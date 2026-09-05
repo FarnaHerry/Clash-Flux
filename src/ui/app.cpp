@@ -27,12 +27,13 @@ namespace clashflux::ui {
 namespace pages {
 
 enum PageIndex : std::size_t {
-    kProfiles = 0,
-    kProxies = 1,
-    kRules = 2,
-    kConnections = 3,
-    kLogs = 4,
-    kSettings = 5,
+    kHome = 0,
+    kProfiles = 1,
+    kProxies = 2,
+    kRules = 3,
+    kConnections = 4,
+    kLogs = 5,
+    kSettings = 6,
 };
 
 } // namespace pages
@@ -112,7 +113,7 @@ huxerui::View FluxThemed(bool dark, huxerui::View content) {
         if (saved == "1" || saved == "2") initialThemeMode = std::stoi(saved);
     }
     auto themeMode = huxerui::UseState<int>(std::move(initialThemeMode));
-    auto navPage = huxerui::UseState<std::size_t>(pages::kProfiles);
+    auto navPage = huxerui::UseState<std::size_t>(pages::kHome);
 
     // 内核自启 + 崩溃检测泵：启动是阻塞活，整段在任务线程；泵每 500ms 检查
     // 进程存活（异常退出 → Failed，快照由各页面/状态胶囊自行轮询）。
@@ -162,8 +163,10 @@ huxerui::View FluxThemed(bool dark, huxerui::View content) {
     const huxerui::ThemeSpec rootSpec = dark ? FluxDarkThemeSpec() : FluxLightThemeSpec();
 
     // 导航项（图标为 apitab 借用的占位形，后续按语义重绘）：
-    // 订阅/代理/规则/连接/日志/设置。
+    // 首页/订阅/代理/规则/连接/日志/设置。
     const std::vector<huxerui::NavigationItem> navItems{
+        huxerui::NavigationItem(app::images::home, "首页")
+            .SelectedIcon(app::images::home_selected),
         huxerui::NavigationItem(app::images::request, "订阅")
             .SelectedIcon(app::images::request_selected),
         huxerui::NavigationItem(app::images::websocket, "代理")
@@ -179,6 +182,7 @@ huxerui::View FluxThemed(bool dark, huxerui::View content) {
     };
 
     std::vector<huxerui::View> pages;
+    pages.push_back(HomePage().Key("home").With(huxerui::Grow(1.0F)));
     pages.push_back(ProfilesPage().Key("profiles").With(huxerui::Grow(1.0F)));
     pages.push_back(ProxiesPage().Key("proxies").With(huxerui::Grow(1.0F)));
     pages.push_back(RulesPage().Key("rules").With(huxerui::Grow(1.0F)));

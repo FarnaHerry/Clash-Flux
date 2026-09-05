@@ -23,6 +23,8 @@ export struct TrafficPoint {
     std::int64_t up = 0;    // 上传速率，字节/秒
     std::int64_t down = 0;  // 下载速率，字节/秒
     std::int64_t at = 0;    // Unix 秒
+
+    bool operator==(const TrafficPoint&) const = default;
 };
 
 export class CoreStreams {

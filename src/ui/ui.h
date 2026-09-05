@@ -23,6 +23,7 @@ inline constexpr float kTitle = 20.0F;    // 页面/弹窗标题
 inline constexpr float kTitleBarContentHeight = 28.0F;
 
 // ---- 页面（定义在各自 .cpp，均为 [[huxerui::composable]]）----
+huxerui::View HomePage();       // 首页（概览）
 huxerui::View ProfilesPage();   // 订阅
 huxerui::View ProxiesPage();    // 代理
 huxerui::View RulesPage();      // 规则
