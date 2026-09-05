@@ -19,14 +19,16 @@
 #     不会触发回落）；但 android job 复用 tarball 里的 huxerui CLI 与 per-ABI AAR。
 #
 # 实验性 job（continue-on-error: true）及原因：
-#   * build-windows / build-macos：本仓库目前只有 platform/linux/main.cpp 平台
-#     入口；CMakeLists 在 WIN32/APPLE 下引用 platform/windows|macos/main.cpp，
-#     文件未落地前 configure 必然报 "Cannot find source file"。工具链解法本身
-#     沿用 apitab 实证配方（Windows=MSVC+choco OpenSSL，macOS=brew llvm/libc++
-#     + 手写 libc++.modules.json + 内联 P0960 补丁），入口文件补齐后把
-#     continue-on-error 摘掉即可。
-#   * build-android：只验证 GUI 壳能否编出 APK/AAB。mihomo 官方没有 Android
-#     资产，安卓内核接入是后续里程碑——产出的包不含内核、不可实际代理。
+#   * build-windows / build-macos：platform/{windows,macos}/main.cpp 入口已落地、
+#     configure 可过；首次全量编译 MSVC / brew-llvm-libc++ 尚未跑绿，等连续
+#     绿后再摘掉 continue-on-error。工具链沿用 apitab 实证配方
+#     （Windows=MSVC+choco OpenSSL，macOS=brew llvm/libc++ + 手写
+#     libc++.modules.json + 内联 P0960 补丁）。
+#   * build-android：platform/android 壳（gradle wrapper + MainActivity）已
+#     入库，job 会经 externalNativeBuild 真正交叉编译原生层。已知阻塞：
+#     NDK 无 OpenSSL（root CMakeLists 会 FATAL_ERROR）+ NDK clang 对 C++23
+#     modules / import std 的支持未验证；mihomo 也无官方 Android 资产。
+#     产出包当前不可实际代理，内核接入是后续里程碑。
 #
 # 已知风险：
 #   * ubuntu:26.04 是滚动预发布容器，clang-21/libc++-21 包名若随发布调整需同步改。
@@ -162,8 +164,8 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------- Windows
-  # 实验性（continue-on-error）：仓库尚无 platform/windows/main.cpp（CMakeLists
-  # WIN32 分支引用它），入口落地前 configure 必败；届时摘掉 continue-on-error。
+  # 实验性（continue-on-error）：platform/windows/main.cpp 已落地、configure
+  # 可过，首次全量编译尚未连续跑绿；绿后摘掉 continue-on-error。
   # 工具链沿用 apitab 实证：MSVC（VS2022，C++23 模块 + import std）+ choco
   # OpenSSL；HuxerUI 源码通道同 Linux。
   build-windows:
@@ -239,7 +241,7 @@ jobs:
           retention-days: 14
 
   # ------------------------------------------------------------------ macOS
-  # 实验性（continue-on-error）：同 Windows，缺 platform/macos/main.cpp。
+  # 实验性（continue-on-error）：同 Windows，入口已落地、首次全量编译尚未跑绿。
   # 工具链沿用 apitab 实证：整链 brew LLVM clang/libc++（.mm 框架层只能 clang
   # 编，std 类型贯穿 .mm/.cpp 接口必须单一标准库；AppleClang 不被 CMake 的
   # C++20 模块扫描支持）。brew llvm 不带 libc++.modules.json，按上游 schema
