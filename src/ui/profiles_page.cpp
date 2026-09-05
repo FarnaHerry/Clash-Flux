@@ -1,6 +1,7 @@
-// profiles_page.cpp — 订阅页：矩形卡片网格（Flow 自动换行，Compact 视口退化为
-// 整宽列表）。卡片交互：右上角刷新图标更新订阅；右键弹上下文菜单（使用/更新/
-// 编辑信息/编辑规则/删除）；双击卡片切换启用订阅。
+// profiles_page.cpp — 订阅页：统一尺寸矩形卡片网格（定宽定高，内容单行
+// UTF-8 截断；Compact 视口退化为整宽列表）。卡片交互：右上角刷新图标更新
+// 订阅；右键弹上下文菜单（使用/更新/编辑信息/编辑规则/删除）；双击卡片
+// 切换启用订阅。
 //
 // 订阅选项（类型/描述/HTTP 超时/更新间隔/自动更新/系统代理/内核代理/无效证书）
 // 在新建与编辑弹窗编辑，仅落库，下载行为在下次「更新」时生效；自动更新由
@@ -10,6 +11,7 @@
 // 阻塞活（网络下载 / 内核重启），全部经 RunOnTaskThread。
 #include <huxerui/huxerui.h>
 
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <string>
@@ -29,8 +31,26 @@ import clashflux.utils;
 namespace clashflux::ui {
 namespace {
 
-// 卡片固定宽度（非 Compact 视口）。
+// 卡片统一尺寸：定宽（Flow 网格换行）+ 定高（内容单行截断，ClipChildren
+// 兜底）；Compact 视口整宽（高度仍统一）。
 constexpr float kCardWidth = 280.0F;
+constexpr float kCardHeight = 136.0F;
+
+// 单行截断（UTF-8 代码点安全）：超限截断加省略号。Text 默认按词换行且无
+// 省略号能力，长 URL/名称会把卡片撑高——网格里统一截断保证卡片等高。
+std::string truncateOneLine(const std::string& s, std::size_t maxCodePoints) {
+    std::size_t count = 0;
+    std::size_t i = 0;
+    while (i < s.size()) {
+        if (count == maxCodePoints) return s.substr(0, i) + "…";
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        const std::size_t len =
+            c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+        i += std::min(len, s.size() - i);
+        ++count;
+    }
+    return s;
+}
 
 // 弹窗表单区滚动视口高度：字段多（类型/描述/超时/间隔/四个开关），限高防
 // 小窗溢出。
@@ -332,10 +352,11 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
 
     huxerui::View card = Card(huxerui::Column {
         huxerui::Row {
-            huxerui::Text(profile.name).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody)
-                    .WithWeight(huxerui::FontWeight::SemiBold),
-                theme.colors.on_surface}),
+            huxerui::Text(truncateOneLine(profile.name, 16)).Style(
+                huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kBody)
+                        .WithWeight(huxerui::FontWeight::SemiBold),
+                    theme.colors.on_surface}),
             profile.selected
                 ? huxerui::View{
                       huxerui::Text("使用中").Style(huxerui::TextStyle{
@@ -350,16 +371,19 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
             std::move(refreshButton),
         }.With(huxerui::Spacing(6.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        huxerui::Text(profile.url.empty() ? "本地导入" : profile.url)
+        huxerui::Text(truncateOneLine(
+                          profile.url.empty() ? "本地导入" : profile.url, 40))
             .Style(huxerui::TextStyle{huxerui::Font::Monospace(font_size::kChip),
                                       theme.colors.on_surface_variant}),
-        profile.description.empty()
-            ? huxerui::View{huxerui::Row{}}
-            : huxerui::View{
-                  huxerui::Text(profile.description)
-                      .Style(huxerui::TextStyle{
-                          huxerui::Font::System(font_size::kCaption),
-                          theme.colors.on_surface_variant})},
+        huxerui::Text(truncateOneLine(
+                          profile.description.empty() ? "—"
+                                                      : profile.description,
+                          44))
+            .Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kCaption),
+                profile.description.empty()
+                    ? theme.colors.outline
+                    : theme.colors.on_surface_variant}),
         huxerui::Row {
             huxerui::Text(profile.type == "local" ? "本地" : "远程")
                 .Style(huxerui::TextStyle{
@@ -373,11 +397,13 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
                                             font_size::kCaption),
                                         theme.colors.on_surface_variant})}
                 : huxerui::View{huxerui::Row{}},
-            huxerui::Text(profile.error.empty()
-                              ? (profile.updatedAt > 0
-                                     ? "更新于 " + formatTime(profile.updatedAt)
-                                     : "未拉取")
-                              : "错误：" + profile.error)
+            huxerui::Text(truncateOneLine(
+                              profile.error.empty()
+                                  ? (profile.updatedAt > 0
+                                         ? "更新于 " + formatTime(profile.updatedAt)
+                                         : "未拉取")
+                                  : "错误：" + profile.error,
+                              44))
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kCaption),
                     profile.error.empty() ? theme.colors.on_surface_variant
@@ -388,9 +414,15 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
     }.With(huxerui::Spacing(6.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
 
-    // 矩形卡：非 Compact 定宽（Flow 网格换行），Compact 由父列 Stretch 整宽。
+    // 矩形卡统一尺寸：定宽定高（内容已单行截断，ClipChildren 兜底），
+    // Compact 由父列 Stretch 整宽（高度仍统一）。
     if (!compact) {
-        card = std::move(card).With(huxerui::Frame{.width = kCardWidth});
+        card = std::move(card).With(huxerui::Frame{.width = kCardWidth,
+                                                   .height = kCardHeight},
+                                    huxerui::ClipChildren());
+    } else {
+        card = std::move(card).With(huxerui::Frame{.height = kCardHeight},
+                                    huxerui::ClipChildren());
     }
     return std::move(card)
         .With(huxerui::MultiTapGesture{.count = 2})
