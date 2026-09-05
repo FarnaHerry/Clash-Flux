@@ -28,8 +28,9 @@ export const char* stateName(CoreState s);
 //   profileYaml  订阅（或手写）配置原文；可为空（生成最小可用配置）。
 //   controller   "127.0.0.1:9097"
 //   secret       external-controller 鉴权
-//   mixedPort    混合入站端口（7890）
+//   mixedPort    混合入站端口（7899）
 //   mode         rule / global / direct
+//   tunEnabled   TUN 透明代理（注入 tun: 块；需 root/CAP_NET_ADMIN）
 // 返回可直接喂给 mihomo -f 的完整 YAML 文本。
 export std::string generateConfig(const std::string& profileYaml,
                                   const std::string& controller,
@@ -37,7 +38,8 @@ export std::string generateConfig(const std::string& profileYaml,
                                   int mixedPort,
                                   const std::string& mode,
                                   bool allowLan,
-                                  const std::string& logLevel);
+                                  const std::string& logLevel,
+                                  bool tunEnabled);
 
 export class CoreProcess {
 public:

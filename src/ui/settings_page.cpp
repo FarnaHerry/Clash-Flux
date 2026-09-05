@@ -262,6 +262,57 @@ const std::string kAboutText =
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
 
                 Card(huxerui::Column {
+                    SectionTitle("系统"),
+                    SettingRow(
+                        "系统代理",
+                        store::coreStore().systemProxySupported()
+                            ? std::format("写入桌面系统代理（127.0.0.1:{}）",
+                                          s.mixedPort)
+                            : "当前桌面环境不支持（仅 KDE / GNOME 系）",
+                        huxerui::Switch(store::coreStore().systemProxyEnabled())
+                            .OnChanged([coreAction](bool on) {
+                                coreAction(
+                                    [on] {
+                                        if (!store::coreStore()
+                                                 .applySystemProxy(on)) {
+                                            const std::string err =
+                                                store::coreStore()
+                                                    .snapshot()
+                                                    .lastError;
+                                            throw std::runtime_error(
+                                                err.empty() ? "系统代理设置失败"
+                                                            : err);
+                                        }
+                                    },
+                                    on ? "系统代理已开启" : "系统代理已关闭");
+                            })
+                            .With(huxerui::Enabled(
+                                store::coreStore().systemProxySupported()))),
+                    SettingRow(
+                        "TUN 模式",
+                        running
+                            ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
+                            : "全局透明代理（下次启动生效）",
+                        huxerui::Switch(s.tunEnabled)
+                            .OnChanged([coreAction](bool on) {
+                                coreAction(
+                                    [on] {
+                                        if (!store::coreStore().applyTun(on)) {
+                                            const std::string err =
+                                                store::coreStore()
+                                                    .snapshot()
+                                                    .lastError;
+                                            throw std::runtime_error(
+                                                err.empty() ? "TUN 切换失败"
+                                                            : err);
+                                        }
+                                    },
+                                    on ? "TUN 已开启" : "TUN 已关闭");
+                            })),
+                }.With(huxerui::Spacing(10.0F),
+                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
+
+                Card(huxerui::Column {
                     SectionTitle("外观"),
                     SettingRow(
                         "主题", "",
