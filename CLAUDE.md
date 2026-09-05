@@ -49,9 +49,12 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
   （REST + 订阅下载）、IXWebSocket 12.0.1（client-only，内核推送流）、
   SQLiteCpp 3.3.3（订阅/设置）、nlohmann::json 3.12.0、OpenSSL 3.5.1
   （linux x86_64 兜底静态包）。
-- **mihomo 不在本仓库**：运行时按 `<exe>/engines/mihomo → <exe>/mihomo →
-  <repo>/engines/mihomo（开发形态）→ PATH` 解析（`src/config.cppm::cfg::mihomoBinary()`）。
-  `engines/` 已 gitignore。
+- **mihomo 由项目自带**：configure 期下载官方 release（v1.19.30 linux x86_64，
+  SHA256 钉死，见 CMakeLists「自带 mihomo 内核」块），POST_BUILD 拷到
+  `<exe>/engines/mihomo`；`-DCLASHFLUX_BUNDLE_MIHOMO=OFF` 关闭。运行时解析
+  优先级 `<exe>/engines/mihomo → <exe>/mihomo → <repo>/engines/mihomo（开发
+  形态）→ PATH`（`src/config.cppm::cfg::mihomoBinary()`）。`engines/` 已
+  gitignore。
 
 ## 架构
 
@@ -90,8 +93,12 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 - external-controller：`127.0.0.1:9097`（避开常见 9090），secret 首启生成存
   settings 表（`core.secret`），REST 走 `Authorization: Bearer`，WS 走 `?token=`。
 - 运行时配置 = `generateConfig(订阅YAML, ...)` 合成：文本级剔除订阅里的托管
-  顶层键（mixed-port/mode/secret 等），注入块放文件头，写 `core/config.yaml`，
-  `mihomo -d core/ -f core/config.yaml` 启动。
+  顶层键（连同其缩进值块；键表必须与注入块一一对应：mixed-port/mode/secret/
+  unified-delay/tcp-concurrent/find-process-mode/global-client-fingerprint/
+  profile 等），注入块放文件头，写 `core/config.yaml`，
+  `mihomo -d core/ -f core/config.yaml` 启动。控制器就绪轮询 ≤30s（订阅带
+  规则 provider 的冷启动要拉 geodata/规则集，5s 会误判）。
+- 默认混合端口 **7899**（避开 Clash 7890 / Verge 7897 常见占用）。
 - 测速：单节点 `GET /proxies/{name}/delay`；整组 `GET /group/{name}/delay`
   （返回节点→延迟 map，超时项值 ≤0）。测速超时要比 curl 传输超时窄。
 

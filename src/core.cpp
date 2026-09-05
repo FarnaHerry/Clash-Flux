@@ -43,8 +43,9 @@ const char* stateName(CoreState s) {
 namespace {
 
 // 订阅 YAML 里由应用托管的顶层键：文本级剔除（顶层键 = 行首无缩进的 key:）。
-// 逐行扫，仅剔行首无空白的 "key:" 单行；多行值（如 tun: 下的缩进块）不受影响
-// —— 剔除只针对我们注入的单行标量键。
+// 逐行扫，仅剔行首无空白的 "key:" 行；命中后连同其缩进值块（profile: 这类
+// 多行块）一起跳过——否则孤立的缩进子行会让合并结果直接不是合法 YAML。
+// 键表必须与下方注入块严格一一对应：注入什么就剔什么。
 bool isManagedKeyLine(std::string_view line) {
     if (line.empty() || line.front() == ' ' || line.front() == '\t' ||
         line.front() == '#') {
@@ -53,11 +54,17 @@ bool isManagedKeyLine(std::string_view line) {
     static constexpr std::string_view kKeys[] = {
         "external-controller:", "secret:", "mixed-port:", "port:", "socks-port:",
         "allow-lan:", "mode:", "log-level:", "ipv6:",
+        "unified-delay:", "tcp-concurrent:", "find-process-mode:",
+        "global-client-fingerprint:", "profile:",
     };
     for (const auto key : kKeys) {
         if (line.starts_with(key)) return true;
     }
     return false;
+}
+
+bool isIndentedContinuation(std::string_view line) {
+    return !line.empty() && (line.front() == ' ' || line.front() == '\t');
 }
 
 } // namespace
@@ -86,14 +93,22 @@ std::string generateConfig(const std::string& profileYaml,
     out += "profile:\n  store-selected: true\n  store-fake-ip: true\n";
     out += "# ---- 订阅内容 ----\n";
 
-    // 剔除订阅里的托管顶层键后原样拼接。
+    // 剔除订阅里的托管顶层键（连同其缩进值块）后原样拼接。
     std::string_view rest{profileYaml};
+    bool skippingBlock = false;
     while (!rest.empty()) {
         const auto pos = rest.find('\n');
         const std::string_view line = rest.substr(0, pos);
-        if (!isManagedKeyLine(line)) {
-            out += line;
-            out.push_back('\n');
+        if (skippingBlock && isIndentedContinuation(line)) {
+            // 托管键的缩进值块：继续跳过（空行/注释行结束块）。
+        } else {
+            skippingBlock = false;
+            if (isManagedKeyLine(line)) {
+                skippingBlock = true;
+            } else {
+                out += line;
+                out.push_back('\n');
+            }
         }
         rest = (pos == std::string_view::npos) ? std::string_view{} : rest.substr(pos + 1);
     }

@@ -75,6 +75,11 @@ huxerui::View PageScaffold(const std::string& title, huxerui::View actions,
 // 卡片容器（二级岛）：raised 表面 + 8pt 圆角 + 内边距。
 huxerui::View Card(huxerui::View content);
 
+// 自定义内容弹窗的卡片包裹：SDK 的 dialog.Show(ViewFactory/DialogFactory) 不给
+// 内容加底板（只有标题+消息的内置形态才有 DialogStyle），统一包一层：
+// overlay 表面 + 阴影 + 描边 + 16pt 圆角 + 内边距。
+huxerui::View DialogCard(huxerui::View content);
+
 // 内核状态胶囊：圆点 + 状态文字（标题栏用）。独立 composable，内部自订阅轮询，
 // 避免 AppRoot 每拍重组。
 huxerui::View CoreStatusPill();

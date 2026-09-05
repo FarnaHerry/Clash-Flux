@@ -114,6 +114,19 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
+[[huxerui::composable]] huxerui::View DialogCard(huxerui::View content) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const IslandTheme islands = ResolveIslandTheme(theme);
+    huxerui::View card = content;
+    return std::move(card).With(
+        huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.24F), {}, 24.0F, 0.0F},
+        huxerui::Background(islands.overlay),
+        huxerui::CornerRadius(islands.island_radius),
+        huxerui::Border(islands.outline_soft, 1.0F),
+        huxerui::ClipChildren(),
+        huxerui::Padding(islands.island_padding));
+}
+
 [[huxerui::composable]] huxerui::View CoreStatusPill() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
