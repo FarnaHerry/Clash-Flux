@@ -2,12 +2,18 @@
 // 整宽列表）。卡片交互：右上角刷新图标更新订阅；右键弹上下文菜单（使用/更新/
 // 编辑信息/编辑规则/删除）；双击卡片切换启用订阅。
 //
+// 订阅选项（类型/描述/HTTP 超时/更新间隔/自动更新/系统代理/内核代理/无效证书）
+// 在新建与编辑弹窗编辑，仅落库，下载行为在下次「更新」时生效；自动更新由
+// 壳层泵（app.cpp）按间隔扫描 refreshDue()。
+//
 // 数据流：列表经 1s 泵从 profilesStore 重读；导入/更新/启用/删除/编辑保存都是
 // 阻塞活（网络下载 / 内核重启），全部经 RunOnTaskThread。
 #include <huxerui/huxerui.h>
 
+#include <charconv>
 #include <chrono>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -26,6 +32,87 @@ namespace {
 // 卡片固定宽度（非 Compact 视口）。
 constexpr float kCardWidth = 280.0F;
 
+// 弹窗表单区滚动视口高度：字段多（类型/描述/超时/间隔/四个开关），限高防
+// 小窗溢出。
+constexpr float kDialogFormHeight = 340.0F;
+
+// 把弹窗数字输入解析为秒/分钟：空/非法回落 fallback。
+int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
+    const std::string t = v.text;
+    int out = 0;
+    const auto [ptr, ec] = std::from_chars(t.data(), t.data() + t.size(), out);
+    if (ec != std::errc() || out < 0) return fallback;
+    return out;
+}
+
+// 开关行：左标签（danger = error 色警示）+ 说明，右 Switch。Switch 卸载风险
+// 不存在（原地改样式），OnChanged 内直接写 State 安全。
+[[huxerui::composable]] huxerui::View ToggleRow(std::string label, std::string hint,
+                                                bool danger,
+                                                huxerui::State<bool> checked) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    return huxerui::Row {
+        huxerui::Column {
+            huxerui::Text(std::move(label))
+                .Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kBody),
+                    danger ? theme.colors.error : theme.colors.on_surface}),
+            huxerui::Text(std::move(hint))
+                .Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kCaption),
+                    theme.colors.on_surface_variant}),
+        }
+            .With(huxerui::Spacing(2.0F))
+            .With(huxerui::Grow(1.0F)),
+        huxerui::Switch(checked.Get()).OnChanged(
+            [checked](bool on) { checked = on; }),
+    }
+        .With(huxerui::Spacing(12.0F),
+              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+}
+
+// 订阅选项表单（新建/编辑弹窗共用）：描述 + HTTP 超时/更新间隔 + 自动更新/
+// 系统代理/内核代理/无效证书开关。字段值由调用方持有的 State 承载。
+[[huxerui::composable]] huxerui::View ProfileOptionsForm(
+    huxerui::State<huxerui::TextEditingValue> desc,
+    huxerui::State<huxerui::TextEditingValue> timeout,
+    huxerui::State<huxerui::TextEditingValue> interval,
+    huxerui::State<bool> autoUp, huxerui::State<bool> sysProxy,
+    huxerui::State<bool> coreProxy, huxerui::State<bool> invalidCert) {
+    return huxerui::Column {
+        huxerui::TextField(desc.Get())
+            .Label("描述（可选）")
+            .Variant(huxerui::TextFieldVariant::Outlined)
+            .OnChanged([desc](const huxerui::TextEditingValue& v) { desc = v; }),
+        huxerui::Row {
+            huxerui::TextField(timeout.Get())
+                .Label("HTTP 超时（秒）")
+                .Variant(huxerui::TextFieldVariant::Outlined)
+                .OnChanged([timeout](const huxerui::TextEditingValue& v) {
+                    timeout = v;
+                })
+                .With(huxerui::Grow(1.0F)),
+            huxerui::TextField(interval.Get())
+                .Label("更新间隔（分钟）")
+                .Variant(huxerui::TextFieldVariant::Outlined)
+                .OnChanged([interval](const huxerui::TextEditingValue& v) {
+                    interval = v;
+                })
+                .With(huxerui::Grow(1.0F)),
+        }
+            .With(huxerui::Spacing(8.0F)),
+        ToggleRow("允许自动更新", "开启后按更新间隔自动拉新（间隔需 > 0）", false,
+                  autoUp),
+        ToggleRow("使用系统代理更新", "经环境变量代理拉取订阅", false, sysProxy),
+        ToggleRow("使用内核代理更新", "经本应用内核混合端口拉取（内核需运行）",
+                  false, coreProxy),
+        ToggleRow("允许无效证书（危险）", "跳过 HTTPS 证书校验，仅用于可信来源",
+                  true, invalidCert),
+    }
+        .With(huxerui::Spacing(12.0F),
+              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
 [[huxerui::composable]] huxerui::View ProfileCard(
     const db::Profile& profile, bool compact, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::function<void()> reload) {
@@ -36,6 +123,14 @@ constexpr float kCardWidth = 280.0F;
     auto editName = huxerui::UseState(huxerui::TextEditingValue{""});
     auto editUrl = huxerui::UseState(huxerui::TextEditingValue{""});
     auto editYaml = huxerui::UseState(huxerui::TextEditingValue{""});
+    // 编辑弹窗的订阅选项字段（ProfileOptionsForm）。
+    auto editDesc = huxerui::UseState(huxerui::TextEditingValue{""});
+    auto editTimeout = huxerui::UseState(huxerui::TextEditingValue{""});
+    auto editInterval = huxerui::UseState(huxerui::TextEditingValue{""});
+    auto editAuto = huxerui::UseState(false);
+    auto editSys = huxerui::UseState(false);
+    auto editCore = huxerui::UseState(false);
+    auto editCert = huxerui::UseState(false);
     const std::int64_t id = profile.id;
 
     auto action = [tasks, toast, reload](std::function<std::string()> job) {
@@ -46,39 +141,66 @@ constexpr float kCardWidth = 280.0F;
         });
     };
 
-    // 编辑信息弹窗：名称 + 订阅链接（仅落库，URL 下次「更新」拉取时生效）。
-    auto showEditInfo = [dialog, tasks, toast, editName, editUrl, id, profile] {
+    // 编辑信息弹窗：名称 + 订阅链接（remote）+ 描述/超时/间隔/四个开关。
+    // 仅落库；URL 等在下次「更新」拉取时生效。
+    auto showEditInfo = [dialog, tasks, toast, editName, editUrl, editDesc,
+                         editTimeout, editInterval, editAuto, editSys, editCore,
+                         editCert, id, profile] {
         editName = huxerui::TextEditingValue{profile.name};
         editUrl = huxerui::TextEditingValue{profile.url};
+        editDesc = huxerui::TextEditingValue{profile.description};
+        editTimeout = huxerui::TextEditingValue{std::format("{}", profile.timeoutSecs)};
+        editInterval = huxerui::TextEditingValue{std::format("{}", profile.intervalMins)};
+        editAuto = profile.autoUpdate;
+        editSys = profile.useSystemProxy;
+        editCore = profile.useCoreProxy;
+        editCert = profile.allowInvalidCert;
         dialog.Show(
-            [tasks, toast, editName, editUrl,
+            [tasks, toast, editName, editUrl, editDesc, editTimeout, editInterval,
+             editAuto, editSys, editCore, editCert,
              id](huxerui::DialogContext ctx) -> huxerui::View {
                 return DialogCard(huxerui::Column {
-                    huxerui::Text("编辑信息", huxerui::TextRole::Title),
-                    huxerui::TextField(editName.Get())
-                        .Label("名称")
-                        .Variant(huxerui::TextFieldVariant::Outlined)
-                        .OnChanged([editName](const huxerui::TextEditingValue& v) {
-                            editName = v;
-                        }),
-                    huxerui::TextField(editUrl.Get())
-                        .Label("订阅链接（留空 = 本地导入）")
-                        .Placeholder("https://...")
-                        .Variant(huxerui::TextFieldVariant::Outlined)
-                        .OnChanged([editUrl](const huxerui::TextEditingValue& v) {
-                            editUrl = v;
-                        }),
+                    huxerui::Text("编辑订阅", huxerui::TextRole::Title),
+                    huxerui::ScrollView(huxerui::Column {
+                        huxerui::TextField(editName.Get())
+                            .Label("名称")
+                            .Variant(huxerui::TextFieldVariant::Outlined)
+                            .OnChanged([editName](const huxerui::TextEditingValue& v) {
+                                editName = v;
+                            }),
+                        huxerui::TextField(editUrl.Get())
+                            .Label("订阅链接（留空 = 本地导入）")
+                            .Placeholder("https://...")
+                            .Variant(huxerui::TextFieldVariant::Outlined)
+                            .OnChanged([editUrl](const huxerui::TextEditingValue& v) {
+                                editUrl = v;
+                            }),
+                        ProfileOptionsForm(editDesc, editTimeout, editInterval,
+                                           editAuto, editSys, editCore, editCert),
+                    }
+                                       .With(huxerui::Spacing(12.0F),
+                                             huxerui::CrossAlign(
+                                                 huxerui::CrossAxisAlignment::Stretch)))
+                        .With(huxerui::Frame{.height = kDialogFormHeight}),
                     huxerui::Row {
                         huxerui::Button("取消").OnClick([ctx] { ctx.Dismiss(); }),
                         huxerui::Button("保存").OnClick([=] {
                             ctx.Dismiss();
                             tasks.Launch([=]() -> huxerui::Task<void> {
-                                const std::string name = editName.Get().text;
-                                const std::string url = editUrl.Get().text;
+                                db::Profile fields;
+                                fields.name = editName.Get().text;
+                                fields.url = editUrl.Get().text;
+                                fields.description = editDesc.Get().text;
+                                fields.timeoutSecs = parseNumber(editTimeout.Get(), 60);
+                                fields.intervalMins = parseNumber(editInterval.Get(), 0);
+                                fields.autoUpdate = editAuto.Get();
+                                fields.useSystemProxy = editSys.Get();
+                                fields.useCoreProxy = editCore.Get();
+                                fields.allowInvalidCert = editCert.Get();
                                 const std::string err = co_await RunOnTaskThread(
-                                    [id, name, url] {
+                                    [id, fields] {
                                         auto& ps = store::profilesStore();
-                                        if (!ps.updateInfo(id, name, url))
+                                        if (!ps.updateProfile(id, fields))
                                             return ps.lastError();
                                         return std::string{};
                                     });
@@ -91,10 +213,11 @@ constexpr float kCardWidth = 280.0F;
                         }),
                     }.With(huxerui::MainAlign(
                                huxerui::MainAxisAlignment::SpaceBetween)),
-                }.With(huxerui::Spacing(12.0F),
-                       huxerui::Frame{.width = 360.0F},
-                       huxerui::CrossAlign(
-                           huxerui::CrossAxisAlignment::Stretch)));
+                }
+                                  .With(huxerui::Spacing(12.0F),
+                                        huxerui::Frame{.width = 420.0F},
+                                        huxerui::CrossAlign(
+                                            huxerui::CrossAxisAlignment::Stretch)));
             },
             huxerui::DialogOptions{});
     };
@@ -230,15 +353,38 @@ constexpr float kCardWidth = 280.0F;
         huxerui::Text(profile.url.empty() ? "本地导入" : profile.url)
             .Style(huxerui::TextStyle{huxerui::Font::Monospace(font_size::kChip),
                                       theme.colors.on_surface_variant}),
-        huxerui::Text(profile.error.empty()
-                          ? (profile.updatedAt > 0
-                                 ? "更新于 " + formatTime(profile.updatedAt)
-                                 : "未拉取")
-                          : "错误：" + profile.error)
-            .Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kCaption),
-                profile.error.empty() ? theme.colors.on_surface_variant
-                                      : theme.colors.error}),
+        profile.description.empty()
+            ? huxerui::View{huxerui::Row{}}
+            : huxerui::View{
+                  huxerui::Text(profile.description)
+                      .Style(huxerui::TextStyle{
+                          huxerui::Font::System(font_size::kCaption),
+                          theme.colors.on_surface_variant})},
+        huxerui::Row {
+            huxerui::Text(profile.type == "local" ? "本地" : "远程")
+                .Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kCaption),
+                    theme.colors.on_surface_variant}),
+            profile.autoUpdate && profile.intervalMins > 0
+                ? huxerui::View{huxerui::Text(std::format("自动 {} 分钟",
+                                                          profile.intervalMins))
+                                    .Style(huxerui::TextStyle{
+                                        huxerui::Font::System(
+                                            font_size::kCaption),
+                                        theme.colors.on_surface_variant})}
+                : huxerui::View{huxerui::Row{}},
+            huxerui::Text(profile.error.empty()
+                              ? (profile.updatedAt > 0
+                                     ? "更新于 " + formatTime(profile.updatedAt)
+                                     : "未拉取")
+                              : "错误：" + profile.error)
+                .Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kCaption),
+                    profile.error.empty() ? theme.colors.on_surface_variant
+                                          : theme.colors.error}),
+        }
+            .With(huxerui::Spacing(8.0F),
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
     }.With(huxerui::Spacing(6.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
 
@@ -276,6 +422,17 @@ constexpr float kCardWidth = 280.0F;
     auto newName = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newUrl = huxerui::UseState(huxerui::TextEditingValue{""});
     auto importing = huxerui::UseState(false);
+    // 新建弹窗的订阅选项字段（ProfileOptionsForm）+ 类型 + 本地文件。
+    auto picker = huxerui::UseService<huxerui::FilePicker>();
+    auto newTypeIdx = huxerui::UseState<std::size_t>(0);
+    auto newDesc = huxerui::UseState(huxerui::TextEditingValue{""});
+    auto newTimeout = huxerui::UseState(huxerui::TextEditingValue{""});
+    auto newInterval = huxerui::UseState(huxerui::TextEditingValue{""});
+    auto newAuto = huxerui::UseState(false);
+    auto newSys = huxerui::UseState(false);
+    auto newCore = huxerui::UseState(false);
+    auto newCert = huxerui::UseState(false);
+    auto pickedPath = huxerui::UseState<std::string>("");
 
     // 列表泵：1s 一拍重读（CRUD 后也会手动触发）。
     huxerui::Lifecycle(
@@ -298,29 +455,102 @@ constexpr float kCardWidth = 280.0F;
         });
     };
 
-    // 新建订阅弹窗：名称可选 + 订阅链接；导入是网络下载（阻塞），走任务线程，
-    // 成功才关弹窗。打开前清空上一轮的输入。
-    auto showCreateDialog = [dialog, tasks, toast, newName, newUrl, importing] {
+    // 新建订阅弹窗：类型（远程/本地）+ 名称 + 选项表单；导入是网络下载
+    // （阻塞），走任务线程，成功才关弹窗。打开前清空上一轮的输入。
+    auto showCreateDialog = [dialog, tasks, toast, picker, newName, newUrl,
+                             newTypeIdx, newDesc, newTimeout, newInterval,
+                             newAuto, newSys, newCore, newCert, pickedPath,
+                             importing] {
         newName = huxerui::TextEditingValue{""};
         newUrl = huxerui::TextEditingValue{""};
+        newTypeIdx = 0;
+        newDesc = huxerui::TextEditingValue{""};
+        newTimeout = huxerui::TextEditingValue{""};
+        newInterval = huxerui::TextEditingValue{""};
+        newAuto = false;
+        newSys = false;
+        newCore = false;
+        newCert = false;
+        pickedPath = "";
         dialog.Show(
-            [tasks, toast, newName, newUrl,
-             importing](huxerui::DialogContext ctx) -> huxerui::View {
+            [tasks, toast, picker, newName, newUrl, newTypeIdx, newDesc,
+             newTimeout, newInterval, newAuto, newSys, newCore, newCert,
+             pickedPath, importing](huxerui::DialogContext ctx) -> huxerui::View {
+                const bool remote = newTypeIdx.Get() == 0;
                 return DialogCard(huxerui::Column {
                     huxerui::Text("新建订阅", huxerui::TextRole::Title),
-                    huxerui::TextField(newName.Get())
-                        .Label("名称（可选）")
-                        .Variant(huxerui::TextFieldVariant::Outlined)
-                        .OnChanged([newName](const huxerui::TextEditingValue& v) {
-                            newName = v;
-                        }),
-                    huxerui::TextField(newUrl.Get())
-                        .Label("订阅链接")
-                        .Placeholder("https://...")
-                        .Variant(huxerui::TextFieldVariant::Outlined)
-                        .OnChanged([newUrl](const huxerui::TextEditingValue& v) {
-                            newUrl = v;
-                        }),
+                    huxerui::ScrollView(huxerui::Column {
+                        huxerui::SegmentedButton(
+                            std::vector<huxerui::StringVariant>{"远程订阅",
+                                                                "本地文件"},
+                            newTypeIdx.Get())
+                            .OnChanged([newTypeIdx](std::size_t idx) {
+                                newTypeIdx = idx;
+                            }),
+                        remote
+                            ? huxerui::View{huxerui::TextField(newUrl.Get())
+                                                .Label("订阅链接")
+                                                .Placeholder("https://...")
+                                                .Variant(huxerui::
+                                                             TextFieldVariant::
+                                                                 Outlined)
+                                                .OnChanged(
+                                                    [newUrl](const huxerui::
+                                                                 TextEditingValue&
+                                                                     v) {
+                                                        newUrl = v;
+                                                    })}
+                            : huxerui::View{huxerui::Row {
+                                  huxerui::Button("选择文件")
+                                      .OnClick([tasks, picker, pickedPath] {
+                                          tasks.Launch(
+                                              [=]() -> huxerui::Task<void> {
+                                                  const auto picked =
+                                                      co_await picker->
+                                                          OpenFileAsync(
+                                                              huxerui::
+                                                                  FilePickerFilter{
+                                                                      .name =
+                                                                          "YAML 订阅",
+                                                                      .extensions =
+                                                                          {"yaml",
+                                                                           "yml"}});
+                                                  if (!picked) co_return;
+                                                  if (const auto f =
+                                                          picked->AsFile()) {
+                                                      pickedPath = f->Path();
+                                                  } else {
+                                                      pickedPath = "";
+                                                  }
+                                              });
+                                      }),
+                                  huxerui::Text(
+                                      pickedPath.Get().empty()
+                                          ? "未选择文件"
+                                          : pickedPath.Get())
+                                      .Style(huxerui::TextStyle{
+                                          huxerui::Font::Monospace(
+                                              font_size::kChip),
+                                          huxerui::UseTheme()
+                                              .colors.on_surface_variant}),
+                              }
+                                  .With(huxerui::Spacing(8.0F),
+                                        huxerui::CrossAlign(
+                                            huxerui::CrossAxisAlignment::
+                                                Center))},
+                        huxerui::TextField(newName.Get())
+                            .Label("名称（可选）")
+                            .Variant(huxerui::TextFieldVariant::Outlined)
+                            .OnChanged([newName](const huxerui::TextEditingValue& v) {
+                                newName = v;
+                            }),
+                        ProfileOptionsForm(newDesc, newTimeout, newInterval,
+                                           newAuto, newSys, newCore, newCert),
+                    }
+                                       .With(huxerui::Spacing(12.0F),
+                                             huxerui::CrossAlign(
+                                                 huxerui::CrossAxisAlignment::Stretch)))
+                        .With(huxerui::Frame{.height = kDialogFormHeight}),
                     huxerui::Row {
                         huxerui::Button("取消").OnClick([ctx] { ctx.Dismiss(); }),
                         importing.Get()
@@ -331,28 +561,52 @@ constexpr float kCardWidth = 280.0F;
                             : huxerui::View{
                                   huxerui::Button("导入").OnClick([=] {
                                       const std::string url = newUrl.Get().text;
-                                      if (url.empty()) {
+                                      if (remote && url.empty()) {
                                           toast.Show("订阅链接不能为空");
+                                          return;
+                                      }
+                                      if (!remote && pickedPath.Get().empty()) {
+                                          toast.Show("请先选择订阅文件");
                                           return;
                                       }
                                       importing = true;
                                       tasks.Launch([=]() -> huxerui::Task<void> {
+                                          db::Profile options;
+                                          options.description =
+                                              newDesc.Get().text;
+                                          options.timeoutSecs =
+                                              parseNumber(newTimeout.Get(), 60);
+                                          options.intervalMins =
+                                              parseNumber(newInterval.Get(), 0);
+                                          options.autoUpdate = newAuto.Get();
+                                          options.useSystemProxy = newSys.Get();
+                                          options.useCoreProxy = newCore.Get();
+                                          options.allowInvalidCert =
+                                              newCert.Get();
                                           const std::string name =
                                               newName.Get().text;
-                                          const auto [id, err] =
-                                              co_await RunOnTaskThread(
-                                                  [name, url] {
+                                          const auto [rid, err] = co_await
+                                              RunOnTaskThread(
+                                                  [remote, name, url, options,
+                                                   picked = pickedPath.Get()] {
                                                       auto& ps =
                                                           store::profilesStore();
-                                                      const std::int64_t id =
-                                                          ps.importUrl(name, url);
+                                                      const std::int64_t nid =
+                                                          remote
+                                                              ? ps.importUrl(
+                                                                    name, url,
+                                                                    options)
+                                                              : ps.importFile(
+                                                                    name,
+                                                                    picked,
+                                                                    options);
                                                       return std::pair{
-                                                          id, ps.lastError()};
+                                                          nid, ps.lastError()};
                                                   });
                                           importing = false;
-                                          if (id == 0) {
-                                              toast.Show(err.empty() ? "导入失败"
-                                                                     : err);
+                                          if (rid == 0) {
+                                              toast.Show(
+                                                  err.empty() ? "导入失败" : err);
                                           } else {
                                               ctx.Dismiss();
                                               toast.Show("订阅已导入");
@@ -363,10 +617,11 @@ constexpr float kCardWidth = 280.0F;
                                huxerui::MainAxisAlignment::SpaceBetween),
                            huxerui::CrossAlign(
                                huxerui::CrossAxisAlignment::Center)),
-                }.With(huxerui::Spacing(12.0F),
-                       huxerui::Frame{.width = 360.0F},
-                       huxerui::CrossAlign(
-                           huxerui::CrossAxisAlignment::Stretch)));
+                }
+                                  .With(huxerui::Spacing(12.0F),
+                                        huxerui::Frame{.width = 420.0F},
+                                        huxerui::CrossAlign(
+                                            huxerui::CrossAxisAlignment::Stretch)));
             },
             huxerui::DialogOptions{});
     };

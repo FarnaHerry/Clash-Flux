@@ -20,11 +20,21 @@ Profile rowToProfile(SQLite::Statement& q) {
     p.selected = q.getColumn(4).getInt() != 0;
     p.updatedAt = q.getColumn(5).getInt64();
     p.error = q.getColumn(6).getString();
+    p.type = q.getColumn(7).getString();
+    p.description = q.getColumn(8).getString();
+    p.timeoutSecs = q.getColumn(9).getInt();
+    p.intervalMins = q.getColumn(10).getInt();
+    p.autoUpdate = q.getColumn(11).getInt() != 0;
+    p.useSystemProxy = q.getColumn(12).getInt() != 0;
+    p.useCoreProxy = q.getColumn(13).getInt() != 0;
+    p.allowInvalidCert = q.getColumn(14).getInt() != 0;
     return p;
 }
 
 constexpr const char* kProfileColumns =
-    "id, name, url, file, selected, updated_at, error";
+    "id, name, url, file, selected, updated_at, error, type, description,"
+    " timeout_secs, interval_mins, auto_update, use_system_proxy,"
+    " use_core_proxy, allow_invalid_cert";
 
 } // namespace
 
@@ -49,6 +59,22 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL DEFAULT ''
 );
 )SQL");
+        // 迁移：订阅选项列（订阅弹窗扩展）。老库补列，新库已含这些列时
+        // ALTER 报 duplicate column，吞掉即可。
+        for (const char* stmt : {
+                 "ALTER TABLE profiles ADD COLUMN type TEXT NOT NULL DEFAULT 'remote'",
+                 "ALTER TABLE profiles ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+                 "ALTER TABLE profiles ADD COLUMN timeout_secs INTEGER NOT NULL DEFAULT 60",
+                 "ALTER TABLE profiles ADD COLUMN interval_mins INTEGER NOT NULL DEFAULT 0",
+                 "ALTER TABLE profiles ADD COLUMN auto_update INTEGER NOT NULL DEFAULT 0",
+                 "ALTER TABLE profiles ADD COLUMN use_system_proxy INTEGER NOT NULL DEFAULT 0",
+                 "ALTER TABLE profiles ADD COLUMN use_core_proxy INTEGER NOT NULL DEFAULT 0",
+                 "ALTER TABLE profiles ADD COLUMN allow_invalid_cert INTEGER NOT NULL DEFAULT 0"}) {
+            try {
+                db.exec(stmt);
+            } catch (const SQLite::Exception&) {
+            }
+        }
     }
 };
 
@@ -66,27 +92,46 @@ std::vector<Profile> Db::listProfiles() {
 std::int64_t Db::saveProfile(const Profile& p) {
     if (p.id == 0) {
         SQLite::Statement q(impl_->db,
-            "INSERT INTO profiles (name, url, file, selected, updated_at, error)"
-            " VALUES (?, ?, ?, ?, ?, ?)");
+            "INSERT INTO profiles (name, url, file, selected, updated_at, error,"
+            " type, description, timeout_secs, interval_mins, auto_update,"
+            " use_system_proxy, use_core_proxy, allow_invalid_cert)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         q.bind(1, p.name);
         q.bind(2, p.url);
         q.bind(3, p.file);
         q.bind(4, p.selected ? 1 : 0);
         q.bind(5, p.updatedAt);
         q.bind(6, p.error);
+        q.bind(7, p.type);
+        q.bind(8, p.description);
+        q.bind(9, p.timeoutSecs);
+        q.bind(10, p.intervalMins);
+        q.bind(11, p.autoUpdate ? 1 : 0);
+        q.bind(12, p.useSystemProxy ? 1 : 0);
+        q.bind(13, p.useCoreProxy ? 1 : 0);
+        q.bind(14, p.allowInvalidCert ? 1 : 0);
         q.exec();
         return impl_->db.getLastInsertRowid();
     }
     SQLite::Statement q(impl_->db,
-        "UPDATE profiles SET name=?, url=?, file=?, selected=?, updated_at=?, error=?"
-        " WHERE id=?");
+        "UPDATE profiles SET name=?, url=?, file=?, selected=?, updated_at=?, error=?,"
+        " type=?, description=?, timeout_secs=?, interval_mins=?, auto_update=?,"
+        " use_system_proxy=?, use_core_proxy=?, allow_invalid_cert=? WHERE id=?");
     q.bind(1, p.name);
     q.bind(2, p.url);
     q.bind(3, p.file);
     q.bind(4, p.selected ? 1 : 0);
     q.bind(5, p.updatedAt);
     q.bind(6, p.error);
-    q.bind(7, p.id);
+    q.bind(7, p.type);
+    q.bind(8, p.description);
+    q.bind(9, p.timeoutSecs);
+    q.bind(10, p.intervalMins);
+    q.bind(11, p.autoUpdate ? 1 : 0);
+    q.bind(12, p.useSystemProxy ? 1 : 0);
+    q.bind(13, p.useCoreProxy ? 1 : 0);
+    q.bind(14, p.allowInvalidCert ? 1 : 0);
+    q.bind(15, p.id);
     q.exec();
     return p.id;
 }

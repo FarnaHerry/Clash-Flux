@@ -18,6 +18,15 @@ export struct Profile {
     bool selected = false;       // 当前启用
     std::int64_t updatedAt = 0;  // 上次成功拉取/导入时间（Unix 秒）
     std::string error;           // 上次拉取错误（成功清空）
+    // ---- 订阅选项（订阅弹窗编辑；下载行为在更新时生效）----
+    std::string type = "remote";    // remote = URL 拉取 / local = 本地文件导入
+    std::string description;        // 描述
+    int timeoutSecs = 60;           // HTTP 请求超时（秒；<=0 回落 60）
+    int intervalMins = 0;           // 更新间隔（分钟；0 = 不自动更新）
+    bool autoUpdate = false;        // 允许自动更新（需 intervalMins > 0）
+    bool useSystemProxy = false;    // 使用系统代理更新（环境变量代理）
+    bool useCoreProxy = false;      // 使用内核代理更新（127.0.0.1:mixedPort）
+    bool allowInvalidCert = false;  // 允许无效证书（危险）
 
     bool operator==(const Profile&) const = default;  // State 变更检测
 };

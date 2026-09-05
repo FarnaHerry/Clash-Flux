@@ -8,6 +8,7 @@ export module clashflux.store.profiles;
 import std;
 import clashflux.config;
 import clashflux.utils;
+import clashflux.api;
 import clashflux.db;
 import clashflux.core;
 import clashflux.store.core;
@@ -49,11 +50,14 @@ public:
                            std::istreambuf_iterator<char>());
     }
 
-    // 新增订阅：先建行拿 id，再下载到 profiles/<id>.yaml。阻塞（网络）。
-    // 成功返回新 id；失败返回 0 并填 lastError()。
-    std::int64_t importUrl(const std::string& name, const std::string& url) {
+    // 新增订阅（remote）：先建行拿 id，再下载到 profiles/<id>.yaml。阻塞（网络）。
+    // options 携带弹窗里的订阅选项（type 强制 remote）。成功返回新 id；失败返回 0。
+    std::int64_t importUrl(const std::string& name, const std::string& url,
+                           const db::Profile& options = {}) {
         lastError_.clear();
-        db::Profile p;
+        db::Profile p = options;
+        p.id = 0;
+        p.type = "remote";
         p.name = name.empty() ? url : name;
         p.url = url;
         try {
@@ -87,10 +91,14 @@ public:
         return false;
     }
 
-    // 本地文件导入：复制内容到 profiles/<id>.yaml。
-    bool importFile(const std::string& name, const std::filesystem::path& source) {
+    // 本地文件导入（local）：复制内容到 profiles/<id>.yaml。
+    bool importFile(const std::string& name, const std::filesystem::path& source,
+                    const db::Profile& options = {}) {
         lastError_.clear();
-        db::Profile p;
+        db::Profile p = options;
+        p.id = 0;
+        p.type = "local";
+        p.url.clear();
         p.name = name.empty() ? source.filename().string() : name;
         try {
             p.id = coreStore().db().saveProfile(p);
@@ -109,17 +117,28 @@ public:
         return true;
     }
 
-    // 编辑订阅信息（名称 / URL）：仅落库——名称立即生效，URL 变化在下次
-    // 「更新」拉取时生效。name 为空时以 url 兜底（同 importUrl 惯例）。
-    bool updateInfo(std::int64_t id, const std::string& name, const std::string& url) {
+    // 保存订阅信息与选项（订阅弹窗唯一保存入口）：fields 携带 name/url 与
+    // type/描述/超时/间隔/自动更新/代理/证书开关；行身份字段（file/selected/
+    // updatedAt/error）保留库中现值。仅落库——URL 等在下次「更新」拉取时生效。
+    bool updateProfile(std::int64_t id, const db::Profile& fields) {
         lastError_.clear();
         auto p = findById(id);
         if (!p) {
             lastError_ = "订阅不存在";
             return false;
         }
-        p->name = name.empty() ? (url.empty() ? p->name : url) : name;
-        p->url = url;
+        p->name = fields.name.empty()
+                      ? (fields.url.empty() ? p->name : fields.url)
+                      : fields.name;
+        p->url = fields.url;
+        p->type = fields.type.empty() ? p->type : fields.type;
+        p->description = fields.description;
+        p->timeoutSecs = fields.timeoutSecs;
+        p->intervalMins = fields.intervalMins;
+        p->autoUpdate = fields.autoUpdate;
+        p->useSystemProxy = fields.useSystemProxy;
+        p->useCoreProxy = fields.useCoreProxy;
+        p->allowInvalidCert = fields.allowInvalidCert;
         try {
             coreStore().db().saveProfile(*p);
         } catch (const std::exception& e) {
@@ -127,6 +146,26 @@ public:
             return false;
         }
         return true;
+    }
+
+    // 自动更新：把「允许自动更新 + 间隔已到」的 remote 订阅逐个拉新。
+    // 全程阻塞（网络），由壳层泵经 RunOnTaskThread 周期调用。返回刷新条数。
+    int refreshDue() {
+        const std::int64_t now = nowUnix();
+        int updated = 0;
+        for (const auto& p : list()) {
+            if (!p.autoUpdate || p.intervalMins <= 0) continue;
+            if (p.url.empty()) continue;  // local 类型无 URL
+            if (now - p.updatedAt < static_cast<std::int64_t>(p.intervalMins) * 60)
+                continue;
+            // 内核代理通道要求内核在跑；不在跑跳过本轮（下一轮再试）。
+            if (p.useCoreProxy &&
+                coreStore().snapshot().state != core::CoreState::Running) {
+                continue;
+            }
+            if (refresh(p.id)) ++updated;
+        }
+        return updated;
     }
 
     // 读取指定订阅的 YAML 原文（不存在 / 读失败 = 空串）。
@@ -227,10 +266,20 @@ private:
     }
 
     // 下载 p.url 到 profiles/<id>.yaml 并更新行（updated_at/error）。
+    // 代理三态按订阅选项组装：内核代理 > 系统环境代理 > 强制直连。
     bool download(db::Profile& p) {
         p.file = std::format("{}.yaml", p.id);
+        api::ClashApi::DownloadOptions opts;
+        opts.timeoutSecs = p.timeoutSecs > 0 ? p.timeoutSecs : 60;
+        opts.allowInvalidCert = p.allowInvalidCert;
+        if (p.useCoreProxy) {
+            opts.proxyUrl =
+                std::format("http://127.0.0.1:{}", coreStore().snapshot().mixedPort);
+        } else {
+            opts.allowProxyEnv = p.useSystemProxy;
+        }
         const auto r = coreStore().api().downloadToFile(
-            p.url, cfg::profilesDir() / p.file, 60);
+            p.url, cfg::profilesDir() / p.file, opts);
         if (!r.ok) {
             p.error = r.error;
             try { coreStore().db().saveProfile(p); } catch (...) {}

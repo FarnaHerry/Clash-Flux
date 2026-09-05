@@ -298,6 +298,23 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
         },
         0);
 
+    // 订阅自动更新泵：每 30s 在任务线程扫描一次「允许自动更新 + 间隔已到」
+    // 的订阅并逐个拉新（store::refreshDue 全程阻塞）。错误落在订阅行的
+    // error 字段，由订阅卡展示，这里不弹提示。
+    huxerui::Lifecycle(
+        [tasks] {
+            tasks.Launch([]() -> huxerui::Task<void> {
+                for (;;) {
+                    co_await huxerui::Delay(std::chrono::duration<double>{30.0});
+                    co_await RunOnTaskThread([] {
+                        store::profilesStore().refreshDue();
+                    });
+                }
+            });
+            return [] {};
+        },
+        0);
+
     // 托盘：图标 + 菜单；点击托盘图标激活主窗口。仅在可用时注册。
     if (trayAvailable) {
         tray.OnActivate([window] { window.Activate(); });

@@ -179,7 +179,7 @@ ApiResult ClashApi::healthcheckProvider(const std::string& name) {
 
 ApiResult ClashApi::downloadToFile(const std::string& url,
                                    const std::filesystem::path& dest,
-                                   long timeoutSec) {
+                                   const DownloadOptions& options) {
     ApiResult result;
     std::ofstream out(dest, std::ios::binary | std::ios::trunc);
     if (!out) {
@@ -197,10 +197,22 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &onFileWrite);
     curl_easy_setopt(easy, CURLOPT_WRITEDATA, &out);
-    curl_easy_setopt(easy, CURLOPT_TIMEOUT, timeoutSec);
+    curl_easy_setopt(easy, CURLOPT_TIMEOUT,
+                     options.timeoutSecs > 0 ? options.timeoutSecs : 60L);
     curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(easy, CURLOPT_USERAGENT, "clash-flux/0.1");
+    if (options.allowInvalidCert) {
+        // 「允许无效证书（危险）」：跳过对端校验（自签/过期订阅源兜底）。
+        curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 0L);
+    }
+    // 代理三态：指定代理 > 环境变量代理 > 强制直连（清空代理，防 env 干扰）。
+    if (!options.proxyUrl.empty()) {
+        curl_easy_setopt(easy, CURLOPT_PROXY, options.proxyUrl.c_str());
+    } else if (!options.allowProxyEnv) {
+        curl_easy_setopt(easy, CURLOPT_PROXY, "");
+    }
     // 订阅服务器 UA 嗅探常见：clash-meta 的 UA 通过率更高。
     const CURLcode code = curl_easy_perform(easy);
     out.flush();
