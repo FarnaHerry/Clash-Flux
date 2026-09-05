@@ -67,10 +67,25 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 | `clashflux.core` | `src/core.cppm/.cpp` | mihomo 子进程生命周期（posix_spawn + 监视线程；SIGTERM→2s→SIGKILL）+ generateConfig（订阅 YAML 剔除托管顶层键 + 注入块合成 runtime config） |
 | `clashflux.stream` | `src/stream.cppm/.cpp` | /logs /traffic /connections 三条 WS 流（IX 自管线程，事件入槽，UI PollWhile 泵取） |
 | `clashflux.sysproxy` | `src/sysproxy.cppm` | Linux 系统代理写入：KDE kioslaverc（kwriteconfig6/5 + dbus 通知 KIO）/ GNOME gsettings；阻塞 shell 调用，UI 必须 RunOnTaskThread |
-| `clashflux.store.core` | `src/store/core_store.cppm` | 编排单例 `coreStore()`：持有 Db/ClashApi/CoreProcess/CoreStreams；startCore/stopCore/applyMode/refreshRuntime/checkAlive；settings KV |
+| `clashflux.service` | `src/service.cppm` | 服务模式：root systemd 单元 `clash-flux.service` + unix socket `/run/clash-flux/service.sock` 行协议（START/STOP/STATUS/VERSION）；只 spawn 安装目录固定 mihomo；install/uninstall 需 root（GUI 经 pkexec 重入本二进制 `service install`） |
+| `clashflux.cli` | `src/cli.cppm` | 完整 CLI：`cli::run(args)`，子命令 version/service/core/mode/tun/proxy/profile/help；platform/*/main.cpp 无参 → GUI、有参 → CLI |
+| `clashflux.store.core` | `src/store/core_store.cppm` | 编排单例 `coreStore()`：持有 Db/ClashApi/CoreProcess/CoreStreams；startCore/stopCore/applyMode/refreshRuntime/checkAlive；settings KV；内核三形态托管：**服务托管 → 接管外部实例（/version 探测 + mihomo.pid pidfile）→ 直接 spawn** |
 | `clashflux.store.profiles` | `src/store/profiles.cppm` | 订阅单例 `profilesStore()`：importUrl/importFile/refresh/activate/remove（activate/remove 触发内核重启） |
 | `clashflux.ui.*`（普通 C++） | `src/ui/*.cpp` | app（壳：标题栏+图标侧栏+IndexedPages+托盘，岛屿风）/ common（岛屿原语 IslandSurface/DialogCard/页面骨架/卡片/状态胶囊）/ home/profiles/proxies/rules/connections/logs/settings 七页 / task_bridge.h（协程桥） |
-| `src/app.cpp` | 普通 TU | `Application{AppRoot, AppOptions}`（Custom chrome，标题栏 28pt） |
+| `src/app.cpp` | 普通 TU | `Application{AppRoot, AppOptions}`（Custom chrome，标题栏 24pt） |
+| 平台入口 | `platform/{linux,macos,windows}/main.cpp` | 无参 → `huxerui::RunApplication()`；有参 → `cli::run`（同一二进制即 CLI） |
+
+## 多平台 / CI
+
+- 平台细节由 `.github/workflows/build.yml` 承担：Linux（ubuntu:26.04 容器 +
+  clang-21/libc++-21 + pip cmake 4.4.2）正式；Windows（MSVC + choco OpenSSL）/
+  macOS（brew LLVM + 内联 P0960 补丁）/ Android（HuxerUI CLI 打 APK，仅 GUI 壳）
+  实验性 continue-on-error。桌面 job 走 HuxerUI 源码通道（钉 commit clone 到
+  `third_party/huxerui/`）。
+- `src/core.cpp` 按 `_WIN32` 分流：POSIX posix_spawn / Windows CreateProcess
+  后端，同一 `core::CoreProcess` 接口。
+- 服务模式仅 Linux；其他平台 `service::available()` 恒 false，自动回落直接
+  spawn。
 
 ## 关键约定（改代码前必读）
 
@@ -121,5 +136,8 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 - ✅ M1：脚手架 + 内核生命周期 + REST/WS + 六页骨架（订阅 CRUD/代理组切换测速/
   规则列表/连接快照/日志流/设置）。
 - ✅ 系统代理（KDE kioslaverc / GNOME gsettings）+ TUN 开关（设置页「系统」卡）。
+- ✅ 服务模式（root systemd 服务托管内核，socket 行协议，pkexec 安装）+
+  完整 CLI（同一二进制子命令）+ 多平台 CI（Linux 正式，Win/macOS/Android 实验）。
 - ⬜ 待做：流量图表增强、订阅合并策略增强（规则覆写）、deep link
-  （clash://install-config）、单实例、开机自启、规则 provider 管理、连接详情。
+  （clash://install-config）、单实例、开机自启、规则 provider 管理、连接详情、
+  Android 内核接入（mihomo 无官方 Android 资产）。

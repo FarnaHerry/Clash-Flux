@@ -23,6 +23,7 @@ import clashflux.api;
 import clashflux.core;
 import clashflux.stream;
 import clashflux.sysproxy;
+import clashflux.service;
 
 namespace store {
 
@@ -172,14 +173,16 @@ public:
     // ---- 内核控制（阻塞：UI 必须 RunOnTaskThread）----
 
     // 启动内核；profileYaml 为启用订阅的原文（无订阅传空）。
-    void startCore(const std::string& profileYaml) {
+    // detached=true（CLI core start）：直连 spawn 走 setsid 脱离会话驻留，
+    // 本进程退出不带走内核。
+    void startCore(const std::string& profileYaml, bool detached = false) {
         ensureOpen();
         {
             std::lock_guard lock(mutex_);
             binaryPath_ = cfg::mihomoBinary().string();
-            if (binaryPath_.empty()) {
+            if (binaryPath_.empty() && !service::available()) {
                 snap_.state = core::CoreState::Failed;
-                snap_.lastError = "未找到 mihomo 内核（engines/ 或 PATH）";
+                snap_.lastError = "未找到 mihomo 内核（engines/ 或 PATH），也未安装服务";
                 return;
             }
             snap_.state = core::CoreState::Starting;
@@ -199,7 +202,30 @@ public:
                                         logLevel(), tunEnabled());
         }
 
-        if (!process_.start(binaryPath_, workDir, configFile)) {
+        // 三种拉起方式（按优先级）：
+        //   1. root 服务托管（装了服务模式 → TUN 等特权操作开箱可用）
+        //   2. 接管已在跑的内核（CLI detached spawn / 上次 GUI 残留）：避免
+        //      重复 spawn 撞 9097 与混合端口
+        //   3. 直接 spawn（默认）
+        if (service::available()) {
+            std::string err;
+            if (!service::startCore(configFile, err)) {
+                fail("服务托管启动失败：" + err);
+                return;
+            }
+            managedByService_ = true;
+        } else if (api_->version().ok) {
+            adopted_ = true;
+        } else if (detached) {
+            // CLI 驻留形态：setsid 脱离会话 + 日志重定向 + pidfile，CLI 退出
+            // 内核仍在。本进程不持句柄，按接管形态管理（活判/停止走 pidfile）。
+            std::string err;
+            if (!core::spawnDetached(binaryPath_, workDir, configFile, err)) {
+                fail(err);
+                return;
+            }
+            adopted_ = true;
+        } else if (!process_.start(binaryPath_, workDir, configFile)) {
             fail(process_.lastError());
             return;
         }
@@ -210,8 +236,11 @@ public:
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
         bool ready = false;
         while (std::chrono::steady_clock::now() < deadline) {
-            if (!process_.running()) {
-                fail(std::format("内核启动后立即退出（exit {}）", process_.exitCode()));
+            if (!coreAlive()) {
+                fail(std::format("内核启动后立即退出（exit {}）",
+                                 managedByService_ || adopted_
+                                     ? -1
+                                     : process_.exitCode()));
                 return;
             }
             if (const auto r = api_->version(); r.ok) {
@@ -224,7 +253,13 @@ public:
             std::this_thread::sleep_for(std::chrono::milliseconds(120));
         }
         if (!ready) {
-            process_.stop();
+            if (managedByService_) {
+                std::string err;
+                service::stopCore(err);
+                managedByService_ = false;
+            } else {
+                process_.stop();
+            }
             fail("external-controller 30s 内未就绪");
             return;
         }
@@ -253,12 +288,25 @@ public:
             sysproxy::disable(err);
         }
         streams_.stop();
-        process_.stop();
+        if (managedByService_) {
+            std::string err;
+            service::stopCore(err);
+            managedByService_ = false;
+        } else if (process_.running()) {
+            process_.stop();
+        } else {
+            // 接管/外部实例（本进程 detached spawn，或另一进程——CLI、上次
+            // GUI 残留——拉起的内核）：本进程没有句柄，经 pidfile 终止。
+            adopted_ = false;
+            if (const long pid = readPidFile(); pid > 0) core::killPid(pid);
+        }
         // 等监视线程收尾（最多 ~2s 宽限 + waitpid）。
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
         while (process_.running() && std::chrono::steady_clock::now() < deadline) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
+        std::error_code ec;
+        std::filesystem::remove(cfg::coreWorkDir() / "mihomo.pid", ec);
         std::lock_guard lock(mutex_);
         snap_.state = core::CoreState::Stopped;
         snap_.version.clear();
@@ -293,16 +341,40 @@ public:
         return true;
     }
 
-    // 崩溃检测：UI 泵每拍调用；Running 但进程已退出 → Failed。
+    // 崩溃检测：UI 泵每拍调用；Running 但内核已不在 → Failed。
     void checkAlive() {
         std::lock_guard lock(mutex_);
-        if (snap_.state == core::CoreState::Running && !process_.running()) {
+        if (snap_.state == core::CoreState::Running && !coreAlive()) {
             snap_.state = core::CoreState::Failed;
-            snap_.lastError = std::format("内核异常退出（exit {}）", process_.exitCode());
+            snap_.lastError =
+                std::format("内核异常退出（exit {}）",
+                            managedByService_ || adopted_ ? -1
+                                                          : process_.exitCode());
         }
     }
 
 private:
+    // 三种托管形态的存活判定：服务托管问服务、接管的外部实例看 pidfile、
+    // 直接 spawn 看进程句柄。接管形态没有 pidfile（对端不是本应用拉的）
+    // 时只好信任——WS 断流会在 UI 层表现为无数据。
+    bool coreAlive() {
+        if (managedByService_) return service::coreRunning();
+        if (adopted_) {
+            const long pid = readPidFile();
+            if (pid <= 0) return true;  // 无 pidfile：信任
+            return std::filesystem::exists(
+                std::format("/proc/{}", pid));  // POSIX /proc 判定
+        }
+        return process_.running();
+    }
+
+    long readPidFile() {
+        std::ifstream in(cfg::coreWorkDir() / "mihomo.pid");
+        long pid = 0;
+        in >> pid;
+        return pid;
+    }
+
     void ensureOpen() {
         if (db_) return;
         db_ = std::make_unique<db::Db>(cfg::databaseFile());
@@ -329,6 +401,8 @@ private:
     std::mutex mutex_;
     CoreSnapshot snap_;
     std::string binaryPath_;
+    bool managedByService_ = false;  // 内核由 root 服务托管
+    bool adopted_ = false;           // 接管的外部内核实例（非本进程 spawn）
 };
 
 // 进程级单例（apitab g_requests 同款形态）。

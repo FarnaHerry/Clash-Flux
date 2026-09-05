@@ -62,6 +62,10 @@ export std::filesystem::path dataDir() {
     if (const char* a = std::getenv("APPDATA"); a && *a) {
         return std::filesystem::path(a) / "clash-flux";
     }
+    // APPDATA 缺失（服务/受限会话）：回落 exe 旁，保证打包形态仍可写。
+    if (const std::filesystem::path dir = executableDir(); !dir.empty()) {
+        return dir;
+    }
 #elif defined(__APPLE__)
     if (const char* h = std::getenv("HOME"); h && *h) {
         return std::filesystem::path(h) / "Library" / "Application Support" / "clash-flux";

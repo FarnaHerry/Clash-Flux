@@ -6,6 +6,8 @@
 #include <huxerui/huxerui.h>
 
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -13,6 +15,7 @@
 #include "task_bridge.h"
 
 import clashflux.core;
+import clashflux.service;
 import clashflux.store.core;
 import clashflux.store.profiles;
 import clashflux.utils;
@@ -68,13 +71,15 @@ const std::string kAboutText =
     auto snap = huxerui::UseState<store::CoreSnapshot>({});
     auto portValue = huxerui::UseState(huxerui::TextEditingValue{""});
     auto busy = huxerui::UseState(false);
+    auto serviceInstalled = huxerui::UseState(service::installed());
 
     huxerui::Lifecycle(
-        [tasks, snap, portValue] {
+        [tasks, snap, portValue, serviceInstalled] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{1.0}, [=] {
                     const auto s = store::coreStore().snapshot();
                     snap = s;
+                    serviceInstalled = service::installed();
                     // 端口输入框未编辑过就用当前值初始化。
                     if (portValue.Get().text.empty() && s.mixedPort > 0) {
                         portValue = huxerui::TextEditingValue{
@@ -263,6 +268,40 @@ const std::string kAboutText =
 
                 Card(huxerui::Column {
                     SectionTitle("系统"),
+                    SettingRow(
+                        "内核服务",
+                        serviceInstalled.Get()
+                            ? "已安装（内核由 root 服务托管，TUN 开箱可用）"
+                            : "安装 root 服务后，TUN 无需每次授权（经 pkexec "
+                              "一次性提权）",
+                        huxerui::Button(serviceInstalled.Get() ? "卸载服务"
+                                                               : "安装服务")
+                            .OnClick([coreAction,
+                                      installed = serviceInstalled.Get()] {
+                                coreAction(
+                                    [installed] {
+                                        // pkexec 弹系统授权框，以 root 重入
+                                        // 本二进制的 service install/uninstall。
+                                        const std::string exe =
+                                            std::filesystem::read_symlink(
+                                                "/proc/self/exe")
+                                                .string();
+                                        const int rc = std::system(
+                                            std::format("pkexec \"{}\" service {}",
+                                                        exe,
+                                                        installed ? "uninstall"
+                                                                  : "install")
+                                                .c_str());
+                                        if (rc != 0) {
+                                            throw std::runtime_error(
+                                                installed
+                                                    ? "卸载被取消或失败"
+                                                    : "安装被取消或失败（需要"
+                                                      "授权）");
+                                        }
+                                    },
+                                    installed ? "服务已卸载" : "服务已安装");
+                            })),
                     SettingRow(
                         "系统代理",
                         store::coreStore().systemProxySupported()

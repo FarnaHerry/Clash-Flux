@@ -6,11 +6,18 @@ REST API 与 WebSocket 推送流交互，UI 与内核接入层全部由 C++ 实�
 
 ## 功能
 
-- 订阅管理：URL 导入 / 更新 / 启用 / 删除，本地落盘
+- 订阅管理：卡片式布局（右键菜单 / 双击切换 / 卡片内刷新）、URL 导入 / 更新 /
+  启用 / 删除 / 规则编辑，本地落盘
 - 代理页：策略组卡片、节点切换、整组测速（延迟着色）
 - 规则 / 连接 / 日志：规则列表、连接快照（可逐条/全部关闭）、实时日志流
 - 内核控制：自动启停、出站模式（规则/全局/直连）、混合端口、局域网连接、日志级别
-- 浅色/深色主题（跟随系统）、自定义窗口标题栏、系统托盘
+- 系统代理（KDE / GNOME）与 TUN 模式开关
+- 服务模式（可选）：root systemd 服务托管内核，TUN 等特权操作无需每次授权；
+  未安装时回落「接管外部实例 → 直接 spawn」
+- 完整 CLI：同一二进制带子命令（core / mode / tun / proxy / profile / service），
+  无参数启动进入 GUI
+- 浅色/深色主题（跟随系统）、岛屿风界面、自定义窗口标题栏、系统托盘、
+  窄窗口响应式布局
 
 项目仍在开发中，界面和数据结构可能继续调整。
 
@@ -44,3 +51,28 @@ cmake --build build -j
 huxerui build linux
 huxerui run linux
 ```
+
+## CLI
+
+同一二进制带完整子命令；无参数启动进入 GUI，有参数走 CLI：
+
+```bash
+clash-flux version                    # 版本
+clash-flux core start|stop|restart|status
+clash-flux mode [rule|global|direct]  # 查看/切换出站模式
+clash-flux tun on|off                 # TUN（需服务模式或 root）
+clash-flux proxy on|off|status        # 系统代理
+clash-flux profile list|import <url> [name]|use <id>|update <id>|remove <id>
+clash-flux service install|uninstall|status|run
+```
+
+`service install` 需 root（GUI 设置页经 pkexec 提权调用）：安装 systemd 单元
+`clash-flux.service`，此后内核由 root 服务托管（unix socket
+`/run/clash-flux/service.sock`），TUN 开箱可用。
+
+## 多平台 CI
+
+`.github/workflows/build.yml`：Linux（ubuntu 容器 + clang-21/libc++）为正式 job；
+Windows（MSVC）/ macOS（brew LLVM）/ Android（HuxerUI CLI 打 APK，仅 GUI 壳、
+不含 mihomo 内核）为实验性 continue-on-error。桌面 job 统一走 HuxerUI 源码
+通道（钉 commit clone 上游），mihomo 在 configure 期自动下载。

@@ -1,5 +1,5 @@
-// platform/linux/main.cpp — Linux 平台入口。
-// 无参数 → HuxerUI GUI；有参数 → CLI 子命令（clashflux.cli，见 src/cli.cppm）。
+// platform/macos/main.cpp — macOS 平台入口（HuxerUI CLI 生成格式）。
+// 无参数 → GUI；有参数 → CLI 子命令（clashflux.cli，见 src/cli.cppm）。
 #include <huxerui/app.h>
 
 #include <string>

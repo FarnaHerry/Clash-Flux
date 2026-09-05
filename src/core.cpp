@@ -1,7 +1,9 @@
 // core.cpp — clashflux.core 实现单元。
 //
-// POSIX 走 posix_spawn + poll 读管道；Windows 走 CreateProcess（里程碑 1 先实现
-// POSIX，Windows 分支留 TerminateProcess 骨架）。
+// 进程后端按编译期分流：POSIX（Linux + macOS）走 posix_spawn + poll 读管道 +
+// SIGTERM/SIGKILL；Windows 走 CreateProcessW + CreatePipe 重定向 + 监视线程读管
+// 拆行 + TerminateProcess。两条路径共用输出队列与拆行逻辑，差异集中在
+// spawn/monitorLoop/stop/running 四个点。
 module;
 
 #ifdef _WIN32
@@ -15,9 +17,11 @@ module;
 #else
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <signal.h>
 #include <spawn.h>
 #include <poll.h>
+#include <fcntl.h>   // open, O_APPEND
 #include <cerrno>   // errno, EINTR
 #include <unistd.h>
 extern char** environ;
@@ -126,6 +130,115 @@ std::string generateConfig(const std::string& profileYaml,
     return out;
 }
 
+// ---- detached spawn / killPid（接管与 CLI 驻留形态）----
+namespace {
+
+// 写 <workDir>/mihomo.pid（CoreProcess::start 与 spawnDetached 共用）。
+void writePidFile(const std::filesystem::path& workDir, long pid) {
+    std::ofstream out(workDir / "mihomo.pid", std::ios::trunc);
+    out << pid << '\n';
+}
+
+} // namespace
+
+void killPid(long pid) {
+#ifdef _WIN32
+    if (pid <= 0) return;
+    if (HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE,
+                               static_cast<DWORD>(pid))) {
+        TerminateProcess(h, 1);
+        CloseHandle(h);
+    }
+#else
+    if (pid > 0) ::kill(static_cast<pid_t>(pid), SIGTERM);
+#endif
+}
+
+bool spawnDetached(const std::filesystem::path& binary,
+                   const std::filesystem::path& workDir,
+                   const std::filesystem::path& configFile,
+                   std::string& error) {
+    if (binary.empty() || !std::filesystem::exists(binary)) {
+        error = "未找到 mihomo 内核（engines/ 或 PATH）";
+        return false;
+    }
+    const std::filesystem::path logPath = workDir / "mihomo.log";
+#ifdef _WIN32
+    // 日志重定向到文件，句柄可继承；DETACHED_PROCESS 不挂控制台。
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE logHandle = CreateFileW(logPath.wstring().c_str(), FILE_APPEND_DATA,
+                                   FILE_SHARE_READ, &sa, OPEN_ALWAYS,
+                                   FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (logHandle == INVALID_HANDLE_VALUE) {
+        error = "无法打开内核日志文件";
+        return false;
+    }
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = logHandle;
+    si.hStdError = logHandle;
+    si.hStdInput = nullptr;
+    const std::wstring cmd = std::format(L"\"{}\" -d \"{}\" -f \"{}\"",
+                                         binary.wstring(), workDir.wstring(),
+                                         configFile.wstring());
+    std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
+    cmdBuf.push_back(L'\0');
+    const std::wstring workDirW = workDir.wstring();
+    PROCESS_INFORMATION pi{};
+    const BOOL ok = CreateProcessW(nullptr, cmdBuf.data(), nullptr, nullptr, TRUE,
+                                   DETACHED_PROCESS | CREATE_NO_WINDOW, nullptr,
+                                   workDirW.c_str(), &si, &pi);
+    CloseHandle(logHandle);
+    if (!ok) {
+        error = "mihomo 进程启动失败";
+        return false;
+    }
+    writePidFile(workDir, static_cast<long>(pi.dwProcessId));
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return true;
+#else
+    // setsid 脱离会话：CLI 退出后内核驻留；stdout/stderr 追加进日志文件
+    // （若仍接管道，CLI 退出后内核写日志会吃 SIGPIPE 被杀）。
+    const int logFd = ::open(logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (logFd < 0) {
+        error = "无法打开内核日志文件";
+        return false;
+    }
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, logFd, STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(&actions, logFd, STDERR_FILENO);
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
+
+    std::string bin = binary.string();
+    std::string dir = workDir.string();
+    std::string cfg = configFile.string();
+    std::vector<std::string> argsStorage{bin, "-d", dir, "-f", cfg};
+    std::vector<char*> argv;
+    for (auto& a : argsStorage) argv.push_back(a.data());
+    argv.push_back(nullptr);
+
+    pid_t pid = -1;
+    const int rc = posix_spawnp(&pid, bin.c_str(), &actions, &attr, argv.data(),
+                                environ);
+    posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attr);
+    ::close(logFd);
+    if (rc != 0) {
+        error = "mihomo 进程启动失败";
+        return false;
+    }
+    writePidFile(workDir, static_cast<long>(pid));
+    return true;
+#endif
+}
+
 // ---- CoreProcess ----
 namespace {
 
@@ -158,6 +271,10 @@ struct CoreProcessImpl {
         if (!running.load()) return;
         stopRequested.store(true);
 #ifdef _WIN32
+        // Windows 没有 SIGTERM 语义（控制台进程只能靠 GenerateConsoleCtrlEvent
+        // 且要求同控制台组，对 CREATE_NO_WINDOW 子进程不适用）：不给宽限，
+        // 直接 TerminateProcess。POSIX 分支的 2s 宽限是等内核优雅退出，
+        // Windows 上这一步不存在，差异仅此而已。
         if (childProcess) TerminateProcess(childProcess, 1);
 #else
         if (childPid > 0) ::kill(childPid, SIGTERM);
@@ -187,9 +304,13 @@ struct CoreProcessImpl {
                                              configFile.wstring());
         std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
         cmdBuf.push_back(L'\0');
+        // 工作目录设为 mihomo 的 -d 目录：内核若解析相对路径（ui/、mmdb 在线
+        // 下载回落等）与命令行参数行为一致。
+        const std::wstring workDirW = workDir.wstring();
         PROCESS_INFORMATION pi{};
         const BOOL ok = CreateProcessW(nullptr, cmdBuf.data(), nullptr, nullptr, TRUE,
-                                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+                                       CREATE_NO_WINDOW, nullptr,
+                                       workDirW.c_str(), &si, &pi);
         CloseHandle(writePipe);
         if (!ok) {
             CloseHandle(readPipe);
@@ -359,13 +480,33 @@ bool CoreProcess::start(const std::filesystem::path& binary,
         impl_->lastError = "mihomo 进程启动失败";
         return false;
     }
+    // pidfile：GUI 附着 spawn 的内核也能被 CLI（另一进程）经 pidfile 接管/停止。
+#ifdef _WIN32
+    writePidFile(workDir, static_cast<long>(GetProcessId(impl_->childProcess)));
+#else
+    writePidFile(workDir, static_cast<long>(impl_->childPid));
+#endif
     impl_->running.store(true);
     impl_->monitor = std::thread([this] { impl_->monitorLoop(); });
     return true;
 }
 
 void CoreProcess::stop() { impl_->stop(); }
-bool CoreProcess::running() const { return impl_->running.load(); }
+
+bool CoreProcess::running() const {
+#ifdef _WIN32
+    // 以进程句柄为权威：WaitForSingleObject 超时 0 探测子进程是否还活着
+    // （WAIT_TIMEOUT = 仍运行）。running 原子量只作快速短路——句柄只在
+    // 监视线程收尾时关闭，此后原子量也已翻 false。
+    if (!impl_->running.load()) return false;
+    if (impl_->childProcess) {
+        return WaitForSingleObject(impl_->childProcess, 0) == WAIT_TIMEOUT;
+    }
+    return true;
+#else
+    return impl_->running.load();
+#endif
+}
 int CoreProcess::exitCode() const { return impl_->exitCode.load(); }
 std::string CoreProcess::lastError() const { return impl_->lastError; }
 
