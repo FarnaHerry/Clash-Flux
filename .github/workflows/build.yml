@@ -1,0 +1,402 @@
+# build.yml — Clash-Flux 多平台 CI 矩阵（Linux / Windows / macOS / 实验性 Android）。
+#
+# 形态蓝本：姊妹项目 apitab 的 .github/workflows/build.yml（已跑通的 HuxerUI +
+# C++23 modules + import std 解法），按本仓库适配（无 sweetedit、目标名
+# clash-flux、configure 期自动下载 mihomo 内核）。
+#
+# HuxerUI SDK 来源假设（关键）：
+#   * 上游 https://github.com/HuxerUI/HuxerUI.git 公开可匿名 clone —— 三个桌面
+#     job 全部走「源码通道」：把上游钉在 env.HUXERUI_COMMIT clone 到
+#     third_party/huxerui/（该路径已 gitignore，不入库），由顶层 CMakeLists 的
+#     优先级 2 add_subdirectory 编译，与本机开发形态一致。
+#   * 宿主工具 hcg/hrc 用上游源码内预置（tools/prebuilt/linux/x86_64）：
+#     钉住的 commit c00e72a 正是 "refresh prebuilt host tools"，预置与源码同步；
+#     若未来升级 commit 后出现 hrc 报 "unknown path operation"，即预置落后，
+#     需按 apitab CI 的方式在 job 内从 tools/codegen + tools/resource_compiler
+#     重编宿主工具（参考 apitab build.yml 的 "Build HuxerUI host tools" 步骤）。
+#   * 仓库自带离线 tarball（third_party/tarballs/huxerui-sdk-0.2.0-linux-x86_64）
+#     只在源码缺失时兜底，CI 不走它（Linux 桌面 job 装了 gtk4/epoxy/libsoup 开发包，
+#     不会触发回落）；但 android job 复用 tarball 里的 huxerui CLI 与 per-ABI AAR。
+#
+# 实验性 job（continue-on-error: true）及原因：
+#   * build-windows / build-macos：本仓库目前只有 platform/linux/main.cpp 平台
+#     入口；CMakeLists 在 WIN32/APPLE 下引用 platform/windows|macos/main.cpp，
+#     文件未落地前 configure 必然报 "Cannot find source file"。工具链解法本身
+#     沿用 apitab 实证配方（Windows=MSVC+choco OpenSSL，macOS=brew llvm/libc++
+#     + 手写 libc++.modules.json + 内联 P0960 补丁），入口文件补齐后把
+#     continue-on-error 摘掉即可。
+#   * build-android：只验证 GUI 壳能否编出 APK/AAB。mihomo 官方没有 Android
+#     资产，安卓内核接入是后续里程碑——产出的包不含内核、不可实际代理。
+#
+# 已知风险：
+#   * ubuntu:26.04 是滚动预发布容器，clang-21/libc++-21 包名若随发布调整需同步改。
+#   * `import std` 依赖 pip 固定的 cmake==4.4.2（CxxImportStdGate.cmake 的 UUID
+#     表覆盖 3.30–4.4）；升级 CMake 时先查 gate 文件是否已支持新版本。
+#   * configure 期从 GitHub releases 下载 mihomo（SHA256 钉死），GitHub 资产
+#     不可用会让 Linux job 在 configure 阶段失败。
+
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HUXERUI_REPO: 'https://github.com/HuxerUI/HuxerUI.git'
+  # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
+  # CI 必须自行 clone 并钉 commit，保证可复现）。
+  HUXERUI_COMMIT: 'c00e72a76b5d44fc745a6734bfc9d8e255d9eb26'
+
+jobs:
+  # ------------------------------------------------------------------ Linux
+  # 工具链照搬 apitab 实证配方：ubuntu:26.04 容器 + clang-21/libc++-21。
+  # 为什么不是 GCC：CMake 的 GNU import-std 发现要 4.0+ 且依赖 GCC ≥15 的
+  # libstdc++.modules.json；apitab 实测 GCC 15 对 vendored 模块包装器报
+  # "exposes TU-local entity"（GCC 16 才放宽，而 26.04 的 g++-16 快照会 ICE），
+  # clang+libc++ 全链最稳。26.04 的 libc++-21-dev 自带 std 模块与
+  # modules.json，但 Debian 打包的相对路径是坏的，下面按 llvm-21 前缀改写。
+  build-linux:
+    name: build-linux-x86_64
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:26.04
+    steps:
+      - name: Install container baseline
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates
+
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Fetch HuxerUI source (pinned)
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
+          git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
+
+      - name: Install dependencies
+        run: |
+          apt-get install -y --no-install-recommends \
+            clang-21 libc++-21-dev g++ ninja-build pkg-config file gzip \
+            python3 python3-pip libssl-dev patchelf \
+            libgtk-4-dev libepoxy-dev libsoup-3.0-dev
+          # 26.04 的 apt cmake 是 3.31（GNU import-std 发现不行），固定 pip 4.4.2
+          python3 -m pip install --break-system-packages -q cmake==4.4.2
+          cmake --version | head -1
+          # Debian 打包的 libc++.modules.json 相对路径坏指 /lib/share/...，
+          # 按 /usr/lib/llvm-21 的真实布局改写为绝对路径
+          python3 -c "
+          import json
+          p = '/usr/lib/x86_64-linux-gnu/libc++.modules.json'
+          d = json.load(open(p))
+          for m in d['modules']:
+              m['source-path'] = '/usr/lib/llvm-21/share/libc++/v1/' + m['source-path'].split('/')[-1]
+              m['local-arguments']['system-include-directories'] = ['/usr/lib/llvm-21/share/libc++/v1']
+          json.dump(d, open(p, 'w'), indent=1)"
+
+      - name: Configure
+        run: |
+          # 源码通道：third_party/huxerui 存在且 gtk4/epoxy/libsoup 已装 →
+          # 顶层 CMakeLists 优先级 2 自动 add_subdirectory 编译 HuxerUI。
+          # configure 期同时下载 mihomo（linux x86_64，CLASHFLUX_BUNDLE_MIHOMO=ON）。
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
+            -DCMAKE_CXX_FLAGS='-stdlib=libc++' \
+            -DCMAKE_EXE_LINKER_FLAGS='-stdlib=libc++' \
+            -DCMAKE_SHARED_LINKER_FLAGS='-stdlib=libc++'
+
+      - name: Build release
+        run: cmake --build build --config Release --parallel
+
+      - name: Smoke test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Stage runtime bundle
+        run: |
+          set -euo pipefail
+          mkdir -p dist-src/lib
+          cp build/clash-flux dist-src/clash-flux
+          chmod +x dist-src/clash-flux
+          # HuxerUI 资源包（resources.bin 索引 + 同目录 .huxv/.png payload），
+          # POST_BUILD 已拷到 exe 旁边。
+          cp -a build/clash-flux.resources dist-src/
+          # mihomo 内核（configure 期下载、POST_BUILD 拷到 <exe>/engines/）
+          cp -a build/engines dist-src/
+          test -x dist-src/engines/mihomo
+          # 源码通道的 libhuxerui.so 在构建树里，随包带出
+          huxerui_so="$(find build/huxerui-sdk -name 'libhuxerui.so*' -print -quit)"
+          test -n "$huxerui_so"
+          cp -L "$huxerui_so" dist-src/lib/libhuxerui.so
+          # clang+libc++ 工具链：libc++/libc++abi/libunwind 多数发行版不预装，随包带出
+          for lib in libc++.so.1 libc++abi.so.1 libunwind.so.1; do
+            p="$(find /usr/lib -name "$lib" -print -quit 2>/dev/null || true)"
+            if [ -n "$p" ]; then cp -L "$p" "dist-src/lib/$lib"; fi
+          done
+          patchelf --set-rpath '$ORIGIN/lib' dist-src/clash-flux
+          file dist-src/clash-flux
+          ls -la dist-src dist-src/lib dist-src/engines
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-linux-x86_64
+          path: dist-src
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------- Windows
+  # 实验性（continue-on-error）：仓库尚无 platform/windows/main.cpp（CMakeLists
+  # WIN32 分支引用它），入口落地前 configure 必败；届时摘掉 continue-on-error。
+  # 工具链沿用 apitab 实证：MSVC（VS2022，C++23 模块 + import std）+ choco
+  # OpenSSL；HuxerUI 源码通道同 Linux。
+  build-windows:
+    name: build-windows-x86_64
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Fetch HuxerUI source (pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
+          git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
+
+      - name: Ensure CMake >= 4.4 and Ninja
+        shell: pwsh
+        run: |
+          # import std 的 experimental UUID 门控要求 CMake ≥ 4.4
+          # （cmake/CxxImportStdGate.cmake）；runner 自带版本不够时 pip 补齐。
+          python -m pip install --quiet "cmake==4.4.2"
+          cmake --version | Select-Object -First 1
+          choco install ninja -y --no-progress
+
+      - name: Install OpenSSL
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install openssl -y --no-progress
+          Write-Host "OPENSSL_ROOT_DIR=C:/Program Files/OpenSSL" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            "-DOPENSSL_ROOT_DIR=$env:OPENSSL_ROOT_DIR"
+
+      - name: Build release
+        run: cmake --build build --config Release --parallel
+
+      - name: Smoke test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Stage executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = 'build/clash-flux.exe'
+          if (-not (Test-Path $exe)) { throw "$exe not found" }
+          New-Item -ItemType Directory -Force dist-src | Out-Null
+          Copy-Item $exe dist-src\clash-flux.exe
+          # 运行时 DLL（huxerui.dll / OpenSSL / MSVC CRT）由构建 POST_BUILD 拷到 exe 旁
+          foreach ($dll in @(Get-ChildItem (Split-Path -Parent (Resolve-Path $exe)) -File -Filter '*.dll')) {
+            Copy-Item $dll.FullName "dist-src\$($dll.Name)" -Force
+          }
+          $resources = 'build/clash-flux.resources'
+          if (Test-Path $resources -PathType Container) {
+            Copy-Item $resources dist-src\clash-flux.resources -Recurse -Force
+          }
+          Get-Item dist-src/*
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-windows-x86_64
+          path: dist-src
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ------------------------------------------------------------------ macOS
+  # 实验性（continue-on-error）：同 Windows，缺 platform/macos/main.cpp。
+  # 工具链沿用 apitab 实证：整链 brew LLVM clang/libc++（.mm 框架层只能 clang
+  # 编，std 类型贯穿 .mm/.cpp 接口必须单一标准库；AppleClang 不被 CMake 的
+  # C++20 模块扫描支持）。brew llvm 不带 libc++.modules.json，按上游 schema
+  # 生成。上游 window.h 的 CrossAlign(...) 函数式转型依赖 P0960（clang 的
+  # ObjC++ 模式未实现），CI 内联打补丁（仓库不持有 cmake/patches）。
+  build-macos:
+    name: build-macos-arm64
+    runs-on: macos-15
+    continue-on-error: true
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Fetch HuxerUI source (pinned) + P0960 patch
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
+          git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
+          # P0960 聚合函数式转型 → 花括号初始化（clang ObjC++ 不支持 P0960；
+          # 上游 window.h 在钉住的 commit 仍未修）。补丁内容与 apitab 的
+          # cmake/patches/huxerui-window-p0960.patch 一致，NOTE 标注同步改。
+          git -C third_party/huxerui apply <<'PATCH'
+          diff --git a/include/huxerui/window.h b/include/huxerui/window.h
+          index f172894..72c6476 100644
+          --- a/include/huxerui/window.h
+          +++ b/include/huxerui/window.h
+          @@ -249,7 +249,12 @@ class WindowTitleBar final : public Layout<WindowTitleBar> {
+           public:
+             /// Constructs a title bar from an existing child collection.
+             explicit WindowTitleBar(std::vector<View> children) : Layout(std::move(children)) {
+          -    this->ApplyModifiers(WindowDragRegion{}, CrossAlign(CrossAxisAlignment::Center));
+          +    // NOTE(clash-flux CI patch): functional-style cast to the CrossAlign
+          +    // aggregate relies on P0960, which clang does not implement in Objective-C++
+          +    // mode — every appkit *.mm TU failed to compile on macOS ("no matching
+          +    // conversion for functional-style cast"). Brace initialization works in all
+          +    // languages/compilers. Suggest upstream adopt CrossAlign{...} here.
+          +    this->ApplyModifiers(WindowDragRegion{}, CrossAlign{CrossAxisAlignment::Center});
+             }
+           
+             /// Constructs a title bar from ordinary View children.
+          PATCH
+
+      - name: Install dependencies (brew llvm + openssl)
+        run: |
+          brew list openssl@3 &>/dev/null || brew install openssl@3
+          brew install llvm
+          llvm_prefix="$(brew --prefix llvm)"
+          mod_dir="$llvm_prefix/share/libc++/v1"
+          # brew llvm 只装模块源不带 libc++.modules.json（formula 未开
+          # LIBCXX_ENABLE_STD_MODULES）——按上游 schema 生成一份，写进 brew
+          # 的 lib/ 使 -print-file-name 发现路径命中。
+          for f in std.cppm std.compat.cppm; do
+            test -f "$mod_dir/$f" || { echo "missing $mod_dir/$f (brew llvm layout changed?)" >&2; exit 1; }
+          done
+          python3 - "$mod_dir" "$llvm_prefix/lib/libc++.modules.json" <<'PY'
+          import json, sys
+          mod_dir, out = sys.argv[1], sys.argv[2]
+          mod = lambda name: {"logical-name": name, "source-path": mod_dir + "/" + name + ".cppm", "is-std-library": True, "local-arguments": {"system-include-directories": [mod_dir]}}
+          json.dump({"version": 1, "revision": 1, "modules": [mod("std"), mod("std.compat")]}, open(out, "w"), indent=1)
+          PY
+          echo "LLVM_PREFIX=$llvm_prefix" >> "$GITHUB_ENV"
+          cmake --version
+          ninja --version
+
+      - name: Configure
+        run: |
+          set -euo pipefail
+          # 要点（apitab 实证）：OBJCXX 必须显式指定 brew clang，否则 CMake
+          # 默认拿 xcrun 的 AppleClang 混回两套 libc++；链接行按 brew llvm
+          # caveats 配方（libc++/libc++abi 在 lib/c++，libunwind 在 lib/unwind，
+          # -L 指错会落到 SDK 系统 libc++ tbd 报 undefined symbol）；
+          # _LIBCPP_DISABLE_AVAILABILITY 关闭针对系统 dylib 的假可用性标注
+          # （本链链 brew 自带 dylib）；CMAKE_CXX_STDLIB_MODULES_JSON 显式注入
+          # 上一步生成的元数据。部署目标 14.0（框架已用 macOS 14 API）。
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
+            -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
+            -DCMAKE_OBJCXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
+            -DCMAKE_CXX_FLAGS='-stdlib=libc++ -D_LIBCPP_DISABLE_AVAILABILITY' \
+            -DCMAKE_OBJCXX_FLAGS='-stdlib=libc++ -D_LIBCPP_DISABLE_AVAILABILITY' \
+            -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -L$LLVM_PREFIX/lib/c++ -L$LLVM_PREFIX/lib/unwind -lc++ -lc++abi -lunwind" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-stdlib=libc++ -L$LLVM_PREFIX/lib/c++ -L$LLVM_PREFIX/lib/unwind -lc++ -lc++abi -lunwind" \
+            -DCMAKE_MODULE_LINKER_FLAGS="-stdlib=libc++ -L$LLVM_PREFIX/lib/c++ -L$LLVM_PREFIX/lib/unwind -lc++ -lc++abi -lunwind" \
+            -DCMAKE_CXX_STDLIB_MODULES_JSON="$LLVM_PREFIX/lib/libc++.modules.json" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+            -DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3
+
+      - name: Build release
+        run: cmake --build build --config Release --parallel
+
+      - name: Smoke test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Stage app bundle
+        run: |
+          set -euo pipefail
+          # huxerui_add_app 在 APPLE 上产 .app bundle
+          test -d build/clash-flux.app
+          mkdir -p dist-src
+          cp -a build/clash-flux.app dist-src/
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-macos-arm64
+          path: dist-src
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ---------------------------------------------------------------- Android
+  # 实验性（continue-on-error）：只验证 GUI 壳能否经 HuxerUI CLI 编出
+  # APK/AAB。mihomo 官方没有 Android 资产，安卓内核接入是后续里程碑——
+  # 产出的包不含内核、不可实际代理。
+  # CLI 来源：仓库自带 Linux 离线 SDK tarball（bin/huxerui +
+  # share/huxerui/platform/android/{HuxerUI.aar,arm64-v8a,x86_64}）。
+  build-android:
+    name: build-android-experimental
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Extract HuxerUI CLI from vendored tarball
+        run: |
+          set -euo pipefail
+          mkdir -p huxerui-sdk
+          tar -xzf third_party/tarballs/huxerui-sdk-0.2.0-linux-x86_64.tar.gz \
+            -C huxerui-sdk --strip-components=1
+          test -x huxerui-sdk/bin/huxerui
+          test -f huxerui-sdk/share/huxerui/platform/android/HuxerUI.aar
+          echo "HUXERUI_HOME=$PWD/huxerui-sdk" >> "$GITHUB_ENV"
+          echo "$PWD/huxerui-sdk/bin" >> "$GITHUB_PATH"
+          huxerui --version || true
+
+      - name: Build Android package (GUI shell only, no mihomo kernel)
+        run: |
+          set -euo pipefail
+          huxerui build android --profile release
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-android-experimental
+          path: |
+            .huxerui/build/android/**/*.apk
+            .huxerui/build/android/**/*.aab
+            build/**/*.apk
+            build/**/*.aab
+          if-no-files-found: warn
+          retention-days: 14

@@ -258,6 +258,9 @@ set(CLASHFLUX_MODULE_UNITS
     src/api.cppm
     src/stream.cppm
     src/sysproxy.cppm
+    # 服务模式（root 托管内核；非 Linux 平台编译为同签名 stub）+ 完整 CLI
+    src/service.cppm
+    src/cli.cppm
     # 领域 store（UI 无关）
     src/store/core_store.cppm
     src/store/profiles.cppm
@@ -289,6 +292,14 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # TU 里的 std::max/std::min（MSVC C2589）；宏不跨 TU，必须整个目标定义。
     if (WIN32)
         target_compile_definitions(clash-flux PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        # GUI 子系统入口（CLI 子命令运行时经 AttachConsole 附着父控制台，
+        # 见 cli.cppm）。
+        if (MSVC)
+            target_link_options(clash-flux PRIVATE
+                /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
+        else ()
+            target_link_options(clash-flux PRIVATE -mwindows)
+        endif ()
     endif ()
     # 源码注释含中文：MSVC 必须显式 /utf-8，否则按 codepage 误读
     if (MSVC)
@@ -315,59 +326,14 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     endif ()
 
     # ---- 自带 mihomo 内核 ---------------------------------------------------
-    # 项目附带引擎：configure 期下载官方 release（版本与 SHA256 钉死），
-    # POST_BUILD 拷到 <exe>/engines/mihomo（cfg::mihomoBinary() 第一优先级
-    # 解析位），构建产物开箱即可启动内核。-DCLASHFLUX_BUNDLE_MIHOMO=OFF 关闭
-    # （回落 <repo>/engines 与 PATH 解析）。目前只提供 linux x86_64 包。
-    if (CMAKE_SYSTEM_NAME STREQUAL "Linux"
-            AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64)")
-        option(CLASHFLUX_BUNDLE_MIHOMO
-               "Download and bundle the mihomo kernel next to the executable" ON)
-    else ()
-        option(CLASHFLUX_BUNDLE_MIHOMO
-               "Download and bundle the mihomo kernel next to the executable" OFF)
-    endif ()
-    if (CLASHFLUX_BUNDLE_MIHOMO)
-        if (NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux"
-                AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64)"))
-            message(FATAL_ERROR
-                "CLASHFLUX_BUNDLE_MIHOMO 目前只提供 linux x86_64 包；"
-                "其他平台请 -DCLASHFLUX_BUNDLE_MIHOMO=OFF 并自行放置 engines/mihomo")
-        endif ()
-        set(CLASHFLUX_MIHOMO_VERSION "v1.19.30")
-        set(CLASHFLUX_MIHOMO_DIR "${CMAKE_BINARY_DIR}/vendor/mihomo")
-        set(CLASHFLUX_MIHOMO_BIN
-            "${CLASHFLUX_MIHOMO_DIR}/mihomo-linux-amd64-${CLASHFLUX_MIHOMO_VERSION}")
-        if (NOT EXISTS "${CLASHFLUX_MIHOMO_BIN}")
-            file(MAKE_DIRECTORY "${CLASHFLUX_MIHOMO_DIR}")
-            message(STATUS "clash-flux: 下载自带内核 mihomo ${CLASHFLUX_MIHOMO_VERSION}")
-            file(DOWNLOAD
-                "https://github.com/MetaCubeX/mihomo/releases/download/${CLASHFLUX_MIHOMO_VERSION}/mihomo-linux-amd64-${CLASHFLUX_MIHOMO_VERSION}.gz"
-                "${CLASHFLUX_MIHOMO_BIN}.gz"
-                EXPECTED_HASH SHA256=cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84
-                STATUS CLASHFLUX_MIHOMO_DL_STATUS)
-            list(GET CLASHFLUX_MIHOMO_DL_STATUS 0 CLASHFLUX_MIHOMO_DL_CODE)
-            if (NOT CLASHFLUX_MIHOMO_DL_CODE EQUAL 0)
-                file(REMOVE "${CLASHFLUX_MIHOMO_BIN}.gz")
-                message(FATAL_ERROR "mihomo 下载失败：${CLASHFLUX_MIHOMO_DL_STATUS}")
-            endif ()
-            find_program(CLASHFLUX_GZIP gzip REQUIRED)
-            execute_process(COMMAND "${CLASHFLUX_GZIP}" -dkf "${CLASHFLUX_MIHOMO_BIN}.gz"
-                RESULT_VARIABLE CLASHFLUX_GZIP_RESULT)
-            if (NOT CLASHFLUX_GZIP_RESULT EQUAL 0)
-                file(REMOVE "${CLASHFLUX_MIHOMO_BIN}.gz" "${CLASHFLUX_MIHOMO_BIN}")
-                message(FATAL_ERROR "mihomo 解压失败（gzip -d 退出码 ${CLASHFLUX_GZIP_RESULT}）")
-            endif ()
-            file(CHMOD "${CLASHFLUX_MIHOMO_BIN}" PERMISSIONS
-                OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE
-                WORLD_READ WORLD_EXECUTE)
-        endif ()
-        add_custom_command(TARGET clash-flux POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:clash-flux>/engines"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${CLASHFLUX_MIHOMO_BIN}" "$<TARGET_FILE_DIR:clash-flux>/engines/mihomo"
-            COMMENT "Bundling mihomo ${CLASHFLUX_MIHOMO_VERSION} into engines/")
-    endif ()
+    # 项目附带引擎：configure 期按宿主平台下载官方 release（版本与 SHA256 钉死，
+    # 见 cmake/mihomo_bundle.cmake 的平台资产表），POST_BUILD 拷到
+    # <exe>/engines/mihomo（Windows 为 mihomo.exe —— cfg::mihomoBinary() 第一
+    # 优先级解析位），构建产物开箱即可启动内核。-DCLASHFLUX_BUNDLE_MIHOMO=OFF
+    # 关闭（回落 <repo>/engines 与 PATH 解析）。覆盖 linux/windows x86_64 与
+    # macOS x86_64/arm64；其他平台显式关闭并自行放置内核。
+    include(cmake/mihomo_bundle.cmake)
+    clashflux_bundle_mihomo(clash-flux)
 
     # 图标资源放 <exe>/assets；HuxerUI 资源包（内置+app 合并，由 huxerui_add_app 的
     # 资源构建生成）放 <exe>.resources。最新运行时除了 resources.bin 索引外，
