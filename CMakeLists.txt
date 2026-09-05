@@ -253,10 +253,11 @@ set(CLASHFLUX_MODULE_UNITS
     src/config.cppm
     src/utils.cppm
     src/db.cppm
-    # mihomo 核心：进程生命周期 / REST API / 推送流
+    # mihomo 核心：进程生命周期 / REST API / 推送流 / 系统代理
     src/core.cppm
     src/api.cppm
     src/stream.cppm
+    src/sysproxy.cppm
     # 领域 store（UI 无关）
     src/store/core_store.cppm
     src/store/profiles.cppm

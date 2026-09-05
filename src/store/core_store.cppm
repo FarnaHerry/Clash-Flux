@@ -22,6 +22,7 @@ import clashflux.db;
 import clashflux.api;
 import clashflux.core;
 import clashflux.stream;
+import clashflux.sysproxy;
 
 namespace store {
 
@@ -105,6 +106,68 @@ public:
     }
     bool allowLan() { return setting("core.allow_lan", "false") == "true"; }
     std::string logLevel() { return setting("core.log_level", "info"); }
+    // TUN 开关（持久化；运行中经 applyTun PATCH 立即生效，否则下次启动生效）。
+    bool tunEnabled() { return setting("core.tun_enabled", "false") == "true"; }
+    // 系统代理开关（持久化；写入 KDE kioslaverc / GNOME gsettings）。
+    bool systemProxyEnabled() {
+        return setting("proxy.system_enabled", "false") == "true";
+    }
+    bool systemProxySupported() { return sysproxy::supported(); }
+
+    // 切换 TUN（阻塞）。内核运行中 → PATCH /configs 立即生效，失败回滚设置；
+    // 未运行 → 仅持久化（下次启动注入 tun 块）。成功更新快照。
+    bool applyTun(bool enable) {
+        ensureOpen();
+        setSetting("core.tun_enabled", enable ? "true" : "false");
+        {
+            std::lock_guard lock(mutex_);
+            snap_.tunEnabled = enable;
+        }
+        if (snapshot().state != core::CoreState::Running) return true;
+        const nlohmann::json body = {{"tun",
+                                      {{"enable", enable},
+                                       {"stack", "mixed"},
+                                       {"device", "clash-flux"},
+                                       {"auto-route", true},
+                                       {"auto-detect-interface", true},
+                                       {"dns-hijack", {"any:53"}}}}};
+        if (const auto r = api_->patchConfigs(body.dump()); r.ok) return true;
+        // PATCH 失败（常见：无 CAP_NET_ADMIN 权限）→ 回滚，避免每次启动都带
+        // 一个起不来的 tun 块。
+        setSetting("core.tun_enabled", enable ? "false" : "true");
+        const auto r2 = api_->configs();  // 以内核真实状态回写快照
+        if (r2.ok) {
+            const auto j = nlohmann::json::parse(r2.body, nullptr, false);
+            if (j.is_object() && j.contains("tun") && j["tun"].is_object()) {
+                std::lock_guard lock(mutex_);
+                snap_.tunEnabled = j["tun"].value("enable", false);
+            }
+        }
+        {
+            std::lock_guard lock(mutex_);
+            snap_.lastError =
+                std::format("TUN {}失败（可能需要 root/CAP_NET_ADMIN）",
+                            enable ? "开启" : "关闭");
+        }
+        return false;
+    }
+
+    // 切换系统代理（阻塞 shell 调用）。成功持久化设置。
+    bool applySystemProxy(bool enable) {
+        ensureOpen();
+        std::string err;
+        const bool ok =
+            enable ? sysproxy::enable("127.0.0.1", mixedPort(), err)
+                   : sysproxy::disable(err);
+        if (!ok) {
+            std::lock_guard lock(mutex_);
+            snap_.lastError = "系统代理" + std::string(enable ? "开启" : "关闭") +
+                              "失败：" + err;
+            return false;
+        }
+        setSetting("proxy.system_enabled", enable ? "true" : "false");
+        return true;
+    }
 
     // ---- 内核控制（阻塞：UI 必须 RunOnTaskThread）----
 
@@ -131,8 +194,9 @@ public:
                 fail("无法写入运行时配置: " + configFile.string());
                 return;
             }
-            out << core::generateConfig(profileYaml, cfg::controllerAddress(), secret_,
-                                        mixedPort(), mode(), allowLan(), logLevel());
+            out << core::generateConfig(profileYaml, cfg::controllerAddress(),
+                                        secret_, mixedPort(), mode(), allowLan(),
+                                        logLevel(), tunEnabled());
         }
 
         if (!process_.start(binaryPath_, workDir, configFile)) {
@@ -171,9 +235,23 @@ public:
             snap_.state = core::CoreState::Running;
         }
         refreshRuntime();
+        // 系统代理开关处于开：内核就绪后重指到当前端口（best effort，
+        // 失败不判启动失败，记 lastError）。
+        if (systemProxyEnabled()) {
+            std::string err;
+            if (!sysproxy::enable("127.0.0.1", mixedPort(), err)) {
+                std::lock_guard lock(mutex_);
+                snap_.lastError = "系统代理应用失败：" + err;
+            }
+        }
     }
 
     void stopCore() {
+        // 先摘系统代理：内核停掉后系统仍指向旧端口会断网。
+        if (systemProxyEnabled()) {
+            std::string err;
+            sysproxy::disable(err);
+        }
         streams_.stop();
         process_.stop();
         // 等监视线程收尾（最多 ~2s 宽限 + waitpid）。

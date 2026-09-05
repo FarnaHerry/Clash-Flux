@@ -55,7 +55,7 @@ bool isManagedKeyLine(std::string_view line) {
         "external-controller:", "secret:", "mixed-port:", "port:", "socks-port:",
         "allow-lan:", "mode:", "log-level:", "ipv6:",
         "unified-delay:", "tcp-concurrent:", "find-process-mode:",
-        "global-client-fingerprint:", "profile:",
+        "global-client-fingerprint:", "profile:", "tun:",
     };
     for (const auto key : kKeys) {
         if (line.starts_with(key)) return true;
@@ -75,7 +75,8 @@ std::string generateConfig(const std::string& profileYaml,
                            int mixedPort,
                            const std::string& mode,
                            bool allowLan,
-                           const std::string& logLevel) {
+                           const std::string& logLevel,
+                           bool tunEnabled) {
     std::string out;
     // 注入块放头部。
     out += "# ---- Clash-Flux 托管块（手写改动会被覆盖）----\n";
@@ -91,6 +92,16 @@ std::string generateConfig(const std::string& profileYaml,
     out += "find-process-mode: 'off'\n";
     out += "global-client-fingerprint: chrome\n";
     out += "profile:\n  store-selected: true\n  store-fake-ip: true\n";
+    if (tunEnabled) {
+        // TUN 透明代理（需 root/CAP_NET_ADMIN，权限不足时 mihomo 只报错不退出）。
+        out += "tun:\n"
+               "  enable: true\n"
+               "  stack: mixed\n"
+               "  device: clash-flux\n"
+               "  auto-route: true\n"
+               "  auto-detect-interface: true\n"
+               "  dns-hijack:\n    - any:53\n";
+    }
     out += "# ---- 订阅内容 ----\n";
 
     // 剔除订阅里的托管顶层键（连同其缩进值块）后原样拼接。

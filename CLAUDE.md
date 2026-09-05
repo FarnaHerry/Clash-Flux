@@ -66,6 +66,7 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 | `clashflux.api` | `src/api.cppm/.cpp` | mihomo REST 客户端（curl，同步阻塞、每调用独立 handle）：version/configs/patchConfigs/proxies/selectProxy/delay/rules/connections/providers/订阅下载 |
 | `clashflux.core` | `src/core.cppm/.cpp` | mihomo 子进程生命周期（posix_spawn + 监视线程；SIGTERM→2s→SIGKILL）+ generateConfig（订阅 YAML 剔除托管顶层键 + 注入块合成 runtime config） |
 | `clashflux.stream` | `src/stream.cppm/.cpp` | /logs /traffic /connections 三条 WS 流（IX 自管线程，事件入槽，UI PollWhile 泵取） |
+| `clashflux.sysproxy` | `src/sysproxy.cppm` | Linux 系统代理写入：KDE kioslaverc（kwriteconfig6/5 + dbus 通知 KIO）/ GNOME gsettings；阻塞 shell 调用，UI 必须 RunOnTaskThread |
 | `clashflux.store.core` | `src/store/core_store.cppm` | 编排单例 `coreStore()`：持有 Db/ClashApi/CoreProcess/CoreStreams；startCore/stopCore/applyMode/refreshRuntime/checkAlive；settings KV |
 | `clashflux.store.profiles` | `src/store/profiles.cppm` | 订阅单例 `profilesStore()`：importUrl/importFile/refresh/activate/remove（activate/remove 触发内核重启） |
 | `clashflux.ui.*`（普通 C++） | `src/ui/*.cpp` | app（壳：标题栏+图标侧栏+IndexedPages+托盘，岛屿风）/ common（岛屿原语 IslandSurface/DialogCard/页面骨架/卡片/状态胶囊）/ home/profiles/proxies/rules/connections/logs/settings 七页 / task_bridge.h（协程桥） |
@@ -107,6 +108,11 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
   `mihomo -d core/ -f core/config.yaml` 启动。控制器就绪轮询 ≤30s（订阅带
   规则 provider 的冷启动要拉 geodata/规则集，5s 会误判）。
 - 默认混合端口 **7899**（避开 Clash 7890 / Verge 7897 常见占用）。
+- 系统代理（`proxy.system_enabled`）：内核就绪后重指当前端口；stopCore 先
+  摘代理再停内核（防系统指向死端口断网）。TUN（`core.tun_enabled`）：
+  运行中 PATCH /configs 立即生效（失败回滚设置），未运行则下次启动经
+  generateConfig 注入 tun 块（需 root/CAP_NET_ADMIN，不足时 mihomo 只报
+  错不退出）。
 - 测速：单节点 `GET /proxies/{name}/delay`；整组 `GET /group/{name}/delay`
   （返回节点→延迟 map，超时项值 ≤0）。测速超时要比 curl 传输超时窄。
 
@@ -114,6 +120,6 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 
 - ✅ M1：脚手架 + 内核生命周期 + REST/WS + 六页骨架（订阅 CRUD/代理组切换测速/
   规则列表/连接快照/日志流/设置）。
-- ⬜ 待做：系统代理（gsettings）/ TUN 开关、流量图表（Canvas 自绘或
-  HuxerUI::Charts 官方库）、订阅合并策略增强（规则覆写）、deep link
+- ✅ 系统代理（KDE kioslaverc / GNOME gsettings）+ TUN 开关（设置页「系统」卡）。
+- ⬜ 待做：流量图表增强、订阅合并策略增强（规则覆写）、deep link
   （clash://install-config）、单实例、开机自启、规则 provider 管理、连接详情。
