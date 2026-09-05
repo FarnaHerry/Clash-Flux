@@ -9,7 +9,8 @@
 // 启动流程（startCore）：
 //   1. 解析 mihomo 二进制（cfg::mihomoBinary）——缺失 → Failed
 //   2. 读启用订阅的 YAML（无订阅 = 空）+ 托管注入块合成 coreWorkDir/config.yaml
-//   3. spawn mihomo -d <workdir> -f <config>，轮询 /version 等控制器就绪（≤5s）
+//   3. spawn mihomo -d <workdir> -f <config>，轮询 /version 等控制器就绪（≤30s，
+//      覆盖订阅带规则 provider 的慢冷启动；进程提前退出仍立即判失败）
 //   4. 就绪 → Running，拉起 /logs /traffic /connections 三条 WS 流
 export module clashflux.store.core;
 
@@ -31,7 +32,7 @@ export struct CoreSnapshot {
     std::string lastError;
     // 运行配置快照（Running 时有效）
     std::string mode;            // rule / global / direct
-    int mixedPort = 7890;
+    int mixedPort = 7899;
     bool allowLan = false;
     std::string logLevel = "info";
     bool tunEnabled = false;
@@ -97,9 +98,9 @@ public:
     std::string mode() { return setting("core.mode", "rule"); }
     int mixedPort() {
         try {
-            return std::stoi(setting("core.mixed_port", "7890"));
+            return std::stoi(setting("core.mixed_port", "7899"));
         } catch (...) {
-            return 7890;
+            return 7899;
         }
     }
     bool allowLan() { return setting("core.allow_lan", "false") == "true"; }
@@ -139,8 +140,10 @@ public:
             return;
         }
 
-        // 等控制器就绪（≤5s）。
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        // 等控制器就绪（≤30s）：订阅带规则 provider 时冷启动要拉 geodata/
+        // 规则集（可能还走尚未就绪的代理），5s 窗口会误判慢启动为失败；
+        // 进程已退出仍立即失败，30s 只是给慢启动的上限。
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
         bool ready = false;
         while (std::chrono::steady_clock::now() < deadline) {
             if (!process_.running()) {
@@ -158,7 +161,7 @@ public:
         }
         if (!ready) {
             process_.stop();
-            fail("external-controller 5s 内未就绪");
+            fail("external-controller 30s 内未就绪");
             return;
         }
 
