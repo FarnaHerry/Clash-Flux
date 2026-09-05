@@ -1,0 +1,125 @@
+plugins {
+    alias(libs.plugins.android.application)
+}
+
+def huxeruiProperty = { String name -> providers.gradleProperty(name).get() }
+def huxeruiHome = rootProject.gradle.ext.huxeruiHome
+def huxeruiLibraries = rootProject.gradle.ext.huxeruiLibraries
+def huxeruiCompileSdk = huxeruiProperty("huxeruiCompileSdk").toInteger()
+def huxeruiMinSdk = huxeruiProperty("huxeruiMinSdk").toInteger()
+def huxeruiTargetSdk = huxeruiProperty("huxeruiTargetSdk").toInteger()
+def huxeruiNdkVersion = huxeruiProperty("huxeruiNdkVersion")
+def huxeruiAbis = huxeruiProperty("huxeruiAbis").split(",")
+def huxeruiStl = huxeruiProperty("huxeruiStl")
+def huxeruiDebugResourceRoot = layout.buildDirectory.dir("generated/huxerui/resources/debug").get().asFile
+def huxeruiReleaseResourceRoot = layout.buildDirectory.dir("generated/huxerui/resources/release").get().asFile
+def huxeruiDebugAssets = layout.buildDirectory.dir("generated/huxerui/assets/debug").get().asFile
+def huxeruiReleaseAssets = layout.buildDirectory.dir("generated/huxerui/assets/release").get().asFile
+
+android {
+    namespace = "dev.farna.clashflux"
+    compileSdk = huxeruiCompileSdk
+    ndkVersion = huxeruiNdkVersion
+
+    defaultConfig {
+        applicationId = "dev.farna.clashflux"
+        minSdk = huxeruiMinSdk
+        targetSdk = huxeruiTargetSdk
+        versionCode = 1
+        versionName = "1.0"
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=${huxeruiStl}",
+                        "-DHUXERUI_HOME=${huxeruiHome.absolutePath}"
+            }
+        }
+
+        ndk {
+            abiFilters(*huxeruiAbis)
+        }
+    }
+
+    buildTypes {
+        debug {
+            externalNativeBuild {
+                cmake {
+                    arguments "-DHUXERUI_ANDROID_RESOURCE_OUTPUT_ROOT=${huxeruiDebugResourceRoot.absolutePath}"
+                }
+            }
+        }
+        release {
+            minifyEnabled = false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            externalNativeBuild {
+                cmake {
+                    arguments "-DHUXERUI_ANDROID_RESOURCE_OUTPUT_ROOT=${huxeruiReleaseResourceRoot.absolutePath}"
+                }
+            }
+        }
+    }
+
+    sourceSets {
+        debug {
+            assets.srcDir huxeruiDebugAssets
+        }
+        release {
+            assets.srcDir huxeruiReleaseAssets
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("../../../CMakeLists.txt")
+        }
+    }
+}
+
+dependencies {
+    if (rootProject.gradle.ext.huxeruiUsesSource) {
+        implementation project(":HuxerUI")
+    } else {
+        implementation files(rootProject.gradle.ext.huxeruiAndroidArchive)
+    }
+    huxeruiLibraries.each { library ->
+        implementation project(library.projectPath)
+    }
+}
+
+def registerHuxerUIResourceStaging = { String buildType, File resourceRoot, File assetsDirectory ->
+    def capitalizedBuildType = buildType.capitalize()
+    def nativeTaskName = "externalNativeBuild${capitalizedBuildType}"
+    def resolveResourcePackage = {
+        for (String abi : huxeruiAbis) {
+            def packageDirectory = new File(resourceRoot, "${abi}/package")
+            if (new File(packageDirectory, "huxerui/resources.bin").isFile()) {
+                return packageDirectory
+            }
+        }
+        return null
+    }
+    def verificationTask = tasks.register("verifyHuxerUI${capitalizedBuildType}Resources") {
+        dependsOn nativeTaskName
+        doLast {
+            if (resolveResourcePackage() == null) {
+                throw new GradleException("HuxerUI resource package is missing under ${resourceRoot}")
+            }
+        }
+    }
+    def stagingTask = tasks.register("stageHuxerUI${capitalizedBuildType}Resources", Sync) {
+        dependsOn verificationTask
+        from { resolveResourcePackage() ?: [] }
+        into assetsDirectory
+    }
+    tasks.matching { it.name == "merge${capitalizedBuildType}Assets" }.configureEach {
+        dependsOn stagingTask
+    }
+}
+
+registerHuxerUIResourceStaging("debug", huxeruiDebugResourceRoot, huxeruiDebugAssets)
+registerHuxerUIResourceStaging("release", huxeruiReleaseResourceRoot, huxeruiReleaseAssets)

@@ -568,15 +568,15 @@ export bool stopCore(std::string& err) {
 }
 export bool coreRunning() { return false; }
 export int install() {
-    std::println(stderr, "服务模式仅支持 Linux（systemd）");
+    std::println("服务模式仅支持 Linux（systemd）");
     return 1;
 }
 export int uninstall() {
-    std::println(stderr, "服务模式仅支持 Linux（systemd）");
+    std::println("服务模式仅支持 Linux（systemd）");
     return 1;
 }
 export int run() {
-    std::println(stderr, "服务模式仅支持 Linux（systemd）");
+    std::println("服务模式仅支持 Linux（systemd）");
     return 1;
 }
 
