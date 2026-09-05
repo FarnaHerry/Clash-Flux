@@ -212,6 +212,9 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
 [[huxerui::composable]] huxerui::View SideShell(huxerui::State<std::size_t> navPage) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
+    // 响应式：Compact(<600) 收窄侧栏宽度与内边距。
+    const bool compact =
+        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     struct Item {
         huxerui::ImageResource icon;
         huxerui::ImageResource icon_selected;
@@ -246,9 +249,10 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
                 .With(huxerui::Tooltip(item.tooltip)));
     }
     return huxerui::Column(std::move(buttons))
-        .With(huxerui::Padding(theme.spacing.medium),
+        .With(huxerui::Padding(compact ? theme.spacing.small
+                                       : theme.spacing.medium),
               huxerui::Spacing(theme.spacing.small),
-              huxerui::Frame{.width = 56.0F},
+              huxerui::Frame{.width = compact ? 44.0F : 56.0F},
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 }
 

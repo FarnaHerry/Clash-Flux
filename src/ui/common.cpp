@@ -84,6 +84,9 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                                                    huxerui::View content) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
+    // 响应式：Compact(<600) 收窄一级岛内边距。
+    const bool compact =
+        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     // 一级岛：页面根本身是岛（Grow + Stretch 占满页面区块，圆角 16pt，
     // base 表面），内容在岛内部滚动；海面底色经岛间缝隙透出。
     // composable 形参被 codegen 固定为 const：拷贝到局部再走右值链。
@@ -95,7 +98,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             std::move(actions),
         }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         std::move(body).With(huxerui::Grow(1.0F)),
-    }.With(huxerui::Padding(theme.spacing.large),
+    }.With(huxerui::Padding(compact ? theme.spacing.medium
+                                    : theme.spacing.large),
            huxerui::Spacing(theme.spacing.medium),
            huxerui::Background(islands.base),
            huxerui::CornerRadius(islands.island_radius),

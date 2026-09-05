@@ -68,7 +68,7 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 | `clashflux.stream` | `src/stream.cppm/.cpp` | /logs /traffic /connections 三条 WS 流（IX 自管线程，事件入槽，UI PollWhile 泵取） |
 | `clashflux.store.core` | `src/store/core_store.cppm` | 编排单例 `coreStore()`：持有 Db/ClashApi/CoreProcess/CoreStreams；startCore/stopCore/applyMode/refreshRuntime/checkAlive；settings KV |
 | `clashflux.store.profiles` | `src/store/profiles.cppm` | 订阅单例 `profilesStore()`：importUrl/importFile/refresh/activate/remove（activate/remove 触发内核重启） |
-| `clashflux.ui.*`（普通 C++） | `src/ui/*.cpp` | app（壳：标题栏+NavigationPane+IndexedPages+托盘）/ common（骨架/卡片/状态胶囊）/ profiles/proxies/rules/connections/logs/settings 六页 / task_bridge.h（协程桥） |
+| `clashflux.ui.*`（普通 C++） | `src/ui/*.cpp` | app（壳：标题栏+图标侧栏+IndexedPages+托盘，岛屿风）/ common（岛屿原语 IslandSurface/DialogCard/页面骨架/卡片/状态胶囊）/ home/profiles/proxies/rules/connections/logs/settings 七页 / task_bridge.h（协程桥） |
 | `src/app.cpp` | 普通 TU | `Application{AppRoot, AppOptions}`（Custom chrome，标题栏 28pt） |
 
 ## 关键约定（改代码前必读）
@@ -87,6 +87,14 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 5. **占位不能用 Spacer().With(Frame)**（Spacer 自带 Grow(1) 会平分空间）——
    用空 `Row{}`/`Column{}`；页面根要 `Grow(1.0F)` + `CrossAlign(Stretch)`。
 6. 内核 REST 全部走 `store::coreStore().api()`；UI 不直接持有 curl。
+7. **岛屿风**（对齐 apitab）：极简黑白主题（app.cpp MinimalDark/Light）；
+   一级岛 16pt / 二级岛 8pt 圆角，表面色经 `ResolveIslandTheme(theme)` 语义
+   层级取，不直接用 surface_container_*。订阅卡交互范式：右键
+   `ViewEvents::ContextMenuRequested` + `UseMenu().ShowAt`，双击
+   `MultiTapGesture{.count=2}` + `MultiTapEvents::Recognized`，矢量图标着色
+   用 `Image::Tint`（IconButton/Foreground 不着色 SVG）。
+8. **响应式**：`UseViewportClass()` Compact(<600) 收窄侧栏(44pt)/一级岛内边距
+   （PageScaffold）/首页卡片 2×2/订阅卡整宽列表；窗口最小 560×480。
 
 ## mihomo 交互要点
 
