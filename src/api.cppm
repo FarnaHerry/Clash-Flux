@@ -65,10 +65,19 @@ public:
     ApiResult updateProxyProvider(const std::string& name);
     ApiResult healthcheckProvider(const std::string& name);
 
-    // 订阅下载：GET url 落盘到 dest（覆盖写）。走系统代理设置由调用方决定
-    // （默认直连；订阅下载通常需要全局/直连策略，里程碑 1 先直连）。
+    // 订阅下载选项：超时 / 证书校验 / 代理三态（指定代理 > 系统环境代理 >
+    // 强制直连）。使用内核代理时由调用方拼 http://127.0.0.1:<mixedPort>。
+    struct DownloadOptions {
+        long timeoutSecs = 60;
+        bool allowInvalidCert = false;
+        std::string proxyUrl;        // 非空 = 经该代理（如 http://127.0.0.1:7899）
+        bool allowProxyEnv = false;  // proxyUrl 为空时是否允许环境变量代理
+    };
+
+    // 订阅下载：GET url 落盘到 dest（覆盖写）。options 必传（模块接口下
+    // 默认参数 + 花括号临时量的组合 GCC 不接受）。
     ApiResult downloadToFile(const std::string& url, const std::filesystem::path& dest,
-                             long timeoutSec = 60);
+                             const DownloadOptions& options);
 
 private:
     struct Impl;
