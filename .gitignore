@@ -1,0 +1,29 @@
+# CMake 构建产物
+build/
+# 各种本地变体构建目录
+build-*/
+
+# HuxerUI CLI 构建/生成产物（huxerui build/run 的构建目录与依赖图）
+.huxerui/
+
+# CMake 导出的编译数据库（仓库根是指向 build/ 的软链）
+compile_commands.json
+
+# 本地 / CI 打包产物
+dist/
+dist-src/
+clash-flux-v*
+
+# 本地放置的 mihomo 内核二进制（engines/mihomo）
+engines/
+
+# 会话目录
+.claude/
+
+# HuxerUI 上游源码 clone（存在时优先于 third_party/tarballs 的预编译 SDK）
+third_party/huxerui/
+# 用当前 huxerui 源码本地构建的宿主工具（hcg/hrc；上游 linux 预置可能落后于源码）
+third_party/huxerui-tools/
+
+# huxerui_add_app 生成物
+.agents/
