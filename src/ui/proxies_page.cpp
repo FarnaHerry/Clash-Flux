@@ -1,6 +1,10 @@
-// proxies_page.cpp — 代理页：顶部收束区（出站模式 规则/全局/直连 切换 + 订阅
-// 自带分组的横向 chips）→ 选中组的统一矩形节点卡网格 → 底部嵌套分支导航
-// （组里嵌组的节点可点入，面包屑显示当前路径 + 返回上一级）。
+// proxies_page.cpp — 代理页：顶部收束区（出站模式 规则/全局/直连 切换）+
+// 按模式分视图：规则 → 订阅自带分组 chips + 选中组的统一矩形节点卡网格；
+// 全局 → GLOBAL 组节点网格；直连 → 不展示订阅内容（流量不经节点）。
+// 底部状态条：嵌套分支导航（面包屑 + 返回）+ 整组测速 + 节点数。
+//
+// 规则/全局两套分支路径 State 独立（rulePath/globalPath），切换模式互不
+// 覆盖对方的选择。GLOBAL 组只在全局模式出现，规则 chips 不含它。
 //
 // 节点网格列数随视口分级：Compact(<600) 2 列 / Medium 3 列 / Expanded 4 列；
 // 末行用空占位补齐，保证同一组内所有节点卡同宽。
@@ -275,8 +279,8 @@ constexpr float kNodeGridGap = 8.0F;
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-// 分组 chips 横向条（订阅自带的分组）：选中 chip primary 底，GLOBAL 沉底
-// （parseProxies 已排序）。
+// 分组 chips 横向条（规则模式：订阅自带的分组，不含 GLOBAL——GLOBAL 属于
+// 全局模式视图）：选中 chip primary 底。
 constexpr float kChipHeight = 32.0F;
 constexpr float kChipGap = 8.0F;
 
@@ -287,6 +291,7 @@ constexpr float kChipGap = 8.0F;
     const IslandTheme islands = ResolveIslandTheme(theme);
     std::vector<huxerui::View> chips;
     for (const auto& g : groups) {
+        if (g.name == "GLOBAL") continue;
         const bool active = g.name == selected;
         const std::string name = g.name;
         chips.push_back(
@@ -321,12 +326,17 @@ constexpr float kChipGap = 8.0F;
         .ScrollAxis(huxerui::Axis::Horizontal);
 }
 
-// 底部嵌套分支导航：‹ 返回（根层级禁用）+ 面包屑路径。
+// 底部状态条：‹ 返回（根层级隐藏）+ 面包屑路径 + 整组测速 + 节点数。
 [[huxerui::composable]] huxerui::View BranchBar(
-    const std::vector<std::string>& path, std::size_t nodeCount,
-    huxerui::State<std::vector<std::string>> navPath, huxerui::TaskScope tasks) {
+    const std::vector<std::string>& path, const ProxyGroup& group,
+    huxerui::State<std::vector<std::string>> navPath,
+    huxerui::State<std::unordered_map<std::string, int>> delays,
+    huxerui::State<std::unordered_map<std::string, bool>> timeouts,
+    huxerui::State<std::string> testingGroup, huxerui::TaskScope tasks) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
+    const bool testing = testingGroup.Get() == group.name;
+    const std::string groupName = group.name;
 
     std::string breadcrumb;
     for (std::size_t i = 0; i < path.size(); ++i) {
@@ -372,7 +382,45 @@ constexpr float kChipGap = 8.0F;
             huxerui::Font::System(font_size::kCaption),
             theme.colors.on_surface_variant}),
         huxerui::Spacer(),
-        huxerui::Text(std::format("{} 节点", nodeCount))
+        testing ? huxerui::View{huxerui::ProgressCircle()
+                                    .With(huxerui::Frame{.width = 16.0F,
+                                                         .height = 16.0F})}
+                : huxerui::View{huxerui::Button("测速").OnClick(
+                      [tasks, delays, timeouts, testingGroup, groupName] {
+                          tasks.Launch([=]() -> huxerui::Task<void> {
+                              testingGroup = groupName;
+                              const auto r = co_await RunOnTaskThread([=] {
+                                  return store::coreStore().api().groupDelay(
+                                      groupName,
+                                      "https://www.gstatic.com/generate_204",
+                                      3000);
+                              });
+                              if (r.ok) {
+                                  const auto j = nlohmann::json::parse(
+                                      r.body, nullptr, false);
+                                  if (j.is_object()) {
+                                      auto d = delays.Get();
+                                      auto t = timeouts.Get();
+                                      for (auto it = j.begin(); it != j.end();
+                                           ++it) {
+                                          const auto& v = it.value();
+                                          if (v.is_number_integer() &&
+                                              v.get<int>() > 0) {
+                                              d[it.key()] = v.get<int>();
+                                              t.erase(it.key());
+                                          } else {
+                                              t[it.key()] = true;
+                                              d.erase(it.key());
+                                          }
+                                      }
+                                      delays = d;
+                                      timeouts = t;
+                                  }
+                              }
+                              testingGroup = "";
+                          });
+                      })},
+        huxerui::Text(std::format("{} 节点", group.nodes.size()))
             .Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kCaption),
                 theme.colors.on_surface_variant}),
@@ -393,8 +441,10 @@ constexpr float kChipGap = 8.0F;
     auto delays = huxerui::UseState<std::unordered_map<std::string, int>>({});
     auto timeouts = huxerui::UseState<std::unordered_map<std::string, bool>>({});
     auto testingGroup = huxerui::UseState<std::string>("");
-    // 分支路径：path[0] = 选中组（chips），后续 = 逐级点入的嵌套子组。
-    auto navPath = huxerui::UseState<std::vector<std::string>>({});
+    // 分支路径按模式独立（互不共享）：规则模式 path[0] = chips 选中的订阅组，
+    // 全局模式 path[0] 固定 GLOBAL；后续元素 = 逐级点入的嵌套子组。
+    auto rulePath = huxerui::UseState<std::vector<std::string>>({});
+    auto globalPath = huxerui::UseState<std::vector<std::string>>({});
 
     // 数据泵：内核 Running 时每 3s 刷一次 /proxies（保持 now/history 新鲜）；
     // 非 Running 清空列表。
@@ -440,11 +490,40 @@ constexpr float kChipGap = 8.0F;
                 });
             });
 
-    // 渲染期校验路径：根组消失回落第一个组；嵌套前缀逐级校验。
+    // 按出站模式取当前视图的路径与组（渲染期校验：根组消失回落，嵌套前缀
+    // 逐级校验）。直连不经过节点，不展示订阅组。
     const std::vector<ProxyGroup>& all = groups.Get();
-    std::vector<std::string> path = resolvePath(all, navPath.Get());
-    if (path.empty() && !all.empty()) path = {all.front().name};
+    const bool direct = mode.Get() == "direct";
+    const bool global = mode.Get() == "global";
+    const ProxyGroup* firstRule = nullptr;
+    for (const auto& g : all) {
+        if (g.name != "GLOBAL") {
+            firstRule = &g;
+            break;
+        }
+    }
+    if (firstRule == nullptr && !all.empty()) firstRule = &all.front();
+
+    std::vector<std::string> path;
+    huxerui::State<std::vector<std::string>> activePath = rulePath;
+    if (global) {
+        activePath = globalPath;
+        path = resolvePath(all, globalPath.Get());
+        if (path.empty() && findGroup(all, "GLOBAL") != nullptr) {
+            path = {"GLOBAL"};
+        }
+    } else {
+        path = resolvePath(all, rulePath.Get());
+        if (path.empty() && firstRule != nullptr) path = {firstRule->name};
+    }
     const ProxyGroup* current = path.empty() ? nullptr : findGroup(all, path.back());
+    bool hasRuleChips = false;
+    for (const auto& g : all) {
+        if (g.name != "GLOBAL") {
+            hasRuleChips = true;
+            break;
+        }
+    }
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const std::size_t cols = compact ? 2
@@ -453,17 +532,29 @@ constexpr float kChipGap = 8.0F;
                                  ? 3
                                  : 4;
 
-    // 网格区：有组 → 选中组的统一节点网格（滚动）；无组 → 原提示。
+    // 网格区：直连 → 提示不展示订阅；有组 → 选中组的统一节点网格（滚动）。
     huxerui::View gridArea;
-    if (current != nullptr) {
+    if (direct) {
+        gridArea = huxerui::Column {
+            huxerui::Text("直连模式 —— 流量不经过任何代理节点")
+                .Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kBody),
+                    theme.colors.on_surface_variant}),
+        }
+            .With(huxerui::Padding(32.0F),
+                  huxerui::Grow(1.0F),
+                  huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    } else if (current != nullptr) {
         gridArea = huxerui::ScrollView(
                        NodeGrid(*current, cols, delays, timeouts, tasks, groups,
-                                navPath))
+                                activePath))
             .With(huxerui::Grow(1.0F));
     } else {
         gridArea = huxerui::Column {
             huxerui::Text(coreState.Get() == core::CoreState::Running
-                              ? "暂无策略组（检查订阅配置）"
+                              ? (global ? "全局组（GLOBAL）不可用"
+                                        : "暂无策略组（检查订阅配置）")
                               : "内核未运行 —— 请到设置页启动内核")
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kBody),
@@ -477,13 +568,14 @@ constexpr float kChipGap = 8.0F;
 
     huxerui::View content = huxerui::Column {
         huxerui::Row { std::move(modeSwitch), huxerui::Spacer() },
-        all.empty() ? huxerui::View{huxerui::Row{}}
-                    : huxerui::View{GroupChipBar(all, path.front(), navPath,
-                                                 tasks)},
+        (!direct && !global && hasRuleChips)
+            ? huxerui::View{GroupChipBar(all, path.front(), activePath, tasks)}
+            : huxerui::View{huxerui::Row{}},
         std::move(gridArea),
-        current == nullptr ? huxerui::View{huxerui::Row{}}
-                           : huxerui::View{BranchBar(path, current->nodes.size(),
-                                                     navPath, tasks)},
+        (!direct && current != nullptr)
+            ? huxerui::View{BranchBar(path, *current, activePath, delays,
+                                      timeouts, testingGroup, tasks)}
+            : huxerui::View{huxerui::Row{}},
     }
         .With(huxerui::Spacing(10.0F),
               huxerui::Grow(1.0F),
