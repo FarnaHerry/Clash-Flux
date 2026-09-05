@@ -1,8 +1,9 @@
-// profiles_page.cpp — 订阅页：一订阅一卡片的卡片布局 + 右上角「新建订阅」
-// 弹窗导入（名称可选 + 订阅链接）。
+// profiles_page.cpp — 订阅页：矩形卡片网格（Flow 自动换行，Compact 视口退化为
+// 整宽列表）。卡片交互：右上角刷新图标更新订阅；右键弹上下文菜单（使用/更新/
+// 编辑信息/编辑规则/删除）；双击卡片切换启用订阅。
 //
-// 数据流：列表经 1s 泵从 profilesStore 重读（CRUD 后立即重读）；导入/更新/
-// 启用/删除都是阻塞活（网络下载 / 内核重启），全部经 RunOnTaskThread。
+// 数据流：列表经 1s 泵从 profilesStore 重读；导入/更新/启用/删除/编辑保存都是
+// 阻塞活（网络下载 / 内核重启），全部经 RunOnTaskThread。
 #include <huxerui/huxerui.h>
 
 #include <chrono>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include "ui.h"
+#include "app_resources.h"
 #include "task_bridge.h"
 
 import clashflux.db;
@@ -21,11 +23,19 @@ import clashflux.utils;
 namespace clashflux::ui {
 namespace {
 
+// 卡片固定宽度（非 Compact 视口）。
+constexpr float kCardWidth = 280.0F;
+
 [[huxerui::composable]] huxerui::View ProfileCard(
-    const db::Profile& profile, huxerui::TaskScope tasks,
+    const db::Profile& profile, bool compact, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::function<void()> reload) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
+    auto menu = huxerui::UseMenu();
+    auto dialog = huxerui::UseDialog();
+    auto editName = huxerui::UseState(huxerui::TextEditingValue{""});
+    auto editUrl = huxerui::UseState(huxerui::TextEditingValue{""});
+    auto editYaml = huxerui::UseState(huxerui::TextEditingValue{""});
     const std::int64_t id = profile.id;
 
     auto action = [tasks, toast, reload](std::function<std::string()> job) {
@@ -36,7 +46,168 @@ namespace {
         });
     };
 
-    return Card(huxerui::Column {
+    // 编辑信息弹窗：名称 + 订阅链接（仅落库，URL 下次「更新」拉取时生效）。
+    auto showEditInfo = [dialog, tasks, toast, editName, editUrl, id, profile] {
+        editName = huxerui::TextEditingValue{profile.name};
+        editUrl = huxerui::TextEditingValue{profile.url};
+        dialog.Show(
+            [tasks, toast, editName, editUrl,
+             id](huxerui::DialogContext ctx) -> huxerui::View {
+                return DialogCard(huxerui::Column {
+                    huxerui::Text("编辑信息", huxerui::TextRole::Title),
+                    huxerui::TextField(editName.Get())
+                        .Label("名称")
+                        .Variant(huxerui::TextFieldVariant::Outlined)
+                        .OnChanged([editName](const huxerui::TextEditingValue& v) {
+                            editName = v;
+                        }),
+                    huxerui::TextField(editUrl.Get())
+                        .Label("订阅链接（留空 = 本地导入）")
+                        .Placeholder("https://...")
+                        .Variant(huxerui::TextFieldVariant::Outlined)
+                        .OnChanged([editUrl](const huxerui::TextEditingValue& v) {
+                            editUrl = v;
+                        }),
+                    huxerui::Row {
+                        huxerui::Button("取消").OnClick([ctx] { ctx.Dismiss(); }),
+                        huxerui::Button("保存").OnClick([=] {
+                            ctx.Dismiss();
+                            tasks.Launch([=]() -> huxerui::Task<void> {
+                                const std::string name = editName.Get().text;
+                                const std::string url = editUrl.Get().text;
+                                const std::string err = co_await RunOnTaskThread(
+                                    [id, name, url] {
+                                        auto& ps = store::profilesStore();
+                                        if (!ps.updateInfo(id, name, url))
+                                            return ps.lastError();
+                                        return std::string{};
+                                    });
+                                if (!err.empty()) {
+                                    toast.Show(err);
+                                } else {
+                                    toast.Show("已保存");
+                                }
+                            });
+                        }),
+                    }.With(huxerui::MainAlign(
+                               huxerui::MainAxisAlignment::SpaceBetween)),
+                }.With(huxerui::Spacing(12.0F),
+                       huxerui::Frame{.width = 360.0F},
+                       huxerui::CrossAlign(
+                           huxerui::CrossAxisAlignment::Stretch)));
+            },
+            huxerui::DialogOptions{});
+    };
+
+    // 编辑规则弹窗：直接编辑订阅 YAML 原文；保存后若该订阅启用中将重启内核。
+    auto showEditYaml = [dialog, tasks, toast, editYaml, id, profile] {
+        editYaml = huxerui::TextEditingValue{store::profilesStore().yamlOf(id)};
+        dialog.Show(
+            [tasks, toast, editYaml, id,
+             name = profile.name](huxerui::DialogContext ctx) -> huxerui::View {
+                return DialogCard(huxerui::Column {
+                    huxerui::Text("编辑规则 — " + name, huxerui::TextRole::Title),
+                    huxerui::Text("直接编辑订阅 YAML；保存后若该订阅启用中，"
+                                  "内核将重启使改动生效。")
+                        .Style(huxerui::TextStyle{
+                            huxerui::Font::System(font_size::kCaption),
+                            huxerui::UseTheme().colors.on_surface_variant}),
+                    huxerui::TextField(editYaml.Get())
+                        .Variant(huxerui::TextFieldVariant::Outlined)
+                        .LineLimits(huxerui::TextFieldLineLimits::MultiLine(14, 22))
+                        .OnChanged([editYaml](const huxerui::TextEditingValue& v) {
+                            editYaml = v;
+                        }),
+                    huxerui::Row {
+                        huxerui::Button("取消").OnClick([ctx] { ctx.Dismiss(); }),
+                        huxerui::Button("保存").OnClick([=] {
+                            ctx.Dismiss();
+                            tasks.Launch([=]() -> huxerui::Task<void> {
+                                const std::string content = editYaml.Get().text;
+                                const std::string err = co_await RunOnTaskThread(
+                                    [id, content] {
+                                        auto& ps = store::profilesStore();
+                                        if (!ps.saveYaml(id, content))
+                                            return ps.lastError();
+                                        return std::string{};
+                                    });
+                                if (!err.empty()) {
+                                    toast.Show(err);
+                                } else {
+                                    toast.Show("已保存");
+                                }
+                            });
+                        }),
+                    }.With(huxerui::MainAlign(
+                               huxerui::MainAxisAlignment::SpaceBetween)),
+                }.With(huxerui::Spacing(12.0F),
+                       huxerui::Frame{.width = 640.0F},
+                       huxerui::CrossAlign(
+                           huxerui::CrossAxisAlignment::Stretch)));
+            },
+            huxerui::DialogOptions{});
+    };
+
+    // 右键菜单：使用（未启用时）/ 更新 / 编辑信息 / 编辑规则 / 删除。
+    auto showMenu = [menu, action, showEditInfo, showEditYaml, id,
+                     selected = profile.selected](huxerui::Point pos) {
+        std::vector<huxerui::MenuEntry> entries;
+        if (!selected) {
+            entries.push_back(huxerui::MenuItem("使用", [action, id] {
+                action([id]() -> std::string {
+                    auto& ps = store::profilesStore();
+                    if (!ps.activate(id)) return ps.lastError();
+                    return "";
+                });
+            }));
+        }
+        entries.push_back(huxerui::MenuItem("更新", [action, id] {
+            action([id]() -> std::string {
+                auto& ps = store::profilesStore();
+                if (!ps.refresh(id)) return ps.lastError();
+                return "";
+            });
+        }));
+        entries.push_back(huxerui::MenuSection{});
+        entries.push_back(huxerui::MenuItem("编辑信息", showEditInfo));
+        entries.push_back(huxerui::MenuItem("编辑规则", showEditYaml));
+        entries.push_back(huxerui::MenuSection{});
+        entries.push_back(huxerui::MenuItem("删除", [action, id] {
+            action([id]() -> std::string {
+                auto& ps = store::profilesStore();
+                ps.remove(id);
+                return ps.lastError();
+            });
+        }));
+        menu.ShowAt(pos, std::move(entries));
+    };
+
+    // 右上角刷新图标：裸 Image + Tint 着色（IconButton 不着色矢量资源；
+    // 同 apitab 标题栏齿轮配方），自绘 24pt 正方形热区。
+    huxerui::View refreshButton =
+        huxerui::Row {
+            huxerui::Image(app::images::refresh)
+                .Fit(huxerui::ImageFit::Contain)
+                .Align(huxerui::HorizontalAlignment::Center,
+                       huxerui::VerticalAlignment::Center)
+                .Tint(theme.colors.on_surface_variant)
+                .With(huxerui::Frame{.width = 14.0F, .height = 14.0F}),
+        }
+            .With(huxerui::Padding(5.0F),
+                  huxerui::CornerRadius(islands.nested_radius),
+                  huxerui::Tooltip("更新订阅"),
+                  huxerui::Focusable(true),
+                  huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                     .label = "更新订阅"})
+            .OnClick([action, id] {
+                action([id]() -> std::string {
+                    auto& ps = store::profilesStore();
+                    if (!ps.refresh(id)) return ps.lastError();
+                    return "";
+                });
+            });
+
+    huxerui::View card = Card(huxerui::Column {
         huxerui::Row {
             huxerui::Text(profile.name).Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kBody)
@@ -53,30 +224,8 @@ namespace {
                             huxerui::CornerRadius(islands.nested_radius))
                 : huxerui::View{huxerui::Row{}},
             huxerui::Spacer(),
-            profile.selected
-                ? huxerui::View{huxerui::Row{}}
-                : huxerui::View{huxerui::Button("启用").OnClick([action, id] {
-                      action([id]() -> std::string {
-                          auto& ps = store::profilesStore();
-                          if (!ps.activate(id)) return ps.lastError();
-                          return "";
-                      });
-                  })},
-            huxerui::Button("更新").OnClick([action, id] {
-                action([id]() -> std::string {
-                    auto& ps = store::profilesStore();
-                    if (!ps.refresh(id)) return ps.lastError();
-                    return "";
-                });
-            }),
-            huxerui::Button("删除").OnClick([action, id] {
-                action([id]() -> std::string {
-                    auto& ps = store::profilesStore();
-                    ps.remove(id);
-                    return ps.lastError();
-                });
-            }),
-        }.With(huxerui::Spacing(8.0F),
+            std::move(refreshButton),
+        }.With(huxerui::Spacing(6.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         huxerui::Text(profile.url.empty() ? "本地导入" : profile.url)
             .Style(huxerui::TextStyle{huxerui::Font::Monospace(font_size::kChip),
@@ -92,12 +241,34 @@ namespace {
                                       : theme.colors.error}),
     }.With(huxerui::Spacing(6.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+
+    // 矩形卡：非 Compact 定宽（Flow 网格换行），Compact 由父列 Stretch 整宽。
+    if (!compact) {
+        card = std::move(card).With(huxerui::Frame{.width = kCardWidth});
+    }
+    return std::move(card)
+        .With(huxerui::MultiTapGesture{.count = 2})
+        // 双击切换启用订阅（未启用时）。
+        .On<huxerui::MultiTapEvents::Recognized>(
+            [action, id, selected = profile.selected](const huxerui::MultiTapEvent&) {
+                if (selected) return;
+                action([id]() -> std::string {
+                    auto& ps = store::profilesStore();
+                    if (!ps.activate(id)) return ps.lastError();
+                    return "";
+                });
+            })
+        // 右键上下文菜单（跟随点击位置弹出）。
+        .On<huxerui::ViewEvents::ContextMenuRequested>(showMenu)
+        .Key(id);
 }
 
 } // namespace
 
 [[huxerui::composable]] huxerui::View ProfilesPage() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const bool compact =
+        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto dialog = huxerui::UseDialog();
@@ -202,7 +373,7 @@ namespace {
 
     std::vector<huxerui::View> cards;
     for (const auto& p : profiles.Get()) {
-        cards.push_back(ProfileCard(p, tasks, toast, reload).Key(p.id));
+        cards.push_back(ProfileCard(p, compact, tasks, toast, reload).Key(p.id));
     }
 
     return PageScaffold(
@@ -230,10 +401,14 @@ namespace {
                          huxerui::CrossAlign(
                              huxerui::CrossAxisAlignment::Center))}
             : huxerui::View{huxerui::ScrollView(
-                                huxerui::Column(std::move(cards))
-                                    .With(huxerui::Spacing(10.0F),
-                                          huxerui::CrossAlign(
-                                              huxerui::CrossAxisAlignment::Stretch)))
+                                compact
+                                    ? huxerui::View{huxerui::Column(std::move(cards))
+                                                        .With(huxerui::Spacing(10.0F),
+                                                              huxerui::CrossAlign(
+                                                                  huxerui::CrossAxisAlignment::Stretch))}
+                                    : huxerui::View{huxerui::Flow(std::move(cards))
+                                                        .With(huxerui::Spacing(
+                                                            theme.spacing.medium))})
                                 .With(huxerui::Grow(1.0F))});
 }
 

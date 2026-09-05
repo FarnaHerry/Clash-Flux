@@ -109,9 +109,75 @@ public:
         return true;
     }
 
-    // 启用订阅：标记 selected，若内核在跑则重启内核使配置生效。阻塞。
-    bool activate(std::int64_t id) {
+    // 编辑订阅信息（名称 / URL）：仅落库——名称立即生效，URL 变化在下次
+    // 「更新」拉取时生效。name 为空时以 url 兜底（同 importUrl 惯例）。
+    bool updateInfo(std::int64_t id, const std::string& name, const std::string& url) {
         lastError_.clear();
+        auto p = findById(id);
+        if (!p) {
+            lastError_ = "订阅不存在";
+            return false;
+        }
+        p->name = name.empty() ? (url.empty() ? p->name : url) : name;
+        p->url = url;
+        try {
+            coreStore().db().saveProfile(*p);
+        } catch (const std::exception& e) {
+            lastError_ = e.what();
+            return false;
+        }
+        return true;
+    }
+
+    // 读取指定订阅的 YAML 原文（不存在 / 读失败 = 空串）。
+    std::string yamlOf(std::int64_t id) {
+        const auto p = findById(id);
+        if (!p || p->file.empty()) return "";
+        std::ifstream in(cfg::profilesDir() / p->file, std::ios::binary);
+        if (!in) return "";
+        return std::string(std::istreambuf_iterator<char>(in),
+                           std::istreambuf_iterator<char>());
+    }
+
+    // 保存订阅 YAML 原文（编辑规则/内容）：写文件 + 更新 updatedAt；
+    // 若该订阅启用中且内核在跑，重启内核使改动生效。阻塞。
+    bool saveYaml(std::int64_t id, const std::string& content) {
+        lastError_.clear();
+        const auto p = findById(id);
+        if (!p || p->file.empty()) {
+            lastError_ = "订阅不存在";
+            return false;
+        }
+        try {
+            std::ofstream out(cfg::profilesDir() / p->file,
+                              std::ios::binary | std::ios::trunc);
+            if (!out) {
+                lastError_ = "无法写入订阅文件";
+                return false;
+            }
+            out << content;
+            out.flush();
+            if (!out) {
+                lastError_ = "写入订阅文件失败";
+                return false;
+            }
+            db::Profile row = *p;
+            row.updatedAt = nowUnix();
+            row.error.clear();
+            coreStore().db().saveProfile(row);
+        } catch (const std::exception& e) {
+            lastError_ = e.what();
+            return false;
+        }
+        if (p->selected && coreStore().snapshot().state == core::CoreState::Running) {
+            coreStore().stopCore();
+            coreStore().startCore(selectedYaml());
+        }
+        return true;
+    }
+
+    // 启用订阅：标记 selected，若内核在跑则重启内核使配置生效。阻塞。
+    bool activate(std::int64_t id) {        lastError_.clear();
         try {
             coreStore().db().setSelectedProfile(id);
         } catch (const std::exception& e) {
@@ -153,6 +219,13 @@ public:
     }
 
 private:
+    std::optional<db::Profile> findById(std::int64_t id) {
+        for (const auto& p : list()) {
+            if (p.id == id) return p;
+        }
+        return std::nullopt;
+    }
+
     // 下载 p.url 到 profiles/<id>.yaml 并更新行（updated_at/error）。
     bool download(db::Profile& p) {
         p.file = std::format("{}.yaml", p.id);

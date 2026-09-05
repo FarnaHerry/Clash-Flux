@@ -11,7 +11,7 @@ const huxerui::Application application{
         .window = {
             .title = "Clash-Flux",
             .initial_size = {1080.0F, 720.0F},
-            .minimum_size = huxerui::Size{760.0F, 560.0F},
+            .minimum_size = huxerui::Size{560.0F, 480.0F},
             .chrome_mode = huxerui::WindowChromeMode::Custom,
             .title_bar_height = 24.0F,
         }},

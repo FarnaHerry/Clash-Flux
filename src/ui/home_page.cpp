@@ -122,6 +122,8 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
 
 [[huxerui::composable]] huxerui::View HomePage() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const bool compact =
+        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto state = huxerui::UseState<HomeState>({});
@@ -188,25 +190,87 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
         if (s.core.mode == kModes[i]) modeIndex = i;
     }
 
+    // 响应式：Compact 视口统计卡 2×2 网格、模式/订阅双卡竖排。
+    huxerui::View statCards =
+        compact
+            ? huxerui::View{huxerui::Column {
+                  huxerui::Row {
+                      StatCard("下载速率", formatRate(s.latest.down), downColor)
+                          .With(huxerui::Grow(1.0F)),
+                      StatCard("上传速率", formatRate(s.latest.up), upColor)
+                          .With(huxerui::Grow(1.0F)),
+                  }.With(huxerui::Spacing(10.0F),
+                         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                  huxerui::Row {
+                      StatCard("总下载", formatBytes(s.totalDown),
+                               theme.colors.on_surface)
+                          .With(huxerui::Grow(1.0F)),
+                      StatCard("总上传", formatBytes(s.totalUp),
+                               theme.colors.on_surface)
+                          .With(huxerui::Grow(1.0F)),
+                  }.With(huxerui::Spacing(10.0F),
+                         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+              }.With(huxerui::Spacing(10.0F),
+                     huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))}
+            : huxerui::View{huxerui::Row {
+                  StatCard("下载速率", formatRate(s.latest.down), downColor)
+                      .With(huxerui::Grow(1.0F)),
+                  StatCard("上传速率", formatRate(s.latest.up), upColor)
+                      .With(huxerui::Grow(1.0F)),
+                  StatCard("总下载", formatBytes(s.totalDown),
+                           theme.colors.on_surface)
+                      .With(huxerui::Grow(1.0F)),
+                  StatCard("总上传", formatBytes(s.totalUp),
+                           theme.colors.on_surface)
+                      .With(huxerui::Grow(1.0F)),
+              }.With(huxerui::Spacing(10.0F),
+                     huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))};
+
+    // 出站模式 / 当前订阅两卡（Compact 视口竖排，见下方布局分支）。
+    huxerui::View modeCard = Card(huxerui::Column {
+        huxerui::Text("出站模式").Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kBody)
+                .WithWeight(huxerui::FontWeight::SemiBold),
+            theme.colors.on_surface}),
+        huxerui::SegmentedButton(kModeNames, modeIndex)
+            .OnChanged([tasks, toast](std::size_t idx) {
+                tasks.Launch([=]() -> huxerui::Task<void> {
+                    const bool ok = co_await RunOnTaskThread(
+                        [idx] {
+                            return store::coreStore().applyMode(kModes[idx]);
+                        });
+                    if (!ok) toast.Show("切换失败（内核未运行？）");
+                });
+            }),
+    }.With(huxerui::Spacing(10.0F)))
+                                 .With(huxerui::Grow(1.0F));
+    huxerui::View profileCard = Card(huxerui::Column {
+        huxerui::Text("当前订阅").Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kBody)
+                .WithWeight(huxerui::FontWeight::SemiBold),
+            theme.colors.on_surface}),
+        huxerui::Text(s.profileName)
+            .Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBody),
+                theme.colors.on_surface}),
+        s.profileUpdated.empty()
+            ? huxerui::View{huxerui::Row{}}
+            : huxerui::View{
+                  huxerui::Text(s.profileUpdated)
+                      .Style(huxerui::TextStyle{
+                          huxerui::Font::System(font_size::kCaption),
+                          theme.colors.on_surface_variant})},
+    }.With(huxerui::Spacing(4.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start)))
+                                    .With(huxerui::Grow(1.0F));
+
     return PageScaffold(
         "首页",
         huxerui::Row{},
         huxerui::ScrollView(
             huxerui::Column {
                 // 速率统计卡
-                huxerui::Row {
-                    StatCard("下载速率", formatRate(s.latest.down), downColor)
-                        .With(huxerui::Grow(1.0F)),
-                    StatCard("上传速率", formatRate(s.latest.up), upColor)
-                        .With(huxerui::Grow(1.0F)),
-                    StatCard("总下载", formatBytes(s.totalDown),
-                             theme.colors.on_surface)
-                        .With(huxerui::Grow(1.0F)),
-                    StatCard("总上传", formatBytes(s.totalUp),
-                             theme.colors.on_surface)
-                        .With(huxerui::Grow(1.0F)),
-                }.With(huxerui::Spacing(10.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                std::move(statCards),
 
                 // 流量曲线
                 Card(huxerui::Column {
@@ -230,49 +294,20 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                 }.With(huxerui::Spacing(10.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
 
-                // 出站模式 + 状态双卡
-                huxerui::Row {
-                    Card(huxerui::Column {
-                        huxerui::Text("出站模式").Style(huxerui::TextStyle{
-                            huxerui::Font::System(font_size::kBody)
-                                .WithWeight(huxerui::FontWeight::SemiBold),
-                            theme.colors.on_surface}),
-                        huxerui::SegmentedButton(kModeNames, modeIndex)
-                            .OnChanged([tasks, toast](std::size_t idx) {
-                                tasks.Launch([=]() -> huxerui::Task<void> {
-                                    const bool ok = co_await RunOnTaskThread(
-                                        [idx] {
-                                            return store::coreStore().applyMode(
-                                                kModes[idx]);
-                                        });
-                                    if (!ok) toast.Show("切换失败（内核未运行？）");
-                                });
-                            }),
-                    }.With(huxerui::Spacing(10.0F)))
-                        .With(huxerui::Grow(1.0F)),
-                    Card(huxerui::Column {
-                        huxerui::Text("当前订阅").Style(huxerui::TextStyle{
-                            huxerui::Font::System(font_size::kBody)
-                                .WithWeight(huxerui::FontWeight::SemiBold),
-                            theme.colors.on_surface}),
-                        huxerui::Text(s.profileName)
-                            .Style(huxerui::TextStyle{
-                                huxerui::Font::System(font_size::kBody),
-                                theme.colors.on_surface}),
-                        s.profileUpdated.empty()
-                            ? huxerui::View{huxerui::Row{}}
-                            : huxerui::View{
-                                  huxerui::Text(s.profileUpdated)
-                                      .Style(huxerui::TextStyle{
-                                          huxerui::Font::System(
-                                              font_size::kCaption),
-                                          theme.colors.on_surface_variant})},
-                    }.With(huxerui::Spacing(4.0F),
-                           huxerui::CrossAlign(
-                               huxerui::CrossAxisAlignment::Start)))
-                        .With(huxerui::Grow(1.0F)),
-                }.With(huxerui::Spacing(10.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                // 出站模式 + 当前订阅（Compact 竖排）
+                compact
+                    ? huxerui::View{huxerui::Column {
+                          std::move(modeCard),
+                          std::move(profileCard),
+                      }.With(huxerui::Spacing(10.0F),
+                             huxerui::CrossAlign(
+                                 huxerui::CrossAxisAlignment::Stretch))}
+                    : huxerui::View{huxerui::Row {
+                          std::move(modeCard),
+                          std::move(profileCard),
+                      }.With(huxerui::Spacing(10.0F),
+                             huxerui::CrossAlign(
+                                 huxerui::CrossAxisAlignment::Stretch))},
 
                 // 内核状态
                 Card(huxerui::Row {
