@@ -163,19 +163,26 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
 
     // 编辑信息弹窗：名称 + 订阅链接（remote）+ 描述/超时/间隔/四个开关。
     // 仅落库；URL 等在下次「更新」拉取时生效。
+    // 菜单项点击在指针事件路径上：同步写 State + dialog.Show 会当场卸载菜单
+    // 节点，框架指针会话清理悬空条目即 SIGSEGV——必须 Delay(0) 让出后再开
+    // （约定 4/6，编辑规则弹窗同因，曾实测崩溃）。
     auto showEditInfo = [dialog, tasks, toast, editName, editUrl, editDesc,
                          editTimeout, editInterval, editAuto, editSys, editCore,
                          editCert, id, profile] {
-        editName = huxerui::TextEditingValue{profile.name};
-        editUrl = huxerui::TextEditingValue{profile.url};
-        editDesc = huxerui::TextEditingValue{profile.description};
-        editTimeout = huxerui::TextEditingValue{std::format("{}", profile.timeoutSecs)};
-        editInterval = huxerui::TextEditingValue{std::format("{}", profile.intervalMins)};
-        editAuto = profile.autoUpdate;
-        editSys = profile.useSystemProxy;
-        editCore = profile.useCoreProxy;
-        editCert = profile.allowInvalidCert;
-        dialog.Show(
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            co_await huxerui::Delay(std::chrono::duration<double>{0});
+            editName = huxerui::TextEditingValue{profile.name};
+            editUrl = huxerui::TextEditingValue{profile.url};
+            editDesc = huxerui::TextEditingValue{profile.description};
+            editTimeout =
+                huxerui::TextEditingValue{std::format("{}", profile.timeoutSecs)};
+            editInterval =
+                huxerui::TextEditingValue{std::format("{}", profile.intervalMins)};
+            editAuto = profile.autoUpdate;
+            editSys = profile.useSystemProxy;
+            editCore = profile.useCoreProxy;
+            editCert = profile.allowInvalidCert;
+            dialog.Show(
             [tasks, toast, editName, editUrl, editDesc, editTimeout, editInterval,
              editAuto, editSys, editCore, editCert,
              id](huxerui::DialogContext ctx) -> huxerui::View {
@@ -240,55 +247,67 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
                                             huxerui::CrossAxisAlignment::Stretch)));
             },
             huxerui::DialogOptions{});
+        });
     };
 
     // 编辑规则弹窗：直接编辑订阅 YAML 原文；保存后若该订阅启用中将重启内核。
-    auto showEditYaml = [dialog, tasks, toast, editYaml, id, profile] {
-        editYaml = huxerui::TextEditingValue{store::profilesStore().yamlOf(id)};
-        dialog.Show(
-            [tasks, toast, editYaml, id,
-             name = profile.name](huxerui::DialogContext ctx) -> huxerui::View {
-                return DialogCard(huxerui::Column {
-                    huxerui::Text("编辑规则 — " + name, huxerui::TextRole::Title),
-                    huxerui::Text("直接编辑订阅 YAML；保存后若该订阅启用中，"
-                                  "内核将重启使改动生效。")
-                        .Style(huxerui::TextStyle{
-                            huxerui::Font::System(font_size::kCaption),
-                            huxerui::UseTheme().colors.on_surface_variant}),
-                    huxerui::TextField(editYaml.Get())
-                        .Variant(huxerui::TextFieldVariant::Outlined)
-                        .LineLimits(huxerui::TextFieldLineLimits::MultiLine(14, 22))
-                        .OnChanged([editYaml](const huxerui::TextEditingValue& v) {
-                            editYaml = v;
-                        }),
-                    huxerui::Row {
-                        huxerui::Button("取消").OnClick([ctx] { ctx.Dismiss(); }),
-                        huxerui::Button("保存").OnClick([=] {
-                            ctx.Dismiss();
-                            tasks.Launch([=]() -> huxerui::Task<void> {
-                                const std::string content = editYaml.Get().text;
-                                const std::string err = co_await RunOnTaskThread(
-                                    [id, content] {
-                                        auto& ps = store::profilesStore();
-                                        if (!ps.saveYaml(id, content))
-                                            return ps.lastError();
-                                        return std::string{};
-                                    });
-                                if (!err.empty()) {
-                                    toast.Show(err);
-                                } else {
-                                    toast.Show("已保存");
-                                }
-                            });
-                        }),
-                    }.With(huxerui::MainAlign(
-                               huxerui::MainAxisAlignment::SpaceBetween)),
-                }.With(huxerui::Spacing(12.0F),
-                       huxerui::Frame{.width = 640.0F},
-                       huxerui::CrossAlign(
-                           huxerui::CrossAxisAlignment::Stretch)));
-            },
-            huxerui::DialogOptions{});
+    // 同 showEditInfo：菜单点击路径上必须 Delay(0) 让出后再写 State/开弹窗。
+    // 提示色在卡片组合期取值捕获——工厂 lambda 里不放裸 UseTheme 钩子。
+    auto showEditYaml = [dialog, tasks, toast, editYaml, id, profile,
+                         hintColor = theme.colors.on_surface_variant] {
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            co_await huxerui::Delay(std::chrono::duration<double>{0});
+            editYaml = huxerui::TextEditingValue{store::profilesStore().yamlOf(id)};
+            dialog.Show(
+                [tasks, toast, editYaml, id, hintColor,
+                 name = profile.name](huxerui::DialogContext ctx) -> huxerui::View {
+                    return DialogCard(huxerui::Column {
+                        huxerui::Text("编辑规则 — " + name,
+                                      huxerui::TextRole::Title),
+                        huxerui::Text("直接编辑订阅 YAML；保存后若该订阅启用中，"
+                                      "内核将重启使改动生效。")
+                            .Style(huxerui::TextStyle{
+                                huxerui::Font::System(font_size::kCaption),
+                                hintColor}),
+                        huxerui::TextField(editYaml.Get())
+                            .Variant(huxerui::TextFieldVariant::Outlined)
+                            .LineLimits(
+                                huxerui::TextFieldLineLimits::MultiLine(14, 22))
+                            .OnChanged(
+                                [editYaml](const huxerui::TextEditingValue& v) {
+                                    editYaml = v;
+                                }),
+                        huxerui::Row {
+                            huxerui::Button("取消").OnClick(
+                                [ctx] { ctx.Dismiss(); }),
+                            huxerui::Button("保存").OnClick([=] {
+                                ctx.Dismiss();
+                                tasks.Launch([=]() -> huxerui::Task<void> {
+                                    const std::string content =
+                                        editYaml.Get().text;
+                                    const std::string err = co_await
+                                        RunOnTaskThread([id, content] {
+                                            auto& ps = store::profilesStore();
+                                            if (!ps.saveYaml(id, content))
+                                                return ps.lastError();
+                                            return std::string{};
+                                        });
+                                    if (!err.empty()) {
+                                        toast.Show(err);
+                                    } else {
+                                        toast.Show("已保存");
+                                    }
+                                });
+                            }),
+                        }.With(huxerui::MainAlign(
+                                   huxerui::MainAxisAlignment::SpaceBetween)),
+                    }.With(huxerui::Spacing(12.0F),
+                           huxerui::Frame{.width = 640.0F},
+                           huxerui::CrossAlign(
+                               huxerui::CrossAxisAlignment::Stretch)));
+                },
+                huxerui::DialogOptions{});
+        });
     };
 
     // 右键菜单：使用（未启用时）/ 更新 / 编辑信息 / 编辑规则 / 删除。
@@ -492,7 +511,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
     auto showCreateDialog = [dialog, tasks, toast, picker, newName, newUrl,
                              newTypeIdx, newDesc, newTimeout, newInterval,
                              newAuto, newSys, newCore, newCert, pickedPath,
-                             importing] {
+                             importing, hintColor = theme.colors.on_surface_variant] {
         newName = huxerui::TextEditingValue{""};
         newUrl = huxerui::TextEditingValue{""};
         newTypeIdx = 0;
@@ -507,7 +526,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
         dialog.Show(
             [tasks, toast, picker, newName, newUrl, newTypeIdx, newDesc,
              newTimeout, newInterval, newAuto, newSys, newCore, newCert,
-             pickedPath, importing](huxerui::DialogContext ctx) -> huxerui::View {
+             pickedPath, importing, hintColor](huxerui::DialogContext ctx) -> huxerui::View {
                 const bool remote = newTypeIdx.Get() == 0;
                 return DialogCard(huxerui::Column {
                     huxerui::Text("新建订阅", huxerui::TextRole::Title),
@@ -563,8 +582,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
                                       .Style(huxerui::TextStyle{
                                           huxerui::Font::Monospace(
                                               font_size::kChip),
-                                          huxerui::UseTheme()
-                                              .colors.on_surface_variant}),
+                                          hintColor}),
                               }
                                   .With(huxerui::Spacing(8.0F),
                                         huxerui::CrossAlign(
