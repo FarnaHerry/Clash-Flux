@@ -15,6 +15,124 @@ import clashflux.store.core;
 
 namespace store {
 
+// ---- 订阅 YAML 的 rules 文本级操作（编辑规则弹窗用）-------------------------
+// 文本级而非完整 YAML 解析：与 generateConfig 的键剔除同一量级，够用且零依赖。
+
+// 解析顶层 rules: 块下的每一条 "- <规则>"（不含前导横杠；注释/空行跳过）。
+export std::vector<std::string> parseRules(const std::string& yaml) {
+    std::vector<std::string> rules;
+    bool inRules = false;
+    std::size_t begin = 0;
+    while (begin <= yaml.size()) {
+        const auto end = yaml.find('\n', begin);
+        std::string line = yaml.substr(
+            begin, end == std::string::npos ? std::string::npos : end - begin);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!line.empty() && line[0] != ' ' && line[0] != '\t' &&
+            line[0] != '#') {
+            // 顶层键：切换是否处于 rules 块。
+            const auto colon = line.find(':');
+            inRules = colon != std::string::npos &&
+                      std::string_view(line).substr(0, colon) == "rules";
+        } else if (inRules) {
+            std::size_t j = 0;
+            while (j < line.size() && (line[j] == ' ' || line[j] == '\t')) ++j;
+            if (line.compare(j, 2, "- ") == 0) {
+                std::string rule = line.substr(j + 2);
+                while (!rule.empty() &&
+                       (rule.back() == ' ' || rule.back() == '\t')) {
+                    rule.pop_back();
+                }
+                if (!rule.empty()) rules.push_back(std::move(rule));
+            }
+        }
+        if (end == std::string::npos) break;
+        begin = end + 1;
+    }
+    return rules;
+}
+
+// 在 rules 块的前/后插入一条规则；无 rules 块时新建。规则文本会被清理
+//（去首尾空白/行首 "- "/拒绝换行），失败原样返回。
+export std::string insertRule(const std::string& yaml, const std::string& rule,
+                              bool prepend) {
+    std::string clean = rule;
+    while (!clean.empty() &&
+           (clean.front() == ' ' || clean.front() == '\t')) {
+        clean.erase(clean.begin());
+    }
+    while (!clean.empty() &&
+           (clean.back() == ' ' || clean.back() == '\t' ||
+            clean.back() == '\r')) {
+        clean.pop_back();
+    }
+    while (clean.starts_with("- ")) clean.erase(0, 2);
+    if (clean.empty() || clean.find('\n') != std::string::npos) return yaml;
+
+    std::vector<std::string> lines;
+    {
+        std::size_t begin = 0;
+        while (begin <= yaml.size()) {
+            const auto end = yaml.find('\n', begin);
+            lines.push_back(yaml.substr(
+                begin,
+                end == std::string::npos ? std::string::npos : end - begin));
+            if (end == std::string::npos) break;
+            begin = end + 1;
+        }
+    }
+
+    // 找顶层 rules: 行。
+    std::size_t rulesIdx = lines.size();
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const std::string_view l = lines[i];
+        if (!l.empty() && l[0] != ' ' && l[0] != '\t' && l[0] != '#') {
+            const auto colon = l.find(':');
+            if (colon != std::string::npos && l.substr(0, colon) == "rules") {
+                rulesIdx = i;
+                break;
+            }
+        }
+    }
+    if (rulesIdx == lines.size()) {
+        std::string out = yaml;
+        if (!out.empty() && out.back() != '\n') out += '\n';
+        out += std::format("rules:\n  - {}\n", clean);
+        return out;
+    }
+
+    // 块内第一条/最后一条 "- " 行与缩进。
+    std::size_t first = std::string::npos;
+    std::size_t last = std::string::npos;
+    std::string indent = "  ";
+    for (std::size_t i = rulesIdx + 1; i < lines.size(); ++i) {
+        const std::string_view l = lines[i];
+        if (!l.empty() && l[0] != ' ' && l[0] != '\t' && l[0] != '#') break;
+        std::size_t j = 0;
+        while (j < l.size() && (l[j] == ' ' || l[j] == '\t')) ++j;
+        if (l.compare(j, 2, "- ") == 0) {
+            if (first == std::string::npos) {
+                first = i;
+                indent = std::string(l.substr(0, j));
+            }
+            last = i;
+        }
+    }
+    const std::size_t insertAt =
+        (prepend || last == std::string::npos)
+            ? (first == std::string::npos ? rulesIdx + 1 : first)
+            : last + 1;
+    lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(insertAt),
+                 std::format("{}- {}", indent, clean));
+
+    std::string out;
+    for (const auto& l : lines) {
+        out += l;
+        out += '\n';
+    }
+    return out;
+}
+
 export class ProfilesStore {
 public:
     ProfilesStore() = default;
