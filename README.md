@@ -76,3 +76,7 @@ clash-flux service install|uninstall|status|run
 Windows（MSVC）/ macOS（brew LLVM）/ Android（HuxerUI CLI 打 APK，仅 GUI 壳、
 不含 mihomo 内核）为实验性 continue-on-error。桌面 job 统一走 HuxerUI 源码
 通道（钉 commit clone 上游），mihomo 在 configure 期自动下载。
+
+Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
+（Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、
+修复/卸载；界面字符串含简中/繁中/英文）。

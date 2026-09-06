@@ -335,6 +335,31 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     include(cmake/mihomo_bundle.cmake)
     clashflux_bundle_mihomo(clash-flux)
 
+    # ---- Windows 自定义安装向导 ---------------------------------------------
+    # `huxerui package windows` 时生效（日常构建零开销）：platform/windows/
+    # huxerui.cmake 定义配置函数，把 MSI + Burn 捆绑包 + 托管安装器 UI
+    # （platform/windows/package/，品牌面板 + 简中/繁中/英文目录）接进构建。
+    # install 规则是安装包文件唯一来源——自带内核与图标资产在此显式声明。
+    # 必须位于 clashflux_bundle_mihomo 之后（引用其导出的内核路径）。
+    if (WIN32 AND COMMAND huxerui_configure_windows_project_package)
+        get_target_property(CLASHFLUX_APP_INSTALL_COMPONENT clash-flux
+            HUXERUI_APPLICATION_INSTALL_COMPONENT)
+        if (CLASHFLUX_APP_INSTALL_COMPONENT
+                AND NOT CLASHFLUX_APP_INSTALL_COMPONENT MATCHES "-NOTFOUND$")
+            huxerui_configure_windows_project_package(clash-flux
+                "${CLASHFLUX_APP_INSTALL_COMPONENT}")
+            if (CLASHFLUX_BUNDLE_MIHOMO AND CLASHFLUX_MIHOMO_BUNDLED_BINARY)
+                install(FILES "${CLASHFLUX_MIHOMO_BUNDLED_BINARY}"
+                    DESTINATION engines
+                    RENAME "${CLASHFLUX_MIHOMO_BUNDLED_NAME}"
+                    COMPONENT "${CLASHFLUX_APP_INSTALL_COMPONENT}")
+            endif ()
+            install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+                DESTINATION .
+                COMPONENT "${CLASHFLUX_APP_INSTALL_COMPONENT}")
+        endif ()
+    endif ()
+
     # 图标资源放 <exe>/assets；HuxerUI 资源包（内置+app 合并，由 huxerui_add_app 的
     # 资源构建生成）放 <exe>.resources。最新运行时除了 resources.bin 索引外，
     # 还会按索引读取同目录下的 .huxv/.png 等实际 payload，必须把整个 package

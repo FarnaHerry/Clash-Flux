@@ -111,4 +111,8 @@ function(clashflux_bundle_mihomo target)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${_bin}" "$<TARGET_FILE_DIR:${target}>/engines/${_bundled_name}"
         COMMENT "Bundling mihomo ${CLASHFLUX_MIHOMO_VERSION} into engines/")
+
+    # 暴露解包出的内核路径（打包安装规则用，见顶层 CMakeLists Windows 打包块）。
+    set(CLASHFLUX_MIHOMO_BUNDLED_BINARY "${_bin}" PARENT_SCOPE)
+    set(CLASHFLUX_MIHOMO_BUNDLED_NAME "${_bundled_name}" PARENT_SCOPE)
 endfunction()
