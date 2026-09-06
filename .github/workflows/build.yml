@@ -74,7 +74,7 @@ env:
   # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
   # CI 必须自行 clone 并钉 commit，保证可复现）。上游活跃开发中，追新时
   # 同步更新本机 checkout 与此 pin。
-  HUXERUI_COMMIT: '371072b4e964adc17f5be8fdfbad94b2daeead88'
+  HUXERUI_COMMIT: '6a52b08450173ea7fbd6903f7557b56febe9b63b'
 
 jobs:
   # ------------------------------------------------------------------ Linux
