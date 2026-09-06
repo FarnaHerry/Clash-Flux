@@ -49,12 +49,14 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
   （REST + 订阅下载）、IXWebSocket 12.0.1（client-only，内核推送流）、
   SQLiteCpp 3.3.3（订阅/设置）、nlohmann::json 3.12.0、OpenSSL 3.5.1
   （linux x86_64 兜底静态包）。
-- **mihomo 由项目自带**：configure 期下载官方 release（v1.19.30 linux x86_64，
-  SHA256 钉死，见 CMakeLists「自带 mihomo 内核」块），POST_BUILD 拷到
+- **mihomo 由项目自带**：configure 期下载官方 release（v1.19.30，SHA256
+  钉死，资产表见 `cmake/mihomo_bundle.cmake`），POST_BUILD 拷到
   `<exe>/engines/mihomo`；`-DCLASHFLUX_BUNDLE_MIHOMO=OFF` 关闭。运行时解析
   优先级 `<exe>/engines/mihomo → <exe>/mihomo → <repo>/engines/mihomo（开发
   形态）→ PATH`（`src/config.cppm::cfg::mihomoBinary()`）。`engines/` 已
-  gitignore。
+  gitignore。**内核发布什么桌面平台/arch 就钉什么**：linux/windows ×
+  x86_64/arm64 + darwin x86_64/arm64 六组合（riscv64/loong64/freebsd 等
+  壳编不到的目标不入表）。
 
 ## 架构
 
@@ -77,10 +79,13 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 
 ## 多平台 / CI
 
-- 平台细节由 `.github/workflows/build.yml` 承担：Linux（ubuntu:26.04 容器 +
-  clang-21/libc++-21 + pip cmake 4.4.2）正式；Windows（MSVC + choco OpenSSL）/
-  macOS（brew LLVM + 内联 P0960 补丁）/ Android（HuxerUI CLI 打 APK，仅 GUI 壳）
-  实验性 continue-on-error。桌面 job 走 HuxerUI 源码通道（钉 commit clone 到
+- 平台细节由 `.github/workflows/build.yml` 承担（矩阵命名对齐 apitab：
+  `build-<os>-<arch>`）：build-linux-x86_64（ubuntu:26.04 容器 + clang-21/
+  libc++-21 + pip cmake 4.4.2）正式；linux-arm64（ubuntu-24.04-arm 原生）/
+  windows-x86_64（MSVC + choco OpenSSL）/ windows-arm64（windows-11-arm +
+  vcpkg OpenSSL）/ macos-arm64（macos-15 + brew LLVM + 内联 P0960 补丁）/
+  macos-x86_64（macos-13）/ Android（HuxerUI CLI 打 APK，仅 GUI 壳）实验性
+  continue-on-error。桌面 job 走 HuxerUI 源码通道（钉 commit clone 到
   `third_party/huxerui/`；上游活跃开发中，本机 pull 后同步更新 workflow 的
   HUXERUI_COMMIT，当前 371072b）。
 - **Windows 自定义安装向导**（`platform/windows/package/`）：`huxerui package
