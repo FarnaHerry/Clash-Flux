@@ -415,6 +415,10 @@ jobs:
     name: build-android-experimental
     runs-on: ubuntu-24.04
     continue-on-error: true
+    # 仅手动触发：NDK 工具链不提供 import std 所需的 __CMAKE::CXX23（CMake
+    # 报 "Only libc++ is supported"，NDK 也不带 std.cppm 模块源），C++23
+    # 模块工程无法在 NDK 上 configure——等 NDK/CMake 支持成熟后再挂回 push。
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - name: Check out source
         uses: actions/checkout@v4
