@@ -314,8 +314,8 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                                 co_return;
                             }
                             if (gate == core::TunGate::Denied) {
-                                ShowTunGuideDialog(dialog, clipboard, textColor,
-                                                   hintColor);
+                                ShowTunGuideDialog(dialog, clipboard, toast,
+                                                   textColor, hintColor);
                                 co_return;
                             }
                         }

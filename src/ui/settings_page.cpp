@@ -356,7 +356,7 @@ const std::string kAboutText =
                                         }
                                         if (gate == core::TunGate::Denied) {
                                             ShowTunGuideDialog(dialog, clipboard,
-                                                               textColor,
+                                                               toast, textColor,
                                                                hintColor);
                                             co_return;
                                         }

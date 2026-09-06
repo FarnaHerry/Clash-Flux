@@ -203,8 +203,8 @@ jobs:
         include:
           - arch: x86_64
             runner: windows-latest
-          - arch: arm64
-            runner: windows-11-arm
+        # arm64 已移除：上游无 windows/arm64 预置 hcg/hrc，本项目也不发布
+        # Windows ARM 包（vcpkg openssl:arm64 通道验证成本高，不再支持）。
     continue-on-error: true
     steps:
       - name: Check out source
@@ -226,53 +226,21 @@ jobs:
           cmake --version | Select-Object -First 1
           choco install ninja -y --no-progress
 
-      - name: Install OpenSSL (x86_64, choco)
-        if: matrix.arch == 'x86_64'
+      - name: Install OpenSSL (choco)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           choco install openssl -y --no-progress
           Write-Host "OPENSSL_ROOT_DIR=C:/Program Files/OpenSSL" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Install OpenSSL (arm64, vcpkg)
-        if: matrix.arch == 'arm64'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          # choco 的 OpenSSL 只有 x64；vcpkg 从源码构建 arm64 动态库（较慢）。
-          vcpkg install openssl:arm64-windows
-          Write-Host "OPENSSL_ROOT_DIR=$env:VCPKG_ROOT/installed/arm64-windows" | Out-File -FilePath $env:GITHUB_ENV -Append
-
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Build HuxerUI host tools (arm64, no upstream prebuilt)
-        if: matrix.arch == 'arm64'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          # 上游没有 windows/arm64 预置 hcg/hrc —— 从源码原生编（独立 CMake
-          # 工程，无第三方依赖），装进解析器期望的 <root>/windows/arm64 布局，
-          # Configure 经 HUXERUI_HOST_TOOL_ROOT 指过去。
-          $toolsRoot = "third_party/huxerui-tools/windows/arm64"
-          New-Item -ItemType Directory -Force $toolsRoot | Out-Null
-          foreach ($tool in @('codegen', 'resource_compiler')) {
-            cmake -S "third_party/huxerui/tools/$tool" -B "host-tools-build/$tool" -G Ninja
-            cmake --build "host-tools-build/$tool" --config Release --parallel
-            cmake --install "host-tools-build/$tool" --config Release --prefix "$toolsRoot"
-          }
-          if (-not (Test-Path "$toolsRoot/hcg.exe")) { throw "hcg.exe missing after install" }
-          Write-Host "HUXERUI_HOST_TOOL_ROOT=$PWD/third_party/huxerui-tools" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Configure
         shell: pwsh
         run: |
-          $extra = @()
-          if ("${{ matrix.arch }}" -eq 'arm64') {
-            $extra += "-DHUXERUI_HOST_TOOL_ROOT=$env:HUXERUI_HOST_TOOL_ROOT"
-          }
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
-            "-DOPENSSL_ROOT_DIR=$env:OPENSSL_ROOT_DIR" @extra
+            "-DOPENSSL_ROOT_DIR=$env:OPENSSL_ROOT_DIR"
 
       - name: Build release
         run: cmake --build build --config Release --parallel
@@ -291,12 +259,6 @@ jobs:
           # 运行时 DLL（huxerui.dll / OpenSSL / MSVC CRT）由构建 POST_BUILD 拷到 exe 旁
           foreach ($dll in @(Get-ChildItem (Split-Path -Parent (Resolve-Path $exe)) -File -Filter '*.dll')) {
             Copy-Item $dll.FullName "dist-src\$($dll.Name)" -Force
-          }
-          # vcpkg 的 OpenSSL DLL 不在 exe 旁（arm64 通道），补拷
-          if ("${{ matrix.arch }}" -eq 'arm64') {
-            foreach ($dll in @(Get-ChildItem "$env:VCPKG_ROOT/installed/arm64-windows/bin" -File -Filter '*.dll' -ErrorAction SilentlyContinue)) {
-              Copy-Item $dll.FullName "dist-src\$($dll.Name)" -Force
-            }
           }
           # 自带内核（configure 期下载、POST_BUILD 拷到 exe 旁 engines/）
           if (Test-Path 'build/engines' -PathType Container) {
@@ -465,6 +427,19 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Ensure CMake >= 4.4 (pip) and expose to Gradle
+        run: |
+          set -euo pipefail
+          # 项目要求 CMake >= 3.30（import std 门控）；SDK 自带的 3.22.1 不够，
+          # AGP 也不会自动装 3.31.1 —— 直接 pip 装 4.4.2，经用户级 gradle
+          # 属性 cmake.dir 指给 AGP（不进仓库）。
+          python3 -m pip install --break-system-packages -q cmake==4.4.2
+          cmake_bin="$(command -v cmake)"
+          cmake_root="$(dirname "$(dirname "$cmake_bin")")"
+          "$cmake_root/bin/cmake" --version | head -1
+          mkdir -p ~/.gradle
+          echo "cmake.dir=$cmake_root" >> ~/.gradle/gradle.properties
 
       - name: Extract HuxerUI CLI from vendored tarball
         run: |
