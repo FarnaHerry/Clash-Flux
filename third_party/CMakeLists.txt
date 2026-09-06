@@ -17,7 +17,9 @@
 # 本文件假定 find_package(OpenSSL) 已成功。
 include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/clashflux_vendor.cmake")
 
-if(NOT OpenSSL_FOUND)
+if(NOT OpenSSL_FOUND AND NOT ANDROID)
+    # Android 走 curl 无 TLS 路径（见上面的 CURL_USE_OPENSSL 分支），
+    # 顶层不解析 OpenSSL。
     message(FATAL_ERROR "third_party：顶层应已完成 OpenSSL 解析")
 endif()
 
