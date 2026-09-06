@@ -265,6 +265,41 @@ private:
         return std::nullopt;
     }
 
+    // 解析 subscription-userinfo：upload=..; download=..; total=..; expire=..
+    // （单位字节；键值两侧空白容忍；未知键忽略）。
+    void parseUserInfo(const std::string& value, std::int64_t& used,
+                       std::int64_t& total) {
+        std::int64_t upload = 0;
+        std::int64_t download = 0;
+        std::int64_t totalIn = 0;
+        std::int64_t begin = 0;
+        while (begin <= value.size()) {
+            const auto end = value.find(';', begin);
+            const std::string pair = value.substr(
+                begin, end == std::string::npos ? std::string::npos : end - begin);
+            const auto eq = pair.find('=');
+            if (eq != std::string::npos) {
+                const std::string key = pair.substr(0, eq);
+                std::string num = pair.substr(eq + 1);
+                while (!num.empty() && (num.front() == ' ' || num.front() == '\t')) {
+                    num.erase(num.begin());
+                }
+                std::int64_t parsed = 0;
+                const auto [ptr, ec] = std::from_chars(
+                    num.data(), num.data() + num.size(), parsed);
+                if (ec == std::errc()) {
+                    if (key == "upload") upload = parsed;
+                    else if (key == "download") download = parsed;
+                    else if (key == "total") totalIn = parsed;
+                }
+            }
+            if (end == std::string::npos) break;
+            begin = end + 1;
+        }
+        used = upload + download;
+        total = totalIn;
+    }
+
     // 下载 p.url 到 profiles/<id>.yaml 并更新行（updated_at/error）。
     // 代理三态按订阅选项组装：内核代理 > 系统环境代理 > 强制直连。
     bool download(db::Profile& p) {
@@ -285,6 +320,21 @@ private:
             try { coreStore().db().saveProfile(p); } catch (...) {}
             lastError_ = std::format("下载失败：{}", r.error);
             return false;
+        }
+        // 订阅响应头：subscription-userinfo（流量）/ profile-web-page-url
+        // （提供方首页）。缺头时清零/清空——以最新一跳为准。
+        if (const auto it = r.headers.find("subscription-userinfo");
+            it != r.headers.end()) {
+            parseUserInfo(it->second, p.usedBytes, p.totalBytes);
+        } else {
+            p.usedBytes = 0;
+            p.totalBytes = 0;
+        }
+        if (const auto it = r.headers.find("profile-web-page-url");
+            it != r.headers.end()) {
+            p.homepage = it->second;
+        } else {
+            p.homepage.clear();
         }
         p.error.clear();
         p.updatedAt = nowUnix();

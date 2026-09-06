@@ -54,6 +54,10 @@ export enum class TunGate {
 // macOS 同理。Denied 时 UI 引导安装服务。
 export TunGate tunGate();
 
+// 用系统默认浏览器打开 URL（订阅卡「首页」跳转）。fork+exec（不走 shell，
+// URL 无注入面）/ Windows ShellExecuteW。失败静默（best-effort）。
+export void openInBrowser(const std::string& url);
+
 // 合成运行时配置文本。
 //   profileYaml  订阅（或手写）配置原文；可为空（生成最小可用配置）。
 //   controller   "127.0.0.1:9097"

@@ -315,6 +315,7 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         OpenSSL::SSL
         OpenSSL::Crypto
         clashflux_json
+        clashflux_qrcode
         Threads::Threads
     )
 
