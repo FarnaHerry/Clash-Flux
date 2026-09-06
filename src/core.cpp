@@ -14,6 +14,7 @@ module;
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shellapi.h>  // ShellExecuteExW（WIN32_LEAN_AND_MEAN 不含 shellapi）
 #else
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -30,8 +31,58 @@ extern char** environ;
 module clashflux.core;
 
 import std;
+import clashflux.service;
 
 namespace core {
+
+// ---- TUN 打开门禁（见 core.cppm 注释）----
+namespace {
+
+#ifdef _WIN32
+// 当前进程是否以管理员令牌运行。
+bool tokenElevated() {
+    BOOL elevated = FALSE;
+    HANDLE token = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        TOKEN_ELEVATION elevation{};
+        DWORD ret = 0;
+        if (GetTokenInformation(token, TokenElevation, &elevation,
+                                sizeof(elevation), &ret)) {
+            elevated = elevation.TokenIsElevated;
+        }
+        CloseHandle(token);
+    }
+    return elevated != FALSE;
+}
+
+// 以管理员重新启动自身（runas → UAC）。用户取消 / 失败返回 false。
+bool relaunchElevated() {
+    wchar_t path[MAX_PATH]{};
+    if (GetModuleFileNameW(nullptr, path, MAX_PATH) == 0) return false;
+    SHELLEXECUTEINFOW sei{};
+    sei.cbSize = sizeof(sei);
+    sei.lpVerb = L"runas";
+    sei.lpFile = path;
+    sei.nShow = SW_SHOWNORMAL;
+    return ShellExecuteExW(&sei) != FALSE;
+}
+#endif
+
+} // namespace
+
+TunGate tunGate() {
+#ifdef _WIN32
+    if (tokenElevated()) return TunGate::Ok;
+    return relaunchElevated() ? TunGate::Elevated : TunGate::Denied;
+#else
+    if (::geteuid() == 0) return TunGate::Ok;
+#ifdef __linux__
+    // root 服务托管的内核由服务侧（root）建 TUN：服务可用即视为可开。
+    if (service::available()) return TunGate::Ok;
+#endif
+    return TunGate::Denied;
+#endif
+}
 
 const char* stateName(CoreState s) {
     switch (s) {
