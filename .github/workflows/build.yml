@@ -435,11 +435,15 @@ jobs:
           # AGP 也不会自动装 3.31.1 —— 直接 pip 装 4.4.2，经用户级 gradle
           # 属性 cmake.dir 指给 AGP（不进仓库）。
           python3 -m pip install --break-system-packages -q cmake==4.4.2
-          cmake_bin="$(command -v cmake)"
-          cmake_root="$(dirname "$(dirname "$cmake_bin")")"
+          cmake_root="$(dirname "$(dirname "$(command -v cmake)")")"
           "$cmake_root/bin/cmake" --version | head -1
-          mkdir -p ~/.gradle
-          echo "cmake.dir=$cmake_root" >> ~/.gradle/gradle.properties
+          # AGP 读 cmake.dir：setup-android 会重定向 GRADLE_USER_HOME，用户级
+          # gradle.properties 可能被绕过 —— 项目级（必读）+ 用户级双写兜底。
+          # 项目文件改动只存在于本 job，不进仓库。
+          echo "cmake.dir=$cmake_root" >> platform/android/gradle.properties
+          gradle_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          mkdir -p "$gradle_home"
+          echo "cmake.dir=$cmake_root" >> "$gradle_home/gradle.properties"
 
       - name: Extract HuxerUI CLI from vendored tarball
         run: |
