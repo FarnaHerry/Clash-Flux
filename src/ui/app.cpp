@@ -279,13 +279,18 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
     // Checked 勾选保持与真实状态同步。
     auto traySysProxy = huxerui::UseState(false);
     auto trayTun = huxerui::UseState(false);
+    // 托盘启用（设置页开关写 KV，泵每拍带回；关闭后关窗即退出）与关闭询问
+    // 弹窗防重标记。
+    auto trayEnabled =
+        huxerui::UseState(store::coreStore().setting("tray.enabled", "true") == "true");
+    auto closeDialogOpen = huxerui::UseState(false);
     // 托盘 TUN 门禁 Denied 时的引导弹窗（挂在主窗口上）。
     auto dialog = huxerui::UseDialog();
 
     // 内核自启 + 崩溃检测泵：启动是阻塞活，整段在任务线程；泵每 500ms 检查
     // 进程存活（异常退出 → Failed，快照由各页面/状态胶囊自行轮询）。
     huxerui::Lifecycle(
-        [tasks, traySysProxy, trayTun] {
+        [tasks, traySysProxy, trayTun, trayEnabled] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await RunOnTaskThread([] {
                     auto& core = store::coreStore();
@@ -299,6 +304,8 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
                     core.checkAlive();
                     traySysProxy = core.systemProxyEnabled();
                     trayTun = core.snapshot().tunEnabled;
+                    trayEnabled =
+                        core.setting("tray.enabled", "true") == "true";
                     return true;
                 });
             });
@@ -338,9 +345,12 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
         tray.OnActivate([window] { window.Activate(); });
         huxerui::Lifecycle(
             [tray, window, application, tasks, traySysProxy, trayTun, dialog,
-             textColor = rootSpec.colors.on_surface,
+             trayEnabled, textColor = rootSpec.colors.on_surface,
              hintColor = rootSpec.colors.on_surface_variant] {
-                std::vector<huxerui::MenuEntry> menuEntries;
+                // 设置页关掉托盘：跳过注册（依赖变化重建时不 Show）；Hide 对
+                // 未显示的托盘是幂等 no-op，cleanup 统一执行。
+                if (trayEnabled.Get()) {
+                    std::vector<huxerui::MenuEntry> menuEntries;
                 menuEntries.push_back(
                     huxerui::MenuItem("显示主窗口", [window] { window.Activate(); }));
                 menuEntries.push_back(huxerui::MenuSection{});
@@ -388,9 +398,100 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
                           huxerui::SystemTrayOptions{
                               .tooltip = "Clash-Flux",
                               .menu = std::move(menuEntries)});
+                }
                 return [tray] { tray.Hide(); };
             },
-            traySysProxy, trayTun);
+            traySysProxy, trayTun, trayEnabled);
+    }
+
+    // ---- 关闭窗口行为（托盘功能核心：驻留托盘继续代理）----
+    // tray.close_behavior：0 = 每次询问 / 1 = 直接退出 / 2 = 最小化到托盘。
+    // 托盘不可用（平台不支持或设置页关闭）时一律直接退出。
+    {
+        const huxerui::Color closeHintColor = rootSpec.colors.on_surface_variant;
+        // 隐藏到托盘：Hide 会卸载窗口子树，推迟出事件路径。
+        auto hideToTray = [tasks, window] {
+            tasks.Launch([=]() -> huxerui::Task<void> {
+                co_await huxerui::Delay(std::chrono::duration<double>{0});
+                window.Hide();
+            });
+        };
+        window.OnCloseRequest(
+            [=]() mutable -> bool {
+                if (!trayAvailable || !trayEnabled.Get()) return false;
+                const std::string behavior =
+                    store::coreStore().setting("tray.close_behavior", "0");
+                if (behavior == "1") return false;
+                if (behavior == "2") {
+                    hideToTray();
+                    return true;
+                }
+                // 0 = 询问（防重复弹窗；事件路径上只置标记，弹窗推迟）。
+                if (closeDialogOpen.Get()) return true;
+                closeDialogOpen = true;
+                tasks.Launch([=]() -> huxerui::Task<void> {
+                    co_await huxerui::Delay(std::chrono::duration<double>{0});
+                    dialog.Show(
+                        [=](huxerui::DialogContext ctx) -> huxerui::View {
+                            return DialogCard(huxerui::Column {
+                                huxerui::Text("关闭 Clash-Flux？",
+                                              huxerui::TextRole::Title),
+                                huxerui::Text("直接退出将停止代理；最小化到托盘"
+                                              "后代理继续在后台运行。")
+                                    .Style(huxerui::TextStyle{
+                                        huxerui::Font::System(
+                                            font_size::kCaption),
+                                        closeHintColor}),
+                                huxerui::Row {
+                                    huxerui::Button("直接关闭")
+                                        .OnClick([=] {
+                                            ctx.Dismiss();
+                                            closeDialogOpen = false;
+                                            tasks.Launch(
+                                                [=]() -> huxerui::Task<void> {
+                                                    co_await huxerui::Delay(
+                                                        std::chrono::duration<
+                                                            double>{0});
+                                                    window.Close();
+                                                });
+                                        }),
+                                    huxerui::Button("最小化到托盘")
+                                        .OnClick([=] {
+                                            ctx.Dismiss();
+                                            closeDialogOpen = false;
+                                            hideToTray();
+                                        }),
+                                    huxerui::Button("取消")
+                                        .OnClick([=] {
+                                            ctx.Dismiss();
+                                            closeDialogOpen = false;
+                                        }),
+                                }.With(
+                                    huxerui::Spacing(8.0F),
+                                    huxerui::MainAlign(
+                                        huxerui::MainAxisAlignment::
+                                            SpaceBetween)),
+                            }
+                                              .With(
+                                                  huxerui::Spacing(12.0F),
+                                                  huxerui::Frame{.width = 420.0F},
+                                                  huxerui::CrossAlign(
+                                                      huxerui::
+                                                          CrossAxisAlignment::
+                                                              Stretch)));
+                        },
+                        huxerui::DialogOptions{});
+                });
+                return true;
+            },
+            0);
+
+        // 启动时隐藏到托盘（需托盘可用且启用，否则无入口恢复窗口）。
+        if (trayAvailable && trayEnabled.Get() &&
+            store::coreStore().setting("tray.start_minimized", "false") ==
+                "true") {
+            window.Hide();
+        }
     }
 
     std::vector<huxerui::View> pages;

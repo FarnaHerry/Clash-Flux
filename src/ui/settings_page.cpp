@@ -378,6 +378,46 @@ const std::string kAboutText =
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
 
                 Card(huxerui::Column {
+                    SectionTitle("托盘"),
+                    SettingRow(
+                        "启用托盘图标", "关闭后托盘不可用，关闭窗口即退出",
+                        huxerui::Switch(store::coreStore().setting(
+                                            "tray.enabled", "true") == "true")
+                            .OnChanged([](bool on) {
+                                store::coreStore().setSetting(
+                                    "tray.enabled", on ? "true" : "false");
+                            })),
+                    SettingRow(
+                        "关闭窗口时", "托盘可用时的驻留行为（代理继续后台运行 = "
+                                      "最小化到托盘）",
+                        huxerui::SegmentedButton(
+                            std::vector<huxerui::StringVariant>{
+                                "每次询问", "直接退出", "最小化到托盘"},
+                            [] {
+                                const std::string v = store::coreStore().setting(
+                                    "tray.close_behavior", "0");
+                                if (v == "1") return std::size_t{1};
+                                if (v == "2") return std::size_t{2};
+                                return std::size_t{0};
+                            }())
+                            .OnChanged([](std::size_t idx) {
+                                store::coreStore().setSetting(
+                                    "tray.close_behavior", std::to_string(idx));
+                            })),
+                    SettingRow(
+                        "启动时隐藏到托盘", "下次启动不显示主窗口，经托盘唤出",
+                        huxerui::Switch(store::coreStore().setting(
+                                            "tray.start_minimized",
+                                            "false") == "true")
+                            .OnChanged([](bool on) {
+                                store::coreStore().setSetting(
+                                    "tray.start_minimized",
+                                    on ? "true" : "false");
+                            })),
+                }.With(huxerui::Spacing(10.0F),
+                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
+
+                Card(huxerui::Column {
                     SectionTitle("外观"),
                     SettingRow(
                         "主题", "",
