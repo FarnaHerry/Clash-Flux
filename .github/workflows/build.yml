@@ -246,11 +246,33 @@ jobs:
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Build HuxerUI host tools (arm64, no upstream prebuilt)
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # 上游没有 windows/arm64 预置 hcg/hrc —— 从源码原生编（独立 CMake
+          # 工程，无第三方依赖），装进解析器期望的 <root>/windows/arm64 布局，
+          # Configure 经 HUXERUI_HOST_TOOL_ROOT 指过去。
+          $toolsRoot = "third_party/huxerui-tools/windows/arm64"
+          New-Item -ItemType Directory -Force $toolsRoot | Out-Null
+          foreach ($tool in @('codegen', 'resource_compiler')) {
+            cmake -S "third_party/huxerui/tools/$tool" -B "host-tools-build/$tool" -G Ninja
+            cmake --build "host-tools-build/$tool" --config Release --parallel
+            cmake --install "host-tools-build/$tool" --config Release --prefix "$toolsRoot"
+          }
+          if (-not (Test-Path "$toolsRoot/hcg.exe")) { throw "hcg.exe missing after install" }
+          Write-Host "HUXERUI_HOST_TOOL_ROOT=$PWD/third_party/huxerui-tools" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Configure
         shell: pwsh
         run: |
+          $extra = @()
+          if ("${{ matrix.arch }}" -eq 'arm64') {
+            $extra += "-DHUXERUI_HOST_TOOL_ROOT=$env:HUXERUI_HOST_TOOL_ROOT"
+          }
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
-            "-DOPENSSL_ROOT_DIR=$env:OPENSSL_ROOT_DIR"
+            "-DOPENSSL_ROOT_DIR=$env:OPENSSL_ROOT_DIR" @extra
 
       - name: Build release
         run: cmake --build build --config Release --parallel
@@ -312,8 +334,10 @@ jobs:
         include:
           - arch: arm64
             runner: macos-15
-          - arch: x86_64
-            runner: macos-13
+        # x86_64 已移除：macos-13（Intel）runner 已退役，job 永远排队阻塞；
+        # 在 arm runner 上交叉编译 x86_64 又卡在「没有 x86_64 的 OpenSSL 产物」
+        # （brew 只有 arm64 库）。darwin amd64 的 mihomo 资产表保留，供发布
+        # 打包；Intel 构建等有 x86_64 OpenSSL 产物后再补。
     continue-on-error: true
     steps:
       - name: Check out source

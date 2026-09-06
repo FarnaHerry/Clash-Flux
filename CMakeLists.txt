@@ -202,21 +202,27 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # ---- OpenSSL 解析（必须在 add_subdirectory(third_party) 前：imported target
     # 要对 curl 等子项目全局可见）----------------------------------------
     # 优先系统 OpenSSL；系统没有时，linux x86_64 使用 vendor 的静态 3.5.1。
-    find_package(OpenSSL QUIET)
-    if (NOT OpenSSL_FOUND)
-        if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64)")
-            clashflux_extract(openssl
-                "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tarballs/openssl-3.5.1-linux-x86_64.tar.gz"
-                "d749ee7ec6bda301dba4a67dc7196d4a04b310f664dc360d6ab2e49298b731cf"
-                "openssl-3.5.1-linux-x86_64")
-            set(OPENSSL_ROOT_DIR "${openssl_SOURCE_DIR}" CACHE PATH "vendored OpenSSL" FORCE)
-            set(OPENSSL_USE_STATIC_LIBS TRUE CACHE BOOL "" FORCE)
-            find_package(OpenSSL REQUIRED)
-            message(STATUS "clash-flux: using vendored OpenSSL ${OPENSSL_VERSION} (static)")
-        else ()
-            message(FATAL_ERROR
-                "未找到 OpenSSL 开发头文件/库。请安装系统 OpenSSL（libssl-dev / "
-                "openssl@3 / vcpkg openssl），或为该平台补充 third_party/tarballs 下的静态包。")
+    # Android：NDK 无 OpenSSL，curl 以无 TLS 构建（见 third_party/CMakeLists），
+    # 目标链接跳过 OpenSSL。
+    if (ANDROID)
+        message(STATUS "clash-flux: Android 无 OpenSSL，curl 以无 TLS 构建")
+    else ()
+        find_package(OpenSSL QUIET)
+        if (NOT OpenSSL_FOUND)
+            if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64)")
+                clashflux_extract(openssl
+                    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tarballs/openssl-3.5.1-linux-x86_64.tar.gz"
+                    "d749ee7ec6bda301dba4a67dc7196d4a04b310f664dc360d6ab2e49298b731cf"
+                    "openssl-3.5.1-linux-x86_64")
+                set(OPENSSL_ROOT_DIR "${openssl_SOURCE_DIR}" CACHE PATH "vendored OpenSSL" FORCE)
+                set(OPENSSL_USE_STATIC_LIBS TRUE CACHE BOOL "" FORCE)
+                find_package(OpenSSL REQUIRED)
+                message(STATUS "clash-flux: using vendored OpenSSL ${OPENSSL_VERSION} (static)")
+            else ()
+                message(FATAL_ERROR
+                    "未找到 OpenSSL 开发头文件/库。请安装系统 OpenSSL（libssl-dev / "
+                    "openssl@3 / vcpkg openssl），或为该平台补充 third_party/tarballs 下的静态包。")
+            endif ()
         endif ()
     endif ()
 
@@ -312,12 +318,14 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         ixwebsocket
         CURL::libcurl
         SQLiteCpp
-        OpenSSL::SSL
-        OpenSSL::Crypto
         clashflux_json
         clashflux_qrcode
         Threads::Threads
     )
+    # Android：NDK 无 OpenSSL（curl 无 TLS 构建），链接跳过 OpenSSL。
+    if (NOT ANDROID)
+        target_link_libraries(clash-flux PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    endif ()
 
     # 生成格式钩子：平台清单 / Info.plist
     if (WIN32 AND HUXERUI_WINDOWS_MANIFEST)
