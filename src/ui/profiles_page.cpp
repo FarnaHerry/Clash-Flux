@@ -174,6 +174,10 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
     auto editName = huxerui::UseState(huxerui::TextEditingValue{""});
     auto editUrl = huxerui::UseState(huxerui::TextEditingValue{""});
     auto editYaml = huxerui::UseState(huxerui::TextEditingValue{""});
+    // 编辑规则弹窗：工作 YAML（未保存的插入结果）+ 规则行列表 + 输入行。
+    auto editRules = huxerui::UseState<std::vector<std::string>>({});
+    auto editRuleInput = huxerui::UseState(huxerui::TextEditingValue{""});
+    auto editRulesDirty = huxerui::UseState(false);
     // 编辑弹窗的订阅选项字段（ProfileOptionsForm）。
     auto editDesc = huxerui::UseState(huxerui::TextEditingValue{""});
     auto editTimeout = huxerui::UseState(huxerui::TextEditingValue{""});
@@ -281,10 +285,132 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
         });
     };
 
-    // 编辑规则弹窗：直接编辑订阅 YAML 原文；保存后若该订阅启用中将重启内核。
+    // 编辑规则弹窗：订阅 rules 逐条列表 + 前置/后置添加（文本级 insertRule，
+    // 改的是工作副本；「保存」才写回订阅文件，启用中的订阅重启内核生效）。
+    // 同 showEditInfo：菜单点击路径上必须 Delay(0) 让出后再写 State/开弹窗；
+    // 工厂 lambda 只消费按值捕获的颜色，不放裸钩子。
+    auto showEditRules = [dialog, tasks, toast, editYaml, editRules,
+                          editRuleInput, editRulesDirty, id, profile,
+                         textColor = theme.colors.on_surface,
+                         hintColor = theme.colors.on_surface_variant] {
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            co_await huxerui::Delay(std::chrono::duration<double>{0});
+            const std::string yaml = store::profilesStore().yamlOf(id);
+            editYaml = huxerui::TextEditingValue{yaml};
+            editRules = store::parseRules(yaml);
+            editRuleInput = huxerui::TextEditingValue{""};
+            editRulesDirty = false;
+            dialog.Show(
+                [tasks, toast, editYaml, editRules, editRuleInput,
+                 editRulesDirty, id, textColor, hintColor,
+                 name = profile.name](huxerui::DialogContext ctx) -> huxerui::View {
+                    // 规则行（动态列表：键用行号；行内无状态）。
+                    std::vector<huxerui::View> rows;
+                    const std::vector<std::string>& rules = editRules.Get();
+                    rows.reserve(rules.size());
+                    for (std::size_t i = 0; i < rules.size(); ++i) {
+                        rows.push_back(
+                            huxerui::Row {
+                                huxerui::Text(std::format("{}", i + 1))
+                                    .Style(huxerui::TextStyle{
+                                        huxerui::Font::System(
+                                            font_size::kCaption),
+                                        hintColor})
+                                    .With(huxerui::Frame{.width = 32.0F}),
+                                huxerui::Text(truncateOneLine(rules[i], 72))
+                                    .Style(huxerui::TextStyle{
+                                        huxerui::Font::Monospace(
+                                            font_size::kMonoBody),
+                                        textColor}),
+                            }
+                                .With(huxerui::Spacing(6.0F),
+                                      huxerui::CrossAlign(
+                                          huxerui::CrossAxisAlignment::
+                                              Center))
+                                .Key(std::to_string(i)));
+                    }
+                    auto addRule = [=](bool prepend) {
+                        const std::string text = editRuleInput.Get().text;
+                        if (text.empty()) return;
+                        const std::string yaml = store::insertRule(
+                            editYaml.Get().text, text, prepend);
+                        editYaml = huxerui::TextEditingValue{yaml};
+                        editRules = store::parseRules(yaml);
+                        editRuleInput = huxerui::TextEditingValue{""};
+                        editRulesDirty = true;
+                    };
+                    return DialogCard(huxerui::Column {
+                        huxerui::Text("编辑规则 — " + name,
+                                      huxerui::TextRole::Title),
+                        huxerui::Text("前置插到列表头、后置追加到尾；点「保存」"
+                                      "写回订阅文件，启用中的订阅将重启内核生效。")
+                            .Style(huxerui::TextStyle{
+                                huxerui::Font::System(font_size::kCaption),
+                                hintColor}),
+                        huxerui::ScrollView(
+                                rows.empty()
+                                    ? huxerui::View{
+                                          huxerui::Text("订阅没有 rules 规则")
+                                              .Style(huxerui::TextStyle{
+                                                  huxerui::Font::System(
+                                                      font_size::kCaption),
+                                                  hintColor})}
+                                          .With(huxerui::Padding(12.0F))
+                                    : huxerui::View{
+                                          huxerui::Column(std::move(rows))
+                                              .With(huxerui::Spacing(6.0F))})
+                            .With(huxerui::Frame{.height = 300.0F}),
+                        huxerui::Row {
+                            huxerui::TextField(editRuleInput.Get())
+                                .Label("规则，如 DOMAIN-SUFFIX,example.com,代理组")
+                                .Variant(huxerui::TextFieldVariant::Outlined)
+                                .OnChanged(
+                                    [editRuleInput](
+                                        const huxerui::TextEditingValue& v) {
+                                        editRuleInput = v;
+                                    })
+                                .With(huxerui::Grow(1.0F)),
+                            huxerui::Button("前置").OnClick([=] { addRule(true); }),
+                            huxerui::Button("后置").OnClick([=] { addRule(false); }),
+                        }
+                            .With(huxerui::Spacing(8.0F),
+                                  huxerui::CrossAlign(
+                                      huxerui::CrossAxisAlignment::Center)),
+                        huxerui::Row {
+                            huxerui::Button("取消").OnClick(
+                                [ctx] { ctx.Dismiss(); }),
+                            huxerui::Button("保存").OnClick([=] {
+                                ctx.Dismiss();
+                                if (!editRulesDirty.Get()) return;
+                                const std::string content = editYaml.Get().text;
+                                tasks.Launch([=]() -> huxerui::Task<void> {
+                                    const std::string err = co_await
+                                        RunOnTaskThread([id, content] {
+                                            auto& ps = store::profilesStore();
+                                            if (!ps.saveYaml(id, content))
+                                                return ps.lastError();
+                                            return std::string{};
+                                        });
+                                    toast.Show(err.empty() ? "规则已保存" : err);
+                                });
+                            }),
+                        }.With(huxerui::MainAlign(
+                                   huxerui::MainAxisAlignment::SpaceBetween)),
+                    }
+                                      .With(huxerui::Spacing(12.0F),
+                                            huxerui::Frame{.width = 620.0F},
+                                            huxerui::CrossAlign(
+                                                huxerui::CrossAxisAlignment::
+                                                    Stretch)));
+                },
+                huxerui::DialogOptions{});
+        });
+    };
+
+    // 编辑文件弹窗：直接编辑订阅 YAML 原文；保存后若该订阅启用中将重启内核。
     // 同 showEditInfo：菜单点击路径上必须 Delay(0) 让出后再写 State/开弹窗。
     // 提示色在卡片组合期取值捕获——工厂 lambda 里不放裸 UseTheme 钩子。
-    auto showEditYaml = [dialog, tasks, toast, editYaml, id, profile,
+    auto showEditFile = [dialog, tasks, toast, editYaml, id, profile,
                          hintColor = theme.colors.on_surface_variant] {
         tasks.Launch([=]() -> huxerui::Task<void> {
             co_await huxerui::Delay(std::chrono::duration<double>{0});
@@ -293,10 +419,10 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
                 [tasks, toast, editYaml, id, hintColor,
                  name = profile.name](huxerui::DialogContext ctx) -> huxerui::View {
                     return DialogCard(huxerui::Column {
-                        huxerui::Text("编辑规则 — " + name,
+                        huxerui::Text("编辑文件 — " + name,
                                       huxerui::TextRole::Title),
-                        huxerui::Text("直接编辑订阅 YAML；保存后若该订阅启用中，"
-                                      "内核将重启使改动生效。")
+                        huxerui::Text("直接编辑订阅 YAML 原文；保存后若该订阅"
+                                      "启用中，内核将重启使改动生效。")
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::System(font_size::kCaption),
                                 hintColor}),
@@ -374,9 +500,11 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
     };
 
     // 右键菜单：使用（未启用时）/ 更新 / 首页（解析到 profile-web-page-url
-    // 才显示）/ 分享二维码（remote 才显示）/ 编辑信息 / 编辑规则 / 删除。
-    auto showMenu = [menu, action, showEditInfo, showEditYaml, showQr, id,
-                     homepage = profile.homepage, url = profile.url,
+    // 才显示）/ 分享二维码（remote 才显示）/ 编辑信息 / 编辑规则 / 编辑文件 /
+    // 删除。
+    auto showMenu = [menu, action, showEditInfo, showEditRules, showEditFile,
+                     showQr, id, homepage = profile.homepage,
+                     url = profile.url,
                      selected = profile.selected](huxerui::Point pos) {
         std::vector<huxerui::MenuEntry> entries;
         if (!selected) {
@@ -408,7 +536,8 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
         }
         entries.push_back(huxerui::MenuSection{});
         entries.push_back(huxerui::MenuItem("编辑信息", showEditInfo));
-        entries.push_back(huxerui::MenuItem("编辑规则", showEditYaml));
+        entries.push_back(huxerui::MenuItem("编辑规则", showEditRules));
+        entries.push_back(huxerui::MenuItem("编辑文件", showEditFile));
         entries.push_back(huxerui::MenuSection{});
         entries.push_back(huxerui::MenuItem("删除", [action, id] {
             action([id]() -> std::string {
