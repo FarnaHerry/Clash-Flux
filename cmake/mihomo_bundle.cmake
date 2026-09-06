@@ -24,6 +24,12 @@ function(clashflux_bundle_mihomo target)
         return()
     endif ()
 
+    if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+        # 官方无 Android 资产：Android 包不内置内核（GUI 壳验证用）。
+        message(STATUS "clash-flux: Android 不内置 mihomo（官方无 Android 资产）")
+        return()
+    endif ()
+
     set(CLASHFLUX_MIHOMO_VERSION "v1.19.30")
     set(_base_url "https://github.com/MetaCubeX/mihomo/releases/download/${CLASHFLUX_MIHOMO_VERSION}")
 
