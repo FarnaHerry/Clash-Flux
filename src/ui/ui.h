@@ -84,9 +84,9 @@ huxerui::View DialogCard(huxerui::View content);
 // 避免 AppRoot 每拍重组。
 huxerui::View CoreStatusPill();
 
-// TUN 权限引导弹窗（core::tunGate()==Denied 时调用，UI 线程）：展示两条可复制
-// 终端指令——安装服务模式（推荐，root 服务托管内核）/ 以 root 运行本应用。
-// 命令放在 TextField 里，选中即走内置复制。纯函数无钩子，可在任务协程续体里调。
+// TUN 权限引导弹窗（core::tunGate()==Denied 时调用，UI 线程）：Linux 引导安装
+// 服务模式（应用保持非 root，root 只在服务侧），展示可复制终端指令。纯函数
+// 无钩子，可在任务协程续体里调。
 void ShowTunGuideDialog(huxerui::DialogHandle dialog, huxerui::Color textColor,
                         huxerui::Color hintColor);
 

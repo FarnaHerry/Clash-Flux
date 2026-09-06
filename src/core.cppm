@@ -49,8 +49,9 @@ export enum class TunGate {
 
 // 打开 TUN 前的门禁（阻塞：Linux 会连服务 socket 探测 root 服务托管；任务线程
 // 调用）。判定：Windows 看 TokenElevation（不足时顺带尝试提权重启自身）；
-// Linux 看自身 euid==0 或服务模式可用（root 服务托管的内核能建 TUN）；
-// macOS 看自身 euid==0。
+// Linux 的设计取向是应用自身保持非 root（更安全），root 只在服务侧——服务模式
+// 可用即 Ok；euid==0 仅作兜底事实判断（已经 root 的环境 TUN 本就能建）；
+// macOS 同理。Denied 时 UI 引导安装服务。
 export TunGate tunGate();
 
 // 合成运行时配置文本。
