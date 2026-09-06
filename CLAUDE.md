@@ -81,7 +81,14 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
   clang-21/libc++-21 + pip cmake 4.4.2）正式；Windows（MSVC + choco OpenSSL）/
   macOS（brew LLVM + 内联 P0960 补丁）/ Android（HuxerUI CLI 打 APK，仅 GUI 壳）
   实验性 continue-on-error。桌面 job 走 HuxerUI 源码通道（钉 commit clone 到
-  `third_party/huxerui/`）。
+  `third_party/huxerui/`；上游活跃开发中，本机 pull 后同步更新 workflow 的
+  HUXERUI_COMMIT，当前 371072b）。
+- **Windows 自定义安装向导**（`platform/windows/package/`）：`huxerui package
+  windows` 产出自含 Burn setup.exe = MSI + 托管安装器 UI（HuxerUI 写的向导，
+  `UseInstaller()` 会话驱动：安装目录选择/桌面快捷方式/修复/卸载/进度/回滚）。
+  字符串走资源系统（default + zh/zh-TW/zh-HK）。install 规则是安装包文件
+  唯一来源：自带 mihomo 与 assets 在顶层 CMakeLists 的 Windows 打包块显式
+  install；日常构建零开销（`HUXERUI_PACKAGE` 未开时函数直接返回）。
 - `src/core.cpp` 按 `_WIN32` 分流：POSIX posix_spawn / Windows CreateProcess
   后端，同一 `core::CoreProcess` 接口。
 - 服务模式仅 Linux；其他平台 `service::available()` 恒 false，自动回落直接
