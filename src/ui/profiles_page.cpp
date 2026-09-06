@@ -799,7 +799,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
     };
 
     // ---- 分享二维码 ----
-    auto showQr = [dialog, tasks, profiles, findProfile, clipboard,
+    auto showQr = [dialog, tasks, toast, profiles, findProfile, clipboard,
                    hintColor = theme.colors.on_surface_variant](std::int64_t id) {
         tasks.Launch([=]() -> huxerui::Task<void> {
             co_await huxerui::Delay(std::chrono::duration<double>{0});
@@ -807,7 +807,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
             if (!profile || profile->url.empty()) co_return;
             const std::string url = profile->url;
             dialog.Show(
-                [url, clipboard,
+                [url, clipboard, toast,
                  hintColor](huxerui::DialogContext ctx) -> huxerui::View {
                     return DialogCard(huxerui::Column {
                         huxerui::Text("分享订阅", huxerui::TextRole::Title),
@@ -820,8 +820,12 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
                                                  .height = 240.0F}),
                         huxerui::Row {
                             huxerui::Button("复制链接").OnClick(
-                                [clipboard, url] {
-                                    clipboard->WriteText(url);
+                                [clipboard, toast, url] {
+                                    if (clipboard->WriteText(url)) {
+                                        toast.Show("已复制到剪贴板");
+                                    } else {
+                                        toast.Show("复制失败");
+                                    }
                                 }),
                             huxerui::Button("关闭").OnClick(
                                 [ctx] { ctx.Dismiss(); }),

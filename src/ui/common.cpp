@@ -22,7 +22,8 @@ namespace clashflux::ui {
 // （工厂在 layer 组合期执行，未经 codegen 管理的裸钩子是脆弱写法）。
 void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                         std::shared_ptr<huxerui::Clipboard> clipboard,
-                        huxerui::Color textColor, huxerui::Color hintColor) {
+                        huxerui::ToastHandle toast, huxerui::Color textColor,
+                        huxerui::Color hintColor) {
     namespace fs = std::filesystem;
     const std::string exe = [] {
         const fs::path dir = cfg::executableDir();
@@ -32,7 +33,7 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
     const std::string serviceCmd =
         std::format("pkexec {} service install", exe);
     dialog.Show(
-        [clipboard, textColor, hintColor,
+        [clipboard, toast, textColor, hintColor,
          serviceCmd](huxerui::DialogContext ctx) -> huxerui::View {
             return DialogCard(huxerui::Column {
                 huxerui::Text("TUN 需要安装服务模式", huxerui::TextRole::Title),
@@ -49,8 +50,13 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                         huxerui::TextEditingValue{serviceCmd})
                         .Variant(huxerui::TextFieldVariant::Outlined)
                         .With(huxerui::Grow(1.0F)),
-                    huxerui::Button("复制").OnClick([clipboard, serviceCmd] {
-                        clipboard->WriteText(serviceCmd);
+                    huxerui::Button("复制").OnClick([clipboard, toast,
+                                                     serviceCmd] {
+                        if (clipboard->WriteText(serviceCmd)) {
+                            toast.Show("已复制到剪贴板");
+                        } else {
+                            toast.Show("复制失败");
+                        }
                     }),
                 }
                     .With(huxerui::Spacing(8.0F),
