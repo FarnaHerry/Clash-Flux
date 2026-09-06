@@ -126,6 +126,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
+    auto dialog = huxerui::UseDialog();
     auto state = huxerui::UseState<HomeState>({});
 
     huxerui::Lifecycle(
@@ -295,8 +296,27 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                 theme.colors.on_surface}),
             huxerui::Spacer(),
             huxerui::Switch(s.core.tunEnabled)
-                .OnChanged([tasks, toast](bool on) {
+                .OnChanged([tasks, toast, dialog,
+                            textColor = theme.colors.on_surface,
+                            hintColor =
+                                theme.colors.on_surface_variant](bool on) {
                     tasks.Launch([=]() -> huxerui::Task<void> {
+                        if (on) {
+                            // 门禁/弹窗会卸载点击路径：先让出一拍（约定 4/6）。
+                            co_await huxerui::Delay(
+                                std::chrono::duration<double>{0});
+                            const core::TunGate gate = co_await RunOnTaskThread(
+                                [] { return core::tunGate(); });
+                            if (gate == core::TunGate::Elevated) {
+                                toast.Show("已请求管理员权限重启，请在新窗口开启"
+                                           " TUN");
+                                co_return;
+                            }
+                            if (gate == core::TunGate::Denied) {
+                                ShowTunGuideDialog(dialog, textColor, hintColor);
+                                co_return;
+                            }
+                        }
                         const bool ok = co_await RunOnTaskThread(
                             [on] { return store::coreStore().applyTun(on); });
                         if (!ok) {

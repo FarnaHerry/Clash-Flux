@@ -11,9 +11,56 @@
 #include "task_bridge.h"
 
 import clashflux.core;
+import clashflux.config;
 import clashflux.store.core;
 
 namespace clashflux::ui {
+
+// TUN 权限引导弹窗（见 ui.h）。工厂 lambda 里只消费按值捕获的颜色与命令文本，
+// 不放钩子（工厂在 layer 组合期执行，未经 codegen 管理的裸钩子是脆弱写法）。
+void ShowTunGuideDialog(huxerui::DialogHandle dialog, huxerui::Color textColor,
+                        huxerui::Color hintColor) {
+    namespace fs = std::filesystem;
+    const std::string exe = [] {
+        const fs::path dir = cfg::executableDir();
+        if (dir.empty()) return std::string{"clash-flux"};
+        return (dir / "clash-flux").string();
+    }();
+    const huxerui::TextEditingValue serviceCmd{std::format(
+        "pkexec {} service install", exe)};
+    const huxerui::TextEditingValue sudoCmd{std::format("sudo \"{}\"", exe)};
+    dialog.Show(
+        [textColor, hintColor, serviceCmd,
+         sudoCmd](huxerui::DialogContext ctx) -> huxerui::View {
+            return DialogCard(huxerui::Column {
+                huxerui::Text("TUN 需要管理员权限", huxerui::TextRole::Title),
+                huxerui::Text("TUN 模式需要 root/CAP_NET_ADMIN 创建虚拟网卡。"
+                              "复制任一指令到终端执行后重试：")
+                    .Style(huxerui::TextStyle{
+                        huxerui::Font::System(font_size::kCaption), hintColor}),
+                huxerui::Text("方式一（推荐）：安装服务模式，内核由 root 服务"
+                              "托管，TUN 开箱可用")
+                    .Style(huxerui::TextStyle{
+                        huxerui::Font::System(font_size::kBody), textColor}),
+                huxerui::TextField(serviceCmd)
+                    .Variant(huxerui::TextFieldVariant::Outlined),
+                huxerui::Text("方式二：以 root 运行本应用")
+                    .Style(huxerui::TextStyle{
+                        huxerui::Font::System(font_size::kBody), textColor}),
+                huxerui::TextField(sudoCmd)
+                    .Variant(huxerui::TextFieldVariant::Outlined),
+                huxerui::Row {
+                    huxerui::Button("关闭").OnClick([ctx] { ctx.Dismiss(); }),
+                }.With(huxerui::MainAlign(
+                    huxerui::MainAxisAlignment::End)),
+            }
+                              .With(huxerui::Spacing(12.0F),
+                                    huxerui::Frame{.width = 460.0F},
+                                    huxerui::CrossAlign(
+                                        huxerui::CrossAxisAlignment::Stretch)));
+        },
+        huxerui::DialogOptions{});
+}
 
 IslandTheme ResolveIslandTheme(const huxerui::ThemeSpec& theme) {
     return IslandTheme{
@@ -131,8 +178,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         huxerui::Padding(islands.island_padding));
 }
 
-[[huxerui::composable]] huxerui::View CoreStatusPill() {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+[[huxerui::composable]] huxerui::View CoreStatusPill() {    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
     auto snap = huxerui::UseState<store::CoreSnapshot>({});
 

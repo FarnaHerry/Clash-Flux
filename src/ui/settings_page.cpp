@@ -68,6 +68,7 @@ const std::string kAboutText =
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
+    auto dialog = huxerui::UseDialog();
     auto snap = huxerui::UseState<store::CoreSnapshot>({});
     auto portValue = huxerui::UseState(huxerui::TextEditingValue{""});
     auto busy = huxerui::UseState(false);
@@ -333,20 +334,45 @@ const std::string kAboutText =
                             ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
                             : "全局透明代理（下次启动生效）",
                         huxerui::Switch(s.tunEnabled)
-                            .OnChanged([coreAction](bool on) {
-                                coreAction(
-                                    [on] {
-                                        if (!store::coreStore().applyTun(on)) {
-                                            const std::string err =
-                                                store::coreStore()
-                                                    .snapshot()
-                                                    .lastError;
-                                            throw std::runtime_error(
-                                                err.empty() ? "TUN 切换失败"
-                                                            : err);
+                            .OnChanged([tasks, toast, dialog,
+                                        textColor = theme.colors.on_surface,
+                                        hintColor =
+                                            theme.colors.on_surface_variant](bool on) {
+                                tasks.Launch([=]() -> huxerui::Task<void> {
+                                    if (on) {
+                                        // 门禁/弹窗会卸载点击路径：先让出一拍
+                                        // （约定 4/6）。
+                                        co_await huxerui::Delay(
+                                            std::chrono::duration<double>{0});
+                                        const core::TunGate gate =
+                                            co_await RunOnTaskThread([] {
+                                                return core::tunGate();
+                                            });
+                                        if (gate == core::TunGate::Elevated) {
+                                            toast.Show("已请求管理员权限重启，请在"
+                                                       "新窗口开启 TUN");
+                                            co_return;
                                         }
-                                    },
-                                    on ? "TUN 已开启" : "TUN 已关闭");
+                                        if (gate == core::TunGate::Denied) {
+                                            ShowTunGuideDialog(dialog, textColor,
+                                                               hintColor);
+                                            co_return;
+                                        }
+                                    }
+                                    const bool ok = co_await RunOnTaskThread(
+                                        [on] {
+                                            return store::coreStore().applyTun(on);
+                                        });
+                                    if (!ok) {
+                                        const std::string err =
+                                            store::coreStore().snapshot().lastError;
+                                        toast.Show(err.empty() ? "TUN 切换失败"
+                                                               : err);
+                                    } else {
+                                        toast.Show(on ? "TUN 已开启"
+                                                      : "TUN 已关闭");
+                                    }
+                                });
                             })),
                 }.With(huxerui::Spacing(10.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),

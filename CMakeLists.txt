@@ -292,6 +292,8 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # TU 里的 std::max/std::min（MSVC C2589）；宏不跨 TU，必须整个目标定义。
     if (WIN32)
         target_compile_definitions(clash-flux PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        # TUN 门禁：ShellExecuteExW（runas 提权重启）+ TokenElevation 查询。
+        target_link_libraries(clash-flux PRIVATE shell32 advapi32)
         # GUI 子系统入口（CLI 子命令运行时经 AttachConsole 附着父控制台，
         # 见 cli.cppm）。
         if (MSVC)

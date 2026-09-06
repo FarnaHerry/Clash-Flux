@@ -23,6 +23,7 @@
 #include "task_bridge.h"
 
 import clashflux.config;
+import clashflux.core;
 import clashflux.store.core;
 import clashflux.store.profiles;
 
@@ -278,6 +279,8 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
     // Checked 勾选保持与真实状态同步。
     auto traySysProxy = huxerui::UseState(false);
     auto trayTun = huxerui::UseState(false);
+    // 托盘 TUN 门禁 Denied 时的引导弹窗（挂在主窗口上）。
+    auto dialog = huxerui::UseDialog();
 
     // 内核自启 + 崩溃检测泵：启动是阻塞活，整段在任务线程；泵每 500ms 检查
     // 进程存活（异常退出 → Failed，快照由各页面/状态胶囊自行轮询）。
@@ -322,13 +325,21 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
         },
         0);
 
+    // 主题派生（托盘 TUN 引导弹窗也要取 rootSpec 配色，故先于托盘块计算）。
+    const bool dark =
+        themeMode.Get() == 1 || (themeMode.Get() == 0 && cfg::systemPrefersDark());
+    const huxerui::ThemeSpec rootSpec = dark ? MinimalDarkThemeSpec() : MinimalLightThemeSpec();
+    const IslandTheme rootIslands = ResolveIslandTheme(rootSpec);
+
     // 托盘：图标 + 菜单（显示主窗口 / 系统代理 / TUN / 退出）；点击托盘图标
     // 激活主窗口。仅在可用时注册。系统代理/TUN 以勾选态展示，Lifecycle 依赖
     // 两个 State——任意一处（首页/设置/托盘自身）切换后菜单带最新勾选重建。
     if (trayAvailable) {
         tray.OnActivate([window] { window.Activate(); });
         huxerui::Lifecycle(
-            [tray, window, application, tasks, traySysProxy, trayTun] {
+            [tray, window, application, tasks, traySysProxy, trayTun, dialog,
+             textColor = rootSpec.colors.on_surface,
+             hintColor = rootSpec.colors.on_surface_variant] {
                 std::vector<huxerui::MenuEntry> menuEntries;
                 menuEntries.push_back(
                     huxerui::MenuItem("显示主窗口", [window] { window.Activate(); }));
@@ -344,9 +355,26 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
                         });
                     }).Checked(traySysProxy.Get()));
                 menuEntries.push_back(
-                    huxerui::MenuItem("TUN 模式", [tasks, trayTun] {
+                    huxerui::MenuItem("TUN 模式", [tasks, trayTun, window, dialog,
+                                                   textColor, hintColor] {
                         tasks.Launch([=]() -> huxerui::Task<void> {
                             const bool next = !trayTun.Get();
+                            if (next) {
+                                // 门禁/弹窗会卸载点击路径：先让出一拍（约定 4/6）。
+                                co_await huxerui::Delay(
+                                    std::chrono::duration<double>{0});
+                                const core::TunGate gate = co_await RunOnTaskThread(
+                                    [] { return core::tunGate(); });
+                                if (gate == core::TunGate::Elevated) {
+                                    co_return;  // 新实例自行开启 TUN
+                                }
+                                if (gate == core::TunGate::Denied) {
+                                    window.Activate();  // 引导弹窗在窗口里
+                                    ShowTunGuideDialog(dialog, textColor,
+                                                       hintColor);
+                                    co_return;
+                                }
+                            }
                             const bool ok = co_await RunOnTaskThread([next] {
                                 return store::coreStore().applyTun(next);
                             });
@@ -364,11 +392,6 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
             },
             traySysProxy, trayTun);
     }
-
-    const bool dark =
-        themeMode.Get() == 1 || (themeMode.Get() == 0 && cfg::systemPrefersDark());
-    const huxerui::ThemeSpec rootSpec = dark ? MinimalDarkThemeSpec() : MinimalLightThemeSpec();
-    const IslandTheme rootIslands = ResolveIslandTheme(rootSpec);
 
     std::vector<huxerui::View> pages;
     pages.push_back(HomePage().Key("home").With(huxerui::Grow(1.0F)));

@@ -39,6 +39,20 @@ export bool spawnDetached(const std::filesystem::path& binary,
                           const std::filesystem::path& configFile,
                           std::string& error);
 
+// ---- TUN 打开门禁 -----------------------------------------------------------
+// TUN 需要内核侧持有 root/CAP_NET_ADMIN（Linux 建虚拟网卡）或 Windows 管理员。
+export enum class TunGate {
+    Ok,        // 权限足够，可直接 applyTun
+    Elevated,  // 仅 Windows：已拉起 UAC 提权重启自身，本次放弃（新实例里操作）
+    Denied,    // 权限不足且无自动提权路径（UI 弹终端指令引导框）
+};
+
+// 打开 TUN 前的门禁（阻塞：Linux 会连服务 socket 探测 root 服务托管；任务线程
+// 调用）。判定：Windows 看 TokenElevation（不足时顺带尝试提权重启自身）；
+// Linux 看自身 euid==0 或服务模式可用（root 服务托管的内核能建 TUN）；
+// macOS 看自身 euid==0。
+export TunGate tunGate();
+
 // 合成运行时配置文本。
 //   profileYaml  订阅（或手写）配置原文；可为空（生成最小可用配置）。
 //   controller   "127.0.0.1:9097"
