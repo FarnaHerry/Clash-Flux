@@ -685,6 +685,11 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
         card = std::move(card).With(huxerui::Frame{.height = kCardHeight},
                                     huxerui::ClipChildren());
     }
+    // 选中（使用中）状态：primary 描边，与「使用中」徽标呼应。
+    if (profile.selected) {
+        card = std::move(card).With(
+            huxerui::Border(theme.colors.primary, 2.0F));
+    }
     return std::move(card)
         .With(huxerui::MultiTapGesture{.count = 2})
         // 双击切换启用订阅（未启用时）。
