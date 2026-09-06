@@ -8,10 +8,13 @@
 #
 # 平台资产表（v1.19.30，https://github.com/MetaCubeX/mihomo/releases）：
 #   linux   x86_64  mihomo-linux-amd64-v1.19.30.gz      （gzip 单文件）
+#   linux   arm64   mihomo-linux-arm64-v1.19.30.gz
 #   windows x86_64  mihomo-windows-amd64-v1.19.30.zip   （内含 mihomo-windows-amd64.exe）
+#   windows arm64   mihomo-windows-arm64-v1.19.30.zip   （内含 mihomo-windows-arm64.exe）
 #   darwin  x86_64  mihomo-darwin-amd64-v1.19.30.gz
 #   darwin  arm64   mihomo-darwin-arm64-v1.19.30.gz
-# 新增资产/升版本时：curl -sSfL 下载后 sha256sum 钉进下表。
+# 内核（mihomo）发布什么桌面平台/arch，本表就钉什么——GUI 壳能编到的目标都
+# 自带内核。新增资产/升版本时：curl -sSfL 下载后 sha256sum 钉进下表。
 
 option(CLASHFLUX_BUNDLE_MIHOMO
        "Download and bundle the mihomo kernel next to the executable" ON)
@@ -28,15 +31,27 @@ function(clashflux_bundle_mihomo target)
     set(_asset "")
     set(_sha "")
     set(_format "")  # gz | zip
+    set(_zip_inner "")  # zip 内含的 exe 名（解出后改名为规范名）
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux"
             AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64)")
         set(_asset "mihomo-linux-amd64-${CLASHFLUX_MIHOMO_VERSION}.gz")
         set(_sha "cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84")
         set(_format "gz")
+    elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux"
+            AND CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64|ARM64)")
+        set(_asset "mihomo-linux-arm64-${CLASHFLUX_MIHOMO_VERSION}.gz")
+        set(_sha "58896873736d28628f66de3677c8654fa0f180662523148e136cff4f6e890069")
+        set(_format "gz")
     elseif (WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64)")
         set(_asset "mihomo-windows-amd64-${CLASHFLUX_MIHOMO_VERSION}.zip")
         set(_sha "22c09fd67673895ef7cd6b1820563918275c3d316f2462b306208675118db3c0")
         set(_format "zip")
+        set(_zip_inner "mihomo-windows-amd64.exe")
+    elseif (WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64|ARM64)")
+        set(_asset "mihomo-windows-arm64-${CLASHFLUX_MIHOMO_VERSION}.zip")
+        set(_sha "b37c4b0259e85b020edc4215aa4c86052e21071cf520d4800364b21b4e2fc162")
+        set(_format "zip")
+        set(_zip_inner "mihomo-windows-arm64.exe")
     elseif (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64)")
         set(_asset "mihomo-darwin-amd64-${CLASHFLUX_MIHOMO_VERSION}.gz")
         set(_sha "99dfcfe454ed58fb95ee4ba222c39defd051b687ad3e5deabb1b9d6be3103e2f")
@@ -78,7 +93,7 @@ function(clashflux_bundle_mihomo target)
         endif ()
         if (_format STREQUAL "zip")
             # zip 用 cmake -E tar 解（libarchive 直读 zip，无需外部工具）；
-            # 内含固定名 mihomo-windows-amd64.exe，解出后改名为规范名。
+            # 内含固定名 mihomo-windows-<arch>.exe，解出后改名为规范名。
             execute_process(COMMAND "${CMAKE_COMMAND}" -E tar xzf "${_archive}"
                 WORKING_DIRECTORY "${CLASHFLUX_MIHOMO_DIR}"
                 RESULT_VARIABLE _tar_result)
@@ -86,7 +101,7 @@ function(clashflux_bundle_mihomo target)
                 file(REMOVE "${_archive}")
                 message(FATAL_ERROR "mihomo 解压失败（cmake -E tar 退出码 ${_tar_result}）")
             endif ()
-            file(RENAME "${CLASHFLUX_MIHOMO_DIR}/mihomo-windows-amd64.exe" "${_bin}")
+            file(RENAME "${CLASHFLUX_MIHOMO_DIR}/${_zip_inner}" "${_bin}")
         else ()
             find_program(CLASHFLUX_GZIP gzip REQUIRED)
             execute_process(COMMAND "${CLASHFLUX_GZIP}" -dkf "${_archive}"

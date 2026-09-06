@@ -72,10 +72,21 @@ clash-flux service install|uninstall|status|run
 
 ## 多平台 CI
 
-`.github/workflows/build.yml`：Linux（ubuntu 容器 + clang-21/libc++）为正式 job；
-Windows（MSVC）/ macOS（brew LLVM）/ Android（HuxerUI CLI 打 APK，仅 GUI 壳、
-不含 mihomo 内核）为实验性 continue-on-error。桌面 job 统一走 HuxerUI 源码
-通道（钉 commit clone 上游），mihomo 在 configure 期自动下载。
+`.github/workflows/build.yml` 矩阵（命名 `build-<os>-<arch>`）：
+
+| Job | Runner | 状态 |
+|-----|--------|------|
+| build-linux-x86_64 | ubuntu 容器 + clang-21/libc++ | 正式 |
+| build-linux-arm64 | ubuntu-24.04-arm 原生 | 实验性 |
+| build-windows-x86_64 | MSVC + choco OpenSSL | 实验性 |
+| build-windows-arm64 | windows-11-arm + vcpkg OpenSSL | 实验性 |
+| build-macos-arm64 | macos-15 + brew LLVM | 实验性 |
+| build-macos-x86_64 | macos-13 + brew LLVM | 实验性 |
+| build-android | HuxerUI CLI 打 APK（仅 GUI 壳，无内核） | 实验性 |
+
+覆盖面原则：mihomo 内核发布什么桌面平台/arch，就构建什么目标（内核资产
+SHA256 钉在 `cmake/mihomo_bundle.cmake`，configure 期自动下载）。桌面 job
+统一走 HuxerUI 源码通道（钉 commit clone 上游）。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、
