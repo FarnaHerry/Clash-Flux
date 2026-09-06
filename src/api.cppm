@@ -30,6 +30,8 @@ export struct ApiResult {
     long status = 0;          // HTTP 状态码；传输失败为 0
     std::string body;         // 响应体（错误时也可能有，mihomo 的错误是 JSON message）
     std::string error;        // 传输层错误描述（curl）；HTTP 错误时从 body 提取 message
+    // 响应头（仅订阅下载填充；名字统一小写，重定向取最后一跳）。
+    std::map<std::string, std::string> headers;
 };
 
 // REST 客户端：baseUrl 形如 "http://127.0.0.1:9097"，secret 为 Bearer token（可空）。

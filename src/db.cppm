@@ -27,6 +27,11 @@ export struct Profile {
     bool useSystemProxy = false;    // 使用系统代理更新（环境变量代理）
     bool useCoreProxy = false;      // 使用内核代理更新（127.0.0.1:mixedPort）
     bool allowInvalidCert = false;  // 允许无效证书（危险）
+    // ---- 订阅响应头解析（更新时从 subscription-userinfo / profile-web-page-url
+    // 提取；本地导入恒空/0）----
+    std::string homepage;           // 订阅提供方首页（右键「首页」跳转）
+    std::int64_t usedBytes = 0;     // 已用流量（upload + download）
+    std::int64_t totalBytes = 0;    // 总流量（0 = 未知，卡片不显示流量条）
 
     bool operator==(const Profile&) const = default;  // State 变更检测
 };

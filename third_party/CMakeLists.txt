@@ -11,6 +11,7 @@
 #   CURL::libcurl curl 8.22.0（OpenSSL 后端，静态库，不编 curl.exe）
 #   SQLiteCpp     SQLiteCpp 3.3.3（内置 sqlite3 amalgamation）
 #   clashflux_json nlohmann::json 3.12.0（single header）+ `import nlohmann.json`
+#   clashflux_qrcode Nayuki QR-Code-generator 1.8.0（订阅分享二维码；源码直提）
 #
 # OpenSSL 在顶层 CMakeLists 解析（imported target 需要全局可见），
 # 本文件假定 find_package(OpenSSL) 已成功。
@@ -27,6 +28,11 @@ target_sources(clashflux_json PUBLIC FILE_SET json_modules TYPE CXX_MODULES
     FILES "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/nlohmann.json.cppm")
 set_target_properties(clashflux_json PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON CXX_MODULE_STD ON)
 target_include_directories(clashflux_json PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/json")
+
+# ---- Nayuki QR-Code-generator 1.8.0（订阅分享二维码；源码直提，同 json 先例）----
+add_library(clashflux_qrcode STATIC "${CMAKE_CURRENT_SOURCE_DIR}/qrcodegen/qrcodegen.cpp")
+target_compile_features(clashflux_qrcode PRIVATE cxx_std_17)
+target_include_directories(clashflux_qrcode PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/qrcodegen")
 
 # ---- curl 8.22.0（静态库，OpenSSL 后端，仅 lib）------------------------------
 # 用途：mihomo external-controller REST API 与订阅下载。

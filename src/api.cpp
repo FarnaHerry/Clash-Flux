@@ -37,6 +37,29 @@ size_t onFileWrite(char* ptr, size_t size, size_t nmemb, void* userdata) noexcep
     }
 }
 
+// 订阅响应头收集（名字统一小写；重定向多跳时后值覆盖前值 = 最后一跳生效）。
+size_t onHeaderLine(char* ptr, size_t size, size_t nmemb, void* userdata) noexcept {
+    auto* headers = static_cast<std::map<std::string, std::string>*>(userdata);
+    const std::string line(ptr, size * nmemb);
+    const auto colon = line.find(':');
+    if (colon == std::string::npos) return size * nmemb;
+    std::string name = line.substr(0, colon);
+    for (char& c : name) {
+        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+    }
+    std::string value = line.substr(colon + 1);
+    while (!value.empty() && (value.front() == ' ' || value.front() == '\t' ||
+                              value.front() == '\r' || value.front() == '\n')) {
+        value.erase(value.begin());
+    }
+    while (!value.empty() && (value.back() == ' ' || value.back() == '\t' ||
+                              value.back() == '\r' || value.back() == '\n')) {
+        value.pop_back();
+    }
+    (*headers)[std::move(name)] = std::move(value);
+    return size * nmemb;
+}
+
 // 从 mihomo 的错误响应体提取 message 字段（{"message": "..."}）。
 std::string extractMessage(const std::string& body) {
     const auto j = nlohmann::json::parse(body, nullptr, false);
@@ -197,6 +220,8 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &onFileWrite);
     curl_easy_setopt(easy, CURLOPT_WRITEDATA, &out);
+    curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, &onHeaderLine);
+    curl_easy_setopt(easy, CURLOPT_HEADERDATA, &result.headers);
     curl_easy_setopt(easy, CURLOPT_TIMEOUT,
                      options.timeoutSecs > 0 ? options.timeoutSecs : 60L);
     curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 10L);

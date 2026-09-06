@@ -11,6 +11,8 @@
 // 阻塞活（网络下载 / 内核重启），全部经 RunOnTaskThread。
 #include <huxerui/huxerui.h>
 
+#include <qrcodegen.hpp>
+
 #include <algorithm>
 #include <charconv>
 #include <chrono>
@@ -23,6 +25,7 @@
 #include "app_resources.h"
 #include "task_bridge.h"
 
+import clashflux.core;
 import clashflux.db;
 import clashflux.store.core;
 import clashflux.store.profiles;
@@ -34,7 +37,7 @@ namespace {
 // 卡片统一尺寸：定宽（Flow 网格换行）+ 定高（内容单行截断，ClipChildren
 // 兜底）；Compact 视口整宽（高度仍统一）。
 constexpr float kCardWidth = 280.0F;
-constexpr float kCardHeight = 136.0F;
+constexpr float kCardHeight = 156.0F;
 
 // 单行截断（UTF-8 代码点安全）：超限截断加省略号。Text 默认按词换行且无
 // 省略号能力，长 URL/名称会把卡片撑高——网格里统一截断保证卡片等高。
@@ -50,6 +53,34 @@ std::string truncateOneLine(const std::string& s, std::size_t maxCodePoints) {
         ++count;
     }
     return s;
+}
+
+// 订阅链接二维码画笔：白底 + 近黑模块（固定高对比，不随主题翻转，保证
+// 扫码成功率）。模块居中、留白 = 0（DialogCard 自带边距当静区）。
+huxerui::CanvasPainter QrPainter(const std::string& text) {
+    return [text](huxerui::PaintContext& paint, huxerui::Size size) {
+        const float side = std::min(size.width, size.height);
+        if (side <= 0.0F) return;
+        qrcodegen::QrCode qr = qrcodegen::QrCode::encodeText(
+            text.c_str(), qrcodegen::QrCode::Ecc::MEDIUM);
+        const int n = qr.getSize();
+        const float cell = side / static_cast<float>(n);
+        const float ox = (size.width - side) / 2.0F;
+        const float oy = (size.height - side) / 2.0F;
+        paint.DrawRect({ox, oy, side, side},
+                       huxerui::Color::Rgb(255, 255, 255), {});
+        const huxerui::Color moduleColor = huxerui::Color::Rgb(17, 17, 17);
+        for (int y = 0; y < n; ++y) {
+            for (int x = 0; x < n; ++x) {
+                if (qr.getModule(x, y)) {
+                    paint.DrawRect({ox + static_cast<float>(x) * cell,
+                                    oy + static_cast<float>(y) * cell, cell,
+                                    cell},
+                                   moduleColor, {});
+                }
+            }
+        }
+    };
 }
 
 // 弹窗表单区滚动视口高度：字段多（类型/描述/超时/间隔/四个开关），限高防
@@ -310,8 +341,42 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
         });
     };
 
-    // 右键菜单：使用（未启用时）/ 更新 / 编辑信息 / 编辑规则 / 删除。
-    auto showMenu = [menu, action, showEditInfo, showEditYaml, id,
+    // 分享二维码弹窗（右键菜单项；仅 remote 订阅有 URL）。弹窗出事件路径。
+    auto showQr = [dialog, tasks, url = profile.url,
+                   hintColor = theme.colors.on_surface_variant] {
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            co_await huxerui::Delay(std::chrono::duration<double>{0});
+            dialog.Show(
+                [url, hintColor](huxerui::DialogContext ctx) -> huxerui::View {
+                    return DialogCard(huxerui::Column {
+                        huxerui::Text("分享订阅", huxerui::TextRole::Title),
+                        huxerui::Text(truncateOneLine(url, 60))
+                            .Style(huxerui::TextStyle{
+                                huxerui::Font::Monospace(font_size::kChip),
+                                hintColor}),
+                        huxerui::Canvas(QrPainter(url))
+                            .With(huxerui::Frame{.width = 240.0F,
+                                                 .height = 240.0F}),
+                        huxerui::Row {
+                            huxerui::Button("关闭").OnClick(
+                                [ctx] { ctx.Dismiss(); }),
+                        }.With(huxerui::MainAlign(
+                            huxerui::MainAxisAlignment::End)),
+                    }
+                                      .With(huxerui::Spacing(12.0F),
+                                            huxerui::Frame{.width = 320.0F},
+                                            huxerui::CrossAlign(
+                                                huxerui::CrossAxisAlignment::
+                                                    Stretch)));
+                },
+                huxerui::DialogOptions{});
+        });
+    };
+
+    // 右键菜单：使用（未启用时）/ 更新 / 首页（解析到 profile-web-page-url
+    // 才显示）/ 分享二维码（remote 才显示）/ 编辑信息 / 编辑规则 / 删除。
+    auto showMenu = [menu, action, showEditInfo, showEditYaml, showQr, id,
+                     homepage = profile.homepage, url = profile.url,
                      selected = profile.selected](huxerui::Point pos) {
         std::vector<huxerui::MenuEntry> entries;
         if (!selected) {
@@ -330,6 +395,17 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
                 return "";
             });
         }));
+        if (!homepage.empty()) {
+            entries.push_back(huxerui::MenuItem("首页", [action, homepage] {
+                action([homepage]() -> std::string {
+                    core::openInBrowser(homepage);
+                    return "";
+                });
+            }));
+        }
+        if (!url.empty()) {
+            entries.push_back(huxerui::MenuItem("分享二维码", showQr));
+        }
         entries.push_back(huxerui::MenuSection{});
         entries.push_back(huxerui::MenuItem("编辑信息", showEditInfo));
         entries.push_back(huxerui::MenuItem("编辑规则", showEditYaml));
@@ -416,6 +492,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
                                             font_size::kCaption),
                                         theme.colors.on_surface_variant})}
                 : huxerui::View{huxerui::Row{}},
+            huxerui::Spacer(),
             huxerui::Text(truncateOneLine(
                               profile.error.empty()
                                   ? (profile.updatedAt > 0
@@ -430,6 +507,42 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
         }
             .With(huxerui::Spacing(8.0F),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        // 流量行 + 进度条（订阅响应头 subscription-userinfo；total 未知不显示）。
+        profile.totalBytes > 0
+            ? huxerui::View{huxerui::Column {
+                  huxerui::Row {
+                      huxerui::Text("已用 " + formatBytes(profile.usedBytes) +
+                                    " / " + formatBytes(profile.totalBytes))
+                          .Style(huxerui::TextStyle{
+                              huxerui::Font::System(font_size::kCaption),
+                              theme.colors.on_surface_variant}),
+                      huxerui::Spacer(),
+                      huxerui::Text(std::format(
+                          "{}%", static_cast<int>(
+                                     std::clamp(
+                                         static_cast<double>(profile.usedBytes) /
+                                             static_cast<double>(
+                                                 profile.totalBytes),
+                                         0.0, 1.0) *
+                                     100.0)))
+                          .Style(huxerui::TextStyle{
+                              huxerui::Font::System(font_size::kCaption),
+                              theme.colors.on_surface_variant}),
+                  }
+                      .With(huxerui::CrossAlign(
+                          huxerui::CrossAxisAlignment::Center)),
+                  huxerui::ProgressBar(std::clamp(
+                                           static_cast<float>(
+                                               profile.usedBytes) /
+                                               static_cast<float>(
+                                                   profile.totalBytes),
+                                           0.0F, 1.0F))
+                      .With(huxerui::Frame{.height = 4.0F}),
+              }
+                                .With(huxerui::Spacing(4.0F),
+                                      huxerui::CrossAlign(
+                                          huxerui::CrossAxisAlignment::Stretch))}
+            : huxerui::View{huxerui::Row{}},
     }.With(huxerui::Spacing(6.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
 

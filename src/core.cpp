@@ -84,6 +84,35 @@ TunGate tunGate() {
 #endif
 }
 
+void openInBrowser(const std::string& url) {
+#ifdef _WIN32
+    const int wlen = MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1,
+                                         nullptr, 0);
+    if (wlen <= 0) return;
+    std::wstring wurl(static_cast<size_t>(wlen), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, wurl.data(), wlen);
+    ShellExecuteW(nullptr, L"open", wurl.c_str(), nullptr, nullptr,
+                  SW_SHOWNORMAL);
+#else
+    // fork + exec 不经 shell：URL 里的 & 等字符无注入面。
+    const char* opener =
+#ifdef __APPLE__
+        "open";
+#else
+        "xdg-open";
+#endif
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        ::execlp(opener, opener, url.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    if (pid > 0) {
+        int status = 0;
+        ::waitpid(pid, &status, 0);
+    }
+#endif
+}
+
 const char* stateName(CoreState s) {
     switch (s) {
         case CoreState::Stopped: return "已停止";
