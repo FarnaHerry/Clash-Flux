@@ -263,6 +263,53 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     }.With(huxerui::Spacing(4.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start)))
                                     .With(huxerui::Grow(1.0F));
+    // 系统快捷开关卡：系统代理 / TUN 模式（与设置页「系统」卡同一 store 通道）。
+    // 系统代理开关按桌面环境支持性禁用；写失败由 0.5s 泵带回真实状态。
+    huxerui::View systemCard = Card(huxerui::Column {
+        huxerui::Text("系统").Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kBody)
+                .WithWeight(huxerui::FontWeight::SemiBold),
+            theme.colors.on_surface}),
+        huxerui::Row {
+            huxerui::Text("系统代理").Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBody),
+                theme.colors.on_surface}),
+            huxerui::Spacer(),
+            huxerui::Switch(store::coreStore().systemProxyEnabled())
+                .OnChanged([tasks, toast](bool on) {
+                    tasks.Launch([=]() -> huxerui::Task<void> {
+                        const bool ok = co_await RunOnTaskThread(
+                            [on] { return store::coreStore().applySystemProxy(on); });
+                        if (!ok) {
+                            const std::string err =
+                                store::coreStore().snapshot().lastError;
+                            toast.Show(err.empty() ? "系统代理设置失败" : err);
+                        }
+                    });
+                })
+                .With(huxerui::Enabled(store::coreStore().systemProxySupported())),
+        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        huxerui::Row {
+            huxerui::Text("TUN 模式").Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBody),
+                theme.colors.on_surface}),
+            huxerui::Spacer(),
+            huxerui::Switch(s.core.tunEnabled)
+                .OnChanged([tasks, toast](bool on) {
+                    tasks.Launch([=]() -> huxerui::Task<void> {
+                        const bool ok = co_await RunOnTaskThread(
+                            [on] { return store::coreStore().applyTun(on); });
+                        if (!ok) {
+                            const std::string err =
+                                store::coreStore().snapshot().lastError;
+                            toast.Show(err.empty() ? "TUN 设置失败" : err);
+                        }
+                    });
+                }),
+        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+    }.With(huxerui::Spacing(10.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+                                    .With(huxerui::Grow(1.0F));
 
     return PageScaffold(
         "首页",
@@ -294,17 +341,19 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                 }.With(huxerui::Spacing(10.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
 
-                // 出站模式 + 当前订阅（Compact 竖排）
+                // 出站模式 + 当前订阅 + 系统开关（Compact 竖排）
                 compact
                     ? huxerui::View{huxerui::Column {
                           std::move(modeCard),
                           std::move(profileCard),
+                          std::move(systemCard),
                       }.With(huxerui::Spacing(10.0F),
                              huxerui::CrossAlign(
                                  huxerui::CrossAxisAlignment::Stretch))}
                     : huxerui::View{huxerui::Row {
                           std::move(modeCard),
                           std::move(profileCard),
+                          std::move(systemCard),
                       }.With(huxerui::Spacing(10.0F),
                              huxerui::CrossAlign(
                                  huxerui::CrossAxisAlignment::Stretch))},

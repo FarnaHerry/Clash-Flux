@@ -274,12 +274,16 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
     }
     auto themeMode = huxerui::UseState<int>(std::move(initialThemeMode));
     auto navPage = huxerui::UseState<std::size_t>(pages::kHome);
+    // 托盘菜单勾选态：内核泵每拍刷新；变更触发托盘菜单 Lifecycle 重建，
+    // Checked 勾选保持与真实状态同步。
+    auto traySysProxy = huxerui::UseState(false);
+    auto trayTun = huxerui::UseState(false);
 
     // 内核自启 + 崩溃检测泵：启动是阻塞活，整段在任务线程；泵每 500ms 检查
     // 进程存活（异常退出 → Failed，快照由各页面/状态胶囊自行轮询）。
     huxerui::Lifecycle(
-        [tasks] {
-            tasks.Launch([]() -> huxerui::Task<void> {
+        [tasks, traySysProxy, trayTun] {
+            tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await RunOnTaskThread([] {
                     auto& core = store::coreStore();
                     core.init();
@@ -287,8 +291,11 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
                         core.startCore(store::profilesStore().selectedYaml());
                     }
                 });
-                co_await PollWhile(std::chrono::duration<double>{0.5}, [] {
-                    store::coreStore().checkAlive();
+                co_await PollWhile(std::chrono::duration<double>{0.5}, [=] {
+                    auto& core = store::coreStore();
+                    core.checkAlive();
+                    traySysProxy = core.systemProxyEnabled();
+                    trayTun = core.snapshot().tunEnabled;
                     return true;
                 });
             });
@@ -315,14 +322,37 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
         },
         0);
 
-    // 托盘：图标 + 菜单；点击托盘图标激活主窗口。仅在可用时注册。
+    // 托盘：图标 + 菜单（显示主窗口 / 系统代理 / TUN / 退出）；点击托盘图标
+    // 激活主窗口。仅在可用时注册。系统代理/TUN 以勾选态展示，Lifecycle 依赖
+    // 两个 State——任意一处（首页/设置/托盘自身）切换后菜单带最新勾选重建。
     if (trayAvailable) {
         tray.OnActivate([window] { window.Activate(); });
         huxerui::Lifecycle(
-            [tray, window, application] {
+            [tray, window, application, tasks, traySysProxy, trayTun] {
                 std::vector<huxerui::MenuEntry> menuEntries;
                 menuEntries.push_back(
                     huxerui::MenuItem("显示主窗口", [window] { window.Activate(); }));
+                menuEntries.push_back(huxerui::MenuSection{});
+                menuEntries.push_back(
+                    huxerui::MenuItem("系统代理", [tasks, traySysProxy] {
+                        tasks.Launch([=]() -> huxerui::Task<void> {
+                            const bool next = !traySysProxy.Get();
+                            const bool ok = co_await RunOnTaskThread([next] {
+                                return store::coreStore().applySystemProxy(next);
+                            });
+                            if (ok) traySysProxy = next;  // 失败由泵回滚显示
+                        });
+                    }).Checked(traySysProxy.Get()));
+                menuEntries.push_back(
+                    huxerui::MenuItem("TUN 模式", [tasks, trayTun] {
+                        tasks.Launch([=]() -> huxerui::Task<void> {
+                            const bool next = !trayTun.Get();
+                            const bool ok = co_await RunOnTaskThread([next] {
+                                return store::coreStore().applyTun(next);
+                            });
+                            if (ok) trayTun = next;
+                        });
+                    }).Checked(trayTun.Get()));
                 menuEntries.push_back(huxerui::MenuSection{});
                 menuEntries.push_back(
                     huxerui::MenuItem("退出", [application] { application.Quit(); }));
@@ -332,7 +362,7 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
                               .menu = std::move(menuEntries)});
                 return [tray] { tray.Hide(); };
             },
-            0);
+            traySysProxy, trayTun);
     }
 
     const bool dark =
