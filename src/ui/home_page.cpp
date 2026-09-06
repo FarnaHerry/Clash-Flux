@@ -127,6 +127,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto dialog = huxerui::UseDialog();
+    auto clipboard = huxerui::UseService<huxerui::Clipboard>();
     auto state = huxerui::UseState<HomeState>({});
 
     huxerui::Lifecycle(
@@ -296,7 +297,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                 theme.colors.on_surface}),
             huxerui::Spacer(),
             huxerui::Switch(s.core.tunEnabled)
-                .OnChanged([tasks, toast, dialog,
+                .OnChanged([tasks, toast, dialog, clipboard,
                             textColor = theme.colors.on_surface,
                             hintColor =
                                 theme.colors.on_surface_variant](bool on) {
@@ -313,7 +314,8 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                                 co_return;
                             }
                             if (gate == core::TunGate::Denied) {
-                                ShowTunGuideDialog(dialog, textColor, hintColor);
+                                ShowTunGuideDialog(dialog, clipboard, textColor,
+                                                   hintColor);
                                 co_return;
                             }
                         }

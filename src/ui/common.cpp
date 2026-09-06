@@ -17,20 +17,22 @@ import clashflux.store.core;
 namespace clashflux::ui {
 
 // TUN 权限引导弹窗（见 ui.h）。Linux 只引导安装服务模式：应用自身保持非 root
-// （更安全），root 只在服务侧。工厂 lambda 里只消费按值捕获的颜色与命令文本，
-// 不放钩子（工厂在 layer 组合期执行，未经 codegen 管理的裸钩子是脆弱写法）。
-void ShowTunGuideDialog(huxerui::DialogHandle dialog, huxerui::Color textColor,
-                        huxerui::Color hintColor) {
+// （更安全），root 只在服务侧。命令行 = TextField 展示 + 复制按钮（runtime
+// Clipboard 服务，组合期传入）。工厂 lambda 里只消费按值捕获的值，不放钩子
+// （工厂在 layer 组合期执行，未经 codegen 管理的裸钩子是脆弱写法）。
+void ShowTunGuideDialog(huxerui::DialogHandle dialog,
+                        std::shared_ptr<huxerui::Clipboard> clipboard,
+                        huxerui::Color textColor, huxerui::Color hintColor) {
     namespace fs = std::filesystem;
     const std::string exe = [] {
         const fs::path dir = cfg::executableDir();
         if (dir.empty()) return std::string{"clash-flux"};
         return (dir / "clash-flux").string();
     }();
-    const huxerui::TextEditingValue serviceCmd{std::format(
-        "pkexec {} service install", exe)};
+    const std::string serviceCmd =
+        std::format("pkexec {} service install", exe);
     dialog.Show(
-        [textColor, hintColor,
+        [clipboard, textColor, hintColor,
          serviceCmd](huxerui::DialogContext ctx) -> huxerui::View {
             return DialogCard(huxerui::Column {
                 huxerui::Text("TUN 需要安装服务模式", huxerui::TextRole::Title),
@@ -42,8 +44,18 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog, huxerui::Color textColor,
                 huxerui::Text("安装 root 服务（内核由服务托管，TUN 开箱可用）")
                     .Style(huxerui::TextStyle{
                         huxerui::Font::System(font_size::kBody), textColor}),
-                huxerui::TextField(serviceCmd)
-                    .Variant(huxerui::TextFieldVariant::Outlined),
+                huxerui::Row {
+                    huxerui::TextField(
+                        huxerui::TextEditingValue{serviceCmd})
+                        .Variant(huxerui::TextFieldVariant::Outlined)
+                        .With(huxerui::Grow(1.0F)),
+                    huxerui::Button("复制").OnClick([clipboard, serviceCmd] {
+                        clipboard->WriteText(serviceCmd);
+                    }),
+                }
+                    .With(huxerui::Spacing(8.0F),
+                          huxerui::CrossAlign(
+                              huxerui::CrossAxisAlignment::Center)),
                 huxerui::Row {
                     huxerui::Button("关闭").OnClick([ctx] { ctx.Dismiss(); }),
                 }.With(huxerui::MainAlign(

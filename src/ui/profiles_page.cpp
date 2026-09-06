@@ -418,6 +418,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
     auto toast = huxerui::UseToast();
     auto dialog = huxerui::UseDialog();
     auto menu = huxerui::UseMenu();
+    auto clipboard = huxerui::UseService<huxerui::Clipboard>();
     auto profiles = huxerui::UseState<std::vector<db::Profile>>({});
 
     // ---- 新建订阅弹窗 ----
@@ -798,7 +799,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
     };
 
     // ---- 分享二维码 ----
-    auto showQr = [dialog, tasks, profiles, findProfile,
+    auto showQr = [dialog, tasks, profiles, findProfile, clipboard,
                    hintColor = theme.colors.on_surface_variant](std::int64_t id) {
         tasks.Launch([=]() -> huxerui::Task<void> {
             co_await huxerui::Delay(std::chrono::duration<double>{0});
@@ -806,7 +807,8 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
             if (!profile || profile->url.empty()) co_return;
             const std::string url = profile->url;
             dialog.Show(
-                [url, hintColor](huxerui::DialogContext ctx) -> huxerui::View {
+                [url, clipboard,
+                 hintColor](huxerui::DialogContext ctx) -> huxerui::View {
                     return DialogCard(huxerui::Column {
                         huxerui::Text("分享订阅", huxerui::TextRole::Title),
                         huxerui::Text(truncateOneLine(url, 60))
@@ -817,10 +819,15 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
                             .With(huxerui::Frame{.width = 240.0F,
                                                  .height = 240.0F}),
                         huxerui::Row {
+                            huxerui::Button("复制链接").OnClick(
+                                [clipboard, url] {
+                                    clipboard->WriteText(url);
+                                }),
                             huxerui::Button("关闭").OnClick(
                                 [ctx] { ctx.Dismiss(); }),
                         }.With(huxerui::MainAlign(
-                            huxerui::MainAxisAlignment::End)),
+                                   huxerui::MainAxisAlignment::End),
+                               huxerui::Spacing(8.0F)),
                     }
                                       .With(huxerui::Spacing(12.0F),
                                             huxerui::Frame{.width = 320.0F},

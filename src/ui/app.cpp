@@ -286,6 +286,7 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
     auto closeDialogOpen = huxerui::UseState(false);
     // 托盘 TUN 门禁 Denied 时的引导弹窗（挂在主窗口上）。
     auto dialog = huxerui::UseDialog();
+    auto clipboard = huxerui::UseService<huxerui::Clipboard>();
 
     // 内核自启 + 崩溃检测泵：启动是阻塞活，整段在任务线程；泵每 500ms 检查
     // 进程存活（异常退出 → Failed，快照由各页面/状态胶囊自行轮询）。
@@ -345,7 +346,7 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
         tray.OnActivate([window] { window.Activate(); });
         huxerui::Lifecycle(
             [tray, window, application, tasks, traySysProxy, trayTun, dialog,
-             trayEnabled, textColor = rootSpec.colors.on_surface,
+             clipboard, trayEnabled, textColor = rootSpec.colors.on_surface,
              hintColor = rootSpec.colors.on_surface_variant] {
                 // 设置页关掉托盘：跳过注册（依赖变化重建时不 Show）；Hide 对
                 // 未显示的托盘是幂等 no-op，cleanup 统一执行。
@@ -365,8 +366,9 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
                         });
                     }).Checked(traySysProxy.Get()));
                 menuEntries.push_back(
-                    huxerui::MenuItem("TUN 模式", [tasks, trayTun, window, dialog,
-                                                   textColor, hintColor] {
+                    huxerui::MenuItem("TUN 模式",
+                                      [tasks, trayTun, window, dialog, clipboard,
+                                       textColor, hintColor] {
                         tasks.Launch([=]() -> huxerui::Task<void> {
                             const bool next = !trayTun.Get();
                             if (next) {
@@ -380,8 +382,8 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
                                 }
                                 if (gate == core::TunGate::Denied) {
                                     window.Activate();  // 引导弹窗在窗口里
-                                    ShowTunGuideDialog(dialog, textColor,
-                                                       hintColor);
+                                    ShowTunGuideDialog(dialog, clipboard,
+                                                       textColor, hintColor);
                                     co_return;
                                 }
                             }

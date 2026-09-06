@@ -69,6 +69,7 @@ const std::string kAboutText =
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto dialog = huxerui::UseDialog();
+    auto clipboard = huxerui::UseService<huxerui::Clipboard>();
     auto snap = huxerui::UseState<store::CoreSnapshot>({});
     auto portValue = huxerui::UseState(huxerui::TextEditingValue{""});
     auto busy = huxerui::UseState(false);
@@ -334,7 +335,7 @@ const std::string kAboutText =
                             ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
                             : "全局透明代理（下次启动生效）",
                         huxerui::Switch(s.tunEnabled)
-                            .OnChanged([tasks, toast, dialog,
+                            .OnChanged([tasks, toast, dialog, clipboard,
                                         textColor = theme.colors.on_surface,
                                         hintColor =
                                             theme.colors.on_surface_variant](bool on) {
@@ -354,7 +355,8 @@ const std::string kAboutText =
                                             co_return;
                                         }
                                         if (gate == core::TunGate::Denied) {
-                                            ShowTunGuideDialog(dialog, textColor,
+                                            ShowTunGuideDialog(dialog, clipboard,
+                                                               textColor,
                                                                hintColor);
                                             co_return;
                                         }
