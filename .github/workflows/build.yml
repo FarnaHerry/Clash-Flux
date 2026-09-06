@@ -434,9 +434,11 @@ jobs:
           # 项目要求 CMake >= 3.30（import std 门控）；SDK 自带的 3.22.1 不够，
           # AGP 也不会自动装 3.31.1 —— 直接 pip 装 4.4.2，经用户级 gradle
           # 属性 cmake.dir 指给 AGP（不进仓库）。
-          python3 -m pip install --break-system-packages -q cmake==4.4.2
+          python3 -m pip install --break-system-packages -q cmake==3.31.6
           cmake_root="$(dirname "$(dirname "$(command -v cmake)")")"
           "$cmake_root/bin/cmake" --version | head -1
+          # 诊断：SDK 里有哪些 cmake 版本（PATH 搜索失败时的备选）。
+          (yes | sdkmanager --list 2>/dev/null | grep -i "cmake;" | head -5) || true
           # AGP 读 cmake.dir：setup-android 会重定向 GRADLE_USER_HOME，用户级
           # gradle.properties 可能被绕过 —— 项目级（必读）+ 用户级双写兜底。
           # 项目文件改动只存在于本 job，不进仓库。

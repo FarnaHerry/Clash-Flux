@@ -76,8 +76,10 @@ android {
     externalNativeBuild {
         cmake {
             path = file("../../../CMakeLists.txt")
-            // 项目要求 CMake >= 3.30（import std 实验门控）；SDK 自带 3.22.1
-            // 不够 —— CI 经用户级 gradle 属性 cmake.dir 指向 pip 装的 4.4.2。
+            // 项目要求 CMake >= 3.30（import std 实验门控），SDK 自带 3.22.1
+            // 不够。CI 里 pip 装 CMake 3.31.6（在 PATH 上），AGP 按版本号经
+            // SDK/PATH/cmake.dir 三路搜索命中。
+            version = "3.31.6"
         }
     }
 }
