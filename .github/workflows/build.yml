@@ -120,7 +120,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             clang-21 libc++-21-dev g++ ninja-build pkg-config file gzip \
             python3 python3-pip libssl-dev patchelf \
-            libgtk-4-dev libepoxy-dev libsoup-3.0-dev
+            libgtk-4-dev libepoxy-dev libsoup-3.0-dev dpkg-dev rpm
           # 26.04 的 apt cmake 是 3.31（GNU import-std 发现不行），固定 pip 4.4.2
           python3 -m pip install --break-system-packages -q cmake==4.4.2
           cmake --version | head -1
@@ -177,6 +177,17 @@ jobs:
           patchelf --set-rpath '$ORIGIN/lib' dist-src/clash-flux
           file dist-src/clash-flux
           ls -la dist-src dist-src/lib dist-src/engines
+
+      - name: Package Linux DEB and RPM
+        run: |
+          set -euo pipefail
+          mkdir -p dist-packages
+          cpack --config build/CPackConfig.cmake -G DEB -B dist-packages
+          cpack --config build/CPackConfig.cmake -G RPM -B dist-packages
+          packages=(dist-packages/*.deb dist-packages/*.rpm)
+          test "${#packages[@]}" -eq 2
+          cp "${packages[@]}" dist-src/
+          ls -lh dist-src/*.deb dist-src/*.rpm
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -307,6 +318,9 @@ jobs:
           Invoke-Native $cmake @("-DHUXERUI_WIX_PAYLOAD_DIRECTORY=$installerStaging",
             "-DHUXERUI_WIX_PAYLOAD_EXECUTABLE=$([string]$installerPlan.installer)",
             "-DHUXERUI_WIX_PAYLOAD_OUTPUT=$payloads", '-P', $payloadScript)
+          if ((Get-Content $payloads -Raw) -notmatch 'mbanative\.dll') {
+            throw 'HuxerUI installer payload is missing mbanative.dll'
+          }
 
           Invoke-Native $wix @('build', [string]$plan.bundleSource, $payloads, '-arch', 'x64',
             '-bindpath', "Installer=$installerStaging", '-bindpath', "Package=$packageRoot",
@@ -322,21 +336,21 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = 'build/clash-flux.exe'
-          if (-not (Test-Path $exe)) { throw "$exe not found" }
+          # 复用 CMake install 生成的完整运行目录，不能只复制 exe。
+          $staging = '.huxerui/package/windows/release/staging'
+          $exe = Join-Path $staging 'clash-flux.exe'
+          if (-not (Test-Path $exe -PathType Leaf)) { throw "$exe not found" }
           New-Item -ItemType Directory -Force dist-src | Out-Null
-          Copy-Item $exe dist-src\clash-flux.exe
-          # 运行时 DLL（huxerui.dll / OpenSSL / MSVC CRT）由构建 POST_BUILD 拷到 exe 旁
-          foreach ($dll in @(Get-ChildItem (Split-Path -Parent (Resolve-Path $exe)) -File -Filter '*.dll')) {
-            Copy-Item $dll.FullName "dist-src\$($dll.Name)" -Force
+          Copy-Item (Join-Path $staging '*') dist-src -Recurse -Force
+          foreach ($file in @('clash-flux.exe', 'huxerui.dll')) {
+            if (-not (Test-Path (Join-Path 'dist-src' $file) -PathType Leaf)) {
+              throw "Windows runtime payload is missing: $file"
+            }
           }
-          # 自带内核（configure 期下载、POST_BUILD 拷到 exe 旁 engines/）
-          if (Test-Path 'build/engines' -PathType Container) {
-            Copy-Item 'build/engines' dist-src\engines -Recurse -Force
-          }
-          $resources = 'build/clash-flux.resources'
-          if (Test-Path $resources -PathType Container) {
-            Copy-Item $resources dist-src\clash-flux.resources -Recurse -Force
+          foreach ($pattern in @('libssl-*.dll', 'libcrypto-*.dll')) {
+            if (-not (Get-ChildItem 'dist-src' -File -Filter $pattern)) {
+              throw "Windows runtime payload is missing: $pattern"
+            }
           }
           Get-Item dist-src/*
 
@@ -575,21 +589,33 @@ jobs:
           mkdir -p release
           for artifact in dist/build-*; do
             name="$(basename "$artifact")"
-            tar -C dist -czf "release/clash-flux-${GITHUB_REF_NAME}-${name}.tar.gz" "$name"
             if [ "$name" = "build-windows-x86_64" ]; then
               setup_exe="$(find "$artifact" -maxdepth 1 -type f -name '*-Setup-*.exe' -print -quit)"
               test -n "$setup_exe"
               cp "$setup_exe" "release/clash-flux-${GITHUB_REF_NAME}-windows-x86_64-setup.exe"
               (
                 cd "$artifact"
-                zip -qr "$GITHUB_WORKSPACE/release/clash-flux-${GITHUB_REF_NAME}-windows-x86_64-portable.zip" . \
+                zip -qr "$GITHUB_WORKSPACE/release/clash-flux-${GITHUB_REF_NAME}-windows-x86_64.zip" . \
                   -x '*-Setup-*.exe'
               )
+            elif [[ "$name" == build-linux-* ]]; then
+              tar -C dist -czf "release/clash-flux-${GITHUB_REF_NAME}-${name}.tar.gz" "$name"
+              arch="${name#build-linux-}"
+              shopt -s nullglob
+              for extension in deb rpm; do
+                packages=("$artifact"/*."$extension")
+                test "${#packages[@]}" -eq 1
+                cp "${packages[0]}" "release/clash-flux-${GITHUB_REF_NAME}-linux-${arch}.${extension}"
+              done
+            else
+              tar -C dist -czf "release/clash-flux-${GITHUB_REF_NAME}-${name}.tar.gz" "$name"
             fi
           done
           test -s "release/clash-flux-${GITHUB_REF_NAME}-windows-x86_64-setup.exe"
-          test -s "release/clash-flux-${GITHUB_REF_NAME}-windows-x86_64-portable.zip"
+          test -s "release/clash-flux-${GITHUB_REF_NAME}-windows-x86_64.zip"
           test -n "$(find release -type f -name '*.tar.gz' -print -quit)"
+          test -n "$(find release -type f -name '*.deb' -print -quit)"
+          test -n "$(find release -type f -name '*.rpm' -print -quit)"
           ls -lh release
 
       - name: Publish GitHub Release
