@@ -29,11 +29,9 @@
 #   * build-linux-arm64：ubuntu-24.04-arm 原生 runner + ubuntu:26.04 容器，
 #     配方与 x86_64 完全相同，但 26.04 arm64 仓库的 clang-21/libc++-21 可用性
 #     未经首跑验证；连续绿后摘掉 continue-on-error。
-#   * build-windows-*：platform/windows/main.cpp 入口已落地、configure 可过；
-#     首次全量编译 MSVC 尚未跑绿。arm64 走 windows-11-arm 原生 runner +
-#     vcpkg openssl:arm64-windows（choco 的 OpenSSL 只有 x64）。
-#   * build-macos-*：入口已落地、首次全量编译尚未跑绿；x86_64 用 macos-13
-#     （Intel），arm64 用 macos-15。
+#
+# Windows 与 macOS 已纳入发布门禁：完整 Release 构建或 smoke test 失败时，
+# workflow 失败，不会进入发布 job。
 #   * build-android：platform/android 壳（gradle wrapper + MainActivity）已
 #     入库，job 会经 externalNativeBuild 真正交叉编译原生层。已知阻塞：
 #     NDK 无 OpenSSL（root CMakeLists 会 FATAL_ERROR）+ NDK clang 对 C++23
@@ -189,8 +187,7 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------- Windows
-  # 实验性（continue-on-error）：platform/windows/main.cpp 已落地、configure
-  # 可过，首次全量编译尚未连续跑绿；绿后摘掉 continue-on-error。
+  # 发布门禁：Windows Release 必须完整通过。
   # 工具链沿用 apitab 实证：MSVC（VS2022，C++23 模块 + import std）。
   # OpenSSL：x86_64 用 choco 包；arm64（windows-11-arm 原生 runner）choco 无
   # arm64 包，用 runner 自带 vcpkg 装 openssl:arm64-windows（动态triplet，
@@ -280,7 +277,7 @@ jobs:
           retention-days: 14
 
   # ------------------------------------------------------------------ macOS
-  # 实验性（continue-on-error）：同 Windows，入口已落地、首次全量编译尚未跑绿。
+  # 发布门禁：macOS Release 必须完整通过。
   # 工具链沿用 apitab 实证：整链 brew LLVM clang/libc++（.mm 框架层只能 clang
   # 编，std 类型贯穿 .mm/.cpp 接口必须单一标准库；AppleClang 不被 CMake 的
   # C++20 模块扫描支持）。brew llvm 不带 libc++.modules.json，按上游 schema
