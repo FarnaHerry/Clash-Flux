@@ -179,6 +179,7 @@ jobs:
           ls -la dist-src dist-src/lib dist-src/engines
 
       - name: Package Linux DEB and RPM
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist-packages
