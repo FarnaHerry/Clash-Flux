@@ -19,12 +19,12 @@ function(huxerui_configure_windows_project_package target_name install_component
             "${OPENSSL_ROOT_DIR}/bin/libssl-*.dll"
             "${OPENSSL_ROOT_DIR}/bin/libcrypto-*.dll"
         )
-        if (HUXERUI_OPENSSL_RUNTIME_FILES)
-            huxerui_add_runtime_dependencies(${target_name}
-                FILES ${HUXERUI_OPENSSL_RUNTIME_FILES}
-                SEARCH_DIRECTORIES "${OPENSSL_ROOT_DIR}/bin"
-            )
-        endif ()
+        # 即使 GLOB 因 OpenSSL 版本命名变化没有命中，也必须保留目录；
+        # runtime scanner 会按 clash-flux.exe 的实际导入名在这里解析 DLL。
+        huxerui_add_runtime_dependencies(${target_name}
+            FILES ${HUXERUI_OPENSSL_RUNTIME_FILES}
+            SEARCH_DIRECTORIES "${OPENSSL_ROOT_DIR}/bin"
+        )
     endif ()
     _huxerui_install_runtime_dependencies(${target_name} "${install_component}"
             . "$<TARGET_FILE_NAME:${target_name}>"
