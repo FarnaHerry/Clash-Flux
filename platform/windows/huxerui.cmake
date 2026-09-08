@@ -11,6 +11,21 @@ function(huxerui_configure_windows_project_package target_name install_component
     )
     # 将 HuxerUI、OpenSSL 和 MSVC Release runtime 一并部署到安装目录。
     # 只安装主 exe 会导致 Windows 上启动时找不到 huxerui.dll 等运行时依赖。
+    # OpenSSL 的 imported target 不总是向 CMake runtime scanner 暴露 DLL
+    # 所在目录，因此把实际 DLL 和搜索路径显式注册进去。
+    if (WIN32 AND OPENSSL_ROOT_DIR)
+        file(GLOB HUXERUI_OPENSSL_RUNTIME_FILES
+            LIST_DIRECTORIES FALSE
+            "${OPENSSL_ROOT_DIR}/bin/libssl-*.dll"
+            "${OPENSSL_ROOT_DIR}/bin/libcrypto-*.dll"
+        )
+        if (HUXERUI_OPENSSL_RUNTIME_FILES)
+            huxerui_add_runtime_dependencies(${target_name}
+                FILES ${HUXERUI_OPENSSL_RUNTIME_FILES}
+                SEARCH_DIRECTORIES "${OPENSSL_ROOT_DIR}/bin"
+            )
+        endif ()
+    endif ()
     _huxerui_install_runtime_dependencies(${target_name} "${install_component}"
             . "$<TARGET_FILE_NAME:${target_name}>"
     )
