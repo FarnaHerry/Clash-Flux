@@ -52,6 +52,7 @@ name: build
 on:
   push:
     branches: [main]
+    tags: ['v*']
     paths-ignore:
       - 'docs/**'
       - '**.md'
@@ -74,7 +75,7 @@ env:
   # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
   # CI 必须自行 clone 并钉 commit，保证可复现）。上游活跃开发中，追新时
   # 同步更新本机 checkout 与此 pin。
-  HUXERUI_COMMIT: '6a52b08450173ea7fbd6903f7557b56febe9b63b'
+  HUXERUI_COMMIT: '9eff3c8f6a90f7390e4ec4fdab3ccc4b732e3ecf'
 
 jobs:
   # ------------------------------------------------------------------ Linux
@@ -205,7 +206,7 @@ jobs:
             runner: windows-latest
         # arm64 已移除：上游无 windows/arm64 预置 hcg/hrc，本项目也不发布
         # Windows ARM 包（vcpkg openssl:arm64 通道验证成本高，不再支持）。
-    continue-on-error: true
+    continue-on-error: false
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -300,7 +301,7 @@ jobs:
         # 在 arm runner 上交叉编译 x86_64 又卡在「没有 x86_64 的 OpenSSL 产物」
         # （brew 只有 arm64 库）。darwin amd64 的 mihomo 资产表保留，供发布
         # 打包；Intel 构建等有 x86_64 OpenSSL 产物后再补。
-    continue-on-error: true
+    continue-on-error: false
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -479,3 +480,43 @@ jobs:
             build/**/*.aab
           if-no-files-found: warn
           retention-days: 14
+
+  # -------------------------------------------------------------- Release
+  # 只有 v* 标签触发此 job。桌面构建全部通过后，将各平台 artifact 打成归档并
+  # 发布到对应 GitHub Release，避免出现“Release 已发布但没有可下载产物”。
+  publish-release:
+    name: publish-release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download desktop artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: build-*
+          path: dist
+          merge-multiple: false
+
+      - name: Package release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          for artifact in dist/build-*; do
+            name="$(basename "$artifact")"
+            tar -C dist -czf "release/clash-flux-${GITHUB_REF_NAME}-${name}.tar.gz" "$name"
+          done
+          test -n "$(find release -type f -name '*.tar.gz' -print -quit)"
+          ls -lh release
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Clash-Flux $GITHUB_REF_NAME" \
+            --generate-notes \
+            release/*.tar.gz
