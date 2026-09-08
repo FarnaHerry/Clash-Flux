@@ -42,7 +42,7 @@ std::vector<RuleRow> parseRules(const std::string& body) {
 [[huxerui::composable]] huxerui::View RulesPage() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
-    auto rules = huxerui::UseState<std::vector<RuleRow>>({});
+    auto rules = huxerui::UseStateList<RuleRow>();
     auto running = huxerui::UseState(false);
     auto refreshTick = huxerui::UseState(0);  // 手动刷新触发器
 
@@ -57,7 +57,7 @@ std::vector<RuleRow> parseRules(const std::string& body) {
                         const auto r = co_await RunOnTaskThread([] {
                             return store::coreStore().api().rules();
                         });
-                        if (r.ok) rules = parseRules(r.body);
+                        if (r.ok) ReplaceStateList(rules, parseRules(r.body));
                         // 手动刷新信号到达前每 5s 一拍。
                         for (int i = 0; i < 25; ++i) {
                             co_await huxerui::Delay(std::chrono::duration<double>{0.2});
@@ -67,7 +67,7 @@ std::vector<RuleRow> parseRules(const std::string& body) {
                             }
                         }
                     } else {
-                        if (!rules.Get().empty()) rules = {};
+                        if (!rules.Empty()) rules.Clear();
                         co_await huxerui::Delay(std::chrono::duration<double>{0.5});
                     }
                 }
@@ -76,7 +76,7 @@ std::vector<RuleRow> parseRules(const std::string& body) {
         },
         0);
 
-    auto mono = [&theme](const std::string& text, huxerui::Color color) {
+    auto mono = [](const std::string& text, huxerui::Color color) {
         return huxerui::Text(text).Style(huxerui::TextStyle{
             huxerui::Font::Monospace(font_size::kMonoBody), color});
     };
@@ -88,7 +88,7 @@ std::vector<RuleRow> parseRules(const std::string& body) {
     }.With(huxerui::Padding(32.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 
-    if (!rules.Get().empty()) {
+    if (!rules.Empty()) {
         body = huxerui::Column {
             huxerui::Row {
                 mono("类型", theme.colors.on_surface_variant)
@@ -100,8 +100,9 @@ std::vector<RuleRow> parseRules(const std::string& body) {
             }.With(huxerui::Spacing(8.0F),
                    huxerui::Padding(huxerui::EdgeInsets::Symmetric(4.0F, 2.0F))),
             huxerui::Divider(),
-            huxerui::VirtualList(rules.Get(),
-                                 [mono, theme](const RuleRow& rule) {
+            huxerui::VirtualList(rules.Size(),
+                                 [rules, mono, theme](std::size_t index) {
+                                     const RuleRow& rule = rules[index];
                                      return huxerui::Row {
                                          mono(rule.type, theme.colors.primary)
                                              .With(huxerui::Frame{.width = 150.0F}),
