@@ -6,9 +6,21 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace clashflux::ui {
+
+// Replace a snapshot-backed collection without storing the whole collection in
+// one State value. StateList keeps the list identity stable so virtualized
+// views can retain their item state across refreshes.
+template <class T>
+void ReplaceStateList(huxerui::StateList<T> list, std::vector<T> values) {
+    list.Clear();
+    for (auto& value : values) {
+        list.PushBack(std::move(value));
+    }
+}
 
 // 全项目统一字号阶梯（pt）：控件/正文跟随 SDK 默认 14，不再散落硬编码字面量。
 namespace font_size {

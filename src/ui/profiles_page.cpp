@@ -419,7 +419,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
     auto dialog = huxerui::UseDialog();
     auto menu = huxerui::UseMenu();
     auto clipboard = huxerui::UseService<huxerui::Clipboard>();
-    auto profiles = huxerui::UseState<std::vector<db::Profile>>({});
+    auto profiles = huxerui::UseStateList<db::Profile>();
 
     // ---- 新建订阅弹窗 ----
     auto newName = huxerui::UseState(huxerui::TextEditingValue{""});
@@ -449,7 +449,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
 
     // ---- 编辑规则弹窗（工作 YAML + 规则行 + 输入行 + 脏标记）----
     auto editYamlText = huxerui::UseState<std::string>("");
-    auto editRules = huxerui::UseState<std::vector<std::string>>({});
+    auto editRules = huxerui::UseStateList<std::string>();
     auto editRuleInput = huxerui::UseState(huxerui::TextEditingValue{""});
     auto editRulesDirty = huxerui::UseState(false);
 
@@ -462,7 +462,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
         [tasks, profiles] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{2.0}, [=] {
-                    profiles = store::profilesStore().list();
+                    ReplaceStateList(profiles, store::profilesStore().list());
                     return true;
                 });
             });
@@ -479,7 +479,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
     };
 
     auto findProfile = [profiles](std::int64_t id) -> std::optional<db::Profile> {
-        for (const auto& p : profiles.Get()) {
+        for (const auto& p : profiles) {
             if (p.id == id) return p;
         }
         return std::nullopt;
@@ -592,7 +592,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
                     return store::profilesStore().yamlOf(id);
                 });
             editYamlText = yaml;
-            editRules = store::parseRules(yaml);
+            ReplaceStateList(editRules, store::parseRules(yaml));
             editRuleInput = huxerui::TextEditingValue{""};
             editRulesDirty = false;
             dialog.Show(
@@ -600,28 +600,43 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
                  editRulesDirty, id, textColor, hintColor](
                     huxerui::DialogContext ctx) -> huxerui::View {
                     // 规则行（动态列表：键用行号；行内无状态）。
-                    std::vector<huxerui::View> rows;
-                    const std::vector<std::string>& rules = editRules.Get();
-                    rows.reserve(rules.size());
-                    for (std::size_t i = 0; i < rules.size(); ++i) {
-                        rows.push_back(
-                            huxerui::Row {
-                                huxerui::Text(std::format("{}", i + 1))
-                                    .Style(huxerui::TextStyle{
-                                        huxerui::Font::System(
-                                            font_size::kCaption),
-                                        hintColor})
-                                    .With(huxerui::Frame{.width = 32.0F}),
-                                huxerui::Text(truncateOneLine(rules[i], 72))
-                                    .Style(huxerui::TextStyle{
-                                        huxerui::Font::Monospace(
-                                            font_size::kMonoBody),
-                                        textColor}),
-                            }
-                                .With(huxerui::Spacing(6.0F),
-                                      huxerui::CrossAlign(
-                                          huxerui::CrossAxisAlignment::Center))
-                                .Key(std::to_string(i)));
+                    huxerui::View ruleList;
+                    if (editRules.Empty()) {
+                        ruleList = huxerui::Column {
+                            huxerui::Text("订阅没有 rules 规则")
+                                .Style(huxerui::TextStyle{
+                                    huxerui::Font::System(font_size::kCaption),
+                                    hintColor}),
+                        }.With(huxerui::Padding(12.0F),
+                               huxerui::Frame{.height = 300.0F});
+                    } else {
+                        ruleList = huxerui::VirtualList(
+                                       editRules.Size(),
+                                       [editRules, textColor,
+                                        hintColor](std::size_t index) {
+                                           return huxerui::Row {
+                                               huxerui::Text(std::format("{}", index + 1))
+                                                   .Style(huxerui::TextStyle{
+                                                       huxerui::Font::System(
+                                                           font_size::kCaption),
+                                                       hintColor})
+                                                   .With(huxerui::Frame{.width = 32.0F}),
+                                               huxerui::Text(truncateOneLine(
+                                                                 editRules[index], 72))
+                                                   .Style(huxerui::TextStyle{
+                                                       huxerui::Font::Monospace(
+                                                           font_size::kMonoBody),
+                                                       textColor}),
+                                           }
+                                               .With(
+                                                   huxerui::Spacing(6.0F),
+                                                   huxerui::CrossAlign(
+                                                       huxerui::CrossAxisAlignment::Center))
+                                               .Key(std::to_string(index));
+                                       })
+                                       .ItemExtent(28.0F)
+                                       .With(huxerui::Frame{.height = 300.0F},
+                                             huxerui::ScrollBar());
                     }
                     auto addRule = [=](bool prepend) {
                         const std::string text = editRuleInput.Get().text;
@@ -629,7 +644,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
                         const std::string yaml = store::insertRule(
                             editYamlText.Get(), text, prepend);
                         editYamlText = yaml;
-                        editRules = store::parseRules(yaml);
+                        ReplaceStateList(editRules, store::parseRules(yaml));
                         editRuleInput = huxerui::TextEditingValue{""};
                         editRulesDirty = true;
                     };
@@ -640,19 +655,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::System(font_size::kCaption),
                                 hintColor}),
-                        huxerui::ScrollView(
-                                rows.empty()
-                                    ? huxerui::View{
-                                          huxerui::Text("订阅没有 rules 规则")
-                                              .Style(huxerui::TextStyle{
-                                                  huxerui::Font::System(
-                                                      font_size::kCaption),
-                                                  hintColor})}
-                                          .With(huxerui::Padding(12.0F))
-                                    : huxerui::View{
-                                          huxerui::Column(std::move(rows))
-                                              .With(huxerui::Spacing(6.0F))})
-                            .With(huxerui::Frame{.height = 300.0F}),
+                        std::move(ruleList),
                         huxerui::Row {
                             huxerui::TextField(editRuleInput.Get())
                                 .Label("规则，如 DOMAIN-SUFFIX,example.com,代理组")
@@ -1014,13 +1017,26 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
             huxerui::DialogOptions{});
     };
 
-    std::vector<huxerui::View> cards;
-    for (const auto& p : profiles.Get()) {
-        cards.push_back(ProfileCard(p, compact, menu, tasks, toast, reload,
-                                    showEditInfo, showEditRules, showEditFile,
-                                    showQr)
-                            .Key(p.id));
-    }
+    huxerui::View profileGrid = huxerui::VirtualGrid(
+                                    profiles.Size(),
+                                    [profiles, compact, menu, tasks, toast, reload,
+                                     showEditInfo, showEditRules, showEditFile,
+                                     showQr](std::size_t index) {
+                                        const db::Profile& profile = profiles[index];
+                                        return ProfileCard(
+                                                   profile, compact, menu, tasks,
+                                                   toast, reload, showEditInfo,
+                                                   showEditRules, showEditFile, showQr)
+                                            .Key(profile.id);
+                                    })
+                                    .Columns(compact
+                                                 ? huxerui::GridColumns::Fixed(1)
+                                                 : huxerui::GridColumns::Adaptive(
+                                                       kCardWidth))
+                                    .EstimatedRowExtent(kCardHeight)
+                                    .RowSpacing(theme.spacing.medium)
+                                    .ColumnSpacing(theme.spacing.medium)
+                                    .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
 
     return PageScaffold(
         "订阅",
@@ -1034,7 +1050,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
                     });
                 }),
         },
-        cards.empty()
+        profiles.Empty()
             ? huxerui::View{
                   huxerui::Column {
                       huxerui::Text("还没有订阅。点击右上角「新建订阅」导入。")
@@ -1046,16 +1062,7 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
                          huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
                          huxerui::CrossAlign(
                              huxerui::CrossAxisAlignment::Center))}
-            : huxerui::View{huxerui::ScrollView(
-                                compact
-                                    ? huxerui::View{huxerui::Column(std::move(cards))
-                                                        .With(huxerui::Spacing(10.0F),
-                                                              huxerui::CrossAlign(
-                                                                  huxerui::CrossAxisAlignment::Stretch))}
-                                    : huxerui::View{huxerui::Flow(std::move(cards))
-                                                        .With(huxerui::Spacing(
-                                                            theme.spacing.medium))})
-                                .With(huxerui::Grow(1.0F))});
+            : std::move(profileGrid));
 }
 
 } // namespace clashflux::ui

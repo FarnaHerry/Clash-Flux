@@ -114,7 +114,7 @@ std::vector<ProxyGroup> parseProxies(const std::string& body) {
     return groups;
 }
 
-const ProxyGroup* findGroup(const std::vector<ProxyGroup>& groups,
+const ProxyGroup* findGroup(const huxerui::StateList<ProxyGroup>& groups,
                             const std::string& name) {
     for (const auto& g : groups) {
         if (g.name == name) return &g;
@@ -124,8 +124,9 @@ const ProxyGroup* findGroup(const std::vector<ProxyGroup>& groups,
 
 // 渲染期校验：只保留 navPath 中仍然存在且逐级可达（组类型子节点）的前缀；
 // 空输入或根组消失返回空（调用方回落第一个组）。
-std::vector<std::string> resolvePath(const std::vector<ProxyGroup>& groups,
-                                     const std::vector<std::string>& raw) {
+std::vector<std::string> resolvePath(
+    const huxerui::StateList<ProxyGroup>& groups,
+    const std::vector<std::string>& raw) {
     std::vector<std::string> out;
     if (raw.empty()) return out;
     const ProxyGroup* g = findGroup(groups, raw.front());
@@ -158,7 +159,7 @@ huxerui::Color delayColor(const huxerui::ThemeSpec& theme, int delay, bool timeo
 
 // 节点统一矩形卡：名称（正文级）+ 元信息行（延迟着色；组类型节点显示
 // 「组 · 分支当前选中」作为可点入提示），选中态 primary 底。
-// 宽度由 NodeGrid 的 Grow(1) 均分，高度随行内 Stretch 拉齐。
+// 宽度由 VirtualGrid 均分，高度由 EstimatedRowExtent 提供估计。
 [[huxerui::composable]] huxerui::View NodeCard(
     const ProxyNode& node, bool selected,
     huxerui::State<std::unordered_map<std::string, int>> delays,
@@ -214,69 +215,64 @@ huxerui::Color delayColor(const huxerui::ThemeSpec& theme, int delay, bool timeo
         .OnClick([onSelect = std::move(onSelect)] { onSelect(); });
 }
 
-// 节点统一网格：按 cols 切行，每张卡 Grow(1) 等宽；行 CrossAlign(Stretch)
-// 等高；末行以空 Row 占位补齐（约定 5：不用 Spacer），所有卡同宽。
+// 节点统一网格：交给 VirtualGrid 按 cols 虚拟化，只创建视口附近的节点卡。
 constexpr float kNodeGridGap = 8.0F;
 
 [[huxerui::composable]] huxerui::View NodeGrid(
     const ProxyGroup& group, std::size_t cols,
     huxerui::State<std::unordered_map<std::string, int>> delays,
     huxerui::State<std::unordered_map<std::string, bool>> timeouts,
-    huxerui::TaskScope tasks, huxerui::State<std::vector<ProxyGroup>> groups,
+    huxerui::TaskScope tasks, huxerui::StateList<ProxyGroup> groups,
     huxerui::State<std::vector<std::string>> navPath) {
-    const std::vector<ProxyNode>& nodes = group.nodes;
+    const std::size_t nodeCount = group.nodes.size();
     const std::string groupName = group.name;
-    std::vector<huxerui::View> rows;
-    for (std::size_t begin = 0; begin < nodes.size(); begin += cols) {
-        const std::size_t end = std::min(begin + cols, nodes.size());
-        std::vector<huxerui::View> cells;
-        for (std::size_t i = begin; i < end; ++i) {
-            const ProxyNode& node = nodes[i];
-            const std::string nodeName = node.name;
-            // 分支节点：先选中到当前组（selectProxy），再进入浏览（路径入栈）。
-            // 叶子节点：常规切换。路径写在任务协程里（点击节点会随网格换组卸载）。
-            std::function<void()> onSelect;
-            if (node.isGroup) {
-                onSelect = [tasks, groups, navPath, groupName, nodeName] {
-                    tasks.Launch([=]() -> huxerui::Task<void> {
-                        co_await RunOnTaskThread([=] {
-                            store::coreStore().api().selectProxy(groupName,
-                                                                 nodeName);
-                        });
-                        std::vector<std::string> p =
-                            resolvePath(groups.Get(), navPath.Get());
-                        if (p.empty() || p.back() != groupName) co_return;
-                        p.push_back(nodeName);
-                        navPath = p;
-                    });
-                };
-            } else {
-                onSelect = [tasks, groupName, nodeName] {
-                    tasks.Launch([=]() -> huxerui::Task<void> {
-                        co_await RunOnTaskThread([=] {
-                            store::coreStore().api().selectProxy(groupName,
-                                                                 nodeName);
-                        });
-                    });
-                };
-            }
-            cells.push_back(
-                NodeCard(node, node.name == group.now, delays, timeouts,
-                         std::move(onSelect))
-                    .Key(node.name));
-        }
-        for (std::size_t i = end; i < begin + cols; ++i) {
-            cells.push_back(huxerui::Row{}.With(huxerui::Grow(1.0F)));
-        }
-        rows.push_back(
-            huxerui::Row(std::move(cells))
-                .With(huxerui::Spacing(kNodeGridGap),
-                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
-                .Key(nodes[begin].name));
-    }
-    return huxerui::Column(std::move(rows))
-        .With(huxerui::Spacing(kNodeGridGap),
-              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    const std::string selectedName = group.now;
+    return huxerui::VirtualGrid(
+               nodeCount,
+               [groups, selectedName, groupName, delays, timeouts, tasks,
+                navPath](std::size_t index) {
+                   const ProxyGroup* current = findGroup(groups, groupName);
+                   if (current == nullptr || index >= current->nodes.size()) {
+                       return huxerui::View{};
+                   }
+                   const ProxyNode node = current->nodes[index];
+                   const std::string nodeName = node.name;
+                   // 分支节点：先选中到当前组（selectProxy），再进入浏览（路径入栈）。
+                   // 叶子节点：常规切换。路径写在任务协程里（点击节点会随网格换组卸载）。
+                   std::function<void()> onSelect;
+                   if (node.isGroup) {
+                       onSelect = [tasks, groups, navPath, groupName, nodeName] {
+                           tasks.Launch([=]() -> huxerui::Task<void> {
+                               co_await RunOnTaskThread([=] {
+                                   store::coreStore().api().selectProxy(groupName,
+                                                                        nodeName);
+                               });
+                               std::vector<std::string> p =
+                                   resolvePath(groups, navPath.Get());
+                               if (p.empty() || p.back() != groupName) co_return;
+                               p.push_back(nodeName);
+                               navPath = p;
+                           });
+                       };
+                   } else {
+                       onSelect = [tasks, groupName, nodeName] {
+                           tasks.Launch([=]() -> huxerui::Task<void> {
+                               co_await RunOnTaskThread([=] {
+                                   store::coreStore().api().selectProxy(groupName,
+                                                                        nodeName);
+                               });
+                           });
+                       };
+                   }
+                   return NodeCard(node, node.name == selectedName, delays,
+                                   timeouts, std::move(onSelect))
+                       .Key(node.name);
+               })
+        .Columns(huxerui::GridColumns::Fixed(cols))
+        .EstimatedRowExtent(72.0F)
+        .RowSpacing(kNodeGridGap)
+        .ColumnSpacing(kNodeGridGap)
+        .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
 }
 
 // 分组 chips 横向条（规则模式：订阅自带的分组，不含 GLOBAL——GLOBAL 属于
@@ -285,7 +281,7 @@ constexpr float kChipHeight = 32.0F;
 constexpr float kChipGap = 8.0F;
 
 [[huxerui::composable]] huxerui::View GroupChipBar(
-    const std::vector<ProxyGroup>& groups, const std::string& selected,
+    huxerui::StateList<ProxyGroup> groups, const std::string& selected,
     huxerui::State<std::vector<std::string>> navPath, huxerui::TaskScope tasks) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
@@ -435,7 +431,7 @@ constexpr float kChipGap = 8.0F;
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
-    auto groups = huxerui::UseState<std::vector<ProxyGroup>>({});
+    auto groups = huxerui::UseStateList<ProxyGroup>();
     auto coreState = huxerui::UseState<core::CoreState>(core::CoreState::Stopped);
     auto mode = huxerui::UseState<std::string>("rule");
     auto delays = huxerui::UseState<std::unordered_map<std::string, int>>({});
@@ -459,10 +455,10 @@ constexpr float kChipGap = 8.0F;
                         const auto r = co_await RunOnTaskThread([] {
                             return store::coreStore().api().proxies();
                         });
-                        if (r.ok) groups = parseProxies(r.body);
+                        if (r.ok) ReplaceStateList(groups, parseProxies(r.body));
                         co_await huxerui::Delay(std::chrono::duration<double>{3.0});
                     } else {
-                        if (!groups.Get().empty()) groups = {};
+                        if (!groups.Empty()) groups.Clear();
                         co_await huxerui::Delay(std::chrono::duration<double>{0.5});
                     }
                 }
@@ -492,7 +488,7 @@ constexpr float kChipGap = 8.0F;
 
     // 按出站模式取当前视图的路径与组（渲染期校验：根组消失回落，嵌套前缀
     // 逐级校验）。直连不经过节点，不展示订阅组。
-    const std::vector<ProxyGroup>& all = groups.Get();
+    const huxerui::StateList<ProxyGroup> all = groups;
     const bool direct = mode.Get() == "direct";
     const bool global = mode.Get() == "global";
     const ProxyGroup* firstRule = nullptr;
@@ -502,7 +498,7 @@ constexpr float kChipGap = 8.0F;
             break;
         }
     }
-    if (firstRule == nullptr && !all.empty()) firstRule = &all.front();
+    if (firstRule == nullptr && !all.Empty()) firstRule = &all[0];
 
     std::vector<std::string> path;
     huxerui::State<std::vector<std::string>> activePath = rulePath;
@@ -546,10 +542,8 @@ constexpr float kChipGap = 8.0F;
                   huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     } else if (current != nullptr) {
-        gridArea = huxerui::ScrollView(
-                       NodeGrid(*current, cols, delays, timeouts, tasks, groups,
-                                activePath))
-            .With(huxerui::Grow(1.0F));
+        gridArea = NodeGrid(*current, cols, delays, timeouts, tasks, groups,
+                            activePath);
     } else {
         gridArea = huxerui::Column {
             huxerui::Text(coreState.Get() == core::CoreState::Running

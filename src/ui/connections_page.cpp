@@ -2,7 +2,7 @@
 // 表头（总量 + 关闭全部）+ VirtualList 行（链 | 目标 | 上/下行 | 规则 | 关闭）。
 //
 // 数据流：IX 线程把每帧原文推进 CoreStreams 槽位；UI 泵每 500ms takeConnections
-// 取最新帧解析写 State（全量快照语义，直接整表替换，无需差分）。
+// 取最新帧解析写 StateList（全量快照语义，直接整表替换，无需差分）。
 #include <huxerui/huxerui.h>
 
 #include <chrono>
@@ -86,18 +86,24 @@ ConnectionsSnapshot parseConnections(const std::string& body) {
 [[huxerui::composable]] huxerui::View ConnectionsPage() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
-    auto snap = huxerui::UseState<ConnectionsSnapshot>({});
+    auto rows = huxerui::UseStateList<ConnectionRow>();
+    auto totalUp = huxerui::UseState<std::int64_t>(0);
+    auto totalDown = huxerui::UseState<std::int64_t>(0);
     auto streamOpen = huxerui::UseState(false);
+    const auto scroll = huxerui::UseScrollController();
 
     huxerui::Lifecycle(
-        [tasks, snap, streamOpen] {
+        [tasks, rows, totalUp, totalDown, streamOpen] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{0.5}, [=] {
                     auto& streams = store::coreStore().streams();
                     streamOpen = streams.connectionsOpen();
                     std::string frame;
                     if (streams.takeConnections(frame)) {
-                        snap = parseConnections(frame);
+                        ConnectionsSnapshot snapshot = parseConnections(frame);
+                        totalUp = snapshot.totalUp;
+                        totalDown = snapshot.totalDown;
+                        ReplaceStateList(rows, std::move(snapshot.rows));
                     }
                     return true;
                 });
@@ -106,14 +112,12 @@ ConnectionsSnapshot parseConnections(const std::string& body) {
         },
         0);
 
-    auto mono = [&theme](const std::string& text, huxerui::Color color, float width) {
+    auto mono = [](const std::string& text, huxerui::Color color, float width) {
         huxerui::View t = huxerui::Text(text).Style(huxerui::TextStyle{
             huxerui::Font::Monospace(font_size::kMonoBody), color});
         if (width > 0.0F) return std::move(t).With(huxerui::Frame{.width = width});
         return std::move(t).With(huxerui::Grow(1.0F));
     };
-
-    const ConnectionsSnapshot s = snap.Get();
 
     huxerui::View body = huxerui::Column {
         huxerui::Text(streamOpen.Get() ? "暂无活动连接"
@@ -123,51 +127,53 @@ ConnectionsSnapshot parseConnections(const std::string& body) {
     }.With(huxerui::Padding(32.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 
-    if (!s.rows.empty()) {
-        std::vector<huxerui::View> rows;
-        for (const auto& row : s.rows) {
-            const std::string id = row.id;
-            rows.push_back(
-                huxerui::Row {
-                    mono(row.host, theme.colors.on_surface, 0.0F),
-                    mono(row.network, theme.colors.on_surface_variant, 50.0F),
-                    mono(row.chains, theme.colors.on_surface_variant, 220.0F),
-                    mono(std::format("↑{} ↓{}", formatBytes(row.up),
-                                     formatBytes(row.down)),
-                         theme.colors.on_surface_variant, 160.0F),
-                    mono(row.rule, theme.colors.on_surface_variant, 140.0F),
-                    huxerui::Text("✕").Style(huxerui::TextStyle{
-                        huxerui::Font::System(font_size::kCaption),
-                        theme.colors.on_surface_variant})
-                        .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(
-                                  8.0F, 2.0F)),
-                              huxerui::Semantics{.role =
-                                                     huxerui::SemanticRole::Button,
-                                                 .label = "关闭连接"},
-                              huxerui::Focusable(true),
-                              huxerui::Tooltip("关闭该连接"))
-                        .OnClick([tasks, id] {
-                            tasks.Launch([=]() -> huxerui::Task<void> {
-                                co_await RunOnTaskThread([=] {
-                                    store::coreStore().api().closeConnection(id);
-                                });
-                            });
-                        }),
-                }
-                    .With(huxerui::Spacing(8.0F),
-                          huxerui::Padding(huxerui::EdgeInsets::Symmetric(4.0F, 5.0F)),
-                          huxerui::CrossAlign(
-                              huxerui::CrossAxisAlignment::Center))
-                    .Key(row.id));
-        }
-        body = huxerui::Column(std::move(rows))
-            .With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-        body = huxerui::ScrollView(std::move(body)).With(huxerui::Grow(1.0F));
+    if (!rows.Empty()) {
+        body = huxerui::VirtualList(
+                   rows.Size(),
+                   [rows, tasks, mono, theme](std::size_t index) {
+                       const ConnectionRow& row = rows[index];
+                       const std::string id = row.id;
+                       return huxerui::Row {
+                           mono(row.host, theme.colors.on_surface, 0.0F),
+                           mono(row.network, theme.colors.on_surface_variant, 50.0F),
+                           mono(row.chains, theme.colors.on_surface_variant, 220.0F),
+                           mono(std::format("↑{} ↓{}", formatBytes(row.up),
+                                            formatBytes(row.down)),
+                                theme.colors.on_surface_variant, 160.0F),
+                           mono(row.rule, theme.colors.on_surface_variant, 140.0F),
+                           huxerui::Text("✕").Style(huxerui::TextStyle{
+                               huxerui::Font::System(font_size::kCaption),
+                               theme.colors.on_surface_variant})
+                               .With(huxerui::Padding(
+                                         huxerui::EdgeInsets::Symmetric(8.0F, 2.0F)),
+                                     huxerui::Semantics{
+                                         .role = huxerui::SemanticRole::Button,
+                                         .label = "关闭连接"},
+                                     huxerui::Focusable(true),
+                                     huxerui::Tooltip("关闭该连接"))
+                               .OnClick([tasks, id] {
+                                   tasks.Launch([=]() -> huxerui::Task<void> {
+                                       co_await RunOnTaskThread([=] {
+                                           store::coreStore().api().closeConnection(id);
+                                       });
+                                   });
+                               }),
+                       }
+                           .With(huxerui::Spacing(8.0F),
+                                 huxerui::Padding(
+                                     huxerui::EdgeInsets::Symmetric(4.0F, 5.0F)),
+                                 huxerui::CrossAlign(
+                                     huxerui::CrossAxisAlignment::Center))
+                           .Key(row.id);
+                   })
+                   .EstimatedItemExtent(38.0F)
+                   .Controller(scroll)
+                   .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     }
 
     return PageScaffold(
-        std::format("连接（{} 条 · ↑{} ↓{}）", s.rows.size(),
-                    formatBytes(s.totalUp), formatBytes(s.totalDown)),
+        std::format("连接（{} 条 · ↑{} ↓{}）", rows.Size(),
+                    formatBytes(totalUp.Get()), formatBytes(totalDown.Get())),
         huxerui::Button("关闭全部")
             .OnClick([tasks] {
                 tasks.Launch([=]() -> huxerui::Task<void> {
