@@ -237,14 +237,86 @@ jobs:
       - name: Configure
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          # HuxerUI 的 Windows 安装器通过 WiX 5 生成 MSI + Burn setup.exe。
+          # CMake 配置阶段会按固定 SHA256 下载 WiX 依赖到此缓存目录。
+          $wixRoot = Join-Path (Get-Location) '.huxerui/package/windows/dependencies/wix'
+          New-Item -ItemType Directory -Force $wixRoot | Out-Null
+          dotnet --list-runtimes
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
-            "-DOPENSSL_ROOT_DIR=$env:OPENSSL_ROOT_DIR"
+            "-DOPENSSL_ROOT_DIR=$env:OPENSSL_ROOT_DIR" `
+            '-DHUXERUI_PACKAGE=ON' `
+            "-DHUXERUI_WIX_ROOT=$wixRoot"
 
       - name: Build release
         run: cmake --build build --config Release --parallel
 
       - name: Smoke test
         run: ctest --test-dir build --output-on-failure
+
+      - name: Package HuxerUI Windows installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Invoke-Native([string] $File, [string[]] $Arguments) {
+            & $File @Arguments
+            if ($LASTEXITCODE -ne 0) {
+              throw "$File exited with code $LASTEXITCODE"
+            }
+          }
+
+          $cmake = (Get-Command cmake).Path
+          $projectRoot = (Get-Location).Path
+          $planPath = Join-Path $projectRoot 'build/huxerui-package/windows/Release/package.json'
+          if (-not (Test-Path $planPath -PathType Leaf)) {
+            throw "HuxerUI Windows package plan not found: $planPath"
+          }
+          $plan = Get-Content $planPath -Raw | ConvertFrom-Json
+          $installerPlanPath = [string]$plan.installerPlan
+          if (-not (Test-Path $installerPlanPath -PathType Leaf)) {
+            throw "HuxerUI installer integration plan not found: $installerPlanPath"
+          }
+          $installerPlan = Get-Content $installerPlanPath -Raw | ConvertFrom-Json
+
+          # Keep the layout identical to `huxerui package windows`; the setup.exe
+          # is the release artifact and embeds the staged MSI plus installer UI.
+          $packageRoot = Join-Path $projectRoot '.huxerui/package/windows/release'
+          $staging = Join-Path $packageRoot 'staging'
+          $installerStaging = Join-Path $packageRoot 'installer'
+          $projectShell = Join-Path $projectRoot 'platform/windows'
+          $msi = Join-Path $packageRoot "$($plan.target).msi"
+          $payloads = Join-Path $packageRoot 'installer-payloads.wxs'
+          $bundle = Join-Path $packageRoot "$($plan.target)-Setup-$($plan.version).exe"
+          New-Item -ItemType Directory -Force $packageRoot | Out-Null
+          Invoke-Native $cmake @('-E', 'rm', '-rf', $staging)
+          Invoke-Native $cmake @('-E', 'rm', '-rf', $installerStaging)
+          Invoke-Native $cmake @('-E', 'make_directory', $staging)
+          Invoke-Native $cmake @('-E', 'make_directory', $installerStaging)
+
+          Invoke-Native $cmake @('--install', 'build', '--config', 'Release', '--component',
+            [string]$plan.installComponent, '--prefix', $staging)
+          Invoke-Native $cmake @('--install', 'build', '--config', 'Release', '--component',
+            [string]$installerPlan.installComponent, '--prefix', $installerStaging)
+
+          $wix = [string]$installerPlan.wix
+          Invoke-Native $wix @('build', [string]$plan.packageSource, '-arch', 'x64',
+            '-bindpath', "Application=$staging", '-bindpath', "Project=$projectShell", '-out', $msi)
+
+          $payloadScript = Join-Path $projectRoot 'third_party/huxerui/cmake/HuxerUIGenerateWixPayloads.cmake'
+          Invoke-Native $cmake @("-DHUXERUI_WIX_PAYLOAD_DIRECTORY=$installerStaging",
+            "-DHUXERUI_WIX_PAYLOAD_EXECUTABLE=$([string]$installerPlan.installer)",
+            "-DHUXERUI_WIX_PAYLOAD_OUTPUT=$payloads", '-P', $payloadScript)
+
+          Invoke-Native $wix @('build', [string]$plan.bundleSource, $payloads, '-arch', 'x64',
+            '-bindpath', "Installer=$installerStaging", '-bindpath', "Package=$packageRoot",
+            '-bindpath', "Project=$projectShell", '-out', $bundle)
+          if (-not (Test-Path $bundle -PathType Leaf)) {
+            throw "HuxerUI setup.exe was not produced: $bundle"
+          }
+          New-Item -ItemType Directory -Force dist-src | Out-Null
+          Copy-Item $bundle (Join-Path 'dist-src' ([IO.Path]::GetFileName($bundle))) -Force
+          Get-Item $bundle
 
       - name: Stage executable
         shell: pwsh
@@ -273,7 +345,7 @@ jobs:
         with:
           name: build-windows-${{ matrix.arch }}
           path: dist-src
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
   # ------------------------------------------------------------------ macOS
