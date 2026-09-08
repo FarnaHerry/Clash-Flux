@@ -9,6 +9,11 @@ function(huxerui_configure_windows_project_package target_name install_component
             RUNTIME DESTINATION .
             COMPONENT "${install_component}"
     )
+    # 将 HuxerUI、OpenSSL 和 MSVC Release runtime 一并部署到安装目录。
+    # 只安装主 exe 会导致 Windows 上启动时找不到 huxerui.dll 等运行时依赖。
+    _huxerui_install_runtime_dependencies(${target_name} "${install_component}"
+            . "$<TARGET_FILE_NAME:${target_name}>"
+    )
     get_target_property(HUXERUI_WINDOWS_APP_RESOURCES
             ${target_name}
             HUXERUI_RESOURCE_PACKAGE

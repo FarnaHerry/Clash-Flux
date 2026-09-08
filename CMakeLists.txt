@@ -371,6 +371,44 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         endif ()
     endif ()
 
+    # ---- Linux DEB/RPM 安装包 ----------------------------------------------
+    # 安装目录保持应用自包含布局（exe、resources、engines、lib 同级），避免
+    # HuxerUI 资源与内核在发行版之间出现路径差异。运行时依赖部署脚本会把
+    # libhuxerui、OpenSSL、libc++ 等非系统库复制到 lib/ 并修正 RPATH。
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux"
+            AND COMMAND _huxerui_install_runtime_dependencies)
+        get_target_property(CLASHFLUX_LINUX_INSTALL_COMPONENT clash-flux
+            HUXERUI_APPLICATION_INSTALL_COMPONENT)
+        get_target_property(CLASHFLUX_LINUX_RESOURCE_PACKAGE clash-flux
+            HUXERUI_RESOURCE_PACKAGE)
+        install(TARGETS clash-flux
+            RUNTIME DESTINATION .
+            COMPONENT "${CLASHFLUX_LINUX_INSTALL_COMPONENT}"
+        )
+        _huxerui_install_runtime_dependencies(clash-flux
+            "${CLASHFLUX_LINUX_INSTALL_COMPONENT}"
+            . "$<TARGET_FILE_NAME:clash-flux>"
+        )
+        if (CLASHFLUX_LINUX_RESOURCE_PACKAGE
+                AND NOT CLASHFLUX_LINUX_RESOURCE_PACKAGE MATCHES "-NOTFOUND$")
+            install(DIRECTORY "${CLASHFLUX_LINUX_RESOURCE_PACKAGE}/"
+                DESTINATION "clash-flux.resources"
+                COMPONENT "${CLASHFLUX_LINUX_INSTALL_COMPONENT}"
+            )
+        endif ()
+        if (CLASHFLUX_BUNDLE_MIHOMO AND CLASHFLUX_MIHOMO_BUNDLED_BINARY)
+            install(FILES "${CLASHFLUX_MIHOMO_BUNDLED_BINARY}"
+                DESTINATION engines
+                RENAME "${CLASHFLUX_MIHOMO_BUNDLED_NAME}"
+                COMPONENT "${CLASHFLUX_LINUX_INSTALL_COMPONENT}"
+            )
+        endif ()
+        install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+            DESTINATION .
+            COMPONENT "${CLASHFLUX_LINUX_INSTALL_COMPONENT}"
+        )
+    endif ()
+
     # 图标资源放 <exe>/assets；HuxerUI 资源包（内置+app 合并，由 huxerui_add_app 的
     # 资源构建生成）放 <exe>.resources。最新运行时除了 resources.bin 索引外，
     # 还会按索引读取同目录下的 .huxv/.png 等实际 payload，必须把整个 package
@@ -401,5 +439,26 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         set_target_properties(test_smoke PROPERTIES CXX_MODULE_STD ON)
         target_compile_features(test_smoke PRIVATE cxx_std_23)
         add_test(NAME smoke COMMAND test_smoke)
+    endif ()
+
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(CPACK_PACKAGE_NAME "clash-flux")
+        set(CPACK_PACKAGE_VENDOR "FarnaHerry")
+        set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Clash/mihomo proxy client")
+        set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+        set(CPACK_PACKAGE_CONTACT "FarnaHerry")
+        set(CPACK_PACKAGING_INSTALL_PREFIX "/opt/clash-flux")
+        set(CPACK_GENERATOR "DEB;RPM")
+        set(CPACK_DEBIAN_PACKAGE_MAINTAINER "FarnaHerry")
+        set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
+        set(CPACK_RPM_PACKAGE_LICENSE "MIT")
+        set(CPACK_RPM_PACKAGE_GROUP "Applications/Internet")
+        # HuxerUI/curl 的 SDK 目标也注册了 install component，但发行包只应
+        # 带 Clash-Flux 应用本身，不能把开发头文件和静态库塞进 DEB/RPM。
+        set(CPACK_COMPONENTS_ALL "HuxerUIApplication")
+        set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)
+        set(CPACK_INSTALL_CMAKE_PROJECTS
+            "${CMAKE_BINARY_DIR};clash-flux;HuxerUIApplication;/")
+        include(CPack)
     endif ()
 endif ()
