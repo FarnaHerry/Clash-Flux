@@ -306,6 +306,16 @@ jobs:
           Invoke-Native $cmake @('-E', 'make_directory', $staging)
           Invoke-Native $cmake @('-E', 'make_directory', $installerStaging)
 
+          # CMake runtime scanner 的搜索根包含 build/；先把当前 OpenSSL
+          # 安装中的 DLL 放进去，保证 libssl/libcrypto 会被解析并部署到
+          # 免安装目录与 MSI，而不是依赖 runner 的 PATH。
+          $opensslBin = Join-Path $env:OPENSSL_ROOT_DIR 'bin'
+          foreach ($pattern in @('libssl-*.dll', 'libcrypto-*.dll')) {
+            $dlls = @(Get-ChildItem $opensslBin -File -Filter $pattern)
+            if ($dlls.Count -eq 0) { throw "OpenSSL runtime DLL is missing: $opensslBin\$pattern" }
+            Copy-Item $dlls.FullName build -Force
+          }
+
           Invoke-Native $cmake @('--install', 'build', '--config', 'Release', '--component',
             [string]$plan.installComponent, '--prefix', $staging)
           Invoke-Native $cmake @('--install', 'build', '--config', 'Release', '--component',
