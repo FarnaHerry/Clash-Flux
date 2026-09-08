@@ -103,7 +103,7 @@ View SecondaryAction(View action, const ThemeSpec& theme) {
       .padding = EdgeInsets::Symmetric(20.0F, 8.0F),
       .minimum_width = 72.0F,
       .minimum_height = 40.0F,
-      .corner_radius = theme.shapes.full,
+      .corner_radii = CornerRadii{theme.shapes.full},
       .indication = theme.interactions.indication,
   });
   return Theme {std::move(definition), std::move(action)};
