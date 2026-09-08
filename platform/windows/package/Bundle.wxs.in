@@ -2,8 +2,7 @@
   <Bundle Name="Clash-Flux" Manufacturer="dev.farna.clashflux" Version="@HUXERUI_WINDOWS_PROJECT_VERSION@"
           UpgradeCode="@HUXERUI_WINDOWS_BUNDLE_UPGRADE_CODE@">
     <BootstrapperApplication SourceFile="!(bindpath.Installer)\clash-flux-Installer.exe">
-      <PayloadGroupRef Id="HuxerUIInstallerResources" />
-      <Payload SourceFile="!(bindpath.Installer)\mbanative.dll" />
+      <PayloadGroupRef Id="HuxerUIInstallerPayloads" />
     </BootstrapperApplication>
     <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]Clash-Flux" />
     <Variable Name="CreateDesktopShortcut" Type="numeric" Value="0" />
