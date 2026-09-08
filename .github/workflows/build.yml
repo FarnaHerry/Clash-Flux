@@ -576,7 +576,19 @@ jobs:
           for artifact in dist/build-*; do
             name="$(basename "$artifact")"
             tar -C dist -czf "release/clash-flux-${GITHUB_REF_NAME}-${name}.tar.gz" "$name"
+            if [ "$name" = "build-windows-x86_64" ]; then
+              setup_exe="$(find "$artifact" -maxdepth 1 -type f -name '*-Setup-*.exe' -print -quit)"
+              test -n "$setup_exe"
+              cp "$setup_exe" "release/clash-flux-${GITHUB_REF_NAME}-windows-x86_64-setup.exe"
+              (
+                cd "$artifact"
+                zip -qr "$GITHUB_WORKSPACE/release/clash-flux-${GITHUB_REF_NAME}-windows-x86_64-portable.zip" . \
+                  -x '*-Setup-*.exe'
+              )
+            fi
           done
+          test -s "release/clash-flux-${GITHUB_REF_NAME}-windows-x86_64-setup.exe"
+          test -s "release/clash-flux-${GITHUB_REF_NAME}-windows-x86_64-portable.zip"
           test -n "$(find release -type f -name '*.tar.gz' -print -quit)"
           ls -lh release
 
@@ -588,4 +600,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "Clash-Flux $GITHUB_REF_NAME" \
             --generate-notes \
-            release/*.tar.gz
+            release/*
