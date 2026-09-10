@@ -563,7 +563,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist-src
-          apk="$(find platform/android/build -type f -path '*/outputs/apk/release/*.apk' -print -quit)"
+          apk="$(find platform/android/app/build -type f -path '*/outputs/apk/release/*.apk' -print -quit)"
           test -n "$apk"
           cp "$apk" dist-src/clash-flux-android-universal.apk
           test -s dist-src/clash-flux-android-universal.apk

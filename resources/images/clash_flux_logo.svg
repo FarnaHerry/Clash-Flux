@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Clash-Flux logo</title>
+  <desc id="desc">A rounded midnight-blue cat face with cyan eyes, ears, and a small wave-shaped mouth.</desc>
+  <defs>
+    <linearGradient id="ear" x1="92" y1="100" x2="240" y2="238" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#252b49"/>
+      <stop offset="1" stop-color="#111527"/>
+    </linearGradient>
+    <linearGradient id="face" x1="126" y1="192" x2="384" y2="426" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2b314e"/>
+      <stop offset="0.52" stop-color="#1b2038"/>
+      <stop offset="1" stop-color="#111526"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="116" y1="128" x2="412" y2="404" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#b8c8ff"/>
+      <stop offset="0.38" stop-color="#6f83de"/>
+      <stop offset="0.72" stop-color="#3a63e0"/>
+      <stop offset="1" stop-color="#192a86"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="170" y1="174" x2="336" y2="352" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9be6ff"/>
+      <stop offset="1" stop-color="#55bff1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Ears -->
+  <path d="M119 273C103 235 99 174 116 128C126 101 143 92 170 99C223 113 267 139 295 174L263 232C224 221 177 232 119 273Z"
+        fill="url(#ear)" stroke="#0d1223" stroke-width="11" stroke-linejoin="round"/>
+  <path d="M393 273C409 235 413 174 396 128C386 101 369 92 342 99C289 113 245 139 217 174L249 232C288 221 335 232 393 273Z"
+        fill="url(#ear)" stroke="#0d1223" stroke-width="11" stroke-linejoin="round"/>
+  <path d="M143 238C132 203 135 157 148 130C174 135 213 153 242 179L224 207C194 207 168 217 143 238Z"
+        fill="url(#cyan)"/>
+  <path d="M369 238C380 203 377 157 364 130C338 135 299 153 270 179L288 207C318 207 344 217 369 238Z"
+        fill="url(#cyan)"/>
+  <path d="M127 132C143 105 166 108 204 124C231 135 252 148 270 164"
+        fill="none" stroke="url(#edge)" stroke-width="9" stroke-linecap="round"/>
+  <path d="M385 132C369 105 346 108 308 124C281 135 260 148 242 164"
+        fill="none" stroke="url(#edge)" stroke-width="9" stroke-linecap="round"/>
+
+  <!-- Head -->
+  <path d="M107 295C116 232 170 190 256 190C342 190 396 232 405 295C415 307 424 316 432 321C424 340 413 351 402 359C387 403 337 438 256 440C175 438 125 403 110 359C99 351 88 340 80 321C88 316 97 307 107 295Z"
+        fill="url(#face)" stroke="#0b1020" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M112 292C126 232 179 201 256 201C333 201 386 232 400 292"
+        fill="none" stroke="url(#edge)" stroke-width="9" stroke-linecap="round"/>
+  <path d="M100 324C109 344 118 353 129 361C145 405 191 425 256 428C321 425 367 405 383 361C394 353 403 344 412 324"
+        fill="none" stroke="#26398d" stroke-width="8" stroke-linecap="round"/>
+
+  <!-- Forehead highlight -->
+  <ellipse cx="331" cy="244" rx="33" ry="14" transform="rotate(31 331 244)" fill="#909bd1"/>
+
+  <!-- Face -->
+  <ellipse cx="183" cy="310" rx="16" ry="37" fill="url(#cyan)"/>
+  <ellipse cx="329" cy="310" rx="16" ry="37" fill="url(#cyan)"/>
+  <path d="M237 347C245 357 253 358 261 348C269 358 277 357 285 347"
+        fill="none" stroke="url(#cyan)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
