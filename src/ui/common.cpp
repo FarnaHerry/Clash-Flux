@@ -24,6 +24,14 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                         std::shared_ptr<huxerui::Clipboard> clipboard,
                         huxerui::ToastHandle toast, huxerui::Color textColor,
                         huxerui::Color hintColor) {
+#if defined(__ANDROID__)
+    (void)dialog;
+    (void)clipboard;
+    (void)textColor;
+    (void)hintColor;
+    toast.Show("Android VPN/TUN 尚未接入");
+    return;
+#else
     namespace fs = std::filesystem;
     const std::string exe = [] {
         const fs::path dir = cfg::executableDir();
@@ -73,6 +81,7 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                                         huxerui::CrossAxisAlignment::Stretch)));
         },
         huxerui::DialogOptions{});
+#endif
 }
 
 IslandTheme ResolveIslandTheme(const huxerui::ThemeSpec& theme) {

@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.1.3 DESCRIPTION "Clash/mihomo proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.1.4 DESCRIPTION "Clash/mihomo proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # HUXERUI_LIBRARY_GRAPH_ONLY：CLI 扫描 huxerui 库依赖图时的特殊配置——
 # 不启用语言、不构建，huxerui_add_app 只写出库图 JSON 即返回（见 SDK
@@ -230,16 +230,36 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
 endif ()
 
 # ---- clash-flux app 目标 ----------------------------------------------------
-# 源码发现对齐生成格式：src/ 下递归 glob 普通 C++ 源（UI composable 源 + 领域
-# 模块的实现单元 .cpp；codegen 无 composable 标记时原样放行）。模块接口 .cppm
-# 不经 glob，由 FILE_SET 显式追加。
-file(GLOB_RECURSE APP_SOURCE_FILES CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cxx"
-)
-# 平台入口（graph-only 配置不编译任何东西，跳过）
-if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
+# 桌面源码发现对齐生成格式：src/ 下递归 glob 普通 C++ 源（UI composable 源 +
+# 领域模块的实现单元 .cpp；codegen 无 composable 标记时原样放行）。模块接口
+# .cppm 不经 glob，由 FILE_SET 显式追加。
+if (ANDROID)
+    # NDK 的 C++ modules/import std 支持尚未达到桌面构建所需的级别。Android
+    # 目标使用 configure 期生成的兼容源：领域实现合并为一个 TU，UI 仍以独立
+    # .cpp 交给 HuxerUI codegen，保证 Android 与桌面共用同一套 UI 源码。
+    include(cmake/AndroidLegacy)
+    clashflux_prepare_android_sources(
+        "${CMAKE_CURRENT_BINARY_DIR}/android-legacy"
+        CLASHFLUX_ANDROID_LEGACY_HEADER
+        CLASHFLUX_ANDROID_LEGACY_CORE
+        CLASHFLUX_ANDROID_LEGACY_UI
+    )
+    set(APP_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/app.cpp")
+    list(APPEND APP_SOURCE_FILES
+        "${CLASHFLUX_ANDROID_LEGACY_CORE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/platform/android/android_bridge.cpp"
+        ${CLASHFLUX_ANDROID_LEGACY_UI}
+    )
+else ()
+    file(GLOB_RECURSE APP_SOURCE_FILES CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cxx"
+    )
+endif ()
+
+# 平台入口（Android 由 HuxerUIActivity 加载共享库，不需要 C++ main）。
+if (NOT HUXERUI_LIBRARY_GRAPH_ONLY AND NOT ANDROID)
     if (WIN32)
         list(APPEND APP_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/platform/windows/main.cpp")
     elseif (APPLE AND NOT IOS)
@@ -272,6 +292,13 @@ set(CLASHFLUX_MODULE_UNITS
     src/store/profiles.cppm
 )
 
+set(CLASHFLUX_APP_RESOURCE_OPTIONS)
+if (ANDROID AND HUXERUI_ANDROID_RESOURCE_OUTPUT_ROOT)
+    list(APPEND CLASHFLUX_APP_RESOURCE_OPTIONS
+        RESOURCE_OUTPUT_DIRECTORY "${HUXERUI_ANDROID_RESOURCE_OUTPUT_ROOT}"
+    )
+endif ()
+
 huxerui_add_app(clash-flux
     SOURCES
         ${APP_SOURCE_FILES}
@@ -279,18 +306,25 @@ huxerui_add_app(clash-flux
     RESOURCE_NAMESPACE app
     BUNDLE_NAME "Clash-Flux"
     BUNDLE_IDENTIFIER "dev.farna.clashflux"
+    ${CLASHFLUX_APP_RESOURCE_OPTIONS}
 )
 
 if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
-    # 领域层 C++23 模块（.cppm 接口；对应 .cpp 实现单元已随 glob 进 SOURCES）
-    target_sources(clash-flux PRIVATE FILE_SET clashflux_modules TYPE CXX_MODULES
-        BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-        FILES ${CLASHFLUX_MODULE_UNITS})
-    set_target_properties(clash-flux PROPERTIES CXX_MODULE_STD ON)
-    # 显式打开全源扫描：模块实现单元（普通 .cpp 里的 module clashflux.*;）必须经
-    # 扫描拿到 -fmodules-ts。SDK 模式下 CMP0155 默认行为恰好扫描全部源，源码
-    # 模式（add_subdirectory huxerui）下该默认不覆盖普通 .cpp，会丢模块标志。
-    set_target_properties(clash-flux PROPERTIES CXX_SCAN_FOR_MODULES ON)
+    if (ANDROID)
+        # AndroidLegacy.cmake 已把模块接口/实现转为普通 C++ 源；显式关闭扫描，
+        # 防止 NDK Clang 把兼容头中的普通 import 误判为模块单元。
+        set_target_properties(clash-flux PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+    else ()
+        # 领域层 C++23 模块（.cppm 接口；对应 .cpp 实现单元已随 glob 进 SOURCES）
+        target_sources(clash-flux PRIVATE FILE_SET clashflux_modules TYPE CXX_MODULES
+            BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+            FILES ${CLASHFLUX_MODULE_UNITS})
+        set_target_properties(clash-flux PROPERTIES CXX_MODULE_STD ON)
+        # 显式打开全源扫描：模块实现单元（普通 .cpp 里的 module clashflux.*;）必须经
+        # 扫描拿到 -fmodules-ts。SDK 模式下 CMP0155 默认行为恰好扫描全部源，源码
+        # 模式（add_subdirectory huxerui）下该默认不覆盖普通 .cpp，会丢模块标志。
+        set_target_properties(clash-flux PROPERTIES CXX_SCAN_FOR_MODULES ON)
+    endif ()
     target_compile_features(clash-flux PRIVATE cxx_std_23)
     # 应用版本编译期常量（设置页“关于”展示）：唯一来源是顶层 project(VERSION)。
     target_compile_definitions(clash-flux PRIVATE CLASHFLUX_VERSION="${PROJECT_VERSION}")
@@ -313,7 +347,15 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     if (MSVC)
         target_compile_options(clash-flux PRIVATE /utf-8)
     endif ()
-    target_include_directories(clash-flux PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_include_directories(clash-flux PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui"
+    )
+    if (ANDROID)
+        target_include_directories(clash-flux PRIVATE
+            "${CMAKE_CURRENT_BINARY_DIR}/android-legacy"
+        )
+    endif ()
     target_link_libraries(clash-flux PRIVATE
         ixwebsocket
         CURL::libcurl

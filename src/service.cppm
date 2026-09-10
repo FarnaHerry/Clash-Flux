@@ -20,7 +20,7 @@
 module;
 
 // 服务模式仅 Linux（systemd + unix socket）；非 Linux 平台下方导出同签名 stub。
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
 #include <unistd.h>     // fork, execv, setsid, geteuid, readlink, access, unlink, close
 #include <sys/socket.h> // socket, bind, listen, accept, connect
 #include <sys/un.h>     // sockaddr_un
@@ -47,7 +47,7 @@ export constexpr std::string_view kUnitName = "clash-flux.service";
 export constexpr std::string_view kSocketPath = "/run/clash-flux/service.sock";
 export constexpr std::string_view kInstallDir = "/usr/local/lib/clash-flux";
 
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
 
 namespace {
 
@@ -568,15 +568,27 @@ export bool stopCore(std::string& err) {
 }
 export bool coreRunning() { return false; }
 export int install() {
+#if defined(__ANDROID__)
+    std::fputs("服务模式仅支持 Linux（systemd）\n", stdout);
+#else
     std::println("服务模式仅支持 Linux（systemd）");
+#endif
     return 1;
 }
 export int uninstall() {
+#if defined(__ANDROID__)
+    std::fputs("服务模式仅支持 Linux（systemd）\n", stdout);
+#else
     std::println("服务模式仅支持 Linux（systemd）");
+#endif
     return 1;
 }
 export int run() {
+#if defined(__ANDROID__)
+    std::fputs("服务模式仅支持 Linux（systemd）\n", stdout);
+#else
     std::println("服务模式仅支持 Linux（systemd）");
+#endif
     return 1;
 }
 

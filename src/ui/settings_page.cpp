@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,7 @@
 #include "task_bridge.h"
 
 import clashflux.core;
+import clashflux.config;
 import clashflux.service;
 import clashflux.store.core;
 import clashflux.store.profiles;
@@ -67,6 +69,15 @@ const std::string kAboutText =
 [[huxerui::composable]] huxerui::View SettingsPage(huxerui::State<int> themeMode) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
+    // 与 apitab 的主题切换保持一致：整棵主题树用圆形揭示过渡；reduced
+    // motion 由 HuxerUI 自动降级，但状态更新和配置落盘仍然必须执行。
+    auto transition = huxerui::UseSceneTransition();
+    // HuxerUI 的场景过渡没有公开“运行中”查询或完成回调，重复 Run 会替换
+    // 当前过渡。按 apitab 的限制加冷却标记，动画期间再次点击直接忽略。
+    struct ThemeAnimationFlag {
+        bool animating = false;
+    };
+    auto animating = huxerui::UseState(std::make_shared<ThemeAnimationFlag>());
     auto toast = huxerui::UseToast();
     auto dialog = huxerui::UseDialog();
     auto clipboard = huxerui::UseService<huxerui::Clipboard>();
@@ -96,6 +107,39 @@ const std::string kAboutText =
 
     const store::CoreSnapshot s = snap.Get();
     const bool running = s.state == core::CoreState::Running;
+
+    // 主题模式：0=跟随系统，1=深色，2=浅色。目标与当前有效深浅一致时
+    // 只更新偏好，不播放动画。圆形揭示原点取同步事件的精确位置；键盘/无
+    // 指针激活时由 HuxerUI 回落到激活控件中心。上游不提供反向播放，因此
+    // 深→浅同样使用展开动画。
+    auto applyTheme = [themeMode, transition, tasks, animating](int mode) {
+        if (animating.Get()->animating) return;
+
+        const bool currentDark =
+            themeMode.Get() == 1 || (themeMode.Get() == 0 && cfg::systemPrefersDark());
+        const bool targetDark = mode == 1 || (mode == 0 && cfg::systemPrefersDark());
+        auto mutation = [themeMode, mode] {
+            themeMode = mode;
+            store::coreStore().setSetting("ui.theme_mode", std::to_string(mode));
+        };
+        if (currentDark == targetDark) {
+            mutation();
+            return;
+        }
+
+        animating.Get()->animating = true;
+        // 冷却时间略长于 CircularRevealSceneTransition 默认 0.36s，避免
+        // 第二次同步触发打断首个场景过渡；完成后只解除门禁，不改主题状态。
+        tasks.Launch([animating]() -> huxerui::Task<void> {
+            co_await huxerui::Delay(std::chrono::duration<double>{0.5});
+            animating.Get()->animating = false;
+        });
+
+        // 必须在同步事件回调中调用；异步代码若已有窗口坐标，按 HuxerUI
+        // 约定应使用 RunAt，而不能在这里延迟调用 RunFromCurrentInteraction。
+        transition.RunFromCurrentInteraction(huxerui::CircularRevealSceneTransition{},
+                                             std::move(mutation));
+    };
 
     // 通用动作：阻塞活在任务线程，错误 toast，完成后快照由泵刷新。
     auto coreAction = [tasks, toast, busy](std::function<void()> job,
@@ -426,10 +470,8 @@ const std::string kAboutText =
                         huxerui::SegmentedButton(kThemeNames,
                                                  static_cast<std::size_t>(
                                                      themeMode.Get()))
-                            .OnChanged([themeMode](std::size_t idx) {
-                                themeMode = static_cast<int>(idx);
-                                store::coreStore().setSetting(
-                                    "ui.theme_mode", std::to_string(idx));
+                            .OnChanged([applyTheme](std::size_t idx) {
+                                applyTheme(static_cast<int>(idx));
                             })),
                 }.With(huxerui::Spacing(10.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),

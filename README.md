@@ -18,6 +18,8 @@ REST API 与 WebSocket 推送流交互，UI 与内核接入层全部由 C++ 实�
   无参数启动进入 GUI
 - 浅色/深色主题（跟随系统）、岛屿风界面、自定义窗口标题栏、系统托盘、
   窄窗口响应式布局
+- Android GUI/native shell：使用应用私有目录保存数据、支持 Android Activity
+  生命周期与外部链接；mihomo Android 内核和 VPN/TUN 接入尚未提供
 
 项目仍在开发中，界面和数据结构可能继续调整。
 
@@ -52,6 +54,16 @@ huxerui build linux
 huxerui run linux
 ```
 
+Android 构建（需要 Android SDK/NDK、Gradle，以及 HuxerUI SDK 的 `HUXERUI_HOME`）：
+
+```bash
+export HUXERUI_HOME=/path/to/huxerui-sdk
+huxerui build android --profile release
+```
+
+Android 使用兼容编译路径，不要求 NDK 支持 C++ modules；当前 APK 仅包含
+GUI/native shell，不包含 mihomo 内核，因此不能建立代理或启用 VPN/TUN。
+
 ## CLI
 
 同一二进制带完整子命令；无参数启动进入 GUI，有参数走 CLI：
@@ -82,7 +94,7 @@ clash-flux service install|uninstall|status|run
 | build-windows-arm64 | windows-11-arm + vcpkg OpenSSL | 实验性 |
 | build-macos-arm64 | macos-15 + brew LLVM | 实验性 |
 | build-macos-x86_64 | macos-13 + brew LLVM | 实验性 |
-| build-android | HuxerUI CLI 打 APK（仅 GUI 壳，无内核） | 实验性 |
+| build-android | HuxerUI CLI 打 APK（GUI/native shell，无内核） | 实验性 |
 
 覆盖面原则：mihomo 内核发布什么桌面平台/arch，就构建什么目标（内核资产
 SHA256 钉在 `cmake/mihomo_bundle.cmake`，configure 期自动下载）。桌面 job

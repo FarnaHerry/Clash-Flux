@@ -32,6 +32,20 @@ import std;
 
 namespace cfg {
 
+#if defined(__ANDROID__)
+// Android 没有稳定可用的 HOME/XDG_DATA_HOME 约定。MainActivity 在 native
+// UI 启动前把 Context.getFilesDir() 传进来，所有数据库/配置都落在应用私有
+// 目录，卸载应用时可随系统一并清理。
+inline std::string& androidDataDirOverride() {
+    static std::string value;
+    return value;
+}
+
+export void setAndroidDataDir(std::string path) {
+    androidDataDirOverride() = std::move(path);
+}
+#endif
+
 // 可执行文件目录（engines/ 相对解析 / 资源回退用）。
 export std::filesystem::path executableDir() {
 #ifdef _WIN32
@@ -58,6 +72,11 @@ export std::filesystem::path executableDir() {
 // SQLite 库、mihomo 工作目录、订阅 YAML 都放这里 —— 安装版启动时 cwd 可能
 // 不可写，不能依赖 cwd。
 export std::filesystem::path dataDir() {
+#if defined(__ANDROID__)
+    if (!androidDataDirOverride().empty()) {
+        return std::filesystem::path(androidDataDirOverride()) / "clash-flux";
+    }
+#endif
 #ifdef _WIN32
     if (const char* a = std::getenv("APPDATA"); a && *a) {
         return std::filesystem::path(a) / "clash-flux";
@@ -106,7 +125,7 @@ export std::filesystem::path coreWorkDir() {
     return dir;
 }
 
-bool executableExists(const std::filesystem::path& p) {
+inline bool executableExists(const std::filesystem::path& p) {
     std::error_code ec;
     if (!std::filesystem::exists(p, ec) || ec) return false;
 #ifdef _WIN32
@@ -117,7 +136,7 @@ bool executableExists(const std::filesystem::path& p) {
 }
 
 // PATH 查找（which 语义）。
-std::filesystem::path findInPath(std::string_view name) {
+inline std::filesystem::path findInPath(std::string_view name) {
     const char* pathEnv = std::getenv("PATH");
     if (!pathEnv) return {};
 #ifdef _WIN32
@@ -146,6 +165,13 @@ export std::filesystem::path mihomoBinary() {
     constexpr std::string_view exeName = "mihomo";
 #endif
     const std::filesystem::path exeDir = executableDir();
+#if defined(__ANDROID__)
+    // Android 可执行文件不能直接从 APK assets 运行；若后续接入 Android
+    // mihomo 内核，由 Java 层解包到 files/engines/ 后从这里发现。
+    if (const auto p = dataDir() / "engines" / exeName; executableExists(p)) {
+        return p;
+    }
+#endif
     if (!exeDir.empty()) {
         if (const auto p = exeDir / "engines" / exeName; executableExists(p)) return p;
         if (const auto p = exeDir / exeName; executableExists(p)) return p;
@@ -207,6 +233,9 @@ export bool systemPrefersDark() {
                       std::string_view(buf.data()).starts_with("Dark");
     ::pclose(pipe);
     return dark;
+#elif defined(__ANDROID__)
+    // Android 的主题由 HuxerUI/Activity 处理；native 层没有桌面 gsettings。
+    return false;
 #else
     FILE* pipe = ::popen("gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null", "r");
     if (pipe == nullptr) return false;
