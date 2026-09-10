@@ -553,7 +553,7 @@ jobs:
           test -f huxerui-sdk/share/huxerui/platform/android/HuxerUI.aar
           echo "HUXERUI_HOME=$PWD/huxerui-sdk" >> "$GITHUB_ENV"
           echo "$PWD/huxerui-sdk/bin" >> "$GITHUB_PATH"
-          huxerui --version || true
+          huxerui-sdk/bin/huxerui --version
 
       - name: Build Android package (GUI/native shell, no mihomo kernel)
         run: |
@@ -595,32 +595,34 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
+          release_version="${GITHUB_REF_NAME#v}"
+          test "$release_version" != "$GITHUB_REF_NAME"
           for artifact in dist/build-*; do
             name="$(basename "$artifact")"
             if [ "$name" = "build-windows-x86_64" ]; then
               setup_exe="$(find "$artifact" -maxdepth 1 -type f -name '*-Setup-*.exe' -print -quit)"
               test -n "$setup_exe"
-              cp "$setup_exe" "release/clash-flux-${GITHUB_REF_NAME}-windows-x86_64-setup.exe"
+              cp "$setup_exe" "release/clash-flux-${release_version}-windows-x86_64-setup.exe"
               (
                 cd "$artifact"
-                zip -qr "$GITHUB_WORKSPACE/release/clash-flux-${GITHUB_REF_NAME}-windows-x86_64.zip" . \
+                zip -qr "$GITHUB_WORKSPACE/release/clash-flux-${release_version}-windows-x86_64.zip" . \
                   -x '*-Setup-*.exe'
               )
             elif [[ "$name" == build-linux-* ]]; then
-              tar -C dist -czf "release/clash-flux-${GITHUB_REF_NAME}-${name}.tar.gz" "$name"
+              tar -C dist -czf "release/clash-flux-${release_version}-${name}.tar.gz" "$name"
               arch="${name#build-linux-}"
               shopt -s nullglob
               for extension in deb rpm; do
                 packages=("$artifact"/*."$extension")
                 test "${#packages[@]}" -eq 1
-                cp "${packages[0]}" "release/clash-flux-${GITHUB_REF_NAME}-linux-${arch}.${extension}"
+                cp "${packages[0]}" "release/clash-flux-${release_version}-linux-${arch}.${extension}"
               done
             else
-              tar -C dist -czf "release/clash-flux-${GITHUB_REF_NAME}-${name}.tar.gz" "$name"
+              tar -C dist -czf "release/clash-flux-${release_version}-${name}.tar.gz" "$name"
             fi
           done
-          test -s "release/clash-flux-${GITHUB_REF_NAME}-windows-x86_64-setup.exe"
-          test -s "release/clash-flux-${GITHUB_REF_NAME}-windows-x86_64.zip"
+          test -s "release/clash-flux-${release_version}-windows-x86_64-setup.exe"
+          test -s "release/clash-flux-${release_version}-windows-x86_64.zip"
           test -n "$(find release -type f -name '*.tar.gz' -print -quit)"
           test -n "$(find release -type f -name '*.deb' -print -quit)"
           test -n "$(find release -type f -name '*.rpm' -print -quit)"
