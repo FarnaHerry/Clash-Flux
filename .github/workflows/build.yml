@@ -70,7 +70,7 @@ env:
   # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
   # CI 必须自行 clone 并钉 commit，保证可复现）。上游活跃开发中，追新时
   # 同步更新本机 checkout 与此 pin。
-  HUXERUI_COMMIT: '90447b16f678e5e35d9da96d7d17b1aac1b32e41'
+  HUXERUI_COMMIT: '065ab79fc989438221b964aa9f03226b0301d2'
 
 jobs:
   # ------------------------------------------------------------------ Linux
@@ -115,6 +115,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Fetch HuxerUI source (pinned)
+        shell: bash
         run: |
           set -euo pipefail
           git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
@@ -160,6 +161,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
       - name: Stage runtime bundle
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist-src/lib
