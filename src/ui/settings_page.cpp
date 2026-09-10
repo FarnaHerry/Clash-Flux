@@ -128,7 +128,7 @@ const std::string kAboutText =
         }
 
         animating.Get()->animating = true;
-        // 冷却时间略长于 CircularRevealSceneTransition 默认 0.36s，避免
+        // 冷却时间略长于 CircularRevealTransition 默认 0.36s，避免
         // 第二次同步触发打断首个场景过渡；完成后只解除门禁，不改主题状态。
         tasks.Launch([animating]() -> huxerui::Task<void> {
             co_await huxerui::Delay(std::chrono::duration<double>{0.5});
@@ -137,8 +137,9 @@ const std::string kAboutText =
 
         // 必须在同步事件回调中调用；异步代码若已有窗口坐标，按 HuxerUI
         // 约定应使用 RunAt，而不能在这里延迟调用 RunFromCurrentInteraction。
-        transition.RunFromCurrentInteraction(huxerui::CircularRevealSceneTransition{},
-                                             std::move(mutation));
+        transition.RunFromCurrentInteraction(
+            huxerui::TransitionSpec{huxerui::CircularRevealTransition{}, huxerui::TweenSpec{0.36}},
+            std::move(mutation));
     };
 
     // 通用动作：阻塞活在任务线程，错误 toast，完成后快照由泵刷新。
