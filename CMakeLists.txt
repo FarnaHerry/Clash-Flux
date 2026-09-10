@@ -490,6 +490,22 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     endif ()
 
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # CPack otherwise asks uname(2) for the RPM architecture. That is the
+        # build host, not the CMake target, and silently produces the wrong
+        # package when a Linux target is cross-packaged. Keep the RPM/DEB
+        # spelling explicit and derive it from CMAKE_SYSTEM_PROCESSOR.
+        string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" CLASHFLUX_LINUX_PROCESSOR)
+        if (CLASHFLUX_LINUX_PROCESSOR MATCHES "^(x86_64|amd64|x64)$")
+            set(CLASHFLUX_LINUX_RPM_ARCH "x86_64")
+            set(CLASHFLUX_LINUX_DEB_ARCH "amd64")
+        elseif (CLASHFLUX_LINUX_PROCESSOR MATCHES "^(aarch64|arm64)$")
+            set(CLASHFLUX_LINUX_RPM_ARCH "aarch64")
+            set(CLASHFLUX_LINUX_DEB_ARCH "arm64")
+        else ()
+            message(FATAL_ERROR
+                "Linux packages are unsupported for CMAKE_SYSTEM_PROCESSOR=${CMAKE_SYSTEM_PROCESSOR}")
+        endif ()
+
         set(CPACK_PACKAGE_NAME "clash-flux")
         set(CPACK_PACKAGE_VENDOR "FarnaHerry")
         set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Clash/mihomo proxy client")
@@ -498,9 +514,11 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         set(CPACK_PACKAGING_INSTALL_PREFIX "/opt/clash-flux")
         set(CPACK_GENERATOR "DEB;RPM")
         set(CPACK_DEBIAN_PACKAGE_MAINTAINER "FarnaHerry")
+        set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "${CLASHFLUX_LINUX_DEB_ARCH}")
         set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
         set(CPACK_RPM_PACKAGE_LICENSE "MIT")
         set(CPACK_RPM_PACKAGE_GROUP "Applications/Internet")
+        set(CPACK_RPM_PACKAGE_ARCHITECTURE "${CLASHFLUX_LINUX_RPM_ARCH}")
         # HuxerUI/curl 的 SDK 目标也注册了 install component，但发行包只应
         # 带 Clash-Flux 应用本身，不能把开发头文件和静态库塞进 DEB/RPM。
         set(CPACK_COMPONENTS_ALL "HuxerUIApplication")

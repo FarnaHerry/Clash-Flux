@@ -80,8 +80,8 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 ## 多平台 / CI
 
 - 平台细节由 `.github/workflows/build.yml` 承担（矩阵命名对齐 apitab：
-  `build-<os>-<arch>`）：build-linux-x86_64（ubuntu:26.04 容器 + clang-21/
-  libc++-21 + pip cmake 4.4.2）正式；linux-arm64（ubuntu-24.04-arm 原生）/
+  `build-<os>-<arch>`）：build-linux-x86_64（ubuntu:24.04 容器 + apt.llvm.org
+  clang-21/libc++-21 + pip cmake 4.4.2）正式；linux-arm64（ubuntu-24.04-arm 原生）/
   windows-x86_64（MSVC + choco OpenSSL）/ windows-arm64（windows-11-arm +
   vcpkg OpenSSL）/ macos-arm64（macos-15 + brew LLVM + 内联 P0960 补丁）/
   macos-x86_64（macos-13）/ Android（HuxerUI CLI 打 APK，仅 GUI 壳）实验性
