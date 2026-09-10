@@ -23,7 +23,8 @@
 #     重编宿主工具（参考 apitab build.yml 的 "Build HuxerUI host tools" 步骤）。
 #   * 仓库自带离线 tarball（third_party/tarballs/huxerui-sdk-0.2.0-linux-x86_64）
 #     只在源码缺失时兜底，CI 不走它（Linux 桌面 job 装了 gtk4/epoxy/libsoup 开发包，
-#     不会触发回落）；但 android job 复用 tarball 里的 huxerui CLI 与 per-ABI AAR。
+#     不会触发回落）；android job 只复用 tarball 里的 huxerui CLI，原生框架与
+#     项目使用同一提交的源码，避免 SDK 头文件与源码 API 漂移。
 #
 # 实验性 job（continue-on-error: true）及原因：
 #   * build-linux-arm64：ubuntu-24.04-arm 原生 runner + ubuntu:26.04 容器，
@@ -73,7 +74,7 @@ env:
   # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
   # CI 必须自行 clone 并钉 commit，保证可复现）。上游活跃开发中，追新时
   # 同步更新本机 checkout 与此 pin。
-  HUXERUI_COMMIT: '9eff3c8f6a90f7390e4ec4fdab3ccc4b732e3ecf'
+  HUXERUI_COMMIT: '90447b16f678e5e35d9da96d7d17b1aac1b32e41'
 
 jobs:
   # ------------------------------------------------------------------ Linux
@@ -505,8 +506,8 @@ jobs:
   # 实验性（continue-on-error）：验证 GUI/native shell 能否经 HuxerUI CLI 编出
   # APK/AAB。mihomo 官方没有 Android 资产，安卓内核接入是后续里程碑——
   # 产出的包不含内核、不可实际代理。
-  # CLI 来源：仓库自带 Linux 离线 SDK tarball（bin/huxerui +
-  # share/huxerui/platform/android/{HuxerUI.aar,arm64-v8a,x86_64}）。
+  # CLI 来源：仓库自带 Linux 离线 SDK tarball（bin/huxerui）；框架源码与桌面
+  # job 使用同一 HUXERUI_COMMIT，Android Gradle 从该源码构建 HuxerUI。
   build-android:
     name: build-android
     runs-on: ubuntu-24.04
@@ -543,14 +544,17 @@ jobs:
           mkdir -p "$gradle_home"
           echo "cmake.dir=$cmake_root" >> "$gradle_home/gradle.properties"
 
-      - name: Extract HuxerUI CLI from vendored tarball
+      - name: Prepare HuxerUI CLI and source
         run: |
           set -euo pipefail
           mkdir -p huxerui-sdk
           tar -xzf third_party/tarballs/huxerui-sdk-0.2.0-linux-x86_64.tar.gz \
             -C huxerui-sdk --strip-components=1
           test -x huxerui-sdk/bin/huxerui
-          test -f huxerui-sdk/share/huxerui/platform/android/HuxerUI.aar
+          git clone --filter=blob:none "$HUXERUI_REPO" huxerui-source
+          git -C huxerui-source checkout "$HUXERUI_COMMIT"
+          test -f huxerui-source/CMakeLists.txt
+          test -f huxerui-source/platform/android/huxerui/build.gradle
           echo "HUXERUI_HOME=$PWD/huxerui-sdk" >> "$GITHUB_ENV"
           echo "$PWD/huxerui-sdk/bin" >> "$GITHUB_PATH"
           huxerui-sdk/bin/huxerui --version
@@ -558,7 +562,7 @@ jobs:
       - name: Build Android package (GUI/native shell, no mihomo kernel)
         run: |
           set -euo pipefail
-          huxerui build android --profile release
+          huxerui build android --source huxerui-source --profile release
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
