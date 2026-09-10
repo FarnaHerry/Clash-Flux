@@ -28,6 +28,10 @@ module;
 extern char** environ;
 #endif
 
+#if defined(__ANDROID__)
+extern "C" void clashflux_android_open_url(const char* url) noexcept;
+#endif
+
 module clashflux.core;
 
 import std;
@@ -93,6 +97,8 @@ void openInBrowser(const std::string& url) {
     MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, wurl.data(), wlen);
     ShellExecuteW(nullptr, L"open", wurl.c_str(), nullptr, nullptr,
                   SW_SHOWNORMAL);
+#elif defined(__ANDROID__)
+    clashflux_android_open_url(url.c_str());
 #else
     // fork + exec 不经 shell：URL 里的 & 等字符无注入面。
     const char* opener =

@@ -24,12 +24,22 @@ if(NOT OpenSSL_FOUND AND NOT ANDROID)
 endif()
 
 # ---- nlohmann::json 3.12.0（single header + `import nlohmann.json` 模块）------
-add_library(clashflux_json STATIC)
-target_sources(clashflux_json PUBLIC FILE_SET json_modules TYPE CXX_MODULES
-    BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/.."
-    FILES "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/nlohmann.json.cppm")
-set_target_properties(clashflux_json PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON CXX_MODULE_STD ON)
-target_include_directories(clashflux_json PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/json")
+# AndroidLegacy.cmake 直接包含 single header；不要在 NDK 上额外编译依赖
+# `import std` 的 nlohmann.json 模块。
+if (ANDROID)
+    add_library(clashflux_json INTERFACE)
+else ()
+    add_library(clashflux_json STATIC)
+    target_sources(clashflux_json PUBLIC FILE_SET json_modules TYPE CXX_MODULES
+        BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/.."
+        FILES "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/nlohmann.json.cppm")
+    set_target_properties(clashflux_json PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON CXX_MODULE_STD ON)
+endif ()
+if (ANDROID)
+    target_include_directories(clashflux_json INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/json")
+else ()
+    target_include_directories(clashflux_json PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/json")
+endif ()
 
 # ---- Nayuki QR-Code-generator 1.8.0（订阅分享二维码；源码直提，同 json 先例）----
 add_library(clashflux_qrcode STATIC "${CMAKE_CURRENT_SOURCE_DIR}/qrcodegen/qrcodegen.cpp")

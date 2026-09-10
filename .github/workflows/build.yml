@@ -33,10 +33,10 @@
 # Windows 与 macOS 已纳入发布门禁：完整 Release 构建或 smoke test 失败时，
 # workflow 失败，不会进入发布 job。
 #   * build-android：platform/android 壳（gradle wrapper + MainActivity）已
-#     入库，job 会经 externalNativeBuild 真正交叉编译原生层。已知阻塞：
-#     NDK 无 OpenSSL（root CMakeLists 会 FATAL_ERROR）+ NDK clang 对 C++23
-#     modules / import std 的支持未验证；mihomo 也无官方 Android 资产。
-#     产出包当前不可实际代理，内核接入是后续里程碑。
+#     入库，job 会经 externalNativeBuild 真正交叉编译原生层。Android 使用
+#     AndroidLegacy.cmake 兼容层绕开 NDK 的 C++ modules/import std 限制；
+#     mihomo 也无官方 Android 资产，因此产出包当前只提供 GUI/native shell，
+#     内核接入是后续里程碑。
 #
 # 已知风险：
 #   * ubuntu:26.04 是滚动预发布容器，clang-21/libc++-21 包名若随发布调整需同步改。
@@ -502,19 +502,15 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------- Android
-  # 实验性（continue-on-error）：只验证 GUI 壳能否经 HuxerUI CLI 编出
+  # 实验性（continue-on-error）：验证 GUI/native shell 能否经 HuxerUI CLI 编出
   # APK/AAB。mihomo 官方没有 Android 资产，安卓内核接入是后续里程碑——
   # 产出的包不含内核、不可实际代理。
   # CLI 来源：仓库自带 Linux 离线 SDK tarball（bin/huxerui +
   # share/huxerui/platform/android/{HuxerUI.aar,arm64-v8a,x86_64}）。
   build-android:
-    name: build-android-experimental
+    name: build-android
     runs-on: ubuntu-24.04
     continue-on-error: true
-    # 仅手动触发：NDK 工具链不提供 import std 所需的 __CMAKE::CXX23（CMake
-    # 报 "Only libc++ is supported"，NDK 也不带 std.cppm 模块源），C++23
-    # 模块工程无法在 NDK 上 configure——等 NDK/CMake 支持成熟后再挂回 push。
-    if: github.event_name == 'workflow_dispatch'
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -528,11 +524,11 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Ensure CMake >= 4.4 (pip) and expose to Gradle
+      - name: Ensure CMake >= 3.31 (pip) and expose to Gradle
         run: |
           set -euo pipefail
-          # 项目要求 CMake >= 3.30（import std 门控）；SDK 自带的 3.22.1 不够，
-          # AGP 也不会自动装 3.31.1 —— 直接 pip 装 4.4.2，经用户级 gradle
+          # SDK 自带的 3.22.1 不够，AGP 也不会自动装 3.31.1 —— 直接 pip 装
+          # 3.31.6，经用户级 gradle
           # 属性 cmake.dir 指给 AGP（不进仓库）。
           python3 -m pip install --break-system-packages -q cmake==3.31.6
           cmake_root="$(dirname "$(dirname "$(command -v cmake)")")"
@@ -559,7 +555,7 @@ jobs:
           echo "$PWD/huxerui-sdk/bin" >> "$GITHUB_PATH"
           huxerui --version || true
 
-      - name: Build Android package (GUI shell only, no mihomo kernel)
+      - name: Build Android package (GUI/native shell, no mihomo kernel)
         run: |
           set -euo pipefail
           huxerui build android --profile release
