@@ -455,13 +455,15 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # 资源构建生成）放 <exe>.resources。最新运行时除了 resources.bin 索引外，
     # 还会按索引读取同目录下的 .huxv/.png 等实际 payload，必须把整个 package
     # 目录复制到运行目录。
-    add_custom_command(TARGET clash-flux POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:clash-flux>/assets"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_BINARY_DIR}/huxerui-resources/clash-flux/package"
-                "$<TARGET_FILE_DIR:clash-flux>/clash-flux.resources"
-        COMMENT "Copying assets and the merged HuxerUI resource package next to clash-flux")
+    if (NOT ANDROID)
+        add_custom_command(TARGET clash-flux POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:clash-flux>/assets"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_BINARY_DIR}/huxerui-resources/clash-flux/package"
+                    "$<TARGET_FILE_DIR:clash-flux>/clash-flux.resources"
+            COMMENT "Copying assets and the merged HuxerUI resource package next to clash-flux")
+    endif ()
 
     # 仓库根的 compile_commands.json 软链（给 clangd 用；.gitignore 已忽略）
     # 并行测试/多构建并发时多个 build 目录同时创建同一软链接会竞态；已存在则跳过
