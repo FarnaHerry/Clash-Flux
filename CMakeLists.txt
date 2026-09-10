@@ -237,7 +237,7 @@ if (ANDROID)
     # NDK 的 C++ modules/import std 支持尚未达到桌面构建所需的级别。Android
     # 目标使用 configure 期生成的兼容源：领域实现合并为一个 TU，UI 仍以独立
     # .cpp 交给 HuxerUI codegen，保证 Android 与桌面共用同一套 UI 源码。
-    include(cmake/AndroidLegacy)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/AndroidLegacy.cmake")
     clashflux_prepare_android_sources(
         "${CMAKE_CURRENT_BINARY_DIR}/android-legacy"
         CLASHFLUX_ANDROID_LEGACY_HEADER
