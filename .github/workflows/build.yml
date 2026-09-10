@@ -1,5 +1,4 @@
-# build.yml — Clash-Flux 多平台 CI 矩阵（Linux / Windows / macOS 各 x86_64 +
-# arm64，实验性 Android）。
+# build.yml — Clash-Flux 多平台 CI 矩阵（Linux / Windows / macOS + Android）。
 #
 # 形态蓝本：姊妹项目 apitab 的 .github/workflows/build.yml（已跑通的 HuxerUI +
 # C++23 modules + import std 解法），按本仓库适配（无 sweetedit、目标名
@@ -31,13 +30,10 @@
 #     配方与 x86_64 完全相同，但 26.04 arm64 仓库的 clang-21/libc++-21 可用性
 #     未经首跑验证；连续绿后摘掉 continue-on-error。
 #
-# Windows 与 macOS 已纳入发布门禁：完整 Release 构建或 smoke test 失败时，
-# workflow 失败，不会进入发布 job。
-#   * build-android：platform/android 壳（gradle wrapper + MainActivity）已
-#     入库，job 会经 externalNativeBuild 真正交叉编译原生层。Android 使用
-#     AndroidLegacy.cmake 兼容层绕开 NDK 的 C++ modules/import std 限制；
-#     mihomo 也无官方 Android 资产，因此产出包当前只提供 GUI/native shell，
-#     内核接入是后续里程碑。
+# Windows、macOS 和 Android 已纳入发布门禁：完整 Release 构建或 smoke test
+# 失败时，workflow 失败，不会进入发布 job。Android 使用 AndroidLegacy.cmake
+# 兼容层绕开 NDK 的 C++ modules/import std 限制；mihomo 也无官方 Android 资产，
+# 因此产出包当前只提供 GUI/native shell，内核接入是后续里程碑。
 #
 # 已知风险：
 #   * ubuntu:26.04 是滚动预发布容器，clang-21/libc++-21 包名若随发布调整需同步改。
@@ -503,15 +499,14 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------- Android
-  # 实验性（continue-on-error）：验证 GUI/native shell 能否经 HuxerUI CLI 编出
-  # APK/AAB。mihomo 官方没有 Android 资产，安卓内核接入是后续里程碑——
-  # 产出的包不含内核、不可实际代理。
+  # Android 发布门禁：验证 GUI/native shell 能否经 HuxerUI CLI 编出 APK。
+  # mihomo 官方没有 Android 资产，安卓内核接入是后续里程碑——产出的包不含
+  # 内核、不可实际代理。
   # CLI 来源：仓库自带 Linux 离线 SDK tarball（bin/huxerui）；框架源码与桌面
   # job 使用同一 HUXERUI_COMMIT，Android Gradle 从该源码构建 HuxerUI。
   build-android:
     name: build-android
     runs-on: ubuntu-24.04
-    continue-on-error: true
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -564,30 +559,36 @@ jobs:
           set -euo pipefail
           huxerui build android --source huxerui-source --profile release
 
+      - name: Stage Android artifact
+        run: |
+          set -euo pipefail
+          mkdir -p dist-src
+          apk="$(find platform/android/build -type f -path '*/outputs/apk/release/*.apk' -print -quit)"
+          test -n "$apk"
+          cp "$apk" dist-src/clash-flux-android-universal.apk
+          test -s dist-src/clash-flux-android-universal.apk
+          ls -lh dist-src
+
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:
-          name: build-android-experimental
-          path: |
-            .huxerui/build/android/**/*.apk
-            .huxerui/build/android/**/*.aab
-            build/**/*.apk
-            build/**/*.aab
-          if-no-files-found: warn
+          name: build-android
+          path: dist-src
+          if-no-files-found: error
           retention-days: 14
 
   # -------------------------------------------------------------- Release
-  # 只有 v* 标签触发此 job。桌面构建全部通过后，将各平台 artifact 打成归档并
+  # 只有 v* 标签触发此 job。各平台构建全部通过后，将 artifact 打成归档并
   # 发布到对应 GitHub Release，避免出现“Release 已发布但没有可下载产物”。
   publish-release:
     name: publish-release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux, build-windows, build-macos]
+    needs: [build-linux, build-windows, build-macos, build-android]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - name: Download desktop artifacts
+      - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: build-*
@@ -613,23 +614,36 @@ jobs:
                   -x '*-Setup-*.exe'
               )
             elif [[ "$name" == build-linux-* ]]; then
-              tar -C dist -czf "release/clash-flux-${release_version}-${name}.tar.gz" "$name"
               arch="${name#build-linux-}"
+              [[ "$arch" == "arm64" ]] && arch="aarch64"
+              tar -C dist -czf "release/clash-flux-${release_version}-linux-${arch}.tar.gz" "$name"
               shopt -s nullglob
               for extension in deb rpm; do
                 packages=("$artifact"/*."$extension")
                 test "${#packages[@]}" -eq 1
                 cp "${packages[0]}" "release/clash-flux-${release_version}-linux-${arch}.${extension}"
               done
+            elif [[ "$name" == build-macos-* ]]; then
+              arch="${name#build-macos-}"
+              tar -C dist -czf "release/clash-flux-${release_version}-macos-${arch}.tar.gz" "$name"
+            elif [ "$name" = "build-android" ]; then
+              apk="$(find "$artifact" -maxdepth 1 -type f -name '*.apk' -print -quit)"
+              test -n "$apk"
+              cp "$apk" "release/clash-flux-${release_version}-android-universal.apk"
             else
-              tar -C dist -czf "release/clash-flux-${release_version}-${name}.tar.gz" "$name"
+              echo "Unsupported build artifact: $name" >&2
+              exit 1
             fi
           done
           test -s "release/clash-flux-${release_version}-windows-x86_64-setup.exe"
           test -s "release/clash-flux-${release_version}-windows-x86_64.zip"
+          test -s "release/clash-flux-${release_version}-android-universal.apk"
           test -n "$(find release -type f -name '*.tar.gz' -print -quit)"
           test -n "$(find release -type f -name '*.deb' -print -quit)"
           test -n "$(find release -type f -name '*.rpm' -print -quit)"
+          for artifact in release/*; do
+            (cd release && sha256sum "$(basename "$artifact")") > "$artifact.sha256"
+          done
           ls -lh release
 
       - name: Publish GitHub Release
