@@ -554,6 +554,30 @@ jobs:
           echo "$PWD/huxerui-sdk/bin" >> "$GITHUB_PATH"
           huxerui-sdk/bin/huxerui --version
 
+      - name: Configure Android release signing
+        env:
+          CLASHFLUX_ANDROID_KEYSTORE_BASE64: ${{ secrets.CLASHFLUX_ANDROID_KEYSTORE_BASE64 }}
+          CLASHFLUX_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.CLASHFLUX_ANDROID_KEYSTORE_PASSWORD }}
+          CLASHFLUX_ANDROID_KEY_ALIAS: ${{ secrets.CLASHFLUX_ANDROID_KEY_ALIAS }}
+          CLASHFLUX_ANDROID_KEY_PASSWORD: ${{ secrets.CLASHFLUX_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$CLASHFLUX_ANDROID_KEYSTORE_BASE64"
+          test -n "$CLASHFLUX_ANDROID_KEYSTORE_PASSWORD"
+          test -n "$CLASHFLUX_ANDROID_KEY_ALIAS"
+          test -n "$CLASHFLUX_ANDROID_KEY_PASSWORD"
+          keystore="$RUNNER_TEMP/clash-flux-release.jks"
+          printf '%s' "$CLASHFLUX_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          test -s "$keystore"
+          chmod 600 "$keystore"
+          {
+            echo "ORG_GRADLE_PROJECT_clashfluxReleaseKeystoreFile=$keystore"
+            echo "ORG_GRADLE_PROJECT_clashfluxReleaseKeystorePassword=$CLASHFLUX_ANDROID_KEYSTORE_PASSWORD"
+            echo "ORG_GRADLE_PROJECT_clashfluxReleaseKeyAlias=$CLASHFLUX_ANDROID_KEY_ALIAS"
+            echo "ORG_GRADLE_PROJECT_clashfluxReleaseKeyPassword=$CLASHFLUX_ANDROID_KEY_PASSWORD"
+            echo 'ORG_GRADLE_PROJECT_clashfluxRequireReleaseSigning=true'
+          } >> "$GITHUB_ENV"
+
       - name: Build Android package (GUI/native shell, no mihomo kernel)
         run: |
           set -euo pipefail
@@ -568,6 +592,14 @@ jobs:
           cp "$apk" dist-src/clash-flux-android-universal.apk
           test -s dist-src/clash-flux-android-universal.apk
           ls -lh dist-src
+
+      - name: Verify Android APK signature
+        run: |
+          set -euo pipefail
+          apk="dist-src/clash-flux-android-universal.apk"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
+          test -n "$apksigner"
+          "$apksigner" verify --verbose "$apk"
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
@@ -641,9 +673,6 @@ jobs:
           test -n "$(find release -type f -name '*.tar.gz' -print -quit)"
           test -n "$(find release -type f -name '*.deb' -print -quit)"
           test -n "$(find release -type f -name '*.rpm' -print -quit)"
-          for artifact in release/*; do
-            (cd release && sha256sum "$(basename "$artifact")") > "$artifact.sha256"
-          done
           ls -lh release
 
       - name: Publish GitHub Release
