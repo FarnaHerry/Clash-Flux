@@ -41,6 +41,27 @@ def huxeruiTargetSdk = huxeruiProperty("huxeruiTargetSdk").toInteger()
 def huxeruiNdkVersion = huxeruiProperty("huxeruiNdkVersion")
 def huxeruiAbis = huxeruiProperty("huxeruiAbis").split(",")
 def huxeruiStl = huxeruiProperty("huxeruiStl")
+def releaseKeystoreFile = providers.gradleProperty("clashfluxReleaseKeystoreFile").orNull
+def releaseKeystorePassword = providers.gradleProperty("clashfluxReleaseKeystorePassword").orNull
+def releaseKeyAlias = providers.gradleProperty("clashfluxReleaseKeyAlias").orNull
+def releaseKeyPassword = providers.gradleProperty("clashfluxReleaseKeyPassword").orNull
+def requireReleaseSigning = providers.gradleProperty("clashfluxRequireReleaseSigning")
+        .map { it.toBoolean() }
+        .orElse(false)
+        .get()
+def hasReleaseSigning = [releaseKeystoreFile, releaseKeystorePassword, releaseKeyAlias,
+                         releaseKeyPassword].every { it != null && !it.isEmpty() }
+
+if (requireReleaseSigning && !hasReleaseSigning) {
+    throw new GradleException(
+            "Release signing is required; provide clashfluxReleaseKeystoreFile, " +
+                    "clashfluxReleaseKeystorePassword, clashfluxReleaseKeyAlias, " +
+                    "and clashfluxReleaseKeyPassword")
+}
+
+if (hasReleaseSigning && !file(releaseKeystoreFile).isFile()) {
+    throw new GradleException("Android release keystore does not exist: ${releaseKeystoreFile}")
+}
 
 android {
     buildFeatures {
@@ -70,13 +91,6 @@ android {
         }
     }
 
-    buildTypes {
-        release {
-            minifyEnabled = false
-            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
-        }
-    }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
@@ -86,6 +100,27 @@ android {
         cmake {
             path = file("../../../CMakeLists.txt")
             version = "3.31.6"
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile = file(releaseKeystoreFile)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = false
+            // Local builds use the generated debug key. CI passes a stable
+            // release keystore through Gradle project properties.
+            signingConfig = hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }
 

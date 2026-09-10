@@ -64,6 +64,11 @@ huxerui build android --profile release
 Android 使用兼容编译路径，不要求 NDK 支持 C++ modules；当前 APK 仅包含
 GUI/native shell，不包含 mihomo 内核，因此不能建立代理或启用 VPN/TUN。
 
+GitHub Release 使用稳定的 Android 发布密钥签名。CI 需要配置
+`CLASHFLUX_ANDROID_KEYSTORE_BASE64`、`CLASHFLUX_ANDROID_KEYSTORE_PASSWORD`、
+`CLASHFLUX_ANDROID_KEY_ALIAS` 和 `CLASHFLUX_ANDROID_KEY_PASSWORD` 四个仓库
+Secrets；本地未提供发布密钥时，Gradle 会使用开发用 debug 签名。
+
 ## CLI
 
 同一二进制带完整子命令；无参数启动进入 GUI，有参数走 CLI：
