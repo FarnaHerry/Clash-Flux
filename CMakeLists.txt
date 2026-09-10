@@ -475,7 +475,10 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
     # 决定 clash-flux 自己的测试。
     option(CLASHFLUX_BUILD_TESTS "Build clash-flux test executables" ON)
-    if (CLASHFLUX_BUILD_TESTS)
+    # Android uses the legacy source path and its NDK libc++ does not provide
+    # the desktop `import std` test target; Android validation is performed by
+    # the Gradle/NDK package build instead.
+    if (CLASHFLUX_BUILD_TESTS AND NOT ANDROID)
         enable_testing()
         add_executable(test_smoke tests/test_smoke.cpp)
         set_target_properties(test_smoke PROPERTIES CXX_MODULE_STD ON)
