@@ -20,7 +20,9 @@ module;
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <signal.h>
+#if !defined(__ANDROID__)
 #include <spawn.h>
+#endif
 #include <poll.h>
 #include <fcntl.h>   // open, O_APPEND
 #include <cerrno>   // errno, EINTR
@@ -287,6 +289,15 @@ bool spawnDetached(const std::filesystem::path& binary,
     CloseHandle(pi.hThread);
     return true;
 #else
+    // Android currently ships only the GUI/native shell; the mihomo process
+    // backend will be enabled together with the Android kernel integration.
+#if defined(__ANDROID__)
+    (void)binary;
+    (void)workDir;
+    (void)configFile;
+    error = "Android mihomo 内核尚未接入";
+    return false;
+#else
     // setsid 脱离会话：CLI 退出后内核驻留；stdout/stderr 追加进日志文件
     // （若仍接管道，CLI 退出后内核写日志会吃 SIGPIPE 被杀）。
     const int logFd = ::open(logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
@@ -322,6 +333,7 @@ bool spawnDetached(const std::filesystem::path& binary,
     }
     writePidFile(workDir, static_cast<long>(pid));
     return true;
+#endif
 #endif
 }
 
@@ -407,6 +419,12 @@ struct CoreProcessImpl {
         CloseHandle(pi.hThread);
         return true;
 #else
+#if defined(__ANDROID__)
+        (void)binary;
+        (void)workDir;
+        (void)configFile;
+        return false;
+#else
         int pipefd[2];
         if (::pipe(pipefd) != 0) return false;
 
@@ -435,6 +453,7 @@ struct CoreProcessImpl {
         }
         readFd = pipefd[0];
         return true;
+#endif
 #endif
     }
 

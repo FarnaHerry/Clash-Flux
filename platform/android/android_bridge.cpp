@@ -24,7 +24,7 @@ JNIEnv* current_environment(bool& attached) noexcept {
         JNI_OK) {
         return environment;
     }
-    if (g_vm->AttachCurrentThread(reinterpret_cast<void**>(&environment), nullptr) != JNI_OK) {
+    if (g_vm->AttachCurrentThread(&environment, nullptr) != JNI_OK) {
         return nullptr;
     }
     attached = true;
