@@ -1,7 +1,7 @@
 // app.cpp — 应用壳（岛屿架构 + 自定义标题栏 + 托盘，对齐 apitab 岛屿风）：
 //   标题栏：应用名 + 内核状态胶囊 + 框架窗口按钮；收窄为 24px 高、去背景直接
-//     融入窗口底色。主题为极简 AI 黑白风（MinimalDark/MinimalLightThemeSpec，
-//     对齐 apitab/tinynext 配色：深色近纯黑 + 纯白主色；浅色海面白 + 近黑主色）。
+//     融入窗口底色。主题取自 Clash-Flux icon 的午夜蓝、靛蓝和冰青配色，
+//     深浅两套模式共用同一品牌色相，只调整明度和对比度。
 //   下方：左侧图标侧边栏（无岛屿包裹，直接落在窗口背景上）｜内容区（页面自己的
 //   一级岛屿划分区域——PageScaffold，外壳不再套岛）。根节点刷整窗海面底色
 //   （rootSpec.colors.background——AppRoot 在主题 provider 之上，UseTheme 只能
@@ -45,10 +45,40 @@ enum PageIndex : std::size_t {
 
 namespace {
 
-// 极简 AI 黑白风主题（对齐 apitab/tinynext 的 heibu geekBlack/geekWhite 配色）：
-// 深色 = 近纯黑底 + 纯白主色（主色控件白底黑字）；浅色 = 近白海面 + 近黑主色。
-// 文本/描边只用地道中灰，状态色仅 error 保留柔和红。
-huxerui::ThemeSpec MinimalDarkThemeSpec() {
+struct FluxPalette {
+    static constexpr huxerui::Color deep_navy() noexcept {
+        return huxerui::Color::Rgb(11, 16, 32); // icon outline #0B1020
+    }
+
+    static constexpr huxerui::Color midnight() noexcept {
+        return huxerui::Color::Rgb(17, 21, 38); // face #111526
+    }
+
+    static constexpr huxerui::Color indigo() noexcept {
+        return huxerui::Color::Rgb(58, 99, 224); // edge #3A63E0
+    }
+
+    static constexpr huxerui::Color indigo_soft() noexcept {
+        return huxerui::Color::Rgb(111, 131, 222); // edge highlight #6F83DE
+    }
+
+    static constexpr huxerui::Color indigo_bright() noexcept {
+        return huxerui::Color::Rgb(184, 200, 255); // edge highlight #B8C8FF
+    }
+
+    static constexpr huxerui::Color cyan() noexcept {
+        return huxerui::Color::Rgb(85, 191, 241); // eye gradient #55BFF1
+    }
+
+    static constexpr huxerui::Color cyan_bright() noexcept {
+        return huxerui::Color::Rgb(155, 230, 255); // eye gradient #9BE6FF
+    }
+
+};
+
+// Clash-Flux 品牌深色主题：icon 的午夜蓝作为海面和最底层，靛蓝作为主要交互色，
+// 冰青作为次级强调色。所有 M3 语义色都在这里落到同一品牌色相上。
+huxerui::ThemeSpec FluxDarkThemeSpec() {
     huxerui::ThemeSpec spec = huxerui::MaterialDarkThemeSpec();
     spec.typography = huxerui::TypographyScheme{
         .body_large = 16.0F,
@@ -58,28 +88,36 @@ huxerui::ThemeSpec MinimalDarkThemeSpec() {
         .title_large = font_size::kTitle,
         .headline_small = 24.0F,
     };
-    spec.colors.primary = huxerui::Color::Rgb(255, 255, 255);      // 纯白主色
-    spec.colors.on_primary = huxerui::Color::Rgb(10, 10, 12);      // 白底上翻黑
-    spec.colors.secondary = huxerui::Color::Rgb(214, 214, 217);
-    spec.colors.on_secondary = huxerui::Color::Rgb(10, 10, 12);
-    spec.colors.secondary_container = huxerui::Color::Rgb(30, 30, 35);
-    spec.colors.on_secondary_container = huxerui::Color::Rgb(242, 242, 242);
-    spec.colors.background = huxerui::Color::Rgb(10, 10, 12);      // #0A0A0C 近纯黑（海面）
-    spec.colors.surface = huxerui::Color::Rgb(14, 14, 17);
-    spec.colors.surface_container_low = huxerui::Color::Rgb(19, 19, 22);
-    spec.colors.surface_container = huxerui::Color::Rgb(24, 24, 28);
-    spec.colors.surface_container_high = huxerui::Color::Rgb(30, 30, 35);
-    spec.colors.surface_container_highest = huxerui::Color::Rgb(37, 37, 43);
-    spec.colors.on_surface = huxerui::Color::Rgb(242, 242, 242);   // 0.95 白
-    spec.colors.on_surface_variant = huxerui::Color::Rgb(148, 148, 153); // 0.58 灰
-    spec.colors.outline = huxerui::Color::Rgb(46, 46, 52);
-    spec.colors.inverse_surface = huxerui::Color::Rgb(242, 242, 242);
-    spec.colors.inverse_on_surface = huxerui::Color::Rgb(10, 10, 12);
-    spec.colors.error = huxerui::Color::Rgb(235, 122, 112);        // 柔和红
+    spec.colors.primary = FluxPalette::indigo_soft();
+    spec.colors.on_primary = FluxPalette::deep_navy();
+    spec.colors.primary_container = huxerui::Color::Rgb(38, 57, 141);
+    spec.colors.on_primary_container = huxerui::Color::Rgb(231, 235, 255);
+    spec.colors.secondary = FluxPalette::cyan();
+    spec.colors.on_secondary = huxerui::Color::Rgb(7, 25, 39);
+    spec.colors.secondary_container = huxerui::Color::Rgb(22, 59, 85);
+    spec.colors.on_secondary_container = FluxPalette::cyan_bright();
+    spec.colors.tertiary_container = huxerui::Color::Rgb(52, 52, 93);
+    spec.colors.on_tertiary_container = huxerui::Color::Rgb(232, 229, 255);
+    spec.colors.background = FluxPalette::deep_navy();
+    spec.colors.surface = FluxPalette::midnight();
+    spec.colors.surface_container_low = huxerui::Color::Rgb(20, 26, 46);
+    spec.colors.surface_container = huxerui::Color::Rgb(27, 35, 64);
+    spec.colors.surface_container_high = huxerui::Color::Rgb(36, 46, 82);
+    spec.colors.surface_container_highest = huxerui::Color::Rgb(45, 57, 98);
+    spec.colors.on_surface = huxerui::Color::Rgb(241, 244, 255);
+    spec.colors.on_surface_variant = FluxPalette::indigo_bright();
+    spec.colors.outline = huxerui::Color::Rgb(82, 105, 177);
+    spec.colors.inverse_surface = huxerui::Color::Rgb(232, 238, 255);
+    spec.colors.inverse_on_surface = FluxPalette::midnight();
+    spec.colors.scrim = huxerui::Color::Rgb(5, 8, 18, 0.62F);
+    spec.colors.error = huxerui::Color::Rgb(255, 155, 168);
+    spec.interactions.focus_ring = huxerui::FocusRing{FluxPalette::cyan(), 2.0F, 2.0F};
     return spec;
 }
 
-huxerui::ThemeSpec MinimalLightThemeSpec() {
+// Clash-Flux 品牌浅色主题：冰蓝白作为背景，靛蓝负责主要交互，深青负责次级文字，
+// 让 icon 的冷色调在浅色模式依然清晰而不刺眼。
+huxerui::ThemeSpec FluxLightThemeSpec() {
     huxerui::ThemeSpec spec = huxerui::MaterialLightThemeSpec();
     spec.typography = huxerui::TypographyScheme{
         .body_large = 16.0F,
@@ -89,33 +127,38 @@ huxerui::ThemeSpec MinimalLightThemeSpec() {
         .title_large = font_size::kTitle,
         .headline_small = 24.0F,
     };
-    // 冷中性灰白：保留柔和层级，去掉米白中过强的黄/棕分量。
-    spec.colors.primary = huxerui::Color::Rgb(37, 40, 45);         // #25282D
-    spec.colors.on_primary = huxerui::Color::Rgb(250, 250, 251);   // #FAFAFB
-    spec.colors.secondary = huxerui::Color::Rgb(104, 112, 124);    // #68707C
-    spec.colors.on_secondary = huxerui::Color::Rgb(250, 250, 251);
-    spec.colors.secondary_container = huxerui::Color::Rgb(231, 234, 240);
-    spec.colors.on_secondary_container = huxerui::Color::Rgb(37, 40, 45);
-    spec.colors.background = huxerui::Color::Rgb(243, 244, 246);   // #F3F4F6 海面
-    spec.colors.surface = huxerui::Color::Rgb(250, 250, 251);      // #FAFAFB
-    spec.colors.surface_container_low = huxerui::Color::Rgb(248, 249, 250);
-    spec.colors.surface_container = huxerui::Color::Rgb(241, 243, 245);
-    spec.colors.surface_container_high = huxerui::Color::Rgb(231, 234, 238);
-    spec.colors.surface_container_highest = huxerui::Color::Rgb(255, 255, 255);
-    spec.colors.on_surface = huxerui::Color::Rgb(36, 39, 44);      // #24272C
-    spec.colors.on_surface_variant = huxerui::Color::Rgb(107, 114, 128); // #6B7280
-    spec.colors.outline = huxerui::Color::Rgb(216, 220, 226);      // #D8DCE2
-    spec.colors.inverse_surface = huxerui::Color::Rgb(36, 39, 44);
-    spec.colors.inverse_on_surface = huxerui::Color::Rgb(250, 250, 251);
-    spec.colors.error = huxerui::Color::Rgb(204, 64, 51);
+    spec.colors.primary = FluxPalette::indigo();
+    spec.colors.on_primary = huxerui::Color::White();
+    spec.colors.primary_container = huxerui::Color::Rgb(221, 229, 255);
+    spec.colors.on_primary_container = huxerui::Color::Rgb(27, 47, 132);
+    spec.colors.secondary = huxerui::Color::Rgb(23, 127, 168);
+    spec.colors.on_secondary = huxerui::Color::White();
+    spec.colors.secondary_container = huxerui::Color::Rgb(217, 243, 255);
+    spec.colors.on_secondary_container = huxerui::Color::Rgb(10, 65, 90);
+    spec.colors.tertiary_container = huxerui::Color::Rgb(230, 229, 255);
+    spec.colors.on_tertiary_container = huxerui::Color::Rgb(52, 54, 109);
+    spec.colors.background = huxerui::Color::Rgb(243, 247, 255);
+    spec.colors.surface = huxerui::Color::Rgb(252, 253, 255);
+    spec.colors.surface_container_low = huxerui::Color::Rgb(246, 249, 255);
+    spec.colors.surface_container = huxerui::Color::Rgb(234, 240, 253);
+    spec.colors.surface_container_high = huxerui::Color::Rgb(223, 232, 251);
+    spec.colors.surface_container_highest = huxerui::Color::White();
+    spec.colors.on_surface = huxerui::Color::Rgb(17, 26, 52);
+    spec.colors.on_surface_variant = huxerui::Color::Rgb(82, 100, 142);
+    spec.colors.outline = huxerui::Color::Rgb(174, 188, 224);
+    spec.colors.inverse_surface = huxerui::Color::Rgb(27, 42, 88);
+    spec.colors.inverse_on_surface = huxerui::Color::Rgb(244, 247, 255);
+    spec.colors.scrim = huxerui::Color::Rgb(8, 16, 42, 0.32F);
+    spec.colors.error = huxerui::Color::Rgb(186, 26, 58);
+    spec.interactions.focus_ring = huxerui::FocusRing{FluxPalette::indigo(), 2.0F, 2.0F};
     return spec;
 }
 
 // 主题边界：MaterialThemeDefinition(spec) 之上用 typed style 覆盖组件样式——
 // 按钮/分段按钮/菜单圆角统一 8px（M3 默认全圆胶囊），叠加层用 on_surface
-// 半透明（深色下黑叠黑、浅色黑底上白叠加不可见，故不用 M3 ripple）。
-huxerui::View MinimalThemed(bool dark, huxerui::View content) {
-    const huxerui::ThemeSpec spec = dark ? MinimalDarkThemeSpec() : MinimalLightThemeSpec();
+// 半透明，让深浅模式的交互反馈都留在品牌色相内。
+huxerui::View FluxThemed(bool dark, huxerui::View content) {
+    const huxerui::ThemeSpec spec = dark ? FluxDarkThemeSpec() : FluxLightThemeSpec();
     huxerui::ThemeDefinition definition = huxerui::MaterialThemeDefinition(spec);
 
     const auto withAlpha = [](huxerui::Color c, float a) {
@@ -209,6 +252,17 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
     return huxerui::Theme(std::move(definition), content);
 }
 
+void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application) {
+#if defined(__ANDROID__)
+    // HuxerUI owns the Android Context and has already prepared its application
+    // directories before creating the runtime. Use that official data root for
+    // Clash-Flux instead of entering Android through an early custom JNI call.
+    cfg::setAndroidDataDir(application.Directories().data_directory.Path());
+#else
+    static_cast<void>(application);
+#endif
+}
+
 // 左列：图标侧边栏（无岛屿包裹，选中态用实心图标变体，悬停显示文字提示）。
 [[huxerui::composable]] huxerui::View SideShell(huxerui::State<std::size_t> navPage) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
@@ -261,13 +315,14 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
 
 [[huxerui::composable]] huxerui::View AppRoot() {
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
+    PreparePlatformDataDirectory(application);
     const huxerui::WindowHandle window = huxerui::UseWindow();
     const huxerui::SystemTrayHandle tray = application.SystemTray();
     const bool trayAvailable = tray.IsAvailable();
     auto tasks = huxerui::UseTaskScope();
 
     // 初始值在 UseState 之前算好（组合体内不写 State）：
-    // 主题模式 0=跟随系统 1=深色 2=浅色；未保存偏好时默认深色（极简黑白黑底）。
+    // 主题模式 0=跟随系统 1=深色 2=浅色；未保存偏好时默认使用品牌深色主题。
     int initialThemeMode = 1;
     {
         const std::string saved = store::coreStore().setting("ui.theme_mode", "1");
@@ -337,7 +392,7 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
     // 主题派生（托盘 TUN 引导弹窗也要取 rootSpec 配色，故先于托盘块计算）。
     const bool dark =
         themeMode.Get() == 1 || (themeMode.Get() == 0 && cfg::systemPrefersDark());
-    const huxerui::ThemeSpec rootSpec = dark ? MinimalDarkThemeSpec() : MinimalLightThemeSpec();
+    const huxerui::ThemeSpec rootSpec = dark ? FluxDarkThemeSpec() : FluxLightThemeSpec();
     const IslandTheme rootIslands = ResolveIslandTheme(rootSpec);
 
     // 托盘：图标 + 菜单（显示主窗口 / 系统代理 / TUN / 退出）；点击托盘图标
@@ -539,7 +594,7 @@ huxerui::View MinimalThemed(bool dark, huxerui::View content) {
               huxerui::Background(rootSpec.colors.background),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
-    return MinimalThemed(dark, std::move(content));
+    return FluxThemed(dark, std::move(content));
 }
 
 } // namespace clashflux::ui

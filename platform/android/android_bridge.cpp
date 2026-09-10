@@ -1,7 +1,7 @@
 // android_bridge.cpp — Java/NDK glue kept in the Clash-Flux app library.
 //
-// HuxerUI owns the rendering Activity. Clash-Flux only needs a small bridge for
-// the app-private data directory and for opening subscription home pages.
+// HuxerUI owns the rendering Activity and application directories. Clash-Flux
+// only keeps a small bridge for opening subscription home pages.
 #include <jni.h>
 
 #include <mutex>
@@ -35,23 +35,16 @@ JNIEnv* current_environment(bool& attached) noexcept {
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_MainActivity_nativeInit(JNIEnv* environment,
-                                                  jclass activity_class,
-                                                  jstring files_dir) {
-    if (environment == nullptr || activity_class == nullptr || files_dir == nullptr) {
+                                                  jclass activity_class) {
+    if (environment == nullptr || activity_class == nullptr) {
         return;
     }
-
-    const char* chars = environment->GetStringUTFChars(files_dir, nullptr);
-    if (chars == nullptr) return;
-    const std::string path(chars);
-    environment->ReleaseStringUTFChars(files_dir, chars);
 
     std::lock_guard lock(g_mutex);
     if (g_vm == nullptr) {
         environment->GetJavaVM(&g_vm);
         g_activity_class = static_cast<jclass>(environment->NewGlobalRef(activity_class));
     }
-    cfg::setAndroidDataDir(path);
 }
 
 extern "C" void clashflux_android_open_url(const char* url) noexcept {

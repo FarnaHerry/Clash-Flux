@@ -14,13 +14,16 @@ public final class MainActivity extends HuxerUIActivity {
 
     private static MainActivity current;
 
-    private static native void nativeInit(String filesDirectory);
+    private static native void nativeInit();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         current = this;
-        nativeInit(getFilesDir().getAbsolutePath());
         super.onCreate(savedInstanceState);
+        // HuxerUI must finish creating its Activity/View first. The native bridge
+        // now only retains the VM/class for URL callbacks; application directories
+        // are obtained from HuxerUI's ApplicationHandle inside the native runtime.
+        nativeInit();
     }
 
     @Override
