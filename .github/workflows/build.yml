@@ -26,9 +26,9 @@
 #     项目使用同一提交的源码，避免 SDK 头文件与源码 API 漂移。
 #
 # 实验性 job（continue-on-error: true）及原因：
-#   * build-linux-arm64：ubuntu-24.04-arm 原生 runner + ubuntu:26.04 容器，
-#     配方与 x86_64 完全相同，但 26.04 arm64 仓库的 clang-21/libc++-21 可用性
-#     未经首跑验证；连续绿后摘掉 continue-on-error。
+#   * build-linux-arm64：ubuntu-24.04-arm 原生 runner + ubuntu:24.04 容器，
+#     配方与 x86_64 完全相同，但 arm64 runner 的 LLVM 源仓库可用性未经首跑验证；
+#     连续绿后摘掉 continue-on-error。
 #
 # Windows、macOS 和 Android 已纳入发布门禁：完整 Release 构建或 smoke test
 # 失败时，workflow 失败，不会进入发布 job。Android 使用 AndroidLegacy.cmake
@@ -36,7 +36,7 @@
 # 因此产出包当前只提供 GUI/native shell，内核接入是后续里程碑。
 #
 # 已知风险：
-#   * ubuntu:26.04 是滚动预发布容器，clang-21/libc++-21 包名若随发布调整需同步改。
+#   * apt.llvm.org 的 clang-21/libc++-21 包名或 Ubuntu 24.04 的仓库配置若调整需同步改。
 #   * `import std` 依赖 pip 固定的 cmake==4.4.2（CxxImportStdGate.cmake 的 UUID
 #     表覆盖 3.30–4.4）；升级 CMake 时先查 gate 文件是否已支持新版本。
 #   * configure 期从 GitHub releases 下载 mihomo（SHA256 钉死），GitHub 资产
@@ -74,18 +74,20 @@ env:
 
 jobs:
   # ------------------------------------------------------------------ Linux
-  # 工具链照搬 apitab 实证配方：ubuntu:26.04 容器 + clang-21/libc++-21。
+  # 工具链照搬 apitab 实证配方：ubuntu:24.04 容器 + apt.llvm.org 的
+  # clang-21/libc++-21。24.04 是 Linux 发布包的 glibc 基线；不能用 26.04
+  # 构建，否则 RPM 会要求 GLIBC_2.43，旧版 Fedora/aarch64 无法安装。
   # 为什么不是 GCC：CMake 的 GNU import-std 发现要 4.0+ 且依赖 GCC ≥15 的
   # libstdc++.modules.json；apitab 实测 GCC 15 对 vendored 模块包装器报
-  # "exposes TU-local entity"（GCC 16 才放宽，而 26.04 的 g++-16 快照会 ICE），
-  # clang+libc++ 全链最稳。26.04 的 libc++-21-dev 自带 std 模块与
+  # "exposes TU-local entity"（GCC 16 才放宽，而 Ubuntu 的 g++-16 快照会 ICE），
+  # clang+libc++ 全链最稳。libc++-21-dev 自带 std 模块与
   # modules.json，但 Debian 打包的相对路径是坏的，下面按 llvm-21 前缀改写。
   # arm64 用 ubuntu-24.04-arm 原生 runner（容器同配方，无交叉编译）。
   build-linux:
     name: build-linux-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     container:
-      image: ubuntu:26.04
+      image: ubuntu:24.04
     strategy:
       fail-fast: false
       matrix:
@@ -95,13 +97,19 @@ jobs:
             experimental: false
           - arch: arm64
             runner: ubuntu-24.04-arm
-            experimental: true   # 首跑验证 26.04 arm64 仓库后摘掉
+            experimental: true   # 首跑验证 noble arm64 LLVM 源后摘掉
     continue-on-error: ${{ matrix.experimental }}
     steps:
       - name: Install container baseline
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates
+          apt-get install -y --no-install-recommends git ca-certificates curl gnupg
+          install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | gpg --dearmor --yes -o /etc/apt/keyrings/llvm.gpg
+          echo 'deb [signed-by=/etc/apt/keyrings/llvm.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main' \
+            > /etc/apt/sources.list.d/llvm.list
+          apt-get update
 
       - name: Check out source
         uses: actions/checkout@v4
@@ -115,10 +123,11 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get install -y --no-install-recommends \
-            clang-21 libc++-21-dev g++ ninja-build pkg-config file gzip \
+            clang-21 libc++-21-dev g++ ninja-build pkg-config file binutils gzip \
             python3 python3-pip libssl-dev patchelf \
             libgtk-4-dev libepoxy-dev libsoup-3.0-dev dpkg-dev rpm
-          # 26.04 的 apt cmake 是 3.31（GNU import-std 发现不行），固定 pip 4.4.2
+          # Ubuntu 24.04 的 apt cmake/clang 版本不满足 import-std，固定 CMake
+          # 并从 apt.llvm.org 安装 LLVM 21。
           python3 -m pip install --break-system-packages -q cmake==4.4.2
           cmake --version | head -1
           # Debian 打包的 libc++.modules.json 相对路径坏指 /lib/share/...，
@@ -186,6 +195,25 @@ jobs:
           test "${#packages[@]}" -eq 2
           cp "${packages[@]}" dist-src/
           ls -lh dist-src/*.deb dist-src/*.rpm
+          expected_rpm_arch="${{ matrix.arch }}"
+          [[ "$expected_rpm_arch" == "arm64" ]] && expected_rpm_arch="aarch64"
+          rpm_files=(dist-packages/*.rpm)
+          test "${#rpm_files[@]}" -eq 1
+          rpm_arch="$(rpm -qp --qf '%{ARCH}' "${rpm_files[0]}")"
+          test "$rpm_arch" = "$expected_rpm_arch"
+          elf_info="$(file dist-src/clash-flux)"
+          if [[ "$expected_rpm_arch" == "aarch64" ]]; then
+            [[ "$elf_info" == *"ARM aarch64"* ]]
+          else
+            [[ "$elf_info" == *"x86-64"* ]]
+          fi
+          # Keep the executable runnable on the supported Fedora/RHEL-era
+          # baseline. A newer build image must not silently raise glibc.
+          if readelf --version-info dist-src/clash-flux \
+              | grep -Eq 'GLIBC_2\.(4[0-9]|[5-9][0-9])'; then
+            echo 'Linux package requires newer than GLIBC_2.39' >&2
+            exit 1
+          fi
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
