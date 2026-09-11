@@ -712,20 +712,42 @@ jobs:
             echo "Android app process is not alive after launch" >&2
             failures=1
           fi
-          if ! timeout 10s "$adb_bin" -s emulator-5554 shell run-as \
-              dev.farna.clashflux test -x files/clash-flux/engines/mihomo; then
-            echo "Bundled mihomo was not extracted as an executable" >&2
-            failures=1
-          fi
-          core_pid="$(timeout 10s "$adb_bin" -s emulator-5554 shell run-as \
-            dev.farna.clashflux sh -c 'cat files/clash-flux/core/mihomo.pid 2>/dev/null' \
+          # Release APKs are intentionally not debuggable, so run-as cannot
+          # inspect their private files. The hosted AOSP emulator permits adb
+          # root; use the real files/pid when available and keep logcat plus
+          # process-name checks as the non-root fallback.
+          adb_root=0
+          timeout 30s "$adb_bin" -s emulator-5554 root >/dev/null 2>&1 || :
+          timeout 30s "$adb_bin" -s emulator-5554 wait-for-device >/dev/null 2>&1 || :
+          uid="$(timeout 10s "$adb_bin" -s emulator-5554 shell id -u \
             | tr -d '\r' || true)"
-          if [ -z "$core_pid" ] || ! timeout 10s "$adb_bin" -s emulator-5554 shell run-as \
-              dev.farna.clashflux kill -0 "$core_pid"; then
-            echo "Android mihomo process is not alive after launch" >&2
-            timeout 10s "$adb_bin" -s emulator-5554 shell run-as \
-              dev.farna.clashflux sh -c 'cat files/clash-flux/core/mihomo.log 2>/dev/null' || :
-            failures=1
+          [ "$uid" = "0" ] && adb_root=1
+          app_files="/data/user/0/dev.farna.clashflux/files/clash-flux"
+          if [ "$adb_root" -eq 1 ]; then
+            if ! timeout 10s "$adb_bin" -s emulator-5554 shell test -x \
+                "$app_files/engines/mihomo"; then
+              echo "Bundled mihomo was not extracted as an executable" >&2
+              failures=1
+            fi
+            core_pid="$(timeout 10s "$adb_bin" -s emulator-5554 shell \
+              cat "$app_files/core/mihomo.pid" 2>/dev/null | tr -d '\r' || true)"
+            if [ -z "$core_pid" ] || ! timeout 10s "$adb_bin" -s emulator-5554 shell \
+                kill -0 "$core_pid"; then
+              echo "Android mihomo process is not alive after launch" >&2
+              timeout 10s "$adb_bin" -s emulator-5554 shell \
+                cat "$app_files/core/mihomo.log" 2>/dev/null || :
+              failures=1
+            fi
+          else
+            if ! grep -q 'Bundled mihomo ready' android-launch.log; then
+              echo "Android did not report a ready bundled mihomo engine" >&2
+              failures=1
+            fi
+            if ! timeout 10s "$adb_bin" -s emulator-5554 shell pidof mihomo \
+                | tr -d '\r' | grep -q '[0-9]'; then
+              echo "Android mihomo process is not visible after launch" >&2
+              failures=1
+            fi
           fi
           timeout 10s "$adb_bin" -s emulator-5554 shell am force-stop dev.farna.clashflux || :
           exit "$failures"
