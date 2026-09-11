@@ -642,10 +642,21 @@ jobs:
           adb_bin="${ANDROID_HOME}/platform-tools/adb"
           emulator_bin="${ANDROID_HOME}/emulator/emulator"
           image="system-images;android-35;default;x86_64"
+          # Keep the AVD in an explicit runner-local directory. Newer Android
+          # command-line tools may honor ANDROID_USER_HOME while the emulator
+          # still falls back to $HOME/.android/avd, which can make a freshly
+          # created AVD appear to be missing.
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
           failures=0
 
           sdkmanager --install emulator platform-tools "platforms;android-35" "$image" >/dev/null
-          echo no | avdmanager create avd --force -n "$avd_name" --package "$image" >/dev/null
+          avd_path="$ANDROID_AVD_HOME/${avd_name}.avd"
+          echo no | avdmanager create avd --force \
+            -n "$avd_name" --package "$image" --path "$avd_path" >/dev/null
+          test -f "$avd_path/config.ini"
+          "$emulator_bin" -list-avds | grep -Fx "$avd_name"
           "$emulator_bin" -avd "$avd_name" -no-window -no-audio -no-boot-anim \
             -gpu swiftshader_indirect -accel off -no-snapshot -wipe-data > emulator.log 2>&1 &
           emulator_pid=$!
