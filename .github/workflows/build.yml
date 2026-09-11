@@ -641,7 +641,10 @@ jobs:
           api-level: 35
           arch: x86_64
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
-          disable-animations: true
+          # API 35's adb can restart its settings service immediately after a
+          # slow cold boot; the action's animation-setting command then fails
+          # with a broken pipe before our app smoke script is reached.
+          disable-animations: false
           script: |
             # Keep adb lifecycle control in Python.  Killing only the timeout
             # wrapper can leave an adb child attached to a blocked Activity
