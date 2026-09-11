@@ -210,6 +210,15 @@ android {
         }
     }
 
+    // The bundled mihomo is an executable packaged under lib/<abi>, not a
+    // library loaded by System.loadLibrary. Force JNI extraction so Android
+    // places it in nativeLibraryDir, whose SELinux label permits execution.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     lintOptions {
         checkReleaseBuilds = false
         abortOnError = false
