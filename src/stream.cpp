@@ -100,8 +100,10 @@ struct CoreStreams::Impl {
 };
 
 CoreStreams::CoreStreams() : impl_(std::make_unique<Impl>()) {
+#if !defined(__ANDROID__)
     static std::once_flag flag;
     std::call_once(flag, [] { ix::initNetSystem(); });
+#endif
 }
 
 CoreStreams::~CoreStreams() = default;

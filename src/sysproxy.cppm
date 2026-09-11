@@ -66,6 +66,13 @@ bool hasTool(const char* tool) {
 }
 
 Desktop detect() {
+#if defined(__ANDROID__)
+    // Android has no desktop proxy configuration channel. In particular, do
+    // not probe for command-line tools here: this function is called while
+    // composing the first frame and Android's system() shell is not a desktop
+    // environment (and may block or be unavailable).
+    return Desktop::Unsupported;
+#else
 #ifdef _WIN32
     return Desktop::Windows;  // 注册表通道，无需探测
 #elif defined(__APPLE__)
@@ -87,6 +94,7 @@ Desktop detect() {
         return Desktop::Gnome;
     }
     return Desktop::Unsupported;
+#endif
 #endif
 }
 
