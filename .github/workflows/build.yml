@@ -643,20 +643,31 @@ jobs:
             adb install -r dist-src/clash-flux-android-universal.apk
             adb logcat -c
             # `am start` can wait forever when the app blocks during native
-            # startup.  Detach it, including stdin/stdout/stderr, from the
-            # adb shell so the test can always reach logcat collection.
-            adb shell 'nohup sh -c "am start -n dev.farna.clashflux/.MainActivity" >/data/local/tmp/clash-flux-am-start.log 2>&1 </dev/null &'
-            sleep 2
-            timeout 10s adb shell cat /data/local/tmp/clash-flux-am-start.log > android-start.log 2>&1 || true
-            cat android-start.log
+            # startup.  Keep the adb client detached from this shell and
+            # never wait for its result; the activity remains on the device.
+            adb shell am start -n dev.farna.clashflux/.MainActivity > android-start.log 2>&1 &
+            am_pid=$!
+            disown "$am_pid" 2>/dev/null || true
+            sleep 3
+            kill -9 "$am_pid" 2>/dev/null || true
+            cat android-start.log || true
             sleep 12
-            timeout 15s adb logcat -d -v threadtime > android-launch.log 2>&1 || true
+            adb logcat -d -v threadtime > android-launch.log 2>&1 &
+            logcat_pid=$!
+            disown "$logcat_pid" 2>/dev/null || true
+            sleep 3
+            kill -9 "$logcat_pid" 2>/dev/null || true
             cat android-launch.log
             if grep -Eq 'FATAL EXCEPTION|Fatal signal|Abort message|Process: dev\.farna\.clashflux|RuntimeException' android-launch.log; then
               echo "Android launch produced a fatal log entry" >&2
               exit 1
             fi
-            pid="$(timeout 10s adb shell pidof dev.farna.clashflux | tr -d '\r' || true)"
+            adb shell pidof dev.farna.clashflux > android-pid.log 2>&1 &
+            pid_pid=$!
+            disown "$pid_pid" 2>/dev/null || true
+            sleep 3
+            kill -9 "$pid_pid" 2>/dev/null || true
+            pid="$(tr -d '\r' < android-pid.log || true)"
             test -n "$pid"
             timeout 10s adb shell am force-stop dev.farna.clashflux || true
 
