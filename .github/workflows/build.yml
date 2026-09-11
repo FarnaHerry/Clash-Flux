@@ -643,25 +643,22 @@ jobs:
             adb install -r dist-src/clash-flux-android-universal.apk
             adb logcat -c
             # `am start` can wait forever when the app blocks during native
-            # startup.  Kill only the local adb client after a short grace
-            # period; the activity keeps running on the emulator so logcat is
-            # still collected in that case.
-            adb shell am start -n dev.farna.clashflux/.MainActivity > android-start.log 2>&1 &
-            am_pid=$!
-            sleep 3
-            kill "$am_pid" 2>/dev/null || true
-            wait "$am_pid" 2>/dev/null || true
+            # startup.  Detach it, including stdin/stdout/stderr, from the
+            # adb shell so the test can always reach logcat collection.
+            adb shell 'nohup sh -c "am start -n dev.farna.clashflux/.MainActivity" >/data/local/tmp/clash-flux-am-start.log 2>&1 </dev/null &'
+            sleep 2
+            timeout 10s adb shell cat /data/local/tmp/clash-flux-am-start.log > android-start.log 2>&1 || true
             cat android-start.log
             sleep 12
-            adb logcat -d -v threadtime > android-launch.log
+            timeout 15s adb logcat -d -v threadtime > android-launch.log 2>&1 || true
             cat android-launch.log
             if grep -Eq 'FATAL EXCEPTION|Fatal signal|Abort message|Process: dev\.farna\.clashflux|RuntimeException' android-launch.log; then
               echo "Android launch produced a fatal log entry" >&2
               exit 1
             fi
-            pid="$(adb shell pidof dev.farna.clashflux | tr -d '\r')"
+            pid="$(timeout 10s adb shell pidof dev.farna.clashflux | tr -d '\r' || true)"
             test -n "$pid"
-            adb shell am force-stop dev.farna.clashflux
+            timeout 10s adb shell am force-stop dev.farna.clashflux || true
 
       - name: Upload Android launch log
         if: always()
