@@ -7,15 +7,14 @@
 //   （rootSpec.colors.background——AppRoot 在主题 provider 之上，UseTheme 只能
 //   拿到默认浅色 spec，须按 dark 自选；子树在 provider 之下 UseTheme 正常）。
 //
-// 内核：首个组合即经 RunOnTaskThread 自动启动 mihomo（内核缺失时安静降级，
-// 状态胶囊显示「未安装」）；托盘：显示主窗口 / 退出。
+// 内核：Android 壳层在引擎解包后独立启动 mihomo，桌面端首个组合经
+// RunOnTaskThread 启动（内核缺失时安静降级，状态胶囊显示「未安装」）；托盘：
+// 显示主窗口 / 退出。
 #include <huxerui/huxerui.h>
 
 #include <array>
 #include <chrono>
 #include <cstddef>
-#include <exception>
-#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -308,16 +307,6 @@ void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application)
 #endif
 }
 
-void LogAndroid(const std::string& message, bool error = false) {
-#if defined(__ANDROID__)
-    __android_log_print(error ? ANDROID_LOG_ERROR : ANDROID_LOG_INFO, "ClashFlux",
-                        "%s", message.c_str());
-#else
-    static_cast<void>(message);
-    static_cast<void>(error);
-#endif
-}
-
 std::vector<huxerui::NavigationItem> NavigationItems() {
     struct Item {
         huxerui::ImageResource icon;
@@ -606,45 +595,6 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
             window.Hide();
         }
     }
-    }
-
-    if constexpr (kAndroidPlatform) {
-        // Android has no desktop window/tray lifecycle, but the native shell
-        // still owns a local mihomo process. Start it after HuxerUI has
-        // published the application data directory and keep its state pump
-        // active for the home/status pages.
-        huxerui::Lifecycle(
-            [tasks] {
-                tasks.Launch([]() -> huxerui::Task<void> {
-                    co_await RunOnTaskThread([] {
-                        try {
-                            auto& core = store::coreStore();
-                            core.init();
-                            const std::filesystem::path binary = cfg::mihomoBinary();
-                            LogAndroid("mihomo path: " +
-                                       (binary.empty() ? std::string{"<missing>"}
-                                                       : binary.string()));
-                            if (!binary.empty()) {
-                                core.startCore(store::profilesStore().selectedYaml());
-                                const auto snapshot = core.snapshot();
-                                LogAndroid("core startup state=" +
-                                           std::to_string(static_cast<int>(snapshot.state)) +
-                                           " error=" + snapshot.lastError);
-                            }
-                        } catch (const std::exception& error) {
-                            LogAndroid("core initialization failed: " +
-                                           std::string{error.what()},
-                                       true);
-                        }
-                    });
-                    co_await PollWhile(std::chrono::duration<double>{0.5}, [] {
-                        store::coreStore().checkAlive();
-                        return true;
-                    });
-                });
-                return [] {};
-            },
-            0);
     }
 
     std::vector<huxerui::View> pages;
