@@ -255,6 +255,36 @@ huxerui::View FluxThemed(bool dark, huxerui::View content) {
     menus.item_indication = selectIndication;
     definition.Set(menus);
 
+    // 响应式导航跟随品牌主题：Compact 使用底部 NavigationBar，Medium/Expanded
+    // 使用官方 NavigationPane；不再由应用手工拼接侧栏几何。
+    huxerui::NavigationBarStyle navigationBar =
+        huxerui::NavigationBarStyle::Default();
+    navigationBar.background = spec.colors.surface_container_low;
+    navigationBar.label_style = huxerui::TextStyle{
+        huxerui::Font::System(font_size::kCaption), spec.colors.on_surface_variant};
+    navigationBar.selected_content = spec.colors.on_primary_container;
+    navigationBar.indicator = spec.colors.primary_container;
+    navigationBar.indicator_size = huxerui::Size{40.0F, 30.0F};
+    navigationBar.indicator_corner_radius = spec.shapes.small;
+    navigationBar.item_padding = huxerui::EdgeInsets::Symmetric(2.0F, 2.0F);
+    navigationBar.minimum_item_width = 44.0F;
+    navigationBar.icon_size = 20.0F;
+    navigationBar.icon_spacing = 2.0F;
+    navigationBar.show_unselected_labels = false;
+    definition.Set(navigationBar);
+
+    huxerui::NavigationPaneStyle navigationPane =
+        huxerui::NavigationPaneStyle::Default();
+    navigationPane.background = spec.colors.surface_container_low;
+    navigationPane.label_style = huxerui::TextStyle{
+        huxerui::Font::System(font_size::kBody), spec.colors.on_surface_variant};
+    navigationPane.selected_content = spec.colors.on_primary_container;
+    navigationPane.indicator = spec.colors.primary_container;
+    navigationPane.compact_width = 72.0F;
+    navigationPane.expanded_min_width = 220.0F;
+    navigationPane.indicator_corner_radius = spec.shapes.small;
+    definition.Set(navigationPane);
+
     return huxerui::Theme(std::move(definition), content);
 }
 
@@ -269,52 +299,50 @@ void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application)
 #endif
 }
 
-// 左列：图标侧边栏（无岛屿包裹，选中态用实心图标变体，悬停显示文字提示）。
-[[huxerui::composable]] huxerui::View SideShell(huxerui::State<std::size_t> navPage) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    auto tasks = huxerui::UseTaskScope();
-    // 响应式：Compact(<600) 收窄侧栏宽度与内边距。
-    const bool compact =
-        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+std::vector<huxerui::NavigationItem> NavigationItems() {
     struct Item {
         huxerui::ImageResource icon;
         huxerui::ImageResource icon_selected;
         const char* tooltip;
-        std::size_t page;
     };
     const std::array<Item, 7> items{
-        Item{app::images::home, app::images::home_selected, "首页", pages::kHome},
-        Item{app::images::request, app::images::request_selected, "订阅", pages::kProfiles},
-        Item{app::images::websocket, app::images::websocket_selected, "代理", pages::kProxies},
-        Item{app::images::loadtest, app::images::loadtest_selected, "规则", pages::kRules},
-        Item{app::images::tcp, app::images::tcp_selected, "连接", pages::kConnections},
-        Item{app::images::history, app::images::history_selected, "日志", pages::kLogs},
-        Item{app::images::project_settings, app::images::project_settings_selected, "设置",
-             pages::kSettings},
+        Item{app::images::home, app::images::home_selected, "首页"},
+        Item{app::images::request, app::images::request_selected, "订阅"},
+        Item{app::images::websocket, app::images::websocket_selected, "代理"},
+        Item{app::images::loadtest, app::images::loadtest_selected, "规则"},
+        Item{app::images::tcp, app::images::tcp_selected, "连接"},
+        Item{app::images::history, app::images::history_selected, "日志"},
+        Item{app::images::project_settings, app::images::project_settings_selected, "设置"},
     };
 
-    std::vector<huxerui::View> buttons;
+    std::vector<huxerui::NavigationItem> destinations;
     for (const Item& item : items) {
-        const std::size_t page = item.page;
-        const huxerui::ImageResource& icon =
-            navPage.Get() == page ? item.icon_selected : item.icon;
-        buttons.push_back(
-            huxerui::IconButton(icon, item.tooltip)
-                .OnClick([tasks, navPage, page] {
-                    // 切页会卸载内容子树：推迟出指针事件路径
-                    tasks.Launch([=]() -> huxerui::Task<void> {
-                        co_await huxerui::Delay(std::chrono::duration<double>{0});
-                        navPage = page;
-                    });
-                })
-                .With(huxerui::Tooltip(item.tooltip)));
+        destinations.push_back(huxerui::NavigationItem(item.icon, item.tooltip)
+                                   .SelectedIcon(item.icon_selected));
     }
-    return huxerui::Column(std::move(buttons))
-        .With(huxerui::Padding(compact ? theme.spacing.small
-                                       : theme.spacing.medium),
-              huxerui::Spacing(theme.spacing.small),
-              huxerui::Frame{.width = compact ? 44.0F : 56.0F},
-              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    return destinations;
+}
+
+// 响应式导航：Compact 使用底部导航栏，Medium 使用紧凑导航栏，Expanded 展开
+// 为带文字的导航面板。三种结构共享同一个 navPage，IndexedPages 继续保留页面。
+[[huxerui::composable]] huxerui::View NavigationSurface(
+    huxerui::State<std::size_t> navPage) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const huxerui::ViewportClass viewport = huxerui::UseViewportClass();
+    const std::vector<huxerui::NavigationItem> items = NavigationItems();
+    const auto onChanged = [navPage](std::size_t index) { navPage = index; };
+
+    if (viewport == huxerui::ViewportClass::Compact) {
+        return huxerui::NavigationBar(items, navPage)
+            .OnChanged(onChanged)
+            .With(huxerui::Background(theme.colors.surface_container_low),
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    }
+
+    return huxerui::NavigationPane(items, navPage,
+                                   viewport == huxerui::ViewportClass::Expanded)
+        .OnChanged(onChanged)
+        .With(huxerui::Background(theme.colors.surface_container_low));
 }
 
 } // namespace
@@ -595,14 +623,29 @@ void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application)
     pages.push_back(LogsPage().Key("logs").With(huxerui::Grow(1.0F)));
     pages.push_back(SettingsPage(themeMode).Key("settings").With(huxerui::Grow(1.0F)));
 
-    huxerui::View mainRow = huxerui::Row {
-        SideShell(navPage),
+    const huxerui::ViewportClass viewport = huxerui::UseViewportClass();
+    huxerui::View indexedPages =
         huxerui::IndexedPages(std::move(pages), navPage.Get())
-            .With(huxerui::Grow(1.0F)),
+            .With(huxerui::Grow(1.0F));
+    huxerui::View mainRow;
+    if (viewport == huxerui::ViewportClass::Compact) {
+        // 手机/窄窗口：导航移到底部，页面获得完整的横向空间。
+        mainRow = huxerui::Column {
+            std::move(indexedPages),
+            NavigationSurface(navPage),
+        }
+            .With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
+                  huxerui::Grow(1.0F));
+    } else {
+        // Medium 保留紧凑图标栏，Expanded 展开官方导航面板并显示文字。
+        mainRow = huxerui::Row {
+            NavigationSurface(navPage),
+            std::move(indexedPages),
+        }
+            .With(huxerui::Spacing(rootIslands.page_gap),
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
+                  huxerui::Grow(1.0F));
     }
-        .With(huxerui::Spacing(rootIslands.page_gap),
-              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
-              huxerui::Grow(1.0F));
 
     huxerui::View content;
     if constexpr (kAndroidPlatform) {
