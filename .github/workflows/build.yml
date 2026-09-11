@@ -649,10 +649,13 @@ jobs:
               exit 1
             fi
             timeout 10s adb logcat -c || :
-            # `am start` waits for the Activity lifecycle to finish and can
-            # therefore block when native startup is broken. `monkey` only
-            # dispatches the launcher intent, which lets us collect logcat.
-            timeout 10s adb shell monkey -p dev.farna.clashflux -c android.intent.category.LAUNCHER 1 \
+            # Dispatch the launcher from a detached device-side shell.  Both
+            # `am start` and `monkey` wait for the Activity lifecycle on some
+            # API 35 images; keeping them attached to adb can prevent this
+            # step from ever reaching logcat collection when native startup is
+            # broken.
+            adb shell 'am force-stop dev.farna.clashflux >/dev/null 2>&1 || :'
+            adb shell 'nohup am start -n dev.farna.clashflux/.MainActivity >/sdcard/clash-flux-start.log 2>&1 </dev/null &' \
               > android-start.log 2>&1 || :
             cat android-start.log
             sleep 12
