@@ -642,7 +642,7 @@ jobs:
             set -euo pipefail
             adb install -r dist-src/clash-flux-android-universal.apk
             adb logcat -c
-            adb shell am start -W -n dev.farna.clashflux/.MainActivity
+            adb shell am start -n dev.farna.clashflux/.MainActivity
             sleep 12
             adb logcat -d -v threadtime > android-launch.log
             cat android-launch.log
