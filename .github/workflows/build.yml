@@ -770,11 +770,9 @@ jobs:
           [ "$uid" = "0" ] && adb_root=1
           app_files="/data/user/0/dev.farna.clashflux/files/clash-flux"
           if [ "$adb_root" -eq 1 ]; then
-            if ! timeout 10s "$adb_bin" -s emulator-5554 shell test -x \
-                "$app_files/engines/mihomo"; then
-              echo "Bundled mihomo was not extracted as an executable" >&2
-              failures=1
-            fi
+            # The Android engine is packaged as libmihomo.so in the APK's
+            # PackageManager-managed nativeLibraryDir. It is intentionally not
+            # copied into app data: SELinux denies execute_no_trans there.
             core_pid="$(timeout 10s "$adb_bin" -s emulator-5554 shell \
               cat "$app_files/core/mihomo.pid" 2>/dev/null | tr -d '\r' || true)"
             if [ -z "$core_pid" ] || ! timeout 10s "$adb_bin" -s emulator-5554 shell \
@@ -785,8 +783,13 @@ jobs:
               failures=1
             fi
           else
-            if ! timeout 10s "$adb_bin" -s emulator-5554 shell pidof mihomo \
-                | tr -d '\r' | grep -q '[0-9]'; then
+            mihomo_pid="$(timeout 10s "$adb_bin" -s emulator-5554 shell pidof \
+              mihomo 2>/dev/null | tr -d '\r' || true)"
+            if [ -z "$mihomo_pid" ]; then
+              mihomo_pid="$(timeout 10s "$adb_bin" -s emulator-5554 shell pidof \
+                libmihomo.so 2>/dev/null | tr -d '\r' || true)"
+            fi
+            if ! printf '%s\n' "$mihomo_pid" | grep -q '[0-9]'; then
               echo "Android mihomo process is not visible after launch" >&2
               failures=1
             fi
