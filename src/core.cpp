@@ -26,11 +26,13 @@ module;
 #include <poll.h>
 #include <fcntl.h>   // open, O_APPEND
 #include <cerrno>   // errno, EINTR
+#include <cstring>  // strerror
 #include <unistd.h>
 extern char** environ;
 #endif
 
 #if defined(__ANDROID__)
+#include <android/log.h>
 extern "C" void clashflux_android_open_url(const char* url) noexcept;
 #endif
 
@@ -452,6 +454,9 @@ struct CoreProcessImpl {
             ::close(pipefd[1]);
             ::execl(bin.c_str(), bin.c_str(), "-d", dir.c_str(), "-f", cfg.c_str(),
                     static_cast<char*>(nullptr));
+            const int execError = errno;
+            ::dprintf(STDOUT_FILENO, "mihomo exec failed: %s\n",
+                      std::strerror(execError));
             _exit(127);
         }
         ::close(pipefd[1]);
@@ -497,6 +502,9 @@ struct CoreProcessImpl {
 
     void pushLine(std::string line) {
         if (line.empty()) return;
+#if defined(__ANDROID__)
+        __android_log_print(ANDROID_LOG_INFO, "ClashFlux", "mihomo: %s", line.c_str());
+#endif
         std::lock_guard lock(mutex);
         if (output.size() >= kMaxOutputLines) return;
         output.push_back(std::move(line));
@@ -581,6 +589,16 @@ struct CoreProcessImpl {
             ::close(readFd);
             readFd = -1;
         }
+#endif
+#if defined(__ANDROID__)
+        const int loggedExitCode =
+#ifdef _WIN32
+            status;
+#else
+            WIFEXITED(status) ? WEXITSTATUS(status) : 128;
+#endif
+        __android_log_print(ANDROID_LOG_INFO, "ClashFlux",
+                            "mihomo process exited: %d", loggedExitCode);
 #endif
         if (stopRequested.load()) {
             exitCode.store(0);

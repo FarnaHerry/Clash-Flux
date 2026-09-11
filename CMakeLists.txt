@@ -368,6 +368,8 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # Android：NDK 无 OpenSSL（curl 无 TLS 构建），链接跳过 OpenSSL。
     if (NOT ANDROID)
         target_link_libraries(clash-flux PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    else ()
+        target_link_libraries(clash-flux PRIVATE log)
     endif ()
 
     # 生成格式钩子：平台清单 / Info.plist
