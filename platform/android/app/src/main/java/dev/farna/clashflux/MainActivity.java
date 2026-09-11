@@ -25,7 +25,9 @@ public final class MainActivity extends HuxerUIActivity {
     private static final String MIHOMO_VERSION = "v1.19.30";
 
     static {
+        Log.i(TAG, "Loading application native library: " + BuildConfig.HUXERUI_APP_LIBRARY);
         System.loadLibrary(BuildConfig.HUXERUI_APP_LIBRARY);
+        Log.i(TAG, "Application native library loaded");
     }
 
     private static MainActivity current;
@@ -34,6 +36,7 @@ public final class MainActivity extends HuxerUIActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        Log.i(TAG, "MainActivity.onCreate entered");
         current = this;
         try {
             ensureMihomoBinary();
@@ -43,11 +46,14 @@ public final class MainActivity extends HuxerUIActivity {
             // an unrelated Activity crash.
             Log.e(TAG, "Unable to extract the bundled mihomo Android engine", error);
         }
+        Log.i(TAG, "Calling HuxerUIActivity.onCreate");
         super.onCreate(savedInstanceState);
+        Log.i(TAG, "HuxerUIActivity.onCreate returned");
         // HuxerUI must finish creating its Activity/View first. The native bridge
         // now only retains the VM/class for URL callbacks; application directories
         // are obtained from HuxerUI's ApplicationHandle inside the native runtime.
         nativeInit();
+        Log.i(TAG, "Native bridge initialized");
     }
 
     private void ensureMihomoBinary() throws IOException {
