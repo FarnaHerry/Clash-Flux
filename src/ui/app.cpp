@@ -14,8 +14,14 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <exception>
+#include <filesystem>
 #include <string>
 #include <vector>
+
+#if defined(__ANDROID__)
+#include <android/log.h>
+#endif
 
 #include "ui.h"
 #include "app.h"
@@ -293,9 +299,22 @@ void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application)
     // HuxerUI owns the Android Context and has already prepared its application
     // directories before creating the runtime. Use that official data root for
     // Clash-Flux instead of entering Android through an early custom JNI call.
-    cfg::setAndroidDataDir(application.Directories().data_directory.Path());
+    const std::string dataDirectory = application.Directories().data_directory.Path();
+    cfg::setAndroidDataDir(dataDirectory);
+    __android_log_print(ANDROID_LOG_INFO, "ClashFlux",
+                        "HuxerUI data directory: %s", dataDirectory.c_str());
 #else
     static_cast<void>(application);
+#endif
+}
+
+void LogAndroid(const std::string& message, bool error = false) {
+#if defined(__ANDROID__)
+    __android_log_print(error ? ANDROID_LOG_ERROR : ANDROID_LOG_INFO, "ClashFlux",
+                        "%s", message.c_str());
+#else
+    static_cast<void>(message);
+    static_cast<void>(error);
 #endif
 }
 
@@ -598,10 +617,24 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
             [tasks] {
                 tasks.Launch([]() -> huxerui::Task<void> {
                     co_await RunOnTaskThread([] {
-                        auto& core = store::coreStore();
-                        core.init();
-                        if (!cfg::mihomoBinary().empty()) {
-                            core.startCore(store::profilesStore().selectedYaml());
+                        try {
+                            auto& core = store::coreStore();
+                            core.init();
+                            const std::filesystem::path binary = cfg::mihomoBinary();
+                            LogAndroid("mihomo path: " +
+                                       (binary.empty() ? std::string{"<missing>"}
+                                                       : binary.string()));
+                            if (!binary.empty()) {
+                                core.startCore(store::profilesStore().selectedYaml());
+                                const auto snapshot = core.snapshot();
+                                LogAndroid("core startup state=" +
+                                           std::to_string(static_cast<int>(snapshot.state)) +
+                                           " error=" + snapshot.lastError);
+                            }
+                        } catch (const std::exception& error) {
+                            LogAndroid("core initialization failed: " +
+                                           std::string{error.what()},
+                                       true);
                         }
                     });
                     co_await PollWhile(std::chrono::duration<double>{0.5}, [] {
