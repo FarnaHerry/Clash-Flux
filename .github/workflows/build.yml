@@ -633,7 +633,10 @@ jobs:
 
       - name: Smoke test Android launch
         uses: reactivecircus/android-emulator-runner@v2
-        timeout-minutes: 6
+        # API 35 cold boot can take several minutes on a fresh hosted runner;
+        # keep enough time for the script to reach the Activity launch while
+        # still bounding a genuinely wedged emulator.
+        timeout-minutes: 15
         with:
           api-level: 35
           arch: x86_64
