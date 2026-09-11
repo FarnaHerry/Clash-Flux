@@ -34,7 +34,7 @@ abstract class StageHuxerUIAssets extends DefaultTask {
     }
 }
 
-abstract class StageMihomoAssets extends DefaultTask {
+abstract class StageMihomoJniLibs extends DefaultTask {
     @Input
     abstract ListProperty<String> getAbis()
 
@@ -100,7 +100,11 @@ abstract class StageMihomoAssets extends DefaultTask {
                         "mihomo ${asset.name} SHA-256 mismatch: ${actualSha256}")
             }
 
-            def binary = new File(output, "engines/${abi}/mihomo")
+            // Android SELinux forbids execute_no_trans for app_data_file. Put
+            // the official engine in the APK's prebuilt JNI library set so
+            // PackageManager extracts it into nativeLibraryDir, whose file
+            // labeling permits an app to execute it.
+            def binary = new File(output, "${abi}/libmihomo.so")
             binary.parentFile.mkdirs()
             new GZIPInputStream(archive.newInputStream()).withCloseable { input ->
                 binary.withOutputStream { fileOutput ->
@@ -268,11 +272,11 @@ androidComponents.onVariants(androidComponents.selector().all()) { variant ->
     }
     variant.sources.assets.addGeneratedSourceDirectory(stageAssets) { it.outputDirectory }
 
-    def stageMihomo = tasks.register("stageMihomo${variant.name.capitalize()}Assets", StageMihomoAssets) {
+    def stageMihomo = tasks.register("stageMihomo${variant.name.capitalize()}JniLibs", StageMihomoJniLibs) {
         abis.set(huxeruiAbis.toList())
-        outputDirectory.set(layout.buildDirectory.dir("generated/mihomo/assets/${variant.name}"))
+        outputDirectory.set(layout.buildDirectory.dir("generated/mihomo/jniLibs/${variant.name}"))
     }
-    variant.sources.assets.addGeneratedSourceDirectory(stageMihomo) { it.outputDirectory }
+    variant.sources.jniLibs.addGeneratedSourceDirectory(stageMihomo) { it.outputDirectory }
 }
 
 dependencies {

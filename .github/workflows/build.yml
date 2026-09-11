@@ -530,8 +530,9 @@ jobs:
 
   # ---------------------------------------------------------------- Android
   # Android 发布门禁：验证 GUI/native shell 与 mihomo 内核能否经 HuxerUI CLI
-  # 编出可启动 APK。两个发布 ABI 的内核都放进 assets，Activity 首次启动时
-  # 按设备 ABI 解包到应用私有目录后由 native core 拉起。
+  # 编出可启动 APK。两个发布 ABI 的内核都作为预构建 JNI 库放进 APK，
+  # Activity 从 Android 的 nativeLibraryDir 直接拉起，避免 app_data_file 的
+  # SELinux execute_no_trans 限制。
   # CLI 来源：仓库自带 Linux 离线 SDK tarball（bin/huxerui）；框架源码与桌面
   # job 使用同一 HUXERUI_COMMIT，Android Gradle 从该源码构建 HuxerUI。
   build-android:
@@ -622,9 +623,9 @@ jobs:
           cp "$apk" dist-src/clash-flux-android-universal.apk
           test -s dist-src/clash-flux-android-universal.apk
           unzip -l dist-src/clash-flux-android-universal.apk \
-            | grep -q 'assets/engines/arm64-v8a/mihomo'
+            | grep -q 'lib/arm64-v8a/libmihomo.so'
           unzip -l dist-src/clash-flux-android-universal.apk \
-            | grep -q 'assets/engines/x86_64/mihomo'
+            | grep -q 'lib/x86_64/libmihomo.so'
           ls -lh dist-src
 
       - name: Verify Android APK signature
