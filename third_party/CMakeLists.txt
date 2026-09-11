@@ -6,7 +6,7 @@
 # 构建完全离线、可复现。
 #
 # 产物 target：
-#   HuxerUI::huxerui  HuxerUI 0.2.0 SDK（shared；见文件尾 find_package）
+#   HuxerUI::huxerui  HuxerUI 0.3.0 SDK（shared；见文件尾 find_package）
 #   ixwebsocket   IXWebSocket 12.0.1（client-only，无 TLS/无 zlib）
 #   CURL::libcurl curl 8.22.0（OpenSSL 后端，静态库，不编 curl.exe）
 #   SQLiteCpp     SQLiteCpp 3.3.3（内置 sqlite3 amalgamation）

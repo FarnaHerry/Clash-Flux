@@ -20,7 +20,7 @@
 #     若未来升级 commit 后出现 hrc 报 "unknown path operation"，即预置落后，
 #     需按 apitab CI 的方式在 job 内从 tools/codegen + tools/resource_compiler
 #     重编宿主工具（参考 apitab build.yml 的 "Build HuxerUI host tools" 步骤）。
-#   * 仓库自带离线 tarball（third_party/tarballs/huxerui-sdk-0.2.0-linux-x86_64）
+#   * 仓库自带离线 tarball（third_party/tarballs/huxerui-sdk-0.3.0-linux-x86_64）
 #     只在源码缺失时兜底，CI 不走它（Linux 桌面 job 装了 gtk4/epoxy/libsoup 开发包，
 #     不会触发回落）；android job 只复用 tarball 里的 huxerui CLI，原生框架与
 #     项目使用同一提交的源码，避免 SDK 头文件与源码 API 漂移。
@@ -70,7 +70,7 @@ env:
   # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
   # CI 必须自行 clone 并钉 commit，保证可复现）。上游活跃开发中，追新时
   # 同步更新本机 checkout 与此 pin。
-  HUXERUI_COMMIT: '065ab79fc989438221b964aaaf9b03226b0301d2'
+  HUXERUI_COMMIT: 'd1d2daa154200ff293e556244a5bbf98011602bb'
 
 jobs:
   # ------------------------------------------------------------------ Linux
@@ -573,7 +573,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p huxerui-sdk
-          tar -xzf third_party/tarballs/huxerui-sdk-0.2.0-linux-x86_64.tar.gz \
+          tar -xzf third_party/tarballs/huxerui-sdk-0.3.0-linux-x86_64.tar.gz \
             -C huxerui-sdk --strip-components=1
           test -x huxerui-sdk/bin/huxerui
           git clone --filter=blob:none "$HUXERUI_REPO" huxerui-source

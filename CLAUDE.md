@@ -16,7 +16,7 @@ UI 工作先读 skill：`.claude/skills/huxerui-app-development/SKILL.md`（refe
 - HuxerUI 接入“SDK 工程契约驱动、源码解析优先”：开发构建优先
   `third_party/huxerui` 源码（git clone 上游，`add_subdirectory` 编译，不入库）；
   缺 GTK ≥4.14 / libepoxy ≥1.5 / libsoup ≥3.0 开发包时自动回落已安装 SDK
-  （`HUXERUI_HOME`）或 `third_party/tarballs` 的 Linux 0.2.0 离线包。强制 SDK：
+  （`HUXERUI_HOME`）或 `third_party/tarballs` 的 Linux 0.3.0 离线包。强制 SDK：
   `-DCLASHFLUX_HUXERUI_FORCE_SDK=ON`。本机（Fedora）缺 libepoxy-devel，当前走
   已安装 SDK 通道。
 - 源码通道需用当前源码本地构建的宿主工具（`third_party/huxerui-tools/
@@ -45,7 +45,7 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 - 工具链：系统 GCC（本机 16.2.1）+ libstdc++，CMake ≥ 4.4（`import std` 仍是
   experimental：UUID 表在 `cmake/CxxImportStdGate.cmake`）。
 - **依赖全部 vendor 在 `third_party/`**（tarball + SHA256，configure 期解包到
-  `build/vendor/`，清单见 `third_party/README.md`）：HuxerUI 0.2.0、curl 8.22.0
+  `build/vendor/`，清单见 `third_party/README.md`）：HuxerUI 0.3.0、curl 8.22.0
   （REST + 订阅下载）、IXWebSocket 12.0.1（client-only，内核推送流）、
   SQLiteCpp 3.3.3（订阅/设置）、nlohmann::json 3.12.0、OpenSSL 3.5.1
   （linux x86_64 兜底静态包）。
