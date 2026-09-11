@@ -269,8 +269,8 @@ androidComponents.onVariants(androidComponents.selector().all()) { variant ->
     variant.sources.assets.addGeneratedSourceDirectory(stageAssets) { it.outputDirectory }
 
     def stageMihomo = tasks.register("stageMihomo${variant.name.capitalize()}Assets", StageMihomoAssets) {
-        abis.set(huxeruiAbis)
-        outputDirectory = layout.buildDirectory.dir("generated/mihomo/assets/${variant.name}")
+        abis.set(huxeruiAbis.toList())
+        outputDirectory.set(layout.buildDirectory.dir("generated/mihomo/assets/${variant.name}"))
     }
     variant.sources.assets.addGeneratedSourceDirectory(stageMihomo) { it.outputDirectory }
 }
