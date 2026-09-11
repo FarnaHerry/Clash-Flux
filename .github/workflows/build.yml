@@ -642,34 +642,22 @@ jobs:
             set -euo pipefail
             adb install -r dist-src/clash-flux-android-universal.apk
             adb logcat -c
-            # `am start` can wait forever when the app blocks during native
-            # startup.  Keep the adb client detached from this shell and
-            # never wait for its result; the activity remains on the device.
-            adb shell am start -n dev.farna.clashflux/.MainActivity > android-start.log 2>&1 &
-            am_pid=$!
-            disown "$am_pid" 2>/dev/null || true
-            sleep 3
-            kill -9 "$am_pid" 2>/dev/null || true
-            cat android-start.log || true
+            # `am start` waits for the Activity lifecycle to finish and can
+            # therefore block when native startup is broken. `monkey` only
+            # dispatches the launcher intent, which lets us collect logcat.
+            adb shell monkey -p dev.farna.clashflux -c android.intent.category.LAUNCHER 1 \
+              > android-start.log 2>&1 || true
+            cat android-start.log
             sleep 12
-            adb logcat -d -v threadtime > android-launch.log 2>&1 &
-            logcat_pid=$!
-            disown "$logcat_pid" 2>/dev/null || true
-            sleep 3
-            kill -9 "$logcat_pid" 2>/dev/null || true
+            adb logcat -d -v threadtime > android-launch.log 2>&1
             cat android-launch.log
             if grep -Eq 'FATAL EXCEPTION|Fatal signal|Abort message|Process: dev\.farna\.clashflux|RuntimeException' android-launch.log; then
               echo "Android launch produced a fatal log entry" >&2
               exit 1
             fi
-            adb shell pidof dev.farna.clashflux > android-pid.log 2>&1 &
-            pid_pid=$!
-            disown "$pid_pid" 2>/dev/null || true
-            sleep 3
-            kill -9 "$pid_pid" 2>/dev/null || true
-            pid="$(tr -d '\r' < android-pid.log || true)"
+            pid="$(adb shell pidof dev.farna.clashflux | tr -d '\r')"
             test -n "$pid"
-            timeout 10s adb shell am force-stop dev.farna.clashflux || true
+            adb shell am force-stop dev.farna.clashflux
 
       - name: Upload Android launch log
         if: always()
