@@ -639,38 +639,84 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
           script: |
-            # android-emulator-runner executes this block with /bin/sh, not
-            # bash; keep the smoke script POSIX-shell compatible.
-            set -u
-            # API 35 cold-boots slowly on the hosted runner; installation can
-            # still be completing after the emulator reports booted.
-            if ! timeout 180s adb install -r dist-src/clash-flux-android-universal.apk; then
-              echo "Android APK installation failed" >&2
-              exit 1
-            fi
-            timeout 10s adb logcat -c || :
-            # Dispatch the launcher from a detached device-side shell.  Both
-            # `am start` and `monkey` wait for the Activity lifecycle on some
-            # API 35 images; keeping them attached to adb can prevent this
-            # step from ever reaching logcat collection when native startup is
-            # broken.
-            timeout 10s adb shell 'am force-stop dev.farna.clashflux >/dev/null 2>&1 || :' || :
-            timeout 15s adb shell 'nohup am start -n dev.farna.clashflux/.MainActivity >/sdcard/clash-flux-start.log 2>&1 </dev/null &' \
-              > android-start.log 2>&1 || :
-            cat android-start.log
-            sleep 12
-            timeout 20s adb logcat -d -v threadtime > android-launch.log 2>&1 || :
-            cat android-launch.log
-            if grep -Eq 'FATAL EXCEPTION|Fatal signal|Abort message|Process: dev\.farna\.clashflux|RuntimeException' android-launch.log; then
-              echo "Android launch produced a fatal log entry" >&2
-              exit 1
-            fi
-            pid="$(timeout 10s adb shell pidof dev.farna.clashflux | tr -d '\r')" || pid=""
-            if [ -z "$pid" ]; then
-              echo "Android app process is not alive after launch" >&2
-              exit 1
-            fi
-            timeout 10s adb shell am force-stop dev.farna.clashflux || :
+            # Keep adb lifecycle control in Python.  Killing only the timeout
+            # wrapper can leave an adb child attached to a blocked Activity
+            # shell, which prevents the emulator action from reaching logcat.
+            python3 - <<'PY'
+            import subprocess
+            import sys
+            import time
+
+            failures = []
+
+            def run(args, timeout, output=None):
+                try:
+                    return subprocess.run(
+                        ["adb", *args],
+                        stdout=subprocess.PIPE if output is None else output,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        timeout=timeout,
+                        check=False,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    failures.append(f"timeout: adb {' '.join(args)}")
+                    text = exc.stdout or ""
+                    if isinstance(text, bytes):
+                        text = text.decode(errors="replace")
+                    return subprocess.CompletedProcess(args, 124, text)
+
+            install = run(["install", "-r", "dist-src/clash-flux-android-universal.apk"], 180)
+            print(install.stdout or "", end="")
+            if install.returncode != 0:
+                failures.append(f"APK installation failed ({install.returncode})")
+
+            run(["logcat", "-c"], 10)
+            run(["shell", "am", "force-stop", "dev.farna.clashflux"], 10)
+
+            with open("android-start.log", "w", encoding="utf-8") as start_log:
+                launcher = subprocess.Popen(
+                    ["adb", "shell", "am", "start", "-n", "dev.farna.clashflux/.MainActivity"],
+                    stdout=start_log,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                try:
+                    launcher.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    failures.append("Activity start did not return within 8s")
+                    launcher.kill()
+                    launcher.wait(timeout=5)
+
+            time.sleep(12)
+            logcat = run(["logcat", "-d", "-v", "threadtime"], 30)
+            with open("android-launch.log", "w", encoding="utf-8") as launch_log:
+                launch_log.write(logcat.stdout or "")
+            print(logcat.stdout or "", end="")
+
+            fatal = any(
+                marker in (logcat.stdout or "")
+                for marker in (
+                    "FATAL EXCEPTION",
+                    "Fatal signal",
+                    "Abort message",
+                    "Process: dev.farna.clashflux",
+                    "RuntimeException",
+                )
+            )
+            if fatal:
+                failures.append("Android launch produced a fatal log entry")
+
+            pid = run(["shell", "pidof", "dev.farna.clashflux"], 10)
+            if not (pid.stdout or "").strip():
+                failures.append("Android app process is not alive after launch")
+
+            run(["shell", "am", "force-stop", "dev.farna.clashflux"], 10)
+            if failures:
+                for failure in failures:
+                    print(f"ANDROID_SMOKE_FAILURE: {failure}", file=sys.stderr)
+                sys.exit(1)
+            PY
 
       - name: Upload Android launch log
         if: always()
