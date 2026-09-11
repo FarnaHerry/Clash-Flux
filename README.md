@@ -29,7 +29,7 @@ REST API 与 WebSocket 推送流交互，UI 与内核接入层全部由 C++ 实�
 - 支持 C++23 modules / `import std` 的编译器（本机 GCC 16）
 - Ninja（推荐）
 - Linux 源码构建 HuxerUI 需要 GTK ≥4.14、libepoxy ≥1.5 与 libsoup ≥3.0 开发包；
-  缺失时自动回落已安装/离线 0.2.0 SDK
+  缺失时自动回落已安装/离线 0.3.0 SDK
 - mihomo 内核由项目自带：configure 期自动下载官方 release（linux x86_64，
   哈希钉死），无需手动放置；`-DCLASHFLUX_BUNDLE_MIHOMO=OFF` 可关闭
 

@@ -73,7 +73,7 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     find_package(Threads REQUIRED)
 endif ()
 
-# ---- HuxerUI（0.2.0 SDK / 源码双通道，HUXERUI_HOME 契约）-------------------
+# ---- HuxerUI（0.3.0 SDK / 源码双通道，HUXERUI_HOME 契约）-------------------
 # 优先级（固定顺序，与 apitab 一致）：
 #   1. 显式 HUXERUI_HOME 源码（有 CMakeLists.txt + include/huxerui/huxerui.h）。
 #   2. third_party/huxerui 源码（本地 git clone 的上游仓库，add_subdirectory 编译，
@@ -85,7 +85,7 @@ endif ()
 # CLASHFLUX_HUXERUI_FORCE_SDK=ON：唯一明确跳过源码的开关，只走第 3/4 通道（发布门禁
 # 与兼容测试用）。源码模式编译 Linux 后端需要 gtk4-devel libsoup3-devel。
 include(cmake/clashflux_vendor.cmake)
-set(HUXERUI_HOME "$ENV{HUXERUI_HOME}" CACHE PATH "HuxerUI 0.2.0 SDK or source directory")
+set(HUXERUI_HOME "$ENV{HUXERUI_HOME}" CACHE PATH "HuxerUI 0.3.0 SDK or source directory")
 set(CLASHFLUX_HUXERUI_BUNDLED_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/huxerui" CACHE PATH "Bundled HuxerUI source checkout (override for testing to simulate missing source without moving shared directory)")
 set(CLASHFLUX_HUXERUI_SOURCE_DIR "")
 option(CLASHFLUX_HUXERUI_FORCE_SDK "Skip source checkout; use SDK fallback only" OFF)
@@ -170,13 +170,13 @@ else ()
     elseif (APPLE OR WIN32)
         message(FATAL_ERROR
             "clash-flux: macOS/Windows 未提供离线 SDK 包；"
-            "请用 HUXERUI_HOME 指向 0.2.0 源码或已安装 SDK，"
+            "请用 HUXERUI_HOME 指向 0.3.0 源码或已安装 SDK，"
             "或 clone third_party/huxerui 后默认以源码模式编译")
     else ()
         clashflux_extract(huxerui
-            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tarballs/huxerui-sdk-0.2.0-linux-x86_64.tar.gz"
-            "e184a62a0e5e22cd71835d5278034d65f8a30a2c48273513633f88719a1243e5"
-            "huxerui-sdk-0.2.0-linux-x86_64")
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tarballs/huxerui-sdk-0.3.0-linux-x86_64.tar.gz"
+            "5413ccd9d35d0ad50c08c67045d73cb9faff23c04005a554af0faa7a914eb916"
+            "huxerui-sdk-0.3.0-linux-x86_64")
         set(HUXERUI_SDK_DIR "${huxerui_SOURCE_DIR}" CACHE INTERNAL "HuxerUI SDK root" FORCE)
         message(STATUS "clash-flux: HuxerUI SDK（离线 tarball，${HUXERUI_SDK_DIR}）")
     endif ()
@@ -187,7 +187,7 @@ else ()
     set(HUXERUI_RESOURCES_BIN "${HUXERUI_SDK_DIR}/share/huxerui/resources/huxerui/resources.bin" CACHE INTERNAL "")
     # shared 组件：桌面 Linux/Windows 运行时动态库（static 切片在 Linux 要 gtk4
     # 开发包，本仓库不用）。
-    find_package(HuxerUI 0.2.0 CONFIG REQUIRED COMPONENTS shared
+    find_package(HuxerUI 0.3.0 CONFIG REQUIRED COMPONENTS shared
         PATHS "${HUXERUI_SDK_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 endif ()
 
