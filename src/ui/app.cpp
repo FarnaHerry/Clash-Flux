@@ -561,6 +561,31 @@ void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application)
     }
     }
 
+    if constexpr (kAndroidPlatform) {
+        // Android has no desktop window/tray lifecycle, but the native shell
+        // still owns a local mihomo process. Start it after HuxerUI has
+        // published the application data directory and keep its state pump
+        // active for the home/status pages.
+        huxerui::Lifecycle(
+            [tasks] {
+                tasks.Launch([]() -> huxerui::Task<void> {
+                    co_await RunOnTaskThread([] {
+                        auto& core = store::coreStore();
+                        core.init();
+                        if (!cfg::mihomoBinary().empty()) {
+                            core.startCore(store::profilesStore().selectedYaml());
+                        }
+                    });
+                    co_await PollWhile(std::chrono::duration<double>{0.5}, [] {
+                        store::coreStore().checkAlive();
+                        return true;
+                    });
+                });
+                return [] {};
+            },
+            0);
+    }
+
     std::vector<huxerui::View> pages;
     pages.push_back(HomePage().Key("home").With(huxerui::Grow(1.0F)));
     pages.push_back(ProfilesPage().Key("profiles").With(huxerui::Grow(1.0F)));

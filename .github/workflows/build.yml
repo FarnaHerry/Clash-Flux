@@ -32,8 +32,8 @@
 #
 # Windows、macOS 和 Android 已纳入发布门禁：完整 Release 构建或 smoke test
 # 失败时，workflow 失败，不会进入发布 job。Android 使用 AndroidLegacy.cmake
-# 兼容层绕开 NDK 的 C++ modules/import std 限制；mihomo 也无官方 Android 资产，
-# 因此产出包当前只提供 GUI/native shell，内核接入是后续里程碑。
+# 兼容层绕开 NDK 的 C++ modules/import std 限制，并将官方 mihomo Android
+# ABI 二进制打进 APK、启动时解包到应用私有目录。
 #
 # 已知风险：
 #   * apt.llvm.org 的 clang-21/libc++-21 包名或 Ubuntu 24.04 的仓库配置若调整需同步改。
@@ -529,9 +529,9 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------- Android
-  # Android 发布门禁：验证 GUI/native shell 能否经 HuxerUI CLI 编出 APK。
-  # mihomo 官方没有 Android 资产，安卓内核接入是后续里程碑——产出的包不含
-  # 内核、不可实际代理。
+  # Android 发布门禁：验证 GUI/native shell 与 mihomo 内核能否经 HuxerUI CLI
+  # 编出可启动 APK。两个发布 ABI 的内核都放进 assets，Activity 首次启动时
+  # 按设备 ABI 解包到应用私有目录后由 native core 拉起。
   # CLI 来源：仓库自带 Linux 离线 SDK tarball（bin/huxerui）；框架源码与桌面
   # job 使用同一 HUXERUI_COMMIT，Android Gradle 从该源码构建 HuxerUI。
   build-android:
@@ -608,7 +608,7 @@ jobs:
             echo 'ORG_GRADLE_PROJECT_clashfluxRequireReleaseSigning=true'
           } >> "$GITHUB_ENV"
 
-      - name: Build Android package (GUI/native shell, no mihomo kernel)
+      - name: Build Android package (GUI/native shell + mihomo kernel)
         run: |
           set -euo pipefail
           huxerui build android --source huxerui-source --profile release
@@ -621,6 +621,10 @@ jobs:
           test -n "$apk"
           cp "$apk" dist-src/clash-flux-android-universal.apk
           test -s dist-src/clash-flux-android-universal.apk
+          unzip -l dist-src/clash-flux-android-universal.apk \
+            | grep -q 'assets/engines/arm64-v8a/mihomo'
+          unzip -l dist-src/clash-flux-android-universal.apk \
+            | grep -q 'assets/engines/x86_64/mihomo'
           ls -lh dist-src
 
       - name: Verify Android APK signature
@@ -706,6 +710,21 @@ jobs:
           pid="$(timeout 10s "$adb_bin" -s emulator-5554 shell pidof dev.farna.clashflux | tr -d '\r')" || pid=""
           if [ -z "$pid" ]; then
             echo "Android app process is not alive after launch" >&2
+            failures=1
+          fi
+          if ! timeout 10s "$adb_bin" -s emulator-5554 shell run-as \
+              dev.farna.clashflux test -x files/clash-flux/engines/mihomo; then
+            echo "Bundled mihomo was not extracted as an executable" >&2
+            failures=1
+          fi
+          core_pid="$(timeout 10s "$adb_bin" -s emulator-5554 shell run-as \
+            dev.farna.clashflux sh -c 'cat files/clash-flux/core/mihomo.pid 2>/dev/null' \
+            | tr -d '\r' || true)"
+          if [ -z "$core_pid" ] || ! timeout 10s "$adb_bin" -s emulator-5554 shell run-as \
+              dev.farna.clashflux kill -0 "$core_pid"; then
+            echo "Android mihomo process is not alive after launch" >&2
+            timeout 10s "$adb_bin" -s emulator-5554 shell run-as \
+              dev.farna.clashflux sh -c 'cat files/clash-flux/core/mihomo.log 2>/dev/null' || :
             failures=1
           fi
           timeout 10s "$adb_bin" -s emulator-5554 shell am force-stop dev.farna.clashflux || :

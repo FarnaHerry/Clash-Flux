@@ -384,8 +384,8 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # 见 cmake/mihomo_bundle.cmake 的平台资产表），POST_BUILD 拷到
     # <exe>/engines/mihomo（Windows 为 mihomo.exe —— cfg::mihomoBinary() 第一
     # 优先级解析位），构建产物开箱即可启动内核。-DCLASHFLUX_BUNDLE_MIHOMO=OFF
-    # 关闭（回落 <repo>/engines 与 PATH 解析）。覆盖 linux/windows x86_64 与
-    # macOS x86_64/arm64；其他平台显式关闭并自行放置内核。
+    # 关闭（回落 <repo>/engines 与 PATH 解析）。桌面覆盖 linux/windows x86_64
+    # 与 macOS x86_64/arm64；Android 的多 ABI 内核由 Gradle 统一打进 APK。
     include(cmake/mihomo_bundle.cmake)
     clashflux_bundle_mihomo(clash-flux)
 

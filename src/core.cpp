@@ -1,9 +1,9 @@
 // core.cpp — clashflux.core 实现单元。
 //
 // 进程后端按编译期分流：POSIX（Linux + macOS）走 posix_spawn + poll 读管道 +
-// SIGTERM/SIGKILL；Windows 走 CreateProcessW + CreatePipe 重定向 + 监视线程读管
-// 拆行 + TerminateProcess。两条路径共用输出队列与拆行逻辑，差异集中在
-// spawn/monitorLoop/stop/running 四个点。
+// SIGTERM/SIGKILL；Android 使用 fork + exec（Android NDK 不保证完整的
+// posix_spawn 文件动作 API）；Windows 走 CreateProcessW + CreatePipe 重定向
+// + 监视线程读管拆行 + TerminateProcess。三条路径共用输出队列与拆行逻辑。
 module;
 
 #ifdef _WIN32
@@ -289,14 +289,32 @@ bool spawnDetached(const std::filesystem::path& binary,
     CloseHandle(pi.hThread);
     return true;
 #else
-    // Android currently ships only the GUI/native shell; the mihomo process
-    // backend will be enabled together with the Android kernel integration.
 #if defined(__ANDROID__)
-    (void)binary;
-    (void)workDir;
-    (void)configFile;
-    error = "Android mihomo 内核尚未接入";
-    return false;
+    const int logFd = ::open(logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (logFd < 0) {
+        error = "无法打开内核日志文件";
+        return false;
+    }
+    const std::string bin = binary.string();
+    const std::string dir = workDir.string();
+    const std::string cfg = configFile.string();
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        ::setsid();
+        ::dup2(logFd, STDOUT_FILENO);
+        ::dup2(logFd, STDERR_FILENO);
+        ::close(logFd);
+        ::execl(bin.c_str(), bin.c_str(), "-d", dir.c_str(), "-f", cfg.c_str(),
+                static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    ::close(logFd);
+    if (pid < 0) {
+        error = "Android mihomo 内核进程启动失败";
+        return false;
+    }
+    writePidFile(workDir, static_cast<long>(pid));
+    return true;
 #else
     // setsid 脱离会话：CLI 退出后内核驻留；stdout/stderr 追加进日志文件
     // （若仍接管道，CLI 退出后内核写日志会吃 SIGPIPE 被杀）。
@@ -420,10 +438,30 @@ struct CoreProcessImpl {
         return true;
 #else
 #if defined(__ANDROID__)
-        (void)binary;
-        (void)workDir;
-        (void)configFile;
-        return false;
+        int pipefd[2];
+        if (::pipe(pipefd) != 0) return false;
+
+        const std::string bin = binary.string();
+        const std::string dir = workDir.string();
+        const std::string cfg = configFile.string();
+        const pid_t pid = ::fork();
+        if (pid == 0) {
+            ::close(pipefd[0]);
+            ::dup2(pipefd[1], STDOUT_FILENO);
+            ::dup2(pipefd[1], STDERR_FILENO);
+            ::close(pipefd[1]);
+            ::execl(bin.c_str(), bin.c_str(), "-d", dir.c_str(), "-f", cfg.c_str(),
+                    static_cast<char*>(nullptr));
+            _exit(127);
+        }
+        ::close(pipefd[1]);
+        if (pid < 0) {
+            ::close(pipefd[0]);
+            return false;
+        }
+        childPid = pid;
+        readFd = pipefd[0];
+        return true;
 #else
         int pipefd[2];
         if (::pipe(pipefd) != 0) return false;
