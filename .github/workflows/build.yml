@@ -633,6 +633,7 @@ jobs:
 
       - name: Smoke test Android launch
         uses: reactivecircus/android-emulator-runner@v2
+        timeout-minutes: 6
         with:
           api-level: 35
           arch: x86_64
@@ -676,7 +677,7 @@ jobs:
             install_log = "android-install.log"
             install_code = run(
                 ["install", "-r", "dist-src/clash-flux-android-universal.apk"],
-                180,
+                90,
                 install_log,
             )
             with open(install_log, encoding="utf-8") as log:
