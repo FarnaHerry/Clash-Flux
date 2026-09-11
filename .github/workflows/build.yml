@@ -642,7 +642,8 @@ jobs:
             set -euo pipefail
             adb install -r dist-src/clash-flux-android-universal.apk
             adb logcat -c
-            adb shell am start -n dev.farna.clashflux/.MainActivity
+            timeout 20s adb shell am start -n dev.farna.clashflux/.MainActivity > android-start.log 2>&1 || true
+            cat android-start.log
             sleep 12
             adb logcat -d -v threadtime > android-launch.log
             cat android-launch.log
@@ -659,7 +660,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-launch-log
-          path: android-launch.log
+          path: |
+            android-launch.log
+            android-start.log
           if-no-files-found: ignore
           retention-days: 14
 
