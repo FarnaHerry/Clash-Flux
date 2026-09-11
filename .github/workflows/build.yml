@@ -643,11 +643,14 @@ jobs:
             adb install -r dist-src/clash-flux-android-universal.apk
             adb logcat -c
             # `am start` can wait forever when the app blocks during native
-            # startup.  Run it on the device and detach it so logcat is still
-            # collected in that case.
-            adb shell 'am start -n dev.farna.clashflux/.MainActivity > /data/local/tmp/clash-flux-am-start.log 2>&1 &'
-            sleep 2
-            adb shell cat /data/local/tmp/clash-flux-am-start.log > android-start.log || true
+            # startup.  Kill only the local adb client after a short grace
+            # period; the activity keeps running on the emulator so logcat is
+            # still collected in that case.
+            adb shell am start -n dev.farna.clashflux/.MainActivity > android-start.log 2>&1 &
+            am_pid=$!
+            sleep 3
+            kill "$am_pid" 2>/dev/null || true
+            wait "$am_pid" 2>/dev/null || true
             cat android-start.log
             sleep 12
             adb logcat -d -v threadtime > android-launch.log
