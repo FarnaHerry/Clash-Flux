@@ -643,59 +643,68 @@ jobs:
             # wrapper can leave an adb child attached to a blocked Activity
             # shell, which prevents the emulator action from reaching logcat.
             python3 - <<'PY'
+            import os
+            import signal
             import subprocess
             import sys
             import time
 
             failures = []
 
-            def run(args, timeout, output=None):
-                try:
-                    return subprocess.run(
-                        ["adb", *args],
-                        stdout=subprocess.PIPE if output is None else output,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        timeout=timeout,
-                        check=False,
-                    )
-                except subprocess.TimeoutExpired as exc:
-                    failures.append(f"timeout: adb {' '.join(args)}")
-                    text = exc.stdout or ""
-                    if isinstance(text, bytes):
-                        text = text.decode(errors="replace")
-                    return subprocess.CompletedProcess(args, 124, text)
-
-            install = run(["install", "-r", "dist-src/clash-flux-android-universal.apk"], 180)
-            print(install.stdout or "", end="")
-            if install.returncode != 0:
-                failures.append(f"APK installation failed ({install.returncode})")
-
-            run(["logcat", "-c"], 10)
-            run(["shell", "am", "force-stop", "dev.farna.clashflux"], 10)
-
-            with open("android-start.log", "w", encoding="utf-8") as start_log:
-                launcher = subprocess.Popen(
-                    ["adb", "shell", "am", "start", "-n", "dev.farna.clashflux/.MainActivity"],
-                    stdout=start_log,
+            def run(args, timeout, log_path=None):
+                if log_path is None:
+                    log_path = os.devnull
+                log = open(log_path, "w", encoding="utf-8")
+                process = subprocess.Popen(
+                    ["adb", *args],
+                    stdout=log,
                     stderr=subprocess.STDOUT,
-                    text=True,
+                    start_new_session=True,
+                    close_fds=True,
                 )
                 try:
-                    launcher.wait(timeout=8)
+                    returncode = process.wait(timeout=timeout)
                 except subprocess.TimeoutExpired:
-                    failures.append("Activity start did not return within 8s")
-                    launcher.kill()
-                    launcher.wait(timeout=5)
+                    failures.append(f"timeout: adb {' '.join(args)}")
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                    returncode = 124
+                finally:
+                    log.close()
+                return returncode
+
+            install_log = "android-install.log"
+            install_code = run(
+                ["install", "-r", "dist-src/clash-flux-android-universal.apk"],
+                180,
+                install_log,
+            )
+            with open(install_log, encoding="utf-8") as log:
+                print(log.read(), end="")
+            if install_code != 0:
+                failures.append(f"APK installation failed ({install_code})")
+
+            run(["logcat", "-c"], 10, "android-logcat-clear.log")
+            run(["shell", "am", "force-stop", "dev.farna.clashflux"], 10, "android-force-stop.log")
+
+            with open("android-start.log", "w", encoding="utf-8") as start_log:
+                start_log.flush()
+            launcher_code = run(
+                ["shell", "am", "start", "-n", "dev.farna.clashflux/.MainActivity"],
+                8,
+                "android-start.log",
+            )
+            if launcher_code == 124:
+                failures.append("Activity start did not return within 8s")
 
             time.sleep(12)
-            logcat = run(["logcat", "-d", "-v", "threadtime"], 30)
-            with open("android-launch.log", "w", encoding="utf-8") as launch_log:
-                launch_log.write(logcat.stdout or "")
-            print(logcat.stdout or "", end="")
+            run(["logcat", "-d", "-v", "threadtime"], 30, "android-launch.log")
+            with open("android-launch.log", encoding="utf-8") as launch_log:
+                logcat = launch_log.read()
+            print(logcat, end="")
 
             fatal = any(
-                marker in (logcat.stdout or "")
+                marker in logcat
                 for marker in (
                     "FATAL EXCEPTION",
                     "Fatal signal",
@@ -707,11 +716,13 @@ jobs:
             if fatal:
                 failures.append("Android launch produced a fatal log entry")
 
-            pid = run(["shell", "pidof", "dev.farna.clashflux"], 10)
-            if not (pid.stdout or "").strip():
+            run(["shell", "pidof", "dev.farna.clashflux"], 10, "android-pid.log")
+            with open("android-pid.log", encoding="utf-8") as pid_log:
+                pid = pid_log.read()
+            if not pid.strip():
                 failures.append("Android app process is not alive after launch")
 
-            run(["shell", "am", "force-stop", "dev.farna.clashflux"], 10)
+            run(["shell", "am", "force-stop", "dev.farna.clashflux"], 10, "android-force-stop-final.log")
             if failures:
                 for failure in failures:
                     print(f"ANDROID_SMOKE_FAILURE: {failure}", file=sys.stderr)
