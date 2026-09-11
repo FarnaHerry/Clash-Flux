@@ -66,6 +66,7 @@ public final class MainActivity extends HuxerUIActivity {
         File binary = new File(engineDirectory, "mihomo");
         File marker = new File(engineDirectory, "mihomo.version");
         if (binary.isFile() && binary.canExecute() && MIHOMO_VERSION.equals(readMarker(marker))) {
+            Log.i(TAG, "Bundled mihomo ready (cached): " + binary.getAbsolutePath());
             return;
         }
 
@@ -100,6 +101,7 @@ public final class MainActivity extends HuxerUIActivity {
         if (!binary.setExecutable(true, false)) {
             throw new IOException("Installed mihomo engine is not executable: " + binary);
         }
+        Log.i(TAG, "Bundled mihomo ready (extracted): " + binary.getAbsolutePath());
     }
 
     private static String readMarker(File marker) throws IOException {
