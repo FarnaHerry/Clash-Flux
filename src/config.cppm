@@ -36,13 +36,24 @@ namespace cfg {
 // Android 没有稳定可用的 HOME/XDG_DATA_HOME 约定。MainActivity 在 native
 // UI 启动前把 Context.getFilesDir() 传进来，所有数据库/配置都落在应用私有
 // 目录，卸载应用时可随系统一并清理。
+inline std::mutex& androidDataDirMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
 inline std::string& androidDataDirOverride() {
     static std::string value;
     return value;
 }
 
 export void setAndroidDataDir(std::string path) {
+    std::lock_guard lock(androidDataDirMutex());
     androidDataDirOverride() = std::move(path);
+}
+
+inline std::string androidDataDir() {
+    std::lock_guard lock(androidDataDirMutex());
+    return androidDataDirOverride();
 }
 #endif
 
@@ -73,8 +84,8 @@ export std::filesystem::path executableDir() {
 // 不可写，不能依赖 cwd。
 export std::filesystem::path dataDir() {
 #if defined(__ANDROID__)
-    if (!androidDataDirOverride().empty()) {
-        return std::filesystem::path(androidDataDirOverride()) / "clash-flux";
+    if (const std::string override = androidDataDir(); !override.empty()) {
+        return std::filesystem::path(override) / "clash-flux";
     }
 #endif
 #ifdef _WIN32

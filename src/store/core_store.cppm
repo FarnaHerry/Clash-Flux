@@ -50,7 +50,6 @@ public:
 
     // 惰性初始化（打开 Db、确保 secret 存在、准备 API 端点）。幂等。
     void init() {
-        std::lock_guard lock(mutex_);
         ensureOpen();
     }
 
@@ -381,14 +380,22 @@ private:
     }
 
     void ensureOpen() {
-        if (db_) return;
-        db_ = std::make_unique<db::Db>(cfg::databaseFile());
-        secret_ = db_->getSetting("core.secret", "");
-        if (secret_.empty()) {
-            secret_ = cfg::randomSecret();
-            db_->setSetting("core.secret", secret_);
-        }
-        api_ = std::make_unique<api::ClashApi>(cfg::controllerBaseUrl(), secret_);
+        // Android starts the bundled engine from the Java/native shell before
+        // HuxerUI necessarily builds its first frame. AppRoot may therefore
+        // initialize the same store concurrently; call_once makes lazy DB/API
+        // construction safe for both paths while preserving the existing
+        // single-process singleton contract on desktop.
+        std::call_once(initFlag_, [this] {
+            auto database = std::make_unique<db::Db>(cfg::databaseFile());
+            std::string secret = database->getSetting("core.secret", "");
+            if (secret.empty()) {
+                secret = cfg::randomSecret();
+                database->setSetting("core.secret", secret);
+            }
+            db_ = std::move(database);
+            secret_ = std::move(secret);
+            api_ = std::make_unique<api::ClashApi>(cfg::controllerBaseUrl(), secret_);
+        });
     }
 
     void fail(std::string error) {
@@ -404,6 +411,7 @@ private:
     std::string secret_;
 
     std::mutex mutex_;
+    std::once_flag initFlag_;
     CoreSnapshot snap_;
     std::string binaryPath_;
     bool managedByService_ = false;  // 内核由 root 服务托管

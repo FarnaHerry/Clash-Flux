@@ -32,7 +32,8 @@ public final class MainActivity extends HuxerUIActivity {
 
     private static MainActivity current;
 
-    private static native void nativeInit();
+    private static native void nativeInit(String filesDirectory);
+    private static native void nativeStartCore();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -49,11 +50,13 @@ public final class MainActivity extends HuxerUIActivity {
         Log.i(TAG, "Calling HuxerUIActivity.onCreate");
         super.onCreate(savedInstanceState);
         Log.i(TAG, "HuxerUIActivity.onCreate returned");
-        // HuxerUI must finish creating its Activity/View first. The native bridge
-        // now only retains the VM/class for URL callbacks; application directories
-        // are obtained from HuxerUI's ApplicationHandle inside the native runtime.
-        nativeInit();
+        // Pass the private files directory before starting the native worker so
+        // the bundled engine does not depend on HuxerUI's first composable frame
+        // to discover its data directory.
+        nativeInit(getFilesDir().getAbsolutePath());
         Log.i(TAG, "Native bridge initialized");
+        nativeStartCore();
+        Log.i(TAG, "Native mihomo startup requested");
     }
 
     private void ensureMihomoBinary() throws IOException {
