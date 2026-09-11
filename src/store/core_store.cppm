@@ -81,8 +81,13 @@ public:
 
     // ---- 设置（落 settings 表）----
     std::string setting(const std::string& key, const std::string& fallback = "") {
-        ensureOpen();
         try {
+            // Database creation can fail on a freshly installed Android app
+            // (storage/SQLite initialization happens during the first frame).
+            // Settings are optional, so an unavailable store must not abort
+            // the UI process; use the caller's default and let later actions
+            // retry initialization.
+            ensureOpen();
             return db_->getSetting(key, fallback);
         } catch (...) {
             return fallback;
@@ -90,8 +95,8 @@ public:
     }
 
     void setSetting(const std::string& key, const std::string& value) {
-        ensureOpen();
         try {
+            ensureOpen();
             db_->setSetting(key, value);
         } catch (...) {
         }
