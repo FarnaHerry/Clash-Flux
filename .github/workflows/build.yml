@@ -654,8 +654,8 @@ jobs:
             # API 35 images; keeping them attached to adb can prevent this
             # step from ever reaching logcat collection when native startup is
             # broken.
-            adb shell 'am force-stop dev.farna.clashflux >/dev/null 2>&1 || :'
-            adb shell 'nohup am start -n dev.farna.clashflux/.MainActivity >/sdcard/clash-flux-start.log 2>&1 </dev/null &' \
+            timeout 10s adb shell 'am force-stop dev.farna.clashflux >/dev/null 2>&1 || :' || :
+            timeout 15s adb shell 'nohup am start -n dev.farna.clashflux/.MainActivity >/sdcard/clash-flux-start.log 2>&1 </dev/null &' \
               > android-start.log 2>&1 || :
             cat android-start.log
             sleep 12
