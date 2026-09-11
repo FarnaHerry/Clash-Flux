@@ -635,7 +635,7 @@ jobs:
         # API 35 cold boot can take several minutes on a fresh hosted runner;
         # keep enough time for the script to reach the Activity launch while
         # still bounding a genuinely wedged emulator.
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: |
           set -u
           avd_name=clash-flux-smoke
@@ -647,7 +647,7 @@ jobs:
           sdkmanager --install emulator platform-tools "platforms;android-35" "$image" >/dev/null
           echo no | avdmanager create avd --force -n "$avd_name" --package "$image" >/dev/null
           "$emulator_bin" -avd "$avd_name" -no-window -no-audio -no-boot-anim \
-            -gpu swiftshader_indirect -accel off > emulator.log 2>&1 &
+            -gpu swiftshader_indirect -accel off -no-snapshot -wipe-data > emulator.log 2>&1 &
           emulator_pid=$!
           cleanup() {
             kill "$emulator_pid" 2>/dev/null || :
@@ -656,8 +656,9 @@ jobs:
           trap cleanup EXIT
 
           "$adb_bin" start-server >/dev/null 2>&1 || :
+          timeout 120s "$adb_bin" -s emulator-5554 wait-for-device || :
           booted=0
-          for _ in $(seq 1 300); do
+          for _ in $(seq 1 480); do
             state="$(timeout 5s "$adb_bin" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" || state=""
             if [ "$state" = "1" ]; then
               booted=1
@@ -667,6 +668,7 @@ jobs:
           done
           if [ "$booted" -ne 1 ]; then
             echo "Android emulator did not finish booting" >&2
+            cat emulator.log >&2 || :
             exit 1
           fi
 
@@ -706,6 +708,8 @@ jobs:
           path: |
             android-launch.log
             android-start.log
+            android-install.log
+            emulator.log
           if-no-files-found: ignore
           retention-days: 14
 
