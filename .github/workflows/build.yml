@@ -631,6 +631,39 @@ jobs:
           test -n "$apksigner"
           "$apksigner" verify --verbose "$apk"
 
+      - name: Smoke test Android launch
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: Pixel_6
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            adb install -r dist-src/clash-flux-android-universal.apk
+            adb logcat -c
+            adb shell am start -W -n dev.farna.clashflux/.MainActivity
+            sleep 12
+            adb logcat -d -v threadtime > android-launch.log
+            cat android-launch.log
+            if grep -Eq 'FATAL EXCEPTION|Fatal signal|Abort message|Process: dev\.farna\.clashflux|RuntimeException' android-launch.log; then
+              echo "Android launch produced a fatal log entry" >&2
+              exit 1
+            fi
+            pid="$(adb shell pidof dev.farna.clashflux | tr -d '\r')"
+            test -n "$pid"
+            adb shell am force-stop dev.farna.clashflux
+
+      - name: Upload Android launch log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-launch-log
+          path: android-launch.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:
