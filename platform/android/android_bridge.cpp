@@ -55,7 +55,8 @@ JNIEnv* current_environment(bool& attached) noexcept {
 extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_MainActivity_nativeInit(JNIEnv* environment,
                                                   jclass activity_class,
-                                                  jstring files_directory) {
+                                                  jstring files_directory,
+                                                  jstring native_library_directory) {
     if (environment == nullptr || activity_class == nullptr) {
         return;
     }
@@ -65,6 +66,13 @@ Java_dev_farna_clashflux_MainActivity_nativeInit(JNIEnv* environment,
         if (value != nullptr) {
             cfg::setAndroidDataDir(value);
             environment->ReleaseStringUTFChars(files_directory, value);
+        }
+    }
+    if (native_library_directory != nullptr) {
+        const char* value = environment->GetStringUTFChars(native_library_directory, nullptr);
+        if (value != nullptr) {
+            cfg::setAndroidNativeLibraryDir(value);
+            environment->ReleaseStringUTFChars(native_library_directory, value);
         }
     }
 

@@ -46,14 +46,29 @@ inline std::string& androidDataDirOverride() {
     return value;
 }
 
+inline std::string& androidNativeLibraryDirOverride() {
+    static std::string value;
+    return value;
+}
+
 export void setAndroidDataDir(std::string path) {
     std::lock_guard lock(androidDataDirMutex());
     androidDataDirOverride() = std::move(path);
 }
 
+export void setAndroidNativeLibraryDir(std::string path) {
+    std::lock_guard lock(androidDataDirMutex());
+    androidNativeLibraryDirOverride() = std::move(path);
+}
+
 inline std::string androidDataDir() {
     std::lock_guard lock(androidDataDirMutex());
     return androidDataDirOverride();
+}
+
+inline std::string androidNativeLibraryDir() {
+    std::lock_guard lock(androidDataDirMutex());
+    return androidNativeLibraryDirOverride();
 }
 #endif
 
@@ -167,8 +182,8 @@ inline std::filesystem::path findInPath(std::string_view name) {
     return {};
 }
 
-// mihomo 二进制解析：Android 应用私有 data/clash-flux/engines/ → exe 旁
-// engines/ → exe 旁 → <repo>/engines（开发形态）→ PATH。
+// mihomo 二进制解析：Android nativeLibraryDir → exe 旁 engines/ → exe 旁
+// → <repo>/engines（开发形态）→ PATH。
 // 找不到返回空路径。
 export std::filesystem::path mihomoBinary() {
 #ifdef _WIN32
@@ -178,10 +193,14 @@ export std::filesystem::path mihomoBinary() {
 #endif
     const std::filesystem::path exeDir = executableDir();
 #if defined(__ANDROID__)
-    // MainActivity 将 APK assets/engines/<abi>/mihomo 解包到应用私有目录；
-    // dataDir() 与 HuxerUI 的 Android filesDir 保持一致。
-    if (const auto p = dataDir() / "engines" / exeName; executableExists(p)) {
-        return p;
+    // MainActivity passes Context.getApplicationInfo().nativeLibraryDir. Android
+    // permits execution from this PackageManager-managed directory, while it
+    // denies execute_no_trans for binaries copied into app_data_file.
+    if (const std::string nativeDir = androidNativeLibraryDir(); !nativeDir.empty()) {
+        if (const auto p = std::filesystem::path(nativeDir) / "libmihomo.so";
+            executableExists(p)) {
+            return p;
+        }
     }
 #endif
     if (!exeDir.empty()) {
