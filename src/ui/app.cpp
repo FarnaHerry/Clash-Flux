@@ -45,6 +45,12 @@ enum PageIndex : std::size_t {
 
 namespace {
 
+#if defined(__ANDROID__)
+constexpr bool kAndroidPlatform = true;
+#else
+constexpr bool kAndroidPlatform = false;
+#endif
+
 struct FluxPalette {
     static constexpr huxerui::Color deep_navy() noexcept {
         return huxerui::Color::Rgb(11, 16, 32); // icon outline #0B1020
@@ -316,11 +322,6 @@ void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application)
 [[huxerui::composable]] huxerui::View AppRoot() {
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
     PreparePlatformDataDirectory(application);
-#if !defined(__ANDROID__)
-    const huxerui::WindowHandle window = huxerui::UseWindow();
-    const huxerui::SystemTrayHandle tray = application.SystemTray();
-    const bool trayAvailable = tray.IsAvailable();
-#endif
     auto tasks = huxerui::UseTaskScope();
 
     // 初始值在 UseState 之前算好（组合体内不写 State）：
@@ -346,34 +347,6 @@ void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application)
     auto clipboard = huxerui::UseService<huxerui::Clipboard>();
     auto toast = huxerui::UseToast();
 
-    // 内核自启 + 崩溃检测泵：启动是阻塞活，整段在任务线程；泵每 500ms 检查
-    // 进程存活（异常退出 → Failed，快照由各页面/状态胶囊自行轮询）。
-    huxerui::Lifecycle(
-        [tasks, traySysProxy, trayTun, trayEnabled] {
-            tasks.Launch([=]() -> huxerui::Task<void> {
-                co_await RunOnTaskThread([] {
-                    auto& core = store::coreStore();
-                    core.init();
-                    if (!cfg::mihomoBinary().empty()) {
-                        core.startCore(store::profilesStore().selectedYaml());
-                    }
-                });
-                co_await PollWhile(std::chrono::duration<double>{0.5}, [=] {
-                    auto& core = store::coreStore();
-                    core.checkAlive();
-                    traySysProxy = core.systemProxyEnabled();
-                    trayTun = core.snapshot().tunEnabled;
-                    trayEnabled =
-                        core.setting("tray.enabled", "true") == "true";
-                    return true;
-                });
-            });
-            return [] {
-                // 卸载（退出）时停内核：阻塞调用走任务线程池，不等结果。
-            };
-        },
-        0);
-
     // 订阅自动更新泵：每 30s 在任务线程扫描一次「允许自动更新 + 间隔已到」
     // 的订阅并逐个拉新（store::refreshDue 全程阻塞）。错误落在订阅行的
     // error 字段，由订阅卡展示，这里不弹提示。
@@ -397,9 +370,39 @@ void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application)
     const huxerui::ThemeSpec rootSpec = dark ? FluxDarkThemeSpec() : FluxLightThemeSpec();
     const IslandTheme rootIslands = ResolveIslandTheme(rootSpec);
 
-    // 托盘是桌面能力；Android 没有对应的 native tray host，也不进入这条
-    // Lifecycle，避免移动端根组合触碰桌面窗口服务。
-#if !defined(__ANDROID__)
+    if constexpr (!kAndroidPlatform) {
+        const huxerui::WindowHandle window = huxerui::UseWindow();
+        const huxerui::SystemTrayHandle tray = application.SystemTray();
+        const bool trayAvailable = tray.IsAvailable();
+
+        // 内核自启 + 崩溃检测泵：启动是阻塞活，整段在任务线程；泵每 500ms 检查
+        // 进程存活（异常退出 → Failed，快照由各页面/状态胶囊自行轮询）。
+        huxerui::Lifecycle(
+            [tasks, traySysProxy, trayTun, trayEnabled] {
+                tasks.Launch([=]() -> huxerui::Task<void> {
+                    co_await RunOnTaskThread([] {
+                        auto& core = store::coreStore();
+                        core.init();
+                        if (!cfg::mihomoBinary().empty()) {
+                            core.startCore(store::profilesStore().selectedYaml());
+                        }
+                    });
+                    co_await PollWhile(std::chrono::duration<double>{0.5}, [=] {
+                        auto& core = store::coreStore();
+                        core.checkAlive();
+                        traySysProxy = core.systemProxyEnabled();
+                        trayTun = core.snapshot().tunEnabled;
+                        trayEnabled =
+                            core.setting("tray.enabled", "true") == "true";
+                        return true;
+                    });
+                });
+                return [] {
+                    // 卸载（退出）时停内核：阻塞调用走任务线程池，不等结果。
+                };
+            },
+            0);
+
     // 托盘：图标 + 菜单（显示主窗口 / 系统代理 / TUN / 退出）；点击托盘图标
     // 激活主窗口。仅在可用时注册。系统代理/TUN 以勾选态展示，Lifecycle 依赖
     // 两个 State——任意一处（首页/设置/托盘自身）切换后菜单带最新勾选重建。
@@ -466,12 +469,10 @@ void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application)
             },
             traySysProxy, trayTun, trayEnabled);
     }
-#endif
 
     // ---- 关闭窗口行为（托盘功能核心：驻留托盘继续代理）----
     // tray.close_behavior：0 = 每次询问 / 1 = 直接退出 / 2 = 最小化到托盘。
     // 托盘不可用（平台不支持或设置页关闭）时一律直接退出。
-#if !defined(__ANDROID__)
     {
         const huxerui::Color closeHintColor = rootSpec.colors.on_surface_variant;
         // 隐藏到托盘：Hide 会卸载窗口子树，推迟出事件路径。
@@ -558,7 +559,7 @@ void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application)
             window.Hide();
         }
     }
-#endif
+    }
 
     std::vector<huxerui::View> pages;
     pages.push_back(HomePage().Key("home").With(huxerui::Grow(1.0F)));
@@ -578,18 +579,19 @@ void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application)
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
               huxerui::Grow(1.0F));
 
-#if defined(__ANDROID__)
-    // Android uses the Activity/system bars as its shell. WindowTitleBar and
-    // WindowDragRegion are desktop chrome and must not be composed on mobile.
-    huxerui::View content = huxerui::Column {
-        CoreStatusPill(),
-        std::move(mainRow),
-    }
-        .With(huxerui::Spacing(rootSpec.spacing.extra_small),
-              huxerui::Background(rootSpec.colors.background),
-              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-#else
-    huxerui::View content = huxerui::Column {
+    huxerui::View content;
+    if constexpr (kAndroidPlatform) {
+        // Android uses the Activity/system bars as its shell. WindowTitleBar and
+        // WindowDragRegion are desktop chrome and must not be composed on mobile.
+        content = huxerui::Column {
+            CoreStatusPill(),
+            std::move(mainRow),
+        }
+            .With(huxerui::Spacing(rootSpec.spacing.extra_small),
+                  huxerui::Background(rootSpec.colors.background),
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    } else {
+        content = huxerui::Column {
         // 自定义标题栏：应用名 + 拖拽区 + 内核状态胶囊（框架在其右侧渲染窗口
         // 按钮）。收窄 + 去背景：直接融入窗口海面底色；垂直零内边距，内容本身
         // 24pt 高，与 title_bar_height 对齐。
@@ -609,12 +611,12 @@ void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application)
         // 主行：图标侧栏（无岛屿包裹）+ 内容区；Grow 吃满标题栏之外剩余高度。
         // 内容区不再套外壳岛：区域划分由各页面自己的一级岛（PageScaffold）承担。
         std::move(mainRow),
+        }
+            .With(huxerui::Spacing(rootSpec.spacing.extra_small),
+                  // 窗口整体海面底色刷满根节点：岛间缝隙透出底色形成层次。
+                  huxerui::Background(rootSpec.colors.background),
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }
-        .With(huxerui::Spacing(rootSpec.spacing.extra_small),
-              // 窗口整体海面底色刷满根节点：岛间缝隙透出底色形成层次。
-              huxerui::Background(rootSpec.colors.background),
-              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-#endif
 
     return FluxThemed(dark, std::move(content));
 }
