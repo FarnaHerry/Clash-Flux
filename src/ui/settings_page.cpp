@@ -68,6 +68,7 @@ const std::string kAboutText =
 
 [[huxerui::composable]] huxerui::View SettingsPage(huxerui::State<int> themeMode) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const huxerui::ApplicationHandle application = huxerui::UseApplication();
     auto tasks = huxerui::UseTaskScope();
     // 与 apitab 的主题切换保持一致：整棵主题树用圆形揭示过渡；reduced
     // motion 由 HuxerUI 自动降级，但状态更新和配置落盘仍然必须执行。
@@ -80,7 +81,7 @@ const std::string kAboutText =
     auto animating = huxerui::UseState(std::make_shared<ThemeAnimationFlag>());
     auto toast = huxerui::UseToast();
     auto dialog = huxerui::UseDialog();
-    auto clipboard = huxerui::UseService<huxerui::Clipboard>();
+    auto clipboard = application.Clipboard();
     auto snap = huxerui::UseState<store::CoreSnapshot>({});
     auto portValue = huxerui::UseState(huxerui::TextEditingValue{""});
     auto busy = huxerui::UseState(false);

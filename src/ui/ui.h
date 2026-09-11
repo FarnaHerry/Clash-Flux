@@ -98,7 +98,7 @@ huxerui::View CoreStatusPill();
 
 // TUN 权限引导弹窗（core::tunGate()==Denied 时调用，UI 线程）：Linux 引导安装
 // 服务模式（应用保持非 root，root 只在服务侧），展示终端指令 + 一键复制
-// （成功/失败经 toast 提示；clipboard 为组合期 UseService<Clipboard>()）。
+// （成功/失败经 toast 提示；clipboard 从 UseApplication().Clipboard() 获取）。
 // 纯函数无钩子，可在任务协程续体里调。
 void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                         std::shared_ptr<huxerui::Clipboard> clipboard,
