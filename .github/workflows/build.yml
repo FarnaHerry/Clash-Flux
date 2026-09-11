@@ -655,6 +655,7 @@ jobs:
           export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
           mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
           failures=0
+          logcat_pid=""
 
           sdkmanager --install emulator platform-tools "platforms;android-35" "$image" >/dev/null
           avd_path="$ANDROID_AVD_HOME/${avd_name}.avd"
@@ -666,6 +667,10 @@ jobs:
             -gpu swiftshader_indirect -accel off -no-snapshot -wipe-data > emulator.log 2>&1 &
           emulator_pid=$!
           cleanup() {
+            if [ -n "$logcat_pid" ]; then
+              kill "$logcat_pid" 2>/dev/null || :
+              wait "$logcat_pid" 2>/dev/null || :
+            fi
             kill "$emulator_pid" 2>/dev/null || :
             wait "$emulator_pid" 2>/dev/null || :
           }
@@ -697,45 +702,50 @@ jobs:
           fi
           timeout 10s "$adb_bin" -s emulator-5554 logcat -c || :
           timeout 10s "$adb_bin" -s emulator-5554 shell am force-stop dev.farna.clashflux || :
+          # Keep one streaming logcat process alive. Repeated `adb logcat -d`
+          # calls are prohibitively slow on the no-KVM emulator and can consume
+          # the whole smoke-test budget before the Activity gets CPU time.
+          timeout 600s "$adb_bin" -s emulator-5554 logcat -v threadtime \
+            > android-launch.log 2>&1 &
+          logcat_pid=$!
           timeout 15s "$adb_bin" -s emulator-5554 shell am start -n \
             dev.farna.clashflux/.MainActivity > android-start.log 2>&1 || failures=1
-          # Hosted runners may emulate x86_64 without KVM. Wait for the app's
-          # own extraction marker instead of assuming Activity startup fits in
-          # a fixed 12-second window; this still has a hard upper bound.
+          # Hosted runners may emulate x86_64 without KVM. Poll the local log
+          # file instead of starting a new adb/logcat command on every attempt.
           engine_ready=0
-          for _ in $(seq 1 60); do
-            if timeout 10s "$adb_bin" -s emulator-5554 logcat -d \
-                -s ClashFlux:I '*:S' 2>/dev/null \
-                | grep -q 'Bundled mihomo ready'; then
+          for _ in $(seq 1 180); do
+            if grep -q 'Bundled mihomo ready' android-launch.log; then
               engine_ready=1
               break
             fi
-            sleep 2
+            sleep 1
           done
           if [ "$engine_ready" -ne 1 ]; then
             echo "Android did not report a ready bundled mihomo engine" >&2
             failures=1
           fi
           core_ready=0
-          for _ in $(seq 1 60); do
-            if timeout 10s "$adb_bin" -s emulator-5554 logcat -d \
-                -s ClashFlux:I '*:S' 2>/dev/null \
-                | grep -q 'Android core startup state=2 error='; then
-              core_ready=1
-              break
-            fi
-            if timeout 10s "$adb_bin" -s emulator-5554 logcat -d \
-                -s ClashFlux:I '*:S' 2>/dev/null \
-                | grep -q 'Android core initialization failed'; then
-              break
-            fi
-            sleep 2
-          done
+          if [ "$engine_ready" -eq 1 ]; then
+            for _ in $(seq 1 180); do
+              if grep -q 'Android core startup state=2 error=' android-launch.log; then
+                core_ready=1
+                break
+              fi
+              if grep -q 'Android core initialization failed' android-launch.log; then
+                break
+              fi
+              sleep 1
+            done
+          fi
           if [ "$core_ready" -ne 1 ]; then
             echo "Android mihomo core did not report a running state" >&2
             failures=1
           fi
-          timeout 30s "$adb_bin" -s emulator-5554 logcat -d -v threadtime > android-launch.log 2>&1 || failures=1
+          if [ -n "$logcat_pid" ]; then
+            kill "$logcat_pid" 2>/dev/null || :
+            wait "$logcat_pid" 2>/dev/null || :
+            logcat_pid=""
+          fi
           cat android-start.log
           cat android-launch.log
           pid="$(timeout 10s "$adb_bin" -s emulator-5554 shell pidof \
