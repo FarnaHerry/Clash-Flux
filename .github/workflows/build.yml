@@ -641,27 +641,33 @@ jobs:
           script: |
             # android-emulator-runner executes this block with /bin/sh, not
             # bash; keep the smoke script POSIX-shell compatible.
-            set -eu
+            set -u
             # API 35 cold-boots slowly on the hosted runner; installation can
             # still be completing after the emulator reports booted.
-            timeout 180s adb install -r dist-src/clash-flux-android-universal.apk
-            timeout 10s adb logcat -c
+            if ! timeout 180s adb install -r dist-src/clash-flux-android-universal.apk; then
+              echo "Android APK installation failed" >&2
+              exit 1
+            fi
+            timeout 10s adb logcat -c || :
             # `am start` waits for the Activity lifecycle to finish and can
             # therefore block when native startup is broken. `monkey` only
             # dispatches the launcher intent, which lets us collect logcat.
             timeout 10s adb shell monkey -p dev.farna.clashflux -c android.intent.category.LAUNCHER 1 \
-              > android-start.log 2>&1 || true
+              > android-start.log 2>&1 || :
             cat android-start.log
             sleep 12
-            timeout 20s adb logcat -d -v threadtime > android-launch.log 2>&1 || true
+            timeout 20s adb logcat -d -v threadtime > android-launch.log 2>&1 || :
             cat android-launch.log
             if grep -Eq 'FATAL EXCEPTION|Fatal signal|Abort message|Process: dev\.farna\.clashflux|RuntimeException' android-launch.log; then
               echo "Android launch produced a fatal log entry" >&2
               exit 1
             fi
-            pid="$(timeout 10s adb shell pidof dev.farna.clashflux | tr -d '\r')"
-            test -n "$pid"
-            timeout 10s adb shell am force-stop dev.farna.clashflux
+            pid="$(timeout 10s adb shell pidof dev.farna.clashflux | tr -d '\r')" || pid=""
+            if [ -z "$pid" ]; then
+              echo "Android app process is not alive after launch" >&2
+              exit 1
+            fi
+            timeout 10s adb shell am force-stop dev.farna.clashflux || :
 
       - name: Upload Android launch log
         if: always()
