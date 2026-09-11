@@ -642,7 +642,9 @@ jobs:
             # android-emulator-runner executes this block with /bin/sh, not
             # bash; keep the smoke script POSIX-shell compatible.
             set -eu
-            timeout 30s adb install -r dist-src/clash-flux-android-universal.apk
+            # API 35 cold-boots slowly on the hosted runner; installation can
+            # still be completing after the emulator reports booted.
+            timeout 180s adb install -r dist-src/clash-flux-android-universal.apk
             timeout 10s adb logcat -c
             # `am start` waits for the Activity lifecycle to finish and can
             # therefore block when native startup is broken. `monkey` only
