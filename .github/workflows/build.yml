@@ -640,7 +640,7 @@ jobs:
         # API 35 cold boot can take several minutes on a fresh hosted runner;
         # keep enough time for the script to reach the Activity launch while
         # still bounding a genuinely wedged emulator.
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
           set -u
           avd_name=clash-flux-smoke
@@ -695,9 +695,14 @@ jobs:
 
           : > android-start.log
           : > android-launch.log
-          if ! timeout 120s "$adb_bin" -s emulator-5554 install -r \
+          if ! timeout 300s "$adb_bin" -s emulator-5554 install -r \
               dist-src/clash-flux-android-universal.apk > android-install.log 2>&1; then
             echo "APK installation failed" >&2
+            failures=1
+          fi
+          if ! timeout 30s "$adb_bin" -s emulator-5554 shell pm path \
+              dev.farna.clashflux | grep -q 'package:'; then
+            echo "Installed Android package is not visible to PackageManager" >&2
             failures=1
           fi
           timeout 10s "$adb_bin" -s emulator-5554 logcat -c || :
@@ -708,7 +713,7 @@ jobs:
           timeout 600s "$adb_bin" -s emulator-5554 logcat -v threadtime \
             > android-launch.log 2>&1 &
           logcat_pid=$!
-          timeout 15s "$adb_bin" -s emulator-5554 shell am start -n \
+          timeout 120s "$adb_bin" -s emulator-5554 shell am start -n \
             dev.farna.clashflux/.MainActivity > android-start.log 2>&1 || failures=1
           # Hosted runners may emulate x86_64 without KVM. Poll the local log
           # file instead of starting a new adb/logcat command on every attempt.
