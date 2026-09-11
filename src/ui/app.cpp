@@ -344,7 +344,7 @@ void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application)
     auto closeDialogOpen = huxerui::UseState(false);
     // 托盘 TUN 门禁 Denied 时的引导弹窗（挂在主窗口上）。
     auto dialog = huxerui::UseDialog();
-    auto clipboard = huxerui::UseService<huxerui::Clipboard>();
+    auto clipboard = application.Clipboard();
     auto toast = huxerui::UseToast();
 
     // 订阅自动更新泵：每 30s 在任务线程扫描一次「允许自动更新 + 间隔已到」

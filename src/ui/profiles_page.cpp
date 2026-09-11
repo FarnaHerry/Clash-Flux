@@ -412,13 +412,14 @@ int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
 
 [[huxerui::composable]] huxerui::View ProfilesPage() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const huxerui::ApplicationHandle application = huxerui::UseApplication();
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto dialog = huxerui::UseDialog();
     auto menu = huxerui::UseMenu();
-    auto clipboard = huxerui::UseService<huxerui::Clipboard>();
+    auto clipboard = application.Clipboard();
     auto profiles = huxerui::UseStateList<db::Profile>();
 
     // ---- 新建订阅弹窗 ----
