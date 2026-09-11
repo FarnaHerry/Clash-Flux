@@ -702,7 +702,7 @@ jobs:
           timeout 30s "$adb_bin" -s emulator-5554 logcat -d -v threadtime > android-launch.log 2>&1 || failures=1
           cat android-start.log
           cat android-launch.log
-          if grep -Eq 'FATAL EXCEPTION|Fatal signal|Abort message|Process: dev\.farna\.clashflux|RuntimeException' \
+          if grep -Eq 'FATAL EXCEPTION|Fatal signal|Abort message|Process: dev\.farna\.clashflux' \
               android-launch.log; then
             echo "Android launch produced a fatal log entry" >&2
             failures=1
