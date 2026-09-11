@@ -3,6 +3,8 @@ import com.android.build.api.variant.BuildConfigField
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import javax.inject.Inject
+import java.security.MessageDigest
+import java.util.zip.GZIPInputStream
 
 plugins {
     alias(libs.plugins.android.application)
@@ -28,6 +30,86 @@ abstract class StageHuxerUIAssets extends DefaultTask {
         fileSystemOperations.sync {
             from resourcePackage
             into outputDirectory
+        }
+    }
+}
+
+abstract class StageMihomoAssets extends DefaultTask {
+    @Input
+    abstract ListProperty<String> getAbis()
+
+    @OutputDirectory
+    abstract DirectoryProperty getOutputDirectory()
+
+    private static final String MIHOMO_VERSION = "v1.19.30"
+    private static final String MIHOMO_BASE_URL =
+            "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}"
+    private static final Map<String, Map<String, String>> MIHOMO_ASSETS = [
+            "arm64-v8a": [
+                    name: "mihomo-android-arm64-v8-${MIHOMO_VERSION}.gz",
+                    sha256: "19afeb40fca190fc2e3906a4e3b87c74a0c2120626fd3cb3ae0cf4092cb780ad"
+            ],
+            "x86_64": [
+                    name: "mihomo-android-amd64-${MIHOMO_VERSION}.gz",
+                    sha256: "33aa898cb17b442531abbb9f7567e0e4a8e0542ee2f72f042b1a805f0b6ab1fe"
+            ],
+            "armeabi-v7a": [
+                    name: "mihomo-android-armv7-${MIHOMO_VERSION}.gz",
+                    sha256: "cfdd1fee92408da09666aa3845fbf73727359b72b6eb4bf69785a21bddb28ec1"
+            ],
+            "x86": [
+                    name: "mihomo-android-386-${MIHOMO_VERSION}.gz",
+                    sha256: "4fc9a2fa45f93d4bb1ae055157c67ba401890a80f23d60fa2d2b542b774fdfca"
+            ]
+    ]
+
+    @TaskAction
+    void stage() {
+        def output = outputDirectory.get().asFile
+        project.delete(output)
+        output.mkdirs()
+
+        abis.get().each { abi ->
+            def asset = MIHOMO_ASSETS[abi]
+            if (asset == null) {
+                throw new GradleException("No mihomo Android asset is configured for ABI ${abi}")
+            }
+
+            def archive = new File(temporaryDir, asset.name)
+            if (!archive.parentFile.exists()) archive.parentFile.mkdirs()
+            def connection = new URL("${MIHOMO_BASE_URL}/${asset.name}").openConnection()
+            connection.connectTimeout = 30_000
+            connection.readTimeout = 120_000
+            connection.inputStream.withCloseable { input ->
+                archive.withOutputStream { fileOutput ->
+                    fileOutput << input
+                }
+            }
+
+            def digest = MessageDigest.getInstance("SHA-256")
+            archive.withInputStream { input ->
+                def buffer = new byte[64 * 1024]
+                int count
+                while ((count = input.read(buffer)) >= 0) {
+                    if (count > 0) digest.update(buffer, 0, count)
+                }
+            }
+            def actualSha256 = digest.digest().collect { String.format("%02x", it & 0xff) }.join()
+            if (actualSha256 != asset.sha256) {
+                throw new GradleException(
+                        "mihomo ${asset.name} SHA-256 mismatch: ${actualSha256}")
+            }
+
+            def binary = new File(output, "engines/${abi}/mihomo")
+            binary.parentFile.mkdirs()
+            new GZIPInputStream(archive.newInputStream()).withCloseable { input ->
+                binary.withOutputStream { fileOutput ->
+                    fileOutput << input
+                }
+            }
+            if (!binary.setExecutable(true, false)) {
+                throw new GradleException("Unable to mark staged mihomo executable: ${binary}")
+            }
         }
     }
 }
@@ -185,6 +267,12 @@ androidComponents.onVariants(androidComponents.selector().all()) { variant ->
         })
     }
     variant.sources.assets.addGeneratedSourceDirectory(stageAssets) { it.outputDirectory }
+
+    def stageMihomo = tasks.register("stageMihomo${variant.name.capitalize()}Assets", StageMihomoAssets) {
+        abis.set(huxeruiAbis)
+        outputDirectory = layout.buildDirectory.dir("generated/mihomo/assets/${variant.name}")
+    }
+    variant.sources.assets.addGeneratedSourceDirectory(stageMihomo) { it.outputDirectory }
 }
 
 dependencies {

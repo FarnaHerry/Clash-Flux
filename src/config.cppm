@@ -156,7 +156,8 @@ inline std::filesystem::path findInPath(std::string_view name) {
     return {};
 }
 
-// mihomo 二进制解析：exe 旁 engines/ → exe 旁 → <repo>/engines（开发形态）→ PATH。
+// mihomo 二进制解析：Android 应用私有 data/clash-flux/engines/ → exe 旁
+// engines/ → exe 旁 → <repo>/engines（开发形态）→ PATH。
 // 找不到返回空路径。
 export std::filesystem::path mihomoBinary() {
 #ifdef _WIN32
@@ -166,8 +167,8 @@ export std::filesystem::path mihomoBinary() {
 #endif
     const std::filesystem::path exeDir = executableDir();
 #if defined(__ANDROID__)
-    // Android 可执行文件不能直接从 APK assets 运行；若后续接入 Android
-    // mihomo 内核，由 Java 层解包到 files/engines/ 后从这里发现。
+    // MainActivity 将 APK assets/engines/<abi>/mihomo 解包到应用私有目录；
+    // dataDir() 与 HuxerUI 的 Android filesDir 保持一致。
     if (const auto p = dataDir() / "engines" / exeName; executableExists(p)) {
         return p;
     }

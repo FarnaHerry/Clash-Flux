@@ -1,4 +1,4 @@
-# mihomo_bundle.cmake — 自带 mihomo 内核（多平台）。
+# mihomo_bundle.cmake — 自带 mihomo 内核（桌面平台）。
 #
 # clashflux_bundle_mihomo(<target>)：configure 期按宿主平台下载官方 release
 # （版本与 SHA256 钉死），POST_BUILD 把可执行文件拷到 <exe>/engines/mihomo
@@ -25,8 +25,10 @@ function(clashflux_bundle_mihomo target)
     endif ()
 
     if (CMAKE_SYSTEM_NAME STREQUAL "Android")
-        # 官方无 Android 资产：Android 包不内置内核（GUI 壳验证用）。
-        message(STATUS "clash-flux: Android 不内置 mihomo（官方无 Android 资产）")
+        # Android 的 ABI 资产由 platform/android/app/build.gradle 按 variant
+        # 下载并放入 APK assets；这里不重复下载，因为 CMake 会为每个 ABI
+        # 单独 configure 一次，而 APK 需要同时携带多个 ABI 的内核。
+        message(STATUS "clash-flux: Android mihomo 由 Gradle 按 ABI 打包")
         return()
     endif ()
 
