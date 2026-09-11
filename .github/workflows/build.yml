@@ -640,24 +640,24 @@ jobs:
           disable-animations: true
           script: |
             set -euo pipefail
-            adb install -r dist-src/clash-flux-android-universal.apk
-            adb logcat -c
+            timeout 30s adb install -r dist-src/clash-flux-android-universal.apk
+            timeout 10s adb logcat -c
             # `am start` waits for the Activity lifecycle to finish and can
             # therefore block when native startup is broken. `monkey` only
             # dispatches the launcher intent, which lets us collect logcat.
-            adb shell monkey -p dev.farna.clashflux -c android.intent.category.LAUNCHER 1 \
+            timeout 10s adb shell monkey -p dev.farna.clashflux -c android.intent.category.LAUNCHER 1 \
               > android-start.log 2>&1 || true
             cat android-start.log
             sleep 12
-            adb logcat -d -v threadtime > android-launch.log 2>&1
+            timeout 20s adb logcat -d -v threadtime > android-launch.log 2>&1 || true
             cat android-launch.log
             if grep -Eq 'FATAL EXCEPTION|Fatal signal|Abort message|Process: dev\.farna\.clashflux|RuntimeException' android-launch.log; then
               echo "Android launch produced a fatal log entry" >&2
               exit 1
             fi
-            pid="$(adb shell pidof dev.farna.clashflux | tr -d '\r')"
+            pid="$(timeout 10s adb shell pidof dev.farna.clashflux | tr -d '\r')"
             test -n "$pid"
-            adb shell am force-stop dev.farna.clashflux
+            timeout 10s adb shell am force-stop dev.farna.clashflux
 
       - name: Upload Android launch log
         if: always()
