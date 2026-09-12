@@ -57,15 +57,6 @@ constexpr float kCardHeight = 180.0F;
 // 小窗溢出。
 constexpr float kDialogFormHeight = 340.0F;
 
-// 订阅下载通道：Android 的 vendored curl 无 TLS（NDK 无 OpenSSL），https 订阅
-// 报 Unsupported protocol，改走 HuxerUI HttpClient（平台原生栈，自带 TLS 与
-// 系统证书库）；桌面 curl 支持订阅级代理/无效证书选项，保持不变。
-#ifdef __ANDROID__
-constexpr bool kHuxerHttpDownload = true;
-#else
-constexpr bool kHuxerHttpDownload = false;
-#endif
-
 enum class ProfileGridItemKind { GroupHeader, Profile, Footer };
 
 struct ProfileGridItem {
@@ -949,6 +940,27 @@ huxerui::Task<std::string> HuxerRefreshRemote(
 }
 
 } // namespace
+
+// 订阅自动更新泵的一次迭代（kHuxerHttpDownload 通道，app.cpp 的壳层泵调用）：
+// 任务线程列出到期订阅 → 逐个经 HuxerUI HttpClient 抓取 → store completeRemote
+// 收尾。错误落在订阅行 error 字段（订阅卡展示），这里不弹提示。
+huxerui::Task<int> ProfilesRefreshDueOnce(
+    std::shared_ptr<huxerui::HttpClient> http) {
+    const std::vector<db::Profile> due = co_await RunOnTaskThread(
+        [] { return store::profilesStore().dueForUpdate(); });
+    int updated = 0;
+    for (const auto& row : due) {
+        const store::FetchedProfile fetched = co_await FetchProfile(
+            http, row.url, row.timeoutSecs);
+        const bool ok = co_await RunOnTaskThread(
+            [id = row.id, fetched] {
+                return store::profilesStore().completeRemote(id, fetched,
+                                                             false);
+            });
+        if (ok) ++updated;
+    }
+    co_return updated;
+}
 
 [[huxerui::composable]] huxerui::View ProfilesPage() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
