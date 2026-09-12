@@ -723,7 +723,9 @@ jobs:
           # Hosted runners may emulate x86_64 without KVM. Poll the local log
           # file instead of starting a new adb/logcat command on every attempt.
           engine_ready=0
-          for _ in $(seq 1 180); do
+          # 冷启动 + 首次拉 geodata 时内核就绪可能明显超过 3 分钟（无 KVM 的
+          # 托管 runner 上更慢，v0.1.18 的发布门禁曾被 180s 轮询误伤），放宽到 5 分钟。
+          for _ in $(seq 1 300); do
             if grep -q 'Bundled mihomo ready' android-launch.log; then
               engine_ready=1
               break
