@@ -21,17 +21,6 @@ module;
 #include <cwchar>
 #include <limits.h>
 #include <stdint.h>
-#if defined(_MSC_VER)
-// VS 18.0's std module leaves these <charconv> constexpr members undefined
-// when floating-point formatting is instantiated from an imported module.
-// Provide the required out-of-class definitions in this TU; the declarations
-// remain part of the MSVC STL and this is harmless on toolsets that emit them.
-#include <charconv>
-namespace std {
-constexpr int _General_precision_tables_2<float>::_Max_P;
-constexpr int _General_precision_tables_2<double>::_Max_P;
-}
-#endif
 #elif defined(__linux__) && !defined(__ANDROID__)
 #include <sys/types.h>
 #include <sys/wait.h>

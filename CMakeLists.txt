@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.1.15 DESCRIPTION "Clash/mihomo proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.1.16 DESCRIPTION "Clash/mihomo proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # HUXERUI_LIBRARY_GRAPH_ONLY：CLI 扫描 huxerui 库依赖图时的特殊配置——
 # 不启用语言、不构建，huxerui_add_app 只写出库图 JSON 即返回（见 SDK
@@ -495,7 +495,8 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         add_test(NAME smoke COMMAND test_smoke)
 
         add_executable(test_vpn tests/test_vpn.cpp)
-        target_sources(test_vpn PRIVATE src/pptp.cpp src/openvpn.cpp)
+        target_sources(test_vpn PRIVATE src/pptp.cpp src/openvpn.cpp
+                       src/msvc_std_compat.cpp)
         target_sources(test_vpn PRIVATE FILE_SET clashflux_vpn_modules TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
             FILES src/config.cppm src/vpn.cppm src/pptp.cppm src/openvpn.cppm
@@ -510,7 +511,7 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         # 真实 PPTP 拨号需要外部服务器和已安装的 root 服务，不作为自动测试；
         # 该工具只供本地联调，连接后按回车负责断开并清理路由。
         add_executable(test_pptp_connect tests/pptp_connect.cpp src/pptp.cpp
-                       src/openvpn.cpp)
+                       src/openvpn.cpp src/msvc_std_compat.cpp)
         target_sources(test_pptp_connect PRIVATE FILE_SET clashflux_pptp_modules
             TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
