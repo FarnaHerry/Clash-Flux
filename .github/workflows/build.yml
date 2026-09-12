@@ -641,10 +641,20 @@ jobs:
           test -n "$apksigner"
           "$apksigner" verify --verbose "$apk"
 
+      # 冒烟用的模拟器组件（系统镜像 ~1.2GB + emulator 包）按版本缓存，避免
+      # 每个 run 都重新下载；key 里的 vN 用于组件升级时手动失效。
+      - name: Cache Android emulator components
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/system-images/android-35
+            /usr/local/lib/android/sdk/platforms/android-35
+            /usr/local/lib/android/sdk/emulator
+          key: android-smoke-android35-default-x86_64-v1
+
       - name: Smoke test Android launch
-        # API 35 cold boot can take several minutes on a fresh hosted runner;
-        # keep enough time for the script to reach the Activity launch while
-        # still bounding a genuinely wedged emulator.
+        # 有 KVM 时开机 ~20s；软件模拟兜底可能仍需数分钟，timeout 保持宽裕
+        # 以兜住真正卡死的模拟器。
         timeout-minutes: 30
         run: |
           set -u
@@ -668,8 +678,15 @@ jobs:
             -n "$avd_name" --package "$image" --path "$avd_path" >/dev/null
           test -f "$avd_path/config.ini"
           "$emulator_bin" -list-avds | grep -Fx "$avd_name"
+          # 托管 ubuntu runner 暴露 /dev/kvm（嵌套虚拟化），KVM 下开机 ~20s；
+          # 软件模拟兜底仅作无 KVM 环境的回退。
+          accel=off
+          if [ -e /dev/kvm ] && [ -w /dev/kvm ]; then
+            accel=on
+          fi
+          echo "emulator acceleration: $accel"
           "$emulator_bin" -avd "$avd_name" -no-window -no-audio -no-boot-anim \
-            -gpu swiftshader_indirect -accel off -no-snapshot -wipe-data > emulator.log 2>&1 &
+            -gpu swiftshader_indirect -accel "$accel" -no-snapshot -wipe-data > emulator.log 2>&1 &
           emulator_pid=$!
           cleanup() {
             if [ -n "$logcat_pid" ]; then
