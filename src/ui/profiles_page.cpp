@@ -57,6 +57,15 @@ constexpr float kCardHeight = 180.0F;
 // 小窗溢出。
 constexpr float kDialogFormHeight = 340.0F;
 
+// 订阅下载通道：Android 的 vendored curl 无 TLS（NDK 无 OpenSSL），https 订阅
+// 报 Unsupported protocol，改走 HuxerUI HttpClient（平台原生栈，自带 TLS 与
+// 系统证书库）；桌面 curl 支持订阅级代理/无效证书选项，保持不变。
+#ifdef __ANDROID__
+constexpr bool kHuxerHttpDownload = true;
+#else
+constexpr bool kHuxerHttpDownload = false;
+#endif
+
 enum class ProfileGridItemKind { GroupHeader, Profile, Footer };
 
 struct ProfileGridItem {
@@ -290,10 +299,22 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
                 return ToggleRow("使用系统代理更新", "经环境变量代理拉取订阅",
                                  false, sysProxy);
             }),
-        ToggleRow("使用内核代理更新", "经本应用内核混合端口拉取（内核需运行）",
-                  false, coreProxy),
-        ToggleRow("允许无效证书（危险）", "跳过 HTTPS 证书校验，仅用于可信来源",
-                  true, invalidCert),
+        // 订阅级代理/证书选项只有 curl 通道（桌面）支持；Android 走
+        // HuxerUI 平台栈，按订阅代理和跳过证书校验均不生效，直接不展示。
+        PlatformControl(
+            {PlatformCode::Linux, PlatformCode::Windows, PlatformCode::MacOS},
+            [coreProxy] {
+                return ToggleRow("使用内核代理更新",
+                                 "经本应用内核混合端口拉取（内核需运行）",
+                                 false, coreProxy);
+            }),
+        PlatformControl(
+            {PlatformCode::Linux, PlatformCode::Windows, PlatformCode::MacOS},
+            [invalidCert] {
+                return ToggleRow("允许无效证书（危险）",
+                                 "跳过 HTTPS 证书校验，仅用于可信来源",
+                                 true, invalidCert);
+            }),
     }
         .With(huxerui::Spacing(12.0F),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -517,12 +538,89 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
                 .With(huxerui::Grow(1.0F))));
 }
 
+// HuxerUI HttpClient 订阅抓取：GET + UA + 全程超时，响应转 store::FetchedProfile。
+// 必须在 UI 线程任务协程里 co_await（HTTP 自带平台异步通道，禁入阻塞线程池）。
+huxerui::Task<store::FetchedProfile> FetchProfile(
+    std::shared_ptr<huxerui::HttpClient> http, std::string url,
+    int timeoutSecs) {
+    store::FetchedProfile fetched;
+    if (!http) {
+        fetched.error = "HTTP 服务不可用";
+        co_return fetched;
+    }
+    huxerui::HttpRequest request;
+    request.url = std::move(url);
+    request.headers.push_back(
+        huxerui::HttpHeader{"User-Agent", "clash-flux/0.1"});
+    request.timeout = std::chrono::milliseconds{
+        (timeoutSecs > 0 ? timeoutSecs : 60) * 1000};
+    huxerui::HttpResult<huxerui::HttpResponse> result =
+        co_await http->SendAsync(std::move(request));
+    if (!result.Succeeded()) {
+        fetched.error = result.Error().message;
+        co_return fetched;
+    }
+    huxerui::HttpResponse response = std::move(result).Value();
+    fetched.status = response.status_code;
+    fetched.ok = response.status_code >= 200 && response.status_code < 300;
+    for (const auto& header : response.headers) {
+        fetched.headers.emplace(header.name, header.value);
+    }
+    fetched.body.assign(
+        reinterpret_cast<const char*>(response.body.data()),
+        static_cast<std::size_t>(response.body.size()));
+    co_return fetched;
+}
+
+// Android 订阅导入：store 建行 → 平台栈抓取 → store 落盘。返回新订阅 id
+//（失败 0，错误经 profilesStore().lastError() 读取）。
+huxerui::Task<std::int64_t> HuxerImportRemote(
+    std::shared_ptr<huxerui::HttpClient> http, const std::string& name,
+    const std::string& url, db::Profile options) {
+    const std::int64_t nid = co_await RunOnTaskThread(
+        [name, url, options] { return store::profilesStore().createRemote(
+                                   name, url, options); });
+    if (nid == 0) co_return 0;
+    const store::FetchedProfile fetched = co_await FetchProfile(
+        std::move(http), url, options.timeoutSecs);
+    const bool ok = co_await RunOnTaskThread(
+        [nid, fetched] { return store::profilesStore().completeRemote(
+                             nid, fetched, true); });
+    co_return ok ? nid : 0;
+}
+
+// Android 订阅更新：按订阅行的 URL/超时经平台栈抓取后收尾；非 remote 行
+// 回落阻塞路径（保留「本地导入的订阅不支持更新」等语义）。返回错误串。
+huxerui::Task<std::string> HuxerRefreshRemote(
+    std::shared_ptr<huxerui::HttpClient> http, std::int64_t id) {
+    const std::optional<db::Profile> row = co_await RunOnTaskThread(
+        [id]() -> std::optional<db::Profile> {
+            for (const auto& p : store::profilesStore().list()) {
+                if (p.id == id) return p;
+            }
+            return std::nullopt;
+        });
+    if (!row || row->url.empty()) {
+        const std::string err = co_await RunOnTaskThread([id]() -> std::string {
+            auto& ps = store::profilesStore();
+            return ps.refresh(id) ? "" : ps.lastError();
+        });
+        co_return err;
+    }
+    const store::FetchedProfile fetched = co_await FetchProfile(
+        std::move(http), row->url, row->timeoutSecs);
+    const bool ok = co_await RunOnTaskThread(
+        [id, fetched] { return store::profilesStore().completeRemote(
+                             id, fetched, false); });
+    co_return ok ? "" : store::profilesStore().lastError();
+}
+
 // 单张订阅卡：纯视图（零弹窗 State；菜单句柄/任务域由页面下发），弹窗经
 // openXxx(id) 回调到页面级懒加载打开。
 [[huxerui::composable]] huxerui::View ProfileCard(
     const db::Profile& profile, bool compact, huxerui::MenuHandle menu,
     huxerui::TaskScope tasks, huxerui::ToastHandle toast,
-    std::function<void()> reload,
+    std::shared_ptr<huxerui::HttpClient> http, std::function<void()> reload,
     const store::PptpState& pptpState,
     const store::OpenVpnState& openVpnState, bool connectionSelected,
     const std::function<void(std::int64_t, bool)>& toggleConnection,
@@ -538,6 +636,17 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
     auto action = [tasks, toast, reload](std::function<std::string()> job) {
         tasks.Launch([=]() -> huxerui::Task<void> {
             const std::string err = co_await RunOnTaskThread(std::move(job));
+            if (!err.empty()) toast.Show(err);
+            reload();
+        });
+    };
+
+    // 平台栈刷新路径（Android）：HttpClient 不许进阻塞线程池，走协程抓取。
+    auto httpRefresh = [tasks, toast, reload,
+                        http](std::int64_t pid) {
+        tasks.Launch([toast, reload, http, pid]() -> huxerui::Task<void> {
+            const std::string err =
+                co_await HuxerRefreshRemote(http, pid);
             if (!err.empty()) toast.Show(err);
             reload();
         });
@@ -561,7 +670,11 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
                   huxerui::Focusable(true),
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                      .label = "更新订阅"})
-            .OnClick([action, id] {
+            .OnClick([action, httpRefresh, id] {
+                if (kHuxerHttpDownload) {
+                    httpRefresh(id);
+                    return;
+                }
                 action([id]() -> std::string {
                     auto& ps = store::profilesStore();
                     if (!ps.refresh(id)) return ps.lastError();
@@ -748,7 +861,8 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
             })
         // 右键上下文菜单（跟随点击位置弹出）。
         .On<huxerui::ViewEvents::ContextMenuRequested>(
-            [menu, tasks, action, openEditInfo, openEditRules, openEditFile, openQr,
+            [menu, tasks, action, httpRefresh, openEditInfo, openEditRules,
+             openEditFile, openQr,
              id, homepage = profile.homepage, url = profile.url,
              selected = profile.selected, nativeVpn,
              openVpn = profile.type == "openvpn"](
@@ -764,7 +878,13 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
                     }));
                 }
                 if (!nativeVpn) {
-                    entries.push_back(huxerui::MenuItem("更新", [action, id] {
+                    entries.push_back(huxerui::MenuItem("更新",
+                                                        [action, httpRefresh,
+                                                         id] {
+                        if (kHuxerHttpDownload) {
+                            httpRefresh(id);
+                            return;
+                        }
                         action([id]() -> std::string {
                             auto& ps = store::profilesStore();
                             if (!ps.refresh(id)) return ps.lastError();
@@ -837,6 +957,8 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
+    // 平台栈下载通道（Android 订阅导入/刷新用）：Runtime 各平台都装了该服务。
+    auto http = huxerui::UseService<huxerui::HttpClient>();
     auto dialog = huxerui::UseDialog();
     auto menu = huxerui::UseMenu();
     auto clipboard = application.Clipboard();
@@ -1496,7 +1618,8 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
     // ---- 新建订阅弹窗 ----
     // 类型（远程/本地/PPTP/OpenVPN）+ 名称 + 类型表单；远程导入是网络下载（阻塞），走任务
     // 线程，成功才关弹窗。打开前清空上一轮的输入。
-    auto showCreateDialog = [dialog, tasks, toast, picker, newName, newUrl,
+    auto showCreateDialog = [dialog, tasks, toast, picker, http, newName,
+                             newUrl,
                              newTypeIdx, newDesc, newTimeout, newInterval,
                              newAuto, newSys, newCore, newCert, newPptpServer,
                              newPptpUsername, newPptpPassword, newPptpTimeout,
@@ -1524,7 +1647,7 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
         newOpenVpnRoutes = huxerui::TextEditingValue{""};
         pickedPath = "";
         dialog.Show(
-            [tasks, toast, picker, newName, newUrl, newTypeIdx, newDesc,
+            [tasks, toast, picker, http, newName, newUrl, newTypeIdx, newDesc,
              newTimeout, newInterval, newAuto, newSys, newCore, newCert,
              newPptpServer, newPptpUsername, newPptpPassword, newPptpTimeout,
              newPptpRoutes, newPptpMppe, newOpenVpnConfig, newOpenVpnRoutes,
@@ -1688,29 +1811,45 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
                                           }
                                           const std::string name =
                                               newName.Get().text;
-                                          const auto [rid, err] = co_await
-                                              RunOnTaskThread(
-                                                  [remote, local, pptp, openvpn, name, url, options,
-                                                   picked = pickedPath.Get()] {
-                                                      auto& ps =
-                                                          store::profilesStore();
-                                                      const std::int64_t nid =
-                                                          remote
-                                                              ? ps.importUrl(
-                                                                    name, url,
-                                                                    options)
-                                                              : local
-                                                                    ? ps.importFile(name, picked,
-                                                                                     options)
-                                                                    : ps.importNative(
-                                                                          name,
-                                                                          pptp ? "pptp" : "openvpn",
-                                                                          options.nativeConfig,
-                                                                          options.nativeRoutes,
-                                                                          options);
-                                                      return std::pair{
-                                                          nid, ps.lastError()};
-                                                  });
+                                          std::int64_t rid = 0;
+                                          std::string err;
+                                          if (remote && kHuxerHttpDownload) {
+                                              rid = co_await HuxerImportRemote(
+                                                  http, name, url, options);
+                                              err = rid == 0
+                                                        ? store::profilesStore()
+                                                              .lastError()
+                                                        : "";
+                                          } else {
+                                              const auto [nid, e] =
+                                                  co_await RunOnTaskThread(
+                                                      [remote, local, pptp,
+                                                       openvpn, name, url,
+                                                       options,
+                                                       picked = pickedPath
+                                                                    .Get()] {
+                                                          auto& ps =
+                                                              store::profilesStore();
+                                                          const std::int64_t nid =
+                                                              remote
+                                                                  ? ps.importUrl(
+                                                                        name, url,
+                                                                        options)
+                                                                  : local
+                                                                        ? ps.importFile(name, picked,
+                                                                                         options)
+                                                                        : ps.importNative(
+                                                                              name,
+                                                                              pptp ? "pptp" : "openvpn",
+                                                                              options.nativeConfig,
+                                                                              options.nativeRoutes,
+                                                                              options);
+                                                          return std::pair{
+                                                              nid, ps.lastError()};
+                                                      });
+                                              rid = nid;
+                                              err = e;
+                                          }
                                           importing = false;
                                           if (rid == 0) {
                                               toast.Show(
@@ -1779,7 +1918,8 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
 
     huxerui::View profileGrid = huxerui::VirtualGrid(
                                     profileItems.size(),
-                                    [profiles, profileItems, compact, menu, tasks, toast, reload,
+                                    [profiles, profileItems, compact, menu, tasks, toast, http,
+                                     reload,
                                      pptpStates, openVpnStates, isConnectionSelected,
                                      toggleConnection, openEditInfo, showEditRules,
                                      showEditFile, showQr, theme](
@@ -1836,7 +1976,8 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
                                         }
                                         return ProfileCard(
                                                    profile, compact, menu, tasks,
-                                                   toast, reload, pptpState, openVpnState,
+                                                   toast, http, reload,
+                                                   pptpState, openVpnState,
                                                    isConnectionSelected(profile.id),
                                                    toggleConnection, openEditInfo,
                                                    showEditRules, showEditFile, showQr)

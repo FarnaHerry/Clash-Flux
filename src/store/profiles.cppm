@@ -133,6 +133,16 @@ export std::string insertRule(const std::string& yaml, const std::string& rule,
     return out;
 }
 
+// 平台下载器（HuxerUI HttpClient，Android 订阅通道）取回的响应：网络与线程
+// 模型留在 UI 层，store 只做校验/落盘/行更新。ok 对齐 ApiResult::ok（2xx）。
+export struct FetchedProfile {
+    bool ok = false;
+    long status = 0;
+    std::string error;  // 传输失败信息（ok=false 时有效）
+    std::multimap<std::string, std::string> headers;
+    std::string body;
+};
+
 export class ProfilesStore {
 public:
     ProfilesStore() = default;
@@ -192,6 +202,93 @@ public:
             return 0;
         }
         return p.id;
+    }
+
+    // 新建 remote 订阅行（不下载）：Android 上下载由 UI 层经平台栈完成后调
+    // completeRemote 落盘；桌面仍走 importUrl 的 curl 直下。成功返回新 id。
+    std::int64_t createRemote(const std::string& name, const std::string& url,
+                              const db::Profile& options = {}) {
+        lastError_.clear();
+        db::Profile p = options;
+        p.id = 0;
+        p.type = "remote";
+        p.name = name.empty() ? url : name;
+        p.url = url;
+        try {
+            p.id = coreStore().db().saveProfile(p);
+        } catch (const std::exception& e) {
+            lastError_ = e.what();
+            return 0;
+        }
+        return p.id;
+    }
+
+    // UI 层下载路径收尾：2xx 内容写 profiles/<id>.yaml + 解析 userinfo 头 +
+    // 行更新；失败写行 error，import=true（新建流程行已先建）回滚删行。
+    bool completeRemote(std::int64_t id, const FetchedProfile& fetched,
+                        bool import) {
+        lastError_.clear();
+        auto profile = findById(id);
+        if (!profile) {
+            lastError_ = "订阅不存在";
+            return false;
+        }
+        db::Profile& p = *profile;
+        p.file = std::format("{}.yaml", p.id);
+        std::string failure;
+        if (!fetched.ok) {
+            failure = fetched.error.empty() ? "传输失败" : fetched.error;
+        } else if (fetched.status < 200 || fetched.status >= 300) {
+            failure = std::format("HTTP {}", fetched.status);
+        } else {
+            std::error_code ec;
+            std::filesystem::create_directories(cfg::profilesDir(), ec);
+            std::ofstream out(cfg::profilesDir() / p.file,
+                              std::ios::binary | std::ios::trunc);
+            if (!out) {
+                failure = "无法写入订阅文件";
+            } else {
+                out.write(fetched.body.data(),
+                          static_cast<std::streamsize>(fetched.body.size()));
+                out.flush();
+                if (!out) failure = "写入订阅文件失败";
+            }
+        }
+        if (failure.empty()) {
+            if (const auto it = fetched.headers.find("subscription-userinfo");
+                it != fetched.headers.end()) {
+                parseUserInfo(it->second, p.usedBytes, p.totalBytes);
+            } else {
+                p.usedBytes = 0;
+                p.totalBytes = 0;
+            }
+            if (const auto it = fetched.headers.find("profile-web-page-url");
+                it != fetched.headers.end()) {
+                p.homepage = it->second;
+            } else {
+                p.homepage.clear();
+            }
+            p.error.clear();
+            p.updatedAt = nowUnix();
+        } else {
+            p.error = failure;
+            lastError_ = std::format("下载失败：{}", failure);
+        }
+        try {
+            coreStore().db().saveProfile(p);
+        } catch (const std::exception& e) {
+            lastError_ = e.what();
+            failure = e.what();
+        }
+        if (!failure.empty() && import) {
+            try {
+                coreStore().db().deleteProfile(p.id);
+            } catch (...) {
+            }
+            std::error_code ec;
+            std::filesystem::remove(cfg::profilesDir() / p.file, ec);
+        }
+        return failure.empty();
     }
 
     // 重新拉取订阅（阻塞）。本地导入（无 url）直接报错。

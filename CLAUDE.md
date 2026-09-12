@@ -153,6 +153,12 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
   错不退出）。
 - 测速：单节点 `GET /proxies/{name}/delay`；整组 `GET /group/{name}/delay`
   （返回节点→延迟 map，超时项值 ≤0）。测速超时要比 curl 传输超时窄。
+- 订阅下载双通道：桌面走 vendored curl（`ClashApi::downloadToFile`，支持订阅级
+  代理/无效证书选项）；Android 的 curl 无 TLS（NDK 无 OpenSSL，https 会报
+  Unsupported protocol），UI 层经 HuxerUI `HttpClient`（平台原生栈，自带 TLS
+  与系统证书库）抓取，store 只建行/收尾（`profiles::createRemote` +
+  `completeRemote`，开关在 ui/profiles_page.cpp 的 `kHuxerHttpDownload`）。
+  Android 的自动更新泵（`refreshDue`）仍走 curl，https 订阅自动更新暂不可用。
 
 ## 里程碑状态（2026-09-05）
 
