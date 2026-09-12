@@ -6,6 +6,12 @@
 module;
 
 #ifdef _WIN32
+#ifndef _WIN32_WINNT
+// MIB_IPFORWARD_ROW2 and the *IpForwardEntry2 APIs are Vista-era IP Helper
+// APIs. Some Windows CI SDK/toolchain combinations default the target level
+// low enough that netioapi.h hides these declarations.
+#define _WIN32_WINNT 0x0600
+#endif
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
