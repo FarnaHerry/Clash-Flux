@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.1.16 DESCRIPTION "Clash/mihomo proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.1.17 DESCRIPTION "Clash/mihomo proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # HUXERUI_LIBRARY_GRAPH_ONLY：CLI 扫描 huxerui 库依赖图时的特殊配置——
 # 不启用语言、不构建，huxerui_add_app 只写出库图 JSON 即返回（见 SDK
@@ -331,6 +331,13 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         set_target_properties(clash-flux PROPERTIES CXX_SCAN_FOR_MODULES ON)
     endif ()
     target_compile_features(clash-flux PRIVATE cxx_std_23)
+    if (WIN32 AND MSVC)
+        # CMake's MSVC import-std support packages std.ixx.obj as
+        # @cmake_cxx_std.lib. The archive contains the required <charconv>
+        # definitions, but the linker may omit that member before resolving
+        # imported std's floating-point formatting references.
+        target_link_options(clash-flux PRIVATE "/WHOLEARCHIVE:@cmake_cxx_std.lib")
+    endif ()
     # 应用版本编译期常量（设置页“关于”展示）：唯一来源是顶层 project(VERSION)。
     target_compile_definitions(clash-flux PRIVATE CLASHFLUX_VERSION="${PROJECT_VERSION}")
     # windows.h 的 min/max 宏会毁掉所有经 ixwebsocket/curl 头链引入它的
@@ -495,13 +502,15 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         add_test(NAME smoke COMMAND test_smoke)
 
         add_executable(test_vpn tests/test_vpn.cpp)
-        target_sources(test_vpn PRIVATE src/pptp.cpp src/openvpn.cpp
-                       src/msvc_std_compat.cpp)
+        target_sources(test_vpn PRIVATE src/pptp.cpp src/openvpn.cpp)
         target_sources(test_vpn PRIVATE FILE_SET clashflux_vpn_modules TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
             FILES src/config.cppm src/vpn.cppm src/pptp.cppm src/openvpn.cppm
                    src/service.cppm)
         set_target_properties(test_vpn PROPERTIES CXX_MODULE_STD ON)
+        if (WIN32 AND MSVC)
+            target_link_options(test_vpn PRIVATE "/WHOLEARCHIVE:@cmake_cxx_std.lib")
+        endif ()
         target_compile_features(test_vpn PRIVATE cxx_std_23)
         if (WIN32)
             target_link_libraries(test_vpn PRIVATE rasapi32 iphlpapi ws2_32)
@@ -511,13 +520,16 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         # 真实 PPTP 拨号需要外部服务器和已安装的 root 服务，不作为自动测试；
         # 该工具只供本地联调，连接后按回车负责断开并清理路由。
         add_executable(test_pptp_connect tests/pptp_connect.cpp src/pptp.cpp
-                       src/openvpn.cpp src/msvc_std_compat.cpp)
+                       src/openvpn.cpp)
         target_sources(test_pptp_connect PRIVATE FILE_SET clashflux_pptp_modules
             TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
             FILES src/config.cppm src/vpn.cppm src/pptp.cppm src/openvpn.cppm
                    src/service.cppm)
         set_target_properties(test_pptp_connect PROPERTIES CXX_MODULE_STD ON)
+        if (WIN32 AND MSVC)
+            target_link_options(test_pptp_connect PRIVATE "/WHOLEARCHIVE:@cmake_cxx_std.lib")
+        endif ()
         target_compile_features(test_pptp_connect PRIVATE cxx_std_23)
         if (WIN32)
             target_link_libraries(test_pptp_connect PRIVATE rasapi32 iphlpapi ws2_32)
