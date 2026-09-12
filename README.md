@@ -9,10 +9,14 @@ REST API 与 WebSocket 推送流交互，UI 与内核接入层全部由 C++ 实�
 - 订阅管理：卡片式布局（右键菜单 / 双击切换 / 卡片内刷新）、URL 导入 / 更新 /
   启用 / 删除 / 规则编辑，本地落盘
 - 代理页：策略组卡片、节点切换、整组测速（延迟着色）
-- 规则 / 连接 / 日志：规则列表、连接快照（可逐条/全部关闭）、实时日志流
+- 多重规则 / 连接 / 日志：按订阅查看各自规则，使用全局路由规则把域名/IP/CIDR
+  分配给不同连接；连接快照（可逐条/全部关闭）、实时日志流
+- 原生 VPN 订阅：Linux 支持 PPTP 和 OpenVPN CLI（粘贴 `.ovpn` 文本），可多选
+  同时连接；内网 CIDR 由统一 root 服务安装到对应隧道
 - 内核控制：自动启停、出站模式（规则/全局/直连）、混合端口、局域网连接、日志级别
 - 系统代理（KDE / GNOME）与 TUN 模式开关
-- 服务模式（可选）：root systemd 服务托管内核，TUN 等特权操作无需每次授权；
+- 服务模式（可选）：统一 root systemd 服务托管 mihomo、Linux PPTP 和 OpenVPN，
+  TUN、拨号和原生路由无需每次授权；
   未安装时回落「接管外部实例 → 直接 spawn」
 - 完整 CLI：同一二进制带子命令（core / mode / tun / proxy / profile / service），
   无参数启动进入 GUI
@@ -38,6 +42,29 @@ Fedora：
 ```bash
 sudo dnf install cmake ninja-build gcc-c++ gtk4-devel libepoxy-devel libsoup3-devel
 ```
+
+Linux PPTP root 服务还需要系统拨号工具（服务只负责以 root 调用它们，不会把
+工具打进应用）：
+
+```bash
+# Fedora
+sudo dnf install ppp pptp iproute
+# Debian/Ubuntu
+sudo apt install ppp pptp iproute2
+```
+
+Linux OpenVPN 还需要系统 CLI：
+
+```bash
+# Fedora
+sudo dnf install openvpn iproute
+# Debian/Ubuntu
+sudo apt install openvpn iproute2
+```
+
+OpenVPN 配置保存为原生 `.ovpn` 文本。为了让 root 服务能够安全托管连接，建议使用
+`<ca>`、`<cert>`、`<key>`、`<tls-auth>` 和 `<auth-user-pass>` inline 块；配置中引用的
+相对路径文件不会随订阅卡片自动复制，若必须使用外部文件请填写绝对路径并确保 root 服务可读。
 
 ## 构建与运行
 
@@ -85,8 +112,13 @@ clash-flux service install|uninstall|status|run
 ```
 
 `service install` 需 root（GUI 设置页经 pkexec 提权调用）：安装 systemd 单元
-`clash-flux.service`，此后内核由 root 服务托管（unix socket
-`/run/clash-flux/service.sock`），TUN 开箱可用。
+`clash-flux.service`，此后 mihomo、Linux PPTP 和 OpenVPN 都由同一个 root daemon 托管。
+更新了二进制或新增了服务协议后，需要重新执行一次 `sudo clash-flux service install`
+让 systemd 使用新版本 daemon；仅替换 GUI 二进制不会更新已运行的 root 服务。
+GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议请求，
+不再直接执行 `pppd` 或 `ip route`；安装时记录提权前用户 UID，socket 只允许该
+用户和 root 访问。TUN/PPTP/OpenVPN 开箱可用，未安装服务时 Linux 原生 VPN 不会静默尝试
+用户态 root 操作，而是明确提示安装服务。
 
 ## 多平台 CI
 

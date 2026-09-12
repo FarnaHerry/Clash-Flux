@@ -45,6 +45,20 @@ export struct CoreSnapshot {
 export class CoreStore {
 public:
     CoreStore() = default;
+    ~CoreStore() noexcept {
+        // 正常关闭由 AppRoot 的异步收尾负责；这里保留一个进程退出时的
+        // RAII 兜底，避免窗口被外部关闭、组合树提前卸载后 root 服务仍
+        // 持有 mihomo。析构阶段不能把异常带出进程；正常 UI 关闭仍由
+        // AppRoot 的任务线程路径负责，避免阻塞交互线程。
+        try {
+            const bool serviceOwnsCore =
+                managedByService_ ||
+                (!process_.running() && service::available() &&
+                 service::coreRunning());
+            if (serviceOwnsCore || adopted_ || process_.running()) stopCore();
+        } catch (...) {
+        }
+    }
     CoreStore(const CoreStore&) = delete;
     CoreStore& operator=(const CoreStore&) = delete;
 
@@ -112,16 +126,31 @@ public:
     bool allowLan() { return setting("core.allow_lan", "false") == "true"; }
     std::string logLevel() { return setting("core.log_level", "info"); }
     // TUN 开关（持久化；运行中经 applyTun PATCH 立即生效，否则下次启动生效）。
-    bool tunEnabled() { return setting("core.tun_enabled", "false") == "true"; }
+    bool tunEnabled() {
+#if defined(__ANDROID__)
+        // Android 的 VPN/TUN 通道尚未接入，不能让旧设置继续注入 tun 块。
+        return false;
+#else
+        return setting("core.tun_enabled", "false") == "true";
+#endif
+    }
     // 系统代理开关（持久化；写入 KDE kioslaverc / GNOME gsettings）。
     bool systemProxyEnabled() {
+#if defined(__ANDROID__)
+        return false;
+#else
         return setting("proxy.system_enabled", "false") == "true";
+#endif
     }
     bool systemProxySupported() { return sysproxy::supported(); }
 
     // 切换 TUN（阻塞）。内核运行中 → PATCH /configs 立即生效，失败回滚设置；
     // 未运行 → 仅持久化（下次启动注入 tun 块）。成功更新快照。
     bool applyTun(bool enable) {
+#if defined(__ANDROID__)
+        (void)enable;
+        return false;
+#else
         ensureOpen();
         setSetting("core.tun_enabled", enable ? "true" : "false");
         {
@@ -135,6 +164,11 @@ public:
                                        {"device", "clash-flux"},
                                        {"auto-route", true},
                                        {"auto-detect-interface", true},
+                                       {"strict-route", true},
+                                       {"route-address", {"0.0.0.0/1",
+                                                            "128.0.0.0/1",
+                                                            "::/1",
+                                                            "8000::/1"}},
                                        {"dns-hijack", {"any:53"}}}}};
         if (const auto r = api_->patchConfigs(body.dump()); r.ok) return true;
         // PATCH 失败（常见：无 CAP_NET_ADMIN 权限）→ 回滚，避免每次启动都带
@@ -155,10 +189,15 @@ public:
                             enable ? "开启" : "关闭");
         }
         return false;
+#endif
     }
 
     // 切换系统代理（阻塞 shell 调用）。成功持久化设置。
     bool applySystemProxy(bool enable) {
+#if defined(__ANDROID__)
+        (void)enable;
+        return false;
+#else
         ensureOpen();
         std::string err;
         const bool ok =
@@ -172,6 +211,7 @@ public:
         }
         setSetting("proxy.system_enabled", enable ? "true" : "false");
         return true;
+#endif
     }
 
     // ---- 内核控制（阻塞：UI 必须 RunOnTaskThread）----
@@ -292,10 +332,23 @@ public:
             sysproxy::disable(err);
         }
         streams_.stop();
-        if (managedByService_) {
+        // 正常情况下 managedByService_ 会记录所有权；但 GUI 可能在 START
+        // 成功后还没来得及写入标记就被关闭，或者上一次实例异常退出留下了
+        // 服务侧 mihomo。只要本地没有直连 CoreProcess，且 root 服务报告
+        // 有自己的 core，就补发一次幂等 STOP，避免下一次启动误报“先 STOP”。
+        const bool serviceOwnsCore =
+            managedByService_ ||
+            (!process_.running() && service::available() &&
+             service::coreRunning());
+        if (serviceOwnsCore) {
             std::string err;
-            service::stopCore(err);
-            managedByService_ = false;
+            if (!service::stopCore(err)) {
+                std::lock_guard lock(mutex_);
+                snap_.lastError = "root 服务停止内核失败：" + err;
+            } else {
+                managedByService_ = false;
+            }
+            adopted_ = false;
         } else if (process_.running()) {
             process_.stop();
         } else {
@@ -328,9 +381,11 @@ public:
         snap_.mixedPort = j.value("mixed-port", snap_.mixedPort);
         snap_.allowLan = j.value("allow-lan", snap_.allowLan);
         snap_.logLevel = j.value("log-level", snap_.logLevel);
+#if !defined(__ANDROID__)
         if (j.contains("tun") && j["tun"].is_object()) {
             snap_.tunEnabled = j["tun"].value("enable", false);
         }
+#endif
     }
 
     // 切换出站模式（阻塞）。成功即更新快照。
@@ -351,7 +406,7 @@ public:
         if (snap_.state == core::CoreState::Running && !coreAlive()) {
             snap_.state = core::CoreState::Failed;
             snap_.lastError =
-                std::format("内核异常退出（exit {}）",
+                std::format("mihomo 内核异常退出（exit {}）",
                             managedByService_ || adopted_ ? -1
                                                           : process_.exitCode());
         }
@@ -362,7 +417,14 @@ private:
     // 直接 spawn 看进程句柄。接管形态没有 pidfile（对端不是本应用拉的）
     // 时只好信任——WS 断流会在 UI 层表现为无数据。
     bool coreAlive() {
-        if (managedByService_) return service::coreRunning();
+        if (managedByService_) {
+            // root 服务同步处理 PPTP/OpenVPN 建链时，STATUS 可能
+            // 超时。先查 mihomo 自己的控制器，避免 UI 存活泵在
+            // PPTP 拨号期间每次阻塞 2 秒；仅在控制器不通时才向
+            // root 服务确认进程状态。
+            if (api_->version().ok) return true;
+            return service::coreRunning();
+        }
         if (adopted_) {
             const long pid = readPidFile();
             if (pid <= 0) return true;  // 无 pidfile：信任

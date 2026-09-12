@@ -41,16 +41,28 @@ const std::string kAboutText =
                                                  const std::string& hint,
                                                  huxerui::View control) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const bool compact =
+        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    huxerui::View description = huxerui::Column {
+        huxerui::Text(label).Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kBody), theme.colors.on_surface}),
+        hint.empty()
+            ? huxerui::View{huxerui::Row{}}
+            : huxerui::View{huxerui::Text(hint).Style(huxerui::TextStyle{
+                  huxerui::Font::System(font_size::kCaption),
+                  theme.colors.on_surface_variant})},
+    }.With(huxerui::Spacing(2.0F));
+
+    if (compact) {
+        return huxerui::Column {
+            std::move(description),
+            std::move(control),
+        }.With(huxerui::Spacing(8.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    }
+
     return huxerui::Row {
-        huxerui::Column {
-            huxerui::Text(label).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody), theme.colors.on_surface}),
-            hint.empty()
-                ? huxerui::View{huxerui::Row{}}
-                : huxerui::View{huxerui::Text(hint).Style(huxerui::TextStyle{
-                      huxerui::Font::System(font_size::kCaption),
-                      theme.colors.on_surface_variant})},
-        }.With(huxerui::Spacing(2.0F)),
+        std::move(description),
         huxerui::Spacer(),
         std::move(control),
     }.With(huxerui::Spacing(12.0F),
@@ -68,6 +80,8 @@ const std::string kAboutText =
 
 [[huxerui::composable]] huxerui::View SettingsPage(huxerui::State<int> themeMode) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const bool compact =
+        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
     auto tasks = huxerui::UseTaskScope();
     // 与 apitab 的主题切换保持一致：整棵主题树用圆形揭示过渡；reduced
@@ -86,6 +100,13 @@ const std::string kAboutText =
     auto portValue = huxerui::UseState(huxerui::TextEditingValue{""});
     auto busy = huxerui::UseState(false);
     auto serviceInstalled = huxerui::UseState(service::installed());
+    auto trayCloseBehavior = huxerui::UseState<std::size_t>([] {
+        const std::string value =
+            store::coreStore().setting("tray.close_behavior", "0");
+        if (value == "1") return std::size_t{1};
+        if (value == "2") return std::size_t{2};
+        return std::size_t{0};
+    }());
 
     huxerui::Lifecycle(
         [tasks, snap, portValue, serviceInstalled] {
@@ -111,8 +132,8 @@ const std::string kAboutText =
 
     // 主题模式：0=跟随系统，1=深色，2=浅色。目标与当前有效深浅一致时
     // 只更新偏好，不播放动画。圆形揭示原点取同步事件的精确位置；键盘/无
-    // 指针激活时由 HuxerUI 回落到激活控件中心。上游不提供反向播放，因此
-    // 深→浅同样使用展开动画。
+    // 指针激活时由 HuxerUI 回落到激活控件中心。浅→深使用从内向外的揭示，
+    // 深→浅使用上游的反向 TransitionSpec，让深色层从外向内收缩。
     auto applyTheme = [themeMode, transition, tasks, animating](int mode) {
         if (animating.Get()->animating) return;
 
@@ -138,9 +159,12 @@ const std::string kAboutText =
 
         // 必须在同步事件回调中调用；异步代码若已有窗口坐标，按 HuxerUI
         // 约定应使用 RunAt，而不能在这里延迟调用 RunFromCurrentInteraction。
+        const huxerui::TransitionSpec reveal{
+            huxerui::CircularRevealTransition{}, huxerui::TweenSpec{0.36}};
+        const huxerui::TransitionSpec transitionSpec =
+            currentDark ? reveal.Reversed() : reveal;
         transition.RunFromCurrentInteraction(
-            huxerui::TransitionSpec{huxerui::CircularRevealTransition{}, huxerui::TweenSpec{0.36}},
-            std::move(mutation));
+            transitionSpec, std::move(mutation));
     };
 
     // 通用动作：阻塞活在任务线程，错误 toast，完成后快照由泵刷新。
@@ -310,160 +334,204 @@ const std::string kAboutText =
                                         }
                                     },
                                     "");
-                            })),
-                }.With(huxerui::Spacing(10.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
-
-                Card(huxerui::Column {
-                    SectionTitle("系统"),
-                    SettingRow(
-                        "内核服务",
-                        serviceInstalled.Get()
-                            ? "已安装（内核由 root 服务托管，TUN 开箱可用）"
-                            : "安装 root 服务后，TUN 无需每次授权（经 pkexec "
-                              "一次性提权）",
-                        huxerui::Button(serviceInstalled.Get() ? "卸载服务"
-                                                               : "安装服务")
-                            .OnClick([coreAction,
-                                      installed = serviceInstalled.Get()] {
-                                coreAction(
-                                    [installed] {
-                                        // pkexec 弹系统授权框，以 root 重入
-                                        // 本二进制的 service install/uninstall。
-                                        const std::string exe =
-                                            std::filesystem::read_symlink(
-                                                "/proc/self/exe")
-                                                .string();
-                                        const int rc = std::system(
-                                            std::format("pkexec \"{}\" service {}",
-                                                        exe,
-                                                        installed ? "uninstall"
-                                                                  : "install")
-                                                .c_str());
-                                        if (rc != 0) {
-                                            throw std::runtime_error(
-                                                installed
-                                                    ? "卸载被取消或失败"
-                                                    : "安装被取消或失败（需要"
-                                                      "授权）");
-                                        }
-                                    },
-                                    installed ? "服务已卸载" : "服务已安装");
-                            })),
-                    SettingRow(
-                        "系统代理",
-                        store::coreStore().systemProxySupported()
-                            ? std::format("写入桌面系统代理（127.0.0.1:{}）",
-                                          s.mixedPort)
-                            : "当前桌面环境不支持（仅 KDE / GNOME 系）",
-                        huxerui::Switch(store::coreStore().systemProxyEnabled())
-                            .OnChanged([coreAction](bool on) {
-                                coreAction(
-                                    [on] {
-                                        if (!store::coreStore()
-                                                 .applySystemProxy(on)) {
-                                            const std::string err =
-                                                store::coreStore()
-                                                    .snapshot()
-                                                    .lastError;
-                                            throw std::runtime_error(
-                                                err.empty() ? "系统代理设置失败"
-                                                            : err);
-                                        }
-                                    },
-                                    on ? "系统代理已开启" : "系统代理已关闭");
                             })
-                            .With(huxerui::Enabled(
-                                store::coreStore().systemProxySupported()))),
-                    SettingRow(
-                        "TUN 模式",
-                        running
-                            ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
-                            : "全局透明代理（下次启动生效）",
-                        huxerui::Switch(s.tunEnabled)
-                            .OnChanged([tasks, toast, dialog, clipboard,
-                                        textColor = theme.colors.on_surface,
-                                        hintColor =
-                                            theme.colors.on_surface_variant](bool on) {
-                                tasks.Launch([=]() -> huxerui::Task<void> {
-                                    if (on) {
-                                        // 门禁/弹窗会卸载点击路径：先让出一拍
-                                        // （约定 4/6）。
-                                        co_await huxerui::Delay(
-                                            std::chrono::duration<double>{0});
-                                        const core::TunGate gate =
-                                            co_await RunOnTaskThread([] {
-                                                return core::tunGate();
-                                            });
-                                        if (gate == core::TunGate::Elevated) {
-                                            toast.Show("已请求管理员权限重启，请在"
-                                                       "新窗口开启 TUN");
-                                            co_return;
-                                        }
-                                        if (gate == core::TunGate::Denied) {
-                                            ShowTunGuideDialog(dialog, clipboard,
-                                                               toast, textColor,
-                                                               hintColor);
-                                            co_return;
-                                        }
-                                    }
-                                    const bool ok = co_await RunOnTaskThread(
-                                        [on] {
-                                            return store::coreStore().applyTun(on);
-                                        });
-                                    if (!ok) {
-                                        const std::string err =
-                                            store::coreStore().snapshot().lastError;
-                                        toast.Show(err.empty() ? "TUN 切换失败"
-                                                               : err);
-                                    } else {
-                                        toast.Show(on ? "TUN 已开启"
-                                                      : "TUN 已关闭");
-                                    }
-                                });
-                            })),
+                            .With(huxerui::Frame{.width = 180.0F})),
                 }.With(huxerui::Spacing(10.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
 
-                Card(huxerui::Column {
-                    SectionTitle("托盘"),
-                    SettingRow(
-                        "启用托盘图标", "关闭后托盘不可用，关闭窗口即退出",
-                        huxerui::Switch(store::coreStore().setting(
-                                            "tray.enabled", "true") == "true")
-                            .OnChanged([](bool on) {
-                                store::coreStore().setSetting(
-                                    "tray.enabled", on ? "true" : "false");
-                            })),
-                    SettingRow(
-                        "关闭窗口时", "托盘可用时的驻留行为（代理继续后台运行 = "
-                                      "最小化到托盘）",
-                        huxerui::SegmentedButton(
-                            std::vector<huxerui::StringVariant>{
-                                "每次询问", "直接退出", "最小化到托盘"},
-                            [] {
-                                const std::string v = store::coreStore().setting(
-                                    "tray.close_behavior", "0");
-                                if (v == "1") return std::size_t{1};
-                                if (v == "2") return std::size_t{2};
-                                return std::size_t{0};
-                            }())
-                            .OnChanged([](std::size_t idx) {
-                                store::coreStore().setSetting(
-                                    "tray.close_behavior", std::to_string(idx));
-                            })),
-                    SettingRow(
-                        "启动时隐藏到托盘", "下次启动不显示主窗口，经托盘唤出",
-                        huxerui::Switch(store::coreStore().setting(
-                                            "tray.start_minimized",
-                                            "false") == "true")
-                            .OnChanged([](bool on) {
-                                store::coreStore().setSetting(
-                                    "tray.start_minimized",
-                                    on ? "true" : "false");
-                            })),
-                }.With(huxerui::Spacing(10.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
+                PlatformControl(
+                    {PlatformCode::CoreService, PlatformCode::SystemProxy,
+                     PlatformCode::CoreTun},
+                    [s, running, serviceInstalled, coreAction, tasks, toast,
+                     dialog, clipboard,
+                     textColor = theme.colors.on_surface,
+                     hintColor = theme.colors.on_surface_variant] {
+                        return Card(huxerui::Column {
+                            SectionTitle("系统"),
+                            PlatformControl(
+                                {PlatformCode::CoreService},
+                                [serviceInstalled, coreAction] {
+                                    return SettingRow(
+                                        "内核服务",
+                                        serviceInstalled.Get()
+                                            ? "已安装（mihomo、PPTP 与 TUN 由 root 服务托管）"
+                                            : "安装 root 服务后，TUN/PPTP 无需每次授权（经 pkexec "
+                                              "一次性提权）",
+                                        huxerui::Button(serviceInstalled.Get()
+                                                            ? "卸载服务"
+                                                            : "安装服务")
+                                            .OnClick([
+                                                coreAction,
+                                                installed = serviceInstalled.Get()] {
+                                                coreAction(
+                                                    [installed] {
+                                                        // pkexec 弹系统授权框，以 root 重入
+                                                        // 本二进制的 service install/uninstall。
+                                                        const std::string exe =
+                                                            std::filesystem::read_symlink(
+                                                                "/proc/self/exe")
+                                                                .string();
+                                                        const int rc = std::system(
+                                                            std::format(
+                                                                "pkexec \"{}\" service {}",
+                                                                exe,
+                                                                installed ? "uninstall"
+                                                                          : "install")
+                                                                .c_str());
+                                                        if (rc != 0) {
+                                                            throw std::runtime_error(
+                                                                installed
+                                                                    ? "卸载被取消或失败"
+                                                                    : "安装被取消或失败（需要"
+                                                                      "授权）");
+                                                        }
+                                                    },
+                                                    installed ? "服务已卸载"
+                                                              : "服务已安装");
+                                            }));
+                                }),
+                            PlatformControl(
+                                {PlatformCode::SystemProxy}, [s, coreAction] {
+                                    return SettingRow(
+                                        "系统代理",
+                                        std::format(
+                                            "写入桌面系统代理（127.0.0.1:{}）",
+                                            s.mixedPort),
+                                        huxerui::Switch(
+                                            store::coreStore().systemProxyEnabled())
+                                            .OnChanged([coreAction](bool on) {
+                                                coreAction(
+                                                    [on] {
+                                                        if (!store::coreStore()
+                                                                 .applySystemProxy(on)) {
+                                                            const std::string err =
+                                                                store::coreStore()
+                                                                    .snapshot()
+                                                                    .lastError;
+                                                            throw std::runtime_error(
+                                                                err.empty()
+                                                                    ? "系统代理设置失败"
+                                                                    : err);
+                                                        }
+                                                    },
+                                                    on ? "系统代理已开启"
+                                                       : "系统代理已关闭");
+                                            }));
+                                }),
+                            PlatformControl(
+                                {PlatformCode::CoreTun},
+                                [s, running, tasks, toast, dialog, clipboard,
+                                 textColor, hintColor] {
+                                    return SettingRow(
+                                        "TUN 模式",
+                                        running
+                                            ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
+                                            : "全局透明代理（下次启动生效）",
+                                        huxerui::Switch(s.tunEnabled)
+                                            .OnChanged(
+                                                [tasks, toast, dialog, clipboard,
+                                                 textColor, hintColor](bool on) {
+                                                    tasks.Launch(
+                                                        [=]() -> huxerui::Task<void> {
+                                                            if (on) {
+                                                                // 门禁/弹窗会卸载点击路径：先让出一拍
+                                                                // （约定 4/6）。
+                                                                co_await huxerui::Delay(
+                                                                    std::chrono::duration<
+                                                                        double>{0});
+                                                                const core::TunGate gate =
+                                                                    co_await RunOnTaskThread(
+                                                                        [] {
+                                                                            return core::tunGate();
+                                                                        });
+                                                                if (gate ==
+                                                                    core::TunGate::Elevated) {
+                                                                    toast.Show(
+                                                                        "已请求管理员权限重启，请在新窗口开启 TUN");
+                                                                    co_return;
+                                                                }
+                                                                if (gate ==
+                                                                    core::TunGate::Denied) {
+                                                                    ShowTunGuideDialog(
+                                                                        dialog, clipboard,
+                                                                        toast, textColor,
+                                                                        hintColor);
+                                                                    co_return;
+                                                                }
+                                                            }
+                                                            const bool ok =
+                                                                co_await RunOnTaskThread(
+                                                                    [on] {
+                                                                        return store::coreStore()
+                                                                            .applyTun(on);
+                                                                    });
+                                                            if (!ok) {
+                                                                const std::string err =
+                                                                    store::coreStore()
+                                                                        .snapshot()
+                                                                        .lastError;
+                                                                toast.Show(
+                                                                    err.empty()
+                                                                        ? "TUN 切换失败"
+                                                                        : err);
+                                                            } else {
+                                                                toast.Show(on ? "TUN 已开启"
+                                                                              : "TUN 已关闭");
+                                                            }
+                                                        });
+                                                }));
+                                }),
+                        }.With(huxerui::Spacing(10.0F),
+                               huxerui::CrossAlign(
+                                   huxerui::CrossAxisAlignment::Stretch)));
+                    }),
+
+                PlatformControl({PlatformCode::SystemTray},
+                                [trayCloseBehavior] {
+                                    return Card(huxerui::Column {
+                                        SectionTitle("托盘"),
+                                        SettingRow(
+                                            "启用托盘图标",
+                                            "关闭后托盘不可用，关闭窗口即退出",
+                                            huxerui::Switch(store::coreStore().setting(
+                                                                "tray.enabled",
+                                                                "true") == "true")
+                                                .OnChanged([](bool on) {
+                                                    store::coreStore().setSetting(
+                                                        "tray.enabled",
+                                                        on ? "true" : "false");
+                                                })),
+                                        SettingRow(
+                                            "关闭窗口时",
+                                            "托盘可用时的驻留行为（代理继续后台运行 = "
+                                            "最小化到托盘）",
+                                            huxerui::SegmentedButton(
+                                                std::vector<huxerui::StringVariant>{
+                                                    "每次询问", "直接退出", "最小化到托盘"},
+                                                trayCloseBehavior.Get())
+                                                .OnChanged(
+                                                    [trayCloseBehavior](std::size_t idx) {
+                                                        trayCloseBehavior = idx;
+                                                        store::coreStore().setSetting(
+                                                            "tray.close_behavior",
+                                                            std::to_string(idx));
+                                                    })),
+                                        SettingRow(
+                                            "启动时隐藏到托盘",
+                                            "下次启动不显示主窗口，经托盘唤出",
+                                            huxerui::Switch(store::coreStore().setting(
+                                                                "tray.start_minimized",
+                                                                "false") == "true")
+                                                .OnChanged([](bool on) {
+                                                    store::coreStore().setSetting(
+                                                        "tray.start_minimized",
+                                                        on ? "true" : "false");
+                                                })),
+                                    }
+                                        .With(huxerui::Spacing(10.0F),
+                                              huxerui::CrossAlign(
+                                                  huxerui::CrossAxisAlignment::Stretch)));
+                                }),
 
                 Card(huxerui::Column {
                     SectionTitle("外观"),
@@ -486,6 +554,7 @@ const std::string kAboutText =
                             theme.colors.on_surface_variant}),
                 }.With(huxerui::Spacing(6.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
+                compact ? CompactFloatingNavigationFooter() : huxerui::View{},
             }.With(huxerui::Spacing(12.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
             .With(huxerui::Grow(1.0F)));

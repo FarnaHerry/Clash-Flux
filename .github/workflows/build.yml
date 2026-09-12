@@ -120,6 +120,11 @@ jobs:
           set -euo pipefail
           git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
           git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
+          # HuxerUI 0.3.0 can dispatch one already-ready frame source after
+          # GTK has destroyed the drawing widget during window close. Keep
+          # this app-side patch until the fix lands upstream.
+          git -C third_party/huxerui apply \
+            "$GITHUB_WORKSPACE/cmake/patches/huxerui-linux-close-frame.patch"
 
       - name: Install dependencies
         run: |

@@ -64,7 +64,9 @@ export void openInBrowser(const std::string& url);
 //   secret       external-controller 鉴权
 //   mixedPort    混合入站端口（7899）
 //   mode         rule / global / direct
-//   tunEnabled   TUN 透明代理（注入 tun: 块；需 root/CAP_NET_ADMIN）
+//   tunEnabled   全流量 TUN 透明代理（需 root/CAP_NET_ADMIN）。Linux/Windows
+//                后续由 VPN 编排层把原生 VPN 内网加入排除路由，主 Mihomo TUN
+//                只负责默认出口。
 // 返回可直接喂给 mihomo -f 的完整 YAML 文本。
 export std::string generateConfig(const std::string& profileYaml,
                                   const std::string& controller,

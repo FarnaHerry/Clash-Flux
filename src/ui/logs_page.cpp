@@ -107,10 +107,18 @@ int levelRank(const std::string& level) {
     }.With(huxerui::Padding(32.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 
+    const bool compact =
+        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     if (!visible.empty()) {
+        const std::size_t visibleCount = visible.size();
         body = huxerui::VirtualList(
-                   visible.size(),
-                   [entries, visible, theme](std::size_t index) {
+                   visibleCount + (compact ? 1U : 0U),
+                   [entries, visible, theme, compact, visibleCount](
+                       std::size_t index) -> huxerui::View {
+                       if (compact && index == visibleCount) {
+                           return CompactFloatingNavigationFooter()
+                               .Key("compact-floating-footer");
+                       }
                        const std::size_t sourceIndex = visible[index];
                        const std::string& text = entries[sourceIndex].text;
                        return huxerui::Text(text)
@@ -126,18 +134,34 @@ int levelRank(const std::string& level) {
                    .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     }
 
-    return PageScaffold(
-        "日志",
-        huxerui::Row {
-            huxerui::Select(
-                kLevelNames, filter.Get(),
-                [](const std::string& name) { return huxerui::Text(name); })
-                .OnChanged([filter](std::size_t idx) { filter = idx; }),
-            huxerui::Button("清空").OnClick([clearTick] {
-                clearTick = clearTick.Get() + 1;
-            }),
-        }.With(huxerui::Spacing(8.0F)),
-        std::move(body));
+    huxerui::View filterControl = huxerui::Select(
+                                    kLevelNames, filter.Get(),
+                                    [](const std::string& name) {
+                                        return huxerui::Text(name);
+                                    })
+                                    .OnChanged([filter](std::size_t idx) {
+                                        filter = idx;
+                                    })
+                                    .With(huxerui::Frame{.width = 180.0F});
+    huxerui::View clearControl = huxerui::Button("清空").OnClick([clearTick] {
+        clearTick = clearTick.Get() + 1;
+    });
+    huxerui::View actions;
+    if (compact) {
+        actions = huxerui::Column {
+            std::move(filterControl),
+            std::move(clearControl),
+        }.With(huxerui::Spacing(8.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
+    } else {
+        actions = huxerui::Row {
+            std::move(filterControl),
+            std::move(clearControl),
+        }.With(huxerui::Spacing(8.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    }
+
+    return PageScaffold("日志", std::move(actions), std::move(body));
 }
 
 } // namespace clashflux::ui

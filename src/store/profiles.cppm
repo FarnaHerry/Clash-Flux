@@ -151,7 +151,7 @@ public:
     // 当前启用的订阅；无 = nullptr。
     std::optional<db::Profile> selected() {
         for (const auto& p : list()) {
-            if (p.selected) return p;
+            if (p.selected && p.type != "pptp" && p.type != "openvpn") return p;
         }
         return std::nullopt;
     }
@@ -235,6 +235,30 @@ public:
         return true;
     }
 
+    // 新增原生连接订阅（PPTP/OpenVPN/WireGuard 等）：不下载 YAML，连接参数
+    // 和路由由 nativeConfig/nativeRoutes 保存，具体引擎由 VPN store 解释。
+    std::int64_t importNative(const std::string& name, const std::string& type,
+                              const std::string& nativeConfig,
+                              const std::string& nativeRoutes,
+                              const db::Profile& options = {}) {
+        lastError_.clear();
+        db::Profile p = options;
+        p.id = 0;
+        p.type = type;
+        p.url.clear();
+        p.file.clear();
+        p.name = name.empty() ? type : name;
+        p.nativeConfig = nativeConfig;
+        p.nativeRoutes = nativeRoutes;
+        try {
+            p.id = coreStore().db().saveProfile(p);
+        } catch (const std::exception& e) {
+            lastError_ = e.what();
+            return 0;
+        }
+        return p.id;
+    }
+
     // 保存订阅信息与选项（订阅弹窗唯一保存入口）：fields 携带 name/url 与
     // type/描述/超时/间隔/自动更新/代理/证书开关；行身份字段（file/selected/
     // updatedAt/error）保留库中现值。仅落库——URL 等在下次「更新」拉取时生效。
@@ -257,6 +281,11 @@ public:
         p->useSystemProxy = fields.useSystemProxy;
         p->useCoreProxy = fields.useCoreProxy;
         p->allowInvalidCert = fields.allowInvalidCert;
+        if (!fields.nativeConfig.empty() || fields.type == "pptp" ||
+            fields.type == "openvpn") {
+            p->nativeConfig = fields.nativeConfig;
+            p->nativeRoutes = fields.nativeRoutes;
+        }
         try {
             coreStore().db().saveProfile(*p);
         } catch (const std::exception& e) {
@@ -334,7 +363,17 @@ public:
     }
 
     // 启用订阅：标记 selected，若内核在跑则重启内核使配置生效。阻塞。
-    bool activate(std::int64_t id) {        lastError_.clear();
+    bool activate(std::int64_t id) {
+        lastError_.clear();
+        const auto profile = findById(id);
+        if (!profile) {
+            lastError_ = "订阅不存在";
+            return false;
+        }
+        if (profile->type == "pptp" || profile->type == "openvpn") {
+            lastError_ = "原生 VPN 连接不能作为 mihomo 订阅启用";
+            return false;
+        }
         try {
             coreStore().db().setSelectedProfile(id);
         } catch (const std::exception& e) {

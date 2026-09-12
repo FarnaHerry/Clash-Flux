@@ -1,0 +1,25 @@
+diff --git a/platform/linux/linux_adapter.cpp b/platform/linux/linux_adapter.cpp
+index aaee1e1..7384d59 100644
+--- a/platform/linux/linux_adapter.cpp
++++ b/platform/linux/linux_adapter.cpp
+@@ -738,10 +738,19 @@ private:
+
+   void CommitFrame() {
+     frame_source_ = 0;
+-    if (runtime_ == nullptr || !frame_state_.BeginCommit()) {
++    // A close request can destroy the GTK window while another GLib frame
++    // source is already ready in the same main-context iteration.  The
++    // destroy signal clears drawing_area_, but that ready callback still
++    // reaches CommitFrame before Run() gets a chance to enter Cleanup().
++    // Never build or enqueue a frame after the platform surface is gone.
++    if (runtime_ == nullptr || drawing_area_ == nullptr || !running_ ||
++        !GTK_IS_WIDGET(drawing_area_) || !frame_state_.BeginCommit()) {
+       return;
+     }
+     const FrameCommit& commit = runtime_->BuildFrame();
++    if (drawing_area_ == nullptr || !running_ || !GTK_IS_WIDGET(drawing_area_)) {
++      return;
++    }
+     committed_frame_ = &commit.render_frame;
+     frame_state_.MarkPaintPending();
+     gtk_widget_queue_draw(GTK_WIDGET(drawing_area_));

@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "app_resources.h"
 #include "ui.h"
 #include "task_bridge.h"
 
@@ -15,6 +16,45 @@ import clashflux.config;
 import clashflux.store.core;
 
 namespace clashflux::ui {
+
+// 所有密码输入统一走 HuxerUI 的受控 TextField 显隐能力：Secure 负责安全
+// 输入策略，TrailingIcon 负责内置眼睛操作。调用方只提供受控的完整
+// TextEditingValue，秘密值不会被组件复制到日志、卡片或错误文本中。
+[[huxerui::composable]] huxerui::View PasswordField(
+    huxerui::State<huxerui::TextEditingValue> password) {
+    auto visible = huxerui::UseState(false);
+    const bool isVisible = visible.Get();
+    return huxerui::TextField(password.Get())
+        .Label("密码")
+        .Secure(!isVisible)
+        .TrailingIcon(isVisible ? app::images::visibility_off
+                                : app::images::visibility,
+                      isVisible ? "隐藏密码" : "显示密码")
+        .OnTrailingIconClick([visible] { visible = !visible.Get(); })
+        .Variant(huxerui::TextFieldVariant::Outlined)
+        .OnChanged([password](const huxerui::TextEditingValue& value) {
+            password = value;
+        });
+}
+
+[[huxerui::composable]] huxerui::View PlatformControl(
+    std::initializer_list<PlatformCode> allowed,
+    huxerui::ViewFactory content_factory) {
+    const PlatformInfo info = ResolvePlatformInfo(huxerui::UseViewportClass());
+    // 运行时探测只在编译目标具备这项通道时执行；Android 不会触碰桌面
+    // sysproxy 实现，也不会把不可用的开关误加入当前代码列表。
+    const PlatformCapabilities capabilities =
+        ResolvePlatformCapabilities(info.platform);
+    const bool system_proxy_supported =
+        capabilities.system_proxy && store::coreStore().systemProxySupported();
+    if (!MatchesPlatformCode(
+            ResolvePlatformCodes(info, system_proxy_supported), allowed)) {
+        return {};
+    }
+
+    // Scope 将匹配后的工厂放进独立子组合；不匹配时工厂根本不会执行。
+    return huxerui::Scope(std::move(content_factory));
+}
 
 // TUN 权限引导弹窗（见 ui.h）。Linux 只引导安装服务模式：应用自身保持非 root
 // （更安全），root 只在服务侧。命令行 = TextField 展示 + 复制按钮（runtime
@@ -159,19 +199,31 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     // 一级岛：页面根本身是岛（Grow + Stretch 占满页面区块，圆角 16pt，
     // base 表面），内容在岛内部滚动；海面底色经岛间缝隙透出。
     // composable 形参被 codegen 固定为 const：拷贝到局部再走右值链。
-    huxerui::View body = content;
-    return huxerui::Column {
-        huxerui::Row {
+    // 窄屏时把标题和操作区改为上下布局，避免 Select/按钮挤出岛屿。
+    huxerui::View header;
+    if (compact) {
+        header = huxerui::Column {
+            huxerui::Text(title, huxerui::TextRole::Title),
+            std::move(actions),
+        }.With(huxerui::Spacing(theme.spacing.small),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    } else {
+        header = huxerui::Row {
             huxerui::Text(title, huxerui::TextRole::Title),
             huxerui::Spacer(),
             std::move(actions),
-        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    }
+    huxerui::View body = content;
+    return huxerui::Column {
+        std::move(header),
         std::move(body).With(huxerui::Grow(1.0F)),
     }.With(huxerui::Padding(compact ? theme.spacing.medium
                                     : theme.spacing.large),
            huxerui::Spacing(theme.spacing.medium),
            huxerui::Background(islands.base),
            huxerui::CornerRadius(islands.island_radius),
+           huxerui::ClipChildren(),
            huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -184,6 +236,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         .With(huxerui::Padding(islands.island_padding),
               huxerui::Background(islands.raised),
               huxerui::CornerRadius(islands.nested_radius),
+              huxerui::ClipChildren(),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 

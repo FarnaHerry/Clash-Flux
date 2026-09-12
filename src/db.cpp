@@ -28,16 +28,19 @@ Profile rowToProfile(SQLite::Statement& q) {
     p.useSystemProxy = q.getColumn(12).getInt() != 0;
     p.useCoreProxy = q.getColumn(13).getInt() != 0;
     p.allowInvalidCert = q.getColumn(14).getInt() != 0;
-    p.homepage = q.getColumn(15).getString();
-    p.usedBytes = q.getColumn(16).getInt64();
-    p.totalBytes = q.getColumn(17).getInt64();
+    p.nativeConfig = q.getColumn(15).getString();
+    p.nativeRoutes = q.getColumn(16).getString();
+    p.homepage = q.getColumn(17).getString();
+    p.usedBytes = q.getColumn(18).getInt64();
+    p.totalBytes = q.getColumn(19).getInt64();
     return p;
 }
 
 constexpr const char* kProfileColumns =
     "id, name, url, file, selected, updated_at, error, type, description,"
     " timeout_secs, interval_mins, auto_update, use_system_proxy,"
-    " use_core_proxy, allow_invalid_cert, homepage, used_bytes, total_bytes";
+    " use_core_proxy, allow_invalid_cert, native_config, native_routes,"
+    " homepage, used_bytes, total_bytes";
 
 } // namespace
 
@@ -73,6 +76,8 @@ CREATE TABLE IF NOT EXISTS settings (
                  "ALTER TABLE profiles ADD COLUMN use_system_proxy INTEGER NOT NULL DEFAULT 0",
                  "ALTER TABLE profiles ADD COLUMN use_core_proxy INTEGER NOT NULL DEFAULT 0",
                  "ALTER TABLE profiles ADD COLUMN allow_invalid_cert INTEGER NOT NULL DEFAULT 0",
+                 "ALTER TABLE profiles ADD COLUMN native_config TEXT NOT NULL DEFAULT ''",
+                 "ALTER TABLE profiles ADD COLUMN native_routes TEXT NOT NULL DEFAULT ''",
                  "ALTER TABLE profiles ADD COLUMN homepage TEXT NOT NULL DEFAULT ''",
                  "ALTER TABLE profiles ADD COLUMN used_bytes INTEGER NOT NULL DEFAULT 0",
                  "ALTER TABLE profiles ADD COLUMN total_bytes INTEGER NOT NULL DEFAULT 0"}) {
@@ -101,8 +106,8 @@ std::int64_t Db::saveProfile(const Profile& p) {
             "INSERT INTO profiles (name, url, file, selected, updated_at, error,"
             " type, description, timeout_secs, interval_mins, auto_update,"
             " use_system_proxy, use_core_proxy, allow_invalid_cert,"
-            " homepage, used_bytes, total_bytes)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            " native_config, native_routes, homepage, used_bytes, total_bytes)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         q.bind(1, p.name);
         q.bind(2, p.url);
         q.bind(3, p.file);
@@ -117,9 +122,11 @@ std::int64_t Db::saveProfile(const Profile& p) {
         q.bind(12, p.useSystemProxy ? 1 : 0);
         q.bind(13, p.useCoreProxy ? 1 : 0);
         q.bind(14, p.allowInvalidCert ? 1 : 0);
-        q.bind(15, p.homepage);
-        q.bind(16, p.usedBytes);
-        q.bind(17, p.totalBytes);
+        q.bind(15, p.nativeConfig);
+        q.bind(16, p.nativeRoutes);
+        q.bind(17, p.homepage);
+        q.bind(18, p.usedBytes);
+        q.bind(19, p.totalBytes);
         q.exec();
         return impl_->db.getLastInsertRowid();
     }
@@ -127,7 +134,8 @@ std::int64_t Db::saveProfile(const Profile& p) {
         "UPDATE profiles SET name=?, url=?, file=?, selected=?, updated_at=?, error=?,"
         " type=?, description=?, timeout_secs=?, interval_mins=?, auto_update=?,"
         " use_system_proxy=?, use_core_proxy=?, allow_invalid_cert=?,"
-        " homepage=?, used_bytes=?, total_bytes=? WHERE id=?");
+        " native_config=?, native_routes=?, homepage=?, used_bytes=?, total_bytes=?"
+        " WHERE id=?");
     q.bind(1, p.name);
     q.bind(2, p.url);
     q.bind(3, p.file);
@@ -142,10 +150,12 @@ std::int64_t Db::saveProfile(const Profile& p) {
     q.bind(12, p.useSystemProxy ? 1 : 0);
     q.bind(13, p.useCoreProxy ? 1 : 0);
     q.bind(14, p.allowInvalidCert ? 1 : 0);
-    q.bind(15, p.homepage);
-    q.bind(16, p.usedBytes);
-    q.bind(17, p.totalBytes);
-    q.bind(18, p.id);
+    q.bind(15, p.nativeConfig);
+    q.bind(16, p.nativeRoutes);
+    q.bind(17, p.homepage);
+    q.bind(18, p.usedBytes);
+    q.bind(19, p.totalBytes);
+    q.bind(20, p.id);
     q.exec();
     return p.id;
 }
