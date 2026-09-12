@@ -2,6 +2,7 @@ package dev.farna.clashflux;
 
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -23,6 +24,7 @@ public final class MainActivity extends HuxerUIActivity {
     private static MainActivity current;
 
     private static native void nativeInit(String filesDirectory, String nativeLibraryDirectory);
+    private static native void nativeSetSystemDark(boolean dark);
     private static native void nativeStartCore();
 
     @Override
@@ -45,8 +47,20 @@ public final class MainActivity extends HuxerUIActivity {
         // to discover its data directory.
         nativeInit(getFilesDir().getAbsolutePath(), getApplicationInfo().nativeLibraryDir);
         Log.i(TAG, "Native bridge initialized");
+        // System dark/light toggles recreate the Activity (uiMode is not in
+        // configChanges), so this per-onCreate report is always fresh for the
+        // "follow system" theme option.
+        nativeSetSystemDark(isSystemDarkMode());
         nativeStartCore();
         Log.i(TAG, "Native mihomo startup requested");
+    }
+
+    private static boolean isSystemDarkMode() {
+        MainActivity activity = current;
+        if (activity == null) return false;
+        final int nightMode = activity.getResources().getConfiguration().uiMode
+                & Configuration.UI_MODE_NIGHT_MASK;
+        return nightMode == Configuration.UI_MODE_NIGHT_YES;
     }
 
     private void ensureMihomoBinary() throws IOException {

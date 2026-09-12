@@ -5,6 +5,7 @@
 // Android shell has extracted it.
 #include <jni.h>
 
+#include <atomic>
 #include <chrono>
 #include <exception>
 #include <mutex>
@@ -23,6 +24,9 @@ std::mutex g_mutex;
 JavaVM* g_vm = nullptr;
 jclass g_activity_class = nullptr;
 std::once_flag g_core_start_once;
+// 「跟随系统」主题用：MainActivity 在每次 onCreate 时上报（系统深浅切换会
+// 重建 Activity，uiMode 不在 configChanges 里），因此缓存总是新鲜的。
+std::atomic<bool> g_system_dark{false};
 
 void log_android(const char* message, bool error = false) noexcept {
 #if defined(__ANDROID__)
@@ -125,6 +129,17 @@ Java_dev_farna_clashflux_MainActivity_nativeStartCore(JNIEnv*, jclass) {
             }
         }).detach();
     });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_farna_clashflux_MainActivity_nativeSetSystemDark(JNIEnv*, jclass,
+                                                          jboolean dark) {
+    g_system_dark.store(dark == JNI_TRUE);
+}
+
+// cfg::systemPrefersDark() 的 Android 后端（见 src/config.cppm）。
+extern "C" bool clashflux_android_system_dark() noexcept {
+    return g_system_dark.load();
 }
 
 extern "C" void clashflux_android_open_url(const char* url) noexcept {
