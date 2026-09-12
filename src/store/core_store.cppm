@@ -223,6 +223,11 @@ public:
         ensureOpen();
         {
             std::lock_guard lock(mutex_);
+            // Android 桥线程在应用启动时自动拉起内核，启动慢时（拉 geodata
+            // 等）UI 侧再点启动会 spawn 第二个实例，抢不到 9097/混合端口的
+            // 那个以 exit 1 收场，把「内核启动后立即退出」误报给用户。
+            // 启动进行中直接拒绝重入。
+            if (snap_.state == core::CoreState::Starting) return;
             binaryPath_ = cfg::mihomoBinary().string();
             if (binaryPath_.empty() && !service::available()) {
                 snap_.state = core::CoreState::Failed;
@@ -281,10 +286,19 @@ public:
         bool ready = false;
         while (std::chrono::steady_clock::now() < deadline) {
             if (!coreAlive()) {
-                fail(std::format("内核启动后立即退出（exit {}）",
-                                 managedByService_ || adopted_
-                                     ? -1
-                                     : process_.exitCode()));
+                std::string message = std::format(
+                    "内核启动后立即退出（exit {}）",
+                    managedByService_ || adopted_ ? -1 : process_.exitCode());
+                // 直接 spawn 才有本进程输出管道；附上内核最后的报错行，
+                // 把「exit 1」背后的真实原因（端口占用、配置解析、GeoIP
+                // 拉取失败等）直接呈给用户。
+                if (!managedByService_ && !adopted_) {
+                    if (const std::string tailText = process_.recentTail();
+                        !tailText.empty()) {
+                        message += "：" + tailText;
+                    }
+                }
+                fail(std::move(message));
                 return;
             }
             if (const auto r = api_->version(); r.ok) {
@@ -409,6 +423,12 @@ public:
                 std::format("mihomo 内核异常退出（exit {}）",
                             managedByService_ || adopted_ ? -1
                                                           : process_.exitCode());
+            if (!managedByService_ && !adopted_) {
+                if (const std::string tailText = process_.recentTail();
+                    !tailText.empty()) {
+                    snap_.lastError += "：" + tailText;
+                }
+            }
         }
     }
 
