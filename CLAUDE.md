@@ -130,6 +130,10 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
    用 `Image::Tint`（IconButton/Foreground 不着色 SVG）。
 8. **响应式**：`UseViewportClass()` Compact(<600) 收窄侧栏(44pt)/一级岛内边距
    （PageScaffold）/首页卡片 2×2/订阅卡整宽列表；窗口最小 560×480。
+9. **平台收束**：新增平台相关选项先登记 `src/ui/ui.h` 顶部的「统一收束表」，
+   UI 侧一律经 `PlatformControl(平台代码列表, …)` 门控（不支持的平台上子组合
+   树不进入）；Android 能力位当前全 false，订阅下载走 `kHuxerHttpDownload`
+   分叉（见 CLAUDE.md「mihomo 交互要点」）。
 
 ## mihomo 交互要点
 
