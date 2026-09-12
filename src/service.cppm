@@ -58,6 +58,19 @@ export constexpr std::string_view kUnitName = "clash-flux.service";
 export constexpr std::string_view kSocketPath = "/run/clash-flux/service.sock";
 export constexpr std::string_view kInstallDir = "/usr/local/lib/clash-flux";
 
+// Returned by native VPN start calls on every platform.  The service backend
+// is Linux-only, but the client API and its non-Linux stubs must share the
+// same public signature so the Android legacy source can include this module.
+export struct PptpSessionInfo {
+    std::string interfaceName;
+    std::string gateway;
+};
+
+export struct OpenVpnSessionInfo {
+    std::string interfaceName;
+    std::string gateway;
+};
+
 #if defined(__linux__) && !defined(__ANDROID__)
 
 namespace {
@@ -253,16 +266,6 @@ export bool coreRunning() {
     const auto reply = request("STATUS", err);
     return reply && reply->starts_with("RUNNING ");
 }
-
-export struct PptpSessionInfo {
-    std::string interfaceName;
-    std::string gateway;
-};
-
-export struct OpenVpnSessionInfo {
-    std::string interfaceName;
-    std::string gateway;
-};
 
 export bool pptpAvailable() {
     std::string err;
