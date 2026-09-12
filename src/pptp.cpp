@@ -607,7 +607,7 @@ ULONG ipv4Mask(BYTE prefix) {
 }
 
 void deleteWindowsRoutes(WindowsSession& session) {
-    for (const WindowsRoute& route : session.routes) {
+    for (WindowsRoute& route : session.routes) {
         DeleteIpForwardEntry(&route.row);
     }
     session.routes.clear();
