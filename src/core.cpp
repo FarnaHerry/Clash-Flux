@@ -186,6 +186,7 @@ std::string generateConfig(const std::string& profileYaml,
     out += "find-process-mode: 'off'\n";
     out += "global-client-fingerprint: chrome\n";
     out += "profile:\n  store-selected: true\n  store-fake-ip: true\n";
+#if !defined(__ANDROID__)
     if (tunEnabled) {
         // TUN 透明代理（需 root/CAP_NET_ADMIN，权限不足时 mihomo 只报错不退出）。
         out += "tun:\n"
@@ -194,8 +195,17 @@ std::string generateConfig(const std::string& profileYaml,
                "  device: clash-flux\n"
                "  auto-route: true\n"
                "  auto-detect-interface: true\n"
+               "  strict-route: true\n"
+               "  route-address:\n"
+               "    - 0.0.0.0/1\n"
+               "    - 128.0.0.0/1\n"
+               "    - ::/1\n"
+               "    - 8000::/1\n"
                "  dns-hijack:\n    - any:53\n";
     }
+#else
+    static_cast<void>(tunEnabled);
+#endif
     out += "# ---- 订阅内容 ----\n";
 
     // 剔除订阅里的托管顶层键（连同其缩进值块）后原样拼接。

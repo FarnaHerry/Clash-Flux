@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.1.9 DESCRIPTION "Clash/mihomo proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.1.10 DESCRIPTION "Clash/mihomo proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # HUXERUI_LIBRARY_GRAPH_ONLY：CLI 扫描 huxerui 库依赖图时的特殊配置——
 # 不启用语言、不构建，huxerui_add_app 只写出库图 JSON 即返回（见 SDK
@@ -279,6 +279,9 @@ set(CLASHFLUX_MODULE_UNITS
     src/config.cppm
     src/utils.cppm
     src/db.cppm
+    src/vpn.cppm
+    src/pptp.cppm
+    src/openvpn.cppm
     # mihomo 核心：进程生命周期 / REST API / 推送流 / 系统代理
     src/core.cppm
     src/api.cppm
@@ -289,6 +292,7 @@ set(CLASHFLUX_MODULE_UNITS
     src/cli.cppm
     # 领域 store（UI 无关）
     src/store/core_store.cppm
+    src/store/vpn.cppm
     src/store/profiles.cppm
 )
 
@@ -334,7 +338,7 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     if (WIN32)
         target_compile_definitions(clash-flux PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
         # TUN 门禁：ShellExecuteExW（runas 提权重启）+ TokenElevation 查询。
-        target_link_libraries(clash-flux PRIVATE shell32 advapi32)
+        target_link_libraries(clash-flux PRIVATE shell32 advapi32 rasapi32 iphlpapi ws2_32)
         # GUI 子系统入口（CLI 子命令运行时经 AttachConsole 附着父控制台，
         # 见 cli.cppm）。
         if (MSVC)
@@ -489,6 +493,34 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         set_target_properties(test_smoke PROPERTIES CXX_MODULE_STD ON)
         target_compile_features(test_smoke PRIVATE cxx_std_23)
         add_test(NAME smoke COMMAND test_smoke)
+
+        add_executable(test_vpn tests/test_vpn.cpp)
+        target_sources(test_vpn PRIVATE src/pptp.cpp src/openvpn.cpp)
+        target_sources(test_vpn PRIVATE FILE_SET clashflux_vpn_modules TYPE CXX_MODULES
+            BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+            FILES src/config.cppm src/vpn.cppm src/pptp.cppm src/openvpn.cppm
+                   src/service.cppm)
+        set_target_properties(test_vpn PROPERTIES CXX_MODULE_STD ON)
+        target_compile_features(test_vpn PRIVATE cxx_std_23)
+        if (WIN32)
+            target_link_libraries(test_vpn PRIVATE rasapi32 iphlpapi ws2_32)
+        endif ()
+        add_test(NAME vpn COMMAND test_vpn)
+
+        # 真实 PPTP 拨号需要外部服务器和已安装的 root 服务，不作为自动测试；
+        # 该工具只供本地联调，连接后按回车负责断开并清理路由。
+        add_executable(test_pptp_connect tests/pptp_connect.cpp src/pptp.cpp
+                       src/openvpn.cpp)
+        target_sources(test_pptp_connect PRIVATE FILE_SET clashflux_pptp_modules
+            TYPE CXX_MODULES
+            BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+            FILES src/config.cppm src/vpn.cppm src/pptp.cppm src/openvpn.cppm
+                   src/service.cppm)
+        set_target_properties(test_pptp_connect PROPERTIES CXX_MODULE_STD ON)
+        target_compile_features(test_pptp_connect PRIVATE cxx_std_23)
+        if (WIN32)
+            target_link_libraries(test_pptp_connect PRIVATE rasapi32 iphlpapi ws2_32)
+        endif ()
     endif ()
 
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")

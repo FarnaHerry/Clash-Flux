@@ -85,6 +85,8 @@ ConnectionsSnapshot parseConnections(const std::string& body) {
 
 [[huxerui::composable]] huxerui::View ConnectionsPage() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const bool compact =
+        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
     auto rows = huxerui::UseStateList<ConnectionRow>();
     auto totalUp = huxerui::UseState<std::int64_t>(0);
@@ -128,9 +130,15 @@ ConnectionsSnapshot parseConnections(const std::string& body) {
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 
     if (!rows.Empty()) {
+        const std::size_t rowCount = rows.Size();
         body = huxerui::VirtualList(
-                   rows.Size(),
-                   [rows, tasks, mono, theme](std::size_t index) {
+                   rowCount + (compact ? 1U : 0U),
+                   [rows, tasks, mono, theme, compact, rowCount](
+                       std::size_t index) -> huxerui::View {
+                       if (compact && index == rowCount) {
+                           return CompactFloatingNavigationFooter()
+                               .Key("compact-floating-footer");
+                       }
                        const ConnectionRow& row = rows[index];
                        const std::string id = row.id;
                        return huxerui::Row {

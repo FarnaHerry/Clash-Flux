@@ -21,6 +21,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "#include <atomic>\n"
         "#include <chrono>\n"
         "#include <charconv>\n"
+        "#include <cctype>\n"
         "#include <condition_variable>\n"
         "#include <cstddef>\n"
         "#include <cstdint>\n"
@@ -64,12 +65,16 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/config.cppm"
         "${_root}/src/utils.cppm"
         "${_root}/src/db.cppm"
+        "${_root}/src/vpn.cppm"
+        "${_root}/src/pptp.cppm"
+        "${_root}/src/openvpn.cppm"
         "${_root}/src/core.cppm"
         "${_root}/src/api.cppm"
         "${_root}/src/stream.cppm"
         "${_root}/src/sysproxy.cppm"
         "${_root}/src/service.cppm"
         "${_root}/src/store/core_store.cppm"
+        "${_root}/src/store/vpn.cppm"
         "${_root}/src/store/profiles.cppm"
     )
     set(_android_legacy_inputs
@@ -112,6 +117,8 @@ function(clashflux_prepare_android_sources output_directory output_header
     set(_core "#include \"clashflux_android_legacy.h\"\n\n")
     foreach (_source IN ITEMS
             "${_root}/src/db.cpp"
+            "${_root}/src/pptp.cpp"
+            "${_root}/src/openvpn.cpp"
             "${_root}/src/core.cpp"
             "${_root}/src/api.cpp"
             "${_root}/src/stream.cpp")

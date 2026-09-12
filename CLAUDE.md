@@ -69,10 +69,12 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 | `clashflux.core` | `src/core.cppm/.cpp` | mihomo 子进程生命周期（posix_spawn + 监视线程；SIGTERM→2s→SIGKILL）+ generateConfig（订阅 YAML 剔除托管顶层键 + 注入块合成 runtime config） |
 | `clashflux.stream` | `src/stream.cppm/.cpp` | /logs /traffic /connections 三条 WS 流（IX 自管线程，事件入槽，UI PollWhile 泵取） |
 | `clashflux.sysproxy` | `src/sysproxy.cppm` | Linux 系统代理写入：KDE kioslaverc（kwriteconfig6/5 + dbus 通知 KIO）/ GNOME gsettings；阻塞 shell 调用，UI 必须 RunOnTaskThread |
-| `clashflux.service` | `src/service.cppm` | 服务模式：root systemd 单元 `clash-flux.service` + unix socket `/run/clash-flux/service.sock` 行协议（START/STOP/STATUS/VERSION）；只 spawn 安装目录固定 mihomo；install/uninstall 需 root（GUI 经 pkexec 重入本二进制 `service install`） |
+| `clashflux.service` | `src/service.cppm` | 统一特权服务：root systemd 单元 `clash-flux.service` + `/run/clash-flux/service.sock` 行协议（mihomo START/STOP/STATUS/VERSION + PPTP/OpenVPN AVAILABLE/START/ROUTES/STOP）；由同一 daemon 管理 Linux pppd/openvpn/ip；install/uninstall 需 root（GUI 经 pkexec 重入本二进制 `service install`），socket 仅安装用户 UID + root 可访问 |
 | `clashflux.cli` | `src/cli.cppm` | 完整 CLI：`cli::run(args)`，子命令 version/service/core/mode/tun/proxy/profile/help；platform/*/main.cpp 无参 → GUI、有参 → CLI |
 | `clashflux.store.core` | `src/store/core_store.cppm` | 编排单例 `coreStore()`：持有 Db/ClashApi/CoreProcess/CoreStreams；startCore/stopCore/applyMode/refreshRuntime/checkAlive；settings KV；内核三形态托管：**服务托管 → 接管外部实例（/version 探测 + mihomo.pid pidfile）→ 直接 spawn** |
 | `clashflux.store.profiles` | `src/store/profiles.cppm` | 订阅单例 `profilesStore()`：importUrl/importFile/refresh/activate/remove（activate/remove 触发内核重启） |
+| `clashflux.openvpn` | `src/openvpn.cppm/.cpp` | OpenVPN CLI 配置校验、Linux root 会话、tun 接口与内网 CIDR 路由；托管模式禁止配置自带 route/up/down 脚本 |
+| `clashflux.store.vpn` | `src/store/vpn.cppm` | PPTP/OpenVPN 连接生命周期 + 全局 `VpnPolicy` 持久化；`ProfileConnectionId` 是跨引擎稳定连接引用，原生连接建连时将 IPv4 全局规则交给对应隧道接口 |
 | `clashflux.ui.*`（普通 C++） | `src/ui/*.cpp` | app（壳：标题栏+图标侧栏+IndexedPages+托盘，岛屿风）/ common（岛屿原语 IslandSurface/DialogCard/页面骨架/卡片/状态胶囊）/ home/profiles/proxies/rules/connections/logs/settings 七页 / task_bridge.h（协程桥） |
 | `src/app.cpp` | 普通 TU | `Application{AppRoot, AppOptions}`（Custom chrome，标题栏 24pt） |
 | 平台入口 | `platform/{linux,macos,windows}/main.cpp` | 无参 → `huxerui::RunApplication()`；有参 → `cli::run`（同一二进制即 CLI） |
@@ -97,7 +99,9 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 - `src/core.cpp` 按 `_WIN32` 分流：POSIX posix_spawn / Windows CreateProcess
   后端，同一 `core::CoreProcess` 接口。
 - 服务模式仅 Linux；其他平台 `service::available()` 恒 false，自动回落直接
-  spawn。
+  spawn。Linux PPTP/OpenVPN 必须经统一 root 服务，不再由普通 GUI 直接 spawn
+  `pppd`/`openvpn` 或执行 `ip route`；Windows 继续使用系统 RAS，Android 后续接入
+  VpnService。
 
 ## 关键约定（改代码前必读）
 
@@ -107,7 +111,10 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 2. **UI 层遵守 skill 的 DSL 风格**：普通 .cpp、composable 不加 inline、View 按值
    传递、具名 View 链式调用前 `std::move`（`.With` 等是右值限定）。
 3. **受控值以应用状态为权威**；TextField 保留完整 TextEditingValue；动态兄弟用
-   稳定 `.Key(...)`。
+   稳定 `.Key(...)`。所有密码、令牌和其他秘密输入统一使用 `PasswordField`
+   约定：`Secure()` + HuxerUI `TrailingIcon`/`OnTrailingIconClick`，复用内置的
+   显隐眼睛操作；不要自绘重复的眼睛按钮，也不要把秘密值写入日志、卡片或错误
+   文本。新增秘密输入框必须沿用这个约定。
 4. **线程契约**（src/ui/task_bridge.h）：State 只在 UI 线程读写；api/core/store
    的阻塞方法必须 `co_await RunOnTaskThread(fn)` 派到任务线程池；WS 流与进程
    输出经 `PollWhile(interval, tick)` 泵回 UI。**事件处理器内禁止同步写会导致
@@ -135,6 +142,10 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
   `mihomo -d core/ -f core/config.yaml` 启动。控制器就绪轮询 ≤30s（订阅带
   规则 provider 的冷启动要拉 geodata/规则集，5s 会误判）。
 - 默认混合端口 **7899**（避开 Clash 7890 / Verge 7897 常见占用）。
+- 规则页分为“订阅规则”和“全局路由”：前者按 Profile 读取 YAML `rules` 或原生连接
+  `nativeRoutes`，后者保存 `vpn.global_policy`（默认主连接 + 多条域名/IP/CIDR →
+  连接规则）。全局策略由 `VpnManager` 统一选举，原生连接建立时再安装对应网段；
+  不把某个 mihomo `/rules` 快照误当成所有订阅的规则。
 - 系统代理（`proxy.system_enabled`）：内核就绪后重指当前端口；stopCore 先
   摘代理再停内核（防系统指向死端口断网）。TUN（`core.tun_enabled`）：
   运行中 PATCH /configs 立即生效（失败回滚设置），未运行则下次启动经
@@ -148,8 +159,10 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 - ✅ M1：脚手架 + 内核生命周期 + REST/WS + 六页骨架（订阅 CRUD/代理组切换测速/
   规则列表/连接快照/日志流/设置）。
 - ✅ 系统代理（KDE kioslaverc / GNOME gsettings）+ TUN 开关（设置页「系统」卡）。
-- ✅ 服务模式（root systemd 服务托管内核，socket 行协议，pkexec 安装）+
+- ✅ 统一 root 服务（systemd 托管 mihomo + Linux PPTP/OpenVPN，socket 行协议，UID 校验，
+  pkexec 安装）+
   完整 CLI（同一二进制子命令）+ 多平台 CI（Linux 正式，Win/macOS/Android 实验）。
-- ⬜ 待做：流量图表增强、订阅合并策略增强（规则覆写）、deep link
+- ⬜ 待做：流量图表增强、订阅合并策略增强（规则覆写）、全局策略对多 mihomo
+  实例的运行时编排、deep link
   （clash://install-config）、单实例、开机自启、规则 provider 管理、连接详情、
   Android 内核接入（mihomo 无官方 Android 资产）。

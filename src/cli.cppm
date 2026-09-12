@@ -4,7 +4,7 @@
 // 订阅 / 代理」三块，全部复用领域 store（与 GUI 同一份数据目录与设置）：
 //
 //   clash-flux version
-//   clash-flux service install|uninstall|status|run   服务模式（root 托管内核）
+//   clash-flux service install|uninstall|status|run   服务模式（root 托管 mihomo/PPTP）
 //   clash-flux core start|stop|restart|status         内核生命周期
 //   clash-flux mode [rule|global|direct]              查/切出站模式
 //   clash-flux tun on|off                             TUN 开关
@@ -56,7 +56,7 @@ void printUsage() {
         "用法：clash-flux [命令] [参数]    （无参数 = 启动 GUI）\n"
         "\n"
         "  version                          版本信息\n"
-        "  service install|uninstall|status 安装/卸载/查看 root 内核服务\n"
+        "  service install|uninstall|status 安装/卸载/查看 root 网络服务\n"
         "  core start|stop|restart|status   内核生命周期\n"
         "  mode [rule|global|direct]        查/切出站模式\n"
         "  tun on|off                       TUN 透明代理开关\n"
@@ -78,12 +78,14 @@ int cmdService(const std::vector<std::string>& args) {
     if (args[0] == "uninstall") return service::uninstall();
     if (args[0] == "run") return service::run();  // systemd ExecStart 专用
     if (args[0] == "status") {
-        std::println("服务：{}；内核：{}",
+        std::println("服务：{}；内核：{}；PPTP：{}；OpenVPN：{}",
                      service::installed()
                          ? (service::available() ? "已安装且在运行"
                                                  : "已安装但未运行")
                          : "未安装",
-                     service::coreRunning() ? "运行中（服务托管）" : "未运行");
+                     service::coreRunning() ? "运行中（服务托管）" : "未运行",
+                     service::pptpAvailable() ? "root 后端可用" : "不可用",
+                     service::openvpnAvailable() ? "root 后端可用" : "不可用");
         return 0;
     }
     std::println(stderr, "未知 service 子命令：{}", args[0]);

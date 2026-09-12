@@ -267,72 +267,116 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start)))
                                     .With(huxerui::Grow(1.0F));
     // 系统快捷开关卡：系统代理 / TUN 模式（与设置页「系统」卡同一 store 通道）。
-    // 系统代理开关按桌面环境支持性禁用；写失败由 0.5s 泵带回真实状态。
-    huxerui::View systemCard = Card(huxerui::Column {
-        huxerui::Text("系统").Style(huxerui::TextStyle{
-            huxerui::Font::System(font_size::kBody)
-                .WithWeight(huxerui::FontWeight::SemiBold),
-            theme.colors.on_surface}),
-        huxerui::Row {
-            huxerui::Text("系统代理").Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody),
-                theme.colors.on_surface}),
-            huxerui::Spacer(),
-            huxerui::Switch(store::coreStore().systemProxyEnabled())
-                .OnChanged([tasks, toast](bool on) {
-                    tasks.Launch([=]() -> huxerui::Task<void> {
-                        const bool ok = co_await RunOnTaskThread(
-                            [on] { return store::coreStore().applySystemProxy(on); });
-                        if (!ok) {
-                            const std::string err =
-                                store::coreStore().snapshot().lastError;
-                            toast.Show(err.empty() ? "系统代理设置失败" : err);
-                        }
-                    });
-                })
-                .With(huxerui::Enabled(store::coreStore().systemProxySupported())),
-        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        huxerui::Row {
-            huxerui::Text("TUN 模式").Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody),
-                theme.colors.on_surface}),
-            huxerui::Spacer(),
-            huxerui::Switch(s.core.tunEnabled)
-                .OnChanged([tasks, toast, dialog, clipboard,
-                            textColor = theme.colors.on_surface,
-                            hintColor =
-                                theme.colors.on_surface_variant](bool on) {
-                    tasks.Launch([=]() -> huxerui::Task<void> {
-                        if (on) {
-                            // 门禁/弹窗会卸载点击路径：先让出一拍（约定 4/6）。
-                            co_await huxerui::Delay(
-                                std::chrono::duration<double>{0});
-                            const core::TunGate gate = co_await RunOnTaskThread(
-                                [] { return core::tunGate(); });
-                            if (gate == core::TunGate::Elevated) {
-                                toast.Show("已请求管理员权限重启，请在新窗口开启"
-                                           " TUN");
-                                co_return;
-                            }
-                            if (gate == core::TunGate::Denied) {
-                                ShowTunGuideDialog(dialog, clipboard, toast,
-                                                   textColor, hintColor);
-                                co_return;
-                            }
-                        }
-                        const bool ok = co_await RunOnTaskThread(
-                            [on] { return store::coreStore().applyTun(on); });
-                        if (!ok) {
-                            const std::string err =
-                                store::coreStore().snapshot().lastError;
-                            toast.Show(err.empty() ? "TUN 设置失败" : err);
-                        }
-                    });
-                }),
-        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-    }.With(huxerui::Spacing(10.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
-                                    .With(huxerui::Grow(1.0F));
+    // 每个快捷开关都由平台代码门控；不支持时不进入当前组合树，而不是显示
+    // 一个永远不可用的开关。
+    huxerui::View systemCard =
+        PlatformControl(
+            {PlatformCode::SystemProxy, PlatformCode::CoreTun},
+            [s, tasks, toast, dialog, clipboard,
+             textColor = theme.colors.on_surface,
+             hintColor = theme.colors.on_surface_variant] {
+                return Card(huxerui::Column {
+                    huxerui::Text("系统").Style(huxerui::TextStyle{
+                        huxerui::Font::System(font_size::kBody)
+                            .WithWeight(huxerui::FontWeight::SemiBold),
+                        textColor}),
+                    PlatformControl(
+                        {PlatformCode::SystemProxy}, [tasks, toast, textColor] {
+                            return huxerui::Row {
+                                huxerui::Text("系统代理").Style(
+                                    huxerui::TextStyle{
+                                        huxerui::Font::System(font_size::kBody),
+                                        textColor}),
+                                huxerui::Spacer(),
+                                huxerui::Switch(
+                                    store::coreStore().systemProxyEnabled())
+                                    .OnChanged([tasks, toast](bool on) {
+                                        tasks.Launch([=]() -> huxerui::Task<void> {
+                                            const bool ok = co_await RunOnTaskThread(
+                                                [on] {
+                                                    return store::coreStore()
+                                                        .applySystemProxy(on);
+                                                });
+                                            if (!ok) {
+                                                const std::string err =
+                                                    store::coreStore()
+                                                        .snapshot()
+                                                        .lastError;
+                                                toast.Show(err.empty()
+                                                               ? "系统代理设置失败"
+                                                               : err);
+                                            }
+                                        });
+                                    }),
+                            }.With(huxerui::CrossAlign(
+                                huxerui::CrossAxisAlignment::Center));
+                        }),
+                    PlatformControl(
+                        {PlatformCode::CoreTun},
+                        [s, tasks, toast, dialog, clipboard, textColor,
+                         hintColor] {
+                            return huxerui::Row {
+                                huxerui::Text("TUN 模式").Style(
+                                    huxerui::TextStyle{
+                                        huxerui::Font::System(font_size::kBody),
+                                        textColor}),
+                                huxerui::Spacer(),
+                                huxerui::Switch(s.core.tunEnabled)
+                                    .OnChanged(
+                                        [tasks, toast, dialog, clipboard,
+                                         textColor, hintColor](bool on) {
+                                            tasks.Launch(
+                                                [=]() -> huxerui::Task<void> {
+                                                    if (on) {
+                                                        // 门禁/弹窗会卸载点击路径：先让出一拍
+                                                        // （约定 4/6）。
+                                                        co_await huxerui::Delay(
+                                                            std::chrono::duration<
+                                                                double>{0});
+                                                        const core::TunGate gate =
+                                                            co_await RunOnTaskThread(
+                                                                [] {
+                                                                    return core::tunGate();
+                                                                });
+                                                        if (gate ==
+                                                            core::TunGate::Elevated) {
+                                                            toast.Show(
+                                                                "已请求管理员权限重启，请在新窗口开启 TUN");
+                                                            co_return;
+                                                        }
+                                                        if (gate ==
+                                                            core::TunGate::Denied) {
+                                                            ShowTunGuideDialog(
+                                                                dialog, clipboard, toast,
+                                                                textColor, hintColor);
+                                                            co_return;
+                                                        }
+                                                    }
+                                                    const bool ok =
+                                                        co_await RunOnTaskThread(
+                                                            [on] {
+                                                                return store::coreStore()
+                                                                    .applyTun(on);
+                                                            });
+                                                    if (!ok) {
+                                                        const std::string err =
+                                                            store::coreStore()
+                                                                .snapshot()
+                                                                .lastError;
+                                                        toast.Show(err.empty()
+                                                                       ? "TUN 设置失败"
+                                                                       : err);
+                                                    }
+                                                });
+                                        }),
+                            }.With(huxerui::CrossAlign(
+                                huxerui::CrossAxisAlignment::Center));
+                        }),
+                }.With(huxerui::Spacing(10.0F),
+                       huxerui::CrossAlign(
+                           huxerui::CrossAxisAlignment::Stretch)));
+            })
+            .With(huxerui::Grow(1.0F));
 
     return PageScaffold(
         "首页",
@@ -399,6 +443,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                             running ? downColor
                                     : theme.colors.on_surface_variant}),
                 }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))),
+                compact ? CompactFloatingNavigationFooter() : huxerui::View{},
             }.With(huxerui::Spacing(12.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
             .With(huxerui::Grow(1.0F)));

@@ -225,12 +225,18 @@ constexpr float kNodeGridGap = 8.0F;
     huxerui::TaskScope tasks, huxerui::StateList<ProxyGroup> groups,
     huxerui::State<std::vector<std::string>> navPath) {
     const std::size_t nodeCount = group.nodes.size();
+    const bool compact =
+        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const std::string groupName = group.name;
     const std::string selectedName = group.now;
     return huxerui::VirtualGrid(
-               nodeCount,
+               nodeCount + (compact ? 1U : 0U),
                [groups, selectedName, groupName, delays, timeouts, tasks,
-                navPath](std::size_t index) {
+                navPath, compact, nodeCount](std::size_t index) -> huxerui::View {
+                   if (compact && index == nodeCount) {
+                       return CompactFloatingNavigationFooter()
+                           .Key("compact-floating-footer");
+                   }
                    const ProxyGroup* current = findGroup(groups, groupName);
                    if (current == nullptr || index >= current->nodes.size()) {
                        return huxerui::View{};

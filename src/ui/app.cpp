@@ -31,6 +31,7 @@ import clashflux.config;
 import clashflux.core;
 import clashflux.store.core;
 import clashflux.store.profiles;
+import clashflux.store.vpn;
 
 namespace clashflux::ui {
 
@@ -50,11 +51,7 @@ enum PageIndex : std::size_t {
 
 namespace {
 
-#if defined(__ANDROID__)
-constexpr bool kAndroidPlatform = true;
-#else
-constexpr bool kAndroidPlatform = false;
-#endif
+constexpr PlatformKind kBuildPlatform = CompileTimePlatform();
 
 struct FluxPalette {
     static constexpr huxerui::Color deep_navy() noexcept {
@@ -276,6 +273,8 @@ huxerui::View FluxThemed(bool dark, huxerui::View content) {
     navigationBar.icon_size = 20.0F;
     navigationBar.icon_spacing = 2.0F;
     navigationBar.show_unselected_labels = false;
+    // 悬浮导航岛内部的选中切换使用胶囊圆角，与外层岛屿保持同一套圆润语言。
+    navigationBar.indicator_corner_radius = 20.0F;
     definition.Set(navigationBar);
 
     huxerui::NavigationPaneStyle navigationPane =
@@ -337,10 +336,11 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
     huxerui::State<std::size_t> navPage) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::ViewportClass viewport = huxerui::UseViewportClass();
+    const PlatformInfo platform = ResolvePlatformInfo(viewport);
     const std::vector<huxerui::NavigationItem> items = NavigationItems();
     const auto onChanged = [navPage](std::size_t index) { navPage = index; };
 
-    if (viewport == huxerui::ViewportClass::Compact) {
+    if (platform.viewport == huxerui::ViewportClass::Compact) {
         return huxerui::NavigationBar(items, navPage)
             .OnChanged(onChanged)
             .With(huxerui::Background(theme.colors.surface_container_low),
@@ -378,6 +378,7 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
     auto trayEnabled =
         huxerui::UseState(store::coreStore().setting("tray.enabled", "true") == "true");
     auto closeDialogOpen = huxerui::UseState(false);
+    auto exitRequested = huxerui::UseState(false);
     // 托盘 TUN 门禁 Denied 时的引导弹窗（挂在主窗口上）。
     auto dialog = huxerui::UseDialog();
     auto clipboard = application.Clipboard();
@@ -406,7 +407,7 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
     const huxerui::ThemeSpec rootSpec = dark ? FluxDarkThemeSpec() : FluxLightThemeSpec();
     const IslandTheme rootIslands = ResolveIslandTheme(rootSpec);
 
-    if constexpr (!kAndroidPlatform) {
+    if constexpr (kBuildPlatform != PlatformKind::Android) {
         const huxerui::WindowHandle window = huxerui::UseWindow();
         const huxerui::SystemTrayHandle tray = application.SystemTray();
         const bool trayAvailable = tray.IsAvailable();
@@ -439,6 +440,25 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
             },
             0);
 
+        // 系统 VPN 的断开可能要等待 pppd/RAS 收尾，必须先在线程池完成清理，
+        // 再关闭窗口；否则 UI 退出后会留下旧的“连接中”状态。
+        auto finishExit = [tasks, application, window, exitRequested](
+                              bool closeWindow) {
+            if (exitRequested.Get()) return;
+            exitRequested = true;
+            tasks.Launch([application, window, closeWindow]() -> huxerui::Task<void> {
+                co_await RunOnTaskThread([] {
+                    store::vpnStore().shutdown();
+                    store::coreStore().stopCore();
+                });
+                if (closeWindow) {
+                    window.Close();
+                } else {
+                    application.Quit();
+                }
+            });
+        };
+
     // 托盘：图标 + 菜单（显示主窗口 / 系统代理 / TUN / 退出）；点击托盘图标
     // 激活主窗口。仅在可用时注册。系统代理/TUN 以勾选态展示，Lifecycle 依赖
     // 两个 State——任意一处（首页/设置/托盘自身）切换后菜单带最新勾选重建。
@@ -446,7 +466,8 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
         tray.OnActivate([window] { window.Activate(); });
         huxerui::Lifecycle(
             [tray, window, application, tasks, traySysProxy, trayTun, dialog,
-             clipboard, toast, trayEnabled, textColor = rootSpec.colors.on_surface,
+             clipboard, toast, trayEnabled, finishExit,
+             textColor = rootSpec.colors.on_surface,
              hintColor = rootSpec.colors.on_surface_variant] {
                 // 设置页关掉托盘：跳过注册（依赖变化重建时不 Show）；Hide 对
                 // 未显示的托盘是幂等 no-op，cleanup 统一执行。
@@ -495,7 +516,7 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
                     }).Checked(trayTun.Get()));
                 menuEntries.push_back(huxerui::MenuSection{});
                 menuEntries.push_back(
-                    huxerui::MenuItem("退出", [application] { application.Quit(); }));
+                    huxerui::MenuItem("退出", [finishExit] { finishExit(false); }));
                 tray.Show(app::images::tray,
                           huxerui::SystemTrayOptions{
                               .tooltip = "Clash-Flux",
@@ -520,10 +541,17 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
         };
         window.OnCloseRequest(
             [=]() mutable -> bool {
-                if (!trayAvailable || !trayEnabled.Get()) return false;
+                if (exitRequested.Get()) return false;
+                if (!trayAvailable || !trayEnabled.Get()) {
+                    finishExit(true);
+                    return true;
+                }
                 const std::string behavior =
                     store::coreStore().setting("tray.close_behavior", "0");
-                if (behavior == "1") return false;
+                if (behavior == "1") {
+                    finishExit(true);
+                    return true;
+                }
                 if (behavior == "2") {
                     hideToTray();
                     return true;
@@ -549,13 +577,7 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
                                         .OnClick([=] {
                                             ctx.Dismiss();
                                             closeDialogOpen = false;
-                                            tasks.Launch(
-                                                [=]() -> huxerui::Task<void> {
-                                                    co_await huxerui::Delay(
-                                                        std::chrono::duration<
-                                                            double>{0});
-                                                    window.Close();
-                                                });
+                                            finishExit(true);
                                         }),
                                     huxerui::Button("最小化到托盘")
                                         .OnClick([=] {
@@ -607,18 +629,39 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
     pages.push_back(SettingsPage(themeMode).Key("settings").With(huxerui::Grow(1.0F)));
 
     const huxerui::ViewportClass viewport = huxerui::UseViewportClass();
+    const PlatformInfo platform = ResolvePlatformInfo(viewport);
     huxerui::View indexedPages =
         huxerui::IndexedPages(std::move(pages), navPage.Get())
             .With(huxerui::Grow(1.0F));
     huxerui::View mainRow;
-    if (viewport == huxerui::ViewportClass::Compact) {
-        // 手机/窄窗口：导航移到底部，页面获得完整的横向空间。
-        mainRow = huxerui::Column {
+    if (platform.viewport == huxerui::ViewportClass::Compact) {
+        // 手机/窄窗口：官方 NavigationBar 直接悬浮在内容岛上，不再占用
+        // 页面底部的布局空间，滚动内容自然从悬浮岛下方经过。
+        huxerui::View floatingNavigation = NavigationSurface(navPage).With(
+            huxerui::Frame{.max_width = 520.0F},
+            huxerui::Background(rootIslands.base),
+            huxerui::CornerRadius(28.0F),
+            huxerui::Border{rootIslands.outline_soft, 1.0F},
+            huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.28F), {}, 18.0F,
+                            2.0F},
+            huxerui::ClipChildren());
+        huxerui::View floatingNavigationDock = huxerui::Column {
+            std::move(floatingNavigation),
+        }.With(
+            huxerui::Padding(huxerui::EdgeInsets{
+                .right = rootSpec.spacing.medium,
+                .bottom = rootSpec.spacing.small,
+                .left = rootSpec.spacing.medium,
+            }),
+            huxerui::MainAlign(huxerui::MainAxisAlignment::End),
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+        mainRow = huxerui::Stack {
             std::move(indexedPages),
-            NavigationSurface(navPage),
+            std::move(floatingNavigationDock),
         }
-            .With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
-                  huxerui::Grow(1.0F));
+            .With(huxerui::Grow(1.0F),
+                  huxerui::Align(huxerui::HorizontalAlignment::Stretch,
+                                 huxerui::VerticalAlignment::Stretch));
     } else {
         // Medium 保留紧凑图标栏，Expanded 展开官方导航面板并显示文字。
         mainRow = huxerui::Row {
@@ -631,7 +674,7 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
     }
 
     huxerui::View content;
-    if constexpr (kAndroidPlatform) {
+    if constexpr (kBuildPlatform == PlatformKind::Android) {
         // Android uses the Activity/system bars as its shell. WindowTitleBar and
         // WindowDragRegion are desktop chrome and must not be composed on mobile.
         content = huxerui::Column {
