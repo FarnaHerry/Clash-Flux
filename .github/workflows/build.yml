@@ -678,8 +678,15 @@ jobs:
             -n "$avd_name" --package "$image" --path "$avd_path" >/dev/null
           test -f "$avd_path/config.ini"
           "$emulator_bin" -list-avds | grep -Fx "$avd_name"
-          # 托管 ubuntu runner 暴露 /dev/kvm（嵌套虚拟化），KVM 下开机 ~20s；
-          # 软件模拟兜底仅作无 KVM 环境的回退。
+          # 托管 runner 若暴露 /dev/kvm（嵌套虚拟化）则走 KVM（开机 ~20s）；
+          # 设备节点可能存在但运行用户不可写——免密 sudo chmod 修正后重探；
+          # 两者皆无时回退软件模拟（开机数分钟，属平台限制）。
+          if [ -e /dev/kvm ]; then
+            ls -l /dev/kvm
+            sudo -n chmod 666 /dev/kvm 2>/dev/null || true
+          else
+            echo "no /dev/kvm on this runner"
+          fi
           accel=off
           if [ -e /dev/kvm ] && [ -w /dev/kvm ]; then
             accel=on
