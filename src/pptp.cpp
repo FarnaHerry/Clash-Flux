@@ -6,12 +6,6 @@
 module;
 
 #ifdef _WIN32
-#ifndef _WIN32_WINNT
-// MIB_IPFORWARD_ROW2 and the *IpForwardEntry2 APIs are Vista-era IP Helper
-// APIs. Some Windows CI SDK/toolchain combinations default the target level
-// low enough that netioapi.h hides these declarations.
-#define _WIN32_WINNT 0x0600
-#endif
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -21,7 +15,6 @@ module;
 #include <winsock2.h>
 #include <windows.h>
 #include <iphlpapi.h>
-#include <netioapi.h>
 #include <ras.h>
 #include <raserror.h>
 #include <ws2tcpip.h>
@@ -512,7 +505,7 @@ void disconnectLinux(const std::shared_ptr<Runtime>&,
 #elif defined(_WIN32)
 
 struct WindowsRoute {
-    MIB_IPFORWARD_ROW2 row{};
+    MIB_IPFORWARDROW row{};
 };
 
 struct WindowsSession {
@@ -608,9 +601,14 @@ std::optional<std::pair<IN_ADDR, BYTE>> parseIpv4Cidr(std::string_view value) {
     return std::pair{parsed, prefix};
 }
 
+ULONG ipv4Mask(BYTE prefix) {
+    if (prefix == 0) return 0;
+    return htonl(0xffffffffu << (32 - prefix));
+}
+
 void deleteWindowsRoutes(WindowsSession& session) {
     for (const WindowsRoute& route : session.routes) {
-        DeleteIpForwardEntry2(&route.row);
+        DeleteIpForwardEntry(&route.row);
     }
     session.routes.clear();
 }
@@ -728,11 +726,11 @@ bool applyWindowsRoutes(const std::shared_ptr<Runtime>& runtime,
     WindowsSession& session = it->second;
     for (const std::string& route : routes) {
         if (std::ranges::find_if(session.routes, [&](const WindowsRoute& installed) {
-                const auto& prefix = installed.row.DestinationPrefix;
                 const auto parsed = parseIpv4Cidr(route);
-                return parsed && prefix.PrefixLength == parsed->second &&
-                       prefix.Prefix.Ipv4.sin_addr.S_un.S_addr ==
-                           parsed->first.S_un.S_addr;
+                return parsed &&
+                       installed.row.dwForwardDest == parsed->first.S_un.S_addr &&
+                       installed.row.dwForwardMask == ipv4Mask(parsed->second) &&
+                       installed.row.dwForwardIfIndex == session.interfaceIndex;
             }) != session.routes.end()) {
             continue;
         }
@@ -743,18 +741,17 @@ bool applyWindowsRoutes(const std::shared_ptr<Runtime>& runtime,
             return false;
         }
         WindowsRoute nativeRoute;
-        InitializeIpForwardEntry(&nativeRoute.row);
-        nativeRoute.row.InterfaceIndex = session.interfaceIndex;
-        nativeRoute.row.DestinationPrefix.Prefix.si_family = AF_INET;
-        nativeRoute.row.DestinationPrefix.Prefix.Ipv4.sin_addr = parsed->first;
-        nativeRoute.row.DestinationPrefix.PrefixLength = parsed->second;
-        nativeRoute.row.NextHop.si_family = AF_INET;
-        nativeRoute.row.NextHop.Ipv4.sin_addr.S_un.S_addr = INADDR_ANY;
-        nativeRoute.row.Protocol = MIB_IPPROTO_NETMGMT;
-        nativeRoute.row.Metric = 1;
-        nativeRoute.row.ValidLifetime = UINT32_MAX;
-        nativeRoute.row.PreferredLifetime = UINT32_MAX;
-        const DWORD result = CreateIpForwardEntry2(&nativeRoute.row);
+        nativeRoute.row.dwForwardDest = parsed->first.S_un.S_addr;
+        nativeRoute.row.dwForwardMask = ipv4Mask(parsed->second);
+        nativeRoute.row.dwForwardPolicy = 0;
+        nativeRoute.row.dwForwardNextHop = INADDR_ANY;
+        nativeRoute.row.dwForwardIfIndex = session.interfaceIndex;
+        nativeRoute.row.dwForwardType = MIB_IPROUTE_TYPE_DIRECT;
+        nativeRoute.row.dwForwardProto = MIB_IPPROTO_NETMGMT;
+        nativeRoute.row.dwForwardAge = 0;
+        nativeRoute.row.dwForwardNextHopAS = 0;
+        nativeRoute.row.dwForwardMetric1 = 1;
+        const DWORD result = CreateIpForwardEntry(&nativeRoute.row);
         if (result != NO_ERROR) {
             error = windowsError("安装 PPTP 内网路由失败", result);
             deleteWindowsRoutes(session);
