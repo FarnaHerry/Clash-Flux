@@ -108,6 +108,28 @@ inline constexpr PlatformInfo ResolvePlatformInfo(
     };
 }
 
+// ---- 统一收束表（平台 × 能力/选项）-----------------------------------------
+// 新增任何平台相关选项前，先在这张表登记：能力加进 PlatformCapabilities、
+// 选项用 PlatformControl 门控——不支持的平台上整棵子组合树不进入，而不是
+// 渲染一个不可用的控件。另有两条平台分叉不走路由能力表：
+// kHuxerHttpDownload（订阅下载通道，见下方声明）与 store 层的
+// available()==false 兜底（service/sysproxy/openvpn 等阻塞能力）。
+//
+// 能力/分叉           Linux  Windows  macOS  Android  挂靠的 UI 选项
+// ------------------- -----  -------  -----  -------  -----------------------------
+// CoreTun               ✓       ✓      ✓      ✗     设置·TUN 模式；首页·TUN 快捷开关
+// SystemProxy           ✓       ✓      ✓      ✗     设置·系统代理；首页·系统代理开关
+// CoreService           ✓       ✗      ✗      ✗     设置·内核服务（pkexec 安装）
+// SystemTray            ✓       ✓      ✓      ✗     设置·托盘卡；壳层托盘与关窗驻留
+// PptpEngine            ✓       ✓      ✗      ✗     订阅弹窗·类型「PPTP 内网」
+// OpenVpnEngine         ✓       ✗      ✗      ✗     订阅弹窗·类型「OpenVPN 内网」
+// kHuxerHttpDownload    ✗       ✗      ✗      ✓     订阅导入/手动刷新/自动更新走
+//                                                  HuxerUI 平台栈；订阅弹窗的
+//                                                  「内核代理/无效证书」开关仅桌面
+//                                                  显示（{Linux,Windows,MacOS}）
+//
+// 安卓设置页保留项（内核随 APK 打包并在启动时拉起，均生效）：内核控制、
+// 出站模式、混合端口、局域网连接（热点共享）、日志级别、主题、关于。
 inline constexpr PlatformCapabilities ResolvePlatformCapabilities(
     PlatformKind platform) noexcept {
     const bool desktop = platform == PlatformKind::Linux ||
