@@ -243,6 +243,13 @@ export std::string randomSecret() {
     return out;
 }
 
+#if defined(__ANDROID__)
+// Android 后端由 platform/android/android_bridge.cpp 提供（C 链接符号）。
+// 声明必须在命名空间作用域：链接说明不允许出现在块作用域，而无 extern "C"
+// 的块作用域声明会带上 cfg:: 限定改名，链接不到 C 符号。
+extern "C" bool clashflux_android_system_dark() noexcept;
+#endif
+
 // 系统是否偏好深色（"跟随系统"主题模式用）。启动时读取一次即可。
 export bool systemPrefersDark() {
 #if defined(_WIN32)
@@ -265,8 +272,9 @@ export bool systemPrefersDark() {
     ::pclose(pipe);
     return dark;
 #elif defined(__ANDROID__)
-    // Android 的主题由 HuxerUI/Activity 处理；native 层没有桌面 gsettings。
-    return false;
+    // uiMode 不在 configChanges 里：系统切深浅会重建 Activity，onCreate 里的
+    // JNI 查询随之刷新缓存；无 Activity 实例的极端情况按浅色回落。
+    return clashflux_android_system_dark();
 #else
     FILE* pipe = ::popen("gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null", "r");
     if (pipe == nullptr) return false;
