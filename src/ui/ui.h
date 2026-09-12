@@ -108,12 +108,22 @@ inline constexpr PlatformInfo ResolvePlatformInfo(
     };
 }
 
+// 托盘 UI 只在桌面编译目标有意义（配合上方收束表 SystemTray 行的说明）。
+inline constexpr bool kSystemTrayUi =
+    CompileTimePlatform() == PlatformKind::Linux ||
+    CompileTimePlatform() == PlatformKind::Windows ||
+    CompileTimePlatform() == PlatformKind::MacOS;
+
 // ---- 统一收束表（平台 × 能力/选项）-----------------------------------------
 // 新增任何平台相关选项前，先在这张表登记：能力加进 PlatformCapabilities、
 // 选项用 PlatformControl 门控——不支持的平台上整棵子组合树不进入，而不是
 // 渲染一个不可用的控件。另有两条平台分叉不走路由能力表：
 // kHuxerHttpDownload（订阅下载通道，见下方声明）与 store 层的
 // available()==false 兜底（service/sysproxy/openvpn 等阻塞能力）。
+//
+// 托盘另有编译期第二道闸 kSystemTrayUi：平台代码表是运行时判定，历史构建
+// 出现过 Android 上托盘卡漏出的报告；托盘卡工厂内据该常量直接返回空视图，
+// 保证手机上无论如何渲染不出托盘/关窗驻留选项。
 //
 // 能力/分叉           Linux  Windows  macOS  Android  挂靠的 UI 选项
 // ------------------- -----  -------  -----  -------  -----------------------------

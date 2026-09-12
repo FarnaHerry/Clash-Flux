@@ -488,6 +488,11 @@ const std::string kAboutText =
 
                 PlatformControl({PlatformCode::SystemTray},
                                 [trayCloseBehavior] {
+                                    // 编译期第二道闸（kSystemTrayUi）：平台代
+                                    // 码表是运行时判定，历史构建出现过 Android
+                                    // 上托盘卡漏出的报告，这里兜底保证手机上
+                                    // 不渲染托盘/关窗驻留选项。
+                                    if (!kSystemTrayUi) return huxerui::View{};
                                     return Card(huxerui::Column {
                                         SectionTitle("托盘"),
                                         SettingRow(
