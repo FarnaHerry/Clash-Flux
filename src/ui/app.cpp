@@ -383,18 +383,25 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
     auto dialog = huxerui::UseDialog();
     auto clipboard = application.Clipboard();
     auto toast = huxerui::UseToast();
+    // 平台栈订阅下载通道（kHuxerHttpDownload 的自动更新泵用）。
+    auto http = huxerui::UseService<huxerui::HttpClient>();
 
-    // 订阅自动更新泵：每 30s 在任务线程扫描一次「允许自动更新 + 间隔已到」
-    // 的订阅并逐个拉新（store::refreshDue 全程阻塞）。错误落在订阅行的
-    // error 字段，由订阅卡展示，这里不弹提示。
+    // 订阅自动更新泵：每 30s 扫描一次「允许自动更新 + 间隔已到」的订阅并
+    // 逐个拉新。桌面走阻塞 curl（refreshDue，RunOnTaskThread）；Android 走
+    // HuxerUI HttpClient 协程抓取（ProfilesRefreshDueOnce）。错误落在订阅
+    // 行的 error 字段，由订阅卡展示，这里不弹提示。
     huxerui::Lifecycle(
-        [tasks] {
-            tasks.Launch([]() -> huxerui::Task<void> {
+        [tasks, http] {
+            tasks.Launch([http]() -> huxerui::Task<void> {
                 for (;;) {
                     co_await huxerui::Delay(std::chrono::duration<double>{30.0});
-                    co_await RunOnTaskThread([] {
-                        store::profilesStore().refreshDue();
-                    });
+                    if (kHuxerHttpDownload) {
+                        co_await ProfilesRefreshDueOnce(http);
+                    } else {
+                        co_await RunOnTaskThread([] {
+                            store::profilesStore().refreshDue();
+                        });
+                    }
                 }
             });
             return [] {};

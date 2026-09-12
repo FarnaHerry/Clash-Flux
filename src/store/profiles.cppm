@@ -392,21 +392,31 @@ public:
         return true;
     }
 
-    // 自动更新：把「允许自动更新 + 间隔已到」的 remote 订阅逐个拉新。
-    // 全程阻塞（网络），由壳层泵经 RunOnTaskThread 周期调用。返回刷新条数。
-    int refreshDue() {
+    // 到期待更新的订阅清单（无网络，纯查询）：允许自动更新 + 间隔已到；
+    // 内核代理通道要求内核在跑，不在跑跳过本轮（下一轮再试）。Android 泵
+    // 用它拿清单后经 HuxerUI HttpClient 逐个抓取（completeRemote 收尾）。
+    std::vector<db::Profile> dueForUpdate() {
         const std::int64_t now = nowUnix();
-        int updated = 0;
+        std::vector<db::Profile> due;
         for (const auto& p : list()) {
             if (!p.autoUpdate || p.intervalMins <= 0) continue;
             if (p.url.empty()) continue;  // local 类型无 URL
             if (now - p.updatedAt < static_cast<std::int64_t>(p.intervalMins) * 60)
                 continue;
-            // 内核代理通道要求内核在跑；不在跑跳过本轮（下一轮再试）。
             if (p.useCoreProxy &&
                 coreStore().snapshot().state != core::CoreState::Running) {
                 continue;
             }
+            due.push_back(p);
+        }
+        return due;
+    }
+
+    // 自动更新（桌面 curl 通道）：把 dueForUpdate() 命中的订阅逐个拉新。
+    // 全程阻塞（网络），由壳层泵经 RunOnTaskThread 周期调用。返回刷新条数。
+    int refreshDue() {
+        int updated = 0;
+        for (const auto& p : dueForUpdate()) {
             if (refresh(p.id)) ++updated;
         }
         return updated;

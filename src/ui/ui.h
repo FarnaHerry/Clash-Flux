@@ -7,12 +7,23 @@
 #include <cstdint>
 #include <functional>
 #include <initializer_list>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 namespace clashflux::ui {
+
+// 订阅下载通道：Android 的 vendored curl 无 TLS（NDK 无 OpenSSL，https 订阅
+// 报 Unsupported protocol），订阅导入/手动刷新/自动更新全走 HuxerUI
+// HttpClient（平台原生栈：系统 TLS/证书/代理）；桌面 curl 支持订阅级代理/
+// 无效证书选项，保持不变。
+#ifdef __ANDROID__
+inline constexpr bool kHuxerHttpDownload = true;
+#else
+inline constexpr bool kHuxerHttpDownload = false;
+#endif
 
 // 平台/设备判断集中在应用层：HuxerUI 的公开环境只提供视口分级，平台宏
 // 负责识别编译目标，视口再负责把 Android 区分为手机或平板。
@@ -304,5 +315,11 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                         std::shared_ptr<huxerui::Clipboard> clipboard,
                         huxerui::ToastHandle toast, huxerui::Color textColor,
                         huxerui::Color hintColor);
+
+// 订阅自动更新泵的一次迭代（kHuxerHttpDownload 通道）：任务线程列出到期
+// 订阅，逐个经 HuxerUI HttpClient 抓取并由 store 收尾。返回更新条数。
+// HttpClient 必须在 UI 线程任务协程里 co_await（禁入阻塞线程池）。
+huxerui::Task<int> ProfilesRefreshDueOnce(
+    std::shared_ptr<huxerui::HttpClient> http);
 
 } // namespace clashflux::ui
