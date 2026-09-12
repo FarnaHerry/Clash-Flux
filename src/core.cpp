@@ -371,6 +371,8 @@ bool spawnDetached(const std::filesystem::path& binary,
 namespace {
 
 constexpr std::size_t kMaxOutputLines = 4000;   // 内核日志队列上限（防爆内存）
+constexpr std::size_t kTailLines = 6;           // 诊断尾部缓冲行数
+constexpr std::size_t kTailLineChars = 120;     // 尾部单行截断长度
 constexpr auto kGracePeriod = std::chrono::seconds(2);
 
 struct CoreProcessImpl {
@@ -388,6 +390,7 @@ struct CoreProcessImpl {
     std::string lastError;
     std::mutex mutex;
     std::vector<std::string> output;
+    std::vector<std::string> tail;  // 最近输出的非破坏性副本（诊断用）
 
     ~CoreProcessImpl() { stop(); joinMonitor(); }
 
@@ -516,6 +519,10 @@ struct CoreProcessImpl {
         __android_log_print(ANDROID_LOG_INFO, "ClashFlux", "mihomo: %s", line.c_str());
 #endif
         std::lock_guard lock(mutex);
+        // 尾部缓冲先于上限检查：output 达到 kMaxOutputLines 后不再增长，
+        // 但诊断尾部必须始终记录最新的行（崩溃原因常在缓冲饱和后出现）。
+        tail.push_back(line);
+        if (tail.size() > kTailLines) tail.erase(tail.begin());
         if (output.size() >= kMaxOutputLines) return;
         output.push_back(std::move(line));
     }
@@ -638,6 +645,7 @@ bool CoreProcess::start(const std::filesystem::path& binary,
     {
         std::lock_guard lock(impl_->mutex);
         impl_->output.clear();
+        impl_->tail.clear();
     }
     impl_->stopRequested.store(false);
     impl_->exitCode.store(-1);
@@ -684,6 +692,19 @@ std::string CoreProcess::lastError() const { return impl_->lastError; }
 std::vector<std::string> CoreProcess::drainOutput() {
     std::lock_guard lock(impl_->mutex);
     return std::exchange(impl_->output, {});
+}
+
+std::string CoreProcess::recentTail() const {
+    std::lock_guard lock(impl_->mutex);
+    // 取最后 3 行、单行截断，紧凑单行拼接，便于直接附进 lastError。
+    std::string joined;
+    const std::size_t begin = impl_->tail.size() > 3 ? impl_->tail.size() - 3 : 0;
+    for (std::size_t i = begin; i < impl_->tail.size(); ++i) {
+        std::string line = impl_->tail[i].substr(0, kTailLineChars);
+        if (!joined.empty()) joined += " / ";
+        joined += line;
+    }
+    return joined;
 }
 
 } // namespace core

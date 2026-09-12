@@ -96,6 +96,11 @@ public:
     std::string lastError() const;
     // UI 线程泵：取走累计的内核 stdout/stderr 行（一次取空）。
     std::vector<std::string> drainOutput();
+    // 非破坏性尾部快照：最近 ≤3 行内核输出（单行截断到 120 字符，
+    // " / " 连接）。drainOutput 的消费者（日志页）不影响本缓冲，供启动
+    // 失败/异常退出时把内核真实报错（如端口占用、GeoIP 拉取失败）带回
+    // lastError，而不是只给一个 exit 码。
+    std::string recentTail() const;
 
 private:
     struct Impl;
