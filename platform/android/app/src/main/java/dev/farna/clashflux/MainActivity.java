@@ -33,6 +33,7 @@ public final class MainActivity extends HuxerUIActivity {
     private static native void nativeInit(String filesDirectory, String nativeLibraryDirectory);
     private static native void nativeSetSystemDark(boolean dark);
     private static native void nativeStartCore();
+    private static native void nativeVpnStartCancelled();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -148,13 +149,23 @@ public final class MainActivity extends HuxerUIActivity {
     public static void requestIgnoreBatteryOptimizations() {
         MainActivity activity = current;
         if (activity == null) return;
-        PowerManager power = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
-        if (power == null || power.isIgnoringBatteryOptimizations(activity.getPackageName())) {
-            return;
-        }
-        activity.startActivity(new Intent(
-                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                Uri.parse("package:" + activity.getPackageName())));
+        // JNI 可能从 HuxerUI 的渲染线程进入；Activity 跳转必须在 Android
+        // 主线程执行，否则部分设备会无提示地忽略这次请求。
+        activity.runOnUiThread(() -> {
+            PowerManager power =
+                    (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+            if (power == null
+                    || power.isIgnoringBatteryOptimizations(activity.getPackageName())) {
+                return;
+            }
+            try {
+                activity.startActivity(new Intent(
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:" + activity.getPackageName())));
+            } catch (ActivityNotFoundException error) {
+                Log.w(TAG, "Battery optimization settings activity is unavailable", error);
+            }
+        });
     }
 
     private void beginVpnStart() {
@@ -202,8 +213,14 @@ public final class MainActivity extends HuxerUIActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_VPN_CONSENT && resultCode == RESULT_OK) {
-            startVpnService();
+        if (requestCode == REQUEST_VPN_CONSENT) {
+            if (resultCode == RESULT_OK) {
+                startVpnService();
+            } else {
+                // 用户取消系统授权时回滚 C++ 持久化状态，设置页的受控开关会
+                // 在下一次状态校准中恢复为关闭。
+                nativeVpnStartCancelled();
+            }
         }
     }
 }
