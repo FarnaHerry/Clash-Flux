@@ -1,0 +1,69 @@
+package dev.farna.clashflux;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
+import android.content.Intent;
+import android.content.pm.ServiceInfo;
+import android.os.Build;
+import android.os.IBinder;
+
+/**
+ * CMFA-style resident notification: a foreground service started when the
+ * app launches that pins a persistent "core running" notification for the
+ * whole process lifetime. Keeping a foreground service alive from launch
+ * also raises the process priority so OEM background killers are less
+ * likely to reap the proxy core.
+ */
+public final class CoreService extends Service {
+    private static final String CHANNEL_ID = "clashflux_core";
+    private static final int NOTIFICATION_ID = 2;
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        startForegroundWithNotification();
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        // Sticky: the service (and its notification) survives process death
+        // and is recreated alongside the process.
+        return START_STICKY;
+    }
+
+    private void startForegroundWithNotification() {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null
+                && Build.VERSION.SDK_INT >= 26
+                && manager.getNotificationChannel(CHANNEL_ID) == null) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID, "内核状态", NotificationManager.IMPORTANCE_MIN);
+            channel.setDescription("Clash-Flux 内核运行状态");
+            manager.createNotificationChannel(channel);
+        }
+
+        Notification notification = null;
+        if (Build.VERSION.SDK_INT >= 26) {
+            notification = new Notification.Builder(this, CHANNEL_ID)
+                    .setContentTitle("Clash-Flux")
+                    .setContentText("代理内核运行中")
+                    .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+                    .setOngoing(true)
+                    .build();
+        }
+
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(NOTIFICATION_ID, notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+        } else {
+            startForeground(NOTIFICATION_ID, notification);
+        }
+    }
+}

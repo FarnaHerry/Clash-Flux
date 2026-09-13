@@ -59,6 +59,13 @@ public final class MainActivity extends HuxerUIActivity {
         // "follow system" theme option.
         nativeSetSystemDark(isSystemDarkMode());
         nativeStartCore();
+        // CMFA-style resident notification from launch: the foreground
+        // service pins a persistent notification for the process lifetime.
+        try {
+            startForegroundService(new Intent(this, CoreService.class));
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Unable to start the core notification service", error);
+        }
         Log.i(TAG, "Native mihomo startup requested");
     }
 
