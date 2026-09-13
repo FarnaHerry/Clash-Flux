@@ -1,17 +1,14 @@
 // common.cpp — 岛屿原语（ResolveIslandTheme/IslandSurface/IslandSection）、
-// 页面骨架（一级岛）/ 卡片（二级岛）/ 内核状态胶囊等跨页通用部件。
+// 页面骨架（一级岛）/ 卡片（二级岛）等跨页通用部件。
 #include <huxerui/huxerui.h>
 
 #include <algorithm>
-#include <chrono>
 #include <string>
 #include <vector>
 
 #include "app_resources.h"
 #include "ui.h"
-#include "task_bridge.h"
 
-import clashflux.core;
 import clashflux.config;
 import clashflux.store.core;
 
@@ -69,7 +66,7 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
     (void)clipboard;
     (void)textColor;
     (void)hintColor;
-    toast.Show("Android VPN/TUN 尚未接入");
+    toast.Show("请在设置页的“VPN 代理”中管理 Android VPN 隧道");
     return;
 #else
     namespace fs = std::filesystem;
@@ -251,53 +248,6 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         huxerui::Border(islands.outline_soft, 1.0F),
         huxerui::ClipChildren(),
         huxerui::Padding(islands.island_padding));
-}
-
-[[huxerui::composable]] huxerui::View CoreStatusPill() {    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    auto tasks = huxerui::UseTaskScope();
-    auto snap = huxerui::UseState<store::CoreSnapshot>({});
-
-    huxerui::Lifecycle(
-        [tasks, snap] {
-            tasks.Launch([snap]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{0.5}, [snap] {
-                    snap = store::coreStore().snapshot();
-                    return true;
-                });
-            });
-            return [] {};
-        },
-        0);
-
-    const store::CoreSnapshot s = snap.Get();
-    huxerui::Color dot = theme.colors.on_surface_variant;
-    std::string label = "已停止";
-    if (s.binaryPath.empty()) {
-        label = "内核未安装";
-    } else if (s.state == core::CoreState::Running) {
-        dot = huxerui::Color::Rgb(34, 197, 94);   // 绿
-        label = s.version.empty() ? "运行中" : s.version;
-    } else if (s.state == core::CoreState::Starting) {
-        dot = huxerui::Color::Rgb(245, 158, 11);  // 琥珀
-        label = "启动中";
-    } else if (s.state == core::CoreState::Failed) {
-        dot = theme.colors.error;
-        label = "内核异常";
-    }
-
-    return huxerui::Row {
-        huxerui::Text("●").Style(huxerui::TextStyle{
-            huxerui::Font::System(font_size::kCaption), dot}),
-        huxerui::Text(label).Style(huxerui::TextStyle{
-            huxerui::Font::System(font_size::kCaption),
-            theme.colors.on_surface_variant}),
-    }.With(huxerui::Spacing(6.0F),
-           huxerui::Padding(huxerui::EdgeInsets::Symmetric(8.0F, 3.0F)),
-           huxerui::Background(ResolveIslandTheme(theme).overlay),
-           huxerui::CornerRadius(ResolveIslandTheme(theme).nested_radius),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
-           huxerui::Frame{.height = kTitleBarContentHeight},
-           huxerui::Tooltip("mihomo 内核状态"));
 }
 
 } // namespace clashflux::ui

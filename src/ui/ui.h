@@ -276,9 +276,6 @@ inline constexpr float kMonoBody = 13.0F; // 等宽正文（日志、连接元�
 inline constexpr float kTitle = 20.0F;    // 页面/弹窗标题
 } // namespace font_size
 
-// 标题栏内容统一高度（= AppOptions.window.title_bar_height）。
-inline constexpr float kTitleBarContentHeight = 24.0F;
-
 // Compact 悬浮导航覆盖在内容岛底部时，滚动内容需要一个真正属于滚动内容
 // 的尾部空白，确保最后一项可以滑到悬浮岛上方，而不是被悬浮层遮住。
 inline constexpr float kCompactFloatingNavigationInset = 96.0F;
@@ -348,10 +345,6 @@ huxerui::View Card(huxerui::View content);
 // 内容加底板（只有标题+消息的内置形态才有 DialogStyle），统一包一层：
 // overlay 表面 + 阴影 + 描边 + 16pt 圆角 + 内边距。
 huxerui::View DialogCard(huxerui::View content);
-
-// 内核状态胶囊：圆点 + 状态文字（标题栏用）。独立 composable，内部自订阅轮询，
-// 避免 AppRoot 每拍重组。
-huxerui::View CoreStatusPill();
 
 // 平台依赖控件：只在当前平台代码列表命中时创建子组合树；不匹配时直接返回
 // 空 View，工厂不会执行。允许列表是 OR 关系，可同时表达“桌面能力”和“设备形态”。

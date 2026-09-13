@@ -130,11 +130,13 @@ public:
     }
     bool allowLan() { return setting("core.allow_lan", "false") == "true"; }
     std::string logLevel() { return setting("core.log_level", "info"); }
-    // TUN 开关（持久化；运行中经 applyTun PATCH 立即生效，否则下次启动生效）。
+    // TUN 开关（持久化；Android 由 VpnService 交付 fd 后重启内核生效）。
     bool tunEnabled() {
 #if defined(__ANDROID__)
-        // Android 的 VPN/TUN 通道尚未接入，不能让旧设置继续注入 tun 块。
-        return false;
+        // Android 的系统 VPN 由 ClashVpnService 建立；fd 就绪后 bridge 会重启
+        // mihomo。这里必须保留用户设置，令 generateConfig 注入
+        // tun.file-descriptor，否则 VPN 会建立却没有数据面接管流量。
+        return setting("core.tun_enabled", "false") == "true";
 #else
         return setting("core.tun_enabled", "false") == "true";
 #endif
