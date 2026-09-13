@@ -83,10 +83,12 @@ public final class ClashVpnService extends VpnService {
             // Builder parameters mirror ClashMetaForAndroid's TunService.
             VpnService.Builder builder = new VpnService.Builder()
                     .setSession("Clash-Flux")
-                    .setMtu(9000)
+                    // 与 core.cpp 的 TUN 配置一致；1400 避免移动网络 MTU
+                    // 黑洞。198.18.0.0/16 留给 mihomo fake-IP，不能拿作接口地址。
+                    .setMtu(1400)
                     .setBlocking(false)
-                    .addAddress("198.18.0.1", 30)
-                    .addDnsServer("198.18.0.2")
+                    .addAddress("172.19.0.1", 30)
+                    .addDnsServer("172.19.0.2")
                     .addRoute("0.0.0.0", 0)
                     // The VPN app's own UID must bypass the tunnel so the
                     // spawned mihomo process reaches the physical network

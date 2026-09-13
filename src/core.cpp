@@ -202,7 +202,13 @@ std::string generateConfig(const std::string& profileYaml,
     out += std::format("log-level: {}\n", logLevel);
     out += std::format("external-controller: {}\n", controller);
     if (!secret.empty()) out += std::format("secret: \"{}\"\n", secret);
+#if defined(__ANDROID__)
+    // Android VpnService 当前只建立 IPv4 TUN/默认路由。保留 AAAA 解析会让
+    // IPv6 流量绕过这个隧道；先明确禁用，待服务同时建立 IPv6 TUN 后再开启。
+    out += "ipv6: false\n";
+#else
     out += "ipv6: true\n";
+#endif
     out += "unified-delay: true\n";
     out += "tcp-concurrent: true\n";
     out += "find-process-mode: 'off'\n";
@@ -224,17 +230,18 @@ std::string generateConfig(const std::string& profileYaml,
                "    - 8000::/1\n"
                "  dns-hijack:\n    - any:53\n";
 #else
-        // file-descriptor 固定 3（spawn 时 dup2 继承，见 kAndroidTunFd）；
-        // gvisor 栈对继承 fd 最稳（CMFA 同款默认）。
+        // file-descriptor 固定 3（spawn 时 dup2 继承，见 kAndroidTunFd）。
+        // 隧道地址必须避开 fake-ip 的 198.18.0.0/16；重叠会让 DNS 映射的
+        // 目标被 Android 当作本地 TUN 网段处理，造成 VPN 已连接但没有流量。
         out += "tun:\n"
                "  enable: true\n"
-               "  stack: gvisor\n"
+               "  stack: mixed\n"
                "  device: clash-flux\n"
                "  file-descriptor: 3\n"
                "  auto-route: false\n"
                "  auto-detect-interface: false\n"
-               "  mtu: 9000\n"
-               "  inet4-address:\n    - 198.18.0.1/30\n"
+               "  mtu: 1400\n"
+               "  inet4-address:\n    - 172.19.0.1/30\n"
                "  dns-hijack:\n    - any:53\n";
 #endif
     }
