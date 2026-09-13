@@ -46,6 +46,7 @@ public final class MainActivity extends HuxerUIActivity {
             io.github.oviron.libmihomo.Clash.INSTANCE.load(
                     getApplicationInfo().nativeLibraryDir);
             io.github.oviron.libmihomo.Clash.INSTANCE.assertReady();
+            Log.i(TAG, "Embedded mihomo bridge loaded");
         } catch (RuntimeException error) {
             Log.e(TAG, "Unable to load embedded mihomo", error);
         }

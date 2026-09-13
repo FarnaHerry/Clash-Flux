@@ -110,8 +110,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 31
-        versionName = "0.1.31"
+        versionCode = 32
+        versionName = "0.1.32"
 
         externalNativeBuild {
             cmake {
@@ -163,6 +163,9 @@ android {
     // ABI enter MERGED_NATIVE_LIBS and invalidate HuxerUI's per-ABI plan.
     packaging {
         jniLibs {
+            // Clash.load verifies and loads the two C-shared files by their
+            // nativeLibraryDir paths, so they must be extracted from the APK.
+            useLegacyPackaging = true
             excludes += ["**/armeabi-v7a/**"]
         }
     }
