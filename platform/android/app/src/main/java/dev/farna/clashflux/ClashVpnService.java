@@ -106,12 +106,16 @@ public final class ClashVpnService extends VpnService {
             fd = builder.establish().detachFd();
         } catch (Exception error) {
             established = false;
+            BootReceiver.setVpnActive(this, false);
+            nativeTunRevoked();
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
             return;
         }
         if (fd < 0) {
             established = false;
+            BootReceiver.setVpnActive(this, false);
+            nativeTunRevoked();
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
             return;

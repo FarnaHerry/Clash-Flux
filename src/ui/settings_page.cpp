@@ -100,6 +100,11 @@ const std::string kAboutText =
     auto portValue = huxerui::UseState(huxerui::TextEditingValue{""});
     auto busy = huxerui::UseState(false);
     auto serviceInstalled = huxerui::UseState(service::installed());
+    // Android VPN 授权/服务回调发生在平台侧，不能把 Switch 的值直接绑在
+    // 一次性的 setting() 读取上；用受控 State 立即响应点击，并由页面泵
+    // 校准取消授权、系统撤销等异步结果。
+    auto tunEnabled = huxerui::UseState(
+        store::coreStore().setting("core.tun_enabled", "false") == "true");
     auto trayCloseBehavior = huxerui::UseState<std::size_t>([] {
         const std::string value =
             store::coreStore().setting("tray.close_behavior", "0");
@@ -109,12 +114,14 @@ const std::string kAboutText =
     }());
 
     huxerui::Lifecycle(
-        [tasks, snap, portValue, serviceInstalled] {
+        [tasks, snap, portValue, serviceInstalled, tunEnabled] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{1.0}, [=] {
                     const auto s = store::coreStore().snapshot();
                     snap = s;
                     serviceInstalled = service::installed();
+                    tunEnabled = store::coreStore().setting("core.tun_enabled",
+                                                            "false") == "true";
                     // 端口输入框未编辑过就用当前值初始化。
                     if (portValue.Get().text.empty() && s.mixedPort > 0) {
                         portValue = huxerui::TextEditingValue{
@@ -490,7 +497,7 @@ const std::string kAboutText =
                 // Scope 子组合曾错误丢弃 Android 专属卡，导致系统 VPN 无从
                 // 开启、所有透明代理流量和统计都保持为 0。使用编译期平台分支
                 // 直接声明卡片，桌面构建仍生成空 View。
-                [coreAction]() -> huxerui::View {
+                [coreAction, tunEnabled]() -> huxerui::View {
                     if constexpr (CompileTimePlatform() != PlatformKind::Android) {
                         return {};
                     }
@@ -499,10 +506,10 @@ const std::string kAboutText =
                         SettingRow(
                             "VPN 代理",
                             "建立系统 VPN 隧道接管全部手机流量（首次需系统授权）",
-                            huxerui::Switch(
-                                store::coreStore().setting("core.tun_enabled",
-                                                           "false") == "true")
-                                .OnChanged([coreAction](bool on) {
+                            huxerui::Switch(tunEnabled.Get())
+                                .OnChanged([coreAction, tunEnabled](bool on) {
+                                    // 先写受控状态，避免必须切走页面再回来才看到开关变化。
+                                    tunEnabled = on;
                                     coreAction(
                                         [on] {
                                             store::coreStore().setSetting(

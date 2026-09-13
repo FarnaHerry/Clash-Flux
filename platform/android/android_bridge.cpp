@@ -143,6 +143,16 @@ Java_dev_farna_clashflux_MainActivity_nativeSetSystemDark(JNIEnv*, jclass,
     g_system_dark.store(dark == JNI_TRUE);
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_dev_farna_clashflux_MainActivity_nativeVpnStartCancelled(JNIEnv*, jclass) {
+    // VpnService.prepare 的授权框被取消时，不能留下一个看似已启用的偏好。
+    try {
+        store::coreStore().setSetting("core.tun_enabled", "false");
+    } catch (...) {
+        log_android("Failed to roll back VPN setting after declined consent", true);
+    }
+}
+
 // cfg::systemPrefersDark() 的 Android 后端（见 src/config.cppm）。
 extern "C" bool clashflux_android_system_dark() noexcept {
     return g_system_dark.load();
