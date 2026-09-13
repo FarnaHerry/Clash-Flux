@@ -1,0 +1,38 @@
+package dev.farna.clashflux;
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+
+/**
+ * Restores the VPN tunnel after boot or an app update. ClashVpnService
+ * records whether the tunnel was up in a shared preference; on shutdown the
+ * process may die without callbacks, which is exactly the case we want to
+ * restore, so a stale "true" is the desired outcome.
+ */
+public final class BootReceiver extends BroadcastReceiver {
+    private static final String PREFS = "clashflux";
+    private static final String KEY_VPN_ACTIVE = "vpn_active";
+
+    static void setVpnActive(Context context, boolean active) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_VPN_ACTIVE, active)
+                .apply();
+    }
+
+    @Override
+    public void onReceive(Context context, Intent intent) {
+        final String action = intent.getAction();
+        if (!Intent.ACTION_BOOT_COMPLETED.equals(action)
+                && !Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) {
+            return;
+        }
+        final boolean wasActive = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(KEY_VPN_ACTIVE, false);
+        if (!wasActive) {
+            return;
+        }
+        context.startForegroundService(new Intent(context, ClashVpnService.class));
+    }
+}

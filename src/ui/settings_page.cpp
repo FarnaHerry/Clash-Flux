@@ -512,6 +512,14 @@ const std::string kAboutText =
                                         on ? "正在请求建立 VPN 隧道"
                                            : "VPN 隧道已关闭");
                                 })),
+                        SettingRow(
+                            "后台保活",
+                            "申请忽略电池优化，防止后台被杀；建议同时在系统设"
+                            "置中允许本应用自启动（MIUI 等系统需要手动放行），"
+                            "并在系统 VPN 设置里开启「始终开启」以便重启后自动"
+                            "恢复隧道",
+                            huxerui::Button("忽略电池优化").OnClick(
+                                [] { AndroidRequestIgnoreBattery(); })),
                     }
                         .With(huxerui::Spacing(10.0F),
                               huxerui::CrossAlign(

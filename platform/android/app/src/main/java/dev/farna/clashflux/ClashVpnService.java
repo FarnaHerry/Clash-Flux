@@ -40,6 +40,9 @@ public final class ClashVpnService extends VpnService {
     @Override
     public void onCreate() {
         super.onCreate();
+        // Boot/update restore path: no Activity ran in this process yet, so
+        // the native store bootstrap (data directories) happens here first.
+        MainActivity.bootstrapNative(this);
         startForegroundWithNotification();
     }
 
@@ -47,6 +50,7 @@ public final class ClashVpnService extends VpnService {
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (!established) {
             established = true;
+            BootReceiver.setVpnActive(this, true);
             establishVpn();
         }
         return START_STICKY;
@@ -57,6 +61,7 @@ public final class ClashVpnService extends VpnService {
         // System revoked the VPN (user toggled it off, another VPN took over,
         // or the profile was removed). Tear the core's TUN down on our side.
         established = false;
+        BootReceiver.setVpnActive(this, false);
         nativeTunRevoked();
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
@@ -66,6 +71,7 @@ public final class ClashVpnService extends VpnService {
     public void onDestroy() {
         if (established) {
             established = false;
+            BootReceiver.setVpnActive(this, false);
             nativeTunRevoked();
         }
         super.onDestroy();

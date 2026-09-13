@@ -228,6 +228,20 @@ extern "C" void clashflux_android_stop_vpn() noexcept {
     if (attached) g_vm->DetachCurrentThread();
 }
 
+// 已豁免时 Java 侧直接 return（不弹窗）。
+extern "C" void clashflux_android_request_ignore_battery() noexcept {
+    std::lock_guard lock(g_mutex);
+    bool attached = false;
+    JNIEnv* environment = current_environment(attached);
+    if (environment == nullptr || g_activity_class == nullptr) return;
+    if (jmethodID method = environment->GetStaticMethodID(
+            g_activity_class, "requestIgnoreBatteryOptimizations", "()V")) {
+        environment->CallStaticVoidMethod(g_activity_class, method);
+        if (environment->ExceptionCheck()) environment->ExceptionClear();
+    }
+    if (attached) g_vm->DetachCurrentThread();
+}
+
 extern "C" void clashflux_android_open_url(const char* url) noexcept {
     if (url == nullptr || *url == '\0') return;
 
