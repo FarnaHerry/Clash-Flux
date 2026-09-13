@@ -39,17 +39,6 @@ public final class MainActivity extends HuxerUIActivity {
         Log.i(TAG, "MainActivity.onCreate entered");
         current = this;
         applicationContext = getApplicationContext();
-        // The data plane is loaded in-process as libclash.so.  There is no
-        // executable extraction/fork path: that path cannot receive
-        // VpnService.protect(fd) callbacks and is the source of VPN blackholes.
-        try {
-            io.github.oviron.libmihomo.Clash.INSTANCE.load(
-                    getApplicationInfo().nativeLibraryDir);
-            io.github.oviron.libmihomo.Clash.INSTANCE.assertReady();
-            Log.i(TAG, "Embedded mihomo bridge loaded");
-        } catch (RuntimeException error) {
-            Log.e(TAG, "Unable to load embedded mihomo", error);
-        }
         Log.i(TAG, "Calling HuxerUIActivity.onCreate");
         super.onCreate(savedInstanceState);
         Log.i(TAG, "HuxerUIActivity.onCreate returned");
@@ -70,7 +59,7 @@ public final class MainActivity extends HuxerUIActivity {
         } catch (RuntimeException error) {
             Log.e(TAG, "Unable to start the core notification service", error);
         }
-        Log.i(TAG, "Native mihomo startup requested");
+        Log.i(TAG, "Android shell initialized; sing-box starts with VPN service");
     }
 
     private static boolean isSystemDarkMode() {
@@ -113,18 +102,6 @@ public final class MainActivity extends HuxerUIActivity {
         applicationContext = context.getApplicationContext();
         nativeInit(context.getFilesDir().getAbsolutePath(),
                 context.getApplicationInfo().nativeLibraryDir);
-    }
-
-    /** Called by the C++ CoreProcess Android backend on its worker thread. */
-    public static boolean startEmbeddedCore(String homeDirectory) {
-        Context context = applicationContext;
-        if (context == null) return false;
-        return MihomoRuntime.start(context, homeDirectory);
-    }
-
-    /** Called by the C++ CoreProcess Android backend during orderly shutdown. */
-    public static void stopEmbeddedCore() {
-        MihomoRuntime.stop();
     }
 
     public static void startVpn() {

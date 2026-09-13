@@ -30,6 +30,7 @@ namespace store {
 #if defined(__ANDROID__)
 // android_bridge: 0=stopped, 1=establishing, 2=attached, 3=failed.
 extern "C" int clashflux_android_vpn_state() noexcept;
+extern "C" void clashflux_android_stop_vpn() noexcept;
 #endif
 
 export struct CoreSnapshot {
@@ -43,6 +44,13 @@ export struct CoreSnapshot {
     bool allowLan = false;
     std::string logLevel = "info";
     bool tunEnabled = false;
+    // Android sing-box libbox status stream.  Desktop continues to use the
+    // mihomo WebSocket streams below.
+    std::int64_t uploadRate = 0;
+    std::int64_t downloadRate = 0;
+    std::int64_t uploadTotal = 0;
+    std::int64_t downloadTotal = 0;
+    int connectionCount = 0;
 
     bool operator==(const CoreSnapshot&) const = default;  // State 变更检测
 };
@@ -72,6 +80,36 @@ public:
         ensureOpen();
     }
 
+    void setAndroidRuntimeStats(std::int64_t uploadRate, std::int64_t downloadRate,
+                                std::int64_t uploadTotal, std::int64_t downloadTotal,
+                                int connectionCount) {
+#if defined(__ANDROID__)
+        std::lock_guard lock(mutex_);
+        snap_.uploadRate = uploadRate;
+        snap_.downloadRate = downloadRate;
+        snap_.uploadTotal = uploadTotal;
+        snap_.downloadTotal = downloadTotal;
+        snap_.connectionCount = connectionCount;
+#else
+        static_cast<void>(uploadRate); static_cast<void>(downloadRate);
+        static_cast<void>(uploadTotal); static_cast<void>(downloadTotal);
+        static_cast<void>(connectionCount);
+#endif
+    }
+
+    void startAndroidApiStreams() {
+#if defined(__ANDROID__)
+        ensureOpen();
+        streams_.start(cfg::controllerWsUrl(), secret_, logLevel());
+#endif
+    }
+
+    void stopAndroidApiStreams() {
+#if defined(__ANDROID__)
+        streams_.stop();
+#endif
+    }
+
     db::Db& db() {
         ensureOpen();
         return *db_;
@@ -93,6 +131,22 @@ public:
     CoreSnapshot snapshot() {
         std::lock_guard lock(mutex_);
         CoreSnapshot s = snap_;
+#if defined(__ANDROID__)
+        // libbox is hosted by ClashVpnService and intentionally has no
+        // mihomo external-controller.  Report the service's authoritative
+        // state so the UI never claims that a dead data plane is running.
+        switch (clashflux_android_vpn_state()) {
+            case 1: s.state = core::CoreState::Starting; break;
+            case 2: s.state = core::CoreState::Running; break;
+            case 3: s.state = core::CoreState::Failed; break;
+            default:
+                if (s.state != core::CoreState::Failed) s.state = core::CoreState::Stopped;
+                break;
+        }
+        s.version = s.state == core::CoreState::Running ? "sing-box libbox" : "";
+        s.tunEnabled = clashflux_android_vpn_state() == 1 ||
+                       clashflux_android_vpn_state() == 2;
+#endif
         s.binaryPath = binaryPath_;
         return s;
     }
@@ -269,10 +323,20 @@ public:
         //      重复 spawn 撞 9097 与混合端口
         //   3. 直接 spawn（默认）
 #if defined(__ANDROID__)
-        if (!process_.start({}, workDir, configFile)) {
-            fail(process_.lastError());
-            return;
+        // Config generation is the only native responsibility on Android.
+        // ClashVpnService reads this file and starts libbox after Android has
+        // granted VPN consent.  Do not poll the old mihomo REST controller.
+        {
+            std::lock_guard lock(mutex_);
+            binaryPath_ = "sing-box libbox";
+            snap_.mode = mode();
+            snap_.mixedPort = mixedPort();
+            snap_.allowLan = false;
+            snap_.logLevel = logLevel();
+            snap_.tunEnabled = false;
+            snap_.state = core::CoreState::Stopped;
         }
+        return;
 #else
         if (service::available()) {
             std::string err;
@@ -359,6 +423,14 @@ public:
     }
 
     void stopCore() {
+#if defined(__ANDROID__)
+        clashflux_android_stop_vpn();
+        std::lock_guard lock(mutex_);
+        snap_.state = core::CoreState::Stopped;
+        snap_.version.clear();
+        snap_.tunEnabled = false;
+        return;
+#else
         // 先摘系统代理：内核停掉后系统仍指向旧端口会断网。
         if (systemProxyEnabled()) {
             std::string err;
@@ -400,11 +472,17 @@ public:
         std::lock_guard lock(mutex_);
         snap_.state = core::CoreState::Stopped;
         snap_.version.clear();
+#endif
     }
 
     // 拉 /configs 刷新运行配置快照（阻塞：UI 必须 RunOnTaskThread）。
     void refreshRuntime() {
         ensureOpen();
+#if defined(__ANDROID__)
+        // libbox has no Clash-compatible /configs endpoint.  Its VPN state
+        // is reflected by snapshot(); configuration is persisted locally.
+        return;
+#else
         const auto r = api_->configs();
         if (!r.ok) return;
         const auto j = nlohmann::json::parse(r.body, nullptr, false);
@@ -414,19 +492,11 @@ public:
         snap_.mixedPort = j.value("mixed-port", snap_.mixedPort);
         snap_.allowLan = j.value("allow-lan", snap_.allowLan);
         snap_.logLevel = j.value("log-level", snap_.logLevel);
-#if defined(__ANDROID__)
-        // The Android TUN is attached by Clash.startTUN, outside /configs.
-        // State comes from the owning VpnService rather than a stale config
-        // field left over from the old file-descriptor implementation.
-        if (snap_.state == core::CoreState::Running && tunEnabled() &&
-            clashflux_android_vpn_state() != 2) {
-            snap_.lastError = "VPN 已请求但 TUN 尚未附着；请查看 Android VPN 状态";
-        }
-#endif
 #if !defined(__ANDROID__)
         if (j.contains("tun") && j["tun"].is_object()) {
             snap_.tunEnabled = j["tun"].value("enable", false);
         }
+#endif
 #endif
     }
 
@@ -444,6 +514,19 @@ public:
 
     // 崩溃检测：UI 泵每拍调用；Running 但内核已不在 → Failed。
     void checkAlive() {
+#if defined(__ANDROID__)
+        std::lock_guard lock(mutex_);
+        if (clashflux_android_vpn_state() == 3) {
+            snap_.state = core::CoreState::Failed;
+        } else if (clashflux_android_vpn_state() == 2) {
+            snap_.state = core::CoreState::Running;
+        } else if (clashflux_android_vpn_state() == 1) {
+            snap_.state = core::CoreState::Starting;
+        } else if (snap_.state != core::CoreState::Failed) {
+            snap_.state = core::CoreState::Stopped;
+        }
+        return;
+#else
         std::lock_guard lock(mutex_);
         if (snap_.state == core::CoreState::Running && !coreAlive()) {
             snap_.state = core::CoreState::Failed;
@@ -458,6 +541,7 @@ public:
                 }
             }
         }
+#endif
     }
 
 private:

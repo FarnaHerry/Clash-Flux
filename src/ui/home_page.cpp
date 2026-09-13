@@ -41,6 +41,43 @@ struct HomeState {
     bool operator==(const HomeState&) const = default;
 };
 
+// Kept outside the composable body: HuxerUI's code generator deliberately
+// rejects conditional compilation within a composable function.
+void updateRuntime(HomeState& s, store::CoreStore& core) {
+    s.core = core.snapshot();
+#if defined(__ANDROID__)
+    // Android libbox emits its own status stream instead of mihomo's
+    // /traffic and /connections WebSockets.
+    stream::TrafficPoint point{s.core.uploadRate, s.core.downloadRate, 0};
+    s.latest = point;
+    s.totalUp = s.core.uploadTotal;
+    s.totalDown = s.core.downloadTotal;
+    if (s.core.state == core::CoreState::Running) {
+        s.history.push_back(point);
+        if (s.history.size() > kHistoryPoints) s.history.erase(s.history.begin());
+    }
+#else
+    stream::TrafficPoint point;
+    if (core.streams().takeTraffic(point)) {
+        s.latest = point;
+        s.history.push_back(point);
+        if (s.history.size() > kHistoryPoints) s.history.erase(s.history.begin());
+    }
+    if (s.core.state != core::CoreState::Running && !s.history.empty()) {
+        s.history.clear();
+        s.latest = {};
+    }
+    std::string frame;
+    if (core.streams().takeConnections(frame)) {
+        const auto j = nlohmann::json::parse(frame, nullptr, false);
+        if (j.is_object()) {
+            s.totalUp = j.value("uploadTotal", std::int64_t{0});
+            s.totalDown = j.value("downloadTotal", std::int64_t{0});
+        }
+    }
+#endif
+}
+
 // 统计卡：上标签下数值。
 [[huxerui::composable]] huxerui::View StatCard(const std::string& label,
                                                const std::string& value,
@@ -137,32 +174,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                 co_await PollWhile(std::chrono::duration<double>{0.5}, [state] {
                     auto& core = store::coreStore();
                     HomeState s = state.Get();
-                    s.core = core.snapshot();
-
-                    stream::TrafficPoint point;
-                    if (core.streams().takeTraffic(point)) {
-                        s.latest = point;
-                        s.history.push_back(point);
-                        if (s.history.size() > kHistoryPoints) {
-                            s.history.erase(s.history.begin());
-                        }
-                    }
-                    if (s.core.state != core::CoreState::Running &&
-                        !s.history.empty()) {
-                        s.history.clear();
-                        s.latest = {};
-                    }
-
-                    std::string frame;
-                    if (core.streams().takeConnections(frame)) {
-                        const auto j = nlohmann::json::parse(frame, nullptr,
-                                                             false);
-                        if (j.is_object()) {
-                            s.totalUp = j.value("uploadTotal", std::int64_t{0});
-                            s.totalDown = j.value("downloadTotal",
-                                                  std::int64_t{0});
-                        }
-                    }
+                    updateRuntime(s, core);
 
                     if (const auto p = store::profilesStore().selected()) {
                         s.profileName = p->name;

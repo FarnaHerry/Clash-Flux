@@ -1,8 +1,7 @@
 // android_bridge.cpp — Java/NDK glue kept in the Clash-Flux app library.
 //
 // HuxerUI owns the rendering Activity and application directories. Clash-Flux
-// keeps a small URL bridge and starts the bundled mihomo process after the
-// Android shell has extracted it.
+// keeps a small URL bridge and receives state from the sing-box VPN service.
 #include <jni.h>
 
 #include <unistd.h>
@@ -152,44 +151,7 @@ extern "C" bool clashflux_android_system_dark() noexcept {
     return g_system_dark.load();
 }
 
-// ---- Embedded core / VPN state --------------------------------------------
-
-extern "C" bool clashflux_android_start_embedded_mihomo(const char* home) noexcept {
-    if (home == nullptr) return false;
-    std::lock_guard lock(g_mutex);
-    bool attached = false;
-    JNIEnv* environment = current_environment(attached);
-    if (environment == nullptr || g_activity_class == nullptr) return false;
-    bool ok = false;
-    if (jmethodID method = environment->GetStaticMethodID(
-            g_activity_class, "startEmbeddedCore", "(Ljava/lang/String;)Z")) {
-        jstring path = environment->NewStringUTF(home);
-        if (path != nullptr) {
-            ok = environment->CallStaticBooleanMethod(g_activity_class, method, path) == JNI_TRUE;
-            environment->DeleteLocalRef(path);
-        }
-    }
-    if (environment->ExceptionCheck()) {
-        environment->ExceptionClear();
-        ok = false;
-    }
-    if (attached) g_vm->DetachCurrentThread();
-    return ok;
-}
-
-extern "C" void clashflux_android_stop_embedded_mihomo() noexcept {
-    std::lock_guard lock(g_mutex);
-    bool attached = false;
-    JNIEnv* environment = current_environment(attached);
-    if (environment != nullptr && g_activity_class != nullptr) {
-        if (jmethodID method = environment->GetStaticMethodID(
-                g_activity_class, "stopEmbeddedCore", "()V")) {
-            environment->CallStaticVoidMethod(g_activity_class, method);
-            if (environment->ExceptionCheck()) environment->ExceptionClear();
-        }
-    }
-    if (attached) g_vm->DetachCurrentThread();
-}
+// ---- sing-box VPN state ----------------------------------------------------
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_ClashVpnService_nativeVpnState(JNIEnv* environment, jclass,
@@ -203,8 +165,31 @@ Java_dev_farna_clashflux_ClashVpnService_nativeVpnState(JNIEnv* environment, jcl
         }
     }
     log_android(("VPN state=" + std::to_string(state) + " " + text).c_str(), state == 3);
+    if (state == 2) {
+        try { store::coreStore().startAndroidApiStreams(); } catch (...) {}
+    }
     if (state == 0 || state == 3) {
-        try { store::coreStore().setSetting("core.tun_enabled", "false"); } catch (...) {}
+        try {
+            store::coreStore().stopAndroidApiStreams();
+            store::coreStore().setSetting("core.tun_enabled", "false");
+        } catch (...) {}
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_farna_clashflux_ClashVpnService_nativeVpnStats(JNIEnv*, jclass,
+                                                        jlong upload_rate,
+                                                        jlong download_rate,
+                                                        jlong upload_total,
+                                                        jlong download_total,
+                                                        jint connections) {
+    try {
+        store::coreStore().setAndroidRuntimeStats(
+            static_cast<std::int64_t>(upload_rate), static_cast<std::int64_t>(download_rate),
+            static_cast<std::int64_t>(upload_total), static_cast<std::int64_t>(download_total),
+            static_cast<int>(connections));
+    } catch (...) {
+        // A status callback can race the first native-store initialization.
     }
 }
 

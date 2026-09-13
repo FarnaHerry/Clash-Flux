@@ -3,7 +3,6 @@ import com.android.build.api.variant.BuildConfigField
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import javax.inject.Inject
-import java.security.MessageDigest
 
 plugins {
     alias(libs.plugins.android.application)
@@ -33,36 +32,20 @@ abstract class StageHuxerUIAssets extends DefaultTask {
     }
 }
 
-// The Android data plane is a C-shared mihomo library, not an executable
-// inherited by a child process.  Pin and verify the artifact in Gradle so
-// every APK contains exactly the same ABI bridge that the Java lifecycle uses.
-def mihomoAar = layout.buildDirectory.file("libs/libmihomo-android-v0.3.3.aar")
-def downloadMihomoAar = tasks.register("downloadMihomoAar") {
-    inputs.property("version", "v0.3.3")
-    outputs.file(mihomoAar)
+def singboxAar = layout.buildDirectory.file("libs/libbox-arm64.aar")
+def suppliedSingboxAar = providers.environmentVariable("CLASHFLUX_SINGBOX_AAR")
+def stageSingboxAar = tasks.register("stageSingboxAar") {
+    inputs.property("revision", "0b8995879f29a9b98ee027bc17b75e101445b238")
+    inputs.file(suppliedSingboxAar)
+    outputs.file(singboxAar)
     doLast {
-        def target = mihomoAar.get().asFile
+        def source = suppliedSingboxAar.orNull == null ? null : file(suppliedSingboxAar.get())
+        if (source == null || !source.isFile()) {
+            throw new GradleException("Missing arm64 sing-box libbox AAR; run platform/android/build-singbox-libbox.sh first.")
+        }
+        def target = singboxAar.get().asFile
         target.parentFile.mkdirs()
-        def connection = new URL("https://github.com/oviron/libmihomo-android/releases/download/v0.3.3/libmihomo-android-v0.3.3.aar").openConnection()
-        connection.connectTimeout = 30_000
-        connection.readTimeout = 120_000
-        connection.inputStream.withCloseable { input ->
-            target.withOutputStream { output -> output << input }
-        }
-        def digest = MessageDigest.getInstance("SHA-256")
-        target.withInputStream { input ->
-            def buffer = new byte[64 * 1024]
-            int count
-            while ((count = input.read(buffer)) >= 0) {
-                if (count > 0) digest.update(buffer, 0, count)
-            }
-        }
-        def actual = digest.digest().collect { String.format("%02x", it & 0xff) }.join()
-        def expected = "3bccc9020926b0b7bf1fd09553b41e4678c80cedc5cbe61d90a78fe4b71aca76"
-        if (actual != expected) {
-            target.delete()
-            throw new GradleException("libmihomo Android AAR SHA-256 mismatch: ${actual}")
-        }
+        copy { from source; into target.parentFile; rename { target.name } }
     }
 }
 
@@ -77,7 +60,7 @@ def huxeruiNdkVersion = huxeruiProperty("huxeruiNdkVersion")
 // fixed also prevents transitive JNI binaries for emulator ABIs from being
 // included accidentally.
 def clashfluxTargetAbis = ["arm64-v8a"]
-def mihomoAarAbis = ["arm64-v8a", "armeabi-v7a", "x86_64"]
+def singboxAarAbis = ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"]
 def huxeruiStl = huxeruiProperty("huxeruiStl")
 def releaseKeystoreFile = providers.gradleProperty("clashfluxReleaseKeystoreFile").orNull
 def releaseKeystorePassword = providers.gradleProperty("clashfluxReleaseKeystorePassword").orNull
@@ -114,8 +97,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 33
-        versionName = "0.1.33"
+        versionCode = 34
+        versionName = "0.1.34"
 
         externalNativeBuild {
             cmake {
@@ -163,14 +146,12 @@ android {
     }
 
     // Do not package a library for an ABI that this variant does not support.
-    // This keeps release APKs arm64-only even though the C-shared AAR also
-    // provides emulator and legacy ARM binaries.
+    // libbox must remain arm64-only even if an upstream build grows extra slices.
     packaging {
         jniLibs {
-            // Clash.load verifies and loads the two C-shared files by their
-            // nativeLibraryDir paths, so they must be extracted from the APK.
+            // gomobile JNI needs an extracted nativeLibraryDir entry.
             useLegacyPackaging = true
-            excludes += mihomoAarAbis.findAll { !clashfluxTargetAbis.contains(it) }
+            excludes += singboxAarAbis.findAll { !clashfluxTargetAbis.contains(it) }
                     .collect { "**/${it}/**" }
         }
     }
@@ -240,10 +221,8 @@ androidComponents.onVariants(androidComponents.selector().all()) { variant ->
 }
 
 dependencies {
-    implementation(files(mihomoAar).builtBy(downloadMihomoAar))
-    // The pinned AAR is a file dependency, so Gradle cannot resolve its
-    // Kotlin metadata transitively. Keep this aligned with the facade build.
-    implementation "org.jetbrains.kotlin:kotlin-stdlib:2.2.10"
+    implementation(files(singboxAar).builtBy(stageSingboxAar))
+    implementation "org.snakeyaml:snakeyaml-engine:2.9"
     if (rootProject.gradle.ext.huxeruiUsesSource) {
         implementation project(":HuxerUI")
     } else {

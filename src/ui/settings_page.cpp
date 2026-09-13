@@ -35,7 +35,7 @@ const std::vector<huxerui::StringVariant> kThemeNames{"跟随系统", "深色", 
 // 版本号编译期常量由顶层 CMake 注入（hcg 不支持 composable 内条件编译，
 // 字符串在文件作用域先拼好）。
 const std::string kAboutText =
-    std::format("Clash-Flux v{} · mihomo 客户端", CLASHFLUX_VERSION);
+    std::format("Clash-Flux v{} · 桌面 mihomo / Android sing-box", CLASHFLUX_VERSION);
 
 [[huxerui::composable]] huxerui::View SettingRow(const std::string& label,
                                                  const std::string& hint,
@@ -505,7 +505,7 @@ const std::string kAboutText =
                     }
                     const int state = vpnState.Get();
                     const std::string status = state == 2
-                        ? "已附着：内嵌 mihomo 正通过 protect(fd) 使用物理网络"
+                        ? "已附着：sing-box 正通过 protect(fd) 使用物理网络"
                         : state == 1 ? "正在建立系统 VPN 与 TUN 数据面"
                         : state == 3 ? "启动失败：请查看日志页中的 Android VPN 错误"
                                      : "未连接；开启后将请求系统 VPN 授权";
