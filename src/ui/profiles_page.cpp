@@ -2044,7 +2044,9 @@ huxerui::Task<int> ProfilesRefreshDueOnce(
                              huxerui::CrossAxisAlignment::Center))}
             : std::move(profileGrid));
 
-    huxerui::View mobileEditPage =
+    // IndexedPages 要求每一页都是挂载节点；即使还没有选中订阅，也用 Scope
+    // 保留 Android 编辑页的节点，而不是直接传入空 View。
+    huxerui::View mobileEditPage = huxerui::Scope(
         [editPageId, tasks, toast, editName, editUrl, editType, editDesc,
          editTimeout, editInterval, editAuto, editSys, editCore, editCert,
          editPptpServer, editPptpUsername, editPptpPassword, editPptpTimeout,
@@ -2060,7 +2062,7 @@ huxerui::Task<int> ProfilesRefreshDueOnce(
                 editPptpTimeout, editPptpRoutes, editPptpMppe, editOpenVpnConfig,
                 editOpenVpnRoutes, tasks, toast,
                 [editPageId] { editPageId = 0; });
-        }();
+        });
 
     return huxerui::IndexedPages(
                std::vector<huxerui::View>{std::move(profileListPage),

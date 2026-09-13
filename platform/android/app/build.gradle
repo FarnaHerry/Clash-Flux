@@ -162,8 +162,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 26
-        versionName = "0.1.26"
+        versionCode = 27
+        versionName = "0.1.27"
 
         externalNativeBuild {
             cmake {
