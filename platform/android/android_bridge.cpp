@@ -165,6 +165,7 @@ Java_dev_farna_clashflux_ClashVpnService_nativeVpnState(JNIEnv* environment, jcl
         }
     }
     log_android(("VPN state=" + std::to_string(state) + " " + text).c_str(), state == 3);
+    try { store::coreStore().setAndroidRuntimeState(state, text); } catch (...) {}
     if (state == 2) {
         try { store::coreStore().startAndroidApiStreams(); } catch (...) {}
     }

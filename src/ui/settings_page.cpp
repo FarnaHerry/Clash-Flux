@@ -36,6 +36,11 @@ const std::vector<huxerui::StringVariant> kThemeNames{"跟随系统", "深色", 
 // 字符串在文件作用域先拼好）。
 const std::string kAboutText =
     std::format("Clash-Flux v{} · 桌面 mihomo / Android sing-box", CLASHFLUX_VERSION);
+#if defined(__ANDROID__)
+const std::string kDefaultCoreName = "sing-box libbox";
+#else
+const std::string kDefaultCoreName = "mihomo";
+#endif
 
 [[huxerui::composable]] huxerui::View SettingRow(const std::string& label,
                                                  const std::string& hint,
@@ -194,12 +199,11 @@ const std::string kAboutText =
     };
 
     // ---- 内核控制 ----
-    const std::string stateText =
-        s.binaryPath.empty()
-            ? "未找到 mihomo 内核 —— 请将二进制放入 engines/ 或 PATH"
-            : std::format("{} · {}{}", core::stateName(s.state),
-                          s.version.empty() ? "mihomo" : s.version,
-                          s.lastError.empty() ? "" : " · " + s.lastError);
+    const std::string stateText = s.binaryPath.empty()
+        ? "未找到内核运行时"
+        : std::format("{} · {}{}", core::stateName(s.state),
+                      s.version.empty() ? kDefaultCoreName : s.version,
+                      s.lastError.empty() ? "" : " · " + s.lastError);
 
     // ---- 出站模式 ----
     std::size_t modeIndex = 0;
@@ -218,48 +222,56 @@ const std::string kAboutText =
         huxerui::Row{},
         huxerui::ScrollView(
             huxerui::Column {
-                Card(huxerui::Column {
-                    SectionTitle("内核"),
-                    huxerui::Text(stateText)
-                        .Style(huxerui::TextStyle{
-                            huxerui::Font::System(font_size::kBody),
-                            s.state == core::CoreState::Failed
-                                ? theme.colors.error
-                                : theme.colors.on_surface}),
-                    huxerui::Row {
-                        running
-                            ? huxerui::View{huxerui::Button("停止").OnClick(
-                                  [coreAction] {
-                                      coreAction(
-                                          [] { store::coreStore().stopCore(); },
-                                          "内核已停止");
-                                  })}
-                            : huxerui::View{huxerui::Button("启动").OnClick(
-                                  [coreAction] {
-                                      coreAction(
-                                          [] {
-                                              auto& core = store::coreStore();
-                                              core.startCore(
-                                                  store::profilesStore()
-                                                      .selectedYaml());
-                                          },
-                                          "");
-                                  })},
-                        huxerui::Button("重启")
-                            .OnClick([coreAction] {
-                                coreAction(
-                                    [] {
-                                        auto& core = store::coreStore();
-                                        core.stopCore();
-                                        core.startCore(
-                                            store::profilesStore().selectedYaml());
-                                    },
-                                    "内核已重启");
-                            })
-                            .With(huxerui::Enabled(running)),
-                    }.With(huxerui::Spacing(8.0F)),
-                }.With(huxerui::Spacing(8.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
+                // Android's data plane is the VpnService below.  The desktop
+                // core buttons only generate YAML on Android and therefore
+                // looked successful while never starting sing-box.
+                [stateText, s, running, coreAction, theme]() -> huxerui::View {
+                    if constexpr (CompileTimePlatform() == PlatformKind::Android) {
+                        return {};
+                    }
+                    return Card(huxerui::Column {
+                        SectionTitle("内核"),
+                        huxerui::Text(stateText)
+                            .Style(huxerui::TextStyle{
+                                huxerui::Font::System(font_size::kBody),
+                                s.state == core::CoreState::Failed
+                                    ? theme.colors.error
+                                    : theme.colors.on_surface}),
+                        huxerui::Row {
+                            running
+                                ? huxerui::View{huxerui::Button("停止").OnClick(
+                                      [coreAction] {
+                                          coreAction(
+                                              [] { store::coreStore().stopCore(); },
+                                              "内核已停止");
+                                      })}
+                                : huxerui::View{huxerui::Button("启动").OnClick(
+                                      [coreAction] {
+                                          coreAction(
+                                              [] {
+                                                  auto& core = store::coreStore();
+                                                  core.startCore(
+                                                      store::profilesStore()
+                                                          .selectedYaml());
+                                              },
+                                              "");
+                                      })},
+                            huxerui::Button("重启")
+                                .OnClick([coreAction] {
+                                    coreAction(
+                                        [] {
+                                            auto& core = store::coreStore();
+                                            core.stopCore();
+                                            core.startCore(
+                                                store::profilesStore().selectedYaml());
+                                        },
+                                        "内核已重启");
+                                })
+                                .With(huxerui::Enabled(running)),
+                        }.With(huxerui::Spacing(8.0F)),
+                    }.With(huxerui::Spacing(8.0F),
+                           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+                }(),
 
                 Card(huxerui::Column {
                     SectionTitle("代理"),

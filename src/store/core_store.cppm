@@ -97,6 +97,20 @@ public:
 #endif
     }
 
+    void setAndroidRuntimeState(int state, const std::string& message) {
+#if defined(__ANDROID__)
+        std::lock_guard lock(mutex_);
+        switch (state) {
+            case 1: snap_.state = core::CoreState::Starting; break;
+            case 2: snap_.state = core::CoreState::Running; snap_.lastError.clear(); break;
+            case 3: snap_.state = core::CoreState::Failed; snap_.lastError = message; break;
+            default: snap_.state = core::CoreState::Stopped; break;
+        }
+#else
+        static_cast<void>(state); static_cast<void>(message);
+#endif
+    }
+
     void startAndroidApiStreams() {
 #if defined(__ANDROID__)
         ensureOpen();

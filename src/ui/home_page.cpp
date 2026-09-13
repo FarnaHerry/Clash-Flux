@@ -28,6 +28,11 @@ constexpr std::size_t kHistoryPoints = 60;  // 60 拍 ≈ 30s 窗口
 
 const std::vector<huxerui::StringVariant> kModeNames{"规则", "全局", "直连"};
 const std::vector<std::string> kModes{"rule", "global", "direct"};
+#if defined(__ANDROID__)
+constexpr std::string_view kDefaultCoreName = "sing-box libbox";
+#else
+constexpr std::string_view kDefaultCoreName = "mihomo";
+#endif
 
 struct HomeState {
     stream::TrafficPoint latest;
@@ -447,7 +452,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                     huxerui::Text(
                         running
                             ? "运行中 · " +
-                                  (s.core.version.empty() ? "mihomo"
+                                  (s.core.version.empty() ? std::string{kDefaultCoreName}
                                                           : s.core.version)
                             : core::stateName(s.core.state))
                         .Style(huxerui::TextStyle{
