@@ -168,6 +168,12 @@ void restartCoreForVpn(bool tunUp) {
                 core.setSetting("core.tun_enabled", "false");
             }
             core.startCore(store::profilesStore().selectedYaml());
+            const auto snapshot = core.snapshot();
+            log_android(("VPN core restart state=" +
+                         std::to_string(static_cast<int>(snapshot.state)) +
+                         " error=" + snapshot.lastError)
+                            .c_str(),
+                        snapshot.state == core::CoreState::Failed);
         } catch (const std::exception& error) {
             log_android(("VPN core restart failed: " + std::string{error.what()})
                             .c_str(),

@@ -27,6 +27,11 @@ import clashflux.service;
 
 namespace store {
 
+#if defined(__ANDROID__)
+// android_bridge：VpnService TUN fd（-1 = 无 VPN）。
+extern "C" int clashflux_android_vpn_tun_fd() noexcept;
+#endif
+
 export struct CoreSnapshot {
     core::CoreState state = core::CoreState::Stopped;
     std::string binaryPath;      // 解析到的内核路径（空 = 未安装）
@@ -395,6 +400,21 @@ public:
         snap_.mixedPort = j.value("mixed-port", snap_.mixedPort);
         snap_.allowLan = j.value("allow-lan", snap_.allowLan);
         snap_.logLevel = j.value("log-level", snap_.logLevel);
+#if defined(__ANDROID__)
+        // VPN 隧道打开时校验 TUN 是否真的附着：mihomo 的 TUN 监听器启动失败
+        // 只记日志不退出，内核会以「运行中」假象黑洞全部流量（连接页空、
+        // 流量 0）。/configs 的 tun.enable 是附着成功的权威信号。
+        if (snap_.state == core::CoreState::Running && tunEnabled() &&
+            clashflux_android_vpn_tun_fd() >= 0) {
+            const bool tunAttached =
+                j.contains("tun") && j["tun"].is_object() &&
+                j["tun"].value("enable", false);
+            if (!tunAttached) {
+                snap_.lastError =
+                    "TUN 未附着，VPN 流量未被内核接管（内核报错见日志页）";
+            }
+        }
+#endif
 #if !defined(__ANDROID__)
         if (j.contains("tun") && j["tun"].is_object()) {
             snap_.tunEnabled = j["tun"].value("enable", false);
