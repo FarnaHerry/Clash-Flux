@@ -299,7 +299,7 @@ jobs:
       - name: Smoke test
         run: ctest --test-dir build --output-on-failure
 
-      - name: Package HuxerUI Windows installer
+      - name: Stage Windows runtime and installer inputs
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -324,15 +324,11 @@ jobs:
           }
           $installerPlan = Get-Content $installerPlanPath -Raw | ConvertFrom-Json
 
-          # Keep the layout identical to `huxerui package windows`; the setup.exe
-          # is the release artifact and embeds the staged MSI plus installer UI.
+          # Stage once with the compiled application. WiX bundling runs in a
+          # separate job so the runtime ZIP is not held by installer packaging.
           $packageRoot = Join-Path $projectRoot '.huxerui/package/windows/release'
           $staging = Join-Path $packageRoot 'staging'
           $installerStaging = Join-Path $packageRoot 'installer'
-          $projectShell = Join-Path $projectRoot 'platform/windows'
-          $msi = Join-Path $packageRoot "$($plan.target).msi"
-          $payloads = Join-Path $packageRoot 'installer-payloads.wxs'
-          $bundle = Join-Path $packageRoot "$($plan.target)-Setup-$($plan.version).exe"
           New-Item -ItemType Directory -Force $packageRoot | Out-Null
           Invoke-Native $cmake @('-E', 'rm', '-rf', $staging)
           Invoke-Native $cmake @('-E', 'rm', '-rf', $installerStaging)
@@ -354,28 +350,6 @@ jobs:
             [string]$plan.installComponent, '--prefix', $staging)
           Invoke-Native $cmake @('--install', 'build', '--config', 'Release', '--component',
             [string]$installerPlan.installComponent, '--prefix', $installerStaging)
-
-          $wix = [string]$installerPlan.wix
-          Invoke-Native $wix @('build', [string]$plan.packageSource, '-arch', 'x64',
-            '-bindpath', "Application=$staging", '-bindpath', "Project=$projectShell", '-out', $msi)
-
-          $payloadScript = Join-Path $projectRoot 'third_party/huxerui/cmake/HuxerUIGenerateWixPayloads.cmake'
-          Invoke-Native $cmake @("-DHUXERUI_WIX_PAYLOAD_DIRECTORY=$installerStaging",
-            "-DHUXERUI_WIX_PAYLOAD_EXECUTABLE=$([string]$installerPlan.installer)",
-            "-DHUXERUI_WIX_PAYLOAD_OUTPUT=$payloads", '-P', $payloadScript)
-          if ((Get-Content $payloads -Raw) -notmatch 'mbanative\.dll') {
-            throw 'HuxerUI installer payload is missing mbanative.dll'
-          }
-
-          Invoke-Native $wix @('build', [string]$plan.bundleSource, $payloads, '-arch', 'x64',
-            '-bindpath', "Installer=$installerStaging", '-bindpath', "Package=$packageRoot",
-            '-bindpath', "Project=$projectShell", '-out', $bundle)
-          if (-not (Test-Path $bundle -PathType Leaf)) {
-            throw "HuxerUI setup.exe was not produced: $bundle"
-          }
-          New-Item -ItemType Directory -Force dist-src | Out-Null
-          Copy-Item $bundle (Join-Path 'dist-src' ([IO.Path]::GetFileName($bundle))) -Force
-          Get-Item $bundle
 
       - name: Stage executable
         shell: pwsh
@@ -406,6 +380,17 @@ jobs:
           path: dist-src
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload installer inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-input
+          path: |
+            .huxerui/package/windows/release
+            .huxerui/package/windows/dependencies
+            build/huxerui-package/windows/Release
+          if-no-files-found: error
+          retention-days: 2
 
   # ------------------------------------------------------------------ macOS
   # 发布门禁：macOS Release 必须完整通过。
@@ -701,13 +686,9 @@ jobs:
           for artifact in dist/build-*; do
             name="$(basename "$artifact")"
             if [ "$name" = "build-windows-x86_64" ]; then
-              setup_exe="$(find "$artifact" -maxdepth 1 -type f -name '*-Setup-*.exe' -print -quit)"
-              test -n "$setup_exe"
-              cp "$setup_exe" "release/clash-flux-${release_version}-windows-x86_64-setup.exe"
               (
                 cd "$artifact"
-                zip -qr "$GITHUB_WORKSPACE/release/clash-flux-${release_version}-windows-x86_64.zip" . \
-                  -x '*-Setup-*.exe'
+                zip -qr "$GITHUB_WORKSPACE/release/clash-flux-${release_version}-windows-x86_64.zip" .
               )
             elif [[ "$name" == build-linux-* ]]; then
               arch="${name#build-linux-}"
@@ -731,7 +712,6 @@ jobs:
               exit 1
             fi
           done
-          test -s "release/clash-flux-${release_version}-windows-x86_64-setup.exe"
           test -s "release/clash-flux-${release_version}-windows-x86_64.zip"
           test -s "release/clash-flux-${release_version}-android-arm64-v8a.apk"
           test -n "$(find release -type f -name '*.tar.gz' -print -quit)"
@@ -748,3 +728,57 @@ jobs:
             --title "Clash-Flux $GITHUB_REF_NAME" \
             --generate-notes \
             release/*
+
+  # WiX only consumes the already-staged Windows payload; it never recompiles
+  # the application.  Keeping it after publication makes the portable ZIP
+  # available as soon as the actual product build is green.
+  package-windows-installer:
+    name: package-windows-installer
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-windows, publish-release]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Fetch HuxerUI packaging script
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
+          git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
+
+      - name: Download staged installer inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer-input
+          path: installer-input
+
+      - name: Build installer and attach it to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Copy-Item 'installer-input/.huxerui' '.huxerui' -Recurse -Force
+          Copy-Item 'installer-input/build' 'build' -Recurse -Force
+          $projectRoot = (Get-Location).Path
+          $plan = Get-Content 'build/huxerui-package/windows/Release/package.json' -Raw | ConvertFrom-Json
+          $installerPlan = Get-Content ([string]$plan.installerPlan) -Raw | ConvertFrom-Json
+          $packageRoot = Join-Path $projectRoot '.huxerui/package/windows/release'
+          $staging = Join-Path $packageRoot 'staging'
+          $installerStaging = Join-Path $packageRoot 'installer'
+          $msi = Join-Path $packageRoot "$($plan.target).msi"
+          $payloads = Join-Path $packageRoot 'installer-payloads.wxs'
+          $bundle = Join-Path $packageRoot "$($plan.target)-Setup-$($plan.version).exe"
+          $wix = [string]$installerPlan.wix
+          & $wix build ([string]$plan.packageSource) '-arch' 'x64' '-bindpath' "Application=$staging" '-bindpath' "Project=$(Join-Path $projectRoot 'platform/windows')" '-out' $msi
+          if ($LASTEXITCODE -ne 0) { throw 'WiX MSI build failed' }
+          $cmake = (Get-Command cmake).Path
+          & $cmake "-DHUXERUI_WIX_PAYLOAD_DIRECTORY=$installerStaging" "-DHUXERUI_WIX_PAYLOAD_EXECUTABLE=$([string]$installerPlan.installer)" "-DHUXERUI_WIX_PAYLOAD_OUTPUT=$payloads" '-P' (Join-Path $projectRoot 'third_party/huxerui/cmake/HuxerUIGenerateWixPayloads.cmake')
+          if ($LASTEXITCODE -ne 0) { throw 'WiX payload generation failed' }
+          & $wix build ([string]$plan.bundleSource) $payloads '-arch' 'x64' '-bindpath' "Installer=$installerStaging" '-bindpath' "Package=$packageRoot" '-bindpath' "Project=$(Join-Path $projectRoot 'platform/windows')" '-out' $bundle
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $bundle -PathType Leaf)) { throw 'WiX setup build failed' }
+          gh release upload "$env:GITHUB_REF_NAME" $bundle --repo "$env:GITHUB_REPOSITORY" --clobber
