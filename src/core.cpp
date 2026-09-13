@@ -34,6 +34,8 @@ extern char** environ;
 #if defined(__ANDROID__)
 #include <android/log.h>
 extern "C" void clashflux_android_open_url(const char* url) noexcept;
+// android_bridge：VpnService establish() 交给本进程的 TUN fd（-1 = 无 VPN）。
+extern "C" int clashflux_android_vpn_tun_fd() noexcept;
 #endif
 
 module clashflux.core;
@@ -42,6 +44,11 @@ import std;
 import clashflux.service;
 
 namespace core {
+
+// Android VPN 模式：mihomo 子进程里固定的 TUN fd 编号（VpnService 的 fd 在
+// spawn 时 dup2 过来；必须与 ClashVpnService.MIHOMO_TUN_FD、generateConfig
+// 注入的 tun.file-descriptor 三方一致）。
+constexpr int kAndroidTunFd = 3;
 
 // ---- TUN 打开门禁（见 core.cppm 注释）----
 namespace {
@@ -139,8 +146,9 @@ namespace {
 // 订阅 YAML 里由应用托管的顶层键：文本级剔除（顶层键 = 行首无缩进的 key:）。
 // 逐行扫，仅剔行首无空白的 "key:" 行；命中后连同其缩进值块（profile: 这类
 // 多行块）一起跳过——否则孤立的缩进子行会让合并结果直接不是合法 YAML。
-// 键表必须与下方注入块严格一一对应：注入什么就剔什么。
-bool isManagedKeyLine(std::string_view line) {
+// 键表必须与下方注入块严格一一对应：注入什么就剔什么。stripDns 只在注入
+// tun 块（连带注入 dns 块）时为真——不注入时订阅自带的 dns 原样保留。
+bool isManagedKeyLine(std::string_view line, bool stripDns) {
     if (line.empty() || line.front() == ' ' || line.front() == '\t' ||
         line.front() == '#') {
         return false;
@@ -154,7 +162,7 @@ bool isManagedKeyLine(std::string_view line) {
     for (const auto key : kKeys) {
         if (line.starts_with(key)) return true;
     }
-    return false;
+    return stripDns && line.starts_with("dns:");
 }
 
 bool isIndentedContinuation(std::string_view line) {
@@ -171,6 +179,20 @@ std::string generateConfig(const std::string& profileYaml,
                            bool allowLan,
                            const std::string& logLevel,
                            bool tunEnabled) {
+    // TUN 注入形态：桌面 = 内核自建 TUN + 自路由（需 root/CAP_NET_ADMIN）；
+    // Android = 接管 VpnService 的 fd（路由/地址由 VPN Builder 掌管）。
+    // Android 上 fd 未就绪时跳过注入，内核先以普通代理形态跑，VPN 建立后
+    // 会重启内核补上。
+#if defined(__ANDROID__)
+    const bool injectTun = tunEnabled && clashflux_android_vpn_tun_fd() >= 0;
+#else
+    const bool injectTun = tunEnabled;
+#endif
+    // dns-hijack 依赖内核 DNS 模块运行；fake-ip 保证 TUN 侧域名规则可用。
+    // 注入 tun 的同时接管 dns（订阅自带 dns 块一并剔除）；未注入时订阅的
+    // dns 原样保留（桌面无 TUN 行为不变）。
+    const bool injectDns = injectTun;
+
     std::string out;
     // 注入块放头部。
     out += "# ---- Clash-Flux 托管块（手写改动会被覆盖）----\n";
@@ -186,9 +208,8 @@ std::string generateConfig(const std::string& profileYaml,
     out += "find-process-mode: 'off'\n";
     out += "global-client-fingerprint: chrome\n";
     out += "profile:\n  store-selected: true\n  store-fake-ip: true\n";
+    if (injectTun) {
 #if !defined(__ANDROID__)
-    if (tunEnabled) {
-        // TUN 透明代理（需 root/CAP_NET_ADMIN，权限不足时 mihomo 只报错不退出）。
         out += "tun:\n"
                "  enable: true\n"
                "  stack: mixed\n"
@@ -202,10 +223,38 @@ std::string generateConfig(const std::string& profileYaml,
                "    - ::/1\n"
                "    - 8000::/1\n"
                "  dns-hijack:\n    - any:53\n";
-    }
 #else
-    static_cast<void>(tunEnabled);
+        // file-descriptor 固定 3（spawn 时 dup2 继承，见 kAndroidTunFd）；
+        // gvisor 栈对继承 fd 最稳（CMFA 同款默认）。
+        out += "tun:\n"
+               "  enable: true\n"
+               "  stack: gvisor\n"
+               "  device: clash-flux\n"
+               "  file-descriptor: 3\n"
+               "  auto-route: false\n"
+               "  auto-detect-interface: false\n"
+               "  mtu: 9000\n"
+               "  inet4-address:\n    - 198.18.0.1/30\n"
+               "  dns-hijack:\n    - any:53\n";
 #endif
+    }
+    if (injectDns) {
+        out += "dns:\n"
+               "  enable: true\n"
+               "  listen: 127.0.0.1:1053\n"
+               "  ipv6: false\n"
+               "  enhanced-mode: fake-ip\n"
+               "  fake-ip-range: 198.18.0.1/16\n"
+               "  fake-ip-filter:\n"
+               "    - '*.lan'\n"
+               "    - '+.local'\n"
+               "  default-nameserver:\n"
+               "    - 223.5.5.5\n"
+               "    - 119.29.29.29\n"
+               "  nameserver:\n"
+               "    - 223.5.5.5\n"
+               "    - 119.29.29.29\n";
+    }
     out += "# ---- 订阅内容 ----\n";
 
     // 剔除订阅里的托管顶层键（连同其缩进值块）后原样拼接。
@@ -218,7 +267,7 @@ std::string generateConfig(const std::string& profileYaml,
             // 托管键的缩进值块：继续跳过（空行/注释行结束块）。
         } else {
             skippingBlock = false;
-            if (isManagedKeyLine(line)) {
+            if (isManagedKeyLine(line, injectDns)) {
                 skippingBlock = true;
             } else {
                 out += line;
@@ -465,6 +514,14 @@ struct CoreProcessImpl {
             ::dup2(pipefd[1], STDOUT_FILENO);
             ::dup2(pipefd[1], STDERR_FILENO);
             ::close(pipefd[1]);
+            // VPN TUN fd 继承：dup2 到固定编号（dup2 自带清除 CLOEXEC）；
+            // fd 恰好就是目标编号时只清 CLOEXEC。
+            if (const int tunFd = clashflux_android_vpn_tun_fd();
+                tunFd >= 0 && tunFd != kAndroidTunFd) {
+                ::dup2(tunFd, kAndroidTunFd);
+            } else if (tunFd == kAndroidTunFd) {
+                ::fcntl(kAndroidTunFd, F_SETFD, 0);
+            }
             ::execl(bin.c_str(), bin.c_str(), "-d", dir.c_str(), "-f", cfg.c_str(),
                     static_cast<char*>(nullptr));
             const int execError = errno;

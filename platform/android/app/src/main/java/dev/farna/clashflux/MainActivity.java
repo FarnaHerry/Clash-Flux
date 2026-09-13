@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.net.Uri;
+import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
@@ -15,6 +16,7 @@ import java.io.IOException;
 
 public final class MainActivity extends HuxerUIActivity {
     private static final String TAG = "ClashFlux";
+    private static final int REQUEST_VPN_CONSENT = 4001;
     static {
         Log.i(TAG, "Loading application native library: " + BuildConfig.HUXERUI_APP_LIBRARY);
         System.loadLibrary(BuildConfig.HUXERUI_APP_LIBRARY);
@@ -93,5 +95,47 @@ public final class MainActivity extends HuxerUIActivity {
                 // No browser is installed; the native caller has no recovery action.
             }
         });
+    }
+
+    // ---- VPN（C++ 设置页 VPN 开关经 JNI 调用）----
+
+    public static void startVpn() {
+        MainActivity activity = current;
+        if (activity == null) {
+            return;
+        }
+        activity.runOnUiThread(() -> {
+            Intent consent = VpnService.prepare(activity);
+            if (consent != null) {
+                activity.startActivityForResult(consent, REQUEST_VPN_CONSENT);
+            } else {
+                activity.startVpnService();
+            }
+        });
+    }
+
+    public static void stopVpn() {
+        MainActivity activity = current;
+        if (activity == null) {
+            return;
+        }
+        activity.runOnUiThread(() ->
+                activity.stopService(new Intent(activity, ClashVpnService.class)));
+    }
+
+    private void startVpnService() {
+        try {
+            startForegroundService(new Intent(this, ClashVpnService.class));
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Unable to start the VPN service", error);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_VPN_CONSENT && resultCode == RESULT_OK) {
+            startVpnService();
+        }
     }
 }
