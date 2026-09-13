@@ -684,18 +684,14 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
     if constexpr (kBuildPlatform == PlatformKind::Android) {
         // Android uses the Activity/system bars as its shell. WindowTitleBar and
         // WindowDragRegion are desktop chrome and must not be composed on mobile.
-        content = huxerui::Column {
-            CoreStatusPill(),
-            std::move(mainRow),
-        }
-            .With(huxerui::Spacing(rootSpec.spacing.extra_small),
-                  huxerui::Background(rootSpec.colors.background),
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        content = std::move(mainRow)
+                      .With(huxerui::Background(rootSpec.colors.background),
+                            huxerui::CrossAlign(
+                                huxerui::CrossAxisAlignment::Stretch));
     } else {
         content = huxerui::Column {
-        // 自定义标题栏：应用名 + 拖拽区 + 内核状态胶囊（框架在其右侧渲染窗口
-        // 按钮）。收窄 + 去背景：直接融入窗口海面底色；垂直零内边距，内容本身
-        // 24pt 高，与 title_bar_height 对齐。
+        // 自定义标题栏：应用名 + 拖拽区（框架在其右侧渲染窗口按钮）。
+        // 收窄 + 去背景：直接融入窗口海面底色；垂直零内边距。
         huxerui::WindowTitleBar {
             huxerui::Text("Clash-Flux")
                 .Style(huxerui::TextStyle{
@@ -704,7 +700,6 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
                     rootSpec.colors.on_surface})
                 .With(huxerui::WindowDragRegion{}),
             huxerui::Spacer{}.With(huxerui::Grow(1.0F), huxerui::WindowDragRegion{}),
-            CoreStatusPill(),
         }
             .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(
                       rootSpec.spacing.small, 0.0F)),
