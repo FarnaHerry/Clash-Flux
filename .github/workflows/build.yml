@@ -614,7 +614,7 @@ jobs:
             echo 'ORG_GRADLE_PROJECT_clashfluxRequireReleaseSigning=true'
           } >> "$GITHUB_ENV"
 
-      - name: Build Android package (GUI/native shell + mihomo kernel)
+      - name: Build Android package (GUI/native shell + embedded mihomo)
         run: |
           set -euo pipefail
           huxerui build android --source huxerui-source --profile release
@@ -627,10 +627,15 @@ jobs:
           test -n "$apk"
           cp "$apk" dist-src/clash-flux-android-universal.apk
           test -s dist-src/clash-flux-android-universal.apk
-          unzip -l dist-src/clash-flux-android-universal.apk \
-            | grep -q 'lib/arm64-v8a/libmihomo.so'
-          unzip -l dist-src/clash-flux-android-universal.apk \
-            | grep -q 'lib/x86_64/libmihomo.so'
+          # Android data plane uses the C-shared core and JNI shim. The old
+          # libmihomo.so executable is deliberately absent: it cannot call
+          # VpnService.protect(fd) and causes a routing loop on real devices.
+          for abi in arm64-v8a x86_64; do
+            unzip -l dist-src/clash-flux-android-universal.apk \
+              | grep -q "lib/$abi/libclash.so"
+            unzip -l dist-src/clash-flux-android-universal.apk \
+              | grep -q "lib/$abi/libmihomo-jni.so"
+          done
           ls -lh dist-src
 
       - name: Verify Android APK signature
