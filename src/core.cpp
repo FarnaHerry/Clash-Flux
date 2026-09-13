@@ -1,8 +1,8 @@
 // core.cpp — clashflux.core 实现单元。
 //
 // 进程后端按编译期分流：POSIX（Linux + macOS）走 posix_spawn，Windows 走
-// CreateProcess。Android 不是子进程：它经项目 JNI bridge 调用 APK 内嵌的
-// mihomo C-shared，并由 VpnService 回调 protect(fd)。
+// CreateProcess。Android 的 sing-box libbox 由 Java VpnService 持有，
+// 此处仅保留跨平台的轻量状态接口。
 module;
 
 #ifdef _WIN32
@@ -33,8 +33,6 @@ extern char** environ;
 #if defined(__ANDROID__)
 #include <android/log.h>
 extern "C" void clashflux_android_open_url(const char* url) noexcept;
-extern "C" bool clashflux_android_start_embedded_mihomo(const char* home) noexcept;
-extern "C" void clashflux_android_stop_embedded_mihomo() noexcept;
 #endif
 
 module clashflux.core;
@@ -442,7 +440,6 @@ struct CoreProcessImpl {
         if (!running.load()) return;
         stopRequested.store(true);
 #if defined(__ANDROID__)
-        clashflux_android_stop_embedded_mihomo();
         running.store(false);
         exitCode.store(0);
 #elif defined(_WIN32)
@@ -675,11 +672,12 @@ bool CoreProcess::start(const std::filesystem::path& binary,
     impl_->lastError.clear();
 
 #if defined(__ANDROID__)
+    // Android's engine is sing-box libbox, owned by ClashVpnService rather
+    // than a native child process.  CoreProcess remains a lightweight state
+    // holder so the desktop orchestration interface stays platform-neutral.
     static_cast<void>(binary);
-    if (!clashflux_android_start_embedded_mihomo(workDir.c_str())) {
-        impl_->lastError = "内嵌 mihomo C-shared 启动失败";
-        return false;
-    }
+    static_cast<void>(workDir);
+    static_cast<void>(configFile);
     impl_->running.store(true);
     return true;
 #else

@@ -25,10 +25,9 @@ function(clashflux_bundle_mihomo target)
     endif ()
 
     if (CMAKE_SYSTEM_NAME STREQUAL "Android")
-        # Android 的 ABI 资产由 platform/android/app/build.gradle 按 variant
-        # 下载并放入 APK assets；这里不重复下载，因为 CMake 会为每个 ABI
-        # 单独 configure 一次，而 APK 需要同时携带多个 ABI 的内核。
-        message(STATUS "clash-flux: Android mihomo 由 Gradle 按 ABI 打包")
+        # Android uses sing-box libbox from Gradle; desktop-only mihomo is not
+        # downloaded while CMake configures each Android ABI.
+        message(STATUS "clash-flux: Android sing-box libbox is supplied by Gradle")
         return()
     endif ()
 

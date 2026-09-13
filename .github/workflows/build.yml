@@ -71,6 +71,7 @@ env:
   # CI 必须自行 clone 并钉 commit，保证可复现）。上游活跃开发中，追新时
   # 同步更新本机 checkout 与此 pin。
   HUXERUI_COMMIT: 'd1d2daa154200ff293e556244a5bbf98011602bb'
+  SINGBOX_COMMIT: '0b8995879f29a9b98ee027bc17b75e101445b238' # v1.14.0
 
 jobs:
   # ------------------------------------------------------------------ Linux
@@ -534,10 +535,8 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------- Android
-  # Android 发布门禁：验证 GUI/native shell 与 mihomo 内核能否经 HuxerUI CLI
-  # 编出可启动 APK。两个发布 ABI 的内核都作为预构建 JNI 库放进 APK，
-  # Activity 从 Android 的 nativeLibraryDir 直接拉起，避免 app_data_file 的
-  # SELinux execute_no_trans 限制。
+  # Android 发布门禁：验证 GUI/native shell 与 pinned sing-box libbox 能编出
+  # 可启动 APK。仅发布 arm64-v8a，libbox 经 VpnService 建立 TUN。
   # CLI 来源：仓库自带 Linux 离线 SDK tarball（bin/huxerui）；框架源码与桌面
   # job 使用同一 HUXERUI_COMMIT，Android Gradle 从该源码构建 HuxerUI。
   build-android:
@@ -553,8 +552,29 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Go for sing-box
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.7'
+          cache: false
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Set up NDK for sing-box libbox
+        id: singbox-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+
+      - name: Build pinned sing-box libbox (arm64)
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/libbox-arm64.aar"
+          ANDROID_NDK_HOME="${{ steps.singbox-ndk.outputs.ndk-path }}" \
+            platform/android/build-singbox-libbox.sh "$output"
+          test -s "$output"
+          echo "CLASHFLUX_SINGBOX_AAR=$output" >> "$GITHUB_ENV"
 
       - name: Ensure CMake >= 3.31 (pip) and expose to Gradle
         run: |
@@ -614,7 +634,7 @@ jobs:
             echo 'ORG_GRADLE_PROJECT_clashfluxRequireReleaseSigning=true'
           } >> "$GITHUB_ENV"
 
-      - name: Build Android package (GUI/native shell + embedded mihomo)
+      - name: Build Android package (GUI/native shell + sing-box libbox)
         run: |
           set -euo pipefail
           huxerui build android --source huxerui-source --profile release
@@ -627,13 +647,12 @@ jobs:
           test -n "$apk"
           cp "$apk" dist-src/clash-flux-android-arm64-v8a.apk
           test -s dist-src/clash-flux-android-arm64-v8a.apk
-          # Android data plane uses the C-shared core and JNI shim. The old
-          # libmihomo.so executable is deliberately absent: it cannot call
-          # VpnService.protect(fd) and causes a routing loop on real devices.
+          # libbox is the only Android data-plane library.  Keep unsupported
+          # ABI slices out of the published arm64-only APK.
           unzip -l dist-src/clash-flux-android-arm64-v8a.apk \
-            | grep -q 'lib/arm64-v8a/libclash.so'
-          unzip -l dist-src/clash-flux-android-arm64-v8a.apk \
-            | grep -q 'lib/arm64-v8a/libmihomo-jni.so'
+            | grep -q 'lib/arm64-v8a/libbox.so'
+          ! unzip -l dist-src/clash-flux-android-arm64-v8a.apk \
+            | grep -Eq 'lib/arm64-v8a/lib(mihomo|clash)\\.so'
           ! unzip -l dist-src/clash-flux-android-arm64-v8a.apk \
             | grep -Eq 'lib/(x86|x86_64|armeabi-v7a)/'
           ls -lh dist-src
