@@ -114,6 +114,18 @@ inline constexpr bool kSystemTrayUi =
     CompileTimePlatform() == PlatformKind::Windows ||
     CompileTimePlatform() == PlatformKind::MacOS;
 
+// Android VPN 隧道开关（设置页 VPN 卡 → VpnService consent/前台服务）。
+// 桌面编译目标是空操作桩，UI 侧调用无需平台宏分叉（收束表 Android 行）。
+#ifdef __ANDROID__
+extern "C" void clashflux_android_start_vpn() noexcept;
+extern "C" void clashflux_android_stop_vpn() noexcept;
+inline void AndroidStartVpn() noexcept { clashflux_android_start_vpn(); }
+inline void AndroidStopVpn() noexcept { clashflux_android_stop_vpn(); }
+#else
+inline void AndroidStartVpn() noexcept {}
+inline void AndroidStopVpn() noexcept {}
+#endif
+
 // ---- 统一收束表（平台 × 能力/选项）-----------------------------------------
 // 新增任何平台相关选项前，先在这张表登记：能力加进 PlatformCapabilities、
 // 选项用 PlatformControl 门控——不支持的平台上整棵子组合树不进入，而不是
@@ -133,13 +145,17 @@ inline constexpr bool kSystemTrayUi =
 // SystemTray            ✓       ✓      ✓      ✗     设置·托盘卡；壳层托盘与关窗驻留
 // PptpEngine            ✓       ✓      ✗      ✗     订阅弹窗·类型「PPTP 内网」
 // OpenVpnEngine         ✓       ✗      ✗      ✗     订阅弹窗·类型「OpenVPN 内网」
+// VpnTunnel             ✗       ✗      ✗      ✓     设置·VPN 代理（VpnService TUN，
+//                                                  fd 经 spawn 继承给 mihomo，
+//                                                  复用 core.tun_enabled 设置）
 // kHuxerHttpDownload    ✗       ✗      ✗      ✓     订阅导入/手动刷新/自动更新走
 //                                                  HuxerUI 平台栈；订阅弹窗的
 //                                                  「内核代理/无效证书」开关仅桌面
 //                                                  显示（{Linux,Windows,MacOS}）
 //
 // 安卓设置页保留项（内核随 APK 打包并在启动时拉起，均生效）：内核控制、
-// 出站模式、混合端口、局域网连接（热点共享）、日志级别、主题、关于。
+// 出站模式、混合端口、局域网连接（热点共享）、日志级别、VPN 代理、主题、
+// 关于。
 inline constexpr PlatformCapabilities ResolvePlatformCapabilities(
     PlatformKind platform) noexcept {
     const bool desktop = platform == PlatformKind::Linux ||

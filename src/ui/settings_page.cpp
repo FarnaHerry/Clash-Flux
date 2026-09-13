@@ -486,6 +486,38 @@ const std::string kAboutText =
                                    huxerui::CrossAxisAlignment::Stretch)));
                     }),
 
+                // Android VPN 隧道：桌面的「系统」卡在手机上不可用，手机流量
+                // 接管走 VpnService（TUN fd 经 spawn 继承给内核）。
+                PlatformControl({PlatformCode::Android}, [coreAction] {
+                    return Card(huxerui::Column {
+                        SectionTitle("VPN"),
+                        SettingRow(
+                            "VPN 代理",
+                            "建立系统 VPN 隧道接管全部手机流量（首次需系统授权）",
+                            huxerui::Switch(
+                                store::coreStore().setting("core.tun_enabled",
+                                                           "false") == "true")
+                                .OnChanged([coreAction](bool on) {
+                                    coreAction(
+                                        [on] {
+                                            store::coreStore().setSetting(
+                                                "core.tun_enabled",
+                                                on ? "true" : "false");
+                                            if (on) {
+                                                AndroidStartVpn();
+                                            } else {
+                                                AndroidStopVpn();
+                                            }
+                                        },
+                                        on ? "正在请求建立 VPN 隧道"
+                                           : "VPN 隧道已关闭");
+                                })),
+                    }
+                        .With(huxerui::Spacing(10.0F),
+                              huxerui::CrossAlign(
+                                  huxerui::CrossAxisAlignment::Stretch)));
+                }),
+
                 PlatformControl({PlatformCode::SystemTray},
                                 [trayCloseBehavior] {
                                     // 编译期第二道闸（kSystemTrayUi）：平台代
