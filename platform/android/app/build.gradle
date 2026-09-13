@@ -4,7 +4,6 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import javax.inject.Inject
 import java.security.MessageDigest
-import java.util.zip.GZIPInputStream
 
 plugins {
     alias(libs.plugins.android.application)
@@ -34,86 +33,35 @@ abstract class StageHuxerUIAssets extends DefaultTask {
     }
 }
 
-abstract class StageMihomoJniLibs extends DefaultTask {
-    @Input
-    abstract ListProperty<String> getAbis()
-
-    @OutputDirectory
-    abstract DirectoryProperty getOutputDirectory()
-
-    private static final String MIHOMO_VERSION = "v1.19.30"
-    private static final String MIHOMO_BASE_URL =
-            "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}"
-    private static final Map<String, Map<String, String>> MIHOMO_ASSETS = [
-            "arm64-v8a": [
-                    name: "mihomo-android-arm64-v8-${MIHOMO_VERSION}.gz",
-                    sha256: "19afeb40fca190fc2e3906a4e3b87c74a0c2120626fd3cb3ae0cf4092cb780ad"
-            ],
-            "x86_64": [
-                    name: "mihomo-android-amd64-${MIHOMO_VERSION}.gz",
-                    sha256: "33aa898cb17b442531abbb9f7567e0e4a8e0542ee2f72f042b1a805f0b6ab1fe"
-            ],
-            "armeabi-v7a": [
-                    name: "mihomo-android-armv7-${MIHOMO_VERSION}.gz",
-                    sha256: "cfdd1fee92408da09666aa3845fbf73727359b72b6eb4bf69785a21bddb28ec1"
-            ],
-            "x86": [
-                    name: "mihomo-android-386-${MIHOMO_VERSION}.gz",
-                    sha256: "4fc9a2fa45f93d4bb1ae055157c67ba401890a80f23d60fa2d2b542b774fdfca"
-            ]
-    ]
-
-    @TaskAction
-    void stage() {
-        def output = outputDirectory.get().asFile
-        project.delete(output)
-        output.mkdirs()
-
-        abis.get().each { abi ->
-            def asset = MIHOMO_ASSETS[abi]
-            if (asset == null) {
-                throw new GradleException("No mihomo Android asset is configured for ABI ${abi}")
+// The Android data plane is a C-shared mihomo library, not an executable
+// inherited by a child process.  Pin and verify the artifact in Gradle so
+// every APK contains exactly the same ABI bridge that the Java lifecycle uses.
+def mihomoAar = layout.buildDirectory.file("libs/libmihomo-android-v0.3.3.aar")
+def downloadMihomoAar = tasks.register("downloadMihomoAar") {
+    inputs.property("version", "v0.3.3")
+    outputs.file(mihomoAar)
+    doLast {
+        def target = mihomoAar.get().asFile
+        target.parentFile.mkdirs()
+        def connection = new URL("https://github.com/oviron/libmihomo-android/releases/download/v0.3.3/libmihomo-android-v0.3.3.aar").openConnection()
+        connection.connectTimeout = 30_000
+        connection.readTimeout = 120_000
+        connection.inputStream.withCloseable { input ->
+            target.withOutputStream { output -> output << input }
+        }
+        def digest = MessageDigest.getInstance("SHA-256")
+        target.withInputStream { input ->
+            def buffer = new byte[64 * 1024]
+            int count
+            while ((count = input.read(buffer)) >= 0) {
+                if (count > 0) digest.update(buffer, 0, count)
             }
-
-            def archive = new File(temporaryDir, asset.name)
-            if (!archive.parentFile.exists()) archive.parentFile.mkdirs()
-            def connection = new URL("${MIHOMO_BASE_URL}/${asset.name}").openConnection()
-            connection.connectTimeout = 30_000
-            connection.readTimeout = 120_000
-            connection.inputStream.withCloseable { input ->
-                archive.withOutputStream { fileOutput ->
-                    fileOutput << input
-                }
-            }
-
-            def digest = MessageDigest.getInstance("SHA-256")
-            archive.withInputStream { input ->
-                def buffer = new byte[64 * 1024]
-                int count
-                while ((count = input.read(buffer)) >= 0) {
-                    if (count > 0) digest.update(buffer, 0, count)
-                }
-            }
-            def actualSha256 = digest.digest().collect { String.format("%02x", it & 0xff) }.join()
-            if (actualSha256 != asset.sha256) {
-                throw new GradleException(
-                        "mihomo ${asset.name} SHA-256 mismatch: ${actualSha256}")
-            }
-
-            // Android SELinux forbids execute_no_trans for app_data_file. Put
-            // the official engine in the APK's prebuilt JNI library set so
-            // PackageManager extracts it into nativeLibraryDir, whose file
-            // labeling permits an app to execute it.
-            def binary = new File(output, "${abi}/libmihomo.so")
-            binary.parentFile.mkdirs()
-            new GZIPInputStream(archive.newInputStream()).withCloseable { input ->
-                binary.withOutputStream { fileOutput ->
-                    fileOutput << input
-                }
-            }
-            if (!binary.setExecutable(true, false)) {
-                throw new GradleException("Unable to mark staged mihomo executable: ${binary}")
-            }
+        }
+        def actual = digest.digest().collect { String.format("%02x", it & 0xff) }.join()
+        def expected = "3bccc9020926b0b7bf1fd09553b41e4678c80cedc5cbe61d90a78fe4b71aca76"
+        if (actual != expected) {
+            target.delete()
+            throw new GradleException("libmihomo Android AAR SHA-256 mismatch: ${actual}")
         }
     }
 }
@@ -162,8 +110,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 29
-        versionName = "0.1.29"
+        versionCode = 30
+        versionName = "0.1.30"
 
         externalNativeBuild {
             cmake {
@@ -210,12 +158,12 @@ android {
         }
     }
 
-    // The bundled mihomo is an executable packaged under lib/<abi>, not a
-    // library loaded by System.loadLibrary. Force JNI extraction so Android
-    // places it in nativeLibraryDir, whose SELinux label permits execution.
+    // libmihomo ships an extra armeabi-v7a binary. Clash-Flux currently
+    // supports the two ABIs declared in huxeruiAbis; do not let an AAR-only
+    // ABI enter MERGED_NATIVE_LIBS and invalidate HuxerUI's per-ABI plan.
     packaging {
         jniLibs {
-            useLegacyPackaging = true
+            excludes += ["**/armeabi-v7a/**"]
         }
     }
 
@@ -281,14 +229,13 @@ androidComponents.onVariants(androidComponents.selector().all()) { variant ->
     }
     variant.sources.assets.addGeneratedSourceDirectory(stageAssets) { it.outputDirectory }
 
-    def stageMihomo = tasks.register("stageMihomo${variant.name.capitalize()}JniLibs", StageMihomoJniLibs) {
-        abis.set(huxeruiAbis.toList())
-        outputDirectory.set(layout.buildDirectory.dir("generated/mihomo/jniLibs/${variant.name}"))
-    }
-    variant.sources.jniLibs.addGeneratedSourceDirectory(stageMihomo) { it.outputDirectory }
 }
 
 dependencies {
+    implementation(files(mihomoAar).builtBy(downloadMihomoAar))
+    // The pinned AAR is a file dependency, so Gradle cannot resolve its
+    // Kotlin metadata transitively. Keep this aligned with the facade build.
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:2.2.10"
     if (rootProject.gradle.ext.huxeruiUsesSource) {
         implementation project(":HuxerUI")
     } else {

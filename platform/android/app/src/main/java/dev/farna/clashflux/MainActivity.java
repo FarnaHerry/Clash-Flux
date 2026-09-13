@@ -16,8 +16,6 @@ import android.util.Log;
 
 import org.huxerui.HuxerUIActivity;
 
-import java.io.File;
-import java.io.IOException;
 
 public final class MainActivity extends HuxerUIActivity {
     private static final String TAG = "ClashFlux";
@@ -29,6 +27,7 @@ public final class MainActivity extends HuxerUIActivity {
     }
 
     private static MainActivity current;
+    private static volatile Context applicationContext;
 
     private static native void nativeInit(String filesDirectory, String nativeLibraryDirectory);
     private static native void nativeSetSystemDark(boolean dark);
@@ -39,13 +38,16 @@ public final class MainActivity extends HuxerUIActivity {
     protected void onCreate(Bundle savedInstanceState) {
         Log.i(TAG, "MainActivity.onCreate entered");
         current = this;
+        applicationContext = getApplicationContext();
+        // The data plane is loaded in-process as libclash.so.  There is no
+        // executable extraction/fork path: that path cannot receive
+        // VpnService.protect(fd) callbacks and is the source of VPN blackholes.
         try {
-            ensureMihomoBinary();
-        } catch (IOException | RuntimeException error) {
-            // Keep the UI available so the failure is visible in the core status
-            // card and in logcat instead of turning a missing packaged asset into
-            // an unrelated Activity crash.
-            Log.e(TAG, "Unable to extract the bundled mihomo Android engine", error);
+            io.github.oviron.libmihomo.Clash.INSTANCE.load(
+                    getApplicationInfo().nativeLibraryDir);
+            io.github.oviron.libmihomo.Clash.INSTANCE.assertReady();
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Unable to load embedded mihomo", error);
         }
         Log.i(TAG, "Calling HuxerUIActivity.onCreate");
         super.onCreate(savedInstanceState);
@@ -78,16 +80,6 @@ public final class MainActivity extends HuxerUIActivity {
         return nightMode == Configuration.UI_MODE_NIGHT_YES;
     }
 
-    private void ensureMihomoBinary() throws IOException {
-        String abi = Build.SUPPORTED_ABIS.length == 0 ? "unknown" : Build.SUPPORTED_ABIS[0];
-        File binary = new File(getApplicationInfo().nativeLibraryDir, "libmihomo.so");
-        if (!binary.isFile() || !binary.canExecute()) {
-            throw new IOException("Bundled mihomo JNI library is unavailable for ABI " + abi +
-                    ": " + binary);
-        }
-        Log.i(TAG, "Bundled mihomo ready (nativeLibraryDir): " + binary.getAbsolutePath());
-    }
-
     @Override
     protected void onDestroy() {
         if (current == this) {
@@ -117,8 +109,21 @@ public final class MainActivity extends HuxerUIActivity {
 
     /** Initializes the native store when no Activity UI ran (boot restore). */
     public static void bootstrapNative(Context context) {
+        applicationContext = context.getApplicationContext();
         nativeInit(context.getFilesDir().getAbsolutePath(),
                 context.getApplicationInfo().nativeLibraryDir);
+    }
+
+    /** Called by the C++ CoreProcess Android backend on its worker thread. */
+    public static boolean startEmbeddedCore(String homeDirectory) {
+        Context context = applicationContext;
+        if (context == null) return false;
+        return MihomoRuntime.start(context, homeDirectory);
+    }
+
+    /** Called by the C++ CoreProcess Android backend during orderly shutdown. */
+    public static void stopEmbeddedCore() {
+        MihomoRuntime.stop();
     }
 
     public static void startVpn() {

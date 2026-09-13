@@ -105,6 +105,7 @@ const std::string kAboutText =
     // 校准取消授权、系统撤销等异步结果。
     auto tunEnabled = huxerui::UseState(
         store::coreStore().setting("core.tun_enabled", "false") == "true");
+    auto vpnState = huxerui::UseState(AndroidVpnState());
     auto trayCloseBehavior = huxerui::UseState<std::size_t>([] {
         const std::string value =
             store::coreStore().setting("tray.close_behavior", "0");
@@ -114,7 +115,7 @@ const std::string kAboutText =
     }());
 
     huxerui::Lifecycle(
-        [tasks, snap, portValue, serviceInstalled, tunEnabled] {
+        [tasks, snap, portValue, serviceInstalled, tunEnabled, vpnState] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{1.0}, [=] {
                     const auto s = store::coreStore().snapshot();
@@ -122,6 +123,7 @@ const std::string kAboutText =
                     serviceInstalled = service::installed();
                     tunEnabled = store::coreStore().setting("core.tun_enabled",
                                                             "false") == "true";
+                    vpnState = AndroidVpnState();
                     // 端口输入框未编辑过就用当前值初始化。
                     if (portValue.Get().text.empty() && s.mixedPort > 0) {
                         portValue = huxerui::TextEditingValue{
@@ -497,16 +499,26 @@ const std::string kAboutText =
                 // Scope 子组合曾错误丢弃 Android 专属卡，导致系统 VPN 无从
                 // 开启、所有透明代理流量和统计都保持为 0。使用编译期平台分支
                 // 直接声明卡片，桌面构建仍生成空 View。
-                [coreAction, tunEnabled]() -> huxerui::View {
+                [coreAction, tunEnabled, vpnState]() -> huxerui::View {
                     if constexpr (CompileTimePlatform() != PlatformKind::Android) {
                         return {};
                     }
+                    const int state = vpnState.Get();
+                    const std::string status = state == 2
+                        ? "已附着：内嵌 mihomo 正通过 protect(fd) 使用物理网络"
+                        : state == 1 ? "正在建立系统 VPN 与 TUN 数据面"
+                        : state == 3 ? "启动失败：请查看日志页中的 Android VPN 错误"
+                                     : "未连接；开启后将请求系统 VPN 授权";
                     return Card(huxerui::Column {
-                        SectionTitle("VPN"),
+                        SectionTitle("Android 数据面"),
+                        SettingRow("隧道状态", status,
+                                   huxerui::Text(state == 2 ? "已连接" :
+                                                 state == 1 ? "连接中" :
+                                                 state == 3 ? "失败" : "未连接")),
                         SettingRow(
                             "VPN 代理",
-                            "建立系统 VPN 隧道接管全部手机流量（首次需系统授权）",
-                            huxerui::Switch(tunEnabled.Get())
+                            "系统 VPN 由此服务持有；内核出站 socket 会自动绕过 TUN",
+                            huxerui::Switch(tunEnabled.Get() || state == 1 || state == 2)
                                 .OnChanged([coreAction, tunEnabled](bool on) {
                                     // 先写受控状态，避免必须切走页面再回来才看到开关变化。
                                     tunEnabled = on;
@@ -516,6 +528,12 @@ const std::string kAboutText =
                                                 "core.tun_enabled",
                                                 on ? "true" : "false");
                                             if (on) {
+                                                // Rebuild the managed DNS block before
+                                                // VpnService attaches the TUN. Android
+                                                // TUN itself is started by Java, not by
+                                                // this core restart.
+                                                store::coreStore().startCore(
+                                                    store::profilesStore().selectedYaml());
                                                 AndroidStartVpn();
                                             } else {
                                                 AndroidStopVpn();

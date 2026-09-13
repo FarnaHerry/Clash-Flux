@@ -1,9 +1,8 @@
 // core.cpp — clashflux.core 实现单元。
 //
-// 进程后端按编译期分流：POSIX（Linux + macOS）走 posix_spawn + poll 读管道 +
-// SIGTERM/SIGKILL；Android 使用 fork + exec（Android NDK 不保证完整的
-// posix_spawn 文件动作 API）；Windows 走 CreateProcessW + CreatePipe 重定向
-// + 监视线程读管拆行 + TerminateProcess。三条路径共用输出队列与拆行逻辑。
+// 进程后端按编译期分流：POSIX（Linux + macOS）走 posix_spawn，Windows 走
+// CreateProcess。Android 不是子进程：它经项目 JNI bridge 调用 APK 内嵌的
+// mihomo C-shared，并由 VpnService 回调 protect(fd)。
 module;
 
 #ifdef _WIN32
@@ -34,8 +33,8 @@ extern char** environ;
 #if defined(__ANDROID__)
 #include <android/log.h>
 extern "C" void clashflux_android_open_url(const char* url) noexcept;
-// android_bridge：VpnService establish() 交给本进程的 TUN fd（-1 = 无 VPN）。
-extern "C" int clashflux_android_vpn_tun_fd() noexcept;
+extern "C" bool clashflux_android_start_embedded_mihomo(const char* home) noexcept;
+extern "C" void clashflux_android_stop_embedded_mihomo() noexcept;
 #endif
 
 module clashflux.core;
@@ -44,11 +43,6 @@ import std;
 import clashflux.service;
 
 namespace core {
-
-// Android VPN 模式：mihomo 子进程里固定的 TUN fd 编号（VpnService 的 fd 在
-// spawn 时 dup2 过来；必须与 ClashVpnService.MIHOMO_TUN_FD、generateConfig
-// 注入的 tun.file-descriptor 三方一致）。
-constexpr int kAndroidTunFd = 3;
 
 // ---- TUN 打开门禁（见 core.cppm 注释）----
 namespace {
@@ -179,19 +173,23 @@ std::string generateConfig(const std::string& profileYaml,
                            bool allowLan,
                            const std::string& logLevel,
                            bool tunEnabled) {
-    // TUN 注入形态：桌面 = 内核自建 TUN + 自路由（需 root/CAP_NET_ADMIN）；
-    // Android = 接管 VpnService 的 fd（路由/地址由 VPN Builder 掌管）。
-    // Android 上 fd 未就绪时跳过注入，内核先以普通代理形态跑，VPN 建立后
-    // 会重启内核补上。
+    // TUN 注入形态：桌面 = 内核自建 TUN + 自路由（需 root/CAP_NET_ADMIN）。
+    // Android 的 TUN 只能由 VpnService 建立；随后由 JNI 调 Clash.startTUN，
+    // 因此绝不把 file-descriptor 写进 profile（避免重回子进程继承路径）。
 #if defined(__ANDROID__)
-    const bool injectTun = tunEnabled && clashflux_android_vpn_tun_fd() >= 0;
+    const bool injectTun = false;
 #else
     const bool injectTun = tunEnabled;
 #endif
     // dns-hijack 依赖内核 DNS 模块运行；fake-ip 保证 TUN 侧域名规则可用。
     // 注入 tun 的同时接管 dns（订阅自带 dns 块一并剔除）；未注入时订阅的
     // dns 原样保留（桌面无 TUN 行为不变）。
-    const bool injectDns = injectTun;
+    const bool injectDns = injectTun ||
+#if defined(__ANDROID__)
+                           tunEnabled;
+#else
+                           false;
+#endif
 
     std::string out;
     // 注入块放头部。
@@ -228,20 +226,6 @@ std::string generateConfig(const std::string& profileYaml,
                "    - 128.0.0.0/1\n"
                "    - ::/1\n"
                "    - 8000::/1\n"
-               "  dns-hijack:\n    - any:53\n";
-#else
-        // file-descriptor 固定 3（spawn 时 dup2 继承，见 kAndroidTunFd）。
-        // 隧道地址必须避开 fake-ip 的 198.18.0.0/16；重叠会让 DNS 映射的
-        // 目标被 Android 当作本地 TUN 网段处理，造成 VPN 已连接但没有流量。
-        out += "tun:\n"
-               "  enable: true\n"
-               "  stack: mixed\n"
-               "  device: clash-flux\n"
-               "  file-descriptor: 3\n"
-               "  auto-route: false\n"
-               "  auto-detect-interface: false\n"
-               "  mtu: 1400\n"
-               "  inet4-address:\n    - 172.19.0.1/30\n"
                "  dns-hijack:\n    - any:53\n";
 #endif
     }
@@ -457,7 +441,11 @@ struct CoreProcessImpl {
     void stop() {
         if (!running.load()) return;
         stopRequested.store(true);
-#ifdef _WIN32
+#if defined(__ANDROID__)
+        clashflux_android_stop_embedded_mihomo();
+        running.store(false);
+        exitCode.store(0);
+#elif defined(_WIN32)
         // Windows 没有 SIGTERM 语义（控制台进程只能靠 GenerateConsoleCtrlEvent
         // 且要求同控制台组，对 CREATE_NO_WINDOW 子进程不适用）：不给宽限，
         // 直接 TerminateProcess。POSIX 分支的 2s 宽限是等内核优雅退出，
@@ -509,41 +497,12 @@ struct CoreProcessImpl {
         return true;
 #else
 #if defined(__ANDROID__)
-        int pipefd[2];
-        if (::pipe(pipefd) != 0) return false;
-
-        const std::string bin = binary.string();
-        const std::string dir = workDir.string();
-        const std::string cfg = configFile.string();
-        const pid_t pid = ::fork();
-        if (pid == 0) {
-            ::close(pipefd[0]);
-            ::dup2(pipefd[1], STDOUT_FILENO);
-            ::dup2(pipefd[1], STDERR_FILENO);
-            ::close(pipefd[1]);
-            // VPN TUN fd 继承：dup2 到固定编号（dup2 自带清除 CLOEXEC）；
-            // fd 恰好就是目标编号时只清 CLOEXEC。
-            if (const int tunFd = clashflux_android_vpn_tun_fd();
-                tunFd >= 0 && tunFd != kAndroidTunFd) {
-                ::dup2(tunFd, kAndroidTunFd);
-            } else if (tunFd == kAndroidTunFd) {
-                ::fcntl(kAndroidTunFd, F_SETFD, 0);
-            }
-            ::execl(bin.c_str(), bin.c_str(), "-d", dir.c_str(), "-f", cfg.c_str(),
-                    static_cast<char*>(nullptr));
-            const int execError = errno;
-            ::dprintf(STDOUT_FILENO, "mihomo exec failed: %s\n",
-                      std::strerror(execError));
-            _exit(127);
-        }
-        ::close(pipefd[1]);
-        if (pid < 0) {
-            ::close(pipefd[0]);
-            return false;
-        }
-        childPid = pid;
-        readFd = pipefd[0];
-        return true;
+        // Android CoreProcess::start is implemented through the Java
+        // C-shared lifecycle. Never fall back to child-process execution.
+        static_cast<void>(binary);
+        static_cast<void>(workDir);
+        static_cast<void>(configFile);
+        return false;
 #else
         int pipefd[2];
         if (::pipe(pipefd) != 0) return false;
@@ -715,6 +674,15 @@ bool CoreProcess::start(const std::filesystem::path& binary,
     impl_->exitCode.store(-1);
     impl_->lastError.clear();
 
+#if defined(__ANDROID__)
+    static_cast<void>(binary);
+    if (!clashflux_android_start_embedded_mihomo(workDir.c_str())) {
+        impl_->lastError = "内嵌 mihomo C-shared 启动失败";
+        return false;
+    }
+    impl_->running.store(true);
+    return true;
+#else
     if (binary.empty() || !std::filesystem::exists(binary)) {
         impl_->lastError = "未找到 mihomo 内核（engines/ 或 PATH）";
         return false;
@@ -732,6 +700,7 @@ bool CoreProcess::start(const std::filesystem::path& binary,
     impl_->running.store(true);
     impl_->monitor = std::thread([this] { impl_->monitorLoop(); });
     return true;
+#endif
 }
 
 void CoreProcess::stop() { impl_->stop(); }
