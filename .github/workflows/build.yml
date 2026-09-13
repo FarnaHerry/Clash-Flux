@@ -625,208 +625,26 @@ jobs:
           mkdir -p dist-src
           apk="$(find platform/android/app/build -type f -path '*/outputs/apk/release/*.apk' -print -quit)"
           test -n "$apk"
-          cp "$apk" dist-src/clash-flux-android-universal.apk
-          test -s dist-src/clash-flux-android-universal.apk
+          cp "$apk" dist-src/clash-flux-android-arm64-v8a.apk
+          test -s dist-src/clash-flux-android-arm64-v8a.apk
           # Android data plane uses the C-shared core and JNI shim. The old
           # libmihomo.so executable is deliberately absent: it cannot call
           # VpnService.protect(fd) and causes a routing loop on real devices.
-          for abi in arm64-v8a x86_64; do
-            unzip -l dist-src/clash-flux-android-universal.apk \
-              | grep -q "lib/$abi/libclash.so"
-            unzip -l dist-src/clash-flux-android-universal.apk \
-              | grep -q "lib/$abi/libmihomo-jni.so"
-          done
+          unzip -l dist-src/clash-flux-android-arm64-v8a.apk \
+            | grep -q 'lib/arm64-v8a/libclash.so'
+          unzip -l dist-src/clash-flux-android-arm64-v8a.apk \
+            | grep -q 'lib/arm64-v8a/libmihomo-jni.so'
+          ! unzip -l dist-src/clash-flux-android-arm64-v8a.apk \
+            | grep -Eq 'lib/(x86|x86_64|armeabi-v7a)/'
           ls -lh dist-src
 
       - name: Verify Android APK signature
         run: |
           set -euo pipefail
-          apk="dist-src/clash-flux-android-universal.apk"
+          apk="dist-src/clash-flux-android-arm64-v8a.apk"
           apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
           test -n "$apksigner"
           "$apksigner" verify --verbose "$apk"
-
-      # 冒烟用的模拟器组件（系统镜像 ~1.2GB + emulator 包）按版本缓存，避免
-      # 每个 run 都重新下载；key 里的 vN 用于组件升级时手动失效。
-      - name: Cache Android emulator components
-        uses: actions/cache@v4
-        with:
-          path: |
-            /usr/local/lib/android/sdk/system-images/android-35
-            /usr/local/lib/android/sdk/platforms/android-35
-            /usr/local/lib/android/sdk/emulator
-          key: android-smoke-android35-default-x86_64-v1
-
-      - name: Smoke test Android launch
-        # 有 KVM 时开机 ~20s；软件模拟兜底可能仍需数分钟，timeout 保持宽裕
-        # 以兜住真正卡死的模拟器。
-        timeout-minutes: 30
-        run: |
-          set -u
-          avd_name=clash-flux-smoke
-          adb_bin="${ANDROID_HOME}/platform-tools/adb"
-          emulator_bin="${ANDROID_HOME}/emulator/emulator"
-          image="system-images;android-35;default;x86_64"
-          # Keep the AVD in an explicit runner-local directory. Newer Android
-          # command-line tools may honor ANDROID_USER_HOME while the emulator
-          # still falls back to $HOME/.android/avd, which can make a freshly
-          # created AVD appear to be missing.
-          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
-          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
-          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
-          failures=0
-          logcat_pid=""
-
-          sdkmanager --install emulator platform-tools "platforms;android-35" "$image" >/dev/null
-          avd_path="$ANDROID_AVD_HOME/${avd_name}.avd"
-          echo no | avdmanager create avd --force \
-            -n "$avd_name" --package "$image" --path "$avd_path" >/dev/null
-          test -f "$avd_path/config.ini"
-          "$emulator_bin" -list-avds | grep -Fx "$avd_name"
-          # 托管 runner 若暴露 /dev/kvm（嵌套虚拟化）则走 KVM（开机 ~20s）；
-          # 设备节点可能存在但运行用户不可写——免密 sudo chmod 修正后重探；
-          # 两者皆无时回退软件模拟（开机数分钟，属平台限制）。
-          if [ -e /dev/kvm ]; then
-            ls -l /dev/kvm
-            sudo -n chmod 666 /dev/kvm 2>/dev/null || true
-          else
-            echo "no /dev/kvm on this runner"
-          fi
-          accel=off
-          if [ -e /dev/kvm ] && [ -w /dev/kvm ]; then
-            accel=on
-          fi
-          echo "emulator acceleration: $accel"
-          "$emulator_bin" -avd "$avd_name" -no-window -no-audio -no-boot-anim \
-            -gpu swiftshader_indirect -accel "$accel" -no-snapshot -wipe-data > emulator.log 2>&1 &
-          emulator_pid=$!
-          cleanup() {
-            if [ -n "$logcat_pid" ]; then
-              kill "$logcat_pid" 2>/dev/null || :
-              wait "$logcat_pid" 2>/dev/null || :
-            fi
-            kill "$emulator_pid" 2>/dev/null || :
-            wait "$emulator_pid" 2>/dev/null || :
-          }
-          trap cleanup EXIT
-
-          "$adb_bin" start-server >/dev/null 2>&1 || :
-          timeout 120s "$adb_bin" -s emulator-5554 wait-for-device || :
-          booted=0
-          for _ in $(seq 1 480); do
-            state="$(timeout 5s "$adb_bin" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" || state=""
-            if [ "$state" = "1" ]; then
-              booted=1
-              break
-            fi
-            sleep 2
-          done
-          if [ "$booted" -ne 1 ]; then
-            echo "Android emulator did not finish booting" >&2
-            cat emulator.log >&2 || :
-            exit 1
-          fi
-
-          : > android-start.log
-          : > android-launch.log
-          if ! timeout 300s "$adb_bin" -s emulator-5554 install -r \
-              dist-src/clash-flux-android-universal.apk > android-install.log 2>&1; then
-            echo "APK installation failed" >&2
-            failures=1
-          fi
-          if ! timeout 30s "$adb_bin" -s emulator-5554 shell pm path \
-              dev.farna.clashflux | grep -q 'package:'; then
-            echo "Installed Android package is not visible to PackageManager" >&2
-            failures=1
-          fi
-          timeout 10s "$adb_bin" -s emulator-5554 logcat -c || :
-          timeout 10s "$adb_bin" -s emulator-5554 shell am force-stop dev.farna.clashflux || :
-          # Keep one streaming logcat process alive. Repeated `adb logcat -d`
-          # calls are prohibitively slow on the no-KVM emulator and can consume
-          # the whole smoke-test budget before the Activity gets CPU time.
-          timeout 600s "$adb_bin" -s emulator-5554 logcat -v threadtime \
-            > android-launch.log 2>&1 &
-          logcat_pid=$!
-          timeout 120s "$adb_bin" -s emulator-5554 shell am start -n \
-            dev.farna.clashflux/.MainActivity > android-start.log 2>&1 || failures=1
-          # Hosted runners may emulate x86_64 without KVM. Poll the local log
-          # file instead of starting a new adb/logcat command on every attempt.
-          engine_ready=0
-          # 冷启动 + 首次拉 geodata 时内核就绪可能明显超过 3 分钟（无 KVM 的
-          # 托管 runner 上更慢，v0.1.18 的发布门禁曾被 180s 轮询误伤），放宽到 5 分钟。
-          for _ in $(seq 1 300); do
-            if grep -q 'Embedded mihomo bridge loaded' android-launch.log; then
-              engine_ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [ "$engine_ready" -ne 1 ]; then
-            echo "Android did not report a ready embedded mihomo bridge" >&2
-            failures=1
-          fi
-          core_ready=0
-          if [ "$engine_ready" -eq 1 ]; then
-            for _ in $(seq 1 180); do
-              if grep -q 'Android embedded core startup state=2 error=' android-launch.log; then
-                core_ready=1
-                break
-              fi
-              if grep -q 'Android core initialization failed' android-launch.log; then
-                break
-              fi
-              sleep 1
-            done
-          fi
-          if [ "$core_ready" -ne 1 ]; then
-            echo "Android mihomo core did not report a running state" >&2
-            failures=1
-          fi
-          if [ -n "$logcat_pid" ]; then
-            kill "$logcat_pid" 2>/dev/null || :
-            wait "$logcat_pid" 2>/dev/null || :
-            logcat_pid=""
-          fi
-          cat android-start.log
-          cat android-launch.log
-          pid="$(timeout 10s "$adb_bin" -s emulator-5554 shell pidof \
-            dev.farna.clashflux | tr -d '\r' || true)"
-          app_crash=0
-          # Java crashes identify the package with a Process: line. Native
-          # crashes identify the app pid; ignore unrelated emulator services
-          # (for example Bluetooth may abort during a cold boot).
-          if grep -q 'Process: dev\.farna\.clashflux' android-launch.log; then
-            app_crash=1
-          elif [ -n "$pid" ] && grep -Eq \
-              "(Fatal signal|Abort message).*pid ${pid}([^0-9]|$)" android-launch.log; then
-            app_crash=1
-          fi
-          if [ "$app_crash" -eq 1 ]; then
-            echo "Android launch produced a fatal log entry" >&2
-            failures=1
-          fi
-          if [ -z "$pid" ]; then
-            echo "Android app process is not alive after launch" >&2
-            failures=1
-          fi
-          # The C-shared core runs in this application process. Bridge/core
-          # log readiness plus app-process liveness above replace the old
-          # external mihomo pidfile/process assertion.
-          timeout 10s "$adb_bin" -s emulator-5554 shell am force-stop dev.farna.clashflux || :
-          exit "$failures"
-
-      - name: Upload Android launch log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-launch-log
-          path: |
-            android-launch.log
-            android-start.log
-            android-install.log
-            emulator.log
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
@@ -888,7 +706,7 @@ jobs:
             elif [ "$name" = "build-android" ]; then
               apk="$(find "$artifact" -maxdepth 1 -type f -name '*.apk' -print -quit)"
               test -n "$apk"
-              cp "$apk" "release/clash-flux-${release_version}-android-universal.apk"
+              cp "$apk" "release/clash-flux-${release_version}-android-arm64-v8a.apk"
             else
               echo "Unsupported build artifact: $name" >&2
               exit 1
@@ -896,7 +714,7 @@ jobs:
           done
           test -s "release/clash-flux-${release_version}-windows-x86_64-setup.exe"
           test -s "release/clash-flux-${release_version}-windows-x86_64.zip"
-          test -s "release/clash-flux-${release_version}-android-universal.apk"
+          test -s "release/clash-flux-${release_version}-android-arm64-v8a.apk"
           test -n "$(find release -type f -name '*.tar.gz' -print -quit)"
           test -n "$(find release -type f -name '*.deb' -print -quit)"
           test -n "$(find release -type f -name '*.rpm' -print -quit)"

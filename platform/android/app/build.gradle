@@ -73,7 +73,11 @@ def huxeruiCompileSdk = huxeruiProperty("huxeruiCompileSdk").toInteger()
 def huxeruiMinSdk = huxeruiProperty("huxeruiMinSdk").toInteger()
 def huxeruiTargetSdk = huxeruiProperty("huxeruiTargetSdk").toInteger()
 def huxeruiNdkVersion = huxeruiProperty("huxeruiNdkVersion")
-def huxeruiAbis = huxeruiProperty("huxeruiAbis").split(",")
+// The Android app is published for 64-bit ARM devices only. Keeping this
+// fixed also prevents transitive JNI binaries for emulator ABIs from being
+// included accidentally.
+def clashfluxTargetAbis = ["arm64-v8a"]
+def mihomoAarAbis = ["arm64-v8a", "armeabi-v7a", "x86_64"]
 def huxeruiStl = huxeruiProperty("huxeruiStl")
 def releaseKeystoreFile = providers.gradleProperty("clashfluxReleaseKeystoreFile").orNull
 def releaseKeystorePassword = providers.gradleProperty("clashfluxReleaseKeystorePassword").orNull
@@ -110,8 +114,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 32
-        versionName = "0.1.32"
+        versionCode = 33
+        versionName = "0.1.33"
 
         externalNativeBuild {
             cmake {
@@ -121,7 +125,7 @@ android {
         }
 
         ndk {
-            abiFilters(*huxeruiAbis)
+            abiFilters(*clashfluxTargetAbis)
         }
     }
 
@@ -158,15 +162,16 @@ android {
         }
     }
 
-    // libmihomo ships an extra armeabi-v7a binary. Clash-Flux currently
-    // supports the two ABIs declared in huxeruiAbis; do not let an AAR-only
-    // ABI enter MERGED_NATIVE_LIBS and invalidate HuxerUI's per-ABI plan.
+    // Do not package a library for an ABI that this variant does not support.
+    // This keeps release APKs arm64-only even though the C-shared AAR also
+    // provides emulator and legacy ARM binaries.
     packaging {
         jniLibs {
             // Clash.load verifies and loads the two C-shared files by their
             // nativeLibraryDir paths, so they must be extracted from the APK.
             useLegacyPackaging = true
-            excludes += ["**/armeabi-v7a/**"]
+            excludes += mihomoAarAbis.findAll { !clashfluxTargetAbis.contains(it) }
+                    .collect { "**/${it}/**" }
         }
     }
 
