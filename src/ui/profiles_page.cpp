@@ -1346,7 +1346,9 @@ huxerui::Task<int> ProfilesRefreshDueOnce(
 
     const PlatformCodeList platformCodes = ResolvePlatformCodes(
         ResolvePlatformInfo(huxerui::UseViewportClass()), false);
-    const bool isAndroid = HasPlatformCode(platformCodes, PlatformCode::Android);
+    // Android 专属编辑页不能依赖 PlatformControl：其 Scope 子组合在真机上
+    // 会被错误过滤。编译目标是唯一权威，视口只负责布局而不参与平台判断。
+    constexpr bool isAndroid = CompileTimePlatform() == PlatformKind::Android;
     const bool pptpSupported =
         HasPlatformCode(platformCodes, PlatformCode::PptpEngine);
     const bool openvpnSupported =
@@ -2042,12 +2044,13 @@ huxerui::Task<int> ProfilesRefreshDueOnce(
                              huxerui::CrossAxisAlignment::Center))}
             : std::move(profileGrid));
 
-    huxerui::View mobileEditPage = PlatformControl(
-        {PlatformCode::Android},
+    huxerui::View mobileEditPage =
         [editPageId, tasks, toast, editName, editUrl, editType, editDesc,
          editTimeout, editInterval, editAuto, editSys, editCore, editCert,
          editPptpServer, editPptpUsername, editPptpPassword, editPptpTimeout,
-         editPptpRoutes, editPptpMppe, editOpenVpnConfig, editOpenVpnRoutes] {
+         editPptpRoutes, editPptpMppe, editOpenVpnConfig,
+         editOpenVpnRoutes]() -> huxerui::View {
+            if constexpr (!isAndroid) return {};
             const std::int64_t id = editPageId.Get();
             if (id == 0) return huxerui::View{};
             return ProfileEditPage(
@@ -2057,7 +2060,7 @@ huxerui::Task<int> ProfilesRefreshDueOnce(
                 editPptpTimeout, editPptpRoutes, editPptpMppe, editOpenVpnConfig,
                 editOpenVpnRoutes, tasks, toast,
                 [editPageId] { editPageId = 0; });
-        });
+        }();
 
     return huxerui::IndexedPages(
                std::vector<huxerui::View>{std::move(profileListPage),

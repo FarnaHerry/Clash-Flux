@@ -486,9 +486,14 @@ const std::string kAboutText =
                                    huxerui::CrossAxisAlignment::Stretch)));
                     }),
 
-                // Android VPN 隧道：桌面的「系统」卡在手机上不可用，手机流量
-                // 接管走 VpnService（TUN fd 经 spawn 继承给内核）。
-                PlatformControl({PlatformCode::Android}, [coreAction] {
+                // Android VPN 隧道：这里不能复用 PlatformControl。真机上其
+                // Scope 子组合曾错误丢弃 Android 专属卡，导致系统 VPN 无从
+                // 开启、所有透明代理流量和统计都保持为 0。使用编译期平台分支
+                // 直接声明卡片，桌面构建仍生成空 View。
+                [coreAction]() -> huxerui::View {
+                    if constexpr (CompileTimePlatform() != PlatformKind::Android) {
+                        return {};
+                    }
                     return Card(huxerui::Column {
                         SectionTitle("VPN"),
                         SettingRow(
@@ -524,7 +529,7 @@ const std::string kAboutText =
                         .With(huxerui::Spacing(10.0F),
                               huxerui::CrossAlign(
                                   huxerui::CrossAxisAlignment::Stretch)));
-                }),
+                }(),
 
                 PlatformControl({PlatformCode::SystemTray},
                                 [trayCloseBehavior] {
