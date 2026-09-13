@@ -125,10 +125,13 @@ extern "C" void clashflux_android_request_ignore_battery() noexcept;
 inline void AndroidRequestIgnoreBattery() noexcept {
     clashflux_android_request_ignore_battery();
 }
+extern "C" int clashflux_android_vpn_state() noexcept;
+inline int AndroidVpnState() noexcept { return clashflux_android_vpn_state(); }
 #else
 inline void AndroidStartVpn() noexcept {}
 inline void AndroidStopVpn() noexcept {}
 inline void AndroidRequestIgnoreBattery() noexcept {}
+inline int AndroidVpnState() noexcept { return 0; }
 #endif
 
 // ---- 统一收束表（平台 × 能力/选项）-----------------------------------------

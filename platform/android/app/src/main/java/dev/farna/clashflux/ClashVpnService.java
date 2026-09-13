@@ -6,26 +6,41 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.InetAddresses;
 import android.net.VpnService;
 import android.os.Build;
+import android.util.Log;
+
+import io.github.oviron.libmihomo.Clash;
+import io.github.oviron.libmihomo.TunInterface;
+
+import java.net.InetSocketAddress;
 
 /**
- * System VPN tunnel: establishes the TUN device and hands the raw fd to the
- * native side, which spawns mihomo with tun.file-descriptor inheriting it.
- *
- * No protect() callback is needed: the VPN-owning UID (including the mihomo
- * child process) is exempt from VPN routing, and the package is also added
- * via addDisallowedApplication as an explicit belt-and-braces measure.
+ * Android-owned TUN endpoint for the embedded mihomo C-shared core.  The
+ * core calls protect(fd) for every physical outbound socket, which is the
+ * essential difference from the old child-process/fd-inheritance design.
  */
 public final class ClashVpnService extends VpnService {
     private static final String TAG = "ClashFlux";
     private static final String CHANNEL_ID = "clashflux_vpn";
     private static final int NOTIFICATION_ID = 1;
 
-    // Must match core.cpp kAndroidTunFd (fd number used inside the mihomo child).
-    static final int MIHOMO_TUN_FD = 3;
-
     private boolean established = false;
+    private final TunInterface tunCallbacks = new TunInterface() {
+        @Override public void protect(int fd) {
+            // VpnService.protect returns whether Android exempted this socket;
+            // mihomo's callback contract is notification-only.
+            ClashVpnService.this.protect(fd);
+        }
+
+        @Override public String resolverProcess(int protocol, String source,
+                                                String target, int uid) {
+            return ClashVpnService.this.resolverProcess(protocol, source, target, uid);
+        }
+    };
 
     static {
         // Same native library MainActivity loads; declared here so the JNI
@@ -34,8 +49,7 @@ public final class ClashVpnService extends VpnService {
         System.loadLibrary(BuildConfig.HUXERUI_APP_LIBRARY);
     }
 
-    private static native void nativeTunEstablished(int fd);
-    private static native void nativeTunRevoked();
+    private static native void nativeVpnState(int state, String message);
 
     @Override
     public void onCreate() {
@@ -58,26 +72,26 @@ public final class ClashVpnService extends VpnService {
 
     @Override
     public void onRevoke() {
-        // System revoked the VPN (user toggled it off, another VPN took over,
-        // or the profile was removed). Tear the core's TUN down on our side.
-        established = false;
-        BootReceiver.setVpnActive(this, false);
-        nativeTunRevoked();
+        closeTunnel("系统撤销了 VPN");
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
 
     @Override
     public void onDestroy() {
-        if (established) {
-            established = false;
-            BootReceiver.setVpnActive(this, false);
-            nativeTunRevoked();
-        }
+        closeTunnel("VPN 已关闭");
         super.onDestroy();
     }
 
     private void establishVpn() {
+        nativeVpnState(1, "正在建立系统 VPN");
+        // Boot restore has no Activity/core worker. Reapply the persisted
+        // generated config before the TUN is handed to mihomo.
+        if (!MihomoRuntime.start(this,
+                new java.io.File(getFilesDir(), "clash-flux/core").getAbsolutePath())) {
+            failTunnel("内嵌 mihomo 未能加载运行配置");
+            return;
+        }
         int fd;
         try {
             // Builder parameters mirror ClashMetaForAndroid's TunService.
@@ -89,11 +103,7 @@ public final class ClashVpnService extends VpnService {
                     .setBlocking(false)
                     .addAddress("172.19.0.1", 30)
                     .addDnsServer("172.19.0.2")
-                    .addRoute("0.0.0.0", 0)
-                    // The VPN app's own UID must bypass the tunnel so the
-                    // spawned mihomo process reaches the physical network
-                    // without loops.
-                    .addDisallowedApplication(getPackageName());
+                    .addRoute("0.0.0.0", 0);
 
             PendingIntent configure = PendingIntent.getActivity(
                     this, 0,
@@ -107,22 +117,70 @@ public final class ClashVpnService extends VpnService {
 
             fd = builder.establish().detachFd();
         } catch (Exception error) {
-            established = false;
-            BootReceiver.setVpnActive(this, false);
-            nativeTunRevoked();
-            stopForeground(STOP_FOREGROUND_REMOVE);
-            stopSelf();
+            failTunnel("建立 VPN 失败: " + error.getMessage());
             return;
         }
         if (fd < 0) {
-            established = false;
-            BootReceiver.setVpnActive(this, false);
-            nativeTunRevoked();
-            stopForeground(STOP_FOREGROUND_REMOVE);
-            stopSelf();
+            failTunnel("系统拒绝创建 VPN 接口");
             return;
         }
-        nativeTunEstablished(fd);
+        try {
+            Clash.INSTANCE.startTUN(fd, tunCallbacks, "clash-flux", "system",
+                    "172.19.0.1/30", "172.19.0.2", 1400);
+            nativeVpnState(2, "TUN 已附着；socket protect 已启用");
+        } catch (RuntimeException error) {
+            failTunnel("内嵌 mihomo 未能附着 TUN: " + error.getMessage());
+        }
+    }
+
+    private String resolverProcess(int protocol, String source, String target, int uid) {
+        int owner = uid;
+        if (owner < 0 && Build.VERSION.SDK_INT >= 29) {
+            try {
+                ConnectivityManager connectivity =
+                        (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+                if (connectivity != null) {
+                    owner = connectivity.getConnectionOwnerUid(protocol,
+                            parseEndpoint(source), parseEndpoint(target));
+                }
+            } catch (RuntimeException ignored) {
+                owner = -1;
+            }
+        }
+        if (owner < 0) return "";
+        String[] packages = getPackageManager().getPackagesForUid(owner);
+        String name = packages != null && packages.length > 0 ? packages[0] : "";
+        return owner + "\n" + name;
+    }
+
+    private static InetSocketAddress parseEndpoint(String value) {
+        int separator = value.lastIndexOf(':');
+        if (separator <= 0) throw new IllegalArgumentException("Bad endpoint: " + value);
+        String host = value.substring(0, separator).replace("[", "").replace("]", "");
+        return new InetSocketAddress(InetAddresses.parseNumericAddress(host),
+                Integer.parseInt(value.substring(separator + 1)));
+    }
+
+    private void closeTunnel(String message) {
+        if (!established) return;
+        established = false;
+        BootReceiver.setVpnActive(this, false);
+        try {
+            Clash.INSTANCE.stopTun();
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Unable to stop embedded TUN", error);
+        }
+        nativeVpnState(0, message);
+    }
+
+    private void failTunnel(String message) {
+        Log.e(TAG, message);
+        established = false;
+        BootReceiver.setVpnActive(this, false);
+        try { Clash.INSTANCE.stopTun(); } catch (RuntimeException ignored) { }
+        nativeVpnState(3, message);
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        stopSelf();
     }
 
     private void startForegroundWithNotification() {
