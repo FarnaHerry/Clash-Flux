@@ -1,12 +1,17 @@
 package dev.farna.clashflux;
 
+import android.Manifest;
 import android.content.ActivityNotFoundException;
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.net.Uri;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.Log;
 
 import org.huxerui.HuxerUIActivity;
@@ -99,19 +104,21 @@ public final class MainActivity extends HuxerUIActivity {
 
     // ---- VPN（C++ 设置页 VPN 开关经 JNI 调用）----
 
+    private static final int REQUEST_NOTIFICATIONS = 4002;
+    private static boolean pendingVpnStart = false;
+
+    /** Initializes the native store when no Activity UI ran (boot restore). */
+    public static void bootstrapNative(Context context) {
+        nativeInit(context.getFilesDir().getAbsolutePath(),
+                context.getApplicationInfo().nativeLibraryDir);
+    }
+
     public static void startVpn() {
         MainActivity activity = current;
         if (activity == null) {
             return;
         }
-        activity.runOnUiThread(() -> {
-            Intent consent = VpnService.prepare(activity);
-            if (consent != null) {
-                activity.startActivityForResult(consent, REQUEST_VPN_CONSENT);
-            } else {
-                activity.startVpnService();
-            }
-        });
+        activity.runOnUiThread(activity::beginVpnStart);
     }
 
     public static void stopVpn() {
@@ -123,11 +130,65 @@ public final class MainActivity extends HuxerUIActivity {
                 activity.stopService(new Intent(activity, ClashVpnService.class)));
     }
 
+    public static boolean isIgnoringBatteryOptimizations() {
+        MainActivity activity = current;
+        if (activity == null) return true;
+        PowerManager power = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+        return power == null
+                || power.isIgnoringBatteryOptimizations(activity.getPackageName());
+    }
+
+    public static void requestIgnoreBatteryOptimizations() {
+        MainActivity activity = current;
+        if (activity == null) return;
+        PowerManager power = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+        if (power == null || power.isIgnoringBatteryOptimizations(activity.getPackageName())) {
+            return;
+        }
+        activity.startActivity(new Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:" + activity.getPackageName())));
+    }
+
+    private void beginVpnStart() {
+        // The sticky FGS notification is part of the keep-alive story: ask
+        // for the (denied-by-default) notification permission first, then
+        // continue with the VPN consent dialog once the answer is in.
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(
+                Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            pendingVpnStart = true;
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                    REQUEST_NOTIFICATIONS);
+            return;
+        }
+        continueVpnStart();
+    }
+
+    private void continueVpnStart() {
+        Intent consent = VpnService.prepare(this);
+        if (consent != null) {
+            startActivityForResult(consent, REQUEST_VPN_CONSENT);
+        } else {
+            startVpnService();
+        }
+    }
+
     private void startVpnService() {
         try {
             startForegroundService(new Intent(this, ClashVpnService.class));
         } catch (RuntimeException error) {
             Log.e(TAG, "Unable to start the VPN service", error);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                                           int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_NOTIFICATIONS && pendingVpnStart) {
+            pendingVpnStart = false;
+            continueVpnStart();
         }
     }
 
