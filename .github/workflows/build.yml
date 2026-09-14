@@ -388,7 +388,10 @@ jobs:
           path: |
             .huxerui/package/windows/release
             .huxerui/package/windows/dependencies
-            build/huxerui-package/windows/Release
+            # 整个 huxerui-package/windows：package.json 在 Release/ 下，而
+            # package.json 引用的 Package.wxs / Bundle.wxs 生成在其父目录
+            # （configure 期产物），漏传会导致安装器 job 找不到 WiX 输入。
+            build/huxerui-package/windows
           if-no-files-found: error
           retention-days: 2
 
