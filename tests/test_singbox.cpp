@@ -156,7 +156,7 @@ int main() {
     check(!hk.contains("udp"), "udp 字段不透传（sing-box 严格字段校验）");
     const json us = findOutbound("美国 01");
     check(us.value("security", "") == "auto", "vmess cipher → security");
-    check(us.value("transport", json{})["type"] == "websocket", "vmess ws transport");
+    check(us.value("transport", json{})["type"] == "ws", "vmess ws transport");
     check(us.value("transport", json{})["headers"]["Host"] == "us.example.com",
           "ws-opts.headers → transport.headers");
     check(us.value("tls", json{})["server_name"] == "us.example.com", "vmess tls sni");
@@ -214,8 +214,8 @@ int main() {
     check(sawCidr, "IP-CIDR 直映射");
     check(config["route"]["rule_set"].is_array() &&
               config["route"]["rule_set"][0]["tag"] == "geoip-cn" &&
-              config["route"]["rule_set"][0]["url"].get<std::string>().find("geoip-cn.srs") !=
-                  std::string::npos,
+              config["route"]["rule_set"][0]["url"].get<std::string>().find(
+                  "meta-rules-dat/sing/geo/geoip/cn.srs") != std::string::npos,
           "geoip-cn 远程 .srs 规则集");
     check(std::any_of(result.warnings.begin(), result.warnings.end(),
                       [](const std::string& w) {
