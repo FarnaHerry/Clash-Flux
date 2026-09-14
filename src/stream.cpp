@@ -18,6 +18,16 @@ namespace {
 
 constexpr std::size_t kMaxLogLines = 2000;
 
+struct ApplicationLogStore {
+    std::mutex mutex;
+    std::vector<LogLine> lines;
+};
+
+ApplicationLogStore& applicationLogStore() {
+    static ApplicationLogStore store;
+    return store;
+}
+
 // mihomo 与 sing-box 的日志级别词表差异归一：WS /logs 帧的 type（sing-box
 // 发 "warn"）统一映射成 UI 词表（warning）；测速/过滤沿用。
 std::string normalizeLevel(std::string level) {
@@ -56,6 +66,31 @@ struct Channel {
 };
 
 } // namespace
+
+void logApplication(std::string level, std::string payload) {
+    if (payload.empty()) return;
+    LogLine line{
+        .level = normalizeLevel(std::move(level)),
+        .payload = std::move(payload),
+        .at = nowUnix(),
+    };
+    auto& store = applicationLogStore();
+    std::lock_guard lock(store.mutex);
+    if (store.lines.size() >= kMaxLogLines) store.lines.erase(store.lines.begin());
+    store.lines.push_back(std::move(line));
+}
+
+std::vector<LogLine> drainApplicationLogs() {
+    auto& store = applicationLogStore();
+    std::lock_guard lock(store.mutex);
+    return std::exchange(store.lines, {});
+}
+
+void clearApplicationLogs() {
+    auto& store = applicationLogStore();
+    std::lock_guard lock(store.mutex);
+    store.lines.clear();
+}
 
 struct CoreStreams::Impl {
     Channel logs;

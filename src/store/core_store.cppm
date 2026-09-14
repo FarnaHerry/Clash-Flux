@@ -289,6 +289,7 @@ public:
     // 本进程退出不带走内核。
     void startCore(const std::string& profileYaml, bool detached = false) {
         ensureOpen();
+        stream::logApplication("info", "开始启动代理内核");
         {
             std::lock_guard lock(mutex_);
             // Android 桥线程在应用启动时自动拉起内核，启动慢时（拉远程
@@ -471,6 +472,7 @@ public:
             std::lock_guard lock(mutex_);
             snap_.state = core::CoreState::Running;
         }
+        stream::logApplication("info", "代理内核控制器已就绪");
         refreshRuntime();
         // 系统代理开关处于开：内核就绪后重指到当前端口（best effort，
         // 失败不判启动失败，记 lastError）。
@@ -484,6 +486,7 @@ public:
     }
 
     void stopCore() {
+        stream::logApplication("info", "请求停止代理内核");
 #if defined(__ANDROID__)
         clashflux_android_stop_vpn();
         std::lock_guard lock(mutex_);
@@ -687,10 +690,12 @@ private:
             db_ = std::move(database);
             secret_ = std::move(secret);
             api_ = std::make_unique<api::ClashApi>(cfg::controllerBaseUrl(), secret_);
+            stream::logApplication("debug", "应用数据库与内核 API 已初始化");
         });
     }
 
     void fail(std::string error) {
+        stream::logApplication("error", "内核操作失败：" + error);
         std::lock_guard lock(mutex_);
         snap_.state = core::CoreState::Failed;
         snap_.lastError = std::move(error);

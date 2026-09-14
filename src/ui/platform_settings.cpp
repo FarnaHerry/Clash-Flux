@@ -105,6 +105,7 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
 
 [[huxerui::composable]] huxerui::View AndroidSettingsSection() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const huxerui::ApplicationHandle application = huxerui::UseApplication();
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto snap = huxerui::UseState<store::CoreSnapshot>({});
@@ -113,6 +114,15 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
     auto vpn_state = huxerui::UseState(AndroidVpnState());
     auto battery_ignored = huxerui::UseState(AndroidIsIgnoringBattery());
     auto busy = huxerui::UseState(false);
+
+    // Android 的授权页会暂时遮住 Activity；回到前台时立即重读系统状态，
+    // 不依赖用户再次点击控件或等待后台轮询恢复。
+    application.OnLifecycleChange(
+        [battery_ignored](huxerui::ApplicationLifecycleState state) {
+            if (state == huxerui::ApplicationLifecycleState::Active) {
+                battery_ignored = AndroidIsIgnoringBattery();
+            }
+        });
 
     huxerui::Lifecycle(
         [tasks, snap, tun_enabled, vpn_state, battery_ignored] {
@@ -175,9 +185,13 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
             huxerui::Switch(battery_ignored.Get())
                 .OnChanged([battery_ignored, toast](bool on) {
                     if (on) {
+                        battery_ignored = false;
                         AndroidRequestBackgroundKeepAlive();
                     } else {
-                        toast.Show("请在系统设置中关闭电池优化");
+                        // Android 不允许普通应用静默撤销自身的电池优化豁免，
+                        // 关闭动作必须进入系统管理页完成。
+                        AndroidOpenBatterySettings();
+                        toast.Show("请在系统电池设置中关闭本应用的电池优化豁免");
                     }
                     battery_ignored = AndroidIsIgnoringBattery();
                 })),
@@ -196,6 +210,12 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
         store::coreStore().setting("tray.enabled", "true") == "true");
     auto startMinimized = huxerui::UseState(
         store::coreStore().setting("tray.start_minimized", "false") == "true");
+    std::size_t initialCloseBehavior = 0;
+    const std::string savedCloseBehavior =
+        store::coreStore().setting("tray.close_behavior", "0");
+    if (savedCloseBehavior == "1") initialCloseBehavior = 1;
+    if (savedCloseBehavior == "2") initialCloseBehavior = 2;
+    auto closeBehavior = huxerui::UseState(initialCloseBehavior);
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
     auto tasks = huxerui::UseTaskScope();
@@ -358,14 +378,9 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
                 huxerui::SegmentedButton(
                     std::vector<huxerui::StringVariant>{"每次询问", "直接退出",
                                                         "最小化到托盘"},
-                    [&] {
-                        const std::string value =
-                            store::coreStore().setting("tray.close_behavior", "0");
-                        if (value == "1") return std::size_t{1};
-                        if (value == "2") return std::size_t{2};
-                        return std::size_t{0};
-                    }())
-                    .OnChanged([](std::size_t index) {
+                    closeBehavior.Get())
+                    .OnChanged([closeBehavior](std::size_t index) {
+                        closeBehavior = index;
                         store::coreStore().setSetting("tray.close_behavior",
                                                        std::to_string(index));
                     })),

@@ -37,35 +37,50 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     @Override public void onCreate() {
         super.onCreate();
         current = this;
+        MainActivity.appLog("VPN 服务已创建，开始初始化 libbox", false);
         MainActivity.bootstrapNative(this);
         setup();
         try {
             foreground();
             foregroundReady = true;
+            MainActivity.appLog("VPN 前台服务已就绪", false);
         } catch (RuntimeException error) {
             fail("无法启动 VPN 前台服务：" + error.getMessage());
         }
     }
     @Override public int onStartCommand(Intent i, int f, int id) {
-        if (!foregroundReady) return START_NOT_STICKY;
+        if (!foregroundReady) {
+            MainActivity.appLog("VPN 服务未完成前台初始化，拒绝启动数据面", true);
+            return START_NOT_STICKY;
+        }
         if (!started && !starting) {
             starting = true;
             startRequested = true;
+            MainActivity.appLog("VPN 数据面启动线程已开始", false);
             new Thread(this::startDataPlane, "clashflux-vpn-start").start();
         }
         return START_STICKY;
     }
-    @Override public void onRevoke() { close("系统撤销了 VPN"); stopSelf(); }
+    @Override public void onRevoke() {
+        MainActivity.appLog("系统撤销了 VPN 授权", true);
+        close("系统撤销了 VPN");
+        stopSelf();
+    }
     @Override public void onDestroy() {
+        MainActivity.appLog("VPN 服务正在销毁", false);
         close("VPN 已关闭");
         if (current == this) current = null;
         super.onDestroy();
     }
     private void setup() {
         try { SetupOptions o = new SetupOptions(); o.setBasePath(getFilesDir().getPath()); o.setWorkingPath(getFilesDir().getPath()); o.setTempPath(getCacheDir().getPath()); o.setAppVersion(String.valueOf(BuildConfig.VERSION_CODE)); o.setAppMarketingVersion(BuildConfig.VERSION_NAME); Libbox.setup(o); }
-        catch (Exception e) { Log.e(TAG, "libbox setup", e); }
+        catch (Exception e) {
+            Log.e(TAG, "libbox setup", e);
+            MainActivity.appLog("libbox 初始化失败：" + e.getMessage(), true);
+        }
     }
     private void startDataPlane() {
+        MainActivity.appLog("开始创建 sing-box VPN 数据面", false);
         nativeVpnState(1, "正在启动 sing-box VPN 数据面");
         try {
             // The native store compiles the selected profile into sing-box
@@ -77,7 +92,10 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 Thread.sleep(200);
             }
             if (!startRequested) return;
-            if (!config.isFile()) throw new IllegalStateException("未找到启用订阅的运行配置");
+            if (!config.isFile()) {
+                throw new IllegalStateException("未找到启用订阅的运行配置");
+            }
+            MainActivity.appLog("已找到运行配置，启动 libbox CommandServer", false);
             server = new CommandServer(this, this);
             server.start();
             if (!startRequested) {
@@ -94,6 +112,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             startStatusClient();
             started = true; BootReceiver.setVpnActive(this, true);
             nativeVpnState(2, "sing-box 已附着 TUN；socket protect 已启用");
+            MainActivity.appLog("sing-box 已成功附着 Android TUN", false);
         } catch (Exception e) {
             if (startRequested) fail("sing-box 启动失败: " + e.getMessage());
         } finally {
@@ -101,11 +120,27 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         }
     }
     @Override public int openTun(TunOptions o) throws Exception {
-        Builder b = new Builder().setSession("Clash-Flux").setMtu(o.getMTU()).setBlocking(false);
-        addAddresses(b, o.getInet4Address()); addAddresses(b, o.getInet6Address());
-        if (o.getAutoRoute()) { addRoutes(b, o.getInet4RouteRange()); addRoutes(b, o.getInet6RouteRange()); if (Build.VERSION.SDK_INT >= 29) b.setMetered(false); }
-        b.setConfigureIntent(PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
-        tunnel = b.establish(); if (tunnel == null) throw new IllegalStateException("系统拒绝创建 VPN 接口"); return tunnel.detachFd();
+        try {
+            Builder b = new Builder().setSession("Clash-Flux")
+                    .setMtu(o.getMTU()).setBlocking(false);
+            addAddresses(b, o.getInet4Address());
+            addAddresses(b, o.getInet6Address());
+            if (o.getAutoRoute()) {
+                addRoutes(b, o.getInet4RouteRange());
+                addRoutes(b, o.getInet6RouteRange());
+                if (Build.VERSION.SDK_INT >= 29) b.setMetered(false);
+            }
+            b.setConfigureIntent(PendingIntent.getActivity(
+                    this, 0, new Intent(this, MainActivity.class),
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+            tunnel = b.establish();
+            if (tunnel == null) throw new IllegalStateException("系统拒绝创建 VPN 接口");
+            MainActivity.appLog("Android VPN 接口已创建", false);
+            return tunnel.detachFd();
+        } catch (Exception error) {
+            MainActivity.appLog("Android VPN 接口创建失败：" + error.getMessage(), true);
+            throw error;
+        }
     }
     private static void addAddresses(Builder b, RoutePrefixIterator i) {
         if (i == null) return;
@@ -131,11 +166,13 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         } catch (Exception error) {
             // The VPN data plane is independent of the optional UI client.
             Log.w(TAG, "Unable to attach sing-box status stream", error);
+            MainActivity.appLog("libbox 状态通道连接失败：" + error.getMessage(), true);
         }
     }
     private void close(String msg) { close(msg, true); }
     private void close(String msg, boolean reportStopped) {
         startRequested = false;
+        MainActivity.appLog("VPN 数据面关闭：" + msg, false);
         if (!started && tunnel == null && server == null) {
             if (reportStopped && !failureReported) nativeVpnState(0, msg);
             return;
@@ -166,6 +203,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             return true;
         } catch (Exception error) {
             Log.w(TAG, "Unable to select outbound " + group + " -> " + name, error);
+            MainActivity.appLog("线路切换失败：" + error.getMessage(), true);
             return false;
         }
     }
@@ -178,6 +216,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private void fail(String msg) {
         failureReported = true;
         Log.e(TAG, msg);
+        MainActivity.appLog(msg, true);
         close(msg, false);
         nativeVpnState(3, msg);
         stopForeground(STOP_FOREGROUND_REMOVE);
@@ -217,7 +256,31 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             outboundGroupsJson = new JSONObject().put("proxies", proxies).toString();
         } catch (Exception error) {
             Log.w(TAG, "Unable to snapshot outbound groups", error);
+            MainActivity.appLog("读取出站线路失败：" + error.getMessage(), true);
         }
     }
-    private void foreground(){ NotificationManager m=getSystemService(NotificationManager.class); if(m!=null&&Build.VERSION.SDK_INT>=26&&m.getNotificationChannel(CHANNEL_ID)==null)m.createNotificationChannel(new NotificationChannel(CHANNEL_ID,"VPN 状态",NotificationManager.IMPORTANCE_LOW)); android.app.Notification.Builder builder=Build.VERSION.SDK_INT>=26?new android.app.Notification.Builder(this,CHANNEL_ID):new android.app.Notification.Builder(this); android.app.Notification n=builder.setContentTitle("Clash-Flux").setContentText("正在启动 sing-box VPN 隧道").setSmallIcon(android.R.drawable.stat_notify_sync_noanim).setCategory(android.app.Notification.CATEGORY_SERVICE).setOngoing(true).build(); if(Build.VERSION.SDK_INT>=34)startForeground(NOTIFICATION_ID,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED);else startForeground(NOTIFICATION_ID,n); }
+    private void foreground() {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null && Build.VERSION.SDK_INT >= 26
+                && manager.getNotificationChannel(CHANNEL_ID) == null) {
+            manager.createNotificationChannel(new NotificationChannel(
+                    CHANNEL_ID, "VPN 状态", NotificationManager.IMPORTANCE_LOW));
+        }
+        android.app.Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                ? new android.app.Notification.Builder(this, CHANNEL_ID)
+                : new android.app.Notification.Builder(this);
+        android.app.Notification notification = builder
+                .setContentTitle("Clash-Flux")
+                .setContentText("正在启动 sing-box VPN 隧道")
+                .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+                .setCategory(android.app.Notification.CATEGORY_SERVICE)
+                .setOngoing(true)
+                .build();
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(NOTIFICATION_ID, notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED);
+        } else {
+            startForeground(NOTIFICATION_ID, notification);
+        }
+    }
 }

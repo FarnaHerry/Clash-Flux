@@ -14,6 +14,7 @@
 #include "task_bridge.h"
 
 import clashflux.config;
+import clashflux.stream;
 import clashflux.store.core;
 import clashflux.store.profiles;
 
@@ -54,14 +55,18 @@ const std::string kAboutText = std::format(
     auto toast = huxerui::UseToast();
     auto snap = huxerui::UseState<store::CoreSnapshot>({});
     auto portValue = huxerui::UseState(huxerui::TextEditingValue{""});
+    auto allowLan = huxerui::UseState(
+        store::coreStore().setting("core.allow_lan", "false") == "true");
     auto busy = huxerui::UseState(false);
 
     huxerui::Lifecycle(
-        [tasks, snap, portValue] {
+        [tasks, snap, portValue, allowLan] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{1.0}, [=] {
                     const auto current = store::coreStore().snapshot();
                     snap = current;
+                    allowLan = store::coreStore().setting(
+                                   "core.allow_lan", "false") == "true";
                     if (portValue.Get().text.empty() && current.mixedPort > 0) {
                         portValue = huxerui::TextEditingValue{
                             std::to_string(current.mixedPort)};
@@ -111,6 +116,8 @@ const std::string kAboutText = std::format(
                 co_await RunOnTaskThread(std::move(job));
                 if (!okMessage.empty()) toast.Show(okMessage);
             } catch (const std::exception& error) {
+                stream::logApplication("error",
+                                       std::format("设置操作失败：{}", error.what()));
                 toast.Show(error.what());
             }
             busy = false;
@@ -172,10 +179,10 @@ const std::string kAboutText = std::format(
                         }.With(huxerui::Spacing(8.0F))),
                     SettingRow(
                         "局域网连接", "允许局域网设备接入（下次启动生效）",
-                        huxerui::Switch(
-                            store::coreStore().setting("core.allow_lan", "false") ==
-                            "true")
-                            .OnChanged([coreAction](bool on) {
+                        huxerui::Switch(allowLan.Get())
+                            .OnChanged([coreAction, allowLan, busy](bool on) {
+                                if (busy.Get()) return;
+                                allowLan = on;
                                 coreAction(
                                     [on] {
                                         store::coreStore().setSetting(

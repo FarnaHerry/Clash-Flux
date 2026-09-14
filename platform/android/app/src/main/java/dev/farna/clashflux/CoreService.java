@@ -28,6 +28,7 @@ public final class CoreService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        MainActivity.appLog("常驻保活服务已创建", false);
         startForegroundWithNotification();
     }
 
@@ -65,5 +66,6 @@ public final class CoreService extends Service {
         } else {
             startForeground(NOTIFICATION_ID, notification);
         }
+        MainActivity.appLog("常驻保活通知已建立", false);
     }
 }
