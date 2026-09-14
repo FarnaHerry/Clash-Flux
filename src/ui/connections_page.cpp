@@ -60,9 +60,21 @@ ConnectionsSnapshot parseConnections(const std::string& body) {
             if (row.host.empty()) {
                 row.host = m.value("destinationIP", "");
             }
+            if (row.host.empty() && m.contains("destination") &&
+                m["destination"].is_string()) {
+                row.host = m["destination"].get<std::string>();
+            }
             const std::string port = m.value("destinationPort", "");
             if (!port.empty()) row.host += ":" + port;
             row.network = m.value("network", "");
+        }
+        if (row.host.empty() && c.contains("destination") &&
+            c["destination"].is_string()) {
+            row.host = c["destination"].get<std::string>();
+        }
+        if (row.network.empty() && c.contains("network") &&
+            c["network"].is_string()) {
+            row.network = c["network"].get<std::string>();
         }
         if (c.contains("chains") && c["chains"].is_array()) {
             std::string chains;
@@ -73,9 +85,17 @@ ConnectionsSnapshot parseConnections(const std::string& body) {
             }
             row.chains = std::move(chains);
         }
+        if (row.chains.empty() && c.contains("chain") &&
+            c["chain"].is_string()) {
+            row.chains = c["chain"].get<std::string>();
+        }
         row.rule = c.value("rule", "");
         const std::string payload = c.value("rulePayload", "");
         if (!payload.empty()) row.rule += "(" + payload + ")";
+        if (row.host.empty()) row.host = "未知目标";
+        if (row.network.empty()) row.network = "—";
+        if (row.chains.empty()) row.chains = "DIRECT";
+        if (row.rule.empty()) row.rule = "未匹配规则";
         snap.rows.push_back(std::move(row));
     }
     return snap;
@@ -96,12 +116,15 @@ ConnectionsSnapshot parseConnections(const std::string& body) {
 
     huxerui::Lifecycle(
         [tasks, rows, totalUp, totalDown, streamOpen] {
-            tasks.Launch([=]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{0.5}, [=] {
+            tasks.Launch([=]() mutable -> huxerui::Task<void> {
+                std::string lastFrame;
+                co_await PollWhile(std::chrono::duration<double>{0.5},
+                                   [=, &lastFrame] {
                     auto& streams = store::coreStore().streams();
                     streamOpen = streams.connectionsOpen();
                     std::string frame;
-                    if (streams.takeConnections(frame)) {
+                    if (streams.readConnections(frame) && frame != lastFrame) {
+                        lastFrame = frame;
                         ConnectionsSnapshot snapshot = parseConnections(frame);
                         totalUp = snapshot.totalUp;
                         totalDown = snapshot.totalDown;
@@ -141,17 +164,14 @@ ConnectionsSnapshot parseConnections(const std::string& body) {
                        }
                        const ConnectionRow& row = rows[index];
                        const std::string id = row.id;
-                       return huxerui::Row {
-                           mono(row.host, theme.colors.on_surface, 0.0F),
-                           mono(row.network, theme.colors.on_surface_variant, 50.0F),
-                           mono(row.chains, theme.colors.on_surface_variant, 220.0F),
-                           mono(std::format("↑{} ↓{}", formatBytes(row.up),
-                                            formatBytes(row.down)),
-                                theme.colors.on_surface_variant, 160.0F),
-                           mono(row.rule, theme.colors.on_surface_variant, 140.0F),
-                           huxerui::Text("✕").Style(huxerui::TextStyle{
-                               huxerui::Font::System(font_size::kCaption),
-                               theme.colors.on_surface_variant})
+                       const std::string key = id.empty()
+                                                   ? std::format("connection-{}", index)
+                                                   : id;
+                       const auto closeButton = [tasks, id, theme] {
+                           return huxerui::Text("✕")
+                               .Style(huxerui::TextStyle{
+                                   huxerui::Font::System(font_size::kCaption),
+                                   theme.colors.on_surface_variant})
                                .With(huxerui::Padding(
                                          huxerui::EdgeInsets::Symmetric(8.0F, 2.0F)),
                                      huxerui::Semantics{
@@ -160,21 +180,53 @@ ConnectionsSnapshot parseConnections(const std::string& body) {
                                      huxerui::Focusable(true),
                                      huxerui::Tooltip("关闭该连接"))
                                .OnClick([tasks, id] {
+                                   if (id.empty()) return;
                                    tasks.Launch([=]() -> huxerui::Task<void> {
                                        co_await RunOnTaskThread([=] {
                                            store::coreStore().api().closeConnection(id);
                                        });
                                    });
-                               }),
+                               });
+                       };
+                       if (compact) {
+                           return UnifiedListRow(
+                               huxerui::Column{
+                                   huxerui::Row{
+                                       mono(row.host, theme.colors.on_surface, 0.0F),
+                                       mono(row.network,
+                                            theme.colors.on_surface_variant, 55.0F),
+                                       closeButton(),
+                                   }
+                                       .With(huxerui::Spacing(6.0F),
+                                             huxerui::CrossAlign(
+                                                 huxerui::CrossAxisAlignment::Center)),
+                                   mono(std::format("链路：{}", row.chains),
+                                        theme.colors.on_surface_variant, 0.0F),
+                                   huxerui::Row{
+                                       mono(std::format("↑{} ↓{}", formatBytes(row.up),
+                                                        formatBytes(row.down)),
+                                            theme.colors.on_surface_variant, 0.0F),
+                                       mono(std::format("规则：{}", row.rule),
+                                            theme.colors.on_surface_variant, 0.0F),
+                                   }
+                                       .With(huxerui::Spacing(8.0F)),
+                               },
+                               theme, key, true);
                        }
-                           .With(huxerui::Spacing(8.0F),
-                                 huxerui::Padding(
-                                     huxerui::EdgeInsets::Symmetric(4.0F, 5.0F)),
-                                 huxerui::CrossAlign(
-                                     huxerui::CrossAxisAlignment::Center))
-                           .Key(row.id);
+                       return UnifiedListRow(
+                           huxerui::Row{
+                               mono(row.host, theme.colors.on_surface, 0.0F),
+                               mono(row.network, theme.colors.on_surface_variant, 50.0F),
+                               mono(row.chains, theme.colors.on_surface_variant, 220.0F),
+                               mono(std::format("↑{} ↓{}", formatBytes(row.up),
+                                                formatBytes(row.down)),
+                                    theme.colors.on_surface_variant, 160.0F),
+                               mono(row.rule, theme.colors.on_surface_variant, 140.0F),
+                               closeButton(),
+                           },
+                           theme, key, false);
                    })
-                   .EstimatedItemExtent(38.0F)
+                   .EstimatedItemExtent(compact ? 92.0F : 44.0F)
                    .Controller(scroll)
                    .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     }

@@ -388,47 +388,37 @@ std::vector<std::string> TargetNames(
                     const SubscriptionRuleRow& rule = subscriptionRules[index];
                     const std::string payload =
                         rule.payload.empty() ? "—" : rule.payload;
+                    const std::string key = std::format(
+                        "{}:{}:{}", rule.profileId, rule.ordinal, rule.type);
                     if (compact) {
                         // 紧凑窗口不再复用桌面表格的固定列宽。固定列会把
                         // VirtualList 的最小宽度推过页面岛，导致右侧内容和
                         // 操作区一起溢出屏幕；卡片字段可以在有限宽度内换行。
-                        return huxerui::Column{
-                                   mono(rule.profile, theme.colors.primary),
-                                   mono(std::format("{} · 走向：{}", rule.type,
-                                                    rule.target),
-                                        theme.colors.on_surface_variant),
-                                   mono(payload, theme.colors.on_surface),
-                               }
-                            .With(huxerui::Spacing(4.0F),
-                                  huxerui::Padding(
-                                      huxerui::EdgeInsets::Symmetric(8.0F, 6.0F)),
-                                  huxerui::Background(
-                                      theme.colors.surface_container_high),
-                                  huxerui::CornerRadius(12.0F),
-                                  huxerui::ClipChildren(),
-                                  huxerui::CrossAlign(
-                                      huxerui::CrossAxisAlignment::Stretch))
-                            .Key(std::format("{}:{}:{}", rule.profileId,
-                                             rule.ordinal, rule.type));
+                        return UnifiedListRow(
+                            huxerui::Column{
+                                mono(rule.profile, theme.colors.primary),
+                                mono(std::format("{} · 走向：{}", rule.type,
+                                                 rule.target),
+                                     theme.colors.on_surface_variant),
+                                mono(payload, theme.colors.on_surface),
+                            },
+                            theme, key, true);
                     }
-                    return huxerui::Row{
-                               mono(rule.profile, theme.colors.primary)
-                                   .With(huxerui::Frame{.width = 180.0F}),
-                               mono(rule.type, theme.colors.on_surface)
-                                   .With(huxerui::Frame{.width = 145.0F}),
-                               mono(payload, theme.colors.on_surface)
-                                   .With(huxerui::Grow(1.0F)),
-                               mono(rule.target, theme.colors.on_surface_variant)
-                                   .With(huxerui::Frame{.width = 180.0F}),
-                           }
-                        .With(huxerui::Spacing(8.0F),
-                              huxerui::Padding(
-                                  huxerui::EdgeInsets::Symmetric(4.0F, 5.0F)))
-                        .Key(std::format("{}:{}:{}", rule.profileId,
-                                         rule.ordinal, rule.type));
+                    return UnifiedListRow(
+                        huxerui::Row{
+                            mono(rule.profile, theme.colors.primary)
+                                .With(huxerui::Frame{.width = 180.0F}),
+                            mono(rule.type, theme.colors.on_surface)
+                                .With(huxerui::Frame{.width = 145.0F}),
+                            mono(payload, theme.colors.on_surface)
+                                .With(huxerui::Grow(1.0F)),
+                            mono(rule.target, theme.colors.on_surface_variant)
+                                .With(huxerui::Frame{.width = 180.0F}),
+                        },
+                        theme, key, false);
                 });
             subscriptionList = std::move(subscriptionList)
-                                   .EstimatedItemExtent(compact ? 76.0F : 28.0F)
+                                   .EstimatedItemExtent(compact ? 86.0F : 42.0F)
                                    .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
             if (compact) {
                 body = huxerui::Column{std::move(subscriptionList)}
@@ -484,70 +474,60 @@ std::vector<std::string> TargetNames(
                         rule.pattern.empty() ? "全部" : rule.pattern;
                     const std::string connection =
                         ConnectionName(profiles, rule.connectionId);
+                    const std::string key = std::format(
+                        "{}:{}:{}", rule.connectionId, rule.pattern, rule.priority);
                     if (compact) {
-                        return huxerui::Column{
-                                   mono(std::format(
-                                            "{} · 优先级：{}",
-                                            vpn::MatchKindName(rule.match),
-                                            rule.priority),
-                                        theme.colors.primary),
-                                   mono(std::format("匹配：{}", pattern),
-                                        theme.colors.on_surface),
-                                   mono(std::format("连接：{}", connection),
-                                        theme.colors.on_surface_variant),
-                                   huxerui::Row{
-                                       huxerui::Spacer(),
-                                       huxerui::Button("删除").OnClick(
-                                           [globalRules, index,
-                                            persistGlobalPolicy] {
-                                               if (index < globalRules.Size()) {
-                                                   globalRules.Erase(index);
-                                                   persistGlobalPolicy();
-                                               }
-                                           }),
-                                   }
-                                       .With(huxerui::CrossAlign(
-                                           huxerui::CrossAxisAlignment::Stretch)),
-                               }
-                            .With(huxerui::Spacing(4.0F),
-                                  huxerui::Padding(
-                                      huxerui::EdgeInsets::Symmetric(8.0F, 6.0F)),
-                                  huxerui::Background(
-                                      theme.colors.surface_container_high),
-                                  huxerui::CornerRadius(12.0F),
-                                  huxerui::ClipChildren(),
-                                  huxerui::CrossAlign(
-                                      huxerui::CrossAxisAlignment::Stretch))
-                            .Key(std::format("{}:{}:{}", rule.connectionId,
-                                             rule.pattern, rule.priority));
+                        return UnifiedListRow(
+                            huxerui::Column{
+                                mono(std::format(
+                                         "{} · 优先级：{}",
+                                         vpn::MatchKindName(rule.match),
+                                         rule.priority),
+                                     theme.colors.primary),
+                                mono(std::format("匹配：{}", pattern),
+                                     theme.colors.on_surface),
+                                mono(std::format("连接：{}", connection),
+                                     theme.colors.on_surface_variant),
+                                huxerui::Row{
+                                    huxerui::Spacer(),
+                                    huxerui::Button("删除").OnClick(
+                                        [globalRules, index,
+                                         persistGlobalPolicy] {
+                                            if (index < globalRules.Size()) {
+                                                globalRules.Erase(index);
+                                                persistGlobalPolicy();
+                                            }
+                                        }),
+                                }
+                                    .With(huxerui::CrossAlign(
+                                        huxerui::CrossAxisAlignment::Stretch)),
+                            },
+                            theme, key, true);
                     }
-                    return huxerui::Row{
-                               mono(std::string(vpn::MatchKindName(rule.match)),
-                                    theme.colors.primary)
-                                   .With(huxerui::Frame{.width = 125.0F}),
-                               mono(pattern, theme.colors.on_surface)
-                                   .With(huxerui::Grow(1.0F)),
-                               mono(connection, theme.colors.on_surface_variant)
-                                   .With(huxerui::Frame{.width = 180.0F}),
-                               mono(std::to_string(rule.priority),
-                                    theme.colors.on_surface_variant)
-                                   .With(huxerui::Frame{.width = 70.0F}),
-                               huxerui::Button("删除").OnClick(
-                                   [globalRules, index, persistGlobalPolicy] {
-                                       if (index < globalRules.Size()) {
-                                           globalRules.Erase(index);
-                                           persistGlobalPolicy();
-                                       }
-                                   }),
-                           }
-                        .With(huxerui::Spacing(8.0F),
-                              huxerui::Padding(
-                                  huxerui::EdgeInsets::Symmetric(4.0F, 5.0F)))
-                        .Key(std::format("{}:{}:{}", rule.connectionId,
-                                         rule.pattern, rule.priority));
+                    return UnifiedListRow(
+                        huxerui::Row{
+                            mono(std::string(vpn::MatchKindName(rule.match)),
+                                 theme.colors.primary)
+                                .With(huxerui::Frame{.width = 125.0F}),
+                            mono(pattern, theme.colors.on_surface)
+                                .With(huxerui::Grow(1.0F)),
+                            mono(connection, theme.colors.on_surface_variant)
+                                .With(huxerui::Frame{.width = 180.0F}),
+                            mono(std::to_string(rule.priority),
+                                 theme.colors.on_surface_variant)
+                                .With(huxerui::Frame{.width = 70.0F}),
+                            huxerui::Button("删除").OnClick(
+                                [globalRules, index, persistGlobalPolicy] {
+                                    if (index < globalRules.Size()) {
+                                        globalRules.Erase(index);
+                                        persistGlobalPolicy();
+                                    }
+                                }),
+                        },
+                        theme, key, false);
                 });
             globalList = std::move(globalList)
-                             .EstimatedItemExtent(compact ? 112.0F : 34.0F)
+                             .EstimatedItemExtent(compact ? 128.0F : 48.0F)
                              .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
             body = huxerui::Column{std::move(globalList)}
                        .With(huxerui::Spacing(8.0F),

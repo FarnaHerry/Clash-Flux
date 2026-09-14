@@ -47,8 +47,12 @@ public:
     std::vector<LogLine> drainLogs();
     // 取最新流量帧；无新帧返回 false（槽位取走后清空）。
     bool takeTraffic(TrafficPoint& out);
-    // 取最新连接快照（原始 JSON 文本）；无新帧返回 false。
+    // 取最新连接快照（原始 JSON 文本）；消费新帧标记但保留快照缓存，
+    // 无新帧返回 false。
     bool takeConnections(std::string& out);
+    // 读取最近一次连接快照但不消费。页面切换/重新挂载后仍能立即显示
+    // 当前连接，而不必等待下一帧 WebSocket 推送。
+    bool readConnections(std::string& out) const;
 
 private:
     struct Impl;

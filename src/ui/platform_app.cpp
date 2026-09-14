@@ -24,6 +24,9 @@ import clashflux.service;
 import clashflux.store.core;
 import clashflux.store.profiles;
 import clashflux.store.vpn;
+#if !defined(__ANDROID__)
+import clashflux.instance;
+#endif
 
 namespace clashflux::ui {
 
@@ -113,6 +116,23 @@ void DesktopPreparePlatformDataDirectory(
     auto clipboard = application.Clipboard();
     auto toast = huxerui::UseToast();
 
+    // 第二次启动通过单实例通道只发一个唤醒事件；这里在 UI 线程轻量轮询，
+    // 不参与内核/REST 工作，确保隐藏到托盘后也能被再次打开。
+    huxerui::Lifecycle(
+        [tasks, window] {
+            tasks.Launch([window]() -> huxerui::Task<void> {
+                co_await PollWhile(std::chrono::duration<double>{0.1}, [window] {
+                    if (instance::consumeActivation()) {
+                        window.Show();
+                        window.Activate();
+                    }
+                    return true;
+                });
+            });
+            return [] {};
+        },
+        0);
+
     // 内核自启 + 崩溃检测泵：启动和存活检查全部在任务线程执行。
     huxerui::Lifecycle(
         [tasks, traySysProxy, trayTun, trayEnabled] {
@@ -174,7 +194,10 @@ void DesktopPreparePlatformDataDirectory(
     };
 
     if (trayAvailable) {
-        tray.OnActivate([window] { window.Activate(); });
+        tray.OnActivate([window] {
+            window.Show();
+            window.Activate();
+        });
         huxerui::Lifecycle(
             [tray, window, application, tasks, traySysProxy, trayTun, dialog,
              clipboard, toast, trayProfiles, trayProxyGroups, trayEnabled, finishExit,
@@ -184,6 +207,7 @@ void DesktopPreparePlatformDataDirectory(
                     std::vector<huxerui::MenuEntry> menuEntries;
                     menuEntries.push_back(
                         huxerui::MenuItem("显示主窗口", [window] {
+                            window.Show();
                             window.Activate();
                         }));
                     menuEntries.push_back(huxerui::MenuSection{});
@@ -357,10 +381,17 @@ void DesktopPreparePlatformDataDirectory(
         },
         0);
 
-    if (trayAvailable && trayEnabled.Get() &&
-        store::coreStore().setting("tray.start_minimized", "false") == "true") {
-        window.Hide();
-    }
+    // 只在这个壳层生命周期首次挂载时执行一次。此前直接写在组合函数末尾，
+    // 页面切换造成重组后会再次 Hide，表现为“切换页面就缩到托盘”。
+    const bool hideOnStartup =
+        trayAvailable && trayEnabled.Get() &&
+        store::coreStore().setting("tray.start_minimized", "false") == "true";
+    huxerui::Lifecycle(
+        [window, hideOnStartup] {
+            if (hideOnStartup) window.Hide();
+            return [] {};
+        },
+        0);
     return {};
 }
 

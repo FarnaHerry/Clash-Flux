@@ -130,6 +130,7 @@ void CoreStreams::start(const std::string& wsBase, const std::string& secret,
         std::lock_guard lock(impl_->mutex);
         impl_->logLines.clear();
         impl_->trafficDirty = false;
+        impl_->latestConnections.clear();
         impl_->connectionsDirty = false;
     }
 
@@ -212,8 +213,17 @@ bool CoreStreams::takeTraffic(TrafficPoint& out) {
 bool CoreStreams::takeConnections(std::string& out) {
     std::lock_guard lock(impl_->mutex);
     if (!impl_->connectionsDirty) return false;
-    out = std::move(impl_->latestConnections);
+    // 保留缓存供连接页在切页后立即恢复；首页和连接页可能同时消费同一条
+    // 全量快照，不能通过 move 把另一个页面看到的数据清空。
+    out = impl_->latestConnections;
     impl_->connectionsDirty = false;
+    return true;
+}
+
+bool CoreStreams::readConnections(std::string& out) const {
+    std::lock_guard lock(impl_->mutex);
+    if (impl_->latestConnections.empty()) return false;
+    out = impl_->latestConnections;
     return true;
 }
 

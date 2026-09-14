@@ -120,6 +120,25 @@ bool SelectProxyLine(const std::string& group, const std::string& name) {
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 }
 
+[[huxerui::composable]] huxerui::View UnifiedListRow(
+    huxerui::View content, const huxerui::ThemeSpec& theme, std::string key,
+    bool compact) {
+    const float horizontal = compact ? 10.0F : 8.0F;
+    const float vertical = compact ? 8.0F : 6.0F;
+    const IslandTheme islands = ResolveIslandTheme(theme);
+    // composable 形参被 codegen 固定为 const：拷贝到局部再走右值 With 链。
+    huxerui::View row = content;
+    return std::move(row)
+        .With(huxerui::Spacing(compact ? 5.0F : 8.0F),
+              huxerui::Padding(huxerui::EdgeInsets::Symmetric(horizontal,
+                                                               vertical)),
+              huxerui::Background(islands.raised),
+              huxerui::CornerRadius(compact ? 12.0F : 10.0F),
+              huxerui::ClipChildren(),
+              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+        .Key(std::move(key));
+}
+
 [[huxerui::composable]] huxerui::View SectionTitle(const std::string& title) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     return huxerui::Text(title).Style(huxerui::TextStyle{
