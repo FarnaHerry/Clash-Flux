@@ -79,7 +79,7 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 | `clashflux.store.profiles` | `src/store/profiles.cppm` | 订阅单例 `profilesStore()`：importUrl/importFile/refresh/activate/remove（activate/remove 触发内核重启） |
 | `clashflux.openvpn` | `src/openvpn.cppm/.cpp` | OpenVPN CLI 配置校验、Linux root 会话、tun 接口与内网 CIDR 路由；托管模式禁止配置自带 route/up/down 脚本 |
 | `clashflux.store.vpn` | `src/store/vpn.cppm` | PPTP/OpenVPN 连接生命周期 + 全局 `VpnPolicy` 持久化；`ProfileConnectionId` 是跨引擎稳定连接引用，原生连接建连时将 IPv4 全局规则交给对应隧道接口 |
-| `clashflux.ui.*`（普通 C++） | `src/ui/*.cpp` | app（壳：标题栏+图标侧栏+IndexedPages+托盘，岛屿风）/ common（岛屿原语 IslandSurface/DialogCard/页面骨架/卡片/状态胶囊）/ home/profiles/proxies/rules/connections/logs/settings 七页 / task_bridge.h（协程桥） |
+| `clashflux.ui.*`（普通 C++） | `src/ui/*.cpp` | app（通用壳 + `platform_app.cpp` 平台应用壳）/ common（岛屿原语 IslandSurface/DialogCard/页面骨架/卡片/状态胶囊）/ home/profiles/proxies/rules/connections/logs/settings 七页（平台设置在 `platform_settings.cpp`）/ task_bridge.h（协程桥） |
 | `src/app.cpp` | 普通 TU | `Application{AppRoot, AppOptions}`（Custom chrome，标题栏 24pt） |
 | 平台入口 | `platform/{linux,macos,windows}/main.cpp` | 无参 → `huxerui::RunApplication()`；有参 → `cli::run`（同一二进制即 CLI） |
 
@@ -134,10 +134,23 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
    用 `Image::Tint`（IconButton/Foreground 不着色 SVG）。
 8. **响应式**：`UseViewportClass()` Compact(<600) 收窄侧栏(44pt)/一级岛内边距
    （PageScaffold）/首页卡片 2×2/订阅卡整宽列表；窗口最小 560×480。
-9. **平台收束**：新增平台相关选项先登记 `src/ui/ui.h` 顶部的「统一收束表」，
-   UI 侧一律经 `PlatformControl(平台代码列表, …)` 门控（不支持的平台上子组合
-   树不进入）；Android 能力位当前全 false，订阅下载走 `kHuxerHttpDownload`
-   分叉（见 CLAUDE.md「sing-box 交互要点」）。
+9. **平台组件收束**：平台差异只在页面/组件边界用编译宏选择一个完整函数，
+   例如 `CLASHFLUX_SETTINGS_PLATFORM_SECTION` 选择
+   `AndroidSettingsSection` 或 `DesktopSettingsSection`；宏不要下沉成控件级
+   过滤器，也不要在通用页面里维护平台能力矩阵、`PlatformControl`、全局
+   `isAndroid` 标记或类似的分发状态。HuxerUI codegen 不支持 composable 函数体内
+   的条件编译，`#if defined(__ANDROID__)` 应放在文件作用域，选择函数后由函数
+   自己完成组合。
+10. **平台命名与高内聚**：通用组件使用不带平台前缀的名字（如 `SettingRow`、
+    `SectionTitle`）；平台专属函数必须带平台前缀（如 `Android...`、`Desktop...`、
+    `Linux...`）。一个平台函数内部自洽管理自己的 State、TaskScope、生命周期、
+    权限请求、乐观状态、错误提示和控件树；调用方只提交统一的数据/动作，不再
+    同时理解多个平台的细节。新增平台差异时优先新增一个前缀函数和一个宏选择点，
+    不扩大全局 UI 状态模型。
+11. **平台编译边界**：平台专属实现放入对应的 `platform_*.cpp` 或组件文件的
+    平台分支；新增 Android UI 源文件必须同步加入 `cmake/AndroidLegacy.cmake`
+    的 legacy 源列表。核心运行时若确实需要 `PlatformKind` 等领域模型可以保留，
+    但不得把领域运行时枚举重新用作 UI 控件能力分发。
 
 ## sing-box 交互要点
 
@@ -178,9 +191,9 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 - 订阅下载双通道：桌面走 vendored curl（`ClashApi::downloadToFile`，支持订阅级
   代理/无效证书选项）；Android 的 curl 无 TLS（NDK 无 OpenSSL，https 会报
   Unsupported protocol），订阅导入/手动刷新/自动更新全走 HuxerUI
-  `HttpClient`（平台原生栈，自带 TLS/证书/系统代理），store 只建行/收尾
-  （`profiles::createRemote` + `completeRemote` + `dueForUpdate`，开关在
-  `src/ui/ui.h` 的 `kHuxerHttpDownload`，抓取助手在 ui/profiles_page.cpp）。
+  `HttpClient`（平台原生栈，自带 TLS/证书/系统代理）。平台选择收束在
+  `AndroidImportProfile`、`AndroidRefreshProfile` 和 Android 刷新泵等平台函数内，
+  store 只建行/收尾（`profiles::createRemote` + `completeRemote` + `dueForUpdate`）。
 
 ## 里程碑状态（2026-09-05）
 
