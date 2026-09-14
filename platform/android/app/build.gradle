@@ -36,14 +36,25 @@ def singboxAar = layout.buildDirectory.file("libs/libbox-arm64.aar")
 def suppliedSingboxAar = providers.environmentVariable("CLASHFLUX_SINGBOX_AAR")
 def stageSingboxAar = tasks.register("stageSingboxAar") {
     inputs.property("revision", "0b8995879f29a9b98ee027bc17b75e101445b238")
-    inputs.file(suppliedSingboxAar)
+    // The AAR is deliberately supplied by the release/build script.  Mark the
+    // provider optional so Gradle reaches the task's actionable diagnostic
+    // below instead of failing configuration validation with an unnamed input.
+    inputs.file(suppliedSingboxAar).optional()
     outputs.file(singboxAar)
     doLast {
+        def target = singboxAar.get().asFile
         def source = suppliedSingboxAar.orNull == null ? null : file(suppliedSingboxAar.get())
         if (source == null || !source.isFile()) {
+            // A checked build can reuse the already-staged pinned artifact.
+            // CI/release builds still provide CLASHFLUX_SINGBOX_AAR to refresh it.
+            if (target.isFile()) {
+                return
+            }
             throw new GradleException("Missing arm64 sing-box libbox AAR; run platform/android/build-singbox-libbox.sh first.")
         }
-        def target = singboxAar.get().asFile
+        if (source.canonicalFile == target.canonicalFile) {
+            return
+        }
         target.parentFile.mkdirs()
         copy { from source; into target.parentFile; rename { target.name } }
     }
@@ -97,8 +108,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 40
-        versionName = "0.1.40"
+        versionCode = 41
+        versionName = "0.1.41"
 
         externalNativeBuild {
             cmake {
