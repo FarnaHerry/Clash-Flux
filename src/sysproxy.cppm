@@ -215,7 +215,7 @@ export bool enabled() {
     }
 }
 
-// 打开系统代理，指向 host:port（本机 mihomo mixed 端口）。
+// 打开系统代理，指向 host:port（本机内核 mixed 入站端口）。
 export bool enable(const std::string& host, int port, std::string& err) {
     const std::string p = std::to_string(port);
     switch (desktop()) {

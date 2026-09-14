@@ -4,7 +4,7 @@
 // 订阅 / 代理」三块，全部复用领域 store（与 GUI 同一份数据目录与设置）：
 //
 //   clash-flux version
-//   clash-flux service install|uninstall|status|run   服务模式（root 托管 mihomo/PPTP）
+//   clash-flux service install|uninstall|status|run   服务模式（root 托管 sing-box/PPTP）
 //   clash-flux core start|stop|restart|status         内核生命周期
 //   clash-flux mode [rule|global|direct]              查/切出站模式
 //   clash-flux tun on|off                             TUN 开关
@@ -16,7 +16,7 @@
 //   clash-flux profile remove <id>                    删除订阅
 //
 // 与 GUI 的关系：CLI 启动的内核若为直连 spawn 则以 setsid 脱离会话驻留
-// （pid 写 core/mihomo.pid）；GUI 启动时先探测控制器，已有内核在跑则直接
+// （pid 写 core/core.pid）；GUI 启动时先探测控制器，已有内核在跑则直接
 // 接管（不重复 spawn）。装了服务模式后 start/stop 一律经 root 服务。
 module;
 
@@ -51,7 +51,7 @@ namespace {
 
 void printUsage() {
     std::println(
-        "Clash-Flux v{} — mihomo 代理客户端\n"
+        "Clash-Flux v{} — sing-box 代理客户端\n"
         "\n"
         "用法：clash-flux [命令] [参数]    （无参数 = 启动 GUI）\n"
         "\n"
@@ -283,7 +283,7 @@ export int run(const std::vector<std::string>& args) {
     const std::string& cmd = args[0];
     const std::vector<std::string> rest(args.begin() + 1, args.end());
     if (cmd == "version" || cmd == "--version" || cmd == "-v") {
-        std::println("Clash-Flux v{}（mihomo 客户端）", CLASHFLUX_VERSION);
+        std::println("Clash-Flux v{}（sing-box 客户端）", CLASHFLUX_VERSION);
         return 0;
     }
     if (cmd == "help" || cmd == "--help" || cmd == "-h") {

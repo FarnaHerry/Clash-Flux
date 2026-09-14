@@ -31,7 +31,7 @@ const std::vector<std::string> kModes{"rule", "global", "direct"};
 #if defined(__ANDROID__)
 constexpr std::string_view kDefaultCoreName = "sing-box libbox";
 #else
-constexpr std::string_view kDefaultCoreName = "mihomo";
+constexpr std::string_view kDefaultCoreName = "sing-box";
 #endif
 
 struct HomeState {
@@ -51,7 +51,7 @@ struct HomeState {
 void updateRuntime(HomeState& s, store::CoreStore& core) {
     s.core = core.snapshot();
 #if defined(__ANDROID__)
-    // Android libbox emits its own status stream instead of mihomo's
+    // Android libbox emits its own status stream instead of clash_api's
     // /traffic and /connections WebSockets.
     stream::TrafficPoint point{s.core.uploadRate, s.core.downloadRate, 0};
     s.latest = point;

@@ -197,7 +197,7 @@ std::vector<std::string> TargetNames(
             std::string error;
             const bool ok = co_await RunOnTaskThread([policy = std::move(policy),
                                                        &error]() mutable {
-                // 未命中的流量始终跟随当前启用的 mihomo 订阅；原生 PPTP/
+                // 未命中的流量始终跟随当前启用的代理订阅；原生 PPTP/
                 // OpenVPN 只通过全局路由规则接管自己的目标网段。
                 for (const db::Profile& profile : store::profilesStore().list()) {
                     if (profile.selected && profile.type != "pptp" &&

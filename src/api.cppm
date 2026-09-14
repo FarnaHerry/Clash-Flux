@@ -1,24 +1,21 @@
-// api.cppm — clashflux.api：mihomo external-controller REST 客户端（接口模块）。
+// api.cppm — clashflux.api：sing-box clash_api REST 客户端（接口模块）。
 //
 // 所有方法同步阻塞、线程安全（每次调用独立 curl easy handle），必须由 UI 经
 // RunOnTaskThread 派到任务线程调用；UI 线程禁止直接调。curl 头只进实现单元。
 //
-// 端点约定（mihomo RESTful API）：
+// 端点约定（sing-box clash_api 与 mihomo 兼容的子集）：
 //   GET    /version                     内核版本
-//   GET    /configs                     运行配置快照（mode / mixed-port / tun ...）
-//   PATCH  /configs                     增量改运行配置（{"mode":"global"} 等）
-//   PUT    /configs?force=true          重载配置文件（{"path": "..."}）
-//   POST   /restart                     重启内核（mihomo 新版本支持）
+//   GET    /configs                     运行配置快照（mode 等；字段非全量）
+//   PATCH  /configs                     增量改运行配置（{"mode":"global"} 等；
+//                                        sing-box 仅支持 mode 等少数字段）
 //   GET    /proxies                     全部代理与策略组
 //   PUT    /proxies/{group}             策略组切换节点（{"name": "..."}）
 //   GET    /proxies/{name}/delay        延迟测速（?url=&timeout=）
-//   GET    /rules                       规则列表
 //   GET    /connections                 连接快照（REST 轮询用；推送走 WS）
 //   DELETE /connections/{id}            关闭单条连接
 //   DELETE /connections                 关闭全部连接
-//   GET    /providers/proxies           代理 providers
-//   PUT    /providers/proxies/{name}    更新 provider
-//   GET    /providers/proxies/{name}/healthcheck
+// mihomo 专属端点（/group/{name}/delay 聚合测速、/providers/*、PUT /configs、
+// /restart）已随 mihomo 移除；组测速由 groupDelay 内部 fan-out 实现。
 export module clashflux.api;
 
 import std;
@@ -28,7 +25,7 @@ namespace api {
 export struct ApiResult {
     bool ok = false;
     long status = 0;          // HTTP 状态码；传输失败为 0
-    std::string body;         // 响应体（错误时也可能有，mihomo 的错误是 JSON message）
+    std::string body;         // 响应体（错误时也可能有，错误是 JSON message）
     std::string error;        // 传输层错误描述（curl）；HTTP 错误时从 body 提取 message
     // 响应头（仅订阅下载填充；名字统一小写，重定向取最后一跳）。
     std::map<std::string, std::string> headers;
@@ -48,24 +45,18 @@ public:
     ApiResult version();
     ApiResult configs();
     ApiResult patchConfigs(const std::string& jsonBody);
-    ApiResult reloadConfig(const std::string& path);   // PUT /configs?force=true
-    ApiResult restart();
 
     ApiResult proxies();
     ApiResult selectProxy(const std::string& group, const std::string& name);
     // 延迟测速：ok 时 body 是 {"delay":N}；超时/失败 ok=false。
     ApiResult proxyDelay(const std::string& name, const std::string& testUrl, int timeoutMs);
-    // 策略组整体测速：GET /group/{name}/delay（mihomo）。
+    // 策略组整体测速：取组成员后并发逐节点 /proxies/{name}/delay，合并为
+    // {节点: 延迟} JSON 对象；测速失败的节点延迟记 0（UI 归入超时）。
     ApiResult groupDelay(const std::string& group, const std::string& testUrl, int timeoutMs);
 
-    ApiResult rules();
     ApiResult connections();
     ApiResult closeConnection(const std::string& id);
     ApiResult closeAllConnections();
-
-    ApiResult proxyProviders();
-    ApiResult updateProxyProvider(const std::string& name);
-    ApiResult healthcheckProvider(const std::string& name);
 
     // 订阅下载选项：超时 / 证书校验 / 代理三态（指定代理 > 系统环境代理 >
     // 强制直连）。使用内核代理时由调用方拼 http://127.0.0.1:<mixedPort>。

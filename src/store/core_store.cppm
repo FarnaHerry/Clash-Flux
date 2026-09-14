@@ -7,10 +7,11 @@
 // 协程恢复点把 snapshot 写进 State）。
 //
 // 启动流程（startCore）：
-//   1. 解析 mihomo 二进制（cfg::mihomoBinary）——缺失 → Failed
-//   2. 读启用订阅的 YAML（无订阅 = 空）+ 托管注入块合成 coreWorkDir/config.yaml
-//   3. spawn mihomo -d <workdir> -f <config>，轮询 /version 等控制器就绪（≤30s，
-//      覆盖订阅带规则 provider 的慢冷启动；进程提前退出仍立即判失败）
+//   1. 解析 sing-box 二进制（cfg::singboxBinary）——缺失 → Failed
+//   2. 读启用订阅（无订阅 = 空）经 clashflux.singbox 编译为
+//      coreWorkDir/config.json（不支持的节点/规则以 warnings 带回）
+//   3. spawn `sing-box run -c <config> -D <workdir>`，轮询 /version 等
+//      clash_api 就绪（≤30s，覆盖远程规则集首启下载；进程提前退出仍立即判失败）
 //   4. 就绪 → Running，拉起 /logs /traffic /connections 三条 WS 流
 export module clashflux.store.core;
 
@@ -21,6 +22,7 @@ import clashflux.utils;
 import clashflux.db;
 import clashflux.api;
 import clashflux.core;
+import clashflux.singbox;
 import clashflux.stream;
 import clashflux.sysproxy;
 import clashflux.service;
@@ -38,6 +40,8 @@ export struct CoreSnapshot {
     std::string binaryPath;      // 解析到的内核路径（空 = 未安装）
     std::string version;         // 内核版本（Running 时）
     std::string lastError;
+    // 订阅编译降级报告（不支持的节点/规则；启动时更新）
+    std::vector<std::string> warnings;
     // 运行配置快照（Running 时有效）
     std::string mode;            // rule / global / direct
     int mixedPort = 7899;
@@ -45,7 +49,7 @@ export struct CoreSnapshot {
     std::string logLevel = "info";
     bool tunEnabled = false;
     // Android sing-box libbox status stream.  Desktop continues to use the
-    // mihomo WebSocket streams below.
+    // sing-box clash_api WebSocket streams below.
     std::int64_t uploadRate = 0;
     std::int64_t downloadRate = 0;
     std::int64_t uploadTotal = 0;
@@ -61,14 +65,17 @@ public:
     ~CoreStore() noexcept {
         // 正常关闭由 AppRoot 的异步收尾负责；这里保留一个进程退出时的
         // RAII 兜底，避免窗口被外部关闭、组合树提前卸载后 root 服务仍
-        // 持有 mihomo。析构阶段不能把异常带出进程；正常 UI 关闭仍由
-        // AppRoot 的任务线程路径负责，避免阻塞交互线程。
+        // 持有内核。兜底只覆盖本进程直接持有的形态（服务托管/直接
+        // spawn）：adopted 不在其列——CLI `core start` 的 detached 驻留
+        // 契约就是 CLI 退出后内核继续跑（停止走 `core stop` / pidfile）。
+        // 析构阶段不能把异常带出进程；正常 UI 关闭仍由 AppRoot 的任务
+        // 线程路径负责，避免阻塞交互线程。
         try {
             const bool serviceOwnsCore =
                 managedByService_ ||
                 (!process_.running() && service::available() &&
                  service::coreRunning());
-            if (serviceOwnsCore || adopted_ || process_.running()) stopCore();
+            if (serviceOwnsCore || process_.running()) stopCore();
         } catch (...) {
         }
     }
@@ -147,7 +154,7 @@ public:
         CoreSnapshot s = snap_;
 #if defined(__ANDROID__)
         // libbox is hosted by ClashVpnService and intentionally has no
-        // mihomo external-controller.  Report the service's authoritative
+        // REST controller of its own.  Report the service's authoritative
         // state so the UI never claims that a dead data plane is running.
         switch (clashflux_android_vpn_state()) {
             case 1: s.state = core::CoreState::Starting; break;
@@ -202,8 +209,8 @@ public:
     bool tunEnabled() {
 #if defined(__ANDROID__)
         // Android 的系统 VPN 由 ClashVpnService 建立；fd 就绪后 bridge 会重启
-        // mihomo。这里必须保留用户设置，令 generateConfig 注入
-        // tun.file-descriptor，否则 VPN 会建立却没有数据面接管流量。
+        // 内核。这里必须保留用户设置，令 generateConfig 生成 tun inbound，
+        // 否则 VPN 会建立却没有数据面接管流量。
         return setting("core.tun_enabled", "false") == "true";
 #else
         return setting("core.tun_enabled", "false") == "true";
@@ -219,8 +226,10 @@ public:
     }
     bool systemProxySupported() { return sysproxy::supported(); }
 
-    // 切换 TUN（阻塞）。内核运行中 → PATCH /configs 立即生效，失败回滚设置；
-    // 未运行 → 仅持久化（下次启动注入 tun 块）。成功更新快照。
+    // 切换 TUN（阻塞）。sing-box 的 clash_api 不支持热更 tun：内核运行中 →
+    // 重新合成 config.json 并重启内核生效，重启失败（如无 root/CAP_NET_ADMIN，
+    // sing-box 建 TUN 失败退出）回滚设置并恢复无 TUN 运行；未运行 → 仅持久化
+    // （下次启动生成 tun inbound）。成功更新快照。
     bool applyTun(bool enable) {
 #if defined(__ANDROID__)
         (void)enable;
@@ -233,36 +242,20 @@ public:
             snap_.tunEnabled = enable;
         }
         if (snapshot().state != core::CoreState::Running) return true;
-        const nlohmann::json body = {{"tun",
-                                      {{"enable", enable},
-                                       {"stack", "mixed"},
-                                       {"device", "clash-flux"},
-                                       {"auto-route", true},
-                                       {"auto-detect-interface", true},
-                                       {"strict-route", true},
-                                       {"route-address", {"0.0.0.0/1",
-                                                            "128.0.0.0/1",
-                                                            "::/1",
-                                                            "8000::/1"}},
-                                       {"dns-hijack", {"any:53"}}}}};
-        if (const auto r = api_->patchConfigs(body.dump()); r.ok) return true;
-        // PATCH 失败（常见：无 CAP_NET_ADMIN 权限）→ 回滚，避免每次启动都带
-        // 一个起不来的 tun 块。
+        stopCore();
+        startCore(lastProfileYaml_);
+        if (snapshot().state == core::CoreState::Running) return true;
         setSetting("core.tun_enabled", enable ? "false" : "true");
-        const auto r2 = api_->configs();  // 以内核真实状态回写快照
-        if (r2.ok) {
-            const auto j = nlohmann::json::parse(r2.body, nullptr, false);
-            if (j.is_object() && j.contains("tun") && j["tun"].is_object()) {
-                std::lock_guard lock(mutex_);
-                snap_.tunEnabled = j["tun"].value("enable", false);
-            }
-        }
         {
             std::lock_guard lock(mutex_);
+            snap_.tunEnabled = !enable;
             snap_.lastError =
                 std::format("TUN {}失败（可能需要 root/CAP_NET_ADMIN）",
                             enable ? "开启" : "关闭");
         }
+        // 恢复无 TUN 的可用状态（best effort）。
+        stopCore();
+        startCore(lastProfileYaml_);
         return false;
 #endif
     }
@@ -298,37 +291,67 @@ public:
         ensureOpen();
         {
             std::lock_guard lock(mutex_);
-            // Android 桥线程在应用启动时自动拉起内核，启动慢时（拉 geodata
-            // 等）UI 侧再点启动会 spawn 第二个实例，抢不到 9097/混合端口的
-            // 那个以 exit 1 收场，把「内核启动后立即退出」误报给用户。
-            // 启动进行中直接拒绝重入。
+            // Android 桥线程在应用启动时自动拉起内核，启动慢时（拉远程
+            // 规则集等）UI 侧再点启动会 spawn 第二个实例，抢不到 9097/
+            // 混合端口的那个以 exit 1 收场，把「内核启动后立即退出」误报
+            // 给用户。启动进行中直接拒绝重入。
             if (snap_.state == core::CoreState::Starting) return;
-            binaryPath_ = cfg::mihomoBinary().string();
 #if defined(__ANDROID__)
-            // The Android core is libclash.so loaded in our app process. It
-            // is intentionally not discoverable as an executable path.
-            binaryPath_ = "embedded libclash.so";
-#endif
+            // The Android core is libbox hosted by ClashVpnService, not an
+            // executable path discoverable by the native layer.
+            binaryPath_ = "sing-box libbox";
+#else
+            binaryPath_ = cfg::singboxBinary().string();
             if (binaryPath_.empty() && !service::available()) {
                 snap_.state = core::CoreState::Failed;
-                snap_.lastError = "未找到 mihomo 内核（engines/ 或 PATH），也未安装服务";
+                snap_.lastError = "未找到 sing-box 内核（engines/ 或 PATH），也未安装服务";
                 return;
             }
+#endif
             snap_.state = core::CoreState::Starting;
             snap_.lastError.clear();
         }
+        lastProfileYaml_ = profileYaml;
 
         const std::filesystem::path workDir = cfg::coreWorkDir();
-        const std::filesystem::path configFile = workDir / "config.yaml";
+        const std::filesystem::path configFile = workDir / "config.json";
         {
+            // 两遍编译：第一遍拿到远程规则集清单，直连预取 .srs 缓存（失败
+            // 不致命）；第二遍命中本地文件即以 local rule_set 生成——内核
+            // 首启不再因代理不可用而拉取失败退出，预取过的缓存按周刷新。
+            singbox::CompileOptions options;
+            options.profileYaml = profileYaml;
+            options.controller = cfg::controllerAddress();
+            options.secret = secret_;
+            options.mixedPort = mixedPort();
+            options.mode = mode();
+            options.allowLan = allowLan();
+            options.logLevel = logLevel();
+            options.tunInbound = tunEnabled();
+            auto compiled = core::generateConfig(options);
+            if (compiled.json.empty() || !compiled.error.empty()) {
+                fail("订阅编译失败：" + (compiled.error.empty()
+                                             ? std::string{"未知错误"}
+                                             : compiled.error));
+                return;
+            }
+            prefetchRuleSets(compiled.json, workDir);
+            options.ruleSetDir = workDir.string();
+            compiled = core::generateConfig(options);
+            if (compiled.json.empty() || !compiled.error.empty()) {
+                fail("订阅编译失败：" + (compiled.error.empty()
+                                             ? std::string{"未知错误"}
+                                             : compiled.error));
+                return;
+            }
             std::ofstream out(configFile, std::ios::binary | std::ios::trunc);
             if (!out) {
                 fail("无法写入运行时配置: " + configFile.string());
                 return;
             }
-            out << core::generateConfig(profileYaml, cfg::controllerAddress(),
-                                        secret_, mixedPort(), mode(), allowLan(),
-                                        logLevel(), tunEnabled());
+            out << compiled.json;
+            std::lock_guard lock(mutex_);
+            snap_.warnings = std::move(compiled.warnings);
         }
 
         // 三种拉起方式（按优先级）：
@@ -339,10 +362,9 @@ public:
 #if defined(__ANDROID__)
         // Config generation is the only native responsibility on Android.
         // ClashVpnService reads this file and starts libbox after Android has
-        // granted VPN consent.  Do not poll the old mihomo REST controller.
+        // granted VPN consent.  Do not poll the REST controller here.
         {
             std::lock_guard lock(mutex_);
-            binaryPath_ = "sing-box libbox";
             snap_.mode = mode();
             snap_.mixedPort = mixedPort();
             snap_.allowLan = false;
@@ -376,9 +398,9 @@ public:
         }
 #endif
 
-        // 等控制器就绪（≤30s）：订阅带规则 provider 时冷启动要拉 geodata/
-        // 规则集（可能还走尚未就绪的代理），5s 窗口会误判慢启动为失败；
-        // 进程已退出仍立即失败，30s 只是给慢启动的上限。
+        // 等 clash_api 就绪（≤30s）：订阅含 GEOIP 规则时冷启动要拉远程
+        // .srs 规则集（可能还走尚未就绪的代理），5s 窗口会误判慢启动为
+        // 失败；进程已退出仍立即失败，30s 只是给慢启动的上限。
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
         bool ready = false;
         while (std::chrono::steady_clock::now() < deadline) {
@@ -453,7 +475,7 @@ public:
         streams_.stop();
         // 正常情况下 managedByService_ 会记录所有权；但 GUI 可能在 START
         // 成功后还没来得及写入标记就被关闭，或者上一次实例异常退出留下了
-        // 服务侧 mihomo。只要本地没有直连 CoreProcess，且 root 服务报告
+        // 服务侧内核。只要本地没有直连 CoreProcess，且 root 服务报告
         // 有自己的 core，就补发一次幂等 STOP，避免下一次启动误报“先 STOP”。
         const bool serviceOwnsCore =
             managedByService_ ||
@@ -482,7 +504,7 @@ public:
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
         std::error_code ec;
-        std::filesystem::remove(cfg::coreWorkDir() / "mihomo.pid", ec);
+        std::filesystem::remove(cfg::coreWorkDir() / "core.pid", ec);
         std::lock_guard lock(mutex_);
         snap_.state = core::CoreState::Stopped;
         snap_.version.clear();
@@ -545,7 +567,7 @@ public:
         if (snap_.state == core::CoreState::Running && !coreAlive()) {
             snap_.state = core::CoreState::Failed;
             snap_.lastError =
-                std::format("mihomo 内核异常退出（exit {}）",
+                std::format("sing-box 内核异常退出（exit {}）",
                             managedByService_ || adopted_ ? -1
                                                           : process_.exitCode());
             if (!managedByService_ && !adopted_) {
@@ -565,7 +587,7 @@ private:
     bool coreAlive() {
         if (managedByService_) {
             // root 服务同步处理 PPTP/OpenVPN 建链时，STATUS 可能
-            // 超时。先查 mihomo 自己的控制器，避免 UI 存活泵在
+            // 超时。先查内核自己的控制器，避免 UI 存活泵在
             // PPTP 拨号期间每次阻塞 2 秒；仅在控制器不通时才向
             // root 服务确认进程状态。
             if (api_->version().ok) return true;
@@ -580,8 +602,45 @@ private:
         return process_.running();
     }
 
+    // 直连预取远程规则集到 <workDir>/<tag>.srs（best-effort：失败即回落
+    // remote，由内核启动时经默认出站拉取）。缓存按周刷新，刷新失败沿用
+    // 旧文件。Android 的 curl 无 TLS，这里会快速失败并保持 remote 行为。
+    void prefetchRuleSets(const std::string& configJson,
+                          const std::filesystem::path& workDir) {
+        const auto j = nlohmann::json::parse(configJson, nullptr, false);
+        if (!j.is_object() || !j.contains("route") || !j["route"].is_object()) {
+            return;
+        }
+        const auto& route = j["route"];
+        if (!route.contains("rule_set") || !route["rule_set"].is_array()) {
+            return;
+        }
+        for (const auto& ruleSet : route["rule_set"]) {
+            if (!ruleSet.is_object() || ruleSet.value("type", "") != "remote") {
+                continue;
+            }
+            const std::string tag = ruleSet.value("tag", "");
+            const std::string url = ruleSet.value("url", "");
+            if (tag.empty() || url.empty()) continue;
+            const auto dest = workDir / (tag + ".srs");
+            std::error_code ec;
+            bool stale = true;
+            if (std::filesystem::exists(dest, ec) && !ec) {
+                const auto mtime = std::filesystem::last_write_time(dest, ec);
+                if (!ec) {
+                    stale = decltype(mtime)::clock::now() - mtime >
+                            std::chrono::hours{24 * 7};
+                }
+            }
+            if (!stale) continue;
+            api::ClashApi::DownloadOptions download;
+            download.timeoutSecs = 8;  // 直连快速失败，不拖慢启动
+            api_->downloadToFile(url, dest, download);
+        }
+    }
+
     long readPidFile() {
-        std::ifstream in(cfg::coreWorkDir() / "mihomo.pid");
+        std::ifstream in(cfg::coreWorkDir() / "core.pid");
         long pid = 0;
         in >> pid;
         return pid;
@@ -622,6 +681,7 @@ private:
     std::once_flag initFlag_;
     CoreSnapshot snap_;
     std::string binaryPath_;
+    std::string lastProfileYaml_;    // 最近一次 startCore 的订阅原文（applyTun 重启用）
     bool managedByService_ = false;  // 内核由 root 服务托管
     bool adopted_ = false;           // 接管的外部内核实例（非本进程 spawn）
 };

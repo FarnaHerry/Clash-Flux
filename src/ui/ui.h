@@ -154,7 +154,7 @@ inline int AndroidVpnState() noexcept { return 0; }
 // PptpEngine            ✓       ✓      ✗      ✗     订阅弹窗·类型「PPTP 内网」
 // OpenVpnEngine         ✓       ✗      ✗      ✗     订阅弹窗·类型「OpenVPN 内网」
 // VpnTunnel             ✗       ✗      ✗      ✓     设置·VPN 代理（VpnService TUN，
-//                                                  fd 经 spawn 继承给 mihomo，
+//                                                  fd 经 spawn 继承给内核，
 //                                                  复用 core.tun_enabled 设置）
 // kHuxerHttpDownload    ✗       ✗      ✗      ✓     订阅导入/手动刷新/自动更新走
 //                                                  HuxerUI 平台栈；订阅弹窗的

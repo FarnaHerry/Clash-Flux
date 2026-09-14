@@ -7,7 +7,7 @@
 //   （rootSpec.colors.background——AppRoot 在主题 provider 之上，UseTheme 只能
 //   拿到默认浅色 spec，须按 dark 自选；子树在 provider 之下 UseTheme 正常）。
 //
-// 内核：Android 壳层在引擎解包后独立启动 mihomo，桌面端首个组合经
+// 内核：Android 壳层在 VPN 服务就绪后独立启动数据面，桌面端首个组合经
 // RunOnTaskThread 启动（内核缺失时安静降级，状态胶囊显示「未安装」）；托盘：
 // 显示主窗口 / 退出。
 #include <huxerui/huxerui.h>
@@ -427,7 +427,7 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
                     co_await RunOnTaskThread([] {
                         auto& core = store::coreStore();
                         core.init();
-                        if (!cfg::mihomoBinary().empty()) {
+                        if (!cfg::singboxBinary().empty()) {
                             core.startCore(store::profilesStore().selectedYaml());
                         }
                     });

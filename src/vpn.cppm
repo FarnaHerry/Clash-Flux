@@ -1,6 +1,6 @@
 // vpn.cppm — clashflux.vpn：连接编排层（与具体引擎、平台解耦）。
 //
-// mihomo、PPTP、OpenVPN、WireGuard 等都只是 EngineAdapter 的实现。上层只
+// sing-box、PPTP、OpenVPN、WireGuard 等都只是 EngineAdapter 的实现。上层只
 // 关心：连接是什么、默认主 VPN 是谁、哪些目标交给哪条 VPN，以及每条 VPN 自己
 // 的引擎原生规则。引擎不支持某种连接时，由 SelectEngine 按偏好和能力自动降级。
 export module clashflux.vpn;
@@ -10,14 +10,14 @@ import std;
 namespace vpn {
 
 export enum class EngineKind {
-    Mihomo,
+    SingBox,
     SystemPptp,
     SystemOpenVpn,
     SystemWireGuard,
     Unknown,
 };
 
-// 平台和 TUN 后端是两个概念：Linux/Windows 先由 mihomo 提供全流量入口，
+// 平台和 TUN 后端是两个概念：Linux/Windows 先由 sing-box 提供全流量入口，
 // Android 后续由 Java VpnService 建立系统 TUN，再把 fd 交给 native 数据面。
 export enum class PlatformKind {
     Linux,
@@ -28,7 +28,7 @@ export enum class PlatformKind {
 };
 
 export enum class TunBackendKind {
-    Mihomo,
+    SingBox,
     AndroidVpnService,
     Unsupported,
 };
@@ -39,7 +39,7 @@ export enum class TunCaptureMode {
 };
 
 export enum class ConnectionKind {
-    ProxyConfig,  // mihomo YAML/订阅等代理配置
+    ProxyConfig,  // 订阅等代理配置（Clash YAML / 原生 sing-box JSON）
     Pptp,
     OpenVpn,
     WireGuard,
@@ -98,8 +98,8 @@ export struct RouteRule {
     bool operator==(const RouteRule&) const = default;
 };
 
-// 某条 VPN 的声明。nativeConfig/nativeRules 保留给引擎自己解释：mihomo 使用
-// YAML，PPTP 使用拨号参数，未来其他引擎不需要修改这层数据结构。
+// 某条 VPN 的声明。nativeConfig/nativeRules 保留给引擎自己解释：sing-box
+// 使用 JSON，PPTP 使用拨号参数，未来其他引擎不需要修改这层数据结构。
 export struct VpnConnection {
     std::string id;
     std::string name;
@@ -128,7 +128,7 @@ export struct VpnPolicy {
     bool operator==(const VpnPolicy&) const = default;
 };
 
-// 一条交给操作系统路由表的网段。它的目的不是替代 Mihomo 规则，而是让
+// 一条交给操作系统路由表的网段。它的目的不是替代 sing-box 规则，而是让
 // PPTP/OpenVPN/WireGuard 这类原生隧道绕过主 TUN，直接进入自己的接口。
 export struct TunNativeRoute {
     std::string destination;
@@ -139,7 +139,7 @@ export struct TunNativeRoute {
     bool operator==(const TunNativeRoute&) const = default;
 };
 
-// 全流量接管入口的声明。Linux/Windows 当前直接使用 Mihomo TUN；Android 的
+// 全流量接管入口的声明。Linux/Windows 当前直接使用 sing-box TUN；Android 的
 // backend 只描述后续实现方向，ready=false，避免 UI 误以为已经能接管流量。
 export struct TunConfig {
     PlatformKind platform = PlatformKind::Unknown;
@@ -159,9 +159,9 @@ export struct TunConfig {
 };
 
 // 这是“一个入口、多条出口”的结果：
-//   1. logicalRules 由编排器/Mihomo 的规则层消费；
+//   1. logicalRules 由编排器/sing-box 的规则层消费；
 //   2. nativeRoutes 由 Linux/Windows 路由后端安装到原生 VPN 接口；
-//   3. routeExcludeAddress 写进 Mihomo TUN，避免原生内网又被主 TUN 捕获。
+//   3. routeExcludeAddress 写进 sing-box TUN，避免原生内网又被主 TUN 捕获。
 export struct TunRoutePlan {
     TunConfig capture;
     std::string mainConnectionId;
@@ -194,7 +194,7 @@ export struct EngineSelection {
     bool ok() const noexcept { return engine.has_value(); }
 };
 
-// 平台/引擎适配器的最小运行时契约。编排层不直接调用 pppd、RAS 或 mihomo；
+// 平台/引擎适配器的最小运行时契约。编排层不直接调用 pppd、RAS 或 sing-box；
 // 适配器负责建立连接、安装连接自身和策略层生成的原生路由，并在失败时给出
 // 可继续尝试的错误。
 export struct EngineAdapter {
@@ -207,7 +207,7 @@ export struct EngineAdapter {
     std::function<void(VpnConnection&)> disconnect;
 };
 
-export inline bool SupportsDesktopMihomoTun(PlatformKind platform) noexcept {
+export inline bool SupportsDesktopSingBoxTun(PlatformKind platform) noexcept {
     return platform == PlatformKind::Linux ||
            platform == PlatformKind::Windows ||
            platform == PlatformKind::MacOS;
@@ -224,11 +224,11 @@ export inline TunConfig MakeFullTunConfig(PlatformKind platform,
         .routeAddress = {"0.0.0.0/1", "128.0.0.0/1", "::/1", "8000::/1"},
     };
 
-    if (SupportsDesktopMihomoTun(platform)) {
-        config.backend = TunBackendKind::Mihomo;
+    if (SupportsDesktopSingBoxTun(platform)) {
+        config.backend = TunBackendKind::SingBox;
         config.mode = TunCaptureMode::FullDevice;
         config.ready = true;
-        config.note = "Mihomo TUN 作为全流量入口；原生 VPN 网段由系统路由绕过入口";
+        config.note = "sing-box TUN 作为全流量入口；原生 VPN 网段由系统路由绕过入口";
         return config;
     }
 
@@ -237,7 +237,7 @@ export inline TunConfig MakeFullTunConfig(PlatformKind platform,
         config.mode = TunCaptureMode::FullDevice;
         config.ready = false;
         config.note =
-            "等待 Android VpnService.establish() 提供 TUN fd，当前不能由 Mihomo 独立创建系统 VPN";
+            "等待 Android VpnService.establish() 提供 TUN fd，当前不能由 sing-box 独立创建系统 VPN";
         return config;
     }
 
@@ -384,9 +384,9 @@ inline void appendNativeRoute(TunRoutePlan& plan, const VpnConnection& connectio
 } // namespace detail
 
 export inline std::vector<EngineKind> DefaultEngineOrder() {
-    // mihomo 是默认实现；系统 VPN 引擎是后备实现。排序只表达偏好，最终仍需
+    // sing-box 是默认实现；系统 VPN 引擎是后备实现。排序只表达偏好，最终仍需
     // 经过 EngineDescriptor 的能力/可用性检查。
-    return {EngineKind::Mihomo, EngineKind::SystemPptp,
+    return {EngineKind::SingBox, EngineKind::SystemPptp,
             EngineKind::SystemOpenVpn, EngineKind::SystemWireGuard};
 }
 
@@ -664,9 +664,9 @@ private:
 
 // 从连接和策略生成“一条全流量入口 + 多条原生出口”的执行计划。
 //
-// 对 Mihomo 代理连接，logicalRules 留给 Mihomo/编排器处理；对 PPTP、
+// 对 sing-box 代理连接，logicalRules 留给 sing-box/编排器处理；对 PPTP、
 // OpenVPN、WireGuard，CIDR/单 IP 规则转成 nativeRoutes，并把这些目标加入
-// TUN 排除表。这样主 Mihomo TUN 负责默认流量，而 A/B 公司网段按最长前缀
+// TUN 排除表。这样主 sing-box TUN 负责默认流量，而 A/B 公司网段按最长前缀
 // 进入各自的 ppp/tun/wg 接口。
 export inline TunRoutePlan BuildTunRoutePlan(const VpnManager& manager,
                                               PlatformKind platform) {

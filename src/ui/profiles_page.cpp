@@ -409,6 +409,14 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
     huxerui::State<huxerui::TextEditingValue> openvpn_routes,
     huxerui::TaskScope tasks, huxerui::ToastHandle toast,
     std::function<void()> on_back) {
+    // 返回会切走 IndexedPages，从而卸载当前按钮节点。先让点击事件完成，避免
+    // 事件派发与节点销毁发生在同一帧造成卡顿。
+    const auto deferredBack = [tasks, on_back] {
+        tasks.Launch([on_back]() -> huxerui::Task<void> {
+            co_await huxerui::Delay(std::chrono::duration<double>{0});
+            on_back();
+        });
+    };
     const auto save = [id, name, url, type, desc, timeout, interval, auto_update,
                        system_proxy, core_proxy, invalid_cert, pptp_server,
                        pptp_username, pptp_password, pptp_timeout, pptp_routes,
@@ -467,7 +475,7 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
     };
 
     return PageScaffold(
-        "编辑订阅", huxerui::Button("返回").OnClick(on_back),
+        "编辑订阅", huxerui::Button("返回").OnClick(deferredBack),
         huxerui::ScrollView(
             huxerui::Column {
                 Card(huxerui::Column {
@@ -513,7 +521,7 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
                                             })}
                         : huxerui::View{huxerui::Row{}},
                     huxerui::Row {
-                        huxerui::Button("取消").OnClick(on_back),
+                        huxerui::Button("取消").OnClick(deferredBack),
                         huxerui::Button("保存").OnClick(save),
                     }.With(huxerui::Spacing(8.0F),
                            huxerui::MainAlign(
@@ -840,7 +848,7 @@ huxerui::Task<std::string> HuxerRefreshRemote(
             huxerui::Border(theme.colors.primary, 2.0F));
     }
     return std::move(card)
-        // 远程/本地 mihomo 订阅暂时保持单选：点击哪张卡片，哪张就是当前订阅。
+        // 远程/本地代理订阅暂时保持单选：点击哪张卡片，哪张就是当前订阅。
         // 原生 PPTP/OpenVPN 仍由复选框进入多连接流程，后续再统一抽象。
         .OnClick([action, id, selected = profile.selected, nativeVpn] {
                 if (selected || nativeVpn) return;

@@ -2,11 +2,11 @@
 #
 # 形态蓝本：姊妹项目 apitab 的 .github/workflows/build.yml（已跑通的 HuxerUI +
 # C++23 modules + import std 解法），按本仓库适配（无 sweetedit、目标名
-# clash-flux、configure 期自动下载 mihomo 内核）。命名格式与 apitab 一致：
+# clash-flux、configure 期自动下载 sing-box 内核）。命名格式与 apitab 一致：
 # build-<os>-<arch>（linux-x86_64 / windows-arm64 / macos-arm64 ...）。
 #
-# 覆盖面原则：**mihomo 内核发布什么桌面平台/arch，就构建什么目标**（内核资产
-# 表见 cmake/mihomo_bundle.cmake，SHA256 钉死）。HuxerUI 桌面壳实际能编的目标
+# 覆盖面原则：**sing-box 内核发布什么桌面平台/arch，就构建什么目标**（内核资产
+# 表见 cmake/singbox_bundle.cmake，SHA256 钉死）。HuxerUI 桌面壳实际能编的目标
 # 是 linux/windows/macos × x86_64/arm64 六项，全部入矩阵；内核还发布
 # riscv64/loong64/freebsd 等资产，壳编不到的目标暂不入矩阵。
 #
@@ -32,14 +32,14 @@
 #
 # Windows、macOS 和 Android 已纳入发布门禁：完整 Release 构建或 smoke test
 # 失败时，workflow 失败，不会进入发布 job。Android 使用 AndroidLegacy.cmake
-# 兼容层绕开 NDK 的 C++ modules/import std 限制，并将官方 mihomo Android
-# ABI 二进制打进 APK、启动时解包到应用私有目录。
+# 兼容层绕开 NDK 的 C++ modules/import std 限制；Android 数据面是源码构建的
+# sing-box libbox AAR（与桌面内核同版本）。
 #
 # 已知风险：
 #   * apt.llvm.org 的 clang-21/libc++-21 包名或 Ubuntu 24.04 的仓库配置若调整需同步改。
 #   * `import std` 依赖 pip 固定的 cmake==4.4.2（CxxImportStdGate.cmake 的 UUID
 #     表覆盖 3.30–4.4）；升级 CMake 时先查 gate 文件是否已支持新版本。
-#   * configure 期从 GitHub releases 下载 mihomo（SHA256 钉死），GitHub 资产
+#   * configure 期从 GitHub releases 下载 sing-box（SHA256 钉死），GitHub 资产
 #     不可用会让 Linux job 在 configure 阶段失败。
 
 name: build
@@ -152,8 +152,8 @@ jobs:
         run: |
           # 源码通道：third_party/huxerui 存在且 gtk4/epoxy/libsoup 已装 →
           # 顶层 CMakeLists 优先级 2 自动 add_subdirectory 编译 HuxerUI。
-          # configure 期同时下载 mihomo（按本机 arch 选资产，
-          # CLASHFLUX_BUNDLE_MIHOMO=ON）。
+          # configure 期同时下载 sing-box（按本机 arch 选资产，
+          # CLASHFLUX_BUNDLE_SINGBOX=ON）。
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
             -DCMAKE_CXX_FLAGS='-stdlib=libc++' \
@@ -176,9 +176,9 @@ jobs:
           # HuxerUI 资源包（resources.bin 索引 + 同目录 .huxv/.png payload），
           # POST_BUILD 已拷到 exe 旁边。
           cp -a build/clash-flux.resources dist-src/
-          # mihomo 内核（configure 期下载、POST_BUILD 拷到 <exe>/engines/）
+          # sing-box 内核（configure 期下载、POST_BUILD 拷到 <exe>/engines/）
           cp -a build/engines dist-src/
-          test -x dist-src/engines/mihomo
+          test -x dist-src/engines/sing-box
           # 源码通道的 libhuxerui.so 在构建树里，随包带出
           huxerui_so="$(find build/huxerui-sdk -name 'libhuxerui.so*' -print -quit)"
           test -n "$huxerui_so"
@@ -412,7 +412,7 @@ jobs:
             runner: macos-15
         # x86_64 已移除：macos-13（Intel）runner 已退役，job 永远排队阻塞；
         # 在 arm runner 上交叉编译 x86_64 又卡在「没有 x86_64 的 OpenSSL 产物」
-        # （brew 只有 arm64 库）。darwin amd64 的 mihomo 资产表保留，供发布
+        # （brew 只有 arm64 库）。darwin amd64 的 sing-box 资产表保留，供发布
         # 打包；Intel 构建等有 x86_64 OpenSSL 产物后再补。
     continue-on-error: false
     steps:

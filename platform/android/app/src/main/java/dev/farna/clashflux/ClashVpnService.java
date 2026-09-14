@@ -9,6 +9,8 @@ import android.os.ParcelFileDescriptor;
 import android.util.Log;
 import io.nekohasekai.libbox.*;
 import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 
 /** sing-box owns the data plane; Android owns TUN creation and protect(fd). */
 public final class ClashVpnService extends VpnService implements PlatformInterface, CommandServerHandler, CommandClientHandler {
@@ -35,10 +37,15 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private void start() {
         nativeVpnState(1, "正在启动 sing-box VPN 数据面");
         try {
-            File yaml = new File(getFilesDir(), "clash-flux/core/config.yaml");
-            if (!yaml.isFile()) throw new IllegalStateException("未找到启用订阅的运行配置");
+            // The native store compiles the selected profile into sing-box
+            // JSON (clashflux.singbox). Java only hands the file content to
+            // libbox — no second converter on this side.
+            File config = new File(getFilesDir(), "clash-flux/core/config.json");
+            if (!config.isFile()) throw new IllegalStateException("未找到启用订阅的运行配置");
             server = new CommandServer(this, this); server.start();
-            server.startOrReloadService(SingBoxConfig.compile(yaml, "rule"), new OverrideOptions());
+            server.startOrReloadService(
+                new String(Files.readAllBytes(config.toPath()), StandardCharsets.UTF_8),
+                new OverrideOptions());
             startStatusClient();
             started = true; BootReceiver.setVpnActive(this, true);
             nativeVpnState(2, "sing-box 已附着 TUN；socket protect 已启用");

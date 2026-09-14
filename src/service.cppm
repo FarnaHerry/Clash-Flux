@@ -2,7 +2,7 @@
 //
 // 对齐 Clash Verge Rev 的 service mode：TUN/PPTP 需要 root/CAP_NET_ADMIN，一次性
 // pkexec 提权执行 `clash-flux service install` 安装一个 systemd 服务；服务以
-// root 常驻（`clash-flux service run`），统一代替用户态 GUI/CLI 管理 mihomo
+// root 常驻（`clash-flux service run`），统一代替用户态 GUI/CLI 管理 sing-box
 // 和系统 PPTP/OpenVPN 连接。之后开关 TUN、拨号和安装原生路由都不再需要用户手动 sudo。
 //
 // 进程间通道：unix socket /run/clash-flux/service.sock（安装用户 + root 可连）。
@@ -21,10 +21,10 @@
 //   OPENVPN_STOP <hex id>                              → OK / ERR <原因>
 //
 // 安全模型：安装时记录 pkexec/sudo 的原始用户 UID；socket 只允许该 UID 和
-// root，daemon 还通过 SO_PEERCRED 二次校验。服务只 spawn 固定 mihomo/OpenVPN 二进制
-// （<服务exe目录>/engines/mihomo → <服务exe目录>/mihomo，安装后形态即
-// /usr/local/lib/clash-flux/engines/mihomo），参数固定为
-// `-d <parent(config)> -f <config>`，configPath 必须是不含 ".." 的 .yaml
+// root，daemon 还通过 SO_PEERCRED 二次校验。服务只 spawn 固定 sing-box/OpenVPN 二进制
+// （<服务exe目录>/engines/sing-box → <服务exe目录>/sing-box，安装后形态即
+// /usr/local/lib/clash-flux/engines/sing-box），参数固定为
+// `run -c <config> -D <parent(config)>`，configPath 必须是不含 ".." 的 .json
 // 绝对路径。PPTP/OpenVPN 请求的字段经过十六进制编码，服务端只接受固定协议字段。
 module;
 
@@ -142,12 +142,12 @@ bool executableExists(const std::filesystem::path& p) {
     return std::filesystem::exists(p, ec) && !ec && ::access(p.c_str(), X_OK) == 0;
 }
 
-// 服务允许 spawn 的唯一二进制：<exe>/engines/mihomo → <exe>/mihomo。
-std::filesystem::path serviceMihomo() {
+// 服务允许 spawn 的唯一二进制：<exe>/engines/sing-box → <exe>/sing-box。
+std::filesystem::path serviceEngine() {
     const std::filesystem::path dir = cfg::executableDir();
     if (dir.empty()) return {};
-    if (const auto p = dir / "engines" / "mihomo"; executableExists(p)) return p;
-    if (const auto p = dir / "mihomo"; executableExists(p)) return p;
+    if (const auto p = dir / "engines" / "sing-box"; executableExists(p)) return p;
+    if (const auto p = dir / "sing-box"; executableExists(p)) return p;
     return {};
 }
 
@@ -227,12 +227,12 @@ export bool installed() {
 
 // ---- 客户端命令（阻塞 IO；UI 必须经 RunOnTaskThread 调用）----
 
-// 让服务以 root 启动 mihomo：-d <config 父目录> -f <config>。
+// 让服务以 root 启动 sing-box：run -c <config> -D <config 父目录>。
 export bool startCore(const std::filesystem::path& config, std::string& err) {
     err.clear();
     auto reply = request(std::format("START {}", config.string()), err);
     if (!reply) return false;
-    // 兼容已经安装但尚未重启的旧 root daemon：旧协议在发现 mihomo
+    // 兼容已经安装但尚未重启的旧 root daemon：旧协议在发现内核
     // 已运行时要求客户端先 STOP。新协议本身是幂等 START；这里只对旧
     // 错误做一次 stop + retry，升级应用后无需用户手动 sudo stop。
     if (reply->starts_with("ERR ") && reply->find("先 STOP") != std::string::npos) {
@@ -248,6 +248,11 @@ export bool startCore(const std::filesystem::path& config, std::string& err) {
     }
     if (*reply == "OK") return true;
     err = reply->starts_with("ERR ") ? reply->substr(4) : *reply;
+    // 旧版 root daemon 只认 .yaml 配置：升级内核格式后服务本体还是旧二进制。
+    // 给出明确的重装指引，而不是让用户对着「以 .yaml 结尾」猜原因。
+    if (err.find(".yaml") != std::string::npos) {
+        err += "（检测到旧版服务：请重新执行 sudo clash-flux service install 升级服务）";
+    }
     return false;
 }
 
@@ -437,7 +442,7 @@ std::optional<uid_t> serviceOwnerUid() {
 
 // ---- 管理命令（由 CLI 子命令直接调用，install/uninstall 要求 euid==0）----
 
-// 复制自身 + engines/mihomo 到 kInstallDir，写 systemd 单元，
+// 复制自身 + engines/sing-box 到 kInstallDir，写 systemd 单元，
 // daemon-reload + enable --now。非 root 返回非零并提示用 pkexec。
 export int install() {
     if (::geteuid() != 0) {
@@ -453,10 +458,10 @@ export int install() {
         std::fprintf(stderr, "无法解析自身可执行文件路径（/proc/self/exe）\n");
         return 1;
     }
-    const auto mihomo = serviceMihomo();
-    if (mihomo.empty()) {
+    const auto engine = serviceEngine();
+    if (engine.empty()) {
         std::fprintf(stderr,
-                     "找不到 mihomo 内核（<exe>/engines/mihomo 或 <exe>/mihomo），无法安装\n");
+                     "找不到 sing-box 内核（<exe>/engines/sing-box 或 <exe>/sing-box），无法安装\n");
         return 1;
     }
 
@@ -484,15 +489,15 @@ export int install() {
                                      std::filesystem::perms::others_exec,
                                  std::filesystem::perm_options::replace, ec);
 
-    std::println("[2/4] 复制 {} -> {}", mihomo.string(),
-                 (installDir / "engines" / "mihomo").string());
-    std::filesystem::copy_file(mihomo, installDir / "engines" / "mihomo",
+    std::println("[2/4] 复制 {} -> {}", engine.string(),
+                 (installDir / "engines" / "sing-box").string());
+    std::filesystem::copy_file(engine, installDir / "engines" / "sing-box",
                                std::filesystem::copy_options::overwrite_existing, ec);
     if (ec) {
-        std::fprintf(stderr, "复制 mihomo 失败: %s\n", ec.message().c_str());
+        std::fprintf(stderr, "复制 sing-box 失败: %s\n", ec.message().c_str());
         return 1;
     }
-    std::filesystem::permissions(installDir / "engines" / "mihomo",
+    std::filesystem::permissions(installDir / "engines" / "sing-box",
                                  std::filesystem::perms::owner_all |
                                      std::filesystem::perms::group_read |
                                      std::filesystem::perms::group_exec |
@@ -533,7 +538,7 @@ export int install() {
             return 1;
         }
         out << "[Unit]\n"
-               "Description=Clash-Flux privileged network service (mihomo + PPTP + OpenVPN)\n"
+               "Description=Clash-Flux privileged network service (sing-box + PPTP + OpenVPN)\n"
                "After=network.target\n"
                "\n"
                "[Service]\n"
@@ -602,9 +607,9 @@ volatile sig_atomic_t g_childEvent = 0;
 void onQuitSignal(int) { g_quit = 1; }
 void onChildSignal(int) { g_childEvent = 1; }
 
-// 非阻塞收割 mihomo 子进程。PPTP/OpenVPN 也是本服务的直接
+// 非阻塞收割 sing-box 子进程。PPTP/OpenVPN 也是本服务的直接
 // 子进程，必须由各自的会话 runtime 回收；waitpid(-1) 会抢走它们
-// 的退出状态，把不同引擎的异常误归到 mihomo 监管链路。
+// 的退出状态，把不同引擎的异常误归到 sing-box 监管链路。
 void reapChildren(pid_t& childPid) {
     if (childPid <= 0) return;
     int status = 0;
@@ -612,7 +617,10 @@ void reapChildren(pid_t& childPid) {
     if (pid == childPid || (pid < 0 && errno == ECHILD)) childPid = 0;
 }
 
-// 校验 START 的 config 路径：绝对、.yaml 结尾、不含 ".."。
+// 校验 START 的 config 路径：绝对、.json/.yaml 结尾、不含 ".."。
+// .yaml 一并接受：sing-box 按 content 而非扩展名读配置，且升级窗口里
+// 新客户端（.json）与旧版 daemon（只认 .yaml）可能并存，扩展名不是安全
+// 边界——路径合法性（绝对 + 无 ".."）才是。
 bool validConfigPath(const std::string& config, std::string& why) {
     const std::filesystem::path p{config};
     if (!p.is_absolute()) {
@@ -623,19 +631,19 @@ bool validConfigPath(const std::string& config, std::string& why) {
         why = "配置路径不允许包含 \"..\"";
         return false;
     }
-    if (!config.ends_with(".yaml")) {
-        why = "配置路径必须以 .yaml 结尾";
+    if (!config.ends_with(".json") && !config.ends_with(".yaml")) {
+        why = "配置路径必须以 .json 结尾";
         return false;
     }
     return true;
 }
 
-// fork + execv 拉起 mihomo：setsid 独立会话，stdout/stderr 追加到
-// <workdir>/mihomo.service.log。参数固定为 -d <parent> -f <config>。
-pid_t spawnMihomo(const std::filesystem::path& binary, const std::string& config,
+// fork + execv 拉起 sing-box：setsid 独立会话，stdout/stderr 追加到
+// <workdir>/sing-box.service.log。参数固定为 run -c <config> -D <parent>。
+pid_t spawnEngine(const std::filesystem::path& binary, const std::string& config,
                   std::string& err) {
     const std::string workDir = std::filesystem::path{config}.parent_path().string();
-    const std::string logPath = workDir + "/mihomo.service.log";
+    const std::string logPath = workDir + "/sing-box.service.log";
 
     const pid_t pid = ::fork();
     if (pid < 0) {
@@ -653,10 +661,11 @@ pid_t spawnMihomo(const std::filesystem::path& binary, const std::string& config
         }
         const std::string bin = binary.string();
         char* const argv[] = {const_cast<char*>(bin.c_str()),
-                              const_cast<char*>("-d"),
-                              const_cast<char*>(workDir.c_str()),
-                              const_cast<char*>("-f"),
+                              const_cast<char*>("run"),
+                              const_cast<char*>("-c"),
                               const_cast<char*>(config.c_str()),
+                              const_cast<char*>("-D"),
+                              const_cast<char*>(workDir.c_str()),
                               nullptr};
         ::execv(bin.c_str(), argv);
         _exit(127);  // execv 失败
@@ -665,7 +674,7 @@ pid_t spawnMihomo(const std::filesystem::path& binary, const std::string& config
 }
 
 // STOP：SIGTERM → 2s 宽限 → SIGKILL。childPid 出参清零。
-void stopMihomo(pid_t& childPid) {
+void stopEngine(pid_t& childPid) {
     if (childPid <= 0) return;
     ::kill(childPid, SIGTERM);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -762,7 +771,7 @@ export int run() {
         }
     }
     // 安装用户 + root；若安装时未识别原始 UID，则退回 root-only，避免
-    // 任意本地用户接管 mihomo/PPTP。
+    // 任意本地用户接管 sing-box/PPTP。
     ::chmod(sockPath.c_str(), 0600);
     if (::listen(listenFd, 8) != 0) {
         std::fprintf(stderr, "%s\n", errnoText("listen 失败").c_str());
@@ -828,7 +837,7 @@ export int run() {
             if (childPid <= 0) {
                 replyLine(fd, "OK");  // 本就没在跑：幂等成功
             } else {
-                stopMihomo(childPid);
+                stopEngine(childPid);
                 replyLine(fd, "OK");
             }
         } else if (cmd.starts_with("START ")) {
@@ -838,16 +847,16 @@ export int run() {
             if (!validConfigPath(config, why)) {
                 replyLine(fd, std::format("ERR {}", why));
             } else {
-                const auto binary = serviceMihomo();
+                const auto binary = serviceEngine();
                 if (binary.empty()) {
-                    replyLine(fd, "ERR 服务侧找不到 mihomo 二进制");
+                    replyLine(fd, "ERR 服务侧找不到 sing-box 二进制");
                 } else {
                     // START 是幂等的重启请求。GUI 可能在上一次关闭、崩溃或
                     // 热重载期间没有机会发送 STOP；沿用 Clash Verge 的
                     // 生命周期模型，先回收本服务托管的旧 core，再启动新配置。
-                    if (childPid > 0) stopMihomo(childPid);
+                    if (childPid > 0) stopEngine(childPid);
                     std::string err;
-                    const pid_t pid = spawnMihomo(binary, config, err);
+                    const pid_t pid = spawnEngine(binary, config, err);
                     if (pid < 0) {
                         replyLine(fd, std::format("ERR {}", err));
                     } else {
@@ -989,9 +998,9 @@ export int run() {
         ::close(fd);
     }
 
-    // 退出：杀掉 mihomo 子进程、删 socket 文件。
+    // 退出：杀掉 sing-box 子进程、删 socket 文件。
     reapChildren(childPid);
-    if (childPid > 0) stopMihomo(childPid);
+    if (childPid > 0) stopEngine(childPid);
     pptp::PrivilegedPptpShutdown();
     openvpn::PrivilegedOpenVpnShutdown();
     ::close(listenFd);

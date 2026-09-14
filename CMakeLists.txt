@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.1.36 DESCRIPTION "Clash proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.1.36 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # HUXERUI_LIBRARY_GRAPH_ONLY：CLI 扫描 huxerui 库依赖图时的特殊配置——
 # 不启用语言、不构建，huxerui_add_app 只写出库图 JSON 即返回（见 SDK
@@ -282,8 +282,9 @@ set(CLASHFLUX_MODULE_UNITS
     src/vpn.cppm
     src/pptp.cppm
     src/openvpn.cppm
-    # mihomo 核心：进程生命周期 / REST API / 推送流 / 系统代理
+    # sing-box 核心：进程生命周期 / 订阅编译 / REST API / 推送流 / 系统代理
     src/core.cppm
+    src/singbox.cppm
     src/api.cppm
     src/stream.cppm
     src/sysproxy.cppm
@@ -374,6 +375,7 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         SQLiteCpp
         clashflux_json
         clashflux_qrcode
+        yaml-cpp
         Threads::Threads
     )
     # Android：NDK 无 OpenSSL（curl 无 TLS 构建），链接跳过 OpenSSL。
@@ -392,22 +394,23 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
             MACOSX_BUNDLE_INFO_PLIST "${HUXERUI_MACOS_INFO_PLIST}")
     endif ()
 
-    # ---- 自带 mihomo 内核 ---------------------------------------------------
+    # ---- 自带 sing-box 内核 -------------------------------------------------
     # 项目附带引擎：configure 期按宿主平台下载官方 release（版本与 SHA256 钉死，
-    # 见 cmake/mihomo_bundle.cmake 的平台资产表），POST_BUILD 拷到
-    # <exe>/engines/mihomo（Windows 为 mihomo.exe —— cfg::mihomoBinary() 第一
-    # 优先级解析位），构建产物开箱即可启动内核。-DCLASHFLUX_BUNDLE_MIHOMO=OFF
-    # 关闭（回落 <repo>/engines 与 PATH 解析）。桌面覆盖 linux/windows x86_64
-    # 与 macOS x86_64/arm64；Android 的多 ABI 内核由 Gradle 统一打进 APK。
-    include(cmake/mihomo_bundle.cmake)
-    clashflux_bundle_mihomo(clash-flux)
+    # 见 cmake/singbox_bundle.cmake 的平台资产表，与 Android libbox 同版本），
+    # POST_BUILD 拷到 <exe>/engines/sing-box（Windows 为 sing-box.exe ——
+    # cfg::singboxBinary() 第一优先级解析位），构建产物开箱即可启动内核。
+    # -DCLASHFLUX_BUNDLE_SINGBOX=OFF 关闭（回落 <repo>/engines 与 PATH 解析）。
+    # 桌面覆盖 linux/windows x86_64/arm64 与 macOS x86_64/arm64；Android 的
+    # libbox 由 Gradle 统一打进 APK。
+    include(cmake/singbox_bundle.cmake)
+    clashflux_bundle_singbox(clash-flux)
 
     # ---- Windows 自定义安装向导 ---------------------------------------------
     # `huxerui package windows` 时生效（日常构建零开销）：platform/windows/
     # huxerui.cmake 定义配置函数，把 MSI + Burn 捆绑包 + 托管安装器 UI
     # （platform/windows/package/，品牌面板 + 简中/繁中/英文目录）接进构建。
     # install 规则是安装包文件唯一来源——自带内核与图标资产在此显式声明。
-    # 必须位于 clashflux_bundle_mihomo 之后（引用其导出的内核路径）。
+    # 必须位于 clashflux_bundle_singbox 之后（引用其导出的内核路径）。
     if (WIN32 AND COMMAND huxerui_configure_windows_project_package)
         get_target_property(CLASHFLUX_APP_INSTALL_COMPONENT clash-flux
             HUXERUI_APPLICATION_INSTALL_COMPONENT)
@@ -415,10 +418,10 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
                 AND NOT CLASHFLUX_APP_INSTALL_COMPONENT MATCHES "-NOTFOUND$")
             huxerui_configure_windows_project_package(clash-flux
                 "${CLASHFLUX_APP_INSTALL_COMPONENT}")
-            if (CLASHFLUX_BUNDLE_MIHOMO AND CLASHFLUX_MIHOMO_BUNDLED_BINARY)
-                install(FILES "${CLASHFLUX_MIHOMO_BUNDLED_BINARY}"
+            if (CLASHFLUX_BUNDLE_SINGBOX AND CLASHFLUX_SINGBOX_BUNDLED_BINARY)
+                install(FILES "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
                     DESTINATION engines
-                    RENAME "${CLASHFLUX_MIHOMO_BUNDLED_NAME}"
+                    RENAME "${CLASHFLUX_SINGBOX_BUNDLED_NAME}"
                     COMPONENT "${CLASHFLUX_APP_INSTALL_COMPONENT}")
             endif ()
             install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets"
@@ -452,10 +455,10 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
                 COMPONENT "${CLASHFLUX_LINUX_INSTALL_COMPONENT}"
             )
         endif ()
-        if (CLASHFLUX_BUNDLE_MIHOMO AND CLASHFLUX_MIHOMO_BUNDLED_BINARY)
-            install(FILES "${CLASHFLUX_MIHOMO_BUNDLED_BINARY}"
+        if (CLASHFLUX_BUNDLE_SINGBOX AND CLASHFLUX_SINGBOX_BUNDLED_BINARY)
+            install(FILES "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
                 DESTINATION engines
-                RENAME "${CLASHFLUX_MIHOMO_BUNDLED_NAME}"
+                RENAME "${CLASHFLUX_SINGBOX_BUNDLED_NAME}"
                 COMPONENT "${CLASHFLUX_LINUX_INSTALL_COMPONENT}"
             )
         endif ()
@@ -500,6 +503,17 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         set_target_properties(test_smoke PROPERTIES CXX_MODULE_STD ON)
         target_compile_features(test_smoke PRIVATE cxx_std_23)
         add_test(NAME smoke COMMAND test_smoke)
+
+        # clashflux.singbox 订阅编译器：只依赖 std + nlohmann.json 模块 + yaml-cpp。
+        add_executable(test_singbox tests/test_singbox.cpp src/singbox.cpp)
+        target_sources(test_singbox PRIVATE FILE_SET clashflux_singbox_modules
+            TYPE CXX_MODULES
+            BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+            FILES src/singbox.cppm)
+        set_target_properties(test_singbox PROPERTIES CXX_MODULE_STD ON)
+        target_compile_features(test_singbox PRIVATE cxx_std_23)
+        target_link_libraries(test_singbox PRIVATE clashflux_json yaml-cpp)
+        add_test(NAME singbox COMMAND test_singbox)
 
         add_executable(test_vpn tests/test_vpn.cpp)
         target_sources(test_vpn PRIVATE src/pptp.cpp src/openvpn.cpp)
@@ -555,7 +569,7 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
 
         set(CPACK_PACKAGE_NAME "clash-flux")
         set(CPACK_PACKAGE_VENDOR "FarnaHerry")
-        set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Clash/mihomo proxy client")
+        set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "sing-box proxy client (Clash Verge Rev style)")
         set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
         set(CPACK_PACKAGE_CONTACT "FarnaHerry")
         set(CPACK_PACKAGING_INSTALL_PREFIX "/opt/clash-flux")

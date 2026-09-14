@@ -1,6 +1,6 @@
-// stream.cppm — clashflux.stream：mihomo 推送流（接口模块）。
+// stream.cppm — clashflux.stream：clash_api 推送流（接口模块）。
 //
-// 三条 WebSocket 通道（mihomo external-controller 的推送端点）：
+// 三条 WebSocket 通道（clash_api 的推送端点）：
 //   /logs?level=<level>     内核日志（{"type":..,"payload":..} 逐条推）
 //   /traffic                每秒流量帧（{"up":N,"down":N}，字节/秒）
 //   /connections            连接快照（全量 JSON，约每秒一帧）
