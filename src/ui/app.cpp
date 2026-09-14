@@ -449,20 +449,18 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
 
         // 系统 VPN 的断开可能要等待 pppd/RAS 收尾，必须先在线程池完成清理，
         // 再关闭窗口；否则 UI 退出后会留下旧的“连接中”状态。
-        auto finishExit = [tasks, application, window, exitRequested](
-                              bool closeWindow) {
+        auto finishExit = [tasks, application, exitRequested]() {
             if (exitRequested.Get()) return;
             exitRequested = true;
-            tasks.Launch([application, window, closeWindow]() -> huxerui::Task<void> {
+            tasks.Launch([application]() -> huxerui::Task<void> {
                 co_await RunOnTaskThread([] {
                     store::vpnStore().shutdown();
                     store::coreStore().stopCore();
                 });
-                if (closeWindow) {
-                    window.Close();
-                } else {
-                    application.Quit();
-                }
+                // Quit bypasses the window close-request path. Do not call
+                // WindowHandle::Close after asynchronous cleanup: GTK may
+                // already have invalidated its frame.
+                application.Quit();
             });
         };
 
@@ -523,7 +521,7 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
                     }).Checked(trayTun.Get()));
                 menuEntries.push_back(huxerui::MenuSection{});
                 menuEntries.push_back(
-                    huxerui::MenuItem("退出", [finishExit] { finishExit(false); }));
+                    huxerui::MenuItem("退出", [finishExit] { finishExit(); }));
                 tray.Show(app::images::tray,
                           huxerui::SystemTrayOptions{
                               .tooltip = "Clash-Flux",
@@ -539,36 +537,31 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
     // 托盘不可用（平台不支持或设置页关闭）时一律直接退出。
     {
         const huxerui::Color closeHintColor = rootSpec.colors.on_surface_variant;
-        // 隐藏到托盘：Hide 会卸载窗口子树，推迟出事件路径。
-        auto hideToTray = [tasks, window] {
-            tasks.Launch([=]() -> huxerui::Task<void> {
-                co_await huxerui::Delay(std::chrono::duration<double>{0});
-                window.Hide();
-            });
-        };
+        // Hide 是直接窗口命令，不会经过 close handler；保持同步可避免 GTK
+        // 在关闭事件返回后销毁 frame，随后延迟任务再访问它的竞态。
+        auto hideToTray = [window] { window.Hide(); };
         window.OnCloseRequest(
             [=]() mutable -> bool {
                 if (exitRequested.Get()) return false;
                 if (!trayAvailable || !trayEnabled.Get()) {
-                    finishExit(true);
+                    finishExit();
                     return true;
                 }
                 const std::string behavior =
                     store::coreStore().setting("tray.close_behavior", "0");
                 if (behavior == "1") {
-                    finishExit(true);
+                    finishExit();
                     return true;
                 }
                 if (behavior == "2") {
                     hideToTray();
                     return true;
                 }
-                // 0 = 询问（防重复弹窗；事件路径上只置标记，弹窗推迟）。
+                // 0 = 询问。Dialog 是事件路径安全的同步 presentation；不要
+                // 延迟到 CloseRequest 返回之后，Linux 后端届时可能已释放 frame。
                 if (closeDialogOpen.Get()) return true;
                 closeDialogOpen = true;
-                tasks.Launch([=]() -> huxerui::Task<void> {
-                    co_await huxerui::Delay(std::chrono::duration<double>{0});
-                    dialog.Show(
+                dialog.Show(
                         [=](huxerui::DialogContext ctx) -> huxerui::View {
                             return DialogCard(huxerui::Column {
                                 huxerui::Text("关闭 Clash-Flux？",
@@ -584,7 +577,7 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
                                         .OnClick([=] {
                                             ctx.Dismiss();
                                             closeDialogOpen = false;
-                                            finishExit(true);
+                                            finishExit();
                                         }),
                                     huxerui::Button("最小化到托盘")
                                         .OnClick([=] {
@@ -612,7 +605,6 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
                                                               Stretch)));
                         },
                         huxerui::DialogOptions{});
-                });
                 return true;
             },
             0);

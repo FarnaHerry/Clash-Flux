@@ -110,6 +110,11 @@ const std::string kDefaultCoreName = "sing-box";
     // 校准取消授权、系统撤销等异步结果。
     auto tunEnabled = huxerui::UseState(
         store::coreStore().setting("core.tun_enabled", "false") == "true");
+    // 乐观开关：点击立即翻转显示，后台完成后清除覆盖（真实状态接管），
+    // 失败自动回弹并提示。覆盖值非空即“进行中”，期间忽略再次点击，
+    // 避免 TUN 重启内核期间的并发 stop/start。
+    auto proxyOverride = huxerui::UseState<std::optional<bool>>(std::nullopt);
+    auto tunOverride = huxerui::UseState<std::optional<bool>>(std::nullopt);
     auto vpnState = huxerui::UseState(AndroidVpnState());
     auto trayCloseBehavior = huxerui::UseState<std::size_t>([] {
         const std::string value =
@@ -355,7 +360,7 @@ const std::string kDefaultCoreName = "sing-box";
                     {PlatformCode::CoreService, PlatformCode::SystemProxy,
                      PlatformCode::CoreTun},
                     [s, running, serviceInstalled, coreAction, tasks, toast,
-                     dialog, clipboard,
+                     dialog, clipboard, proxyOverride, tunOverride,
                      textColor = theme.colors.on_surface,
                      hintColor = theme.colors.on_surface_variant] {
                         return Card(huxerui::Column {
@@ -403,46 +408,62 @@ const std::string kDefaultCoreName = "sing-box";
                                             }));
                                 }),
                             PlatformControl(
-                                {PlatformCode::SystemProxy}, [s, coreAction] {
+                                {PlatformCode::SystemProxy},
+                                [s, tasks, toast, proxyOverride] {
                                     return SettingRow(
                                         "系统代理",
                                         std::format(
                                             "写入桌面系统代理（127.0.0.1:{}）",
                                             s.mixedPort),
                                         huxerui::Switch(
-                                            store::coreStore().systemProxyEnabled())
-                                            .OnChanged([coreAction](bool on) {
-                                                coreAction(
-                                                    [on] {
-                                                        if (!store::coreStore()
-                                                                 .applySystemProxy(on)) {
-                                                            const std::string err =
-                                                                store::coreStore()
-                                                                    .snapshot()
-                                                                    .lastError;
-                                                            throw std::runtime_error(
-                                                                err.empty()
-                                                                    ? "系统代理设置失败"
-                                                                    : err);
-                                                        }
-                                                    },
-                                                    on ? "系统代理已开启"
-                                                       : "系统代理已关闭");
+                                            proxyOverride.Get().value_or(
+                                                store::coreStore().systemProxyEnabled()))
+                                            .OnChanged([tasks, toast,
+                                                        proxyOverride](bool on) {
+                                                // 乐观切换：先翻转，失败再回弹。
+                                                if (proxyOverride.Get().has_value()) return;
+                                                proxyOverride = on;
+                                                tasks.Launch([=]() -> huxerui::Task<void> {
+                                                    const bool ok = co_await RunOnTaskThread(
+                                                        [on] {
+                                                            return store::coreStore()
+                                                                .applySystemProxy(on);
+                                                        });
+                                                    proxyOverride = std::nullopt;
+                                                    if (!ok) {
+                                                        const std::string err =
+                                                            store::coreStore()
+                                                                .snapshot()
+                                                                .lastError;
+                                                        toast.Show(err.empty()
+                                                                       ? "系统代理设置失败"
+                                                                       : err);
+                                                    } else {
+                                                        toast.Show(on ? "系统代理已开启"
+                                                                      : "系统代理已关闭");
+                                                    }
+                                                });
                                             }));
                                 }),
                             PlatformControl(
                                 {PlatformCode::CoreTun},
                                 [s, running, tasks, toast, dialog, clipboard,
-                                 textColor, hintColor] {
+                                 textColor, hintColor, tunOverride] {
                                     return SettingRow(
                                         "TUN 模式",
                                         running
                                             ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
                                             : "全局透明代理（下次启动生效）",
-                                        huxerui::Switch(s.tunEnabled)
+                                        huxerui::Switch(
+                                            tunOverride.Get().value_or(s.tunEnabled))
                                             .OnChanged(
-                                                [tasks, toast, dialog, clipboard,
-                                                 textColor, hintColor](bool on) {
+                                                [s, tasks, toast, dialog, clipboard,
+                                                 textColor, hintColor,
+                                                 tunOverride](bool on) {
+                                                    // 乐观切换：TUN 重启内核耗时数秒，
+                                                    // 先翻转显示，失败/门禁拦截再回弹。
+                                                    if (tunOverride.Get().has_value()) return;
+                                                    tunOverride = on;
                                                     tasks.Launch(
                                                         [=]() -> huxerui::Task<void> {
                                                             if (on) {
@@ -458,12 +479,14 @@ const std::string kDefaultCoreName = "sing-box";
                                                                         });
                                                                 if (gate ==
                                                                     core::TunGate::Elevated) {
+                                                                    tunOverride = std::nullopt;
                                                                     toast.Show(
                                                                         "已请求管理员权限重启，请在新窗口开启 TUN");
                                                                     co_return;
                                                                 }
                                                                 if (gate ==
                                                                     core::TunGate::Denied) {
+                                                                    tunOverride = std::nullopt;
                                                                     ShowTunGuideDialog(
                                                                         dialog, clipboard,
                                                                         toast, textColor,
@@ -477,6 +500,7 @@ const std::string kDefaultCoreName = "sing-box";
                                                                         return store::coreStore()
                                                                             .applyTun(on);
                                                                     });
+                                                            tunOverride = std::nullopt;
                                                             if (!ok) {
                                                                 const std::string err =
                                                                     store::coreStore()

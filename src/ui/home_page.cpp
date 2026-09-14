@@ -172,6 +172,11 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     auto dialog = huxerui::UseDialog();
     auto clipboard = application.Clipboard();
     auto state = huxerui::UseState<HomeState>({});
+    // 乐观开关：点击立即翻转显示，后台完成后清除覆盖（真实状态接管），
+    // 失败自动回弹并提示。覆盖值非空即“进行中”，期间忽略再次点击，
+    // 避免 TUN 重启内核期间的并发 stop/start。
+    auto proxyOverride = huxerui::UseState<std::optional<bool>>(std::nullopt);
+    auto tunOverride = huxerui::UseState<std::optional<bool>>(std::nullopt);
 
     huxerui::Lifecycle(
         [tasks, state] {
@@ -289,7 +294,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     huxerui::View systemCard =
         PlatformControl(
             {PlatformCode::SystemProxy, PlatformCode::CoreTun},
-            [s, tasks, toast, dialog, clipboard,
+            [s, tasks, toast, dialog, clipboard, proxyOverride, tunOverride,
              textColor = theme.colors.on_surface,
              hintColor = theme.colors.on_surface_variant] {
                 return Card(huxerui::Column {
@@ -298,7 +303,8 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                             .WithWeight(huxerui::FontWeight::SemiBold),
                         textColor}),
                     PlatformControl(
-                        {PlatformCode::SystemProxy}, [tasks, toast, textColor] {
+                        {PlatformCode::SystemProxy},
+                        [tasks, toast, textColor, proxyOverride] {
                             return huxerui::Row {
                                 huxerui::Text("系统代理").Style(
                                     huxerui::TextStyle{
@@ -306,14 +312,20 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                                         textColor}),
                                 huxerui::Spacer(),
                                 huxerui::Switch(
-                                    store::coreStore().systemProxyEnabled())
-                                    .OnChanged([tasks, toast](bool on) {
+                                    proxyOverride.Get().value_or(
+                                        store::coreStore().systemProxyEnabled()))
+                                    .OnChanged([tasks, toast,
+                                                proxyOverride](bool on) {
+                                        // 乐观切换：先翻转，失败再回弹。
+                                        if (proxyOverride.Get().has_value()) return;
+                                        proxyOverride = on;
                                         tasks.Launch([=]() -> huxerui::Task<void> {
                                             const bool ok = co_await RunOnTaskThread(
                                                 [on] {
                                                     return store::coreStore()
                                                         .applySystemProxy(on);
                                                 });
+                                            proxyOverride = std::nullopt;
                                             if (!ok) {
                                                 const std::string err =
                                                     store::coreStore()
@@ -331,17 +343,23 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                     PlatformControl(
                         {PlatformCode::CoreTun},
                         [s, tasks, toast, dialog, clipboard, textColor,
-                         hintColor] {
+                         hintColor, tunOverride] {
                             return huxerui::Row {
                                 huxerui::Text("TUN 模式").Style(
                                     huxerui::TextStyle{
                                         huxerui::Font::System(font_size::kBody),
                                         textColor}),
                                 huxerui::Spacer(),
-                                huxerui::Switch(s.core.tunEnabled)
+                                huxerui::Switch(
+                                    tunOverride.Get().value_or(s.core.tunEnabled))
                                     .OnChanged(
-                                        [tasks, toast, dialog, clipboard,
-                                         textColor, hintColor](bool on) {
+                                        [s, tasks, toast, dialog, clipboard,
+                                         textColor, hintColor,
+                                         tunOverride](bool on) {
+                                            // 乐观切换：TUN 重启内核耗时数秒，
+                                            // 先翻转显示，失败/门禁拦截再回弹。
+                                            if (tunOverride.Get().has_value()) return;
+                                            tunOverride = on;
                                             tasks.Launch(
                                                 [=]() -> huxerui::Task<void> {
                                                     if (on) {
@@ -357,12 +375,14 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                                                                 });
                                                         if (gate ==
                                                             core::TunGate::Elevated) {
+                                                            tunOverride = std::nullopt;
                                                             toast.Show(
                                                                 "已请求管理员权限重启，请在新窗口开启 TUN");
                                                             co_return;
                                                         }
                                                         if (gate ==
                                                             core::TunGate::Denied) {
+                                                            tunOverride = std::nullopt;
                                                             ShowTunGuideDialog(
                                                                 dialog, clipboard, toast,
                                                                 textColor, hintColor);
@@ -375,6 +395,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                                                                 return store::coreStore()
                                                                     .applyTun(on);
                                                             });
+                                                    tunOverride = std::nullopt;
                                                     if (!ok) {
                                                         const std::string err =
                                                             store::coreStore()
