@@ -1,7 +1,7 @@
 // proxies_page.cpp — 代理页：顶部收束区（出站模式 规则/全局/直连 切换）+
 // 按模式分视图：规则 → 订阅自带分组 chips + 选中组的统一矩形节点卡网格；
 // 全局 → GLOBAL 组节点网格；直连 → 不展示订阅内容（流量不经节点）。
-// 底部状态条：嵌套分支导航（面包屑 + 返回）+ 整组测速 + 节点数。
+// 底部状态条：嵌套分支导航（面包屑 + 返回）+ 当前组测速触发 + 节点数。
 //
 // 规则/全局两套分支路径 State 独立（rulePath/globalPath），切换模式互不
 // 覆盖对方的选择。GLOBAL 组只在全局模式出现，规则 chips 不含它。
@@ -22,7 +22,6 @@
 #include <chrono>
 #include <cstddef>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "ui.h"
@@ -59,6 +58,14 @@ struct ProxyGroup {
     std::vector<ProxyNode> nodes;
 
     bool operator==(const ProxyGroup&) const = default;
+};
+
+struct ProbeState {
+    int delay = 0;
+    bool timeout = false;
+    bool testing = false;
+
+    bool operator==(const ProbeState&) const = default;
 };
 
 // 组类型：带 all 列表的才是策略组（Selector/URLTest/Fallback/LoadBalance/Relay），
@@ -161,30 +168,71 @@ huxerui::Color delayColor(const huxerui::ThemeSpec& theme, int delay, bool timeo
 // 「组 · 分支当前选中」作为可点入提示），选中态 primary 底。
 // 宽度由 VirtualGrid 均分，高度由 EstimatedRowExtent 提供估计。
 [[huxerui::composable]] huxerui::View NodeCard(
-    const ProxyNode& node, bool selected,
-    huxerui::State<std::unordered_map<std::string, int>> delays,
-    huxerui::State<std::unordered_map<std::string, bool>> timeouts,
+    const ProxyNode& node, bool selected, const std::string& groupName,
+    huxerui::State<int> testGeneration, huxerui::State<std::string> testGroup,
     std::function<void()> onSelect) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
-    // 测速结果优先于 history 快照。
-    int delay = node.delay;
-    bool timeout = node.timeout;
-    if (const auto it = delays.Get().find(node.name); it != delays.Get().end()) {
-        delay = it->second;
-        timeout = false;
-    }
-    if (const auto it = timeouts.Get().find(node.name);
-        it != timeouts.Get().end() && it->second) {
-        timeout = true;
-        delay = 0;
-    }
+    auto tasks = huxerui::UseTaskScope();
+    auto probe = huxerui::UseState(ProbeState{
+        .delay = node.delay, .timeout = node.timeout, .testing = false});
+    auto lastGeneration = huxerui::UseState(testGeneration.Get());
+    const std::string nodeName = node.name;
+
+    // 测速请求只作为广播事件；真正的 REST 请求、状态和完成时机都归卡片自己。
+    // 卡片被 VirtualGrid 回收时，TaskScope 会取消自己的请求，不影响其他卡片。
+    huxerui::Lifecycle(
+        [tasks, probe, lastGeneration, testGeneration, testGroup, nodeName,
+         groupName] {
+            if (testGeneration.Get() == 0 || testGroup.Get() != groupName ||
+                testGeneration.Get() == lastGeneration.Get() ||
+                probe.Get().testing) {
+                return;
+            }
+
+            ProbeState started = probe.Get();
+            started.delay = 0;
+            started.timeout = false;
+            started.testing = true;
+            probe = started;
+            lastGeneration = testGeneration.Get();
+            tasks.Launch([probe, nodeName]() -> huxerui::Task<void> {
+                try {
+                    const int measured = co_await RunOnTaskThread([nodeName] {
+                        const auto result = store::coreStore().api().proxyDelay(
+                            nodeName, "https://www.gstatic.com/generate_204", 3000);
+                        if (!result.ok) return 0;
+                        const auto body = nlohmann::json::parse(
+                            result.body, nullptr, false);
+                        return body.is_object() ? body.value("delay", 0) : 0;
+                    });
+
+                    ProbeState completed = probe.Get();
+                    completed.delay = measured > 0 ? measured : 0;
+                    completed.timeout = measured <= 0;
+                    completed.testing = false;
+                    probe = completed;
+                } catch (const std::exception&) {
+                    ProbeState failed = probe.Get();
+                    failed.delay = 0;
+                    failed.timeout = true;
+                    failed.testing = false;
+                    probe = failed;
+                }
+            });
+        },
+        testGeneration, testGroup);
+
+    const ProbeState currentProbe = probe.Get();
+    const int delay = currentProbe.delay;
+    const bool timeout = currentProbe.timeout;
 
     std::string meta;
     if (node.isGroup) {
         meta = "组 · " + (node.groupNow.empty() ? node.type : node.groupNow);
     } else {
-        meta = timeout ? "超时"
+        meta = currentProbe.testing ? "测速中…"
+                       : timeout ? "超时"
                        : (delay > 0 ? std::format("{} ms", delay) : node.type);
     }
 
@@ -219,10 +267,9 @@ huxerui::Color delayColor(const huxerui::ThemeSpec& theme, int delay, bool timeo
 constexpr float kNodeGridGap = 8.0F;
 
 [[huxerui::composable]] huxerui::View NodeGrid(
-    const ProxyGroup& group, std::size_t cols,
-    huxerui::State<std::unordered_map<std::string, int>> delays,
-    huxerui::State<std::unordered_map<std::string, bool>> timeouts,
-    huxerui::TaskScope tasks, huxerui::StateList<ProxyGroup> groups,
+    const ProxyGroup& group, std::size_t cols, huxerui::State<int> testGeneration,
+    huxerui::State<std::string> testGroup, huxerui::TaskScope tasks,
+    huxerui::StateList<ProxyGroup> groups,
     huxerui::State<std::vector<std::string>> navPath) {
     const std::size_t nodeCount = group.nodes.size();
     const bool compact =
@@ -231,7 +278,7 @@ constexpr float kNodeGridGap = 8.0F;
     const std::string selectedName = group.now;
     return huxerui::VirtualGrid(
                nodeCount + (compact ? 1U : 0U),
-               [groups, selectedName, groupName, delays, timeouts, tasks,
+               [groups, selectedName, groupName, testGeneration, testGroup, tasks,
                 navPath, compact, nodeCount](std::size_t index) -> huxerui::View {
                    if (compact && index == nodeCount) {
                        return CompactFloatingNavigationFooter()
@@ -270,9 +317,9 @@ constexpr float kNodeGridGap = 8.0F;
                            });
                        };
                    }
-                   return NodeCard(node, node.name == selectedName, delays,
-                                   timeouts, std::move(onSelect))
-                       .Key(node.name);
+                   return NodeCard(node, node.name == selectedName, groupName,
+                                   testGeneration, testGroup, std::move(onSelect))
+                       .Key(groupName + "::" + node.name);
                })
         .Columns(huxerui::GridColumns::Fixed(cols))
         .EstimatedRowExtent(72.0F)
@@ -328,16 +375,14 @@ constexpr float kChipGap = 8.0F;
         .ScrollAxis(huxerui::Axis::Horizontal);
 }
 
-// 底部状态条：‹ 返回（根层级隐藏）+ 面包屑路径 + 整组测速 + 节点数。
+// 底部状态条：‹ 返回（根层级隐藏）+ 面包屑路径 + 当前组测速触发 + 节点数。
 [[huxerui::composable]] huxerui::View BranchBar(
     const std::vector<std::string>& path, const ProxyGroup& group,
     huxerui::State<std::vector<std::string>> navPath,
-    huxerui::State<std::unordered_map<std::string, int>> delays,
-    huxerui::State<std::unordered_map<std::string, bool>> timeouts,
-    huxerui::State<std::string> testingGroup, huxerui::TaskScope tasks) {
+    huxerui::State<int> testGeneration, huxerui::State<std::string> testGroup,
+    huxerui::TaskScope tasks) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
-    const bool testing = testingGroup.Get() == group.name;
     const std::string groupName = group.name;
 
     std::string breadcrumb;
@@ -384,44 +429,11 @@ constexpr float kChipGap = 8.0F;
             huxerui::Font::System(font_size::kCaption),
             theme.colors.on_surface_variant}),
         huxerui::Spacer(),
-        testing ? huxerui::View{huxerui::ProgressCircle()
-                                    .With(huxerui::Frame{.width = 16.0F,
-                                                         .height = 16.0F})}
-                : huxerui::View{huxerui::Button("测速").OnClick(
-                      [tasks, delays, timeouts, testingGroup, groupName] {
-                          tasks.Launch([=]() -> huxerui::Task<void> {
-                              testingGroup = groupName;
-                              const auto r = co_await RunOnTaskThread([=] {
-                                  return store::coreStore().api().groupDelay(
-                                      groupName,
-                                      "https://www.gstatic.com/generate_204",
-                                      3000);
-                              });
-                              if (r.ok) {
-                                  const auto j = nlohmann::json::parse(
-                                      r.body, nullptr, false);
-                                  if (j.is_object()) {
-                                      auto d = delays.Get();
-                                      auto t = timeouts.Get();
-                                      for (auto it = j.begin(); it != j.end();
-                                           ++it) {
-                                          const auto& v = it.value();
-                                          if (v.is_number_integer() &&
-                                              v.get<int>() > 0) {
-                                              d[it.key()] = v.get<int>();
-                                              t.erase(it.key());
-                                          } else {
-                                              t[it.key()] = true;
-                                              d.erase(it.key());
-                                          }
-                                      }
-                                      delays = d;
-                                      timeouts = t;
-                                  }
-                              }
-                              testingGroup = "";
-                          });
-                      })},
+        huxerui::View{huxerui::Button("测速").OnClick(
+            [testGeneration, testGroup, groupName] {
+                testGroup = groupName;
+                testGeneration += 1;
+            })},
         huxerui::Text(std::format("{} 节点", group.nodes.size()))
             .Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kCaption),
@@ -440,9 +452,8 @@ constexpr float kChipGap = 8.0F;
     auto groups = huxerui::UseStateList<ProxyGroup>();
     auto coreState = huxerui::UseState<core::CoreState>(core::CoreState::Stopped);
     auto mode = huxerui::UseState<std::string>("rule");
-    auto delays = huxerui::UseState<std::unordered_map<std::string, int>>({});
-    auto timeouts = huxerui::UseState<std::unordered_map<std::string, bool>>({});
-    auto testingGroup = huxerui::UseState<std::string>("");
+    auto testGeneration = huxerui::UseState(0);
+    auto testGroup = huxerui::UseState<std::string>("");
     // 分支路径按模式独立（互不共享）：规则模式 path[0] = chips 选中的订阅组，
     // 全局模式 path[0] 固定 GLOBAL；后续元素 = 逐级点入的嵌套子组。
     auto rulePath = huxerui::UseState<std::vector<std::string>>({});
@@ -548,8 +559,8 @@ constexpr float kChipGap = 8.0F;
                   huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     } else if (current != nullptr) {
-        gridArea = NodeGrid(*current, cols, delays, timeouts, tasks, groups,
-                            activePath);
+        gridArea = NodeGrid(*current, cols, testGeneration, testGroup, tasks,
+                            groups, activePath);
     } else {
         gridArea = huxerui::Column {
             huxerui::Text(coreState.Get() == core::CoreState::Running
@@ -573,8 +584,8 @@ constexpr float kChipGap = 8.0F;
             : huxerui::View{huxerui::Row{}},
         std::move(gridArea),
         (!direct && current != nullptr)
-            ? huxerui::View{BranchBar(path, *current, activePath, delays,
-                                      timeouts, testingGroup, tasks)}
+            ? huxerui::View{BranchBar(path, *current, activePath, testGeneration,
+                                      testGroup, tasks)}
             : huxerui::View{huxerui::Row{}},
     }
         .With(huxerui::Spacing(10.0F),
