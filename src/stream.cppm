@@ -21,7 +21,7 @@ export struct LogLine {
 
 // 应用自身的诊断日志与内核 /logs 分开存放；Android 的 Java/VPN 桥和桌面
 // store 都可以写入，日志页按来源选择查看。
-export void logApplication(std::string level, std::string payload);
+export void logApplication(std::string level, std::string payload) noexcept;
 export std::vector<LogLine> drainApplicationLogs();
 export void clearApplicationLogs();
 

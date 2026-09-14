@@ -33,6 +33,9 @@ public final class BootReceiver extends BroadcastReceiver {
         if (!wasActive) {
             return;
         }
+        // Initialize the native data-directory override before recording the
+        // restore attempt; boot receivers run before MainActivity exists.
+        MainActivity.bootstrapNative(context);
         MainActivity.appLog("系统启动广播触发 VPN 恢复", false);
         try {
             context.startForegroundService(new Intent(context, ClashVpnService.class));

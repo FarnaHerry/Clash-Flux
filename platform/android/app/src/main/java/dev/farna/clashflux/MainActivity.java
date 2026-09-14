@@ -24,6 +24,7 @@ public final class MainActivity extends HuxerUIActivity {
         Log.i(TAG, "Loading application native library: " + BuildConfig.HUXERUI_APP_LIBRARY);
         System.loadLibrary(BuildConfig.HUXERUI_APP_LIBRARY);
         Log.i(TAG, "Application native library loaded");
+        installCrashLogger();
     }
 
     private static volatile MainActivity current;
@@ -35,6 +36,21 @@ public final class MainActivity extends HuxerUIActivity {
     private static native void nativeVpnStartCancelled();
     private static native void nativeVpnStartFailed(String message);
     private static native void nativeAppLog(int level, String message);
+
+    private static void installCrashLogger() {
+        final Thread.UncaughtExceptionHandler delegate =
+                Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
+            try {
+                appLog("线程 " + thread.getName() + " 发生未捕获异常：\n"
+                        + Log.getStackTraceString(error), true);
+            } catch (Throwable ignored) {
+                // The process is already terminating; never mask the original
+                // crash with a diagnostic failure.
+            }
+            if (delegate != null) delegate.uncaughtException(thread, error);
+        });
+    }
 
     static void appLog(String message, boolean error) {
         if (message == null || message.isEmpty()) return;

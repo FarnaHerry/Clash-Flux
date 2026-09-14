@@ -18,6 +18,7 @@
 import clashflux.config;
 import clashflux.core;
 import clashflux.service;
+import clashflux.stream;
 import clashflux.store.core;
 import clashflux.store.profiles;
 
@@ -165,6 +166,9 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
             huxerui::Switch(tun_enabled.Get() || state == 1 || state == 2)
                 .OnChanged([core_action, tun_enabled](bool on) {
                     tun_enabled = on;
+                    stream::logApplication(
+                        "info", on ? "用户请求开启 Android VPN"
+                                   : "用户请求关闭 Android VPN");
                     core_action(
                         [on] {
                             store::coreStore().setSetting(
