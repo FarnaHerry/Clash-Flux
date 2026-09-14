@@ -293,7 +293,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     // 一个永远不可用的开关。
     huxerui::View systemCard =
         PlatformControl(
-            {PlatformCode::SystemProxy, PlatformCode::CoreTun},
+            {PlatformCode::CoreTun},
             [s, tasks, toast, dialog, clipboard, proxyOverride, tunOverride,
              textColor = theme.colors.on_surface,
              hintColor = theme.colors.on_surface_variant] {

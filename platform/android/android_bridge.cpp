@@ -237,6 +237,28 @@ extern "C" void clashflux_android_request_ignore_battery() noexcept {
     if (attached) g_vm->DetachCurrentThread();
 }
 
+extern "C" bool clashflux_android_is_ignoring_battery() noexcept {
+    std::lock_guard lock(g_mutex);
+    bool attached = false;
+    JNIEnv* environment = current_environment(attached);
+    if (environment == nullptr || g_activity_class == nullptr) return false;
+    const jmethodID method = environment->GetStaticMethodID(
+        g_activity_class, "isIgnoringBatteryOptimizations", "()Z");
+    if (method == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    const jboolean result =
+        environment->CallStaticBooleanMethod(g_activity_class, method);
+    if (environment->ExceptionCheck()) {
+        environment->ExceptionClear();
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    if (attached) g_vm->DetachCurrentThread();
+    return result == JNI_TRUE;
+}
+
 extern "C" void clashflux_android_open_url(const char* url) noexcept {
     if (url == nullptr || *url == '\0') return;
 

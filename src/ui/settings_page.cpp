@@ -116,6 +116,7 @@ const std::string kDefaultCoreName = "sing-box";
     auto proxyOverride = huxerui::UseState<std::optional<bool>>(std::nullopt);
     auto tunOverride = huxerui::UseState<std::optional<bool>>(std::nullopt);
     auto vpnState = huxerui::UseState(AndroidVpnState());
+    auto batteryIgnored = huxerui::UseState(AndroidIsIgnoringBattery());
     auto trayCloseBehavior = huxerui::UseState<std::size_t>([] {
         const std::string value =
             store::coreStore().setting("tray.close_behavior", "0");
@@ -125,7 +126,8 @@ const std::string kDefaultCoreName = "sing-box";
     }());
 
     huxerui::Lifecycle(
-        [tasks, snap, portValue, serviceInstalled, tunEnabled, vpnState] {
+        [tasks, snap, portValue, serviceInstalled, tunEnabled, vpnState,
+         batteryIgnored] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{1.0}, [=] {
                     const auto s = store::coreStore().snapshot();
@@ -134,6 +136,7 @@ const std::string kDefaultCoreName = "sing-box";
                     tunEnabled = store::coreStore().setting("core.tun_enabled",
                                                             "false") == "true";
                     vpnState = AndroidVpnState();
+                    batteryIgnored = AndroidIsIgnoringBattery();
                     // 端口输入框未编辑过就用当前值初始化。
                     if (portValue.Get().text.empty() && s.mixedPort > 0) {
                         portValue = huxerui::TextEditingValue{
@@ -357,8 +360,7 @@ const std::string kDefaultCoreName = "sing-box";
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
 
                 PlatformControl(
-                    {PlatformCode::CoreService, PlatformCode::SystemProxy,
-                     PlatformCode::CoreTun},
+                    {PlatformCode::CoreService, PlatformCode::CoreTun},
                     [s, running, serviceInstalled, coreAction, tasks, toast,
                      dialog, clipboard, proxyOverride, tunOverride,
                      textColor = theme.colors.on_surface,
@@ -526,7 +528,7 @@ const std::string kDefaultCoreName = "sing-box";
                 // Scope 子组合曾错误丢弃 Android 专属卡，导致系统 VPN 无从
                 // 开启、所有透明代理流量和统计都保持为 0。使用编译期平台分支
                 // 直接声明卡片，桌面构建仍生成空 View。
-                [coreAction, tunEnabled, vpnState]() -> huxerui::View {
+                [coreAction, tunEnabled, vpnState, batteryIgnored, toast]() -> huxerui::View {
                     if constexpr (CompileTimePlatform() != PlatformKind::Android) {
                         return {};
                     }
@@ -575,8 +577,15 @@ const std::string kDefaultCoreName = "sing-box";
                             "置中允许本应用自启动（MIUI 等系统需要手动放行），"
                             "并在系统 VPN 设置里开启「始终开启」以便重启后自动"
                             "恢复隧道",
-                            huxerui::Button("忽略电池优化").OnClick(
-                                [] { AndroidRequestIgnoreBattery(); })),
+                            huxerui::Switch(batteryIgnored.Get())
+                                .OnChanged([batteryIgnored, toast](bool on) {
+                                    if (on) {
+                                        AndroidRequestIgnoreBattery();
+                                    } else {
+                                        toast.Show("请在系统设置中关闭电池优化");
+                                    }
+                                    batteryIgnored = AndroidIsIgnoringBattery();
+                                })),
                     }
                         .With(huxerui::Spacing(10.0F),
                               huxerui::CrossAlign(
