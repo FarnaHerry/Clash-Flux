@@ -138,6 +138,9 @@ GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议�
 | build-macos-x86_64 | macos-13 + brew LLVM | 实验性 |
 | build-android | HuxerUI CLI 打 APK（GUI/native shell + sing-box libbox） | 实验性 |
 
+Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用菜单图标
+（.desktop + hicolor 图标）；应用本体自包含安装于 `/opt/clash-flux`。
+
 覆盖面原则：sing-box 内核发布什么桌面平台/arch，就构建什么目标（内核资产
 SHA256 钉在 `cmake/singbox_bundle.cmake`，configure 期自动下载）。桌面 job
 统一走 HuxerUI 源码通道（钉 commit clone 上游）。

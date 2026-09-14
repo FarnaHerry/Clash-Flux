@@ -422,6 +422,9 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
                 install(FILES "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
                     DESTINATION engines
                     RENAME "${CLASHFLUX_SINGBOX_BUNDLED_NAME}"
+                    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                                GROUP_READ GROUP_EXECUTE
+                                WORLD_READ WORLD_EXECUTE
                     COMPONENT "${CLASHFLUX_APP_INSTALL_COMPONENT}")
             endif ()
             install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets"
@@ -456,14 +459,43 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
             )
         endif ()
         if (CLASHFLUX_BUNDLE_SINGBOX AND CLASHFLUX_SINGBOX_BUNDLED_BINARY)
+            # install(FILES) 默认 644——内核必须带执行位，否则 root 服务的
+            # serviceEngine() 以 X_OK 探测会误报"找不到 sing-box 内核"。
             install(FILES "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
                 DESTINATION engines
                 RENAME "${CLASHFLUX_SINGBOX_BUNDLED_NAME}"
+                PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                            GROUP_READ GROUP_EXECUTE
+                            WORLD_READ WORLD_EXECUTE
                 COMPONENT "${CLASHFLUX_LINUX_INSTALL_COMPONENT}"
             )
         endif ()
         install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets"
             DESTINATION .
+            COMPONENT "${CLASHFLUX_LINUX_INSTALL_COMPONENT}"
+        )
+
+        # ---- 桌面集成：PATH 命令入口 + 应用菜单 ----------------------------
+        # 应用本体保持在 CPACK_PACKAGING_INSTALL_PREFIX（/opt/clash-flux，与
+        # desktop 文件的 Exec 一致）的自包含布局（engines/lib/resources 相对
+        # exe 解析），只把命令软链、.desktop 与图标装进系统目录。
+        # /proc/self/exe 解析真实路径，经软链启动不影响相对布局。
+        # 括号参数原样进入安装脚本：$ENV{DESTDIR} 在 cpack 安装期求值。
+        install(CODE [[
+file(MAKE_DIRECTORY "$ENV{DESTDIR}/usr/bin")
+file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux" SYMBOLIC)
+]]
+            COMPONENT "${CLASHFLUX_LINUX_INSTALL_COMPONENT}"
+        )
+        # 绝对 DESTINATION：相对路径会被加 CPACK_PACKAGING_INSTALL_PREFIX
+        # 前缀（装进 /opt/clash-flux/share），桌面入口必须在 /usr/share。
+        install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/platform/linux/clash-flux.desktop"
+            DESTINATION /usr/share/applications
+            COMPONENT "${CLASHFLUX_LINUX_INSTALL_COMPONENT}"
+        )
+        install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png"
+            DESTINATION /usr/share/icons/hicolor/256x256/apps
+            RENAME clash-flux.png
             COMPONENT "${CLASHFLUX_LINUX_INSTALL_COMPONENT}"
         )
     endif ()

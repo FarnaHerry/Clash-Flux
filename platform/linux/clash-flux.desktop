@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Clash-Flux
+Name[zh_CN]=Clash-Flux
+Comment=sing-box proxy client (Clash Verge Rev style)
+Comment[zh_CN]=sing-box 代理客户端
+# 路径与顶层 CMakeLists 的 CPACK_PACKAGING_INSTALL_PREFIX 一致；经
+# /proc/self/exe 解析真实路径，engines/、resources 相对布局不受调用方式影响。
+Exec=/opt/clash-flux/clash-flux
+Icon=clash-flux
+Terminal=false
+Categories=Network;Utility;
+StartupWMClass=dev.farna.clashflux

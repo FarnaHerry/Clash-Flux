@@ -1,6 +1,6 @@
 // app.cpp — 应用壳（岛屿架构 + 自定义标题栏 + 托盘，对齐 apitab 岛屿风）：
 //   标题栏：应用名 + 内核状态胶囊 + 框架窗口按钮；收窄为 24px 高、去背景直接
-//     融入窗口底色。主题取自 Clash-Flux icon 的午夜蓝、靛蓝和冰青配色，
+//     融入窗口底色。主题沿用 Clash-Flux 品牌的午夜蓝、靛蓝和冰青配色，
 //     深浅两套模式共用同一品牌色相，只调整明度和对比度。
 //   下方：左侧图标侧边栏（无岛屿包裹，直接落在窗口背景上）｜内容区（页面自己的
 //   一级岛屿划分区域——PageScaffold，外壳不再套岛）。根节点刷整窗海面底色
@@ -55,7 +55,7 @@ constexpr PlatformKind kBuildPlatform = CompileTimePlatform();
 
 struct FluxPalette {
     static constexpr huxerui::Color deep_navy() noexcept {
-        return huxerui::Color::Rgb(11, 16, 32); // icon outline #0B1020
+        return huxerui::Color::Rgb(11, 16, 32); // 品牌午夜蓝 #0B1020
     }
 
     static constexpr huxerui::Color midnight() noexcept {
@@ -84,7 +84,7 @@ struct FluxPalette {
 
 };
 
-// Clash-Flux 品牌深色主题：icon 的午夜蓝作为海面和最底层，靛蓝作为主要交互色，
+// Clash-Flux 品牌深色主题：午夜蓝作为海面和最底层，靛蓝作为主要交互色，
 // 冰青作为次级强调色。所有 M3 语义色都在这里落到同一品牌色相上。
 huxerui::ThemeSpec FluxDarkThemeSpec() {
     huxerui::ThemeSpec spec = huxerui::MaterialDarkThemeSpec();
@@ -124,7 +124,7 @@ huxerui::ThemeSpec FluxDarkThemeSpec() {
 }
 
 // Clash-Flux 品牌浅色主题：冰蓝白作为背景，靛蓝负责主要交互，深青负责次级文字，
-// 让 icon 的冷色调在浅色模式依然清晰而不刺眼。
+// 让冷色调在浅色模式依然清晰而不刺眼。
 huxerui::ThemeSpec FluxLightThemeSpec() {
     huxerui::ThemeSpec spec = huxerui::MaterialLightThemeSpec();
     spec.typography = huxerui::TypographyScheme{
