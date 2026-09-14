@@ -30,8 +30,10 @@ const std::vector<huxerui::StringVariant> kModeNames{"规则", "全局", "直连
 const std::vector<std::string> kModes{"rule", "global", "direct"};
 #if defined(__ANDROID__)
 constexpr std::string_view kDefaultCoreName = "sing-box libbox";
+#define CLASHFLUX_HOME_SYSTEM_CARD AndroidHomeSystemCard
 #else
 constexpr std::string_view kDefaultCoreName = "sing-box";
+#define CLASHFLUX_HOME_SYSTEM_CARD DesktopHomeSystemCard
 #endif
 
 struct HomeState {
@@ -160,23 +162,111 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     };
 }
 
-} // namespace
+#if defined(__ANDROID__)
 
-[[huxerui::composable]] huxerui::View HomePage() {
+[[huxerui::composable]] huxerui::View AndroidHomeSystemCard(const HomeState&) {
+    return {};
+}
+
+#else
+
+// 桌面快捷开关自洽管理自己的任务、权限引导和乐观状态；Android 不会进入
+// 这个函数，所以不会从首页漏出系统代理/TUN 控件。
+[[huxerui::composable]] huxerui::View DesktopHomeSystemCard(
+    const HomeState& state) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
-    const bool compact =
-        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto dialog = huxerui::UseDialog();
     auto clipboard = application.Clipboard();
+    auto proxy_override = huxerui::UseState<std::optional<bool>>(std::nullopt);
+    auto tun_override = huxerui::UseState<std::optional<bool>>(std::nullopt);
+    const huxerui::Color text_color = theme.colors.on_surface;
+    const huxerui::Color hint_color = theme.colors.on_surface_variant;
+
+    return Card(huxerui::Column {
+        huxerui::Text("系统").Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kBody)
+                .WithWeight(huxerui::FontWeight::SemiBold),
+            text_color}),
+        huxerui::Row {
+            huxerui::Text("系统代理").Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBody), text_color}),
+            huxerui::Spacer(),
+            huxerui::Switch(proxy_override.Get().value_or(
+                                store::coreStore().systemProxyEnabled()))
+                .OnChanged([tasks, toast, proxy_override](bool on) {
+                    if (proxy_override.Get().has_value()) return;
+                    proxy_override = on;
+                    tasks.Launch([=]() -> huxerui::Task<void> {
+                        const bool ok = co_await RunOnTaskThread(
+                            [on] { return store::coreStore().applySystemProxy(on); });
+                        proxy_override = std::nullopt;
+                        if (!ok) {
+                            const std::string error =
+                                store::coreStore().snapshot().lastError;
+                            toast.Show(error.empty() ? "系统代理设置失败" : error);
+                        }
+                    });
+                }),
+        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        huxerui::Row {
+            huxerui::Text("TUN 模式").Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBody), text_color}),
+            huxerui::Spacer(),
+            huxerui::Switch(tun_override.Get().value_or(state.core.tunEnabled))
+                .OnChanged([state, tasks, toast, dialog, clipboard, text_color,
+                            hint_color, tun_override](bool on) {
+                    if (tun_override.Get().has_value()) return;
+                    tun_override = on;
+                    tasks.Launch([=]() -> huxerui::Task<void> {
+                        if (on) {
+                            co_await huxerui::Delay(
+                                std::chrono::duration<double>{0});
+                            const core::TunGate gate = co_await RunOnTaskThread(
+                                [] { return core::tunGate(); });
+                            if (gate == core::TunGate::Elevated) {
+                                tun_override = std::nullopt;
+                                toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
+                                co_return;
+                            }
+                            if (gate == core::TunGate::Denied) {
+                                tun_override = std::nullopt;
+                                ShowTunGuideDialog(dialog, clipboard, toast,
+                                                   text_color, hint_color);
+                                co_return;
+                            }
+                        }
+                        const bool ok = co_await RunOnTaskThread(
+                            [on] { return store::coreStore().applyTun(on); });
+                        tun_override = std::nullopt;
+                        if (!ok) {
+                            const std::string error =
+                                store::coreStore().snapshot().lastError;
+                            toast.Show(error.empty() ? "TUN 设置失败" : error);
+                        }
+                    });
+                }),
+        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+    }.With(huxerui::Spacing(10.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+}
+
+#endif
+
+} // namespace
+
+[[huxerui::composable]] huxerui::View HomePage() {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const bool compact =
+        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    auto tasks = huxerui::UseTaskScope();
+    auto toast = huxerui::UseToast();
     auto state = huxerui::UseState<HomeState>({});
     // 乐观开关：点击立即翻转显示，后台完成后清除覆盖（真实状态接管），
     // 失败自动回弹并提示。覆盖值非空即“进行中”，期间忽略再次点击，
     // 避免 TUN 重启内核期间的并发 stop/start。
-    auto proxyOverride = huxerui::UseState<std::optional<bool>>(std::nullopt);
-    auto tunOverride = huxerui::UseState<std::optional<bool>>(std::nullopt);
     auto modeOverride = huxerui::UseState<std::optional<std::size_t>>(std::nullopt);
 
     huxerui::Lifecycle(
@@ -292,133 +382,8 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     }.With(huxerui::Spacing(4.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start)))
                                     .With(huxerui::Grow(1.0F));
-    // 系统快捷开关卡：系统代理 / TUN 模式（与设置页「系统」卡同一 store 通道）。
-    // 每个快捷开关都由平台代码门控；不支持时不进入当前组合树，而不是显示
-    // 一个永远不可用的开关。
-    huxerui::View systemCard =
-        PlatformControl(
-            {PlatformCode::CoreTun},
-            [s, tasks, toast, dialog, clipboard, proxyOverride, tunOverride,
-             textColor = theme.colors.on_surface,
-             hintColor = theme.colors.on_surface_variant] {
-                return Card(huxerui::Column {
-                    huxerui::Text("系统").Style(huxerui::TextStyle{
-                        huxerui::Font::System(font_size::kBody)
-                            .WithWeight(huxerui::FontWeight::SemiBold),
-                        textColor}),
-                    PlatformControl(
-                        {PlatformCode::SystemProxy},
-                        [tasks, toast, textColor, proxyOverride] {
-                            return huxerui::Row {
-                                huxerui::Text("系统代理").Style(
-                                    huxerui::TextStyle{
-                                        huxerui::Font::System(font_size::kBody),
-                                        textColor}),
-                                huxerui::Spacer(),
-                                huxerui::Switch(
-                                    proxyOverride.Get().value_or(
-                                        store::coreStore().systemProxyEnabled()))
-                                    .OnChanged([tasks, toast,
-                                                proxyOverride](bool on) {
-                                        // 乐观切换：先翻转，失败再回弹。
-                                        if (proxyOverride.Get().has_value()) return;
-                                        proxyOverride = on;
-                                        tasks.Launch([=]() -> huxerui::Task<void> {
-                                            const bool ok = co_await RunOnTaskThread(
-                                                [on] {
-                                                    return store::coreStore()
-                                                        .applySystemProxy(on);
-                                                });
-                                            proxyOverride = std::nullopt;
-                                            if (!ok) {
-                                                const std::string err =
-                                                    store::coreStore()
-                                                        .snapshot()
-                                                        .lastError;
-                                                toast.Show(err.empty()
-                                                               ? "系统代理设置失败"
-                                                               : err);
-                                            }
-                                        });
-                                    }),
-                            }.With(huxerui::CrossAlign(
-                                huxerui::CrossAxisAlignment::Center));
-                        }),
-                    PlatformControl(
-                        {PlatformCode::CoreTun},
-                        [s, tasks, toast, dialog, clipboard, textColor,
-                         hintColor, tunOverride] {
-                            return huxerui::Row {
-                                huxerui::Text("TUN 模式").Style(
-                                    huxerui::TextStyle{
-                                        huxerui::Font::System(font_size::kBody),
-                                        textColor}),
-                                huxerui::Spacer(),
-                                huxerui::Switch(
-                                    tunOverride.Get().value_or(s.core.tunEnabled))
-                                    .OnChanged(
-                                        [s, tasks, toast, dialog, clipboard,
-                                         textColor, hintColor,
-                                         tunOverride](bool on) {
-                                            // 乐观切换：TUN 重启内核耗时数秒，
-                                            // 先翻转显示，失败/门禁拦截再回弹。
-                                            if (tunOverride.Get().has_value()) return;
-                                            tunOverride = on;
-                                            tasks.Launch(
-                                                [=]() -> huxerui::Task<void> {
-                                                    if (on) {
-                                                        // 门禁/弹窗会卸载点击路径：先让出一拍
-                                                        // （约定 4/6）。
-                                                        co_await huxerui::Delay(
-                                                            std::chrono::duration<
-                                                                double>{0});
-                                                        const core::TunGate gate =
-                                                            co_await RunOnTaskThread(
-                                                                [] {
-                                                                    return core::tunGate();
-                                                                });
-                                                        if (gate ==
-                                                            core::TunGate::Elevated) {
-                                                            tunOverride = std::nullopt;
-                                                            toast.Show(
-                                                                "已请求管理员权限重启，请在新窗口开启 TUN");
-                                                            co_return;
-                                                        }
-                                                        if (gate ==
-                                                            core::TunGate::Denied) {
-                                                            tunOverride = std::nullopt;
-                                                            ShowTunGuideDialog(
-                                                                dialog, clipboard, toast,
-                                                                textColor, hintColor);
-                                                            co_return;
-                                                        }
-                                                    }
-                                                    const bool ok =
-                                                        co_await RunOnTaskThread(
-                                                            [on] {
-                                                                return store::coreStore()
-                                                                    .applyTun(on);
-                                                            });
-                                                    tunOverride = std::nullopt;
-                                                    if (!ok) {
-                                                        const std::string err =
-                                                            store::coreStore()
-                                                                .snapshot()
-                                                                .lastError;
-                                                        toast.Show(err.empty()
-                                                                       ? "TUN 设置失败"
-                                                                       : err);
-                                                    }
-                                                });
-                                        }),
-                            }.With(huxerui::CrossAlign(
-                                huxerui::CrossAxisAlignment::Center));
-                        }),
-                }.With(huxerui::Spacing(10.0F),
-                       huxerui::CrossAlign(
-                           huxerui::CrossAxisAlignment::Stretch)));
-            })
-            .With(huxerui::Grow(1.0F));
+    huxerui::View systemCard = CLASHFLUX_HOME_SYSTEM_CARD(s).With(
+        huxerui::Grow(1.0F));
 
     return PageScaffold(
         "首页",
@@ -490,5 +455,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
             .With(huxerui::Grow(1.0F)));
 }
+
+#undef CLASHFLUX_HOME_SYSTEM_CARD
 
 } // namespace clashflux::ui

@@ -13,25 +13,16 @@
 #include <huxerui/huxerui.h>
 
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <string>
 #include <vector>
 
-#if defined(__ANDROID__)
-#include <android/log.h>
-#endif
-
 #include "ui.h"
 #include "app.h"
 #include "app_resources.h"
-#include "task_bridge.h"
 
 import clashflux.config;
-import clashflux.core;
 import clashflux.store.core;
-import clashflux.store.profiles;
-import clashflux.store.vpn;
 
 namespace clashflux::ui {
 
@@ -51,7 +42,17 @@ enum PageIndex : std::size_t {
 
 namespace {
 
-constexpr PlatformKind kBuildPlatform = CompileTimePlatform();
+#if defined(__ANDROID__)
+#define CLASHFLUX_PREPARE_PLATFORM_DATA AndroidPreparePlatformDataDirectory
+#define CLASHFLUX_PROFILE_REFRESH_PUMP AndroidProfileRefreshPump
+#define CLASHFLUX_APPLICATION_EFFECTS AndroidApplicationEffects
+#define CLASHFLUX_APP_CONTENT AndroidAppContent
+#else
+#define CLASHFLUX_PREPARE_PLATFORM_DATA DesktopPreparePlatformDataDirectory
+#define CLASHFLUX_PROFILE_REFRESH_PUMP DesktopProfileRefreshPump
+#define CLASHFLUX_APPLICATION_EFFECTS DesktopApplicationEffects
+#define CLASHFLUX_APP_CONTENT DesktopAppContent
+#endif
 
 struct FluxPalette {
     static constexpr huxerui::Color deep_navy() noexcept {
@@ -292,20 +293,6 @@ huxerui::View FluxThemed(bool dark, huxerui::View content) {
     return huxerui::Theme(std::move(definition), content);
 }
 
-void PreparePlatformDataDirectory(const huxerui::ApplicationHandle& application) {
-#if defined(__ANDROID__)
-    // HuxerUI owns the Android Context and has already prepared its application
-    // directories before creating the runtime. Use that official data root for
-    // Clash-Flux instead of entering Android through an early custom JNI call.
-    const std::string dataDirectory = application.Directories().data_directory.Path();
-    cfg::setAndroidDataDir(dataDirectory);
-    __android_log_print(ANDROID_LOG_INFO, "ClashFlux",
-                        "HuxerUI data directory: %s", dataDirectory.c_str());
-#else
-    static_cast<void>(application);
-#endif
-}
-
 std::vector<huxerui::NavigationItem> NavigationItems() {
     struct Item {
         huxerui::ImageResource icon;
@@ -336,11 +323,10 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
     huxerui::State<std::size_t> navPage) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::ViewportClass viewport = huxerui::UseViewportClass();
-    const PlatformInfo platform = ResolvePlatformInfo(viewport);
     const std::vector<huxerui::NavigationItem> items = NavigationItems();
     const auto onChanged = [navPage](std::size_t index) { navPage = index; };
 
-    if (platform.viewport == huxerui::ViewportClass::Compact) {
+    if (viewport == huxerui::ViewportClass::Compact) {
         return huxerui::NavigationBar(items, navPage)
             .OnChanged(onChanged)
             .With(huxerui::Background(theme.colors.surface_container_low),
@@ -357,8 +343,7 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
 
 [[huxerui::composable]] huxerui::View AppRoot() {
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
-    PreparePlatformDataDirectory(application);
-    auto tasks = huxerui::UseTaskScope();
+    CLASHFLUX_PREPARE_PLATFORM_DATA(application);
 
     // 初始值在 UseState 之前算好（组合体内不写 State）：
     // 主题模式 0=跟随系统 1=深色 2=浅色；未保存偏好时默认使用品牌深色主题。
@@ -369,44 +354,8 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
     }
     auto themeMode = huxerui::UseState<int>(std::move(initialThemeMode));
     auto navPage = huxerui::UseState<std::size_t>(pages::kHome);
-    // 托盘菜单勾选态：内核泵每拍刷新；变更触发托盘菜单 Lifecycle 重建，
-    // Checked 勾选保持与真实状态同步。
-    auto traySysProxy = huxerui::UseState(false);
-    auto trayTun = huxerui::UseState(false);
-    // 托盘启用（设置页开关写 KV，泵每拍带回；关闭后关窗即退出）与关闭询问
-    // 弹窗防重标记。
-    auto trayEnabled =
-        huxerui::UseState(store::coreStore().setting("tray.enabled", "true") == "true");
-    auto closeDialogOpen = huxerui::UseState(false);
-    auto exitRequested = huxerui::UseState(false);
-    // 托盘 TUN 门禁 Denied 时的引导弹窗（挂在主窗口上）。
-    auto dialog = huxerui::UseDialog();
-    auto clipboard = application.Clipboard();
-    auto toast = huxerui::UseToast();
-    // 平台栈订阅下载通道（kHuxerHttpDownload 的自动更新泵用）。
-    auto http = huxerui::UseService<huxerui::HttpClient>();
-
-    // 订阅自动更新泵：每 30s 扫描一次「允许自动更新 + 间隔已到」的订阅并
-    // 逐个拉新。桌面走阻塞 curl（refreshDue，RunOnTaskThread）；Android 走
-    // HuxerUI HttpClient 协程抓取（ProfilesRefreshDueOnce）。错误落在订阅
-    // 行的 error 字段，由订阅卡展示，这里不弹提示。
-    huxerui::Lifecycle(
-        [tasks, http] {
-            tasks.Launch([http]() -> huxerui::Task<void> {
-                for (;;) {
-                    co_await huxerui::Delay(std::chrono::duration<double>{30.0});
-                    if (kHuxerHttpDownload) {
-                        co_await ProfilesRefreshDueOnce(http);
-                    } else {
-                        co_await RunOnTaskThread([] {
-                            store::profilesStore().refreshDue();
-                        });
-                    }
-                }
-            });
-            return [] {};
-        },
-        0);
+    // 平台刷新泵和应用生命周期各自由平台组件收束，通用壳层只挂载它们。
+    huxerui::View profileRefreshPump = CLASHFLUX_PROFILE_REFRESH_PUMP();
 
     // 主题派生（托盘 TUN 引导弹窗也要取 rootSpec 配色，故先于托盘块计算）。
     const bool dark =
@@ -414,210 +363,8 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
     const huxerui::ThemeSpec rootSpec = dark ? FluxDarkThemeSpec() : FluxLightThemeSpec();
     const IslandTheme rootIslands = ResolveIslandTheme(rootSpec);
 
-    if constexpr (kBuildPlatform != PlatformKind::Android) {
-        const huxerui::WindowHandle window = huxerui::UseWindow();
-        const huxerui::SystemTrayHandle tray = application.SystemTray();
-        const bool trayAvailable = tray.IsAvailable();
-
-        // 内核自启 + 崩溃检测泵：启动是阻塞活，整段在任务线程；泵每 500ms 检查
-        // 进程存活（异常退出 → Failed，快照由各页面/状态胶囊自行轮询）。
-        huxerui::Lifecycle(
-            [tasks, traySysProxy, trayTun, trayEnabled] {
-                tasks.Launch([=]() -> huxerui::Task<void> {
-                    co_await RunOnTaskThread([] {
-                        auto& core = store::coreStore();
-                        core.init();
-                        if (!cfg::singboxBinary().empty()) {
-                            core.startCore(store::profilesStore().selectedYaml());
-                        }
-                    });
-                    co_await PollWhile(std::chrono::duration<double>{0.5}, [=] {
-                        auto& core = store::coreStore();
-                        core.checkAlive();
-                        traySysProxy = core.systemProxyEnabled();
-                        trayTun = core.snapshot().tunEnabled;
-                        trayEnabled =
-                            core.setting("tray.enabled", "true") == "true";
-                        return true;
-                    });
-                });
-                return [] {
-                    // 卸载（退出）时停内核：阻塞调用走任务线程池，不等结果。
-                };
-            },
-            0);
-
-        // 系统 VPN 的断开可能要等待 pppd/RAS 收尾，必须先在线程池完成清理，
-        // 再关闭窗口；否则 UI 退出后会留下旧的“连接中”状态。
-        auto finishExit = [tasks, application, exitRequested]() {
-            if (exitRequested.Get()) return;
-            exitRequested = true;
-            tasks.Launch([application]() -> huxerui::Task<void> {
-                co_await RunOnTaskThread([] {
-                    store::vpnStore().shutdown();
-                    store::coreStore().stopCore();
-                });
-                // Quit bypasses the window close-request path. Do not call
-                // WindowHandle::Close after asynchronous cleanup: GTK may
-                // already have invalidated its frame.
-                application.Quit();
-            });
-        };
-
-    // 托盘：图标 + 菜单（显示主窗口 / 系统代理 / TUN / 退出）；点击托盘图标
-    // 激活主窗口。仅在可用时注册。系统代理/TUN 以勾选态展示，Lifecycle 依赖
-    // 两个 State——任意一处（首页/设置/托盘自身）切换后菜单带最新勾选重建。
-    if (trayAvailable) {
-        tray.OnActivate([window] { window.Activate(); });
-        huxerui::Lifecycle(
-            [tray, window, application, tasks, traySysProxy, trayTun, dialog,
-             clipboard, toast, trayEnabled, finishExit,
-             textColor = rootSpec.colors.on_surface,
-             hintColor = rootSpec.colors.on_surface_variant] {
-                // 设置页关掉托盘：跳过注册（依赖变化重建时不 Show）；Hide 对
-                // 未显示的托盘是幂等 no-op，cleanup 统一执行。
-                if (trayEnabled.Get()) {
-                    std::vector<huxerui::MenuEntry> menuEntries;
-                menuEntries.push_back(
-                    huxerui::MenuItem("显示主窗口", [window] { window.Activate(); }));
-                menuEntries.push_back(huxerui::MenuSection{});
-                menuEntries.push_back(
-                    huxerui::MenuItem("系统代理", [tasks, traySysProxy] {
-                        tasks.Launch([=]() -> huxerui::Task<void> {
-                            const bool next = !traySysProxy.Get();
-                            const bool ok = co_await RunOnTaskThread([next] {
-                                return store::coreStore().applySystemProxy(next);
-                            });
-                            if (ok) traySysProxy = next;  // 失败由泵回滚显示
-                        });
-                    }).Checked(traySysProxy.Get()));
-                menuEntries.push_back(
-                    huxerui::MenuItem("TUN 模式",
-                                      [tasks, trayTun, window, dialog, clipboard,
-                                       toast, textColor, hintColor] {
-                        tasks.Launch([=]() -> huxerui::Task<void> {
-                            const bool next = !trayTun.Get();
-                            if (next) {
-                                // 门禁/弹窗会卸载点击路径：先让出一拍（约定 4/6）。
-                                co_await huxerui::Delay(
-                                    std::chrono::duration<double>{0});
-                                const core::TunGate gate = co_await RunOnTaskThread(
-                                    [] { return core::tunGate(); });
-                                if (gate == core::TunGate::Elevated) {
-                                    co_return;  // 新实例自行开启 TUN
-                                }
-                                if (gate == core::TunGate::Denied) {
-                                    window.Activate();  // 引导弹窗在窗口里
-                                    ShowTunGuideDialog(dialog, clipboard, toast,
-                                                       textColor, hintColor);
-                                    co_return;
-                                }
-                            }
-                            const bool ok = co_await RunOnTaskThread([next] {
-                                return store::coreStore().applyTun(next);
-                            });
-                            if (ok) trayTun = next;
-                        });
-                    }).Checked(trayTun.Get()));
-                menuEntries.push_back(huxerui::MenuSection{});
-                menuEntries.push_back(
-                    huxerui::MenuItem("退出", [finishExit] { finishExit(); }));
-                tray.Show(app::images::tray,
-                          huxerui::SystemTrayOptions{
-                              .tooltip = "Clash-Flux",
-                              .menu = std::move(menuEntries)});
-                }
-                return [tray] { tray.Hide(); };
-            },
-            traySysProxy, trayTun, trayEnabled);
-    }
-
-    // ---- 关闭窗口行为（托盘功能核心：驻留托盘继续代理）----
-    // tray.close_behavior：0 = 每次询问 / 1 = 直接退出 / 2 = 最小化到托盘。
-    // 托盘不可用（平台不支持或设置页关闭）时一律直接退出。
-    {
-        const huxerui::Color closeHintColor = rootSpec.colors.on_surface_variant;
-        // Hide 是直接窗口命令，不会经过 close handler；保持同步可避免 GTK
-        // 在关闭事件返回后销毁 frame，随后延迟任务再访问它的竞态。
-        auto hideToTray = [window] { window.Hide(); };
-        window.OnCloseRequest(
-            [=]() mutable -> bool {
-                if (exitRequested.Get()) return false;
-                if (!trayAvailable || !trayEnabled.Get()) {
-                    finishExit();
-                    return true;
-                }
-                const std::string behavior =
-                    store::coreStore().setting("tray.close_behavior", "0");
-                if (behavior == "1") {
-                    finishExit();
-                    return true;
-                }
-                if (behavior == "2") {
-                    hideToTray();
-                    return true;
-                }
-                // 0 = 询问。Dialog 是事件路径安全的同步 presentation；不要
-                // 延迟到 CloseRequest 返回之后，Linux 后端届时可能已释放 frame。
-                if (closeDialogOpen.Get()) return true;
-                closeDialogOpen = true;
-                dialog.Show(
-                        [=](huxerui::DialogContext ctx) -> huxerui::View {
-                            return DialogCard(huxerui::Column {
-                                huxerui::Text("关闭 Clash-Flux？",
-                                              huxerui::TextRole::Title),
-                                huxerui::Text("直接退出将停止代理；最小化到托盘"
-                                              "后代理继续在后台运行。")
-                                    .Style(huxerui::TextStyle{
-                                        huxerui::Font::System(
-                                            font_size::kCaption),
-                                        closeHintColor}),
-                                huxerui::Row {
-                                    huxerui::Button("直接关闭")
-                                        .OnClick([=] {
-                                            ctx.Dismiss();
-                                            closeDialogOpen = false;
-                                            finishExit();
-                                        }),
-                                    huxerui::Button("最小化到托盘")
-                                        .OnClick([=] {
-                                            ctx.Dismiss();
-                                            closeDialogOpen = false;
-                                            hideToTray();
-                                        }),
-                                    huxerui::Button("取消")
-                                        .OnClick([=] {
-                                            ctx.Dismiss();
-                                            closeDialogOpen = false;
-                                        }),
-                                }.With(
-                                    huxerui::Spacing(8.0F),
-                                    huxerui::MainAlign(
-                                        huxerui::MainAxisAlignment::
-                                            SpaceBetween)),
-                            }
-                                              .With(
-                                                  huxerui::Spacing(12.0F),
-                                                  huxerui::Frame{.width = 420.0F},
-                                                  huxerui::CrossAlign(
-                                                      huxerui::
-                                                          CrossAxisAlignment::
-                                                              Stretch)));
-                        },
-                        huxerui::DialogOptions{});
-                return true;
-            },
-            0);
-
-        // 启动时隐藏到托盘（需托盘可用且启用，否则无入口恢复窗口）。
-        if (trayAvailable && trayEnabled.Get() &&
-            store::coreStore().setting("tray.start_minimized", "false") ==
-                "true") {
-            window.Hide();
-        }
-    }
-    }
-
+    huxerui::View applicationEffects =
+        CLASHFLUX_APPLICATION_EFFECTS(application, rootSpec);
     std::vector<huxerui::View> pages;
     pages.push_back(HomePage().Key("home").With(huxerui::Grow(1.0F)));
     pages.push_back(ProfilesPage().Key("profiles").With(huxerui::Grow(1.0F)));
@@ -628,12 +375,11 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
     pages.push_back(SettingsPage(themeMode).Key("settings").With(huxerui::Grow(1.0F)));
 
     const huxerui::ViewportClass viewport = huxerui::UseViewportClass();
-    const PlatformInfo platform = ResolvePlatformInfo(viewport);
     huxerui::View indexedPages =
         huxerui::IndexedPages(std::move(pages), navPage.Get())
             .With(huxerui::Grow(1.0F));
     huxerui::View mainRow;
-    if (platform.viewport == huxerui::ViewportClass::Compact) {
+    if (viewport == huxerui::ViewportClass::Compact) {
         // 手机/窄窗口：官方 NavigationBar 直接悬浮在内容岛上，不再占用
         // 页面底部的布局空间，滚动内容自然从悬浮岛下方经过。
         huxerui::View floatingNavigation = NavigationSurface(navPage).With(
@@ -672,41 +418,21 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
                   huxerui::Grow(1.0F));
     }
 
-    huxerui::View content;
-    if constexpr (kBuildPlatform == PlatformKind::Android) {
-        // Android uses the Activity/system bars as its shell. WindowTitleBar and
-        // WindowDragRegion are desktop chrome and must not be composed on mobile.
-        content = std::move(mainRow)
-                      .With(huxerui::Background(rootSpec.colors.background),
-                            huxerui::CrossAlign(
-                                huxerui::CrossAxisAlignment::Stretch));
-    } else {
-        content = huxerui::Column {
-        // 自定义标题栏：应用名 + 拖拽区（框架在其右侧渲染窗口按钮）。
-        // 收窄 + 去背景：直接融入窗口海面底色；垂直零内边距。
-        huxerui::WindowTitleBar {
-            huxerui::Text("Clash-Flux")
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kChip)
-                        .WithWeight(huxerui::FontWeight::Bold),
-                    rootSpec.colors.on_surface})
-                .With(huxerui::WindowDragRegion{}),
-            huxerui::Spacer{}.With(huxerui::Grow(1.0F), huxerui::WindowDragRegion{}),
-        }
-            .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(
-                      rootSpec.spacing.small, 0.0F)),
-                  huxerui::Spacing(rootSpec.spacing.small)),
-        // 主行：图标侧栏（无岛屿包裹）+ 内容区；Grow 吃满标题栏之外剩余高度。
-        // 内容区不再套外壳岛：区域划分由各页面自己的一级岛（PageScaffold）承担。
-        std::move(mainRow),
-        }
-            .With(huxerui::Spacing(rootSpec.spacing.extra_small),
-                  // 窗口整体海面底色刷满根节点：岛间缝隙透出底色形成层次。
-                  huxerui::Background(rootSpec.colors.background),
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    }
+    huxerui::View content = CLASHFLUX_APP_CONTENT(mainRow, rootSpec);
 
-    return FluxThemed(dark, std::move(content));
+    return FluxThemed(
+        dark,
+        huxerui::Column {
+            std::move(profileRefreshPump),
+            std::move(applicationEffects),
+            std::move(content),
+        }.With(huxerui::Grow(1.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
 }
 
 } // namespace clashflux::ui
+
+#undef CLASHFLUX_PREPARE_PLATFORM_DATA
+#undef CLASHFLUX_PROFILE_REFRESH_PUMP
+#undef CLASHFLUX_APPLICATION_EFFECTS
+#undef CLASHFLUX_APP_CONTENT

@@ -3,7 +3,7 @@
 // 订阅；右键弹上下文菜单（使用/更新/首页/分享二维码/编辑信息/编辑规则/
 // 编辑文件/删除）；双击卡片切换启用订阅。
 //
-// 订阅选项（类型/描述/HTTP 超时/更新间隔/自动更新/系统代理/内核代理/无效证书）
+// 订阅选项（类型/描述/HTTP 超时/更新间隔/自动更新；桌面额外提供代理/证书开关）
 // 在新建与编辑弹窗编辑，仅落库，下载行为在下次「更新」时生效；自动更新由
 // 壳层泵（app.cpp）按间隔扫描 refreshDue()。
 //
@@ -77,6 +77,63 @@ std::string profileTypeLabel(std::string_view type) {
 bool isNativeVpnType(std::string_view type) {
     return type == "pptp" || type == "openvpn";
 }
+
+struct NativeProfileSupport {
+    bool pptp = false;
+    bool openvpn = false;
+};
+
+// 原生内网连接类型由目标平台函数一次性给出，不再通过全局能力码逐项
+// 过滤控件。以后新增平台时只需新增一个同前缀函数和这里的宏选择。
+#if defined(__ANDROID__)
+NativeProfileSupport AndroidProfileSupport() {
+    return {};
+}
+#define CLASHFLUX_PROFILE_SUPPORT AndroidProfileSupport
+#elif defined(__linux__)
+NativeProfileSupport LinuxProfileSupport() {
+    return {.pptp = true, .openvpn = true};
+}
+#define CLASHFLUX_PROFILE_SUPPORT LinuxProfileSupport
+#elif defined(_WIN32)
+NativeProfileSupport WindowsProfileSupport() {
+    return {.pptp = true, .openvpn = false};
+}
+#define CLASHFLUX_PROFILE_SUPPORT WindowsProfileSupport
+#elif defined(__APPLE__)
+NativeProfileSupport MacOSProfileSupport() {
+    return {};
+}
+#define CLASHFLUX_PROFILE_SUPPORT MacOSProfileSupport
+#else
+NativeProfileSupport UnknownProfileSupport() {
+    return {};
+}
+#define CLASHFLUX_PROFILE_SUPPORT UnknownProfileSupport
+#endif
+
+using ProfileEditLoader =
+    std::function<void(std::int64_t, std::function<void()>)>;
+using ProfileEditDialog = std::function<void(std::int64_t)>;
+
+// 编辑入口的页面/弹窗差异在一个平台函数内处理；ProfileCard 只发出
+// openEditInfo(id)，不再携带平台标记。
+#if defined(__ANDROID__)
+void AndroidOpenProfileEditInfo(std::int64_t id,
+                                const ProfileEditLoader& load_edit_info,
+                                const ProfileEditDialog&,
+                                huxerui::State<std::int64_t> edit_page_id) {
+    load_edit_info(id, [edit_page_id, id] { edit_page_id = id; });
+}
+#define CLASHFLUX_OPEN_PROFILE_INFO AndroidOpenProfileEditInfo
+#else
+void DesktopOpenProfileEditInfo(std::int64_t id, const ProfileEditLoader&,
+                                const ProfileEditDialog& show_edit_info,
+                                huxerui::State<std::int64_t>) {
+    show_edit_info(id);
+}
+#define CLASHFLUX_OPEN_PROFILE_INFO DesktopOpenProfileEditInfo
+#endif
 
 // 单行截断（UTF-8 代码点安全）：超限截断加省略号。Text 默认按词换行且无
 // 省略号能力，长 URL/名称会把卡片撑高——网格里统一截断保证卡片等高。
@@ -252,6 +309,37 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 }
 
+// 订阅表单中的平台字段由平台函数整体负责。Android 不需要也不显示桌面
+// 系统代理、内核代理和证书绕过开关；桌面函数保持原有三项。
+#if defined(__ANDROID__)
+
+[[huxerui::composable]] huxerui::View AndroidProfileOptions(
+    huxerui::State<bool>, huxerui::State<bool>, huxerui::State<bool>) {
+    return {};
+}
+
+#define CLASHFLUX_PROFILE_OPTIONS AndroidProfileOptions
+
+#else
+
+[[huxerui::composable]] huxerui::View DesktopProfileOptions(
+    huxerui::State<bool> system_proxy, huxerui::State<bool> core_proxy,
+    huxerui::State<bool> invalid_cert) {
+    return huxerui::Column {
+        ToggleRow("使用系统代理更新", "经环境变量代理拉取订阅", false,
+                  system_proxy),
+        ToggleRow("使用内核代理更新", "经本应用内核混合端口拉取（内核需运行）",
+                  false, core_proxy),
+        ToggleRow("允许无效证书（危险）", "跳过 HTTPS 证书校验，仅用于可信来源",
+                  true, invalid_cert),
+    }.With(huxerui::Spacing(12.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
+#define CLASHFLUX_PROFILE_OPTIONS DesktopProfileOptions
+
+#endif
+
 // 订阅选项表单（新建/编辑弹窗共用）：描述 + HTTP 超时/更新间隔 + 自动更新/
 // 系统代理/内核代理/无效证书开关。字段值由调用方持有的 State 承载。
 [[huxerui::composable]] huxerui::View ProfileOptionsForm(
@@ -284,28 +372,7 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
             .With(huxerui::Spacing(8.0F)),
         ToggleRow("允许自动更新", "开启后按更新间隔自动拉新（间隔需 > 0）", false,
                   autoUp),
-        PlatformControl(
-            {PlatformCode::SystemProxy},
-            [sysProxy] {
-                return ToggleRow("使用系统代理更新", "经环境变量代理拉取订阅",
-                                 false, sysProxy);
-            }),
-        // 订阅级代理/证书选项只有 curl 通道（桌面）支持；Android 走
-        // HuxerUI 平台栈，按订阅代理和跳过证书校验均不生效，直接不展示。
-        PlatformControl(
-            {PlatformCode::Linux, PlatformCode::Windows, PlatformCode::MacOS},
-            [coreProxy] {
-                return ToggleRow("使用内核代理更新",
-                                 "经本应用内核混合端口拉取（内核需运行）",
-                                 false, coreProxy);
-            }),
-        PlatformControl(
-            {PlatformCode::Linux, PlatformCode::Windows, PlatformCode::MacOS},
-            [invalidCert] {
-                return ToggleRow("允许无效证书（危险）",
-                                 "跳过 HTTPS 证书校验，仅用于可信来源",
-                                 true, invalidCert);
-            }),
+        CLASHFLUX_PROFILE_OPTIONS(sysProxy, coreProxy, invalidCert),
     }
         .With(huxerui::Spacing(12.0F),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -537,9 +604,67 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
                 .With(huxerui::Grow(1.0F))));
 }
 
+struct ProfileEditFields {
+    huxerui::State<huxerui::TextEditingValue> name;
+    huxerui::State<huxerui::TextEditingValue> url;
+    huxerui::State<std::string> type;
+    huxerui::State<huxerui::TextEditingValue> desc;
+    huxerui::State<huxerui::TextEditingValue> timeout;
+    huxerui::State<huxerui::TextEditingValue> interval;
+    huxerui::State<bool> auto_update;
+    huxerui::State<bool> system_proxy;
+    huxerui::State<bool> core_proxy;
+    huxerui::State<bool> invalid_cert;
+    huxerui::State<huxerui::TextEditingValue> pptp_server;
+    huxerui::State<huxerui::TextEditingValue> pptp_username;
+    huxerui::State<huxerui::TextEditingValue> pptp_password;
+    huxerui::State<huxerui::TextEditingValue> pptp_timeout;
+    huxerui::State<huxerui::TextEditingValue> pptp_routes;
+    huxerui::State<bool> pptp_mppe;
+    huxerui::State<huxerui::TextEditingValue> openvpn_config;
+    huxerui::State<huxerui::TextEditingValue> openvpn_routes;
+};
+
+// Android 编辑订阅使用页面，桌面不挂载第二个 IndexedPages 节点；两者由
+// 宏在组件入口选择，避免在 ProfilesPage 内写平台条件。
+#if defined(__ANDROID__)
+[[huxerui::composable]] huxerui::View AndroidProfileEditSurface(
+    std::int64_t id, ProfileEditFields fields, huxerui::TaskScope tasks,
+    huxerui::ToastHandle toast, std::function<void()> on_back) {
+    return huxerui::Scope(
+        [id, fields, tasks, toast, on_back]() -> huxerui::View {
+            return ProfileEditPage(
+                id, fields.name, fields.url, fields.type, fields.desc,
+                fields.timeout, fields.interval, fields.auto_update,
+                fields.system_proxy, fields.core_proxy, fields.invalid_cert,
+                fields.pptp_server, fields.pptp_username, fields.pptp_password,
+                fields.pptp_timeout, fields.pptp_routes, fields.pptp_mppe,
+                fields.openvpn_config, fields.openvpn_routes, tasks, toast,
+                on_back);
+        });
+}
+std::size_t AndroidProfilePageIndex(
+    huxerui::State<std::int64_t> edit_page_id) {
+    return edit_page_id.Get() != 0 ? 1U : 0U;
+}
+#define CLASHFLUX_PROFILE_EDIT_SURFACE AndroidProfileEditSurface
+#define CLASHFLUX_PROFILE_PAGE_INDEX AndroidProfilePageIndex
+#else
+[[huxerui::composable]] huxerui::View DesktopProfileEditSurface(
+    std::int64_t, ProfileEditFields, huxerui::TaskScope,
+    huxerui::ToastHandle, std::function<void()>) {
+    return huxerui::Scope([]() -> huxerui::View { return {}; });
+}
+std::size_t DesktopProfilePageIndex(huxerui::State<std::int64_t>) {
+    return 0U;
+}
+#define CLASHFLUX_PROFILE_EDIT_SURFACE DesktopProfileEditSurface
+#define CLASHFLUX_PROFILE_PAGE_INDEX DesktopProfilePageIndex
+#endif
+
 // HuxerUI HttpClient 订阅抓取：GET + UA + 全程超时，响应转 store::FetchedProfile。
 // 必须在 UI 线程任务协程里 co_await（HTTP 自带平台异步通道，禁入阻塞线程池）。
-huxerui::Task<store::FetchedProfile> FetchProfile(
+huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
     std::shared_ptr<huxerui::HttpClient> http, std::string url,
     int timeoutSecs) {
     store::FetchedProfile fetched;
@@ -573,14 +698,14 @@ huxerui::Task<store::FetchedProfile> FetchProfile(
 
 // Android 订阅导入：store 建行 → 平台栈抓取 → store 落盘。返回新订阅 id
 //（失败 0，错误经 profilesStore().lastError() 读取）。
-huxerui::Task<std::int64_t> HuxerImportRemote(
+huxerui::Task<std::int64_t> AndroidImportRemote(
     std::shared_ptr<huxerui::HttpClient> http, const std::string& name,
     const std::string& url, db::Profile options) {
     const std::int64_t nid = co_await RunOnTaskThread(
         [name, url, options] { return store::profilesStore().createRemote(
                                    name, url, options); });
     if (nid == 0) co_return 0;
-    const store::FetchedProfile fetched = co_await FetchProfile(
+    const store::FetchedProfile fetched = co_await AndroidFetchProfile(
         std::move(http), url, options.timeoutSecs);
     const bool ok = co_await RunOnTaskThread(
         [nid, fetched] { return store::profilesStore().completeRemote(
@@ -590,7 +715,7 @@ huxerui::Task<std::int64_t> HuxerImportRemote(
 
 // Android 订阅更新：按订阅行的 URL/超时经平台栈抓取后收尾；非 remote 行
 // 回落阻塞路径（保留「本地导入的订阅不支持更新」等语义）。返回错误串。
-huxerui::Task<std::string> HuxerRefreshRemote(
+huxerui::Task<std::string> AndroidRefreshRemote(
     std::shared_ptr<huxerui::HttpClient> http, std::int64_t id) {
     const std::optional<db::Profile> row = co_await RunOnTaskThread(
         [id]() -> std::optional<db::Profile> {
@@ -606,13 +731,98 @@ huxerui::Task<std::string> HuxerRefreshRemote(
         });
         co_return err;
     }
-    const store::FetchedProfile fetched = co_await FetchProfile(
+    const store::FetchedProfile fetched = co_await AndroidFetchProfile(
         std::move(http), row->url, row->timeoutSecs);
     const bool ok = co_await RunOnTaskThread(
         [id, fetched] { return store::profilesStore().completeRemote(
                              id, fetched, false); });
     co_return ok ? "" : store::profilesStore().lastError();
 }
+
+using ProfileRefreshAction = std::function<void(std::int64_t)>;
+
+// 更新入口只在这里做一次平台选择；卡片自身只持有 refresh(id) 这个统一动作。
+#if defined(__ANDROID__)
+void AndroidRefreshProfile(std::int64_t id,
+                           const ProfileRefreshAction& http_refresh,
+                           const ProfileRefreshAction&) {
+    http_refresh(id);
+}
+#define CLASHFLUX_REFRESH_PROFILE AndroidRefreshProfile
+#else
+void DesktopRefreshProfile(std::int64_t id, const ProfileRefreshAction&,
+                           const ProfileRefreshAction& desktop_refresh) {
+    desktop_refresh(id);
+}
+#define CLASHFLUX_REFRESH_PROFILE DesktopRefreshProfile
+#endif
+
+struct ProfileImportRequest {
+    bool remote = false;
+    bool local = false;
+    bool pptp = false;
+    bool openvpn = false;
+    std::string name;
+    std::string url;
+    std::string picked_path;
+    db::Profile options;
+};
+
+using ProfileImportResult = std::pair<std::int64_t, std::string>;
+
+// 导入流程的网络差异也在平台函数内收束：Android remote 走平台 HttpClient，
+// 桌面及本地/原生订阅走阻塞 store。弹窗只提交 request，不再判断平台。
+#if defined(__ANDROID__)
+huxerui::Task<ProfileImportResult> AndroidImportProfile(
+    std::shared_ptr<huxerui::HttpClient> http, ProfileImportRequest request) {
+    if (request.remote) {
+        const std::int64_t id = co_await AndroidImportRemote(
+            std::move(http), request.name, request.url, request.options);
+        co_return ProfileImportResult{
+            id, id == 0 ? store::profilesStore().lastError() : ""};
+    }
+    const ProfileImportResult result = co_await RunOnTaskThread(
+        [request = std::move(request)] {
+            auto& ps = store::profilesStore();
+            const std::int64_t id =
+                request.remote
+                    ? ps.importUrl(request.name, request.url, request.options)
+                    : request.local
+                          ? ps.importFile(request.name, request.picked_path,
+                                          request.options)
+                          : ps.importNative(request.name,
+                                            request.pptp ? "pptp" : "openvpn",
+                                            request.options.nativeConfig,
+                                            request.options.nativeRoutes,
+                                            request.options);
+            return ProfileImportResult{id, ps.lastError()};
+        });
+    co_return result;
+}
+#define CLASHFLUX_IMPORT_PROFILE AndroidImportProfile
+#else
+huxerui::Task<ProfileImportResult> DesktopImportProfile(
+    std::shared_ptr<huxerui::HttpClient>, ProfileImportRequest request) {
+    const ProfileImportResult result = co_await RunOnTaskThread(
+        [request = std::move(request)] {
+            auto& ps = store::profilesStore();
+            const std::int64_t id =
+                request.remote
+                    ? ps.importUrl(request.name, request.url, request.options)
+                    : request.local
+                          ? ps.importFile(request.name, request.picked_path,
+                                          request.options)
+                          : ps.importNative(request.name,
+                                            request.pptp ? "pptp" : "openvpn",
+                                            request.options.nativeConfig,
+                                            request.options.nativeRoutes,
+                                            request.options);
+            return ProfileImportResult{id, ps.lastError()};
+        });
+    co_return result;
+}
+#define CLASHFLUX_IMPORT_PROFILE DesktopImportProfile
+#endif
 
 // 单张订阅卡：纯视图（零弹窗 State；菜单句柄/任务域由页面下发），弹窗经
 // openXxx(id) 回调到页面级懒加载打开。
@@ -650,10 +860,21 @@ huxerui::Task<std::string> HuxerRefreshRemote(
                         http](std::int64_t pid) {
         tasks.Launch([toast, reload, http, pid]() -> huxerui::Task<void> {
             const std::string err =
-                co_await HuxerRefreshRemote(http, pid);
+                co_await AndroidRefreshRemote(http, pid);
             if (!err.empty()) toast.Show(err);
             reload();
         });
+    };
+    const ProfileRefreshAction desktopRefresh = [action](std::int64_t pid) {
+        action([pid]() -> std::string {
+            auto& ps = store::profilesStore();
+            if (!ps.refresh(pid)) return ps.lastError();
+            return "";
+        });
+    };
+    const ProfileRefreshAction refresh = [httpRefresh, desktopRefresh](
+                                             std::int64_t pid) {
+        CLASHFLUX_REFRESH_PROFILE(pid, httpRefresh, desktopRefresh);
     };
 
     // 右上角刷新图标：裸 Image + Tint 着色（IconButton 不着色矢量资源；
@@ -674,17 +895,7 @@ huxerui::Task<std::string> HuxerRefreshRemote(
                   huxerui::Focusable(true),
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                      .label = "更新订阅"})
-            .OnClick([action, httpRefresh, id] {
-                if (kHuxerHttpDownload) {
-                    httpRefresh(id);
-                    return;
-                }
-                action([id]() -> std::string {
-                    auto& ps = store::profilesStore();
-                    if (!ps.refresh(id)) return ps.lastError();
-                    return "";
-                });
-            });
+            .OnClick([refresh, id] { refresh(id); });
     }
 
     const std::string primaryLine = [&] {
@@ -866,7 +1077,7 @@ huxerui::Task<std::string> HuxerRefreshRemote(
             })
         // 右键上下文菜单（跟随点击位置弹出）。
         .On<huxerui::ViewEvents::ContextMenuRequested>(
-            [menu, tasks, action, httpRefresh, openEditInfo, openEditRules,
+            [menu, tasks, action, refresh, openEditInfo, openEditRules,
              openEditFile, openQr,
              id, homepage = profile.homepage, url = profile.url,
              selected, nativeVpn, optimisticSelected,
@@ -886,17 +1097,8 @@ huxerui::Task<std::string> HuxerRefreshRemote(
                 }
                 if (!nativeVpn) {
                     entries.push_back(huxerui::MenuItem("更新",
-                                                        [action, httpRefresh,
-                                                         id] {
-                        if (kHuxerHttpDownload) {
-                            httpRefresh(id);
-                            return;
-                        }
-                        action([id]() -> std::string {
-                            auto& ps = store::profilesStore();
-                            if (!ps.refresh(id)) return ps.lastError();
-                            return "";
-                        });
+                                                        [refresh, id] {
+                        refresh(id);
                     }));
                 }
                 if (!nativeVpn && !homepage.empty()) {
@@ -957,16 +1159,15 @@ huxerui::Task<std::string> HuxerRefreshRemote(
 
 } // namespace
 
-// 订阅自动更新泵的一次迭代（kHuxerHttpDownload 通道，app.cpp 的壳层泵调用）：
-// 任务线程列出到期订阅 → 逐个经 HuxerUI HttpClient 抓取 → store completeRemote
-// 收尾。错误落在订阅行 error 字段（订阅卡展示），这里不弹提示。
-huxerui::Task<int> ProfilesRefreshDueOnce(
+// Android 订阅自动更新泵的一次迭代：任务线程列出到期订阅 → 逐个经 HuxerUI
+// HttpClient 抓取 → store completeRemote 收尾。错误落在订阅行 error 字段。
+huxerui::Task<int> AndroidRefreshProfilesDueOnce(
     std::shared_ptr<huxerui::HttpClient> http) {
     const std::vector<db::Profile> due = co_await RunOnTaskThread(
         [] { return store::profilesStore().dueForUpdate(); });
     int updated = 0;
     for (const auto& row : due) {
-        const store::FetchedProfile fetched = co_await FetchProfile(
+        const store::FetchedProfile fetched = co_await AndroidFetchProfile(
             http, row.url, row.timeoutSecs);
         const bool ok = co_await RunOnTaskThread(
             [id = row.id, fetched] {
@@ -1362,22 +1563,12 @@ huxerui::Task<int> ProfilesRefreshDueOnce(
         });
     };
 
-    const PlatformCodeList platformCodes = ResolvePlatformCodes(
-        ResolvePlatformInfo(huxerui::UseViewportClass()), false);
-    // Android 专属编辑页不能依赖 PlatformControl：其 Scope 子组合在真机上
-    // 会被错误过滤。编译目标是唯一权威，视口只负责布局而不参与平台判断。
-    constexpr bool isAndroid = CompileTimePlatform() == PlatformKind::Android;
-    const bool pptpSupported =
-        HasPlatformCode(platformCodes, PlatformCode::PptpEngine);
-    const bool openvpnSupported =
-        HasPlatformCode(platformCodes, PlatformCode::OpenVpnEngine);
-    auto openEditInfo = [isAndroid, loadEditInfo, showEditInfo, editPageId](
+    const NativeProfileSupport profileSupport = CLASHFLUX_PROFILE_SUPPORT();
+    const bool pptpSupported = profileSupport.pptp;
+    const bool openvpnSupported = profileSupport.openvpn;
+    auto openEditInfo = [loadEditInfo, showEditInfo, editPageId](
                             std::int64_t id) {
-        if (!isAndroid) {
-            showEditInfo(id);
-            return;
-        }
-        loadEditInfo(id, [editPageId, id] { editPageId = id; });
+        CLASHFLUX_OPEN_PROFILE_INFO(id, loadEditInfo, showEditInfo, editPageId);
     };
 
     // ---- 编辑规则（rules 列表 + 前置/后置；工作副本，保存才落盘）----
@@ -1843,45 +2034,18 @@ huxerui::Task<int> ProfilesRefreshDueOnce(
                                           }
                                           const std::string name =
                                               newName.Get().text;
-                                          std::int64_t rid = 0;
-                                          std::string err;
-                                          if (remote && kHuxerHttpDownload) {
-                                              rid = co_await HuxerImportRemote(
-                                                  http, name, url, options);
-                                              err = rid == 0
-                                                        ? store::profilesStore()
-                                                              .lastError()
-                                                        : "";
-                                          } else {
-                                              const auto [nid, e] =
-                                                  co_await RunOnTaskThread(
-                                                      [remote, local, pptp,
-                                                       openvpn, name, url,
-                                                       options,
-                                                       picked = pickedPath
-                                                                    .Get()] {
-                                                          auto& ps =
-                                                              store::profilesStore();
-                                                          const std::int64_t nid =
-                                                              remote
-                                                                  ? ps.importUrl(
-                                                                        name, url,
-                                                                        options)
-                                                                  : local
-                                                                        ? ps.importFile(name, picked,
-                                                                                         options)
-                                                                        : ps.importNative(
-                                                                              name,
-                                                                              pptp ? "pptp" : "openvpn",
-                                                                              options.nativeConfig,
-                                                                              options.nativeRoutes,
-                                                                              options);
-                                                          return std::pair{
-                                                              nid, ps.lastError()};
-                                                      });
-                                              rid = nid;
-                                              err = e;
-                                          }
+                                          const auto [rid, err] =
+                                              co_await CLASHFLUX_IMPORT_PROFILE(
+                                                  http,
+                                                  ProfileImportRequest{
+                                                      .remote = remote,
+                                                      .local = local,
+                                                      .pptp = pptp,
+                                                      .openvpn = openvpn,
+                                                      .name = name,
+                                                      .url = url,
+                                                      .picked_path = pickedPath.Get(),
+                                                      .options = std::move(options)});
                                           importing = false;
                                           if (rid == 0) {
                                               toast.Show(
@@ -2063,31 +2227,30 @@ huxerui::Task<int> ProfilesRefreshDueOnce(
                              huxerui::CrossAxisAlignment::Center))}
             : std::move(profileGrid));
 
-    // IndexedPages 要求每一页都是挂载节点；即使还没有选中订阅，也用 Scope
-    // 保留 Android 编辑页的节点，而不是直接传入空 View。
-    huxerui::View mobileEditPage = huxerui::Scope(
-        [editPageId, tasks, toast, editName, editUrl, editType, editDesc,
-         editTimeout, editInterval, editAuto, editSys, editCore, editCert,
-         editPptpServer, editPptpUsername, editPptpPassword, editPptpTimeout,
-         editPptpRoutes, editPptpMppe, editOpenVpnConfig,
-         editOpenVpnRoutes]() -> huxerui::View {
-            if constexpr (!isAndroid) return {};
-            const std::int64_t id = editPageId.Get();
-            if (id == 0) return huxerui::View{};
-            return ProfileEditPage(
-                id, editName, editUrl, editType, editDesc, editTimeout,
-                editInterval, editAuto, editSys, editCore, editCert,
-                editPptpServer, editPptpUsername, editPptpPassword,
-                editPptpTimeout, editPptpRoutes, editPptpMppe, editOpenVpnConfig,
-                editOpenVpnRoutes, tasks, toast,
-                [editPageId] { editPageId = 0; });
-        });
+    // IndexedPages 要求每一页都是挂载节点；平台函数负责 Android 编辑页是否
+    // 存在，ProfilesPage 只提交同一份表单状态。
+    huxerui::View mobileEditPage = CLASHFLUX_PROFILE_EDIT_SURFACE(
+        editPageId.Get(),
+        ProfileEditFields{editName, editUrl, editType, editDesc, editTimeout,
+                           editInterval, editAuto, editSys, editCore, editCert,
+                           editPptpServer, editPptpUsername, editPptpPassword,
+                           editPptpTimeout, editPptpRoutes, editPptpMppe,
+                           editOpenVpnConfig, editOpenVpnRoutes},
+        tasks, toast, [editPageId] { editPageId = 0; });
 
     return huxerui::IndexedPages(
                std::vector<huxerui::View>{std::move(profileListPage),
                                           std::move(mobileEditPage)},
-               isAndroid && editPageId.Get() != 0 ? 1U : 0U)
+               CLASHFLUX_PROFILE_PAGE_INDEX(editPageId))
         .With(huxerui::Grow(1.0F));
 }
+
+#undef CLASHFLUX_PROFILE_SUPPORT
+#undef CLASHFLUX_PROFILE_OPTIONS
+#undef CLASHFLUX_OPEN_PROFILE_INFO
+#undef CLASHFLUX_PROFILE_EDIT_SURFACE
+#undef CLASHFLUX_PROFILE_PAGE_INDEX
+#undef CLASHFLUX_REFRESH_PROFILE
+#undef CLASHFLUX_IMPORT_PROFILE
 
 } // namespace clashflux::ui
