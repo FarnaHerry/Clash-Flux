@@ -43,6 +43,10 @@ extern "C" void clashflux_android_request_ignore_battery() noexcept;
 inline void AndroidRequestIgnoreBattery() noexcept {
     clashflux_android_request_ignore_battery();
 }
+extern "C" void clashflux_android_open_battery_settings() noexcept;
+inline void AndroidOpenBatterySettings() noexcept {
+    clashflux_android_open_battery_settings();
+}
 extern "C" bool clashflux_android_is_ignoring_battery() noexcept;
 inline bool AndroidIsIgnoringBattery() noexcept {
     return clashflux_android_is_ignoring_battery();
@@ -57,6 +61,7 @@ inline void AndroidStartVpn() noexcept {}
 inline void AndroidStopVpn() noexcept {}
 inline void AndroidRequestBackgroundKeepAlive() noexcept {}
 inline void AndroidRequestIgnoreBattery() noexcept {}
+inline void AndroidOpenBatterySettings() noexcept {}
 inline bool AndroidIsIgnoringBattery() noexcept { return false; }
 inline int AndroidVpnState() noexcept { return 0; }
 #endif

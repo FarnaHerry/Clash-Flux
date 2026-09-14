@@ -19,6 +19,12 @@ export struct LogLine {
     std::int64_t at = 0;   // Unix 秒
 };
 
+// 应用自身的诊断日志与内核 /logs 分开存放；Android 的 Java/VPN 桥和桌面
+// store 都可以写入，日志页按来源选择查看。
+export void logApplication(std::string level, std::string payload);
+export std::vector<LogLine> drainApplicationLogs();
+export void clearApplicationLogs();
+
 export struct TrafficPoint {
     std::int64_t up = 0;    // 上传速率，字节/秒
     std::int64_t down = 0;  // 下载速率，字节/秒

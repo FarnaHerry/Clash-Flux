@@ -34,6 +34,17 @@ public final class MainActivity extends HuxerUIActivity {
     private static native void nativeStartCore();
     private static native void nativeVpnStartCancelled();
     private static native void nativeVpnStartFailed(String message);
+    private static native void nativeAppLog(int level, String message);
+
+    static void appLog(String message, boolean error) {
+        if (message == null || message.isEmpty()) return;
+        Log.println(error ? Log.ERROR : Log.INFO, TAG, message);
+        try {
+            nativeAppLog(error ? 3 : 1, message);
+        } catch (RuntimeException | LinkageError ignored) {
+            // Diagnostics must not affect permissions or service startup.
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -46,6 +57,7 @@ public final class MainActivity extends HuxerUIActivity {
         // valid Activity class and data-directory bridge.
         nativeInit(getFilesDir().getAbsolutePath(), getApplicationInfo().nativeLibraryDir);
         Log.i(TAG, "Native bridge initialized");
+        appLog("主 Activity 已初始化 native bridge", false);
         // Make the system-theme value available to the first native frame too.
         nativeSetSystemDark(isSystemDarkMode());
         Log.i(TAG, "Calling HuxerUIActivity.onCreate");
@@ -60,6 +72,7 @@ public final class MainActivity extends HuxerUIActivity {
         // before the service is started so the keep-alive state is observable.
         requestNotificationAction(PENDING_CORE_SERVICE);
         Log.i(TAG, "Android shell initialized; sing-box waits for VPN consent");
+        appLog("Android 外壳已初始化，等待 VPN 系统授权", false);
     }
 
     private static boolean isSystemDarkMode() {
@@ -76,6 +89,12 @@ public final class MainActivity extends HuxerUIActivity {
             current = null;
         }
         super.onDestroy();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        appLog("Activity 已回到前台，刷新系统权限状态", false);
     }
 
     public static void openUrl(String url) {
@@ -143,8 +162,15 @@ public final class MainActivity extends HuxerUIActivity {
         // JNI 可能从 HuxerUI 的渲染线程进入；Activity 跳转必须在 Android
         // 主线程执行，否则部分设备会无提示地忽略这次请求。
         activity.runOnUiThread(() -> {
-            activity.openBatteryOptimizationSettings();
+            activity.requestBatteryOptimization();
         });
+    }
+
+    /** Opens the system management page so the user can revoke the exemption. */
+    public static void openBatteryOptimizationSettings() {
+        MainActivity activity = current;
+        if (activity == null) return;
+        activity.runOnUiThread(activity::openBatteryOptimizationManagement);
     }
 
     // ---- 后台保活 ----------------------------------------------------------
@@ -152,6 +178,7 @@ public final class MainActivity extends HuxerUIActivity {
     public static void requestBackgroundKeepAlive() {
         MainActivity activity = current;
         if (activity == null) return;
+        appLog("请求后台保活：通知权限、常驻服务和电池优化豁免", false);
         activity.runOnUiThread(() ->
                 activity.requestNotificationAction(PENDING_CORE_SERVICE | PENDING_BATTERY));
     }
@@ -172,6 +199,7 @@ public final class MainActivity extends HuxerUIActivity {
                 != PackageManager.PERMISSION_GRANTED) {
             if (!notificationRequestInFlight) {
                 notificationRequestInFlight = true;
+                appLog("正在请求 Android 通知权限", false);
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},
                         REQUEST_NOTIFICATIONS);
             }
@@ -187,7 +215,7 @@ public final class MainActivity extends HuxerUIActivity {
             startCoreService();
         }
         if ((actions & PENDING_BATTERY) != 0) {
-            openBatteryOptimizationSettings();
+            requestBatteryOptimization();
         }
         if ((actions & PENDING_VPN) != 0) {
             continueVpnStart();
@@ -202,45 +230,54 @@ public final class MainActivity extends HuxerUIActivity {
             } else {
                 startService(intent);
             }
+            appLog("后台保活前台服务已请求启动", false);
         } catch (RuntimeException error) {
             Log.e(TAG, "Unable to start the core keep-alive service", error);
+            appLog("后台保活服务启动失败：" + error.getMessage(), true);
         }
     }
 
-    private void openBatteryOptimizationSettings() {
+    private void requestBatteryOptimization() {
         PowerManager power =
                 (PowerManager) getSystemService(Context.POWER_SERVICE);
         if (power == null || power.isIgnoringBatteryOptimizations(getPackageName())) {
+            appLog("电池优化已处于豁免状态", false);
             return;
         }
         try {
             startActivity(new Intent(
                     Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                     Uri.parse("package:" + getPackageName())));
+            appLog("已呼出系统电池优化豁免确认", false);
             return;
         } catch (ActivityNotFoundException | SecurityException error) {
             // Some OEM ROMs do not expose the package-specific action; still
             // open the generic list so the user has a real system action.
+            appLog("厂商系统不支持专用电池优化请求，改开管理页面", false);
+            openBatteryOptimizationManagement();
+        }
+    }
+
+    private void openBatteryOptimizationManagement() {
+        try {
+            startActivity(new Intent(
+                    Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            appLog("已打开系统电池优化管理页面", false);
+            return;
+        } catch (ActivityNotFoundException | SecurityException error) {
+            // A few ROMs do not expose the generic list. Opening the app
+            // details page is still actionable and avoids a silent no-op.
             try {
                 startActivity(new Intent(
-                        Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:" + getPackageName())));
+                appLog("系统电池优化列表不可用，已打开应用详情页", false);
                 return;
             } catch (ActivityNotFoundException | SecurityException fallbackError) {
-                // A few ROMs block both battery-optimization intents. Opening
-                // the app details page is still actionable and avoids a silent
-                // no-op when the button is pressed.
-                try {
-                    startActivity(new Intent(
-                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                            Uri.parse("package:" + getPackageName())));
-                } catch (ActivityNotFoundException | SecurityException detailsError) {
-                    Log.w(TAG, "Battery optimization settings unavailable",
-                            detailsError);
-                }
-                Log.w(TAG, "Battery optimization action unavailable",
-                        fallbackError);
+                Log.w(TAG, "Battery optimization settings unavailable", fallbackError);
+                appLog("无法打开系统电池优化管理页面：" + fallbackError.getMessage(), true);
             }
-            Log.w(TAG, "Battery optimization request unavailable", error);
+            Log.w(TAG, "Battery optimization management unavailable", error);
         }
     }
 
@@ -252,10 +289,13 @@ public final class MainActivity extends HuxerUIActivity {
 
     private void continueVpnStart() {
         try {
+            appLog("开始请求系统 VPN 授权", false);
             Intent consent = VpnService.prepare(this);
             if (consent != null) {
+                appLog("系统 VPN 尚未授权，正在显示授权页面", false);
                 startActivityForResult(consent, REQUEST_VPN_CONSENT);
             } else {
+                appLog("系统 VPN 已授权，正在启动 VPN 前台服务", false);
                 startVpnService();
             }
         } catch (RuntimeException error) {
@@ -271,6 +311,7 @@ public final class MainActivity extends HuxerUIActivity {
             } else {
                 startService(intent);
             }
+            appLog("VPN 前台服务已请求启动", false);
         } catch (RuntimeException error) {
             reportVpnStartFailure("无法启动 VPN 服务：" + error.getMessage(), error);
         }
@@ -278,6 +319,7 @@ public final class MainActivity extends HuxerUIActivity {
 
     private void reportVpnStartFailure(String message, RuntimeException error) {
         Log.e(TAG, message, error);
+        appLog(message, true);
         try {
             nativeVpnStartFailed(message);
         } catch (RuntimeException bridgeError) {
@@ -291,6 +333,10 @@ public final class MainActivity extends HuxerUIActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_NOTIFICATIONS) {
             notificationRequestInFlight = false;
+            appLog("通知权限结果：" +
+                    (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED
+                            ? "已允许" : "未允许"),
+                    false);
             drainNotificationActions();
         }
     }
@@ -300,11 +346,13 @@ public final class MainActivity extends HuxerUIActivity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_VPN_CONSENT) {
             if (resultCode == RESULT_OK) {
+                appLog("用户已允许系统 VPN，继续启动服务", false);
                 startVpnService();
             } else {
                 // 用户取消系统授权时回滚 C++ 持久化状态，设置页的受控开关会
                 // 在下一次状态校准中恢复为关闭。
                 nativeVpnStartCancelled();
+                appLog("用户取消系统 VPN 授权", true);
             }
         }
     }

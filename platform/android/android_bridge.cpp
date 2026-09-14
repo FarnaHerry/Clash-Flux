@@ -35,6 +35,11 @@ void log_android(const char* message, bool error = false) noexcept {
 #if defined(__ANDROID__)
     __android_log_print(error ? ANDROID_LOG_ERROR : ANDROID_LOG_INFO, "ClashFlux",
                         "%s", message);
+    try {
+        stream::logApplication(error ? "error" : "info", message);
+    } catch (...) {
+        // Diagnostics must never interfere with the JNI callback itself.
+    }
 #else
     static_cast<void>(message);
     static_cast<void>(error);
@@ -93,6 +98,23 @@ Java_dev_farna_clashflux_MainActivity_nativeInit(JNIEnv* environment,
     }
 
     log_android("Native bridge initialized with Android files directory");
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_farna_clashflux_MainActivity_nativeAppLog(JNIEnv* environment,
+                                                    jclass,
+                                                    jint level,
+                                                    jstring message) {
+    if (environment == nullptr || message == nullptr) return;
+    const char* value = environment->GetStringUTFChars(message, nullptr);
+    if (value == nullptr) return;
+    const char* name = level == 3 ? "error" : level == 2 ? "warning" :
+                       level == 4 ? "debug" : "info";
+    try {
+        stream::logApplication(name, value);
+    } catch (...) {
+    }
+    environment->ReleaseStringUTFChars(message, value);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -279,6 +301,22 @@ extern "C" void clashflux_android_request_ignore_battery() noexcept {
     }
     if (jmethodID method = environment->GetStaticMethodID(
             g_activity_class, "requestIgnoreBatteryOptimizations", "()V")) {
+        environment->CallStaticVoidMethod(g_activity_class, method);
+        if (environment->ExceptionCheck()) environment->ExceptionClear();
+    }
+    if (attached) g_vm->DetachCurrentThread();
+}
+
+extern "C" void clashflux_android_open_battery_settings() noexcept {
+    std::lock_guard lock(g_mutex);
+    bool attached = false;
+    JNIEnv* environment = current_environment(attached);
+    if (environment == nullptr || g_activity_class == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return;
+    }
+    if (jmethodID method = environment->GetStaticMethodID(
+            g_activity_class, "openBatteryOptimizationSettings", "()V")) {
         environment->CallStaticVoidMethod(g_activity_class, method);
         if (environment->ExceptionCheck()) environment->ExceptionClear();
     }

@@ -33,6 +33,11 @@ public final class BootReceiver extends BroadcastReceiver {
         if (!wasActive) {
             return;
         }
-        context.startForegroundService(new Intent(context, ClashVpnService.class));
+        MainActivity.appLog("系统启动广播触发 VPN 恢复", false);
+        try {
+            context.startForegroundService(new Intent(context, ClashVpnService.class));
+        } catch (RuntimeException error) {
+            MainActivity.appLog("系统启动后恢复 VPN 失败：" + error.getMessage(), true);
+        }
     }
 }
