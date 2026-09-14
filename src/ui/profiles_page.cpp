@@ -620,6 +620,7 @@ huxerui::Task<std::string> HuxerRefreshRemote(
     const db::Profile& profile, bool compact, huxerui::MenuHandle menu,
     huxerui::TaskScope tasks, huxerui::ToastHandle toast,
     std::shared_ptr<huxerui::HttpClient> http, std::function<void()> reload,
+    huxerui::State<std::optional<std::int64_t>> optimisticSelected,
     const store::PptpState& pptpState,
     const store::OpenVpnState& openVpnState, bool connectionSelected,
     const std::function<void(std::int64_t, bool)>& toggleConnection,
@@ -631,10 +632,14 @@ huxerui::Task<std::string> HuxerRefreshRemote(
     const IslandTheme islands = ResolveIslandTheme(theme);
     const std::int64_t id = profile.id;
     const bool nativeVpn = isNativeVpnType(profile.type);
+    const bool selected = optimisticSelected.Get().has_value()
+                              ? optimisticSelected.Get().value() == id
+                              : profile.selected;
 
-    auto action = [tasks, toast, reload](std::function<std::string()> job) {
+    auto action = [tasks, toast, reload, optimisticSelected](std::function<std::string()> job) {
         tasks.Launch([=]() -> huxerui::Task<void> {
             const std::string err = co_await RunOnTaskThread(std::move(job));
+            EndOptimistic(optimisticSelected);
             if (!err.empty()) toast.Show(err);
             reload();
         });
@@ -700,7 +705,7 @@ huxerui::Task<std::string> HuxerRefreshRemote(
                     huxerui::Font::System(font_size::kBody)
                         .WithWeight(huxerui::FontWeight::SemiBold),
                     theme.colors.on_surface}),
-            profile.selected
+            selected
                 ? huxerui::View{
                       huxerui::Text("使用中").Style(huxerui::TextStyle{
                           huxerui::Font::System(font_size::kCaption),
@@ -843,15 +848,16 @@ huxerui::Task<std::string> HuxerRefreshRemote(
                                     huxerui::ClipChildren());
     }
     // 选中（使用中）状态：primary 描边，与「使用中」徽标呼应。
-    if (profile.selected) {
+    if (selected) {
         card = std::move(card).With(
             huxerui::Border(theme.colors.primary, 2.0F));
     }
     return std::move(card)
         // 远程/本地代理订阅暂时保持单选：点击哪张卡片，哪张就是当前订阅。
         // 原生 PPTP/OpenVPN 仍由复选框进入多连接流程，后续再统一抽象。
-        .OnClick([action, id, selected = profile.selected, nativeVpn] {
+        .OnClick([action, id, selected, nativeVpn, optimisticSelected] {
                 if (selected || nativeVpn) return;
+                BeginOptimistic(optimisticSelected, id);
                 action([id]() -> std::string {
                     auto& ps = store::profilesStore();
                     if (!ps.activate(id)) return ps.lastError();
@@ -863,12 +869,14 @@ huxerui::Task<std::string> HuxerRefreshRemote(
             [menu, tasks, action, httpRefresh, openEditInfo, openEditRules,
              openEditFile, openQr,
              id, homepage = profile.homepage, url = profile.url,
-             selected = profile.selected, nativeVpn,
+             selected, nativeVpn, optimisticSelected,
              openVpn = profile.type == "openvpn"](
                 huxerui::Point pos) {
                 std::vector<huxerui::MenuEntry> entries;
                 if (!selected && !nativeVpn) {
-                    entries.push_back(huxerui::MenuItem("使用", [action, id] {
+                    entries.push_back(huxerui::MenuItem("使用", [action, id,
+                                                                    optimisticSelected] {
+                        BeginOptimistic(optimisticSelected, id);
                         action([id]() -> std::string {
                             auto& ps = store::profilesStore();
                             if (!ps.activate(id)) return ps.lastError();
@@ -986,6 +994,8 @@ huxerui::Task<int> ProfilesRefreshDueOnce(
     auto pptpStates = huxerui::UseStateList<store::PptpState>();
     auto openVpnStates = huxerui::UseStateList<store::OpenVpnState>();
     auto connectionSelection = huxerui::UseStateList<std::int64_t>();
+    auto optimisticSelected =
+        huxerui::UseState<std::optional<std::int64_t>>(std::nullopt);
 
     // ---- 新建订阅弹窗 ----
     auto newName = huxerui::UseState(huxerui::TextEditingValue{""});
@@ -1944,7 +1954,7 @@ huxerui::Task<int> ProfilesRefreshDueOnce(
                                      reload,
                                      pptpStates, openVpnStates, isConnectionSelected,
                                      toggleConnection, openEditInfo, showEditRules,
-                                     showEditFile, showQr, theme](
+                                     showEditFile, showQr, optimisticSelected, theme](
                                         std::size_t index)
                                          -> huxerui::View {
                                         const ProfileGridItem& item = profileItems[index];
@@ -1999,6 +2009,7 @@ huxerui::Task<int> ProfilesRefreshDueOnce(
                                         return ProfileCard(
                                                    profile, compact, menu, tasks,
                                                    toast, http, reload,
+                                                   optimisticSelected,
                                                    pptpState, openVpnState,
                                                    isConnectionSelected(profile.id),
                                                    toggleConnection, openEditInfo,
