@@ -93,6 +93,8 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/ui/proxies_page.cpp"
         "${_root}/src/ui/rules_page.cpp"
         "${_root}/src/ui/settings_page.cpp"
+        "${_root}/src/ui/platform_settings.cpp"
+        "${_root}/src/ui/platform_app.cpp"
     )
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         ${_android_legacy_inputs}
@@ -145,7 +147,9 @@ function(clashflux_prepare_android_sources output_directory output_header
             "${_root}/src/ui/profiles_page.cpp"
             "${_root}/src/ui/proxies_page.cpp"
             "${_root}/src/ui/rules_page.cpp"
-            "${_root}/src/ui/settings_page.cpp")
+            "${_root}/src/ui/settings_page.cpp"
+            "${_root}/src/ui/platform_settings.cpp"
+            "${_root}/src/ui/platform_app.cpp")
         file(READ "${_source}" _content)
         string(REGEX REPLACE "import [A-Za-z0-9_.]+;" "" _content "${_content}")
         string(PREPEND _content "#include \"clashflux_android_legacy.h\"\n")

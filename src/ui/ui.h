@@ -6,7 +6,6 @@
 
 #include <cstdint>
 #include <functional>
-#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string>
@@ -28,107 +27,9 @@ void EndOptimistic(huxerui::State<std::optional<T>> state) {
     state = std::nullopt;
 }
 
-// 订阅下载通道：Android 的 vendored curl 无 TLS（NDK 无 OpenSSL，https 订阅
-// 报 Unsupported protocol），订阅导入/手动刷新/自动更新全走 HuxerUI
-// HttpClient（平台原生栈：系统 TLS/证书/代理）；桌面 curl 支持订阅级代理/
-// 无效证书选项，保持不变。
-#ifdef __ANDROID__
-inline constexpr bool kHuxerHttpDownload = true;
-#else
-inline constexpr bool kHuxerHttpDownload = false;
-#endif
-
-// 平台/设备判断集中在应用层：HuxerUI 的公开环境只提供视口分级，平台宏
-// 负责识别编译目标，视口再负责把 Android 区分为手机或平板。
-enum class PlatformKind {
-    Android,
-    Linux,
-    Windows,
-    MacOS,
-    Unknown,
-};
-
-enum class FormFactor {
-    Phone,
-    Tablet,
-    Desktop,
-    Unknown,
-};
-
-struct PlatformInfo {
-    PlatformKind platform;
-    FormFactor form_factor;
-    huxerui::ViewportClass viewport;
-
-    constexpr bool IsAndroid() const noexcept {
-        return platform == PlatformKind::Android;
-    }
-    constexpr bool IsDesktop() const noexcept {
-        return form_factor == FormFactor::Desktop;
-    }
-    constexpr bool IsPhone() const noexcept {
-        return form_factor == FormFactor::Phone;
-    }
-    constexpr bool IsTablet() const noexcept {
-        return form_factor == FormFactor::Tablet;
-    }
-};
-
-struct PlatformCapabilities {
-    bool tun = false;
-    bool system_proxy = false;
-    bool service = false;
-    bool tray = false;
-    bool pptp = false;
-    bool openvpn = false;
-};
-
-inline constexpr PlatformKind CompileTimePlatform() noexcept {
-#if defined(__ANDROID__)
-    return PlatformKind::Android;
-#elif defined(_WIN32)
-    return PlatformKind::Windows;
-#elif defined(__APPLE__)
-    return PlatformKind::MacOS;
-#elif defined(__linux__)
-    return PlatformKind::Linux;
-#else
-    return PlatformKind::Unknown;
-#endif
-}
-
-inline constexpr FormFactor ResolveFormFactor(
-    PlatformKind platform, huxerui::ViewportClass viewport) noexcept {
-    if (platform == PlatformKind::Android) {
-        return viewport == huxerui::ViewportClass::Compact
-                   ? FormFactor::Phone
-                   : FormFactor::Tablet;
-    }
-    if (platform == PlatformKind::Linux || platform == PlatformKind::Windows ||
-        platform == PlatformKind::MacOS) {
-        return FormFactor::Desktop;
-    }
-    return FormFactor::Unknown;
-}
-
-inline constexpr PlatformInfo ResolvePlatformInfo(
-    huxerui::ViewportClass viewport) noexcept {
-    constexpr PlatformKind platform = CompileTimePlatform();
-    return PlatformInfo{
-        .platform = platform,
-        .form_factor = ResolveFormFactor(platform, viewport),
-        .viewport = viewport,
-    };
-}
-
-// 托盘 UI 只在桌面编译目标有意义（配合上方收束表 SystemTray 行的说明）。
-inline constexpr bool kSystemTrayUi =
-    CompileTimePlatform() == PlatformKind::Linux ||
-    CompileTimePlatform() == PlatformKind::Windows ||
-    CompileTimePlatform() == PlatformKind::MacOS;
-
 // Android VPN 隧道开关（设置页 VPN 卡 → VpnService consent/前台服务）。
-// 桌面编译目标是空操作桩，UI 侧调用无需平台宏分叉（收束表 Android 行）。
+// 这些是 Android bridge 的平台前缀函数；桌面目标提供空操作桩，避免通用
+// 组件在控件内部再写平台分支。
 #ifdef __ANDROID__
 extern "C" void clashflux_android_start_vpn() noexcept;
 extern "C" void clashflux_android_stop_vpn() noexcept;
@@ -151,131 +52,6 @@ inline void AndroidRequestIgnoreBattery() noexcept {}
 inline bool AndroidIsIgnoringBattery() noexcept { return false; }
 inline int AndroidVpnState() noexcept { return 0; }
 #endif
-
-// ---- 统一收束表（平台 × 能力/选项）-----------------------------------------
-// 新增任何平台相关选项前，先在这张表登记：能力加进 PlatformCapabilities、
-// 选项用 PlatformControl 门控——不支持的平台上整棵子组合树不进入，而不是
-// 渲染一个不可用的控件。另有两条平台分叉不走路由能力表：
-// kHuxerHttpDownload（订阅下载通道，见下方声明）与 store 层的
-// available()==false 兜底（service/sysproxy/openvpn 等阻塞能力）。
-//
-// 托盘另有编译期第二道闸 kSystemTrayUi：平台代码表是运行时判定，历史构建
-// 出现过 Android 上托盘卡漏出的报告；托盘卡工厂内据该常量直接返回空视图，
-// 保证手机上无论如何渲染不出托盘/关窗驻留选项。
-//
-// 能力/分叉           Linux  Windows  macOS  Android  挂靠的 UI 选项
-// ------------------- -----  -------  -----  -------  -----------------------------
-// CoreTun               ✓       ✓      ✓      ✗     设置·TUN 模式；首页·TUN 快捷开关
-// SystemProxy           ✓       ✓      ✓      ✗     设置·系统代理；首页·系统代理开关
-// CoreService           ✓       ✗      ✗      ✗     设置·内核服务（pkexec 安装）
-// SystemTray            ✓       ✓      ✓      ✗     设置·托盘卡；壳层托盘与关窗驻留
-// PptpEngine            ✓       ✓      ✗      ✗     订阅弹窗·类型「PPTP 内网」
-// OpenVpnEngine         ✓       ✗      ✗      ✗     订阅弹窗·类型「OpenVPN 内网」
-// VpnTunnel             ✗       ✗      ✗      ✓     设置·VPN 代理（VpnService TUN，
-//                                                  fd 经 spawn 继承给内核，
-//                                                  复用 core.tun_enabled 设置）
-// kHuxerHttpDownload    ✗       ✗      ✗      ✓     订阅导入/手动刷新/自动更新走
-//                                                  HuxerUI 平台栈；订阅弹窗的
-//                                                  「内核代理/无效证书」开关仅桌面
-//                                                  显示（{Linux,Windows,MacOS}）
-//
-// 安卓设置页保留项（内核随 APK 打包并在启动时拉起，均生效）：内核控制、
-// 出站模式、混合端口、局域网连接（热点共享）、日志级别、VPN 代理、主题、
-// 关于。
-inline constexpr PlatformCapabilities ResolvePlatformCapabilities(
-    PlatformKind platform) noexcept {
-    const bool desktop = platform == PlatformKind::Linux ||
-                         platform == PlatformKind::Windows ||
-                         platform == PlatformKind::MacOS;
-    return PlatformCapabilities{
-        .tun = desktop,
-        .system_proxy = desktop,
-        .service = platform == PlatformKind::Linux,
-        .tray = desktop,
-        .pptp = platform == PlatformKind::Linux ||
-                platform == PlatformKind::Windows,
-        .openvpn = platform == PlatformKind::Linux,
-    };
-}
-
-inline constexpr std::string_view PlatformName(PlatformKind platform) noexcept {
-    switch (platform) {
-    case PlatformKind::Android: return "Android";
-    case PlatformKind::Linux: return "Linux";
-    case PlatformKind::Windows: return "Windows";
-    case PlatformKind::MacOS: return "macOS";
-    case PlatformKind::Unknown: return "Unknown";
-    }
-    return "Unknown";
-}
-
-// 平台代码既描述目标平台/设备形态，也描述该平台真正提供的能力。
-// UI 只声明允许哪些代码，具体代码列表由 PlatformControl 统一生成，避免
-// 每个页面各自维护 Android/桌面/运行时能力的组合判断。
-enum class PlatformCode {
-    Android,
-    Linux,
-    Windows,
-    MacOS,
-    Phone,
-    Tablet,
-    Desktop,
-    CoreTun,
-    SystemProxy,
-    CoreService,
-    SystemTray,
-    PptpEngine,
-    OpenVpnEngine,
-};
-
-using PlatformCodeList = std::vector<PlatformCode>;
-
-inline PlatformCodeList ResolvePlatformCodes(const PlatformInfo& info,
-                                             bool system_proxy_supported) {
-    PlatformCodeList codes;
-    switch (info.platform) {
-    case PlatformKind::Android: codes.push_back(PlatformCode::Android); break;
-    case PlatformKind::Linux: codes.push_back(PlatformCode::Linux); break;
-    case PlatformKind::Windows: codes.push_back(PlatformCode::Windows); break;
-    case PlatformKind::MacOS: codes.push_back(PlatformCode::MacOS); break;
-    case PlatformKind::Unknown: break;
-    }
-
-    switch (info.form_factor) {
-    case FormFactor::Phone: codes.push_back(PlatformCode::Phone); break;
-    case FormFactor::Tablet: codes.push_back(PlatformCode::Tablet); break;
-    case FormFactor::Desktop: codes.push_back(PlatformCode::Desktop); break;
-    case FormFactor::Unknown: break;
-    }
-
-    const PlatformCapabilities capabilities =
-        ResolvePlatformCapabilities(info.platform);
-    if (capabilities.tun) codes.push_back(PlatformCode::CoreTun);
-    if (capabilities.system_proxy && system_proxy_supported) {
-        codes.push_back(PlatformCode::SystemProxy);
-    }
-    if (capabilities.service) codes.push_back(PlatformCode::CoreService);
-    if (capabilities.tray) codes.push_back(PlatformCode::SystemTray);
-    if (capabilities.pptp) codes.push_back(PlatformCode::PptpEngine);
-    if (capabilities.openvpn) codes.push_back(PlatformCode::OpenVpnEngine);
-    return codes;
-}
-
-inline bool HasPlatformCode(const PlatformCodeList& current,
-                            PlatformCode expected) noexcept {
-    for (const PlatformCode code : current) {
-        if (code == expected) return true;
-    }
-    return false;
-}
-
-inline bool MatchesPlatformCode(const PlatformCodeList& current,
-                                std::initializer_list<PlatformCode> allowed) noexcept {
-    for (const PlatformCode code : allowed) {
-        if (HasPlatformCode(current, code)) return true;
-    }
-    return false;
-}
 
 // Replace a snapshot-backed collection without storing the whole collection in
 // one State value. StateList keeps the list identity stable so virtualized
@@ -349,6 +125,29 @@ huxerui::View LogsPage();       // 日志
 // 设置页持有主题模式 State（AppRoot 传入）。
 huxerui::View SettingsPage(huxerui::State<int> themeMode);
 
+// 平台专属设置区：调用点用编译宏选择一个函数；函数自己管理平台相关状态、
+// 任务和控件。通用设置页不再维护 Android/桌面能力矩阵。
+huxerui::View DesktopSettingsSection();
+huxerui::View AndroidSettingsSection();
+
+// 应用壳层的平台边界：AppRoot 仅在调用点用宏选择，不持有托盘/窗口等平台状态。
+void AndroidPreparePlatformDataDirectory(
+    const huxerui::ApplicationHandle& application);
+void DesktopPreparePlatformDataDirectory(
+    const huxerui::ApplicationHandle& application);
+huxerui::View AndroidProfileRefreshPump();
+huxerui::View DesktopProfileRefreshPump();
+huxerui::View AndroidApplicationEffects(
+    const huxerui::ApplicationHandle& application,
+    const huxerui::ThemeSpec& rootSpec);
+huxerui::View DesktopApplicationEffects(
+    const huxerui::ApplicationHandle& application,
+    const huxerui::ThemeSpec& rootSpec);
+huxerui::View AndroidAppContent(huxerui::View mainRow,
+                               const huxerui::ThemeSpec& rootSpec);
+huxerui::View DesktopAppContent(huxerui::View mainRow,
+                                const huxerui::ThemeSpec& rootSpec);
+
 // ---- 通用部件（common.cpp）----
 
 huxerui::View PasswordField(
@@ -362,17 +161,15 @@ huxerui::View PageScaffold(const std::string& title, huxerui::View actions,
 // 卡片容器（二级岛）：raised 表面 + 8pt 圆角 + 内边距。
 huxerui::View Card(huxerui::View content);
 
+// 通用设置排版部件；这里不做任何平台判断。
+huxerui::View SettingRow(const std::string& label, const std::string& hint,
+                         huxerui::View control);
+huxerui::View SectionTitle(const std::string& title);
+
 // 自定义内容弹窗的卡片包裹：SDK 的 dialog.Show(ViewFactory/DialogFactory) 不给
 // 内容加底板（只有标题+消息的内置形态才有 DialogStyle），统一包一层：
 // overlay 表面 + 阴影 + 描边 + 16pt 圆角 + 内边距。
 huxerui::View DialogCard(huxerui::View content);
-
-// 平台依赖控件：只在当前平台代码列表命中时创建子组合树；不匹配时直接返回
-// 空 View，工厂不会执行。允许列表是 OR 关系，可同时表达“桌面能力”和“设备形态”。
-// Scope 让匹配后的工厂延迟到独立子组合中执行，避免把不适用控件先拼进页面。
-[[huxerui::composable]] huxerui::View PlatformControl(
-    std::initializer_list<PlatformCode> allowed,
-    huxerui::ViewFactory content_factory);
 
 // TUN 权限引导弹窗（core::tunGate()==Denied 时调用，UI 线程）：Linux 引导安装
 // 服务模式（应用保持非 root，root 只在服务侧），展示终端指令 + 一键复制
@@ -383,10 +180,9 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                         huxerui::ToastHandle toast, huxerui::Color textColor,
                         huxerui::Color hintColor);
 
-// 订阅自动更新泵的一次迭代（kHuxerHttpDownload 通道）：任务线程列出到期
-// 订阅，逐个经 HuxerUI HttpClient 抓取并由 store 收尾。返回更新条数。
-// HttpClient 必须在 UI 线程任务协程里 co_await（禁入阻塞线程池）。
-huxerui::Task<int> ProfilesRefreshDueOnce(
+// Android 订阅自动更新：任务线程列出到期订阅，HuxerUI HttpClient 在 UI
+// 协程中抓取并由 store 收尾。桌面刷新由 DesktopProfileRefreshPump 走 curl。
+huxerui::Task<int> AndroidRefreshProfilesDueOnce(
     std::shared_ptr<huxerui::HttpClient> http);
 
 } // namespace clashflux::ui

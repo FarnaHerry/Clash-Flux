@@ -14,6 +14,45 @@ import clashflux.store.core;
 
 namespace clashflux::ui {
 
+[[huxerui::composable]] huxerui::View SettingRow(const std::string& label,
+                                                 const std::string& hint,
+                                                 huxerui::View control) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const bool compact =
+        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    huxerui::View description = huxerui::Column {
+        huxerui::Text(label).Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kBody), theme.colors.on_surface}),
+        hint.empty()
+            ? huxerui::View{huxerui::Row{}}
+            : huxerui::View{huxerui::Text(hint).Style(huxerui::TextStyle{
+                  huxerui::Font::System(font_size::kCaption),
+                  theme.colors.on_surface_variant})},
+    }.With(huxerui::Spacing(2.0F));
+
+    if (compact) {
+        return huxerui::Column {
+            std::move(description),
+            std::move(control),
+        }.With(huxerui::Spacing(8.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    }
+
+    return huxerui::Row {
+        std::move(description),
+        huxerui::Spacer(),
+        std::move(control),
+    }.With(huxerui::Spacing(12.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+}
+
+[[huxerui::composable]] huxerui::View SectionTitle(const std::string& title) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    return huxerui::Text(title).Style(huxerui::TextStyle{
+        huxerui::Font::System(font_size::kChip).WithWeight(huxerui::FontWeight::Bold),
+        theme.colors.primary});
+}
+
 // 所有密码输入统一走 HuxerUI 的受控 TextField 显隐能力：Secure 负责安全
 // 输入策略，TrailingIcon 负责内置眼睛操作。调用方只提供受控的完整
 // TextEditingValue，秘密值不会被组件复制到日志、卡片或错误文本中。
@@ -32,25 +71,6 @@ namespace clashflux::ui {
         .OnChanged([password](const huxerui::TextEditingValue& value) {
             password = value;
         });
-}
-
-[[huxerui::composable]] huxerui::View PlatformControl(
-    std::initializer_list<PlatformCode> allowed,
-    huxerui::ViewFactory content_factory) {
-    const PlatformInfo info = ResolvePlatformInfo(huxerui::UseViewportClass());
-    // 运行时探测只在编译目标具备这项通道时执行；Android 不会触碰桌面
-    // sysproxy 实现，也不会把不可用的开关误加入当前代码列表。
-    const PlatformCapabilities capabilities =
-        ResolvePlatformCapabilities(info.platform);
-    const bool system_proxy_supported =
-        capabilities.system_proxy && store::coreStore().systemProxySupported();
-    if (!MatchesPlatformCode(
-            ResolvePlatformCodes(info, system_proxy_supported), allowed)) {
-        return {};
-    }
-
-    // Scope 将匹配后的工厂放进独立子组合；不匹配时工厂根本不会执行。
-    return huxerui::Scope(std::move(content_factory));
 }
 
 // TUN 权限引导弹窗（见 ui.h）。Linux 只引导安装服务模式：应用自身保持非 root
