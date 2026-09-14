@@ -107,7 +107,7 @@ std::vector<ProxyGroup> parseProxies(const std::string& body) {
         }
         groups.push_back(std::move(g));
     }
-    // GLOBAL 组太长且无意义时沉底（mihomo 自带，列出全部节点）。
+    // GLOBAL 组太长且无意义时沉底（clash_api 兼容组，列出全部节点）。
     std::ranges::stable_sort(groups, [](const ProxyGroup& a, const ProxyGroup& b) {
         return (a.name == "GLOBAL") < (b.name == "GLOBAL");
     });

@@ -68,6 +68,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/vpn.cppm"
         "${_root}/src/pptp.cppm"
         "${_root}/src/openvpn.cppm"
+        "${_root}/src/singbox.cppm"
         "${_root}/src/core.cppm"
         "${_root}/src/api.cppm"
         "${_root}/src/stream.cppm"
@@ -119,6 +120,7 @@ function(clashflux_prepare_android_sources output_directory output_header
             "${_root}/src/db.cpp"
             "${_root}/src/pptp.cpp"
             "${_root}/src/openvpn.cpp"
+            "${_root}/src/singbox.cpp"
             "${_root}/src/core.cpp"
             "${_root}/src/api.cpp"
             "${_root}/src/stream.cpp")

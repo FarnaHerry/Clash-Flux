@@ -46,8 +46,22 @@ add_library(clashflux_qrcode STATIC "${CMAKE_CURRENT_SOURCE_DIR}/qrcodegen/qrcod
 target_compile_features(clashflux_qrcode PRIVATE cxx_std_17)
 target_include_directories(clashflux_qrcode PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/qrcodegen")
 
+# ---- yaml-cpp 0.8.0（Clash 订阅 YAML 解析，sing-box 配置编译器输入）---------
+clashflux_extract(yamlcpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/tarballs/yaml-cpp-0.8.0.tar.gz"
+    "fbe74bbdcee21d656715688706da3c8becfd946d92cd44705cc6098bb23b3a16"
+    "yaml-cpp-0.8.0")
+set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_INSTALL OFF CACHE BOOL "" FORCE)
+set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+# yaml-cpp 0.8.0 声明 cmake_minimum_required(3.4)，CMake 4.x 已移除 <3.5 兼容。
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+add_subdirectory("${yamlcpp_SOURCE_DIR}" "yaml-cpp-build")
+
 # ---- curl 8.22.0（静态库，OpenSSL 后端，仅 lib）------------------------------
-# 用途：mihomo external-controller REST API 与订阅下载。
+# 用途：sing-box clash_api REST 与订阅下载。
 clashflux_extract(curl
     "${CMAKE_CURRENT_SOURCE_DIR}/tarballs/curl-8.22.0.tar.gz"
     "d54dd598bf05927a726deb38df31c6a255ba83ff1de57c5d1464dac3ed8f44a1"
@@ -74,7 +88,7 @@ set(CURL_DISABLE_LDAPS ON CACHE BOOL "" FORCE)
 add_subdirectory("${curl_SOURCE_DIR}" "curl-build")
 
 # ---- IXWebSocket 12.0.1：client-only -----------------------------------------
-# 用途：mihomo /logs /traffic /connections /memory 推送流（纯 ws:// 本地回环，
+# 用途：clash_api /logs /traffic /connections 推送流（纯 ws:// 本地回环，
 # 不需要 TLS/zlib）。
 clashflux_extract(ixwebsocket
     "${CMAKE_CURRENT_SOURCE_DIR}/tarballs/ixwebsocket-12.0.1.tar.gz"

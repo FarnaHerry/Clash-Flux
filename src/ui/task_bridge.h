@@ -7,7 +7,7 @@
 // - 阻塞 / CPU 重活经 RunOnTaskThread 派给进程级任务线程池：UI 协程挂起不卡帧，
 //   完成（或异常）后协程在 UI 线程恢复，直接拿返回值 / try-catch。
 // - 内核 REST 调用（clashflux.api）与内核启停（store 层）都是同步阻塞式，全部
-//   经 RunOnTaskThread 派到任务线程；mihomo 推送流由 IXWebSocket 自管线程
+//   经 RunOnTaskThread 派到任务线程；内核推送流由 IXWebSocket 自管线程
 //  （事件经 PollWhile 泵取回）；内核子进程自带监视线程（输出行经 PollWhile
 //   drain）。
 //

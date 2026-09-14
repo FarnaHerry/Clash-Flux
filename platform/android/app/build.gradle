@@ -222,7 +222,6 @@ androidComponents.onVariants(androidComponents.selector().all()) { variant ->
 
 dependencies {
     implementation(files(singboxAar).builtBy(stageSingboxAar))
-    implementation "org.snakeyaml:snakeyaml-engine:2.9"
     if (rootProject.gradle.ext.huxeruiUsesSource) {
         implementation project(":HuxerUI")
     } else {

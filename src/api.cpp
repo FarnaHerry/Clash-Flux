@@ -60,7 +60,7 @@ size_t onHeaderLine(char* ptr, size_t size, size_t nmemb, void* userdata) noexce
     return size * nmemb;
 }
 
-// 从 mihomo 的错误响应体提取 message 字段（{"message": "..."}）。
+// 从错误响应体提取 message 字段（{"message": "..."}）。
 std::string extractMessage(const std::string& body) {
     const auto j = nlohmann::json::parse(body, nullptr, false);
     if (j.is_object()) return j.value("message", "");
@@ -146,13 +146,6 @@ ApiResult ClashApi::patchConfigs(const std::string& jsonBody) {
     return impl_->request("PATCH", "/configs", jsonBody);
 }
 
-ApiResult ClashApi::reloadConfig(const std::string& path) {
-    const nlohmann::json body = {{"path", path}};
-    return impl_->request("PUT", "/configs?force=true", body.dump(), 20);
-}
-
-ApiResult ClashApi::restart() { return impl_->request("POST", "/restart", "{}", 20); }
-
 ApiResult ClashApi::proxies() { return impl_->request("", "/proxies"); }
 
 ApiResult ClashApi::selectProxy(const std::string& group, const std::string& name) {
@@ -171,13 +164,57 @@ ApiResult ClashApi::proxyDelay(const std::string& name, const std::string& testU
 
 ApiResult ClashApi::groupDelay(const std::string& group, const std::string& testUrl,
                                int timeoutMs) {
-    const std::string path = appendQuery("/group/" + percentEncode(group) + "/delay",
-                                         {{"url", testUrl},
-                                          {"timeout", std::to_string(timeoutMs)}});
-    return impl_->request("", path, {}, timeoutMs / 1000 + 15);
+    // sing-box clash_api 没有 /group/{name}/delay 聚合端点：取组成员表后并发
+    // 逐节点测速，合并成与旧版 mihomo 聚合端点相同的 {节点: 延迟} JSON 对象；
+    // 测速失败的节点延迟记 0（消费方把 ≤0 归入超时）。
+    ApiResult result;
+    const auto detail = impl_->request("", "/proxies/" + percentEncode(group));
+    if (!detail.ok) return detail;
+    const auto j = nlohmann::json::parse(detail.body, nullptr, false);
+    if (!j.is_object() || !j.contains("all") || !j["all"].is_array()) {
+        result.error = "组响应缺少成员表（all）";
+        return result;
+    }
+    std::vector<std::string> members;
+    for (const auto& entry : j["all"]) {
+        if (entry.is_string()) members.push_back(entry.get<std::string>());
+    }
+    if (members.empty()) {
+        result.ok = true;
+        result.body = "{}";
+        return result;
+    }
+
+    std::map<std::string, int> delays;
+    std::mutex mergeMutex;
+    std::atomic<std::size_t> cursor{0};
+    auto worker = [&] {
+        for (;;) {
+            const std::size_t index = cursor.fetch_add(1);
+            if (index >= members.size()) break;
+            const auto& name = members[index];
+            int value = 0;
+            if (const auto r = proxyDelay(name, testUrl, timeoutMs); r.ok) {
+                const auto rj = nlohmann::json::parse(r.body, nullptr, false);
+                if (rj.is_object()) value = rj.value("delay", 0);
+            }
+            std::lock_guard lock(mergeMutex);
+            delays.emplace(std::move(name), value);
+        }
+    };
+    const unsigned hardware = std::max(2u, std::thread::hardware_concurrency());
+    const std::size_t workers =
+        std::min<std::size_t>({8, static_cast<std::size_t>(hardware), members.size()});
+    std::vector<std::thread> pool;
+    pool.reserve(workers);
+    for (std::size_t i = 0; i < workers; ++i) pool.emplace_back(worker);
+    for (auto& thread : pool) thread.join();
+
+    result.ok = true;
+    result.body = nlohmann::json(delays).dump();
+    return result;
 }
 
-ApiResult ClashApi::rules() { return impl_->request("", "/rules"); }
 ApiResult ClashApi::connections() { return impl_->request("", "/connections"); }
 
 ApiResult ClashApi::closeConnection(const std::string& id) {
@@ -186,18 +223,6 @@ ApiResult ClashApi::closeConnection(const std::string& id) {
 
 ApiResult ClashApi::closeAllConnections() {
     return impl_->request("DELETE", "/connections");
-}
-
-ApiResult ClashApi::proxyProviders() { return impl_->request("", "/providers/proxies"); }
-
-ApiResult ClashApi::updateProxyProvider(const std::string& name) {
-    return impl_->request("PUT", "/providers/proxies/" + percentEncode(name), "{}",
-                          60);
-}
-
-ApiResult ClashApi::healthcheckProvider(const std::string& name) {
-    return impl_->request("", "/providers/proxies/" + percentEncode(name) +
-                          "/healthcheck", {}, 60);
 }
 
 ApiResult ClashApi::downloadToFile(const std::string& url,

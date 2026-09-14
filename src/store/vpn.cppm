@@ -16,7 +16,7 @@ import clashflux.store.core;
 namespace store {
 
 // 连接 id 是跨引擎、跨平台的稳定引用。规则页只保存这个 id，不保存某个
-// 引擎的临时接口名；这样同一条全局规则可以在 PPTP/Mihomo 等引擎之间复用。
+// 引擎的临时接口名；这样同一条全局规则可以在 PPTP/sing-box 等引擎之间复用。
 export inline std::string ProfileConnectionId(std::int64_t profileId) {
     return std::format("profile-{}", profileId);
 }

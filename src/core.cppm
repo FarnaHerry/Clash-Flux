@@ -1,18 +1,19 @@
-// core.cppm — clashflux.core：mihomo 内核进程生命周期（接口模块）。
+// core.cppm — clashflux.core：sing-box 内核进程生命周期（接口模块）。
 //
 // 进程模型（对齐 apitab k6_engine）：start() 由 store 调用，POSIX（Linux/macOS）
-// posix_spawn / Windows CreateProcessW 拉起 mihomo 子进程（stdout+stderr 合并进
+// posix_spawn / Windows CreateProcessW 拉起 sing-box 子进程（stdout+stderr 合并进
 // 一根管道），监视线程按 \r / \n 拆行入队（内核自身的启动日志，日志页在 WS
 // 断线时也能看到这些）；stop() POSIX 先 SIGTERM，2s 宽限后 SIGKILL；Windows 无
 // SIGTERM 语义，直接 TerminateProcess。
 //
-// 运行时配置：generateConfig() 把订阅 YAML（或空）与本应用托管的注入块
-// （external-controller / secret / mixed-port 等）合成 coreWorkDir/config.yaml，
-// 再以 -d <workdir> -f <config> 启动。注入块优先级最高：先文本级剔除订阅里
-// 的同名顶层键，再把注入块放到文件头部。
+// 运行时配置：generateConfig() 经 clashflux.singbox 编译器把订阅（Clash YAML、
+// 原生 sing-box JSON 或空）与本应用托管的设置（clash_api / mixed 入站 / tun /
+// 日志级别等）合成 sing-box JSON，写 coreWorkDir/config.json，再以
+// `run -c <config> -D <workdir>` 启动。
 export module clashflux.core;
 
 import std;
+import clashflux.singbox;
 
 namespace core {
 
@@ -31,8 +32,8 @@ export const char* stateName(CoreState s);
 export void killPid(long pid);
 
 // 以脱离会话方式启动内核（CLI `core start` 用：CLI 退出后内核驻留）：
-// POSIX setsid + stdout/stderr 追加到 <workDir>/mihomo.log；Windows
-// DETACHED_PROCESS + 同样重定向日志。成功后 pid 写 <workDir>/mihomo.pid
+// POSIX setsid + stdout/stderr 追加到 <workDir>/core.log；Windows
+// DETACHED_PROCESS + 同样重定向日志。成功后 pid 写 <workDir>/core.pid
 // （接管/停止路径的活判与 killPid 依据）。失败返回 false 并填 error。
 export bool spawnDetached(const std::filesystem::path& binary,
                           const std::filesystem::path& workDir,
@@ -58,24 +59,11 @@ export TunGate tunGate();
 // URL 无注入面）/ Windows ShellExecuteW。失败静默（best-effort）。
 export void openInBrowser(const std::string& url);
 
-// 合成运行时配置文本。
-//   profileYaml  订阅（或手写）配置原文；可为空（生成最小可用配置）。
-//   controller   "127.0.0.1:9097"
-//   secret       external-controller 鉴权
-//   mixedPort    混合入站端口（7899）
-//   mode         rule / global / direct
-//   tunEnabled   全流量 TUN 透明代理（需 root/CAP_NET_ADMIN）。Linux/Windows
-//                后续由 VPN 编排层把原生 VPN 内网加入排除路由，主 Mihomo TUN
-//                只负责默认出口。
-// 返回可直接喂给 mihomo -f 的完整 YAML 文本。
-export std::string generateConfig(const std::string& profileYaml,
-                                  const std::string& controller,
-                                  const std::string& secret,
-                                  int mixedPort,
-                                  const std::string& mode,
-                                  bool allowLan,
-                                  const std::string& logLevel,
-                                  bool tunEnabled);
+// 合成 sing-box 运行时配置（含平台形态修正：Android 恒生成 tun inbound、
+// 仅 IPv4、宽松路由）。 tunEnabled 只在桌面平台作为 tunInbound 生效。
+// 返回的 CompileResult.json 可直接 `sing-box run -c`；失败 json 为空并填
+// error；订阅降级细节（不支持的节点/规则）经 warnings 带回。
+export singbox::CompileResult generateConfig(singbox::CompileOptions options);
 
 export class CoreProcess {
 public:

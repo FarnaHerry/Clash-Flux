@@ -478,7 +478,7 @@ public:
             return false;
         }
         if (profile->type == "pptp" || profile->type == "openvpn") {
-            lastError_ = "原生 VPN 连接不能作为 mihomo 订阅启用";
+            lastError_ = "原生 VPN 连接不能作为代理订阅启用";
             return false;
         }
         try {

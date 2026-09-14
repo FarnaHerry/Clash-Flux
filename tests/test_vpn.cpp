@@ -51,7 +51,7 @@ int main() {
            openvpn::OpenVpnToolsAvailable());
 
     const std::vector<EngineDescriptor> engines{
-        {EngineKind::Mihomo, 100, true, {ConnectionKind::ProxyConfig}},
+        {EngineKind::SingBox, 100, true, {ConnectionKind::ProxyConfig}},
         {EngineKind::SystemPptp, 90, true, {ConnectionKind::Pptp}},
     };
 
@@ -77,14 +77,14 @@ int main() {
                   {MatchKind::Ipv4Cidr, "10.21.0.0/16", "company-a", 90}},
     });
 
-    assert(manager.selectEngine("main").engine == EngineKind::Mihomo);
+    assert(manager.selectEngine("main").engine == EngineKind::SingBox);
     assert(manager.selectEngine("company-a").engine == EngineKind::SystemPptp);
     assert(manager.resolveConnection("10.20.8.9") == "company-a");
     assert(manager.resolveConnection("198.51.100.9") == "main");
 
     const TunConfig linuxTun = MakeFullTunConfig(PlatformKind::Linux);
     assert(linuxTun.ready);
-    assert(linuxTun.backend == TunBackendKind::Mihomo);
+    assert(linuxTun.backend == TunBackendKind::SingBox);
     assert(linuxTun.mode == TunCaptureMode::FullDevice);
     assert(linuxTun.routeAddress.size() == 4);
 
@@ -102,7 +102,7 @@ int main() {
     const TunRoutePlan windowsPlan =
         BuildTunRoutePlan(manager, PlatformKind::Windows);
     assert(windowsPlan.ready());
-    assert(windowsPlan.capture.backend == TunBackendKind::Mihomo);
+    assert(windowsPlan.capture.backend == TunBackendKind::SingBox);
 
     const TunConfig androidTun = MakeFullTunConfig(PlatformKind::Android);
     assert(!androidTun.ready);

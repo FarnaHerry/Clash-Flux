@@ -1,11 +1,11 @@
-// config.cppm — clashflux.config：用户数据目录、mihomo 内核二进制与控制器端点解析。
+// config.cppm — clashflux.config：用户数据目录、sing-box 内核二进制与控制器端点解析。
 // 无 UI 依赖，core / api / store / UI 共用。
 //
-// mihomo 不在本仓库：CI 打包时下载对应平台二进制放进包内 engines/，运行时按
-//   1. <exe 目录>/engines/mihomo(.exe)   —— 打包分发形态
-//   2. <exe 目录>/mihomo(.exe)
-//   3. <repo>/engines/mihomo             —— 开发形态（exe 在 <repo>/build/）
-//   4. PATH 里的 mihomo                  —— 系统已装
+// sing-box 不在本仓库：CI 打包时下载对应平台二进制放进包内 engines/，运行时按
+//   1. <exe 目录>/engines/sing-box(.exe)   —— 打包分发形态
+//   2. <exe 目录>/sing-box(.exe)
+//   3. <repo>/engines/sing-box             —— 开发形态（exe 在 <repo>/build/）
+//   4. PATH 里的 sing-box                  —— 系统已装
 // 顺序解析。
 module;
 
@@ -95,7 +95,7 @@ export std::filesystem::path executableDir() {
 
 // 用户数据目录：Linux $XDG_DATA_HOME/clash-flux（~/.local/share/clash-flux）/
 // Windows %APPDATA%\clash-flux / macOS ~/Library/Application Support/clash-flux。
-// SQLite 库、mihomo 工作目录、订阅 YAML 都放这里 —— 安装版启动时 cwd 可能
+// SQLite 库、内核工作目录、订阅 YAML 都放这里 —— 安装版启动时 cwd 可能
 // 不可写，不能依赖 cwd。
 export std::filesystem::path dataDir() {
 #if defined(__ANDROID__)
@@ -142,8 +142,8 @@ export std::filesystem::path profilesDir() {
     return dir;
 }
 
-// mihomo 工作目录（-d 参数）：运行时生成的 config.yaml、Country.mmdb、
-// cache.db、ui/ 等都落这里，与用户数据隔离在一处便于清理。
+// 内核工作目录（-D 参数）：运行时生成的 config.json、cache.db、
+// core.pid/core.log 等都落这里，与用户数据隔离在一处便于清理。
 export std::filesystem::path coreWorkDir() {
     const std::filesystem::path dir = dataDir() / "core";
     std::error_code ec;
@@ -182,27 +182,16 @@ inline std::filesystem::path findInPath(std::string_view name) {
     return {};
 }
 
-// mihomo 二进制解析：Android nativeLibraryDir → exe 旁 engines/ → exe 旁
-// → <repo>/engines（开发形态）→ PATH。
+// sing-box 二进制解析：exe 旁 engines/ → exe 旁 → <repo>/engines（开发形态）
+// → PATH。Android 内核是 libbox（Java 侧持有），不走本解析。
 // 找不到返回空路径。
-export std::filesystem::path mihomoBinary() {
+export std::filesystem::path singboxBinary() {
 #ifdef _WIN32
-    constexpr std::string_view exeName = "mihomo.exe";
+    constexpr std::string_view exeName = "sing-box.exe";
 #else
-    constexpr std::string_view exeName = "mihomo";
+    constexpr std::string_view exeName = "sing-box";
 #endif
     const std::filesystem::path exeDir = executableDir();
-#if defined(__ANDROID__)
-    // MainActivity passes Context.getApplicationInfo().nativeLibraryDir. Android
-    // permits execution from this PackageManager-managed directory, while it
-    // denies execute_no_trans for binaries copied into app_data_file.
-    if (const std::string nativeDir = androidNativeLibraryDir(); !nativeDir.empty()) {
-        if (const auto p = std::filesystem::path(nativeDir) / "libmihomo.so";
-            executableExists(p)) {
-            return p;
-        }
-    }
-#endif
     if (!exeDir.empty()) {
         if (const auto p = exeDir / "engines" / exeName; executableExists(p)) return p;
         if (const auto p = exeDir / exeName; executableExists(p)) return p;

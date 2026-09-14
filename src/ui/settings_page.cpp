@@ -35,11 +35,11 @@ const std::vector<huxerui::StringVariant> kThemeNames{"跟随系统", "深色", 
 // 版本号编译期常量由顶层 CMake 注入（hcg 不支持 composable 内条件编译，
 // 字符串在文件作用域先拼好）。
 const std::string kAboutText =
-    std::format("Clash-Flux v{} · 桌面 mihomo / Android sing-box", CLASHFLUX_VERSION);
+    std::format("Clash-Flux v{} · sing-box 内核（桌面 spawn / Android libbox）", CLASHFLUX_VERSION);
 #if defined(__ANDROID__)
 const std::string kDefaultCoreName = "sing-box libbox";
 #else
-const std::string kDefaultCoreName = "mihomo";
+const std::string kDefaultCoreName = "sing-box";
 #endif
 
 [[huxerui::composable]] huxerui::View SettingRow(const std::string& label,
@@ -320,18 +320,13 @@ const std::string kDefaultCoreName = "mihomo";
                             .OnChanged([coreAction](bool on) {
                                 coreAction(
                                     [on] {
-                                        auto& core = store::coreStore();
-                                        core.setSetting("core.allow_lan",
-                                                        on ? "true" : "false");
-                                        if (core.snapshot().state ==
-                                            core::CoreState::Running) {
-                                            core.api().patchConfigs(
-                                                std::format(
-                                                    "{{\"allow-lan\":{}}}",
-                                                    on ? "true" : "false"));
-                                        }
+                                        // sing-box 的 clash_api 不支持热更
+                                        // allow-lan：持久化后下次启动生效。
+                                        store::coreStore().setSetting(
+                                            "core.allow_lan",
+                                            on ? "true" : "false");
                                     },
-                                    on ? "已允许局域网连接（重启内核完全生效）"
+                                    on ? "已允许局域网连接（重启内核生效）"
                                        : "已关闭局域网连接");
                             })),
                     SettingRow(
@@ -344,15 +339,11 @@ const std::string kDefaultCoreName = "mihomo";
                             .OnChanged([coreAction](std::size_t idx) {
                                 coreAction(
                                     [idx] {
-                                        auto& core = store::coreStore();
-                                        core.setSetting("core.log_level",
-                                                        kLogLevels[idx]);
-                                        if (core.snapshot().state ==
-                                            core::CoreState::Running) {
-                                            core.api().patchConfigs(
-                                                std::format("{{\"log-level\":\"{}\"}}",
-                                                            kLogLevels[idx]));
-                                        }
+                                        // sing-box 的 clash_api 不支持热更日志
+                                        // 级别：持久化后下次启动生效（词表在
+                                        // 配置生成与 WS 订阅层做映射）。
+                                        store::coreStore().setSetting(
+                                            "core.log_level", kLogLevels[idx]);
                                     },
                                     "");
                             })
@@ -375,7 +366,7 @@ const std::string kDefaultCoreName = "mihomo";
                                     return SettingRow(
                                         "内核服务",
                                         serviceInstalled.Get()
-                                            ? "已安装（mihomo、PPTP 与 TUN 由 root 服务托管）"
+                                            ? "已安装（sing-box、PPTP 与 TUN 由 root 服务托管）"
                                             : "安装 root 服务后，TUN/PPTP 无需每次授权（经 pkexec "
                                               "一次性提权）",
                                         huxerui::Button(serviceInstalled.Get()

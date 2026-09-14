@@ -18,6 +18,21 @@ namespace {
 
 constexpr std::size_t kMaxLogLines = 2000;
 
+// mihomo 与 sing-box 的日志级别词表差异归一：WS /logs 帧的 type（sing-box
+// 发 "warn"）统一映射成 UI 词表（warning）；测速/过滤沿用。
+std::string normalizeLevel(std::string level) {
+    if (level == "warn") return "warning";
+    if (level == "trace") return "debug";
+    return level;
+}
+
+// UI 级别词表（silent/error/warning/info/debug）→ sing-box /logs?level= 值。
+std::string queryLevel(std::string level) {
+    if (level == "warning") return "warn";
+    if (level == "silent") return "error";  // sing-box 无 silent 订阅级别，取最静
+    return level;
+}
+
 std::string withToken(const std::string& url, const std::string& secret) {
     if (secret.empty()) return url;
     return appendQuery(url, {{"token", secret}});
@@ -67,7 +82,7 @@ struct CoreStreams::Impl {
         line.at = nowUnix();
         const auto j = nlohmann::json::parse(text, nullptr, false);
         if (j.is_object()) {
-            line.level = j.value("type", "info");
+            line.level = normalizeLevel(j.value("type", "info"));
             line.payload = j.value("payload", "");
         } else {
             line.level = "info";
@@ -168,7 +183,8 @@ void CoreStreams::start(const std::string& wsBase, const std::string& secret,
             }
         });
 
-    impl_->logs.start(withToken(appendQuery(wsBase + "/logs", {{"level", logLevel}}),
+    impl_->logs.start(withToken(appendQuery(wsBase + "/logs",
+                                            {{"level", queryLevel(logLevel)}}),
                                 secret));
     impl_->traffic.start(withToken(wsBase + "/traffic", secret));
     impl_->connections.start(withToken(wsBase + "/connections", secret));

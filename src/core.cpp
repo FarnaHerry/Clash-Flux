@@ -39,6 +39,7 @@ module clashflux.core;
 
 import std;
 import clashflux.service;
+import clashflux.singbox;
 
 namespace core {
 
@@ -132,148 +133,27 @@ const char* stateName(CoreState s) {
     return "未知";
 }
 
-// ---- 配置合成 ----
-namespace {
+// ---- 配置合成（经 clashflux.singbox 编译器）----
 
-// 订阅 YAML 里由应用托管的顶层键：文本级剔除（顶层键 = 行首无缩进的 key:）。
-// 逐行扫，仅剔行首无空白的 "key:" 行；命中后连同其缩进值块（profile: 这类
-// 多行块）一起跳过——否则孤立的缩进子行会让合并结果直接不是合法 YAML。
-// 键表必须与下方注入块严格一一对应：注入什么就剔什么。stripDns 只在注入
-// tun 块（连带注入 dns 块）时为真——不注入时订阅自带的 dns 原样保留。
-bool isManagedKeyLine(std::string_view line, bool stripDns) {
-    if (line.empty() || line.front() == ' ' || line.front() == '\t' ||
-        line.front() == '#') {
-        return false;
-    }
-    static constexpr std::string_view kKeys[] = {
-        "external-controller:", "secret:", "mixed-port:", "port:", "socks-port:",
-        "allow-lan:", "mode:", "log-level:", "ipv6:",
-        "unified-delay:", "tcp-concurrent:", "find-process-mode:",
-        "global-client-fingerprint:", "profile:", "tun:",
-    };
-    for (const auto key : kKeys) {
-        if (line.starts_with(key)) return true;
-    }
-    return stripDns && line.starts_with("dns:");
-}
-
-bool isIndentedContinuation(std::string_view line) {
-    return !line.empty() && (line.front() == ' ' || line.front() == '\t');
-}
-
-} // namespace
-
-std::string generateConfig(const std::string& profileYaml,
-                           const std::string& controller,
-                           const std::string& secret,
-                           int mixedPort,
-                           const std::string& mode,
-                           bool allowLan,
-                           const std::string& logLevel,
-                           bool tunEnabled) {
-    // TUN 注入形态：桌面 = 内核自建 TUN + 自路由（需 root/CAP_NET_ADMIN）。
-    // Android 的 TUN 只能由 VpnService 建立；随后由 JNI 调 Clash.startTUN，
-    // 因此绝不把 file-descriptor 写进 profile（避免重回子进程继承路径）。
+singbox::CompileResult generateConfig(singbox::CompileOptions options) {
 #if defined(__ANDROID__)
-    const bool injectTun = false;
-#else
-    const bool injectTun = tunEnabled;
+    // Android 的 TUN 由 VpnService 建立：libbox 读取 tun inbound 后经
+    // PlatformInterface::openTun 回调拿 fd，因此配置里恒含 tun inbound。
+    // VpnService 当前只建立 IPv4 TUN/默认路由，先只走 IPv4；严格路由会
+    // 截断系统级分流，保持关闭。
+    options.tunInbound = true;
+    options.ipv6 = false;
+    options.tunStrictRoute = false;
 #endif
-    // dns-hijack 依赖内核 DNS 模块运行；fake-ip 保证 TUN 侧域名规则可用。
-    // 注入 tun 的同时接管 dns（订阅自带 dns 块一并剔除）；未注入时订阅的
-    // dns 原样保留（桌面无 TUN 行为不变）。
-    const bool injectDns = injectTun ||
-#if defined(__ANDROID__)
-                           tunEnabled;
-#else
-                           false;
-#endif
-
-    std::string out;
-    // 注入块放头部。
-    out += "# ---- Clash-Flux 托管块（手写改动会被覆盖）----\n";
-    out += std::format("mixed-port: {}\n", mixedPort);
-    out += std::format("allow-lan: {}\n", allowLan ? "true" : "false");
-    out += std::format("mode: {}\n", mode);
-    out += std::format("log-level: {}\n", logLevel);
-    out += std::format("external-controller: {}\n", controller);
-    if (!secret.empty()) out += std::format("secret: \"{}\"\n", secret);
-#if defined(__ANDROID__)
-    // Android VpnService 当前只建立 IPv4 TUN/默认路由。保留 AAAA 解析会让
-    // IPv6 流量绕过这个隧道；先明确禁用，待服务同时建立 IPv6 TUN 后再开启。
-    out += "ipv6: false\n";
-#else
-    out += "ipv6: true\n";
-#endif
-    out += "unified-delay: true\n";
-    out += "tcp-concurrent: true\n";
-    out += "find-process-mode: 'off'\n";
-    out += "global-client-fingerprint: chrome\n";
-    out += "profile:\n  store-selected: true\n  store-fake-ip: true\n";
-    if (injectTun) {
-#if !defined(__ANDROID__)
-        out += "tun:\n"
-               "  enable: true\n"
-               "  stack: mixed\n"
-               "  device: clash-flux\n"
-               "  auto-route: true\n"
-               "  auto-detect-interface: true\n"
-               "  strict-route: true\n"
-               "  route-address:\n"
-               "    - 0.0.0.0/1\n"
-               "    - 128.0.0.0/1\n"
-               "    - ::/1\n"
-               "    - 8000::/1\n"
-               "  dns-hijack:\n    - any:53\n";
-#endif
-    }
-    if (injectDns) {
-        out += "dns:\n"
-               "  enable: true\n"
-               "  listen: 127.0.0.1:1053\n"
-               "  ipv6: false\n"
-               "  enhanced-mode: fake-ip\n"
-               "  fake-ip-range: 198.18.0.1/16\n"
-               "  fake-ip-filter:\n"
-               "    - '*.lan'\n"
-               "    - '+.local'\n"
-               "  default-nameserver:\n"
-               "    - 223.5.5.5\n"
-               "    - 119.29.29.29\n"
-               "  nameserver:\n"
-               "    - 223.5.5.5\n"
-               "    - 119.29.29.29\n";
-    }
-    out += "# ---- 订阅内容 ----\n";
-
-    // 剔除订阅里的托管顶层键（连同其缩进值块）后原样拼接。
-    std::string_view rest{profileYaml};
-    bool skippingBlock = false;
-    while (!rest.empty()) {
-        const auto pos = rest.find('\n');
-        const std::string_view line = rest.substr(0, pos);
-        if (skippingBlock && isIndentedContinuation(line)) {
-            // 托管键的缩进值块：继续跳过（空行/注释行结束块）。
-        } else {
-            skippingBlock = false;
-            if (isManagedKeyLine(line, injectDns)) {
-                skippingBlock = true;
-            } else {
-                out += line;
-                out.push_back('\n');
-            }
-        }
-        rest = (pos == std::string_view::npos) ? std::string_view{} : rest.substr(pos + 1);
-    }
-    return out;
+    return singbox::compileConfig(options);
 }
 
 // ---- detached spawn / killPid（接管与 CLI 驻留形态）----
 namespace {
 
-// 写 <workDir>/mihomo.pid（CoreProcess::start 与 spawnDetached 共用）。
+// 写 <workDir>/core.pid（CoreProcess::start 与 spawnDetached 共用）。
 void writePidFile(const std::filesystem::path& workDir, long pid) {
-    std::ofstream out(workDir / "mihomo.pid", std::ios::trunc);
+    std::ofstream out(workDir / "core.pid", std::ios::trunc);
     out << pid << '\n';
 }
 
@@ -297,10 +177,10 @@ bool spawnDetached(const std::filesystem::path& binary,
                    const std::filesystem::path& configFile,
                    std::string& error) {
     if (binary.empty() || !std::filesystem::exists(binary)) {
-        error = "未找到 mihomo 内核（engines/ 或 PATH）";
+        error = "未找到 sing-box 内核（engines/ 或 PATH）";
         return false;
     }
-    const std::filesystem::path logPath = workDir / "mihomo.log";
+    const std::filesystem::path logPath = workDir / "core.log";
 #ifdef _WIN32
     // 日志重定向到文件，句柄可继承；DETACHED_PROCESS 不挂控制台。
     SECURITY_ATTRIBUTES sa{};
@@ -319,9 +199,9 @@ bool spawnDetached(const std::filesystem::path& binary,
     si.hStdOutput = logHandle;
     si.hStdError = logHandle;
     si.hStdInput = nullptr;
-    const std::wstring cmd = std::format(L"\"{}\" -d \"{}\" -f \"{}\"",
-                                         binary.wstring(), workDir.wstring(),
-                                         configFile.wstring());
+    const std::wstring cmd = std::format(L"\"{}\" run -c \"{}\" -D \"{}\"",
+                                         binary.wstring(), configFile.wstring(),
+                                         workDir.wstring());
     std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
     cmdBuf.push_back(L'\0');
     const std::wstring workDirW = workDir.wstring();
@@ -331,7 +211,7 @@ bool spawnDetached(const std::filesystem::path& binary,
                                    workDirW.c_str(), &si, &pi);
     CloseHandle(logHandle);
     if (!ok) {
-        error = "mihomo 进程启动失败";
+        error = "sing-box 进程启动失败";
         return false;
     }
     writePidFile(workDir, static_cast<long>(pi.dwProcessId));
@@ -354,13 +234,13 @@ bool spawnDetached(const std::filesystem::path& binary,
         ::dup2(logFd, STDOUT_FILENO);
         ::dup2(logFd, STDERR_FILENO);
         ::close(logFd);
-        ::execl(bin.c_str(), bin.c_str(), "-d", dir.c_str(), "-f", cfg.c_str(),
-                static_cast<char*>(nullptr));
+        ::execl(bin.c_str(), bin.c_str(), "run", "-c", cfg.c_str(), "-D",
+                dir.c_str(), static_cast<char*>(nullptr));
         _exit(127);
     }
     ::close(logFd);
     if (pid < 0) {
-        error = "Android mihomo 内核进程启动失败";
+        error = "Android sing-box 内核进程启动失败";
         return false;
     }
     writePidFile(workDir, static_cast<long>(pid));
@@ -384,7 +264,7 @@ bool spawnDetached(const std::filesystem::path& binary,
     std::string bin = binary.string();
     std::string dir = workDir.string();
     std::string cfg = configFile.string();
-    std::vector<std::string> argsStorage{bin, "-d", dir, "-f", cfg};
+    std::vector<std::string> argsStorage{bin, "run", "-c", cfg, "-D", dir};
     std::vector<char*> argv;
     for (auto& a : argsStorage) argv.push_back(a.data());
     argv.push_back(nullptr);
@@ -396,7 +276,7 @@ bool spawnDetached(const std::filesystem::path& binary,
     posix_spawnattr_destroy(&attr);
     ::close(logFd);
     if (rc != 0) {
-        error = "mihomo 进程启动失败";
+        error = "sing-box 进程启动失败";
         return false;
     }
     writePidFile(workDir, static_cast<long>(pid));
@@ -471,13 +351,13 @@ struct CoreProcessImpl {
         si.hStdError = writePipe;
         si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
 
-        const std::wstring cmd = std::format(L"\"{}\" -d \"{}\" -f \"{}\"",
-                                             binary.wstring(), workDir.wstring(),
-                                             configFile.wstring());
+        const std::wstring cmd = std::format(L"\"{}\" run -c \"{}\" -D \"{}\"",
+                                             binary.wstring(), configFile.wstring(),
+                                             workDir.wstring());
         std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
         cmdBuf.push_back(L'\0');
-        // 工作目录设为 mihomo 的 -d 目录：内核若解析相对路径（ui/、mmdb 在线
-        // 下载回落等）与命令行参数行为一致。
+        // 工作目录设为 -D 目录：内核的相对路径（cache.db、在线规则集缓存等）
+        // 与命令行参数行为一致。
         const std::wstring workDirW = workDir.wstring();
         PROCESS_INFORMATION pi{};
         const BOOL ok = CreateProcessW(nullptr, cmdBuf.data(), nullptr, nullptr, TRUE,
@@ -513,7 +393,7 @@ struct CoreProcessImpl {
         std::string bin = binary.string();
         std::string dir = workDir.string();
         std::string cfg = configFile.string();
-        std::vector<std::string> argsStorage{bin, "-d", dir, "-f", cfg};
+        std::vector<std::string> argsStorage{bin, "run", "-c", cfg, "-D", dir};
         std::vector<char*> argv;
         for (auto& a : argsStorage) argv.push_back(a.data());
         argv.push_back(nullptr);
@@ -536,7 +416,7 @@ struct CoreProcessImpl {
     void pushLine(std::string line) {
         if (line.empty()) return;
 #if defined(__ANDROID__)
-        __android_log_print(ANDROID_LOG_INFO, "ClashFlux", "mihomo: %s", line.c_str());
+        __android_log_print(ANDROID_LOG_INFO, "ClashFlux", "core: %s", line.c_str());
 #endif
         std::lock_guard lock(mutex);
         // 尾部缓冲先于上限检查：output 达到 kMaxOutputLines 后不再增长，
@@ -635,7 +515,7 @@ struct CoreProcessImpl {
             WIFEXITED(status) ? WEXITSTATUS(status) : 128;
 #endif
         __android_log_print(ANDROID_LOG_INFO, "ClashFlux",
-                            "mihomo process exited: %d", loggedExitCode);
+                            "core process exited: %d", loggedExitCode);
 #endif
         if (stopRequested.load()) {
             exitCode.store(0);
@@ -682,11 +562,11 @@ bool CoreProcess::start(const std::filesystem::path& binary,
     return true;
 #else
     if (binary.empty() || !std::filesystem::exists(binary)) {
-        impl_->lastError = "未找到 mihomo 内核（engines/ 或 PATH）";
+        impl_->lastError = "未找到 sing-box 内核（engines/ 或 PATH）";
         return false;
     }
     if (!impl_->spawn(binary, workDir, configFile)) {
-        impl_->lastError = "mihomo 进程启动失败";
+        impl_->lastError = "sing-box 进程启动失败";
         return false;
     }
     // pidfile：GUI 附着 spawn 的内核也能被 CLI（另一进程）经 pidfile 接管/停止。
