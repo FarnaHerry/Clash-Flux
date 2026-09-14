@@ -360,7 +360,8 @@ const std::string kDefaultCoreName = "sing-box";
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
 
                 PlatformControl(
-                    {PlatformCode::CoreService, PlatformCode::CoreTun},
+                    {PlatformCode::Linux, PlatformCode::Windows,
+                     PlatformCode::MacOS},
                     [s, running, serviceInstalled, coreAction, tasks, toast,
                      dialog, clipboard, proxyOverride, tunOverride,
                      textColor = theme.colors.on_surface,
