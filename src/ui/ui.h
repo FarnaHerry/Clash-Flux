@@ -35,6 +35,10 @@ extern "C" void clashflux_android_start_vpn() noexcept;
 extern "C" void clashflux_android_stop_vpn() noexcept;
 inline void AndroidStartVpn() noexcept { clashflux_android_start_vpn(); }
 inline void AndroidStopVpn() noexcept { clashflux_android_stop_vpn(); }
+extern "C" void clashflux_android_request_background_keep_alive() noexcept;
+inline void AndroidRequestBackgroundKeepAlive() noexcept {
+    clashflux_android_request_background_keep_alive();
+}
 extern "C" void clashflux_android_request_ignore_battery() noexcept;
 inline void AndroidRequestIgnoreBattery() noexcept {
     clashflux_android_request_ignore_battery();
@@ -45,9 +49,13 @@ inline bool AndroidIsIgnoringBattery() noexcept {
 }
 extern "C" int clashflux_android_vpn_state() noexcept;
 inline int AndroidVpnState() noexcept { return clashflux_android_vpn_state(); }
+extern "C" const char* clashflux_android_proxy_groups() noexcept;
+extern "C" bool clashflux_android_select_outbound(const char* group,
+                                                    const char* name) noexcept;
 #else
 inline void AndroidStartVpn() noexcept {}
 inline void AndroidStopVpn() noexcept {}
+inline void AndroidRequestBackgroundKeepAlive() noexcept {}
 inline void AndroidRequestIgnoreBattery() noexcept {}
 inline bool AndroidIsIgnoringBattery() noexcept { return false; }
 inline int AndroidVpnState() noexcept { return 0; }
@@ -63,6 +71,27 @@ void ReplaceStateList(huxerui::StateList<T> list, std::vector<T> values) {
         list.PushBack(std::move(value));
     }
 }
+
+// 当前运行内核公开的可切换策略组快照。桌面来自 clash_api，Android 来自
+// libbox CommandClient；UI 只依赖这份跨平台模型，不直接知道平台 API。
+struct ProxyGroupSnapshot {
+    std::string name;
+    std::string type;
+    std::string current;
+    std::vector<std::string> nodes;
+
+    bool operator==(const ProxyGroupSnapshot&) const = default;
+};
+
+std::vector<ProxyGroupSnapshot> ParseProxyGroups(const std::string& body);
+std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
+    const std::vector<ProxyGroupSnapshot>& groups,
+    std::function<void(const std::string&, const std::string&)> on_select);
+
+// 这两个调用均可能触发阻塞 REST，调用方必须经 RunOnTaskThread 执行；Android
+// 的快照/切换由 libbox bridge 提供同名能力。
+std::string ProxyGroupsSnapshot();
+bool SelectProxyLine(const std::string& group, const std::string& name);
 
 // 全项目统一字号阶梯（pt）：控件/正文跟随 SDK 默认 14，不再散落硬编码字面量。
 namespace font_size {

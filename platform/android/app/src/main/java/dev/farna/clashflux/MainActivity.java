@@ -26,7 +26,7 @@ public final class MainActivity extends HuxerUIActivity {
         Log.i(TAG, "Application native library loaded");
     }
 
-    private static MainActivity current;
+    private static volatile MainActivity current;
     private static volatile Context applicationContext;
 
     private static native void nativeInit(String filesDirectory, String nativeLibraryDirectory);
@@ -52,7 +52,11 @@ public final class MainActivity extends HuxerUIActivity {
         // "follow system" theme option.
         nativeSetSystemDark(isSystemDarkMode());
         nativeStartCore();
-        Log.i(TAG, "Android shell initialized; sing-box starts with VPN service");
+        // The core resident service is a real foreground service, not only a
+        // label in the settings page. Android 13+ asks for notification access
+        // before the service is started so the keep-alive state is observable.
+        requestNotificationAction(PENDING_CORE_SERVICE);
+        Log.i(TAG, "Android shell initialized; sing-box waits for VPN consent");
     }
 
     private static boolean isSystemDarkMode() {
@@ -88,7 +92,6 @@ public final class MainActivity extends HuxerUIActivity {
     // ---- VPN（C++ 设置页 VPN 开关经 JNI 调用）----
 
     private static final int REQUEST_NOTIFICATIONS = 4002;
-    private static boolean pendingVpnStart = false;
 
     /** Initializes the native store when no Activity UI ran (boot restore). */
     public static void bootstrapNative(Context context) {
@@ -114,12 +117,21 @@ public final class MainActivity extends HuxerUIActivity {
                 activity.stopService(new Intent(activity, ClashVpnService.class)));
     }
 
+    public static boolean selectOutbound(String group, String name) {
+        return ClashVpnService.selectOutbound(group, name);
+    }
+
+    public static String proxyGroups() {
+        return ClashVpnService.proxyGroups();
+    }
+
     public static boolean isIgnoringBatteryOptimizations() {
         MainActivity activity = current;
-        if (activity == null) return true;
-        PowerManager power = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
-        return power == null
-                || power.isIgnoringBatteryOptimizations(activity.getPackageName());
+        Context context = activity != null ? activity : applicationContext;
+        if (context == null) return false;
+        PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        return power != null
+                && power.isIgnoringBatteryOptimizations(context.getPackageName());
     }
 
     public static void requestIgnoreBatteryOptimizations() {
@@ -128,44 +140,97 @@ public final class MainActivity extends HuxerUIActivity {
         // JNI 可能从 HuxerUI 的渲染线程进入；Activity 跳转必须在 Android
         // 主线程执行，否则部分设备会无提示地忽略这次请求。
         activity.runOnUiThread(() -> {
-            PowerManager power =
-                    (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
-            if (power == null
-                    || power.isIgnoringBatteryOptimizations(activity.getPackageName())) {
-                return;
-            }
-            try {
-                activity.startActivity(new Intent(
-                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                        Uri.parse("package:" + activity.getPackageName())));
-            } catch (ActivityNotFoundException error) {
-                // Some OEM ROMs do not expose the package-specific action;
-                // still open the system battery settings so the user can
-                // grant the exemption manually instead of seeing no effect.
-                try {
-                    activity.startActivity(new Intent(
-                            Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
-                } catch (ActivityNotFoundException fallbackError) {
-                    Log.w(TAG, "Battery optimization settings unavailable",
-                            fallbackError);
-                }
-            }
+            activity.openBatteryOptimizationSettings();
         });
     }
 
-    private void beginVpnStart() {
+    // ---- 后台保活 ----------------------------------------------------------
+
+    public static void requestBackgroundKeepAlive() {
+        MainActivity activity = current;
+        if (activity == null) return;
+        activity.runOnUiThread(() ->
+                activity.requestNotificationAction(PENDING_CORE_SERVICE | PENDING_BATTERY));
+    }
+
+    private static final int PENDING_CORE_SERVICE = 1;
+    private static final int PENDING_VPN = 2;
+    private static final int PENDING_BATTERY = 4;
+    private static int pendingNotificationActions = 0;
+    private static boolean notificationRequestInFlight = false;
+
+    private void requestNotificationAction(int actions) {
+        pendingNotificationActions |= actions;
         // The sticky FGS notification is part of the keep-alive story: ask
         // for the (denied-by-default) notification permission first, then
-        // continue with the VPN consent dialog once the answer is in.
+        // continue with the requested operation once the answer is in.
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(
                 Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
-            pendingVpnStart = true;
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},
-                    REQUEST_NOTIFICATIONS);
+            if (!notificationRequestInFlight) {
+                notificationRequestInFlight = true;
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                        REQUEST_NOTIFICATIONS);
+            }
             return;
         }
-        continueVpnStart();
+        drainNotificationActions();
+    }
+
+    private void drainNotificationActions() {
+        final int actions = pendingNotificationActions;
+        pendingNotificationActions = 0;
+        if ((actions & (PENDING_CORE_SERVICE | PENDING_BATTERY)) != 0) {
+            startCoreService();
+        }
+        if ((actions & PENDING_BATTERY) != 0) {
+            openBatteryOptimizationSettings();
+        }
+        if ((actions & PENDING_VPN) != 0) {
+            continueVpnStart();
+        }
+    }
+
+    private void startCoreService() {
+        try {
+            Intent intent = new Intent(this, CoreService.class);
+            if (Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
+            }
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Unable to start the core keep-alive service", error);
+        }
+    }
+
+    private void openBatteryOptimizationSettings() {
+        PowerManager power =
+                (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (power == null || power.isIgnoringBatteryOptimizations(getPackageName())) {
+            return;
+        }
+        try {
+            startActivity(new Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:" + getPackageName())));
+        } catch (ActivityNotFoundException error) {
+            // Some OEM ROMs do not expose the package-specific action; still
+            // open the generic list so the user has a real system action.
+            try {
+                startActivity(new Intent(
+                        Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            } catch (ActivityNotFoundException fallbackError) {
+                Log.w(TAG, "Battery optimization settings unavailable",
+                        fallbackError);
+            }
+        }
+    }
+
+    // ---- VPN（VpnService.prepare 授权 + 前台服务）--------------------------
+
+    private void beginVpnStart() {
+        requestNotificationAction(PENDING_CORE_SERVICE | PENDING_VPN);
     }
 
     private void continueVpnStart() {
@@ -179,7 +244,12 @@ public final class MainActivity extends HuxerUIActivity {
 
     private void startVpnService() {
         try {
-            startForegroundService(new Intent(this, ClashVpnService.class));
+            Intent intent = new Intent(this, ClashVpnService.class);
+            if (Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
+            }
         } catch (RuntimeException error) {
             Log.e(TAG, "Unable to start the VPN service", error);
         }
@@ -189,9 +259,9 @@ public final class MainActivity extends HuxerUIActivity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions,
                                            int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_NOTIFICATIONS && pendingVpnStart) {
-            pendingVpnStart = false;
-            continueVpnStart();
+        if (requestCode == REQUEST_NOTIFICATIONS) {
+            notificationRequestInFlight = false;
+            drainNotificationActions();
         }
     }
 

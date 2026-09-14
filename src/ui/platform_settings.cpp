@@ -175,7 +175,7 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
             huxerui::Switch(battery_ignored.Get())
                 .OnChanged([battery_ignored, toast](bool on) {
                     if (on) {
-                        AndroidRequestIgnoreBattery();
+                        AndroidRequestBackgroundKeepAlive();
                     } else {
                         toast.Show("请在系统设置中关闭电池优化");
                     }

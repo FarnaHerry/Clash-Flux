@@ -49,15 +49,15 @@ public final class CoreService extends Service {
             manager.createNotificationChannel(channel);
         }
 
-        Notification notification = null;
-        if (Build.VERSION.SDK_INT >= 26) {
-            notification = new Notification.Builder(this, CHANNEL_ID)
-                    .setContentTitle("Clash-Flux")
-                    .setContentText("代理内核运行中")
-                    .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
-                    .setOngoing(true)
-                    .build();
-        }
+        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(this, CHANNEL_ID)
+                : new Notification.Builder(this);
+        Notification notification = builder
+                .setContentTitle("Clash-Flux")
+                .setContentText("代理内核运行中")
+                .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+                .setOngoing(true)
+                .build();
 
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, notification,

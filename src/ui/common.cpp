@@ -9,10 +9,84 @@
 #include "app_resources.h"
 #include "ui.h"
 
+import nlohmann.json;
 import clashflux.config;
 import clashflux.store.core;
 
 namespace clashflux::ui {
+
+std::vector<ProxyGroupSnapshot> ParseProxyGroups(const std::string& body) {
+    std::vector<ProxyGroupSnapshot> groups;
+    const auto json = nlohmann::json::parse(body, nullptr, false);
+    if (!json.is_object() || !json.contains("proxies") ||
+        !json["proxies"].is_object()) {
+        return groups;
+    }
+
+    const auto& proxies = json["proxies"];
+    for (auto it = proxies.begin(); it != proxies.end(); ++it) {
+        const auto& value = it.value();
+        if (!value.is_object() || !value.contains("all") ||
+            !value["all"].is_array()) {
+            continue;
+        }
+        ProxyGroupSnapshot group;
+        group.name = it.key();
+        group.type = value.value("type", "");
+        group.current = value.value("now", "");
+        for (const auto& node : value["all"]) {
+            if (node.is_string()) group.nodes.push_back(node.get<std::string>());
+        }
+        groups.push_back(std::move(group));
+    }
+    return groups;
+}
+
+std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
+    const std::vector<ProxyGroupSnapshot>& groups,
+    std::function<void(const std::string&, const std::string&)> on_select) {
+    std::vector<huxerui::MenuEntry> entries;
+    for (const ProxyGroupSnapshot& group : groups) {
+        std::vector<huxerui::MenuEntry> nodes;
+        for (const std::string& node : group.nodes) {
+            nodes.push_back(huxerui::MenuItem(
+                                node,
+                                [on_select, groupName = group.name, node] {
+                                    on_select(groupName, node);
+                                })
+                                .Checked(node == group.current));
+        }
+        if (nodes.empty()) {
+            nodes.push_back(
+                huxerui::MenuItem("暂无可切换线路", [] {}).Enabled(false));
+        }
+        entries.push_back(
+            huxerui::MenuItem(group.name, std::move(nodes)));
+    }
+    if (entries.empty()) {
+        entries.push_back(
+            huxerui::MenuItem("暂无可切换线路", [] {}).Enabled(false));
+    }
+    return entries;
+}
+
+std::string ProxyGroupsSnapshot() {
+#if defined(__ANDROID__)
+    const char* body = clashflux_android_proxy_groups();
+    return body == nullptr ? std::string{} : std::string{body};
+#else
+    const auto result = store::coreStore().api().proxies();
+    return result.ok ? result.body : std::string{};
+#endif
+}
+
+bool SelectProxyLine(const std::string& group, const std::string& name) {
+#if defined(__ANDROID__)
+    return clashflux_android_select_outbound(group.c_str(), name.c_str());
+#else
+    return store::coreStore().api().selectProxy(group, name).ok;
+#endif
+}
 
 [[huxerui::composable]] huxerui::View SettingRow(const std::string& label,
                                                  const std::string& hint,

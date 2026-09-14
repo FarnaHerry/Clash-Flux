@@ -201,7 +201,10 @@ extern "C" void clashflux_android_start_vpn() noexcept {
     std::lock_guard lock(g_mutex);
     bool attached = false;
     JNIEnv* environment = current_environment(attached);
-    if (environment == nullptr || g_activity_class == nullptr) return;
+    if (environment == nullptr || g_activity_class == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return;
+    }
     if (jmethodID method = environment->GetStaticMethodID(
             g_activity_class, "startVpn", "()V")) {
         environment->CallStaticVoidMethod(g_activity_class, method);
@@ -214,9 +217,29 @@ extern "C" void clashflux_android_stop_vpn() noexcept {
     std::lock_guard lock(g_mutex);
     bool attached = false;
     JNIEnv* environment = current_environment(attached);
-    if (environment == nullptr || g_activity_class == nullptr) return;
+    if (environment == nullptr || g_activity_class == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return;
+    }
     if (jmethodID method = environment->GetStaticMethodID(
             g_activity_class, "stopVpn", "()V")) {
+        environment->CallStaticVoidMethod(g_activity_class, method);
+        if (environment->ExceptionCheck()) environment->ExceptionClear();
+    }
+    if (attached) g_vm->DetachCurrentThread();
+}
+
+// 后台保活由 Activity 统一串接通知权限、前台服务和电池优化豁免页面。
+extern "C" void clashflux_android_request_background_keep_alive() noexcept {
+    std::lock_guard lock(g_mutex);
+    bool attached = false;
+    JNIEnv* environment = current_environment(attached);
+    if (environment == nullptr || g_activity_class == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return;
+    }
+    if (jmethodID method = environment->GetStaticMethodID(
+            g_activity_class, "requestBackgroundKeepAlive", "()V")) {
         environment->CallStaticVoidMethod(g_activity_class, method);
         if (environment->ExceptionCheck()) environment->ExceptionClear();
     }
@@ -257,6 +280,73 @@ extern "C" bool clashflux_android_is_ignoring_battery() noexcept {
     }
     if (attached) g_vm->DetachCurrentThread();
     return result == JNI_TRUE;
+}
+
+extern "C" const char* clashflux_android_proxy_groups() noexcept {
+    thread_local std::string result;
+    result.clear();
+
+    std::lock_guard lock(g_mutex);
+    bool attached = false;
+    JNIEnv* environment = current_environment(attached);
+    if (environment == nullptr || g_activity_class == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return result.c_str();
+    }
+    const jmethodID method = environment->GetStaticMethodID(
+        g_activity_class, "proxyGroups", "()Ljava/lang/String;");
+    if (method != nullptr) {
+        auto* value = static_cast<jstring>(
+            environment->CallStaticObjectMethod(g_activity_class, method));
+        if (!environment->ExceptionCheck() && value != nullptr) {
+            if (const char* chars = environment->GetStringUTFChars(value, nullptr)) {
+                result = chars;
+                environment->ReleaseStringUTFChars(value, chars);
+            }
+            environment->DeleteLocalRef(value);
+        } else if (environment->ExceptionCheck()) {
+            environment->ExceptionClear();
+        }
+    }
+    if (attached) g_vm->DetachCurrentThread();
+    return result.c_str();
+}
+
+extern "C" bool clashflux_android_select_outbound(const char* group,
+                                                    const char* name) noexcept {
+    if (group == nullptr || name == nullptr || *group == '\0' || *name == '\0') {
+        return false;
+    }
+
+    std::lock_guard lock(g_mutex);
+    bool attached = false;
+    JNIEnv* environment = current_environment(attached);
+    if (environment == nullptr || g_activity_class == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    const jmethodID method = environment->GetStaticMethodID(
+        g_activity_class, "selectOutbound", "(Ljava/lang/String;Ljava/lang/String;)Z");
+    if (method == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    jstring groupValue = environment->NewStringUTF(group);
+    jstring nameValue = environment->NewStringUTF(name);
+    if (groupValue == nullptr || nameValue == nullptr) {
+        if (groupValue != nullptr) environment->DeleteLocalRef(groupValue);
+        if (nameValue != nullptr) environment->DeleteLocalRef(nameValue);
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    const jboolean ok = environment->CallStaticBooleanMethod(
+        g_activity_class, method, groupValue, nameValue);
+    environment->DeleteLocalRef(groupValue);
+    environment->DeleteLocalRef(nameValue);
+    const bool failed = environment->ExceptionCheck();
+    if (failed) environment->ExceptionClear();
+    if (attached) g_vm->DetachCurrentThread();
+    return !failed && ok == JNI_TRUE;
 }
 
 extern "C" void clashflux_android_open_url(const char* url) noexcept {
