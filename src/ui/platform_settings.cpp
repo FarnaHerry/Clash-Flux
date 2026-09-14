@@ -192,6 +192,10 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
 }
 
 [[huxerui::composable]] huxerui::View DesktopSettingsSection() {
+    auto trayEnabled = huxerui::UseState(
+        store::coreStore().setting("tray.enabled", "true") == "true");
+    auto startMinimized = huxerui::UseState(
+        store::coreStore().setting("tray.start_minimized", "false") == "true");
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
     auto tasks = huxerui::UseTaskScope();
@@ -342,9 +346,9 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
             SectionTitle("托盘"),
             SettingRow(
                 "启用托盘图标", "关闭后托盘不可用，关闭窗口即退出",
-                huxerui::Switch(store::coreStore().setting("tray.enabled", "true") ==
-                                "true")
-                    .OnChanged([](bool on) {
+                huxerui::Switch(trayEnabled.Get())
+                    .OnChanged([trayEnabled](bool on) {
+                        trayEnabled = on;
                         store::coreStore().setSetting("tray.enabled",
                                                        on ? "true" : "false");
                     })),
@@ -367,9 +371,9 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
                     })),
             SettingRow(
                 "启动时隐藏到托盘", "下次启动不显示主窗口，经托盘唤出",
-                huxerui::Switch(store::coreStore().setting("tray.start_minimized",
-                                                            "false") == "true")
-                    .OnChanged([](bool on) {
+                huxerui::Switch(startMinimized.Get())
+                    .OnChanged([startMinimized](bool on) {
+                        startMinimized = on;
                         store::coreStore().setSetting(
                             "tray.start_minimized", on ? "true" : "false");
                     })),

@@ -190,6 +190,12 @@ huxerui::View PageScaffold(const std::string& title, huxerui::View actions,
 // 卡片容器（二级岛）：raised 表面 + 8pt 圆角 + 内边距。
 huxerui::View Card(huxerui::View content);
 
+// 日志、连接、规则等信息列表的统一行容器。内容由页面自己组织，容器统一
+// 表面、内边距、圆角和裁剪，避免桌面/紧凑视口各自复制一套视觉规则。
+huxerui::View UnifiedListRow(huxerui::View content,
+                             const huxerui::ThemeSpec& theme,
+                             std::string key, bool compact = false);
+
 // 通用设置排版部件；这里不做任何平台判断。
 huxerui::View SettingRow(const std::string& label, const std::string& hint,
                          huxerui::View control);

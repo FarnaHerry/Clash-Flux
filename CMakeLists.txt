@@ -277,6 +277,7 @@ set(HUXERUI_LIBRARY_GRAPH_OUTPUT
 set(CLASHFLUX_MODULE_UNITS
     # 基础设施
     src/config.cppm
+    src/app_instance.cppm
     src/utils.cppm
     src/db.cppm
     src/vpn.cppm

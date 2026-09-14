@@ -7,10 +7,12 @@
 #include <vector>
 
 import clashflux.cli;
+import clashflux.instance;
 
 int main(int argc, char** argv) {
     if (argc > 1) {
         return cli::run(std::vector<std::string>(argv + 1, argv + argc));
     }
+    if (!clashflux::instance::acquireOrActivate()) return 0;
     return huxerui::RunApplication();
 }

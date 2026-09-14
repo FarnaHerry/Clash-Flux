@@ -66,6 +66,7 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 | 模块 | 文件 | 职责 |
 |------|------|------|
 | `clashflux.config` | `src/config.cppm` | 数据目录（~/.local/share/clash-flux）/ sing-box 二进制解析 / 控制器端点（127.0.0.1:9097）/ secret 生成 / 深色检测 |
+| `clashflux.instance` | `src/app_instance.cppm` | 桌面 GUI 单实例锁与二次启动唤醒（Linux/macOS 文件锁+信号，Windows Mutex+Event；CLI 不拦截） |
 | `clashflux.utils` | `src/utils.cppm` | 纯 string/number 帮助函数 + percentEncode / appendQuery |
 | `clashflux.db` | `src/db.cppm/.cpp` | SQLiteCpp：profiles（订阅）/ settings（KV）两表 |
 | `clashflux.api` | `src/api.cppm/.cpp` | sing-box clash_api REST 客户端（curl，同步阻塞、每调用独立 handle）：version/configs/patchConfigs(mode)/proxies/selectProxy/proxyDelay/groupDelay(fan-out 并发逐节点)/connections/订阅下载 |
@@ -81,7 +82,7 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 | `clashflux.store.vpn` | `src/store/vpn.cppm` | PPTP/OpenVPN 连接生命周期 + 全局 `VpnPolicy` 持久化；`ProfileConnectionId` 是跨引擎稳定连接引用，原生连接建连时将 IPv4 全局规则交给对应隧道接口 |
 | `clashflux.ui.*`（普通 C++） | `src/ui/*.cpp` | app（通用壳 + `platform_app.cpp` 平台应用壳）/ common（岛屿原语 IslandSurface/DialogCard/页面骨架/卡片/状态胶囊）/ home/profiles/proxies/rules/connections/logs/settings 七页（平台设置在 `platform_settings.cpp`）/ task_bridge.h（协程桥） |
 | `src/app.cpp` | 普通 TU | `Application{AppRoot, AppOptions}`（Custom chrome，标题栏 24pt） |
-| 平台入口 | `platform/{linux,macos,windows}/main.cpp` | 无参 → `huxerui::RunApplication()`；有参 → `cli::run`（同一二进制即 CLI） |
+| 平台入口 | `platform/{linux,macos,windows}/main.cpp` | 无参 → 获取单实例后 `huxerui::RunApplication()`；有参 → `cli::run`（同一二进制即 CLI） |
 
 ## 多平台 / CI
 
@@ -151,6 +152,13 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
     平台分支；新增 Android UI 源文件必须同步加入 `cmake/AndroidLegacy.cmake`
     的 legacy 源列表。核心运行时若确实需要 `PlatformKind` 等领域模型可以保留，
     但不得把领域运行时枚举重新用作 UI 控件能力分发。
+12. **单实例与列表一致性**：桌面 GUI 入口必须先经过
+    `clashflux::instance::acquireOrActivate()`；第二次启动只唤醒已有窗口并退出，CLI
+    参数不受单实例锁影响。Android 主 Activity 使用 `singleTask` 保证回到已有任务。
+    窗口的“启动时隐藏到托盘”只能绑定一次性生命周期，不得
+    在组合函数每次重组时直接 `Hide()`。日志、连接、规则等信息列表统一通过
+    `UnifiedListRow` 管理表面/间距/圆角；紧凑视口禁止复用桌面固定列宽。全量推送列表
+    页面切换后应读取最近快照并按帧去重，不能只依赖“新事件”才能恢复显示。
 
 ## sing-box 交互要点
 
@@ -208,4 +216,4 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
   转换器（SingBoxConfig.java + snakeyaml）。
 - ⬜ 待做：RULE-SET/rule-providers 转换（订阅规则集保真）、流量图表增强、订阅
   合并策略增强（规则覆写）、全局策略对多实例的运行时编排、deep link
-  （clash://install-config）、单实例、开机自启、规则 provider 管理、连接详情。
+  （clash://install-config）、开机自启、规则 provider 管理、连接详情。

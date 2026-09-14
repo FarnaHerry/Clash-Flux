@@ -121,15 +121,13 @@ int levelRank(const std::string& level) {
                        }
                        const std::size_t sourceIndex = visible[index];
                        const std::string& text = entries[sourceIndex].text;
-                       return huxerui::Text(text)
-                           .Style(huxerui::TextStyle{
+                       return UnifiedListRow(
+                           huxerui::Text(text).Style(huxerui::TextStyle{
                                huxerui::Font::Monospace(font_size::kMonoBody),
-                               theme.colors.on_surface})
-                           .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(
-                                     4.0F, 1.0F)))
-                           .Key(static_cast<std::int64_t>(sourceIndex));
+                               theme.colors.on_surface}),
+                           theme, std::format("log-{}", sourceIndex), compact);
                    })
-                   .EstimatedItemExtent(22.0F)
+                   .EstimatedItemExtent(compact ? 38.0F : 34.0F)
                    .Controller(scroll)
                    .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     }
