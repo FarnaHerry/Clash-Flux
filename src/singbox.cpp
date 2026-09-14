@@ -136,7 +136,8 @@ bool appendTransport(Context& ctx, const YAML::Node& item, nlohmann::json& out,
     const std::string network = lowerCopy(ytext(item, "network"));
     if (network.empty() || network == "tcp") return true;
     if (network == "ws") {
-        nlohmann::json transport = {{"type", "websocket"}};
+        // sing-box 的类型名是 "ws"（"websocket" 会直接解码失败）。
+        nlohmann::json transport = {{"type", "ws"}};
         if (const YAML::Node opts = item["ws-opts"]; opts && opts.IsMap()) {
             if (const std::string path = ytext(opts, "path"); !path.empty()) {
                 transport["path"] = path;
@@ -429,7 +430,10 @@ void ensureGeoipRuleSet(Context& ctx, std::string country) {
         {"type", "remote"},
         {"tag", tag},
         {"format", "binary"},
-        {"url", std::format("https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-{}.srs", country)},
+        // meta-rules-dat（mihomo geodata 同源）：国家码与 telegram/netflix/
+        // cloudflare 等类别全覆盖；SagerNet/sing-geoip 只有国家码，GEOIP,
+        // TELEGRAM 这类别会 404 并在启动期 FATAL。
+        {"url", std::format("https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/{}.srs", country)},
         {"update_interval", "24h"},
     });
 }
