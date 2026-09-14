@@ -1,8 +1,9 @@
 # Clash-Flux
 
-Clash-Flux 是一个使用 C++23 和 HuxerUI 构建的桌面代理客户端，复刻 Clash Verge Rev
-的核心体验：以 mihomo（Clash.Meta）为内核，全程经其 external-controller 的
-REST API 与 WebSocket 推送流交互，UI 与内核接入层全部由 C++ 实现。
+Clash-Flux 是一个使用 C++23 和 HuxerUI 构建的全平台代理客户端，复刻 Clash Verge Rev
+的核心体验：以 sing-box 为内核（桌面 spawn 官方二进制、Android 进程内 libbox），
+全程经其 clash_api 的 REST API 与 WebSocket 推送流交互，UI 与内核接入层全部由
+C++ 实现。订阅沿用 Clash YAML 格式，由内置编译器转换为 sing-box 配置。
 
 ## 功能
 
@@ -14,16 +15,19 @@ REST API 与 WebSocket 推送流交互，UI 与内核接入层全部由 C++ 实�
 - 原生 VPN 订阅：Linux 支持 PPTP 和 OpenVPN CLI（粘贴 `.ovpn` 文本），可多选
   同时连接；内网 CIDR 由统一 root 服务安装到对应隧道
 - 内核控制：自动启停、出站模式（规则/全局/直连）、混合端口、局域网连接、日志级别
-- 系统代理（KDE / GNOME）与 TUN 模式开关
-- 服务模式（可选）：统一 root systemd 服务托管 mihomo、Linux PPTP 和 OpenVPN，
+- 订阅转换：Clash YAML → sing-box JSON 编译器（ss/vmess/vless/trojan/hysteria2/
+  tuic 等协议、策略组、域名/IP/GEOIP 规则；不支持的条目显式提示而非静默丢弃；
+  原生 sing-box JSON 订阅直通）
+- 系统代理（KDE / GNOME）与 TUN 模式开关（sing-box TUN，切换即重启内核生效）
+- 服务模式（可选）：统一 root systemd 服务托管 sing-box、Linux PPTP 和 OpenVPN，
   TUN、拨号和原生路由无需每次授权；
   未安装时回落「接管外部实例 → 直接 spawn」
 - 完整 CLI：同一二进制带子命令（core / mode / tun / proxy / profile / service），
   无参数启动进入 GUI
 - 浅色/深色主题（跟随系统）、岛屿风界面、自定义窗口标题栏、系统托盘、
   窄窗口响应式布局
-- Android：按设备 ABI 内置 mihomo Android 内核，使用应用私有目录保存数据、
-  支持 Android Activity 生命周期与外部链接；VPN/TUN 接入尚未提供
+- Android：进程内 sing-box libbox（与桌面内核同版本）驱动 VpnService TUN，
+  使用应用私有目录保存数据、支持 Activity 生命周期、开机自启与外部链接
 
 项目仍在开发中，界面和数据结构可能继续调整。
 
@@ -34,8 +38,9 @@ REST API 与 WebSocket 推送流交互，UI 与内核接入层全部由 C++ 实�
 - Ninja（推荐）
 - Linux 源码构建 HuxerUI 需要 GTK ≥4.14、libepoxy ≥1.5 与 libsoup ≥3.0 开发包；
   缺失时自动回落已安装/离线 0.3.0 SDK
-- mihomo 内核由项目自带：configure 期自动下载官方 release（linux x86_64，
-  哈希钉死），无需手动放置；`-DCLASHFLUX_BUNDLE_MIHOMO=OFF` 可关闭
+- sing-box 内核由项目自带：configure 期自动下载官方 release（按本机
+  平台/arch，哈希钉死，与 Android libbox 同为 1.14.0），无需手动放置；
+  `-DCLASHFLUX_BUNDLE_SINGBOX=OFF` 可关闭
 
 Fedora：
 
@@ -88,9 +93,8 @@ export HUXERUI_HOME=/path/to/huxerui-sdk
 huxerui build android --profile release
 ```
 
-Android 使用兼容编译路径，不要求 NDK 支持 C++ modules；APK 同时包含
-arm64-v8a 与 x86_64 的 mihomo 内核，首次启动时按设备 ABI 解包到应用私有目录。
-当前版本可启动 mihomo 的本地代理，但 Android VPN/TUN 接入尚未提供。
+Android 使用兼容编译路径，不要求 NDK 支持 C++ modules；数据面是源码构建的
+sing-box libbox AAR（arm64-v8a，与桌面内核同版本），经 VpnService 提供 TUN。
 
 GitHub Release 使用稳定的 Android 发布密钥签名。CI 需要配置
 `CLASHFLUX_ANDROID_KEYSTORE_BASE64`、`CLASHFLUX_ANDROID_KEYSTORE_PASSWORD`、
@@ -112,7 +116,7 @@ clash-flux service install|uninstall|status|run
 ```
 
 `service install` 需 root（GUI 设置页经 pkexec 提权调用）：安装 systemd 单元
-`clash-flux.service`，此后 mihomo、Linux PPTP 和 OpenVPN 都由同一个 root daemon 托管。
+`clash-flux.service`，此后 sing-box、Linux PPTP 和 OpenVPN 都由同一个 root daemon 托管。
 更新了二进制或新增了服务协议后，需要重新执行一次 `sudo clash-flux service install`
 让 systemd 使用新版本 daemon；仅替换 GUI 二进制不会更新已运行的 root 服务。
 GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议请求，
@@ -132,10 +136,10 @@ GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议�
 | build-windows-arm64 | windows-11-arm + vcpkg OpenSSL | 实验性 |
 | build-macos-arm64 | macos-15 + brew LLVM | 实验性 |
 | build-macos-x86_64 | macos-13 + brew LLVM | 实验性 |
-| build-android | HuxerUI CLI 打 APK（GUI/native shell + mihomo 内核） | 实验性 |
+| build-android | HuxerUI CLI 打 APK（GUI/native shell + sing-box libbox） | 实验性 |
 
-覆盖面原则：mihomo 内核发布什么桌面平台/arch，就构建什么目标（内核资产
-SHA256 钉在 `cmake/mihomo_bundle.cmake`，configure 期自动下载）。桌面 job
+覆盖面原则：sing-box 内核发布什么桌面平台/arch，就构建什么目标（内核资产
+SHA256 钉在 `cmake/singbox_bundle.cmake`，configure 期自动下载）。桌面 job
 统一走 HuxerUI 源码通道（钉 commit clone 上游）。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
