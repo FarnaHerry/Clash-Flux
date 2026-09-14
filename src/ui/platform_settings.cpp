@@ -182,7 +182,7 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
                     battery_ignored = AndroidIsIgnoringBattery();
                 })),
     }.With(huxerui::Spacing(10.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
 }
 
 #else
