@@ -33,24 +33,27 @@ public final class MainActivity extends HuxerUIActivity {
     private static native void nativeSetSystemDark(boolean dark);
     private static native void nativeStartCore();
     private static native void nativeVpnStartCancelled();
+    private static native void nativeVpnStartFailed(String message);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         Log.i(TAG, "MainActivity.onCreate entered");
         current = this;
         applicationContext = getApplicationContext();
+        // Initialize the native bridge before HuxerUI composes the first frame.
+        // Android settings and VPN callbacks can be queried during composition;
+        // waiting until after super.onCreate leaves that first frame without a
+        // valid Activity class and data-directory bridge.
+        nativeInit(getFilesDir().getAbsolutePath(), getApplicationInfo().nativeLibraryDir);
+        Log.i(TAG, "Native bridge initialized");
+        // Make the system-theme value available to the first native frame too.
+        nativeSetSystemDark(isSystemDarkMode());
         Log.i(TAG, "Calling HuxerUIActivity.onCreate");
         super.onCreate(savedInstanceState);
         Log.i(TAG, "HuxerUIActivity.onCreate returned");
-        // Pass the private files directory before starting the native worker so
-        // the bundled engine does not depend on HuxerUI's first composable frame
-        // to discover its data directory.
-        nativeInit(getFilesDir().getAbsolutePath(), getApplicationInfo().nativeLibraryDir);
-        Log.i(TAG, "Native bridge initialized");
         // System dark/light toggles recreate the Activity (uiMode is not in
         // configChanges), so this per-onCreate report is always fresh for the
         // "follow system" theme option.
-        nativeSetSystemDark(isSystemDarkMode());
         nativeStartCore();
         // The core resident service is a real foreground service, not only a
         // label in the settings page. Android 13+ asks for notification access
@@ -214,16 +217,30 @@ public final class MainActivity extends HuxerUIActivity {
             startActivity(new Intent(
                     Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                     Uri.parse("package:" + getPackageName())));
-        } catch (ActivityNotFoundException error) {
+            return;
+        } catch (ActivityNotFoundException | SecurityException error) {
             // Some OEM ROMs do not expose the package-specific action; still
             // open the generic list so the user has a real system action.
             try {
                 startActivity(new Intent(
                         Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
-            } catch (ActivityNotFoundException fallbackError) {
-                Log.w(TAG, "Battery optimization settings unavailable",
+                return;
+            } catch (ActivityNotFoundException | SecurityException fallbackError) {
+                // A few ROMs block both battery-optimization intents. Opening
+                // the app details page is still actionable and avoids a silent
+                // no-op when the button is pressed.
+                try {
+                    startActivity(new Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:" + getPackageName())));
+                } catch (ActivityNotFoundException | SecurityException detailsError) {
+                    Log.w(TAG, "Battery optimization settings unavailable",
+                            detailsError);
+                }
+                Log.w(TAG, "Battery optimization action unavailable",
                         fallbackError);
             }
+            Log.w(TAG, "Battery optimization request unavailable", error);
         }
     }
 
@@ -234,11 +251,15 @@ public final class MainActivity extends HuxerUIActivity {
     }
 
     private void continueVpnStart() {
-        Intent consent = VpnService.prepare(this);
-        if (consent != null) {
-            startActivityForResult(consent, REQUEST_VPN_CONSENT);
-        } else {
-            startVpnService();
+        try {
+            Intent consent = VpnService.prepare(this);
+            if (consent != null) {
+                startActivityForResult(consent, REQUEST_VPN_CONSENT);
+            } else {
+                startVpnService();
+            }
+        } catch (RuntimeException error) {
+            reportVpnStartFailure("无法请求系统 VPN 授权：" + error.getMessage(), error);
         }
     }
 
@@ -251,7 +272,16 @@ public final class MainActivity extends HuxerUIActivity {
                 startService(intent);
             }
         } catch (RuntimeException error) {
-            Log.e(TAG, "Unable to start the VPN service", error);
+            reportVpnStartFailure("无法启动 VPN 服务：" + error.getMessage(), error);
+        }
+    }
+
+    private void reportVpnStartFailure(String message, RuntimeException error) {
+        Log.e(TAG, message, error);
+        try {
+            nativeVpnStartFailed(message);
+        } catch (RuntimeException bridgeError) {
+            Log.e(TAG, "Unable to report VPN startup failure", bridgeError);
         }
     }
 

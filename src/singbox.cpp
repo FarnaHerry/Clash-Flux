@@ -558,18 +558,23 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
         });
     }
     if (opt.tunInbound && !hasTun) {
-        config["inbounds"].push_back({
+        nlohmann::json tun = {
             {"type", "tun"},
             {"tag", "tun-in"},
             {"address", nlohmann::json::array({"172.19.0.1/30"})},
             {"mtu", 1400},
             {"auto_route", true},
             {"strict_route", opt.tunStrictRoute},
-            // The controller and mixed inbound are local services. Keep the
-            // loopback range outside the auto route so strict TUN mode cannot
-            // feed local control traffic back into the proxy data plane.
-            {"route_exclude_address", nlohmann::json::array({"127.0.0.0/8"})},
-        });
+        };
+#if !defined(__ANDROID__)
+        // Desktop strict TUN must keep the local controller/mixed inbound out
+        // of the data plane. Android's VpnService.Builder has its own route
+        // constraints; the platform protect(fd) callback already keeps
+        // sing-box's physical-network sockets outside the tunnel.
+        tun["route_exclude_address"] =
+            nlohmann::json::array({"127.0.0.0/8"});
+#endif
+        config["inbounds"].push_back(std::move(tun));
     }
 
     if (!config.contains("route") || !config["route"].is_object()) {

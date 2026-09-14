@@ -344,12 +344,37 @@ public:
                                              : compiled.error));
                 return;
             }
-            std::ofstream out(configFile, std::ios::binary | std::ios::trunc);
+            // Android's VpnService waits for this file from another thread.
+            // Never expose a partially-written JSON document to libbox; an
+            // atomic rename also prevents a stale config from being selected
+            // while a new subscription is being compiled.
+#if defined(__ANDROID__)
+            std::error_code staleConfigError;
+            std::filesystem::remove(configFile, staleConfigError);
+#endif
+            const std::filesystem::path tempConfig =
+                configFile.string() + ".tmp";
+            std::ofstream out(tempConfig, std::ios::binary | std::ios::trunc);
             if (!out) {
                 fail("无法写入运行时配置: " + configFile.string());
                 return;
             }
             out << compiled.json;
+            out.flush();
+            out.close();
+#ifdef _WIN32
+            // std::filesystem::rename does not replace an existing target on
+            // Windows. Remove only this app-owned runtime file after the new
+            // contents are safely closed, then commit the replacement.
+            std::error_code replaceError;
+            std::filesystem::remove(configFile, replaceError);
+#endif
+            std::error_code renameError;
+            std::filesystem::rename(tempConfig, configFile, renameError);
+            if (renameError) {
+                fail("无法提交运行时配置: " + renameError.message());
+                return;
+            }
             std::lock_guard lock(mutex_);
             snap_.warnings = std::move(compiled.warnings);
         }

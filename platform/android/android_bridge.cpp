@@ -103,13 +103,11 @@ Java_dev_farna_clashflux_MainActivity_nativeStartCore(JNIEnv*, jclass) {
             try {
                 auto& core = store::coreStore();
                 core.init();
-                core.startCore(store::profilesStore().selectedYaml());
-                const auto snapshot = core.snapshot();
-                log_android(("Android embedded core startup state=" +
-                             std::to_string(static_cast<int>(snapshot.state)) +
-                             " error=" + snapshot.lastError)
-                                .c_str(),
-                            snapshot.state == core::CoreState::Failed);
+                // Android's real data plane is created only after the user
+                // grants VpnService consent. Preparing a config here makes
+                // the UI race that service and leaves the native state stuck
+                // at Stopped, so startup only initializes the store/monitor.
+                log_android("Android native store initialized; waiting for VPN consent");
 
                 // Keep the process state fresh even when the first HuxerUI
                 // frame is delayed. UI pages independently poll snapshots and
@@ -139,10 +137,34 @@ Java_dev_farna_clashflux_MainActivity_nativeSetSystemDark(JNIEnv*, jclass,
 extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_MainActivity_nativeVpnStartCancelled(JNIEnv*, jclass) {
     // VpnService.prepare 的授权框被取消时，不能留下一个看似已启用的偏好。
+    g_vpn_state.store(0);
     try {
+        store::coreStore().setAndroidRuntimeState(0, "");
         store::coreStore().setSetting("core.tun_enabled", "false");
     } catch (...) {
         log_android("Failed to roll back VPN setting after declined consent", true);
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_farna_clashflux_MainActivity_nativeVpnStartFailed(JNIEnv* environment,
+                                                            jclass,
+                                                            jstring message) {
+    g_vpn_state.store(3);
+    std::string text = "Android VPN 启动失败";
+    if (environment != nullptr && message != nullptr) {
+        if (const char* value = environment->GetStringUTFChars(message, nullptr)) {
+            text = value;
+            environment->ReleaseStringUTFChars(message, value);
+        }
+    }
+    log_android(text.c_str(), true);
+    try {
+        store::coreStore().stopAndroidApiStreams();
+        store::coreStore().setAndroidRuntimeState(3, text);
+        store::coreStore().setSetting("core.tun_enabled", "false");
+    } catch (...) {
+        log_android("Failed to persist Android VPN startup failure", true);
     }
 }
 
@@ -251,7 +273,10 @@ extern "C" void clashflux_android_request_ignore_battery() noexcept {
     std::lock_guard lock(g_mutex);
     bool attached = false;
     JNIEnv* environment = current_environment(attached);
-    if (environment == nullptr || g_activity_class == nullptr) return;
+    if (environment == nullptr || g_activity_class == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return;
+    }
     if (jmethodID method = environment->GetStaticMethodID(
             g_activity_class, "requestIgnoreBatteryOptimizations", "()V")) {
         environment->CallStaticVoidMethod(g_activity_class, method);
