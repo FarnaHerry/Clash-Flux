@@ -276,13 +276,18 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
         }
         // 带宽字段 "30 Mbps" / "30" 之类取前导数字；无效则省略（内核自适应）。
         const auto leadingNumber = [](std::string_view text) -> std::optional<int> {
-            text = trimCopy(text);
+            // 拷贝到稳定存储：trimCopy 返回的临时 string 赋回 string_view 会
+            // 悬垂（libstdc++ 的 SSO 缓冲恰好能读到，libc++ 下即出错）。
+            const std::string trimmed = trimCopy(text);
+            std::string_view digits{trimmed};
             std::size_t end = 0;
-            while (end < text.size() && text[end] >= '0' && text[end] <= '9') ++end;
+            while (end < digits.size() && digits[end] >= '0' && digits[end] <= '9') {
+                ++end;
+            }
             if (end == 0) return std::nullopt;
             int parsed = 0;
             const auto [ptr, ec] =
-                std::from_chars(text.data(), text.data() + end, parsed);
+                std::from_chars(digits.data(), digits.data() + end, parsed);
             if (ec != std::errc()) return std::nullopt;
             return parsed;
         };
