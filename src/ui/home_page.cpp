@@ -42,11 +42,20 @@ struct HomeState {
     std::int64_t totalUp = 0;
     std::int64_t totalDown = 0;
     store::CoreSnapshot core;
+    std::int64_t profileId = 0;
     std::string profileName;
     std::string profileUpdated;
+    std::vector<ProxyGroupSnapshot> proxyGroups;
 
     bool operator==(const HomeState&) const = default;
 };
+
+std::string currentProxyLine(const std::vector<ProxyGroupSnapshot>& groups) {
+    for (const ProxyGroupSnapshot& group : groups) {
+        if (!group.current.empty()) return group.name + " · " + group.current;
+    }
+    return "暂无当前线路";
+}
 
 // Kept outside the composable body: HuxerUI's code generator deliberately
 // rejects conditional compilation within a composable function.
@@ -263,6 +272,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
+    auto menu = huxerui::UseMenu();
     auto state = huxerui::UseState<HomeState>({});
     // 乐观开关：点击立即翻转显示，后台完成后清除覆盖（真实状态接管），
     // 失败自动回弹并提示。覆盖值非空即“进行中”，期间忽略再次点击，
@@ -278,19 +288,36 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                     updateRuntime(s, core);
 
                     if (const auto p = store::profilesStore().selected()) {
+                        s.profileId = p->id;
                         s.profileName = p->name;
                         s.profileUpdated = p->updatedAt > 0
                                                ? "更新于 " + formatTime(p->updatedAt)
                                                : "未拉取";
                         if (!p->error.empty()) s.profileUpdated = "拉取失败";
                     } else {
+                        s.profileId = 0;
                         s.profileName = "未启用订阅";
                         s.profileUpdated = "";
+                        s.proxyGroups.clear();
                     }
 
                     state = s;
                     return true;
                 });
+            });
+            tasks.Launch([state]() -> huxerui::Task<void> {
+                for (;;) {
+                    const std::string body = co_await RunOnTaskThread([] {
+                        return store::coreStore().snapshot().state ==
+                                       core::CoreState::Running
+                                   ? ProxyGroupsSnapshot()
+                                   : std::string{};
+                    });
+                    HomeState s = state.Get();
+                    s.proxyGroups = ParseProxyGroups(body);
+                    state = s;
+                    co_await huxerui::Delay(std::chrono::duration<double>{2.0});
+                }
             });
             return [] {};
         },
@@ -363,6 +390,28 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
             }),
     }.With(huxerui::Spacing(10.0F)))
                                  .With(huxerui::Grow(1.0F));
+
+    const auto selectLine = [tasks, toast, state](const std::string& group,
+                                                   const std::string& name) {
+        tasks.Launch([toast, state, group, name]() -> huxerui::Task<void> {
+            const bool ok = co_await RunOnTaskThread(
+                [group, name] { return SelectProxyLine(group, name); });
+            if (!ok) {
+                const std::string error = store::coreStore().snapshot().lastError;
+                toast.Show(error.empty() ? "线路切换失败" : error);
+                co_return;
+            }
+            HomeState next = state.Get();
+            for (ProxyGroupSnapshot& proxyGroup : next.proxyGroups) {
+                if (proxyGroup.name == group) proxyGroup.current = name;
+            }
+            state = next;
+        });
+    };
+    const auto showLineMenu = [menu, state, selectLine] {
+        menu.Show(BuildProxyLineMenu(state.Get().proxyGroups, selectLine));
+    };
+    const std::string lineText = currentProxyLine(s.proxyGroups);
     huxerui::View profileCard = Card(huxerui::Column {
         huxerui::Text("当前订阅").Style(huxerui::TextStyle{
             huxerui::Font::System(font_size::kBody)
@@ -372,6 +421,20 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
             .Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kBody),
                 theme.colors.on_surface}),
+        s.profileId != 0
+            ? huxerui::View{huxerui::Row {
+                  huxerui::Text("当前线路：" + lineText)
+                      .Style(huxerui::TextStyle{
+                          huxerui::Font::System(font_size::kCaption),
+                          theme.colors.on_surface_variant})
+                      .With(huxerui::Grow(1.0F)),
+                  huxerui::Button("切换线路")
+                      .With(menu.Anchor())
+                      .OnClick(showLineMenu),
+              }.With(huxerui::Spacing(8.0F),
+                     huxerui::CrossAlign(
+                         huxerui::CrossAxisAlignment::Center))}
+            : huxerui::View{huxerui::Row{}},
         s.profileUpdated.empty()
             ? huxerui::View{huxerui::Row{}}
             : huxerui::View{

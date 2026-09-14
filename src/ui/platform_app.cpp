@@ -19,6 +19,7 @@
 
 import clashflux.config;
 import clashflux.core;
+import clashflux.db;
 import clashflux.service;
 import clashflux.store.core;
 import clashflux.store.profiles;
@@ -102,6 +103,8 @@ void DesktopPreparePlatformDataDirectory(
     auto tasks = huxerui::UseTaskScope();
     auto traySysProxy = huxerui::UseState(false);
     auto trayTun = huxerui::UseState(false);
+    auto trayProfiles = huxerui::UseState<std::vector<db::Profile>>({});
+    auto trayProxyGroups = huxerui::UseState<std::vector<ProxyGroupSnapshot>>({});
     auto trayEnabled = huxerui::UseState(
         store::coreStore().setting("tray.enabled", "true") == "true");
     auto closeDialogOpen = huxerui::UseState(false);
@@ -134,6 +137,29 @@ void DesktopPreparePlatformDataDirectory(
         },
         0);
 
+    // 托盘菜单需要的是当前可选订阅和运行中的策略组快照。数据库/API 读取
+    // 全部放到任务线程，菜单本身只消费最近一次轻量快照。
+    huxerui::Lifecycle(
+        [tasks, trayProfiles, trayProxyGroups] {
+            tasks.Launch([trayProfiles, trayProxyGroups]() -> huxerui::Task<void> {
+                for (;;) {
+                    const auto profiles = co_await RunOnTaskThread(
+                        [] { return store::profilesStore().list(); });
+                    trayProfiles = profiles;
+                    const std::string body = co_await RunOnTaskThread([] {
+                        return store::coreStore().snapshot().state ==
+                                       core::CoreState::Running
+                                   ? ProxyGroupsSnapshot()
+                                   : std::string{};
+                    });
+                    trayProxyGroups = ParseProxyGroups(body);
+                    co_await huxerui::Delay(std::chrono::duration<double>{1.0});
+                }
+            });
+            return [] {};
+        },
+        0);
+
     // 系统 VPN 的断开可能要等待 pppd/RAS 收尾，先完成清理再关闭窗口。
     auto finishExit = [tasks, application, exitRequested]() {
         if (exitRequested.Get()) return;
@@ -151,7 +177,7 @@ void DesktopPreparePlatformDataDirectory(
         tray.OnActivate([window] { window.Activate(); });
         huxerui::Lifecycle(
             [tray, window, application, tasks, traySysProxy, trayTun, dialog,
-             clipboard, toast, trayEnabled, finishExit,
+             clipboard, toast, trayProfiles, trayProxyGroups, trayEnabled, finishExit,
              textColor = rootSpec.colors.on_surface,
              hintColor = rootSpec.colors.on_surface_variant] {
                 if (trayEnabled.Get()) {
@@ -161,6 +187,66 @@ void DesktopPreparePlatformDataDirectory(
                             window.Activate();
                         }));
                     menuEntries.push_back(huxerui::MenuSection{});
+                    std::vector<huxerui::MenuEntry> profileEntries;
+                    for (const db::Profile& profile : trayProfiles.Get()) {
+                        if (profile.type == "pptp" || profile.type == "openvpn") {
+                            continue;
+                        }
+                        profileEntries.push_back(
+                            huxerui::MenuItem(
+                                profile.name,
+                                [tasks, toast, trayProfiles, id = profile.id] {
+                                    tasks.Launch(
+                                        [tasks, toast, trayProfiles, id]()
+                                            -> huxerui::Task<void> {
+                                            const std::string error =
+                                                co_await RunOnTaskThread([id] {
+                                                    auto& profiles =
+                                                        store::profilesStore();
+                                                    return profiles.activate(id)
+                                                               ? std::string{}
+                                                               : profiles.lastError();
+                                                });
+                                            if (!error.empty()) toast.Show(error);
+                                            trayProfiles = co_await RunOnTaskThread(
+                                                [] { return store::profilesStore().list(); });
+                                        });
+                                })
+                                .Checked(profile.selected));
+                    }
+                    if (profileEntries.empty()) {
+                        profileEntries.push_back(
+                            huxerui::MenuItem("暂无可用订阅", [] {}).Enabled(false));
+                    }
+                    menuEntries.push_back(huxerui::MenuItem(
+                        "选择订阅", std::move(profileEntries)));
+                    menuEntries.push_back(huxerui::MenuItem(
+                        "切换当前订阅线路",
+                        BuildProxyLineMenu(
+                            trayProxyGroups.Get(),
+                            [tasks, toast, trayProxyGroups](
+                                const std::string& group, const std::string& name) {
+                                tasks.Launch([toast, trayProxyGroups, group, name]()
+                                                 -> huxerui::Task<void> {
+                                    const bool ok = co_await RunOnTaskThread(
+                                        [group, name] {
+                                            return SelectProxyLine(group, name);
+                                        });
+                                    if (!ok) {
+                                        const std::string error =
+                                            store::coreStore().snapshot().lastError;
+                                        toast.Show(error.empty() ? "线路切换失败" : error);
+                                        co_return;
+                                    }
+                                    auto groups = trayProxyGroups.Get();
+                                    for (ProxyGroupSnapshot& proxyGroup : groups) {
+                                        if (proxyGroup.name == group) {
+                                            proxyGroup.current = name;
+                                        }
+                                    }
+                                    trayProxyGroups = std::move(groups);
+                                });
+                            })));
                     menuEntries.push_back(
                         huxerui::MenuItem("系统代理", [tasks, traySysProxy] {
                             tasks.Launch([=]() -> huxerui::Task<void> {
