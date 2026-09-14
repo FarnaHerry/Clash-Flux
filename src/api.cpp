@@ -91,6 +91,9 @@ struct ClashApi::Impl {
         }
         curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
         curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http");
+        // The Clash controller is always a local endpoint. Never let
+        // http_proxy/https_proxy environment variables intercept it.
+        curl_easy_setopt(easy, CURLOPT_NOPROXY, "*");
         if (!method.empty()) {
             curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, method.c_str());
         }
