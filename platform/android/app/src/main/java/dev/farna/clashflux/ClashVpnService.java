@@ -96,6 +96,10 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 throw new IllegalStateException("未找到启用订阅的运行配置");
             }
             MainActivity.appLog("已找到运行配置，启动 libbox CommandServer", false);
+            String configContent = new String(
+                    Files.readAllBytes(config.toPath()), StandardCharsets.UTF_8);
+            Libbox.checkConfig(configContent);
+            MainActivity.appLog("运行配置校验通过", false);
             server = new CommandServer(this, this);
             server.start();
             if (!startRequested) {
@@ -103,8 +107,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 return;
             }
             server.startOrReloadService(
-                new String(Files.readAllBytes(config.toPath()), StandardCharsets.UTF_8),
-                new OverrideOptions());
+                configContent, new OverrideOptions());
             if (!startRequested) {
                 close("VPN 启动已取消");
                 return;
@@ -233,8 +236,8 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     @Override public void clearDNSCache(){} @Override public LocalDNSTransport localDNSTransport(){return null;} @Override public ConnectionOwner findConnectionOwner(int a,String b,int c,String d,int e){return null;} @Override public NetworkInterfaceIterator getInterfaces(){return null;} @Override public WIFIState readWIFIState(){return null;}
     @Override public void startDefaultInterfaceMonitor(InterfaceUpdateListener l){} @Override public void closeDefaultInterfaceMonitor(InterfaceUpdateListener l){} @Override public void startNeighborMonitor(NeighborUpdateListener l){} @Override public void closeNeighborMonitor(NeighborUpdateListener l){} @Override public void registerMyInterface(String n){} @Override public void checkPlatformShell(){}
     @Override public BridgeSession createBridge(BridgeOptions o){return null;} @Override public PlatformUser lookupUser(String n){return null;} @Override public ShellSession openShellSession(PlatformUser u,String c,StringIterator e,String d,int p,int q){return null;} @Override public String lookupSFTPServer(){return "";} @Override public String readSystemSSHHostKey(){return "";} @Override public String tailscaleHostname(){return "";}
-    @Override public void sendNotification(io.nekohasekai.libbox.Notification n){} @Override public void cancelNotification(String i,int t){} @Override public int connectSSHAgent(){return -1;} @Override public SystemProxyStatus getSystemProxyStatus(){return null;} @Override public void serviceReload(){} @Override public void serviceStop(){close("sing-box 已停止");} @Override public void setSystemProxyEnabled(boolean e){} @Override public void triggerNativeCrash(){} @Override public void writeDebugMessage(String m){Log.d(TAG,m);}
-    @Override public void clearLogs(){} @Override public void connected(){Log.i(TAG,"sing-box status stream connected");} @Override public void disconnected(String message){Log.w(TAG,"sing-box status stream disconnected: "+message);} @Override public void initializeClashMode(StringIterator modes,String current){} @Override public void setDefaultLogLevel(int level){} @Override public void updateClashMode(String mode){} @Override public void writeConnectionEvents(ConnectionEvents events){} @Override public void writeLogs(LogIterator logs){} @Override public void writeOutbounds(OutboundGroupItemIterator outbounds){} @Override public void writeStatus(StatusMessage status){nativeVpnStats(status.getUplink(),status.getDownlink(),status.getUplinkTotal(),status.getDownlinkTotal(),status.getConnectionsIn()+status.getConnectionsOut());}
+    @Override public void sendNotification(io.nekohasekai.libbox.Notification n){} @Override public void cancelNotification(String i,int t){} @Override public int connectSSHAgent(){return -1;} @Override public SystemProxyStatus getSystemProxyStatus(){return null;} @Override public void serviceReload(){} @Override public void serviceStop(){close("sing-box 已停止");} @Override public void setSystemProxyEnabled(boolean e){} @Override public void triggerNativeCrash(){} @Override public void writeDebugMessage(String m){Log.d(TAG,m); MainActivity.appLog("libbox 调试信息："+m,false);}
+    @Override public void clearLogs(){} @Override public void connected(){Log.i(TAG,"sing-box status stream connected"); MainActivity.appLog("libbox 状态通道已连接",false);} @Override public void disconnected(String message){Log.w(TAG,"sing-box status stream disconnected: "+message); MainActivity.appLog("libbox 状态通道断开："+message,true);} @Override public void initializeClashMode(StringIterator modes,String current){} @Override public void setDefaultLogLevel(int level){} @Override public void updateClashMode(String mode){} @Override public void writeConnectionEvents(ConnectionEvents events){} @Override public void writeLogs(LogIterator logs){} @Override public void writeOutbounds(OutboundGroupItemIterator outbounds){} @Override public void writeStatus(StatusMessage status){nativeVpnStats(status.getUplink(),status.getDownlink(),status.getUplinkTotal(),status.getDownlinkTotal(),status.getConnectionsIn()+status.getConnectionsOut());}
     @Override public void writeGroups(OutboundGroupIterator groups) {
         try {
             JSONObject proxies = new JSONObject();
@@ -278,7 +281,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 .build();
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED);
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         } else {
             startForeground(NOTIFICATION_ID, notification);
         }

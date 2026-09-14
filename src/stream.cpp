@@ -10,6 +10,7 @@ module;
 module clashflux.stream;
 
 import std;
+import clashflux.config;
 import nlohmann.json;
 import clashflux.utils;
 
@@ -21,11 +22,64 @@ constexpr std::size_t kMaxLogLines = 2000;
 struct ApplicationLogStore {
     std::mutex mutex;
     std::vector<LogLine> lines;
+    bool loaded = false;
 };
 
 ApplicationLogStore& applicationLogStore() {
     static ApplicationLogStore store;
     return store;
+}
+
+std::string normalizeLevel(std::string level);
+
+std::filesystem::path applicationLogPath() {
+    return cfg::coreWorkDir() / "app.log";
+}
+
+void loadApplicationLogsLocked(ApplicationLogStore& store) {
+    if (store.loaded) return;
+    store.loaded = true;
+    try {
+        std::ifstream input(applicationLogPath(), std::ios::binary);
+        std::string line;
+        while (std::getline(input, line)) {
+            const auto json = nlohmann::json::parse(line, nullptr, false);
+            if (!json.is_object() || !json.contains("payload") ||
+                !json["payload"].is_string()) {
+                continue;
+            }
+            store.lines.push_back(LogLine{
+                .level = normalizeLevel(json.value("level", "info")),
+                .payload = json.value("payload", ""),
+                .at = json.value("at", std::int64_t{0}),
+            });
+        }
+        if (store.lines.size() > kMaxLogLines) {
+            store.lines.erase(
+                store.lines.begin(),
+                store.lines.begin() + static_cast<std::ptrdiff_t>(
+                                         store.lines.size() - kMaxLogLines));
+        }
+    } catch (...) {
+        store.lines.clear();
+    }
+}
+
+void persistApplicationLogsLocked(const ApplicationLogStore& store) noexcept {
+    try {
+        std::ofstream output(applicationLogPath(),
+                             std::ios::binary | std::ios::trunc);
+        if (!output) return;
+        for (const auto& line : store.lines) {
+            output << nlohmann::json{
+                {"at", line.at}, {"level", line.level},
+                {"payload", line.payload}}
+                              .dump()
+                     << '\n';
+        }
+    } catch (...) {
+        // Diagnostics must never affect the operation being diagnosed.
+    }
 }
 
 // mihomo 与 sing-box 的日志级别词表差异归一：WS /logs 帧的 type（sing-box
@@ -67,22 +121,29 @@ struct Channel {
 
 } // namespace
 
-void logApplication(std::string level, std::string payload) {
-    if (payload.empty()) return;
-    LogLine line{
-        .level = normalizeLevel(std::move(level)),
-        .payload = std::move(payload),
-        .at = nowUnix(),
-    };
-    auto& store = applicationLogStore();
-    std::lock_guard lock(store.mutex);
-    if (store.lines.size() >= kMaxLogLines) store.lines.erase(store.lines.begin());
-    store.lines.push_back(std::move(line));
+void logApplication(std::string level, std::string payload) noexcept {
+    try {
+        if (payload.empty()) return;
+        LogLine line{
+            .level = normalizeLevel(std::move(level)),
+            .payload = std::move(payload),
+            .at = nowUnix(),
+        };
+        auto& store = applicationLogStore();
+        std::lock_guard lock(store.mutex);
+        loadApplicationLogsLocked(store);
+        if (store.lines.size() >= kMaxLogLines) store.lines.erase(store.lines.begin());
+        store.lines.push_back(std::move(line));
+        persistApplicationLogsLocked(store);
+    } catch (...) {
+        // Application diagnostics are best-effort and must not crash the app.
+    }
 }
 
 std::vector<LogLine> drainApplicationLogs() {
     auto& store = applicationLogStore();
     std::lock_guard lock(store.mutex);
+    loadApplicationLogsLocked(store);
     return std::exchange(store.lines, {});
 }
 
@@ -90,6 +151,8 @@ void clearApplicationLogs() {
     auto& store = applicationLogStore();
     std::lock_guard lock(store.mutex);
     store.lines.clear();
+    std::error_code error;
+    std::filesystem::remove(applicationLogPath(), error);
 }
 
 struct CoreStreams::Impl {
