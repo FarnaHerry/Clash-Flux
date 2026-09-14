@@ -52,13 +52,6 @@ public final class MainActivity extends HuxerUIActivity {
         // "follow system" theme option.
         nativeSetSystemDark(isSystemDarkMode());
         nativeStartCore();
-        // CMFA-style resident notification from launch: the foreground
-        // service pins a persistent notification for the process lifetime.
-        try {
-            startForegroundService(new Intent(this, CoreService.class));
-        } catch (RuntimeException error) {
-            Log.e(TAG, "Unable to start the core notification service", error);
-        }
         Log.i(TAG, "Android shell initialized; sing-box starts with VPN service");
     }
 
@@ -146,7 +139,16 @@ public final class MainActivity extends HuxerUIActivity {
                         Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                         Uri.parse("package:" + activity.getPackageName())));
             } catch (ActivityNotFoundException error) {
-                Log.w(TAG, "Battery optimization settings activity is unavailable", error);
+                // Some OEM ROMs do not expose the package-specific action;
+                // still open the system battery settings so the user can
+                // grant the exemption manually instead of seeing no effect.
+                try {
+                    activity.startActivity(new Intent(
+                            Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+                } catch (ActivityNotFoundException fallbackError) {
+                    Log.w(TAG, "Battery optimization settings unavailable",
+                            fallbackError);
+                }
             }
         });
     }

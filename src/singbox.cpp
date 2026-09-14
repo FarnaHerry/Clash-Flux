@@ -564,7 +564,11 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
             {"address", nlohmann::json::array({"172.19.0.1/30"})},
             {"mtu", 1400},
             {"auto_route", true},
-            {"strict_route", opt.tunStrictRoute},
+            // Do not force sing-box's own outbound sockets through the TUN.
+            // In strict mode proxy delay probes can re-enter the active proxy
+            // path, making the current node time out and inflating all other
+            // node delays.
+            {"strict_route", false},
         });
     }
 
