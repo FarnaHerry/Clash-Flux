@@ -177,6 +177,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     // 避免 TUN 重启内核期间的并发 stop/start。
     auto proxyOverride = huxerui::UseState<std::optional<bool>>(std::nullopt);
     auto tunOverride = huxerui::UseState<std::optional<bool>>(std::nullopt);
+    auto modeOverride = huxerui::UseState<std::optional<std::size_t>>(std::nullopt);
 
     huxerui::Lifecycle(
         [tasks, state] {
@@ -252,18 +253,21 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))};
 
     // 出站模式 / 当前订阅两卡（Compact 视口竖排，见下方布局分支）。
+    const std::size_t displayedModeIndex = modeOverride.Get().value_or(modeIndex);
     huxerui::View modeCard = Card(huxerui::Column {
         huxerui::Text("出站模式").Style(huxerui::TextStyle{
             huxerui::Font::System(font_size::kBody)
                 .WithWeight(huxerui::FontWeight::SemiBold),
             theme.colors.on_surface}),
-        huxerui::SegmentedButton(kModeNames, modeIndex)
-            .OnChanged([tasks, toast](std::size_t idx) {
+        huxerui::SegmentedButton(kModeNames, displayedModeIndex)
+            .OnChanged([tasks, toast, modeOverride](std::size_t idx) {
+                if (!BeginOptimistic(modeOverride, idx)) return;
                 tasks.Launch([=]() -> huxerui::Task<void> {
                     const bool ok = co_await RunOnTaskThread(
                         [idx] {
                             return store::coreStore().applyMode(kModes[idx]);
                         });
+                    EndOptimistic(modeOverride);
                     if (!ok) toast.Show("切换失败（内核未运行？）");
                 });
             }),

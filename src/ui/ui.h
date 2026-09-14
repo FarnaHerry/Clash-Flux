@@ -8,12 +8,25 @@
 #include <functional>
 #include <initializer_list>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 namespace clashflux::ui {
+
+template <typename T>
+bool BeginOptimistic(huxerui::State<std::optional<T>> state, T value) {
+    if (state.Get().has_value()) return false;
+    state = std::move(value);
+    return true;
+}
+
+template <typename T>
+void EndOptimistic(huxerui::State<std::optional<T>> state) {
+    state = std::nullopt;
+}
 
 // 订阅下载通道：Android 的 vendored curl 无 TLS（NDK 无 OpenSSL，https 订阅
 // 报 Unsupported protocol），订阅导入/手动刷新/自动更新全走 HuxerUI
