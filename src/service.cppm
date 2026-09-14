@@ -552,13 +552,21 @@ export int install() {
                "WantedBy=multi-user.target\n";
     }
 
-    std::println("[4/4] systemctl daemon-reload && enable --now {}", kUnitName);
+    std::println("[4/4] systemctl daemon-reload && enable && restart {}", kUnitName);
     if (::system("systemctl daemon-reload") != 0) {
         std::fprintf(stderr, "systemctl daemon-reload 失败\n");
         return 1;
     }
-    if (::system(std::format("systemctl enable --now {}", kUnitName).c_str()) != 0) {
-        std::fprintf(stderr, "systemctl enable --now 失败（journalctl -u %s 查看原因）\n",
+    if (::system(std::format("systemctl enable {}", kUnitName).c_str()) != 0) {
+        std::fprintf(stderr, "systemctl enable 失败（journalctl -u %s 查看原因）\n",
+                     std::string(kUnitName).c_str());
+        return 1;
+    }
+    // restart 而非 start：单元已在运行时 enable --now 是空操作，磁盘上
+    // 换了新二进制也不会生效——升级后必须重启守护进程（restart 对未启动
+    // 的单元等价于 start）。
+    if (::system(std::format("systemctl restart {}", kUnitName).c_str()) != 0) {
+        std::fprintf(stderr, "systemctl restart 失败（journalctl -u %s 查看原因）\n",
                      std::string(kUnitName).c_str());
         return 1;
     }
@@ -729,6 +737,14 @@ export int run() {
 
     if (::mkdir(std::string(kSocketDir).c_str(), 0755) != 0 && errno != EEXIST) {
         std::fprintf(stderr, "%s\n", errnoText(std::format("创建 {}", kSocketDir).c_str()).c_str());
+        return 1;
+    }
+    // systemd 单元的 UMask=0077 会把 mkdir 的 0755 剥成 0700：非 root 的
+    // GUI/CLI 连目录都无法穿越，socket 永远不可达（TUN 门禁因此误报
+    // "未安装服务"）。目录权限显式校正；访问控制由 socket 本身的
+    // 0600 + chown(安装用户) 承担。
+    if (::chmod(std::string(kSocketDir).c_str(), 0755) != 0) {
+        std::fprintf(stderr, "%s\n", errnoText(std::format("chmod {}", kSocketDir).c_str()).c_str());
         return 1;
     }
 
