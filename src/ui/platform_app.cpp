@@ -324,12 +324,21 @@ void DesktopPreparePlatformDataDirectory(
     }
 
     // 关闭窗口行为：托盘可用时按设置询问/退出/最小化到托盘。
+    // trayAvailable 只是当前帧的快照；关闭事件可能在托盘宿主晚就绪后
+    // 才发生，因此事件处理必须动态查询 tray.IsAvailable()。
     const huxerui::Color closeHintColor = rootSpec.colors.on_surface_variant;
-    auto hideToTray = [window] { window.Hide(); };
+    auto hideToTray = [tasks, window] {
+        // GTK/Win32/macOS 的关闭回调都在平台事件栈中执行。把 Hide 推迟
+        // 到下一帧，避免隐藏最后一个窗口时让运行时在回调中途拆毁自己。
+        tasks.Launch([window]() -> huxerui::Task<void> {
+            co_await huxerui::Delay(std::chrono::duration<double>{0});
+            window.Hide();
+        });
+    };
     window.OnCloseRequest(
         [=]() mutable -> bool {
             if (exitRequested.Get()) return false;
-            if (!trayAvailable || !trayEnabled.Get()) {
+            if (!tray.IsAvailable() || !trayEnabled.Get()) {
                 finishExit();
                 return true;
             }
@@ -376,7 +385,9 @@ void DesktopPreparePlatformDataDirectory(
                            huxerui::CrossAlign(
                                huxerui::CrossAxisAlignment::Stretch)));
                 },
-                huxerui::DialogOptions{});
+                huxerui::DialogOptions{
+                    .dismiss_on_outside_press = false,
+                    .dismiss_on_cancel = false});
             return true;
         },
         0);

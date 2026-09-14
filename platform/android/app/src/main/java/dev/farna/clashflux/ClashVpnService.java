@@ -22,6 +22,8 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private CommandClient client;
     private ParcelFileDescriptor tunnel;
     private boolean started;
+    private boolean foregroundReady;
+    private boolean failureReported;
     private volatile boolean starting;
     private volatile boolean startRequested;
     private static volatile ClashVpnService current;
@@ -32,8 +34,20 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                                               long uploadTotal, long downloadTotal,
                                               int connections);
 
-    @Override public void onCreate() { super.onCreate(); current = this; MainActivity.bootstrapNative(this); setup(); foreground(); }
+    @Override public void onCreate() {
+        super.onCreate();
+        current = this;
+        MainActivity.bootstrapNative(this);
+        setup();
+        try {
+            foreground();
+            foregroundReady = true;
+        } catch (RuntimeException error) {
+            fail("无法启动 VPN 前台服务：" + error.getMessage());
+        }
+    }
     @Override public int onStartCommand(Intent i, int f, int id) {
+        if (!foregroundReady) return START_NOT_STICKY;
         if (!started && !starting) {
             starting = true;
             startRequested = true;
@@ -42,7 +56,11 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         return START_STICKY;
     }
     @Override public void onRevoke() { close("系统撤销了 VPN"); stopSelf(); }
-    @Override public void onDestroy() { close("VPN 已关闭"); if (current == this) current = null; super.onDestroy(); }
+    @Override public void onDestroy() {
+        close("VPN 已关闭");
+        if (current == this) current = null;
+        super.onDestroy();
+    }
     private void setup() {
         try { SetupOptions o = new SetupOptions(); o.setBasePath(getFilesDir().getPath()); o.setWorkingPath(getFilesDir().getPath()); o.setTempPath(getCacheDir().getPath()); o.setAppVersion(String.valueOf(BuildConfig.VERSION_CODE)); o.setAppMarketingVersion(BuildConfig.VERSION_NAME); Libbox.setup(o); }
         catch (Exception e) { Log.e(TAG, "libbox setup", e); }
@@ -60,10 +78,19 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             }
             if (!startRequested) return;
             if (!config.isFile()) throw new IllegalStateException("未找到启用订阅的运行配置");
-            server = new CommandServer(this, this); server.start();
+            server = new CommandServer(this, this);
+            server.start();
+            if (!startRequested) {
+                close("VPN 启动已取消");
+                return;
+            }
             server.startOrReloadService(
                 new String(Files.readAllBytes(config.toPath()), StandardCharsets.UTF_8),
                 new OverrideOptions());
+            if (!startRequested) {
+                close("VPN 启动已取消");
+                return;
+            }
             startStatusClient();
             started = true; BootReceiver.setVpnActive(this, true);
             nativeVpnState(2, "sing-box 已附着 TUN；socket protect 已启用");
@@ -80,8 +107,20 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         b.setConfigureIntent(PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
         tunnel = b.establish(); if (tunnel == null) throw new IllegalStateException("系统拒绝创建 VPN 接口"); return tunnel.detachFd();
     }
-    private static void addAddresses(Builder b, RoutePrefixIterator i) { while (i.hasNext()) { RoutePrefix p=i.next(); b.addAddress(p.address(),p.prefix()); } }
-    private static void addRoutes(Builder b, RoutePrefixIterator i) { while (i.hasNext()) { RoutePrefix p=i.next(); b.addRoute(p.address(),p.prefix()); } }
+    private static void addAddresses(Builder b, RoutePrefixIterator i) {
+        if (i == null) return;
+        while (i.hasNext()) {
+            RoutePrefix p = i.next();
+            if (p != null) b.addAddress(p.address(), p.prefix());
+        }
+    }
+    private static void addRoutes(Builder b, RoutePrefixIterator i) {
+        if (i == null) return;
+        while (i.hasNext()) {
+            RoutePrefix p = i.next();
+            if (p != null) b.addRoute(p.address(), p.prefix());
+        }
+    }
     private void startStatusClient() {
         try {
             CommandClientOptions options = new CommandClientOptions();
@@ -95,7 +134,25 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         }
     }
     private void close(String msg) { close(msg, true); }
-    private void close(String msg, boolean reportStopped) { startRequested=false; if (!started && tunnel == null && server == null) { if (reportStopped) nativeVpnState(0,msg); return; } started=false; BootReceiver.setVpnActive(this,false); outboundGroupsJson = "{\"proxies\":{}}"; try { if(client!=null)client.disconnect(); } catch(Exception ignored){} client=null; try { if(server!=null) server.closeService(); } catch(Exception ignored){} try { if(server!=null) server.close(); } catch(Exception ignored){} server=null; try { if(tunnel!=null)tunnel.close(); }catch(Exception ignored){} tunnel=null; nativeVpnStats(0,0,0,0,0); if (reportStopped) nativeVpnState(0,msg); }
+    private void close(String msg, boolean reportStopped) {
+        startRequested = false;
+        if (!started && tunnel == null && server == null) {
+            if (reportStopped && !failureReported) nativeVpnState(0, msg);
+            return;
+        }
+        started = false;
+        BootReceiver.setVpnActive(this, false);
+        outboundGroupsJson = "{\"proxies\":{}}";
+        try { if (client != null) client.disconnect(); } catch (Exception ignored) {}
+        client = null;
+        try { if (server != null) server.closeService(); } catch (Exception ignored) {}
+        try { if (server != null) server.close(); } catch (Exception ignored) {}
+        server = null;
+        try { if (tunnel != null) tunnel.close(); } catch (Exception ignored) {}
+        tunnel = null;
+        nativeVpnStats(0, 0, 0, 0, 0);
+        if (reportStopped && !failureReported) nativeVpnState(0, msg);
+    }
 
     public static boolean selectOutbound(String group, String name) {
         ClashVpnService service = current;
@@ -118,7 +175,14 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     }
     // Preserve Failed for the native/UI state machine.  Previously close() sent
     // a second "stopped" callback immediately, hiding the actual libbox error.
-    private void fail(String msg) { Log.e(TAG,msg); close(msg, false); nativeVpnState(3,msg); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); }
+    private void fail(String msg) {
+        failureReported = true;
+        Log.e(TAG, msg);
+        close(msg, false);
+        nativeVpnState(3, msg);
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        stopSelf();
+    }
 
     @Override public boolean usePlatformAutoDetectInterfaceControl(){return true;}
     // Present in newer libbox builds but deliberately not annotated: v1.14 does
@@ -155,5 +219,5 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             Log.w(TAG, "Unable to snapshot outbound groups", error);
         }
     }
-    private void foreground(){ NotificationManager m=getSystemService(NotificationManager.class); if(m!=null&&Build.VERSION.SDK_INT>=26&&m.getNotificationChannel(CHANNEL_ID)==null)m.createNotificationChannel(new NotificationChannel(CHANNEL_ID,"VPN 状态",NotificationManager.IMPORTANCE_LOW)); android.app.Notification.Builder builder=Build.VERSION.SDK_INT>=26?new android.app.Notification.Builder(this,CHANNEL_ID):new android.app.Notification.Builder(this); android.app.Notification n=builder.setContentTitle("Clash-Flux").setContentText("sing-box VPN 隧道运行中").setSmallIcon(android.R.drawable.stat_notify_sync_noanim).setCategory(android.app.Notification.CATEGORY_SERVICE).setOngoing(true).build(); if(Build.VERSION.SDK_INT>=34)startForeground(NOTIFICATION_ID,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);else startForeground(NOTIFICATION_ID,n); }
+    private void foreground(){ NotificationManager m=getSystemService(NotificationManager.class); if(m!=null&&Build.VERSION.SDK_INT>=26&&m.getNotificationChannel(CHANNEL_ID)==null)m.createNotificationChannel(new NotificationChannel(CHANNEL_ID,"VPN 状态",NotificationManager.IMPORTANCE_LOW)); android.app.Notification.Builder builder=Build.VERSION.SDK_INT>=26?new android.app.Notification.Builder(this,CHANNEL_ID):new android.app.Notification.Builder(this); android.app.Notification n=builder.setContentTitle("Clash-Flux").setContentText("正在启动 sing-box VPN 隧道").setSmallIcon(android.R.drawable.stat_notify_sync_noanim).setCategory(android.app.Notification.CATEGORY_SERVICE).setOngoing(true).build(); if(Build.VERSION.SDK_INT>=34)startForeground(NOTIFICATION_ID,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED);else startForeground(NOTIFICATION_ID,n); }
 }
