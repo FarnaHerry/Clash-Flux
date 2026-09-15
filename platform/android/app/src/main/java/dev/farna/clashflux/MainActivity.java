@@ -204,11 +204,21 @@ public final class MainActivity extends HuxerUIActivity {
 
     public static void stopVpn() {
         MainActivity activity = current;
-        if (activity == null) {
+        Context context = activity != null ? activity : applicationContext;
+        if (context == null) {
+            appLog("无法关闭 Android VPN：Activity 尚未就绪", true);
             return;
         }
-        activity.runOnUiThread(() ->
-                activity.stopService(new Intent(activity, ClashVpnService.class)));
+        Runnable stop = () -> {
+            appLog("用户请求关闭 Android VPN", false);
+            if (!ClashVpnService.stopCurrent()) {
+                // Covers a service that is between process recreation and
+                // assigning its static instance, and remains idempotent.
+                context.stopService(new Intent(context, ClashVpnService.class));
+            }
+        };
+        if (activity != null) activity.runOnUiThread(stop);
+        else stop.run();
     }
 
     public static boolean selectOutbound(String group, String name) {

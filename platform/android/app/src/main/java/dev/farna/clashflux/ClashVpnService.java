@@ -33,6 +33,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -51,6 +52,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private boolean failureReported;
     private volatile boolean starting;
     private volatile boolean startRequested;
+    private final AtomicBoolean stopRequested = new AtomicBoolean();
     private volatile Network defaultNetwork;
     private final Object clientLock = new Object();
     private static volatile ClashVpnService current;
@@ -199,6 +201,13 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             }
             Builder b = new Builder().setSession("Clash-Flux")
                     .setMtu(o.getMTU()).setBlocking(false);
+            // The app must keep a physical-network escape path for importing
+            // or refreshing subscriptions while its own TUN is active.  The
+            // VPN data plane still captures other applications; without this
+            // exclusion HuxerUI HttpClient is routed back into the TUN before
+            // a usable profile exists and subscription HTTP requests fail.
+            b.addDisallowedApplication(getPackageName());
+            MainActivity.appLog("已排除 Clash-Flux 自身流量，订阅请求保持直连", false);
             addAddresses(b, o.getInet4Address());
             addAddresses(b, o.getInet6Address());
             if (Build.VERSION.SDK_INT >= 29) b.setMetered(false);
@@ -600,6 +609,20 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         tunnel = null;
         nativeVpnStats(0, 0, 0, 0, 0);
         if (reportStopped && !failureReported) nativeVpnState(0, msg);
+    }
+
+    /** Stops the current data plane before asking Android to destroy the service. */
+    public static boolean stopCurrent() {
+        ClashVpnService service = current;
+        if (service == null) return false;
+        if (!service.stopRequested.compareAndSet(false, true)) return true;
+        service.startRequested = false;
+        new Thread(() -> {
+            service.close("用户请求关闭 Android VPN");
+            service.stopForeground(STOP_FOREGROUND_REMOVE);
+            service.stopSelf();
+        }, "clashflux-vpn-stop").start();
+        return true;
     }
 
     public static boolean selectOutbound(String group, String name) {
