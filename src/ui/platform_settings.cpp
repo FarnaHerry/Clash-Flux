@@ -198,21 +198,23 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 
 #endif
 
-// 由宏只在桌面设置函数中选择 Linux 专属行；没有跨页面能力表。
+// 由宏只在桌面内核模块中选择 Linux 专属行；没有跨页面能力表。
 #define CLASHFLUX_LINUX_SERVICE_ROW LinuxServiceRow
 
 #if defined(__ANDROID__)
 
-[[huxerui::composable]] huxerui::View DesktopSettingsSection() {
+[[huxerui::composable]] huxerui::View AndroidGeneralSettings() {
     return {};
 }
 
-[[huxerui::composable]] huxerui::View AndroidSettingsSection() {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+[[huxerui::composable]] huxerui::View DesktopGeneralSettings() {
+    return {};
+}
+
+[[huxerui::composable]] huxerui::View AndroidKernelSettings() {
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
-    auto snap = huxerui::UseState<store::CoreSnapshot>({});
     auto tun_enabled = huxerui::UseState(
         store::coreStore().setting("core.tun_enabled", "false") == "true");
     auto vpn_state = huxerui::UseState(AndroidVpnState());
@@ -229,10 +231,9 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
         });
 
     huxerui::Lifecycle(
-        [tasks, snap, tun_enabled, vpn_state, battery_ignored] {
+        [tasks, tun_enabled, vpn_state, battery_ignored] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{1.0}, [=] {
-                    snap = store::coreStore().snapshot();
                     tun_enabled = store::coreStore().setting(
                                       "core.tun_enabled", "false") == "true";
                     vpn_state = AndroidVpnState();
@@ -257,8 +258,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                              std::move(ok_message));
     };
 
-    return Card(huxerui::Column {
-        SectionTitle("Android 数据面"),
+    return huxerui::Column {
         SettingRow("隧道状态", status,
                    huxerui::Text(state == 2 ? "已连接"
                                  : state == 1 ? "连接中"
@@ -303,26 +303,61 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                     battery_ignored = AndroidIsIgnoringBattery();
                 })),
     }.With(huxerui::Spacing(10.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 #else
 
-[[huxerui::composable]] huxerui::View AndroidSettingsSection() {
+[[huxerui::composable]] huxerui::View AndroidGeneralSettings() {
     return {};
 }
 
-[[huxerui::composable]] huxerui::View DesktopSettingsSection() {
-    auto trayEnabled = huxerui::UseState(
+[[huxerui::composable]] huxerui::View DesktopGeneralSettings() {
+    auto tray_enabled = huxerui::UseState(
         store::coreStore().setting("tray.enabled", "true") == "true");
-    auto startMinimized = huxerui::UseState(
+    auto start_minimized = huxerui::UseState(
         store::coreStore().setting("tray.start_minimized", "false") == "true");
-    std::size_t initialCloseBehavior = 0;
-    const std::string savedCloseBehavior =
+    std::size_t initial_close_behavior = 0;
+    const std::string saved_close_behavior =
         store::coreStore().setting("tray.close_behavior", "0");
-    if (savedCloseBehavior == "1") initialCloseBehavior = 1;
-    if (savedCloseBehavior == "2") initialCloseBehavior = 2;
-    auto closeBehavior = huxerui::UseState(initialCloseBehavior);
+    if (saved_close_behavior == "1") initial_close_behavior = 1;
+    if (saved_close_behavior == "2") initial_close_behavior = 2;
+    auto close_behavior = huxerui::UseState(initial_close_behavior);
+
+    return huxerui::Column {
+        SettingRow(
+            "启用托盘图标", "关闭后托盘不可用，关闭窗口即退出",
+            huxerui::Switch(tray_enabled.Get())
+                .OnChanged([tray_enabled](bool on) {
+                    tray_enabled = on;
+                    store::coreStore().setSetting("tray.enabled",
+                                                   on ? "true" : "false");
+                })),
+        SettingRow(
+            "关闭窗口时",
+            "托盘可用时的驻留行为（代理继续后台运行 = 最小化到托盘）",
+            huxerui::SegmentedButton(
+                std::vector<huxerui::StringVariant>{"每次询问", "直接退出",
+                                                    "最小化到托盘"},
+                close_behavior.Get())
+                .OnChanged([close_behavior](std::size_t index) {
+                    close_behavior = index;
+                    store::coreStore().setSetting("tray.close_behavior",
+                                                   std::to_string(index));
+                })),
+        SettingRow(
+            "启动时隐藏到托盘", "下次启动不显示主窗口，经托盘唤出",
+            huxerui::Switch(start_minimized.Get())
+                .OnChanged([start_minimized](bool on) {
+                    start_minimized = on;
+                    store::coreStore().setSetting(
+                        "tray.start_minimized", on ? "true" : "false");
+                })),
+    }.With(huxerui::Spacing(10.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
+[[huxerui::composable]] huxerui::View DesktopKernelSettings() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
     auto tasks = huxerui::UseTaskScope();
@@ -370,170 +405,129 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
     };
 
     return huxerui::Column {
-        Card(huxerui::Column {
-            SectionTitle("内核"),
-            huxerui::Text(state_text).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody),
-                s.state == core::CoreState::Failed ? theme.colors.error
-                                                    : theme.colors.on_surface}),
+        huxerui::Text(state_text).Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kBody),
+            s.state == core::CoreState::Failed ? theme.colors.error
+                                                : theme.colors.on_surface}),
+        huxerui::Row {
+            running
+                ? huxerui::View{huxerui::Button("停止").OnClick(
+                      [core_action] {
+                          core_action(
+                              [] { store::coreStore().stopCore(); },
+                              "内核已停止");
+                      })}
+                : huxerui::View{huxerui::Button("启动").OnClick(
+                      [core_action] {
+                          core_action(
+                              [] {
+                                  store::coreStore().startCore(
+                                      store::profilesStore().selectedYaml());
+                              },
+                              "内核已启动");
+                      })},
+            huxerui::Button("重启")
+                .OnClick([core_action] {
+                    core_action(
+                        [] {
+                            store::coreStore().stopCore();
+                            store::coreStore().startCore(
+                                store::profilesStore().selectedYaml());
+                        },
+                        "内核已重启");
+                })
+                .With(huxerui::Enabled(running)),
+        }.With(huxerui::Spacing(8.0F)),
+
+        CLASHFLUX_LINUX_SERVICE_ROW(service_installed, tasks, toast),
+        SettingRow(
+            "系统代理",
+            std::format("写入桌面系统代理（127.0.0.1:{}）", s.mixedPort),
+            huxerui::Switch(proxy_override.Get().value_or(
+                                store::coreStore().systemProxyEnabled()))
+                .OnChanged([tasks, toast, proxy_override](bool on) {
+                    if (proxy_override.Get().has_value()) return;
+                    proxy_override = on;
+                    tasks.Launch([=]() -> huxerui::Task<void> {
+                        const bool ok = co_await RunOnTaskThread(
+                            [on] { return store::coreStore().applySystemProxy(on); });
+                        proxy_override = std::nullopt;
+                        if (!ok) {
+                            const std::string error =
+                                store::coreStore().snapshot().lastError;
+                            toast.Show(error.empty() ? "系统代理设置失败" : error);
+                        } else {
+                            toast.Show(on ? "系统代理已开启" : "系统代理已关闭");
+                        }
+                    });
+                })),
+        SettingRow(
+            "复制环境变量",
+            std::format("当前检测到 {}；复制当前混合端口的代理变量",
+                        detectedShell),
             huxerui::Row {
-                running
-                    ? huxerui::View{huxerui::Button("停止").OnClick(
-                          [core_action] {
-                              core_action(
-                                  [] { store::coreStore().stopCore(); },
-                                  "内核已停止");
-                          })}
-                    : huxerui::View{huxerui::Button("启动").OnClick(
-                          [core_action] {
-                              core_action(
-                                  [] {
-                                      store::coreStore().startCore(
-                                          store::profilesStore().selectedYaml());
-                                  },
-                                  "内核已启动");
-                          })},
-                huxerui::Button("重启")
-                    .OnClick([core_action] {
-                        core_action(
-                            [] {
-                                store::coreStore().stopCore();
-                                store::coreStore().startCore(
-                                    store::profilesStore().selectedYaml());
-                            },
-                            "内核已重启");
-                    })
-                    .With(huxerui::Enabled(running)),
-            }.With(huxerui::Spacing(8.0F)),
-        }.With(huxerui::Spacing(8.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
-
-        Card(huxerui::Column {
-            SectionTitle("系统"),
-            CLASHFLUX_LINUX_SERVICE_ROW(service_installed, tasks, toast),
-            SettingRow(
-                "系统代理",
-                std::format("写入桌面系统代理（127.0.0.1:{}）", s.mixedPort),
-                huxerui::Switch(proxy_override.Get().value_or(
-                                    store::coreStore().systemProxyEnabled()))
-                    .OnChanged([tasks, toast, proxy_override](bool on) {
-                        if (proxy_override.Get().has_value()) return;
-                        proxy_override = on;
-                        tasks.Launch([=]() -> huxerui::Task<void> {
-                            const bool ok = co_await RunOnTaskThread(
-                                [on] { return store::coreStore().applySystemProxy(on); });
-                            proxy_override = std::nullopt;
-                            if (!ok) {
-                                const std::string error =
-                                    store::coreStore().snapshot().lastError;
-                                toast.Show(error.empty() ? "系统代理设置失败" : error);
-                            } else {
-                                toast.Show(on ? "系统代理已开启" : "系统代理已关闭");
-                            }
-                        });
-                    })),
-            SettingRow(
-                "复制环境变量",
-                std::format("当前检测到 {}；复制当前混合端口的代理变量",
-                            detectedShell),
-                huxerui::Row {
-                    huxerui::Select(
-                        envShellLabels,
-                        envShell.Get(),
-                        [](const std::string& name) { return huxerui::Text(name); })
-                        .OnChanged([envShell](std::size_t index) {
-                            envShell = index;
-                            store::coreStore().setSetting(
-                                "ui.env_shell", kEnvironmentShells[index].id);
-                        })
-                        .With(huxerui::Frame{.width = 170.0F}),
-                    huxerui::Button("复制").OnClick(
-                        [clipboard, toast, envShell, s] {
-                            const std::string command = ProxyEnvironmentCommand(
-                                kEnvironmentShells[envShell.Get()].id,
-                                s.mixedPort);
-                            if (clipboard->WriteText(command)) {
-                                toast.Show("环境变量命令已复制");
-                            } else {
-                                toast.Show("复制失败");
-                            }
-                        }),
-                }.With(huxerui::Spacing(8.0F))),
-            SettingRow(
-                "TUN 模式",
-                running ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
-                        : "全局透明代理（下次启动生效）",
-                huxerui::Switch(tun_override.Get().value_or(s.tunEnabled))
-                    .OnChanged([s, tasks, toast, dialog, clipboard, proxy_override,
-                               tun_override, textColor = theme.colors.on_surface,
-                               hintColor = theme.colors.on_surface_variant](bool on) {
-                        if (tun_override.Get().has_value()) return;
-                        tun_override = on;
-                        tasks.Launch([=]() -> huxerui::Task<void> {
-                            if (on) {
-                                co_await huxerui::Delay(
-                                    std::chrono::duration<double>{0});
-                                const core::TunGate gate = co_await RunOnTaskThread(
-                                    [] { return core::tunGate(); });
-                                if (gate == core::TunGate::Elevated) {
-                                    tun_override = std::nullopt;
-                                    toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
-                                    co_return;
-                                }
-                                if (gate == core::TunGate::Denied) {
-                                    tun_override = std::nullopt;
-                                    ShowTunGuideDialog(dialog, clipboard, toast,
-                                                       textColor, hintColor);
-                                    co_return;
-                                }
-                            }
-                            const bool ok = co_await RunOnTaskThread(
-                                [on] { return store::coreStore().applyTun(on); });
-                            tun_override = std::nullopt;
-                            if (!ok) {
-                                const std::string error =
-                                    store::coreStore().snapshot().lastError;
-                                toast.Show(error.empty() ? "TUN 切换失败" : error);
-                            } else {
-                                toast.Show(on ? "TUN 已开启" : "TUN 已关闭");
-                            }
-                        });
-                    })),
-        }.With(huxerui::Spacing(10.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
-
-        Card(huxerui::Column {
-            SectionTitle("托盘"),
-            SettingRow(
-                "启用托盘图标", "关闭后托盘不可用，关闭窗口即退出",
-                huxerui::Switch(trayEnabled.Get())
-                    .OnChanged([trayEnabled](bool on) {
-                        trayEnabled = on;
-                        store::coreStore().setSetting("tray.enabled",
-                                                       on ? "true" : "false");
-                    })),
-            SettingRow(
-                "关闭窗口时",
-                "托盘可用时的驻留行为（代理继续后台运行 = 最小化到托盘）",
-                huxerui::SegmentedButton(
-                    std::vector<huxerui::StringVariant>{"每次询问", "直接退出",
-                                                        "最小化到托盘"},
-                    closeBehavior.Get())
-                    .OnChanged([closeBehavior](std::size_t index) {
-                        closeBehavior = index;
-                        store::coreStore().setSetting("tray.close_behavior",
-                                                       std::to_string(index));
-                    })),
-            SettingRow(
-                "启动时隐藏到托盘", "下次启动不显示主窗口，经托盘唤出",
-                huxerui::Switch(startMinimized.Get())
-                    .OnChanged([startMinimized](bool on) {
-                        startMinimized = on;
+                huxerui::Select(
+                    envShellLabels,
+                    envShell.Get(),
+                    [](const std::string& name) { return huxerui::Text(name); })
+                    .OnChanged([envShell](std::size_t index) {
+                        envShell = index;
                         store::coreStore().setSetting(
-                            "tray.start_minimized", on ? "true" : "false");
-                    })),
-        }.With(huxerui::Spacing(10.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
+                            "ui.env_shell", kEnvironmentShells[index].id);
+                    })
+                    .With(huxerui::Frame{.width = 170.0F}),
+                huxerui::Button("复制").OnClick(
+                    [clipboard, toast, envShell, s] {
+                        const std::string command = ProxyEnvironmentCommand(
+                            kEnvironmentShells[envShell.Get()].id,
+                            s.mixedPort);
+                        if (clipboard->WriteText(command)) {
+                            toast.Show("环境变量命令已复制");
+                        } else {
+                            toast.Show("复制失败");
+                        }
+                    }),
+            }.With(huxerui::Spacing(8.0F))),
+        SettingRow(
+            "TUN 模式",
+            running ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
+                    : "全局透明代理（下次启动生效）",
+            huxerui::Switch(tun_override.Get().value_or(s.tunEnabled))
+                .OnChanged([s, tasks, toast, dialog, clipboard, proxy_override,
+                           tun_override, textColor = theme.colors.on_surface,
+                           hintColor = theme.colors.on_surface_variant](bool on) {
+                    if (tun_override.Get().has_value()) return;
+                    tun_override = on;
+                    tasks.Launch([=]() -> huxerui::Task<void> {
+                        if (on) {
+                            co_await huxerui::Delay(
+                                std::chrono::duration<double>{0});
+                            const core::TunGate gate = co_await RunOnTaskThread(
+                                [] { return core::tunGate(); });
+                            if (gate == core::TunGate::Elevated) {
+                                tun_override = std::nullopt;
+                                toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
+                                co_return;
+                            }
+                            if (gate == core::TunGate::Denied) {
+                                tun_override = std::nullopt;
+                                ShowTunGuideDialog(dialog, clipboard, toast,
+                                                   textColor, hintColor);
+                                co_return;
+                            }
+                        }
+                        const bool ok = co_await RunOnTaskThread(
+                            [on] { return store::coreStore().applyTun(on); });
+                        tun_override = std::nullopt;
+                        if (!ok) {
+                            const std::string error =
+                                store::coreStore().snapshot().lastError;
+                            toast.Show(error.empty() ? "TUN 切换失败" : error);
+                        } else {
+                            toast.Show(on ? "TUN 已开启" : "TUN 已关闭");
+                        }
+                    });
+                })),
     }.With(huxerui::Spacing(12.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }

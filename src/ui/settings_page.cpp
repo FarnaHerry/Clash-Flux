@@ -1,7 +1,7 @@
-// settings_page.cpp — 通用设置页。
+// settings_page.cpp — 设置页的三个固定模块：通用 / 内核 / 关于。
 //
-// 平台专属设置区由编译宏在页面边界选择：Android 与桌面分别由自己的
-// 高内聚函数管理，通用页只保留代理、外观和关于等真正共用的内容。
+// 平台专属内容由模块入口处的编译宏选择，平台函数内部自洽管理状态、
+// 任务、权限和控件；这里不维护 Android/桌面能力矩阵。
 #include <huxerui/huxerui.h>
 
 #include <chrono>
@@ -27,11 +27,13 @@ const std::vector<std::string> kLogLevels{"silent", "error", "warning", "info",
                                           "debug"};
 const std::vector<huxerui::StringVariant> kThemeNames{"跟随系统", "深色", "浅色"};
 
-// 宏只选择一个完整的平台设置区，不把平台能力拆成控件级过滤条件。
+// 宏只选择模块级平台函数，不把平台能力拆成控件级过滤条件。
 #if defined(__ANDROID__)
-#define CLASHFLUX_SETTINGS_PLATFORM_SECTION AndroidSettingsSection
+#define CLASHFLUX_GENERAL_PLATFORM_SECTION AndroidGeneralSettings
+#define CLASHFLUX_KERNEL_PLATFORM_SECTION AndroidKernelSettings
 #else
-#define CLASHFLUX_SETTINGS_PLATFORM_SECTION DesktopSettingsSection
+#define CLASHFLUX_GENERAL_PLATFORM_SECTION DesktopGeneralSettings
+#define CLASHFLUX_KERNEL_PLATFORM_SECTION DesktopKernelSettings
 #endif
 
 const std::string kAboutText = std::format(
@@ -138,10 +140,21 @@ const std::string kAboutText = std::format(
         "设置", huxerui::Row{},
         huxerui::ScrollView(
             huxerui::Column {
-                CLASHFLUX_SETTINGS_PLATFORM_SECTION(),
+                Card(huxerui::Column {
+                    SectionTitle("通用"),
+                    SettingRow(
+                        "主题", "",
+                        huxerui::SegmentedButton(
+                            kThemeNames, static_cast<std::size_t>(themeMode.Get()))
+                            .OnChanged([applyTheme](std::size_t index) {
+                                applyTheme(static_cast<int>(index));
+                            })),
+                    CLASHFLUX_GENERAL_PLATFORM_SECTION(),
+                }.With(huxerui::Spacing(10.0F),
+                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
 
                 Card(huxerui::Column {
-                    SectionTitle("代理"),
+                    SectionTitle("内核"),
                     SettingRow(
                         "出站模式", "规则 / 全局 / 直连",
                         huxerui::SegmentedButton(kModeNames, modeIndex)
@@ -205,18 +218,7 @@ const std::string kAboutText = std::format(
                                     "");
                             })
                             .With(huxerui::Frame{.width = 180.0F})),
-                }.With(huxerui::Spacing(10.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
-
-                Card(huxerui::Column {
-                    SectionTitle("外观"),
-                    SettingRow(
-                        "主题", "",
-                        huxerui::SegmentedButton(
-                            kThemeNames, static_cast<std::size_t>(themeMode.Get()))
-                            .OnChanged([applyTheme](std::size_t index) {
-                                applyTheme(static_cast<int>(index));
-                            })),
+                    CLASHFLUX_KERNEL_PLATFORM_SECTION(),
                 }.With(huxerui::Spacing(10.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
 
@@ -233,6 +235,7 @@ const std::string kAboutText = std::format(
             .With(huxerui::Grow(1.0F)));
 }
 
-#undef CLASHFLUX_SETTINGS_PLATFORM_SECTION
+#undef CLASHFLUX_GENERAL_PLATFORM_SECTION
+#undef CLASHFLUX_KERNEL_PLATFORM_SECTION
 
 } // namespace clashflux::ui

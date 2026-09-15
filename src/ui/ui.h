@@ -162,10 +162,12 @@ huxerui::View LogsPage();       // 日志
 // 设置页持有主题模式 State（AppRoot 传入）。
 huxerui::View SettingsPage(huxerui::State<int> themeMode);
 
-// 平台专属设置区：调用点用编译宏选择一个函数；函数自己管理平台相关状态、
-// 任务和控件。通用设置页不再维护 Android/桌面能力矩阵。
-huxerui::View DesktopSettingsSection();
-huxerui::View AndroidSettingsSection();
+// 设置页的三个固定模块：通用 / 内核 / 关于。平台宏只在模块入口选择
+// 平台函数；函数自己管理平台相关状态、任务、权限和控件。
+huxerui::View DesktopGeneralSettings();
+huxerui::View AndroidGeneralSettings();
+huxerui::View DesktopKernelSettings();
+huxerui::View AndroidKernelSettings();
 
 // 应用壳层的平台边界：AppRoot 仅在调用点用宏选择，不持有托盘/窗口等平台状态。
 void AndroidPreparePlatformDataDirectory(
