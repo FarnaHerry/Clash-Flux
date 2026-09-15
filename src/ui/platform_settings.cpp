@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "ui.h"
 #include "task_bridge.h"
@@ -44,6 +45,108 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
         busy = false;
     });
 }
+
+#if !defined(__ANDROID__)
+
+struct EnvironmentShell {
+    const char* id;
+    const char* label;
+};
+
+#if defined(_WIN32)
+constexpr EnvironmentShell kEnvironmentShells[] = {
+    {"powershell", "PowerShell"},
+    {"cmd", "命令提示符（cmd）"},
+};
+#else
+constexpr EnvironmentShell kEnvironmentShells[] = {
+    {"bash", "Bash"},
+    {"zsh", "Zsh"},
+    {"fish", "Fish"},
+    {"sh", "POSIX sh"},
+};
+#endif
+
+std::string ShellBasename(const char* value) {
+    if (value == nullptr || *value == '\0') return {};
+    std::string path = value;
+    const std::size_t slash = path.find_last_of("/\\");
+    if (slash != std::string::npos) path.erase(0, slash + 1);
+    if (path.size() > 4 && path.ends_with(".exe")) path.resize(path.size() - 4);
+    for (char& c : path) {
+        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+    }
+    return path;
+}
+
+std::string CurrentEnvironmentShell() {
+#if defined(_WIN32)
+    const std::string shell = ShellBasename(std::getenv("COMSPEC"));
+    if (shell == "cmd") return "cmd";
+    return "powershell";
+#else
+    const std::string shell = ShellBasename(std::getenv("SHELL"));
+    for (const auto& option : kEnvironmentShells) {
+        if (shell == option.id) return option.id;
+    }
+    return "sh";
+#endif
+}
+
+std::size_t EnvironmentShellIndex(const std::string& id) {
+    for (std::size_t index = 0; index < std::size(kEnvironmentShells); ++index) {
+        if (id == kEnvironmentShells[index].id) return index;
+    }
+    return 0;
+}
+
+std::vector<std::string> EnvironmentShellLabels() {
+    std::vector<std::string> labels;
+    for (const auto& option : kEnvironmentShells) labels.emplace_back(option.label);
+    return labels;
+}
+
+std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
+    const int safePort = port > 0 && port <= 65535 ? port : 7899;
+    const std::string endpoint = std::format("http://127.0.0.1:{}", safePort);
+#if defined(_WIN32)
+    if (shell == "cmd") {
+        return std::format(
+            "set \"HTTP_PROXY={}\"\n"
+            "set \"HTTPS_PROXY={}\"\n"
+            "set \"ALL_PROXY={}\"\n"
+            "set \"NO_PROXY=localhost,127.0.0.1\"",
+            endpoint, endpoint, endpoint);
+    }
+    return std::format(
+        "$env:HTTP_PROXY = '{}'\n"
+        "$env:HTTPS_PROXY = '{}'\n"
+        "$env:ALL_PROXY = '{}'\n"
+        "$env:NO_PROXY = 'localhost,127.0.0.1'",
+        endpoint, endpoint, endpoint);
+#else
+    if (shell == "fish") {
+        return std::format(
+            "set -gx HTTP_PROXY {}\n"
+            "set -gx HTTPS_PROXY {}\n"
+            "set -gx ALL_PROXY {}\n"
+            "set -gx NO_PROXY localhost,127.0.0.1",
+            endpoint, endpoint, endpoint);
+    }
+    return std::format(
+        "export HTTP_PROXY={}\n"
+        "export HTTPS_PROXY={}\n"
+        "export ALL_PROXY={}\n"
+        "export NO_PROXY=localhost,127.0.0.1\n"
+        "export http_proxy=\"$HTTP_PROXY\"\n"
+        "export https_proxy=\"$HTTPS_PROXY\"\n"
+        "export all_proxy=\"$ALL_PROXY\"\n"
+        "export no_proxy=\"$NO_PROXY\"",
+        endpoint, endpoint, endpoint);
+#endif
+}
+
+#endif
 
 } // namespace
 
@@ -230,6 +333,12 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
     auto service_installed = huxerui::UseState(service::installed());
     auto proxy_override = huxerui::UseState<std::optional<bool>>(std::nullopt);
     auto tun_override = huxerui::UseState<std::optional<bool>>(std::nullopt);
+    const std::string detectedShell = CurrentEnvironmentShell();
+    const std::string savedShell =
+        store::coreStore().setting("ui.env_shell", detectedShell);
+    auto envShell = huxerui::UseState(EnvironmentShellIndex(savedShell));
+    const std::vector<std::string> envShellLabels =
+        EnvironmentShellLabels();
     auto busy = huxerui::UseState(false);
 
     huxerui::Lifecycle(
@@ -323,6 +432,33 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
                             }
                         });
                     })),
+            SettingRow(
+                "复制环境变量",
+                std::format("当前检测到 {}；复制当前混合端口的代理变量",
+                            detectedShell),
+                huxerui::Row {
+                    huxerui::Select(
+                        envShellLabels,
+                        envShell.Get(),
+                        [](const std::string& name) { return huxerui::Text(name); })
+                        .OnChanged([envShell](std::size_t index) {
+                            envShell = index;
+                            store::coreStore().setSetting(
+                                "ui.env_shell", kEnvironmentShells[index].id);
+                        })
+                        .With(huxerui::Frame{.width = 170.0F}),
+                    huxerui::Button("复制").OnClick(
+                        [clipboard, toast, envShell, s] {
+                            const std::string command = ProxyEnvironmentCommand(
+                                kEnvironmentShells[envShell.Get()].id,
+                                s.mixedPort);
+                            if (clipboard->WriteText(command)) {
+                                toast.Show("环境变量命令已复制");
+                            } else {
+                                toast.Show("复制失败");
+                            }
+                        }),
+                }.With(huxerui::Spacing(8.0F))),
             SettingRow(
                 "TUN 模式",
                 running ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"

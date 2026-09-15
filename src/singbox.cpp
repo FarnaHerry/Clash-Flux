@@ -589,6 +589,14 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
     if (!config.contains("experimental") || !config["experimental"].is_object()) {
         config["experimental"] = nlohmann::json::object();
     }
+#if defined(__ANDROID__)
+    // Android libbox is controlled through CommandServer/CommandClient.  It
+    // has no desktop REST controller on 127.0.0.1:9097, so remove a
+    // clash_api left by a native sing-box profile as well as the managed
+    // desktop skeleton.  Keeping this out of the Android config also avoids
+    // starting an unnecessary second controller inside the libbox service.
+    config["experimental"].erase("clash_api");
+#else
     nlohmann::json clashApi = config["experimental"].contains("clash_api") &&
                                       config["experimental"]["clash_api"].is_object()
                                   ? config["experimental"]["clash_api"]
@@ -600,6 +608,7 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
     // 不在列表里时会被自动补头——因此小写 rule/global/direct 全部可用。
     clashApi["default_mode"] = opt.mode;
     config["experimental"]["clash_api"] = std::move(clashApi);
+#endif
     config["experimental"]["cache_file"] = {{"enabled", true}};
 }
 
