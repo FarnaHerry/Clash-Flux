@@ -225,6 +225,10 @@ public final class MainActivity extends HuxerUIActivity {
         return ClashVpnService.selectOutbound(group, name);
     }
 
+    public static boolean setClashMode(String mode) {
+        return ClashVpnService.setClashMode(mode);
+    }
+
     public static String proxyGroups() {
         return ClashVpnService.proxyGroups();
     }

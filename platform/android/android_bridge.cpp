@@ -382,6 +382,36 @@ extern "C" const char* clashflux_android_proxy_groups() noexcept {
     return result.c_str();
 }
 
+extern "C" bool clashflux_android_set_clash_mode(const char* mode) noexcept {
+    if (mode == nullptr || *mode == '\0') return false;
+
+    std::lock_guard lock(g_mutex);
+    bool attached = false;
+    JNIEnv* environment = current_environment(attached);
+    if (environment == nullptr || g_activity_class == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    const jmethodID method = environment->GetStaticMethodID(
+        g_activity_class, "setClashMode", "(Ljava/lang/String;)Z");
+    if (method == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    jstring modeValue = environment->NewStringUTF(mode);
+    if (modeValue == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    const jboolean ok = environment->CallStaticBooleanMethod(
+        g_activity_class, method, modeValue);
+    environment->DeleteLocalRef(modeValue);
+    const bool failed = environment->ExceptionCheck();
+    if (failed) environment->ExceptionClear();
+    if (attached) g_vm->DetachCurrentThread();
+    return !failed && ok == JNI_TRUE;
+}
+
 extern "C" bool clashflux_android_select_outbound(const char* group,
                                                     const char* name) noexcept {
     if (group == nullptr || name == nullptr || *group == '\0' || *name == '\0') {

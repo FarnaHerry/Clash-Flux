@@ -34,6 +34,7 @@ namespace store {
 extern "C" int clashflux_android_vpn_state() noexcept;
 extern "C" void clashflux_android_start_vpn() noexcept;
 extern "C" void clashflux_android_stop_vpn() noexcept;
+extern "C" bool clashflux_android_set_clash_mode(const char*) noexcept;
 #endif
 
 export struct CoreSnapshot {
@@ -588,9 +589,13 @@ public:
     // 切换出站模式（阻塞）。成功即更新快照。
     bool applyMode(const std::string& m) {
         ensureOpen();
+#if defined(__ANDROID__)
+        if (!clashflux_android_set_clash_mode(m.c_str())) return false;
+#else
         const nlohmann::json body = {{"mode", m}};
         const auto r = api_->patchConfigs(body.dump());
         if (!r.ok) return false;
+#endif
         setSetting("core.mode", m);
         std::lock_guard lock(mutex_);
         snap_.mode = m;

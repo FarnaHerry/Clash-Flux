@@ -824,10 +824,10 @@ huxerui::Task<ProfileImportResult> DesktopImportProfile(
 #define CLASHFLUX_IMPORT_PROFILE DesktopImportProfile
 #endif
 
-// 单张订阅卡：纯视图（零弹窗 State；菜单句柄/任务域由页面下发），弹窗经
-// openXxx(id) 回调到页面级懒加载打开。
+// 单张订阅卡：纯视图（零弹窗 State；任务域由页面下发，菜单句柄由卡片自持有），
+// 弹窗经 openXxx(id) 回调到页面级懒加载打开。
 [[huxerui::composable]] huxerui::View ProfileCard(
-    const db::Profile& profile, bool compact, huxerui::MenuHandle menu,
+    const db::Profile& profile, bool compact,
     huxerui::TaskScope tasks, huxerui::ToastHandle toast,
     std::shared_ptr<huxerui::HttpClient> http, std::function<void()> reload,
     huxerui::State<std::optional<std::int64_t>> optimisticSelected,
@@ -839,6 +839,11 @@ huxerui::Task<ProfileImportResult> DesktopImportProfile(
     const std::function<void(std::int64_t)>& openEditFile,
     const std::function<void(std::int64_t)>& openQr) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    // Each card owns its presentation anchor. Sharing one page-level MenuHandle
+    // across compact cards mounts the same LayerAnchor on multiple Views, which
+    // Android rejects during the next frame with "anchor must be mounted on only
+    // one View" when the subscription page contains more than one card.
+    auto menu = huxerui::UseMenu();
     const IslandTheme islands = ResolveIslandTheme(theme);
     const std::int64_t id = profile.id;
     const bool nativeVpn = isNativeVpnType(profile.type);
@@ -1205,7 +1210,6 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
     // 平台栈下载通道（Android 订阅导入/刷新用）：Runtime 各平台都装了该服务。
     auto http = huxerui::UseService<huxerui::HttpClient>();
     auto dialog = huxerui::UseDialog();
-    auto menu = huxerui::UseMenu();
     auto clipboard = application.Clipboard();
     auto profiles = huxerui::UseStateList<db::Profile>();
     auto pptpStates = huxerui::UseStateList<store::PptpState>();
@@ -2130,7 +2134,7 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
 
     huxerui::View profileGrid = huxerui::VirtualGrid(
                                     profileItems.size(),
-                                    [profiles, profileItems, compact, menu, tasks, toast, http,
+                                    [profiles, profileItems, compact, tasks, toast, http,
                                      reload,
                                      pptpStates, openVpnStates, isConnectionSelected,
                                      toggleConnection, openEditInfo, showEditRules,
@@ -2187,7 +2191,7 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
                                             }
                                         }
                                         return ProfileCard(
-                                                   profile, compact, menu, tasks,
+                                                   profile, compact, tasks,
                                                    toast, http, reload,
                                                    optimisticSelected,
                                                    pptpState, openVpnState,
