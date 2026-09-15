@@ -1,8 +1,12 @@
 package dev.farna.clashflux;
 
 import android.app.*;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
@@ -37,6 +41,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private boolean failureReported;
     private volatile boolean starting;
     private volatile boolean startRequested;
+    private volatile Network defaultNetwork;
     private static volatile ClashVpnService current;
     private static volatile String outboundGroupsJson = "{\"proxies\":{}}";
     static { System.loadLibrary(BuildConfig.HUXERUI_APP_LIBRARY); }
@@ -62,6 +67,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         try {
             MainActivity.appLog("VPN 服务已创建，开始初始化 libbox", false);
             MainActivity.bootstrapNative(this);
+            defaultNetwork = findPhysicalNetwork();
             setup();
         } catch (Throwable error) {
             Log.e(TAG, "VPN service initialization", error);
@@ -237,13 +243,29 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
 
     private static final LocalDNSTransport SYSTEM_DNS = new LocalDNSTransport() {
         @Override public void exchange(ExchangeContext context, byte[] message) {
-            throw new UnsupportedOperationException("raw local DNS is unavailable");
+            // raw() is false, so libbox normally uses lookup().  If a future
+            // libbox build nevertheless calls exchange(), fail the query
+            // explicitly instead of letting an exception escape a Go callback.
+            context.errorCode(2);
         }
 
         @Override public void lookup(ExchangeContext context, String network,
                                      String domain) {
             try {
-                InetAddress[] addresses = InetAddress.getAllByName(domain);
+                ClashVpnService service = current;
+                Network physical = service == null ? null : service.defaultNetwork;
+                if (physical == null && service != null) {
+                    physical = service.findPhysicalNetwork();
+                    service.defaultNetwork = physical;
+                }
+                if (physical == null) {
+                    context.errorCode(2);
+                    return;
+                }
+                // Resolve against the captured physical network.  Calling
+                // InetAddress.getAllByName() after the VPN is attached can
+                // route the resolver request back into this TUN and recurse.
+                InetAddress[] addresses = physical.getAllByName(domain);
                 StringBuilder result = new StringBuilder();
                 for (InetAddress address : addresses) {
                     if (address == null) continue;
@@ -257,11 +279,37 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 }
             } catch (UnknownHostException error) {
                 context.errorCode(3);
+            } catch (RuntimeException error) {
+                context.errorCode(2);
             }
         }
 
         @Override public boolean raw() { return false; }
     };
+
+    private Network findPhysicalNetwork() {
+        ConnectivityManager manager =
+                (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (manager == null) return null;
+        Network active = manager.getActiveNetwork();
+        if (isPhysicalNetwork(manager, active)) return active;
+        try {
+            for (Network network : manager.getAllNetworks()) {
+                if (isPhysicalNetwork(manager, network)) return network;
+            }
+        } catch (RuntimeException error) {
+            MainActivity.appLog("读取 Android 默认网络失败：" + error.getMessage(), true);
+        }
+        return null;
+    }
+
+    private static boolean isPhysicalNetwork(ConnectivityManager manager,
+                                             Network network) {
+        if (network == null) return false;
+        NetworkCapabilities capabilities = manager.getNetworkCapabilities(network);
+        return capabilities != null
+                && !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN);
+    }
 
     @Override public NetworkInterfaceIterator getInterfaces() {
         List<io.nekohasekai.libbox.NetworkInterface> result = new ArrayList<>();
@@ -318,8 +366,11 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         try {
             MainActivity.appLog("正在连接 libbox 状态通道", false);
             CommandClientOptions options = new CommandClientOptions();
-            options.setStatusInterval(1000);
-            options.addCommand(Libbox.CommandStatus);
+            // Keep the control channel for outbound selection, but do not
+            // subscribe to periodic Java status callbacks.  The status
+            // callback is optional for the VPN data plane and was the last
+            // asynchronous callback before the observed post-attach restart.
+            options.setStatusInterval(0);
             client = new CommandClient(this, options);
             MainActivity.appLog("libbox 状态通道对象已创建", false);
             client.connect();
