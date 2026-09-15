@@ -14,6 +14,10 @@ import android.os.PowerManager;
 import android.provider.Settings;
 import android.util.Log;
 
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+
 import org.huxerui.HuxerUIActivity;
 
 
@@ -72,6 +76,7 @@ public final class MainActivity extends HuxerUIActivity {
         // waiting until after super.onCreate leaves that first frame without a
         // valid Activity class and data-directory bridge.
         nativeInit(getFilesDir().getAbsolutePath(), getApplicationInfo().nativeLibraryDir);
+        reportPreviousNativeCrash(this);
         Log.i(TAG, "Native bridge initialized");
         appLog("主 Activity 已初始化 native bridge", false);
         // Make the system-theme value available to the first native frame too.
@@ -136,6 +141,33 @@ public final class MainActivity extends HuxerUIActivity {
         applicationContext = context.getApplicationContext();
         nativeInit(context.getFilesDir().getAbsolutePath(),
                 context.getApplicationInfo().nativeLibraryDir);
+        reportPreviousNativeCrash(context);
+    }
+
+    /**
+     * libbox redirects Go/native fatal output to CrashReport-*.log. Surface
+     * the previous report in the app log after a process restart; otherwise a
+     * native crash looks like a silent return to the launcher.
+     */
+    private static void reportPreviousNativeCrash(Context context) {
+        try {
+            File report = new File(context.getFilesDir(), "CrashReport-ClashFlux.log");
+            if (!report.isFile() || report.length() == 0) return;
+            long signature = report.lastModified() ^ report.length();
+            android.content.SharedPreferences prefs = context.getSharedPreferences(
+                    "clashflux", Context.MODE_PRIVATE);
+            if (prefs.getLong("last_crash_report_signature", Long.MIN_VALUE) == signature) {
+                return;
+            }
+            String text = new String(Files.readAllBytes(report.toPath()),
+                    StandardCharsets.UTF_8);
+            final int maxChars = 12000;
+            if (text.length() > maxChars) text = text.substring(text.length() - maxChars);
+            appLog("上一次 libbox 崩溃报告：\n" + text, true);
+            prefs.edit().putLong("last_crash_report_signature", signature).apply();
+        } catch (Throwable error) {
+            Log.w(TAG, "Unable to read previous libbox crash report", error);
+        }
     }
 
     public static void startVpn() {

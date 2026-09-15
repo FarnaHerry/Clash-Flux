@@ -5,8 +5,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.net.ConnectivityManager;
+import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.RouteInfo;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
@@ -17,8 +19,6 @@ import java.net.InetAddress;
 import java.net.InterfaceAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Enumeration;
 import java.util.Iterator;
 import java.util.List;
 import java.nio.charset.StandardCharsets;
@@ -224,7 +224,9 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         }
 
         @Override public boolean hasNext() { return index < values.size(); }
-        @Override public int len() { return values.size(); }
+        // Keep the same contract as sing-box's Android StringArray: core
+        // consumes the iterator, and does not use len() for preallocation.
+        @Override public int len() { return 0; }
         @Override public String next() { return values.get(index++); }
     }
 
@@ -313,15 +315,28 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
 
     @Override public NetworkInterfaceIterator getInterfaces() {
         List<io.nekohasekai.libbox.NetworkInterface> result = new ArrayList<>();
+        ConnectivityManager manager =
+                (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (manager == null) return new NetworkInterfaceArray(result);
         try {
-            Enumeration<java.net.NetworkInterface> all =
-                    java.net.NetworkInterface.getNetworkInterfaces();
-            while (all != null && all.hasMoreElements()) {
-                java.net.NetworkInterface source = all.nextElement();
-                if (source == null || source.getName() == null) continue;
+            // Build the list from Android ConnectivityManager, not from every
+            // Linux interface. This avoids exposing the VPN's own tun device
+            // as a candidate physical default interface.
+            for (Network network : manager.getAllNetworks()) {
+                LinkProperties link = manager.getLinkProperties(network);
+                NetworkCapabilities capabilities = manager.getNetworkCapabilities(network);
+                if (link == null || capabilities == null
+                        || link.getInterfaceName() == null) continue;
+                java.net.NetworkInterface source;
+                try {
+                    source = java.net.NetworkInterface.getByName(link.getInterfaceName());
+                } catch (Exception ignored) {
+                    continue;
+                }
+                if (source == null) continue;
                 io.nekohasekai.libbox.NetworkInterface target =
                         new io.nekohasekai.libbox.NetworkInterface();
-                target.setName(source.getName());
+                target.setName(link.getInterfaceName());
                 target.setIndex(source.getIndex());
                 try {
                     int mtu = source.getMTU();
@@ -333,17 +348,42 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 List<String> addresses = new ArrayList<>();
                 for (InterfaceAddress address : source.getInterfaceAddresses()) {
                     if (address == null || address.getAddress() == null) continue;
-                    addresses.add(address.getAddress().getHostAddress() + "/"
+                    addresses.add(stripAddressScope(address.getAddress()) + "/"
                             + address.getNetworkPrefixLength());
                 }
                 target.setAddresses(new StringArray(addresses));
-                target.setDNSServer(new StringArray(Collections.emptyList()));
-                target.setGateway(new StringArray(Collections.emptyList()));
-                target.setType(Libbox.InterfaceTypeOther);
+                List<String> dnsServers = new ArrayList<>();
+                for (InetAddress dns : link.getDnsServers()) {
+                    if (dns != null) dnsServers.add(stripAddressScope(dns));
+                }
+                target.setDNSServer(new StringArray(dnsServers));
+                List<String> gateways = new ArrayList<>();
+                for (RouteInfo route : link.getRoutes()) {
+                    if (route == null || route.getDestination() == null
+                            || route.getDestination().getPrefixLength() != 0) continue;
+                    InetAddress gateway = route.getGateway();
+                    if (gateway != null && !gateway.isAnyLocalAddress()) {
+                        gateways.add(stripAddressScope(gateway));
+                    }
+                }
+                target.setGateway(new StringArray(gateways));
+                if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                    target.setType(Libbox.InterfaceTypeWIFI);
+                } else if (capabilities.hasTransport(
+                        NetworkCapabilities.TRANSPORT_CELLULAR)) {
+                    target.setType(Libbox.InterfaceTypeCellular);
+                } else if (capabilities.hasTransport(
+                        NetworkCapabilities.TRANSPORT_ETHERNET)) {
+                    target.setType(Libbox.InterfaceTypeEthernet);
+                } else {
+                    target.setType(Libbox.InterfaceTypeOther);
+                }
 
                 int flags = 0;
                 try {
-                    if (source.isUp()) flags |= 0x1 | 0x40;
+                    if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                        flags |= 0x1 | 0x40;
+                    }
                     if (source.isLoopback()) flags |= 0x8;
                     if (source.isPointToPoint()) flags |= 0x10;
                     if (source.supportsMulticast()) flags |= 0x1000;
@@ -351,13 +391,20 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                     // Interface metadata is advisory; keep the entry usable.
                 }
                 target.setFlags(flags);
-                target.setMetered(false);
+                target.setMetered(!capabilities.hasCapability(
+                        NetworkCapabilities.NET_CAPABILITY_NOT_METERED));
                 result.add(target);
             }
         } catch (Exception error) {
             MainActivity.appLog("读取 Android 网络接口失败：" + error.getMessage(), true);
         }
         return new NetworkInterfaceArray(result);
+    }
+
+    private static String stripAddressScope(InetAddress address) {
+        String value = address.getHostAddress();
+        int scope = value == null ? -1 : value.indexOf('%');
+        return scope < 0 ? value : value.substring(0, scope);
     }
 
     @Override public LocalDNSTransport localDNSTransport() { return SYSTEM_DNS; }
