@@ -120,8 +120,11 @@ public:
 
     void startAndroidApiStreams() {
 #if defined(__ANDROID__)
-        ensureOpen();
-        streams_.start(cfg::controllerWsUrl(), secret_, logLevel());
+        // libbox is hosted by ClashVpnService and exposes status through the
+        // Java-side CommandClient.  It does not provide the desktop
+        // clash_api HTTP/WS controller at cfg::controllerWsUrl().  Keep this
+        // legacy entry point as a no-op so Android can never start the three
+        // invalid desktop WebSocket channels after TUN attachment.
 #endif
     }
 
