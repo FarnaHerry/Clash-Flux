@@ -211,7 +211,14 @@ Java_dev_farna_clashflux_ClashVpnService_nativeVpnState(JNIEnv* environment, jcl
     log_android(("VPN state=" + std::to_string(state) + " " + text).c_str(), state == 3);
     try { store::coreStore().setAndroidRuntimeState(state, text); } catch (...) {}
     if (state == 2) {
-        try { store::coreStore().startAndroidApiStreams(); } catch (...) {}
+        // Android libbox exposes its status API through the Java-side
+        // CommandClient.  It does not host the desktop clash_api HTTP/WS
+        // controller on 127.0.0.1:9097.  Starting CoreStreams here would
+        // create three invalid IXWebSocket channels immediately after TUN
+        // attach, and on some Android builds the process dies when those
+        // channels time out.  Keep the native bridge limited to runtime
+        // state; ClashVpnService owns the authoritative status stream.
+        log_android("Android libbox 使用 CommandClient 状态通道，不启动桌面 clash_api WebSocket", false);
     }
     if (state == 0 || state == 3) {
         try {
