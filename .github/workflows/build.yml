@@ -664,12 +664,14 @@ jobs:
           retention-days: 14
 
   # -------------------------------------------------------------- Release
-  # 只有 v* 标签触发此 job。各平台构建全部通过后，将 artifact 打成归档并
-  # 发布到对应 GitHub Release，避免出现“Release 已发布但没有可下载产物”。
+  # 只有 v* 标签触发此 job。各平台构建与 Windows 安装器构建全部通过后，
+  # 将 artifact 打成归档并一次性发布到对应 GitHub Release，避免出现
+  # “Release 已发布但没有可下载产物”。
   publish-release:
     name: publish-release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux, build-windows, build-macos, build-android]
+    needs: [build-linux, build-windows, build-macos, build-android,
+            build-windows-installer]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -695,6 +697,10 @@ jobs:
                 cd "$artifact"
                 zip -qr "$GITHUB_WORKSPACE/release/clash-flux-${release_version}-windows-x86_64.zip" .
               )
+            elif [ "$name" = "build-windows-installer" ]; then
+              installer="$artifact/clash-flux-Setup-${release_version}.exe"
+              test -s "$installer"
+              cp "$installer" "release/clash-flux-Setup-${release_version}.exe"
             elif [[ "$name" == build-linux-* ]]; then
               arch="${name#build-linux-}"
               [[ "$arch" == "arm64" ]] && arch="aarch64"
@@ -718,6 +724,7 @@ jobs:
             fi
           done
           test -s "release/clash-flux-${release_version}-windows-x86_64.zip"
+          test -s "release/clash-flux-Setup-${release_version}.exe"
           test -s "release/clash-flux-${release_version}-android-arm64-v8a.apk"
           test -n "$(find release -type f -name '*.tar.gz' -print -quit)"
           test -n "$(find release -type f -name '*.deb' -print -quit)"
@@ -735,15 +742,14 @@ jobs:
             release/*
 
   # WiX only consumes the already-staged Windows payload; it never recompiles
-  # the application.  Keeping it after publication makes the portable ZIP
-  # available as soon as the actual product build is green.
-  package-windows-installer:
-    name: package-windows-installer
+  # the application. It starts as soon as build-windows finishes and runs in
+  # parallel with Linux/macOS/Android builds. publish-release consumes its
+  # artifact together with the portable runtime artifacts.
+  build-windows-installer:
+    name: build-windows-installer
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-windows, publish-release]
+    needs: [build-windows]
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -761,10 +767,8 @@ jobs:
           name: windows-installer-input
           path: installer-input
 
-      - name: Build installer and attach it to the release
+      - name: Build installer
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           Copy-Item 'installer-input/.huxerui' '.huxerui' -Recurse -Force
@@ -786,4 +790,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'WiX payload generation failed' }
           & $wix build ([string]$plan.bundleSource) $payloads '-arch' 'x64' '-bindpath' "Installer=$installerStaging" '-bindpath' "Package=$packageRoot" '-bindpath' "Project=$(Join-Path $projectRoot 'platform/windows')" '-out' $bundle
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path $bundle -PathType Leaf)) { throw 'WiX setup build failed' }
-          gh release upload "$env:GITHUB_REF_NAME" $bundle --repo "$env:GITHUB_REPOSITORY" --clobber
+          $releaseVersion = $env:GITHUB_REF_NAME.Substring(1)
+          New-Item -ItemType Directory -Force dist-src | Out-Null
+          Copy-Item $bundle (Join-Path 'dist-src' "clash-flux-Setup-$releaseVersion.exe") -Force
+          if (-not (Test-Path (Join-Path 'dist-src' "clash-flux-Setup-$releaseVersion.exe") -PathType Leaf)) {
+            throw 'Staged Windows installer is missing'
+          }
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-windows-installer
+          path: dist-src
+          if-no-files-found: error
+          retention-days: 2
