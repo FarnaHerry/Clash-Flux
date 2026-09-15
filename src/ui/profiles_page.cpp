@@ -282,23 +282,11 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
 [[huxerui::composable]] huxerui::View ToggleRow(std::string label, std::string hint,
                                                 bool danger,
                                                 huxerui::State<bool> checked) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const std::string description =
-        label + (hint.empty() ? "" : " · " + hint);
-    return huxerui::Row {
-        huxerui::Text(description)
-            .Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody),
-                danger ? theme.colors.error : theme.colors.on_surface})
-            .With(huxerui::Grow(1.0F),
-                  huxerui::Frame{.height = 24.0F},
-                  huxerui::ClipChildren(),
-                  huxerui::Tooltip(description)),
+    return SettingSwitchRow(
+        label, hint,
         huxerui::Switch(checked.Get()).OnChanged(
             [checked](bool on) { checked = on; }),
-    }
-        .With(huxerui::Spacing(12.0F),
-              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+        danger);
 }
 
 // 订阅表单中的平台字段由平台函数整体负责。Android 不需要也不显示桌面
@@ -394,20 +382,16 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
                 username = value;
             }),
         PasswordField(password),
-        huxerui::Row {
-            huxerui::TextField(timeout.Get())
-                .Label("连接超时（秒）")
-                .Variant(huxerui::TextFieldVariant::Outlined)
-                .OnChanged([timeout](const huxerui::TextEditingValue& value) {
-                    timeout = value;
-                })
-                .With(huxerui::Grow(1.0F)),
-            huxerui::Text("要求 MPPE-128").With(huxerui::Grow(1.0F)),
+        huxerui::TextField(timeout.Get())
+            .Label("连接超时（秒）")
+            .Variant(huxerui::TextFieldVariant::Outlined)
+            .OnChanged([timeout](const huxerui::TextEditingValue& value) {
+                timeout = value;
+            }),
+        SettingSwitchRow(
+            "要求 MPPE-128", "为 PPTP 连接启用 MPPE-128 加密",
             huxerui::Switch(requireMppe.Get())
-                .OnChanged([requireMppe](bool checked) { requireMppe = checked; }),
-        }
-            .With(huxerui::Spacing(8.0F),
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+                .OnChanged([requireMppe](bool checked) { requireMppe = checked; })),
         huxerui::TextField(routes.Get())
             .Label("内网 CIDR（逗号或换行分隔，可为空）")
             .Placeholder("10.20.0.0/16, 10.30.0.0/16")

@@ -216,10 +216,10 @@ huxerui::View UnifiedListRow(huxerui::View content,
 // 通用设置排版部件；这里不做任何平台判断。
 huxerui::View SettingRow(const std::string& label, const std::string& hint,
                          huxerui::View control);
-// Switch 专用设置行：所有视口均保持说明文字在左、开关在右的单行布局。
+// Switch 专用设置行：主名称与小字描述在左侧列，开关固定在右侧。
 huxerui::View SettingSwitchRow(const std::string& label,
                                const std::string& hint,
-                               huxerui::View control);
+                               huxerui::View control, bool danger = false);
 huxerui::View SectionTitle(const std::string& title);
 
 // 自定义内容弹窗的卡片包裹：SDK 的 dialog.Show(ViewFactory/DialogFactory) 不给

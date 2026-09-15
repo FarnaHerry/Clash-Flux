@@ -135,18 +135,21 @@ bool SelectProxyLine(const std::string& group, const std::string& name) {
 }
 
 [[huxerui::composable]] huxerui::View SettingSwitchRow(
-    const std::string& label, const std::string& hint, huxerui::View control) {
+    const std::string& label, const std::string& hint, huxerui::View control,
+    bool danger) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const std::string description = hint.empty() ? label : label + " · " + hint;
+    huxerui::View text = huxerui::Column {
+        huxerui::Text(label).Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kBody),
+            danger ? theme.colors.error : theme.colors.on_surface}),
+        hint.empty()
+            ? huxerui::View{huxerui::Row{}}
+            : huxerui::View{huxerui::Text(hint).Style(huxerui::TextStyle{
+                  huxerui::Font::System(font_size::kCaption),
+                  theme.colors.on_surface_variant})},
+    }.With(huxerui::Spacing(2.0F), huxerui::Grow(1.0F));
     return huxerui::Row {
-        huxerui::Text(description)
-            .Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody),
-                theme.colors.on_surface})
-            .With(huxerui::Grow(1.0F),
-                  huxerui::Frame{.height = 24.0F},
-                  huxerui::ClipChildren(),
-                  huxerui::Tooltip(description)),
+        std::move(text),
         control,
     }.With(huxerui::Spacing(12.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
