@@ -15,6 +15,14 @@ import clashflux.store.core;
 
 namespace clashflux::ui {
 
+namespace {
+
+bool isSelectorType(const std::string& type) {
+    return type == "Selector" || type == "selector";
+}
+
+} // namespace
+
 std::vector<ProxyGroupSnapshot> ParseProxyGroups(const std::string& body) {
     std::vector<ProxyGroupSnapshot> groups;
     const auto json = nlohmann::json::parse(body, nullptr, false);
@@ -34,6 +42,7 @@ std::vector<ProxyGroupSnapshot> ParseProxyGroups(const std::string& body) {
         group.name = it.key();
         group.type = value.value("type", "");
         group.current = value.value("now", "");
+        group.selectable = value.value("selectable", isSelectorType(group.type));
         for (const auto& node : value["all"]) {
             if (node.is_string()) group.nodes.push_back(node.get<std::string>());
         }
@@ -47,6 +56,11 @@ std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
     std::function<void(const std::string&, const std::string&)> on_select) {
     std::vector<huxerui::MenuEntry> entries;
     for (const ProxyGroupSnapshot& group : groups) {
+        if (!group.selectable) {
+            entries.push_back(huxerui::MenuItem(
+                group.name + "（自动测速，不支持手动切换）", [] {}).Enabled(false));
+            continue;
+        }
         std::vector<huxerui::MenuEntry> nodes;
         for (const std::string& node : group.nodes) {
             nodes.push_back(huxerui::MenuItem(

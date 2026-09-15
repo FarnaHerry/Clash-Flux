@@ -152,6 +152,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private void startDataPlane() {
         MainActivity.appLog("开始创建 sing-box VPN 数据面", false);
         nativeVpnState(1, "正在启动 sing-box VPN 数据面");
+        updateForegroundNotification("正在启动 sing-box VPN 隧道");
         try {
             if (!libboxReady) throw new IllegalStateException("libbox 尚未初始化完成");
             // The native store compiles the selected profile into sing-box
@@ -190,6 +191,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             }
             started = true; BootReceiver.setVpnActive(this, true);
             nativeVpnState(2, "sing-box 已附着 TUN；socket protect 已启用");
+            updateForegroundNotification("sing-box VPN 隧道运行中");
             MainActivity.appLog("sing-box 已成功附着 Android TUN，控制通道按需连接", false);
         } catch (Throwable e) {
             if (startRequested) fail("sing-box 启动失败: " + e.getMessage());
@@ -751,6 +753,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 JSONObject value = new JSONObject();
                 value.put("type", group.getType());
                 value.put("now", group.getSelected());
+                value.put("selectable", group.getSelectable());
                 JSONArray all = new JSONArray();
                 OutboundGroupItemIterator items = group.getItems();
                 while (items != null && items.hasNext()) {
@@ -766,6 +769,24 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             MainActivity.appLog("读取出站线路失败：" + error.getMessage(), true);
         }
     }
+    private android.app.Notification buildForegroundNotification(String text) {
+        android.app.Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                ? new android.app.Notification.Builder(this, CHANNEL_ID)
+                : new android.app.Notification.Builder(this);
+        return builder
+                .setContentTitle("Clash-Flux")
+                .setContentText(text)
+                .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+                .setCategory(android.app.Notification.CATEGORY_SERVICE)
+                .setOngoing(true)
+                .build();
+    }
+
+    private void updateForegroundNotification(String text) {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null) manager.notify(NOTIFICATION_ID, buildForegroundNotification(text));
+    }
+
     private void foreground() {
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null && Build.VERSION.SDK_INT >= 26
@@ -773,16 +794,8 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             manager.createNotificationChannel(new NotificationChannel(
                     CHANNEL_ID, "VPN 状态", NotificationManager.IMPORTANCE_LOW));
         }
-        android.app.Notification.Builder builder = Build.VERSION.SDK_INT >= 26
-                ? new android.app.Notification.Builder(this, CHANNEL_ID)
-                : new android.app.Notification.Builder(this);
-        android.app.Notification notification = builder
-                .setContentTitle("Clash-Flux")
-                .setContentText("正在启动 sing-box VPN 隧道")
-                .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
-                .setCategory(android.app.Notification.CATEGORY_SERVICE)
-                .setOngoing(true)
-                .build();
+        android.app.Notification notification =
+                buildForegroundNotification("等待启动 sing-box VPN 隧道");
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, notification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);

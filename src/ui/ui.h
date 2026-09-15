@@ -84,6 +84,9 @@ struct ProxyGroupSnapshot {
     std::string type;
     std::string current;
     std::vector<std::string> nodes;
+    // sing-box URLTest/Fallback groups are readable but cannot be changed
+    // with SelectOutbound; only selector groups are manually selectable.
+    bool selectable = false;
 
     bool operator==(const ProxyGroupSnapshot&) const = default;
 };

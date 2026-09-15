@@ -11,8 +11,8 @@ import android.os.IBinder;
 
 /**
  * CMFA-style resident notification: a foreground service started when the
- * app launches that pins a persistent "core running" notification for the
- * whole process lifetime. Keeping a foreground service alive from launch
+ * app launches that pins a persistent keep-alive notification for the whole
+ * process lifetime. Keeping a foreground service alive from launch
  * also raises the process priority so OEM background killers are less
  * likely to reap the proxy core.
  */
@@ -46,7 +46,7 @@ public final class CoreService extends Service {
                 && manager.getNotificationChannel(CHANNEL_ID) == null) {
             NotificationChannel channel = new NotificationChannel(
                     CHANNEL_ID, "内核状态", NotificationManager.IMPORTANCE_MIN);
-            channel.setDescription("Clash-Flux 内核运行状态");
+            channel.setDescription("Clash-Flux 后台保活状态");
             manager.createNotificationChannel(channel);
         }
 
@@ -55,7 +55,7 @@ public final class CoreService extends Service {
                 : new Notification.Builder(this);
         Notification notification = builder
                 .setContentTitle("Clash-Flux")
-                .setContentText("代理内核运行中")
+                .setContentText("后台保活已启用，VPN 状态见 VPN 通知")
                 .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
                 .setOngoing(true)
                 .build();
