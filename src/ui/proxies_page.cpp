@@ -55,6 +55,7 @@ struct ProxyGroup {
     std::string name;
     std::string type;   // Selector / URLTest / Fallback / LoadBalance / Relay
     std::string now;    // 当前选中节点
+    bool selectable = false;
     std::vector<ProxyNode> nodes;
 
     bool operator==(const ProxyGroup&) const = default;
@@ -71,8 +72,14 @@ struct ProbeState {
 // 组类型：带 all 列表的才是策略组（Selector/URLTest/Fallback/LoadBalance/Relay），
 // 其余（Direct/Reject/具体协议节点）不进组列表。
 bool isGroupType(const std::string& t) {
-    return t == "Selector" || t == "URLTest" || t == "Fallback" ||
-           t == "LoadBalance" || t == "Relay";
+    return t == "Selector" || t == "selector" || t == "URLTest" ||
+           t == "urltest" || t == "Fallback" || t == "fallback" ||
+           t == "LoadBalance" || t == "loadbalance" || t == "Relay" ||
+           t == "relay";
+}
+
+bool isSelectorType(const std::string& t) {
+    return t == "Selector" || t == "selector";
 }
 
 std::vector<ProxyGroup> parseProxies(const std::string& body) {
@@ -93,6 +100,7 @@ std::vector<ProxyGroup> parseProxies(const std::string& body) {
         g.name = it.key();
         g.type = type;
         g.now = v.value("now", "");
+        g.selectable = v.value("selectable", isSelectorType(type));
         for (const auto& nodeName : v["all"]) {
             if (!nodeName.is_string()) continue;
             ProxyNode node;
@@ -170,7 +178,7 @@ huxerui::Color delayColor(const huxerui::ThemeSpec& theme, int delay, bool timeo
 [[huxerui::composable]] huxerui::View NodeCard(
     const ProxyNode& node, bool selected, const std::string& groupName,
     huxerui::State<int> testGeneration, huxerui::State<std::string> testGroup,
-    std::function<void()> onSelect) {
+    bool interactive, std::function<void()> onSelect) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     auto tasks = huxerui::UseTaskScope();
@@ -259,7 +267,8 @@ huxerui::Color delayColor(const huxerui::ThemeSpec& theme, int delay, bool timeo
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start),
               huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                  .label = node.name},
-              huxerui::Focusable(true))
+              huxerui::Focusable(interactive),
+              huxerui::Enabled(interactive))
         .OnClick([onSelect = std::move(onSelect)] { onSelect(); });
 }
 
@@ -293,7 +302,12 @@ constexpr float kNodeGridGap = 8.0F;
                    // 分支节点：先选中到当前组（selectProxy），再进入浏览（路径入栈）。
                    // 叶子节点：常规切换。路径写在任务协程里（点击节点会随网格换组卸载）。
                    std::function<void()> onSelect;
-                   if (node.isGroup) {
+                   if (!current->selectable) {
+                       // URLTest/Fallback groups expose their members for
+                       // inspection and per-card delay, but libbox rejects
+                       // manual selection on them.
+                       onSelect = [] {};
+                   } else if (node.isGroup) {
                        onSelect = [tasks, groups, navPath, groupName, nodeName] {
                            tasks.Launch([=]() -> huxerui::Task<void> {
                                co_await RunOnTaskThread([=] {
@@ -316,7 +330,8 @@ constexpr float kNodeGridGap = 8.0F;
                        };
                    }
                    return NodeCard(node, node.name == selectedName, groupName,
-                                   testGeneration, testGroup, std::move(onSelect))
+                                   testGeneration, testGroup, current->selectable,
+                                   std::move(onSelect))
                        .Key(groupName + "::" + node.name);
                })
         .Columns(huxerui::GridColumns::Fixed(cols))
