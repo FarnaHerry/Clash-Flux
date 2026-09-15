@@ -192,14 +192,21 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     }
     @Override public int openTun(TunOptions o) throws Exception {
         try {
+            if (VpnService.prepare(this) != null) {
+                throw new SecurityException("Android VPN 尚未获得系统授权");
+            }
             Builder b = new Builder().setSession("Clash-Flux")
                     .setMtu(o.getMTU()).setBlocking(false);
             addAddresses(b, o.getInet4Address());
             addAddresses(b, o.getInet6Address());
+            if (Build.VERSION.SDK_INT >= 29) b.setMetered(false);
             if (o.getAutoRoute()) {
                 addRoutes(b, o.getInet4RouteRange());
                 addRoutes(b, o.getInet6RouteRange());
-                if (Build.VERSION.SDK_INT >= 29) b.setMetered(false);
+                StringBox dnsMode = o.getDNSMode();
+                if (dnsMode != null && !Libbox.DNSModeDisabled.equals(dnsMode.getValue())) {
+                    addDnsServers(b, o.getDNSServerAddress());
+                }
             }
             b.setConfigureIntent(PendingIntent.getActivity(
                     this, 0, new Intent(this, MainActivity.class),
@@ -230,6 +237,14 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         while (i.hasNext()) {
             RoutePrefix p = i.next();
             if (p != null) b.addRoute(p.address(), p.prefix());
+        }
+    }
+
+    private static void addDnsServers(Builder b, StringIterator i) {
+        if (i == null) return;
+        while (i.hasNext()) {
+            String address = i.next();
+            if (address != null && !address.isEmpty()) b.addDnsServer(address);
         }
     }
 
