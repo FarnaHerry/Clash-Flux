@@ -566,6 +566,15 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
             {"auto_route", true},
             {"strict_route", opt.tunStrictRoute},
         };
+#if defined(__ANDROID__)
+        // Keep Android on sing-tun's system stack.  The implicit/default
+        // mixed stack creates a gVisor UDP dataplane in libbox; if that
+        // native path faults, it takes down the whole Android process instead
+        // of returning an ordinary startup error.  Android's VpnService
+        // already supplies a real TUN and protected physical sockets, so the
+        // system stack is sufficient for TCP and UDP forwarding here.
+        tun["stack"] = "system";
+#endif
 #if !defined(__ANDROID__)
         // Desktop strict TUN must keep the local controller/mixed inbound out
         // of the data plane. Android's VpnService.Builder has its own route
@@ -576,6 +585,17 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
 #endif
         config["inbounds"].push_back(std::move(tun));
     }
+#if defined(__ANDROID__)
+    // Native sing-box profiles may already contain a tun inbound, in which
+    // case the branch above does not create one.  Apply the Android stack
+    // policy to those profiles too; otherwise the imported config can still
+    // silently select the mixed/gVisor path.
+    for (auto& inbound : config["inbounds"]) {
+        if (inbound.is_object() && inbound.value("type", "") == "tun") {
+            inbound["stack"] = "system";
+        }
+    }
+#endif
 
     if (!config.contains("route") || !config["route"].is_object()) {
         config["route"] = nlohmann::json::object();

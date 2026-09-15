@@ -15,8 +15,9 @@ import android.provider.Settings;
 import android.util.Log;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 
 import org.huxerui.HuxerUIActivity;
 
@@ -159,14 +160,37 @@ public final class MainActivity extends HuxerUIActivity {
             if (prefs.getLong("last_crash_report_signature", Long.MIN_VALUE) == signature) {
                 return;
             }
-            String text = new String(Files.readAllBytes(report.toPath()),
-                    StandardCharsets.UTF_8);
-            final int maxChars = 12000;
-            if (text.length() > maxChars) text = text.substring(text.length() - maxChars);
-            appLog("上一次 libbox 崩溃报告：\n" + text, true);
+            // A Go fatal report is usually much larger than the application
+            // log card because it contains every goroutine.  Showing only its
+            // tail hides the fatal/panic headline and leaves only an innocent
+            // worker frame (for example sing-tun's NAT cleanup loop).  Read a
+            // bounded head and tail so the UI remains responsive while the
+            // cause and the relevant shutdown frames are both preserved.
+            appLog("上一次 libbox 崩溃报告：\n" + readCrashReportExcerpt(report), true);
             prefs.edit().putLong("last_crash_report_signature", signature).apply();
         } catch (Throwable error) {
             Log.w(TAG, "Unable to read previous libbox crash report", error);
+        }
+    }
+
+    private static String readCrashReportExcerpt(File report) throws IOException {
+        final int headBytes = 8192;
+        final int tailBytes = 12000;
+        try (RandomAccessFile input = new RandomAccessFile(report, "r")) {
+            long length = input.length();
+            if (length <= headBytes + tailBytes) {
+                byte[] all = new byte[(int) length];
+                input.readFully(all);
+                return new String(all, StandardCharsets.UTF_8);
+            }
+            byte[] head = new byte[headBytes];
+            input.readFully(head);
+            input.seek(length - tailBytes);
+            byte[] tail = new byte[tailBytes];
+            input.readFully(tail);
+            return new String(head, StandardCharsets.UTF_8)
+                    + "\n...（崩溃报告中间内容已省略）...\n"
+                    + new String(tail, StandardCharsets.UTF_8);
         }
     }
 
