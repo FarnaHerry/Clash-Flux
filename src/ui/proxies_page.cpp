@@ -297,8 +297,7 @@ constexpr float kNodeGridGap = 8.0F;
                        onSelect = [tasks, groups, navPath, groupName, nodeName] {
                            tasks.Launch([=]() -> huxerui::Task<void> {
                                co_await RunOnTaskThread([=] {
-                                   store::coreStore().api().selectProxy(groupName,
-                                                                        nodeName);
+                                   SelectProxyLine(groupName, nodeName);
                                });
                                std::vector<std::string> p =
                                    resolvePath(groups, navPath.Get());
@@ -311,8 +310,7 @@ constexpr float kNodeGridGap = 8.0F;
                        onSelect = [tasks, groupName, nodeName] {
                            tasks.Launch([=]() -> huxerui::Task<void> {
                                co_await RunOnTaskThread([=] {
-                                   store::coreStore().api().selectProxy(groupName,
-                                                                        nodeName);
+                                   SelectProxyLine(groupName, nodeName);
                                });
                            });
                        };
@@ -469,10 +467,10 @@ constexpr float kChipGap = 8.0F;
                     coreState = snap.state;
                     if (!snap.mode.empty()) mode = snap.mode;
                     if (snap.state == core::CoreState::Running) {
-                        const auto r = co_await RunOnTaskThread([] {
-                            return store::coreStore().api().proxies();
+                        const std::string body = co_await RunOnTaskThread([] {
+                            return ProxyGroupsSnapshot();
                         });
-                        if (r.ok) ReplaceStateList(groups, parseProxies(r.body));
+                        if (!body.empty()) ReplaceStateList(groups, parseProxies(body));
                         co_await huxerui::Delay(std::chrono::duration<double>{3.0});
                     } else {
                         if (!groups.Empty()) groups.Clear();
