@@ -5,13 +5,16 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.net.ConnectivityManager;
+import android.net.DnsResolver;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.RouteInfo;
 import android.net.VpnService;
 import android.os.Build;
+import android.os.CancellationSignal;
 import android.os.ParcelFileDescriptor;
+import android.system.ErrnoException;
 import android.util.Log;
 import io.nekohasekai.libbox.*;
 import java.io.File;
@@ -19,10 +22,15 @@ import java.net.InetAddress;
 import java.net.InterfaceAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -42,8 +50,14 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private volatile boolean starting;
     private volatile boolean startRequested;
     private volatile Network defaultNetwork;
+    private final Object clientLock = new Object();
     private static volatile ClashVpnService current;
     private static volatile String outboundGroupsJson = "{\"proxies\":{}}";
+    private static final Executor DNS_EXECUTOR = Executors.newCachedThreadPool(runnable -> {
+        Thread thread = new Thread(runnable, "clashflux-dns");
+        thread.setDaemon(true);
+        return thread;
+    });
     static { System.loadLibrary(BuildConfig.HUXERUI_APP_LIBRARY); }
     private static native void nativeVpnState(int state, String message);
     private static native void nativeVpnStats(long uploadRate, long downloadRate,
@@ -167,10 +181,9 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 close("VPN 启动已取消");
                 return;
             }
-            startStatusClient();
             started = true; BootReceiver.setVpnActive(this, true);
             nativeVpnState(2, "sing-box 已附着 TUN；socket protect 已启用");
-            MainActivity.appLog("sing-box 已成功附着 Android TUN", false);
+            MainActivity.appLog("sing-box 已成功附着 Android TUN，控制通道按需连接", false);
         } catch (Throwable e) {
             if (startRequested) fail("sing-box 启动失败: " + e.getMessage());
         } finally {
@@ -194,7 +207,12 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             tunnel = b.establish();
             if (tunnel == null) throw new IllegalStateException("系统拒绝创建 VPN 接口");
             MainActivity.appLog("Android VPN 接口已创建", false);
-            return tunnel.detachFd();
+            // Keep the PFD owned by the service until libbox is stopped.  The
+            // official Android client returns pfd.fd and closes the same PFD
+            // from onDestroy; detachFd() makes the Java lifetime unrelated to
+            // the descriptor handed to libbox and can leave a stale tunnel
+            // across service recreation.
+            return tunnel.getFd();
         } catch (Exception error) {
             MainActivity.appLog("Android VPN 接口创建失败：" + error.getMessage(), true);
             throw error;
@@ -244,49 +262,167 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     }
 
     private static final LocalDNSTransport SYSTEM_DNS = new LocalDNSTransport() {
-        @Override public void exchange(ExchangeContext context, byte[] message) {
-            // raw() is false, so libbox normally uses lookup().  If a future
-            // libbox build nevertheless calls exchange(), fail the query
-            // explicitly instead of letting an exception escape a Go callback.
-            context.errorCode(2);
+        private Network physicalNetwork() {
+            ClashVpnService service = current;
+            Network physical = service == null ? null : service.defaultNetwork;
+            if (physical == null && service != null) {
+                physical = service.findPhysicalNetwork();
+                service.defaultNetwork = physical;
+            }
+            return physical;
         }
 
-        @Override public void lookup(ExchangeContext context, String network,
-                                     String domain) {
+        @Override public boolean raw() {
+            return Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
+        }
+
+        @Override public void exchange(ExchangeContext context, byte[] message) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                context.errorCode(2);
+                return;
+            }
+            final Network physical = physicalNetwork();
+            if (physical == null) {
+                context.errorCode(2);
+                return;
+            }
+            final CountDownLatch completed = new CountDownLatch(1);
+            final CancellationSignal cancellation = new CancellationSignal();
             try {
-                ClashVpnService service = current;
-                Network physical = service == null ? null : service.defaultNetwork;
-                if (physical == null && service != null) {
-                    physical = service.findPhysicalNetwork();
-                    service.defaultNetwork = physical;
-                }
-                if (physical == null) {
-                    context.errorCode(2);
-                    return;
-                }
-                // Resolve against the captured physical network.  Calling
-                // InetAddress.getAllByName() after the VPN is attached can
-                // route the resolver request back into this TUN and recurse.
-                InetAddress[] addresses = physical.getAllByName(domain);
-                StringBuilder result = new StringBuilder();
-                for (InetAddress address : addresses) {
-                    if (address == null) continue;
-                    if (result.length() > 0) result.append('\n');
-                    result.append(address.getHostAddress());
-                }
-                if (result.length() == 0) {
-                    context.errorCode(3);
-                } else {
-                    context.success(result.toString());
-                }
-            } catch (UnknownHostException error) {
-                context.errorCode(3);
+                context.onCancel(() -> {
+                    cancellation.cancel();
+                    completed.countDown();
+                });
+                DnsResolver.getInstance().rawQuery(
+                        physical, message, DnsResolver.FLAG_NO_RETRY, DNS_EXECUTOR,
+                        cancellation, new DnsResolver.Callback<byte[]>() {
+                            @Override public void onAnswer(byte[] answer, int rcode) {
+                                try {
+                                    if (rcode == 0) context.rawSuccess(answer);
+                                    else context.errorCode(rcode);
+                                } finally {
+                                    completed.countDown();
+                                }
+                            }
+
+                            @Override public void onError(DnsResolver.DnsException error) {
+                                try {
+                                    if (error.getCause() instanceof ErrnoException) {
+                                        context.errnoCode(((ErrnoException) error.getCause()).errno);
+                                    } else {
+                                        context.errorCode(2);
+                                    }
+                                } finally {
+                                    completed.countDown();
+                                }
+                            }
+                        });
+                await(completed, cancellation);
             } catch (RuntimeException error) {
+                cancellation.cancel();
                 context.errorCode(2);
             }
         }
 
-        @Override public boolean raw() { return false; }
+        @Override public void lookup(ExchangeContext context, String network,
+                                     String domain) {
+            final Network physical = physicalNetwork();
+            if (physical == null) {
+                context.errorCode(2);
+                return;
+            }
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                try {
+                    InetAddress[] addresses = physical.getAllByName(domain);
+                    StringBuilder result = new StringBuilder();
+                    for (InetAddress address : addresses) {
+                        if (address == null) continue;
+                        if (result.length() > 0) result.append('\n');
+                        result.append(address.getHostAddress());
+                    }
+                    if (result.length() == 0) context.errorCode(3);
+                    else context.success(result.toString());
+                } catch (UnknownHostException error) {
+                    context.errorCode(3);
+                } catch (RuntimeException error) {
+                    context.errorCode(2);
+                }
+                return;
+            }
+
+            final CountDownLatch completed = new CountDownLatch(1);
+            final CancellationSignal cancellation = new CancellationSignal();
+            try {
+                context.onCancel(() -> {
+                    cancellation.cancel();
+                    completed.countDown();
+                });
+                int type = network != null && network.endsWith("4")
+                        ? DnsResolver.TYPE_A
+                        : network != null && network.endsWith("6")
+                        ? DnsResolver.TYPE_AAAA : 0;
+                DnsResolver.Callback<Collection<InetAddress>> callback =
+                        new DnsResolver.Callback<Collection<InetAddress>>() {
+                            @Override public void onAnswer(Collection<InetAddress> addresses,
+                                                            int rcode) {
+                                try {
+                                    if (rcode != 0) {
+                                        context.errorCode(rcode);
+                                        return;
+                                    }
+                                    StringBuilder result = new StringBuilder();
+                                    if (addresses != null) {
+                                        for (InetAddress address : addresses) {
+                                            if (address == null) continue;
+                                            if (result.length() > 0) result.append('\n');
+                                            result.append(address.getHostAddress());
+                                        }
+                                    }
+                                    if (result.length() == 0) context.errorCode(3);
+                                    else context.success(result.toString());
+                                } finally {
+                                    completed.countDown();
+                                }
+                            }
+
+                            @Override public void onError(DnsResolver.DnsException error) {
+                                try {
+                                    if (error.getCause() instanceof ErrnoException) {
+                                        context.errnoCode(((ErrnoException) error.getCause()).errno);
+                                    } else {
+                                        context.errorCode(2);
+                                    }
+                                } finally {
+                                    completed.countDown();
+                                }
+                            }
+                        };
+                if (type == DnsResolver.TYPE_A || type == DnsResolver.TYPE_AAAA) {
+                    DnsResolver.getInstance().query(
+                            physical, domain, type, DnsResolver.FLAG_NO_RETRY,
+                            DNS_EXECUTOR, cancellation, callback);
+                } else {
+                    DnsResolver.getInstance().query(
+                            physical, domain, DnsResolver.FLAG_NO_RETRY,
+                            DNS_EXECUTOR, cancellation, callback);
+                }
+                await(completed, cancellation);
+            } catch (RuntimeException error) {
+                cancellation.cancel();
+                context.errorCode(2);
+            }
+        }
+
+        private void await(CountDownLatch completed, CancellationSignal cancellation) {
+            try {
+                if (!completed.await(15, TimeUnit.SECONDS)) {
+                    cancellation.cancel();
+                }
+            } catch (InterruptedException error) {
+                cancellation.cancel();
+                Thread.currentThread().interrupt();
+            }
+        }
     };
 
     private Network findPhysicalNetwork() {
@@ -409,23 +545,18 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
 
     @Override public LocalDNSTransport localDNSTransport() { return SYSTEM_DNS; }
 
-    private void startStatusClient() {
-        try {
-            MainActivity.appLog("正在连接 libbox 状态通道", false);
+    private CommandClient controlClient() throws Exception {
+        synchronized (clientLock) {
+            if (client != null) return client;
+            if (!startRequested) throw new IllegalStateException("VPN 未在运行");
+            MainActivity.appLog("线路切换：按需连接 libbox 控制通道", false);
             CommandClientOptions options = new CommandClientOptions();
-            // Keep the control channel for outbound selection, but do not
-            // subscribe to periodic Java status callbacks.  The status
-            // callback is optional for the VPN data plane and was the last
-            // asynchronous callback before the observed post-attach restart.
             options.setStatusInterval(0);
-            client = new CommandClient(this, options);
-            MainActivity.appLog("libbox 状态通道对象已创建", false);
-            client.connect();
-            MainActivity.appLog("libbox 状态通道连接请求已发送", false);
-        } catch (Throwable error) {
-            // The VPN data plane is independent of the optional UI client.
-            Log.w(TAG, "Unable to attach sing-box status stream", error);
-            MainActivity.appLog("libbox 状态通道连接失败：" + error.getMessage(), true);
+            CommandClient candidate = new CommandClient(this, options);
+            candidate.connect();
+            client = candidate;
+            MainActivity.appLog("libbox 控制通道已连接", false);
+            return candidate;
         }
     }
     private void close(String msg) { close(msg, true); }
@@ -439,8 +570,12 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         started = false;
         BootReceiver.setVpnActive(this, false);
         outboundGroupsJson = "{\"proxies\":{}}";
-        try { if (client != null) client.disconnect(); } catch (Exception ignored) {}
-        client = null;
+        CommandClient activeClient;
+        synchronized (clientLock) {
+            activeClient = client;
+            client = null;
+        }
+        try { if (activeClient != null) activeClient.disconnect(); } catch (Exception ignored) {}
         try { if (server != null) server.closeService(); } catch (Exception ignored) {}
         try { if (server != null) server.close(); } catch (Exception ignored) {}
         server = null;
@@ -456,9 +591,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             return false;
         }
         try {
-            CommandClient activeClient = service.client;
-            if (activeClient == null) return false;
-            activeClient.selectOutbound(group, name);
+            service.controlClient().selectOutbound(group, name);
             return true;
         } catch (Exception error) {
             Log.w(TAG, "Unable to select outbound " + group + " -> " + name, error);
