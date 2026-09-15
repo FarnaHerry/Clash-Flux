@@ -651,6 +651,19 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         }
     }
 
+    public static boolean setClashMode(String mode) {
+        ClashVpnService service = current;
+        if (service == null || mode == null || mode.isEmpty()) return false;
+        try {
+            service.controlClient().setClashMode(mode);
+            return true;
+        } catch (Exception error) {
+            Log.w(TAG, "Unable to set clash mode " + mode, error);
+            MainActivity.appLog("出站模式切换失败：" + error.getMessage(), true);
+            return false;
+        }
+    }
+
     public static String proxyGroups() {
         ClashVpnService service = current;
         if (service != null) {
