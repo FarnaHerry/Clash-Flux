@@ -14,12 +14,14 @@ import android.net.VpnService;
 import android.os.Build;
 import android.os.CancellationSignal;
 import android.os.ParcelFileDescriptor;
+import android.os.Process;
 import android.system.ErrnoException;
 import android.util.Log;
 import io.nekohasekai.libbox.*;
 import java.io.File;
 import java.net.InetAddress;
 import java.net.InterfaceAddress;
+import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -635,9 +637,42 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     // not declare it, while an unannotated method remains harmless there.
     public boolean usePlatformAutoRedirect(){return false;}
     @Override public void autoDetectInterfaceControl(int fd){protect(fd);}
-    @Override public boolean useProcFS(){return false;} @Override public boolean includeAllNetworks(){return false;} @Override public boolean underNetworkExtension(){return false;}
+    @Override public boolean useProcFS(){return Build.VERSION.SDK_INT < Build.VERSION_CODES.Q;} @Override public boolean includeAllNetworks(){return false;} @Override public boolean underNetworkExtension(){return false;}
     @Override public boolean usePlatformBridge(){return false;} @Override public boolean usePlatformShell(){return false;}
-    @Override public void clearDNSCache(){} @Override public ConnectionOwner findConnectionOwner(int a,String b,int c,String d,int e){return null;} @Override public WIFIState readWIFIState(){return null;}
+    @Override public void clearDNSCache(){}
+    // libbox dereferences the returned owner while preparing TUN DNS metadata;
+    // returning null here causes a Go-side SIGSEGV. Android 10+ exposes the
+    // exact socket-to-UID lookup, while older releases use libbox procfs mode.
+    @Override public ConnectionOwner findConnectionOwner(int protocol, String sourceAddress,
+                                                         int sourcePort, String destinationAddress,
+                                                         int destinationPort) throws Exception {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            throw new UnsupportedOperationException("Android connection owner lookup requires API 29");
+        }
+        ConnectivityManager manager =
+                (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (manager == null) throw new IllegalStateException("Android 网络服务不可用");
+        int uid = manager.getConnectionOwnerUid(
+                protocol,
+                new InetSocketAddress(sourceAddress, sourcePort),
+                new InetSocketAddress(destinationAddress, destinationPort));
+        if (uid == Process.INVALID_UID) {
+            throw new IllegalStateException("Android 未找到连接所属应用");
+        }
+        String[] packages = getPackageManager().getPackagesForUid(uid);
+        List<String> packageNames = new ArrayList<>();
+        if (packages != null) {
+            for (String packageName : packages) {
+                if (packageName != null && !packageName.isEmpty()) packageNames.add(packageName);
+            }
+        }
+        ConnectionOwner owner = new ConnectionOwner();
+        owner.setUserId(uid);
+        owner.setUserName(packageNames.isEmpty() ? "" : packageNames.get(0));
+        owner.setAndroidPackageNames(new StringArray(packageNames));
+        return owner;
+    }
+    @Override public WIFIState readWIFIState(){return null;}
     @Override public void startDefaultInterfaceMonitor(InterfaceUpdateListener l){} @Override public void closeDefaultInterfaceMonitor(InterfaceUpdateListener l){} @Override public void startNeighborMonitor(NeighborUpdateListener l){} @Override public void closeNeighborMonitor(NeighborUpdateListener l){} @Override public void registerMyInterface(String n){} @Override public void checkPlatformShell(){}
     @Override public BridgeSession createBridge(BridgeOptions o){return null;} @Override public PlatformUser lookupUser(String n){return null;} @Override public ShellSession openShellSession(PlatformUser u,String c,StringIterator e,String d,int p,int q){return null;} @Override public String lookupSFTPServer(){return "";} @Override public String readSystemSSHHostKey(){return "";} @Override public String tailscaleHostname(){return "";}
     @Override public void sendNotification(io.nekohasekai.libbox.Notification n){} @Override public void cancelNotification(String i,int t){} @Override public int connectSSHAgent(){return -1;} @Override public SystemProxyStatus getSystemProxyStatus(){return null;} @Override public void serviceReload(){} @Override public void serviceStop(){close("sing-box 已停止");} @Override public void setSystemProxyEnabled(boolean e){} @Override public void triggerNativeCrash(){} @Override public void writeDebugMessage(String m){Log.d(TAG,m); MainActivity.appLog("libbox 调试信息："+m,false);}
