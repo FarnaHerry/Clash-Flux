@@ -382,6 +382,87 @@ extern "C" const char* clashflux_android_proxy_groups() noexcept {
     return result.c_str();
 }
 
+extern "C" const char* clashflux_android_connections() noexcept {
+    thread_local std::string result;
+    result.clear();
+
+    std::lock_guard lock(g_mutex);
+    bool attached = false;
+    JNIEnv* environment = current_environment(attached);
+    if (environment == nullptr || g_activity_class == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return result.c_str();
+    }
+    const jmethodID method = environment->GetStaticMethodID(
+        g_activity_class, "connectionsSnapshot", "()Ljava/lang/String;");
+    if (method != nullptr) {
+        auto* value = static_cast<jstring>(
+            environment->CallStaticObjectMethod(g_activity_class, method));
+        if (!environment->ExceptionCheck() && value != nullptr) {
+            if (const char* chars = environment->GetStringUTFChars(value, nullptr)) {
+                result = chars;
+                environment->ReleaseStringUTFChars(value, chars);
+            }
+            environment->DeleteLocalRef(value);
+        } else if (environment->ExceptionCheck()) {
+            environment->ExceptionClear();
+        }
+    }
+    if (attached) g_vm->DetachCurrentThread();
+    return result.c_str();
+}
+
+extern "C" bool clashflux_android_close_connection(const char* id) noexcept {
+    if (id == nullptr || *id == '\0') return false;
+
+    std::lock_guard lock(g_mutex);
+    bool attached = false;
+    JNIEnv* environment = current_environment(attached);
+    if (environment == nullptr || g_activity_class == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    const jmethodID method = environment->GetStaticMethodID(
+        g_activity_class, "closeConnection", "(Ljava/lang/String;)Z");
+    if (method == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    jstring value = environment->NewStringUTF(id);
+    if (value == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    const jboolean ok = environment->CallStaticBooleanMethod(
+        g_activity_class, method, value);
+    environment->DeleteLocalRef(value);
+    const bool failed = environment->ExceptionCheck();
+    if (failed) environment->ExceptionClear();
+    if (attached) g_vm->DetachCurrentThread();
+    return !failed && ok == JNI_TRUE;
+}
+
+extern "C" bool clashflux_android_close_all_connections() noexcept {
+    std::lock_guard lock(g_mutex);
+    bool attached = false;
+    JNIEnv* environment = current_environment(attached);
+    if (environment == nullptr || g_activity_class == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    const jmethodID method = environment->GetStaticMethodID(
+        g_activity_class, "closeAllConnections", "()Z");
+    if (method == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    const jboolean ok = environment->CallStaticBooleanMethod(g_activity_class, method);
+    const bool failed = environment->ExceptionCheck();
+    if (failed) environment->ExceptionClear();
+    if (attached) g_vm->DetachCurrentThread();
+    return !failed && ok == JNI_TRUE;
+}
+
 extern "C" bool clashflux_android_set_clash_mode(const char* mode) noexcept {
     if (mode == nullptr || *mode == '\0') return false;
 

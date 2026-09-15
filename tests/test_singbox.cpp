@@ -19,6 +19,11 @@ const std::string kFixture = R"yaml(
 mixed-port: 7890
 mode: rule
 log-level: info
+dns:
+  ipv6: false
+  nameserver:
+    - https://dns.example.com/dns-query#手动选择
+    - 223.5.5.5
 proxies:
   - name: "香港 01"
     type: ss
@@ -186,6 +191,19 @@ int main() {
 
     // 路由：final = MATCH 目标；clash_mode 前置；REJECT → action；GEOIP → rule_set。
     check(config["route"]["final"] == "自动选择", "MATCH 目标成为 final");
+    const json& dnsServers = config["dns"]["servers"];
+    check(config["dns"]["final"] == "dns-0", "Clash nameserver 成为 DNS final");
+    check(dnsServers.size() == 3, "Clash nameserver 转换为 typed DNS servers");
+    if (dnsServers.size() >= 3) {
+        check(dnsServers[1].value("type", "") == "https" &&
+                  dnsServers[1].value("server", "") == "dns.example.com" &&
+                  dnsServers[1].value("detour", "") == "手动选择" &&
+                  dnsServers[1].value("domain_resolver", json{})["server"] == "local",
+              "DoH nameserver 保留 detour 与 domain_resolver");
+        check(dnsServers[2].value("type", "") == "udp" &&
+                  dnsServers[2].value("server", "") == "223.5.5.5",
+              "纯 IP nameserver 转换为 UDP DNS server");
+    }
     const json& rules = config["route"]["rules"];
     check(rules[0].value("action", "") == "sniff", "首条规则为 sniff action");
     check(rules[1].value("action", "") == "hijack-dns", "DNS 劫持规则");

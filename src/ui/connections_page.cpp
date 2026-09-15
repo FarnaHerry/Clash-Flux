@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "app_resources.h"
 #include "ui.h"
 #include "task_bridge.h"
 
@@ -101,6 +102,43 @@ ConnectionsSnapshot parseConnections(const std::string& body) {
     return snap;
 }
 
+struct ConnectionFrame {
+    bool open = false;
+    std::string body;
+};
+
+ConnectionFrame readConnectionFrame() {
+    ConnectionFrame frame;
+#if defined(__ANDROID__)
+    frame.open = AndroidVpnState() == 2;
+    if (const char* body = clashflux_android_connections();
+        body != nullptr && *body != '\0') {
+        frame.body = body;
+    }
+#else
+    auto& streams = store::coreStore().streams();
+    frame.open = streams.connectionsOpen();
+    streams.readConnections(frame.body);
+#endif
+    return frame;
+}
+
+void closeConnectionForPlatform(const std::string& id) {
+#if defined(__ANDROID__)
+    clashflux_android_close_connection(id.c_str());
+#else
+    store::coreStore().api().closeConnection(id);
+#endif
+}
+
+void closeAllConnectionsForPlatform() {
+#if defined(__ANDROID__)
+    clashflux_android_close_all_connections();
+#else
+    store::coreStore().api().closeAllConnections();
+#endif
+}
+
 } // namespace
 
 [[huxerui::composable]] huxerui::View ConnectionsPage() {
@@ -120,12 +158,11 @@ ConnectionsSnapshot parseConnections(const std::string& body) {
                 std::string lastFrame;
                 co_await PollWhile(std::chrono::duration<double>{0.5},
                                    [=, &lastFrame] {
-                    auto& streams = store::coreStore().streams();
-                    streamOpen = streams.connectionsOpen();
-                    std::string frame;
-                    if (streams.readConnections(frame) && frame != lastFrame) {
-                        lastFrame = frame;
-                        ConnectionsSnapshot snapshot = parseConnections(frame);
+                    const ConnectionFrame frame = readConnectionFrame();
+                    streamOpen = frame.open;
+                    if (!frame.body.empty() && frame.body != lastFrame) {
+                        lastFrame = frame.body;
+                        ConnectionsSnapshot snapshot = parseConnections(frame.body);
                         totalUp = snapshot.totalUp;
                         totalDown = snapshot.totalDown;
                         ReplaceStateList(rows, std::move(snapshot.rows));
@@ -167,23 +204,15 @@ ConnectionsSnapshot parseConnections(const std::string& body) {
                        const std::string key = id.empty()
                                                    ? std::format("connection-{}", index)
                                                    : id;
-                       const auto closeButton = [tasks, id, theme] {
-                           return huxerui::Text("✕")
-                               .Style(huxerui::TextStyle{
-                                   huxerui::Font::System(font_size::kCaption),
-                                   theme.colors.on_surface_variant})
-                               .With(huxerui::Padding(
-                                         huxerui::EdgeInsets::Symmetric(8.0F, 2.0F)),
-                                     huxerui::Semantics{
-                                         .role = huxerui::SemanticRole::Button,
-                                         .label = "关闭连接"},
-                                     huxerui::Focusable(true),
-                                     huxerui::Tooltip("关闭该连接"))
+                       const auto closeButton = [tasks, id] {
+                           return huxerui::IconButton(app::images::close,
+                                                      "关闭连接")
+                               .With(huxerui::Tooltip("关闭该连接"))
                                .OnClick([tasks, id] {
                                    if (id.empty()) return;
                                    tasks.Launch([=]() -> huxerui::Task<void> {
                                        co_await RunOnTaskThread([=] {
-                                           store::coreStore().api().closeConnection(id);
+                                           closeConnectionForPlatform(id);
                                        });
                                    });
                                });
@@ -234,12 +263,13 @@ ConnectionsSnapshot parseConnections(const std::string& body) {
     return PageScaffold(
         std::format("连接（{} 条 · ↑{} ↓{}）", rows.Size(),
                     formatBytes(totalUp.Get()), formatBytes(totalDown.Get())),
-        huxerui::Button("关闭全部")
+        huxerui::IconButton(app::images::clear_all, "关闭全部")
+            .With(huxerui::Tooltip("关闭全部连接"))
             .OnClick([tasks] {
-                tasks.Launch([=]() -> huxerui::Task<void> {
-                    co_await RunOnTaskThread([] {
-                        store::coreStore().api().closeAllConnections();
-                    });
+                    tasks.Launch([=]() -> huxerui::Task<void> {
+                        co_await RunOnTaskThread([] {
+                        closeAllConnectionsForPlatform();
+                        });
                 });
             }),
         std::move(body));

@@ -263,7 +263,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                    huxerui::Text(state == 2 ? "已连接"
                                  : state == 1 ? "连接中"
                                  : state == 3 ? "失败" : "未连接")),
-        SettingRow(
+        SettingSwitchRow(
             "VPN 代理",
             "系统 VPN 由此服务持有；内核出站 socket 会自动绕过 TUN",
             huxerui::Switch(tun_enabled.Get() || state == 1 || state == 2)
@@ -286,7 +286,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         },
                         on ? "正在请求建立 VPN 隧道" : "VPN 隧道已关闭");
                 })),
-        SettingRow(
+        SettingSwitchRow(
             "后台保活",
             "申请忽略电池优化，防止后台被杀；建议同时在系统设置中允许本应用自启动",
             huxerui::Switch(battery_ignored.Get())
@@ -325,7 +325,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
     auto close_behavior = huxerui::UseState(initial_close_behavior);
 
     return huxerui::Column {
-        SettingRow(
+        SettingSwitchRow(
             "启用托盘图标", "关闭后托盘不可用，关闭窗口即退出",
             huxerui::Switch(tray_enabled.Get())
                 .OnChanged([tray_enabled](bool on) {
@@ -345,7 +345,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                     store::coreStore().setSetting("tray.close_behavior",
                                                    std::to_string(index));
                 })),
-        SettingRow(
+        SettingSwitchRow(
             "启动时隐藏到托盘", "下次启动不显示主窗口，经托盘唤出",
             huxerui::Switch(start_minimized.Get())
                 .OnChanged([start_minimized](bool on) {
@@ -440,7 +440,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
         }.With(huxerui::Spacing(8.0F)),
 
         CLASHFLUX_LINUX_SERVICE_ROW(service_installed, tasks, toast),
-        SettingRow(
+        SettingSwitchRow(
             "系统代理",
             std::format("写入桌面系统代理（127.0.0.1:{}）", s.mixedPort),
             huxerui::Switch(proxy_override.Get().value_or(
@@ -488,7 +488,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         }
                     }),
             }.With(huxerui::Spacing(8.0F))),
-        SettingRow(
+        SettingSwitchRow(
             "TUN 模式",
             running ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
                     : "全局透明代理（下次启动生效）",

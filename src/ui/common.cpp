@@ -134,6 +134,24 @@ bool SelectProxyLine(const std::string& group, const std::string& name) {
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 }
 
+[[huxerui::composable]] huxerui::View SettingSwitchRow(
+    const std::string& label, const std::string& hint, huxerui::View control) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const std::string description = hint.empty() ? label : label + " · " + hint;
+    return huxerui::Row {
+        huxerui::Text(description)
+            .Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBody),
+                theme.colors.on_surface})
+            .With(huxerui::Grow(1.0F),
+                  huxerui::Frame{.height = 24.0F},
+                  huxerui::ClipChildren(),
+                  huxerui::Tooltip(description)),
+        control,
+    }.With(huxerui::Spacing(12.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+}
+
 [[huxerui::composable]] huxerui::View UnifiedListRow(
     huxerui::View content, const huxerui::ThemeSpec& theme, std::string key,
     bool compact) {
@@ -314,7 +332,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 
 [[huxerui::composable]] huxerui::View PageScaffold(const std::string& title,
                                                    huxerui::View actions,
-                                                   huxerui::View content) {
+                                                   huxerui::View content,
+                                                   bool inlineCompactActions) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     // 响应式：Compact(<600) 收窄一级岛内边距。
@@ -325,7 +344,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     // composable 形参被 codegen 固定为 const：拷贝到局部再走右值链。
     // 窄屏时把标题和操作区改为上下布局，避免 Select/按钮挤出岛屿。
     huxerui::View header;
-    if (compact) {
+    if (compact && !inlineCompactActions) {
         header = huxerui::Column {
             huxerui::Text(title, huxerui::TextRole::Title),
             std::move(actions),

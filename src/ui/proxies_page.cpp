@@ -1,10 +1,11 @@
 // proxies_page.cpp — 代理页：顶部收束区（出站模式 规则/全局/直连 切换）+
 // 按模式分视图：规则 → 订阅自带分组 chips + 选中组的统一矩形节点卡网格；
-// 全局 → GLOBAL 组节点网格；直连 → 不展示订阅内容（流量不经节点）。
+// 全局 → GLOBAL 兼容组或平台提供的实际可选组节点网格；直连 → 不展示订阅内容。
 // 底部状态条：嵌套分支导航（面包屑 + 返回）+ 当前组测速触发 + 节点数。
 //
 // 规则/全局两套分支路径 State 独立（rulePath/globalPath），切换模式互不
-// 覆盖对方的选择。GLOBAL 组只在全局模式出现，规则 chips 不含它。
+// 覆盖对方的选择。GLOBAL 组只在全局模式出现，规则 chips 不含它；Android
+// 等仅返回真实策略组的平台，则全局模式回落到第一个可选策略组。
 //
 // 节点网格列数随视口分级：Compact(<600) 2 列 / Medium 3 列 / Expanded 4 列；
 // 末行用空占位补齐，保证同一组内所有节点卡同宽。
@@ -17,6 +18,8 @@
 // 都是阻塞 REST，全部走 RunOnTaskThread；点击事件处理器内不直接写 State
 // （约定 6），只 Launch 协程。
 #include <huxerui/huxerui.h>
+
+#include "app_resources.h"
 
 #include <algorithm>
 #include <chrono>
@@ -315,7 +318,11 @@ constexpr float kNodeGridGap = 8.0F;
                                });
                                std::vector<std::string> p =
                                    resolvePath(groups, navPath.Get());
-                               if (p.empty() || p.back() != groupName) co_return;
+                               // 根组由渲染期回落时，State 可能仍为空或保留了
+                               // 已消失的 GLOBAL；以当前已校验的组重新建立路径。
+                               if (p.empty() || p.back() != groupName) {
+                                   p = {groupName};
+                               }
                                p.push_back(nodeName);
                                navPath = p;
                            });
@@ -348,12 +355,13 @@ constexpr float kChipGap = 8.0F;
 
 [[huxerui::composable]] huxerui::View GroupChipBar(
     huxerui::StateList<ProxyGroup> groups, const std::string& selected,
-    huxerui::State<std::vector<std::string>> navPath, huxerui::TaskScope tasks) {
+    huxerui::State<std::vector<std::string>> navPath, huxerui::TaskScope tasks,
+    bool selectorsOnly) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     std::vector<huxerui::View> chips;
     for (const auto& g : groups) {
-        if (g.name == "GLOBAL") continue;
+        if (g.name == "GLOBAL" || (selectorsOnly && !g.selectable)) continue;
         const bool active = g.name == selected;
         const std::string name = g.name;
         chips.push_back(
@@ -442,7 +450,9 @@ constexpr float kChipGap = 8.0F;
             huxerui::Font::System(font_size::kCaption),
             theme.colors.on_surface_variant}),
         huxerui::Spacer(),
-        huxerui::View{huxerui::Button("测速").OnClick(
+        huxerui::View{huxerui::IconButton(app::images::speed, "测速")
+            .With(huxerui::Tooltip("测试当前组延迟"))
+            .OnClick(
             [testGeneration, testGroup, groupName] {
                 testGroup = groupName;
                 testGeneration += 1;
@@ -468,7 +478,7 @@ constexpr float kChipGap = 8.0F;
     auto testGeneration = huxerui::UseState(0);
     auto testGroup = huxerui::UseState<std::string>("");
     // 分支路径按模式独立（互不共享）：规则模式 path[0] = chips 选中的订阅组，
-    // 全局模式 path[0] 固定 GLOBAL；后续元素 = 逐级点入的嵌套子组。
+    // 全局模式 path[0] = GLOBAL 或平台返回的实际可选组；后续元素 = 逐级点入的嵌套子组。
     auto rulePath = huxerui::UseState<std::vector<std::string>>({});
     auto globalPath = huxerui::UseState<std::vector<std::string>>({});
 
@@ -522,22 +532,46 @@ constexpr float kChipGap = 8.0F;
     const bool direct = mode.Get() == "direct";
     const bool global = mode.Get() == "global";
     const ProxyGroup* firstRule = nullptr;
+    const ProxyGroup* firstRuleFallback = nullptr;
+    const ProxyGroup* globalRoot = findGroup(all, "GLOBAL");
+    bool hasRuleSelector = false;
     for (const auto& g : all) {
-        if (g.name != "GLOBAL") {
-            firstRule = &g;
-            break;
+        if (g.name == "GLOBAL") continue;
+        if (firstRuleFallback == nullptr) firstRuleFallback = &g;
+        if (g.selectable) {
+            hasRuleSelector = true;
+            if (firstRule == nullptr) firstRule = &g;
+        }
+        if (globalRoot == nullptr && g.selectable) globalRoot = &g;
+    }
+    // URLTest groups are normally children of a selector (for example
+    // “节点选择” -> “自动选择”). Showing both as root chips duplicates the same
+    // branch. Prefer selector roots, but keep a URLTest-only subscription usable.
+    if (firstRule == nullptr) firstRule = firstRuleFallback;
+    if (firstRule == nullptr && !all.Empty()) firstRule = &all[0];
+    if (globalRoot == nullptr) {
+        for (const auto& g : all) {
+            if (g.name != "GLOBAL" && g.selectable) {
+                globalRoot = &g;
+                break;
+            }
         }
     }
-    if (firstRule == nullptr && !all.Empty()) firstRule = &all[0];
+    if (globalRoot == nullptr && !all.Empty()) {
+        for (const auto& g : all) {
+            if (g.name != "GLOBAL") {
+                globalRoot = &g;
+                break;
+            }
+        }
+    }
 
     std::vector<std::string> path;
     huxerui::State<std::vector<std::string>> activePath = rulePath;
     if (global) {
         activePath = globalPath;
         path = resolvePath(all, globalPath.Get());
-        if (path.empty() && findGroup(all, "GLOBAL") != nullptr) {
-            path = {"GLOBAL"};
-        }
+        if (path.empty() && globalRoot != nullptr) path = {globalRoot->name};
     } else {
         path = resolvePath(all, rulePath.Get());
         if (path.empty() && firstRule != nullptr) path = {firstRule->name};
@@ -545,7 +579,7 @@ constexpr float kChipGap = 8.0F;
     const ProxyGroup* current = path.empty() ? nullptr : findGroup(all, path.back());
     bool hasRuleChips = false;
     for (const auto& g : all) {
-        if (g.name != "GLOBAL") {
+        if (g.name != "GLOBAL" && (!hasRuleSelector || g.selectable)) {
             hasRuleChips = true;
             break;
         }
@@ -577,7 +611,7 @@ constexpr float kChipGap = 8.0F;
     } else {
         gridArea = huxerui::Column {
             huxerui::Text(coreState.Get() == core::CoreState::Running
-                              ? (global ? "全局组（GLOBAL）不可用"
+                              ? (global ? "全局模式暂无可用策略组"
                                         : "暂无策略组（检查订阅配置）")
                               : "内核未运行 —— 请到设置页启动内核")
                 .Style(huxerui::TextStyle{
@@ -593,7 +627,8 @@ constexpr float kChipGap = 8.0F;
     huxerui::View content = huxerui::Column {
         huxerui::Row { std::move(modeSwitch), huxerui::Spacer() },
         (!direct && !global && hasRuleChips)
-            ? huxerui::View{GroupChipBar(all, path.front(), activePath, tasks)}
+            ? huxerui::View{GroupChipBar(all, path.front(), activePath, tasks,
+                                         hasRuleSelector)}
             : huxerui::View{huxerui::Row{}},
         std::move(gridArea),
         (!direct && current != nullptr)

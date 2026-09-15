@@ -139,10 +139,9 @@ singbox::CompileResult generateConfig(singbox::CompileOptions options) {
 #if defined(__ANDROID__)
     // Android 的 TUN 由 VpnService 建立：libbox 读取 tun inbound 后经
     // PlatformInterface::openTun 回调拿 fd，因此配置里恒含 tun inbound。
-    // VpnService 当前只建立 IPv4 TUN/默认路由，先只走 IPv4；严格路由会
-    // 截断系统级分流，保持关闭。
+    // IPv6 是否启用由持久化设置传入；VpnService 会按 libbox 返回的 IPv6
+    // 地址与路由配置接口。严格路由仍关闭，避免截断系统级分流。
     options.tunInbound = true;
-    options.ipv6 = false;
     options.tunStrictRoute = false;
 #endif
     return singbox::compileConfig(options);

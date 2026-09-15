@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "app_resources.h"
 #include "ui.h"
 #include "task_bridge.h"
 
@@ -59,16 +60,20 @@ const std::string kAboutText = std::format(
     auto portValue = huxerui::UseState(huxerui::TextEditingValue{""});
     auto allowLan = huxerui::UseState(
         store::coreStore().setting("core.allow_lan", "false") == "true");
+    auto ipv6Enabled = huxerui::UseState(
+        store::coreStore().setting("core.ipv6_enabled", "false") == "true");
     auto busy = huxerui::UseState(false);
 
     huxerui::Lifecycle(
-        [tasks, snap, portValue, allowLan] {
+        [tasks, snap, portValue, allowLan, ipv6Enabled] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{1.0}, [=] {
                     const auto current = store::coreStore().snapshot();
                     snap = current;
                     allowLan = store::coreStore().setting(
                                    "core.allow_lan", "false") == "true";
+                    ipv6Enabled = store::coreStore().setting(
+                                      "core.ipv6_enabled", "false") == "true";
                     if (portValue.Get().text.empty() && current.mixedPort > 0) {
                         portValue = huxerui::TextEditingValue{
                             std::to_string(current.mixedPort)};
@@ -178,7 +183,9 @@ const std::string kAboutText = std::format(
                                     portValue = value;
                                 })
                                 .With(huxerui::Frame{.width = 100.0F}),
-                            huxerui::Button("保存").OnClick([portValue, toast] {
+                            huxerui::IconButton(app::images::save, "保存设置")
+                                .With(huxerui::Tooltip("保存设置"))
+                                .OnClick([portValue, toast] {
                                 try {
                                     const int port = std::stoi(portValue.Get().text);
                                     if (port < 1 || port > 65535) throw 0;
@@ -190,7 +197,7 @@ const std::string kAboutText = std::format(
                                 }
                             }),
                         }.With(huxerui::Spacing(8.0F))),
-                    SettingRow(
+                    SettingSwitchRow(
                         "局域网连接", "允许局域网设备接入（下次启动生效）",
                         huxerui::Switch(allowLan.Get())
                             .OnChanged([coreAction, allowLan, busy](bool on) {
@@ -203,6 +210,21 @@ const std::string kAboutText = std::format(
                                     },
                                     on ? "已允许局域网连接（重启内核生效）"
                                        : "已关闭局域网连接");
+                            })),
+                    SettingSwitchRow(
+                        "IPv6", "重启内核生效",
+                        huxerui::Switch(ipv6Enabled.Get())
+                            .OnChanged([coreAction, ipv6Enabled, busy](bool on) {
+                                if (busy.Get()) return;
+                                ipv6Enabled = on;
+                                coreAction(
+                                    [on] {
+                                        store::coreStore().setSetting(
+                                            "core.ipv6_enabled",
+                                            on ? "true" : "false");
+                                    },
+                                    on ? "已启用 IPv6（重启内核生效）"
+                                       : "已关闭 IPv6（重启内核生效）");
                             })),
                     SettingRow(
                         "日志级别", "内核日志详细程度",

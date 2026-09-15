@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "app_resources.h"
 #include "ui.h"
 #include "task_bridge.h"
 
@@ -31,9 +32,11 @@ const std::vector<std::string> kModes{"rule", "global", "direct"};
 #if defined(__ANDROID__)
 constexpr std::string_view kDefaultCoreName = "sing-box libbox";
 #define CLASHFLUX_HOME_SYSTEM_CARD AndroidHomeSystemCard
+#define CLASHFLUX_HOME_ACTION AndroidHomeAction
 #else
 constexpr std::string_view kDefaultCoreName = "sing-box";
 #define CLASHFLUX_HOME_SYSTEM_CARD DesktopHomeSystemCard
+#define CLASHFLUX_HOME_ACTION DesktopHomeAction
 #endif
 
 struct HomeState {
@@ -177,7 +180,50 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     return {};
 }
 
+[[huxerui::composable]] huxerui::View AndroidHomeAction(const HomeState& state) {
+    auto tasks = huxerui::UseTaskScope();
+    auto toast = huxerui::UseToast();
+    auto busy = huxerui::UseState(false);
+    const int vpnState = AndroidVpnState();
+    const bool active = vpnState == 1 || vpnState == 2;
+    const bool canStart = state.profileId != 0;
+    const std::string label = busy.Get() ? "处理中…"
+                              : vpnState == 1 ? "启动中…"
+                                              : active ? "停止" : "启动";
+
+    return huxerui::Button(label)
+        .OnClick([tasks, toast, busy, active] {
+            if (busy.Get()) return;
+            busy = true;
+            tasks.Launch([toast, busy, active]() -> huxerui::Task<void> {
+                try {
+                    co_await RunOnTaskThread([active] {
+                        auto& core = store::coreStore();
+                        core.setSetting("core.tun_enabled", active ? "false" : "true");
+                        if (active) {
+                            AndroidStopVpn();
+                        } else {
+                            core.startCore(store::profilesStore().selectedYaml());
+                            AndroidStartVpn();
+                        }
+                    });
+                    toast.Show(active ? "VPN 隧道已关闭" : "正在启动 VPN 隧道");
+                } catch (const std::exception& error) {
+                    toast.Show(error.what());
+                }
+                busy = false;
+            });
+        })
+        .With(huxerui::Enabled(!busy.Get() && (active || canStart)),
+              huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                 .label = active ? "停止 VPN" : "启动 VPN"});
+}
+
 #else
+
+[[huxerui::composable]] huxerui::View DesktopHomeAction(const HomeState&) {
+    return {};
+}
 
 // 桌面快捷开关自洽管理自己的任务、权限引导和乐观状态；Android 不会进入
 // 这个函数，所以不会从首页漏出系统代理/TUN 控件。
@@ -428,7 +474,8 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                           huxerui::Font::System(font_size::kCaption),
                           theme.colors.on_surface_variant})
                       .With(huxerui::Grow(1.0F)),
-                  huxerui::Button("切换线路")
+                  huxerui::IconButton(app::images::swap, "切换线路")
+                      .With(huxerui::Tooltip("切换线路"))
                       .With(menu.Anchor())
                       .OnClick(showLineMenu),
               }.With(huxerui::Spacing(8.0F),
@@ -450,7 +497,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
 
     return PageScaffold(
         "首页",
-        huxerui::Row{},
+        CLASHFLUX_HOME_ACTION(s),
         huxerui::ScrollView(
             huxerui::Column {
                 // 速率统计卡
@@ -520,5 +567,6 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
 }
 
 #undef CLASHFLUX_HOME_SYSTEM_CARD
+#undef CLASHFLUX_HOME_ACTION
 
 } // namespace clashflux::ui
