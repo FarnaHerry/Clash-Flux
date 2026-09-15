@@ -1,7 +1,7 @@
 // profiles_page.cpp — 订阅页：统一尺寸矩形卡片网格（定宽定高，内容单行
 // UTF-8 截断；Compact 视口退化为整宽列表）。卡片交互：右上角刷新图标更新
-// 订阅；右键弹上下文菜单（使用/更新/首页/分享二维码/编辑信息/编辑规则/
-// 编辑文件/删除）；双击卡片切换启用订阅。
+// 订阅；桌面右键、Compact 的“更多”按钮共用上下文菜单（使用/更新/首页/
+// 分享二维码/编辑信息/编辑规则/编辑文件/删除）；点击卡片切换启用订阅。
 //
 // 订阅选项（类型/描述/HTTP 超时/更新间隔/自动更新；桌面额外提供代理/证书开关）
 // 在新建与编辑弹窗编辑，仅落库，下载行为在下次「更新」时生效；自动更新由
@@ -877,6 +877,73 @@ huxerui::Task<ProfileImportResult> DesktopImportProfile(
         CLASHFLUX_REFRESH_PROFILE(pid, httpRefresh, desktopRefresh);
     };
 
+    // 桌面端由右键触发，Compact 由卡片上的触控按钮触发；菜单内容只维护
+    // 一份，避免移动端和桌面端的订阅操作逐渐产生行为差异。
+    const auto buildMenuEntries = [action, refresh, openEditInfo, openEditRules,
+                                   openEditFile, openQr, id,
+                                   homepage = profile.homepage, url = profile.url,
+                                   selected, nativeVpn, optimisticSelected,
+                                   openVpn = profile.type == "openvpn"] {
+        std::vector<huxerui::MenuEntry> entries;
+        if (!selected && !nativeVpn) {
+            entries.push_back(huxerui::MenuItem("使用", [action, id,
+                                                           optimisticSelected] {
+                BeginOptimistic(optimisticSelected, id);
+                action([id]() -> std::string {
+                    auto& ps = store::profilesStore();
+                    if (!ps.activate(id)) return ps.lastError();
+                    return "";
+                });
+            }));
+        }
+        if (!nativeVpn) {
+            entries.push_back(huxerui::MenuItem("更新", [refresh, id] {
+                refresh(id);
+            }));
+        }
+        if (!nativeVpn && !homepage.empty()) {
+            entries.push_back(huxerui::MenuItem("首页", [action, homepage] {
+                action([homepage]() -> std::string {
+                    core::openInBrowser(homepage);
+                    return "";
+                });
+            }));
+        }
+        if (!nativeVpn && !url.empty()) {
+            entries.push_back(huxerui::MenuItem("分享二维码", [openQr, id] {
+                openQr(id);
+            }));
+        }
+        // 原生 VPN 卡片没有“使用/更新”等前置菜单项，不能在菜单开头
+        // 插入分隔线；HuxerUI 要求 MenuSection 必须夹在两个菜单项之间。
+        if (!entries.empty()) entries.push_back(huxerui::MenuSection{});
+        entries.push_back(huxerui::MenuItem("编辑信息", [openEditInfo, id] {
+            openEditInfo(id);
+        }));
+        if (!nativeVpn) {
+            entries.push_back(huxerui::MenuItem("编辑规则", [openEditRules, id] {
+                openEditRules(id);
+            }));
+            entries.push_back(huxerui::MenuItem("编辑文件", [openEditFile, id] {
+                openEditFile(id);
+            }));
+        }
+        entries.push_back(huxerui::MenuSection{});
+        entries.push_back(huxerui::MenuItem("删除", [action, id, nativeVpn,
+                                                       openVpn] {
+            action([id, nativeVpn, openVpn]() -> std::string {
+                if (nativeVpn) {
+                    if (openVpn) store::vpnStore().forgetOpenVpn(id);
+                    else store::vpnStore().forgetPptp(id);
+                }
+                auto& ps = store::profilesStore();
+                ps.remove(id);
+                return ps.lastError();
+            });
+        }));
+        return entries;
+    };
+
     // 右上角刷新图标：裸 Image + Tint 着色（IconButton 不着色矢量资源；
     // 同 apitab 标题栏齿轮配方），自绘 24pt 正方形热区。
     huxerui::View refreshButton = huxerui::Row{};
@@ -898,6 +965,25 @@ huxerui::Task<ProfileImportResult> DesktopImportProfile(
             .OnClick([refresh, id] { refresh(id); });
     }
 
+    huxerui::View moreButton = huxerui::Row{};
+    if (compact) {
+        // 手机没有鼠标右键；使用可见按钮打开同一份卡片操作菜单。锚点挂在
+        // 按钮本身，菜单在窄屏上会自动避开屏幕边缘。
+        moreButton = huxerui::Button("更多")
+                         .With(menu.Anchor(), huxerui::Tooltip("更多操作"))
+                         .OnClick([menu, buildMenuEntries] {
+                             menu.Show(buildMenuEntries());
+                         });
+    }
+
+    huxerui::View profileName =
+        huxerui::Text(truncateOneLine(profile.name, compact ? 9 : 16)).Style(
+            huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBody)
+                    .WithWeight(huxerui::FontWeight::SemiBold),
+                theme.colors.on_surface});
+    if (compact) profileName = std::move(profileName).With(huxerui::Grow(1.0F));
+
     const std::string primaryLine = [&] {
         if (!nativeVpn) {
             return profile.url.empty() ? std::string("本地导入") : profile.url;
@@ -911,11 +997,7 @@ huxerui::Task<ProfileImportResult> DesktopImportProfile(
 
     huxerui::View card = Card(huxerui::Column {
         huxerui::Row {
-            huxerui::Text(truncateOneLine(profile.name, 16)).Style(
-                huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kBody)
-                        .WithWeight(huxerui::FontWeight::SemiBold),
-                    theme.colors.on_surface}),
+            std::move(profileName),
             selected
                 ? huxerui::View{
                       huxerui::Text("使用中").Style(huxerui::TextStyle{
@@ -945,6 +1027,7 @@ huxerui::Task<ProfileImportResult> DesktopImportProfile(
                 : huxerui::View{huxerui::Row{}},
             huxerui::Spacer(),
             std::move(refreshButton),
+            std::move(moreButton),
         }.With(huxerui::Spacing(6.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         huxerui::Text(truncateOneLine(primaryLine, 40))
@@ -1077,78 +1160,11 @@ huxerui::Task<ProfileImportResult> DesktopImportProfile(
             })
         // 右键上下文菜单（跟随点击位置弹出）。
         .On<huxerui::ViewEvents::ContextMenuRequested>(
-            [menu, tasks, action, refresh, openEditInfo, openEditRules,
-             openEditFile, openQr,
-             id, homepage = profile.homepage, url = profile.url,
-             selected, nativeVpn, optimisticSelected,
-             openVpn = profile.type == "openvpn"](
-                huxerui::Point pos) {
-                std::vector<huxerui::MenuEntry> entries;
-                if (!selected && !nativeVpn) {
-                    entries.push_back(huxerui::MenuItem("使用", [action, id,
-                                                                    optimisticSelected] {
-                        BeginOptimistic(optimisticSelected, id);
-                        action([id]() -> std::string {
-                            auto& ps = store::profilesStore();
-                            if (!ps.activate(id)) return ps.lastError();
-                            return "";
-                        });
-                    }));
-                }
-                if (!nativeVpn) {
-                    entries.push_back(huxerui::MenuItem("更新",
-                                                        [refresh, id] {
-                        refresh(id);
-                    }));
-                }
-                if (!nativeVpn && !homepage.empty()) {
-                    entries.push_back(huxerui::MenuItem("首页",
-                                                        [action, homepage] {
-                        action([homepage]() -> std::string {
-                            core::openInBrowser(homepage);
-                            return "";
-                        });
-                    }));
-                }
-                if (!nativeVpn && !url.empty()) {
-                    entries.push_back(huxerui::MenuItem("分享二维码",
-                                                        [openQr, id] {
-                        openQr(id);
-                    }));
-                }
-                // 原生 VPN 卡片没有“使用/更新”等前置菜单项，不能在菜单开头
-                // 插入分隔线；HuxerUI 要求 MenuSection 必须夹在两个菜单项之间。
-                if (!entries.empty()) entries.push_back(huxerui::MenuSection{});
-                entries.push_back(huxerui::MenuItem("编辑信息", [openEditInfo, id] {
-                    openEditInfo(id);
-                }));
-                if (!nativeVpn) {
-                    entries.push_back(huxerui::MenuItem("编辑规则",
-                                                        [openEditRules, id] {
-                        openEditRules(id);
-                    }));
-                    entries.push_back(huxerui::MenuItem("编辑文件",
-                                                        [openEditFile, id] {
-                        openEditFile(id);
-                    }));
-                }
-                entries.push_back(huxerui::MenuSection{});
-                entries.push_back(huxerui::MenuItem("删除", [action, id, nativeVpn,
-                                                               openVpn] {
-                    action([id, nativeVpn, openVpn]() -> std::string {
-                        if (nativeVpn) {
-                            if (openVpn) store::vpnStore().forgetOpenVpn(id);
-                            else store::vpnStore().forgetPptp(id);
-                        }
-                        auto& ps = store::profilesStore();
-                        ps.remove(id);
-                        return ps.lastError();
-                    });
-                }));
+            [menu, tasks, buildMenuEntries](huxerui::Point pos) {
                 // ContextMenuRequested 仍处于鼠标释放事件路径；同步创建菜单
                 // 会重组浮层树，使 HuxerUI 正在清理的 pointer session 迭代器
                 // 失效。延迟到下一帧再挂载菜单。
-                tasks.Launch([menu, pos, entries = std::move(entries)]()
+                tasks.Launch([menu, pos, entries = buildMenuEntries()]()
                                  mutable -> huxerui::Task<void> {
                     co_await huxerui::Delay(std::chrono::duration<double>{0});
                     menu.ShowAt(pos, std::move(entries));
