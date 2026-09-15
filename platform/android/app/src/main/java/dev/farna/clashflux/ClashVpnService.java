@@ -9,6 +9,7 @@ import android.net.DnsResolver;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.IpPrefix;
 import android.net.RouteInfo;
 import android.net.VpnService;
 import android.os.Build;
@@ -54,9 +55,16 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private volatile boolean startRequested;
     private final AtomicBoolean stopRequested = new AtomicBoolean();
     private volatile Network defaultNetwork;
+    private volatile InterfaceUpdateListener defaultInterfaceListener;
     private final Object clientLock = new Object();
+    private final Object connectionsLock = new Object();
+    private Connections connectionSnapshot = Libbox.newConnections();
     private static volatile ClashVpnService current;
     private static volatile String outboundGroupsJson = "{\"proxies\":{}}";
+    private static volatile String connectionsJson =
+            "{\"uploadTotal\":0,\"downloadTotal\":0,\"connections\":[]}";
+    private static volatile long uploadTotal;
+    private static volatile long downloadTotal;
     private static final Executor DNS_EXECUTOR = Executors.newCachedThreadPool(runnable -> {
         Thread thread = new Thread(runnable, "clashflux-dns");
         thread.setDaemon(true);
@@ -211,19 +219,44 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             // VPN data plane still captures other applications; without this
             // exclusion HuxerUI HttpClient is routed back into the TUN before
             // a usable profile exists and subscription HTTP requests fail.
-            b.addDisallowedApplication(getPackageName());
-            MainActivity.appLog("已排除 Clash-Flux 自身流量，订阅请求保持直连", false);
             addAddresses(b, o.getInet4Address());
             addAddresses(b, o.getInet6Address());
             if (Build.VERSION.SDK_INT >= 29) b.setMetered(false);
             if (o.getAutoRoute()) {
-                addRoutes(b, o.getInet4RouteRange());
-                addRoutes(b, o.getInet6RouteRange());
+                // Android 13+ expects the explicit route-address iterator. The
+                // route-range iterator is the legacy API and is empty for the
+                // current libbox when the managed config uses auto_route. An
+                // empty Builder route only leaves the /30 TUN address route,
+                // so other applications never enter the VPN data plane.
+                boolean hasIPv4Route = false;
+                boolean hasIPv6Route = false;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    hasIPv4Route = addRoutes(b, o.getInet4RouteAddress());
+                    hasIPv6Route = addRoutes(b, o.getInet6RouteAddress());
+                    addExcludedRoutes(b, o.getInet4RouteExcludeAddress(),
+                            o.getInet6RouteExcludeAddress());
+                } else {
+                    hasIPv4Route = addRoutes(b, o.getInet4RouteRange());
+                    hasIPv6Route = addRoutes(b, o.getInet6RouteRange());
+                }
+                if (!hasIPv4Route) {
+                    b.addRoute("0.0.0.0", 0);
+                    MainActivity.appLog("Android VPN 未返回 IPv4 路由，已补充全局路由 0.0.0.0/0", false);
+                }
+                // Do not install an IPv6 default route unless libbox also
+                // supplied an IPv6 TUN address. Some Android 13+ devices
+                // reject ::/0 without an IPv6 address on the VPN interface.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                        !hasIPv6Route && hasIPv6Address(o)) {
+                    b.addRoute("::", 0);
+                }
                 StringBox dnsMode = o.getDNSMode();
                 if (dnsMode != null && !Libbox.DNSModeDisabled.equals(dnsMode.getValue())) {
                     addDnsServers(b, o.getDNSServerAddress());
                 }
             }
+            addPackageRules(b, o);
+            MainActivity.appLog("已排除 Clash-Flux 自身流量，订阅请求保持直连", false);
             b.setConfigureIntent(PendingIntent.getActivity(
                     this, 0, new Intent(this, MainActivity.class),
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
@@ -248,11 +281,85 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             if (p != null) b.addAddress(p.address(), p.prefix());
         }
     }
-    private static void addRoutes(Builder b, RoutePrefixIterator i) {
-        if (i == null) return;
+    private static boolean addRoutes(Builder b, RoutePrefixIterator i) {
+        if (i == null) return false;
+        boolean added = false;
         while (i.hasNext()) {
             RoutePrefix p = i.next();
-            if (p != null) b.addRoute(p.address(), p.prefix());
+            if (p != null) {
+                b.addRoute(p.address(), p.prefix());
+                added = true;
+            }
+        }
+        return added;
+    }
+
+    private static void addExcludedRoutes(Builder b, RoutePrefixIterator ipv4,
+                                          RoutePrefixIterator ipv6) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
+        if (ipv4 != null) {
+            while (ipv4.hasNext()) {
+                RoutePrefix p = ipv4.next();
+                if (p != null) excludeRoute(b, p);
+            }
+        }
+        if (ipv6 != null) {
+            while (ipv6.hasNext()) {
+                RoutePrefix p = ipv6.next();
+                if (p != null) excludeRoute(b, p);
+            }
+        }
+    }
+
+    private static void excludeRoute(Builder b, RoutePrefix p) {
+        try {
+            b.excludeRoute(new IpPrefix(InetAddress.getByName(p.address()), p.prefix()));
+        } catch (Exception error) {
+            MainActivity.appLog("忽略无效的 Android 排除路由：" + p.address() + "/" + p.prefix(), true);
+        }
+    }
+
+    private static boolean hasIPv6Address(TunOptions o) {
+        RoutePrefixIterator addresses = o.getInet6Address();
+        if (addresses == null) return false;
+        boolean found = addresses.hasNext();
+        while (addresses.hasNext()) addresses.next();
+        return found;
+    }
+
+    private void addPackageRules(Builder b, TunOptions o) {
+        StringIterator include = o.getIncludePackage();
+        boolean hasInclude = include != null && include.hasNext();
+        if (hasInclude) {
+            while (include.hasNext()) {
+                String packageName = include.next();
+                if (packageName == null || packageName.isEmpty()) continue;
+                try {
+                    b.addAllowedApplication(packageName);
+                } catch (Exception error) {
+                    MainActivity.appLog("忽略不存在的 Android 包：" + packageName, true);
+                }
+            }
+            return;
+        }
+        // Keep the control/subscription app on the physical network. This is
+        // also the fallback when the imported profile has no per-app options.
+        try {
+            b.addDisallowedApplication(getPackageName());
+        } catch (Exception error) {
+            MainActivity.appLog("无法排除 Clash-Flux 自身流量：" + error.getMessage(), true);
+        }
+        StringIterator exclude = o.getExcludePackage();
+        if (exclude != null) {
+            while (exclude.hasNext()) {
+                String packageName = exclude.next();
+                if (packageName == null || packageName.isEmpty()) continue;
+                try {
+                    b.addDisallowedApplication(packageName);
+                } catch (Exception error) {
+                    MainActivity.appLog("忽略不存在的 Android 包：" + packageName, true);
+                }
+            }
         }
     }
 
@@ -480,6 +587,50 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 && !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN);
     }
 
+    private void notifyDefaultInterface(InterfaceUpdateListener listener) {
+        if (listener == null) return;
+        try {
+            ConnectivityManager manager =
+                    (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            Network physical = defaultNetwork;
+            if (manager == null || !isPhysicalNetwork(manager, physical)) {
+                physical = findPhysicalNetwork();
+                defaultNetwork = physical;
+            }
+            if (manager == null || physical == null) {
+                listener.updateDefaultInterface("", -1, false, false);
+                MainActivity.appLog("Android 未找到默认物理网络接口", true);
+                return;
+            }
+            LinkProperties link = manager.getLinkProperties(physical);
+            if (link == null || link.getInterfaceName() == null) {
+                listener.updateDefaultInterface("", -1, false, false);
+                MainActivity.appLog("Android 默认物理网络缺少接口信息", true);
+                return;
+            }
+            java.net.NetworkInterface networkInterface =
+                    java.net.NetworkInterface.getByName(link.getInterfaceName());
+            if (networkInterface == null) {
+                listener.updateDefaultInterface("", -1, false, false);
+                MainActivity.appLog("Android 找不到物理接口：" + link.getInterfaceName(), true);
+                return;
+            }
+            NetworkCapabilities capabilities = manager.getNetworkCapabilities(physical);
+            boolean metered = capabilities != null && !capabilities.hasCapability(
+                    NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
+            listener.updateDefaultInterface(link.getInterfaceName(),
+                    networkInterface.getIndex(), metered, false);
+            MainActivity.appLog("Android 默认物理接口已注册：" + link.getInterfaceName()
+                    + " (" + networkInterface.getIndex() + ")", false);
+        } catch (Exception error) {
+            MainActivity.appLog("注册 Android 默认物理接口失败：" + error.getMessage(), true);
+            try {
+                listener.updateDefaultInterface("", -1, false, false);
+            } catch (RuntimeException ignored) {
+            }
+        }
+    }
+
     @Override public NetworkInterfaceIterator getInterfaces() {
         List<io.nekohasekai.libbox.NetworkInterface> result = new ArrayList<>();
         ConnectivityManager manager =
@@ -588,6 +739,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             options.addCommand(Libbox.CommandGroup);
             options.addCommand(Libbox.CommandStatus);
             options.addCommand(Libbox.CommandClashMode);
+            options.addCommand(Libbox.CommandConnections);
             options.setStatusInterval(1L * 1000L * 1000L * 1000L);
             CommandClient candidate = new CommandClient(this, options);
             candidate.connect();
@@ -607,6 +759,12 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         started = false;
         BootReceiver.setVpnActive(this, false);
         outboundGroupsJson = "{\"proxies\":{}}";
+        connectionsJson = "{\"uploadTotal\":0,\"downloadTotal\":0,\"connections\":[]}";
+        uploadTotal = 0;
+        downloadTotal = 0;
+        synchronized (connectionsLock) {
+            connectionSnapshot = Libbox.newConnections();
+        }
         CommandClient activeClient;
         synchronized (clientLock) {
             activeClient = client;
@@ -679,6 +837,41 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         }
         return outboundGroupsJson;
     }
+
+    public static String connectionsSnapshot() {
+        ClashVpnService service = current;
+        return service == null ? connectionsJson : service.readConnectionsSnapshot();
+    }
+
+    private String readConnectionsSnapshot() {
+        synchronized (connectionsLock) {
+            return connectionsJson;
+        }
+    }
+
+    public static boolean closeConnection(String id) {
+        ClashVpnService service = current;
+        if (service == null || id == null || id.isEmpty()) return false;
+        try {
+            service.controlClient().closeConnection(id);
+            return true;
+        } catch (Exception error) {
+            MainActivity.appLog("关闭 Android 连接失败：" + error.getMessage(), true);
+            return false;
+        }
+    }
+
+    public static boolean closeAllConnections() {
+        ClashVpnService service = current;
+        if (service == null) return false;
+        try {
+            service.controlClient().closeConnections();
+            return true;
+        } catch (Exception error) {
+            MainActivity.appLog("关闭 Android 连接失败：" + error.getMessage(), true);
+            return false;
+        }
+    }
     // Preserve Failed for the native/UI state machine.  Previously close() sent
     // a second "stopped" callback immediately, hiding the actual libbox error.
     private void fail(String msg) {
@@ -732,24 +925,99 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         return owner;
     }
     @Override public WIFIState readWIFIState(){return null;}
-    @Override public void startDefaultInterfaceMonitor(InterfaceUpdateListener l){} @Override public void closeDefaultInterfaceMonitor(InterfaceUpdateListener l){} @Override public void startNeighborMonitor(NeighborUpdateListener l){} @Override public void closeNeighborMonitor(NeighborUpdateListener l){} @Override public void registerMyInterface(String n){} @Override public void checkPlatformShell(){}
+    @Override public void startDefaultInterfaceMonitor(InterfaceUpdateListener listener) {
+        defaultInterfaceListener = listener;
+        notifyDefaultInterface(listener);
+    }
+    @Override public void closeDefaultInterfaceMonitor(InterfaceUpdateListener listener) {
+        if (defaultInterfaceListener == listener) defaultInterfaceListener = null;
+    }
+    @Override public void startNeighborMonitor(NeighborUpdateListener l){}
+    @Override public void closeNeighborMonitor(NeighborUpdateListener l){}
+    @Override public void registerMyInterface(String n){}
+    @Override public void checkPlatformShell(){}
     @Override public BridgeSession createBridge(BridgeOptions o){return null;} @Override public PlatformUser lookupUser(String n){return null;} @Override public ShellSession openShellSession(PlatformUser u,String c,StringIterator e,String d,int p,int q){return null;} @Override public String lookupSFTPServer(){return "";} @Override public String readSystemSSHHostKey(){return "";} @Override public String tailscaleHostname(){return "";}
     @Override public void sendNotification(io.nekohasekai.libbox.Notification n){} @Override public void cancelNotification(String i,int t){} @Override public int connectSSHAgent(){return -1;} @Override public SystemProxyStatus getSystemProxyStatus(){return null;} @Override public void serviceReload(){} @Override public void serviceStop(){close("sing-box 已停止");} @Override public void setSystemProxyEnabled(boolean e){} @Override public void triggerNativeCrash(){} @Override public void writeDebugMessage(String m){Log.d(TAG,m); MainActivity.appLog("libbox 调试信息："+m,false);}
-    @Override public void clearLogs(){} @Override public void connected(){Log.i(TAG,"sing-box status stream connected"); MainActivity.appLog("libbox 状态通道已连接",false);} @Override public void disconnected(String message){Log.w(TAG,"sing-box status stream disconnected: "+message); MainActivity.appLog("libbox 状态通道断开："+message,true);} @Override public void initializeClashMode(StringIterator modes,String current){} @Override public void setDefaultLogLevel(int level){} @Override public void updateClashMode(String mode){} @Override public void writeConnectionEvents(ConnectionEvents events){} @Override public void writeLogs(LogIterator logs){} @Override public void writeOutbounds(OutboundGroupItemIterator outbounds){} @Override public void writeStatus(StatusMessage status){
+    @Override public void clearLogs(){} @Override public void connected(){Log.i(TAG,"sing-box status stream connected"); MainActivity.appLog("libbox 状态通道已连接",false);} @Override public void disconnected(String message){Log.w(TAG,"sing-box status stream disconnected: "+message); MainActivity.appLog("libbox 状态通道断开："+message,true);} @Override public void initializeClashMode(StringIterator modes,String current){} @Override public void setDefaultLogLevel(int level){} @Override public void updateClashMode(String mode){} @Override public void writeConnectionEvents(ConnectionEvents events){
+        if (events == null) return;
+        try {
+            synchronized (connectionsLock) {
+                connectionSnapshot.applyEvents(events);
+                connectionSnapshot.filterState((int) Libbox.ConnectionStateActive);
+                connectionSnapshot.sortByDate();
+                connectionsJson = encodeConnectionsLocked();
+            }
+        } catch (Throwable error) {
+            Log.w(TAG, "Unable to snapshot sing-box connections", error);
+            MainActivity.appLog("读取 Android 连接失败：" + error.getMessage(), true);
+        }
+    } @Override public void writeLogs(LogIterator logs){} @Override public void writeOutbounds(OutboundGroupItemIterator outbounds){} @Override public void writeStatus(StatusMessage status){
         if (status == null) return;
         try {
+            uploadTotal = status.getUplinkTotal();
+            downloadTotal = status.getDownlinkTotal();
+            synchronized (connectionsLock) {
+                connectionsJson = encodeConnectionsLocked();
+            }
             nativeVpnStats(status.getUplink(),status.getDownlink(),status.getUplinkTotal(),status.getDownlinkTotal(),status.getConnectionsIn()+status.getConnectionsOut());
         } catch (Throwable error) {
             Log.w(TAG, "Unable to publish sing-box status", error);
             MainActivity.appLog("发布 libbox 状态失败：" + error.getMessage(), true);
         }
     }
+
+    private String encodeConnectionsLocked() throws Exception {
+        JSONObject result = new JSONObject();
+        result.put("uploadTotal", uploadTotal);
+        result.put("downloadTotal", downloadTotal);
+        JSONArray items = new JSONArray();
+        ConnectionIterator iterator = connectionSnapshot.iterator();
+        while (iterator != null && iterator.hasNext()) {
+            Connection connection = iterator.next();
+            if (connection == null) continue;
+            JSONObject item = new JSONObject();
+            item.put("id", safe(connection.getID()));
+            item.put("upload", connection.getUplink());
+            item.put("download", connection.getDownlink());
+            JSONObject metadata = new JSONObject();
+            String domain = safe(connection.getDomain());
+            String destination = safe(connection.getDestination());
+            metadata.put("host", domain.isEmpty() ? destination : domain);
+            metadata.put("destination", destination);
+            metadata.put("network", safe(connection.getNetwork()));
+            metadata.put("destinationPort", destinationPort(destination));
+            item.put("metadata", metadata);
+            JSONArray chains = new JSONArray();
+            StringIterator chain = connection.chain();
+            while (chain != null && chain.hasNext()) {
+                String hop = chain.next();
+                if (hop != null && !hop.isEmpty()) chains.put(hop);
+            }
+            if (chains.length() > 0) item.put("chains", chains);
+            item.put("rule", safe(connection.getRule()));
+            items.put(item);
+        }
+        result.put("connections", items);
+        return result.toString();
+    }
+
+    private static String safe(String value) { return value == null ? "" : value; }
+
+    private static String destinationPort(String destination) {
+        if (destination == null || destination.isEmpty()) return "";
+        int colon = destination.lastIndexOf(':');
+        return colon < 0 || colon == destination.length() - 1
+                ? "" : destination.substring(colon + 1);
+    }
     @Override public void writeGroups(OutboundGroupIterator groups) {
         try {
             JSONObject proxies = new JSONObject();
+            int groupCount = 0;
+            int itemCount = 0;
             while (groups != null && groups.hasNext()) {
                 OutboundGroup group = groups.next();
                 if (group == null || group.getTag() == null || group.getTag().isEmpty()) continue;
+                groupCount++;
                 JSONObject value = new JSONObject();
                 value.put("type", group.getType());
                 value.put("now", group.getSelected());
@@ -758,12 +1026,16 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 OutboundGroupItemIterator items = group.getItems();
                 while (items != null && items.hasNext()) {
                     OutboundGroupItem item = items.next();
-                    if (item != null && item.getTag() != null) all.put(item.getTag());
+                    if (item != null && item.getTag() != null) {
+                        all.put(item.getTag());
+                        itemCount++;
+                    }
                 }
                 value.put("all", all);
                 proxies.put(group.getTag(), value);
             }
             outboundGroupsJson = new JSONObject().put("proxies", proxies).toString();
+            Log.i(TAG, "libbox 出站组快照已更新：" + groupCount + " 组，" + itemCount + " 节点");
         } catch (Throwable error) {
             Log.w(TAG, "Unable to snapshot outbound groups", error);
             MainActivity.appLog("读取出站线路失败：" + error.getMessage(), true);

@@ -423,13 +423,20 @@ public:
     }
 
     // 读取指定订阅的 YAML 原文（不存在 / 读失败 = 空串）。
-    std::string yamlOf(std::int64_t id) {
-        const auto p = findById(id);
-        if (!p || p->file.empty()) return "";
-        std::ifstream in(cfg::profilesDir() / p->file, std::ios::binary);
+    // 直接接收已查询出的 Profile，避免 UI 列表线程在同一轮刷新里再次
+    // 查询 SQLite；Android 的 WAL/Activity 重建期间二次查询可能返回空，
+    // 导致规则页误显示“没有订阅规则”，而内核实际仍在使用该文件。
+    std::string yamlOf(const db::Profile& profile) {
+        if (profile.file.empty()) return "";
+        std::ifstream in(cfg::profilesDir() / profile.file, std::ios::binary);
         if (!in) return "";
         return std::string(std::istreambuf_iterator<char>(in),
                            std::istreambuf_iterator<char>());
+    }
+
+    std::string yamlOf(std::int64_t id) {
+        const auto p = findById(id);
+        return p ? yamlOf(*p) : std::string{};
     }
 
     // 保存订阅 YAML 原文（编辑规则/内容）：写文件 + 更新 updatedAt；

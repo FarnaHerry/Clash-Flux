@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "app_resources.h"
 #include "ui.h"
 #include "task_bridge.h"
 
@@ -160,7 +161,9 @@ int levelRank(const std::string& level) {
     huxerui::View sourceControl =
         huxerui::SegmentedButton(kSourceNames, source.Get())
             .OnChanged([source](std::size_t idx) { source = idx; });
-    huxerui::View clearControl = huxerui::Button("清空").OnClick([clearTick] {
+    huxerui::View clearControl = huxerui::IconButton(app::images::clear_all, "清空日志")
+        .With(huxerui::Tooltip("清空日志"))
+        .OnClick([clearTick] {
         clearTick = clearTick.Get() + 1;
     });
     huxerui::View actions;

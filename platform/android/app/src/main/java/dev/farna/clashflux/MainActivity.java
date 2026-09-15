@@ -233,6 +233,18 @@ public final class MainActivity extends HuxerUIActivity {
         return ClashVpnService.proxyGroups();
     }
 
+    public static String connectionsSnapshot() {
+        return ClashVpnService.connectionsSnapshot();
+    }
+
+    public static boolean closeConnection(String id) {
+        return ClashVpnService.closeConnection(id);
+    }
+
+    public static boolean closeAllConnections() {
+        return ClashVpnService.closeAllConnections();
+    }
+
     public static boolean isIgnoringBatteryOptimizations() {
         MainActivity activity = current;
         Context context = activity != null ? activity : applicationContext;

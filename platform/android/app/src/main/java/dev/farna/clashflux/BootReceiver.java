@@ -19,6 +19,12 @@ public final class BootReceiver extends BroadcastReceiver {
                 .edit()
                 .putBoolean(KEY_VPN_ACTIVE, active)
                 .apply();
+        VpnTileService.syncState(context, active);
+    }
+
+    static boolean isVpnActive(Context context) {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(KEY_VPN_ACTIVE, false);
     }
 
     @Override

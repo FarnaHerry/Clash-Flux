@@ -209,6 +209,7 @@ public:
         }
     }
     bool allowLan() { return setting("core.allow_lan", "false") == "true"; }
+    bool ipv6Enabled() { return setting("core.ipv6_enabled", "false") == "true"; }
     std::string logLevel() { return setting("core.log_level", "info"); }
     // TUN 开关（持久化；Android 由 VpnService 交付 fd 后重启内核生效）。
     bool tunEnabled() {
@@ -333,6 +334,7 @@ public:
             options.mixedPort = mixedPort();
             options.mode = mode();
             options.allowLan = allowLan();
+            options.ipv6 = ipv6Enabled();
             options.logLevel = logLevel();
             // 自动启动只准备本地内核，不应因为上次保存的开关状态突然接管
             // 桌面所有流量；显式启动/重启仍按用户保存的 TUN 设置执行。

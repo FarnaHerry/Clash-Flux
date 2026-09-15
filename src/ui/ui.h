@@ -54,6 +54,9 @@ inline bool AndroidIsIgnoringBattery() noexcept {
 extern "C" int clashflux_android_vpn_state() noexcept;
 inline int AndroidVpnState() noexcept { return clashflux_android_vpn_state(); }
 extern "C" const char* clashflux_android_proxy_groups() noexcept;
+extern "C" const char* clashflux_android_connections() noexcept;
+extern "C" bool clashflux_android_close_connection(const char*) noexcept;
+extern "C" bool clashflux_android_close_all_connections() noexcept;
 extern "C" bool clashflux_android_select_outbound(const char* group,
                                                     const char* name) noexcept;
 #else
@@ -64,6 +67,9 @@ inline void AndroidRequestIgnoreBattery() noexcept {}
 inline void AndroidOpenBatterySettings() noexcept {}
 inline bool AndroidIsIgnoringBattery() noexcept { return false; }
 inline int AndroidVpnState() noexcept { return 0; }
+inline const char* clashflux_android_connections() noexcept { return ""; }
+inline bool clashflux_android_close_connection(const char*) noexcept { return false; }
+inline bool clashflux_android_close_all_connections() noexcept { return false; }
 #endif
 
 // Replace a snapshot-backed collection without storing the whole collection in
@@ -195,7 +201,8 @@ huxerui::View PasswordField(
 // 页面骨架（一级岛）：标题行（标题 + 右缘动作）+ 内容区，整体为 16pt 圆角岛，
 // 落在窗口海面底色上（岛间缝隙经壳层 Spacing 透出）。
 huxerui::View PageScaffold(const std::string& title, huxerui::View actions,
-                           huxerui::View content);
+                           huxerui::View content,
+                           bool inlineCompactActions = false);
 
 // 卡片容器（二级岛）：raised 表面 + 8pt 圆角 + 内边距。
 huxerui::View Card(huxerui::View content);
@@ -209,6 +216,10 @@ huxerui::View UnifiedListRow(huxerui::View content,
 // 通用设置排版部件；这里不做任何平台判断。
 huxerui::View SettingRow(const std::string& label, const std::string& hint,
                          huxerui::View control);
+// Switch 专用设置行：所有视口均保持说明文字在左、开关在右的单行布局。
+huxerui::View SettingSwitchRow(const std::string& label,
+                               const std::string& hint,
+                               huxerui::View control);
 huxerui::View SectionTitle(const std::string& title);
 
 // 自定义内容弹窗的卡片包裹：SDK 的 dialog.Show(ViewFactory/DialogFactory) 不给

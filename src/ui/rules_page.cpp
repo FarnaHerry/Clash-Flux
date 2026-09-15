@@ -13,6 +13,7 @@
 #include <string_view>
 #include <vector>
 
+#include "app_resources.h"
 #include "ui.h"
 #include "task_bridge.h"
 
@@ -120,7 +121,7 @@ std::vector<SubscriptionRuleRow> LoadSubscriptionRules() {
             }
         } else {
             for (const std::string& rule : store::parseRules(
-                     store::profilesStore().yamlOf(profile.id))) {
+                     store::profilesStore().yamlOf(profile))) {
                 rows.push_back(ParseSubscriptionRule(profile, rule, ordinal++));
             }
         }
@@ -185,6 +186,7 @@ std::vector<std::string> TargetNames(
     auto editTarget = huxerui::UseState<std::size_t>(0);
     auto editPriority = huxerui::UseState(
         huxerui::TextEditingValue::FromText("100"));
+    auto globalEditorOpen = huxerui::UseState(false);
 
     auto persistGlobalPolicy = [tasks, globalRules, toast] {
         vpn::VpnPolicy policy;
@@ -263,13 +265,17 @@ std::vector<std::string> TargetNames(
             huxerui::Font::Monospace(font_size::kMonoBody), color});
     };
 
-    auto openGlobalRuleEditor = [dialog, profiles, editMatch, editPattern,
+    auto openGlobalRuleEditor = [compact, dialog, profiles, editMatch, editPattern,
                                  editTarget, editPriority, globalRules,
-                                 persistGlobalPolicy, theme] {
+                                 persistGlobalPolicy, globalEditorOpen, theme] {
         editMatch = 0;
         editPattern = huxerui::TextEditingValue{};
         editTarget = 0;
         editPriority = huxerui::TextEditingValue::FromText("100");
+        if (compact) {
+            globalEditorOpen = true;
+            return;
+        }
         dialog.Show(
             [profiles, editMatch, editPattern, editTarget, editPriority,
              globalRules, persistGlobalPolicy, theme](huxerui::DialogContext ctx)
@@ -490,7 +496,10 @@ std::vector<std::string> TargetNames(
                                      theme.colors.on_surface_variant),
                                 huxerui::Row{
                                     huxerui::Spacer(),
-                                    huxerui::Button("删除").OnClick(
+                                    huxerui::IconButton(app::images::trash,
+                                                        "删除规则")
+                                        .With(huxerui::Tooltip("删除规则"))
+                                        .OnClick(
                                         [globalRules, index,
                                          persistGlobalPolicy] {
                                             if (index < globalRules.Size()) {
@@ -516,7 +525,10 @@ std::vector<std::string> TargetNames(
                             mono(std::to_string(rule.priority),
                                  theme.colors.on_surface_variant)
                                 .With(huxerui::Frame{.width = 70.0F}),
-                            huxerui::Button("删除").OnClick(
+                            huxerui::IconButton(app::images::trash,
+                                                "删除规则")
+                                .With(huxerui::Tooltip("删除规则"))
+                                .OnClick(
                                 [globalRules, index, persistGlobalPolicy] {
                                     if (index < globalRules.Size()) {
                                         globalRules.Erase(index);
@@ -544,9 +556,13 @@ std::vector<std::string> TargetNames(
     huxerui::View addRule =
         section.Get() == 1
             ? huxerui::View{
-                  huxerui::Button("添加规则").OnClick(openGlobalRuleEditor)}
+                  huxerui::IconButton(app::images::add, "添加规则")
+                      .With(huxerui::Tooltip("添加规则"))
+                      .OnClick(openGlobalRuleEditor)}
             : huxerui::View{huxerui::Row{}};
-    huxerui::View refresh = huxerui::Button("刷新").OnClick([refreshTick] {
+    huxerui::View refresh = huxerui::IconButton(app::images::refresh, "刷新规则")
+        .With(huxerui::Tooltip("刷新规则"))
+        .OnClick([refreshTick] {
         refreshTick = refreshTick.Get() + 1;
     });
     huxerui::View actions;
@@ -583,7 +599,98 @@ std::vector<std::string> TargetNames(
                                 huxerui::CrossAxisAlignment::Center));
     }
 
-    return PageScaffold("规则", std::move(actions), std::move(body));
+    huxerui::View listPage = PageScaffold("规则", std::move(actions),
+                                          std::move(body));
+    const std::vector<std::string> editorTargets = TargetNames(profiles);
+    const auto saveResponsiveRule = [=] {
+        if (editorTargets.empty()) return;
+        int priority = 0;
+        const std::string priorityText = editPriority.Get().text;
+        const auto parsed = std::from_chars(
+            priorityText.data(), priorityText.data() + priorityText.size(),
+            priority);
+        if (parsed.ec != std::errc() ||
+            parsed.ptr != priorityText.data() + priorityText.size()) {
+            toast.Show("优先级必须是整数");
+            return;
+        }
+        const auto match = vpn::ParseMatchKind(kMatchKinds[editMatch.Get()]);
+        if (!match) return;
+        const std::size_t targetIndex =
+            std::min(editTarget.Get(), profiles.Size() - 1);
+        vpn::RouteRule rule{
+            .match = *match,
+            .pattern = Trim(editPattern.Get().text),
+            .connectionId = store::ProfileConnectionId(
+                profiles[targetIndex].id),
+            .priority = priority,
+        };
+        if (rule.match == vpn::MatchKind::Any) {
+            rule.pattern.clear();
+        } else if (rule.pattern.empty()) {
+            toast.Show("匹配内容不能为空");
+            return;
+        }
+        globalRules.PushBack(std::move(rule));
+        persistGlobalPolicy();
+        globalEditorOpen = false;
+    };
+    huxerui::View editorPage = PageScaffold(
+        "添加全局路由规则",
+        huxerui::Row {
+            huxerui::IconButton(app::images::arrow_back, "返回")
+                .With(huxerui::Tooltip("返回规则列表"))
+                .OnClick([globalEditorOpen] { globalEditorOpen = false; }),
+            huxerui::IconButton(app::images::save, "保存规则")
+                .With(huxerui::Tooltip("保存规则"))
+                .OnClick(saveResponsiveRule),
+        }.With(huxerui::Spacing(8.0F)),
+        huxerui::ScrollView(
+            huxerui::Column {
+                Card(huxerui::Column {
+                    huxerui::Text(
+                        "按匹配类型把流量交给某个订阅连接；未命中时跟随当前订阅。"),
+                    huxerui::Select(
+                        kMatchKinds, editMatch.Get(),
+                        [](const std::string& value) { return huxerui::Text(value); })
+                        .OnChanged([editMatch](std::size_t index) {
+                            editMatch = index;
+                        }),
+                    huxerui::TextField(editPattern.Get())
+                        .Label("匹配内容（全部类型可留空）")
+                        .Variant(huxerui::TextFieldVariant::Outlined)
+                        .OnChanged([editPattern](
+                                       const huxerui::TextEditingValue& value) {
+                            editPattern = value;
+                        }),
+                    editorTargets.empty()
+                        ? huxerui::View{huxerui::Text("请先创建一个订阅连接")}
+                        : huxerui::View{huxerui::Select(
+                              editorTargets, editTarget.Get(),
+                              [](const std::string& value) {
+                                  return huxerui::Text(value);
+                              })
+                              .OnChanged([editTarget](std::size_t index) {
+                                  editTarget = index;
+                              })},
+                    huxerui::TextField(editPriority.Get())
+                        .Label("优先级（数字越大越先匹配）")
+                        .Variant(huxerui::TextFieldVariant::Outlined)
+                        .OnChanged([editPriority](
+                                       const huxerui::TextEditingValue& value) {
+                            editPriority = value;
+                        }),
+                }.With(huxerui::Spacing(12.0F),
+                       huxerui::CrossAlign(
+                           huxerui::CrossAxisAlignment::Stretch))),
+                CompactFloatingNavigationFooter(),
+            }.With(huxerui::Spacing(12.0F),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+            .With(huxerui::Grow(1.0F)));
+    return huxerui::IndexedPages(
+               std::vector<huxerui::View>{listPage, editorPage},
+               compact && globalEditorOpen.Get() ? 1U : 0U)
+        .With(huxerui::Grow(1.0F));
 }
 
 } // namespace clashflux::ui

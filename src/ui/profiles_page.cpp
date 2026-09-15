@@ -116,24 +116,18 @@ using ProfileEditLoader =
     std::function<void(std::int64_t, std::function<void()>)>;
 using ProfileEditDialog = std::function<void(std::int64_t)>;
 
-// 编辑入口的页面/弹窗差异在一个平台函数内处理；ProfileCard 只发出
-// openEditInfo(id)，不再携带平台标记。
-#if defined(__ANDROID__)
-void AndroidOpenProfileEditInfo(std::int64_t id,
-                                const ProfileEditLoader& load_edit_info,
-                                const ProfileEditDialog&,
-                                huxerui::State<std::int64_t> edit_page_id) {
-    load_edit_info(id, [edit_page_id, id] { edit_page_id = id; });
-}
-#define CLASHFLUX_OPEN_PROFILE_INFO AndroidOpenProfileEditInfo
-#else
-void DesktopOpenProfileEditInfo(std::int64_t id, const ProfileEditLoader&,
-                                const ProfileEditDialog& show_edit_info,
-                                huxerui::State<std::int64_t>) {
+// 页面/弹窗由视口决定，与操作系统无关。Compact（含缩小后的桌面窗口）进入
+// 独立页面；Medium/Expanded 使用桌面弹窗。平台只控制表单能力。
+void OpenProfileEditInfo(std::int64_t id, bool compact,
+                         const ProfileEditLoader& load_edit_info,
+                         const ProfileEditDialog& show_edit_info,
+                         huxerui::State<std::int64_t> edit_page_id) {
+    if (compact) {
+        load_edit_info(id, [edit_page_id, id] { edit_page_id = id; });
+        return;
+    }
     show_edit_info(id);
 }
-#define CLASHFLUX_OPEN_PROFILE_INFO DesktopOpenProfileEditInfo
-#endif
 
 // 单行截断（UTF-8 代码点安全）：超限截断加省略号。Text 默认按词换行且无
 // 省略号能力，长 URL/名称会把卡片撑高——网格里统一截断保证卡片等高。
@@ -289,19 +283,17 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
                                                 bool danger,
                                                 huxerui::State<bool> checked) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const std::string description =
+        label + (hint.empty() ? "" : " · " + hint);
     return huxerui::Row {
-        huxerui::Column {
-            huxerui::Text(std::move(label))
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kBody),
-                    danger ? theme.colors.error : theme.colors.on_surface}),
-            huxerui::Text(std::move(hint))
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kCaption),
-                    theme.colors.on_surface_variant}),
-        }
-            .With(huxerui::Spacing(2.0F))
-            .With(huxerui::Grow(1.0F)),
+        huxerui::Text(description)
+            .Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBody),
+                danger ? theme.colors.error : theme.colors.on_surface})
+            .With(huxerui::Grow(1.0F),
+                  huxerui::Frame{.height = 24.0F},
+                  huxerui::ClipChildren(),
+                  huxerui::Tooltip(description)),
         huxerui::Switch(checked.Get()).OnChanged(
             [checked](bool on) { checked = on; }),
     }
@@ -410,9 +402,9 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
                     timeout = value;
                 })
                 .With(huxerui::Grow(1.0F)),
+            huxerui::Text("要求 MPPE-128").With(huxerui::Grow(1.0F)),
             huxerui::Switch(requireMppe.Get())
                 .OnChanged([requireMppe](bool checked) { requireMppe = checked; }),
-            huxerui::Text("要求 MPPE-128"),
         }
             .With(huxerui::Spacing(8.0F),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
@@ -457,6 +449,213 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
 // Android 端的编辑入口使用完整页面，避免弹窗被软键盘和窄视口挤压；桌面
 // 仍由调用方使用 Dialog。表单 State 由 ProfilesPage 持有，页面与弹窗共用一份
 // 数据和保存逻辑。
+struct ProfileCreateFields {
+    huxerui::State<huxerui::TextEditingValue> name;
+    huxerui::State<huxerui::TextEditingValue> url;
+    huxerui::State<std::size_t> type_index;
+    huxerui::State<huxerui::TextEditingValue> desc;
+    huxerui::State<huxerui::TextEditingValue> timeout;
+    huxerui::State<huxerui::TextEditingValue> interval;
+    huxerui::State<bool> auto_update;
+    huxerui::State<bool> system_proxy;
+    huxerui::State<bool> core_proxy;
+    huxerui::State<bool> invalid_cert;
+    huxerui::State<huxerui::TextEditingValue> pptp_server;
+    huxerui::State<huxerui::TextEditingValue> pptp_username;
+    huxerui::State<huxerui::TextEditingValue> pptp_password;
+    huxerui::State<huxerui::TextEditingValue> pptp_timeout;
+    huxerui::State<huxerui::TextEditingValue> pptp_routes;
+    huxerui::State<bool> pptp_mppe;
+    huxerui::State<huxerui::TextEditingValue> openvpn_config;
+    huxerui::State<huxerui::TextEditingValue> openvpn_routes;
+    huxerui::State<std::string> picked_path;
+    huxerui::State<bool> importing;
+};
+
+struct ProfileImportRequest {
+    bool remote = false;
+    bool local = false;
+    bool pptp = false;
+    bool openvpn = false;
+    std::string name;
+    std::string url;
+    std::string picked_path;
+    db::Profile options;
+};
+
+using ProfileImportResult = std::pair<std::int64_t, std::string>;
+
+huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
+    std::shared_ptr<huxerui::HttpClient> http, ProfileImportRequest request);
+
+[[huxerui::composable]] huxerui::View ProfileCreatePage(
+    ProfileCreateFields fields, huxerui::TaskScope tasks,
+    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    std::shared_ptr<huxerui::HttpClient> http, bool pptp_supported,
+    bool openvpn_supported, std::function<void()> on_back) {
+    const auto typeIndex = fields.type_index.Get();
+    const bool remote = typeIndex == 0;
+    const bool local = typeIndex == 1;
+    const bool pptp = pptp_supported && typeIndex == 2;
+    const bool openvpn = openvpn_supported &&
+                         typeIndex == (pptp_supported ? 3U : 2U);
+    std::vector<huxerui::StringVariant> types{"远程订阅", "本地文件"};
+    if (pptp_supported) types.emplace_back("PPTP 内网");
+    if (openvpn_supported) types.emplace_back("OpenVPN 内网");
+
+    huxerui::View typeFields;
+    if (remote) {
+        typeFields = huxerui::TextField(fields.url.Get())
+                         .Label("订阅链接")
+                         .Placeholder("https://...")
+                         .Variant(huxerui::TextFieldVariant::Outlined)
+                         .OnChanged([url = fields.url](const huxerui::TextEditingValue& value) {
+                             url = value;
+                         });
+    } else if (local) {
+        typeFields = huxerui::Column {
+            huxerui::Button("选择文件").OnClick(
+                [tasks, picker, path = fields.picked_path] {
+                    tasks.Launch([picker, path]() -> huxerui::Task<void> {
+                        const auto picked = co_await picker->OpenFileAsync(
+                            huxerui::FilePickerFilter{
+                                .name = "YAML 订阅",
+                                .extensions = {"yaml", "yml"}});
+                        if (!picked) co_return;
+                        if (const auto file = picked->AsFile()) path = file->Path();
+                    });
+                }),
+            huxerui::Text(fields.picked_path.Get()),
+        }.With(huxerui::Spacing(8.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    } else if (pptp) {
+        typeFields = PptpOptionsForm(
+            fields.pptp_server, fields.pptp_username, fields.pptp_password,
+            fields.pptp_timeout, fields.pptp_routes, fields.pptp_mppe);
+    } else {
+        typeFields = OpenVpnOptionsForm(fields.openvpn_config,
+                                        fields.openvpn_routes);
+    }
+
+    const auto importProfile = [=] {
+        const std::string url = fields.url.Get().text;
+        if (remote && url.empty()) {
+            toast.Show("订阅链接不能为空");
+            return;
+        }
+        if (local && fields.picked_path.Get().empty()) {
+            toast.Show("请先选择订阅文件");
+            return;
+        }
+        std::string configError;
+        std::optional<std::string> nativeConfig;
+        if (pptp) {
+            nativeConfig = makePptpConfig(
+                fields.pptp_server.Get(), fields.pptp_username.Get(),
+                fields.pptp_password.Get(), fields.pptp_timeout.Get(),
+                fields.pptp_mppe.Get(), configError);
+            if (!nativeConfig) {
+                toast.Show(configError);
+                return;
+            }
+        } else if (openvpn) {
+            if (!openvpn::ParseOpenVpnConfig(fields.openvpn_config.Get().text,
+                                             configError)) {
+                toast.Show(configError);
+                return;
+            }
+            nativeConfig = fields.openvpn_config.Get().text;
+        }
+        fields.importing = true;
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            db::Profile options;
+            options.description = fields.desc.Get().text;
+            if (!pptp && !openvpn) {
+                options.timeoutSecs = parseNumber(fields.timeout.Get(), 60);
+                options.intervalMins = parseNumber(fields.interval.Get(), 0);
+                options.autoUpdate = fields.auto_update.Get();
+                options.useSystemProxy = fields.system_proxy.Get();
+                options.useCoreProxy = fields.core_proxy.Get();
+                options.allowInvalidCert = fields.invalid_cert.Get();
+            } else {
+                options.type = pptp ? "pptp" : "openvpn";
+                options.nativeConfig = *nativeConfig;
+                options.nativeRoutes = joinRoutes(parseRouteField(
+                    pptp ? fields.pptp_routes.Get().text
+                         : fields.openvpn_routes.Get().text));
+            }
+            const auto [id, error] = co_await ImportProfileForPlatform(
+                http, ProfileImportRequest{
+                          .remote = remote,
+                          .local = local,
+                          .pptp = pptp,
+                          .openvpn = openvpn,
+                          .name = fields.name.Get().text,
+                          .url = url,
+                          .picked_path = fields.picked_path.Get(),
+                          .options = std::move(options)});
+            fields.importing = false;
+            if (id == 0) {
+                toast.Show(error.empty() ? "导入失败" : error);
+                co_return;
+            }
+            toast.Show("订阅已导入");
+            on_back();
+        });
+    };
+
+    huxerui::View commonFields =
+        (pptp || openvpn)
+            ? huxerui::View{huxerui::TextField(fields.desc.Get())
+                                .Label("描述（可选）")
+                                .Variant(huxerui::TextFieldVariant::Outlined)
+                                .OnChanged([desc = fields.desc](
+                                               const huxerui::TextEditingValue& value) {
+                                    desc = value;
+                                })}
+            : huxerui::View{ProfileOptionsForm(
+                  fields.desc, fields.timeout, fields.interval,
+                  fields.auto_update, fields.system_proxy, fields.core_proxy,
+                  fields.invalid_cert)};
+
+    return PageScaffold(
+        "新建订阅",
+        huxerui::Row {
+            huxerui::IconButton(app::images::arrow_back, "返回")
+                .With(huxerui::Tooltip("返回订阅列表"))
+                .OnClick(on_back),
+            fields.importing.Get()
+                ? huxerui::View{huxerui::ProgressCircle().With(
+                      huxerui::Frame{.width = 20.0F, .height = 20.0F})}
+                : huxerui::View{huxerui::IconButton(app::images::add, "导入订阅")
+                                    .With(huxerui::Tooltip("导入订阅"))
+                                    .OnClick(importProfile)},
+        }.With(huxerui::Spacing(8.0F)),
+        huxerui::ScrollView(
+            huxerui::Column {
+                Card(huxerui::Column {
+                    huxerui::SegmentedButton(types, typeIndex)
+                        .OnChanged([type = fields.type_index](std::size_t index) {
+                            type = index;
+                        }),
+                    typeFields,
+                    huxerui::TextField(fields.name.Get())
+                        .Label("名称（可选）")
+                        .Variant(huxerui::TextFieldVariant::Outlined)
+                        .OnChanged([name = fields.name](
+                                       const huxerui::TextEditingValue& value) {
+                            name = value;
+                        }),
+                    commonFields,
+                }.With(huxerui::Spacing(12.0F),
+                       huxerui::CrossAlign(
+                           huxerui::CrossAxisAlignment::Stretch))),
+                CompactFloatingNavigationFooter(),
+            }.With(huxerui::Spacing(12.0F),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+        ).With(huxerui::Grow(1.0F)));
+}
+
 [[huxerui::composable]] huxerui::View ProfileEditPage(
     std::int64_t id, huxerui::State<huxerui::TextEditingValue> name,
     huxerui::State<huxerui::TextEditingValue> url,
@@ -542,7 +741,10 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
     };
 
     return PageScaffold(
-        "编辑订阅", huxerui::Button("返回").OnClick(deferredBack),
+        "编辑订阅",
+        huxerui::IconButton(app::images::arrow_back, "返回")
+            .With(huxerui::Tooltip("返回订阅列表"))
+            .OnClick(deferredBack),
         huxerui::ScrollView(
             huxerui::Column {
                 Card(huxerui::Column {
@@ -589,7 +791,9 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
                         : huxerui::View{huxerui::Row{}},
                     huxerui::Row {
                         huxerui::Button("取消").OnClick(deferredBack),
-                        huxerui::Button("保存").OnClick(save),
+                        huxerui::IconButton(app::images::save, "保存")
+                            .With(huxerui::Tooltip("保存订阅"))
+                            .OnClick(save),
                     }.With(huxerui::Spacing(8.0F),
                            huxerui::MainAlign(
                                huxerui::MainAxisAlignment::End)),
@@ -625,10 +829,7 @@ struct ProfileEditFields {
     huxerui::State<huxerui::TextEditingValue> openvpn_routes;
 };
 
-// Android 编辑订阅使用页面，桌面不挂载第二个 IndexedPages 节点；两者由
-// 宏在组件入口选择，避免在 ProfilesPage 内写平台条件。
-#if defined(__ANDROID__)
-[[huxerui::composable]] huxerui::View AndroidProfileEditSurface(
+[[huxerui::composable]] huxerui::View ResponsiveProfileEditSurface(
     std::int64_t id, ProfileEditFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::function<void()> on_back) {
     return huxerui::Scope(
@@ -643,24 +844,162 @@ struct ProfileEditFields {
                 on_back);
         });
 }
-std::size_t AndroidProfilePageIndex(
-    huxerui::State<std::int64_t> edit_page_id) {
-    return edit_page_id.Get() != 0 ? 1U : 0U;
+[[huxerui::composable]] huxerui::View ResponsiveProfileCreateSurface(
+    ProfileCreateFields fields, huxerui::TaskScope tasks,
+    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    std::shared_ptr<huxerui::HttpClient> http, bool pptp_supported,
+    bool openvpn_supported, std::function<void()> on_back) {
+    return huxerui::Scope([=]() -> huxerui::View {
+        return ProfileCreatePage(fields, tasks, toast, picker, http,
+                                 pptp_supported, openvpn_supported, on_back);
+    });
 }
-#define CLASHFLUX_PROFILE_EDIT_SURFACE AndroidProfileEditSurface
-#define CLASHFLUX_PROFILE_PAGE_INDEX AndroidProfilePageIndex
-#else
-[[huxerui::composable]] huxerui::View DesktopProfileEditSurface(
-    std::int64_t, ProfileEditFields, huxerui::TaskScope,
-    huxerui::ToastHandle, std::function<void()>) {
-    return huxerui::Scope([]() -> huxerui::View { return {}; });
+[[huxerui::composable]] huxerui::View ProfileFilePage(
+    std::int64_t id, huxerui::State<std::shared_ptr<std::string>> content,
+    huxerui::State<bool> loading, huxerui::TaskScope tasks,
+    huxerui::ToastHandle toast, std::function<void()> on_back) {
+    const auto save = [=] {
+        if (loading.Get()) return;
+        const std::string yaml = *content.Get();
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            const std::string error = co_await RunOnTaskThread([id, yaml] {
+                auto& profiles = store::profilesStore();
+                return profiles.saveYaml(id, yaml) ? std::string{}
+                                                    : profiles.lastError();
+            });
+            if (!error.empty()) {
+                toast.Show(error);
+                co_return;
+            }
+            toast.Show("已保存");
+            on_back();
+        });
+    };
+    huxerui::View editor = loading.Get()
+        ? huxerui::View{huxerui::ProgressCircle()}
+        : huxerui::View{huxerui::TextField(
+              huxerui::TextEditingValue{*content.Get()})
+              .Variant(huxerui::TextFieldVariant::Outlined)
+              .LineLimits(huxerui::TextFieldLineLimits::MultiLine(18, 40))
+              .OnChanged([content](const huxerui::TextEditingValue& value) {
+                  *content.Get() = value.text;
+              })};
+    return PageScaffold(
+        "编辑订阅文件",
+        huxerui::Row {
+            huxerui::IconButton(app::images::arrow_back, "返回")
+                .With(huxerui::Tooltip("返回订阅列表"))
+                .OnClick(on_back),
+            huxerui::IconButton(app::images::save, "保存文件")
+                .With(huxerui::Tooltip("保存订阅文件"))
+                .OnClick(save),
+        }.With(huxerui::Spacing(8.0F)),
+        huxerui::Column {
+            huxerui::Text("直接编辑订阅 YAML；保存后启用中的订阅会重启生效。"),
+            editor,
+            CompactFloatingNavigationFooter(),
+        }.With(huxerui::Spacing(12.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
+               huxerui::Grow(1.0F)));
 }
-std::size_t DesktopProfilePageIndex(huxerui::State<std::int64_t>) {
-    return 0U;
+[[huxerui::composable]] huxerui::View ProfileRulesPage(
+    std::int64_t id, huxerui::State<std::string> yaml,
+    huxerui::StateList<std::string> rules,
+    huxerui::State<huxerui::TextEditingValue> input,
+    huxerui::State<bool> dirty, huxerui::TaskScope tasks,
+    huxerui::ToastHandle toast, std::function<void()> on_back) {
+    const auto add = [=](bool prepend) {
+        const std::string text = input.Get().text;
+        if (text.empty()) return;
+        const std::string updated = store::insertRule(yaml.Get(), text, prepend);
+        yaml = updated;
+        ReplaceStateList(rules, store::parseRules(updated));
+        input = huxerui::TextEditingValue{""};
+        dirty = true;
+    };
+    const auto save = [=] {
+        if (!dirty.Get()) {
+            on_back();
+            return;
+        }
+        const std::string content = yaml.Get();
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            const std::string error = co_await RunOnTaskThread([id, content] {
+                auto& profiles = store::profilesStore();
+                return profiles.saveYaml(id, content) ? std::string{}
+                                                       : profiles.lastError();
+            });
+            if (!error.empty()) {
+                toast.Show(error);
+                co_return;
+            }
+            toast.Show("规则已保存");
+            on_back();
+        });
+    };
+    huxerui::View list = rules.Empty()
+        ? huxerui::View{huxerui::Text("订阅没有 rules 规则")}
+        : huxerui::View{huxerui::VirtualList(
+              rules.Size(), [rules](std::size_t index) {
+                  return huxerui::Text(std::format("{}  {}", index + 1,
+                                                   rules[index]))
+                      .Key(std::to_string(index));
+              })
+              .ItemExtent(32.0F)
+              .With(huxerui::Grow(1.0F), huxerui::ScrollBar())};
+    return PageScaffold(
+        "编辑订阅规则",
+        huxerui::Row {
+            huxerui::IconButton(app::images::arrow_back, "返回")
+                .With(huxerui::Tooltip("返回订阅列表"))
+                .OnClick(on_back),
+            huxerui::IconButton(app::images::save, "保存规则")
+                .With(huxerui::Tooltip("保存订阅规则"))
+                .OnClick(save),
+        }.With(huxerui::Spacing(8.0F)),
+        huxerui::Column {
+            huxerui::Text("前置插入列表头，后置追加到列表尾。"),
+            list,
+            huxerui::TextField(input.Get())
+                .Label("规则，如 DOMAIN-SUFFIX,example.com,代理组")
+                .Variant(huxerui::TextFieldVariant::Outlined)
+                .OnChanged([input](const huxerui::TextEditingValue& value) {
+                    input = value;
+                }),
+            huxerui::Row {
+                huxerui::Button("前置").OnClick([add] { add(true); }),
+                huxerui::Button("后置").OnClick([add] { add(false); }),
+            }.With(huxerui::Spacing(8.0F),
+                   huxerui::MainAlign(huxerui::MainAxisAlignment::End)),
+            CompactFloatingNavigationFooter(),
+        }.With(huxerui::Spacing(12.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
+               huxerui::Grow(1.0F)));
 }
-#define CLASHFLUX_PROFILE_EDIT_SURFACE DesktopProfileEditSurface
-#define CLASHFLUX_PROFILE_PAGE_INDEX DesktopProfilePageIndex
-#endif
+std::size_t ResponsiveProfilePageIndex(
+    bool compact,
+    huxerui::State<std::int64_t> edit_page_id,
+    huxerui::State<bool> create_page_open,
+    huxerui::State<std::int64_t> file_page_id,
+    huxerui::State<std::int64_t> rules_page_id) {
+    if (!compact) return 0U;
+    if (edit_page_id.Get() != 0) return 1U;
+    if (create_page_open.Get()) return 2U;
+    if (file_page_id.Get() != 0) return 3U;
+    return rules_page_id.Get() != 0 ? 4U : 0U;
+}
+void OpenProfileCreate(bool compact, huxerui::State<bool> page,
+                       huxerui::TaskScope tasks,
+                       const std::function<void()>& dialog) {
+    if (compact) {
+        page = true;
+        return;
+    }
+    tasks.Launch([dialog]() -> huxerui::Task<void> {
+        co_await huxerui::Delay(std::chrono::duration<double>{0});
+        dialog();
+    });
+}
 
 // HuxerUI HttpClient 订阅抓取：GET + UA + 全程超时，响应转 store::FetchedProfile。
 // 必须在 UI 线程任务协程里 co_await（HTTP 自带平台异步通道，禁入阻塞线程池）。
@@ -757,23 +1096,10 @@ void DesktopRefreshProfile(std::int64_t id, const ProfileRefreshAction&,
 #define CLASHFLUX_REFRESH_PROFILE DesktopRefreshProfile
 #endif
 
-struct ProfileImportRequest {
-    bool remote = false;
-    bool local = false;
-    bool pptp = false;
-    bool openvpn = false;
-    std::string name;
-    std::string url;
-    std::string picked_path;
-    db::Profile options;
-};
-
-using ProfileImportResult = std::pair<std::int64_t, std::string>;
-
 // 导入流程的网络差异也在平台函数内收束：Android remote 走平台 HttpClient，
 // 桌面及本地/原生订阅走阻塞 store。弹窗只提交 request，不再判断平台。
 #if defined(__ANDROID__)
-huxerui::Task<ProfileImportResult> AndroidImportProfile(
+huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
     std::shared_ptr<huxerui::HttpClient> http, ProfileImportRequest request) {
     if (request.remote) {
         const std::int64_t id = co_await AndroidImportRemote(
@@ -799,9 +1125,8 @@ huxerui::Task<ProfileImportResult> AndroidImportProfile(
         });
     co_return result;
 }
-#define CLASHFLUX_IMPORT_PROFILE AndroidImportProfile
 #else
-huxerui::Task<ProfileImportResult> DesktopImportProfile(
+huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
     std::shared_ptr<huxerui::HttpClient>, ProfileImportRequest request) {
     const ProfileImportResult result = co_await RunOnTaskThread(
         [request = std::move(request)] {
@@ -821,7 +1146,6 @@ huxerui::Task<ProfileImportResult> DesktopImportProfile(
         });
     co_return result;
 }
-#define CLASHFLUX_IMPORT_PROFILE DesktopImportProfile
 #endif
 
 // 单张订阅卡：纯视图（零弹窗 State；任务域由页面下发，菜单句柄由卡片自持有），
@@ -837,7 +1161,8 @@ huxerui::Task<ProfileImportResult> DesktopImportProfile(
     const std::function<void(std::int64_t)>& openEditInfo,
     const std::function<void(std::int64_t)>& openEditRules,
     const std::function<void(std::int64_t)>& openEditFile,
-    const std::function<void(std::int64_t)>& openQr) {
+    const std::function<void(std::int64_t)>& openQr,
+    huxerui::DialogHandle dialog) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     // Each card owns its presentation anchor. Sharing one page-level MenuHandle
     // across compact cards mounts the same LayerAnchor on multiple Views, which
@@ -882,13 +1207,64 @@ huxerui::Task<ProfileImportResult> DesktopImportProfile(
         CLASHFLUX_REFRESH_PROFILE(pid, httpRefresh, desktopRefresh);
     };
 
+    const auto confirmDelete = [dialog, tasks, action, id, nativeVpn,
+                                openVpn = profile.type == "openvpn",
+                                profileName = profile.name,
+                                errorColor = theme.colors.error,
+                                onErrorColor = huxerui::Color::White(),
+                                textColor = theme.colors.on_surface] {
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            co_await huxerui::Delay(std::chrono::duration<double>{0});
+            dialog.Show(
+                [=](huxerui::DialogContext context) -> huxerui::View {
+                    huxerui::ButtonStyle danger = huxerui::ButtonStyle::Default();
+                    danger.background = errorColor;
+                    danger.label_style = huxerui::TextStyle{
+                        huxerui::Font::System(font_size::kBody), onErrorColor};
+                    return DialogCard(huxerui::Column {
+                        huxerui::Text("删除订阅", huxerui::TextRole::Title),
+                        huxerui::Text("确定删除“" + profileName + "”吗？此操作无法撤销。")
+                            .Style(huxerui::TextStyle{
+                                huxerui::Font::System(font_size::kBody), textColor}),
+                        huxerui::Row {
+                            huxerui::Button("取消").OnClick(
+                                [context] { context.Dismiss(); }),
+                            huxerui::ProvideEnvironment(
+                                danger,
+                                huxerui::Button("删除").OnClick(
+                                    [=] {
+                                        context.Dismiss();
+                                        action([=]() -> std::string {
+                                            if (nativeVpn) {
+                                                if (openVpn) {
+                                                    store::vpnStore().forgetOpenVpn(id);
+                                                } else {
+                                                    store::vpnStore().forgetPptp(id);
+                                                }
+                                            }
+                                            auto& ps = store::profilesStore();
+                                            ps.remove(id);
+                                            return ps.lastError();
+                                        });
+                                    })),
+                        }.With(huxerui::Spacing(8.0F),
+                               huxerui::MainAlign(huxerui::MainAxisAlignment::End)),
+                    }.With(huxerui::Spacing(12.0F),
+                           huxerui::Frame{.width = 360.0F},
+                           huxerui::CrossAlign(
+                               huxerui::CrossAxisAlignment::Stretch)));
+                },
+                huxerui::DialogOptions{});
+        });
+    };
+
     // 桌面端由右键触发，Compact 由卡片上的触控按钮触发；菜单内容只维护
     // 一份，避免移动端和桌面端的订阅操作逐渐产生行为差异。
     const auto buildMenuEntries = [action, refresh, openEditInfo, openEditRules,
                                    openEditFile, openQr, id,
                                    homepage = profile.homepage, url = profile.url,
                                    selected, nativeVpn, optimisticSelected,
-                                   openVpn = profile.type == "openvpn"] {
+                                   confirmDelete, errorColor = theme.colors.error] {
         std::vector<huxerui::MenuEntry> entries;
         if (!selected && !nativeVpn) {
             entries.push_back(huxerui::MenuItem("使用", [action, id,
@@ -934,18 +1310,9 @@ huxerui::Task<ProfileImportResult> DesktopImportProfile(
             }));
         }
         entries.push_back(huxerui::MenuSection{});
-        entries.push_back(huxerui::MenuItem("删除", [action, id, nativeVpn,
-                                                       openVpn] {
-            action([id, nativeVpn, openVpn]() -> std::string {
-                if (nativeVpn) {
-                    if (openVpn) store::vpnStore().forgetOpenVpn(id);
-                    else store::vpnStore().forgetPptp(id);
-                }
-                auto& ps = store::profilesStore();
-                ps.remove(id);
-                return ps.lastError();
-            });
-        }));
+        entries.push_back(
+            huxerui::MenuItem(app::images::trash, "删除", confirmDelete)
+                .IconTint(errorColor));
         return entries;
     };
 
@@ -974,7 +1341,7 @@ huxerui::Task<ProfileImportResult> DesktopImportProfile(
     if (compact) {
         // 手机没有鼠标右键；使用可见按钮打开同一份卡片操作菜单。锚点挂在
         // 按钮本身，菜单在窄屏上会自动避开屏幕边缘。
-        moreButton = huxerui::Button("更多")
+        moreButton = huxerui::IconButton(app::images::more_vertical, "更多操作")
                          .With(menu.Anchor(), huxerui::Tooltip("更多操作"))
                          .OnClick([menu, buildMenuEntries] {
                              menu.Show(buildMenuEntries());
@@ -1240,6 +1607,7 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
     auto newOpenVpnConfig = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newOpenVpnRoutes = huxerui::UseState(huxerui::TextEditingValue{""});
     auto pickedPath = huxerui::UseState<std::string>("");
+    auto createPageOpen = huxerui::UseState(false);
 
     // ---- 编辑订阅弹窗（页面级一份；卡片按 id 打开，避免 N 卡 × N 状态）----
     auto editName = huxerui::UseState(huxerui::TextEditingValue{""});
@@ -1272,6 +1640,8 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
     auto fileLoading = huxerui::UseState(false);
     // Android 编辑订阅时切换到页面；0 表示仍在订阅列表。
     auto editPageId = huxerui::UseState<std::int64_t>(0);
+    auto filePageId = huxerui::UseState<std::int64_t>(0);
+    auto rulesPageId = huxerui::UseState<std::int64_t>(0);
 
     // 列表泵：2s 一拍重读（State 相等时短路，无重组；CRUD 后手动 reload）。
     huxerui::Lifecycle(
@@ -1586,14 +1956,15 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
     const NativeProfileSupport profileSupport = CLASHFLUX_PROFILE_SUPPORT();
     const bool pptpSupported = profileSupport.pptp;
     const bool openvpnSupported = profileSupport.openvpn;
-    auto openEditInfo = [loadEditInfo, showEditInfo, editPageId](
+    auto openEditInfo = [compact, loadEditInfo, showEditInfo, editPageId](
                             std::int64_t id) {
-        CLASHFLUX_OPEN_PROFILE_INFO(id, loadEditInfo, showEditInfo, editPageId);
+        OpenProfileEditInfo(id, compact, loadEditInfo, showEditInfo, editPageId);
     };
 
     // ---- 编辑规则（rules 列表 + 前置/后置；工作副本，保存才落盘）----
-    auto showEditRules = [dialog, tasks, toast, editYamlText, editRules,
+    auto showEditRules = [compact, dialog, tasks, toast, editYamlText, editRules,
                           editRuleInput, editRulesDirty,
+                          rulesPageId,
                           textColor = theme.colors.on_surface,
                           hintColor = theme.colors.on_surface_variant](
                              std::int64_t id) {
@@ -1607,6 +1978,10 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
             ReplaceStateList(editRules, store::parseRules(yaml));
             editRuleInput = huxerui::TextEditingValue{""};
             editRulesDirty = false;
+            if (compact) {
+                rulesPageId = id;
+                co_return;
+            }
             dialog.Show(
                 [tasks, toast, editYamlText, editRules, editRuleInput,
                  editRulesDirty, id, textColor, hintColor](
@@ -1717,13 +2092,23 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
 
     // ---- 编辑文件（懒加载 YAML + 非受控多行编辑：OnChanged 只写 shared_ptr
     // 指向的内容，不触发 State 写 → 无逐键全文重排版；保存取现值）----
-    auto showEditFile = [dialog, tasks, toast, fileContent, fileLoading,
+    auto showEditFile = [compact, dialog, tasks, toast, fileContent, fileLoading,
+                         filePageId,
                          hintColor = theme.colors.on_surface_variant](
                             std::int64_t id) {
         tasks.Launch([=]() -> huxerui::Task<void> {
             co_await huxerui::Delay(std::chrono::duration<double>{0});
             *fileContent.Get() = "";
             fileLoading = true;
+            if (compact) {
+                filePageId = id;
+                const std::string yaml = co_await RunOnTaskThread([id] {
+                    return store::profilesStore().yamlOf(id);
+                });
+                *fileContent.Get() = yaml;
+                fileLoading = false;
+                co_return;
+            }
             dialog.Show(
                 [tasks, toast, fileContent, fileLoading, id, hintColor](
                     huxerui::DialogContext ctx) -> huxerui::View {
@@ -2055,7 +2440,7 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
                                           const std::string name =
                                               newName.Get().text;
                                           const auto [rid, err] =
-                                              co_await CLASHFLUX_IMPORT_PROFILE(
+                                              co_await ImportProfileForPlatform(
                                                   http,
                                                   ProfileImportRequest{
                                                       .remote = remote,
@@ -2138,7 +2523,8 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
                                      reload,
                                      pptpStates, openVpnStates, isConnectionSelected,
                                      toggleConnection, openEditInfo, showEditRules,
-                                     showEditFile, showQr, optimisticSelected, theme](
+                                     showEditFile, showQr, optimisticSelected, theme,
+                                     dialog](
                                         std::size_t index)
                                          -> huxerui::View {
                                         const ProfileGridItem& item = profileItems[index];
@@ -2197,7 +2583,8 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
                                                    pptpState, openVpnState,
                                                    isConnectionSelected(profile.id),
                                                    toggleConnection, openEditInfo,
-                                                   showEditRules, showEditFile, showQr)
+                                                   showEditRules, showEditFile, showQr,
+                                                   dialog)
                                             .Key(profile.id);
                                     })
                                     .Columns(compact
@@ -2220,18 +2607,39 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     }
 
+    const auto resetCreateFields = [=] {
+        newName = huxerui::TextEditingValue{""};
+        newUrl = huxerui::TextEditingValue{""};
+        newTypeIdx = 0;
+        newDesc = huxerui::TextEditingValue{""};
+        newTimeout = huxerui::TextEditingValue{""};
+        newInterval = huxerui::TextEditingValue{""};
+        newAuto = false;
+        newSys = false;
+        newCore = false;
+        newCert = false;
+        newPptpServer = huxerui::TextEditingValue{""};
+        newPptpUsername = huxerui::TextEditingValue{""};
+        newPptpPassword = huxerui::TextEditingValue{""};
+        newPptpTimeout = huxerui::TextEditingValue{"30"};
+        newPptpRoutes = huxerui::TextEditingValue{""};
+        newPptpMppe = true;
+        newOpenVpnConfig = huxerui::TextEditingValue{""};
+        newOpenVpnRoutes = huxerui::TextEditingValue{""};
+        pickedPath = "";
+    };
+    const auto openCreate = [=] {
+        resetCreateFields();
+        OpenProfileCreate(compact, createPageOpen, tasks, showCreateDialog);
+    };
+
     huxerui::View profileListPage = PageScaffold(
         "订阅",
         huxerui::Row {
             std::move(batchActions),
-            huxerui::Button("新建订阅").OnClick(
-                [tasks, showCreateDialog] {
-                    // 弹窗会卸载点击路径上的节点：推迟出指针事件路径。
-                    tasks.Launch([=]() -> huxerui::Task<void> {
-                        co_await huxerui::Delay(std::chrono::duration<double>{0});
-                        showCreateDialog();
-                    });
-                }),
+            huxerui::IconButton(app::images::add, "新建订阅")
+                .With(huxerui::Tooltip("新建订阅"))
+                .OnClick(openCreate),
         },
         profiles.Empty()
             ? huxerui::View{
@@ -2245,11 +2653,12 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
                          huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
                          huxerui::CrossAlign(
                              huxerui::CrossAxisAlignment::Center))}
-            : std::move(profileGrid));
+            : std::move(profileGrid),
+        true);
 
     // IndexedPages 要求每一页都是挂载节点；平台函数负责 Android 编辑页是否
     // 存在，ProfilesPage 只提交同一份表单状态。
-    huxerui::View mobileEditPage = CLASHFLUX_PROFILE_EDIT_SURFACE(
+    huxerui::View mobileEditPage = ResponsiveProfileEditSurface(
         editPageId.Get(),
         ProfileEditFields{editName, editUrl, editType, editDesc, editTimeout,
                            editInterval, editAuto, editSys, editCore, editCert,
@@ -2258,19 +2667,36 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
                            editOpenVpnConfig, editOpenVpnRoutes},
         tasks, toast, [editPageId] { editPageId = 0; });
 
+    huxerui::View mobileCreatePage = ResponsiveProfileCreateSurface(
+        ProfileCreateFields{
+            newName, newUrl, newTypeIdx, newDesc, newTimeout, newInterval,
+            newAuto, newSys, newCore, newCert, newPptpServer,
+            newPptpUsername, newPptpPassword, newPptpTimeout, newPptpRoutes,
+            newPptpMppe, newOpenVpnConfig, newOpenVpnRoutes, pickedPath,
+            importing},
+        tasks, toast, picker, http, pptpSupported, openvpnSupported,
+        [createPageOpen] { createPageOpen = false; });
+
+    huxerui::View mobileFilePage = ProfileFilePage(
+        filePageId.Get(), fileContent, fileLoading, tasks, toast,
+        [filePageId] { filePageId = 0; });
+    huxerui::View mobileRulesPage = ProfileRulesPage(
+        rulesPageId.Get(), editYamlText, editRules, editRuleInput,
+        editRulesDirty, tasks, toast, [rulesPageId] { rulesPageId = 0; });
+
     return huxerui::IndexedPages(
                std::vector<huxerui::View>{std::move(profileListPage),
-                                          std::move(mobileEditPage)},
-               CLASHFLUX_PROFILE_PAGE_INDEX(editPageId))
+                                          std::move(mobileEditPage),
+                                          std::move(mobileCreatePage),
+                                          std::move(mobileFilePage),
+                                          std::move(mobileRulesPage)},
+               ResponsiveProfilePageIndex(compact, editPageId, createPageOpen,
+                                          filePageId, rulesPageId))
         .With(huxerui::Grow(1.0F));
 }
 
 #undef CLASHFLUX_PROFILE_SUPPORT
 #undef CLASHFLUX_PROFILE_OPTIONS
-#undef CLASHFLUX_OPEN_PROFILE_INFO
-#undef CLASHFLUX_PROFILE_EDIT_SURFACE
-#undef CLASHFLUX_PROFILE_PAGE_INDEX
 #undef CLASHFLUX_REFRESH_PROFILE
-#undef CLASHFLUX_IMPORT_PROFILE
 
 } // namespace clashflux::ui

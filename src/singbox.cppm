@@ -31,7 +31,7 @@ export struct CompileOptions {
                                                  // 桌面 = tunEnabled，需 root/CAP_NET_ADMIN）
     bool tunStrictRoute = true;                  // Android VpnService 侧保持 false（严格
                                                  // 路由会截断系统级分流）
-    bool ipv6 = true;                            // Android VpnService 目前只建 IPv4 TUN
+    bool ipv6 = true;                            // DNS 与 TUN 是否允许 IPv6
     std::string ruleSetDir;                      // 非空时 GEOIP .srs 本地命中即以
                                                  // local rule_set 生成（core_store
                                                  // 预取缓存目录；未命中回落 remote）
