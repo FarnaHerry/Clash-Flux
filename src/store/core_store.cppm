@@ -32,6 +32,7 @@ namespace store {
 #if defined(__ANDROID__)
 // android_bridge: 0=stopped, 1=establishing, 2=attached, 3=failed.
 extern "C" int clashflux_android_vpn_state() noexcept;
+extern "C" void clashflux_android_start_vpn() noexcept;
 extern "C" void clashflux_android_stop_vpn() noexcept;
 #endif
 
@@ -290,7 +291,8 @@ public:
     // 启动内核；profileYaml 为启用订阅的原文（无订阅传空）。
     // detached=true（CLI core start）：直连 spawn 走 setsid 脱离会话驻留，
     // 本进程退出不带走内核。
-    void startCore(const std::string& profileYaml, bool detached = false) {
+    void startCore(const std::string& profileYaml, bool detached = false,
+                   bool useSavedTunSetting = true) {
         ensureOpen();
         stream::logApplication("info", "开始启动代理内核");
         {
@@ -331,7 +333,9 @@ public:
             options.mode = mode();
             options.allowLan = allowLan();
             options.logLevel = logLevel();
-            options.tunInbound = tunEnabled();
+            // 自动启动只准备本地内核，不应因为上次保存的开关状态突然接管
+            // 桌面所有流量；显式启动/重启仍按用户保存的 TUN 设置执行。
+            options.tunInbound = useSavedTunSetting && tunEnabled();
             auto compiled = core::generateConfig(options);
             if (compiled.json.empty() || !compiled.error.empty()) {
                 fail("订阅编译失败：" + (compiled.error.empty()
@@ -539,6 +543,20 @@ public:
         std::lock_guard lock(mutex_);
         snap_.state = core::CoreState::Stopped;
         snap_.version.clear();
+#endif
+    }
+
+    // 订阅/配置变更时重启当前内核。Android 的 startCore 只负责生成
+    // config.json，真正的数据面由 VpnService 持有，因此必须在写完新配置后
+    // 再显式请求恢复服务；否则切换订阅会停在 Stopped，代理页自然没有内容。
+    void restartCore(const std::string& profileYaml) {
+        const core::CoreState before = snapshot().state;
+        const bool wasActive = before == core::CoreState::Running ||
+                               before == core::CoreState::Starting;
+        stopCore();
+        startCore(profileYaml);
+#if defined(__ANDROID__)
+        if (wasActive) clashflux_android_start_vpn();
 #endif
     }
 

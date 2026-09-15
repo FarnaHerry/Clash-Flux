@@ -97,6 +97,9 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             MainActivity.appLog("VPN 服务未完成前台初始化，拒绝启动数据面", true);
             return START_NOT_STICKY;
         }
+        // stopCurrent() may have stopped the data plane while Android reused
+        // this service instance. A new start command is a fresh lifecycle.
+        stopRequested.set(false);
         if (!started && !starting) {
             starting = true;
             startRequested = true;
@@ -577,7 +580,13 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             if (!startRequested) throw new IllegalStateException("VPN 未在运行");
             MainActivity.appLog("线路切换：按需连接 libbox 控制通道", false);
             CommandClientOptions options = new CommandClientOptions();
-            options.setStatusInterval(0);
+            // CommandClient 默认不订阅任何数据流。代理页需要 groups，首页/日志
+            // 需要 status；不声明这些命令时 writeGroups 永远不会回调，UI 只能看到
+            // 空的订阅内容。
+            options.addCommand(Libbox.CommandGroup);
+            options.addCommand(Libbox.CommandStatus);
+            options.addCommand(Libbox.CommandClashMode);
+            options.setStatusInterval(1L * 1000L * 1000L * 1000L);
             CommandClient candidate = new CommandClient(this, options);
             candidate.connect();
             client = candidate;
@@ -617,11 +626,13 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         if (service == null) return false;
         if (!service.stopRequested.compareAndSet(false, true)) return true;
         service.startRequested = false;
-        new Thread(() -> {
-            service.close("用户请求关闭 Android VPN");
-            service.stopForeground(STOP_FOREGROUND_REMOVE);
-            service.stopSelf();
-        }, "clashflux-vpn-stop").start();
+        // Keep stop and the following profile-restart start command ordered.
+        // The old background stop thread could let startVpn() observe
+        // started=true, after which the new config was never loaded and the
+        // service finally stopped underneath the newly selected subscription.
+        service.close("用户请求关闭 Android VPN");
+        service.stopForeground(STOP_FOREGROUND_REMOVE);
+        service.stopSelf();
         return true;
     }
 
@@ -641,6 +652,16 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     }
 
     public static String proxyGroups() {
+        ClashVpnService service = current;
+        if (service != null) {
+            try {
+                // 代理快照按需建立控制通道；首次进入代理页时也必须触发
+                // writeGroups，否则 outboundGroupsJson 仍是空对象。
+                service.controlClient();
+            } catch (Exception error) {
+                MainActivity.appLog("读取出站线路失败：" + error.getMessage(), true);
+            }
+        }
         return outboundGroupsJson;
     }
     // Preserve Failed for the native/UI state machine.  Previously close() sent

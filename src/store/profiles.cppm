@@ -463,8 +463,7 @@ public:
             return false;
         }
         if (p->selected && coreStore().snapshot().state == core::CoreState::Running) {
-            coreStore().stopCore();
-            coreStore().startCore(selectedYaml());
+            coreStore().restartCore(selectedYaml());
         }
         return true;
     }
@@ -488,8 +487,7 @@ public:
             return false;
         }
         if (coreStore().snapshot().state == core::CoreState::Running) {
-            coreStore().stopCore();
-            coreStore().startCore(selectedYaml());
+            coreStore().restartCore(selectedYaml());
         }
         return true;
     }
@@ -516,8 +514,7 @@ public:
         }
         // 删掉的是启用订阅且内核在跑：用空配置重启（代理全断比跑旧配置直观）。
         if (wasSelected && coreStore().snapshot().state == core::CoreState::Running) {
-            coreStore().stopCore();
-            coreStore().startCore("");
+            coreStore().restartCore("");
         }
     }
 

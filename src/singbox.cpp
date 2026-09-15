@@ -405,11 +405,29 @@ std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
 
 // ---- 规则转换 -----------------------------------------------------------------
 
-void ensureGeoipRuleSet(Context& ctx, std::string country) {
+bool ensureGeoipRuleSet(Context& ctx, std::string country) {
     country = lowerCopy(country);
-    if (ctx.geoipTags.contains(country)) return;
+    if (ctx.geoipTags.contains(country)) {
+        const std::string tag = "geoip-" + country;
+        for (const auto& ruleSet : ctx.ruleSets) {
+            if (ruleSet.is_object() && ruleSet.value("tag", "") == tag) {
+                return true;
+            }
+        }
+        return false;
+    }
     const std::string tag = "geoip-" + country;
     ctx.geoipTags.emplace(country, tag);
+    // MetaCubeX 的 geoip 目录只提供国家/地区代码。某些 Clash 订阅会把
+    // TELEGRAM 等类别误写成 GEOIP；继续拼出不存在的 URL 会让 sing-box
+    // 在启动阶段直接 FATAL，而不是把规则温和地降级。
+    if (country.size() != 2 ||
+        !std::all_of(country.begin(), country.end(), [](unsigned char c) {
+            return c >= 'a' && c <= 'z';
+        })) {
+        ctx.warn(std::format("GEOIP 代码「{}」不是国家/地区代码，已跳过", country));
+        return false;
+    }
     // 本地缓存命中 → local rule_set（首启不依赖代理/网络；core_store 负责
     // 预取与按周刷新）；未命中 → remote，由内核在启动时经默认出站拉取。
     if (!ctx.opt.ruleSetDir.empty()) {
@@ -423,9 +441,16 @@ void ensureGeoipRuleSet(Context& ctx, std::string country) {
                 {"format", "binary"},
                 {"path", local.string()},
             });
-            return;
+            return true;
         }
     }
+#if defined(__ANDROID__)
+    // Android 的远程 GEOIP 规则集会在 VpnService 建立 TUN 的同一阶段下载。
+    // 此时 libbox 还没有可用的物理网络接口，下载失败会使整个数据面启动
+    // 失败。节点/策略组仍可正常使用，GEOIP 规则只在本地缓存存在时启用。
+    ctx.warn(std::format("Android 暂无本地 GEOIP 规则集「{}」，已跳过在线下载", country));
+    return false;
+#else
     ctx.ruleSets.push_back({
         {"type", "remote"},
         {"tag", tag},
@@ -436,6 +461,8 @@ void ensureGeoipRuleSet(Context& ctx, std::string country) {
         {"url", std::format("https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/{}.srs", country)},
         {"update_interval", "24h"},
     });
+    return true;
+#endif
 }
 
 // 单条 Clash 规则 → sing-box route rule；MATCH 返回 false 表示已写入 final。
@@ -491,7 +518,7 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
         if (code == "private" || code == "lan") {
             rule["ip_is_private"] = true;
         } else {
-            ensureGeoipRuleSet(ctx, code);
+            if (!ensureGeoipRuleSet(ctx, code)) return true;
             rule["rule_set"] = {ctx.geoipTags.at(code)};
         }
     } else if (kind == "rule-set") {
