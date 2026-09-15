@@ -245,10 +245,8 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
             huxerui::Font::System(font_size::kBody)
                 .WithWeight(huxerui::FontWeight::SemiBold),
             text_color}),
-        huxerui::Row {
-            huxerui::Text("系统代理").Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody), text_color}),
-            huxerui::Spacer(),
+        SettingSwitchRow(
+            "系统代理", "为桌面应用设置系统代理",
             huxerui::Switch(proxy_override.Get().value_or(
                                 store::coreStore().systemProxyEnabled()))
                 .OnChanged([tasks, toast, proxy_override](bool on) {
@@ -264,12 +262,9 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                             toast.Show(error.empty() ? "系统代理设置失败" : error);
                         }
                     });
-                }),
-        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        huxerui::Row {
-            huxerui::Text("TUN 模式").Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody), text_color}),
-            huxerui::Spacer(),
+                })),
+        SettingSwitchRow(
+            "TUN 模式", "全局透明代理（需管理员权限）",
             huxerui::Switch(tun_override.Get().value_or(state.core.tunEnabled))
                 .OnChanged([state, tasks, toast, dialog, clipboard, text_color,
                             hint_color, tun_override](bool on) {
@@ -302,8 +297,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                             toast.Show(error.empty() ? "TUN 设置失败" : error);
                         }
                     });
-                }),
-        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+                })),
     }.With(huxerui::Spacing(10.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
 }

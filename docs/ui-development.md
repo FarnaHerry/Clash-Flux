@@ -10,5 +10,5 @@
 
 - 页面命令优先使用带语义标签的 `IconButton`；桌面悬停必须提供说明操作含义的 `Tooltip`。
 - 表达状态或模式的选项（例如“规则 / 全局 / 直连”）保留文字。
-- 所有 Switch 设置项必须保持单行：说明文字在左，Switch 在右。设置页统一使用 `SettingSwitchRow`，不得在 Compact 视口改成上下堆叠。
-- Switch 行说明过长时保持单行并裁剪，完整说明通过 Tooltip 提供；不得因说明文本换行把 Switch 挤到下一行。
+- 所有 Switch 设置项统一由三部分组成：主名称、小字描述、Switch。主名称和小字描述放在左侧列，Switch 固定在右侧并与文字列垂直居中对齐。设置页统一使用 `SettingSwitchRow`，不得在 Compact 视口改成上下堆叠。
+- 小字描述允许自然换行；左侧文字列使用 Grow 保留 Switch 的固定右侧位置，不得因长描述把 Switch 挤到下一行。
