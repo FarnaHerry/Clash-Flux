@@ -12,8 +12,8 @@ C++ 实现。订阅沿用 Clash YAML 格式，由内置编译器转换为 sing-b
 - 代理页：策略组卡片、节点切换、整组测速（延迟着色）
 - 多重规则 / 连接 / 日志：按订阅查看各自规则，使用全局路由规则把域名/IP/CIDR
   分配给不同连接；连接快照（可逐条/全部关闭）、实时日志流
-- 原生 VPN 订阅：Linux 支持 PPTP 和 OpenVPN CLI（粘贴 `.ovpn` 文本），可多选
-  同时连接；内网 CIDR 由统一 root 服务安装到对应隧道
+- 原生 VPN 订阅：Linux 与 Windows 支持 PPTP 和 OpenVPN CLI（粘贴 `.ovpn`
+  文本），可多选同时连接；内网 CIDR 由平台后端安装到对应隧道
 - 内核控制：自动启停、出站模式（规则/全局/直连）、混合端口、局域网连接、日志级别
 - 订阅转换：Clash YAML → sing-box JSON 编译器（ss/vmess/vless/trojan/hysteria2/
   tuic 等协议、策略组、域名/IP/GEOIP 规则；不支持的条目显式提示而非静默丢弃；
@@ -66,6 +66,10 @@ sudo dnf install openvpn iproute
 # Debian/Ubuntu
 sudo apt install openvpn iproute2
 ```
+
+Windows OpenVPN 需要安装 [OpenVPN Community](https://openvpn.net/community-downloads/)。
+Clash-Flux 会从 `PATH` 或默认的 `Program Files/OpenVPN/bin` 目录查找
+`openvpn.exe`；安装内网路由可能需要以管理员身份运行。
 
 OpenVPN 配置保存为原生 `.ovpn` 文本。为了让 root 服务能够安全托管连接，建议使用
 `<ca>`、`<cert>`、`<key>`、`<tls-auth>` 和 `<auth-user-pass>` inline 块；配置中引用的

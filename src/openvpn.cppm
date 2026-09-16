@@ -193,7 +193,7 @@ export inline std::optional<OpenVpnConfig> ParseOpenVpnConfig(
     return config;
 }
 
-// 当前机器是否具备 OpenVPN CLI 和统一 root 服务后端。
+// 当前机器是否具备 OpenVPN CLI；Linux 还要求统一 root 服务后端。
 export bool OpenVpnToolsAvailable();
 export bool OpenVpnSessionAlive(std::string_view connectionId);
 

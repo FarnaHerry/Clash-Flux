@@ -97,7 +97,7 @@ NativeProfileSupport LinuxProfileSupport() {
 #define CLASHFLUX_PROFILE_SUPPORT LinuxProfileSupport
 #elif defined(_WIN32)
 NativeProfileSupport WindowsProfileSupport() {
-    return {.pptp = true, .openvpn = false};
+    return {.pptp = true, .openvpn = true};
 }
 #define CLASHFLUX_PROFILE_SUPPORT WindowsProfileSupport
 #elif defined(__APPLE__)
