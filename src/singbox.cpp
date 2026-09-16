@@ -741,7 +741,11 @@ std::optional<std::string> addressCidr(std::string_view raw, bool ipv4Only,
     const std::string value = trimCopy(raw);
     const auto slash = value.find('/');
     const std::string_view address = std::string_view(value).substr(0, slash);
-    const int bits = validIpv4(address) ? 32 : (!ipv4Only && validIpv6(address) ? 128 : 0);
+    // Keep this validation independent from platform name resolution. A host
+    // name must never enter sing-box route_exclude_address as if it were an IP.
+    const bool ipv4 = validIpv4(address) &&
+        std::ranges::count(address, '.') == 3;
+    const int bits = ipv4 ? 32 : (!ipv4Only && validIpv6(address) ? 128 : 0);
     if (bits == 0) return std::nullopt;
     if (slash == std::string::npos) {
         return requirePrefix ? std::nullopt : std::optional{value + "/" + std::to_string(bits)};
@@ -926,6 +930,16 @@ std::string mappedLogLevel(const std::string& level) {
 void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
     nlohmann::json& config = ctx.config;
 
+    // Validate policy input even on platforms that cannot create a managed
+    // TUN, so host names never cross the routing boundary as address values.
+    for (const auto& address : opt.tunExcludeAddresses) {
+        if (!addressCidr(address, false)) {
+            ctx.result.error = std::format(
+                "TUN 补偿地址「{}」无效，必须为 IP/CIDR", address);
+            return;
+        }
+    }
+
     nlohmann::json log = nlohmann::json::object();
     if (lowerCopy(trimCopy(opt.logLevel)) == "silent") {
         log["disabled"] = true;
@@ -1036,12 +1050,7 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
         appendExclusion("127.0.0.0/8");
 #endif
         for (const auto& address : opt.tunExcludeAddresses) {
-            const auto cidr = addressCidr(address, false);
-            if (!cidr) {
-                ctx.result.error = std::format("TUN 补偿地址「{}」无效，必须为 IP/CIDR", address);
-                return;
-            }
-            appendExclusion(*cidr);
+            appendExclusion(*addressCidr(address, false));
         }
         if (!exclusions.empty()) inbound["route_exclude_address"] = std::move(exclusions);
     }

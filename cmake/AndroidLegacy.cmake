@@ -42,6 +42,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "#include <queue>\n"
         "#include <random>\n"
         "#include <ranges>\n"
+        "#include <set>\n"
         "#include <span>\n"
         "#include <sstream>\n"
         "#include <stdexcept>\n"
@@ -110,7 +111,13 @@ function(clashflux_prepare_android_sources output_directory output_header
         string(REPLACE "export struct" "struct" _content "${_content}")
         string(REPLACE "export class" "class" _content "${_content}")
         string(REPLACE "export enum" "enum" _content "${_content}")
-        string(REGEX REPLACE "export ([^;{}]*\\{)" "inline \\1" _content "${_content}")
+        # Only inline exported function definitions. A broad `export ... {`
+        # rewrite also matches namespaces and declarations already marked
+        # inline, producing invalid `inline namespace a::b` and duplicate
+        # specifiers in the generated compatibility header.
+        string(REPLACE "export inline " "CLASHFLUX_ANDROID_INLINE " _content "${_content}")
+        string(REGEX REPLACE "export ([A-Za-z_][A-Za-z0-9_:<> ,&*]*\\([^;{}]*\\)[^;{}]*\\{)" "inline \\1" _content "${_content}")
+        string(REPLACE "CLASHFLUX_ANDROID_INLINE " "inline " _content "${_content}")
         string(REPLACE "export " "" _content "${_content}")
         string(APPEND _header "// Generated from ${_source}.\n${_content}\n")
     endforeach()
