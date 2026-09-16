@@ -458,12 +458,12 @@ bool physicalInterface(std::string_view name, int depth = 0) {
     if (std::filesystem::exists(directory / "device", ec)) return true;
     // VLANs, bonds and bridges backed by a physical port are valid uplinks.
     // Pure virtual interfaces (TUN, PPP, WireGuard, veth) have no such lower.
-    for (std::filesystem::directory_iterator it(directory, ec), end; !ec && it != end; it.increment(ec)) {
+    for (std::filesystem::directory_iterator it(directory, ec); !ec && it != std::default_sentinel; it.increment(ec)) {
         const auto file = it->path().filename().string();
         if (file.starts_with("lower_") && physicalInterface(file.substr(6), depth + 1)) return true;
     }
     ec.clear();
-    for (std::filesystem::directory_iterator it(directory / "brif", ec), end; !ec && it != end; it.increment(ec)) {
+    for (std::filesystem::directory_iterator it(directory / "brif", ec); !ec && it != std::default_sentinel; it.increment(ec)) {
         if (physicalInterface(it->path().filename().string(), depth + 1)) return true;
     }
     return false;
