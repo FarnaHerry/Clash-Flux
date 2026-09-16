@@ -688,6 +688,234 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
 
 // ---- 骨架与收尾 ----------------------------------------------------------------
 
+bool validIpv4(std::string_view value) {
+    for (int index = 0; index < 4; ++index) {
+        const auto separator = value.find('.');
+        const auto part = value.substr(0, separator);
+        unsigned int octet = 0;
+        const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), octet);
+        if (part.empty() || (part.size() > 1 && part.front() == '0') ||
+            error != std::errc{} || end != part.data() + part.size() || octet > 255 ||
+            (index == 3) != (separator == std::string_view::npos)) return false;
+        if (index != 3) value.remove_prefix(separator + 1);
+    }
+    return true;
+}
+
+bool validIpv6(std::string_view value) {
+    // Portable parser for literal addresses only (no scoped interface or DNS).
+    // A dotted IPv4 tail occupies two 16-bit groups.
+    const auto compressed = value.find("::");
+    if (compressed != std::string_view::npos &&
+        value.find("::", compressed + 2) != std::string_view::npos) return false;
+    const auto countGroups = [](std::string_view part, bool allowIpv4) {
+        int count = 0;
+        if (part.empty()) return count;
+        while (!part.empty()) {
+            const auto separator = part.find(':');
+            const auto group = part.substr(0, separator);
+            if (group.empty()) return -1;
+            if (group.find('.') != std::string_view::npos) {
+                if (!allowIpv4 || separator != std::string_view::npos || !validIpv4(group)) return -1;
+                return count + 2;
+            }
+            if (group.size() > 4 || !std::ranges::all_of(group, [](unsigned char ch) {
+                    return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') ||
+                           (ch >= 'A' && ch <= 'F');
+                })) return -1;
+            ++count;
+            if (separator == std::string_view::npos) return count;
+            part.remove_prefix(separator + 1);
+            if (part.empty()) return -1;
+        }
+        return count;
+    };
+    if (compressed == std::string_view::npos) return countGroups(value, true) == 8;
+    const int left = countGroups(value.substr(0, compressed), false);
+    const int right = countGroups(value.substr(compressed + 2), true);
+    return left >= 0 && right >= 0 && left + right < 8;
+}
+
+std::optional<std::string> addressCidr(std::string_view raw, bool ipv4Only,
+                                     bool requirePrefix = false) {
+    const std::string value = trimCopy(raw);
+    const auto slash = value.find('/');
+    const std::string_view address = std::string_view(value).substr(0, slash);
+    const int bits = validIpv4(address) ? 32 : (!ipv4Only && validIpv6(address) ? 128 : 0);
+    if (bits == 0) return std::nullopt;
+    if (slash == std::string::npos) {
+        return requirePrefix ? std::nullopt : std::optional{value + "/" + std::to_string(bits)};
+    }
+    unsigned int prefix = 0;
+    const auto [end, error] = std::from_chars(value.data() + slash + 1,
+                                             value.data() + value.size(), prefix);
+    if (error != std::errc{} || end != value.data() + value.size() ||
+        prefix > static_cast<unsigned int>(bits)) return std::nullopt;
+    return value;
+}
+
+int ruleSpecificity(vpn::MatchKind kind) {
+    switch (kind) {
+    case vpn::MatchKind::ExactDomain:
+    case vpn::MatchKind::ExactIp: return 4;
+    case vpn::MatchKind::DomainSuffix: return 3;
+    case vpn::MatchKind::Ipv4Cidr: return 2;
+    case vpn::MatchKind::Any: return 1;
+    }
+    return 0;
+}
+
+std::optional<nlohmann::json> globalRuleMatch(Context& ctx, const vpn::RouteRule& rule) {
+    nlohmann::json match = nlohmann::json::object();
+    std::string pattern = trimCopy(rule.pattern);
+    switch (rule.match) {
+    case vpn::MatchKind::Any: return match;
+    case vpn::MatchKind::ExactDomain:
+    case vpn::MatchKind::DomainSuffix:
+        pattern = lowerCopy(std::move(pattern));
+        while (!pattern.empty() && pattern.back() == '.') pattern.pop_back();
+        if (rule.match == vpn::MatchKind::DomainSuffix && pattern.starts_with('.')) pattern.erase(0, 1);
+        if (!pattern.empty() && pattern.find_first_of(" /:\t\r\n") == std::string::npos) {
+            match[rule.match == vpn::MatchKind::ExactDomain ? "domain" : "domain_suffix"] = {pattern};
+            return match;
+        }
+        break;
+    case vpn::MatchKind::ExactIp:
+    case vpn::MatchKind::Ipv4Cidr: {
+        const bool cidr = rule.match == vpn::MatchKind::Ipv4Cidr;
+        if (!cidr && pattern.find('/') != std::string::npos) break;
+        if (const auto address = addressCidr(pattern, cidr, cidr)) {
+            match["ip_cidr"] = {*address};
+            return match;
+        }
+        break;
+    }
+    }
+    ctx.result.error = std::format("全局规则「{}」的匹配地址无效，未启动内核", rule.pattern);
+    return std::nullopt;
+}
+
+std::string unusedOutboundTag(const nlohmann::json& config, std::string preferred) {
+    const auto used = [&](const std::string& tag) {
+        for (const char* section : {"outbounds", "endpoints"}) {
+            if (!config.contains(section) || !config[section].is_array()) continue;
+            for (const auto& item : config[section]) {
+                if (item.is_object() && item.value("tag", "") == tag) return true;
+            }
+        }
+        return false;
+    };
+    const std::string base = preferred;
+    for (int index = 1; used(preferred); ++index) preferred = base + "-" + std::to_string(index);
+    return preferred;
+}
+
+bool applyConnectionRules(Context& ctx) {
+#if !defined(__linux__) || defined(__ANDROID__)
+    if (ctx.opt.tunInbound && std::ranges::any_of(ctx.opt.nativeConnections,
+            [](const auto& native) { return native.connected; })) {
+        ctx.result.error = "当前平台尚未实现原生 VPN 与主 TUN 的补偿路由；请先关闭 TUN";
+        return false;
+    }
+#endif
+    auto& config = ctx.config;
+    if (!config.contains("outbounds")) config["outbounds"] = nlohmann::json::array();
+    if (!config["outbounds"].is_array()) {
+        ctx.result.error = "sing-box outbounds 必须为数组";
+        return false;
+    }
+    std::string directTag;
+    for (const auto& outbound : config["outbounds"]) {
+        if (outbound.is_object() && outbound.value("type", "") == "direct" &&
+            !outbound.contains("bind_interface") && !outbound.contains("detour")) {
+            directTag = outbound.value("tag", "");
+            if (!directTag.empty()) break;
+        }
+    }
+    if (directTag.empty()) {
+        directTag = unusedOutboundTag(config, "DIRECT");
+        config["outbounds"].push_back({{"type", "direct"}, {"tag", directTag}});
+    }
+    const std::string finalOutbound = config["route"].value("final", directTag);
+    std::map<std::string, std::string> nativeTags;
+    std::set<std::string> unavailableWarnings;
+    for (const auto& native : ctx.opt.nativeConnections) {
+        if (native.id.empty() || nativeTags.contains(native.id)) {
+            ctx.result.error = "原生 VPN 连接 ID 为空或重复";
+            return false;
+        }
+        std::string tag;
+        if (native.connected && !native.interfaceName.empty()) {
+            tag = unusedOutboundTag(config, "clash-flux-native-" + std::to_string(nativeTags.size()));
+            config["outbounds"].push_back({{"type", "direct"}, {"tag", tag},
+                                          {"bind_interface", native.interfaceName}});
+        }
+        nativeTags.emplace(native.id, std::move(tag));
+    }
+    const auto applyTarget = [&](nlohmann::json& rule, const std::string& connectionId) {
+        if (const auto native = nativeTags.find(connectionId); native != nativeTags.end()) {
+            if (!native->second.empty()) {
+                rule["outbound"] = native->second;
+                return;
+            }
+        } else if (!connectionId.empty() && connectionId == ctx.opt.mainConnectionId) {
+            rule["outbound"] = finalOutbound;
+            return;
+        }
+        rule["action"] = "reject";
+        if (unavailableWarnings.insert(connectionId).second) {
+            ctx.warn(std::format("全局目标连接「{}」未连接、接口不可用或不是当前主 VPN；匹配流量将被拒绝", connectionId));
+        }
+    };
+
+    nlohmann::json precedence = nlohmann::json::array({
+        {{"action", "sniff"}}, {{"protocol", "dns"}, {"action", "hijack-dns"}},
+    });
+    auto globalRules = ctx.opt.globalRules;
+    std::stable_sort(globalRules.begin(), globalRules.end(), [](const auto& left, const auto& right) {
+        if (left.priority != right.priority) return left.priority > right.priority;
+        return ruleSpecificity(left.match) > ruleSpecificity(right.match);
+    });
+    for (const auto& global : globalRules) {
+        if (global.match == vpn::MatchKind::ExactIp &&
+            global.pattern.find(':') != std::string::npos &&
+            nativeTags.contains(global.connectionId)) {
+            ctx.result.error = "原生 VPN 补偿路由当前仅支持 IPv4，不能使用 IPv6 目标规则";
+            return false;
+        }
+        auto rule = globalRuleMatch(ctx, global);
+        if (!rule) return false;
+        applyTarget(*rule, global.connectionId);
+        precedence.push_back(std::move(*rule));
+    }
+
+    struct InternalRule { std::string cidr; std::string connectionId; int prefix; };
+    std::vector<InternalRule> internalRules;
+    for (const auto& native : ctx.opt.nativeConnections) {
+        for (const auto& route : native.internalRoutes) {
+            const auto cidr = addressCidr(route, true);
+            if (!cidr) {
+                ctx.result.error = std::format("原生 VPN「{}」的内网地址「{}」无效；当前仅支持 IPv4/CIDR", native.id, route);
+                return false;
+            }
+            internalRules.push_back({*cidr, native.id, std::stoi(cidr->substr(cidr->find('/') + 1))});
+        }
+    }
+    std::stable_sort(internalRules.begin(), internalRules.end(), [](const auto& left, const auto& right) {
+        return left.prefix > right.prefix;
+    });
+    for (const auto& internal : internalRules) {
+        nlohmann::json rule = {{"ip_cidr", {internal.cidr}}};
+        applyTarget(rule, internal.connectionId);
+        precedence.push_back(std::move(rule));
+    }
+    precedence.push_back({{"clash_mode", "direct"}, {"outbound", directTag}});
+    precedence.push_back({{"clash_mode", "global"}, {"outbound", finalOutbound}});
+    for (auto& rule : config["route"]["rules"]) precedence.push_back(std::move(rule));
+    config["route"]["rules"] = std::move(precedence);
+    return true;
+}
+
 std::string mappedLogLevel(const std::string& level) {
     const std::string lowered = lowerCopy(trimCopy(level));
     if (lowered == "warning") return "warn";
@@ -723,12 +951,24 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
     if (!config.contains("inbounds") || !config["inbounds"].is_array()) {
         config["inbounds"] = nlohmann::json::array();
     }
+    if (!opt.tunInbound) {
+        auto& inbounds = config["inbounds"];
+        inbounds.erase(std::remove_if(inbounds.begin(), inbounds.end(), [](const auto& inbound) {
+            return inbound.is_object() && inbound.value("type", "") == "tun";
+        }), inbounds.end());
+    }
     bool hasMixed = false;
     bool hasTun = false;
     for (const auto& inbound : config["inbounds"]) {
         const std::string type = inbound.value("type", "");
         if (type == "mixed") hasMixed = true;
-        if (type == "tun") hasTun = true;
+        if (type == "tun") {
+            if (hasTun) {
+                ctx.result.error = "主 VPN 仅允许一个托管 TUN；请移除配置中的额外 TUN 入站";
+                return;
+            }
+            hasTun = true;
+        }
     }
     if (!hasMixed) {
         config["inbounds"].push_back({
@@ -756,32 +996,69 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
         // independent of the ROM's kernel-network integration.
         tun["stack"] = "gvisor";
 #endif
-#if !defined(__ANDROID__)
-        // Desktop strict TUN must keep the local controller/mixed inbound out
-        // of the data plane. Android's VpnService.Builder has its own route
-        // constraints; the platform protect(fd) callback already keeps
-        // sing-box's physical-network sockets outside the tunnel.
-        tun["route_exclude_address"] =
-            nlohmann::json::array({"127.0.0.0/8"});
-#endif
         config["inbounds"].push_back(std::move(tun));
     }
-#if defined(__ANDROID__)
-    // Native sing-box profiles may already contain a tun inbound, in which
-    // case the branch above does not create one.  Apply the Android stack
-    // policy to those profiles too; otherwise an imported config can still
-    // select the ROM-dependent system stack.
+    // Apply ownership and transport compensation to imported TUNs as well.
+    // Data destinations stay inside TUN so explicit global rules win over a
+    // native connection's implicit CIDRs. Only transport addresses bypass it.
     for (auto& inbound : config["inbounds"]) {
-        if (inbound.is_object() && inbound.value("type", "") == "tun") {
-            inbound["stack"] = "gvisor";
+        if (!inbound.is_object() || inbound.value("type", "") != "tun") continue;
+        inbound["auto_route"] = true;
+        inbound["strict_route"] = opt.tunStrictRoute;
+#if defined(__ANDROID__)
+        inbound["stack"] = "gvisor";
+#elif defined(__linux__)
+        // Native transport rules use priorities before 9000; native data
+        // routes after it. auto_redirect's nftables interception would bypass
+        // that ordering, so all managed Linux TUNs use policy routing.
+        inbound["iproute2_rule_index"] = 9000;
+        if (inbound.value("auto_redirect", false)) {
+            ctx.warn("托管 TUN 已关闭 auto_redirect，以保证原生 VPN 补偿路由优先级");
         }
-    }
+        inbound["auto_redirect"] = false;
 #endif
+        nlohmann::json exclusions = nlohmann::json::array();
+        if (inbound.contains("route_exclude_address")) {
+            const auto& existing = inbound["route_exclude_address"];
+            if (existing.is_string()) exclusions.push_back(existing);
+            else if (existing.is_array()) exclusions = existing;
+            else {
+                ctx.result.error = "TUN route_exclude_address 必须为地址字符串或数组";
+                return;
+            }
+        }
+        auto appendExclusion = [&](const std::string& address) {
+            if (std::find(exclusions.begin(), exclusions.end(), nlohmann::json(address)) == exclusions.end()) {
+                exclusions.push_back(address);
+            }
+        };
+#if !defined(__ANDROID__)
+        appendExclusion("127.0.0.0/8");
+#endif
+        for (const auto& address : opt.tunExcludeAddresses) {
+            const auto cidr = addressCidr(address, false);
+            if (!cidr) {
+                ctx.result.error = std::format("TUN 补偿地址「{}」无效，必须为 IP/CIDR", address);
+                return;
+            }
+            appendExclusion(*cidr);
+        }
+        if (!exclusions.empty()) inbound["route_exclude_address"] = std::move(exclusions);
+    }
 
     if (!config.contains("route") || !config["route"].is_object()) {
         config["route"] = nlohmann::json::object();
     }
-    if (!config["route"].contains("final")) config["route"]["final"] = "DIRECT";
+    if (!config["route"].contains("final")) {
+        // Native JSON without final uses the first outbound, matching
+        // sing-box's own default instead of referencing a missing DIRECT.
+        std::string final = "DIRECT";
+        if (config.contains("outbounds") && config["outbounds"].is_array() &&
+            !config["outbounds"].empty() && config["outbounds"][0].is_object()) {
+            final = config["outbounds"][0].value("tag", final);
+        }
+        config["route"]["final"] = std::move(final);
+    }
     if (!config["route"].contains("rules") || !config["route"]["rules"].is_array()) {
         config["route"]["rules"] = nlohmann::json::array();
     }
@@ -885,13 +1162,20 @@ CompileResult compileConfig(const CompileOptions& options) {
             return std::move(ctx.result);
         }
         ctx.config = std::move(parsed);
-        applyManagedSkeleton(ctx, options);
+        try {
+            applyManagedSkeleton(ctx, options);
+            if (!ctx.result.error.empty() || !applyConnectionRules(ctx)) return std::move(ctx.result);
+        } catch (const std::exception& error) {
+            ctx.result.error = std::format("原生 sing-box 配置合并失败：{}", error.what());
+            return std::move(ctx.result);
+        }
         ctx.result.json = ctx.config.dump();
         return std::move(ctx.result);
     }
 
     ctx.config = nlohmann::json::object();
     applyManagedSkeleton(ctx, options);
+    if (!ctx.result.error.empty()) return std::move(ctx.result);
     // DIRECT 是普通 outbound；REJECT 在 1.14 已移除，由规则 action 承担。
     ctx.outbounds.push_back({{"type", "direct"}, {"tag", "DIRECT"}});
     ctx.knownTags.push_back("DIRECT");
@@ -928,25 +1212,11 @@ CompileResult compileConfig(const CompileOptions& options) {
     }
     ctx.config["route"]["final"] = finalOutbound;
 
-    // 三模式 UX：Direct/Global 优先于订阅规则（clash_api 在运行时切 clash_mode）。
-    {
-        nlohmann::json& rules = ctx.config["route"]["rules"];
-        nlohmann::json precedence = nlohmann::json::array();
-        precedence.push_back({{"action", "sniff"}});
-        precedence.push_back({{"protocol", "dns"}, {"action", "hijack-dns"}});
-        precedence.push_back({{"clash_mode", "direct"}, {"outbound", "DIRECT"}});
-        precedence.push_back(
-            {{"clash_mode", "global"}, {"outbound", finalOutbound}});
-        for (auto it = rules.begin(); it != rules.end(); ++it) {
-            precedence.push_back(std::move(*it));
-        }
-        rules = std::move(precedence);
-    }
-
     if (!ctx.ruleSets.empty()) {
         ctx.config["route"]["rule_set"] = std::move(ctx.ruleSets);
     }
     ctx.config["outbounds"] = std::move(ctx.outbounds);
+    if (!applyConnectionRules(ctx)) return std::move(ctx.result);
     ctx.result.json = ctx.config.dump();
     return std::move(ctx.result);
 }

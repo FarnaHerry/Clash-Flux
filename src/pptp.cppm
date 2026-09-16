@@ -185,11 +185,14 @@ export inline std::optional<PptpConfig> ParsePptpConfig(
 
 // 只报告当前机器是否具备系统拨号后端；不代表当前用户一定拥有建隧道权限。
 export bool PptpToolsAvailable();
+// Read-only session liveness; cleanup follows only after the main TUN stops.
+export bool PptpSessionAlive(std::string_view connectionId);
 
 #if defined(__linux__) && !defined(__ANDROID__)
 // 这些接口只供 clash-flux.service 的 root daemon 使用。普通 GUI 进程不应
 // 直接调用 pppd/ip；它通过 service 模块的 IPC 客户端调用同一 daemon。
 export bool PrivilegedPptpAvailable();
+export bool PrivilegedPptpSessionAlive(std::string_view connectionId);
 export bool PrivilegedPptpConnect(std::string_view connectionId,
                                   std::string_view nativeConfig,
                                   std::span<const std::string> routes,

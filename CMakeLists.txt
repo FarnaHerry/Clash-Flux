@@ -281,11 +281,13 @@ set(CLASHFLUX_MODULE_UNITS
     src/utils.cppm
     src/db.cppm
     src/vpn.cppm
+    src/vpn_compensation.cppm
     src/pptp.cppm
     src/openvpn.cppm
     # sing-box 核心：进程生命周期 / 订阅编译 / REST API / 推送流 / 系统代理
     src/core.cppm
     src/singbox.cppm
+    src/routing.cppm
     src/api.cppm
     src/stream.cppm
     src/sysproxy.cppm
@@ -542,18 +544,19 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         target_sources(test_singbox PRIVATE FILE_SET clashflux_singbox_modules
             TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-            FILES src/singbox.cppm)
+            FILES src/singbox.cppm src/vpn.cppm)
         set_target_properties(test_singbox PROPERTIES CXX_MODULE_STD ON)
         target_compile_features(test_singbox PRIVATE cxx_std_23)
         target_link_libraries(test_singbox PRIVATE clashflux_json yaml-cpp)
         add_test(NAME singbox COMMAND test_singbox)
 
         add_executable(test_vpn tests/test_vpn.cpp)
-        target_sources(test_vpn PRIVATE src/pptp.cpp src/openvpn.cpp)
+        target_sources(test_vpn PRIVATE src/pptp.cpp src/openvpn.cpp src/vpn_compensation.cpp)
         target_sources(test_vpn PRIVATE FILE_SET clashflux_vpn_modules TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
             FILES src/config.cppm src/vpn.cppm src/pptp.cppm src/openvpn.cppm
-                   src/service.cppm)
+                   src/service.cppm src/vpn_compensation.cppm)
+        target_link_libraries(test_vpn PRIVATE clashflux_json)
         set_target_properties(test_vpn PROPERTIES CXX_MODULE_STD ON)
         if (WIN32 AND MSVC)
             target_link_options(test_vpn PRIVATE "/WHOLEARCHIVE:@cmake_cxx_std.lib")
@@ -564,15 +567,37 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         endif ()
         add_test(NAME vpn COMMAND test_vpn)
 
+        add_executable(test_routing tests/test_routing.cpp)
+        target_sources(test_routing PRIVATE FILE_SET clashflux_routing_modules TYPE CXX_MODULES
+            BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+            FILES src/routing.cppm src/db.cppm src/vpn.cppm src/singbox.cppm)
+        set_target_properties(test_routing PROPERTIES CXX_MODULE_STD ON)
+        target_compile_features(test_routing PRIVATE cxx_std_23)
+        target_link_libraries(test_routing PRIVATE clashflux_json)
+        add_test(NAME routing COMMAND test_routing)
+
+        add_executable(test_compensation tests/test_vpn_compensation.cpp src/vpn_compensation.cpp)
+        target_sources(test_compensation PRIVATE FILE_SET clashflux_compensation_modules TYPE CXX_MODULES
+            BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+            FILES src/vpn_compensation.cppm)
+        set_target_properties(test_compensation PROPERTIES CXX_MODULE_STD ON)
+        target_compile_features(test_compensation PRIVATE cxx_std_23)
+        target_link_libraries(test_compensation PRIVATE clashflux_json)
+        if (WIN32)
+            target_link_libraries(test_compensation PRIVATE iphlpapi ws2_32)
+        endif ()
+        add_test(NAME compensation COMMAND test_compensation)
+
         # 真实 PPTP 拨号需要外部服务器和已安装的 root 服务，不作为自动测试；
         # 该工具只供本地联调，连接后按回车负责断开并清理路由。
         add_executable(test_pptp_connect tests/pptp_connect.cpp src/pptp.cpp
-                       src/openvpn.cpp)
+                       src/openvpn.cpp src/vpn_compensation.cpp)
         target_sources(test_pptp_connect PRIVATE FILE_SET clashflux_pptp_modules
             TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
             FILES src/config.cppm src/vpn.cppm src/pptp.cppm src/openvpn.cppm
-                   src/service.cppm)
+                   src/service.cppm src/vpn_compensation.cppm)
+        target_link_libraries(test_pptp_connect PRIVATE clashflux_json)
         set_target_properties(test_pptp_connect PROPERTIES CXX_MODULE_STD ON)
         if (WIN32 AND MSVC)
             target_link_options(test_pptp_connect PRIVATE "/WHOLEARCHIVE:@cmake_cxx_std.lib")

@@ -5,6 +5,7 @@ module;
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <net/if.h>
 #include <signal.h>
 #include <spawn.h>
 #include <cerrno>
@@ -18,6 +19,7 @@ module clashflux.openvpn;
 import std;
 import clashflux.service;
 import clashflux.vpn;
+import clashflux.vpn_compensation;
 
 namespace openvpn {
 namespace {
@@ -51,38 +53,6 @@ bool linuxToolsAvailable() {
 
 std::string errnoText(std::string_view prefix) {
     return std::format("{}: {}", prefix, std::strerror(errno));
-}
-
-bool validIpv4Cidr(std::string_view value) {
-    const std::size_t slash = value.find('/');
-    if (slash == std::string_view::npos || slash == 0 ||
-        slash + 1 >= value.size() ||
-        value.find('/', slash + 1) != std::string_view::npos) {
-        return false;
-    }
-    std::size_t begin = 0;
-    for (int part = 0; part < 4; ++part) {
-        const std::size_t end = value.find('.', begin);
-        const std::size_t limit = end == std::string_view::npos ? slash : end;
-        if (limit <= begin || limit > slash) return false;
-        unsigned int octet = 0;
-        const auto [ptr, ec] = std::from_chars(value.data() + begin,
-                                               value.data() + limit, octet);
-        if (ec != std::errc() || ptr != value.data() + limit || octet > 255) {
-            return false;
-        }
-        if (end == std::string_view::npos) {
-            if (part != 3) return false;
-            break;
-        }
-        if (part == 3 || end >= slash) return false;
-        begin = end + 1;
-    }
-    unsigned int prefix = 0;
-    const auto [ptr, ec] = std::from_chars(value.data() + slash + 1,
-                                           value.data() + value.size(), prefix);
-    return ec == std::errc() && ptr == value.data() + value.size() &&
-           prefix <= 32;
 }
 
 bool writePrivateFile(const std::filesystem::path& path,
@@ -158,39 +128,16 @@ std::string shellQuote(std::string_view value) {
     return result;
 }
 
-bool spawnAndWait(const std::vector<std::string>& args, std::string& error) {
-    if (args.empty()) {
-        error = "内部错误：空命令";
-        return false;
-    }
-    std::vector<char*> argv;
-    argv.reserve(args.size() + 1);
-    for (const std::string& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
-    argv.push_back(nullptr);
-    pid_t pid = -1;
-    const int spawnError = ::posix_spawnp(&pid, args.front().c_str(), nullptr,
-                                          nullptr, argv.data(), environ);
-    if (spawnError != 0) {
-        error = std::format("启动 ip 失败：{}", std::strerror(spawnError));
-        return false;
-    }
-    int status = 0;
-    while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
-    }
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        error = std::format("ip 命令失败（退出码 {}）",
-                            WIFEXITED(status) ? WEXITSTATUS(status) : -1);
-        return false;
-    }
-    return true;
-}
-
 struct LinuxSession {
     pid_t pid = -1;
+    pid_t processGroup = -1;
+    unsigned int interfaceIndex = 0;
     std::filesystem::path directory;
     std::string interfaceName;
     std::string gateway;
-    std::vector<std::string> routes;
+    std::vector<vpn::compensation::TransportLease> transports;
+    vpn::compensation::RouteLease boundInterface;
+    std::vector<vpn::compensation::RouteLease> routes;
 };
 
 struct Runtime {
@@ -209,26 +156,38 @@ bool childExited(pid_t pid, int& status) {
 }
 
 void stopSession(LinuxSession session) {
-    for (const auto& route : session.routes) {
-        std::string ignored;
-        spawnAndWait({"ip", "route", "del", route, "dev", session.interfaceName},
-                     ignored);
-    }
-    if (session.pid > 0) {
-        ::kill(session.pid, SIGTERM);
+    if (session.processGroup > 0) {
+        // The dialer and its helpers share an owned process group. Keep the
+        // physical bypass until all live helpers and the VPN interface are gone.
+        ::kill(-session.processGroup, SIGTERM);
         const auto deadline = std::chrono::steady_clock::now() +
                               std::chrono::seconds(3);
         int status = 0;
         while (std::chrono::steady_clock::now() < deadline) {
-            if (childExited(session.pid, status)) break;
+            if (session.pid > 0 && childExited(session.pid, status)) session.pid = -1;
+            if (::kill(-session.processGroup, 0) < 0 && errno == ESRCH) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
-        if (!childExited(session.pid, status)) {
-            ::kill(session.pid, SIGKILL);
+        // pppd/OpenVPN may exit before one of their helper processes does.
+        // Always kill remaining group members even if the parent was reaped.
+        ::kill(-session.processGroup, SIGKILL);
+        if (session.pid > 0) {
             while (::waitpid(session.pid, &status, 0) < 0 && errno == EINTR) {
             }
         }
     }
+    // Closing the daemon's descriptors normally removes the interface; a killed
+    // helper may still be exiting. Allow that teardown before dropping its bypass.
+    const auto interfaceDeadline = std::chrono::steady_clock::now() +
+                                   std::chrono::seconds(1);
+    while (session.interfaceIndex != 0 &&
+           ::if_nametoindex(session.interfaceName.c_str()) == session.interfaceIndex &&
+           std::chrono::steady_clock::now() < interfaceDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    session.routes.clear();
+    session.boundInterface.reset();
+    session.transports.clear();
     removePrivateDirectory(session.directory);
 }
 
@@ -256,6 +215,20 @@ bool connectPrivileged(const std::shared_ptr<Runtime>& runtime,
         }
     }
 
+    std::vector<vpn::compensation::TransportLease> transports;
+    std::string managedConfig = config->configText;
+    // Replace backwards so offsets remain valid, including per-connection remotes.
+    for (const auto& remote : config->remotes | std::views::reverse) {
+        auto transport = vpn::compensation::PrepareTransport(remote.host, error);
+        if (!transport) return false;
+        managedConfig.replace(remote.offset, remote.length, transport->address);
+        transports.push_back(std::move(*transport));
+    }
+    if (transports.empty()) {
+        error = "托管 OpenVPN 配置需要至少一个 remote 服务器地址";
+        return false;
+    }
+
     const auto directory = makePrivateDirectory(error);
     if (directory.empty()) return false;
     const auto configPath = directory / "managed.ovpn";
@@ -269,7 +242,6 @@ bool connectPrivileged(const std::shared_ptr<Runtime>& runtime,
         "printf '%s\\n' \"${dev-}\" > " + shellQuote(interfacePath.string()) + "\n"
         "printf '%s\\n' \"${route_vpn_gateway-}\" > " +
         shellQuote(gatewayPath.string()) + "\n";
-    std::string managedConfig = connection.nativeConfig;
     if (!managedConfig.empty() && managedConfig.back() != '\n') managedConfig += '\n';
     managedConfig += "route-nopull\nroute-noexec\nscript-security 2\n";
     managedConfig += "route-up " + shellQuote(routeUpPath.string()) + "\n";
@@ -290,15 +262,28 @@ bool connectPrivileged(const std::shared_ptr<Runtime>& runtime,
     for (auto& arg : command) argv.push_back(arg.data());
     argv.push_back(nullptr);
     pid_t pid = -1;
-    const int spawnError = ::posix_spawnp(&pid, "openvpn", nullptr, nullptr,
-                                          argv.data(), environ);
+    posix_spawnattr_t attributes;
+    int spawnError = ::posix_spawnattr_init(&attributes);
+    const bool attributesInitialized = spawnError == 0;
+    if (spawnError == 0) {
+        spawnError = ::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+    }
+    if (spawnError == 0) {
+        spawnError = ::posix_spawnattr_setpgroup(&attributes, 0);
+    }
+    if (spawnError == 0) {
+        spawnError = ::posix_spawnp(&pid, "openvpn", nullptr, &attributes,
+                                  argv.data(), environ);
+    }
+    if (attributesInitialized) ::posix_spawnattr_destroy(&attributes);
     if (spawnError != 0) {
         error = std::format("启动 openvpn 失败：{}", std::strerror(spawnError));
         removePrivateDirectory(directory);
         return false;
     }
 
-    LinuxSession session{.pid = pid, .directory = directory};
+    LinuxSession session{.pid = pid, .processGroup = pid, .directory = directory,
+                         .transports = std::move(transports)};
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::seconds(config->connectTimeoutSecs);
     int status = 0;
@@ -323,6 +308,18 @@ bool connectPrivileged(const std::shared_ptr<Runtime>& runtime,
         stopSession(std::move(session));
         return false;
     }
+    session.interfaceIndex = ::if_nametoindex(session.interfaceName.c_str());
+    if (session.interfaceIndex == 0) {
+        error = "原生 VPN 接口在连接期间消失";
+        stopSession(std::move(session));
+        return false;
+    }
+    session.boundInterface = vpn::compensation::PrepareBoundInterface(
+        session.interfaceName, error);
+    if (!session.boundInterface) {
+        stopSession(std::move(session));
+        return false;
+    }
     connection.interfaceName = session.interfaceName;
     connection.gateway = session.gateway;
     {
@@ -336,12 +333,6 @@ bool applyRoutesPrivileged(const std::shared_ptr<Runtime>& runtime,
                            vpn::VpnConnection& connection,
                            std::span<const std::string> routes,
                            std::string& error) {
-    for (const auto& route : routes) {
-        if (!route.empty() && !validIpv4Cidr(route)) {
-            error = "OpenVPN 路由必须是 IPv4 CIDR";
-            return false;
-        }
-    }
     std::lock_guard lock(runtime->mutex);
     const auto it = runtime->sessions.find(connection.id);
     if (it == runtime->sessions.end()) {
@@ -349,23 +340,8 @@ bool applyRoutesPrivileged(const std::shared_ptr<Runtime>& runtime,
         return false;
     }
     auto& session = it->second;
-    for (const auto& route : routes) {
-        if (route.empty() || std::ranges::find(session.routes, route) != session.routes.end()) {
-            continue;
-        }
-        if (!spawnAndWait({"ip", "route", "replace", route, "dev",
-                           session.interfaceName}, error)) {
-            for (const auto& installed : session.routes) {
-                std::string ignored;
-                spawnAndWait({"ip", "route", "del", installed, "dev",
-                              session.interfaceName}, ignored);
-            }
-            session.routes.clear();
-            return false;
-        }
-        session.routes.push_back(route);
-    }
-    return true;
+    return vpn::compensation::ReplaceNativeRoutes(
+        session.interfaceName, routes, session.routes, error);
 }
 
 void disconnectPrivileged(const std::shared_ptr<Runtime>& runtime,
@@ -432,6 +408,22 @@ bool PrivilegedOpenVpnAvailable() {
     return ::geteuid() == 0 && linuxToolsAvailable();
 }
 
+bool PrivilegedOpenVpnSessionAlive(std::string_view connectionId) {
+    const auto runtime = privilegedRuntime();
+    std::lock_guard lock(runtime->mutex);
+    const auto it = runtime->sessions.find(std::string(connectionId));
+    if (it == runtime->sessions.end()) return false;
+    auto& session = it->second;
+    if (session.pid <= 0) return false;
+    int status = 0;
+    if (childExited(session.pid, status)) {
+        session.pid = -1;
+        return false;
+    }
+    return session.interfaceIndex != 0 &&
+           ::if_nametoindex(session.interfaceName.c_str()) == session.interfaceIndex;
+}
+
 bool PrivilegedOpenVpnConnect(std::string_view connectionId,
                               std::string_view nativeConfig,
                               std::span<const std::string> routes,
@@ -479,6 +471,15 @@ void PrivilegedOpenVpnShutdown() {
 }
 
 #endif
+
+bool OpenVpnSessionAlive(std::string_view connectionId) {
+#if defined(__linux__) && !defined(__ANDROID__)
+    return service::openvpnSessionAlive(connectionId);
+#else
+    (void)connectionId;
+    return false;
+#endif
+}
 
 bool OpenVpnToolsAvailable() {
 #if defined(__linux__) && !defined(__ANDROID__)
