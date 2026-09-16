@@ -197,6 +197,7 @@ const std::string kAboutText = std::format(
                                 }
                             }),
                         }.With(huxerui::Spacing(8.0F))),
+                    CLASHFLUX_KERNEL_PLATFORM_SECTION(),
                     SettingSwitchRow(
                         "局域网连接", "允许局域网设备接入（下次启动生效）",
                         huxerui::Switch(allowLan.Get())
@@ -240,7 +241,6 @@ const std::string kAboutText = std::format(
                                     "");
                             })
                             .With(huxerui::Frame{.width = 180.0F})),
-                    CLASHFLUX_KERNEL_PLATFORM_SECTION(),
                 }.With(huxerui::Spacing(10.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
 

@@ -168,11 +168,7 @@ std::vector<std::string> resolvePath(
 
 // 延迟着色：未测灰 / <300ms 绿 / <1000ms 琥珀 / 超时红。
 huxerui::Color delayColor(const huxerui::ThemeSpec& theme, int delay, bool timeout) {
-    if (timeout) return theme.colors.error;
-    if (delay <= 0) return theme.colors.on_surface_variant;
-    if (delay < 300) return huxerui::Color::Rgb(34, 197, 94);
-    if (delay < 1000) return huxerui::Color::Rgb(245, 158, 11);
-    return theme.colors.error;
+    return DelayLevelColor(theme, delay, timeout || delay <= 0);
 }
 
 // 节点统一矩形卡：名称（正文级）+ 元信息行（延迟着色；组类型节点显示
@@ -243,8 +239,7 @@ huxerui::Color delayColor(const huxerui::ThemeSpec& theme, int delay, bool timeo
         meta = "组 · " + (node.groupNow.empty() ? node.type : node.groupNow);
     } else {
         meta = currentProbe.testing ? "测速中…"
-                       : timeout ? "超时"
-                       : (delay > 0 ? std::format("{} ms", delay) : node.type);
+                       : (delay > 0 ? std::format("{} ms", delay) : "超时");
     }
 
     huxerui::Color bg = islands.active;

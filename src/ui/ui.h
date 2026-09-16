@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -90,12 +91,22 @@ struct ProxyGroupSnapshot {
     std::string type;
     std::string current;
     std::vector<std::string> nodes;
+    std::map<std::string, int> delays;
     // sing-box URLTest/Fallback groups are readable but cannot be changed
     // with SelectOutbound; only selector groups are manually selectable.
     bool selectable = false;
 
     bool operator==(const ProxyGroupSnapshot&) const = default;
 };
+
+inline huxerui::Color DelayLevelColor(const huxerui::ThemeSpec& theme, int delay,
+                                      bool unavailable = false) {
+    if (unavailable || delay <= 0) return huxerui::Color::Rgb(220, 38, 38);
+    if (delay < 300) return huxerui::Color::Rgb(34, 197, 94);
+    if (delay < 600) return huxerui::Color::Rgb(37, 99, 235);
+    if (delay < 1000) return huxerui::Color::Rgb(234, 179, 8);
+    return huxerui::Color::Rgb(220, 38, 38);
+}
 
 std::vector<ProxyGroupSnapshot> ParseProxyGroups(const std::string& body);
 std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
