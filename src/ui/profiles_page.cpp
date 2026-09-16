@@ -818,6 +818,10 @@ struct ProfileEditFields {
     huxerui::ToastHandle toast, std::function<void()> on_back) {
     return huxerui::Scope(
         [id, fields, tasks, toast, on_back]() -> huxerui::View {
+            // 非激活时必须保持空页：IndexedPages 常驻挂载每一页，而桌面编辑
+            // 弹窗与本页绑定同一组表单 State——两个受控 TextField 同时挂载时，
+            // 输入法组合值会被另一实例当作外部权威值而抛 std::invalid_argument。
+            if (id == 0) return huxerui::Row{};
             return ProfileEditPage(
                 id, fields.name, fields.url, fields.type, fields.desc,
                 fields.timeout, fields.interval, fields.auto_update,
@@ -829,11 +833,13 @@ struct ProfileEditFields {
         });
 }
 [[huxerui::composable]] huxerui::View ResponsiveProfileCreateSurface(
-    ProfileCreateFields fields, huxerui::TaskScope tasks,
+    bool open, ProfileCreateFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<huxerui::HttpClient> http, bool pptp_supported,
     bool openvpn_supported, std::function<void()> on_back) {
     return huxerui::Scope([=]() -> huxerui::View {
+        // 同编辑页：未打开时不得挂载受控输入框（见 ResponsiveProfileEditSurface）。
+        if (!open) return huxerui::Row{};
         return ProfileCreatePage(fields, tasks, toast, picker, http,
                                  pptp_supported, openvpn_supported, on_back);
     });
@@ -892,6 +898,8 @@ struct ProfileEditFields {
     huxerui::State<huxerui::TextEditingValue> input,
     huxerui::State<bool> dirty, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::function<void()> on_back) {
+    // 同编辑页：未打开时不得挂载受控输入框（见 ResponsiveProfileEditSurface）。
+    if (id == 0) return huxerui::Row{};
     const auto add = [=](bool prepend) {
         const std::string text = input.Get().text;
         if (text.empty()) return;
@@ -2652,6 +2660,7 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
         tasks, toast, [editPageId] { editPageId = 0; });
 
     huxerui::View mobileCreatePage = ResponsiveProfileCreateSurface(
+        createPageOpen.Get(),
         ProfileCreateFields{
             newName, newUrl, newTypeIdx, newDesc, newTimeout, newInterval,
             newAuto, newSys, newCore, newCert, newPptpServer,
