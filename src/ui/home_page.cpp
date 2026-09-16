@@ -181,18 +181,15 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
 }
 
 [[huxerui::composable]] huxerui::View AndroidHomeAction(const HomeState& state) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto busy = huxerui::UseState(false);
     const int vpnState = AndroidVpnState();
     const bool active = vpnState == 1 || vpnState == 2;
     const bool canStart = state.profileId != 0;
-    const std::string label = busy.Get() ? "处理中…"
-                              : vpnState == 1 ? "启动中…"
-                                              : active ? "停止" : "启动";
-
-    return huxerui::Button(label)
-        .OnClick([tasks, toast, busy, active] {
+    const bool enabled = !busy.Get() && (active || canStart);
+    const auto toggle = [tasks, toast, busy, active] {
             if (busy.Get()) return;
             busy = true;
             tasks.Launch([toast, busy, active]() -> huxerui::Task<void> {
@@ -213,10 +210,62 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                 }
                 busy = false;
             });
-        })
-        .With(huxerui::Enabled(!busy.Get() && (active || canStart)),
+        };
+
+    // The mobile action is deliberately a single tall island. Traffic is
+    // shown only while the tunnel is active; the center icon remains the
+    // only control when stopped, which keeps the compact home screen quiet.
+    huxerui::View center = huxerui::IconButton(
+                              active ? app::images::speed : app::images::bolt,
+                              active ? "停止 VPN" : "启动 VPN")
+        .OnClick(toggle)
+        .With(huxerui::Frame{.width = 76.0F, .height = 76.0F},
+              huxerui::Enabled(enabled),
               huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                  .label = active ? "停止 VPN" : "启动 VPN"});
+    if (!active) {
+        return huxerui::Card(huxerui::Row{std::move(center)}
+                                 .With(huxerui::MainAlign(
+                                           huxerui::MainAxisAlignment::Center),
+                                       huxerui::CrossAlign(
+                                           huxerui::CrossAxisAlignment::Center)))
+            .With(huxerui::Frame{.height = 184.0F},
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    }
+
+    const huxerui::Color downColor = theme.colors.primary;
+    const huxerui::Color upColor = huxerui::Color::Rgb(245, 158, 11);
+    auto metric = [&](std::string_view title, const std::string& value,
+                      huxerui::Color color) {
+        return huxerui::Column{
+            huxerui::Text(std::string(title)).Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kCaption),
+                theme.colors.on_surface_variant}),
+            huxerui::Text(value).Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kChip)
+                    .WithWeight(huxerui::FontWeight::Bold),
+                color}),
+        }.With(huxerui::Spacing(3.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    };
+    const auto left = huxerui::Column{
+        metric("下载速率", formatRate(state.latest.down), downColor),
+        metric("总下载", formatBytes(state.totalDown), theme.colors.on_surface),
+    }.With(huxerui::Spacing(14.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
+                       .With(huxerui::Grow(1.0F));
+    const auto right = huxerui::Column{
+        metric("上传速率", formatRate(state.latest.up), upColor),
+        metric("总上传", formatBytes(state.totalUp), theme.colors.on_surface),
+    }.With(huxerui::Spacing(14.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
+                        .With(huxerui::Grow(1.0F));
+    return huxerui::Card(huxerui::Row{left, std::move(center), right}
+                             .With(huxerui::Spacing(10.0F),
+                                   huxerui::CrossAlign(
+                                       huxerui::CrossAxisAlignment::Center)))
+        .With(huxerui::Frame{.height = 184.0F},
+              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 #else
@@ -374,28 +423,9 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     }
 
     // 响应式：Compact 视口统计卡 2×2 网格、模式/订阅双卡竖排。
-    huxerui::View statCards =
-        compact
-            ? huxerui::View{huxerui::Column {
-                  huxerui::Row {
-                      StatCard("下载速率", formatRate(s.latest.down), downColor)
-                          .With(huxerui::Grow(1.0F)),
-                      StatCard("上传速率", formatRate(s.latest.up), upColor)
-                          .With(huxerui::Grow(1.0F)),
-                  }.With(huxerui::Spacing(10.0F),
-                         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-                  huxerui::Row {
-                      StatCard("总下载", formatBytes(s.totalDown),
-                               theme.colors.on_surface)
-                          .With(huxerui::Grow(1.0F)),
-                      StatCard("总上传", formatBytes(s.totalUp),
-                               theme.colors.on_surface)
-                          .With(huxerui::Grow(1.0F)),
-                  }.With(huxerui::Spacing(10.0F),
-                         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-              }.With(huxerui::Spacing(10.0F),
-                     huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))}
-            : huxerui::View{huxerui::Row {
+    huxerui::View statCards = compact
+        ? huxerui::View{}
+        : huxerui::View{huxerui::Row {
                   StatCard("下载速率", formatRate(s.latest.down), downColor)
                       .With(huxerui::Grow(1.0F)),
                   StatCard("上传速率", formatRate(s.latest.up), upColor)
