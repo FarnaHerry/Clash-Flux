@@ -226,7 +226,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
               huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                  .label = active ? "停止 VPN" : "启动 VPN"});
     if (!active) {
-        return huxerui::Card(huxerui::Row{std::move(center)}
+        return Card(huxerui::Row{std::move(center)}
                                  .With(huxerui::MainAlign(
                                            huxerui::MainAxisAlignment::Center),
                                        huxerui::CrossAlign(
@@ -262,7 +262,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     }.With(huxerui::Spacing(14.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
                         .With(huxerui::Grow(1.0F));
-    return huxerui::Card(huxerui::Row{left, std::move(center), right}
+    return Card(huxerui::Row{left, std::move(center), right}
                              .With(huxerui::Spacing(10.0F),
                                    huxerui::CrossAlign(
                                        huxerui::CrossAxisAlignment::Center)))
