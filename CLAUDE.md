@@ -116,7 +116,11 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 2. **UI 层遵守 skill 的 DSL 风格**：普通 .cpp、composable 不加 inline、View 按值
    传递、具名 View 链式调用前 `std::move`（`.With` 等是右值限定）。
 3. **受控值以应用状态为权威**；TextField 保留完整 TextEditingValue；动态兄弟用
-   稳定 `.Key(...)`。所有密码、令牌和其他秘密输入统一使用 `PasswordField`
+   稳定 `.Key(...)`。**同一受控 TextEditingValue State 同一时刻只能挂载一个
+   TextField**：IndexedPages 的隐藏页保持挂载，与弹窗共用表单 State 的次要页面
+   在非激活时必须渲染为空（id==0/未打开），否则输入法组合值会被另一实例当作
+   外部权威值，HuxerUI 抛 invalid_argument 直接崩溃。所有密码、令牌和其他秘密
+   输入统一使用 `PasswordField`
    约定：`Secure()` + HuxerUI `TrailingIcon`/`OnTrailingIconClick`，复用内置的
    显隐眼睛操作；不要自绘重复的眼睛按钮，也不要把秘密值写入日志、卡片或错误
    文本。新增秘密输入框必须沿用这个约定。
