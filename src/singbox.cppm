@@ -9,6 +9,7 @@
 export module clashflux.singbox;
 
 import std;
+import clashflux.vpn;
 
 namespace singbox {
 
@@ -16,6 +17,15 @@ export struct CompileResult {
     std::string json;                    // sing-box 配置 JSON；失败为空
     std::string error;                   // 致命错误（YAML 解析失败等）
     std::vector<std::string> warnings;   // 保真度降级报告（不阻断启动）
+};
+
+// 原生引擎的运行时快照。未连接的声明也必须传入，使规则保持拒绝而不回落
+// 主出口；internalRoutes 是隐式规则，不加入 TUN 排除地址。
+export struct NativeConnection {
+    std::string id;
+    std::string interfaceName;
+    std::vector<std::string> internalRoutes;
+    bool connected = false;
 };
 
 export struct CompileOptions {
@@ -35,6 +45,10 @@ export struct CompileOptions {
     std::string ruleSetDir;                      // 非空时 GEOIP .srs 本地命中即以
                                                  // local rule_set 生成（core_store
                                                  // 预取缓存目录；未命中回落 remote）
+    std::string mainConnectionId;                // 本次加载的 sing-box profile 连接 ID
+    std::vector<vpn::RouteRule> globalRules;      // 优先于模式和订阅的全局连接规则
+    std::vector<NativeConnection> nativeConnections;
+    std::vector<std::string> tunExcludeAddresses; // 原生 VPN 服务器传输地址（IP/CIDR）
 };
 
 // 编译 options.profileYaml 为 sing-box 配置 JSON。可为空（最小可用配置）、

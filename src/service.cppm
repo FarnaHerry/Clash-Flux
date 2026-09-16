@@ -12,10 +12,12 @@
 //   STATUS              → RUNNING <pid> / STOPPED
 //   VERSION             → clash-flux-service 0.1.0
 //   PPTP_AVAILABLE      → YES / NO
+//   PPTP_STATUS <hex id> → CONNECTED / DISCONNECTED
 //   PPTP_START <hex id> <hex config> [hex route ...] → OK <hex if> <hex gateway>
 //   PPTP_ROUTES <hex id> [hex route ...]            → OK / ERR <原因>
 //   PPTP_STOP <hex id>                              → OK / ERR <原因>
 //   OPENVPN_AVAILABLE                              → YES / NO
+//   OPENVPN_STATUS <hex id>                         → CONNECTED / DISCONNECTED
 //   OPENVPN_START <hex id> <hex config> [hex route ...] → OK <hex if> <hex gateway>
 //   OPENVPN_ROUTES <hex id> [hex route ...]            → OK / ERR <原因>
 //   OPENVPN_STOP <hex id>                              → OK / ERR <原因>
@@ -278,6 +280,16 @@ export bool pptpAvailable() {
     return reply && *reply == "YES";
 }
 
+// Status never releases a session: the caller must first remove the core's
+// interface binding before disconnecting and releasing compensation routes.
+// An unavailable or older daemon cannot prove ownership of a live interface.
+export bool pptpSessionAlive(std::string_view connectionId) {
+    if (connectionId.empty() || connectionId.size() > 128) return false;
+    std::string err;
+    const auto reply = request(std::format("PPTP_STATUS {}", hexEncode(connectionId)), err);
+    return reply && *reply == "CONNECTED";
+}
+
 export bool startPptp(std::string_view connectionId, std::string_view nativeConfig,
                       std::span<const std::string> routes,
                       PptpSessionInfo& session, std::string& err) {
@@ -343,6 +355,13 @@ export bool openvpnAvailable() {
     std::string err;
     const auto reply = request("OPENVPN_AVAILABLE", err);
     return reply && *reply == "YES";
+}
+
+export bool openvpnSessionAlive(std::string_view connectionId) {
+    if (connectionId.empty() || connectionId.size() > 128) return false;
+    std::string err;
+    const auto reply = request(std::format("OPENVPN_STATUS {}", hexEncode(connectionId)), err);
+    return reply && *reply == "CONNECTED";
 }
 
 export bool startOpenVpn(std::string_view connectionId,
@@ -883,6 +902,15 @@ export int run() {
             }
         } else if (cmd == "PPTP_AVAILABLE") {
             replyLine(fd, pptp::PrivilegedPptpAvailable() ? "YES" : "NO");
+        } else if (cmd.starts_with("PPTP_STATUS ")) {
+            const auto fields = splitWords(cmd);
+            const auto id = decodeWord(fields, 1);
+            if (!id || id->empty() || id->size() > 128 || fields.size() != 2) {
+                replyLine(fd, "ERR 无效的 PPTP 连接标识");
+            } else {
+                replyLine(fd, pptp::PrivilegedPptpSessionAlive(*id)
+                                  ? "CONNECTED" : "DISCONNECTED");
+            }
         } else if (cmd.starts_with("PPTP_START ")) {
             const auto fields = splitWords(cmd);
             const auto id = decodeWord(fields, 1);
@@ -946,6 +974,15 @@ export int run() {
             }
         } else if (cmd == "OPENVPN_AVAILABLE") {
             replyLine(fd, openvpn::PrivilegedOpenVpnAvailable() ? "YES" : "NO");
+        } else if (cmd.starts_with("OPENVPN_STATUS ")) {
+            const auto fields = splitWords(cmd);
+            const auto id = decodeWord(fields, 1);
+            if (!id || id->empty() || id->size() > 128 || fields.size() != 2) {
+                replyLine(fd, "ERR 无效的 OpenVPN 连接标识");
+            } else {
+                replyLine(fd, openvpn::PrivilegedOpenVpnSessionAlive(*id)
+                                  ? "CONNECTED" : "DISCONNECTED");
+            }
         } else if (cmd.starts_with("OPENVPN_START ")) {
             const auto fields = splitWords(cmd);
             const auto id = decodeWord(fields, 1);
@@ -1039,6 +1076,7 @@ export bool stopCore(std::string& err) {
 }
 export bool coreRunning() { return false; }
 export bool pptpAvailable() { return false; }
+export bool pptpSessionAlive(std::string_view) { return false; }
 export bool startPptp(std::string_view, std::string_view,
                       std::span<const std::string>, PptpSessionInfo&, std::string& err) {
     err = "PPTP root 服务仅支持 Linux";
@@ -1054,6 +1092,7 @@ export bool stopPptp(std::string_view, std::string& err) {
     return false;
 }
 export bool openvpnAvailable() { return false; }
+export bool openvpnSessionAlive(std::string_view) { return false; }
 export bool startOpenVpn(std::string_view, std::string_view,
                          std::span<const std::string>, OpenVpnSessionInfo&,
                          std::string& err) {

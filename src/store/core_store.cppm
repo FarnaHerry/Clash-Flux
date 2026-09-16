@@ -26,6 +26,7 @@ import clashflux.singbox;
 import clashflux.stream;
 import clashflux.sysproxy;
 import clashflux.service;
+import clashflux.routing;
 
 namespace store {
 
@@ -237,6 +238,7 @@ public:
     // sing-box 建 TUN 失败退出）回滚设置并恢复无 TUN 运行；未运行 → 仅持久化
     // （下次启动生成 tun inbound）。成功更新快照。
     bool applyTun(bool enable) {
+        std::lock_guard operationLock(lifecycleMutex_);
 #if defined(__ANDROID__)
         (void)enable;
         return false;
@@ -248,7 +250,10 @@ public:
             snap_.tunEnabled = enable;
         }
         if (snapshot().state != core::CoreState::Running) return true;
-        stopCore();
+        if (!stopCore()) {
+            setSetting("core.tun_enabled", enable ? "false" : "true");
+            return false;
+        }
         startCore(lastProfileYaml_);
         if (snapshot().state == core::CoreState::Running) return true;
         setSetting("core.tun_enabled", enable ? "false" : "true");
@@ -290,11 +295,64 @@ public:
 
     // ---- 内核控制（阻塞：UI 必须 RunOnTaskThread）----
 
+    // Called by the native store after establishing a session, or BEFORE
+    // tearing one down. Compile a reject for unavailable destinations before
+    // the interface can disappear or be reused by another connection.
+    inline bool updateNativeRouting(std::vector<singbox::NativeConnection> sessions,
+                                    std::string& error) {
+        std::lock_guard operationLock(lifecycleMutex_);
+        nativeSessions_ = std::move(sessions);
+        return refreshRouting(error);
+    }
+
+    // Recompile saved global rules on every policy/session change. Core
+    // lifecycle operations are serialized so a TUN toggle cannot race a VPN
+    // connect/disconnect and restore an obsolete configuration.
+    inline bool refreshRouting(std::string& error) {
+        std::lock_guard operationLock(lifecycleMutex_);
+        ensureOpen();
+        error.clear();
+        const bool running = snapshot().state == core::CoreState::Running;
+        try {
+            auto options = routingOptions(lastProfileYaml_, true);
+            const auto compiled = core::generateConfig(std::move(options));
+            if (!compiled.error.empty() || compiled.json.empty()) {
+                error = "路由计划编译失败：" + compiled.error;
+                return false;
+            }
+            if (!running) return true;
+            if (!stopCore()) {
+                error = snapshot().lastError;
+                return false;
+            }
+            startCore(lastProfileYaml_);
+#if defined(__ANDROID__)
+            if (snapshot().state != core::CoreState::Failed) {
+                clashflux_android_start_vpn();
+                return true;
+            }
+#else
+            if (snapshot().state == core::CoreState::Running) return true;
+#endif
+            error = snapshot().lastError;
+            if (error.empty()) error = "应用路由计划后主 VPN 未能启动";
+            // Never leave the old core using an interface that is being
+            // released. Stopping the main core is also required on failure.
+            stopCore();
+            fail(error);
+            return false;
+        } catch (const std::exception& exception) {
+            error = exception.what();
+            return false;
+        }
+    }
+
     // 启动内核；profileYaml 为启用订阅的原文（无订阅传空）。
     // detached=true（CLI core start）：直连 spawn 走 setsid 脱离会话驻留，
     // 本进程退出不带走内核。
     void startCore(const std::string& profileYaml, bool detached = false,
                    bool useSavedTunSetting = true) {
+        std::lock_guard operationLock(lifecycleMutex_);
         ensureOpen();
         stream::logApplication("info", "开始启动代理内核");
         {
@@ -328,17 +386,12 @@ public:
             // 不致命）；第二遍命中本地文件即以 local rule_set 生成——内核
             // 首启不再因代理不可用而拉取失败退出，预取过的缓存按周刷新。
             singbox::CompileOptions options;
-            options.profileYaml = profileYaml;
-            options.controller = cfg::controllerAddress();
-            options.secret = secret_;
-            options.mixedPort = mixedPort();
-            options.mode = mode();
-            options.allowLan = allowLan();
-            options.ipv6 = ipv6Enabled();
-            options.logLevel = logLevel();
-            // 自动启动只准备本地内核，不应因为上次保存的开关状态突然接管
-            // 桌面所有流量；显式启动/重启仍按用户保存的 TUN 设置执行。
-            options.tunInbound = useSavedTunSetting && tunEnabled();
+            try {
+                options = routingOptions(profileYaml, useSavedTunSetting);
+            } catch (const std::exception& exception) {
+                fail(std::string("读取主 VPN 路由计划失败：") + exception.what());
+                return;
+            }
             auto compiled = core::generateConfig(options);
             if (compiled.json.empty() || !compiled.error.empty()) {
                 fail("订阅编译失败：" + (compiled.error.empty()
@@ -495,7 +548,8 @@ public:
         }
     }
 
-    void stopCore() {
+    bool stopCore() {
+        std::lock_guard operationLock(lifecycleMutex_);
         stream::logApplication("info", "请求停止代理内核");
 #if defined(__ANDROID__)
         clashflux_android_stop_vpn();
@@ -503,7 +557,7 @@ public:
         snap_.state = core::CoreState::Stopped;
         snap_.version.clear();
         snap_.tunEnabled = false;
-        return;
+        return true;
 #else
         // 先摘系统代理：内核停掉后系统仍指向旧端口会断网。
         if (systemProxyEnabled()) {
@@ -523,7 +577,9 @@ public:
             std::string err;
             if (!service::stopCore(err)) {
                 std::lock_guard lock(mutex_);
+                snap_.state = core::CoreState::Failed;
                 snap_.lastError = "root 服务停止内核失败：" + err;
+                return false;
             } else {
                 managedByService_ = false;
             }
@@ -546,6 +602,7 @@ public:
         std::lock_guard lock(mutex_);
         snap_.state = core::CoreState::Stopped;
         snap_.version.clear();
+        return true;
 #endif
     }
 
@@ -553,10 +610,11 @@ public:
     // config.json，真正的数据面由 VpnService 持有，因此必须在写完新配置后
     // 再显式请求恢复服务；否则切换订阅会停在 Stopped，代理页自然没有内容。
     void restartCore(const std::string& profileYaml) {
+        std::lock_guard operationLock(lifecycleMutex_);
         const core::CoreState before = snapshot().state;
         const bool wasActive = before == core::CoreState::Running ||
                                before == core::CoreState::Starting;
-        stopCore();
+        if (!stopCore()) return;
         startCore(profileYaml);
 #if defined(__ANDROID__)
         if (wasActive) clashflux_android_start_vpn();
@@ -637,6 +695,24 @@ public:
     }
 
 private:
+    inline singbox::CompileOptions routingOptions(const std::string& profileYaml,
+                                                  bool useSavedTunSetting) {
+        singbox::CompileOptions options;
+        options.profileYaml = profileYaml;
+        options.controller = cfg::controllerAddress();
+        options.secret = secret_;
+        options.mixedPort = mixedPort();
+        options.mode = mode();
+        options.allowLan = allowLan();
+        options.ipv6 = ipv6Enabled();
+        options.logLevel = logLevel();
+        options.tunInbound = useSavedTunSetting && tunEnabled();
+        options.ruleSetDir = cfg::coreWorkDir().string();
+        routing::PopulateOptions(options, db_->listProfiles(),
+            routing::DecodePolicy(setting("vpn.global_policy", "")), nativeSessions_);
+        return options;
+    }
+
     // 三种托管形态的存活判定：服务托管问服务、接管的外部实例看 pidfile、
     // 直接 spawn 看进程句柄。接管形态没有 pidfile（对端不是本应用拉的）
     // 时只好信任——WS 断流会在 UI 层表现为无数据。
@@ -736,6 +812,8 @@ private:
     std::string secret_;
 
     std::mutex mutex_;
+    std::recursive_mutex lifecycleMutex_;
+    std::vector<singbox::NativeConnection> nativeSessions_;
     std::once_flag initFlag_;
     CoreSnapshot snap_;
     std::string binaryPath_;

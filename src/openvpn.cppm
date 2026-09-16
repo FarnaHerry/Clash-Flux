@@ -10,9 +10,20 @@ import clashflux.vpn;
 
 namespace openvpn {
 
+// Byte ranges refer to configText and include optional quotes around the host.
+// The privileged adapter resolves and rewrites every remote before OpenVPN runs.
+export struct OpenVpnRemote {
+    std::string host;
+    std::size_t offset = 0;
+    std::size_t length = 0;
+
+    bool operator==(const OpenVpnRemote&) const = default;
+};
+
 export struct OpenVpnConfig {
     std::string configText;
     std::string interfaceName;
+    std::vector<OpenVpnRemote> remotes;
     int connectTimeoutSecs = 60;
 
     bool operator==(const OpenVpnConfig&) const = default;
@@ -36,7 +47,9 @@ inline std::string trim(std::string_view value) {
 
 inline std::string directive(std::string_view line) {
     const std::size_t split = line.find_first_of(" \t");
-    return std::string(line.substr(0, split));
+    auto result = line.substr(0, split);
+    if (result.starts_with("--")) result.remove_prefix(2);
+    return std::string(result);
 }
 
 inline bool hasNewline(std::string_view value) {
@@ -75,10 +88,28 @@ export inline std::optional<OpenVpnConfig> ParseOpenVpnConfig(
     std::istringstream input{std::string(text)};
     std::string line;
     std::size_t lineNumber = 0;
+    std::size_t offset = 0;
+    std::string inlineBlock;
     while (std::getline(input, line)) {
         ++lineNumber;
+        const auto lineOffset = offset;
+        offset += line.size() + 1;
         const std::string value = detail::trim(line);
+        if (!inlineBlock.empty()) {
+            if (value == "</" + inlineBlock + ">") inlineBlock.clear();
+            continue;
+        }
         if (value.empty() || value.starts_with('#') || value.starts_with(';')) {
+            continue;
+        }
+        if (value.starts_with('<') && value.ends_with('>')) {
+            if (value != "<connection>" && value != "</connection>") {
+                if (value.starts_with("</")) {
+                    error = "OpenVPN inline 配置块不匹配";
+                    return std::nullopt;
+                }
+                inlineBlock = value.substr(1, value.size() - 2);
+            }
             continue;
         }
         const std::string key = detail::directive(value);
@@ -86,11 +117,46 @@ export inline std::optional<OpenVpnConfig> ParseOpenVpnConfig(
             key == "route-pre-down" || key == "route" ||
             key == "route-ipv6" || key == "redirect-gateway" ||
             key == "route-noexec" || key == "route-nopull" ||
-            key == "daemon" || key == "log" || key == "writepid") {
+            key == "daemon" || key == "log" || key == "writepid" ||
+            key == "config" || key == "http-proxy" || key == "socks-proxy" ||
+            key == "remote-random-hostname" || key == "management-query-remote") {
             error = std::format(
                 "OpenVPN 配置第 {} 行包含托管模式不允许的 '{}' 指令",
                 lineNumber, key);
             return std::nullopt;
+        }
+        if (key == "remote") {
+            const auto directiveStart = line.find_first_not_of(" \t\r");
+            const auto split = line.find_first_of(" \t", directiveStart);
+            const auto start = split == std::string::npos
+                                   ? std::string::npos
+                                   : line.find_first_not_of(" \t", split);
+            if (start == std::string::npos) {
+                error = "OpenVPN remote 缺少服务器地址";
+                return std::nullopt;
+            }
+            const bool quoted = line[start] == '\'' || line[start] == '"';
+            const auto end = quoted ? line.find(line[start], start + 1)
+                                    : line.find_first_of(" \t\r", start);
+            if (quoted && (end == std::string::npos ||
+                           (end + 1 < line.size() &&
+                            !std::isspace(static_cast<unsigned char>(line[end + 1]))))) {
+                error = "OpenVPN remote 服务器引号无效";
+                return std::nullopt;
+            }
+            const auto limit = end == std::string::npos ? line.size() : end;
+            const auto host = line.substr(start + (quoted ? 1 : 0),
+                                           limit - start - (quoted ? 1 : 0));
+            if (host.empty() || host.front() == '-' ||
+                !std::ranges::all_of(host, [](unsigned char c) {
+                    return std::isalnum(c) || c == '.' || c == '-' ||
+                           c == '_' || c == ':' || c == '%';
+                })) {
+                error = "OpenVPN remote 服务器地址无效";
+                return std::nullopt;
+            }
+            config.remotes.push_back({host, lineOffset + start,
+                                      limit - start + (quoted ? 1 : 0)});
         }
         if (key == "dev") {
             const std::size_t split = value.find_first_of(" \t");
@@ -120,14 +186,20 @@ export inline std::optional<OpenVpnConfig> ParseOpenVpnConfig(
             config.connectTimeoutSecs = static_cast<int>(seconds);
         }
     }
+    if (!inlineBlock.empty()) {
+        error = "OpenVPN inline 配置块未结束";
+        return std::nullopt;
+    }
     return config;
 }
 
 // 当前机器是否具备 OpenVPN CLI 和统一 root 服务后端。
 export bool OpenVpnToolsAvailable();
+export bool OpenVpnSessionAlive(std::string_view connectionId);
 
 #if defined(__linux__) && !defined(__ANDROID__)
 export bool PrivilegedOpenVpnAvailable();
+export bool PrivilegedOpenVpnSessionAlive(std::string_view connectionId);
 export bool PrivilegedOpenVpnConnect(std::string_view connectionId,
                                      std::string_view nativeConfig,
                                      std::span<const std::string> routes,

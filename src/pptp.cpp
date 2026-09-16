@@ -25,6 +25,7 @@ module;
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <net/if.h>
 #include <signal.h>
 #include <spawn.h>
 #include <poll.h>
@@ -39,6 +40,7 @@ module clashflux.pptp;
 import std;
 import clashflux.service;
 import clashflux.vpn;
+import clashflux.vpn_compensation;
 
 namespace pptp {
 namespace {
@@ -73,39 +75,6 @@ bool executableOnPath(std::string_view name) {
 bool linuxToolsAvailable() {
     return executableOnPath("pppd") && executableOnPath("pptp") &&
            executableOnPath("ip");
-}
-
-bool validIpv4Cidr(std::string_view value) {
-    const std::size_t slash = value.find('/');
-    if (slash == std::string_view::npos || slash == 0 ||
-        slash + 1 >= value.size() || value.find('/', slash + 1) !=
-                                      std::string_view::npos) {
-        return false;
-    }
-    std::size_t begin = 0;
-    for (int part = 0; part < 4; ++part) {
-        const std::size_t end = value.find('.', begin);
-        const std::size_t limit = end == std::string_view::npos ? slash : end;
-        if (limit <= begin || limit > slash) return false;
-        unsigned int octet = 0;
-        const auto [ptr, ec] = std::from_chars(value.data() + begin,
-                                               value.data() + limit, octet);
-        if (ec != std::errc() || ptr != value.data() + limit || octet > 255) {
-            return false;
-        }
-        if (part == 3 && end != std::string_view::npos) return false;
-        if (end == std::string_view::npos) {
-            if (part != 3) return false;
-            break;
-        }
-        if (end >= slash) return false;
-        begin = end + 1;
-    }
-    unsigned int prefix = 0;
-    const auto [ptr, ec] = std::from_chars(value.data() + slash + 1,
-                                           value.data() + value.size(), prefix);
-    return ec == std::errc() && ptr == value.data() + value.size() &&
-           prefix <= 32;
 }
 
 std::string errnoText(std::string_view prefix) {
@@ -190,44 +159,16 @@ void removePrivateDirectory(const std::filesystem::path& path) {
     std::filesystem::remove_all(path, ec);
 }
 
-bool spawnAndWait(const std::vector<std::string>& args, std::string& error) {
-    if (args.empty()) {
-        error = "内部错误：空命令";
-        return false;
-    }
-    std::vector<char*> argv;
-    argv.reserve(args.size() + 1);
-    for (const std::string& arg : args) {
-        argv.push_back(const_cast<char*>(arg.c_str()));
-    }
-    argv.push_back(nullptr);
-    pid_t pid = -1;
-    const int spawnError = ::posix_spawnp(&pid, args.front().c_str(), nullptr,
-                                          nullptr, argv.data(), environ);
-    if (spawnError != 0) {
-        error = errorText("启动 ip 失败", spawnError);
-        return false;
-    }
-    int status = 0;
-    while (::waitpid(pid, &status, 0) < 0) {
-        if (errno == EINTR) continue;
-        error = errnoText("等待 ip 失败");
-        return false;
-    }
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        error = std::format("ip 命令失败（退出码 {}）",
-                            WIFEXITED(status) ? WEXITSTATUS(status) : -1);
-        return false;
-    }
-    return true;
-}
-
 struct LinuxSession {
     pid_t pid = -1;
+    pid_t processGroup = -1;
+    unsigned int interfaceIndex = 0;
     std::filesystem::path directory;
     std::string interfaceName;
     std::string gateway;
-    std::vector<std::string> routes;
+    vpn::compensation::TransportLease transport;
+    vpn::compensation::RouteLease boundInterface;
+    std::vector<vpn::compensation::RouteLease> routes;
 };
 
 struct Runtime {
@@ -243,28 +184,38 @@ bool childExited(pid_t pid, int& status) {
 }
 
 void stopLinuxSession(LinuxSession session) {
-    for (const std::string& route : session.routes) {
-        std::string ignored;
-        spawnAndWait({"ip", "route", "del", route, "dev", session.interfaceName},
-                     ignored);
-    }
-    if (session.pid > 0) {
-        // pppd 及其 pptp/call-manager 子进程在独立进程组中。
-        // 向整组发信号，避免超时后留下孤立的 pptp 进程。
-        ::kill(-session.pid, SIGTERM);
+    if (session.processGroup > 0) {
+        // The dialer and its helpers share an owned process group. Keep the
+        // physical bypass until all live helpers and the VPN interface are gone.
+        ::kill(-session.processGroup, SIGTERM);
         const auto deadline = std::chrono::steady_clock::now() +
                               std::chrono::seconds(3);
         int status = 0;
         while (std::chrono::steady_clock::now() < deadline) {
-            if (childExited(session.pid, status)) break;
+            if (session.pid > 0 && childExited(session.pid, status)) session.pid = -1;
+            if (::kill(-session.processGroup, 0) < 0 && errno == ESRCH) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
-        if (!childExited(session.pid, status)) {
-            ::kill(-session.pid, SIGKILL);
+        // pppd/OpenVPN may exit before one of their helper processes does.
+        // Always kill remaining group members even if the parent was reaped.
+        ::kill(-session.processGroup, SIGKILL);
+        if (session.pid > 0) {
             while (::waitpid(session.pid, &status, 0) < 0 && errno == EINTR) {
             }
         }
     }
+    // Closing the daemon's descriptors normally removes the interface; a killed
+    // helper may still be exiting. Allow that teardown before dropping its bypass.
+    const auto interfaceDeadline = std::chrono::steady_clock::now() +
+                                   std::chrono::seconds(1);
+    while (session.interfaceIndex != 0 &&
+           ::if_nametoindex(session.interfaceName.c_str()) == session.interfaceIndex &&
+           std::chrono::steady_clock::now() < interfaceDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    session.routes.clear();
+    session.boundInterface.reset();
+    session.transport.route.reset();
     removePrivateDirectory(session.directory);
 }
 
@@ -289,6 +240,9 @@ bool connectLinuxPrivileged(const std::shared_ptr<Runtime>& runtime,
         }
     }
 
+    auto transport = vpn::compensation::PrepareTransport(config->server, error);
+    if (!transport) return false;
+
     std::string directoryError;
     const std::filesystem::path directory = makePrivateDirectory(directoryError);
     if (directory.empty()) {
@@ -308,7 +262,7 @@ bool connectLinuxPrivileged(const std::shared_ptr<Runtime>& runtime,
         "printf '%s\\n' \"$1\" > \"" + interfacePath.string() + "\"\n"
         "printf '%s\\n' \"${5-}\" > \"" + gatewayPath.string() + "\"\n";
     const std::string options =
-        "pty \"pptp " + config->server + " --nolaunchpppd\"\n"
+        "pty \"pptp " + transport->address + " --nolaunchpppd\"\n"
         "noauth\n"
         "nodetach\n"
         "lock\n"
@@ -366,7 +320,8 @@ bool connectLinuxPrivileged(const std::shared_ptr<Runtime>& runtime,
         return false;
     }
 
-    LinuxSession session{.pid = pid, .directory = directory};
+    LinuxSession session{.pid = pid, .processGroup = pid, .directory = directory,
+                         .transport = std::move(*transport)};
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::seconds(config->connectTimeoutSecs);
     int status = 0;
@@ -395,6 +350,18 @@ bool connectLinuxPrivileged(const std::shared_ptr<Runtime>& runtime,
         stopLinuxSession(std::move(session));
         return false;
     }
+    session.interfaceIndex = ::if_nametoindex(session.interfaceName.c_str());
+    if (session.interfaceIndex == 0) {
+        error = "原生 VPN 接口在连接期间消失";
+        stopLinuxSession(std::move(session));
+        return false;
+    }
+    session.boundInterface = vpn::compensation::PrepareBoundInterface(
+        session.interfaceName, error);
+    if (!session.boundInterface) {
+        stopLinuxSession(std::move(session));
+        return false;
+    }
     connection.interfaceName = session.interfaceName;
     connection.gateway = session.gateway;
     {
@@ -408,12 +375,6 @@ bool applyLinuxRoutesPrivileged(const std::shared_ptr<Runtime>& runtime,
                                 vpn::VpnConnection& connection,
                                 std::span<const std::string> routes,
                                 std::string& error) {
-    for (const std::string& route : routes) {
-        if (!route.empty() && !validIpv4Cidr(route)) {
-            error = "PPTP 路由必须是 IPv4 CIDR";
-            return false;
-        }
-    }
     std::lock_guard lock(runtime->mutex);
     const auto it = runtime->linuxSessions.find(connection.id);
     if (it == runtime->linuxSessions.end()) {
@@ -421,24 +382,8 @@ bool applyLinuxRoutesPrivileged(const std::shared_ptr<Runtime>& runtime,
         return false;
     }
     LinuxSession& session = it->second;
-    for (const std::string& route : routes) {
-        if (route.empty() ||
-            std::ranges::find(session.routes, route) != session.routes.end()) {
-            continue;
-        }
-        if (!spawnAndWait({"ip", "route", "replace", route, "dev",
-                           session.interfaceName}, error)) {
-            for (const std::string& installed : session.routes) {
-                std::string ignored;
-                spawnAndWait({"ip", "route", "del", installed, "dev",
-                              session.interfaceName}, ignored);
-            }
-            session.routes.clear();
-            return false;
-        }
-        session.routes.push_back(route);
-    }
-    return true;
+    return vpn::compensation::ReplaceNativeRoutes(
+        session.interfaceName, routes, session.routes, error);
 }
 
 void disconnectLinuxPrivileged(const std::shared_ptr<Runtime>& runtime,
@@ -506,6 +451,7 @@ void disconnectLinux(const std::shared_ptr<Runtime>&,
 
 struct WindowsRoute {
     MIB_IPFORWARDROW row{};
+    bool owned = false;
 };
 
 struct WindowsSession {
@@ -575,7 +521,6 @@ std::optional<ULONG> findPppInterface(const std::vector<ULONG>& before) {
     for (const ULONG index : after) {
         if (std::ranges::find(before, index) == before.end()) return index;
     }
-    if (!after.empty()) return after.front();
     return std::nullopt;
 }
 
@@ -608,7 +553,7 @@ ULONG ipv4Mask(BYTE prefix) {
 
 void deleteWindowsRoutes(WindowsSession& session) {
     for (WindowsRoute& route : session.routes) {
-        DeleteIpForwardEntry(&route.row);
+        if (route.owned) DeleteIpForwardEntry(&route.row);
     }
     session.routes.clear();
 }
@@ -724,41 +669,68 @@ bool applyWindowsRoutes(const std::shared_ptr<Runtime>& runtime,
         return false;
     }
     WindowsSession& session = it->second;
+    std::vector<WindowsRoute> desired;
+    std::vector<WindowsRoute> created;
+    auto matches = [](const WindowsRoute& a, const WindowsRoute& b) {
+        return a.row.dwForwardDest == b.row.dwForwardDest &&
+               a.row.dwForwardMask == b.row.dwForwardMask &&
+               a.row.dwForwardIfIndex == b.row.dwForwardIfIndex &&
+               a.row.dwForwardNextHop == b.row.dwForwardNextHop;
+    };
+    auto rollback = [&] {
+        for (auto& route : created) DeleteIpForwardEntry(&route.row);
+    };
     for (const std::string& route : routes) {
-        if (std::ranges::find_if(session.routes, [&](const WindowsRoute& installed) {
-                const auto parsed = parseIpv4Cidr(route);
-                return parsed &&
-                       installed.row.dwForwardDest == parsed->first.S_un.S_addr &&
-                       installed.row.dwForwardMask == ipv4Mask(parsed->second) &&
-                       installed.row.dwForwardIfIndex == session.interfaceIndex;
-            }) != session.routes.end()) {
-            continue;
-        }
+        if (route.empty()) continue;
         const auto parsed = parseIpv4Cidr(route);
-        if (!parsed) {
-            error = std::format("PPTP 路由不是合法 IPv4 CIDR: {}", route);
-            deleteWindowsRoutes(session);
+        if (!parsed || parsed->second == 0) {
+            error = "PPTP 内网路由必须是非默认 IPv4 CIDR";
+            rollback();
             return false;
         }
         WindowsRoute nativeRoute;
-        nativeRoute.row.dwForwardDest = parsed->first.S_un.S_addr;
         nativeRoute.row.dwForwardMask = ipv4Mask(parsed->second);
+        nativeRoute.row.dwForwardDest =
+            parsed->first.S_un.S_addr & nativeRoute.row.dwForwardMask;
         nativeRoute.row.dwForwardPolicy = 0;
         nativeRoute.row.dwForwardNextHop = INADDR_ANY;
         nativeRoute.row.dwForwardIfIndex = session.interfaceIndex;
         nativeRoute.row.dwForwardType = MIB_IPROUTE_TYPE_DIRECT;
         nativeRoute.row.dwForwardProto = MIB_IPPROTO_NETMGMT;
-        nativeRoute.row.dwForwardAge = 0;
-        nativeRoute.row.dwForwardNextHopAS = 0;
         nativeRoute.row.dwForwardMetric1 = 1;
+        if (std::ranges::any_of(desired, [&](const WindowsRoute& installed) {
+                return matches(installed, nativeRoute);
+            })) continue;
+        const auto existing = std::ranges::find_if(
+            session.routes, [&](const WindowsRoute& installed) {
+                return matches(installed, nativeRoute);
+            });
+        if (existing != session.routes.end()) {
+            desired.push_back(*existing);
+            continue;
+        }
         const DWORD result = CreateIpForwardEntry(&nativeRoute.row);
-        if (result != NO_ERROR) {
+        if (result == NO_ERROR) {
+            nativeRoute.owned = true;
+            created.push_back(nativeRoute);
+        } else if (result == ERROR_OBJECT_ALREADY_EXISTS ||
+                   result == ERROR_ALREADY_EXISTS) {
+            // An identical user route already satisfies this request. Borrow it;
+            // neither rollback nor disconnect may remove an entry we did not add.
+            nativeRoute.owned = false;
+        } else {
             error = windowsError("安装 PPTP 内网路由失败", result);
-            deleteWindowsRoutes(session);
+            rollback();
             return false;
         }
-        session.routes.push_back(nativeRoute);
+        desired.push_back(nativeRoute);
     }
+    for (auto& old : session.routes) {
+        if (old.owned && !std::ranges::any_of(desired, [&](const WindowsRoute& route) {
+                return matches(old, route);
+            })) DeleteIpForwardEntry(&old.row);
+    }
+    session.routes = std::move(desired);
     return true;
 }
 
@@ -786,12 +758,33 @@ struct Runtime {};
 
 #endif
 
+std::shared_ptr<Runtime> adapterRuntime() {
+    static const auto runtime = std::make_shared<Runtime>();
+    return runtime;
+}
+
 } // namespace
 
 #if defined(__linux__) && !defined(__ANDROID__)
 
 bool PrivilegedPptpAvailable() {
     return ::geteuid() == 0 && linuxToolsAvailable();
+}
+
+bool PrivilegedPptpSessionAlive(std::string_view connectionId) {
+    const auto runtime = privilegedRuntime();
+    std::lock_guard lock(runtime->mutex);
+    const auto it = runtime->linuxSessions.find(std::string(connectionId));
+    if (it == runtime->linuxSessions.end()) return false;
+    auto& session = it->second;
+    if (session.pid <= 0) return false;
+    int status = 0;
+    if (childExited(session.pid, status)) {
+        session.pid = -1;
+        return false;
+    }
+    return session.interfaceIndex != 0 &&
+           ::if_nametoindex(session.interfaceName.c_str()) == session.interfaceIndex;
 }
 
 bool PrivilegedPptpConnect(std::string_view connectionId,
@@ -849,6 +842,26 @@ void PrivilegedPptpShutdown() {
 
 #endif
 
+bool PptpSessionAlive(std::string_view connectionId) {
+#if defined(__linux__) && !defined(__ANDROID__)
+    return service::pptpSessionAlive(connectionId);
+#elif defined(_WIN32)
+    const auto runtime = adapterRuntime();
+    std::lock_guard lock(runtime->mutex);
+    const auto it = runtime->windowsSessions.find(std::string(connectionId));
+    if (it == runtime->windowsSessions.end() || it->second.connection == nullptr) {
+        return false;
+    }
+    RASCONNSTATUSW status{};
+    status.dwSize = sizeof(status);
+    return RasGetConnectStatusW(it->second.connection, &status) == ERROR_SUCCESS &&
+           status.rasconnstate == RASCS_Connected;
+#else
+    (void)connectionId;
+    return false;
+#endif
+}
+
 bool PptpToolsAvailable() {
 #if defined(__linux__) && !defined(__ANDROID__)
     // 普通进程不直接探测/执行本地 pppd；能力以 root service 的环境为准。
@@ -861,7 +874,7 @@ bool PptpToolsAvailable() {
 }
 
 vpn::EngineAdapter MakePptpAdapter() {
-    const auto runtime = std::make_shared<Runtime>();
+    const auto runtime = adapterRuntime();
     vpn::EngineAdapter adapter{
         .descriptor = vpn::EngineDescriptor{
             .kind = vpn::EngineKind::SystemPptp,

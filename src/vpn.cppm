@@ -345,12 +345,30 @@ inline bool nativeConnection(const VpnConnection& connection) noexcept {
            connection.kind == ConnectionKind::WireGuard;
 }
 
+// 系统辅助出口只安装具体 IPv4 路由。全流量规则留给主核心的绑定接口
+// 出站处理，绝不能将其转换成第二条系统默认路由。
+inline std::optional<std::string> nativeIpv4Destination(std::string_view value) {
+    const std::size_t slash = value.find('/');
+    const std::string_view address = value.substr(0, slash);
+    std::uint32_t parsedAddress = 0;
+    if (!parseIpv4(address, parsedAddress)) return std::nullopt;
+    if (slash == std::string_view::npos) return std::string(value) + "/32";
+
+    unsigned int prefix = 0;
+    const auto [ptr, ec] = std::from_chars(
+        value.data() + slash + 1, value.data() + value.size(), prefix);
+    if (ec != std::errc() || ptr != value.data() + value.size() ||
+        prefix == 0U || prefix > 32U) {
+        return std::nullopt;
+    }
+    return std::string(value);
+}
+
 inline std::optional<std::string> nativeDestination(const RouteRule& rule) {
     switch (rule.match) {
     case MatchKind::Ipv4Cidr:
-        return rule.pattern;
     case MatchKind::ExactIp:
-        return rule.pattern + "/32";
+        return nativeIpv4Destination(rule.pattern);
     case MatchKind::Any:
     case MatchKind::ExactDomain:
     case MatchKind::DomainSuffix:
@@ -464,7 +482,71 @@ public:
         });
     }
 
-    void setPolicy(VpnPolicy policy) { policy_ = std::move(policy); }
+    // 初始化/测试装载用；已有连接时应使用 applyPolicy 同步运行时路由。
+    inline void setPolicy(VpnPolicy policy) { policy_ = std::move(policy); }
+
+    // applyRoutes 接收完整目标集合（包括空集合），后端负责增删差异和
+    // 路由所有权。策略只在全部连接成功后提交；任一失败会还原已尝试的
+    // 连接，包括可能已部分修改系统路由的失败连接。
+    inline bool applyPolicy(VpnPolicy policy, std::string& error) {
+        struct Change {
+            VpnConnection* connection;
+            EngineAdapter* adapter;
+            std::vector<std::string> previous;
+            std::vector<std::string> desired;
+        };
+        std::vector<Change> changes;
+        for (VpnConnection& connection : connections_) {
+            if (connection.state != ConnectionState::Connected ||
+                !connection.activeEngine || !detail::nativeConnection(connection)) {
+                continue;
+            }
+            if (!validateNativeRoutes(connection, error)) return false;
+            EngineAdapter* adapter = findAdapter(*connection.activeEngine);
+            auto previous = nativeRoutesFor(connection.id, policy_);
+            auto desired = nativeRoutesFor(connection.id, policy);
+            if (previous == desired) continue;
+            if (adapter == nullptr || !adapter->applyRoutes) {
+                error = std::format("{}：引擎不支持动态更新路由", connection.name);
+                return false;
+            }
+            changes.push_back({&connection, adapter, std::move(previous),
+                               std::move(desired)});
+        }
+
+        const auto apply = [](Change& change,
+                              std::span<const std::string> routes,
+                              std::string& failure) {
+            try {
+                return change.adapter->applyRoutes(*change.connection, routes,
+                                                   failure);
+            } catch (const std::exception& exception) {
+                failure = exception.what();
+            } catch (...) {
+                failure = "引擎异常";
+            }
+            return false;
+        };
+        for (std::size_t index = 0; index < changes.size(); ++index) {
+            std::string failure;
+            if (apply(changes[index], changes[index].desired, failure)) continue;
+            error = std::format("{}：路由更新失败{}", changes[index].connection->name,
+                                failure.empty() ? "" : " · " + failure);
+            for (std::size_t rollback = index + 1; rollback > 0; --rollback) {
+                Change& change = changes[rollback - 1];
+                std::string rollbackError;
+                if (!apply(change, change.previous, rollbackError)) {
+                    error += std::format("；{} 路由回滚失败{}", change.connection->name,
+                                         rollbackError.empty() ? ""
+                                                               : " · " + rollbackError);
+                }
+            }
+            return false;
+        }
+        policy_ = std::move(policy);
+        error.clear();
+        return true;
+    }
 
     const std::vector<EngineDescriptor>& engines() const noexcept {
         return engines_;
@@ -515,10 +597,18 @@ public:
             error = "VPN 连接不存在";
             return false;
         }
+        // Repeated connect requests must not orphan an already-owned session
+        // when the adapter refuses a duplicate dial. Reconfiguration callers
+        // explicitly disconnect before replacing the connection definition.
+        if (connection->state == ConnectionState::Connected && connection->activeEngine) {
+            error.clear();
+            return true;
+        }
         if (!connection->enabled) {
             error = "VPN 连接未启用";
             return false;
         }
+        if (!validateNativeRoutes(*connection, error)) return false;
 
         connection->state = ConnectionState::Connecting;
         std::vector<EngineKind> preference = connection->enginePreference;
@@ -535,10 +625,13 @@ public:
                 if (!adapter->connect ||
                     !adapter->connect(*connection, attemptError)) {
                     lastError = attemptError.empty() ? "引擎连接失败" : attemptError;
+                    if (adapter->disconnect) adapter->disconnect(*connection);
+                    connection->interfaceName.clear();
+                    connection->gateway.clear();
                     continue;
                 }
                 const std::vector<std::string> nativeRoutes =
-                    nativeRoutesFor(connection->id);
+                    nativeRoutesFor(connection->id, policy_);
                 if (adapter->applyRoutes &&
                     !adapter->applyRoutes(*connection, nativeRoutes, attemptError)) {
                     if (adapter->disconnect) adapter->disconnect(*connection);
@@ -569,6 +662,8 @@ public:
         }
         connection->state = ConnectionState::Failed;
         connection->activeEngine.reset();
+        connection->interfaceName.clear();
+        connection->gateway.clear();
         error = lastError.empty() ? "没有可用引擎支持该连接类型" : lastError;
         return false;
     }
@@ -589,6 +684,8 @@ public:
         }
         connection->activeEngine.reset();
         connection->state = ConnectionState::Idle;
+        connection->interfaceName.clear();
+        connection->gateway.clear();
     }
 
     // 统一释放所有仍由适配器持有的系统连接。析构和应用的显式退出流程都
@@ -625,13 +722,33 @@ public:
     }
 
 private:
-    std::vector<std::string> nativeRoutesFor(std::string_view id) const {
+    static inline bool validateNativeRoutes(const VpnConnection& connection,
+                                           std::string& error) {
+        if (!detail::nativeConnection(connection)) return true;
+        for (const std::string& route : connection.internalRoutes) {
+            if (!detail::nativeIpv4Destination(route)) {
+                error = std::format("{}：辅助 VPN 路由必须是具体 IPv4 地址或 /1–/32 网段，不能接管系统默认路由",
+                                    connection.name);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    inline std::vector<std::string> nativeRoutesFor(std::string_view id,
+                                                   const VpnPolicy& policy) const {
         const VpnConnection* connection = findConnection(id);
         if (connection == nullptr || !detail::nativeConnection(*connection)) {
             return {};
         }
-        std::vector<std::string> routes = connection->internalRoutes;
-        for (const RouteRule& rule : policy_.rules) {
+        std::vector<std::string> routes;
+        for (const std::string& route : connection->internalRoutes) {
+            if (auto destination = detail::nativeIpv4Destination(route);
+                destination && std::ranges::find(routes, *destination) == routes.end()) {
+                routes.push_back(std::move(*destination));
+            }
+        }
+        for (const RouteRule& rule : policy.rules) {
             if (rule.connectionId != id) continue;
             if (const auto destination = detail::nativeDestination(rule);
                 destination.has_value() &&
@@ -662,7 +779,8 @@ private:
     VpnPolicy policy_;
 };
 
-// 从连接和策略生成“一条全流量入口 + 多条原生出口”的执行计划。
+// 兼容的纯计划生成接口；本函数不安装路由，也不刷新运行中的主核心。
+// 运行时主订阅与补偿配置由 store/core 编排，原生路由由 applyPolicy 提交。
 //
 // 对 sing-box 代理连接，logicalRules 留给 sing-box/编排器处理；对 PPTP、
 // OpenVPN、WireGuard，CIDR/单 IP 规则转成 nativeRoutes，并把这些目标加入
@@ -686,7 +804,9 @@ export inline TunRoutePlan BuildTunRoutePlan(const VpnManager& manager,
     for (const VpnConnection& connection : manager.connections()) {
         if (!connection.enabled || !detail::nativeConnection(connection)) continue;
         for (const std::string& route : connection.internalRoutes) {
-            detail::appendNativeRoute(plan, connection, route);
+            if (auto destination = detail::nativeIpv4Destination(route)) {
+                detail::appendNativeRoute(plan, connection, std::move(*destination));
+            }
         }
     }
 
