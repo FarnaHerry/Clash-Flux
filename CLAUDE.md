@@ -78,7 +78,7 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
 | `clashflux.cli` | `src/cli.cppm` | 完整 CLI：`cli::run(args)`，子命令 version/service/core/mode/tun/proxy/profile/help；platform/*/main.cpp 无参 → GUI、有参 → CLI |
 | `clashflux.store.core` | `src/store/core_store.cppm` | 编排单例 `coreStore()`：持有 Db/ClashApi/CoreProcess/CoreStreams；startCore/stopCore/applyMode/refreshRuntime/checkAlive；settings KV；TUN 切换 = 重新编译 config.json + 自动重启内核；内核三形态托管：**服务托管 → 接管外部实例（/version 探测 + core.pid pidfile）→ 直接 spawn** |
 | `clashflux.store.profiles` | `src/store/profiles.cppm` | 订阅单例 `profilesStore()`：importUrl/importFile/refresh/activate/remove（activate/remove 触发内核重启） |
-| `clashflux.openvpn` | `src/openvpn.cppm/.cpp` | OpenVPN CLI 配置校验、Linux root 会话、tun 接口与内网 CIDR 路由；托管模式禁止配置自带 route/up/down 脚本 |
+| `clashflux.openvpn` | `src/openvpn.cppm/.cpp` | OpenVPN CLI 配置校验、Linux root/Windows CLI 会话、tun 接口与内网 CIDR 路由；托管模式禁止配置自带 route/up/down 脚本 |
 | `clashflux.store.vpn` | `src/store/vpn.cppm` | PPTP/OpenVPN 连接生命周期 + 全局 `VpnPolicy` 持久化；`ProfileConnectionId` 是跨引擎稳定连接引用，原生连接建连时将 IPv4 全局规则交给对应隧道接口 |
 | `clashflux.ui.*`（普通 C++） | `src/ui/*.cpp` | app（通用壳 + `platform_app.cpp` 平台应用壳）/ common（岛屿原语 IslandSurface/DialogCard/页面骨架/卡片/状态胶囊）/ home/profiles/proxies/rules/connections/logs/settings 七页（平台设置在 `platform_settings.cpp`）/ task_bridge.h（协程桥） |
 | `src/app.cpp` | 普通 TU | `Application{AppRoot, AppOptions}`（Custom chrome，标题栏 24pt） |
@@ -105,8 +105,8 @@ huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/bui
   后端，同一 `core::CoreProcess` 接口。
 - 服务模式仅 Linux；其他平台 `service::available()` 恒 false，自动回落直接
   spawn。Linux PPTP/OpenVPN 必须经统一 root 服务，不再由普通 GUI 直接 spawn
-  `pppd`/`openvpn` 或执行 `ip route`；Windows 继续使用系统 RAS，Android 后续接入
-  VpnService。
+  `pppd`/`openvpn` 或执行 `ip route`；Windows PPTP 使用系统 RAS，OpenVPN 使用
+  OpenVPN Community CLI，Android 后续接入 VpnService。
 
 ## 关键约定（改代码前必读）
 

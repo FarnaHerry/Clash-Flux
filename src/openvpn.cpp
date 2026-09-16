@@ -1,7 +1,18 @@
-// openvpn.cpp — clashflux.openvpn 的 Linux OpenVPN CLI 实现。
+// openvpn.cpp — clashflux.openvpn 的桌面 OpenVPN CLI 实现。
 module;
 
-#if defined(__linux__) && !defined(__ANDROID__)
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <windows.h>
+#include <iphlpapi.h>
+#include <ws2tcpip.h>
+#elif defined(__linux__) && !defined(__ANDROID__)
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -398,6 +409,294 @@ void disconnectUser(const std::shared_ptr<Runtime>&,
     connection.gateway.clear();
 }
 
+#elif defined(_WIN32)
+
+struct WindowsRoute {
+    MIB_IPFORWARDROW row{};
+    bool owned = false;
+};
+
+struct WindowsAdapter {
+    ULONG index = 0;
+    std::string name;
+};
+
+struct WindowsSession {
+    HANDLE process = nullptr;
+    std::filesystem::path directory;
+    WindowsAdapter adapter;
+    std::vector<WindowsRoute> routes;
+};
+
+struct Runtime {
+    std::mutex mutex;
+    std::unordered_map<std::string, WindowsSession> sessions;
+};
+
+std::shared_ptr<Runtime> windowsRuntime() {
+    static const auto runtime = std::make_shared<Runtime>();
+    return runtime;
+}
+
+std::string windowsError(std::string_view prefix, DWORD code) {
+    return std::format("{}（错误码 {}）", prefix, code);
+}
+
+std::optional<std::filesystem::path> openVpnExecutable() {
+    std::vector<wchar_t> found(32768);
+    if (SearchPathW(nullptr, L"openvpn.exe", nullptr,
+                    static_cast<DWORD>(found.size()), found.data(), nullptr) > 0) {
+        return std::filesystem::path(found.data());
+    }
+    for (const wchar_t* variable : {L"ProgramFiles", L"ProgramW6432"}) {
+        std::vector<wchar_t> root(32768);
+        const DWORD size = GetEnvironmentVariableW(variable, root.data(),
+                                                    static_cast<DWORD>(root.size()));
+        if (size == 0 || size >= root.size()) continue;
+        const auto candidate = std::filesystem::path(root.data()) /
+                               L"OpenVPN" / L"bin" / L"openvpn.exe";
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(candidate, ec)) return candidate;
+    }
+    return std::nullopt;
+}
+
+std::vector<WindowsAdapter> activeAdapters() {
+    ULONG size = 0;
+    if (GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, nullptr, nullptr,
+                             &size) != ERROR_BUFFER_OVERFLOW || size == 0) return {};
+    std::vector<unsigned char> buffer(size);
+    auto* adapter = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+    if (GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, nullptr, adapter,
+                             &size) != NO_ERROR) return {};
+    std::vector<WindowsAdapter> result;
+    for (; adapter != nullptr; adapter = adapter->Next) {
+        if (adapter->OperStatus == IfOperStatusUp && adapter->IfIndex != 0) {
+            result.push_back({adapter->IfIndex,
+                              adapter->AdapterName ? adapter->AdapterName : ""});
+        }
+    }
+    return result;
+}
+
+std::wstring quoteWindowsArgument(std::wstring_view value) {
+    std::wstring result{L"\""};
+    std::size_t slashes = 0;
+    for (const wchar_t c : value) {
+        if (c == L'\\') { ++slashes; continue; }
+        if (c == L'\"') result.append(slashes * 2 + 1, L'\\');
+        else result.append(slashes, L'\\');
+        slashes = 0;
+        result.push_back(c);
+    }
+    result.append(slashes * 2, L'\\');
+    result.push_back(L'\"');
+    return result;
+}
+
+std::string readWindowsLog(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    std::string line;
+    std::vector<std::string> lines;
+    while (std::getline(file, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!line.empty()) lines.push_back(std::move(line));
+    }
+    std::string result;
+    for (std::size_t i = lines.size() > 3 ? lines.size() - 3 : 0;
+         i < lines.size(); ++i) {
+        if (!result.empty()) result += "；";
+        result += lines[i];
+    }
+    if (result.size() > 512) result.resize(512);
+    return result;
+}
+
+void deleteWindowsRoutes(WindowsSession& session) {
+    for (auto& route : session.routes) if (route.owned) DeleteIpForwardEntry(&route.row);
+    session.routes.clear();
+}
+
+void stopWindowsSession(WindowsSession& session) {
+    deleteWindowsRoutes(session);
+    if (session.process != nullptr) {
+        if (WaitForSingleObject(session.process, 0) == WAIT_TIMEOUT) {
+            TerminateProcess(session.process, 1);
+            WaitForSingleObject(session.process, 3000);
+        }
+        CloseHandle(session.process);
+    }
+    std::error_code ec;
+    std::filesystem::remove_all(session.directory, ec);
+}
+
+bool connectWindows(const std::shared_ptr<Runtime>& runtime,
+                    vpn::VpnConnection& connection, std::string& error) {
+    const auto executable = openVpnExecutable();
+    if (!executable) { error = "未找到 openvpn.exe；请安装 OpenVPN Community"; return false; }
+    const auto config = ParseOpenVpnConfig(connection.nativeConfig, error);
+    if (!config) return false;
+    {
+        std::lock_guard lock(runtime->mutex);
+        if (runtime->sessions.contains(connection.id)) {
+            error = "该 OpenVPN 连接已经建立";
+            return false;
+        }
+    }
+    const auto before = activeAdapters();
+    const auto directory = std::filesystem::temp_directory_path() /
+        std::format("clash-flux-openvpn-{}-{}", GetCurrentProcessId(), GetTickCount64());
+    std::error_code ec;
+    if (!std::filesystem::create_directory(directory, ec) || ec) {
+        error = "无法创建 OpenVPN 临时目录";
+        return false;
+    }
+    const auto configPath = directory / "managed.ovpn";
+    const auto logPath = directory / "openvpn.log";
+    std::string managed = config->configText;
+    if (!managed.empty() && managed.back() != '\n') managed += '\n';
+    managed += "route-nopull\nroute-noexec\n";
+    {
+        std::ofstream file(configPath, std::ios::binary | std::ios::trunc);
+        file.write(managed.data(), static_cast<std::streamsize>(managed.size()));
+        if (!file) {
+            error = "写入 OpenVPN 临时配置失败";
+            std::filesystem::remove_all(directory, ec);
+            return false;
+        }
+    }
+    std::wstring command = quoteWindowsArgument(executable->wstring()) + L" --config " +
+        quoteWindowsArgument(configPath.wstring()) + L" --route-nopull --route-noexec --log " +
+        quoteWindowsArgument(logPath.wstring());
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(executable->c_str(), command.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW, nullptr, directory.c_str(), &startup, &process)) {
+        error = windowsError("启动 openvpn.exe 失败", GetLastError());
+        std::filesystem::remove_all(directory, ec);
+        return false;
+    }
+    CloseHandle(process.hThread);
+    WindowsSession session{.process = process.hProcess, .directory = directory};
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::seconds(config->connectTimeoutSecs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (WaitForSingleObject(session.process, 0) != WAIT_TIMEOUT) {
+            DWORD exitCode = 0;
+            GetExitCodeProcess(session.process, &exitCode);
+            error = std::format("openvpn.exe 提前退出（退出码 {}）", exitCode);
+            const auto detail = readWindowsLog(logPath);
+            if (!detail.empty()) error += " · " + detail;
+            stopWindowsSession(session);
+            return false;
+        }
+        for (const auto& adapter : activeAdapters()) {
+            if (std::ranges::none_of(before, [&](const auto& old) {
+                    return old.index == adapter.index;
+                })) {
+                session.adapter = adapter;
+                break;
+            }
+        }
+        if (session.adapter.index != 0) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    if (session.adapter.index == 0) {
+        error = "OpenVPN 连接超时，未检测到新的活动网卡";
+        const auto detail = readWindowsLog(logPath);
+        if (!detail.empty()) error += " · " + detail;
+        stopWindowsSession(session);
+        return false;
+    }
+    connection.interfaceName = session.adapter.name;
+    connection.gateway.clear();
+    std::lock_guard lock(runtime->mutex);
+    runtime->sessions.emplace(connection.id, std::move(session));
+    return true;
+}
+
+bool applyWindowsRoutes(const std::shared_ptr<Runtime>& runtime,
+                        vpn::VpnConnection& connection,
+                        std::span<const std::string> routes, std::string& error) {
+    std::lock_guard lock(runtime->mutex);
+    const auto found = runtime->sessions.find(connection.id);
+    if (found == runtime->sessions.end()) { error = "OpenVPN 会话不存在"; return false; }
+    auto& session = found->second;
+    std::vector<WindowsRoute> desired;
+    std::vector<WindowsRoute> created;
+    auto same = [](const WindowsRoute& a, const WindowsRoute& b) {
+        return a.row.dwForwardDest == b.row.dwForwardDest &&
+               a.row.dwForwardMask == b.row.dwForwardMask &&
+               a.row.dwForwardIfIndex == b.row.dwForwardIfIndex;
+    };
+    auto rollback = [&] {
+        for (auto& item : created) DeleteIpForwardEntry(&item.row);
+    };
+    for (const auto& route : routes) {
+        const auto normalized = vpn::compensation::NormalizeIpv4Cidr(route);
+        if (!normalized) {
+            rollback();
+            error = "OpenVPN 内网路由必须是非默认 IPv4 CIDR";
+            return false;
+        }
+        const auto slash = normalized->find('/');
+        IN_ADDR address{};
+        if (InetPtonA(AF_INET, normalized->substr(0, slash).c_str(), &address) != 1) {
+            rollback();
+            error = "OpenVPN 内网路由地址无效";
+            return false;
+        }
+        unsigned int prefix = 0;
+        std::from_chars(normalized->data() + slash + 1,
+                        normalized->data() + normalized->size(), prefix);
+        WindowsRoute item;
+        item.row.dwForwardMask = prefix == 0 ? 0 : htonl(0xffffffffu << (32 - prefix));
+        item.row.dwForwardDest = address.S_un.S_addr & item.row.dwForwardMask;
+        item.row.dwForwardIfIndex = session.adapter.index;
+        item.row.dwForwardNextHop = INADDR_ANY;
+        item.row.dwForwardType = MIB_IPROUTE_TYPE_DIRECT;
+        item.row.dwForwardProto = MIB_IPPROTO_NETMGMT;
+        item.row.dwForwardMetric1 = 1;
+        if (std::ranges::any_of(desired, [&](const auto& current) { return same(item, current); })) continue;
+        const auto old = std::ranges::find_if(session.routes,
+            [&](const auto& current) { return same(item, current); });
+        if (old != session.routes.end()) { desired.push_back(*old); continue; }
+        const DWORD result = CreateIpForwardEntry(&item.row);
+        if (result == NO_ERROR) {
+            item.owned = true;
+            created.push_back(item);
+        }
+        else if (result != ERROR_OBJECT_ALREADY_EXISTS && result != ERROR_ALREADY_EXISTS) {
+            rollback();
+            error = windowsError("安装 OpenVPN 内网路由失败", result);
+            return false;
+        }
+        desired.push_back(item);
+    }
+    for (auto& old : session.routes) {
+        if (old.owned && std::ranges::none_of(desired,
+            [&](const auto& current) { return same(old, current); })) DeleteIpForwardEntry(&old.row);
+    }
+    session.routes = std::move(desired);
+    return true;
+}
+
+void disconnectWindows(const std::shared_ptr<Runtime>& runtime,
+                       vpn::VpnConnection& connection) {
+    WindowsSession session;
+    {
+        std::lock_guard lock(runtime->mutex);
+        const auto found = runtime->sessions.find(connection.id);
+        if (found == runtime->sessions.end()) return;
+        session = std::move(found->second);
+        runtime->sessions.erase(found);
+    }
+    stopWindowsSession(session);
+    connection.interfaceName.clear();
+    connection.gateway.clear();
+}
+
 #endif
 
 } // namespace
@@ -475,6 +774,12 @@ void PrivilegedOpenVpnShutdown() {
 bool OpenVpnSessionAlive(std::string_view connectionId) {
 #if defined(__linux__) && !defined(__ANDROID__)
     return service::openvpnSessionAlive(connectionId);
+#elif defined(_WIN32)
+    const auto runtime = windowsRuntime();
+    std::lock_guard lock(runtime->mutex);
+    const auto found = runtime->sessions.find(std::string(connectionId));
+    return found != runtime->sessions.end() && found->second.process != nullptr &&
+           WaitForSingleObject(found->second.process, 0) == WAIT_TIMEOUT;
 #else
     (void)connectionId;
     return false;
@@ -484,6 +789,8 @@ bool OpenVpnSessionAlive(std::string_view connectionId) {
 bool OpenVpnToolsAvailable() {
 #if defined(__linux__) && !defined(__ANDROID__)
     return service::available() && service::openvpnAvailable();
+#elif defined(_WIN32)
+    return openVpnExecutable().has_value();
 #else
     return false;
 #endif
@@ -510,6 +817,19 @@ vpn::EngineAdapter MakeOpenVpnAdapter() {
     };
     adapter.disconnect = [runtime](vpn::VpnConnection& connection) {
         disconnectUser(runtime, connection);
+    };
+#elif defined(_WIN32)
+    const auto runtime = windowsRuntime();
+    adapter.connect = [runtime](vpn::VpnConnection& connection, std::string& error) {
+        return connectWindows(runtime, connection, error);
+    };
+    adapter.applyRoutes = [runtime](vpn::VpnConnection& connection,
+                                    std::span<const std::string> routes,
+                                    std::string& error) {
+        return applyWindowsRoutes(runtime, connection, routes, error);
+    };
+    adapter.disconnect = [runtime](vpn::VpnConnection& connection) {
+        disconnectWindows(runtime, connection);
     };
 #else
     adapter.connect = [](vpn::VpnConnection&, std::string& error) {
