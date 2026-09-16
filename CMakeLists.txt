@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.1.56 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.1.57 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # HUXERUI_LIBRARY_GRAPH_ONLY：CLI 扫描 huxerui 库依赖图时的特殊配置——
 # 不启用语言、不构建，huxerui_add_app 只写出库图 JSON 即返回（见 SDK
@@ -349,7 +349,7 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     if (WIN32)
         target_compile_definitions(clash-flux PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
         # TUN 门禁：ShellExecuteExW（runas 提权重启）+ TokenElevation 查询。
-        target_link_libraries(clash-flux PRIVATE shell32 advapi32 rasapi32 iphlpapi ws2_32)
+        target_link_libraries(clash-flux PRIVATE shell32 advapi32 rasapi32 iphlpapi ws2_32 dnsapi)
         # GUI 子系统入口（CLI 子命令运行时经 AttachConsole 附着父控制台，
         # 见 cli.cppm）。
         if (MSVC)
@@ -551,7 +551,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         add_test(NAME singbox COMMAND test_singbox)
 
         add_executable(test_vpn tests/test_vpn.cpp)
-        target_sources(test_vpn PRIVATE src/pptp.cpp src/openvpn.cpp src/vpn_compensation.cpp)
+        target_sources(test_vpn PRIVATE src/pptp.cpp src/openvpn.cpp src/vpn_compensation.cpp src/vpn_compensation_windows.cpp)
         target_sources(test_vpn PRIVATE FILE_SET clashflux_vpn_modules TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
             FILES src/config.cppm src/vpn.cppm src/pptp.cppm src/openvpn.cppm
@@ -563,7 +563,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         endif ()
         target_compile_features(test_vpn PRIVATE cxx_std_23)
         if (WIN32)
-            target_link_libraries(test_vpn PRIVATE rasapi32 iphlpapi ws2_32)
+            target_link_libraries(test_vpn PRIVATE rasapi32 iphlpapi ws2_32 dnsapi)
         endif ()
         add_test(NAME vpn COMMAND test_vpn)
 
@@ -576,7 +576,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         target_link_libraries(test_routing PRIVATE clashflux_json)
         add_test(NAME routing COMMAND test_routing)
 
-        add_executable(test_compensation tests/test_vpn_compensation.cpp src/vpn_compensation.cpp)
+        add_executable(test_compensation tests/test_vpn_compensation.cpp src/vpn_compensation.cpp src/vpn_compensation_windows.cpp)
         target_sources(test_compensation PRIVATE FILE_SET clashflux_compensation_modules TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
             FILES src/vpn_compensation.cppm)
@@ -584,14 +584,14 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         target_compile_features(test_compensation PRIVATE cxx_std_23)
         target_link_libraries(test_compensation PRIVATE clashflux_json)
         if (WIN32)
-            target_link_libraries(test_compensation PRIVATE iphlpapi ws2_32)
+            target_link_libraries(test_compensation PRIVATE iphlpapi ws2_32 dnsapi)
         endif ()
         add_test(NAME compensation COMMAND test_compensation)
 
         # 真实 PPTP 拨号需要外部服务器和已安装的 root 服务，不作为自动测试；
         # 该工具只供本地联调，连接后按回车负责断开并清理路由。
         add_executable(test_pptp_connect tests/pptp_connect.cpp src/pptp.cpp
-                       src/openvpn.cpp src/vpn_compensation.cpp)
+                       src/openvpn.cpp src/vpn_compensation.cpp src/vpn_compensation_windows.cpp)
         target_sources(test_pptp_connect PRIVATE FILE_SET clashflux_pptp_modules
             TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -604,7 +604,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         endif ()
         target_compile_features(test_pptp_connect PRIVATE cxx_std_23)
         if (WIN32)
-            target_link_libraries(test_pptp_connect PRIVATE rasapi32 iphlpapi ws2_32)
+            target_link_libraries(test_pptp_connect PRIVATE rasapi32 iphlpapi ws2_32 dnsapi)
         endif ()
     endif ()
 

@@ -88,11 +88,13 @@ export inline void PopulateOptions(
         }
         singbox::NativeConnection native;
         native.id = id;
+        native.kind = profile.type == "pptp" ? vpn::ConnectionKind::Pptp : vpn::ConnectionKind::OpenVpn;
         native.internalRoutes = SplitRoutes(profile.nativeRoutes);
         for (const auto& session : sessions) {
             if (session.id != id) continue;
             native.connected = session.connected && !session.interfaceName.empty();
             native.interfaceName = native.connected ? session.interfaceName : "";
+            native.transportAddress = native.connected ? session.transportAddress : "";
             break;
         }
         options.nativeConnections.push_back(std::move(native));

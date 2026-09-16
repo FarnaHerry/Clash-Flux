@@ -8,6 +8,7 @@ export module clashflux.store.vpn;
 import std;
 import nlohmann.json;
 import clashflux.db;
+import clashflux.core;
 import clashflux.openvpn;
 import clashflux.pptp;
 import clashflux.vpn;
@@ -216,6 +217,15 @@ public:
 
         const std::string id = connectionId(profile.id);
         std::unique_lock operationLock(operationMutex_);
+#ifdef _WIN32
+        auto mainOperation = coreStore().lockNativeLifecycle();
+        const bool mainWasRunning = coreStore().snapshot().state == core::CoreState::Running;
+        if (mainWasRunning && !coreStore().stopCore()) {
+            error = coreStore().snapshot().lastError;
+            setError(profile.id, error);
+            return false;
+        }
+#endif
         blockBeforeDisconnect(id);
         manager_.disconnect(id);
         {
@@ -232,7 +242,11 @@ public:
         }
 
         bool connected = manager_.connect(id, error);
-        if (connected && !publishRouting(error)) {
+        bool routingApplied = connected && publishRouting(error);
+#ifdef _WIN32
+        if (routingApplied && mainWasRunning) routingApplied = coreStore().resumeNativeRouting(error);
+#endif
+        if (connected && !routingApplied) {
             // Compilation can fail before refreshRouting stops the old core.
             // Never release an interface still referenced by that core.
             coreStore().stopCore();
@@ -243,6 +257,12 @@ public:
             error = "PPTP 已撤销，主 VPN 路由更新失败：" + failure;
             connected = false;
         }
+#ifdef _WIN32
+        if (!connected && mainWasRunning && coreStore().snapshot().state != core::CoreState::Running) {
+            std::string restoreError;
+            if (!coreStore().resumeNativeRouting(restoreError)) error += "；恢复主内核失败：" + restoreError;
+        }
+#endif
         {
             std::lock_guard snapshotLock(mutex_);
             updateSnapshotLocked(profile.id, connected ? std::string_view{} : error);
@@ -386,6 +406,8 @@ private:
             session.connected = connection.id != unavailable &&
                 connection.state == vpn::ConnectionState::Connected;
             session.interfaceName = session.connected ? connection.interfaceName : "";
+            session.kind = connection.kind;
+            session.transportAddress = session.connected ? connection.transportAddress : "";
             sessions.push_back(std::move(session));
         }
         return coreStore().updateNativeRouting(std::move(sessions), error);

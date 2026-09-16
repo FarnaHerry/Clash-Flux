@@ -330,13 +330,17 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
         return huxerui::NavigationBar(items, navPage)
             .OnChanged(onChanged)
             .With(huxerui::Background(theme.colors.surface_container_low),
+                  huxerui::CornerRadius(20.0F),
+                  huxerui::ClipChildren(),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }
 
     return huxerui::NavigationPane(items, navPage,
                                    viewport == huxerui::ViewportClass::Expanded)
         .OnChanged(onChanged)
-        .With(huxerui::Background(theme.colors.surface_container_low));
+        .With(huxerui::Background(theme.colors.surface_container_low),
+              huxerui::CornerRadius(20.0F),
+              huxerui::ClipChildren());
 }
 
 } // namespace

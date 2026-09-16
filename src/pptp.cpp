@@ -13,11 +13,12 @@ module;
 #define NOMINMAX
 #endif
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <iphlpapi.h>
+#include <netioapi.h>
 #include <ras.h>
 #include <raserror.h>
-#include <ws2tcpip.h>
 #include <cwchar>
 #include <limits.h>
 #include <stdint.h>
@@ -449,17 +450,14 @@ void disconnectLinux(const std::shared_ptr<Runtime>&,
 
 #elif defined(_WIN32)
 
-struct WindowsRoute {
-    MIB_IPFORWARDROW row{};
-    bool owned = false;
-};
-
 struct WindowsSession {
     HRASCONN connection = nullptr;
     std::wstring phonebook;
     std::wstring entry;
     ULONG interfaceIndex = 0;
-    std::vector<WindowsRoute> routes;
+    NET_LUID interfaceLuid{};
+    vpn::compensation::RouteLease transport;
+    std::vector<vpn::compensation::RouteLease> routes;
 };
 
 struct Runtime {
@@ -493,76 +491,45 @@ bool copyWide(wchar_t (&destination)[N], std::wstring_view value) {
     return true;
 }
 
-std::vector<ULONG> pppInterfaces() {
-    ULONG size = 0;
-    if (GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, nullptr, nullptr,
-                             &size) != ERROR_BUFFER_OVERFLOW ||
-        size == 0) {
-        return {};
-    }
-    std::vector<unsigned char> buffer(size);
-    auto* adapter = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
-    if (GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, nullptr, adapter,
-                             &size) != NO_ERROR) {
-        return {};
-    }
-    std::vector<ULONG> result;
-    for (; adapter != nullptr; adapter = adapter->Next) {
-        if (adapter->IfType == IF_TYPE_PPP &&
-            adapter->OperStatus == IfOperStatusUp) {
-            result.push_back(adapter->IfIndex);
-        }
-    }
-    return result;
+// Resolve the private phonebook entry's alias, then verify the address
+// negotiated by this RAS handle. RASCONN.luid is a logon-session LUID, not
+// a network-interface LUID; a before/after interface diff is also ambiguous.
+std::optional<MIB_IF_ROW2> findPppInterface(HRASCONN connection, const std::wstring& entry) {
+    RASPPPIPW projection{};
+    projection.dwSize = sizeof(projection);
+    DWORD size = sizeof(projection);
+    if (RasGetProjectionInfoW(connection, RASP_PppIp, &projection, &size) != ERROR_SUCCESS ||
+        projection.dwError != ERROR_SUCCESS) return {};
+    NET_LUID luid{};
+    if (ConvertInterfaceAliasToLuid(entry.c_str(), &luid) != NO_ERROR) return {};
+    MIB_UNICASTIPADDRESS_ROW address{};
+    address.InterfaceLuid = luid;
+    address.Address.si_family = AF_INET;
+    if (InetPtonW(AF_INET, projection.szIpAddress, &address.Address.Ipv4.sin_addr) != 1 ||
+        GetUnicastIpAddressEntry(&address) != NO_ERROR) return {};
+    MIB_IF_ROW2 row{};
+    row.InterfaceLuid = luid;
+    if (GetIfEntry2(&row) == NO_ERROR && row.Type == IF_TYPE_PPP &&
+        row.OperStatus == IfOperStatusUp) return row;
+    return {};
 }
 
-std::optional<ULONG> findPppInterface(const std::vector<ULONG>& before) {
-    const auto after = pppInterfaces();
-    for (const ULONG index : after) {
-        if (std::ranges::find(before, index) == before.end()) return index;
-    }
-    return std::nullopt;
-}
-
-std::optional<std::pair<IN_ADDR, BYTE>> parseIpv4Cidr(std::string_view value) {
-    const std::size_t slash = value.find('/');
-    if (slash == std::string_view::npos || slash == 0 || slash + 1 >= value.size()) {
-        return std::nullopt;
-    }
-    const std::string address(value.substr(0, slash));
-    IN_ADDR parsed{};
-    if (InetPtonA(AF_INET, address.c_str(), &parsed) != 1) return std::nullopt;
-    BYTE prefix = 0;
-    const auto prefixText = value.substr(slash + 1);
-    unsigned int parsedPrefix = 0;
-    const auto [ptr, ec] = std::from_chars(prefixText.data(),
-                                           prefixText.data() + prefixText.size(),
-                                           parsedPrefix);
-    if (ec != std::errc() || ptr != prefixText.data() + prefixText.size() ||
-        parsedPrefix > 32) {
-        return std::nullopt;
-    }
-    prefix = static_cast<BYTE>(parsedPrefix);
-    return std::pair{parsed, prefix};
-}
-
-ULONG ipv4Mask(BYTE prefix) {
-    if (prefix == 0) return 0;
-    return htonl(0xffffffffu << (32 - prefix));
-}
-
-void deleteWindowsRoutes(WindowsSession& session) {
-    for (WindowsRoute& route : session.routes) {
-        if (route.owned) DeleteIpForwardEntry(&route.row);
-    }
-    session.routes.clear();
+std::string interfaceAlias(const MIB_IF_ROW2& row) {
+    const int size = WideCharToMultiByte(CP_UTF8, 0, row.Alias, -1, nullptr, 0, nullptr, nullptr);
+    if (size <= 1) return {};
+    std::string value(size, '\0');
+    if (!WideCharToMultiByte(CP_UTF8, 0, row.Alias, -1, value.data(), size, nullptr, nullptr)) return {};
+    value.pop_back();
+    return value;
 }
 
 bool connectWindows(const std::shared_ptr<Runtime>& runtime,
                     vpn::VpnConnection& connection, std::string& error) {
     const auto config = ParsePptpConfig(connection.nativeConfig, error);
     if (!config) return false;
-    const auto server = utf8ToWide(config->server);
+    auto transport = vpn::compensation::PrepareTransport(config->server, error);
+    if (!transport) return false;
+    const auto server = utf8ToWide(transport->address);
     const auto username = utf8ToWide(config->username);
     const auto password = utf8ToWide(config->password);
     if (!server || !username || !password) {
@@ -577,7 +544,6 @@ bool connectWindows(const std::shared_ptr<Runtime>& runtime,
         }
     }
 
-    const auto before = pppInterfaces();
     const std::filesystem::path phonebookPath =
         std::filesystem::temp_directory_path() /
         std::format("clash-flux-pptp-{}-{}.pbk", GetCurrentProcessId(),
@@ -637,8 +603,9 @@ bool connectWindows(const std::shared_ptr<Runtime>& runtime,
         return false;
     }
 
-    const auto interfaceIndex = findPppInterface(before);
-    if (!interfaceIndex) {
+    const auto iface = findPppInterface(rasConnection, entry);
+    const auto alias = iface ? interfaceAlias(*iface) : std::string{};
+    if (!iface || alias.empty()) {
         error = "PPTP 已拨号但未找到 PPP 网卡";
         RasHangUp(rasConnection);
         RasDeleteEntryW(phonebook.c_str(), entry.c_str());
@@ -648,8 +615,11 @@ bool connectWindows(const std::shared_ptr<Runtime>& runtime,
     WindowsSession session{.connection = rasConnection,
                            .phonebook = phonebook,
                            .entry = entry,
-                           .interfaceIndex = *interfaceIndex};
-    connection.interfaceName = std::to_string(*interfaceIndex);
+                           .interfaceIndex = iface->InterfaceIndex,
+                           .interfaceLuid = iface->InterfaceLuid,
+                           .transport = std::move(transport->route)};
+    connection.interfaceName = alias;
+    connection.transportAddress = transport->address;
     connection.gateway.clear();
     {
         std::lock_guard lock(runtime->mutex);
@@ -669,69 +639,8 @@ bool applyWindowsRoutes(const std::shared_ptr<Runtime>& runtime,
         return false;
     }
     WindowsSession& session = it->second;
-    std::vector<WindowsRoute> desired;
-    std::vector<WindowsRoute> created;
-    auto matches = [](const WindowsRoute& a, const WindowsRoute& b) {
-        return a.row.dwForwardDest == b.row.dwForwardDest &&
-               a.row.dwForwardMask == b.row.dwForwardMask &&
-               a.row.dwForwardIfIndex == b.row.dwForwardIfIndex &&
-               a.row.dwForwardNextHop == b.row.dwForwardNextHop;
-    };
-    auto rollback = [&] {
-        for (auto& route : created) DeleteIpForwardEntry(&route.row);
-    };
-    for (const std::string& route : routes) {
-        if (route.empty()) continue;
-        const auto parsed = parseIpv4Cidr(route);
-        if (!parsed || parsed->second == 0) {
-            error = "PPTP 内网路由必须是非默认 IPv4 CIDR";
-            rollback();
-            return false;
-        }
-        WindowsRoute nativeRoute;
-        nativeRoute.row.dwForwardMask = ipv4Mask(parsed->second);
-        nativeRoute.row.dwForwardDest =
-            parsed->first.S_un.S_addr & nativeRoute.row.dwForwardMask;
-        nativeRoute.row.dwForwardPolicy = 0;
-        nativeRoute.row.dwForwardNextHop = INADDR_ANY;
-        nativeRoute.row.dwForwardIfIndex = session.interfaceIndex;
-        nativeRoute.row.dwForwardType = MIB_IPROUTE_TYPE_DIRECT;
-        nativeRoute.row.dwForwardProto = MIB_IPPROTO_NETMGMT;
-        nativeRoute.row.dwForwardMetric1 = 1;
-        if (std::ranges::any_of(desired, [&](const WindowsRoute& installed) {
-                return matches(installed, nativeRoute);
-            })) continue;
-        const auto existing = std::ranges::find_if(
-            session.routes, [&](const WindowsRoute& installed) {
-                return matches(installed, nativeRoute);
-            });
-        if (existing != session.routes.end()) {
-            desired.push_back(*existing);
-            continue;
-        }
-        const DWORD result = CreateIpForwardEntry(&nativeRoute.row);
-        if (result == NO_ERROR) {
-            nativeRoute.owned = true;
-            created.push_back(nativeRoute);
-        } else if (result == ERROR_OBJECT_ALREADY_EXISTS ||
-                   result == ERROR_ALREADY_EXISTS) {
-            // An identical user route already satisfies this request. Borrow it;
-            // neither rollback nor disconnect may remove an entry we did not add.
-            nativeRoute.owned = false;
-        } else {
-            error = windowsError("安装 PPTP 内网路由失败", result);
-            rollback();
-            return false;
-        }
-        desired.push_back(nativeRoute);
-    }
-    for (auto& old : session.routes) {
-        if (old.owned && !std::ranges::any_of(desired, [&](const WindowsRoute& route) {
-                return matches(old, route);
-            })) DeleteIpForwardEntry(&old.row);
-    }
-    session.routes = std::move(desired);
-    return true;
+    return vpn::compensation::ReplaceWindowsNativeRoutes(
+        session.interfaceLuid.Value, routes, session.routes, error);
 }
 
 void disconnectWindows(const std::shared_ptr<Runtime>& runtime,
@@ -744,12 +653,13 @@ void disconnectWindows(const std::shared_ptr<Runtime>& runtime,
         session = std::move(it->second);
         runtime->windowsSessions.erase(it);
     }
-    deleteWindowsRoutes(session);
+    session.routes.clear();
     if (session.connection != nullptr) RasHangUp(session.connection);
     RasDeleteEntryW(session.phonebook.c_str(), session.entry.c_str());
     DeleteFileW(session.phonebook.c_str());
     connection.interfaceName.clear();
     connection.gateway.clear();
+    connection.transportAddress.clear();
 }
 
 #else
@@ -854,8 +764,10 @@ bool PptpSessionAlive(std::string_view connectionId) {
     }
     RASCONNSTATUSW status{};
     status.dwSize = sizeof(status);
+    const auto iface = findPppInterface(it->second.connection, it->second.entry);
     return RasGetConnectStatusW(it->second.connection, &status) == ERROR_SUCCESS &&
-           status.rasconnstate == RASCS_Connected;
+           status.rasconnstate == RASCS_Connected && iface &&
+           iface->InterfaceLuid.Value == it->second.interfaceLuid.Value;
 #else
     (void)connectionId;
     return false;

@@ -439,6 +439,7 @@ void DesktopPreparePlatformDataDirectory(
     }
         .With(huxerui::Spacing(rootSpec.spacing.extra_small),
               huxerui::Background(rootSpec.colors.background),
+              huxerui::ClipChildren(),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 

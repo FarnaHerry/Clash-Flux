@@ -238,6 +238,123 @@ std::optional<PhysicalRoute> SelectPhysicalRoute(std::string_view address,
     return selected;
 }
 
+std::optional<std::vector<std::string>> WindowsCaptureDestinations(
+    std::span<const std::string> destinations, std::span<const std::string> exclusions,
+    std::string& error) {
+    error.clear();
+    using Prefix = std::pair<std::uint32_t, unsigned int>;
+    const auto parse = [](std::string_view text) -> std::optional<Prefix> {
+        const auto normalized = NormalizeIpv4Cidr(text, true);
+        if (!normalized) return {};
+        const auto slash = normalized->find('/');
+        unsigned int bits = 0;
+        std::from_chars(normalized->data() + slash + 1, normalized->data() + normalized->size(), bits);
+        return Prefix{*parseIpv4(std::string_view(*normalized).substr(0, slash)), bits};
+    };
+    std::vector<Prefix> excluded;
+    for (const auto& text : exclusions) {
+        // Windows compensation is IPv4 only; IPv6 exclusions stay in sing-box.
+        if (text.find(':') != std::string::npos) continue;
+        const auto value = parse(text);
+        if (!value) { error = "Windows TUN 排除网段无效"; return {}; }
+        excluded.push_back(*value);
+    }
+    std::set<Prefix> result;
+    for (const auto& text : destinations) {
+        const auto value = parse(text);
+        if (!value || value->second == 0) { error = "Windows 原生网段必须是非默认 IPv4 路由"; return {}; }
+        std::vector<Prefix> pending{*value};
+        while (!pending.empty()) {
+            const auto [network, bits] = pending.back();
+            pending.pop_back();
+            bool split = false, skip = false;
+            for (const auto& [other, otherBits] : excluded) {
+                const auto common = std::min(bits, otherBits);
+                const auto mask = common == 0 ? 0U : (0xffffffffU << (32 - common));
+                if ((network & mask) != (other & mask)) continue;
+                if (otherBits <= bits) skip = true;
+                else split = true;
+            }
+            if (skip) continue;
+            if (split) {
+                pending.emplace_back(network, bits + 1);
+                pending.emplace_back(network | (1U << (31 - bits)), bits + 1);
+            } else result.emplace(network, bits);
+        }
+    }
+    std::vector<std::string> routes;
+    for (const auto& [network, bits] : result) routes.push_back(std::format("{}/{}", formatIpv4(network), bits));
+    return routes;
+}
+
+struct WindowsRouteRegistry::Impl {
+    explicit Impl(WindowsRouteOperations value) : operations(std::move(value)) {}
+    struct Entry {
+        std::shared_ptr<Impl> owner;
+        WindowsRoute route;
+        std::string key;
+        bool owned = false;
+        bool registered = false;
+        ~Entry() {
+            if (!registered) return;
+            std::lock_guard lock(owner->mutex);
+            // A final owner can wait on the mutex while acquire() installs a
+            // replacement. The expired map entry is removed under the same lock.
+            if (owned) {
+                try { owner->operations.remove(route); } catch (...) {}
+            }
+            owner->entries.erase(key);
+        }
+    };
+    WindowsRouteOperations operations;
+    std::mutex mutex;
+    std::map<std::string, std::weak_ptr<Entry>> entries;
+};
+
+WindowsRouteRegistry::WindowsRouteRegistry(WindowsRouteOperations operations)
+    : impl_(std::make_shared<Impl>(std::move(operations))) {}
+WindowsRouteRegistry::~WindowsRouteRegistry() = default;
+
+RouteLease WindowsRouteRegistry::acquire(WindowsRoute route, std::string& error) {
+    error.clear();
+    const auto normalized = NormalizeIpv4Cidr(route.destination, true);
+    if (!route.interfaceLuid || !normalized ||
+        (!route.gateway.empty() && !usableTransport(route.gateway))) {
+        error = "Windows 路由接口、网段或网关无效";
+        return {};
+    }
+    route.destination = *normalized;
+    const auto key = std::format("{}|{}|{}", route.interfaceLuid, route.destination, route.gateway);
+    std::lock_guard lock(impl_->mutex);
+    if (const auto found = impl_->entries.find(key); found != impl_->entries.end()) {
+        if (auto existing = found->second.lock()) {
+            if (existing->route.metric != route.metric) {
+                error = "Windows 路由已被另一会话以不同 metric 使用";
+                return {};
+            }
+            return existing;
+        }
+        // The old deleter may be blocked on this mutex. Do not borrow its
+        // about-to-be-deleted entry or replace it before cleanup finishes.
+        error = "Windows 路由正在释放，请重试";
+        return {};
+    }
+    if (!impl_->operations.create || !impl_->operations.remove) {
+        error = "缺少 Windows 路由后端";
+        return {};
+    }
+    auto entry = std::make_shared<Impl::Entry>();
+    entry->owner = impl_;
+    entry->route = std::move(route);
+    entry->key = key;
+    const auto result = impl_->operations.create(entry->route, error);
+    if (result == RouteCreation::Failed) return {};
+    entry->owned = result == RouteCreation::Created;
+    impl_->entries[key] = entry;
+    entry->registered = true;
+    return entry;
+}
+
 struct RouteRegistry::Impl : std::enable_shared_from_this<Impl> {
     struct Entry {
         std::shared_ptr<Impl> owner;
@@ -449,6 +566,27 @@ CommandResult runIp(const std::vector<std::string>& args) {
 RouteRegistry& systemRegistry() {
     static RouteRegistry registry(runIp);
     return registry;
+}
+
+void cleanupManagedLinuxRoutesImpl(std::string& error) {
+    error.clear();
+    bool failed = false;
+    auto run = [&](std::vector<std::string> args) {
+        const auto result = runIp(args);
+        if (result.exitCode != 0 && result.output.find("No such file") == std::string::npos) {
+            failed = true;
+            if (error.empty()) error = result.output;
+        }
+    };
+    // The TUN compiler owns pref 9000; remove only that exact priority.
+    run({"ip", "-4", "rule", "del", "pref", "9000"});
+    // RouteRegistry uses protocol 186 and tables 52000–52999. Flush only
+    // entries carrying that protocol, never the user's ordinary routes.
+    for (int table = FirstTable; table <= LastTable; ++table) {
+        run({"ip", "-4", "route", "flush", "table", std::to_string(table),
+             "proto", std::string(RouteProtocol)});
+    }
+    if (failed && error.empty()) error = "清理托管 Linux 路由失败";
 }
 
 bool physicalInterface(std::string_view name, int depth = 0) {
@@ -689,6 +827,12 @@ std::vector<std::string> queryDns(std::string_view host, std::string_view server
 
 } // namespace
 
+#if defined(__linux__) && !defined(__ANDROID__)
+void CleanupManagedLinuxRoutes(std::string& error) {
+    cleanupManagedLinuxRoutesImpl(error);
+}
+#endif
+
 std::optional<TransportLease> PrepareTransport(std::string_view host, std::string& error) {
     error.clear();
     if (host.find(':') != std::string_view::npos) {
@@ -730,6 +874,8 @@ std::optional<TransportLease> PrepareTransport(std::string_view host, std::strin
             return TransportLease{address, std::move(lease)};
     }
     if (error.empty()) error = "无法通过物理网卡解析或绕行 VPN 服务器 IPv4 地址";
+#elif defined(_WIN32)
+    return PrepareWindowsTransport(host, error);
 #else
     error = "当前平台尚未实现原生 VPN 临时补偿路由；仅 Linux 支持";
 #endif

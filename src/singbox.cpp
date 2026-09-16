@@ -773,14 +773,13 @@ std::optional<nlohmann::json> globalRuleMatch(Context& ctx, const vpn::RouteRule
     nlohmann::json match = nlohmann::json::object();
     std::string pattern = trimCopy(rule.pattern);
     switch (rule.match) {
-    case vpn::MatchKind::Any: return match;
+    case vpn::MatchKind::Any:
+        if (pattern.empty()) return match;
+        break;
     case vpn::MatchKind::ExactDomain:
     case vpn::MatchKind::DomainSuffix:
-        pattern = lowerCopy(std::move(pattern));
-        while (!pattern.empty() && pattern.back() == '.') pattern.pop_back();
-        if (rule.match == vpn::MatchKind::DomainSuffix && pattern.starts_with('.')) pattern.erase(0, 1);
-        if (!pattern.empty() && pattern.find_first_of(" /:\t\r\n") == std::string::npos) {
-            match[rule.match == vpn::MatchKind::ExactDomain ? "domain" : "domain_suffix"] = {pattern};
+        if (const auto host = vpn::NormalizeRuleDomain(pattern)) {
+            match[rule.match == vpn::MatchKind::ExactDomain ? "domain" : "domain_suffix"] = {*host};
             return match;
         }
         break;
@@ -815,10 +814,17 @@ std::string unusedOutboundTag(const nlohmann::json& config, std::string preferre
 }
 
 bool applyConnectionRules(Context& ctx) {
-#if !defined(__linux__) || defined(__ANDROID__)
+#if (!defined(__linux__) && !defined(_WIN32)) || defined(__ANDROID__)
     if (ctx.opt.tunInbound && std::ranges::any_of(ctx.opt.nativeConnections,
             [](const auto& native) { return native.connected; })) {
         ctx.result.error = "当前平台尚未实现原生 VPN 与主 TUN 的补偿路由；请先关闭 TUN";
+        return false;
+    }
+#endif
+#ifdef _WIN32
+    if (ctx.opt.tunInbound && std::ranges::any_of(ctx.opt.nativeConnections,
+            [](const auto& native) { return native.connected && native.kind != vpn::ConnectionKind::Pptp; })) {
+        ctx.result.error = "Windows 主 TUN 共存目前支持 PPTP；其他原生 VPN 请先关闭 TUN";
         return false;
     }
 #endif
@@ -860,16 +866,16 @@ bool applyConnectionRules(Context& ctx) {
         if (const auto native = nativeTags.find(connectionId); native != nativeTags.end()) {
             if (!native->second.empty()) {
                 rule["outbound"] = native->second;
-                return;
+                return true;
             }
         } else if (!connectionId.empty() && connectionId == ctx.opt.mainConnectionId) {
             rule["outbound"] = finalOutbound;
-            return;
+            return true;
         }
-        rule["action"] = "reject";
         if (unavailableWarnings.insert(connectionId).second) {
-            ctx.warn(std::format("全局目标连接「{}」未连接、接口不可用或不是当前主 VPN；匹配流量将被拒绝", connectionId));
+            ctx.warn(std::format("目标连接「{}」未连接或不可用；对应规则已暂停", connectionId));
         }
+        return false;
     };
 
     nlohmann::json precedence = nlohmann::json::array({
@@ -889,8 +895,7 @@ bool applyConnectionRules(Context& ctx) {
         }
         auto rule = globalRuleMatch(ctx, global);
         if (!rule) return false;
-        applyTarget(*rule, global.connectionId);
-        precedence.push_back(std::move(*rule));
+        if (applyTarget(*rule, global.connectionId)) precedence.push_back(std::move(*rule));
     }
 
     struct InternalRule { std::string cidr; std::string connectionId; int prefix; };
@@ -910,8 +915,7 @@ bool applyConnectionRules(Context& ctx) {
     });
     for (const auto& internal : internalRules) {
         nlohmann::json rule = {{"ip_cidr", {internal.cidr}}};
-        applyTarget(rule, internal.connectionId);
-        precedence.push_back(std::move(rule));
+        if (applyTarget(rule, internal.connectionId)) precedence.push_back(std::move(rule));
     }
     precedence.push_back({{"clash_mode", "direct"}, {"outbound", directTag}});
     precedence.push_back({{"clash_mode", "global"}, {"outbound", finalOutbound}});
@@ -936,6 +940,14 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
         if (!addressCidr(address, false)) {
             ctx.result.error = std::format(
                 "TUN 补偿地址「{}」无效，必须为 IP/CIDR", address);
+            return;
+        }
+    }
+
+    for (const auto& native : opt.nativeConnections) {
+        if (native.connected && !native.transportAddress.empty() &&
+            (!addressCidr(native.transportAddress, false) || native.transportAddress.find_first_of(":/") != std::string::npos)) {
+            ctx.result.error = "原生 VPN 传输服务器必须是预解析的 IPv4 地址";
             return;
         }
     }
@@ -1019,6 +1031,18 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
         if (!inbound.is_object() || inbound.value("type", "") != "tun") continue;
         inbound["auto_route"] = true;
         inbound["strict_route"] = opt.tunStrictRoute;
+#ifdef _WIN32
+        if (inbound.value("interface_name", "").empty()) inbound["interface_name"] = "ClashFlux";
+        if (!opt.nativeConnections.empty()) {
+            if (std::ranges::any_of(opt.nativeConnections, [](const auto& native) { return native.connected; }) &&
+                (inbound.contains("route_address") || inbound.contains("route_address_set") ||
+                 inbound.contains("route_exclude_address_set") || inbound.contains("inet4_route_address") ||
+                 inbound.contains("inet4_route_exclude_address"))) {
+                ctx.result.error = "Windows PPTP 共存需要默认全流量 TUN；请移除自定义 route_address/地址规则集/旧版地址字段";
+                return;
+            }
+        }
+#endif
 #if defined(__ANDROID__)
         inbound["stack"] = "gvisor";
 #elif defined(__linux__)
@@ -1051,6 +1075,10 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
 #endif
         for (const auto& address : opt.tunExcludeAddresses) {
             appendExclusion(*addressCidr(address, false));
+        }
+        for (const auto& native : opt.nativeConnections) {
+            if (native.connected && !native.transportAddress.empty())
+                appendExclusion(*addressCidr(native.transportAddress, false));
         }
         if (!exclusions.empty()) inbound["route_exclude_address"] = std::move(exclusions);
     }
