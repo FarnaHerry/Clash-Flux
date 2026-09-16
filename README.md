@@ -83,6 +83,19 @@ cmake --build build -j
 ./run.sh
 ```
 
+### 开发验证规范
+
+每次需求修改或代码修改完成后，必须先在本地重新编译，再交付或继续验证功能：
+
+```bash
+cmake --build build --target clash-flux
+./run.sh
+```
+
+`run.sh` 默认只启动仓库 `build/clash-flux` 中已编译的程序，不负责隐式编译；
+因此构建失败时不得把改动标记为已完成。若使用其他构建目录，需显式设置
+`CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh` 验证对应产物可运行。
+
 也可以使用 HuxerUI CLI：
 
 ```bash

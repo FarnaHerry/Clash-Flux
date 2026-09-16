@@ -44,7 +44,19 @@ std::vector<ProxyGroupSnapshot> ParseProxyGroups(const std::string& body) {
         group.current = value.value("now", "");
         group.selectable = value.value("selectable", isSelectorType(group.type));
         for (const auto& node : value["all"]) {
-            if (node.is_string()) group.nodes.push_back(node.get<std::string>());
+            if (!node.is_string()) continue;
+            const std::string name = node.get<std::string>();
+            group.nodes.push_back(name);
+            if (proxies.contains(name) && proxies[name].is_object()) {
+                const auto& info = proxies[name];
+                if (info.contains("history") && info["history"].is_array() &&
+                    !info["history"].empty()) {
+                    const auto& last = info["history"].back();
+                    group.delays[name] = last.is_object() ? last.value("delay", 0) : 0;
+                } else {
+                    group.delays[name] = 0;
+                }
+            }
         }
         groups.push_back(std::move(group));
     }
@@ -90,15 +102,15 @@ std::string ProxyGroupsSnapshot() {
     return body == nullptr ? std::string{} : std::string{body};
 #else
     const auto result = store::coreStore().api().proxies();
-    return result.ok ? result.body : std::string{};
+    return result.ok ? result.body : store::coreStore().proxyGroupsSnapshot();
 #endif
 }
 
 bool SelectProxyLine(const std::string& group, const std::string& name) {
 #if defined(__ANDROID__)
-    return clashflux_android_select_outbound(group.c_str(), name.c_str());
+    return store::coreStore().selectProxy(group, name);
 #else
-    return store::coreStore().api().selectProxy(group, name).ok;
+    return store::coreStore().selectProxy(group, name);
 #endif
 }
 

@@ -44,6 +44,20 @@ ctest --test-dir build             # 冒烟测试（test_smoke）
 huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/build/linux/）
 ```
 
+### 每次改动后的本地验证（强制）
+
+任何需求实现、修复、重构或 UI 调整完成后，agent 必须先重新编译本地目标，
+再验证 `./run.sh` 启动的是刚编译的可执行文件。默认流程为：
+
+```bash
+cmake --build build --target clash-flux
+./run.sh
+```
+
+`run.sh` 默认使用 `build/clash-flux`，不会替代编译步骤；若使用 `build-ubsan`
+或其他目录，必须通过 `CLASHFLUX_BIN` 指向该目录的可执行文件后再运行验证。
+没有完成本地编译和运行验证时，不得在回复中声称改动已完成。
+
 - 工具链：系统 GCC（本机 16.2.1）+ libstdc++，CMake ≥ 4.4（`import std` 仍是
   experimental：UUID 表在 `cmake/CxxImportStdGate.cmake`）。
 - **依赖全部 vendor 在 `third_party/`**（tarball + SHA256，configure 期解包到

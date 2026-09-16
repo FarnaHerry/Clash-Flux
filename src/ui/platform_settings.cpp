@@ -313,6 +313,8 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 }
 
 [[huxerui::composable]] huxerui::View DesktopGeneralSettings() {
+    auto autostart_enabled = huxerui::UseState(
+        store::coreStore().setting("app.autostart", "false") == "true");
     auto tray_enabled = huxerui::UseState(
         store::coreStore().setting("tray.enabled", "true") == "true");
     auto start_minimized = huxerui::UseState(
@@ -326,12 +328,28 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 
     return huxerui::Column {
         SettingSwitchRow(
+            "开机自启动", "登录系统后自动启动 Clash-Flux（桌面端）",
+            huxerui::Switch(autostart_enabled.Get())
+                .OnChanged([autostart_enabled](bool on) {
+                    autostart_enabled = on;
+                    store::coreStore().setSetting(
+                        "app.autostart", on ? "true" : "false");
+                })),
+        SettingSwitchRow(
             "启用托盘图标", "关闭后托盘不可用，关闭窗口即退出",
             huxerui::Switch(tray_enabled.Get())
                 .OnChanged([tray_enabled](bool on) {
                     tray_enabled = on;
                     store::coreStore().setSetting("tray.enabled",
                                                    on ? "true" : "false");
+                })),
+        SettingSwitchRow(
+            "启动时隐藏到托盘", "下次启动不显示主窗口，经托盘唤出",
+            huxerui::Switch(start_minimized.Get())
+                .OnChanged([start_minimized](bool on) {
+                    start_minimized = on;
+                    store::coreStore().setSetting(
+                        "tray.start_minimized", on ? "true" : "false");
                 })),
         SettingRow(
             "关闭窗口时",
@@ -344,14 +362,6 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                     close_behavior = index;
                     store::coreStore().setSetting("tray.close_behavior",
                                                    std::to_string(index));
-                })),
-        SettingSwitchRow(
-            "启动时隐藏到托盘", "下次启动不显示主窗口，经托盘唤出",
-            huxerui::Switch(start_minimized.Get())
-                .OnChanged([start_minimized](bool on) {
-                    start_minimized = on;
-                    store::coreStore().setSetting(
-                        "tray.start_minimized", on ? "true" : "false");
                 })),
     }.With(huxerui::Spacing(10.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -461,33 +471,6 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         }
                     });
                 })),
-        SettingRow(
-            "复制环境变量",
-            std::format("当前检测到 {}；复制当前混合端口的代理变量",
-                        detectedShell),
-            huxerui::Row {
-                huxerui::Select(
-                    envShellLabels,
-                    envShell.Get(),
-                    [](const std::string& name) { return huxerui::Text(name); })
-                    .OnChanged([envShell](std::size_t index) {
-                        envShell = index;
-                        store::coreStore().setSetting(
-                            "ui.env_shell", kEnvironmentShells[index].id);
-                    })
-                    .With(huxerui::Frame{.width = 170.0F}),
-                huxerui::Button("复制").OnClick(
-                    [clipboard, toast, envShell, s] {
-                        const std::string command = ProxyEnvironmentCommand(
-                            kEnvironmentShells[envShell.Get()].id,
-                            s.mixedPort);
-                        if (clipboard->WriteText(command)) {
-                            toast.Show("环境变量命令已复制");
-                        } else {
-                            toast.Show("复制失败");
-                        }
-                    }),
-            }.With(huxerui::Spacing(8.0F))),
         SettingSwitchRow(
             "TUN 模式",
             running ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
@@ -528,6 +511,33 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         }
                     });
                 })),
+        SettingRow(
+            "复制环境变量",
+            std::format("当前检测到 {}；复制当前混合端口的代理变量",
+                        detectedShell),
+            huxerui::Row {
+                huxerui::Select(
+                    envShellLabels,
+                    envShell.Get(),
+                    [](const std::string& name) { return huxerui::Text(name); })
+                    .OnChanged([envShell](std::size_t index) {
+                        envShell = index;
+                        store::coreStore().setSetting(
+                            "ui.env_shell", kEnvironmentShells[index].id);
+                    })
+                    .With(huxerui::Frame{.width = 170.0F}),
+                huxerui::Button("复制").OnClick(
+                    [clipboard, toast, envShell, s] {
+                        const std::string command = ProxyEnvironmentCommand(
+                            kEnvironmentShells[envShell.Get()].id,
+                            s.mixedPort);
+                        if (clipboard->WriteText(command)) {
+                            toast.Show("环境变量命令已复制");
+                        } else {
+                            toast.Show("复制失败");
+                        }
+                    }),
+            }.With(huxerui::Spacing(8.0F))),
     }.With(huxerui::Spacing(12.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }

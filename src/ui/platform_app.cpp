@@ -192,9 +192,17 @@ void DesktopPreparePlatformDataDirectory(
         0);
 
     // 系统 VPN 的断开可能要等待 pppd/RAS 收尾，先完成清理再关闭窗口。
-    auto finishExit = [tasks, application, exitRequested]() {
+    auto finishExit = [tasks, application, tray, window, exitRequested]() {
         if (exitRequested.Get()) return;
         exitRequested = true;
+        // Defer platform UI teardown by one frame. The close callback only
+        // marks the exit and schedules work, so native window/tray APIs do
+        // not block the input event that requested the close.
+        tasks.Launch([window, tray]() -> huxerui::Task<void> {
+            co_await huxerui::Delay(std::chrono::duration<double>{0});
+            window.Hide();
+            tray.Hide();
+        });
         tasks.Launch([application]() -> huxerui::Task<void> {
             co_await RunOnTaskThread([] {
                 store::vpnStore().shutdown();
@@ -338,7 +346,7 @@ void DesktopPreparePlatformDataDirectory(
     // trayAvailable 只是当前帧的快照；关闭事件可能在托盘宿主晚就绪后
     // 才发生，因此事件处理必须动态查询 tray.IsAvailable()。
     const huxerui::Color closeHintColor = rootSpec.colors.on_surface_variant;
-    auto hideToTray = [tasks, window] {
+    auto hideWindow = [tasks, window] {
         // GTK/Win32/macOS 的关闭回调都在平台事件栈中执行。把 Hide 推迟
         // 到下一帧，避免隐藏最后一个窗口时让运行时在回调中途拆毁自己。
         tasks.Launch([window]() -> huxerui::Task<void> {
@@ -360,20 +368,20 @@ void DesktopPreparePlatformDataDirectory(
                 return true;
             }
             if (behavior == "2") {
-                hideToTray();
+                hideWindow();
                 return true;
             }
             if (closeDialogOpen.Get()) return true;
             closeDialogOpen = true;
             dialog.Show(
                 [=](huxerui::DialogContext ctx) -> huxerui::View {
-                    return DialogCard(huxerui::Column {
+                    return DialogCard(huxerui::Column{
                         huxerui::Text("关闭 Clash-Flux？", huxerui::TextRole::Title),
-                        huxerui::Text("直接退出将停止代理；最小化到托盘后代理继续在后台运行。")
+                        huxerui::Text("直接关闭会停止代理；最小化到托盘后代理继续运行。")
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::System(font_size::kCaption),
                                 closeHintColor}),
-                        huxerui::Row {
+                        huxerui::Row{
                             huxerui::Button("直接关闭").OnClick([=] {
                                 ctx.Dismiss();
                                 closeDialogOpen = false;
@@ -382,7 +390,7 @@ void DesktopPreparePlatformDataDirectory(
                             huxerui::Button("最小化到托盘").OnClick([=] {
                                 ctx.Dismiss();
                                 closeDialogOpen = false;
-                                hideToTray();
+                                hideWindow();
                             }),
                             huxerui::Button("取消").OnClick([=] {
                                 ctx.Dismiss();

@@ -202,6 +202,23 @@ public:
         }
     }
 
+    std::string proxyGroupsSnapshot() {
+        std::lock_guard lock(mutex_);
+        return compiledProxyGroups_;
+    }
+
+    bool selectProxy(const std::string& group, const std::string& name) {
+        setSetting("proxy.selection." + group, name);
+#if defined(__ANDROID__)
+        if (clashflux_android_vpn_state() == 2)
+            return clashflux_android_select_outbound(group.c_str(), name.c_str());
+        return true;
+#else
+        if (snapshot().state != core::CoreState::Running) return true;
+        return api_->selectProxy(group, name).ok;
+#endif
+    }
+
     std::string mode() { return setting("core.mode", "rule"); }
     int mixedPort() {
         try {
@@ -447,6 +464,35 @@ public:
                                              ? std::string{"未知错误"}
                                              : compiled.error));
                 return;
+            }
+            {
+                auto config = nlohmann::json::parse(compiled.json);
+                nlohmann::json groups = nlohmann::json::object();
+                for (auto& outbound : config["outbounds"]) {
+                    const std::string type = outbound.value("type", "");
+                    if (type != "selector" && type != "urltest") continue;
+                    const std::string group = outbound.value("tag", "");
+                    if (group.empty()) continue;
+                    const auto members = outbound.value("outbounds", nlohmann::json::array());
+                    std::string current = outbound.value("default", "");
+                    const std::string saved = setting("proxy.selection." + group, "");
+                    if (type == "selector" && !saved.empty()) {
+                        for (const auto& member : members) {
+                            if (member == saved) {
+                                outbound["default"] = saved;
+                                current = saved;
+                                break;
+                            }
+                        }
+                    }
+                    if (current.empty() && !members.empty())
+                        current = members.front().get<std::string>();
+                    groups[group] = {{"type", type}, {"now", current},
+                                     {"all", members},
+                                     {"selectable", type == "selector"}};
+                }
+                compiledProxyGroups_ = nlohmann::json{{"proxies", groups}}.dump();
+                compiled.json = config.dump();
             }
             prefetchRuleSets(compiled.json, workDir);
             options.ruleSetDir = workDir.string();
@@ -911,6 +957,7 @@ private:
     CoreSnapshot snap_;
     std::string binaryPath_;
     std::string lastProfileYaml_;    // 最近一次 startCore 的订阅原文（applyTun 重启用）
+    std::string compiledProxyGroups_;
     bool managedByService_ = false;  // 内核由 root 服务托管
     bool adopted_ = false;           // 接管的外部内核实例（非本进程 spawn）
 };

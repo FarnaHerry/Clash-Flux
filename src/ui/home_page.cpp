@@ -48,6 +48,8 @@ struct HomeState {
     std::int64_t profileId = 0;
     std::string profileName;
     std::string profileUpdated;
+    std::int64_t profileUsedBytes = 0;
+    std::int64_t profileTotalBytes = 0;
     std::vector<ProxyGroupSnapshot> proxyGroups;
 
     bool operator==(const HomeState&) const = default;
@@ -361,12 +363,12 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
-    auto menu = huxerui::UseMenu();
     auto state = huxerui::UseState<HomeState>({});
     // 乐观开关：点击立即翻转显示，后台完成后清除覆盖（真实状态接管），
     // 失败自动回弹并提示。覆盖值非空即“进行中”，期间忽略再次点击，
     // 避免 TUN 重启内核期间的并发 stop/start。
     auto modeOverride = huxerui::UseState<std::optional<std::size_t>>(std::nullopt);
+    auto selectedGroup = huxerui::UseState<std::size_t>(0);
 
     huxerui::Lifecycle(
         [tasks, state] {
@@ -379,6 +381,8 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                     if (const auto p = store::profilesStore().selected()) {
                         s.profileId = p->id;
                         s.profileName = p->name;
+                        s.profileUsedBytes = p->usedBytes;
+                        s.profileTotalBytes = p->totalBytes;
                         s.profileUpdated = p->updatedAt > 0
                                                ? "更新于 " + formatTime(p->updatedAt)
                                                : "未拉取";
@@ -387,6 +391,8 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                         s.profileId = 0;
                         s.profileName = "未启用订阅";
                         s.profileUpdated = "";
+                        s.profileUsedBytes = 0;
+                        s.profileTotalBytes = 0;
                         s.proxyGroups.clear();
                     }
 
@@ -396,12 +402,8 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
             });
             tasks.Launch([state]() -> huxerui::Task<void> {
                 for (;;) {
-                    const std::string body = co_await RunOnTaskThread([] {
-                        return store::coreStore().snapshot().state ==
-                                       core::CoreState::Running
-                                   ? ProxyGroupsSnapshot()
-                                   : std::string{};
-                    });
+                    const std::string body =
+                        co_await RunOnTaskThread([] { return ProxyGroupsSnapshot(); });
                     HomeState s = state.Get();
                     s.proxyGroups = ParseProxyGroups(body);
                     state = s;
@@ -478,34 +480,73 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
             state = next;
         });
     };
-    const auto showLineMenu = [menu, state, selectLine] {
-        menu.Show(BuildProxyLineMenu(state.Get().proxyGroups, selectLine));
-    };
-    const std::string lineText = currentProxyLine(s.proxyGroups);
-    huxerui::View profileCard = Card(huxerui::Column {
+    std::vector<ProxyGroupSnapshot> selectableGroups;
+    for (const auto& group : s.proxyGroups) {
+        if (group.selectable) selectableGroups.push_back(group);
+    }
+    if (selectedGroup.Get() >= selectableGroups.size()) selectedGroup = 0;
+    const std::size_t groupIndex =
+        selectableGroups.empty() ? 0 : selectedGroup.Get();
+    std::vector<std::string> groupNames;
+    std::vector<std::string> nodeNames;
+    for (const auto& group : selectableGroups) groupNames.push_back(group.name);
+    if (groupIndex < selectableGroups.size()) {
+        for (const auto& node : selectableGroups[groupIndex].nodes)
+            nodeNames.push_back(node);
+    }
+    std::size_t nodeIndex = 0;
+    if (groupIndex < selectableGroups.size()) {
+        for (std::size_t i = 0; i < selectableGroups[groupIndex].nodes.size(); ++i) {
+            if (selectableGroups[groupIndex].nodes[i] ==
+                selectableGroups[groupIndex].current) {
+                nodeIndex = i;
+                break;
+            }
+        }
+    }
+    huxerui::View profileBody = huxerui::Column {
         huxerui::Text("当前订阅").Style(huxerui::TextStyle{
             huxerui::Font::System(font_size::kBody)
                 .WithWeight(huxerui::FontWeight::SemiBold),
             theme.colors.on_surface}),
-        huxerui::Text(s.profileName)
-            .Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody),
-                theme.colors.on_surface}),
-        s.profileId != 0
-            ? huxerui::View{huxerui::Row {
-                  huxerui::Text("当前线路：" + lineText)
-                      .Style(huxerui::TextStyle{
-                          huxerui::Font::System(font_size::kCaption),
-                          theme.colors.on_surface_variant})
-                      .With(huxerui::Grow(1.0F)),
-                  huxerui::IconButton(app::images::swap, "切换线路")
-                      .With(huxerui::Tooltip("切换线路"))
-                      .With(menu.Anchor())
-                      .OnClick(showLineMenu),
-              }.With(huxerui::Spacing(8.0F),
-                     huxerui::CrossAlign(
-                         huxerui::CrossAxisAlignment::Center))}
-            : huxerui::View{huxerui::Row{}},
+        huxerui::Text(s.profileName).Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kBody), theme.colors.on_surface}),
+        selectableGroups.empty()
+            ? huxerui::View{huxerui::Text("暂无可选代理分组")}
+            : huxerui::View{huxerui::Column{
+                  huxerui::Select(groupNames, groupIndex,
+                                  [](const std::string& name) { return huxerui::Text(name); })
+                      .OnChanged([selectedGroup](std::size_t index) {
+                          selectedGroup = index;
+                      }),
+                  huxerui::Select(nodeNames, nodeIndex,
+                                  [theme, selectableGroups, groupIndex](
+                                      const std::string& name) {
+                                      const std::string& text = name;
+                                      int delay = 0;
+                                      if (groupIndex < selectableGroups.size()) {
+                                          const auto it = selectableGroups[groupIndex].delays.find(text);
+                                          if (it != selectableGroups[groupIndex].delays.end()) delay = it->second;
+                                      }
+                                      return huxerui::Row{
+                                          huxerui::Text(name), huxerui::Spacer{},
+                                          huxerui::Text(delay > 0 ? std::format("{} ms", delay)
+                                                                  : "超时")
+                                              .Style(huxerui::TextStyle{
+                                                  huxerui::Font::System(font_size::kCaption),
+                                                  DelayLevelColor(theme, delay)})}
+                                          .With(huxerui::Semantics{
+                                              .role = huxerui::SemanticRole::MenuItem,
+                                              .label = name});
+                                  })
+                      .OnChanged([selectLine, selectableGroups, groupIndex](std::size_t index) {
+                          if (groupIndex < selectableGroups.size() &&
+                              index < selectableGroups[groupIndex].nodes.size()) {
+                              selectLine(selectableGroups[groupIndex].name,
+                                         selectableGroups[groupIndex].nodes[index]);
+                          }
+                      }),
+              }.With(huxerui::Spacing(6.0F))},
         s.profileUpdated.empty()
             ? huxerui::View{huxerui::Row{}}
             : huxerui::View{
@@ -514,8 +555,21 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                           huxerui::Font::System(font_size::kCaption),
                           theme.colors.on_surface_variant})},
     }.With(huxerui::Spacing(4.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start)))
-                                    .With(huxerui::Grow(1.0F));
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
+    huxerui::View profileCard = Card(huxerui::Stack{
+        std::move(profileBody),
+        s.profileId != 0
+            ? huxerui::View{huxerui::ProgressBar(s.profileTotalBytes > 0
+                                                     ? std::clamp(
+                                                           static_cast<float>(s.profileUsedBytes) /
+                                                               static_cast<float>(s.profileTotalBytes),
+                                                           0.0F, 1.0F)
+                                                     : 1.0F)
+                                .With(huxerui::Frame{.height = 3.0F},
+                                      huxerui::MainAlign(huxerui::MainAxisAlignment::End),
+                                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))}
+            : huxerui::View{huxerui::Row{}}});
+    profileCard = std::move(profileCard).With(huxerui::Grow(1.0F));
     huxerui::View systemCard = CLASHFLUX_HOME_SYSTEM_CARD(s).With(
         huxerui::Grow(1.0F));
 
