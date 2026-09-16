@@ -26,6 +26,8 @@ export struct NativeConnection {
     std::string interfaceName;
     std::vector<std::string> internalRoutes;
     bool connected = false;
+    vpn::ConnectionKind kind = vpn::ConnectionKind::Pptp;
+    std::string transportAddress;
 };
 
 export struct CompileOptions {

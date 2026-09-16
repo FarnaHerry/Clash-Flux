@@ -27,6 +27,7 @@ import clashflux.stream;
 import clashflux.sysproxy;
 import clashflux.service;
 import clashflux.routing;
+import clashflux.vpn_compensation;
 
 namespace store {
 
@@ -235,8 +236,8 @@ public:
 
     // 切换 TUN（阻塞）。sing-box 的 clash_api 不支持热更 tun：内核运行中 →
     // 重新合成 config.json 并重启内核生效，重启失败（如无 root/CAP_NET_ADMIN，
-    // sing-box 建 TUN 失败退出）回滚设置并恢复无 TUN 运行；未运行 → 仅持久化
-    // （下次启动生成 tun inbound）。成功更新快照。
+    // sing-box 建 TUN 失败退出）回滚设置并恢复无 TUN 运行；未运行时开启
+    // TUN 会尝试使用当前订阅启动内核。成功更新快照。
     bool applyTun(bool enable) {
         std::lock_guard operationLock(lifecycleMutex_);
 #if defined(__ANDROID__)
@@ -249,7 +250,14 @@ public:
             std::lock_guard lock(mutex_);
             snap_.tunEnabled = enable;
         }
-        if (snapshot().state != core::CoreState::Running) return true;
+        if (snapshot().state != core::CoreState::Running) {
+            if (!enable) return true;
+            if (ensureRunning()) return true;
+            setSetting("core.tun_enabled", "false");
+            std::lock_guard lock(mutex_);
+            snap_.tunEnabled = false;
+            return false;
+        }
         if (!stopCore()) {
             setSetting("core.tun_enabled", enable ? "false" : "true");
             return false;
@@ -273,11 +281,13 @@ public:
 
     // 切换系统代理（阻塞 shell 调用）。成功持久化设置。
     bool applySystemProxy(bool enable) {
+        std::lock_guard operationLock(lifecycleMutex_);
 #if defined(__ANDROID__)
         (void)enable;
         return false;
 #else
         ensureOpen();
+        if (enable && !ensureRunning()) return false;
         std::string err;
         const bool ok =
             enable ? sysproxy::enable("127.0.0.1", mixedPort(), err)
@@ -293,11 +303,45 @@ public:
 #endif
     }
 
+    // Read the selected profile at the time of the action, including after a
+    // stopped-core subscription switch. Never silently start an empty profile.
+    inline bool ensureRunning() {
+        std::lock_guard operationLock(lifecycleMutex_);
+        if (snapshot().state == core::CoreState::Running) return true;
+        ensureOpen();
+        for (const auto& profile : db_->listProfiles()) {
+            if (!profile.selected || profile.type == "pptp" || profile.type == "openvpn") continue;
+            std::ifstream input(cfg::profilesDir() / profile.file, std::ios::binary);
+            if (!input) { fail("无法读取当前订阅配置，请先更新或重新导入订阅"); return false; }
+            const std::string yaml{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+            if (yaml.empty()) { fail("当前订阅配置为空，请先更新订阅"); return false; }
+            startCore(yaml);
+            return snapshot().state == core::CoreState::Running;
+        }
+        fail("请先选择一个代理订阅，再开启 TUN 或系统代理");
+        return false;
+    }
+
     // ---- 内核控制（阻塞：UI 必须 RunOnTaskThread）----
 
+#ifdef _WIN32
+    // Native dialing must run before TUN captures are installed: an existing
+    // TUN /32 could otherwise beat the new server's physical /32 route.
+    inline std::unique_lock<std::recursive_mutex> lockNativeLifecycle() {
+        return std::unique_lock(lifecycleMutex_);
+    }
+    inline bool resumeNativeRouting(std::string& error) {
+        std::lock_guard operationLock(lifecycleMutex_);
+        startCore(lastProfileYaml_);
+        if (snapshot().state == core::CoreState::Running) return true;
+        error = snapshot().lastError;
+        return false;
+    }
+#endif
+
     // Called by the native store after establishing a session, or BEFORE
-    // tearing one down. Compile a reject for unavailable destinations before
-    // the interface can disappear or be reused by another connection.
+    // tearing one down. Suspend unavailable destinations before the interface
+    // can disappear or be reused by another connection.
     inline bool updateNativeRouting(std::vector<singbox::NativeConnection> sessions,
                                     std::string& error) {
         std::lock_guard operationLock(lifecycleMutex_);
@@ -381,6 +425,11 @@ public:
 
         const std::filesystem::path workDir = cfg::coreWorkDir();
         const std::filesystem::path configFile = workDir / "config.json";
+#ifdef _WIN32
+        std::string windowsTunInterface;
+        std::vector<std::string> windowsNativeInterfaces;
+        std::vector<std::string> windowsExclusions;
+#endif
         {
             // 两遍编译：第一遍拿到远程规则集清单，直连预取 .srs 缓存（失败
             // 不致命）；第二遍命中本地文件即以 local rule_set 生成——内核
@@ -408,6 +457,22 @@ public:
                                              : compiled.error));
                 return;
             }
+#ifdef _WIN32
+            if (options.tunInbound) {
+                for (const auto& native : options.nativeConnections) {
+                    if (native.connected && !native.interfaceName.empty())
+                        windowsNativeInterfaces.push_back(native.interfaceName);
+                }
+                if (!windowsNativeInterfaces.empty()) {
+                    const auto config = nlohmann::json::parse(compiled.json);
+                    for (const auto& inbound : config["inbounds"]) {
+                        if (inbound.value("type", "") != "tun") continue;
+                        windowsTunInterface = inbound.value("interface_name", "ClashFlux");
+                        windowsExclusions = inbound.value("route_exclude_address", std::vector<std::string>{});
+                    }
+                }
+            }
+#endif
             // Android's VpnService waits for this file from another thread.
             // Never expose a partially-written JSON document to libbox; an
             // atomic rename also prevents a stale config from being selected
@@ -530,6 +595,18 @@ public:
             return;
         }
 
+#ifdef _WIN32
+        if (!windowsNativeInterfaces.empty()) {
+            std::string error;
+            windowsRouting_ = vpn::compensation::PrepareWindowsTun(
+                windowsTunInterface, windowsNativeInterfaces, windowsExclusions, error);
+            if (!windowsRouting_) {
+                stopCore();
+                fail("Windows PPTP/TUN 补偿失败：" + error);
+                return;
+            }
+        }
+#endif
         streams_.start(cfg::controllerWsUrl(), secret_, logLevel());
         {
             std::lock_guard lock(mutex_);
@@ -550,6 +627,11 @@ public:
 
     bool stopCore() {
         std::lock_guard operationLock(lifecycleMutex_);
+#ifdef _WIN32
+        // Remove native interface fallback defaults while TUN still captures
+        // ordinary traffic. PPTP's server route remains owned by its session.
+        windowsRouting_.reset();
+#endif
         stream::logApplication("info", "请求停止代理内核");
 #if defined(__ANDROID__)
         clashflux_android_stop_vpn();
@@ -599,6 +681,14 @@ public:
         }
         std::error_code ec;
         std::filesystem::remove(cfg::coreWorkDir() / "core.pid", ec);
+#if defined(__linux__) && !defined(__ANDROID__)
+        std::string routeCleanupError;
+        vpn::compensation::CleanupManagedLinuxRoutes(routeCleanupError);
+        if (!routeCleanupError.empty()) {
+            std::lock_guard lock(mutex_);
+            snap_.lastError = "主内核已停止，但系统路由清理失败：" + routeCleanupError;
+        }
+#endif
         std::lock_guard lock(mutex_);
         snap_.state = core::CoreState::Stopped;
         snap_.version.clear();
@@ -814,6 +904,9 @@ private:
     std::mutex mutex_;
     std::recursive_mutex lifecycleMutex_;
     std::vector<singbox::NativeConnection> nativeSessions_;
+#ifdef _WIN32
+    vpn::compensation::RouteLease windowsRouting_;
+#endif
     std::once_flag initFlag_;
     CoreSnapshot snap_;
     std::string binaryPath_;

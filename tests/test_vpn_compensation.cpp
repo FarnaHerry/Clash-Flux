@@ -24,6 +24,70 @@ int main() {
     assert(!SelectPhysicalRoute("198.18.1.7", routes));
     assert(SelectPhysicalRoute("10.2.3.4", routes)->interfaceName == "eth0");
 
+    // Windows leases share a server route across sessions, borrow user routes,
+    // and roll back only objects whose creation succeeded.
+    std::string windowsError;
+    std::vector<WindowsRoute> installed, removed;
+    WindowsRouteRegistry windows({
+        [&](const WindowsRoute& route, std::string& error) {
+            if (route.destination == "203.0.113.99/32") {
+                error = "access denied";
+                return RouteCreation::Failed;
+            }
+            if (route.destination == "203.0.113.88/32") return RouteCreation::Borrowed;
+            installed.push_back(route);
+            return RouteCreation::Created;
+        },
+        [&](const WindowsRoute& route) { removed.push_back(route); }});
+    auto endpoint = windows.acquire({42, "203.0.113.7", "192.0.2.1", 0}, windowsError);
+    assert(endpoint && windowsError.empty());
+    auto shared = windows.acquire({42, "203.0.113.7/32", "192.0.2.1", 0}, windowsError);
+    assert(shared && installed.size() == 1);
+    assert(!windows.acquire({42, "203.0.113.7/32", "192.0.2.1", 1}, windowsError));
+    endpoint.reset();
+    assert(removed.empty());
+    shared.reset();
+    assert(removed.size() == 1 && removed[0] == installed[0]);
+    endpoint = windows.acquire({42, "203.0.113.7", "192.0.2.1", 0}, windowsError);
+    assert(endpoint && installed.size() == 2); // cleanup must allow reconnect
+    endpoint.reset();
+    const auto removalCount = removed.size();
+    auto borrowed = windows.acquire({42, "203.0.113.88", "192.0.2.1", 0}, windowsError);
+    assert(borrowed);
+    borrowed.reset();
+    assert(removed.size() == removalCount);
+    borrowed = windows.acquire({42, "203.0.113.88", "192.0.2.1", 0}, windowsError);
+    assert(borrowed); // borrowed entries also release their registry key
+    assert(!windows.acquire({42, "203.0.113.99", "192.0.2.1", 0}, windowsError));
+    assert(windowsError == "access denied" && removed.size() == removalCount);
+    assert(!windows.acquire({0, "203.0.113.7", {}, 0}, windowsError));
+    assert(!windows.acquire({42, "vpn.example", {}, 0}, windowsError));
+    assert(!windows.acquire({42, "203.0.113.7", "198.18.0.1", 0}, windowsError));
+    {
+        std::vector<RouteLease> transaction;
+        transaction.push_back(windows.acquire({77, "10.0.0.1/24", {}, 0}, windowsError));
+        assert(transaction.back());
+        assert(!windows.acquire({77, "203.0.113.99", {}, 0}, windowsError));
+    }
+    assert(removed.back().destination == "10.0.0.0/24");
+
+    // Extra TUN routes preserve /32 capture and subtract exclusions without
+    // merging into the broad /1 routes that would lose to native routes.
+    auto capture = WindowsCaptureDestinations(
+        std::vector<std::string>{"10.0.0.0/30", "10.0.0.9/32", "10.0.0.9"},
+        std::vector<std::string>{"10.0.0.1/32", "2001:db8::/32"}, windowsError);
+    assert(capture && *capture == (std::vector<std::string>{"10.0.0.0/32", "10.0.0.2/31", "10.0.0.9/32"}));
+    capture = WindowsCaptureDestinations(std::vector<std::string>{"10.0.0.9/32"},
+        std::vector<std::string>{"10.0.0.0/8"}, windowsError);
+    assert(capture && capture->empty());
+    capture = WindowsCaptureDestinations(std::vector<std::string>{"10.0.0.9/32"},
+        std::vector<std::string>{"0.0.0.0/0"}, windowsError);
+    assert(capture && capture->empty());
+    assert(!WindowsCaptureDestinations(std::vector<std::string>{"0.0.0.0/0"}, {}, windowsError));
+    assert(!WindowsCaptureDestinations(std::vector<std::string>{"10.0.0.0/33"}, {}, windowsError));
+    assert(!WindowsCaptureDestinations(std::vector<std::string>{"10.0.0.0/8"},
+        std::vector<std::string>{"vpn.example"}, windowsError));
+
     std::vector<std::vector<std::string>> commands;
     CommandRunner runner = [&commands](const std::vector<std::string>& command) {
         commands.push_back(command);

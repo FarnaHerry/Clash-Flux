@@ -303,7 +303,7 @@ rules:
         {.match = vpn::MatchKind::ExactIp, .pattern = "2001:db8::1", .connectionId = "profile:main", .priority = 7},
     };
     compensation.tunExcludeAddresses = {"198.51.100.7", "198.51.100.7/32"};
-#if !defined(__linux__) || defined(__ANDROID__)
+#if (!defined(__linux__) && !defined(_WIN32)) || defined(__ANDROID__)
     check(!singbox::compileConfig(compensation).error.empty(),
           "缺少补偿后端的平台必须拒绝原生 VPN 与 TUN 共存");
     compensation.tunInbound = false;
@@ -327,13 +327,9 @@ rules:
         }
     }
     check(hasBoundNative, "原生 VPN 域名规则使用绑定 ppp 接口的 direct outbound");
-    check(compensationRules[5]["action"] == "reject" && compensationRules[6]["action"] == "reject",
-          "离线原生连接和非主 sing-box 目标拒绝，不能泄露到主出口");
-    check(compensationRules[7]["ip_cidr"] == json{"2001:db8::1/128"}, "IPv6 精确 IP 全局规则保留");
-    check(compensationRules[8]["ip_cidr"] == json{"10.42.0.0/16"} &&
-              compensationRules[8]["action"] == "reject" &&
-              compensationRules[9]["ip_cidr"] == json{"10.0.0.0/8"}, "内部 CIDR 按最长前缀且在全局之后匹配");
-    check(compensationRules[10]["clash_mode"] == "direct" && compensationRules[11]["clash_mode"] == "global",
+    check(compensationRules[5]["ip_cidr"] == json{"2001:db8::1/128"}, "离线目标规则暂停，IPv6 精确 IP 全局规则保留");
+    check(compensationRules[6]["ip_cidr"] == json{"10.0.0.0/8"}, "只安装活动连接的内部 CIDR");
+    check(compensationRules[7]["clash_mode"] == "direct" && compensationRules[8]["clash_mode"] == "global",
           "主 VPN 三模式不能绕过全局连接选择");
     for (const auto& inbound : compensationConfig["inbounds"]) {
         if (inbound.value("type", "") != "tun") continue;
@@ -347,17 +343,62 @@ rules:
               "Linux TUN 使用约定的补偿规则优先级并关闭 auto_redirect");
 #endif
     }
+    #ifdef _WIN32
     check(compensationResult.warnings.size() == 2, "不可用连接各报告一次警告");
+    for (const auto& inbound : compensationConfig["inbounds"]) {
+        if (inbound.value("type", "") != "tun") continue;
+        check(inbound["strict_route"] == true && inbound["interface_name"] == "ClashFlux",
+              "Windows PPTP 共存保留 strict_route 并使用确定的 TUN 别名");
+    }
+    auto unsupportedNative = compensation;
+    unsupportedNative.nativeConnections[0].kind = vpn::ConnectionKind::OpenVpn;
+    check(!singbox::compileConfig(unsupportedNative).error.empty(), "Windows OpenVPN 共存不得被误开放");
+    unsupportedNative.tunInbound = false;
+    check(singbox::compileConfig(unsupportedNative).error.empty(), "Windows OpenVPN 独立运行不受限制");
+    auto customCapture = compensation;
+    customCapture.profileYaml = R"({"inbounds":[{"type":"tun","route_address":["10.0.0.0/8"]}]})";
+    check(!singbox::compileConfig(customCapture).error.empty(), "Windows PPTP 共存拒绝不完整的 TUN 接管范围");
+#else
+    check(compensationResult.warnings.size() == 2, "不可用连接各报告一次警告");
+#endif
+    auto transport = compensation;
+    transport.nativeConnections[0].transportAddress = "203.0.113.7";
+    const auto transportConfig = json::parse(singbox::compileConfig(transport).json);
+    for (const auto& inbound : transportConfig["inbounds"]) {
+        if (inbound.value("type", "") != "tun") continue;
+        const auto& excluded = inbound["route_exclude_address"];
+        check(std::find(excluded.begin(), excluded.end(), json("203.0.113.7/32")) != excluded.end(),
+              "运行时实际拨号地址自动排除 TUN");
+    }
+    transport.nativeConnections[0].transportAddress = "vpn.example";
+    check(!singbox::compileConfig(transport).error.empty(), "拒绝未解析的会话服务器地址");
 
     compensation.nativeConnections[0].connected = false;
     const auto disconnected = json::parse(singbox::compileConfig(compensation).json);
-    check(disconnected["route"]["rules"][4]["action"] == "reject" &&
-              disconnected["route"]["rules"][9]["action"] == "reject", "断开后的重新编译撤销接口出口并保留拒绝规则");
+    check(disconnected["route"]["rules"][4]["ip_cidr"] == json{"2001:db8::1/128"} &&
+              disconnected["route"]["rules"][5]["clash_mode"] == "direct",
+          "断开后撤销目标规则及内部路由，恢复主订阅");
     compensation.nativeConnections[0].connected = true;
     compensation.nativeConnections[0].interfaceName.clear();
     const auto missingInterface = json::parse(singbox::compileConfig(compensation).json);
-    check(missingInterface["route"]["rules"][4]["action"] == "reject", "连接状态成功但无接口不能回落直连");
+    check(missingInterface["route"]["rules"] == disconnected["route"]["rules"],
+          "连接无接口时规则同样暂停");
     compensation.nativeConnections[0].connected = false;
+
+    auto catchAll = compensation;
+    catchAll.globalRules = {{vpn::MatchKind::Any, "", "profile:pptp", 100}};
+    const auto paused = json::parse(singbox::compileConfig(catchAll).json);
+    check(paused["route"]["rules"][2]["clash_mode"] == "direct",
+          "离线全部规则不得生成无条件拒绝");
+    catchAll.tunInbound = false;
+    catchAll.nativeConnections[0].connected = true;
+    catchAll.nativeConnections[0].interfaceName = "ppp7";
+    catchAll.globalRules = {{vpn::MatchKind::ExactDomain, "https://Portal.Example:443/path?q=1", "profile:pptp", 100}};
+    const auto urlConfig = json::parse(singbox::compileConfig(catchAll).json);
+    check(urlConfig["route"]["rules"][2]["domain"] == json{"portal.example"},
+          "URL 只生成目标域名匹配，不能变成全部流量");
+    catchAll.globalRules[0].match = vpn::MatchKind::Any;
+    check(!singbox::compileConfig(catchAll).error.empty(), "全部规则不允许携带被忽略的匹配内容");
 
     // 原生 JSON 的额外排除必须合并，TUN 开关和单一所有权同样生效。
     auto rawCompensation = compensation;

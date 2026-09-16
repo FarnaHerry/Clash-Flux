@@ -120,7 +120,10 @@ int main() {
 
     assert(manager.selectEngine("main").engine == EngineKind::SingBox);
     assert(manager.selectEngine("company-a").engine == EngineKind::SystemPptp);
-    assert(manager.resolveConnection("10.20.8.9") == "company-a");
+    assert(manager.resolveConnection("10.20.8.9") == "main");
+    assert(NormalizeRuleDomain("https://Portal.Example:443/path?q=1") == "portal.example");
+    assert(!NormalizeRuleDomain("https://user:pass@example.com/path"));
+    assert(!NormalizeRuleDomain("https:///missing-host"));
     assert(manager.resolveConnection("198.51.100.9") == "main");
 
     const TunConfig linuxTun = MakeFullTunConfig(PlatformKind::Linux);

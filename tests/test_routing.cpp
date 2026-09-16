@@ -41,12 +41,16 @@ int main() {
     active.id = "profile-3";
     active.connected = true;
     active.interfaceName = "ppp7";
+    active.transportAddress = "203.0.113.7";
     routing::PopulateOptions(options, profiles, policy, std::vector{active});
     assert(options.nativeConnections.front().connected);
     assert(options.nativeConnections.front().interfaceName == "ppp7");
+    assert(options.nativeConnections.front().transportAddress == "203.0.113.7");
+    assert(options.nativeConnections.front().kind == vpn::ConnectionKind::Pptp);
     active.interfaceName.clear();
     routing::PopulateOptions(options, profiles, policy, std::vector{active});
     assert(!options.nativeConnections.front().connected);
+    assert(options.nativeConnections.front().transportAddress.empty());
     active.interfaceName = "ppp7";
     active.id = "deleted-profile";
     routing::PopulateOptions(options, profiles, policy, std::vector{active});

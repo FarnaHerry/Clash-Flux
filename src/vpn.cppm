@@ -98,6 +98,50 @@ export struct RouteRule {
     bool operator==(const RouteRule&) const = default;
 };
 
+// Routing sees the destination host, not an encrypted HTTP path.
+export inline std::optional<std::string> NormalizeRuleDomain(std::string_view input) {
+    const auto first = input.find_first_not_of(" \t\r\n");
+    if (first == std::string_view::npos) return {};
+    input = input.substr(first, input.find_last_not_of(" \t\r\n") - first + 1);
+    const auto scheme = input.find("://");
+    if (scheme != std::string_view::npos) {
+        std::string protocol(input.substr(0, scheme));
+        std::ranges::transform(protocol, protocol.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (protocol != "http" && protocol != "https") return {};
+        input.remove_prefix(scheme + 3);
+        input = input.substr(0, input.find_first_of("/?#"));
+        const auto colon = input.find(':');
+        if (colon != std::string_view::npos) {
+            unsigned int port = 0;
+            const auto value = input.substr(colon + 1);
+            const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), port);
+            if (ec != std::errc{} || end != value.data() + value.size() ||
+                port == 0 || port > 65535) return {};
+            input = input.substr(0, colon);
+        }
+    }
+    if (input.starts_with('.')) input.remove_prefix(1);
+    if (input.ends_with('.')) input.remove_suffix(1);
+    if (input.empty() || input.size() > 253) return {};
+    std::string result(input);
+    std::ranges::transform(result, result.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::size_t begin = 0;
+    while (begin < result.size()) {
+        const auto dot = result.find('.', begin);
+        const auto label = std::string_view(result).substr(begin,
+            dot == std::string::npos ? result.size() - begin : dot - begin);
+        if (label.empty() || label.size() > 63 || label.front() == '-' || label.back() == '-' ||
+            !std::ranges::all_of(label, [](unsigned char c) {
+                return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
+            })) return {};
+        if (dot == std::string::npos) return result;
+        begin = dot + 1;
+    }
+    return {};
+}
+
 // 某条 VPN 的声明。nativeConfig/nativeRules 保留给引擎自己解释：sing-box
 // 使用 JSON，PPTP 使用拨号参数，未来其他引擎不需要修改这层数据结构。
 export struct VpnConnection {
@@ -110,12 +154,13 @@ export struct VpnConnection {
     std::vector<std::string> internalRoutes;  // 连接成功后应进入该隧道的 CIDR
     std::vector<RouteRule> internalRules;     // 引擎/连接自身的规则
     // 原生 VPN 适配器建立连接后回填。Linux 通常是 ppp0/tun0/wg0，Windows
-    // 可以填接口别名或接口索引；编排层不会假定某个平台的命名方式。
+    // 使用 UTF-8 接口别名（sing-box bind_interface 不接受数字索引）。
     std::string interfaceName;
     std::string gateway;
     std::string nativeConfig;                 // 引擎原生配置，不由编排层解析
     ConnectionState state = ConnectionState::Idle;
     std::optional<EngineKind> activeEngine;
+    std::string transportAddress;            // 会话实际拨号的服务器 IPv4
 
     bool operator==(const VpnConnection&) const = default;
 };
@@ -465,11 +510,13 @@ public:
             const std::optional<EngineKind> active = current->activeEngine;
             const std::string interfaceName = current->interfaceName;
             const std::string gateway = current->gateway;
+            const std::string transportAddress = current->transportAddress;
             *current = std::move(connection);
             current->state = state;
             current->activeEngine = active;
             current->interfaceName = interfaceName;
             current->gateway = gateway;
+            current->transportAddress = transportAddress;
             return;
         }
         connections_.push_back(std::move(connection));
@@ -686,6 +733,7 @@ public:
         connection->state = ConnectionState::Idle;
         connection->interfaceName.clear();
         connection->gateway.clear();
+        connection->transportAddress.clear();
     }
 
     // 统一释放所有仍由适配器持有的系统连接。析构和应用的显式退出流程都
@@ -708,6 +756,8 @@ public:
         for (const RouteRule& rule : policy_.rules) {
             const VpnConnection* connection = findConnection(rule.connectionId);
             if (connection == nullptr || !connection->enabled ||
+                (detail::nativeConnection(*connection) &&
+                 connection->state != ConnectionState::Connected) ||
                 !detail::matches(rule, target)) {
                 continue;
             }
