@@ -12,6 +12,7 @@
 // 显示主窗口 / 退出。
 #include <huxerui/huxerui.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <string>
@@ -47,11 +48,17 @@ namespace {
 #define CLASHFLUX_PROFILE_REFRESH_PUMP AndroidProfileRefreshPump
 #define CLASHFLUX_APPLICATION_EFFECTS AndroidApplicationEffects
 #define CLASHFLUX_APP_CONTENT AndroidAppContent
+#define CLASHFLUX_NAVIGATION_SURFACE AndroidNavigationSurface
+#define CLASHFLUX_MAIN_CONTENT AndroidMainContent
+#define CLASHFLUX_SETTINGS_BACK(navPage) [navPage] { navPage = pages::kSettings; }
 #else
 #define CLASHFLUX_PREPARE_PLATFORM_DATA DesktopPreparePlatformDataDirectory
 #define CLASHFLUX_PROFILE_REFRESH_PUMP DesktopProfileRefreshPump
 #define CLASHFLUX_APPLICATION_EFFECTS DesktopApplicationEffects
 #define CLASHFLUX_APP_CONTENT DesktopAppContent
+#define CLASHFLUX_NAVIGATION_SURFACE DesktopNavigationSurface
+#define CLASHFLUX_MAIN_CONTENT DesktopMainContent
+#define CLASHFLUX_SETTINGS_BACK(navPage) std::function<void()>{}
 #endif
 
 struct FluxPalette {
@@ -293,7 +300,7 @@ huxerui::View FluxThemed(bool dark, huxerui::View content) {
     return huxerui::Theme(std::move(definition), content);
 }
 
-std::vector<huxerui::NavigationItem> NavigationItems() {
+std::vector<huxerui::NavigationItem> DesktopNavigationItems() {
     struct Item {
         huxerui::ImageResource icon;
         huxerui::ImageResource icon_selected;
@@ -317,30 +324,100 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
     return destinations;
 }
 
-// 响应式导航：Compact 使用底部导航栏，Medium 使用紧凑导航栏，Expanded 展开
-// 为带文字的导航面板。三种结构共享同一个 navPage，IndexedPages 继续保留页面。
-[[huxerui::composable]] huxerui::View NavigationSurface(
+std::vector<huxerui::NavigationItem> AndroidNavigationItems() {
+    struct Item {
+        huxerui::ImageResource icon;
+        huxerui::ImageResource iconSelected;
+        const char* label;
+    };
+    const std::array<Item, 4> items{
+        Item{app::images::home, app::images::home_selected, "首页"},
+        Item{app::images::websocket, app::images::websocket_selected, "代理"},
+        Item{app::images::request, app::images::request_selected, "订阅"},
+        Item{app::images::project_settings,
+             app::images::project_settings_selected, "设置"},
+    };
+    std::vector<huxerui::NavigationItem> destinations;
+    for (const Item& item : items) {
+        destinations.push_back(huxerui::NavigationItem(item.icon, item.label)
+                                   .SelectedIcon(item.iconSelected));
+    }
+    return destinations;
+}
+
+// 桌面端不兼容 Compact：窗口最小尺寸保证 Medium，导航只构造侧边栏。
+[[huxerui::composable]] huxerui::View DesktopNavigationSurface(
     huxerui::State<std::size_t> navPage) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::ViewportClass viewport = huxerui::UseViewportClass();
-    const std::vector<huxerui::NavigationItem> items = NavigationItems();
+    const std::vector<huxerui::NavigationItem> items = DesktopNavigationItems();
     const auto onChanged = [navPage](std::size_t index) { navPage = index; };
-
-    if (viewport == huxerui::ViewportClass::Compact) {
-        return huxerui::NavigationBar(items, navPage)
-            .OnChanged(onChanged)
-            .With(huxerui::Background(theme.colors.surface_container_low),
-                  huxerui::CornerRadius(20.0F),
-                  huxerui::ClipChildren(),
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    }
-
     return huxerui::NavigationPane(items, navPage,
                                    viewport == huxerui::ViewportClass::Expanded)
         .OnChanged(onChanged)
         .With(huxerui::Background(theme.colors.surface_container_low),
               huxerui::CornerRadius(20.0F),
               huxerui::ClipChildren());
+}
+
+// Android 仅暴露四个一级页；规则、连接和日志由设置页的“更多”入口承载。
+[[huxerui::composable]] huxerui::View AndroidNavigationSurface(
+    huxerui::State<std::size_t> navPage) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const std::size_t selected = navPage.Get() == pages::kHome
+        ? 0U
+        : navPage.Get() == pages::kProxies ? 1U
+        : navPage.Get() == pages::kProfiles ? 2U : 3U;
+    const auto onChanged = [navPage](std::size_t index) {
+        constexpr std::array<std::size_t, 4> kDestinations{
+            pages::kHome, pages::kProxies, pages::kProfiles, pages::kSettings};
+        navPage = kDestinations[std::min(index, kDestinations.size() - 1)];
+    };
+    return huxerui::NavigationBar(AndroidNavigationItems(), selected)
+        .OnChanged(onChanged)
+        .With(huxerui::Background(theme.colors.surface_container_low),
+              huxerui::CornerRadius(20.0F), huxerui::ClipChildren(),
+              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
+[[huxerui::composable]] huxerui::View DesktopMainContent(
+    huxerui::State<std::size_t> navPage, huxerui::View indexedPages,
+    const IslandTheme& islands, const huxerui::ThemeSpec&) {
+    return huxerui::Row {
+        DesktopNavigationSurface(navPage),
+        std::move(indexedPages),
+    }.With(huxerui::Spacing(islands.page_gap),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
+           huxerui::Grow(1.0F));
+}
+
+[[huxerui::composable]] huxerui::View AndroidMainContent(
+    huxerui::State<std::size_t> navPage, huxerui::View indexedPages,
+    const IslandTheme& islands, const huxerui::ThemeSpec& spec) {
+    huxerui::View floatingNavigation = AndroidNavigationSurface(navPage).With(
+        huxerui::Frame{.max_width = 520.0F},
+        huxerui::Background(islands.base), huxerui::CornerRadius(28.0F),
+        huxerui::Border{islands.outline_soft, 1.0F},
+        huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.28F), {}, 18.0F, 2.0F},
+        huxerui::ClipChildren());
+    huxerui::View dock = huxerui::Column {
+        std::move(floatingNavigation),
+    }.With(huxerui::Padding(huxerui::EdgeInsets{
+               .right = spec.spacing.medium,
+               .bottom = spec.spacing.small,
+               .left = spec.spacing.medium,
+           }),
+           huxerui::MainAlign(huxerui::MainAxisAlignment::End),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    const bool secondary = navPage.Get() == pages::kRules ||
+                           navPage.Get() == pages::kConnections ||
+                           navPage.Get() == pages::kLogs;
+    return huxerui::Stack {
+        std::move(indexedPages),
+        secondary ? huxerui::View{huxerui::Row{}} : std::move(dock),
+    }.With(huxerui::Grow(1.0F),
+           huxerui::Align(huxerui::HorizontalAlignment::Stretch,
+                          huxerui::VerticalAlignment::Stretch));
 }
 
 } // namespace
@@ -370,58 +447,23 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
     huxerui::View applicationEffects =
         CLASHFLUX_APPLICATION_EFFECTS(application, rootSpec);
     std::vector<huxerui::View> pages;
-    pages.push_back(HomePage().Key("home").With(huxerui::Grow(1.0F)));
+    pages.push_back(HomePage(navPage).Key("home").With(huxerui::Grow(1.0F)));
     pages.push_back(ProfilesPage().Key("profiles").With(huxerui::Grow(1.0F)));
     pages.push_back(ProxiesPage().Key("proxies").With(huxerui::Grow(1.0F)));
-    pages.push_back(RulesPage().Key("rules").With(huxerui::Grow(1.0F)));
-    pages.push_back(ConnectionsPage().Key("connections").With(huxerui::Grow(1.0F)));
-    pages.push_back(LogsPage().Key("logs").With(huxerui::Grow(1.0F)));
-    pages.push_back(SettingsPage(themeMode).Key("settings").With(huxerui::Grow(1.0F)));
+    pages.push_back(RulesPage(CLASHFLUX_SETTINGS_BACK(navPage))
+                        .Key("rules").With(huxerui::Grow(1.0F)));
+    pages.push_back(ConnectionsPage(CLASHFLUX_SETTINGS_BACK(navPage))
+                        .Key("connections").With(huxerui::Grow(1.0F)));
+    pages.push_back(LogsPage(CLASHFLUX_SETTINGS_BACK(navPage))
+                        .Key("logs").With(huxerui::Grow(1.0F)));
+    pages.push_back(SettingsPage(themeMode, navPage)
+                        .Key("settings").With(huxerui::Grow(1.0F)));
 
-    const huxerui::ViewportClass viewport = huxerui::UseViewportClass();
     huxerui::View indexedPages =
         huxerui::IndexedPages(std::move(pages), navPage.Get())
             .With(huxerui::Grow(1.0F));
-    huxerui::View mainRow;
-    if (viewport == huxerui::ViewportClass::Compact) {
-        // 手机/窄窗口：官方 NavigationBar 直接悬浮在内容岛上，不再占用
-        // 页面底部的布局空间，滚动内容自然从悬浮岛下方经过。
-        huxerui::View floatingNavigation = NavigationSurface(navPage).With(
-            huxerui::Frame{.max_width = 520.0F},
-            huxerui::Background(rootIslands.base),
-            huxerui::CornerRadius(28.0F),
-            huxerui::Border{rootIslands.outline_soft, 1.0F},
-            huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.28F), {}, 18.0F,
-                            2.0F},
-            huxerui::ClipChildren());
-        huxerui::View floatingNavigationDock = huxerui::Column {
-            std::move(floatingNavigation),
-        }.With(
-            huxerui::Padding(huxerui::EdgeInsets{
-                .right = rootSpec.spacing.medium,
-                .bottom = rootSpec.spacing.small,
-                .left = rootSpec.spacing.medium,
-            }),
-            huxerui::MainAlign(huxerui::MainAxisAlignment::End),
-            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
-        mainRow = huxerui::Stack {
-            std::move(indexedPages),
-            std::move(floatingNavigationDock),
-        }
-            .With(huxerui::Grow(1.0F),
-                  huxerui::Align(huxerui::HorizontalAlignment::Stretch,
-                                 huxerui::VerticalAlignment::Stretch));
-    } else {
-        // Medium 保留紧凑图标栏，Expanded 展开官方导航面板并显示文字。
-        mainRow = huxerui::Row {
-            NavigationSurface(navPage),
-            std::move(indexedPages),
-        }
-            .With(huxerui::Spacing(rootIslands.page_gap),
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
-                  huxerui::Grow(1.0F));
-    }
-
+    huxerui::View mainRow = CLASHFLUX_MAIN_CONTENT(
+        navPage, std::move(indexedPages), rootIslands, rootSpec);
     huxerui::View content = CLASHFLUX_APP_CONTENT(mainRow, rootSpec);
 
     return FluxThemed(
@@ -440,3 +482,6 @@ std::vector<huxerui::NavigationItem> NavigationItems() {
 #undef CLASHFLUX_PROFILE_REFRESH_PUMP
 #undef CLASHFLUX_APPLICATION_EFFECTS
 #undef CLASHFLUX_APP_CONTENT
+#undef CLASHFLUX_NAVIGATION_SURFACE
+#undef CLASHFLUX_MAIN_CONTENT
+#undef CLASHFLUX_SETTINGS_BACK

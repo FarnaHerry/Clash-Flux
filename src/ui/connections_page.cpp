@@ -6,6 +6,7 @@
 #include <huxerui/huxerui.h>
 
 #include <chrono>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -141,7 +142,8 @@ void closeAllConnectionsForPlatform() {
 
 } // namespace
 
-[[huxerui::composable]] huxerui::View ConnectionsPage() {
+[[huxerui::composable]] huxerui::View ConnectionsPage(
+    std::function<void()> onBack) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
@@ -150,6 +152,8 @@ void closeAllConnectionsForPlatform() {
     auto totalUp = huxerui::UseState<std::int64_t>(0);
     auto totalDown = huxerui::UseState<std::int64_t>(0);
     auto streamOpen = huxerui::UseState(false);
+    auto searching = huxerui::UseState(false);
+    auto searchValue = huxerui::UseState(huxerui::TextEditingValue{""});
     const auto scroll = huxerui::UseScrollController();
 
     huxerui::Lifecycle(
@@ -181,25 +185,33 @@ void closeAllConnectionsForPlatform() {
         return std::move(t).With(huxerui::Grow(1.0F));
     };
 
+    const std::string query = searchValue.Get().text;
     huxerui::View body = huxerui::Column {
-        huxerui::Text(streamOpen.Get() ? "暂无活动连接"
-                                       : "连接流未就绪（内核未运行？）")
+        huxerui::Text(!query.empty() ? "没有匹配的连接"
+                         : streamOpen.Get() ? "暂无活动连接"
+                                            : "连接流未就绪（内核未运行？）")
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
                                       theme.colors.on_surface_variant}),
     }.With(huxerui::Padding(32.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 
-    if (!rows.Empty()) {
-        const std::size_t rowCount = rows.Size();
+    std::vector<std::size_t> visibleRows;
+    for (std::size_t index = 0; index < rows.Size(); ++index) {
+        if (query.empty() || rows[index].host.find(query) != std::string::npos) {
+            visibleRows.push_back(index);
+        }
+    }
+    if (!visibleRows.empty()) {
+        const std::size_t rowCount = visibleRows.size();
         body = huxerui::VirtualList(
                    rowCount + (compact ? 1U : 0U),
-                   [rows, tasks, mono, theme, compact, rowCount](
+                   [rows, visibleRows, tasks, mono, theme, compact, rowCount](
                        std::size_t index) -> huxerui::View {
                        if (compact && index == rowCount) {
                            return CompactFloatingNavigationFooter()
                                .Key("compact-floating-footer");
                        }
-                       const ConnectionRow& row = rows[index];
+                       const ConnectionRow& row = rows[visibleRows[index]];
                        const std::string id = row.id;
                        const std::string key = id.empty()
                                                    ? std::format("connection-{}", index)
@@ -232,7 +244,7 @@ void closeAllConnectionsForPlatform() {
                                    mono(std::format("链路：{}", row.chains),
                                         theme.colors.on_surface_variant, 0.0F),
                                    huxerui::Row{
-                                       mono(std::format("↑{} ↓{}", formatBytes(row.up),
+                                       mono(std::format("↑{}/s ↓{}/s", formatBytes(row.up),
                                                         formatBytes(row.down)),
                                             theme.colors.on_surface_variant, 0.0F),
                                        mono(std::format("规则：{}", row.rule),
@@ -247,7 +259,7 @@ void closeAllConnectionsForPlatform() {
                                mono(row.host, theme.colors.on_surface, 0.0F),
                                mono(row.network, theme.colors.on_surface_variant, 50.0F),
                                mono(row.chains, theme.colors.on_surface_variant, 220.0F),
-                               mono(std::format("↑{} ↓{}", formatBytes(row.up),
+                               mono(std::format("↑{}/s ↓{}/s", formatBytes(row.up),
                                                 formatBytes(row.down)),
                                     theme.colors.on_surface_variant, 160.0F),
                                mono(row.rule, theme.colors.on_surface_variant, 140.0F),
@@ -260,19 +272,33 @@ void closeAllConnectionsForPlatform() {
                    .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     }
 
-    return PageScaffold(
-        std::format("连接（{} 条 · ↑{} ↓{}）", rows.Size(),
-                    formatBytes(totalUp.Get()), formatBytes(totalDown.Get())),
-        huxerui::IconButton(app::images::clear_all, "关闭全部")
-            .With(huxerui::Tooltip("关闭全部连接"))
-            .OnClick([tasks] {
+    huxerui::View title = searching.Get()
+        ? PillSearchField(searchValue, "搜索连接", [searching, searchValue] {
+              searchValue = huxerui::TextEditingValue{""};
+              searching = false;
+          })
+        : huxerui::View{huxerui::Text("连接", huxerui::TextRole::Title)};
+    huxerui::View actions = searching.Get()
+        ? huxerui::View{huxerui::Row{}}
+        : huxerui::View{huxerui::Row {
+              huxerui::IconButton(app::images::search, "搜索连接")
+                  .With(huxerui::Tooltip("搜索连接"))
+                  .OnClick([searching] { searching = true; }),
+              huxerui::IconButton(app::images::clear_all, "关闭全部")
+                  .With(huxerui::Tooltip("关闭全部连接"))
+                  .OnClick([tasks] {
                     tasks.Launch([=]() -> huxerui::Task<void> {
                         co_await RunOnTaskThread([] {
-                        closeAllConnectionsForPlatform();
+                            closeAllConnectionsForPlatform();
                         });
-                });
-            }),
-        std::move(body));
+                    });
+                  }),
+          }.With(huxerui::Spacing(6.0F),
+                 huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))};
+    return onBack
+        ? SecondaryPageScaffold(std::move(title), std::move(actions),
+                                std::move(body), onBack, searching.Get())
+        : PageScaffold("连接", std::move(actions), std::move(body));
 }
 
 } // namespace clashflux::ui

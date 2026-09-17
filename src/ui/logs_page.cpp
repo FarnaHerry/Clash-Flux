@@ -41,7 +41,7 @@ int levelRank(const std::string& level) {
 
 } // namespace
 
-[[huxerui::composable]] huxerui::View LogsPage() {
+[[huxerui::composable]] huxerui::View LogsPage(std::function<void()> onBack) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
     auto coreEntries = huxerui::UseStateList<LogEntry>();
@@ -157,7 +157,7 @@ int levelRank(const std::string& level) {
                                     .OnChanged([filter](std::size_t idx) {
                                         filter = idx;
                                     })
-                                    .With(huxerui::Frame{.width = 180.0F});
+                                    .With(huxerui::Frame{.width = 112.0F});
     huxerui::View sourceControl =
         huxerui::SegmentedButton(kSourceNames, source.Get())
             .OnChanged([source](std::size_t idx) { source = idx; });
@@ -166,23 +166,18 @@ int levelRank(const std::string& level) {
         .OnClick([clearTick] {
         clearTick = clearTick.Get() + 1;
     });
-    huxerui::View actions;
-    if (compact) {
-        actions = huxerui::Column {
-            std::move(sourceControl),
-            std::move(filterControl),
-            std::move(clearControl),
-        }.With(huxerui::Spacing(8.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
-    } else {
-        actions = huxerui::Row {
-            std::move(sourceControl),
-            std::move(filterControl),
-            std::move(clearControl),
-        }.With(huxerui::Spacing(8.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
-    }
+    huxerui::View actions = huxerui::Row {
+        std::move(filterControl), std::move(clearControl),
+    }.With(huxerui::Spacing(6.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    body = huxerui::Column {
+        std::move(sourceControl),
+        std::move(body),
+    }.With(huxerui::Spacing(10.0F), huxerui::Grow(1.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
+    if (onBack) return SecondaryPageScaffold(huxerui::Text("日志", huxerui::TextRole::Title), std::move(actions),
+                                              std::move(body), onBack);
     return PageScaffold("日志", std::move(actions), std::move(body));
 }
 

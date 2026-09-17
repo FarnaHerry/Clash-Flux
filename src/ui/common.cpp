@@ -386,6 +386,109 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
+[[huxerui::composable]] huxerui::View SecondaryPageScaffold(
+    huxerui::View title, huxerui::View actions, huxerui::View content,
+    std::function<void()> onBack, bool hideBack) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const IslandTheme islands = ResolveIslandTheme(theme);
+    huxerui::View body = content;
+    huxerui::View titleView = title;
+    auto backAction = onBack;
+    huxerui::View header = hideBack
+        ? huxerui::Row {
+              std::move(titleView).With(huxerui::Grow(1.0F)),
+              std::move(actions),
+          }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
+        : huxerui::Row {
+              huxerui::IconButton(app::images::arrow_back, "返回设置")
+                  .With(huxerui::Tooltip("返回设置"))
+                  .OnClick(std::move(onBack)),
+              std::move(titleView).With(huxerui::Grow(1.0F)),
+              std::move(actions),
+          }.With(huxerui::Spacing(theme.spacing.small),
+                 huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    huxerui::View scaffold = huxerui::Column {
+        std::move(header),
+        std::move(body).With(huxerui::Grow(1.0F)),
+    }.With(huxerui::Padding(theme.spacing.medium), huxerui::Spacing(theme.spacing.medium),
+           huxerui::Background(islands.base), huxerui::CornerRadius(islands.island_radius),
+           huxerui::ClipChildren(), huxerui::Grow(1.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    if (backAction && !hideBack) {
+        scaffold = std::move(scaffold).On<huxerui::ViewEvents::BackRequested>(
+            std::move(backAction));
+    }
+    return scaffold;
+}
+
+[[huxerui::composable]] huxerui::View PillSearchField(
+    huxerui::State<huxerui::TextEditingValue> value,
+    const std::string& placeholder,
+    std::function<void()> onClose) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    huxerui::TextFieldStyle inputStyle = huxerui::UseEnvironment<huxerui::TextFieldStyle>();
+    inputStyle.border_width = 0.0F;
+    inputStyle.focused_border_width = 0.0F;
+    inputStyle.validation_border_width = 0.0F;
+    inputStyle.focused_validation_border_width = 0.0F;
+    inputStyle.standard.background = huxerui::Color::Transparent();
+    inputStyle.standard.border = huxerui::Color::Transparent();
+    inputStyle.standard.hovered_border = huxerui::Color::Transparent();
+    inputStyle.standard.focused_border = huxerui::Color::Transparent();
+    inputStyle.standard.disabled_border = huxerui::Color::Transparent();
+    inputStyle.standard.minimum_height = 48.0F;
+    inputStyle.padding = huxerui::EdgeInsets::Symmetric(0.0F, 0.0F);
+    huxerui::ThemeDefinition inputTheme;
+    inputTheme.Set(inputStyle);
+    huxerui::View input = huxerui::Theme(
+        std::move(inputTheme),
+        huxerui::TextField(value.Get())
+            .Placeholder(placeholder)
+            .Variant(huxerui::TextFieldVariant::Standard)
+            .OnChanged([value](const huxerui::TextEditingValue& next) {
+                value = next;
+            })
+            .With(huxerui::Grow(1.0F)));
+
+    // 胶囊体内容：搜索图标、无框输入文本框、退出搜索按钮。
+    auto closeAction = onClose;
+    huxerui::View pillContent = huxerui::Row {
+        huxerui::Image(app::images::search)
+            .Fit(huxerui::ImageFit::Contain)
+            .Align(huxerui::HorizontalAlignment::Center,
+                   huxerui::VerticalAlignment::Center)
+            .Tint(theme.colors.on_surface_variant)
+            .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
+        std::move(input),
+        huxerui::IconButton(app::images::close, "退出搜索")
+            .With(huxerui::Tooltip("退出搜索"))
+            .OnClick(std::move(onClose)),
+    }.With(huxerui::Spacing(6.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
+           huxerui::Grow(1.0F));
+
+    // 使用 Row 做背景容器，高度与标签栏一致（48dp），圆角 24dp，无边框线。
+    huxerui::View pill = huxerui::Row {
+        std::move(pillContent),
+    }.With(huxerui::Frame{.height = 48.0F},
+           huxerui::Padding(huxerui::EdgeInsets{
+               .right = 4.0F,
+               .left = 14.0F,
+           }),
+           huxerui::Background(theme.colors.surface_container_highest),
+           huxerui::CornerRadius(24.0F),
+           huxerui::ClipChildren(),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
+           huxerui::Grow(1.0F));
+
+    // 吸收系统返回事件：收到系统返回指令相当于触发退出搜索（叉号）。
+    if (closeAction) {
+        pill = std::move(pill).On<huxerui::ViewEvents::BackRequested>(
+            std::move(closeAction));
+    }
+    return pill;
+}
+
 [[huxerui::composable]] huxerui::View Card(huxerui::View content) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);

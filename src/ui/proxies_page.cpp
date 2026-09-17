@@ -477,8 +477,8 @@ constexpr float kChipGap = 8.0F;
     auto rulePath = huxerui::UseState<std::vector<std::string>>({});
     auto globalPath = huxerui::UseState<std::vector<std::string>>({});
 
-    // 数据泵：内核 Running 时每 3s 刷一次 /proxies（保持 now/history 新鲜）；
-    // 非 Running 清空列表。
+    // 数据泵：运行时刷新 /proxies；停止后保留最后一次订阅节点快照，
+    // 这样用户仍能预先选择节点，下一次内核启动后再由内核正式应用。
     huxerui::Lifecycle(
         [tasks, groups, coreState, mode] {
             tasks.Launch([=]() -> huxerui::Task<void> {
@@ -492,10 +492,8 @@ constexpr float kChipGap = 8.0F;
                         });
                         if (!body.empty()) ReplaceStateList(groups, parseProxies(body));
                         co_await huxerui::Delay(std::chrono::duration<double>{3.0});
-                    } else {
-                        if (!groups.Empty()) groups.Clear();
-                        co_await huxerui::Delay(std::chrono::duration<double>{0.5});
-                    }
+                    } else co_await huxerui::Delay(
+                        std::chrono::duration<double>{0.5});
                 }
             });
             return [] {};

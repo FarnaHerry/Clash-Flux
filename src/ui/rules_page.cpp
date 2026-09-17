@@ -209,7 +209,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
 
 } // namespace
 
-[[huxerui::composable]] huxerui::View RulesPage() {
+[[huxerui::composable]] huxerui::View RulesPage(std::function<void()> onBack) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
@@ -595,42 +595,18 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
         .OnClick([refreshTick] {
         refreshTick = refreshTick.Get() + 1;
     });
-    huxerui::View actions;
-    if (compact) {
-        // Flow 受父级有限宽度约束，按钮不足一行时自动换行；不要再用
-        // Spacer + 固定 Row 把两个按钮推到岛屿右边界之外。
-        huxerui::View compactActions;
-        if (section.Get() == 1) {
-            compactActions = huxerui::Flow{
-                                 std::move(addRule), std::move(refresh)}
-                .With(huxerui::Spacing(8.0F),
-                      huxerui::MainAlign(huxerui::MainAxisAlignment::End),
-                      huxerui::CrossAlign(
-                          huxerui::CrossAxisAlignment::Center));
-        } else {
-            compactActions = huxerui::Flow{std::move(refresh)}.With(
-                huxerui::MainAlign(huxerui::MainAxisAlignment::End),
-                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
-        }
-        actions = huxerui::Column{
-                      std::move(sectionSwitch), std::move(compactActions)}
-                      .With(huxerui::Spacing(8.0F),
-                            huxerui::CrossAlign(
-                                huxerui::CrossAxisAlignment::Stretch));
-    } else {
-        actions = huxerui::Row{
-                      std::move(sectionSwitch),
-                      huxerui::Spacer(),
-                      std::move(addRule),
-                      std::move(refresh),
-                  }
-                      .With(huxerui::Spacing(8.0F),
-                            huxerui::CrossAlign(
-                                huxerui::CrossAxisAlignment::Center));
-    }
+    huxerui::View actions = huxerui::Row{
+        std::move(addRule), std::move(refresh),
+    }.With(huxerui::Spacing(8.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    body = huxerui::Column {
+        std::move(sectionSwitch), std::move(body),
+    }.With(huxerui::Spacing(8.0F), huxerui::Grow(1.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
-    huxerui::View listPage = PageScaffold("规则", std::move(actions),
-                                          std::move(body));
+    huxerui::View listPage = onBack
+        ? SecondaryPageScaffold(huxerui::Text("规则", huxerui::TextRole::Title), std::move(actions), std::move(body), onBack)
+        : PageScaffold("规则", std::move(actions), std::move(body));
     const std::vector<std::string> editorTargets = TargetNames(profiles);
     const auto saveResponsiveRule = [=] {
         if (editorTargets.empty() || editTarget.Get() >= profiles.Size()) {
@@ -727,6 +703,10 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
             }.With(huxerui::Spacing(12.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
             .With(huxerui::Grow(1.0F)));
+    if (compact && globalEditorOpen.Get()) {
+        editorPage = std::move(editorPage).On<huxerui::ViewEvents::BackRequested>(
+            [globalEditorOpen] { globalEditorOpen = false; });
+    }
     return huxerui::IndexedPages(
                std::vector<huxerui::View>{listPage, editorPage},
                compact && globalEditorOpen.Get() ? 1U : 0U)
