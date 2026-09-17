@@ -24,17 +24,17 @@ namespace {
 
 const std::vector<std::string> kModes{"rule", "global", "direct"};
 const std::vector<huxerui::StringVariant> kModeNames{"规则", "全局", "直连"};
-const std::vector<std::string> kLogLevels{"silent", "error", "warning", "info",
-                                          "debug"};
 const std::vector<huxerui::StringVariant> kThemeNames{"跟随系统", "深色", "浅色"};
 
 // 宏只选择模块级平台函数，不把平台能力拆成控件级过滤条件。
 #if defined(__ANDROID__)
 #define CLASHFLUX_GENERAL_PLATFORM_SECTION AndroidGeneralSettings
 #define CLASHFLUX_KERNEL_PLATFORM_SECTION AndroidKernelSettings
+#define CLASHFLUX_MORE_SETTINGS AndroidMoreSettings
 #else
 #define CLASHFLUX_GENERAL_PLATFORM_SECTION DesktopGeneralSettings
 #define CLASHFLUX_KERNEL_PLATFORM_SECTION DesktopKernelSettings
+#define CLASHFLUX_MORE_SETTINGS DesktopMoreSettings
 #endif
 
 const std::string kAboutText = std::format(
@@ -43,8 +43,42 @@ const std::string kAboutText = std::format(
 
 } // namespace
 
+[[huxerui::composable]] huxerui::View AndroidMoreSettings(
+    huxerui::State<std::size_t> navPage) {
+    return huxerui::Column {
+        SectionTitle("更多"),
+        Card(huxerui::Row {
+                 huxerui::Text("连接"), huxerui::Spacer(), huxerui::Text("›"),
+             }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)))
+            .OnClick([navPage] { navPage = 4; })
+            .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                     .label = "连接"},
+                  huxerui::Focusable(true), huxerui::Enabled(true)),
+        Card(huxerui::Row {
+                 huxerui::Text("日志"), huxerui::Spacer(), huxerui::Text("›"),
+             }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)))
+            .OnClick([navPage] { navPage = 5; })
+            .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                     .label = "日志"},
+                  huxerui::Focusable(true), huxerui::Enabled(true)),
+        Card(huxerui::Row {
+                 huxerui::Text("规则"), huxerui::Spacer(), huxerui::Text("›"),
+             }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)))
+            .OnClick([navPage] { navPage = 3; })
+            .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                     .label = "规则"},
+                  huxerui::Focusable(true), huxerui::Enabled(true)),
+    }.With(huxerui::Spacing(10.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
+[[huxerui::composable]] huxerui::View DesktopMoreSettings(
+    huxerui::State<std::size_t>) {
+    return huxerui::View{};
+}
+
 [[huxerui::composable]] huxerui::View SettingsPage(
-    huxerui::State<int> themeMode) {
+    huxerui::State<int> themeMode, huxerui::State<std::size_t> navPage) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
@@ -136,15 +170,11 @@ const std::string kAboutText = std::format(
     for (std::size_t i = 0; i < kModes.size(); ++i) {
         if (s.mode == kModes[i]) modeIndex = i;
     }
-    std::size_t levelIndex = 3;
-    for (std::size_t i = 0; i < kLogLevels.size(); ++i) {
-        if (s.logLevel == kLogLevels[i]) levelIndex = i;
-    }
-
     return PageScaffold(
         "设置", huxerui::Row{},
         huxerui::ScrollView(
             huxerui::Column {
+                CLASHFLUX_MORE_SETTINGS(navPage),
                 Card(huxerui::Column {
                     SectionTitle("通用"),
                     SettingRow(
@@ -227,20 +257,6 @@ const std::string kAboutText = std::format(
                                     on ? "已启用 IPv6（重启内核生效）"
                                        : "已关闭 IPv6（重启内核生效）");
                             })),
-                    SettingRow(
-                        "日志级别", "内核日志详细程度",
-                        huxerui::Select(
-                            kLogLevels, levelIndex,
-                            [](const std::string& name) { return huxerui::Text(name); })
-                            .OnChanged([coreAction](std::size_t index) {
-                                coreAction(
-                                    [index] {
-                                        store::coreStore().setSetting(
-                                            "core.log_level", kLogLevels[index]);
-                                    },
-                                    "");
-                            })
-                            .With(huxerui::Frame{.width = 180.0F})),
                 }.With(huxerui::Spacing(10.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
 
@@ -259,5 +275,6 @@ const std::string kAboutText = std::format(
 
 #undef CLASHFLUX_GENERAL_PLATFORM_SECTION
 #undef CLASHFLUX_KERNEL_PLATFORM_SECTION
+#undef CLASHFLUX_MORE_SETTINGS
 
 } // namespace clashflux::ui

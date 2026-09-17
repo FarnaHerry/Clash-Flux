@@ -32,11 +32,15 @@ const std::vector<std::string> kModes{"rule", "global", "direct"};
 #if defined(__ANDROID__)
 constexpr std::string_view kDefaultCoreName = "sing-box libbox";
 #define CLASHFLUX_HOME_SYSTEM_CARD AndroidHomeSystemCard
-#define CLASHFLUX_HOME_ACTION AndroidHomeAction
+#define CLASHFLUX_HOME_ACTION(state) huxerui::Row{}
+#define CLASHFLUX_HOME_INLINE_ACTION(state) AndroidHomeAction(state),
+#define CLASHFLUX_HOME_NAV_ACTIONS(state) AndroidHomeNavigationActions(state),
 #else
 constexpr std::string_view kDefaultCoreName = "sing-box";
 #define CLASHFLUX_HOME_SYSTEM_CARD DesktopHomeSystemCard
-#define CLASHFLUX_HOME_ACTION DesktopHomeAction
+#define CLASHFLUX_HOME_ACTION(state) DesktopHomeAction(state)
+#define CLASHFLUX_HOME_INLINE_ACTION(state)
+#define CLASHFLUX_HOME_NAV_ACTIONS(state)
 #endif
 
 struct HomeState {
@@ -182,6 +186,31 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     return {};
 }
 
+[[huxerui::composable]] huxerui::View AndroidHomeNavigationActions(
+    huxerui::State<std::size_t> navPage) {
+    return huxerui::Column {
+        Card(huxerui::Row {
+                 huxerui::Text("选择订阅"),
+                 huxerui::Spacer(),
+                 huxerui::Text("›"),
+             }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)))
+            .OnClick([navPage] { navPage = 1; })
+            .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                     .label = "选择订阅"},
+                  huxerui::Focusable(true), huxerui::Enabled(true)),
+        Card(huxerui::Row {
+                 huxerui::Text("选择节点"),
+                 huxerui::Spacer(),
+                 huxerui::Text("›"),
+             }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)))
+            .OnClick([navPage] { navPage = 2; })
+            .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                     .label = "选择节点"},
+                  huxerui::Focusable(true), huxerui::Enabled(true)),
+    }.With(huxerui::Spacing(10.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
 [[huxerui::composable]] huxerui::View AndroidHomeAction(const HomeState& state) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
@@ -214,25 +243,28 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
             });
         };
 
-    // The mobile action is deliberately a single tall island. Traffic is
-    // shown only while the tunnel is active; the center icon remains the
-    // only control when stopped, which keeps the compact home screen quiet.
+    // 移动端操作区随首页内容一起滚动，不再占据页面顶部的固定操作栏。
+    // 启动后以主题主色填充图标按钮，提供清晰的隧道已启动反馈。
     huxerui::View center = huxerui::IconButton(
                               active ? app::images::speed : app::images::bolt,
                               active ? "停止 VPN" : "启动 VPN")
         .OnClick(toggle)
         .With(huxerui::Frame{.width = 76.0F, .height = 76.0F},
               huxerui::Enabled(enabled),
+              huxerui::Background(active ? theme.colors.primary
+                                         : huxerui::Color::Transparent()),
+              huxerui::Foreground(active ? theme.colors.on_primary
+                                         : theme.colors.primary),
+              huxerui::CornerRadius(38.0F),
               huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                  .label = active ? "停止 VPN" : "启动 VPN"});
     if (!active) {
-        return Card(huxerui::Row{std::move(center)}
-                                 .With(huxerui::MainAlign(
-                                           huxerui::MainAxisAlignment::Center),
-                                       huxerui::CrossAlign(
-                                           huxerui::CrossAxisAlignment::Center)))
-            .With(huxerui::Frame{.height = 184.0F},
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        return Card(huxerui::Row { std::move(center) }
+                        .With(huxerui::Frame{.height = 92.0F},
+                              huxerui::MainAlign(
+                                  huxerui::MainAxisAlignment::Center),
+                              huxerui::CrossAlign(
+                                  huxerui::CrossAxisAlignment::Center)));
     }
 
     const huxerui::Color downColor = theme.colors.primary;
@@ -242,11 +274,12 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
         return huxerui::Column{
             huxerui::Text(std::string(title)).Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kCaption),
-                theme.colors.on_surface_variant}),
+                active ? theme.colors.on_primary_container
+                       : theme.colors.on_surface_variant}),
             huxerui::Text(value).Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kChip)
                     .WithWeight(huxerui::FontWeight::Bold),
-                color}),
+                active ? theme.colors.on_primary_container : color}),
         }.With(huxerui::Spacing(3.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     };
@@ -262,12 +295,24 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     }.With(huxerui::Spacing(14.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
                         .With(huxerui::Grow(1.0F));
-    return Card(huxerui::Row{left, std::move(center), right}
-                             .With(huxerui::Spacing(10.0F),
-                                   huxerui::CrossAlign(
-                                       huxerui::CrossAxisAlignment::Center)))
-        .With(huxerui::Frame{.height = 184.0F},
-              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    return Card(huxerui::Row { left, std::move(center), right }
+                    .With(huxerui::Frame{.height = 92.0F},
+                          huxerui::Spacing(10.0F),
+                          huxerui::CrossAlign(
+                              huxerui::CrossAxisAlignment::Center)))
+        .With(huxerui::Background(active ? theme.colors.primary_container
+                                         : ResolveIslandTheme(theme).raised),
+              huxerui::Border{active ? theme.colors.primary
+                                     : huxerui::Color::Transparent(),
+                               active ? 1.5F : 0.0F},
+              huxerui::Shadow{.color = active
+                                           ? huxerui::Color{
+                                                 theme.colors.primary.red,
+                                                 theme.colors.primary.green,
+                                                 theme.colors.primary.blue, 0.55F}
+                                           : huxerui::Color::Transparent(),
+                               .blur_radius = active ? 18.0F : 0.0F,
+                               .spread = active ? 2.0F : 0.0F});
 }
 
 #else
@@ -357,7 +402,8 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
 
 } // namespace
 
-[[huxerui::composable]] huxerui::View HomePage() {
+[[huxerui::composable]] huxerui::View HomePage(
+    huxerui::State<std::size_t> navPage) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
@@ -368,7 +414,6 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     // 失败自动回弹并提示。覆盖值非空即“进行中”，期间忽略再次点击，
     // 避免 TUN 重启内核期间的并发 stop/start。
     auto modeOverride = huxerui::UseState<std::optional<std::size_t>>(std::nullopt);
-    auto selectedGroup = huxerui::UseState<std::size_t>(0);
 
     huxerui::Lifecycle(
         [tasks, state] {
@@ -463,47 +508,6 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     }.With(huxerui::Spacing(10.0F)))
                                  .With(huxerui::Grow(1.0F));
 
-    const auto selectLine = [tasks, toast, state](const std::string& group,
-                                                   const std::string& name) {
-        tasks.Launch([toast, state, group, name]() -> huxerui::Task<void> {
-            const bool ok = co_await RunOnTaskThread(
-                [group, name] { return SelectProxyLine(group, name); });
-            if (!ok) {
-                const std::string error = store::coreStore().snapshot().lastError;
-                toast.Show(error.empty() ? "线路切换失败" : error);
-                co_return;
-            }
-            HomeState next = state.Get();
-            for (ProxyGroupSnapshot& proxyGroup : next.proxyGroups) {
-                if (proxyGroup.name == group) proxyGroup.current = name;
-            }
-            state = next;
-        });
-    };
-    std::vector<ProxyGroupSnapshot> selectableGroups;
-    for (const auto& group : s.proxyGroups) {
-        if (group.selectable) selectableGroups.push_back(group);
-    }
-    if (selectedGroup.Get() >= selectableGroups.size()) selectedGroup = 0;
-    const std::size_t groupIndex =
-        selectableGroups.empty() ? 0 : selectedGroup.Get();
-    std::vector<std::string> groupNames;
-    std::vector<std::string> nodeNames;
-    for (const auto& group : selectableGroups) groupNames.push_back(group.name);
-    if (groupIndex < selectableGroups.size()) {
-        for (const auto& node : selectableGroups[groupIndex].nodes)
-            nodeNames.push_back(node);
-    }
-    std::size_t nodeIndex = 0;
-    if (groupIndex < selectableGroups.size()) {
-        for (std::size_t i = 0; i < selectableGroups[groupIndex].nodes.size(); ++i) {
-            if (selectableGroups[groupIndex].nodes[i] ==
-                selectableGroups[groupIndex].current) {
-                nodeIndex = i;
-                break;
-            }
-        }
-    }
     huxerui::View profileBody = huxerui::Column {
         huxerui::Text("当前订阅").Style(huxerui::TextStyle{
             huxerui::Font::System(font_size::kBody)
@@ -511,42 +515,6 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
             theme.colors.on_surface}),
         huxerui::Text(s.profileName).Style(huxerui::TextStyle{
             huxerui::Font::System(font_size::kBody), theme.colors.on_surface}),
-        selectableGroups.empty()
-            ? huxerui::View{huxerui::Text("暂无可选代理分组")}
-            : huxerui::View{huxerui::Column{
-                  huxerui::Select(groupNames, groupIndex,
-                                  [](const std::string& name) { return huxerui::Text(name); })
-                      .OnChanged([selectedGroup](std::size_t index) {
-                          selectedGroup = index;
-                      }),
-                  huxerui::Select(nodeNames, nodeIndex,
-                                  [theme, selectableGroups, groupIndex](
-                                      const std::string& name) {
-                                      const std::string& text = name;
-                                      int delay = 0;
-                                      if (groupIndex < selectableGroups.size()) {
-                                          const auto it = selectableGroups[groupIndex].delays.find(text);
-                                          if (it != selectableGroups[groupIndex].delays.end()) delay = it->second;
-                                      }
-                                      return huxerui::Row{
-                                          huxerui::Text(name), huxerui::Spacer{},
-                                          huxerui::Text(delay > 0 ? std::format("{} ms", delay)
-                                                                  : "超时")
-                                              .Style(huxerui::TextStyle{
-                                                  huxerui::Font::System(font_size::kCaption),
-                                                  DelayLevelColor(theme, delay)})}
-                                          .With(huxerui::Semantics{
-                                              .role = huxerui::SemanticRole::MenuItem,
-                                              .label = name});
-                                  })
-                      .OnChanged([selectLine, selectableGroups, groupIndex](std::size_t index) {
-                          if (groupIndex < selectableGroups.size() &&
-                              index < selectableGroups[groupIndex].nodes.size()) {
-                              selectLine(selectableGroups[groupIndex].name,
-                                         selectableGroups[groupIndex].nodes[index]);
-                          }
-                      }),
-              }.With(huxerui::Spacing(6.0F))},
         s.profileUpdated.empty()
             ? huxerui::View{huxerui::Row{}}
             : huxerui::View{
@@ -580,6 +548,12 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
             huxerui::Column {
                 // 速率统计卡
                 std::move(statCards),
+
+                // Android 启动控件与页面内容同处滚动流，不单独冻结在标题下方。
+                CLASHFLUX_HOME_INLINE_ACTION(s)
+
+                // 移动端导航动作独立成卡片，紧跟启动卡片。
+                CLASHFLUX_HOME_NAV_ACTIONS(navPage)
 
                 // 流量曲线
                 Card(huxerui::Column {
@@ -646,5 +620,7 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
 
 #undef CLASHFLUX_HOME_SYSTEM_CARD
 #undef CLASHFLUX_HOME_ACTION
+#undef CLASHFLUX_HOME_INLINE_ACTION
+#undef CLASHFLUX_HOME_NAV_ACTIONS
 
 } // namespace clashflux::ui

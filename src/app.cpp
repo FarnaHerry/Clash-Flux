@@ -11,7 +11,8 @@ const huxerui::Application application{
         .window = {
             .title = "Clash-Flux",
             .initial_size = {1080.0F, 720.0F},
-            .minimum_size = huxerui::Size{560.0F, 480.0F},
+            // 桌面不承载手机布局：最小宽度始终落在 Medium 视口。
+            .minimum_size = huxerui::Size{720.0F, 520.0F},
             .chrome_mode = huxerui::WindowChromeMode::Custom,
             .title_bar_height = 24.0F,
         }},

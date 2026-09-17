@@ -170,14 +170,15 @@ huxerui::View IslandSurface(huxerui::View content, IslandLevel level = IslandLev
 huxerui::View IslandSection(std::string title, huxerui::View content);
 
 // ---- 页面（定义在各自 .cpp，均为 [[huxerui::composable]]）----
-huxerui::View HomePage();       // 首页（概览）
+huxerui::View HomePage(huxerui::State<std::size_t> navPage); // 首页（概览）
 huxerui::View ProfilesPage();   // 订阅
 huxerui::View ProxiesPage();    // 代理
-huxerui::View RulesPage();      // 规则
-huxerui::View ConnectionsPage();// 连接
-huxerui::View LogsPage();       // 日志
+huxerui::View RulesPage(std::function<void()> onBack = {});       // 规则
+huxerui::View ConnectionsPage(std::function<void()> onBack = {}); // 连接
+huxerui::View LogsPage(std::function<void()> onBack = {});        // 日志
 // 设置页持有主题模式 State（AppRoot 传入）。
-huxerui::View SettingsPage(huxerui::State<int> themeMode);
+huxerui::View SettingsPage(huxerui::State<int> themeMode,
+                           huxerui::State<std::size_t> navPage);
 
 // 设置页的三个固定模块：通用 / 内核 / 关于。平台宏只在模块入口选择
 // 平台函数；函数自己管理平台相关状态、任务、权限和控件。
@@ -214,6 +215,13 @@ huxerui::View PasswordField(
 huxerui::View PageScaffold(const std::string& title, huxerui::View actions,
                            huxerui::View content,
                            bool inlineCompactActions = false);
+huxerui::View SecondaryPageScaffold(huxerui::View title,
+                                    huxerui::View actions, huxerui::View content,
+                                    std::function<void()> onBack,
+                                    bool hideBack = false);
+huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
+                              const std::string& placeholder,
+                              std::function<void()> onClose);
 
 // 卡片容器（二级岛）：raised 表面 + 8pt 圆角 + 内边距。
 huxerui::View Card(huxerui::View content);
