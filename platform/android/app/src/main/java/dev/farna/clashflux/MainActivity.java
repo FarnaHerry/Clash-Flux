@@ -15,7 +15,9 @@ import android.provider.Settings;
 import android.util.Log;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 
@@ -72,6 +74,7 @@ public final class MainActivity extends HuxerUIActivity {
         Log.i(TAG, "MainActivity.onCreate entered");
         current = this;
         applicationContext = getApplicationContext();
+        installBundledRuleSets(this);
         // Initialize the native bridge before HuxerUI composes the first frame.
         // Android settings and VPN callbacks can be queried during composition;
         // waiting until after super.onCreate leaves that first frame without a
@@ -140,9 +143,39 @@ public final class MainActivity extends HuxerUIActivity {
     /** Initializes the native store when no Activity UI ran (boot restore). */
     public static void bootstrapNative(Context context) {
         applicationContext = context.getApplicationContext();
+        installBundledRuleSets(context);
         nativeInit(context.getFilesDir().getAbsolutePath(),
                 context.getApplicationInfo().nativeLibraryDir);
         reportPreviousNativeCrash(context);
+    }
+
+    private static void installBundledRuleSets(Context context) {
+        File directory = new File(context.getFilesDir(), "clash-flux/core");
+        if (!directory.isDirectory() && !directory.mkdirs()) {
+            appLog("无法创建内置分流规则目录", true);
+            return;
+        }
+        for (String name : new String[]{"geoip-cn.srs", "geosite-cn.srs"}) {
+            File destination = new File(directory, name);
+            File temporary = new File(directory, name + ".asset");
+            try (InputStream input = context.getAssets().open("rules/" + name);
+                 FileOutputStream output = new FileOutputStream(temporary)) {
+                byte[] buffer = new byte[16384];
+                for (int count = input.read(buffer); count >= 0; count = input.read(buffer)) {
+                    if (count > 0) output.write(buffer, 0, count);
+                }
+                output.getFD().sync();
+                if (destination.exists() && !destination.delete()) {
+                    throw new IOException("无法替换旧规则集");
+                }
+                if (!temporary.renameTo(destination)) {
+                    throw new IOException("无法安装规则集");
+                }
+            } catch (IOException error) {
+                temporary.delete();
+                appLog("安装内置分流规则 " + name + " 失败：" + error.getMessage(), true);
+            }
+        }
     }
 
     /**

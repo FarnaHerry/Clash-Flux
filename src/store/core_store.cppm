@@ -787,7 +787,12 @@ public:
     bool applyMode(const std::string& m) {
         ensureOpen();
 #if defined(__ANDROID__)
-        if (!clashflux_android_set_clash_mode(m.c_str())) return false;
+        // The preferred mode is configuration, not merely live CommandClient
+        // state.  Allow changing it before VpnService exists so the next
+        // generated config starts in that mode; only require the JNI update
+        // when a data plane is actually running.
+        if (clashflux_android_vpn_state() == 2 &&
+            !clashflux_android_set_clash_mode(m.c_str())) return false;
 #else
         const nlohmann::json body = {{"mode", m}};
         const auto r = api_->patchConfigs(body.dump());

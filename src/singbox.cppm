@@ -3,8 +3,8 @@
 // sing-box 不认识 Clash YAML；全平台（桌面 spawn 进程 / Android libbox）共用
 // 本编译器把订阅（或手写配置、原生 sing-box JSON）合成为 sing-box 运行时
 // 配置。clash_mode 取小写 rule/global/direct（经 clash_api mode_list 自定义，
-// 与 UI 硬编码字符串一致）。保真度第一期：基础协议/组/规则 + GEOIP → 在线
-// .srs 规则集；不支持的条目（RULE-SET、小众协议等）以警告返回而不是静默
+// 与 UI 硬编码字符串一致）。保真度第一期：基础协议/组/规则 + GEOIP/GEOSITE
+// → .srs 规则集；不支持的条目（RULE-SET、小众协议等）以警告返回而不是静默
 // 丢弃，调用方呈现给用户。
 export module clashflux.singbox;
 
@@ -44,7 +44,7 @@ export struct CompileOptions {
     bool tunStrictRoute = true;                  // Android VpnService 侧保持 false（严格
                                                  // 路由会截断系统级分流）
     bool ipv6 = true;                            // DNS 与 TUN 是否允许 IPv6
-    std::string ruleSetDir;                      // 非空时 GEOIP .srs 本地命中即以
+    std::string ruleSetDir;                      // 非空时 GEOIP/GEOSITE .srs 本地命中即以
                                                  // local rule_set 生成（core_store
                                                  // 预取缓存目录；未命中回落 remote）
     std::string mainConnectionId;                // 本次加载的 sing-box profile 连接 ID

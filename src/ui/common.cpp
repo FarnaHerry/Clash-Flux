@@ -283,10 +283,10 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
 
 IslandTheme ResolveIslandTheme(const huxerui::ThemeSpec& theme) {
     return IslandTheme{
-        .page_gap = theme.spacing.small,
+        .page_gap = 10.0F,
         .island_padding = theme.spacing.medium,
-        .island_radius = 16.0F,
-        .nested_radius = 8.0F,
+        .island_radius = 22.0F,
+        .nested_radius = 14.0F,
         .ocean = theme.colors.background,
         .base = theme.colors.surface_container_low,
         .raised = theme.colors.surface_container,
@@ -492,11 +492,12 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 [[huxerui::composable]] huxerui::View Card(huxerui::View content) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
-    // 二级岛：raised 表面（比一级岛高一层级）+ 8pt 同心圆角。
+    // 二级岛：半透明水晶卡片感的 raised 表面 + 同心圆角。
     return huxerui::Column { std::move(content) }
         .With(huxerui::Padding(islands.island_padding),
               huxerui::Background(islands.raised),
               huxerui::CornerRadius(islands.nested_radius),
+              huxerui::Border(islands.outline_soft, 1.0F),
               huxerui::ClipChildren(),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -506,7 +507,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     const IslandTheme islands = ResolveIslandTheme(theme);
     huxerui::View card = content;
     return std::move(card).With(
-        huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.24F), {}, 24.0F, 0.0F},
+        huxerui::Shadow{huxerui::Color::Rgb(5, 35, 64, 0.28F), {}, 28.0F, 2.0F},
         huxerui::Background(islands.overlay),
         huxerui::CornerRadius(islands.island_radius),
         huxerui::Border(islands.outline_soft, 1.0F),
