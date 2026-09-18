@@ -2,6 +2,7 @@ import com.android.build.api.artifact.SingleArtifact
 import com.android.build.api.variant.BuildConfigField
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
+import java.security.MessageDigest
 import javax.inject.Inject
 
 plugins {
@@ -60,6 +61,60 @@ def stageSingboxAar = tasks.register("stageSingboxAar") {
     }
 }
 
+// Android cannot fetch route rule-sets while the VpnService is still creating
+// its physical-network path.  Package the two China rule-sets needed by common
+// Clash subscriptions and let MainActivity install them before native config
+// generation.  The upstream revision and hashes are pinned for reproducible
+// APKs; a normal incremental build reuses these generated assets.
+def bundledRuleSetRevision = "74de9fd23e9bd07d3d2c42741472f61194a9a3d8"
+def bundledRuleSets = [
+        "geoip-cn.srs"  : [path: "geo/geoip/cn.srs",   sha256: "412585ab8d9f05701a11cf6b040e85719510696d0879389d5a8ef8d8764b04dd"],
+        "geosite-cn.srs": [path: "geo/geosite/cn.srs", sha256: "265b60680d291447ef98f80513c7ed350efe7047ae6cde77a7a9578b623cbd1b"],
+]
+def generatedRuleSetAssets = layout.buildDirectory.dir("generated/rule-set-assets")
+def stageBundledRuleSets = tasks.register("stageBundledRuleSets") {
+    inputs.property("revision", bundledRuleSetRevision)
+    inputs.properties(bundledRuleSets.collectEntries { name, details ->
+        [("sha256." + name): details.sha256]
+    })
+    outputs.dir(generatedRuleSetAssets)
+    doLast {
+        def rulesDirectory = new File(generatedRuleSetAssets.get().asFile, "rules")
+        rulesDirectory.mkdirs()
+        bundledRuleSets.each { name, details ->
+            def destination = new File(rulesDirectory, name)
+            def digest = { File input ->
+                MessageDigest md = MessageDigest.getInstance("SHA-256")
+                input.withInputStream { stream ->
+                    byte[] buffer = new byte[16384]
+                    for (int count = stream.read(buffer); count >= 0; count = stream.read(buffer)) {
+                        if (count > 0) md.update(buffer, 0, count)
+                    }
+                }
+                md.digest().encodeHex().toString()
+            }
+            if (destination.isFile() && digest(destination) == details.sha256) return
+            def temporary = new File(rulesDirectory, name + ".download")
+            temporary.delete()
+            def url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/${bundledRuleSetRevision}/${details.path}"
+            new URL(url).withInputStream { input ->
+                temporary.withOutputStream { output -> output << input }
+            }
+            def actual = digest(temporary)
+            if (actual != details.sha256) {
+                temporary.delete()
+                throw new GradleException("Rule-set checksum mismatch for ${name}: ${actual}")
+            }
+            if (destination.exists() && !destination.delete()) {
+                throw new GradleException("Unable to replace generated rule-set: ${destination}")
+            }
+            if (!temporary.renameTo(destination)) {
+                throw new GradleException("Unable to install generated rule-set: ${destination}")
+            }
+        }
+    }
+}
+
 def huxeruiProperty = { String name -> providers.gradleProperty(name).get() }
 def huxeruiHome = rootProject.gradle.ext.huxeruiHome
 def huxeruiLibraries = rootProject.gradle.ext.huxeruiLibraries
@@ -108,8 +163,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 58
-        versionName = "0.1.60"
+        versionCode = 59
+        versionName = "0.1.61"
 
         externalNativeBuild {
             cmake {
@@ -156,6 +211,10 @@ android {
         }
     }
 
+    sourceSets {
+        main.assets.srcDir(generatedRuleSetAssets)
+    }
+
     // Do not package a library for an ABI that this variant does not support.
     // libbox must remain arm64-only even if an upstream build grows extra slices.
     packaging {
@@ -171,6 +230,10 @@ android {
         checkReleaseBuilds = false
         abortOnError = false
     }
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+    dependsOn(stageBundledRuleSets)
 }
 
 androidComponents.onVariants(androidComponents.selector().all()) { variant ->

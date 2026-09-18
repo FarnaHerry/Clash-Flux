@@ -16,7 +16,8 @@ C++ 实现。订阅沿用 Clash YAML 格式，由内置编译器转换为 sing-b
   文本），可多选同时连接；内网 CIDR 由平台后端安装到对应隧道
 - 内核控制：自动启停、出站模式（规则/全局/直连）、混合端口、局域网连接、日志级别
 - 订阅转换：Clash YAML → sing-box JSON 编译器（ss/vmess/vless/trojan/hysteria2/
-  tuic 等协议、策略组、域名/IP/GEOIP 规则；不支持的条目显式提示而非静默丢弃；
+  tuic 等协议、策略组、域名/IP/GEOIP/GEOSITE 规则，并将 Mihomo 常见的
+  `RULE-SET,cn` / `RULE-SET,cn-ip` 映射到内置国内规则集；不支持的条目显式提示而非静默丢弃；
   原生 sing-box JSON 订阅直通）
 - 系统代理（KDE / GNOME）与 TUN 模式开关（sing-box TUN，切换即重启内核生效）
 - 服务模式（可选）：统一 root systemd 服务托管 sing-box、Linux PPTP 和 OpenVPN，
@@ -112,6 +113,8 @@ huxerui build android --profile release
 
 Android 使用兼容编译路径，不要求 NDK 支持 C++ modules；数据面是源码构建的
 sing-box libbox AAR（arm64-v8a，与桌面内核同版本），经 VpnService 提供 TUN。
+Gradle 会按固定上游 revision 和 SHA256 生成并打包 `geoip-cn.srs` /
+`geosite-cn.srs`；首次构建需要网络，运行时则无需联网下载国内分流规则。
 
 GitHub Release 使用稳定的 Android 发布密钥签名。CI 需要配置
 `CLASHFLUX_ANDROID_KEYSTORE_BASE64`、`CLASHFLUX_ANDROID_KEYSTORE_PASSWORD`、

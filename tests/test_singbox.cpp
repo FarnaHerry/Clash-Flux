@@ -1,7 +1,8 @@
 // test_singbox.cpp — clashflux.singbox 编译器的最小单元测试。
 //
 // 覆盖：节点协议映射（ss/vmess/hysteria2/tuic/未知协议）、代理组降级与成员
-// 过滤、规则直映射 + REJECT action + GEOIP 规则集 + MATCH final、三模式
+// 过滤、规则直映射 + REJECT action + GEOIP/GEOSITE 规则集 + MATCH final、
+// resolve 前置规则、三模式
 // clash_mode 前置规则、原生 sing-box JSON 直通、空订阅最小配置。
 // 断言风格与 test_vpn 一致（check 计数 + main）。
 #include <cassert>
@@ -89,7 +90,10 @@ rules:
   - DOMAIN,example.org,DIRECT
   - DOMAIN-SUFFIX,cn,GEOIPPLACEHOLDER
   - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - GEOSITE,CN,DIRECT
   - GEOIP,CN,手动选择
+  - RULE-SET,cn,DIRECT
+  - RULE-SET,cn-ip,DIRECT
   - DOMAIN,blocked.net,REJECT
   - RULE-SET,some-provider,手动选择
   - PROCESS-NAME,ssh,手动选择
@@ -107,7 +111,7 @@ void check(bool condition, std::string_view what) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     // ---- 订阅编译 -----------------------------------------------------------
     singbox::CompileOptions options;
     options.controller = "127.0.0.1:9097";
@@ -190,7 +194,8 @@ int main() {
               [](const std::string& w) { return w.find("手动选择") != std::string::npos; }),
           "select 组无降级警告");
 
-    // 路由：final = MATCH 目标；clash_mode 前置；REJECT → action；GEOIP → rule_set。
+    // 路由：final = MATCH 目标；clash_mode 前置；resolve 使 GEOIP 可匹配域名；
+    // REJECT → action；GEOIP/GEOSITE → rule_set。
     check(config["route"]["final"] == "自动选择", "MATCH 目标成为 final");
     const json& dnsServers = config["dns"]["servers"];
     check(config["dns"]["final"] == "dns-0", "Clash nameserver 成为 DNS final");
@@ -208,12 +213,16 @@ int main() {
     const json& rules = config["route"]["rules"];
     check(rules[0].value("action", "") == "sniff", "首条规则为 sniff action");
     check(rules[1].value("action", "") == "hijack-dns", "DNS 劫持规则");
-    check(rules[2].value("clash_mode", "") == "direct" &&
-              rules[2].value("outbound", "") == "DIRECT",
+    check(rules[2].value("action", "") == "resolve", "DNS 劫持后前置 resolve action");
+    check(rules[3].value("clash_mode", "") == "direct" &&
+              rules[3].value("outbound", "") == "DIRECT",
           "direct 模式前置规则");
-    check(rules[3].value("clash_mode", "") == "global", "global 模式前置规则");
+    check(rules[4].value("clash_mode", "") == "global", "global 模式前置规则");
     bool sawReject = false;
     bool sawGeoip = false;
+    bool sawGeosite = false;
+    int geoipCnRuleCount = 0;
+    int geositeCnRuleCount = 0;
     bool sawCidr = false;
     for (const auto& rule : rules) {
         if (rule.value("action", "") == "reject" &&
@@ -223,6 +232,12 @@ int main() {
         if (rule.contains("rule_set") &&
             rule["rule_set"] == json{"geoip-cn"}) {
             sawGeoip = true;
+            ++geoipCnRuleCount;
+        }
+        if (rule.contains("rule_set") &&
+            rule["rule_set"] == json{"geosite-cn"}) {
+            sawGeosite = true;
+            ++geositeCnRuleCount;
         }
         if (rule.value("ip_cidr", json{}) == json{"192.168.0.0/16"}) {
             sawCidr = true;
@@ -230,12 +245,29 @@ int main() {
     }
     check(sawReject, "REJECT 目标 → action:reject");
     check(sawGeoip, "GEOIP CN → rule_set");
+    check(sawGeosite, "GEOSITE CN → rule_set");
+    check(geoipCnRuleCount == 2, "RULE-SET cn-ip → geoip-cn rule_set");
+    check(geositeCnRuleCount == 2, "RULE-SET cn → geosite-cn rule_set");
     check(sawCidr, "IP-CIDR 直映射");
-    check(config["route"]["rule_set"].is_array() &&
-              config["route"]["rule_set"][0]["tag"] == "geoip-cn" &&
-              config["route"]["rule_set"][0]["url"].get<std::string>().find(
-                  "meta-rules-dat/sing/geo/geoip/cn.srs") != std::string::npos,
-          "geoip-cn 远程 .srs 规则集");
+    bool sawRemoteGeoip = false;
+    bool sawRemoteGeosite = false;
+    for (const auto& ruleSet : config["route"]["rule_set"]) {
+        const std::string url = ruleSet.value("url", "");
+        if (ruleSet.value("tag", "") == "geoip-cn") {
+            sawRemoteGeoip = url.find("meta-rules-dat/sing/geo/geoip/cn.srs") !=
+                             std::string::npos;
+        }
+        if (ruleSet.value("tag", "") == "geosite-cn") {
+            sawRemoteGeosite = url.find("meta-rules-dat/sing/geo/geosite/cn.srs") !=
+                                std::string::npos;
+        }
+    }
+    check(sawRemoteGeoip, "geoip-cn 远程 .srs 规则集");
+    check(sawRemoteGeosite, "geosite-cn 远程 .srs 规则集");
+    check(config["dns"]["rules"].is_array() &&
+              config["dns"]["rules"][0]["rule_set"] == json{"geosite-cn"} &&
+              config["dns"]["rules"][0]["server"] == "local",
+          "GEOSITE CN 直连规则使用本地 DNS");
     check(std::any_of(result.warnings.begin(), result.warnings.end(),
                       [](const std::string& w) {
                           return w.find("RULE-SET") != std::string::npos;
@@ -312,13 +344,15 @@ rules:
     check(compensationResult.error.empty(), "主 VPN 补偿配置编译成功");
     const auto compensationConfig = json::parse(compensationResult.json);
     const auto& compensationRules = compensationConfig["route"]["rules"];
-    check(compensationRules[0]["action"] == "sniff" && compensationRules[1]["action"] == "hijack-dns",
-          "补偿规则位于 sniff/DNS 之后");
-    check(compensationRules[2]["ip_cidr"] == json{"10.42.0.9/32"} &&
-              compensationRules[2]["outbound"] == "chosen", "高优先级全局规则可覆盖原生内网");
-    check(compensationRules[3]["domain"] == json{"public.corp.example"} &&
-              compensationRules[3]["outbound"] == "chosen", "同优先级精确域名先于后缀，主 VPN 选择订阅 final");
-    const std::string nativeTag = compensationRules[4]["outbound"];
+    check(compensationRules[0]["action"] == "sniff" &&
+              compensationRules[1]["action"] == "hijack-dns" &&
+              compensationRules[2]["action"] == "resolve",
+          "补偿规则位于 sniff/DNS/resolve 之后");
+    check(compensationRules[3]["ip_cidr"] == json{"10.42.0.9/32"} &&
+              compensationRules[3]["outbound"] == "chosen", "高优先级全局规则可覆盖原生内网");
+    check(compensationRules[4]["domain"] == json{"public.corp.example"} &&
+              compensationRules[4]["outbound"] == "chosen", "同优先级精确域名先于后缀，主 VPN 选择订阅 final");
+    const std::string nativeTag = compensationRules[5]["outbound"];
     bool hasBoundNative = false;
     for (const auto& outbound : compensationConfig["outbounds"]) {
         if (outbound.value("tag", "") == nativeTag) {
@@ -327,9 +361,9 @@ rules:
         }
     }
     check(hasBoundNative, "原生 VPN 域名规则使用绑定 ppp 接口的 direct outbound");
-    check(compensationRules[5]["ip_cidr"] == json{"2001:db8::1/128"}, "离线目标规则暂停，IPv6 精确 IP 全局规则保留");
-    check(compensationRules[6]["ip_cidr"] == json{"10.0.0.0/8"}, "只安装活动连接的内部 CIDR");
-    check(compensationRules[7]["clash_mode"] == "direct" && compensationRules[8]["clash_mode"] == "global",
+    check(compensationRules[6]["ip_cidr"] == json{"2001:db8::1/128"}, "离线目标规则暂停，IPv6 精确 IP 全局规则保留");
+    check(compensationRules[7]["ip_cidr"] == json{"10.0.0.0/8"}, "只安装活动连接的内部 CIDR");
+    check(compensationRules[8]["clash_mode"] == "direct" && compensationRules[9]["clash_mode"] == "global",
           "主 VPN 三模式不能绕过全局连接选择");
     for (const auto& inbound : compensationConfig["inbounds"]) {
         if (inbound.value("type", "") != "tun") continue;
@@ -375,8 +409,8 @@ rules:
 
     compensation.nativeConnections[0].connected = false;
     const auto disconnected = json::parse(singbox::compileConfig(compensation).json);
-    check(disconnected["route"]["rules"][4]["ip_cidr"] == json{"2001:db8::1/128"} &&
-              disconnected["route"]["rules"][5]["clash_mode"] == "direct",
+    check(disconnected["route"]["rules"][5]["ip_cidr"] == json{"2001:db8::1/128"} &&
+              disconnected["route"]["rules"][6]["clash_mode"] == "direct",
           "断开后撤销目标规则及内部路由，恢复主订阅");
     compensation.nativeConnections[0].connected = true;
     compensation.nativeConnections[0].interfaceName.clear();
@@ -388,14 +422,14 @@ rules:
     auto catchAll = compensation;
     catchAll.globalRules = {{vpn::MatchKind::Any, "", "profile:pptp", 100}};
     const auto paused = json::parse(singbox::compileConfig(catchAll).json);
-    check(paused["route"]["rules"][2]["clash_mode"] == "direct",
+    check(paused["route"]["rules"][3]["clash_mode"] == "direct",
           "离线全部规则不得生成无条件拒绝");
     catchAll.tunInbound = false;
     catchAll.nativeConnections[0].connected = true;
     catchAll.nativeConnections[0].interfaceName = "ppp7";
     catchAll.globalRules = {{vpn::MatchKind::ExactDomain, "https://Portal.Example:443/path?q=1", "profile:pptp", 100}};
     const auto urlConfig = json::parse(singbox::compileConfig(catchAll).json);
-    check(urlConfig["route"]["rules"][2]["domain"] == json{"portal.example"},
+    check(urlConfig["route"]["rules"][3]["domain"] == json{"portal.example"},
           "URL 只生成目标域名匹配，不能变成全部流量");
     catchAll.globalRules[0].match = vpn::MatchKind::Any;
     check(!singbox::compileConfig(catchAll).error.empty(), "全部规则不允许携带被忽略的匹配内容");
@@ -411,7 +445,7 @@ rules:
     check(std::find(rawExclude.begin(), rawExclude.end(), json("203.0.113.0/24")) != rawExclude.end() &&
               std::find(rawExclude.begin(), rawExclude.end(), json("198.51.100.7/32")) != rawExclude.end(),
           "用户和动态服务器排除地址均保留");
-    check(rawConfig["route"]["rules"][2]["outbound"] == "local" &&
+    check(rawConfig["route"]["rules"][3]["outbound"] == "local" &&
               rawConfig["route"]["rules"].back()["domain"] == json{"user.example"}, "原生 JSON 全局规则优先，订阅规则保留");
     rawCompensation.tunInbound = false;
     const auto withoutTun = json::parse(singbox::compileConfig(rawCompensation).json);
@@ -439,18 +473,25 @@ rules:
     {
         std::filesystem::create_directories("/tmp/clashflux-test-ruleset");
         { std::ofstream out("/tmp/clashflux-test-ruleset/geoip-cn.srs", std::ios::binary); out << "stub"; }
+        { std::ofstream out("/tmp/clashflux-test-ruleset/geosite-cn.srs", std::ios::binary); out << "stub"; }
         singbox::CompileOptions localOptions = options;
         localOptions.ruleSetDir = "/tmp/clashflux-test-ruleset";
         const auto localResult = singbox::compileConfig(localOptions);
         const json localConfig = json::parse(localResult.json);
-        bool sawLocal = false;
+        bool sawLocalGeoip = false;
+        bool sawLocalGeosite = false;
         for (const auto& rs : localConfig["route"]["rule_set"]) {
             if (rs.value("tag", "") == "geoip-cn") {
-                sawLocal = rs.value("type", "") == "local" &&
-                           rs.value("path", "").find("geoip-cn.srs") != std::string::npos;
+                sawLocalGeoip = rs.value("type", "") == "local" &&
+                                rs.value("path", "").find("geoip-cn.srs") != std::string::npos;
+            }
+            if (rs.value("tag", "") == "geosite-cn") {
+                sawLocalGeosite = rs.value("type", "") == "local" &&
+                                   rs.value("path", "").find("geosite-cn.srs") != std::string::npos;
             }
         }
-        check(sawLocal, "ruleSetDir 命中时 GEOIP 以 local rule_set 生成");
+        check(sawLocalGeoip, "ruleSetDir 命中时 GEOIP 以 local rule_set 生成");
+        check(sawLocalGeosite, "ruleSetDir 命中时 GEOSITE 以 local rule_set 生成");
     }
 
     // ---- 空订阅最小配置 -------------------------------------------------------
@@ -460,6 +501,42 @@ rules:
     const json emptyConfig = json::parse(empty.json);
     check(emptyConfig["route"]["final"] == "DIRECT", "空订阅 final = DIRECT");
     check(emptyConfig["outbounds"].size() == 1, "空订阅仅 DIRECT outbound");
+
+    // 可选真实订阅回归：命令行传入 YAML、本地规则集目录和
+    // 可选输出 JSON。测试不固化订阅密钥，但能用用户实际订阅
+    // 验证 RULE-SET,cn/cn-ip 没有再落入 MATCH 兜底。
+    if (argc >= 3) {
+        std::ifstream input(argv[1], std::ios::binary);
+        check(input.good(), "真实订阅测试文件可读");
+        singbox::CompileOptions realOptions;
+        realOptions.mode = "rule";
+        realOptions.tunInbound = true;
+        realOptions.ruleSetDir = argv[2];
+        realOptions.profileYaml = std::string(std::istreambuf_iterator<char>(input),
+                                              std::istreambuf_iterator<char>());
+        const auto realResult = singbox::compileConfig(realOptions);
+        check(realResult.error.empty(),
+              std::format("真实订阅编译无错（实际: {}）", realResult.error));
+        if (!realResult.json.empty()) {
+            const json realConfig = json::parse(realResult.json);
+            const auto& realRules = realConfig["route"]["rules"];
+            const bool hasCnDomain = std::ranges::any_of(realRules, [](const auto& rule) {
+                return rule.value("rule_set", json::array()) == json{"geosite-cn"} &&
+                       rule.value("outbound", "") == "DIRECT";
+            });
+            const bool hasCnIp = std::ranges::any_of(realRules, [](const auto& rule) {
+                return rule.value("rule_set", json::array()) == json{"geoip-cn"} &&
+                       rule.value("outbound", "") == "DIRECT";
+            });
+            check(hasCnDomain, "真实订阅 RULE-SET,cn 保留为国内域名直连");
+            check(hasCnIp, "真实订阅 RULE-SET,cn-ip 保留为国内 IP 直连");
+            if (argc >= 4) {
+                std::ofstream output(argv[3], std::ios::binary | std::ios::trunc);
+                output << realResult.json;
+                check(output.good(), "真实订阅 sing-box JSON 可写");
+            }
+        }
+    }
 
     if (failures != 0) {
         std::println(stderr, "test_singbox: {} 项断言失败", failures);

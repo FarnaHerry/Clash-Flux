@@ -5,8 +5,10 @@
 #include <huxerui/huxerui.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <format>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if defined(__ANDROID__)
@@ -195,14 +197,9 @@ void DesktopPreparePlatformDataDirectory(
     auto finishExit = [tasks, application, tray, window, exitRequested]() {
         if (exitRequested.Get()) return;
         exitRequested = true;
-        // Defer platform UI teardown by one frame. The close callback only
-        // marks the exit and schedules work, so native window/tray APIs do
-        // not block the input event that requested the close.
-        tasks.Launch([window, tray]() -> huxerui::Task<void> {
-            co_await huxerui::Delay(std::chrono::duration<double>{0});
-            window.Hide();
-            tray.Hide();
-        });
+        clashflux::instance::markClosing();
+        tray.Hide();
+        window.Hide();
         tasks.Launch([application]() -> huxerui::Task<void> {
             co_await RunOnTaskThread([] {
                 store::vpnStore().shutdown();
@@ -210,6 +207,11 @@ void DesktopPreparePlatformDataDirectory(
             });
             application.Quit();
         });
+        // 退出保底看门狗：避免任何底层阻塞（网络断开超时、平台事件循环等）导致后台残留僵尸进程
+        std::thread([] {
+            std::this_thread::sleep_for(std::chrono::seconds(3));
+            std::_Exit(0);
+        }).detach();
     };
 
     if (trayAvailable) {
@@ -356,7 +358,7 @@ void DesktopPreparePlatformDataDirectory(
     };
     window.OnCloseRequest(
         [=]() mutable -> bool {
-            if (exitRequested.Get()) return false;
+            if (exitRequested.Get()) return true;
             if (!tray.IsAvailable() || !trayEnabled.Get()) {
                 finishExit();
                 return true;
@@ -431,6 +433,10 @@ void DesktopPreparePlatformDataDirectory(
     huxerui::View content = mainRow;
     return huxerui::Column {
         huxerui::WindowTitleBar {
+            huxerui::Image(app::images::mascot_logo)
+                .Fit(huxerui::ImageFit::Contain)
+                .With(huxerui::Frame{.width = 20.0F, .height = 20.0F},
+                      huxerui::WindowDragRegion{}),
             huxerui::Text("Clash-Flux")
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kChip)

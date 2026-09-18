@@ -84,6 +84,7 @@ struct Context {
     nlohmann::json ruleSets = nlohmann::json::array();
     std::vector<std::string> knownTags;               // 节点 + 组 + DIRECT
     std::map<std::string, std::string> geoipTags;     // 国家码 → rule_set tag
+    std::map<std::string, std::string> geositeTags;   // 站点类别 → rule_set tag
     std::map<std::string, std::string> dnsServerTags; // Clash DNS 地址 → typed server tag
     std::string finalTarget;                          // MATCH 目标
 
@@ -619,6 +620,73 @@ bool ensureGeoipRuleSet(Context& ctx, std::string country) {
 #endif
 }
 
+bool ensureGeositeRuleSet(Context& ctx, std::string category) {
+    category = lowerCopy(category);
+    if (ctx.geositeTags.contains(category)) {
+        const std::string tag = "geosite-" + category;
+        return std::ranges::any_of(ctx.ruleSets, [&](const auto& ruleSet) {
+            return ruleSet.is_object() && ruleSet.value("tag", "") == tag;
+        });
+    }
+    const std::string tag = "geosite-" + category;
+    ctx.geositeTags.emplace(category, tag);
+    if (category.empty() ||
+        !std::all_of(category.begin(), category.end(), [](unsigned char c) {
+            return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                   c == '-' || c == '_';
+        })) {
+        ctx.warn(std::format("GEOSITE 类别「{}」无效，已跳过", category));
+        return false;
+    }
+    if (!ctx.opt.ruleSetDir.empty()) {
+        const std::filesystem::path local =
+            std::filesystem::path(ctx.opt.ruleSetDir) / (tag + ".srs");
+        std::error_code ec;
+        if (std::filesystem::exists(local, ec) && !ec) {
+            ctx.ruleSets.push_back({
+                {"type", "local"},
+                {"tag", tag},
+                {"format", "binary"},
+                {"path", local.string()},
+            });
+            return true;
+        }
+    }
+#if defined(__ANDROID__)
+    ctx.warn(std::format("Android 暂无本地 GEOSITE 规则集「{}」，已跳过在线下载", category));
+    return false;
+#else
+    ctx.ruleSets.push_back({
+        {"type", "remote"},
+        {"tag", tag},
+        {"format", "binary"},
+        {"url", std::format("https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/{}.srs", category)},
+        {"update_interval", "24h"},
+    });
+    return true;
+#endif
+}
+
+void ensureChinaDnsRule(Context& ctx, const std::string& geositeTag) {
+    if (!ctx.config["dns"].contains("rules") ||
+        !ctx.config["dns"]["rules"].is_array()) {
+        ctx.config["dns"]["rules"] = nlohmann::json::array();
+    }
+    const bool exists = std::ranges::any_of(ctx.config["dns"]["rules"],
+        [&](const auto& rule) {
+            return rule.is_object() && rule.value("server", "") == "local" &&
+                   rule.value("rule_set", nlohmann::json::array()) ==
+                       nlohmann::json::array({geositeTag});
+        });
+    if (!exists) {
+        ctx.config["dns"]["rules"].push_back({
+            {"rule_set", {geositeTag}},
+            {"action", "route"},
+            {"server", "local"},
+        });
+    }
+}
+
 // 单条 Clash 规则 → sing-box route rule；MATCH 返回 false 表示已写入 final。
 bool convertRule(Context& ctx, std::string_view rawLine) {
     // 先拷贝到稳定存储：trimCopy 返回的临时 string 一旦赋回 string_view 就
@@ -675,9 +743,35 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
             if (!ensureGeoipRuleSet(ctx, code)) return true;
             rule["rule_set"] = {ctx.geoipTags.at(code)};
         }
+    } else if (kind == "geosite") {
+        const std::string category = lowerCopy(value);
+        if (!ensureGeositeRuleSet(ctx, category)) return true;
+        const std::string& tag = ctx.geositeTags.at(category);
+        rule["rule_set"] = {tag};
+        if (category == "cn" && target == "DIRECT") {
+            ensureChinaDnsRule(ctx, tag);
+        }
     } else if (kind == "rule-set") {
-        ctx.warn(std::format("规则集 RULE-SET {} 暂不支持（计划后续迭代），已跳过", value));
-        return true;
+        // Mihomo 订阅普遍用 MRS provider 表达国内分流。sing-box
+        // 不能直读 MRS，但 cn / cn-ip 的语义与我们内置的
+        // geosite-cn / geoip-cn 一致；显式映射这两个高频别名，
+        // 避免国内直连规则被丢弃后全部落入 MATCH,PROXY。
+        const std::string provider = lowerCopy(value);
+        if (provider == "cn" || provider == "china" ||
+            provider == "geosite-cn") {
+            if (!ensureGeositeRuleSet(ctx, "cn")) return true;
+            const std::string& tag = ctx.geositeTags.at("cn");
+            rule["rule_set"] = {tag};
+            if (target == "DIRECT") ensureChinaDnsRule(ctx, tag);
+        } else if (provider == "cn-ip" || provider == "china-ip" ||
+                   provider == "geoip-cn") {
+            if (!ensureGeoipRuleSet(ctx, "cn")) return true;
+            rule["rule_set"] = {ctx.geoipTags.at("cn")};
+        } else {
+            ctx.warn(std::format(
+                "规则集 RULE-SET {} 的格式暂不支持，已跳过", value));
+            return true;
+        }
     } else {
         ctx.warn(std::format("规则类型 {} 暂不支持，已跳过", parts[0]));
         return true;
@@ -879,7 +973,9 @@ bool applyConnectionRules(Context& ctx) {
     };
 
     nlohmann::json precedence = nlohmann::json::array({
-        {{"action", "sniff"}}, {{"protocol", "dns"}, {"action", "hijack-dns"}},
+        {{"action", "sniff"}},
+        {{"protocol", "dns"}, {"action", "hijack-dns"}},
+        {{"action", "resolve"}},
     });
     auto globalRules = ctx.opt.globalRules;
     std::stable_sort(globalRules.begin(), globalRules.end(), [](const auto& left, const auto& right) {
@@ -1105,12 +1201,11 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
         config["experimental"] = nlohmann::json::object();
     }
 #if defined(__ANDROID__)
-    // Android libbox is controlled through CommandServer/CommandClient.  It
-    // has no desktop REST controller on 127.0.0.1:9097, so remove a
-    // clash_api left by a native sing-box profile as well as the managed
-    // desktop skeleton.  Keeping this out of the Android config also avoids
-    // starting an unnecessary second controller inside the libbox service.
-    config["experimental"].erase("clash_api");
+    // Android libbox is controlled through CommandServer/CommandClient, so it
+    // must not listen on the desktop REST port.  A clash_api object is still
+    // required: libbox's internal Clash server reads default_mode from it and
+    // exposes that mode through CommandClient without opening an HTTP socket.
+    config["experimental"]["clash_api"] = {{"default_mode", opt.mode}};
 #else
     nlohmann::json clashApi = config["experimental"].contains("clash_api") &&
                                       config["experimental"]["clash_api"].is_object()

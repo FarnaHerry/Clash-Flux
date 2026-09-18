@@ -26,6 +26,8 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
 
 - 修改前先检查 `git status`，保留用户已有改动，不得擅自 reset、restore 或清理无关文件。
 - 优先使用 Ninja/CMake 的增量构建；UI 修改必须经过 HuxerUI codegen 和目标构建。
+- Android Gradle 构建会按固定 revision/SHA256 生成并打包国内 GEOIP/GEOSITE
+  规则集；不得跳过 `stageBundledRuleSets` 或改为运行时下载。
 - HuxerUI composable 函数体内不能使用条件编译；普通 UI 源文件按项目现有 DSL 约定编写。
 - 手机端二级页面（详情、编辑或从一级页内部入口继续进入的页面）必须覆盖一级底部导航，
   并在标题栏左侧提供返回箭头。系统返回键、返回手势与该箭头必须调用同一个返回动作，
