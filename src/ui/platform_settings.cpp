@@ -30,18 +30,23 @@ namespace {
 template <typename Job>
 void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
                           huxerui::State<bool> busy, Job job,
-                          std::string ok_message = {}) {
+                          std::string ok_message = {},
+                          std::function<void(bool)> finished = {}) {
     if (busy.Get()) return;
     busy = true;
     tasks.Launch([tasks, toast, busy, job = std::move(job),
-                  ok_message = std::move(ok_message)]() mutable
+                  ok_message = std::move(ok_message),
+                  finished = std::move(finished)]() mutable
                      -> huxerui::Task<void> {
+        bool ok = false;
         try {
             co_await RunOnTaskThread(std::move(job));
+            ok = true;
             if (!ok_message.empty()) toast.Show(ok_message);
         } catch (const std::exception& error) {
             toast.Show(error.what());
         }
+        if (finished) finished(ok);
         busy = false;
     });
 }
@@ -218,6 +223,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
     auto tun_enabled = huxerui::UseState(
         store::coreStore().setting("core.tun_enabled", "false") == "true");
     auto vpn_state = huxerui::UseState(AndroidVpnState());
+    auto vpn_override = huxerui::UseState<std::optional<bool>>(std::nullopt);
     auto battery_ignored = huxerui::UseState(AndroidIsIgnoringBattery());
     auto busy = huxerui::UseState(false);
 
@@ -231,13 +237,22 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
         });
 
     huxerui::Lifecycle(
-        [tasks, tun_enabled, vpn_state, battery_ignored] {
+        [tasks, tun_enabled, vpn_state, vpn_override, battery_ignored] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{1.0}, [=] {
                     tun_enabled = store::coreStore().setting(
                                       "core.tun_enabled", "false") == "true";
                     vpn_state = AndroidVpnState();
                     battery_ignored = AndroidIsIgnoringBattery();
+                    if (vpn_override.Get().has_value()) {
+                        const bool actual = tun_enabled.Get() ||
+                                             vpn_state.Get() == 1 ||
+                                             vpn_state.Get() == 2;
+                        if (actual == vpn_override.Get().value() &&
+                            (vpn_override.Get().value() || vpn_state.Get() == 0)) {
+                            vpn_override = std::nullopt;
+                        }
+                    }
                     return true;
                 });
             });
@@ -251,11 +266,14 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
         : state == 1 ? "正在建立系统 VPN 与 TUN 数据面"
         : state == 3 ? "启动失败：请查看日志页中的 Android VPN 错误"
                      : "未连接；开启后将请求系统 VPN 授权";
+    const bool displayedVpnEnabled = vpn_override.Get().value_or(
+        tun_enabled.Get() || state == 1 || state == 2);
 
-    const auto core_action = [tasks, toast, busy](std::function<void()> job,
-                                                   std::string ok_message) {
+    const auto core_action = [tasks, toast, busy](
+        std::function<void()> job, std::string ok_message,
+        std::function<void(bool)> finished = {}) {
         LaunchSettingsAction(tasks, toast, busy, std::move(job),
-                             std::move(ok_message));
+                             std::move(ok_message), std::move(finished));
     };
 
     return huxerui::Column {
@@ -266,8 +284,10 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
         SettingSwitchRow(
             "VPN 代理",
             "系统 VPN 由此服务持有；内核出站 socket 会自动绕过 TUN",
-            huxerui::Switch(tun_enabled.Get() || state == 1 || state == 2)
-                .OnChanged([core_action, tun_enabled](bool on) {
+            huxerui::Switch(displayedVpnEnabled)
+                .OnChanged([core_action, tun_enabled, vpn_override](bool on) {
+                    if (vpn_override.Get().has_value()) return;
+                    vpn_override = on;
                     tun_enabled = on;
                     stream::logApplication(
                         "info", on ? "用户请求开启 Android VPN"
@@ -282,9 +302,14 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                                 AndroidStartVpn();
                             } else {
                                 AndroidStopVpn();
+                                WaitForAndroidVpnStopped();
                             }
                         },
-                        on ? "正在请求建立 VPN 隧道" : "VPN 隧道已关闭");
+                        on ? "正在请求建立 VPN 隧道" : "VPN 隧道已关闭",
+                        [on, tun_enabled, vpn_override](bool ok) {
+                            if (!ok) tun_enabled = !on;
+                            vpn_override = std::nullopt;
+                        });
                 })),
         SettingSwitchRow(
             "后台保活",

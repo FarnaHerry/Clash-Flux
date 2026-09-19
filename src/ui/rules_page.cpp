@@ -475,7 +475,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                                      theme.colors.on_surface_variant),
                                 mono(payload, theme.colors.on_surface),
                             },
-                            theme, key, true);
+                            key, true, index + 1 < count);
                     }
                     return UnifiedListRow(
                         huxerui::Row{
@@ -488,7 +488,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                             mono(rule.target, theme.colors.on_surface_variant)
                                 .With(huxerui::Frame{.width = 180.0F}),
                         },
-                        theme, key, false);
+                        key, false, index + 1 < count);
                 });
             subscriptionList = std::move(subscriptionList)
                                    .EstimatedItemExtent(compact ? 86.0F : 42.0F)
@@ -566,7 +566,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                             }),
                           }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
                         }.With(huxerui::Spacing(6.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-                        theme, key, true);
+                        key, true, index + 1 < count);
                 });
             globalList = std::move(globalList)
                              .EstimatedItemExtent(116.0F)

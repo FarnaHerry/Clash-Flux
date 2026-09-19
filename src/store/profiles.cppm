@@ -270,6 +270,7 @@ public:
             }
             p.error.clear();
             p.updatedAt = nowUnix();
+            if (p.selected) coreStore().invalidateProxyGroupsSnapshot();
         } else {
             p.error = failure;
             lastError_ = std::format("下载失败：{}", failure);
@@ -469,6 +470,7 @@ public:
             lastError_ = e.what();
             return false;
         }
+        coreStore().invalidateProxyGroupsSnapshot();
         if (p->selected && coreStore().snapshot().state == core::CoreState::Running) {
             coreStore().restartCore(selectedYaml());
         }
@@ -489,6 +491,7 @@ public:
         }
         try {
             coreStore().db().setSelectedProfile(id);
+            coreStore().invalidateProxyGroupsSnapshot();
         } catch (const std::exception& e) {
             lastError_ = e.what();
             return false;
@@ -519,6 +522,7 @@ public:
             std::error_code ec;
             std::filesystem::remove(cfg::profilesDir() / file, ec);
         }
+        if (wasSelected) coreStore().invalidateProxyGroupsSnapshot();
         // 删掉的是启用订阅且内核在跑：用空配置重启（代理全断比跑旧配置直观）。
         if (wasSelected && coreStore().snapshot().state == core::CoreState::Running) {
             coreStore().restartCore("");
@@ -612,6 +616,7 @@ private:
             lastError_ = e.what();
             return false;
         }
+        if (p.selected) coreStore().invalidateProxyGroupsSnapshot();
         return true;
     }
 

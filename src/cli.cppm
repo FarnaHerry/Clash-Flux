@@ -78,14 +78,35 @@ int cmdService(const std::vector<std::string>& args) {
     if (args[0] == "uninstall") return service::uninstall();
     if (args[0] == "run") return service::run();  // systemd ExecStart 专用
     if (args[0] == "status") {
+        const bool installed = service::installed();
+        const auto info = service::query();
+        std::string serviceState;
+        if (!installed) {
+            serviceState = "未安装";
+        } else if (!info.reachable) {
+            serviceState = "已安装但未运行";
+        } else if (!info.compatible()) {
+            serviceState = std::format(
+                "版本不匹配（服务 {}；客户端 {}）",
+                info.applicationVersion.empty() ? "未知" : info.applicationVersion,
+                CLASHFLUX_VERSION);
+        } else {
+            serviceState = std::format("已安装且在运行（{}）", info.applicationVersion);
+        }
         std::println("服务：{}；内核：{}；PPTP：{}；OpenVPN：{}",
-                     service::installed()
-                         ? (service::available() ? "已安装且在运行"
-                                                 : "已安装但未运行")
-                         : "未安装",
-                     service::coreRunning() ? "运行中（服务托管）" : "未运行",
-                     service::pptpAvailable() ? "root 后端可用" : "不可用",
-                     service::openvpnAvailable() ? "root 后端可用" : "不可用");
+                     serviceState,
+                     info.reachable && service::coreRunning()
+                         ? "运行中（服务托管）"
+                         : "未运行",
+                     info.compatible() && service::pptpAvailable()
+                         ? "root 后端可用"
+                         : "不可用",
+                     info.compatible() && service::openvpnAvailable()
+                         ? "root 后端可用"
+                         : "不可用");
+        if (!info.error.empty() && info.reachable) {
+            std::println("提示：{}", info.error);
+        }
         return 0;
     }
     std::println(stderr, "未知 service 子命令：{}", args[0]);

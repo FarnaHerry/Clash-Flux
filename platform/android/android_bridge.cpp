@@ -531,6 +531,36 @@ extern "C" bool clashflux_android_select_outbound(const char* group,
     return !failed && ok == JNI_TRUE;
 }
 
+extern "C" bool clashflux_android_url_test(const char* group) noexcept {
+    if (group == nullptr || *group == '\0') return false;
+
+    std::lock_guard lock(g_mutex);
+    bool attached = false;
+    JNIEnv* environment = current_environment(attached);
+    if (environment == nullptr || g_activity_class == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    const jmethodID method = environment->GetStaticMethodID(
+        g_activity_class, "urlTest", "(Ljava/lang/String;)Z");
+    if (method == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    jstring groupValue = environment->NewStringUTF(group);
+    if (groupValue == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    const jboolean ok = environment->CallStaticBooleanMethod(
+        g_activity_class, method, groupValue);
+    environment->DeleteLocalRef(groupValue);
+    const bool failed = environment->ExceptionCheck();
+    if (failed) environment->ExceptionClear();
+    if (attached) g_vm->DetachCurrentThread();
+    return !failed && ok == JNI_TRUE;
+}
+
 extern "C" void clashflux_android_open_url(const char* url) noexcept {
     if (url == nullptr || *url == '\0') return;
 

@@ -250,12 +250,49 @@ public final class MainActivity extends HuxerUIActivity {
                 context.stopService(new Intent(context, ClashVpnService.class));
             }
         };
-        if (activity != null) activity.runOnUiThread(stop);
-        else stop.run();
+        // ClashVpnService.close() disconnects libbox and can wait on native
+        // shutdown. Never run it on the Activity main thread; the button is
+        // updated optimistically by the UI while this worker tears it down.
+        Thread worker = new Thread(stop, "clashflux-vpn-stop");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /** Starts libbox without requesting VPN consent for proxy-page speed tests. */
+    public static void startSpeedTestService() {
+        Context context = applicationContext;
+        MainActivity activity = current;
+        if (activity != null) context = activity.getApplicationContext();
+        if (context == null) {
+            appLog("无法启动测速内核：Activity 尚未就绪", true);
+            return;
+        }
+        final Context serviceContext = context;
+        Runnable start = () -> {
+            try {
+                Intent intent = new Intent(serviceContext, ClashVpnService.class);
+                intent.putExtra(ClashVpnService.EXTRA_SPEED_TEST_ONLY, true);
+                if (Build.VERSION.SDK_INT >= 26) {
+                    serviceContext.startForegroundService(intent);
+                } else {
+                    serviceContext.startService(intent);
+                }
+                appLog("已请求启动无 VPN 的测速内核", false);
+            } catch (RuntimeException error) {
+                Log.e(TAG, "Unable to start speed-test service", error);
+                appLog("测速内核启动失败：" + error.getMessage(), true);
+            }
+        };
+        if (activity != null) activity.runOnUiThread(start);
+        else start.run();
     }
 
     public static boolean selectOutbound(String group, String name) {
         return ClashVpnService.selectOutbound(group, name);
+    }
+
+    public static boolean urlTest(String group) {
+        return ClashVpnService.urlTest(group);
     }
 
     public static boolean setClashMode(String mode) {

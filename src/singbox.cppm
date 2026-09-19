@@ -41,6 +41,7 @@ export struct CompileOptions {
     std::string logLevel = "info";               // silent/error/warning/info/debug
     bool tunInbound = false;                     // 生成 TUN inbound（Android 恒真；
                                                  // 桌面 = tunEnabled，需 root/CAP_NET_ADMIN）
+    bool speedTestOnly = false;                  // 仅测速时关闭 URLTest 自动巡检
     bool tunStrictRoute = true;                  // Android VpnService 侧保持 false（严格
                                                  // 路由会截断系统级分流）
     bool ipv6 = true;                            // DNS 与 TUN 是否允许 IPv6
