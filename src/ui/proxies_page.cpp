@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -46,6 +47,7 @@ struct ProxyNode {
     std::string name;
     std::string type;
     int delay = 0;      // 0 = 未测；来自 history 或测速结果
+    std::int64_t urlTestTime = 0;
     bool timeout = false;
     bool udp = false;
     bool isGroup = false;      // 该节点本身是策略组（可点入的分支）
@@ -120,6 +122,8 @@ std::vector<ProxyGroup> parseProxies(const std::string& body) {
                     const auto& last = (*nit)["history"].back();
                     if (last.is_object()) node.delay = last.value("delay", 0);
                 }
+                node.delay = nit->value("urlTestDelay", node.delay);
+                node.urlTestTime = nit->value("urlTestTime", std::int64_t{0});
             }
             g.nodes.push_back(std::move(node));
         }
@@ -184,51 +188,93 @@ huxerui::Color delayColor(const huxerui::ThemeSpec& theme, int delay, bool timeo
     auto probe = huxerui::UseState(ProbeState{
         .delay = node.delay, .timeout = node.timeout, .testing = false});
     auto lastGeneration = huxerui::UseState(testGeneration.Get());
+    auto testBaselineTime =
+        huxerui::UseState<std::int64_t>(std::int64_t{node.urlTestTime});
     const std::string nodeName = node.name;
+    const bool nativeGroupTest = ProxyTestUsesNativeGroup();
 
     // 测速请求只作为广播事件；真正的 REST 请求、状态和完成时机都归卡片自己。
     // 卡片被 VirtualGrid 回收时，TaskScope 会取消自己的请求，不影响其他卡片。
     huxerui::Lifecycle(
-        [tasks, probe, lastGeneration, testGeneration, testGroup, nodeName,
-         groupName] {
-            if (testGeneration.Get() == 0 || testGroup.Get() != groupName ||
-                testGeneration.Get() == lastGeneration.Get() ||
-                probe.Get().testing) {
-                return;
+        [tasks, probe, lastGeneration, testBaselineTime, testGeneration,
+         testGroup, nodeName, groupName, nativeGroupTest, nodeDelay = node.delay,
+         nodeTestTime = node.urlTestTime] {
+            const bool newRequest =
+                testGeneration.Get() != 0 && testGroup.Get() == groupName &&
+                testGeneration.Get() != lastGeneration.Get() &&
+                !probe.Get().testing;
+            if (newRequest) {
+                ProbeState started = probe.Get();
+                started.delay = 0;
+                started.timeout = false;
+                started.testing = true;
+                probe = started;
+                lastGeneration = testGeneration.Get();
+                testBaselineTime = nodeTestTime;
+                if (!nativeGroupTest) {
+                    tasks.Launch([probe, nodeName]() -> huxerui::Task<void> {
+                        try {
+                            const int measured = co_await RunOnTaskThread([nodeName] {
+                                const auto result = store::coreStore().api().proxyDelay(
+                                    nodeName, "https://www.gstatic.com/generate_204", 3000);
+                                if (!result.ok) return 0;
+                                const auto body = nlohmann::json::parse(
+                                    result.body, nullptr, false);
+                                return body.is_object() ? body.value("delay", 0) : 0;
+                            });
+
+                            ProbeState completed = probe.Get();
+                            completed.delay = measured > 0 ? measured : 0;
+                            completed.timeout = measured <= 0;
+                            completed.testing = false;
+                            probe = completed;
+                        } catch (const std::exception&) {
+                            ProbeState failed = probe.Get();
+                            failed.delay = 0;
+                            failed.timeout = true;
+                            failed.testing = false;
+                            probe = failed;
+                        }
+                    });
+                } else {
+                    // Some libbox outbounds fail before emitting a changed
+                    // URLTest timestamp. Close that UI state locally instead
+                    // of leaving an unresponsive node at “测速中…”.
+                    tasks.Launch([probe]() -> huxerui::Task<void> {
+                        for (int attempt = 0; attempt < 120; ++attempt) {
+                            co_await huxerui::Delay(
+                                std::chrono::duration<double>{0.25});
+                            if (!probe.Get().testing) co_return;
+                        }
+                        ProbeState timedOut = probe.Get();
+                        timedOut.delay = 0;
+                        timedOut.timeout = true;
+                        timedOut.testing = false;
+                        probe = timedOut;
+                    });
+                }
             }
 
-            ProbeState started = probe.Get();
-            started.delay = 0;
-            started.timeout = false;
-            started.testing = true;
-            probe = started;
-            lastGeneration = testGeneration.Get();
-            tasks.Launch([probe, nodeName]() -> huxerui::Task<void> {
-                try {
-                    const int measured = co_await RunOnTaskThread([nodeName] {
-                        const auto result = store::coreStore().api().proxyDelay(
-                            nodeName, "https://www.gstatic.com/generate_204", 3000);
-                        if (!result.ok) return 0;
-                        const auto body = nlohmann::json::parse(
-                            result.body, nullptr, false);
-                        return body.is_object() ? body.value("delay", 0) : 0;
-                    });
-
-                    ProbeState completed = probe.Get();
-                    completed.delay = measured > 0 ? measured : 0;
-                    completed.timeout = measured <= 0;
+            if (nativeGroupTest) {
+                const ProbeState current = probe.Get();
+                if (current.testing && nodeTestTime != testBaselineTime.Get()) {
+                    ProbeState completed = current;
+                    completed.delay = nodeDelay > 0 ? nodeDelay : 0;
+                    completed.timeout = nodeDelay <= 0;
                     completed.testing = false;
                     probe = completed;
-                } catch (const std::exception&) {
-                    ProbeState failed = probe.Get();
-                    failed.delay = 0;
-                    failed.timeout = true;
-                    failed.testing = false;
-                    probe = failed;
+                } else if (!current.testing &&
+                           (current.delay != nodeDelay ||
+                            current.timeout != (nodeDelay <= 0))) {
+                    ProbeState snapshot = current;
+                    snapshot.delay = nodeDelay;
+                    snapshot.timeout = nodeDelay <= 0;
+                    probe = snapshot;
                 }
-            });
+                return;
+            }
         },
-        testGeneration, testGroup);
+        testGeneration, testGroup, node.delay, node.urlTestTime);
 
     const ProbeState currentProbe = probe.Get();
     const int delay = currentProbe.delay;
@@ -400,6 +446,8 @@ constexpr float kChipGap = 8.0F;
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     const std::string groupName = group.name;
+    const bool compact =
+        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
 
     std::string breadcrumb;
     for (std::size_t i = 0; i < path.size(); ++i) {
@@ -439,19 +487,31 @@ constexpr float kChipGap = 8.0F;
         back = huxerui::Row{};
     }
 
+    huxerui::View speed = compact
+        ? huxerui::View{huxerui::Row{}}
+        : huxerui::View{huxerui::IconButton(app::images::speed, "测速")
+              .With(huxerui::Tooltip("测试当前组延迟"))
+              .OnClick(
+                  [tasks, testGeneration, testGroup, groupName] {
+                      tasks.Launch([=]() -> huxerui::Task<void> {
+                          const bool ok = co_await RunOnTaskThread(
+                              [groupName] {
+                                  return StartProxyGroupTest(groupName);
+                              });
+                          if (ok) {
+                              testGroup = groupName;
+                              testGeneration += 1;
+                          }
+                      });
+                  })};
+
     return huxerui::Row {
         std::move(back),
         huxerui::Text(breadcrumb).Style(huxerui::TextStyle{
             huxerui::Font::System(font_size::kCaption),
             theme.colors.on_surface_variant}),
         huxerui::Spacer(),
-        huxerui::View{huxerui::IconButton(app::images::speed, "测速")
-            .With(huxerui::Tooltip("测试当前组延迟"))
-            .OnClick(
-            [testGeneration, testGroup, groupName] {
-                testGroup = groupName;
-                testGeneration += 1;
-            })},
+        std::move(speed),
         huxerui::Text(std::format("{} 节点", group.nodes.size()))
             .Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kCaption),
@@ -477,7 +537,7 @@ constexpr float kChipGap = 8.0F;
     auto rulePath = huxerui::UseState<std::vector<std::string>>({});
     auto globalPath = huxerui::UseState<std::vector<std::string>>({});
 
-    // 数据泵：运行时刷新 /proxies；停止后保留最后一次订阅节点快照，
+    // 数据泵：运行时刷新 /proxies；停止时从当前订阅编译预览快照，
     // 这样用户仍能预先选择节点，下一次内核启动后再由内核正式应用。
     huxerui::Lifecycle(
         [tasks, groups, coreState, mode] {
@@ -486,14 +546,12 @@ constexpr float kChipGap = 8.0F;
                     const auto snap = store::coreStore().snapshot();
                     coreState = snap.state;
                     if (!snap.mode.empty()) mode = snap.mode;
-                    if (snap.state == core::CoreState::Running) {
-                        const std::string body = co_await RunOnTaskThread([] {
-                            return ProxyGroupsSnapshot();
-                        });
-                        if (!body.empty()) ReplaceStateList(groups, parseProxies(body));
-                        co_await huxerui::Delay(std::chrono::duration<double>{3.0});
-                    } else co_await huxerui::Delay(
-                        std::chrono::duration<double>{0.5});
+                    const std::string body = co_await RunOnTaskThread([] {
+                        return ProxyGroupsSnapshot();
+                    });
+                    if (!body.empty()) ReplaceStateList(groups, parseProxies(body));
+                    co_await huxerui::Delay(std::chrono::duration<double>{
+                        snap.state == core::CoreState::Running ? 3.0 : 0.5});
                 }
             });
             return [] {};
@@ -633,7 +691,51 @@ constexpr float kChipGap = 8.0F;
               huxerui::Grow(1.0F),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
-    return PageScaffold("代理", huxerui::Row{}, std::move(content));
+    huxerui::View page = PageScaffold("代理", huxerui::Row{}, std::move(content));
+    if (compact && !direct && current != nullptr) {
+        const std::string groupName = current->name;
+        huxerui::View floatingSpeed =
+            huxerui::IconButton(app::images::speed, "测速")
+                .With(huxerui::Tooltip("测试当前组延迟"),
+                      huxerui::Frame{.width = 56.0F, .height = 56.0F},
+                      huxerui::Background(theme.colors.primary),
+                      huxerui::Foreground(theme.colors.on_primary),
+                      huxerui::CornerRadius(28.0F),
+                      huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.28F),
+                                      {}, 14.0F, 2.0F},
+                      huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                         .label = "测速"})
+                .OnClick([tasks, testGeneration, testGroup, groupName] {
+                    tasks.Launch([=]() -> huxerui::Task<void> {
+                        const bool ok = co_await RunOnTaskThread(
+                            [groupName] {
+                                return StartProxyGroupTest(groupName);
+                            });
+                        if (ok) {
+                            testGroup = groupName;
+                            testGeneration += 1;
+                        }
+                    });
+                });
+        // 与 Android 底部悬浮导航栏相同：按钮放在独立的全屏覆盖层中，
+        // 由覆盖层的 Column 在主轴末端、交叉轴末端定位，不依赖页面内容容器。
+        huxerui::View speedDock = huxerui::Column {
+            std::move(floatingSpeed),
+        }.With(huxerui::Padding(huxerui::EdgeInsets{
+                   .right = theme.spacing.medium,
+                   .bottom = kCompactFloatingNavigationInset,
+                   .left = theme.spacing.medium,
+               }),
+               huxerui::MainAlign(huxerui::MainAxisAlignment::End),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::End));
+        return huxerui::Stack {
+            std::move(page),
+            std::move(speedDock),
+        }.With(huxerui::Grow(1.0F),
+               huxerui::Align(huxerui::HorizontalAlignment::Stretch,
+                              huxerui::VerticalAlignment::Stretch));
+    }
+    return page;
 }
 
 } // namespace clashflux::ui

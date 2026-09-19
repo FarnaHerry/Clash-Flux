@@ -252,7 +252,7 @@ void closeAllConnectionsForPlatform() {
                                    }
                                        .With(huxerui::Spacing(8.0F)),
                                },
-                               theme, key, true);
+                               key, true, index + 1 < rowCount);
                        }
                        return UnifiedListRow(
                            huxerui::Row{
@@ -265,7 +265,7 @@ void closeAllConnectionsForPlatform() {
                                mono(row.rule, theme.colors.on_surface_variant, 140.0F),
                                closeButton(),
                            },
-                           theme, key, false);
+                           key, false, index + 1 < rowCount);
                    })
                    .EstimatedItemExtent(compact ? 92.0F : 44.0F)
                    .Controller(scroll)

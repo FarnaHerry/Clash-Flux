@@ -527,12 +527,22 @@ std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
             ctx.warn(std::format("代理组「{}」类型 {} 在 sing-box 无对应语义，降级为 urltest",
                                  name, clashType));
         }
-        out["type"] = "urltest";
-        std::string url = ytext(item, "url");
-        if (url.empty()) url = "https://www.gstatic.com/generate_204";
-        out["url"] = url;
-        if (const auto interval = yint(item, "interval"); interval && *interval > 0) {
-            out["interval"] = std::format("{}s", *interval);
+        if (ctx.opt.speedTestOnly) {
+            // A speed-only libbox instance performs explicit outbound tests
+            // from Android.  Keeping imported URLTest groups here would make
+            // sing-box start its own automatic sweep at the same time, which
+            // doubles the connections and mixes its configured URL with the
+            // CommandClient default URL.  Keep the group as a selector so the
+            // page still exposes the same members without a second sweep.
+            out["type"] = "selector";
+        } else {
+            out["type"] = "urltest";
+            std::string url = ytext(item, "url");
+            if (url.empty()) url = "https://www.gstatic.com/generate_204";
+            out["url"] = url;
+            if (const auto interval = yint(item, "interval"); interval && *interval > 0) {
+                out["interval"] = std::format("{}s", *interval);
+            }
         }
     } else {
         ctx.warn(std::format("代理组「{}」类型 {} 暂不支持，已跳过", name, clashType));

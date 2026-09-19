@@ -142,7 +142,8 @@ int levelRank(const std::string& level) {
                            huxerui::Text(text).Style(huxerui::TextStyle{
                                huxerui::Font::Monospace(font_size::kMonoBody),
                                theme.colors.on_surface}),
-                           theme, std::format("log-{}", sourceIndex), compact);
+                           std::format("log-{}", sourceIndex), compact,
+                           index + 1 < visibleCount);
                    })
                    .EstimatedItemExtent(compact ? 38.0F : 34.0F)
                    .Controller(scroll)

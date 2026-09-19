@@ -104,11 +104,12 @@ void updateRuntime(HomeState& s, store::CoreStore& core) {
 }
 
 // 统计卡：上标签下数值。
-[[huxerui::composable]] huxerui::View StatCard(const std::string& label,
-                                               const std::string& value,
-                                               huxerui::Color valueColor) {
+// 统计列：统计带内的一列指标；不带卡片外壳，由外层统计带统一包卡。
+[[huxerui::composable]] huxerui::View StatMetric(const std::string& label,
+                                                 const std::string& value,
+                                                 huxerui::Color valueColor) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    return Card(huxerui::Column {
+    return huxerui::Column {
         huxerui::Text(label).Style(huxerui::TextStyle{
             huxerui::Font::System(font_size::kCaption),
             theme.colors.on_surface_variant}),
@@ -117,7 +118,7 @@ void updateRuntime(HomeState& s, store::CoreStore& core) {
                 .WithWeight(huxerui::FontWeight::Bold),
             valueColor}),
     }.With(huxerui::Spacing(4.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start)));
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
 }
 
 // 流量曲线：下载面积图（主色渐变填充）+ 上传折线（琥珀）。历史不足两点画平线。
@@ -188,27 +189,30 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
 
 [[huxerui::composable]] huxerui::View AndroidHomeNavigationActions(
     huxerui::State<std::size_t> navPage) {
-    return huxerui::Column {
-        Card(huxerui::Row {
-                 huxerui::Text("选择订阅"),
-                 huxerui::Spacer(),
-                 huxerui::Text("›"),
-             }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)))
+    // 两个入口合并为一张分组卡，行间 Divider 分隔，避免连续多张单行卡。
+    return Card(huxerui::Column {
+        huxerui::Row {
+            huxerui::Text("选择订阅"),
+            huxerui::Spacer(),
+            huxerui::Text("›"),
+        }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, 10.0F)),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
             .OnClick([navPage] { navPage = 1; })
             .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                      .label = "选择订阅"},
                   huxerui::Focusable(true), huxerui::Enabled(true)),
-        Card(huxerui::Row {
-                 huxerui::Text("选择节点"),
-                 huxerui::Spacer(),
-                 huxerui::Text("›"),
-             }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)))
+        huxerui::Divider(),
+        huxerui::Row {
+            huxerui::Text("选择节点"),
+            huxerui::Spacer(),
+            huxerui::Text("›"),
+        }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, 10.0F)),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
             .OnClick([navPage] { navPage = 2; })
             .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                      .label = "选择节点"},
                   huxerui::Focusable(true), huxerui::Enabled(true)),
-    }.With(huxerui::Spacing(10.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
 }
 
 [[huxerui::composable]] huxerui::View AndroidHomeAction(const HomeState& state) {
@@ -216,27 +220,33 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto busy = huxerui::UseState(false);
+    auto activeOverride = huxerui::UseState<std::optional<bool>>(std::nullopt);
     const int vpnState = AndroidVpnState();
-    const bool active = vpnState == 1 || vpnState == 2;
+    const bool realActive = vpnState == 1 || vpnState == 2;
+    const bool active = activeOverride.Get().value_or(realActive);
     const bool canStart = state.profileId != 0;
     const bool enabled = !busy.Get() && (active || canStart);
-    const auto toggle = [tasks, toast, busy, active] {
-            if (busy.Get()) return;
-            busy = true;
-            tasks.Launch([toast, busy, active]() -> huxerui::Task<void> {
+    const auto toggle = [tasks, toast, busy, activeOverride, realActive] {
+        if (busy.Get()) return;
+        activeOverride = !realActive;
+        busy = true;
+            tasks.Launch([toast, busy, activeOverride, realActive]() -> huxerui::Task<void> {
                 try {
-                    co_await RunOnTaskThread([active] {
+                    co_await RunOnTaskThread([realActive] {
                         auto& core = store::coreStore();
-                        core.setSetting("core.tun_enabled", active ? "false" : "true");
-                        if (active) {
+                        core.setSetting("core.tun_enabled", realActive ? "false" : "true");
+                        if (realActive) {
                             AndroidStopVpn();
+                            WaitForAndroidVpnStopped();
                         } else {
                             core.startCore(store::profilesStore().selectedYaml());
                             AndroidStartVpn();
                         }
                     });
-                    toast.Show(active ? "VPN 隧道已关闭" : "正在启动 VPN 隧道");
+                    activeOverride = std::nullopt;
+                    toast.Show(realActive ? "VPN 隧道已关闭" : "正在启动 VPN 隧道");
                 } catch (const std::exception& error) {
+                    activeOverride = std::nullopt;
                     toast.Show(error.what());
                 }
                 busy = false;
@@ -463,28 +473,38 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     const bool running = s.core.state == core::CoreState::Running;
     const huxerui::Color upColor = huxerui::Color::Rgb(245, 158, 11);   // 琥珀
     const huxerui::Color downColor = theme.colors.primary;
+    // 流量主岛顶部品牌蓝光晕的起止色（primary 8% → 全透明）。
+    huxerui::Color heroGlowTop = theme.colors.primary;
+    heroGlowTop.alpha = 0.08F;
+    huxerui::Color heroGlowBottom = theme.colors.primary;
+    heroGlowBottom.alpha = 0.0F;
 
     std::size_t modeIndex = 0;
     for (std::size_t i = 0; i < kModes.size(); ++i) {
         if (s.core.mode == kModes[i]) modeIndex = i;
     }
 
-    // 响应式：Compact 视口统计卡 2×2 网格、模式/订阅双卡竖排。
+    // 响应式：Compact 视口的统计并入启动卡片（metric 列）；桌面端是一条
+    // 统计带——一张卡内 4 列指标，列间竖向 Divider 分隔，不再并排多张小卡。
     huxerui::View statCards = compact
         ? huxerui::View{}
-        : huxerui::View{huxerui::Row {
-                  StatCard("下载速率", formatRate(s.latest.down), downColor)
+        : huxerui::View{Card(huxerui::Row {
+                  StatMetric("下载速率", formatRate(s.latest.down), downColor)
                       .With(huxerui::Grow(1.0F)),
-                  StatCard("上传速率", formatRate(s.latest.up), upColor)
+                  huxerui::Divider(huxerui::Axis::Vertical),
+                  StatMetric("上传速率", formatRate(s.latest.up), upColor)
                       .With(huxerui::Grow(1.0F)),
-                  StatCard("总下载", formatBytes(s.totalDown),
-                           theme.colors.on_surface)
+                  huxerui::Divider(huxerui::Axis::Vertical),
+                  StatMetric("总下载", formatBytes(s.totalDown),
+                             theme.colors.on_surface)
                       .With(huxerui::Grow(1.0F)),
-                  StatCard("总上传", formatBytes(s.totalUp),
-                           theme.colors.on_surface)
+                  huxerui::Divider(huxerui::Axis::Vertical),
+                  StatMetric("总上传", formatBytes(s.totalUp),
+                             theme.colors.on_surface)
                       .With(huxerui::Grow(1.0F)),
-              }.With(huxerui::Spacing(10.0F),
-                     huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))};
+              }.With(huxerui::Spacing(16.0F),
+                     huxerui::CrossAlign(
+                         huxerui::CrossAxisAlignment::Stretch)))};
 
     // 出站模式 / 当前订阅两卡（Compact 视口竖排，见下方布局分支）。
     const std::size_t displayedModeIndex = modeOverride.Get().value_or(modeIndex);
@@ -555,7 +575,8 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                 // 移动端导航动作独立成卡片，紧跟启动卡片。
                 CLASHFLUX_HOME_NAV_ACTIONS(navPage)
 
-                // 流量曲线
+                // 流量曲线：自上而下叠一层品牌蓝光晕，强调色落在主岛
+                // 而不是铺满背景。
                 Card(huxerui::Column {
                     huxerui::Row {
                         huxerui::Text("流量").Style(huxerui::TextStyle{
@@ -575,7 +596,13 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                                         theme.colors.outline))
                         .With(huxerui::Frame{.height = 160.0F}),
                 }.With(huxerui::Spacing(10.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
+                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
+                       huxerui::Background(huxerui::LinearGradient{
+                           .start = {0.0F, 0.0F},
+                           .end = {0.0F, 1.0F},
+                           .stops = {{0.0F, heroGlowTop},
+                                     {1.0F, heroGlowBottom}},
+                       }))),
 
                 // 出站模式 + 当前订阅 + 系统开关（Compact 竖排）
                 compact

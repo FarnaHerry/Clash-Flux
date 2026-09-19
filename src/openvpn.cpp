@@ -372,8 +372,11 @@ void disconnectPrivileged(const std::shared_ptr<Runtime>& runtime,
 
 bool connectUser(const std::shared_ptr<Runtime>&,
                  vpn::VpnConnection& connection, std::string& error) {
-    if (!service::available()) {
-        error = "Clash-Flux root 服务未运行；请先在设置中安装/启动服务";
+    std::string serviceError;
+    if (!service::ensureCompatible(serviceError)) {
+        error = serviceError.empty()
+                    ? "Clash-Flux root 服务未运行；请先在设置中安装/启动服务"
+                    : serviceError;
         return false;
     }
     if (!service::openvpnAvailable()) {

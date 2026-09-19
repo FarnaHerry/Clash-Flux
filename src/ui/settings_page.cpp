@@ -43,31 +43,34 @@ const std::string kAboutText = std::format(
 
 } // namespace
 
+// 单行导航项：整行可点，自带触控高度；用于合并后的分组卡内部。
+[[huxerui::composable]] huxerui::View MoreNavRow(std::string label,
+                                                 std::size_t target,
+                                                 huxerui::State<std::size_t> navPage) {
+    return huxerui::Row {
+        huxerui::Text(label),
+        huxerui::Spacer(),
+        huxerui::Text("›"),
+    }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, 10.0F)),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
+        .OnClick([navPage, target] { navPage = target; })
+        .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                 .label = label},
+              huxerui::Focusable(true), huxerui::Enabled(true));
+}
+
 [[huxerui::composable]] huxerui::View AndroidMoreSettings(
     huxerui::State<std::size_t> navPage) {
+    // 同组入口合并为一张分组卡，行间用 Divider 分隔，避免一屏多张单行卡。
     return huxerui::Column {
         SectionTitle("更多"),
-        Card(huxerui::Row {
-                 huxerui::Text("连接"), huxerui::Spacer(), huxerui::Text("›"),
-             }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)))
-            .OnClick([navPage] { navPage = 4; })
-            .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                     .label = "连接"},
-                  huxerui::Focusable(true), huxerui::Enabled(true)),
-        Card(huxerui::Row {
-                 huxerui::Text("日志"), huxerui::Spacer(), huxerui::Text("›"),
-             }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)))
-            .OnClick([navPage] { navPage = 5; })
-            .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                     .label = "日志"},
-                  huxerui::Focusable(true), huxerui::Enabled(true)),
-        Card(huxerui::Row {
-                 huxerui::Text("规则"), huxerui::Spacer(), huxerui::Text("›"),
-             }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)))
-            .OnClick([navPage] { navPage = 3; })
-            .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                     .label = "规则"},
-                  huxerui::Focusable(true), huxerui::Enabled(true)),
+        Card(huxerui::Column {
+            MoreNavRow("连接", 4, navPage),
+            huxerui::Divider(),
+            MoreNavRow("日志", 5, navPage),
+            huxerui::Divider(),
+            MoreNavRow("规则", 3, navPage),
+        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
     }.With(huxerui::Spacing(10.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }

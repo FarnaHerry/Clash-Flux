@@ -3,7 +3,9 @@
 #include <huxerui/huxerui.h>
 
 #include <algorithm>
+#include <chrono>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "app_resources.h"
@@ -12,6 +14,7 @@
 import nlohmann.json;
 import clashflux.config;
 import clashflux.store.core;
+import clashflux.store.profiles;
 
 namespace clashflux::ui {
 
@@ -99,7 +102,14 @@ std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
 std::string ProxyGroupsSnapshot() {
 #if defined(__ANDROID__)
     const char* body = clashflux_android_proxy_groups();
-    return body == nullptr ? std::string{} : std::string{body};
+    // Before the VPN service is started there is no libbox CommandClient, so
+    // Java returns an empty group object.  Keep the page usable by falling
+    // back to the native store's stopped-core subscription preview.
+    if (body != nullptr && *body != '\0' &&
+        std::string_view(body) != "{\"proxies\":{}}") {
+        return body;
+    }
+    return store::coreStore().proxyGroupsSnapshot();
 #else
     const auto result = store::coreStore().api().proxies();
     return result.ok ? result.body : store::coreStore().proxyGroupsSnapshot();
@@ -111,6 +121,37 @@ bool SelectProxyLine(const std::string& group, const std::string& name) {
     return store::coreStore().selectProxy(group, name);
 #else
     return store::coreStore().selectProxy(group, name);
+#endif
+}
+
+bool StartProxyGroupTest(const std::string& group) {
+#if defined(__ANDROID__)
+    try {
+        // A speed test must not enable Android's VPN/TUN switch. Compile a
+        // no-TUN libbox config first, then let Java start the same service in
+        // speed-test-only mode when no VPN service is currently attached.
+        if (clashflux_android_vpn_state() != 2) {
+            auto& core = store::coreStore();
+            core.startCore(store::profilesStore().selectedYaml(), false, false,
+                           true);
+            if (core.snapshot().state == core::CoreState::Failed) return false;
+        }
+        return clashflux_android_url_test(group.c_str());
+    } catch (...) {
+        return false;
+    }
+#else
+    return TriggerProxyGroupTest(group);
+#endif
+}
+
+void WaitForAndroidVpnStopped() noexcept {
+#if defined(__ANDROID__)
+    for (int attempt = 0; attempt < 60; ++attempt) {
+        const int state = clashflux_android_vpn_state();
+        if (state != 1 && state != 2) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
 #endif
 }
 
@@ -168,21 +209,22 @@ bool SelectProxyLine(const std::string& group, const std::string& name) {
 }
 
 [[huxerui::composable]] huxerui::View UnifiedListRow(
-    huxerui::View content, const huxerui::ThemeSpec& theme, std::string key,
-    bool compact) {
+    huxerui::View content, std::string key, bool compact, bool divider) {
     const float horizontal = compact ? 10.0F : 8.0F;
     const float vertical = compact ? 8.0F : 6.0F;
-    const IslandTheme islands = ResolveIslandTheme(theme);
+    // 平铺列表行：不逐行套圆角卡壳，行直接落在一级岛表面上，行间用细分隔
+    // 线划界；divider=false 用于最后一行，避免列表尾部悬一条分隔线。
     // composable 形参被 codegen 固定为 const：拷贝到局部再走右值 With 链。
     huxerui::View row = content;
-    return std::move(row)
-        .With(huxerui::Spacing(compact ? 5.0F : 8.0F),
-              huxerui::Padding(huxerui::EdgeInsets::Symmetric(horizontal,
-                                                               vertical)),
-              huxerui::Background(islands.raised),
-              huxerui::CornerRadius(compact ? 12.0F : 10.0F),
-              huxerui::ClipChildren(),
-              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+    return huxerui::Column {
+        std::move(row)
+            .With(huxerui::Spacing(compact ? 5.0F : 8.0F),
+                  huxerui::Padding(huxerui::EdgeInsets::Symmetric(horizontal,
+                                                                   vertical)),
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+        divider ? huxerui::View{huxerui::Divider()}
+                : huxerui::View{huxerui::Row{}},
+    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
         .Key(std::move(key));
 }
 
@@ -507,7 +549,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     const IslandTheme islands = ResolveIslandTheme(theme);
     huxerui::View card = content;
     return std::move(card).With(
-        huxerui::Shadow{huxerui::Color::Rgb(5, 35, 64, 0.28F), {}, 28.0F, 2.0F},
+        huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.30F), {}, 28.0F, 2.0F},
         huxerui::Background(islands.overlay),
         huxerui::CornerRadius(islands.island_radius),
         huxerui::Border(islands.outline_soft, 1.0F),

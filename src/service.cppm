@@ -1,16 +1,18 @@
 // service.cppm — clashflux.service：服务模式（接口即实现，单文件模块）。
 //
 // 对齐 Clash Verge Rev 的 service mode：TUN/PPTP 需要 root/CAP_NET_ADMIN，一次性
-// pkexec 提权执行 `clash-flux service install` 安装一个 systemd 服务；服务以
-// root 常驻（`clash-flux service run`），统一代替用户态 GUI/CLI 管理 sing-box
-// 和系统 PPTP/OpenVPN 连接。之后开关 TUN、拨号和安装原生路由都不再需要用户手动 sudo。
+// 首次安装可通过 pkexec 执行 `clash-flux service install` 安装一个 systemd
+// 服务；服务以 root 常驻（`clash-flux service run`），统一代替用户态 GUI/CLI
+// 管理 sing-box 和系统 PPTP/OpenVPN 连接。已安装服务的版本升级由 root 服务
+// 自身处理，不再让客户端重复申请 pkexec。
 //
 // 进程间通道：unix socket /run/clash-flux/service.sock（安装用户 + root 可连）。
 // 协议为每条连接一行命令（\n 结尾）、一行回复：
 //   START <configPath>  → OK / ERR <原因>
 //   STOP                → OK / ERR <原因>
 //   STATUS              → RUNNING <pid> / STOPPED
-//   VERSION             → clash-flux-service 0.1.0
+//   VERSION             → clash-flux-service 1 app <Clash-Flux版本>
+//   UPGRADE             → OK / ERR <原因>（从当前客户端自身升级 root 服务）
 //   PPTP_AVAILABLE      → YES / NO
 //   PPTP_STATUS <hex id> → CONNECTED / DISCONNECTED
 //   PPTP_START <hex id> <hex config> [hex route ...] → OK <hex if> <hex gateway>
@@ -23,7 +25,8 @@
 //   OPENVPN_STOP <hex id>                              → OK / ERR <原因>
 //
 // 安全模型：安装时记录 pkexec/sudo 的原始用户 UID；socket 只允许该 UID 和
-// root，daemon 还通过 SO_PEERCRED 二次校验。服务只 spawn 固定 sing-box/OpenVPN 二进制
+// root，daemon 还通过 SO_PEERCRED 二次校验。升级时只使用 SO_PEERCRED 得到的
+// 客户端进程自身可执行文件和相邻的 sing-box，服务只 spawn 固定 sing-box/OpenVPN 二进制
 // （<服务exe目录>/engines/sing-box → <服务exe目录>/sing-box，安装后形态即
 // /usr/local/lib/clash-flux/engines/sing-box），参数固定为
 // `run -c <config> -D <parent(config)>`，configPath 必须是不含 ".." 的 .json
@@ -54,11 +57,27 @@ import clashflux.config;
 import clashflux.openvpn;
 import clashflux.pptp;
 
+#ifndef CLASHFLUX_VERSION
+#define CLASHFLUX_VERSION "unknown"
+#endif
+
 namespace service {
 
 export constexpr std::string_view kUnitName = "clash-flux.service";
 export constexpr std::string_view kSocketPath = "/run/clash-flux/service.sock";
 export constexpr std::string_view kInstallDir = "/usr/local/lib/clash-flux";
+export constexpr std::string_view kProtocolVersion = "1";
+
+// VERSION 握手的结果。reachable 表示 socket 上确实有可识别的服务；
+// compatible 还要求协议版本和应用版本都与当前客户端一致。
+export struct ServiceInfo {
+    bool reachable = false;
+    std::string protocolVersion;
+    std::string applicationVersion;
+    std::string error;
+
+    bool compatible() const { return reachable && error.empty(); }
+};
 
 // Returned by native VPN start calls on every platform.  The service backend
 // is Linux-only, but the client API and its non-Linux stubs must share the
@@ -77,9 +96,13 @@ export struct OpenVpnSessionInfo {
 
 namespace {
 
-constexpr std::string_view kVersionReply = "clash-flux-service 0.1.0";
 constexpr std::string_view kSocketDir = "/run/clash-flux";
 constexpr std::string_view kOwnerUidPath = "/etc/clash-flux/owner.uid";
+
+std::string versionReply() {
+    return std::format("clash-flux-service {} app {}", kProtocolVersion,
+                       CLASHFLUX_VERSION);
+}
 
 std::string errnoText(const char* what) {
     return std::format("{}: {}", what, ::strerror(errno));
@@ -131,6 +154,37 @@ std::vector<std::string> splitWords(std::string_view value) {
     return words;
 }
 
+ServiceInfo parseVersionReply(std::string_view reply) {
+    ServiceInfo info;
+    const auto fields = splitWords(reply);
+    if (fields.size() < 2 || fields[0] != "clash-flux-service") {
+        info.error = "root 服务返回了无效的版本信息";
+        return info;
+    }
+
+    info.reachable = true;
+    info.protocolVersion = fields[1];
+    if (fields.size() != 4 || fields[2] != "app") {
+        info.error = std::format(
+            "root 服务过旧，未报告客户端版本（服务协议 {}；旧服务不支持自升级，需先安装一次当前服务）",
+            info.protocolVersion);
+        return info;
+    }
+    info.applicationVersion = fields[3];
+    if (info.protocolVersion != kProtocolVersion) {
+        info.error = std::format(
+            "root 服务协议版本 {} 与客户端要求的 {} 不一致（将请求 root 服务自动升级）",
+            info.protocolVersion, kProtocolVersion);
+        return info;
+    }
+    if (info.applicationVersion != CLASHFLUX_VERSION) {
+        info.error = std::format(
+            "root 服务版本 {} 与当前软件 {} 不一致（将请求 root 服务自动升级）",
+            info.applicationVersion, CLASHFLUX_VERSION);
+    }
+    return info;
+}
+
 // 自身可执行文件完整路径（/proc/self/exe）。
 std::filesystem::path selfExe() {
     char buf[PATH_MAX]{};
@@ -144,13 +198,44 @@ bool executableExists(const std::filesystem::path& p) {
     return std::filesystem::exists(p, ec) && !ec && ::access(p.c_str(), X_OK) == 0;
 }
 
+bool trustedRootPath(const std::filesystem::path& path, std::string_view label,
+                     std::string& error) {
+    std::filesystem::path current = path;
+    while (!current.empty()) {
+        struct stat info{};
+        if (::stat(current.c_str(), &info) != 0) {
+            error = std::format("无法校验 {}：{}", label, ::strerror(errno));
+            return false;
+        }
+        if (info.st_uid != 0 || (info.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+            error = std::format(
+                "{} 位于非 root 所有或可被普通用户修改的路径，拒绝自动升级",
+                label);
+            return false;
+        }
+        if (current == current.root_path()) break;
+        const auto parent = current.parent_path();
+        if (parent == current) break;
+        current = parent;
+    }
+    return true;
+}
+
 // 服务允许 spawn 的唯一二进制：<exe>/engines/sing-box → <exe>/sing-box。
-std::filesystem::path serviceEngine() {
-    const std::filesystem::path dir = cfg::executableDir();
+std::filesystem::path engineForDirectory(const std::filesystem::path& dir) {
     if (dir.empty()) return {};
     if (const auto p = dir / "engines" / "sing-box"; executableExists(p)) return p;
     if (const auto p = dir / "sing-box"; executableExists(p)) return p;
     return {};
+}
+
+std::filesystem::path serviceEngine() {
+    return engineForDirectory(cfg::executableDir());
+}
+
+std::filesystem::path serviceEngineForExecutable(
+    const std::filesystem::path& executable) {
+    return engineForDirectory(executable.parent_path());
 }
 
 // ---------------- 客户端：unix socket 一问一答 ----------------
@@ -213,11 +298,65 @@ std::optional<std::string> request(const std::string& cmd, std::string& err,
 
 // ---- 状态查询（任意进程可调，轻量）----
 
-// 服务已安装且 socket 可连（= 可托管内核）。
-export bool available() {
+export ServiceInfo query() {
+    ServiceInfo info;
     std::string err;
     const auto reply = request("VERSION", err);
-    return reply && reply->starts_with("clash-flux-service");
+    if (!reply) {
+        info.error = err;
+        return info;
+    }
+    return parseVersionReply(*reply);
+}
+
+// 版本不匹配时请求 root 服务从当前客户端自身升级，并重新握手确认。
+// 没有服务或服务不可达时不主动安装，避免普通启动路径无提示地触发提权。
+export bool ensureCompatible(std::string& err) {
+    err.clear();
+    ServiceInfo info = query();
+    if (info.compatible()) return true;
+    if (!info.reachable) {
+        err = info.error.empty() ? "root 服务不可达" : info.error;
+        return false;
+    }
+
+    std::string upgradeError;
+    const auto reply = request("UPGRADE", upgradeError, 10);
+    if (!reply || *reply != "OK") {
+        if (reply && !reply->empty()) {
+            upgradeError = reply->starts_with("ERR ")
+                               ? reply->substr(4)
+                               : *reply;
+        }
+        if (upgradeError == "未知命令") {
+            upgradeError =
+                "当前 root 服务不支持无授权自升级，旧服务需要先手动安装一次当前服务";
+        }
+        if (upgradeError.empty()) upgradeError = "root 服务未返回升级结果";
+        err = "检测到 root 服务版本不一致，自动升级未完成：" + upgradeError;
+        return false;
+    }
+
+    // systemd restart 完成后 socket 可能还处于旧进程的收尾窗口，短暂重试
+    // 握手，避免把一次成功升级误报为失败。
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        info = query();
+        if (info.compatible()) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    err = "root 服务自动升级后版本仍不匹配：" +
+          (info.error.empty() ? std::string{"请重新启动应用后重试"} : info.error);
+    return false;
+}
+
+// 服务 socket 可连且版本与当前客户端兼容。
+export bool available() {
+    return query().compatible();
+}
+
+// 服务 socket 可连，但不要求版本匹配；用于清理旧服务托管的内核。
+export bool reachable() {
+    return query().reachable;
 }
 
 // systemd 单元文件存在（服务可能未在跑）。
@@ -232,6 +371,7 @@ export bool installed() {
 // 让服务以 root 启动 sing-box：run -c <config> -D <config 父目录>。
 export bool startCore(const std::filesystem::path& config, std::string& err) {
     err.clear();
+    if (!ensureCompatible(err)) return false;
     auto reply = request(std::format("START {}", config.string()), err);
     if (!reply) return false;
     // 兼容已经安装但尚未重启的旧 root daemon：旧协议在发现内核
@@ -457,6 +597,118 @@ std::optional<uid_t> serviceOwnerUid() {
     return parseUid(value);
 }
 
+bool copyServiceFile(const std::filesystem::path& source,
+                     const std::filesystem::path& destination,
+                     std::string_view label, std::string& error) {
+    std::error_code ec;
+    const bool sameFile = std::filesystem::equivalent(source, destination, ec);
+    ec.clear();
+    if (!sameFile) {
+        std::filesystem::copy_file(
+            source, destination, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            error = std::format("复制 {} 失败：{}", label, ec.message());
+            return false;
+        }
+    }
+
+    ec.clear();
+    std::filesystem::permissions(
+        destination,
+        std::filesystem::perms::owner_all |
+            std::filesystem::perms::group_read |
+            std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_read |
+            std::filesystem::perms::others_exec,
+        std::filesystem::perm_options::replace, ec);
+    if (ec) {
+        error = std::format("设置 {} 权限失败：{}", label, ec.message());
+        return false;
+    }
+    return true;
+}
+
+// root 服务收到 UPGRADE 后，从 SO_PEERCRED 对应的客户端进程取出当前版本
+// 的可执行文件，并把它及相邻 sing-box 安装到固定目录。整个过程不经过
+// shell，也不接受客户端自行伪造的源路径。
+bool copyServicePayload(const std::filesystem::path& sourceExe,
+                        std::string& error, bool printProgress = false) {
+    if (sourceExe.empty() || !sourceExe.is_absolute() ||
+        !executableExists(sourceExe)) {
+        error = "当前客户端可执行文件不可用，无法升级 root 服务";
+        return false;
+    }
+    if (!trustedRootPath(sourceExe, "当前客户端", error)) return false;
+    const auto engine = serviceEngineForExecutable(sourceExe);
+    if (engine.empty()) {
+        error = "当前客户端目录中找不到 sing-box，无法升级 root 服务";
+        return false;
+    }
+    if (!trustedRootPath(engine, "当前客户端的 sing-box", error)) return false;
+
+    const std::filesystem::path installDir{kInstallDir};
+    std::error_code ec;
+    std::filesystem::create_directories(installDir / "engines", ec);
+    if (ec) {
+        error = std::format("创建 {} 失败：{}", kInstallDir, ec.message());
+        return false;
+    }
+
+    const auto installedExe = installDir / "clash-flux";
+    const auto installedEngine = installDir / "engines" / "sing-box";
+    if (printProgress) {
+        std::println("[1/4] 复制 {} -> {}", sourceExe.string(), installedExe.string());
+    }
+    if (!copyServiceFile(sourceExe, installedExe, "clash-flux", error)) return false;
+    if (printProgress) {
+        std::println("[2/4] 复制 {} -> {}", engine.string(), installedEngine.string());
+    }
+    return copyServiceFile(engine, installedEngine, "sing-box", error);
+}
+
+bool writeServiceUnit(std::string& error) {
+    const std::filesystem::path unitPath =
+        std::filesystem::path("/etc/systemd/system") / kUnitName;
+    std::ofstream out(unitPath, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        error = std::format("写入 {} 失败", unitPath.string());
+        return false;
+    }
+    out << "[Unit]\n"
+           "Description=Clash-Flux privileged network service (sing-box + PPTP + OpenVPN)\n"
+           "After=network.target\n"
+           "\n"
+           "[Service]\n"
+           "Type=simple\n"
+           "ExecStart=/usr/local/lib/clash-flux/clash-flux service run\n"
+           "Restart=on-failure\n"
+           "RestartSec=2\n"
+           "UMask=0077\n"
+           "\n"
+           "[Install]\n"
+           "WantedBy=multi-user.target\n";
+    if (!out) {
+        error = std::format("写入 {} 失败", unitPath.string());
+        return false;
+    }
+    return true;
+}
+
+bool reloadSystemd(std::string& error) {
+    if (::system("systemctl daemon-reload") != 0) {
+        error = "systemctl daemon-reload 失败";
+        return false;
+    }
+    return true;
+}
+
+bool upgradeFromClient(const std::filesystem::path& clientExe,
+                       std::string& error) {
+    if (!copyServicePayload(clientExe, error)) return false;
+    if (!writeServiceUnit(error)) return false;
+    return reloadSystemd(error);
+}
+
 } // namespace
 
 // ---- 管理命令（由 CLI 子命令直接调用，install/uninstall 要求 euid==0）----
@@ -477,52 +729,13 @@ export int install() {
         std::fprintf(stderr, "无法解析自身可执行文件路径（/proc/self/exe）\n");
         return 1;
     }
-    const auto engine = serviceEngine();
-    if (engine.empty()) {
-        std::fprintf(stderr,
-                     "找不到 sing-box 内核（<exe>/engines/sing-box 或 <exe>/sing-box），无法安装\n");
+    std::string error;
+    if (!copyServicePayload(exe, error, true)) {
+        std::fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
 
-    const std::filesystem::path installDir{kInstallDir};
     std::error_code ec;
-    std::filesystem::create_directories(installDir / "engines", ec);
-    if (ec) {
-        std::fprintf(stderr, "创建 %s 失败: %s\n", std::string(kInstallDir).c_str(),
-                     ec.message().c_str());
-        return 1;
-    }
-
-    std::println("[1/4] 复制 {} -> {}", exe.string(), (installDir / "clash-flux").string());
-    std::filesystem::copy_file(exe, installDir / "clash-flux",
-                               std::filesystem::copy_options::overwrite_existing, ec);
-    if (ec) {
-        std::fprintf(stderr, "复制 clash-flux 失败: %s\n", ec.message().c_str());
-        return 1;
-    }
-    std::filesystem::permissions(installDir / "clash-flux",
-                                 std::filesystem::perms::owner_all |
-                                     std::filesystem::perms::group_read |
-                                     std::filesystem::perms::group_exec |
-                                     std::filesystem::perms::others_read |
-                                     std::filesystem::perms::others_exec,
-                                 std::filesystem::perm_options::replace, ec);
-
-    std::println("[2/4] 复制 {} -> {}", engine.string(),
-                 (installDir / "engines" / "sing-box").string());
-    std::filesystem::copy_file(engine, installDir / "engines" / "sing-box",
-                               std::filesystem::copy_options::overwrite_existing, ec);
-    if (ec) {
-        std::fprintf(stderr, "复制 sing-box 失败: %s\n", ec.message().c_str());
-        return 1;
-    }
-    std::filesystem::permissions(installDir / "engines" / "sing-box",
-                                 std::filesystem::perms::owner_all |
-                                     std::filesystem::perms::group_read |
-                                     std::filesystem::perms::group_exec |
-                                     std::filesystem::perms::others_read |
-                                     std::filesystem::perms::others_exec,
-                                 std::filesystem::perm_options::replace, ec);
 
     const std::filesystem::path ownerDir{"/etc/clash-flux"};
     std::filesystem::create_directories(ownerDir, ec);
@@ -550,30 +763,14 @@ export int install() {
 
     const auto unitPath = std::filesystem::path("/etc/systemd/system") / kUnitName;
     std::println("[3/4] 写 systemd 单元 {}", unitPath.string());
-    {
-        std::ofstream out(unitPath, std::ios::binary | std::ios::trunc);
-        if (!out) {
-            std::fprintf(stderr, "写入 %s 失败\n", unitPath.c_str());
-            return 1;
-        }
-        out << "[Unit]\n"
-               "Description=Clash-Flux privileged network service (sing-box + PPTP + OpenVPN)\n"
-               "After=network.target\n"
-               "\n"
-               "[Service]\n"
-               "Type=simple\n"
-               "ExecStart=/usr/local/lib/clash-flux/clash-flux service run\n"
-               "Restart=on-failure\n"
-               "RestartSec=2\n"
-               "UMask=0077\n"
-               "\n"
-               "[Install]\n"
-               "WantedBy=multi-user.target\n";
+    if (!writeServiceUnit(error)) {
+        std::fprintf(stderr, "%s\n", error.c_str());
+        return 1;
     }
 
     std::println("[4/4] systemctl daemon-reload && enable && restart {}", kUnitName);
-    if (::system("systemctl daemon-reload") != 0) {
-        std::fprintf(stderr, "systemctl daemon-reload 失败\n");
+    if (!reloadSystemd(error)) {
+        std::fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
     if (::system(std::format("systemctl enable {}", kUnitName).c_str()) != 0) {
@@ -729,14 +926,23 @@ void replyLine(int fd, std::string_view line) {
     }
 }
 
-bool peerAllowed(int fd, const std::optional<uid_t>& ownerUid) {
-    ucred credentials{};
+bool peerCredentials(int fd, ucred& credentials) {
     socklen_t length = sizeof(credentials);
-    if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credentials, &length) != 0) {
-        return false;
-    }
+    return ::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credentials, &length) == 0;
+}
+
+bool peerAllowed(const ucred& credentials, const std::optional<uid_t>& ownerUid) {
     if (credentials.uid == 0) return true;
     return ownerUid && credentials.uid == *ownerUid;
+}
+
+std::filesystem::path peerExecutable(pid_t pid) {
+    if (pid <= 0) return {};
+    char buf[PATH_MAX]{};
+    const std::string procPath = std::format("/proc/{}/exe", pid);
+    const ssize_t n = ::readlink(procPath.c_str(), buf, sizeof(buf) - 1);
+    if (n <= 0) return {};
+    return std::filesystem::path(std::string(buf, static_cast<size_t>(n)));
 }
 
 std::optional<std::string> decodeWord(const std::vector<std::string>& words,
@@ -829,7 +1035,8 @@ export int run() {
     std::println("clash-flux 服务就绪，监听 {}", sockPath);
 
     pid_t childPid = 0;
-    while (!g_quit) {
+    bool restartRequested = false;
+    while (!g_quit && !restartRequested) {
         pollfd pfd{.fd = listenFd, .events = POLLIN, .revents = 0};
         const int rc = ::poll(&pfd, 1, 200);
         if (g_childEvent) {
@@ -841,7 +1048,8 @@ export int run() {
         const int fd = ::accept(listenFd, nullptr, nullptr);
         if (fd < 0) continue;
 
-        if (!peerAllowed(fd, ownerUid)) {
+        ucred peer{};
+        if (!peerCredentials(fd, peer) || !peerAllowed(peer, ownerUid)) {
             replyLine(fd, "ERR 未授权的服务客户端");
             ::close(fd);
             continue;
@@ -859,7 +1067,20 @@ export int run() {
         if (!cmd.empty() && cmd.back() == '\r') cmd.pop_back();
 
         if (cmd == "VERSION") {
-            replyLine(fd, kVersionReply);
+            replyLine(fd, versionReply());
+        } else if (cmd == "UPGRADE") {
+            const auto clientExe = peerExecutable(peer.pid);
+            std::string error;
+            if (clientExe.empty()) {
+                replyLine(fd, "ERR 无法识别请求升级的客户端");
+            } else if (!upgradeFromClient(clientExe, error)) {
+                replyLine(fd, std::format("ERR {}", error));
+            } else {
+                // 先给客户端确认，再退出当前旧进程。systemd 的
+                // Restart=on-failure 会用刚复制的二进制重新拉起服务。
+                replyLine(fd, "OK");
+                restartRequested = true;
+            }
         } else if (cmd == "STATUS") {
             reapChildren(childPid);
             if (childPid > 0) {
@@ -1059,12 +1280,24 @@ export int run() {
     ::close(listenFd);
     ::unlink(sockPath.c_str());
     std::println("clash-flux 服务退出。");
-    return 0;
+    // UPGRADE 需要让 systemd 重新执行 /usr/local/lib 中刚替换的二进制。
+    // 返回非零配合 Restart=on-failure，避免在当前进程里同步 restart 自己造成死锁。
+    return restartRequested ? 75 : 0;
 }
 
 #else  // !__linux__：服务模式仅 Linux，导出同签名 stub（core_store/cli/UI 无条件 import）。
 
 export bool available() { return false; }
+export bool reachable() { return false; }
+export ServiceInfo query() {
+    ServiceInfo info;
+    info.error = "服务模式仅支持 Linux";
+    return info;
+}
+export bool ensureCompatible(std::string& err) {
+    err = "服务模式仅支持 Linux";
+    return false;
+}
 export bool installed() { return false; }
 export bool startCore(const std::filesystem::path&, std::string& err) {
     err = "服务模式仅支持 Linux";

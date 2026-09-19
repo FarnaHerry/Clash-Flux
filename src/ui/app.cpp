@@ -1,7 +1,8 @@
 // app.cpp — 应用壳（岛屿架构 + 自定义标题栏 + 托盘，对齐 apitab 岛屿风）：
 //   标题栏：应用名 + 内核状态胶囊 + 框架窗口按钮；收窄为 24px 高、去背景直接
-//     融入窗口底色。主题提取自水猫标识的深海军蓝、亮水蓝和冰青，
-//     深浅两套模式共用同一品牌色相，只调整明度和对比度。
+//     融入窗口底色。品牌色为水猫标识的亮水蓝和冰青，只用于交互与强调；
+//     大面积背景是中性石墨（深色）/冰雾白（浅色），深浅两套模式共用同一
+//     套品牌强调色，只调整背景明度和对比度。
 //   下方：左侧图标侧边栏（无岛屿包裹，直接落在窗口背景上）｜内容区（页面自己的
 //   一级岛屿划分区域——PageScaffold，外壳不再套岛）。根节点刷整窗海面底色
 //   （rootSpec.colors.background——AppRoot 在主题 provider 之上，UseTheme 只能
@@ -67,7 +68,7 @@ struct FluxPalette {
     }
 
     static constexpr huxerui::Color abyss() noexcept {
-        return huxerui::Color::Rgb(6, 20, 39); // 深色背景 #061427
+        return huxerui::Color::Rgb(6, 20, 39); // 品牌深蓝 #061427，亮色表面上的文字
     }
 
     static constexpr huxerui::Color water() noexcept {
@@ -87,8 +88,9 @@ struct FluxPalette {
     }
 };
 
-// Clash-Flux 品牌深色主题：深海蓝作为海面和最底层，亮水蓝作为主要交互色，
-// 冰青作为次级强调色。所有 M3 语义色都在这里落到同一品牌色相上。
+// Clash-Flux 品牌深色主题：石墨色（带一点冷调）作为海面和表面阶梯，靠每级
+// 9-11 的亮度差拉开层次；亮水蓝只出现在交互色和容器强调上，冰青作为次级
+// 强调色，避免整页淹没在同色相的深蓝里。
 huxerui::ThemeSpec FluxDarkThemeSpec() {
     huxerui::ThemeSpec spec = huxerui::MaterialDarkThemeSpec();
     spec.typography = huxerui::TypographyScheme{
@@ -111,18 +113,18 @@ huxerui::ThemeSpec FluxDarkThemeSpec() {
     spec.colors.on_secondary_container = FluxPalette::ice();
     spec.colors.tertiary_container = huxerui::Color::Rgb(24, 72, 105);
     spec.colors.on_tertiary_container = huxerui::Color::Rgb(222, 248, 255);
-    spec.colors.background = FluxPalette::abyss();
-    spec.colors.surface = FluxPalette::deep_navy();
-    spec.colors.surface_container_low = huxerui::Color::Rgb(10, 35, 62);
-    spec.colors.surface_container = huxerui::Color::Rgb(14, 45, 77);
-    spec.colors.surface_container_high = huxerui::Color::Rgb(20, 58, 94);
-    spec.colors.surface_container_highest = huxerui::Color::Rgb(27, 70, 108);
-    spec.colors.on_surface = huxerui::Color::Rgb(241, 251, 255);
-    spec.colors.on_surface_variant = huxerui::Color::Rgb(167, 214, 234);
-    spec.colors.outline = huxerui::Color::Rgb(54, 104, 135);
+    spec.colors.background = huxerui::Color::Rgb(13, 17, 23);
+    spec.colors.surface = huxerui::Color::Rgb(22, 27, 34);
+    spec.colors.surface_container_low = huxerui::Color::Rgb(28, 34, 43);
+    spec.colors.surface_container = huxerui::Color::Rgb(35, 42, 53);
+    spec.colors.surface_container_high = huxerui::Color::Rgb(43, 51, 64);
+    spec.colors.surface_container_highest = huxerui::Color::Rgb(52, 62, 77);
+    spec.colors.on_surface = huxerui::Color::Rgb(233, 237, 243);
+    spec.colors.on_surface_variant = huxerui::Color::Rgb(166, 179, 196);
+    spec.colors.outline = huxerui::Color::Rgb(67, 80, 95);
     spec.colors.inverse_surface = FluxPalette::mist();
     spec.colors.inverse_on_surface = FluxPalette::deep_navy();
-    spec.colors.scrim = huxerui::Color::Rgb(2, 12, 25, 0.66F);
+    spec.colors.scrim = huxerui::Color::Rgb(4, 8, 14, 0.66F);
     spec.colors.error = huxerui::Color::Rgb(255, 155, 168);
     spec.interactions.focus_ring = huxerui::FocusRing{FluxPalette::ice(), 2.0F, 2.0F};
     return spec;
@@ -420,6 +422,61 @@ std::vector<huxerui::NavigationItem> AndroidNavigationItems() {
                           huxerui::VerticalAlignment::Stretch));
 }
 
+// Android 的 Pager 只承载四个一级页；规则、连接和日志仍保留为完整的
+// 二级页，但由设置页入口打开，不进入左右滑动范围。桌面端仍使用
+// IndexedPages，避免侧边导航获得无意的拖拽行为。
+#if defined(__ANDROID__)
+huxerui::View BuildPageContainer(std::vector<huxerui::View> pages,
+                                 huxerui::State<std::size_t> navPage,
+                                 huxerui::State<std::size_t> pagerPage) {
+    std::vector<huxerui::View> primaryPages;
+    primaryPages.reserve(4);
+    primaryPages.push_back(std::move(pages[pages::kHome]));
+    primaryPages.push_back(std::move(pages[pages::kProxies]));
+    primaryPages.push_back(std::move(pages[pages::kProfiles]));
+    primaryPages.push_back(std::move(pages[pages::kSettings]));
+
+    std::vector<huxerui::View> secondaryPages;
+    secondaryPages.reserve(3);
+    secondaryPages.push_back(std::move(pages[pages::kRules]));
+    secondaryPages.push_back(std::move(pages[pages::kConnections]));
+    secondaryPages.push_back(std::move(pages[pages::kLogs]));
+
+    const bool secondary = navPage.Get() >= pages::kRules &&
+                           navPage.Get() <= pages::kLogs;
+    const std::size_t secondaryIndex =
+        secondary ? navPage.Get() - pages::kRules : 0;
+    huxerui::View primaryPager =
+        huxerui::Pager(std::move(primaryPages), pagerPage)
+        .ScrollAxis(huxerui::Axis::Horizontal)
+        .DragEnabled(true)
+        .OnChanged([navPage, pagerPage](std::size_t index) {
+            constexpr std::array<std::size_t, 4> kDestinations{
+                pages::kHome, pages::kProxies, pages::kProfiles, pages::kSettings};
+            const std::size_t clamped =
+                std::min(index, kDestinations.size() - 1);
+            pagerPage = clamped;
+            navPage = kDestinations[clamped];
+        })
+        .With(huxerui::Grow(1.0F));
+
+    huxerui::View secondaryPage =
+        huxerui::IndexedPages(std::move(secondaryPages), secondaryIndex)
+            .With(huxerui::Grow(1.0F));
+    return huxerui::Stack{
+        secondary ? huxerui::View{huxerui::Row{}} : std::move(primaryPager),
+        secondary ? std::move(secondaryPage) : huxerui::View{huxerui::Row{}},
+    }.With(huxerui::Grow(1.0F));
+}
+#else
+huxerui::View BuildPageContainer(std::vector<huxerui::View> pages,
+                                 huxerui::State<std::size_t> navPage,
+                                 huxerui::State<std::size_t>) {
+    return huxerui::IndexedPages(std::move(pages), navPage.Get())
+        .With(huxerui::Grow(1.0F));
+}
+#endif
+
 } // namespace
 
 [[huxerui::composable]] huxerui::View AppRoot() {
@@ -435,6 +492,20 @@ std::vector<huxerui::NavigationItem> AndroidNavigationItems() {
     }
     auto themeMode = huxerui::UseState<int>(std::move(initialThemeMode));
     auto navPage = huxerui::UseState<std::size_t>(pages::kHome);
+    auto pagerPage = huxerui::UseState<std::size_t>(0);
+    // Home/settings cards still navigate by the absolute page index. Keep the
+    // compact Pager's four-slot index synchronized with that shared state.
+    huxerui::Lifecycle(
+        [navPage, pagerPage] {
+            const std::size_t selected = navPage.Get();
+            const std::size_t target =
+                selected == pages::kProxies ? 1U
+                : selected == pages::kProfiles ? 2U
+                : selected == pages::kSettings ? 3U : 0U;
+            if (pagerPage.Get() != target) pagerPage = target;
+            return [] {};
+        },
+        navPage);
     // 平台刷新泵和应用生命周期各自由平台组件收束，通用壳层只挂载它们。
     huxerui::View profileRefreshPump = CLASHFLUX_PROFILE_REFRESH_PUMP();
 
@@ -460,8 +531,7 @@ std::vector<huxerui::NavigationItem> AndroidNavigationItems() {
                         .Key("settings").With(huxerui::Grow(1.0F)));
 
     huxerui::View indexedPages =
-        huxerui::IndexedPages(std::move(pages), navPage.Get())
-            .With(huxerui::Grow(1.0F));
+        BuildPageContainer(std::move(pages), navPage, pagerPage);
     huxerui::View mainRow = CLASHFLUX_MAIN_CONTENT(
         navPage, std::move(indexedPages), rootIslands, rootSpec);
     huxerui::View content = CLASHFLUX_APP_CONTENT(mainRow, rootSpec);

@@ -60,6 +60,11 @@ extern "C" bool clashflux_android_close_connection(const char*) noexcept;
 extern "C" bool clashflux_android_close_all_connections() noexcept;
 extern "C" bool clashflux_android_select_outbound(const char* group,
                                                     const char* name) noexcept;
+extern "C" bool clashflux_android_url_test(const char* group) noexcept;
+inline bool TriggerProxyGroupTest(const std::string& group) noexcept {
+    return clashflux_android_url_test(group.c_str());
+}
+inline constexpr bool ProxyTestUsesNativeGroup() noexcept { return true; }
 #else
 inline void AndroidStartVpn() noexcept {}
 inline void AndroidStopVpn() noexcept {}
@@ -71,6 +76,8 @@ inline int AndroidVpnState() noexcept { return 0; }
 inline const char* clashflux_android_connections() noexcept { return ""; }
 inline bool clashflux_android_close_connection(const char*) noexcept { return false; }
 inline bool clashflux_android_close_all_connections() noexcept { return false; }
+inline bool TriggerProxyGroupTest(const std::string&) noexcept { return true; }
+inline constexpr bool ProxyTestUsesNativeGroup() noexcept { return false; }
 #endif
 
 // Replace a snapshot-backed collection without storing the whole collection in
@@ -117,6 +124,14 @@ std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
 // 的快照/切换由 libbox bridge 提供同名能力。
 std::string ProxyGroupsSnapshot();
 bool SelectProxyLine(const std::string& group, const std::string& name);
+// Start a native speed-test data plane when Android VPN is off, then request
+// the group test. The blocking preparation is performed by the caller's task
+// thread; the UI only observes the returned result.
+bool StartProxyGroupTest(const std::string& group);
+
+// Android stop requests only enqueue the service shutdown. Call this from a
+// task thread when a caller needs to wait for the optimistic UI state to settle.
+void WaitForAndroidVpnStopped() noexcept;
 
 // 全项目统一字号阶梯（pt）：控件/正文跟随 SDK 默认 14，不再散落硬编码字面量。
 namespace font_size {
@@ -227,10 +242,10 @@ huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
 huxerui::View Card(huxerui::View content);
 
 // 日志、连接、规则等信息列表的统一行容器。内容由页面自己组织，容器统一
-// 表面、内边距、圆角和裁剪，避免桌面/紧凑视口各自复制一套视觉规则。
-huxerui::View UnifiedListRow(huxerui::View content,
-                             const huxerui::ThemeSpec& theme,
-                             std::string key, bool compact = false);
+// 内边距；行平铺在一级岛表面上（不逐行套卡），行间画细分隔线，divider=false
+// 用于最后一行。
+huxerui::View UnifiedListRow(huxerui::View content, std::string key,
+                             bool compact = false, bool divider = true);
 
 // 通用设置排版部件；这里不做任何平台判断。
 huxerui::View SettingRow(const std::string& label, const std::string& hint,

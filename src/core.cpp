@@ -85,8 +85,10 @@ TunGate tunGate() {
 #else
     if (::geteuid() == 0) return TunGate::Ok;
 #ifdef __linux__
-    // root 服务托管的内核由服务侧（root）建 TUN：服务可用即视为可开。
-    if (service::available()) return TunGate::Ok;
+    // root 服务托管的内核由服务侧（root）建 TUN。若已安装但版本落后，
+    // 握手会请求 root 服务自行升级；没有服务时仍交给 UI 引导安装。
+    std::string serviceError;
+    if (service::ensureCompatible(serviceError)) return TunGate::Ok;
 #endif
     return TunGate::Denied;
 #endif

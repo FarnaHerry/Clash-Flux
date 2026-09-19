@@ -78,7 +78,7 @@ public:
         try {
             const bool serviceOwnsCore =
                 managedByService_ ||
-                (!process_.running() && service::available() &&
+                (!process_.running() && service::reachable() &&
                  service::coreRunning());
             if (serviceOwnsCore || process_.running()) stopCore();
         } catch (...) {
@@ -204,12 +204,62 @@ public:
     }
 
     std::string proxyGroupsSnapshot() {
+        {
+            std::lock_guard lock(mutex_);
+            if (!compiledProxyGroups_.empty()) return compiledProxyGroups_;
+        }
+
+        // Android's libbox CommandClient does not exist until the VPN service
+        // is started.  Compile the selected subscription on demand so the
+        // proxy page remains usable while the data plane is stopped.  The
+        // selected node is persisted by selectProxy() and will be applied by
+        // the next startCore() compilation.
+        std::lock_guard operationLock(lifecycleMutex_);
+        {
+            std::lock_guard lock(mutex_);
+            if (!compiledProxyGroups_.empty()) return compiledProxyGroups_;
+        }
+        ensureOpen();
+
+        std::string profileYaml;
+        for (const auto& profile : db_->listProfiles()) {
+            if (!profile.selected || profile.type == "pptp" ||
+                profile.type == "openvpn" || profile.file.empty()) {
+                continue;
+            }
+            std::ifstream input(cfg::profilesDir() / profile.file,
+                                std::ios::binary);
+            if (input) {
+                profileYaml.assign(std::istreambuf_iterator<char>(input),
+                                   std::istreambuf_iterator<char>());
+            }
+            break;
+        }
+        if (profileYaml.empty()) return {};
+
+        try {
+            const auto options = routingOptions(profileYaml, false);
+            const auto compiled = core::generateConfig(options);
+            if (compiled.json.empty() || !compiled.error.empty()) return {};
+            auto config = nlohmann::json::parse(compiled.json, nullptr, false);
+            if (!config.is_object()) return {};
+            const std::string snapshot = proxyGroupsFromConfig(config);
+            std::lock_guard lock(mutex_);
+            compiledProxyGroups_ = snapshot;
+            return compiledProxyGroups_;
+        } catch (...) {
+            return {};
+        }
+    }
+
+    void invalidateProxyGroupsSnapshot() {
         std::lock_guard lock(mutex_);
-        return compiledProxyGroups_;
+        compiledProxyGroups_.clear();
     }
 
     bool selectProxy(const std::string& group, const std::string& name) {
         setSetting("proxy.selection." + group, name);
+        invalidateProxyGroupsSnapshot();
 #if defined(__ANDROID__)
         if (clashflux_android_vpn_state() == 2)
             return clashflux_android_select_outbound(group.c_str(), name.c_str());
@@ -413,9 +463,21 @@ public:
     // detached=true（CLI core start）：直连 spawn 走 setsid 脱离会话驻留，
     // 本进程退出不带走内核。
     void startCore(const std::string& profileYaml, bool detached = false,
-                   bool useSavedTunSetting = true) {
+                   bool useSavedTunSetting = true, bool speedTestOnly = false) {
         std::lock_guard operationLock(lifecycleMutex_);
         ensureOpen();
+        const auto serviceInfo = service::query();
+        if (serviceInfo.reachable && !serviceInfo.compatible()) {
+            std::string upgradeError;
+            if (!service::ensureCompatible(upgradeError)) {
+                fail(upgradeError.empty()
+                         ? (serviceInfo.error.empty()
+                                ? "root 服务版本检查失败"
+                                : serviceInfo.error)
+                         : upgradeError);
+                return;
+            }
+        }
         stream::logApplication("info", "开始启动代理内核");
         {
             std::lock_guard lock(mutex_);
@@ -454,7 +516,8 @@ public:
             // 首启不再因代理不可用而拉取失败退出，预取过的缓存按周刷新。
             singbox::CompileOptions options;
             try {
-                options = routingOptions(profileYaml, useSavedTunSetting);
+                options = routingOptions(profileYaml, useSavedTunSetting,
+                                         speedTestOnly);
             } catch (const std::exception& exception) {
                 fail(std::string("读取主 VPN 路由计划失败：") + exception.what());
                 return;
@@ -468,31 +531,11 @@ public:
             }
             {
                 auto config = nlohmann::json::parse(compiled.json);
-                nlohmann::json groups = nlohmann::json::object();
-                for (auto& outbound : config["outbounds"]) {
-                    const std::string type = outbound.value("type", "");
-                    if (type != "selector" && type != "urltest") continue;
-                    const std::string group = outbound.value("tag", "");
-                    if (group.empty()) continue;
-                    const auto members = outbound.value("outbounds", nlohmann::json::array());
-                    std::string current = outbound.value("default", "");
-                    const std::string saved = setting("proxy.selection." + group, "");
-                    if (type == "selector" && !saved.empty()) {
-                        for (const auto& member : members) {
-                            if (member == saved) {
-                                outbound["default"] = saved;
-                                current = saved;
-                                break;
-                            }
-                        }
-                    }
-                    if (current.empty() && !members.empty())
-                        current = members.front().get<std::string>();
-                    groups[group] = {{"type", type}, {"now", current},
-                                     {"all", members},
-                                     {"selectable", type == "selector"}};
+                const std::string proxyGroups = proxyGroupsFromConfig(config);
+                {
+                    std::lock_guard lock(mutex_);
+                    compiledProxyGroups_ = proxyGroups;
                 }
-                compiledProxyGroups_ = nlohmann::json{{"proxies", groups}}.dump();
                 compiled.json = config.dump();
             }
             prefetchRuleSets(compiled.json, workDir);
@@ -700,7 +743,7 @@ public:
         // 有自己的 core，就补发一次幂等 STOP，避免下一次启动误报“先 STOP”。
         const bool serviceOwnsCore =
             managedByService_ ||
-            (!process_.running() && service::available() &&
+            (!process_.running() && service::reachable() &&
              service::coreRunning());
         if (serviceOwnsCore) {
             std::string err;
@@ -837,8 +880,42 @@ public:
     }
 
 private:
-    inline singbox::CompileOptions routingOptions(const std::string& profileYaml,
-                                                  bool useSavedTunSetting) {
+    std::string proxyGroupsFromConfig(nlohmann::json& config) {
+        nlohmann::json groups = nlohmann::json::object();
+        if (!config.is_object() || !config.contains("outbounds") ||
+            !config["outbounds"].is_array()) {
+            return nlohmann::json{{"proxies", groups}}.dump();
+        }
+        for (auto& outbound : config["outbounds"]) {
+            const std::string type = outbound.value("type", "");
+            if (type != "selector" && type != "urltest") continue;
+            const std::string group = outbound.value("tag", "");
+            if (group.empty()) continue;
+            const auto members =
+                outbound.value("outbounds", nlohmann::json::array());
+            std::string current = outbound.value("default", "");
+            const std::string saved = setting("proxy.selection." + group, "");
+            if (type == "selector" && !saved.empty()) {
+                for (const auto& member : members) {
+                    if (member == saved) {
+                        outbound["default"] = saved;
+                        current = saved;
+                        break;
+                    }
+                }
+            }
+            if (current.empty() && !members.empty())
+                current = members.front().get<std::string>();
+            groups[group] = {{"type", type}, {"now", current},
+                             {"all", members},
+                             {"selectable", type == "selector"}};
+        }
+        return nlohmann::json{{"proxies", groups}}.dump();
+    }
+
+    inline singbox::CompileOptions routingOptions(
+        const std::string& profileYaml, bool useSavedTunSetting,
+        bool speedTestOnly = false) {
         singbox::CompileOptions options;
         options.profileYaml = profileYaml;
         options.controller = cfg::controllerAddress();
@@ -849,6 +926,7 @@ private:
         options.ipv6 = ipv6Enabled();
         options.logLevel = logLevel();
         options.tunInbound = useSavedTunSetting && tunEnabled();
+        options.speedTestOnly = speedTestOnly;
         options.ruleSetDir = cfg::coreWorkDir().string();
         routing::PopulateOptions(options, db_->listProfiles(),
             routing::DecodePolicy(setting("vpn.global_policy", "")), nativeSessions_);
