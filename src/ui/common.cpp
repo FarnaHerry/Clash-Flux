@@ -409,10 +409,12 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     // 响应式：Compact(<600) 收窄一级岛内边距。
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
-    // 一级岛：页面根本身是岛（Grow + Stretch 占满页面区块，圆角 16pt，
-    // base 表面），内容在岛内部滚动；海面底色经岛间缝隙透出。
+    // 一级岛（仅桌面）：页面根本身是岛（Grow + Stretch 占满页面区块，圆角
+    // 16pt，base 表面），内容在岛内部滚动；海面底色经岛间缝隙透出。
+    // 移动端不再把页面套成外部卡片：去掉表面与圆角，内容直接落在窗口海面
+    // 底色上（内部卡片/分组仍按各自层级表达）。
     // composable 形参被 codegen 固定为 const：拷贝到局部再走右值链。
-    // 窄屏时把标题和操作区改为上下布局，避免 Select/按钮挤出岛屿。
+    // 窄屏时把标题和操作区改为上下布局，避免 Select/按钮挤出页面。
     huxerui::View header;
     if (compact && !inlineCompactActions) {
         header = huxerui::Column {
@@ -434,8 +436,9 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     }.With(huxerui::Padding(compact ? theme.spacing.medium
                                     : theme.spacing.large),
            huxerui::Spacing(theme.spacing.medium),
-           huxerui::Background(islands.base),
-           huxerui::CornerRadius(islands.island_radius),
+           huxerui::Background(compact ? huxerui::Color::Transparent()
+                                       : islands.base),
+           huxerui::CornerRadius(compact ? 0.0F : islands.island_radius),
            huxerui::ClipChildren(),
            huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -446,6 +449,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     std::function<void()> onBack, bool hideBack) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
+    const bool compact =
+        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     huxerui::View body = content;
     huxerui::View titleView = title;
     auto backAction = onBack;
@@ -462,11 +467,14 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
               std::move(actions),
           }.With(huxerui::Spacing(theme.spacing.small),
                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    // 与 PageScaffold 同规则：移动端二级页也直接落在海面底色上，不套外卡。
     huxerui::View scaffold = huxerui::Column {
         std::move(header),
         std::move(body).With(huxerui::Grow(1.0F)),
     }.With(huxerui::Padding(theme.spacing.medium), huxerui::Spacing(theme.spacing.medium),
-           huxerui::Background(islands.base), huxerui::CornerRadius(islands.island_radius),
+           huxerui::Background(compact ? huxerui::Color::Transparent()
+                                       : islands.base),
+           huxerui::CornerRadius(compact ? 0.0F : islands.island_radius),
            huxerui::ClipChildren(), huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     if (backAction && !hideBack) {
