@@ -33,7 +33,7 @@ export struct NativeConnection {
 export struct CompileOptions {
     std::string profileYaml;                     // 订阅/手写配置原文（Clash YAML、
                                                  // 原生 sing-box JSON 或空）
-    std::string controller = "127.0.0.1:9097";  // clash_api external_controller
+    std::string controller = "127.0.0.1:29097";  // clash_api external_controller
     std::string secret;                          // clash_api secret（可空）
     int mixedPort = 7899;
     std::string mode = "rule";                   // rule / global / direct

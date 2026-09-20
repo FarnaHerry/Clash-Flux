@@ -31,6 +31,11 @@ export const char* stateName(CoreState s);
 // pid ≤0 或进程已不在时为 no-op。
 export void killPid(long pid);
 
+// pid 对应进程是否仍存活（接管判定的门禁：pidfile 命中但进程已死时不得
+// 视为本应用驻留内核）。POSIX kill(pid,0)（EPERM 视为存活——进程存在但
+// 属其他用户）；Windows OpenProcess 探测。pid ≤0 返回 false。
+export bool pidAlive(long pid);
+
 // 以脱离会话方式启动内核（CLI `core start` 用：CLI 退出后内核驻留）：
 // POSIX setsid + stdout/stderr 追加到 <workDir>/core.log；Windows
 // DETACHED_PROCESS + 同样重定向日志。成功后 pid 写 <workDir>/core.pid

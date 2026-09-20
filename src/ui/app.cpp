@@ -49,17 +49,13 @@ namespace {
 #define CLASHFLUX_PROFILE_REFRESH_PUMP AndroidProfileRefreshPump
 #define CLASHFLUX_APPLICATION_EFFECTS AndroidApplicationEffects
 #define CLASHFLUX_APP_CONTENT AndroidAppContent
-#define CLASHFLUX_NAVIGATION_SURFACE AndroidNavigationSurface
 #define CLASHFLUX_MAIN_CONTENT AndroidMainContent
-#define CLASHFLUX_SETTINGS_BACK(navPage) [navPage] { navPage = pages::kSettings; }
 #else
 #define CLASHFLUX_PREPARE_PLATFORM_DATA DesktopPreparePlatformDataDirectory
 #define CLASHFLUX_PROFILE_REFRESH_PUMP DesktopProfileRefreshPump
 #define CLASHFLUX_APPLICATION_EFFECTS DesktopApplicationEffects
 #define CLASHFLUX_APP_CONTENT DesktopAppContent
-#define CLASHFLUX_NAVIGATION_SURFACE DesktopNavigationSurface
 #define CLASHFLUX_MAIN_CONTENT DesktopMainContent
-#define CLASHFLUX_SETTINGS_BACK(navPage) std::function<void()>{}
 #endif
 
 struct FluxPalette {
@@ -282,7 +278,8 @@ huxerui::View FluxThemed(bool dark, huxerui::View content) {
     navigationBar.minimum_item_width = 44.0F;
     navigationBar.icon_size = 20.0F;
     navigationBar.icon_spacing = 2.0F;
-    navigationBar.show_unselected_labels = false;
+    // 底部悬浮导航常驻四个页签的文字标签，而不是只在选中项显示。
+    navigationBar.show_unselected_labels = true;
     // 悬浮导航岛内部的选中切换使用胶囊圆角，与外层岛屿保持同一套圆润语言。
     navigationBar.indicator_corner_radius = 20.0F;
     definition.Set(navigationBar);
@@ -315,7 +312,7 @@ std::vector<huxerui::NavigationItem> DesktopNavigationItems() {
         Item{app::images::loadtest, app::images::loadtest_selected, "规则"},
         Item{app::images::tcp, app::images::tcp_selected, "连接"},
         Item{app::images::history, app::images::history_selected, "日志"},
-        Item{app::images::project_settings, app::images::project_settings_selected, "设置"},
+        Item{app::images::gear, app::images::gear, "设置"},
     };
 
     std::vector<huxerui::NavigationItem> destinations;
@@ -336,8 +333,7 @@ std::vector<huxerui::NavigationItem> AndroidNavigationItems() {
         Item{app::images::home, app::images::home_selected, "首页"},
         Item{app::images::websocket, app::images::websocket_selected, "代理"},
         Item{app::images::request, app::images::request_selected, "订阅"},
-        Item{app::images::project_settings,
-             app::images::project_settings_selected, "设置"},
+        Item{app::images::gear, app::images::gear, "设置"},
     };
     std::vector<huxerui::NavigationItem> destinations;
     for (const Item& item : items) {
@@ -382,71 +378,80 @@ std::vector<huxerui::NavigationItem> AndroidNavigationItems() {
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
+// 桌面：侧边导航 + 七页 IndexedPages（规则/连接/日志是一级页）。
 [[huxerui::composable]] huxerui::View DesktopMainContent(
-    huxerui::State<std::size_t> navPage, huxerui::View indexedPages,
-    const IslandTheme& islands, const huxerui::ThemeSpec&) {
+    huxerui::State<std::size_t> navPage, huxerui::State<std::size_t>,
+    huxerui::State<int> themeMode, const IslandTheme& islands,
+    const huxerui::ThemeSpec&) {
+    std::vector<huxerui::View> pages;
+    pages.reserve(7);
+    pages.push_back(HomePage(navPage).Key("home").With(huxerui::Grow(1.0F)));
+    pages.push_back(ProfilesPage().Key("profiles").With(huxerui::Grow(1.0F)));
+    pages.push_back(ProxiesPage().Key("proxies").With(huxerui::Grow(1.0F)));
+    pages.push_back(RulesPage().Key("rules").With(huxerui::Grow(1.0F)));
+    pages.push_back(
+        ConnectionsPage().Key("connections").With(huxerui::Grow(1.0F)));
+    pages.push_back(LogsPage().Key("logs").With(huxerui::Grow(1.0F)));
+    pages.push_back(SettingsPage(themeMode, navPage)
+                        .Key("settings").With(huxerui::Grow(1.0F)));
     return huxerui::Row {
         DesktopNavigationSurface(navPage),
-        std::move(indexedPages),
+        huxerui::IndexedPages(std::move(pages), navPage.Get())
+            .With(huxerui::Grow(1.0F)),
     }.With(huxerui::Spacing(islands.page_gap),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
            huxerui::Grow(1.0F));
 }
 
-[[huxerui::composable]] huxerui::View AndroidMainContent(
-    huxerui::State<std::size_t> navPage, huxerui::View indexedPages,
-    const IslandTheme& islands, const huxerui::ThemeSpec& spec) {
-    huxerui::View floatingNavigation = AndroidNavigationSurface(navPage).With(
-        huxerui::Frame{.max_width = 520.0F},
-        huxerui::Background(islands.base), huxerui::CornerRadius(28.0F),
-        huxerui::Border{islands.outline_soft, 1.0F},
-        huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.28F), {}, 18.0F, 2.0F},
-        huxerui::ClipChildren());
-    huxerui::View dock = huxerui::Column {
-        std::move(floatingNavigation),
-    }.With(huxerui::Padding(huxerui::EdgeInsets{
-               .right = spec.spacing.medium,
-               .bottom = spec.spacing.small,
-               .left = spec.spacing.medium,
-           }),
-           huxerui::MainAlign(huxerui::MainAxisAlignment::End),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
-    const bool secondary = navPage.Get() == pages::kRules ||
-                           navPage.Get() == pages::kConnections ||
-                           navPage.Get() == pages::kLogs;
-    return huxerui::Stack {
-        std::move(indexedPages),
-        secondary ? huxerui::View{huxerui::Row{}} : std::move(dock),
-    }.With(huxerui::Grow(1.0F),
-           huxerui::Align(huxerui::HorizontalAlignment::Stretch,
-                          huxerui::VerticalAlignment::Stretch));
+#if defined(__ANDROID__)
+// 二级页（规则/连接/日志）的进入与返回动画：新页自右缘滑入、父页左移 20%，
+// 返回时反向滑回。它只作用于 NavigationStack 的页面 push/pop，与一级页 Pager
+// 的左右翻页动画相互独立。
+huxerui::PageTransition SecondaryPageTransition(
+    const huxerui::MotionScheme& motion) {
+    const huxerui::TransitionSpec enter{
+        huxerui::SlideTransition{.incoming_offset = {1.0F, 0.0F},
+                                 .outgoing_offset = {-0.2F, 0.0F}},
+        huxerui::TweenSpec{.duration = motion.slow,
+                           .easing = huxerui::Easing::EaseOut}};
+    return huxerui::PageTransition{
+        .push = enter,
+        .pop = enter.Reversed(huxerui::TweenSpec{
+            .duration = motion.normal, .easing = huxerui::Easing::EaseOut}),
+        .replace = enter};
 }
 
-// Android 的 Pager 只承载四个一级页；规则、连接和日志仍保留为完整的
-// 二级页，但由设置页入口打开，不进入左右滑动范围。桌面端仍使用
-// IndexedPages，避免侧边导航获得无意的拖拽行为。
-#if defined(__ANDROID__)
-huxerui::View BuildPageContainer(std::vector<huxerui::View> pages,
-                                 huxerui::State<std::size_t> navPage,
-                                 huxerui::State<std::size_t> pagerPage) {
+// 一级外壳：四个一级页由 Pager 承载，悬浮 dock 与一级页同属 NavigationStack
+// 的根页面；二级页 push 后整页覆盖 dock，弹出后一级页状态原样保留。
+[[huxerui::composable]] huxerui::View AndroidPrimaryShell(
+    huxerui::State<std::size_t> navPage, huxerui::State<std::size_t> pagerPage,
+    huxerui::State<int> themeMode, const IslandTheme& islands,
+    const huxerui::ThemeSpec& spec) {
+    // Home/settings 卡片仍按绝对页号导航，这里把 Pager 的四槽索引与共享
+    // 页号状态同步；二级页不属于 Pager，不参与该同步。
+    huxerui::Lifecycle(
+        [navPage, pagerPage] {
+            const std::size_t selected = navPage.Get();
+            const std::size_t target =
+                selected == pages::kProxies ? 1U
+                : selected == pages::kProfiles ? 2U
+                : selected == pages::kSettings ? 3U : 0U;
+            if (pagerPage.Get() != target) pagerPage = target;
+            return [] {};
+        },
+        navPage);
+
     std::vector<huxerui::View> primaryPages;
     primaryPages.reserve(4);
-    primaryPages.push_back(std::move(pages[pages::kHome]));
-    primaryPages.push_back(std::move(pages[pages::kProxies]));
-    primaryPages.push_back(std::move(pages[pages::kProfiles]));
-    primaryPages.push_back(std::move(pages[pages::kSettings]));
+    primaryPages.push_back(HomePage(navPage).Key("home").With(huxerui::Grow(1.0F)));
+    primaryPages.push_back(
+        ProxiesPage().Key("proxies").With(huxerui::Grow(1.0F)));
+    primaryPages.push_back(
+        ProfilesPage().Key("profiles").With(huxerui::Grow(1.0F)));
+    primaryPages.push_back(SettingsPage(themeMode, navPage)
+                               .Key("settings").With(huxerui::Grow(1.0F)));
 
-    std::vector<huxerui::View> secondaryPages;
-    secondaryPages.reserve(3);
-    secondaryPages.push_back(std::move(pages[pages::kRules]));
-    secondaryPages.push_back(std::move(pages[pages::kConnections]));
-    secondaryPages.push_back(std::move(pages[pages::kLogs]));
-
-    const bool secondary = navPage.Get() >= pages::kRules &&
-                           navPage.Get() <= pages::kLogs;
-    const std::size_t secondaryIndex =
-        secondary ? navPage.Get() - pages::kRules : 0;
-    huxerui::View primaryPager =
+    huxerui::View pager =
         huxerui::Pager(std::move(primaryPages), pagerPage)
         .ScrollAxis(huxerui::Axis::Horizontal)
         .DragEnabled(true)
@@ -460,24 +465,65 @@ huxerui::View BuildPageContainer(std::vector<huxerui::View> pages,
         })
         .With(huxerui::Grow(1.0F));
 
-    huxerui::View secondaryPage =
-        huxerui::IndexedPages(std::move(secondaryPages), secondaryIndex)
-            .With(huxerui::Grow(1.0F));
-    return huxerui::Stack{
-        secondary ? huxerui::View{huxerui::Row{}} : std::move(primaryPager),
-        secondary ? std::move(secondaryPage) : huxerui::View{huxerui::Row{}},
-    }.With(huxerui::Grow(1.0F));
+    // 底部悬浮导航不描边：只保留表面底色、圆角与投影，与设置页的去边框
+    // 语言一致；岛间层次由表面色差表达。
+    huxerui::View floatingNavigation = AndroidNavigationSurface(navPage).With(
+        huxerui::Frame{.max_width = 520.0F},
+        huxerui::Background(islands.base), huxerui::CornerRadius(28.0F),
+        huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.28F), {}, 18.0F, 2.0F},
+        huxerui::ClipChildren());
+    huxerui::View dock = huxerui::Column {
+        std::move(floatingNavigation),
+    }.With(huxerui::Padding(huxerui::EdgeInsets{
+               .right = spec.spacing.medium,
+               .bottom = spec.spacing.small,
+               .left = spec.spacing.medium,
+           }),
+           huxerui::MainAlign(huxerui::MainAxisAlignment::End),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    return huxerui::Stack {
+        std::move(pager),
+        std::move(dock),
+    }.With(huxerui::Grow(1.0F),
+           huxerui::Align(huxerui::HorizontalAlignment::Stretch,
+                          huxerui::VerticalAlignment::Stretch));
 }
-#else
-huxerui::View BuildPageContainer(std::vector<huxerui::View> pages,
-                                 huxerui::State<std::size_t> navPage,
-                                 huxerui::State<std::size_t>) {
-    return huxerui::IndexedPages(std::move(pages), navPage.Get())
+
+// 手机端一级/二级页容器：二级页是 NavigationStack 的 push 目标，四个一级页是
+// 其根页面，因此二级页覆盖底部导航，并保留一级页的滚动与查询状态。
+[[huxerui::composable]] huxerui::View AndroidMainContent(
+    huxerui::State<std::size_t> navPage, huxerui::State<std::size_t> pagerPage,
+    huxerui::State<int> themeMode, const IslandTheme& islands,
+    const huxerui::ThemeSpec& spec) {
+    return huxerui::NavigationStack(AndroidPrimaryShell, navPage, pagerPage,
+                                    themeMode, islands, spec)
         .With(huxerui::Grow(1.0F));
 }
 #endif
 
 } // namespace
+
+#if defined(__ANDROID__)
+// 手机端二级页：由设置页「更多」入口 push 到 NavigationStack，标题栏返回箭头
+// 与系统返回键统一调用 Pop，因此进入和返回都使用上面的页面动画。
+[[huxerui::composable]] huxerui::View AndroidRulesPage() {
+    const huxerui::NavigationController navigation = huxerui::UseNavigation();
+    return RulesPage([navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+
+[[huxerui::composable]] huxerui::View AndroidConnectionsPage() {
+    const huxerui::NavigationController navigation = huxerui::UseNavigation();
+    return ConnectionsPage([navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+
+[[huxerui::composable]] huxerui::View AndroidLogsPage() {
+    const huxerui::NavigationController navigation = huxerui::UseNavigation();
+    return LogsPage([navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+#endif
 
 [[huxerui::composable]] huxerui::View AppRoot() {
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
@@ -493,19 +539,6 @@ huxerui::View BuildPageContainer(std::vector<huxerui::View> pages,
     auto themeMode = huxerui::UseState<int>(std::move(initialThemeMode));
     auto navPage = huxerui::UseState<std::size_t>(pages::kHome);
     auto pagerPage = huxerui::UseState<std::size_t>(0);
-    // Home/settings cards still navigate by the absolute page index. Keep the
-    // compact Pager's four-slot index synchronized with that shared state.
-    huxerui::Lifecycle(
-        [navPage, pagerPage] {
-            const std::size_t selected = navPage.Get();
-            const std::size_t target =
-                selected == pages::kProxies ? 1U
-                : selected == pages::kProfiles ? 2U
-                : selected == pages::kSettings ? 3U : 0U;
-            if (pagerPage.Get() != target) pagerPage = target;
-            return [] {};
-        },
-        navPage);
     // 平台刷新泵和应用生命周期各自由平台组件收束，通用壳层只挂载它们。
     huxerui::View profileRefreshPump = CLASHFLUX_PROFILE_REFRESH_PUMP();
 
@@ -517,24 +550,9 @@ huxerui::View BuildPageContainer(std::vector<huxerui::View> pages,
 
     huxerui::View applicationEffects =
         CLASHFLUX_APPLICATION_EFFECTS(application, rootSpec);
-    std::vector<huxerui::View> pages;
-    pages.push_back(HomePage(navPage).Key("home").With(huxerui::Grow(1.0F)));
-    pages.push_back(ProfilesPage().Key("profiles").With(huxerui::Grow(1.0F)));
-    pages.push_back(ProxiesPage().Key("proxies").With(huxerui::Grow(1.0F)));
-    pages.push_back(RulesPage(CLASHFLUX_SETTINGS_BACK(navPage))
-                        .Key("rules").With(huxerui::Grow(1.0F)));
-    pages.push_back(ConnectionsPage(CLASHFLUX_SETTINGS_BACK(navPage))
-                        .Key("connections").With(huxerui::Grow(1.0F)));
-    pages.push_back(LogsPage(CLASHFLUX_SETTINGS_BACK(navPage))
-                        .Key("logs").With(huxerui::Grow(1.0F)));
-    pages.push_back(SettingsPage(themeMode, navPage)
-                        .Key("settings").With(huxerui::Grow(1.0F)));
-
-    huxerui::View indexedPages =
-        BuildPageContainer(std::move(pages), navPage, pagerPage);
     huxerui::View mainRow = CLASHFLUX_MAIN_CONTENT(
-        navPage, std::move(indexedPages), rootIslands, rootSpec);
-    huxerui::View content = CLASHFLUX_APP_CONTENT(mainRow, rootSpec);
+        navPage, pagerPage, themeMode, rootIslands, rootSpec);
+    huxerui::View content = CLASHFLUX_APP_CONTENT(std::move(mainRow), rootSpec);
 
     return FluxThemed(
         dark,
@@ -552,6 +570,4 @@ huxerui::View BuildPageContainer(std::vector<huxerui::View> pages,
 #undef CLASHFLUX_PROFILE_REFRESH_PUMP
 #undef CLASHFLUX_APPLICATION_EFFECTS
 #undef CLASHFLUX_APP_CONTENT
-#undef CLASHFLUX_NAVIGATION_SURFACE
 #undef CLASHFLUX_MAIN_CONTENT
-#undef CLASHFLUX_SETTINGS_BACK

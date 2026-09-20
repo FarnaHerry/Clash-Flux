@@ -13,6 +13,7 @@
 
 import nlohmann.json;
 import clashflux.config;
+import clashflux.core;
 import clashflux.store.core;
 import clashflux.store.profiles;
 
@@ -141,6 +142,18 @@ bool StartProxyGroupTest(const std::string& group) {
         return false;
     }
 #else
+    // 桌面测速依赖运行中的内核：内核停止时（启动策略为避免抢占端口默认不
+    // 自启）先按当前订阅拉起一个不带 TUN 的内核，否则逐节点 delay REST 会
+    // 连接失败，界面瞬间全部显示超时。调用方已在任务线程上。
+    try {
+        auto& core = store::coreStore();
+        if (core.snapshot().state != core::CoreState::Running) {
+            core.startCore(store::profilesStore().selectedYaml(), false, false);
+            if (core.snapshot().state != core::CoreState::Running) return false;
+        }
+    } catch (...) {
+        return false;
+    }
     return TriggerProxyGroupTest(group);
 #endif
 }
@@ -531,15 +544,19 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     return pill;
 }
 
-[[huxerui::composable]] huxerui::View Card(huxerui::View content) {
+[[huxerui::composable]] huxerui::View Card(huxerui::View content,
+                                           bool outlined) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
-    // 二级岛：半透明水晶卡片感的 raised 表面 + 同心圆角。
+    // 二级岛：半透明水晶卡片感的 raised 表面 + 同心圆角。移动端设置页等
+    // 场景不需要描边，由同层级的 raised 表面与页面底色自然区分。
     return huxerui::Column { std::move(content) }
         .With(huxerui::Padding(islands.island_padding),
               huxerui::Background(islands.raised),
               huxerui::CornerRadius(islands.nested_radius),
-              huxerui::Border(islands.outline_soft, 1.0F),
+              huxerui::Border(outlined ? islands.outline_soft
+                                       : huxerui::Color::Transparent(),
+                              outlined ? 1.0F : 0.0F),
               huxerui::ClipChildren(),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }

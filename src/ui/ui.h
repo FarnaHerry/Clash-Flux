@@ -191,6 +191,13 @@ huxerui::View ProxiesPage();    // 代理
 huxerui::View RulesPage(std::function<void()> onBack = {});       // 规则
 huxerui::View ConnectionsPage(std::function<void()> onBack = {}); // 连接
 huxerui::View LogsPage(std::function<void()> onBack = {});        // 日志
+// 手机端二级页：由设置页「更多」入口 push 到 NavigationStack，页面自带的
+// 进入/返回动画与一级页切换动画互相独立；返回箭头与系统返回键统一弹栈。
+#if defined(__ANDROID__)
+huxerui::View AndroidRulesPage();
+huxerui::View AndroidConnectionsPage();
+huxerui::View AndroidLogsPage();
+#endif
 // 设置页持有主题模式 State（AppRoot 传入）。
 huxerui::View SettingsPage(huxerui::State<int> themeMode,
                            huxerui::State<std::size_t> navPage);
@@ -238,8 +245,9 @@ huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
                               const std::string& placeholder,
                               std::function<void()> onClose);
 
-// 卡片容器（二级岛）：raised 表面 + 8pt 圆角 + 内边距。
-huxerui::View Card(huxerui::View content);
+// 卡片容器（二级岛）：raised 表面 + 8pt 圆角 + 内边距。outlined=false 去掉
+// 1pt 描边，仅靠表面层级区分卡片（移动端设置页等无边框场景）。
+huxerui::View Card(huxerui::View content, bool outlined = true);
 
 // 日志、连接、规则等信息列表的统一行容器。内容由页面自己组织，容器统一
 // 内边距；行平铺在一级岛表面上（不逐行套卡），行间画细分隔线，divider=false

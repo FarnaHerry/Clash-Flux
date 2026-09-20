@@ -43,42 +43,56 @@ const std::string kAboutText = std::format(
 
 } // namespace
 
+#if defined(__ANDROID__)
+
 // 单行导航项：整行可点，自带触控高度；用于合并后的分组卡内部。
+// 手机端二级页经 NavigationStack push，因此进入/返回动画与一级页切换无关。
 [[huxerui::composable]] huxerui::View MoreNavRow(std::string label,
-                                                 std::size_t target,
-                                                 huxerui::State<std::size_t> navPage) {
+                                                 std::function<void()> open) {
     return huxerui::Row {
         huxerui::Text(label),
         huxerui::Spacer(),
         huxerui::Text("›"),
     }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, 10.0F)),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
-        .OnClick([navPage, target] { navPage = target; })
+        .OnClick(std::move(open))
         .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                  .label = label},
               huxerui::Focusable(true), huxerui::Enabled(true));
 }
 
 [[huxerui::composable]] huxerui::View AndroidMoreSettings(
-    huxerui::State<std::size_t> navPage) {
+    huxerui::State<std::size_t>) {
+    const huxerui::NavigationController navigation = huxerui::UseNavigation();
+    // 移动端卡片去描边，只靠表面层级区分分组。
+    const bool compact =
+        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     // 同组入口合并为一张分组卡，行间用 Divider 分隔，避免一屏多张单行卡。
     return huxerui::Column {
         SectionTitle("更多"),
         Card(huxerui::Column {
-            MoreNavRow("连接", 4, navPage),
+            MoreNavRow("连接",
+                       [navigation] { navigation.Push(AndroidConnectionsPage); }),
             huxerui::Divider(),
-            MoreNavRow("日志", 5, navPage),
+            MoreNavRow("日志",
+                       [navigation] { navigation.Push(AndroidLogsPage); }),
             huxerui::Divider(),
-            MoreNavRow("规则", 3, navPage),
-        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
+            MoreNavRow("规则",
+                       [navigation] { navigation.Push(AndroidRulesPage); }),
+        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+             !compact),
     }.With(huxerui::Spacing(10.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
+
+#else
 
 [[huxerui::composable]] huxerui::View DesktopMoreSettings(
     huxerui::State<std::size_t>) {
     return huxerui::View{};
 }
+
+#endif
 
 [[huxerui::composable]] huxerui::View SettingsPage(
     huxerui::State<int> themeMode, huxerui::State<std::size_t> navPage) {
@@ -189,7 +203,8 @@ const std::string kAboutText = std::format(
                             })),
                     CLASHFLUX_GENERAL_PLATFORM_SECTION(),
                 }.With(huxerui::Spacing(10.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
+                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                     !compact),
 
                 Card(huxerui::Column {
                     SectionTitle("内核"),
@@ -261,7 +276,8 @@ const std::string kAboutText = std::format(
                                        : "已关闭 IPv6（重启内核生效）");
                             })),
                 }.With(huxerui::Spacing(10.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
+                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                     !compact),
 
                 Card(huxerui::Column {
                     SectionTitle("关于"),
@@ -269,7 +285,8 @@ const std::string kAboutText = std::format(
                         huxerui::Font::System(font_size::kChip),
                         theme.colors.on_surface_variant}),
                 }.With(huxerui::Spacing(6.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
+                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                     !compact),
                 compact ? CompactFloatingNavigationFooter() : huxerui::View{},
             }.With(huxerui::Spacing(12.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))

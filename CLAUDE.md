@@ -79,7 +79,7 @@ cmake --build build --target clash-flux
 
 | 模块 | 文件 | 职责 |
 |------|------|------|
-| `clashflux.config` | `src/config.cppm` | 数据目录（~/.local/share/clash-flux）/ sing-box 二进制解析 / 控制器端点（127.0.0.1:9097）/ secret 生成 / 深色检测 |
+| `clashflux.config` | `src/config.cppm` | 数据目录（~/.local/share/clash-flux）/ sing-box 二进制解析 / 控制器端点（127.0.0.1:29097）/ secret 生成 / 深色检测 |
 | `clashflux.instance` | `src/app_instance.cppm` | 桌面 GUI 单实例锁与二次启动唤醒（Linux/macOS 文件锁+信号，Windows Mutex+Event；CLI 不拦截） |
 | `clashflux.utils` | `src/utils.cppm` | 纯 string/number 帮助函数 + percentEncode / appendQuery |
 | `clashflux.db` | `src/db.cppm/.cpp` | SQLiteCpp：profiles（订阅）/ settings（KV）两表 |
@@ -180,7 +180,7 @@ cmake --build build --target clash-flux
 
 ## sing-box 交互要点
 
-- clash_api：`127.0.0.1:9097`（避开常见 9090），secret 首启生成存 settings 表
+- clash_api：`127.0.0.1:29097`（避开其他代理软件常用的 9090/9097），secret 首启生成存 settings 表
   （`core.secret`），REST 走 `Authorization: Bearer`，WS 走 `?token=`。
   `mode_list` 自定义为小写 `rule/global/direct`——UI 与 settings 的模式字符串
   直接对齐，切换模式走 `PATCH /configs {"mode":...}`（clash_api 唯一常用的
