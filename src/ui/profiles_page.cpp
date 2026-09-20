@@ -1,5 +1,6 @@
-// profiles_page.cpp — 订阅页：统一尺寸矩形卡片网格（定宽定高，内容单行
-// UTF-8 截断；Compact 视口退化为整宽列表）。卡片交互：右上角刷新图标更新
+// profiles_page.cpp — 订阅页：矩形卡片网格（定高、宽度由网格轨道均分铺满，
+// 列数按窗口宽度自适应；内容单行 UTF-8 截断；Compact 视口退化为整宽列表）。
+// 卡片交互：右上角刷新图标更新
 // 订阅；桌面右键、Compact 的“更多”按钮共用上下文菜单（使用/更新/首页/
 // 分享二维码/编辑信息/编辑规则/编辑文件/删除）；点击卡片切换启用订阅。
 //
@@ -48,10 +49,13 @@ import clashflux.vpn;
 namespace clashflux::ui {
 namespace {
 
-// 卡片统一尺寸：定宽（Flow 网格换行）+ 定高（内容单行截断，ClipChildren
-// 兜底）；Compact 视口整宽（高度仍统一）。
-constexpr float kCardWidth = 280.0F;
+// 卡片统一尺寸：定高（内容单行截断，ClipChildren 兜底），宽度由网格轨道
+// 均分占满页面；Compact 视口整宽（高度仍统一）。
+constexpr float kCardWidth = 340.0F;
 constexpr float kCardHeight = 180.0F;
+
+// 卡片间隙：比岛屿缝隙更紧，同屏容纳更多订阅卡。
+constexpr float kCardGap = 8.0F;
 
 // 弹窗表单区滚动视口高度：字段多（类型/描述/超时/间隔/四个开关），限高防
 // 小窗溢出。
@@ -1341,7 +1345,7 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
     }
 
     huxerui::View profileName =
-        huxerui::Text(truncateOneLine(profile.name, compact ? 9 : 16)).Style(
+        huxerui::Text(truncateOneLine(profile.name, compact ? 9 : 20)).Style(
             huxerui::TextStyle{
                 huxerui::Font::System(font_size::kBody)
                     .WithWeight(huxerui::FontWeight::SemiBold),
@@ -1394,7 +1398,7 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
             std::move(moreButton),
         }.With(huxerui::Spacing(6.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        huxerui::Text(truncateOneLine(primaryLine, 40))
+        huxerui::Text(truncateOneLine(primaryLine, 48))
             .Style(huxerui::TextStyle{huxerui::Font::Monospace(font_size::kChip),
                                       theme.colors.on_surface_variant}),
         huxerui::Text(truncateOneLine(
@@ -1404,7 +1408,7 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
                                      : "路由：" + profile.nativeRoutes)
                               : (profile.description.empty() ? "—"
                                                               : profile.description),
-                          44))
+                          52))
             .Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kCaption),
                 nativeVpn || profile.description.empty()
@@ -1447,7 +1451,7 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
                                          ? "更新于 " + formatTime(profile.updatedAt)
                                          : "未拉取")
                                   : "错误：" + profile.error,
-                              44))
+                              52))
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kCaption),
                     nativeVpn || profile.error.empty()
@@ -1495,16 +1499,10 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
     }.With(huxerui::Spacing(6.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
 
-    // 矩形卡统一尺寸：定宽定高（内容已单行截断，ClipChildren 兜底），
-    // Compact 由父列 Stretch 整宽（高度仍统一）。
-    if (!compact) {
-        card = std::move(card).With(huxerui::Frame{.width = kCardWidth,
-                                                   .height = kCardHeight},
-                                    huxerui::ClipChildren());
-    } else {
-        card = std::move(card).With(huxerui::Frame{.height = kCardHeight},
-                                    huxerui::ClipChildren());
-    }
+    // 矩形卡统一高度；宽度由虚拟网格的轨道均分，铺满页面而不固定尺寸
+    // （内容已单行截断，ClipChildren 兜底）。
+    card = std::move(card).With(huxerui::Frame{.height = kCardHeight},
+                                huxerui::ClipChildren());
     // 选中（使用中）状态：primary 描边，与「使用中」徽标呼应。
     if (selected) {
         card = std::move(card).With(
@@ -2585,8 +2583,8 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
                                                        kCardWidth))
                                     .EstimatedRowExtent(kCardHeight)
                                     .ItemSpans(std::move(profileSpans))
-                                    .RowSpacing(theme.spacing.medium)
-                                    .ColumnSpacing(theme.spacing.medium)
+                                    .RowSpacing(kCardGap)
+                                    .ColumnSpacing(kCardGap)
                                     .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
 
     huxerui::View batchActions = huxerui::Row{};

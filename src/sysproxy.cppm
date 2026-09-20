@@ -215,6 +215,85 @@ export bool enabled() {
     }
 }
 
+// 当前系统代理指向（"host:port"；非手动模式、未启用或读取失败返回空）。
+// 用于所有权判定：只有指向本应用写入的端口时才允许撤销，避免把其他代理
+// 软件（clash-verge/FlClash 等）接管中的设置一并关闭。读不到精确指向的
+// 通道（如 Windows 按协议分别配置的 ProxyServer）按原文返回，判定侧自然
+// 视为"非本应用"。
+export std::string currentProxy() {
+    switch (desktop()) {
+        case Desktop::Kde: {
+            if (!kdeProxyManual()) return {};
+            const char* home = std::getenv("HOME");
+            if (!home) return {};
+            std::ifstream in(std::string(home) + "/.config/kioslaverc");
+            if (!in) return {};
+            bool inSection = false;
+            std::string line;
+            while (std::getline(in, line)) {
+                if (!line.empty() && line.front() == '[') {
+                    inSection = line == "[Proxy Settings]";
+                    continue;
+                }
+                if (inSection && line.starts_with("httpProxy=")) {
+                    std::string value = line.substr(10);
+                    // 形如 http://host:port；剥掉 scheme。
+                    if (const auto scheme = value.find("://");
+                        scheme != std::string::npos) {
+                        value = value.substr(scheme + 3);
+                    }
+                    return value;
+                }
+            }
+            return {};
+        }
+        case Desktop::Gnome: {
+            if (runCapture("gsettings get org.gnome.system.proxy mode") !=
+                "'manual'") {
+                return {};
+            }
+            // gsettings 输出带单引号：'127.0.0.1'。
+            std::string host = runCapture(
+                "gsettings get org.gnome.system.proxy.http host");
+            const std::string port = runCapture(
+                "gsettings get org.gnome.system.proxy.http port");
+            host.erase(std::remove(host.begin(), host.end(), '\''),
+                       host.end());
+            if (host.empty() || port.empty()) return {};
+            return host + ":" + port;
+        }
+        case Desktop::Windows: {
+            if (!enabled()) return {};
+            // 输出形如 "    ProxyServer    REG_SZ    127.0.0.1:7899"。
+            const std::string out = runCapture(std::format(
+                R"(reg query "{}" /v ProxyServer)", kWinInetRegKey));
+            const auto type = out.find("REG_SZ");
+            if (type == std::string::npos) return {};
+            const std::string value = out.substr(type + 6);
+            const auto first = value.find_first_not_of(" \t");
+            if (first == std::string::npos) return {};
+            return value.substr(first);
+        }
+        case Desktop::Macos: {
+            const std::string out = runCapture(
+                R"(networksetup -getwebproxy "Wi-Fi")");
+            if (out.find("Enabled: Yes") == std::string::npos) return {};
+            std::string host;
+            std::string port;
+            std::istringstream in(out);
+            std::string line;
+            while (std::getline(in, line)) {
+                if (line.starts_with("Server: ")) host = line.substr(8);
+                else if (line.starts_with("Port: ")) port = line.substr(6);
+            }
+            if (host.empty() || port.empty()) return {};
+            return host + ":" + port;
+        }
+        default:
+            return {};
+    }
+}
+
 // 打开系统代理，指向 host:port（本机内核 mixed 入站端口）。
 export bool enable(const std::string& host, int port, std::string& err) {
     const std::string p = std::to_string(port);

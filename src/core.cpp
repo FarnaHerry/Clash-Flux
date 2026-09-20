@@ -173,6 +173,22 @@ void killPid(long pid) {
 #endif
 }
 
+bool pidAlive(long pid) {
+    if (pid <= 0) return false;
+#ifdef _WIN32
+    if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
+                               static_cast<DWORD>(pid))) {
+        CloseHandle(h);
+        return true;
+    }
+    return false;
+#else
+    if (::kill(static_cast<pid_t>(pid), 0) == 0) return true;
+    // EPERM：进程存在但属其他用户（root 服务托管的内核），同样视为存活。
+    return errno == EPERM;
+#endif
+}
+
 bool spawnDetached(const std::filesystem::path& binary,
                    const std::filesystem::path& workDir,
                    const std::filesystem::path& configFile,

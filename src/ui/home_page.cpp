@@ -33,14 +33,14 @@ const std::vector<std::string> kModes{"rule", "global", "direct"};
 constexpr std::string_view kDefaultCoreName = "sing-box libbox";
 #define CLASHFLUX_HOME_SYSTEM_CARD AndroidHomeSystemCard
 #define CLASHFLUX_HOME_ACTION(state) huxerui::Row{}
-#define CLASHFLUX_HOME_INLINE_ACTION(state) AndroidHomeAction(state),
-#define CLASHFLUX_HOME_NAV_ACTIONS(state) AndroidHomeNavigationActions(state),
+#define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact) \
+    AndroidHomeFloatingAction(std::move(page), state, compact)
 #else
 constexpr std::string_view kDefaultCoreName = "sing-box";
 #define CLASHFLUX_HOME_SYSTEM_CARD DesktopHomeSystemCard
 #define CLASHFLUX_HOME_ACTION(state) DesktopHomeAction(state)
-#define CLASHFLUX_HOME_INLINE_ACTION(state)
-#define CLASHFLUX_HOME_NAV_ACTIONS(state)
+#define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact) \
+    DesktopHomeFloatingAction(std::move(page), state, compact)
 #endif
 
 struct HomeState {
@@ -187,40 +187,17 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
     return {};
 }
 
-[[huxerui::composable]] huxerui::View AndroidHomeNavigationActions(
-    huxerui::State<std::size_t> navPage) {
-    // 两个入口合并为一张分组卡，行间 Divider 分隔，避免连续多张单行卡。
-    return Card(huxerui::Column {
-        huxerui::Row {
-            huxerui::Text("选择订阅"),
-            huxerui::Spacer(),
-            huxerui::Text("›"),
-        }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, 10.0F)),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
-            .OnClick([navPage] { navPage = 1; })
-            .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                     .label = "选择订阅"},
-                  huxerui::Focusable(true), huxerui::Enabled(true)),
-        huxerui::Divider(),
-        huxerui::Row {
-            huxerui::Text("选择节点"),
-            huxerui::Spacer(),
-            huxerui::Text("›"),
-        }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, 10.0F)),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
-            .OnClick([navPage] { navPage = 2; })
-            .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                     .label = "选择节点"},
-                  huxerui::Focusable(true), huxerui::Enabled(true)),
-    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
-}
-
-[[huxerui::composable]] huxerui::View AndroidHomeAction(const HomeState& state) {
+[[huxerui::composable]] huxerui::View AndroidHomeFloatingAction(
+    huxerui::View page, const HomeState& state, bool compact) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto busy = huxerui::UseState(false);
     auto activeOverride = huxerui::UseState<std::optional<bool>>(std::nullopt);
+    // composable 形参被 codegen 固定为 const：拷贝到局部再走右值链。
+    huxerui::View base = page;
+    if (!compact) return base;
+
     const int vpnState = AndroidVpnState();
     const bool realActive = vpnState == 1 || vpnState == 2;
     const bool active = activeOverride.Get().value_or(realActive);
@@ -230,105 +207,81 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
         if (busy.Get()) return;
         activeOverride = !realActive;
         busy = true;
-            tasks.Launch([toast, busy, activeOverride, realActive]() -> huxerui::Task<void> {
-                try {
-                    co_await RunOnTaskThread([realActive] {
-                        auto& core = store::coreStore();
-                        core.setSetting("core.tun_enabled", realActive ? "false" : "true");
-                        if (realActive) {
-                            AndroidStopVpn();
-                            WaitForAndroidVpnStopped();
-                        } else {
-                            core.startCore(store::profilesStore().selectedYaml());
-                            AndroidStartVpn();
-                        }
-                    });
-                    activeOverride = std::nullopt;
-                    toast.Show(realActive ? "VPN 隧道已关闭" : "正在启动 VPN 隧道");
-                } catch (const std::exception& error) {
-                    activeOverride = std::nullopt;
-                    toast.Show(error.what());
-                }
-                busy = false;
-            });
-        };
-
-    // 移动端操作区随首页内容一起滚动，不再占据页面顶部的固定操作栏。
-    // 启动后以主题主色填充图标按钮，提供清晰的隧道已启动反馈。
-    huxerui::View center = huxerui::IconButton(
-                              active ? app::images::speed : app::images::bolt,
-                              active ? "停止 VPN" : "启动 VPN")
-        .OnClick(toggle)
-        .With(huxerui::Frame{.width = 76.0F, .height = 76.0F},
-              huxerui::Enabled(enabled),
-              huxerui::Background(active ? theme.colors.primary
-                                         : huxerui::Color::Transparent()),
-              huxerui::Foreground(active ? theme.colors.on_primary
-                                         : theme.colors.primary),
-              huxerui::CornerRadius(38.0F),
-              huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                 .label = active ? "停止 VPN" : "启动 VPN"});
-    if (!active) {
-        return Card(huxerui::Row { std::move(center) }
-                        .With(huxerui::Frame{.height = 92.0F},
-                              huxerui::MainAlign(
-                                  huxerui::MainAxisAlignment::Center),
-                              huxerui::CrossAlign(
-                                  huxerui::CrossAxisAlignment::Center)));
-    }
-
-    const huxerui::Color downColor = theme.colors.primary;
-    const huxerui::Color upColor = huxerui::Color::Rgb(245, 158, 11);
-    auto metric = [&](std::string_view title, const std::string& value,
-                      huxerui::Color color) {
-        return huxerui::Column{
-            huxerui::Text(std::string(title)).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kCaption),
-                active ? theme.colors.on_primary_container
-                       : theme.colors.on_surface_variant}),
-            huxerui::Text(value).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kChip)
-                    .WithWeight(huxerui::FontWeight::Bold),
-                active ? theme.colors.on_primary_container : color}),
-        }.With(huxerui::Spacing(3.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+        tasks.Launch([toast, busy, activeOverride,
+                      realActive]() -> huxerui::Task<void> {
+            try {
+                co_await RunOnTaskThread([realActive] {
+                    auto& core = store::coreStore();
+                    core.setSetting("core.tun_enabled",
+                                    realActive ? "false" : "true");
+                    if (realActive) {
+                        AndroidStopVpn();
+                        WaitForAndroidVpnStopped();
+                    } else {
+                        core.startCore(store::profilesStore().selectedYaml());
+                        AndroidStartVpn();
+                    }
+                });
+                activeOverride = std::nullopt;
+                toast.Show(realActive ? "VPN 隧道已关闭" : "正在启动 VPN 隧道");
+            } catch (const std::exception& error) {
+                activeOverride = std::nullopt;
+                toast.Show(error.what());
+            }
+            busy = false;
+        });
     };
-    const auto left = huxerui::Column{
-        metric("下载速率", formatRate(state.latest.down), downColor),
-        metric("总下载", formatBytes(state.totalDown), theme.colors.on_surface),
-    }.With(huxerui::Spacing(14.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
-                       .With(huxerui::Grow(1.0F));
-    const auto right = huxerui::Column{
-        metric("上传速率", formatRate(state.latest.up), upColor),
-        metric("总上传", formatBytes(state.totalUp), theme.colors.on_surface),
-    }.With(huxerui::Spacing(14.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
-                        .With(huxerui::Grow(1.0F));
-    return Card(huxerui::Row { left, std::move(center), right }
-                    .With(huxerui::Frame{.height = 92.0F},
-                          huxerui::Spacing(10.0F),
-                          huxerui::CrossAlign(
-                              huxerui::CrossAxisAlignment::Center)))
-        .With(huxerui::Background(active ? theme.colors.primary_container
-                                         : ResolveIslandTheme(theme).raised),
-              huxerui::Border{active ? theme.colors.primary
-                                     : huxerui::Color::Transparent(),
-                               active ? 1.5F : 0.0F},
-              huxerui::Shadow{.color = active
-                                           ? huxerui::Color{
-                                                 theme.colors.primary.red,
-                                                 theme.colors.primary.green,
-                                                 theme.colors.primary.blue, 0.55F}
-                                           : huxerui::Color::Transparent(),
-                               .blur_radius = active ? 18.0F : 0.0F,
-                               .spread = active ? 2.0F : 0.0F});
+
+    // 三角（play）启动、双竖线（pause）暂停；与代理页悬浮测速按钮共用
+    // 固定悬浮层定位（主轴末端 + 交叉轴末端，避开底部悬浮导航）。
+    huxerui::View floating =
+        huxerui::IconButton(active ? app::images::pause : app::images::play,
+                            active ? "停止 VPN" : "启动 VPN")
+            .OnClick(toggle)
+            .With(huxerui::Tooltip(active ? "停止 VPN" : "启动 VPN"),
+                  huxerui::Frame{.width = 56.0F, .height = 56.0F},
+                  huxerui::Enabled(enabled),
+                  huxerui::Background(active ? theme.colors.primary_container
+                                             : theme.colors.primary),
+                  huxerui::Foreground(active
+                                          ? theme.colors.on_primary_container
+                                          : theme.colors.on_primary),
+                  huxerui::CornerRadius(28.0F),
+                  huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.28F), {}, 14.0F,
+                                  2.0F},
+                  huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                     .label = active ? "停止 VPN" : "启动 VPN"});
+    // 与 Android 底部悬浮导航栏相同：按钮放在独立的全屏覆盖层中，
+    // 由覆盖层的 Column 在主轴末端、交叉轴末端定位，不依赖页面内容容器。
+    huxerui::View dock = huxerui::Column {
+        std::move(floating),
+    }.With(huxerui::Padding(huxerui::EdgeInsets{
+                 .right = theme.spacing.medium,
+                 .bottom = kCompactFloatingNavigationInset,
+                 .left = theme.spacing.medium,
+             }),
+             huxerui::MainAlign(huxerui::MainAxisAlignment::End),
+             huxerui::CrossAlign(huxerui::CrossAxisAlignment::End));
+    return huxerui::Stack {
+        std::move(base),
+        std::move(dock),
+    }.With(huxerui::Grow(1.0F),
+           huxerui::Align(huxerui::HorizontalAlignment::Stretch,
+                          huxerui::VerticalAlignment::Stretch));
 }
 
 #else
 
 [[huxerui::composable]] huxerui::View DesktopHomeAction(const HomeState&) {
     return {};
+}
+
+// 桌面首页没有 VPN 启动动作，悬浮层退回页面本身；保留同名平台函数是为了
+// 让 HomePage 只经由宏选择一个完整函数，而不在通用页面里写平台分支。
+[[huxerui::composable]] huxerui::View DesktopHomeFloatingAction(
+    huxerui::View page, const HomeState&, bool) {
+    huxerui::View result = page;
+    return result;
 }
 
 // 桌面快捷开关自洽管理自己的任务、权限引导和乐观状态；Android 不会进入
@@ -554,26 +507,26 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                                                            0.0F, 1.0F)
                                                      : 1.0F)
                                 .With(huxerui::Frame{.height = 3.0F},
-                                      huxerui::MainAlign(huxerui::MainAxisAlignment::End),
-                                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))}
-            : huxerui::View{huxerui::Row{}}});
+                                      // Stack 用 Align 定位子项：进度条贴住
+                                      // 卡片下边缘（原来贴在顶部）。
+                                      huxerui::Align(
+                                          huxerui::HorizontalAlignment::Stretch,
+                                          huxerui::VerticalAlignment::End))}
+            : huxerui::View{huxerui::Row{}},
+        // 桌面端同一行的卡片会被拉伸到等高，撑满卡片高度后进度条才真正
+        // 落在下边缘而不是内容中部。
+    }.With(huxerui::Grow(1.0F)));
     profileCard = std::move(profileCard).With(huxerui::Grow(1.0F));
     huxerui::View systemCard = CLASHFLUX_HOME_SYSTEM_CARD(s).With(
         huxerui::Grow(1.0F));
 
-    return PageScaffold(
+    huxerui::View page = PageScaffold(
         "首页",
         CLASHFLUX_HOME_ACTION(s),
         huxerui::ScrollView(
             huxerui::Column {
                 // 速率统计卡
                 std::move(statCards),
-
-                // Android 启动控件与页面内容同处滚动流，不单独冻结在标题下方。
-                CLASHFLUX_HOME_INLINE_ACTION(s)
-
-                // 移动端导航动作独立成卡片，紧跟启动卡片。
-                CLASHFLUX_HOME_NAV_ACTIONS(navPage)
 
                 // 流量曲线：自上而下叠一层品牌蓝光晕，强调色落在主岛
                 // 而不是铺满背景。
@@ -643,11 +596,13 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
             }.With(huxerui::Spacing(12.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
             .With(huxerui::Grow(1.0F)));
+
+    // 移动端启动/停止按钮脱离滚动内容，固定在底部悬浮导航之上的位置。
+    return CLASHFLUX_HOME_FLOATING_ACTION(std::move(page), s, compact);
 }
 
 #undef CLASHFLUX_HOME_SYSTEM_CARD
 #undef CLASHFLUX_HOME_ACTION
-#undef CLASHFLUX_HOME_INLINE_ACTION
-#undef CLASHFLUX_HOME_NAV_ACTIONS
+#undef CLASHFLUX_HOME_FLOATING_ACTION
 
 } // namespace clashflux::ui

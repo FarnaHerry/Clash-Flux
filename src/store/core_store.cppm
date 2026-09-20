@@ -302,6 +302,18 @@ public:
     }
     bool systemProxySupported() { return sysproxy::supported(); }
 
+    // 启动残留清理：上次异常退出可能把系统代理留在指向本应用（此刻已
+    // 不存在的）端口上。仅当当前代理确实指向本应用写入的端口时才撤销；
+    // 指向其他代理软件（clash-verge/FlClash 等）时不动其设置。不改动
+    // “应当接管”的意图标志——是否恢复接管由随后的内核自启与重指决定。
+    void releaseStaleOwnedSystemProxy() {
+#if !defined(__ANDROID__)
+        if (!systemProxyEnabled() || !systemProxyOurs()) return;
+        std::string err;
+        sysproxy::disable(err);
+#endif
+    }
+
     // 切换 TUN（阻塞）。sing-box 的 clash_api 不支持热更 tun：内核运行中 →
     // 重新合成 config.json 并重启内核生效，重启失败（如无 root/CAP_NET_ADMIN，
     // sing-box 建 TUN 失败退出）回滚设置并恢复无 TUN 运行；未运行时开启
@@ -347,7 +359,9 @@ public:
 #endif
     }
 
-    // 切换系统代理（阻塞 shell 调用）。成功持久化设置。
+    // 切换系统代理（阻塞 shell 调用）。开启 = 用户明确要求接管（覆盖写入
+    // 并记录端口）；关闭只撤销本应用写入的设置——当前代理指向其他软件时
+    // 不动系统，仅清开关。成功持久化设置。
     bool applySystemProxy(bool enable) {
         std::lock_guard operationLock(lifecycleMutex_);
 #if defined(__ANDROID__)
@@ -357,9 +371,13 @@ public:
         ensureOpen();
         if (enable && !ensureRunning()) return false;
         std::string err;
-        const bool ok =
-            enable ? sysproxy::enable("127.0.0.1", mixedPort(), err)
-                   : sysproxy::disable(err);
+        bool ok = true;
+        if (enable) {
+            ok = sysproxy::enable("127.0.0.1", mixedPort(), err);
+            if (ok) setSetting("proxy.system_port", std::to_string(mixedPort()));
+        } else if (systemProxyOurs()) {
+            ok = sysproxy::disable(err);
+        }
         if (!ok) {
             std::lock_guard lock(mutex_);
             snap_.lastError = "系统代理" + std::string(enable ? "开启" : "关闭") +
@@ -482,8 +500,8 @@ public:
         {
             std::lock_guard lock(mutex_);
             // Android 桥线程在应用启动时自动拉起内核，启动慢时（拉远程
-            // 规则集等）UI 侧再点启动会 spawn 第二个实例，抢不到 9097/
-            // 混合端口的那个以 exit 1 收场，把「内核启动后立即退出」误报
+            // 规则集等）UI 侧再点启动会 spawn 第二个实例，抢不到控制
+            // 端口/混合端口的那个以 exit 1 收场，把「内核启动后立即退出」误报
             // 给用户。启动进行中直接拒绝重入。
             if (snap_.state == core::CoreState::Starting) return;
 #if defined(__ANDROID__)
@@ -601,7 +619,7 @@ public:
         // 三种拉起方式（按优先级）：
         //   1. root 服务托管（装了服务模式 → TUN 等特权操作开箱可用）
         //   2. 接管已在跑的内核（CLI detached spawn / 上次 GUI 残留）：避免
-        //      重复 spawn 撞 9097 与混合端口
+        //      重复 spawn 撞控制端口与混合端口
         //   3. 直接 spawn（默认）
 #if defined(__ANDROID__)
         // Config generation is the only native responsibility on Android.
@@ -625,20 +643,33 @@ public:
                 return;
             }
             managedByService_ = true;
-        } else if (api_->version().ok) {
-            adopted_ = true;
-        } else if (detached) {
-            // CLI 驻留形态：setsid 脱离会话 + 日志重定向 + pidfile，CLI 退出
-            // 内核仍在。本进程不持句柄，按接管形态管理（活判/停止走 pidfile）。
-            std::string err;
-            if (!core::spawnDetached(binaryPath_, workDir, configFile, err)) {
-                fail(err);
+        } else {
+            const bool controllerAnswering = api_->version().ok;
+            const long residentPid = readPidFile();
+            if (controllerAnswering && residentPid > 0 &&
+                core::pidAlive(residentPid)) {
+                // 接管本应用自己拉起的驻留内核（pidfile 命中且进程活着：
+                // CLI detached spawn / 上次 GUI 残留）。
+                adopted_ = true;
+            } else if (controllerAnswering) {
+                // 控制端口有应答但不是本应用的驻留进程：多半是其他代理
+                // 软件占用了端口。明确报错，不误接管、不重复 spawn。
+                fail("控制端口被其他程序占用（可能是其他代理软件），内核未启动");
+                return;
+            } else if (detached) {
+                // CLI 驻留形态：setsid 脱离会话 + 日志重定向 + pidfile，CLI
+                // 退出内核仍在。本进程不持句柄，按接管形态管理（活判/停止
+                // 走 pidfile）。
+                std::string err;
+                if (!core::spawnDetached(binaryPath_, workDir, configFile, err)) {
+                    fail(err);
+                    return;
+                }
+                adopted_ = true;
+            } else if (!process_.start(binaryPath_, workDir, configFile)) {
+                fail(process_.lastError());
                 return;
             }
-            adopted_ = true;
-        } else if (!process_.start(binaryPath_, workDir, configFile)) {
-            fail(process_.lastError());
-            return;
         }
 #endif
 
@@ -660,6 +691,10 @@ public:
                         !tailText.empty()) {
                         message += "：" + tailText;
                     }
+                }
+                if (message.find("address already in use") != std::string::npos ||
+                    message.find("bind:") != std::string::npos) {
+                    message += "（端口可能被其他代理软件占用；可在设置中修改混合端口）";
                 }
                 fail(std::move(message));
                 return;
@@ -705,12 +740,22 @@ public:
         stream::logApplication("info", "代理内核控制器已就绪");
         refreshRuntime();
         // 系统代理开关处于开：内核就绪后重指到当前端口（best effort，
-        // 失败不判启动失败，记 lastError）。
+        // 失败不判启动失败，记 lastError）。当前代理指向其他软件时让位，
+        // 不抢写对方接管中的设置。
         if (systemProxyEnabled()) {
-            std::string err;
-            if (!sysproxy::enable("127.0.0.1", mixedPort(), err)) {
+            const std::string current = sysproxy::currentProxy();
+            if (current.empty() || systemProxyOurs()) {
+                std::string err;
+                if (sysproxy::enable("127.0.0.1", mixedPort(), err)) {
+                    setSetting("proxy.system_port", std::to_string(mixedPort()));
+                } else {
+                    std::lock_guard lock(mutex_);
+                    snap_.lastError = "系统代理应用失败：" + err;
+                }
+            } else {
                 std::lock_guard lock(mutex_);
-                snap_.lastError = "系统代理应用失败：" + err;
+                snap_.lastError =
+                    "系统代理当前由其他软件（" + current + "）接管，未重新指向本应用";
             }
         }
     }
@@ -731,8 +776,9 @@ public:
         snap_.tunEnabled = false;
         return true;
 #else
-        // 先摘系统代理：内核停掉后系统仍指向旧端口会断网。
-        if (systemProxyEnabled()) {
+        // 先摘系统代理：内核停掉后系统仍指向旧端口会断网。仅当当前代理
+        // 确实指向本应用写入的端口时才撤销；其他代理软件接管中不动。
+        if (systemProxyEnabled() && systemProxyOurs()) {
             std::string err;
             sysproxy::disable(err);
         }
@@ -996,6 +1042,21 @@ private:
         long pid = 0;
         in >> pid;
         return pid;
+    }
+
+    // 系统代理所有权：当前桌面代理是否指向本应用写入的端口（开启时记录
+    // proxy.system_port）。只有指向本应用时才允许撤销/重指，避免误关或
+    // 抢占其他代理软件（clash-verge/FlClash 等）接管中的设置。
+    bool systemProxyOurs() {
+#if defined(__ANDROID__)
+        return false;
+#else
+        const std::string current = sysproxy::currentProxy();
+        return !current.empty() &&
+               current == std::format("127.0.0.1:{}",
+                                      setting("proxy.system_port",
+                                              std::to_string(mixedPort())));
+#endif
     }
 
     void ensureOpen() {

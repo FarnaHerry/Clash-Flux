@@ -70,7 +70,7 @@ std::string extractMessage(const std::string& body) {
 } // namespace
 
 struct ClashApi::Impl {
-    std::string base;    // http://127.0.0.1:9097
+    std::string base;    // http://127.0.0.1:29097
     std::string secret;
 
     // 通用请求。method 为空 = GET；body 非空按 application/json 发送。

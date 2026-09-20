@@ -31,7 +31,7 @@ export struct ApiResult {
     std::map<std::string, std::string> headers;
 };
 
-// REST 客户端：baseUrl 形如 "http://127.0.0.1:9097"，secret 为 Bearer token（可空）。
+// REST 客户端：baseUrl 形如 "http://127.0.0.1:29097"，secret 为 Bearer token（可空）。
 export class ClashApi {
 public:
     ClashApi(std::string baseUrl, std::string secret);

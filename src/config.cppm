@@ -205,18 +205,21 @@ export std::filesystem::path singboxBinary() {
 
 // ---- external-controller 端点（本地回环，仅本进程与内核通信）----------------
 export constexpr std::string_view kControllerHost = "127.0.0.1";
-export constexpr int kControllerPort = 9097;  // 避开常见的 9090 占用
+// 高位端口，与其他代理软件的常用默认彻底避让：9090（mihomo/FlClash 控制
+// 端口）、9097（clash-verge-rev 默认 external controller）、7890/7897
+// （常见 mixed 端口）。取 32768 以下的固定高位，避开 Linux 临时端口段。
+export constexpr int kControllerPort = 29097;
 
 export std::string controllerAddress() {
     return std::format("{}:{}", kControllerHost, kControllerPort);
 }
 
-// REST API base URL（http://127.0.0.1:9097）。
+// REST API base URL（http://127.0.0.1:29097）。
 export std::string controllerBaseUrl() {
     return std::format("http://{}", controllerAddress());
 }
 
-// WebSocket base URL（ws://127.0.0.1:9097）。
+// WebSocket base URL（ws://127.0.0.1:29097）。
 export std::string controllerWsUrl() {
     return std::format("ws://{}", controllerAddress());
 }

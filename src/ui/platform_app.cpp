@@ -23,7 +23,6 @@ import clashflux.config;
 import clashflux.core;
 import clashflux.db;
 import clashflux.service;
-import clashflux.sysproxy;
 import clashflux.store.core;
 import clashflux.store.profiles;
 import clashflux.store.vpn;
@@ -143,18 +142,24 @@ void DesktopPreparePlatformDataDirectory(
                 co_await RunOnTaskThread([] {
                     auto& core = store::coreStore();
                     core.init();
-                    // 系统代理是本应用的瞬时接管状态。若上次异常退出留下了
-                    // 代理设置，启动时先撤销自有设置，避免压过其他代理软件。
-                    if (core.systemProxyEnabled()) {
-                        std::string error;
-                        sysproxy::disable(error);
-                        core.setSetting("proxy.system_enabled", "false");
-                    }
+                    // 若上次异常退出把系统代理留在本应用端口上，先撤销。
+                    // 仅限确实指向本应用的设置，不动其他代理软件的接管。
+                    core.releaseStaleOwnedSystemProxy();
                     if (!cfg::singboxBinary().empty()) {
-                        // 清理上次异常退出留下的旧内核，避免这里接管一个仍
-                        // 持有旧 TUN 配置的进程；自启只准备本地混合端口。
+                        // 清理上次异常退出留下的旧内核（含仍持有旧 TUN 配置
+                        // 的进程）。之后仅在退出时处于接管状态（系统代理或
+                        // TUN 开启）才恢复启动内核，避免与其他代理软件
+                        // （clash-verge/FlClash 等）抢占端口；两者都关时内核
+                        // 保持停止，由用户手动或开启开关时按需拉起。TUN 上次
+                        // 开启时恢复启动同样携带 TUN 配置。
                         core.stopCore();
-                        core.startCore(store::profilesStore().selectedYaml(), false, false);
+                        const bool resumeSysProxy = core.systemProxyEnabled();
+                        const bool resumeTun =
+                            core.setting("core.tun_enabled", "false") == "true";
+                        if (resumeSysProxy || resumeTun) {
+                            core.startCore(store::profilesStore().selectedYaml(),
+                                           false, resumeTun);
+                        }
                     }
                 });
                 co_await PollWhile(std::chrono::duration<double>{0.5}, [=] {
