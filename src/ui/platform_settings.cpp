@@ -298,7 +298,8 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                                 "core.tun_enabled", on ? "true" : "false");
                             if (on) {
                                 store::coreStore().startCore(
-                                    store::profilesStore().selectedYaml());
+                                    store::profilesStore().selectedYaml(),
+                                    false, true);
                                 AndroidStartVpn();
                             } else {
                                 AndroidStopVpn();

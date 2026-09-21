@@ -91,7 +91,7 @@ struct NativeProfileSupport {
 // 过滤控件。以后新增平台时只需新增一个同前缀函数和这里的宏选择。
 #if defined(__ANDROID__)
 NativeProfileSupport AndroidProfileSupport() {
-    return {};
+    return {.openvpn = true};
 }
 #define CLASHFLUX_PROFILE_SUPPORT AndroidProfileSupport
 #elif defined(__linux__)
@@ -106,12 +106,12 @@ NativeProfileSupport WindowsProfileSupport() {
 #define CLASHFLUX_PROFILE_SUPPORT WindowsProfileSupport
 #elif defined(__APPLE__)
 NativeProfileSupport MacOSProfileSupport() {
-    return {};
+    return {.openvpn = true};
 }
 #define CLASHFLUX_PROFILE_SUPPORT MacOSProfileSupport
 #else
 NativeProfileSupport UnknownProfileSupport() {
-    return {};
+    return {.openvpn = true};
 }
 #define CLASHFLUX_PROFILE_SUPPORT UnknownProfileSupport
 #endif
@@ -267,11 +267,8 @@ std::string openVpnStateText(const store::OpenVpnState& state) {
     if (!state.toolsAvailable) return "OpenVPN 引擎不可用";
     switch (state.state) {
     case vpn::ConnectionState::Connected:
-        return std::format("已连接{}{}", state.interfaceName.empty()
-                                              ? ""
-                                              : " · " + state.interfaceName,
-                           state.gateway.empty() ? ""
-                                                 : " · 网关 " + state.gateway);
+        return state.interfaceName.empty() ? "已交给 sing-box"
+                                           : "已连接 · " + state.interfaceName;
     case vpn::ConnectionState::Connecting: return "连接中…";
     case vpn::ConnectionState::Failed:
         return state.error.empty() ? "连接失败" : "连接失败：" + state.error;
@@ -1356,7 +1353,7 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
         if (!nativeVpn) {
             return profile.url.empty() ? std::string("本地导入") : profile.url;
         }
-        if (profile.type == "openvpn") return std::string("OpenVPN · CLI 配置");
+        if (profile.type == "openvpn") return std::string("OpenVPN · sing-box endpoint");
         std::string parseError;
         const auto config = pptp::ParsePptpConfig(profile.nativeConfig, parseError);
         return config ? "PPTP · " + config->server
@@ -1510,7 +1507,7 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
     }
     return std::move(card)
         // 远程/本地代理订阅暂时保持单选：点击哪张卡片，哪张就是当前订阅。
-        // 原生 PPTP/OpenVPN 仍由复选框进入多连接流程，后续再统一抽象。
+        // PPTP 仍使用系统接口；OpenVPN 已由 sing-box endpoint 统一承载。
         .OnClick([action, id, selected, nativeVpn, optimisticSelected] {
                 if (selected || nativeVpn) return;
                 BeginOptimistic(optimisticSelected, id);

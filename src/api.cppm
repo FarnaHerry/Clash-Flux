@@ -10,7 +10,7 @@
 //                                        sing-box 仅支持 mode 等少数字段）
 //   GET    /proxies                     全部代理与策略组
 //   PUT    /proxies/{group}             策略组切换节点（{"name": "..."}）
-//   GET    /proxies/{name}/delay        延迟测速（?url=&timeout=）
+//   GET    /proxies/{name}/delay        内核代理延迟测速（?url=&timeout=）
 //   GET    /connections                 连接快照（REST 轮询用；推送走 WS）
 //   DELETE /connections/{id}            关闭单条连接
 //   DELETE /connections                 关闭全部连接
@@ -50,9 +50,6 @@ public:
     ApiResult selectProxy(const std::string& group, const std::string& name);
     // 延迟测速：ok 时 body 是 {"delay":N}；超时/失败 ok=false。
     ApiResult proxyDelay(const std::string& name, const std::string& testUrl, int timeoutMs);
-    // 策略组整体测速：取组成员后并发逐节点 /proxies/{name}/delay，合并为
-    // {节点: 延迟} JSON 对象；测速失败的节点延迟记 0（UI 归入超时）。
-    ApiResult groupDelay(const std::string& group, const std::string& testUrl, int timeoutMs);
 
     ApiResult connections();
     ApiResult closeConnection(const std::string& id);

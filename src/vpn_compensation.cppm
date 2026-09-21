@@ -111,7 +111,7 @@ std::optional<TransportLease> PrepareWindowsTransport(std::string_view host,
 #endif
 
 // Resolve once and return the numeric address that the dialer must use.
-// PPTP and the current native OpenVPN route backend support IPv4 transport.
+// The PPTP route backend supports IPv4 transport.
 std::optional<TransportLease> PrepareTransport(std::string_view host,
                                               std::string& error);
 RouteLease PrepareBoundInterface(std::string_view interfaceName,

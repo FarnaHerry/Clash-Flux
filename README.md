@@ -12,16 +12,18 @@ C++ 实现。订阅沿用 Clash YAML 格式，由内置编译器转换为 sing-b
 - 代理页：策略组卡片、节点切换、整组测速（延迟着色）
 - 多重规则 / 连接 / 日志：按订阅查看各自规则，使用全局路由规则把域名/IP/CIDR
   分配给不同连接；连接快照（可逐条/全部关闭）、实时日志流
-- 原生 VPN 订阅：Linux 与 Windows 支持 PPTP 和 OpenVPN CLI（粘贴 `.ovpn`
-  文本），可多选同时连接；内网 CIDR 由平台后端安装到对应隧道
+- 原生 VPN 订阅：PPTP 保留系统拨号/特权服务路径；OpenVPN `.ovpn` 由
+  sing-box 1.14 的 `openvpn-client` endpoint 承载，可同时启用多个连接；内网
+  CIDR 由 sing-box 路由规则直接指向各 endpoint，PPTP 才由平台后端安装系统路由
 - 内核控制：自动启停、出站模式（规则/全局/直连）、混合端口、局域网连接、日志级别
 - 订阅转换：Clash YAML → sing-box JSON 编译器（ss/vmess/vless/trojan/hysteria2/
   tuic 等协议、策略组、域名/IP/GEOIP/GEOSITE 规则，并将 Mihomo 常见的
   `RULE-SET,cn` / `RULE-SET,cn-ip` 映射到内置国内规则集；不支持的条目显式提示而非静默丢弃；
   原生 sing-box JSON 订阅直通）
 - 系统代理（KDE / GNOME）与 TUN 模式开关（sing-box TUN，切换即重启内核生效）
-- 服务模式（可选）：统一 root systemd 服务托管 sing-box、Linux PPTP 和 OpenVPN，
-  TUN、拨号和原生路由无需每次授权；
+- 服务模式（可选）：统一 root systemd 服务托管 sing-box 和 Linux PPTP，
+  TUN、PPTP 拨号和原生路由无需每次授权；OpenVPN 不依赖系统 CLI，随 sing-box
+  内核生命周期运行；
   未安装时回落「接管外部实例 → 直接 spawn」
 - 完整 CLI：同一二进制带子命令（core / mode / tun / proxy / profile / service），
   无参数启动进入 GUI
@@ -59,22 +61,9 @@ sudo dnf install ppp pptp iproute
 sudo apt install ppp pptp iproute2
 ```
 
-Linux OpenVPN 还需要系统 CLI：
-
-```bash
-# Fedora
-sudo dnf install openvpn iproute
-# Debian/Ubuntu
-sudo apt install openvpn iproute2
-```
-
-Windows OpenVPN 需要安装 [OpenVPN Community](https://openvpn.net/community-downloads/)。
-Clash-Flux 会从 `PATH` 或默认的 `Program Files/OpenVPN/bin` 目录查找
-`openvpn.exe`；安装内网路由可能需要以管理员身份运行。
-
-OpenVPN 配置保存为原生 `.ovpn` 文本。为了让 root 服务能够安全托管连接，建议使用
-`<ca>`、`<cert>`、`<key>`、`<tls-auth>` 和 `<auth-user-pass>` inline 块；配置中引用的
-相对路径文件不会随订阅卡片自动复制，若必须使用外部文件请填写绝对路径并确保 root 服务可读。
+OpenVPN 配置保存为原生 `.ovpn` 文本。为了让 sing-box 能在运行时直接接管连接，建议使用
+`<ca>`、`<cert>`、`<key>`、`<tls-auth>` 和 `<auth-user-pass>` inline 块；当前转换器
+把这些内容交给 sing-box，外部文件路径和脚本/系统路由指令不会被静默执行。
 
 ## 构建与运行
 
@@ -137,13 +126,14 @@ clash-flux service install|uninstall|status|run
 ```
 
 `service install` 需 root（GUI 设置页经 pkexec 提权调用）：安装 systemd 单元
-`clash-flux.service`，此后 sing-box、Linux PPTP 和 OpenVPN 都由同一个 root daemon 托管。
+`clash-flux.service`，此后 sing-box 和 Linux PPTP 都由同一个 root daemon 托管；
+OpenVPN endpoint 由 sing-box 自己建立，不再要求安装 OpenVPN CLI。
 更新了二进制或新增了服务协议后，需要重新执行一次 `sudo clash-flux service install`
 让 systemd 使用新版本 daemon；仅替换 GUI 二进制不会更新已运行的 root 服务。
 GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议请求，
 不再直接执行 `pppd` 或 `ip route`；安装时记录提权前用户 UID，socket 只允许该
-用户和 root 访问。TUN/PPTP/OpenVPN 开箱可用，未安装服务时 Linux 原生 VPN 不会静默尝试
-用户态 root 操作，而是明确提示安装服务。
+用户和 root 访问。TUN/PPTP 开箱可用，OpenVPN 由 sing-box 用户态 endpoint
+建立；未安装服务时 Linux 的 TUN/PPTP 不会静默尝试 root 操作，而是明确提示安装服务。
 
 ## 多平台 CI
 

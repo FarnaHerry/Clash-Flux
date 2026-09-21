@@ -101,9 +101,7 @@ int cmdService(const std::vector<std::string>& args) {
                      info.compatible() && service::pptpAvailable()
                          ? "root 后端可用"
                          : "不可用",
-                     info.compatible() && service::openvpnAvailable()
-                         ? "root 后端可用"
-                         : "不可用");
+                     "sing-box endpoint");
         if (!info.error.empty() && info.reachable) {
             std::println("提示：{}", info.error);
         }

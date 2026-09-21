@@ -85,11 +85,10 @@ int main() {
     assert(!openvpn::ParseOpenVpnConfig("client\nroute 10.0.0.0 255.0.0.0\n",
                                         openVpnError));
     const auto openVpnAdapter = openvpn::MakeOpenVpnAdapter();
-    assert(openVpnAdapter.descriptor.kind == EngineKind::SystemOpenVpn);
+    assert(openVpnAdapter.descriptor.kind == EngineKind::SingBox);
     assert(openVpnAdapter.descriptor.connectionKinds ==
            std::vector<ConnectionKind>{ConnectionKind::OpenVpn});
-    assert(openVpnAdapter.descriptor.available ==
-           openvpn::OpenVpnToolsAvailable());
+    assert(openVpnAdapter.descriptor.available);
 
     const std::vector<EngineDescriptor> engines{
         {EngineKind::SingBox, 100, true, {ConnectionKind::ProxyConfig}},

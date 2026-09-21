@@ -232,13 +232,12 @@ constexpr float kProxyNodeWidth = 300.0F;
         huxerui::UseState<std::int64_t>(std::int64_t{node.urlTestTime});
     const std::string nodeName = node.name;
     const bool nativeGroupTest = ProxyTestUsesNativeGroup();
-
-    // 测速请求只作为广播事件；真正的 REST 请求、状态和完成时机都归卡片自己。
+    // 测速请求只作为广播事件；真正的内核节点请求、状态和完成时机都归卡片自己。
     // 卡片被 VirtualGrid 回收时，TaskScope 会取消自己的请求，不影响其他卡片。
     huxerui::Lifecycle(
         [tasks, probe, lastGeneration, testBaselineTime, testGeneration,
-         testGroup, nodeName, groupName, nativeGroupTest, nodeDelay = node.delay,
-         nodeTestTime = node.urlTestTime] {
+         testGroup, groupName, nativeGroupTest, nodeDelay = node.delay,
+         nodeTestTime = node.urlTestTime, nodeName] {
             const bool newRequest =
                 testGeneration.Get() != 0 && testGroup.Get() == groupName &&
                 testGeneration.Get() != lastGeneration.Get() &&
@@ -256,7 +255,9 @@ constexpr float kProxyNodeWidth = 300.0F;
                         try {
                             const int measured = co_await RunOnTaskThread([nodeName] {
                                 const auto result = store::coreStore().api().proxyDelay(
-                                    nodeName, "https://www.gstatic.com/generate_204", 3000);
+                                    nodeName,
+                                    "http://connectivitycheck.gstatic.com/generate_204",
+                                    3000);
                                 if (!result.ok) return 0;
                                 const auto body = nlohmann::json::parse(
                                     result.body, nullptr, false);
@@ -277,9 +278,8 @@ constexpr float kProxyNodeWidth = 300.0F;
                         }
                     });
                 } else {
-                    // Some libbox outbounds fail before emitting a changed
-                    // URLTest timestamp. Close that UI state locally instead
-                    // of leaving an unresponsive node at “测速中…”.
+                    // libbox 失败时可能不会更新时间戳；本地结束 UI 状态，
+                    // 避免某个节点永久停留在“测速中”。
                     tasks.Launch([probe]() -> huxerui::Task<void> {
                         for (int attempt = 0; attempt < 120; ++attempt) {
                             co_await huxerui::Delay(
@@ -538,12 +538,13 @@ std::function<void()> NodeSelectAction(
         },
         0);
 
-    // 组测速触发：StartProxyGroupTest 会在内核停止时按需拉起（见 common.cpp）；
-    // 拉起失败给出提示，避免点了按钮却毫无反应。
+    // 组测速触发：桌面逐节点调用内核 delay API；Android 调用 libbox
+    // urlTest，UI 只消费内核回写的结果。
     const std::function<void(const std::string&)> triggerGroupTest =
         [tasks, toast, testGeneration, testGroup, coreState](
             std::string groupName) {
-            tasks.Launch([=]() -> huxerui::Task<void> {
+            tasks.Launch([toast, testGeneration, testGroup, coreState,
+                          groupName = std::move(groupName)]() -> huxerui::Task<void> {
                 if (coreState.Get() != core::CoreState::Running) {
                     toast.Show("正在启动内核以进行测速…");
                 }
@@ -556,6 +557,7 @@ std::function<void()> NodeSelectAction(
                 }
                 testGroup = groupName;
                 testGeneration += 1;
+                co_return;
             });
         };
 

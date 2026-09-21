@@ -305,10 +305,10 @@ public:
     // 启动残留清理：上次异常退出可能把系统代理留在指向本应用（此刻已
     // 不存在的）端口上。仅当当前代理确实指向本应用写入的端口时才撤销；
     // 指向其他代理软件（clash-verge/FlClash 等）时不动其设置。不改动
-    // “应当接管”的意图标志——是否恢复接管由随后的内核自启与重指决定。
+    // “应当接管”的意图标志——是否恢复接管由调用方显式传入运行态决定。
     void releaseStaleOwnedSystemProxy() {
 #if !defined(__ANDROID__)
-        if (!systemProxyEnabled() || !systemProxyOurs()) return;
+        if (!systemProxyOurs()) return;
         std::string err;
         sysproxy::disable(err);
 #endif
@@ -338,11 +338,12 @@ public:
             snap_.tunEnabled = false;
             return false;
         }
+        const bool restoreSystemProxy = systemProxyOurs();
         if (!stopCore()) {
             setSetting("core.tun_enabled", enable ? "false" : "true");
             return false;
         }
-        startCore(lastProfileYaml_);
+        startCore(lastProfileYaml_, false, enable, restoreSystemProxy);
         if (snapshot().state == core::CoreState::Running) return true;
         setSetting("core.tun_enabled", enable ? "false" : "true");
         {
@@ -354,7 +355,7 @@ public:
         }
         // 恢复无 TUN 的可用状态（best effort）。
         stopCore();
-        startCore(lastProfileYaml_);
+        startCore(lastProfileYaml_, false, !enable, restoreSystemProxy);
         return false;
 #endif
     }
@@ -401,7 +402,10 @@ public:
             if (!input) { fail("无法读取当前订阅配置，请先更新或重新导入订阅"); return false; }
             const std::string yaml{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
             if (yaml.empty()) { fail("当前订阅配置为空，请先更新订阅"); return false; }
-            startCore(yaml);
+            // 只恢复当前运行态；不要让启动过程重新读取已经可能过期的
+            // 持久化 TUN/系统代理开关。系统代理由本次 applySystemProxy
+            // 操作在内核就绪后显式打开。
+            startCore(yaml, false, snapshot().tunEnabled, std::nullopt);
             return snapshot().state == core::CoreState::Running;
         }
         fail("请先选择一个代理订阅，再开启 TUN 或系统代理");
@@ -418,7 +422,11 @@ public:
     }
     inline bool resumeNativeRouting(std::string& error) {
         std::lock_guard operationLock(lifecycleMutex_);
-        startCore(lastProfileYaml_);
+        const bool tunEnabled = snapshot().tunEnabled;
+        const bool systemProxyEnabled = systemProxyOurs();
+        startCore(lastProfileYaml_, false, tunEnabled,
+                  systemProxyEnabled ? std::optional<bool>(true)
+                                     : std::nullopt);
         if (snapshot().state == core::CoreState::Running) return true;
         error = snapshot().lastError;
         return false;
@@ -444,7 +452,9 @@ public:
         error.clear();
         const bool running = snapshot().state == core::CoreState::Running;
         try {
-            auto options = routingOptions(lastProfileYaml_, true);
+            const bool tunEnabled = snapshot().tunEnabled;
+            const bool systemProxyEnabled = systemProxyOurs();
+            auto options = routingOptions(lastProfileYaml_, tunEnabled);
             const auto compiled = core::generateConfig(std::move(options));
             if (!compiled.error.empty() || compiled.json.empty()) {
                 error = "路由计划编译失败：" + compiled.error;
@@ -455,7 +465,9 @@ public:
                 error = snapshot().lastError;
                 return false;
             }
-            startCore(lastProfileYaml_);
+            startCore(lastProfileYaml_, false, tunEnabled,
+                      systemProxyEnabled ? std::optional<bool>(true)
+                                         : std::nullopt);
 #if defined(__ANDROID__)
             if (snapshot().state != core::CoreState::Failed) {
                 clashflux_android_start_vpn();
@@ -478,10 +490,15 @@ public:
     }
 
     // 启动内核；profileYaml 为启用订阅的原文（无订阅传空）。
+    // tunEnabled/systemProxyState 是本次操作捕获的运行态，不从 settings
+    // 表重新读取。这样普通 core start 只启动内核，不会隐式恢复 TUN 或
+    // 系统代理；恢复上次接管状态的启动路径必须显式传入这些状态。
     // detached=true（CLI core start）：直连 spawn 走 setsid 脱离会话驻留，
     // 本进程退出不带走内核。
     void startCore(const std::string& profileYaml, bool detached = false,
-                   bool useSavedTunSetting = true, bool speedTestOnly = false) {
+                   bool tunEnabled = false,
+                   std::optional<bool> systemProxyState = std::nullopt,
+                   bool speedTestOnly = false) {
         std::lock_guard operationLock(lifecycleMutex_);
         ensureOpen();
         const auto serviceInfo = service::query();
@@ -534,7 +551,7 @@ public:
             // 首启不再因代理不可用而拉取失败退出，预取过的缓存按周刷新。
             singbox::CompileOptions options;
             try {
-                options = routingOptions(profileYaml, useSavedTunSetting,
+                options = routingOptions(profileYaml, tunEnabled,
                                          speedTestOnly);
             } catch (const std::exception& exception) {
                 fail(std::string("读取主 VPN 路由计划失败：") + exception.what());
@@ -739,10 +756,9 @@ public:
         }
         stream::logApplication("info", "代理内核控制器已就绪");
         refreshRuntime();
-        // 系统代理开关处于开：内核就绪后重指到当前端口（best effort，
-        // 失败不判启动失败，记 lastError）。当前代理指向其他软件时让位，
-        // 不抢写对方接管中的设置。
-        if (systemProxyEnabled()) {
+        // 只有调用方明确要求恢复本次运行态时才处理系统代理。普通启动
+        // 不读取历史设置，也不改变其他软件当前接管的系统代理。
+        if (systemProxyState.has_value() && *systemProxyState) {
             const std::string current = sysproxy::currentProxy();
             if (current.empty() || systemProxyOurs()) {
                 std::string err;
@@ -757,6 +773,9 @@ public:
                 snap_.lastError =
                     "系统代理当前由其他软件（" + current + "）接管，未重新指向本应用";
             }
+        } else if (systemProxyState.has_value() && systemProxyOurs()) {
+            std::string err;
+            sysproxy::disable(err);
         }
     }
 
@@ -778,7 +797,7 @@ public:
 #else
         // 先摘系统代理：内核停掉后系统仍指向旧端口会断网。仅当当前代理
         // 确实指向本应用写入的端口时才撤销；其他代理软件接管中不动。
-        if (systemProxyEnabled() && systemProxyOurs()) {
+        if (systemProxyOurs()) {
             std::string err;
             sysproxy::disable(err);
         }
@@ -840,8 +859,12 @@ public:
         const core::CoreState before = snapshot().state;
         const bool wasActive = before == core::CoreState::Running ||
                                before == core::CoreState::Starting;
+        const bool tunEnabled = snapshot().tunEnabled;
+        const bool systemProxyEnabled = systemProxyOurs();
         if (!stopCore()) return;
-        startCore(profileYaml);
+        startCore(profileYaml, false, tunEnabled,
+                  systemProxyEnabled ? std::optional<bool>(true)
+                                     : std::nullopt);
 #if defined(__ANDROID__)
         if (wasActive) clashflux_android_start_vpn();
 #endif
@@ -960,7 +983,7 @@ private:
     }
 
     inline singbox::CompileOptions routingOptions(
-        const std::string& profileYaml, bool useSavedTunSetting,
+        const std::string& profileYaml, bool tunEnabled,
         bool speedTestOnly = false) {
         singbox::CompileOptions options;
         options.profileYaml = profileYaml;
@@ -971,7 +994,7 @@ private:
         options.allowLan = allowLan();
         options.ipv6 = ipv6Enabled();
         options.logLevel = logLevel();
-        options.tunInbound = useSavedTunSetting && tunEnabled();
+        options.tunInbound = tunEnabled;
         options.speedTestOnly = speedTestOnly;
         options.ruleSetDir = cfg::coreWorkDir().string();
         routing::PopulateOptions(options, db_->listProfiles(),
@@ -984,7 +1007,7 @@ private:
     // 时只好信任——WS 断流会在 UI 层表现为无数据。
     bool coreAlive() {
         if (managedByService_) {
-            // root 服务同步处理 PPTP/OpenVPN 建链时，STATUS 可能
+            // root 服务同步处理 PPTP 建链时，STATUS 可能
             // 超时。先查内核自己的控制器，避免 UI 存活泵在
             // PPTP 拨号期间每次阻塞 2 秒；仅在控制器不通时才向
             // root 服务确认进程状态。
