@@ -217,6 +217,8 @@ huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& h
                     if (realActive) {
                         AndroidStopVpn();
                         WaitForAndroidVpnStopped();
+                        core.startCore(store::profilesStore().selectedYaml(),
+                                       false, false);
                     } else {
                         core.startCore(store::profilesStore().selectedYaml(),
                                        false, true);

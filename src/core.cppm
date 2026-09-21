@@ -64,8 +64,8 @@ export TunGate tunGate();
 // URL 无注入面）/ Windows ShellExecuteW。失败静默（best-effort）。
 export void openInBrowser(const std::string& url);
 
-// 合成 sing-box 运行时配置（含平台形态修正：Android 恒生成 tun inbound、
-// 仅 IPv4、宽松路由）。 tunEnabled 只在桌面平台作为 tunInbound 生效。
+// 合成 sing-box 运行时配置（含平台形态修正：Android 按 tunEnabled 生成
+// tun inbound、仅 IPv4、宽松路由）。内核常驻与 TUN/系统代理互相独立。
 // 返回的 CompileResult.json 可直接 `sing-box run -c`；失败 json 为空并填
 // error；订阅降级细节（不支持的节点/规则）经 warnings 带回。
 export singbox::CompileResult generateConfig(singbox::CompileOptions options);

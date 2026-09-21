@@ -304,6 +304,9 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                             } else {
                                 AndroidStopVpn();
                                 WaitForAndroidVpnStopped();
+                                store::coreStore().startCore(
+                                    store::profilesStore().selectedYaml(),
+                                    false, false);
                             }
                         },
                         on ? "正在请求建立 VPN 隧道" : "VPN 隧道已关闭",

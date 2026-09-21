@@ -94,11 +94,33 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/ui/home_page.cpp"
         "${_root}/src/ui/logs_page.cpp"
         "${_root}/src/ui/profiles_page.cpp"
+        "${_root}/src/ui/profiles_page_card.cpp"
+        "${_root}/src/ui/profiles_page_forms.cpp"
+        "${_root}/src/ui/profiles_page_support.cpp"
+        "${_root}/src/ui/profiles_page_shared.h"
         "${_root}/src/ui/proxies_page.cpp"
         "${_root}/src/ui/rules_page.cpp"
         "${_root}/src/ui/settings_page.cpp"
         "${_root}/src/ui/platform_settings.cpp"
         "${_root}/src/ui/platform_app.cpp"
+        # The desktop module/UI sources include these implementation fragments.
+        # Track them so AndroidLegacy regenerates its compatibility TU when a
+        # split fragment changes.
+        "${_root}/src/service_admin.inc"
+        "${_root}/src/service_client.inc"
+        "${_root}/src/service_daemon.inc"
+        "${_root}/src/service_stub.inc"
+        "${_root}/src/singbox_compile.inc"
+        "${_root}/src/singbox_context_dns.inc"
+        "${_root}/src/singbox_proxy.inc"
+        "${_root}/src/singbox_rules.inc"
+        "${_root}/src/singbox_yaml_openvpn.inc"
+        "${_root}/src/store/core_store_helpers.inc"
+        "${_root}/src/store/core_store_lifecycle.inc"
+        "${_root}/src/store/core_store_routing.inc"
+        "${_root}/src/store/core_store_state.inc"
+        "${_root}/src/ui/profiles_page_actions.inc"
+        "${_root}/src/ui/profiles_page_layout.inc"
     )
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         ${_android_legacy_inputs}
@@ -156,6 +178,9 @@ function(clashflux_prepare_android_sources output_directory output_header
             "${_root}/src/ui/home_page.cpp"
             "${_root}/src/ui/logs_page.cpp"
             "${_root}/src/ui/profiles_page.cpp"
+            "${_root}/src/ui/profiles_page_card.cpp"
+            "${_root}/src/ui/profiles_page_forms.cpp"
+            "${_root}/src/ui/profiles_page_support.cpp"
             "${_root}/src/ui/proxies_page.cpp"
             "${_root}/src/ui/rules_page.cpp"
             "${_root}/src/ui/settings_page.cpp"
