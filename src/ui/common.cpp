@@ -128,13 +128,13 @@ bool SelectProxyLine(const std::string& group, const std::string& name) {
 bool StartProxyGroupTest(const std::string& group) {
 #if defined(__ANDROID__)
     try {
-        // A speed test must not enable Android's VPN/TUN switch. Compile a
-        // no-TUN libbox config first, then let Java start the same service in
-        // speed-test-only mode when no VPN service is currently attached.
+        // Android 的测速内核使用无 TUN 的 libbox 配置；如果当前没有已连接
+        // 的 VPN 服务，先只编译当前配置，再由 Java 启动 speed-test-only
+        // 服务。这样测速不会申请 VPN，也不会接管应用流量。
         if (clashflux_android_vpn_state() != 2) {
             auto& core = store::coreStore();
             core.startCore(store::profilesStore().selectedYaml(), false, false,
-                           true);
+                           std::nullopt, true);
             if (core.snapshot().state == core::CoreState::Failed) return false;
         }
         return clashflux_android_url_test(group.c_str());
@@ -142,9 +142,8 @@ bool StartProxyGroupTest(const std::string& group) {
         return false;
     }
 #else
-    // 桌面测速依赖运行中的内核：内核停止时（启动策略为避免抢占端口默认不
-    // 自启）先按当前订阅拉起一个不带 TUN 的内核，否则逐节点 delay REST 会
-    // 连接失败，界面瞬间全部显示超时。调用方已在任务线程上。
+    // 桌面节点测速通过内核 delay API 完成。内核已停止时这里只负责按当前
+    // 订阅拉起一个不带 TUN 的实例，具体节点请求仍由 NodeCard 调内核执行。
     try {
         auto& core = store::coreStore();
         if (core.snapshot().state != core::CoreState::Running) {

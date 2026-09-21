@@ -1,8 +1,7 @@
-// openvpn.cppm — clashflux.openvpn：OpenVPN CLI 引擎契约。
+// openvpn.cppm — clashflux.openvpn：OpenVPN 配置校验契约。
 //
-// nativeConfig 保存完整的 .ovpn 文本。引擎会在 root 服务的私有目录中写出
-// 0600 配置文件，以 `openvpn --config` 建立 tun 接口；连接自己的内网路由
-// 仍由 clashflux.vpn 的统一策略通过 root 服务安装。
+// nativeConfig 保存完整的 .ovpn 文本，由 sing-box 编译边界翻译成
+// openvpn-client endpoint。
 export module clashflux.openvpn;
 
 import std;
@@ -11,7 +10,7 @@ import clashflux.vpn;
 namespace openvpn {
 
 // Byte ranges refer to configText and include optional quotes around the host.
-// The privileged adapter resolves and rewrites every remote before OpenVPN runs.
+// They are retained for validation/editor diagnostics.
 export struct OpenVpnRemote {
     std::string host;
     std::size_t offset = 0;
@@ -73,8 +72,8 @@ export inline std::optional<OpenVpnConfig> ParseOpenVpnConfig(
         error = "OpenVPN 配置不能为空";
         return std::nullopt;
     }
-    // service socket 使用十六进制单行协议；限制原始配置大小，避免一份配置
-    // 把单行 IPC 请求撑过 daemon 的上限。常见 .ovpn（含 inline 证书）远小于此值。
+    // 限制原始配置大小，避免异常配置占用过多编译和传输资源；常见 .ovpn
+    // （含 inline 证书）远小于此值。
     if (text.size() > 20000) {
         error = "OpenVPN 配置过大（最多 20 KiB）";
         return std::nullopt;
@@ -119,7 +118,13 @@ export inline std::optional<OpenVpnConfig> ParseOpenVpnConfig(
             key == "route-noexec" || key == "route-nopull" ||
             key == "daemon" || key == "log" || key == "writepid" ||
             key == "config" || key == "http-proxy" || key == "socks-proxy" ||
-            key == "remote-random-hostname" || key == "management-query-remote") {
+            key == "remote-random-hostname" || key == "management-query-remote" ||
+            key == "management" || key == "management-client" ||
+            key == "management-hold" || key == "askpass" || key == "plugin" ||
+            key == "script-security" || key == "auth-user-pass-verify" ||
+            key == "tls-verify" || key == "client-connect" ||
+            key == "client-disconnect" || key == "learn-address" ||
+            key == "dhcp-option") {
             error = std::format(
                 "OpenVPN 配置第 {} 行包含托管模式不允许的 '{}' 指令",
                 lineNumber, key);
@@ -192,26 +197,6 @@ export inline std::optional<OpenVpnConfig> ParseOpenVpnConfig(
     }
     return config;
 }
-
-// 当前机器是否具备 OpenVPN CLI；Linux 还要求统一 root 服务后端。
-export bool OpenVpnToolsAvailable();
-export bool OpenVpnSessionAlive(std::string_view connectionId);
-
-#if defined(__linux__) && !defined(__ANDROID__)
-export bool PrivilegedOpenVpnAvailable();
-export bool PrivilegedOpenVpnSessionAlive(std::string_view connectionId);
-export bool PrivilegedOpenVpnConnect(std::string_view connectionId,
-                                     std::string_view nativeConfig,
-                                     std::span<const std::string> routes,
-                                     std::string& interfaceName,
-                                     std::string& gateway,
-                                     std::string& error);
-export bool PrivilegedOpenVpnApplyRoutes(std::string_view connectionId,
-                                         std::span<const std::string> routes,
-                                         std::string& error);
-export void PrivilegedOpenVpnDisconnect(std::string_view connectionId);
-export void PrivilegedOpenVpnShutdown();
-#endif
 
 export vpn::EngineAdapter MakeOpenVpnAdapter();
 

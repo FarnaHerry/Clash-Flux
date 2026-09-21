@@ -197,7 +197,7 @@ void stopLinuxSession(LinuxSession session) {
             if (::kill(-session.processGroup, 0) < 0 && errno == ESRCH) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
-        // pppd/OpenVPN may exit before one of their helper processes does.
+        // pppd may exit before one of its helper processes does.
         // Always kill remaining group members even if the parent was reaped.
         ::kill(-session.processGroup, SIGKILL);
         if (session.pid > 0) {

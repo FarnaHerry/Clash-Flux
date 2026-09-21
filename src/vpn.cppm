@@ -12,7 +12,6 @@ namespace vpn {
 export enum class EngineKind {
     SingBox,
     SystemPptp,
-    SystemOpenVpn,
     SystemWireGuard,
     Unknown,
 };
@@ -142,8 +141,9 @@ export inline std::optional<std::string> NormalizeRuleDomain(std::string_view in
     return {};
 }
 
-// 某条 VPN 的声明。nativeConfig/nativeRules 保留给引擎自己解释：sing-box
-// 使用 JSON，PPTP 使用拨号参数，未来其他引擎不需要修改这层数据结构。
+// 某条 VPN 的声明。nativeConfig/nativeRules 保留给引擎自己解释：OpenVPN
+// 保存 .ovpn 原文并由 sing-box 编译，PPTP 保存拨号参数，未来其他引擎不需要
+// 修改这层数据结构。
 export struct VpnConnection {
     std::string id;
     std::string name;
@@ -174,7 +174,7 @@ export struct VpnPolicy {
 };
 
 // 一条交给操作系统路由表的网段。它的目的不是替代 sing-box 规则，而是让
-// PPTP/OpenVPN/WireGuard 这类原生隧道绕过主 TUN，直接进入自己的接口。
+// PPTP/WireGuard 这类系统接口型隧道绕过主 TUN；OpenVPN endpoint 不安装系统路由。
 export struct TunNativeRoute {
     std::string destination;
     std::string connectionId;
@@ -450,7 +450,7 @@ export inline std::vector<EngineKind> DefaultEngineOrder() {
     // sing-box 是默认实现；系统 VPN 引擎是后备实现。排序只表达偏好，最终仍需
     // 经过 EngineDescriptor 的能力/可用性检查。
     return {EngineKind::SingBox, EngineKind::SystemPptp,
-            EngineKind::SystemOpenVpn, EngineKind::SystemWireGuard};
+            EngineKind::SystemWireGuard};
 }
 
 export inline EngineSelection SelectEngine(
@@ -545,7 +545,8 @@ public:
         std::vector<Change> changes;
         for (VpnConnection& connection : connections_) {
             if (connection.state != ConnectionState::Connected ||
-                !connection.activeEngine || !detail::nativeConnection(connection)) {
+                !connection.activeEngine || !detail::nativeConnection(connection) ||
+                *connection.activeEngine == EngineKind::SingBox) {
                 continue;
             }
             if (!validateNativeRoutes(connection, error)) return false;
@@ -679,7 +680,7 @@ public:
                 }
                 const std::vector<std::string> nativeRoutes =
                     nativeRoutesFor(connection->id, policy_);
-                if (adapter->applyRoutes &&
+                if (preferred != EngineKind::SingBox && adapter->applyRoutes &&
                     !adapter->applyRoutes(*connection, nativeRoutes, attemptError)) {
                     if (adapter->disconnect) adapter->disconnect(*connection);
                     lastError = attemptError.empty() ? "VPN 路由安装失败" : attemptError;
@@ -832,8 +833,8 @@ private:
 // 兼容的纯计划生成接口；本函数不安装路由，也不刷新运行中的主核心。
 // 运行时主订阅与补偿配置由 store/core 编排，原生路由由 applyPolicy 提交。
 //
-// 对 sing-box 代理连接，logicalRules 留给 sing-box/编排器处理；对 PPTP、
-// OpenVPN、WireGuard，CIDR/单 IP 规则转成 nativeRoutes，并把这些目标加入
+// 对 sing-box 代理和 OpenVPN endpoint，logicalRules 留给 sing-box/编排器处理；
+// 对 PPTP、WireGuard，CIDR/单 IP 规则转成 nativeRoutes，并把这些目标加入
 // TUN 排除表。这样主 sing-box TUN 负责默认流量，而 A/B 公司网段按最长前缀
 // 进入各自的 ppp/tun/wg 接口。
 export inline TunRoutePlan BuildTunRoutePlan(const VpnManager& manager,
@@ -852,7 +853,10 @@ export inline TunRoutePlan BuildTunRoutePlan(const VpnManager& manager,
     }
 
     for (const VpnConnection& connection : manager.connections()) {
-        if (!connection.enabled || !detail::nativeConnection(connection)) continue;
+        if (!connection.enabled || !detail::nativeConnection(connection) ||
+            (connection.activeEngine && *connection.activeEngine == EngineKind::SingBox)) {
+            continue;
+        }
         for (const std::string& route : connection.internalRoutes) {
             if (auto destination = detail::nativeIpv4Destination(route)) {
                 detail::appendNativeRoute(plan, connection, std::move(*destination));
@@ -863,7 +867,8 @@ export inline TunRoutePlan BuildTunRoutePlan(const VpnManager& manager,
     for (const RouteRule& rule : manager.policy().rules) {
         const VpnConnection* connection = manager.findConnection(rule.connectionId);
         if (connection == nullptr || !connection->enabled ||
-            !detail::nativeConnection(*connection)) {
+            !detail::nativeConnection(*connection) ||
+            (connection->activeEngine && *connection->activeEngine == EngineKind::SingBox)) {
             continue;
         }
         if (const auto destination = detail::nativeDestination(rule)) {

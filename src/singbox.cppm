@@ -20,7 +20,9 @@ export struct CompileResult {
 };
 
 // 原生引擎的运行时快照。未连接的声明也必须传入，使规则保持拒绝而不回落
-// 主出口；internalRoutes 是隐式规则，不加入 TUN 排除地址。
+// 主出口；internalRoutes 是隐式规则，不加入 TUN 排除地址。OpenVPN 的
+// nativeConfig 是 .ovpn 原文，编译器会把它翻译为 sing-box endpoint；PPTP
+// 则只使用 interfaceName/gateway 走系统接口补偿。
 export struct NativeConnection {
     std::string id;
     std::string interfaceName;
@@ -28,6 +30,7 @@ export struct NativeConnection {
     bool connected = false;
     vpn::ConnectionKind kind = vpn::ConnectionKind::Pptp;
     std::string transportAddress;
+    std::string nativeConfig;
 };
 
 export struct CompileOptions {

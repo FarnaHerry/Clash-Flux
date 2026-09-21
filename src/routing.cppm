@@ -92,9 +92,17 @@ export inline void PopulateOptions(
         native.internalRoutes = SplitRoutes(profile.nativeRoutes);
         for (const auto& session : sessions) {
             if (session.id != id) continue;
-            native.connected = session.connected && !session.interfaceName.empty();
-            native.interfaceName = native.connected ? session.interfaceName : "";
+            // PPTP needs a live OS interface. OpenVPN is a sing-box endpoint
+            // and deliberately has no interface name in userspace mode.
+            native.connected = session.connected &&
+                (native.kind == vpn::ConnectionKind::OpenVpn ||
+                 !session.interfaceName.empty());
+            native.interfaceName = native.connected &&
+                    native.kind == vpn::ConnectionKind::Pptp
+                ? session.interfaceName
+                : "";
             native.transportAddress = native.connected ? session.transportAddress : "";
+            native.nativeConfig = native.connected ? session.nativeConfig : "";
             break;
         }
         options.nativeConnections.push_back(std::move(native));

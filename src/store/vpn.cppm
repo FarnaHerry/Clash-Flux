@@ -1,8 +1,8 @@
 // vpn.cppm — clashflux.store.vpn：订阅化的原生 VPN 连接管理。
 //
-// Profile.type 决定 nativeConfig/nativeRoutes 的解释方式。PPTP/OpenVPN 是
-// 当前的原生订阅；多个原生 Profile 可以同时挂在同一个 VpnManager 中，
-// 每条连接用 profile id 隔离生命周期和系统路由。
+// Profile.type 决定 nativeConfig/nativeRoutes 的解释方式。OpenVPN 使用
+// sing-box endpoint，PPTP 保留系统原生路径；多个 Profile 可以同时挂在同一个
+// VpnManager 中，每条连接用 profile id 隔离生命周期和路由。
 export module clashflux.store.vpn;
 
 import std;
@@ -309,7 +309,7 @@ public:
             .name = profile.name,
             .kind = vpn::ConnectionKind::OpenVpn,
             .canBeMain = false,
-            .enginePreference = {vpn::EngineKind::SystemOpenVpn},
+            .enginePreference = {vpn::EngineKind::SingBox},
             .internalRoutes = splitRoutes(profile.nativeRoutes),
             .nativeConfig = profile.nativeConfig,
         };
@@ -370,16 +370,14 @@ public:
     }
 
 private:
-    // System VPNs can die independently of UI actions. Query the privileged
-    // owner, which checks the child and interface identity, before publishing
-    // a fresh snapshot. No blocking IPC is performed by UI snapshot readers.
+    // PPTP can die independently of UI actions. OpenVPN endpoint liveness is
+    // owned by the resident sing-box instance and follows the core lifecycle.
     inline void refreshSessions() {
         std::lock_guard operationLock(operationMutex_);
         for (const auto& connection : manager_.connections()) {
-            if (connection.state != vpn::ConnectionState::Connected) continue;
-            const bool alive = connection.kind == vpn::ConnectionKind::Pptp
-                ? pptp::PptpSessionAlive(connection.id)
-                : openvpn::OpenVpnSessionAlive(connection.id);
+            if (connection.state != vpn::ConnectionState::Connected ||
+                connection.kind != vpn::ConnectionKind::Pptp) continue;
+            const bool alive = pptp::PptpSessionAlive(connection.id);
             if (alive) continue;
             const std::string id = connection.id;
             blockBeforeDisconnect(id);
@@ -405,9 +403,16 @@ private:
             session.id = connection.id;
             session.connected = connection.id != unavailable &&
                 connection.state == vpn::ConnectionState::Connected;
-            session.interfaceName = session.connected ? connection.interfaceName : "";
+            session.interfaceName = session.connected &&
+                    connection.kind == vpn::ConnectionKind::Pptp
+                ? connection.interfaceName
+                : "";
             session.kind = connection.kind;
             session.transportAddress = session.connected ? connection.transportAddress : "";
+            session.nativeConfig = session.connected &&
+                    connection.kind == vpn::ConnectionKind::OpenVpn
+                ? connection.nativeConfig
+                : "";
             sessions.push_back(std::move(session));
         }
         return coreStore().updateNativeRouting(std::move(sessions), error);

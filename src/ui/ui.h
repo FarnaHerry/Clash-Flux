@@ -124,11 +124,7 @@ std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
 // 的快照/切换由 libbox bridge 提供同名能力。
 std::string ProxyGroupsSnapshot();
 bool SelectProxyLine(const std::string& group, const std::string& name);
-// Start a native speed-test data plane when Android VPN is off, then request
-// the group test. The blocking preparation is performed by the caller's task
-// thread; the UI only observes the returned result.
 bool StartProxyGroupTest(const std::string& group);
-
 // Android stop requests only enqueue the service shutdown. Call this from a
 // task thread when a caller needs to wait for the optimistic UI state to settle.
 void WaitForAndroidVpnStopped() noexcept;

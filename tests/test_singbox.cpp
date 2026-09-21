@@ -385,10 +385,10 @@ rules:
               "Windows PPTP 共存保留 strict_route 并使用确定的 TUN 别名");
     }
     auto unsupportedNative = compensation;
-    unsupportedNative.nativeConnections[0].kind = vpn::ConnectionKind::OpenVpn;
-    check(!singbox::compileConfig(unsupportedNative).error.empty(), "Windows OpenVPN 共存不得被误开放");
+    unsupportedNative.nativeConnections[0].kind = vpn::ConnectionKind::WireGuard;
+    check(!singbox::compileConfig(unsupportedNative).error.empty(), "Windows 未实现的原生 VPN 共存不得被误开放");
     unsupportedNative.tunInbound = false;
-    check(singbox::compileConfig(unsupportedNative).error.empty(), "Windows OpenVPN 独立运行不受限制");
+    check(singbox::compileConfig(unsupportedNative).error.empty(), "Windows 未实现的原生 VPN 独立运行不受 TUN 限制");
     auto customCapture = compensation;
     customCapture.profileYaml = R"({"inbounds":[{"type":"tun","route_address":["10.0.0.0/8"]}]})";
     check(!singbox::compileConfig(customCapture).error.empty(), "Windows PPTP 共存拒绝不完整的 TUN 接管范围");
@@ -418,6 +418,63 @@ rules:
     check(missingInterface["route"]["rules"] == disconnected["route"]["rules"],
           "连接无接口时规则同样暂停");
     compensation.nativeConnections[0].connected = false;
+
+    // ---- sing-box OpenVPN endpoint：多条连接并行、规则直达 endpoint ---------
+    const std::string openVpnConfig =
+        "client\n"
+        "remote first.vpn.example 443 tcp-client\n"
+        "remote second.vpn.example 1194 udp\n"
+        "remote-random\n"
+        "<ca>\n"
+        "-----BEGIN CERTIFICATE-----\n"
+        "test-ca\n"
+        "-----END CERTIFICATE-----\n"
+        "</ca>\n"
+        "<auth-user-pass>\n"
+        "alice\n"
+        "secret\n"
+        "</auth-user-pass>\n"
+        "remote-cert-tls server\n";
+    singbox::CompileOptions openVpnOptions;
+    openVpnOptions.nativeConnections = {
+        {.id = "profile:openvpn-a", .internalRoutes = {"10.20.0.0/16"},
+         .connected = true, .kind = vpn::ConnectionKind::OpenVpn,
+         .nativeConfig = openVpnConfig},
+        {.id = "profile:openvpn-b", .internalRoutes = {"10.21.0.0/16"},
+         .connected = true, .kind = vpn::ConnectionKind::OpenVpn,
+         .nativeConfig = openVpnConfig},
+    };
+    openVpnOptions.globalRules = {
+        {.match = vpn::MatchKind::Ipv4Cidr, .pattern = "10.20.0.0/16",
+         .connectionId = "profile:openvpn-a", .priority = 10},
+        {.match = vpn::MatchKind::Ipv4Cidr, .pattern = "10.21.0.0/16",
+         .connectionId = "profile:openvpn-b", .priority = 10},
+    };
+    const auto openVpnResult = singbox::compileConfig(openVpnOptions);
+    check(openVpnResult.error.empty(), "多个 OpenVPN endpoint 编译成功");
+    if (openVpnResult.error.empty()) {
+        const json openVpnJson = json::parse(openVpnResult.json);
+        check(openVpnJson["endpoints"].size() == 2,
+              "多个 OpenVPN profile 生成多个并行 endpoint");
+        check(openVpnJson["endpoints"][0].value("type", "") == "openvpn-client" &&
+                  openVpnJson["endpoints"][1].value("type", "") == "openvpn-client",
+              "OpenVPN profile 使用 sing-box openvpn-client endpoint");
+        check(openVpnJson["endpoints"][0].value("system", true) == false,
+              "OpenVPN endpoint 默认使用 sing-box 内部网络栈");
+        const std::set<std::string> endpointTags = {
+            openVpnJson["endpoints"][0].value("tag", ""),
+            openVpnJson["endpoints"][1].value("tag", ""),
+        };
+        check(endpointTags.size() == 2, "并行 OpenVPN endpoint tag 独立");
+        bool sawEndpointRoute = false;
+        for (const auto& rule : openVpnJson["route"]["rules"]) {
+            if (rule.value("ip_cidr", json::array()) == json{"10.20.0.0/16"} ||
+                rule.value("ip_cidr", json::array()) == json{"10.21.0.0/16"}) {
+                sawEndpointRoute = endpointTags.contains(rule.value("outbound", ""));
+            }
+        }
+        check(sawEndpointRoute, "全局网段规则直接指向 OpenVPN endpoint");
+    }
 
     auto catchAll = compensation;
     catchAll.globalRules = {{vpn::MatchKind::Any, "", "profile:pptp", 100}};
