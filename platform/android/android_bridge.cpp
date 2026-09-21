@@ -31,6 +31,9 @@ std::atomic<bool> g_system_dark{false};
 // Owned by ClashVpnService, never inferred from a saved setting.
 // 0=closed, 1=building, 2=attached, 3=failed.
 std::atomic<int> g_vpn_state{0};
+// The libbox lifecycle is independent from the Android VPN/TUN lifecycle.
+// 0=stopped, 1=starting, 2=running, 3=failed.
+std::atomic<int> g_core_state{0};
 
 void log_android(const char* message, bool error = false) noexcept {
 #if defined(__ANDROID__)
@@ -126,11 +129,11 @@ Java_dev_farna_clashflux_MainActivity_nativeStartCore(JNIEnv*, jclass) {
             try {
                 auto& core = store::coreStore();
                 core.init();
-                // Android's real data plane is created only after the user
-                // grants VpnService consent. Preparing a config here makes
-                // the UI race that service and leaves the native state stuck
-                // at Stopped, so startup only initializes the store/monitor.
-                log_android("Android native store initialized; waiting for VPN consent");
+                // Match desktop startup: launch libbox with the selected
+                // profile and no TUN. The VPN service is promoted later only
+                // when the user explicitly enables the Android tunnel.
+                core.startCore(store::profilesStore().selectedYaml(), false, false);
+                log_android("Android sing-box core started without VPN/TUN");
 
                 // Keep the process state fresh even when the first HuxerUI
                 // frame is delayed. UI pages independently poll snapshots and
@@ -160,9 +163,13 @@ Java_dev_farna_clashflux_MainActivity_nativeSetSystemDark(JNIEnv*, jclass,
 extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_MainActivity_nativeVpnStartCancelled(JNIEnv*, jclass) {
     // VpnService.prepare 的授权框被取消时，不能留下一个看似已启用的偏好。
+    const bool noTunCoreWasRunning =
+        g_vpn_state.load() == 0 && g_core_state.load() == 2;
     g_vpn_state.store(0);
+    if (!noTunCoreWasRunning) g_core_state.store(0);
     try {
-        store::coreStore().setAndroidRuntimeState(0, "");
+        store::coreStore().setAndroidRuntimeState(
+            noTunCoreWasRunning ? 2 : 0, "");
         store::coreStore().setSetting("core.tun_enabled", "false");
     } catch (...) {
         log_android("Failed to roll back VPN setting after declined consent", true);
@@ -173,7 +180,10 @@ extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_MainActivity_nativeVpnStartFailed(JNIEnv* environment,
                                                             jclass,
                                                             jstring message) {
-    g_vpn_state.store(3);
+    const bool noTunCoreWasRunning =
+        g_vpn_state.load() == 0 && g_core_state.load() == 2;
+    g_vpn_state.store(noTunCoreWasRunning ? 0 : 3);
+    if (!noTunCoreWasRunning) g_core_state.store(3);
     std::string text = "Android VPN 启动失败";
     if (environment != nullptr && message != nullptr) {
         if (const char* value = environment->GetStringUTFChars(message, nullptr)) {
@@ -184,7 +194,8 @@ Java_dev_farna_clashflux_MainActivity_nativeVpnStartFailed(JNIEnv* environment,
     log_android(text.c_str(), true);
     try {
         store::coreStore().stopAndroidApiStreams();
-        store::coreStore().setAndroidRuntimeState(3, text);
+        store::coreStore().setAndroidRuntimeState(
+            noTunCoreWasRunning ? 2 : 3, text);
         store::coreStore().setSetting("core.tun_enabled", "false");
     } catch (...) {
         log_android("Failed to persist Android VPN startup failure", true);
@@ -199,9 +210,28 @@ extern "C" bool clashflux_android_system_dark() noexcept {
 // ---- sing-box VPN state ----------------------------------------------------
 
 extern "C" JNIEXPORT void JNICALL
+Java_dev_farna_clashflux_ClashVpnService_nativeCoreState(JNIEnv* environment,
+                                                          jclass,
+                                                          jint state,
+                                                          jstring message) {
+    g_core_state.store(state);
+    std::string text;
+    if (message != nullptr) {
+        if (const char* value = environment->GetStringUTFChars(message, nullptr)) {
+            text = value;
+            environment->ReleaseStringUTFChars(message, value);
+        }
+    }
+    log_android(("Core state=" + std::to_string(state) + " " + text).c_str(),
+                state == 3);
+    try { store::coreStore().setAndroidRuntimeState(state, text); } catch (...) {}
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_ClashVpnService_nativeVpnState(JNIEnv* environment, jclass,
                                                         jint state, jstring message) {
     g_vpn_state.store(state);
+    g_core_state.store(state);
     std::string text;
     if (message != nullptr) {
         if (const char* value = environment->GetStringUTFChars(message, nullptr)) {
@@ -246,7 +276,32 @@ Java_dev_farna_clashflux_ClashVpnService_nativeVpnStats(JNIEnv*, jclass,
     }
 }
 
+extern "C" int clashflux_android_core_state() noexcept {
+    return g_core_state.load();
+}
+
 extern "C" int clashflux_android_vpn_state() noexcept { return g_vpn_state.load(); }
+
+extern "C" bool clashflux_android_start_core() noexcept {
+    std::lock_guard lock(g_mutex);
+    bool attached = false;
+    JNIEnv* environment = current_environment(attached);
+    if (environment == nullptr || g_activity_class == nullptr) {
+        if (attached) g_vm->DetachCurrentThread();
+        return false;
+    }
+    bool result = false;
+    if (jmethodID method = environment->GetStaticMethodID(
+            g_activity_class, "startCoreOnly", "()Z")) {
+        result = environment->CallStaticBooleanMethod(g_activity_class, method) == JNI_TRUE;
+        if (environment->ExceptionCheck()) {
+            environment->ExceptionClear();
+            result = false;
+        }
+    }
+    if (attached) g_vm->DetachCurrentThread();
+    return result;
+}
 
 // 设置页 VPN 开关 → MainActivity.startVpn/stopVpn（consent 弹窗/前台服务）。
 extern "C" void clashflux_android_start_vpn() noexcept {

@@ -45,6 +45,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private static final String TAG = "ClashFlux", CHANNEL_ID = "clashflux_vpn";
     private static final int NOTIFICATION_ID = 1;
     static final String EXTRA_SPEED_TEST_ONLY = "speed_test_only";
+    static final String EXTRA_CORE_ONLY = "core_only";
     private static final int URL_TEST_BATCH_SIZE = 12;
     private static final long URL_TEST_BATCH_TIMEOUT_MS = 16000L;
     private static final long URL_TEST_POLL_MS = 150L;
@@ -65,6 +66,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private boolean libboxReady;
     private boolean failureReported;
     private volatile boolean speedTestOnly;
+    private volatile boolean coreOnly;
     private volatile boolean starting;
     private volatile boolean startRequested;
     private final AtomicBoolean stopRequested = new AtomicBoolean();
@@ -86,6 +88,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         return thread;
     });
     static { System.loadLibrary(BuildConfig.HUXERUI_APP_LIBRARY); }
+    private static native void nativeCoreState(int state, String message);
     private static native void nativeVpnState(int state, String message);
     private static native void nativeVpnStats(long uploadRate, long downloadRate,
                                               long uploadTotal, long downloadTotal,
@@ -122,13 +125,20 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         }
         final boolean requestedSpeedTest = i != null
                 && i.getBooleanExtra(EXTRA_SPEED_TEST_ONLY, false);
-        if (requestedSpeedTest) {
+        final boolean requestedCoreOnly = i != null
+                && i.getBooleanExtra(EXTRA_CORE_ONLY, false);
+        if (requestedCoreOnly) {
+            coreOnly = true;
+            speedTestOnly = false;
+        } else if (requestedSpeedTest) {
             speedTestOnly = true;
+            coreOnly = false;
         } else if (i != null) {
-            // A real VPN request promotes an already-running no-TUN speed
+            // A real VPN request promotes an already-running no-TUN core
             // service back to the normal data plane on the next start.
-            if (speedTestOnly && started && !starting) {
+            if ((speedTestOnly || coreOnly) && started && !starting) {
                 speedTestOnly = false;
+                coreOnly = false;
                 stopRequested.set(false);
                 starting = true;
                 new Thread(() -> {
@@ -143,6 +153,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 return START_STICKY;
             }
             speedTestOnly = false;
+            coreOnly = false;
         }
         // stopCurrent() may have stopped the data plane while Android reused
         // this service instance. A new start command is a fresh lifecycle.
@@ -197,9 +208,16 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         }
     }
     private void startDataPlane() {
-        MainActivity.appLog("开始创建 sing-box VPN 数据面", false);
-        nativeVpnState(1, "正在启动 sing-box VPN 数据面");
-        updateForegroundNotification("正在启动 sing-box VPN 隧道");
+        final boolean noTun = speedTestOnly || coreOnly;
+        MainActivity.appLog(noTun ? "开始创建无 TUN 的 sing-box 内核"
+                                  : "开始创建 sing-box VPN 数据面", false);
+        if (noTun) {
+            nativeCoreState(1, "正在启动无 TUN 的 sing-box 内核");
+            updateForegroundNotification("sing-box 内核启动中（未启用 VPN）");
+        } else {
+            nativeVpnState(1, "正在启动 sing-box VPN 数据面");
+            updateForegroundNotification("正在启动 sing-box VPN 隧道");
+        }
         try {
             if (!libboxReady) throw new IllegalStateException("libbox 尚未初始化完成");
             // The native store compiles the selected profile into sing-box
@@ -237,11 +255,17 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 return;
             }
             started = true;
-            if (speedTestOnly) {
+            if (noTun) {
                 BootReceiver.setVpnActive(this, false);
-                nativeVpnState(0, "测速内核已启动（未启用 VPN 代理）");
-                updateForegroundNotification("sing-box 测速内核运行中（未启用 VPN）");
-                MainActivity.appLog("测速内核已启动，未启用 Android VPN/TUN", false);
+                nativeCoreState(2, coreOnly
+                        ? "sing-box 内核已启动（未启用 VPN/TUN）"
+                        : "测速内核已启动（未启用 VPN/TUN）");
+                updateForegroundNotification(coreOnly
+                        ? "sing-box 内核运行中（未启用 VPN）"
+                        : "sing-box 测速内核运行中（未启用 VPN）");
+                MainActivity.appLog(coreOnly
+                        ? "sing-box 内核已启动，未启用 Android VPN/TUN"
+                        : "测速内核已启动，未启用 Android VPN/TUN", false);
             } else {
                 BootReceiver.setVpnActive(this, true);
                 nativeVpnState(2, "sing-box 已附着 TUN；socket protect 已启用");
@@ -805,10 +829,14 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     }
     private void close(String msg) { close(msg, true); }
     private void close(String msg, boolean reportStopped) {
+        final boolean noTun = speedTestOnly || coreOnly;
         startRequested = false;
         MainActivity.appLog("VPN 数据面关闭：" + msg, false);
         if (!started && tunnel == null && server == null) {
-            if (reportStopped && !failureReported) nativeVpnState(0, msg);
+            if (reportStopped && !failureReported) {
+                if (noTun) nativeCoreState(0, msg);
+                else nativeVpnState(0, msg);
+            }
             return;
         }
         started = false;
@@ -832,7 +860,10 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         try { if (tunnel != null) tunnel.close(); } catch (Exception ignored) {}
         tunnel = null;
         nativeVpnStats(0, 0, 0, 0, 0);
-        if (reportStopped && !failureReported) nativeVpnState(0, msg);
+        if (reportStopped && !failureReported) {
+            if (noTun) nativeCoreState(0, msg);
+            else nativeVpnState(0, msg);
+        }
     }
 
     /** Stops the current data plane before asking Android to destroy the service. */
@@ -1077,7 +1108,8 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         Log.e(TAG, msg);
         MainActivity.appLog(msg, true);
         close(msg, false);
-        nativeVpnState(speedTestOnly ? 0 : 3, msg);
+        if (speedTestOnly || coreOnly) nativeCoreState(3, msg);
+        else nativeVpnState(3, msg);
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }

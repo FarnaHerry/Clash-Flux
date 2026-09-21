@@ -96,8 +96,8 @@ public final class MainActivity extends HuxerUIActivity {
         // label in the settings page. Android 13+ asks for notification access
         // before the service is started so the keep-alive state is observable.
         requestNotificationAction(PENDING_CORE_SERVICE);
-        Log.i(TAG, "Android shell initialized; sing-box waits for VPN consent");
-        appLog("Android 外壳已初始化，等待 VPN 系统授权", false);
+        Log.i(TAG, "Android shell initialized; sing-box core requested without VPN/TUN");
+        appLog("Android 外壳已初始化，内核已请求启动，TUN 保持关闭", false);
     }
 
     private static boolean isSystemDarkMode() {
@@ -287,6 +287,36 @@ public final class MainActivity extends HuxerUIActivity {
         else start.run();
     }
 
+    /** Starts the resident libbox core without requesting VPN consent or TUN. */
+    public static boolean startCoreOnly() {
+        Context context = applicationContext;
+        MainActivity activity = current;
+        if (activity != null) context = activity.getApplicationContext();
+        if (context == null) {
+            appLog("无法启动 Android 内核：Activity 尚未就绪", true);
+            return false;
+        }
+        final Context serviceContext = context;
+        Runnable start = () -> {
+            try {
+                Intent intent = new Intent(serviceContext, ClashVpnService.class);
+                intent.putExtra(ClashVpnService.EXTRA_CORE_ONLY, true);
+                if (Build.VERSION.SDK_INT >= 26) {
+                    serviceContext.startForegroundService(intent);
+                } else {
+                    serviceContext.startService(intent);
+                }
+                appLog("已请求启动无 TUN 的常驻 sing-box 内核", false);
+            } catch (RuntimeException error) {
+                Log.e(TAG, "Unable to start the resident libbox core", error);
+                appLog("Android 内核启动失败：" + error.getMessage(), true);
+            }
+        };
+        if (activity != null) activity.runOnUiThread(start);
+        else start.run();
+        return true;
+    }
+
     public static boolean selectOutbound(String group, String name) {
         return ClashVpnService.selectOutbound(group, name);
     }
@@ -380,7 +410,7 @@ public final class MainActivity extends HuxerUIActivity {
         final int actions = pendingNotificationActions;
         pendingNotificationActions = 0;
         if ((actions & (PENDING_CORE_SERVICE | PENDING_BATTERY)) != 0) {
-            startCoreService();
+            startResidentCoreService();
         }
         if ((actions & PENDING_BATTERY) != 0) {
             requestBatteryOptimization();
@@ -390,7 +420,7 @@ public final class MainActivity extends HuxerUIActivity {
         }
     }
 
-    private void startCoreService() {
+    private void startResidentCoreService() {
         try {
             Intent intent = new Intent(this, CoreService.class);
             if (Build.VERSION.SDK_INT >= 26) {

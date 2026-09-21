@@ -139,12 +139,11 @@ const char* stateName(CoreState s) {
 
 singbox::CompileResult generateConfig(singbox::CompileOptions options) {
 #if defined(__ANDROID__)
-    // Android 的 TUN 由 VpnService 建立：libbox 读取 tun inbound 后经
-    // PlatformInterface::openTun 回调拿 fd，因此配置里恒含 tun inbound。
+    // Android 的 TUN 由 VpnService 建立：只有请求 TUN 时才生成 tun inbound，
+    // 普通内核常驻/测速使用同一个 libbox 服务但不创建系统 VPN 接口。
     // IPv6 是否启用由持久化设置传入；VpnService 会按 libbox 返回的 IPv6
     // 地址与路由配置接口。严格路由仍关闭，避免截断系统级分流。
-    options.tunInbound = true;
-    options.tunStrictRoute = false;
+    if (options.tunInbound) options.tunStrictRoute = false;
 #endif
     return singbox::compileConfig(options);
 }
