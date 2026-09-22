@@ -252,8 +252,9 @@ huxerui::LayoutResult HomeGrid::Measure(huxerui::LayoutContext& context,
         const float height =
             kHomeGridUnitHeight * static_cast<float>(placement.height) +
             kHomeGridGap * static_cast<float>(placement.height - 1);
-        context.Measure(*placement.child,
-                        huxerui::Constraints{width, width, height, height});
+        static_cast<void>(context.Measure(
+            *placement.child,
+            huxerui::Constraints{width, width, height, height}));
         result.Place(*placement.child,
                      huxerui::Point{
                          (column_width + kHomeGridGap) *
@@ -977,17 +978,17 @@ std::string HomeKernelStatusText(const HomeState& s) {
         },
         0);
 
-    const int state = vpn_state.Get();
+    const int vpnStatus = vpn_state.Get();
     const std::string status =
-        state == 2   ? "已连接"
-        : state == 1 ? "正在连接"
-        : state == 3 ? "启动失败"
-                     : "未连接";
+        vpnStatus == 2   ? "已连接"
+        : vpnStatus == 1 ? "正在连接"
+        : vpnStatus == 3 ? "启动失败"
+                         : "未连接";
     const huxerui::Color statusColor =
-        state == 2   ? theme.colors.primary
-        : state == 1 ? huxerui::Color::Rgb(234, 179, 8)
-        : state == 3 ? theme.colors.error
-                     : theme.colors.on_surface_variant;
+        vpnStatus == 2   ? theme.colors.primary
+        : vpnStatus == 1 ? huxerui::Color::Rgb(234, 179, 8)
+        : vpnStatus == 3 ? theme.colors.error
+                         : theme.colors.on_surface_variant;
 
     return huxerui::Column {
         HomeCardHeading("隧道状态"),
