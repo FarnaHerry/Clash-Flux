@@ -90,7 +90,7 @@ cmake --build build --target clash-flux
 | `clashflux.sysproxy` | `src/sysproxy.cppm` | Linux 系统代理写入：KDE kioslaverc（kwriteconfig6/5 + dbus 通知 KIO）/ GNOME gsettings；阻塞 shell 调用，UI 必须 RunOnTaskThread |
 | `clashflux.service` | `src/service.cppm` | 统一特权服务：root systemd 单元 `clash-flux.service` + `/run/clash-flux/service.sock` 行协议（sing-box START/STOP/STATUS/VERSION + PPTP/OpenVPN AVAILABLE/START/ROUTES/STOP；START 只传 config.json 绝对路径）；由同一 daemon 管理 Linux pppd/openvpn/ip；install/uninstall 需 root（GUI 经 pkexec 重入本二进制 `service install`），socket 仅安装用户 UID + root 可访问 |
 | `clashflux.cli` | `src/cli.cppm` | 完整 CLI：`cli::run(args)`，子命令 version/service/core/mode/tun/proxy/profile/help；platform/*/main.cpp 无参 → GUI、有参 → CLI |
-| `clashflux.store.core` | `src/store/core_store.cppm` | 编排单例 `coreStore()`：持有 Db/ClashApi/CoreProcess/CoreStreams；startCore/stopCore/applyMode/refreshRuntime/checkAlive；settings KV；TUN 切换 = 重新编译 config.json + 自动重启内核；内核三形态托管：**服务托管 → 接管外部实例（/version 探测 + core.pid pidfile）→ 直接 spawn** |
+| `clashflux.store.core` | `src/store/core_store.cppm` | 编排单例 `coreStore()`：持有 Db/ClashApi/CoreProcess/CoreStreams；startCore/stopCore/applyMode/refreshRuntime/checkAlive；settings KV；内核启停与系统代理/TUN/出站模式解耦（开关只记意图，不隐式拉起内核）；TUN 切换 = 重新编译 config.json + 自动重启内核；内核三形态托管：**服务托管 → 接管外部实例（/version 探测 + core.pid pidfile）→ 直接 spawn** |
 | `clashflux.store.profiles` | `src/store/profiles.cppm` | 订阅单例 `profilesStore()`：importUrl/importFile/refresh/activate/remove（activate/remove 触发内核重启） |
 | `clashflux.openvpn` | `src/openvpn.cppm/.cpp` | OpenVPN CLI 配置校验、Linux root/Windows CLI 会话、tun 接口与内网 CIDR 路由；托管模式禁止配置自带 route/up/down 脚本 |
 | `clashflux.store.vpn` | `src/store/vpn.cppm` | PPTP/OpenVPN 连接生命周期 + 全局 `VpnPolicy` 持久化；`ProfileConnectionId` 是跨引擎稳定连接引用，原生连接建连时将 IPv4 全局规则交给对应隧道接口 |
@@ -177,6 +177,14 @@ cmake --build build --target clash-flux
     在组合函数每次重组时直接 `Hide()`。日志、连接、规则等信息列表统一通过
     `UnifiedListRow` 管理表面/间距/圆角；紧凑视口禁止复用桌面固定列宽。全量推送列表
     页面切换后应读取最近快照并按帧去重，不能只依赖“新事件”才能恢复显示。
+13. **首页是可自定义网格**：卡片目录在 `src/ui/home_page.cpp` 文件作用域用
+    `#if` 分平台（桌面含系统代理/TUN，移动端含隧道状态/后台保活）；每张卡片用
+    `.LayoutValue<HomeCardSpan>` 声明宽高（各 1..4 格），`HomeGrid` 自定义布局按
+    页面逻辑宽度分 1..4 列做左上紧凑打包并给卡片紧约束——编辑态与运行态共用同一
+    套算法，格子尺寸完全一致（所见即所得）。布局存 `home.layout.*`（v3 前缀，
+    加载旧格式时保留卡片与顺序、补齐新卡并刷新为默认尺寸），编辑态只改会话
+    State，点保存才写库。**首页滚动内容里不要声明 `Focusable(true)`**：运行时会把
+    初始焦点节点滚入视野，导致首页一打开就被滚到中途。
 
 ## sing-box 交互要点
 
@@ -202,11 +210,21 @@ cmake --build build --target clash-flux
   `nativeRoutes`，后者保存 `vpn.global_policy`（默认主连接 + 多条域名/IP/CIDR →
   连接规则）。全局策略由 `VpnManager` 统一选举，原生连接建立时再安装对应网段；
   不把某个内核 `/rules` 快照误当成所有订阅的规则。
-- 系统代理（`proxy.system_enabled`）：内核就绪后重指当前端口；stopCore 先
-  摘代理再停内核（防系统指向死端口断网）。TUN（`core.tun_enabled`）：
-  clash_api 不支持热更 tun——运行中切换会重新编译 config.json 并自动重启
-  内核（重启失败回滚设置并恢复无 TUN 运行）；allow-lan/log-level 同理只能
-  重启生效（设置页按“下次启动生效”提示）。
+- **内核启停与流量接管解耦**（出站模式 / 系统代理 / TUN / 正式启动各自处理
+  边界，任一方都不隐式拉起内核）：内核只有两个启动入口——首页右下角悬浮按钮，
+  以及设置页「启动时自动运行内核」（`app.auto_run`，默认关，桌面入口据此决定
+  是否 `startCore`）。启动内核 ≠ 接管流量：只开 127.0.0.1 混合端口 + clash_api，
+  代理组/测速/连接/日志都能用；接管只由下面两个开关产生。
+- 系统代理（`proxy.system_enabled`）：开关只记意图——内核没跑时仅写设置（下次
+  启动内核时由 `startCore` 恢复），内核在跑才实时写/撤 OS 代理；关闭时只要当前
+  系统代理是我方写入的就撤销（与内核状态无关，防系统指向死端口），指向其他软件
+  时不动系统。stopCore 仍先摘代理再停内核。
+- TUN（`core.tun_enabled`）：内核在跑才重编译 config.json + 重启内核生效
+  （clash_api 不支持热更 tun；重启失败回滚设置并恢复无 TUN 运行）；内核没跑时
+  只写配置，等启动入口拉起内核时带上。allow-lan/log-level 同理只能重启生效
+  （设置页按“下次启动生效”提示）。
+- 代理页测速只消费内核结果，内核没跑时直接提示「先在首页右下角启动内核」，
+  不再隐式拉起内核（`StartProxyGroupTest`）。
 - 测速：单节点 `GET /proxies/{name}/delay`；sing-box 无组聚合端点，
   `ClashApi::groupDelay` 取组成员后并发 fan-out（≤8 线程）逐节点测速，合并成
   与旧 mihomo 聚合端点相同的 {节点: 延迟} JSON（失败项记 0 = UI 超时）。
@@ -214,9 +232,10 @@ cmake --build build --target clash-flux
 - 日志级别词表：UI/设置存 mihomo 风格 `silent/error/warning/info/debug`；
   配置生成映射 `warning→warn`、`silent→disabled`，WS 订阅 `?level=` 同步映射，
   `stream.cpp` 把内核推送的 `warn/trace` 归一回 UI 词表。
-- 内核生命周期：桌面入口（`platform_app.cpp`）在启动时无条件 `startCore`，没有选中
-  订阅就用空 profile 的最小配置让控制端口/REST 就绪；TUN 与系统代理只按设置恢复，
-  不再决定内核是否启动。`coreAlive()` 对接管/驻留形态用 `core::pidAlive`（Windows）
+- 内核生命周期：桌面入口（`platform_app.cpp`）先 `stopCore()` 清理残留，再按
+  `app.auto_run`（默认 false）决定是否 `startCore`；拉起时按已记录的
+  TUN/系统代理意图恢复接管，没有选中订阅就用空 profile 的最小配置让控制端口/REST
+  就绪。TUN 与系统代理不反过来决定内核是否启动。`coreAlive()` 对接管/驻留形态用 `core::pidAlive`（Windows）
   或 `/proc/<pid>/stat` 且排除僵尸进程（POSIX），detached 形态的诊断尾部读
   `<workDir>/core.log` 本次启动新增的部分。`core::stripAnsi` 统一去掉 sing-box
   输出里的颜色转义后再进 UI/CLI 文本。
