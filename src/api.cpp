@@ -202,6 +202,18 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(easy, CURLOPT_USERAGENT, "clash-flux/0.1");
+    // 失败原因（OpenSSL 文本，例如 "SSL certificate problem: unable to get
+    // local issuer certificate"）比 curl_easy_strerror 的概括更有诊断价值。
+    char errorDetail[CURL_ERROR_SIZE]{};
+    curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, errorDetail);
+#if defined(_WIN32) && defined(CURLSSLOPT_NATIVE_CA)
+    // Windows 没有 /etc/ssl 这类系统 CA 路径，vendored curl/OpenSSL 也不自带
+    // CA bundle：默认信任链为空，任何 https 订阅都会在握手阶段失败
+    // （CURLE_PEER_FAILED_VERIFICATION）。改为使用系统「受信任的根证书颁发
+    // 机构 + 中间证书颁发机构」存储，与系统浏览器/Windows 的信任结论一致。
+    curl_easy_setopt(easy, CURLOPT_SSL_OPTIONS,
+                     static_cast<long>(CURLSSLOPT_NATIVE_CA));
+#endif
     if (options.allowInvalidCert) {
         // 「允许无效证书（危险）」：跳过对端校验（自签/过期订阅源兜底）。
         curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 0L);
@@ -221,7 +233,21 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
         result.ok = result.status >= 200 && result.status < 300;
         if (!result.ok) result.error = std::format("HTTP {}", result.status);
     } else {
-        result.error = curl_easy_strerror(code);
+        const std::string detail = errorDetail[0] != '\0'
+                                       ? std::string(errorDetail)
+                                       : std::string(curl_easy_strerror(code));
+        if (code == CURLE_PEER_FAILED_VERIFICATION ||
+            code == CURLE_SSL_CACERT_BADFILE) {
+            // 证书链不被信任：系统根证书已参与校验（Windows 走系统信任库），
+            // 剩下的可能就是自签/私有 CA/过期证书，交给订阅级开关处理。
+            result.error = std::format(
+                "TLS 证书校验失败（curl {}）：{}；可在订阅编辑中开启"
+                "「允许无效证书（危险）」后重试",
+                static_cast<int>(code), detail);
+        } else {
+            result.error = std::format("{}（curl {}）", detail,
+                                       static_cast<int>(code));
+        }
     }
     curl_easy_cleanup(easy);
     if (!result.ok) {

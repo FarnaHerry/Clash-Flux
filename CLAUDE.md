@@ -215,7 +215,10 @@ cmake --build build --target clash-flux
   配置生成映射 `warning→warn`、`silent→disabled`，WS 订阅 `?level=` 同步映射，
   `stream.cpp` 把内核推送的 `warn/trace` 归一回 UI 词表。
 - 订阅下载双通道：桌面走 vendored curl（`ClashApi::downloadToFile`，支持订阅级
-  代理/无效证书选项）；Android 的 curl 无 TLS（NDK 无 OpenSSL，https 会报
+  代理/无效证书选项）；Windows 的 curl/OpenSSL 既无系统 CA 路径也不带 CA bundle，
+  下载句柄固定开 `CURLSSLOPT_NATIVE_CA` 使用 Windows 证书存储，失败时回传
+  `CURLOPT_ERRORBUFFER` 的 OpenSSL 文本 + curl 错误码，证书类错误再附「允许无效
+  证书」提示；Android 的 curl 无 TLS（NDK 无 OpenSSL，https 会报
   Unsupported protocol），订阅导入/手动刷新/自动更新全走 HuxerUI
   `HttpClient`（平台原生栈，自带 TLS/证书/系统代理）。平台选择收束在
   `AndroidImportProfile`、`AndroidRefreshProfile` 和 Android 刷新泵等平台函数内，
