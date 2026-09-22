@@ -15,8 +15,10 @@ C++ 实现。订阅沿用 Clash YAML 格式，由内置编译器转换为 sing-b
 - 代理页：策略组卡片、节点切换、整组测速（延迟着色）
 - 多重规则 / 连接 / 日志：按订阅查看各自规则，使用全局路由规则把域名/IP/CIDR
   分配给不同连接；连接快照（可逐条/全部关闭）、实时日志流
-- 原生 VPN 订阅：PPTP 保留系统拨号/特权服务路径；OpenVPN `.ovpn` 由
-  sing-box 1.14 的 `openvpn-client` endpoint 承载，可同时启用多个连接；内网
+- 原生 VPN 订阅：PPTP 保留系统拨号/特权服务路径（Windows 走系统 RAS，条目固定
+  使用 MS-CHAPv2，MPPE-128 由订阅开关控制：勾选强制、不勾选按服务端要求协商）；
+  OpenVPN `.ovpn` 由 sing-box 1.14 的 `openvpn-client` endpoint 承载，可同时
+  启用多个连接；内网
   CIDR 由 sing-box 路由规则直接指向各 endpoint，PPTP 才由平台后端安装系统路由
 - 内核控制：自动启停、出站模式（规则/全局/直连）、混合端口、局域网连接、日志级别
 - 订阅转换：Clash YAML → sing-box JSON 编译器（ss/vmess/vless/trojan/hysteria2/
