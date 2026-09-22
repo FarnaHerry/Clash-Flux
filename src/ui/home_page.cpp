@@ -1019,18 +1019,14 @@ std::string HomeKernelStatusText(const HomeState& s) {
 
 // Android 后台保活：电池优化豁免状态 + 申请入口（自洽管理自己的轮询与提示）。
 [[huxerui::composable]] huxerui::View AndroidHomeBackgroundCard() {
-    const huxerui::ApplicationHandle application = huxerui::UseApplication();
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto battery_ignored = huxerui::UseState(AndroidIsIgnoringBattery());
 
-    // 授权页会暂时遮住 Activity；回到前台立即重读系统状态。
-    application.OnLifecycleChange(
-        [battery_ignored](huxerui::ApplicationLifecycleState state) {
-            if (state == huxerui::ApplicationLifecycleState::Active) {
-                battery_ignored = AndroidIsIgnoringBattery();
-            }
-        });
+    // 注意：这里不能用 application.OnLifecycleChange()——HuxerUI 每个进程只允许
+    // 一个 application lifecycle handler（Android 设置页已经连了一个），第二个会
+    // 在下一帧抛「application lifecycle handler is already connected」直接闪退。
+    // 回到前台的状态刷新由下面的 2s 轮询 + 开关自身的 OnChanged 重读覆盖。
 
     huxerui::Lifecycle(
         [tasks, battery_ignored] {
