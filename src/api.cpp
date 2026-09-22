@@ -236,17 +236,18 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
         const std::string detail = errorDetail[0] != '\0'
                                        ? std::string(errorDetail)
                                        : std::string(curl_easy_strerror(code));
+        // 刻意用普通拼接而不是 std::format：clang-21/libc++ 在为这些实参组合做
+        // 重载解析时会实例化宽字符候选 basic_format_string<wchar_t, …>，而
+        // formatter<std::string, wchar_t> 被 libc++ 显式禁用，直接硬错误编译失败。
+        const std::string codeText = std::to_string(static_cast<int>(code));
         if (code == CURLE_PEER_FAILED_VERIFICATION ||
             code == CURLE_SSL_CACERT_BADFILE) {
             // 证书链不被信任：系统根证书已参与校验（Windows 走系统信任库），
             // 剩下的可能就是自签/私有 CA/过期证书，交给订阅级开关处理。
-            result.error = std::format(
-                "TLS 证书校验失败（curl {}）：{}；可在订阅编辑中开启"
-                "「允许无效证书（危险）」后重试",
-                static_cast<int>(code), detail);
+            result.error = "TLS 证书校验失败（curl " + codeText + "）：" + detail +
+                           "；可在订阅编辑中开启「允许无效证书（危险）」后重试";
         } else {
-            result.error = std::format("{}（curl {}）", detail,
-                                       static_cast<int>(code));
+            result.error = detail + "（curl " + codeText + "）";
         }
     }
     curl_easy_cleanup(easy);
