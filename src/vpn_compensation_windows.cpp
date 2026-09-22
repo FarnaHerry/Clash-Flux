@@ -18,8 +18,35 @@ import std;
 namespace vpn::compensation {
 namespace {
 
-std::string winError(std::string_view operation, ULONG status) {
-    return std::format("{}（Windows 错误码 {}，修改路由需要管理员权限）", operation, status);
+// 错误文本必须给出真实原因：IP Helper 的路由操作并不都需要管理员权限
+// （5 = ACCESS_DENIED 才需要），把每个失败都归因于提权会让用户误判。
+std::string winError(std::string_view operation, std::string_view detail,
+                     ULONG status) {
+    std::string_view note;
+    switch (status) {
+    case ERROR_ACCESS_DENIED:
+        note = "，需要管理员权限";
+        break;
+    case ERROR_OBJECT_ALREADY_EXISTS:
+        note = "，系统已存在相同接口/网段/下一跳的路由";
+        break;
+    case ERROR_INVALID_PARAMETER:
+        note = "，接口或网关参数无效";
+        break;
+    case ERROR_NOT_FOUND:
+        note = "，接口、网关或路由不存在";
+        break;
+    case ERROR_NOT_SUPPORTED:
+        note = "，系统不支持该路由操作";
+        break;
+    default:
+        break;
+    }
+    if (detail.empty()) {
+        return std::format("{}（Windows 错误码 {}{}）", operation, status, note);
+    }
+    return std::format("{}（{}，Windows 错误码 {}{}）", operation, detail, status,
+                       note);
 }
 
 std::string addressText(const IN_ADDR& address) {
@@ -53,12 +80,17 @@ WindowsRouteRegistry& registry() {
             auto row = nativeRow(route);
             const auto status = CreateIpForwardEntry2(&row);
             if (status == NO_ERROR) return RouteCreation::Created;
-            if (status == ERROR_OBJECT_ALREADY_EXISTS || status == ERROR_ALREADY_EXISTS) {
-                // Never silently borrow a route with a different cost.
-                if (GetIpForwardEntry2(&row) == NO_ERROR && row.Metric == route.metric)
+            if (status == ERROR_OBJECT_ALREADY_EXISTS) {
+                // 同接口/网段/下一跳的路由已经存在（常见来源：上次进程异常退出
+                // 留下的路由，或系统/上一次连接自己装的），只是 metric 不同。
+                // 目标「该网段走这个接口」已经达成，直接借用即可：不改写别人的
+                // metric，释放时 remove 也只会删自己建的那条。旧实现把它当成
+                // 失败并报「需要管理员权限」，管理员身份下也无法连接 PPTP。
+                auto existing = row;
+                if (GetIpForwardEntry2(&existing) == NO_ERROR)
                     return RouteCreation::Borrowed;
             }
-            error = winError("安装 Windows 补偿路由失败", status);
+            error = winError("安装 Windows 补偿路由失败", route.destination, status);
             return RouteCreation::Failed;
         },
         [](const WindowsRoute& route) {
@@ -72,7 +104,7 @@ WindowsRouteRegistry& registry() {
 std::optional<std::vector<MIB_IPFORWARD_ROW2>> routeTable(std::string& error) {
     MIB_IPFORWARD_TABLE2* table = nullptr;
     const auto status = GetIpForwardTable2(AF_INET, &table);
-    if (status != NO_ERROR) { error = winError("读取 IPv4 路由表失败", status); return {}; }
+    if (status != NO_ERROR) { error = winError("读取 IPv4 路由表失败", {}, status); return {}; }
     const std::unique_ptr<MIB_IPFORWARD_TABLE2, decltype(&FreeMibTable)> owner(table, &FreeMibTable);
     std::vector<MIB_IPFORWARD_ROW2> rows(table->Table, table->Table + table->NumEntries);
     return rows;
@@ -212,7 +244,7 @@ std::optional<TransportLease> PrepareWindowsTransport(std::string_view host, std
                     const auto address = addressText(value);
                     if (SelectPhysicalRoute(address, routes)) addresses.push_back(address);
                 }
-            } else error = winError("通过物理 DNS 解析 VPN 服务器失败", status);
+            } else error = winError("通过物理 DNS 解析 VPN 服务器失败", {}, status);
             if (records) DnsRecordListFree(records, DnsFreeRecordList);
             if (!addresses.empty()) break;
         }
@@ -268,7 +300,7 @@ RouteLease PrepareWindowsTun(std::string_view tunInterface,
     std::vector<std::string> effectiveExclusions(exclusions.begin(), exclusions.end());
     MIB_UNICASTIPADDRESS_TABLE* localAddresses = nullptr;
     const auto addressStatus = GetUnicastIpAddressTable(AF_INET, &localAddresses);
-    if (addressStatus != NO_ERROR) { error = winError("读取本机 IPv4 地址失败", addressStatus); return {}; }
+    if (addressStatus != NO_ERROR) { error = winError("读取本机 IPv4 地址失败", {}, addressStatus); return {}; }
     const std::unique_ptr<MIB_UNICASTIPADDRESS_TABLE, decltype(&FreeMibTable)> addressesOwner(localAddresses, &FreeMibTable);
     for (ULONG index = 0; index < localAddresses->NumEntries; ++index)
         effectiveExclusions.push_back(addressText(localAddresses->Table[index].Address.Ipv4.sin_addr) + "/32");
