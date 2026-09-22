@@ -1,7 +1,11 @@
 // proxies_page.cpp — 代理页：出站模式（规则/全局/直连）按钮挂在「代理」标题
-// 行右侧，与标题左右对齐；下方是分组竖向卡片列表，组头整行可点、下拉展开该组
-// 的统一矩形节点卡网格，同一时刻只展开一个组。
-// 规则 → 订阅自带分组卡；全局 → GLOBAL 兼容组卡（或平台回落组）；直连 →
+// 行右侧，与标题左右对齐；下面是分组标签栏 + 选中分组的节点卡网格。
+//
+// 分组切换（标签栏）：一个根分组一个横向标签，纯文字、无边框无填充；选中项
+// 高亮文字并在底部画一条主题色加粗指示线。标签过多时标签栏横向滚动；内容区
+// 支持左右滑动手势切换相邻分组（移动端）。同一时刻只展示选中分组的节点。
+//
+// 规则 → 订阅自带分组标签；全局 → GLOBAL 兼容组（或平台回落组）；直连 →
 // 不展示订阅内容，只给提示。
 //
 // 规则/全局两套分支路径 State 独立（rulePath/globalPath），切换模式互不
@@ -9,13 +13,15 @@
 // 等仅返回真实策略组的平台，则全局模式回落到第一个可选策略组。
 //
 // 节点网格：Compact(<600) 两列；桌面按窗口宽度排 1/2/3/4 列，轨道均分铺满
-// 页面宽度。组头与嵌套面包屑占满整行，末行用空占位补齐，保证同一组内所有
-// 节点卡同宽。
+// 页面宽度。嵌套面包屑占满整行，保证同一组内所有节点卡同宽。
 //
 // 分支语义：点组类型节点 = 选中该分支到当前组（selectProxy）并进入浏览；
 // 叶子节点 = 常规切换。展开组内出现嵌套时，面包屑行提供返回上级。路径 State
 // 只存用户走出的链，渲染期经 resolvePath 对最新 groups 校验裁剪，订阅刷新
 // 导致组消失时自动回落，无需泵写状态。
+//
+// 延迟测试：页面右下角统一一个悬浮测速按钮（测试当前分组），组头不再各自
+// 挂按钮；Compact 悬浮导航之上留出内缩量。
 //
 // 数据流：PollWhile 每 3s 拉 GET /proxies 解析成组模型写 State。测速 / 切节点
 // 都是阻塞 REST，全部走 RunOnTaskThread；点击事件处理器内不直接写 State
@@ -70,15 +76,14 @@ struct ProxyGroup {
     bool operator==(const ProxyGroup&) const = default;
 };
 
-// 代理页扁平列表项：组头（可展开）+ 展开组内的嵌套面包屑 + 节点网格项。
-// 组头与面包屑占满整行，节点占网格单元；Footer 为 Compact 悬浮导航留位。
-enum class ProxyItemKind { GroupHeader, Breadcrumb, Node, Footer };
+// 代理页扁平列表项：选中分组内的嵌套面包屑 + 节点网格项；Footer 为 Compact
+// 悬浮导航留位。分组切换由页面顶部的标签栏负责，不再是列表项。
+enum class ProxyItemKind { Breadcrumb, Node, Footer };
 
 struct ProxyItem {
     ProxyItemKind kind = ProxyItemKind::Node;
-    std::string group;      // GroupHeader：组名；Node：所属组名
+    std::string group;      // Node/Breadcrumb：所属（当前）组名
     std::size_t nodeIndex = 0;
-    bool expanded = false;
 };
 
 struct ProbeState {
@@ -214,6 +219,15 @@ constexpr float kProxyCardRadius = 8.0F;
 
 // 节点卡自适应列的最小宽度：值越小同宽窗口下卡片越窄（列数更多）。
 constexpr float kProxyNodeWidth = 300.0F;
+
+// 分组标签的底部指示线高度（对齐 apitab 请求页分区条：选中态主色下划线）；
+// 未选中标签画同高透明线，让整条标签栏高度稳定。
+constexpr float kTabIndicatorHeight = 2.0F;
+
+// 左右滑动切换分组：先按水平位移认领指针会话（超过认领阈值且横向分量占优），
+// 松手时位移超过提交阈值才真的换组——纵向滚动因此不会被误判成滑动。
+constexpr float kGroupSwipeClaimDistance = 20.0F;
+constexpr float kGroupSwipeCommitDistance = 56.0F;
 
 // 节点矩形卡：内部左右对齐——左侧名称单行（溢出省略号），右侧写延迟
 // （组类型节点写「组·分支当前选中」），延迟按区间着色；选中态 primary 底。
@@ -402,52 +416,65 @@ std::function<void()> NodeSelectAction(
     };
 }
 
-// 分组卡头部：展开箭头 + 组名 + 类型/当前选中/节点数，整行可点切换展开；
-// 展开时右侧显示本组测速按钮（结果由组内节点卡广播接收）。
-[[huxerui::composable]] huxerui::View GroupCardHeader(
-    const ProxyGroup& group, bool expanded, std::function<void()> onTest,
-    std::function<void()> onToggle) {
+// 分组标签栏：横向纯文本标签，无外框、无填充——直接沿用 apitab 请求页分区条
+// （Auth/Params/Headers/Cookies/Body/设置，FlatSelectRow 的 Underline 样式）：
+// 非选中为次级文字色，选中为主色文字 + 底部 2pt 主色短线；未选中画同高透明线，
+// 切换时布局零跳动。"选择中"（hover/press）只叠普通按钮那层填充，与选中态
+// 互不混淆。标签过多时整条横向滚动（移动端可直接滑动标签条）。
+[[huxerui::composable]] huxerui::View GroupTabBar(
+    const std::vector<std::string>& names, const std::string& selected,
+    std::function<void(const std::string&)> onSelect) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const IslandTheme islands = ResolveIslandTheme(theme);
+    huxerui::Color hoverFill = theme.colors.on_surface;
+    hoverFill.alpha = 0.08F;
+    huxerui::Color pressFill = theme.colors.on_surface;
+    pressFill.alpha = 0.14F;
+    const huxerui::Indication indication{
+        .hover = huxerui::IndicationLayer{
+            .fill = huxerui::VisualFill{huxerui::Brush{hoverFill}}},
+        .press = huxerui::IndicationLayer{
+            .fill = huxerui::VisualFill{huxerui::Brush{pressFill}}},
+    };
 
-    std::string detail = group.type.empty() ? "策略组" : group.type;
-    if (!group.now.empty()) detail += " · " + group.now;
-    detail += std::format(" · {} 节点", group.nodes.size());
-
-    huxerui::View speed;
-    if (expanded) {
-        speed = huxerui::IconButton(app::images::speed, "测速")
-                    .With(huxerui::Tooltip("测试该组延迟"))
-                    .OnClick(std::move(onTest));
+    std::vector<huxerui::View> tabs;
+    tabs.reserve(names.size());
+    for (const std::string& name : names) {
+        const bool active = name == selected;
+        const huxerui::Color labelColor =
+            active ? theme.colors.primary : theme.colors.on_surface_variant;
+        tabs.push_back(
+            huxerui::Column {
+                huxerui::Text(name, huxerui::TextRole::Label)
+                    .With(huxerui::Foreground(labelColor)),
+                // 两态同高的短线：选中显示主色，未选中透明占位，无布局跳动。
+                huxerui::Row{}.With(
+                    huxerui::Frame{.height = kTabIndicatorHeight},
+                    active ? huxerui::Background(theme.colors.primary)
+                           : huxerui::Background(huxerui::Color::Transparent()),
+                    huxerui::CornerRadius(theme.shapes.full)),
+            }
+                .With(huxerui::Spacing(3.0F),
+                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+                .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(8.0F, 4.0F)),
+                      // 未选中用透明描边（宽度恒为 1pt）保住几何，避免切换时
+                      // 整项尺寸跳动；本样式不画框，描边始终透明。
+                      huxerui::Border(huxerui::Color::Transparent(), 1.0F),
+                      huxerui::CornerRadius(theme.shapes.small),
+                      indication,
+                      huxerui::Focusable(true),
+                      huxerui::Semantics{.role = huxerui::SemanticRole::Tab,
+                                         .label = name,
+                                         .selected = active})
+                .OnClick([onSelect, name] { onSelect(name); })
+                .Key("group-tab-" + name));
     }
-
-    return huxerui::Row {
-        // 折角箭头：收起为右向「›」，展开为下向「∨」（旋转的小于号样式）。
-        huxerui::Text(expanded ? "∨" : "›")
-            .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
-                                      theme.colors.on_surface_variant}),
-        huxerui::Column {
-            huxerui::Text(group.name).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody)
-                    .WithWeight(huxerui::FontWeight::SemiBold),
-                theme.colors.on_surface}),
-            huxerui::Text(detail).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kCaption),
-                theme.colors.on_surface_variant}),
-        }.With(huxerui::Spacing(2.0F), huxerui::Grow(1.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start)),
-        std::move(speed),
-    }
-        .With(huxerui::Spacing(10.0F),
-              huxerui::Padding(huxerui::EdgeInsets::Symmetric(12.0F, 10.0F)),
-              huxerui::Background(expanded ? islands.active : islands.raised),
-              huxerui::CornerRadius(kProxyCardRadius),
-              huxerui::Border(islands.outline_soft, 1.0F),
-              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
-              huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                 .label = group.name},
-              huxerui::Focusable(true))
-        .OnClick(std::move(onToggle));
+    return huxerui::ScrollView(
+               huxerui::Row(std::move(tabs))
+                   .With(huxerui::Spacing(theme.spacing.extra_small),
+                         huxerui::CrossAlign(
+                             huxerui::CrossAxisAlignment::Center)))
+        .ScrollAxis(huxerui::Axis::Horizontal)
+        .With(huxerui::ClipChildren());
 }
 
 // 展开组内的嵌套面包屑：路径 + 返回上级（与旧底部状态条同一套弹栈语义）。
@@ -510,12 +537,13 @@ std::function<void()> NodeSelectAction(
     auto mode = huxerui::UseState<std::string>("rule");
     auto testGeneration = huxerui::UseState(0);
     auto testGroup = huxerui::UseState<std::string>("");
-    // 分支路径按模式独立（互不共享）：规则模式 path[0] = chips 选中的订阅组，
+    // 分支路径按模式独立（互不共享）：规则模式 path[0] = 标签栏选中的订阅组，
     // 全局模式 path[0] = GLOBAL 或平台返回的实际可选组；后续元素 = 逐级点入的嵌套子组。
     auto rulePath = huxerui::UseState<std::vector<std::string>>({});
     auto globalPath = huxerui::UseState<std::vector<std::string>>({});
-    // 用户是否手动操作过展开状态：手动收起后不再自动展开首组。
-    auto pathTouched = huxerui::UseState(false);
+    // 横向滑动（Pager 外层）：按下点与"是否已认领本次指针会话"。
+    auto swipeOrigin = huxerui::UseState<huxerui::Point>(huxerui::Point{0.0F, 0.0F});
+    auto swipeOwned = huxerui::UseState(false);
 
     // 数据泵：运行时刷新 /proxies；停止时从当前订阅编译预览快照，
     // 这样用户仍能预先选择节点，下一次内核启动后再由内核正式应用。
@@ -561,18 +589,6 @@ std::function<void()> NodeSelectAction(
             });
         };
 
-    // 切换出站模式时重置“用户已收起”标记，让新模式的视图重新自动展开首组。
-    auto lastMode = huxerui::UseState<std::string>("");
-    huxerui::Lifecycle(
-        [mode, lastMode, pathTouched] {
-            if (lastMode.Get() != mode.Get()) {
-                lastMode = mode.Get();
-                pathTouched = false;
-            }
-            return [] {};
-        },
-        mode);
-
     // 顶部收束区：出站模式切换（同首页 SegmentedButton），挂到标题行右侧。
     std::size_t modeIndex = 0;
     for (std::size_t i = 0; i < kModes.size(); ++i) {
@@ -592,29 +608,20 @@ std::function<void()> NodeSelectAction(
                 });
             });
 
-    // 按出站模式取当前视图的路径与组（渲染期校验：根组消失回落，嵌套前缀
-    // 逐级校验）。直连不经过节点，不展示订阅组。
+    // 按出站模式解析根分组与当前组（渲染期校验：组消失回落，嵌套前缀逐级
+    // 校验）。直连不经过节点，不展示订阅组。
     const huxerui::StateList<ProxyGroup> all = groups;
     const bool direct = mode.Get() == "direct";
     const bool global = mode.Get() == "global";
-    const ProxyGroup* firstRule = nullptr;
-    const ProxyGroup* firstRuleFallback = nullptr;
     const ProxyGroup* globalRoot = findGroup(all, "GLOBAL");
     bool hasRuleSelector = false;
     for (const auto& g : all) {
         if (g.name == "GLOBAL") continue;
-        if (firstRuleFallback == nullptr) firstRuleFallback = &g;
         if (g.selectable) {
             hasRuleSelector = true;
-            if (firstRule == nullptr) firstRule = &g;
+            if (globalRoot == nullptr) globalRoot = &g;
         }
-        if (globalRoot == nullptr && g.selectable) globalRoot = &g;
     }
-    // URLTest groups are normally children of a selector (for example
-    // “节点选择” -> “自动选择”). Showing both as root chips duplicates the same
-    // branch. Prefer selector roots, but keep a URLTest-only subscription usable.
-    if (firstRule == nullptr) firstRule = firstRuleFallback;
-    if (firstRule == nullptr && !all.Empty()) firstRule = &all[0];
     if (globalRoot == nullptr) {
         for (const auto& g : all) {
             if (g.name != "GLOBAL" && g.selectable) {
@@ -632,24 +639,7 @@ std::function<void()> NodeSelectAction(
         }
     }
 
-    // 活动路径：按模式取独立 State，渲染期校验（组消失回落，嵌套前缀逐级
-    // 校验）。首次进入自动展开首组；用户手动收起（pathTouched）后保持全部
-    // 收起；已存路径因订阅刷新失效时同样回落到首组。
-    huxerui::State<std::vector<std::string>> activePath =
-        global ? globalPath : rulePath;
-    const std::vector<std::string> stored = activePath.Get();
-    std::vector<std::string> path = resolvePath(all, stored);
-    if (path.empty() && (!pathTouched.Get() || !stored.empty())) {
-        if (global && globalRoot != nullptr) {
-            path = {globalRoot->name};
-        } else if (!global && firstRule != nullptr) {
-            path = {firstRule->name};
-        }
-    }
-    const ProxyGroup* current =
-        path.empty() ? nullptr : findGroup(all, path.back());
-
-    // 组卡列表的根集合：规则模式列出订阅自带分组（有可选组时跳过纯 URLTest
+    // 标签栏的根分组集合：规则模式列出订阅自带分组（有可选组时跳过纯 URLTest
     // 分支，避免与作为其父级的 selector 重复）；全局模式只保留 GLOBAL（或
     // 平台回落组）。直连不走任何组。
     std::vector<const ProxyGroup*> rootGroups;
@@ -662,40 +652,117 @@ std::function<void()> NodeSelectAction(
             rootGroups.push_back(&g);
         }
     }
+    std::vector<std::string> tabNames;
+    tabNames.reserve(rootGroups.size());
+    for (const ProxyGroup* g : rootGroups) tabNames.push_back(g->name);
+
+    // 活动路径：按模式取独立 State，渲染期校验（组消失回落，嵌套前缀逐级
+    // 校验）。标签栏是分组入口：路径必须落在某个标签上，否则回落到首个标签；
+    // 嵌套层级（path.size() > 1）由面包屑返回。
+    huxerui::State<std::vector<std::string>> activePath =
+        global ? globalPath : rulePath;
+    std::vector<std::string> path = resolvePath(all, activePath.Get());
+    const bool rootSelected =
+        !path.empty() && std::ranges::any_of(rootGroups, [&](const ProxyGroup* g) {
+            return g->name == path.front();
+        });
+    if (!rootSelected) {
+        path = tabNames.empty() ? std::vector<std::string>{}
+                                : std::vector<std::string>{tabNames.front()};
+    }
+    const ProxyGroup* current =
+        path.empty() ? nullptr : findGroup(all, path.back());
+    const std::string selectedRoot = path.empty() ? std::string{} : path.front();
+    std::size_t selectedTab = tabNames.size();
+    for (std::size_t i = 0; i < tabNames.size(); ++i) {
+        if (tabNames[i] == selectedRoot) selectedTab = i;
+    }
+
+    // 切换分组：点击标签或左右滑动都只写这条路径；当前组内的节点卡会被卸载，
+    // 因此按约定 6 让出一拍再写 State。
+    const std::function<void(const std::string&)> selectGroup =
+        [tasks, activePath](const std::string& name) {
+            tasks.Launch([activePath, name]() -> huxerui::Task<void> {
+                co_await huxerui::Delay(std::chrono::duration<double>{0});
+                activePath = std::vector<std::string>{name};
+            });
+        };
 
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     // 节点名单行预算：定宽卡下留出右侧延迟与内边距后的可用字符数。
     const std::size_t nodeNameLimit = compact ? 9 : 16;
 
-    // 分组 → 竖向可展开卡片列表：组头与嵌套面包屑占满整行，展开组内的节点
-    // 复用多列网格；VirtualGrid 只创建视口附近的项。
+    // 一个根分组一页：页内是该分组的节点网格（嵌套时先给面包屑返回上级）。
+    // Pager 保留全部页面、受控下标 + 水平直接拖动 = 左右滑动切换分组；
+    // 每页带稳定 Key，切回来时保留自己的滚动位置。
     constexpr std::size_t kFullRowSpan = std::numeric_limits<std::size_t>::max();
-    const std::string expandedRoot = path.empty() ? std::string{} : path.front();
-    std::vector<ProxyItem> items;
-    std::vector<std::size_t> spans;
-    for (const ProxyGroup* g : rootGroups) {
-        const bool expanded = g->name == expandedRoot;
-        items.push_back(ProxyItem{.kind = ProxyItemKind::GroupHeader,
-                                  .group = g->name,
-                                  .expanded = expanded});
-        spans.push_back(kFullRowSpan);
-        if (!expanded || current == nullptr) continue;
-        if (path.size() > 1) {
+    std::vector<huxerui::View> groupPages;
+    groupPages.reserve(rootGroups.size());
+    for (std::size_t page = 0; page < rootGroups.size(); ++page) {
+        const ProxyGroup& rootGroup = *rootGroups[page];
+        // 只有当前页可能是嵌套子组（path 更深）；其余页就是各自的根分组。
+        const bool selectedPage = page == selectedTab;
+        const ProxyGroup* contentGroup =
+            (selectedPage && current != nullptr) ? current : &rootGroup;
+        const std::vector<std::string> pagePath =
+            (selectedPage && current != nullptr) ? path
+                                                 : std::vector<std::string>{rootGroup.name};
+
+        std::vector<ProxyItem> items;
+        std::vector<std::size_t> spans;
+        if (pagePath.size() > 1) {
             items.push_back(ProxyItem{.kind = ProxyItemKind::Breadcrumb,
-                                      .group = current->name});
+                                      .group = contentGroup->name});
             spans.push_back(kFullRowSpan);
         }
-        for (std::size_t i = 0; i < current->nodes.size(); ++i) {
+        for (std::size_t i = 0; i < contentGroup->nodes.size(); ++i) {
             items.push_back(ProxyItem{.kind = ProxyItemKind::Node,
-                                      .group = current->name,
+                                      .group = contentGroup->name,
                                       .nodeIndex = i});
             spans.push_back(1);
         }
-    }
-    if (compact) {
-        items.push_back(ProxyItem{.kind = ProxyItemKind::Footer});
-        spans.push_back(kFullRowSpan);
+        if (compact) {
+            items.push_back(ProxyItem{.kind = ProxyItemKind::Footer});
+            spans.push_back(kFullRowSpan);
+        }
+
+        groupPages.push_back(
+            huxerui::VirtualGrid(
+                items.size(),
+                [items, pagePath, groups, activePath, testGeneration, testGroup,
+                 tasks, nodeNameLimit](std::size_t index) -> huxerui::View {
+                    const ProxyItem& item = items[index];
+                    if (item.kind == ProxyItemKind::Footer) {
+                        return CompactFloatingNavigationFooter()
+                            .Key("compact-floating-footer");
+                    }
+                    if (item.kind == ProxyItemKind::Breadcrumb) {
+                        return GroupBreadcrumb(pagePath, activePath, tasks)
+                            .Key("crumb-" + item.group);
+                    }
+                    const ProxyGroup* group = findGroup(groups, item.group);
+                    if (group == nullptr) return huxerui::View{};
+                    if (item.nodeIndex >= group->nodes.size()) {
+                        return huxerui::View{};
+                    }
+                    const ProxyNode node = group->nodes[item.nodeIndex];
+                    const std::string nodeName = node.name;
+                    return NodeCard(node, nodeName == group->now, group->name,
+                                    testGeneration, testGroup, group->selectable,
+                                    NodeSelectAction(groups, activePath, tasks,
+                                                     *group, node),
+                                    nodeNameLimit)
+                        .Key(group->name + "::" + nodeName);
+                })
+                .Columns(compact ? huxerui::GridColumns::Fixed(2)
+                                 : huxerui::GridColumns::Adaptive(kProxyNodeWidth))
+                .EstimatedRowExtent(52.0F)
+                .ItemSpans(std::move(spans))
+                .RowSpacing(kNodeGridGap)
+                .ColumnSpacing(kNodeGridGap)
+                .With(huxerui::Grow(1.0F), huxerui::ScrollBar())
+                .Key("group-page-" + rootGroup.name));
     }
 
     huxerui::View body;
@@ -725,75 +792,82 @@ std::function<void()> NodeSelectAction(
                   huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     } else {
-        huxerui::View groupList = huxerui::VirtualGrid(
-            items.size(),
-            [items, path, groups, activePath, testGeneration, testGroup, tasks,
-             pathTouched, nodeNameLimit,
-             triggerGroupTest](std::size_t index) -> huxerui::View {
-                const ProxyItem& item = items[index];
-                if (item.kind == ProxyItemKind::Footer) {
-                    return CompactFloatingNavigationFooter()
-                        .Key("compact-floating-footer");
-                }
-                if (item.kind == ProxyItemKind::Breadcrumb) {
-                    return GroupBreadcrumb(path, activePath, tasks)
-                        .Key("crumb-" + item.group);
-                }
-                const ProxyGroup* group = findGroup(groups, item.group);
-                if (group == nullptr) return huxerui::View{};
-                if (item.kind == ProxyItemKind::GroupHeader) {
-                    const std::string name = item.group;
-                    const bool expanded = item.expanded;
-                    return GroupCardHeader(
-                               *group, expanded,
-                               [triggerGroupTest, name] {
-                                   triggerGroupTest(name);
-                               },
-                               [tasks, activePath, pathTouched, name,
-                                expanded] {
-                                   tasks.Launch([=]() -> huxerui::Task<void> {
-                                       // 展开/收起会卸载被点击的组内节点：
-                                       // 先让出一拍再写 State。
-                                       co_await huxerui::Delay(
-                                           std::chrono::duration<double>{0});
-                                       pathTouched = true;
-                                       activePath = expanded
-                                           ? std::vector<std::string>{}
-                                           : std::vector<std::string>{name};
-                                   });
-                               })
-                        .Key("group-" + name);
-                }
-                if (item.nodeIndex >= group->nodes.size()) {
-                    return huxerui::View{};
-                }
-                const ProxyNode node = group->nodes[item.nodeIndex];
-                const std::string nodeName = node.name;
-                return NodeCard(node, nodeName == group->now, group->name,
-                                testGeneration, testGroup, group->selectable,
-                                NodeSelectAction(groups, activePath, tasks,
-                                                 *group, node),
-                                nodeNameLimit)
-                    .Key(group->name + "::" + nodeName);
-            })
-            .Columns(compact ? huxerui::GridColumns::Fixed(2)
-                             : huxerui::GridColumns::Adaptive(kProxyNodeWidth))
-            .EstimatedRowExtent(52.0F)
-            .ItemSpans(std::move(spans))
-            .RowSpacing(kNodeGridGap)
-            .ColumnSpacing(kNodeGridGap)
-            .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
-        body = std::move(groupList);
+        body = huxerui::Pager(std::move(groupPages), selectedTab)
+                   .ScrollAxis(huxerui::Axis::Horizontal)
+                   .OnChanged([activePath, tabNames](std::size_t index) {
+                       // 键盘/无障碍翻页由 Pager 提议相邻下标（指针滑动走下方
+                       // PointerIntercept）。Pager 是受控组件：同步落盘下标，
+                       // 让显示页与路径状态一致。
+                       if (index < tabNames.size()) {
+                           activePath = std::vector<std::string>{tabNames[index]};
+                       }
+                   })
+                   .With(huxerui::Grow(1.0F))
+                   // 页内是纵向滚动的节点网格：横向滑动要先于子滚动容器认领指针
+                   // 会话（PointerIntercept 取得所有权会取消已开始的子滚动），
+                   // 纵向占优的位移一律不认领，滚动照旧。
+                   .On<huxerui::ViewEvents::PointerIntercept>(
+                       [swipeOrigin, swipeOwned, selectGroup, tabNames,
+                        selectedTab](const huxerui::PointerEvent& event) {
+                           const float dx = event.position.x - swipeOrigin.Get().x;
+                           const float dy = event.position.y - swipeOrigin.Get().y;
+                           switch (event.type) {
+                           case huxerui::PointerEventType::Down:
+                               swipeOrigin = event.position;
+                               swipeOwned = false;
+                               return false;
+                           case huxerui::PointerEventType::Move:
+                               if (swipeOwned.Get()) return true;
+                               if (dx > kGroupSwipeClaimDistance ||
+                                   dx < -kGroupSwipeClaimDistance) {
+                                   if (dx > dy && dx > -dy) {
+                                       swipeOwned = true;
+                                       return true;
+                                   }
+                               }
+                               return false;
+                           case huxerui::PointerEventType::Up:
+                               if (!swipeOwned.Get()) return false;
+                               swipeOwned = false;
+                               if (dx <= -kGroupSwipeCommitDistance &&
+                                   selectedTab + 1 < tabNames.size()) {
+                                   selectGroup(tabNames[selectedTab + 1]);
+                               } else if (dx >= kGroupSwipeCommitDistance &&
+                                          selectedTab > 0) {
+                                   selectGroup(tabNames[selectedTab - 1]);
+                               }
+                               return false;
+                           case huxerui::PointerEventType::Cancel:
+                               swipeOwned = false;
+                               return false;
+                           }
+                           return false;
+                       });
+    }
+
+    // 标签栏固定在页面顶部（不随节点列表滚动），只有选中分组的节点参与滚动。
+    huxerui::View content = std::move(body);
+    if (!tabNames.empty()) {
+        content =
+            huxerui::Column {
+                GroupTabBar(tabNames, selectedRoot, selectGroup),
+                std::move(content).With(huxerui::Grow(1.0F)),
+            }
+                .With(huxerui::Spacing(theme.spacing.small),
+                      huxerui::Grow(1.0F),
+                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }
 
     // 出站模式按钮与「代理」标题同处标题行、左右对齐。
     huxerui::View page = PageScaffold("代理", std::move(modeSwitch),
-                                      std::move(body), true);
-    if (compact && !direct && current != nullptr) {
+                                      std::move(content), true);
+    // 延迟测试按钮统一收在页面右下角：测试当前选中的分组。Compact 下要避开
+    // 悬浮底部导航，桌面只留常规外边距。
+    if (!direct && current != nullptr) {
         const std::string groupName = current->name;
         huxerui::View floatingSpeed =
             huxerui::IconButton(app::images::speed, "测速")
-                .With(huxerui::Tooltip("测试当前组延迟"),
+                .With(huxerui::Tooltip("测试当前分组延迟"),
                       huxerui::Frame{.width = 56.0F, .height = 56.0F},
                       huxerui::Background(theme.colors.primary),
                       huxerui::Foreground(theme.colors.on_primary),
@@ -811,7 +885,8 @@ std::function<void()> NodeSelectAction(
             std::move(floatingSpeed),
         }.With(huxerui::Padding(huxerui::EdgeInsets{
                    .right = theme.spacing.medium,
-                   .bottom = kCompactFloatingNavigationInset,
+                   .bottom = compact ? kCompactFloatingNavigationInset
+                                     : theme.spacing.large,
                    .left = theme.spacing.medium,
                }),
                huxerui::MainAlign(huxerui::MainAxisAlignment::End),
