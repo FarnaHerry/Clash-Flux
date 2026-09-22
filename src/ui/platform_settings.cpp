@@ -344,6 +344,8 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 [[huxerui::composable]] huxerui::View DesktopGeneralSettings() {
     auto autostart_enabled = huxerui::UseState(
         store::coreStore().setting("app.autostart", "false") == "true");
+    auto auto_run = huxerui::UseState(
+        store::coreStore().setting("app.auto_run", "false") == "true");
     auto tray_enabled = huxerui::UseState(
         store::coreStore().setting("tray.enabled", "true") == "true");
     auto start_minimized = huxerui::UseState(
@@ -363,6 +365,16 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                     autostart_enabled = on;
                     store::coreStore().setSetting(
                         "app.autostart", on ? "true" : "false");
+                })),
+        // 内核启停与流量接管解耦后的「启动入口」之一：默认不随应用启动内核
+        // （内核只是本地端口 + 控制接口），需要时用首页右下角悬浮按钮启动。
+        SettingSwitchRow(
+            "启动时自动运行内核", "打开应用就拉起 sing-box，并按已记录的系统代理/TUN 恢复接管",
+            huxerui::Switch(auto_run.Get())
+                .OnChanged([auto_run](bool on) {
+                    auto_run = on;
+                    store::coreStore().setSetting("app.auto_run",
+                                                   on ? "true" : "false");
                 })),
         SettingSwitchRow(
             "启用托盘图标", "关闭后托盘不可用，关闭窗口即退出",

@@ -452,20 +452,27 @@
 #endif
     }
 
-    // 切换出站模式（阻塞）。成功即更新快照。
+    // 切换出站模式（阻塞）。模式是「配置」而不是内核运行前提：内核没起来时
+    // 只写库（下次 startCore 用新配置生成 clash_mode 前置规则），内核真的在
+    // 跑时才热切换；只有热切换被内核拒绝才算失败。
     bool applyMode(const std::string& m) {
         ensureOpen();
+        bool live = false;
 #if defined(__ANDROID__)
-        // The preferred mode is configuration, not merely live CommandClient
-        // state.  Allow changing it before VpnService exists so the next
-        // generated config starts in that mode; only require the JNI update
-        // when a data plane is actually running.
-        if (clashflux_android_vpn_state() == 2 &&
-            !clashflux_android_set_clash_mode(m.c_str())) return false;
+        // VpnService 数据面存在才算「真的在跑」；此时才要求 JNI 同步成功，
+        // 否则仅落配置，等下次生成配置时生效。
+        live = clashflux_android_vpn_state() == 2;
+        if (live && !clashflux_android_set_clash_mode(m.c_str())) return false;
 #else
-        const nlohmann::json body = {{"mode", m}};
-        const auto r = api_->patchConfigs(body.dump());
-        if (!r.ok) return false;
+        {
+            std::lock_guard lock(mutex_);
+            live = snap_.state == core::CoreState::Running;
+        }
+        if (live) {
+            const nlohmann::json body = {{"mode", m}};
+            const auto r = api_->patchConfigs(body.dump());
+            if (!r.ok) return false;
+        }
 #endif
         setSetting("core.mode", m);
         std::lock_guard lock(mutex_);

@@ -1,25 +1,9 @@
 // core_store_routing.inc — 原生连接路由与配置刷新
 // 由 src/store/core_store.cppm 在 CoreStore 类体内包含。
 
-    inline bool ensureRunning() {
-        std::lock_guard operationLock(lifecycleMutex_);
-        if (snapshot().state == core::CoreState::Running) return true;
-        ensureOpen();
-        for (const auto& profile : db_->listProfiles()) {
-            if (!profile.selected || profile.type == "pptp" || profile.type == "openvpn") continue;
-            std::ifstream input(cfg::profilesDir() / profile.file, std::ios::binary);
-            if (!input) { fail("无法读取当前订阅配置，请先更新或重新导入订阅"); return false; }
-            const std::string yaml{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-            if (yaml.empty()) { fail("当前订阅配置为空，请先更新订阅"); return false; }
-            // 只恢复当前运行态；不要让启动过程重新读取已经可能过期的
-            // 持久化 TUN/系统代理开关。系统代理由本次 applySystemProxy
-            // 操作在内核就绪后显式打开。
-            startCore(yaml, false, snapshot().tunEnabled, std::nullopt);
-            return snapshot().state == core::CoreState::Running;
-        }
-        fail("请先选择一个代理订阅，再开启 TUN 或系统代理");
-        return false;
-    }
+    // 说明：这里曾经有一个 ensureRunning()——「开关发现内核没跑就顺手拉起」。
+    // 「彻底分离」之后开关只负责记录意图，内核只由启动入口（首页右下角悬浮
+    // 按钮 / 设置里的启动时自动运行）拉起，因此不再保留这个隐式启动捷径。
 
     // ---- 内核控制（阻塞：UI 必须 RunOnTaskThread）----
 

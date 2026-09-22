@@ -106,6 +106,7 @@ void DesktopPreparePlatformDataDirectory(
     const huxerui::SystemTrayHandle tray = application.SystemTray();
     const bool trayAvailable = tray.IsAvailable();
     auto tasks = huxerui::UseTaskScope();
+    auto trayCoreRunning = huxerui::UseState(false);
     auto traySysProxy = huxerui::UseState(false);
     auto trayTun = huxerui::UseState(false);
     auto trayProfiles = huxerui::UseState<std::vector<db::Profile>>({});
@@ -137,7 +138,7 @@ void DesktopPreparePlatformDataDirectory(
 
     // 内核自启 + 崩溃检测泵：启动和存活检查全部在任务线程执行。
     huxerui::Lifecycle(
-        [tasks, traySysProxy, trayTun, trayEnabled] {
+        [tasks, trayCoreRunning, traySysProxy, trayTun, trayEnabled] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await RunOnTaskThread([] {
                     auto& core = store::coreStore();
@@ -147,20 +148,27 @@ void DesktopPreparePlatformDataDirectory(
                     core.releaseStaleOwnedSystemProxy();
                     if (!cfg::singboxBinary().empty()) {
                         // 清理上次异常退出留下的旧内核（含仍持有旧 TUN 配置
-                        // 的进程）。应用与内核同步启动：没有选中订阅时也用最小
-                        // 配置把内核拉起来（控制端口/REST 就绪），TUN 与系统
-                        // 代理只按实际设置恢复，不反过来决定内核是否启动。
+                        // 的进程）。
                         core.stopCore();
-                        const bool resumeSysProxy = core.systemProxyEnabled();
-                        const bool resumeTun =
-                            core.setting("core.tun_enabled", "false") == "true";
-                        core.startCore(store::profilesStore().selectedYaml(),
-                                       false, resumeTun, resumeSysProxy);
+                        // 内核启停与流量接管解耦：默认不在启动应用时拉起内核
+                        // （内核只是本地混合端口 + 控制接口，需要时由首页右下角
+                        // 悬浮按钮显式启动）；只有用户打开「启动时自动运行内核」
+                        // 才在这里拉起，并按已记录的 TUN / 系统代理意图恢复接管。
+                        if (core.setting("app.auto_run", "false") == "true") {
+                            const bool resumeSysProxy = core.systemProxyEnabled();
+                            const bool resumeTun =
+                                core.setting("core.tun_enabled", "false") == "true";
+                            core.startCore(
+                                store::profilesStore().selectedYaml(), false,
+                                resumeTun, resumeSysProxy);
+                        }
                     }
                 });
                 co_await PollWhile(std::chrono::duration<double>{0.5}, [=] {
                     auto& core = store::coreStore();
                     core.checkAlive();
+                    trayCoreRunning =
+                        core.snapshot().state == core::CoreState::Running;
                     traySysProxy = core.systemProxyEnabled();
                     trayTun = core.snapshot().tunEnabled;
                     trayEnabled = core.setting("tray.enabled", "true") == "true";
@@ -221,8 +229,9 @@ void DesktopPreparePlatformDataDirectory(
             window.Activate();
         });
         huxerui::Lifecycle(
-            [tray, window, application, tasks, traySysProxy, trayTun, dialog,
-             clipboard, toast, trayProfiles, trayProxyGroups, trayEnabled, finishExit,
+            [tray, window, application, tasks, trayCoreRunning, traySysProxy,
+             trayTun, dialog, clipboard, toast, trayProfiles, trayProxyGroups,
+             trayEnabled, finishExit,
              textColor = rootSpec.colors.on_surface,
              hintColor = rootSpec.colors.on_surface_variant] {
                 if (trayEnabled.Get()) {
@@ -293,6 +302,40 @@ void DesktopPreparePlatformDataDirectory(
                                     trayProxyGroups = std::move(groups);
                                 });
                             })));
+                    // 内核启停是独立动作（与系统代理/TUN 解耦）：启动时按已
+                    // 记录的 TUN / 系统代理意图恢复接管。
+                    menuEntries.push_back(
+                        huxerui::MenuItem(
+                            trayCoreRunning.Get() ? "停止内核" : "启动内核",
+                            [tasks, toast, trayCoreRunning] {
+                                tasks.Launch([=]() -> huxerui::Task<void> {
+                                    const bool next = !trayCoreRunning.Get();
+                                    const bool ok = co_await RunOnTaskThread([next] {
+                                        auto& core = store::coreStore();
+                                        if (!next) return core.stopCore();
+                                        const bool resumeSysProxy =
+                                            core.systemProxyEnabled();
+                                        const bool resumeTun =
+                                            core.setting("core.tun_enabled",
+                                                         "false") == "true";
+                                        core.startCore(
+                                            store::profilesStore().selectedYaml(),
+                                            false, resumeTun, resumeSysProxy);
+                                        return core.snapshot().state ==
+                                               core::CoreState::Running;
+                                    });
+                                    if (ok) {
+                                        trayCoreRunning = next;
+                                        co_return;
+                                    }
+                                    const std::string error =
+                                        store::coreStore().snapshot().lastError;
+                                    toast.Show(error.empty()
+                                                   ? (next ? "启动内核失败"
+                                                           : "停止内核失败")
+                                                   : error);
+                                });
+                            }));
                     menuEntries.push_back(
                         huxerui::MenuItem("系统代理", [tasks, traySysProxy] {
                             tasks.Launch([=]() -> huxerui::Task<void> {
@@ -342,7 +385,7 @@ void DesktopPreparePlatformDataDirectory(
                 }
                 return [tray] { tray.Hide(); };
             },
-            traySysProxy, trayTun, trayEnabled);
+            trayCoreRunning, traySysProxy, trayTun, trayEnabled);
     }
 
     // 关闭窗口行为：托盘可用时按设置询问/退出/最小化到托盘。
