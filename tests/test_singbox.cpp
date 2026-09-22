@@ -526,13 +526,18 @@ rules:
     invalidCompensation.tunExcludeAddresses = {"vpn.example"};
     check(!singbox::compileConfig(invalidCompensation).error.empty(), "传输服务器必须预解析，不允许把域名当 CIDR");
 
-    // ---- 本地规则集命中 -------------------------------------------------------
+    // ---- 本地规则集命中与坏缓存拒绝 -------------------------------------------
     {
-        std::filesystem::create_directories("/tmp/clashflux-test-ruleset");
-        { std::ofstream out("/tmp/clashflux-test-ruleset/geoip-cn.srs", std::ios::binary); out << "stub"; }
-        { std::ofstream out("/tmp/clashflux-test-ruleset/geosite-cn.srs", std::ios::binary); out << "stub"; }
+        const std::string dir = "/tmp/clashflux-test-ruleset";
+        const auto geoipPath = std::filesystem::path(dir) / "geoip-cn.srs";
+        const auto geositePath = std::filesystem::path(dir) / "geosite-cn.srs";
+        std::filesystem::create_directories(dir);
+        // .srs 头部 = "SRS" 魔数 + 版本号；内容本身不参与编译期校验。
+        { std::ofstream out(geoipPath, std::ios::binary); out << "SRS\x02" << "stub"; }
+        { std::ofstream out(geositePath, std::ios::binary); out << "SRS\x02" << "stub"; }
         singbox::CompileOptions localOptions = options;
-        localOptions.ruleSetDir = "/tmp/clashflux-test-ruleset";
+        localOptions.ruleSetDir = dir;
+        check(singbox::RuleSetCacheValid(geoipPath), "SRS 头的规则集缓存有效");
         const auto localResult = singbox::compileConfig(localOptions);
         const json localConfig = json::parse(localResult.json);
         bool sawLocalGeoip = false;
@@ -549,6 +554,31 @@ rules:
         }
         check(sawLocalGeoip, "ruleSetDir 命中时 GEOIP 以 local rule_set 生成");
         check(sawLocalGeosite, "ruleSetDir 命中时 GEOSITE 以 local rule_set 生成");
+
+        // 坏缓存（0 字节、错误内容）会让内核启动期 FATAL：必须拒绝、删除并
+        // 回落 remote，而不是把坏文件写进 local rule_set。
+        { std::ofstream out(geoipPath, std::ios::binary | std::ios::trunc); out << "<html>404</html>"; }
+        { std::ofstream out(geositePath, std::ios::binary | std::ios::trunc); }
+        check(!singbox::RuleSetCacheValid(geoipPath), "非 SRS 内容的规则集缓存被拒绝");
+        check(!singbox::RuleSetCacheValid(geositePath), "0 字节规则集缓存被拒绝");
+        check(!singbox::RuleSetCacheValid(std::filesystem::path(dir) / "missing.srs"),
+              "缺失的规则集缓存被拒绝");
+        const auto rejectedResult = singbox::compileConfig(localOptions);
+        const json rejectedConfig = json::parse(rejectedResult.json);
+        bool geoipRemote = false;
+        bool geositeRemote = false;
+        for (const auto& rs : rejectedConfig["route"]["rule_set"]) {
+            if (rs.value("tag", "") == "geoip-cn") {
+                geoipRemote = rs.value("type", "") == "remote";
+            }
+            if (rs.value("tag", "") == "geosite-cn") {
+                geositeRemote = rs.value("type", "") == "remote";
+            }
+        }
+        check(geoipRemote && geositeRemote, "坏缓存回落为 remote rule_set");
+        check(!std::filesystem::exists(geoipPath) &&
+                  !std::filesystem::exists(geositePath),
+              "坏缓存文件被删除");
     }
 
     // ---- 空订阅最小配置 -------------------------------------------------------

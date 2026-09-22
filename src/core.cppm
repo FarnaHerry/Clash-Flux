@@ -36,6 +36,10 @@ export void killPid(long pid);
 // 属其他用户）；Windows OpenProcess 探测。pid ≤0 返回 false。
 export bool pidAlive(long pid);
 
+// 去掉内核输出里的 ANSI 颜色转义（sing-box 的 FATAL/INFO 前缀带 CSI 序列），
+// 供诊断文本进 UI/CLI 前净化。
+export std::string stripAnsi(std::string text);
+
 // 以脱离会话方式启动内核（CLI `core start` 用：CLI 退出后内核驻留）：
 // POSIX setsid + stdout/stderr 追加到 <workDir>/core.log；Windows
 // DETACHED_PROCESS + 同样重定向日志。成功后 pid 写 <workDir>/core.pid

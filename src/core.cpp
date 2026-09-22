@@ -188,6 +188,27 @@ bool pidAlive(long pid) {
 #endif
 }
 
+// 去掉 CSI 转义序列（ESC [ 参数… 终止字节），只留可读文本。
+std::string stripAnsi(std::string text) {
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (static_cast<unsigned char>(text[i]) != 0x1b) {
+            out.push_back(text[i]);
+            continue;
+        }
+        ++i;
+        if (i < text.size() && text[i] == '[') {
+            while (i + 1 < text.size() &&
+                   !(text[i + 1] >= '@' && text[i + 1] <= '~')) {
+                ++i;
+            }
+            ++i;  // 跳过终止字节
+        }
+    }
+    return out;
+}
+
 bool spawnDetached(const std::filesystem::path& binary,
                    const std::filesystem::path& workDir,
                    const std::filesystem::path& configFile,
@@ -430,6 +451,10 @@ struct CoreProcessImpl {
     }
 
     void pushLine(std::string line) {
+        if (line.empty()) return;
+        // sing-box 给 FATAL/INFO 行加 ANSI 颜色；诊断文本直接进 UI 错误提示，
+        // 必须去掉转义序列（否则用户看到 "[31mFATAL[0m"）。
+        line = stripAnsi(std::move(line));
         if (line.empty()) return;
 #if defined(__ANDROID__)
         __android_log_print(ANDROID_LOG_INFO, "ClashFlux", "core: %s", line.c_str());

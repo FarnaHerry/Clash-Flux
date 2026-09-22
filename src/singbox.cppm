@@ -62,4 +62,10 @@ export struct CompileOptions {
 // Clash YAML，或以 "{" 开头的原生 sing-box JSON（直通并合并托管设置）。
 export CompileResult compileConfig(const CompileOptions& options);
 
+// sing-box 二进制规则集（.srs）以 "SRS" 魔数开头。0 字节、被写入错误内容
+// （例如把 HTTP 错误页落盘）或非规则集内容的缓存文件会让内核在启动期直接
+// FATAL（parse rule-set: read rule: unexpected EOF），因此缓存命中与预取
+// 落盘后都必须先校验。
+export bool RuleSetCacheValid(const std::filesystem::path& path);
+
 } // namespace singbox
