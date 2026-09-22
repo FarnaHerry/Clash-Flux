@@ -472,6 +472,71 @@ std::string windowsError(std::string_view prefix, DWORD code) {
     return std::format("{}（错误码 {}）", prefix, code);
 }
 
+std::string wideToUtf8(std::wstring_view value) {
+    if (value.empty()) return {};
+    const int size = WideCharToMultiByte(CP_UTF8, 0, value.data(),
+                                        static_cast<int>(value.size()), nullptr,
+                                        0, nullptr, nullptr);
+    if (size <= 0) return {};
+    std::string out(static_cast<std::size_t>(size), '\0');
+    if (WideCharToMultiByte(CP_UTF8, 0, value.data(),
+                            static_cast<int>(value.size()), out.data(), size,
+                            nullptr, nullptr) <= 0) {
+        return {};
+    }
+    return out;
+}
+
+// PPTP 最常见的 RAS 失败码。这里刻意使用字面量：同一错误码在 winerror.h 与
+// raserror.h 中的宏名各版本不一致，而本分支无法在 Linux 上编译验证。
+constexpr DWORD kRasPortDisconnected = 628;      // 端口被远端断开
+constexpr DWORD kRasRemoteDisconnected = 629;    // 端口被远端主机断开
+constexpr DWORD kRasNoAnswer = 678;              // 服务器无应答
+constexpr DWORD kRasAccessDenied = 691;          // 凭据被拒绝
+constexpr DWORD kRasNoPppProtocols = 720;        // 未协商出 PPP 控制协议
+constexpr DWORD kRasRemoteNotResponding = 721;   // 远端不响应
+constexpr DWORD kRasEncryptionUnsupported = 742; // 服务端不支持该加密强度
+constexpr DWORD kRasEncryptionRequired = 743;    // 服务端要求数据加密
+
+// 只描述本客户端侧可核对的原因，不把服务端猜测写成结论。
+const char* rasErrorHint(DWORD code) {
+    switch (code) {
+    case kRasPortDisconnected:
+    case kRasRemoteDisconnected:
+        return "服务端中断了连接：核对「要求 MPPE-128」是否与服务端一致，并确认网络未阻断 GRE 协议 47";
+    case kRasNoAnswer:
+        return "服务器无应答：确认地址可达、TCP 1723 未被拦截";
+    case kRasAccessDenied:
+        return "用户名或密码被拒绝，或账号没有拨入权限";
+    case kRasNoPppProtocols:
+        return "系统未协商出 PPP 控制协议：检查 WAN Miniport 驱动与 Windows 可选功能";
+    case kRasRemoteNotResponding:
+        return "远端不响应：PPTP 依赖 GRE 协议 47，常被路由器或运营商阻断";
+    case kRasEncryptionUnsupported:
+        return "服务端不支持请求的加密强度";
+    case kRasEncryptionRequired:
+        return "服务端要求数据加密：勾选「要求 MPPE-128」后重试";
+    default:
+        return nullptr;
+    }
+}
+
+// RasDial/RasSetEntryProperties 返回 RAS 错误码；补上系统本地化文本与 PPTP
+// 常见原因提示，否则用户只看到一个数字（例如 628）。
+std::string rasErrorText(std::string_view prefix, DWORD code) {
+    std::wstring buffer(512, L'\0');
+    std::string text = windowsError(prefix, code);
+    if (RasGetErrorStringW(static_cast<UINT>(code), buffer.data(),
+                           static_cast<DWORD>(buffer.size())) == ERROR_SUCCESS) {
+        const std::string detail = wideToUtf8(std::wstring_view(buffer.c_str()));
+        if (!detail.empty()) text += "：" + detail;
+    }
+    if (const char* hint = rasErrorHint(code); hint != nullptr) {
+        text += std::format("；{}", hint);
+    }
+    return text;
+}
+
 std::optional<std::wstring> utf8ToWide(std::string_view value) {
     if (value.empty()) return std::wstring{};
     const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
@@ -568,9 +633,20 @@ bool connectWindows(const std::shared_ptr<Runtime>& runtime,
     rasEntry.dwVpnStrategy = VS_PptpOnly;
     rasEntry.dwFramingProtocol = RASFP_Ppp;
     rasEntry.dwfNetProtocols = RASNP_Ip;
+    // 认证与加密必须显式写进条目：API 新建的条目若留空认证位，现代 Windows
+    // 只按默认（EAP）协商，而 PPTP 服务端（pptpd/RRAS）通常只提供 MS-CHAPv2，
+    // 协商不一致时服务端直接断开端口（RAS 628）。MPPE 的会话密钥也只能由
+    // MS-CHAPv2 派生，所以两种模式都要求 MS-CHAPv2。
+    // 未勾选 MPPE 时用 ET_Optional：自己不再强制加密，但服务端要求加密时仍能
+    // 协商出 MPPE——避免旧实现的「RASEO_RequireDataEncryption + ET_None」自相
+    // 矛盾（要求加密却又声明不用加密）。
+    rasEntry.dwEncryptionType = config->requireMppe ? ET_Require : ET_Optional;
+    rasEntry.dwfOptions = RASEO_RequireMsCHAP2;
+    if (config->requireMppe) {
+        rasEntry.dwfOptions |= RASEO_RequireDataEncryption;
+    }
     // 特意不设置 RASEO_RemoteDefaultGateway：公司内网路由由本适配器安装，
     // 默认流量继续交给主 VPN/TUN。
-    rasEntry.dwfOptions = config->requireMppe ? RASEO_RequireDataEncryption : 0;
     if (!copyWide(rasEntry.szLocalPhoneNumber, *server)) {
         error = "PPTP server 名称过长";
         DeleteFileW(phonebook.c_str());
@@ -579,7 +655,7 @@ bool connectWindows(const std::shared_ptr<Runtime>& runtime,
     const DWORD setResult = RasSetEntryPropertiesW(
         phonebook.c_str(), entry.c_str(), &rasEntry, sizeof(rasEntry), nullptr, 0);
     if (setResult != ERROR_SUCCESS) {
-        error = windowsError("创建 Windows PPTP 条目失败", setResult);
+        error = rasErrorText("创建 Windows PPTP 条目失败", setResult);
         DeleteFileW(phonebook.c_str());
         return false;
     }
@@ -599,7 +675,7 @@ bool connectWindows(const std::shared_ptr<Runtime>& runtime,
     const DWORD dialResult = RasDialW(nullptr, phonebook.c_str(), &params, 0,
                                       nullptr, &rasConnection);
     if (dialResult != ERROR_SUCCESS) {
-        error = windowsError("Windows PPTP 拨号失败", dialResult);
+        error = rasErrorText("Windows PPTP 拨号失败", dialResult);
         if (rasConnection != nullptr) RasHangUp(rasConnection);
         RasDeleteEntryW(phonebook.c_str(), entry.c_str());
         DeleteFileW(phonebook.c_str());

@@ -147,7 +147,7 @@ huxerui::View ProfilePlatformOptions(
                 timeout = value;
             }),
         SettingSwitchRow(
-            "要求 MPPE-128", "为 PPTP 连接启用 MPPE-128 加密",
+            "要求 MPPE-128", "勾选后强制 MPPE-128；不勾选时按服务端要求协商",
             huxerui::Switch(requireMppe.Get())
                 .OnChanged([requireMppe](bool checked) { requireMppe = checked; })),
         huxerui::TextField(routes.Get())
