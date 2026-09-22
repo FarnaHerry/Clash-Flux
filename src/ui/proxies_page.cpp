@@ -574,7 +574,8 @@ std::function<void()> NodeSelectAction(
             tasks.Launch([toast, testGeneration, testGroup, coreState,
                           groupName = std::move(groupName)]() -> huxerui::Task<void> {
                 if (coreState.Get() != core::CoreState::Running) {
-                    toast.Show("正在启动内核以进行测速…");
+                    toast.Show("测速需要内核：请先在首页右下角启动内核");
+                    co_return;
                 }
                 const bool ok = co_await RunOnTaskThread([groupName] {
                     return StartProxyGroupTest(groupName);

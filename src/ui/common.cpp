@@ -142,15 +142,10 @@ bool StartProxyGroupTest(const std::string& group) {
         return false;
     }
 #else
-    // 桌面节点测速通过内核 delay API 完成。内核已停止时这里只负责按当前
-    // 订阅拉起一个不带 TUN 的实例，具体节点请求仍由 NodeCard 调内核执行。
-    try {
-        auto& core = store::coreStore();
-        if (core.snapshot().state != core::CoreState::Running) {
-            core.startCore(store::profilesStore().selectedYaml(), false, false);
-            if (core.snapshot().state != core::CoreState::Running) return false;
-        }
-    } catch (...) {
+    // 桌面节点测速通过内核 delay API 完成。测速依赖内核但不需要接管流量，
+    // 内核没跑时不再隐式拉起（内置启动入口只在首页右下角悬浮按钮与设置里的
+    // 「启动时自动运行内核」），这里直接返回失败由页面提示先启动内核。
+    if (store::coreStore().snapshot().state != core::CoreState::Running) {
         return false;
     }
     return TriggerProxyGroupTest(group);

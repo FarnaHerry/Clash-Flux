@@ -227,10 +227,11 @@
 #endif
     }
 
-    // 切换 TUN（阻塞）。sing-box 的 clash_api 不支持热更 tun：内核运行中 →
-    // 重新合成 config.json 并重启内核生效，重启失败（如无 root/CAP_NET_ADMIN，
-    // sing-box 建 TUN 失败退出）回滚设置并恢复无 TUN 运行；未运行时开启
-    // TUN 会尝试使用当前订阅启动内核。成功更新快照。
+    // 切换 TUN（阻塞）。TUN 是与内核启停解耦的独立开关：
+    // - 内核在跑：sing-box 的 clash_api 不支持热更 tun → 重新合成 config.json
+    //   并重启内核生效；失败（如无 root/CAP_NET_ADMIN）回滚设置并恢复无 TUN 运行；
+    // - 内核没跑：只写配置（下次启动内核时带上 tun），不再隐式拉起内核。
+    // 成功更新快照。
     bool applyTun(bool enable) {
         std::lock_guard operationLock(lifecycleMutex_);
 #if defined(__ANDROID__)
@@ -244,12 +245,8 @@
             snap_.tunEnabled = enable;
         }
         if (snapshot().state != core::CoreState::Running) {
-            if (!enable) return true;
-            if (ensureRunning()) return true;
-            setSetting("core.tun_enabled", "false");
-            std::lock_guard lock(mutex_);
-            snap_.tunEnabled = false;
-            return false;
+            // 只记意图；内核怎么启动由「启动入口 + 启动策略」决定。
+            return true;
         }
         const bool restoreSystemProxy = systemProxyOurs();
         if (!stopCore()) {
@@ -273,9 +270,12 @@
 #endif
     }
 
-    // 切换系统代理（阻塞 shell 调用）。开启 = 用户明确要求接管（覆盖写入
-    // 并记录端口）；关闭只撤销本应用写入的设置——当前代理指向其他软件时
-    // 不动系统，仅清开关。成功持久化设置。
+    // 切换系统代理（阻塞 shell 调用）。系统代理是与内核启停解耦的独立开关：
+    // - 关闭：只要当前系统代理是我方写入的就撤销（与内核是否运行无关，
+    //   避免系统一直指向已死端口）；指向其他软件时不动系统，仅清开关；
+    // - 开启且内核在跑：立即写 OS 代理并记录端口；
+    // - 开启但内核没跑：只记意图（下次启动内核时由 startCore 恢复），
+    //   返回成功表示「意图已记录」。
     bool applySystemProxy(bool enable) {
         std::lock_guard operationLock(lifecycleMutex_);
 #if defined(__ANDROID__)
@@ -283,22 +283,27 @@
         return false;
 #else
         ensureOpen();
-        if (enable && !ensureRunning()) return false;
-        std::string err;
-        bool ok = true;
-        if (enable) {
-            ok = sysproxy::enable("127.0.0.1", mixedPort(), err);
-            if (ok) setSetting("proxy.system_port", std::to_string(mixedPort()));
-        } else if (systemProxyOurs()) {
-            ok = sysproxy::disable(err);
+        if (!enable) {
+            std::string err;
+            bool ok = true;
+            if (systemProxyOurs()) ok = sysproxy::disable(err);
+            if (!ok) {
+                std::lock_guard lock(mutex_);
+                snap_.lastError = "系统代理关闭失败：" + err;
+                return false;
+            }
+            setSetting("proxy.system_enabled", "false");
+            return true;
         }
-        if (!ok) {
+        setSetting("proxy.system_enabled", "true");
+        if (snapshot().state != core::CoreState::Running) return true;
+        std::string err;
+        if (!sysproxy::enable("127.0.0.1", mixedPort(), err)) {
             std::lock_guard lock(mutex_);
-            snap_.lastError = "系统代理" + std::string(enable ? "开启" : "关闭") +
-                              "失败：" + err;
+            snap_.lastError = "系统代理开启失败：" + err;
             return false;
         }
-        setSetting("proxy.system_enabled", enable ? "true" : "false");
+        setSetting("proxy.system_port", std::to_string(mixedPort()));
         return true;
 #endif
     }

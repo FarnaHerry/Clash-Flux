@@ -163,13 +163,10 @@ int cmdMode(const std::vector<std::string>& args) {
         std::println(stderr, "mode 只接受 rule|global|direct");
         return 2;
     }
-    if (core.snapshot().state == core::CoreState::Running) {
-        if (!core.applyMode(args[0])) {
-            std::println(stderr, "切换失败：{}", core.snapshot().lastError);
-            return 1;
-        }
-    } else {
-        core.setSetting("core.mode", args[0]);
+    // applyMode 自己区分「内核在跑就热切换 / 没跑就只落配置」，CLI 不再重复判态。
+    if (!core.applyMode(args[0])) {
+        std::println(stderr, "切换失败：{}", core.snapshot().lastError);
+        return 1;
     }
     std::println("出站模式：{}", args[0]);
     return 0;
@@ -212,7 +209,11 @@ int cmdProxy(const std::vector<std::string>& args) {
         std::println(stderr, "{}", core.snapshot().lastError);
         return 1;
     }
-    std::println("系统代理：{}", on ? "开" : "关");
+    // 内核没跑时开启只落配置（不在系统上写代理），启动内核时才真正接管。
+    std::println("系统代理：{}{}", on ? "开" : "关",
+                 on && core.snapshot().state != core::CoreState::Running
+                     ? "（已记录，启动内核后生效）"
+                     : "");
     return 0;
 }
 
