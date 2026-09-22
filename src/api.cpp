@@ -179,7 +179,11 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
                                    const std::filesystem::path& dest,
                                    const DownloadOptions& options) {
     ApiResult result;
-    std::ofstream out(dest, std::ios::binary | std::ios::trunc);
+    // 先写同目录临时文件，成功后才原子替换目标：旧实现直接 truncate 目标，
+    // 刷新失败（订阅/规则集）会把上一份可用文件删掉。失败时只清理临时文件，
+    // 已有内容原样保留。
+    const std::filesystem::path temp = dest.string() + ".part";
+    std::ofstream out(temp, std::ios::binary | std::ios::trunc);
     if (!out) {
         result.error = "无法写入: " + dest.string();
         return result;
@@ -187,6 +191,9 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     CURL* easy = curl_easy_init();
     if (!easy) {
         result.error = "curl_easy_init failed";
+        out.close();
+        std::error_code removeError;
+        std::filesystem::remove(temp, removeError);
         return result;
     }
     curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
@@ -231,7 +238,22 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     if (code == CURLE_OK) {
         curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status);
         result.ok = result.status >= 200 && result.status < 300;
-        if (!result.ok) result.error = std::format("HTTP {}", result.status);
+        if (!result.ok) {
+            result.error = std::format("HTTP {}", result.status);
+        } else {
+            // 服务器声明了长度就核对实际写入字节数：中间设备/代理按
+            // connection-close 提前收尾时 curl 会当作正常完成，落盘的却可能是
+            // 截断文件（.srs 规则集被截断会让内核启动期 FATAL）。
+            curl_off_t expected = -1;
+            curl_off_t received = -1;
+            curl_easy_getinfo(easy, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &expected);
+            curl_easy_getinfo(easy, CURLINFO_SIZE_DOWNLOAD_T, &received);
+            if (expected > 0 && received >= 0 && received < expected) {
+                result.ok = false;
+                result.error = "下载不完整（收到 " + std::to_string(received) +
+                               "/" + std::to_string(expected) + " 字节）";
+            }
+        }
     } else {
         const std::string detail = errorDetail[0] != '\0'
                                        ? std::string(errorDetail)
@@ -251,9 +273,18 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
         }
     }
     curl_easy_cleanup(easy);
+    std::error_code ec;
+    if (result.ok) {
+        out.close();
+        std::filesystem::rename(temp, dest, ec);
+        if (ec) {
+            result.ok = false;
+            result.error = "无法替换目标文件: " + dest.string();
+        }
+    }
     if (!result.ok) {
-        std::error_code ec;
-        std::filesystem::remove(dest, ec);
+        std::error_code removeError;
+        std::filesystem::remove(temp, removeError);
     }
     return result;
 }

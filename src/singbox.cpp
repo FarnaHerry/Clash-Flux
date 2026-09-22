@@ -94,4 +94,19 @@ CompileResult compileConfig(const CompileOptions& options) {
     return std::move(ctx.result);
 }
 
+bool RuleSetCacheValid(const std::filesystem::path& path) {
+    // 头部 = "SRS" 魔数 + 版本号；只做低成本校验，完整校验需要解压 zlib 流。
+    constexpr std::size_t kHeaderBytes = 4;
+    constexpr std::string_view kMagic = "SRS";
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec || size < kHeaderBytes) return false;
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    char magic[kMagic.size()]{};
+    in.read(magic, static_cast<std::streamsize>(sizeof(magic)));
+    return in.gcount() == static_cast<std::streamsize>(sizeof(magic)) &&
+           std::string_view(magic, sizeof(magic)) == kMagic;
+}
+
 } // namespace singbox

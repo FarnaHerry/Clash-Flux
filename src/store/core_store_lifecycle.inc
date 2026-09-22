@@ -1,10 +1,19 @@
 // core_store_lifecycle.inc — sing-box 内核生命周期
 // 由 src/store/core_store.cppm 在 CoreStore 类体内包含。
 
+    // 内核把规则集解析失败报成启动 FATAL（parse rule-set: read rule:
+    // unexpected EOF）：本地 .srs 缓存被截断或内容错误时会发生。清掉缓存后
+    // 重新预取（curl 会校验 Content-Length）即可自愈；其他启动失败不重试。
+    static bool isRuleSetCacheFailure(const std::string& message) {
+        return message.find("rule-set") != std::string::npos &&
+               message.find("EOF") != std::string::npos;
+    }
+
     void startCore(const std::string& profileYaml, bool detached = false,
                    bool tunEnabled = false,
                    std::optional<bool> systemProxyState = std::nullopt,
-                   bool speedTestOnly = false) {
+                   bool speedTestOnly = false,
+                   bool repairRuleSetCache = true) {
         std::lock_guard operationLock(lifecycleMutex_);
         ensureOpen();
         const auto serviceInfo = service::query();
@@ -46,6 +55,9 @@
 
         const std::filesystem::path workDir = cfg::coreWorkDir();
         const std::filesystem::path configFile = workDir / "config.json";
+        // detached spawn 把内核输出追加进 core.log：记下启动前的长度，失败时
+        // 只取本次启动新增的行作为诊断尾部。
+        [[maybe_unused]] std::uintmax_t detachedLogSize = 0;
 #ifdef _WIN32
         std::string windowsTunInterface;
         std::vector<std::string> windowsNativeInterfaces;
@@ -188,6 +200,10 @@
                 // CLI 驻留形态：setsid 脱离会话 + 日志重定向 + pidfile，CLI
                 // 退出内核仍在。本进程不持句柄，按接管形态管理（活判/停止
                 // 走 pidfile）。
+                std::error_code logSizeError;
+                detachedLogSize = std::filesystem::file_size(workDir / "core.log",
+                                                             logSizeError);
+                if (logSizeError) detachedLogSize = 0;
                 std::string err;
                 if (!core::spawnDetached(binaryPath_, workDir, configFile, err)) {
                     fail(err);
@@ -219,10 +235,35 @@
                         !tailText.empty()) {
                         message += "：" + tailText;
                     }
+                } else if (adopted_) {
+                    // 驻留/接管形态：内核输出在 core.log，旧实现只报一句
+                    // 「exit -1」，用户无法区分配置、规则集还是网络问题。
+                    if (const std::string tailText =
+                            detachedTail(workDir, detachedLogSize);
+                        !tailText.empty()) {
+                        message += "：" + tailText;
+                    }
                 }
                 if (message.find("address already in use") != std::string::npos ||
                     message.find("bind:") != std::string::npos) {
                     message += "（端口可能被其他代理软件占用；可在设置中修改混合端口）";
+                }
+                if (repairRuleSetCache && isRuleSetCacheFailure(message)) {
+                    // 坏缓存会让内核每次启动都 FATAL（且按周刷新的 mtime 判断
+                    // 永远认为它新鲜）：清掉 .srs 与内核自带缓存后重试一次。
+                    // 递归调用前复位状态，避开启动重入保护。
+                    purgeRuleSetCache(workDir);
+                    stream::logApplication(
+                        "warning",
+                        "本地规则集缓存疑似损坏，已清理并重新预取后重试启动内核");
+                    {
+                        std::lock_guard lock(mutex_);
+                        snap_.state = core::CoreState::Stopped;
+                        snap_.lastError.clear();
+                    }
+                    startCore(profileYaml, detached, tunEnabled, systemProxyState,
+                              speedTestOnly, /*repairRuleSetCache=*/false);
+                    return;
                 }
                 fail(std::move(message));
                 return;

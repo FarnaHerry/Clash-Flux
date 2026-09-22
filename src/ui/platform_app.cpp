@@ -147,19 +147,15 @@ void DesktopPreparePlatformDataDirectory(
                     core.releaseStaleOwnedSystemProxy();
                     if (!cfg::singboxBinary().empty()) {
                         // 清理上次异常退出留下的旧内核（含仍持有旧 TUN 配置
-                        // 的进程）。有可用订阅时内核常驻，但普通启动只带本次
-                        // 显式恢复的 TUN/系统代理状态；两个接管开关都关闭时
-                        // 仍只启动本地内核，不接管系统流量。
+                        // 的进程）。应用与内核同步启动：没有选中订阅时也用最小
+                        // 配置把内核拉起来（控制端口/REST 就绪），TUN 与系统
+                        // 代理只按实际设置恢复，不反过来决定内核是否启动。
                         core.stopCore();
                         const bool resumeSysProxy = core.systemProxyEnabled();
                         const bool resumeTun =
                             core.setting("core.tun_enabled", "false") == "true";
-                        const std::string selectedYaml =
-                            store::profilesStore().selectedYaml();
-                        if (!selectedYaml.empty()) {
-                            core.startCore(selectedYaml,
-                                           false, resumeTun, resumeSysProxy);
-                        }
+                        core.startCore(store::profilesStore().selectedYaml(),
+                                       false, resumeTun, resumeSysProxy);
                     }
                 });
                 co_await PollWhile(std::chrono::duration<double>{0.5}, [=] {

@@ -214,6 +214,17 @@ cmake --build build --target clash-flux
 - 日志级别词表：UI/设置存 mihomo 风格 `silent/error/warning/info/debug`；
   配置生成映射 `warning→warn`、`silent→disabled`，WS 订阅 `?level=` 同步映射，
   `stream.cpp` 把内核推送的 `warn/trace` 归一回 UI 词表。
+- 内核生命周期：桌面入口（`platform_app.cpp`）在启动时无条件 `startCore`，没有选中
+  订阅就用空 profile 的最小配置让控制端口/REST 就绪；TUN 与系统代理只按设置恢复，
+  不再决定内核是否启动。`coreAlive()` 对接管/驻留形态用 `core::pidAlive`（Windows）
+  或 `/proc/<pid>/stat` 且排除僵尸进程（POSIX），detached 形态的诊断尾部读
+  `<workDir>/core.log` 本次启动新增的部分。`core::stripAnsi` 统一去掉 sing-box
+  输出里的颜色转义后再进 UI/CLI 文本。
+- 规则集缓存：`.srs` 落盘前校验 `SRS` 魔数（`singbox::RuleSetCacheValid`），
+  编译命中本地缓存、预取（按周刷新）与下载都走同一校验；`downloadToFile` 先写
+  `*.part` 再原子替换，并用 `CURLINFO_CONTENT_LENGTH_DOWNLOAD_T` 拒绝截断。内核
+  以 `parse rule-set: … EOF` 启动失败时 `startCore` 清理 `.srs` + `cache.db` 并
+  自动重试一次（`isRuleSetCacheFailure`）。
 - 订阅下载双通道：桌面走 vendored curl（`ClashApi::downloadToFile`，支持订阅级
   代理/无效证书选项）；Windows 的 curl/OpenSSL 既无系统 CA 路径也不带 CA bundle，
   下载句柄固定开 `CURLSSLOPT_NATIVE_CA` 使用 Windows 证书存储，失败时回传

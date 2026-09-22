@@ -26,18 +26,25 @@ bool ensureGeoipRuleSet(Context& ctx, std::string country) {
     }
     // 本地缓存命中 → local rule_set（首启不依赖代理/网络；core_store 负责
     // 预取与按周刷新）；未命中 → remote，由内核在启动时经默认出站拉取。
+    // 命中前必须校验：0 字节/被写入错误内容的缓存会让内核启动期 FATAL
+    // （parse rule-set: read rule: unexpected EOF）。
     if (!ctx.opt.ruleSetDir.empty()) {
         const std::filesystem::path local =
             std::filesystem::path(ctx.opt.ruleSetDir) / (tag + ".srs");
         std::error_code ec;
         if (std::filesystem::exists(local, ec) && !ec) {
-            ctx.ruleSets.push_back({
-                {"type", "local"},
-                {"tag", tag},
-                {"format", "binary"},
-                {"path", local.string()},
-            });
-            return true;
+            if (RuleSetCacheValid(local)) {
+                ctx.ruleSets.push_back({
+                    {"type", "local"},
+                    {"tag", tag},
+                    {"format", "binary"},
+                    {"path", local.string()},
+                });
+                return true;
+            }
+            std::error_code removeError;
+            std::filesystem::remove(local, removeError);
+            ctx.warn(std::format("本地 GEOIP 规则集缓存「{}」不可用，已删除并改为在线拉取", tag));
         }
     }
 #if defined(__ANDROID__)
@@ -83,13 +90,18 @@ bool ensureGeositeRuleSet(Context& ctx, std::string category) {
             std::filesystem::path(ctx.opt.ruleSetDir) / (tag + ".srs");
         std::error_code ec;
         if (std::filesystem::exists(local, ec) && !ec) {
-            ctx.ruleSets.push_back({
-                {"type", "local"},
-                {"tag", tag},
-                {"format", "binary"},
-                {"path", local.string()},
-            });
-            return true;
+            if (RuleSetCacheValid(local)) {
+                ctx.ruleSets.push_back({
+                    {"type", "local"},
+                    {"tag", tag},
+                    {"format", "binary"},
+                    {"path", local.string()},
+                });
+                return true;
+            }
+            std::error_code removeError;
+            std::filesystem::remove(local, removeError);
+            ctx.warn(std::format("本地 GEOSITE 规则集缓存「{}」不可用，已删除并改为在线拉取", tag));
         }
     }
 #if defined(__ANDROID__)
