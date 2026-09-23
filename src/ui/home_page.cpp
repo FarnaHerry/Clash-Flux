@@ -955,7 +955,7 @@ private:
               huxerui::Background(theme.colors.surface_container_high),
               huxerui::CornerRadius(12.0F),
               huxerui::ClipChildren(),
-              HomeSlidingSegments{selected, indicator, 8.0F, 0.18});
+              HomeSlidingSegments{selected, indicator, 8.0F, 0.14});
 }
 
 [[huxerui::composable]] huxerui::View HomeProfileCard(const HomeState& s) {
@@ -999,8 +999,10 @@ std::string HomeKernelStatusText(const HomeState& s) {
 
 // 标题行内核状态图标（放在编辑按钮之前）：运行中主色、启动中琥珀、失败错误色、
 // 未运行次级色；详细状态走 Tooltip。
-[[huxerui::composable]] huxerui::View HomeKernelStatusIcon(const HomeState& s) {
+[[huxerui::composable]] huxerui::View HomeKernelStatusIcon(
+    huxerui::State<HomeState> state) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const HomeState& s = state.Get();
     huxerui::Color color = theme.colors.on_surface_variant;
     if (s.core.state == core::CoreState::Running) {
         color = theme.colors.primary;
@@ -1135,8 +1137,9 @@ std::string HomeKernelStatusText(const HomeState& s) {
 }
 
 [[huxerui::composable]] huxerui::View AndroidHomeFloatingAction(
-    huxerui::View page, const HomeState& state, bool compact) {
+    huxerui::View page, huxerui::State<HomeState> homeState, bool compact) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const HomeState& state = homeState.Get();
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto busy = huxerui::UseState(false);
@@ -1315,9 +1318,10 @@ std::string HomeKernelStatusText(const HomeState& s) {
 // 「正式启动」是独立动作：只负责拉起/停止内核，启动时按已记录的 TUN 与
 // 系统代理意图恢复；不再由各个开关隐式触发内核。
 [[huxerui::composable]] huxerui::View DesktopHomeFloatingAction(
-    huxerui::View page, const HomeState& state, bool compact) {
+    huxerui::View page, huxerui::State<HomeState> homeState, bool compact) {
     static_cast<void>(compact);
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const HomeState& state = homeState.Get();
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto busy = huxerui::UseState(false);
@@ -1398,9 +1402,10 @@ std::string HomeKernelStatusText(const HomeState& s) {
 // ---- 卡片内容分发 ----------------------------------------------------------
 
 [[huxerui::composable]] huxerui::View HomeCardContent(
-    HomeCardKind kind, const HomeState& s,
+    HomeCardKind kind, huxerui::State<HomeState> state,
     huxerui::State<std::optional<std::size_t>> modeOverride,
     huxerui::TaskScope tasks, huxerui::ToastHandle toast) {
+    const HomeState& s = state.Get();
     if (kind == HomeCardKind::Traffic) return HomeTrafficCard(s);
     if (kind == HomeCardKind::Total) return HomeTotalCard(s);
     if (kind == HomeCardKind::Mode) {
@@ -1622,8 +1627,6 @@ std::string HomeKernelStatusText(const HomeState& s) {
         },
         0);
 
-    const HomeState s = state.Get();
-
     // 进入 / 取消编辑：编辑态内改动只落在会话 State，取消时整份回滚快照；
     // 保存写库后同样更新快照，保证下一次取消回到已保存的布局。
     const auto toggleEdit = [layout, savedLayout, editing, dropTarget] {
@@ -1700,7 +1703,7 @@ std::string HomeKernelStatusText(const HomeState& s) {
         const HomeCardKind kind = entry.kind;
 
         huxerui::View body =
-            HomeCardContent(kind, s, modeOverride, tasks, toast);
+            HomeCardContent(kind, state, modeOverride, tasks, toast);
         // 拖动预览用的卡面：内容不压暗（悬浮的是"正常"整卡），交给框架的拖动预览层。
         const huxerui::View previewFace = Card(body);
         // 本卡的窗口几何（拖动时用来自己算"最近卡片"）。
@@ -1855,7 +1858,7 @@ std::string HomeKernelStatusText(const HomeState& s) {
     // 编辑 / 保存图标按钮固定在标题行右缘，与标题同一行居中对齐（紧凑视口
     // 也保持同一行，不折到标题下方）。
     huxerui::View headerActions = huxerui::Row {
-        HomeKernelStatusIcon(s),
+        HomeKernelStatusIcon(state),
         huxerui::IconButton(isEditing ? app::images::close : app::images::edit,
                             isEditing ? "取消编辑" : "编辑首页")
             .With(huxerui::Tooltip(isEditing ? "取消编辑" : "编辑首页"))
@@ -1879,7 +1882,8 @@ std::string HomeKernelStatusText(const HomeState& s) {
         "首页", std::move(headerActions), std::move(scrollContent), true);
 
     // 移动端启动/停止按钮脱离滚动内容，固定在底部悬浮导航之上的位置。
-    huxerui::View shell = CLASHFLUX_HOME_FLOATING_ACTION(std::move(page), s, compact);
+    huxerui::View shell = CLASHFLUX_HOME_FLOATING_ACTION(
+        std::move(page), state, compact);
 
     return std::move(shell).With(huxerui::Grow(1.0F));
 }

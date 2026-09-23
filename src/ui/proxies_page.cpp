@@ -538,25 +538,26 @@ std::function<void()> NodeSelectAction(
     auto groups = huxerui::UseStateList<ProxyGroup>();
     auto coreState = huxerui::UseState<core::CoreState>(core::CoreState::Stopped);
     auto mode = huxerui::UseState<std::string>("rule");
+    auto modePending = huxerui::UseState(false);
     auto testGeneration = huxerui::UseState(0);
     auto testGroup = huxerui::UseState<std::string>("");
     // 分支路径按模式独立（互不共享）：规则模式 path[0] = 标签栏选中的订阅组，
     // 全局模式 path[0] = GLOBAL 或平台返回的实际可选组；后续元素 = 逐级点入的嵌套子组。
     auto rulePath = huxerui::UseState<std::vector<std::string>>({});
     auto globalPath = huxerui::UseState<std::vector<std::string>>({});
-    // 横向滑动（Pager 外层）：按下点与"是否已认领本次指针会话"。
+    // 横向滑动：按下点与"是否已认领本次指针会话"。
     auto swipeOrigin = huxerui::UseState<huxerui::Point>(huxerui::Point{0.0F, 0.0F});
     auto swipeOwned = huxerui::UseState(false);
 
     // 数据泵：运行时刷新 /proxies；停止时从当前订阅编译预览快照，
     // 这样用户仍能预先选择节点，下一次内核启动后再由内核正式应用。
     huxerui::Lifecycle(
-        [tasks, groups, coreState, mode] {
+        [tasks, groups, coreState, mode, modePending] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 for (;;) {
                     const auto snap = store::coreStore().snapshot();
                     coreState = snap.state;
-                    if (!snap.mode.empty()) mode = snap.mode;
+                    if (!modePending.Get() && !snap.mode.empty()) mode = snap.mode;
                     const auto nextGroups = co_await RunOnTaskThread([]()
                         -> std::optional<std::vector<ProxyGroup>> {
                         const std::string body = ProxyGroupsSnapshot();
@@ -604,14 +605,18 @@ std::function<void()> NodeSelectAction(
     }
     huxerui::View modeSwitch =
         huxerui::SegmentedButton(kModeNames, modeIndex)
-            .OnChanged([tasks, toast, mode](std::size_t idx) {
+            .OnChanged([tasks, toast, mode, modePending](std::size_t idx) {
+                if (idx >= kModes.size() || modePending.Get()) return;
+                const std::string previous = mode.Get();
+                mode = kModes[idx];
+                modePending = true;
                 tasks.Launch([=]() -> huxerui::Task<void> {
                     const bool ok = co_await RunOnTaskThread(
                         [idx] { return store::coreStore().applyMode(kModes[idx]); });
+                    modePending = false;
                     if (!ok) {
+                        mode = previous;
                         toast.Show("切换失败（内核未运行？）");
-                    } else {
-                        mode = kModes[idx];  // 乐观更新，免等下一泵
                     }
                 });
             });
@@ -686,14 +691,10 @@ std::function<void()> NodeSelectAction(
         if (tabNames[i] == selectedRoot) selectedTab = i;
     }
 
-    // 切换分组：点击标签或左右滑动都只写这条路径；当前组内的节点卡会被卸载，
-    // 因此按约定 6 让出一拍再写 State。
+    // 分组标签与左右滑动直接更新路径，让选中态和内容在同一帧切换。
     const std::function<void(const std::string&)> selectGroup =
-        [tasks, activePath](const std::string& name) {
-            tasks.Launch([activePath, name]() -> huxerui::Task<void> {
-                co_await huxerui::Delay(std::chrono::duration<double>{0});
-                activePath = std::vector<std::string>{name};
-            });
+        [activePath](const std::string& name) {
+            activePath = std::vector<std::string>{name};
         };
 
     const bool compact =
@@ -703,7 +704,8 @@ std::function<void()> NodeSelectAction(
 
     // 一个根分组一页。VirtualGrid 直接用索引读取组节点，不再为所有组预先
     // 分配完整的 ProxyItem 与 span 数组；只有视口附近的节点会被构造为卡片。
-    // Pager 保留全部页面和各组滚动位置。
+    // IndexedPages 保留各组页面和滚动位置，只测量当前组，避免切组时并行布局
+    // 离屏网格；滑动手势在内容区自行识别。
     constexpr std::size_t kCompactFooterItems = 2;
     std::vector<huxerui::View> groupPages;
     groupPages.reserve(rootGroups.size());
@@ -804,20 +806,10 @@ std::function<void()> NodeSelectAction(
                   huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     } else {
-        body = huxerui::Pager(std::move(groupPages), selectedTab)
-                   .ScrollAxis(huxerui::Axis::Horizontal)
-                   .OnChanged([activePath, tabNames](std::size_t index) {
-                       // 键盘/无障碍翻页由 Pager 提议相邻下标（指针滑动走下方
-                       // PointerIntercept）。Pager 是受控组件：同步落盘下标，
-                       // 让显示页与路径状态一致。
-                       if (index < tabNames.size()) {
-                           activePath = std::vector<std::string>{tabNames[index]};
-                       }
-                   })
+        body = huxerui::IndexedPages(std::move(groupPages), selectedTab)
                    .With(huxerui::Grow(1.0F))
-                   // 页内是纵向滚动的节点网格：横向滑动要先于子滚动容器认领指针
-                   // 会话（PointerIntercept 取得所有权会取消已开始的子滚动），
-                   // 纵向占优的位移一律不认领，滚动照旧。
+                   // 页内是纵向滚动的节点网格：水平占优时在内容层认领指针，
+                   // 纵向占优的位移不干预网格滚动。
                    .On<huxerui::ViewEvents::PointerIntercept>(
                        [swipeOrigin, swipeOwned, selectGroup, tabNames,
                         selectedTab](const huxerui::PointerEvent& event) {

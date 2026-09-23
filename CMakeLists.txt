@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.2.8 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.2.9 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # HUXERUI_LIBRARY_GRAPH_ONLY：CLI 扫描 huxerui 库依赖图时的特殊配置——
 # 不启用语言、不构建，huxerui_add_app 只写出库图 JSON 即返回（见 SDK
@@ -247,6 +247,7 @@ if (ANDROID)
     set(APP_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/app.cpp")
     list(APPEND APP_SOURCE_FILES
         "${CLASHFLUX_ANDROID_LEGACY_CORE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/qr_photo_decoder.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/platform/android/android_bridge.cpp"
         ${CLASHFLUX_ANDROID_LEGACY_UI}
     )
@@ -316,6 +317,56 @@ huxerui_add_app(clash-flux
     BUNDLE_NAME "Clash-Flux"
     BUNDLE_IDENTIFIER "dev.farna.clashflux"
     ${CLASHFLUX_APP_RESOURCE_OPTIONS}
+)
+
+set(CLASHFLUX_HUXERUI_CAMERA_URL "https://github.com/HuxerUI/Lib-Camera.git")
+set(CLASHFLUX_HUXERUI_CAMERA_COMMIT "cada0539098791019bc5330ffd87009acc29d68a")
+if (HUXERUI_LIBRARY_GRAPH_ONLY)
+    # This Lib-Camera revision adds include directories unconditionally after
+    # huxerui_add_library(). In graph-only mode that helper creates an INTERFACE
+    # target, so predeclare its source-backed identity without adding the broken
+    # library subdirectory; huxerui_use_library still emits the same dependency graph.
+    include(FetchContent)
+    set(CLASHFLUX_HUXERUI_CAMERA_ORIGIN
+        "URL:${CLASHFLUX_HUXERUI_CAMERA_URL}@COMMIT:${CLASHFLUX_HUXERUI_CAMERA_COMMIT}")
+    string(SHA256 CLASHFLUX_HUXERUI_CAMERA_HASH
+        "${CLASHFLUX_HUXERUI_CAMERA_ORIGIN}")
+    string(SUBSTRING "${CLASHFLUX_HUXERUI_CAMERA_HASH}" 0 16
+        CLASHFLUX_HUXERUI_CAMERA_HASH)
+    set(CLASHFLUX_HUXERUI_CAMERA_FETCH_NAME
+        "huxerui_library_${CLASHFLUX_HUXERUI_CAMERA_HASH}")
+    FetchContent_Declare(${CLASHFLUX_HUXERUI_CAMERA_FETCH_NAME}
+        GIT_REPOSITORY "${CLASHFLUX_HUXERUI_CAMERA_URL}"
+        GIT_TAG "${CLASHFLUX_HUXERUI_CAMERA_COMMIT}"
+        GIT_SHALLOW FALSE
+    )
+    FetchContent_GetProperties(${CLASHFLUX_HUXERUI_CAMERA_FETCH_NAME}
+        SOURCE_DIR CLASHFLUX_HUXERUI_CAMERA_SOURCE_DIR
+        POPULATED CLASHFLUX_HUXERUI_CAMERA_POPULATED
+    )
+    if (NOT CLASHFLUX_HUXERUI_CAMERA_POPULATED)
+        cmake_policy(PUSH)
+        if (POLICY CMP0169)
+            cmake_policy(SET CMP0169 OLD)
+        endif ()
+        FetchContent_Populate(${CLASHFLUX_HUXERUI_CAMERA_FETCH_NAME})
+        cmake_policy(POP)
+        FetchContent_GetProperties(${CLASHFLUX_HUXERUI_CAMERA_FETCH_NAME}
+            SOURCE_DIR CLASHFLUX_HUXERUI_CAMERA_SOURCE_DIR
+        )
+    endif ()
+    add_library(huxerui_camera INTERFACE)
+    add_library(HuxerUI::Camera ALIAS huxerui_camera)
+    set_property(TARGET huxerui_camera PROPERTY HUXERUI_LIBRARY TRUE)
+    set_property(TARGET huxerui_camera PROPERTY HUXERUI_LIBRARY_SOURCE_ROOT
+        "${CLASHFLUX_HUXERUI_CAMERA_SOURCE_DIR}")
+    set_property(TARGET huxerui_camera PROPERTY HUXERUI_LIBRARY_ORIGIN
+        "${CLASHFLUX_HUXERUI_CAMERA_ORIGIN}")
+endif ()
+huxerui_use_library(clash-flux
+    TARGET HuxerUI::Camera
+    URL "${CLASHFLUX_HUXERUI_CAMERA_URL}"
+    COMMIT "${CLASHFLUX_HUXERUI_CAMERA_COMMIT}"
 )
 
 if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)

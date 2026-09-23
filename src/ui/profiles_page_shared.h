@@ -225,9 +225,6 @@ huxerui::View ProfileCreateMethodPage(
 huxerui::View ProfileEditRoutePage(
     std::int64_t id, ProfileEditFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::function<void()> on_back);
-void BeginProfileQrScan(
-    huxerui::TaskScope tasks,
-    std::function<void(std::optional<std::string>)> on_result);
 huxerui::View ProfileFilePage(
     std::int64_t id, huxerui::State<std::shared_ptr<std::string>> content,
     huxerui::State<bool> loading, huxerui::TaskScope tasks,

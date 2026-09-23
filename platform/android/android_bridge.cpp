@@ -9,12 +9,9 @@
 #include <atomic>
 #include <chrono>
 #include <exception>
-#include <functional>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <utility>
 
 #if defined(__ANDROID__)
@@ -28,11 +25,6 @@ namespace {
 std::mutex g_mutex;
 JavaVM* g_vm = nullptr;
 jclass g_activity_class = nullptr;
-std::mutex g_qr_mutex;
-jlong g_next_qr_id = 1;
-std::unordered_map<jlong,
-                   std::function<void(std::optional<std::string>)>>
-    g_qr_callbacks;
 // 「跟随系统」主题用：MainActivity 在每次 onCreate 时上报（系统深浅切换会
 // 重建 Activity，uiMode 不在 configChanges 里），因此缓存总是新鲜的。
 std::atomic<bool> g_system_dark{false};
@@ -74,80 +66,7 @@ JNIEnv* current_environment(bool& attached) noexcept {
     return environment;
 }
 
-void complete_qr_scan(jlong id, std::optional<std::string> content) noexcept {
-    std::function<void(std::optional<std::string>)> callback;
-    {
-        std::lock_guard lock(g_qr_mutex);
-        const auto it = g_qr_callbacks.find(id);
-        if (it == g_qr_callbacks.end()) return;
-        callback = std::move(it->second);
-        g_qr_callbacks.erase(it);
-    }
-    try {
-        callback(std::move(content));
-    } catch (...) {
-        log_android("QR scan callback failed", true);
-    }
-}
-
 } // namespace
-
-namespace clashflux::ui {
-
-void AndroidScanQr(
-    std::function<void(std::optional<std::string>)> on_result) {
-    if (!on_result) return;
-    jlong id = 0;
-    {
-        std::lock_guard lock(g_qr_mutex);
-        id = g_next_qr_id++;
-        g_qr_callbacks.emplace(id, std::move(on_result));
-    }
-
-    bool attached = false;
-    JNIEnv* environment = current_environment(attached);
-    jclass activity_class = nullptr;
-    {
-        std::lock_guard lock(g_mutex);
-        activity_class = g_activity_class;
-    }
-    if (environment == nullptr || activity_class == nullptr) {
-        if (attached) g_vm->DetachCurrentThread();
-        complete_qr_scan(id, std::nullopt);
-        return;
-    }
-
-    const jmethodID scan_method = environment->GetStaticMethodID(
-        activity_class, "scanQr", "(J)V");
-    if (scan_method != nullptr) {
-        environment->CallStaticVoidMethod(activity_class, scan_method, id);
-    }
-    const bool failed = scan_method == nullptr || environment->ExceptionCheck();
-    if (failed) {
-        if (environment->ExceptionCheck()) environment->ExceptionClear();
-        complete_qr_scan(id, std::nullopt);
-    }
-    if (attached) g_vm->DetachCurrentThread();
-}
-
-} // namespace clashflux::ui
-
-extern "C" JNIEXPORT void JNICALL
-Java_dev_farna_clashflux_MainActivity_nativeQrScanResult(
-    JNIEnv* environment, jclass, jlong id, jstring content) {
-    if (environment == nullptr || content == nullptr) {
-        complete_qr_scan(id, std::nullopt);
-        return;
-    }
-    const char* value = environment->GetStringUTFChars(content, nullptr);
-    if (value == nullptr) {
-        complete_qr_scan(id, std::nullopt);
-        return;
-    }
-    std::string text = value;
-    environment->ReleaseStringUTFChars(content, value);
-    complete_qr_scan(id, std::move(text));
-}
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_MainActivity_nativeInit(JNIEnv* environment,
