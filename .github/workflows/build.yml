@@ -1,4 +1,4 @@
-# build.yml — Clash-Flux 多平台 CI 矩阵（Linux / Windows / macOS + Android）。
+# build.yml — Clash-Flux 多平台 CI 矩阵（Linux / Windows / macOS / Android + iOS smoke）。
 #
 # 形态蓝本：姊妹项目 apitab 的 .github/workflows/build.yml（已跑通的 HuxerUI +
 # C++23 modules + import std 解法），按本仓库适配（无 sweetedit、目标名
@@ -25,10 +25,14 @@
 #     不会触发回落）；android job 只复用 tarball 里的 huxerui CLI，原生框架与
 #     项目使用同一提交的源码，避免 SDK 头文件与源码 API 漂移。
 #
-# 实验性 job（continue-on-error: true）及原因：
+# 实验性 / 诊断 job（continue-on-error: true）及原因：
 #   * build-linux-arm64：ubuntu-24.04-arm 原生 runner + ubuntu:24.04 容器，
 #     配方与 x86_64 完全相同，但 arm64 runner 的 LLVM 源仓库可用性未经首跑验证；
 #     连续绿后摘掉 continue-on-error。
+#   * build-ios-smoke：macOS 上构建 HuxerUI 自带 iOS Simulator 示例，用来验证固定
+#     HuxerUI revision 的 iOS 支持。它不构建 Clash-Flux IPA、不上传 Release 产物，
+#     也不在 publish-release 的 needs 中；Clash-Flux 的 iOS 壳和 Network Extension
+#     接入仍是 TODO。
 #
 # Windows、macOS 和 Android 已纳入发布门禁：完整 Release 构建或 smoke test
 # 失败时，workflow 失败，不会进入发布 job。Android 使用 AndroidLegacy.cmake
@@ -442,27 +446,9 @@ jobs:
           git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
           # P0960 聚合函数式转型 → 花括号初始化（clang ObjC++ 不支持 P0960；
           # 上游 window.h 在钉住的 commit 仍未修）。补丁内容与 apitab 的
-          # cmake/patches/huxerui-window-p0960.patch 一致，NOTE 标注同步改。
-          git -C third_party/huxerui apply <<'PATCH'
-          diff --git a/include/huxerui/window.h b/include/huxerui/window.h
-          index f172894..72c6476 100644
-          --- a/include/huxerui/window.h
-          +++ b/include/huxerui/window.h
-          @@ -249,7 +249,12 @@ class WindowTitleBar final : public Layout<WindowTitleBar> {
-           public:
-             /// Constructs a title bar from an existing child collection.
-             explicit WindowTitleBar(std::vector<View> children) : Layout(std::move(children)) {
-          -    this->ApplyModifiers(WindowDragRegion{}, CrossAlign(CrossAxisAlignment::Center));
-          +    // NOTE(clash-flux CI patch): functional-style cast to the CrossAlign
-          +    // aggregate relies on P0960, which clang does not implement in Objective-C++
-          +    // mode — every appkit *.mm TU failed to compile on macOS ("no matching
-          +    // conversion for functional-style cast"). Brace initialization works in all
-          +    // languages/compilers. Suggest upstream adopt CrossAlign{...} here.
-          +    this->ApplyModifiers(WindowDragRegion{}, CrossAlign{CrossAxisAlignment::Center});
-             }
-
-             /// Constructs a title bar from ordinary View children.
-          PATCH
+          # The shared patch is also applied by the iOS Simulator smoke job below.
+          git -C third_party/huxerui apply \
+            "$GITHUB_WORKSPACE/cmake/patches/huxerui-window-p0960.patch"
           # Keep drag feedback anchored to the grab point on every platform edge.
           git -C third_party/huxerui apply \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
@@ -537,6 +523,54 @@ jobs:
           path: dist-src
           if-no-files-found: warn
           retention-days: 14
+
+  # ------------------------------------------------------------- iOS smoke
+  # HuxerUI maintains a source-controlled iOS example runner. Build its
+  # Simulator target as an advisory check; Clash-Flux has no iOS app shell or
+  # Network Extension integration yet, so this job produces no release asset.
+  build-ios-smoke:
+    name: build-ios-huxerui-simulator
+    runs-on: macos-15
+    continue-on-error: true
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Fetch HuxerUI source (pinned)
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
+          git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
+          git -C third_party/huxerui apply \
+            "$GITHUB_WORKSPACE/cmake/patches/huxerui-window-p0960.patch"
+
+      - name: Build HuxerUI iOS Simulator example
+        id: ios-smoke
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project third_party/huxerui/platform/ios/example_runner/HuxerUIExamples.xcodeproj \
+            -scheme HuxerUIExamples \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/clash-flux-ios-smoke" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Report iOS integration status
+        if: always()
+        env:
+          IOS_SMOKE_OUTCOME: ${{ steps.ios-smoke.outcome }}
+        run: |
+          if [[ "$IOS_SMOKE_OUTCOME" == "success" ]]; then
+            echo "::notice title=HuxerUI iOS support confirmed::The pinned HuxerUI iOS Simulator example built successfully."
+          else
+            echo "::warning title=HuxerUI iOS smoke failed::The HuxerUI iOS Simulator example did not build; keep iOS distribution on TODO."
+          fi
+          if [[ ! -d platform/ios ]]; then
+            echo "::notice title=Clash-Flux iOS TODO::Clash-Flux has no source-controlled iOS app shell or Network Extension integration. This smoke job creates no IPA or Release artifact."
+          fi
 
   # ---------------------------------------------------------------- Android
   # Android 发布门禁：验证 GUI/native shell 与 pinned sing-box libbox 能编出
@@ -688,6 +722,8 @@ jobs:
   publish-release:
     name: publish-release
     if: startsWith(github.ref, 'refs/tags/v')
+    # build-ios-smoke is intentionally advisory and excluded; it never uploads
+    # an iOS artifact. A distributable iOS release needs a Clash-Flux iOS shell.
     needs: [build-linux, build-windows, build-macos, build-android,
             build-windows-installer]
     runs-on: ubuntu-24.04
