@@ -68,16 +68,16 @@ struct HomeCardSpec {
 };
 
 #if defined(__ANDROID__)
-// 移动端可选卡片：桌面独有的系统代理/TUN 换成隧道状态与后台保活。手机默认
-// 单列，宽只影响横向占位、高决定卡片长度。
-// 初始宽高同样按 FlClash 仪表盘跨度：图表 2 行、信息卡 2 行、按钮/开关类 1 行。
+// 移动端可选卡片：桌面独有的系统代理/TUN 换成隧道状态与后台保活。
+// 手机屏是 2 列：需要整宽的（图表、横排出站模式、开关行）给 2 格，信息卡 1 格；
+// 高度仍按 FlClash 跨度（图表/信息卡 2 行，开关行 1 行）。
 constexpr HomeCardSpec kHomeCards[] = {
-    {HomeCardKind::Traffic, "traffic", "流量曲线", 1, 2},
+    {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 2},
     {HomeCardKind::Total, "total", "流量统计", 1, 2},
-    {HomeCardKind::Mode, "mode", "出站模式", 1, 1},
+    {HomeCardKind::Mode, "mode", "出站模式", 2, 1},
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
     {HomeCardKind::Vpn, "vpn", "隧道状态", 1, 2},
-    {HomeCardKind::Background, "background", "后台保活", 1, 1},
+    {HomeCardKind::Background, "background", "后台保活", 2, 1},
 };
 constexpr std::string_view kHomeLayoutKey = "home.layout.android";
 constexpr std::string_view kDefaultCoreName = "sing-box libbox";
@@ -149,13 +149,20 @@ constexpr float kHomeGridGap = 12.0F; // 格间距，与页面卡片间距一致
 constexpr float kHomeGridUnitHeight = 88.0F;
 constexpr float kHomeGridFallbackWidth = 360.0F;
 
-// 页面逻辑宽度分档：1..4 列。网格布局与卡片内容的粗分档共用同一组阈值。
+// 页面逻辑宽度分档（网格布局与卡片内容粗分档共用阈值）：
+//   桌面：3 列起步，宽屏 4 列——对齐 FlClash 桌面仪表盘的 3 列网格；
+//   移动端：2 列起步（手机屏这种最小逻辑宽度也 2 列，1/2 格宽度才有意义）。
+#if defined(__ANDROID__)
 constexpr int HomeGridColumns(float width) {
-    if (width < 480.0F) return 1;
     if (width < 840.0F) return 2;
     if (width < 1200.0F) return 3;
     return 4;
 }
+#else
+constexpr int HomeGridColumns(float width) {
+    return width < 1200.0F ? 3 : 4;
+}
+#endif
 
 // 自定义网格布局：按声明顺序把每张卡片放进第一个放得下的空位（左上紧凑），
 // 宽度按当前列数均分。卡片尺寸由布局给（不是内容撑开），因此编辑态与运行态
@@ -290,11 +297,11 @@ struct HomeState {
 
 // ---- 布局读写 --------------------------------------------------------------
 
-// 版本前缀让「用户清空全部卡片」("v3:") 与「从未配置过」("") 区分开；旧前缀
-// （v1/v2 / 无前缀）的布局在加载时保留卡片与顺序、补齐这一版新增的卡片，并把
-// 尺寸刷新为本版默认——尺寸模型这两版一直在调（v3 起按 FlClash 实测跨度定稿），
-// 旧值没有保留价值；写入 v3 之后完全尊重用户调整过的尺寸。
-constexpr std::string_view kHomeLayoutPrefix = "v3:";
+// 版本前缀让「用户清空全部卡片」("v4:") 与「从未配置过」("") 区分开；旧前缀
+// （v1/v2/v3 / 无前缀）的布局在加载时保留卡片与顺序、补齐这一版新增的卡片，并把
+// 尺寸刷新为本版默认——尺寸模型这几版一直在调（v4 起按 FlClash 实测跨度 + 最小
+// 2 列定稿），旧值没有保留价值；写入 v4 之后完全尊重用户调整过的尺寸。
+constexpr std::string_view kHomeLayoutPrefix = "v4:";
 
 const HomeCardSpec* FindHomeCard(HomeCardKind kind) {
     for (const HomeCardSpec& spec : kHomeCards) {
@@ -405,7 +412,7 @@ HomeLayout LoadHomeLayout() {
     if (current) {
         body = raw.substr(kHomeLayoutPrefix.size());
     } else {
-        for (const std::string_view legacy : {"v1:", "v2:"}) {
+        for (const std::string_view legacy : {"v1:", "v2:", "v3:"}) {
             if (body.starts_with(legacy)) {
                 body = body.substr(legacy.size());
                 break;
