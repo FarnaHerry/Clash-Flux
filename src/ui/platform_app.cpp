@@ -306,7 +306,7 @@ void DesktopPreparePlatformDataDirectory(
                     // 记录的 TUN / 系统代理意图恢复接管。
                     menuEntries.push_back(
                         huxerui::MenuItem(
-                            trayCoreRunning.Get() ? "停止内核" : "启动内核",
+                            trayCoreRunning.Get() ? "停止内核" : "启动",
                             [tasks, toast, trayCoreRunning] {
                                 tasks.Launch([=]() -> huxerui::Task<void> {
                                     const bool next = !trayCoreRunning.Get();
@@ -335,7 +335,8 @@ void DesktopPreparePlatformDataDirectory(
                                                            : "停止内核失败")
                                                    : error);
                                 });
-                            }));
+                            })
+                            .Checked(trayCoreRunning.Get()));
                     menuEntries.push_back(
                         huxerui::MenuItem("系统代理", [tasks, traySysProxy] {
                             tasks.Launch([=]() -> huxerui::Task<void> {

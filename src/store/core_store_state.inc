@@ -251,6 +251,10 @@
         const bool restoreSystemProxy = systemProxyOurs();
         if (!stopCore()) {
             setSetting("core.tun_enabled", enable ? "false" : "true");
+            {
+                std::lock_guard lock(mutex_);
+                snap_.tunEnabled = !enable;
+            }
             return false;
         }
         startCore(lastProfileYaml_, false, enable, restoreSystemProxy);
@@ -295,10 +299,13 @@
             setSetting("proxy.system_enabled", "false");
             return true;
         }
+        const std::string previousSetting =
+            setting("proxy.system_enabled", "false");
         setSetting("proxy.system_enabled", "true");
         if (snapshot().state != core::CoreState::Running) return true;
         std::string err;
         if (!sysproxy::enable("127.0.0.1", mixedPort(), err)) {
+            setSetting("proxy.system_enabled", previousSetting);
             std::lock_guard lock(mutex_);
             snap_.lastError = "系统代理开启失败：" + err;
             return false;

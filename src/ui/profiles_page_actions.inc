@@ -702,8 +702,8 @@
                                 tasks.Launch([=]() -> huxerui::Task<void> {
                                     const auto picked = co_await picker->OpenFileAsync(
                                         huxerui::FilePickerFilter{
-                                            .name = "YAML 订阅",
-                                            .extensions = {"yaml", "yml"}});
+                                            .name = "sing-box / Clash 配置",
+                                            .extensions = {"json", "yaml", "yml"}});
                                     if (!picked) co_return;
                                     if (const auto f = picked->AsFile()) {
                                         pickedPath = f->Path();
@@ -855,7 +855,7 @@
                                                   err.empty() ? "导入失败" : err);
                                           } else {
                                               ctx.Dismiss();
-                                              toast.Show("订阅已导入");
+                                              toast.Show("配置已导入");
                                           }
                                       });
                                   })},

@@ -3,12 +3,13 @@
 Clash-Flux 是一个使用 C++23 和 HuxerUI 构建的全平台代理客户端，复刻 Clash Verge Rev
 的核心体验：以 sing-box 为内核（桌面 spawn 官方二进制、Android 进程内 libbox），
 全程经其 clash_api 的 REST API 与 WebSocket 推送流交互，UI 与内核接入层全部由
-C++ 实现。订阅沿用 Clash YAML 格式，由内置编译器转换为 sing-box 配置。
+C++ 实现。配置支持 Clash YAML（由内置编译器转换为 sing-box 配置）和 sing-box 原生
+JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 
 ## 功能
 
-- 订阅管理：卡片式布局（右键菜单 / 双击切换 / 卡片内刷新）、URL 导入 / 更新 /
-  启用 / 删除 / 规则编辑，本地落盘
+- 订阅与代理配置管理：卡片式布局（右键菜单 / 双击切换 / 卡片内刷新）、URL 导入 /
+  更新 / 启用 / 删除 / 规则编辑，本地落盘；支持 Clash YAML 和 sing-box 原生 JSON 文件导入
 - 订阅下载：订阅级三态代理（内核 / 系统环境 / 直连）与「允许无效证书」开关；
   Windows 没有系统 CA 目录，https 订阅改用 Windows 证书存储校验，与系统浏览器
   的信任结论一致

@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -611,12 +612,18 @@ std::function<void()> NodeSelectAction(
                 mode = kModes[idx];
                 modePending = true;
                 tasks.Launch([=]() -> huxerui::Task<void> {
-                    const bool ok = co_await RunOnTaskThread(
-                        [idx] { return store::coreStore().applyMode(kModes[idx]); });
+                    bool ok = false;
+                    std::string error;
+                    try {
+                        ok = co_await RunOnTaskThread(
+                            [idx] { return store::coreStore().applyMode(kModes[idx]); });
+                    } catch (const std::exception& exception) {
+                        error = exception.what();
+                    }
                     modePending = false;
                     if (!ok) {
                         mode = previous;
-                        toast.Show("切换失败（内核未运行？）");
+                        toast.Show(error.empty() ? "切换失败（内核未运行？）" : error);
                     }
                 });
             });
@@ -775,7 +782,17 @@ std::function<void()> NodeSelectAction(
                                            : 0.0F),
                       huxerui::Grow(1.0F),
                       huxerui::CrossAlign(
-                          huxerui::CrossAxisAlignment::Stretch))
+                          huxerui::CrossAxisAlignment::Stretch),
+                      huxerui::Transition{
+                          huxerui::AnimateTo(
+                              selectedPage ? 1.0F : 0.0F,
+                              huxerui::TweenSpec{
+                                  .duration = theme.motion.reduced_motion
+                                                  ? 0.0
+                                                  : theme.motion.normal,
+                                  .easing = huxerui::Easing::EaseOut})}
+                          .Opacity(0.82F, 1.0F)
+                          .Offset({12.0F, 0.0F}, {}))
                 .Key("group-page-" + rootGroup.name));
     }
 
@@ -824,7 +841,7 @@ std::function<void()> NodeSelectAction(
                                if (swipeOwned.Get()) return true;
                                if (dx > kGroupSwipeClaimDistance ||
                                    dx < -kGroupSwipeClaimDistance) {
-                                   if (dx > dy && dx > -dy) {
+                                   if (std::abs(dx) > std::abs(dy)) {
                                        swipeOwned = true;
                                        return true;
                                    }

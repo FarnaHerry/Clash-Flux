@@ -47,6 +47,13 @@ constexpr std::size_t kHistoryPoints = 60;  // 60 拍 ≈ 30s 窗口
 const std::vector<std::string> kModeLabels{"规则", "全局", "直连"};
 const std::vector<std::string> kModes{"rule", "global", "direct"};
 
+std::size_t HomeModeIndex(const std::string& mode) {
+    for (std::size_t index = 0; index < kModes.size(); ++index) {
+        if (mode == kModes[index]) return index;
+    }
+    return 0;
+}
+
 // ---- 卡片种类与平台目录 ----------------------------------------------------
 
 enum class HomeCardKind {
@@ -85,8 +92,8 @@ constexpr std::string_view kDefaultCoreName = "sing-box libbox";
 // 移动端：滚动优先，按住卡片 0.35s 后才进入拖动（延迟拖动 = 长按拖动）。
 constexpr bool kHomeLongPressDrag = true;
 constexpr std::string_view kHomeDragHint = "长按卡片拖动排序，× 移除卡片";
-#define CLASHFLUX_HOME_PLATFORM_CARD(state, kind) \
-    AndroidHomePlatformCard(state, kind)
+#define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
+    AndroidHomePlatformCard(homeState, kind)
 #define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact) \
     AndroidHomeFloatingAction(std::move(page), state, compact)
 #else
@@ -110,10 +117,10 @@ constexpr std::string_view kDefaultCoreName = "sing-box";
 // 桌面端：鼠标按下即拖动（滚轮负责滚动，不与拖动争用指针）。
 constexpr bool kHomeLongPressDrag = false;
 constexpr std::string_view kHomeDragHint = "拖动卡片排序，× 移除卡片";
-#define CLASHFLUX_HOME_PLATFORM_CARD(state, kind) \
-    DesktopHomePlatformCard(state, kind)
+#define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
+    DesktopHomePlatformCard(kind)
 #define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact) \
-    DesktopHomeFloatingAction(std::move(page), state, compact)
+    DesktopHomeFloatingAction(std::move(page), compact)
 #endif
 
 // ---- 卡片网格尺寸模型 ------------------------------------------------------
@@ -891,14 +898,11 @@ private:
 // 出站模式：三枚等宽按钮（无标题文字）。选中指示块由 HomeSlidingSegments
 // 在内容之下自绘，切换时做滑动补间。
 [[huxerui::composable]] huxerui::View HomeModeCard(
-    const HomeState& s, huxerui::State<std::optional<std::size_t>> modeOverride,
+    huxerui::State<std::size_t> mode,
+    huxerui::State<bool> modePending,
     huxerui::TaskScope tasks, huxerui::ToastHandle toast) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    std::size_t modeIndex = 0;
-    for (std::size_t i = 0; i < kModes.size(); ++i) {
-        if (s.core.mode == kModes[i]) modeIndex = i;
-    }
-    const std::size_t selected = modeOverride.Get().value_or(modeIndex);
+    const std::size_t selected = mode.Get();
 
     huxerui::Color indicator = theme.colors.primary;
     indicator.alpha = 0.22F;
@@ -938,13 +942,25 @@ private:
                           .role = huxerui::SemanticRole::Tab,
                           .label = kModeLabels[i],
                           .selected = active})
-                .OnClick([tasks, toast, modeOverride, i] {
-                    if (!BeginOptimistic(modeOverride, i)) return;
+                .OnClick([tasks, toast, mode, modePending, i] {
+                    if (modePending.Get()) return;
+                    const std::size_t previous = mode.Get();
+                    mode = i;
+                    modePending = true;
                     tasks.Launch([=]() -> huxerui::Task<void> {
-                        const bool ok = co_await RunOnTaskThread(
-                            [i] { return store::coreStore().applyMode(kModes[i]); });
-                        EndOptimistic(modeOverride);
-                        if (!ok) toast.Show("出站模式切换失败");
+                        bool ok = false;
+                        std::string error;
+                        try {
+                            ok = co_await RunOnTaskThread(
+                                [i] { return store::coreStore().applyMode(kModes[i]); });
+                        } catch (const std::exception& exception) {
+                            error = exception.what();
+                        }
+                        modePending = false;
+                        if (!ok) {
+                            mode = previous;
+                            toast.Show(error.empty() ? "出站模式切换失败" : error);
+                        }
                     });
                 })
                 .Key("home-mode-" + std::to_string(i)));
@@ -1143,28 +1159,47 @@ std::string HomeKernelStatusText(const HomeState& s) {
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto busy = huxerui::UseState(false);
-    auto activeOverride = huxerui::UseState<std::optional<bool>>(std::nullopt);
+    auto activeState = huxerui::UseState(AndroidVpnState() == 1 ||
+                                         AndroidVpnState() == 2);
+    auto pending = huxerui::UseState(false);
     // composable 形参被 codegen 固定为 const：拷贝到局部再走右值链。
     huxerui::View base = page;
     if (!compact) return base;
 
-    const int vpnState = AndroidVpnState();
-    const bool realActive = vpnState == 1 || vpnState == 2;
-    const bool active = activeOverride.Get().value_or(realActive);
+    const bool active = activeState.Get();
     const bool canStart = state.profileId != 0;
     const bool enabled = !busy.Get() && (active || canStart);
-    const auto toggle = [tasks, toast, busy, activeOverride, realActive] {
-        if (busy.Get()) return;
-        activeOverride = !realActive;
+    huxerui::Lifecycle(
+        [tasks, activeState, pending] {
+            tasks.Launch([activeState, pending]() -> huxerui::Task<void> {
+                co_await PollWhile(std::chrono::duration<double>{0.5},
+                                   [activeState, pending] {
+                    if (!pending.Get()) {
+                        const int current = AndroidVpnState();
+                        activeState = current == 1 || current == 2;
+                    }
+                    return true;
+                });
+            });
+            return [] {};
+        },
+        0);
+    const auto toggle = [tasks, toast, busy, activeState, pending] {
+        if (busy.Get() || pending.Get()) return;
+        const bool previous = activeState.Get();
+        activeState = !previous;
+        pending = true;
         busy = true;
-        tasks.Launch([toast, busy, activeOverride,
-                      realActive]() -> huxerui::Task<void> {
+        tasks.Launch([toast, busy, activeState, pending,
+                      previous]() -> huxerui::Task<void> {
+            bool succeeded = false;
+            std::string error;
             try {
-                co_await RunOnTaskThread([realActive] {
+                co_await RunOnTaskThread([previous] {
                     auto& core = store::coreStore();
                     core.setSetting("core.tun_enabled",
-                                    realActive ? "false" : "true");
-                    if (realActive) {
+                                    previous ? "false" : "true");
+                    if (previous) {
                         AndroidStopVpn();
                         WaitForAndroidVpnStopped();
                         core.startCore(store::profilesStore().selectedYaml(),
@@ -1175,13 +1210,55 @@ std::string HomeKernelStatusText(const HomeState& s) {
                         AndroidStartVpn();
                     }
                 });
-                activeOverride = std::nullopt;
-                toast.Show(realActive ? "VPN 隧道已关闭" : "正在启动 VPN 隧道");
-            } catch (const std::exception& error) {
-                activeOverride = std::nullopt;
-                toast.Show(error.what());
+                if (previous) {
+                    const auto [state, tunEnabled] = co_await RunOnTaskThread([] {
+                        return std::pair{AndroidVpnState(),
+                                         store::coreStore().setting(
+                                             "core.tun_enabled", "false") == "true"};
+                    });
+                    succeeded = state != 1 && state != 2 && !tunEnabled;
+                } else {
+                    for (int attempt = 0; attempt < 300; ++attempt) {
+                        const auto [state, tunEnabled] = co_await RunOnTaskThread([] {
+                            return std::pair{AndroidVpnState(),
+                                             store::coreStore().setting(
+                                                 "core.tun_enabled", "false") == "true"};
+                        });
+                        if (state == 1 || state == 2) {
+                            succeeded = true;
+                            break;
+                        }
+                        if (state == 3 || !tunEnabled) break;
+                        co_await huxerui::Delay(std::chrono::duration<double>{0.2});
+                    }
+                }
+            } catch (const std::exception& exception) {
+                error = exception.what();
             }
+            if (!succeeded) {
+                try {
+                    co_await RunOnTaskThread([previous] {
+                        store::coreStore().setSetting(
+                            "core.tun_enabled", previous ? "true" : "false");
+                    });
+                } catch (const std::exception& exception) {
+                    if (error.empty()) error = exception.what();
+                }
+                if (error.empty()) error = store::coreStore().snapshot().lastError;
+                if (error.empty()) {
+                    error = previous ? "VPN 隧道未能关闭" : "VPN 启动已取消或超时";
+                }
+            }
+            pending = false;
             busy = false;
+            if (!succeeded) {
+                activeState = previous;
+                toast.Show(error);
+            } else if (previous) {
+                toast.Show("VPN 隧道已关闭");
+            } else {
+                toast.Show("正在启动 VPN 隧道");
+            }
         });
     };
 
@@ -1230,23 +1307,51 @@ std::string HomeKernelStatusText(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
-    auto proxy_override = huxerui::UseState<std::optional<bool>>(std::nullopt);
+    auto proxyEnabled =
+        huxerui::UseState(store::coreStore().systemProxyEnabled());
+    auto pending = huxerui::UseState(false);
+
+    huxerui::Lifecycle(
+        [tasks, proxyEnabled, pending] {
+            tasks.Launch([proxyEnabled, pending]() -> huxerui::Task<void> {
+                co_await PollWhile(std::chrono::duration<double>{0.5},
+                                   [proxyEnabled, pending] {
+                    if (!pending.Get()) {
+                        proxyEnabled = store::coreStore().systemProxyEnabled();
+                    }
+                    return true;
+                });
+            });
+            return [] {};
+        },
+        0);
 
     return huxerui::Column {
         SettingSwitchRow(
             "系统代理", "为桌面应用设置系统代理",
-            huxerui::Switch(proxy_override.Get().value_or(
-                                store::coreStore().systemProxyEnabled()))
-                .OnChanged([tasks, toast, proxy_override](bool on) {
-                    if (proxy_override.Get().has_value()) return;
-                    proxy_override = on;
-                    tasks.Launch([=]() -> huxerui::Task<void> {
-                        const bool ok = co_await RunOnTaskThread(
-                            [on] { return store::coreStore().applySystemProxy(on); });
-                        proxy_override = std::nullopt;
+            huxerui::Switch(proxyEnabled.Get())
+                .OnChanged([tasks, toast, proxyEnabled, pending](bool on) {
+                    if (pending.Get()) return;
+                    const bool previous = proxyEnabled.Get();
+                    proxyEnabled = on;
+                    pending = true;
+                    tasks.Launch([toast, proxyEnabled, pending, previous,
+                                  on]() -> huxerui::Task<void> {
+                        bool ok = false;
+                        std::string error;
+                        try {
+                            ok = co_await RunOnTaskThread([on] {
+                                return store::coreStore().applySystemProxy(on);
+                            });
+                        } catch (const std::exception& exception) {
+                            error = exception.what();
+                        }
+                        pending = false;
                         if (!ok) {
-                            const std::string error =
-                                store::coreStore().snapshot().lastError;
+                            proxyEnabled = previous;
+                            if (error.empty()) {
+                                error = store::coreStore().snapshot().lastError;
+                            }
                             toast.Show(error.empty() ? "系统代理设置失败" : error);
                         }
                     });
@@ -1256,49 +1361,77 @@ std::string HomeKernelStatusText(const HomeState& s) {
 }
 
 // 桌面：TUN 模式开关卡片（需要管理员权限；权限不足时引导装服务模式）。
-[[huxerui::composable]] huxerui::View DesktopHomeTunCard(const HomeState& state) {
+[[huxerui::composable]] huxerui::View DesktopHomeTunCard() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto dialog = huxerui::UseDialog();
     auto clipboard = application.Clipboard();
-    auto tun_override = huxerui::UseState<std::optional<bool>>(std::nullopt);
+    auto tunEnabled = huxerui::UseState(store::coreStore().snapshot().tunEnabled);
+    auto pending = huxerui::UseState(false);
     const huxerui::Color text_color = theme.colors.on_surface;
     const huxerui::Color hint_color = theme.colors.on_surface_variant;
+
+    huxerui::Lifecycle(
+        [tasks, tunEnabled, pending] {
+            tasks.Launch([tunEnabled, pending]() -> huxerui::Task<void> {
+                co_await PollWhile(std::chrono::duration<double>{0.5},
+                                   [tunEnabled, pending] {
+                    if (!pending.Get()) {
+                        tunEnabled = store::coreStore().snapshot().tunEnabled;
+                    }
+                    return true;
+                });
+            });
+            return [] {};
+        },
+        0);
 
     return huxerui::Column {
         SettingSwitchRow(
             "TUN 模式", "全局透明代理（需管理员权限）",
-            huxerui::Switch(tun_override.Get().value_or(state.core.tunEnabled))
-                .OnChanged([state, tasks, toast, dialog, clipboard, text_color,
-                            hint_color, tun_override](bool on) {
-                    if (tun_override.Get().has_value()) return;
-                    tun_override = on;
+            huxerui::Switch(tunEnabled.Get())
+                .OnChanged([tasks, toast, dialog, clipboard, text_color,
+                            hint_color, tunEnabled, pending](bool on) {
+                    if (pending.Get()) return;
+                    const bool previous = tunEnabled.Get();
+                    tunEnabled = on;
+                    pending = true;
                     tasks.Launch([=]() -> huxerui::Task<void> {
-                        if (on) {
-                            co_await huxerui::Delay(
-                                std::chrono::duration<double>{0});
-                            const core::TunGate gate = co_await RunOnTaskThread(
-                                [] { return core::tunGate(); });
-                            if (gate == core::TunGate::Elevated) {
-                                tun_override = std::nullopt;
-                                toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
-                                co_return;
+                        bool ok = false;
+                        std::string error;
+                        try {
+                            if (on) {
+                                co_await huxerui::Delay(
+                                    std::chrono::duration<double>{0});
+                                const core::TunGate gate = co_await RunOnTaskThread(
+                                    [] { return core::tunGate(); });
+                                if (gate == core::TunGate::Elevated) {
+                                    pending = false;
+                                    tunEnabled = previous;
+                                    toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
+                                    co_return;
+                                }
+                                if (gate == core::TunGate::Denied) {
+                                    pending = false;
+                                    tunEnabled = previous;
+                                    ShowTunGuideDialog(dialog, clipboard, toast,
+                                                       text_color, hint_color);
+                                    co_return;
+                                }
                             }
-                            if (gate == core::TunGate::Denied) {
-                                tun_override = std::nullopt;
-                                ShowTunGuideDialog(dialog, clipboard, toast,
-                                                   text_color, hint_color);
-                                co_return;
-                            }
+                            ok = co_await RunOnTaskThread(
+                                [on] { return store::coreStore().applyTun(on); });
+                        } catch (const std::exception& exception) {
+                            error = exception.what();
                         }
-                        const bool ok = co_await RunOnTaskThread(
-                            [on] { return store::coreStore().applyTun(on); });
-                        tun_override = std::nullopt;
+                        pending = false;
                         if (!ok) {
-                            const std::string error =
-                                store::coreStore().snapshot().lastError;
+                            tunEnabled = previous;
+                            if (error.empty()) {
+                                error = store::coreStore().snapshot().lastError;
+                            }
                             toast.Show(error.empty() ? "TUN 设置失败" : error);
                         }
                     });
@@ -1308,9 +1441,9 @@ std::string HomeKernelStatusText(const HomeState& s) {
 }
 
 [[huxerui::composable]] huxerui::View DesktopHomePlatformCard(
-    const HomeState& state, HomeCardKind kind) {
+    HomeCardKind kind) {
     if (kind == HomeCardKind::Proxy) return DesktopHomeProxyCard();
-    if (kind == HomeCardKind::Tun) return DesktopHomeTunCard(state);
+    if (kind == HomeCardKind::Tun) return DesktopHomeTunCard();
     return huxerui::Row{};
 }
 
@@ -1318,26 +1451,46 @@ std::string HomeKernelStatusText(const HomeState& s) {
 // 「正式启动」是独立动作：只负责拉起/停止内核，启动时按已记录的 TUN 与
 // 系统代理意图恢复；不再由各个开关隐式触发内核。
 [[huxerui::composable]] huxerui::View DesktopHomeFloatingAction(
-    huxerui::View page, huxerui::State<HomeState> homeState, bool compact) {
+    huxerui::View page, bool compact) {
     static_cast<void>(compact);
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const HomeState& state = homeState.Get();
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto busy = huxerui::UseState(false);
-    auto override = huxerui::UseState<std::optional<bool>>(std::nullopt);
+    auto pending = huxerui::UseState(false);
+    auto coreState =
+        huxerui::UseState(store::coreStore().snapshot().state);
+
+    huxerui::Lifecycle(
+        [tasks, coreState, pending] {
+            tasks.Launch([coreState, pending]() -> huxerui::Task<void> {
+                co_await PollWhile(std::chrono::duration<double>{0.5},
+                                   [coreState, pending] {
+                    if (!pending.Get()) {
+                        coreState = store::coreStore().snapshot().state;
+                    }
+                    return true;
+                });
+            });
+            return [] {};
+        },
+        0);
 
     huxerui::View base = page;
-    const bool running = state.core.state == core::CoreState::Running;
-    const bool starting = state.core.state == core::CoreState::Starting;
-    const bool active = override.Get().value_or(running);
+    const bool running = coreState.Get() == core::CoreState::Running;
+    const bool starting = coreState.Get() == core::CoreState::Starting;
+    const bool active = running;
     const bool enabled = !busy.Get() && !starting;
 
-    const auto toggle = [tasks, toast, busy, override, running] {
-        if (busy.Get()) return;
-        override = !running;
+    const auto toggle = [tasks, toast, busy, pending, coreState, running] {
+        if (busy.Get() || pending.Get()) return;
+        const core::CoreState previous = coreState.Get();
+        if (previous == core::CoreState::Starting) return;
+        coreState = running ? core::CoreState::Stopped : core::CoreState::Running;
+        pending = true;
         busy = true;
-        tasks.Launch([toast, busy, override, running]() -> huxerui::Task<void> {
+        tasks.Launch([toast, busy, pending, coreState, previous,
+                      running]() -> huxerui::Task<void> {
             std::string error;
             try {
                 const bool ok = co_await RunOnTaskThread([running] {
@@ -1357,9 +1510,12 @@ std::string HomeKernelStatusText(const HomeState& s) {
             } catch (const std::exception& exception) {
                 error = exception.what();
             }
-            override = std::nullopt;
+            pending = false;
             busy = false;
-            if (!error.empty()) toast.Show(error);
+            if (!error.empty()) {
+                coreState = previous;
+                toast.Show(error);
+            }
         });
     };
 
@@ -1403,16 +1559,17 @@ std::string HomeKernelStatusText(const HomeState& s) {
 
 [[huxerui::composable]] huxerui::View HomeCardContent(
     HomeCardKind kind, huxerui::State<HomeState> state,
-    huxerui::State<std::optional<std::size_t>> modeOverride,
+    huxerui::State<std::size_t> homeMode,
+    huxerui::State<bool> modePending,
     huxerui::TaskScope tasks, huxerui::ToastHandle toast) {
     const HomeState& s = state.Get();
     if (kind == HomeCardKind::Traffic) return HomeTrafficCard(s);
     if (kind == HomeCardKind::Total) return HomeTotalCard(s);
     if (kind == HomeCardKind::Mode) {
-        return HomeModeCard(s, modeOverride, tasks, toast);
+        return HomeModeCard(homeMode, modePending, tasks, toast);
     }
     if (kind == HomeCardKind::Profile) return HomeProfileCard(s);
-    return CLASHFLUX_HOME_PLATFORM_CARD(s, kind);
+    return CLASHFLUX_HOME_PLATFORM_CARD(s, state, kind);
 }
 
 // ---- 编辑态部件 ------------------------------------------------------------
@@ -1559,10 +1716,9 @@ std::string HomeKernelStatusText(const HomeState& s) {
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     auto state = huxerui::UseState<HomeState>({});
-    // 乐观开关：点击立即翻转显示，后台完成后清除覆盖（真实状态接管），
-    // 失败自动回弹并提示。覆盖值非空即“进行中”，期间忽略再次点击，
-    // 避免 TUN 重启内核期间的并发 stop/start。
-    auto modeOverride = huxerui::UseState<std::optional<std::size_t>>(std::nullopt);
+    auto homeMode = huxerui::UseState<std::size_t>(
+        HomeModeIndex(store::coreStore().snapshot().mode));
+    auto modePending = huxerui::UseState(false);
     // 卡片布局：初值在 UseState 之前读库（与 AppRoot 的主题偏好同一套写法，
     // settings 读取是轻量 KV 查询）。编辑态改动只落在 layout，保存才写库。
     auto layout = huxerui::UseState<HomeLayout>(LoadHomeLayout());
@@ -1584,12 +1740,16 @@ std::string HomeKernelStatusText(const HomeState& s) {
 
 
     huxerui::Lifecycle(
-        [tasks, state] {
-            tasks.Launch([state]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{0.5}, [state] {
+        [tasks, state, homeMode, modePending] {
+            tasks.Launch([state, homeMode, modePending]() -> huxerui::Task<void> {
+                co_await PollWhile(std::chrono::duration<double>{0.5},
+                                   [state, homeMode, modePending] {
                     auto& core = store::coreStore();
                     HomeState s = state.Get();
                     updateRuntime(s, core);
+                    if (!modePending.Get()) {
+                        homeMode = HomeModeIndex(s.core.mode);
+                    }
 
                     if (const auto p = store::profilesStore().selected()) {
                         s.profileId = p->id;
@@ -1703,7 +1863,7 @@ std::string HomeKernelStatusText(const HomeState& s) {
         const HomeCardKind kind = entry.kind;
 
         huxerui::View body =
-            HomeCardContent(kind, state, modeOverride, tasks, toast);
+            HomeCardContent(kind, state, homeMode, modePending, tasks, toast);
         // 拖动预览用的卡面：内容不压暗（悬浮的是"正常"整卡），交给框架的拖动预览层。
         const huxerui::View previewFace = Card(body);
         // 本卡的窗口几何（拖动时用来自己算"最近卡片"）。

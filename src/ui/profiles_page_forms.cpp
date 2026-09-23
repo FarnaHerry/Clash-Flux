@@ -261,8 +261,8 @@ huxerui::View ProfilePlatformOptions(
                     tasks.Launch([picker, path]() -> huxerui::Task<void> {
                         const auto picked = co_await picker->OpenFileAsync(
                             huxerui::FilePickerFilter{
-                                .name = "YAML 订阅",
-                                .extensions = {"yaml", "yml"}});
+                                .name = "sing-box / Clash 配置",
+                                .extensions = {"json", "yaml", "yml"}});
                         if (!picked) co_return;
                         if (const auto file = picked->AsFile()) path = file->Path();
                     });
@@ -341,7 +341,7 @@ huxerui::View ProfilePlatformOptions(
                 toast.Show(error.empty() ? "导入失败" : error);
                 co_return;
             }
-            toast.Show("订阅已导入");
+            toast.Show("配置已导入");
             on_back();
         });
     };
@@ -750,8 +750,8 @@ void PushProfileQrScanner(
                          -> huxerui::Task<void> {
             const auto picked = co_await picker->OpenFileAsync(
                 huxerui::FilePickerFilter{
-                    .name = "Clash 配置",
-                    .extensions = {"yaml", "yml"}});
+                    .name = "sing-box / Clash 配置",
+                    .extensions = {"json", "yaml", "yml"}});
             if (!picked) {
                 fields.importing = false;
                 co_return;
@@ -829,7 +829,7 @@ void PushProfileQrScanner(
         ProfileAddMethodRow(
             app::images::file_import, "文件",
             fields.importing.Get() ? "正在导入配置…"
-                                  : "选择 Clash 配置文件并自动导入",
+                                  : "选择 sing-box JSON 或 Clash YAML 配置文件",
             "profile-add-file", true,
             chooseFile),
         ProfileAddMethodRow(
@@ -973,7 +973,7 @@ void PushProfileQrScanner(
                 toast.Show(result.second.empty() ? "导入失败" : result.second);
                 co_return;
             }
-            toast.Show("订阅已导入");
+            toast.Show("配置已导入");
             on_complete();
         });
     };
@@ -995,8 +995,8 @@ void PushProfileQrScanner(
                     tasks.Launch([picker, path]() -> huxerui::Task<void> {
                         const auto picked = co_await picker->OpenFileAsync(
                             huxerui::FilePickerFilter{
-                                .name = "Clash 配置",
-                                .extensions = {"yaml", "yml"}});
+                                .name = "sing-box / Clash 配置",
+                                .extensions = {"json", "yaml", "yml"}});
                         if (!picked) co_return;
                         if (const auto file = picked->AsFile()) path = file->Path();
                     });
@@ -1042,8 +1042,8 @@ void PushProfileQrScanner(
                                         fields.openvpn_routes);
     } else if (isDirect) {
         typeFields = huxerui::TextField(fields.config_content.Get())
-                         .Label("Clash 配置内容")
-                         .Placeholder("粘贴 YAML 或 JSON 配置")
+                         .Label("代理配置内容")
+                         .Placeholder("粘贴 sing-box JSON 或 Clash YAML 配置")
                          .LineLimits(huxerui::TextFieldLineLimits::MultiLine(12, 28))
                          .Variant(huxerui::TextFieldVariant::Outlined)
                          .OnChanged([config = fields.config_content](
@@ -1052,7 +1052,7 @@ void PushProfileQrScanner(
                          });
     }
 
-    std::vector<huxerui::StringVariant> directTypes{"Clash 配置"};
+    std::vector<huxerui::StringVariant> directTypes{"代理配置"};
     if (pptp_supported) directTypes.emplace_back("PPTP 内网");
     if (openvpn_supported) directTypes.emplace_back("OpenVPN 内网");
     huxerui::View directTypeSelector =
