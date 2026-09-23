@@ -28,6 +28,9 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
 - 优先使用 Ninja/CMake 的增量构建；UI 修改必须经过 HuxerUI codegen 和目标构建。
 - HuxerUI 源码构建所需的本地修复应维护为 `cmake/patches/` 中的补丁，并接入所有
   对应平台的源码检出步骤；升级固定版本时先确认补丁仍可应用。
+- iOS CI 目前只构建 HuxerUI 自带的 Simulator 示例，用作非阻塞能力检查；它不构建
+  Clash-Flux IPA，也不属于 Release 门禁。完成 Clash-Flux iOS 应用壳和
+  Network Extension 接入后，才评估 iOS 发布包。
 - Android Gradle 构建会按固定 revision/SHA256 生成并打包国内 GEOIP/GEOSITE
   规则集；不得跳过 `stageBundledRuleSets` 或改为运行时下载。
 - HuxerUI composable 函数体内不能使用条件编译；普通 UI 源文件按项目现有 DSL 约定编写。

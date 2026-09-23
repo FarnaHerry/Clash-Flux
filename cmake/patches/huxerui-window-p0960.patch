@@ -1,0 +1,16 @@
+diff --git a/include/huxerui/window.h b/include/huxerui/window.h
+index f172894..72c6476 100644
+--- a/include/huxerui/window.h
++++ b/include/huxerui/window.h
+@@ -249,5 +249,10 @@ class WindowTitleBar final : public Layout<WindowTitleBar> {
+ public:
+   /// Constructs a title bar from an existing child collection.
+   explicit WindowTitleBar(std::vector<View> children) : Layout(std::move(children)) {
+-    this->ApplyModifiers(WindowDragRegion{}, CrossAlign(CrossAxisAlignment::Center));
++    // NOTE(clash-flux CI patch): functional-style cast to the CrossAlign
++    // aggregate relies on P0960, which clang does not implement in Objective-C++
++    // mode — every appkit *.mm TU failed to compile on macOS ("no matching
++    // conversion for functional-style cast"). Brace initialization works in all
++    // languages/compilers. Suggest upstream adopt CrossAlign{...} here.
++    this->ApplyModifiers(WindowDragRegion{}, CrossAlign{CrossAxisAlignment::Center});
+   }

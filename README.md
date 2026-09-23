@@ -165,6 +165,12 @@ GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议�
 | build-macos-arm64 | macos-15 + brew LLVM | 实验性 |
 | build-macos-x86_64 | macos-13 + brew LLVM | 实验性 |
 | build-android | HuxerUI CLI 打 APK（GUI/native shell + sing-box libbox） | 实验性 |
+| build-ios-huxerui-simulator | macOS + Xcode iOS Simulator，构建 HuxerUI 示例 | 诊断性，不阻塞发布 |
+
+HuxerUI 本身包含 iOS Xcode 示例工程，CI 会用固定 revision 编译该示例确认
+iOS Simulator 支持。Clash-Flux 尚无 `platform/ios` 应用壳或 Network Extension
+代理接入；此 job 不产 IPA、不上传 Release 资产，也不作为发布门禁。相关应用和
+sing-box iOS 集成列为后续 TODO。
 
 Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用菜单图标
 （.desktop + hicolor 图标）；应用本体自包含安装于 `/opt/clash-flux`。
