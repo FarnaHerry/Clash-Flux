@@ -432,6 +432,15 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         yaml-cpp
         Threads::Threads
     )
+    if (APPLE AND NOT IOS)
+        # Lib-Camera uses AppKit, CoreGraphics, and Foundation APIs on macOS,
+        # but its static target does not declare these framework dependencies.
+        target_link_libraries(clash-flux PRIVATE
+            "-framework AppKit"
+            "-framework CoreGraphics"
+            "-framework Foundation"
+        )
+    endif ()
     # Android：NDK 无 OpenSSL（curl 无 TLS 构建），链接跳过 OpenSSL。
     if (NOT ANDROID)
         target_link_libraries(clash-flux PRIVATE OpenSSL::SSL OpenSSL::Crypto)
