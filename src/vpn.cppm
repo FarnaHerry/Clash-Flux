@@ -165,6 +165,17 @@ export struct VpnConnection {
     bool operator==(const VpnConnection&) const = default;
 };
 
+// Desktop can route several auxiliary VPN profiles at once. Android keeps one
+// auxiliary profile active beside the main sing-box TUN; the same manager and
+// sing-box compiler are used on both platforms.
+export inline std::size_t MaxConcurrentAuxiliaryConnections() noexcept {
+#if defined(__ANDROID__)
+    return 1;
+#else
+    return std::numeric_limits<std::size_t>::max();
+#endif
+}
+
 export struct VpnPolicy {
     // 空值表示没有默认主 VPN；匹配不到规则时保持直连/系统默认路由。
     std::string defaultMainId;
@@ -654,6 +665,23 @@ public:
         }
         if (!connection->enabled) {
             error = "VPN 连接未启用";
+            return false;
+        }
+        std::size_t activeCount = 0;
+        for (const VpnConnection& other : connections_) {
+            if (other.id != connection->id &&
+                other.state == ConnectionState::Connected &&
+                other.activeEngine.has_value()) {
+                ++activeCount;
+            }
+        }
+        const std::size_t maxConnections =
+            MaxConcurrentAuxiliaryConnections();
+        if (activeCount >= maxConnections) {
+            connection->state = ConnectionState::Failed;
+            connection->activeEngine.reset();
+            error = std::format("当前平台同时最多连接 {} 条内网 VPN",
+                                maxConnections);
             return false;
         }
         if (!validateNativeRoutes(*connection, error)) return false;

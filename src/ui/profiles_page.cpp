@@ -48,7 +48,8 @@ import clashflux.vpn;
 
 namespace clashflux::ui {
 
-[[huxerui::composable]] huxerui::View ProfilesPage() {
+[[huxerui::composable]] huxerui::View ProfilesPageCore(
+    huxerui::NavigationController navigation, bool navigation_enabled) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
     const bool compact =
@@ -74,8 +75,8 @@ namespace clashflux::ui {
     auto newTypeIdx = huxerui::UseState<std::size_t>(0);
     auto newDesc = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newTimeout = huxerui::UseState(huxerui::TextEditingValue{""});
-    auto newInterval = huxerui::UseState(huxerui::TextEditingValue{""});
-    auto newAuto = huxerui::UseState(false);
+    auto newInterval = huxerui::UseState(huxerui::TextEditingValue{"1440"});
+    auto newAuto = huxerui::UseState(true);
     auto newSys = huxerui::UseState(false);
     auto newCore = huxerui::UseState(false);
     auto newCert = huxerui::UseState(false);
@@ -87,6 +88,8 @@ namespace clashflux::ui {
     auto newPptpMppe = huxerui::UseState(true);
     auto newOpenVpnConfig = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newOpenVpnRoutes = huxerui::UseState(huxerui::TextEditingValue{""});
+    auto newQrContent = huxerui::UseState(huxerui::TextEditingValue{""});
+    auto newConfigContent = huxerui::UseState(huxerui::TextEditingValue{""});
     auto pickedPath = huxerui::UseState<std::string>("");
     auto createPageOpen = huxerui::UseState(false);
 
@@ -156,5 +159,16 @@ namespace clashflux::ui {
     };
     return buildContent();
 }
+
+[[huxerui::composable]] huxerui::View ProfilesPage() {
+    return ProfilesPageCore(huxerui::NavigationController{}, false);
+}
+
+#if defined(__ANDROID__)
+[[huxerui::composable]] huxerui::View AndroidProfilesPage(
+    huxerui::NavigationController navigation) {
+    return ProfilesPageCore(navigation, true);
+}
+#endif
 
 } // namespace clashflux::ui

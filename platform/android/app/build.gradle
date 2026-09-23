@@ -163,8 +163,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 69
-        versionName = "0.2.7"
+        versionCode = 70
+        versionName = "0.2.8"
 
         externalNativeBuild {
             cmake {
@@ -296,6 +296,7 @@ androidComponents.onVariants(androidComponents.selector().all()) { variant ->
 
 dependencies {
     implementation(files(singboxAar).builtBy(stageSingboxAar))
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     if (rootProject.gradle.ext.huxeruiUsesSource) {
         implementation project(":HuxerUI")
     } else {

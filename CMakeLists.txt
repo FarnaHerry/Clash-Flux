@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.2.7 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.2.8 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # HUXERUI_LIBRARY_GRAPH_ONLY：CLI 扫描 huxerui 库依赖图时的特殊配置——
 # 不启用语言、不构建，huxerui_add_app 只写出库图 JSON 即返回（见 SDK
@@ -391,6 +391,9 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # 生成格式钩子：平台清单 / Info.plist
     if (WIN32 AND HUXERUI_WINDOWS_MANIFEST)
         target_sources(clash-flux PRIVATE "${HUXERUI_WINDOWS_MANIFEST}")
+    endif ()
+    if (WIN32 AND HUXERUI_WINDOWS_RESOURCE)
+        target_sources(clash-flux PRIVATE "${HUXERUI_WINDOWS_RESOURCE}")
     endif ()
     if (APPLE AND NOT IOS AND HUXERUI_MACOS_INFO_PLIST)
         set_target_properties(clash-flux PROPERTIES

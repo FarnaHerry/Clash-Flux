@@ -140,8 +140,8 @@
         newTypeIdx = 0;
         newDesc = huxerui::TextEditingValue{""};
         newTimeout = huxerui::TextEditingValue{""};
-        newInterval = huxerui::TextEditingValue{""};
-        newAuto = false;
+        newInterval = huxerui::TextEditingValue{"1440"};
+        newAuto = true;
         newSys = false;
         newCore = false;
         newCert = false;
@@ -153,10 +153,26 @@
         newPptpMppe = true;
         newOpenVpnConfig = huxerui::TextEditingValue{""};
         newOpenVpnRoutes = huxerui::TextEditingValue{""};
+        newQrContent = huxerui::TextEditingValue{""};
+        newConfigContent = huxerui::TextEditingValue{""};
         pickedPath = "";
     };
+    const ProfileCreateFields createFields{
+        newName, newUrl, newQrContent, newConfigContent, newTypeIdx, newDesc,
+        newTimeout, newInterval, newAuto, newSys, newCore, newCert,
+        newPptpServer, newPptpUsername, newPptpPassword, newPptpTimeout,
+        newPptpRoutes, newPptpMppe, newOpenVpnConfig, newOpenVpnRoutes,
+        pickedPath, importing};
     const auto openCreate = [=] {
         resetCreateFields();
+        if (navigation_enabled) {
+            navigation.Push([=] {
+                return ProfileAddMethodPage(createFields, tasks, toast,
+                                            picker, http, pptpSupported,
+                                            openvpnSupported, navigation);
+            });
+            return;
+        }
         OpenProfileCreate(compact, createPageOpen, tasks, showCreateDialog);
     };
 
@@ -195,13 +211,7 @@
         tasks, toast, [editPageId] { editPageId = 0; });
 
     huxerui::View mobileCreatePage = ResponsiveProfileCreateSurface(
-        createPageOpen.Get(),
-        ProfileCreateFields{
-            newName, newUrl, newTypeIdx, newDesc, newTimeout, newInterval,
-            newAuto, newSys, newCore, newCert, newPptpServer,
-            newPptpUsername, newPptpPassword, newPptpTimeout, newPptpRoutes,
-            newPptpMppe, newOpenVpnConfig, newOpenVpnRoutes, pickedPath,
-            importing},
+        createPageOpen.Get(), createFields,
         tasks, toast, picker, http, pptpSupported, openvpnSupported,
         [createPageOpen] { createPageOpen = false; });
 

@@ -13,15 +13,21 @@
 - 所有 Switch 设置项统一由三部分组成：主名称、小字描述、Switch。主名称和小字描述放在左侧列，Switch 固定在右侧并与文字列垂直居中对齐。设置页统一使用 `SettingSwitchRow`，不得在 Compact 视口改成上下堆叠。
 - 小字描述允许自然换行；左侧文字列使用 Grow 保留 Switch 的固定右侧位置，不得因长描述把 Switch 挤到下一行。
 
+## 可拖动仪表盘卡片
+
+- 拖动反馈层保持卡片原尺寸，并持续跟随按下时的抓取点；不要复用会在视口边缘翻转或夹位的弹出层放置规则。
+- 排序由卡片布局几何决定，原位置保留半透明占位；滚动视口注册宽域拖放目标，让卡片间隙和视口边缘仍能接收拖动并触发边缘自动滚动。
+- HuxerUI 通用拖动预览行为通过 `cmake/patches/huxerui-drag-preview-follows-pointer.patch` 维护。改动该补丁或更新 HuxerUI 固定版本时，确认 Linux、Windows、macOS 和 Android 的源码构建步骤都应用它。
+
 ## 改动后的构建验证
 
 每次修改完成后，无论改动大小、涉及何种文件（代码、UI、脚本还是配置），先重新
-编译，再启动仓库内已编译的程序验证：
+编译，再运行版本命令验证：
 
 ```bash
 cmake --build build --target clash-flux
-./run.sh
+./run.sh --version
 ```
 
 不得跳过本地编译，也不得只依赖旧的可执行文件判断改动有效。使用其他构建目录时，
-用 `CLASHFLUX_BIN` 显式指定对应产物。
+用 `CLASHFLUX_BIN` 显式指定对应产物；需要确认 GUI 启动或交互时，再执行 `./run.sh`。

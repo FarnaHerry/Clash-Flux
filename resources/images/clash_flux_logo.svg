@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
   <title id="title">Clash-Flux logo</title>
-  <desc id="desc">A rounded midnight-blue cat face with cyan eyes, ears, and a small wave-shaped mouth.</desc>
+  <desc id="desc">A wide midnight-blue cat mark with cyan ears and eyes, a lilac forehead glint, and a wave-shaped mouth.</desc>
   <defs>
     <linearGradient id="ear" x1="92" y1="100" x2="240" y2="238" gradientUnits="userSpaceOnUse">
       <stop stop-color="#252b49"/>
@@ -24,29 +24,29 @@
   </defs>
 
   <!-- Ears -->
-  <path d="M119 273C103 235 99 174 116 128C126 101 143 92 170 99C223 113 267 139 295 174L263 232C224 221 177 232 119 273Z"
+  <path d="M64 296C48 263 46 206 50 151C54 97 71 70 105 70C149 70 202 105 245 148L219 207C164 215 109 247 64 296Z"
         fill="url(#ear)" stroke="#0d1223" stroke-width="11" stroke-linejoin="round"/>
-  <path d="M393 273C409 235 413 174 396 128C386 101 369 92 342 99C289 113 245 139 217 174L249 232C288 221 335 232 393 273Z"
+  <path d="M448 296C464 263 466 206 462 151C458 97 441 70 407 70C363 70 310 105 267 148L293 207C348 215 403 247 448 296Z"
         fill="url(#ear)" stroke="#0d1223" stroke-width="11" stroke-linejoin="round"/>
-  <path d="M143 238C132 203 135 157 148 130C174 135 213 153 242 179L224 207C194 207 168 217 143 238Z"
+  <path d="M96 257C81 220 83 158 95 111C125 117 163 140 197 171C158 189 123 219 96 257Z"
         fill="url(#cyan)"/>
-  <path d="M369 238C380 203 377 157 364 130C338 135 299 153 270 179L288 207C318 207 344 217 369 238Z"
+  <path d="M416 257C431 220 429 158 417 111C387 117 349 140 315 171C354 189 389 219 416 257Z"
         fill="url(#cyan)"/>
-  <path d="M127 132C143 105 166 108 204 124C231 135 252 148 270 164"
+  <path d="M65 127C72 88 87 83 109 84C150 90 191 115 230 151"
         fill="none" stroke="url(#edge)" stroke-width="9" stroke-linecap="round"/>
-  <path d="M385 132C369 105 346 108 308 124C281 135 260 148 242 164"
+  <path d="M447 127C440 88 425 83 403 84C362 90 321 115 282 151"
         fill="none" stroke="url(#edge)" stroke-width="9" stroke-linecap="round"/>
 
   <!-- Head -->
-  <path d="M107 295C116 232 170 190 256 190C342 190 396 232 405 295C415 307 424 316 432 321C424 340 413 351 402 359C387 403 337 438 256 440C175 438 125 403 110 359C99 351 88 340 80 321C88 316 97 307 107 295Z"
+  <path d="M78 280C91 196 160 151 256 151C352 151 421 196 434 280C441 306 450 329 466 346C451 369 433 386 411 396C391 427 336 445 256 445C176 445 121 427 101 396C79 386 61 369 46 346C62 329 71 306 78 280Z"
         fill="url(#face)" stroke="#0b1020" stroke-width="12" stroke-linejoin="round"/>
-  <path d="M112 292C126 232 179 201 256 201C333 201 386 232 400 292"
+  <path d="M83 278C96 199 163 163 256 163C349 163 416 199 429 278"
         fill="none" stroke="url(#edge)" stroke-width="9" stroke-linecap="round"/>
-  <path d="M100 324C109 344 118 353 129 361C145 405 191 425 256 428C321 425 367 405 383 361C394 353 403 344 412 324"
+  <path d="M62 350C76 369 89 380 102 389C120 423 177 438 256 439C335 438 392 423 410 389C423 380 436 369 450 350"
         fill="none" stroke="#26398d" stroke-width="8" stroke-linecap="round"/>
 
   <!-- Forehead highlight -->
-  <ellipse cx="331" cy="244" rx="33" ry="14" transform="rotate(31 331 244)" fill="#909bd1"/>
+  <ellipse cx="340" cy="203" rx="33" ry="14" transform="rotate(31 340 203)" fill="#909bd1"/>
 
   <!-- Face -->
   <ellipse cx="183" cy="310" rx="16" ry="37" fill="url(#cyan)"/>

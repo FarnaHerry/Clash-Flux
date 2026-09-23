@@ -23,13 +23,36 @@
         return false;
     };
 
-    auto toggleConnection = [connectionSelection](std::int64_t id, bool checked) {
+    auto toggleConnection = [connectionSelection, pptpStates, openVpnStates,
+                             toast](std::int64_t id, bool checked) {
         for (std::size_t index = 0; index < connectionSelection.Size(); ++index) {
             if (connectionSelection[index] != id) continue;
             if (!checked) connectionSelection.Erase(index);
             return;
         }
-        if (checked) connectionSelection.PushBack(id);
+        if (!checked) return;
+
+        const std::size_t maximum = vpn::MaxConcurrentAuxiliaryConnections();
+        if (connectionSelection.Size() >= maximum) {
+            toast.Show(std::format("同时最多选择 {} 条内网连接", maximum));
+            return;
+        }
+        if (maximum == 1) {
+            const auto hasOtherActive = [id](const auto& states) {
+                for (const auto& state : states) {
+                    if (state.profileId != id &&
+                        state.state == vpn::ConnectionState::Connected) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            if (hasOtherActive(pptpStates) || hasOtherActive(openVpnStates)) {
+                toast.Show("请先断开当前内网连接，再连接其他配置");
+                return;
+            }
+        }
+        connectionSelection.PushBack(id);
     };
 
     auto openSelectedConnections = [tasks, toast, connectionSelection] {
@@ -287,13 +310,35 @@
     const NativeProfileSupport profileSupport = profile_detail::profileSupport();
     const bool pptpSupported = profileSupport.pptp;
     const bool openvpnSupported = profileSupport.openvpn;
-    auto openEditInfo = [compact, loadEditInfo, showEditInfo, editPageId](
-                            std::int64_t id) {
+    auto openEditInfo = [compact, navigation, navigation_enabled, tasks, toast,
+                         loadEditInfo, showEditInfo, editPageId,
+                         editName, editUrl, editType, editDesc, editTimeout,
+                         editInterval, editAuto, editSys, editCore, editCert,
+                         editPptpServer, editPptpUsername, editPptpPassword,
+                         editPptpTimeout, editPptpRoutes, editPptpMppe,
+                         editOpenVpnConfig, editOpenVpnRoutes](std::int64_t id) {
+        if (navigation_enabled) {
+            loadEditInfo(id, [=] {
+                const ProfileEditFields fields{
+                    editName, editUrl, editType, editDesc, editTimeout,
+                    editInterval, editAuto, editSys, editCore, editCert,
+                    editPptpServer, editPptpUsername, editPptpPassword,
+                    editPptpTimeout, editPptpRoutes, editPptpMppe,
+                    editOpenVpnConfig, editOpenVpnRoutes};
+                navigation.Push([=] {
+                    return ProfileEditRoutePage(
+                        id, fields, tasks, toast,
+                        [navigation] { static_cast<void>(navigation.Pop()); });
+                });
+            });
+            return;
+        }
         OpenProfileEditInfo(id, compact, loadEditInfo, showEditInfo, editPageId);
     };
 
     // ---- 编辑规则（rules 列表 + 前置/后置；工作副本，保存才落盘）----
-    auto showEditRules = [compact, dialog, tasks, toast, editYamlText, editRules,
+    auto showEditRules = [compact, navigation, navigation_enabled, dialog, tasks,
+                          toast, editYamlText, editRules,
                           editRuleInput, editRulesDirty,
                           rulesPageId,
                           textColor = theme.colors.on_surface,
@@ -309,6 +354,15 @@
             ReplaceStateList(editRules, store::parseRules(yaml));
             editRuleInput = huxerui::TextEditingValue{""};
             editRulesDirty = false;
+            if (navigation_enabled) {
+                navigation.Push([=] {
+                    return ProfileRulesPage(
+                        id, editYamlText, editRules, editRuleInput,
+                        editRulesDirty, tasks, toast,
+                        [navigation] { static_cast<void>(navigation.Pop()); });
+                });
+                co_return;
+            }
             if (compact) {
                 rulesPageId = id;
                 co_return;
@@ -423,14 +477,27 @@
 
     // ---- 编辑文件（懒加载 YAML + 非受控多行编辑：OnChanged 只写 shared_ptr
     // 指向的内容，不触发 State 写 → 无逐键全文重排版；保存取现值）----
-    auto showEditFile = [compact, dialog, tasks, toast, fileContent, fileLoading,
-                         filePageId,
+    auto showEditFile = [compact, navigation, navigation_enabled, dialog, tasks,
+                         toast, fileContent, fileLoading, filePageId,
                          hintColor = theme.colors.on_surface_variant](
                             std::int64_t id) {
         tasks.Launch([=]() -> huxerui::Task<void> {
             co_await huxerui::Delay(std::chrono::duration<double>{0});
             *fileContent.Get() = "";
             fileLoading = true;
+            if (navigation_enabled) {
+                navigation.Push([=] {
+                    return ProfileFilePage(
+                        id, fileContent, fileLoading, tasks, toast,
+                        [navigation] { static_cast<void>(navigation.Pop()); });
+                });
+                const std::string yaml = co_await RunOnTaskThread([id] {
+                    return store::profilesStore().yamlOf(id);
+                });
+                *fileContent.Get() = yaml;
+                fileLoading = false;
+                co_return;
+            }
             if (compact) {
                 filePageId = id;
                 const std::string yaml = co_await RunOnTaskThread([id] {

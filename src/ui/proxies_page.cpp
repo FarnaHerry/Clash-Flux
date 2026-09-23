@@ -13,7 +13,7 @@
 // 等仅返回真实策略组的平台，则全局模式回落到第一个可选策略组。
 //
 // 节点网格：Compact(<600) 两列；桌面按窗口宽度排 1/2/3/4 列，轨道均分铺满
-// 页面宽度。嵌套面包屑占满整行，保证同一组内所有节点卡同宽。
+// 页面宽度。嵌套面包屑固定在网格上方，不参与节点滚动。
 //
 // 分支语义：点组类型节点 = 选中该分支到当前组（selectProxy）并进入浏览；
 // 叶子节点 = 常规切换。展开组内出现嵌套时，面包屑行提供返回上级。路径 State
@@ -23,7 +23,7 @@
 // 延迟测试：页面右下角统一一个悬浮测速按钮（测试当前分组），组头不再各自
 // 挂按钮；Compact 悬浮导航之上留出内缩量。
 //
-// 数据流：PollWhile 每 3s 拉 GET /proxies 解析成组模型写 State。测速 / 切节点
+// 数据流：PollWhile 拉取并在线程池解析 /proxies，只同步有变化的组。测速 / 切节点
 // 都是阻塞 REST，全部走 RunOnTaskThread；点击事件处理器内不直接写 State
 // （约定 6），只 Launch 协程。
 #include <huxerui/huxerui.h>
@@ -34,7 +34,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -74,16 +74,6 @@ struct ProxyGroup {
     std::vector<ProxyNode> nodes;
 
     bool operator==(const ProxyGroup&) const = default;
-};
-
-// 代理页扁平列表项：选中分组内的嵌套面包屑 + 节点网格项；Footer 为 Compact
-// 悬浮导航留位。分组切换由页面顶部的标签栏负责，不再是列表项。
-enum class ProxyItemKind { Breadcrumb, Node, Footer };
-
-struct ProxyItem {
-    ProxyItemKind kind = ProxyItemKind::Node;
-    std::string group;      // Node/Breadcrumb：所属（当前）组名
-    std::size_t nodeIndex = 0;
 };
 
 struct ProbeState {
@@ -154,6 +144,19 @@ std::vector<ProxyGroup> parseProxies(const std::string& body) {
         return (a.name == "GLOBAL") < (b.name == "GLOBAL");
     });
     return groups;
+}
+
+void SyncProxyGroups(huxerui::StateList<ProxyGroup> groups,
+                     std::vector<ProxyGroup> next) {
+    if (groups.Size() != next.size()) {
+        ReplaceStateList(groups, std::move(next));
+        return;
+    }
+    // StateList::Set skips equal values. Preserve unchanged rows and their mounted
+    // card state instead of invalidating the whole page on each polling tick.
+    for (std::size_t i = 0; i < next.size(); ++i) {
+        groups.Set(i, std::move(next[i]));
+    }
 }
 
 const ProxyGroup* findGroup(const huxerui::StateList<ProxyGroup>& groups,
@@ -554,12 +557,16 @@ std::function<void()> NodeSelectAction(
                     const auto snap = store::coreStore().snapshot();
                     coreState = snap.state;
                     if (!snap.mode.empty()) mode = snap.mode;
-                    const std::string body = co_await RunOnTaskThread([] {
-                        return ProxyGroupsSnapshot();
+                    const auto nextGroups = co_await RunOnTaskThread([]()
+                        -> std::optional<std::vector<ProxyGroup>> {
+                        const std::string body = ProxyGroupsSnapshot();
+                        if (body.empty()) return std::nullopt;
+                        return parseProxies(body);
                     });
-                    if (!body.empty()) ReplaceStateList(groups, parseProxies(body));
-                    co_await huxerui::Delay(std::chrono::duration<double>{
-                        snap.state == core::CoreState::Running ? 3.0 : 0.5});
+                    if (nextGroups) {
+                        SyncProxyGroups(groups, std::move(*nextGroups));
+                    }
+                    co_await huxerui::Delay(std::chrono::duration<double>{3.0});
                 }
             });
             return [] {};
@@ -694,10 +701,10 @@ std::function<void()> NodeSelectAction(
     // 节点名单行预算：定宽卡下留出右侧延迟与内边距后的可用字符数。
     const std::size_t nodeNameLimit = compact ? 9 : 16;
 
-    // 一个根分组一页：页内是该分组的节点网格（嵌套时先给面包屑返回上级）。
-    // Pager 保留全部页面、受控下标 + 水平直接拖动 = 左右滑动切换分组；
-    // 每页带稳定 Key，切回来时保留自己的滚动位置。
-    constexpr std::size_t kFullRowSpan = std::numeric_limits<std::size_t>::max();
+    // 一个根分组一页。VirtualGrid 直接用索引读取组节点，不再为所有组预先
+    // 分配完整的 ProxyItem 与 span 数组；只有视口附近的节点会被构造为卡片。
+    // Pager 保留全部页面和各组滚动位置。
+    constexpr std::size_t kCompactFooterItems = 2;
     std::vector<huxerui::View> groupPages;
     groupPages.reserve(rootGroups.size());
     for (std::size_t page = 0; page < rootGroups.size(); ++page) {
@@ -710,59 +717,63 @@ std::function<void()> NodeSelectAction(
             (selectedPage && current != nullptr) ? path
                                                  : std::vector<std::string>{rootGroup.name};
 
-        std::vector<ProxyItem> items;
-        std::vector<std::size_t> spans;
-        if (pagePath.size() > 1) {
-            items.push_back(ProxyItem{.kind = ProxyItemKind::Breadcrumb,
-                                      .group = contentGroup->name});
-            spans.push_back(kFullRowSpan);
-        }
-        for (std::size_t i = 0; i < contentGroup->nodes.size(); ++i) {
-            items.push_back(ProxyItem{.kind = ProxyItemKind::Node,
-                                      .group = contentGroup->name,
-                                      .nodeIndex = i});
-            spans.push_back(1);
-        }
-        if (compact) {
-            items.push_back(ProxyItem{.kind = ProxyItemKind::Footer});
-            spans.push_back(kFullRowSpan);
-        }
+        const std::string contentGroupName = contentGroup->name;
+        const std::size_t nodeCount = contentGroup->nodes.size();
+        const std::size_t footerCount = compact ? kCompactFooterItems : 0;
+        huxerui::View grid = huxerui::VirtualGrid(
+                                 nodeCount + footerCount,
+                                 [groups, activePath, testGeneration, testGroup,
+                                  tasks, nodeNameLimit, contentGroupName,
+                                  nodeCount, compact](std::size_t index)
+                                     -> huxerui::View {
+                                     if (index >= nodeCount) {
+                                         if (!compact) return huxerui::View{};
+                                         return CompactFloatingNavigationFooter()
+                                             .Key("compact-floating-footer-" +
+                                                  std::to_string(index - nodeCount));
+                                     }
+                                     const ProxyGroup* group =
+                                         findGroup(groups, contentGroupName);
+                                     if (group == nullptr ||
+                                         index >= group->nodes.size()) {
+                                         return huxerui::View{};
+                                     }
+                                     const ProxyNode& node = group->nodes[index];
+                                     const std::string nodeName = node.name;
+                                     return NodeCard(
+                                                node, nodeName == group->now,
+                                                group->name, testGeneration,
+                                                testGroup, group->selectable,
+                                                NodeSelectAction(groups, activePath,
+                                                                 tasks, *group,
+                                                                 node),
+                                                nodeNameLimit)
+                                         .Key(group->name + "::" + nodeName);
+                                 })
+                                 .Columns(compact
+                                              ? huxerui::GridColumns::Fixed(2)
+                                              : huxerui::GridColumns::Adaptive(
+                                                    kProxyNodeWidth))
+                                 .EstimatedRowExtent(52.0F)
+                                 .RowSpacing(kNodeGridGap)
+                                 .ColumnSpacing(kNodeGridGap)
+                                 .With(huxerui::Grow(1.0F),
+                                       huxerui::ScrollBar())
+                                 .Key("group-grid-" + rootGroup.name);
 
+        std::vector<huxerui::View> pageContent;
+        if (pagePath.size() > 1) {
+            pageContent.push_back(GroupBreadcrumb(pagePath, activePath, tasks));
+        }
+        pageContent.push_back(std::move(grid));
         groupPages.push_back(
-            huxerui::VirtualGrid(
-                items.size(),
-                [items, pagePath, groups, activePath, testGeneration, testGroup,
-                 tasks, nodeNameLimit](std::size_t index) -> huxerui::View {
-                    const ProxyItem& item = items[index];
-                    if (item.kind == ProxyItemKind::Footer) {
-                        return CompactFloatingNavigationFooter()
-                            .Key("compact-floating-footer");
-                    }
-                    if (item.kind == ProxyItemKind::Breadcrumb) {
-                        return GroupBreadcrumb(pagePath, activePath, tasks)
-                            .Key("crumb-" + item.group);
-                    }
-                    const ProxyGroup* group = findGroup(groups, item.group);
-                    if (group == nullptr) return huxerui::View{};
-                    if (item.nodeIndex >= group->nodes.size()) {
-                        return huxerui::View{};
-                    }
-                    const ProxyNode node = group->nodes[item.nodeIndex];
-                    const std::string nodeName = node.name;
-                    return NodeCard(node, nodeName == group->now, group->name,
-                                    testGeneration, testGroup, group->selectable,
-                                    NodeSelectAction(groups, activePath, tasks,
-                                                     *group, node),
-                                    nodeNameLimit)
-                        .Key(group->name + "::" + nodeName);
-                })
-                .Columns(compact ? huxerui::GridColumns::Fixed(2)
-                                 : huxerui::GridColumns::Adaptive(kProxyNodeWidth))
-                .EstimatedRowExtent(52.0F)
-                .ItemSpans(std::move(spans))
-                .RowSpacing(kNodeGridGap)
-                .ColumnSpacing(kNodeGridGap)
-                .With(huxerui::Grow(1.0F), huxerui::ScrollBar())
+            huxerui::Column(std::move(pageContent))
+                .With(huxerui::Spacing(pagePath.size() > 1
+                                           ? theme.spacing.small
+                                           : 0.0F),
+                      huxerui::Grow(1.0F),
+                      huxerui::CrossAlign(
+                          huxerui::CrossAxisAlignment::Stretch))
                 .Key("group-page-" + rootGroup.name));
     }
 

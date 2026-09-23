@@ -454,8 +454,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
               std::move(actions),
           }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
         : huxerui::Row {
-              huxerui::IconButton(app::images::arrow_back, "返回设置")
-                  .With(huxerui::Tooltip("返回设置"))
+              huxerui::IconButton(app::images::arrow_back, "返回上一页")
+                  .With(huxerui::Tooltip("返回上一页"))
                   .OnClick(std::move(onBack)),
               std::move(titleView).With(huxerui::Grow(1.0F)),
               std::move(actions),

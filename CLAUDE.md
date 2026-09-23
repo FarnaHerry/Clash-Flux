@@ -100,6 +100,12 @@ cmake --build build --target clash-flux
 
 ## 多平台 / CI
 
+- **CI 触发**：`.github/workflows/build.yml` 在推送到 main、PR 与 `v*` Tag 时都跑
+  完整矩阵（本仓库是公开仓库 → 标准 GitHub-hosted runner 的 Actions 用量免费，
+  Windows/macOS 的倍率只对私有仓库额度有意义；实际限制是 Free 计划并发与
+  fair-use）。Tag 推送会额外由 `publish-release`
+  （`if: startsWith(github.ref, 'refs/tags/v')`）创建 Release。发版流程：
+  改版本号 → 提交 → 打 `vX` 注解 Tag → 推 main + Tag。
 - 平台细节由 `.github/workflows/build.yml` 承担（矩阵命名对齐 apitab：
   `build-<os>-<arch>`）：build-linux-x86_64（ubuntu:24.04 容器 + apt.llvm.org
   clang-21/libc++-21 + pip cmake 4.4.2）正式；linux-arm64（ubuntu-24.04-arm 原生）/
@@ -186,6 +192,14 @@ cmake --build build --target clash-flux
     （v4 前缀，加载旧格式时保留卡片与顺序、补齐新卡并刷新为默认尺寸），编辑态只改
     会话 State，点保存才写库。**首页滚动内容里不要声明 `Focusable(true)`**：运行时会
     把初始焦点节点滚入视野，导致首页一打开就被滚到中途。
+    拖动排序：源是卡片槽上的 `DragSource`（桌面鼠标直接拖 / 移动端长按 0.35s），
+    悬浮预览**只用框架的拖动预览层**（`DragSource(payload, previewFactory, gesture)`，
+    工厂里按 `HomeNodeBounds` 量到的格子矩形给预览锁死宽高）——不要自己再叠一层
+    自绘浮层，也不要在拖动过程中调用本地共享过渡：拖动会连续触发重排，共享过渡在
+    播放中被连续打断会捕获退化几何，把移动中的卡片画成一张巨大的浮层副本（"巨大化"
+    /一次拖动两张悬浮）。落点也不走框架 `DropTarget` 命中，而是在 `Changed` 里用
+    `NearestHomeCard` 按指针位置自己算最近卡片（拖到卡片缝里、页面边缘也能落位），
+    命中后直接改布局（瞬时重排），被拖的那张本体只做 `Opacity(0.38F)` 的 disable 观感。
 
 ## sing-box 交互要点
 

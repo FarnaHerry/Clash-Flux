@@ -64,6 +64,8 @@ extern "C" bool clashflux_android_url_test(const char* group) noexcept;
 inline bool TriggerProxyGroupTest(const std::string& group) noexcept {
     return clashflux_android_url_test(group.c_str());
 }
+void AndroidScanQr(
+    std::function<void(std::optional<std::string>)> on_result);
 inline constexpr bool ProxyTestUsesNativeGroup() noexcept { return true; }
 #else
 inline void AndroidStartVpn() noexcept {}
@@ -73,6 +75,10 @@ inline void AndroidRequestIgnoreBattery() noexcept {}
 inline void AndroidOpenBatterySettings() noexcept {}
 inline bool AndroidIsIgnoringBattery() noexcept { return false; }
 inline int AndroidVpnState() noexcept { return 0; }
+inline void AndroidScanQr(
+    std::function<void(std::optional<std::string>)> on_result) {
+    if (on_result) on_result(std::nullopt);
+}
 inline const char* clashflux_android_connections() noexcept { return ""; }
 inline bool clashflux_android_close_connection(const char*) noexcept { return false; }
 inline bool clashflux_android_close_all_connections() noexcept { return false; }
@@ -106,13 +112,31 @@ struct ProxyGroupSnapshot {
     bool operator==(const ProxyGroupSnapshot&) const = default;
 };
 
+inline bool IsDarkTheme(const huxerui::ThemeSpec& theme) noexcept {
+    const huxerui::Color background = theme.colors.background;
+    const float brightness = 0.2126F * background.red +
+                             0.7152F * background.green +
+                             0.0722F * background.blue;
+    return brightness < 0.5F;
+}
+
+inline huxerui::Color SemanticSuccessColor(const huxerui::ThemeSpec& theme) {
+    return IsDarkTheme(theme) ? huxerui::Color::Rgb(108, 202, 145)
+                              : huxerui::Color::Rgb(47, 128, 86);
+}
+
+inline huxerui::Color SemanticWarningColor(const huxerui::ThemeSpec& theme) {
+    return IsDarkTheme(theme) ? huxerui::Color::Rgb(230, 184, 102)
+                              : huxerui::Color::Rgb(144, 96, 8);
+}
+
 inline huxerui::Color DelayLevelColor(const huxerui::ThemeSpec& theme, int delay,
                                       bool unavailable = false) {
-    if (unavailable || delay <= 0) return huxerui::Color::Rgb(220, 38, 38);
-    if (delay < 300) return huxerui::Color::Rgb(34, 197, 94);
-    if (delay < 600) return huxerui::Color::Rgb(37, 99, 235);
-    if (delay < 1000) return huxerui::Color::Rgb(234, 179, 8);
-    return huxerui::Color::Rgb(220, 38, 38);
+    if (unavailable || delay <= 0) return theme.colors.error;
+    if (delay < 300) return SemanticSuccessColor(theme);
+    if (delay < 600) return theme.colors.primary;
+    if (delay < 1000) return SemanticWarningColor(theme);
+    return theme.colors.error;
 }
 
 std::vector<ProxyGroupSnapshot> ParseProxyGroups(const std::string& body);
@@ -190,6 +214,8 @@ huxerui::View LogsPage(std::function<void()> onBack = {});        // 日志
 // 手机端二级页：由设置页「更多」入口 push 到 NavigationStack，页面自带的
 // 进入/返回动画与一级页切换动画互相独立；返回箭头与系统返回键统一弹栈。
 #if defined(__ANDROID__)
+huxerui::View AndroidProfilesPage(
+    huxerui::NavigationController navigation);
 huxerui::View AndroidRulesPage();
 huxerui::View AndroidConnectionsPage();
 huxerui::View AndroidLogsPage();
