@@ -1,5 +1,6 @@
 // profiles_page_forms.cpp — 订阅创建/编辑表单与移动端二级页面。
 #include <huxerui/huxerui.h>
+#include <huxerui/camera.h>
 
 #include <chrono>
 #include <functional>
@@ -12,6 +13,9 @@
 #include "app_resources.h"
 #include "ui.h"
 #include "task_bridge.h"
+#if defined(__ANDROID__)
+#include "qr_photo_decoder.h"
+#endif
 
 import clashflux.core;
 import clashflux.db;
@@ -409,8 +413,8 @@ huxerui::View ProfilePlatformOptions(
     huxerui::View row = UnifiedListRow(
         huxerui::Row {
             huxerui::Image(icon)
-                .With(huxerui::Frame{.width = 26.0F, .height = 26.0F},
-                      huxerui::Foreground(theme.colors.primary)),
+                .Tint(theme.colors.on_surface)
+                .With(huxerui::Frame{.width = 26.0F, .height = 26.0F}),
             huxerui::Column {
                 huxerui::Text(name).Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kBody),
@@ -429,6 +433,223 @@ huxerui::View ProfilePlatformOptions(
                                  .label = std::move(name)});
 }
 
+#if defined(__ANDROID__)
+
+[[huxerui::composable]] huxerui::View ProfileQrScannerPage(
+    std::function<void()> on_back,
+    std::function<void(std::string)> on_result) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const huxerui::ApplicationHandle application = huxerui::UseApplication();
+    const std::shared_ptr<QrPhotoDecoder> decoder =
+        huxerui::UseService<QrPhotoDecoder>();
+    const huxerui::TaskScope tasks = huxerui::UseTaskScope();
+    auto active = huxerui::UseState(false);
+    auto scanning = huxerui::UseState(false);
+    auto decoding = huxerui::UseState(false);
+    auto detected = huxerui::UseState(std::string{});
+    auto message = huxerui::UseState(std::string{"正在准备相机…"});
+    const huxerui::camera::CameraSession session =
+        huxerui::camera::UseCamera({
+            .facing = huxerui::camera::Facing::Back,
+            .active = active.Get(),
+        });
+    const auto pending_request =
+        std::make_shared<std::optional<huxerui::PlatformRequestId>>();
+
+    const auto start_scanning = [=] {
+        if (scanning.Get()) return huxerui::TaskHandle{};
+        scanning = true;
+        message = std::string{"正在请求相机权限…"};
+        detected = std::string{};
+        return tasks.Launch([=]() -> huxerui::Task<void> {
+            const huxerui::PermissionStatus permission =
+                co_await application.RequestPermissionAsync(
+                    huxerui::Permission::Camera);
+            if (permission != huxerui::PermissionStatus::Granted) {
+                message = permission == huxerui::PermissionStatus::Unavailable
+                              ? "当前设备无法使用相机"
+                              : "请允许相机权限后重试";
+                scanning = false;
+                co_return;
+            }
+
+            if (session.Status().state ==
+                huxerui::camera::SessionState::Failed) {
+                session.Retry();
+            }
+            active = true;
+            message = std::string{"正在启动相机…"};
+
+            while (scanning.Get()) {
+                const huxerui::camera::CameraStatus status = session.Status();
+                if (status.state == huxerui::camera::SessionState::Failed) {
+                    message = status.error ? status.error->message
+                                           : "相机启动失败，请重试";
+                    active = false;
+                    scanning = false;
+                    co_return;
+                }
+                if (status.state != huxerui::camera::SessionState::Running) {
+                    co_await huxerui::Delay(
+                        std::chrono::milliseconds{120});
+                    continue;
+                }
+
+                message = std::string{"将二维码放入取景画面，识别后自动导入"};
+                const auto photo = co_await session.CapturePhotoAsync(
+                    {.jpeg_quality = 50,
+                     .mirror = huxerui::camera::MirrorMode::Off});
+                if (!photo.Succeeded()) {
+                    const auto code = photo.Error().code;
+                    if (code != huxerui::camera::CameraErrorCode::NotReady &&
+                        code != huxerui::camera::CameraErrorCode::Interrupted &&
+                        code != huxerui::camera::CameraErrorCode::OperationInProgress) {
+                        message = photo.Error().message;
+                        active = false;
+                        scanning = false;
+                        co_return;
+                    }
+                    co_await huxerui::Delay(
+                        std::chrono::milliseconds{180});
+                    continue;
+                }
+
+                const auto encoded = photo.Value().EncodedBytes();
+                huxerui::Bytes jpeg(encoded.begin(), encoded.end());
+                decoding = true;
+                const huxerui::PlatformRequestId request = decoder->Decode(
+                    std::move(jpeg),
+                    [decoding, detected, message](
+                        huxerui::PlatformResult<std::string> result) {
+                        decoding = false;
+                        if (const auto* error =
+                                std::get_if<huxerui::PlatformError>(&result)) {
+                            message = error->message;
+                            return;
+                        }
+                        const std::string content =
+                            std::get<std::string>(std::move(result));
+                        if (!content.empty()) {
+                            detected = content;
+                        }
+                    });
+                *pending_request = request;
+
+                while (scanning.Get() && decoding.Get()) {
+                    co_await huxerui::Delay(
+                        std::chrono::milliseconds{25});
+                }
+                pending_request->reset();
+                if (!scanning.Get()) co_return;
+                if (!detected.Get().empty()) {
+                    const std::string content = detected.Get();
+                    active = false;
+                    scanning = false;
+                    on_result(content);
+                    co_return;
+                }
+                co_await huxerui::Delay(
+                    std::chrono::milliseconds{380});
+            }
+        });
+    };
+
+    huxerui::Lifecycle([=] {
+        const huxerui::TaskHandle request = start_scanning();
+        return [request, active, scanning, decoder, pending_request] {
+            request.Cancel();
+            scanning = false;
+            active = false;
+            if (*pending_request) {
+                decoder->Cancel(**pending_request);
+                pending_request->reset();
+            }
+        };
+    });
+
+    const huxerui::camera::CameraStatus status = session.Status();
+    huxerui::View preview;
+    if (status.preview) {
+        preview = huxerui::camera::CameraPreview(
+            session, {.fit = huxerui::ImageFit::Cover,
+                      .mirror = huxerui::camera::MirrorMode::Off});
+    } else {
+        preview = huxerui::Column {
+            scanning.Get() ? huxerui::View{huxerui::ProgressCircle()}
+                           : huxerui::View{huxerui::Image(app::images::qr_scan)
+                                               .Tint(theme.colors.on_surface_variant)
+                                               .With(huxerui::Frame{.width = 36.0F,
+                                                                    .height = 36.0F})},
+            huxerui::Text(message.Get())
+                .Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kBody),
+                    theme.colors.on_surface_variant}),
+        }.With(huxerui::Spacing(12.0F),
+               huxerui::Padding(20.0F),
+               huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    }
+    preview = std::move(preview).With(
+        huxerui::Frame{.height = 400.0F},
+        huxerui::Background(theme.colors.surface_container_high),
+        huxerui::CornerRadius(theme.shapes.large),
+        huxerui::ClipChildren());
+
+    huxerui::View body = huxerui::Column {
+        std::move(preview),
+        huxerui::Text(message.Get())
+            .Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBody),
+                theme.colors.on_surface_variant}),
+        !scanning.Get() && !detected.Get().empty()
+            ? huxerui::View{huxerui::Text("正在导入配置…")
+                                .Style(huxerui::TextStyle{
+                                    huxerui::Font::System(font_size::kCaption),
+                                    theme.colors.on_surface_variant})}
+            : huxerui::View{huxerui::Row{}},
+        !scanning.Get()
+            ? huxerui::View{huxerui::Button("重试")
+                                .OnClick(start_scanning)}
+            : huxerui::View{huxerui::Row{}},
+    }.With(huxerui::Spacing(12.0F),
+           huxerui::Padding(huxerui::EdgeInsets::Symmetric(16.0F, 12.0F)),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    return ProfileFlowPage(
+        huxerui::Text("扫描二维码", huxerui::TextRole::Title),
+        huxerui::View{}, std::move(body), std::move(on_back));
+}
+
+void PushProfileQrScanner(
+    ProfileCreateFields fields, huxerui::NavigationController navigation,
+    huxerui::ToastHandle toast,
+    std::function<void(std::string)> on_result) {
+    static_cast<void>(toast);
+    fields.importing = true;
+    navigation.Push([=] {
+        return ProfileQrScannerPage(
+            [navigation, fields] {
+                fields.importing = false;
+                static_cast<void>(navigation.Pop());
+            },
+            [navigation, fields, on_result](std::string content) mutable {
+                fields.importing = false;
+                static_cast<void>(navigation.Pop());
+                if (on_result) on_result(std::move(content));
+            });
+    });
+}
+
+#else
+
+void PushProfileQrScanner(
+    ProfileCreateFields, huxerui::NavigationController,
+    huxerui::ToastHandle toast,
+    std::function<void(std::string)>) {
+    toast.Show("当前平台暂不支持二维码扫描");
+}
+
+#endif
+
 [[huxerui::composable]] huxerui::View ProfileAddMethodPage(
     ProfileCreateFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
@@ -436,23 +657,70 @@ huxerui::View ProfilePlatformOptions(
     bool pptp_supported, bool openvpn_supported,
     huxerui::NavigationController navigation) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    auto dialog = huxerui::UseDialog();
+    auto urlInput = huxerui::UseState(huxerui::TextEditingValue{""});
     const auto on_back = [navigation] {
         static_cast<void>(navigation.Pop());
     };
-    const auto open_method = [fields, tasks, toast, picker, http,
-                              pptp_supported, openvpn_supported, navigation,
-                              on_back,
-                              popDuration = theme.motion.normal](
-                                 ProfileAddMethod method) {
-        fields.qr_content = huxerui::TextEditingValue{""};
-        if (method == ProfileAddMethod::Url) {
-            fields.url = huxerui::TextEditingValue{""};
-        } else if (method == ProfileAddMethod::File) {
-            fields.picked_path = "";
-        } else if (method == ProfileAddMethod::Direct) {
-            fields.config_content = huxerui::TextEditingValue{""};
-            fields.type_index = 0;
+    const auto finishImport = [fields, toast, navigation](
+                                  ProfileImportResult result) {
+        fields.importing = false;
+        if (result.first == 0) {
+            toast.Show(result.second.empty() ? "导入失败" : result.second);
+            return;
         }
+        toast.Show("配置已添加");
+        static_cast<void>(navigation.Pop());
+    };
+    const auto importRemote = [fields, tasks, http, finishImport](
+                                  std::string url) {
+        if (fields.importing.Get()) return;
+        fields.importing = true;
+        db::Profile options;
+        options.autoUpdate = true;
+        options.intervalMins = 1440;
+        options.timeoutSecs = 60;
+        tasks.Launch([http, url = std::move(url), options,
+                      finishImport]() mutable -> huxerui::Task<void> {
+            ProfileImportRequest request;
+            request.remote = true;
+            request.url = std::move(url);
+            request.options = options;
+            finishImport(co_await ImportProfileForPlatform(
+                http, std::move(request)));
+        });
+    };
+    const auto importInline = [fields, tasks, finishImport](
+                                  std::string content) {
+        if (fields.importing.Get()) return;
+        fields.importing = true;
+        db::Profile options;
+        tasks.Launch([content = std::move(content), options,
+                      finishImport]() mutable -> huxerui::Task<void> {
+            const auto [id, error] = co_await ImportProfileContent(
+                "二维码配置", std::move(content), options);
+            finishImport(ProfileImportResult{id, error});
+        });
+    };
+    const auto beginQrScan = [fields, navigation, toast,
+                              importRemote, importInline] {
+        if (fields.importing.Get()) return;
+        PushProfileQrScanner(
+            fields, navigation, toast,
+            [importRemote, importInline](std::string content) mutable {
+                if (IsHttpProfileUrl(content)) {
+                    importRemote(std::move(content));
+                } else {
+                    importInline(std::move(content));
+                }
+            });
+    };
+    const auto openDirect = [fields, tasks, toast, picker, http,
+                             pptp_supported, openvpn_supported, navigation,
+                             on_back, popDuration = theme.motion.normal] {
+        if (fields.importing.Get()) return;
+        fields.config_content = huxerui::TextEditingValue{""};
+        fields.type_index = 0;
         const auto on_complete = [tasks, navigation, popDuration] {
             tasks.Launch([navigation, popDuration]() -> huxerui::Task<void> {
                 if (navigation.Depth() < 3) co_return;
@@ -466,29 +734,112 @@ huxerui::View ProfilePlatformOptions(
         };
         navigation.Push([=] {
             return ProfileCreateMethodPage(
-                method, fields, tasks, toast, picker, http,
+                ProfileAddMethod::Direct, fields, tasks, toast, picker, http,
                 pptp_supported, openvpn_supported, navigation, on_back,
                 on_complete);
         });
     };
+    const auto chooseFile = [fields, tasks, toast, picker, http, finishImport] {
+        if (fields.importing.Get()) return;
+        if (!picker) {
+            toast.Show("文件选择器不可用");
+            return;
+        }
+        fields.importing = true;
+        tasks.Launch([fields, picker, http, finishImport]() mutable
+                         -> huxerui::Task<void> {
+            const auto picked = co_await picker->OpenFileAsync(
+                huxerui::FilePickerFilter{
+                    .name = "Clash 配置",
+                    .extensions = {"yaml", "yml"}});
+            if (!picked) {
+                fields.importing = false;
+                co_return;
+            }
+            const auto file = picked->AsFile();
+            if (!file) {
+                fields.importing = false;
+                co_return;
+            }
+            const std::string path = file->Path();
+            fields.picked_path = path;
+            const std::size_t slash = path.find_last_of("/\\");
+            std::string name = path.substr(
+                slash == std::string::npos ? 0 : slash + 1);
+            const std::size_t extension = name.find_last_of('.');
+            if (extension != std::string::npos && extension > 0) {
+                name.erase(extension);
+            }
+            ProfileImportRequest request;
+            request.local = true;
+            request.name = std::move(name);
+            request.picked_path = path;
+            finishImport(co_await ImportProfileForPlatform(
+                http, std::move(request)));
+        });
+    };
+    const auto openUrlDialog = [fields, dialog, urlInput, toast,
+                                importRemote] {
+        if (fields.importing.Get()) return;
+        urlInput = huxerui::TextEditingValue{""};
+        dialog.Show(
+            [urlInput, toast, importRemote](
+                huxerui::DialogContext ctx) -> huxerui::View {
+                return DialogCard(huxerui::Column {
+                    huxerui::Text("添加订阅", huxerui::TextRole::Title),
+                    huxerui::TextField(urlInput.Get())
+                        .Label("订阅 URL")
+                        .Placeholder("https://...")
+                        .Variant(huxerui::TextFieldVariant::Outlined)
+                        .OnChanged([urlInput](
+                                       const huxerui::TextEditingValue& value) {
+                            urlInput = value;
+                        }),
+                    huxerui::Row {
+                        huxerui::Button("取消").OnClick(
+                            [ctx] { ctx.Dismiss(); }),
+                        huxerui::Button("获取配置").OnClick(
+                            [ctx, urlInput, toast, importRemote] {
+                                const std::string url = urlInput.Get().text;
+                                if (!IsHttpProfileUrl(url)) {
+                                    toast.Show("请输入有效的 HTTP 或 HTTPS URL");
+                                    return;
+                                }
+                                ctx.Dismiss();
+                                importRemote(url);
+                            }),
+                    }.With(huxerui::Spacing(8.0F),
+                           huxerui::MainAlign(
+                               huxerui::MainAxisAlignment::End)),
+                }.With(huxerui::Spacing(12.0F),
+                       huxerui::Frame{.width = 300.0F},
+                       huxerui::CrossAlign(
+                           huxerui::CrossAxisAlignment::Stretch)));
+            },
+            huxerui::DialogOptions{});
+    };
 
     huxerui::View methods = huxerui::Column {
         ProfileAddMethodRow(
-            app::images::qr_scan, "二维码", "扫描二维码获取订阅链接或配置",
+            app::images::qr_scan, "二维码",
+            fields.importing.Get() ? "正在扫描或导入配置…"
+                                  : "扫描后自动导入订阅链接或配置",
             "profile-add-qr", true,
-            [open_method] { open_method(ProfileAddMethod::Qr); }),
+            beginQrScan),
         ProfileAddMethodRow(
-            app::images::file_import, "文件", "从设备中选择 Clash 配置文件",
+            app::images::file_import, "文件",
+            fields.importing.Get() ? "正在导入配置…"
+                                  : "选择 Clash 配置文件并自动导入",
             "profile-add-file", true,
-            [open_method] { open_method(ProfileAddMethod::File); }),
+            chooseFile),
         ProfileAddMethodRow(
-            app::images::link, "URL", "通过订阅链接下载配置文件",
+            app::images::link, "URL", "输入订阅链接并自动获取配置",
             "profile-add-url", true,
-            [open_method] { open_method(ProfileAddMethod::Url); }),
+            openUrlDialog),
         ProfileAddMethodRow(
             app::images::manual_config, "直接配置", "粘贴配置内容或填写 VPN 参数",
             "profile-add-direct", false,
-            [open_method] { open_method(ProfileAddMethod::Direct); }),
+            openDirect),
     }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     huxerui::View content = huxerui::ScrollView(huxerui::Column {
         huxerui::Text("选择添加方式")
@@ -511,11 +862,9 @@ huxerui::View ProfilePlatformOptions(
     std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<huxerui::HttpClient> http,
     bool pptp_supported, bool openvpn_supported,
-    huxerui::NavigationController, std::function<void()> on_back,
+    huxerui::NavigationController navigation, std::function<void()> on_back,
     std::function<void()> on_complete) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    auto scanTasks = huxerui::UseTaskScope();
-    auto scanning = huxerui::UseState(false);
     const std::string qrContent = fields.qr_content.Get().text;
     const bool qrRemote = method == ProfileAddMethod::Qr &&
                           IsHttpProfileUrl(qrContent);
@@ -663,31 +1012,16 @@ huxerui::View ProfilePlatformOptions(
             huxerui::Text("将二维码放入取景框，支持订阅链接和配置文本。")
                 .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
                                           theme.colors.on_surface_variant}),
-            scanning.Get()
-                ? huxerui::View{huxerui::Row {
-                      huxerui::ProgressCircle(),
-                      huxerui::Text("正在打开相机…"),
-                  }.With(huxerui::Spacing(8.0F),
-                         huxerui::CrossAlign(
-                             huxerui::CrossAxisAlignment::Center))}
-                : huxerui::View{huxerui::Button(
-                      scanned ? "重新扫描" : "开始扫码")
-                      .OnClick([scanTasks, toast, scanning,
-                                content = fields.qr_content] {
-                          if (scanning.Get()) return;
-                          scanning = true;
-                          BeginProfileQrScan(
-                              scanTasks, [toast, scanning, content](
-                                         std::optional<std::string> result) {
-                                  scanning = false;
-                                  if (!result) {
-                                      toast.Show("未获取到二维码内容");
-                                      return;
-                                  }
-                                  content = huxerui::TextEditingValue{
-                                      std::move(*result)};
-                              });
-                      })},
+            huxerui::Button(scanned ? "重新扫描" : "开始扫码")
+                .OnClick([fields, navigation, toast,
+                          content = fields.qr_content] {
+                    PushProfileQrScanner(
+                        fields, navigation, toast,
+                        [content](std::string result) {
+                            content = huxerui::TextEditingValue{
+                                std::move(result)};
+                        });
+                }),
             scanned
                 ? huxerui::View{huxerui::Text(
                       qrRemote ? "已识别订阅链接"

@@ -477,22 +477,19 @@ void DesktopPreparePlatformDataDirectory(
     huxerui::View content = mainRow;
     return huxerui::Column {
         huxerui::WindowTitleBar {
-            huxerui::Image(app::images::mascot_logo)
-                .Fit(huxerui::ImageFit::Contain)
-                .With(huxerui::Frame{.width = 20.0F, .height = 20.0F},
+            huxerui::Row {
+                huxerui::Image(app::images::mascot_logo)
+                    .Fit(huxerui::ImageFit::Contain)
+                    .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
+            }
+                .With(huxerui::Frame{.width = 72.0F, .height = 20.0F},
+                      huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
                       huxerui::WindowDragRegion{}),
-            huxerui::Text("Clash-Flux")
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kChip)
-                        .WithWeight(huxerui::FontWeight::Bold),
-                    rootSpec.colors.on_surface})
-                .With(huxerui::WindowDragRegion{}),
             huxerui::Spacer{}.With(huxerui::Grow(1.0F),
                                    huxerui::WindowDragRegion{}),
         }
-            .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(
-                      rootSpec.spacing.small, 0.0F)),
-                  huxerui::Spacing(rootSpec.spacing.small)),
+            .With(huxerui::Spacing(rootSpec.spacing.small)),
         std::move(content),
     }
         .With(huxerui::Spacing(rootSpec.spacing.extra_small),
