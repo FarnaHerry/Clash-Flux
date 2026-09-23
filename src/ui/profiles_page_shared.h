@@ -40,6 +40,8 @@ using ProfileEditDialog = std::function<void(std::int64_t)>;
 struct ProfileCreateFields {
     huxerui::State<huxerui::TextEditingValue> name;
     huxerui::State<huxerui::TextEditingValue> url;
+    huxerui::State<huxerui::TextEditingValue> qr_content;
+    huxerui::State<huxerui::TextEditingValue> config_content;
     huxerui::State<std::size_t> type_index;
     huxerui::State<huxerui::TextEditingValue> desc;
     huxerui::State<huxerui::TextEditingValue> timeout;
@@ -59,6 +61,8 @@ struct ProfileCreateFields {
     huxerui::State<std::string> picked_path;
     huxerui::State<bool> importing;
 };
+
+enum class ProfileAddMethod { Qr, File, Url, Direct };
 
 struct ProfileImportRequest {
     bool remote = false;
@@ -204,6 +208,26 @@ huxerui::View ResponsiveProfileCreateSurface(
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<huxerui::HttpClient> http, bool pptp_supported,
     bool openvpn_supported, std::function<void()> on_back);
+huxerui::View ProfileAddMethodPage(
+    ProfileCreateFields fields, huxerui::TaskScope tasks,
+    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    std::shared_ptr<huxerui::HttpClient> http, bool pptp_supported,
+    bool openvpn_supported,
+    huxerui::NavigationController navigation);
+huxerui::View ProfileCreateMethodPage(
+    ProfileAddMethod method, ProfileCreateFields fields,
+    huxerui::TaskScope tasks, huxerui::ToastHandle toast,
+    std::shared_ptr<huxerui::FilePicker> picker,
+    std::shared_ptr<huxerui::HttpClient> http, bool pptp_supported,
+    bool openvpn_supported,
+    huxerui::NavigationController navigation, std::function<void()> on_back,
+    std::function<void()> on_complete);
+huxerui::View ProfileEditRoutePage(
+    std::int64_t id, ProfileEditFields fields, huxerui::TaskScope tasks,
+    huxerui::ToastHandle toast, std::function<void()> on_back);
+void BeginProfileQrScan(
+    huxerui::TaskScope tasks,
+    std::function<void(std::optional<std::string>)> on_result);
 huxerui::View ProfileFilePage(
     std::int64_t id, huxerui::State<std::shared_ptr<std::string>> content,
     huxerui::State<bool> loading, huxerui::TaskScope tasks,

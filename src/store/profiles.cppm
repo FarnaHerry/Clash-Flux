@@ -333,6 +333,46 @@ public:
         return true;
     }
 
+    // 手动粘贴 YAML 导入（local）：内容写入 profiles/<id>.yaml。
+    std::int64_t importContent(const std::string& name,
+                               const std::string& content,
+                               const db::Profile& options = {}) {
+        lastError_.clear();
+        db::Profile p = options;
+        p.id = 0;
+        p.type = "local";
+        p.url.clear();
+        p.file.clear();
+        p.name = name.empty() ? "手动配置" : name;
+        try {
+            p.id = coreStore().db().saveProfile(p);
+            p.file = std::format("{}.yaml", p.id);
+            std::error_code ec;
+            std::filesystem::create_directories(cfg::profilesDir(), ec);
+            if (ec) throw std::filesystem::filesystem_error(
+                "创建订阅目录失败", cfg::profilesDir(), ec);
+            std::ofstream out(cfg::profilesDir() / p.file,
+                              std::ios::binary | std::ios::trunc);
+            if (!out) throw std::runtime_error("无法写入订阅文件");
+            out.write(content.data(), static_cast<std::streamsize>(content.size()));
+            out.flush();
+            if (!out) throw std::runtime_error("写入订阅文件失败");
+            p.updatedAt = nowUnix();
+            coreStore().db().saveProfile(p);
+        } catch (const std::exception& e) {
+            lastError_ = e.what();
+            if (p.id != 0) {
+                try { coreStore().db().deleteProfile(p.id); } catch (...) {}
+            }
+            if (!p.file.empty()) {
+                std::error_code ec;
+                std::filesystem::remove(cfg::profilesDir() / p.file, ec);
+            }
+            return 0;
+        }
+        return p.id;
+    }
+
     // 新增原生连接订阅（PPTP/OpenVPN/WireGuard 等）：不下载 YAML，连接参数
     // 和路由由 nativeConfig/nativeRoutes 保存，具体引擎由 VPN store 解释。
     std::int64_t importNative(const std::string& name, const std::string& type,

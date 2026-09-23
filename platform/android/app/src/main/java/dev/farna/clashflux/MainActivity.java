@@ -22,11 +22,14 @@ import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 
 import org.huxerui.HuxerUIActivity;
+import com.google.zxing.integration.android.IntentIntegrator;
+import com.google.zxing.integration.android.IntentResult;
 
 
 public final class MainActivity extends HuxerUIActivity {
     private static final String TAG = "ClashFlux";
     private static final int REQUEST_VPN_CONSENT = 4001;
+    private long pendingQrScanId;
     static {
         Log.i(TAG, "Loading application native library: " + BuildConfig.HUXERUI_APP_LIBRARY);
         System.loadLibrary(BuildConfig.HUXERUI_APP_LIBRARY);
@@ -43,6 +46,7 @@ public final class MainActivity extends HuxerUIActivity {
     private static native void nativeVpnStartCancelled();
     private static native void nativeVpnStartFailed(String message);
     private static native void nativeAppLog(int level, String message);
+    private static native void nativeQrScanResult(long requestId, String content);
 
     private static void installCrashLogger() {
         final Thread.UncaughtExceptionHandler delegate =
@@ -133,6 +137,27 @@ public final class MainActivity extends HuxerUIActivity {
             } catch (ActivityNotFoundException ignored) {
                 // No browser is installed; the native caller has no recovery action.
             }
+        });
+    }
+
+    public static void scanQr(long requestId) {
+        MainActivity activity = current;
+        if (activity == null) {
+            nativeQrScanResult(requestId, null);
+            return;
+        }
+        activity.runOnUiThread(() -> {
+            if (activity.pendingQrScanId != 0) {
+                nativeQrScanResult(requestId, null);
+                return;
+            }
+            activity.pendingQrScanId = requestId;
+            new IntentIntegrator(activity)
+                    .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
+                    .setPrompt("扫描订阅二维码")
+                    .setBeepEnabled(false)
+                    .setOrientationLocked(true)
+                    .initiateScan();
         });
     }
 
@@ -542,6 +567,16 @@ public final class MainActivity extends HuxerUIActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        IntentResult qrResult =
+                IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
+        if (qrResult != null) {
+            long requestId = pendingQrScanId;
+            pendingQrScanId = 0;
+            if (requestId != 0) {
+                nativeQrScanResult(requestId, qrResult.getContents());
+            }
+            return;
+        }
         if (requestCode == REQUEST_VPN_CONSENT) {
             if (resultCode == RESULT_OK) {
                 appLog("用户已允许系统 VPN，继续启动服务", false);

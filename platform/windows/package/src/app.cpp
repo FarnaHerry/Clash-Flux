@@ -31,16 +31,12 @@ std::optional<std::filesystem::path> ParseInstallPath(std::string_view value) {
   }
 }
 
-View InstallerMark(Color foreground, Color detail) {
-  return Canvas([foreground, detail](PaintContext& paint, Size size) {
-    const float extent = std::min(size.width, size.height);
-    Color tile = foreground;
-    tile.alpha = 0.14F;
-    paint.DrawRect({0.0F, 0.0F, extent, extent}, tile, CornerRadii{18.0F});
-    paint.DrawRect({15.0F, 17.0F, 34.0F, 32.0F}, foreground, CornerRadii{7.0F});
-    paint.DrawLine({15.0F, 28.0F}, {49.0F, 28.0F}, detail, StrokeStyle{.width = 2.0F});
-    paint.DrawLine({32.0F, 17.0F}, {32.0F, 49.0F}, detail, StrokeStyle{.width = 2.0F});
-  }).With(Frame{.width = 64.0F, .height = 64.0F});
+View InstallerMark(Color tile) {
+  tile.alpha = 0.96F;
+  return Image(installer::images::mascot_logo)
+      .Fit(ImageFit::Contain)
+      .With(Frame{.width = 64.0F, .height = 64.0F}, Padding(5.0F),
+            Background(tile), CornerRadius(18.0F), ClipChildren());
 }
 
 View BrandPanel(const ThemeSpec& theme) {
@@ -52,7 +48,7 @@ View BrandPanel(const ThemeSpec& theme) {
   secondary_text.alpha = 0.72F;
 
   return Column {
-    InstallerMark(theme.colors.on_primary, deep_primary),
+    InstallerMark(theme.colors.on_primary),
     Column {
       Text(installer_strings::application_setup)
           .Style(TextStyle{Font::System(12.0F).WithWeight(FontWeight::SemiBold), secondary_text}),

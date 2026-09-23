@@ -384,6 +384,18 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
 
 namespace clashflux::ui {
 
+void BeginProfileQrScan(
+    huxerui::TaskScope tasks,
+    std::function<void(std::optional<std::string>)> on_result) {
+    AndroidScanQr([tasks, on_result = std::move(on_result)](
+                      std::optional<std::string> content) mutable {
+        tasks.Post([on_result = std::move(on_result),
+                    content = std::move(content)]() mutable {
+            if (on_result) on_result(std::move(content));
+        });
+    });
+}
+
 // Android 订阅自动更新泵的一次迭代：任务线程列出到期订阅 → 逐个经 HuxerUI
 // HttpClient 抓取 → store completeRemote 收尾。错误落在订阅行 error 字段。
 huxerui::Task<int> AndroidRefreshProfilesDueOnce(

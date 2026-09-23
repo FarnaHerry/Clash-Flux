@@ -90,12 +90,13 @@ cmake --build build -j
 
 ```bash
 cmake --build build --target clash-flux
-./run.sh
+./run.sh --version
 ```
 
 `run.sh` 默认只启动仓库 `build/clash-flux` 中已编译的程序，不负责隐式编译；
 因此构建失败时不得把改动标记为已完成。若使用其他构建目录，需显式设置
-`CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh` 验证对应产物可运行。
+`CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version` 验证对应产物可运行；需要
+确认 GUI 启动时再执行 `./run.sh`。
 
 也可以使用 HuxerUI CLI：
 
@@ -147,7 +148,13 @@ GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议�
 
 ## 多平台 CI
 
-`.github/workflows/build.yml` 矩阵（命名 `build-<os>-<arch>`）：
+`.github/workflows/build.yml` 在推送到 main、PR 以及 `v*` Tag 时都跑完整矩阵
+（仓库是公开仓库，标准 GitHub-hosted runner 的 Actions 用量免费，Windows/macOS
+的倍率只影响私有仓库额度；真正的限制是 Free 计划的并发与 fair-use）。Tag 推送会
+额外跑发布流程：`publish-release` 汇总各平台产物创建对应的 GitHub Release
+（各平台归档 + Windows 安装包）。
+
+矩阵（命名 `build-<os>-<arch>`）：
 
 | Job | Runner | 状态 |
 |-----|--------|------|
@@ -164,7 +171,9 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 
 覆盖面原则：sing-box 内核发布什么桌面平台/arch，就构建什么目标（内核资产
 SHA256 钉在 `cmake/singbox_bundle.cmake`，configure 期自动下载）。桌面 job
-统一走 HuxerUI 源码通道（钉 commit clone 上游）。
+统一走 HuxerUI 源码通道（钉 commit clone 上游）。Linux、Windows、macOS 和 Android
+源码构建会在检出后应用 `cmake/patches/huxerui-drag-preview-follows-pointer.patch`，
+让首页卡片拖动预览持续跟随抓取点；升级 HuxerUI 固定版本时需验证补丁仍可应用。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、

@@ -1,8 +1,8 @@
 // vpn.cppm — clashflux.store.vpn：订阅化的原生 VPN 连接管理。
 //
 // Profile.type 决定 nativeConfig/nativeRoutes 的解释方式。OpenVPN 使用
-// sing-box endpoint，PPTP 保留系统原生路径；多个 Profile 可以同时挂在同一个
-// VpnManager 中，每条连接用 profile id 隔离生命周期和路由。
+// sing-box endpoint，PPTP 保留系统原生路径；Profile 通过同一个 VpnManager
+// 管理，活动连接上限由共享领域层按平台能力统一限制。
 export module clashflux.store.vpn;
 
 import std;

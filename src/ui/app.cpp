@@ -1,8 +1,7 @@
 // app.cpp — 应用壳（岛屿架构 + 自定义标题栏 + 托盘，对齐 apitab 岛屿风）：
 //   标题栏：应用名 + 内核状态胶囊 + 框架窗口按钮；收窄为 24px 高、去背景直接
-//     融入窗口底色。品牌色为水猫标识的亮水蓝和冰青，只用于交互与强调；
-//     大面积背景是中性石墨（深色）/冰雾白（浅色），深浅两套模式共用同一
-//     套品牌强调色，只调整背景明度和对比度。
+//     融入窗口底色。品牌水蓝只用于主要交互和少量强调，大面积区域使用中性灰阶；
+//     深浅模式共享品牌色，仅调整底色明度与文本对比度。
 //   下方：左侧图标侧边栏（无岛屿包裹，直接落在窗口背景上）｜内容区（页面自己的
 //   一级岛屿划分区域——PageScaffold，外壳不再套岛）。根节点刷整窗海面底色
 //   （rootSpec.colors.background——AppRoot 在主题 provider 之上，UseTheme 只能
@@ -59,12 +58,8 @@ namespace {
 #endif
 
 struct FluxPalette {
-    static constexpr huxerui::Color deep_navy() noexcept {
-        return huxerui::Color::Rgb(11, 30, 58); // 品牌深海蓝 #0B1E3A
-    }
-
     static constexpr huxerui::Color abyss() noexcept {
-        return huxerui::Color::Rgb(6, 20, 39); // 品牌深蓝 #061427，亮色表面上的文字
+        return huxerui::Color::Rgb(6, 20, 39); // 深蓝字色，用于品牌色按钮
     }
 
     static constexpr huxerui::Color water() noexcept {
@@ -78,15 +73,10 @@ struct FluxPalette {
     static constexpr huxerui::Color ice() noexcept {
         return huxerui::Color::Rgb(182, 242, 255); // 品牌冰青 #B6F2FF
     }
-
-    static constexpr huxerui::Color mist() noexcept {
-        return huxerui::Color::Rgb(232, 248, 255); // 浅色水雾背景
-    }
 };
 
-// Clash-Flux 品牌深色主题：石墨色（带一点冷调）作为海面和表面阶梯，靠每级
-// 9-11 的亮度差拉开层次；亮水蓝只出现在交互色和容器强调上，冰青作为次级
-// 强调色，避免整页淹没在同色相的深蓝里。
+// 品牌蓝只出现在主交互和选中态。页面、卡片、导航与浮层使用中性灰阶，
+// 通过稳定的明度差区分层级，避免整页被蓝色表面染色。
 huxerui::ThemeSpec FluxDarkThemeSpec() {
     huxerui::ThemeSpec spec = huxerui::MaterialDarkThemeSpec();
     spec.typography = huxerui::TypographyScheme{
@@ -101,33 +91,33 @@ huxerui::ThemeSpec FluxDarkThemeSpec() {
                                         10000.0F};
     spec.colors.primary = FluxPalette::water();
     spec.colors.on_primary = FluxPalette::abyss();
-    spec.colors.primary_container = huxerui::Color::Rgb(16, 76, 113);
-    spec.colors.on_primary_container = huxerui::Color::Rgb(213, 246, 255);
-    spec.colors.secondary = FluxPalette::ice();
-    spec.colors.on_secondary = FluxPalette::abyss();
-    spec.colors.secondary_container = huxerui::Color::Rgb(18, 66, 91);
-    spec.colors.on_secondary_container = FluxPalette::ice();
-    spec.colors.tertiary_container = huxerui::Color::Rgb(24, 72, 105);
-    spec.colors.on_tertiary_container = huxerui::Color::Rgb(222, 248, 255);
-    spec.colors.background = huxerui::Color::Rgb(13, 17, 23);
-    spec.colors.surface = huxerui::Color::Rgb(22, 27, 34);
-    spec.colors.surface_container_low = huxerui::Color::Rgb(28, 34, 43);
-    spec.colors.surface_container = huxerui::Color::Rgb(35, 42, 53);
-    spec.colors.surface_container_high = huxerui::Color::Rgb(43, 51, 64);
-    spec.colors.surface_container_highest = huxerui::Color::Rgb(52, 62, 77);
-    spec.colors.on_surface = huxerui::Color::Rgb(233, 237, 243);
-    spec.colors.on_surface_variant = huxerui::Color::Rgb(166, 179, 196);
-    spec.colors.outline = huxerui::Color::Rgb(67, 80, 95);
-    spec.colors.inverse_surface = FluxPalette::mist();
-    spec.colors.inverse_on_surface = FluxPalette::deep_navy();
-    spec.colors.scrim = huxerui::Color::Rgb(4, 8, 14, 0.66F);
-    spec.colors.error = huxerui::Color::Rgb(255, 155, 168);
+    spec.colors.primary_container = huxerui::Color::Rgb(44, 45, 46);
+    spec.colors.on_primary_container = FluxPalette::ice();
+    spec.colors.secondary = huxerui::Color::Rgb(185, 185, 185);
+    spec.colors.on_secondary = huxerui::Color::Rgb(32, 32, 32);
+    spec.colors.secondary_container = huxerui::Color::Rgb(53, 53, 53);
+    spec.colors.on_secondary_container = huxerui::Color::Rgb(226, 226, 226);
+    spec.colors.tertiary_container = huxerui::Color::Rgb(46, 46, 46);
+    spec.colors.on_tertiary_container = huxerui::Color::Rgb(222, 222, 222);
+    spec.colors.background = huxerui::Color::Rgb(18, 19, 20);
+    spec.colors.surface = huxerui::Color::Rgb(25, 26, 27);
+    spec.colors.surface_container_low = huxerui::Color::Rgb(32, 33, 34);
+    spec.colors.surface_container = huxerui::Color::Rgb(40, 41, 42);
+    spec.colors.surface_container_high = huxerui::Color::Rgb(48, 49, 50);
+    spec.colors.surface_container_highest = huxerui::Color::Rgb(56, 57, 58);
+    spec.colors.on_surface = huxerui::Color::Rgb(241, 241, 241);
+    spec.colors.on_surface_variant = huxerui::Color::Rgb(176, 176, 176);
+    spec.colors.outline = huxerui::Color::Rgb(75, 75, 75);
+    spec.colors.inverse_surface = huxerui::Color::Rgb(232, 232, 232);
+    spec.colors.inverse_on_surface = huxerui::Color::Rgb(32, 32, 32);
+    spec.colors.scrim = huxerui::Color::Rgb(7, 7, 7, 0.66F);
+    spec.colors.error = huxerui::Color::Rgb(255, 144, 153);
     spec.interactions.focus_ring = huxerui::FocusRing{FluxPalette::ice(), 2.0F, 2.0F};
     return spec;
 }
 
-// Clash-Flux 品牌浅色主题：冰蓝白作为背景，水蓝负责主要交互，深海蓝负责次级文字，
-// 让冷色调在浅色模式依然清晰而不刺眼。
+// 浅色模式用干净的中性白灰做底，主色容器只保留浅水蓝色调；正文和边界使用
+// 石墨灰，保证内容层级清晰，品牌色不会扩散到大面积背景。
 huxerui::ThemeSpec FluxLightThemeSpec() {
     huxerui::ThemeSpec spec = huxerui::MaterialLightThemeSpec();
     spec.typography = huxerui::TypographyScheme{
@@ -141,28 +131,28 @@ huxerui::ThemeSpec FluxLightThemeSpec() {
     spec.shapes = huxerui::ShapeScheme{6.0F, 12.0F, 16.0F, 22.0F, 28.0F,
                                         10000.0F};
     spec.colors.primary = FluxPalette::water_deep();
-    spec.colors.on_primary = huxerui::Color::White();
-    spec.colors.primary_container = huxerui::Color::Rgb(199, 238, 255);
-    spec.colors.on_primary_container = huxerui::Color::Rgb(8, 66, 101);
-    spec.colors.secondary = huxerui::Color::Rgb(17, 119, 169);
+    spec.colors.on_primary = FluxPalette::abyss();
+    spec.colors.primary_container = huxerui::Color::Rgb(220, 238, 255);
+    spec.colors.on_primary_container = huxerui::Color::Rgb(16, 73, 103);
+    spec.colors.secondary = huxerui::Color::Rgb(94, 104, 114);
     spec.colors.on_secondary = huxerui::Color::White();
-    spec.colors.secondary_container = huxerui::Color::Rgb(215, 247, 255);
-    spec.colors.on_secondary_container = huxerui::Color::Rgb(9, 70, 94);
-    spec.colors.tertiary_container = FluxPalette::ice();
-    spec.colors.on_tertiary_container = huxerui::Color::Rgb(8, 66, 84);
-    spec.colors.background = huxerui::Color::Rgb(227, 244, 252);
-    spec.colors.surface = huxerui::Color::Rgb(248, 253, 255);
-    spec.colors.surface_container_low = huxerui::Color::Rgb(239, 249, 254);
-    spec.colors.surface_container = huxerui::Color::Rgb(226, 243, 251);
-    spec.colors.surface_container_high = huxerui::Color::Rgb(213, 237, 248);
+    spec.colors.secondary_container = huxerui::Color::Rgb(229, 233, 237);
+    spec.colors.on_secondary_container = huxerui::Color::Rgb(48, 56, 64);
+    spec.colors.tertiary_container = huxerui::Color::Rgb(238, 240, 242);
+    spec.colors.on_tertiary_container = huxerui::Color::Rgb(63, 70, 77);
+    spec.colors.background = huxerui::Color::Rgb(239, 241, 244);
+    spec.colors.surface = huxerui::Color::White();
+    spec.colors.surface_container_low = huxerui::Color::Rgb(252, 253, 254);
+    spec.colors.surface_container = huxerui::Color::Rgb(245, 246, 248);
+    spec.colors.surface_container_high = huxerui::Color::Rgb(235, 238, 241);
     spec.colors.surface_container_highest = huxerui::Color::White();
-    spec.colors.on_surface = FluxPalette::deep_navy();
-    spec.colors.on_surface_variant = huxerui::Color::Rgb(66, 101, 127);
-    spec.colors.outline = huxerui::Color::Rgb(171, 211, 231);
-    spec.colors.inverse_surface = FluxPalette::deep_navy();
-    spec.colors.inverse_on_surface = FluxPalette::mist();
-    spec.colors.scrim = huxerui::Color::Rgb(4, 24, 46, 0.34F);
-    spec.colors.error = huxerui::Color::Rgb(186, 26, 58);
+    spec.colors.on_surface = huxerui::Color::Rgb(32, 36, 41);
+    spec.colors.on_surface_variant = huxerui::Color::Rgb(98, 108, 118);
+    spec.colors.outline = huxerui::Color::Rgb(211, 216, 222);
+    spec.colors.inverse_surface = huxerui::Color::Rgb(37, 42, 48);
+    spec.colors.inverse_on_surface = huxerui::Color::Rgb(242, 244, 246);
+    spec.colors.scrim = huxerui::Color::Rgb(17, 24, 32, 0.34F);
+    spec.colors.error = huxerui::Color::Rgb(180, 35, 50);
     spec.interactions.focus_ring = huxerui::FocusRing{FluxPalette::water(), 2.0F, 2.0F};
     return spec;
 }
@@ -286,14 +276,16 @@ huxerui::View FluxThemed(bool dark, huxerui::View content) {
 
     huxerui::NavigationPaneStyle navigationPane =
         huxerui::NavigationPaneStyle::Default();
-    navigationPane.background = spec.colors.surface_container_low;
+    navigationPane.background = huxerui::Color::Transparent();
     navigationPane.label_style = huxerui::TextStyle{
         huxerui::Font::System(font_size::kBody), spec.colors.on_surface_variant};
     navigationPane.selected_content = spec.colors.on_primary_container;
     navigationPane.indicator = spec.colors.primary_container;
     navigationPane.compact_width = 72.0F;
     navigationPane.expanded_min_width = 220.0F;
-    navigationPane.indicator_corner_radius = spec.shapes.full;
+    navigationPane.item_margin = huxerui::EdgeInsets::Symmetric(0.0F, 0.0F);
+    navigationPane.compact_indicator_size = huxerui::Size{44.0F, 44.0F};
+    navigationPane.indicator_corner_radius = spec.shapes.medium;
     definition.Set(navigationPane);
 
     // 顶部状态栏与底部系统导航栏的底色统一取页面海面底色（background），
@@ -351,19 +343,12 @@ const std::array<AndroidNavEntry, 4> kAndroidNavEntries{
 constexpr std::array<std::size_t, 4> kAndroidNavDestinations{
     pages::kHome, pages::kProxies, pages::kProfiles, pages::kSettings};
 
-// 桌面端不兼容 Compact：窗口最小尺寸保证 Medium，导航只构造侧边栏。
+// 桌面一级导航始终使用无底板的紧凑图标栏；文字保留为语义名称。
 [[huxerui::composable]] huxerui::View DesktopNavigationSurface(
     huxerui::State<std::size_t> navPage) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const huxerui::ViewportClass viewport = huxerui::UseViewportClass();
     const std::vector<huxerui::NavigationItem> items = DesktopNavigationItems();
     const auto onChanged = [navPage](std::size_t index) { navPage = index; };
-    return huxerui::NavigationPane(items, navPage,
-                                   viewport == huxerui::ViewportClass::Expanded)
-        .OnChanged(onChanged)
-        .With(huxerui::Background(theme.colors.surface_container_low),
-              huxerui::CornerRadius(20.0F),
-              huxerui::ClipChildren());
+    return huxerui::NavigationPane(items, navPage, false).OnChanged(onChanged);
 }
 
 // 底部导航：选中态把 icon 与文字作为一个整体包进胶囊，而不是只高亮 icon。
@@ -527,7 +512,8 @@ huxerui::PageTransition SecondaryPageTransition(
     primaryPages.push_back(
         ProxiesPage().Key("proxies").With(huxerui::Grow(1.0F)));
     primaryPages.push_back(
-        ProfilesPage().Key("profiles").With(huxerui::Grow(1.0F)));
+        AndroidProfilesPage(huxerui::UseNavigation())
+            .Key("profiles").With(huxerui::Grow(1.0F)));
     primaryPages.push_back(SettingsPage(themeMode, navPage)
                                .Key("settings").With(huxerui::Grow(1.0F)));
 

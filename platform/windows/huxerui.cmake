@@ -1,4 +1,17 @@
 set(HUXERUI_WINDOWS_MANIFEST "${CMAKE_CURRENT_LIST_DIR}/app.manifest")
+set(HUXERUI_WINDOWS_ICON "${PROJECT_SOURCE_DIR}/assets/icon.ico")
+set(HUXERUI_WINDOWS_RESOURCE_DIRECTORY
+        "${CMAKE_CURRENT_BINARY_DIR}/huxerui-platform/windows"
+)
+file(MAKE_DIRECTORY "${HUXERUI_WINDOWS_RESOURCE_DIRECTORY}")
+configure_file(
+        "${CMAKE_CURRENT_LIST_DIR}/app.rc.in"
+        "${HUXERUI_WINDOWS_RESOURCE_DIRECTORY}/app.rc"
+        @ONLY
+)
+set(HUXERUI_WINDOWS_RESOURCE
+        "${HUXERUI_WINDOWS_RESOURCE_DIRECTORY}/app.rc"
+)
 
 function(huxerui_configure_windows_project_package target_name install_component)
     if (NOT HUXERUI_PACKAGE)
@@ -56,8 +69,42 @@ function(huxerui_configure_windows_project_package target_name install_component
     set(HUXERUI_WINDOWS_PACKAGE_DIRECTORY
             "${CMAKE_CURRENT_BINARY_DIR}/huxerui-package/windows"
     )
+    set(HUXERUI_WINDOWS_ICON_FILE "${PROJECT_SOURCE_DIR}/assets/icon.ico")
     set(HUXERUI_WINDOWS_PROJECT_VERSION "${PROJECT_VERSION}")
     file(MAKE_DIRECTORY "${HUXERUI_WINDOWS_PACKAGE_DIRECTORY}")
+
+    # The installer has its own resource package; stage the shared mascot into
+    # that package so the branding panel uses the same artwork as the app.
+    set(HUXERUI_WINDOWS_INSTALLER_RESOURCE_DIRECTORY
+            "${HUXERUI_WINDOWS_PACKAGE_DIRECTORY}/resources"
+    )
+    file(GLOB_RECURSE HUXERUI_WINDOWS_INSTALLER_RESOURCE_FILES CONFIGURE_DEPENDS
+            LIST_DIRECTORIES FALSE
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/package/resources/*"
+    )
+    foreach (resource_file IN LISTS HUXERUI_WINDOWS_INSTALLER_RESOURCE_FILES)
+        file(RELATIVE_PATH resource_relative_path
+                "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/package/resources"
+                "${resource_file}"
+        )
+        get_filename_component(resource_output_directory
+                "${HUXERUI_WINDOWS_INSTALLER_RESOURCE_DIRECTORY}/${resource_relative_path}"
+                DIRECTORY
+        )
+        file(MAKE_DIRECTORY "${resource_output_directory}")
+        configure_file(
+                "${resource_file}"
+                "${HUXERUI_WINDOWS_INSTALLER_RESOURCE_DIRECTORY}/${resource_relative_path}"
+                COPYONLY
+        )
+    endforeach ()
+    file(MAKE_DIRECTORY "${HUXERUI_WINDOWS_INSTALLER_RESOURCE_DIRECTORY}/images")
+    configure_file(
+            "${PROJECT_SOURCE_DIR}/resources/images/mascot_logo.png"
+            "${HUXERUI_WINDOWS_INSTALLER_RESOURCE_DIRECTORY}/images/mascot_logo.png"
+            COPYONLY
+    )
+
     configure_file(
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/package/Package.wxs.in"
             "${HUXERUI_WINDOWS_PACKAGE_DIRECTORY}/Package.wxs"
@@ -77,8 +124,9 @@ function(huxerui_configure_windows_project_package target_name install_component
     huxerui_add_windows_installer(${target_name}_installer
             SOURCES
                 ${HUXERUI_WINDOWS_INSTALLER_SOURCES}
+                "${HUXERUI_WINDOWS_RESOURCE}"
             RESOURCES
-                "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/package/resources"
+                "${HUXERUI_WINDOWS_INSTALLER_RESOURCE_DIRECTORY}"
             RESOURCE_NAMESPACE
                 installer
             INTEGRATION_OUTPUT
