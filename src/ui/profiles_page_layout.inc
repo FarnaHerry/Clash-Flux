@@ -50,7 +50,7 @@
                                      reload,
                                      pptpStates, openVpnStates, isConnectionSelected,
                                      toggleConnection, openEditInfo, showEditRules,
-                                     showEditFile, showQr, optimisticSelected, theme,
+                                     showEditFile, showQr, selectionPending, theme,
                                      dialog](
                                         std::size_t index)
                                          -> huxerui::View {
@@ -106,7 +106,7 @@
                                         return ProfileCard(
                                                    profile, compact, tasks,
                                                    toast, http, reload,
-                                                   optimisticSelected,
+                                                   profiles, selectionPending,
                                                    pptpState, openVpnState,
                                                    isConnectionSelected(profile.id),
                                                    toggleConnection, openEditInfo,

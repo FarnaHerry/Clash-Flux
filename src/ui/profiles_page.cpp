@@ -64,8 +64,7 @@ namespace clashflux::ui {
     auto pptpStates = huxerui::UseStateList<store::PptpState>();
     auto openVpnStates = huxerui::UseStateList<store::OpenVpnState>();
     auto connectionSelection = huxerui::UseStateList<std::int64_t>();
-    auto optimisticSelected =
-        huxerui::UseState<std::optional<std::int64_t>>(std::nullopt);
+    auto selectionPending = huxerui::UseState(false);
 
     // ---- 新建订阅弹窗 ----
     auto newName = huxerui::UseState(huxerui::TextEditingValue{""});
@@ -129,10 +128,12 @@ namespace clashflux::ui {
 
     // 列表泵：2s 一拍重读（State 相等时短路，无重组；CRUD 后手动 reload）。
     huxerui::Lifecycle(
-        [tasks, profiles] {
+        [tasks, profiles, selectionPending] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{2.0}, [=] {
-                    ReplaceStateList(profiles, store::profilesStore().list());
+                    if (!selectionPending.Get()) {
+                        ReplaceStateList(profiles, store::profilesStore().list());
+                    }
                     return true;
                 });
             });

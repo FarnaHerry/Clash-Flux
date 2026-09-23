@@ -11,6 +11,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "ui.h"
@@ -40,9 +42,14 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
                      -> huxerui::Task<void> {
         bool ok = false;
         try {
-            co_await RunOnTaskThread(std::move(job));
-            ok = true;
-            if (!ok_message.empty()) toast.Show(ok_message);
+            using Result = std::invoke_result_t<Job&>;
+            if constexpr (std::is_same_v<Result, bool>) {
+                ok = co_await RunOnTaskThread(std::move(job));
+            } else {
+                co_await RunOnTaskThread(std::move(job));
+                ok = true;
+            }
+            if (ok && !ok_message.empty()) toast.Show(ok_message);
         } catch (const std::exception& error) {
             toast.Show(error.what());
         }
@@ -223,7 +230,9 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
     auto tun_enabled = huxerui::UseState(
         store::coreStore().setting("core.tun_enabled", "false") == "true");
     auto vpn_state = huxerui::UseState(AndroidVpnState());
-    auto vpn_override = huxerui::UseState<std::optional<bool>>(std::nullopt);
+    auto vpn_enabled = huxerui::UseState(
+        tun_enabled.Get() || vpn_state.Get() == 1 || vpn_state.Get() == 2);
+    auto vpn_pending = huxerui::UseState(false);
     auto battery_ignored = huxerui::UseState(AndroidIsIgnoringBattery());
     auto busy = huxerui::UseState(false);
 
@@ -237,21 +246,18 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
         });
 
     huxerui::Lifecycle(
-        [tasks, tun_enabled, vpn_state, vpn_override, battery_ignored] {
+        [tasks, tun_enabled, vpn_state, vpn_enabled, vpn_pending,
+         battery_ignored] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{1.0}, [=] {
                     tun_enabled = store::coreStore().setting(
                                       "core.tun_enabled", "false") == "true";
                     vpn_state = AndroidVpnState();
                     battery_ignored = AndroidIsIgnoringBattery();
-                    if (vpn_override.Get().has_value()) {
-                        const bool actual = tun_enabled.Get() ||
-                                             vpn_state.Get() == 1 ||
-                                             vpn_state.Get() == 2;
-                        if (actual == vpn_override.Get().value() &&
-                            (vpn_override.Get().value() || vpn_state.Get() == 0)) {
-                            vpn_override = std::nullopt;
-                        }
+                    if (!vpn_pending.Get()) {
+                        vpn_enabled = tun_enabled.Get() ||
+                                      vpn_state.Get() == 1 ||
+                                      vpn_state.Get() == 2;
                     }
                     return true;
                 });
@@ -266,16 +272,6 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
         : state == 1 ? "正在建立系统 VPN 与 TUN 数据面"
         : state == 3 ? "启动失败：请查看日志页中的 Android VPN 错误"
                      : "未连接；开启后将请求系统 VPN 授权";
-    const bool displayedVpnEnabled = vpn_override.Get().value_or(
-        tun_enabled.Get() || state == 1 || state == 2);
-
-    const auto core_action = [tasks, toast, busy](
-        std::function<void()> job, std::string ok_message,
-        std::function<void(bool)> finished = {}) {
-        LaunchSettingsAction(tasks, toast, busy, std::move(job),
-                             std::move(ok_message), std::move(finished));
-    };
-
     return huxerui::Column {
         SettingRow("隧道状态", status,
                    huxerui::Text(state == 2 ? "已连接"
@@ -284,36 +280,117 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
         SettingSwitchRow(
             "VPN 代理",
             "系统 VPN 由此服务持有；内核出站 socket 会自动绕过 TUN",
-            huxerui::Switch(displayedVpnEnabled)
-                .OnChanged([core_action, tun_enabled, vpn_override](bool on) {
-                    if (vpn_override.Get().has_value()) return;
-                    vpn_override = on;
-                    tun_enabled = on;
+            huxerui::Switch(vpn_enabled.Get())
+                .OnChanged([tasks, toast, busy, tun_enabled, vpn_state,
+                            vpn_enabled, vpn_pending](bool on) {
+                    if (busy.Get() || vpn_pending.Get()) return;
+                    const bool previous = vpn_enabled.Get();
+                    vpn_enabled = on;
+                    vpn_pending = true;
+                    busy = true;
                     stream::logApplication(
                         "info", on ? "用户请求开启 Android VPN"
                                    : "用户请求关闭 Android VPN");
-                    core_action(
-                        [on] {
-                            store::coreStore().setSetting(
-                                "core.tun_enabled", on ? "true" : "false");
+                    tasks.Launch([toast, busy, tun_enabled, vpn_state,
+                                  vpn_enabled, vpn_pending, on,
+                                  previous]() -> huxerui::Task<void> {
+                        bool ok = false;
+                        std::string error;
+                        try {
+                            co_await RunOnTaskThread([on] {
+                                store::coreStore().setSetting(
+                                    "core.tun_enabled", on ? "true" : "false");
+                                if (on) {
+                                    store::coreStore().startCore(
+                                        store::profilesStore().selectedYaml(),
+                                        false, true);
+                                    AndroidStartVpn();
+                                } else {
+                                    AndroidStopVpn();
+                                    WaitForAndroidVpnStopped();
+                                    store::coreStore().startCore(
+                                        store::profilesStore().selectedYaml(),
+                                        false, false);
+                                }
+                            });
+
                             if (on) {
-                                store::coreStore().startCore(
-                                    store::profilesStore().selectedYaml(),
-                                    false, true);
-                                AndroidStartVpn();
+                                for (int attempt = 0; attempt < 300; ++attempt) {
+                                    const auto [current, requested] =
+                                        co_await RunOnTaskThread([] {
+                                            return std::pair{
+                                                AndroidVpnState(),
+                                                store::coreStore().setting(
+                                                    "core.tun_enabled", "false") == "true"};
+                                        });
+                                    if (current == 1 || current == 2) {
+                                        ok = true;
+                                        break;
+                                    }
+                                    if (current == 3 || !requested) break;
+                                    co_await huxerui::Delay(
+                                        std::chrono::duration<double>{0.2});
+                                }
                             } else {
-                                AndroidStopVpn();
-                                WaitForAndroidVpnStopped();
-                                store::coreStore().startCore(
-                                    store::profilesStore().selectedYaml(),
-                                    false, false);
+                                for (int attempt = 0; attempt < 300; ++attempt) {
+                                    const auto [current, requested] =
+                                        co_await RunOnTaskThread([] {
+                                            return std::pair{
+                                                AndroidVpnState(),
+                                                store::coreStore().setting(
+                                                    "core.tun_enabled", "false") == "true"};
+                                        });
+                                    if (current != 1 && current != 2 && !requested) {
+                                        ok = true;
+                                        break;
+                                    }
+                                    co_await huxerui::Delay(
+                                        std::chrono::duration<double>{0.2});
+                                }
                             }
-                        },
-                        on ? "正在请求建立 VPN 隧道" : "VPN 隧道已关闭",
-                        [on, tun_enabled, vpn_override](bool ok) {
-                            if (!ok) tun_enabled = !on;
-                            vpn_override = std::nullopt;
-                        });
+                        } catch (const std::exception& exception) {
+                            error = exception.what();
+                        }
+
+                        if (!ok) {
+                            try {
+                                co_await RunOnTaskThread([previous] {
+                                    store::coreStore().setSetting(
+                                        "core.tun_enabled",
+                                        previous ? "true" : "false");
+                                });
+                            } catch (const std::exception& exception) {
+                                if (error.empty()) error = exception.what();
+                            }
+                            if (error.empty()) error = store::coreStore().snapshot().lastError;
+                            if (error.empty()) {
+                                error = on ? "VPN 启动已取消或失败" : "VPN 隧道未能关闭";
+                            }
+                        }
+
+                        try {
+                            const auto [current, requested] =
+                                co_await RunOnTaskThread([] {
+                                    return std::pair{
+                                        AndroidVpnState(),
+                                        store::coreStore().setting(
+                                            "core.tun_enabled", "false") == "true"};
+                                });
+                            vpn_state = current;
+                            tun_enabled = requested;
+                        } catch (const std::exception& exception) {
+                            if (error.empty()) error = exception.what();
+                        }
+
+                        vpn_pending = false;
+                        busy = false;
+                        if (!ok) {
+                            vpn_enabled = previous;
+                            if (!error.empty()) toast.Show(error);
+                        } else {
+                            toast.Show(on ? "正在请求建立 VPN 隧道" : "VPN 隧道已关闭");
+                        }
+                    });
                 })),
         SettingSwitchRow(
             "后台保活",
@@ -417,8 +494,11 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
     auto clipboard = application.Clipboard();
     auto snap = huxerui::UseState<store::CoreSnapshot>({});
     auto service_installed = huxerui::UseState(service::installed());
-    auto proxy_override = huxerui::UseState<std::optional<bool>>(std::nullopt);
-    auto tun_override = huxerui::UseState<std::optional<bool>>(std::nullopt);
+    auto proxyEnabled =
+        huxerui::UseState(store::coreStore().systemProxyEnabled());
+    auto tunEnabled = huxerui::UseState(store::coreStore().snapshot().tunEnabled);
+    auto proxyPending = huxerui::UseState(false);
+    auto tunPending = huxerui::UseState(false);
     const std::string detectedShell = CurrentEnvironmentShell();
     const std::string savedShell =
         store::coreStore().setting("ui.env_shell", detectedShell);
@@ -428,10 +508,17 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
     auto busy = huxerui::UseState(false);
 
     huxerui::Lifecycle(
-        [tasks, snap, service_installed] {
+        [tasks, snap, service_installed, proxyEnabled, tunEnabled,
+         proxyPending, tunPending] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{1.0}, [=] {
-                    snap = store::coreStore().snapshot();
+                    const store::CoreSnapshot current =
+                        store::coreStore().snapshot();
+                    snap = current;
+                    if (!proxyPending.Get()) {
+                        proxyEnabled = store::coreStore().systemProxyEnabled();
+                    }
+                    if (!tunPending.Get()) tunEnabled = current.tunEnabled;
                     service_installed = service::installed();
                     return true;
                 });
@@ -494,18 +581,29 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
         SettingSwitchRow(
             "系统代理",
             std::format("写入桌面系统代理（127.0.0.1:{}）", s.mixedPort),
-            huxerui::Switch(proxy_override.Get().value_or(
-                                store::coreStore().systemProxyEnabled()))
-                .OnChanged([tasks, toast, proxy_override](bool on) {
-                    if (proxy_override.Get().has_value()) return;
-                    proxy_override = on;
-                    tasks.Launch([=]() -> huxerui::Task<void> {
-                        const bool ok = co_await RunOnTaskThread(
-                            [on] { return store::coreStore().applySystemProxy(on); });
-                        proxy_override = std::nullopt;
+            huxerui::Switch(proxyEnabled.Get())
+                .OnChanged([tasks, toast, proxyEnabled, proxyPending](bool on) {
+                    if (proxyPending.Get()) return;
+                    const bool previous = proxyEnabled.Get();
+                    proxyEnabled = on;
+                    proxyPending = true;
+                    tasks.Launch([toast, proxyEnabled, proxyPending, previous,
+                                  on]() -> huxerui::Task<void> {
+                        bool ok = false;
+                        std::string error;
+                        try {
+                            ok = co_await RunOnTaskThread([on] {
+                                return store::coreStore().applySystemProxy(on);
+                            });
+                        } catch (const std::exception& exception) {
+                            error = exception.what();
+                        }
+                        proxyPending = false;
                         if (!ok) {
-                            const std::string error =
-                                store::coreStore().snapshot().lastError;
+                            proxyEnabled = previous;
+                            if (error.empty()) {
+                                error = store::coreStore().snapshot().lastError;
+                            }
                             toast.Show(error.empty() ? "系统代理设置失败" : error);
                         } else {
                             toast.Show(on ? "系统代理已开启" : "系统代理已关闭");
@@ -516,36 +614,54 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
             "TUN 模式",
             running ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
                     : "全局透明代理（下次启动生效）",
-            huxerui::Switch(tun_override.Get().value_or(s.tunEnabled))
-                .OnChanged([s, tasks, toast, dialog, clipboard, proxy_override,
-                           tun_override, textColor = theme.colors.on_surface,
+            huxerui::Switch(tunEnabled.Get())
+                .OnChanged([s, tasks, toast, dialog, clipboard, tunEnabled,
+                           tunPending, textColor = theme.colors.on_surface,
                            hintColor = theme.colors.on_surface_variant](bool on) {
-                    if (tun_override.Get().has_value()) return;
-                    tun_override = on;
+                    if (tunPending.Get()) return;
+                    const bool previous = tunEnabled.Get();
+                    tunEnabled = on;
+                    tunPending = true;
                     tasks.Launch([=]() -> huxerui::Task<void> {
+                        bool ok = false;
+                        std::string error;
                         if (on) {
                             co_await huxerui::Delay(
                                 std::chrono::duration<double>{0});
-                            const core::TunGate gate = co_await RunOnTaskThread(
-                                [] { return core::tunGate(); });
-                            if (gate == core::TunGate::Elevated) {
-                                tun_override = std::nullopt;
-                                toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
-                                co_return;
-                            }
-                            if (gate == core::TunGate::Denied) {
-                                tun_override = std::nullopt;
-                                ShowTunGuideDialog(dialog, clipboard, toast,
-                                                   textColor, hintColor);
-                                co_return;
+                            try {
+                                const core::TunGate gate = co_await RunOnTaskThread(
+                                    [] { return core::tunGate(); });
+                                if (gate == core::TunGate::Elevated) {
+                                    tunPending = false;
+                                    tunEnabled = previous;
+                                    toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
+                                    co_return;
+                                }
+                                if (gate == core::TunGate::Denied) {
+                                    tunPending = false;
+                                    tunEnabled = previous;
+                                    ShowTunGuideDialog(dialog, clipboard, toast,
+                                                       textColor, hintColor);
+                                    co_return;
+                                }
+                            } catch (const std::exception& exception) {
+                                error = exception.what();
                             }
                         }
-                        const bool ok = co_await RunOnTaskThread(
-                            [on] { return store::coreStore().applyTun(on); });
-                        tun_override = std::nullopt;
+                        if (error.empty()) {
+                            try {
+                                ok = co_await RunOnTaskThread(
+                                    [on] { return store::coreStore().applyTun(on); });
+                            } catch (const std::exception& exception) {
+                                error = exception.what();
+                            }
+                        }
+                        tunPending = false;
                         if (!ok) {
-                            const std::string error =
-                                store::coreStore().snapshot().lastError;
+                            tunEnabled = previous;
+                            if (error.empty()) {
+                                error = store::coreStore().snapshot().lastError;
+                            }
                             toast.Show(error.empty() ? "TUN 切换失败" : error);
                         } else {
                             toast.Show(on ? "TUN 已开启" : "TUN 已关闭");

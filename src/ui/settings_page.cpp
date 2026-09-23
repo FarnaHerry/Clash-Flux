@@ -226,6 +226,7 @@ const std::string kAboutText = std::format(
                         "混合端口", "HTTP/SOCKS 混合入站端口（下次启动生效）",
                         huxerui::Row {
                             huxerui::TextField(portValue.Get())
+                                .Variant(huxerui::TextFieldVariant::Outlined)
                                 .OnChanged([portValue](
                                                const huxerui::TextEditingValue& value) {
                                     portValue = value;

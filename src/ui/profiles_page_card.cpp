@@ -27,12 +27,36 @@ import clashflux.vpn;
 
 namespace clashflux::ui {
 
+namespace {
+
+std::optional<std::int64_t> CurrentSelectedProfile(
+    huxerui::StateList<db::Profile> profiles) {
+    for (const db::Profile& profile : profiles) {
+        if (profile.selected) return profile.id;
+    }
+    return std::nullopt;
+}
+
+void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
+                        std::optional<std::int64_t> selectedId) {
+    for (std::size_t index = 0; index < profiles.Size(); ++index) {
+        db::Profile profile = profiles[index];
+        const bool selected = selectedId.has_value() &&
+                              profile.id == selectedId.value();
+        if (profile.selected == selected) continue;
+        profile.selected = selected;
+        profiles.Set(index, std::move(profile));
+    }
+}
+
+} // namespace
 
 [[huxerui::composable]] huxerui::View ProfileCard(
     const db::Profile& profile, bool compact,
     huxerui::TaskScope tasks, huxerui::ToastHandle toast,
     std::shared_ptr<huxerui::HttpClient> http, std::function<void()> reload,
-    huxerui::State<std::optional<std::int64_t>> optimisticSelected,
+    huxerui::StateList<db::Profile> profiles,
+    huxerui::State<bool> selectionPending,
     const store::PptpState& pptpState,
     const store::OpenVpnState& openVpnState, bool connectionSelected,
     const std::function<void(std::int64_t, bool)>& toggleConnection,
@@ -50,16 +74,42 @@ namespace clashflux::ui {
     const IslandTheme islands = ResolveIslandTheme(theme);
     const std::int64_t id = profile.id;
     const bool nativeVpn = isNativeVpnType(profile.type);
-    const bool selected = optimisticSelected.Get().has_value()
-                              ? optimisticSelected.Get().value() == id
-                              : profile.selected;
+    const bool selected = profile.selected;
 
-    auto action = [tasks, toast, reload, optimisticSelected](std::function<std::string()> job) {
+    auto action = [tasks, toast, reload](std::function<std::string()> job) {
         tasks.Launch([=]() -> huxerui::Task<void> {
             const std::string err = co_await RunOnTaskThread(std::move(job));
-            EndOptimistic(optimisticSelected);
             if (!err.empty()) toast.Show(err);
             reload();
+        });
+    };
+
+    auto activateProfile = [tasks, toast, profiles,
+                            selectionPending](std::int64_t profileId) {
+        if (selectionPending.Get()) return;
+        const std::optional<std::int64_t> previous =
+            CurrentSelectedProfile(profiles);
+        if (previous == profileId) return;
+        SetSelectedProfile(profiles, profileId);
+        selectionPending = true;
+        tasks.Launch([tasks, toast, profiles, selectionPending, previous,
+                      profileId]() -> huxerui::Task<void> {
+            std::string error;
+            try {
+                error = co_await RunOnTaskThread([profileId] {
+                    auto& profileStore = store::profilesStore();
+                    if (!profileStore.activate(profileId))
+                        return profileStore.lastError();
+                    return std::string{};
+                });
+            } catch (const std::exception& exception) {
+                error = exception.what();
+            }
+            if (!error.empty()) {
+                SetSelectedProfile(profiles, previous);
+                toast.Show(error);
+            }
+            selectionPending = false;
         });
     };
 
@@ -138,21 +188,15 @@ namespace clashflux::ui {
 
     // 桌面端由右键触发，Compact 由卡片上的触控按钮触发；菜单内容只维护
     // 一份，避免移动端和桌面端的订阅操作逐渐产生行为差异。
-    const auto buildMenuEntries = [action, refresh, openEditInfo, openEditRules,
+    const auto buildMenuEntries = [action, activateProfile, refresh, openEditInfo, openEditRules,
                                    openEditFile, openQr, id,
                                    homepage = profile.homepage, url = profile.url,
-                                   selected, nativeVpn, optimisticSelected,
+                                   selected, nativeVpn,
                                    confirmDelete, errorColor = theme.colors.error] {
         std::vector<huxerui::MenuEntry> entries;
         if (!selected && !nativeVpn) {
-            entries.push_back(huxerui::MenuItem("使用", [action, id,
-                                                           optimisticSelected] {
-                BeginOptimistic(optimisticSelected, id);
-                action([id]() -> std::string {
-                    auto& ps = store::profilesStore();
-                    if (!ps.activate(id)) return ps.lastError();
-                    return "";
-                });
+            entries.push_back(huxerui::MenuItem("使用", [activateProfile, id] {
+                activateProfile(id);
             }));
         }
         if (!nativeVpn) {
@@ -393,14 +437,9 @@ namespace clashflux::ui {
     return std::move(card)
         // 远程/本地代理订阅暂时保持单选：点击哪张卡片，哪张就是当前订阅。
         // PPTP 仍使用系统接口；OpenVPN 已由 sing-box endpoint 统一承载。
-        .OnClick([action, id, selected, nativeVpn, optimisticSelected] {
+        .OnClick([activateProfile, id, selected, nativeVpn] {
                 if (selected || nativeVpn) return;
-                BeginOptimistic(optimisticSelected, id);
-                action([id]() -> std::string {
-                    auto& ps = store::profilesStore();
-                    if (!ps.activate(id)) return ps.lastError();
-                    return "";
-                });
+                activateProfile(id);
             })
         // 右键上下文菜单（跟随点击位置弹出）。
         .On<huxerui::ViewEvents::ContextMenuRequested>(

@@ -8,25 +8,12 @@
 #include <functional>
 #include <memory>
 #include <map>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 namespace clashflux::ui {
-
-template <typename T>
-bool BeginOptimistic(huxerui::State<std::optional<T>> state, T value) {
-    if (state.Get().has_value()) return false;
-    state = std::move(value);
-    return true;
-}
-
-template <typename T>
-void EndOptimistic(huxerui::State<std::optional<T>> state) {
-    state = std::nullopt;
-}
 
 // Android VPN 隧道开关（设置页 VPN 卡 → VpnService consent/前台服务）。
 // 这些是 Android bridge 的平台前缀函数；桌面目标提供空操作桩，避免通用
