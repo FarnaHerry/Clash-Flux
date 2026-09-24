@@ -238,7 +238,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 
     // Android 的授权页会暂时遮住 Activity；回到前台时立即重读系统状态，
     // 不依赖用户再次点击控件或等待后台轮询恢复。
-    application.OnLifecycleChange(
+    application.OnLifecycleChanged(
         [battery_ignored](huxerui::ApplicationLifecycleState state) {
             if (state == huxerui::ApplicationLifecycleState::Active) {
                 battery_ignored = AndroidIsIgnoringBattery();

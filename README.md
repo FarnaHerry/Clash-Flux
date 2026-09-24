@@ -181,9 +181,11 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 覆盖面原则：sing-box 内核发布什么桌面平台/arch，就构建什么目标（内核资产
 SHA256 钉在 `cmake/singbox_bundle.cmake`，configure 期自动下载）。桌面 job
 统一走 HuxerUI 源码通道（钉 commit clone 上游）。Linux、Windows、macOS、Android
-和 iOS Simulator 源码构建会在检出后应用
-`cmake/patches/huxerui-drag-preview-follows-pointer.patch`，
-让首页卡片拖动预览持续跟随抓取点；升级 HuxerUI 固定版本时需验证补丁仍可应用。
+和 iOS Simulator 源码构建统一固定 HuxerUI `0c5126235d43c2b703166bcc00781b850f2d1c39`，
+并应用 `cmake/patches/` 中仍未被上游修复的拖动跟手、Linux 帧生命周期和 macOS/iOS
+聚合初始化补丁。CMake 还会在构建前适配固定的 Lib-Camera revision，使它兼容 HuxerUI
+`ApplicationContext` API。升级 HuxerUI revision 时先对照上游逐项审查补丁；上游已有修复的
+补丁直接移除，其余补丁须在所有适用平台通过 `git apply --check`。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、

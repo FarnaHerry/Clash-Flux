@@ -1,0 +1,98 @@
+diff --git a/include/huxerui/camera.h b/include/huxerui/camera.h
+index b5892af..9d2035e 100644
+--- a/include/huxerui/camera.h
++++ b/include/huxerui/camera.h
+@@ -11 +11 @@
+-#include <huxerui/root.h>
++#include <huxerui/app.h>
+@@ -249,2 +249,2 @@ private:
+-/// Installs the camera platform module for an application root.
+-/// Register this function in AppOptions::root_hooks before composing content that calls UseCamera.
++/// Installs the camera platform module for an application.
++/// Register this function in AppOptions::application_hooks before composing content that calls UseCamera.
+@@ -253 +253 @@ private:
+-/// @param root Application root context supplied by HuxerUI when it runs the registered hook.
++/// @param context Application context supplied by HuxerUI during factory installation.
+@@ -258 +258 @@ private:
+-///         .root_hooks = {
++///         .application_hooks = {
+@@ -264 +264 @@ private:
+-void Install(RootContext& root);
++void Install(ApplicationContext& context);
+diff --git a/platform/android/src/main/cpp/camera.cpp b/platform/android/src/main/cpp/camera.cpp
+index 68deea4..50d6e9b 100644
+--- a/platform/android/src/main/cpp/camera.cpp
++++ b/platform/android/src/main/cpp/camera.cpp
+@@ -118 +118 @@ private:
+-void InstallPlatformCamera(RootContext& root) {
++void InstallPlatformCamera(ApplicationContext& context) {
+@@ -126 +126 @@ void InstallPlatformCamera(RootContext& root) {
+-  root.RegisterPlatformModule<std::shared_ptr<CameraBackend>>(camera_module_name, std::move(factory));
++  context.RegisterPlatformModule<std::shared_ptr<CameraBackend>>(camera_module_name, std::move(factory));
+diff --git a/platform/ios/src/camera.mm b/platform/ios/src/camera.mm
+index 4f0bebb..2283d8a 100644
+--- a/platform/ios/src/camera.mm
++++ b/platform/ios/src/camera.mm
+@@ -605,2 +605,2 @@ private:
+-void InstallPlatformCamera(RootContext& root) {
+-  root.RegisterPlatformModule<std::shared_ptr<CameraBackend>>(
++void InstallPlatformCamera(ApplicationContext& context) {
++  context.RegisterPlatformModule<std::shared_ptr<CameraBackend>>(
+@@ -608 +608 @@ void InstallPlatformCamera(RootContext& root) {
+-          .create = [](PlatformAdapter&, UIViewController* owner) -> std::shared_ptr<CameraBackend> {
++          .create = [](UiWindow&, UIViewController* owner) -> std::shared_ptr<CameraBackend> {
+diff --git a/platform/macos/src/camera.mm b/platform/macos/src/camera.mm
+index 00e1ce7..4acc29f 100644
+--- a/platform/macos/src/camera.mm
++++ b/platform/macos/src/camera.mm
+@@ -8,0 +9 @@
++#include <huxerui/macos/platform_registry.h>
+@@ -407,4 +408,6 @@ private:
+-void InstallPlatformCamera(RootContext& root) {
+-  root.RegisterPlatformModule<std::shared_ptr<CameraBackend>>(
+-      camera_module_name, [](PlatformAdapter&) -> std::shared_ptr<CameraBackend> {
+-        return std::make_shared<AppleCamera>();
++void InstallPlatformCamera(ApplicationContext& context) {
++  context.RegisterPlatformModule<std::shared_ptr<CameraBackend>>(
++      camera_module_name, macos::PlatformModuleFactory<std::shared_ptr<CameraBackend>>{
++        .create = [](UiWindow&, NSWindow*) -> std::shared_ptr<CameraBackend> {
++          return std::make_shared<AppleCamera>();
++        },
+diff --git a/platform/windows/src/camera.cpp b/platform/windows/src/camera.cpp
+index f95b302..c2fd502 100644
+--- a/platform/windows/src/camera.cpp
++++ b/platform/windows/src/camera.cpp
+@@ -553,3 +553,3 @@ std::shared_ptr<CameraBackend> CreateWindowsCamera() {
+-void InstallPlatformCamera(RootContext& root) {
+-  root.RegisterPlatformModule<std::shared_ptr<CameraBackend>>(
+-      camera_module_name, [](PlatformAdapter&) { return CreateWindowsCamera(); });
++void InstallPlatformCamera(ApplicationContext& context) {
++  context.RegisterPlatformModule<std::shared_ptr<CameraBackend>>(
++      camera_module_name, [](UiWindow&) { return CreateWindowsCamera(); });
+diff --git a/src/camera.cpp b/src/camera.cpp
+index 49338bf..b91da19 100644
+--- a/src/camera.cpp
++++ b/src/camera.cpp
+@@ -7,2 +7,2 @@ namespace huxerui::camera {
+-void Install(RootContext& root) {
+-  detail::InstallPlatformCamera(root);
++void Install(ApplicationContext& context) {
++  detail::InstallPlatformCamera(context);
+diff --git a/src/camera_internal.h b/src/camera_internal.h
+index 70a6580..e60f645 100644
+--- a/src/camera_internal.h
++++ b/src/camera_internal.h
+@@ -25 +25 @@ public:
+-void InstallPlatformCamera(RootContext& root);
++void InstallPlatformCamera(ApplicationContext& context);
+diff --git a/src/camera_unavailable.cpp b/src/camera_unavailable.cpp
+index f3e2d1e..b783178 100644
+--- a/src/camera_unavailable.cpp
++++ b/src/camera_unavailable.cpp
+@@ -23,3 +23,3 @@ public:
+-void InstallPlatformCamera(RootContext& root) {
+-  root.RegisterPlatformModule<std::shared_ptr<CameraBackend>>(
+-      camera_module_name, [](PlatformAdapter&) -> std::shared_ptr<CameraBackend> {
++void InstallPlatformCamera(ApplicationContext& context) {
++  context.RegisterPlatformModule<std::shared_ptr<CameraBackend>>(
++      camera_module_name, [](UiWindow&) -> std::shared_ptr<CameraBackend> {

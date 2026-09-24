@@ -1,9 +1,20 @@
-diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
-index 3d963eb..7b460cf 100644
---- a/src/runtime/runtime.cpp
-+++ b/src/runtime/runtime.cpp
-@@ -499,2 +499,14 @@ public:
-       break;
+diff --git a/src/runtime/runtime_pointer_interaction.cpp b/src/runtime/runtime_pointer_interaction.cpp
+index dad3775..7a2f606 100644
+--- a/src/runtime/runtime_pointer_interaction.cpp
++++ b/src/runtime/runtime_pointer_interaction.cpp
+@@ -297 +297 @@ LayerPlacement DragPreviewPlacement(Point position, Point grab_offset) {
+-      .kind = LayerPlacementKind::Anchored,
++      .kind = LayerPlacementKind::FollowPointer,
+@@ -299,4 +298,0 @@ LayerPlacement DragPreviewPlacement(Point position, Point grab_offset) {
+-      .preferred_side = LayerAnchorSide::Below,
+-      .alignment = LayerAnchorAlignment::Start,
+-      .gap = 0.0F,
+-      .viewport_margin = 8.0F,
+diff --git a/src/runtime/ui_window.cpp b/src/runtime/ui_window.cpp
+index 9f44442..a6d1d1b 100644
+--- a/src/runtime/ui_window.cpp
++++ b/src/runtime/ui_window.cpp
+@@ -500,0 +501,12 @@ public:
 +    case LayerPlacementKind::FollowPointer: {
 +      // Drag feedback belongs to the pointer, not to the viewport. Popover
 +      // anchor rules (side flipping and viewport clamping) make a dragged
@@ -16,26 +27,9 @@ index 3d963eb..7b460cf 100644
 +      };
 +      break;
 +    }
-     case LayerPlacementKind::Anchored: {
-diff --git a/src/runtime/runtime_internal.h b/src/runtime/runtime_internal.h
-index c1c5f5d..db396d4 100644
---- a/src/runtime/runtime_internal.h
-+++ b/src/runtime/runtime_internal.h
-@@ -140,2 +140,3 @@ enum class LayerPlacementKind : std::uint8_t {
-   Anchored,
+diff --git a/src/runtime/ui_window_internal.h b/src/runtime/ui_window_internal.h
+index 2172fa6..cc5a977 100644
+--- a/src/runtime/ui_window_internal.h
++++ b/src/runtime/ui_window_internal.h
+@@ -140,0 +141 @@ enum class LayerPlacementKind : std::uint8_t {
 +  FollowPointer,
- };
-diff --git a/src/runtime/runtime_pointer_interaction.cpp b/src/runtime/runtime_pointer_interaction.cpp
-index 27e8cf8..6f73612 100644
---- a/src/runtime/runtime_pointer_interaction.cpp
-+++ b/src/runtime/runtime_pointer_interaction.cpp
-@@ -296,8 +296,4 @@ LayerPlacement DragPreviewPlacement(Point position, Point grab_offset) {
-   return {
--      .kind = LayerPlacementKind::Anchored,
-+      .kind = LayerPlacementKind::FollowPointer,
-       .anchor = {position.x, position.y, 0.0F, 0.0F},
--      .preferred_side = LayerAnchorSide::Below,
--      .alignment = LayerAnchorAlignment::Start,
--      .gap = 0.0F,
--      .viewport_margin = 8.0F,
-       .offset = {-grab_offset.x, -grab_offset.y},

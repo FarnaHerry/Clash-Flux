@@ -20,7 +20,7 @@ const huxerui::Application application{
             .chrome_mode = huxerui::WindowChromeMode::Custom,
             .title_bar_height = 24.0F,
         },
-        .root_hooks = {
+        .application_hooks = {
             huxerui::camera::Install,
 #if defined(__ANDROID__)
             clashflux::ui::InstallQrPhotoDecoder,

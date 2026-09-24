@@ -440,12 +440,11 @@ huxerui::View ProfilePlatformOptions(
     std::function<void(std::string)> on_result) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
-    const std::shared_ptr<QrPhotoDecoder> decoder =
-        huxerui::UseService<QrPhotoDecoder>();
     const huxerui::TaskScope tasks = huxerui::UseTaskScope();
     auto active = huxerui::UseState(false);
     auto scanning = huxerui::UseState(false);
     auto decoding = huxerui::UseState(false);
+    auto decoder = huxerui::UseState(std::shared_ptr<QrPhotoDecoder>{});
     auto detected = huxerui::UseState(std::string{});
     auto message = huxerui::UseState(std::string{"正在准备相机…"});
     const huxerui::camera::CameraSession session =
@@ -458,6 +457,11 @@ huxerui::View ProfilePlatformOptions(
 
     const auto start_scanning = [=] {
         if (scanning.Get()) return huxerui::TaskHandle{};
+        auto decoder_instance = decoder.Get();
+        if (!decoder_instance) {
+            decoder_instance = OpenQrPhotoDecoder();
+            decoder = decoder_instance;
+        }
         scanning = true;
         message = std::string{"正在请求相机权限…"};
         detected = std::string{};
@@ -517,7 +521,7 @@ huxerui::View ProfilePlatformOptions(
                 const auto encoded = photo.Value().EncodedBytes();
                 huxerui::Bytes jpeg(encoded.begin(), encoded.end());
                 decoding = true;
-                const huxerui::PlatformRequestId request = decoder->Decode(
+                const huxerui::PlatformRequestId request = decoder_instance->Decode(
                     std::move(jpeg),
                     [decoding, detected, message](
                         huxerui::PlatformResult<std::string> result) {
@@ -561,7 +565,9 @@ huxerui::View ProfilePlatformOptions(
             scanning = false;
             active = false;
             if (*pending_request) {
-                decoder->Cancel(**pending_request);
+                if (const auto decoder_instance = decoder.Get()) {
+                    decoder_instance->Cancel(**pending_request);
+                }
                 pending_request->reset();
             }
         };
