@@ -1,6 +1,8 @@
 #import <UIKit/UIKit.h>
 
-#include <huxerui/app.h>
+namespace huxerui {
+int RunApplication();
+}
 
 int main() {
   @autoreleasepool {
