@@ -4,6 +4,7 @@ import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.drawable.Icon;
 import android.net.VpnService;
 import android.os.Build;
 import android.service.quicksettings.Tile;
@@ -79,6 +80,10 @@ public final class VpnTileService extends TileService {
         Tile tile = getQsTile();
         if (tile == null) return;
         tile.setState(active ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
+        // SystemUI may fall back to the service's cached manifest icon when
+        // the tile is rebound. Push the badge with every state update so the
+        // launcher/app icon can never replace the QS mascot after a click.
+        tile.setIcon(Icon.createWithResource(this, R.drawable.ic_qs_clash_flux));
         tile.setLabel(getString(R.string.app_name));
         if (Build.VERSION.SDK_INT >= 29) {
             tile.setSubtitle(active ? "隧道已开启" : "隧道已关闭");

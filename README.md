@@ -31,14 +31,14 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   tuic 等协议、策略组、域名/IP/GEOIP/GEOSITE 规则，并将 Mihomo 常见的
   `RULE-SET,cn` / `RULE-SET,cn-ip` 映射到内置国内规则集；不支持的条目显式提示而非静默丢弃；
   原生 sing-box JSON 订阅直通）
-- 系统代理（KDE / GNOME）与 TUN 模式开关（sing-box TUN，切换即重启内核生效）
+- 系统代理（Windows、macOS、KDE / GNOME）与 TUN 模式开关（sing-box TUN，切换即重启内核生效）；Windows 后台代理操作直接使用系统 API，不弹命令行窗口
 - 服务模式（可选）：统一 root systemd 服务托管 sing-box 和 Linux PPTP，
   TUN、PPTP 拨号和原生路由无需每次授权；OpenVPN 不依赖系统 CLI，随 sing-box
   内核生命周期运行；
   未安装时回落「接管外部实例 → 直接 spawn」
 - 完整 CLI：同一二进制带子命令（core / mode / tun / proxy / profile / service），
   无参数启动进入 GUI
-- 浅色/深色主题（跟随系统）、岛屿风界面、自定义窗口标题栏、系统托盘、
+- 浅色/深色主题（跟随系统）、岛屿风界面、自定义窗口标题栏、系统托盘（Windows 托盘菜单跟随应用主题）、
   窄窗口响应式布局
 - Android：进程内 sing-box libbox（与桌面内核同版本）驱动 VpnService TUN，
   使用应用私有目录保存数据、支持 Activity 生命周期、开机自启与外部链接，

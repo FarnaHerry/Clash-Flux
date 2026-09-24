@@ -1361,22 +1361,19 @@ std::string HomeKernelStatusText(const HomeState& s) {
                     pending = true;
                     tasks.Launch([toast, proxyEnabled, pending, previous,
                                   on]() -> huxerui::Task<void> {
-                        bool ok = false;
-                        std::string error;
+                        DesktopModeApplyResult result;
                         try {
-                            ok = co_await RunOnTaskThread([on] {
-                                return store::coreStore().applySystemProxy(on);
+                            result = co_await RunOnTaskThread([on] {
+                                return ApplyDesktopSystemProxy(on);
                             });
                         } catch (const std::exception& exception) {
-                            error = exception.what();
+                            result.error = exception.what();
                         }
                         pending = false;
-                        if (!ok) {
+                        if (result.status != DesktopModeApplyStatus::Applied) {
                             proxyEnabled = previous;
-                            if (error.empty()) {
-                                error = store::coreStore().snapshot().lastError;
-                            }
-                            toast.Show(error.empty() ? "系统代理设置失败" : error);
+                            toast.Show(result.error.empty() ? "系统代理设置失败"
+                                                            : result.error);
                         }
                     });
                 })),
@@ -1423,41 +1420,29 @@ std::string HomeKernelStatusText(const HomeState& s) {
                     tunEnabled = on;
                     pending = true;
                     tasks.Launch([=]() -> huxerui::Task<void> {
-                        bool ok = false;
-                        std::string error;
+                        DesktopModeApplyResult result;
                         try {
-                            if (on) {
-                                co_await huxerui::Delay(
-                                    std::chrono::duration<double>{0});
-                                const core::TunGate gate = co_await RunOnTaskThread(
-                                    [] { return core::tunGate(); });
-                                if (gate == core::TunGate::Elevated) {
-                                    pending = false;
-                                    tunEnabled = previous;
-                                    toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
-                                    co_return;
-                                }
-                                if (gate == core::TunGate::Denied) {
-                                    pending = false;
-                                    tunEnabled = previous;
-                                    ShowTunGuideDialog(dialog, clipboard, toast,
-                                                       text_color, hint_color);
-                                    co_return;
-                                }
-                            }
-                            ok = co_await RunOnTaskThread(
-                                [on] { return store::coreStore().applyTun(on); });
+                            result = co_await RunOnTaskThread(
+                                [on] { return ApplyDesktopTun(on); });
                         } catch (const std::exception& exception) {
-                            error = exception.what();
+                            result.error = exception.what();
                         }
                         pending = false;
-                        if (!ok) {
-                            tunEnabled = previous;
-                            if (error.empty()) {
-                                error = store::coreStore().snapshot().lastError;
-                            }
-                            toast.Show(error.empty() ? "TUN 设置失败" : error);
+                        if (result.status == DesktopModeApplyStatus::Applied) {
+                            co_return;
                         }
+                        tunEnabled = previous;
+                        if (result.status == DesktopModeApplyStatus::ElevationRequested) {
+                            toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
+                            co_return;
+                        }
+                        if (result.status == DesktopModeApplyStatus::PermissionDenied) {
+                            ShowTunGuideDialog(dialog, clipboard, toast,
+                                               text_color, hint_color);
+                            co_return;
+                        }
+                        toast.Show(result.error.empty() ? "TUN 设置失败"
+                                                        : result.error);
                     });
                 })),
         huxerui::Spacer(),

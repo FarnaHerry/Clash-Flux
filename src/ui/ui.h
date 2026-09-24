@@ -130,6 +130,24 @@ std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
 std::string ProxyGroupsSnapshot();
 bool SelectProxyLine(const std::string& group, const std::string& name);
 bool StartProxyGroupTest(const std::string& group);
+
+// 桌面端系统代理/TUN 开关共用的操作结果。实际切换包含阻塞的系统或内核
+// 操作，调用方必须把 ApplyDesktop* 放到 RunOnTaskThread 中执行。
+enum class DesktopModeApplyStatus {
+    Applied,
+    ElevationRequested,
+    PermissionDenied,
+    Failed,
+};
+
+struct DesktopModeApplyResult {
+    DesktopModeApplyStatus status = DesktopModeApplyStatus::Failed;
+    std::string error;
+};
+
+DesktopModeApplyResult ApplyDesktopSystemProxy(bool enabled);
+DesktopModeApplyResult ApplyDesktopTun(bool enabled);
+
 // Android stop requests only enqueue the service shutdown. Call this from a
 // task thread when a caller needs to wait for the optimistic UI state to settle.
 void WaitForAndroidVpnStopped() noexcept;

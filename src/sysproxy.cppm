@@ -3,7 +3,7 @@
 //
 // 通道按平台分流：
 //   Windows —— 注册表 HKCU\...\Internet Settings（ProxyEnable/ProxyServer，
-//             WinINet 系应用读取），RUNDLL32 InternetSetOption 通知刷新；
+//             WinINet 系应用读取），直接调用 InternetSetOption 通知刷新；
 //   macOS   —— networksetup 逐网络服务写 web/secureweb/socks 代理；
 //   Linux   —— 按 XDG_CURRENT_DESKTOP 运行时探测 + 工具可用性兜底：
 //             KDE    kwriteconfig6/5 写 ~/.config/kioslaverc [Proxy Settings]
@@ -14,7 +14,18 @@
 // 系统的代理设置，真正生效依赖各应用读对应通道（KDE 应用读 kioslaverc，
 // GTK/GLib 应用读 org.gnome.system.proxy，WinINet 应用读注册表）。
 module;
-#include <cstdio>   // ::popen / ::pclose（Windows 为 _popen/_pclose，读命令输出）
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <wininet.h>
+#else
+#include <cstdio>   // ::popen / ::pclose（读取桌面命令输出）
+#endif
 export module clashflux.sysproxy;
 
 import std;
@@ -31,17 +42,18 @@ export enum class Desktop {
 
 namespace {
 
-// 静默重定向按平台分叉（cmd.exe 没有 /dev/null，用 NUL）。
+// POSIX 桌面环境用 shell 调用系统设置工具；Windows 始终走下面的注册表 API，
+// 避免 system/_popen 拉起 cmd.exe 后闪出控制台窗口。
+#ifdef _WIN32
+bool runOk(const std::string&) { return false; }
+std::string runCapture(const std::string&) { return {}; }
+#else
 bool runOk(const std::string& cmd) {
 #if defined(CLASHFLUX_IOS)
     static_cast<void>(cmd);
     return false;
 #else
-#ifdef _WIN32
-    return std::system((cmd + " >NUL 2>&1").c_str()) == 0;
-#else
     return std::system((cmd + " >/dev/null 2>&1").c_str()) == 0;
-#endif
 #endif
 }
 
@@ -51,19 +63,11 @@ std::string runCapture(const std::string& cmd) {
     return {};
 #else
     std::string out;
-#ifdef _WIN32
-    FILE* fp = ::_popen((cmd + " 2>NUL").c_str(), "r");
-#else
     FILE* fp = ::popen((cmd + " 2>/dev/null").c_str(), "r");
-#endif
     if (fp) {
         char buf[256];
         while (std::fgets(buf, sizeof buf, fp)) out += buf;
-#ifdef _WIN32
-        ::_pclose(fp);
-#else
         ::pclose(fp);
-#endif
     }
     while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) {
         out.pop_back();
@@ -71,6 +75,7 @@ std::string runCapture(const std::string& cmd) {
     return out;
 #endif
 }
+#endif
 
 bool hasTool(const char* tool) {
     return runOk(std::string("command -v ") + tool);
@@ -109,6 +114,13 @@ Desktop detect() {
 }
 
 // ---- Linux 通道：KDE / GNOME ---------------------------------------------
+#ifdef _WIN32
+const char* kwriteTool() { return ""; }
+bool kdeSet(const std::string&, const std::string&) { return false; }
+void kdeReload() {}
+bool gnomeSet(const std::string&, const std::string&) { return false; }
+bool kdeProxyManual() { return false; }
+#else
 const char* kwriteTool() {
     return hasTool("kwriteconfig6") ? "kwriteconfig6" : "kwriteconfig5";
 }
@@ -149,18 +161,137 @@ bool kdeProxyManual() {
     }
     return false;
 }
+#endif
 
 // ---- Windows 通道：注册表 + WinINet 刷新 ----------------------------------
-constexpr std::string_view kWinInetRegKey =
-    R"(HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings)";
+#ifdef _WIN32
+constexpr wchar_t kWinInetRegKey[] =
+    L"Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
+
+bool winReadDword(const wchar_t* valueName, DWORD& value) {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kWinInetRegKey, 0, KEY_QUERY_VALUE,
+                      &key) != ERROR_SUCCESS) {
+        return false;
+    }
+    DWORD type = 0;
+    DWORD size = sizeof(value);
+    const LONG status = RegQueryValueExW(
+        key, valueName, nullptr, &type, reinterpret_cast<BYTE*>(&value), &size);
+    RegCloseKey(key);
+    return status == ERROR_SUCCESS && type == REG_DWORD && size == sizeof(value);
+}
+
+std::wstring winUtf8ToWide(std::string_view text) {
+    if (text.empty()) return {};
+    const int sourceLength = static_cast<int>(text.size());
+    const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                           text.data(), sourceLength, nullptr, 0);
+    if (length <= 0) return {};
+    std::wstring result(static_cast<std::size_t>(length), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+                            sourceLength, result.data(), length) != length) {
+        return {};
+    }
+    return result;
+}
+
+std::string winWideToUtf8(std::wstring_view text) {
+    if (text.empty()) return {};
+    const int sourceLength = static_cast<int>(text.size());
+    const int length = WideCharToMultiByte(CP_UTF8, 0, text.data(), sourceLength,
+                                           nullptr, 0, nullptr, nullptr);
+    if (length <= 0) return {};
+    std::string result(static_cast<std::size_t>(length), '\0');
+    if (WideCharToMultiByte(CP_UTF8, 0, text.data(), sourceLength,
+                            result.data(), length, nullptr, nullptr) != length) {
+        return {};
+    }
+    return result;
+}
+
+std::string winReadString(const wchar_t* valueName) {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kWinInetRegKey, 0, KEY_QUERY_VALUE,
+                      &key) != ERROR_SUCCESS) {
+        return {};
+    }
+    DWORD type = 0;
+    DWORD size = 0;
+    if (RegQueryValueExW(key, valueName, nullptr, &type, nullptr, &size) !=
+            ERROR_SUCCESS ||
+        type != REG_SZ || size < sizeof(wchar_t)) {
+        RegCloseKey(key);
+        return {};
+    }
+    std::vector<wchar_t> value(size / sizeof(wchar_t) + 1, L'\0');
+    const LONG status = RegQueryValueExW(
+        key, valueName, nullptr, &type, reinterpret_cast<BYTE*>(value.data()),
+        &size);
+    RegCloseKey(key);
+    if (status != ERROR_SUCCESS || type != REG_SZ) return {};
+    std::size_t length = size / sizeof(wchar_t);
+    if (length > 0 && value[length - 1] == L'\0') --length;
+    return winWideToUtf8(std::wstring_view(value.data(), length));
+}
+
+bool winWriteDword(const wchar_t* valueName, DWORD value) {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kWinInetRegKey, 0, KEY_SET_VALUE,
+                      &key) != ERROR_SUCCESS) {
+        return false;
+    }
+    const LONG status = RegSetValueExW(
+        key, valueName, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value),
+        sizeof(value));
+    RegCloseKey(key);
+    return status == ERROR_SUCCESS;
+}
+
+bool winWriteString(const wchar_t* valueName, std::string_view value) {
+    const std::wstring wide = winUtf8ToWide(value);
+    if (wide.empty()) return false;
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kWinInetRegKey, 0, KEY_SET_VALUE,
+                      &key) != ERROR_SUCCESS) {
+        return false;
+    }
+    const DWORD size = static_cast<DWORD>((wide.size() + 1) * sizeof(wchar_t));
+    const LONG status = RegSetValueExW(
+        key, valueName, 0, REG_SZ, reinterpret_cast<const BYTE*>(wide.c_str()),
+        size);
+    RegCloseKey(key);
+    return status == ERROR_SUCCESS;
+}
+
+bool winProxyEnabled() {
+    DWORD enabled = 0;
+    return winReadDword(L"ProxyEnable", enabled) && enabled == 1;
+}
 
 // 通知 WinINet 重读代理设置（INTERNET_OPTION_SETTINGS_CHANGED = 39；
 // best effort：失败只意味着已在跑的程序下次查询/重启才生效）。
 void winNotifyRefresh() {
-    runOk("RUNDLL32.EXE WININET.DLL,InternetSetOption 0 39 0 0");
+    InternetSetOptionW(nullptr, INTERNET_OPTION_SETTINGS_CHANGED, nullptr, 0);
+    InternetSetOptionW(nullptr, INTERNET_OPTION_REFRESH, nullptr, 0);
 }
+#else
+bool winProxyEnabled() { return false; }
+std::string winReadString(const wchar_t*) { return {}; }
+bool winWriteDword(const wchar_t*, unsigned long) { return false; }
+bool winWriteString(const wchar_t*, std::string_view) { return false; }
+void winNotifyRefresh() {}
+#endif
 
 // ---- macOS 通道：networksetup ---------------------------------------------
+#ifdef _WIN32
+std::vector<std::string> macServices() { return {}; }
+bool macSetProxy(const std::string&, const std::string&,
+                 const std::string&) {
+    return false;
+}
+bool macSetProxyState(const std::string&, std::string_view) { return false; }
+#else
 // 列出可用网络服务（带 * 前缀的是 disabled 服务，跳过；首行是说明文字）。
 std::vector<std::string> macServices() {
     std::vector<std::string> services;
@@ -192,6 +323,7 @@ bool macSetProxyState(const std::string& svc, std::string_view state) {
            runOk(std::format(R"(networksetup -setsocksfirewallproxystate "{}" {})",
                              svc, state));
 }
+#endif
 
 } // namespace
 
@@ -213,10 +345,7 @@ export bool enabled() {
             return runCapture("gsettings get org.gnome.system.proxy mode") ==
                    "'manual'";
         case Desktop::Windows:
-            // reg query 输出形如 "    ProxyEnable    REG_DWORD    0x1"。
-            return runCapture(std::format(R"(reg query "{}" /v ProxyEnable)",
-                                          kWinInetRegKey))
-                       .find("0x1") != std::string::npos;
+            return winProxyEnabled();
         case Desktop::Macos:
             // best effort：以 Wi-Fi 服务为代表（多数机器的主用服务）。
             return runCapture(R"(networksetup -getwebproxy "Wi-Fi")")
@@ -274,15 +403,7 @@ export std::string currentProxy() {
         }
         case Desktop::Windows: {
             if (!enabled()) return {};
-            // 输出形如 "    ProxyServer    REG_SZ    127.0.0.1:7899"。
-            const std::string out = runCapture(std::format(
-                R"(reg query "{}" /v ProxyServer)", kWinInetRegKey));
-            const auto type = out.find("REG_SZ");
-            if (type == std::string::npos) return {};
-            const std::string value = out.substr(type + 6);
-            const auto first = value.find_first_not_of(" \t");
-            if (first == std::string::npos) return {};
-            return value.substr(first);
+            return winReadString(L"ProxyServer");
         }
         case Desktop::Macos: {
             const std::string out = runCapture(
@@ -330,12 +451,8 @@ export bool enable(const std::string& host, int port, std::string& err) {
             return ok;
         }
         case Desktop::Windows: {
-            const bool ok = runOk(std::format(
-                                R"(reg add "{}" /v ProxyServer /t REG_SZ /d "{}:{}" /f)",
-                                kWinInetRegKey, host, p)) &&
-                            runOk(std::format(
-                                R"(reg add "{}" /v ProxyEnable /t REG_DWORD /d 1 /f)",
-                                kWinInetRegKey));
+            const bool ok = winWriteString(L"ProxyServer", host + ":" + p) &&
+                            winWriteDword(L"ProxyEnable", 1);
             if (ok) winNotifyRefresh();
             if (!ok) err = "reg 写入失败";
             return ok;
@@ -374,9 +491,7 @@ export bool disable(std::string& err) {
             return ok;
         }
         case Desktop::Windows: {
-            const bool ok = runOk(std::format(
-                R"(reg add "{}" /v ProxyEnable /t REG_DWORD /d 0 /f)",
-                kWinInetRegKey));
+            const bool ok = winWriteDword(L"ProxyEnable", 0);
             if (ok) winNotifyRefresh();
             if (!ok) err = "reg 写入失败";
             return ok;
