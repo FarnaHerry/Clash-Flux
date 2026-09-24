@@ -1,4 +1,4 @@
-# build.yml — Clash-Flux 多平台 CI 矩阵（Linux / Windows / macOS / Android + iOS Simulator）。
+# build.yml — Clash-Flux 多平台 CI 矩阵（Linux / Windows / macOS / Android + iOS Simulator core）。
 #
 # 形态蓝本：姊妹项目 apitab 的 .github/workflows/build.yml（已跑通的 HuxerUI +
 # C++23 modules + import std 解法），按本仓库适配（无 sweetedit、目标名
@@ -25,12 +25,13 @@
 #     不会触发回落）；android job 只复用 tarball 里的 huxerui CLI，原生框架与
 #     项目使用同一提交的源码，避免 SDK 头文件与源码 API 漂移。
 #
-# 实验性 job（continue-on-error: true）及原因：
+# 实验性 / 诊断 job（continue-on-error: true）及原因：
 #   * build-linux-arm64：ubuntu-24.04-arm 原生 runner + ubuntu:24.04 容器，
 #     配方与 x86_64 完全相同，但 arm64 runner 的 LLVM 源仓库可用性未经首跑验证；
 #     连续绿后摘掉 continue-on-error。
-#   * build-ios-core：macOS 上编译 iOS Simulator `.app` 并将模拟器包作为 Release
-#     资产上传。实体设备 IPA、Network Extension 和 sing-box iOS 集成仍是 TODO。
+#   * build-ios-simulator-arm64：macOS 上用 iOS Simulator SDK 编译 Clash-Flux 自己的 CMake
+#     app core。它不生成 IPA、不上传 Release 产物，也不在 publish-release 的
+#     needs 中；Network Extension 和 sing-box iOS 集成仍是 TODO。
 #
 # Windows、macOS 和 Android 已纳入发布门禁：完整 Release 构建或 smoke test
 # 失败时，workflow 失败，不会进入发布 job。Android 使用 AndroidLegacy.cmake
@@ -522,12 +523,13 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # ----------------------------------------------------- iOS Simulator app
-  # Build a real Xcode simulator app bundle and ship it as a simulator-only
-  # release archive. Physical-device IPA and VPN integration are not available.
-  build-ios-core:
+  # ------------------------------------------------------- iOS Simulator core
+  # Compile the actual Clash-Flux sources and HuxerUI static platform library
+  # for the iOS Simulator. This is an advisory compile check, not an app/IPA.
+  build-ios-simulator-arm64:
     name: build-ios-simulator-arm64
     runs-on: macos-15
+    continue-on-error: true
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -597,42 +599,17 @@ jobs:
             --target clash-flux_huxerui_ios_core --parallel
           test -f build/ios-simulator/huxerui-ios/clash-flux/libclash-flux_huxerui.a
 
-      - name: Build iOS Simulator app bundle
+      - name: Report iOS integration status
+        if: always()
+        env:
+          IOS_CORE_OUTCOME: ${{ steps.ios-core.outcome }}
         run: |
-          set -euo pipefail
-          version="$(sed -nE 's/^project\(clash-flux VERSION ([^ ]+).*/\1/p' CMakeLists.txt | head -n 1)"
-          build_number="$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/p' platform/android/app/build.gradle | head -n 1)"
-          test -n "$version"
-          test -n "$build_number"
-          xcodebuild \
-            -project platform/ios/clash-flux.xcodeproj \
-            -scheme clash-flux \
-            -configuration Release \
-            -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build/ios-app/DerivedData \
-            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
-            MARKETING_VERSION="$version" \
-            CURRENT_PROJECT_VERSION="$build_number" \
-            CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-            build
-          app="build/ios-app/DerivedData/Build/Products/Release-iphonesimulator/clash-flux.app"
-          test -d "$app"
-          test -x "$app/clash-flux"
-          plutil -extract CFBundleDisplayName raw -o - "$app/Info.plist" | grep -Fx ClashFlux
-          plutil -extract CFBundleShortVersionString raw -o - "$app/Info.plist" | grep -Fx "$version"
-          mkdir -p dist-src
-          ditto -c -k --sequesterRsrc --keepParent "$app" \
-            "dist-src/clash-flux-${version}-ios-simulator-arm64.zip"
-          unzip -t "dist-src/clash-flux-${version}-ios-simulator-arm64.zip"
-
-      - name: Upload iOS Simulator artifact
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-ios-simulator-arm64
-          path: dist-src/clash-flux-*-ios-simulator-arm64.zip
-          if-no-files-found: error
-          retention-days: 14
+          if [[ "$IOS_CORE_OUTCOME" == "success" ]]; then
+            echo "::notice title=Clash-Flux iOS source compile passed::Clash-Flux and the pinned HuxerUI static platform library compiled for the arm64 iOS Simulator."
+          else
+            echo "::warning title=Clash-Flux iOS source compile failed::The Clash-Flux iOS Simulator app core did not build; keep iOS distribution on TODO."
+          fi
+          echo "::notice title=iOS packaging TODO::This compile job creates no .app, IPA, Network Extension, or Release artifact."
 
   # ---------------------------------------------------------------- Android
   # Android 发布门禁：验证 GUI/native shell 与 pinned sing-box libbox 能编出
@@ -784,8 +761,10 @@ jobs:
   publish-release:
     name: publish-release
     if: startsWith(github.ref, 'refs/tags/v')
+    # build-ios-simulator-arm64 is intentionally advisory and excluded; it compiles the
+    # app core only and creates no iOS release artifact.
     needs: [build-linux, build-windows, build-macos, build-android,
-            build-ios-core, build-windows-installer]
+            build-windows-installer]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -832,10 +811,6 @@ jobs:
               apk="$(find "$artifact" -maxdepth 1 -type f -name '*.apk' -print -quit)"
               test -n "$apk"
               cp "$apk" "release/clash-flux-${release_version}-android-arm64-v8a.apk"
-            elif [ "$name" = "build-ios-simulator-arm64" ]; then
-              ios_app="$artifact/clash-flux-${release_version}-ios-simulator-arm64.zip"
-              test -s "$ios_app"
-              cp "$ios_app" "release/clash-flux-${release_version}-ios-simulator-arm64.zip"
             else
               echo "Unsupported build artifact: $name" >&2
               exit 1
@@ -844,7 +819,6 @@ jobs:
           test -s "release/clash-flux-${release_version}-windows-x86_64.zip"
           test -s "release/clash-flux-Setup-${release_version}.exe"
           test -s "release/clash-flux-${release_version}-android-arm64-v8a.apk"
-          test -s "release/clash-flux-${release_version}-ios-simulator-arm64.zip"
           test -n "$(find release -type f -name '*.tar.gz' -print -quit)"
           test -n "$(find release -type f -name '*.deb' -print -quit)"
           test -n "$(find release -type f -name '*.rpm' -print -quit)"
