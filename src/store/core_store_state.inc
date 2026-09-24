@@ -171,16 +171,19 @@
     }
 
     bool selectProxy(const std::string& group, const std::string& name) {
-        setSetting("proxy.selection." + group, name);
-        invalidateProxyGroupsSnapshot();
+        bool selected = true;
 #if defined(__ANDROID__)
         if (clashflux_android_vpn_state() == 2)
-            return clashflux_android_select_outbound(group.c_str(), name.c_str());
-        return true;
+            selected =
+                clashflux_android_select_outbound(group.c_str(), name.c_str());
 #else
-        if (snapshot().state != core::CoreState::Running) return true;
-        return api_->selectProxy(group, name).ok;
+        if (snapshot().state == core::CoreState::Running)
+            selected = api_->selectProxy(group, name).ok;
 #endif
+        if (!selected) return false;
+        setSetting("proxy.selection." + group, name);
+        invalidateProxyGroupsSnapshot();
+        return true;
     }
 
     std::string mode() { return setting("core.mode", "rule"); }

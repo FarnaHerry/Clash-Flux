@@ -122,6 +122,25 @@ Java_dev_farna_clashflux_MainActivity_nativeAppLog(JNIEnv* environment,
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_dev_farna_clashflux_MainActivity_nativeCoreLog(JNIEnv* environment,
+                                                    jclass,
+                                                    jint level,
+                                                    jstring message) {
+    if (environment == nullptr || message == nullptr) return;
+    const char* value = environment->GetStringUTFChars(message, nullptr);
+    if (value == nullptr) return;
+    // libbox v1.14 levels: panic=0, fatal=1, error=2, warn=3, info=4,
+    // debug=5, trace=6. Normalize to the shared log page's level vocabulary.
+    const char* name = level <= 2 ? "error" : level == 3 ? "warning" :
+                       level == 4 ? "info" : "debug";
+    try {
+        stream::logCore(name, value);
+    } catch (...) {
+    }
+    environment->ReleaseStringUTFChars(message, value);
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_MainActivity_nativeStartCore(JNIEnv*, jclass) {
     static std::once_flag started;
     std::call_once(started, [] {

@@ -79,8 +79,9 @@ public final class VpnTileService extends TileService {
         Tile tile = getQsTile();
         if (tile == null) return;
         tile.setState(active ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
+        tile.setLabel("TUN");
         if (Build.VERSION.SDK_INT >= 29) {
-            tile.setSubtitle(active ? "已连接" : "未连接");
+            tile.setSubtitle(active ? "隧道已开启" : "隧道已关闭");
         }
         tile.updateTile();
     }

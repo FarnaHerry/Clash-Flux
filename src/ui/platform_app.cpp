@@ -338,7 +338,8 @@ void DesktopPreparePlatformDataDirectory(
                             })
                             .Checked(trayCoreRunning.Get()));
                     menuEntries.push_back(
-                        huxerui::MenuItem("系统代理", [tasks, traySysProxy] {
+                        huxerui::MenuItem(app::images::system_proxy,
+                                          "系统代理", [tasks, traySysProxy] {
                             tasks.Launch([=]() -> huxerui::Task<void> {
                                 const bool next = !traySysProxy.Get();
                                 const bool ok = co_await RunOnTaskThread([next] {
@@ -349,7 +350,7 @@ void DesktopPreparePlatformDataDirectory(
                         }).Checked(traySysProxy.Get()));
                     menuEntries.push_back(
                         huxerui::MenuItem(
-                            "TUN 模式",
+                            app::images::tun, "TUN 模式",
                             [tasks, trayTun, window, dialog, clipboard, toast,
                              textColor, hintColor] {
                                 tasks.Launch([=]() -> huxerui::Task<void> {

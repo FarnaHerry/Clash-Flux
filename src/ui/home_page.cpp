@@ -1302,6 +1302,28 @@ std::string HomeKernelStatusText(const HomeState& s) {
 
 #else
 
+[[huxerui::composable]] huxerui::View DesktopModeSwitchRow(
+    huxerui::ImageVariant icon, const std::string& label,
+    const std::string& hint, huxerui::View control) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    return huxerui::Row {
+        huxerui::Image(std::move(icon))
+            .Fit(huxerui::ImageFit::Contain)
+            .Tint(theme.colors.primary)
+            .With(huxerui::Frame{.width = 22.0F, .height = 22.0F}),
+        huxerui::Column {
+            huxerui::Text(label).Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBody),
+                theme.colors.on_surface}),
+            huxerui::Text(hint).Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kCaption),
+                theme.colors.on_surface_variant}),
+        }.With(huxerui::Spacing(2.0F), huxerui::Grow(1.0F)),
+        std::move(control),
+    }.With(huxerui::Spacing(12.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+}
+
 // 桌面：系统代理开关卡片（自洽管理自己的任务、乐观状态和失败提示）。
 [[huxerui::composable]] huxerui::View DesktopHomeProxyCard() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
@@ -1327,8 +1349,8 @@ std::string HomeKernelStatusText(const HomeState& s) {
         0);
 
     return huxerui::Column {
-        SettingSwitchRow(
-            "系统代理", "为桌面应用设置系统代理",
+        DesktopModeSwitchRow(
+            app::images::system_proxy, "系统代理", "为桌面应用设置系统代理",
             huxerui::Switch(proxyEnabled.Get())
                 .OnChanged([tasks, toast, proxyEnabled, pending](bool on) {
                     if (pending.Get()) return;
@@ -1389,8 +1411,8 @@ std::string HomeKernelStatusText(const HomeState& s) {
         0);
 
     return huxerui::Column {
-        SettingSwitchRow(
-            "TUN 模式", "全局透明代理（需管理员权限）",
+        DesktopModeSwitchRow(
+            app::images::tun, "TUN 模式", "全局透明代理（需管理员权限）",
             huxerui::Switch(tunEnabled.Get())
                 .OnChanged([tasks, toast, dialog, clipboard, text_color,
                             hint_color, tunEnabled, pending](bool on) {

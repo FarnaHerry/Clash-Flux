@@ -812,9 +812,9 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             if (!startRequested) throw new IllegalStateException("VPN 未在运行");
             MainActivity.appLog("线路切换：按需连接 libbox 控制通道", false);
             CommandClientOptions options = new CommandClientOptions();
-            // CommandClient 默认不订阅任何数据流。代理页需要 groups，首页/日志
-            // 需要 status；不声明这些命令时 writeGroups 永远不会回调，UI 只能看到
-            // 空的订阅内容。
+            // CommandClient 默认不订阅任何数据流。显式订阅代理组、状态、日志、
+            // 出站模式和连接流；Android 的内核日志必须经 CommandLog 转到 C++ 日志页。
+            options.addCommand(Libbox.CommandLog);
             options.addCommand(Libbox.CommandGroup);
             options.addCommand(Libbox.CommandStatus);
             options.addCommand(Libbox.CommandClashMode);
@@ -888,7 +888,9 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             return false;
         }
         try {
+            MainActivity.appLog("sing-box 线路切换请求：" + group + " → " + name, false);
             service.controlClient().selectOutbound(group, name);
+            MainActivity.appLog("sing-box 线路切换完成：" + group + " → " + name, false);
             return true;
         } catch (Exception error) {
             Log.w(TAG, "Unable to select outbound " + group + " -> " + name, error);
@@ -1168,7 +1170,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     @Override public void checkPlatformShell(){}
     @Override public BridgeSession createBridge(BridgeOptions o){return null;} @Override public PlatformUser lookupUser(String n){return null;} @Override public ShellSession openShellSession(PlatformUser u,String c,StringIterator e,String d,int p,int q){return null;} @Override public String lookupSFTPServer(){return "";} @Override public String readSystemSSHHostKey(){return "";} @Override public String tailscaleHostname(){return "";}
     @Override public void sendNotification(io.nekohasekai.libbox.Notification n){} @Override public void cancelNotification(String i,int t){} @Override public int connectSSHAgent(){return -1;} @Override public SystemProxyStatus getSystemProxyStatus(){return null;} @Override public void serviceReload(){} @Override public void serviceStop(){close("sing-box 已停止");} @Override public void setSystemProxyEnabled(boolean e){} @Override public void triggerNativeCrash(){} @Override public void writeDebugMessage(String m){Log.d(TAG,m); MainActivity.appLog("libbox 调试信息："+m,false);}
-    @Override public void clearLogs(){} @Override public void connected(){Log.i(TAG,"sing-box status stream connected"); MainActivity.appLog("libbox 状态通道已连接",false);} @Override public void disconnected(String message){Log.w(TAG,"sing-box status stream disconnected: "+message); MainActivity.appLog("libbox 状态通道断开："+message,true);} @Override public void initializeClashMode(StringIterator modes,String current){} @Override public void setDefaultLogLevel(int level){} @Override public void updateClashMode(String mode){} @Override public void writeConnectionEvents(ConnectionEvents events){
+    @Override public void clearLogs(){} @Override public void connected(){Log.i(TAG,"sing-box command stream connected"); MainActivity.appLog("libbox 控制通道已连接",false);} @Override public void disconnected(String message){Log.w(TAG,"sing-box command stream disconnected: "+message); MainActivity.appLog("libbox 控制流断开："+message,true);} @Override public void initializeClashMode(StringIterator modes,String current){} @Override public void setDefaultLogLevel(int level){} @Override public void updateClashMode(String mode){} @Override public void writeConnectionEvents(ConnectionEvents events){
         if (events == null) return;
         try {
             synchronized (connectionsLock) {
@@ -1181,7 +1183,12 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             Log.w(TAG, "Unable to snapshot sing-box connections", error);
             MainActivity.appLog("读取 Android 连接失败：" + error.getMessage(), true);
         }
-    } @Override public void writeLogs(LogIterator logs){} @Override public void writeOutbounds(OutboundGroupItemIterator outbounds){} @Override public void writeStatus(StatusMessage status){
+    } @Override public void writeLogs(LogIterator logs){
+        while (logs != null && logs.hasNext()) {
+            LogEntry entry = logs.next();
+            if (entry != null) MainActivity.coreLog(entry.getLevel(), entry.getMessage());
+        }
+    } @Override public void writeOutbounds(OutboundGroupItemIterator outbounds){} @Override public void writeStatus(StatusMessage status){
         if (status == null) return;
         try {
             uploadTotal = status.getUplinkTotal();

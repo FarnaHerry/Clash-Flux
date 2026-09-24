@@ -49,7 +49,7 @@
             android:name=".VpnTileService"
             android:exported="true"
             android:icon="@drawable/ic_qs_clash_flux"
-            android:label="Clash-Flux"
+            android:label="Clash-Flux TUN"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />

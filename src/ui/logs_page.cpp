@@ -55,6 +55,33 @@ int levelRank(const std::string& level) {
         [tasks, coreEntries, applicationEntries, clearTick] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 int lastClear = clearTick.Get();
+                const auto coreHistory = stream::coreLogHistory();
+                const std::size_t firstCore =
+                    coreHistory.size() > kMaxLines
+                        ? coreHistory.size() - kMaxLines
+                        : 0;
+                for (std::size_t i = firstCore; i < coreHistory.size(); ++i) {
+                    const auto& line = coreHistory[i];
+                    coreEntries.PushBack(LogEntry{
+                        .text = std::format("[{}] {}", formatClock(line.at),
+                                            line.payload),
+                        .level = levelRank(line.level),
+                    });
+                }
+                const auto applicationHistory = stream::applicationLogHistory();
+                const std::size_t firstApplication =
+                    applicationHistory.size() > kMaxLines
+                        ? applicationHistory.size() - kMaxLines
+                        : 0;
+                for (std::size_t i = firstApplication;
+                     i < applicationHistory.size(); ++i) {
+                    const auto& line = applicationHistory[i];
+                    applicationEntries.PushBack(LogEntry{
+                        .text = std::format("[{}] {}", formatClock(line.at),
+                                            line.payload),
+                        .level = levelRank(line.level),
+                    });
+                }
                 co_await PollWhile(std::chrono::duration<double>{0.25}, [=]() mutable {
                     if (clearTick.Get() != lastClear) {
                         lastClear = clearTick.Get();
@@ -63,13 +90,13 @@ int levelRank(const std::string& level) {
                         auto& core = store::coreStore();
                         // 丢弃已经进入队列但尚未绘制的旧日志，保证“清空”
                         // 不会在下一拍又把旧内容补回来。
-                        core.streams().drainLogs();
                         core.process().drainOutput();
-                        stream::drainApplicationLogs();
+                        stream::clearCoreLogs();
+                        stream::clearApplicationLogs();
                         return true;
                     }
                     auto& core = store::coreStore();
-                    auto batch = core.streams().drainLogs();
+                    auto batch = stream::drainCoreLogs();
                     if (!batch.empty()) {
                         for (const auto& l : batch) {
                             coreEntries.PushBack(LogEntry{

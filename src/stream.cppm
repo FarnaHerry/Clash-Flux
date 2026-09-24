@@ -19,9 +19,16 @@ export struct LogLine {
     std::int64_t at = 0;   // Unix 秒
 };
 
-// 应用自身的诊断日志与内核 /logs 分开存放；Android 的 Java/VPN 桥和桌面
-// store 都可以写入，日志页按来源选择查看。
+// 内核日志与应用自身的诊断日志分别持久化；Android 的 libbox CommandClient
+// 与桌面 clash_api 推送都写入同一条内核日志流。history 用于页面重进恢复，
+// drain 只消费增量队列。
+export void logCore(std::string level, std::string payload) noexcept;
+export std::vector<LogLine> coreLogHistory();
+export std::vector<LogLine> drainCoreLogs();
+export void clearCoreLogs();
+
 export void logApplication(std::string level, std::string payload) noexcept;
+export std::vector<LogLine> applicationLogHistory();
 export std::vector<LogLine> drainApplicationLogs();
 export void clearApplicationLogs();
 
@@ -49,7 +56,7 @@ public:
     bool trafficOpen() const;
     bool connectionsOpen() const;
 
-    // UI 线程泵：取走累计日志行（一次取空）。
+    // UI 线程泵：取走内核日志增量。历史由 stream 模块持久化，重启连接不会清空。
     std::vector<LogLine> drainLogs();
     // 取最新流量帧；无新帧返回 false（槽位取走后清空）。
     bool takeTraffic(TrafficPoint& out);

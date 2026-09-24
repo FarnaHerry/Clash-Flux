@@ -393,15 +393,20 @@ constexpr float kNodeGridGap = 8.0F;
 std::function<void()> NodeSelectAction(
     huxerui::StateList<ProxyGroup> groups,
     huxerui::State<std::vector<std::string>> activePath, huxerui::TaskScope tasks,
-    const ProxyGroup& group, const ProxyNode& node) {
+    std::function<void()> onFailure, const ProxyGroup& group,
+    const ProxyNode& node) {
     const std::string groupName = group.name;
     const std::string nodeName = node.name;
     if (!group.selectable) return [] {};
     if (node.isGroup) {
-        return [groups, activePath, tasks, groupName, nodeName] {
+        return [groups, activePath, tasks, onFailure, groupName, nodeName] {
             tasks.Launch([=]() -> huxerui::Task<void> {
-                co_await RunOnTaskThread(
-                    [=] { SelectProxyLine(groupName, nodeName); });
+                const bool selected = co_await RunOnTaskThread(
+                    [=] { return SelectProxyLine(groupName, nodeName); });
+                if (!selected) {
+                    if (onFailure) onFailure();
+                    co_return;
+                }
                 std::vector<std::string> p =
                     resolvePath(groups, activePath.Get());
                 // 根组由渲染期回落时，State 可能仍为空或保留了已消失的
@@ -412,10 +417,11 @@ std::function<void()> NodeSelectAction(
             });
         };
     }
-    return [tasks, groupName, nodeName] {
+    return [tasks, onFailure, groupName, nodeName] {
         tasks.Launch([=]() -> huxerui::Task<void> {
-            co_await RunOnTaskThread(
-                [=] { SelectProxyLine(groupName, nodeName); });
+            const bool selected = co_await RunOnTaskThread(
+                [=] { return SelectProxyLine(groupName, nodeName); });
+            if (!selected && onFailure) onFailure();
         });
     };
 }
@@ -732,7 +738,7 @@ std::function<void()> NodeSelectAction(
         huxerui::View grid = huxerui::VirtualGrid(
                                  nodeCount + footerCount,
                                  [groups, activePath, testGeneration, testGroup,
-                                  tasks, nodeNameLimit, contentGroupName,
+                                  tasks, toast, nodeNameLimit, contentGroupName,
                                   nodeCount, compact](std::size_t index)
                                      -> huxerui::View {
                                      if (index >= nodeCount) {
@@ -754,8 +760,12 @@ std::function<void()> NodeSelectAction(
                                                 group->name, testGeneration,
                                                 testGroup, group->selectable,
                                                 NodeSelectAction(groups, activePath,
-                                                                 tasks, *group,
-                                                                 node),
+                                                                 tasks,
+                                                                 [toast] {
+                                                                     toast.Show(
+                                                                         "线路切换失败，请查看应用日志");
+                                                                 },
+                                                                 *group, node),
                                                 nodeNameLimit)
                                          .Key(group->name + "::" + nodeName);
                                  })
@@ -768,7 +778,53 @@ std::function<void()> NodeSelectAction(
                                  .ColumnSpacing(kNodeGridGap)
                                  .With(huxerui::Grow(1.0F),
                                        huxerui::ScrollBar())
-                                 .Key("group-grid-" + rootGroup.name);
+                                 .Key("group-grid-" + rootGroup.name)
+                                 // Intercept lives on the scroll node itself.
+                                 // PointerIntercept is resolved deepest-first;
+                                 // on this node it runs before the grid's own
+                                 // vertical-scroll recognizer, so horizontal
+                                 // swipes can claim the sequence while vertical
+                                 // movement remains available to the list.
+                                 .On<huxerui::ViewEvents::PointerIntercept>(
+                                     [swipeOrigin, swipeOwned, selectGroup,
+                                      tabNames, selectedTab](
+                                         const huxerui::PointerEvent& event) {
+                                         const float dx = event.position.x -
+                                                          swipeOrigin.Get().x;
+                                         const float dy = event.position.y -
+                                                          swipeOrigin.Get().y;
+                                         switch (event.type) {
+                                         case huxerui::PointerEventType::Down:
+                                             swipeOrigin = event.position;
+                                             swipeOwned = false;
+                                             return false;
+                                         case huxerui::PointerEventType::Move:
+                                             if (swipeOwned.Get()) return true;
+                                             if (std::abs(dx) >
+                                                     kGroupSwipeClaimDistance &&
+                                                 std::abs(dx) > std::abs(dy)) {
+                                                 swipeOwned = true;
+                                                 return true;
+                                             }
+                                             return false;
+                                         case huxerui::PointerEventType::Up:
+                                             if (!swipeOwned.Get()) return false;
+                                             swipeOwned = false;
+                                             if (dx <= -kGroupSwipeCommitDistance &&
+                                                 selectedTab + 1 < tabNames.size()) {
+                                                 selectGroup(tabNames[selectedTab + 1]);
+                                             } else if (
+                                                 dx >= kGroupSwipeCommitDistance &&
+                                                 selectedTab > 0) {
+                                                 selectGroup(tabNames[selectedTab - 1]);
+                                             }
+                                             return false;
+                                         case huxerui::PointerEventType::Cancel:
+                                             swipeOwned = false;
+                                             return false;
+                                         }
+                                         return false;
+                                     });
 
         std::vector<huxerui::View> pageContent;
         if (pagePath.size() > 1) {
@@ -824,46 +880,7 @@ std::function<void()> NodeSelectAction(
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     } else {
         body = huxerui::IndexedPages(std::move(groupPages), selectedTab)
-                   .With(huxerui::Grow(1.0F))
-                   // 页内是纵向滚动的节点网格：水平占优时在内容层认领指针，
-                   // 纵向占优的位移不干预网格滚动。
-                   .On<huxerui::ViewEvents::PointerIntercept>(
-                       [swipeOrigin, swipeOwned, selectGroup, tabNames,
-                        selectedTab](const huxerui::PointerEvent& event) {
-                           const float dx = event.position.x - swipeOrigin.Get().x;
-                           const float dy = event.position.y - swipeOrigin.Get().y;
-                           switch (event.type) {
-                           case huxerui::PointerEventType::Down:
-                               swipeOrigin = event.position;
-                               swipeOwned = false;
-                               return false;
-                           case huxerui::PointerEventType::Move:
-                               if (swipeOwned.Get()) return true;
-                               if (dx > kGroupSwipeClaimDistance ||
-                                   dx < -kGroupSwipeClaimDistance) {
-                                   if (std::abs(dx) > std::abs(dy)) {
-                                       swipeOwned = true;
-                                       return true;
-                                   }
-                               }
-                               return false;
-                           case huxerui::PointerEventType::Up:
-                               if (!swipeOwned.Get()) return false;
-                               swipeOwned = false;
-                               if (dx <= -kGroupSwipeCommitDistance &&
-                                   selectedTab + 1 < tabNames.size()) {
-                                   selectGroup(tabNames[selectedTab + 1]);
-                               } else if (dx >= kGroupSwipeCommitDistance &&
-                                          selectedTab > 0) {
-                                   selectGroup(tabNames[selectedTab - 1]);
-                               }
-                               return false;
-                           case huxerui::PointerEventType::Cancel:
-                               swipeOwned = false;
-                               return false;
-                           }
-                           return false;
-                       });
+                   .With(huxerui::Grow(1.0F));
     }
 
     // 标签栏固定在页面顶部（不随节点列表滚动），只有选中分组的节点参与滚动。
