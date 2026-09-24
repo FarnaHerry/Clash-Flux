@@ -1,4 +1,4 @@
-# build.yml — Clash-Flux 多平台 CI 矩阵（Linux / Windows / macOS / Android + iOS smoke）。
+# build.yml — Clash-Flux 多平台 CI 矩阵（Linux / Windows / macOS / Android + iOS Simulator core）。
 #
 # 形态蓝本：姊妹项目 apitab 的 .github/workflows/build.yml（已跑通的 HuxerUI +
 # C++23 modules + import std 解法），按本仓库适配（无 sweetedit、目标名
@@ -29,10 +29,9 @@
 #   * build-linux-arm64：ubuntu-24.04-arm 原生 runner + ubuntu:24.04 容器，
 #     配方与 x86_64 完全相同，但 arm64 runner 的 LLVM 源仓库可用性未经首跑验证；
 #     连续绿后摘掉 continue-on-error。
-#   * build-ios-smoke：macOS 上构建 HuxerUI 自带 iOS Simulator 示例，用来验证固定
-#     HuxerUI revision 的 iOS 支持。它不构建 Clash-Flux IPA、不上传 Release 产物，
-#     也不在 publish-release 的 needs 中；Clash-Flux 的 iOS 壳和 Network Extension
-#     接入仍是 TODO。
+#   * build-ios-core：macOS 上用 iOS Simulator SDK 编译 Clash-Flux 自己的 CMake
+#     app core。它不生成 IPA、不上传 Release 产物，也不在 publish-release 的
+#     needs 中；Network Extension 和 sing-box iOS 集成仍是 TODO。
 #
 # Windows、macOS 和 Android 已纳入发布门禁：完整 Release 构建或 smoke test
 # 失败时，workflow 失败，不会进入发布 job。Android 使用 AndroidLegacy.cmake
@@ -446,7 +445,7 @@ jobs:
           git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
           # P0960 聚合函数式转型 → 花括号初始化（clang ObjC++ 不支持 P0960；
           # 上游 window.h 在钉住的 commit 仍未修）。补丁内容与 apitab 的
-          # The shared patch is also applied by the iOS Simulator smoke job below.
+          # The shared patch is also applied by the iOS Simulator core job below.
           git -C third_party/huxerui apply \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-window-p0960.patch"
           # Keep drag feedback anchored to the grab point on every platform edge.
@@ -524,53 +523,93 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # ------------------------------------------------------------- iOS smoke
-  # HuxerUI maintains a source-controlled iOS example runner. Build its
-  # Simulator target as an advisory check; Clash-Flux has no iOS app shell or
-  # Network Extension integration yet, so this job produces no release asset.
-  build-ios-smoke:
-    name: build-ios-huxerui-simulator
+  # ------------------------------------------------------- iOS Simulator core
+  # Compile the actual Clash-Flux sources and HuxerUI static platform library
+  # for the iOS Simulator. This is an advisory compile check, not an app/IPA.
+  build-ios-core:
+    name: build-ios-clash-flux-simulator-core
     runs-on: macos-15
     continue-on-error: true
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Fetch HuxerUI source (pinned)
+      - name: Fetch HuxerUI source (pinned) and apply compatibility patches
         run: |
           set -euo pipefail
           git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
           git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
           git -C third_party/huxerui apply \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-window-p0960.patch"
+          git -C third_party/huxerui apply \
+            "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
 
-      - name: Build HuxerUI iOS Simulator example
-        id: ios-smoke
+      - name: Install CMake, Ninja, and LLVM
         run: |
           set -euo pipefail
-          xcodebuild \
-            -project third_party/huxerui/platform/ios/example_runner/HuxerUIExamples.xcodeproj \
-            -scheme HuxerUIExamples \
-            -configuration Release \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath "$RUNNER_TEMP/clash-flux-ios-smoke" \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+          brew install llvm
+          python3 -m venv "$RUNNER_TEMP/clash-flux-ios-tools"
+          "$RUNNER_TEMP/clash-flux-ios-tools/bin/python" -m pip install \
+            cmake==4.4.2 ninja
+          export PATH="$RUNNER_TEMP/clash-flux-ios-tools/bin:$PATH"
+          echo "$RUNNER_TEMP/clash-flux-ios-tools/bin" >> "$GITHUB_PATH"
+          llvm_prefix="$(brew --prefix llvm)"
+          mod_dir="$llvm_prefix/share/libc++/v1"
+          for f in std.cppm std.compat.cppm; do
+            test -f "$mod_dir/$f" || { echo "missing $mod_dir/$f (brew llvm layout changed?)" >&2; exit 1; }
+          done
+          python3 - "$mod_dir" "$llvm_prefix/lib/libc++.modules.json" <<'PY'
+          import json, sys
+          mod_dir, out = sys.argv[1], sys.argv[2]
+          mod = lambda name: {"logical-name": name, "source-path": mod_dir + "/" + name + ".cppm", "is-std-library": True, "local-arguments": {"system-include-directories": [mod_dir]}}
+          json.dump({"version": 1, "revision": 1, "modules": [mod("std"), mod("std.compat")]}, open(out, "w"), indent=1)
+          PY
+          echo "LLVM_PREFIX=$llvm_prefix" >> "$GITHUB_ENV"
+          cmake --version
+          ninja --version
+
+      - name: Configure Clash-Flux for iOS Simulator
+        run: |
+          set -euo pipefail
+          cmake -S . -B build/ios-simulator -G Ninja \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
+            -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
+            -DCMAKE_OBJCXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
+            -DCMAKE_CXX_FLAGS='-stdlib=libc++ -D_LIBCPP_DISABLE_AVAILABILITY' \
+            -DCMAKE_OBJCXX_FLAGS='-stdlib=libc++ -D_LIBCPP_DISABLE_AVAILABILITY' \
+            -DCMAKE_CXX_STDLIB_MODULES_JSON="$LLVM_PREFIX/lib/libc++.modules.json" \
+            -DHUXERUI_BUILD_SHARED=OFF \
+            -DHUXERUI_BUILD_STATIC=ON \
+            -DHUXERUI_BUILD_TESTS=OFF \
+            -DHUXERUI_BUILD_EXAMPLES=OFF \
+            -DHUXERUI_BUILD_CLI=OFF \
+            -DCLASHFLUX_BUILD_TESTS=OFF \
+            -DCLASHFLUX_BUNDLE_SINGBOX=OFF
+
+      - name: Build Clash-Flux iOS Simulator app core
+        id: ios-core
+        run: |
+          set -euo pipefail
+          cmake --build build/ios-simulator \
+            --target clash-flux_huxerui_ios_core --parallel
+          test -f build/ios-simulator/huxerui-ios/clash-flux/libclash-flux_huxerui.a
 
       - name: Report iOS integration status
         if: always()
         env:
-          IOS_SMOKE_OUTCOME: ${{ steps.ios-smoke.outcome }}
+          IOS_CORE_OUTCOME: ${{ steps.ios-core.outcome }}
         run: |
-          if [[ "$IOS_SMOKE_OUTCOME" == "success" ]]; then
-            echo "::notice title=HuxerUI iOS support confirmed::The pinned HuxerUI iOS Simulator example built successfully."
+          if [[ "$IOS_CORE_OUTCOME" == "success" ]]; then
+            echo "::notice title=Clash-Flux iOS source compile passed::Clash-Flux and the pinned HuxerUI static platform library compiled for the arm64 iOS Simulator."
           else
-            echo "::warning title=HuxerUI iOS smoke failed::The HuxerUI iOS Simulator example did not build; keep iOS distribution on TODO."
+            echo "::warning title=Clash-Flux iOS source compile failed::The Clash-Flux iOS Simulator app core did not build; keep iOS distribution on TODO."
           fi
-          if [[ ! -d platform/ios ]]; then
-            echo "::notice title=Clash-Flux iOS TODO::Clash-Flux has no source-controlled iOS app shell or Network Extension integration. This smoke job creates no IPA or Release artifact."
-          fi
+          echo "::notice title=iOS packaging TODO::This compile job creates no .app, IPA, Network Extension, or Release artifact."
 
   # ---------------------------------------------------------------- Android
   # Android 发布门禁：验证 GUI/native shell 与 pinned sing-box libbox 能编出
@@ -722,8 +761,8 @@ jobs:
   publish-release:
     name: publish-release
     if: startsWith(github.ref, 'refs/tags/v')
-    # build-ios-smoke is intentionally advisory and excluded; it never uploads
-    # an iOS artifact. A distributable iOS release needs a Clash-Flux iOS shell.
+    # build-ios-core is intentionally advisory and excluded; it compiles the
+    # app core only and creates no iOS release artifact.
     needs: [build-linux, build-windows, build-macos, build-android,
             build-windows-installer]
     runs-on: ubuntu-24.04

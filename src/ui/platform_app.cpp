@@ -232,6 +232,7 @@ void DesktopPreparePlatformDataDirectory(
             [tray, window, application, tasks, trayCoreRunning, traySysProxy,
              trayTun, dialog, clipboard, toast, trayProfiles, trayProxyGroups,
              trayEnabled, finishExit,
+             iconTint = rootSpec.colors.primary,
              textColor = rootSpec.colors.on_surface,
              hintColor = rootSpec.colors.on_surface_variant] {
                 if (trayEnabled.Get()) {
@@ -338,7 +339,7 @@ void DesktopPreparePlatformDataDirectory(
                             })
                             .Checked(trayCoreRunning.Get()));
                     menuEntries.push_back(
-                        huxerui::MenuItem(app::images::system_proxy,
+                        huxerui::MenuItem(app::images::system_proxy_menu,
                                           "系统代理", [tasks, traySysProxy] {
                             tasks.Launch([=]() -> huxerui::Task<void> {
                                 const bool next = !traySysProxy.Get();
@@ -347,10 +348,10 @@ void DesktopPreparePlatformDataDirectory(
                                 });
                                 if (ok) traySysProxy = next;
                             });
-                        }).Checked(traySysProxy.Get()));
+                        }).IconTint(iconTint).Checked(traySysProxy.Get()));
                     menuEntries.push_back(
                         huxerui::MenuItem(
-                            app::images::tun, "TUN 模式",
+                            app::images::tun_menu, "TUN 模式",
                             [tasks, trayTun, window, dialog, clipboard, toast,
                              textColor, hintColor] {
                                 tasks.Launch([=]() -> huxerui::Task<void> {
@@ -375,7 +376,7 @@ void DesktopPreparePlatformDataDirectory(
                                     });
                                     if (ok) trayTun = next;
                                 });
-                            })
+                            }).IconTint(iconTint)
                             .Checked(trayTun.Get()));
                     menuEntries.push_back(huxerui::MenuSection{});
                     menuEntries.push_back(
