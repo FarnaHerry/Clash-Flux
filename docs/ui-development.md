@@ -29,7 +29,7 @@
 - CMake 在加入固定的 HuxerUI/Lib-Camera 依赖前，会按 `cmake/patches/huxerui-lib-camera-application-context.patch` 适配 Lib-Camera 的安装钩子和各平台 factory，使其兼容 HuxerUI `ApplicationContext` API。该补丁保持在 CMake 外部依赖源码中，不改写上游 checkout。
 - iOS Simulator CI 从仓库根 CMake 项目构建 `clash-flux_huxerui_ios_core`，同时应用 P0960 和拖动预览补丁。该目标只验证 Clash-Flux 源码与 HuxerUI 静态平台库可编译，不生成应用包；iOS 网络扩展、sing-box 接入和 curl TLS 尚未纳入。
 
-HuxerUI revision 更新到上游最新后，先对照每个维护补丁的变更；上游已包含的改动要移除补丁和 CI 应用步骤。保留的补丁必须在最新源码 checkout 上通过 `git apply --check`，并让所有适用平台继续使用同一个固定 SHA。
+HuxerUI revision 更新到上游最新后，先对照每个维护补丁的变更；上游已包含的改动要移除补丁和 CI 应用步骤。保留的补丁必须在最新源码 checkout 上通过 `git apply --check --unidiff-zero`，并让所有适用平台继续使用同一个固定 SHA。
 
 ## 改动后的构建验证
 
