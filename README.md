@@ -141,8 +141,11 @@ clash-flux service install|uninstall|status|run
 `service install` 需 root（GUI 设置页经 pkexec 提权调用）：安装 systemd 单元
 `clash-flux.service`，此后 sing-box 和 Linux PPTP 都由同一个 root daemon 托管；
 OpenVPN endpoint 由 sing-box 自己建立，不再要求安装 OpenVPN CLI。
-更新了二进制或新增了服务协议后，需要重新执行一次 `sudo clash-flux service install`
-让 systemd 使用新版本 daemon；仅替换 GUI 二进制不会更新已运行的 root 服务。
+已安装服务会在下一次启动内核时检查版本，并从当前客户端同步 Clash-Flux 与
+sing-box；升级文件先写入同目录临时文件，再原子替换，因此即使旧服务或内核仍在运行，
+也能由 systemd 平滑重启到新版本。首次安装或旧服务不支持自升级时，仍需执行一次
+`sudo clash-flux service install`。出于 root 安全校验，客户端也必须位于 root 管理且
+普通用户不可写的安装目录（默认软件包安装目录 `/opt/clash-flux`）。
 GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议请求，
 不再直接执行 `pppd` 或 `ip route`；安装时记录提权前用户 UID，socket 只允许该
 用户和 root 访问。TUN/PPTP 开箱可用，OpenVPN 由 sing-box 用户态 endpoint
