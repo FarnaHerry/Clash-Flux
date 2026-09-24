@@ -32,10 +32,7 @@ public final class VpnTileService extends TileService {
         super.onClick();
         if (BootReceiver.isVpnActive(this)) {
             MainActivity.appLog("通知栏快捷开关请求关闭 VPN", false);
-            if (!ClashVpnService.stopCurrent()) {
-                stopService(new Intent(this, ClashVpnService.class));
-                BootReceiver.setVpnActive(this, false);
-            }
+            RuntimeControlService.requestStop(this);
             updateTile(false);
             return;
         }

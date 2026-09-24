@@ -12,6 +12,8 @@
 
 #include <huxerui/huxerui.h>
 
+#include "app_http_client.h"
+
 namespace clashflux::ui {
 
 inline constexpr float kCardWidth = 340.0F;
@@ -132,20 +134,20 @@ void OpenProfileCreate(bool compact, huxerui::State<bool> page,
                        const std::function<void()>& dialog);
 
 huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
-    std::shared_ptr<huxerui::HttpClient> http, std::string url,
+    std::shared_ptr<AppHttpClient> http, std::string url,
     int timeoutSecs);
 huxerui::Task<std::int64_t> AndroidImportRemote(
-    std::shared_ptr<huxerui::HttpClient> http, const std::string& name,
+    std::shared_ptr<AppHttpClient> http, const std::string& name,
     const std::string& url, db::Profile options);
 huxerui::Task<std::string> AndroidRefreshRemote(
-    std::shared_ptr<huxerui::HttpClient> http, std::int64_t id);
+    std::shared_ptr<AppHttpClient> http, std::int64_t id);
 
 using ProfileRefreshAction = std::function<void(std::int64_t)>;
 void RefreshProfileForPlatform(std::int64_t id,
                                const ProfileRefreshAction& http_refresh,
                                const ProfileRefreshAction& desktop_refresh);
 huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
-    std::shared_ptr<huxerui::HttpClient> http, ProfileImportRequest request);
+    std::shared_ptr<AppHttpClient> http, ProfileImportRequest request);
 
 } // namespace profile_detail
 
@@ -188,7 +190,7 @@ huxerui::View OpenVpnOptionsForm(
 
 huxerui::View ProfileCard(
     const db::Profile& profile, bool compact, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::shared_ptr<huxerui::HttpClient> http,
+    huxerui::ToastHandle toast, std::shared_ptr<AppHttpClient> http,
     std::function<void()> reload,
     huxerui::StateList<db::Profile> profiles,
     huxerui::State<bool> selectionPending,
@@ -207,19 +209,19 @@ huxerui::View ResponsiveProfileEditSurface(
 huxerui::View ResponsiveProfileCreateSurface(
     bool open, ProfileCreateFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
-    std::shared_ptr<huxerui::HttpClient> http, bool pptp_supported,
+    std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     bool openvpn_supported, std::function<void()> on_back);
 huxerui::View ProfileAddMethodPage(
     ProfileCreateFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
-    std::shared_ptr<huxerui::HttpClient> http, bool pptp_supported,
+    std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     bool openvpn_supported,
     huxerui::NavigationController navigation);
 huxerui::View ProfileCreateMethodPage(
     ProfileAddMethod method, ProfileCreateFields fields,
     huxerui::TaskScope tasks, huxerui::ToastHandle toast,
     std::shared_ptr<huxerui::FilePicker> picker,
-    std::shared_ptr<huxerui::HttpClient> http, bool pptp_supported,
+    std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     bool openvpn_supported,
     huxerui::NavigationController navigation, std::function<void()> on_back,
     std::function<void()> on_complete);

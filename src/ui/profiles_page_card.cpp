@@ -54,7 +54,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
 [[huxerui::composable]] huxerui::View ProfileCard(
     const db::Profile& profile, bool compact,
     huxerui::TaskScope tasks, huxerui::ToastHandle toast,
-    std::shared_ptr<huxerui::HttpClient> http, std::function<void()> reload,
+    std::shared_ptr<AppHttpClient> http, std::function<void()> reload,
     huxerui::StateList<db::Profile> profiles,
     huxerui::State<bool> selectionPending,
     const store::PptpState& pptpState,

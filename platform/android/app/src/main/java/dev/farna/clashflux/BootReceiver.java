@@ -3,12 +3,12 @@ package dev.farna.clashflux;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.util.Log;
 
 /**
- * Restores the VPN tunnel after boot or an app update. ClashVpnService
- * records whether the tunnel was up in a shared preference; on shutdown the
- * process may die without callbacks, which is exactly the case we want to
- * restore, so a stale "true" is the desired outcome.
+ * Restores the VPN tunnel after boot or an app update. The runtime process
+ * owns the persisted mode and can bootstrap itself without constructing the
+ * HuxerUI activity or opening the UI process's native store.
  */
 public final class BootReceiver extends BroadcastReceiver {
     private static final String PREFS = "clashflux";
@@ -18,11 +18,14 @@ public final class BootReceiver extends BroadcastReceiver {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putBoolean(KEY_VPN_ACTIVE, active)
-                .apply();
+                .commit();
+        RuntimeSnapshotStore.writeSync(context, "vpn-active.txt", active ? "1" : "0");
         VpnTileService.syncState(context, active);
     }
 
     static boolean isVpnActive(Context context) {
+        String snapshot = RuntimeSnapshotStore.read(context, "vpn-active.txt", "");
+        if (!snapshot.isEmpty()) return "1".equals(snapshot);
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getBoolean(KEY_VPN_ACTIVE, false);
     }
@@ -34,19 +37,15 @@ public final class BootReceiver extends BroadcastReceiver {
                 && !Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) {
             return;
         }
-        final boolean wasActive = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getBoolean(KEY_VPN_ACTIVE, false);
+        final boolean wasActive = isVpnActive(context);
         if (!wasActive) {
             return;
         }
-        // Initialize the native data-directory override before recording the
-        // restore attempt; boot receivers run before MainActivity exists.
-        MainActivity.bootstrapNative(context);
-        MainActivity.appLog("系统启动广播触发 VPN 恢复", false);
+        Log.i("ClashFlux", "系统启动广播触发 VPN 恢复");
         try {
             context.startForegroundService(new Intent(context, ClashVpnService.class));
         } catch (RuntimeException error) {
-            MainActivity.appLog("系统启动后恢复 VPN 失败：" + error.getMessage(), true);
+            Log.e("ClashFlux", "系统启动后恢复 VPN 失败", error);
         }
     }
 }

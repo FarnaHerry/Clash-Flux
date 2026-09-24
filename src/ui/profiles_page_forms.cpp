@@ -233,7 +233,7 @@ huxerui::View ProfilePlatformOptions(
 [[huxerui::composable]] huxerui::View ProfileCreatePage(
     ProfileCreateFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
-    std::shared_ptr<huxerui::HttpClient> http, bool pptp_supported,
+    std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     bool openvpn_supported, std::function<void()> on_back) {
     const auto typeIndex = fields.type_index.Get();
     const bool remote = typeIndex == 0;
@@ -659,7 +659,7 @@ void PushProfileQrScanner(
 [[huxerui::composable]] huxerui::View ProfileAddMethodPage(
     ProfileCreateFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
-    std::shared_ptr<huxerui::HttpClient> http,
+    std::shared_ptr<AppHttpClient> http,
     bool pptp_supported, bool openvpn_supported,
     huxerui::NavigationController navigation) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
@@ -866,7 +866,7 @@ void PushProfileQrScanner(
     ProfileAddMethod method, ProfileCreateFields fields,
     huxerui::TaskScope tasks, huxerui::ToastHandle toast,
     std::shared_ptr<huxerui::FilePicker> picker,
-    std::shared_ptr<huxerui::HttpClient> http,
+    std::shared_ptr<AppHttpClient> http,
     bool pptp_supported, bool openvpn_supported,
     huxerui::NavigationController navigation, std::function<void()> on_back,
     std::function<void()> on_complete) {
@@ -1290,7 +1290,7 @@ void PushProfileQrScanner(
 [[huxerui::composable]] huxerui::View ResponsiveProfileCreateSurface(
     bool open, ProfileCreateFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
-    std::shared_ptr<huxerui::HttpClient> http, bool pptp_supported,
+    std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     bool openvpn_supported, std::function<void()> on_back) {
     return huxerui::Scope([=]() -> huxerui::View {
         // 同编辑页：未打开时不得挂载受控输入框（见 ResponsiveProfileEditSurface）。

@@ -153,6 +153,7 @@ if (hasReleaseSigning && !file(releaseKeystoreFile).isFile()) {
 android {
     buildFeatures {
         buildConfig = true
+        aidl = true
     }
 
     namespace = "dev.farna.clashflux"
@@ -163,8 +164,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 78
-        versionName = "0.2.16"
+        versionCode = 79
+        versionName = "0.2.17"
 
         externalNativeBuild {
             cmake {

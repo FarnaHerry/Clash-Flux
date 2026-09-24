@@ -157,9 +157,10 @@
         //      重复 spawn 撞控制端口与混合端口
         //   3. 直接 spawn（默认）
 #if defined(__ANDROID__)
-        // Android uses the same lifecycle split as desktop: libbox starts
-        // immediately without TUN, while a TUN request only changes the
-        // service mode after the user grants Android VPN consent.
+        // Android compiles the selected profile in the UI process, then hands
+        // its TUN intent to the isolated VpnService runtime after the system
+        // has authorized it. Reopening the app must preserve that persisted
+        // mode instead of replacing the running tunnel with proxy-only config.
         {
             std::lock_guard lock(mutex_);
             snap_.mode = mode();
@@ -171,8 +172,12 @@
                               ? core::CoreState::Stopped
                               : core::CoreState::Starting;
         }
-        if (!tunEnabled && !speedTestOnly && !clashflux_android_start_core()) {
-            fail("无法启动 Android sing-box 内核服务");
+        if (!speedTestOnly) {
+            if (tunEnabled) {
+                clashflux_android_start_vpn();
+            } else if (!clashflux_android_start_core()) {
+                fail("无法启动 Android sing-box 内核服务");
+            }
         }
         return;
 #else

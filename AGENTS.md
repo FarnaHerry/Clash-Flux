@@ -39,6 +39,20 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   完成可分发 iOS 应用壳、Network Extension 和 sing-box iOS 接入后，再评估 iOS 发布包。
 - Android Gradle 构建会按固定 revision/SHA256 生成并打包国内 GEOIP/GEOSITE
   规则集；不得跳过 `stageBundledRuleSets` 或改为运行时下载。
+- Android Gradle 的 HuxerUI Java 模块必须与 CMake 选中的 native HuxerUI 来自同一源码版本：
+  有源码时使用该源码的 `platform/android/huxerui` 项目，只有 CMake 回落到 SDK 时才使用 SDK AAR。
+  详见 `docs/android-build.md`。
+- Android 常驻服务不得等待 `POST_NOTIFICATIONS` 才启动前台服务或继续 VPN 授权；该权限只影响通知栏展示。
+  返回 `START_STICKY` 的服务必须处理空 Intent，并从持久化状态恢复运行模式，不能猜测为 TUN。
+- Android sing-box 所有者固定在 `:background`：`ClashVpnService` 持有 libbox/VpnService，
+  `RuntimeControlService` 提供 AIDL/Binder 控制与状态查询。UI 进程通过 JNI 接收后台快照，
+  不得再依赖跨进程不可见的 Java 静态字段。
+- Android SQLite/CoreStore 数据库只由默认 UI 进程打开和写入；后台进程只消费 UI 原子提交的
+  `clash-flux/core/config.json`，大体积出站/连接快照使用原子文件共享。不要在后台服务进程调用
+  会写配置数据库的 CoreStore 路径，也不要用 SharedPreferences 跨进程同步运行状态。
+- Android `ClashVpnService.onCreate()` 必须先同步 `startForeground()`，JNI/libbox 初始化和
+  数据面启动放在服务工作线程；网络变化、亮屏/退出 Doze 时先更新 sing-box 物理接口，再关闭旧连接。
+  详见 `docs/android-background-lifecycle.md`。
 - HuxerUI composable 函数体内不能使用条件编译；普通 UI 源文件按项目现有 DSL 约定编写。
 - 可排序卡片的拖动预览要持续跟随原始抓取点；滚动网格应在滚动视口注册拖放目标，
   使卡片间隙和视口边缘的拖动继续有效并触发边缘自动滚动。

@@ -1,9 +1,9 @@
 # Clash-Flux
 
 Clash-Flux 是一个使用 C++23 和 HuxerUI 构建的全平台代理客户端，复刻 Clash Verge Rev
-的核心体验：以 sing-box 为内核（桌面 spawn 官方二进制、Android 进程内 libbox），
-全程经其 clash_api 的 REST API 与 WebSocket 推送流交互，UI 与内核接入层全部由
-C++ 实现。配置支持 Clash YAML（由内置编译器转换为 sing-box 配置）和 sing-box 原生
+的核心体验：以 sing-box 为内核（桌面 spawn 官方二进制、Android 后台进程内运行 libbox），
+桌面经 clash_api 的 REST API 与 WebSocket 推送交互，Android 经官方 libbox CommandClient
+交互，UI 与内核接入层由 C++ 实现。配置支持 Clash YAML（由内置编译器转换为 sing-box 配置）和 sing-box 原生
 JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 
 ## 功能
@@ -40,9 +40,10 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   无参数启动进入 GUI
 - 浅色/深色主题（跟随系统）、岛屿风界面、自定义窗口标题栏、系统托盘（Windows 托盘菜单跟随应用主题）、
   窄窗口响应式布局
-- Android：进程内 sing-box libbox（与桌面内核同版本）驱动 VpnService TUN，
-  使用应用私有目录保存数据、支持 Activity 生命周期、开机自启与外部链接，
-  并可通过系统快捷设置磁贴开关 TUN
+- Android：sing-box libbox（与桌面内核同版本）运行在独立 `:background` 进程，
+  由 VpnService 创建 TUN；主进程独占配置数据库，使用 Binder 控制运行时并用原子快照共享线路和连接。
+  前台服务在系统回收后按持久化模式恢复核心或 TUN，网络切换/设备唤醒会更新默认接口并重拨旧连接；
+  通知权限只控制通知栏显示，不阻挡服务启动；并可通过系统快捷设置磁贴开关 TUN
 
 项目仍在开发中，界面和数据结构可能继续调整。
 
@@ -115,9 +116,14 @@ huxerui build android --profile release
 ```
 
 Android 使用兼容编译路径，不要求 NDK 支持 C++ modules；数据面是源码构建的
-sing-box libbox AAR（arm64-v8a，与桌面内核同版本），经 VpnService 提供 TUN。
+sing-box libbox AAR（arm64-v8a，与桌面内核同版本），运行在独立后台进程，经 VpnService 提供 TUN。
+当仓库内存在 `third_party/huxerui` 源码时，Android Java 模块和 C++ native 模块都会
+从同一源码构建；没有源码时两者都使用 `HUXERUI_HOME` 中的已安装 SDK。详见
+[Android 构建与运行时版本一致性](docs/android-build.md)。
 Gradle 会按固定上游 revision 和 SHA256 生成并打包 `geoip-cn.srs` /
 `geosite-cn.srs`；首次构建需要网络，运行时则无需联网下载国内分流规则。
+Android 进程所有权、Binder 控制、服务恢复和网络切换策略见
+[Android 后台服务生命周期](docs/android-background-lifecycle.md)。
 
 GitHub Release 使用稳定的 Android 发布密钥签名。CI 需要配置
 `CLASHFLUX_ANDROID_KEYSTORE_BASE64`、`CLASHFLUX_ANDROID_KEYSTORE_PASSWORD`、
