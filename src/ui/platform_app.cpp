@@ -5,6 +5,7 @@
 #include <huxerui/huxerui.h>
 
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <format>
 #include <string>
@@ -99,6 +100,39 @@ void DesktopPreparePlatformDataDirectory(
     return {};
 }
 
+namespace {
+
+struct TrayRuntimeSnapshot {
+    bool coreRunning = false;
+    bool systemProxyIntent = false;
+    bool tunIntent = false;
+    bool systemProxyActive = false;
+    bool tunActive = false;
+    bool trayEnabled = true;
+};
+
+struct TrayOperationResult {
+    bool ok = false;
+    std::string error;
+};
+
+TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
+    auto& core = store::coreStore();
+    core.checkAlive();
+    const store::CoreSnapshot snapshot = core.snapshot();
+    const bool running = snapshot.state == core::CoreState::Running;
+    return TrayRuntimeSnapshot{
+        .coreRunning = running,
+        .systemProxyIntent = core.systemProxyEnabled(),
+        .tunIntent = snapshot.tunEnabled,
+        .systemProxyActive = running && core.systemProxyActive(),
+        .tunActive = running && snapshot.tunEnabled,
+        .trayEnabled = core.setting("tray.enabled", "true") == "true",
+    };
+}
+
+} // namespace
+
 [[huxerui::composable]] huxerui::View DesktopApplicationEffects(
     const huxerui::ApplicationHandle& application,
     const huxerui::ThemeSpec& rootSpec) {
@@ -106,9 +140,18 @@ void DesktopPreparePlatformDataDirectory(
     const huxerui::SystemTrayHandle tray = application.SystemTray();
     const bool trayAvailable = tray.IsAvailable();
     auto tasks = huxerui::UseTaskScope();
+    // 运行态只负责图标配色；菜单的乐观态独立保存，这样启动/停止耗时期间
+    // 菜单立即响应，但状态图标仍等到后台确认内核运行后才改变。
     auto trayCoreRunning = huxerui::UseState(false);
+    auto trayCoreMenuRunning = huxerui::UseState(false);
     auto traySysProxy = huxerui::UseState(false);
     auto trayTun = huxerui::UseState(false);
+    auto traySysProxyActive = huxerui::UseState(false);
+    auto trayTunActive = huxerui::UseState(false);
+    auto trayCorePending = huxerui::UseState(false);
+    auto traySysProxyPending = huxerui::UseState(false);
+    auto trayTunPending = huxerui::UseState(false);
+    auto trayPollRevision = huxerui::UseState(std::uint64_t{0});
     auto trayProfiles = huxerui::UseState<std::vector<db::Profile>>({});
     auto trayProxyGroups = huxerui::UseState<std::vector<ProxyGroupSnapshot>>({});
     auto trayEnabled = huxerui::UseState(
@@ -138,7 +181,9 @@ void DesktopPreparePlatformDataDirectory(
 
     // 内核自启 + 崩溃检测泵：启动和存活检查全部在任务线程执行。
     huxerui::Lifecycle(
-        [tasks, trayCoreRunning, traySysProxy, trayTun, trayEnabled] {
+        [tasks, trayCoreRunning, trayCoreMenuRunning, traySysProxy, trayTun,
+         traySysProxyActive, trayTunActive, trayCorePending,
+         traySysProxyPending, trayTunPending, trayEnabled, trayPollRevision] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await RunOnTaskThread([] {
                     auto& core = store::coreStore();
@@ -164,16 +209,33 @@ void DesktopPreparePlatformDataDirectory(
                         }
                     }
                 });
-                co_await PollWhile(std::chrono::duration<double>{0.5}, [=] {
-                    auto& core = store::coreStore();
-                    core.checkAlive();
-                    trayCoreRunning =
-                        core.snapshot().state == core::CoreState::Running;
-                    traySysProxy = core.systemProxyEnabled();
-                    trayTun = core.snapshot().tunEnabled;
-                    trayEnabled = core.setting("tray.enabled", "true") == "true";
-                    return true;
-                });
+                for (;;) {
+                    const std::uint64_t revision = trayPollRevision.Get();
+                    const TrayRuntimeSnapshot snapshot = co_await RunOnTaskThread(
+                        [] { return ReadTrayRuntimeSnapshot(); });
+                    if (revision == trayPollRevision.Get()) {
+                        // applyTun 在内核运行时需要重启。保留本次乐观模式更新
+                        // 的运行态，等操作完成后再读回确认，避免状态图标闪回默认色。
+                        if (!trayTunPending.Get()) {
+                            trayCoreRunning = snapshot.coreRunning;
+                        }
+                        if (!trayCorePending.Get()) {
+                            trayCoreMenuRunning = snapshot.coreRunning;
+                        }
+                        if (!trayTunPending.Get() &&
+                            !traySysProxyPending.Get()) {
+                            traySysProxy = snapshot.systemProxyIntent;
+                            traySysProxyActive = snapshot.systemProxyActive;
+                        }
+                        if (!trayTunPending.Get()) {
+                            trayTun = snapshot.tunIntent;
+                            trayTunActive = snapshot.tunActive;
+                        }
+                        trayEnabled = snapshot.trayEnabled;
+                    }
+                    co_await huxerui::Delay(
+                        std::chrono::duration<double>{0.5});
+                }
             });
             return [] {};
         },
@@ -229,10 +291,11 @@ void DesktopPreparePlatformDataDirectory(
             window.Activate();
         });
         huxerui::Lifecycle(
-            [tray, window, application, tasks, trayCoreRunning, traySysProxy,
-             trayTun, dialog, clipboard, toast, trayProfiles, trayProxyGroups,
-             trayEnabled, finishExit,
-             iconTint = rootSpec.colors.primary,
+            [tray, window, application, tasks, trayCoreRunning,
+             trayCoreMenuRunning, traySysProxy, trayTun, traySysProxyActive,
+             trayTunActive, trayCorePending, traySysProxyPending,
+             trayTunPending, trayPollRevision, dialog, clipboard, toast,
+             trayProfiles, trayProxyGroups, trayEnabled, finishExit,
              textColor = rootSpec.colors.on_surface,
              hintColor = rootSpec.colors.on_surface_variant] {
                 if (trayEnabled.Get()) {
@@ -307,88 +370,188 @@ void DesktopPreparePlatformDataDirectory(
                     // 记录的 TUN / 系统代理意图恢复接管。
                     menuEntries.push_back(
                         huxerui::MenuItem(
-                            trayCoreRunning.Get() ? "停止内核" : "启动",
-                            [tasks, toast, trayCoreRunning] {
+                            trayCoreMenuRunning.Get() ? "停止内核" : "启动",
+                            [tasks, toast, trayCoreMenuRunning, trayCorePending,
+                             trayPollRevision] {
+                                if (trayCorePending.Get()) return;
+                                const bool previous = trayCoreMenuRunning.Get();
+                                const bool next = !previous;
+                                trayCorePending = true;
+                                trayCoreMenuRunning = next;
+                                trayPollRevision = trayPollRevision.Get() + 1;
                                 tasks.Launch([=]() -> huxerui::Task<void> {
-                                    const bool next = !trayCoreRunning.Get();
-                                    const bool ok = co_await RunOnTaskThread([next] {
-                                        auto& core = store::coreStore();
-                                        if (!next) return core.stopCore();
-                                        const bool resumeSysProxy =
-                                            core.systemProxyEnabled();
-                                        const bool resumeTun =
-                                            core.setting("core.tun_enabled",
-                                                         "false") == "true";
-                                        core.startCore(
-                                            store::profilesStore().selectedYaml(),
-                                            false, resumeTun, resumeSysProxy);
-                                        return core.snapshot().state ==
-                                               core::CoreState::Running;
-                                    });
-                                    if (ok) {
-                                        trayCoreRunning = next;
-                                        co_return;
+                                    TrayOperationResult result;
+                                    try {
+                                        result = co_await RunOnTaskThread([next] {
+                                            auto& core = store::coreStore();
+                                            if (!next) {
+                                                const bool ok = core.stopCore();
+                                                return TrayOperationResult{
+                                                    .ok = ok,
+                                                    .error = core.snapshot().lastError};
+                                            }
+                                            const bool resumeSysProxy =
+                                                core.systemProxyEnabled();
+                                            const bool resumeTun =
+                                                core.setting("core.tun_enabled",
+                                                             "false") == "true";
+                                            core.startCore(
+                                                store::profilesStore().selectedYaml(),
+                                                false, resumeTun, resumeSysProxy);
+                                            const auto snapshot = core.snapshot();
+                                            return TrayOperationResult{
+                                                .ok = snapshot.state ==
+                                                      core::CoreState::Running,
+                                                .error = snapshot.lastError};
+                                        });
+                                    } catch (const std::exception& error) {
+                                        result.error = error.what();
                                     }
-                                    const std::string error =
-                                        store::coreStore().snapshot().lastError;
-                                    toast.Show(error.empty()
-                                                   ? (next ? "启动内核失败"
-                                                           : "停止内核失败")
-                                                   : error);
+                                    trayCorePending = false;
+                                    trayPollRevision = trayPollRevision.Get() + 1;
+                                    if (!result.ok) {
+                                        trayCoreMenuRunning = previous;
+                                        toast.Show(
+                                            result.error.empty()
+                                                ? (next ? "启动内核失败" : "停止内核失败")
+                                                : result.error);
+                                    }
                                 });
                             })
-                            .Checked(trayCoreRunning.Get()));
-                    menuEntries.push_back(
-                        huxerui::MenuItem(app::images::system_proxy_menu,
-                                          "系统代理", [tasks, traySysProxy] {
-                            tasks.Launch([=]() -> huxerui::Task<void> {
-                                const bool next = !traySysProxy.Get();
-                                const bool ok = co_await RunOnTaskThread([next] {
-                                    return store::coreStore().applySystemProxy(next);
-                                });
-                                if (ok) traySysProxy = next;
-                            });
-                        }).IconTint(iconTint).Checked(traySysProxy.Get()));
+                            .Checked(trayCoreMenuRunning.Get())
+                            .Enabled(!trayCorePending.Get()));
                     menuEntries.push_back(
                         huxerui::MenuItem(
-                            app::images::tun_menu, "TUN 模式",
-                            [tasks, trayTun, window, dialog, clipboard, toast,
-                             textColor, hintColor] {
+                            "系统代理", [tasks, traySysProxy,
+                                         traySysProxyActive, traySysProxyPending,
+                                         trayCoreRunning, trayPollRevision,
+                                         toast] {
+                                if (traySysProxyPending.Get()) return;
+                                const bool previous = traySysProxy.Get();
+                                const bool previousActive =
+                                    traySysProxyActive.Get();
+                                const bool next = !previous;
+                                traySysProxyPending = true;
+                                traySysProxy = next;
+                                if (trayCoreRunning.Get()) {
+                                    traySysProxyActive = next;
+                                }
+                                trayPollRevision = trayPollRevision.Get() + 1;
                                 tasks.Launch([=]() -> huxerui::Task<void> {
-                                    const bool next = !trayTun.Get();
-                                    if (next) {
-                                        co_await huxerui::Delay(
-                                            std::chrono::duration<double>{0});
-                                        const core::TunGate gate =
-                                            co_await RunOnTaskThread(
-                                                [] { return core::tunGate(); });
-                                        if (gate == core::TunGate::Elevated) co_return;
-                                        if (gate == core::TunGate::Denied) {
-                                            window.Activate();
-                                            ShowTunGuideDialog(
-                                                dialog, clipboard, toast, textColor,
-                                                hintColor);
-                                            co_return;
-                                        }
+                                    TrayOperationResult result;
+                                    try {
+                                        result = co_await RunOnTaskThread([next] {
+                                            auto& core = store::coreStore();
+                                            const bool ok =
+                                                core.applySystemProxy(next);
+                                            return TrayOperationResult{
+                                                .ok = ok,
+                                                .error = core.snapshot().lastError};
+                                        });
+                                    } catch (const std::exception& error) {
+                                        result.error = error.what();
                                     }
-                                    const bool ok = co_await RunOnTaskThread([next] {
-                                        return store::coreStore().applyTun(next);
-                                    });
-                                    if (ok) trayTun = next;
+                                    traySysProxyPending = false;
+                                    trayPollRevision =
+                                        trayPollRevision.Get() + 1;
+                                    if (!result.ok) {
+                                        traySysProxy = previous;
+                                        traySysProxyActive = previousActive;
+                                        toast.Show(result.error.empty()
+                                                       ? "系统代理切换失败"
+                                                       : result.error);
+                                    }
                                 });
-                            }).IconTint(iconTint)
-                            .Checked(trayTun.Get()));
+                            })
+                            .Checked(traySysProxy.Get())
+                            .Enabled(!traySysProxyPending.Get()));
+                    menuEntries.push_back(
+                        huxerui::MenuItem(
+                            "TUN 模式",
+                            [tasks, trayTun, trayTunActive, trayTunPending,
+                             trayCoreRunning, trayPollRevision, window, dialog,
+                             clipboard, toast, textColor, hintColor] {
+                                if (trayTunPending.Get()) return;
+                                const bool previous = trayTun.Get();
+                                const bool previousActive = trayTunActive.Get();
+                                const bool next = !previous;
+                                trayTunPending = true;
+                                trayPollRevision = trayPollRevision.Get() + 1;
+                                tasks.Launch([=]() -> huxerui::Task<void> {
+                                    TrayOperationResult result;
+                                    try {
+                                        if (next) {
+                                            co_await huxerui::Delay(
+                                                std::chrono::duration<double>{0});
+                                            const core::TunGate gate =
+                                                co_await RunOnTaskThread(
+                                                    [] { return core::tunGate(); });
+                                            if (gate == core::TunGate::Elevated) {
+                                                trayTunPending = false;
+                                                trayPollRevision =
+                                                    trayPollRevision.Get() + 1;
+                                                co_return;
+                                            }
+                                            if (gate == core::TunGate::Denied) {
+                                                trayTunPending = false;
+                                                trayPollRevision =
+                                                    trayPollRevision.Get() + 1;
+                                                window.Activate();
+                                                ShowTunGuideDialog(
+                                                    dialog, clipboard, toast,
+                                                    textColor, hintColor);
+                                                co_return;
+                                            }
+                                        }
+                                        trayTun = next;
+                                        if (trayCoreRunning.Get()) {
+                                            trayTunActive = next;
+                                        }
+                                        result = co_await RunOnTaskThread([next] {
+                                            auto& core = store::coreStore();
+                                            const bool ok = core.applyTun(next);
+                                            return TrayOperationResult{
+                                                .ok = ok,
+                                                .error = core.snapshot().lastError};
+                                        });
+                                    } catch (const std::exception& error) {
+                                        result.error = error.what();
+                                    }
+                                    trayTunPending = false;
+                                    trayPollRevision =
+                                        trayPollRevision.Get() + 1;
+                                    if (!result.ok) {
+                                        trayTun = previous;
+                                        trayTunActive = previousActive;
+                                        toast.Show(result.error.empty()
+                                                       ? "TUN 模式切换失败"
+                                                       : result.error);
+                                    }
+                                });
+                            })
+                            .Checked(trayTun.Get())
+                            .Enabled(!trayTunPending.Get()));
                     menuEntries.push_back(huxerui::MenuSection{});
                     menuEntries.push_back(
                         huxerui::MenuItem("退出", [finishExit] { finishExit(); }));
-                    tray.Show(app::images::tray,
+                    huxerui::ImageVariant trayIcon = app::images::tray_default;
+                    if (trayCoreRunning.Get()) {
+                        if (trayTunActive.Get()) {
+                            trayIcon = app::images::tray_tun;
+                        } else if (traySysProxyActive.Get()) {
+                            trayIcon = app::images::tray_system_proxy;
+                        }
+                    }
+                    tray.Show(std::move(trayIcon),
                               huxerui::SystemTrayOptions{
                                   .tooltip = "Clash-Flux",
                                   .menu = std::move(menuEntries)});
                 }
                 return [tray] { tray.Hide(); };
             },
-            trayCoreRunning, traySysProxy, trayTun, trayEnabled);
+            trayCoreRunning, trayCoreMenuRunning, traySysProxy, trayTun,
+            traySysProxyActive, trayTunActive, trayCorePending,
+            traySysProxyPending, trayTunPending, trayEnabled);
     }
 
     // 关闭窗口行为：托盘可用时按设置询问/退出/最小化到托盘。

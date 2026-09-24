@@ -343,6 +343,86 @@ const std::array<AndroidNavEntry, 4> kAndroidNavEntries{
 constexpr std::array<std::size_t, 4> kAndroidNavDestinations{
     pages::kHome, pages::kProxies, pages::kProfiles, pages::kSettings};
 
+struct AndroidNavigationIndicator {
+    class Extension;
+
+    std::size_t selected_index = 0;
+    huxerui::Color fill = huxerui::Color::Transparent();
+
+    bool operator==(const AndroidNavigationIndicator&) const = default;
+};
+
+class AndroidNavigationIndicator::Extension final
+    : public huxerui::NodeExtension {
+public:
+    Extension(huxerui::ViewNode& node, const AndroidNavigationIndicator& spec) {
+        Update(node, spec);
+    }
+
+    void Update(huxerui::ViewNode& node,
+                const AndroidNavigationIndicator& spec) {
+        static_cast<void>(node);
+        geometry_pending_ =
+            geometry_pending_ || !initialized_ ||
+            selected_index_ != spec.selected_index;
+        selected_index_ = spec.selected_index;
+        fill_ = spec.fill;
+        initialized_ = true;
+    }
+
+    FrameResult OnFrame(huxerui::ViewNode& node,
+                        const huxerui::FrameInfo& frame) override {
+        static_cast<void>(node);
+        const huxerui::MotionAdvanceResult result = offset_.Advance(frame);
+        if (result.changed) {
+            InvalidatePaint(PaintInvalidation::Content);
+        }
+        return FrameResult{
+            .needs_frame = geometry_pending_ || result.needs_frame,
+            .wake_after = result.wake_after};
+    }
+
+    PaintInvalidation PrepareGeometry(
+        huxerui::ViewNode& node, huxerui::TextMeasurer&) override {
+        if (selected_index_ >= node.ChildCount()) {
+            return PaintInvalidation::None;
+        }
+        const huxerui::ViewNode& selected = node.ChildAt(selected_index_);
+        const float target = selected.LayoutOffset().x +
+                             (selected.LayoutSize().width - kIndicatorWidth) *
+                                 0.5F;
+        geometry_pending_ = false;
+        if (!geometry_initialized_) {
+            geometry_initialized_ = true;
+            offset_.Set(target);
+            return PaintInvalidation::Content;
+        }
+        if (offset_.Target() == target) {
+            return PaintInvalidation::None;
+        }
+        offset_.AnimateTo(
+            target, huxerui::TweenSpec{0.24, huxerui::Easing::EaseOut});
+        return PaintInvalidation::Content;
+    }
+
+    void PaintBehindContent(const huxerui::ViewNode& node,
+                            huxerui::PaintContext& context) const override {
+        if (!geometry_initialized_ || fill_.alpha <= 0.0F) return;
+        context.DrawRect(
+            huxerui::Rect{offset_.Value(), 4.0F, kIndicatorWidth, 56.0F},
+            fill_, 30.0F);
+    }
+
+private:
+    static constexpr float kIndicatorWidth = 88.0F;
+    std::size_t selected_index_ = 0;
+    huxerui::Color fill_ = huxerui::Color::Transparent();
+    huxerui::MotionController offset_;
+    bool initialized_ = false;
+    bool geometry_initialized_ = false;
+    bool geometry_pending_ = false;
+};
+
 // 桌面一级导航始终使用无底板的紧凑图标栏；文字保留为语义名称。
 [[huxerui::composable]] huxerui::View DesktopNavigationSurface(
     huxerui::State<std::size_t> navPage) {
@@ -386,8 +466,8 @@ constexpr std::array<std::size_t, 4> kAndroidNavDestinations{
         const huxerui::Color content =
             isSelected ? theme.colors.on_primary_container
                        : theme.colors.on_surface_variant;
-        // 整块胶囊（图标 + 文字）随选中态显隐，文字与图标同色，作为一个整体
-        // 被选中；未选中时胶囊退化为透明。
+        // 整块胶囊（图标 + 文字）由 AndroidNavigationIndicator 绘制并滑动；
+        // 内容色随选中态即时切换。
         huxerui::View pill = huxerui::Column {
             huxerui::Image(isSelected ? entry.icon_selected : entry.icon)
                 .Tint(content)
@@ -397,8 +477,7 @@ constexpr std::array<std::size_t, 4> kAndroidNavDestinations{
         }.With(huxerui::Frame{.height = 56.0F, .min_width = 88.0F},
                huxerui::Spacing(2.0F),
                huxerui::Padding(huxerui::EdgeInsets::Symmetric(16.0F, 0.0F)),
-               huxerui::Background(isSelected ? theme.colors.primary_container
-                                              : huxerui::Color::Transparent()),
+               huxerui::Background(huxerui::Color::Transparent()),
                huxerui::CornerRadius(30.0F),
                huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
@@ -434,7 +513,9 @@ constexpr std::array<std::size_t, 4> kAndroidNavDestinations{
                   // 用 Padding 表达）。
                   huxerui::Padding(
                       huxerui::EdgeInsets::Symmetric(14.0F, 0.0F)),
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
+                  AndroidNavigationIndicator{selected,
+                                             theme.colors.primary_container}),
     }.With(huxerui::SafeAreaPadding{.top = false},
            systemBars,
            huxerui::Semantics{.role = huxerui::SemanticRole::Navigation},

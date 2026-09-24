@@ -26,6 +26,169 @@ const std::vector<std::string> kModes{"rule", "global", "direct"};
 const std::vector<huxerui::StringVariant> kModeNames{"规则", "全局", "直连"};
 const std::vector<huxerui::StringVariant> kThemeNames{"跟随系统", "深色", "浅色"};
 
+std::size_t ModeIndex(const std::string& mode) {
+    for (std::size_t i = 0; i < kModes.size(); ++i) {
+        if (mode == kModes[i]) return i;
+    }
+    return 0;
+}
+
+#if defined(__ANDROID__)
+
+struct SettingsModeIndicator {
+    class Extension;
+
+    std::size_t selected_index = 0;
+    huxerui::Color fill = huxerui::Color::Transparent();
+
+    bool operator==(const SettingsModeIndicator&) const = default;
+};
+
+class SettingsModeIndicator::Extension final : public huxerui::NodeExtension {
+public:
+    Extension(huxerui::ViewNode& node, const SettingsModeIndicator& spec) {
+        Update(node, spec);
+    }
+
+    void Update(huxerui::ViewNode& node, const SettingsModeIndicator& spec) {
+        static_cast<void>(node);
+        geometry_pending_ =
+            geometry_pending_ || !initialized_ ||
+            selected_index_ != spec.selected_index;
+        selected_index_ = spec.selected_index;
+        fill_ = spec.fill;
+        initialized_ = true;
+    }
+
+    FrameResult OnFrame(huxerui::ViewNode& node,
+                        const huxerui::FrameInfo& frame) override {
+        static_cast<void>(node);
+        const huxerui::MotionAdvanceResult result = offset_.Advance(frame);
+        if (result.changed) InvalidatePaint(PaintInvalidation::Content);
+        return FrameResult{
+            .needs_frame = geometry_pending_ || result.needs_frame,
+            .wake_after = result.wake_after};
+    }
+
+    PaintInvalidation PrepareGeometry(
+        huxerui::ViewNode& node, huxerui::TextMeasurer&) override {
+        if (selected_index_ >= node.ChildCount()) {
+            return PaintInvalidation::None;
+        }
+        const float target = node.ChildAt(selected_index_).LayoutOffset().x;
+        const float width = node.ChildAt(selected_index_).LayoutSize().width;
+        geometry_pending_ = false;
+        if (!geometry_initialized_) {
+            geometry_initialized_ = true;
+            width_ = width;
+            offset_.Set(target);
+            return PaintInvalidation::Content;
+        }
+        bool changed = false;
+        if (width_ != width) {
+            width_ = width;
+            changed = true;
+        }
+        if (offset_.Target() != target) {
+            offset_.AnimateTo(
+                target, huxerui::TweenSpec{0.22, huxerui::Easing::EaseOut});
+            changed = true;
+        }
+        return changed ? PaintInvalidation::Content : PaintInvalidation::None;
+    }
+
+    void PaintBehindContent(const huxerui::ViewNode& node,
+                            huxerui::PaintContext& context) const override {
+        if (!geometry_initialized_ || width_ <= 0.0F || fill_.alpha <= 0.0F) {
+            return;
+        }
+        context.DrawRect(
+            huxerui::Rect{offset_.Value(), 0.0F, width_, node.Bounds().height},
+            fill_, 8.0F);
+    }
+
+private:
+    std::size_t selected_index_ = 0;
+    huxerui::Color fill_ = huxerui::Color::Transparent();
+    huxerui::MotionController offset_;
+    float width_ = 0.0F;
+    bool initialized_ = false;
+    bool geometry_initialized_ = false;
+    bool geometry_pending_ = false;
+};
+
+[[huxerui::composable]] huxerui::View AndroidOutboundModeSelector(
+    huxerui::State<std::size_t> selected,
+    huxerui::State<bool> busy,
+    std::function<void(std::size_t)> onChanged) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const std::size_t active = selected.Get();
+    huxerui::Color indicator = theme.colors.primary_container;
+    huxerui::Color hover = theme.colors.on_surface;
+    hover.alpha = 0.08F;
+    huxerui::Color press = theme.colors.on_surface;
+    press.alpha = 0.14F;
+    const huxerui::Indication indication{
+        .hover = huxerui::IndicationLayer{
+            .fill = huxerui::VisualFill{huxerui::Brush{hover}}},
+        .press = huxerui::IndicationLayer{
+            .fill = huxerui::VisualFill{huxerui::Brush{press}}},
+    };
+
+    std::vector<huxerui::View> entries;
+    entries.reserve(kModeNames.size());
+    for (std::size_t i = 0; i < kModeNames.size(); ++i) {
+        const bool isSelected = i == active;
+        const huxerui::Color content =
+            isSelected ? theme.colors.on_primary_container
+                       : theme.colors.on_surface_variant;
+        entries.push_back(
+            huxerui::Row {
+                huxerui::Text(kModeNames[i]).Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kBody)
+                        .WithWeight(isSelected ? huxerui::FontWeight::SemiBold
+                                               : huxerui::FontWeight::Regular),
+                    content}),
+            }
+                .With(huxerui::Grow(1.0F),
+                      huxerui::Frame{.height = 38.0F},
+                      huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
+                      huxerui::CornerRadius(8.0F), indication,
+                      huxerui::Semantics{
+                          .role = huxerui::SemanticRole::Tab,
+                          .label = kModeNames[i],
+                          .selected = isSelected},
+                      huxerui::Focusable(true),
+                      huxerui::Enabled(!busy.Get()))
+                .OnClick([busy, onChanged, i] {
+                    if (!busy.Get()) onChanged(i);
+                })
+                .Key("settings-outbound-" + std::to_string(i)));
+    }
+
+    return huxerui::Row(std::move(entries))
+        .With(huxerui::Background(theme.colors.surface_container_high),
+              huxerui::CornerRadius(10.0F), huxerui::ClipChildren(),
+              SettingsModeIndicator{active, indicator});
+}
+
+#endif
+
+#if defined(__ANDROID__)
+#define CLASHFLUX_OUTBOUND_MODE_SELECTOR AndroidOutboundModeSelector
+#else
+[[huxerui::composable]] huxerui::View DesktopOutboundModeSelector(
+    huxerui::State<std::size_t> selected,
+    huxerui::State<bool> busy,
+    std::function<void(std::size_t)> onChanged) {
+    static_cast<void>(busy);
+    return huxerui::SegmentedButton(kModeNames, selected.Get())
+        .OnChanged(std::move(onChanged));
+}
+#define CLASHFLUX_OUTBOUND_MODE_SELECTOR DesktopOutboundModeSelector
+#endif
+
 // 宏只选择模块级平台函数，不把平台能力拆成控件级过滤条件。
 #if defined(__ANDROID__)
 #define CLASHFLUX_GENERAL_PLATFORM_SECTION AndroidGeneralSettings
@@ -114,13 +277,16 @@ const std::string kAboutText = std::format(
     auto ipv6Enabled = huxerui::UseState(
         store::coreStore().setting("core.ipv6_enabled", "false") == "true");
     auto busy = huxerui::UseState(false);
+    auto modeSelection = huxerui::UseState(
+        ModeIndex(store::coreStore().snapshot().mode));
 
     huxerui::Lifecycle(
-        [tasks, snap, portValue, allowLan, ipv6Enabled] {
+        [tasks, snap, portValue, allowLan, ipv6Enabled, busy, modeSelection] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{1.0}, [=] {
                     const auto current = store::coreStore().snapshot();
                     snap = current;
+                    if (!busy.Get()) modeSelection = ModeIndex(current.mode);
                     allowLan = store::coreStore().setting(
                                    "core.allow_lan", "false") == "true";
                     ipv6Enabled = store::coreStore().setting(
@@ -182,11 +348,32 @@ const std::string kAboutText = std::format(
         });
     };
 
-    const store::CoreSnapshot s = snap.Get();
-    std::size_t modeIndex = 0;
-    for (std::size_t i = 0; i < kModes.size(); ++i) {
-        if (s.mode == kModes[i]) modeIndex = i;
-    }
+    const auto applyOutboundMode = [tasks, toast, busy, modeSelection](
+                                       std::size_t index) {
+        if (busy.Get() || index >= kModes.size()) return;
+        const std::size_t previous = modeSelection.Get();
+        if (index == previous) return;
+        modeSelection = index;
+        busy = true;
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            bool ok = false;
+            std::string error;
+            try {
+                ok = co_await RunOnTaskThread(
+                    [index] { return store::coreStore().applyMode(kModes[index]); });
+            } catch (const std::exception& exception) {
+                error = exception.what();
+                stream::logApplication(
+                    "error", std::format("出站模式切换失败：{}", error));
+            }
+            busy = false;
+            if (!ok) {
+                modeSelection = previous;
+                toast.Show(error.empty() ? "出站模式切换失败" : error);
+            }
+        });
+    };
+
     return PageScaffold(
         "设置", huxerui::Row{},
         huxerui::ScrollView(
@@ -209,19 +396,9 @@ const std::string kAboutText = std::format(
                 Card(huxerui::Column {
                     SectionTitle("内核"),
                     SettingRow(
-                        "出站模式", "规则 / 全局 / 直连",
-                        huxerui::SegmentedButton(kModeNames, modeIndex)
-                            .OnChanged([coreAction](std::size_t index) {
-                                coreAction(
-                                    [index] {
-                                        if (!store::coreStore().applyMode(
-                                                kModes[index])) {
-                                            throw std::runtime_error(
-                                                "切换模式失败（内核未运行？）");
-                                        }
-                                    },
-                                    "");
-                            })),
+                        "出站模式", "",
+                        CLASHFLUX_OUTBOUND_MODE_SELECTOR(
+                            modeSelection, busy, applyOutboundMode)),
                     SettingRow(
                         "混合端口", "HTTP/SOCKS 混合入站端口（下次启动生效）",
                         huxerui::Row {
