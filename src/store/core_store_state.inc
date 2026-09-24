@@ -216,6 +216,10 @@
         return setting("proxy.system_enabled", "false") == "true";
 #endif
     }
+    // 当前系统代理是否确实指向本应用。与 systemProxyEnabled() 中保存的
+    // 用户意图不同；托盘状态图标只在内核运行时依据该实际状态着色。
+    // 桌面端可能需要调用系统命令读取代理设置，调用方必须放在任务线程。
+    bool systemProxyActive() { return systemProxyOurs(); }
     bool systemProxySupported() { return sysproxy::supported(); }
 
     // 启动残留清理：上次异常退出可能把系统代理留在指向本应用（此刻已

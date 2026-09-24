@@ -154,8 +154,8 @@ constexpr float kHomeFloatingButtonInset = 72.0F;
 // 卡片在网格里重排 / 改尺寸时的本地共享过渡（短一点：播放期间 scope 内不可交互，
 // 编辑态连续点 +/- 不至于被挡太久）。
 constexpr huxerui::TweenSpec kHomeCardReflowTween{0.18, huxerui::Easing::EaseInOut};
-// 拖动悬停让位：改小改快，指针跨卡片时更跟手。
-constexpr huxerui::TweenSpec kHomeCardHoverTween{0.14, huxerui::Easing::EaseOut};
+// 松手后一次性重排，所有稳定键卡片共同播放共享边界补间。
+constexpr huxerui::TweenSpec kHomeCardDropTween{0.26, huxerui::Easing::EaseOut};
 
 constexpr int kHomeGridMaxSpan = 4;   // 卡片宽高上限（格）
 constexpr float kHomeGridGap = 12.0F; // 格间距，与页面卡片间距一致
@@ -792,7 +792,9 @@ public:
         }
         if (offset_.Target() != target) {
             if (duration_ > 0.0) {
-                offset_.AnimateTo(target, huxerui::TweenSpec{duration_});
+                offset_.AnimateTo(
+                    target, huxerui::TweenSpec{
+                                duration_, huxerui::Easing::EaseOut});
             } else {
                 offset_.Set(target);
             }
@@ -971,7 +973,7 @@ private:
               huxerui::Background(theme.colors.surface_container_high),
               huxerui::CornerRadius(12.0F),
               huxerui::ClipChildren(),
-              HomeSlidingSegments{selected, indicator, 8.0F, 0.14});
+              HomeSlidingSegments{selected, indicator, 8.0F, 0.22});
 }
 
 [[huxerui::composable]] huxerui::View HomeProfileCard(const HomeState& s) {
@@ -1753,9 +1755,7 @@ std::string HomeKernelStatusText(const HomeState& s) {
     // 本帧各卡片的窗口几何：拖动时按指针位置自己算"最近卡片"（不依赖 DropTarget
     // 命中判定，所以拖到卡片缝里、页面边缘也能落到最近的槽位）。
     auto cardBounds = std::make_shared<std::vector<HomeCardBoundsEntry>>();
-    // 拖动开始时的布局：手势被异常中断时回滚（正常松手不回滚——悬停阶段已经把
-    // 布局移到落点，松手即定型）。
-    auto dragOrigin = huxerui::UseState<HomeLayout>(HomeLayout{});
+    // 取消手势不会改布局，排序只在松手时提交。
     // 卡片区域的本地共享过渡：改宽高 / 拖动排序 / 增删卡片时，先捕获已提交的
     // 卡片几何，再匹配新布局做补间，卡片是"滑"到新格子而不是瞬移。
     auto shared = huxerui::UseSharedTransition();
@@ -1833,17 +1833,6 @@ std::string HomeKernelStatusText(const HomeState& s) {
             editing = false;
             toast.Show("首页布局已保存");
         });
-    };
-    // 拖动中的实时重排：直接改布局。
-    //
-    // 这里刻意不走本地共享过渡（shared.Run）：拖动会**连续**触发重排，而共享过渡
-    // 在播放中被连续打断时会捕获到退化几何，把正在移动的卡片当成浮层副本画成一张
-    // 巨大的卡片（并 suppress 掉本体）——就是"拖动时冒出一张巨大化/两张悬浮"的来源。
-    // 单次播放的增删/改宽高仍然用共享过渡（见 addCard/removeCard/resizeCard）。
-    const auto reorderCards = [layout](HomeCardKind source, HomeCardKind target) {
-        const HomeLayout next = HomeLayoutMoved(layout.Get(), source, target);
-        if (next == layout.Get()) return;
-        layout = next;
     };
     // 增删卡片会卸载被点击的节点（卡片/添加按钮随布局变化消失），状态写入让出
     // 一拍再执行；写入本身经 shared.Run，其余卡片的位置变化会补间过去。
@@ -1947,57 +1936,52 @@ std::string HomeKernelStatusText(const HomeState& s) {
                                                    0.35}}
                                      : huxerui::DragGesture{}))
                        .On<huxerui::DragSourceEvents::Started>(
-                            [draggingId, dragOrigin, layout,
-                             id](const huxerui::DragEvent& event) {
+                            [draggingId, id](const huxerui::DragEvent& event) {
                                static_cast<void>(event);
                                draggingId = id;
-                               dragOrigin = layout.Get();
                            })
                        .On<huxerui::DragSourceEvents::Changed>(
-                           [draggingId, dropTarget, cardBounds,
-                            reorderCards](const huxerui::DragEvent& event) {
+                           [draggingId, dropTarget, cardBounds](
+                               const huxerui::DragEvent& event) {
                                const std::string nearest = NearestHomeCard(
                                    *cardBounds, event.window_position,
                                    draggingId.Get());
-                               if (nearest.empty() ||
-                                   nearest == dropTarget.Get()) {
-                                   return;
-                               }
                                dropTarget = nearest;
-                               const auto source = FindHomeCard(draggingId.Get());
-                               const auto target = FindHomeCard(nearest);
+                           })
+                       .On<huxerui::DragSourceEvents::Ended>(
+                           [dropTarget, draggingId, cardBounds, layout, shared,
+                            tasks](const huxerui::DragDropResult& result) {
+                               const std::string sourceId = draggingId.Get();
+                               // 本网格用最近卡片命中而不是 DropTarget，因此
+                               // DragDropResult::dropped 不参与排序判定。
+                               std::string targetId = NearestHomeCard(
+                                   *cardBounds, result.drag.window_position,
+                                   sourceId);
+                               if (targetId.empty()) targetId = dropTarget.Get();
+                               dropTarget = "";
+                               draggingId = "";
+                               const auto source = FindHomeCard(sourceId);
+                               const auto target = FindHomeCard(targetId);
                                if (!source.has_value() || !target.has_value() ||
                                    *source == *target) {
                                    return;
                                }
-                               // 动态排序：还没松手就把被拖卡片移到最近卡片的位置，
-                               // 其余卡片实时让位（瞬时重排，理由见 reorderCards）。
-                               reorderCards(*source, *target);
-                           })
-                       .On<huxerui::DragSourceEvents::Ended>(
-                           [dropTarget, draggingId](
-                               const huxerui::DragDropResult&) {
-                               // 布局在悬停阶段已经定型，松手只是收尾。
-                               dropTarget = "";
-                               draggingId = "";
-                           })
-                       .On<huxerui::DragSourceEvents::Canceled>(
-                           [dropTarget, draggingId, dragOrigin, layout, shared,
-                            tasks](const huxerui::DragEvent&) {
-                               dropTarget = "";
-                               draggingId = "";
-                               const HomeLayout origin = dragOrigin.Get();
-                               // 手势被异常中断（不是正常松手）：回滚到拖动前，
-                               // 让出一拍避免在事件派发中搬动节点。
-                               tasks.Launch([layout, shared, origin]()
+                               tasks.Launch([layout, shared, source = *source,
+                                             target = *target]()
                                                 -> huxerui::Task<void> {
                                    co_await huxerui::Delay(
                                        std::chrono::duration<double>{0});
-                                   shared.Run(kHomeCardHoverTween,
-                                              [layout, origin] {
-                                                  layout = origin;
-                                              });
+                                   shared.Run(kHomeCardDropTween,
+                                              [layout, source, target] {
+                                       layout = HomeLayoutMoved(
+                                           layout.Get(), source, target);
+                                   });
                                });
+                           })
+                       .On<huxerui::DragSourceEvents::Canceled>(
+                           [dropTarget, draggingId](const huxerui::DragEvent&) {
+                               dropTarget = "";
+                               draggingId = "";
                            });
         }
         cards.push_back(std::move(slot)
