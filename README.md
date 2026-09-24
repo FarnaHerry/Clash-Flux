@@ -167,20 +167,22 @@ GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议�
 | build-macos-arm64 | macos-15 + brew LLVM | 实验性 |
 | build-macos-x86_64 | macos-13 + brew LLVM | 实验性 |
 | build-android | HuxerUI CLI 打 APK（GUI/native shell + sing-box libbox） | 实验性 |
-| build-ios-huxerui-simulator | macOS + Xcode iOS Simulator，构建 HuxerUI 示例 | 诊断性，不阻塞发布 |
+| build-ios-clash-flux-simulator-core | macOS + iOS Simulator SDK，编译 Clash-Flux app core | 诊断性，不阻塞发布 |
 
-HuxerUI 本身包含 iOS Xcode 示例工程，CI 会用固定 revision 编译该示例确认
-iOS Simulator 支持。Clash-Flux 尚无 `platform/ios` 应用壳或 Network Extension
-代理接入；此 job 不产 IPA、不上传 Release 资产，也不作为发布门禁。相关应用和
-sing-box iOS 集成列为后续 TODO。
+CI 使用固定 revision 的 HuxerUI iOS 平台源码，并从 Clash-Flux 自己的 CMake
+项目编译 `clash-flux_huxerui_ios_core`（arm64 iOS Simulator）。此诊断 job 验证
+Clash-Flux C++ 源码和 HuxerUI 静态平台库能够为模拟器编译；它不生成 `.app`/IPA，
+也不上传 Release 资产或作为发布门禁。iOS Network Extension、sing-box 移动端
+接入和完整应用壳仍列为后续 TODO；当前编译配置也不包含 curl TLS。
 
 Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用菜单图标
 （.desktop + hicolor 图标）；应用本体自包含安装于 `/opt/clash-flux`。
 
 覆盖面原则：sing-box 内核发布什么桌面平台/arch，就构建什么目标（内核资产
 SHA256 钉在 `cmake/singbox_bundle.cmake`，configure 期自动下载）。桌面 job
-统一走 HuxerUI 源码通道（钉 commit clone 上游）。Linux、Windows、macOS 和 Android
-源码构建会在检出后应用 `cmake/patches/huxerui-drag-preview-follows-pointer.patch`，
+统一走 HuxerUI 源码通道（钉 commit clone 上游）。Linux、Windows、macOS、Android
+和 iOS Simulator 源码构建会在检出后应用
+`cmake/patches/huxerui-drag-preview-follows-pointer.patch`，
 让首页卡片拖动预览持续跟随抓取点；升级 HuxerUI 固定版本时需验证补丁仍可应用。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe

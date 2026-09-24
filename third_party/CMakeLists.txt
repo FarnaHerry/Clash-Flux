@@ -8,17 +8,17 @@
 # 产物 target：
 #   HuxerUI::huxerui  HuxerUI 0.3.0 SDK（shared；见文件尾 find_package）
 #   ixwebsocket   IXWebSocket 12.0.1（client-only，无 TLS/无 zlib）
-#   CURL::libcurl curl 8.22.0（OpenSSL 后端，静态库，不编 curl.exe）
+#   CURL::libcurl curl 8.22.0（桌面 OpenSSL 后端；Android/iOS 无 TLS，静态库）
 #   SQLiteCpp     SQLiteCpp 3.3.3（内置 sqlite3 amalgamation）
 #   clashflux_json nlohmann::json 3.12.0（single header）+ `import nlohmann.json`
 #   clashflux_qrcode Nayuki QR-Code-generator 1.8.0（订阅分享二维码；源码直提）
 #
 # OpenSSL 在顶层 CMakeLists 解析（imported target 需要全局可见），
-# 本文件假定 find_package(OpenSSL) 已成功。
+# 桌面平台在顶层解析 OpenSSL；Android/iOS 显式使用无 TLS 的 curl 构建。
 include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/clashflux_vendor.cmake")
 
-if(NOT OpenSSL_FOUND AND NOT ANDROID)
-    # Android 走 curl 无 TLS 路径（见上面的 CURL_USE_OPENSSL 分支），
+if(NOT OpenSSL_FOUND AND NOT ANDROID AND NOT IOS)
+    # Android/iOS 走 curl 无 TLS 路径（见上面的 CURL_USE_OPENSSL 分支），
     # 顶层不解析 OpenSSL。
     message(FATAL_ERROR "third_party：顶层应已完成 OpenSSL 解析")
 endif()
@@ -71,9 +71,9 @@ set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
 set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-if (ANDROID)
-    # NDK 没有 OpenSSL：Android 上 curl 以无 TLS 构建（REST 走
-    # 127.0.0.1 http；订阅 https 下载暂不可用，内核接入是后续里程碑）。
+if (ANDROID OR IOS)
+    # Android/iOS 构建没有 OpenSSL 依赖：curl 以无 TLS 构建。Android REST
+    # 走 127.0.0.1 http；iOS 目前只编译 Simulator app core，不作为可发布应用。
     set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
     set(CURL_ENABLE_SSL OFF CACHE BOOL "" FORCE)
 else ()

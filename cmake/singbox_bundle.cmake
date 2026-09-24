@@ -26,10 +26,14 @@ function(clashflux_bundle_singbox target)
         return()
     endif ()
 
-    if (CMAKE_SYSTEM_NAME STREQUAL "Android")
-        # Android uses sing-box libbox from Gradle; the desktop binary is not
-        # downloaded while CMake configures each Android ABI.
-        message(STATUS "clash-flux: Android sing-box libbox is supplied by Gradle")
+    if (CMAKE_SYSTEM_NAME STREQUAL "Android" OR IOS)
+        # Android uses sing-box libbox from Gradle. The iOS Simulator core is a
+        # static compile target and cannot bundle or launch a desktop child process.
+        if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+            message(STATUS "clash-flux: Android sing-box libbox is supplied by Gradle")
+        else ()
+            message(STATUS "clash-flux: iOS Simulator app core does not bundle a sing-box process")
+        endif ()
         return()
     endif ()
 

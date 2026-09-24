@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.2.11 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.2.12 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # HUXERUI_LIBRARY_GRAPH_ONLY：CLI 扫描 huxerui 库依赖图时的特殊配置——
 # 不启用语言、不构建，huxerui_add_app 只写出库图 JSON 即返回（见 SDK
@@ -135,9 +135,14 @@ endif ()
 # 源码模式
 if (CLASHFLUX_HUXERUI_SOURCE_DIR)
     set(CLASHFLUX_HUXERUI_FROM_SOURCE ON)
-    # 上游顶层作为子项目时 tests/examples/CLI 默认 OFF；static 切片必须关掉——
-    # _huxerui_select_framework_target 偏好 static，留着会让 app 链到静态库。
-    set(HUXERUI_BUILD_STATIC OFF)
+    # 桌面源码模式只用 shared HuxerUI，避免应用误链静态切片；iOS 只支持
+    # static，Clash-Flux CI 用它编译真正的 iOS Simulator app core。
+    if (IOS)
+        set(HUXERUI_BUILD_SHARED OFF)
+        set(HUXERUI_BUILD_STATIC ON)
+    else ()
+        set(HUXERUI_BUILD_STATIC OFF)
+    endif ()
     # 上游预置宿主工具可能落后于源码（linux 预置 hrc 旧 → 新运行时解旧资源包直接
     # 抛 "unknown path operation"）。本地若有用当前源码编出的工具
     # （third_party/huxerui-tools/<platform>/<arch>/{hcg,hrc}），优先使用；
@@ -202,10 +207,10 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # ---- OpenSSL 解析（必须在 add_subdirectory(third_party) 前：imported target
     # 要对 curl 等子项目全局可见）----------------------------------------
     # 优先系统 OpenSSL；系统没有时，linux x86_64 使用 vendor 的静态 3.5.1。
-    # Android：NDK 无 OpenSSL，curl 以无 TLS 构建（见 third_party/CMakeLists），
-    # 目标链接跳过 OpenSSL。
-    if (ANDROID)
-        message(STATUS "clash-flux: Android 无 OpenSSL，curl 以无 TLS 构建")
+    # Android/iOS 的交叉工具链没有仓库支持的 OpenSSL 包；curl 在这两个
+    # 平台以无 TLS 方式构建（见 third_party/CMakeLists），目标链接跳过 OpenSSL。
+    if (ANDROID OR IOS)
+        message(STATUS "clash-flux: Android/iOS 构建不使用 OpenSSL，curl 以无 TLS 构建")
     else ()
         find_package(OpenSSL QUIET)
         if (NOT OpenSSL_FOUND)
@@ -441,10 +446,10 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
             "-framework Foundation"
         )
     endif ()
-    # Android：NDK 无 OpenSSL（curl 无 TLS 构建），链接跳过 OpenSSL。
-    if (NOT ANDROID)
+    # Android/iOS 的 curl 无 TLS 构建，不链接 OpenSSL。
+    if (NOT ANDROID AND NOT IOS)
         target_link_libraries(clash-flux PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-    else ()
+    elseif (ANDROID)
         target_link_libraries(clash-flux PRIVATE log)
     endif ()
 
@@ -570,7 +575,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
     # 资源构建生成）放 <exe>.resources。最新运行时除了 resources.bin 索引外，
     # 还会按索引读取同目录下的 .huxv/.png 等实际 payload，必须把整个 package
     # 目录复制到运行目录。
-    if (NOT ANDROID)
+    if (NOT ANDROID AND NOT IOS)
         add_custom_command(TARGET clash-flux POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                     "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:clash-flux>/assets"
@@ -592,10 +597,9 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
     # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
     # 决定 clash-flux 自己的测试。
     option(CLASHFLUX_BUILD_TESTS "Build clash-flux test executables" ON)
-    # Android uses the legacy source path and its NDK libc++ does not provide
-    # the desktop `import std` test target; Android validation is performed by
-    # the Gradle/NDK package build instead.
-    if (CLASHFLUX_BUILD_TESTS AND NOT ANDROID)
+    # Android uses the legacy source path; iOS cross-builds only the Simulator
+    # app core. Neither platform configures the desktop `import std` test targets.
+    if (CLASHFLUX_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
         enable_testing()
         add_executable(test_smoke tests/test_smoke.cpp)
         set_target_properties(test_smoke PROPERTIES CXX_MODULE_STD ON)
