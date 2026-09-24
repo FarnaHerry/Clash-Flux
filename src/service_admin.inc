@@ -38,12 +38,69 @@ bool copyServiceFile(const std::filesystem::path& source,
     const bool sameFile = std::filesystem::equivalent(source, destination, ec);
     ec.clear();
     if (!sameFile) {
+        // The destination may be the executable of this live daemon (or its
+        // running sing-box child). Copying over it directly fails with
+        // ETXTBSY. Stage in the same directory, sync it, then rename over the
+        // old inode; Linux lets existing processes finish on that inode while
+        // systemd starts the replacement after this daemon exits.
+        const std::string pattern =
+            (destination.parent_path() /
+             ("." + destination.filename().string() + ".tmp.XXXXXX"))
+                .string();
+        std::vector<char> temporaryPattern(pattern.begin(), pattern.end());
+        temporaryPattern.push_back('\0');
+        const int temporaryFd = ::mkstemp(temporaryPattern.data());
+        if (temporaryFd < 0) {
+            error = std::format("创建 {} 临时文件失败：{}", label,
+                                ::strerror(errno));
+            return false;
+        }
+        const std::filesystem::path temporary{temporaryPattern.data()};
+        const auto discardTemporary = [&] {
+            ::close(temporaryFd);
+            ::unlink(temporary.c_str());
+        };
+
         std::filesystem::copy_file(
-            source, destination, std::filesystem::copy_options::overwrite_existing, ec);
+            source, temporary, std::filesystem::copy_options::overwrite_existing, ec);
         if (ec) {
+            discardTemporary();
             error = std::format("复制 {} 失败：{}", label, ec.message());
             return false;
         }
+
+        constexpr mode_t executableMode = S_IRUSR | S_IWUSR | S_IXUSR |
+                                          S_IRGRP | S_IXGRP |
+                                          S_IROTH | S_IXOTH;
+        if (::fchmod(temporaryFd, executableMode) != 0) {
+            const int savedErrno = errno;
+            discardTemporary();
+            error = std::format("设置 {} 权限失败：{}", label,
+                                ::strerror(savedErrno));
+            return false;
+        }
+        if (::fsync(temporaryFd) != 0) {
+            const int savedErrno = errno;
+            discardTemporary();
+            error = std::format("写入 {} 临时文件失败：{}", label,
+                                ::strerror(savedErrno));
+            return false;
+        }
+        if (::close(temporaryFd) != 0) {
+            const int savedErrno = errno;
+            ::unlink(temporary.c_str());
+            error = std::format("关闭 {} 临时文件失败：{}", label,
+                                ::strerror(savedErrno));
+            return false;
+        }
+        if (::rename(temporary.c_str(), destination.c_str()) != 0) {
+            const int savedErrno = errno;
+            ::unlink(temporary.c_str());
+            error = std::format("替换 {} 失败：{}", label,
+                                ::strerror(savedErrno));
+            return false;
+        }
+        return true;
     }
 
     ec.clear();
