@@ -27,17 +27,20 @@ bool QrPhotoDecoder::Cancel(huxerui::PlatformRequestId request) const {
     return channel_.Cancel(request);
 }
 
-void InstallQrPhotoDecoder(huxerui::RootContext& root) {
+void InstallQrPhotoDecoder(huxerui::ApplicationContext& context) {
     huxerui::android::JavaPlatformModuleFactory<
         std::shared_ptr<QrPhotoDecoder>> factory;
     factory.class_name = "dev.farna.clashflux.QrPhotoDecoderModule";
     factory.create = [](huxerui::PlatformChannel channel) {
         return std::make_shared<QrPhotoDecoder>(std::move(channel));
     };
-    root.RegisterPlatformModule<std::shared_ptr<QrPhotoDecoder>>(
+    context.RegisterPlatformModule<std::shared_ptr<QrPhotoDecoder>>(
         kQrPhotoDecoderModule, std::move(factory));
-    root.Provide(root.OpenPlatformModule<std::shared_ptr<QrPhotoDecoder>>(
-        kQrPhotoDecoderModule));
+}
+
+std::shared_ptr<QrPhotoDecoder> OpenQrPhotoDecoder() {
+    return huxerui::OpenPlatformModule<std::shared_ptr<QrPhotoDecoder>>(
+        kQrPhotoDecoderModule);
 }
 
 } // namespace clashflux::ui

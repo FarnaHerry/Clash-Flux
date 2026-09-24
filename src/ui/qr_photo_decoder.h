@@ -7,7 +7,7 @@
 #include <string>
 
 #include <huxerui/platform_registry.h>
-#include <huxerui/root.h>
+#include <huxerui/app.h>
 
 namespace clashflux::ui {
 
@@ -24,7 +24,8 @@ private:
     huxerui::PlatformChannel channel_;
 };
 
-void InstallQrPhotoDecoder(huxerui::RootContext& root);
+void InstallQrPhotoDecoder(huxerui::ApplicationContext& context);
+std::shared_ptr<QrPhotoDecoder> OpenQrPhotoDecoder();
 
 } // namespace clashflux::ui
 

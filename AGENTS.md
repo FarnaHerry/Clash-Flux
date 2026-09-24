@@ -26,8 +26,13 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
 
 - 修改前先检查 `git status`，保留用户已有改动，不得擅自 reset、restore 或清理无关文件。
 - 优先使用 Ninja/CMake 的增量构建；UI 修改必须经过 HuxerUI codegen 和目标构建。
-- HuxerUI 源码构建所需的本地修复应维护为 `cmake/patches/` 中的补丁，并接入所有
-  对应平台的源码检出步骤；升级固定版本时先确认补丁仍可应用。
+- HuxerUI 及其依赖源码构建所需的本地修复应维护为 `cmake/patches/` 中的补丁；
+  HuxerUI 补丁接入所有对应平台的源码检出步骤，依赖补丁在 CMake 加入依赖前应用。
+  升级固定版本时先确认补丁仍可应用。
+- 同步 HuxerUI 时先 fetch 上游最新 revision，再逐项审查本地差异和维护补丁；只保留
+  上游尚未修复的差异。每个保留补丁须针对新 revision 通过 `git apply --check`，并接入
+  所有适用平台。上游已合并的修复应删除本地补丁及对应 CI 应用步骤，所有 CI 平台统一
+  使用同一固定 SHA。
 - iOS CI 用固定 HuxerUI revision 和 iOS Simulator SDK 编译 Clash-Flux 的
   `clash-flux_huxerui_ios_core` 静态目标（arm64）。它是非阻塞源码编译检查，不生成
   `.app`/IPA，也不属于 Release 门禁；当前配置不含 curl TLS 或 sing-box 子进程。

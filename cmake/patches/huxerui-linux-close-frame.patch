@@ -1,25 +1,33 @@
 diff --git a/platform/linux/linux_adapter.cpp b/platform/linux/linux_adapter.cpp
-index aaee1e1..7384d59 100644
+index 4564443..ad7f248 100644
 --- a/platform/linux/linux_adapter.cpp
 +++ b/platform/linux/linux_adapter.cpp
-@@ -738,10 +738,19 @@ private:
-
-   void CommitFrame() {
-     frame_source_ = 0;
--    if (runtime_ == nullptr || !frame_state_.BeginCommit()) {
+@@ -749,0 +750 @@ public:
++      RequestFrameAt(Now());
+@@ -752,0 +754,4 @@ public:
++      if (frame_state_.PaintPending()) {
++        frame_state_.EndPaint(drawing_area_ != nullptr && running_);
++        FlushDeferredFrame();
++      }
+@@ -754,0 +760 @@ public:
++      gtk_widget_set_visible(GTK_WIDGET(window_), TRUE);
+@@ -755,0 +762 @@ public:
++      RequestFrameAt(Now());
+@@ -858 +865,5 @@ private:
+-    if (!IsInitialized() || !frame_state_.BeginCommit()) {
 +    // A close request can destroy the GTK window while another GLib frame
-+    // source is already ready in the same main-context iteration.  The
-+    // destroy signal clears drawing_area_, but that ready callback still
-+    // reaches CommitFrame before Run() gets a chance to enter Cleanup().
-+    // Never build or enqueue a frame after the platform surface is gone.
-+    if (runtime_ == nullptr || drawing_area_ == nullptr || !running_ ||
++    // source is already ready in the same main-context iteration. The destroy
++    // signal clears drawing_area_, but that callback can still reach here.
++    if (!IsInitialized() || drawing_area_ == nullptr || !running_ ||
 +        !GTK_IS_WIDGET(drawing_area_) || !frame_state_.BeginCommit()) {
-       return;
-     }
-     const FrameCommit& commit = runtime_->BuildFrame();
+@@ -861,0 +873,3 @@ private:
 +    if (drawing_area_ == nullptr || !running_ || !GTK_IS_WIDGET(drawing_area_)) {
 +      return;
 +    }
-     committed_frame_ = &commit.render_frame;
-     frame_state_.MarkPaintPending();
-     gtk_widget_queue_draw(GTK_WIDGET(drawing_area_));
+@@ -863,2 +877,4 @@ private:
+-    frame_state_.MarkPaintPending();
+-    gtk_widget_queue_draw(GTK_WIDGET(drawing_area_));
++    if (gtk_widget_is_visible(GTK_WIDGET(drawing_area_))) {
++      frame_state_.MarkPaintPending();
++      gtk_widget_queue_draw(GTK_WIDGET(drawing_area_));
++    }
