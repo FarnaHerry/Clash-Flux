@@ -115,7 +115,7 @@ cmake --build build --target clash-flux
   continue-on-error。桌面 job 走 HuxerUI 源码通道（钉 commit clone 到
   `third_party/huxerui/`；上游活跃开发中，本机同步到上游后更新 workflow 的
   HUXERUI_COMMIT，当前 0c5126235d43c2b703166bcc00781b850f2d1c39。逐项审查本地补丁，
-  上游已修复的补丁要移除，保留的补丁必须在新 revision 上通过 `git apply --check`。
+  上游已修复的补丁要移除，保留的补丁必须在新 revision 上通过 `git apply --check --unidiff-zero`。
 - **Windows 自定义安装向导**（`platform/windows/package/`）：`huxerui package
   windows` 产出自含 Burn setup.exe = MSI + 托管安装器 UI（HuxerUI 写的向导，
   `UseInstaller()` 会话驱动：安装目录选择/桌面快捷方式/修复/卸载/进度/回滚）。

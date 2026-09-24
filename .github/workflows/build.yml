@@ -134,11 +134,11 @@ jobs:
           # HuxerUI 0.3.0 can dispatch one already-ready frame source after
           # GTK has destroyed the drawing widget during window close. Keep
           # this app-side patch until the fix lands upstream.
-          git -C third_party/huxerui apply \
+          git -C third_party/huxerui apply --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-linux-close-frame.patch"
           # Drag previews must keep their grab point at the pointer instead of
           # inheriting popover viewport clamping and side-flipping behavior.
-          git -C third_party/huxerui apply \
+          git -C third_party/huxerui apply --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
 
       - name: Install dependencies
@@ -273,7 +273,7 @@ jobs:
           set -euo pipefail
           git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
           git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
-          git -C third_party/huxerui apply \
+          git -C third_party/huxerui apply --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
 
       - name: Ensure CMake >= 4.4 and Ninja
@@ -446,10 +446,10 @@ jobs:
           # P0960 聚合函数式转型 → 花括号初始化（clang ObjC++ 不支持 P0960；
           # 上游 window.h 在钉住的 commit 仍未修）。补丁内容与 apitab 的
           # The shared patch is also applied by the iOS Simulator core job below.
-          git -C third_party/huxerui apply \
+          git -C third_party/huxerui apply --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-window-p0960.patch"
           # Keep drag feedback anchored to the grab point on every platform edge.
-          git -C third_party/huxerui apply \
+          git -C third_party/huxerui apply --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
 
       - name: Install dependencies (brew llvm + openssl)
@@ -539,9 +539,9 @@ jobs:
           set -euo pipefail
           git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
           git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
-          git -C third_party/huxerui apply \
+          git -C third_party/huxerui apply --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-window-p0960.patch"
-          git -C third_party/huxerui apply \
+          git -C third_party/huxerui apply --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
 
       - name: Install CMake, Ninja, and LLVM
@@ -683,7 +683,7 @@ jobs:
           test -x huxerui-sdk/bin/huxerui
           git clone --filter=blob:none "$HUXERUI_REPO" huxerui-source
           git -C huxerui-source checkout "$HUXERUI_COMMIT"
-          git -C huxerui-source apply \
+          git -C huxerui-source apply --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
           test -f huxerui-source/CMakeLists.txt
           test -f huxerui-source/platform/android/huxerui/build.gradle

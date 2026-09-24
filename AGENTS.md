@@ -30,7 +30,7 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   HuxerUI 补丁接入所有对应平台的源码检出步骤，依赖补丁在 CMake 加入依赖前应用。
   升级固定版本时先确认补丁仍可应用。
 - 同步 HuxerUI 时先 fetch 上游最新 revision，再逐项审查本地差异和维护补丁；只保留
-  上游尚未修复的差异。每个保留补丁须针对新 revision 通过 `git apply --check`，并接入
+  上游尚未修复的差异。每个保留补丁须针对新 revision 通过 `git apply --check --unidiff-zero`，并接入
   所有适用平台。上游已合并的修复应删除本地补丁及对应 CI 应用步骤，所有 CI 平台统一
   使用同一固定 SHA。
 - iOS CI 用固定 HuxerUI revision 和 iOS Simulator SDK 编译 Clash-Flux 的
