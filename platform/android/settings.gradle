@@ -12,13 +12,25 @@ def huxeruiHomeValue = providers.environmentVariable("HUXERUI_HOME").orNull
 if (huxeruiHomeValue == null || huxeruiHomeValue.isBlank()) {
     throw new GradleException("HUXERUI_HOME is required")
 }
-def huxeruiHome = file(huxeruiHomeValue)
+def configuredHuxeruiHome = file(huxeruiHomeValue)
+def bundledHuxeruiHome = file("../../third_party/huxerui")
+def isHuxeruiSource = { File home ->
+    new File(home, "CMakeLists.txt").isFile()
+            && new File(home, "include/huxerui/huxerui.h").isFile()
+}
+// Keep the Android Java adapter on the same HuxerUI revision as the native
+// adapter selected by the app's CMakeLists.txt. CMake prefers an explicit
+// source checkout, then third_party/huxerui, before falling back to the SDK.
+def huxeruiHome = isHuxeruiSource(configuredHuxeruiHome)
+        ? configuredHuxeruiHome
+        : (isHuxeruiSource(bundledHuxeruiHome) ? bundledHuxeruiHome : configuredHuxeruiHome)
 def huxeruiLibrary = new File(huxeruiHome, "platform/android/huxerui")
 def huxeruiArchive = new File(huxeruiHome, "share/huxerui/platform/android/HuxerUI.aar")
 def huxeruiUsesSource = huxeruiLibrary.isDirectory()
 if (!huxeruiUsesSource && !huxeruiArchive.isFile()) {
     throw new GradleException("HuxerUI Android package does not exist under ${huxeruiHome}")
 }
+println("HuxerUI Android Java package: ${huxeruiUsesSource ? huxeruiLibrary : huxeruiArchive}")
 
 def huxeruiLibraryGraphFile = file("../../.huxerui/generated/libraries.json")
 if (!huxeruiLibraryGraphFile.isFile()) {

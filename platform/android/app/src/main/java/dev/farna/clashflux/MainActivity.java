@@ -2,15 +2,21 @@ package dev.farna.clashflux;
 
 import android.Manifest;
 import android.content.ActivityNotFoundException;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.net.Uri;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
 import android.os.PowerManager;
+import android.os.RemoteException;
 import android.provider.Settings;
 import android.util.Log;
 
@@ -20,6 +26,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 
 import org.huxerui.HuxerUIActivity;
 
@@ -36,6 +43,11 @@ public final class MainActivity extends HuxerUIActivity {
 
     private static volatile MainActivity current;
     private static volatile Context applicationContext;
+    private static volatile IClashRuntime runtimeControl;
+    private static volatile boolean runtimeProcess;
+    private static volatile int runtimeCoreState;
+    private static volatile int runtimeVpnState;
+    private static volatile String runtimeMessage = "";
 
     private static native void nativeInit(String filesDirectory, String nativeLibraryDirectory);
     private static native void nativeSetSystemDark(boolean dark);
@@ -44,6 +56,31 @@ public final class MainActivity extends HuxerUIActivity {
     private static native void nativeVpnStartFailed(String message);
     private static native void nativeAppLog(int level, String message);
     private static native void nativeCoreLog(int level, String message);
+    private static native void nativeUpdateRuntimeState(
+            int coreState, int vpnState, long uploadRate, long downloadRate,
+            long uploadTotal, long downloadTotal, int connections, String message);
+    private static native void nativeClearTunPreference();
+
+    private final Handler runtimeHandler = new Handler(Looper.getMainLooper());
+    private boolean runtimeServiceBound;
+    private static volatile long runtimeLogCursor;
+    private final Runnable runtimePoll = new Runnable() {
+        @Override public void run() {
+            pollRuntimeProcess();
+            if (runtimeServiceBound) runtimeHandler.postDelayed(this, 1000);
+        }
+    };
+    private final ServiceConnection runtimeConnection = new ServiceConnection() {
+        @Override public void onServiceConnected(ComponentName name, IBinder binder) {
+            runtimeControl = IClashRuntime.Stub.asInterface(binder);
+            runtimeHandler.removeCallbacks(runtimePoll);
+            runtimeHandler.post(runtimePoll);
+        }
+
+        @Override public void onServiceDisconnected(ComponentName name) {
+            runtimeControl = null;
+        }
+    };
 
     private static void installCrashLogger() {
         final Thread.UncaughtExceptionHandler delegate =
@@ -63,6 +100,7 @@ public final class MainActivity extends HuxerUIActivity {
     static void appLog(String message, boolean error) {
         if (message == null || message.isEmpty()) return;
         Log.println(error ? Log.ERROR : Log.INFO, TAG, message);
+        if (runtimeProcess) RuntimeLogStore.append("app", error ? 3 : 1, message);
         try {
             nativeAppLog(error ? 3 : 1, message);
         } catch (RuntimeException | LinkageError ignored) {
@@ -72,6 +110,7 @@ public final class MainActivity extends HuxerUIActivity {
 
     static void coreLog(int level, String message) {
         if (message == null || message.isEmpty()) return;
+        if (runtimeProcess) RuntimeLogStore.append("core", level, message);
         try {
             nativeCoreLog(level, message);
         } catch (RuntimeException | LinkageError ignored) {
@@ -102,12 +141,66 @@ public final class MainActivity extends HuxerUIActivity {
         // configChanges), so this per-onCreate report is always fresh for the
         // "follow system" theme option.
         nativeStartCore();
-        // The core resident service is a real foreground service, not only a
-        // label in the settings page. Android 13+ asks for notification access
-        // before the service is started so the keep-alive state is observable.
-        requestNotificationAction(PENDING_CORE_SERVICE);
-        Log.i(TAG, "Android shell initialized; sing-box core requested without VPN/TUN");
-        appLog("Android 外壳已初始化，内核已请求启动，TUN 保持关闭", false);
+        requestNotificationPermission();
+        Log.i(TAG, "Android UI process initialized; sing-box runtime is isolated in :background");
+        appLog("Android 界面进程已初始化，sing-box 运行时由独立后台进程托管", false);
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        Intent intent = new Intent(this, RuntimeControlService.class);
+        runtimeServiceBound = bindService(intent, runtimeConnection, Context.BIND_AUTO_CREATE);
+        if (!runtimeServiceBound) appLog("无法连接 sing-box 后台控制服务", true);
+    }
+
+    @Override
+    protected void onStop() {
+        runtimeHandler.removeCallbacks(runtimePoll);
+        if (runtimeServiceBound) {
+            unbindService(runtimeConnection);
+            runtimeServiceBound = false;
+        }
+        runtimeControl = null;
+        super.onStop();
+    }
+
+    private void pollRuntimeProcess() {
+        IClashRuntime service = runtimeControl;
+        if (service == null) return;
+        try {
+            Bundle snapshot = service.snapshot();
+            runtimeCoreState = snapshot.getInt("coreState");
+            runtimeVpnState = snapshot.getInt("vpnState");
+            runtimeMessage = snapshot.getString("message", "");
+            nativeUpdateRuntimeState(runtimeCoreState, runtimeVpnState,
+                    snapshot.getLong("uploadRate"), snapshot.getLong("downloadRate"),
+                    snapshot.getLong("uploadTotal"), snapshot.getLong("downloadTotal"),
+                    snapshot.getInt("connections"), runtimeMessage);
+            if (snapshot.getBoolean("tunResetPending")) {
+                nativeClearTunPreference();
+                service.acknowledgeTunReset();
+            }
+
+            Bundle logs = service.logsAfter(runtimeLogCursor);
+            runtimeLogCursor = logs.getLong("sequence", runtimeLogCursor);
+            ArrayList<String> entries = logs.getStringArrayList("entries");
+            if (entries == null) return;
+            for (String entry : entries) {
+                String[] fields = entry.split("\\|", 4);
+                if (fields.length != 4) continue;
+                int level;
+                try {
+                    level = Integer.parseInt(fields[2]);
+                } catch (NumberFormatException ignored) {
+                    continue;
+                }
+                if ("core".equals(fields[1])) nativeCoreLog(level, fields[3]);
+                else nativeAppLog(level, fields[3]);
+            }
+        } catch (RemoteException | RuntimeException error) {
+            Log.w(TAG, "Unable to read sing-box runtime state", error);
+        }
     }
 
     private static boolean isSystemDarkMode() {
@@ -153,10 +246,32 @@ public final class MainActivity extends HuxerUIActivity {
     /** Initializes the native store when no Activity UI ran (boot restore). */
     public static void bootstrapNative(Context context) {
         applicationContext = context.getApplicationContext();
+        runtimeProcess = isBackgroundRuntimeProcess(context);
         installBundledRuleSets(context);
         nativeInit(context.getFilesDir().getAbsolutePath(),
                 context.getApplicationInfo().nativeLibraryDir);
         reportPreviousNativeCrash(context);
+    }
+
+    private static boolean isBackgroundRuntimeProcess(Context context) {
+        String processName = "";
+        if (Build.VERSION.SDK_INT >= 28) {
+            processName = android.app.Application.getProcessName();
+        } else {
+            int pid = android.os.Process.myPid();
+            android.app.ActivityManager manager =
+                    (android.app.ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+            if (manager != null) {
+                for (android.app.ActivityManager.RunningAppProcessInfo process
+                        : manager.getRunningAppProcesses()) {
+                    if (process.pid == pid) {
+                        processName = process.processName;
+                        break;
+                    }
+                }
+            }
+        }
+        return processName.endsWith(":background");
     }
 
     private static void installBundledRuleSets(Context context) {
@@ -254,11 +369,13 @@ public final class MainActivity extends HuxerUIActivity {
         }
         Runnable stop = () -> {
             appLog("用户请求关闭 Android VPN", false);
-            if (!ClashVpnService.stopCurrent()) {
-                // Covers a service that is between process recreation and
-                // assigning its static instance, and remains idempotent.
-                context.stopService(new Intent(context, ClashVpnService.class));
+            IClashRuntime service = runtimeControl;
+            try {
+                if (service != null && service.stopRuntime()) return;
+            } catch (RemoteException | RuntimeException error) {
+                Log.w(TAG, "Runtime stop IPC failed; queuing a service stop", error);
             }
+            RuntimeControlService.requestStop(context);
         };
         // ClashVpnService.close() disconnects libbox and can wait on native
         // shutdown. Never run it on the Activity main thread; the button is
@@ -328,31 +445,63 @@ public final class MainActivity extends HuxerUIActivity {
     }
 
     public static boolean selectOutbound(String group, String name) {
-        return ClashVpnService.selectOutbound(group, name);
+        IClashRuntime service = runtimeControl;
+        try { return service != null && service.selectOutbound(group, name); }
+        catch (RemoteException | RuntimeException error) {
+            Log.w(TAG, "Unable to select outbound across runtime IPC", error);
+            return false;
+        }
     }
 
     public static boolean urlTest(String group) {
-        return ClashVpnService.urlTest(group);
+        IClashRuntime service = runtimeControl;
+        try { return service != null && service.urlTest(group); }
+        catch (RemoteException | RuntimeException error) {
+            Log.w(TAG, "Unable to start outbound URL test across runtime IPC", error);
+            return false;
+        }
     }
 
     public static boolean setClashMode(String mode) {
-        return ClashVpnService.setClashMode(mode);
+        IClashRuntime service = runtimeControl;
+        try { return service != null && service.setClashMode(mode); }
+        catch (RemoteException | RuntimeException error) {
+            Log.w(TAG, "Unable to set sing-box mode across runtime IPC", error);
+            return false;
+        }
     }
 
     public static String proxyGroups() {
-        return ClashVpnService.proxyGroups();
+        IClashRuntime service = runtimeControl;
+        try { if (service != null) service.refreshProxyGroups(); }
+        catch (RemoteException | RuntimeException error) {
+            Log.w(TAG, "Unable to refresh outbound groups across runtime IPC", error);
+        }
+        return RuntimeSnapshotStore.read(applicationContext, "outbound-groups.json",
+                "{\"proxies\":{}}");
     }
 
     public static String connectionsSnapshot() {
-        return ClashVpnService.connectionsSnapshot();
+        return RuntimeSnapshotStore.read(applicationContext, "connections.json",
+                "{\"uploadTotal\":0,\"downloadTotal\":0,\"connections\":[]}");
     }
 
     public static boolean closeConnection(String id) {
-        return ClashVpnService.closeConnection(id);
+        IClashRuntime service = runtimeControl;
+        try { return service != null && service.closeConnection(id); }
+        catch (RemoteException | RuntimeException error) {
+            Log.w(TAG, "Unable to close connection across runtime IPC", error);
+            return false;
+        }
     }
 
     public static boolean closeAllConnections() {
-        return ClashVpnService.closeAllConnections();
+        IClashRuntime service = runtimeControl;
+        try { return service != null && service.closeAllConnections(); }
+        catch (RemoteException | RuntimeException error) {
+            Log.w(TAG, "Unable to close connections across runtime IPC", error);
+            return false;
+        }
     }
 
     public static boolean isIgnoringBatteryOptimizations() {
@@ -386,7 +535,7 @@ public final class MainActivity extends HuxerUIActivity {
     public static void requestBackgroundKeepAlive() {
         MainActivity activity = current;
         if (activity == null) return;
-        appLog("请求后台保活：通知权限、常驻服务和电池优化豁免", false);
+        appLog("请求后台保活：常驻服务和电池优化豁免", false);
         activity.runOnUiThread(() ->
                 activity.requestNotificationAction(PENDING_CORE_SERVICE | PENDING_BATTERY));
     }
@@ -394,14 +543,15 @@ public final class MainActivity extends HuxerUIActivity {
     private static final int PENDING_CORE_SERVICE = 1;
     private static final int PENDING_VPN = 2;
     private static final int PENDING_BATTERY = 4;
-    private static int pendingNotificationActions = 0;
     private static boolean notificationRequestInFlight = false;
 
     private void requestNotificationAction(int actions) {
-        pendingNotificationActions |= actions;
-        // The sticky FGS notification is part of the keep-alive story: ask
-        // for the (denied-by-default) notification permission first, then
-        // continue with the requested operation once the answer is in.
+        // Notification permission is optional on Android 13+. Never hold a
+        // service or VPN start behind its dialog.
+        drainNotificationActions(actions);
+    }
+
+    private void requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(
                 Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -411,14 +561,10 @@ public final class MainActivity extends HuxerUIActivity {
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},
                         REQUEST_NOTIFICATIONS);
             }
-            return;
         }
-        drainNotificationActions();
     }
 
-    private void drainNotificationActions() {
-        final int actions = pendingNotificationActions;
-        pendingNotificationActions = 0;
+    private void drainNotificationActions(int actions) {
         if ((actions & (PENDING_CORE_SERVICE | PENDING_BATTERY)) != 0) {
             startResidentCoreService();
         }
@@ -431,18 +577,7 @@ public final class MainActivity extends HuxerUIActivity {
     }
 
     private void startResidentCoreService() {
-        try {
-            Intent intent = new Intent(this, CoreService.class);
-            if (Build.VERSION.SDK_INT >= 26) {
-                startForegroundService(intent);
-            } else {
-                startService(intent);
-            }
-            appLog("后台保活前台服务已请求启动", false);
-        } catch (RuntimeException error) {
-            Log.e(TAG, "Unable to start the core keep-alive service", error);
-            appLog("后台保活服务启动失败：" + error.getMessage(), true);
-        }
+        if (!startCoreOnly()) appLog("无法启动 sing-box 常驻服务", true);
     }
 
     private void requestBatteryOptimization() {
@@ -492,7 +627,7 @@ public final class MainActivity extends HuxerUIActivity {
     // ---- VPN（VpnService.prepare 授权 + 前台服务）--------------------------
 
     private void beginVpnStart() {
-        requestNotificationAction(PENDING_CORE_SERVICE | PENDING_VPN);
+        requestNotificationAction(PENDING_VPN);
     }
 
     private void continueVpnStart() {
@@ -545,7 +680,6 @@ public final class MainActivity extends HuxerUIActivity {
                     (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED
                             ? "已允许" : "未允许"),
                     false);
-            drainNotificationActions();
         }
     }
 

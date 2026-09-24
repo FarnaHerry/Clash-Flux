@@ -141,6 +141,43 @@ Java_dev_farna_clashflux_MainActivity_nativeCoreLog(JNIEnv* environment,
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_dev_farna_clashflux_MainActivity_nativeUpdateRuntimeState(
+    JNIEnv* environment, jclass, jint core_state, jint vpn_state,
+    jlong upload_rate, jlong download_rate, jlong upload_total,
+    jlong download_total, jint connections, jstring message) {
+    g_core_state.store(core_state);
+    g_vpn_state.store(vpn_state);
+    std::string text;
+    if (message != nullptr) {
+        if (const char* value = environment->GetStringUTFChars(message, nullptr)) {
+            text = value;
+            environment->ReleaseStringUTFChars(message, value);
+        }
+    }
+    try {
+        auto& core = store::coreStore();
+        core.setAndroidRuntimeState(core_state, text);
+        core.setAndroidRuntimeStats(
+            static_cast<std::int64_t>(upload_rate),
+            static_cast<std::int64_t>(download_rate),
+            static_cast<std::int64_t>(upload_total),
+            static_cast<std::int64_t>(download_total),
+            static_cast<int>(connections));
+    } catch (...) {
+        log_android("Failed to apply the isolated Android runtime snapshot", true);
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_farna_clashflux_MainActivity_nativeClearTunPreference(JNIEnv*, jclass) {
+    try {
+        store::coreStore().setSetting("core.tun_enabled", "false");
+    } catch (...) {
+        log_android("Failed to clear the persisted Android TUN setting", true);
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_MainActivity_nativeStartCore(JNIEnv*, jclass) {
     static std::once_flag started;
     std::call_once(started, [] {
@@ -148,11 +185,15 @@ Java_dev_farna_clashflux_MainActivity_nativeStartCore(JNIEnv*, jclass) {
             try {
                 auto& core = store::coreStore();
                 core.init();
-                // Match desktop startup: launch libbox with the selected
-                // profile and no TUN. The VPN service is promoted later only
-                // when the user explicitly enables the Android tunnel.
-                core.startCore(store::profilesStore().selectedYaml(), false, false);
-                log_android("Android sing-box core started without VPN/TUN");
+                // Restore the persisted Android TUN intent when compiling the
+                // shared runtime file. Otherwise merely reopening the UI can
+                // overwrite a live VPN config with a proxy-only config before
+                // the background service is reclaimed or restarted.
+                const bool tunEnabled = core.tunEnabled();
+                core.startCore(store::profilesStore().selectedYaml(), false, tunEnabled);
+                log_android(tunEnabled
+                    ? "Android sing-box core started with the persisted VPN/TUN mode"
+                    : "Android sing-box core started without VPN/TUN");
 
                 // Keep the process state fresh even when the first HuxerUI
                 // frame is delayed. UI pages independently poll snapshots and
@@ -273,7 +314,6 @@ Java_dev_farna_clashflux_ClashVpnService_nativeVpnState(JNIEnv* environment, jcl
     if (state == 0 || state == 3) {
         try {
             store::coreStore().stopAndroidApiStreams();
-            store::coreStore().setSetting("core.tun_enabled", "false");
         } catch (...) {}
     }
 }

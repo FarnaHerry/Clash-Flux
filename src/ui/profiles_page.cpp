@@ -56,8 +56,8 @@ namespace clashflux::ui {
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
-    // 平台栈下载通道（Android 订阅导入/刷新用）：Runtime 各平台都装了该服务。
-    auto http = huxerui::UseService<huxerui::HttpClient>();
+    // 应用级共享 HTTP 客户端；Android 订阅导入/刷新使用平台网络栈。
+    auto http = huxerui::UseService<AppHttpClient>();
     auto dialog = huxerui::UseDialog();
     auto clipboard = application.Clipboard();
     auto profiles = huxerui::UseStateList<db::Profile>();

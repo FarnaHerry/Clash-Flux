@@ -1,21 +1,28 @@
 package dev.farna.clashflux;
 
 import android.app.*;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.net.ConnectivityManager;
 import android.net.DnsResolver;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.net.IpPrefix;
 import android.net.RouteInfo;
 import android.net.VpnService;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.CancellationSignal;
+import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.ParcelFileDescriptor;
 import android.os.Process;
+import android.os.PowerManager;
 import android.system.ErrnoException;
 import android.util.Log;
 import io.nekohasekai.libbox.*;
@@ -36,6 +43,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -43,6 +51,11 @@ import org.json.JSONObject;
 /** sing-box owns the data plane; Android owns TUN creation and protect(fd). */
 public final class ClashVpnService extends VpnService implements PlatformInterface, CommandServerHandler, CommandClientHandler {
     private static final String TAG = "ClashFlux", CHANNEL_ID = "clashflux_vpn";
+    private static final String SERVICE_PREFS = "clashflux";
+    private static final String KEY_SERVICE_MODE = "vpn_service_mode";
+    private static final String KEY_TUN_RESET_PENDING = "tun_preference_reset_pending";
+    private static final String MODE_CORE_ONLY = "core_only";
+    private static final String MODE_VPN = "vpn";
     private static final int NOTIFICATION_ID = 1;
     static final String EXTRA_SPEED_TEST_ONLY = "speed_test_only";
     static final String EXTRA_CORE_ONLY = "core_only";
@@ -57,6 +70,12 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         thread.setDaemon(true);
         return thread;
     });
+    private static final ScheduledExecutorService NETWORK_EXECUTOR =
+            Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "clashflux-network-recovery");
+                thread.setDaemon(true);
+                return thread;
+            });
     private static volatile boolean libboxSetup;
     private CommandServer server;
     private CommandClient client;
@@ -64,6 +83,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private boolean started;
     private boolean foregroundReady;
     private boolean libboxReady;
+    private volatile boolean runtimeBootstrapReady;
     private boolean failureReported;
     private volatile boolean speedTestOnly;
     private volatile boolean coreOnly;
@@ -72,10 +92,53 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private final AtomicBoolean stopRequested = new AtomicBoolean();
     private volatile Network defaultNetwork;
     private volatile InterfaceUpdateListener defaultInterfaceListener;
+    private volatile String lastPhysicalInterface = "";
+    private volatile long networkChangeGeneration;
+    private ConnectivityManager connectivityManager;
+    private HandlerThread networkThread;
+    private boolean networkMonitorRegistered;
+    private boolean wakeReceiverRegistered;
+    private final ConnectivityManager.NetworkCallback networkCallback =
+            new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network network) {
+                    handlePhysicalNetworkChanged("Android 网络已连接");
+                }
+
+                @Override public void onLost(Network network) {
+                    handlePhysicalNetworkChanged("Android 网络已断开");
+                }
+
+                @Override public void onLinkPropertiesChanged(Network network,
+                                                               LinkProperties properties) {
+                    handlePhysicalNetworkChanged("Android 网络接口已更新");
+                }
+            };
+    private final BroadcastReceiver wakeReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_SCREEN_ON.equals(intent.getAction())) {
+                scheduleUpstreamReset("设备唤醒");
+                return;
+            }
+            if (PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED.equals(intent.getAction())) {
+                PowerManager power = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (power != null && !power.isDeviceIdleMode()) {
+                    scheduleUpstreamReset("设备退出省电待机");
+                }
+            }
+        }
+    };
     private final Object clientLock = new Object();
     private final Object connectionsLock = new Object();
     private Connections connectionSnapshot = Libbox.newConnections();
     private static volatile ClashVpnService current;
+    private static volatile int runtimeCoreState;
+    private static volatile int runtimeVpnState;
+    private static volatile String runtimeMessage = "";
+    private static volatile long runtimeUploadRate;
+    private static volatile long runtimeDownloadRate;
+    private static volatile long runtimeUploadTotal;
+    private static volatile long runtimeDownloadTotal;
+    private static volatile int runtimeConnections;
     private static volatile String outboundGroupsJson = "{\"proxies\":{}}";
     private static volatile String pendingUrlTestGroup;
     private static volatile String connectionsJson =
@@ -94,6 +157,43 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                                               long uploadTotal, long downloadTotal,
                                               int connections);
 
+    static Bundle runtimeSnapshot() {
+        Bundle snapshot = new Bundle();
+        snapshot.putInt("coreState", runtimeCoreState);
+        snapshot.putInt("vpnState", runtimeVpnState);
+        snapshot.putString("message", runtimeMessage);
+        snapshot.putLong("uploadRate", runtimeUploadRate);
+        snapshot.putLong("downloadRate", runtimeDownloadRate);
+        snapshot.putLong("uploadTotal", runtimeUploadTotal);
+        snapshot.putLong("downloadTotal", runtimeDownloadTotal);
+        snapshot.putInt("connections", runtimeConnections);
+        return snapshot;
+    }
+
+    private static void publishCoreState(int state, String message) {
+        runtimeCoreState = state;
+        runtimeMessage = message == null ? "" : message;
+        nativeCoreState(state, runtimeMessage);
+    }
+
+    private static void publishVpnState(int state, String message) {
+        runtimeVpnState = state;
+        runtimeCoreState = state;
+        runtimeMessage = message == null ? "" : message;
+        nativeVpnState(state, runtimeMessage);
+    }
+
+    private static void publishStats(long uploadRate, long downloadRate,
+                                     long uploadTotal, long downloadTotal,
+                                     int connections) {
+        runtimeUploadRate = uploadRate;
+        runtimeDownloadRate = downloadRate;
+        runtimeUploadTotal = uploadTotal;
+        runtimeDownloadTotal = downloadTotal;
+        runtimeConnections = connections;
+        nativeVpnStats(uploadRate, downloadRate, uploadTotal, downloadTotal, connections);
+    }
+
     @Override public void onCreate() {
         super.onCreate();
         current = this;
@@ -109,13 +209,12 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             return;
         }
         try {
-            MainActivity.appLog("VPN 服务已创建，开始初始化 libbox", false);
-            MainActivity.bootstrapNative(this);
-            defaultNetwork = findPhysicalNetwork();
-            setup();
+            MainActivity.appLog("sing-box 后台服务已创建，等待运行命令", false);
+            registerNetworkMonitor();
+            registerWakeMonitor();
         } catch (Throwable error) {
-            Log.e(TAG, "VPN service initialization", error);
-            fail("VPN 服务初始化失败：" + error.getMessage());
+            Log.e(TAG, "Runtime monitor initialization", error);
+            MainActivity.appLog("后台网络监视初始化失败：" + error.getMessage(), true);
         }
     }
     @Override public int onStartCommand(Intent i, int f, int id) {
@@ -123,17 +222,55 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             MainActivity.appLog("VPN 服务未完成前台初始化，拒绝启动数据面", true);
             return START_NOT_STICKY;
         }
+        if (i == null) {
+            // START_STICKY deliberately does not redeliver the last Intent.
+            // Restore the selected service mode instead of accidentally
+            // turning a no-TUN core restart into a VPN/TUN start.
+            String restoredMode = getSharedPreferences(SERVICE_PREFS, MODE_PRIVATE)
+                    .getString(KEY_SERVICE_MODE, "");
+            if (MODE_CORE_ONLY.equals(restoredMode)) {
+                coreOnly = true;
+                speedTestOnly = false;
+                MainActivity.appLog("系统重建服务：恢复无 TUN 内核模式", false);
+            } else if (MODE_VPN.equals(restoredMode) || BootReceiver.isVpnActive(this)) {
+                coreOnly = false;
+                speedTestOnly = false;
+                if (!MODE_VPN.equals(restoredMode)) persistServiceMode(MODE_VPN);
+                MainActivity.appLog("系统重建服务：恢复 VPN/TUN 模式", false);
+            } else {
+                MainActivity.appLog("系统重建了无持久运行模式的服务，停止空服务", false);
+                stopSelf(id);
+                return START_NOT_STICKY;
+            }
+        }
         final boolean requestedSpeedTest = i != null
                 && i.getBooleanExtra(EXTRA_SPEED_TEST_ONLY, false);
         final boolean requestedCoreOnly = i != null
                 && i.getBooleanExtra(EXTRA_CORE_ONLY, false);
-        if (requestedCoreOnly) {
-            coreOnly = true;
-            speedTestOnly = false;
-        } else if (requestedSpeedTest) {
-            speedTestOnly = true;
-            coreOnly = false;
+        if (i != null && requestedCoreOnly) {
+            String savedMode = getSharedPreferences(SERVICE_PREFS, MODE_PRIVATE)
+                    .getString(KEY_SERVICE_MODE, "");
+            if (MODE_VPN.equals(savedMode) || BootReceiver.isVpnActive(this)) {
+                // MainActivity can request the resident core while restoring
+                // its saved state. Preserve an already requested tunnel mode.
+                if (!MODE_VPN.equals(savedMode)) persistServiceMode(MODE_VPN);
+                coreOnly = false;
+                speedTestOnly = false;
+            } else {
+                persistServiceMode(MODE_CORE_ONLY);
+                coreOnly = true;
+                speedTestOnly = false;
+            }
+        } else if (i != null && requestedSpeedTest) {
+            // A speed-test request can share an already-running resident core.
+            // Keep its durable mode so Android can still restore it after a
+            // process reclaim; only a standalone test remains non-sticky.
+            if (!started && !starting) {
+                speedTestOnly = true;
+                coreOnly = false;
+            }
         } else if (i != null) {
+            persistServiceMode(MODE_VPN);
             // A real VPN request promotes an already-running no-TUN core
             // service back to the normal data plane on the next start.
             if ((speedTestOnly || coreOnly) && started && !starting) {
@@ -164,15 +301,43 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             MainActivity.appLog("VPN 数据面启动线程已开始", false);
             new Thread(this::startDataPlane, "clashflux-vpn-start").start();
         }
-        return speedTestOnly ? START_NOT_STICKY : START_STICKY;
+        return speedTestOnly && !hasPersistentServiceMode()
+                ? START_NOT_STICKY : START_STICKY;
     }
+
+    private void persistServiceMode(String mode) {
+        boolean saved = getSharedPreferences(SERVICE_PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(KEY_SERVICE_MODE, mode)
+                .commit();
+        if (!saved) MainActivity.appLog("无法保存 Android 服务恢复模式", true);
+    }
+
+    private boolean hasPersistentServiceMode() {
+        String mode = getSharedPreferences(SERVICE_PREFS, MODE_PRIVATE)
+                .getString(KEY_SERVICE_MODE, "");
+        return MODE_CORE_ONLY.equals(mode) || MODE_VPN.equals(mode)
+                || BootReceiver.isVpnActive(this);
+    }
+
+    static void clearPersistentServiceMode(Context context) {
+        context.getSharedPreferences(SERVICE_PREFS, MODE_PRIVATE)
+                .edit()
+                .remove(KEY_SERVICE_MODE)
+                .commit();
+    }
+
     @Override public void onRevoke() {
         MainActivity.appLog("系统撤销了 VPN 授权", true);
+        markTunPreferenceResetPending();
+        clearPersistentServiceMode(this);
+        BootReceiver.setVpnActive(this, false);
         close("系统撤销了 VPN");
         stopSelf();
     }
     @Override public void onDestroy() {
         MainActivity.appLog("VPN 服务正在销毁", false);
+        unregisterRuntimeMonitors();
         close("VPN 已关闭");
         if (current == this) current = null;
         super.onDestroy();
@@ -212,13 +377,14 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         MainActivity.appLog(noTun ? "开始创建无 TUN 的 sing-box 内核"
                                   : "开始创建 sing-box VPN 数据面", false);
         if (noTun) {
-            nativeCoreState(1, "正在启动无 TUN 的 sing-box 内核");
+            publishCoreState(1, "正在启动无 TUN 的 sing-box 内核");
             updateForegroundNotification("sing-box 内核启动中（未启用 VPN）");
         } else {
-            nativeVpnState(1, "正在启动 sing-box VPN 数据面");
+            publishVpnState(1, "正在启动 sing-box VPN 数据面");
             updateForegroundNotification("正在启动 sing-box VPN 隧道");
         }
         try {
+            initializeRuntime();
             if (!libboxReady) throw new IllegalStateException("libbox 尚未初始化完成");
             // The native store compiles the selected profile into sing-box
             // JSON (clashflux.singbox). Java only hands the file content to
@@ -257,7 +423,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             started = true;
             if (noTun) {
                 BootReceiver.setVpnActive(this, false);
-                nativeCoreState(2, coreOnly
+                publishCoreState(2, coreOnly
                         ? "sing-box 内核已启动（未启用 VPN/TUN）"
                         : "测速内核已启动（未启用 VPN/TUN）");
                 updateForegroundNotification(coreOnly
@@ -268,7 +434,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                         : "测速内核已启动，未启用 Android VPN/TUN", false);
             } else {
                 BootReceiver.setVpnActive(this, true);
-                nativeVpnState(2, "sing-box 已附着 TUN；socket protect 已启用");
+                publishVpnState(2, "sing-box 已附着 TUN；socket protect 已启用");
                 updateForegroundNotification("sing-box VPN 隧道运行中");
                 MainActivity.appLog("sing-box 已成功附着 Android TUN，控制通道按需连接", false);
             }
@@ -284,6 +450,19 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             if (startRequested) fail("sing-box 启动失败: " + e.getMessage());
         } finally {
             starting = false;
+        }
+    }
+
+    private void initializeRuntime() {
+        if (runtimeBootstrapReady) return;
+        synchronized (this) {
+            if (runtimeBootstrapReady) return;
+            MainActivity.appLog("后台进程正在初始化 JNI 与 libbox", false);
+            MainActivity.bootstrapNative(this);
+            defaultNetwork = findPhysicalNetwork();
+            setup();
+            if (!libboxReady) throw new IllegalStateException("libbox 初始化失败");
+            runtimeBootstrapReady = true;
         }
     }
     @Override public int openTun(TunOptions o) throws Exception {
@@ -658,6 +837,104 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         return null;
     }
 
+    private void registerNetworkMonitor() {
+        connectivityManager =
+                (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (connectivityManager == null) return;
+        try {
+            NetworkRequest request = new NetworkRequest.Builder()
+                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .build();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                networkThread = new HandlerThread("clashflux-network-monitor");
+                networkThread.start();
+                connectivityManager.registerNetworkCallback(request, networkCallback,
+                        new Handler(networkThread.getLooper()));
+            } else {
+                connectivityManager.registerNetworkCallback(request, networkCallback);
+            }
+            networkMonitorRegistered = true;
+            defaultNetwork = findPhysicalNetwork();
+            lastPhysicalInterface = physicalInterface(defaultNetwork);
+        } catch (RuntimeException error) {
+            MainActivity.appLog("注册 Android 网络变化监听失败：" + error.getMessage(), true);
+        }
+    }
+
+    private void registerWakeMonitor() {
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_SCREEN_ON);
+        filter.addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(wakeReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(wakeReceiver, filter);
+            }
+            wakeReceiverRegistered = true;
+        } catch (RuntimeException error) {
+            MainActivity.appLog("注册 Android 唤醒监听失败：" + error.getMessage(), true);
+        }
+    }
+
+    private void unregisterRuntimeMonitors() {
+        if (networkMonitorRegistered && connectivityManager != null) {
+            try {
+                connectivityManager.unregisterNetworkCallback(networkCallback);
+            } catch (RuntimeException ignored) {
+            }
+            networkMonitorRegistered = false;
+        }
+        if (networkThread != null) {
+            networkThread.quitSafely();
+            networkThread = null;
+        }
+        if (wakeReceiverRegistered) {
+            try {
+                unregisterReceiver(wakeReceiver);
+            } catch (RuntimeException ignored) {
+            }
+            wakeReceiverRegistered = false;
+        }
+    }
+
+    private String physicalInterface(Network network) {
+        if (connectivityManager == null || network == null) return "";
+        LinkProperties properties = connectivityManager.getLinkProperties(network);
+        return properties == null || properties.getInterfaceName() == null
+                ? "" : properties.getInterfaceName();
+    }
+
+    private void handlePhysicalNetworkChanged(String reason) {
+        Network physical = findPhysicalNetwork();
+        String interfaceName = physicalInterface(physical);
+        boolean changed = !java.util.Objects.equals(defaultNetwork, physical)
+                || !java.util.Objects.equals(lastPhysicalInterface, interfaceName);
+        defaultNetwork = physical;
+        lastPhysicalInterface = interfaceName;
+        if (!changed) return;
+
+        MainActivity.appLog(reason + "，物理接口="
+                + (interfaceName.isEmpty() ? "不可用" : interfaceName), false);
+        InterfaceUpdateListener listener = defaultInterfaceListener;
+        if (listener != null) notifyDefaultInterface(listener);
+        if (started) scheduleUpstreamReset(reason);
+    }
+
+    private void scheduleUpstreamReset(String reason) {
+        final long generation = ++networkChangeGeneration;
+        NETWORK_EXECUTOR.schedule(() -> {
+            if (generation != networkChangeGeneration || !started || !startRequested
+                    || stopRequested.get()) return;
+            try {
+                controlClient().closeConnections();
+                MainActivity.appLog(reason + "：已关闭旧连接，等待 sing-box 按新网络重连", false);
+            } catch (Exception error) {
+                MainActivity.appLog(reason + "后清理旧连接失败：" + error.getMessage(), true);
+            }
+        }, 800, TimeUnit.MILLISECONDS);
+    }
+
     private static boolean isPhysicalNetwork(ConnectivityManager manager,
                                              Network network) {
         if (network == null) return false;
@@ -834,8 +1111,8 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         MainActivity.appLog("VPN 数据面关闭：" + msg, false);
         if (!started && tunnel == null && server == null) {
             if (reportStopped && !failureReported) {
-                if (noTun) nativeCoreState(0, msg);
-                else nativeVpnState(0, msg);
+                if (noTun) publishCoreState(0, msg);
+                else publishVpnState(0, msg);
             }
             return;
         }
@@ -848,6 +1125,8 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         synchronized (connectionsLock) {
             connectionSnapshot = Libbox.newConnections();
         }
+        RuntimeSnapshotStore.writeAsync(this, "connections.json", connectionsJson);
+        RuntimeSnapshotStore.writeAsync(this, "outbound-groups.json", outboundGroupsJson);
         CommandClient activeClient;
         synchronized (clientLock) {
             activeClient = client;
@@ -859,10 +1138,10 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         server = null;
         try { if (tunnel != null) tunnel.close(); } catch (Exception ignored) {}
         tunnel = null;
-        nativeVpnStats(0, 0, 0, 0, 0);
+        publishStats(0, 0, 0, 0, 0);
         if (reportStopped && !failureReported) {
-            if (noTun) nativeCoreState(0, msg);
-            else nativeVpnState(0, msg);
+            if (noTun) publishCoreState(0, msg);
+            else publishVpnState(0, msg);
         }
     }
 
@@ -871,6 +1150,11 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         ClashVpnService service = current;
         if (service == null) return false;
         if (!service.stopRequested.compareAndSet(false, true)) return true;
+        if (!service.coreOnly && !service.speedTestOnly) {
+            service.markTunPreferenceResetPending();
+        }
+        clearPersistentServiceMode(service);
+        BootReceiver.setVpnActive(service, false);
         service.startRequested = false;
         // Keep stop and the following profile-restart start command ordered.
         // The old background stop thread could let startVpn() observe
@@ -880,6 +1164,21 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         service.stopForeground(STOP_FOREGROUND_REMOVE);
         service.stopSelf();
         return true;
+    }
+
+    static void stopServiceFallback(Context context) {
+        if (BootReceiver.isVpnActive(context)) {
+            context.getSharedPreferences(SERVICE_PREFS, MODE_PRIVATE).edit()
+                    .putBoolean(KEY_TUN_RESET_PENDING, true).commit();
+        }
+        clearPersistentServiceMode(context);
+        BootReceiver.setVpnActive(context, false);
+        context.stopService(new Intent(context, ClashVpnService.class));
+    }
+
+    private void markTunPreferenceResetPending() {
+        getSharedPreferences(SERVICE_PREFS, MODE_PRIVATE).edit()
+                .putBoolean(KEY_TUN_RESET_PENDING, true).commit();
     }
 
     public static boolean selectOutbound(String group, String name) {
@@ -1109,9 +1408,12 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         failureReported = true;
         Log.e(TAG, msg);
         MainActivity.appLog(msg, true);
+        if (!speedTestOnly && !coreOnly) markTunPreferenceResetPending();
+        clearPersistentServiceMode(this);
+        BootReceiver.setVpnActive(this, false);
         close(msg, false);
-        if (speedTestOnly || coreOnly) nativeCoreState(3, msg);
-        else nativeVpnState(3, msg);
+        if (speedTestOnly || coreOnly) publishCoreState(3, msg);
+        else publishVpnState(3, msg);
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
@@ -1179,6 +1481,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 connectionSnapshot.sortByDate();
                 connectionsJson = encodeConnectionsLocked();
             }
+            RuntimeSnapshotStore.writeAsync(this, "connections.json", connectionsJson);
         } catch (Throwable error) {
             Log.w(TAG, "Unable to snapshot sing-box connections", error);
             MainActivity.appLog("读取 Android 连接失败：" + error.getMessage(), true);
@@ -1194,9 +1497,12 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             uploadTotal = status.getUplinkTotal();
             downloadTotal = status.getDownlinkTotal();
             synchronized (connectionsLock) {
-                connectionsJson = encodeConnectionsLocked();
+            connectionsJson = encodeConnectionsLocked();
             }
-            nativeVpnStats(status.getUplink(),status.getDownlink(),status.getUplinkTotal(),status.getDownlinkTotal(),status.getConnectionsIn()+status.getConnectionsOut());
+            RuntimeSnapshotStore.writeAsync(this, "connections.json", connectionsJson);
+            publishStats(status.getUplink(), status.getDownlink(),
+                    status.getUplinkTotal(), status.getDownlinkTotal(),
+                    status.getConnectionsIn() + status.getConnectionsOut());
         } catch (Throwable error) {
             Log.w(TAG, "Unable to publish sing-box status", error);
             MainActivity.appLog("发布 libbox 状态失败：" + error.getMessage(), true);
@@ -1283,6 +1589,11 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 if (!proxies.has(tag)) proxies.put(tag, itemDetails.get(tag));
             }
             outboundGroupsJson = new JSONObject().put("proxies", proxies).toString();
+            ClashVpnService service = current;
+            if (service != null) {
+                RuntimeSnapshotStore.writeAsync(service, "outbound-groups.json",
+                        outboundGroupsJson);
+            }
             Log.i(TAG, "libbox 出站组快照已更新：" + groupCount + " 组，" + itemCount + " 节点");
         } catch (Throwable error) {
             Log.w(TAG, "Unable to snapshot outbound groups", error);

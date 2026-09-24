@@ -61,6 +61,7 @@
 
         <service
             android:name=".ClashVpnService"
+            android:process=":background"
             android:exported="false"
             android:foregroundServiceType="specialUse"
             android:permission="android.permission.BIND_VPN_SERVICE">
@@ -83,15 +84,10 @@
             </intent-filter>
         </receiver>
 
-        <!-- Resident notification: started at app launch for the whole
-             process lifetime (CMFA-style keep-alive). -->
         <service
-            android:name=".CoreService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="proxy core foreground notification" />
+            android:name=".RuntimeControlService"
+            android:process=":background"
+            android:exported="false">
         </service>
     </application>
 </manifest>

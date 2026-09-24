@@ -240,7 +240,7 @@ void OpenProfileCreate(bool compact, huxerui::State<bool> page,
 // HuxerUI HttpClient 订阅抓取：GET + UA + 全程超时，响应转 store::FetchedProfile。
 // 必须在 UI 线程任务协程里 co_await（HTTP 自带平台异步通道，禁入阻塞线程池）。
 huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
-    std::shared_ptr<huxerui::HttpClient> http, std::string url,
+    std::shared_ptr<AppHttpClient> http, std::string url,
     int timeoutSecs) {
     store::FetchedProfile fetched;
     if (!http) {
@@ -274,7 +274,7 @@ huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
 // Android 订阅导入：store 建行 → 平台栈抓取 → store 落盘。返回新订阅 id
 //（失败 0，错误经 profilesStore().lastError() 读取）。
 huxerui::Task<std::int64_t> AndroidImportRemote(
-    std::shared_ptr<huxerui::HttpClient> http, const std::string& name,
+    std::shared_ptr<AppHttpClient> http, const std::string& name,
     const std::string& url, db::Profile options) {
     const std::int64_t nid = co_await RunOnTaskThread(
         [name, url, options] { return store::profilesStore().createRemote(
@@ -291,7 +291,7 @@ huxerui::Task<std::int64_t> AndroidImportRemote(
 // Android 订阅更新：按订阅行的 URL/超时经平台栈抓取后收尾；非 remote 行
 // 回落阻塞路径（保留「本地导入的订阅不支持更新」等语义）。返回错误串。
 huxerui::Task<std::string> AndroidRefreshRemote(
-    std::shared_ptr<huxerui::HttpClient> http, std::int64_t id) {
+    std::shared_ptr<AppHttpClient> http, std::int64_t id) {
     const std::optional<db::Profile> row = co_await RunOnTaskThread(
         [id]() -> std::optional<db::Profile> {
             for (const auto& p : store::profilesStore().list()) {
@@ -329,7 +329,7 @@ void RefreshProfileForPlatform(
 // 桌面及本地/原生订阅走阻塞 store。弹窗只提交 request，不再判断平台。
 #if defined(__ANDROID__)
 huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
-    std::shared_ptr<huxerui::HttpClient> http, ProfileImportRequest request) {
+    std::shared_ptr<AppHttpClient> http, ProfileImportRequest request) {
     if (request.remote) {
         const std::int64_t id = co_await AndroidImportRemote(
             std::move(http), request.name, request.url, request.options);
@@ -356,7 +356,7 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
 }
 #else
 huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
-    std::shared_ptr<huxerui::HttpClient>, ProfileImportRequest request) {
+    std::shared_ptr<AppHttpClient>, ProfileImportRequest request) {
     const ProfileImportResult result = co_await RunOnTaskThread(
         [request = std::move(request)] {
             auto& ps = store::profilesStore();
@@ -387,7 +387,7 @@ namespace clashflux::ui {
 // Android 订阅自动更新泵的一次迭代：任务线程列出到期订阅 → 逐个经 HuxerUI
 // HttpClient 抓取 → store completeRemote 收尾。错误落在订阅行 error 字段。
 huxerui::Task<int> AndroidRefreshProfilesDueOnce(
-    std::shared_ptr<huxerui::HttpClient> http) {
+    std::shared_ptr<AppHttpClient> http) {
     const std::vector<db::Profile> due = co_await RunOnTaskThread(
         [] { return store::profilesStore().dueForUpdate(); });
     int updated = 0;

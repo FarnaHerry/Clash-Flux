@@ -13,6 +13,8 @@
 #include <utility>
 #include <vector>
 
+#include "app_http_client.h"
+
 namespace clashflux::ui {
 
 // Android VPN 隧道开关（设置页 VPN 卡 → VpnService consent/前台服务）。
@@ -299,9 +301,9 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                         huxerui::ToastHandle toast, huxerui::Color textColor,
                         huxerui::Color hintColor);
 
-// Android 订阅自动更新：任务线程列出到期订阅，HuxerUI HttpClient 在 UI
+// Android 订阅自动更新：任务线程列出到期订阅，应用共享 HTTP 客户端在 UI
 // 协程中抓取并由 store 收尾。桌面刷新由 DesktopProfileRefreshPump 走 curl。
 huxerui::Task<int> AndroidRefreshProfilesDueOnce(
-    std::shared_ptr<huxerui::HttpClient> http);
+    std::shared_ptr<AppHttpClient> http);
 
 } // namespace clashflux::ui

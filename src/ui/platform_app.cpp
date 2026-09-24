@@ -51,7 +51,7 @@ void AndroidPreparePlatformDataDirectory(
 
 [[huxerui::composable]] huxerui::View AndroidProfileRefreshPump() {
     auto tasks = huxerui::UseTaskScope();
-    auto http = huxerui::UseService<huxerui::HttpClient>();
+    auto http = huxerui::UseService<AppHttpClient>();
     huxerui::Lifecycle(
         [tasks, http] {
             tasks.Launch([http]() -> huxerui::Task<void> {
