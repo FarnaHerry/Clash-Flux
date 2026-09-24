@@ -400,6 +400,9 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     endif ()
     # 应用版本编译期常量（设置页“关于”展示）：唯一来源是顶层 project(VERSION)。
     target_compile_definitions(clash-flux PRIVATE CLASHFLUX_VERSION="${PROJECT_VERSION}")
+    if (IOS)
+        target_compile_definitions(clash-flux PRIVATE CLASHFLUX_IOS=1)
+    endif ()
     # windows.h 的 min/max 宏会毁掉所有经 ixwebsocket/curl 头链引入它的
     # TU 里的 std::max/std::min（MSVC C2589）；宏不跨 TU，必须整个目标定义。
     if (WIN32)
