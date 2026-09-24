@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.2.14 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.2.15 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # HUXERUI_LIBRARY_GRAPH_ONLY：CLI 扫描 huxerui 库依赖图时的特殊配置——
 # 不启用语言、不构建，huxerui_add_app 只写出库图 JSON 即返回（见 SDK
@@ -408,7 +408,7 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     if (WIN32)
         target_compile_definitions(clash-flux PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
         # TUN 门禁：ShellExecuteExW（runas 提权重启）+ TokenElevation 查询。
-        target_link_libraries(clash-flux PRIVATE shell32 advapi32 rasapi32 iphlpapi ws2_32 dnsapi)
+        target_link_libraries(clash-flux PRIVATE shell32 advapi32 wininet rasapi32 iphlpapi ws2_32 dnsapi)
         # GUI 子系统入口（CLI 子命令运行时经 AttachConsole 附着父控制台，
         # 见 cli.cppm）。
         if (MSVC)

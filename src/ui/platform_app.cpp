@@ -12,6 +12,10 @@
 #include <thread>
 #include <vector>
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 #if defined(__ANDROID__)
 #include <android/log.h>
 #endif
@@ -102,6 +106,58 @@ void DesktopPreparePlatformDataDirectory(
 
 namespace {
 
+#if defined(_WIN32)
+// HuxerUI's Windows tray menu is a native HMENU and SystemTrayOptions does not
+// expose MenuStyle. Set the process menu preference from the active app theme;
+// resolve the versioned uxtheme entry points dynamically and leave older systems
+// untouched when the dark-menu API is unavailable.
+void ApplyWindowsNativeMenuTheme(bool dark) noexcept {
+    using RtlGetVersionFunction = LONG(WINAPI*)(OSVERSIONINFOW*);
+    using SetPreferredAppModeFunction = int(WINAPI*)(int);
+    using FlushMenuThemesFunction = void(WINAPI*)();
+
+    const HMODULE nativeLibrary = GetModuleHandleW(L"ntdll.dll");
+    const auto getVersion = reinterpret_cast<RtlGetVersionFunction>(
+        nativeLibrary ? GetProcAddress(nativeLibrary, "RtlGetVersion") : nullptr);
+    if (!getVersion) return;
+
+    OSVERSIONINFOW version{};
+    version.dwOSVersionInfoSize = sizeof(version);
+    if (getVersion(&version) < 0 || version.dwMajorVersion < 10 ||
+        version.dwBuildNumber < 17763) {
+        return;
+    }
+
+    static const HMODULE themeLibrary = LoadLibraryW(L"uxtheme.dll");
+    if (!themeLibrary) return;
+
+    auto setPreferredAppMode = reinterpret_cast<SetPreferredAppModeFunction>(
+        GetProcAddress(themeLibrary, "SetPreferredAppMode"));
+    const bool modernApi = setPreferredAppMode != nullptr ||
+                           version.dwBuildNumber >= 18362;
+    if (!setPreferredAppMode) {
+        setPreferredAppMode = reinterpret_cast<SetPreferredAppModeFunction>(
+            GetProcAddress(themeLibrary, MAKEINTRESOURCEA(135)));
+    }
+    if (!setPreferredAppMode) return;
+
+    // Windows 10 1809 used ordinal 135 as AllowDarkModeForApp(BOOL); later
+    // releases use SetPreferredAppMode(PreferredAppMode).
+    const int mode = modernApi ? (dark ? 2 : 3) : (dark ? 1 : 0);
+    static_cast<void>(setPreferredAppMode(mode));
+
+    auto flushMenuThemes = reinterpret_cast<FlushMenuThemesFunction>(
+        GetProcAddress(themeLibrary, "FlushMenuThemes"));
+    if (!flushMenuThemes) {
+        flushMenuThemes = reinterpret_cast<FlushMenuThemesFunction>(
+            GetProcAddress(themeLibrary, MAKEINTRESOURCEA(136)));
+    }
+    if (flushMenuThemes) flushMenuThemes();
+}
+#else
+void ApplyWindowsNativeMenuTheme(bool) noexcept {}
+#endif
+
 struct TrayRuntimeSnapshot {
     bool coreRunning = false;
     bool systemProxyIntent = false;
@@ -161,6 +217,14 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
     auto dialog = huxerui::UseDialog();
     auto clipboard = application.Clipboard();
     auto toast = huxerui::UseToast();
+    const bool darkTheme = IsDarkTheme(rootSpec);
+
+    huxerui::Lifecycle(
+        [darkTheme] {
+            ApplyWindowsNativeMenuTheme(darkTheme);
+            return [] {};
+        },
+        darkTheme);
 
     // 第二次启动通过单实例通道只发一个唤醒事件；这里在 UI 线程轻量轮询，
     // 不参与内核/REST 工作，确保隐藏到托盘后也能被再次打开。
@@ -440,14 +504,14 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                                 tasks.Launch([=]() -> huxerui::Task<void> {
                                     TrayOperationResult result;
                                     try {
-                                        result = co_await RunOnTaskThread([next] {
-                                            auto& core = store::coreStore();
-                                            const bool ok =
-                                                core.applySystemProxy(next);
-                                            return TrayOperationResult{
-                                                .ok = ok,
-                                                .error = core.snapshot().lastError};
-                                        });
+                                        const DesktopModeApplyResult applyResult =
+                                            co_await RunOnTaskThread([next] {
+                                                return ApplyDesktopSystemProxy(next);
+                                            });
+                                        result = TrayOperationResult{
+                                            .ok = applyResult.status ==
+                                                  DesktopModeApplyStatus::Applied,
+                                            .error = applyResult.error};
                                     } catch (const std::exception& error) {
                                         result.error = error.what();
                                     }
@@ -476,43 +540,16 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                                 const bool previousActive = trayTunActive.Get();
                                 const bool next = !previous;
                                 trayTunPending = true;
+                                trayTun = next;
+                                if (trayCoreRunning.Get()) {
+                                    trayTunActive = next;
+                                }
                                 trayPollRevision = trayPollRevision.Get() + 1;
                                 tasks.Launch([=]() -> huxerui::Task<void> {
-                                    TrayOperationResult result;
+                                    DesktopModeApplyResult result;
                                     try {
-                                        if (next) {
-                                            co_await huxerui::Delay(
-                                                std::chrono::duration<double>{0});
-                                            const core::TunGate gate =
-                                                co_await RunOnTaskThread(
-                                                    [] { return core::tunGate(); });
-                                            if (gate == core::TunGate::Elevated) {
-                                                trayTunPending = false;
-                                                trayPollRevision =
-                                                    trayPollRevision.Get() + 1;
-                                                co_return;
-                                            }
-                                            if (gate == core::TunGate::Denied) {
-                                                trayTunPending = false;
-                                                trayPollRevision =
-                                                    trayPollRevision.Get() + 1;
-                                                window.Activate();
-                                                ShowTunGuideDialog(
-                                                    dialog, clipboard, toast,
-                                                    textColor, hintColor);
-                                                co_return;
-                                            }
-                                        }
-                                        trayTun = next;
-                                        if (trayCoreRunning.Get()) {
-                                            trayTunActive = next;
-                                        }
                                         result = co_await RunOnTaskThread([next] {
-                                            auto& core = store::coreStore();
-                                            const bool ok = core.applyTun(next);
-                                            return TrayOperationResult{
-                                                .ok = ok,
-                                                .error = core.snapshot().lastError};
+                                            return ApplyDesktopTun(next);
                                         });
                                     } catch (const std::exception& error) {
                                         result.error = error.what();
@@ -520,12 +557,24 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                                     trayTunPending = false;
                                     trayPollRevision =
                                         trayPollRevision.Get() + 1;
-                                    if (!result.ok) {
+                                    if (result.status !=
+                                        DesktopModeApplyStatus::Applied) {
                                         trayTun = previous;
                                         trayTunActive = previousActive;
-                                        toast.Show(result.error.empty()
-                                                       ? "TUN 模式切换失败"
-                                                       : result.error);
+                                        if (result.status ==
+                                            DesktopModeApplyStatus::ElevationRequested) {
+                                            toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
+                                        } else if (result.status ==
+                                                   DesktopModeApplyStatus::PermissionDenied) {
+                                            window.Activate();
+                                            ShowTunGuideDialog(
+                                                dialog, clipboard, toast,
+                                                textColor, hintColor);
+                                        } else {
+                                            toast.Show(result.error.empty()
+                                                           ? "TUN 模式切换失败"
+                                                           : result.error);
+                                        }
                                     }
                                 });
                             })
@@ -641,10 +690,12 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
     huxerui::View mainRow, const huxerui::ThemeSpec& rootSpec) {
     // 桌面标题栏和拖拽区只存在于桌面壳函数，Android 不会组合这些节点。
     huxerui::View content = mainRow;
+    const bool darkTheme = IsDarkTheme(rootSpec);
     return huxerui::Column {
         huxerui::WindowTitleBar {
             huxerui::Row {
-                huxerui::Image(app::images::mascot_logo)
+                huxerui::Image(darkTheme ? app::images::mascot_logo_dark
+                                         : app::images::mascot_logo)
                     .Fit(huxerui::ImageFit::Contain)
                     .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
             }

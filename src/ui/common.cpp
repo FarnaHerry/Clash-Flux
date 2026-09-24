@@ -27,6 +27,35 @@ bool isSelectorType(const std::string& type) {
 
 } // namespace
 
+DesktopModeApplyResult ApplyDesktopSystemProxy(bool enabled) {
+    auto& coreStore = store::coreStore();
+    if (coreStore.applySystemProxy(enabled)) {
+        return {.status = DesktopModeApplyStatus::Applied};
+    }
+    return {.status = DesktopModeApplyStatus::Failed,
+            .error = coreStore.snapshot().lastError};
+}
+
+DesktopModeApplyResult ApplyDesktopTun(bool enabled) {
+    if (enabled) {
+        switch (core::tunGate()) {
+            case core::TunGate::Ok:
+                break;
+            case core::TunGate::Elevated:
+                return {.status = DesktopModeApplyStatus::ElevationRequested};
+            case core::TunGate::Denied:
+                return {.status = DesktopModeApplyStatus::PermissionDenied};
+        }
+    }
+
+    auto& coreStore = store::coreStore();
+    if (coreStore.applyTun(enabled)) {
+        return {.status = DesktopModeApplyStatus::Applied};
+    }
+    return {.status = DesktopModeApplyStatus::Failed,
+            .error = coreStore.snapshot().lastError};
+}
+
 std::vector<ProxyGroupSnapshot> ParseProxyGroups(const std::string& body) {
     std::vector<ProxyGroupSnapshot> groups;
     const auto json = nlohmann::json::parse(body, nullptr, false);
