@@ -167,13 +167,13 @@ GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议�
 | build-macos-arm64 | macos-15 + brew LLVM | 实验性 |
 | build-macos-x86_64 | macos-13 + brew LLVM | 实验性 |
 | build-android | HuxerUI CLI 打 APK（GUI/native shell + sing-box libbox） | 实验性 |
-| build-ios-clash-flux-simulator-core | macOS + iOS Simulator SDK，编译 Clash-Flux app core | 诊断性，不阻塞发布 |
+| build-ios-simulator-arm64 | macOS + Xcode，构建 iOS Simulator `.app` 并打包 | 发布门禁，资产名 `clash-flux-VERSION-ios-simulator-arm64.zip` |
 
-CI 使用固定 revision 的 HuxerUI iOS 平台源码，并从 Clash-Flux 自己的 CMake
-项目编译 `clash-flux_huxerui_ios_core`（arm64 iOS Simulator）。此诊断 job 验证
-Clash-Flux C++ 源码和 HuxerUI 静态平台库能够为模拟器编译；它不生成 `.app`/IPA，
-也不上传 Release 资产或作为发布门禁。iOS Network Extension、sing-box 移动端
-接入和完整应用壳仍列为后续 TODO；当前编译配置也不包含 curl TLS。
+CI 使用固定 revision 的 HuxerUI iOS 平台源码，先编译
+`clash-flux_huxerui_ios_core`，再用仓库中的 Xcode app shell 构建 arm64 iOS
+Simulator `.app`。Release 附带模拟器安装包 `clash-flux-VERSION-ios-simulator-arm64.zip`，
+该 job 是发布门禁。它不是面向实体 iPhone/iPad 的 IPA：iOS Network Extension、
+sing-box 移动端接入及实体设备分发仍列为后续 TODO，当前编译配置也不包含 curl TLS。
 
 Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用菜单图标
 （.desktop + hicolor 图标）；应用本体自包含安装于 `/opt/clash-flux`。

@@ -19,7 +19,7 @@
 - 排序由卡片布局几何决定，原位置保留半透明占位；滚动视口注册宽域拖放目标，让卡片间隙和视口边缘仍能接收拖动并触发边缘自动滚动。
 - HuxerUI 通用拖动预览行为通过 `cmake/patches/huxerui-drag-preview-follows-pointer.patch` 维护。改动该补丁或更新 HuxerUI 固定版本时，确认 Linux、Windows、macOS、Android 和 iOS Simulator 的源码构建步骤都应用它。
 - macOS 与 iOS Simulator CI 通过 `cmake/patches/huxerui-window-p0960.patch` 修复固定 HuxerUI revision 在 Objective-C++ 中的聚合初始化兼容问题；升级 HuxerUI 固定版本时确认补丁仍可应用。
-- iOS Simulator CI 从仓库根 CMake 项目构建 `clash-flux_huxerui_ios_core`，同时应用 P0960 和拖动预览补丁。该目标只验证 Clash-Flux 源码与 HuxerUI 静态平台库可编译，不生成应用包；iOS 网络扩展、sing-box 接入和 curl TLS 尚未纳入。
+- iOS Simulator CI 从仓库根 CMake 项目构建 `clash-flux_huxerui_ios_core`，同时应用 P0960 和拖动预览补丁；随后用 `platform/ios/clash-flux.xcodeproj` 构建 Xcode `.app` 并作为发布门禁上传 `clash-flux-VERSION-ios-simulator-arm64.zip`。该包仅供 iOS Simulator 使用，不是实体设备 IPA；iOS 网络扩展、sing-box 接入、实体设备签名分发和 curl TLS 尚未纳入。
 
 ## 改动后的构建验证
 
