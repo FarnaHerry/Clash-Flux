@@ -43,6 +43,7 @@ public final class MainActivity extends HuxerUIActivity {
     private static native void nativeVpnStartCancelled();
     private static native void nativeVpnStartFailed(String message);
     private static native void nativeAppLog(int level, String message);
+    private static native void nativeCoreLog(int level, String message);
 
     private static void installCrashLogger() {
         final Thread.UncaughtExceptionHandler delegate =
@@ -66,6 +67,15 @@ public final class MainActivity extends HuxerUIActivity {
             nativeAppLog(error ? 3 : 1, message);
         } catch (RuntimeException | LinkageError ignored) {
             // Diagnostics must not affect permissions or service startup.
+        }
+    }
+
+    static void coreLog(int level, String message) {
+        if (message == null || message.isEmpty()) return;
+        try {
+            nativeCoreLog(level, message);
+        } catch (RuntimeException | LinkageError ignored) {
+            // Kernel diagnostics must not affect the VPN data plane.
         }
     }
 

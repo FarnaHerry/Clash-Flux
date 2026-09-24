@@ -19,28 +19,50 @@ namespace {
 
 constexpr std::size_t kMaxLogLines = 2000;
 
-struct ApplicationLogStore {
+struct PersistentLogStore {
+    explicit PersistentLogStore(std::filesystem::path logPath)
+        : path(std::move(logPath)) {}
+
     std::mutex mutex;
-    std::vector<LogLine> lines;
+    std::vector<LogLine> history;
+    std::vector<LogLine> pending;
     bool loaded = false;
+    std::filesystem::path path;
 };
 
-ApplicationLogStore& applicationLogStore() {
-    static ApplicationLogStore store;
-    return store;
+std::filesystem::path coreLogPath() {
+    return cfg::coreWorkDir() / "kernel-ui.log";
 }
-
-std::string normalizeLevel(std::string level);
 
 std::filesystem::path applicationLogPath() {
     return cfg::coreWorkDir() / "app.log";
 }
 
-void loadApplicationLogsLocked(ApplicationLogStore& store) {
+PersistentLogStore& coreLogStore() {
+    static PersistentLogStore store{coreLogPath()};
+    return store;
+}
+
+PersistentLogStore& applicationLogStore() {
+    static PersistentLogStore store{applicationLogPath()};
+    return store;
+}
+
+std::string normalizeLevel(std::string level);
+
+void trimLogs(std::vector<LogLine>& lines) {
+    if (lines.size() > kMaxLogLines) {
+        lines.erase(lines.begin(),
+                    lines.begin() + static_cast<std::ptrdiff_t>(
+                                        lines.size() - kMaxLogLines));
+    }
+}
+
+void loadLogsLocked(PersistentLogStore& store) {
     if (store.loaded) return;
     store.loaded = true;
     try {
-        std::ifstream input(applicationLogPath(), std::ios::binary);
+        std::ifstream input(store.path, std::ios::binary);
         std::string line;
         while (std::getline(input, line)) {
             const auto json = nlohmann::json::parse(line, nullptr, false);
@@ -48,29 +70,23 @@ void loadApplicationLogsLocked(ApplicationLogStore& store) {
                 !json["payload"].is_string()) {
                 continue;
             }
-            store.lines.push_back(LogLine{
+            store.history.push_back(LogLine{
                 .level = normalizeLevel(json.value("level", "info")),
                 .payload = json.value("payload", ""),
                 .at = json.value("at", std::int64_t{0}),
             });
         }
-        if (store.lines.size() > kMaxLogLines) {
-            store.lines.erase(
-                store.lines.begin(),
-                store.lines.begin() + static_cast<std::ptrdiff_t>(
-                                         store.lines.size() - kMaxLogLines));
-        }
+        trimLogs(store.history);
     } catch (...) {
-        store.lines.clear();
+        store.history.clear();
     }
 }
 
-void persistApplicationLogsLocked(const ApplicationLogStore& store) noexcept {
+void persistLogsLocked(const PersistentLogStore& store) noexcept {
     try {
-        std::ofstream output(applicationLogPath(),
-                             std::ios::binary | std::ios::trunc);
+        std::ofstream output(store.path, std::ios::binary | std::ios::trunc);
         if (!output) return;
-        for (const auto& line : store.lines) {
+        for (const auto& line : store.history) {
             output << nlohmann::json{
                 {"at", line.at}, {"level", line.level},
                 {"payload", line.payload}}
@@ -80,6 +96,60 @@ void persistApplicationLogsLocked(const ApplicationLogStore& store) noexcept {
     } catch (...) {
         // Diagnostics must never affect the operation being diagnosed.
     }
+}
+
+void appendLogLineLocked(const PersistentLogStore& store,
+                         const LogLine& line) noexcept {
+    try {
+        std::ofstream output(store.path, std::ios::binary | std::ios::app);
+        if (!output) return;
+        output << nlohmann::json{
+            {"at", line.at}, {"level", line.level},
+            {"payload", line.payload}}
+                          .dump()
+                 << '\n';
+    } catch (...) {
+        // Diagnostics must never affect the operation being diagnosed.
+    }
+}
+
+void appendLog(PersistentLogStore& store, LogLine line) {
+    std::lock_guard lock(store.mutex);
+    loadLogsLocked(store);
+    const bool rewrite = store.history.size() >= kMaxLogLines;
+    store.history.push_back(line);
+    store.pending.push_back(std::move(line));
+    trimLogs(store.history);
+    trimLogs(store.pending);
+    if (rewrite) {
+        persistLogsLocked(store);
+    } else {
+        appendLogLineLocked(store, store.history.back());
+    }
+}
+
+std::vector<LogLine> logHistory(PersistentLogStore& store) {
+    std::lock_guard lock(store.mutex);
+    loadLogsLocked(store);
+    // The snapshot already includes queued entries; consume them to avoid
+    // displaying the same lines again on the first UI poll.
+    store.pending.clear();
+    return store.history;
+}
+
+std::vector<LogLine> drainLogQueue(PersistentLogStore& store) {
+    std::lock_guard lock(store.mutex);
+    loadLogsLocked(store);
+    return std::exchange(store.pending, {});
+}
+
+void clearLogHistory(PersistentLogStore& store) {
+    std::lock_guard lock(store.mutex);
+    store.history.clear();
+    store.pending.clear();
+    store.loaded = true;
+    std::error_code error;
+    std::filesystem::remove(store.path, error);
 }
 
 // mihomo 与 sing-box 的日志级别词表差异归一：WS /logs 帧的 type（sing-box
@@ -121,38 +191,54 @@ struct Channel {
 
 } // namespace
 
-void logApplication(std::string level, std::string payload) noexcept {
+void logCore(std::string level, std::string payload) noexcept {
     try {
         if (payload.empty()) return;
-        LogLine line{
+        appendLog(coreLogStore(), LogLine{
             .level = normalizeLevel(std::move(level)),
             .payload = std::move(payload),
             .at = nowUnix(),
-        };
-        auto& store = applicationLogStore();
-        std::lock_guard lock(store.mutex);
-        loadApplicationLogsLocked(store);
-        if (store.lines.size() >= kMaxLogLines) store.lines.erase(store.lines.begin());
-        store.lines.push_back(std::move(line));
-        persistApplicationLogsLocked(store);
+        });
+    } catch (...) {
+        // Kernel diagnostics are best-effort and must not crash the app.
+    }
+}
+
+std::vector<LogLine> coreLogHistory() {
+    return logHistory(coreLogStore());
+}
+
+std::vector<LogLine> drainCoreLogs() {
+    return drainLogQueue(coreLogStore());
+}
+
+void clearCoreLogs() {
+    clearLogHistory(coreLogStore());
+}
+
+void logApplication(std::string level, std::string payload) noexcept {
+    try {
+        if (payload.empty()) return;
+        appendLog(applicationLogStore(), LogLine{
+            .level = normalizeLevel(std::move(level)),
+            .payload = std::move(payload),
+            .at = nowUnix(),
+        });
     } catch (...) {
         // Application diagnostics are best-effort and must not crash the app.
     }
 }
 
+std::vector<LogLine> applicationLogHistory() {
+    return logHistory(applicationLogStore());
+}
+
 std::vector<LogLine> drainApplicationLogs() {
-    auto& store = applicationLogStore();
-    std::lock_guard lock(store.mutex);
-    loadApplicationLogsLocked(store);
-    return std::exchange(store.lines, {});
+    return drainLogQueue(applicationLogStore());
 }
 
 void clearApplicationLogs() {
-    auto& store = applicationLogStore();
-    std::lock_guard lock(store.mutex);
-    store.lines.clear();
-    std::error_code error;
-    std::filesystem::remove(applicationLogPath(), error);
+    clearLogHistory(applicationLogStore());
 }
 
 struct CoreStreams::Impl {
@@ -161,7 +247,6 @@ struct CoreStreams::Impl {
     Channel connections;
 
     std::mutex mutex;
-    std::vector<LogLine> logLines;
     TrafficPoint latestTraffic;
     bool trafficDirty = false;
     std::string latestConnections;
@@ -186,13 +271,7 @@ struct CoreStreams::Impl {
             line.level = "info";
             line.payload = text;
         }
-        std::lock_guard lock(mutex);
-        if (logLines.size() >= kMaxLogLines) {
-            logLines.erase(logLines.begin(),
-                           logLines.begin() +
-                               static_cast<std::ptrdiff_t>(logLines.size() - kMaxLogLines + 1));
-        }
-        logLines.push_back(std::move(line));
+        logCore(std::move(line.level), std::move(line.payload));
     }
 
     void pushTraffic(const std::string& text) {
@@ -226,7 +305,6 @@ void CoreStreams::start(const std::string& wsBase, const std::string& secret,
     impl_->stopAll();
     {
         std::lock_guard lock(impl_->mutex);
-        impl_->logLines.clear();
         impl_->trafficDirty = false;
         impl_->latestConnections.clear();
         impl_->connectionsDirty = false;
@@ -296,8 +374,7 @@ bool CoreStreams::trafficOpen() const { return impl_->traffic.open.load(); }
 bool CoreStreams::connectionsOpen() const { return impl_->connections.open.load(); }
 
 std::vector<LogLine> CoreStreams::drainLogs() {
-    std::lock_guard lock(impl_->mutex);
-    return std::exchange(impl_->logLines, {});
+    return drainCoreLogs();
 }
 
 bool CoreStreams::takeTraffic(TrafficPoint& out) {
