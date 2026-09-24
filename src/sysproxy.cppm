@@ -1,4 +1,5 @@
 // sysproxy.cppm — clashflux.sysproxy：系统代理写入（Linux / macOS / Windows）。
+// iOS/Android 没有本模块管理的桌面系统代理通道。
 //
 // 通道按平台分流：
 //   Windows —— 注册表 HKCU\...\Internet Settings（ProxyEnable/ProxyServer，
@@ -32,14 +33,23 @@ namespace {
 
 // 静默重定向按平台分叉（cmd.exe 没有 /dev/null，用 NUL）。
 bool runOk(const std::string& cmd) {
+#if defined(CLASHFLUX_IOS)
+    static_cast<void>(cmd);
+    return false;
+#else
 #ifdef _WIN32
     return std::system((cmd + " >NUL 2>&1").c_str()) == 0;
 #else
     return std::system((cmd + " >/dev/null 2>&1").c_str()) == 0;
 #endif
+#endif
 }
 
 std::string runCapture(const std::string& cmd) {
+#if defined(CLASHFLUX_IOS)
+    static_cast<void>(cmd);
+    return {};
+#else
     std::string out;
 #ifdef _WIN32
     FILE* fp = ::_popen((cmd + " 2>NUL").c_str(), "r");
@@ -59,6 +69,7 @@ std::string runCapture(const std::string& cmd) {
         out.pop_back();
     }
     return out;
+#endif
 }
 
 bool hasTool(const char* tool) {
@@ -66,11 +77,10 @@ bool hasTool(const char* tool) {
 }
 
 Desktop detect() {
-#if defined(__ANDROID__)
-    // Android has no desktop proxy configuration channel. In particular, do
-    // not probe for command-line tools here: this function is called while
-    // composing the first frame and Android's system() shell is not a desktop
-    // environment (and may block or be unavailable).
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
+    // Mobile platforms have no desktop proxy configuration channel. In
+    // particular, never probe for shell tools: system() is unavailable on iOS
+    // and Android does not provide a desktop shell environment.
     return Desktop::Unsupported;
 #else
 #ifdef _WIN32
