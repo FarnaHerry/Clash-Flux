@@ -33,7 +33,7 @@ std::optional<std::filesystem::path> ParseInstallPath(std::string_view value) {
 
 View InstallerMark(Color tile) {
   tile.alpha = 0.96F;
-  return Image(installer::images::mascot_logo)
+  return Image(installer::images::mascot_logo_dark)
       .Fit(ImageFit::Contain)
       .With(Frame{.width = 64.0F, .height = 64.0F}, Padding(5.0F),
             Background(tile), CornerRadius(18.0F), ClipChildren());
@@ -48,7 +48,7 @@ View BrandPanel(const ThemeSpec& theme) {
   secondary_text.alpha = 0.72F;
 
   return Column {
-    InstallerMark(theme.colors.on_primary),
+    InstallerMark(theme.colors.primary),
     Column {
       Text(installer_strings::application_setup)
           .Style(TextStyle{Font::System(12.0F).WithWeight(FontWeight::SemiBold), secondary_text}),
