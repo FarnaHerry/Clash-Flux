@@ -690,12 +690,10 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
     huxerui::View mainRow, const huxerui::ThemeSpec& rootSpec) {
     // 桌面标题栏和拖拽区只存在于桌面壳函数，Android 不会组合这些节点。
     huxerui::View content = mainRow;
-    const bool darkTheme = IsDarkTheme(rootSpec);
     return huxerui::Column {
         huxerui::WindowTitleBar {
             huxerui::Row {
-                huxerui::Image(darkTheme ? app::images::mascot_logo_dark
-                                         : app::images::mascot_logo)
+                huxerui::Image(app::images::mascot_logo_dark)
                     .Fit(huxerui::ImageFit::Contain)
                     .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
             }

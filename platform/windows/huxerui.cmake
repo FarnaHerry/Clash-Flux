@@ -100,8 +100,8 @@ function(huxerui_configure_windows_project_package target_name install_component
     endforeach ()
     file(MAKE_DIRECTORY "${HUXERUI_WINDOWS_INSTALLER_RESOURCE_DIRECTORY}/images")
     configure_file(
-            "${PROJECT_SOURCE_DIR}/resources/images/mascot_logo.png"
-            "${HUXERUI_WINDOWS_INSTALLER_RESOURCE_DIRECTORY}/images/mascot_logo.png"
+            "${PROJECT_SOURCE_DIR}/resources/images/mascot_logo_dark.png"
+            "${HUXERUI_WINDOWS_INSTALLER_RESOURCE_DIRECTORY}/images/mascot_logo_dark.png"
             COPYONLY
     )
 
