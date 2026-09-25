@@ -222,6 +222,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
     auto profiles = huxerui::UseStateList<db::Profile>();
     auto activeConnections = huxerui::UseStateList<std::string>();
     auto refreshTick = huxerui::UseState(0);
+    auto refreshSpin = huxerui::UseState(0);
 
     // 编辑器状态归页面持有，弹窗只负责渲染；不会在每一行里创建 hook。
     auto editMatch = huxerui::UseState<std::size_t>(1);
@@ -590,11 +591,17 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                       .With(huxerui::Tooltip("添加规则"))
                       .OnClick([openGlobalRuleEditor] { openGlobalRuleEditor(-1); })}
             : huxerui::View{huxerui::Row{}};
-    huxerui::View refresh = huxerui::IconButton(app::images::refresh, "刷新规则")
-        .With(huxerui::Tooltip("刷新规则"))
-        .OnClick([refreshTick] {
-        refreshTick = refreshTick.Get() + 1;
-    });
+    huxerui::View refresh =
+        huxerui::IconButton(app::images::refresh, "刷新规则")
+            .With(huxerui::Tooltip("刷新规则"),
+                  huxerui::Rotation(huxerui::AnimateTo(
+                      static_cast<float>(refreshSpin.Get()) * 360.0F,
+                      huxerui::TweenSpec{.duration = 0.6,
+                                         .easing = huxerui::Easing::Linear})))
+            .OnClick([refreshTick, refreshSpin] {
+                refreshSpin = refreshSpin.Get() + 1;
+                refreshTick = refreshTick.Get() + 1;
+            });
     huxerui::View actions = huxerui::Row{
         std::move(addRule), std::move(refresh),
     }.With(huxerui::Spacing(8.0F),

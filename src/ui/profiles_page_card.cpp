@@ -75,6 +75,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     const std::int64_t id = profile.id;
     const bool nativeVpn = isNativeVpnType(profile.type);
     const bool selected = profile.selected;
+    auto refreshSpin = huxerui::UseState(0);
 
     auto action = [tasks, toast, reload](std::function<std::string()> job) {
         tasks.Launch([=]() -> huxerui::Task<void> {
@@ -248,7 +249,12 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 .Align(huxerui::HorizontalAlignment::Center,
                        huxerui::VerticalAlignment::Center)
                 .Tint(theme.colors.on_surface_variant)
-                .With(huxerui::Frame{.width = 14.0F, .height = 14.0F}),
+                .With(huxerui::Frame{.width = 14.0F, .height = 14.0F},
+                      huxerui::Rotation(huxerui::AnimateTo(
+                          static_cast<float>(refreshSpin.Get()) * 360.0F,
+                          huxerui::TweenSpec{
+                              .duration = 0.6,
+                              .easing = huxerui::Easing::Linear}))),
         }
             .With(huxerui::Padding(5.0F),
                   huxerui::CornerRadius(islands.nested_radius),
@@ -256,7 +262,10 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                   huxerui::Focusable(true),
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                      .label = "更新订阅"})
-            .OnClick([refresh, id] { refresh(id); });
+            .OnClick([refresh, id, refreshSpin] {
+                refreshSpin = refreshSpin.Get() + 1;
+                refresh(id);
+            });
     }
 
     huxerui::View moreButton = huxerui::Row{};

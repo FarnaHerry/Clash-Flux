@@ -252,6 +252,8 @@ huxerui::View DesktopAppContent(huxerui::View mainRow,
 
 // ---- 通用部件（common.cpp）----
 
+huxerui::View WithoutIconButtonOutlines(huxerui::View content);
+
 huxerui::View PasswordField(
     huxerui::State<huxerui::TextEditingValue> password);
 

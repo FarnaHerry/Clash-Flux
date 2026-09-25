@@ -401,6 +401,35 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 
 } // namespace
 
+[[huxerui::composable]] huxerui::View WithoutIconButtonOutlines(
+    huxerui::View content) {
+    // The built-in icon-button focus ring and indication borders read these
+    // scoped values; keep the rest of the theme and interaction feedback intact.
+    huxerui::ThemeSpec theme = huxerui::UseTheme();
+    theme.interactions.focus_ring =
+        huxerui::FocusRing{huxerui::Color::Transparent(), 0.0F, 0.0F};
+    const auto removeIndicationBorders = [](huxerui::Indication& indication) {
+        const auto removeBorder = [](auto& layer) {
+            if (layer) layer->border.reset();
+        };
+        removeBorder(indication.focus);
+        removeBorder(indication.hover);
+        removeBorder(indication.press);
+    };
+    removeIndicationBorders(theme.interactions.indication);
+
+    huxerui::IconButtonStyle iconButtonStyle =
+        huxerui::UseEnvironment<huxerui::IconButtonStyle>();
+    if (iconButtonStyle.indication) {
+        removeIndicationBorders(*iconButtonStyle.indication);
+    }
+
+    huxerui::ThemeDefinition overrides;
+    overrides.Set(theme);
+    overrides.Set(iconButtonStyle);
+    return huxerui::Theme(overrides, content);
+}
+
 [[huxerui::composable]] huxerui::View IslandSurface(huxerui::View content,
                                                     IslandLevel level) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();

@@ -1283,6 +1283,7 @@ std::string HomeKernelStatusText(const HomeState& s) {
                                   2.0F},
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                      .label = active ? "停止 VPN" : "启动 VPN"});
+    floating = WithoutIconButtonOutlines(floating);
     // 与 Android 底部悬浮导航栏相同：按钮放在独立的全屏覆盖层中，
     // 由覆盖层的 Column 在主轴末端、交叉轴末端定位，不依赖页面内容容器。
     huxerui::View dock = huxerui::Column {
@@ -1545,6 +1546,7 @@ std::string HomeKernelStatusText(const HomeState& s) {
                                   2.0F},
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                      .label = active ? "停止内核" : "启动内核"});
+    floating = WithoutIconButtonOutlines(floating);
     huxerui::View dock = huxerui::Column {
         std::move(floating),
     }.With(huxerui::Padding(huxerui::EdgeInsets{
