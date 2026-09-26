@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -21,9 +22,13 @@
 #include "ui.h"
 #include "app.h"
 #include "app_resources.h"
+#include "task_bridge.h"
 
 import clashflux.config;
+import clashflux.cli;
+import clashflux.cli_ipc;
 import clashflux.store.core;
+import clashflux.persistence;
 
 namespace clashflux::ui {
 
@@ -685,6 +690,56 @@ huxerui::PageTransition SecondaryPageTransition(
     auto themeMode = huxerui::UseState<int>(std::move(initialThemeMode));
     auto navPage = huxerui::UseState<std::size_t>(pages::kHome);
     auto pagerPage = huxerui::UseState<std::size_t>(0);
+
+    // 持久化：启动任务打开 ORM 库（含 0→1 迁移）并 hydrate settings/profiles
+    // 缓存，然后补齐 core.secret、把首帧默认主题校正为库里的值，最后长期跑
+    // flush 泵（settings 与 profiles 都是「写缓存 + 异步落库」）。
+    auto tasks = huxerui::UseTaskScope();
+    huxerui::Lifecycle(
+        [tasks, themeMode, application] {
+            tasks.Launch([themeMode, application]() -> huxerui::Task<void> {
+                auto& db = clashflux::persistence::persistence();
+                if (!db.ready()) {
+                    co_await db.open(cfg::databaseFile());
+                }
+                store::coreStore().init();
+                store::coreStore().ensureSecret();
+                if (db.ready()) {
+                    const std::string saved =
+                        store::coreStore().setting("ui.theme_mode", "1");
+                    if (saved == "0" || saved == "2") {
+                        const int mode = std::stoi(saved);
+                        if (mode != themeMode.Get()) themeMode = mode;
+                    }
+                }
+
+                // 单实例：owner 启动转发服务；非 owner 的命令由这里代跑。
+                clashflux::cli_ipc::startCommandServer();
+
+                // 伪 CLI：命令在运行时内执行（窗口隐藏到托盘），落库后退出。
+                auto args = cli::takePendingCommand();
+                if (!args.empty()) {
+                    const int code = co_await RunOnTaskThread(
+                        [args = std::move(args)] { return cli::run(args); });
+                    co_await db.flushSettings();
+                    co_await db.flushProfiles();
+                    cli::setPendingExitCode(code);
+                    application.Quit();
+                    co_return;
+                }
+
+                for (;;) {
+                    co_await huxerui::Delay(std::chrono::duration<double>{0.25});
+                    // 服务其他进程转发来的 CLI 命令（单实例下唯一执行点）。
+                    co_await RunOnTaskThread(
+                        [] { return clashflux::cli_ipc::servePendingCommands(); });
+                    co_await db.flushSettings();
+                    co_await db.flushProfiles();
+                }
+            });
+            return [] {};
+        },
+        0);
     // 平台刷新泵和应用生命周期各自由平台组件收束，通用壳层只挂载它们。
     huxerui::View profileRefreshPump = CLASHFLUX_PROFILE_REFRESH_PUMP();
 

@@ -20,6 +20,7 @@ import nlohmann.json;
 import clashflux.config;
 import clashflux.utils;
 import clashflux.db;
+import clashflux.persistence;
 import clashflux.api;
 import clashflux.core;
 import clashflux.singbox;

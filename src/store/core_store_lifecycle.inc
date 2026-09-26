@@ -100,6 +100,15 @@
                                              : compiled.error));
                 return;
             }
+            {
+                auto config = nlohmann::json::parse(compiled.json);
+                const std::string proxyGroups = proxyGroupsFromConfig(config);
+                {
+                    std::lock_guard lock(mutex_);
+                    compiledProxyGroups_ = proxyGroups;
+                }
+                compiled.json = config.dump();
+            }
 #ifdef _WIN32
             if (options.tunInbound) {
                 for (const auto& native : options.nativeConnections) {

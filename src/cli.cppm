@@ -320,4 +320,35 @@ export int run(const std::vector<std::string>& args) {
     return 2;
 }
 
+// ---- 伪 CLI：命令在应用运行时内执行 -----------------------------------------
+// 纯输出命令（version/help）不启运行时；其余命令需要 HuxerUI 的任务与持久化，
+// 由平台入口写入 pending command，AppRoot 的启动任务执行后退出。
+namespace {
+std::vector<std::string> g_pendingCommand;
+bool g_runtimeMode = false;
+int g_pendingExitCode = 0;
+} // namespace
+
+export bool isPureOutputCommand(const std::vector<std::string>& args) {
+    if (args.empty()) return true;
+    const std::string& cmd = args.front();
+    return cmd == "version" || cmd == "--version" || cmd == "-v" ||
+           cmd == "help" || cmd == "--help" || cmd == "-h";
+}
+
+export void setPendingCommand(std::vector<std::string> args) {
+    g_pendingCommand = std::move(args);
+    g_runtimeMode = true;
+}
+
+export bool runtimeCommandMode() { return g_runtimeMode; }
+
+export std::vector<std::string> takePendingCommand() {
+    return std::exchange(g_pendingCommand, {});
+}
+
+export void setPendingExitCode(int code) { g_pendingExitCode = code; }
+
+export int pendingExitCode() { return g_pendingExitCode; }
+
 } // namespace cli

@@ -26,8 +26,10 @@
 #include "task_bridge.h"
 
 import clashflux.config;
+import clashflux.cli;
 import clashflux.core;
 import clashflux.db;
+import clashflux.persistence;
 import clashflux.service;
 import clashflux.store.core;
 import clashflux.store.profiles;
@@ -324,10 +326,7 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                         [] { return store::profilesStore().list(); });
                     trayProfiles = profiles;
                     const std::string body = co_await RunOnTaskThread([] {
-                        return store::coreStore().snapshot().state ==
-                                       core::CoreState::Running
-                                   ? ProxyGroupsSnapshot()
-                                   : std::string{};
+                        return ProxyGroupsSnapshot();
                     });
                     trayProxyGroups = ParseProxyGroups(body);
                     co_await huxerui::Delay(std::chrono::duration<double>{1.0});
@@ -349,6 +348,9 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                 store::vpnStore().shutdown();
                 store::coreStore().stopCore();
             });
+            // 写后缓存模型：退出前把 settings/profiles 的脏数据落库。
+            co_await clashflux::persistence::persistence().flushSettings();
+            co_await clashflux::persistence::persistence().flushProfiles();
             application.Quit();
         });
         // 退出保底看门狗：避免任何底层阻塞（网络断开超时、平台事件循环等）导致后台残留僵尸进程
@@ -390,9 +392,11 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                         profileEntries.push_back(
                             huxerui::MenuItem(
                                 profile.name,
-                                [tasks, toast, trayProfiles, id = profile.id] {
+                                [tasks, toast, trayProfiles, trayProxyGroups,
+                                 id = profile.id] {
                                     tasks.Launch(
-                                        [tasks, toast, trayProfiles, id]()
+                                        [tasks, toast, trayProfiles,
+                                         trayProxyGroups, id]()
                                             -> huxerui::Task<void> {
                                             const std::string error =
                                                 co_await RunOnTaskThread([id] {
@@ -401,10 +405,17 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                                                     return profiles.activate(id)
                                                                ? std::string{}
                                                                : profiles.lastError();
-                                                });
+                                            });
                                             if (!error.empty()) toast.Show(error);
                                             trayProfiles = co_await RunOnTaskThread(
                                                 [] { return store::profilesStore().list(); });
+                                            if (error.empty()) {
+                                                const std::string groups =
+                                                    co_await RunOnTaskThread(
+                                                        [] { return ProxyGroupsSnapshot(); });
+                                                trayProxyGroups =
+                                                    ParseProxyGroups(groups);
+                                            }
                                         });
                                 })
                                 .Checked(profile.selected));
@@ -686,9 +697,11 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
 
     // 只在这个壳层生命周期首次挂载时执行一次。此前直接写在组合函数末尾，
     // 页面切换造成重组后会再次 Hide，表现为“切换页面就缩到托盘”。
+    // 伪 CLI 模式同样不渲染窗口：命令在运行时内执行，完成即退出。
     const bool hideOnStartup =
-        trayAvailable && trayEnabled.Get() &&
-        store::coreStore().setting("tray.start_minimized", "false") == "true";
+        cli::runtimeCommandMode() ||
+        (trayAvailable && trayEnabled.Get() &&
+         store::coreStore().setting("tray.start_minimized", "false") == "true");
     huxerui::Lifecycle(
         [window, hideOnStartup] {
             if (hideOnStartup) window.Hide();

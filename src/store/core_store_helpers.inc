@@ -215,22 +215,18 @@
     }
 
     void ensureOpen() {
-        // Android starts the bundled engine from the Java/native shell before
-        // HuxerUI necessarily builds its first frame. AppRoot may therefore
-        // initialize the same store concurrently; call_once makes lazy DB/API
-        // construction safe for both paths while preserving the existing
-        // single-process singleton contract on desktop.
+        // 数据库由启动流程的 Persistence::open 负责（异步、带 0→1 迁移）；
+        // 这里只构建同步门面与内核 API 端点。Persistence 未就绪时先建空 secret
+        // 的端点，启动任务随后调用 ensureSecret() 刷新。
         std::call_once(initFlag_, [this] {
-            auto database = std::make_unique<db::Db>(cfg::databaseFile());
-            std::string secret = database->getSetting("core.secret", "");
-            if (secret.empty()) {
-                secret = cfg::randomSecret();
-                database->setSetting("core.secret", secret);
+            db_ = std::make_unique<db::Db>(cfg::databaseFile());
+            if (clashflux::persistence::persistence().ready()) {
+                ensureSecret();
+            } else {
+                api_ = std::make_unique<api::ClashApi>(cfg::controllerBaseUrl(),
+                                                       secret_);
             }
-            db_ = std::move(database);
-            secret_ = std::move(secret);
-            api_ = std::make_unique<api::ClashApi>(cfg::controllerBaseUrl(), secret_);
-            stream::logApplication("debug", "应用数据库与内核 API 已初始化");
+            stream::logApplication("debug", "持久化门面与内核 API 端点已初始化");
         });
     }
 

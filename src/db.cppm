@@ -1,43 +1,18 @@
-// db.cppm — clashflux.db：SQLite 持久化（接口模块）。
+// db.cppm — clashflux.db：持久化访问（接口模块）。
 //
-// 两类数据：
-//   profiles  —— 订阅（远程 URL 或本地文件；selected 标记当前启用）
-//   settings  —— 应用设置 KV（主题模式、控制器 secret、系统代理开关等）
-// SQLiteCpp 头只进实现单元（db.cpp 全局模块片段），接口只暴露纯数据结构。
+// 接口保持不变（profiles / settings），实现已由 huxerui::sqlite ORM
+// （clashflux.persistence）承担：读走内存缓存，写更新缓存并标脏，
+// 落库由启动流程的异步 flush 完成。SQLiteCpp 已不再使用。
 export module clashflux.db;
 
 import std;
+import clashflux.model;
 
 namespace db {
 
-export struct Profile {
-    std::int64_t id = 0;         // 0 = 未保存过
-    std::string name;
-    std::string url;             // 订阅 URL；本地导入为空
-    std::string file;            // profiles/ 下的 YAML 文件名（<id>.yaml）
-    bool selected = false;       // 当前启用
-    std::int64_t updatedAt = 0;  // 上次成功拉取/导入时间（Unix 秒）
-    std::string error;           // 上次拉取错误（成功清空）
-    // ---- 订阅选项（订阅弹窗编辑；下载行为在更新时生效）----
-    std::string type = "remote";    // remote/local 或原生连接类型（如 pptp/openvpn）
-    std::string description;        // 描述
-    int timeoutSecs = 60;           // HTTP 请求超时（秒；<=0 回落 60）
-    int intervalMins = 0;           // 更新间隔（分钟；0 = 不自动更新）
-    bool autoUpdate = false;        // 允许自动更新（需 intervalMins > 0）
-    bool useSystemProxy = false;    // 使用系统代理更新（环境变量代理）
-    bool useCoreProxy = false;      // 使用内核代理更新（127.0.0.1:mixedPort）
-    bool allowInvalidCert = false;  // 允许无效证书（危险）
-    // ---- 原生连接订阅（PPTP/OpenVPN/WireGuard 等；由 type 决定解释）----
-    std::string nativeConfig;
-    std::string nativeRoutes;
-    // ---- 订阅响应头解析（更新时从 subscription-userinfo / profile-web-page-url
-    // 提取；本地导入恒空/0）----
-    std::string homepage;           // 订阅提供方首页（右键「首页」跳转）
-    std::int64_t usedBytes = 0;     // 已用流量（upload + download）
-    std::int64_t totalBytes = 0;    // 总流量（0 = 未知，卡片不显示流量条）
-
-    bool operator==(const Profile&) const = default;  // State 变更检测
-};
+// Profile 的唯一定义在 clashflux.model（打破 db ↔ persistence 的模块环）；
+// 这里保留 db::Profile 这个既有名字，调用点无需改名。
+export using Profile = model::Profile;
 
 // 数据库句柄。构造即打开 + 建表（幂等）。所有方法抛 std::runtime_error；
 // 调用方（领域 store）负责兜底转状态消息。

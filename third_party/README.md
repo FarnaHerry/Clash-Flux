@@ -11,7 +11,7 @@ SHA256 后解包到 `build/vendor/`，源码树不入库），nlohmann::json 是
 | HuxerUI | 0.3.0 | `huxerui-sdk-0.3.0-linux-x86_64.tar.gz` | 由官方 0.3.0 SDK 安装前缀归档（shared 库 + headers + CMake 包 + hcg/hrc + 内置资源）。`HUXERUI_HOME` 可指向 0.3.0 SDK 安装目录或源码根目录；未设置时优先 `third_party/huxerui/` 源码，`CLASHFLUX_HUXERUI_FORCE_SDK=ON` 时使用 Linux 离线包。Linux 源码模式需 GTK ≥4.14、libepoxy ≥1.5、libsoup ≥3.0（Fedora：`gtk4-devel libepoxy-devel libsoup3-devel`）；macOS/Windows 必须通过 `HUXERUI_HOME` 提供 0.3.0 源码或 SDK。 |
 | curl | 8.22.0 | `curl-8.22.0.tar.gz` | 上游 `curl/curl` release tarball。用于 mihomo external-controller REST API 与订阅下载。 |
 | IXWebSocket | 12.0.1 | `ixwebsocket-12.0.1.tar.gz` | 上游 `machinezone/IXWebSocket` v12.0.1（client-only、无 TLS/无 zlib）。用于 mihomo `/logs` `/traffic` `/connections` `/memory` 推送流（ws:// 回环）。 |
-| SQLiteCpp | 3.3.3 | `SQLiteCpp-3.3.3.tar.gz` | 上游 `SRombauts/SQLiteCpp` v3.3.3（内置 sqlite3 amalgamation）。订阅与应用设置持久化。 |
+| SQLite（ORM） | HuxerUI Lib-SQLite | 构建期获取，不入 tarball | 上游 `HuxerUI/Lib-SQLite`（自带钉死版本的 sqlite3 amalgamation）。订阅（profiles）与应用设置（settings）持久化。源码优先 `third_party/lib-sqlite/`（gitignore 的本地 clone，可指向 fork），缺失时由 `huxerui_use_library` 的 FetchContent 拉固定 commit；日志不写库，仍落 `core/*.log`。 |
 | OpenSSL | 3.5.1 | `openssl-3.5.1-linux-x86_64.tar.gz` | 静态预编译产物（libssl.a/libcrypto.a + include），仅 linux x86_64 兜底；其他平台用系统 OpenSSL。 |
 | nlohmann::json | 3.12.0 | `json/nlohmann/json.hpp`（single header） | 上游 `nlohmann/json` v3.12.0 `single_include` |
 | QR-Code-generator | 1.8.0 | `qrcodegen/qrcodegen.{hpp,cpp}`（源码直提，同 json 先例） | 上游 `nayuki/QR-Code-generator` v1.8.0（MIT）。订阅分享二维码。 |

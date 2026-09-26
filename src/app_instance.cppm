@@ -1,9 +1,9 @@
-// app_instance.cppm — clashflux.instance：桌面 GUI 单实例与唤醒通道。
+// clashflux.instance：桌面单实例与唤醒通道。
 //
-// CLI 命令不经过这里；只有无参数启动 GUI 时由各平台 main 获取实例锁。
-// 第二次启动只发送一次唤醒信号并退出，不会再创建第二个内核/托盘。
-// 若发现旧实例处于 closing（正在退出）状态但未完全死亡，则判定为异常卡死，
-// 新实例将主动终止旧残留进程并接管单实例锁。
+// GUI 与 CLI 都经过这里：抢到锁的进程是 owner，负责自己的运行时并服务转发来的
+// CLI 命令；抢不到的进程 GUI 只唤醒已有窗口，CLI 则把命令行转发给 owner 执行
+// （见 clashflux.cli_ipc）。若发现旧实例处于 closing（正在退出）状态但未完全
+// 死亡，则判定为异常卡死，新实例将主动终止旧残留进程并接管单实例锁。
 module;
 
 #ifdef _WIN32
@@ -210,7 +210,10 @@ export void markRunning() {
 #endif
 }
 
-export bool acquireOrActivate() {
+/// 抢单实例锁。返回 true = 本进程成为 owner（继续启动/执行命令）；
+/// 返回 false = 已有实例在运行。
+/// @param activate false 时只探测/转发，不唤醒已有窗口（CLI 命令用）。
+export bool acquireOrActivate(bool activate = true) {
 #ifdef _WIN32
     const std::filesystem::path path =
         cfg::dataDir() / "clash-flux.instance.lock";
@@ -241,10 +244,12 @@ export bool acquireOrActivate() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
         }
-        clashflux::win32::UniqueHandle event{
-            OpenEventW(EVENT_MODIFY_STATE, FALSE, kEventName)};
-        if (event.valid()) SetEvent(event.get());
-        activateExistingWindow();
+        if (activate) {
+            clashflux::win32::UniqueHandle event{
+                OpenEventW(EVENT_MODIFY_STATE, FALSE, kEventName)};
+            if (event.valid()) SetEvent(event.get());
+            activateExistingWindow();
+        }
         return false;
     }
     instanceMutex() = mutex.release();
@@ -286,7 +291,7 @@ export bool acquireOrActivate() {
             }
         }
 
-        if (info.pid > 0) {
+        if (info.pid > 0 && activate) {
             notifyExistingProcess(info.pid);
         }
         ::close(fd);
