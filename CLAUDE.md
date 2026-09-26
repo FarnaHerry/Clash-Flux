@@ -88,7 +88,7 @@ cmake --build build --target clash-flux
 | `clashflux.utils` | `src/utils.cppm` | 纯 string/number 帮助函数 + percentEncode / appendQuery |
 | `clashflux.model` | `src/model.cppm` | 跨层共享数据结构（`Profile`）；单独成模块以打破 db ↔ persistence 的模块环 |
 | `clashflux.db` | `src/db.cppm/.cpp` | 持久化**同步门面**：转发 `clashflux.persistence`，保留 `listProfiles/saveProfile/deleteProfile/setSelectedProfile/getSetting/setSetting` 既有同步接口，调用点无需改动 |
-| `clashflux.persistence` | `src/store/persistence.cppm/.cpp` | `huxerui::sqlite` ORM 持久化服务：settings/profiles **内存缓存 + 异步落库**；`open()` 打开库并跑 0→1 老库迁移、hydrate 缓存；写后由启动任务的 flush 泵落库。**日志不入库**（高频追加，仍写 `core/*.log`）。schema 声明在 `src/sqlite_schema.*` |
+| `clashflux.persistence` | `src/store/persistence.cppm/.cpp` | `huxerui::sqlite` ORM 持久化服务：settings/profiles **内存缓存 + 异步落库**；`open()` 打开库并 hydrate 缓存，**不做向后兼容，也不删任何文件**——0.2.x 旧库用当前 schema 直接打不开（open 失败并提示用户自行删除），应用不会移除数据库文件；写后由启动任务的 flush 泵落库，退出前再 flush 一次。**日志不入库**（高频追加，仍写 `core/*.log`）。schema 声明在 `src/sqlite_schema.*`（无 Migration） |
 | `clashflux.api` | `src/api.cppm/.cpp` | sing-box clash_api REST 客户端（curl，同步阻塞、每调用独立 handle）：version/configs/patchConfigs(mode)/proxies/selectProxy/proxyDelay/groupDelay(fan-out 并发逐节点)/connections/订阅下载 |
 | `clashflux.core` | `src/core.cppm/.cpp` | sing-box 子进程生命周期（`run -c <config.json> -D <workdir>`；posix_spawn + 监视线程；SIGTERM→2s→SIGKILL）+ generateConfig（委托 clashflux.singbox 编译） |
 | `clashflux.singbox` | `src/singbox.cppm/.cpp` | Clash YAML → sing-box JSON 编译器（yaml-cpp 解析 + nlohmann 合成）：节点（ss/vmess/vless/trojan/hysteria2/tuic/http/socks）、组（fallback/load-balance 降级 urltest）、基础规则 + GEOIP→远程 .srs、clash_mode 三模式前置规则；不支持的条目进 warnings 不阻断 |

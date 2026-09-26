@@ -1,8 +1,7 @@
-// sqlite_schema.cpp — schema 声明、版本与 0→1 迁移的唯一定义。
+// sqlite_schema.cpp — schema 声明与打开选项的唯一定义（无迁移，见头文件说明）。
 #include "sqlite_schema.h"
 
 #include <chrono>
-#include <vector>
 
 namespace clashflux::db_schema {
 namespace {
@@ -41,54 +40,10 @@ const sqlite::Table<SettingRow> kSettings{
     sqlite::Column<&SettingRow::value>{"value"},
 };
 
-// Migration 0→1：SQLiteCpp 时代的老库 user_version=0、表已存在，而 PK 列在
-// PRAGMA table_info 里是 notnull=0；ORM 对非空列（含 PK）一律生成 NOT NULL，
-// ValidateSchema 会拒绝。SQLite 不能 ALTER 加 NOT NULL，按官方做法在事务内
-// 建新表 → 搬数据 → 删旧表 → 改名。列顺序/类型必须与上面的声明一致。
-sqlite::Result<void> RebuildLegacyTables(sqlite::MigrationContext& context) {
-    const std::vector<std::string> statements{
-        "CREATE TABLE profiles_v1 ("
-        "id INTEGER NOT NULL PRIMARY KEY, "
-        "name TEXT NOT NULL, url TEXT NOT NULL, file TEXT NOT NULL, "
-        "selected INTEGER NOT NULL, updated_at INTEGER NOT NULL, "
-        "error TEXT NOT NULL, type TEXT NOT NULL, description TEXT NOT NULL, "
-        "timeout_secs INTEGER NOT NULL, interval_mins INTEGER NOT NULL, "
-        "auto_update INTEGER NOT NULL, use_system_proxy INTEGER NOT NULL, "
-        "use_core_proxy INTEGER NOT NULL, allow_invalid_cert INTEGER NOT NULL, "
-        "homepage TEXT NOT NULL, used_bytes INTEGER NOT NULL, "
-        "total_bytes INTEGER NOT NULL, native_config TEXT NOT NULL, "
-        "native_routes TEXT NOT NULL)",
-        "INSERT INTO profiles_v1 ("
-        "id, name, url, file, selected, updated_at, error, type, description, "
-        "timeout_secs, interval_mins, auto_update, use_system_proxy, "
-        "use_core_proxy, allow_invalid_cert, homepage, used_bytes, total_bytes, "
-        "native_config, native_routes) SELECT "
-        "id, name, url, file, selected, updated_at, error, type, description, "
-        "timeout_secs, interval_mins, auto_update, use_system_proxy, "
-        "use_core_proxy, allow_invalid_cert, homepage, used_bytes, total_bytes, "
-        "native_config, native_routes FROM profiles",
-        "DROP TABLE profiles",
-        "ALTER TABLE profiles_v1 RENAME TO profiles",
-        "CREATE TABLE settings_v1 (key TEXT NOT NULL PRIMARY KEY, "
-        "value TEXT NOT NULL)",
-        "INSERT INTO settings_v1 (key, value) SELECT key, value FROM settings",
-        "DROP TABLE settings",
-        "ALTER TABLE settings_v1 RENAME TO settings",
-    };
-    for (const std::string& sql : statements) {
-        auto result = context.Execute(sql);
-        if (!result) {
-            return result.Error();
-        }
-    }
-    return {};
-}
-
+// schema 版本 1，且**没有迁移**：0.2.x 的 SQLiteCpp 旧结构与当前结构不兼容，
+// 也不值得保留（订阅/设置就几行），检测到旧库时由 Persistence::open 直接删库
+// 重建。因此这里不维护任何 Migration 链，schema 变了就升版本并接受重建。
 const sqlite::Schema kSchema{1, kProfiles, kSettings};
-
-const sqlite::Migrations kMigrations{
-    sqlite::Migration{0, 1, &RebuildLegacyTables},
-};
 
 const sqlite::OpenOptions kOpenOptions{
     .journal_mode = sqlite::JournalMode::Wal,
@@ -101,7 +56,6 @@ const sqlite::OpenOptions kOpenOptions{
 const sqlite::Table<ProfileRow>& profiles() { return kProfiles; }
 const sqlite::Table<SettingRow>& settings() { return kSettings; }
 const sqlite::Schema& schema() { return kSchema; }
-const sqlite::Migrations& migrations() { return kMigrations; }
 const sqlite::OpenOptions& openOptions() { return kOpenOptions; }
 
 } // namespace clashflux::db_schema
