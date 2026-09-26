@@ -155,8 +155,7 @@ export int run() {
     {
         std::error_code ec;
         if (std::filesystem::exists(sockPath, ec)) {
-            if (const int probe = connectSocket(); probe >= 0) {
-                ::close(probe);
+            if (const UniqueFd probe = connectSocket(); probe.valid()) {
                 std::fprintf(stderr, "已有 clash-flux 服务实例在运行（%s 可连接）\n",
                              sockPath.c_str());
                 return 1;
@@ -165,24 +164,22 @@ export int run() {
         }
     }
 
-    const int listenFd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-    if (listenFd < 0) {
+    UniqueFd listenFd{::socket(AF_UNIX, SOCK_STREAM, 0)};
+    if (!listenFd.valid()) {
         std::fprintf(stderr, "%s\n", errnoText("创建 socket 失败").c_str());
         return 1;
     }
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
     std::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", sockPath.c_str());
-    if (::bind(listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+    if (::bind(listenFd.get(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
         std::fprintf(stderr, "%s\n", errnoText("bind 失败").c_str());
-        ::close(listenFd);
         return 1;
     }
     const auto ownerUid = serviceOwnerUid();
     if (ownerUid) {
         if (::chown(sockPath.c_str(), *ownerUid, static_cast<gid_t>(-1)) != 0) {
             std::fprintf(stderr, "%s\n", errnoText("设置服务 socket 所有者失败").c_str());
-            ::close(listenFd);
             ::unlink(sockPath.c_str());
             return 1;
         }
@@ -190,9 +187,8 @@ export int run() {
     // 安装用户 + root；若安装时未识别原始 UID，则退回 root-only，避免
     // 任意本地用户接管 sing-box/PPTP。
     ::chmod(sockPath.c_str(), 0600);
-    if (::listen(listenFd, 8) != 0) {
+    if (::listen(listenFd.get(), 8) != 0) {
         std::fprintf(stderr, "%s\n", errnoText("listen 失败").c_str());
-        ::close(listenFd);
         ::unlink(sockPath.c_str());
         return 1;
     }
@@ -213,7 +209,7 @@ export int run() {
     pid_t childPid = 0;
     bool restartRequested = false;
     while (!g_quit && !restartRequested) {
-        pollfd pfd{.fd = listenFd, .events = POLLIN, .revents = 0};
+        pollfd pfd{.fd = listenFd.get(), .events = POLLIN, .revents = 0};
         const int rc = ::poll(&pfd, 1, 200);
         if (g_childEvent) {
             g_childEvent = 0;
@@ -221,13 +217,15 @@ export int run() {
         }
         if (rc <= 0) continue;  // 超时 / EINTR
 
-        const int fd = ::accept(listenFd, nullptr, nullptr);
-        if (fd < 0) continue;
+        // 每条连接一行命令。UniqueFd 负责在 continue/return/异常展开时关闭，
+        // 下面继续用 fd 这个非拥有别名传给 C API。
+        UniqueFd connection{::accept(listenFd.get(), nullptr, nullptr)};
+        if (!connection.valid()) continue;
+        const int fd = connection.get();
 
         ucred peer{};
         if (!peerCredentials(fd, peer) || !peerAllowed(peer, ownerUid)) {
             replyLine(fd, "ERR 未授权的服务客户端");
-            ::close(fd);
             continue;
         }
 
@@ -372,14 +370,12 @@ export int run() {
         } else if (!cmd.empty()) {
             replyLine(fd, "ERR 未知命令");
         }
-        ::close(fd);
     }
 
-    // 退出：杀掉 sing-box 子进程、删 socket 文件。
+    // 退出：杀掉 sing-box 子进程、删 socket 文件（listenFd 由 RAII 关闭）。
     reapChildren(childPid);
     if (childPid > 0) stopEngine(childPid);
     pptp::PrivilegedPptpShutdown();
-    ::close(listenFd);
     ::unlink(sockPath.c_str());
     std::println("clash-flux 服务退出。");
     // UPGRADE 需要让 systemd 重新执行 /usr/local/lib 中刚替换的二进制。

@@ -147,38 +147,36 @@ std::filesystem::path serviceEngineForExecutable(
 // ---------------- 客户端：unix socket 一问一答 ----------------
 
 // 连接服务 socket；短查询默认 2s，PPTP 拨号由调用方传入更长超时。
-int connectSocket(int timeoutSecs = 2) {
-    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0) return -1;
+UniqueFd connectSocket(int timeoutSecs = 2) {
+    UniqueFd fd{::socket(AF_UNIX, SOCK_STREAM, 0)};
+    if (!fd.valid()) return {};
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
     std::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s",
                   std::string(kSocketPath).c_str());
-    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        ::close(fd);
-        return -1;
+    if (::connect(fd.get(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        return {};
     }
     const timeval tv{.tv_sec = timeoutSecs, .tv_usec = 0};
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    ::setsockopt(fd.get(), SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    ::setsockopt(fd.get(), SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     return fd;
 }
 
 // 发一行命令、读一行回复。失败返回 nullopt 并填 err。
 std::optional<std::string> request(const std::string& cmd, std::string& err,
                                    int timeoutSecs = 2) {
-    const int fd = connectSocket(timeoutSecs);
-    if (fd < 0) {
+    UniqueFd fd = connectSocket(timeoutSecs);
+    if (!fd.valid()) {
         err = "无法连接 Clash-Flux root 服务（请在设置中安装/启动服务）";
         return std::nullopt;
     }
     const std::string line = cmd + "\n";
     size_t sent = 0;
     while (sent < line.size()) {
-        const ssize_t n = ::send(fd, line.data() + sent, line.size() - sent, MSG_NOSIGNAL);
+        const ssize_t n = ::send(fd.get(), line.data() + sent, line.size() - sent, MSG_NOSIGNAL);
         if (n <= 0) {
             err = errnoText("发送命令失败");
-            ::close(fd);
             return std::nullopt;
         }
         sent += static_cast<size_t>(n);
@@ -186,12 +184,11 @@ std::optional<std::string> request(const std::string& cmd, std::string& err,
     std::string reply;
     char ch;
     while (reply.size() < 4096) {
-        const ssize_t n = ::recv(fd, &ch, 1, 0);
+        const ssize_t n = ::recv(fd.get(), &ch, 1, 0);
         if (n <= 0) break;
         if (ch == '\n') break;
         reply.push_back(ch);
     }
-    ::close(fd);
     if (reply.empty()) {
         err = "服务无应答";
         return std::nullopt;

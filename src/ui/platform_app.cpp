@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <format>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -105,6 +106,14 @@ void DesktopPreparePlatformDataDirectory(
 }
 
 namespace {
+
+// 托盘激活处理器是整个 Runtime 的一次性连接，不是组合生命周期订阅：HuxerUI
+// 固定 revision 的 SystemTrayHandle::OnActivate 直接连接服务，第二次调用抛
+// std::logic_error("... already connected")。它写在组合函数体里，任何一次
+// 外层重组都会重复连接，未捕获异常冒泡到 LinuxUiWindow::Run 后 abort，表现
+// 为「打开 TUN / 系统代理等任意开关就闪退」。按框架约定用 call_once 保证
+// 进程内只连接一次；handler 常驻到 Runtime 结束，与托盘宿主是否就绪无关。
+std::once_flag g_trayActivationOnce;
 
 #if defined(_WIN32)
 // HuxerUI's Windows tray menu is a native HMENU and SystemTrayOptions does not
@@ -349,11 +358,14 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
         }).detach();
     };
 
-    if (trayAvailable) {
+    std::call_once(g_trayActivationOnce, [tray, window] {
         tray.OnActivate([window] {
             window.Show();
             window.Activate();
         });
+    });
+
+    if (trayAvailable) {
         huxerui::Lifecycle(
             [tray, window, application, tasks, trayCoreRunning,
              trayCoreMenuRunning, traySysProxy, trayTun, traySysProxyActive,

@@ -49,15 +49,15 @@ bool copyServiceFile(const std::filesystem::path& source,
                 .string();
         std::vector<char> temporaryPattern(pattern.begin(), pattern.end());
         temporaryPattern.push_back('\0');
-        const int temporaryFd = ::mkstemp(temporaryPattern.data());
-        if (temporaryFd < 0) {
+        UniqueFd temporaryFd{::mkstemp(temporaryPattern.data())};
+        if (!temporaryFd.valid()) {
             error = std::format("创建 {} 临时文件失败：{}", label,
                                 ::strerror(errno));
             return false;
         }
         const std::filesystem::path temporary{temporaryPattern.data()};
         const auto discardTemporary = [&] {
-            ::close(temporaryFd);
+            temporaryFd.reset();
             ::unlink(temporary.c_str());
         };
 
@@ -72,21 +72,22 @@ bool copyServiceFile(const std::filesystem::path& source,
         constexpr mode_t executableMode = S_IRUSR | S_IWUSR | S_IXUSR |
                                           S_IRGRP | S_IXGRP |
                                           S_IROTH | S_IXOTH;
-        if (::fchmod(temporaryFd, executableMode) != 0) {
+        if (::fchmod(temporaryFd.get(), executableMode) != 0) {
             const int savedErrno = errno;
             discardTemporary();
             error = std::format("设置 {} 权限失败：{}", label,
                                 ::strerror(savedErrno));
             return false;
         }
-        if (::fsync(temporaryFd) != 0) {
+        if (::fsync(temporaryFd.get()) != 0) {
             const int savedErrno = errno;
             discardTemporary();
             error = std::format("写入 {} 临时文件失败：{}", label,
                                 ::strerror(savedErrno));
             return false;
         }
-        if (::close(temporaryFd) != 0) {
+        // release() 交出所有权：close 的返回值在这里有诊断意义，必须自己检查。
+        if (::close(temporaryFd.release()) != 0) {
             const int savedErrno = errno;
             ::unlink(temporary.c_str());
             error = std::format("关闭 {} 临时文件失败：{}", label,

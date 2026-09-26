@@ -17,6 +17,7 @@ module;
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include "win32_raii.h"
 #elif defined(__APPLE__)
 #include <mach-o/dyld.h>
 #include <unistd.h>  // access, X_OK
@@ -245,15 +246,14 @@ extern "C" bool clashflux_android_system_dark() noexcept;
 // 系统是否偏好深色（"跟随系统"主题模式用）。启动时读取一次即可。
 export bool systemPrefersDark() {
 #if defined(_WIN32)
-    HKEY key;
+    clashflux::win32::UniqueHkey key;
     if (RegOpenKeyExA(HKEY_CURRENT_USER,
                       "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                      0, KEY_READ, &key) != ERROR_SUCCESS)
+                      0, KEY_READ, key.put()) != ERROR_SUCCESS)
         return false;
     DWORD value = 1, size = sizeof(value);
-    const LONG rc = RegQueryValueExA(key, "AppsUseLightTheme", nullptr, nullptr,
+    const LONG rc = RegQueryValueExA(key.get(), "AppsUseLightTheme", nullptr, nullptr,
                                      reinterpret_cast<LPBYTE>(&value), &size);
-    RegCloseKey(key);
     return rc == ERROR_SUCCESS && value == 0;
 #elif defined(__APPLE__)
     FILE* pipe = ::popen("defaults read -g AppleInterfaceStyle 2>/dev/null", "r");
