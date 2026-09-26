@@ -44,6 +44,10 @@ ctest --test-dir build             # 冒烟测试（test_smoke）
 huxerui run linux                  # HuxerUI CLI 流程（构建到 .huxerui/build/linux/）
 ```
 
+`ctest` 除 test_smoke 外还会跑 singbox / vpn / routing / compensation / sqlite_orm /
+persistence；Windows 上 MSVC ≥ 19.50 不构建 `test_sqlite_orm`（该编译器的 C4737
+硬错误，`/wd4737` 与 pragma 都抑制不掉），ORM 路径由 `test_persistence` 覆盖。
+
 ### 每次改动后的本地验证（强制）
 
 任何需求实现、修复、重构或 UI 调整完成后，agent 必须先重新编译本地目标，
