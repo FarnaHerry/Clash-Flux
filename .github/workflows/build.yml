@@ -178,7 +178,8 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Smoke test
-        run: ctest --test-dir build --output-on-failure
+        # 单测卡死不能拖住整个 job：ctest 超时后杀掉测试并打印其输出。
+        run: ctest --test-dir build --output-on-failure --timeout 300
 
       - name: Stage runtime bundle
         shell: bash
@@ -313,7 +314,8 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Smoke test
-        run: ctest --test-dir build --output-on-failure
+        # 单测卡死不能拖住整个 job：ctest 超时后杀掉测试并打印其输出。
+        run: ctest --test-dir build --output-on-failure --timeout 300
 
       - name: Stage Windows runtime and installer inputs
         shell: pwsh
@@ -503,7 +505,8 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Smoke test
-        run: ctest --test-dir build --output-on-failure
+        # 单测卡死不能拖住整个 job：ctest 超时后杀掉测试并打印其输出。
+        run: ctest --test-dir build --output-on-failure --timeout 300
 
       - name: Stage app bundle
         run: |
