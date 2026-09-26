@@ -4,6 +4,12 @@
 # 集成（也没有可供 CMAKE_CXX_MODULE_STD 使用的 __CMAKE::CXX23）。Android
 # 仍然使用同一套领域代码：这里在 configure 期生成一个只用于 Android 的
 # 兼容头和实现单元，桌面目标完全不经过本文件。
+#
+# 维护约定：新增的模块接口（.cppm）要同时加入下面 `_interfaces`（顺序即头文件
+# 内的依赖顺序），新增的实现单元（.cpp）要加入 `_core` 与 `_android_legacy_inputs`，
+# 只被 .inc 片段引用的头也要进 `_android_legacy_inputs`；漏登记只会在这条
+# Android 通道上以「未声明标识符」的形式暴露。接口里用到的标准库设施必须补进
+# 兼容头的 include 列表（桌面由 `import std;` 承担）。
 include_guard(GLOBAL)
 set(CLASHFLUX_ANDROID_LEGACY_REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
 
@@ -54,6 +60,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "#include <tuple>\n"
         "#include <type_traits>\n"
         "#include <unordered_map>\n"
+        "#include <unordered_set>\n"
         "#include <utility>\n"
         "#include <vector>\n"
         "#include <nlohmann/json.hpp>\n"
@@ -66,6 +73,7 @@ function(clashflux_prepare_android_sources output_directory output_header
     set(_interfaces
         "${_root}/src/config.cppm"
         "${_root}/src/utils.cppm"
+        "${_root}/src/model.cppm"
         "${_root}/src/db.cppm"
         "${_root}/src/vpn.cppm"
         "${_root}/src/vpn_compensation.cppm"
@@ -78,6 +86,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/stream.cppm"
         "${_root}/src/sysproxy.cppm"
         "${_root}/src/service.cppm"
+        "${_root}/src/store/persistence.cppm"
         "${_root}/src/store/core_store.cppm"
         "${_root}/src/store/vpn.cppm"
         "${_root}/src/store/profiles.cppm"
@@ -88,6 +97,9 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/core.cpp"
         "${_root}/src/api.cpp"
         "${_root}/src/stream.cpp"
+        "${_root}/src/sqlite_schema.h"
+        "${_root}/src/sqlite_schema.cpp"
+        "${_root}/src/store/persistence.cpp"
         "${_root}/src/ui/app.cpp"
         "${_root}/src/ui/common.cpp"
         "${_root}/src/ui/connections_page.cpp"
@@ -151,6 +163,8 @@ function(clashflux_prepare_android_sources output_directory output_header
     # non-inline implementation symbols across Android UI TUs.
     set(_core "#include \"clashflux_android_legacy.h\"\n\n")
     foreach (_source IN ITEMS
+            "${_root}/src/sqlite_schema.cpp"
+            "${_root}/src/store/persistence.cpp"
             "${_root}/src/db.cpp"
             "${_root}/src/pptp.cpp"
             "${_root}/src/openvpn.cpp"

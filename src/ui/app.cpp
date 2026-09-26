@@ -63,6 +63,47 @@ namespace {
 #define CLASHFLUX_MAIN_CONTENT DesktopMainContent
 #endif
 
+// 伪 CLI 与单实例命令转发只存在于桌面/CLI 形态：Android 没有 main()，也没有第二
+// 个进程可以转发命令。平台差异在这里一次性收束成同名函数，composable 函数体内
+// 只调用统一名字（composable 体内不能出现条件编译）。
+#if defined(__ANDROID__)
+namespace {
+
+bool CliRuntimeCommandMode() { return false; }
+
+void CliSetPendingExitCode(int) {}
+
+void CliStartCommandServer() {}
+
+std::vector<std::string> CliTakePendingCommand() { return {}; }
+
+int CliRun(const std::vector<std::string>&) { return 0; }
+
+int CliServePendingCommands() { return 0; }
+
+} // namespace
+#else
+namespace {
+
+bool CliRuntimeCommandMode() { return cli::runtimeCommandMode(); }
+
+void CliSetPendingExitCode(int code) { cli::setPendingExitCode(code); }
+
+void CliStartCommandServer() { clashflux::cli_ipc::startCommandServer(); }
+
+std::vector<std::string> CliTakePendingCommand() {
+    return cli::takePendingCommand();
+}
+
+int CliRun(const std::vector<std::string>& args) { return cli::run(args); }
+
+int CliServePendingCommands() {
+    return clashflux::cli_ipc::servePendingCommands();
+}
+
+} // namespace
+#endif
+
 struct FluxPalette {
     static constexpr huxerui::Color abyss() noexcept {
         return huxerui::Color::Rgb(6, 20, 39); // 深蓝字色，用于品牌色按钮
@@ -704,8 +745,8 @@ huxerui::PageTransition SecondaryPageTransition(
                     if (!db.ready() && !co_await db.open(cfg::databaseFile())) {
                         // 旧版本数据库不兼容：只记录并降级运行，不删除任何文件。
                         stream::logApplication("error", db.lastError());
-                        if (cli::runtimeCommandMode()) {
-                            cli::setPendingExitCode(1);
+                        if (CliRuntimeCommandMode()) {
+                            CliSetPendingExitCode(1);
                             application.Quit();
                             co_return;
                         }
@@ -722,16 +763,16 @@ huxerui::PageTransition SecondaryPageTransition(
                     }
 
                     // 单实例：owner 启动转发服务；非 owner 的命令由这里代跑。
-                    clashflux::cli_ipc::startCommandServer();
+                    CliStartCommandServer();
 
                     // 伪 CLI：命令在运行时内执行（窗口隐藏到托盘），落库后退出。
-                    auto args = cli::takePendingCommand();
+                    auto args = CliTakePendingCommand();
                     if (!args.empty()) {
                         const int code = co_await RunOnTaskThread(
-                            [args = std::move(args)] { return cli::run(args); });
+                            [args = std::move(args)] { return CliRun(args); });
                         co_await db.flushSettings();
                         co_await db.flushProfiles();
-                        cli::setPendingExitCode(code);
+                        CliSetPendingExitCode(code);
                         application.Quit();
                         co_return;
                     }
@@ -740,7 +781,7 @@ huxerui::PageTransition SecondaryPageTransition(
                         co_await huxerui::Delay(std::chrono::duration<double>{0.25});
                         // 服务其他进程转发来的 CLI 命令（单实例下唯一执行点）。
                         co_await RunOnTaskThread(
-                            [] { return clashflux::cli_ipc::servePendingCommands(); });
+                            [] { return CliServePendingCommands(); });
                         co_await db.flushSettings();
                         co_await db.flushProfiles();
                     }
@@ -754,8 +795,8 @@ huxerui::PageTransition SecondaryPageTransition(
                     stream::logApplication("error", "持久化启动任务未知异常");
                 }
                 // 兜底退出：CLI 模式必须给出确定退出码，不能再启动第二个运行时。
-                if (cli::runtimeCommandMode()) {
-                    cli::setPendingExitCode(1);
+                if (CliRuntimeCommandMode()) {
+                    CliSetPendingExitCode(1);
                     application.Quit();
                 }
             });

@@ -27,6 +27,12 @@
 #include <utility>
 #include <vector>
 
+// MSVC 14.51 起把 C4737（协程无法完成 required tail call）报成错误；它只是性能
+// 提示，不该阻断构建。测试仍按普通优化级别编译。
+#if defined(_MSC_VER)
+#pragma warning(disable : 4737)
+#endif
+
 using namespace huxerui;
 namespace sqlite = huxerui::sqlite;
 namespace db_schema = clashflux::db_schema;
@@ -99,76 +105,77 @@ void RemoveDatabase(const std::filesystem::path& path) {
     std::filesystem::remove(path.string() + "-shm", error);
 }
 
+Task<void> FreshSchemaPhase(const std::filesystem::path& path) {
+    sqlite::Database database = Require(
+        co_await sqlite::Database::OpenAsync(File{path.string()}, kSchema,
+                                             sqlite::Migrations{},
+                                             kOpenOptions),
+        "fresh: open");
+
+    // 主键由应用分配，插入时显式给 id。
+    Require(co_await database.InsertAsync(
+                kProfiles, ProfileRow{.id = 1,
+                                      .name = "主订阅",
+                                      .url = "https://example.com/a.yaml",
+                                      .file = "1.yaml",
+                                      .selected = true}),
+            "fresh: insert profile");
+    Require(co_await database.InsertAsync(
+                kProfiles, ProfileRow{.id = 2, .name = "备用", .file = "2.yaml"}),
+            "fresh: insert second profile");
+    Require(co_await database.InsertAsync(
+                kSettings, SettingRow{.key = "ui.theme_mode", .value = "1"}),
+            "fresh: insert setting");
+    Require(co_await database.InsertAsync(
+                kSettings, SettingRow{.key = "core.tun_enabled", .value = "true"}),
+            "fresh: insert setting 2");
+
+    const std::int64_t count =
+        Require(co_await database.Select(kProfiles).CountAsync(), "fresh: count");
+    Check(count == 2, "fresh: unexpected profile count");
+
+    const auto rows = Require(
+        co_await database.Select(kProfiles)
+            .Where(kProfiles.Column<&ProfileRow::selected>() == true)
+            .AllAsync(),
+        "fresh: select selected");
+    Check(rows.size() == 1 && rows.front().name == "主订阅",
+          "fresh: selected profile did not round-trip");
+
+    const std::optional<ProfileRow> found =
+        Require(co_await database.FindAsync(kProfiles, std::int64_t{1}), "fresh: find");
+    Check(found.has_value() && found->url == "https://example.com/a.yaml",
+          "fresh: profile did not round-trip");
+
+    const auto theme = Require(
+        co_await database.QueryAsync<std::string>(
+            "SELECT value FROM settings WHERE key = ?",
+            [](const sqlite::RowView& row) { return row.Get<std::string>(0); },
+            std::string{"ui.theme_mode"}),
+        "fresh: query setting");
+    Check(theme.size() == 1 && theme.front() == "1",
+          "fresh: setting did not round-trip");
+
+    Require(co_await database.CloseAsync(), "fresh: close");
+}
+
+Task<void> ReopenPhase(const std::filesystem::path& path) {
+    sqlite::Database database = Require(
+        co_await sqlite::Database::OpenAsync(File{path.string()}, kSchema,
+                                             sqlite::Migrations{},
+                                             kOpenOptions),
+        "reopen: open");
+    const std::int64_t count =
+        Require(co_await database.Select(kProfiles).CountAsync(), "reopen: count");
+    Check(count == 2, "reopen: data did not persist");
+    Require(co_await database.CloseAsync(), "reopen: close");
+}
+
 Task<void> RunTest() {
     const std::filesystem::path path = TempPath();
     try {
-        {
-            sqlite::Database database = Require(
-                co_await sqlite::Database::OpenAsync(File{path.string()}, kSchema,
-                                                     sqlite::Migrations{},
-                                                     kOpenOptions),
-                "fresh: open");
-
-            // 主键由应用分配，插入时显式给 id。
-            Require(co_await database.InsertAsync(
-                        kProfiles, ProfileRow{.id = 1,
-                                              .name = "主订阅",
-                                              .url = "https://example.com/a.yaml",
-                                              .file = "1.yaml",
-                                              .selected = true}),
-                    "fresh: insert profile");
-            Require(co_await database.InsertAsync(
-                        kProfiles, ProfileRow{.id = 2, .name = "备用", .file = "2.yaml"}),
-                    "fresh: insert second profile");
-            Require(co_await database.InsertAsync(
-                        kSettings, SettingRow{.key = "ui.theme_mode", .value = "1"}),
-                    "fresh: insert setting");
-            Require(co_await database.InsertAsync(
-                        kSettings, SettingRow{.key = "core.tun_enabled", .value = "true"}),
-                    "fresh: insert setting 2");
-
-            const std::int64_t count = Require(
-                co_await database.Select(kProfiles).CountAsync(), "fresh: count");
-            Check(count == 2, "fresh: unexpected profile count");
-
-            const auto rows = Require(
-                co_await database.Select(kProfiles)
-                    .Where(kProfiles.Column<&ProfileRow::selected>() == true)
-                    .AllAsync(),
-                "fresh: select selected");
-            Check(rows.size() == 1 && rows.front().name == "主订阅",
-                  "fresh: selected profile did not round-trip");
-
-            const std::optional<ProfileRow> found = Require(
-                co_await database.FindAsync(kProfiles, std::int64_t{1}),
-                "fresh: find");
-            Check(found.has_value() && found->url == "https://example.com/a.yaml",
-                  "fresh: profile did not round-trip");
-
-            const auto theme = Require(
-                co_await database.QueryAsync<std::string>(
-                    "SELECT value FROM settings WHERE key = ?",
-                    [](const sqlite::RowView& row) { return row.Get<std::string>(0); },
-                    std::string{"ui.theme_mode"}),
-                "fresh: query setting");
-            Check(theme.size() == 1 && theme.front() == "1",
-                  "fresh: setting did not round-trip");
-
-            Require(co_await database.CloseAsync(), "fresh: close");
-        }
-
-        {
-            sqlite::Database database = Require(
-                co_await sqlite::Database::OpenAsync(File{path.string()}, kSchema,
-                                                     sqlite::Migrations{},
-                                                     kOpenOptions),
-                "reopen: open");
-            const std::int64_t count = Require(
-                co_await database.Select(kProfiles).CountAsync(), "reopen: count");
-            Check(count == 2, "reopen: data did not persist");
-            Require(co_await database.CloseAsync(), "reopen: close");
-        }
-
+        co_await FreshSchemaPhase(path);
+        co_await ReopenPhase(path);
         RemoveDatabase(path);
         Finish();
     } catch (const std::exception& exception) {
