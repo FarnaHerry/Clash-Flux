@@ -67,6 +67,45 @@ std::string extractMessage(const std::string& body) {
     return "";
 }
 
+// curl C API 的 RAII 包装：easy handle 与 header list 原本要在每条返回路径
+// 手动 cleanup/free，中途只要抛一次 C++ 异常（std::format、bad_alloc）就会
+// 泄漏句柄。析构里释放后，所有失败/异常路径都由编译器兜底。
+class CurlHandle {
+public:
+    CurlHandle() : handle_(curl_easy_init()) {}
+    ~CurlHandle() {
+        if (handle_ != nullptr) curl_easy_cleanup(handle_);
+    }
+    CurlHandle(const CurlHandle&) = delete;
+    CurlHandle& operator=(const CurlHandle&) = delete;
+    [[nodiscard]] CURL* get() const noexcept { return handle_; }
+    explicit operator bool() const noexcept { return handle_ != nullptr; }
+
+private:
+    CURL* handle_;
+};
+
+class CurlHeaderList {
+public:
+    CurlHeaderList() = default;
+    ~CurlHeaderList() {
+        if (list_ != nullptr) curl_slist_free_all(list_);
+    }
+    CurlHeaderList(const CurlHeaderList&) = delete;
+    CurlHeaderList& operator=(const CurlHeaderList&) = delete;
+    // curl_slist_append 失败时返回 nullptr 且不改动原链表，旧链继续有效。
+    bool append(const char* header) {
+        curl_slist* next = curl_slist_append(list_, header);
+        if (next == nullptr) return false;
+        list_ = next;
+        return true;
+    }
+    [[nodiscard]] curl_slist* get() const noexcept { return list_; }
+
+private:
+    curl_slist* list_ = nullptr;
+};
+
 } // namespace
 
 struct ClashApi::Impl {
@@ -77,17 +116,18 @@ struct ClashApi::Impl {
     ApiResult request(const std::string& method, const std::string& path,
                       const std::string& body = {}, long timeoutSec = 10) {
         ApiResult result;
-        CURL* easy = curl_easy_init();
-        if (!easy) {
+        CurlHandle handle;
+        if (!handle) {
             result.error = "curl_easy_init failed";
             return result;
         }
+        CURL* const easy = handle.get();
         const std::string url = base + path;
-        struct curl_slist* headers = nullptr;
-        headers = curl_slist_append(headers, "Content-Type: application/json");
+        CurlHeaderList headers;
+        headers.append("Content-Type: application/json");
         if (!secret.empty()) {
             const std::string auth = "Authorization: Bearer " + secret;
-            headers = curl_slist_append(headers, auth.c_str());
+            headers.append(auth.c_str());
         }
         curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
         curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http");
@@ -97,7 +137,7 @@ struct ClashApi::Impl {
         if (!method.empty()) {
             curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, method.c_str());
         }
-        curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers.get());
         curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &onBodyWrite);
         curl_easy_setopt(easy, CURLOPT_WRITEDATA, &result.body);
         curl_easy_setopt(easy, CURLOPT_TIMEOUT, timeoutSec);
@@ -122,8 +162,6 @@ struct ClashApi::Impl {
         } else {
             result.error = curl_easy_strerror(code);
         }
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(easy);
         return result;
     }
 };
@@ -188,14 +226,15 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
         result.error = "无法写入: " + dest.string();
         return result;
     }
-    CURL* easy = curl_easy_init();
-    if (!easy) {
+    CurlHandle handle;
+    if (!handle) {
         result.error = "curl_easy_init failed";
         out.close();
         std::error_code removeError;
         std::filesystem::remove(temp, removeError);
         return result;
     }
+    CURL* const easy = handle.get();
     curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
     curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(easy, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
@@ -272,7 +311,6 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
             result.error = detail + "（curl " + codeText + "）";
         }
     }
-    curl_easy_cleanup(easy);
     std::error_code ec;
     if (result.ok) {
         out.close();

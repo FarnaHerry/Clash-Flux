@@ -85,6 +85,34 @@ export struct PptpSessionInfo {
 
 #if defined(__linux__) && !defined(__ANDROID__)
 
+// root 服务 IPC 的 fd 所有权：socket/bind/listen/accept/connect 原本要在每一
+// 条失败分支手动 ::close，漏一条就泄漏一个 fd。用最小 RAII 包装后由编译器
+// 保证释放，调用方仍可用 get() 当普通 int 传给 C API。
+class UniqueFd {
+public:
+    UniqueFd() = default;
+    explicit UniqueFd(int fd) noexcept : fd_(fd) {}
+    ~UniqueFd() { reset(); }
+    UniqueFd(const UniqueFd&) = delete;
+    UniqueFd& operator=(const UniqueFd&) = delete;
+    UniqueFd(UniqueFd&& other) noexcept : fd_(std::exchange(other.fd_, -1)) {}
+    UniqueFd& operator=(UniqueFd&& other) noexcept {
+        if (this != &other) reset(std::exchange(other.fd_, -1));
+        return *this;
+    }
+    [[nodiscard]] int get() const noexcept { return fd_; }
+    [[nodiscard]] bool valid() const noexcept { return fd_ >= 0; }
+    // 交出所有权（调用方负责 ::close）；用于需要检查 close 返回值的路径。
+    int release() noexcept { return std::exchange(fd_, -1); }
+    void reset(int fd = -1) noexcept {
+        if (fd_ >= 0) ::close(fd_);
+        fd_ = fd;
+    }
+
+private:
+    int fd_ = -1;
+};
+
 #include "service_client.inc"
 #include "service_admin.inc"
 #include "service_daemon.inc"

@@ -70,6 +70,23 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
 - 修改完成后运行 `git diff --check`，并在回复中说明实际执行过的验证命令及结果。
 - 除非用户明确要求，不要提交、打标签、推送或发布版本。
 
+## 资源与生命周期约定
+
+- **一次性注册 API 不得直接写在 composable 函数体里**。凡语义为“每个 Runtime
+  只能连接/注册一次”的框架 API（例如 `SystemTrayHandle::OnActivate`，重复调用抛
+  `std::logic_error("... already connected")`），组合函数体在重组时会重复执行，
+  未捕获异常会冒泡出 `LinuxUiWindow::Run` 并 abort（表现为“点任意开关就闪退”）。
+  必须选其一：用 `Lifecycle` 包装、用 `std::call_once` 保证进程内只注册一次、或放进
+  ApplicationHook。`window.OnCloseRequest`、`application.OnLifecycleChanged` 这类
+  框架内部已做 Lifecycle 包装/多观察者处理的 API 不受此限。
+- **本进程拥有的 OS 资源用 RAII 包装，不在多个返回分支手写释放**：服务 IPC 的 fd 用
+  `src/service.cppm` 的 `UniqueFd`，Win32 HANDLE / HKEY 用 `src/win32_raii.h` 的
+  `clashflux::win32::UniqueHandle` / `UniqueHkey`，curl easy handle 与 header list 用
+  `src/api.cpp` 的 `CurlHandle` / `CurlHeaderList`。只有需要检查释放返回值，或所有权
+  属于其它进程/进程级单例时才手工管理，并在注释里写明理由。
+- 跨进程资源（detached 内核、root 服务托管的 pppd/openvpn、systemd 单元）由 pidfile /
+  `pidAlive` / socket 协议管理，不属于本进程 RAII 的范畴。
+
 ## 文档同步
 
 如果构建、运行、发布或开发流程发生变化，必须同步更新 `README.md`、本文件和相关

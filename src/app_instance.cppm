@@ -15,6 +15,7 @@ module;
 #endif
 #include <cstdio>
 #include <windows.h>
+#include "win32_raii.h"
 #else
 #include <cerrno>
 #include <csignal>
@@ -92,11 +93,11 @@ void writeInstanceInfo(const std::filesystem::path& path, long pid, std::string_
 
 void terminateOldProcess(long pid) {
     if (pid <= 0) return;
-    HANDLE hProc = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
-    if (hProc == nullptr) return;
-    TerminateProcess(hProc, 0);
-    WaitForSingleObject(hProc, 1000);
-    CloseHandle(hProc);
+    clashflux::win32::UniqueHandle process{OpenProcess(
+        PROCESS_TERMINATE | SYNCHRONIZE, FALSE, static_cast<DWORD>(pid))};
+    if (!process.valid()) return;
+    TerminateProcess(process.get(), 0);
+    WaitForSingleObject(process.get(), 1000);
 }
 
 #else
@@ -213,8 +214,8 @@ export bool acquireOrActivate() {
 #ifdef _WIN32
     const std::filesystem::path path =
         cfg::dataDir() / "clash-flux.instance.lock";
-    HANDLE mutex = CreateMutexW(nullptr, TRUE, kMutexName);
-    if (mutex == nullptr) {
+    clashflux::win32::UniqueHandle mutex{CreateMutexW(nullptr, TRUE, kMutexName)};
+    if (!mutex.valid()) {
         // 无法判断实例状态时继续启动，避免把应用变成不可启动；正常安装
         // 环境下 CreateMutexW 不会失败。
         return true;
@@ -225,29 +226,28 @@ export bool acquireOrActivate() {
             // 上一个进程处于关闭状态但未完全退出（异常卡死）
             std::println(stderr, "clash-flux: 发现旧实例 (PID {}) 处于未完成的关闭状态，正在执行清理并接管...", info.pid);
             terminateOldProcess(info.pid);
-            CloseHandle(mutex);
+            mutex.reset();
             for (int i = 0; i < 20; ++i) {
-                mutex = CreateMutexW(nullptr, TRUE, kMutexName);
-                if (mutex != nullptr && GetLastError() != ERROR_ALREADY_EXISTS) {
-                    instanceMutex() = mutex;
+                clashflux::win32::UniqueHandle candidate{
+                    CreateMutexW(nullptr, TRUE, kMutexName)};
+                if (candidate.valid() && GetLastError() != ERROR_ALREADY_EXISTS) {
+                    // 所有权交给进程级单例（活到进程结束）。
+                    instanceMutex() = candidate.release();
                     activationEvent() = CreateEventW(nullptr, FALSE, FALSE, kEventName);
                     writeInstanceInfo(path, static_cast<long>(GetCurrentProcessId()), "running");
                     return true;
                 }
-                if (mutex != nullptr) CloseHandle(mutex);
+                // candidate 在本轮结束时自动 CloseHandle；重试期间不再有悬空句柄。
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
         }
-        if (HANDLE event = OpenEventW(EVENT_MODIFY_STATE, FALSE, kEventName);
-            event != nullptr) {
-            SetEvent(event);
-            CloseHandle(event);
-        }
+        clashflux::win32::UniqueHandle event{
+            OpenEventW(EVENT_MODIFY_STATE, FALSE, kEventName)};
+        if (event.valid()) SetEvent(event.get());
         activateExistingWindow();
-        if (mutex != nullptr) CloseHandle(mutex);
         return false;
     }
-    instanceMutex() = mutex;
+    instanceMutex() = mutex.release();
     activationEvent() = CreateEventW(nullptr, FALSE, FALSE, kEventName);
     writeInstanceInfo(path, static_cast<long>(GetCurrentProcessId()), "running");
     return true;

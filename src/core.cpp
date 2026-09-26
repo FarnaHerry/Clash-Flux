@@ -14,6 +14,7 @@ module;
 #endif
 #include <windows.h>
 #include <shellapi.h>  // ShellExecuteExW（WIN32_LEAN_AND_MEAN 不含 shellapi）
+#include "win32_raii.h"
 #else
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -50,15 +51,15 @@ namespace {
 // 当前进程是否以管理员令牌运行。
 bool tokenElevated() {
     BOOL elevated = FALSE;
-    HANDLE token = nullptr;
-    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+    HANDLE raw = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw)) {
+        clashflux::win32::UniqueHandle token{raw};
         TOKEN_ELEVATION elevation{};
         DWORD ret = 0;
-        if (GetTokenInformation(token, TokenElevation, &elevation,
+        if (GetTokenInformation(token.get(), TokenElevation, &elevation,
                                 sizeof(elevation), &ret)) {
             elevated = elevation.TokenIsElevated;
         }
-        CloseHandle(token);
     }
     return elevated != FALSE;
 }
@@ -162,11 +163,9 @@ void writePidFile(const std::filesystem::path& workDir, long pid) {
 void killPid(long pid) {
 #ifdef _WIN32
     if (pid <= 0) return;
-    if (HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE,
-                               static_cast<DWORD>(pid))) {
-        TerminateProcess(h, 1);
-        CloseHandle(h);
-    }
+    clashflux::win32::UniqueHandle process{
+        OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid))};
+    if (process.valid()) TerminateProcess(process.get(), 1);
 #else
     if (pid > 0) ::kill(static_cast<pid_t>(pid), SIGTERM);
 #endif
@@ -175,12 +174,9 @@ void killPid(long pid) {
 bool pidAlive(long pid) {
     if (pid <= 0) return false;
 #ifdef _WIN32
-    if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
-                               static_cast<DWORD>(pid))) {
-        CloseHandle(h);
-        return true;
-    }
-    return false;
+    clashflux::win32::UniqueHandle process{OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid))};
+    return process.valid();
 #else
     if (::kill(static_cast<pid_t>(pid), 0) == 0) return true;
     // EPERM：进程存在但属其他用户（root 服务托管的内核），同样视为存活。
@@ -223,18 +219,18 @@ bool spawnDetached(const std::filesystem::path& binary,
     SECURITY_ATTRIBUTES sa{};
     sa.nLength = sizeof(sa);
     sa.bInheritHandle = TRUE;
-    HANDLE logHandle = CreateFileW(logPath.wstring().c_str(), FILE_APPEND_DATA,
-                                   FILE_SHARE_READ, &sa, OPEN_ALWAYS,
-                                   FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (logHandle == INVALID_HANDLE_VALUE) {
+    clashflux::win32::UniqueHandle logHandle{CreateFileW(
+        logPath.wstring().c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, &sa,
+        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr)};
+    if (!logHandle.valid()) {
         error = "无法打开内核日志文件";
         return false;
     }
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdOutput = logHandle;
-    si.hStdError = logHandle;
+    si.hStdOutput = logHandle.get();
+    si.hStdError = logHandle.get();
     si.hStdInput = nullptr;
     const std::wstring cmd = std::format(L"\"{}\" run -c \"{}\" -D \"{}\"",
                                          binary.wstring(), configFile.wstring(),
@@ -246,14 +242,13 @@ bool spawnDetached(const std::filesystem::path& binary,
     const BOOL ok = CreateProcessW(nullptr, cmdBuf.data(), nullptr, nullptr, TRUE,
                                    DETACHED_PROCESS | CREATE_NO_WINDOW, nullptr,
                                    workDirW.c_str(), &si, &pi);
-    CloseHandle(logHandle);
     if (!ok) {
         error = "sing-box 进程启动失败";
         return false;
     }
+    clashflux::win32::UniqueHandle process{pi.hProcess};
+    clashflux::win32::UniqueHandle thread{pi.hThread};
     writePidFile(workDir, static_cast<long>(pi.dwProcessId));
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
     return true;
 #else
 #if defined(__ANDROID__)
@@ -332,8 +327,10 @@ constexpr auto kGracePeriod = std::chrono::seconds(2);
 
 struct CoreProcessImpl {
 #ifdef _WIN32
-    HANDLE childProcess = nullptr;
-    HANDLE readPipe = nullptr;
+    // 子进程与读管道由本对象拥有；monitorLoop 收尾时 reset()，其余线程只通过
+    // get()/valid() 读取，不再手写 CloseHandle。
+    clashflux::win32::UniqueHandle childProcess;
+    clashflux::win32::UniqueHandle readPipe;
 #else
     pid_t childPid = -1;
     int readFd = -1;
@@ -364,7 +361,7 @@ struct CoreProcessImpl {
         // 且要求同控制台组，对 CREATE_NO_WINDOW 子进程不适用）：不给宽限，
         // 直接 TerminateProcess。POSIX 分支的 2s 宽限是等内核优雅退出，
         // Windows 上这一步不存在，差异仅此而已。
-        if (childProcess) TerminateProcess(childProcess, 1);
+        if (childProcess.valid()) TerminateProcess(childProcess.get(), 1);
 #else
         if (childPid > 0) ::kill(childPid, SIGTERM);
 #endif
@@ -377,15 +374,19 @@ struct CoreProcessImpl {
         SECURITY_ATTRIBUTES sa{};
         sa.nLength = sizeof(sa);
         sa.bInheritHandle = TRUE;
-        HANDLE writePipe = nullptr;
-        if (!CreatePipe(&readPipe, &writePipe, &sa, 0)) return false;
-        SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
+        HANDLE readRaw = nullptr;
+        HANDLE writeRaw = nullptr;
+        if (!CreatePipe(&readRaw, &writeRaw, &sa, 0)) return false;
+        readPipe.reset(readRaw);
+        // 子进程需要继承写端，故保持到 CreateProcessW 之后再随作用域释放。
+        clashflux::win32::UniqueHandle writePipe{writeRaw};
+        SetHandleInformation(readPipe.get(), HANDLE_FLAG_INHERIT, 0);
 
         STARTUPINFOW si{};
         si.cb = sizeof(si);
         si.dwFlags = STARTF_USESTDHANDLES;
-        si.hStdOutput = writePipe;
-        si.hStdError = writePipe;
+        si.hStdOutput = writePipe.get();
+        si.hStdError = writePipe.get();
         si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
 
         const std::wstring cmd = std::format(L"\"{}\" run -c \"{}\" -D \"{}\"",
@@ -400,14 +401,12 @@ struct CoreProcessImpl {
         const BOOL ok = CreateProcessW(nullptr, cmdBuf.data(), nullptr, nullptr, TRUE,
                                        CREATE_NO_WINDOW, nullptr,
                                        workDirW.c_str(), &si, &pi);
-        CloseHandle(writePipe);
         if (!ok) {
-            CloseHandle(readPipe);
-            readPipe = nullptr;
+            readPipe.reset();
             return false;
         }
-        childProcess = pi.hProcess;
-        CloseHandle(pi.hThread);
+        childProcess.reset(pi.hProcess);
+        clashflux::win32::UniqueHandle thread{pi.hThread};
         return true;
 #else
 #if defined(__ANDROID__)
@@ -488,7 +487,7 @@ struct CoreProcessImpl {
 #ifdef _WIN32
             char buf[4096];
             DWORD n = 0;
-            if (!ReadFile(readPipe, buf, sizeof(buf), &n, nullptr) || n == 0) break;
+            if (!ReadFile(readPipe.get(), buf, sizeof(buf), &n, nullptr) || n == 0) break;
             splitLines(pending, buf, n);
 #else
             pollfd pfd{readFd, POLLIN, 0};
@@ -526,18 +525,14 @@ struct CoreProcessImpl {
         // 收尾：等退出码，清理句柄。
         int status = 0;
 #ifdef _WIN32
-        if (childProcess) {
-            WaitForSingleObject(childProcess, INFINITE);
+        if (childProcess.valid()) {
+            WaitForSingleObject(childProcess.get(), INFINITE);
             DWORD code = 0;
-            GetExitCodeProcess(childProcess, &code);
+            GetExitCodeProcess(childProcess.get(), &code);
             status = static_cast<int>(code);
-            CloseHandle(childProcess);
-            childProcess = nullptr;
+            childProcess.reset();
         }
-        if (readPipe) {
-            CloseHandle(readPipe);
-            readPipe = nullptr;
-        }
+        readPipe.reset();
 #else
         if (childPid > 0) {
             while (::waitpid(childPid, &status, 0) < 0 && errno == EINTR) {}
@@ -612,7 +607,7 @@ bool CoreProcess::start(const std::filesystem::path& binary,
     }
     // pidfile：GUI 附着 spawn 的内核也能被 CLI（另一进程）经 pidfile 接管/停止。
 #ifdef _WIN32
-    writePidFile(workDir, static_cast<long>(GetProcessId(impl_->childProcess)));
+    writePidFile(workDir, static_cast<long>(GetProcessId(impl_->childProcess.get())));
 #else
     writePidFile(workDir, static_cast<long>(impl_->childPid));
 #endif
@@ -630,8 +625,8 @@ bool CoreProcess::running() const {
     // （WAIT_TIMEOUT = 仍运行）。running 原子量只作快速短路——句柄只在
     // 监视线程收尾时关闭，此后原子量也已翻 false。
     if (!impl_->running.load()) return false;
-    if (impl_->childProcess) {
-        return WaitForSingleObject(impl_->childProcess, 0) == WAIT_TIMEOUT;
+    if (impl_->childProcess.valid()) {
+        return WaitForSingleObject(impl_->childProcess.get(), 0) == WAIT_TIMEOUT;
     }
     return true;
 #else

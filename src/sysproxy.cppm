@@ -23,6 +23,7 @@ module;
 #endif
 #include <windows.h>
 #include <wininet.h>
+#include "win32_raii.h"
 #else
 #include <cstdio>   // ::popen / ::pclose（读取桌面命令输出）
 #endif
@@ -169,16 +170,16 @@ constexpr wchar_t kWinInetRegKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
 
 bool winReadDword(const wchar_t* valueName, DWORD& value) {
-    HKEY key = nullptr;
+    clashflux::win32::UniqueHkey key;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, kWinInetRegKey, 0, KEY_QUERY_VALUE,
-                      &key) != ERROR_SUCCESS) {
+                      key.put()) != ERROR_SUCCESS) {
         return false;
     }
     DWORD type = 0;
     DWORD size = sizeof(value);
     const LONG status = RegQueryValueExW(
-        key, valueName, nullptr, &type, reinterpret_cast<BYTE*>(&value), &size);
-    RegCloseKey(key);
+        key.get(), valueName, nullptr, &type, reinterpret_cast<BYTE*>(&value),
+        &size);
     return status == ERROR_SUCCESS && type == REG_DWORD && size == sizeof(value);
 }
 
@@ -211,24 +212,22 @@ std::string winWideToUtf8(std::wstring_view text) {
 }
 
 std::string winReadString(const wchar_t* valueName) {
-    HKEY key = nullptr;
+    clashflux::win32::UniqueHkey key;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, kWinInetRegKey, 0, KEY_QUERY_VALUE,
-                      &key) != ERROR_SUCCESS) {
+                      key.put()) != ERROR_SUCCESS) {
         return {};
     }
     DWORD type = 0;
     DWORD size = 0;
-    if (RegQueryValueExW(key, valueName, nullptr, &type, nullptr, &size) !=
+    if (RegQueryValueExW(key.get(), valueName, nullptr, &type, nullptr, &size) !=
             ERROR_SUCCESS ||
         type != REG_SZ || size < sizeof(wchar_t)) {
-        RegCloseKey(key);
         return {};
     }
     std::vector<wchar_t> value(size / sizeof(wchar_t) + 1, L'\0');
     const LONG status = RegQueryValueExW(
-        key, valueName, nullptr, &type, reinterpret_cast<BYTE*>(value.data()),
-        &size);
-    RegCloseKey(key);
+        key.get(), valueName, nullptr, &type,
+        reinterpret_cast<BYTE*>(value.data()), &size);
     if (status != ERROR_SUCCESS || type != REG_SZ) return {};
     std::size_t length = size / sizeof(wchar_t);
     if (length > 0 && value[length - 1] == L'\0') --length;
@@ -236,31 +235,29 @@ std::string winReadString(const wchar_t* valueName) {
 }
 
 bool winWriteDword(const wchar_t* valueName, DWORD value) {
-    HKEY key = nullptr;
+    clashflux::win32::UniqueHkey key;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, kWinInetRegKey, 0, KEY_SET_VALUE,
-                      &key) != ERROR_SUCCESS) {
+                      key.put()) != ERROR_SUCCESS) {
         return false;
     }
     const LONG status = RegSetValueExW(
-        key, valueName, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value),
-        sizeof(value));
-    RegCloseKey(key);
+        key.get(), valueName, 0, REG_DWORD,
+        reinterpret_cast<const BYTE*>(&value), sizeof(value));
     return status == ERROR_SUCCESS;
 }
 
 bool winWriteString(const wchar_t* valueName, std::string_view value) {
     const std::wstring wide = winUtf8ToWide(value);
     if (wide.empty()) return false;
-    HKEY key = nullptr;
+    clashflux::win32::UniqueHkey key;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, kWinInetRegKey, 0, KEY_SET_VALUE,
-                      &key) != ERROR_SUCCESS) {
+                      key.put()) != ERROR_SUCCESS) {
         return false;
     }
     const DWORD size = static_cast<DWORD>((wide.size() + 1) * sizeof(wchar_t));
     const LONG status = RegSetValueExW(
-        key, valueName, 0, REG_SZ, reinterpret_cast<const BYTE*>(wide.c_str()),
-        size);
-    RegCloseKey(key);
+        key.get(), valueName, 0, REG_SZ,
+        reinterpret_cast<const BYTE*>(wide.c_str()), size);
     return status == ERROR_SUCCESS;
 }
 
