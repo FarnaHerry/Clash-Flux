@@ -755,10 +755,22 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             target_link_libraries(test_pptp_connect PRIVATE rasapi32 iphlpapi ws2_32 dnsapi)
         endif ()
 
-        # huxerui::sqlite ORM：schema 声明、0→1 迁移与老 SQLiteCpp 库的兼容性。
+        # huxerui::sqlite ORM：schema 声明与全新建库的 CRUD。
         # 依赖 HuxerUI 公开无窗口测试库（huxerui::testing::UiTest）驱动异步 DB；
         # 没有该 target 的通道（例如仅 SDK 的旧包）直接跳过。
-        if (TARGET HuxerUI::testing)
+        #
+        # MSVC 14.51（VS 2026）把这个测试里直接实例化 ORM 模板的协程判成 C4737
+        # 「Unable to perform required tail call」并**当硬错误报出**：/wd4737 与
+        # #pragma warning(disable) 都抑制不掉（发布 0.3.0 的 CI 实测）。该诊断只
+        # 出现在这个 TU 的协程上，缩小协程帧也只能减少次数。旧 MSVC 只是警告级别，
+        # 因此只在这一版及更新的编译器上跳过；ORM 的持久化路径在 Windows 上仍由
+        # test_persistence 覆盖，Linux/macOS 上这个测试照常跑。
+        set(CLASHFLUX_MSVC_C4737_HARD_ERROR FALSE)
+        if (MSVC AND MSVC_VERSION GREATER_EQUAL 1950)
+            set(CLASHFLUX_MSVC_C4737_HARD_ERROR TRUE)
+            message(STATUS "clash-flux: MSVC ${MSVC_VERSION} 的 C4737 是硬错误，跳过 test_sqlite_orm")
+        endif ()
+        if (TARGET HuxerUI::testing AND NOT CLASHFLUX_MSVC_C4737_HARD_ERROR)
             add_executable(test_sqlite_orm tests/test_sqlite_orm.cpp src/sqlite_schema.cpp)
             target_compile_features(test_sqlite_orm PRIVATE cxx_std_23)
             target_include_directories(test_sqlite_orm PRIVATE
@@ -766,12 +778,13 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             target_link_libraries(test_sqlite_orm PRIVATE
                 HuxerUI::testing HuxerUI::SQLite)
             if (MSVC)
-                # /wd4737：见 clash-flux 目标处的说明；测试源里也有 pragma 兜底。
                 target_compile_options(test_sqlite_orm PRIVATE /utf-8 /wd4737)
             endif ()
             add_test(NAME sqlite_orm COMMAND test_sqlite_orm)
+        endif ()
 
-            # ORM 持久化服务（settings 缓存 + 异步落库）。
+        # ORM 持久化服务（settings 缓存 + 异步落库）。
+        if (TARGET HuxerUI::testing)
             add_executable(test_persistence
                 tests/test_persistence.cpp
                 src/sqlite_schema.cpp
