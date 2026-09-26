@@ -45,6 +45,25 @@ project(clash-flux VERSION 0.3.2 DESCRIPTION "sing-box proxy client (Clash Verge
 # （huxerui::testing::UiTest），所以必须在加入 HuxerUI 之前就确定是否开启。
 option(CLASHFLUX_BUILD_TESTS "Build clash-flux test executables" ON)
 
+# Windows 没有 RPATH：链接共享版 HuxerUI 的可执行文件必须在**同目录**拿到
+# huxerui.dll。共享库在 build/huxerui-sdk/bin，加载器找不到时会弹出模态错误框，
+# 进程根本进不到 main（CI 上表现为 ctest 一直超时、测试没有任何输出）。
+# 安装/打包走 install 规则，这里只解决构建树的直接运行。
+function(clashflux_deploy_huxerui_dll target)
+    if (NOT WIN32 OR NOT TARGET HuxerUI::huxerui)
+        return()
+    endif ()
+    get_target_property(_huxerui_kind HuxerUI::huxerui TYPE)
+    if (NOT _huxerui_kind STREQUAL "SHARED_LIBRARY")
+        return()
+    endif ()
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:HuxerUI::huxerui>"
+                "$<TARGET_FILE_DIR:${target}>"
+        VERBATIM)
+endfunction()
+
 # HUXERUI_LIBRARY_GRAPH_ONLY：CLI 扫描 huxerui 库依赖图时的特殊配置——
 # 不启用语言、不构建，huxerui_add_app 只写出库图 JSON 即返回（见 SDK
 # HuxerUIApp.cmake）。本项目的重活（第三方依赖/模块/链接）全部在该模式下跳过。
@@ -335,6 +354,9 @@ huxerui_add_app(clash-flux
     BUNDLE_IDENTIFIER "dev.farna.clashflux"
     ${CLASHFLUX_APP_RESOURCE_OPTIONS}
 )
+
+# Windows 下手动运行构建树里的 clash-flux.exe 也需要同目录的 huxerui.dll。
+clashflux_deploy_huxerui_dll(clash-flux)
 
 set(CLASHFLUX_HUXERUI_CAMERA_URL "https://github.com/HuxerUI/Lib-Camera.git")
 set(CLASHFLUX_HUXERUI_CAMERA_COMMIT "cada0539098791019bc5330ffd87009acc29d68a")
@@ -780,6 +802,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             if (MSVC)
                 target_compile_options(test_sqlite_orm PRIVATE /utf-8 /wd4737)
             endif ()
+            clashflux_deploy_huxerui_dll(test_sqlite_orm)
             add_test(NAME sqlite_orm COMMAND test_sqlite_orm)
         endif ()
 
@@ -802,6 +825,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             if (MSVC)
                 target_compile_options(test_persistence PRIVATE /utf-8 /wd4737)
             endif ()
+            clashflux_deploy_huxerui_dll(test_persistence)
             add_test(NAME persistence COMMAND test_persistence)
         endif ()
     endif ()
