@@ -13,6 +13,7 @@
 
 #include "sqlite_schema.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -40,6 +41,16 @@ using db_schema::ProfileRow;
 using db_schema::SettingRow;
 
 namespace {
+
+// 同 test_persistence：测试必须有限时间结束，看门狗把卡死变成明确失败。
+void StartWatchdog() {
+    std::thread([] {
+        std::this_thread::sleep_for(std::chrono::seconds{90});
+        std::fprintf(stderr, "test_sqlite_orm: 看门狗超时\n");
+        std::fflush(stderr);
+        std::_Exit(1);
+    }).detach();
+}
 
 const sqlite::Table<ProfileRow>& kProfiles = db_schema::profiles();
 const sqlite::Table<SettingRow>& kSettings = db_schema::settings();
@@ -199,6 +210,7 @@ View SqliteOrmTestApp() {
 } // namespace
 
 int main() {
+    StartWatchdog();
     const Application application{SqliteOrmTestApp};
     testing::UiTest ui{application, testing::UiTestOptions{.viewport = {480.0F, 320.0F}}};
     ui.Pump();

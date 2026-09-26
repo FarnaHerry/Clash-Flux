@@ -10,6 +10,7 @@
 
 #include "sqlite_schema.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -30,6 +31,28 @@ namespace db_schema = clashflux::db_schema;
 namespace persistence = clashflux::persistence;
 
 namespace {
+
+// 测试必须有限时间结束：HuxerUI 测试夹具靠 Pump 驱动协作式任务，一旦某个平台
+// 上的唤醒没送到，任务会一直等下去而主线程也卡在 Pump 里（Windows CI 曾空转
+// 40 分钟）。看门狗线程把任何形式的卡死变成明确的失败，并打印最后到达的进度。
+std::atomic<int> g_progress{0};
+
+void Trace(int stage, std::string_view message) {
+    g_progress.store(stage, std::memory_order_relaxed);
+    std::fprintf(stderr, "test_persistence: [%d] %.*s\n", stage,
+                 static_cast<int>(message.size()), message.data());
+    std::fflush(stderr);
+}
+
+void StartWatchdog() {
+    std::thread([] {
+        std::this_thread::sleep_for(std::chrono::seconds{90});
+        std::fprintf(stderr, "test_persistence: 看门狗超时，最后进度 %d\n",
+                     g_progress.load(std::memory_order_relaxed));
+        std::fflush(stderr);
+        std::_Exit(1);
+    }).detach();
+}
 
 struct Harness {
     std::mutex mutex;
@@ -76,6 +99,7 @@ void RemoveDatabase(const std::filesystem::path& path) {
 
 Task<void> RunTest() {
     const std::filesystem::path path = TempPath();
+    Trace(1, "开始：打开数据库");
     try {
         {
             persistence::Persistence store;
@@ -83,6 +107,7 @@ Task<void> RunTest() {
             Check(store.setting("ui.theme_mode", "fallback") == "fallback",
                   "unopened store must return the fallback");
 
+            Trace(2, "打开数据库");
             Check(co_await store.open(path), "open failed");
             Check(store.ready(), "store must be ready after open");
             Check(store.setting("ui.theme_mode", "fallback") == "fallback",
@@ -95,9 +120,11 @@ Task<void> RunTest() {
                   "setSetting must be visible immediately");
             Check(store.hasPendingSettings(), "setSetting must mark the key dirty");
 
+            Trace(3, "flush settings");
             Check(co_await store.flushSettings(), "flush failed");
             Check(!store.hasPendingSettings(), "flush must clear dirty keys");
 
+            Trace(4, "profiles 缓存操作");
             // ---- profiles：插入/列出/更新/独占选中/删除 ----
             db::Profile first;
             first.name = "主订阅";
@@ -139,11 +166,13 @@ Task<void> RunTest() {
             Check(list.size() == 1 && list.front().id == first_id,
                   "deleteProfile must remove exactly the requested row");
 
+            Trace(5, "关闭数据库");
             co_await store.close();
             Check(!store.ready(), "store must not be ready after close");
         }
 
         {
+            Trace(6, "重新打开数据库");
             persistence::Persistence store;
             Check(co_await store.open(path), "reopen failed");
             Check(store.setting("ui.theme_mode", "") == "2",
@@ -154,6 +183,7 @@ Task<void> RunTest() {
             Check(reopened.size() == 1 && reopened.front().name == "主订阅-改名",
                   "profile did not persist through the ORM database");
             store.setSetting("ui.theme_mode", "1");
+            Trace(7, "第二次 flush");
             Check(co_await store.flushSettings(), "second flush failed");
             co_await store.close();
         }
@@ -167,6 +197,7 @@ Task<void> RunTest() {
             co_await store.close();
         }
 
+        Trace(8, "旧结构不兼容路径");
         // 旧结构不兼容：open 必须失败并给出提示，且**不删除任何文件**
         // （旧库由用户自行清理）。
         {
@@ -210,6 +241,7 @@ Task<void> RunTest() {
             RemoveDatabase(legacy);
         }
 
+        Trace(9, "完成");
         RemoveDatabase(path);
         Finish();
     } catch (const std::exception& exception) {
@@ -233,6 +265,7 @@ View PersistenceTestApp() {
 } // namespace
 
 int main() {
+    StartWatchdog();
     const Application application{PersistenceTestApp};
     testing::UiTest ui{application, testing::UiTestOptions{.viewport = {480.0F, 320.0F}}};
     ui.Pump();
