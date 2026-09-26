@@ -85,7 +85,9 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   `src/api.cpp` 的 `CurlHandle` / `CurlHeaderList`。只有需要检查释放返回值，或所有权
   属于其它进程/进程级单例时才手工管理，并在注释里写明理由。
 - **持久化边界**：settings/profiles 走 `clashflux.persistence`（`huxerui::sqlite`
-  ORM）的**内存缓存 + 异步落库**，schema/迁移在 `src/sqlite_schema.*`；`clashflux.db`
+  ORM）的**内存缓存 + 异步落库**，schema 在 `src/sqlite_schema.*`；**不做向后
+  兼容，也不删任何文件**——0.2.x 旧库用当前 schema 直接打不开（open 失败并提示
+  用户自行删除），应用不会移除数据库文件。`clashflux.db`
   只是保持既有同步接口的转发门面，新代码直接依赖 `clashflux.persistence`。**
   日志不进库**（高频追加会与写事务抢锁/IO），仍直接写 `core/*.log`。需要数据库
   的 CLI 命令必须在应用运行时内执行（`clashflux.cli` 的伪 CLI：`setPendingCommand`

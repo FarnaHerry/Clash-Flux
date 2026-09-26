@@ -29,6 +29,7 @@ import clashflux.cli;
 import clashflux.cli_ipc;
 import clashflux.store.core;
 import clashflux.persistence;
+import clashflux.stream;
 
 namespace clashflux::ui {
 
@@ -691,50 +692,71 @@ huxerui::PageTransition SecondaryPageTransition(
     auto navPage = huxerui::UseState<std::size_t>(pages::kHome);
     auto pagerPage = huxerui::UseState<std::size_t>(0);
 
-    // 持久化：启动任务打开 ORM 库（含 0→1 迁移）并 hydrate settings/profiles
-    // 缓存，然后补齐 core.secret、把首帧默认主题校正为库里的值，最后长期跑
-    // flush 泵（settings 与 profiles 都是「写缓存 + 异步落库」）。
+    // 持久化：启动任务打开 ORM 库并 hydrate settings/profiles 缓存，然后补齐
+    // core.secret、把首帧默认主题校正为库里的值，最后长期跑 flush 泵
+    // （settings 与 profiles 都是「写缓存 + 异步落库」）。旧结构由 open 删库重建。
     auto tasks = huxerui::UseTaskScope();
     huxerui::Lifecycle(
         [tasks, themeMode, application] {
             tasks.Launch([themeMode, application]() -> huxerui::Task<void> {
-                auto& db = clashflux::persistence::persistence();
-                if (!db.ready()) {
-                    co_await db.open(cfg::databaseFile());
-                }
-                store::coreStore().init();
-                store::coreStore().ensureSecret();
-                if (db.ready()) {
-                    const std::string saved =
-                        store::coreStore().setting("ui.theme_mode", "1");
-                    if (saved == "0" || saved == "2") {
-                        const int mode = std::stoi(saved);
-                        if (mode != themeMode.Get()) themeMode = mode;
+                try {
+                    auto& db = clashflux::persistence::persistence();
+                    if (!db.ready() && !co_await db.open(cfg::databaseFile())) {
+                        // 旧版本数据库不兼容：只记录并降级运行，不删除任何文件。
+                        stream::logApplication("error", db.lastError());
+                        if (cli::runtimeCommandMode()) {
+                            cli::setPendingExitCode(1);
+                            application.Quit();
+                            co_return;
+                        }
                     }
+                    store::coreStore().init();
+                    store::coreStore().ensureSecret();
+                    if (db.ready()) {
+                        const std::string saved =
+                            store::coreStore().setting("ui.theme_mode", "1");
+                        if (saved == "0" || saved == "2") {
+                            const int mode = std::stoi(saved);
+                            if (mode != themeMode.Get()) themeMode = mode;
+                        }
+                    }
+
+                    // 单实例：owner 启动转发服务；非 owner 的命令由这里代跑。
+                    clashflux::cli_ipc::startCommandServer();
+
+                    // 伪 CLI：命令在运行时内执行（窗口隐藏到托盘），落库后退出。
+                    auto args = cli::takePendingCommand();
+                    if (!args.empty()) {
+                        const int code = co_await RunOnTaskThread(
+                            [args = std::move(args)] { return cli::run(args); });
+                        co_await db.flushSettings();
+                        co_await db.flushProfiles();
+                        cli::setPendingExitCode(code);
+                        application.Quit();
+                        co_return;
+                    }
+
+                    for (;;) {
+                        co_await huxerui::Delay(std::chrono::duration<double>{0.25});
+                        // 服务其他进程转发来的 CLI 命令（单实例下唯一执行点）。
+                        co_await RunOnTaskThread(
+                            [] { return clashflux::cli_ipc::servePendingCommands(); });
+                        co_await db.flushSettings();
+                        co_await db.flushProfiles();
+                    }
+                } catch (const std::exception& exception) {
+                    // 任务里未捕获的异常会被 HuxerUI 直接 terminate 掉整个进程
+                    // （TaskExecution::CompleteOnUi），所以必须在这里兜住并记录。
+                    stream::logApplication(
+                        "error",
+                        std::string{"持久化启动任务异常："} + exception.what());
+                } catch (...) {
+                    stream::logApplication("error", "持久化启动任务未知异常");
                 }
-
-                // 单实例：owner 启动转发服务；非 owner 的命令由这里代跑。
-                clashflux::cli_ipc::startCommandServer();
-
-                // 伪 CLI：命令在运行时内执行（窗口隐藏到托盘），落库后退出。
-                auto args = cli::takePendingCommand();
-                if (!args.empty()) {
-                    const int code = co_await RunOnTaskThread(
-                        [args = std::move(args)] { return cli::run(args); });
-                    co_await db.flushSettings();
-                    co_await db.flushProfiles();
-                    cli::setPendingExitCode(code);
+                // 兜底退出：CLI 模式必须给出确定退出码，不能再启动第二个运行时。
+                if (cli::runtimeCommandMode()) {
+                    cli::setPendingExitCode(1);
                     application.Quit();
-                    co_return;
-                }
-
-                for (;;) {
-                    co_await huxerui::Delay(std::chrono::duration<double>{0.25});
-                    // 服务其他进程转发来的 CLI 命令（单实例下唯一执行点）。
-                    co_await RunOnTaskThread(
-                        [] { return clashflux::cli_ipc::servePendingCommands(); });
-                    co_await db.flushSettings();
-                    co_await db.flushProfiles();
                 }
             });
             return [] {};

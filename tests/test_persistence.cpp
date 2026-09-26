@@ -1,11 +1,14 @@
-// test_persistence.cpp — ORM 持久化服务的 settings 缓存语义。
+// test_persistence.cpp — ORM 持久化服务语义（settings/profiles 缓存 + 异步落库）。
 //
-// 覆盖：未 open 时读 fallback；open 后 hydrate；setSetting 同步可见（缓存）且
-// 标脏；flushSettings 落库；close 后重开能读回（证明真的写进 ORM 库）。
+// 覆盖：未 open 时读 fallback；open 后 hydrate；setSetting/saveProfile 同步可见
+// （缓存）且标脏；flush 落库；close 后重开能读回；以及 0.2.x 旧结构被删库重建。
 // 用 HuxerUI 公开无窗口测试库驱动异步任务。
 
 #include <huxerui/huxerui.h>
+#include <huxerui/sqlite.h>
 #include <huxerui/testing/ui_test.h>
+
+#include "sqlite_schema.h"
 
 #include <chrono>
 #include <cstdio>
@@ -16,11 +19,14 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 import clashflux.db;
 import clashflux.persistence;
 
 using namespace huxerui;
+namespace sqlite = huxerui::sqlite;
+namespace db_schema = clashflux::db_schema;
 namespace persistence = clashflux::persistence;
 
 namespace {
@@ -159,6 +165,49 @@ Task<void> RunTest() {
             Check(store.setting("ui.theme_mode", "") == "1",
                   "overwritten setting did not persist");
             co_await store.close();
+        }
+
+        // 旧结构不兼容：open 必须失败并给出提示，且**不删除任何文件**
+        // （旧库由用户自行清理）。
+        {
+            const std::filesystem::path legacy = TempPath();
+            {
+                auto opened = co_await sqlite::Database::OpenAsync(
+                    File{legacy.string()}, db_schema::openOptions());
+                Check(static_cast<bool>(opened), "legacy: open raw failed");
+                sqlite::Database raw = std::move(*opened);
+                for (const char* statement :
+                     {"CREATE TABLE profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                      "name TEXT NOT NULL, url TEXT NOT NULL DEFAULT '', "
+                      "file TEXT NOT NULL DEFAULT '', "
+                      "selected INTEGER NOT NULL DEFAULT 0, "
+                      "updated_at INTEGER NOT NULL DEFAULT 0, "
+                      "error TEXT NOT NULL DEFAULT '')",
+                      "CREATE TABLE settings (key TEXT PRIMARY KEY, "
+                      "value TEXT NOT NULL DEFAULT '')",
+                      "INSERT INTO profiles (name) VALUES ('旧订阅')",
+                      "INSERT INTO settings (key, value) "
+                      "VALUES ('ui.theme_mode', '2')"}) {
+                    auto result = co_await raw.ExecuteAsync(statement);
+                    Check(static_cast<bool>(result), "legacy: ddl failed");
+                }
+                auto closed = co_await raw.CloseAsync();
+                Check(static_cast<bool>(closed), "legacy: close failed");
+            }
+            const auto sizeBefore =
+                std::filesystem::file_size(legacy);
+            persistence::Persistence store;
+            Check(!co_await store.open(legacy),
+                  "legacy database must fail to open");
+            Check(!store.lastError().empty(),
+                  "legacy open failure must carry a diagnostic");
+            std::error_code error;
+            Check(std::filesystem::exists(legacy, error),
+                  "legacy database must not be deleted");
+            Check(std::filesystem::file_size(legacy, error) == sizeBefore,
+                  "legacy database must not be modified");
+            co_await store.close();
+            RemoveDatabase(legacy);
         }
 
         RemoveDatabase(path);
