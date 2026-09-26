@@ -60,11 +60,14 @@ cmake --build build --target clash-flux
 
 - 工具链：系统 GCC（本机 16.2.1）+ libstdc++，CMake ≥ 4.4（`import std` 仍是
   experimental：UUID 表在 `cmake/CxxImportStdGate.cmake`）。
-- **依赖全部 vendor 在 `third_party/`**（tarball + SHA256，configure 期解包到
+- **依赖 vendor 在 `third_party/`**（tarball + SHA256，configure 期解包到
   `build/vendor/`，清单见 `third_party/README.md`）：HuxerUI 0.3.0、curl 8.22.0
   （REST + 订阅下载）、IXWebSocket 12.0.1（client-only，内核推送流）、
-  SQLiteCpp 3.3.3（订阅/设置）、nlohmann::json 3.12.0、yaml-cpp 0.8.0（订阅
-  YAML 解析）、OpenSSL 3.5.1（linux x86_64 兜底静态包）。
+  nlohmann::json 3.12.0、yaml-cpp 0.8.0（订阅
+  YAML 解析）、OpenSSL 3.5.1（linux x86_64 兜底静态包）。SQLite 不再单独
+  vendor：订阅/设置走 HuxerUI 官方持久化库 `HuxerUI::SQLite`（`huxerui::sqlite`
+  ORM），本地 `third_party/lib-sqlite/` clone 优先、缺失时 FetchContent 拉固定
+  commit（见 `CMakeLists.txt` 的 `huxerui_use_library`）。
 - **sing-box 由项目自带（桌面）**：configure 期下载官方 release（1.14.0，
   SHA256 钉死，资产表见 `cmake/singbox_bundle.cmake`，与 Android libbox 同
   版本），POST_BUILD 拷到 `<exe>/engines/sing-box`；
@@ -80,23 +83,26 @@ cmake --build build --target clash-flux
 | 模块 | 文件 | 职责 |
 |------|------|------|
 | `clashflux.config` | `src/config.cppm` | 数据目录（~/.local/share/clash-flux）/ sing-box 二进制解析 / 控制器端点（127.0.0.1:29097）/ secret 生成 / 深色检测 |
-| `clashflux.instance` | `src/app_instance.cppm` | 桌面 GUI 单实例锁与二次启动唤醒（Linux/macOS 文件锁+信号，Windows Mutex+Event；CLI 不拦截） |
+| `clashflux.instance` | `src/app_instance.cppm` | 单实例锁与二次启动唤醒（Linux/macOS 文件锁+信号，Windows Mutex+Event）；GUI 与 CLI 都经过这里，`acquireOrActivate(activate=false)` 供 CLI 只探测不唤醒 |
+| `clashflux.cli_ipc` | `src/cli_ipc.cppm` | 单实例下的 CLI 命令转发：非 owner 把命令行写入 `<dataDir>/cli-requests/<pid>.req` 并轮询 `<pid>.res`；owner 在启动泵里 `servePendingCommands()` 执行并回传输出+退出码 |
 | `clashflux.utils` | `src/utils.cppm` | 纯 string/number 帮助函数 + percentEncode / appendQuery |
-| `clashflux.db` | `src/db.cppm/.cpp` | SQLiteCpp：profiles（订阅）/ settings（KV）两表 |
+| `clashflux.model` | `src/model.cppm` | 跨层共享数据结构（`Profile`）；单独成模块以打破 db ↔ persistence 的模块环 |
+| `clashflux.db` | `src/db.cppm/.cpp` | 持久化**同步门面**：转发 `clashflux.persistence`，保留 `listProfiles/saveProfile/deleteProfile/setSelectedProfile/getSetting/setSetting` 既有同步接口，调用点无需改动 |
+| `clashflux.persistence` | `src/store/persistence.cppm/.cpp` | `huxerui::sqlite` ORM 持久化服务：settings/profiles **内存缓存 + 异步落库**；`open()` 打开库并跑 0→1 老库迁移、hydrate 缓存；写后由启动任务的 flush 泵落库。**日志不入库**（高频追加，仍写 `core/*.log`）。schema 声明在 `src/sqlite_schema.*` |
 | `clashflux.api` | `src/api.cppm/.cpp` | sing-box clash_api REST 客户端（curl，同步阻塞、每调用独立 handle）：version/configs/patchConfigs(mode)/proxies/selectProxy/proxyDelay/groupDelay(fan-out 并发逐节点)/connections/订阅下载 |
 | `clashflux.core` | `src/core.cppm/.cpp` | sing-box 子进程生命周期（`run -c <config.json> -D <workdir>`；posix_spawn + 监视线程；SIGTERM→2s→SIGKILL）+ generateConfig（委托 clashflux.singbox 编译） |
 | `clashflux.singbox` | `src/singbox.cppm/.cpp` | Clash YAML → sing-box JSON 编译器（yaml-cpp 解析 + nlohmann 合成）：节点（ss/vmess/vless/trojan/hysteria2/tuic/http/socks）、组（fallback/load-balance 降级 urltest）、基础规则 + GEOIP→远程 .srs、clash_mode 三模式前置规则；不支持的条目进 warnings 不阻断 |
 | `clashflux.stream` | `src/stream.cppm/.cpp` | /logs /traffic /connections 三条 WS 流（IX 自管线程，事件入槽，UI PollWhile 泵取） |
 | `clashflux.sysproxy` | `src/sysproxy.cppm` | Linux 系统代理写入：KDE kioslaverc（kwriteconfig6/5 + dbus 通知 KIO）/ GNOME gsettings；阻塞 shell 调用，UI 必须 RunOnTaskThread |
 | `clashflux.service` | `src/service.cppm` | 统一特权服务：root systemd 单元 `clash-flux.service` + `/run/clash-flux/service.sock` 行协议（sing-box START/STOP/STATUS/VERSION + PPTP/OpenVPN AVAILABLE/START/ROUTES/STOP；START 只传 config.json 绝对路径）；由同一 daemon 管理 Linux pppd/openvpn/ip；install/uninstall 需 root（GUI 经 pkexec 重入本二进制 `service install`），socket 仅安装用户 UID + root 可访问 |
-| `clashflux.cli` | `src/cli.cppm` | 完整 CLI：`cli::run(args)`，子命令 version/service/core/mode/tun/proxy/profile/help；platform/*/main.cpp 无参 → GUI、有参 → CLI |
+| `clashflux.cli` | `src/cli.cppm` | 完整 CLI：`cli::run(args)`，子命令 version/service/core/mode/tun/proxy/profile/help。**伪 CLI**：version/help 走无运行时快路径，其余命令由 `platform/*/main.cpp` 交给应用运行时执行（`isPureOutputCommand`/`setPendingCommand`，窗口隐藏到托盘，可用任务与持久化），完成后写回退出码 |
 | `clashflux.store.core` | `src/store/core_store.cppm` | 编排单例 `coreStore()`：持有 Db/ClashApi/CoreProcess/CoreStreams；startCore/stopCore/applyMode/refreshRuntime/checkAlive；settings KV；内核启停与系统代理/TUN/出站模式解耦（开关只记意图，不隐式拉起内核）；TUN 切换 = 重新编译 config.json + 自动重启内核；内核三形态托管：**服务托管 → 接管外部实例（/version 探测 + core.pid pidfile）→ 直接 spawn** |
 | `clashflux.store.profiles` | `src/store/profiles.cppm` | 订阅单例 `profilesStore()`：importUrl/importFile/refresh/activate/remove（activate/remove 触发内核重启） |
 | `clashflux.openvpn` | `src/openvpn.cppm/.cpp` | OpenVPN CLI 配置校验、Linux root/Windows CLI 会话、tun 接口与内网 CIDR 路由；托管模式禁止配置自带 route/up/down 脚本 |
 | `clashflux.store.vpn` | `src/store/vpn.cppm` | PPTP/OpenVPN 连接生命周期 + 全局 `VpnPolicy` 持久化；`ProfileConnectionId` 是跨引擎稳定连接引用，原生连接建连时将 IPv4 全局规则交给对应隧道接口 |
 | `clashflux.ui.*`（普通 C++） | `src/ui/*.cpp` | app（通用壳 + `platform_app.cpp` 平台应用壳）/ common（岛屿原语 IslandSurface/DialogCard/页面骨架/卡片/状态胶囊）/ home/profiles/proxies/rules/connections/logs/settings 七页（平台设置在 `platform_settings.cpp`）/ task_bridge.h（协程桥） |
 | `src/app.cpp` | 普通 TU | `Application{AppRoot, AppOptions}`（Custom chrome，标题栏 24pt） |
-| 平台入口 | `platform/{linux,macos,windows}/main.cpp` | 无参 → 获取单实例后 `huxerui::RunApplication()`；有参 → `cli::run`（同一二进制即 CLI） |
+| 平台入口 | `platform/{linux,macos,windows}/main.cpp` | 无参 → 获取单实例后 `huxerui::RunApplication()`；有参 → 纯输出命令直接 `cli::run`，其余 `setPendingCommand` 后进运行时执行（同一二进制即 CLI） |
 
 ## 多平台 / CI
 
@@ -177,9 +183,13 @@ cmake --build build --target clash-flux
     平台分支；新增 Android UI 源文件必须同步加入 `cmake/AndroidLegacy.cmake`
     的 legacy 源列表。核心运行时若确实需要 `PlatformKind` 等领域模型可以保留，
     但不得把领域运行时枚举重新用作 UI 控件能力分发。
-12. **单实例与列表一致性**：桌面 GUI 入口必须先经过
-    `clashflux::instance::acquireOrActivate()`；第二次启动只唤醒已有窗口并退出，CLI
-    参数不受单实例锁影响。Android 主 Activity 使用 `singleTask` 保证回到已有任务。
+12. **单实例与列表一致性**：GUI 与 CLI **都**必须先经过
+    `clashflux::instance::acquireOrActivate()`：抢到锁的进程是 owner，在自己的
+    运行时里执行命令（GUI 无参启动；CLI 命令隐藏窗口执行）。已有实例时，CLI 用
+    `clashflux::cli_ipc::tryForwardCommand()` 把命令行转发给 owner 执行并回传
+    输出/退出码（owner 在启动泵里 `servePendingCommands()`），不再启动第二个
+    Runtime/托盘/持久化缓存；GUI 第二次启动只唤醒已有窗口并退出。Android 主
+    Activity 使用 `singleTask` 保证回到已有任务。
     窗口的“启动时隐藏到托盘”只能绑定一次性生命周期，不得
     在组合函数每次重组时直接 `Hide()`。日志、连接、规则等信息列表统一通过
     `UnifiedListRow` 管理表面/间距/圆角；紧凑视口禁止复用桌面固定列宽。全量推送列表

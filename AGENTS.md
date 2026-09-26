@@ -84,6 +84,17 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   `clashflux::win32::UniqueHandle` / `UniqueHkey`，curl easy handle 与 header list 用
   `src/api.cpp` 的 `CurlHandle` / `CurlHeaderList`。只有需要检查释放返回值，或所有权
   属于其它进程/进程级单例时才手工管理，并在注释里写明理由。
+- **持久化边界**：settings/profiles 走 `clashflux.persistence`（`huxerui::sqlite`
+  ORM）的**内存缓存 + 异步落库**，schema/迁移在 `src/sqlite_schema.*`；`clashflux.db`
+  只是保持既有同步接口的转发门面，新代码直接依赖 `clashflux.persistence`。**
+  日志不进库**（高频追加会与写事务抢锁/IO），仍直接写 `core/*.log`。需要数据库
+  的 CLI 命令必须在应用运行时内执行（`clashflux.cli` 的伪 CLI：`setPendingCommand`
+  → 启动任务 `cli::run` → flush → 退出），不要在运行时之外直接读写持久化层。
+- **单实例**：GUI 与 CLI 都先抢 `clashflux::instance::acquireOrActivate()`。owner
+  在自己的运行时里执行命令（CLI 命令隐藏窗口到托盘），非 owner 的 CLI 通过
+  `clashflux::cli_ipc::tryForwardCommand()` 把命令转发给 owner 执行并回传输出与
+  退出码（owner 在启动泵里 `servePendingCommands()`）；任何情况下都不得出现第二个
+  Runtime / 托盘 / 持久化缓存。
 - 跨进程资源（detached 内核、root 服务托管的 pppd/openvpn、systemd 单元）由 pidfile /
   `pidAlive` / socket 协议管理，不属于本进程 RAII 的范畴。
 

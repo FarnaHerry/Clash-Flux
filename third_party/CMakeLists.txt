@@ -9,7 +9,7 @@
 #   HuxerUI::huxerui  HuxerUI 0.3.0 SDK（shared；见文件尾 find_package）
 #   ixwebsocket   IXWebSocket 12.0.1（client-only，无 TLS/无 zlib）
 #   CURL::libcurl curl 8.22.0（桌面 OpenSSL 后端；Android/iOS 无 TLS，静态库）
-#   SQLiteCpp     SQLiteCpp 3.3.3（内置 sqlite3 amalgamation）
+#   SQLite：HuxerUI::SQLite（huxerui::sqlite ORM，自带 sqlite3 amalgamation）
 #   clashflux_json nlohmann::json 3.12.0（single header）+ `import nlohmann.json`
 #   clashflux_qrcode Nayuki QR-Code-generator 1.8.0（订阅分享二维码；源码直提）
 #
@@ -104,18 +104,10 @@ if(WIN32)
     target_link_libraries(ixwebsocket PUBLIC ws2_32)
 endif()
 
-# ---- SQLiteCpp 3.3.3（内置 sqlite3 amalgamation）-----------------------------
-# 用途：订阅（profiles）、应用设置的本地持久化。
-clashflux_extract(sqlitecpp
-    "${CMAKE_CURRENT_SOURCE_DIR}/tarballs/SQLiteCpp-3.3.3.tar.gz"
-    "33bd4372d83bc43117928ee842be64d05e7807f511b5195f85d30015cad9cac6"
-    "SQLiteCpp-3.3.3")
-set(SQLITECPP_INTERNAL_SQLITE ON CACHE BOOL "" FORCE)
-set(SQLITECPP_RUN_CPPLINT OFF CACHE BOOL "" FORCE)
-set(SQLITECPP_RUN_CPPCHECK OFF CACHE BOOL "" FORCE)
-set(SQLITECPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(SQLITECPP_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-add_subdirectory("${sqlitecpp_SOURCE_DIR}" "SQLiteCpp-build")
+# ---- SQLite：由 HuxerUI::SQLite（huxerui_sqlite）提供 ------------------------
+# 订阅（profiles）与应用设置（settings）的本地持久化已迁移到 huxerui::sqlite
+# ORM；它自带钉死版本的 sqlite3 amalgamation，不再单独 vendor SQLiteCpp。
+# 该库的源码获取在顶层 CMakeLists 通过 huxerui_use_library 完成。
 
 # ---- HuxerUI（源码 third_party/huxerui 或预编译 SDK，由顶层选择）--------------
 # Linux 后端为 GTK4/Cairo，运行时需要系统 libgtk-4-1/libsoup-3.0-0；

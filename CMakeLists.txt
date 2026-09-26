@@ -38,7 +38,12 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.2.20 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.0 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+
+# 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
+# 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
+# （huxerui::testing::UiTest），所以必须在加入 HuxerUI 之前就确定是否开启。
+option(CLASHFLUX_BUILD_TESTS "Build clash-flux test executables" ON)
 
 # HUXERUI_LIBRARY_GRAPH_ONLY：CLI 扫描 huxerui 库依赖图时的特殊配置——
 # 不启用语言、不构建，huxerui_add_app 只写出库图 JSON 即返回（见 SDK
@@ -154,6 +159,10 @@ if (CLASHFLUX_HUXERUI_SOURCE_DIR)
             AND EXISTS "${CLASHFLUX_HUXERUI_LOCAL_TOOLS}/linux/x86_64/hcg")
         set(HUXERUI_HOST_TOOL_ROOT "${CLASHFLUX_HUXERUI_LOCAL_TOOLS}")
         message(STATUS "clash-flux: 宿主工具用本地源码构建（third_party/huxerui-tools）")
+    endif ()
+    if (CLASHFLUX_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
+        # 测试用 huxerui::testing::UiTest 在无窗口 Runtime 里驱动 Application 与任务。
+        set(HUXERUI_BUILD_TESTING_LIBRARY ON CACHE BOOL "" FORCE)
     endif ()
     add_subdirectory("${CLASHFLUX_HUXERUI_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/huxerui-sdk"
         EXCLUDE_FROM_ALL)
@@ -285,6 +294,7 @@ set(CLASHFLUX_MODULE_UNITS
     src/config.cppm
     src/app_instance.cppm
     src/utils.cppm
+    src/model.cppm
     src/db.cppm
     src/vpn.cppm
     src/vpn_compensation.cppm
@@ -300,8 +310,10 @@ set(CLASHFLUX_MODULE_UNITS
     # 服务模式（root 托管内核；非 Linux 平台编译为同签名 stub）+ 完整 CLI
     src/service.cppm
     src/cli.cppm
+    src/cli_ipc.cppm
     # 领域 store（UI 无关）
     src/store/core_store.cppm
+    src/store/persistence.cppm
     src/store/vpn.cppm
     src/store/profiles.cppm
 )
@@ -418,6 +430,29 @@ huxerui_use_library(clash-flux
     COMMIT "${CLASHFLUX_HUXERUI_CAMERA_COMMIT}"
 )
 
+# ---- HuxerUI::SQLite（huxerui::sqlite ORM，持久化层）------------------------
+# 源码获取优先本地 clone（third_party/lib-sqlite，已 gitignore）：可以随时
+# pull 上游、或直接换成自己的 fork（改 remote 即可），本地改完立即生效。
+# 没有本地 clone 时回落 FetchContent 拉固定 commit（与 Lib-Camera 同机制），
+# 因此 CI 不需要任何额外 checkout 步骤；升级=改下面的 COMMIT 常量。
+set(CLASHFLUX_HUXERUI_SQLITE_URL "https://github.com/HuxerUI/Lib-SQLite.git")
+set(CLASHFLUX_HUXERUI_SQLITE_COMMIT "5e3d040079629e698ca2f456ad79042cbbcd6aba")
+set(CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lib-sqlite")
+if (EXISTS "${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}/CMakeLists.txt")
+    message(STATUS "clash-flux: HuxerUI::SQLite 使用本地源码 ${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}")
+    huxerui_use_library(clash-flux
+        TARGET HuxerUI::SQLite
+        PATH "${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}"
+    )
+else ()
+    huxerui_use_library(clash-flux
+        TARGET HuxerUI::SQLite
+        URL "${CLASHFLUX_HUXERUI_SQLITE_URL}"
+        COMMIT "${CLASHFLUX_HUXERUI_SQLITE_COMMIT}"
+    )
+endif ()
+
 if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     if (ANDROID)
         # AndroidLegacy.cmake 已把模块接口/实现转为普通 C++ 源；显式关闭扫描，
@@ -478,7 +513,6 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     target_link_libraries(clash-flux PRIVATE
         ixwebsocket
         CURL::libcurl
-        SQLiteCpp
         clashflux_json
         clashflux_qrcode
         yaml-cpp
@@ -641,9 +675,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
     endif()
 
     # ---- 测试 ---------------------------------------------------------------
-    # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
-    # 决定 clash-flux 自己的测试。
-    option(CLASHFLUX_BUILD_TESTS "Build clash-flux test executables" ON)
+    # CLASHFLUX_BUILD_TESTS 已在文件顶部声明（HuxerUI 加入前就要确定）。
     # Android uses the legacy source path; iOS cross-builds only the Simulator
     # app core. Neither platform configures the desktop `import std` test targets.
     if (CLASHFLUX_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
@@ -684,7 +716,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         add_executable(test_routing tests/test_routing.cpp)
         target_sources(test_routing PRIVATE FILE_SET clashflux_routing_modules TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-            FILES src/routing.cppm src/db.cppm src/vpn.cppm src/singbox.cppm)
+            FILES src/model.cppm src/routing.cppm src/db.cppm src/vpn.cppm src/singbox.cppm)
         set_target_properties(test_routing PROPERTIES CXX_MODULE_STD ON)
         target_compile_features(test_routing PRIVATE cxx_std_23)
         target_link_libraries(test_routing PRIVATE clashflux_json)
@@ -719,6 +751,36 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         target_compile_features(test_pptp_connect PRIVATE cxx_std_23)
         if (WIN32)
             target_link_libraries(test_pptp_connect PRIVATE rasapi32 iphlpapi ws2_32 dnsapi)
+        endif ()
+
+        # huxerui::sqlite ORM：schema 声明、0→1 迁移与老 SQLiteCpp 库的兼容性。
+        # 依赖 HuxerUI 公开无窗口测试库（huxerui::testing::UiTest）驱动异步 DB；
+        # 没有该 target 的通道（例如仅 SDK 的旧包）直接跳过。
+        if (TARGET HuxerUI::testing)
+            add_executable(test_sqlite_orm tests/test_sqlite_orm.cpp src/sqlite_schema.cpp)
+            target_compile_features(test_sqlite_orm PRIVATE cxx_std_23)
+            target_include_directories(test_sqlite_orm PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}/src")
+            target_link_libraries(test_sqlite_orm PRIVATE
+                HuxerUI::testing HuxerUI::SQLite)
+            add_test(NAME sqlite_orm COMMAND test_sqlite_orm)
+
+            # ORM 持久化服务（settings 缓存 + 异步落库）。
+            add_executable(test_persistence
+                tests/test_persistence.cpp
+                src/sqlite_schema.cpp
+                src/store/persistence.cpp)
+            target_sources(test_persistence PRIVATE FILE_SET clashflux_persistence_modules
+                TYPE CXX_MODULES
+                BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+                FILES src/model.cppm src/db.cppm src/store/persistence.cppm)
+            set_target_properties(test_persistence PROPERTIES CXX_MODULE_STD ON)
+            target_compile_features(test_persistence PRIVATE cxx_std_23)
+            target_include_directories(test_persistence PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}/src")
+            target_link_libraries(test_persistence PRIVATE
+                HuxerUI::testing HuxerUI::SQLite)
+            add_test(NAME persistence COMMAND test_persistence)
         endif ()
     endif ()
 

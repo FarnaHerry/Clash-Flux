@@ -94,15 +94,11 @@
     }
 
     // ---- 设置（落 settings 表）----
+    // 读走 Persistence 的内存缓存，可在组合期调用；写更新缓存并由启动流程的
+    // flush 泵异步落库。数据库由启动流程 open，这里不再触发任何磁盘 IO。
     std::string setting(const std::string& key, const std::string& fallback = "") {
         try {
-            // Database creation can fail on a freshly installed Android app
-            // (storage/SQLite initialization happens during the first frame).
-            // Settings are optional, so an unavailable store must not abort
-            // the UI process; use the caller's default and let later actions
-            // retry initialization.
-            ensureOpen();
-            return db_->getSetting(key, fallback);
+            return clashflux::persistence::persistence().setting(key, fallback);
         } catch (...) {
             return fallback;
         }
@@ -110,10 +106,24 @@
 
     void setSetting(const std::string& key, const std::string& value) {
         try {
-            ensureOpen();
-            db_->setSetting(key, value);
+            clashflux::persistence::persistence().setSetting(key, value);
         } catch (...) {
         }
+    }
+
+    // 从已 hydrate 的缓存确保 core.secret 存在并（重新）构建 API 端点。
+    // 启动任务在 Persistence::open 之后调用一次；缓存未就绪时只建空 secret 的
+    // 端点，避免把「启动早期读不到设置」误判成需要重新生成 secret。
+    void ensureSecret() {
+        std::string secret = setting("core.secret", "");
+        if (secret.empty()) {
+            if (!clashflux::persistence::persistence().ready()) return;
+            secret = cfg::randomSecret();
+            setSetting("core.secret", secret);
+        }
+        if (secret == secret_ && api_) return;
+        secret_ = std::move(secret);
+        api_ = std::make_unique<api::ClashApi>(cfg::controllerBaseUrl(), secret_);
     }
 
     std::string proxyGroupsSnapshot() {
