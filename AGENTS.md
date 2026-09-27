@@ -42,6 +42,11 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
 - Android Gradle 的 HuxerUI Java 模块必须与 CMake 选中的 native HuxerUI 来自同一源码版本：
   有源码时使用该源码的 `platform/android/huxerui` 项目，只有 CMake 回落到 SDK 时才使用 SDK AAR。
   详见 `docs/android-build.md`。
+- **Android 图标分工是固定的，不要互相替换**：应用图标（`mipmap-*/ic_launcher.png` 与
+  adaptive 前景 `drawable/ic_launcher_foreground.xml`，前景 inset `@drawable/ic_launcher_mascot`、
+  背景 `@color/ic_launcher_background`）用**平滑猫头吉祥物**；快捷开关磁贴徽章
+  `drawable/ic_qs_clash_flux.xml` + `drawable-night/ic_qs_clash_flux.xml` 用**猫爪**
+  （深浅色各一版）。改图标只改对应那一个，别把猫爪铺到启动图标上（也不要反过来）。
 - Android 常驻服务不得等待 `POST_NOTIFICATIONS` 才启动前台服务或继续 VPN 授权；该权限只影响通知栏展示。
   返回 `START_STICKY` 的服务必须处理空 Intent，并从持久化状态恢复运行模式，不能猜测为 TUN。
 - Android sing-box 所有者固定在 `:background`：`ClashVpnService` 持有 libbox/VpnService，
@@ -61,6 +66,21 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   回到直接父级而不是退出应用；此规则适用于所有当前和未来的手机平台，不限于 Android。
   二级页使用独立的页面进入/返回（push/pop）动画，不得与一级页切换动画共用同一套效果；
   进入时保留父页面状态（滚动位置、已填写内容），返回后原样恢复。
+- **页内分区（二级标签）左右滑动必须挂在内容滚动节点上，且认领距离不晚于 6pt**：
+  框架手势识别按「由深到浅」注册、Move 时取第一个 Accept 的识别器，而 Pager 的整页
+  拖动在横向占优且位移 ≥ `touch_gesture_slop`(6pt) 时就 Accept——认领阈值一旦大于它，
+  横滑必然先被外层 Pager 抢走（真机表现：手机端代理页一滑就整页翻走，页内分组切不动）。
+  阈值与判定在 `src/ui/section_swipe.h`，单测 `tests/test_section_swipe.cpp`；两端没有
+  相邻分区时不要认领，把手势让回外层 Pager（页内先翻、翻到头再整页翻）。
+- **只建当前分区内容的页面（代理页）换页动画必须靠「页 Key 随分区变化 + 挂载后把
+  本地进度推进到 1」**：`AnimateTo` 只在目标值变化时才有动画，新挂载的节点会直接落到
+  目标值上，所以照搬订阅页那套 `AnimateTo(selected ? 1 : 0)` 等于没有动画（订阅页能动
+  是因为 `IndexedPages` 把每页都留在树上）。实现见 `proxies_page.cpp` 的 `ProxyGroupPage`，
+  验证见 `tests/test_page_transition.cpp`（无窗口 Runtime + 虚拟时间，断言换页后 12pt
+  偏移逐步收敛到 0；只有 `HuxerUI::testing` 可用时才建该用例）。
+- **不要在界面里加「内核未运行 / 请到设置页启动内核」这类常驻提示**：内核启停由首页
+  悬浮按钮表达，用户自己清楚当前状态；这类横幅只是噪音（代理页顶部那条已删除，
+  以后不要再加回来）。仅保留真正需要用户处置的瞬时反馈（操作失败 toast 等）。
 - 阻塞的内核、网络、路由和系统设置操作必须放到任务线程，不能阻塞 UI 线程。
 - Windows 后台系统操作必须安静执行，不得闪出命令行窗口。优先调用 Win32 API；确实
   需要启动子进程时使用 `CreateProcessW` 的 `CREATE_NO_WINDOW` 并重定向标准句柄，
@@ -103,6 +123,103 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   root 守护进程，环境里没有显示服务，初始化 GTK 会直接 abort。
 - 跨进程资源（detached 内核、root 服务托管的 pppd/openvpn、systemd 单元）由 pidfile /
   `pidAlive` / socket 协议管理，不属于本进程 RAII 的范畴。
+
+### HuxerUI 应用级模型（application service）
+
+跨页面共享数据统一走 `application_hooks` 安装的 application service：`context.Provide`
+模型、组件用 `UseService<T>()` 取用，模型内持 `State`/`StateList`；由 `src/ui/common.cpp`
+里**唯一的数据泵**在 UI 线程写，页面在组合期读（读即订阅，内容相等时 `State::Write`
+去重）。页面不要再为共享数据挂定时器；要把模型值镜像进页面本地 `State` 时，用
+`Lifecycle(setup, 模型State...)` 把模型 State 作为依赖，让变化驱动镜像。
+
+**应用设置必须从 `SettingsModel` 读，不要在组合期直接 `setting(...)`**：persistence
+缓存在首帧之后才 hydrate，直接读只会拿到默认值且之后无人再同步——真机实测表现为
+「关闭窗口时」一直高亮"每次询问"、保存过的首页自定义布局在启动时丢失、环境 shell
+选择回落到探测值。需要"hydrate 完成后补一次"的消费者（首页布局）以 `SettingsView::ready`
+为信号补读。
+
+以下五条都是真机/桌面实测踩出来的硬规则：
+
+- **composable 的返回值必须挂载**。hcg 把 composable 体包成 `huxerui::Scope` 工厂，
+  工厂只在对应 View 被挂载时执行；当裸语句调用并丢弃返回值，等于整个函数体不执行，
+  里面的 `Lifecycle` 永不注册（表现：首页数据永远是默认值、整块空白）。副作用型
+  composable 也要把返回值放进视图树，与 `CLASHFLUX_APPLICATION_EFFECTS`、
+  `CLASHFLUX_PROFILE_REFRESH_PUMP` 一致。
+- **应用级模型里的 `State` 成员必须带初值**（`huxerui::State<T> x{T{}}`）。huxerui 的
+  `State() = default` **不创建 cell**；空 cell 的读取、写入，以及作为 `Lifecycle`
+  依赖，都会抛 `HuxerUI Lifecycle dependency State is empty`——启动即 abort。
+- **框架容器要求非空集合**（如 `IndexedPages` 至少一页）。首帧数据可能为空，必须先
+  构造兜底视图再判断，不能等构造之后才判空——框架抛 `std::invalid_argument` 会直接
+  终止进程。
+- **模型驱动的“条件拉取”必须覆盖 hydrate 完成**。只靠写入口自增的修订号，会让首帧
+  （hydrate 之前）读到空表的消费者永久停在空表；把修订号定义成“内容版本”（`open()`
+  完成 hydrate 也 +1），并让显式 `RequestSync()` 同时强制拉取一次。
+- **不可见的一级页必须“只留状态、不建内容”**。`Pager`（移动端四个一级页）与
+  `IndexedPages`（桌面七个一级页）都会把**所有**页同帧挂载：隐藏页即使自己不重组，
+  其已挂载子树也会跟着每一次渲染被重新测量。OnePlus 真机实测（代理页大分组）：
+  四页同挂时每帧 1443 次测量请求 / MeasureStage ≈20ms、gfxinfo p50 30ms、卡顿率
+  77%；只让当前页构建内容后降到 28 次 / ≈0ms、p50 8ms、卡顿率 1.5%（桌面
+  measure/帧 4304 → 40）。做法：页面加 `bool active` 参数，**在全部 hook（State /
+  Lifecycle / UseXxx）之后**插入
+  `if (!active) return huxerui::View{huxerui::Row{}}.Key("...-idle");`
+  ——页面仍被挂载，自身 State 与 Lifecycle 保留，只是不再构建重子树。已知代价：
+  被门控的页面重新可见时，其内部 ScrollController 从顶部开始（huxerui 的
+  ScrollConnection 重新连接时不恢复偏移），要保留滚动位置需另做处理。
+
+- **用户动作要写透模型，不能“改完本地 State 再等泵”**。`RequestSync()/RequestRefresh()`
+  只把修订号 +1，数据泵睡在 `Delay(1s/2s)` 里时**唤不醒**（tick 只在读完之后才被检查），
+  于是控件会滞后一整拍，表现成“点了没反应 / 又跳回去”。约定：
+  1. KV 设置（`tray.*`、`app.*`、`core.allow_lan`、`core.ipv6_enabled` 等）：`setSetting`
+     是同步写内存缓存，紧接着用模型的 `Update()` 发布同一个值（UI 真值 = 缓存真值，同一
+     时刻），既不需要 pending，也不需要乐观回落。
+  2. 可能失败的慢操作（TUN / 系统代理 / 内核启停 / 出站模式 / 订阅激活）：动作完成时
+     （协程已经回到 UI 线程）成功就用 `Update()` 写权威值——**不要重写本地 State**，
+     避免二次设置与闪烁；失败才回落，且回落前做**目标值校验**：当前显示值仍等于本次
+     target 才回退，否则说明用户已经点到别处、有更新的意图，不许覆盖。
+  3. 被写透的字段，其权威来源必须与写入目标一致（例：局域网开关显示 `CoreView::allowLan`
+     ——KV 意图，而不是内核运行时回读的 `CoreSnapshot::allowLan`），否则下一个泵节拍会把
+     写透的值打回去。
+
+## 架构分层与保真度契约（sing-box 内核）
+
+本项目定位：**内核贴 sing-box、输入贴 Clash 生态、产品层用 Clash 的词汇只暴露内核真有的
+能力**，并把 sing-box 独有能力产品化为 Clash 客户端给不了的差异点。完整契约、当前基线与
+保真度账本形态见 `docs/singbox-layers-and-fidelity.md`（两者冲突时以该文档为准）。
+
+- **L1 内核层（紧贴）**：官方二进制（桌面 spawn）/ libbox（Android）同版本同 SHA256；
+  不 fork、不臆造字段（sing-box 对未知字段直接拒绝启动），能力一律以上游文档/源码为准；
+  控制面走内核自带的 `clash_api`，内核没有的概念不在这一层做兼容包装。
+- **L2 翻译层（处理 Clash 生态）**：Clash YAML、sing-box 原生 JSON、原生连接（PPTP /
+  OpenVPN）都经 `clashflux.singbox` 编译。每条映射（协议 / 组 / 规则 / 字段）必须归入
+  **exact / approx / unsupported** 之一并进入保真度账本，**禁止静默丢弃**，也禁止为
+  「能跑起来」改写用户语义（替换测速 URL、关掉证书校验等）。
+- **L3 产品层（Clash 词汇 + sing-box 能力）**：词汇与信息架构跟 Clash 生态，但只暴露
+  内核真有的能力；做不到的不做假 UI，sing-box 独有能力优先主动暴露。
+
+**决策流程**（新增或修改任何映射时）：① sing-box 有原生等价 → exact；② 语义不同但可
+表达 → approx + 账本条目；③ sing-box 没有 → 默认降级 + 账本条目，只有「体验损失大且实现
+可控」才允许应用层补齐，且必须自证内核在跑/未跑两态都有定义、失败可回滚、不引入第二个
+真相来源，否则不做；④ **任何情况下不得在 UI 假装支持**。
+
+**已知边界（不要当成 bug 去修）**：
+
+- `urltest` 不支持手动锁定：`PUT /proxies/{name}` 只接受 `Selector`（400
+  `Must be a Selector`），也没有 `fixed` 字段；`fallback` / `load-balance` 在 sing-box
+  无对应语义，编译为 `urltest` 并记降级。
+- `interval` 必须 ≤ `idle_timeout`（缺省 30m），否则内核启动失败；组的 `lazy` / `timeout` /
+  `max-failed-times` / `expected-status` 无对应字段。
+- sing-box clashapi 不返回 `selectable` 与组的 `testUrl`，`/providers/proxies` 是空壳：
+  依赖这些字段的 Clash 面板能力一律视为「能打开但残缺」。
+
+**维护**：改编译器映射或升级 sing-box 时必须同步 `docs/singbox-layers-and-fidelity.md`
+的保真度基线表。判定标准：**用户订阅里的条目消失或语义改变 → 用
+`ctx.note(scope, level, subject, detail, action)` 进账本；运行期事件、语义不变 → 留在
+`ctx.warn()`**（如规则集缓存不可用改走在线拉取、托管 TUN 关掉 auto_redirect）。账本为
+`CompileResult.fidelity` → `CoreSnapshot.fidelity`，`warnings` 只是它的自由文本投影；
+账本的消费点：设置页「配置保真度」完整明细、`singbox::FidelitySummary()` 折成的一行
+toast、代理页分组标签的 `!` 角标（`SectionTab.badge`）、CLI `profile check`。
+**toast 只在用户动作后发**（导入 / 刷新 / 启用订阅），内核重启（启停、TUN 或模式切换
+触发的重编译）不得重复提示。
 
 ## 文档同步
 

@@ -573,18 +573,55 @@ void cleanupManagedLinuxRoutesImpl(std::string& error) {
     bool failed = false;
     auto run = [&](std::vector<std::string> args) {
         const auto result = runIp(args);
-        if (result.exitCode != 0 && result.output.find("No such file") == std::string::npos) {
+        // "No such file"(rule 不存在) 与 "does not exist"(表在列举与清理之间消失)
+        // 都是幂等收尾的正常结果，不当失败。
+        const bool benign =
+            result.output.find("No such file") != std::string::npos ||
+            result.output.find("does not exist") != std::string::npos;
+        if (result.exitCode != 0 && !benign) {
             failed = true;
             if (error.empty()) error = result.output;
         }
     };
     // The TUN compiler owns pref 9000; remove only that exact priority.
     run({"ip", "-4", "rule", "del", "pref", "9000"});
-    // RouteRegistry uses protocol 186 and tables 52000–52999. Flush only
-    // entries carrying that protocol, never the user's ordinary routes.
-    for (int table = FirstTable; table <= LastTable; ++table) {
-        run({"ip", "-4", "route", "flush", "table", std::to_string(table),
-             "proto", std::string(RouteProtocol)});
+    // RouteRegistry uses protocol 186 and tables 52000–52999。这里只清理**确实
+    // 带该 protocol 的表**：以前对 1000 个表逐个 `ip route flush`，等于每次
+    // stopCore（应用启动与停内核各一次）串行拉起 1000 个 `ip` 子进程——实测是
+    // 启动期最大的一笔系统开销。先用一次 `ip -j route show table all proto 186`
+    // 列出候选表，再逐表 flush，且仍然只 flush proto 匹配的条目，绝不动用户的
+    // 普通路由。
+    const auto listed = runIp({"ip", "-j", "-4", "route", "show", "table", "all",
+                               "proto", std::string(RouteProtocol)});
+    if (listed.exitCode != 0) {
+        failed = true;
+        if (error.empty()) error = listed.output;
+    } else if (listed.output.find_first_not_of(" \t\r\n") != std::string::npos) {
+        const auto parsed = nlohmann::json::parse(listed.output, nullptr, false);
+        if (parsed.is_discarded()) {
+            failed = true;
+            if (error.empty()) error = "解析 ip 路由表失败";
+        } else if (parsed.is_array()) {
+            std::set<int> tables;
+            for (const auto& entry : parsed) {
+                if (!entry.is_object()) continue;
+                const auto table = entry.find("table");
+                if (table == entry.end() || !table->is_string()) continue;
+                const std::string& text = table->get_ref<const std::string&>();
+                int value = 0;
+                const auto [end, ec] = std::from_chars(
+                    text.data(), text.data() + text.size(), value);
+                if (ec == std::errc{} && end == text.data() + text.size() &&
+                    value >= FirstTable && value <= LastTable) {
+                    tables.insert(value);
+                }
+            }
+            for (const int table : tables) {
+                run({"ip", "-4", "route", "flush", "table",
+                     std::to_string(table), "proto",
+                     std::string(RouteProtocol)});
+            }
+        }
     }
     if (failed && error.empty()) error = "清理托管 Linux 路由失败";
 }

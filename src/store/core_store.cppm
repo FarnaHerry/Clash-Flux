@@ -48,8 +48,11 @@ export struct CoreSnapshot {
     std::string binaryPath;      // 解析到的内核路径（空 = 未安装）
     std::string version;         // 内核版本（Running 时）
     std::string lastError;
-    // 订阅编译降级报告（不支持的节点/规则；启动时更新）
+    // 订阅编译降级报告（不支持的节点/规则；启动时更新）。warnings 是自由文本
+    // 投影，fidelity 是结构化账本——UI/CLI 应按 fidelity 渲染（见
+    // docs/singbox-layers-and-fidelity.md §2），不要解析 warnings 文本。
     std::vector<std::string> warnings;
+    std::vector<singbox::FidelityNote> fidelity;
     // 运行配置快照（Running 时有效）
     std::string mode;            // rule / global / direct
     int mixedPort = 7899;
@@ -114,6 +117,10 @@ private:
     std::string binaryPath_;
     std::string lastProfileYaml_;    // 最近一次 startCore 的订阅原文（applyTun 重启用）
     std::string compiledProxyGroups_;
+    // 缓存对应的订阅文件指纹：文件被重新下载/替换（手机上"传输失败后手动补
+    // 文件"就是这样）时必须重编，否则进程内会一直返回旧的空快照。
+    std::filesystem::file_time_type compiledProxyGroupsStamp_{};
+    std::uintmax_t compiledProxyGroupsSize_ = 0;
     bool managedByService_ = false;  // 内核由 root 服务托管
     bool adopted_ = false;           // 接管的外部内核实例（非本进程 spawn）
 };

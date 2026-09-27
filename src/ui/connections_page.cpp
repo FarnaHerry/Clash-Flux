@@ -1,8 +1,8 @@
 // connections_page.cpp — 连接页：WS /connections 推送快照（约 1Hz 全量），
 // 表头（总量 + 关闭全部）+ VirtualList 行（链 | 目标 | 上/下行 | 规则 | 关闭）。
 //
-// 数据流：IX 线程把每帧原文推进 CoreStreams 槽位；UI 泵每 500ms takeConnections
-// 取最新帧解析写 StateList（全量快照语义，直接整表替换，无需差分）。
+// 数据流：IX 线程把每帧原文推进 CoreStreams 槽位并通知一次；UI 线程收到通知
+// 才解析写 StateList（全量快照语义，直接整表替换，无需差分）。
 #include <huxerui/huxerui.h>
 
 #include <chrono>
@@ -17,7 +17,11 @@
 import nlohmann.json;
 import clashflux.core;
 import clashflux.store.core;
+import clashflux.stream;
 import clashflux.utils;
+
+// 用到 stream::StreamKind，必须在模块导入之后。
+#include "stream_updates.h"
 
 namespace clashflux::ui {
 namespace {
@@ -143,7 +147,7 @@ void closeAllConnectionsForPlatform() {
 } // namespace
 
 [[huxerui::composable]] huxerui::View ConnectionsPage(
-    std::function<void()> onBack) {
+    std::function<void()> onBack, bool active) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
@@ -158,25 +162,34 @@ void closeAllConnectionsForPlatform() {
 
     huxerui::Lifecycle(
         [tasks, rows, totalUp, totalDown, streamOpen] {
-            tasks.Launch([=]() mutable -> huxerui::Task<void> {
-                std::string lastFrame;
-                co_await PollWhile(std::chrono::duration<double>{0.5},
-                                   [=, &lastFrame] {
-                    const ConnectionFrame frame = readConnectionFrame();
-                    streamOpen = frame.open;
-                    if (!frame.body.empty() && frame.body != lastFrame) {
-                        lastFrame = frame.body;
-                        ConnectionsSnapshot snapshot = parseConnections(frame.body);
-                        totalUp = snapshot.totalUp;
-                        totalDown = snapshot.totalDown;
-                        ReplaceStateList(rows, std::move(snapshot.rows));
-                    }
-                    return true;
+            // 帧原文比较用共享对象保存：页面重进的首次读取与后续推送共用同一份。
+            auto lastFrame = std::make_shared<std::string>();
+            const auto applyFrame = [rows, totalUp, totalDown, streamOpen,
+                                     lastFrame] {
+                const ConnectionFrame frame = readConnectionFrame();
+                streamOpen = frame.open;
+                if (!frame.body.empty() && frame.body != *lastFrame) {
+                    *lastFrame = frame.body;
+                    ConnectionsSnapshot snapshot = parseConnections(frame.body);
+                    totalUp = snapshot.totalUp;
+                    totalDown = snapshot.totalDown;
+                    ReplaceStateList(rows, std::move(snapshot.rows));
+                }
+            };
+            // 先消费最近一次快照：切页/重挂载不必等下一帧推送。
+            applyFrame();
+            const std::uint64_t subscription = SubscribeStreamUpdates(
+                tasks, [applyFrame](stream::StreamKind kind) {
+                    if (kind != stream::StreamKind::Connections) return;
+                    applyFrame();
                 });
-            });
-            return [] {};
+            return [subscription] { UnsubscribeStreamUpdates(subscription); };
         },
         0);
+
+    // 不可见时只保留本页 State/Lifecycle，不构建内容：桌面 IndexedPages 让七个
+    // 一级页同帧参与测量，隐藏页（日志/连接有推送流更新）的重子树会拖慢每一次渲染。
+    if (!active) return huxerui::View{huxerui::Row{}}.Key("connections-idle");
 
     auto mono = [](const std::string& text, huxerui::Color color, float width) {
         huxerui::View t = huxerui::Text(text).Style(huxerui::TextStyle{

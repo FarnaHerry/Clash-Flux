@@ -36,6 +36,12 @@ export void killPid(long pid);
 // 属其他用户）；Windows OpenProcess 探测。pid ≤0 返回 false。
 export bool pidAlive(long pid);
 
+// pid 对应进程的镜像/可执行文件名（basename，小写不敏感无关）。
+// Linux 读 /proc/<pid>/comm；Windows 查询进程镜像路径；macOS/iOS 无对应能力，
+// 返回空串。用于"按 pidfile 终止之前先确认它还是不是我们期望的进程"——pid 会被
+// 系统复用，裸 kill 可能误杀无关进程。pid ≤0 或读取失败返回空串。
+export std::string pidImageName(long pid);
+
 // 去掉内核输出里的 ANSI 颜色转义（sing-box 的 FATAL/INFO 前缀带 CSI 序列），
 // 供诊断文本进 UI/CLI 前净化。
 export std::string stripAnsi(std::string text);

@@ -20,6 +20,7 @@
 import clashflux.db;
 import clashflux.openvpn;
 import clashflux.pptp;
+import clashflux.store.core;
 import clashflux.store.profiles;
 import clashflux.store.vpn;
 import clashflux.vpn;
@@ -34,6 +35,15 @@ std::string profileTypeLabel(std::string_view type) {
     if (type == "pptp") return "PPTP 内网连接";
     if (type == "openvpn") return "OpenVPN 内网连接";
     return type.empty() ? "其他订阅" : "其他 · " + std::string(type);
+}
+
+// 分区标签栏用的标签（Compact 视口）：手机宽度放不下「PPTP/OpenVPN 内网连接」
+// 两种长名，第 4 个标签会被屏幕右缘截断半个字；标签本身仍可横向滚动，但默认
+// 一行放全是手机端的基本要求。只收窄标签，卡片/表单继续用完整名称。
+std::string profileTypeTabLabel(std::string_view type) {
+    if (type == "pptp") return "PPTP";
+    if (type == "openvpn") return "OpenVPN";
+    return profileTypeLabel(type);
 }
 
 bool isNativeVpnType(std::string_view type) {
@@ -253,10 +263,18 @@ huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
         huxerui::HttpHeader{"User-Agent", "clash-flux/0.1"});
     request.timeout = std::chrono::milliseconds{
         (timeoutSecs > 0 ? timeoutSecs : 60) * 1000};
+    const std::string urlText = request.url;
     huxerui::HttpResult<huxerui::HttpResponse> result =
         co_await http->SendAsync(std::move(request));
     if (!result.Succeeded()) {
-        fetched.error = result.Error().message;
+        // 失败时把可定位的信息一起带出来：HuxerUI 的 message 可能是空的
+        // （真机实测就只剩一个"传输失败"），code 是稳定分类，url 用于区分
+        // 是哪一个订阅源。
+        const huxerui::HttpError& error = result.Error();
+        fetched.error = std::format(
+            "{}（code={}, url={}）",
+            error.message.empty() ? "平台栈未给出错误详情" : error.message,
+            static_cast<int>(error.code), urlText);
         co_return fetched;
     }
     huxerui::HttpResponse response = std::move(result).Value();
@@ -383,6 +401,16 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
 } // namespace clashflux::ui::profile_detail
 
 namespace clashflux::ui {
+
+// 保真度摘要（订阅内容变化后统一提示用）。编译失败 / 无降级都返回空串，调用方
+// 据此决定要不要额外弹一条 toast。
+std::string ProfileFidelitySummary(std::int64_t profileId) {
+    try {
+        return store::coreStore().fidelitySummaryForProfile(profileId);
+    } catch (...) {
+        return {};
+    }
+}
 
 // Android 订阅自动更新泵的一次迭代：任务线程列出到期订阅 → 逐个经 HuxerUI
 // HttpClient 抓取 → store completeRemote 收尾。错误落在订阅行 error 字段。

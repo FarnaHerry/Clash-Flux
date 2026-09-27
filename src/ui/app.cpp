@@ -16,20 +16,34 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
 #include "ui.h"
 #include "app.h"
 #include "app_resources.h"
+#include "proxies_model.h"
 #include "task_bridge.h"
 
 import clashflux.config;
 import clashflux.cli;
 import clashflux.cli_ipc;
+import clashflux.db;
 import clashflux.store.core;
+import clashflux.store.profiles;
+import clashflux.store.vpn;
 import clashflux.persistence;
 import clashflux.stream;
+
+// CoreView 含 store::CoreSnapshot、ProfilesModel 含 db::Profile，必须在模块导入
+// 之后（同 profiles_cache.h）。
+#include "core_model.h"
+#include "profiles_model.h"
+#include "settings_model.h"
+#include "vpn_model.h"
+
+#include "profiles_cache.h"
 
 namespace clashflux::ui {
 
@@ -79,8 +93,6 @@ std::vector<std::string> CliTakePendingCommand() { return {}; }
 
 int CliRun(const std::vector<std::string>&) { return 0; }
 
-int CliServePendingCommands() { return 0; }
-
 } // namespace
 #else
 namespace {
@@ -96,10 +108,6 @@ std::vector<std::string> CliTakePendingCommand() {
 }
 
 int CliRun(const std::vector<std::string>& args) { return cli::run(args); }
-
-int CliServePendingCommands() {
-    return clashflux::cli_ipc::servePendingCommands();
-}
 
 } // namespace
 #endif
@@ -571,21 +579,65 @@ private:
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
+// CLI 请求服务：阻塞的 serve 放到任务线程，完成后请订阅模型跟上（CLI 可能
+// 增删/切换订阅）。事件路径（Linux inotify）与兜底轮询共用本函数。
+huxerui::Task<void> ServeCliRequests(std::shared_ptr<ProfilesModel> profilesModel) {
+#if defined(__ANDROID__)
+    // Android 没有 CLI 转发通道（clashflux.cli_ipc 不在 legacy 接口集合里），
+    // 平台边界收在这里，composable 体内保持无条件编译。
+    static_cast<void>(profilesModel);
+    co_return;
+#else
+    const int served = co_await RunOnTaskThread(
+        [] { return clashflux::cli_ipc::servePendingCommands(); });
+    if (served > 0) profilesModel->RequestSync();
+#endif
+}
+
+// 启动 CLI 请求监视（Linux 事件驱动；其他平台 no-op）。
+// 平台差异收在函数边界：Android 编译不到 cli_ipc，非 Linux 没有 inotify。
+void StartCliRequestWatcher(huxerui::TaskScope tasks,
+                            std::shared_ptr<ProfilesModel> profilesModel) {
+#if defined(__ANDROID__) || !defined(__linux__)
+    static_cast<void>(tasks);
+    static_cast<void>(profilesModel);
+#else
+    clashflux::cli_ipc::startRequestWatcher([tasks, profilesModel] {
+        // 后台线程：只 Post 回 UI 线程（scope 关闭后 Post 被忽略）。
+        tasks.Post([tasks, profilesModel] {
+            tasks.Launch([profilesModel]() -> huxerui::Task<void> {
+                co_await ServeCliRequests(profilesModel);
+            });
+        });
+    });
+#endif
+}
+
 // 桌面：侧边导航 + 七页 IndexedPages（规则/连接/日志是一级页）。
 [[huxerui::composable]] huxerui::View DesktopMainContent(
     huxerui::State<std::size_t> navPage, huxerui::State<std::size_t>,
     huxerui::State<int> themeMode, const IslandTheme& islands,
-    const huxerui::ThemeSpec&) {
+    const huxerui::ThemeSpec&, ProfilesCache profilesCache) {
     std::vector<huxerui::View> pages;
     pages.reserve(7);
-    pages.push_back(HomePage(navPage).Key("home").With(huxerui::Grow(1.0F)));
-    pages.push_back(ProfilesPage().Key("profiles").With(huxerui::Grow(1.0F)));
-    pages.push_back(ProxiesPage().Key("proxies").With(huxerui::Grow(1.0F)));
-    pages.push_back(RulesPage().Key("rules").With(huxerui::Grow(1.0F)));
-    pages.push_back(
-        ConnectionsPage().Key("connections").With(huxerui::Grow(1.0F)));
-    pages.push_back(LogsPage().Key("logs").With(huxerui::Grow(1.0F)));
-    pages.push_back(SettingsPage(themeMode, navPage)
+    // 不可见的一级页仍挂载（保住 State/Lifecycle）但不构建内容：IndexedPages 让
+    // 所有页同帧参与测量，隐藏页的重子树会拖慢每一次渲染。
+    const std::size_t desktopActivePage = navPage.Get();
+    pages.push_back(HomePage(navPage, desktopActivePage == pages::kHome)
+                        .Key("home").With(huxerui::Grow(1.0F)));
+    pages.push_back(ProfilesPage(profilesCache, desktopActivePage == pages::kProfiles)
+                        .Key("profiles").With(huxerui::Grow(1.0F)));
+    pages.push_back(ProxiesPage(desktopActivePage == pages::kProxies)
+                        .Key("proxies").With(huxerui::Grow(1.0F)));
+    pages.push_back(RulesPage(profilesCache, {},
+                              desktopActivePage == pages::kRules)
+                        .Key("rules").With(huxerui::Grow(1.0F)));
+    pages.push_back(ConnectionsPage({}, desktopActivePage == pages::kConnections)
+                        .Key("connections").With(huxerui::Grow(1.0F)));
+    pages.push_back(LogsPage({}, desktopActivePage == pages::kLogs)
+                        .Key("logs").With(huxerui::Grow(1.0F)));
+    pages.push_back(SettingsPage(themeMode, navPage, profilesCache,
+                                 desktopActivePage == pages::kSettings)
                         .Key("settings").With(huxerui::Grow(1.0F)));
     return huxerui::Row {
         DesktopNavigationSurface(navPage),
@@ -619,7 +671,7 @@ huxerui::PageTransition SecondaryPageTransition(
 [[huxerui::composable]] huxerui::View AndroidPrimaryShell(
     huxerui::State<std::size_t> navPage, huxerui::State<std::size_t> pagerPage,
     huxerui::State<int> themeMode, const IslandTheme& islands,
-    const huxerui::ThemeSpec& spec) {
+    const huxerui::ThemeSpec& spec, ProfilesCache profilesCache) {
     // Home/settings 卡片仍按绝对页号导航，这里把 Pager 的四槽索引与共享
     // 页号状态同步；二级页不属于 Pager，不参与该同步。
     huxerui::Lifecycle(
@@ -634,15 +686,22 @@ huxerui::PageTransition SecondaryPageTransition(
         },
         navPage);
 
+    // 只有当前显示的槽位构建内容：Pager 会把四个一级页同时挂载，隐藏页的重子树
+    // （节点网格/订阅列表/设置项）即使不重组也会被逐帧重新测量，真机上这是代理页
+    // 卡顿的主因（实测每帧 1443→28 次测量请求，MeasureStage 20ms→0ms）。
+    const std::size_t activePagerPage = pagerPage.Get();
     std::vector<huxerui::View> primaryPages;
     primaryPages.reserve(4);
-    primaryPages.push_back(HomePage(navPage).Key("home").With(huxerui::Grow(1.0F)));
+    primaryPages.push_back(HomePage(navPage, activePagerPage == 0)
+                               .Key("home").With(huxerui::Grow(1.0F)));
     primaryPages.push_back(
-        ProxiesPage().Key("proxies").With(huxerui::Grow(1.0F)));
+        ProxiesPage(activePagerPage == 1).Key("proxies").With(huxerui::Grow(1.0F)));
     primaryPages.push_back(
-        AndroidProfilesPage(huxerui::UseNavigation())
+        AndroidProfilesPage(huxerui::UseNavigation(), profilesCache,
+                            activePagerPage == 2)
             .Key("profiles").With(huxerui::Grow(1.0F)));
-    primaryPages.push_back(SettingsPage(themeMode, navPage)
+    primaryPages.push_back(SettingsPage(themeMode, navPage, profilesCache,
+                                        activePagerPage == 3)
                                .Key("settings").With(huxerui::Grow(1.0F)));
 
     huxerui::View pager =
@@ -687,9 +746,9 @@ huxerui::PageTransition SecondaryPageTransition(
 [[huxerui::composable]] huxerui::View AndroidMainContent(
     huxerui::State<std::size_t> navPage, huxerui::State<std::size_t> pagerPage,
     huxerui::State<int> themeMode, const IslandTheme& islands,
-    const huxerui::ThemeSpec& spec) {
+    const huxerui::ThemeSpec& spec, ProfilesCache profilesCache) {
     return huxerui::NavigationStack(AndroidPrimaryShell, navPage, pagerPage,
-                                    themeMode, islands, spec)
+                                    themeMode, islands, spec, profilesCache)
         .With(huxerui::Grow(1.0F));
 }
 #endif
@@ -699,9 +758,11 @@ huxerui::PageTransition SecondaryPageTransition(
 #if defined(__ANDROID__)
 // 手机端二级页：由设置页「更多」入口 push 到 NavigationStack，标题栏返回箭头
 // 与系统返回键统一调用 Pop，因此进入和返回都使用上面的页面动画。
-[[huxerui::composable]] huxerui::View AndroidRulesPage() {
+[[huxerui::composable]] huxerui::View AndroidRulesPage(
+    ProfilesCache profilesCache) {
     const huxerui::NavigationController navigation = huxerui::UseNavigation();
-    return RulesPage([navigation] { static_cast<void>(navigation.Pop()); })
+    return RulesPage(profilesCache,
+                     [navigation] { static_cast<void>(navigation.Pop()); })
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
 
@@ -730,8 +791,22 @@ huxerui::PageTransition SecondaryPageTransition(
         if (saved == "0" || saved == "2") initialThemeMode = std::stoi(saved);
     }
     auto themeMode = huxerui::UseState<int>(std::move(initialThemeMode));
-    auto navPage = huxerui::UseState<std::size_t>(pages::kHome);
+    // TEMP-PERF-ONLY: 直接落到指定一级页做帧分析，测完删除。
+    std::size_t initialNavPage = pages::kHome;
+    if (const char* perf_page = std::getenv("CLASHFLUX_PERF_PAGE")) {
+        initialNavPage = static_cast<std::size_t>(std::atoi(perf_page));
+    }
+    auto navPage = huxerui::UseState<std::size_t>(std::move(initialNavPage));
     auto pagerPage = huxerui::UseState<std::size_t>(0);
+    // 订阅列表：模型是唯一来源，页面拿到的 StateList 只是它的镜像；
+    // 乐观选中标记与模型共享同一个 State（见 profiles_model.h）。
+    const auto profilesModel = huxerui::UseService<ProfilesModel>();
+    // 设置：hydrate 完成后要立刻请它重读一次（首帧组合早于 hydrate，见
+    // settings_model.h），所以在这里就取好，供下面的启动任务使用。
+    const auto settingsModel = huxerui::UseService<SettingsModel>();
+    auto profilesCacheList = huxerui::UseStateList<db::Profile>();
+    const ProfilesCache profilesCache{profilesCacheList,
+                                      profilesModel->selectionPending};
 
     // 持久化：启动任务打开 ORM 库并 hydrate settings/profiles 缓存，然后补齐
     // core.secret、把首帧默认主题校正为库里的值，最后长期跑 flush 泵
@@ -739,8 +814,9 @@ huxerui::PageTransition SecondaryPageTransition(
     // 由 open 里的 0→1 迁移重建表并保留数据。
     auto tasks = huxerui::UseTaskScope();
     huxerui::Lifecycle(
-        [tasks, themeMode, application] {
-            tasks.Launch([themeMode, application]() -> huxerui::Task<void> {
+        [tasks, themeMode, application, profilesModel, settingsModel] {
+            tasks.Launch([themeMode, application, profilesModel,
+                          settingsModel]() -> huxerui::Task<void> {
                 try {
                     auto& db = clashflux::persistence::persistence();
                     if (!db.ready() && !co_await db.open(cfg::databaseFile())) {
@@ -761,6 +837,12 @@ huxerui::PageTransition SecondaryPageTransition(
                             const int mode = std::stoi(saved);
                             if (mode != themeMode.Get()) themeMode = mode;
                         }
+                        // hydrate 只是填充缓存、不算一次「变更」，修订号不会动；
+                        // 这里显式请模型同步一次，否则首帧之后不会再发布。
+                        profilesModel->RequestSync();
+                        // 设置同理：让依赖「hydrate 完成后补读」的消费者（首页布局、
+                        // 环境 shell 选择）立刻拿到库里的值，而不是等下一拍。
+                        settingsModel->RequestSync();
                     }
 
                     // 单实例：owner 启动转发服务；非 owner 的命令由这里代跑。
@@ -778,13 +860,28 @@ huxerui::PageTransition SecondaryPageTransition(
                         co_return;
                     }
 
+                    // 落库失败必须可见：持久化降级（库打不开）时 flush* 会返回
+                    // false，以前这里直接丢弃返回值，用户直到重启丢数据才发现。
+                    bool storageFailureReported = false;
                     for (;;) {
-                        co_await huxerui::Delay(std::chrono::duration<double>{0.25});
+                        // 兜底节拍：Linux 的主路径是 inotify（见 startRequestWatcher），
+                        // 非 Linux 平台这里是唯一路径。1s 足够，不必 4Hz 扫目录。
+                        co_await huxerui::Delay(std::chrono::duration<double>{1.0});
                         // 服务其他进程转发来的 CLI 命令（单实例下唯一执行点）。
-                        co_await RunOnTaskThread(
-                            [] { return CliServePendingCommands(); });
-                        co_await db.flushSettings();
-                        co_await db.flushProfiles();
+                        co_await ServeCliRequests(profilesModel);
+                        const bool settingsFlushed = co_await db.flushSettings();
+                        const bool profilesFlushed = co_await db.flushProfiles();
+                        if (settingsFlushed && profilesFlushed) {
+                            storageFailureReported = false;
+                        } else if (!storageFailureReported) {
+                            storageFailureReported = true;
+                            stream::logApplication(
+                                "error",
+                                "设置/订阅未能落库：" +
+                                    (db.lastError().empty()
+                                         ? std::string{"未知原因"}
+                                         : db.lastError()));
+                        }
                     }
                 } catch (const std::exception& exception) {
                     // 任务里未捕获的异常会被 HuxerUI 直接 terminate 掉整个进程
@@ -804,8 +901,72 @@ huxerui::PageTransition SecondaryPageTransition(
             return [] {};
         },
         0);
+    // 订阅列表：唯一来源是 ProfilesModel（见 profiles_model.h）；页面用的
+    // StateList 是它的镜像——模型一变就同步一次，不再是 2s 全量泵。
+    huxerui::Lifecycle(
+        [profilesCache, profilesModel] {
+            ReplaceStateList(profilesCache.list, profilesModel->list.Get());
+            return [] {};
+        },
+        profilesModel->list);
+    // 唯一的数据泵：1s 修订号脏检查（变了才拷贝），显式 RequestSync 时立刻同步。
+    huxerui::Lifecycle(
+        [tasks, profilesModel] {
+            DriveProfilesModel(tasks, profilesModel);
+            return [] {};
+        },
+        0);
+
+    // CLI 请求目录监视：Linux 上 inotify 事件驱动——新请求一到立刻服务，不再
+    // 靠 0.25s 扫目录；其他平台该调用是 no-op，由下面的兜底轮询负责。
+    huxerui::Lifecycle(
+        [tasks, profilesModel] {
+            StartCliRequestWatcher(tasks, profilesModel);
+            return [] {};
+        },
+        0);
+
     // 平台刷新泵和应用生命周期各自由平台组件收束，通用壳层只挂载它们。
     huxerui::View profileRefreshPump = CLASHFLUX_PROFILE_REFRESH_PUMP();
+
+    // 策略组快照的唯一数据泵：首页卡片、代理页、托盘菜单都只读 ProxiesModel
+    // 的 State，不再各自拉 /proxies（此前是 2s/3s/1s 三条独立轮询 + 三次解析）。
+    const auto proxiesModel = huxerui::UseService<ProxiesModel>();
+    huxerui::Lifecycle(
+        [tasks, proxiesModel] {
+            DriveProxiesModel(tasks, proxiesModel);
+            return [] {};
+        },
+        0);
+
+    // 内核/接管状态的唯一数据泵：首页三张桌面卡片、代理页、设置页、内核设置段与
+    // 托盘菜单都只读 CoreModel 的 State，不再各自读 coreStore()（此前是
+    // 0.5s×4 + 1s×2 六条轮询，托盘那条还带 2Hz 的子进程/HTTP 探测）。
+    const auto coreModel = huxerui::UseService<CoreModel>();
+    huxerui::Lifecycle(
+        [tasks, coreModel] {
+            DriveCoreModel(tasks, coreModel);
+            return [] {};
+        },
+        0);
+
+    // 原生连接（PPTP/OpenVPN）状态的唯一数据泵：订阅页不再自建 0.5s 泵。
+    const auto vpnModel = huxerui::UseService<VpnModel>();
+    huxerui::Lifecycle(
+        [tasks, vpnModel] {
+            DriveVpnModel(tasks, vpnModel);
+            return [] {};
+        },
+        0);
+
+    // 应用级设置（KV）的唯一读取点：组合期不再直接 setting(...)，否则首帧会拿到
+    // hydrate 之前的默认值（见 settings_model.h）。
+    huxerui::Lifecycle(
+        [tasks, settingsModel] {
+            DriveSettingsModel(tasks, settingsModel);
+            return [] {};
+        },
+        0);
 
     // 主题派生（托盘 TUN 引导弹窗也要取 rootSpec 配色，故先于托盘块计算）。
     const bool dark =
@@ -816,7 +977,7 @@ huxerui::PageTransition SecondaryPageTransition(
     huxerui::View applicationEffects =
         CLASHFLUX_APPLICATION_EFFECTS(application, rootSpec);
     huxerui::View mainRow = CLASHFLUX_MAIN_CONTENT(
-        navPage, pagerPage, themeMode, rootIslands, rootSpec);
+        navPage, pagerPage, themeMode, rootIslands, rootSpec, profilesCache);
     huxerui::View content = CLASHFLUX_APP_CONTENT(std::move(mainRow), rootSpec);
 
     return FluxThemed(

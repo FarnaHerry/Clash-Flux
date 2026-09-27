@@ -9,15 +9,55 @@
 export module clashflux.singbox;
 
 import std;
+import nlohmann.json;
 import clashflux.vpn;
 
 namespace singbox {
 
+// 保真度级别（见 docs/singbox-layers-and-fidelity.md §2）：翻译层对订阅里每个条目
+// （协议 / 组 / 规则 / 字段）的映射结果。Exact 不产生条目，因此只出现后两级。
+export enum class Fidelity {
+    Exact,        // 1:1 映射
+    Approx,       // 语义近似，或被忽略的字段（fallback → urltest、lazy 被丢弃…）
+    Unsupported,  // 跳过 / 拒绝（未知协议、REJECT 成员、不支持的规则类型…）
+};
+
+// 条目作用的对象类型：汇总摘要（FidelitySummary）与页面级渲染按它分类，
+// 不要靠解析 detail 文本。
+export enum class FidelityScope {
+    Node,
+    Group,
+    Rule,
+    Dns,
+    Field,
+};
+
+// 结构化保真度条目：subject 是订阅里出现的名字（节点 / 组名 / 规则类型 / 字段），
+// detail 可直接展示给用户，action 是可选处置建议。UI 据此决定角标 / 灰显 / 原因，
+// 不要再靠解析 warnings 文本。
+export struct FidelityNote {
+    FidelityScope scope = FidelityScope::Field;
+    Fidelity level = Fidelity::Approx;
+    std::string subject;
+    std::string detail;
+    std::string action;
+
+    bool operator==(const FidelityNote&) const = default;
+};
+
 export struct CompileResult {
     std::string json;                    // sing-box 配置 JSON；失败为空
     std::string error;                   // 致命错误（YAML 解析失败等）
-    std::vector<std::string> warnings;   // 保真度降级报告（不阻断启动）
+    // 自由文本投影（历史消费方与内核启动诊断沿用；每条 = fidelity[i].detail）
+    std::vector<std::string> warnings;
+    // 结构化保真度账本（不阻断启动）
+    std::vector<FidelityNote> fidelity;
 };
+
+// 把账本汇总成一行提示（"跳过 3 个节点 · 降级 1 个组"）；无降级返回空串。
+// 只报计数、不报明细——明细由设置页「配置保真度」呈现（见
+// docs/singbox-layers-and-fidelity.md §2）。
+export std::string FidelitySummary(const std::vector<FidelityNote>& notes);
 
 // 原生引擎的运行时快照。未连接的声明也必须传入，使规则保持拒绝而不回落
 // 主出口；internalRoutes 是隐式规则，不加入 TUN 排除地址。OpenVPN 的
@@ -67,5 +107,59 @@ export CompileResult compileConfig(const CompileOptions& options);
 // FATAL（parse rule-set: read rule: unexpected EOF），因此缓存命中与预取
 // 落盘后都必须先校验。
 export bool RuleSetCacheValid(const std::filesystem::path& path);
+
+// 把编译产物拍成代理页使用的 /proxies 形状快照：
+//   * 组出站（selector/urltest）→ {type, now, all, selectable}
+//   * 其余出站 → {type, udp}（代理页卡片第二行的协议/UDP 元数据；内核没跑时的
+//     "订阅预览"没有真实 /proxies，这里是唯一数据源）
+// savedSelection(tag) 返回该组持久化的选中项（空串 = 没有）；命中成员时写回
+// `now`，并同步落到 `config` 里该 selector 的 `default`（写盘配置与 UI 一致）。
+// config 为空或形态不对时返回只有空 proxies 对象的快照。
+export inline std::string BuildProxySnapshot(
+    nlohmann::json& config,
+    const std::function<std::string(const std::string&)>& savedSelection = {}) {
+    nlohmann::json proxies = nlohmann::json::object();
+    if (!config.is_object() || !config.contains("outbounds") ||
+        !config["outbounds"].is_array()) {
+        return nlohmann::json{{"proxies", proxies}}.dump();
+    }
+    // 先补每个节点自己的条目：代理页卡片第二行的协议/UDP 读的就是它。只写组
+    // 条目时（旧行为）parseProxies 在 all 里找不到节点对象，预览态永远是空的。
+    for (const auto& outbound : config["outbounds"]) {
+        const std::string type = outbound.value("type", "");
+        if (type == "selector" || type == "urltest") continue;  // 组条目下面生成
+        const std::string tag = outbound.value("tag", "");
+        if (tag.empty() || type.empty()) continue;
+        // 只写真实存在的类型；UDP 能力是服务端策略、客户端快照里没有，
+        // 不在这里臆测（只有内核 /proxies 真给了 udp 才由 UI 显示）。
+        proxies[tag] = {{"type", type}};
+    }
+    for (auto& outbound : config["outbounds"]) {
+        const std::string type = outbound.value("type", "");
+        if (type != "selector" && type != "urltest") continue;
+        const std::string group = outbound.value("tag", "");
+        if (group.empty()) continue;
+        const auto members =
+            outbound.value("outbounds", nlohmann::json::array());
+        std::string current = outbound.value("default", "");
+        const std::string saved =
+            savedSelection ? savedSelection(group) : std::string{};
+        if (type == "selector" && !saved.empty()) {
+            for (const auto& member : members) {
+                if (member == saved) {
+                    outbound["default"] = saved;
+                    current = saved;
+                    break;
+                }
+            }
+        }
+        if (current.empty() && !members.empty()) {
+            current = members.front().get<std::string>();
+        }
+        proxies[group] = {{"type", type}, {"now", current}, {"all", members},
+                          {"selectable", type == "selector"}};
+    }
+    return nlohmann::json{{"proxies", proxies}}.dump();
+}
 
 } // namespace singbox

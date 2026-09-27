@@ -19,15 +19,25 @@
 
 import clashflux.db;
 import clashflux.core;
+import clashflux.persistence;
 import clashflux.store.core;
 import clashflux.store.profiles;
 import clashflux.store.vpn;
+import clashflux.stream;
 import clashflux.vpn;
+
+// 模型头用到模块类型（store::CoreSnapshot / db::Profile / store::*State），
+// 必须在模块导入之后包含（同 profiles_cache.h 的约定）。
+#include "core_model.h"
+#include "profiles_cache.h"
+#include "profiles_model.h"
+#include "vpn_model.h"
 
 namespace clashflux::ui {
 namespace {
 
-const std::vector<huxerui::StringVariant> kRuleSections{"订阅规则", "全局路由"};
+const std::vector<SectionTab> kRuleTabs{{"subscription", "订阅规则"},
+                                        {"global", "全局路由"}};
 const std::vector<std::string> kMatchKinds{
     "全部", "精确域名", "域名后缀", "精确 IP", "IPv4 网段"};
 
@@ -145,10 +155,6 @@ std::vector<SubscriptionRuleRow> LoadSubscriptionRules() {
     return rows;
 }
 
-std::vector<db::Profile> LoadProfiles() {
-    return store::profilesStore().list();
-}
-
 std::string ConnectionName(const huxerui::StateList<db::Profile>& profiles,
                            std::string_view connectionId) {
     for (const db::Profile& profile : profiles) {
@@ -167,19 +173,25 @@ std::vector<std::string> TargetNames(
     return names;
 }
 
-std::vector<std::string> ActiveRuleConnections() {
+// 当前"生效中"的连接：主连接（内核在跑且订阅已选中）+ 已连上的原生连接。
+// 纯函数、只读模型值——由 Lifecycle 以模型 State 为依赖驱动，不再每秒读 store。
+std::vector<std::string> ActiveRuleConnections(
+    const store::CoreSnapshot& core,
+    const std::vector<db::Profile>& profiles,
+    const std::vector<store::PptpState>& pptpStates,
+    const std::vector<store::OpenVpnState>& openVpnStates) {
     std::vector<std::string> ids;
-    if (store::coreStore().snapshot().state == core::CoreState::Running) {
-        for (const auto& profile : LoadProfiles()) {
+    if (core.state == core::CoreState::Running) {
+        for (const auto& profile : profiles) {
             if (profile.selected && profile.type != "pptp" && profile.type != "openvpn")
                 ids.push_back(store::ProfileConnectionId(profile.id));
         }
     }
-    for (const auto& state : store::vpnStore().states()) {
+    for (const auto& state : pptpStates) {
         if (state.state == vpn::ConnectionState::Connected && !state.interfaceName.empty())
             ids.push_back(store::ProfileConnectionId(state.profileId));
     }
-    for (const auto& state : store::vpnStore().openVpnStates()) {
+    for (const auto& state : openVpnStates) {
         if (state.state == vpn::ConnectionState::Connected && !state.interfaceName.empty())
             ids.push_back(store::ProfileConnectionId(state.profileId));
     }
@@ -209,20 +221,30 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
 
 } // namespace
 
-[[huxerui::composable]] huxerui::View RulesPage(std::function<void()> onBack) {
+[[huxerui::composable]] huxerui::View RulesPage(
+    ProfilesCache profilesCache, std::function<void()> onBack, bool active) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
     auto dialog = huxerui::UseDialog();
     auto toast = huxerui::UseToast();
+    // 共享数据一律来自 application service（见 *_model.h）。
+    const auto coreModel = huxerui::UseService<CoreModel>();
+    const auto profilesModel = huxerui::UseService<ProfilesModel>();
+    const auto vpnModel = huxerui::UseService<VpnModel>();
     auto section = huxerui::UseState<std::size_t>(0);
     auto subscriptionRules = huxerui::UseStateList<SubscriptionRuleRow>();
     auto globalRules = huxerui::UseStateList<vpn::RouteRule>();
-    auto profiles = huxerui::UseStateList<db::Profile>();
+    // 订阅列表来自 ProfilesModel 的镜像（唯一来源见 profiles_model.h），
+    // 本页不再自维护副本。
+    auto profiles = profilesCache.list;
     auto activeConnections = huxerui::UseStateList<std::string>();
     auto refreshTick = huxerui::UseState(0);
     auto refreshSpin = huxerui::UseState(0);
+    // 分区滑动切换的手势状态（处理器与阈值见 common.cpp SectionTabSwipeHandler）。
+    auto swipeOrigin = huxerui::UseState<huxerui::Point>(huxerui::Point{0.0F, 0.0F});
+    auto swipeOwned = huxerui::UseState(false);
 
     // 编辑器状态归页面持有，弹窗只负责渲染；不会在每一行里创建 hook。
     auto editMatch = huxerui::UseState<std::size_t>(1);
@@ -263,50 +285,68 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
         });
     };
 
+    // 规则加载：以「订阅列表 + 手动刷新计数」为依赖——订阅变化或用户点刷新时
+    // 重载一次（订阅模型在 hydrate 完成后会发布，天然覆盖启动竞态），不再靠
+    // 每秒轮询。存储读取与隐式写库都在 worker，State 写回在 UI 线程。
     huxerui::Lifecycle(
-        [tasks, subscriptionRules, globalRules, profiles, refreshTick, activeConnections] {
-            tasks.Launch([=]() -> huxerui::Task<void> {
-                int lastTick = -1;
-                for (;;) {
-                    if (refreshTick.Get() != lastTick) {
-                        lastTick = refreshTick.Get();
-                        const auto loaded = co_await RunOnTaskThread([] {
-                            const auto rules = LoadSubscriptionRules();
-                            const auto allProfiles = LoadProfiles();
-                            auto policy = store::vpnStore().globalPolicy();
-                            std::string selectedMainId;
-                            for (const auto& profile : allProfiles) {
-                                if (profile.selected && profile.type != "pptp" &&
-                                    profile.type != "openvpn") {
-                                    selectedMainId =
-                                        store::ProfileConnectionId(profile.id);
-                                    break;
-                                }
-                            }
-                            if (policy.defaultMainId != selectedMainId) {
-                                policy.defaultMainId = std::move(selectedMainId);
-                                std::string ignored;
-                                store::vpnStore().saveGlobalPolicy(policy,
-                                                                    ignored);
-                            }
-                            return std::tuple{rules, allProfiles, policy};
-                        });
-                        ReplaceStateList(subscriptionRules,
-                                         std::move(std::get<0>(loaded)));
-                        ReplaceStateList(profiles,
-                                         std::move(std::get<1>(loaded)));
-                        const vpn::VpnPolicy& policy = std::get<2>(loaded);
-                        ReplaceStateList(globalRules, policy.rules);
-                    }
-                    const auto active = co_await RunOnTaskThread(ActiveRuleConnections);
-                    ReplaceStateList(activeConnections, active);
-                    co_await huxerui::Delay(
-                        std::chrono::duration<double>{1.0});
+        [tasks, subscriptionRules, globalRules, refreshTick, profilesModel] {
+            // 选中的主连接先从模型取（UI 线程、借用引用），再按值带进 worker，
+            // 避免 worker 里再整表拷贝一次。
+            std::string selectedMainId;
+            for (const db::Profile& profile : profilesModel->list.Get()) {
+                if (profile.selected && profile.type != "pptp" &&
+                    profile.type != "openvpn") {
+                    selectedMainId = store::ProfileConnectionId(profile.id);
+                    break;
                 }
+            }
+            tasks.Launch([subscriptionRules, globalRules,
+                          selectedMainId]() -> huxerui::Task<void> {
+                const auto loaded = co_await RunOnTaskThread(
+                    [selectedMainId] {
+                        const auto rules = LoadSubscriptionRules();
+                        auto policy = store::vpnStore().globalPolicy();
+                        if (policy.defaultMainId != selectedMainId) {
+                            policy.defaultMainId = selectedMainId;
+                            // 自动跟随主连接是一次隐式写库：失败必须可见，
+                            // 不能像以前那样把错误丢掉后无限重试。
+                            std::string followError;
+                            if (!store::vpnStore().saveGlobalPolicy(
+                                    policy, followError) &&
+                                !followError.empty()) {
+                                stream::logApplication(
+                                    "warning",
+                                    "自动跟随主连接更新全局路由失败：" + followError);
+                            }
+                        }
+                        return std::tuple{rules, policy};
+                    });
+                ReplaceStateList(subscriptionRules,
+                                 std::move(std::get<0>(loaded)));
+                const vpn::VpnPolicy& policy = std::get<1>(loaded);
+                ReplaceStateList(globalRules, policy.rules);
             });
             return [] {};
         },
-        0);
+        profilesModel->list, refreshTick);
+
+    // 生效中的连接：模型依赖驱动（内核状态 / 订阅列表 / 两条原生连接状态），
+    // 不再是每秒一次 store 读取。
+    huxerui::Lifecycle(
+        [activeConnections, coreModel, profilesModel, vpnModel] {
+            ReplaceStateList(
+                activeConnections,
+                ActiveRuleConnections(coreModel->view.Get().core,
+                                      profilesModel->list.Get(),
+                                      vpnModel->pptp.Get(),
+                                      vpnModel->openvpn.Get()));
+            return [] {};
+        },
+        coreModel->view, profilesModel->list, vpnModel->pptp, vpnModel->openvpn);
+
+    // 不可见时只保留本页 State/Lifecycle，不构建内容：桌面 IndexedPages 让七个
+    // 一级页同帧参与测量，隐藏页（日志/连接有推送流更新）的重子树会拖慢每一次渲染。
+    if (!active) return huxerui::View{huxerui::Row{}}.Key("rules-idle");
 
     const auto mono = [](const std::string& text, huxerui::Color color) {
         return huxerui::Text(text).Style(huxerui::TextStyle{
@@ -494,6 +534,15 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
             subscriptionList = std::move(subscriptionList)
                                    .EstimatedItemExtent(compact ? 86.0F : 42.0F)
                                    .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
+            // 分区组件默认支持滑动（见 ui.h）：列表区左右滑动切到「全局路由」。
+            if (kSectionTabsSwipeDefault) {
+                subscriptionList =
+                    std::move(subscriptionList)
+                        .On<huxerui::ViewEvents::PointerIntercept>(
+                            SectionTabSwipeHandler(
+                                swipeOrigin, swipeOwned, nullptr,
+                                [section] { section = 1; }));
+            }
             if (compact) {
                 body = huxerui::Column{std::move(subscriptionList)}
                            .With(huxerui::CrossAlign(
@@ -572,6 +621,15 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
             globalList = std::move(globalList)
                              .EstimatedItemExtent(116.0F)
                              .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
+            // 分区组件默认支持滑动（见 ui.h）：列表区左右滑动切回「订阅规则」。
+            if (kSectionTabsSwipeDefault) {
+                globalList =
+                    std::move(globalList)
+                        .On<huxerui::ViewEvents::PointerIntercept>(
+                            SectionTabSwipeHandler(
+                                swipeOrigin, swipeOwned,
+                                [section] { section = 0; }, nullptr));
+            }
             body = huxerui::Column{std::move(globalList)}
                        .With(huxerui::Spacing(8.0F),
                              huxerui::CrossAlign(
@@ -580,10 +638,10 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
         }
     }
 
-    huxerui::View sectionSwitch = huxerui::SegmentedButton(kRuleSections, section)
-                                      .OnChanged([section](std::size_t index) {
-                                          section = index;
-                                      });
+    // 分区切换与代理页/订阅页共用同一下划线标签栏（SectionTabBar）。
+    huxerui::View sectionSwitch = SectionTabBar(
+        kRuleTabs, section.Get() == 0 ? "subscription" : "global",
+        [section](const std::string& key) { section = key == "global" ? 1 : 0; });
     huxerui::View addRule =
         section.Get() == 1
             ? huxerui::View{

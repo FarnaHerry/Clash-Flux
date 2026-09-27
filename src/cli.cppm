@@ -14,6 +14,8 @@
 //   clash-flux profile use <id>                       启用订阅（重启内核生效）
 //   clash-flux profile update <id>                    更新订阅
 //   clash-flux profile remove <id>                    删除订阅
+//   clash-flux profile check [<id>]                   检查订阅的 sing-box 保真度
+//                                                     （有无法映射的条目时退出码 1）
 //
 // 与 GUI 的关系：CLI 启动的内核若为直连 spawn 则以 setsid 脱离会话驻留
 // （pid 写 core/core.pid）；GUI 启动时先探测控制器，已有内核在跑则直接
@@ -44,6 +46,7 @@ import clashflux.sysproxy;
 import clashflux.service;
 import clashflux.store.core;
 import clashflux.store.profiles;
+import clashflux.singbox;
 
 namespace cli {
 
@@ -65,7 +68,8 @@ void printUsage() {
         "  profile import <url> [名称]      导入订阅\n"
         "  profile use <id>                 启用订阅\n"
         "  profile update <id>              更新订阅\n"
-        "  profile remove <id>              删除订阅\n",
+        "  profile remove <id>              删除订阅\n"
+        "  profile check [<id>]             检查订阅保真度（默认查启用的那条）\n",
         CLASHFLUX_VERSION);
 }
 
@@ -247,9 +251,49 @@ int cmdProfile(const std::vector<std::string>& args) {
         std::println("已导入（id={}）", id);
         return 0;
     }
+    if (args[0] == "check") {
+        // 只编译不启动：把订阅里无法映射到 sing-box 的条目打出来（见
+        // docs/singbox-layers-and-fidelity.md §2）。有 Unsupported 条目时退出码 1，
+        // 方便脚本/机场作者自查。
+        std::int64_t id = 0;
+        if (args.size() > 1) {
+            try {
+                id = std::stoll(args[1]);
+            } catch (...) {
+                std::println(stderr, "id 无效：{}", args[1]);
+                return 2;
+            }
+        } else {
+            for (const auto& p : ps.list()) {
+                if (p.selected) {
+                    id = p.id;
+                    break;
+                }
+            }
+        }
+        if (id == 0) {
+            std::println(stderr, "没有启用的订阅；用法：profile check <id>");
+            return 2;
+        }
+        const std::vector<singbox::FidelityNote> notes =
+            store::coreStore().fidelityForProfile(id);
+        const std::string summary = singbox::FidelitySummary(notes);
+        std::println("订阅 {} 保真度检查：{}", id,
+                     summary.empty() ? "没有降级或跳过的条目" : summary);
+        std::size_t unsupported = 0;
+        for (const singbox::FidelityNote& note : notes) {
+            const bool lost = note.level == singbox::Fidelity::Unsupported;
+            if (lost) ++unsupported;
+            std::println("  [{}] {}", lost ? "不支持" : "已近似", note.detail);
+            if (!note.action.empty()) std::println("        → {}", note.action);
+        }
+        // 退出码：有 Unsupported（真正丢掉的条目）→ 1；只有 Approx → 0。摘要行
+        // 本身已经在 stdout 说明了丢了多少，不再往 stderr 重复一遍。
+        return unsupported > 0 ? 1 : 0;
+    }
     if (args.size() < 2 ||
         (args[0] != "use" && args[0] != "update" && args[0] != "remove")) {
-        std::println(stderr, "用法：profile use|update|remove <id>");
+        std::println(stderr, "用法：profile list|import|use|update|remove|check");
         return 2;
     }
     std::int64_t id = 0;

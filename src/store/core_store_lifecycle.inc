@@ -14,6 +14,38 @@
                    std::optional<bool> systemProxyState = std::nullopt,
                    bool speedTestOnly = false,
                    bool repairRuleSetCache = true) {
+        // 任何未捕获异常都必须让状态离开 Starting：以前 json::parse /
+        // filesystem 抛出会越过 fail()，把 snap_.state 永久留在 Starting，而
+        // 「启动中拒绝重入」的保护会因此挡掉之后所有启动，直到重启应用。
+        try {
+            startCoreUnchecked(profileYaml, detached, tunEnabled,
+                               systemProxyState, speedTestOnly,
+                               repairRuleSetCache);
+        } catch (const std::exception& exception) {
+            settleStartFailure(std::string{"内核启动异常："} + exception.what());
+        } catch (...) {
+            settleStartFailure("内核启动未知异常");
+        }
+    }
+
+    // 异常只记错误、不把已经跑起来的内核翻成 Failed；仍停在 Starting 时才走 fail()。
+    void settleStartFailure(const std::string& error) {
+        {
+            std::lock_guard lock(mutex_);
+            if (snap_.state != core::CoreState::Starting) {
+                snap_.lastError = error;
+                stream::logApplication("warning", "内核启动流程异常：" + error);
+                return;
+            }
+        }
+        fail(error);
+    }
+
+    void startCoreUnchecked(const std::string& profileYaml, bool detached = false,
+                            bool tunEnabled = false,
+                            std::optional<bool> systemProxyState = std::nullopt,
+                            bool speedTestOnly = false,
+                            bool repairRuleSetCache = true) {
         std::lock_guard operationLock(lifecycleMutex_);
         ensureOpen();
         const auto serviceInfo = service::query();
@@ -83,7 +115,11 @@
                 return;
             }
             {
-                auto config = nlohmann::json::parse(compiled.json);
+                auto config = nlohmann::json::parse(compiled.json, nullptr, false);
+                if (!config.is_object()) {
+                    fail("订阅编译结果不是合法 JSON 对象");
+                    return;
+                }
                 const std::string proxyGroups = proxyGroupsFromConfig(config);
                 {
                     std::lock_guard lock(mutex_);
@@ -101,7 +137,11 @@
                 return;
             }
             {
-                auto config = nlohmann::json::parse(compiled.json);
+                auto config = nlohmann::json::parse(compiled.json, nullptr, false);
+                if (!config.is_object()) {
+                    fail("订阅编译结果不是合法 JSON 对象");
+                    return;
+                }
                 const std::string proxyGroups = proxyGroupsFromConfig(config);
                 {
                     std::lock_guard lock(mutex_);
@@ -116,7 +156,8 @@
                         windowsNativeInterfaces.push_back(native.interfaceName);
                 }
                 if (!windowsNativeInterfaces.empty()) {
-                    const auto config = nlohmann::json::parse(compiled.json);
+                    const auto config =
+                        nlohmann::json::parse(compiled.json, nullptr, false);
                     for (const auto& inbound : config["inbounds"]) {
                         if (inbound.value("type", "") != "tun") continue;
                         windowsTunInterface = inbound.value("interface_name", "ClashFlux");
@@ -158,6 +199,7 @@
             }
             std::lock_guard lock(mutex_);
             snap_.warnings = std::move(compiled.warnings);
+            snap_.fidelity = std::move(compiled.fidelity);
         }
 
         // 三种拉起方式（按优先级）：
@@ -275,8 +317,9 @@
                         snap_.state = core::CoreState::Stopped;
                         snap_.lastError.clear();
                     }
-                    startCore(profileYaml, detached, tunEnabled, systemProxyState,
-                              speedTestOnly, /*repairRuleSetCache=*/false);
+                    startCoreUnchecked(profileYaml, detached, tunEnabled,
+                                       systemProxyState, speedTestOnly,
+                                       /*repairRuleSetCache=*/false);
                     return;
                 }
                 fail(std::move(message));
@@ -393,7 +436,20 @@
             // 接管/外部实例（本进程 detached spawn，或另一进程——CLI、上次
             // GUI 残留——拉起的内核）：本进程没有句柄，经 pidfile 终止。
             adopted_ = false;
-            if (const long pid = readPidFile(); pid > 0) core::killPid(pid);
+            const long pid = readPidFile();
+            if (pid > 0) {
+                // pidfile 可能陈旧且该 pid 已被系统复用：先确认它仍然是 sing-box
+                // 再发信号，绝不误杀无关进程（无法判定的平台返回空串＝保持旧行为）。
+                const std::string image = core::pidImageName(pid);
+                if (image.empty() || image.find("sing-box") != std::string::npos) {
+                    core::killPid(pid);
+                } else {
+                    stream::logApplication(
+                        "warning",
+                        "忽略陈旧的 core.pid（PID " + std::to_string(pid) +
+                            " 已是 " + image + "，不是 sing-box），未发送终止信号");
+                }
+            }
         }
         // 等监视线程收尾（最多 ~2s 宽限 + waitpid）。
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);

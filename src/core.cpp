@@ -184,6 +184,29 @@ bool pidAlive(long pid) {
 #endif
 }
 
+std::string pidImageName(long pid) {
+    if (pid <= 0) return {};
+#ifdef _WIN32
+    clashflux::win32::UniqueHandle process{OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid))};
+    if (!process.valid()) return {};
+    wchar_t buffer[MAX_PATH]{};
+    DWORD size = static_cast<DWORD>(std::size(buffer));
+    if (!QueryFullProcessImageNameW(process.get(), 0, buffer, &size)) return {};
+    const std::filesystem::path image{buffer};
+    return image.filename().string();
+#elif defined(__APPLE__) || defined(__ANDROID__)
+    // 没有 /proc：不做身份判定（调用方应保持旧的按 pidfile 处理行为）。
+    return {};
+#else
+    std::ifstream comm(std::format("/proc/{}/comm", pid));
+    if (!comm) return {};
+    std::string name;
+    std::getline(comm, name);
+    return name;
+#endif
+}
+
 // 去掉 CSI 转义序列（ESC [ 参数… 终止字节），只留可读文本。
 std::string stripAnsi(std::string text) {
     std::string out;

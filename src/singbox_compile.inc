@@ -242,14 +242,19 @@ void compileClashDocument(Context& ctx, const std::string& trimmed) {
         if (name.empty()) continue;
         std::vector<std::string> members = ylist(group, "proxies");
         if (ybool(group, "include-all") || !ytext(group, "use").empty()) {
-            ctx.warn(std::format("代理组「{}」使用了 provider（use/include-all），"
+            ctx.note(FidelityScope::Group, Fidelity::Unsupported, name,
+                     std::format("代理组「{}」使用了 provider（use/include-all），"
                                  "sing-box 编译暂不支持，仅保留显式成员",
-                                 name));
+                                 name),
+                     "sing-box 侧没有 provider 概念：provider 提供的节点不会出现在"
+                     "这个组里，只有 proxies 里显式写出的成员会生效");
         }
         if (auto converted = convertGroup(ctx, group, name, members)) {
             ctx.outbounds.push_back(std::move(*converted));
         } else {
-            ctx.warn(std::format("代理组「{}」编译失败，已跳过", name));
+            ctx.note(FidelityScope::Group, Fidelity::Unsupported, name,
+                     std::format("代理组「{}」编译失败，已跳过", name),
+                     "该组已从订阅里移除；到日志页看具体编译错误");
         }
     }
 

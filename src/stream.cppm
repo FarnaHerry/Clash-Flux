@@ -5,7 +5,8 @@
 //   /traffic                每秒流量帧（{"up":N,"down":N}，字节/秒）
 //   /connections            连接快照（全量 JSON，约每秒一帧）
 // IXWebSocket 自管内部线程，应用侧不拥有线程：回调（IX 线程）只把事件推入
-// 互斥保护的队列/最新值槽，UI 经 PollWhile 泵按节拍 drain（见 store 层）。
+// 互斥保护的队列/最新值槽；写入后经 addStreamUpdateObserver 通知 UI 线程，
+// UI 收到通知再 drain（不再按节拍轮询）。
 // 鉴权用 ?token=<secret> 查询参数（clash 系内核对 WS 的通用鉴权方式）。
 export module clashflux.stream;
 
@@ -40,10 +41,18 @@ export struct TrafficPoint {
     bool operator==(const TrafficPoint&) const = default;
 };
 
+// 推送流里发生变化的那一路。观察者据此只 drain 自己关心的队列。
+export enum class StreamKind {
+    Logs,
+    Traffic,
+    Connections,
+};
+
 export class CoreStreams {
 public:
     CoreStreams();
     ~CoreStreams();
+
     CoreStreams(const CoreStreams&) = delete;
     CoreStreams& operator=(const CoreStreams&) = delete;
 
@@ -71,5 +80,16 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+// ---- 变化通知（推送线程 → UI 线程）----------------------------------------
+// IX 线程（或任意调用 logCore/logApplication 的线程）在写入数据后通知观察者；
+// 观察者通常在 UI 层把回调 Post 回 UI 线程，处理完再 Acknowledge(kind)。
+// 同一路在同一时刻最多只有一个未确认通知（内部合并），所以推送再密也只是一个
+// 待处理回调，不会淹没 UI。观察者在任意线程被调用：不得直接触碰 State/View。
+export using StreamUpdateObserver = std::function<void(StreamKind)>;
+export [[nodiscard]] std::uint64_t addStreamUpdateObserver(StreamUpdateObserver observer);
+export void removeStreamUpdateObserver(std::uint64_t id);
+// 观察者处理完该路数据后调用，允许下一次通知。
+export void acknowledgeStreamUpdate(StreamKind kind);
 
 } // namespace stream

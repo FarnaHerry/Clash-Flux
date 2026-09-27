@@ -27,6 +27,8 @@ third_party/huxerui/
 # HuxerUI Lib-SQLite 源码 clone（可指向自己的 fork / 随时 pull；不存在时
 # CMake 回落 FetchContent 拉固定 commit，见 CMakeLists.txt）
 third_party/lib-sqlite/
+# HuxerUI Lib-Charts 源码 clone（首页流量曲线；不存在时 CMake 回落 FetchContent）
+third_party/lib-charts/
 # 用当前 huxerui 源码本地构建的宿主工具（hcg/hrc；上游 linux 预置可能落后于源码）
 third_party/huxerui-tools/
 

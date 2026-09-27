@@ -855,7 +855,18 @@
                                                   err.empty() ? "导入失败" : err);
                                           } else {
                                               ctx.Dismiss();
-                                              toast.Show("配置已导入");
+                                              // 导入即告知「这份订阅有什么吃不下」：
+                                              // 账本来自一次只编译不启动的编译（见
+                                              // docs/singbox-layers-and-fidelity.md §2）。
+                                              const std::string summary =
+                                                  co_await RunOnTaskThread([rid] {
+                                                      return ProfileFidelitySummary(rid);
+                                                  });
+                                              toast.Show(
+                                                  summary.empty()
+                                                      ? std::string{"配置已导入"}
+                                                      : "配置已导入 · " + summary,
+                                                  huxerui::ToastOptions{6.0});
                                           }
                                       });
                                   })},

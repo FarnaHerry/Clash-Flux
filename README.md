@@ -130,6 +130,14 @@ GitHub Release 使用稳定的 Android 发布密钥签名。CI 需要配置
 `CLASHFLUX_ANDROID_KEY_ALIAS` 和 `CLASHFLUX_ANDROID_KEY_PASSWORD` 四个仓库
 Secrets；本地未提供发布密钥时，Gradle 会使用开发用 debug 签名。
 
+## 架构与保真度契约
+
+内核贴 sing-box、输入贴 Clash 生态、产品层用 Clash 的词汇只暴露内核真有的能力：Clash
+YAML、sing-box 原生 JSON 与原生连接（PPTP、OpenVPN）统一由内置编译器翻译，每条映射按
+exact / approx / unsupported 记入保真度账本，不静默降级，也不在界面里假装支持内核没有
+的能力。分层职责、决策流程、协议/端点/规则覆盖基线与已知边界见
+[内核分层与 Clash → sing-box 保真度契约](docs/singbox-layers-and-fidelity.md)。
+
 ## CLI
 
 同一二进制带完整子命令；无参数启动进入 GUI，有参数走 CLI：
@@ -141,6 +149,7 @@ clash-flux mode [rule|global|direct]  # 查看/切换出站模式
 clash-flux tun on|off                 # TUN（需服务模式或 root）
 clash-flux proxy on|off|status        # 系统代理
 clash-flux profile list|import <url> [name]|use <id>|update <id>|remove <id>
+clash-flux profile check [<id>]        # 检查订阅保真度（有无法映射的条目时退出码 1）
 clash-flux service install|uninstall|status|run
 ```
 

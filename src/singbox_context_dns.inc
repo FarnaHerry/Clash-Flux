@@ -16,6 +16,16 @@ struct Context {
     explicit Context(const CompileOptions& options) : opt(options) {}
 
     void warn(std::string message) { result.warnings.push_back(std::move(message)); }
+
+    // 结构化保真度条目（见 docs/singbox-layers-and-fidelity.md §2）。detail 同时
+    // 并入 warnings，保证历史消费方（测试、内核启动诊断、日志）看到的文本不缩水。
+    void note(FidelityScope scope, Fidelity level, std::string subject,
+              std::string detail, std::string action = {}) {
+        result.fidelity.push_back(FidelityNote{scope, level, std::move(subject),
+                                               std::move(detail),
+                                               std::move(action)});
+        result.warnings.push_back(result.fidelity.back().detail);
+    }
     bool tagKnown(const std::string& tag) const {
         for (const std::string& known : knownTags) {
             if (known == tag) return true;
@@ -122,13 +132,18 @@ std::string appendDnsServer(Context& ctx, std::string_view rawValue) {
     const std::optional<DnsEndpoint> endpoint = parseDnsEndpoint(raw);
     if (!endpoint || endpoint->scheme == "rcode" || endpoint->scheme == "fakeip" ||
         endpoint->scheme == "dhcp") {
-        ctx.warn(std::format("DNS 服务器「{}」格式暂不支持，已忽略", raw));
+        ctx.note(FidelityScope::Dns, Fidelity::Unsupported, raw,
+                 std::format("DNS 服务器「{}」格式暂不支持，已忽略", raw),
+                 "rcode:// / fakeip:// / dhcp:// 在 sing-box 1.14 是 DNS 规则而不是传输"
+                 "服务器；该服务器已从 DNS 列表移除");
         return {};
     }
     const std::string scheme = endpoint->scheme == "http" ? "https" : endpoint->scheme;
     if (scheme != "udp" && scheme != "tcp" && scheme != "tls" && scheme != "https" &&
         scheme != "quic") {
-        ctx.warn(std::format("DNS 服务器「{}」协议 {} 暂不支持，已忽略", raw, scheme));
+        ctx.note(FidelityScope::Dns, Fidelity::Unsupported, raw,
+                 std::format("DNS 服务器「{}」协议 {} 暂不支持，已忽略", raw, scheme),
+                 "sing-box 只接受 udp/tcp/tls/https/quic 五种 DNS 传输");
         return {};
     }
 
@@ -152,8 +167,10 @@ std::string appendDnsServer(Context& ctx, std::string_view rawValue) {
         if (ctx.tagKnown(endpoint->detour)) {
             server["detour"] = endpoint->detour;
         } else {
-            ctx.warn(std::format("DNS 服务器「{}」引用了未知出站「{}」，已按直连处理",
-                                 raw, endpoint->detour));
+            ctx.note(FidelityScope::Dns, Fidelity::Approx, raw,
+                     std::format("DNS 服务器「{}」引用了未知出站「{}」，已按直连处理",
+                                 raw, endpoint->detour),
+                     "该 DNS 查询不走代理；确认出站名是否写错或该出站是否被跳过");
         }
     }
     ctx.config["dns"]["servers"].push_back(std::move(server));
