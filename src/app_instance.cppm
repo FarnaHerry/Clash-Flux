@@ -30,6 +30,7 @@ export module clashflux.instance;
 
 import std;
 import clashflux.config;
+import clashflux.core;
 
 namespace clashflux::instance {
 namespace {
@@ -93,6 +94,11 @@ void writeInstanceInfo(const std::filesystem::path& path, long pid, std::string_
 
 void terminateOldProcess(long pid) {
     if (pid <= 0) return;
+    // 锁文件里的 pid 也可能已被复用：先确认它还是 clash-flux 再终止。
+    const std::string image = core::pidImageName(pid);
+    if (!image.empty() && image.find("clash-flux") == std::string::npos) {
+        return;
+    }
     clashflux::win32::UniqueHandle process{OpenProcess(
         PROCESS_TERMINATE | SYNCHRONIZE, FALSE, static_cast<DWORD>(pid))};
     if (!process.valid()) return;
@@ -152,6 +158,11 @@ void writeLockState(int fd, long pid, std::string_view state) {
 
 void terminateOldProcess(long pid) {
     if (pid <= 0) return;
+    // 锁文件里的 pid 也可能已被复用：先确认它还是 clash-flux 再终止。
+    const std::string image = core::pidImageName(pid);
+    if (!image.empty() && image.find("clash-flux") == std::string::npos) {
+        return;
+    }
     const auto pidVal = static_cast<pid_t>(pid);
     if (::kill(pidVal, 0) == 0) {
         ::kill(pidVal, SIGTERM);

@@ -11,6 +11,7 @@ module clashflux.stream;
 
 import std;
 import clashflux.config;
+import clashflux.core;
 import nlohmann.json;
 import clashflux.utils;
 
@@ -27,6 +28,8 @@ struct PersistentLogStore {
     std::vector<LogLine> history;
     std::vector<LogLine> pending;
     bool loaded = false;
+    // 压实计数：到上限后不再每行整文件重写（见 appendLog）。
+    std::size_t appendsSinceCompaction = 0;
     std::filesystem::path path;
 };
 
@@ -50,6 +53,51 @@ PersistentLogStore& applicationLogStore() {
 
 std::string normalizeLevel(std::string level);
 
+// ---- 变化通知注册表（推送线程 → 观察者）------------------------------------
+struct StreamUpdateRegistry {
+    std::mutex mutex;
+    std::unordered_map<std::uint64_t, StreamUpdateObserver> observers;
+    std::uint64_t nextId = 1;
+    // 每一路一个"未确认"标记：合并同一路的连续通知。
+    std::atomic<bool> pending[3]{};
+};
+
+StreamUpdateRegistry& updateRegistry() {
+    static StreamUpdateRegistry registry;
+    return registry;
+}
+
+// 在推送线程调用：向所有观察者广播一次（同一路的未确认通知只发一次）。
+// noexcept：调用方是 logCore/logApplication（本身 noexcept），通知失败绝不能
+// 让"记一条日志"把进程带走（例如拷贝观察者列表时 bad_alloc）。
+void notifyStreamUpdate(StreamKind kind) noexcept {
+    try {
+        StreamUpdateRegistry& registry = updateRegistry();
+        std::atomic<bool>& pending = registry.pending[static_cast<int>(kind)];
+        if (pending.exchange(true)) return;
+        std::vector<StreamUpdateObserver> observers;
+        {
+            std::lock_guard lock(registry.mutex);
+            observers.reserve(registry.observers.size());
+            for (auto& [id, observer] : registry.observers) {
+                observers.push_back(observer);
+            }
+        }
+        if (observers.empty()) {
+            pending.store(false);
+            return;
+        }
+        for (StreamUpdateObserver& observer : observers) {
+            // 观察者的异常绝不能打断推送线程。
+            try {
+                observer(kind);
+            } catch (...) {
+            }
+        }
+    } catch (...) {
+    }
+}
+
 void trimLogs(std::vector<LogLine>& lines) {
     if (lines.size() > kMaxLogLines) {
         lines.erase(lines.begin(),
@@ -72,7 +120,10 @@ void loadLogsLocked(PersistentLogStore& store) {
             }
             store.history.push_back(LogLine{
                 .level = normalizeLevel(json.value("level", "info")),
-                .payload = json.value("payload", ""),
+                // 载入时也去 ANSI：写入侧统一清理是后来的修复，磁盘上早先写入
+                // 的行仍带颜色转义（真机实测过 [36mINFO[0m），只清新增会留下
+                // 一段永远难看的历史。
+                .payload = core::stripAnsi(json.value("payload", "")),
                 .at = json.value("at", std::int64_t{0}),
             });
         }
@@ -116,7 +167,13 @@ void appendLogLineLocked(const PersistentLogStore& store,
 void appendLog(PersistentLogStore& store, LogLine line) {
     std::lock_guard lock(store.mutex);
     loadLogsLocked(store);
-    const bool rewrite = store.history.size() >= kMaxLogLines;
+    // 到上限后 history 恒为 kMaxLogLines：曾经因此每追加一行就整份重写文件
+    // （O(n) 写放大，debug 级别日志下每秒几十次）。改成每追加 1/4 上限的量才
+    // 压实一次，文件最多比上限多这么多行。
+    const bool atCap = store.history.size() >= kMaxLogLines;
+    const bool rewrite =
+        atCap && ++store.appendsSinceCompaction >= kMaxLogLines / 4;
+    if (rewrite) store.appendsSinceCompaction = 0;
     store.history.push_back(line);
     store.pending.push_back(std::move(line));
     trimLogs(store.history);
@@ -126,6 +183,7 @@ void appendLog(PersistentLogStore& store, LogLine line) {
     } else {
         appendLogLineLocked(store, store.history.back());
     }
+    // 锁外通知：观察者不得触碰 State，UI 层负责 Post 回 UI 线程。
 }
 
 std::vector<LogLine> logHistory(PersistentLogStore& store) {
@@ -177,7 +235,12 @@ struct Channel {
     std::atomic<bool> open{false};
 
     void start(const std::string& url) {
-        socket.disableAutomaticReconnection();
+        // 断线必须自愈：内核重启、控制器短暂不可用都会断开。以前禁用自动重连，
+        // 流断了就永久死了（页面只能一直显示"未就绪"），直到内核再次重启。
+        // IX 的重连等待可被 stop() 取消，所以 stopCore/startCore 的重启路径不受影响。
+        socket.enableAutomaticReconnection();
+        socket.setMinWaitBetweenReconnectionRetries(1000);
+        socket.setMaxWaitBetweenReconnectionRetries(30000);
         socket.setUrl(url);
         socket.setHandshakeTimeout(5);
         socket.start();
@@ -194,11 +257,15 @@ struct Channel {
 void logCore(std::string level, std::string payload) noexcept {
     try {
         if (payload.empty()) return;
+        // 统一在这里去掉 ANSI 颜色转义：Android 的 libbox 日志带颜色（桌面进程
+        // 输出在 core.cpp 已单独处理过），不清理会原样显示成 "[36mINFO[0m"。
+        payload = core::stripAnsi(std::move(payload));
         appendLog(coreLogStore(), LogLine{
             .level = normalizeLevel(std::move(level)),
             .payload = std::move(payload),
             .at = nowUnix(),
         });
+        notifyStreamUpdate(StreamKind::Logs);
     } catch (...) {
         // Kernel diagnostics are best-effort and must not crash the app.
     }
@@ -224,6 +291,7 @@ void logApplication(std::string level, std::string payload) noexcept {
             .payload = std::move(payload),
             .at = nowUnix(),
         });
+        notifyStreamUpdate(StreamKind::Logs);
     } catch (...) {
         // Application diagnostics are best-effort and must not crash the app.
     }
@@ -277,17 +345,24 @@ struct CoreStreams::Impl {
     void pushTraffic(const std::string& text) {
         const auto j = nlohmann::json::parse(text, nullptr, false);
         if (!j.is_object()) return;
-        std::lock_guard lock(mutex);
-        latestTraffic.up = j.value("up", std::int64_t{0});
-        latestTraffic.down = j.value("down", std::int64_t{0});
-        latestTraffic.at = nowUnix();
-        trafficDirty = true;
+        {
+            std::lock_guard lock(mutex);
+            latestTraffic.up = j.value("up", std::int64_t{0});
+            latestTraffic.down = j.value("down", std::int64_t{0});
+            latestTraffic.at = nowUnix();
+            trafficDirty = true;
+        }
+        // 出锁后再通知：观察者可能（间接）回调本对象。
+        notifyStreamUpdate(StreamKind::Traffic);
     }
 
     void pushConnections(const std::string& text) {
-        std::lock_guard lock(mutex);
-        latestConnections = text;
-        connectionsDirty = true;
+        {
+            std::lock_guard lock(mutex);
+            latestConnections = text;
+            connectionsDirty = true;
+        }
+        notifyStreamUpdate(StreamKind::Connections);
     }
 };
 
@@ -316,6 +391,7 @@ void CoreStreams::start(const std::string& wsBase, const std::string& secret,
             switch (msg->type) {
                 case ix::WebSocketMessageType::Open:
                     impl->logs.open.store(true);
+                    notifyStreamUpdate(StreamKind::Logs);
                     break;
                 case ix::WebSocketMessageType::Message:
                     impl->pushLog(msg->str);
@@ -323,6 +399,7 @@ void CoreStreams::start(const std::string& wsBase, const std::string& secret,
                 case ix::WebSocketMessageType::Close:
                 case ix::WebSocketMessageType::Error:
                     impl->logs.open.store(false);
+                    notifyStreamUpdate(StreamKind::Logs);
                     break;
                 default: break;
             }
@@ -332,6 +409,7 @@ void CoreStreams::start(const std::string& wsBase, const std::string& secret,
             switch (msg->type) {
                 case ix::WebSocketMessageType::Open:
                     impl->traffic.open.store(true);
+                    notifyStreamUpdate(StreamKind::Traffic);
                     break;
                 case ix::WebSocketMessageType::Message:
                     impl->pushTraffic(msg->str);
@@ -339,6 +417,7 @@ void CoreStreams::start(const std::string& wsBase, const std::string& secret,
                 case ix::WebSocketMessageType::Close:
                 case ix::WebSocketMessageType::Error:
                     impl->traffic.open.store(false);
+                    notifyStreamUpdate(StreamKind::Traffic);
                     break;
                 default: break;
             }
@@ -348,6 +427,7 @@ void CoreStreams::start(const std::string& wsBase, const std::string& secret,
             switch (msg->type) {
                 case ix::WebSocketMessageType::Open:
                     impl->connections.open.store(true);
+                    notifyStreamUpdate(StreamKind::Connections);
                     break;
                 case ix::WebSocketMessageType::Message:
                     impl->pushConnections(msg->str);
@@ -355,6 +435,7 @@ void CoreStreams::start(const std::string& wsBase, const std::string& secret,
                 case ix::WebSocketMessageType::Close:
                 case ix::WebSocketMessageType::Error:
                     impl->connections.open.store(false);
+                    notifyStreamUpdate(StreamKind::Connections);
                     break;
                 default: break;
             }
@@ -400,6 +481,31 @@ bool CoreStreams::readConnections(std::string& out) const {
     if (impl_->latestConnections.empty()) return false;
     out = impl_->latestConnections;
     return true;
+}
+
+std::uint64_t addStreamUpdateObserver(StreamUpdateObserver observer) {
+    if (!observer) return 0;
+    StreamUpdateRegistry& registry = updateRegistry();
+    {
+        std::lock_guard lock(registry.mutex);
+        const std::uint64_t id = registry.nextId++;
+        registry.observers.emplace(id, std::move(observer));
+    }
+    // 新观察者（页面重挂载）必须能收到下一帧：清掉可能残留的"未确认"标记。
+    // 旧观察者的 Post 因 scope 关闭被丢弃时标记会留在 true，不清就永远不再通知。
+    for (std::atomic<bool>& pending : registry.pending) pending.store(false);
+    return registry.nextId - 1;
+}
+
+void removeStreamUpdateObserver(std::uint64_t id) {
+    if (id == 0) return;
+    StreamUpdateRegistry& registry = updateRegistry();
+    std::lock_guard lock(registry.mutex);
+    registry.observers.erase(id);
+}
+
+void acknowledgeStreamUpdate(StreamKind kind) {
+    updateRegistry().pending[static_cast<int>(kind)].store(false);
 }
 
 } // namespace stream

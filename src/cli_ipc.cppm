@@ -6,6 +6,9 @@
 //
 // 这样任何时刻只有一个 Runtime / 一个持久化缓存 / 一个托盘，CLI 改的设置由
 // 运行中的实例直接写进它的缓存并落库，不存在跨进程缓存不一致。
+//
+// 服务端在 Linux 上用 inotify 监视请求目录：新请求一到就 wake()（事件驱动，
+// 不再靠 0.25s 扫目录）；其他平台由调用方保留一个低频兜底轮询。
 module;
 
 #include <cstdint>
@@ -23,6 +26,10 @@ module;
 #else
 #include <fcntl.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <errno.h>
+#include <sys/inotify.h>
+#endif
 #endif
 
 export module clashflux.cli_ipc;
@@ -208,6 +215,44 @@ export int servePendingCommands() {
     return served;
 }
 
+/// owner 进程：监视请求目录，出现新请求文件就调用 wake()。
+/// wake 会在后台线程被调用（调用方通常在里面 Post 回 UI 线程），必须自持数据。
+/// Linux 用 inotify；其他平台是 no-op（调用方保留兜底轮询）。
+/// 线程与进程同生共死（与内核监视线程同一约定）。
+export void startRequestWatcher(std::function<void()> wake) {
+#if defined(__linux__)
+    if (!wake) return;
+    std::thread([wake = std::move(wake)] {
+        const std::filesystem::path dir = requestDir();
+        const int fd = ::inotify_init1(IN_CLOEXEC);
+        if (fd < 0) return;
+        const int watch = ::inotify_add_watch(
+            fd, dir.c_str(), IN_CLOSE_WRITE | IN_MOVED_TO);
+        if (watch < 0) {
+            ::close(fd);
+            return;
+        }
+        for (;;) {
+            char buffer[4096];
+            const ssize_t count = ::read(fd, buffer, sizeof(buffer));
+            if (count < 0) {
+                if (errno == EINTR) continue;
+                break;  // 目录被删/出错：退出，由调用方的兜底轮询接管
+            }
+            if (count == 0) break;
+            try {
+                wake();
+            } catch (...) {
+                // 通知失败不能杀死监视线程。
+            }
+        }
+        ::close(fd);
+    }).detach();
+#else
+    static_cast<void>(wake);
+#endif
+}
+
 /// 非 owner 进程：把命令转发给运行中的实例，拿到输出与退出码。
 /// 失败（owner 未起来 / 超时）返回 false。
 export bool tryForwardCommand(const std::vector<std::string>& args, int& code) {
@@ -220,6 +265,7 @@ export bool tryForwardCommand(const std::vector<std::string>& args, int& code) {
     if (!std::filesystem::exists(request, error)) return false;
 
     const auto deadline = std::chrono::steady_clock::now() + kClientTimeout;
+    // 20ms 一拍等 owner 回写响应：这是有界的 IPC 等待（≤60s），不是常驻轮询。
     while (std::chrono::steady_clock::now() < deadline) {
         if (std::filesystem::exists(response, error)) {
             // 响应先落文本、后追加 8 字节 footer；等 footer 到齐再读。
@@ -228,7 +274,13 @@ export bool tryForwardCommand(const std::vector<std::string>& args, int& code) {
                 std::ifstream in(response, std::ios::binary);
                 std::string content((std::istreambuf_iterator<char>(in)),
                                     std::istreambuf_iterator<char>());
-                if (content.size() < 8) break;
+                if (content.size() < 8) {
+                    // file_size 与这次读取之间 owner 可能刚截断/重写：重试，
+                    // 不能因为一次短读就判定失败（旧实现直接 break 返回 false）。
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds{20});
+                    continue;
+                }
                 std::int32_t exitCode = 1;
                 std::uint32_t magic = 0;
                 std::memcpy(&exitCode, content.data() + content.size() - 8, 4);

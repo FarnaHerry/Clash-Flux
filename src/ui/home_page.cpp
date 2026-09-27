@@ -1,20 +1,19 @@
-// home_page.cpp — 可自定义首页：卡片目录（增删）+ 网格摆放（宽/高各 1..4 单位）
-// + 排序（桌面鼠标拖动 / 移动端长按拖动）。
+// home_page.cpp — 固定网格首页：卡片目录 + 网格摆放（宽/高各 1..4 单位）。
 //
 // 结构：
 //   kHomeCards   文件作用域 #if 选出的平台卡片表（composable 体内禁止条件编译，
-//                平台差异只出现在这里和平台函数选择宏上）；
-//   HomeGrid     自定义布局：把「页面逻辑宽度」分成 1..4 列，按卡片声明的宽高
-//                （HomeCardSpan）做左上紧凑的二维打包。编辑态与运行态共用同一
-//                套算法与同一份约束，所以卡片占用的大小完全一致（所见即所得）；
+//                平台差异只出现在这里和平台函数选择宏上）；顺序与尺寸即最终布局；
+//   HomeGrid     把「页面逻辑宽度」分成 1..4 列，按卡片声明的宽高（HomeCardSpan）
+//                做左上紧凑的二维打包；
 //   HomeCardContent 按种类组装卡片内容，平台专属卡片经宏选择完整函数。
-// 持久化：settings KV "home.layout.desktop|android"，值为 "v1:<id>:<宽>x<高>,…"。
-// 编辑态只改会话内 State，点保存才写库；编辑态下点编辑按钮回滚到进入时快照。
+// 布局是**编译期常量**（见 AGENTS.md / CLAUDE.md 第 13 条）：没有编辑态、拖动排序、
+// 增删卡片，也没有 home.layout.* 持久化，因此首帧就是最终布局。
 //
 // 数据流：UI 泵每 500ms 从 CoreStreams 取最新流量帧追加进 60 点环形历史
 // （State<vector<TrafficPoint>>），连接快照帧只取总量字段；内核状态与启用
 // 订阅每拍重读。Canvas 画家捕获历史快照，重组后按最新序列重绘。
 #include <huxerui/huxerui.h>
+#include <huxerui/charts.h>
 
 #include <algorithm>
 #include <chrono>
@@ -22,22 +21,30 @@
 #include <functional>
 #include <iterator>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "app_resources.h"
+#include "proxies_model.h"
 #include "ui.h"
 #include "task_bridge.h"
 
 import nlohmann.json;
 import clashflux.core;
+import clashflux.db;
 import clashflux.stream;
 import clashflux.store.core;
 import clashflux.store.profiles;
 import clashflux.utils;
+
+// CoreView 含 store::CoreSnapshot、ProfilesModel 含 db::Profile，必须在模块导入
+// 之后（同 profiles_cache.h）。
+#include "core_model.h"
+#include "profiles_model.h"
+#include "settings_model.h"
+#include "stream_updates.h"
 
 namespace clashflux::ui {
 namespace {
@@ -80,18 +87,16 @@ struct HomeCardSpec {
 // 手机屏是 2 列：需要整宽的（图表、横排出站模式、开关行）给 2 格，信息卡 1 格；
 // 高度仍按 FlClash 跨度（图表/信息卡 2 行，开关行 1 行）。
 constexpr HomeCardSpec kHomeCards[] = {
-    {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 2},
+    // Lib-Charts 的绘图面最小 240×180（库内部 Frame），2×2 的格子只有 188pt 高，
+    // 减去卡片内边距与标题行不够用；3 行（288pt）才给得出合法盒子。
+    {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 3},
     {HomeCardKind::Total, "total", "流量统计", 1, 2},
     {HomeCardKind::Mode, "mode", "出站模式", 2, 1},
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
     {HomeCardKind::Vpn, "vpn", "隧道状态", 1, 2},
     {HomeCardKind::Background, "background", "后台保活", 2, 1},
 };
-constexpr std::string_view kHomeLayoutKey = "home.layout.android";
 constexpr std::string_view kDefaultCoreName = "sing-box libbox";
-// 移动端：滚动优先，按住卡片 0.35s 后才进入拖动（延迟拖动 = 长按拖动）。
-constexpr bool kHomeLongPressDrag = true;
-constexpr std::string_view kHomeDragHint = "长按卡片拖动排序，× 移除卡片";
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     AndroidHomePlatformCard(homeState, kind)
 #define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact) \
@@ -105,18 +110,16 @@ constexpr std::string_view kHomeDragHint = "长按卡片拖动排序，× 移除
 //   出站模式(竖排) 1x2 / V2(横排) → 出站模式取 2x1（横排三段按钮吃宽度）
 //   其余信息类卡片（当前订阅）与 FlClash 的信息卡同级，取 1x2。
 constexpr HomeCardSpec kHomeCards[] = {
-    {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 2},
+    // Lib-Charts 的绘图面最小 240×180（库内部 Frame），2×2 的格子只有 188pt 高，
+    // 减去卡片内边距与标题行不够用；3 行（288pt）才给得出合法盒子。
+    {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 3},
     {HomeCardKind::Total, "total", "流量统计", 1, 2},
     {HomeCardKind::Mode, "mode", "出站模式", 2, 1},
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
     {HomeCardKind::Proxy, "proxy", "系统代理", 1, 1},
     {HomeCardKind::Tun, "tun", "TUN 模式", 1, 1},
 };
-constexpr std::string_view kHomeLayoutKey = "home.layout.desktop";
 constexpr std::string_view kDefaultCoreName = "sing-box";
-// 桌面端：鼠标按下即拖动（滚轮负责滚动，不与拖动争用指针）。
-constexpr bool kHomeLongPressDrag = false;
-constexpr std::string_view kHomeDragHint = "拖动卡片排序，× 移除卡片";
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     DesktopHomePlatformCard(kind)
 #define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact) \
@@ -150,12 +153,6 @@ using HomeLayout = std::vector<HomeCardEntry>;
 
 // 首页右下角悬浮启动按钮的占位高度（滚动内容尾部留白）。
 constexpr float kHomeFloatingButtonInset = 72.0F;
-
-// 卡片在网格里重排 / 改尺寸时的本地共享过渡（短一点：播放期间 scope 内不可交互，
-// 编辑态连续点 +/- 不至于被挡太久）。
-constexpr huxerui::TweenSpec kHomeCardReflowTween{0.18, huxerui::Easing::EaseInOut};
-// 松手后一次性重排，所有稳定键卡片共同播放共享边界补间。
-constexpr huxerui::TweenSpec kHomeCardDropTween{0.26, huxerui::Easing::EaseOut};
 
 constexpr int kHomeGridMaxSpan = 4;   // 卡片宽高上限（格）
 constexpr float kHomeGridGap = 12.0F; // 格间距，与页面卡片间距一致
@@ -309,13 +306,7 @@ struct HomeState {
     bool operator==(const HomeState&) const = default;
 };
 
-// ---- 布局读写 --------------------------------------------------------------
-
-// 版本前缀让「用户清空全部卡片」("v4:") 与「从未配置过」("") 区分开；旧前缀
-// （v1/v2/v3 / 无前缀）的布局在加载时保留卡片与顺序、补齐这一版新增的卡片，并把
-// 尺寸刷新为本版默认——尺寸模型这几版一直在调（v4 起按 FlClash 实测跨度 + 最小
-// 2 列定稿），旧值没有保留价值；写入 v4 之后完全尊重用户调整过的尺寸。
-constexpr std::string_view kHomeLayoutPrefix = "v4:";
+// ---- 布局读取 --------------------------------------------------------------
 
 const HomeCardSpec* FindHomeCard(HomeCardKind kind) {
     for (const HomeCardSpec& spec : kHomeCards) {
@@ -324,199 +315,14 @@ const HomeCardSpec* FindHomeCard(HomeCardKind kind) {
     return nullptr;
 }
 
-std::optional<HomeCardKind> FindHomeCard(std::string_view id) {
-    for (const HomeCardSpec& spec : kHomeCards) {
-        if (spec.id == id) return spec.kind;
-    }
-    return std::nullopt;
-}
-
+// 首页布局是**编译期常量**（见 AGENTS.md / CLAUDE.md 第 13 条）：顺序与尺寸只由
+// kHomeCards 决定，没有编辑态、拖动排序、增删卡片，也没有 home.layout.* 持久化。
 HomeLayout DefaultHomeLayout() {
     HomeLayout layout;
     layout.reserve(std::size(kHomeCards));
     for (const HomeCardSpec& spec : kHomeCards) {
         layout.push_back(HomeCardEntry{spec.kind, {spec.width, spec.height}});
     }
-    return layout;
-}
-
-// "3x2" → 宽 3 高 2；缺省或非法时回落卡片默认尺寸。
-HomeCardSize ParseHomeCardSize(std::string_view text,
-                               const HomeCardSpec& spec) {
-    const HomeCardSize fallback{spec.width, spec.height};
-    const std::size_t separator = text.find('x');
-    if (separator == std::string_view::npos) return fallback;
-    const auto parse = [](std::string_view value) -> std::optional<int> {
-        if (value.empty() || value.size() > 2) return std::nullopt;
-        int number = 0;
-        for (const char c : value) {
-            if (c < '0' || c > '9') return std::nullopt;
-            number = number * 10 + (c - '0');
-        }
-        return number;
-    };
-    const std::optional<int> width = parse(text.substr(0, separator));
-    const std::optional<int> height = parse(text.substr(separator + 1));
-    if (!width.has_value() || !height.has_value()) return fallback;
-    return HomeCardSize{std::clamp(*width, 1, kHomeGridMaxSpan),
-                        std::clamp(*height, 1, kHomeGridMaxSpan)};
-}
-
-HomeLayout ParseHomeLayout(std::string_view stored) {
-    HomeLayout layout;
-    std::size_t begin = 0;
-    while (begin <= stored.size()) {
-        const std::size_t end = stored.find(',', begin);
-        const std::string_view item =
-            stored.substr(begin, end == std::string_view::npos
-                                     ? std::string_view::npos
-                                     : end - begin);
-        if (!item.empty()) {
-            const std::size_t separator = item.find(':');
-            const std::string_view id = separator == std::string_view::npos
-                                            ? item
-                                            : item.substr(0, separator);
-            if (const auto kind = FindHomeCard(id)) {
-                const HomeCardSpec* spec = FindHomeCard(*kind);
-                const bool duplicate = std::any_of(
-                    layout.begin(), layout.end(),
-                    [kind](const HomeCardEntry& entry) {
-                        return entry.kind == *kind;
-                    });
-                if (spec != nullptr && !duplicate) {
-                    const HomeCardSize size =
-                        separator == std::string_view::npos
-                            ? HomeCardSize{spec->width, spec->height}
-                            : ParseHomeCardSize(item.substr(separator + 1),
-                                                *spec);
-                    layout.push_back(HomeCardEntry{*kind, size});
-                }
-            }
-        }
-        if (end == std::string_view::npos) break;
-        begin = end + 1;
-    }
-    return layout;
-}
-
-std::string SerializeHomeLayout(const HomeLayout& layout) {
-    std::string out{kHomeLayoutPrefix};
-    for (const HomeCardEntry& entry : layout) {
-        const HomeCardSpec* spec = FindHomeCard(entry.kind);
-        if (spec == nullptr) continue;
-        if (out.size() > kHomeLayoutPrefix.size()) out.push_back(',');
-        out.append(spec->id);
-        out.push_back(':');
-        out.append(std::to_string(
-            std::clamp(entry.size.width, 1, kHomeGridMaxSpan)));
-        out.push_back('x');
-        out.append(std::to_string(
-            std::clamp(entry.size.height, 1, kHomeGridMaxSpan)));
-    }
-    return out;
-}
-
-HomeLayout LoadHomeLayout() {
-    const std::string stored =
-        store::coreStore().setting(std::string{kHomeLayoutKey}, "");
-    if (stored.empty()) return DefaultHomeLayout();
-    const std::string_view raw = stored;
-    const bool current = raw.starts_with(kHomeLayoutPrefix);
-    std::string_view body = raw;
-    if (current) {
-        body = raw.substr(kHomeLayoutPrefix.size());
-    } else {
-        for (const std::string_view legacy : {"v1:", "v2:", "v3:"}) {
-            if (body.starts_with(legacy)) {
-                body = body.substr(legacy.size());
-                break;
-            }
-        }
-    }
-    // 未知 id（平台切换或旧版本）被丢弃；整份布局都失效时才回落默认。
-    HomeLayout layout = ParseHomeLayout(body);
-    if (layout.empty() && !body.empty()) return DefaultHomeLayout();
-    if (!current) {
-        // 旧布局：保留卡片与顺序（未知 id 已在上一步丢弃），补齐这一版新增的
-        // 卡片，尺寸统一刷新为本版默认。
-        std::vector<HomeCardKind> order;
-        order.reserve(layout.size() + std::size(kHomeCards));
-        for (const HomeCardEntry& entry : layout) order.push_back(entry.kind);
-        for (const HomeCardSpec& spec : kHomeCards) {
-            const bool present =
-                std::any_of(order.begin(), order.end(),
-                            [&spec](HomeCardKind kind) {
-                                return kind == spec.kind;
-                            });
-            if (!present) order.push_back(spec.kind);
-        }
-        layout.clear();
-        layout.reserve(order.size());
-        for (const HomeCardKind kind : order) {
-            if (const HomeCardSpec* spec = FindHomeCard(kind)) {
-                layout.push_back(
-                    HomeCardEntry{kind, {spec->width, spec->height}});
-            }
-        }
-    }
-    return layout;
-}
-
-void SaveHomeLayout(const HomeLayout& layout) {
-    store::coreStore().setSetting(std::string{kHomeLayoutKey},
-                                  SerializeHomeLayout(layout));
-}
-
-HomeLayout HomeLayoutWithCard(HomeLayout layout, HomeCardKind kind) {
-    const bool present =
-        std::any_of(layout.begin(), layout.end(),
-                    [kind](const HomeCardEntry& entry) {
-                        return entry.kind == kind;
-                    });
-    if (!present) {
-        const HomeCardSpec* spec = FindHomeCard(kind);
-        if (spec != nullptr) {
-            layout.push_back(HomeCardEntry{kind, {spec->width, spec->height}});
-        }
-    }
-    return layout;
-}
-
-HomeLayout HomeLayoutWithoutCard(HomeLayout layout, HomeCardKind kind) {
-    std::erase_if(layout, [kind](const HomeCardEntry& entry) {
-        return entry.kind == kind;
-    });
-    return layout;
-}
-
-HomeLayout HomeLayoutResized(HomeLayout layout, HomeCardKind kind, int width,
-                             int height) {
-    for (HomeCardEntry& entry : layout) {
-        if (entry.kind != kind) continue;
-        entry.size.width = std::clamp(width, 1, kHomeGridMaxSpan);
-        entry.size.height = std::clamp(height, 1, kHomeGridMaxSpan);
-        break;
-    }
-    return layout;
-}
-
-// 拖到哪张卡片上就插到那张卡片原来的位置（两个方向语义一致：插在目标之前
-// 意味着上行拖动落到目标位、下行拖动落到目标位之后）。
-HomeLayout HomeLayoutMoved(HomeLayout layout, HomeCardKind source,
-                           HomeCardKind target) {
-    const auto from = std::find_if(layout.begin(), layout.end(),
-                                   [source](const HomeCardEntry& entry) {
-                                       return entry.kind == source;
-                                   });
-    if (from == layout.end() || source == target) return layout;
-    const HomeCardEntry moved = *from;
-    layout.erase(from);
-    const auto to = std::find_if(layout.begin(), layout.end(),
-                                 [target](const HomeCardEntry& entry) {
-                                     return entry.kind == target;
-                                 });
-    if (to == layout.end()) return layout;
-    layout.insert(to, moved);
     return layout;
 }
 
@@ -531,8 +337,8 @@ std::string currentProxyLine(const std::vector<ProxyGroupSnapshot>& groups) {
 
 // Kept outside the composable body: HuxerUI's code generator deliberately
 // rejects conditional compilation within a composable function.
+// s.core 由调用方从 CoreModel 填好（见 core_model.h）。
 void updateRuntime(HomeState& s, store::CoreStore& core) {
-    s.core = core.snapshot();
 #if defined(__ANDROID__)
     // Android libbox emits its own status stream instead of clash_api's
     // /traffic and /connections WebSockets.
@@ -545,30 +351,153 @@ void updateRuntime(HomeState& s, store::CoreStore& core) {
         if (s.history.size() > kHistoryPoints) s.history.erase(s.history.begin());
     }
 #else
-    stream::TrafficPoint point;
-    if (core.streams().takeTraffic(point)) {
-        s.latest = point;
-        s.history.push_back(point);
-        if (s.history.size() > kHistoryPoints) s.history.erase(s.history.begin());
-    }
+    static_cast<void>(core);
+    // 内核停掉后清空折线；桌面流量/总量由推送订阅写入（见 SubscribeHomeStreams）。
     if (s.core.state != core::CoreState::Running && !s.history.empty()) {
         s.history.clear();
         s.latest = {};
     }
-    std::string frame;
-    if (core.streams().takeConnections(frame)) {
-        const auto j = nlohmann::json::parse(frame, nullptr, false);
-        if (j.is_object()) {
-            s.totalUp = j.value("uploadTotal", std::int64_t{0});
-            s.totalDown = j.value("downloadTotal", std::int64_t{0});
-        }
-    }
 #endif
 }
+
+// 桌面：订阅 /traffic 与 /connections 推送，帧到达时才更新首页（不再按节拍
+// 轮询槽位）。Android 没有这两个 WS 通道，速率来自 libbox 快照（updateRuntime）。
+// 返回订阅 id（Android 返回 0），调用方在 Lifecycle 清理里注销。
+std::uint64_t SubscribeHomeStreams(huxerui::TaskScope tasks,
+                                   huxerui::State<HomeState> state) {
+#if defined(__ANDROID__)
+    static_cast<void>(tasks);
+    static_cast<void>(state);
+    return 0;
+#else
+    return SubscribeStreamUpdates(tasks, [state](stream::StreamKind kind) {
+        if (kind != stream::StreamKind::Traffic &&
+            kind != stream::StreamKind::Connections) {
+            return;
+        }
+        auto& core = store::coreStore();
+        HomeState s = state.Get();
+        if (kind == stream::StreamKind::Traffic) {
+            stream::TrafficPoint point;
+            if (core.streams().takeTraffic(point)) {
+                s.latest = point;
+                s.history.push_back(point);
+                if (s.history.size() > kHistoryPoints) {
+                    s.history.erase(s.history.begin());
+                }
+            }
+        } else {
+            std::string frame;
+            if (core.streams().takeConnections(frame)) {
+                const auto j = nlohmann::json::parse(frame, nullptr, false);
+                if (j.is_object()) {
+                    s.totalUp = j.value("uploadTotal", std::int64_t{0});
+                    s.totalDown = j.value("downloadTotal", std::int64_t{0});
+                }
+            }
+        }
+        state = s;
+    });
+#endif
+}
+
+// 把模型里的运行态镜像进首页 HomeState。桌面由模型 State 变化驱动（见
+// HomeRuntimePump 的桌面实现）；Android 额外需要固定节拍采样 libbox 速率
+// （模型只在数值变化时通知，空闲时不会有事件），因此两处共用本函数。
+void MirrorHomeState(huxerui::State<HomeState> state,
+                     huxerui::State<std::size_t> homeMode,
+                     huxerui::State<bool> modePending,
+                     const std::shared_ptr<CoreModel>& coreModel,
+                     const std::shared_ptr<ProfilesModel>& profilesModel,
+                     const std::shared_ptr<ProxiesModel>& proxiesModel) {
+    auto& core = store::coreStore();
+    HomeState s = state.Get();
+    // 内核状态来自唯一来源 CoreModel。
+    s.core = coreModel->view.Get().core;
+    updateRuntime(s, core);
+    if (!modePending.Get()) homeMode = HomeModeIndex(s.core.mode);
+
+    // 选中订阅来自 ProfilesModel：直接扫它的列表（借用引用，不做整表拷贝），
+    // 不再每次调用 profilesStore().selected()。
+    const db::Profile* selected = nullptr;
+    for (const db::Profile& candidate : profilesModel->list.Get()) {
+        if (candidate.selected && candidate.type != "pptp" &&
+            candidate.type != "openvpn") {
+            selected = &candidate;
+            break;
+        }
+    }
+    if (selected != nullptr) {
+        s.profileId = selected->id;
+        s.profileName = selected->name;
+        s.profileUsedBytes = selected->usedBytes;
+        s.profileTotalBytes = selected->totalBytes;
+        s.profileUpdated = selected->updatedAt > 0
+                               ? "更新于 " + formatTime(selected->updatedAt)
+                               : "未拉取";
+        if (!selected->error.empty()) s.profileUpdated = "拉取失败";
+    } else {
+        s.profileId = 0;
+        s.profileName = "未启用订阅";
+        s.profileUpdated = "";
+        s.profileUsedBytes = 0;
+        s.profileTotalBytes = 0;
+    }
+    // 策略组取自全局唯一的 ProxiesModel（由 AppRoot 驱动刷新）。
+    s.proxyGroups = proxiesModel->snapshot.Get().groups;
+    state = s;
+}
+
+// 首页运行态泵：平台差异由宏在文件作用域选择整份实现（composable 体内不做
+// 条件编译）。
+#if defined(__ANDROID__)
+// Android：libbox 速率只在快照里、且模型空闲时不通知，需要固定节拍采样。
+[[huxerui::composable]] huxerui::View HomeRuntimePump(
+    huxerui::State<HomeState> state, huxerui::State<std::size_t> homeMode,
+    huxerui::State<bool> modePending, std::shared_ptr<CoreModel> coreModel,
+    std::shared_ptr<ProfilesModel> profilesModel,
+    std::shared_ptr<ProxiesModel> proxiesModel) {
+    auto tasks = huxerui::UseTaskScope();
+    huxerui::Lifecycle(
+        [tasks, state, homeMode, modePending, coreModel, profilesModel,
+         proxiesModel] {
+            tasks.Launch([state, homeMode, modePending, coreModel, profilesModel,
+                          proxiesModel]() -> huxerui::Task<void> {
+                co_await PollWhile(std::chrono::duration<double>{0.5}, [=] {
+                    MirrorHomeState(state, homeMode, modePending, coreModel,
+                                    profilesModel, proxiesModel);
+                    return true;
+                });
+            });
+            return [] {};
+        },
+        0);
+    return {};
+}
+#else
+// 桌面：模型一变就镜像，没有任何定时器；流量/总量由推送订阅写入
+// （见 SubscribeHomeStreams）。
+[[huxerui::composable]] huxerui::View HomeRuntimePump(
+    huxerui::State<HomeState> state, huxerui::State<std::size_t> homeMode,
+    huxerui::State<bool> modePending, std::shared_ptr<CoreModel> coreModel,
+    std::shared_ptr<ProfilesModel> profilesModel,
+    std::shared_ptr<ProxiesModel> proxiesModel) {
+    huxerui::Lifecycle(
+        [state, homeMode, modePending, coreModel, profilesModel, proxiesModel] {
+            MirrorHomeState(state, homeMode, modePending, coreModel,
+                            profilesModel, proxiesModel);
+            return [] {};
+        },
+        coreModel->view, profilesModel->list, proxiesModel->snapshot);
+    return {};
+}
+#endif
+#define CLASHFLUX_HOME_RUNTIME_PUMP HomeRuntimePump
 
 // ---- 通用卡片部件 ----------------------------------------------------------
 
 // 卡片标题：所有卡片共用同一排版；卡片外壳由卡片槽统一提供。
+// 首页卡片没有选中态（「当前订阅」也是普通卡片），标题一律用 on_surface。
 [[huxerui::composable]] huxerui::View HomeCardHeading(const std::string& title) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     return huxerui::Text(title).Style(huxerui::TextStyle{
@@ -595,140 +524,25 @@ void updateRuntime(HomeState& s, store::CoreStore& core) {
 }
 
 // 流量曲线：下载面积图（主色渐变填充）+ 上传折线（琥珀）。历史不足两点画平线。
-huxerui::CanvasPainter TrafficPainter(const std::vector<stream::TrafficPoint>& history,
-                                      huxerui::Color downColor,
-                                      huxerui::Color upColor,
-                                      huxerui::Color gridColor) {
-    return [=](huxerui::PaintContext& paint, huxerui::Size size) {
-        const float w = size.width;
-        const float h = size.height;
-        if (w <= 0.0F || h <= 0.0F) return;
-
-        // 网格：三条虚线横线。
-        for (int i = 1; i <= 3; ++i) {
-            const float y = h * static_cast<float>(i) / 4.0F;
-            paint.DrawLine({0.0F, y}, {w, y}, gridColor,
-                           huxerui::StrokeStyle{.width = 1.0F,
-                                                .dash_pattern = {4.0F, 4.0F}});
-        }
-
-        std::int64_t peak = 1;
-        for (const auto& p : history) {
-            peak = std::max({peak, p.up, p.down});
-        }
-        const auto yOf = [h, peak](std::int64_t v) {
-            return h - (static_cast<float>(v) / static_cast<float>(peak)) *
-                           (h - 8.0F) - 4.0F;  // 上下各留 4pt 呼吸
-        };
-        const std::size_t n = history.size();
-        const float dx = n > 1 ? w / static_cast<float>(n - 1) : 0.0F;
-
-        // 下载：路径面积填充 + 顶线描边。
-        if (n >= 2) {
-            huxerui::Path area;
-            area.MoveTo({0.0F, yOf(history.front().down)});
-            for (std::size_t i = 1; i < n; ++i) {
-                area.LineTo({static_cast<float>(i) * dx, yOf(history[i].down)});
-            }
-            huxerui::Path line = area;  // 顶线单独描边
-            area.LineTo({w, h});
-            area.LineTo({0.0F, h});
-            area.Close();
-            huxerui::Color fill = downColor;
-            fill.alpha = 0.18F;
-            paint.FillPath(area, fill);
-            paint.StrokePath(line, downColor,
-                             huxerui::StrokeStyle{.width = 2.0F});
-
-            huxerui::Path upLine;
-            upLine.MoveTo({0.0F, yOf(history.front().up)});
-            for (std::size_t i = 1; i < n; ++i) {
-                upLine.LineTo({static_cast<float>(i) * dx, yOf(history[i].up)});
-            }
-            paint.StrokePath(upLine, upColor,
-                             huxerui::StrokeStyle{.width = 1.5F});
-        } else {
-            paint.DrawLine({0.0F, h - 4.0F}, {w, h - 4.0F}, downColor,
-                           huxerui::StrokeStyle{.width = 1.5F});
-        }
-    };
-}
-
-// 拖动荷载：卡片 id（持久化身份）就是跨卡片传递的唯一数据。
-struct HomeCardDrag {
-    std::string id;
-};
-
-// 节点几何（布局尺寸 + 窗口矩形）：扩展在布局后记录，
-//   * 卡片：拖动预览据此渲染与本体等大的整卡，并用来自己计算"最近卡片"；
-//   * 页面根：把 DragEvent 的窗口坐标换算成页面内坐标。
-// 预览浮层里不挂这个标记，避免回写。
-struct HomeNodeBounds {
-    huxerui::Size size{};
-    huxerui::Rect window{};
-    bool valid = false;
-};
-
-struct HomeNodeBoundsMarker {
-    class Extension;
-    std::shared_ptr<HomeNodeBounds> state;
-
-    bool operator==(const HomeNodeBoundsMarker&) const = default;
-};
-
-class HomeNodeBoundsMarker::Extension final : public huxerui::NodeExtension {
-public:
-    Extension(huxerui::ViewNode& node, const HomeNodeBoundsMarker& spec) {
-        Update(node, spec);
+// 首页流量曲线数据：把滚动窗口拍成 Lib-Charts 的坐标快照（datum key 必须非空且唯一、
+// x 必须严格递增；这里用窗口内索引当 x，天然递增）。窗口约 1 Hz 变一次，重建 60×2 个
+// 点可忽略；空窗口也是合法快照（库会呈现空数据提示）。
+huxerui::XYChartData BuildTrafficChartData(
+    const std::vector<stream::TrafficPoint>& history) {
+    std::vector<huxerui::XYDatum> down;
+    std::vector<huxerui::XYDatum> up;
+    down.reserve(history.size());
+    up.reserve(history.size());
+    for (std::size_t i = 0; i < history.size(); ++i) {
+        std::string key = std::to_string(i);
+        const double x = static_cast<double>(i);
+        down.push_back({key, x, static_cast<double>(history[i].down)});
+        up.push_back({key, x, static_cast<double>(history[i].up)});
     }
-
-    void Update(huxerui::ViewNode&, const HomeNodeBoundsMarker& spec) {
-        state_ = spec.state;
-    }
-
-    PaintInvalidation PrepareGeometry(huxerui::ViewNode& node,
-                                      huxerui::TextMeasurer&) override {
-        if (state_) {
-            state_->size = node.LayoutSize();
-            state_->window = node.PresentationBounds();
-            state_->valid =
-                state_->size.width > 0.0F && state_->size.height > 0.0F;
-        }
-        return PaintInvalidation::None;
-    }
-
-private:
-    std::shared_ptr<HomeNodeBounds> state_;
-};
-
-// 一帧里每张卡片的窗口几何（拖动时按指针位置自己算最近卡片）。
-struct HomeCardBoundsEntry {
-    std::string id;
-    std::shared_ptr<HomeNodeBounds> bounds;
-};
-
-// 自己算"附近位置"：指针落在某张卡里就用它，否则取矩形距离最近的那张（不含被拖
-// 的那张自己）。不依赖框架的 DropTarget 命中判定，所以拖到卡片之间的缝、页面
-// 边缘也能落到最近的槽位。
-std::string NearestHomeCard(const std::vector<HomeCardBoundsEntry>& entries,
-                            huxerui::Point position,
-                            const std::string& skip) {
-    std::string best;
-    float best_distance = 0.0F;
-    for (const HomeCardBoundsEntry& entry : entries) {
-        if (entry.id == skip || !entry.bounds || !entry.bounds->valid) continue;
-        const huxerui::Rect& r = entry.bounds->window;
-        const float dx =
-            std::max({r.x - position.x, 0.0F, position.x - (r.x + r.width)});
-        const float dy =
-            std::max({r.y - position.y, 0.0F, position.y - (r.y + r.height)});
-        const float distance = dx * dx + dy * dy;
-        if (best.empty() || distance < best_distance) {
-            best = entry.id;
-            best_distance = distance;
-        }
-    }
-    return best;
+    return huxerui::XYChartData({
+        huxerui::XYSeries("down", "↓ 下载", std::move(down)),
+        huxerui::XYSeries("up", "↑ 上传", std::move(up)),
+    });
 }
 
 // 等宽分段选择器的滑动指示块：选中项下方自绘圆角色块，切换时按补间滑动。
@@ -862,16 +676,15 @@ private:
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-// 流量卡片：标题行 + 曲线；曲线吃掉卡片剩余高度，任意高度都成立。
+// 流量卡片：标题行 + 曲线；曲线吃掉卡片剩余高度，任意高度都成立。曲线用
+// HuxerUI Lib-Charts（面积图），替掉原先手绘的 Canvas：多了坐标轴刻度（速率格式化）
+// 与 hover tooltip，外观仍保持「下载实心面积 + 上传细线」。
 [[huxerui::composable]] huxerui::View HomeTrafficCard(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::Color downColor = theme.colors.primary;
     const huxerui::Color upColor = SemanticWarningColor(theme);
-    // 顶部品牌蓝光晕（primary 8% → 全透明）。
-    huxerui::Color glowTop = theme.colors.primary;
-    glowTop.alpha = 0.08F;
-    huxerui::Color glowBottom = theme.colors.primary;
-    glowBottom.alpha = 0.0F;
+    huxerui::Color fillDown = theme.colors.primary;
+    fillDown.alpha = 0.18F;  // 与旧手绘面积填充同一透明度
 
     return huxerui::Column {
         huxerui::Row {
@@ -885,16 +698,37 @@ private:
                     huxerui::Font::System(font_size::kCaption), downColor}),
         }.With(huxerui::Spacing(12.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        huxerui::Canvas(TrafficPainter(s.history, downColor, upColor,
-                                       theme.colors.outline))
+        huxerui::AreaChart(BuildTrafficChartData(s.history))
+            .Baseline(0.0)
+            .Interpolation(huxerui::ChartInterpolation::Linear)
+            // 小卡片里 X 轴（窗口内索引）没有信息量，只留 Y 轴刻度；刻度文本按速率
+            // 格式化，比原先「按窗口峰值归一化、无任何数字」可读。
+            .XAxis(huxerui::ChartAxis::Linear().Labels(false).Grid(false))
+            .YAxis(huxerui::ChartAxis::Linear()
+                       .IncludeZero()
+                       .TickCount(3)
+                       .Formatter([](double value) {
+                           return formatRate(static_cast<std::int64_t>(value));
+                       }))
+            .Legend(huxerui::ChartLegendOptions{.visible = false})
+            .Accessibility(huxerui::ChartAccessibilityOptions{
+                .summary = "上/下行实时速率曲线"})
+            .SeriesStyle("down",
+                         huxerui::AreaChartStyle{
+                             .fill = huxerui::Brush(fillDown),
+                             .stroke = huxerui::Brush(downColor),
+                             .stroke_style =
+                                 huxerui::StrokeStyle{.width = 2.0F}})
+            .SeriesStyle("up",
+                         huxerui::AreaChartStyle{
+                             .fill =
+                                 huxerui::Brush(huxerui::Color::Transparent()),
+                             .stroke = huxerui::Brush(upColor),
+                             .stroke_style =
+                                 huxerui::StrokeStyle{.width = 1.5F}})
             .With(huxerui::Grow(1.0F)),
     }.With(huxerui::Spacing(10.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
-           huxerui::Background(huxerui::LinearGradient{
-               .start = {0.0F, 0.0F},
-               .end = {0.0F, 1.0F},
-               .stops = {{0.0F, glowTop}, {1.0F, glowBottom}},
-           }));
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 // 出站模式：三枚等宽按钮（无标题文字）。选中指示块由 HomeSlidingSegments
@@ -976,9 +810,14 @@ private:
               HomeSlidingSegments{selected, indicator, 8.0F, 0.22});
 }
 
+// 当前订阅卡：普通首页卡片，和别的卡片一样是 raised 表面 + on_surface 文字。
+// 「哪个订阅在使用中」由订阅页承担（那边是 primary 实心底的选中卡），首页不再
+// 复刻一套选中态/进度条配色。
 [[huxerui::composable]] huxerui::View HomeProfileCard(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool hasProfile = s.profileId != 0;
+    const huxerui::Color fg = theme.colors.on_surface;
+    const huxerui::Color muted = theme.colors.on_surface_variant;
     const float progress =
         s.profileTotalBytes > 0
             ? std::clamp(static_cast<float>(s.profileUsedBytes) /
@@ -989,14 +828,13 @@ private:
     return huxerui::Column {
         HomeCardHeading("当前订阅"),
         huxerui::Text(s.profileName).Style(huxerui::TextStyle{
-            huxerui::Font::System(font_size::kBody), theme.colors.on_surface}),
+            huxerui::Font::System(font_size::kBody), fg}),
         s.profileUpdated.empty()
             ? huxerui::View{huxerui::Row{}}
             : huxerui::View{
                   huxerui::Text(s.profileUpdated)
                       .Style(huxerui::TextStyle{
-                          huxerui::Font::System(font_size::kCaption),
-                          theme.colors.on_surface_variant})},
+                          huxerui::Font::System(font_size::kCaption), muted})},
         huxerui::Spacer(),
         hasProfile ? huxerui::View{huxerui::ProgressBar(progress)
                                        .With(huxerui::Frame{.height = 3.0F})}
@@ -1332,36 +1170,28 @@ std::string HomeKernelStatusText(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
-    auto proxyEnabled =
-        huxerui::UseState(store::coreStore().systemProxyEnabled());
+    // 内核/接管状态的全局唯一来源（见 core_model.h）：本卡片不再自己轮询
+    // coreStore()，组合期读模型即可，模型变化时本卡片自动重组。
+    const auto coreModel = huxerui::UseService<CoreModel>();
+    const CoreView coreView = coreModel->view.Get();
+    // 动作期间显示乐观值，动作结束后回到模型的权威值。
+    const bool modelProxy = coreView.systemProxyIntent;
+    auto proxyEnabled = huxerui::UseState(modelProxy);
     auto pending = huxerui::UseState(false);
-
-    huxerui::Lifecycle(
-        [tasks, proxyEnabled, pending] {
-            tasks.Launch([proxyEnabled, pending]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{0.5},
-                                   [proxyEnabled, pending] {
-                    if (!pending.Get()) {
-                        proxyEnabled = store::coreStore().systemProxyEnabled();
-                    }
-                    return true;
-                });
-            });
-            return [] {};
-        },
-        0);
+    const bool shownProxy = pending.Get() ? proxyEnabled.Get() : modelProxy;
 
     return huxerui::Column {
         DesktopModeSwitchRow(
             app::images::system_proxy, "系统代理", "为桌面应用设置系统代理",
-            huxerui::Switch(proxyEnabled.Get())
-                .OnChanged([tasks, toast, proxyEnabled, pending](bool on) {
+            huxerui::Switch(shownProxy)
+                .OnChanged([tasks, toast, proxyEnabled, pending, modelProxy,
+                            coreModel](bool on) {
                     if (pending.Get()) return;
-                    const bool previous = proxyEnabled.Get();
+                    const bool previous = modelProxy;
                     proxyEnabled = on;
                     pending = true;
-                    tasks.Launch([toast, proxyEnabled, pending, previous,
-                                  on]() -> huxerui::Task<void> {
+                    tasks.Launch([toast, proxyEnabled, pending, previous, on,
+                                  coreModel]() -> huxerui::Task<void> {
                         DesktopModeApplyResult result;
                         try {
                             result = co_await RunOnTaskThread([on] {
@@ -1370,11 +1200,18 @@ std::string HomeKernelStatusText(const HomeState& s) {
                         } catch (const std::exception& exception) {
                             result.error = exception.what();
                         }
+                        // 成功：权威值写透模型（本卡片与设置页/托盘读同一份），
+                        // 失败：目标值校验后回落，不覆盖用户更新的意图。
                         pending = false;
                         if (result.status != DesktopModeApplyStatus::Applied) {
-                            proxyEnabled = previous;
+                            if (proxyEnabled.Get() == on) proxyEnabled = previous;
                             toast.Show(result.error.empty() ? "系统代理设置失败"
                                                             : result.error);
+                        } else {
+                            coreModel->Update([on](CoreView& view) {
+                                view.systemProxyIntent = on;
+                                view.systemProxyActive = on;
+                            });
                         }
                     });
                 })),
@@ -1390,34 +1227,26 @@ std::string HomeKernelStatusText(const HomeState& s) {
     auto toast = huxerui::UseToast();
     auto dialog = huxerui::UseDialog();
     auto clipboard = application.Clipboard();
-    auto tunEnabled = huxerui::UseState(store::coreStore().snapshot().tunEnabled);
+    auto tunEnabled = huxerui::UseState(false);
     auto pending = huxerui::UseState(false);
     const huxerui::Color text_color = theme.colors.on_surface;
     const huxerui::Color hint_color = theme.colors.on_surface_variant;
 
-    huxerui::Lifecycle(
-        [tasks, tunEnabled, pending] {
-            tasks.Launch([tunEnabled, pending]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{0.5},
-                                   [tunEnabled, pending] {
-                    if (!pending.Get()) {
-                        tunEnabled = store::coreStore().snapshot().tunEnabled;
-                    }
-                    return true;
-                });
-            });
-            return [] {};
-        },
-        0);
+    // 内核/接管状态的全局唯一来源（见 core_model.h）：TUN 意图来自模型。
+    const auto coreModel = huxerui::UseService<CoreModel>();
+    const CoreView coreView = coreModel->view.Get();
+    const bool modelTun = coreView.core.tunEnabled;
+    const bool shownTun = pending.Get() ? tunEnabled.Get() : modelTun;
 
     return huxerui::Column {
         DesktopModeSwitchRow(
             app::images::tun, "TUN 模式", "全局透明代理（需管理员权限）",
-            huxerui::Switch(tunEnabled.Get())
+            huxerui::Switch(shownTun)
                 .OnChanged([tasks, toast, dialog, clipboard, text_color,
-                            hint_color, tunEnabled, pending](bool on) {
+                            hint_color, tunEnabled, pending, modelTun,
+                            coreModel](bool on) {
                     if (pending.Get()) return;
-                    const bool previous = tunEnabled.Get();
+                    const bool previous = modelTun;
                     tunEnabled = on;
                     pending = true;
                     tasks.Launch([=]() -> huxerui::Task<void> {
@@ -1428,11 +1257,16 @@ std::string HomeKernelStatusText(const HomeState& s) {
                         } catch (const std::exception& exception) {
                             result.error = exception.what();
                         }
+                        // 成功：TUN 切换在内核运行时是重启流程（耗时较长），权威值
+                        // 立刻写透模型，不必等下一拍；失败目标值校验后回落。
                         pending = false;
                         if (result.status == DesktopModeApplyStatus::Applied) {
+                            coreModel->Update([on](CoreView& view) {
+                                view.core.tunEnabled = on;
+                            });
                             co_return;
                         }
-                        tunEnabled = previous;
+                        if (tunEnabled.Get() == on) tunEnabled = previous;
                         if (result.status == DesktopModeApplyStatus::ElevationRequested) {
                             toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
                             co_return;
@@ -1468,39 +1302,29 @@ std::string HomeKernelStatusText(const HomeState& s) {
     auto toast = huxerui::UseToast();
     auto busy = huxerui::UseState(false);
     auto pending = huxerui::UseState(false);
-    auto coreState =
-        huxerui::UseState(store::coreStore().snapshot().state);
-
-    huxerui::Lifecycle(
-        [tasks, coreState, pending] {
-            tasks.Launch([coreState, pending]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{0.5},
-                                   [coreState, pending] {
-                    if (!pending.Get()) {
-                        coreState = store::coreStore().snapshot().state;
-                    }
-                    return true;
-                });
-            });
-            return [] {};
-        },
-        0);
+    // 内核状态来自 CoreModel（见 core_model.h）：本按钮不再自己 0.5s 轮询。
+    const auto coreModel = huxerui::UseService<CoreModel>();
+    const CoreView coreView = coreModel->view.Get();
+    const core::CoreState modelState = coreView.core.state;
+    auto coreState = huxerui::UseState(modelState);
+    const core::CoreState shownState = pending.Get() ? coreState.Get() : modelState;
 
     huxerui::View base = page;
-    const bool running = coreState.Get() == core::CoreState::Running;
-    const bool starting = coreState.Get() == core::CoreState::Starting;
+    const bool running = shownState == core::CoreState::Running;
+    const bool starting = shownState == core::CoreState::Starting;
     const bool active = running;
     const bool enabled = !busy.Get() && !starting;
 
-    const auto toggle = [tasks, toast, busy, pending, coreState, running] {
+    const auto toggle = [tasks, toast, busy, pending, coreState, running,
+                         modelState, coreModel] {
         if (busy.Get() || pending.Get()) return;
-        const core::CoreState previous = coreState.Get();
+        const core::CoreState previous = modelState;
         if (previous == core::CoreState::Starting) return;
         coreState = running ? core::CoreState::Stopped : core::CoreState::Running;
         pending = true;
         busy = true;
-        tasks.Launch([toast, busy, pending, coreState, previous,
-                      running]() -> huxerui::Task<void> {
+        tasks.Launch([toast, busy, pending, coreState, previous, running,
+                      coreModel]() -> huxerui::Task<void> {
             std::string error;
             try {
                 const bool ok = co_await RunOnTaskThread([running] {
@@ -1520,12 +1344,22 @@ std::string HomeKernelStatusText(const HomeState& s) {
             } catch (const std::exception& exception) {
                 error = exception.what();
             }
+            // 成功：把权威值（内核状态）写透模型，界面不必等下一拍；失败做
+            // 目标值校验后回落（用户若已再点一次就不覆盖新意图）。
             pending = false;
             busy = false;
             if (!error.empty()) {
-                coreState = previous;
+                const core::CoreState target =
+                    running ? core::CoreState::Stopped : core::CoreState::Running;
+                if (coreState.Get() == target) coreState = previous;
                 toast.Show(error);
+                co_return;
             }
+            const core::CoreState landed = running ? core::CoreState::Stopped
+                                                   : core::CoreState::Running;
+            coreModel->Update([landed](CoreView& view) {
+                view.core.state = landed;
+            });
         });
     };
 
@@ -1583,272 +1417,52 @@ std::string HomeKernelStatusText(const HomeState& s) {
     return CLASHFLUX_HOME_PLATFORM_CARD(s, state, kind);
 }
 
-// ---- 编辑态部件 ------------------------------------------------------------
-
-// 编辑态拖动提示条（拖动方式随平台不同：长按 vs 直接拖动）。
-[[huxerui::composable]] huxerui::View HomeEditHint() {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    return huxerui::Row {
-        huxerui::Image(app::images::drag_indicator)
-            .Fit(huxerui::ImageFit::Contain)
-            .Tint(theme.colors.primary)
-            .With(huxerui::Frame{.width = 16.0F, .height = 16.0F}),
-        huxerui::Text(std::string{kHomeDragHint})
-            .Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kCaption),
-                theme.colors.on_surface_variant})
-            .With(huxerui::Grow(1.0F)),
-    }.With(huxerui::Spacing(6.0F),
-           huxerui::Padding(huxerui::EdgeInsets::Symmetric(4.0F, 2.0F)),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
-}
-
-// 尺寸步进器：宽/高各 1..4 格。紧凑排布（22pt 图标按钮）以便塞进最小的卡片。
-[[huxerui::composable]] huxerui::View HomeSizeStepper(
-    const std::string& label, int value,
-    std::function<void(int)> onChanged) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const auto step = [value, onChanged](int delta) {
-        onChanged(std::clamp(value + delta, 1, kHomeGridMaxSpan));
-    };
-    return huxerui::Row {
-        huxerui::Text(label).Style(huxerui::TextStyle{
-            huxerui::Font::System(font_size::kCaption),
-            theme.colors.on_surface_variant}),
-        huxerui::IconButton(app::images::remove, "减小" + label)
-            .With(huxerui::Tooltip("减小" + label),
-                  huxerui::Frame{.width = 20.0F, .height = 20.0F})
-            .OnClick([step] { step(-1); }),
-        huxerui::Text(std::to_string(value)).Style(huxerui::TextStyle{
-            huxerui::Font::System(font_size::kChip)
-                .WithWeight(huxerui::FontWeight::Bold),
-            theme.colors.on_surface}),
-        huxerui::IconButton(app::images::add, "增大" + label)
-            .With(huxerui::Tooltip("增大" + label),
-                  huxerui::Frame{.width = 20.0F, .height = 20.0F})
-            .OnClick([step] { step(1); }),
-    }.With(huxerui::Spacing(1.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
-}
-
-// 编辑态卡片浮条：拖动把手 + 卡片名 + 宽/高步进 + 移除。浮在卡片内容之上，
-// 不改变卡片在网格中占用的尺寸（编辑态与运行态所见即所得）。
-[[huxerui::composable]] huxerui::View HomeCardEditBar(
-    const std::string& title, HomeCardSize size,
-    std::function<void(int width, int height)> onResize,
-    std::function<void()> onRemove) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    huxerui::Color bar = theme.colors.surface_container_highest;
-    bar.alpha = 0.94F;
-    return huxerui::Row {
-        huxerui::Image(app::images::drag_indicator)
-            .Fit(huxerui::ImageFit::Contain)
-            .Tint(theme.colors.primary)
-            .With(huxerui::Frame{.width = 16.0F, .height = 16.0F}),
-        huxerui::Text(title)
-            .Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kCaption)
-                    .WithWeight(huxerui::FontWeight::Bold),
-                theme.colors.on_surface_variant})
-            .With(huxerui::Grow(1.0F)),
-        HomeSizeStepper("宽", size.width,
-                        [onResize, size](int width) {
-                            onResize(width, size.height);
-                        }),
-        HomeSizeStepper("高", size.height,
-                        [onResize, size](int height) {
-                            onResize(size.width, height);
-                        }),
-        huxerui::IconButton(app::images::close, "移除" + title)
-            .With(huxerui::Tooltip("移除卡片"),
-                  huxerui::Frame{.width = 26.0F, .height = 26.0F})
-            .OnClick(onRemove),
-    }.With(huxerui::Spacing(4.0F),
-           huxerui::Padding(huxerui::EdgeInsets::Symmetric(6.0F, 3.0F)),
-           huxerui::Background(bar),
-           huxerui::CornerRadius(10.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
-}
-
-// 编辑态「添加卡片」面板：只列出当前不在首页上的卡片。
-[[huxerui::composable]] huxerui::View HomeEditPalette(
-    const HomeLayout& layout, std::function<void(HomeCardKind)> onAdd) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    std::vector<huxerui::View> rows;
-    for (const HomeCardSpec& spec : kHomeCards) {
-        const bool present = std::any_of(
-            layout.begin(), layout.end(), [&spec](const HomeCardEntry& entry) {
-                return entry.kind == spec.kind;
-            });
-        if (present) continue;
-        const HomeCardKind kind = spec.kind;
-        rows.push_back(
-            huxerui::Row {
-                huxerui::Text(std::string{spec.title})
-                    .Style(huxerui::TextStyle{
-                        huxerui::Font::System(font_size::kBody),
-                        theme.colors.on_surface})
-                    .With(huxerui::Grow(1.0F)),
-                huxerui::IconButton(app::images::add,
-                                    "添加" + std::string{spec.title})
-                    .With(huxerui::Tooltip("添加到首页"))
-                    .OnClick([onAdd, kind] { onAdd(kind); }),
-            }.With(huxerui::Spacing(8.0F),
-                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
-                .Key("home-palette-" + std::string{spec.id}));
-    }
-
-    if (rows.empty()) {
-        return Card(huxerui::Row {
-            huxerui::Text("所有卡片都已在首页")
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kCaption),
-                    theme.colors.on_surface_variant})
-                .With(huxerui::Grow(1.0F)),
-        });
-    }
-
-    return Card(huxerui::Column {
-        HomeCardHeading("添加卡片"),
-        huxerui::Column(std::move(rows))
-            .With(huxerui::Spacing(2.0F),
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-    }.With(huxerui::Spacing(6.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
-}
-
 } // namespace
 
 [[huxerui::composable]] huxerui::View HomePage(
-    huxerui::State<std::size_t> navPage) {
+    huxerui::State<std::size_t> navPage, bool active) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
+    // 策略组快照 / 内核与接管状态的全局唯一来源（见 *_model.h）。
+    const auto proxiesModel = huxerui::UseService<ProxiesModel>();
+    const auto coreModel = huxerui::UseService<CoreModel>();
+    const auto profilesModel = huxerui::UseService<ProfilesModel>();
+    const auto settingsModel = huxerui::UseService<SettingsModel>();
     auto state = huxerui::UseState<HomeState>({});
     auto homeMode = huxerui::UseState<std::size_t>(
         HomeModeIndex(store::coreStore().snapshot().mode));
     auto modePending = huxerui::UseState(false);
-    // 卡片布局：初值在 UseState 之前读库（与 AppRoot 的主题偏好同一套写法，
-    // settings 读取是轻量 KV 查询）。编辑态改动只落在 layout，保存才写库。
-    auto layout = huxerui::UseState<HomeLayout>(LoadHomeLayout());
-    auto savedLayout = huxerui::UseState<HomeLayout>(HomeLayout{});
-    auto editing = huxerui::UseState(false);
-    auto dropTarget = huxerui::UseState<std::string>("");
-    // 正在被拖动的卡片 id：本体在这期间用 disable 透明度显示，与跟随指针的
-    // 整卡预览区分开。
-    auto draggingId = huxerui::UseState<std::string>("");
-    // 本帧各卡片的窗口几何：拖动时按指针位置自己算"最近卡片"（不依赖 DropTarget
-    // 命中判定，所以拖到卡片缝里、页面边缘也能落到最近的槽位）。
-    auto cardBounds = std::make_shared<std::vector<HomeCardBoundsEntry>>();
-    // 取消手势不会改布局，排序只在松手时提交。
-    // 卡片区域的本地共享过渡：改宽高 / 拖动排序 / 增删卡片时，先捕获已提交的
-    // 卡片几何，再匹配新布局做补间，卡片是"滑"到新格子而不是瞬移。
-    auto shared = huxerui::UseSharedTransition();
+    // 首页布局是**编译期常量**（见 AGENTS.md / CLAUDE.md 第 13 条）：顺序与尺寸只由
+    // kHomeCards 决定，没有编辑态、拖动排序、增删卡片与 home.layout.* 持久化，也就
+    // 没有"先画默认、persistence hydrate 之后再换一份库里的布局"的首帧跳变。
+    const HomeLayout order = DefaultHomeLayout();
 
-
+    // 桌面：流量/连接由推送驱动（见 SubscribeHomeStreams），不占用轮询。
     huxerui::Lifecycle(
-        [tasks, state, homeMode, modePending] {
-            tasks.Launch([state, homeMode, modePending]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{0.5},
-                                   [state, homeMode, modePending] {
-                    auto& core = store::coreStore();
-                    HomeState s = state.Get();
-                    updateRuntime(s, core);
-                    if (!modePending.Get()) {
-                        homeMode = HomeModeIndex(s.core.mode);
-                    }
-
-                    if (const auto p = store::profilesStore().selected()) {
-                        s.profileId = p->id;
-                        s.profileName = p->name;
-                        s.profileUsedBytes = p->usedBytes;
-                        s.profileTotalBytes = p->totalBytes;
-                        s.profileUpdated = p->updatedAt > 0
-                                               ? "更新于 " + formatTime(p->updatedAt)
-                                               : "未拉取";
-                        if (!p->error.empty()) s.profileUpdated = "拉取失败";
-                    } else {
-                        s.profileId = 0;
-                        s.profileName = "未启用订阅";
-                        s.profileUpdated = "";
-                        s.profileUsedBytes = 0;
-                        s.profileTotalBytes = 0;
-                        s.proxyGroups.clear();
-                    }
-
-                    state = s;
-                    return true;
-                });
-            });
-            tasks.Launch([state]() -> huxerui::Task<void> {
-                for (;;) {
-                    const std::string body =
-                        co_await RunOnTaskThread([] { return ProxyGroupsSnapshot(); });
-                    HomeState s = state.Get();
-                    s.proxyGroups = ParseProxyGroups(body);
-                    state = s;
-                    co_await huxerui::Delay(std::chrono::duration<double>{2.0});
-                }
-            });
-            return [] {};
+        [tasks, state] {
+            const std::uint64_t subscription = SubscribeHomeStreams(tasks, state);
+            return [subscription] { UnsubscribeStreamUpdates(subscription); };
         },
         0);
 
-    // 进入 / 取消编辑：编辑态内改动只落在会话 State，取消时整份回滚快照；
-    // 保存写库后同样更新快照，保证下一次取消回到已保存的布局。
-    const auto toggleEdit = [layout, savedLayout, editing, dropTarget] {
-        if (editing.Get()) {
-            layout = savedLayout.Get();
-            dropTarget = "";
-            editing = false;
-            return;
-        }
-        savedLayout = layout.Get();
-        editing = true;
-    };
-    const auto saveLayout = [tasks, toast, layout, savedLayout, editing,
-                             dropTarget] {
-        if (!editing.Get()) return;
-        tasks.Launch([layout, savedLayout, editing, dropTarget,
-                      toast]() -> huxerui::Task<void> {
-            const HomeLayout snapshot = layout.Get();
-            co_await RunOnTaskThread([snapshot] { SaveHomeLayout(snapshot); });
-            savedLayout = snapshot;
-            dropTarget = "";
-            editing = false;
-            toast.Show("首页布局已保存");
-        });
-    };
-    // 增删卡片会卸载被点击的节点（卡片/添加按钮随布局变化消失），状态写入让出
-    // 一拍再执行；写入本身经 shared.Run，其余卡片的位置变化会补间过去。
-    const auto removeCard = [tasks, layout, shared](HomeCardKind kind) {
-        tasks.Launch([layout, shared, kind]() -> huxerui::Task<void> {
-            co_await huxerui::Delay(std::chrono::duration<double>{0});
-            shared.Run(kHomeCardReflowTween, [layout, kind] {
-                layout = HomeLayoutWithoutCard(layout.Get(), kind);
-            });
-        });
-    };
-    const auto addCard = [tasks, layout, shared](HomeCardKind kind) {
-        tasks.Launch([layout, shared, kind]() -> huxerui::Task<void> {
-            co_await huxerui::Delay(std::chrono::duration<double>{0});
-            shared.Run(kHomeCardReflowTween, [layout, kind] {
-                layout = HomeLayoutWithCard(layout.Get(), kind);
-            });
-        });
-    };
-    // 改尺寸只改布局值：卡片节点被键保留，不涉及卸载，Run 内部同步写入。
-    const auto resizeCard = [layout, shared](HomeCardKind kind, int width, int height) {
-        shared.Run(kHomeCardReflowTween, [layout, kind, width, height] {
-            layout = HomeLayoutResized(layout.Get(), kind, width, height);
-        });
-    };
+    // 不可见时只保留本页 State/Lifecycle，不构建重子树：huxerui 的 Pager 会把
+    // 四个一级页同时挂载，隐藏页即使不重组，其已挂载子树仍随每一帧被重新测量。
+    // 真机实测（代理页大分组）：四页同挂时每帧 1443 次测量请求 / ~20ms，
+    // 只留当前页后降到 28 次 / ~0ms；因此不可见页必须返回空占位。
+    if (!active) return huxerui::View{huxerui::Row{}}.Key("home-idle");
 
-    const bool isEditing = editing.Get();
-    const std::string highlight = dropTarget.Get();
-    const HomeLayout order = layout.Get();
+    // 运行态镜像：桌面由模型 State 驱动（无定时器），Android 由固定节拍泵
+    // 采样 libbox 速率。平台实现由宏选择（见文件上方的 HomeRuntimePump）。
+    //
+    // 必须把返回的 View **挂载**进视图树：hcg 把 composable 体包成
+    // huxerui::Scope 工厂，只有挂载时工厂才会执行。当裸语句丢弃返回值时，
+    // 里面的 Lifecycle 永不注册、MirrorHomeState 一次都不跑，HomeState 保持
+    // 默认值（首页订阅/流量/总量全空）——Android 真机上实测过的回归。
+    huxerui::View runtimePump = CLASHFLUX_HOME_RUNTIME_PUMP(
+        state, homeMode, modePending, coreModel, profilesModel, proxiesModel);
 
     std::vector<huxerui::View> cards;
     cards.reserve(order.size());
@@ -1856,150 +1470,32 @@ std::string HomeKernelStatusText(const HomeState& s) {
         const HomeCardSpec* spec = FindHomeCard(entry.kind);
         if (spec == nullptr) continue;
         const std::string id{spec->id};
-        const std::string title{spec->title};
         const HomeCardSize size = entry.size;
         const HomeCardKind kind = entry.kind;
 
-        huxerui::View body =
-            HomeCardContent(kind, state, homeMode, modePending, tasks, toast);
-        // 拖动预览用的卡面：内容不压暗（悬浮的是"正常"整卡），交给框架的拖动预览层。
-        const huxerui::View previewFace = Card(body);
-        // 本卡的窗口几何（拖动时用来自己算"最近卡片"）。
-        auto metrics = std::make_shared<HomeNodeBounds>();
-        cardBounds->push_back(HomeCardBoundsEntry{id, metrics});
-        // 非编辑态直接用正常卡面。
-        huxerui::View slot = previewFace;
-        if (isEditing) {
-            // 编辑态：卡片内容停用交互，浮条叠在内容之上（不占额外高度，卡片格子
-            // 尺寸与运行态完全一致）。正在被拖动的那张只把内容压暗成 disable 观感、
-            // 卡面（表面色/描边）保持——看起来是"这张卡被禁用"而不是消失，与跟随
-            // 指针的整卡预览区分开。
-            if (draggingId.Get() == id) {
-                // 本体 disable 观感：内容压暗。悬浮的那份由框架预览层画（正常亮度），
-                // 两者观感上区分开。
-                body = std::move(body).With(huxerui::Opacity(0.38F));
-            }
-            slot = huxerui::Stack {
-                Card(std::move(body)).With(
-                    huxerui::Enabled(false),
-                    huxerui::Align(huxerui::HorizontalAlignment::Stretch,
-                                   huxerui::VerticalAlignment::Stretch)),
-                huxerui::Column {
-                    HomeCardEditBar(
-                        title, size,
-                        [resizeCard, kind](int width, int height) {
-                            resizeCard(kind, width, height);
-                        },
-                        [removeCard, kind] { removeCard(kind); }),
-                }.With(huxerui::Align(huxerui::HorizontalAlignment::Stretch,
-                                      huxerui::VerticalAlignment::Start),
-                       huxerui::Padding(huxerui::EdgeInsets::All(6.0F))),
-            };
-            if (highlight == id) {
-                slot = std::move(slot)
-                           .With(huxerui::Border(theme.colors.primary, 2.0F));
-            }
-            // 拖动源挂在卡片槽上：桌面鼠标直接拖，移动端长按后拖；落点不靠框架的
-            // DropTarget 命中，而是自己在 Changed 里按指针算最近卡片。
-            // 悬浮预览用框架的拖动预览层（框架维护的**单实例**浮层：层级最高、
-            // 松手/取消自动移除，抓取偏移由框架按按下点算），尺寸按本体的格子矩形
-            // 锁死——所见即所得，且不存在"自己画一份、又残留一份"的可能。
-            const auto previewFactory = [previewFace, metrics] {
-                const huxerui::Rect& box = metrics->window;
-                return huxerui::Stack {
-                    previewFace,
-                }.With(huxerui::Frame{.width = box.width, .height = box.height},
-                       huxerui::Align(huxerui::HorizontalAlignment::Stretch,
-                                      huxerui::VerticalAlignment::Stretch));
-            };
-            slot = std::move(slot)
-                       .With(HomeNodeBoundsMarker{metrics},
-                             huxerui::DragSource(
-                                 HomeCardDrag{id}, previewFactory,
-                                 kHomeLongPressDrag
-                                     ? huxerui::DragGesture{
-                                           .minimum_press_duration =
-                                               std::chrono::duration<double>{
-                                                   0.35}}
-                                     : huxerui::DragGesture{}))
-                       .On<huxerui::DragSourceEvents::Started>(
-                            [draggingId, id](const huxerui::DragEvent& event) {
-                               static_cast<void>(event);
-                               draggingId = id;
-                           })
-                       .On<huxerui::DragSourceEvents::Changed>(
-                           [draggingId, dropTarget, cardBounds](
-                               const huxerui::DragEvent& event) {
-                               const std::string nearest = NearestHomeCard(
-                                   *cardBounds, event.window_position,
-                                   draggingId.Get());
-                               dropTarget = nearest;
-                           })
-                       .On<huxerui::DragSourceEvents::Ended>(
-                           [dropTarget, draggingId, cardBounds, layout, shared,
-                            tasks](const huxerui::DragDropResult& result) {
-                               const std::string sourceId = draggingId.Get();
-                               // 本网格用最近卡片命中而不是 DropTarget，因此
-                               // DragDropResult::dropped 不参与排序判定。
-                               std::string targetId = NearestHomeCard(
-                                   *cardBounds, result.drag.window_position,
-                                   sourceId);
-                               if (targetId.empty()) targetId = dropTarget.Get();
-                               dropTarget = "";
-                               draggingId = "";
-                               const auto source = FindHomeCard(sourceId);
-                               const auto target = FindHomeCard(targetId);
-                               if (!source.has_value() || !target.has_value() ||
-                                   *source == *target) {
-                                   return;
-                               }
-                               tasks.Launch([layout, shared, source = *source,
-                                             target = *target]()
-                                                -> huxerui::Task<void> {
-                                   co_await huxerui::Delay(
-                                       std::chrono::duration<double>{0});
-                                   shared.Run(kHomeCardDropTween,
-                                              [layout, source, target] {
-                                       layout = HomeLayoutMoved(
-                                           layout.Get(), source, target);
-                                   });
-                               });
-                           })
-                       .On<huxerui::DragSourceEvents::Canceled>(
-                           [dropTarget, draggingId](const huxerui::DragEvent&) {
-                               dropTarget = "";
-                               draggingId = "";
-                           });
-        }
-        cards.push_back(std::move(slot)
+        // 首页所有卡片一视同仁：都是 raised 二级岛外壳。「当前订阅」不显示选中态
+        // （哪个订阅在使用中由订阅页的选中卡承担）。
+        huxerui::View body = HomeCardContent(kind, state, homeMode, modePending,
+                                             tasks, toast);
+        huxerui::View cardView = Card(std::move(body));
+        cards.push_back(std::move(cardView)
                             .LayoutValue<HomeCardSpan>(size)
-                            .With(huxerui::SharedBounds("home-card-" + id))
                             .Key("home-card-" + id));
     }
 
-    // scope 挂在不随卡片数量变化的常驻容器上：删到空时 grid 会被空态卡替换，
-    // 不能把 scope 留在 grid 自身上，否则那次替换会丢掉共享过渡的持有者。
     huxerui::View cardArea = cards.empty()
-        ? huxerui::View{Card(huxerui::Text(
-              isEditing ? "首页还没有卡片，从下面的列表里添加"
-                        : "首页还没有卡片，点右上角编辑按钮添加")
-              .Style(huxerui::TextStyle{
-                  huxerui::Font::System(font_size::kBody),
-                  theme.colors.on_surface_variant}))}
+        ? huxerui::View{Card(huxerui::Text("首页还没有卡片")
+                                 .Style(huxerui::TextStyle{
+                                     huxerui::Font::System(font_size::kBody),
+                                     theme.colors.on_surface_variant}))}
         : huxerui::View{HomeGrid(std::move(cards)).With(huxerui::Grow(1.0F))};
     huxerui::View grid = huxerui::Column {
         std::move(cardArea),
     }.With(huxerui::Grow(1.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
-           shared.Scope());
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
     huxerui::View pageBody = huxerui::Column {
-        isEditing ? huxerui::View{HomeEditHint()} : huxerui::View{huxerui::Row{}},
         std::move(grid),
-        isEditing ? HomeEditPalette(order, [addCard](HomeCardKind kind) {
-            addCard(kind);
-        })
-                  : huxerui::View{huxerui::Row{}},
         // 悬浮启动按钮压在滚动内容之上，尾部留出等高的空白，避免最后一张
         // 卡片被按钮遮住（紧凑视口本来就带底部悬浮导航的空白）。
         compact ? CompactFloatingNavigationFooter()
@@ -2008,29 +1504,19 @@ std::string HomeKernelStatusText(const HomeState& s) {
     }.With(huxerui::Spacing(12.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
-    // 编辑 / 保存图标按钮固定在标题行右缘，与标题同一行居中对齐（紧凑视口
-    // 也保持同一行，不折到标题下方）。
+    // 标题行右缘只剩内核状态图标：首页布局固定，不再有编辑/保存入口。
     huxerui::View headerActions = huxerui::Row {
+        // 运行态泵是空 View（无布局），挂在这里即可让它内部的 Lifecycle 注册。
+        std::move(runtimePump),
         HomeKernelStatusIcon(state),
-        huxerui::IconButton(isEditing ? app::images::close : app::images::edit,
-                            isEditing ? "取消编辑" : "编辑首页")
-            .With(huxerui::Tooltip(isEditing ? "取消编辑" : "编辑首页"))
-            .OnClick(toggleEdit),
-        huxerui::IconButton(app::images::save, "保存布局")
-            .With(huxerui::Tooltip("保存布局"), huxerui::Enabled(isEditing))
-            .OnClick(saveLayout),
     }.With(huxerui::Spacing(4.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 
     // 注意：首页不要在滚动内容里声明 Focusable(true)——运行时会自动把初始
     // 焦点所在的节点滚入视野，导致首页一打开就被滚到中途（且随后每次重组都可能
     // 来回滚）。可聚焦性交给内置控件自己的默认策略，分段选择器只保留语义。
-    // ScrollView 作为宽域拖放目标：HuxerUI 只会在拖动命中 DropTarget 时
-    // 驱动边缘自动滚动。目标挂在滚动视口本身，卡片间隙和页面边缘也能继续拖动；
-    // 卡片换位仍由上面的 Changed 回调按最近卡片决定。
-    huxerui::View scrollContent = huxerui::ScrollView(std::move(pageBody))
-                                     .With(huxerui::Grow(1.0F),
-                                           huxerui::DropTarget::Accepts<HomeCardDrag>());
+    huxerui::View scrollContent =
+        huxerui::ScrollView(std::move(pageBody)).With(huxerui::Grow(1.0F));
     huxerui::View page = PageScaffold(
         "首页", std::move(headerActions), std::move(scrollContent), true);
 

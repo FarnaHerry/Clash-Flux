@@ -23,6 +23,7 @@
 
 #include "ui.h"
 #include "app_resources.h"
+#include "proxies_model.h"
 #include "task_bridge.h"
 
 import clashflux.config;
@@ -34,9 +35,15 @@ import clashflux.service;
 import clashflux.store.core;
 import clashflux.store.profiles;
 import clashflux.store.vpn;
+import clashflux.stream;
 #if !defined(__ANDROID__)
 import clashflux.instance;
 #endif
+
+// CoreView 含 store::CoreSnapshot、ProfilesModel 含 db::Profile，必须在模块导入
+// 之后（同 profiles_cache.h）。
+#include "core_model.h"
+#include "profiles_model.h"
 
 namespace clashflux::ui {
 
@@ -169,34 +176,10 @@ void ApplyWindowsNativeMenuTheme(bool dark) noexcept {
 void ApplyWindowsNativeMenuTheme(bool) noexcept {}
 #endif
 
-struct TrayRuntimeSnapshot {
-    bool coreRunning = false;
-    bool systemProxyIntent = false;
-    bool tunIntent = false;
-    bool systemProxyActive = false;
-    bool tunActive = false;
-    bool trayEnabled = true;
-};
-
 struct TrayOperationResult {
     bool ok = false;
     std::string error;
 };
-
-TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
-    auto& core = store::coreStore();
-    core.checkAlive();
-    const store::CoreSnapshot snapshot = core.snapshot();
-    const bool running = snapshot.state == core::CoreState::Running;
-    return TrayRuntimeSnapshot{
-        .coreRunning = running,
-        .systemProxyIntent = core.systemProxyEnabled(),
-        .tunIntent = snapshot.tunEnabled,
-        .systemProxyActive = running && core.systemProxyActive(),
-        .tunActive = running && snapshot.tunEnabled,
-        .trayEnabled = core.setting("tray.enabled", "true") == "true",
-    };
-}
 
 } // namespace
 
@@ -204,6 +187,10 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
     const huxerui::ApplicationHandle& application,
     const huxerui::ThemeSpec& rootSpec) {
     const huxerui::WindowHandle window = huxerui::UseWindow();
+    // 策略组快照 / 内核与接管状态的全局唯一来源（见 *_model.h）：托盘菜单只读。
+    const auto proxiesModel = huxerui::UseService<ProxiesModel>();
+    const auto coreModel = huxerui::UseService<CoreModel>();
+    const auto profilesModel = huxerui::UseService<ProfilesModel>();
     const huxerui::SystemTrayHandle tray = application.SystemTray();
     const bool trayAvailable = tray.IsAvailable();
     auto tasks = huxerui::UseTaskScope();
@@ -218,7 +205,6 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
     auto trayCorePending = huxerui::UseState(false);
     auto traySysProxyPending = huxerui::UseState(false);
     auto trayTunPending = huxerui::UseState(false);
-    auto trayPollRevision = huxerui::UseState(std::uint64_t{0});
     auto trayProfiles = huxerui::UseState<std::vector<db::Profile>>({});
     auto trayProxyGroups = huxerui::UseState<std::vector<ProxyGroupSnapshot>>({});
     auto trayEnabled = huxerui::UseState(
@@ -237,12 +223,13 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
         },
         darkTheme);
 
-    // 第二次启动通过单实例通道只发一个唤醒事件；这里在 UI 线程轻量轮询，
-    // 不参与内核/REST 工作，确保隐藏到托盘后也能被再次打开。
+    // 第二次启动通过单实例通道只发一个唤醒事件；这里在 UI 线程轻量轮询
+    // （0.25s：唤醒延迟肉眼无差，但不参与内核/REST 工作），确保隐藏到托盘后
+    // 也能被再次打开。改成阻塞等待需要信号掩码/命名事件层面的改动，收益不足。
     huxerui::Lifecycle(
         [tasks, window] {
             tasks.Launch([window]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{0.1}, [window] {
+                co_await PollWhile(std::chrono::duration<double>{0.25}, [window] {
                     if (instance::consumeActivation()) {
                         window.Show();
                         window.Activate();
@@ -258,7 +245,7 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
     huxerui::Lifecycle(
         [tasks, trayCoreRunning, trayCoreMenuRunning, traySysProxy, trayTun,
          traySysProxyActive, trayTunActive, trayCorePending,
-         traySysProxyPending, trayTunPending, trayEnabled, trayPollRevision] {
+         traySysProxyPending, trayTunPending, trayEnabled, coreModel] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await RunOnTaskThread([] {
                     auto& core = store::coreStore();
@@ -284,57 +271,51 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                         }
                     }
                 });
-                for (;;) {
-                    const std::uint64_t revision = trayPollRevision.Get();
-                    const TrayRuntimeSnapshot snapshot = co_await RunOnTaskThread(
-                        [] { return ReadTrayRuntimeSnapshot(); });
-                    if (revision == trayPollRevision.Get()) {
-                        // applyTun 在内核运行时需要重启。保留本次乐观模式更新
-                        // 的运行态，等操作完成后再读回确认，避免状态图标闪回默认色。
-                        if (!trayTunPending.Get()) {
-                            trayCoreRunning = snapshot.coreRunning;
-                        }
-                        if (!trayCorePending.Get()) {
-                            trayCoreMenuRunning = snapshot.coreRunning;
-                        }
-                        if (!trayTunPending.Get() &&
-                            !traySysProxyPending.Get()) {
-                            traySysProxy = snapshot.systemProxyIntent;
-                            traySysProxyActive = snapshot.systemProxyActive;
-                        }
-                        if (!trayTunPending.Get()) {
-                            trayTun = snapshot.tunIntent;
-                            trayTunActive = snapshot.tunActive;
-                        }
-                        trayEnabled = snapshot.trayEnabled;
-                    }
-                    co_await huxerui::Delay(
-                        std::chrono::duration<double>{0.5});
-                }
+
             });
             return [] {};
         },
         0);
 
-    // 托盘菜单需要的是当前可选订阅和运行中的策略组快照。数据库/API 读取
-    // 全部放到任务线程，菜单本身只消费最近一次轻量快照。
+    // 托盘运行态镜像：以 CoreModel 的 State 作依赖——模型一变就重新镜像一次，
+    // 不再是 0.5s 定时器。动作进行中（pending）保留乐观值，避免图标闪回。
     huxerui::Lifecycle(
-        [tasks, trayProfiles, trayProxyGroups] {
-            tasks.Launch([trayProfiles, trayProxyGroups]() -> huxerui::Task<void> {
-                for (;;) {
-                    const auto profiles = co_await RunOnTaskThread(
-                        [] { return store::profilesStore().list(); });
-                    trayProfiles = profiles;
-                    const std::string body = co_await RunOnTaskThread([] {
-                        return ProxyGroupsSnapshot();
-                    });
-                    trayProxyGroups = ParseProxyGroups(body);
-                    co_await huxerui::Delay(std::chrono::duration<double>{1.0});
-                }
-            });
+        [trayCoreRunning, trayCoreMenuRunning, traySysProxy, traySysProxyActive,
+         trayTun, trayTunActive, trayEnabled, trayCorePending,
+         traySysProxyPending, trayTunPending, coreModel] {
+            const CoreView view = coreModel->view.Get();
+            const bool running = view.core.state == core::CoreState::Running;
+            if (!trayTunPending.Get()) trayCoreRunning = running;
+            if (!trayCorePending.Get()) trayCoreMenuRunning = running;
+            if (!trayTunPending.Get() && !traySysProxyPending.Get()) {
+                traySysProxy = view.systemProxyIntent;
+                traySysProxyActive = running && view.systemProxyActive;
+            }
+            if (!trayTunPending.Get()) {
+                trayTun = view.core.tunEnabled;
+                trayTunActive = running && view.core.tunEnabled;
+            }
+            trayEnabled = view.trayEnabled;
             return [] {};
         },
-        0);
+        coreModel->view);
+
+    // 托盘菜单需要的是当前可选订阅和运行中的策略组快照。数据库/API 读取
+    // 全部放到任务线程，菜单本身只消费最近一次轻量快照。
+    // 托盘菜单的运行态/列表镜像：都以模型 State 为依赖，模型一变就同步一次，
+    // 不再有 1s 轮询，也不再自己读存储层（第三份订阅拷贝就此消失）。
+    huxerui::Lifecycle(
+        [trayProfiles, profilesModel] {
+            trayProfiles = profilesModel->list.Get();
+            return [] {};
+        },
+        profilesModel->list);
+    huxerui::Lifecycle(
+        [trayProxyGroups, proxiesModel] {
+            trayProxyGroups = proxiesModel->snapshot.Get().groups;
+            return [] {};
+        },
+        proxiesModel->snapshot);
 
     // 系统 VPN 的断开可能要等待 pppd/RAS 收尾，先完成清理再关闭窗口。
     auto finishExit = [tasks, application, tray, window, exitRequested]() {
@@ -348,9 +329,18 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                 store::vpnStore().shutdown();
                 store::coreStore().stopCore();
             });
-            // 写后缓存模型：退出前把 settings/profiles 的脏数据落库。
-            co_await clashflux::persistence::persistence().flushSettings();
-            co_await clashflux::persistence::persistence().flushProfiles();
+            // 写后缓存模型：退出前把 settings/profiles 的脏数据落库。失败只能
+            // 记日志（退出路径没有界面），但绝不能再静默——那等于用户改动凭空消失。
+            auto& store = clashflux::persistence::persistence();
+            const bool settingsSaved = co_await store.flushSettings();
+            const bool profilesSaved = co_await store.flushProfiles();
+            if (!settingsSaved || !profilesSaved) {
+                stream::logApplication(
+                    "error",
+                    "退出前落库失败：" + (store.lastError().empty()
+                                             ? std::string{"未知原因"}
+                                             : store.lastError()));
+            }
             application.Quit();
         });
         // 退出保底看门狗：避免任何底层阻塞（网络断开超时、平台事件循环等）导致后台残留僵尸进程
@@ -372,8 +362,10 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
             [tray, window, application, tasks, trayCoreRunning,
              trayCoreMenuRunning, traySysProxy, trayTun, traySysProxyActive,
              trayTunActive, trayCorePending, traySysProxyPending,
-             trayTunPending, trayPollRevision, dialog, clipboard, toast,
-             trayProfiles, trayProxyGroups, trayEnabled, finishExit,
+             trayTunPending, dialog, clipboard, toast,
+             trayProfiles, trayProxyGroups, trayEnabled, proxiesModel,
+             coreModel, profilesModel,
+             finishExit,
              textColor = rootSpec.colors.on_surface,
              hintColor = rootSpec.colors.on_surface_variant] {
                 if (trayEnabled.Get()) {
@@ -393,10 +385,11 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                             huxerui::MenuItem(
                                 profile.name,
                                 [tasks, toast, trayProfiles, trayProxyGroups,
-                                 id = profile.id] {
+                                 proxiesModel, profilesModel, id = profile.id] {
                                     tasks.Launch(
                                         [tasks, toast, trayProfiles,
-                                         trayProxyGroups, id]()
+                                         trayProxyGroups, proxiesModel,
+                                         profilesModel, id]()
                                             -> huxerui::Task<void> {
                                             const std::string error =
                                                 co_await RunOnTaskThread([id] {
@@ -407,14 +400,13 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                                                                : profiles.lastError();
                                             });
                                             if (!error.empty()) toast.Show(error);
-                                            trayProfiles = co_await RunOnTaskThread(
-                                                [] { return store::profilesStore().list(); });
+                                            // 切换订阅会改选中态与策略组，两个模型都
+                                            // 立刻补一拍（镜像会跟着更新）。
+                                            profilesModel->RequestSync();
                                             if (error.empty()) {
-                                                const std::string groups =
-                                                    co_await RunOnTaskThread(
-                                                        [] { return ProxyGroupsSnapshot(); });
-                                                trayProxyGroups =
-                                                    ParseProxyGroups(groups);
+                                                // 切换订阅会换掉整组策略：请共享模型
+                                                // 立即补一拍，托盘与各页面同一份数据。
+                                                proxiesModel->RequestRefresh();
                                             }
                                         });
                                 })
@@ -459,13 +451,13 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                         huxerui::MenuItem(
                             trayCoreMenuRunning.Get() ? "停止内核" : "启动",
                             [tasks, toast, trayCoreMenuRunning, trayCorePending,
-                             trayPollRevision] {
+                             coreModel] {
                                 if (trayCorePending.Get()) return;
                                 const bool previous = trayCoreMenuRunning.Get();
                                 const bool next = !previous;
                                 trayCorePending = true;
                                 trayCoreMenuRunning = next;
-                                trayPollRevision = trayPollRevision.Get() + 1;
+                                coreModel->RequestRefresh();
                                 tasks.Launch([=]() -> huxerui::Task<void> {
                                     TrayOperationResult result;
                                     try {
@@ -495,7 +487,7 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                                         result.error = error.what();
                                     }
                                     trayCorePending = false;
-                                    trayPollRevision = trayPollRevision.Get() + 1;
+                                    coreModel->RequestRefresh();
                                     if (!result.ok) {
                                         trayCoreMenuRunning = previous;
                                         toast.Show(
@@ -511,8 +503,7 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                         huxerui::MenuItem(
                             "系统代理", [tasks, traySysProxy,
                                          traySysProxyActive, traySysProxyPending,
-                                         trayCoreRunning, trayPollRevision,
-                                         toast] {
+                                         trayCoreRunning, coreModel, toast] {
                                 if (traySysProxyPending.Get()) return;
                                 const bool previous = traySysProxy.Get();
                                 const bool previousActive =
@@ -523,7 +514,7 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                                 if (trayCoreRunning.Get()) {
                                     traySysProxyActive = next;
                                 }
-                                trayPollRevision = trayPollRevision.Get() + 1;
+                                coreModel->RequestRefresh();
                                 tasks.Launch([=]() -> huxerui::Task<void> {
                                     TrayOperationResult result;
                                     try {
@@ -539,8 +530,7 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                                         result.error = error.what();
                                     }
                                     traySysProxyPending = false;
-                                    trayPollRevision =
-                                        trayPollRevision.Get() + 1;
+                                    coreModel->RequestRefresh();
                                     if (!result.ok) {
                                         traySysProxy = previous;
                                         traySysProxyActive = previousActive;
@@ -556,7 +546,7 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                         huxerui::MenuItem(
                             "TUN 模式",
                             [tasks, trayTun, trayTunActive, trayTunPending,
-                             trayCoreRunning, trayPollRevision, window, dialog,
+                             trayCoreRunning, coreModel, window, dialog,
                              clipboard, toast, textColor, hintColor] {
                                 if (trayTunPending.Get()) return;
                                 const bool previous = trayTun.Get();
@@ -567,7 +557,7 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                                 if (trayCoreRunning.Get()) {
                                     trayTunActive = next;
                                 }
-                                trayPollRevision = trayPollRevision.Get() + 1;
+                                coreModel->RequestRefresh();
                                 tasks.Launch([=]() -> huxerui::Task<void> {
                                     DesktopModeApplyResult result;
                                     try {
@@ -578,8 +568,7 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
                                         result.error = error.what();
                                     }
                                     trayTunPending = false;
-                                    trayPollRevision =
-                                        trayPollRevision.Get() + 1;
+                                    coreModel->RequestRefresh();
                                     if (result.status !=
                                         DesktopModeApplyStatus::Applied) {
                                         trayTun = previous;
@@ -624,6 +613,7 @@ TrayRuntimeSnapshot ReadTrayRuntimeSnapshot() {
             trayCoreRunning, trayCoreMenuRunning, traySysProxy, trayTun,
             traySysProxyActive, trayTunActive, trayCorePending,
             traySysProxyPending, trayTunPending, trayEnabled);
+
     }
 
     // 关闭窗口行为：托盘可用时按设置询问/退出/最小化到托盘。

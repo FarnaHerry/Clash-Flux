@@ -69,12 +69,16 @@ model::Profile ToProfile(const db_schema::ProfileRow& row) {
 struct Persistence::Impl {
     std::optional<sqlite::Database> database;
     bool ready = false;
+    // 库打不开/迁移不了 → 降级运行；此后不再尝试落库，也不假装成功。
+    bool degraded = false;
     mutable std::mutex mutex;
     std::unordered_map<std::string, std::string> settings;
     std::unordered_set<std::string> dirty;
     std::vector<model::Profile> profiles;
     std::unordered_set<std::int64_t> dirtyProfiles;
     std::unordered_set<std::int64_t> deletedProfiles;
+    // 订阅修订号：三个变更入口各 +1，供 UI 侧做脏检查（见 profilesRevision）。
+    std::uint64_t profilesRevision = 0;
     std::string lastError;
 };
 
@@ -92,6 +96,7 @@ huxerui::Task<bool> Persistence::open(const std::filesystem::path& file) {
     if (!opened) {
         std::lock_guard lock(impl->mutex);
         impl->ready = false;
+        impl->degraded = true;
         impl->database.reset();
         impl->lastError = "打开数据库失败（无法迁移的旧结构）：" +
                           opened.Error().Message();
@@ -103,6 +108,7 @@ huxerui::Task<bool> Persistence::open(const std::filesystem::path& file) {
     if (!rows) {
         std::lock_guard lock(impl->mutex);
         impl->ready = false;
+        impl->degraded = true;
         impl->lastError = "读取设置失败：" + rows.Error().Message();
         co_return false;
     }
@@ -115,6 +121,7 @@ huxerui::Task<bool> Persistence::open(const std::filesystem::path& file) {
     if (!profileRows) {
         std::lock_guard lock(impl->mutex);
         impl->ready = false;
+        impl->degraded = true;
         impl->lastError = "读取订阅失败：" + profileRows.Error().Message();
         co_return false;
     }
@@ -151,7 +158,12 @@ huxerui::Task<bool> Persistence::open(const std::filesystem::path& file) {
         impl->dirtyProfiles.clear();
         impl->deletedProfiles.clear();
         impl->ready = true;
+        impl->degraded = false;
         impl->lastError.clear();
+        // hydrate 也算一次内容变化：修订号是「列表内容版本」，而不是「写入次数」。
+        // 否则首帧（hydrate 之前）读到空表的消费者，在 hydrate 之后如果没有任何
+        // 写操作就再也不会收到变化信号（订阅列表停在空表——已发生过的线上问题）。
+        ++impl->profilesRevision;
     }
     co_return true;
 }
@@ -175,6 +187,11 @@ huxerui::Task<void> Persistence::close() {
 bool Persistence::ready() const noexcept {
     std::lock_guard lock(impl_->mutex);
     return impl_->ready && impl_->database.has_value();
+}
+
+bool Persistence::degraded() const noexcept {
+    std::lock_guard lock(impl_->mutex);
+    return impl_->degraded;
 }
 
 std::string Persistence::setting(const std::string& key,
@@ -201,7 +218,14 @@ huxerui::Task<bool> Persistence::flushSettings() {
     std::vector<std::pair<std::string, std::string>> pending;
     {
         std::lock_guard lock(impl->mutex);
-        if (!impl->ready || !impl->database.has_value()) co_return true;
+        if (!impl->ready || !impl->database.has_value()) {
+            if (impl->degraded) {
+                impl->lastError =
+                    "持久化不可用（数据库未打开/迁移失败），本次改动只在内存中，重启会丢失";
+                co_return false;
+            }
+            co_return true;  // 尚未 open：没有需要落库的东西
+        }
         pending.reserve(impl->dirty.size());
         for (const std::string& key : impl->dirty) {
             const auto found = impl->settings.find(key);
@@ -252,6 +276,7 @@ std::int64_t Persistence::saveProfile(model::Profile profile) {
     }
     impl_->dirtyProfiles.insert(profile.id);
     impl_->deletedProfiles.erase(profile.id);
+    ++impl_->profilesRevision;
     return profile.id;
 }
 
@@ -262,6 +287,7 @@ bool Persistence::deleteProfile(std::int64_t id) {
     });
     impl_->dirtyProfiles.erase(id);
     impl_->deletedProfiles.insert(id);
+    ++impl_->profilesRevision;
     return true;
 }
 
@@ -272,6 +298,7 @@ bool Persistence::setSelectedProfile(std::int64_t id) {
         // 选中态可能从 1→0，统一标脏交给 flush upsert。
         impl_->dirtyProfiles.insert(profile.id);
     }
+    ++impl_->profilesRevision;
     return true;
 }
 
@@ -286,7 +313,14 @@ huxerui::Task<bool> Persistence::flushProfiles() {
     std::vector<std::int64_t> removals;
     {
         std::lock_guard lock(impl->mutex);
-        if (!impl->ready || !impl->database.has_value()) co_return true;
+        if (!impl->ready || !impl->database.has_value()) {
+            if (impl->degraded) {
+                impl->lastError =
+                    "持久化不可用（数据库未打开/迁移失败），本次改动只在内存中，重启会丢失";
+                co_return false;
+            }
+            co_return true;  // 尚未 open：没有需要落库的东西
+        }
         removals.assign(impl->deletedProfiles.begin(), impl->deletedProfiles.end());
         for (const std::int64_t id : impl->dirtyProfiles) {
             const auto found = std::ranges::find_if(
@@ -322,6 +356,11 @@ huxerui::Task<bool> Persistence::flushProfiles() {
         impl->deletedProfiles.erase(id);
     }
     co_return true;
+}
+
+std::uint64_t Persistence::profilesRevision() const noexcept {
+    std::lock_guard lock(impl_->mutex);
+    return impl_->profilesRevision;
 }
 
 std::string Persistence::lastError() const {

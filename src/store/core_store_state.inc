@@ -126,10 +126,37 @@
         api_ = std::make_unique<api::ClashApi>(cfg::controllerBaseUrl(), secret_);
     }
 
+    // 当前选中订阅的文件路径（无选中/无文件时为空）。
+    std::filesystem::path selectedProfileFile() {
+        for (const auto& profile : db_->listProfiles()) {
+            if (!profile.selected || profile.type == "pptp" ||
+                profile.type == "openvpn" || profile.file.empty()) {
+                continue;
+            }
+            return cfg::profilesDir() / profile.file;
+        }
+        return {};
+    }
+
+    // 缓存是否仍是"同一个订阅文件"的快照：文件被替换/重下后自动失效。
+    bool proxyGroupsCacheFresh() {
+        const std::filesystem::path file = selectedProfileFile();
+        if (file.empty()) return false;
+        std::error_code ec;
+        const auto stamp = std::filesystem::last_write_time(file, ec);
+        if (ec) return false;
+        const auto size = std::filesystem::file_size(file, ec);
+        if (ec) return false;
+        return stamp == compiledProxyGroupsStamp_ &&
+               size == compiledProxyGroupsSize_;
+    }
+
     std::string proxyGroupsSnapshot() {
         {
             std::lock_guard lock(mutex_);
-            if (!compiledProxyGroups_.empty()) return compiledProxyGroups_;
+            if (!compiledProxyGroups_.empty() && proxyGroupsCacheFresh()) {
+                return compiledProxyGroups_;
+            }
         }
 
         // Android's libbox CommandClient does not exist until the VPN service
@@ -140,7 +167,9 @@
         std::lock_guard operationLock(lifecycleMutex_);
         {
             std::lock_guard lock(mutex_);
-            if (!compiledProxyGroups_.empty()) return compiledProxyGroups_;
+            if (!compiledProxyGroups_.empty() && proxyGroupsCacheFresh()) {
+                return compiledProxyGroups_;
+            }
         }
         ensureOpen();
 
@@ -167,12 +196,66 @@
             auto config = nlohmann::json::parse(compiled.json, nullptr, false);
             if (!config.is_object()) return {};
             const std::string snapshot = proxyGroupsFromConfig(config);
+            // 记下这份快照对应的订阅文件指纹（mtime + 大小）：文件被重新下载或
+            // 替换后缓存自动失效，不会一直返回旧的空快照。
+            const std::filesystem::path file = selectedProfileFile();
+            std::error_code ec;
+            const auto stamp = std::filesystem::last_write_time(file, ec);
+            const auto size = ec ? 0 : std::filesystem::file_size(file, ec);
             std::lock_guard lock(mutex_);
             compiledProxyGroups_ = snapshot;
+            compiledProxyGroupsStamp_ = ec ? std::filesystem::file_time_type{}
+                                           : stamp;
+            compiledProxyGroupsSize_ = ec ? 0 : size;
+            // 预览编译同样产出保真度账本：让「配置保真度」报告在内核没跑时也
+            // 有内容（startCore 那条路径看到的是同一份订阅）。
+            snap_.fidelity = compiled.fidelity;
             return compiledProxyGroups_;
         } catch (...) {
             return {};
         }
+    }
+
+    // 只编译、不启动：返回订阅原文的保真度账本。不 spawn、不写盘、不联网
+    // （rule_set 只做缓存命中判断）。导入 / 刷新 / 启用订阅后用它告诉用户
+    // 「这份订阅有哪些条目吃不下」。
+    std::vector<singbox::FidelityNote> compileFidelity(const std::string& profileYaml) {
+        if (profileYaml.empty()) return {};
+        try {
+            const auto options = routingOptions(profileYaml, false);
+            const auto compiled = core::generateConfig(options);
+            if (compiled.json.empty() || !compiled.error.empty()) return {};
+            return compiled.fidelity;
+        } catch (...) {
+            return {};
+        }
+    }
+
+    // 指定订阅的完整保真度账本（只编译不启动，见 compileFidelity）。原生连接
+    // （PPTP/OpenVPN）没有可编译的 YAML，返回空。
+    std::vector<singbox::FidelityNote> fidelityForProfile(std::int64_t profileId) {
+        ensureOpen();
+        std::string profileYaml;
+        for (const auto& profile : db_->listProfiles()) {
+            if (profile.id != profileId) continue;
+            if (profile.type == "pptp" || profile.type == "openvpn" ||
+                profile.file.empty()) {
+                return {};
+            }
+            std::ifstream input(cfg::profilesDir() / profile.file,
+                                std::ios::binary);
+            if (input) {
+                profileYaml.assign(std::istreambuf_iterator<char>(input),
+                                   std::istreambuf_iterator<char>());
+            }
+            break;
+        }
+        return compileFidelity(profileYaml);
+    }
+
+    // 指定订阅的保真度一行摘要（"跳过 3 个节点 · 降级 1 个组"）；无降级返回空串。
+    std::string fidelitySummaryForProfile(std::int64_t profileId) {
+        return singbox::FidelitySummary(fidelityForProfile(profileId));
     }
 
     void invalidateProxyGroupsSnapshot() {

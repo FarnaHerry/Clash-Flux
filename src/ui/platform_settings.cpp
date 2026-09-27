@@ -25,6 +25,9 @@ import clashflux.stream;
 import clashflux.store.core;
 import clashflux.store.profiles;
 
+#include "core_model.h"
+#include "settings_model.h"
+
 namespace clashflux::ui {
 
 namespace {
@@ -419,55 +422,55 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 }
 
 [[huxerui::composable]] huxerui::View DesktopGeneralSettings() {
-    auto autostart_enabled = huxerui::UseState(
-        store::coreStore().setting("app.autostart", "false") == "true");
-    auto auto_run = huxerui::UseState(
-        store::coreStore().setting("app.auto_run", "false") == "true");
-    auto tray_enabled = huxerui::UseState(
-        store::coreStore().setting("tray.enabled", "true") == "true");
-    auto start_minimized = huxerui::UseState(
-        store::coreStore().setting("tray.start_minimized", "false") == "true");
-    std::size_t initial_close_behavior = 0;
-    const std::string saved_close_behavior =
-        store::coreStore().setting("tray.close_behavior", "0");
-    if (saved_close_behavior == "1") initial_close_behavior = 1;
-    if (saved_close_behavior == "2") initial_close_behavior = 2;
-    auto close_behavior = huxerui::UseState(initial_close_behavior);
+    // 设置项一律从 SettingsModel 读（见 settings_model.h）：组合期直接
+    // setting(...) 会读到 hydrate 之前的默认值，且之后无人再同步——「关闭窗口时」
+    // 曾经因此一直高亮"每次询问"。
+    //
+    // 写入走「写透」：setSetting 同步写内存缓存，紧接着把同一个值 Update 进模型，
+    // 于是 UI 真值与缓存真值同一时刻成立——KV 不会失败，既不需要 pending/乐观
+    // 回落，也不需要 RequestSync 去等下一个泵节拍（那个 tick 唤醒不了正在 Delay
+    // 的泵，会让开关看起来"点了不动"）。
+    const auto settingsModel = huxerui::UseService<SettingsModel>();
+    const SettingsView settings = settingsModel->view.Get();
 
     return huxerui::Column {
         SettingSwitchRow(
             "开机自启动", "登录系统后自动启动 Clash-Flux（桌面端）",
-            huxerui::Switch(autostart_enabled.Get())
-                .OnChanged([autostart_enabled](bool on) {
-                    autostart_enabled = on;
+            huxerui::Switch(settings.autoStart)
+                .OnChanged([settingsModel](bool on) {
                     store::coreStore().setSetting(
                         "app.autostart", on ? "true" : "false");
+                    settingsModel->Update(
+                        [on](SettingsView& view) { view.autoStart = on; });
                 })),
         // 内核启停与流量接管解耦后的「启动入口」之一：默认不随应用启动内核
         // （内核只是本地端口 + 控制接口），需要时用首页右下角悬浮按钮启动。
         SettingSwitchRow(
             "启动时自动运行内核", "打开应用就拉起 sing-box，并按已记录的系统代理/TUN 恢复接管",
-            huxerui::Switch(auto_run.Get())
-                .OnChanged([auto_run](bool on) {
-                    auto_run = on;
+            huxerui::Switch(settings.autoRun)
+                .OnChanged([settingsModel](bool on) {
                     store::coreStore().setSetting("app.auto_run",
-                                                   on ? "true" : "false");
+                                                  on ? "true" : "false");
+                    settingsModel->Update(
+                        [on](SettingsView& view) { view.autoRun = on; });
                 })),
         SettingSwitchRow(
             "启用托盘图标", "关闭后托盘不可用，关闭窗口即退出",
-            huxerui::Switch(tray_enabled.Get())
-                .OnChanged([tray_enabled](bool on) {
-                    tray_enabled = on;
+            huxerui::Switch(settings.trayEnabled)
+                .OnChanged([settingsModel](bool on) {
                     store::coreStore().setSetting("tray.enabled",
-                                                   on ? "true" : "false");
+                                                  on ? "true" : "false");
+                    settingsModel->Update(
+                        [on](SettingsView& view) { view.trayEnabled = on; });
                 })),
         SettingSwitchRow(
             "启动时隐藏到托盘", "下次启动不显示主窗口，经托盘唤出",
-            huxerui::Switch(start_minimized.Get())
-                .OnChanged([start_minimized](bool on) {
-                    start_minimized = on;
+            huxerui::Switch(settings.startMinimized)
+                .OnChanged([settingsModel](bool on) {
                     store::coreStore().setSetting(
                         "tray.start_minimized", on ? "true" : "false");
+                    settingsModel->Update(
+                        [on](SettingsView& view) { view.startMinimized = on; });
                 })),
         SettingRow(
             "关闭窗口时",
@@ -475,11 +478,13 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
             huxerui::SegmentedButton(
                 std::vector<huxerui::StringVariant>{"每次询问", "直接退出",
                                                     "最小化到托盘"},
-                close_behavior.Get())
-                .OnChanged([close_behavior](std::size_t index) {
-                    close_behavior = index;
+                static_cast<std::size_t>(settings.closeBehavior))
+                .OnChanged([settingsModel](std::size_t index) {
                     store::coreStore().setSetting("tray.close_behavior",
-                                                   std::to_string(index));
+                                                  std::to_string(index));
+                    settingsModel->Update([index](SettingsView& view) {
+                        view.closeBehavior = static_cast<int>(index);
+                    });
                 })),
     }.With(huxerui::Spacing(10.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -503,29 +508,40 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
     const std::string savedShell =
         store::coreStore().setting("ui.env_shell", detectedShell);
     auto envShell = huxerui::UseState(EnvironmentShellIndex(savedShell));
+    // 首帧组合早于 hydrate，上面拿到的可能是探测值；模型报 ready 后补一次库里
+    // 保存的 shell（见 settings_model.h）。
+    const auto settingsModel = huxerui::UseService<SettingsModel>();
+    auto envShellHydrated = huxerui::UseState(false);
+    huxerui::Lifecycle(
+        [envShell, envShellHydrated, settingsModel, detectedShell] {
+            const SettingsView settings = settingsModel->view.Get();
+            if (!envShellHydrated.Get() && settings.ready) {
+                envShellHydrated = true;
+                envShell = EnvironmentShellIndex(
+                    settings.envShell.empty() ? detectedShell
+                                              : settings.envShell);
+            }
+            return [] {};
+        },
+        settingsModel->view);
     const std::vector<std::string> envShellLabels =
         EnvironmentShellLabels();
     auto busy = huxerui::UseState(false);
 
+    // 内核/接管状态来自唯一来源 CoreModel（见 core_model.h）：以模型的 State 作
+    // 依赖镜像到本段的受控值——模型一变就同步一次，不再是 1s 定时器。
+    const auto coreModel = huxerui::UseService<CoreModel>();
     huxerui::Lifecycle(
-        [tasks, snap, service_installed, proxyEnabled, tunEnabled,
-         proxyPending, tunPending] {
-            tasks.Launch([=]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{1.0}, [=] {
-                    const store::CoreSnapshot current =
-                        store::coreStore().snapshot();
-                    snap = current;
-                    if (!proxyPending.Get()) {
-                        proxyEnabled = store::coreStore().systemProxyEnabled();
-                    }
-                    if (!tunPending.Get()) tunEnabled = current.tunEnabled;
-                    service_installed = service::installed();
-                    return true;
-                });
-            });
+        [snap, service_installed, proxyEnabled, tunEnabled, proxyPending,
+         tunPending, coreModel] {
+            const CoreView view = coreModel->view.Get();
+            snap = view.core;
+            service_installed = view.serviceInstalled;
+            if (!proxyPending.Get()) proxyEnabled = view.systemProxyIntent;
+            if (!tunPending.Get()) tunEnabled = view.core.tunEnabled;
             return [] {};
         },
-        0);
+        coreModel->view);
 
     const store::CoreSnapshot s = snap.Get();
     const bool running = s.state == core::CoreState::Running;
@@ -536,10 +552,13 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                           s.version.empty() ? "sing-box" : s.version,
                           s.lastError.empty() ? "" : " · " + s.lastError);
 
-    const auto core_action = [tasks, toast, busy](std::function<void()> job,
-                                                   std::string ok_message) {
+    const auto core_action = [tasks, toast, busy,
+                              coreModel](std::function<void()> job,
+                                         std::string ok_message) {
+        // finished 回调在 UI 线程执行：动作一完成就请模型重读，权威值不必等下一拍。
         LaunchSettingsAction(tasks, toast, busy, std::move(job),
-                             std::move(ok_message));
+                             std::move(ok_message),
+                             [coreModel](bool) { coreModel->RequestRefresh(); });
     };
 
     return huxerui::Column {
@@ -581,14 +600,17 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
         SettingSwitchRow(
             "系统代理",
             std::format("写入桌面系统代理（127.0.0.1:{}）", s.mixedPort),
-            huxerui::Switch(proxyEnabled.Get())
-                .OnChanged([tasks, toast, proxyEnabled, proxyPending](bool on) {
+            huxerui::Switch(proxyPending.Get()
+                                ? proxyEnabled.Get()
+                                : coreModel->view.Get().systemProxyIntent)
+                .OnChanged([tasks, toast, proxyEnabled, proxyPending,
+                            coreModel](bool on) {
                     if (proxyPending.Get()) return;
                     const bool previous = proxyEnabled.Get();
                     proxyEnabled = on;
                     proxyPending = true;
-                    tasks.Launch([toast, proxyEnabled, proxyPending, previous,
-                                  on]() -> huxerui::Task<void> {
+                    tasks.Launch([toast, proxyEnabled, proxyPending, previous, on,
+                                  coreModel]() -> huxerui::Task<void> {
                         DesktopModeApplyResult result;
                         try {
                             result = co_await RunOnTaskThread([on] {
@@ -599,10 +621,19 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         }
                         proxyPending = false;
                         if (result.status != DesktopModeApplyStatus::Applied) {
-                            proxyEnabled = previous;
+                            // 失败回落要做目标值校验：只有界面仍停在本任务的意图
+                            // 值时才回退；用户若已经点到别处，说明有更新的意图，
+                            // 不覆盖它（避免"失败回落把新状态打回去"）。
+                            if (proxyEnabled.Get() == on) proxyEnabled = previous;
                             toast.Show(result.error.empty() ? "系统代理设置失败"
                                                             : result.error);
                         } else {
+                            // 成功不回写本地 State（它已经等于 on）：把权威值写透
+                            // 进模型即可，首页卡/托盘下一帧跟随，也不会二次闪烁。
+                            coreModel->Update([on](CoreView& view) {
+                                view.systemProxyIntent = on;
+                                view.systemProxyActive = on;
+                            });
                             toast.Show(on ? "系统代理已开启" : "系统代理已关闭");
                         }
                     });
@@ -611,9 +642,12 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
             "TUN 模式",
             running ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
                     : "全局透明代理（下次启动生效）",
-            huxerui::Switch(tunEnabled.Get())
+            huxerui::Switch(tunPending.Get()
+                                ? tunEnabled.Get()
+                                : coreModel->view.Get().core.tunEnabled)
                 .OnChanged([s, tasks, toast, dialog, clipboard, tunEnabled,
-                           tunPending, textColor = theme.colors.on_surface,
+                           tunPending, coreModel,
+                           textColor = theme.colors.on_surface,
                            hintColor = theme.colors.on_surface_variant](bool on) {
                     if (tunPending.Get()) return;
                     const bool previous = tunEnabled.Get();
@@ -629,10 +663,15 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         }
                         tunPending = false;
                         if (result.status == DesktopModeApplyStatus::Applied) {
+                            // 成功：权威值写透模型，不再用 RequestRefresh 赌下一拍。
+                            coreModel->Update([on](CoreView& view) {
+                                view.core.tunEnabled = on;
+                            });
                             toast.Show(on ? "TUN 已开启" : "TUN 已关闭");
                             co_return;
                         }
-                        tunEnabled = previous;
+                        // 失败回落同样做目标值校验（见系统代理处的说明）。
+                        if (tunEnabled.Get() == on) tunEnabled = previous;
                         if (result.status == DesktopModeApplyStatus::ElevationRequested) {
                             toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
                             co_return;

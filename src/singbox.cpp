@@ -23,6 +23,56 @@ namespace {
 #include "singbox_compile.inc"
 } // namespace
 
+std::string FidelitySummary(const std::vector<FidelityNote>& notes) {
+    std::size_t nodeSkip = 0;
+    std::size_t nodeApprox = 0;
+    std::size_t groupSkip = 0;
+    std::size_t groupApprox = 0;
+    std::size_t ruleSkip = 0;
+    std::size_t ruleApprox = 0;
+    std::size_t dnsMiss = 0;
+    std::size_t fieldMiss = 0;
+    std::size_t fieldApprox = 0;
+    for (const FidelityNote& note : notes) {
+        if (note.level == Fidelity::Exact) continue;
+        const bool approx = note.level == Fidelity::Approx;
+        switch (note.scope) {
+        case FidelityScope::Node:
+            if (approx) ++nodeApprox; else ++nodeSkip;
+            break;
+        case FidelityScope::Group:
+            if (approx) ++groupApprox; else ++groupSkip;
+            break;
+        case FidelityScope::Rule:
+            if (approx) ++ruleApprox; else ++ruleSkip;
+            break;
+        case FidelityScope::Dns:
+            ++dnsMiss;
+            break;
+        case FidelityScope::Field:
+            if (approx) ++fieldApprox; else ++fieldMiss;
+            break;
+        }
+    }
+    // 先报「丢了什么」，再报「变成什么样」；固定顺序便于用户和测试比对。
+    std::vector<std::string> parts;
+    if (nodeSkip > 0) parts.push_back(std::format("跳过 {} 个节点", nodeSkip));
+    if (groupSkip > 0) parts.push_back(std::format("跳过 {} 个组", groupSkip));
+    if (ruleSkip > 0) parts.push_back(std::format("忽略 {} 条规则", ruleSkip));
+    if (dnsMiss > 0) parts.push_back(std::format("忽略 {} 项 DNS", dnsMiss));
+    if (fieldMiss > 0) parts.push_back(std::format("忽略 {} 个字段", fieldMiss));
+    if (nodeApprox > 0) parts.push_back(std::format("近似 {} 个节点", nodeApprox));
+    if (groupApprox > 0) parts.push_back(std::format("降级 {} 个组", groupApprox));
+    if (ruleApprox > 0) parts.push_back(std::format("近似 {} 条规则", ruleApprox));
+    if (fieldApprox > 0) parts.push_back(std::format("近似 {} 个字段", fieldApprox));
+    std::string summary;
+    for (const std::string& part : parts) {
+        if (!summary.empty()) summary += " · ";
+        summary += part;
+    }
+    return summary;
+}
+
 CompileResult compileConfig(const CompileOptions& options) {
     Context ctx{options};
     const std::string trimmed = trimCopy(options.profileYaml);
@@ -71,7 +121,9 @@ CompileResult compileConfig(const CompileOptions& options) {
     }
     if (finalOutbound.empty() || finalOutbound == "PASS") finalOutbound = "DIRECT";
     if (finalOutbound != "DIRECT" && !ctx.tagKnown(finalOutbound)) {
-        ctx.warn(std::format("MATCH 目标「{}」不存在，回落 DIRECT", finalOutbound));
+        ctx.note(FidelityScope::Rule, Fidelity::Approx, "MATCH",
+                 std::format("MATCH 目标「{}」不存在，回落 DIRECT", finalOutbound),
+                 "订阅里的兜底规则引用了一个不存在的节点/组；确认它没有被编译器跳过");
         finalOutbound = "DIRECT";
     }
     if (finalOutbound == "DIRECT") {

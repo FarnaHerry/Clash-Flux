@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Quick Settings tile badge: Clash-Flux paw mark.
+
+  Two files, one per shade theme:
+    * drawable/ic_qs_clash_flux.xml       - black paw, for a light shade
+    * drawable-night/ic_qs_clash_flux.xml - white paw, for a dark shade
+
+  Why the viewport is 1200x1565 (portrait) instead of square:
+  SystemUI does NOT fit tile icons uniformly. Measured on ColorOS 15
+  (Android 15, OnePlus PJE110) the 40dp square drawable was stretched
+  into a ~24.67 x 32.18dp box (fitXY, 1.304x vertical stretch), so the paw -
+  whose artwork is 1.304:1 wide - rendered as a 1.00:1 blob while the launcher
+  icon next to it rendered the same artwork at its true 1.31:1. Making the
+  drawable's own aspect equal the box's aspect turns that stretch into a
+  uniform scale: artwork 1200x920 letterboxed in a 1200x1565
+  viewport renders at the intended 1.304:1.
+
+  On a ROM that fits the icon uniformly (FIT_CENTER) this drawable stays
+  undistorted too, only marginally smaller than a square one; the trade-off is
+  that a ROM stretching a square box would stretch this one the other way.
+
+  Intrinsic width stays 40dp so the badge keeps the size the previous mascot
+  badge had; the artwork is flush horizontally with blank above and below.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="40dp"
+    android:height="52.17dp"
+    android:viewportWidth="1200"
+    android:viewportHeight="1565">
+    <group
+        android:translateY="1242.5"
+        android:scaleX="0.1"
+        android:scaleY="-0.1">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M4165 9184 c-560 -61 -1024 -281 -1416 -673 -74 -75 -163 -172 -196
+-217 -301 -399 -468 -840 -499 -1318 l-7 -108 -101 4 c-753 34 -1456 -438
+-1764 -1182 -110 -265 -160 -514 -169 -845 -6 -226 8 -401 48 -594 126 -614
+461 -1155 929 -1497 111 -81 176 -123 243 -155 26 -13 47 -29 47 -35 0 -7 -13
+-49 -30 -94 -55 -150 -75 -273 -75 -475 0 -148 4 -201 23 -295 25 -125 82
+-303 132 -415 125 -278 374 -586 639 -789 443 -339 1001 -524 1466 -485 209
+17 431 76 584 153 108 55 331 209 331 229 0 4 -3 6 -8 4 -4 -3 -115 -10 -248
+-17 -350 -16 -611 7 -894 78 -607 154 -1128 563 -1348 1057 -100 224 -132 447
+-97 680 33 224 128 418 284 584 28 30 50 55 49 57 -2 1 -57 16 -122 33 -591
+154 -1022 547 -1252 1144 -158 411 -174 959 -40 1362 163 485 509 811 968 912
+113 24 395 25 523 0 122 -23 286 -78 423 -143 61 -29 112 -49 112 -44 0 5 -11
+73 -25 152 -114 661 -2 1229 333 1678 74 99 257 282 358 358 170 128 382 228
+601 283 276 70 613 63 865 -16 264 -83 460 -205 674 -419 177 -177 316 -375
+439 -624 28 -56 53 -102 57 -102 4 0 20 28 37 63 16 34 62 118 101 186 324
+564 764 883 1314 951 120 15 365 8 486 -14 675 -124 1215 -662 1370 -1366 40
+-183 52 -292 52 -485 1 -199 -9 -318 -44 -523 -11 -68 -18 -125 -15 -128 2 -2
+50 18 105 46 117 58 296 120 427 146 122 25 417 25 523 1 252 -58 443 -164
+622 -346 229 -234 370 -530 416 -876 31 -237 15 -594 -37 -805 -154 -619 -561
+-1105 -1109 -1323 -76 -30 -116 -42 -292 -89 l-47 -13 61 -70 c120 -139 200
+-286 249 -457 27 -95 37 -338 20 -459 -69 -468 -452 -941 -984 -1212 -397
+-203 -815 -284 -1338 -257 -121 6 -233 13 -250 17 -16 3 -29 2 -29 -3 0 -19
+201 -157 310 -213 141 -72 222 -101 370 -135 641 -143 1405 115 1941 655 384
+387 602 932 558 1397 -13 143 -43 285 -79 379 -17 43 -30 81 -30 85 0 4 23 19
+52 34 152 77 303 190 465 347 209 203 344 387 477 650 345 679 379 1499 88
+2142 -262 582 -758 985 -1362 1107 -96 19 -146 23 -301 23 l-186 0 -11 150
+c-53 672 -365 1259 -897 1690 -145 117 -393 261 -579 335 -440 174 -997 197
+-1451 58 -345 -105 -654 -294 -907 -556 l-97 -100 -98 100 c-317 324 -702 529
+-1152 614 -111 21 -173 26 -341 29 -113 2 -223 1 -245 -1z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M4215 7576 c-342 -68 -593 -345 -705 -780 -69 -270 -67 -594 6 -891
+85 -346 280 -669 507 -838 201 -149 367 -209 577 -209 138 0 231 22 355 83
+277 136 470 407 547 765 20 94 23 137 23 314 0 175 -3 222 -23 320 -43 209
+-129 437 -228 603 -105 174 -298 386 -434 475 -206 135 -440 194 -625 158z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M7575 7583 c-201 -28 -410 -138 -583 -307 -202 -197 -345 -432 -440
+-726 -109 -337 -115 -695 -15 -990 97 -288 255 -487 483 -608 98 -52 153 -70
+274 -88 385 -58 788 183 1026 613 232 417 285 979 135 1430 -97 292 -272 508
+-498 614 -109 50 -272 77 -382 62z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M2145 5561 c-383 -63 -644 -356 -685 -770 -50 -498 256 -1104 709
+-1406 117 -78 214 -124 341 -161 87 -26 109 -29 255 -29 140 0 169 3 235 23
+141 44 225 96 335 207 109 109 150 170 202 302 88 220 94 480 18 743 -173 601
+-717 1072 -1265 1095 -52 2 -117 0 -145 -4z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M9645 5564 c-135 -19 -299 -70 -414 -129 -193 -97 -426 -303 -555
+-489 -131 -187 -236 -436 -267 -631 -18 -111 -15 -331 5 -428 71 -333 282
+-573 586 -669 66 -20 94 -23 235 -22 143 1 169 3 250 28 620 186 1104 902
+1054 1561 -34 447 -350 763 -779 780 -47 2 -98 1 -115 -1z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M5870 4769 c-368 -36 -714 -227 -945 -524 -74 -95 -129 -182 -191
+-308 -99 -198 -197 -323 -335 -427 -79 -59 -106 -76 -334 -205 -187 -106 -322
+-202 -421 -300 -355 -350 -456 -912 -244 -1347 178 -365 648 -572 1140 -503
+200 29 371 81 759 232 162 62 333 121 405 137 184 42 367 45 552 7 126 -26
+223 -59 559 -191 146 -57 308 -111 440 -145 469 -120 840 -42 1132 238 181
+174 289 395 311 638 30 325 -83 657 -303 888 -132 139 -250 224 -540 391 -99
+56 -209 124 -245 151 -139 101 -239 230 -350 449 -88 172 -166 285 -279 402
+-117 123 -221 201 -360 272 -230 117 -500 169 -751 145z" />
+    </group>
+</vector>

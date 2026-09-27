@@ -97,6 +97,9 @@ rules:
   - DOMAIN,blocked.net,REJECT
   - RULE-SET,some-provider,手动选择
   - PROCESS-NAME,ssh,手动选择
+  - PROCESS-PATH,/usr/bin/curl,DIRECT
+  - PROCESS-PATH-REGEX,^/opt/.+,DIRECT
+  - PROCESS-NAME-REGEX,^chr,DIRECT
   - MATCH,自动选择
 )yaml";
 
@@ -179,6 +182,34 @@ int main(int argc, char** argv) {
     check(std::any_of(result.warnings.begin(), result.warnings.end(),
                       [](const std::string& w) { return w.find("ssr") != std::string::npos; }),
           "未知协议 ssr 产生警告");
+    // 同一批降级既进 warnings（自由文本）也进 fidelity（结构化账本）：UI 按
+    // fidelity 渲染，不再解析文本（见 docs/singbox-layers-and-fidelity.md §2）。
+    check(std::any_of(result.fidelity.begin(), result.fidelity.end(),
+                      [](const singbox::FidelityNote& n) {
+                          return n.level == singbox::Fidelity::Unsupported &&
+                                 n.subject == "过期节点" && !n.action.empty();
+                      }),
+          "未知协议进账本（Unsupported + subject + 建议动作）");
+    check(std::any_of(result.fidelity.begin(), result.fidelity.end(),
+                      [](const singbox::FidelityNote& n) {
+                          return n.scope == singbox::FidelityScope::Group &&
+                                 n.level == singbox::Fidelity::Approx &&
+                                 n.subject == "自动选择" &&
+                                 n.detail.find("REJECT") != std::string::npos;
+                      }),
+          "REJECT 成员移除进账本（组级 Approx，subject = 组名）");
+    check(std::all_of(result.fidelity.begin(), result.fidelity.end(),
+                      [&result](const singbox::FidelityNote& n) {
+                          return std::find(result.warnings.begin(),
+                                           result.warnings.end(),
+                                           n.detail) != result.warnings.end();
+                      }),
+          "每条 fidelity 都能在 warnings 里找到自由文本投影");
+    const std::string mainSummary = singbox::FidelitySummary(result.fidelity);
+    check(mainSummary.find("跳过 1 个节点") != std::string::npos,
+          "摘要统计被跳过的节点数");
+    check(mainSummary.find("降级 1 个组") != std::string::npos,
+          "摘要统计被降级的组数（REJECT 成员移除）");
 
     // 组映射：url-test → urltest，REJECT 成员被过滤。
     const json autoGroup = findOutbound("自动选择");
@@ -189,10 +220,16 @@ int main(int argc, char** argv) {
           "REJECT 成员被移除");
     check(std::find(members.begin(), members.end(), "香港 01") != members.end(),
           "节点成员保留");
+    // select 组本身不该有降级条目。这里断言结构化账本而不是 warnings 文本：
+    // 「手动选择」会作为别的降级条目的目标名出现在 detail 里（如
+    // `PROCESS-NAME,ssh,手动选择`），子串匹配会误判。
     check(std::none_of(
-              result.warnings.begin(), result.warnings.end(),
-              [](const std::string& w) { return w.find("手动选择") != std::string::npos; }),
-          "select 组无降级警告");
+              result.fidelity.begin(), result.fidelity.end(),
+              [](const singbox::FidelityNote& n) {
+                  return n.scope == singbox::FidelityScope::Group &&
+                         n.subject == "手动选择";
+              }),
+          "select 组无降级条目");
 
     // 路由：final = MATCH 目标；clash_mode 前置；resolve 使 GEOIP 可匹配域名；
     // REJECT → action；GEOIP/GEOSITE → rule_set。
@@ -273,11 +310,34 @@ int main(int argc, char** argv) {
                           return w.find("RULE-SET") != std::string::npos;
                       }),
           "RULE-SET 产生警告");
+
+    // 进程匹配：桌面上一等映射到 sing-box 的 process_name / process_path /
+    // process_path_regex（Android 侧 process_* 不可用，编译器按平台分支记不支持，
+    // 本测试是桌面目标，走不到那条分支）。
+    const auto findRule = [&config](std::string_view field,
+                                    const json& expected) -> bool {
+        for (const auto& rule : config["route"]["rules"]) {
+            if (rule.contains(field) && rule[field] == expected) return true;
+        }
+        return false;
+    };
+    check(findRule("process_name", json{"ssh"}),
+          "PROCESS-NAME → process_name");
+    check(findRule("process_path", json{"/usr/bin/curl"}),
+          "PROCESS-PATH → process_path");
+    check(findRule("process_path_regex", json{"^/opt/.+"}),
+          "PROCESS-PATH-REGEX → process_path_regex");
     check(std::any_of(result.warnings.begin(), result.warnings.end(),
                       [](const std::string& w) {
-                          return w.find("PROCESS-NAME") != std::string::npos;
+                          return w.find("PROCESS-NAME-REGEX") != std::string::npos;
                       }),
-          "不支持的规则类型产生警告");
+          "PROCESS-NAME-REGEX 无对应字段，进账本");
+    check(std::none_of(result.fidelity.begin(), result.fidelity.end(),
+                       [](const singbox::FidelityNote& n) {
+                           return n.scope == singbox::FidelityScope::Rule &&
+                                  n.subject == "PROCESS-NAME";
+                       }),
+          "PROCESS-NAME 已映射，不再出现在账本里");
 
     // ---- TUN 注入（Android 形态：ipv6 关闭 + 宽松路由）-----------------------
     singbox::CompileOptions androidOptions = options;
@@ -623,6 +683,138 @@ rules:
                 check(output.good(), "真实订阅 sing-box JSON 可写");
             }
         }
+    }
+
+    // ---- 代理页快照（BuildProxySnapshot）-----------------------------------
+    // 组条目 + 每个节点的 type/udp；savedSelection 同时落到快照 now 与 config
+    // 的 selector default（写盘配置必须和 UI 一致）。
+    {
+        nlohmann::json config = {
+            {"outbounds",
+             nlohmann::json::array(
+                 {{{"type", "selector"},
+                   {"tag", "节点选择"},
+                   {"outbounds", nlohmann::json::array({"vmess-01", "http-01"})},
+                   {"default", "vmess-01"}},
+                  {{"type", "vmess"}, {"tag", "vmess-01"}},
+                  {{"type", "http"}, {"tag", "http-01"}},
+                  {{"type", "direct"}, {"tag", "DIRECT"}}})}};
+        const std::string snapshot = singbox::BuildProxySnapshot(
+            config, [](const std::string& group) {
+                return group == "节点选择" ? std::string{"http-01"}
+                                          : std::string{};
+            });
+        const auto proxies = nlohmann::json::parse(snapshot, nullptr, false);
+        check(proxies.is_object() && proxies.contains("proxies"),
+              "代理快照顶层含 proxies");
+        const auto& table = proxies["proxies"];
+        check(table.contains("节点选择") &&
+                  table["节点选择"].value("all", nlohmann::json::array())
+                          .size() == 2 &&
+                  table["节点选择"].value("selectable", false) &&
+                  table["节点选择"].value("now", "") == "http-01",
+              "组条目保留 all 成员并按保存值更新 now");
+        check(table.contains("vmess-01") &&
+                  table["vmess-01"].value("type", "") == "vmess",
+              "节点条目带真实协议类型");
+        check(!table["vmess-01"].contains("udp") &&
+                  !table["DIRECT"].value("type", "").empty(),
+              "预览快照不臆测 udp（只有内核真给了才显示）");
+        check(config["outbounds"][0].value("default", "") == "http-01",
+              "保存的选中项落到 config 的 selector default");
+        // 形态不对的 config 不能抛异常。
+        nlohmann::json broken = nlohmann::json::array();
+        const auto empty = nlohmann::json::parse(
+            singbox::BuildProxySnapshot(broken), nullptr, false);
+        check(empty.is_object() && empty["proxies"].empty(),
+              "非对象 config 返回空 proxies 快照");
+    }
+
+    // ---- 保真度账本：fallback / load-balance → urltest（Approx）-------------
+    {
+        singbox::CompileOptions fidelityOptions;
+        fidelityOptions.profileYaml = R"yaml(
+proxies:
+  - name: "A"
+    type: ss
+    server: a.example.com
+    port: 443
+    cipher: aes-256-gcm
+    password: "x"
+proxy-groups:
+  - name: "故障转移"
+    type: fallback
+    proxies: [A]
+  - name: "负载均衡"
+    type: load-balance
+    proxies: [A]
+rules:
+  - MATCH,故障转移
+)yaml";
+        const auto groupResult = singbox::compileConfig(fidelityOptions);
+        const auto notedAs = [&groupResult](singbox::Fidelity level,
+                                           std::string_view subject) {
+            return std::any_of(
+                groupResult.fidelity.begin(), groupResult.fidelity.end(),
+                [&](const singbox::FidelityNote& n) {
+                    return n.level == level && n.subject == subject;
+                });
+        };
+        check(notedAs(singbox::Fidelity::Approx, "故障转移"),
+              "fallback 进账本 Approx（subject = 组名）");
+        check(notedAs(singbox::Fidelity::Approx, "负载均衡"),
+              "load-balance 进账本 Approx（subject = 组名）");
+        check(singbox::FidelitySummary(groupResult.fidelity) == "降级 2 个组",
+              "摘要按 scope + 级别汇总（降级 N 个组）");
+        check(singbox::FidelitySummary({}).empty(), "空账本摘要为空串");
+        check(std::all_of(groupResult.fidelity.begin(), groupResult.fidelity.end(),
+                          [&groupResult](const singbox::FidelityNote& n) {
+                              return std::find(groupResult.warnings.begin(),
+                                               groupResult.warnings.end(),
+                                               n.detail) !=
+                                     groupResult.warnings.end();
+                          }),
+              "降级组的 fidelity 都有对应的 warnings 投影");
+    }
+
+    // ---- 账本也覆盖「条目消失」类降级（输入非法 / 平台限制）------------------
+    {
+        singbox::CompileOptions degradeOptions;
+        degradeOptions.profileYaml = R"yaml(
+proxies:
+  - name: "重复"
+    type: ss
+    server: a.example.com
+    port: 443
+    cipher: aes-256-gcm
+    password: "x"
+  - name: "重复"
+    type: ss
+    server: b.example.com
+    port: 443
+    cipher: aes-256-gcm
+    password: "y"
+rules:
+  - GEOIP,TELEGRAM,DIRECT
+  - MATCH,DIRECT
+)yaml";
+        const auto degradeResult = singbox::compileConfig(degradeOptions);
+        const auto noted = [&degradeResult](singbox::FidelityScope scope,
+                                            std::string_view subject) {
+            return std::any_of(
+                degradeResult.fidelity.begin(), degradeResult.fidelity.end(),
+                [&](const singbox::FidelityNote& n) {
+                    return n.scope == scope && n.subject == subject;
+                });
+        };
+        check(noted(singbox::FidelityScope::Node, "重复"),
+              "重名节点进账本（Node / 未支持）");
+        check(noted(singbox::FidelityScope::Rule, "GEOIP,telegram"),
+              "非法 GEOIP 代码进账本（Rule / 未支持）");
+        const std::string summary = singbox::FidelitySummary(degradeResult.fidelity);
+        check(summary.find("跳过 1 个节点") != std::string::npos &&
+                  summary.find("忽略 1 条规则") != std::string::npos,
+              "输入非法导致的条目消失同样计入摘要");
     }
 
     if (failures != 0) {

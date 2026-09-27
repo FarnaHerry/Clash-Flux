@@ -108,7 +108,9 @@ bool appendTransport(Context& ctx, const YAML::Node& item, nlohmann::json& out,
         out["transport"] = std::move(transport);
         return true;
     }
-    ctx.warn(std::format("节点「{}」的传输层 network:{} 暂不支持，已跳过", name, network));
+    ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+             std::format("节点「{}」的传输层 network:{} 暂不支持，已跳过", name, network),
+             "把该节点的 network 换成 sing-box 支持的传输层（tcp/ws/grpc/http）");
     return false;
 }
 
@@ -118,17 +120,23 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
     const std::string name = ytext(item, "name");
     const std::string type = lowerCopy(ytext(item, "type"));
     if (name.empty() || type.empty()) {
-        ctx.warn("订阅包含无名称或类型的节点，已跳过");
+        ctx.note(FidelityScope::Node, Fidelity::Unsupported, "(未命名节点)",
+                 "订阅包含无名称或类型的节点，已跳过",
+                 "订阅里有一个没有 name/type 的条目，它不会出现在节点列表里");
         return std::nullopt;
     }
     if (ctx.tagKnown(name)) {
-        ctx.warn(std::format("订阅包含重名节点「{}」，仅保留首个", name));
+        ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+                 std::format("订阅包含重名节点「{}」，仅保留首个", name),
+                 "同名节点只保留第一个；改名后两份才会都生效");
         return std::nullopt;
     }
     const std::string server = ytext(item, "server");
     const auto port = yint(item, "port");
     if (server.empty() || !port || *port <= 0 || *port > 65535) {
-        ctx.warn(std::format("节点「{}」缺少有效的 server/port，已跳过", name));
+        ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+                 std::format("节点「{}」缺少有效的 server/port，已跳过", name),
+                 "补上 server/port 之后该节点才会生效");
         return std::nullopt;
     }
 
@@ -146,7 +154,9 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
             out["password"] = password;
         }
         if (!ytext(item, "plugin").empty()) {
-            ctx.warn(std::format("节点「{}」使用 SS 插件（obfs/v2ray-plugin），暂不支持，已跳过", name));
+            ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+                     std::format("节点「{}」使用 SS 插件（obfs/v2ray-plugin），暂不支持，已跳过", name),
+                     "该节点已从所有组中移除；需要插件时请改用 sing-box 支持的协议");
             return std::nullopt;
         }
         if (ybool(item, "udp-over-tcp")) out["udp_over_tcp"] = true;
@@ -200,7 +210,9 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
             out["obfs"] = {{"type", "salamander"}, {"password", obfsPassword}};
         } else if (const std::string obfs = ytext(item, "obfs");
                    !obfs.empty() && lowerCopy(obfs) != "none") {
-            ctx.warn(std::format("节点「{}」的 obfs 配置缺少 obfs-password，已忽略", name));
+            ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                     std::format("节点「{}」的 obfs 配置缺少 obfs-password，已忽略", name),
+                     "该节点会以不带 obfs 的方式连接；补上 obfs-password 才会带伪装");
         }
         if (const std::string ports = ytext(item, "ports"); !ports.empty()) {
             // Clash "20000-30000,40000" → sing-box server_ports ["20000:30000","40000"]。
@@ -253,7 +265,9 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
         }
         appendTls(ctx, item, out);
     } else {
-        ctx.warn(std::format("节点「{}」的协议 {} 暂不支持，已跳过", name, type));
+        ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+                 std::format("节点「{}」的协议 {} 暂不支持，已跳过", name, type),
+                 "该节点已从所有组中移除；可在订阅里删除它，或等编译器补上该协议");
         return std::nullopt;
     }
     return out;
@@ -271,8 +285,11 @@ std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
     } else if (clashType == "url-test" || clashType == "fallback" ||
                clashType == "load-balance") {
         if (clashType != "url-test") {
-            ctx.warn(std::format("代理组「{}」类型 {} 在 sing-box 无对应语义，降级为 urltest",
-                                 name, clashType));
+            ctx.note(FidelityScope::Group, Fidelity::Approx, name,
+                     std::format("代理组「{}」类型 {} 在 sing-box 无对应语义，降级为 urltest",
+                                 name, clashType),
+                     "sing-box 没有 fallback / load-balance：该组现在是「最低延迟」，"
+                     "不再是顺序兜底 / 轮询分发");
         }
         if (ctx.opt.speedTestOnly) {
             // A speed-only libbox instance performs explicit outbound tests
@@ -292,7 +309,9 @@ std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
             }
         }
     } else {
-        ctx.warn(std::format("代理组「{}」类型 {} 暂不支持，已跳过", name, clashType));
+        ctx.note(FidelityScope::Group, Fidelity::Unsupported, name,
+                 std::format("代理组「{}」类型 {} 暂不支持，已跳过", name, clashType),
+                 "该组已从订阅里移除；把 type 改成 select / url-test 才会被编译");
         return std::nullopt;
     }
     // 成员必须是已知的节点/组/DIRECT；REJECT 等特殊目标在 1.14 无对应 outbound，
@@ -300,12 +319,17 @@ std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
     nlohmann::json filtered = nlohmann::json::array();
     for (const std::string& member : members) {
         if (member == "REJECT" || member == "REJECT-DROP" || member == "PASS") {
-            ctx.warn(std::format("代理组「{}」的成员 {} 在 sing-box 无对应 outbound，已移除",
-                                 name, member));
+            ctx.note(FidelityScope::Group, Fidelity::Approx, name,
+                     std::format("代理组「{}」的成员 {} 在 sing-box 无对应 outbound，已移除",
+                                 name, member),
+                     "sing-box 1.14 的 REJECT 是规则动作而不是出站，因此该成员不会"
+                     "出现在卡片列表里");
             continue;
         }
         if (member != "DIRECT" && !ctx.tagKnown(member)) {
-            ctx.warn(std::format("代理组「{}」引用了未知的成员「{}」，已移除", name, member));
+            ctx.note(FidelityScope::Group, Fidelity::Approx, name,
+                     std::format("代理组「{}」引用了未知的成员「{}」，已移除", name, member),
+                     "检查订阅里被引用的成员名是否写错，或该节点是否因协议不支持被跳过");
             continue;
         }
         filtered.push_back(member);

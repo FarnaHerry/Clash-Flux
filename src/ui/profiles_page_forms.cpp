@@ -341,7 +341,13 @@ huxerui::View ProfilePlatformOptions(
                 toast.Show(error.empty() ? "导入失败" : error);
                 co_return;
             }
-            toast.Show("配置已导入");
+            // 导入即告知「这份订阅有什么吃不下」（只编译不启动，见
+            // docs/singbox-layers-and-fidelity.md §2）。
+            const std::string summary = co_await RunOnTaskThread(
+                [id] { return ProfileFidelitySummary(id); });
+            toast.Show(summary.empty() ? std::string{"配置已导入"}
+                                       : "配置已导入 · " + summary,
+                       huxerui::ToastOptions{6.0});
             on_back();
         });
     };

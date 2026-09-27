@@ -1,37 +1,13 @@
 // core_store_helpers.inc — 私有编排辅助函数
 // 由 src/store/core_store.cppm 在 CoreStore 类体内包含。
 
+    // 代理页快照（组 + 每节点 type/udp）由 clashflux.singbox 的纯函数生成，
+    // 便于单测；这里只把「持久化的组选中项」从 settings 里喂进去。
     std::string proxyGroupsFromConfig(nlohmann::json& config) {
-        nlohmann::json groups = nlohmann::json::object();
-        if (!config.is_object() || !config.contains("outbounds") ||
-            !config["outbounds"].is_array()) {
-            return nlohmann::json{{"proxies", groups}}.dump();
-        }
-        for (auto& outbound : config["outbounds"]) {
-            const std::string type = outbound.value("type", "");
-            if (type != "selector" && type != "urltest") continue;
-            const std::string group = outbound.value("tag", "");
-            if (group.empty()) continue;
-            const auto members =
-                outbound.value("outbounds", nlohmann::json::array());
-            std::string current = outbound.value("default", "");
-            const std::string saved = setting("proxy.selection." + group, "");
-            if (type == "selector" && !saved.empty()) {
-                for (const auto& member : members) {
-                    if (member == saved) {
-                        outbound["default"] = saved;
-                        current = saved;
-                        break;
-                    }
-                }
-            }
-            if (current.empty() && !members.empty())
-                current = members.front().get<std::string>();
-            groups[group] = {{"type", type}, {"now", current},
-                             {"all", members},
-                             {"selectable", type == "selector"}};
-        }
-        return nlohmann::json{{"proxies", groups}}.dump();
+        return singbox::BuildProxySnapshot(
+            config, [this](const std::string& group) {
+                return setting("proxy.selection." + group, "");
+            });
     }
 
     inline singbox::CompileOptions routingOptions(

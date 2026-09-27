@@ -39,6 +39,11 @@ public:
 
     [[nodiscard]] bool ready() const noexcept;
 
+    /// 是否处于"降级运行"：库未能打开/迁移，所有写入只留在内存缓存里，重启即
+    /// 丢失。与 ready()==false 的区别是"之后也不会再成功"——flush* 在这种情况下
+    /// 返回失败而不是假装成功，调用方必须把这件事暴露给用户。
+    [[nodiscard]] bool degraded() const noexcept;
+
     /// 同步读缓存；未 hydrate 或键不存在返回 fallback。
     [[nodiscard]] std::string setting(const std::string& key,
                                       const std::string& fallback = {}) const;
@@ -63,6 +68,13 @@ public:
     [[nodiscard]] bool hasPendingProfiles() const noexcept;
     /// 把标脏的订阅 upsert、已删除的订阅删除，一次落库。
     huxerui::Task<bool> flushProfiles();
+
+    /// 订阅列表内容的单调修订号：**任何**一次 saveProfile / deleteProfile /
+    /// setSelectedProfile 都会 +1（含 CLI、后台自动更新等所有路径），
+    /// open() 完成 hydrate 也 +1（首帧读到空表的消费者因此还能收到通知）。
+    /// UI 侧用它做「脏检查」：每拍只比较一个整数，而不是每次把整张表拷贝出来
+    /// 再逐字段比较（订阅可能带 nativeConfig/nativeRoutes 大字段）。
+    [[nodiscard]] std::uint64_t profilesRevision() const noexcept;
 
     [[nodiscard]] std::string lastError() const;
 

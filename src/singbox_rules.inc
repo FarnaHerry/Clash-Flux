@@ -21,7 +21,10 @@ bool ensureGeoipRuleSet(Context& ctx, std::string country) {
         !std::all_of(country.begin(), country.end(), [](unsigned char c) {
             return c >= 'a' && c <= 'z';
         })) {
-        ctx.warn(std::format("GEOIP 代码「{}」不是国家/地区代码，已跳过", country));
+        ctx.note(FidelityScope::Rule, Fidelity::Unsupported,
+                 std::format("GEOIP,{}", country),
+                 std::format("GEOIP 代码「{}」不是国家/地区代码，已跳过", country),
+                 "GEOIP 只接受两位国家/地区代码（如 CN、US）；该条规则已丢弃");
         return false;
     }
     // 本地缓存命中 → local rule_set（首启不依赖代理/网络；core_store 负责
@@ -51,7 +54,11 @@ bool ensureGeoipRuleSet(Context& ctx, std::string country) {
     // Android 的远程 GEOIP 规则集会在 VpnService 建立 TUN 的同一阶段下载。
     // 此时 libbox 还没有可用的物理网络接口，下载失败会使整个数据面启动
     // 失败。节点/策略组仍可正常使用，GEOIP 规则只在本地缓存存在时启用。
-    ctx.warn(std::format("Android 暂无本地 GEOIP 规则集「{}」，已跳过在线下载", country));
+    ctx.note(FidelityScope::Rule, Fidelity::Unsupported,
+             std::format("GEOIP,{}", country),
+             std::format("Android 暂无本地 GEOIP 规则集「{}」，已跳过在线下载", country),
+             "Android 在建立 TUN 的阶段没有可用物理网络，无法下载规则集；"
+             "该条规则已丢弃（节点与策略组不受影响）");
     return false;
 #else
     ctx.ruleSets.push_back({
@@ -82,7 +89,10 @@ bool ensureGeositeRuleSet(Context& ctx, std::string category) {
             return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
                    c == '-' || c == '_';
         })) {
-        ctx.warn(std::format("GEOSITE 类别「{}」无效，已跳过", category));
+        ctx.note(FidelityScope::Rule, Fidelity::Unsupported,
+                 std::format("GEOSITE,{}", category),
+                 std::format("GEOSITE 类别「{}」无效，已跳过", category),
+                 "类别名只能包含 a-z0-9-_（如 cn、geolocation-!cn）；该条规则已丢弃");
         return false;
     }
     if (!ctx.opt.ruleSetDir.empty()) {
@@ -105,7 +115,11 @@ bool ensureGeositeRuleSet(Context& ctx, std::string category) {
         }
     }
 #if defined(__ANDROID__)
-    ctx.warn(std::format("Android 暂无本地 GEOSITE 规则集「{}」，已跳过在线下载", category));
+    ctx.note(FidelityScope::Rule, Fidelity::Unsupported,
+             std::format("GEOSITE,{}", category),
+             std::format("Android 暂无本地 GEOSITE 规则集「{}」，已跳过在线下载", category),
+             "Android 在建立 TUN 的阶段没有可用物理网络，无法下载规则集；"
+             "该条规则已丢弃（节点与策略组不受影响）");
     return false;
 #else
     ctx.ruleSets.push_back({
@@ -168,10 +182,14 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
     if (target == "REJECT" || target == "REJECT-DROP") {
         rule["action"] = "reject";
     } else if (target == "PASS") {
-        ctx.warn(std::format("规则 {} 的目标 PASS 暂不支持，已跳过", line));
+        ctx.note(FidelityScope::Rule, Fidelity::Unsupported, parts[0],
+                 std::format("规则 {} 的目标 PASS 暂不支持，已跳过", line),
+                 "sing-box 没有 PASS 语义；删掉这条规则或改用 DIRECT");
         return true;
     } else if (target != "DIRECT" && !ctx.tagKnown(target)) {
-        ctx.warn(std::format("规则 {} 引用了未知目标「{}」，已跳过", line, target));
+        ctx.note(FidelityScope::Rule, Fidelity::Unsupported, parts[0],
+                 std::format("规则 {} 引用了未知目标「{}」，已跳过", line, target),
+                 "检查目标名是否写错，或它引用的节点/组是否因不支持被跳过");
         return true;
     } else {
         rule["outbound"] = target;
@@ -185,6 +203,32 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
         rule["domain_keyword"] = {value};
     } else if (kind == "domain-regex") {
         rule["domain_regex"] = {value};
+#if !defined(__ANDROID__)
+    } else if (kind == "process-name") {
+        // mihomo 的 PROCESS-NAME / PROCESS-PATH（+ 路径正则）在桌面是一等匹配；
+        // 见 docs/singbox-layers-and-fidelity.md §4.4。
+        rule["process_name"] = {value};
+    } else if (kind == "process-path") {
+        rule["process_path"] = {value};
+    } else if (kind == "process-path-regex") {
+        rule["process_path_regex"] = {value};
+#endif
+    } else if (kind == "process-name" || kind == "process-path" ||
+               kind == "process-path-regex" || kind == "process-name-regex") {
+        // 只有两种情况会走到这里：Android（process_* 仅 Linux/Windows/macOS 生效），
+        // 或 PROCESS-NAME-REGEX（sing-box 压根没有进程名正则字段）。
+        if (kind == "process-name-regex") {
+            ctx.note(FidelityScope::Rule, Fidelity::Unsupported, parts[0],
+                     std::format("规则 {} 无对应语义，已跳过", line),
+                     "sing-box 只有 process_path_regex，没有进程名正则；"
+                     "可用 PROCESS-NAME 精确匹配或 PROCESS-PATH-REGEX 代替");
+        } else {
+            ctx.note(FidelityScope::Rule, Fidelity::Unsupported, parts[0],
+                     std::format("规则 {} 在 Android 无对应语义，已跳过", line),
+                     "sing-box 的 process_name / process_path 只在 Linux/Windows/macOS "
+                     "生效；Android 侧按应用包名匹配");
+        }
+        return true;
     } else if (kind == "ip-cidr" || kind == "ip-cidr6") {
         rule["ip_cidr"] = {value};
     } else if (kind == "geoip") {
@@ -220,12 +264,17 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
             if (!ensureGeoipRuleSet(ctx, "cn")) return true;
             rule["rule_set"] = {ctx.geoipTags.at("cn")};
         } else {
-            ctx.warn(std::format(
-                "规则集 RULE-SET {} 的格式暂不支持，已跳过", value));
+            ctx.note(FidelityScope::Rule, Fidelity::Unsupported, value,
+                     std::format("规则集 RULE-SET {} 的格式暂不支持，已跳过", value),
+                     "目前只支持 GEOIP/GEOSITE 规则集；该条规则已丢弃");
             return true;
         }
     } else {
-        ctx.warn(std::format("规则类型 {} 暂不支持，已跳过", parts[0]));
+        // detail 带上原始规则行：一份订阅里往往有几十条同类规则，只报类型名无法
+        // 定位（实测某订阅 24 条 PROCESS-NAME 会打出一模一样的 24 行）。
+        ctx.note(FidelityScope::Rule, Fidelity::Unsupported, parts[0],
+                 std::format("规则 {} 暂不支持，已跳过", line),
+                 "sing-box 侧可用的规则类型见 docs/singbox-layers-and-fidelity.md §4.4");
         return true;
     }
     ctx.config["route"]["rules"].push_back(std::move(rule));

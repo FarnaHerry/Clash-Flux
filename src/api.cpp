@@ -149,18 +149,26 @@ struct ClashApi::Impl {
             curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE,
                              static_cast<long>(body.size()));
         }
+        // 错误必须能归因到具体调用：以前只回一句 "Couldn't connect to server"，
+        // 调用方无法判断是 /proxies、/configs 还是 /version 挂了。
+        const std::string verb = method.empty() ? std::string{"GET"} : method;
         const CURLcode code = curl_easy_perform(easy);
         if (code == CURLE_OK) {
             curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status);
             result.ok = result.status >= 200 && result.status < 300;
             if (!result.ok) {
-                result.error = extractMessage(result.body);
-                if (result.error.empty()) {
-                    result.error = std::format("HTTP {}", result.status);
-                }
+                const std::string message = extractMessage(result.body);
+                // 用拼接而非 std::format：见 downloadToFile 里关于 libc++ 宽字符
+                // 候选实例化的说明。
+                result.error = verb + " " + path + " → HTTP " +
+                               std::to_string(result.status) +
+                               (message.empty() ? std::string{}
+                                                : " · " + message);
             }
         } else {
-            result.error = curl_easy_strerror(code);
+            result.error = verb + " " + path + "：" +
+                           curl_easy_strerror(code) + "（curl " +
+                           std::to_string(static_cast<int>(code)) + "）";
         }
         return result;
     }

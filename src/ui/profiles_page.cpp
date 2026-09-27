@@ -13,16 +13,15 @@
 // 文件的 YAML 经任务线程读取（加载指示），TextField 非受控——OnChanged
 // 只写 shared_ptr 指向的内容（无 State 写 → 无逐键重组），保存时取现值。
 //
-// 数据流：列表经 2s 泵从 profilesStore 重读（未变化时 State 相等短路，无
-// 重组）；导入/更新/启用/删除/编辑保存都是阻塞活（网络下载 / 内核重启），
-// 全部经 RunOnTaskThread。
+// 数据流：订阅列表来自应用级 ProfilesModel（见 profiles_model.h），页面拿到的
+// ProfilesCache 只是它的镜像；导入/更新/启用/删除/编辑保存都是阻塞活
+// （网络下载 / 内核重启），全部经 RunOnTaskThread。
 #include <huxerui/huxerui.h>
 
 #include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cctype>
-#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -44,12 +43,15 @@ import clashflux.store.vpn;
 import clashflux.utils;
 import clashflux.vpn;
 
+#include "profiles_cache.h"
 #include "profiles_page_shared.h"
+#include "vpn_model.h"
 
 namespace clashflux::ui {
 
 [[huxerui::composable]] huxerui::View ProfilesPageCore(
-    huxerui::NavigationController navigation, bool navigation_enabled) {
+    huxerui::NavigationController navigation, bool navigation_enabled,
+    ProfilesCache profilesCache, bool active) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
     const bool compact =
@@ -60,11 +62,19 @@ namespace clashflux::ui {
     auto http = huxerui::UseService<AppHttpClient>();
     auto dialog = huxerui::UseDialog();
     auto clipboard = application.Clipboard();
-    auto profiles = huxerui::UseStateList<db::Profile>();
+    // 订阅列表来自 ProfilesModel 的镜像（唯一来源与数据泵见
+    // profiles_model.h），本页不再自维护副本；乐观选中标记与模型共享。
+    const auto profiles = profilesCache.list;
+    const auto selectionPending = profilesCache.selection_pending;
     auto pptpStates = huxerui::UseStateList<store::PptpState>();
     auto openVpnStates = huxerui::UseStateList<store::OpenVpnState>();
     auto connectionSelection = huxerui::UseStateList<std::int64_t>();
-    auto selectionPending = huxerui::UseState(false);
+    // 当前选中的类型分区标签（remote/local/pptp/openvpn/…）；无效或为空时
+    // 回落到第一个有订阅的类型。
+    auto activeType = huxerui::UseState<std::string>("");
+    // 分区滑动切换的手势状态（处理器与阈值见 common.cpp SectionTabSwipeHandler）。
+    auto swipeOrigin = huxerui::UseState<huxerui::Point>(huxerui::Point{0.0F, 0.0F});
+    auto swipeOwned = huxerui::UseState(false);
 
     // ---- 新建订阅弹窗 ----
     auto newName = huxerui::UseState(huxerui::TextEditingValue{""});
@@ -126,34 +136,32 @@ namespace clashflux::ui {
     auto filePageId = huxerui::UseState<std::int64_t>(0);
     auto rulesPageId = huxerui::UseState<std::int64_t>(0);
 
-    // 列表泵：2s 一拍重读（State 相等时短路，无重组；CRUD 后手动 reload）。
+    // 原生连接状态：唯一来源是 VpnModel（见 vpn_model.h）。挂载时加载一次
+    // 持久化的连接配置并请模型立刻同步，之后由模型 State 驱动镜像。
+    const auto vpnModel = huxerui::UseService<VpnModel>();
     huxerui::Lifecycle(
-        [tasks, profiles, selectionPending] {
-            tasks.Launch([=]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{2.0}, [=] {
-                    if (!selectionPending.Get()) {
-                        ReplaceStateList(profiles, store::profilesStore().list());
-                    }
-                    return true;
-                });
-            });
-            return [] {};
-        },
-        0);
-
-    huxerui::Lifecycle(
-        [tasks, pptpStates, openVpnStates] {
-            tasks.Launch([=]() -> huxerui::Task<void> {
+        [tasks, vpnModel] {
+            tasks.Launch([vpnModel]() -> huxerui::Task<void> {
                 co_await RunOnTaskThread([] { store::vpnStore().init(); });
-                co_await PollWhile(std::chrono::duration<double>{0.5}, [=] {
-                    ReplaceStateList(pptpStates, store::vpnStore().states());
-                    ReplaceStateList(openVpnStates, store::vpnStore().openVpnStates());
-                    return true;
-                });
+                vpnModel->RequestSync();
             });
             return [] {};
         },
         0);
+    huxerui::Lifecycle(
+        [pptpStates, openVpnStates, vpnModel] {
+            ReplaceStateList(pptpStates, vpnModel->pptp.Get());
+            ReplaceStateList(openVpnStates, vpnModel->openvpn.Get());
+            return [] {};
+        },
+        vpnModel->pptp, vpnModel->openvpn);
+
+    // 不可见时只保留本页 State/Lifecycle，不构建重子树：huxerui 的 Pager 会把
+    // 四个一级页同时挂载，隐藏页即使不重组，其已挂载子树仍随每一帧被重新测量。
+    // 真机实测（代理页大分组）：四页同挂时每帧 1443 次测量请求 / ~20ms，
+    // 只留当前页后降到 28 次 / ~0ms；因此不可见页必须返回空占位。
+    if (!active) return huxerui::View{huxerui::Row{}}.Key("profiles-idle");
+
     const auto buildContent = [&]() -> huxerui::View {
 #include "ui/profiles_page_actions.inc"
 #include "ui/profiles_page_layout.inc"
@@ -161,14 +169,17 @@ namespace clashflux::ui {
     return buildContent();
 }
 
-[[huxerui::composable]] huxerui::View ProfilesPage() {
-    return ProfilesPageCore(huxerui::NavigationController{}, false);
+[[huxerui::composable]] huxerui::View ProfilesPage(
+    ProfilesCache profilesCache, bool active) {
+    return ProfilesPageCore(huxerui::NavigationController{}, false,
+                            profilesCache, active);
 }
 
 #if defined(__ANDROID__)
 [[huxerui::composable]] huxerui::View AndroidProfilesPage(
-    huxerui::NavigationController navigation) {
-    return ProfilesPageCore(navigation, true);
+    huxerui::NavigationController navigation, ProfilesCache profilesCache,
+    bool active) {
+    return ProfilesPageCore(navigation, true, profilesCache, active);
 }
 #endif
 

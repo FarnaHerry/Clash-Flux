@@ -62,6 +62,17 @@ cmake --build build --target clash-flux
 或其他目录，必须通过 `CLASHFLUX_BIN` 指向该目录的可执行文件后再运行验证。
 没有完成本地编译和运行验证时，不得在回复中声称改动已完成。
 
+**UI 改动可以自己截图核对（本机 KDE Wayland 实测可用）**，不要只靠布局推理：
+`spectacle -b -n -f -o /tmp/x.png` 走 KWin 自己的截屏接口，有真实内容（同一台机器上
+`import`/XWayland 抓根窗口是全黑，不要用它判断 UI）。应用窗口被别的窗口挡住时，
+用 KWin 脚本临行置顶：写一个把目标窗口 `keepAbove = true`（按 `caption`/`resourceClass`
+匹配）的脚本，`qdbus-qt6 org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript
+<file> <name>` + `...Scripting.start`，截完再用同法置回 `false` 并 `unloadScript`；
+`keepAbove` 不抢焦点，不会打断用户正在输入的其他窗口。分析截图时以**像素取色**为准
+（PIL/ImageMagick 取 `#RRGGBB` 与主题常量比对），预览图缩放的观感会骗人。
+另外 `CLASHFLUX_PERF_PAGE=<n>`（0=首页、1=订阅、2=代理…）可直接落到指定一级页，
+方便逐页截图；它是源码里标注 `TEMP-PERF-ONLY` 的临时开关，被删掉后改用导航点击。
+
 - 工具链：系统 GCC（本机 16.2.1）+ libstdc++，CMake ≥ 4.4（`import std` 仍是
   experimental：UUID 表在 `cmake/CxxImportStdGate.cmake`）。
 - **依赖 vendor 在 `third_party/`**（tarball + SHA256，configure 期解包到
@@ -88,7 +99,7 @@ cmake --build build --target clash-flux
 |------|------|------|
 | `clashflux.config` | `src/config.cppm` | 数据目录（~/.local/share/clash-flux）/ sing-box 二进制解析 / 控制器端点（127.0.0.1:29097）/ secret 生成 / 深色检测 |
 | `clashflux.instance` | `src/app_instance.cppm` | 单实例锁与二次启动唤醒（Linux/macOS 文件锁+信号，Windows Mutex+Event）；GUI 与 CLI 都经过这里，`acquireOrActivate(activate=false)` 供 CLI 只探测不唤醒 |
-| `clashflux.cli_ipc` | `src/cli_ipc.cppm` | 单实例下的 CLI 命令转发：非 owner 把命令行写入 `<dataDir>/cli-requests/<pid>.req` 并轮询 `<pid>.res`；owner 在启动泵里 `servePendingCommands()` 执行并回传输出+退出码 |
+| `clashflux.cli_ipc` | `src/cli_ipc.cppm` | 单实例下的 CLI 命令转发：非 owner 把命令行写入 `<dataDir>/cli-requests/<pid>.req` 并等 `<pid>.res`（20ms 有界等待 ≤60s）；owner 侧 Linux 用 `startRequestWatcher()`（inotify）事件驱动、其他平台 1s 兜底，`servePendingCommands()` 执行并回传输出+退出码 |
 | `clashflux.utils` | `src/utils.cppm` | 纯 string/number 帮助函数 + percentEncode / appendQuery |
 | `clashflux.model` | `src/model.cppm` | 跨层共享数据结构（`Profile`）；单独成模块以打破 db ↔ persistence 的模块环 |
 | `clashflux.db` | `src/db.cppm/.cpp` | 持久化**同步门面**：转发 `clashflux.persistence`，保留 `listProfiles/saveProfile/deleteProfile/setSelectedProfile/getSetting/setSetting` 既有同步接口，调用点无需改动 |
@@ -96,7 +107,7 @@ cmake --build build --target clash-flux
 | `clashflux.api` | `src/api.cppm/.cpp` | sing-box clash_api REST 客户端（curl，同步阻塞、每调用独立 handle）：version/configs/patchConfigs(mode)/proxies/selectProxy/proxyDelay/groupDelay(fan-out 并发逐节点)/connections/订阅下载 |
 | `clashflux.core` | `src/core.cppm/.cpp` | sing-box 子进程生命周期（`run -c <config.json> -D <workdir>`；posix_spawn + 监视线程；SIGTERM→2s→SIGKILL）+ generateConfig（委托 clashflux.singbox 编译） |
 | `clashflux.singbox` | `src/singbox.cppm/.cpp` | Clash YAML → sing-box JSON 编译器（yaml-cpp 解析 + nlohmann 合成）：节点（ss/vmess/vless/trojan/hysteria2/tuic/http/socks）、组（fallback/load-balance 降级 urltest）、基础规则 + GEOIP→远程 .srs、clash_mode 三模式前置规则；不支持的条目进 warnings 不阻断 |
-| `clashflux.stream` | `src/stream.cppm/.cpp` | /logs /traffic /connections 三条 WS 流（IX 自管线程，事件入槽，UI PollWhile 泵取） |
+| `clashflux.stream` | `src/stream.cppm/.cpp` | /logs /traffic /connections 三条 WS 流（IX 自管线程，事件入槽；写入后经 `addStreamUpdateObserver` 通知、UI 用 `TaskScope::Post` 拉回，不再按节拍轮询） |
 | `clashflux.sysproxy` | `src/sysproxy.cppm` | Linux 系统代理写入：KDE kioslaverc（kwriteconfig6/5 + dbus 通知 KIO）/ GNOME gsettings；阻塞 shell 调用，UI 必须 RunOnTaskThread |
 | `clashflux.service` | `src/service.cppm` | 统一特权服务：root systemd 单元 `clash-flux.service` + `/run/clash-flux/service.sock` 行协议（sing-box START/STOP/STATUS/VERSION + PPTP/OpenVPN AVAILABLE/START/ROUTES/STOP；START 只传 config.json 绝对路径）；由同一 daemon 管理 Linux pppd/openvpn/ip；install/uninstall 需 root（GUI 经 pkexec 重入本二进制 `service install`），socket 仅安装用户 UID + root 可访问 |
 | `clashflux.cli` | `src/cli.cppm` | 完整 CLI：`cli::run(args)`，子命令 version/service/core/mode/tun/proxy/profile/help。**伪 CLI**：version/help 走无运行时快路径，其余命令由 `platform/*/main.cpp` 交给应用运行时执行（`isPureOutputCommand`/`setPendingCommand`，窗口隐藏到托盘，可用任务与持久化），完成后写回退出码 |
@@ -104,7 +115,7 @@ cmake --build build --target clash-flux
 | `clashflux.store.profiles` | `src/store/profiles.cppm` | 订阅单例 `profilesStore()`：importUrl/importFile/refresh/activate/remove（activate/remove 触发内核重启） |
 | `clashflux.openvpn` | `src/openvpn.cppm/.cpp` | OpenVPN CLI 配置校验、Linux root/Windows CLI 会话、tun 接口与内网 CIDR 路由；托管模式禁止配置自带 route/up/down 脚本 |
 | `clashflux.store.vpn` | `src/store/vpn.cppm` | PPTP/OpenVPN 连接生命周期 + 全局 `VpnPolicy` 持久化；`ProfileConnectionId` 是跨引擎稳定连接引用，原生连接建连时将 IPv4 全局规则交给对应隧道接口 |
-| `clashflux.ui.*`（普通 C++） | `src/ui/*.cpp` | app（通用壳 + `platform_app.cpp` 平台应用壳）/ common（岛屿原语 IslandSurface/DialogCard/页面骨架/卡片/状态胶囊）/ home/profiles/proxies/rules/connections/logs/settings 七页（平台设置在 `platform_settings.cpp`）/ task_bridge.h（协程桥） |
+| `clashflux.ui.*`（普通 C++） | `src/ui/*.cpp` | app（通用壳 + `platform_app.cpp` 平台应用壳）/ common（岛屿原语 + `ProxiesModel`/`CoreModel`/`ProfilesModel`/`VpnModel` 的安装与唯一数据泵）/ home/profiles/proxies/rules/connections/logs/settings 七页（平台设置在 `platform_settings.cpp`）/ task_bridge.h（协程桥，转发 `huxerui::RunWorker`）/ `stream_updates.h`（推送流 → UI 线程的 Post 桥） |
 | `src/app.cpp` | 普通 TU | `Application{AppRoot, AppOptions}`（Custom chrome，标题栏 24pt） |
 | 平台入口 | `platform/{linux,macos,windows}/main.cpp` | 无参 → 获取单实例后 `huxerui::RunApplication()`；有参 → 纯输出命令直接 `cli::run`，其余 `setPendingCommand` 后进运行时执行（同一二进制即 CLI） |
 
@@ -145,7 +156,17 @@ cmake --build build --target clash-flux
    （`module;` 与 `module clashflux.x;` 之间）。普通 UI .cpp / ui.h 头用哪个
    std 设施就自己 `#include` 哪个（libstdc++ 传递包含在 libc++ 上不存在）。
 2. **UI 层遵守 skill 的 DSL 风格**：普通 .cpp、composable 不加 inline、View 按值
-   传递、具名 View 链式调用前 `std::move`（`.With` 等是右值限定）。
+   传递、具名 View 链式调用前 `std::move`（`.With` 等是右值限定）。**composable 的
+   形参在函数体内是 const**：hcg 把函数体包成 `[=]` 的 Scope lambda，副本捕获使形参
+   带 const，`std::move(形参).With(...)` 编译不过（`discards qualifiers`）——先把形参
+   拷进一个有名字的局部再装修，或 `std::move(形参)` 进新容器（`Column{...}`）。
+   同一类修饰符后加的覆盖先加的（`ApplyCornerRadius` 等是直接赋值），这只对**同一个
+   View** 成立。**composable 的返回值是 hcg 生成的 `Scope` 包装节点**，在它上面补
+   `Background/Border/CornerRadius` 只会画在整棵子树背后：子节点自己的表面圆角略有
+   差异就从圆角处漏出一圈底色（真机表现：首页「当前订阅」卡成了「深灰底 + 蓝色圆角
+   描边」，订阅卡也踩过同一坑）。**表面/描边/圆角必须在建树时就定好**——要么直接写在
+   返回的 `Column{...}.With(...)` 上，要么给外壳加一个带参数的 composable（如
+   `Card`/`SelectableTile`），不要事后装修。
 3. **受控值以应用状态为权威**；TextField 保留完整 TextEditingValue；动态兄弟用
    稳定 `.Key(...)`。**同一受控 TextEditingValue State 同一时刻只能挂载一个
    TextField**：IndexedPages 的隐藏页保持挂载，与弹窗共用表单 State 的次要页面
@@ -156,9 +177,11 @@ cmake --build build --target clash-flux
    显隐眼睛操作；不要自绘重复的眼睛按钮，也不要把秘密值写入日志、卡片或错误
    文本。新增秘密输入框必须沿用这个约定。
 4. **线程契约**（src/ui/task_bridge.h）：State 只在 UI 线程读写；api/core/store
-   的阻塞方法必须 `co_await RunOnTaskThread(fn)` 派到任务线程池；WS 流与进程
-   输出经 `PollWhile(interval, tick)` 泵回 UI。**事件处理器内禁止同步写会导致
-   点击节点被卸载的 State**——经 `tasks.Launch` + `co_await Delay(0)` 推迟。
+   的阻塞方法必须 `co_await RunOnTaskThread(fn)`（内部即 `huxerui::RunWorker`，
+   调用方 lambda 会先做类型擦除以避免协程帧带内部链接类型）；WS 流与日志写入
+   经 `stream` 的通知 API + `TaskScope::Post` 推回 UI（见 `src/ui/stream_updates.h`），
+   只有确属周期性的事才用 `PollWhile(interval, tick)`。**事件处理器内禁止同步写会
+   导致点击节点被卸载的 State**——经 `tasks.Launch` + `co_await Delay(0)` 推迟。
 5. **占位不能用 Spacer().With(Frame)**（Spacer 自带 Grow(1) 会平分空间）——
    用空 `Row{}`/`Column{}`；页面根要 `Grow(1.0F)` + `CrossAlign(Stretch)`。
 6. 内核 REST 全部走 `store::coreStore().api()`；UI 不直接持有 curl。
@@ -168,6 +191,23 @@ cmake --build build --target clash-flux
    `ViewEvents::ContextMenuRequested` + `UseMenu().ShowAt`，双击
    `MultiTapGesture{.count=2}` + `MultiTapEvents::Recognized`，矢量图标着色
    用 `Image::Tint`（IconButton/Foreground 不着色 SVG）。
+   **选中态统一为「primary 实心底 + on_primary 文字」**（同代理页节点卡）：
+   目前只有**订阅页「使用中」卡**与代理页节点卡用它，**不再叠描边或「使用中」
+   徽标**第二个信号；次级文字用同色降透明度（≈0.78）、更弱信息≈0.62，**错误信息
+   保持 `error`**（选中态不吞异常）。选中容器里的 `ProgressBar` 必须换成
+   `SelectedProgressBar()`（`ProgressBar` 的主题色在 primary 底上看不见）；
+   `IconButton` 的 SVG 不吃 `Foreground`，选中底上的图标要用裸 `Image` + `Tint`。
+   **首页卡片没有选中态**：「当前订阅」就是普通卡片（raised 表面 + on_surface 文字 +
+   普通 `ProgressBar`）——哪个订阅在使用中由订阅页承担，首页不再复刻一套高亮。
+   **可选中卡片只有一个形状原语**：`SelectableTile(content, selected, 语义标签,
+   on_click)`（`src/ui/common.cpp`，形状/内边距/圆角/表面色/点击/焦点全部由它提供），
+   文字色走 `ResolveSelectableTileColors()` 的 `fg/muted/faint`；列表项**不要再自绘
+   表面、圆角、选中底色或描边**——订阅卡、代理节点卡都是它的消费者，新增同类卡片
+   直接复用。需要别的表面形状时加一个新的**建树型** composable（表面写在其内部
+   `Column{...}.With(...)` 上），**不要**用「先 `Card(...)` 再在外层补
+   `Background/Border`」——那是 Scope 包装节点，补的修饰符只会画在卡片背后（见第 2 条）。
+   密集只读信息行仍用
+   `UnifiedListRow`（见第 12 条），两者不要互串。
 8. **响应式**：`UseViewportClass()` Compact(<600) 收窄侧栏(44pt)/一级岛内边距
    （PageScaffold）/首页卡片 2×2/订阅卡整宽列表；窗口最小 560×480。
 9. **平台组件收束**：平台差异只在页面/组件边界用编译宏选择一个完整函数，
@@ -198,23 +238,27 @@ cmake --build build --target clash-flux
     在组合函数每次重组时直接 `Hide()`。日志、连接、规则等信息列表统一通过
     `UnifiedListRow` 管理表面/间距/圆角；紧凑视口禁止复用桌面固定列宽。全量推送列表
     页面切换后应读取最近快照并按帧去重，不能只依赖“新事件”才能恢复显示。
-13. **首页是可自定义网格**：卡片目录在 `src/ui/home_page.cpp` 文件作用域用
-    `#if` 分平台（桌面含系统代理/TUN，移动端含隧道状态/后台保活）；每张卡片用
-    `.LayoutValue<HomeCardSpan>` 声明宽高（各 1..4 格），`HomeGrid` 自定义布局按
-    页面逻辑宽度分列（**桌面 3 列起步、宽屏 4 列**，对齐 FlClash 桌面仪表盘；
-    移动端 2 列起步——手机屏也 2 列，1/2 格宽度才有意义）做左上紧凑打包并给卡片
-    紧约束——编辑态与运行态共用同一套算法，格子尺寸完全一致（所见即所得）。布局存 `home.layout.*`
-    （v4 前缀，加载旧格式时保留卡片与顺序、补齐新卡并刷新为默认尺寸），编辑态只改
-    会话 State，点保存才写库。**首页滚动内容里不要声明 `Focusable(true)`**：运行时会
+13. **首页是固定网格，没有自定义**：卡片目录与默认宽高在 `src/ui/home_page.cpp` 文件
+    作用域用 `#if` 分平台（桌面含系统代理/TUN，移动端含隧道状态/后台保活），每张卡片
+    用 `.LayoutValue<HomeCardSpan>` 声明宽高（各 1..4 格），`HomeGrid` 按页面逻辑宽度
+    分列（**桌面 3 列起步、宽屏 4 列**，对齐 FlClash 桌面仪表盘；移动端 2 列起步）做
+    左上紧凑打包并给卡片紧约束。布局是**编译期常量**：不要再引入编辑态、拖动排序、
+    增删卡片或 `home.layout.*` 持久化——首帧组合早于 persistence hydrate，"先默认、
+    hydrate 后再换一份库里的布局"会让首页跳一下（该功能已按此删除）。
+    **首页滚动内容里不要声明 `Focusable(true)`**：运行时会
     把初始焦点节点滚入视野，导致首页一打开就被滚到中途。
-    拖动排序：源是卡片槽上的 `DragSource`（桌面鼠标直接拖 / 移动端长按 0.35s），
-    悬浮预览**只用框架的拖动预览层**（`DragSource(payload, previewFactory, gesture)`，
-    工厂里按 `HomeNodeBounds` 量到的格子矩形给预览锁死宽高）——不要自己再叠一层
-    自绘浮层，也不要在拖动过程中调用本地共享过渡：拖动会连续触发重排，共享过渡在
-    播放中被连续打断会捕获退化几何，把移动中的卡片画成一张巨大的浮层副本（"巨大化"
-    /一次拖动两张悬浮）。落点也不走框架 `DropTarget` 命中，而是在 `Changed` 里用
-    `NearestHomeCard` 按指针位置自己算最近卡片（拖到卡片缝里、页面边缘也能落位），
-    命中后直接改布局（瞬时重排），被拖的那张本体只做 `Opacity(0.38F)` 的 disable 观感。
+
+14. **一级页必须按可见性门控**：`Pager`/`IndexedPages` 会同时挂载所有一级页，
+    隐藏页的重子树会被逐帧重新测量（真机代理页 20ms/帧 → 门控后 0ms）。页面接收
+    `bool active`，在 hook 之后早退成空占位（保留 State/Lifecycle）；二级页由
+    `NavigationStack` 按需 realize，不需要门控。详见 `AGENTS.md`。
+15. **跨页共享数据走 application service，不用定时器**：`application_hooks` 里
+    `Provide` 的 `ProxiesModel` / `CoreModel` / `ProfilesModel` / `VpnModel` /
+    `SettingsModel`（`src/ui/*_model.h`，模型内持 `State`）是唯一来源，数据泵集中在
+    `src/ui/common.cpp`，页面用 `UseService<T>()` 读，或把模型 `State` 作为
+    `Lifecycle` 依赖做镜像。四条实测踩出来的硬规则（composable 返回值必须挂载、
+    模型 `State` 成员必须带初值、框架容器不能传空集合、修订号必须覆盖 hydrate）
+    见 `AGENTS.md` 的「HuxerUI 应用级模型」。
 
 ## sing-box 交互要点
 
@@ -232,9 +276,18 @@ cmake --build build --target clash-flux
 - 订阅转换保真度（第一期）：协议 ss/vmess/vless/trojan/hysteria2/tuic/http/
   socks5；组 select→selector、url-test/fallback/load-balance→urltest；
   规则 DOMAIN/DOMAIN-SUFFIX/DOMAIN-KEYWORD/DOMAIN-REGEX/IP-CIDR(6)/GEOIP
-  （PRIVATE→ip_is_private，国家码→SagerNet 官方 .srs rule_set）/MATCH；
-  RULE-SET/小众协议/SS 插件等降级为 `CoreSnapshot.warnings`（设置页展示），
-  不静默丢弃。原生 sing-box JSON profile 直通（合并托管设置）。
+  （PRIVATE→ip_is_private，国家码→SagerNet 官方 .srs rule_set）/MATCH，
+  以及 PROCESS-NAME→process_name、PROCESS-PATH→process_path、
+  PROCESS-PATH-REGEX→process_path_regex（这三个仅 Linux/Windows/macOS，Android 目标
+  编译时记不支持；PROCESS-NAME-REGEX 无对应字段）；
+  RULE-SET/小众协议/SS 插件等降级不静默丢弃：编译器用 `ctx.note(scope, level, subject,
+  detail, action)` 产出结构化保真度账本（`CompileResult.fidelity` → `CoreSnapshot.fidelity`，
+  `warnings` 是它的自由文本投影）；消费点：设置页「配置保真度」明细、导入/刷新/启用后的
+  一行 toast（`singbox::FidelitySummary`）、代理页分组标签的 `!` 角标、CLI
+  `profile check [<id>]`（有无法映射的条目时退出码 1）。toast 只在用户动作后提示，
+  内核重启不重复提示。新增降级点用 `note()` 而不是 `warn()`（见
+  `docs/singbox-layers-and-fidelity.md` §2）。原生 sing-box JSON profile 直通
+  （合并托管设置）。
 - 默认混合端口 **7899**（避开 Clash 7890 / Verge 7897 常见占用）。
 - 规则页分为“订阅规则”和“全局路由”：前者按 Profile 读取 YAML `rules` 或原生连接
   `nativeRoutes`，后者保存 `vpn.global_policy`（默认主连接 + 多条域名/IP/CIDR →

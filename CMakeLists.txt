@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.4 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.5 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -475,6 +475,29 @@ else ()
     )
 endif ()
 
+# ---- HuxerUI::Charts（折线/面积/柱/散点，首页流量曲线）------------------------
+# 与 SQLite 同机制：本地 clone（third_party/lib-charts，已 gitignore）优先，
+# 缺失时由 huxerui_use_library 拉固定 commit；升级 = 改下面的 COMMIT。
+# 注意：不要用 v0.1.0 tag —— 那个版本用 TooltipStyle::corner_radius，编译不过
+# 当前 HuxerUI（0.3.0-47 起字段名是 corner_radii）；main 的 c42ad9c 才对齐。
+set(CLASHFLUX_HUXERUI_CHARTS_URL "https://github.com/HuxerUI/Lib-Charts.git")
+set(CLASHFLUX_HUXERUI_CHARTS_COMMIT "cf7c28655e1b6cdaa15a1c0fc2612000e1ef9301")
+set(CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lib-charts")
+if (EXISTS "${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}/CMakeLists.txt")
+    message(STATUS "clash-flux: HuxerUI::Charts 使用本地源码 ${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}")
+    huxerui_use_library(clash-flux
+        TARGET HuxerUI::Charts
+        PATH "${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}"
+    )
+else ()
+    huxerui_use_library(clash-flux
+        TARGET HuxerUI::Charts
+        URL "${CLASHFLUX_HUXERUI_CHARTS_URL}"
+        COMMIT "${CLASHFLUX_HUXERUI_CHARTS_COMMIT}"
+    )
+endif ()
+
 if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     if (ANDROID)
         # AndroidLegacy.cmake 已把模块接口/实现转为普通 C++ 源；显式关闭扫描，
@@ -708,6 +731,29 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         set_target_properties(test_smoke PROPERTIES CXX_MODULE_STD ON)
         target_compile_features(test_smoke PRIVATE cxx_std_23)
         add_test(NAME smoke COMMAND test_smoke)
+
+        # 页内分区滑动的判定规则：纯函数，不依赖 huxerui 运行时，因此能单独测。
+        add_executable(test_section_swipe tests/test_section_swipe.cpp)
+        target_compile_features(test_section_swipe PRIVATE cxx_std_23)
+        if (MSVC)
+            # 断言文本是 UTF-8，MSVC 默认按本地代码页解析源码。
+            target_compile_options(test_section_swipe PRIVATE /utf-8)
+        endif ()
+        add_test(NAME section_swipe COMMAND test_section_swipe)
+
+        # 页内分区切换动画：用 huxerui 的无窗口 Runtime 驱动真实帧 + 虚拟时间，
+        # 验证「只建当前页 + 页 Key 随分区变化」时换页动画真的会播。
+        if (TARGET HuxerUI::testing)
+            add_executable(test_page_transition tests/test_page_transition.cpp)
+            target_compile_features(test_page_transition PRIVATE cxx_std_23)
+            target_link_libraries(test_page_transition PRIVATE HuxerUI::testing)
+            if (MSVC)
+                target_compile_options(test_page_transition PRIVATE /utf-8)
+            endif ()
+            huxerui_enable_codegen(test_page_transition)
+            clashflux_deploy_huxerui_dll(test_page_transition)
+            add_test(NAME page_transition COMMAND test_page_transition)
+        endif ()
 
         # clashflux.singbox 订阅编译器：只依赖 std + nlohmann.json 模块 + yaml-cpp。
         add_executable(test_singbox tests/test_singbox.cpp src/singbox.cpp)

@@ -21,15 +21,6 @@ inline constexpr float kCardHeight = 180.0F;
 inline constexpr float kCardGap = 8.0F;
 inline constexpr float kDialogFormHeight = 340.0F;
 
-enum class ProfileGridItemKind { GroupHeader, Profile, Footer };
-
-struct ProfileGridItem {
-    ProfileGridItemKind kind = ProfileGridItemKind::Profile;
-    std::string type;
-    std::size_t profileIndex = 0;
-    std::size_t profileCount = 0;
-};
-
 struct NativeProfileSupport {
     bool pptp = false;
     bool openvpn = false;
@@ -103,6 +94,9 @@ struct ProfileEditFields {
 namespace profile_detail {
 
 std::string profileTypeLabel(std::string_view type);
+// 分区标签栏（Compact）用的短标签：只把两种长名收窄成 PPTP / OpenVPN，
+// 其余与 profileTypeLabel 相同。
+std::string profileTypeTabLabel(std::string_view type);
 bool isNativeVpnType(std::string_view type);
 NativeProfileSupport profileSupport();
 
@@ -161,6 +155,7 @@ using profile_detail::isNativeVpnType;
 using profile_detail::parseNumber;
 using profile_detail::parseRouteField;
 using profile_detail::profileTypeLabel;
+using profile_detail::profileTypeTabLabel;
 using profile_detail::ProfileRefreshAction;
 using profile_detail::QrPainter;
 using profile_detail::joinRoutes;
