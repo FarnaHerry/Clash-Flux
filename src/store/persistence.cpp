@@ -83,17 +83,17 @@ Persistence::~Persistence() = default;
 
 huxerui::Task<bool> Persistence::open(const std::filesystem::path& file) {
     Impl* impl = impl_.get();
-    // 不假装兼容，也不删任何文件：0.2.x 的 SQLiteCpp 旧库用当前 schema 直接打
-    // 不开（ORM 报 Migration/SchemaMismatch），此时只是 open 失败并记录错误；
-    // 旧数据不需要保留，由用户自己删掉 clash-flux.db 后重开即可。
+    // 老库（user_version=0 的 SQLiteCpp / 早期 ORM 结构）由 0→1 迁移在事务内
+    // 重建表并保留数据；真正迁移不了的库 open 失败并记录错误——应用不删除任何
+    // 文件，此时降级为内存缓存运行（重启丢数据），错误经 lastError 露出。
     auto opened = co_await sqlite::Database::OpenAsync(
         huxerui::File{file.string()}, db_schema::schema(),
-        sqlite::Migrations{}, db_schema::openOptions());
+        db_schema::migrations(), db_schema::openOptions());
     if (!opened) {
         std::lock_guard lock(impl->mutex);
         impl->ready = false;
         impl->database.reset();
-        impl->lastError = "打开数据库失败（旧版本数据库不兼容，请删除后重试）：" +
+        impl->lastError = "打开数据库失败（无法迁移的旧结构）：" +
                           opened.Error().Message();
         co_return false;
     }

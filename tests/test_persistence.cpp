@@ -1,7 +1,8 @@
 // test_persistence.cpp — ORM 持久化服务语义（settings/profiles 缓存 + 异步落库）。
 //
 // 覆盖：未 open 时读 fallback；open 后 hydrate；setSetting/saveProfile 同步可见
-// （缓存）且标脏；flush 落库；close 后重开能读回；以及 0.2.x 旧结构被删库重建。
+// （缓存）且标脏；flush 落库；close 后重开能读回；以及 user_version=0 的旧库经
+// 0→1 迁移重建表后数据保留。
 // 用 HuxerUI 公开无窗口测试库驱动异步任务。
 
 #include <huxerui/huxerui.h>
@@ -197,9 +198,9 @@ Task<void> RunTest() {
             co_await store.close();
         }
 
-        Trace(8, "旧结构不兼容路径");
-        // 旧结构不兼容：open 必须失败并给出提示，且**不删除任何文件**
-        // （旧库由用户自行清理）。
+        Trace(8, "旧结构 0→1 迁移路径");
+        // user_version=0 的老库（SQLiteCpp 时代形状：PK 无 NOT NULL，后期列由
+        // ALTER 追加）必须由 0→1 迁移重建表并保留全部数据；应用不删除任何文件。
         {
             const std::filesystem::path legacy = TempPath();
             {
@@ -216,7 +217,22 @@ Task<void> RunTest() {
                       "error TEXT NOT NULL DEFAULT '')",
                       "CREATE TABLE settings (key TEXT PRIMARY KEY, "
                       "value TEXT NOT NULL DEFAULT '')",
-                      "INSERT INTO profiles (name) VALUES ('旧订阅')",
+                      "ALTER TABLE profiles ADD COLUMN type TEXT NOT NULL DEFAULT 'remote'",
+                      "ALTER TABLE profiles ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+                      "ALTER TABLE profiles ADD COLUMN timeout_secs INTEGER NOT NULL DEFAULT 60",
+                      "ALTER TABLE profiles ADD COLUMN interval_mins INTEGER NOT NULL DEFAULT 0",
+                      "ALTER TABLE profiles ADD COLUMN auto_update INTEGER NOT NULL DEFAULT 0",
+                      "ALTER TABLE profiles ADD COLUMN use_system_proxy INTEGER NOT NULL DEFAULT 0",
+                      "ALTER TABLE profiles ADD COLUMN use_core_proxy INTEGER NOT NULL DEFAULT 0",
+                      "ALTER TABLE profiles ADD COLUMN allow_invalid_cert INTEGER NOT NULL DEFAULT 0",
+                      "ALTER TABLE profiles ADD COLUMN homepage TEXT NOT NULL DEFAULT ''",
+                      "ALTER TABLE profiles ADD COLUMN used_bytes INTEGER NOT NULL DEFAULT 0",
+                      "ALTER TABLE profiles ADD COLUMN total_bytes INTEGER NOT NULL DEFAULT 0",
+                      "ALTER TABLE profiles ADD COLUMN native_config TEXT NOT NULL DEFAULT ''",
+                      "ALTER TABLE profiles ADD COLUMN native_routes TEXT NOT NULL DEFAULT ''",
+                      "INSERT INTO profiles (name, url, file, type, selected) "
+                      "VALUES ('旧订阅', 'https://example.com/legacy.yaml', "
+                      "'1.yaml', 'remote', 1)",
                       "INSERT INTO settings (key, value) "
                       "VALUES ('ui.theme_mode', '2')"}) {
                     auto result = co_await raw.ExecuteAsync(statement);
@@ -225,19 +241,31 @@ Task<void> RunTest() {
                 auto closed = co_await raw.CloseAsync();
                 Check(static_cast<bool>(closed), "legacy: close failed");
             }
-            const auto sizeBefore =
-                std::filesystem::file_size(legacy);
             persistence::Persistence store;
-            Check(!co_await store.open(legacy),
-                  "legacy database must fail to open");
-            Check(!store.lastError().empty(),
-                  "legacy open failure must carry a diagnostic");
+            Check(co_await store.open(legacy),
+                  "legacy database must open through the 0->1 migration: " +
+                      store.lastError());
+            Check(store.ready(), "legacy store must be ready after migration");
+            Check(store.setting("ui.theme_mode", "") == "2",
+                  "legacy setting lost by migration");
+            const auto migrated = store.listProfiles();
+            Check(migrated.size() == 1 && migrated.front().name == "旧订阅" &&
+                      migrated.front().url == "https://example.com/legacy.yaml" &&
+                      migrated.front().selected,
+                  "legacy profile lost or corrupted by migration");
+            // 迁移后的库必须可写。
+            store.setSetting("ui.theme_mode", "1");
+            Check(co_await store.flushSettings(), "legacy: flush failed");
+            co_await store.close();
             std::error_code error;
             Check(std::filesystem::exists(legacy, error),
                   "legacy database must not be deleted");
-            Check(std::filesystem::file_size(legacy, error) == sizeBefore,
-                  "legacy database must not be modified");
-            co_await store.close();
+            persistence::Persistence reopened;
+            Check(co_await reopened.open(legacy),
+                  "legacy reopen after migration failed");
+            Check(reopened.setting("ui.theme_mode", "") == "1",
+                  "write after migration did not persist");
+            co_await reopened.close();
             RemoveDatabase(legacy);
         }
 

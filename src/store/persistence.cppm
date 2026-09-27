@@ -29,8 +29,8 @@ public:
     Persistence& operator=(const Persistence&) = delete;
 
     /// 打开数据库并 hydrate settings/profiles 缓存。应用线程调用一次。
-    /// **不做向后兼容，也不删任何文件**：0.2.x 的旧库用当前 schema 直接打不开，
-    /// open 返回 false 并提示用户自行删除；应用不会移除数据库文件。
+    /// 老库（user_version=0）由 0→1 迁移重建表并保留全部数据；迁移不了的库
+    /// open 返回 false，应用不删除任何文件，lastError 有诊断文本。
     /// @return true 表示库已就绪；失败时 lastError 有诊断文本。
     huxerui::Task<bool> open(const std::filesystem::path& file);
 
