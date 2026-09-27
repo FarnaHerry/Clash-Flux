@@ -3,7 +3,8 @@
 //
 // 单实例：GUI 与 CLI 都先抢实例锁。抢到的进程在自己的运行时里执行命令（伪 CLI，
 // 窗口隐藏到托盘）；已有实例时把命令转发给它执行并回传输出/退出码，不再启动
-// 第二个运行时。version/help 这类纯输出命令走无运行时快路径。
+// 第二个运行时。version/help 与 service 子命令走无运行时快路径（service run
+// 是 systemd root 守护进程，没有显示服务可用）。
 #include <huxerui/app.h>
 
 #include <cstdio>
@@ -18,7 +19,7 @@ import clashflux.instance;
 int main(int argc, char** argv) {
     if (argc > 1) {
         std::vector<std::string> args(argv + 1, argv + argc);
-        if (cli::isPureOutputCommand(args)) return cli::run(args);
+        if (cli::isDirectCommand(args)) return cli::run(args);
         if (!clashflux::instance::acquireOrActivate(/*activate=*/false)) {
             int code = 1;
             if (clashflux::cli_ipc::tryForwardCommand(args, code)) return code;

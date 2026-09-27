@@ -329,11 +329,15 @@ bool g_runtimeMode = false;
 int g_pendingExitCode = 0;
 } // namespace
 
-export bool isPureOutputCommand(const std::vector<std::string>& args) {
+// 无需 GUI 运行时的直接命令：version/help 是纯输出；service 子命令要么跑在
+// systemd root 环境（没有显示服务，初始化 GTK 会直接抛异常使守护进程崩溃），
+// 要么自身做提权（install/uninstall 要求 euid==0）——都不得经过 GUI 运行时。
+export bool isDirectCommand(const std::vector<std::string>& args) {
     if (args.empty()) return true;
     const std::string& cmd = args.front();
     return cmd == "version" || cmd == "--version" || cmd == "-v" ||
-           cmd == "help" || cmd == "--help" || cmd == "-h";
+           cmd == "help" || cmd == "--help" || cmd == "-h" ||
+           cmd == "service";
 }
 
 export void setPendingCommand(std::vector<std::string> args) {
