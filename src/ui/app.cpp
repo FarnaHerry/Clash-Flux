@@ -735,7 +735,8 @@ huxerui::PageTransition SecondaryPageTransition(
 
     // 持久化：启动任务打开 ORM 库并 hydrate settings/profiles 缓存，然后补齐
     // core.secret、把首帧默认主题校正为库里的值，最后长期跑 flush 泵
-    // （settings 与 profiles 都是「写缓存 + 异步落库」）。旧结构由 open 删库重建。
+    // （settings 与 profiles 都是「写缓存 + 异步落库」）。user_version=0 的老库
+    // 由 open 里的 0→1 迁移重建表并保留数据。
     auto tasks = huxerui::UseTaskScope();
     huxerui::Lifecycle(
         [tasks, themeMode, application] {
