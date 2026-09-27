@@ -98,7 +98,9 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   在自己的运行时里执行命令（CLI 命令隐藏窗口到托盘），非 owner 的 CLI 通过
   `clashflux::cli_ipc::tryForwardCommand()` 把命令转发给 owner 执行并回传输出与
   退出码（owner 在启动泵里 `servePendingCommands()`）；任何情况下都不得出现第二个
-  Runtime / 托盘 / 持久化缓存。
+  Runtime / 托盘 / 持久化缓存。`version`/`help`/`service` 子命令例外：它们由
+  `cli::isDirectCommand` 直发、不启动运行时——`service run` 是 systemd 拉起的
+  root 守护进程，环境里没有显示服务，初始化 GTK 会直接 abort。
 - 跨进程资源（detached 内核、root 服务托管的 pppd/openvpn、systemd 单元）由 pidfile /
   `pidAlive` / socket 协议管理，不属于本进程 RAII 的范畴。
 
