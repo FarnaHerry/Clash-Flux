@@ -180,8 +180,10 @@ cmake --build build --target clash-flux
    的阻塞方法必须 `co_await RunOnTaskThread(fn)`（内部即 `huxerui::RunWorker`，
    调用方 lambda 会先做类型擦除以避免协程帧带内部链接类型）；WS 流与日志写入
    经 `stream` 的通知 API + `TaskScope::Post` 推回 UI（见 `src/ui/stream_updates.h`），
-   只有确属周期性的事才用 `PollWhile(interval, tick)`。**事件处理器内禁止同步写会
-   导致点击节点被卸载的 State**——经 `tasks.Launch` + `co_await Delay(0)` 推迟。
+   只有确属周期性的事才用 `PollWhile(interval, tick)`。事件处理器在 UI 线程直接写
+   权威 `State`，由框架安排订阅者重组；不要为了推迟重组而统一套
+   `tasks.Launch` + `co_await Delay(0)`。阻塞操作放入任务线程，外部线程回调才用
+   `TaskScope::Post` 推回 UI；需要保留特定视图生命周期时，按该 API 的真实约束处理。
 5. **占位不能用 Spacer().With(Frame)**（Spacer 自带 Grow(1) 会平分空间）——
    用空 `Row{}`/`Column{}`；页面根要 `Grow(1.0F)` + `CrossAlign(Stretch)`。
 6. 内核 REST 全部走 `store::coreStore().api()`；UI 不直接持有 curl。

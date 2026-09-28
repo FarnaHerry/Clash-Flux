@@ -231,7 +231,6 @@ CoreView ReadCoreView(bool slowProbes, bool previousSystemProxyActive) {
     // 内核没跑时运行时快照不含本次意图，写透后会被这一拍打回去。
     view.allowLan = core.setting("core.allow_lan", "false") == "true";
     view.serviceInstalled = service::installed();
-    view.trayEnabled = core.setting("tray.enabled", "true") == "true";
     return view;
 }
 
@@ -1046,6 +1045,8 @@ void DriveSettingsModel(huxerui::TaskScope tasks,
             SettingsView next;
             auto& core = store::coreStore();
             next.ready = clashflux::persistence::persistence().ready();
+            const std::string themeMode = core.setting("ui.theme_mode", "1");
+            next.themeMode = themeMode == "0" ? 0 : themeMode == "2" ? 2 : 1;
             next.autoStart = core.setting("app.autostart", "false") == "true";
             next.autoRun = core.setting("app.auto_run", "false") == "true";
             next.trayEnabled = core.setting("tray.enabled", "true") == "true";

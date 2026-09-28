@@ -36,7 +36,6 @@ struct CoreView {
     // /configs 回读值，内核没跑时它一直是旧值/false，会让开关写完立刻被泵打回去。
     bool allowLan = false;
     bool serviceInstalled = false;    // root 服务单元是否存在
-    bool trayEnabled = true;          // tray.enabled
 
     bool operator==(const CoreView&) const = default;
 };

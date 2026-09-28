@@ -1,0 +1,429 @@
+diff --git a/README.md b/README.md
+index 734b574..7231c84 100644
+--- a/README.md
++++ b/README.md
+@@ -12,0 +13 @@ Charts for HuxerUI applications, with tooltips, interactive legends, selection,
++| `PieChart` | Proportional slices for part-to-whole comparisons |
+@@ -55,0 +57,13 @@ View SalesChart() {
++
++View TrafficMix() {
++  static const PieChartData data({
++    {"upload", "Upload", 72.0},
++    {"download", "Download", 28.0},
++  });
++
++  return PieChart(data)
++      .Title("Traffic mix")
++      .SliceStyle("upload", {.fill = Brush(Color::Rgb(230, 184, 102))})
++      .SliceStyle("download", {.fill = Brush(Color::Rgb(72, 118, 232))})
++      .With(Frame{.width = 96.0F, .height = 96.0F});
++}
+@@ -58 +72 @@ View SalesChart() {
+-Call `SalesChart()` from your app's UI inside a Flat or Material theme. Set the height with `Frame` and let the parent layout provide the width.
++Call these composables from your app's UI inside a Flat or Material theme. Set the chart dimensions with `Frame`.
+@@ -62 +76 @@ Call `SalesChart()` from your app's UI inside a Flat or Material theme. Set the
+-- [Example gallery](examples/preview/src/app.cpp): all four chart types, stacking, selection, interactive legends and animations.
++- [Example gallery](examples/preview/src/app.cpp): Cartesian and pie charts, stacking, selection, interactive legends and animations.
+diff --git a/examples/preview/src/app.cpp b/examples/preview/src/app.cpp
+index 8f9e878..5c93d64 100644
+--- a/examples/preview/src/app.cpp
++++ b/examples/preview/src/app.cpp
+@@ -38,0 +39,7 @@ ScatterChartData ScatterData() {
++PieChartData TrafficMixData() {
++  return PieChartData({
++      {"upload", "Upload", 72.0},
++      {"download", "Download", 28.0},
++  });
++}
++
+@@ -142,0 +150 @@ View SelectionNote(const std::optional<ChartDatumInfo>& selection) {
++  static const auto initial_traffic_mix = TrafficMixData();
+@@ -267,0 +276,13 @@ View SelectionNote(const std::optional<ChartDatumInfo>& selection) {
++  View pie = ChartCard(Column {
++    CardHeading("PIE / PART TO WHOLE", "Traffic mix", "A compact view of the relative transfer totals."),
++    Row {
++      PieChart(initial_traffic_mix)
++          .SliceStyle("upload", {.fill = Brush(Color::Rgb(214, 146, 55))})
++          .SliceStyle("download", {.fill = Brush(Color::Rgb(55, 103, 218))})
++          .With(Frame{.width = 160.0F, .height = 160.0F}),
++      Column {
++        Text("Upload · 72%").Style({Font::System(14.0F), Color::Rgb(214, 146, 55)}),
++        Text("Download · 28%").Style({Font::System(14.0F), Color::Rgb(55, 103, 218)}),
++      }.With(Grow(), Spacing(12.0F), MainAlign(MainAxisAlignment::Center)),
++    }.With(Spacing(20.0F), CrossAlign(CrossAxisAlignment::Center)),
++  });
+@@ -278,0 +300 @@ View SelectionNote(const std::optional<ChartDatumInfo>& selection) {
++    pie,
+diff --git a/include/huxerui/charts.h b/include/huxerui/charts.h
+index d88a7ae..f8dbb38 100644
+--- a/include/huxerui/charts.h
++++ b/include/huxerui/charts.h
+@@ -4 +4 @@
+-/// @brief Public data, styling, events and View declarations for HuxerUI Cartesian charts.
++/// @brief Public data, styling, events and View declarations for HuxerUI charts.
+@@ -164,0 +165 @@ struct Access;
++struct PieConfig;
+@@ -306,0 +308,30 @@ private:
++/// Stores one finite, nonnegative value displayed as a PieChart slice.
++struct PieDatum {
++  /// Nonempty stable identifier, unique within the chart snapshot.
++  std::string key;
++  /// Display text or a generated localized string resource.
++  StringVariant label;
++  /// Finite, nonnegative value that determines this datum's share of the pie.
++  double value = 0.0;
++  bool operator==(const PieDatum&) const = default;
++};
++
++/// Owns an immutable snapshot of values displayed by PieChart.
++///
++/// Datum keys must be nonempty and unique. Values must be finite and nonnegative. An empty or all-zero snapshot
++/// renders the chart's neutral empty state; positive values are normalized without overflowing their sum.
++/// @code
++/// PieChartData data({{"upload", "Upload", 72.0}, {"download", "Download", 28.0}});
++/// @endcode
++class PieChartData {
++public:
++  explicit PieChartData(std::vector<PieDatum> data = {});
++  /// Borrows data in the declared slice order.
++  /// @return An immutable span valid while this snapshot's shared storage remains alive.
++  [[nodiscard]] std::span<const PieDatum> Data() const noexcept;
++  bool operator==(const PieChartData&) const = default;
++private:
++  std::shared_ptr<const std::vector<PieDatum>> data_ =
++      std::make_shared<const std::vector<PieDatum>>();
++};
++
+@@ -538,0 +570,11 @@ struct ScatterChartStyle {
++/// Describes pie-slice paint independently of data values and slice order.
++/// Apply as the chart-wide default with PieChart::Style() or to one datum with PieChart::SliceStyle().
++struct PieChartStyle {
++  /// Slice fill Brush; the unresolved value is selected from ChartTheme::palette using the datum's stable key.
++  std::optional<Brush> fill;
++  /// Slice outline Brush; the unresolved value is the surrounding SDK surface color.
++  std::optional<Brush> stroke;
++  /// SDK stroke configuration for slice outlines; the resolved default width is 1 DIP.
++  std::optional<StrokeStyle> stroke_style;
++  bool operator==(const PieChartStyle&) const = default;
++};
+@@ -564,0 +607,2 @@ struct ChartTheme {
++  /// Default slice paint overrides for PieChart instances in this environment.
++  PieChartStyle pie;
+@@ -744 +788 @@ namespace charts_detail {
+-/// Supplies the common fluent API inherited by all four concrete chart components.
++/// Supplies the common fluent API inherited by Cartesian chart components.
+@@ -1015,0 +1060,45 @@ public:
++/// Displays nonnegative values as proportional circular slices.
++///
++/// Slice colors use the chart palette selected by stable datum key. Labels and values remain ordinary application
++/// Views so callers can choose a layout that fits their use case. PieChart uses the same Title(), Appearance() and
++/// Style() and Accessibility() fluent naming as the other chart components; SliceStyle() supplies keyed overrides.
++/// @code
++/// PieChartData data({{"upload", "Upload", 72.0}, {"download", "Download", 28.0}});
++/// return PieChart(data)
++///     .SliceStyle("upload", {.fill = Brush(Color::Rgb(230, 184, 102))})
++///     .SliceStyle("download", {.fill = Brush(Color::Rgb(72, 118, 232))})
++///     .With(Frame{.width = 96.0F, .height = 96.0F});
++/// @endcode
++class PieChart final : public View {
++public:
++  /// Creates a proportional pie from an immutable data snapshot.
++  explicit PieChart(PieChartData data);
++  /// Sets a title rendered as an ordinary SDK Text View above the plotting surface.
++  /// @param value Literal text or a generated localized resource; empty hides the title.
++  /// @return The updated pie-chart declaration.
++  PieChart Title(StringVariant value) &&;
++  /// Overrides shared chart decoration without changing pie-slice styles.
++  /// @param value Chart-wide overrides. Pie charts apply the title typography and plotting background fields;
++  /// axis and interaction fields do not apply to a pie.
++  /// @return The updated pie-chart declaration.
++  PieChart Appearance(ChartStyle value) &&;
++  /// Overrides the generated semantic summary for assistive technology.
++  /// @param value ChartAccessibilityOptions::summary; an empty value uses the generated datum labels and shares.
++  /// max_data_nodes does not apply because the pie is exposed as one summarized image.
++  /// @return The updated pie-chart declaration.
++  PieChart Accessibility(ChartAccessibilityOptions value) &&;
++  /// Overrides slice fill and outline for every datum in the chart.
++  /// @param value Override fields layered over ChartTheme::pie and the resolved palette; unset fields inherit.
++  /// @return The updated pie-chart declaration. Keyed SliceStyle() overrides still take precedence.
++  PieChart Style(PieChartStyle value) &&;
++  /// Overrides the fill and outline of one datum without copying the immutable data snapshot.
++  /// @param key Stable key of a datum present in the snapshot.
++  /// @param value Override fields layered over this chart's default pie style.
++  /// @return The updated pie-chart declaration.
++  /// @throws std::invalid_argument during composition if key is unknown or a resolved style is invalid.
++  PieChart SliceStyle(std::string key, PieChartStyle value) &&;
++private:
++  std::shared_ptr<const charts_detail::PieConfig> config_;
++  PieChart Change(std::function<void(charts_detail::PieConfig&)>&& update);
++};
++
+diff --git a/src/chart_data.cpp b/src/chart_data.cpp
+index 5252b28..ea423c9 100644
+--- a/src/chart_data.cpp
++++ b/src/chart_data.cpp
+@@ -156,0 +157,13 @@ ScatterChartData ScatterChartData::WithSeriesVisible(std::string_view key, bool
++PieChartData::PieChartData(std::vector<PieDatum> data) {
++  std::unordered_set<std::string> keys;
++  for (const auto& datum : data) {
++    charts_detail::Require(!datum.key.empty() && keys.insert(datum.key).second,
++                           "Pie datum keys must be nonempty and unique");
++    charts_detail::Require(std::isfinite(datum.value) && datum.value >= 0.0,
++                           "Pie datum values must be finite and nonnegative");
++  }
++  data_ = std::make_shared<const std::vector<PieDatum>>(std::move(data));
++}
++
++std::span<const PieDatum> PieChartData::Data() const noexcept { return *data_; }
++
+diff --git a/src/chart_internal.h b/src/chart_internal.h
+index 9c585fd..d3ffaf1 100644
+--- a/src/chart_internal.h
++++ b/src/chart_internal.h
+@@ -58,0 +59,9 @@ struct Access {
++struct PieConfig {
++  PieChartData data;
++  StringVariant title;
++  ChartStyle appearance;
++  ChartAccessibilityOptions accessibility;
++  PieChartStyle style;
++  std::unordered_map<std::string, PieChartStyle> slice_styles;
++};
++
+@@ -164,0 +174 @@ View BuildChart(std::shared_ptr<const Config> config);
++[[huxerui::composable]] View BuildPieChart(std::shared_ptr<const PieConfig> config);
+diff --git a/src/chart_pie.cpp b/src/chart_pie.cpp
+new file mode 100644
+index 0000000..4dcb666
+--- /dev/null
++++ b/src/chart_pie.cpp
+@@ -0,0 +1,187 @@
++#include "chart_internal.h"
++#include <charts_resources.h>
++
++#include <algorithm>
++#include <cmath>
++#include <numbers>
++#include <unordered_set>
++
++namespace huxerui::charts_detail {
++namespace {
++
++struct ResolvedSliceStyle {
++  Brush fill;
++  Brush stroke;
++  StrokeStyle stroke_style{.width = 1.0F, .join = StrokeJoin::Round};
++};
++
++void Merge(ResolvedSliceStyle& target, const PieChartStyle& source) {
++  if (source.fill) target.fill = *source.fill;
++  if (source.stroke) target.stroke = *source.stroke;
++  if (source.stroke_style) target.stroke_style = *source.stroke_style;
++}
++
++void Merge(ChartStyle& target, const ChartStyle& source) {
++  if (source.background) target.background = source.background;
++  if (source.title) target.title = source.title;
++}
++
++void Validate(const StrokeStyle& stroke) {
++  Require(std::isfinite(stroke.width) && stroke.width >= 0.0F &&
++              std::isfinite(stroke.miter_limit) && stroke.miter_limit >= 1.0F &&
++              std::isfinite(stroke.dash_offset),
++          "Invalid pie chart stroke style");
++  for (const auto dash : stroke.dash_pattern) {
++    Require(std::isfinite(dash) && dash >= 0.0F, "Invalid pie chart stroke dash pattern");
++  }
++}
++
++std::vector<double> Shares(std::span<const PieDatum> data) {
++  double maximum = 0.0;
++  for (const auto& datum : data) maximum = std::max(maximum, datum.value);
++  if (maximum == 0.0) return std::vector<double>(data.size(), 0.0);
++
++  double scaled_total = 0.0;
++  for (const auto& datum : data) scaled_total += datum.value / maximum;
++  std::vector<double> shares;
++  shares.reserve(data.size());
++  for (const auto& datum : data) shares.push_back((datum.value / maximum) / scaled_total);
++  return shares;
++}
++
++std::string Summary(std::span<const PieDatum> data, std::span<const std::string> labels,
++                    std::span<const double> shares, const std::string& empty_label) {
++  if (std::none_of(data.begin(), data.end(), [](const PieDatum& datum) { return datum.value > 0.0; })) {
++    return empty_label;
++  }
++
++  std::string summary;
++  for (std::size_t index = 0; index < data.size(); ++index) {
++    if (data[index].value <= 0.0) continue;
++    if (!summary.empty()) summary += ", ";
++    summary += labels[index];
++    summary += " ";
++    summary += std::to_string(static_cast<int>(std::lround(shares[index] * 100.0)));
++    summary += "%";
++  }
++  return summary;
++}
++
++Path SectorPath(Point center, float radius, double start, double sweep, bool whole_circle) {
++  const auto steps = std::clamp(
++      static_cast<int>(std::ceil(sweep * static_cast<double>(radius) / 3.0)), 2, 512);
++  Path path;
++  if (whole_circle) {
++    const double angle = start;
++    path.MoveTo({center.x + radius * static_cast<float>(std::cos(angle)),
++                 center.y + radius * static_cast<float>(std::sin(angle))});
++    for (int step = 1; step < steps; ++step) {
++      const double current = start + sweep * static_cast<double>(step) / static_cast<double>(steps);
++      path.LineTo({center.x + radius * static_cast<float>(std::cos(current)),
++                   center.y + radius * static_cast<float>(std::sin(current))});
++    }
++  } else {
++    path.MoveTo(center);
++    for (int step = 0; step <= steps; ++step) {
++      const double current = start + sweep * static_cast<double>(step) / static_cast<double>(steps);
++      path.LineTo({center.x + radius * static_cast<float>(std::cos(current)),
++                   center.y + radius * static_cast<float>(std::sin(current))});
++    }
++  }
++  path.Close();
++  return path;
++}
++
++void PaintPie(PaintContext& context, Size size, std::span<const double> shares,
++              std::span<const ResolvedSliceStyle> styles, Color empty_color) {
++  const float radius = std::max(0.0F, std::min(size.width, size.height) * 0.5F - 1.0F);
++  if (radius <= 0.0F) return;
++
++  const Point center{size.width * 0.5F, size.height * 0.5F};
++  const std::size_t positive_count = static_cast<std::size_t>(std::count_if(
++      shares.begin(), shares.end(), [](double share) { return share > 0.0; }));
++  if (positive_count == 0) {
++    context.DrawCircle(center, radius, empty_color);
++    return;
++  }
++
++  double start = -std::numbers::pi_v<double> * 0.5;
++  for (std::size_t index = 0; index < shares.size(); ++index) {
++    const double sweep = shares[index] * 2.0 * std::numbers::pi_v<double>;
++    if (sweep <= 0.0) continue;
++    const auto path = SectorPath(center, radius, start, sweep, positive_count == 1);
++    context.FillPath(path, styles[index].fill);
++    if (styles[index].stroke_style.width > 0.0F) {
++      context.StrokePath(path, styles[index].stroke, styles[index].stroke_style);
++    }
++    start += sweep;
++  }
++}
++
++} // namespace
++
++[[huxerui::composable]] View BuildPieChart(std::shared_ptr<const PieConfig> config) {
++  const auto& theme = UseTheme();
++  const auto charts = UseEnvironment<ChartTheme>();
++  const auto data = config->data.Data();
++  const auto shares = Shares(data);
++  std::vector<std::string> labels;
++  labels.reserve(data.size());
++  for (const auto& datum : data) labels.push_back(UseString(datum.label));
++
++  auto palette = charts.palette;
++  if (palette.empty()) {
++    palette = {theme.colors.primary, theme.colors.secondary, theme.colors.error,
++               theme.colors.on_surface_variant, theme.colors.outline};
++  }
++
++  std::unordered_set<std::string> keys;
++  keys.reserve(data.size());
++  std::vector<ResolvedSliceStyle> styles;
++  styles.reserve(data.size());
++  for (const auto& datum : data) {
++    keys.insert(datum.key);
++    ResolvedSliceStyle style{
++        .fill = Brush(palette[StableHash(datum.key) % palette.size()]),
++        .stroke = Brush(theme.colors.surface),
++    };
++    Merge(style, charts.pie);
++    Merge(style, config->style);
++    if (const auto found = config->slice_styles.find(datum.key); found != config->slice_styles.end()) {
++      Merge(style, found->second);
++    }
++    Validate(style.stroke_style);
++    styles.push_back(std::move(style));
++  }
++  for (const auto& [key, style] : config->slice_styles) {
++    Require(keys.contains(key), "Unknown pie datum key in SliceStyle");
++    Validate(style.stroke_style.value_or(StrokeStyle{.width = 1.0F, .join = StrokeJoin::Round}));
++  }
++
++  ChartStyle appearance{
++      .background = Brush(Color::Transparent()),
++      .title = TextStyle{Font::System(theme.typography.title_large), theme.colors.on_surface},
++  };
++  Merge(appearance, charts.common);
++  Merge(appearance, config->appearance);
++
++  Color empty_color = theme.colors.surface_container_high;
++  empty_color.alpha *= 0.8F;
++  const std::string empty_label = UseString(::charts::strings::empty);
++  const std::string custom_summary = UseString(config->accessibility.summary);
++  const std::string summary = custom_summary.empty()
++      ? Summary(data, labels, shares, empty_label)
++      : custom_summary;
++  const std::string title = UseString(config->title);
++  const auto plot = Canvas([shares, styles, empty_color, background = appearance.background](PaintContext& context, Size size) {
++    if (background) context.FillPath(Path::RoundedRect({0.0F, 0.0F, size.width, size.height}, {}), *background);
++    PaintPie(context, size, shares, styles, empty_color);
++  }).With(Semantics{.role = SemanticRole::Image, .label = summary});
++  if (title.empty()) return plot;
++  return Column {
++    Text(title).Style(*appearance.title),
++    plot,
++  }.With(Spacing(theme.spacing.small), CrossAlign(CrossAxisAlignment::Stretch));
++}
++
++} // namespace huxerui::charts_detail
+diff --git a/src/charts.cpp b/src/charts.cpp
+index af58ed3..a56cfa7 100644
+--- a/src/charts.cpp
++++ b/src/charts.cpp
+@@ -104,0 +105,37 @@ ScatterChart ScatterChart::SeriesStyle(std::string key, ScatterChartStyle value)
++PieChart::PieChart(PieChartData data) {
++  auto config = std::make_shared<charts_detail::PieConfig>();
++  config->data = std::move(data);
++  config_ = std::move(config);
++  View::operator=(charts_detail::BuildPieChart(config_));
++}
++
++PieChart PieChart::Change(std::function<void(charts_detail::PieConfig&)>&& update) {
++  auto config = std::make_shared<charts_detail::PieConfig>(*config_);
++  update(*config);
++  config_ = config;
++  View::operator=(charts_detail::BuildPieChart(config));
++  return std::move(*this);
++}
++
++PieChart PieChart::Title(StringVariant value) && {
++  return Change([&](charts_detail::PieConfig& config) { config.title = std::move(value); });
++}
++
++PieChart PieChart::Appearance(ChartStyle value) && {
++  return Change([&](charts_detail::PieConfig& config) { config.appearance = std::move(value); });
++}
++
++PieChart PieChart::Accessibility(ChartAccessibilityOptions value) && {
++  return Change([&](charts_detail::PieConfig& config) { config.accessibility = std::move(value); });
++}
++
++PieChart PieChart::Style(PieChartStyle value) && {
++  return Change([&](charts_detail::PieConfig& config) { config.style = std::move(value); });
++}
++
++PieChart PieChart::SliceStyle(std::string key, PieChartStyle value) && {
++  return Change([&](charts_detail::PieConfig& config) {
++    config.slice_styles[std::move(key)] = std::move(value);
++  });
++}
++
