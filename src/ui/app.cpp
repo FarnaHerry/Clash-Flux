@@ -783,14 +783,8 @@ huxerui::PageTransition SecondaryPageTransition(
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
     CLASHFLUX_PREPARE_PLATFORM_DATA(application);
 
-    // 初始值在 UseState 之前算好（组合体内不写 State）：
-    // 主题模式 0=跟随系统 1=深色 2=浅色；未保存偏好时默认使用品牌深色主题。
-    int initialThemeMode = 1;
-    {
-        const std::string saved = store::coreStore().setting("ui.theme_mode", "1");
-        if (saved == "0" || saved == "2") initialThemeMode = std::stoi(saved);
-    }
-    auto themeMode = huxerui::UseState<int>(std::move(initialThemeMode));
+    // 首帧先用品牌深色；设置模型 hydrate 后再镜像持久化主题值。
+    auto themeMode = huxerui::UseState<int>(1);
     // TEMP-PERF-ONLY: 直接落到指定一级页做帧分析，测完删除。
     std::size_t initialNavPage = pages::kHome;
     if (const char* perf_page = std::getenv("CLASHFLUX_PERF_PAGE")) {
@@ -804,18 +798,27 @@ huxerui::PageTransition SecondaryPageTransition(
     // 设置：hydrate 完成后要立刻请它重读一次（首帧组合早于 hydrate，见
     // settings_model.h），所以在这里就取好，供下面的启动任务使用。
     const auto settingsModel = huxerui::UseService<SettingsModel>();
+    huxerui::Lifecycle(
+        [themeMode, settingsModel] {
+            const SettingsView settings = settingsModel->view.Get();
+            if (settings.ready && themeMode.Get() != settings.themeMode) {
+                themeMode = settings.themeMode;
+            }
+            return [] {};
+        },
+        settingsModel->view);
     auto profilesCacheList = huxerui::UseStateList<db::Profile>();
     const ProfilesCache profilesCache{profilesCacheList,
                                       profilesModel->selectionPending};
 
     // 持久化：启动任务打开 ORM 库并 hydrate settings/profiles 缓存，然后补齐
-    // core.secret、把首帧默认主题校正为库里的值，最后长期跑 flush 泵
+    // core.secret，最后长期跑 flush 泵
     // （settings 与 profiles 都是「写缓存 + 异步落库」）。user_version=0 的老库
     // 由 open 里的 0→1 迁移重建表并保留数据。
     auto tasks = huxerui::UseTaskScope();
     huxerui::Lifecycle(
-        [tasks, themeMode, application, profilesModel, settingsModel] {
-            tasks.Launch([themeMode, application, profilesModel,
+        [tasks, application, profilesModel, settingsModel] {
+            tasks.Launch([application, profilesModel,
                           settingsModel]() -> huxerui::Task<void> {
                 try {
                     auto& db = clashflux::persistence::persistence();
@@ -831,12 +834,6 @@ huxerui::PageTransition SecondaryPageTransition(
                     store::coreStore().init();
                     store::coreStore().ensureSecret();
                     if (db.ready()) {
-                        const std::string saved =
-                            store::coreStore().setting("ui.theme_mode", "1");
-                        if (saved == "0" || saved == "2") {
-                            const int mode = std::stoi(saved);
-                            if (mode != themeMode.Get()) themeMode = mode;
-                        }
                         // hydrate 只是填充缓存、不算一次「变更」，修订号不会动；
                         // 这里显式请模型同步一次，否则首帧之后不会再发布。
                         profilesModel->RequestSync();

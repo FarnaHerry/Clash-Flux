@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.5 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.6 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -484,13 +484,81 @@ set(CLASHFLUX_HUXERUI_CHARTS_URL "https://github.com/HuxerUI/Lib-Charts.git")
 set(CLASHFLUX_HUXERUI_CHARTS_COMMIT "cf7c28655e1b6cdaa15a1c0fc2612000e1ef9301")
 set(CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lib-charts")
+set(CLASHFLUX_HUXERUI_CHARTS_PATCH
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/huxerui-lib-charts-pie-chart.patch")
+if (NOT EXISTS "${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}/CMakeLists.txt"
+        AND NOT HUXERUI_LIBRARY_GRAPH_ONLY)
+    # Populate the pinned source before huxerui_use_library() adds its CMake project,
+    # so the maintained pie-chart patch is applied before any library targets exist.
+    set(CLASHFLUX_HUXERUI_CHARTS_ORIGIN
+        "${CLASHFLUX_HUXERUI_CHARTS_URL}@${CLASHFLUX_HUXERUI_CHARTS_COMMIT}")
+    string(SHA256 CLASHFLUX_HUXERUI_CHARTS_FETCH_HASH
+        "${CLASHFLUX_HUXERUI_CHARTS_ORIGIN}")
+    string(SUBSTRING "${CLASHFLUX_HUXERUI_CHARTS_FETCH_HASH}" 0 16
+        CLASHFLUX_HUXERUI_CHARTS_FETCH_HASH)
+    set(CLASHFLUX_HUXERUI_CHARTS_FETCH_NAME
+        "clashflux_huxerui_charts_${CLASHFLUX_HUXERUI_CHARTS_FETCH_HASH}")
+    FetchContent_Declare(${CLASHFLUX_HUXERUI_CHARTS_FETCH_NAME}
+        GIT_REPOSITORY "${CLASHFLUX_HUXERUI_CHARTS_URL}"
+        GIT_TAG "${CLASHFLUX_HUXERUI_CHARTS_COMMIT}"
+        GIT_SHALLOW FALSE
+    )
+    FetchContent_GetProperties(${CLASHFLUX_HUXERUI_CHARTS_FETCH_NAME}
+        SOURCE_DIR CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR
+        POPULATED CLASHFLUX_HUXERUI_CHARTS_POPULATED
+    )
+    if (NOT CLASHFLUX_HUXERUI_CHARTS_POPULATED)
+        cmake_policy(PUSH)
+        if (POLICY CMP0169)
+            cmake_policy(SET CMP0169 OLD)
+        endif ()
+        FetchContent_Populate(${CLASHFLUX_HUXERUI_CHARTS_FETCH_NAME})
+        cmake_policy(POP)
+        FetchContent_GetProperties(${CLASHFLUX_HUXERUI_CHARTS_FETCH_NAME}
+            SOURCE_DIR CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR
+        )
+    endif ()
+endif ()
+
 if (EXISTS "${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}/CMakeLists.txt")
-    message(STATUS "clash-flux: HuxerUI::Charts 使用本地源码 ${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}")
+    message(STATUS "clash-flux: HuxerUI::Charts 使用源码 ${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}")
+    execute_process(
+        COMMAND git apply --check --unidiff-zero "${CLASHFLUX_HUXERUI_CHARTS_PATCH}"
+        WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}"
+        RESULT_VARIABLE CLASHFLUX_HUXERUI_CHARTS_PATCH_CHECK
+        ERROR_VARIABLE CLASHFLUX_HUXERUI_CHARTS_PATCH_ERROR
+    )
+    if (CLASHFLUX_HUXERUI_CHARTS_PATCH_CHECK EQUAL 0)
+        execute_process(
+            COMMAND git apply --unidiff-zero "${CLASHFLUX_HUXERUI_CHARTS_PATCH}"
+            WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}"
+            RESULT_VARIABLE CLASHFLUX_HUXERUI_CHARTS_PATCH_RESULT
+            ERROR_VARIABLE CLASHFLUX_HUXERUI_CHARTS_PATCH_ERROR
+        )
+        if (NOT CLASHFLUX_HUXERUI_CHARTS_PATCH_RESULT EQUAL 0)
+            message(FATAL_ERROR
+                "HuxerUI::Charts pie-chart patch failed: ${CLASHFLUX_HUXERUI_CHARTS_PATCH_ERROR}")
+        endif ()
+    else ()
+        execute_process(
+            COMMAND git apply --reverse --check --unidiff-zero "${CLASHFLUX_HUXERUI_CHARTS_PATCH}"
+            WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}"
+            RESULT_VARIABLE CLASHFLUX_HUXERUI_CHARTS_PATCH_REVERSE_CHECK
+            ERROR_VARIABLE CLASHFLUX_HUXERUI_CHARTS_PATCH_ERROR
+        )
+        if (NOT CLASHFLUX_HUXERUI_CHARTS_PATCH_REVERSE_CHECK EQUAL 0)
+            message(FATAL_ERROR
+                "HuxerUI::Charts pie-chart patch no longer applies to the pinned source: ${CLASHFLUX_HUXERUI_CHARTS_PATCH_ERROR}")
+        endif ()
+        message(STATUS "clash-flux: HuxerUI::Charts pie-chart patch already applied")
+    endif ()
     huxerui_use_library(clash-flux
         TARGET HuxerUI::Charts
         PATH "${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}"
     )
 else ()
+    # Library graph-only configurations need the upstream identity but do not build
+    # chart sources, so keep their acquisition declarative.
     huxerui_use_library(clash-flux
         TARGET HuxerUI::Charts
         URL "${CLASHFLUX_HUXERUI_CHARTS_URL}"

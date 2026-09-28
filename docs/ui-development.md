@@ -27,6 +27,8 @@
 - Linux GTK 窗口显示、隐藏和关闭时的帧生命周期由 `cmake/patches/huxerui-linux-close-frame.patch` 维护，只应用于 Linux 源码构建。
 - macOS 与 iOS Simulator CI 通过 `cmake/patches/huxerui-window-p0960.patch` 修复固定 HuxerUI revision 在 Objective-C++ 中的聚合初始化兼容问题；升级 HuxerUI 固定版本时确认补丁仍可应用。
 - CMake 在加入固定的 HuxerUI/Lib-Camera 依赖前，会按 `cmake/patches/huxerui-lib-camera-application-context.patch` 适配 Lib-Camera 的安装钩子和各平台 factory，使其兼容 HuxerUI `ApplicationContext` API。该补丁保持在 CMake 外部依赖源码中，不改写上游 checkout。
+- 当前固定的 HuxerUI Lib-Charts 没有饼图组件；Clash-Flux 通过 `cmake/patches/huxerui-lib-charts-pie-chart.patch` 给该扩展库补充 `PieChartData` / `PieChart`，并在 `huxerui_use_library()` 加入源码前应用。升级 Lib-Charts revision 时先确认补丁仍可 `git apply --check --unidiff-zero`，若上游新增等价 API 则删除补丁和对应 CMake 接入。
+- 饼图通过 `PieChartData` 保存稳定 key、标签和值，`PieChart` 使用显式帧约束；标签与数值放在普通 HuxerUI Views 中，图形本身提供图像语义摘要。
 - iOS Simulator CI 从仓库根 CMake 项目构建 `clash-flux_huxerui_ios_core`，同时应用 P0960 和拖动预览补丁。该目标只验证 Clash-Flux 源码与 HuxerUI 静态平台库可编译，不生成应用包；iOS 网络扩展、sing-box 接入和 curl TLS 尚未纳入。
 
 HuxerUI revision 更新到上游最新后，先对照每个维护补丁的变更；上游已包含的改动要移除补丁和 CI 应用步骤。保留的补丁必须在最新源码 checkout 上通过 `git apply --check --unidiff-zero`，并让所有适用平台继续使用同一个固定 SHA。

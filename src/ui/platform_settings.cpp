@@ -505,11 +505,8 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
     auto proxyPending = huxerui::UseState(false);
     auto tunPending = huxerui::UseState(false);
     const std::string detectedShell = CurrentEnvironmentShell();
-    const std::string savedShell =
-        store::coreStore().setting("ui.env_shell", detectedShell);
-    auto envShell = huxerui::UseState(EnvironmentShellIndex(savedShell));
-    // 首帧组合早于 hydrate，上面拿到的可能是探测值；模型报 ready 后补一次库里
-    // 保存的 shell（见 settings_model.h）。
+    auto envShell = huxerui::UseState(EnvironmentShellIndex(detectedShell));
+    // 首帧组合使用探测值；模型报 ready 后用持久化选择覆盖（见 settings_model.h）。
     const auto settingsModel = huxerui::UseService<SettingsModel>();
     auto envShellHydrated = huxerui::UseState(false);
     huxerui::Lifecycle(

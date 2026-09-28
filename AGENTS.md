@@ -29,6 +29,9 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
 - HuxerUI 及其依赖源码构建所需的本地修复应维护为 `cmake/patches/` 中的补丁；
   HuxerUI 补丁接入所有对应平台的源码检出步骤，依赖补丁在 CMake 加入依赖前应用。
   升级固定版本时先确认补丁仍可应用。
+- 固定的 HuxerUI Lib-Charts 尚无饼图；Clash-Flux 的 `PieChartData` / `PieChart` 扩展由
+  `cmake/patches/huxerui-lib-charts-pie-chart.patch` 维护，必须在 CMake 加入该依赖前应用；
+  升级 Lib-Charts 时核对上游 API，并在饼图已上游实现后移除本地补丁。
 - 同步 HuxerUI 时先 fetch 上游最新 revision，再逐项审查本地差异和维护补丁；只保留
   上游尚未修复的差异。每个保留补丁须针对新 revision 通过 `git apply --check --unidiff-zero`，并接入
   所有适用平台。上游已合并的修复应删除本地补丁及对应 CI 应用步骤，所有 CI 平台统一

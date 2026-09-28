@@ -645,34 +645,64 @@ private:
 
 // ---- 卡片内容 --------------------------------------------------------------
 
-// 流量统计：上箭头紧跟总上传、下箭头紧跟总下载（不写文字提示；实时速率在流量卡片标题行）。
+// 流量统计：饼图展示上传/下载累计占比，右侧保留各自总量与百分比。
 [[huxerui::composable]] huxerui::View HomeTotalCard(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::Color upColor = SemanticWarningColor(theme);
     const huxerui::Color downColor = theme.colors.primary;
-
-    // 只留「箭头紧跟数值」：↑ = 总上传，↓ = 总下载，不再写文字提示。
-    const auto totalRow = [&theme](const char* arrow, huxerui::Color arrowColor,
-                                   const std::string& value) {
-        return huxerui::Row {
-            huxerui::Text(arrow).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody)
-                    .WithWeight(huxerui::FontWeight::Bold),
-                arrowColor}),
+    const std::int64_t upload = std::max<std::int64_t>(0, s.totalUp);
+    const std::int64_t download = std::max<std::int64_t>(0, s.totalDown);
+    const double total = static_cast<double>(upload) + static_cast<double>(download);
+    const auto shareText = [total](std::int64_t value) {
+        if (total <= 0.0) return std::string("—");
+        const int percent = static_cast<int>(static_cast<double>(value) / total * 100.0 + 0.5);
+        return std::to_string(percent) + "%";
+    };
+    const auto totalMetric = [&theme](const char* label, huxerui::Color color,
+                                      const std::string& value,
+                                      const std::string& share) {
+        return huxerui::Column {
+            huxerui::Row {
+                huxerui::Text(label).Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kCaption)
+                        .WithWeight(huxerui::FontWeight::Medium),
+                    color}),
+                huxerui::Spacer(),
+                huxerui::Text(share).Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kCaption)
+                        .WithWeight(huxerui::FontWeight::SemiBold),
+                    color}),
+            }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
             huxerui::Text(value).Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kBody)
                     .WithWeight(huxerui::FontWeight::SemiBold),
                 theme.colors.on_surface}),
-            huxerui::Spacer(),
-        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+        }.With(huxerui::Spacing(2.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     };
+    const huxerui::PieChartData data({
+        {"upload", "上传", static_cast<double>(upload)},
+        {"download", "下载", static_cast<double>(download)},
+    });
 
     return huxerui::Column {
         HomeCardHeading("流量统计"),
-        totalRow("↑", upColor, formatBytes(s.totalUp)),
-        totalRow("↓", downColor, formatBytes(s.totalDown)),
-        huxerui::Spacer(),
-    }.With(huxerui::Spacing(6.0F),
+        huxerui::Row {
+            huxerui::PieChart(data)
+                .SliceStyle("upload", {.fill = huxerui::Brush(upColor)})
+                .SliceStyle("download", {.fill = huxerui::Brush(downColor)})
+                .With(huxerui::Frame{.width = 72.0F, .height = 72.0F}),
+            huxerui::Column {
+                totalMetric("↑ 上传", upColor, formatBytes(upload), shareText(upload)),
+                totalMetric("↓ 下载", downColor, formatBytes(download), shareText(download)),
+            }.With(huxerui::Grow(1.0F),
+                   huxerui::Spacing(12.0F),
+                   huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+        }.With(huxerui::Grow(1.0F),
+               huxerui::Spacing(8.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+    }.With(huxerui::Spacing(8.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 

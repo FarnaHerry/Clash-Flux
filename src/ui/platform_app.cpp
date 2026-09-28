@@ -24,6 +24,7 @@
 #include "ui.h"
 #include "app_resources.h"
 #include "proxies_model.h"
+#include "settings_model.h"
 #include "task_bridge.h"
 
 import clashflux.config;
@@ -191,6 +192,7 @@ struct TrayOperationResult {
     const auto proxiesModel = huxerui::UseService<ProxiesModel>();
     const auto coreModel = huxerui::UseService<CoreModel>();
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
+    const auto settingsModel = huxerui::UseService<SettingsModel>();
     const huxerui::SystemTrayHandle tray = application.SystemTray();
     const bool trayAvailable = tray.IsAvailable();
     auto tasks = huxerui::UseTaskScope();
@@ -207,8 +209,7 @@ struct TrayOperationResult {
     auto trayTunPending = huxerui::UseState(false);
     auto trayProfiles = huxerui::UseState<std::vector<db::Profile>>({});
     auto trayProxyGroups = huxerui::UseState<std::vector<ProxyGroupSnapshot>>({});
-    auto trayEnabled = huxerui::UseState(
-        store::coreStore().setting("tray.enabled", "true") == "true");
+    auto startupVisibilityHandled = huxerui::UseState(false);
     auto closeDialogOpen = huxerui::UseState(false);
     auto exitRequested = huxerui::UseState(false);
     auto dialog = huxerui::UseDialog();
@@ -245,7 +246,7 @@ struct TrayOperationResult {
     huxerui::Lifecycle(
         [tasks, trayCoreRunning, trayCoreMenuRunning, traySysProxy, trayTun,
          traySysProxyActive, trayTunActive, trayCorePending,
-         traySysProxyPending, trayTunPending, trayEnabled, coreModel] {
+         traySysProxyPending, trayTunPending, coreModel] {
             tasks.Launch([=]() -> huxerui::Task<void> {
                 co_await RunOnTaskThread([] {
                     auto& core = store::coreStore();
@@ -281,7 +282,7 @@ struct TrayOperationResult {
     // 不再是 0.5s 定时器。动作进行中（pending）保留乐观值，避免图标闪回。
     huxerui::Lifecycle(
         [trayCoreRunning, trayCoreMenuRunning, traySysProxy, traySysProxyActive,
-         trayTun, trayTunActive, trayEnabled, trayCorePending,
+         trayTun, trayTunActive, trayCorePending,
          traySysProxyPending, trayTunPending, coreModel] {
             const CoreView view = coreModel->view.Get();
             const bool running = view.core.state == core::CoreState::Running;
@@ -295,7 +296,6 @@ struct TrayOperationResult {
                 trayTun = view.core.tunEnabled;
                 trayTunActive = running && view.core.tunEnabled;
             }
-            trayEnabled = view.trayEnabled;
             return [] {};
         },
         coreModel->view);
@@ -363,12 +363,12 @@ struct TrayOperationResult {
              trayCoreMenuRunning, traySysProxy, trayTun, traySysProxyActive,
              trayTunActive, trayCorePending, traySysProxyPending,
              trayTunPending, dialog, clipboard, toast,
-             trayProfiles, trayProxyGroups, trayEnabled, proxiesModel,
+             trayProfiles, trayProxyGroups, settingsModel, proxiesModel,
              coreModel, profilesModel,
              finishExit,
              textColor = rootSpec.colors.on_surface,
              hintColor = rootSpec.colors.on_surface_variant] {
-                if (trayEnabled.Get()) {
+                if (settingsModel->view.Get().trayEnabled) {
                     std::vector<huxerui::MenuEntry> menuEntries;
                     menuEntries.push_back(
                         huxerui::MenuItem("显示主窗口", [window] {
@@ -607,12 +607,22 @@ struct TrayOperationResult {
                               huxerui::SystemTrayOptions{
                                   .tooltip = "Clash-Flux",
                                   .menu = std::move(menuEntries)});
+                } else {
+                    // 关掉托盘图标后不能只停在「不再 Show」：托盘项是上一次
+                    // Show 注册的，必须显式撤掉，否则图标会一直留在托盘里。
+                    tray.Hide();
                 }
                 return [tray] { tray.Hide(); };
             },
+            // 依赖必须覆盖菜单真正读到的每一份状态：订阅列表与线路快照是
+            // **镜像 State**（由上面两个 Lifecycle 在模型变化时写入），漏掉它们
+            // 会出现「菜单在镜像填充之前就建好、之后再也不会重建」——表现为
+            // 缩到托盘后菜单里只剩「暂无可用订阅 / 暂无可切换线路」，而窗口可见时
+            // 因为内核/接管状态变化顺带重建才看起来正常。
             trayCoreRunning, trayCoreMenuRunning, traySysProxy, trayTun,
             traySysProxyActive, trayTunActive, trayCorePending,
-            traySysProxyPending, trayTunPending, trayEnabled);
+            traySysProxyPending, trayTunPending, trayProfiles,
+            trayProxyGroups, settingsModel->view);
 
     }
 
@@ -631,17 +641,16 @@ struct TrayOperationResult {
     window.OnCloseRequest(
         [=]() mutable -> bool {
             if (exitRequested.Get()) return true;
-            if (!tray.IsAvailable() || !trayEnabled.Get()) {
+            if (!tray.IsAvailable() || !settingsModel->view.Get().trayEnabled) {
                 finishExit();
                 return true;
             }
-            const std::string behavior =
-                store::coreStore().setting("tray.close_behavior", "0");
-            if (behavior == "1") {
+            const int behavior = settingsModel->view.Get().closeBehavior;
+            if (behavior == 1) {
                 finishExit();
                 return true;
             }
-            if (behavior == "2") {
+            if (behavior == 2) {
                 hideWindow();
                 return true;
             }
@@ -688,16 +697,20 @@ struct TrayOperationResult {
     // 只在这个壳层生命周期首次挂载时执行一次。此前直接写在组合函数末尾，
     // 页面切换造成重组后会再次 Hide，表现为“切换页面就缩到托盘”。
     // 伪 CLI 模式同样不渲染窗口：命令在运行时内执行，完成即退出。
-    const bool hideOnStartup =
-        cli::runtimeCommandMode() ||
-        (trayAvailable && trayEnabled.Get() &&
-         store::coreStore().setting("tray.start_minimized", "false") == "true");
     huxerui::Lifecycle(
-        [window, hideOnStartup] {
-            if (hideOnStartup) window.Hide();
+        [window, tray, settingsModel, startupVisibilityHandled] {
+            const bool commandMode = cli::runtimeCommandMode();
+            const SettingsView settings = settingsModel->view.Get();
+            if (!startupVisibilityHandled.Get() && (commandMode || settings.ready)) {
+                startupVisibilityHandled = true;
+                if (commandMode ||
+                    (tray.IsAvailable() && settings.trayEnabled && settings.startMinimized)) {
+                    window.Hide();
+                }
+            }
             return [] {};
         },
-        0);
+        settingsModel->view);
     return {};
 }
 

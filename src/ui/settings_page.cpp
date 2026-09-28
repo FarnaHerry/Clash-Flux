@@ -24,6 +24,7 @@ import clashflux.store.profiles;
 
 #include "core_model.h"
 #include "profiles_cache.h"
+#include "settings_model.h"
 
 namespace clashflux::ui {
 namespace {
@@ -321,6 +322,7 @@ const std::string kAboutText = std::format(
     auto animating =
         huxerui::UseState(std::make_shared<ThemeAnimationFlag>());
     auto toast = huxerui::UseToast();
+    const auto settingsModel = huxerui::UseService<SettingsModel>();
     auto portValue = huxerui::UseState(huxerui::TextEditingValue{""});
     // 出站模式：HTTP 热更，快且可能失败 → 保留本地乐观值 + busy 单飞；
     // 成功时把权威值写透模型，失败才回落（见 applyOutboundMode）。
@@ -351,16 +353,20 @@ const std::string kAboutText = std::format(
     if (!active) return huxerui::View{huxerui::Row{}}.Key("settings-idle");
 
     // 主题模式：0=跟随系统，1=深色，2=浅色。
-    const auto applyTheme = [themeMode, transition, tasks, animating](int mode) {
+    const auto applyTheme = [themeMode, transition, tasks, animating,
+                             settingsModel](int mode) {
         if (animating.Get()->animating) return;
         const bool currentDark =
             themeMode.Get() == 1 ||
             (themeMode.Get() == 0 && cfg::systemPrefersDark());
         const bool targetDark =
             mode == 1 || (mode == 0 && cfg::systemPrefersDark());
-        const auto mutation = [themeMode, mode] {
-            themeMode = mode;
+        const auto mutation = [themeMode, mode, settingsModel] {
             store::coreStore().setSetting("ui.theme_mode", std::to_string(mode));
+            settingsModel->Update([mode](SettingsView& settings) {
+                settings.themeMode = mode;
+            });
+            themeMode = mode;
         };
         if (currentDark == targetDark) {
             mutation();
