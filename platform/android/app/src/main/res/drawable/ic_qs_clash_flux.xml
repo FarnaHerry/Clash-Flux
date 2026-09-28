@@ -9,19 +9,16 @@
   Why the viewport is 1200x1565 (portrait) instead of square:
   SystemUI does NOT fit tile icons uniformly. Measured on ColorOS 15
   (Android 15, OnePlus PJE110) the 40dp square drawable was stretched
-  into a ~24.67 x 32.18dp box (fitXY, 1.304x vertical stretch), so the paw -
-  whose artwork is 1.304:1 wide - rendered as a 1.00:1 blob while the launcher
-  icon next to it rendered the same artwork at its true 1.31:1. Making the
-  drawable's own aspect equal the box's aspect turns that stretch into a
-  uniform scale: artwork 1200x918 letterboxed in a 1200x1565
-  viewport renders at the intended 1.304:1.
+  into a ~24.67 x 32.18dp box (fitXY, 1.304x vertical stretch). The paw
+  silhouette is vertically extended in the path transform so it stays
+  nearly square in that measured box instead of looking flattened.
 
   On a ROM that fits the icon uniformly (FIT_CENTER) this drawable stays
   undistorted too, only marginally smaller than a square one; the trade-off is
   that a ROM stretching a square box would stretch this one the other way.
 
   Intrinsic width stays 40dp so the badge keeps the size the previous mascot
-  badge had; the artwork is flush horizontally with blank above and below.
+  badge had; the artwork has a small vertical safety margin for the tile mask.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="40dp"
@@ -29,9 +26,9 @@
     android:viewportWidth="1200"
     android:viewportHeight="1565">
     <group
-        android:translateY="1241.5"
+        android:translateY="1402.15"
         android:scaleX="0.1"
-        android:scaleY="-0.1">
+        android:scaleY="-0.135">
         <path
             android:fillColor="#FF000000"
             android:fillType="evenOdd"
