@@ -164,8 +164,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 89
-        versionName = "0.3.6"
+        versionCode = 90
+        versionName = "0.3.7"
 
         externalNativeBuild {
             cmake {
@@ -192,7 +192,15 @@ android {
     }
 
     signingConfigs {
+        // Include the traditional JAR signature files as well as APK Signature
+        // Scheme v2. Some OEM installers still reject v2-only APKs as unsigned.
+        debug {
+            enableV1Signing = true
+            enableV2Signing = true
+        }
         release {
+            enableV1Signing = true
+            enableV2Signing = true
             if (hasReleaseSigning) {
                 storeFile = file(releaseKeystoreFile)
                 storePassword = releaseKeystorePassword

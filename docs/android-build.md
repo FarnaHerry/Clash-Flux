@@ -20,3 +20,11 @@ huxerui build android --profile debug
 如果 `third_party/huxerui` 存在，Android Java 和 C++ 模块会一起从该源码构建；CI 显式传入
 `--source` 时，则两者一起使用该指定源码。构建配置会打印 Gradle 实际选中的 Android Java
 模块或 AAR 路径，可用于确认没有混用版本。
+
+## 发布 APK 签名
+
+Android Release APK 必须同时启用 v1（JAR 签名，包含 `META-INF` 签名文件）和 v2 签名。
+虽然现代 Android 支持 v2，但部分 OEM 安装器仍会因为缺少传统签名文件而将 v2-only APK
+报告为未签名。GitHub Actions 使用 `apksigner verify --verbose --min-sdk-version 23` 并分别
+断言 v1、v2 均为 `true`；由于应用的 minSdk 是 24，默认核验会跳过 v1，因此只检查默认命令
+退出成功不能防止该兼容性回归。

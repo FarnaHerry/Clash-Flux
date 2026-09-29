@@ -129,7 +129,8 @@ Android 进程所有权、Binder 控制、服务恢复和网络切换策略见
 GitHub Release 使用稳定的 Android 发布密钥签名。CI 需要配置
 `CLASHFLUX_ANDROID_KEYSTORE_BASE64`、`CLASHFLUX_ANDROID_KEYSTORE_PASSWORD`、
 `CLASHFLUX_ANDROID_KEY_ALIAS` 和 `CLASHFLUX_ANDROID_KEY_PASSWORD` 四个仓库
-Secrets；本地未提供发布密钥时，Gradle 会使用开发用 debug 签名。
+Secrets；APK 同时包含 v1（JAR）和 v2 签名，CI 会分别校验两种签名。本地未提供发布密钥时，
+Gradle 会使用开发用 debug 签名。
 
 ## 架构与保真度契约
 

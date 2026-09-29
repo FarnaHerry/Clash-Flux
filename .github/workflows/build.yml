@@ -747,7 +747,12 @@ jobs:
           apk="dist-src/clash-flux-android-arm64-v8a.apk"
           apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
           test -n "$apksigner"
-          "$apksigner" verify --verbose "$apk"
+          # Lower the verifier's minimum to API 23 so apksigner checks the
+          # legacy v1 signature even though this app's minSdk is 24.
+          report="$("$apksigner" verify --verbose --min-sdk-version 23 "$apk")"
+          printf '%s\n' "$report"
+          grep -Fq 'Verified using v1 scheme (JAR signing): true' <<<"$report"
+          grep -Fq 'Verified using v2 scheme (APK Signature Scheme v2): true' <<<"$report"
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4

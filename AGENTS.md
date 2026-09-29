@@ -45,6 +45,10 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
 - Android Gradle 的 HuxerUI Java 模块必须与 CMake 选中的 native HuxerUI 来自同一源码版本：
   有源码时使用该源码的 `platform/android/huxerui` 项目，只有 CMake 回落到 SDK 时才使用 SDK AAR。
   详见 `docs/android-build.md`。
+- Android 发布 APK 必须同时启用 v1（JAR/META-INF）和 v2 签名，以兼容仍依赖传统签名文件的 OEM 安装器；
+  Android CI 必须使用 `apksigner verify --verbose --min-sdk-version 23` 分别断言 v1、v2 均为 `true`；
+  应用 minSdk 为 24 时，默认核验会跳过 v1，不能仅检查默认命令成功。
+  详见 `docs/android-build.md`。
 - **Android 图标分工是固定的，不要互相替换**：应用图标（`mipmap-*/ic_launcher.png` 与
   adaptive 前景 `drawable/ic_launcher_foreground.xml`，前景 inset `@drawable/ic_launcher_mascot`、
   背景 `@color/ic_launcher_background`）用**平滑猫头吉祥物**；快捷开关磁贴徽章
