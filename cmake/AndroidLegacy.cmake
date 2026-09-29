@@ -118,6 +118,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/ui/vpn_model.h"
         "${_root}/src/ui/proxies_page.cpp"
         "${_root}/src/ui/rules_page.cpp"
+        "${_root}/src/ui/section_tabs.cpp"
         "${_root}/src/ui/settings_page.cpp"
         "${_root}/src/ui/platform_settings.cpp"
         "${_root}/src/ui/platform_app.cpp"
@@ -203,6 +204,7 @@ function(clashflux_prepare_android_sources output_directory output_header
             "${_root}/src/ui/profiles_page_support.cpp"
             "${_root}/src/ui/proxies_page.cpp"
             "${_root}/src/ui/rules_page.cpp"
+            "${_root}/src/ui/section_tabs.cpp"
             "${_root}/src/ui/settings_page.cpp"
             "${_root}/src/ui/platform_settings.cpp"
             "${_root}/src/ui/platform_app.cpp")
