@@ -361,6 +361,9 @@ huxerui::View SectionTabBar(const std::vector<SectionTab>& tabs,
                             const std::string& selectedKey,
                             std::function<void(const std::string&)> onSelect);
 
+// 只建当前分区时使用的挂载入场过渡：direction 为 -1（左）、0（不动）、1（右）。
+huxerui::View ProxyGroupPage(huxerui::View content, int direction);
+
 // 分区内容的左右滑动切换（与 SectionTabBar 配套）：返回 PointerIntercept 处理器，
 // 由页面挂到内容滚动节点上；手势状态由页面持有一对。onPrev/onNext 为空表示
 // 该方向无页可切（此时不认领手势，交给外层容器，例如手机端 Pager 整页翻）。

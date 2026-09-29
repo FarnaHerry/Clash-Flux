@@ -3,8 +3,8 @@
 //
 // 分组切换（标签栏）：一个根分组一个横向标签，纯文字、无边框无填充；选中项
 // 高亮文字并在底部画一条主题色加粗指示线。标签过多时标签栏横向滚动；内容区
-// 支持左右滑动手势切换相邻分组（桌面；手机端「代理」在 Pager 里，横向拖动由
-// Pager 切一级页，分组切换用标签点击）。同一时刻只展示选中分组的节点。
+// 支持左右滑动手势切换相邻分组，两端继续滑动交给手机端 Pager 切一级页。
+// 同一时刻只展示选中分组的节点。
 //
 // 规则 → 订阅自带分组标签；全局 → 内核默认出站（`route.final`）所在的那个真实
 // 分组，sing-box 合成的只读 GLOBAL 只作兜底；直连 → 不展示订阅内容，只给提示。
@@ -480,35 +480,6 @@ std::function<void()> NodeSelectAction(
 
 } // namespace
 
-// 分组页的入场过渡：代理页只为当前分组构造内容（虚拟化，见页面里的循环），换组时
-// 新页是**全新挂载**的节点，而 `AnimateTo` 只在目标值变化时才有动画、新挂载会直接
-// 落到目标值上——照搬订阅页那套 `AnimateTo(selected ? 1 : 0)` 在代理页等于没有动画。
-// 所以每页自带一条本地进度：挂载后由 Lifecycle 从 0 推到 1（页的 Key 随分组变化，
-// 新挂载 = 新 scope = 进度重新从 0 开始），换组因此每次都播一遍「透明度 + 横向轻移」。
-// 轨道值与订阅页/规则页保持一致（0.82→1、右侧 12pt 滑入），reduced motion 下时长归零。
-[[huxerui::composable]] huxerui::View ProxyGroupPage(huxerui::View content) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    auto progress = huxerui::UseState(0.0F);
-    // 常量依赖：只在挂载时补一次（与数据泵那类 Lifecycle 写法一致）。
-    huxerui::Lifecycle(
-        [progress] {
-            progress = 1.0F;
-            return [] {};
-        },
-        0);
-    // composable 形参在函数体内是 const（见 CLAUDE.md 第 2 条），先取副本再装修。
-    huxerui::View page = std::move(content);
-    return std::move(page).With(
-        huxerui::Grow(1.0F),
-        huxerui::Transition{huxerui::AnimateTo(
-            progress.Get(),
-            huxerui::TweenSpec{
-                .duration = theme.motion.reduced_motion ? 0.0 : theme.motion.normal,
-                .easing = huxerui::Easing::EaseOut})}
-            .Opacity(0.82F, 1.0F)
-            .Offset({12.0F, 0.0F}, {}));
-}
-
 [[huxerui::composable]] huxerui::View ProxiesPage(bool active) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
@@ -526,6 +497,7 @@ std::function<void()> NodeSelectAction(
     // 全局模式 path[0] = GLOBAL 或平台返回的实际可选组；后续元素 = 逐级点入的嵌套子组。
     auto rulePath = huxerui::UseState<std::vector<std::string>>({});
     auto globalPath = huxerui::UseState<std::vector<std::string>>({});
+    auto groupDirection = huxerui::UseState(0);
     // 横向滑动：按下点与"是否已认领本次指针会话"。
     auto swipeOrigin = huxerui::UseState<huxerui::Point>(huxerui::Point{0.0F, 0.0F});
     auto swipeOwned = huxerui::UseState(false);
@@ -704,7 +676,16 @@ std::function<void()> NodeSelectAction(
 
     // 分组标签与左右滑动直接更新路径，让选中态和内容在同一帧切换。
     const std::function<void(const std::string&)> selectGroup =
-        [activePath](const std::string& name) {
+        [activePath, groupDirection, tabNames, selectedRoot](const std::string& name) {
+            const auto& latestPath = activePath.Get();
+            const std::string from = !latestPath.empty() &&
+                                             std::ranges::find(tabNames, latestPath.front()) != tabNames.end()
+                                         ? latestPath.front() : selectedRoot;
+            if (from == name) return;
+            const auto previous = std::ranges::find(tabNames, from);
+            const auto next = std::ranges::find(tabNames, name);
+            if (next == tabNames.end()) return;
+            groupDirection = previous == tabNames.end() ? 0 : (next > previous ? 1 : -1);
             activePath = std::vector<std::string>{name};
         };
 
@@ -830,8 +811,8 @@ std::function<void()> NodeSelectAction(
         }
 
         groupPages.push_back(
-            ProxyGroupPage(std::move(grid)).Key("group-page-" +
-                                                rootGroup.name));
+            ProxyGroupPage(grid, rootSelected ? groupDirection.Get() : 0)
+                .Key("group-page-" + rootGroup.name));
     }
 
     huxerui::View body;
