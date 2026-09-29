@@ -721,9 +721,13 @@ struct TrayOperationResult {
     return huxerui::Column {
         huxerui::WindowTitleBar {
             huxerui::Row {
-                huxerui::Image(app::images::mascot_logo_dark)
+                // The standard navy logo needs a pale brand tile to stay visible in dark mode.
+                huxerui::Image(app::images::clash_flux_logo)
                     .Fit(huxerui::ImageFit::Contain)
-                    .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
+                    .With(huxerui::Frame{.width = 20.0F, .height = 20.0F},
+                          huxerui::Background(
+                              huxerui::Color::Rgb(220, 238, 255)),
+                          huxerui::CornerRadius(4.0F)),
             }
                 .With(huxerui::Frame{.width = 72.0F, .height = 20.0F},
                       huxerui::MainAlign(huxerui::MainAxisAlignment::Center),

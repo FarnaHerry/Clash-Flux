@@ -154,12 +154,12 @@ huxerui::ThemeSpec FluxDarkThemeSpec() {
     spec.colors.on_secondary_container = huxerui::Color::Rgb(226, 226, 226);
     spec.colors.tertiary_container = huxerui::Color::Rgb(46, 46, 46);
     spec.colors.on_tertiary_container = huxerui::Color::Rgb(222, 222, 222);
-    spec.colors.background = huxerui::Color::Rgb(18, 19, 20);
-    spec.colors.surface = huxerui::Color::Rgb(25, 26, 27);
-    spec.colors.surface_container_low = huxerui::Color::Rgb(32, 33, 34);
+    spec.colors.background = huxerui::Color::Rgb(28, 29, 30);
+    spec.colors.surface = huxerui::Color::Rgb(32, 33, 34);
+    spec.colors.surface_container_low = huxerui::Color::Rgb(36, 37, 38);
     spec.colors.surface_container = huxerui::Color::Rgb(40, 41, 42);
-    spec.colors.surface_container_high = huxerui::Color::Rgb(48, 49, 50);
-    spec.colors.surface_container_highest = huxerui::Color::Rgb(56, 57, 58);
+    spec.colors.surface_container_high = huxerui::Color::Rgb(46, 47, 48);
+    spec.colors.surface_container_highest = huxerui::Color::Rgb(52, 53, 54);
     spec.colors.on_surface = huxerui::Color::Rgb(241, 241, 241);
     spec.colors.on_surface_variant = huxerui::Color::Rgb(176, 176, 176);
     spec.colors.outline = huxerui::Color::Rgb(75, 75, 75);
