@@ -355,46 +355,32 @@ huxerui::View FluxThemed(bool dark, huxerui::View content) {
     return huxerui::Theme(std::move(definition), content);
 }
 
-std::vector<huxerui::NavigationItem> DesktopNavigationItems() {
-    struct Item {
-        huxerui::ImageResource icon;
-        huxerui::ImageResource icon_selected;
-        const char* tooltip;
-    };
-    const std::array<Item, 7> items{
-        Item{app::images::home, app::images::home_selected, "首页"},
-        Item{app::images::request, app::images::request_selected, "订阅"},
-        Item{app::images::websocket, app::images::websocket_selected, "代理"},
-        Item{app::images::loadtest, app::images::loadtest_selected, "规则"},
-        Item{app::images::tcp, app::images::tcp_selected, "连接"},
-        Item{app::images::history, app::images::history_selected, "日志"},
-        Item{app::images::gear, app::images::gear, "设置"},
-    };
+// 桌面与手机共用图标定义；选中只改变内容色和指示器，不替换图标轮廓。
+struct NavigationEntry {
+    huxerui::ImageResource icon;
+    const char* label;
+};
 
+const std::array<NavigationEntry, 7> kNavigationEntries{
+    NavigationEntry{app::images::home, "首页"},
+    NavigationEntry{app::images::request, "订阅"},
+    NavigationEntry{app::images::proxies, "代理"},
+    NavigationEntry{app::images::route, "规则"},
+    NavigationEntry{app::images::connections, "连接"},
+    NavigationEntry{app::images::logs, "日志"},
+    NavigationEntry{app::images::gear, "设置"},
+};
+
+std::vector<huxerui::NavigationItem> DesktopNavigationItems() {
     std::vector<huxerui::NavigationItem> destinations;
-    for (const Item& item : items) {
-        destinations.push_back(huxerui::NavigationItem(item.icon, item.tooltip)
-                                   .SelectedIcon(item.icon_selected));
+    destinations.reserve(kNavigationEntries.size());
+    for (const NavigationEntry& entry : kNavigationEntries) {
+        destinations.push_back(huxerui::NavigationItem(entry.icon, entry.label));
     }
     return destinations;
 }
 
-// Android 底部导航条目：普通态/选中态图标 + 文字标签。
-struct AndroidNavEntry {
-    huxerui::ImageResource icon;
-    huxerui::ImageResource icon_selected;
-    const char* label;
-};
-
 // Android 仅暴露四个一级页；规则、连接和日志由设置页的“更多”入口承载。
-const std::array<AndroidNavEntry, 4> kAndroidNavEntries{
-    AndroidNavEntry{app::images::home, app::images::home_selected, "首页"},
-    AndroidNavEntry{app::images::websocket, app::images::websocket_selected,
-                    "代理"},
-    AndroidNavEntry{app::images::request, app::images::request_selected, "订阅"},
-    AndroidNavEntry{app::images::gear, app::images::gear, "设置"},
-};
-
 constexpr std::array<std::size_t, 4> kAndroidNavDestinations{
     pages::kHome, pages::kProxies, pages::kProfiles, pages::kSettings};
 
@@ -498,7 +484,7 @@ private:
         : navPage.Get() == pages::kProfiles ? 2U : 3U;
 
     std::vector<huxerui::View> entries;
-    entries.reserve(kAndroidNavEntries.size());
+    entries.reserve(kAndroidNavDestinations.size());
 
     // 点击/悬停反馈的几何与选中胶囊完全一致（88×56、圆角 30）：默认指示层
     // 会按条目方框铺满，点按时能看到直角方框。
@@ -515,8 +501,9 @@ private:
         .press = huxerui::IndicationLayer{.fill = statePress},
     };
 
-    for (std::size_t index = 0; index < kAndroidNavEntries.size(); ++index) {
-        const AndroidNavEntry& entry = kAndroidNavEntries[index];
+    for (std::size_t index = 0; index < kAndroidNavDestinations.size(); ++index) {
+        const std::size_t destination = kAndroidNavDestinations[index];
+        const NavigationEntry& entry = kNavigationEntries[destination];
         const bool isSelected = index == selected;
         const huxerui::Color content =
             isSelected ? theme.colors.on_primary_container
@@ -524,7 +511,7 @@ private:
         // 整块胶囊（图标 + 文字）由 AndroidNavigationIndicator 绘制并滑动；
         // 内容色随选中态即时切换。
         huxerui::View pill = huxerui::Column {
-            huxerui::Image(isSelected ? entry.icon_selected : entry.icon)
+            huxerui::Image(entry.icon)
                 .Tint(content)
                 .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
             huxerui::Text(entry.label).Style(huxerui::TextStyle{
@@ -536,7 +523,6 @@ private:
                huxerui::CornerRadius(30.0F),
                huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
-        const std::size_t destination = kAndroidNavDestinations[index];
         entries.push_back(
             huxerui::Row { std::move(pill) }
                 .With(huxerui::Grow(1.0F),

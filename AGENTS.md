@@ -82,9 +82,14 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
 - **只建当前分区内容的页面（代理页）换页动画必须靠「页 Key 随分区变化 + 挂载后把
   本地进度推进到 1」**：`AnimateTo` 只在目标值变化时才有动画，新挂载的节点会直接落到
   目标值上，所以照搬订阅页那套 `AnimateTo(selected ? 1 : 0)` 等于没有动画（订阅页能动
-  是因为 `IndexedPages` 把每页都留在树上）。实现见 `proxies_page.cpp` 的 `ProxyGroupPage`，
-  验证见 `tests/test_page_transition.cpp`（无窗口 Runtime + 虚拟时间，断言换页后 12pt
-  偏移逐步收敛到 0；只有 `HuxerUI::testing` 可用时才建该用例）。
+  是因为 `IndexedPages` 把每页都留在树上）。点击、菜单选择与内容横滑共用同一个选组动作，
+  依标签先后决定左右入场方向；首次展示不加无方向动画。实现见 `section_tabs.cpp` 的
+  `ProxyGroupPage`，验证见 `tests/test_page_transition.cpp`（直接编译生产组件，在无窗口
+  Runtime + 虚拟时间中断言左右 48pt 偏移收敛、快速反向切换与 reduced motion）。
+- **二级标签栏必须自动揭示选中项**：选中变化、标签尺寸变化或窗口缩放后，使用实际
+  布局几何滚到选中标签完整可见；内容横滑与菜单选择也适用。保持 ScrollView 的 Key 与
+  容器结构稳定，不能因溢出菜单出现/消失而重挂载并丢失偏移。手动滚动浏览其它标签时
+  不持续拉回当前选中项；生产组件与交互测试见 `section_tabs.cpp` / `test_page_transition.cpp`。
 - **不要在界面里加「内核未运行 / 请到设置页启动内核」这类常驻提示**：内核启停由首页
   悬浮按钮表达，用户自己清楚当前状态；这类横幅只是噪音（代理页顶部那条已删除，
   以后不要再加回来）。仅保留真正需要用户处置的瞬时反馈（操作失败 toast 等）。

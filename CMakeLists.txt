@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.9 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.10 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -812,7 +812,8 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         # 页内分区切换动画：用 huxerui 的无窗口 Runtime 驱动真实帧 + 虚拟时间，
         # 验证「只建当前页 + 页 Key 随分区变化」时换页动画真的会播。
         if (TARGET HuxerUI::testing)
-            add_executable(test_page_transition tests/test_page_transition.cpp)
+            add_executable(test_page_transition tests/test_page_transition.cpp src/ui/section_tabs.cpp)
+            target_include_directories(test_page_transition PRIVATE src/ui)
             target_compile_features(test_page_transition PRIVATE cxx_std_23)
             target_link_libraries(test_page_transition PRIVATE HuxerUI::testing)
             if (MSVC)

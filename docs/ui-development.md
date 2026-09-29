@@ -13,6 +13,15 @@
 - 所有 Switch 设置项统一由三部分组成：主名称、小字描述、Switch。主名称和小字描述放在左侧列，Switch 固定在右侧并与文字列垂直居中对齐。设置页统一使用 `SettingSwitchRow`，不得在 Compact 视口改成上下堆叠。
 - 小字描述允许自然换行；左侧文字列使用 Grow 保留 Switch 的固定右侧位置，不得因长描述把 Switch 挤到下一行。
 
+## 页内标签与导航图标
+
+- 二级标签共用 `src/ui/section_tabs.cpp` 的 `SectionTabBar`。点击、溢出菜单选择与内容横滑都走页面同一个选中动作，标签与内容同步切换。
+- 代理页保持仅构造当前组的虚拟网格；`ProxyGroupPage` 按标签顺序决定左右 48pt 入场方向，并在挂载时冻结方向。首次显示无额外入场运动，减少动态效果时直接归位。
+- 标签栏用挂载后的实际标签几何保证选中项完整可见。选择变化、标签尺寸变化与窗口缩放重新揭示；用户手动滚动时保持其浏览位置。溢出菜单的显隐不能重挂载 ScrollView。
+- `tests/test_page_transition.cpp` 直接编译并调用生产标签栏、滑动处理器与过渡组件，验证方向、菜单跳转、手势切换、自动滚动、窗口缩放与 reduced motion。
+- 所有一级导航共用 `src/ui/app.cpp` 的 `kNavigationEntries`，每个条目只定义一个线条图标。桌面侧栏与手机底栏选中时保持同一轮廓与线宽，仅改变内容颜色和选中指示器，不配置填充版选中图标。
+- 代理导航使用地球网络图标 `proxies.svg`，连接导航使用链环图标 `connections.svg`；日志使用纸张图标 `logs.svg`，规则使用分流路径图标 `route.svg`。
+
 ## Windows 后台操作与托盘菜单
 
 - 启动、轮询和退出清理中的系统操作不能闪出命令行窗口。优先使用 Win32 API；确实需要子进程时，用 `CreateProcessW` 的 `CREATE_NO_WINDOW` 并重定向标准句柄。不要在后台 Windows 路径使用 `std::system` 或 `_popen`。
