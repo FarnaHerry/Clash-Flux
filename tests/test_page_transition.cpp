@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -74,6 +75,28 @@ std::string label(int index) { return "Group " + std::to_string(index) + " nodes
 }
 
 constexpr float kPageInset = 16.0F;
+
+class AppResourceProvider final : public huxerui::PlatformResources {
+public:
+    huxerui::ResourceConfiguration Configuration() const override {
+        return {};
+    }
+
+    std::optional<huxerui::InputStream> OpenRead(
+        std::string_view packagePath) override {
+        const huxerui::File file =
+            huxerui::File(CLASHFLUX_TEST_RESOURCE_PACKAGE).Resolve(packagePath);
+        auto result = file.OpenRead();
+        if (!result.Succeeded()) return std::nullopt;
+        return std::move(result).Value();
+    }
+};
+
+std::shared_ptr<AppResourceProvider> AppResources() {
+    static const auto provider = std::make_shared<AppResourceProvider>();
+    return provider;
+}
+
 huxerui::View TestRoot() {
     return huxerui::FlatTheme {
       huxerui::Column {TestContent()}.With(huxerui::Padding(kPageInset), huxerui::Grow(1.0F)),
@@ -113,7 +136,10 @@ void checkEntry(huxerui::testing::UiTest& ui, int expectedDirection) {
 
 int main() {
     {
-        huxerui::testing::UiTest ui(kApplication, {.viewport = {400.0F, 700.0F}});
+        huxerui::testing::UiTest ui(kApplication, {
+            .viewport = {400.0F, 700.0F},
+            .resource_provider = AppResources(),
+        });
         ui.PumpAndSettle();
         check(std::abs(ui.Find(UiSelector::Key("page-content")).One().bounds.x - kPageInset) <= 0.5F,
               "首次显示不制造无方向的入场运动");
@@ -191,7 +217,10 @@ int main() {
         check(!ui.Find(UiSelector::Key("section-tab-picker")).Exists(), "不溢出时隐藏菜单入口");
     }
     {
-        huxerui::testing::UiTest ui(kReducedApplication, {.viewport = {400.0F, 700.0F}});
+        huxerui::testing::UiTest ui(kReducedApplication, {
+            .viewport = {400.0F, 700.0F},
+            .resource_provider = AppResources(),
+        });
         ui.PumpAndSettle();
         ui.Find(UiSelector::Text("Last")).Tap();
         ui.PumpAndSettle();

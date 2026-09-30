@@ -819,6 +819,13 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             target_include_directories(test_page_transition PRIVATE src/ui)
             target_compile_features(test_page_transition PRIVATE cxx_std_23)
             target_link_libraries(test_page_transition PRIVATE HuxerUI::testing)
+            get_target_property(CLASHFLUX_TEST_RESOURCE_PACKAGE
+                clash-flux HUXERUI_RESOURCE_PACKAGE)
+            file(TO_CMAKE_PATH "${CLASHFLUX_TEST_RESOURCE_PACKAGE}"
+                CLASHFLUX_TEST_RESOURCE_PACKAGE)
+            target_compile_definitions(test_page_transition PRIVATE
+                "CLASHFLUX_TEST_RESOURCE_PACKAGE=\"${CLASHFLUX_TEST_RESOURCE_PACKAGE}\"")
+            add_dependencies(test_page_transition clash-flux)
             if (MSVC)
                 target_compile_options(test_page_transition PRIVATE /utf-8)
             endif ()
