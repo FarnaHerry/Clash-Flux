@@ -19,8 +19,24 @@ namespace clashflux::ui {
 
 // Resolve app-authored text through HuxerUI's locale-aware resource service.
 // The same UTF-8 phrase hashes to the resource key emitted in strings/*.properties.
-huxerui::StringVariant Localized(std::string_view source);
-huxerui::StringResource LocalizedResource(std::string_view source);
+inline huxerui::StringResource LocalizedResource(std::string_view source) {
+    // Stable across platforms and builds: catalogs use msg_<FNV-1a-64(source UTF-8)>.
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (const unsigned char byte : source) {
+        hash ^= byte;
+        hash *= 1099511628211ULL;
+    }
+    constexpr char digits[] = "0123456789abcdef";
+    std::string key = "strings/msg_0000000000000000";
+    for (int index = 0; index < 16; ++index) {
+        key[12 + index] = digits[(hash >> ((15 - index) * 4)) & 0x0fU];
+    }
+    return huxerui::StringResource{"app", key};
+}
+
+inline huxerui::StringVariant Localized(std::string_view source) {
+    return LocalizedResource(source);
+}
 
 template <class... Arguments>
 huxerui::StringVariant LocalizedFormat(std::string_view source,
