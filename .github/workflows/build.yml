@@ -249,9 +249,9 @@ jobs:
   # ---------------------------------------------------------------- Windows
   # 发布门禁：Windows Release 必须完整通过。
   # 工具链沿用 apitab 实证：MSVC（VS2022，C++23 模块 + import std）。
-  # OpenSSL：x86_64 用 choco 包；arm64（windows-11-arm 原生 runner）choco 无
-  # arm64 包，用 runner 自带 vcpkg 装 openssl:arm64-windows（动态triplet，
-  # DLL 在打包步骤一并带出）。HuxerUI 源码通道同 Linux。
+  # OpenSSL：x86_64 使用 Windows runner 预装的 OpenSSL，并在构建前检查
+  # 可执行文件与开发头文件；运行时 DLL 在打包步骤一并带出。
+  # HuxerUI 源码通道同 Linux。
   build-windows:
     name: build-windows-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
@@ -286,12 +286,18 @@ jobs:
           cmake --version | Select-Object -First 1
           choco install ninja -y --no-progress
 
-      - name: Install OpenSSL (choco)
+      - name: Verify preinstalled OpenSSL
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          choco install openssl -y --no-progress
-          Write-Host "OPENSSL_ROOT_DIR=C:/Program Files/OpenSSL" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $opensslRoot = Join-Path $env:ProgramFiles 'OpenSSL'
+          foreach ($required in @('bin/openssl.exe', 'include/openssl/ssl.h')) {
+            $path = Join-Path $opensslRoot $required
+            if (-not (Test-Path $path -PathType Leaf)) {
+              throw "Runner OpenSSL file is missing: $path"
+            }
+          }
+          "OPENSSL_ROOT_DIR=$opensslRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
@@ -356,8 +362,7 @@ jobs:
           # CMake runtime scanner 的搜索根包含 build/；先把当前 OpenSSL
           # 安装中的 DLL 放进去，保证 libssl/libcrypto 会被解析并部署到
           # 免安装目录与 MSI，而不是依赖 runner 的 PATH。
-          $opensslExecutable = (Get-Command openssl.exe -ErrorAction Stop).Source
-          $opensslBin = Split-Path -Parent $opensslExecutable
+          $opensslBin = Join-Path $env:OPENSSL_ROOT_DIR 'bin'
           foreach ($pattern in @('libssl-*.dll', 'libcrypto-*.dll')) {
             $dlls = @(Get-ChildItem $opensslBin -File -Filter $pattern)
             if ($dlls.Count -eq 0) { throw "OpenSSL runtime DLL is missing: $opensslBin\$pattern" }
