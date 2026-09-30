@@ -37,25 +37,6 @@ import clashflux.store.vpn;
 
 namespace clashflux::ui {
 
-huxerui::StringResource LocalizedResource(std::string_view source) {
-    // Stable across platforms and builds: catalogs use msg_<FNV-1a-64(source UTF-8)>.
-    std::uint64_t hash = 14695981039346656037ULL;
-    for (const unsigned char byte : source) {
-        hash ^= byte;
-        hash *= 1099511628211ULL;
-    }
-    constexpr char digits[] = "0123456789abcdef";
-    std::string key = "strings/msg_0000000000000000";
-    for (int index = 0; index < 16; ++index) {
-        key[12 + index] = digits[(hash >> ((15 - index) * 4)) & 0x0fU];
-    }
-    return huxerui::StringResource{"app", key};
-}
-
-huxerui::StringVariant Localized(std::string_view source) {
-    return LocalizedResource(source);
-}
-
 namespace {
 
 bool isSelectorType(const std::string& type) {
