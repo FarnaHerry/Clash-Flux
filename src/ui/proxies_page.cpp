@@ -60,7 +60,8 @@ namespace clashflux::ui {
 namespace {
 
 // 与首页模式卡同源（home_page.cpp 匿名命名空间各持一份）。
-const std::vector<huxerui::StringVariant> kModeNames{"规则", "全局", "直连"};
+const std::vector<huxerui::StringVariant> kModeNames{
+    Localized("规则"), Localized("全局"), Localized("直连")};
 const std::vector<std::string> kModes{"rule", "global", "direct"};
 
 struct ProxyNode {
@@ -385,8 +386,13 @@ constexpr std::size_t kNodeMetaChars = 8;
     const std::string detail =
         node.detail.size() > detailLimit ? truncateOneLine(node.detail, detailLimit)
                                          : node.detail;
-    const std::string metaText =
-        meta.size() > kNodeMetaChars ? truncateOneLine(meta, kNodeMetaChars) : meta;
+    const std::string localizedMeta =
+        meta == "测速中…" ? huxerui::UseString(Localized("测速中…"))
+        : meta == "超时" ? huxerui::UseString(Localized("超时"))
+                         : meta;
+    const std::string metaText = localizedMeta.size() > kNodeMetaChars
+                                     ? truncateOneLine(localizedMeta, kNodeMetaChars)
+                                     : localizedMeta;
 
     // 卡片表面与文字色来自统一原语：未选中 islands.active、选中 primary 实心底。
     const SelectableTileColors tile =
@@ -552,14 +558,14 @@ std::function<void()> NodeSelectAction(
             tasks.Launch([toast, testGeneration, testGroup, coreState,
                           groupName = std::move(groupName)]() -> huxerui::Task<void> {
                 if (coreState.Get() != core::CoreState::Running) {
-                    toast.Show("测速需要内核：请先在首页右下角启动内核");
+                    toast.Show(Localized("测速需要内核：请先在首页右下角启动内核"));
                     co_return;
                 }
                 const bool ok = co_await RunOnTaskThread([groupName] {
                     return StartProxyGroupTest(groupName);
                 });
                 if (!ok) {
-                    toast.Show("测速失败：内核未运行或启动失败");
+                    toast.Show(Localized("测速失败：内核未运行或启动失败"));
                     co_return;
                 }
                 testGroup = groupName;
@@ -592,7 +598,9 @@ std::function<void()> NodeSelectAction(
                     modePending = false;
                     if (!ok) {
                         mode = previous;
-                        toast.Show(error.empty() ? "切换失败（内核未运行？）" : error);
+                        toast.Show(error.empty()
+                                       ? Localized("切换失败（内核未运行？）")
+                                       : huxerui::StringVariant(error));
                     }
                 });
             });
@@ -768,7 +776,7 @@ std::function<void()> NodeSelectAction(
                                                     proxiesModel,
                                                     [toast] {
                                                         toast.Show(
-                                                            "线路切换失败，请查看应用日志");
+                                                            Localized("线路切换失败，请查看应用日志"));
                                                     },
                                                     *group, node),
                                                 nodeNameLimit, detailLimit)
@@ -818,7 +826,7 @@ std::function<void()> NodeSelectAction(
     huxerui::View body;
     if (direct) {
         body = huxerui::Column {
-            huxerui::Text("直连模式 —— 流量不经过任何代理节点")
+            huxerui::Text(Localized("直连模式 —— 流量不经过任何代理节点"))
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kBody),
                     theme.colors.on_surface_variant}),
@@ -829,8 +837,8 @@ std::function<void()> NodeSelectAction(
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     } else if (rootGroups.empty()) {
         body = huxerui::Column {
-            huxerui::Text(global ? "全局模式暂无可用策略组"
-                                 : "暂无策略组（检查订阅配置）")
+            huxerui::Text(Localized(global ? "全局模式暂无可用策略组"
+                                           : "暂无策略组（检查订阅配置）"))
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kBody),
                     theme.colors.on_surface_variant}),
@@ -889,15 +897,15 @@ std::function<void()> NodeSelectAction(
     }
 
     // 出站模式按钮与「代理」标题同处标题行、左右对齐。
-    huxerui::View page = PageScaffold("代理", std::move(modeSwitch),
+    huxerui::View page = PageScaffold(Localized("代理"), std::move(modeSwitch),
                                       std::move(content), true);
     // 延迟测试按钮统一收在页面右下角：测试当前选中的分组。Compact 下要避开
     // 悬浮底部导航，桌面只留常规外边距。
     if (!direct && current != nullptr) {
         const std::string groupName = current->name;
         huxerui::View floatingSpeed =
-            huxerui::IconButton(app::images::speed, "测速")
-                .With(huxerui::Tooltip("测试当前分组延迟"),
+            huxerui::IconButton(app::images::speed, Localized("测速"))
+                .With(huxerui::Tooltip(Localized("测试当前分组延迟")),
                       huxerui::Frame{.width = 56.0F, .height = 56.0F},
                       huxerui::Background(theme.colors.primary),
                       huxerui::Foreground(theme.colors.on_primary),
@@ -905,7 +913,8 @@ std::function<void()> NodeSelectAction(
                       huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.28F),
                                       {}, 14.0F, 2.0F},
                       huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                         .label = "测速"})
+                                         .label = huxerui::UseString(
+                                             Localized("测速"))})
                 .OnClick([triggerGroupTest, groupName] {
                     triggerGroupTest(groupName);
                 });

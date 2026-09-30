@@ -200,9 +200,9 @@ void closeAllConnectionsForPlatform() {
 
     const std::string query = searchValue.Get().text;
     huxerui::View body = huxerui::Column {
-        huxerui::Text(!query.empty() ? "没有匹配的连接"
-                         : streamOpen.Get() ? "暂无活动连接"
-                                            : "连接流未就绪（内核未运行？）")
+        huxerui::Text(Localized(!query.empty() ? "没有匹配的连接"
+                                   : streamOpen.Get() ? "暂无活动连接"
+                                                      : "连接流未就绪（内核未运行？）"))
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
                                       theme.colors.on_surface_variant}),
     }.With(huxerui::Padding(32.0F),
@@ -225,14 +225,22 @@ void closeAllConnectionsForPlatform() {
                                .Key("compact-floating-footer");
                        }
                        const ConnectionRow& row = rows[visibleRows[index]];
+                       const std::string host =
+                           row.host == "未知目标"
+                               ? huxerui::UseString(Localized("未知目标"))
+                               : row.host;
+                       const std::string rule =
+                           row.rule == "未匹配规则"
+                               ? huxerui::UseString(Localized("未匹配规则"))
+                               : row.rule;
                        const std::string id = row.id;
                        const std::string key = id.empty()
                                                    ? std::format("connection-{}", index)
                                                    : id;
                        const auto closeButton = [tasks, id] {
                            return huxerui::IconButton(app::images::close,
-                                                      "关闭连接")
-                               .With(huxerui::Tooltip("关闭该连接"))
+                                                      Localized("关闭连接"))
+                               .With(huxerui::Tooltip(Localized("关闭该连接")))
                                .OnClick([tasks, id] {
                                    if (id.empty()) return;
                                    tasks.Launch([=]() -> huxerui::Task<void> {
@@ -246,7 +254,7 @@ void closeAllConnectionsForPlatform() {
                            return UnifiedListRow(
                                huxerui::Column{
                                    huxerui::Row{
-                                       mono(row.host, theme.colors.on_surface, 0.0F),
+                                       mono(host, theme.colors.on_surface, 0.0F),
                                        mono(row.network,
                                             theme.colors.on_surface_variant, 55.0F),
                                        closeButton(),
@@ -254,13 +262,13 @@ void closeAllConnectionsForPlatform() {
                                        .With(huxerui::Spacing(6.0F),
                                              huxerui::CrossAlign(
                                                  huxerui::CrossAxisAlignment::Center)),
-                                   mono(std::format("链路：{}", row.chains),
+                                   mono(huxerui::UseString(LocalizedFormat("链路：{}", row.chains)),
                                         theme.colors.on_surface_variant, 0.0F),
                                    huxerui::Row{
                                        mono(std::format("↑{}/s ↓{}/s", formatBytes(row.up),
                                                         formatBytes(row.down)),
                                             theme.colors.on_surface_variant, 0.0F),
-                                       mono(std::format("规则：{}", row.rule),
+                                   mono(huxerui::UseString(LocalizedFormat("规则：{}", rule)),
                                             theme.colors.on_surface_variant, 0.0F),
                                    }
                                        .With(huxerui::Spacing(8.0F)),
@@ -269,13 +277,13 @@ void closeAllConnectionsForPlatform() {
                        }
                        return UnifiedListRow(
                            huxerui::Row{
-                               mono(row.host, theme.colors.on_surface, 0.0F),
+                               mono(host, theme.colors.on_surface, 0.0F),
                                mono(row.network, theme.colors.on_surface_variant, 50.0F),
                                mono(row.chains, theme.colors.on_surface_variant, 220.0F),
                                mono(std::format("↑{}/s ↓{}/s", formatBytes(row.up),
                                                 formatBytes(row.down)),
                                     theme.colors.on_surface_variant, 160.0F),
-                               mono(row.rule, theme.colors.on_surface_variant, 140.0F),
+                               mono(rule, theme.colors.on_surface_variant, 140.0F),
                                closeButton(),
                            },
                            key, false, index + 1 < rowCount);
@@ -286,19 +294,19 @@ void closeAllConnectionsForPlatform() {
     }
 
     huxerui::View title = searching.Get()
-        ? PillSearchField(searchValue, "搜索连接", [searching, searchValue] {
+        ? PillSearchField(searchValue, Localized("搜索连接"), [searching, searchValue] {
               searchValue = huxerui::TextEditingValue{""};
               searching = false;
           })
-        : huxerui::View{huxerui::Text("连接", huxerui::TextRole::Title)};
+        : huxerui::View{huxerui::Text(Localized("连接"), huxerui::TextRole::Title)};
     huxerui::View actions = searching.Get()
         ? huxerui::View{huxerui::Row{}}
         : huxerui::View{huxerui::Row {
-              huxerui::IconButton(app::images::search, "搜索连接")
-                  .With(huxerui::Tooltip("搜索连接"))
+              huxerui::IconButton(app::images::search, Localized("搜索连接"))
+                  .With(huxerui::Tooltip(Localized("搜索连接")))
                   .OnClick([searching] { searching = true; }),
-              huxerui::IconButton(app::images::clear_all, "关闭全部")
-                  .With(huxerui::Tooltip("关闭全部连接"))
+              huxerui::IconButton(app::images::clear_all, Localized("关闭全部"))
+                  .With(huxerui::Tooltip(Localized("关闭全部连接")))
                   .OnClick([tasks] {
                     tasks.Launch([=]() -> huxerui::Task<void> {
                         co_await RunOnTaskThread([] {
@@ -311,7 +319,7 @@ void closeAllConnectionsForPlatform() {
     return onBack
         ? SecondaryPageScaffold(std::move(title), std::move(actions),
                                 std::move(body), onBack, searching.Get())
-        : PageScaffold("连接", std::move(actions), std::move(body));
+        : PageScaffold(Localized("连接"), std::move(actions), std::move(body));
 }
 
 } // namespace clashflux::ui

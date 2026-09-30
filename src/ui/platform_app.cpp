@@ -371,7 +371,7 @@ struct TrayOperationResult {
                 if (settingsModel->view.Get().trayEnabled) {
                     std::vector<huxerui::MenuEntry> menuEntries;
                     menuEntries.push_back(
-                        huxerui::MenuItem("显示主窗口", [window] {
+                        huxerui::MenuItem(Localized("显示主窗口"), [window] {
                             window.Show();
                             window.Activate();
                         }));
@@ -414,12 +414,12 @@ struct TrayOperationResult {
                     }
                     if (profileEntries.empty()) {
                         profileEntries.push_back(
-                            huxerui::MenuItem("暂无可用订阅", [] {}).Enabled(false));
+                            huxerui::MenuItem(Localized("暂无可用订阅"), [] {}).Enabled(false));
                     }
                     menuEntries.push_back(huxerui::MenuItem(
-                        "选择订阅", std::move(profileEntries)));
+                        Localized("选择订阅"), std::move(profileEntries)));
                     menuEntries.push_back(huxerui::MenuItem(
-                        "切换当前订阅线路",
+                        Localized("切换当前订阅线路"),
                         BuildProxyLineMenu(
                             trayProxyGroups.Get(),
                             [tasks, toast, trayProxyGroups](
@@ -433,7 +433,9 @@ struct TrayOperationResult {
                                     if (!ok) {
                                         const std::string error =
                                             store::coreStore().snapshot().lastError;
-                                        toast.Show(error.empty() ? "线路切换失败" : error);
+                                        toast.Show(error.empty()
+                                                       ? Localized("线路切换失败")
+                                                       : huxerui::StringVariant(error));
                                         co_return;
                                     }
                                     auto groups = trayProxyGroups.Get();
@@ -449,7 +451,7 @@ struct TrayOperationResult {
                     // 记录的 TUN / 系统代理意图恢复接管。
                     menuEntries.push_back(
                         huxerui::MenuItem(
-                            trayCoreMenuRunning.Get() ? "停止内核" : "启动",
+                            Localized(trayCoreMenuRunning.Get() ? "停止内核" : "启动"),
                             [tasks, toast, trayCoreMenuRunning, trayCorePending,
                              coreModel] {
                                 if (trayCorePending.Get()) return;
@@ -490,10 +492,11 @@ struct TrayOperationResult {
                                     coreModel->RequestRefresh();
                                     if (!result.ok) {
                                         trayCoreMenuRunning = previous;
-                                        toast.Show(
-                                            result.error.empty()
-                                                ? (next ? "启动内核失败" : "停止内核失败")
-                                                : result.error);
+                                        toast.Show(result.error.empty()
+                                                       ? Localized(next ? "启动内核失败"
+                                                                        : "停止内核失败")
+                                                       : huxerui::StringVariant(
+                                                             result.error));
                                     }
                                 });
                             })
@@ -501,7 +504,7 @@ struct TrayOperationResult {
                             .Enabled(!trayCorePending.Get()));
                     menuEntries.push_back(
                         huxerui::MenuItem(
-                            "系统代理", [tasks, traySysProxy,
+                            Localized("系统代理"), [tasks, traySysProxy,
                                          traySysProxyActive, traySysProxyPending,
                                          trayCoreRunning, coreModel, toast] {
                                 if (traySysProxyPending.Get()) return;
@@ -535,8 +538,9 @@ struct TrayOperationResult {
                                         traySysProxy = previous;
                                         traySysProxyActive = previousActive;
                                         toast.Show(result.error.empty()
-                                                       ? "系统代理切换失败"
-                                                       : result.error);
+                                                       ? Localized("系统代理切换失败")
+                                                       : huxerui::StringVariant(
+                                                             result.error));
                                     }
                                 });
                             })
@@ -544,7 +548,7 @@ struct TrayOperationResult {
                             .Enabled(!traySysProxyPending.Get()));
                     menuEntries.push_back(
                         huxerui::MenuItem(
-                            "TUN 模式",
+                            Localized("TUN 模式"),
                             [tasks, trayTun, trayTunActive, trayTunPending,
                              trayCoreRunning, coreModel, window, dialog,
                              clipboard, toast, textColor, hintColor] {
@@ -575,7 +579,7 @@ struct TrayOperationResult {
                                         trayTunActive = previousActive;
                                         if (result.status ==
                                             DesktopModeApplyStatus::ElevationRequested) {
-                                            toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
+                                            toast.Show(Localized("已请求管理员权限重启，请在新窗口开启 TUN"));
                                         } else if (result.status ==
                                                    DesktopModeApplyStatus::PermissionDenied) {
                                             window.Activate();
@@ -584,8 +588,9 @@ struct TrayOperationResult {
                                                 textColor, hintColor);
                                         } else {
                                             toast.Show(result.error.empty()
-                                                           ? "TUN 模式切换失败"
-                                                           : result.error);
+                                                           ? Localized("TUN 模式切换失败")
+                                                           : huxerui::StringVariant(
+                                                                 result.error));
                                         }
                                     }
                                 });
@@ -594,7 +599,7 @@ struct TrayOperationResult {
                             .Enabled(!trayTunPending.Get()));
                     menuEntries.push_back(huxerui::MenuSection{});
                     menuEntries.push_back(
-                        huxerui::MenuItem("退出", [finishExit] { finishExit(); }));
+                        huxerui::MenuItem(Localized("退出"), [finishExit] { finishExit(); }));
                     huxerui::ImageVariant trayIcon = app::images::tray_default;
                     if (trayCoreRunning.Get()) {
                         if (trayTunActive.Get()) {
@@ -659,23 +664,23 @@ struct TrayOperationResult {
             dialog.Show(
                 [=](huxerui::DialogContext ctx) -> huxerui::View {
                     return DialogCard(huxerui::Column{
-                        huxerui::Text("关闭 Clash-Flux？", huxerui::TextRole::Title),
-                        huxerui::Text("直接关闭会停止代理；最小化到托盘后代理继续运行。")
+                        huxerui::Text(Localized("关闭 Clash-Flux？"), huxerui::TextRole::Title),
+                        huxerui::Text(Localized("直接关闭会停止代理；最小化到托盘后代理继续运行。"))
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::System(font_size::kCaption),
                                 closeHintColor}),
                         huxerui::Row{
-                            huxerui::Button("直接关闭").OnClick([=] {
+                            huxerui::Button(Localized("直接关闭")).OnClick([=] {
                                 ctx.Dismiss();
                                 closeDialogOpen = false;
                                 finishExit();
                             }),
-                            huxerui::Button("最小化到托盘").OnClick([=] {
+                            huxerui::Button(Localized("最小化到托盘")).OnClick([=] {
                                 ctx.Dismiss();
                                 closeDialogOpen = false;
                                 hideWindow();
                             }),
-                            huxerui::Button("取消").OnClick([=] {
+                            huxerui::Button(Localized("取消")).OnClick([=] {
                                 ctx.Dismiss();
                                 closeDialogOpen = false;
                             }),

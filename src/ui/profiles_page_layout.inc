@@ -169,9 +169,9 @@
     huxerui::View batchActions = huxerui::Row{};
     if (connectionSelection.Size() > 0) {
         batchActions = huxerui::Row {
-            huxerui::Text(std::format("已选 {} 个连接", connectionSelection.Size())),
-            huxerui::Button("打开").OnClick(openSelectedConnections),
-            huxerui::Button("关闭").OnClick(closeSelectedConnections),
+            huxerui::Text(LocalizedFormat("已选 {} 个连接", connectionSelection.Size())),
+            huxerui::Button(Localized("打开")).OnClick(openSelectedConnections),
+            huxerui::Button(Localized("关闭")).OnClick(closeSelectedConnections),
         }.With(huxerui::Spacing(8.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     }
@@ -219,17 +219,17 @@
     };
 
     huxerui::View profileListPage = PageScaffold(
-        "订阅",
+        Localized("订阅"),
         huxerui::Row {
             std::move(batchActions),
-            huxerui::IconButton(app::images::add, "新建订阅")
-                .With(huxerui::Tooltip("新建订阅"))
+            huxerui::IconButton(app::images::add, Localized("新建订阅"))
+                .With(huxerui::Tooltip(Localized("新建订阅")))
                 .OnClick(openCreate),
         },
         profiles.Empty()
             ? huxerui::View{
                   huxerui::Column {
-                      huxerui::Text("还没有订阅。点击右上角「新建订阅」导入。")
+                      huxerui::Text(Localized("还没有订阅。点击右上角「新建订阅」导入。"))
                           .Style(huxerui::TextStyle{
                               huxerui::Font::System(font_size::kBody),
                               theme.colors.on_surface_variant}),

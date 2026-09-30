@@ -29,6 +29,7 @@ struct SettingsView {
     bool startMinimized = false;  // tray.start_minimized
     int closeBehavior = 0;        // tray.close_behavior: 0 询问 / 1 退出 / 2 最小化
     std::string envShell;         // ui.env_shell（空 = 未保存，用探测值）
+    std::string language = "system"; // ui.language: system / zh / en
 
     bool operator==(const SettingsView&) const = default;
 };
