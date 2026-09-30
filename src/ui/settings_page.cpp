@@ -31,7 +31,7 @@ namespace {
 
 const std::vector<std::string> kModes{"rule", "global", "direct"};
 const std::vector<huxerui::StringVariant> kModeNames{"规则", "全局", "直连"};
-const std::vector<huxerui::StringVariant> kThemeNames{"跟随系统", "深色", "浅色"};
+const std::vector<huxerui::StringVariant> kThemeNames{"自动", "深色", "浅色"};
 
 std::size_t ModeIndex(const std::string& mode) {
     for (std::size_t i = 0; i < kModes.size(); ++i) {
@@ -352,7 +352,7 @@ const std::string kAboutText = std::format(
     // 只留当前页后降到 28 次 / ~0ms；因此不可见页必须返回空占位。
     if (!active) return huxerui::View{huxerui::Row{}}.Key("settings-idle");
 
-    // 主题模式：0=跟随系统，1=深色，2=浅色。
+    // 主题模式：0=自动，1=深色，2=浅色。
     const auto applyTheme = [themeMode, transition, tasks, animating,
                              settingsModel](int mode) {
         if (animating.Get()->animating) return;

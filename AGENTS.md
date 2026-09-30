@@ -51,9 +51,10 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   详见 `docs/android-build.md`。
 - **Android 图标分工是固定的，不要互相替换**：应用图标（`mipmap-*/ic_launcher.png` 与
   adaptive 前景 `drawable/ic_launcher_foreground.xml`，前景 inset `@drawable/ic_launcher_mascot`、
-  背景 `@color/ic_launcher_background`）用**平滑猫头吉祥物**；快捷开关磁贴徽章
+  背景 `@color/ic_launcher_background`）用**黑猫探出盒子的应用 Logo**；快捷开关磁贴徽章
   `drawable/ic_qs_clash_flux.xml` + `drawable-night/ic_qs_clash_flux.xml` 用**猫爪**
-  （深浅色各一版）。改图标只改对应那一个，别把猫爪铺到启动图标上（也不要反过来）。
+  （深浅色各一版）。应用 Logo 的透明源图为 `resources/images/clash_flux_logo.png`；
+  改图标只改对应那一个，别把猫爪铺到启动图标上（也不要反过来）。
 - Android 常驻服务不得等待 `POST_NOTIFICATIONS` 才启动前台服务或继续 VPN 授权；该权限只影响通知栏展示。
   返回 `START_STICKY` 的服务必须处理空 Intent，并从持久化状态恢复运行模式，不能猜测为 TUN。
 - Android sing-box 所有者固定在 `:background`：`ClashVpnService` 持有 libbox/VpnService，
