@@ -71,7 +71,6 @@ enum class HomeCardKind {
     Proxy,      // 系统代理（桌面）
     Tun,        // TUN 模式（桌面）
     Vpn,        // 隧道状态（移动端）
-    Background, // 后台保活（移动端）
 };
 
 struct HomeCardSpec {
@@ -83,18 +82,16 @@ struct HomeCardSpec {
 };
 
 #if defined(__ANDROID__)
-// 移动端可选卡片：桌面独有的系统代理/TUN 换成隧道状态与后台保活。
+// 移动端可选卡片：桌面独有的系统代理/TUN 换成隧道状态。
 // 手机屏是 2 列：需要整宽的（图表、横排出站模式、开关行）给 2 格，信息卡 1 格；
 // 高度仍按 FlClash 跨度（图表/信息卡 2 行，开关行 1 行）。
 constexpr HomeCardSpec kHomeCards[] = {
-    // Lib-Charts 的绘图面最小 240×180（库内部 Frame），2×2 的格子只有 188pt 高，
-    // 减去卡片内边距与标题行不够用；3 行（288pt）才给得出合法盒子。
-    {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 3},
+    // Lib-Charts 的紧凑绘图面最小 240×96，适配 2 行（188pt）的卡片。
+    {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 2},
     {HomeCardKind::Total, "total", "流量统计", 1, 2},
     {HomeCardKind::Mode, "mode", "出站模式", 2, 1},
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
     {HomeCardKind::Vpn, "vpn", "隧道状态", 1, 2},
-    {HomeCardKind::Background, "background", "后台保活", 2, 1},
 };
 constexpr std::string_view kDefaultCoreName = "sing-box libbox";
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
@@ -110,9 +107,8 @@ constexpr std::string_view kDefaultCoreName = "sing-box libbox";
 //   出站模式(竖排) 1x2 / V2(横排) → 出站模式取 2x1（横排三段按钮吃宽度）
 //   其余信息类卡片（当前订阅）与 FlClash 的信息卡同级，取 1x2。
 constexpr HomeCardSpec kHomeCards[] = {
-    // Lib-Charts 的绘图面最小 240×180（库内部 Frame），2×2 的格子只有 188pt 高，
-    // 减去卡片内边距与标题行不够用；3 行（288pt）才给得出合法盒子。
-    {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 3},
+    // 与移动端共用紧凑绘图面，流量卡片高度降为 2 行。
+    {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 2},
     {HomeCardKind::Total, "total", "流量统计", 1, 2},
     {HomeCardKind::Mode, "mode", "出站模式", 2, 1},
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
@@ -969,56 +965,9 @@ std::string HomeKernelStatusText(const HomeState& s) {
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-// Android 后台保活：电池优化豁免状态 + 申请入口（自洽管理自己的轮询与提示）。
-[[huxerui::composable]] huxerui::View AndroidHomeBackgroundCard() {
-    auto tasks = huxerui::UseTaskScope();
-    auto toast = huxerui::UseToast();
-    auto battery_ignored = huxerui::UseState(AndroidIsIgnoringBattery());
-
-    // 注意：这里不能用 application.OnLifecycleChange()——HuxerUI 每个进程只允许
-    // 一个 application lifecycle handler（Android 设置页已经连了一个），第二个会
-    // 在下一帧抛「application lifecycle handler is already connected」直接闪退。
-    // 回到前台的状态刷新由下面的 2s 轮询 + 开关自身的 OnChanged 重读覆盖。
-
-    huxerui::Lifecycle(
-        [tasks, battery_ignored] {
-            tasks.Launch([battery_ignored]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{2.0},
-                                   [battery_ignored] {
-                                       battery_ignored =
-                                           AndroidIsIgnoringBattery();
-                                       return true;
-                                   });
-            });
-            return [] {};
-        },
-        0);
-
-    return huxerui::Column {
-        SettingSwitchRow(
-            "后台保活",
-            "申请忽略电池优化，防止后台被杀；建议同时允许本应用自启动",
-            huxerui::Switch(battery_ignored.Get())
-                .OnChanged([battery_ignored, toast](bool on) {
-                    if (on) {
-                        battery_ignored = false;
-                        AndroidRequestBackgroundKeepAlive();
-                    } else {
-                        // Android 不允许普通应用静默撤销自身的电池优化豁免，
-                        // 关闭动作必须进入系统管理页完成。
-                        AndroidOpenBatterySettings();
-                        toast.Show("请在系统电池设置中关闭本应用的电池优化豁免");
-                    }
-                    battery_ignored = AndroidIsIgnoringBattery();
-                })),
-        huxerui::Spacer(),
-    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-}
-
 [[huxerui::composable]] huxerui::View AndroidHomePlatformCard(
     const HomeState& state, HomeCardKind kind) {
     if (kind == HomeCardKind::Vpn) return AndroidHomeVpnCard(state);
-    if (kind == HomeCardKind::Background) return AndroidHomeBackgroundCard();
     return huxerui::Row{};
 }
 

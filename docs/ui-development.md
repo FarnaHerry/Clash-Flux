@@ -15,7 +15,7 @@
 
 ## 页内标签与导航图标
 
-- 应用 Logo 使用 `resources/images/clash_flux_logo.png` 中的黑猫探出盒子图形。桌面标题栏和 Windows 安装器将透明图放在白色底托上，以适配深色主题；Linux/Windows 应用图标与 Android 启动图标使用白底版本。桌面托盘图标由 `scripts/generate-tray-icons.sh` 从同一透明源图生成，背景保持透明，默认、TUN 和系统代理状态分别使用深蓝、青绿和紫色图形，并加细白描边以适配深色系统托盘。Android 快捷开关磁贴仍使用独立的猫爪图标。
+- 应用 Logo 使用 `resources/images/clash_flux_logo.png` 中的黑猫探出盒子图形。桌面标题栏和 Windows 安装器将透明图放在白色底托上，以适配深色主题；Linux/Windows 任务栏应用图标使用透明背景和细白描边，Android 启动图标仍使用白底版本。桌面托盘图标由 `scripts/generate-tray-icons.sh` 从同一透明源图生成，背景保持透明，默认、TUN 和系统代理状态分别使用深蓝、青绿和紫色图形，并加细白描边以适配深色系统托盘。Android 快捷开关磁贴仍使用独立的猫爪图标。
 - 桌面与移动端共用设置页主题选项，三个标签统一为“自动 / 深色 / 浅色”；“自动”按系统深浅模式选择主题。
 
 - 二级标签共用 `src/ui/section_tabs.cpp` 的 `SectionTabBar`。点击、溢出菜单选择与内容横滑都走页面同一个选中动作，标签与内容同步切换。
@@ -41,6 +41,7 @@
 - macOS 与 iOS Simulator CI 通过 `cmake/patches/huxerui-window-p0960.patch` 修复固定 HuxerUI revision 在 Objective-C++ 中的聚合初始化兼容问题；升级 HuxerUI 固定版本时确认补丁仍可应用。
 - CMake 在加入固定的 HuxerUI/Lib-Camera 依赖前，会按 `cmake/patches/huxerui-lib-camera-application-context.patch` 适配 Lib-Camera 的安装钩子和各平台 factory，使其兼容 HuxerUI `ApplicationContext` API。该补丁保持在 CMake 外部依赖源码中，不改写上游 checkout。
 - 当前固定的 HuxerUI Lib-Charts 没有饼图组件；Clash-Flux 通过 `cmake/patches/huxerui-lib-charts-pie-chart.patch` 给该扩展库补充 `PieChartData` / `PieChart`，并在 `huxerui_use_library()` 加入源码前应用。升级 Lib-Charts revision 时先确认补丁仍可 `git apply --check --unidiff-zero`，若上游新增等价 API 则删除补丁和对应 CMake 接入。
+- 首页流量曲线卡片占 2 行。`cmake/patches/huxerui-lib-charts-compact-plot.patch` 将 Lib-Charts 绘图面的最小高度降至 96pt，以容纳卡片内边距和标题；CMake 在加入依赖前应用此补丁，升级固定 revision 时需重新校验。
 - 饼图通过 `PieChartData` 保存稳定 key、标签和值，`PieChart` 使用显式帧约束；标签与数值放在普通 HuxerUI Views 中，图形本身提供图像语义摘要。
 - iOS Simulator CI 从仓库根 CMake 项目构建 `clash-flux_huxerui_ios_core`，同时应用 P0960 和拖动预览补丁。该目标只验证 Clash-Flux 源码与 HuxerUI 静态平台库可编译，不生成应用包；iOS 网络扩展、sing-box 接入和 curl TLS 尚未纳入。
 
