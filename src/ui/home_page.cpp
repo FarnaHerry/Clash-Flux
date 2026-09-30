@@ -328,7 +328,7 @@ std::string currentProxyLine(const std::vector<ProxyGroupSnapshot>& groups) {
     for (const ProxyGroupSnapshot& group : groups) {
         if (!group.current.empty()) return group.name + " · " + group.current;
     }
-    return "暂无当前线路";
+    return {};
 }
 
 // Kept outside the composable body: HuxerUI's code generator deliberately
@@ -494,7 +494,8 @@ void MirrorHomeState(huxerui::State<HomeState> state,
 
 // 卡片标题：所有卡片共用同一排版；卡片外壳由卡片槽统一提供。
 // 首页卡片没有选中态（「当前订阅」也是普通卡片），标题一律用 on_surface。
-[[huxerui::composable]] huxerui::View HomeCardHeading(const std::string& title) {
+[[huxerui::composable]] huxerui::View HomeCardHeading(
+    huxerui::StringVariant title) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     return huxerui::Text(title).Style(huxerui::TextStyle{
         huxerui::Font::System(font_size::kBody)
@@ -524,7 +525,8 @@ void MirrorHomeState(huxerui::State<HomeState> state,
 // x 必须严格递增；这里用窗口内索引当 x，天然递增）。窗口约 1 Hz 变一次，重建 60×2 个
 // 点可忽略；空窗口也是合法快照（库会呈现空数据提示）。
 huxerui::XYChartData BuildTrafficChartData(
-    const std::vector<stream::TrafficPoint>& history) {
+    const std::vector<stream::TrafficPoint>& history,
+    const std::string& downloadLabel, const std::string& uploadLabel) {
     std::vector<huxerui::XYDatum> down;
     std::vector<huxerui::XYDatum> up;
     down.reserve(history.size());
@@ -536,8 +538,8 @@ huxerui::XYChartData BuildTrafficChartData(
         up.push_back({key, x, static_cast<double>(history[i].up)});
     }
     return huxerui::XYChartData({
-        huxerui::XYSeries("down", "↓ 下载", std::move(down)),
-        huxerui::XYSeries("up", "↑ 上传", std::move(up)),
+        huxerui::XYSeries("down", downloadLabel, std::move(down)),
+        huxerui::XYSeries("up", uploadLabel, std::move(up)),
     });
 }
 
@@ -654,7 +656,7 @@ private:
         const int percent = static_cast<int>(static_cast<double>(value) / total * 100.0 + 0.5);
         return std::to_string(percent) + "%";
     };
-    const auto totalMetric = [&theme](const char* label, huxerui::Color color,
+    const auto totalMetric = [&theme](huxerui::StringVariant label, huxerui::Color color,
                                       const std::string& value,
                                       const std::string& share) {
         return huxerui::Column {
@@ -677,20 +679,22 @@ private:
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     };
     const huxerui::PieChartData data({
-        {"upload", "上传", static_cast<double>(upload)},
-        {"download", "下载", static_cast<double>(download)},
+        {"upload", huxerui::UseString(Localized("上传")),
+         static_cast<double>(upload)},
+        {"download", huxerui::UseString(Localized("下载")),
+         static_cast<double>(download)},
     });
 
     return huxerui::Column {
-        HomeCardHeading("流量统计"),
+        HomeCardHeading(Localized("流量统计")),
         huxerui::Row {
             huxerui::PieChart(data)
                 .SliceStyle("upload", {.fill = huxerui::Brush(upColor)})
                 .SliceStyle("download", {.fill = huxerui::Brush(downColor)})
                 .With(huxerui::Frame{.width = 72.0F, .height = 72.0F}),
             huxerui::Column {
-                totalMetric("↑ 上传", upColor, formatBytes(upload), shareText(upload)),
-                totalMetric("↓ 下载", downColor, formatBytes(download), shareText(download)),
+                totalMetric(Localized("↑ 上传"), upColor, formatBytes(upload), shareText(upload)),
+                totalMetric(Localized("↓ 下载"), downColor, formatBytes(download), shareText(download)),
             }.With(huxerui::Grow(1.0F),
                    huxerui::Spacing(12.0F),
                    huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
@@ -714,7 +718,7 @@ private:
 
     return huxerui::Column {
         huxerui::Row {
-            HomeCardHeading("流量"),
+            HomeCardHeading(Localized("流量")),
             huxerui::Spacer(),
             huxerui::Text("↑ " + formatRate(s.latest.up))
                 .Style(huxerui::TextStyle{
@@ -724,7 +728,9 @@ private:
                     huxerui::Font::System(font_size::kCaption), downColor}),
         }.With(huxerui::Spacing(12.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        huxerui::AreaChart(BuildTrafficChartData(s.history))
+        huxerui::AreaChart(BuildTrafficChartData(
+            s.history, huxerui::UseString(Localized("↓ 下载")),
+            huxerui::UseString(Localized("↑ 上传"))))
             .Baseline(0.0)
             .Interpolation(huxerui::ChartInterpolation::Linear)
             // 小卡片里 X 轴（窗口内索引）没有信息量，只留 Y 轴刻度；刻度文本按速率
@@ -738,7 +744,8 @@ private:
                        }))
             .Legend(huxerui::ChartLegendOptions{.visible = false})
             .Accessibility(huxerui::ChartAccessibilityOptions{
-                .summary = "上/下行实时速率曲线"})
+                .summary = huxerui::UseString(
+                    Localized("上/下行实时速率曲线"))})
             .SeriesStyle("down",
                          huxerui::AreaChartStyle{
                              .fill = huxerui::Brush(fillDown),
@@ -785,7 +792,7 @@ private:
         const bool active = i == selected;
         segments.push_back(
             huxerui::Row {
-                huxerui::Text(kModeLabels[i]).Style(huxerui::TextStyle{
+                huxerui::Text(Localized(kModeLabels[i])).Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kBody)
                         .WithWeight(active ? huxerui::FontWeight::SemiBold
                                            : huxerui::FontWeight::Regular),
@@ -802,7 +809,7 @@ private:
                       indication,
                       huxerui::Semantics{
                           .role = huxerui::SemanticRole::Tab,
-                          .label = kModeLabels[i],
+                          .label = Localized(kModeLabels[i]),
                           .selected = active})
                 .OnClick([tasks, toast, mode, modePending, i] {
                     if (modePending.Get()) return;
@@ -821,7 +828,8 @@ private:
                         modePending = false;
                         if (!ok) {
                             mode = previous;
-                            toast.Show(error.empty() ? "出站模式切换失败" : error);
+                            toast.Show(error.empty() ? Localized("出站模式切换失败")
+                                                     : huxerui::StringVariant(error));
                         }
                     });
                 })
@@ -844,6 +852,20 @@ private:
     const bool hasProfile = s.profileId != 0;
     const huxerui::Color fg = theme.colors.on_surface;
     const huxerui::Color muted = theme.colors.on_surface_variant;
+    const std::string profileName =
+        s.profileName == "未启用订阅"
+            ? huxerui::UseString(Localized("未启用订阅"))
+            : s.profileName;
+    const huxerui::StringVariant profileUpdated = [&] {
+        if (s.profileUpdated == "未拉取") return Localized("未拉取");
+        if (s.profileUpdated == "拉取失败") return Localized("拉取失败");
+        constexpr std::string_view prefix = "更新于 ";
+        if (s.profileUpdated.starts_with(prefix)) {
+            return LocalizedFormat("更新于 {}",
+                                   s.profileUpdated.substr(prefix.size()));
+        }
+        return huxerui::StringVariant(s.profileUpdated);
+    }();
     const float progress =
         s.profileTotalBytes > 0
             ? std::clamp(static_cast<float>(s.profileUsedBytes) /
@@ -852,13 +874,13 @@ private:
             : (hasProfile ? 1.0F : 0.0F);
 
     return huxerui::Column {
-        HomeCardHeading("当前订阅"),
-        huxerui::Text(s.profileName).Style(huxerui::TextStyle{
+        HomeCardHeading(Localized("当前订阅")),
+        huxerui::Text(profileName).Style(huxerui::TextStyle{
             huxerui::Font::System(font_size::kBody), fg}),
         s.profileUpdated.empty()
             ? huxerui::View{huxerui::Row{}}
             : huxerui::View{
-                  huxerui::Text(s.profileUpdated)
+                  huxerui::Text(profileUpdated)
                       .Style(huxerui::TextStyle{
                           huxerui::Font::System(font_size::kCaption), muted})},
         huxerui::Spacer(),
@@ -870,13 +892,17 @@ private:
 }
 
 // 内核状态文字：标题行状态图标的提示文本（内核状态不再单独占一张卡片）。
-std::string HomeKernelStatusText(const HomeState& s) {
-    if (s.core.state == core::CoreState::Running) {
-        return "内核运行中 · " + (s.core.version.empty()
-                                      ? std::string{kDefaultCoreName}
-                                      : s.core.version);
+huxerui::StringVariant HomeKernelStatusText(const HomeState& s) {
+    switch (s.core.state) {
+    case core::CoreState::Running:
+        return LocalizedFormat("内核运行中 · {}", s.core.version.empty()
+                                                       ? std::string{kDefaultCoreName}
+                                                       : s.core.version);
+    case core::CoreState::Stopped: return Localized("内核已停止");
+    case core::CoreState::Starting: return Localized("内核启动中");
+    case core::CoreState::Failed: return Localized("内核启动失败");
     }
-    return std::string{"内核"} + core::stateName(s.core.state);
+    return Localized("内核状态未知");
 }
 
 // 标题行内核状态图标（放在编辑按钮之前）：运行中主色、启动中琥珀、失败错误色、
@@ -899,7 +925,8 @@ std::string HomeKernelStatusText(const HomeState& s) {
         .With(huxerui::Frame{.width = 20.0F, .height = 20.0F},
               huxerui::Tooltip(HomeKernelStatusText(s)),
               huxerui::Semantics{.role = huxerui::SemanticRole::Image,
-                                 .label = HomeKernelStatusText(s)});
+                                 .label = huxerui::UseString(
+                                     HomeKernelStatusText(s))});
 }
 
 // ---- 平台专属卡片（整个函数由编译宏在调用点选择）---------------------------
@@ -927,21 +954,22 @@ std::string HomeKernelStatusText(const HomeState& s) {
         0);
 
     const int vpnStatus = vpn_state.Get();
-    const std::string status =
+    const huxerui::StringVariant status = Localized(
         vpnStatus == 2   ? "已连接"
         : vpnStatus == 1 ? "正在连接"
         : vpnStatus == 3 ? "启动失败"
-                         : "未连接";
+                         : "未连接");
     const huxerui::Color statusColor =
         vpnStatus == 2   ? theme.colors.primary
         : vpnStatus == 1 ? SemanticWarningColor(theme)
         : vpnStatus == 3 ? theme.colors.error
                          : theme.colors.on_surface_variant;
+    const std::string proxyLine = currentProxyLine(state.proxyGroups);
 
     return huxerui::Column {
-        HomeCardHeading("隧道状态"),
+        HomeCardHeading(Localized("隧道状态")),
         huxerui::Row {
-            huxerui::Text("状态").Style(huxerui::TextStyle{
+            huxerui::Text(Localized("状态")).Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kBody),
                 theme.colors.on_surface_variant}),
             huxerui::Spacer(),
@@ -951,11 +979,12 @@ std::string HomeKernelStatusText(const HomeState& s) {
                 statusColor}),
         }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         huxerui::Row {
-            huxerui::Text("当前线路").Style(huxerui::TextStyle{
+            huxerui::Text(Localized("当前线路")).Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kBody),
                 theme.colors.on_surface_variant}),
             huxerui::Spacer(),
-            huxerui::Text(currentProxyLine(state.proxyGroups))
+            huxerui::Text(proxyLine.empty() ? Localized("暂无当前线路")
+                                            : huxerui::StringVariant(proxyLine))
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kChip),
                     theme.colors.on_surface}),
@@ -1064,19 +1093,19 @@ std::string HomeKernelStatusText(const HomeState& s) {
                     if (error.empty()) error = exception.what();
                 }
                 if (error.empty()) error = store::coreStore().snapshot().lastError;
-                if (error.empty()) {
-                    error = previous ? "VPN 隧道未能关闭" : "VPN 启动已取消或超时";
-                }
             }
             pending = false;
             busy = false;
             if (!succeeded) {
                 activeState = previous;
-                toast.Show(error);
+                toast.Show(error.empty()
+                               ? Localized(previous ? "VPN 隧道未能关闭"
+                                                    : "VPN 启动已取消或超时")
+                               : huxerui::StringVariant(error));
             } else if (previous) {
-                toast.Show("VPN 隧道已关闭");
+                toast.Show(Localized("VPN 隧道已关闭"));
             } else {
-                toast.Show("正在启动 VPN 隧道");
+                toast.Show(Localized("正在启动 VPN 隧道"));
             }
         });
     };
@@ -1085,9 +1114,9 @@ std::string HomeKernelStatusText(const HomeState& s) {
     // 固定悬浮层定位（主轴末端 + 交叉轴末端，避开底部悬浮导航）。
     huxerui::View floating =
         huxerui::IconButton(active ? app::images::pause : app::images::play,
-                            active ? "停止 VPN" : "启动 VPN")
+                            Localized(active ? "停止 VPN" : "启动 VPN"))
             .OnClick(toggle)
-            .With(huxerui::Tooltip(active ? "停止 VPN" : "启动 VPN"),
+            .With(huxerui::Tooltip(Localized(active ? "停止 VPN" : "启动 VPN")),
                   huxerui::Frame{.width = 56.0F, .height = 56.0F},
                   huxerui::Enabled(enabled),
                   huxerui::Background(active ? theme.colors.primary_container
@@ -1099,7 +1128,8 @@ std::string HomeKernelStatusText(const HomeState& s) {
                   huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.28F), {}, 14.0F,
                                   2.0F},
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                     .label = active ? "停止 VPN" : "启动 VPN"});
+                                     .label = huxerui::UseString(Localized(
+                                         active ? "停止 VPN" : "启动 VPN"))});
     floating = WithoutIconButtonOutlines(floating);
     // 与 Android 底部悬浮导航栏相同：按钮放在独立的全屏覆盖层中，
     // 由覆盖层的 Column 在主轴末端、交叉轴末端定位，不依赖页面内容容器。
@@ -1123,8 +1153,8 @@ std::string HomeKernelStatusText(const HomeState& s) {
 #else
 
 [[huxerui::composable]] huxerui::View DesktopModeSwitchRow(
-    huxerui::ImageVariant icon, const std::string& label,
-    const std::string& hint, huxerui::View control) {
+    huxerui::ImageVariant icon, huxerui::StringVariant label,
+    huxerui::StringVariant hint, huxerui::View control) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     return huxerui::Row {
         huxerui::Image(std::move(icon))
@@ -1161,7 +1191,8 @@ std::string HomeKernelStatusText(const HomeState& s) {
 
     return huxerui::Column {
         DesktopModeSwitchRow(
-            app::images::system_proxy, "系统代理", "为桌面应用设置系统代理",
+            app::images::system_proxy, Localized("系统代理"),
+            Localized("为桌面应用设置系统代理"),
             huxerui::Switch(shownProxy)
                 .OnChanged([tasks, toast, proxyEnabled, pending, modelProxy,
                             coreModel](bool on) {
@@ -1184,8 +1215,9 @@ std::string HomeKernelStatusText(const HomeState& s) {
                         pending = false;
                         if (result.status != DesktopModeApplyStatus::Applied) {
                             if (proxyEnabled.Get() == on) proxyEnabled = previous;
-                            toast.Show(result.error.empty() ? "系统代理设置失败"
-                                                            : result.error);
+                            toast.Show(result.error.empty()
+                                           ? Localized("系统代理设置失败")
+                                           : huxerui::StringVariant(result.error));
                         } else {
                             coreModel->Update([on](CoreView& view) {
                                 view.systemProxyIntent = on;
@@ -1219,7 +1251,8 @@ std::string HomeKernelStatusText(const HomeState& s) {
 
     return huxerui::Column {
         DesktopModeSwitchRow(
-            app::images::tun, "TUN 模式", "全局透明代理（需管理员权限）",
+            app::images::tun, Localized("TUN 模式"),
+            Localized("全局透明代理（需管理员权限）"),
             huxerui::Switch(shownTun)
                 .OnChanged([tasks, toast, dialog, clipboard, text_color,
                             hint_color, tunEnabled, pending, modelTun,
@@ -1247,7 +1280,7 @@ std::string HomeKernelStatusText(const HomeState& s) {
                         }
                         if (tunEnabled.Get() == on) tunEnabled = previous;
                         if (result.status == DesktopModeApplyStatus::ElevationRequested) {
-                            toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
+                            toast.Show(Localized("已请求管理员权限重启，请在新窗口开启 TUN"));
                             co_return;
                         }
                         if (result.status == DesktopModeApplyStatus::PermissionDenied) {
@@ -1255,8 +1288,9 @@ std::string HomeKernelStatusText(const HomeState& s) {
                                                text_color, hint_color);
                             co_return;
                         }
-                        toast.Show(result.error.empty() ? "TUN 设置失败"
-                                                        : result.error);
+                        toast.Show(result.error.empty()
+                                       ? Localized("TUN 设置失败")
+                                       : huxerui::StringVariant(result.error));
                     });
                 })),
         huxerui::Spacer(),
@@ -1305,6 +1339,7 @@ std::string HomeKernelStatusText(const HomeState& s) {
         tasks.Launch([toast, busy, pending, coreState, previous, running,
                       coreModel]() -> huxerui::Task<void> {
             std::string error;
+            bool failed = false;
             try {
                 const bool ok = co_await RunOnTaskThread([running] {
                     auto& core = store::coreStore();
@@ -1317,21 +1352,24 @@ std::string HomeKernelStatusText(const HomeState& s) {
                     return core.snapshot().state == core::CoreState::Running;
                 });
                 if (!ok) {
+                    failed = true;
                     error = store::coreStore().snapshot().lastError;
-                    if (error.empty()) error = running ? "停止内核失败" : "启动内核失败";
                 }
             } catch (const std::exception& exception) {
+                failed = true;
                 error = exception.what();
             }
             // 成功：把权威值（内核状态）写透模型，界面不必等下一拍；失败做
             // 目标值校验后回落（用户若已再点一次就不覆盖新意图）。
             pending = false;
             busy = false;
-            if (!error.empty()) {
+            if (failed) {
                 const core::CoreState target =
                     running ? core::CoreState::Stopped : core::CoreState::Running;
                 if (coreState.Get() == target) coreState = previous;
-                toast.Show(error);
+                toast.Show(error.empty()
+                               ? Localized(running ? "停止内核失败" : "启动内核失败")
+                               : huxerui::StringVariant(error));
                 co_return;
             }
             const core::CoreState landed = running ? core::CoreState::Stopped
@@ -1344,9 +1382,9 @@ std::string HomeKernelStatusText(const HomeState& s) {
 
     huxerui::View floating =
         huxerui::IconButton(active ? app::images::pause : app::images::play,
-                            active ? "停止内核" : "启动内核")
+                            Localized(active ? "停止内核" : "启动内核"))
             .OnClick(toggle)
-            .With(huxerui::Tooltip(active ? "停止内核" : "启动内核"),
+            .With(huxerui::Tooltip(Localized(active ? "停止内核" : "启动内核")),
                   huxerui::Frame{.width = 56.0F, .height = 56.0F},
                   huxerui::Enabled(enabled),
                   huxerui::Background(active ? theme.colors.primary_container
@@ -1358,7 +1396,8 @@ std::string HomeKernelStatusText(const HomeState& s) {
                   huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.28F), {}, 14.0F,
                                   2.0F},
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                     .label = active ? "停止内核" : "启动内核"});
+                                     .label = huxerui::UseString(Localized(
+                                         active ? "停止内核" : "启动内核"))});
     floating = WithoutIconButtonOutlines(floating);
     huxerui::View dock = huxerui::Column {
         std::move(floating),
@@ -1463,7 +1502,7 @@ std::string HomeKernelStatusText(const HomeState& s) {
     }
 
     huxerui::View cardArea = cards.empty()
-        ? huxerui::View{Card(huxerui::Text("首页还没有卡片")
+        ? huxerui::View{Card(huxerui::Text(Localized("首页还没有卡片"))
                                  .Style(huxerui::TextStyle{
                                      huxerui::Font::System(font_size::kBody),
                                      theme.colors.on_surface_variant}))}
@@ -1497,7 +1536,7 @@ std::string HomeKernelStatusText(const HomeState& s) {
     huxerui::View scrollContent =
         huxerui::ScrollView(std::move(pageBody)).With(huxerui::Grow(1.0F));
     huxerui::View page = PageScaffold(
-        "首页", std::move(headerActions), std::move(scrollContent), true);
+        Localized("首页"), std::move(headerActions), std::move(scrollContent), true);
 
     // 移动端启动/停止按钮脱离滚动内容，固定在底部悬浮导航之上的位置。
     huxerui::View shell = CLASHFLUX_HOME_FLOATING_ACTION(

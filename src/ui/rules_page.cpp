@@ -36,8 +36,9 @@ import clashflux.vpn;
 namespace clashflux::ui {
 namespace {
 
-const std::vector<SectionTab> kRuleTabs{{"subscription", "订阅规则"},
-                                        {"global", "全局路由"}};
+const std::vector<SectionTab> kRuleTabs{
+    {"subscription", Localized("订阅规则")},
+    {"global", Localized("全局路由")}};
 const std::vector<std::string> kMatchKinds{
     "全部", "精确域名", "域名后缀", "精确 IP", "IPv4 网段"};
 
@@ -279,8 +280,8 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                 return store::vpnStore().saveGlobalPolicy(std::move(policy),
                                                           error);
             });
-            toast.Show(ok ? "全局规则已保存"
-                          : std::format("全局规则保存失败：{}", error));
+            toast.Show(ok ? Localized("全局规则已保存")
+                          : LocalizedFormat("全局规则保存失败：{}", error));
             refreshTick = refreshTick.Get() + 1;
         });
     };
@@ -383,17 +384,19 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                 const std::vector<std::string> targets = TargetNames(profiles);
                 return DialogCard(
                     huxerui::Column{
-                        huxerui::Text(editIndex.Get() < 0 ? "添加全局路由规则" : "编辑全局路由规则",
+                        huxerui::Text(editIndex.Get() < 0
+                                          ? Localized("添加全局路由规则")
+                                          : Localized("编辑全局路由规则"),
                                       huxerui::TextRole::Title),
                         huxerui::Text(
-                            "目标连接未打开时暂停规则；URL 按主机名匹配，不区分路径。")
+                            Localized("目标连接未打开时暂停规则；URL 按主机名匹配，不区分路径。"))
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::System(font_size::kCaption),
                                 theme.colors.on_surface_variant}),
                         huxerui::Select(
                             kMatchKinds, editMatch.Get(),
                             [](const std::string& value) {
-                                return huxerui::Text(value);
+                                return huxerui::Text(Localized(value));
                             })
                             .OnChanged([editMatch](std::size_t index) {
                                 editMatch = index;
@@ -401,7 +404,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                             .With(huxerui::Frame{.width = 220.0F}),
                         editMatch.Get() == 0 ? huxerui::View{huxerui::Row{}} :
                         huxerui::View{huxerui::TextField(editPattern.Get())
-                            .Label("匹配域名、URL 或 IP")
+                            .Label(Localized("匹配域名、URL 或 IP"))
                             .Variant(huxerui::TextFieldVariant::Outlined)
                             .OnChanged([editPattern](
                                            const huxerui::TextEditingValue& value) {
@@ -409,7 +412,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                             })},
                         targets.empty()
                             ? huxerui::View{
-                                  huxerui::Text("请先创建一个订阅连接")}
+                                  huxerui::Text(Localized("请先创建一个订阅连接"))}
                             : huxerui::View{huxerui::Select(
                                   targets, editTarget.Get(),
                                   [](const std::string& value) {
@@ -419,18 +422,18 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                                       editTarget = index;
                                   })},
                         huxerui::TextField(editPriority.Get())
-                            .Label("优先级（数字越大越先匹配）")
+                            .Label(Localized("优先级（数字越大越先匹配）"))
                             .Variant(huxerui::TextFieldVariant::Outlined)
                             .OnChanged([editPriority](
                                            const huxerui::TextEditingValue& value) {
                                 editPriority = value;
                             }),
                         huxerui::Row{
-                            huxerui::Button("取消").OnClick(
+                            huxerui::Button(Localized("取消")).OnClick(
                                 [ctx] { ctx.Dismiss(); }),
-                            huxerui::Button("保存").OnClick([=] {
+                            huxerui::Button(Localized("保存")).OnClick([=] {
                                 if (targets.empty() || editTarget.Get() >= profiles.Size()) {
-                                    toast.Show("请选择目标连接");
+                                    toast.Show(Localized("请选择目标连接"));
                                     return;
                                 }
                                 int priority = 0;
@@ -443,7 +446,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                                 if (parsed.ec != std::errc() ||
                                     parsed.ptr !=
                                         priorityText.data() + priorityText.size()) {
-                                    toast.Show("优先级必须是整数");
+                                    toast.Show(Localized("优先级必须是整数"));
                                     return;
                                 }
                                 const auto match = vpn::ParseMatchKind(
@@ -460,7 +463,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                                 };
                                 std::string validationError;
                                 if (!ValidateRuleInput(rule, validationError)) {
-                                    toast.Show(validationError);
+                                    toast.Show(Localized(validationError));
                                     return;
                                 }
                                 if (editIndex.Get() >= 0 &&
@@ -485,7 +488,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
     if (section.Get() == 0) {
         const std::size_t count = subscriptionRules.Size();
         body = count == 0
-                   ? huxerui::View{huxerui::Text("还没有订阅规则")
+                   ? huxerui::View{huxerui::Text(Localized("还没有订阅规则"))
                                        .Style(huxerui::TextStyle{
                                            huxerui::Font::System(font_size::kBody),
                                            theme.colors.on_surface_variant})}
@@ -501,7 +504,18 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                     }
                     const SubscriptionRuleRow& rule = subscriptionRules[index];
                     const std::string payload =
-                        rule.payload.empty() ? "—" : rule.payload;
+                        rule.payload == "未配置内置规则"
+                            ? huxerui::UseString(Localized("未配置内置规则"))
+                            : rule.payload.empty() ? "—" : rule.payload;
+                    const std::string type =
+                        rule.type == "规则" || rule.type == "IPv4 网段"
+                            ? huxerui::UseString(Localized(rule.type))
+                            : rule.type;
+                    const std::string target =
+                        rule.target == "本连接" || rule.target == "内网路由" ||
+                                rule.target == "规则为空"
+                            ? huxerui::UseString(Localized(rule.target))
+                            : rule.target;
                     const std::string key = std::format(
                         "{}:{}:{}", rule.profileId, rule.ordinal, rule.type);
                     if (compact) {
@@ -511,8 +525,8 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                         return UnifiedListRow(
                             huxerui::Column{
                                 mono(rule.profile, theme.colors.primary),
-                                mono(std::format("{} · 走向：{}", rule.type,
-                                                 rule.target),
+                                mono(huxerui::UseString(LocalizedFormat(
+                                         "{} · 走向：{}", type, target)),
                                      theme.colors.on_surface_variant),
                                 mono(payload, theme.colors.on_surface),
                             },
@@ -522,11 +536,11 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                         huxerui::Row{
                             mono(rule.profile, theme.colors.primary)
                                 .With(huxerui::Frame{.width = 180.0F}),
-                            mono(rule.type, theme.colors.on_surface)
+                            mono(type, theme.colors.on_surface)
                                 .With(huxerui::Frame{.width = 145.0F}),
                             mono(payload, theme.colors.on_surface)
                                 .With(huxerui::Grow(1.0F)),
-                            mono(rule.target, theme.colors.on_surface_variant)
+                            mono(target, theme.colors.on_surface_variant)
                                 .With(huxerui::Frame{.width = 180.0F}),
                         },
                         key, false, index + 1 < count);
@@ -551,13 +565,17 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
             } else {
                 body = huxerui::Column{
                            huxerui::Row{
-                               mono("订阅", theme.colors.on_surface_variant)
+                               mono(huxerui::UseString(Localized("订阅")),
+                                    theme.colors.on_surface_variant)
                                    .With(huxerui::Frame{.width = 180.0F}),
-                               mono("类型", theme.colors.on_surface_variant)
+                               mono(huxerui::UseString(Localized("类型")),
+                                    theme.colors.on_surface_variant)
                                    .With(huxerui::Frame{.width = 145.0F}),
-                               mono("匹配内容", theme.colors.on_surface_variant)
+                               mono(huxerui::UseString(Localized("匹配内容")),
+                                    theme.colors.on_surface_variant)
                                    .With(huxerui::Grow(1.0F)),
-                               mono("订阅走向", theme.colors.on_surface_variant)
+                               mono(huxerui::UseString(Localized("订阅走向")),
+                                    theme.colors.on_surface_variant)
                                    .With(huxerui::Frame{.width = 180.0F}),
                            }
                                .With(huxerui::Spacing(8.0F),
@@ -575,7 +593,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
         const std::size_t count = globalRules.Size();
         if (count == 0) {
             body = huxerui::Column{
-                       huxerui::Text("还没有全局路由规则")
+                       huxerui::Text(Localized("还没有全局路由规则"))
                            .Style(huxerui::TextStyle{
                                huxerui::Font::System(font_size::kBody),
                                theme.colors.on_surface_variant}),
@@ -597,18 +615,29 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                                                  rule.connectionId, rule.pattern, rule.priority);
                     return UnifiedListRow(
                         huxerui::Column {
-                          mono(rule.match == vpn::MatchKind::Any ? "全部流量" : rule.pattern, theme.colors.on_surface),
-                          mono(std::format("{} · {} · 优先级 {}", vpn::MatchKindName(rule.match),
-                                           ConnectionName(profiles, rule.connectionId), rule.priority),
+                          mono(rule.match == vpn::MatchKind::Any
+                                   ? huxerui::UseString(Localized("全部流量"))
+                                   : rule.pattern,
+                               theme.colors.on_surface),
+                          mono(huxerui::UseString(LocalizedFormat(
+                                   "{} · {} · 优先级 {}",
+                                   huxerui::UseString(Localized(
+                                       vpn::MatchKindName(rule.match))),
+                                   ConnectionName(profiles, rule.connectionId) == "未设置"
+                                       ? huxerui::UseString(Localized("未设置"))
+                                       : ConnectionName(profiles, rule.connectionId),
+                                   rule.priority)),
                                theme.colors.on_surface_variant),
                           huxerui::Flow {
-                            huxerui::Text(active ? "已生效" : "已暂停 · 目标连接未打开")
+                            huxerui::Text(Localized(active
+                                ? "已生效"
+                                : "已暂停 · 目标连接未打开"))
                                 .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption),
                                     active ? theme.colors.primary : theme.colors.on_surface_variant}),
-                            huxerui::Button("编辑").OnClick([openGlobalRuleEditor, index] {
+                            huxerui::Button(Localized("编辑")).OnClick([openGlobalRuleEditor, index] {
                                 openGlobalRuleEditor(static_cast<int>(index));
                             }),
-                            huxerui::Button("删除").OnClick([globalRules, index, persistGlobalPolicy] {
+                            huxerui::Button(Localized("删除")).OnClick([globalRules, index, persistGlobalPolicy] {
                                 if (index < globalRules.Size()) {
                                     globalRules.Erase(index);
                                     persistGlobalPolicy();
@@ -645,13 +674,13 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
     huxerui::View addRule =
         section.Get() == 1
             ? huxerui::View{
-                  huxerui::IconButton(app::images::add, "添加规则")
-                      .With(huxerui::Tooltip("添加规则"))
+                  huxerui::IconButton(app::images::add, Localized("添加规则"))
+                      .With(huxerui::Tooltip(Localized("添加规则")))
                       .OnClick([openGlobalRuleEditor] { openGlobalRuleEditor(-1); })}
             : huxerui::View{huxerui::Row{}};
     huxerui::View refresh =
-        huxerui::IconButton(app::images::refresh, "刷新规则")
-            .With(huxerui::Tooltip("刷新规则"),
+        huxerui::IconButton(app::images::refresh, Localized("刷新规则"))
+            .With(huxerui::Tooltip(Localized("刷新规则")),
                   huxerui::Rotation(huxerui::AnimateTo(
                       static_cast<float>(refreshSpin.Get()) * 360.0F,
                       huxerui::TweenSpec{.duration = 0.6,
@@ -670,12 +699,12 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
     huxerui::View listPage = onBack
-        ? SecondaryPageScaffold(huxerui::Text("规则", huxerui::TextRole::Title), std::move(actions), std::move(body), onBack)
-        : PageScaffold("规则", std::move(actions), std::move(body));
+        ? SecondaryPageScaffold(huxerui::Text(Localized("规则"), huxerui::TextRole::Title), std::move(actions), std::move(body), onBack)
+        : PageScaffold(Localized("规则"), std::move(actions), std::move(body));
     const std::vector<std::string> editorTargets = TargetNames(profiles);
     const auto saveResponsiveRule = [=] {
         if (editorTargets.empty() || editTarget.Get() >= profiles.Size()) {
-            toast.Show("请选择目标连接");
+            toast.Show(Localized("请选择目标连接"));
             return;
         }
         int priority = 0;
@@ -685,7 +714,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
             priority);
         if (parsed.ec != std::errc() ||
             parsed.ptr != priorityText.data() + priorityText.size()) {
-            toast.Show("优先级必须是整数");
+            toast.Show(Localized("优先级必须是整数"));
             return;
         }
         const auto match = vpn::ParseMatchKind(kMatchKinds[editMatch.Get()]);
@@ -701,7 +730,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
         };
         std::string validationError;
         if (!ValidateRuleInput(rule, validationError)) {
-            toast.Show(validationError);
+            toast.Show(Localized(validationError));
             return;
         }
         if (editIndex.Get() >= 0 &&
@@ -716,36 +745,39 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
     huxerui::View editorPage = !globalEditorOpen.Get()
         ? huxerui::View{huxerui::Row{}}
         : PageScaffold(
-        editIndex.Get() < 0 ? "添加全局路由规则" : "编辑全局路由规则",
+        Localized(editIndex.Get() < 0 ? "添加全局路由规则"
+                                      : "编辑全局路由规则"),
         huxerui::Row {
-            huxerui::IconButton(app::images::arrow_back, "返回")
-                .With(huxerui::Tooltip("返回规则列表"))
+            huxerui::IconButton(app::images::arrow_back, Localized("返回"))
+                .With(huxerui::Tooltip(Localized("返回规则列表")))
                 .OnClick([globalEditorOpen] { globalEditorOpen = false; }),
-            huxerui::IconButton(app::images::save, "保存规则")
-                .With(huxerui::Tooltip("保存规则"))
+            huxerui::IconButton(app::images::save, Localized("保存规则"))
+                .With(huxerui::Tooltip(Localized("保存规则")))
                 .OnClick(saveResponsiveRule),
         }.With(huxerui::Spacing(8.0F)),
         huxerui::ScrollView(
             huxerui::Column {
                 Card(huxerui::Column {
                     huxerui::Text(
-                        "目标连接未打开时暂停规则；URL 按主机名匹配，不区分路径。"),
+                        Localized("目标连接未打开时暂停规则；URL 按主机名匹配，不区分路径。")),
                     huxerui::Select(
                         kMatchKinds, editMatch.Get(),
-                        [](const std::string& value) { return huxerui::Text(value); })
+                        [](const std::string& value) {
+                            return huxerui::Text(Localized(value));
+                        })
                         .OnChanged([editMatch](std::size_t index) {
                             editMatch = index;
                         }),
                     editMatch.Get() == 0 ? huxerui::View{huxerui::Row{}} :
                     huxerui::View{huxerui::TextField(editPattern.Get())
-                        .Label("匹配域名、URL 或 IP")
+                        .Label(Localized("匹配域名、URL 或 IP"))
                         .Variant(huxerui::TextFieldVariant::Outlined)
                         .OnChanged([editPattern](
                                        const huxerui::TextEditingValue& value) {
                             editPattern = value;
                         })},
                     editorTargets.empty()
-                        ? huxerui::View{huxerui::Text("请先创建一个订阅连接")}
+                        ? huxerui::View{huxerui::Text(Localized("请先创建一个订阅连接"))}
                         : huxerui::View{huxerui::Select(
                               editorTargets, editTarget.Get(),
                               [](const std::string& value) {
@@ -755,7 +787,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                                   editTarget = index;
                               })},
                     huxerui::TextField(editPriority.Get())
-                        .Label("优先级（数字越大越先匹配）")
+                        .Label(Localized("优先级（数字越大越先匹配）"))
                         .Variant(huxerui::TextFieldVariant::Outlined)
                         .OnChanged([editPriority](
                                        const huxerui::TextEditingValue& value) {

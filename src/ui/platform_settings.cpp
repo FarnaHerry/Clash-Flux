@@ -35,7 +35,7 @@ namespace {
 template <typename Job>
 void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
                           huxerui::State<bool> busy, Job job,
-                          std::string ok_message = {},
+                          std::optional<huxerui::StringVariant> ok_message = {},
                           std::function<void(bool)> finished = {}) {
     if (busy.Get()) return;
     busy = true;
@@ -52,7 +52,7 @@ void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
                 co_await RunOnTaskThread(std::move(job));
                 ok = true;
             }
-            if (ok && !ok_message.empty()) toast.Show(ok_message);
+            if (ok && ok_message) toast.Show(*ok_message);
         } catch (const std::exception& error) {
             toast.Show(error.what());
         }
@@ -117,7 +117,9 @@ std::size_t EnvironmentShellIndex(const std::string& id) {
 
 std::vector<std::string> EnvironmentShellLabels() {
     std::vector<std::string> labels;
-    for (const auto& option : kEnvironmentShells) labels.emplace_back(option.label);
+    for (const auto& option : kEnvironmentShells) {
+        labels.emplace_back(option.label);
+    }
     return labels;
 }
 
@@ -171,11 +173,11 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
     huxerui::State<bool> service_installed, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast) {
     return SettingRow(
-        "内核服务",
+        Localized("内核服务"),
         service_installed.Get()
-            ? "已安装（sing-box、PPTP 与 TUN 由 root 服务托管）"
-            : "安装 root 服务后，TUN/PPTP 无需每次授权（经 pkexec 一次性提权）",
-        huxerui::Button(service_installed.Get() ? "卸载服务" : "安装服务")
+            ? Localized("已安装（sing-box、PPTP 与 TUN 由 root 服务托管）")
+            : Localized("安装 root 服务后，TUN/PPTP 无需每次授权（经 pkexec 一次性提权）"),
+        huxerui::Button(Localized(service_installed.Get() ? "卸载服务" : "安装服务"))
             .OnClick([service_installed, tasks, toast] {
                 const bool installed = service_installed.Get();
                 tasks.Launch([service_installed, tasks, toast,
@@ -191,12 +193,13 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                                     .c_str());
                         });
                         if (result != 0) {
-                            throw std::runtime_error(
+                            toast.Show(Localized(
                                 installed ? "卸载被取消或失败"
-                                           : "安装被取消或失败（需要授权）");
+                                          : "安装被取消或失败（需要授权）"));
+                            co_return;
                         }
                         service_installed = !installed;
-                        toast.Show(installed ? "服务已卸载" : "服务已安装");
+                        toast.Show(Localized(installed ? "服务已卸载" : "服务已安装"));
                     } catch (const std::exception& error) {
                         toast.Show(error.what());
                     }
@@ -270,19 +273,19 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
         0);
 
     const int state = vpn_state.Get();
-    const std::string status =
+    const huxerui::StringVariant status = Localized(
         state == 2 ? "已附着：sing-box 正通过 protect(fd) 使用物理网络"
         : state == 1 ? "正在建立系统 VPN 与 TUN 数据面"
         : state == 3 ? "启动失败：请查看日志页中的 Android VPN 错误"
-                     : "未连接；开启后将请求系统 VPN 授权";
+                     : "未连接；开启后将请求系统 VPN 授权");
     return huxerui::Column {
-        SettingRow("隧道状态", status,
-                   huxerui::Text(state == 2 ? "已连接"
-                                 : state == 1 ? "连接中"
-                                 : state == 3 ? "失败" : "未连接")),
+        SettingRow(Localized("隧道状态"), status,
+                   huxerui::Text(Localized(state == 2 ? "已连接"
+                                            : state == 1 ? "连接中"
+                                            : state == 3 ? "失败" : "未连接"))),
         SettingSwitchRow(
-            "VPN 代理",
-            "系统 VPN 由此服务持有；内核出站 socket 会自动绕过 TUN",
+            Localized("VPN 代理"),
+            Localized("系统 VPN 由此服务持有；内核出站 socket 会自动绕过 TUN"),
             huxerui::Switch(vpn_enabled.Get())
                 .OnChanged([tasks, toast, busy, tun_enabled, vpn_state,
                             vpn_enabled, vpn_pending](bool on) {
@@ -366,9 +369,6 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                                 if (error.empty()) error = exception.what();
                             }
                             if (error.empty()) error = store::coreStore().snapshot().lastError;
-                            if (error.empty()) {
-                                error = on ? "VPN 启动已取消或失败" : "VPN 隧道未能关闭";
-                            }
                         }
 
                         try {
@@ -389,15 +389,22 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         busy = false;
                         if (!ok) {
                             vpn_enabled = previous;
-                            if (!error.empty()) toast.Show(error);
+                            if (!error.empty()) {
+                                toast.Show(error);
+                            } else {
+                                toast.Show(Localized(on
+                                                         ? "VPN 启动已取消或失败"
+                                                         : "VPN 隧道未能关闭"));
+                            }
                         } else {
-                            toast.Show(on ? "正在请求建立 VPN 隧道" : "VPN 隧道已关闭");
+                            toast.Show(Localized(on ? "正在请求建立 VPN 隧道"
+                                                    : "VPN 隧道已关闭"));
                         }
                     });
                 })),
         SettingSwitchRow(
-            "后台保活",
-            "申请忽略电池优化，防止后台被杀；建议同时在系统设置中允许本应用自启动",
+            Localized("后台保活"),
+            Localized("申请忽略电池优化，防止后台被杀；建议同时在系统设置中允许本应用自启动"),
             huxerui::Switch(battery_ignored.Get())
                 .OnChanged([battery_ignored, toast](bool on) {
                     if (on) {
@@ -407,7 +414,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         // Android 不允许普通应用静默撤销自身的电池优化豁免，
                         // 关闭动作必须进入系统管理页完成。
                         AndroidOpenBatterySettings();
-                        toast.Show("请在系统电池设置中关闭本应用的电池优化豁免");
+                        toast.Show(Localized("请在系统电池设置中关闭本应用的电池优化豁免"));
                     }
                     battery_ignored = AndroidIsIgnoringBattery();
                 })),
@@ -435,7 +442,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 
     return huxerui::Column {
         SettingSwitchRow(
-            "开机自启动", "登录系统后自动启动 Clash-Flux（桌面端）",
+            Localized("开机自启动"), Localized("登录系统后自动启动 Clash-Flux（桌面端）"),
             huxerui::Switch(settings.autoStart)
                 .OnChanged([settingsModel](bool on) {
                     store::coreStore().setSetting(
@@ -446,7 +453,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
         // 内核启停与流量接管解耦后的「启动入口」之一：默认不随应用启动内核
         // （内核只是本地端口 + 控制接口），需要时用首页右下角悬浮按钮启动。
         SettingSwitchRow(
-            "启动时自动运行内核", "打开应用就拉起 sing-box，并按已记录的系统代理/TUN 恢复接管",
+            Localized("启动时自动运行内核"), Localized("打开应用就拉起 sing-box，并按已记录的系统代理/TUN 恢复接管"),
             huxerui::Switch(settings.autoRun)
                 .OnChanged([settingsModel](bool on) {
                     store::coreStore().setSetting("app.auto_run",
@@ -455,7 +462,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         [on](SettingsView& view) { view.autoRun = on; });
                 })),
         SettingSwitchRow(
-            "启用托盘图标", "关闭后托盘不可用，关闭窗口即退出",
+            Localized("启用托盘图标"), Localized("关闭后托盘不可用，关闭窗口即退出"),
             huxerui::Switch(settings.trayEnabled)
                 .OnChanged([settingsModel](bool on) {
                     store::coreStore().setSetting("tray.enabled",
@@ -464,7 +471,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         [on](SettingsView& view) { view.trayEnabled = on; });
                 })),
         SettingSwitchRow(
-            "启动时隐藏到托盘", "下次启动不显示主窗口，经托盘唤出",
+            Localized("启动时隐藏到托盘"), Localized("下次启动不显示主窗口，经托盘唤出"),
             huxerui::Switch(settings.startMinimized)
                 .OnChanged([settingsModel](bool on) {
                     store::coreStore().setSetting(
@@ -473,11 +480,12 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         [on](SettingsView& view) { view.startMinimized = on; });
                 })),
         SettingRow(
-            "关闭窗口时",
-            "托盘可用时的驻留行为（代理继续后台运行 = 最小化到托盘）",
+            Localized("关闭窗口时"),
+            Localized("托盘可用时的驻留行为（代理继续后台运行 = 最小化到托盘）"),
             huxerui::SegmentedButton(
-                std::vector<huxerui::StringVariant>{"每次询问", "直接退出",
-                                                    "最小化到托盘"},
+                std::vector<huxerui::StringVariant>{
+                    Localized("每次询问"), Localized("直接退出"),
+                    Localized("最小化到托盘")},
                 static_cast<std::size_t>(settings.closeBehavior))
                 .OnChanged([settingsModel](std::size_t index) {
                     store::coreStore().setSetting("tray.close_behavior",
@@ -521,8 +529,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
             return [] {};
         },
         settingsModel->view);
-    const std::vector<std::string> envShellLabels =
-        EnvironmentShellLabels();
+    const std::vector<std::string> envShellLabels = EnvironmentShellLabels();
     auto busy = huxerui::UseState(false);
 
     // 内核/接管状态来自唯一来源 CoreModel（见 core_model.h）：以模型的 State 作
@@ -542,19 +549,21 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 
     const store::CoreSnapshot s = snap.Get();
     const bool running = s.state == core::CoreState::Running;
-    const std::string state_text =
+    const huxerui::StringVariant state_text =
         s.binaryPath.empty()
-            ? "未找到内核运行时"
-            : std::format("{} · {}{}", core::stateName(s.state),
-                          s.version.empty() ? "sing-box" : s.version,
-                          s.lastError.empty() ? "" : " · " + s.lastError);
+            ? Localized("未找到内核运行时")
+            : LocalizedFormat("{} · {}{}",
+                              huxerui::UseString(Localized(core::stateName(s.state))),
+                              s.version.empty() ? "sing-box" : s.version,
+                              s.lastError.empty() ? "" : " · " + s.lastError);
 
     const auto core_action = [tasks, toast, busy,
                               coreModel](std::function<void()> job,
-                                         std::string ok_message) {
+                                         huxerui::StringVariant ok_message) {
         // finished 回调在 UI 线程执行：动作一完成就请模型重读，权威值不必等下一拍。
         LaunchSettingsAction(tasks, toast, busy, std::move(job),
-                             std::move(ok_message),
+                             std::optional<huxerui::StringVariant>{
+                                 std::move(ok_message)},
                              [coreModel](bool) { coreModel->RequestRefresh(); });
     };
 
@@ -565,22 +574,22 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                                                 : theme.colors.on_surface}),
         huxerui::Row {
             running
-                ? huxerui::View{huxerui::Button("停止").OnClick(
+                ? huxerui::View{huxerui::Button(Localized("停止")).OnClick(
                       [core_action] {
                           core_action(
                               [] { store::coreStore().stopCore(); },
-                              "内核已停止");
+                              Localized("内核已停止"));
                       })}
-                : huxerui::View{huxerui::Button("启动").OnClick(
+                : huxerui::View{huxerui::Button(Localized("启动")).OnClick(
                       [core_action] {
                           core_action(
                               [] {
                                   store::coreStore().startCore(
                                       store::profilesStore().selectedYaml());
                               },
-                              "内核已启动");
+                              Localized("内核已启动"));
                       })},
-            huxerui::Button("重启")
+            huxerui::Button(Localized("重启"))
                 .OnClick([core_action] {
                     core_action(
                         [] {
@@ -588,15 +597,15 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                             store::coreStore().startCore(
                                 store::profilesStore().selectedYaml());
                         },
-                        "内核已重启");
+                        Localized("内核已重启"));
                 })
                 .With(huxerui::Enabled(running)),
         }.With(huxerui::Spacing(8.0F)),
 
         CLASHFLUX_LINUX_SERVICE_ROW(service_installed, tasks, toast),
         SettingSwitchRow(
-            "系统代理",
-            std::format("写入桌面系统代理（127.0.0.1:{}）", s.mixedPort),
+            Localized("系统代理"),
+            LocalizedFormat("写入桌面系统代理（127.0.0.1:{}）", s.mixedPort),
             huxerui::Switch(proxyPending.Get()
                                 ? proxyEnabled.Get()
                                 : coreModel->view.Get().systemProxyIntent)
@@ -622,8 +631,9 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                             // 值时才回退；用户若已经点到别处，说明有更新的意图，
                             // 不覆盖它（避免"失败回落把新状态打回去"）。
                             if (proxyEnabled.Get() == on) proxyEnabled = previous;
-                            toast.Show(result.error.empty() ? "系统代理设置失败"
-                                                            : result.error);
+                            toast.Show(result.error.empty()
+                                           ? Localized("系统代理设置失败")
+                                           : huxerui::StringVariant(result.error));
                         } else {
                             // 成功不回写本地 State（它已经等于 on）：把权威值写透
                             // 进模型即可，首页卡/托盘下一帧跟随，也不会二次闪烁。
@@ -631,14 +641,14 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                                 view.systemProxyIntent = on;
                                 view.systemProxyActive = on;
                             });
-                            toast.Show(on ? "系统代理已开启" : "系统代理已关闭");
+                            toast.Show(Localized(on ? "系统代理已开启" : "系统代理已关闭"));
                         }
                     });
                 })),
         SettingSwitchRow(
-            "TUN 模式",
-            running ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
-                    : "全局透明代理（下次启动生效）",
+            Localized("TUN 模式"),
+            Localized(running ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
+                              : "全局透明代理（下次启动生效）"),
             huxerui::Switch(tunPending.Get()
                                 ? tunEnabled.Get()
                                 : coreModel->view.Get().core.tunEnabled)
@@ -664,13 +674,13 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                             coreModel->Update([on](CoreView& view) {
                                 view.core.tunEnabled = on;
                             });
-                            toast.Show(on ? "TUN 已开启" : "TUN 已关闭");
+                            toast.Show(Localized(on ? "TUN 已开启" : "TUN 已关闭"));
                             co_return;
                         }
                         // 失败回落同样做目标值校验（见系统代理处的说明）。
                         if (tunEnabled.Get() == on) tunEnabled = previous;
                         if (result.status == DesktopModeApplyStatus::ElevationRequested) {
-                            toast.Show("已请求管理员权限重启，请在新窗口开启 TUN");
+                            toast.Show(Localized("已请求管理员权限重启，请在新窗口开启 TUN"));
                             co_return;
                         }
                         if (result.status == DesktopModeApplyStatus::PermissionDenied) {
@@ -678,34 +688,39 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                                                textColor, hintColor);
                             co_return;
                         }
-                        toast.Show(result.error.empty() ? "TUN 切换失败"
-                                                        : result.error);
+                        toast.Show(result.error.empty()
+                                       ? Localized("TUN 切换失败")
+                                       : huxerui::StringVariant(result.error));
                     });
                 })),
         SettingRow(
-            "复制环境变量",
-            std::format("当前检测到 {}；复制当前混合端口的代理变量",
-                        detectedShell),
+            Localized("复制环境变量"),
+            LocalizedFormat("当前检测到 {}；复制当前混合端口的代理变量",
+                            detectedShell),
             huxerui::Row {
                 huxerui::Select(
                     envShellLabels,
                     envShell.Get(),
-                    [](const std::string& name) { return huxerui::Text(name); })
+                    [](const std::string& name) {
+                        return huxerui::Text(name == "命令提示符（cmd）"
+                                                 ? Localized("命令提示符（cmd）")
+                                                 : huxerui::StringVariant(name));
+                    })
                     .OnChanged([envShell](std::size_t index) {
                         envShell = index;
                         store::coreStore().setSetting(
                             "ui.env_shell", kEnvironmentShells[index].id);
                     })
                     .With(huxerui::Frame{.width = 170.0F}),
-                huxerui::Button("复制").OnClick(
+                huxerui::Button(Localized("复制")).OnClick(
                     [clipboard, toast, envShell, s] {
                         const std::string command = ProxyEnvironmentCommand(
                             kEnvironmentShells[envShell.Get()].id,
                             s.mixedPort);
                         if (clipboard->WriteText(command)) {
-                            toast.Show("环境变量命令已复制");
+                            toast.Show(Localized("环境变量命令已复制"));
                         } else {
-                            toast.Show("复制失败");
+                            toast.Show(Localized("复制失败"));
                         }
                     }),
             }.With(huxerui::Spacing(8.0F))),

@@ -122,7 +122,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 const std::string summary = co_await RunOnTaskThread(
                     [profileId] { return ProfileFidelitySummary(profileId); });
                 if (!summary.empty()) {
-                    toast.Show("订阅已启用 · " + summary,
+                    toast.Show(LocalizedFormat("订阅已启用 · {}", summary),
                                huxerui::ToastOptions{6.0});
                 }
             }
@@ -142,7 +142,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 const std::string summary = co_await RunOnTaskThread(
                     [pid] { return ProfileFidelitySummary(pid); });
                 if (!summary.empty()) {
-                    toast.Show("订阅已更新 · " + summary,
+                    toast.Show(LocalizedFormat("订阅已更新 · {}", summary),
                                huxerui::ToastOptions{6.0});
                 }
             }
@@ -165,7 +165,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 const std::string summary = co_await RunOnTaskThread(
                     [pid] { return ProfileFidelitySummary(pid); });
                 if (!summary.empty()) {
-                    toast.Show("订阅已更新 · " + summary,
+                    toast.Show(LocalizedFormat("订阅已更新 · {}", summary),
                                huxerui::ToastOptions{6.0});
                 }
             }
@@ -192,16 +192,17 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                     danger.label_style = huxerui::TextStyle{
                         huxerui::Font::System(font_size::kBody), onErrorColor};
                     return DialogCard(huxerui::Column {
-                        huxerui::Text("删除订阅", huxerui::TextRole::Title),
-                        huxerui::Text("确定删除“" + profileName + "”吗？此操作无法撤销。")
+                        huxerui::Text(Localized("删除订阅"), huxerui::TextRole::Title),
+                        huxerui::Text(LocalizedFormat(
+                            "确定删除“{}”吗？此操作无法撤销。", profileName))
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::System(font_size::kBody), textColor}),
                         huxerui::Row {
-                            huxerui::Button("取消").OnClick(
+                            huxerui::Button(Localized("取消")).OnClick(
                                 [context] { context.Dismiss(); }),
                             huxerui::ProvideEnvironment(
                                 danger,
-                                huxerui::Button("删除").OnClick(
+                                huxerui::Button(Localized("删除")).OnClick(
                                     [=] {
                                         context.Dismiss();
                                         action([=]() -> std::string {
@@ -237,17 +238,17 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                    confirmDelete, errorColor = theme.colors.error] {
         std::vector<huxerui::MenuEntry> entries;
         if (!selected && !nativeVpn) {
-            entries.push_back(huxerui::MenuItem("使用", [activateProfile, id] {
+            entries.push_back(huxerui::MenuItem(Localized("使用"), [activateProfile, id] {
                 activateProfile(id);
             }));
         }
         if (!nativeVpn) {
-            entries.push_back(huxerui::MenuItem("更新", [refresh, id] {
+            entries.push_back(huxerui::MenuItem(Localized("更新"), [refresh, id] {
                 refresh(id);
             }));
         }
         if (!nativeVpn && !homepage.empty()) {
-            entries.push_back(huxerui::MenuItem("首页", [action, homepage] {
+            entries.push_back(huxerui::MenuItem(Localized("首页"), [action, homepage] {
                 action([homepage]() -> std::string {
                     core::openInBrowser(homepage);
                     return "";
@@ -255,27 +256,27 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
             }));
         }
         if (!nativeVpn && !url.empty()) {
-            entries.push_back(huxerui::MenuItem("分享二维码", [openQr, id] {
+            entries.push_back(huxerui::MenuItem(Localized("分享二维码"), [openQr, id] {
                 openQr(id);
             }));
         }
         // 原生 VPN 卡片没有“使用/更新”等前置菜单项，不能在菜单开头
         // 插入分隔线；HuxerUI 要求 MenuSection 必须夹在两个菜单项之间。
         if (!entries.empty()) entries.push_back(huxerui::MenuSection{});
-        entries.push_back(huxerui::MenuItem("编辑信息", [openEditInfo, id] {
+        entries.push_back(huxerui::MenuItem(Localized("编辑信息"), [openEditInfo, id] {
             openEditInfo(id);
         }));
         if (!nativeVpn) {
-            entries.push_back(huxerui::MenuItem("编辑规则", [openEditRules, id] {
+            entries.push_back(huxerui::MenuItem(Localized("编辑规则"), [openEditRules, id] {
                 openEditRules(id);
             }));
-            entries.push_back(huxerui::MenuItem("编辑文件", [openEditFile, id] {
+            entries.push_back(huxerui::MenuItem(Localized("编辑文件"), [openEditFile, id] {
                 openEditFile(id);
             }));
         }
         entries.push_back(huxerui::MenuSection{});
         entries.push_back(
-            huxerui::MenuItem(app::images::trash, "删除", confirmDelete)
+            huxerui::MenuItem(app::images::trash, Localized("删除"), confirmDelete)
                 .IconTint(errorColor));
         return entries;
     };
@@ -299,10 +300,11 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         }
             .With(huxerui::Padding(5.0F),
                   huxerui::CornerRadius(islands.nested_radius),
-                  huxerui::Tooltip("更新订阅"),
+                  huxerui::Tooltip(Localized("更新订阅")),
                   huxerui::Focusable(true),
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                     .label = "更新订阅"})
+                                     .label = huxerui::UseString(
+                                         Localized("更新订阅"))})
             .OnClick([refresh, id, refreshSpin] {
                 refreshSpin = refreshSpin.Get() + 1;
                 refresh(id);
@@ -322,11 +324,12 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                          .With(menu.Anchor(),
                                huxerui::Padding(4.0F),
                                huxerui::CornerRadius(islands.nested_radius),
-                               huxerui::Tooltip("更多操作"),
+                               huxerui::Tooltip(Localized("更多操作")),
                                huxerui::Focusable(true),
                                huxerui::Semantics{
                                    .role = huxerui::SemanticRole::Button,
-                                   .label = "更多操作"})
+                                   .label = huxerui::UseString(
+                                       Localized("更多操作"))})
                          .OnClick([menu, buildMenuEntries] {
                              menu.Show(buildMenuEntries());
                          });
@@ -342,13 +345,15 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
 
     const std::string primaryLine = [&] {
         if (!nativeVpn) {
-            return profile.url.empty() ? std::string("本地导入") : profile.url;
+            return profile.url.empty()
+                       ? huxerui::UseString(Localized("本地导入"))
+                       : profile.url;
         }
         if (profile.type == "openvpn") return std::string("OpenVPN · sing-box endpoint");
         std::string parseError;
         const auto config = pptp::ParsePptpConfig(profile.nativeConfig, parseError);
         return config ? "PPTP · " + config->server
-                      : std::string("PPTP 配置无效");
+                      : huxerui::UseString(Localized("PPTP 配置无效"));
     }();
 
     // 订阅卡复用代理页节点卡的形状原语（SelectableTile）：同一套内边距、圆角、
@@ -386,8 +391,10 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         huxerui::Text(truncateOneLine(
                           nativeVpn
                               ? (profile.nativeRoutes.empty()
-                                     ? "未设置内网路由"
-                                     : "路由：" + profile.nativeRoutes)
+                                     ? huxerui::UseString(
+                                           Localized("未设置内网路由"))
+                                     : huxerui::UseString(LocalizedFormat(
+                                           "路由：{}", profile.nativeRoutes)))
                               : (profile.description.empty() ? "—"
                                                               : profile.description),
                           52))
@@ -396,13 +403,17 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 nativeVpn || profile.description.empty() ? faint : muted}),
         huxerui::Row {
             huxerui::Text(nativeVpn
-                              ? profile.type == "openvpn" ? "OpenVPN" : "PPTP"
-                              : profile.type == "local" ? "本地" : "远程")
+                              ? profile.type == "openvpn"
+                                    ? huxerui::StringVariant{"OpenVPN"}
+                                    : huxerui::StringVariant{"PPTP"}
+                              : profile.type == "local"
+                                    ? Localized("本地文件")
+                                    : Localized("远程订阅"))
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kCaption), muted}),
             !nativeVpn && profile.autoUpdate && profile.intervalMins > 0
-                ? huxerui::View{huxerui::Text(std::format("自动 {} 分钟",
-                                                          profile.intervalMins))
+                ? huxerui::View{huxerui::Text(LocalizedFormat(
+                                       "自动 {} 分钟", profile.intervalMins))
                                     .Style(huxerui::TextStyle{
                                         huxerui::Font::System(
                                             font_size::kCaption),
@@ -427,9 +438,11 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                   ? ""
                                   : profile.error.empty()
                                   ? (profile.updatedAt > 0
-                                         ? "更新于 " + formatTime(profile.updatedAt)
-                                         : "未拉取")
-                                  : "错误：" + profile.error,
+                                         ? huxerui::UseString(LocalizedFormat(
+                                               "更新于 {}", formatTime(profile.updatedAt)))
+                                         : huxerui::UseString(Localized("未拉取")))
+                                  : huxerui::UseString(LocalizedFormat(
+                                        "错误：{}", profile.error)),
                               52))
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kCaption),
@@ -442,8 +455,10 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         !nativeVpn && profile.totalBytes > 0
             ? huxerui::View{huxerui::Column {
                   huxerui::Row {
-                      huxerui::Text("已用 " + formatBytes(profile.usedBytes) +
-                                    " / " + formatBytes(profile.totalBytes))
+                      huxerui::Text(LocalizedFormat(
+                                        "已用 {} / {}",
+                                        formatBytes(profile.usedBytes),
+                                        formatBytes(profile.totalBytes)))
                           .Style(huxerui::TextStyle{
                               huxerui::Font::System(font_size::kCaption),
                               muted}),
