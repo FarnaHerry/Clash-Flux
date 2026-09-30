@@ -100,6 +100,8 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   不要在后台使用 `std::system`、`_popen` 或会显示终端的 shell 启动方式。只有明确
   需要用户交互的授权流程（例如 UAC）才显示系统提示；启动、轮询和退出清理中的类似
   操作也必须遵守此规则。
+- Windows CI 使用 runner 预装的 OpenSSL（`Program Files/OpenSSL`），构建前检查
+  可执行文件和开发头文件；不要在发布门禁重新调用 Chocolatey 安装 OpenSSL。
 - 修改完成后运行 `git diff --check`，并在回复中说明实际执行过的验证命令及结果。
 - 除非用户明确要求，不要提交、打标签、推送或发布版本。
 
