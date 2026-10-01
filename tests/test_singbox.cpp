@@ -23,6 +23,8 @@ mode: rule
 log-level: info
 dns:
   ipv6: false
+  # 节点解析独立于经代理查询的主 DNS，避免解析/代理依赖环。
+  proxy-server-nameserver: [223.5.5.5]
   nameserver:
     - https://dns.example.com/dns-query#手动选择
     - 223.5.5.5
