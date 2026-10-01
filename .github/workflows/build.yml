@@ -139,11 +139,11 @@ jobs:
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-linux-close-frame.patch"
           # Drag previews must keep their grab point at the pointer instead of
           # inheriting popover viewport clamping and side-flipping behavior.
-          git -C third_party/huxerui apply --unidiff-zero \
+          git -C third_party/huxerui apply --ignore-space-change --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
-          git -C third_party/huxerui apply --unidiff-zero \
+          git -C third_party/huxerui apply --ignore-space-change --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-pager-retarget.patch"
-          git -C third_party/huxerui apply --unidiff-zero \
+          git -C third_party/huxerui apply --ignore-space-change --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-hidden-virtual-layout.patch"
 
       - name: Install dependencies
@@ -283,11 +283,18 @@ jobs:
           # source on LF so zero-context compatibility patches match reliably.
           git -C third_party/huxerui config core.autocrlf false
           git -C third_party/huxerui checkout --force "$HUXERUI_COMMIT"
-          git -C third_party/huxerui apply --unidiff-zero \
+          for source in \
+            src/runtime/runtime_pointer_interaction.cpp \
+            src/runtime/ui_window.cpp \
+            src/runtime/ui_window_internal.h \
+            src/components/pager.cpp; do
+            sed -i 's/\r$//' "third_party/huxerui/$source"
+          done
+          git -C third_party/huxerui apply --ignore-space-change --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
-          git -C third_party/huxerui apply --unidiff-zero \
+          git -C third_party/huxerui apply --ignore-space-change --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-pager-retarget.patch"
-          git -C third_party/huxerui apply --unidiff-zero \
+          git -C third_party/huxerui apply --ignore-space-change --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-hidden-virtual-layout.patch"
 
       - name: Ensure CMake >= 4.4 and Ninja
