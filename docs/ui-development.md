@@ -25,10 +25,11 @@
 - 对照 ACGU 首页 `FeedTabs` + `SwipePages`：内容使用框架 Pager 的完整出入场、跟手拖动与取消回弹；内层首尾向外滑由框架滚动事务交给外层 Pager。不要再添加 PointerIntercept 或逐页入场过渡。
 - 标签保留独立警示色角标和溢出菜单，因此继续使用现有标签结构；一条由实际布局驱动的保留指示线连续移动并调整宽度。每对标签栏/内容页在所有 hook 区域调用一次 `UseSectionTabMotion()`，将同一 handle 传给 `SectionTabBar` 和 `SectionTabPages`；它从 Pager 与参与显示的页的最终呈现几何读取进度，拖动、提交与取消回弹时下划线同步跟随。两端分别使用正弦的加速/减速插值，形成前端延伸、后端收拢的效果；动画只更新保留几何与指示线绘制，不逐帧写 State 或使布局失效。首次显示直接定位，reduced motion 保留线性跟手但关闭伸缩。
 - 页面根用稳定语义 Key 与有界 Column，Pager 只测量显示轨道中的页。代理组仅声明轻量 VirtualGrid，卡片按视口构建，避免无界 IndexedPages 让大组节点全量构建；切回分区保留各页滚动位置。
+- 分页视口占满页面骨架可用宽度，水平内容边距放进每个分页，与内容一起移动。对照 [FlClash 的代理分组实现](https://github.com/chen08209/FlClash/blob/main/lib/views/proxies/tab.dart)：`TabBarView` 占满宽度，每页网格设置左右 16 的 padding，卡片间距另由网格设置。我们的四种二级标签页启用骨架的 `fullWidthSections`：骨架通过 `SectionTabContentInsets` 提供边距，标题和标签条也用相同值；`SectionTabPages` 将其一半应用在每个稳定页根上。代理/订阅网格的行列间距与分页边距均由 `kSectionCardSpacing`（8pt）计算，页面每侧留 4pt，滑动中的两页边距合成 8pt，恰好等于卡片间距。Pager 外侧不加水平 Padding，翻页步长始终是完整视口宽度，形成连续的卡片节奏。
 - 标签栏用实际标签几何计算各项居中偏移，先限制到滚动范围，再按 Pager 呈现进度在两端偏移间插值（与 Flutter TabBar 相同）。内容拖动期间提前揭示目标，松手收敛、反向和取消回弹时标签条同步跟随；选择变化、标签尺寸变化与窗口缩放重新尽量居中。首尾标签按滚动边界对齐，手动滚动保持浏览位置。滚动请求在保留扩展的帧更新中执行，不逐帧写页面 State；溢出菜单的显隐不能重挂载 ScrollView。
 - `cmake/patches/huxerui-pager-retarget.patch` 修复固定 HuxerUI 的过期 drag target 与跨标签动画反向时的离场页 slot。CMake 在加入源码前幂等应用，Linux、Windows、macOS、Android 和 iOS Simulator 源码检出步骤都应用；升级时校验并移除上游已修复的补丁。已有预编译 SDK 不会由 CMake 原地打补丁，此修复需使用已修复的 SDK 或源码构建。
 - `cmake/patches/huxerui-hidden-virtual-layout.patch` 阻止隐藏虚拟页的 viewport dirty 标记每帧使可见祖先失效，同时在隐藏子树保留测量失效状态供重新显示时使用。未应用时保留多个分区会持续重复测量当前网格，动画帧尤为明显；CMake 与所有 CI 源码检出步骤应用此补丁，预编译 SDK 需包含同一修复。
-- `tests/test_page_transition.cpp` 直接调用生产组件，验证方向、菜单、跟手与取消、嵌套边界、自动揭示、窗口缩放、滚动保留、快速反向、reduced motion 和万节点虚拟化。
+- `tests/test_page_transition.cpp` 直接调用生产组件，验证分页全宽、拖动中的相邻内容间距、方向、跟手与取消、嵌套边界、自动揭示、窗口缩放、滚动保留、快速反向、reduced motion 和万节点虚拟化。
 - 所有一级导航共用 `src/ui/app.cpp` 的 `kNavigationEntries`，每个条目只定义一个线条图标。桌面侧栏与手机底栏选中时保持同一轮廓与线宽，仅改变内容颜色和选中指示器，不配置填充版选中图标。
 - 代理导航使用地球网络图标 `proxies.svg`，连接导航使用链环图标 `connections.svg`；日志使用纸张图标 `logs.svg`，规则使用分流路径图标 `route.svg`。
 

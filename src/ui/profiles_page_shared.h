@@ -18,7 +18,6 @@ namespace clashflux::ui {
 
 inline constexpr float kCardWidth = 340.0F;
 inline constexpr float kCardHeight = 180.0F;
-inline constexpr float kCardGap = 8.0F;
 inline constexpr float kDialogFormHeight = 340.0F;
 
 struct NativeProfileSupport {

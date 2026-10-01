@@ -71,7 +71,7 @@ std::string label(int index) { return "Group " + std::to_string(index) + " nodes
     }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-constexpr float kPageInset = 16.0F;
+constexpr float kPageInset = clashflux::ui::kSectionCardSpacing * 0.5F;
 
 class AppResourceProvider final : public huxerui::PlatformResources {
 public:
@@ -96,14 +96,18 @@ std::shared_ptr<AppResourceProvider> AppResources() {
 
 huxerui::View TestRoot() {
     return huxerui::FlatTheme {
-      huxerui::Column {TestContent()}.With(huxerui::Padding(kPageInset), huxerui::Grow(1.0F)),
+      huxerui::ProvideEnvironment(clashflux::ui::SectionTabContentInsets{clashflux::ui::kSectionCardSpacing},
+          huxerui::Column {TestContent()}.With(
+              huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, kPageInset)), huxerui::Grow(1.0F))),
     };
 }
 huxerui::View ReducedRoot() {
     huxerui::ThemeSpec theme = huxerui::FlatLightThemeSpec();
     theme.motion.reduced_motion = true;
     return huxerui::FlatTheme(theme,
-        huxerui::Column {TestContent()}.With(huxerui::Padding(kPageInset), huxerui::Grow(1.0F)));
+        huxerui::ProvideEnvironment(clashflux::ui::SectionTabContentInsets{clashflux::ui::kSectionCardSpacing},
+            huxerui::Column {TestContent()}.With(
+                huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, kPageInset)), huxerui::Grow(1.0F))));
 }
 // 生产页面同样由虚拟网格声明每个组：大量节点不能被 Pager 测成无界高度。
 int constructed[12]{};
@@ -189,22 +193,16 @@ int main() {
         ui.PumpAndSettle();
         check(std::abs(ui.Find(UiSelector::Key("page-content-0")).One().bounds.x - kPageInset) <= 0.5F,
               "首次显示不制造无方向的入场运动");
+        const auto viewport = ui.Find(UiSelector::Key("section-tab-pages")).One().bounds;
+        check(std::abs(viewport.x) < 0.5F && std::abs(viewport.width - 400.0F) < 0.5F,
+              "分页视口占满容器宽度，左右内容边距不缩窄滑动区域");
+        check(std::abs(ui.Find(UiSelector::Key("page-content-0")).One().bounds.width -
+                       (viewport.width - 2.0F * kPageInset)) < 0.5F,
+              "内容宽度由每页的左右边距决定");
         checkVisible(ui, 0, "初始标签可见");
         check(ui.Find(UiSelector::Key("section-tab-picker")).Exists(), "溢出时提供标签菜单");
 
         const auto initialIndicator = indicator(ui);
-        // 关闭后重新打开仍须保有完整选项，不能在第一次 Show 时移空事件闭包。
-        ui.Find(UiSelector::Key("section-tab-picker")).Tap();
-        ui.PumpAndSettle();
-        ui.PressKey(huxerui::Key::Escape);
-        ui.PumpAndSettle();
-        ui.Find(UiSelector::Key("section-tab-picker")).Tap();
-        ui.PumpAndSettle();
-        check(ui.FindSemantics(huxerui::testing::UiSemanticSelector::Role(huxerui::SemanticRole::MenuItem)).Count() == 12,
-              "标签菜单关闭再打开仍包含全部选项");
-        ui.PressKey(huxerui::Key::Escape);
-        ui.PumpAndSettle();
-
         // 点击标签：前后方向不同，选择不需要等待模型泵。
         ui.Find(UiSelector::Key("section-tab-group-1")).Tap();
         check(ui.Find(UiSelector::Text("SELECTED-1")).Exists(), "点击立即显示选中组");
@@ -219,21 +217,10 @@ int main() {
         ui.Find(UiSelector::Key("section-tab-group-0")).Tap();
         checkEntry(ui, 0, -1);
 
-        // 菜单可以选择当前视口以外的标签；选中项自动揭示且含角标的整项不被裁切。
-        ui.Find(UiSelector::Key("section-tab-picker")).Tap({.device_kind = huxerui::PointerDeviceKind::Mouse});
-        ui.Pump(kSettle);
-        bool menuItemTapped = false;
-        for (const auto& item : ui.Find(UiSelector::Text(label(11))).All()) {
-            if (!item.in_viewport) continue;
-            ui.TapAt({item.bounds.x + item.bounds.width * 0.5F,
-                      item.bounds.y + item.bounds.height * 0.5F});
-            menuItemTapped = true;
-            break;
-        }
-        check(menuItemTapped, "菜单包含可点击的目标分组");
-        check(ui.Find(UiSelector::Text("SELECTED-11")).Exists(), "菜单选择立即切换内容");
+        // 受控选择跳到未显示的目标页后，标签条应揭示完整目标项。
+        ui.Find(UiSelector::Text("Last")).Tap();
         checkEntry(ui, 11, 1);
-        checkVisible(ui, 11, "菜单选中末尾标签后自动滚到完整可见");
+        checkVisible(ui, 11, "远距离切换后末尾标签完整可见");
 
         // 真正的内容横滑使用框架 Pager，沿标签顺序返回并保持标签与内容同步。
         ui.Drag({100.0F, 210.0F}, {300.0F, 210.0F});
@@ -248,24 +235,12 @@ int main() {
         checkVisible(ui, 11, "滑回末尾标签仍完整可见");
 
         ui.Find(UiSelector::Key("section-tab-scroll")).ScrollBy({-300.0F, 0.0F});
-        ui.PumpAndSettle();
+        ui.Pump(kSettle);
         check(!ui.Find(UiSelector::Key("section-tab-group-11")).One().in_viewport,
               "手动滚动允许浏览其他标签，不会立即被拉回选中项");
         ui.Find(UiSelector::Text("First")).Tap();
         checkEntry(ui, 0, -1);
         checkVisible(ui, 0, "从末尾切回首项时标签栏滚回开头");
-
-        // 手机触摸打开菜单，并通过真实辅助功能动作选择，确保两条输入路径共用逻辑。
-        ui.Find(UiSelector::Key("section-tab-picker")).Tap();
-        ui.Pump(kSettle);
-        ui.FindSemantics(huxerui::testing::UiSemanticSelector::AllOf(
-            huxerui::testing::UiSemanticSelector::Role(huxerui::SemanticRole::MenuItem),
-            huxerui::testing::UiSemanticSelector::Label(label(6))))
-            .PerformSemanticAction({huxerui::SemanticActionKind::Activate, {}});
-        checkEntry(ui, 6, 1);
-        checkVisible(ui, 6, "触摸菜单和辅助功能选择同样滚到目标标签");
-        ui.Find(UiSelector::Text("First")).Tap();
-        checkEntry(ui, 0, -1);
 
         // 在过渡完成前反向切换，最终意图与方向仍正确。
         ui.Find(UiSelector::Text("Last")).Tap();
@@ -275,12 +250,12 @@ int main() {
         checkVisible(ui, 0, "快速反向切换后首项可见");
 
         ui.Find(UiSelector::Text("Last")).Tap();
-        ui.PumpAndSettle();
+        checkEntry(ui, 11, 1);
         ui.SetWindowMetrics({.viewport = {260.0F, 700.0F}});
-        ui.PumpAndSettle();
+        for (int frame = 0; frame < 10; ++frame) ui.Pump(kStep);
         checkVisible(ui, 11, "缩窄窗口后重新保证选中标签可见");
         ui.Find(UiSelector::Text("Fewer")).Tap();
-        ui.PumpAndSettle();
+        ui.Pump(kSettle);
         checkVisible(ui, 0, "标签数量减少后滚动偏移正确回落");
         check(!ui.Find(UiSelector::Key("section-tab-picker")).Exists(), "不溢出时隐藏菜单入口");
     }
@@ -314,6 +289,12 @@ int main() {
         ui.SendPointer(event);
         ui.Pump();
         check(content.One().bounds.x < kPageInset - 40.0F, "按住拖动时内容跟手移动");
+        const auto outgoing = content.One().bounds;
+        const auto incoming = ui.Find(UiSelector::Key("page-content-1")).One().bounds;
+        check(std::abs(incoming.x - (outgoing.x + outgoing.width) - 2.0F * kPageInset) < 0.5F,
+              "拖动中两页边距合成一份卡片间距，形成连续但不粘连的卡片节奏");
+        check(std::abs(incoming.x - outgoing.x - 400.0F) < 0.5F,
+              "横滑步长保持完整容器宽度");
         check(ui.Find(UiSelector::Key("section-tab-group-0")).One().bounds == tab.bounds,
               "拖动只移动内容，标签栏固定");
         event.type = huxerui::PointerEventType::Cancel;

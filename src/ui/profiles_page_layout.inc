@@ -103,8 +103,8 @@
                                               : huxerui::GridColumns::Adaptive(
                                                     kCardWidth))
                                  .EstimatedRowExtent(kCardHeight)
-                                 .RowSpacing(kCardGap)
-                                 .ColumnSpacing(kCardGap)
+                                 .RowSpacing(kSectionCardSpacing)
+                                 .ColumnSpacing(kSectionCardSpacing)
                                  .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
         typePages.push_back(huxerui::Column {grid}.With(
             huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
@@ -199,7 +199,7 @@
                          huxerui::CrossAlign(
                              huxerui::CrossAxisAlignment::Center))}
             : std::move(profileBody),
-        true);
+        true, true);
 
     // IndexedPages 要求每一页都是挂载节点；平台函数负责 Android 编辑页是否
     // 存在，ProfilesPage 只提交同一份表单状态。

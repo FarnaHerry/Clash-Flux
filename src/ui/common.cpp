@@ -564,7 +564,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 [[huxerui::composable]] huxerui::View PageScaffold(huxerui::StringVariant title,
                                                    huxerui::View actions,
                                                    huxerui::View content,
-                                                   bool inlineCompactActions) {
+                                                   bool inlineCompactActions,
+                                                   bool fullWidthSections) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     // 响应式：Compact(<600) 收窄一级岛内边距。
@@ -590,16 +591,21 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             std::move(actions),
         }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     }
-    huxerui::View body = content;
+    const float horizontal = fullWidthSections
+        ? kSectionCardSpacing
+        : (compact ? 4.0F : theme.spacing.large);
+    huxerui::View body = huxerui::View{content}.With(huxerui::Grow(1.0F));
+    if (fullWidthSections) {
+        header = huxerui::View{header}.With(
+            huxerui::Padding(huxerui::EdgeInsets::Symmetric(horizontal, 0.0F)));
+        body = huxerui::ProvideEnvironment(SectionTabContentInsets{horizontal}, body);
+    }
     return huxerui::Column {
         std::move(header),
-        std::move(body).With(huxerui::Grow(1.0F)),
-    }.With(huxerui::Padding(compact
-                                ? huxerui::EdgeInsets::Symmetric(
-                                      4.0F, theme.spacing.medium)
-                                : huxerui::EdgeInsets::Symmetric(
-                                      theme.spacing.large,
-                                      theme.spacing.large)),
+        std::move(body),
+    }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(
+               fullWidthSections ? 0.0F : horizontal,
+               compact ? theme.spacing.medium : theme.spacing.large)),
            huxerui::Spacing(theme.spacing.medium),
            huxerui::Background(compact ? huxerui::Color::Transparent()
                                        : islands.base),
@@ -611,12 +617,12 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 
 [[huxerui::composable]] huxerui::View SecondaryPageScaffold(
     huxerui::View title, huxerui::View actions, huxerui::View content,
-    std::function<void()> onBack, bool hideBack) {
+    std::function<void()> onBack, bool hideBack, bool fullWidthSections) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
-    huxerui::View body = content;
+    huxerui::View body = huxerui::View{content}.With(huxerui::Grow(1.0F));
     huxerui::View titleView = title;
     auto backAction = onBack;
     huxerui::View header = hideBack
@@ -632,12 +638,18 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
               std::move(actions),
           }.With(huxerui::Spacing(theme.spacing.small),
                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    const float horizontal = fullWidthSections ? kSectionCardSpacing : 4.0F;
+    if (fullWidthSections) {
+        header = huxerui::View{header}.With(
+            huxerui::Padding(huxerui::EdgeInsets::Symmetric(horizontal, 0.0F)));
+        body = huxerui::ProvideEnvironment(SectionTabContentInsets{horizontal}, body);
+    }
     // 与 PageScaffold 同规则：移动端二级页也直接落在海面底色上，不套外卡。
     huxerui::View scaffold = huxerui::Column {
         std::move(header),
-        std::move(body).With(huxerui::Grow(1.0F)),
+        std::move(body),
     }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(
-                   4.0F, theme.spacing.medium)),
+                   fullWidthSections ? 0.0F : horizontal, theme.spacing.medium)),
            huxerui::Spacing(theme.spacing.medium),
            huxerui::Background(compact ? huxerui::Color::Transparent()
                                        : islands.base),

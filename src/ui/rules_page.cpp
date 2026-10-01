@@ -759,8 +759,8 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
     huxerui::View listPage = onBack
-        ? SecondaryPageScaffold(huxerui::Text(Localized("规则"), huxerui::TextRole::Title), std::move(actions), std::move(body), onBack)
-        : PageScaffold(Localized("规则"), std::move(actions), std::move(body));
+        ? SecondaryPageScaffold(huxerui::Text(Localized("规则"), huxerui::TextRole::Title), std::move(actions), std::move(body), onBack, false, true)
+        : PageScaffold(Localized("规则"), std::move(actions), std::move(body), false, true);
     const auto editorProfiles = editSources.Get();
     auto editorTargets = TargetNames(editorProfiles);
     if (!editorTargets.empty() && editTarget.Get() >= editorTargets.size()) editorTargets.push_back(huxerui::UseString(Localized("目标来源已失效，请重新选择")));

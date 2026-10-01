@@ -423,9 +423,6 @@ constexpr std::size_t kNodeMetaChars = 8;
         interactive ? std::move(onSelect) : std::function<void()>{});
 }
 
-// 节点网格间隙：组卡内部节点按列排布，取比岛屿缝隙更紧的间距。
-constexpr float kNodeGridGap = 8.0F;
-
 // 页面级「乐观选中意图」：点击后渲染立刻读到目标节点。以前直接改 `groups`
 // （StateList）——那会让整张 VirtualGrid 失效并重排，大订阅下点一下卡一下；
 // 现在只写这个小 State，只有可见的卡片重组。模型快照追平后清掉意图。
@@ -764,8 +761,8 @@ std::function<void()> NodeSelectAction(
                                  // 自适应高度（字体缩放、系统字号变化都会改高度），
                                  // 写死精确行高会在这些情况下裁切/错位。
                                  .EstimatedRowExtent(52.0F)
-                                 .RowSpacing(kNodeGridGap)
-                                 .ColumnSpacing(kNodeGridGap)
+                                 .RowSpacing(kSectionCardSpacing)
+                                 .ColumnSpacing(kSectionCardSpacing)
                                  .With(huxerui::Grow(1.0F),
                                        huxerui::ScrollBar())
                                  .Key("group-grid-" + rootGroup.name);
@@ -848,7 +845,7 @@ std::function<void()> NodeSelectAction(
 
     // 出站模式按钮与「代理」标题同处标题行、左右对齐。
     huxerui::View page = PageScaffold(Localized("代理"), std::move(modeSwitch),
-                                      std::move(content), true);
+                                      std::move(content), true, true);
     // 延迟测试按钮统一收在页面右下角：测试当前选中的分组。Compact 下要避开
     // 悬浮底部导航，桌面只留常规外边距。
     if (!direct && current != nullptr) {
