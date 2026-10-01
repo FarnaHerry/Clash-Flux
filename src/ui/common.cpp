@@ -111,7 +111,8 @@ std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
     for (const ProxyGroupSnapshot& group : groups) {
         if (!group.selectable) {
             entries.push_back(huxerui::MenuItem(
-                group.displayName + "（自动测速，不支持手动切换）", [] {}).Enabled(false));
+                LocalizedFormat("{}（自动测速，不支持手动切换）", group.displayName),
+                [] {}).Enabled(false));
             continue;
         }
         std::vector<huxerui::MenuEntry> nodes;
@@ -125,14 +126,14 @@ std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
         }
         if (nodes.empty()) {
             nodes.push_back(
-                huxerui::MenuItem("暂无可切换线路", [] {}).Enabled(false));
+                huxerui::MenuItem(Localized("暂无可切换线路"), [] {}).Enabled(false));
         }
         entries.push_back(
             huxerui::MenuItem(group.displayName, std::move(nodes)));
     }
     if (entries.empty()) {
         entries.push_back(
-            huxerui::MenuItem("暂无可切换线路", [] {}).Enabled(false));
+            huxerui::MenuItem(Localized("暂无可切换线路"), [] {}).Enabled(false));
     }
     return entries;
 }
@@ -298,8 +299,8 @@ void WaitForAndroidVpnStopped() noexcept {
 #endif
 }
 
-[[huxerui::composable]] huxerui::View SettingRow(const std::string& label,
-                                                 const std::string& hint,
+[[huxerui::composable]] huxerui::View SettingRow(huxerui::StringVariant label,
+                                                 huxerui::StringVariant hint,
                                                  huxerui::View control) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool compact =
@@ -307,7 +308,7 @@ void WaitForAndroidVpnStopped() noexcept {
     huxerui::View description = huxerui::Column {
         huxerui::Text(label).Style(huxerui::TextStyle{
             huxerui::Font::System(font_size::kBody), theme.colors.on_surface}),
-        hint.empty()
+        huxerui::UseString(hint).empty()
             ? huxerui::View{huxerui::Row{}}
             : huxerui::View{huxerui::Text(hint).Style(huxerui::TextStyle{
                   huxerui::Font::System(font_size::kCaption),
@@ -331,14 +332,14 @@ void WaitForAndroidVpnStopped() noexcept {
 }
 
 [[huxerui::composable]] huxerui::View SettingSwitchRow(
-    const std::string& label, const std::string& hint, huxerui::View control,
+    huxerui::StringVariant label, huxerui::StringVariant hint, huxerui::View control,
     bool danger) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     huxerui::View text = huxerui::Column {
         huxerui::Text(label).Style(huxerui::TextStyle{
             huxerui::Font::System(font_size::kBody),
             danger ? theme.colors.error : theme.colors.on_surface}),
-        hint.empty()
+        huxerui::UseString(hint).empty()
             ? huxerui::View{huxerui::Row{}}
             : huxerui::View{huxerui::Text(hint).Style(huxerui::TextStyle{
                   huxerui::Font::System(font_size::kCaption),
@@ -371,7 +372,7 @@ void WaitForAndroidVpnStopped() noexcept {
         .Key(std::move(key));
 }
 
-[[huxerui::composable]] huxerui::View SectionTitle(const std::string& title) {
+[[huxerui::composable]] huxerui::View SectionTitle(huxerui::StringVariant title) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     return huxerui::Text(title).Style(huxerui::TextStyle{
         huxerui::Font::System(font_size::kChip).WithWeight(huxerui::FontWeight::Bold),
@@ -386,11 +387,11 @@ void WaitForAndroidVpnStopped() noexcept {
     auto visible = huxerui::UseState(false);
     const bool isVisible = visible.Get();
     return huxerui::TextField(password.Get())
-        .Label("密码")
+        .Label(Localized("密码"))
         .Secure(!isVisible)
         .TrailingIcon(isVisible ? app::images::visibility_off
                                 : app::images::visibility,
-                      isVisible ? "隐藏密码" : "显示密码")
+                      Localized(isVisible ? "隐藏密码" : "显示密码"))
         .OnTrailingIconClick([visible] { visible = !visible.Get(); })
         .Variant(huxerui::TextFieldVariant::Outlined)
         .OnChanged([password](const huxerui::TextEditingValue& value) {
@@ -411,7 +412,7 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
     (void)clipboard;
     (void)textColor;
     (void)hintColor;
-    toast.Show("请在设置页的“VPN 代理”中管理 Android VPN 隧道");
+    toast.Show(Localized("请在设置页的“VPN 代理”中管理 Android VPN 隧道"));
     return;
 #else
     namespace fs = std::filesystem;
@@ -426,13 +427,14 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
         [clipboard, toast, textColor, hintColor,
          serviceCmd](huxerui::DialogContext ctx) -> huxerui::View {
             return DialogCard(huxerui::Column {
-                huxerui::Text("TUN 需要安装服务模式", huxerui::TextRole::Title),
-                huxerui::Text("TUN 由内核创建虚拟网卡，需要 root 权限。应用本身"
-                              "保持非 root 运行（更安全），由 root 服务托管内核。"
-                              "复制指令到终端执行（pkexec 会弹出授权）后重试：")
+                huxerui::Text(Localized("TUN 需要安装服务模式"), huxerui::TextRole::Title),
+                huxerui::Text(Localized(
+                    "TUN 由内核创建虚拟网卡，需要 root 权限。应用本身"
+                    "保持非 root 运行（更安全），由 root 服务托管内核。"
+                    "复制指令到终端执行（pkexec 会弹出授权）后重试："))
                     .Style(huxerui::TextStyle{
                         huxerui::Font::System(font_size::kCaption), hintColor}),
-                huxerui::Text("安装 root 服务（内核由服务托管，TUN 开箱可用）")
+                huxerui::Text(Localized("安装 root 服务（内核由服务托管，TUN 开箱可用）"))
                     .Style(huxerui::TextStyle{
                         huxerui::Font::System(font_size::kBody), textColor}),
                 huxerui::Row {
@@ -440,12 +442,12 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                         huxerui::TextEditingValue{serviceCmd})
                         .Variant(huxerui::TextFieldVariant::Outlined)
                         .With(huxerui::Grow(1.0F)),
-                    huxerui::Button("复制").OnClick([clipboard, toast,
+                    huxerui::Button(Localized("复制")).OnClick([clipboard, toast,
                                                      serviceCmd] {
                         if (clipboard->WriteText(serviceCmd)) {
-                            toast.Show("已复制到剪贴板");
+                            toast.Show(Localized("已复制到剪贴板"));
                         } else {
-                            toast.Show("复制失败");
+                            toast.Show(Localized("复制失败"));
                         }
                     }),
                 }
@@ -453,7 +455,7 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                           huxerui::CrossAlign(
                               huxerui::CrossAxisAlignment::Center)),
                 huxerui::Row {
-                    huxerui::Button("关闭").OnClick([ctx] { ctx.Dismiss(); }),
+                    huxerui::Button(Localized("关闭")).OnClick([ctx] { ctx.Dismiss(); }),
                 }.With(huxerui::MainAlign(
                     huxerui::MainAxisAlignment::End)),
             }
@@ -559,7 +561,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         IslandLevel::Base);
 }
 
-[[huxerui::composable]] huxerui::View PageScaffold(const std::string& title,
+[[huxerui::composable]] huxerui::View PageScaffold(huxerui::StringVariant title,
                                                    huxerui::View actions,
                                                    huxerui::View content,
                                                    bool inlineCompactActions) {
@@ -623,8 +625,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
               std::move(actions),
           }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
         : huxerui::Row {
-              huxerui::IconButton(app::images::arrow_back, "返回上一页")
-                  .With(huxerui::Tooltip("返回上一页"))
+              huxerui::IconButton(app::images::arrow_back, Localized("返回上一页"))
+                  .With(huxerui::Tooltip(Localized("返回上一页")))
                   .OnClick(std::move(onBack)),
               std::move(titleView).With(huxerui::Grow(1.0F)),
               std::move(actions),
@@ -651,7 +653,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 
 [[huxerui::composable]] huxerui::View PillSearchField(
     huxerui::State<huxerui::TextEditingValue> value,
-    const std::string& placeholder,
+    huxerui::StringVariant placeholder,
     std::function<void()> onClose) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     huxerui::TextFieldStyle inputStyle = huxerui::UseEnvironment<huxerui::TextFieldStyle>();
@@ -688,8 +690,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             .Tint(theme.colors.on_surface_variant)
             .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
         std::move(input),
-        huxerui::IconButton(app::images::close, "退出搜索")
-            .With(huxerui::Tooltip("退出搜索"))
+        huxerui::IconButton(app::images::close, Localized("退出搜索"))
+            .With(huxerui::Tooltip(Localized("退出搜索")))
             .OnClick(std::move(onClose)),
     }.With(huxerui::Spacing(6.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
@@ -885,6 +887,7 @@ void DriveSettingsModel(huxerui::TaskScope tasks,
                                  : closeBehavior == "2" ? 2
                                                         : 0;
             next.envShell = core.setting("ui.env_shell", "");
+            next.language = core.setting("ui.language", "system");
             // 都是内存读；State 按 operator== 去重，只有真的变了才通知订阅者。
             model->view = std::move(next);
             if (model->syncTick.Get() != before) continue;

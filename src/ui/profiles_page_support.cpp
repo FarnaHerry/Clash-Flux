@@ -32,18 +32,19 @@ import clashflux.vpn;
 
 namespace clashflux::ui::profile_detail {
 
-std::string profileTypeLabel(std::string_view type) {
-    if (type == "remote") return "远程订阅";
-    if (type == "local") return "本地文件";
-    if (type == "pptp") return "PPTP 内网连接";
-    if (type == "openvpn") return "OpenVPN 内网连接";
-    return type.empty() ? "其他订阅" : "其他 · " + std::string(type);
+huxerui::StringVariant profileTypeLabel(std::string_view type) {
+    if (type == "remote") return Localized("远程订阅");
+    if (type == "local") return Localized("本地文件");
+    if (type == "pptp") return Localized("PPTP 内网连接");
+    if (type == "openvpn") return Localized("OpenVPN 内网连接");
+    return type.empty() ? Localized("其他订阅")
+                        : LocalizedFormat("其他 · {}", std::string(type));
 }
 
 // 分区标签栏用的标签（Compact 视口）：手机宽度放不下「PPTP/OpenVPN 内网连接」
 // 两种长名，第 4 个标签会被屏幕右缘截断半个字；标签本身仍可横向滚动，但默认
 // 一行放全是手机端的基本要求。只收窄标签，卡片/表单继续用完整名称。
-std::string profileTypeTabLabel(std::string_view type) {
+huxerui::StringVariant profileTypeTabLabel(std::string_view type) {
     if (type == "pptp") return "PPTP";
     if (type == "openvpn") return "OpenVPN";
     return profileTypeLabel(type);
@@ -192,37 +193,43 @@ std::optional<std::string> makePptpConfig(
     return nativeConfig;
 }
 
-std::string pptpStateText(const store::PptpState& state) {
-    if (!state.toolsAvailable) return "PPTP 引擎不可用";
+huxerui::StringVariant pptpStateText(const store::PptpState& state) {
+    if (!state.toolsAvailable) return Localized("PPTP 引擎不可用");
     switch (state.state) {
     case vpn::ConnectionState::Connected:
-        return std::format("已连接{}{}", state.interfaceName.empty()
-                                              ? ""
-                                              : " · " + state.interfaceName,
-                           state.gateway.empty() ? ""
-                                                 : " · 网关 " + state.gateway);
-    case vpn::ConnectionState::Connecting: return "连接中…";
+        if (!state.interfaceName.empty() && !state.gateway.empty())
+            return LocalizedFormat("已连接 · {} · 网关 {}", state.interfaceName,
+                                   state.gateway);
+        if (!state.interfaceName.empty())
+            return LocalizedFormat("已连接 · {}", state.interfaceName);
+        if (!state.gateway.empty())
+            return LocalizedFormat("已连接 · 网关 {}", state.gateway);
+        return Localized("已连接");
+    case vpn::ConnectionState::Connecting: return Localized("连接中…");
     case vpn::ConnectionState::Failed:
-        return state.error.empty() ? "连接失败" : "连接失败：" + state.error;
-    case vpn::ConnectionState::Disabled: return "已禁用";
-    case vpn::ConnectionState::Idle: return "未连接";
+        return state.error.empty() ? Localized("连接失败")
+                                   : LocalizedFormat("连接失败：{}", state.error);
+    case vpn::ConnectionState::Disabled: return Localized("已禁用");
+    case vpn::ConnectionState::Idle: return Localized("未连接");
     }
-    return "未连接";
+    return Localized("未连接");
 }
 
-std::string openVpnStateText(const store::OpenVpnState& state) {
-    if (!state.toolsAvailable) return "OpenVPN 引擎不可用";
+huxerui::StringVariant openVpnStateText(const store::OpenVpnState& state) {
+    if (!state.toolsAvailable) return Localized("OpenVPN 引擎不可用");
     switch (state.state) {
     case vpn::ConnectionState::Connected:
-        return state.interfaceName.empty() ? "已交给 sing-box"
-                                           : "已连接 · " + state.interfaceName;
-    case vpn::ConnectionState::Connecting: return "连接中…";
+        return state.interfaceName.empty()
+                   ? Localized("已交给 sing-box")
+                   : LocalizedFormat("已连接 · {}", state.interfaceName);
+    case vpn::ConnectionState::Connecting: return Localized("连接中…");
     case vpn::ConnectionState::Failed:
-        return state.error.empty() ? "连接失败" : "连接失败：" + state.error;
-    case vpn::ConnectionState::Disabled: return "已禁用";
-    case vpn::ConnectionState::Idle: return "未连接";
+        return state.error.empty() ? Localized("连接失败")
+                                   : LocalizedFormat("连接失败：{}", state.error);
+    case vpn::ConnectionState::Disabled: return Localized("已禁用");
+    case vpn::ConnectionState::Idle: return Localized("未连接");
     }
-    return "未连接";
+    return Localized("未连接");
 }
 
 std::size_t ResponsiveProfilePageIndex(

@@ -67,9 +67,9 @@ huxerui::Task<std::pair<std::int64_t, std::string>> ImportProfileContent(
 
 // 开关行：左标签（danger = error 色警示）+ 说明，右 Switch。Switch 卸载风险
 // 不存在（原地改样式），OnChanged 内直接写 State 安全。
-[[huxerui::composable]] huxerui::View ToggleRow(std::string label, std::string hint,
-                                                bool danger,
-                                                huxerui::State<bool> checked) {
+[[huxerui::composable]] huxerui::View ToggleRow(
+    huxerui::StringVariant label, huxerui::StringVariant hint, bool danger,
+    huxerui::State<bool> checked) {
     return SettingSwitchRow(
         label, hint,
         huxerui::Switch(checked.Get()).OnChanged(
@@ -103,11 +103,14 @@ huxerui::View ProfilePlatformOptions(
     huxerui::State<bool> system_proxy, huxerui::State<bool> core_proxy,
     huxerui::State<bool> invalid_cert) {
     return huxerui::Column {
-        ToggleRow("使用系统代理更新", "经环境变量代理拉取订阅", false,
+        ToggleRow(Localized("使用系统代理更新"),
+                  Localized("经环境变量代理拉取订阅"), false,
                   system_proxy),
-        ToggleRow("使用内核代理更新", "经本应用内核混合端口拉取（内核需运行）",
+        ToggleRow(Localized("使用内核代理更新"),
+                  Localized("经本应用内核混合端口拉取（内核需运行）"),
                   false, core_proxy),
-        ToggleRow("允许无效证书（危险）", "跳过 HTTPS 证书校验，仅用于可信来源",
+        ToggleRow(Localized("允许无效证书（危险）"),
+                  Localized("跳过 HTTPS 证书校验，仅用于可信来源"),
                   true, invalid_cert),
     }.With(huxerui::Spacing(12.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -131,19 +134,19 @@ huxerui::View ProfilePlatformOptions(
     huxerui::State<bool> coreProxy, huxerui::State<bool> invalidCert) {
     return huxerui::Column {
         huxerui::TextField(desc.Get())
-            .Label("描述（可选）")
+            .Label(Localized("描述（可选）"))
             .Variant(huxerui::TextFieldVariant::Outlined)
             .OnChanged([desc](const huxerui::TextEditingValue& v) { desc = v; }),
         huxerui::Row {
             huxerui::TextField(timeout.Get())
-                .Label("HTTP 超时（秒）")
+                .Label(Localized("HTTP 超时（秒）"))
                 .Variant(huxerui::TextFieldVariant::Outlined)
                 .OnChanged([timeout](const huxerui::TextEditingValue& v) {
                     timeout = v;
                 })
                 .With(huxerui::Grow(1.0F)),
             huxerui::TextField(interval.Get())
-                .Label("更新间隔（分钟）")
+                .Label(Localized("更新间隔（分钟）"))
                 .Variant(huxerui::TextFieldVariant::Outlined)
                 .OnChanged([interval](const huxerui::TextEditingValue& v) {
                     interval = v;
@@ -151,7 +154,8 @@ huxerui::View ProfilePlatformOptions(
                 .With(huxerui::Grow(1.0F)),
         }
             .With(huxerui::Spacing(8.0F)),
-        ToggleRow("允许自动更新", "开启后按更新间隔自动拉新（间隔需 > 0）", false,
+        ToggleRow(Localized("允许自动更新"),
+                  Localized("开启后按更新间隔自动拉新（间隔需 > 0）"), false,
                   autoUp),
         ProfilePlatformOptions(sysProxy, coreProxy, invalidCert),
     }
@@ -170,31 +174,31 @@ huxerui::View ProfilePlatformOptions(
     huxerui::State<bool> requireMppe) {
     return huxerui::Column {
         huxerui::TextField(server.Get())
-            .Label("PPTP 服务器")
+            .Label(Localized("PPTP 服务器"))
             .Placeholder("vpn.example.com")
             .Variant(huxerui::TextFieldVariant::Outlined)
             .OnChanged([server](const huxerui::TextEditingValue& value) {
                 server = value;
             }),
         huxerui::TextField(username.Get())
-            .Label("用户名")
+            .Label(Localized("用户名"))
             .Variant(huxerui::TextFieldVariant::Outlined)
             .OnChanged([username](const huxerui::TextEditingValue& value) {
                 username = value;
             }),
         PasswordField(password),
         huxerui::TextField(timeout.Get())
-            .Label("连接超时（秒）")
+            .Label(Localized("连接超时（秒）"))
             .Variant(huxerui::TextFieldVariant::Outlined)
             .OnChanged([timeout](const huxerui::TextEditingValue& value) {
                 timeout = value;
             }),
         SettingSwitchRow(
-            "要求 MPPE-128", "勾选后强制 MPPE-128；不勾选时按服务端要求协商",
+            Localized("要求 MPPE-128"), Localized("勾选后强制 MPPE-128；不勾选时按服务端要求协商"),
             huxerui::Switch(requireMppe.Get())
                 .OnChanged([requireMppe](bool checked) { requireMppe = checked; })),
         huxerui::TextField(routes.Get())
-            .Label("内网 CIDR（逗号或换行分隔，可为空）")
+            .Label(Localized("内网 CIDR（逗号或换行分隔，可为空）"))
             .Placeholder("10.20.0.0/16, 10.30.0.0/16")
             .Variant(huxerui::TextFieldVariant::Outlined)
             .OnChanged([routes](const huxerui::TextEditingValue& value) {
@@ -212,7 +216,7 @@ huxerui::View ProfilePlatformOptions(
     huxerui::State<huxerui::TextEditingValue> routes) {
     return huxerui::Column {
         huxerui::TextField(config.Get())
-            .Label("OpenVPN 配置（.ovpn 文本，支持 inline 证书）")
+            .Label(Localized("OpenVPN 配置（.ovpn 文本，支持 inline 证书）"))
             .Placeholder("client\\ndev tun\\nremote vpn.example.com 1194 udp")
             .LineLimits(huxerui::TextFieldLineLimits::MultiLine(8, 16))
             .Variant(huxerui::TextFieldVariant::Outlined)
@@ -220,7 +224,7 @@ huxerui::View ProfilePlatformOptions(
                 config = value;
             }),
         huxerui::TextField(routes.Get())
-            .Label("内网 CIDR（逗号或换行分隔，可为空）")
+            .Label(Localized("内网 CIDR（逗号或换行分隔，可为空）"))
             .Placeholder("10.20.0.0/16, 10.30.0.0/16")
             .Variant(huxerui::TextFieldVariant::Outlined)
             .OnChanged([routes](const huxerui::TextEditingValue& value) {
@@ -246,14 +250,15 @@ huxerui::View ProfilePlatformOptions(
     const bool pptp = pptp_supported && typeIndex == 2;
     const bool openvpn = openvpn_supported &&
                          typeIndex == (pptp_supported ? 3U : 2U);
-    std::vector<huxerui::StringVariant> types{"远程订阅", "本地文件"};
-    if (pptp_supported) types.emplace_back("PPTP 内网");
-    if (openvpn_supported) types.emplace_back("OpenVPN 内网");
+    std::vector<huxerui::StringVariant> types{
+        Localized("远程订阅"), Localized("本地文件")};
+    if (pptp_supported) types.push_back(Localized("PPTP 内网"));
+    if (openvpn_supported) types.push_back(Localized("OpenVPN 内网"));
 
     huxerui::View typeFields;
     if (remote) {
         typeFields = huxerui::TextField(fields.url.Get())
-                         .Label("订阅链接")
+                         .Label(Localized("订阅链接"))
                          .Placeholder("https://...")
                          .Variant(huxerui::TextFieldVariant::Outlined)
                          .OnChanged([url = fields.url](const huxerui::TextEditingValue& value) {
@@ -261,12 +266,13 @@ huxerui::View ProfilePlatformOptions(
                          });
     } else if (local) {
         typeFields = huxerui::Column {
-            huxerui::Button("选择文件").OnClick(
+            huxerui::Button(Localized("选择文件")).OnClick(
                 [tasks, picker, path = fields.picked_path] {
                     tasks.Launch([picker, path]() -> huxerui::Task<void> {
                         const auto picked = co_await picker->OpenFileAsync(
                             huxerui::FilePickerFilter{
-                                .name = "sing-box / Clash 配置",
+                                .name = huxerui::UseString(
+                                    Localized("sing-box / Clash 配置")),
                                 .extensions = {"json", "yaml", "yml"}});
                         if (!picked) co_return;
                         if (const auto file = picked->AsFile()) path = file->Path();
@@ -287,11 +293,11 @@ huxerui::View ProfilePlatformOptions(
     const auto importProfile = [=] {
         const std::string url = fields.url.Get().text;
         if (remote && url.empty()) {
-            toast.Show("订阅链接不能为空");
+            toast.Show(Localized("订阅链接不能为空"));
             return;
         }
         if (local && fields.picked_path.Get().empty()) {
-            toast.Show("请先选择订阅文件");
+            toast.Show(Localized("请先选择订阅文件"));
             return;
         }
         std::string configError;
@@ -343,15 +349,16 @@ huxerui::View ProfilePlatformOptions(
                           .options = std::move(options)});
             fields.importing = false;
             if (id == 0) {
-                toast.Show(error.empty() ? "导入失败" : error);
+                toast.Show(error.empty() ? Localized("导入失败")
+                                         : huxerui::StringVariant(error));
                 co_return;
             }
             // 导入即告知「这份订阅有什么吃不下」（只编译不启动，见
             // docs/singbox-layers-and-fidelity.md §2）。
             const std::string summary = co_await RunOnTaskThread(
                 [id] { return ProfileFidelitySummary(id); });
-            toast.Show(summary.empty() ? std::string{"配置已导入"}
-                                       : "配置已导入 · " + summary,
+            toast.Show(summary.empty() ? Localized("配置已导入")
+                                       : LocalizedFormat("配置已导入 · {}", summary),
                        huxerui::ToastOptions{6.0});
             on_back();
         });
@@ -360,7 +367,7 @@ huxerui::View ProfilePlatformOptions(
     huxerui::View commonFields =
         (pptp || openvpn)
             ? huxerui::View{huxerui::TextField(fields.desc.Get())
-                                .Label("描述（可选）")
+                                .Label(Localized("描述（可选）"))
                                 .Variant(huxerui::TextFieldVariant::Outlined)
                                 .OnChanged([desc = fields.desc](
                                                const huxerui::TextEditingValue& value) {
@@ -372,16 +379,16 @@ huxerui::View ProfilePlatformOptions(
                   fields.invalid_cert)};
 
     return PageScaffold(
-        "新建订阅",
+        Localized("新建订阅"),
         huxerui::Row {
-            huxerui::IconButton(app::images::arrow_back, "返回")
-                .With(huxerui::Tooltip("返回订阅列表"))
+            huxerui::IconButton(app::images::arrow_back, Localized("返回"))
+                .With(huxerui::Tooltip(Localized("返回订阅列表")))
                 .OnClick(on_back),
             fields.importing.Get()
                 ? huxerui::View{huxerui::ProgressCircle().With(
                       huxerui::Frame{.width = 20.0F, .height = 20.0F})}
-                : huxerui::View{huxerui::IconButton(app::images::add, "导入订阅")
-                                    .With(huxerui::Tooltip("导入订阅"))
+                : huxerui::View{huxerui::IconButton(app::images::add, Localized("导入订阅"))
+                                    .With(huxerui::Tooltip(Localized("导入订阅")))
                                     .OnClick(importProfile)},
         }.With(huxerui::Spacing(8.0F)),
         huxerui::ScrollView(
@@ -393,7 +400,7 @@ huxerui::View ProfilePlatformOptions(
                         }),
                     typeFields,
                     huxerui::TextField(fields.name.Get())
-                        .Label("名称（可选）")
+                        .Label(Localized("名称（可选）"))
                         .Variant(huxerui::TextFieldVariant::Outlined)
                         .OnChanged([name = fields.name](
                                        const huxerui::TextEditingValue& value) {
@@ -418,7 +425,8 @@ huxerui::View ProfilePlatformOptions(
 }
 
 [[huxerui::composable]] huxerui::View ProfileAddMethodRow(
-    huxerui::ImageResource icon, std::string name, std::string hint,
+    huxerui::ImageResource icon, huxerui::StringVariant name,
+    huxerui::StringVariant hint,
     std::string key, bool divider, std::function<void()> on_click) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     huxerui::View row = UnifiedListRow(
@@ -441,7 +449,7 @@ huxerui::View ProfilePlatformOptions(
     return std::move(row).OnClick(on_click)
         .With(huxerui::Focusable(true),
               huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                 .label = std::move(name)});
+                                 .label = huxerui::UseString(name)});
 }
 
 #if defined(__ANDROID__)
@@ -457,7 +465,7 @@ huxerui::View ProfilePlatformOptions(
     auto decoding = huxerui::UseState(false);
     auto decoder = huxerui::UseState(std::shared_ptr<QrPhotoDecoder>{});
     auto detected = huxerui::UseState(std::string{});
-    auto message = huxerui::UseState(std::string{"正在准备相机…"});
+    auto message = huxerui::UseState(Localized("正在准备相机…"));
     const huxerui::camera::CameraSession session =
         huxerui::camera::UseCamera({
             .facing = huxerui::camera::Facing::Back,
@@ -474,16 +482,17 @@ huxerui::View ProfilePlatformOptions(
             decoder = decoder_instance;
         }
         scanning = true;
-        message = std::string{"正在请求相机权限…"};
+        message = Localized("正在请求相机权限…");
         detected = std::string{};
         return tasks.Launch([=]() -> huxerui::Task<void> {
             const huxerui::PermissionStatus permission =
                 co_await application.RequestPermissionAsync(
                     huxerui::Permission::Camera);
             if (permission != huxerui::PermissionStatus::Granted) {
-                message = permission == huxerui::PermissionStatus::Unavailable
-                              ? "当前设备无法使用相机"
-                              : "请允许相机权限后重试";
+                message = Localized(
+                    permission == huxerui::PermissionStatus::Unavailable
+                        ? "当前设备无法使用相机"
+                        : "请允许相机权限后重试");
                 scanning = false;
                 co_return;
             }
@@ -493,13 +502,14 @@ huxerui::View ProfilePlatformOptions(
                 session.Retry();
             }
             active = true;
-            message = std::string{"正在启动相机…"};
+            message = Localized("正在启动相机…");
 
             while (scanning.Get()) {
                 const huxerui::camera::CameraStatus status = session.Status();
                 if (status.state == huxerui::camera::SessionState::Failed) {
-                    message = status.error ? status.error->message
-                                           : "相机启动失败，请重试";
+                    message = status.error
+                                  ? huxerui::StringVariant(status.error->message)
+                                  : Localized("相机启动失败，请重试");
                     active = false;
                     scanning = false;
                     co_return;
@@ -510,7 +520,7 @@ huxerui::View ProfilePlatformOptions(
                     continue;
                 }
 
-                message = std::string{"将二维码放入取景画面，识别后自动导入"};
+                message = Localized("将二维码放入取景画面，识别后自动导入");
                 const auto photo = co_await session.CapturePhotoAsync(
                     {.jpeg_quality = 50,
                      .mirror = huxerui::camera::MirrorMode::Off});
@@ -619,20 +629,20 @@ huxerui::View ProfilePlatformOptions(
                 huxerui::Font::System(font_size::kBody),
                 theme.colors.on_surface_variant}),
         !scanning.Get() && !detected.Get().empty()
-            ? huxerui::View{huxerui::Text("正在导入配置…")
+            ? huxerui::View{huxerui::Text(Localized("正在导入配置…"))
                                 .Style(huxerui::TextStyle{
                                     huxerui::Font::System(font_size::kCaption),
                                     theme.colors.on_surface_variant})}
             : huxerui::View{huxerui::Row{}},
         !scanning.Get()
-            ? huxerui::View{huxerui::Button("重试")
+            ? huxerui::View{huxerui::Button(Localized("重试"))
                                 .OnClick(start_scanning)}
             : huxerui::View{huxerui::Row{}},
     }.With(huxerui::Spacing(12.0F),
            huxerui::Padding(huxerui::EdgeInsets::Symmetric(16.0F, 12.0F)),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     return ProfileFlowPage(
-        huxerui::Text("扫描二维码", huxerui::TextRole::Title),
+        huxerui::Text(Localized("扫描二维码"), huxerui::TextRole::Title),
         huxerui::View{}, std::move(body), std::move(on_back));
 }
 
@@ -662,7 +672,7 @@ void PushProfileQrScanner(
     ProfileCreateFields, huxerui::NavigationController,
     huxerui::ToastHandle toast,
     std::function<void(std::string)>) {
-    toast.Show("当前平台暂不支持二维码扫描");
+    toast.Show(Localized("当前平台暂不支持二维码扫描"));
 }
 
 #endif
@@ -683,10 +693,11 @@ void PushProfileQrScanner(
                                   ProfileImportResult result) {
         fields.importing = false;
         if (result.first == 0) {
-            toast.Show(result.second.empty() ? "导入失败" : result.second);
+            toast.Show(result.second.empty() ? Localized("导入失败")
+                                             : huxerui::StringVariant(result.second));
             return;
         }
-        toast.Show("配置已添加");
+        toast.Show(Localized("配置已添加"));
         static_cast<void>(navigation.Pop());
     };
     const auto importRemote = [fields, tasks, http, finishImport](
@@ -715,7 +726,8 @@ void PushProfileQrScanner(
         tasks.Launch([content = std::move(content), options,
                       finishImport]() mutable -> huxerui::Task<void> {
             const auto [id, error] = co_await ImportProfileContent(
-                "二维码配置", std::move(content), options);
+                    huxerui::UseString(Localized("二维码配置")),
+                    std::move(content), options);
             finishImport(ProfileImportResult{id, error});
         });
     };
@@ -759,7 +771,7 @@ void PushProfileQrScanner(
     const auto chooseFile = [fields, tasks, toast, picker, http, finishImport] {
         if (fields.importing.Get()) return;
         if (!picker) {
-            toast.Show("文件选择器不可用");
+            toast.Show(Localized("文件选择器不可用"));
             return;
         }
         fields.importing = true;
@@ -767,7 +779,8 @@ void PushProfileQrScanner(
                          -> huxerui::Task<void> {
             const auto picked = co_await picker->OpenFileAsync(
                 huxerui::FilePickerFilter{
-                    .name = "sing-box / Clash 配置",
+                    .name = huxerui::UseString(
+                        Localized("sing-box / Clash 配置")),
                     .extensions = {"json", "yaml", "yml"}});
             if (!picked) {
                 fields.importing = false;
@@ -803,9 +816,9 @@ void PushProfileQrScanner(
             [urlInput, toast, importRemote](
                 huxerui::DialogContext ctx) -> huxerui::View {
                 return DialogCard(huxerui::Column {
-                    huxerui::Text("添加订阅", huxerui::TextRole::Title),
+                    huxerui::Text(Localized("添加订阅"), huxerui::TextRole::Title),
                     huxerui::TextField(urlInput.Get())
-                        .Label("订阅 URL")
+                        .Label(Localized("订阅 URL"))
                         .Placeholder("https://...")
                         .Variant(huxerui::TextFieldVariant::Outlined)
                         .OnChanged([urlInput](
@@ -813,13 +826,13 @@ void PushProfileQrScanner(
                             urlInput = value;
                         }),
                     huxerui::Row {
-                        huxerui::Button("取消").OnClick(
+                        huxerui::Button(Localized("取消")).OnClick(
                             [ctx] { ctx.Dismiss(); }),
-                        huxerui::Button("获取配置").OnClick(
+                        huxerui::Button(Localized("获取配置")).OnClick(
                             [ctx, urlInput, toast, importRemote] {
                                 const std::string url = urlInput.Get().text;
                                 if (!IsHttpProfileUrl(url)) {
-                                    toast.Show("请输入有效的 HTTP 或 HTTPS URL");
+                                    toast.Show(Localized("请输入有效的 HTTP 或 HTTPS URL"));
                                     return;
                                 }
                                 ctx.Dismiss();
@@ -838,28 +851,29 @@ void PushProfileQrScanner(
 
     huxerui::View methods = huxerui::Column {
         ProfileAddMethodRow(
-            app::images::qr_scan, "二维码",
-            fields.importing.Get() ? "正在扫描或导入配置…"
-                                  : "扫描后自动导入订阅链接或配置",
+            app::images::qr_scan, Localized("二维码"),
+            Localized(fields.importing.Get() ? "正在扫描或导入配置…"
+                                             : "扫描后自动导入订阅链接或配置"),
             "profile-add-qr", true,
             beginQrScan),
         ProfileAddMethodRow(
-            app::images::file_import, "文件",
-            fields.importing.Get() ? "正在导入配置…"
-                                  : "选择 sing-box JSON 或 Clash YAML 配置文件",
+            app::images::file_import, Localized("文件"),
+            Localized(fields.importing.Get() ? "正在导入配置…"
+                                             : "选择 sing-box JSON 或 Clash YAML 配置文件"),
             "profile-add-file", true,
             chooseFile),
         ProfileAddMethodRow(
-            app::images::link, "URL", "输入订阅链接并自动获取配置",
+            app::images::link, "URL", Localized("输入订阅链接并自动获取配置"),
             "profile-add-url", true,
             openUrlDialog),
         ProfileAddMethodRow(
-            app::images::manual_config, "直接配置", "粘贴配置内容或填写 VPN 参数",
+            app::images::manual_config, Localized("直接配置"),
+            Localized("粘贴配置内容或填写 VPN 参数"),
             "profile-add-direct", false,
             openDirect),
     }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     huxerui::View content = huxerui::ScrollView(huxerui::Column {
-        huxerui::Text("选择添加方式")
+        huxerui::Text(Localized("选择添加方式"))
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption),
                                       theme.colors.on_surface_variant}),
         methods,
@@ -867,10 +881,11 @@ void PushProfileQrScanner(
     }.With(huxerui::Spacing(8.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
         .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
-    return ProfileFlowPage(huxerui::Text("添加配置", huxerui::TextRole::Title),
+    return ProfileFlowPage(huxerui::Text(Localized("添加配置"), huxerui::TextRole::Title),
                             huxerui::View{}, std::move(content), on_back)
         .With(huxerui::Semantics{.role = huxerui::SemanticRole::Navigation,
-                                 .label = "添加配置"});
+                                 .label = huxerui::UseString(
+                                     Localized("添加配置"))});
 }
 
 [[huxerui::composable]] huxerui::View ProfileCreateMethodPage(
@@ -914,17 +929,17 @@ void PushProfileQrScanner(
             inlineConfig = fields.config_content.Get().text;
         }
         if ((remote && url.empty()) || (isQr && qrContent.empty())) {
-            toast.Show(isQr ? "请先扫描二维码" : "订阅 URL 不能为空");
+            toast.Show(Localized(isQr ? "请先扫描二维码" : "订阅 URL 不能为空"));
             return;
         }
         if (local && fields.picked_path.Get().empty()) {
-            toast.Show("请先选择配置文件");
+            toast.Show(Localized("请先选择配置文件"));
             return;
         }
         if ((isDirect && !pptp && !openvpn) ||
             (isQr && !IsHttpProfileUrl(qrContent))) {
             if (inlineConfig.empty()) {
-                toast.Show("配置内容不能为空");
+                toast.Show(Localized("配置内容不能为空"));
                 return;
             }
         }
@@ -972,7 +987,9 @@ void PushProfileQrScanner(
             std::pair<std::int64_t, std::string> result;
             if (!inlineConfig.empty()) {
                 result = co_await ImportProfileContent(
-                    name.empty() ? "手动配置" : name, inlineConfig, options);
+                    name.empty() ? huxerui::UseString(Localized("手动配置"))
+                                 : name,
+                    inlineConfig, options);
             } else {
                 result = co_await ImportProfileForPlatform(
                     http, ProfileImportRequest{
@@ -987,10 +1004,11 @@ void PushProfileQrScanner(
             }
             fields.importing = false;
             if (result.first == 0) {
-                toast.Show(result.second.empty() ? "导入失败" : result.second);
+                toast.Show(result.second.empty() ? Localized("导入失败")
+                                                 : huxerui::StringVariant(result.second));
                 co_return;
             }
-            toast.Show("配置已导入");
+            toast.Show(Localized("配置已导入"));
             on_complete();
         });
     };
@@ -998,7 +1016,7 @@ void PushProfileQrScanner(
     huxerui::View typeFields;
     if (method == ProfileAddMethod::Url) {
         typeFields = huxerui::TextField(fields.url.Get())
-                         .Label("订阅 URL")
+                         .Label(Localized("订阅 URL"))
                          .Placeholder("https://...")
                          .Variant(huxerui::TextFieldVariant::Outlined)
                          .OnChanged([url = fields.url](
@@ -1007,12 +1025,13 @@ void PushProfileQrScanner(
                          });
     } else if (isFile) {
         typeFields = huxerui::Column {
-            huxerui::Button("选择配置文件").OnClick(
+            huxerui::Button(Localized("选择配置文件")).OnClick(
                 [tasks, picker, path = fields.picked_path] {
                     tasks.Launch([picker, path]() -> huxerui::Task<void> {
                         const auto picked = co_await picker->OpenFileAsync(
                             huxerui::FilePickerFilter{
-                                .name = "sing-box / Clash 配置",
+                                .name = huxerui::UseString(
+                                    Localized("sing-box / Clash 配置")),
                                 .extensions = {"json", "yaml", "yml"}});
                         if (!picked) co_return;
                         if (const auto file = picked->AsFile()) path = file->Path();
@@ -1026,10 +1045,10 @@ void PushProfileQrScanner(
     } else if (isQr) {
         const bool scanned = !qrContent.empty();
         typeFields = huxerui::Column {
-            huxerui::Text("将二维码放入取景框，支持订阅链接和配置文本。")
+            huxerui::Text(Localized("将二维码放入取景框，支持订阅链接和配置文本。"))
                 .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
                                           theme.colors.on_surface_variant}),
-            huxerui::Button(scanned ? "重新扫描" : "开始扫码")
+            huxerui::Button(Localized(scanned ? "重新扫描" : "开始扫码"))
                 .OnClick([fields, navigation, toast,
                           content = fields.qr_content] {
                     PushProfileQrScanner(
@@ -1041,9 +1060,9 @@ void PushProfileQrScanner(
                 }),
             scanned
                 ? huxerui::View{huxerui::Text(
-                      qrRemote ? "已识别订阅链接"
-                               : std::format("已识别配置文本 · {} 字符",
-                                             qrContent.size()))
+                      qrRemote ? Localized("已识别订阅链接")
+                               : LocalizedFormat("已识别配置文本 · {} 字符",
+                                                 qrContent.size()))
                       .Style(huxerui::TextStyle{
                           huxerui::Font::System(font_size::kCaption),
                           theme.colors.on_surface_variant})}
@@ -1059,8 +1078,8 @@ void PushProfileQrScanner(
                                         fields.openvpn_routes);
     } else if (isDirect) {
         typeFields = huxerui::TextField(fields.config_content.Get())
-                         .Label("代理配置内容")
-                         .Placeholder("粘贴 sing-box JSON 或 Clash YAML 配置")
+                         .Label(Localized("代理配置内容"))
+                         .Placeholder(Localized("粘贴 sing-box JSON 或 Clash YAML 配置"))
                          .LineLimits(huxerui::TextFieldLineLimits::MultiLine(12, 28))
                          .Variant(huxerui::TextFieldVariant::Outlined)
                          .OnChanged([config = fields.config_content](
@@ -1069,9 +1088,9 @@ void PushProfileQrScanner(
                          });
     }
 
-    std::vector<huxerui::StringVariant> directTypes{"代理配置"};
-    if (pptp_supported) directTypes.emplace_back("PPTP 内网");
-    if (openvpn_supported) directTypes.emplace_back("OpenVPN 内网");
+    std::vector<huxerui::StringVariant> directTypes{Localized("代理配置")};
+    if (pptp_supported) directTypes.push_back(Localized("PPTP 内网"));
+    if (openvpn_supported) directTypes.push_back(Localized("OpenVPN 内网"));
     huxerui::View directTypeSelector =
         isDirect && directTypes.size() > 1
             ? huxerui::View{huxerui::SegmentedButton(directTypes, directIndex)
@@ -1091,7 +1110,7 @@ void PushProfileQrScanner(
     } else if (method == ProfileAddMethod::Url || isFile ||
                (isQr && !qrRemote) || isDirect) {
         commonFields = huxerui::TextField(fields.desc.Get())
-                           .Label("描述（可选）")
+                           .Label(Localized("描述（可选）"))
                            .Variant(huxerui::TextFieldVariant::Outlined)
                            .OnChanged([desc = fields.desc](
                                           const huxerui::TextEditingValue& value) {
@@ -1104,7 +1123,7 @@ void PushProfileQrScanner(
     formFields.push_back(std::move(directTypeSelector));
     formFields.push_back(std::move(typeFields));
     formFields.push_back(huxerui::TextField(fields.name.Get())
-                             .Label("名称（可选）")
+                             .Label(Localized("名称（可选）"))
                              .Variant(huxerui::TextFieldVariant::Outlined)
                              .OnChanged([name = fields.name](
                                             const huxerui::TextEditingValue& value) {
@@ -1115,15 +1134,15 @@ void PushProfileQrScanner(
         fields.importing.Get()
             ? huxerui::View{huxerui::ProgressCircle().With(
                   huxerui::Frame{.width = 28.0F, .height = 28.0F})}
-            : huxerui::View{huxerui::Button("导入配置")
+            : huxerui::View{huxerui::Button(Localized("导入配置"))
                                 .With(huxerui::Grow(1.0F))
                                 .OnClick(import_profile)});
     formFields.push_back(CompactFloatingNavigationFooter());
-    const std::string title =
+    const huxerui::StringVariant title = Localized(
         method == ProfileAddMethod::Qr ? "扫码导入"
         : isFile                         ? "从文件导入"
         : method == ProfileAddMethod::Url ? "从 URL 导入"
-                                          : "直接配置";
+                                          : "直接配置");
     huxerui::View content = huxerui::ScrollView(
         huxerui::Column(std::move(formFields))
             .With(huxerui::Spacing(12.0F),
@@ -1202,7 +1221,7 @@ void PushProfileQrScanner(
                     return std::string{};
                 });
             if (err.empty()) {
-                toast.Show("已保存");
+                toast.Show(Localized("已保存"));
                 on_back();
             } else {
                 toast.Show(err);
@@ -1211,20 +1230,20 @@ void PushProfileQrScanner(
     };
 
     return ProfileFlowPage(
-        huxerui::Text("编辑订阅", huxerui::TextRole::Title),
-        huxerui::IconButton(app::images::save, "保存")
-            .With(huxerui::Tooltip("保存订阅"))
+        huxerui::Text(Localized("编辑订阅"), huxerui::TextRole::Title),
+        huxerui::IconButton(app::images::save, Localized("保存"))
+            .With(huxerui::Tooltip(Localized("保存订阅")))
             .OnClick(save),
         huxerui::ScrollView(
             huxerui::Column {
-                huxerui::Text(type.Get() == "pptp"
+                huxerui::Text(Localized(type.Get() == "pptp"
                                   ? "类型：PPTP 内网连接"
                                   : type.Get() == "openvpn"
                                   ? "类型：OpenVPN 内网连接"
                                   : type.Get() == "local" ? "类型：本地文件"
-                                                           : "类型：远程订阅"),
+                                                           : "类型：远程订阅")),
                     huxerui::TextField(name.Get())
-                        .Label("名称")
+                        .Label(Localized("名称"))
                         .Variant(huxerui::TextFieldVariant::Outlined)
                         .OnChanged([name](const huxerui::TextEditingValue& value) {
                             name = value;
@@ -1238,7 +1257,7 @@ void PushProfileQrScanner(
                                                            openvpn_routes)}
                         : huxerui::View{huxerui::Column {
                               huxerui::TextField(url.Get())
-                                  .Label("订阅链接（留空 = 本地导入）")
+                                  .Label(Localized("订阅链接（留空 = 本地导入）"))
                                   .Placeholder("https://...")
                                   .Variant(huxerui::TextFieldVariant::Outlined)
                                   .OnChanged([url](
@@ -1251,7 +1270,7 @@ void PushProfileQrScanner(
                           }},
                     type.Get() == "pptp" || type.Get() == "openvpn"
                         ? huxerui::View{huxerui::TextField(desc.Get())
-                                            .Label("描述（可选）")
+                                            .Label(Localized("描述（可选）"))
                                             .Variant(huxerui::TextFieldVariant::Outlined)
                                             .OnChanged([desc](
                                                            const huxerui::TextEditingValue& value) {
@@ -1327,7 +1346,7 @@ void PushProfileQrScanner(
                 toast.Show(error);
                 co_return;
             }
-            toast.Show("已保存");
+            toast.Show(Localized("已保存"));
             on_back();
         });
     };
@@ -1341,12 +1360,12 @@ void PushProfileQrScanner(
                   *content.Get() = value.text;
               })};
     return ProfileFlowPage(
-        huxerui::Text("编辑订阅文件", huxerui::TextRole::Title),
-        huxerui::IconButton(app::images::save, "保存文件")
-            .With(huxerui::Tooltip("保存订阅文件"))
+        huxerui::Text(Localized("编辑订阅文件"), huxerui::TextRole::Title),
+        huxerui::IconButton(app::images::save, Localized("保存文件"))
+            .With(huxerui::Tooltip(Localized("保存订阅文件")))
             .OnClick(save),
         huxerui::Column {
-            huxerui::Text("直接编辑订阅 YAML；保存后启用中的订阅会重启生效。"),
+            huxerui::Text(Localized("直接编辑订阅 YAML；保存后启用中的订阅会重启生效。")),
             editor,
             CompactFloatingNavigationFooter(),
         }.With(huxerui::Spacing(12.0F),
@@ -1387,12 +1406,12 @@ void PushProfileQrScanner(
                 toast.Show(error);
                 co_return;
             }
-            toast.Show("规则已保存");
+            toast.Show(Localized("规则已保存"));
             on_back();
         });
     };
     huxerui::View list = rules.Empty()
-        ? huxerui::View{huxerui::Text("订阅没有 rules 规则")}
+        ? huxerui::View{huxerui::Text(Localized("订阅没有 rules 规则"))}
         : huxerui::View{huxerui::VirtualList(
               rules.Size(), [rules](std::size_t index) {
                   return huxerui::Text(std::format("{}  {}", index + 1,
@@ -1402,22 +1421,22 @@ void PushProfileQrScanner(
               .ItemExtent(32.0F)
               .With(huxerui::Grow(1.0F), huxerui::ScrollBar())};
     return ProfileFlowPage(
-        huxerui::Text("编辑订阅规则", huxerui::TextRole::Title),
-        huxerui::IconButton(app::images::save, "保存规则")
-            .With(huxerui::Tooltip("保存订阅规则"))
+        huxerui::Text(Localized("编辑订阅规则"), huxerui::TextRole::Title),
+        huxerui::IconButton(app::images::save, Localized("保存规则"))
+            .With(huxerui::Tooltip(Localized("保存订阅规则")))
             .OnClick(save),
         huxerui::Column {
-            huxerui::Text("前置插入列表头，后置追加到列表尾。"),
+            huxerui::Text(Localized("前置插入列表头，后置追加到列表尾。")),
             list,
             huxerui::TextField(input.Get())
-                .Label("规则，如 DOMAIN-SUFFIX,example.com,代理组")
+                .Label(Localized("规则，如 DOMAIN-SUFFIX,example.com,代理组"))
                 .Variant(huxerui::TextFieldVariant::Outlined)
                 .OnChanged([input](const huxerui::TextEditingValue& value) {
                     input = value;
                 }),
             huxerui::Row {
-                huxerui::Button("前置").OnClick([add] { add(true); }),
-                huxerui::Button("后置").OnClick([add] { add(false); }),
+                huxerui::Button(Localized("前置")).OnClick([add] { add(true); }),
+                huxerui::Button(Localized("后置")).OnClick([add] { add(false); }),
             }.With(huxerui::Spacing(8.0F),
                    huxerui::MainAlign(huxerui::MainAxisAlignment::End)),
             CompactFloatingNavigationFooter(),

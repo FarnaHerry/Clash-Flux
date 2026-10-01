@@ -93,10 +93,10 @@ struct ProfileEditFields {
 
 namespace profile_detail {
 
-std::string profileTypeLabel(std::string_view type);
+huxerui::StringVariant profileTypeLabel(std::string_view type);
 // 分区标签栏（Compact）用的短标签：只把两种长名收窄成 PPTP / OpenVPN，
 // 其余与 profileTypeLabel 相同。
-std::string profileTypeTabLabel(std::string_view type);
+huxerui::StringVariant profileTypeTabLabel(std::string_view type);
 bool isNativeVpnType(std::string_view type);
 NativeProfileSupport profileSupport();
 
@@ -115,8 +115,8 @@ std::optional<std::string> makePptpConfig(
     const huxerui::TextEditingValue& password,
     const huxerui::TextEditingValue& timeout, bool requireMppe,
     std::string& error);
-std::string pptpStateText(const store::PptpState& state);
-std::string openVpnStateText(const store::OpenVpnState& state);
+huxerui::StringVariant pptpStateText(const store::PptpState& state);
+huxerui::StringVariant openVpnStateText(const store::OpenVpnState& state);
 
 std::size_t ResponsiveProfilePageIndex(
     bool compact, huxerui::State<std::int64_t> edit_page_id,

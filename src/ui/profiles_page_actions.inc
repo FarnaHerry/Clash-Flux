@@ -34,7 +34,7 @@
 
         const std::size_t maximum = vpn::MaxConcurrentAuxiliaryConnections();
         if (connectionSelection.Size() >= maximum) {
-            toast.Show(std::format("同时最多选择 {} 条内网连接", maximum));
+            toast.Show(LocalizedFormat("同时最多选择 {} 条内网连接", maximum));
             return;
         }
         if (maximum == 1) {
@@ -48,7 +48,7 @@
                 return false;
             };
             if (hasOtherActive(pptpStates) || hasOtherActive(openVpnStates)) {
-                toast.Show("请先断开当前内网连接，再连接其他配置");
+                toast.Show(Localized("请先断开当前内网连接，再连接其他配置"));
                 return;
             }
         }
@@ -59,7 +59,7 @@
         std::vector<std::int64_t> ids;
         for (const std::int64_t id : connectionSelection) ids.push_back(id);
         if (ids.empty()) {
-            toast.Show("请先选择 PPTP 或 OpenVPN 订阅");
+            toast.Show(Localized("请先选择 PPTP 或 OpenVPN 订阅"));
             return;
         }
         tasks.Launch([ids, toast, connectionSelection]() -> huxerui::Task<void> {
@@ -87,13 +87,13 @@
             });
             connectionSelection.Clear();
             if (std::get<1>(result) == 0) {
-                toast.Show(std::format("已打开 {} 个连接", std::get<0>(result)));
+                toast.Show(LocalizedFormat("已打开 {} 个连接", std::get<0>(result)));
             } else {
-                toast.Show(std::format("已打开 {} 个，失败 {} 个{}", std::get<0>(result),
-                                      std::get<1>(result),
-                                      std::get<2>(result).empty()
-                                          ? ""
-                                          : "：" + std::get<2>(result)));
+                toast.Show(LocalizedFormat(
+                    "已打开 {} 个，失败 {} 个{}", std::get<0>(result),
+                    std::get<1>(result), std::get<2>(result).empty()
+                        ? std::string{}
+                        : "：" + std::get<2>(result)));
             }
         });
     };
@@ -102,7 +102,7 @@
         std::vector<std::int64_t> ids;
         for (const std::int64_t id : connectionSelection) ids.push_back(id);
         if (ids.empty()) {
-            toast.Show("请先选择 PPTP 或 OpenVPN 订阅");
+            toast.Show(Localized("请先选择 PPTP 或 OpenVPN 订阅"));
             return;
         }
         tasks.Launch([ids, toast, connectionSelection]() -> huxerui::Task<void> {
@@ -117,7 +117,7 @@
                 }
             });
             connectionSelection.Clear();
-            toast.Show("已关闭选中的连接");
+            toast.Show(Localized("已关闭选中的连接"));
         });
     };
 
@@ -187,15 +187,15 @@
                     const bool pptp = editType.Get() == "pptp";
                     const bool openvpn = editType.Get() == "openvpn";
                     return DialogCard(huxerui::Column {
-                        huxerui::Text("编辑订阅", huxerui::TextRole::Title),
+                        huxerui::Text(Localized("编辑订阅"), huxerui::TextRole::Title),
                         huxerui::ScrollView(huxerui::Column {
-                            huxerui::Text(pptp ? "类型：PPTP 内网连接"
+                            huxerui::Text(Localized(pptp ? "类型：PPTP 内网连接"
                                                : openvpn ? "类型：OpenVPN 内网连接"
                                                : editType.Get() == "local"
                                                      ? "类型：本地文件"
-                                                     : "类型：远程订阅"),
+                                                     : "类型：远程订阅")),
                             huxerui::TextField(editName.Get())
-                                .Label("名称")
+                                .Label(Localized("名称"))
                                 .Variant(huxerui::TextFieldVariant::Outlined)
                                 .OnChanged(
                                     [editName](const huxerui::TextEditingValue& v) {
@@ -211,7 +211,7 @@
                                       editOpenVpnConfig, editOpenVpnRoutes)}
                                 : huxerui::View{huxerui::Column {
                                       huxerui::TextField(editUrl.Get())
-                                          .Label("订阅链接（留空 = 本地导入）")
+                                          .Label(Localized("订阅链接（留空 = 本地导入）"))
                                           .Placeholder("https://...")
                                           .Variant(huxerui::TextFieldVariant::Outlined)
                                           .OnChanged([editUrl](
@@ -224,7 +224,7 @@
                                   }},
                             pptp || openvpn
                                 ? huxerui::View{huxerui::TextField(editDesc.Get())
-                                                    .Label("描述（可选）")
+                                                    .Label(Localized("描述（可选）"))
                                                     .Variant(huxerui::TextFieldVariant::Outlined)
                                                     .OnChanged([editDesc](
                                                                    const huxerui::TextEditingValue& v) {
@@ -238,9 +238,9 @@
                                                          Stretch)))
                             .With(huxerui::Frame{.height = kDialogFormHeight}),
                         huxerui::Row {
-                            huxerui::Button("取消").OnClick(
+                            huxerui::Button(Localized("取消")).OnClick(
                                 [ctx] { ctx.Dismiss(); }),
-                            huxerui::Button("保存").OnClick([=] {
+                            huxerui::Button(Localized("保存")).OnClick([=] {
                                 std::string configError;
                                 std::optional<std::string> nativeConfig;
                                 if (editType.Get() == "pptp") {
@@ -291,7 +291,8 @@
                                                 return ps.lastError();
                                             return std::string{};
                                         });
-                                    toast.Show(err.empty() ? "已保存" : err);
+                                    toast.Show(err.empty() ? Localized("已保存")
+                                                           : huxerui::StringVariant(err));
                                 });
                             }),
                         }.With(huxerui::MainAlign(
@@ -375,7 +376,7 @@
                     huxerui::View ruleList;
                     if (editRules.Empty()) {
                         ruleList = huxerui::Column {
-                            huxerui::Text("订阅没有 rules 规则")
+                            huxerui::Text(Localized("订阅没有 rules 规则"))
                                 .Style(huxerui::TextStyle{
                                     huxerui::Font::System(font_size::kCaption),
                                     hintColor}),
@@ -421,16 +422,17 @@
                         editRulesDirty = true;
                     };
                     return DialogCard(huxerui::Column {
-                        huxerui::Text("编辑规则", huxerui::TextRole::Title),
-                        huxerui::Text("前置插到列表头、后置追加到尾；点「保存」"
-                                      "写回订阅文件，启用中的订阅将重启内核生效。")
+                        huxerui::Text(Localized("编辑规则"), huxerui::TextRole::Title),
+                        huxerui::Text(Localized(
+                            "前置插到列表头、后置追加到尾；点「保存」"
+                            "写回订阅文件，启用中的订阅将重启内核生效。"))
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::System(font_size::kCaption),
                                 hintColor}),
                         std::move(ruleList),
                         huxerui::Row {
                             huxerui::TextField(editRuleInput.Get())
-                                .Label("规则，如 DOMAIN-SUFFIX,example.com,代理组")
+                                .Label(Localized("规则，如 DOMAIN-SUFFIX,example.com,代理组"))
                                 .Variant(huxerui::TextFieldVariant::Outlined)
                                 .OnChanged(
                                     [editRuleInput](
@@ -438,16 +440,16 @@
                                         editRuleInput = v;
                                     })
                                 .With(huxerui::Grow(1.0F)),
-                            huxerui::Button("前置").OnClick([=] { addRule(true); }),
-                            huxerui::Button("后置").OnClick([=] { addRule(false); }),
+                            huxerui::Button(Localized("前置")).OnClick([=] { addRule(true); }),
+                            huxerui::Button(Localized("后置")).OnClick([=] { addRule(false); }),
                         }
                             .With(huxerui::Spacing(8.0F),
                                   huxerui::CrossAlign(
                                       huxerui::CrossAxisAlignment::Center)),
                         huxerui::Row {
-                            huxerui::Button("取消").OnClick(
+                            huxerui::Button(Localized("取消")).OnClick(
                                 [ctx] { ctx.Dismiss(); }),
-                            huxerui::Button("保存").OnClick([=] {
+                            huxerui::Button(Localized("保存")).OnClick([=] {
                                 ctx.Dismiss();
                                 if (!editRulesDirty.Get()) return;
                                 const std::string content = editYamlText.Get();
@@ -459,7 +461,8 @@
                                                 return ps.lastError();
                                             return std::string{};
                                         });
-                                    toast.Show(err.empty() ? "规则已保存" : err);
+                                    toast.Show(err.empty() ? Localized("规则已保存")
+                                                           : huxerui::StringVariant(err));
                                 });
                             }),
                         }.With(huxerui::MainAlign(
@@ -518,7 +521,7 @@
                                           .With(huxerui::Frame{
                                               .width = 28.0F,
                                               .height = 28.0F}),
-                                      huxerui::Text("正在加载订阅文件…")
+                                      huxerui::Text(Localized("正在加载订阅文件…"))
                                           .Style(huxerui::TextStyle{
                                               huxerui::Font::System(
                                                   font_size::kCaption),
@@ -551,17 +554,18 @@
                                                 *fileContent.Get() = v.text;
                                             })};
                     return DialogCard(huxerui::Column {
-                        huxerui::Text("编辑文件", huxerui::TextRole::Title),
-                        huxerui::Text("直接编辑订阅 YAML 原文；保存后若该订阅"
-                                      "启用中，内核将重启使改动生效。")
+                        huxerui::Text(Localized("编辑文件"), huxerui::TextRole::Title),
+                        huxerui::Text(Localized(
+                            "直接编辑订阅 YAML 原文；保存后若该订阅"
+                            "启用中，内核将重启使改动生效。"))
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::System(font_size::kCaption),
                                 hintColor}),
                         body,
                         huxerui::Row {
-                            huxerui::Button("取消").OnClick(
+                            huxerui::Button(Localized("取消")).OnClick(
                                 [ctx] { ctx.Dismiss(); }),
-                            huxerui::Button("保存").OnClick([=] {
+                            huxerui::Button(Localized("保存")).OnClick([=] {
                                 ctx.Dismiss();
                                 if (fileLoading.Get()) return;
                                 const std::string content = *fileContent.Get();
@@ -573,7 +577,8 @@
                                                 return ps.lastError();
                                             return std::string{};
                                         });
-                                    toast.Show(err.empty() ? "已保存" : err);
+                                    toast.Show(err.empty() ? Localized("已保存")
+                                                           : huxerui::StringVariant(err));
                                 });
                             }),
                         }.With(huxerui::MainAlign(
@@ -608,7 +613,7 @@
                 [url, clipboard, toast,
                  hintColor](huxerui::DialogContext ctx) -> huxerui::View {
                     return DialogCard(huxerui::Column {
-                        huxerui::Text("分享订阅", huxerui::TextRole::Title),
+                        huxerui::Text(Localized("分享订阅"), huxerui::TextRole::Title),
                         huxerui::Text(truncateOneLine(url, 60))
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::Monospace(font_size::kChip),
@@ -617,15 +622,15 @@
                             .With(huxerui::Frame{.width = 240.0F,
                                                  .height = 240.0F}),
                         huxerui::Row {
-                            huxerui::Button("复制链接").OnClick(
+                            huxerui::Button(Localized("复制链接")).OnClick(
                                 [clipboard, toast, url] {
                                     if (clipboard->WriteText(url)) {
-                                        toast.Show("已复制到剪贴板");
+                                        toast.Show(Localized("已复制到剪贴板"));
                                     } else {
-                                        toast.Show("复制失败");
+                                        toast.Show(Localized("复制失败"));
                                     }
                                 }),
-                            huxerui::Button("关闭").OnClick(
+                            huxerui::Button(Localized("关闭")).OnClick(
                                 [ctx] { ctx.Dismiss(); }),
                         }.With(huxerui::MainAlign(
                                    huxerui::MainAxisAlignment::End),
@@ -688,7 +693,7 @@
                 huxerui::View typeFields;
                 if (remote) {
                     typeFields = huxerui::TextField(newUrl.Get())
-                                     .Label("订阅链接")
+                                     .Label(Localized("订阅链接"))
                                      .Placeholder("https://...")
                                      .Variant(huxerui::TextFieldVariant::Outlined)
                                      .OnChanged([newUrl](
@@ -697,12 +702,13 @@
                                      });
                 } else if (local) {
                     typeFields = huxerui::Row {
-                        huxerui::Button("选择文件")
+                        huxerui::Button(Localized("选择文件"))
                             .OnClick([tasks, picker, pickedPath] {
                                 tasks.Launch([=]() -> huxerui::Task<void> {
                                     const auto picked = co_await picker->OpenFileAsync(
                                         huxerui::FilePickerFilter{
-                                            .name = "sing-box / Clash 配置",
+                                            .name = huxerui::UseString(
+                                                Localized("sing-box / Clash 配置")),
                                             .extensions = {"json", "yaml", "yml"}});
                                     if (!picked) co_return;
                                     if (const auto f = picked->AsFile()) {
@@ -728,7 +734,7 @@
                                                     newOpenVpnRoutes);
                 } else {
                     typeFields = huxerui::TextField(newUrl.Get())
-                                     .Label("订阅链接")
+                                     .Label(Localized("订阅链接"))
                                      .Placeholder("https://...")
                                      .Variant(huxerui::TextFieldVariant::Outlined)
                                      .OnChanged([newUrl](
@@ -738,7 +744,7 @@
                 }
                 huxerui::View commonFields =
                     (pptp || openvpn) ? huxerui::View{huxerui::TextField(newDesc.Get())
-                                              .Label("描述（可选）")
+                                              .Label(Localized("描述（可选）"))
                                               .Variant(huxerui::TextFieldVariant::Outlined)
                                               .OnChanged([newDesc](
                                                              const huxerui::TextEditingValue& v) {
@@ -748,14 +754,18 @@
                                newDesc, newTimeout, newInterval, newAuto, newSys,
                                newCore, newCert)};
                 return DialogCard(huxerui::Column {
-                    huxerui::Text("新建订阅", huxerui::TextRole::Title),
+                    huxerui::Text(Localized("新建订阅"), huxerui::TextRole::Title),
                     huxerui::ScrollView(huxerui::Column {
                         huxerui::SegmentedButton(
                             [&]() {
                                 std::vector<huxerui::StringVariant> types{
-                                    "远程订阅", "本地文件"};
-                                if (pptpSupported) types.emplace_back("PPTP 内网");
-                                if (openvpnSupported) types.emplace_back("OpenVPN 内网");
+                                    Localized("远程订阅"), Localized("本地文件")};
+                                if (pptpSupported) {
+                                    types.push_back(Localized("PPTP 内网"));
+                                }
+                                if (openvpnSupported) {
+                                    types.push_back(Localized("OpenVPN 内网"));
+                                }
                                 return types;
                             }(),
                             newTypeIdx.Get())
@@ -764,7 +774,7 @@
                             }),
                         std::move(typeFields),
                         huxerui::TextField(newName.Get())
-                            .Label("名称（可选）")
+                            .Label(Localized("名称（可选）"))
                             .Variant(huxerui::TextFieldVariant::Outlined)
                             .OnChanged([newName](const huxerui::TextEditingValue& v) {
                                 newName = v;
@@ -776,21 +786,21 @@
                                                  huxerui::CrossAxisAlignment::Stretch)))
                         .With(huxerui::Frame{.height = kDialogFormHeight}),
                     huxerui::Row {
-                        huxerui::Button("取消").OnClick([ctx] { ctx.Dismiss(); }),
+                        huxerui::Button(Localized("取消")).OnClick([ctx] { ctx.Dismiss(); }),
                         importing.Get()
                             ? huxerui::View{
                                   huxerui::ProgressCircle()
                                       .With(huxerui::Frame{.width = 20.0F,
                                                            .height = 20.0F})}
                             : huxerui::View{
-                                  huxerui::Button("导入").OnClick([=] {
+                                  huxerui::Button(Localized("导入")).OnClick([=] {
                                       const std::string url = newUrl.Get().text;
                                       if (remote && url.empty()) {
-                                          toast.Show("订阅链接不能为空");
+                                          toast.Show(Localized("订阅链接不能为空"));
                                           return;
                                       }
                                       if (local && pickedPath.Get().empty()) {
-                                          toast.Show("请先选择订阅文件");
+                                          toast.Show(Localized("请先选择订阅文件"));
                                           return;
                                       }
                                       std::string configError;
@@ -851,8 +861,11 @@
                                                       .options = std::move(options)});
                                           importing = false;
                                           if (rid == 0) {
-                                              toast.Show(
-                                                  err.empty() ? "导入失败" : err);
+                                              if (err.empty()) {
+                                                  toast.Show(Localized("导入失败"));
+                                              } else {
+                                                  toast.Show(err);
+                                              }
                                           } else {
                                               ctx.Dismiss();
                                               // 导入即告知「这份订阅有什么吃不下」：
@@ -864,8 +877,9 @@
                                                   });
                                               toast.Show(
                                                   summary.empty()
-                                                      ? std::string{"配置已导入"}
-                                                      : "配置已导入 · " + summary,
+                                                      ? Localized("配置已导入")
+                                                      : LocalizedFormat(
+                                                            "配置已导入 · {}", summary),
                                                   huxerui::ToastOptions{6.0});
                                           }
                                       });
