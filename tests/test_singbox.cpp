@@ -387,7 +387,7 @@ rules:
         {.id = "profile:offline", .internalRoutes = {"10.42.0.0/16"}},
     };
     compensation.globalRules = {
-        {.match = vpn::MatchKind::DomainSuffix, .pattern = "corp.example", .connectionId = "profile:pptp", .priority = 10},
+        {.match = vpn::MatchKind::DomainSuffix, .pattern = "corp.example", .connectionId = "profile:pptp", .priority = 10, .order = 1},
         {.match = vpn::MatchKind::ExactDomain, .pattern = "PUBLIC.CORP.EXAMPLE.", .connectionId = "profile:main", .priority = 10},
         {.match = vpn::MatchKind::ExactIp, .pattern = "10.42.0.9", .connectionId = "profile:main", .priority = 20},
         {.match = vpn::MatchKind::ExactDomain, .pattern = "offline.example", .connectionId = "profile:offline", .priority = 9},
@@ -404,14 +404,15 @@ rules:
     check(compensationResult.error.empty(), "主 VPN 补偿配置编译成功");
     const auto compensationConfig = json::parse(compensationResult.json);
     const auto& compensationRules = compensationConfig["route"]["rules"];
+    const std::string mainOutbound = compensationConfig["route"]["final"];
     check(compensationRules[0]["action"] == "sniff" &&
               compensationRules[1]["action"] == "hijack-dns" &&
               compensationRules[2]["action"] == "resolve",
           "补偿规则位于 sniff/DNS/resolve 之后");
     check(compensationRules[3]["ip_cidr"] == json{"10.42.0.9/32"} &&
-              compensationRules[3]["outbound"] == "chosen", "高优先级全局规则可覆盖原生内网");
+              compensationRules[3]["outbound"] == mainOutbound, "高优先级全局规则可覆盖原生内网");
     check(compensationRules[4]["domain"] == json{"public.corp.example"} &&
-              compensationRules[4]["outbound"] == "chosen", "同优先级精确域名先于后缀，主 VPN 选择订阅 final");
+              compensationRules[4]["outbound"] == mainOutbound, "同优先级按显式 order 排序，主 VPN 使用隔离后的订阅 final");
     const std::string nativeTag = compensationRules[5]["outbound"];
     bool hasBoundNative = false;
     for (const auto& outbound : compensationConfig["outbounds"]) {
@@ -421,9 +422,15 @@ rules:
         }
     }
     check(hasBoundNative, "原生 VPN 域名规则使用绑定 ppp 接口的 direct outbound");
-    check(compensationRules[6]["ip_cidr"] == json{"2001:db8::1/128"}, "离线目标规则暂停，IPv6 精确 IP 全局规则保留");
-    check(compensationRules[7]["ip_cidr"] == json{"10.0.0.0/8"}, "只安装活动连接的内部 CIDR");
-    check(compensationRules[8]["clash_mode"] == "direct" && compensationRules[9]["clash_mode"] == "global",
+    check(compensationRules[6]["action"] == "reject" &&
+              compensationRules[7]["action"] == "reject" &&
+              compensationRules[8]["ip_cidr"] == json{"2001:db8::1/128"},
+          "离线目标按默认策略阻断，IPv6 精确 IP 全局规则保留");
+    check(compensationRules[9]["ip_cidr"] == json{"10.42.0.0/16"} &&
+              compensationRules[9]["action"] == "reject" &&
+              compensationRules[10]["ip_cidr"] == json{"10.0.0.0/8"},
+          "内部 CIDR 同层按最长前缀排序，离线内部网段阻断");
+    check(compensationRules[11]["clash_mode"] == "direct" && compensationRules[12]["clash_mode"] == "global",
           "主 VPN 三模式不能绕过全局连接选择");
     for (const auto& inbound : compensationConfig["inbounds"]) {
         if (inbound.value("type", "") != "tun") continue;
@@ -469,14 +476,16 @@ rules:
 
     compensation.nativeConnections[0].connected = false;
     const auto disconnected = json::parse(singbox::compileConfig(compensation).json);
-    check(disconnected["route"]["rules"][5]["ip_cidr"] == json{"2001:db8::1/128"} &&
-              disconnected["route"]["rules"][6]["clash_mode"] == "direct",
-          "断开后撤销目标规则及内部路由，恢复主订阅");
+    check(disconnected["route"]["rules"][5]["action"] == "reject" &&
+              disconnected["route"]["rules"][8]["ip_cidr"] == json{"2001:db8::1/128"} &&
+              disconnected["route"]["rules"][10]["action"] == "reject" &&
+              disconnected["route"]["rules"][11]["clash_mode"] == "direct",
+          "断开后保留匹配条件并阻断，不静默回落主订阅");
     compensation.nativeConnections[0].connected = true;
     compensation.nativeConnections[0].interfaceName.clear();
     const auto missingInterface = json::parse(singbox::compileConfig(compensation).json);
     check(missingInterface["route"]["rules"] == disconnected["route"]["rules"],
-          "连接无接口时规则同样暂停");
+          "连接无接口时同样执行目标不可用策略");
     compensation.nativeConnections[0].connected = false;
 
     // ---- sing-box OpenVPN endpoint：多条连接并行、规则直达 endpoint ---------
@@ -539,8 +548,8 @@ rules:
     auto catchAll = compensation;
     catchAll.globalRules = {{vpn::MatchKind::Any, "", "profile:pptp", 100}};
     const auto paused = json::parse(singbox::compileConfig(catchAll).json);
-    check(paused["route"]["rules"][3]["clash_mode"] == "direct",
-          "离线全部规则不得生成无条件拒绝");
+    check(paused["route"]["rules"][3]["action"] == "reject",
+          "显式全部规则的离线目标执行默认阻断策略");
     catchAll.tunInbound = false;
     catchAll.nativeConnections[0].connected = true;
     catchAll.nativeConnections[0].interfaceName = "ppp7";
@@ -592,9 +601,9 @@ rules:
         const auto geoipPath = std::filesystem::path(dir) / "geoip-cn.srs";
         const auto geositePath = std::filesystem::path(dir) / "geosite-cn.srs";
         std::filesystem::create_directories(dir);
-        // .srs 头部 = "SRS" 魔数 + 版本号；内容本身不参与编译期校验。
-        { std::ofstream out(geoipPath, std::ios::binary); out << "SRS\x02" << "stub"; }
-        { std::ofstream out(geositePath, std::ios::binary); out << "SRS\x02" << "stub"; }
+        // .srs 头部包含魔数、版本与合法 zlib 头；这里只验证筛查边界，不解压。
+        { std::ofstream out(geoipPath, std::ios::binary); out << "SRS\x02\x78\x9c" << "stub-stub"; }
+        { std::ofstream out(geositePath, std::ios::binary); out << "SRS\x02\x78\x9c" << "stub-stub"; }
         singbox::CompileOptions localOptions = options;
         localOptions.ruleSetDir = dir;
         check(singbox::RuleSetCacheValid(geoipPath), "SRS 头的规则集缓存有效");
@@ -615,7 +624,7 @@ rules:
         check(sawLocalGeoip, "ruleSetDir 命中时 GEOIP 以 local rule_set 生成");
         check(sawLocalGeosite, "ruleSetDir 命中时 GEOSITE 以 local rule_set 生成");
 
-        // 坏缓存（0 字节、错误内容）会让内核启动期 FATAL：必须拒绝、删除并
+        // 坏缓存（0 字节、错误内容）会让内核启动期 FATAL：必须拒绝并
         // 回落 remote，而不是把坏文件写进 local rule_set。
         { std::ofstream out(geoipPath, std::ios::binary | std::ios::trunc); out << "<html>404</html>"; }
         { std::ofstream out(geositePath, std::ios::binary | std::ios::trunc); }
@@ -636,9 +645,9 @@ rules:
             }
         }
         check(geoipRemote && geositeRemote, "坏缓存回落为 remote rule_set");
-        check(!std::filesystem::exists(geoipPath) &&
-                  !std::filesystem::exists(geositePath),
-              "坏缓存文件被删除");
+        check(std::filesystem::exists(geoipPath) &&
+                  std::filesystem::exists(geositePath),
+              "纯编译保留坏缓存文件，替换由下载边界负责");
     }
 
     // ---- 空订阅最小配置 -------------------------------------------------------

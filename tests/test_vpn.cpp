@@ -119,7 +119,10 @@ int main() {
 
     assert(manager.selectEngine("main").engine == EngineKind::SingBox);
     assert(manager.selectEngine("company-a").engine == EngineKind::SystemPptp);
-    assert(manager.resolveConnection("10.20.8.9") == "main");
+    bool rejectedUnavailable = false;
+    try { manager.resolveConnection("10.20.8.9"); }
+    catch (const std::runtime_error&) { rejectedUnavailable = true; }
+    assert(rejectedUnavailable);
     assert(NormalizeRuleDomain("https://Portal.Example:443/path?q=1") == "portal.example");
     assert(!NormalizeRuleDomain("https://user:pass@example.com/path"));
     assert(!NormalizeRuleDomain("https:///missing-host"));
