@@ -226,8 +226,8 @@ int levelRank(const std::string& level) {
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
     if (onBack) return SecondaryPageScaffold(huxerui::Text(Localized("日志"), huxerui::TextRole::Title), std::move(actions),
-                                              std::move(body), onBack);
-    return PageScaffold(Localized("日志"), std::move(actions), std::move(body));
+                                              std::move(body), onBack, false, true);
+    return PageScaffold(Localized("日志"), std::move(actions), std::move(body), false, true);
 }
 
 } // namespace clashflux::ui

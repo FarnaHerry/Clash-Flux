@@ -17,6 +17,9 @@
 
 namespace clashflux::ui {
 
+// Section edge inset and card grid spacing share one rhythm across the app.
+inline constexpr float kSectionCardSpacing = 8.0F;
+
 // 桌面图标栏和标题栏 logo 共用几何，保证两者中心线由同一宽度定义。
 inline constexpr float kTopNavigationIndicatorSize = 44.0F;
 inline constexpr float kTopNavigationItemHeight = 48.0F;
@@ -327,11 +330,13 @@ huxerui::View PasswordField(
 // 落在窗口海面底色上（岛间缝隙经壳层 Spacing 透出）。
 huxerui::View PageScaffold(huxerui::StringVariant title, huxerui::View actions,
                            huxerui::View content,
-                           bool inlineCompactActions = false);
+                           bool inlineCompactActions = false,
+                           bool fullWidthSections = false);
 huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     huxerui::View actions, huxerui::View content,
                                     std::function<void()> onBack,
-                                    bool hideBack = false);
+                                    bool hideBack = false,
+                                    bool fullWidthSections = false);
 huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
                               huxerui::StringVariant placeholder,
                               std::function<void()> onClose);
@@ -401,6 +406,12 @@ struct SectionTab {
 // 每对标签栏/内容页共享一个保留的几何通道；动画采样不写 State、不触发重组。
 class SectionTabMotion;
 using SectionTabMotionHandle = std::shared_ptr<SectionTabMotion>;
+// 骨架决定内容留白，分页将它放在每一页内部；Pager 自身占满骨架宽度。
+struct SectionTabContentInsets {
+    float horizontal = kSectionCardSpacing;
+    static SectionTabContentInsets Default() { return {}; }
+    bool operator==(const SectionTabContentInsets&) const = default;
+};
 SectionTabMotionHandle UseSectionTabMotion();
 huxerui::View SectionTabBar(const std::vector<SectionTab>& tabs,
                             const std::string& selectedKey,

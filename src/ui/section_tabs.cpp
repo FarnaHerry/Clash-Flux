@@ -337,6 +337,7 @@ private:
     std::function<void(const std::string&)> onSelect, SectionTabMotionHandle motion) {
     constexpr float kTabIndicatorHeight = 2.0F;
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const auto insets = huxerui::UseEnvironment<SectionTabContentInsets>();
     auto scroll = huxerui::UseScrollController();
     auto menu = huxerui::UseMenu();
     huxerui::Color hoverFill = theme.colors.on_surface;
@@ -443,6 +444,7 @@ private:
     std::vector<huxerui::View> children{huxerui::View{strip}.With(huxerui::Grow(1.0F))};
     if (scroll.MaxOffset() > 1.0F) children.push_back(picker);
     return huxerui::Row(children).With(
+        huxerui::Padding(huxerui::EdgeInsets::Symmetric(insets.horizontal, 0.0F)),
         huxerui::Spacing(2.0F),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 }
@@ -450,16 +452,24 @@ private:
 // 与 ACGU 首页相同：标签栏留在 Pager 外，内容跟手移动；受控索引变化由
 // 框架处理完整的出入场、反向重定向、取消回弹、嵌套滚动边界与 reduced motion。
 // 页根由调用方以语义 Key 标识，Pager 传递有界高度，虚拟列表只构造视口附近的条目。
-huxerui::View SectionTabPages(std::vector<huxerui::View> pages, std::size_t selectedIndex,
+[[huxerui::composable]] huxerui::View SectionTabPages(std::vector<huxerui::View> pages, std::size_t selectedIndex,
                               std::function<void(std::size_t)> onSelect, SectionTabMotionHandle motion) {
+    const auto insets = huxerui::UseEnvironment<SectionTabContentInsets>();
     if (pages.empty()) return huxerui::Column {}.With(huxerui::Grow(1.0F));
-    selectedIndex = std::min(selectedIndex, pages.size() - 1);
+    auto pageViews = pages;
+    const auto selected = std::min(selectedIndex, pageViews.size() - 1);
+    // 语义 Key 和页根保持原样，半个卡片间距归每页所有，随内容一起移动。
+    // 两页相接时合成一份卡片间距；不缩窄 Pager 或改变翻页步长。
+    for (auto& page : pageViews) {
+        page = huxerui::View{page}.With(
+            huxerui::Padding(huxerui::EdgeInsets::Symmetric(insets.horizontal * 0.5F, 0.0F)));
+    }
     if (motion) {
-        for (std::size_t index = 0; index < pages.size(); ++index) {
-            pages[index] = huxerui::View{pages[index]}.With(SectionPageGeometry{motion, index});
+        for (std::size_t index = 0; index < pageViews.size(); ++index) {
+            pageViews[index] = huxerui::View{pageViews[index]}.With(SectionPageGeometry{motion, index});
         }
     }
-    huxerui::View pager = huxerui::Pager(pages, selectedIndex)
+    huxerui::View pager = huxerui::Pager(pageViews, selected)
         .OnChanged([onSelect](std::size_t index) { if (onSelect) onSelect(index); })
         .With(huxerui::Grow(1.0F))
         .Key("section-tab-pages");

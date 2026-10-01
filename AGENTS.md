@@ -94,6 +94,13 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   `section_tabs.cpp` / `tests/test_page_transition.cpp`。
   每对标签栏与内容页共用 `UseSectionTabMotion()` 的保留 handle，使下划线随
   Pager 的实际呈现进度延伸/收拢；进度不得逐帧写 State 或触发内容布局失效。
+- **二级分页的水平留白必须归每页所有**：调用 `PageScaffold` / `SecondaryPageScaffold`
+  时启用 `fullWidthSections`，骨架通过 `SectionTabContentInsets` 提供水平边距；标题与
+  标签条各自留白，`SectionTabPages` 把留白加在每个稳定页根上。Pager 视口占满骨架
+  可用宽度，不在外侧套水平 Padding；内容页每侧留白为网格卡片间距的一半，统一从
+  `kSectionCardSpacing` 计算。滑动时相邻页面合起来正好是一份卡片间距，翻页步长仍为
+  完整视口宽度。
+  页根水平 Padding 由通用分页管理，卡片自身内边距仍由卡片决定。
 - **Pager 反向切换补丁**维护在 `cmake/patches/huxerui-pager-retarget.patch`：固定
   HuxerUI 在跨多标签动画中切回起始页会复用旧 drag target，导致缺少布局 slot。
   补丁清除已结束的拖动目标，并保留回弹/反向轨道中的离场页。CMake 在加入源码前
