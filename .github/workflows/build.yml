@@ -279,6 +279,10 @@ jobs:
           set -euo pipefail
           git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
           git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
+          # The Windows runner defaults to CRLF checkout. Keep this vendored
+          # source on LF so zero-context compatibility patches match reliably.
+          git -C third_party/huxerui config core.autocrlf false
+          git -C third_party/huxerui checkout --force "$HUXERUI_COMMIT"
           git -C third_party/huxerui apply --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
           git -C third_party/huxerui apply --unidiff-zero \
