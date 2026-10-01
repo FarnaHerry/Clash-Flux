@@ -389,7 +389,7 @@ huxerui::View SettingSwitchRow(huxerui::StringVariant label,
                                huxerui::View control, bool danger = false);
 huxerui::View SectionTitle(huxerui::StringVariant title);
 
-// 二级分区标签栏（全项目统一的页内分区切换，实现与样式说明见 common.cpp）：
+// 二级分区标签栏（全项目统一的页内分区切换，实现与样式说明见 section_tabs.cpp）：
 // 代理页分组、规则页「订阅规则/全局路由」、订阅页类型分区共用。key 参与
 // 选中匹配与节点 Key，label 是展示文本；badge 是可选角标（非空时以警示色显示在
 // label 之后，例如被 sing-box 降级的策略组），留空即无角标。
@@ -398,26 +398,20 @@ struct SectionTab {
     huxerui::StringVariant label;
     std::string badge;
 };
+// 每对标签栏/内容页共享一个保留的几何通道；动画采样不写 State、不触发重组。
+class SectionTabMotion;
+using SectionTabMotionHandle = std::shared_ptr<SectionTabMotion>;
+SectionTabMotionHandle UseSectionTabMotion();
 huxerui::View SectionTabBar(const std::vector<SectionTab>& tabs,
                             const std::string& selectedKey,
-                            std::function<void(const std::string&)> onSelect);
+                            std::function<void(const std::string&)> onSelect,
+                            SectionTabMotionHandle motion = {});
 
-// 只建当前分区时使用的挂载入场过渡：direction 为 -1（左）、0（不动）、1（右）。
-huxerui::View ProxyGroupPage(huxerui::View content, int direction);
-
-// 分区内容的左右滑动切换（与 SectionTabBar 配套）：返回 PointerIntercept 处理器，
-// 由页面挂到内容滚动节点上；手势状态由页面持有一对。onPrev/onNext 为空表示
-// 该方向无页可切（此时不认领手势，交给外层容器，例如手机端 Pager 整页翻）。
-// 阈值与「认领必须早于 Pager」的不变量见 src/ui/section_swipe.h。
-//
-// 是否启用滑动是分区组件自己的能力，默认值由组件自己给出（下面的编译期常量），
-// 页面在调用处直接引用它——不接入应用设置、不需要用户态开关，也不要求调用方
-// 从上层把开关传进来。个别页面要关闭时只改自己调用处的那一处判断。
-inline constexpr bool kSectionTabsSwipeDefault = true;
-
-std::function<bool(const huxerui::PointerEvent&)> SectionTabSwipeHandler(
-    huxerui::State<huxerui::Point> origin, huxerui::State<bool> owned,
-    std::function<void()> onPrev, std::function<void()> onNext);
+// 通用二级内容分页：标签栏留在外侧。点击、菜单与跟手滑动共用受控索引，
+// 页面有界并保持挂载；滚动边界交给框架，取消时回弹，reduced motion 由主题控制。
+huxerui::View SectionTabPages(std::vector<huxerui::View> pages, std::size_t selectedIndex,
+                              std::function<void(std::size_t)> onSelect,
+                              SectionTabMotionHandle motion = {});
 
 // 自定义内容弹窗的卡片包裹：SDK 的 dialog.Show(ViewFactory/DialogFactory) 不给
 // 内容加底板（只有标题+消息的内置形态才有 DialogStyle），统一包一层：

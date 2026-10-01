@@ -262,6 +262,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     const auto vpnModel = huxerui::UseService<VpnModel>();
     auto section = huxerui::UseState<std::size_t>(0);
+    auto sectionMotion = UseSectionTabMotion();
     auto subscriptionRules = huxerui::UseStateList<SubscriptionRuleRow>();
     auto globalRules = huxerui::UseStateList<vpn::RouteRule>();
     // 订阅列表来自 ProfilesModel 的镜像（唯一来源见 profiles_model.h），
@@ -270,10 +271,6 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
     auto activeConnections = huxerui::UseStateList<std::string>();
     auto refreshTick = huxerui::UseState(0);
     auto refreshSpin = huxerui::UseState(0);
-    // 分区滑动切换的手势状态（处理器与阈值见 common.cpp SectionTabSwipeHandler）。
-    auto swipeOrigin = huxerui::UseState<huxerui::Point>(huxerui::Point{0.0F, 0.0F});
-    auto swipeOwned = huxerui::UseState(false);
-
     // 编辑器状态归页面持有，弹窗只负责渲染；不会在每一行里创建 hook。
     auto editMatch = huxerui::UseState<std::size_t>(1);
     auto editIndex = huxerui::UseState(-1);
@@ -538,211 +535,202 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
             huxerui::DialogOptions{});
     };
 
-    huxerui::View body;
-    if (section.Get() == 0) {
-        const std::size_t count = subscriptionRules.Size();
-        body = count == 0
-                   ? huxerui::View{huxerui::Text(Localized("还没有订阅规则"))
-                                       .Style(huxerui::TextStyle{
-                                           huxerui::Font::System(font_size::kBody),
-                                           theme.colors.on_surface_variant})}
-                   : huxerui::View{};
-        if (count != 0) {
-            auto subscriptionList = huxerui::VirtualList(
-                count + (compact ? 1U : 0U),
-                [subscriptionRules, mono, theme, compact, count](
-                    std::size_t index) -> huxerui::View {
-                    // 测量 factory 无组合上下文，文本解析必须延迟到 Scope 挂载。
-                    return huxerui::Scope([=]() -> huxerui::View {
-                    if (compact && index == count) {
-                        return CompactFloatingNavigationFooter()
-                            .Key("compact-floating-footer");
-                    }
-                    const SubscriptionRuleRow& rule = subscriptionRules[index];
-                    const std::string payload =
-                        rule.payload == "未配置内置规则"
-                            ? huxerui::UseString(Localized("未配置内置规则"))
-                            : rule.payload.empty() ? "—" : rule.payload;
-                    const std::string type =
-                        rule.type == "规则" || rule.type == "IPv4 网段"
-                            ? huxerui::UseString(Localized(rule.type))
-                            : rule.type;
-                    const std::string target =
-                        rule.target == "本连接" || rule.target == "内网路由" ||
-                                rule.target == "规则为空"
-                            ? huxerui::UseString(Localized(rule.target))
-                            : rule.target;
-                    const std::string key = std::format(
-                        "{}:{}:{}", rule.profileId, rule.ordinal, rule.type);
-                    if (compact) {
-                        // 紧凑窗口不再复用桌面表格的固定列宽。固定列会把
-                        // VirtualList 的最小宽度推过页面岛，导致右侧内容和
-                        // 操作区一起溢出屏幕；卡片字段可以在有限宽度内换行。
+    std::vector<huxerui::View> sectionPages;
+    for (std::size_t page = 0; page < kRuleTabs.size(); ++page) {
+        huxerui::View body;
+        if (page == 0) {
+            const std::size_t count = subscriptionRules.Size();
+            body = count == 0
+                       ? huxerui::View{huxerui::Text(Localized("还没有订阅规则"))
+                                           .Style(huxerui::TextStyle{
+                                               huxerui::Font::System(font_size::kBody),
+                                               theme.colors.on_surface_variant})}
+                       : huxerui::View{};
+            if (count != 0) {
+                auto subscriptionList = huxerui::VirtualList(
+                    count + (compact ? 1U : 0U),
+                    [subscriptionRules, mono, theme, compact, count](
+                        std::size_t index) -> huxerui::View {
+                        // 测量 factory 无组合上下文，文本解析必须延迟到 Scope 挂载。
+                        return huxerui::Scope([=]() -> huxerui::View {
+                        if (compact && index == count) {
+                            return CompactFloatingNavigationFooter()
+                                .Key("compact-floating-footer");
+                        }
+                        const SubscriptionRuleRow& rule = subscriptionRules[index];
+                        const std::string payload =
+                            rule.payload == "未配置内置规则"
+                                ? huxerui::UseString(Localized("未配置内置规则"))
+                                : rule.payload.empty() ? "—" : rule.payload;
+                        const std::string type =
+                            rule.type == "规则" || rule.type == "IPv4 网段"
+                                ? huxerui::UseString(Localized(rule.type))
+                                : rule.type;
+                        const std::string target =
+                            rule.target == "本连接" || rule.target == "内网路由" ||
+                                    rule.target == "规则为空"
+                                ? huxerui::UseString(Localized(rule.target))
+                                : rule.target;
+                        const std::string key = std::format(
+                            "{}:{}:{}", rule.profileId, rule.ordinal, rule.type);
+                        if (compact) {
+                            // 紧凑窗口不再复用桌面表格的固定列宽。固定列会把
+                            // VirtualList 的最小宽度推过页面岛，导致右侧内容和
+                            // 操作区一起溢出屏幕；卡片字段可以在有限宽度内换行。
+                            return UnifiedListRow(
+                                huxerui::Column{
+                                    mono(rule.profile, theme.colors.primary),
+                                    mono(huxerui::UseString(LocalizedFormat(
+                                             "{} · 走向：{}", type, target)),
+                                         theme.colors.on_surface_variant),
+                                    mono(payload, theme.colors.on_surface),
+                                },
+                                key, true, index + 1 < count);
+                        }
                         return UnifiedListRow(
-                            huxerui::Column{
-                                mono(rule.profile, theme.colors.primary),
-                                mono(huxerui::UseString(LocalizedFormat(
-                                         "{} · 走向：{}", type, target)),
-                                     theme.colors.on_surface_variant),
-                                mono(payload, theme.colors.on_surface),
+                            huxerui::Row{
+                                mono(rule.profile, theme.colors.primary)
+                                    .With(huxerui::Frame{.width = 180.0F}),
+                                mono(type, theme.colors.on_surface)
+                                    .With(huxerui::Frame{.width = 145.0F}),
+                                mono(payload, theme.colors.on_surface)
+                                    .With(huxerui::Grow(1.0F)),
+                                mono(target, theme.colors.on_surface_variant)
+                                    .With(huxerui::Frame{.width = 180.0F}),
                             },
-                            key, true, index + 1 < count);
-                    }
-                    return UnifiedListRow(
-                        huxerui::Row{
-                            mono(rule.profile, theme.colors.primary)
-                                .With(huxerui::Frame{.width = 180.0F}),
-                            mono(type, theme.colors.on_surface)
-                                .With(huxerui::Frame{.width = 145.0F}),
-                            mono(payload, theme.colors.on_surface)
-                                .With(huxerui::Grow(1.0F)),
-                            mono(target, theme.colors.on_surface_variant)
-                                .With(huxerui::Frame{.width = 180.0F}),
-                        },
-                        key, false, index + 1 < count);
+                            key, false, index + 1 < count);
+                        });
                     });
-                });
-            subscriptionList = std::move(subscriptionList)
-                                   .EstimatedItemExtent(compact ? 86.0F : 42.0F)
-                                   .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
-            // 分区组件默认支持滑动（见 ui.h）：列表区左右滑动切到「全局路由」。
-            if (kSectionTabsSwipeDefault) {
-                subscriptionList =
-                    std::move(subscriptionList)
-                        .On<huxerui::ViewEvents::PointerIntercept>(
-                            SectionTabSwipeHandler(
-                                swipeOrigin, swipeOwned, nullptr,
-                                [section] { section = 1; }));
+                subscriptionList = std::move(subscriptionList)
+                                       .EstimatedItemExtent(compact ? 86.0F : 42.0F)
+                                       .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
+                if (compact) {
+                    body = huxerui::Column{std::move(subscriptionList)}
+                               .With(huxerui::CrossAlign(
+                                         huxerui::CrossAxisAlignment::Stretch),
+                                     huxerui::Grow(1.0F));
+                } else {
+                    body = huxerui::Column{
+                               huxerui::Row{
+                                   mono(huxerui::UseString(Localized("订阅")),
+                                        theme.colors.on_surface_variant)
+                                       .With(huxerui::Frame{.width = 180.0F}),
+                                   mono(huxerui::UseString(Localized("类型")),
+                                        theme.colors.on_surface_variant)
+                                       .With(huxerui::Frame{.width = 145.0F}),
+                                   mono(huxerui::UseString(Localized("匹配内容")),
+                                        theme.colors.on_surface_variant)
+                                       .With(huxerui::Grow(1.0F)),
+                                   mono(huxerui::UseString(Localized("订阅走向")),
+                                        theme.colors.on_surface_variant)
+                                       .With(huxerui::Frame{.width = 180.0F}),
+                               }
+                                   .With(huxerui::Spacing(8.0F),
+                                         huxerui::Padding(
+                                             huxerui::EdgeInsets::Symmetric(4.0F,
+                                                                             2.0F))),
+                               huxerui::Divider(), std::move(subscriptionList)}
+                        .With(huxerui::Spacing(4.0F),
+                              huxerui::CrossAlign(
+                                  huxerui::CrossAxisAlignment::Stretch),
+                              huxerui::Grow(1.0F));
+                }
             }
-            if (compact) {
-                body = huxerui::Column{std::move(subscriptionList)}
+        } else {
+            const std::size_t count = globalRules.Size();
+            if (count == 0) {
+                body = huxerui::Column{
+                           huxerui::Text(Localized("还没有全局路由规则"))
+                               .Style(huxerui::TextStyle{
+                                   huxerui::Font::System(font_size::kBody),
+                                   theme.colors.on_surface_variant}),
+                       }
                            .With(huxerui::CrossAlign(
                                      huxerui::CrossAxisAlignment::Stretch),
                                  huxerui::Grow(1.0F));
             } else {
-                body = huxerui::Column{
-                           huxerui::Row{
-                               mono(huxerui::UseString(Localized("订阅")),
-                                    theme.colors.on_surface_variant)
-                                   .With(huxerui::Frame{.width = 180.0F}),
-                               mono(huxerui::UseString(Localized("类型")),
-                                    theme.colors.on_surface_variant)
-                                   .With(huxerui::Frame{.width = 145.0F}),
-                               mono(huxerui::UseString(Localized("匹配内容")),
-                                    theme.colors.on_surface_variant)
-                                   .With(huxerui::Grow(1.0F)),
-                               mono(huxerui::UseString(Localized("订阅走向")),
-                                    theme.colors.on_surface_variant)
-                                   .With(huxerui::Frame{.width = 180.0F}),
-                           }
-                               .With(huxerui::Spacing(8.0F),
-                                     huxerui::Padding(
-                                         huxerui::EdgeInsets::Symmetric(4.0F,
-                                                                         2.0F))),
-                           huxerui::Divider(), std::move(subscriptionList)}
-                    .With(huxerui::Spacing(4.0F),
-                          huxerui::CrossAlign(
-                              huxerui::CrossAxisAlignment::Stretch),
-                          huxerui::Grow(1.0F));
-            }
-        }
-    } else {
-        const std::size_t count = globalRules.Size();
-        if (count == 0) {
-            body = huxerui::Column{
-                       huxerui::Text(Localized("还没有全局路由规则"))
-                           .Style(huxerui::TextStyle{
-                               huxerui::Font::System(font_size::kBody),
-                               theme.colors.on_surface_variant}),
-                   }
-                       .With(huxerui::CrossAlign(
-                                 huxerui::CrossAxisAlignment::Stretch),
-                             huxerui::Grow(1.0F));
-        } else {
-            auto globalList = huxerui::VirtualList(
-                count + (compact ? 1U : 0U),
-                [globalRules, profiles, mono, theme, compact, count,
-                 persistGlobalPolicy, openGlobalRuleEditor, activeConnections, policySaving, coreModel](std::size_t index) -> huxerui::View {
-                    // 与订阅规则相同：只在测量 factory 中声明 Scope。
-                    return huxerui::Scope([=]() -> huxerui::View {
-                      if (compact && index == count) {
-                          return CompactFloatingNavigationFooter().Key("compact-floating-footer");
-                      }
-                      const auto& rule = globalRules[index];
-                      const auto catalog = coreModel->view.Get().core.sourceObjects;
-                      const bool objectExists = rule.targetKind == vpn::TargetKind::Default || (catalog &&
-                          std::ranges::any_of(*catalog, [&](const auto& object) {
-                              return object.sourceId == rule.connectionId && object.kind == rule.targetKind && object.objectId == rule.targetObject;
-                          }));
-                      const bool active = rule.enabled && objectExists && std::ranges::find(activeConnections, rule.connectionId) != activeConnections.end();
-                      const auto key = rule.id.empty() ? "pending-rule-" + std::to_string(index) : rule.id;
-                      return UnifiedListRow(
-                          huxerui::Column {
-                            mono(rule.match == vpn::MatchKind::Any ? huxerui::UseString(Localized("全部流量")) : rule.pattern, theme.colors.on_surface),
-                            mono(huxerui::UseString(LocalizedFormat("{} · {} · 优先级 {}", huxerui::UseString(Localized(vpn::MatchKindName(rule.match))),
-                                             ConnectionName(profiles, rule.connectionId) + (rule.targetObject.empty() ? "" : " / " + rule.targetObject), rule.priority)),
-                                 theme.colors.on_surface_variant),
-                            huxerui::Flow {
-                              huxerui::Text(!rule.enabled ? Localized("已禁用") : active ? Localized("已参与编排") :
-                                  LocalizedFormat("目标不可用/待应用 · {}", huxerui::UseString(Localized(kUnavailableNames[static_cast<std::size_t>(rule.unavailable)]))))
-                                  .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption),
-                                      active ? theme.colors.primary : theme.colors.on_surface_variant}),
-                              huxerui::Text(Localized(rule.tier == vpn::RuleTier::UserOverride ? "全局覆盖" : "来源分流")),
-                              huxerui::Button(Localized(rule.enabled ? "禁用" : "启用")).With(huxerui::Enabled(!policySaving.Get()))
-                                  .OnClick([globalRules, index, persistGlobalPolicy] {
-                                      auto changed = globalRules[index]; changed.enabled = !changed.enabled;
-                                      globalRules.Set(index, std::move(changed)); persistGlobalPolicy();
-                                  }),
-                              huxerui::Button(Localized("上移")).OnClick([globalRules, index, persistGlobalPolicy, policySaving] {
-                                  if (policySaving.Get() || index == 0) return;
-                                  auto previous = globalRules[index - 1]; auto current = globalRules[index];
-                                  globalRules.Set(index - 1, std::move(current)); globalRules.Set(index, std::move(previous));
-                                  persistGlobalPolicy();
-                              }).With(huxerui::Enabled(!policySaving.Get() && index > 0)),
-                              huxerui::Button(Localized("下移")).OnClick([globalRules, index, persistGlobalPolicy, policySaving] {
-                                  if (policySaving.Get() || index + 1 >= globalRules.Size()) return;
-                                  auto next = globalRules[index + 1]; auto current = globalRules[index];
-                                  globalRules.Set(index + 1, std::move(current)); globalRules.Set(index, std::move(next));
-                                  persistGlobalPolicy();
-                              }).With(huxerui::Enabled(!policySaving.Get() && index + 1 < count)),
-                              huxerui::Button(Localized("编辑")).With(huxerui::Enabled(!policySaving.Get())).OnClick([openGlobalRuleEditor, index] {
-                                  openGlobalRuleEditor(static_cast<int>(index));
-                              }),
-                              huxerui::Button(Localized("删除")).With(huxerui::Enabled(!policySaving.Get())).OnClick([globalRules, index, persistGlobalPolicy] {
-                                  if (index < globalRules.Size()) {
-                                      globalRules.Erase(index);
+                auto globalList = huxerui::VirtualList(
+                    count + (compact ? 1U : 0U),
+                    [globalRules, profiles, mono, theme, compact, count,
+                     persistGlobalPolicy, openGlobalRuleEditor, activeConnections, policySaving, coreModel](std::size_t index) -> huxerui::View {
+                        // 与订阅规则相同：只在测量 factory 中声明 Scope。
+                        return huxerui::Scope([=]() -> huxerui::View {
+                          if (compact && index == count) {
+                              return CompactFloatingNavigationFooter().Key("compact-floating-footer");
+                          }
+                          const auto& rule = globalRules[index];
+                          const auto catalog = coreModel->view.Get().core.sourceObjects;
+                          const bool objectExists = rule.targetKind == vpn::TargetKind::Default || (catalog &&
+                              std::ranges::any_of(*catalog, [&](const auto& object) {
+                                  return object.sourceId == rule.connectionId && object.kind == rule.targetKind && object.objectId == rule.targetObject;
+                              }));
+                          const bool active = rule.enabled && objectExists && std::ranges::find(activeConnections, rule.connectionId) != activeConnections.end();
+                          const auto key = rule.id.empty() ? "pending-rule-" + std::to_string(index) : rule.id;
+                          return UnifiedListRow(
+                              huxerui::Column {
+                                mono(rule.match == vpn::MatchKind::Any ? huxerui::UseString(Localized("全部流量")) : rule.pattern, theme.colors.on_surface),
+                                mono(huxerui::UseString(LocalizedFormat("{} · {} · 优先级 {}", huxerui::UseString(Localized(vpn::MatchKindName(rule.match))),
+                                                 ConnectionName(profiles, rule.connectionId) + (rule.targetObject.empty() ? "" : " / " + rule.targetObject), rule.priority)),
+                                     theme.colors.on_surface_variant),
+                                huxerui::Flow {
+                                  huxerui::Text(!rule.enabled ? Localized("已禁用") : active ? Localized("已参与编排") :
+                                      LocalizedFormat("目标不可用/待应用 · {}", huxerui::UseString(Localized(kUnavailableNames[static_cast<std::size_t>(rule.unavailable)]))))
+                                      .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption),
+                                          active ? theme.colors.primary : theme.colors.on_surface_variant}),
+                                  huxerui::Text(Localized(rule.tier == vpn::RuleTier::UserOverride ? "全局覆盖" : "来源分流")),
+                                  huxerui::Button(Localized(rule.enabled ? "禁用" : "启用")).With(huxerui::Enabled(!policySaving.Get()))
+                                      .OnClick([globalRules, index, persistGlobalPolicy] {
+                                          auto changed = globalRules[index]; changed.enabled = !changed.enabled;
+                                          globalRules.Set(index, std::move(changed)); persistGlobalPolicy();
+                                      }),
+                                  huxerui::Button(Localized("上移")).OnClick([globalRules, index, persistGlobalPolicy, policySaving] {
+                                      if (policySaving.Get() || index == 0) return;
+                                      auto previous = globalRules[index - 1]; auto current = globalRules[index];
+                                      globalRules.Set(index - 1, std::move(current)); globalRules.Set(index, std::move(previous));
                                       persistGlobalPolicy();
-                                  }
-                              }),
-                            }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-                          }.With(huxerui::Spacing(6.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-                          key, true, index + 1 < count);
+                                  }).With(huxerui::Enabled(!policySaving.Get() && index > 0)),
+                                  huxerui::Button(Localized("下移")).OnClick([globalRules, index, persistGlobalPolicy, policySaving] {
+                                      if (policySaving.Get() || index + 1 >= globalRules.Size()) return;
+                                      auto next = globalRules[index + 1]; auto current = globalRules[index];
+                                      globalRules.Set(index + 1, std::move(current)); globalRules.Set(index, std::move(next));
+                                      persistGlobalPolicy();
+                                  }).With(huxerui::Enabled(!policySaving.Get() && index + 1 < count)),
+                                  huxerui::Button(Localized("编辑")).With(huxerui::Enabled(!policySaving.Get())).OnClick([openGlobalRuleEditor, index] {
+                                      openGlobalRuleEditor(static_cast<int>(index));
+                                  }),
+                                  huxerui::Button(Localized("删除")).With(huxerui::Enabled(!policySaving.Get())).OnClick([globalRules, index, persistGlobalPolicy] {
+                                      if (index < globalRules.Size()) {
+                                          globalRules.Erase(index);
+                                          persistGlobalPolicy();
+                                      }
+                                  }),
+                                }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+                              }.With(huxerui::Spacing(6.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                              key, true, index + 1 < count);
+                        });
                     });
-                });
-            globalList = std::move(globalList)
-                             .EstimatedItemExtent(116.0F)
-                             .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
-            // 分区组件默认支持滑动（见 ui.h）：列表区左右滑动切回「订阅规则」。
-            if (kSectionTabsSwipeDefault) {
-                globalList =
-                    std::move(globalList)
-                        .On<huxerui::ViewEvents::PointerIntercept>(
-                            SectionTabSwipeHandler(
-                                swipeOrigin, swipeOwned,
-                                [section] { section = 0; }, nullptr));
+                globalList = std::move(globalList)
+                                 .EstimatedItemExtent(116.0F)
+                                 .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
+                body = huxerui::Column{std::move(globalList)}
+                           .With(huxerui::Spacing(8.0F),
+                                 huxerui::CrossAlign(
+                                     huxerui::CrossAxisAlignment::Stretch),
+                                 huxerui::Grow(1.0F));
             }
-            body = huxerui::Column{std::move(globalList)}
-                       .With(huxerui::Spacing(8.0F),
-                             huxerui::CrossAlign(
-                                 huxerui::CrossAxisAlignment::Stretch),
-                             huxerui::Grow(1.0F));
         }
+
+        sectionPages.push_back(huxerui::Column {body}.With(
+            huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+            .Key("rule-section-" + kRuleTabs[page].key));
     }
+    huxerui::View body = SectionTabPages(sectionPages, section.Get(),
+        [section](std::size_t index) { section = index; }, sectionMotion);
 
     // 分区切换与代理页/订阅页共用同一下划线标签栏（SectionTabBar）。
     huxerui::View sectionSwitch = SectionTabBar(
         kRuleTabs, section.Get() == 0 ? "subscription" : "global",
-        [section](const std::string& key) { section = key == "global" ? 1 : 0; });
+        [section](const std::string& key) { section = key == "global" ? 1 : 0; }, sectionMotion);
     huxerui::View addRule =
         section.Get() == 1
             ? huxerui::View{

@@ -1,0 +1,8 @@
+diff --git a/src/runtime/ui_window.cpp b/src/runtime/ui_window.cpp
+--- a/src/runtime/ui_window.cpp
++++ b/src/runtime/ui_window.cpp
+@@ -760 +760,3 @@
+-  return subtree_dirty;
++  // Retain dirty state inside inactive pages for their next measurement, but do not invalidate the visible ancestor
++  // path every frame for an unrealized viewport that cannot be cleared until its page participates again.
++  return subtree_dirty && node.participates_in_layout;

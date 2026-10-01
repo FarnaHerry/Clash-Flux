@@ -141,6 +141,10 @@ jobs:
           # inheriting popover viewport clamping and side-flipping behavior.
           git -C third_party/huxerui apply --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
+          git -C third_party/huxerui apply --unidiff-zero \
+            "$GITHUB_WORKSPACE/cmake/patches/huxerui-pager-retarget.patch"
+          git -C third_party/huxerui apply --unidiff-zero \
+            "$GITHUB_WORKSPACE/cmake/patches/huxerui-hidden-virtual-layout.patch"
 
       - name: Install dependencies
         run: |
@@ -277,6 +281,10 @@ jobs:
           git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
           git -C third_party/huxerui apply --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
+          git -C third_party/huxerui apply --unidiff-zero \
+            "$GITHUB_WORKSPACE/cmake/patches/huxerui-pager-retarget.patch"
+          git -C third_party/huxerui apply --unidiff-zero \
+            "$GITHUB_WORKSPACE/cmake/patches/huxerui-hidden-virtual-layout.patch"
 
       - name: Ensure CMake >= 4.4 and Ninja
         shell: pwsh
@@ -459,6 +467,10 @@ jobs:
           # Keep drag feedback anchored to the grab point on every platform edge.
           git -C third_party/huxerui apply --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
+          git -C third_party/huxerui apply --unidiff-zero \
+            "$GITHUB_WORKSPACE/cmake/patches/huxerui-pager-retarget.patch"
+          git -C third_party/huxerui apply --unidiff-zero \
+            "$GITHUB_WORKSPACE/cmake/patches/huxerui-hidden-virtual-layout.patch"
 
       - name: Install dependencies (brew llvm + openssl)
         run: |
@@ -559,6 +571,10 @@ jobs:
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-window-p0960.patch"
           git -C third_party/huxerui apply --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
+          git -C third_party/huxerui apply --unidiff-zero \
+            "$GITHUB_WORKSPACE/cmake/patches/huxerui-pager-retarget.patch"
+          git -C third_party/huxerui apply --unidiff-zero \
+            "$GITHUB_WORKSPACE/cmake/patches/huxerui-hidden-virtual-layout.patch"
 
       - name: Install CMake, Ninja, and LLVM
         run: |
@@ -696,6 +712,10 @@ jobs:
           git -C huxerui-source checkout "$HUXERUI_COMMIT"
           git -C huxerui-source apply --unidiff-zero \
             "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
+          git -C huxerui-source apply --unidiff-zero \
+            "$GITHUB_WORKSPACE/cmake/patches/huxerui-pager-retarget.patch"
+          git -C huxerui-source apply --unidiff-zero \
+            "$GITHUB_WORKSPACE/cmake/patches/huxerui-hidden-virtual-layout.patch"
           test -f huxerui-source/CMakeLists.txt
           test -f huxerui-source/platform/android/huxerui/build.gradle
           echo "HUXERUI_HOME=$PWD/huxerui-sdk" >> "$GITHUB_ENV"

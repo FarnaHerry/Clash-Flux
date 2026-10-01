@@ -55,15 +55,13 @@ int levelRank(const std::string& level) {
     auto coreEntries = huxerui::UseStateList<LogEntry>();
     auto applicationEntries = huxerui::UseStateList<LogEntry>();
     auto source = huxerui::UseState<std::size_t>(0);
+    auto sectionMotion = UseSectionTabMotion();
     auto filter = huxerui::UseState<std::size_t>(0);
     // 内核日志推送流是否就绪：断线（IX 会自动重连）时给出可见状态，而不是静默
     // 停更。
     auto streamReady = huxerui::UseState(false);
-    // 来源分区滑动切换的手势状态（处理器与阈值见 common.cpp SectionTabSwipeHandler）。
-    auto swipeOrigin =
-        huxerui::UseState<huxerui::Point>(huxerui::Point{0.0F, 0.0F});
-    auto swipeOwned = huxerui::UseState(false);
-    const auto scroll = huxerui::UseScrollController();
+    const auto coreScroll = huxerui::UseScrollController();
+    const auto applicationScroll = huxerui::UseScrollController();
 
     huxerui::Lifecycle(
         [tasks, coreEntries, applicationEntries, streamReady] {
@@ -129,66 +127,61 @@ int levelRank(const std::string& level) {
         },
         0);
 
-    // 过滤后的索引视图。
-    const auto entries = source.Get() == 0 ? coreEntries : applicationEntries;
-    std::vector<std::size_t> visible;
-    for (std::size_t i = 0; i < entries.Size(); ++i) {
-        if (filter.Get() == 0 ||
-            entries[i].level == static_cast<int>(filter.Get())) {
-            visible.push_back(i);
-        }
-    }
-
-    huxerui::View body = huxerui::Column {
-        huxerui::Text(Localized(source.Get() == 0 ? "暂无内核日志" : "暂无应用日志"))
-            .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
-                                      theme.colors.on_surface_variant}),
-    }.With(huxerui::Padding(32.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
-
-    const bool compact =
-        huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
-
-    // 不可见时只保留本页 State/Lifecycle，不构建内容：桌面 IndexedPages 让七个
-    // 一级页同帧参与测量，隐藏页（日志/连接有推送流更新）的重子树会拖慢每一次渲染。
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     if (!active) return huxerui::View{huxerui::Row{}}.Key("logs-idle");
 
-    if (!visible.empty()) {
-        const std::size_t visibleCount = visible.size();
-        huxerui::View list =
-            huxerui::VirtualList(
-                visibleCount + (compact ? 1U : 0U),
-                [entries, visible, theme, compact, visibleCount](
-                    std::size_t index) -> huxerui::View {
-                    if (compact && index == visibleCount) {
-                        return CompactFloatingNavigationFooter()
-                            .Key("compact-floating-footer");
-                    }
-                    const std::size_t sourceIndex = visible[index];
-                    const std::string& text = entries[sourceIndex].text;
-                    return UnifiedListRow(
-                        huxerui::Text(text).Style(huxerui::TextStyle{
-                            huxerui::Font::Monospace(font_size::kMonoBody),
-                            theme.colors.on_surface}),
-                        std::format("log-{}", sourceIndex), compact,
-                        index + 1 < visibleCount);
-                })
-                .EstimatedItemExtent(compact ? 38.0F : 34.0F)
-                .Controller(scroll)
-                .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
-        // 分区组件默认支持滑动（见 ui.h）：日志区左右滑动在内核/应用日志间切换。
-        if (kSectionTabsSwipeDefault) {
-            const bool onCore = source.Get() == 0;
-            list = std::move(list).On<huxerui::ViewEvents::PointerIntercept>(
-                SectionTabSwipeHandler(
-                    swipeOrigin, swipeOwned,
-                    onCore ? nullptr
-                           : std::function<void()>{[source] { source = 0; }},
-                    onCore ? std::function<void()>{[source] { source = 1; }}
-                           : nullptr));
+    std::vector<huxerui::View> sourcePages;
+    for (std::size_t page = 0; page < kSourceTabs.size(); ++page) {
+        // 每个来源保留自己的过滤列表与滚动连接。
+        const auto scroll = page == 0 ? coreScroll : applicationScroll;
+        const auto entries = page == 0 ? coreEntries : applicationEntries;
+        std::vector<std::size_t> visible;
+        for (std::size_t i = 0; i < entries.Size(); ++i) {
+            if (filter.Get() == 0 ||
+                entries[i].level == static_cast<int>(filter.Get())) {
+                visible.push_back(i);
+            }
         }
-        body = std::move(list);
+
+        huxerui::View body = huxerui::Column {
+            huxerui::Text(Localized(page == 0 ? "暂无内核日志" : "暂无应用日志"))
+                .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
+                                          theme.colors.on_surface_variant}),
+        }.With(huxerui::Padding(32.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+
+        if (!visible.empty()) {
+            const std::size_t visibleCount = visible.size();
+            huxerui::View list =
+                huxerui::VirtualList(
+                    visibleCount + (compact ? 1U : 0U),
+                    [entries, visible, theme, compact, visibleCount](
+                        std::size_t index) -> huxerui::View {
+                        if (compact && index == visibleCount) {
+                            return CompactFloatingNavigationFooter()
+                                .Key("compact-floating-footer");
+                        }
+                        const std::size_t sourceIndex = visible[index];
+                        const std::string& text = entries[sourceIndex].text;
+                        return UnifiedListRow(
+                            huxerui::Text(text).Style(huxerui::TextStyle{
+                                huxerui::Font::Monospace(font_size::kMonoBody),
+                                theme.colors.on_surface}),
+                            std::format("log-{}", sourceIndex), compact,
+                            index + 1 < visibleCount);
+                    })
+                    .EstimatedItemExtent(compact ? 38.0F : 34.0F)
+                    .Controller(scroll)
+                    .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
+            body = std::move(list);
+        }
+
+        sourcePages.push_back(huxerui::Column {body}.With(
+            huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+            .Key("log-source-" + kSourceTabs[page].key));
     }
+    huxerui::View body = SectionTabPages(sourcePages, source.Get(),
+        [source](std::size_t index) { source = index; }, sectionMotion);
 
     huxerui::View filterControl = huxerui::Select(
                                     kLevelNames, filter.Get(),
@@ -204,7 +197,7 @@ int levelRank(const std::string& level) {
         kSourceTabs, source.Get() == 0 ? "core" : "application",
         [source](const std::string& key) {
             source = key == "application" ? 1 : 0;
-        });
+        }, sectionMotion);
     huxerui::View clearControl = huxerui::IconButton(app::images::clear_all, Localized("清空日志"))
         .With(huxerui::Tooltip(Localized("清空日志")))
         .OnClick([coreEntries, applicationEntries] {
