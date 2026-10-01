@@ -2,7 +2,7 @@
 // 此文件由 profiles_page.cpp 在 ProfilesPage 函数体内包含。
 
     // 订阅按类型分区：与代理页/规则页共用 SectionTabBar（统一样式）；每个
-    // 类型一页，IndexedPages 保留各页滚动位置、只测量当前页。不再把分组头
+    // 类型一页，Pager 保留各页滚动位置并负责跟手切换。不再把分组头
     // 混排在同一张网格里。
     std::vector<std::string> profileTypes{"remote", "local", "pptp", "openvpn"};
     for (const db::Profile& profile : profiles) {
@@ -51,7 +51,6 @@
         for (std::size_t index = 0; index < profiles.Size(); ++index) {
             if (profiles[index].type == type) typeIndices.push_back(index);
         }
-        const bool selectedPage = page == selectedType;
         const std::size_t typeCount = typeIndices.size();
         huxerui::View grid = huxerui::VirtualGrid(
                                  typeCount + (compact ? 1U : 0U),
@@ -107,60 +106,21 @@
                                  .RowSpacing(kCardGap)
                                  .ColumnSpacing(kCardGap)
                                  .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
-        // 分区组件默认支持滑动（见 ui.h）；与代理页/规则页共用 SectionTabSwipeHandler。
-        // 手机端「订阅」是 Pager 的一级页，处理器会在 6pt 内抢先认领指针会话，因此
-        // 页内滑动与整页翻不冲突；两端没有相邻分区时不认领，让 Pager 整页翻
-        // （见 section_swipe.h）。
-        if (kSectionTabsSwipeDefault) {
-            std::function<void()> swipePrev;
-            if (page > 0) {
-                swipePrev = [activeType, visibleTypes, page] {
-                    activeType = visibleTypes[page - 1];
-                };
-            }
-            std::function<void()> swipeNext;
-            if (page + 1 < visibleTypes.size()) {
-                swipeNext = [activeType, visibleTypes, page] {
-                    activeType = visibleTypes[page + 1];
-                };
-            }
-            grid = std::move(grid).On<huxerui::ViewEvents::PointerIntercept>(
-                SectionTabSwipeHandler(swipeOrigin, swipeOwned,
-                                       std::move(swipePrev),
-                                       std::move(swipeNext)));
-        }
-        // 与代理页相同的换页过渡：透明度 + 横向轻移。
-        typePages.push_back(
-            huxerui::Column {std::move(grid)}
-                .With(huxerui::Grow(1.0F),
-                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
-                      huxerui::Transition{
-                          huxerui::AnimateTo(
-                              selectedPage ? 1.0F : 0.0F,
-                              huxerui::TweenSpec{
-                                  .duration = theme.motion.reduced_motion
-                                                  ? 0.0
-                                                  : theme.motion.normal,
-                                  .easing = huxerui::Easing::EaseOut})}
-                          .Opacity(0.82F, 1.0F)
-                          .Offset({12.0F, 0.0F}, {}))
-                .Key("type-page-" + type));
+        typePages.push_back(huxerui::Column {grid}.With(
+            huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+            .Key("type-page-" + type));
     }
 
-    // 无订阅时（首帧镜像尚未同步、或库里确实为空）不能构造 IndexedPages：
-    // 它要求至少一页，否则抛 invalid_argument 直接终止进程。下面的
-    // page 已经在 profiles.Empty() 时用空状态视图替换掉这里的内容。
-    huxerui::View profileBody = huxerui::Column{};
-    if (!typePages.empty()) {
-        profileBody = huxerui::IndexedPages(std::move(typePages), selectedType)
-                          .With(huxerui::Grow(1.0F));
-    }
+    huxerui::View profileBody = SectionTabPages(typePages, selectedType,
+        [activeType, visibleTypes](std::size_t index) {
+            if (index < visibleTypes.size()) activeType = visibleTypes[index];
+        }, sectionMotion);
     if (!typeTabs.empty()) {
         profileBody = huxerui::Column {
             SectionTabBar(typeTabs, currentType,
                           [activeType](const std::string& key) {
                               activeType = key;
-                          }),
+                          }, sectionMotion),
             std::move(profileBody),
         }.With(huxerui::Spacing(theme.spacing.small), huxerui::Grow(1.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));

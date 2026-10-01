@@ -241,12 +241,6 @@ constexpr float kProxyNodeWidth = 225.0F;
 // 延迟槽能放下的字符数（"测速中…"/"99999 ms"），超出截断成省略号。
 constexpr std::size_t kNodeMetaChars = 8;
 
-// 左右滑动切换分组的处理器与阈值由 SectionTabSwipeHandler（common.cpp）统一提供，
-// 代理/订阅/规则页一致；「手机端在 Pager 里也能局部切换」的关键在于它 6pt 就抢先
-// 认领指针会话（早于 Pager 的整页拖动，见 section_swipe.h），并且在第一个/最后一个
-// 分组时主动不认领，把手势让回 Pager 整页翻。这里给页面挂的是内容网格，所以标签栏
-// 与页面留白上的横向拖动仍然是整页翻。
-
 // 节点矩形卡：内部左右对齐——左侧名称单行（溢出省略号），右侧写延迟
 // （组类型节点写「组·分支当前选中」），延迟按区间着色；选中态 primary 底。
 // 宽度由 VirtualGrid 均分，高度由 EstimatedRowExtent 提供估计。
@@ -484,6 +478,7 @@ std::function<void()> NodeSelectAction(
     auto groups = huxerui::UseStateList<ProxyGroup>();
     auto coreState = huxerui::UseState<core::CoreState>(core::CoreState::Stopped);
     auto mode = huxerui::UseState<std::string>("rule");
+    auto sectionMotion = UseSectionTabMotion();
     auto modePending = huxerui::UseState(false);
     auto testGeneration = huxerui::UseState(0);
     auto testGroup = huxerui::UseState<std::string>("");
@@ -491,10 +486,6 @@ std::function<void()> NodeSelectAction(
     // 全局模式 path[0] = GLOBAL 或平台返回的实际可选组；后续元素 = 逐级点入的嵌套子组。
     auto rulePath = huxerui::UseState<std::vector<std::string>>({});
     auto globalPath = huxerui::UseState<std::vector<std::string>>({});
-    auto groupDirection = huxerui::UseState(0);
-    // 横向滑动：按下点与"是否已认领本次指针会话"。
-    auto swipeOrigin = huxerui::UseState<huxerui::Point>(huxerui::Point{0.0F, 0.0F});
-    auto swipeOwned = huxerui::UseState(false);
     // 已经投影过的快照原文：只在内容变化时重新投影（模型的 State 去重已保证
     // 通知只在内容变化时发生）。
     auto parsedLabels = huxerui::UseState<std::map<std::string, std::string>>({});
@@ -678,16 +669,14 @@ std::function<void()> NodeSelectAction(
 
     // 分组标签与左右滑动直接更新路径，让选中态和内容在同一帧切换。
     const std::function<void(const std::string&)> selectGroup =
-        [activePath, groupDirection, tabNames, selectedRoot](const std::string& name) {
+        [activePath, tabNames, selectedRoot](const std::string& name) {
             const auto& latestPath = activePath.Get();
             const std::string from = !latestPath.empty() &&
                                              std::ranges::find(tabNames, latestPath.front()) != tabNames.end()
                                          ? latestPath.front() : selectedRoot;
             if (from == name) return;
-            const auto previous = std::ranges::find(tabNames, from);
             const auto next = std::ranges::find(tabNames, name);
             if (next == tabNames.end()) return;
-            groupDirection = previous == tabNames.end() ? 0 : (next > previous ? 1 : -1);
             activePath = std::vector<std::string>{name};
         };
 
@@ -707,9 +696,8 @@ std::function<void()> NodeSelectAction(
 
     // 一个根分组一页。VirtualGrid 直接用索引读取组节点，不再为所有组预先
     // 分配完整的 ProxyItem 与 span 数组；只有视口附近的节点会被构造为卡片。
-    // 只为**当前 tab**构造页面并直接挂载（不再套 IndexedPages：它给子页无界高度，
-    // 内层 VirtualGrid 会因此全量构建——真机实测大组 53ms/帧、小组 6ms/帧）；
-    // 滑动手势在内容区自行识别。
+    // 每个根组仅声明轻量虚拟网格；Pager 提供有界视口并只测量参与显示的页。
+    // 不给各页叠加单独入场动画，避免与 Pager 的完整出入场轨道冲突。
     constexpr std::size_t kCompactFooterItems = 2;
     std::vector<huxerui::View> groupPages;
     groupPages.reserve(rootGroups.size());
@@ -719,15 +707,6 @@ std::function<void()> NodeSelectAction(
         const bool selectedPage = page == selectedTab;
         const ProxyGroup* contentGroup =
             (selectedPage && current != nullptr) ? current : &rootGroup;
-
-        // 只为**当前 tab**构造真正的页面：以前每个根组都建一个 VirtualGrid 并
-        // 交给 IndexedPages 保持挂载，几十个组时会同帧参与组合。其余页留空占位，
-        // 切组时再造（切组会重建当前页，滚动位置不再跨组保留）。
-        if (!selectedPage) {
-            groupPages.push_back(huxerui::View{huxerui::Row{}}.Key(
-                "group-page-idle-" + rootGroup.name));
-            continue;
-        }
 
         const std::string contentGroupName = contentGroup->name;
         const std::size_t nodeCount = contentGroup->nodes.size();
@@ -790,31 +769,9 @@ std::function<void()> NodeSelectAction(
                                  .With(huxerui::Grow(1.0F),
                                        huxerui::ScrollBar())
                                  .Key("group-grid-" + rootGroup.name);
-        // 页内分区滑动：两端没有相邻分组时 onPrev/onNext 留空，处理器据此不认领，
-        // 手势交给外层 Pager 整页翻（见 section_swipe.h）。处理器/阈值与订阅页、
-        // 规则页共用。
-        if (kSectionTabsSwipeDefault) {
-            std::function<void()> swipePrev;
-            if (selectedTab > 0) {
-                swipePrev = [selectGroup, tabNames, selectedTab] {
-                    selectGroup(tabNames[selectedTab - 1]);
-                };
-            }
-            std::function<void()> swipeNext;
-            if (selectedTab + 1 < tabNames.size()) {
-                swipeNext = [selectGroup, tabNames, selectedTab] {
-                    selectGroup(tabNames[selectedTab + 1]);
-                };
-            }
-            grid = std::move(grid).On<huxerui::ViewEvents::PointerIntercept>(
-                SectionTabSwipeHandler(swipeOrigin, swipeOwned,
-                                       std::move(swipePrev),
-                                       std::move(swipeNext)));
-        }
-
-        groupPages.push_back(
-            ProxyGroupPage(grid, rootSelected ? groupDirection.Get() : 0)
-                .Key("group-page-" + rootGroup.name));
+        groupPages.push_back(huxerui::Column {grid}.With(
+            huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+            .Key("group-page-" + rootGroup.name));
     }
 
     huxerui::View body;
@@ -842,15 +799,9 @@ std::function<void()> NodeSelectAction(
                   huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     } else {
-    // 不套 IndexedPages：它给子页的约束是无界高度，内层 VirtualGrid 因此拿不到
-    // 有界视口，只能**全量构建**该组所有卡片——真机实测同一个页面里
-    // 大组 53ms/帧、小组 6ms/帧，就是这个原因。页面已经是"只为当前 tab 建页"，
-    // 直接挂载当前页即可恢复虚拟化。
-    body = groupPages.empty()
-               ? huxerui::View{huxerui::Column{}.With(huxerui::Grow(1.0F))}
-               : std::move(groupPages[std::min(selectedTab,
-                                               groupPages.size() - 1)])
-                     .With(huxerui::Grow(1.0F));
+        body = SectionTabPages(groupPages, selectedTab, [selectGroup, tabNames](std::size_t index) {
+            if (index < tabNames.size()) selectGroup(tabNames[index]);
+        }, sectionMotion);
     }
 
     // 标签栏固定在页面顶部（不随节点列表滚动），只有选中分组的节点参与滚动。
@@ -882,7 +833,7 @@ std::function<void()> NodeSelectAction(
                 groupHasFidelityNote(name) ? std::string{"!"} : std::string{}});
         }
         columnChildren.push_back(
-            SectionTabBar(groupTabs, selectedRoot, selectGroup));
+            SectionTabBar(groupTabs, selectedRoot, selectGroup, sectionMotion));
     }
     huxerui::View content = std::move(body);
     if (!columnChildren.empty()) {

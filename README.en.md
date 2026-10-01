@@ -1,6 +1,6 @@
 # Clash-Flux
 
-See the [v0.3.14 release notes](docs/releases/v0.3.14.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.15 release notes](docs/releases/v0.3.15.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -25,8 +25,9 @@ application-managed settings before being passed to sing-box.
   validation, matching the system browser's trust decisions.
 - Proxies: horizontally scrollable group tabs with a primary-color underline;
   switch groups by clicking, choosing from the tab menu or swiping the content.
-  Content enters from the selected direction, and the tab bar reveals the selected
-  tab. Switch nodes and test a whole group's latency, with colored delay values and
+  The underline and tab strip follow content swipes, keeping the destination tab near
+  the center. Content rebounds when canceled; returning to a group preserves its scroll
+  position. Switch nodes and test a whole group's latency, with colored delay values and
   a test button at the bottom right.
 - Rules, connections and logs: view each subscription's rules; assign domains,
   IP addresses and CIDRs to different connections through global routing rules;
@@ -152,6 +153,10 @@ before delivering or validating functionality:
 cmake --build build --target clash-flux
 ./run.sh --version
 ```
+
+Section content uses the framework Pager for direct dragging, rebound, and retained scroll positions.
+Source builds automatically apply the Pager retargeting and hidden virtual page layout patches; all CI platforms apply them as well.
+See [UI development notes](docs/ui-development.md).
 
 By default, `run.sh` starts the existing `build/clash-flux` executable and does not
 build it implicitly. A failed build must not be reported as complete. For another

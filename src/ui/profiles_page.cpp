@@ -72,10 +72,7 @@ namespace clashflux::ui {
     // 当前选中的类型分区标签（remote/local/pptp/openvpn/…）；无效或为空时
     // 回落到第一个有订阅的类型。
     auto activeType = huxerui::UseState<std::string>("");
-    // 分区滑动切换的手势状态（处理器与阈值见 common.cpp SectionTabSwipeHandler）。
-    auto swipeOrigin = huxerui::UseState<huxerui::Point>(huxerui::Point{0.0F, 0.0F});
-    auto swipeOwned = huxerui::UseState(false);
-
+    auto sectionMotion = UseSectionTabMotion();
     // ---- 新建订阅弹窗 ----
     auto newName = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newUrl = huxerui::UseState(huxerui::TextEditingValue{""});

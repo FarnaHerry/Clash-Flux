@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.14 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.15 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -182,6 +182,45 @@ if (CLASHFLUX_HUXERUI_SOURCE_DIR)
     if (CLASHFLUX_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
         # 测试用 huxerui::testing::UiTest 在无窗口 Runtime 里驱动 Application 与任务。
         set(HUXERUI_BUILD_TESTING_LIBRARY ON CACHE BOOL "" FORCE)
+    endif ()
+    # Native Pager retargeting must retain a slot for the departing peer. Apply
+    # before adding HuxerUI, also for explicit HUXERUI_HOME source checkouts.
+    set(CLASHFLUX_PAGER_PATCH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/huxerui-pager-retarget.patch")
+    execute_process(COMMAND git apply --reverse --check --unidiff-zero "${CLASHFLUX_PAGER_PATCH}"
+        WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SOURCE_DIR}"
+        RESULT_VARIABLE CLASHFLUX_PAGER_PATCH_APPLIED ERROR_QUIET)
+    if (NOT CLASHFLUX_PAGER_PATCH_APPLIED EQUAL 0)
+        execute_process(COMMAND git apply --check --unidiff-zero "${CLASHFLUX_PAGER_PATCH}"
+            WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SOURCE_DIR}"
+            RESULT_VARIABLE CLASHFLUX_PAGER_PATCH_CHECK ERROR_VARIABLE CLASHFLUX_PAGER_PATCH_ERROR)
+        if (NOT CLASHFLUX_PAGER_PATCH_CHECK EQUAL 0)
+            message(FATAL_ERROR "HuxerUI Pager patch is incompatible with this source: ${CLASHFLUX_PAGER_PATCH_ERROR}")
+        endif ()
+        execute_process(COMMAND git apply --unidiff-zero "${CLASHFLUX_PAGER_PATCH}"
+            WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SOURCE_DIR}"
+            RESULT_VARIABLE CLASHFLUX_PAGER_PATCH_RESULT ERROR_VARIABLE CLASHFLUX_PAGER_PATCH_ERROR)
+        if (NOT CLASHFLUX_PAGER_PATCH_RESULT EQUAL 0)
+            message(FATAL_ERROR "HuxerUI Pager patch failed: ${CLASHFLUX_PAGER_PATCH_ERROR}")
+        endif ()
+    endif ()
+    # Hidden virtual pages retain pending viewport work without invalidating visible layout every frame.
+    set(CLASHFLUX_HIDDEN_VIRTUAL_PATCH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/huxerui-hidden-virtual-layout.patch")
+    execute_process(COMMAND git apply --reverse --check --unidiff-zero "${CLASHFLUX_HIDDEN_VIRTUAL_PATCH}"
+        WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SOURCE_DIR}"
+        RESULT_VARIABLE CLASHFLUX_HIDDEN_VIRTUAL_PATCH_APPLIED ERROR_QUIET)
+    if (NOT CLASHFLUX_HIDDEN_VIRTUAL_PATCH_APPLIED EQUAL 0)
+        execute_process(COMMAND git apply --check --unidiff-zero "${CLASHFLUX_HIDDEN_VIRTUAL_PATCH}"
+            WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SOURCE_DIR}"
+            RESULT_VARIABLE CLASHFLUX_HIDDEN_VIRTUAL_PATCH_CHECK ERROR_VARIABLE CLASHFLUX_HIDDEN_VIRTUAL_PATCH_ERROR)
+        if (NOT CLASHFLUX_HIDDEN_VIRTUAL_PATCH_CHECK EQUAL 0)
+            message(FATAL_ERROR "HuxerUI hidden virtual layout patch is incompatible: ${CLASHFLUX_HIDDEN_VIRTUAL_PATCH_ERROR}")
+        endif ()
+        execute_process(COMMAND git apply --unidiff-zero "${CLASHFLUX_HIDDEN_VIRTUAL_PATCH}"
+            WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SOURCE_DIR}"
+            RESULT_VARIABLE CLASHFLUX_HIDDEN_VIRTUAL_PATCH_RESULT ERROR_VARIABLE CLASHFLUX_HIDDEN_VIRTUAL_PATCH_ERROR)
+        if (NOT CLASHFLUX_HIDDEN_VIRTUAL_PATCH_RESULT EQUAL 0)
+            message(FATAL_ERROR "HuxerUI hidden virtual layout patch failed: ${CLASHFLUX_HIDDEN_VIRTUAL_PATCH_ERROR}")
+        endif ()
     endif ()
     add_subdirectory("${CLASHFLUX_HUXERUI_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/huxerui-sdk"
         EXCLUDE_FROM_ALL)
@@ -806,17 +845,8 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         target_compile_features(test_smoke PRIVATE cxx_std_23)
         add_test(NAME smoke COMMAND test_smoke)
 
-        # 页内分区滑动的判定规则：纯函数，不依赖 huxerui 运行时，因此能单独测。
-        add_executable(test_section_swipe tests/test_section_swipe.cpp)
-        target_compile_features(test_section_swipe PRIVATE cxx_std_23)
-        if (MSVC)
-            # 断言文本是 UTF-8，MSVC 默认按本地代码页解析源码。
-            target_compile_options(test_section_swipe PRIVATE /utf-8)
-        endif ()
-        add_test(NAME section_swipe COMMAND test_section_swipe)
-
-        # 页内分区切换动画：用 huxerui 的无窗口 Runtime 驱动真实帧 + 虚拟时间，
-        # 验证「只建当前页 + 页 Key 随分区变化」时换页动画真的会播。
+        # 页内分区切换：无窗口 Runtime 验证生产 Pager 的跟手、回弹、嵌套边界、
+        # 快速反向切换、滚动保留以及大组的有界虚拟化。
         if (TARGET HuxerUI::testing)
             add_executable(test_page_transition tests/test_page_transition.cpp src/ui/section_tabs.cpp)
             target_include_directories(test_page_transition PRIVATE src/ui)
