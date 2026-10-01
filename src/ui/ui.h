@@ -27,6 +27,34 @@ inline constexpr float kTopNavigationItemVerticalMargin =
 inline constexpr float kTopNavigationRailWidth =
     kTopNavigationIndicatorSize + 2.0F * kTopNavigationSpacing;
 
+// Resolve app-authored text through HuxerUI's locale-aware resource service.
+// The same UTF-8 phrase hashes to the resource key emitted in strings/*.properties.
+inline huxerui::StringResource LocalizedResource(std::string_view source) {
+    // Stable across platforms and builds: catalogs use msg_<FNV-1a-64(source UTF-8)>.
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (const unsigned char byte : source) {
+        hash ^= byte;
+        hash *= 1099511628211ULL;
+    }
+    constexpr char digits[] = "0123456789abcdef";
+    std::string key = "strings/msg_0000000000000000";
+    for (int index = 0; index < 16; ++index) {
+        key[12 + index] = digits[(hash >> ((15 - index) * 4)) & 0x0fU];
+    }
+    return huxerui::StringResource{"app", key};
+}
+
+inline huxerui::StringVariant Localized(std::string_view source) {
+    return LocalizedResource(source);
+}
+
+template <class... Arguments>
+huxerui::StringVariant LocalizedFormat(std::string_view source,
+                                       Arguments&&... arguments) {
+    return huxerui::StringVariant::Format(
+        LocalizedResource(source), std::forward<Arguments>(arguments)...);
+}
+
 // Android VPN 隧道开关（设置页 VPN 卡 → VpnService consent/前台服务）。
 // 这些是 Android bridge 的平台前缀函数；桌面目标提供空操作桩，避免通用
 // 组件在控件内部再写平台分支。
@@ -297,7 +325,7 @@ huxerui::View PasswordField(
 
 // 页面骨架（一级岛）：标题行（标题 + 右缘动作）+ 内容区，整体为 16pt 圆角岛，
 // 落在窗口海面底色上（岛间缝隙经壳层 Spacing 透出）。
-huxerui::View PageScaffold(const std::string& title, huxerui::View actions,
+huxerui::View PageScaffold(huxerui::StringVariant title, huxerui::View actions,
                            huxerui::View content,
                            bool inlineCompactActions = false);
 huxerui::View SecondaryPageScaffold(huxerui::View title,
@@ -305,7 +333,7 @@ huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     std::function<void()> onBack,
                                     bool hideBack = false);
 huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
-                              const std::string& placeholder,
+                              huxerui::StringVariant placeholder,
                               std::function<void()> onClose);
 
 // 卡片容器（二级岛）：raised 表面 + 8pt 圆角 + 内边距。outlined=false 去掉
@@ -352,13 +380,14 @@ huxerui::View UnifiedListRow(huxerui::View content, std::string key,
                              bool compact = false, bool divider = true);
 
 // 通用设置排版部件；这里不做任何平台判断。
-huxerui::View SettingRow(const std::string& label, const std::string& hint,
+huxerui::View SettingRow(huxerui::StringVariant label,
+                         huxerui::StringVariant hint,
                          huxerui::View control);
 // Switch 专用设置行：主名称与小字描述在左侧列，开关固定在右侧。
-huxerui::View SettingSwitchRow(const std::string& label,
-                               const std::string& hint,
+huxerui::View SettingSwitchRow(huxerui::StringVariant label,
+                               huxerui::StringVariant hint,
                                huxerui::View control, bool danger = false);
-huxerui::View SectionTitle(const std::string& title);
+huxerui::View SectionTitle(huxerui::StringVariant title);
 
 // 二级分区标签栏（全项目统一的页内分区切换，实现与样式说明见 common.cpp）：
 // 代理页分组、规则页「订阅规则/全局路由」、订阅页类型分区共用。key 参与
@@ -366,7 +395,7 @@ huxerui::View SectionTitle(const std::string& title);
 // label 之后，例如被 sing-box 降级的策略组），留空即无角标。
 struct SectionTab {
     std::string key;
-    std::string label;
+    huxerui::StringVariant label;
     std::string badge;
 };
 huxerui::View SectionTabBar(const std::vector<SectionTab>& tabs,

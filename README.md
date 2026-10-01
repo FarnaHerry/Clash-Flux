@@ -1,5 +1,7 @@
 # Clash-Flux
 
+版本更新见 [v0.3.14 发布说明](docs/releases/v0.3.14.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+
 简体中文 | [English](README.en.md)
 
 Clash-Flux 是一个使用 C++23 和 HuxerUI 构建的全平台代理客户端，复刻 Clash Verge Rev
@@ -213,7 +215,7 @@ GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议�
 |-----|--------|------|
 | build-linux-x86_64 | ubuntu 容器 + clang-21/libc++ | 正式 |
 | build-linux-arm64 | ubuntu-24.04-arm 原生 | 实验性 |
-| build-windows-x86_64 | MSVC + choco OpenSSL + HuxerUI 安装器 | 正式 |
+| build-windows-x86_64 | MSVC + runner 预装 OpenSSL + HuxerUI 安装器 | 正式 |
 | build-windows-arm64 | windows-11-arm + vcpkg OpenSSL | 实验性 |
 | build-macos-arm64 | macos-15 + brew LLVM | 实验性 |
 | build-macos-x86_64 | macos-13 + brew LLVM | 实验性 |

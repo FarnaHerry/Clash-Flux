@@ -31,8 +31,8 @@ constexpr std::size_t kMaxLines = 800;
 // 过滤级别：0=全部 1=信息 2=警告 3=错误 4=调试。
 const std::vector<std::string> kLevelNames{"全部", "信息", "警告", "错误", "调试"};
 // 日志来源分区：key 参与标签选中匹配，label 是展示文本（见 SectionTabBar）。
-const std::vector<SectionTab> kSourceTabs{{"core", "内核日志"},
-                                          {"application", "应用日志"}};
+const std::vector<SectionTab> kSourceTabs{{"core", Localized("内核日志")},
+                                          {"application", Localized("应用日志")}};
 
 struct LogEntry {
     std::string text;
@@ -140,7 +140,7 @@ int levelRank(const std::string& level) {
     }
 
     huxerui::View body = huxerui::Column {
-        huxerui::Text(source.Get() == 0 ? "暂无内核日志" : "暂无应用日志")
+        huxerui::Text(Localized(source.Get() == 0 ? "暂无内核日志" : "暂无应用日志"))
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
                                       theme.colors.on_surface_variant}),
     }.With(huxerui::Padding(32.0F),
@@ -193,7 +193,7 @@ int levelRank(const std::string& level) {
     huxerui::View filterControl = huxerui::Select(
                                     kLevelNames, filter.Get(),
                                     [](const std::string& name) {
-                                        return huxerui::Text(name);
+                                        return huxerui::Text(Localized(name));
                                     })
                                     .OnChanged([filter](std::size_t idx) {
                                         filter = idx;
@@ -205,8 +205,8 @@ int levelRank(const std::string& level) {
         [source](const std::string& key) {
             source = key == "application" ? 1 : 0;
         });
-    huxerui::View clearControl = huxerui::IconButton(app::images::clear_all, "清空日志")
-        .With(huxerui::Tooltip("清空日志"))
+    huxerui::View clearControl = huxerui::IconButton(app::images::clear_all, Localized("清空日志"))
+        .With(huxerui::Tooltip(Localized("清空日志")))
         .OnClick([coreEntries, applicationEntries] {
             coreEntries.Clear();
             applicationEntries.Clear();
@@ -217,7 +217,8 @@ int levelRank(const std::string& level) {
         });
     huxerui::View actions = huxerui::Row {
         std::move(filterControl),
-        huxerui::Text(streamReady.Get() ? "推送流已连接" : "推送流未连接（自动重试中）")
+        huxerui::Text(Localized(streamReady.Get() ? "推送流已连接"
+                                                  : "推送流未连接（自动重试中）"))
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption),
                                       streamReady.Get()
                                           ? theme.colors.on_surface_variant
@@ -231,9 +232,9 @@ int levelRank(const std::string& level) {
     }.With(huxerui::Spacing(10.0F), huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
-    if (onBack) return SecondaryPageScaffold(huxerui::Text("日志", huxerui::TextRole::Title), std::move(actions),
+    if (onBack) return SecondaryPageScaffold(huxerui::Text(Localized("日志"), huxerui::TextRole::Title), std::move(actions),
                                               std::move(body), onBack);
-    return PageScaffold("日志", std::move(actions), std::move(body));
+    return PageScaffold(Localized("日志"), std::move(actions), std::move(body));
 }
 
 } // namespace clashflux::ui

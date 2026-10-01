@@ -375,17 +375,17 @@ huxerui::View FluxThemed(bool dark, huxerui::View content) {
 // 桌面与手机共用图标定义；选中只改变内容色和指示器，不替换图标轮廓。
 struct NavigationEntry {
     huxerui::ImageResource icon;
-    const char* label;
+    huxerui::StringVariant label;
 };
 
 const std::array<NavigationEntry, 7> kNavigationEntries{
-    NavigationEntry{app::images::home, "首页"},
-    NavigationEntry{app::images::request, "订阅"},
-    NavigationEntry{app::images::proxies, "代理"},
-    NavigationEntry{app::images::route, "规则"},
-    NavigationEntry{app::images::connections, "连接"},
-    NavigationEntry{app::images::logs, "日志"},
-    NavigationEntry{app::images::gear, "设置"},
+    NavigationEntry{app::images::home, Localized("首页")},
+    NavigationEntry{app::images::request, Localized("订阅")},
+    NavigationEntry{app::images::proxies, Localized("代理")},
+    NavigationEntry{app::images::route, Localized("规则")},
+    NavigationEntry{app::images::connections, Localized("连接")},
+    NavigationEntry{app::images::logs, Localized("日志")},
+    NavigationEntry{app::images::gear, Localized("设置")},
 };
 
 std::vector<huxerui::NavigationItem> DesktopNavigationItems() {
@@ -551,7 +551,7 @@ private:
                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
                 .OnClick([navPage, destination] { navPage = destination; })
                 .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                         .label = entry.label,
+                                         .label = huxerui::UseString(entry.label),
                                          .selected = isSelected},
                       itemIndication,
                       huxerui::Focusable(true), huxerui::Enabled(true))
@@ -785,6 +785,8 @@ huxerui::PageTransition SecondaryPageTransition(
 
 [[huxerui::composable]] huxerui::View AppRoot() {
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
+    const huxerui::Locale systemLocale =
+        huxerui::UseEnvironment<huxerui::Locale>();
     CLASHFLUX_PREPARE_PLATFORM_DATA(application);
 
     // 首帧先用品牌深色；设置模型 hydrate 后再镜像持久化主题值。
@@ -974,6 +976,11 @@ huxerui::PageTransition SecondaryPageTransition(
         themeMode.Get() == 1 || (themeMode.Get() == 0 && cfg::systemPrefersDark());
     const huxerui::ThemeSpec rootSpec = dark ? FluxDarkThemeSpec() : FluxLightThemeSpec();
     const IslandTheme rootIslands = ResolveIslandTheme(rootSpec);
+    const std::string language = settingsModel->view.Get().language;
+    const huxerui::Locale locale =
+        language == "zh" ? huxerui::Locale::FromLanguageTag("zh")
+        : language == "en" ? huxerui::Locale::FromLanguageTag("en")
+                            : systemLocale;
 
     huxerui::View applicationEffects =
         CLASHFLUX_APPLICATION_EFFECTS(application, rootSpec);
@@ -981,14 +988,14 @@ huxerui::PageTransition SecondaryPageTransition(
         navPage, pagerPage, themeMode, rootIslands, rootSpec, profilesCache);
     huxerui::View content = CLASHFLUX_APP_CONTENT(std::move(mainRow), rootSpec);
 
-    return FluxThemed(
+    return huxerui::ProvideEnvironment(locale, FluxThemed(
         dark,
         huxerui::Column {
             std::move(profileRefreshPump),
             std::move(applicationEffects),
             std::move(content),
         }.With(huxerui::Grow(1.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))));
 }
 
 } // namespace clashflux::ui

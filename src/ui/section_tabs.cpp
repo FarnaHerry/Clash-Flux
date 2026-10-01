@@ -228,6 +228,14 @@ std::function<bool(const huxerui::PointerEvent&)> SectionTabSwipeHandler(
     // MaxOffset 会把本组件订阅到标签条的滚动几何上，代价只限这一条标签栏子树，
     // 而且只在标签条自身滚动时触发（真机 profiler 未见此项开销）。
     // 箭头旋转只作用于字形；外层保持普通点击区域和辅助功能语义。
+    std::vector<huxerui::MenuEntry> pickerEntries;
+    pickerEntries.reserve(tabs.size());
+    for (const SectionTab& tab : tabs) {
+        const std::string label = huxerui::UseString(tab.label);
+        pickerEntries.emplace_back(huxerui::MenuItem(
+            tab.key == selectedKey ? "✓ " + label : label,
+            [onSelect, key = tab.key] { onSelect(key); }));
+    }
     huxerui::View picker =
         huxerui::Row {
           huxerui::Text("›")
@@ -238,16 +246,10 @@ std::function<bool(const huxerui::PointerEvent&)> SectionTabSwipeHandler(
             .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(6.0F, 2.0F)),
                   huxerui::CornerRadius(theme.shapes.small), indication,
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                     .label = "选择标签"},
+                                     .label = huxerui::UseString(
+                                         Localized("选择标签"))},
                   huxerui::Focusable(true), huxerui::Enabled(true), menu.Anchor())
-            .OnClick([menu, tabs, selectedKey, onSelect] {
-                std::vector<huxerui::MenuEntry> entries;
-                entries.reserve(tabs.size());
-                for (const SectionTab& tab : tabs) {
-                    entries.emplace_back(huxerui::MenuItem(
-                        tab.key == selectedKey ? "✓ " + tab.label : tab.label,
-                        [onSelect, key = tab.key] { onSelect(key); }));
-                }
+            .OnClick([menu, entries = std::move(pickerEntries)]() mutable {
                 menu.Show(std::move(entries));
             })
             .Key("section-tab-picker");

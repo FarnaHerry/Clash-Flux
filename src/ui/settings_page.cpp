@@ -30,8 +30,13 @@ namespace clashflux::ui {
 namespace {
 
 const std::vector<std::string> kModes{"rule", "global", "direct"};
-const std::vector<huxerui::StringVariant> kModeNames{"规则", "全局", "直连"};
-const std::vector<huxerui::StringVariant> kThemeNames{"自动", "深色", "浅色"};
+const std::vector<huxerui::StringVariant> kModeNames{
+    Localized("规则"), Localized("全局"), Localized("直连")};
+const std::vector<huxerui::StringVariant> kThemeNames{
+    Localized("自动"), Localized("深色"), Localized("浅色")};
+const std::vector<std::string> kLanguages{"system", "zh", "en"};
+const std::vector<huxerui::StringVariant> kLanguageNames{
+    Localized("自动"), Localized("简体中文"), Localized("English")};
 
 std::size_t ModeIndex(const std::string& mode) {
     for (std::size_t i = 0; i < kModes.size(); ++i) {
@@ -227,27 +232,30 @@ private:
     rows.reserve(shown + 1);
     for (std::size_t i = 0; i < shown; ++i) {
         const singbox::FidelityNote& note = notes[i];
-        const char* level =
-            note.level == singbox::Fidelity::Unsupported ? "不支持" : "已近似";
-        std::string text = std::format("· [{}] {}{}", level, note.sourceId.empty() ? "" : note.sourceId + " · ", note.detail);
-        if (!note.action.empty()) text += std::format("（{}）", note.action);
+        const std::string level = huxerui::UseString(Localized(
+            note.level == singbox::Fidelity::Unsupported ? "不支持" : "已近似"));
+        std::string text = huxerui::UseString(
+            LocalizedFormat("· [{}] {}", level, (note.sourceId.empty() ? "" : note.sourceId + " · ") + note.detail));
+        if (!note.action.empty()) {
+            text += huxerui::UseString(LocalizedFormat("（{}）", note.action));
+        }
         rows.push_back(huxerui::Text(std::move(text))
                            .Style(huxerui::TextStyle{
                                huxerui::Font::System(font_size::kCaption),
                                theme.colors.on_surface_variant}));
     }
     if (notes.size() > shown) {
-        rows.push_back(huxerui::Text(std::format("· 另有 {} 条降级 / 跳过记录",
-                                                 notes.size() - shown))
+        rows.push_back(huxerui::Text(LocalizedFormat(
+                           "· 另有 {} 条降级 / 跳过记录", notes.size() - shown))
                            .Style(huxerui::TextStyle{
                                huxerui::Font::System(font_size::kCaption),
                                theme.colors.on_surface_variant}));
     }
     if (notes.size() > kMaxRows) rows.push_back(
-        huxerui::Button(expanded.Get() ? "收起" : "显示全部保真度记录")
+        huxerui::Button(Localized(expanded.Get() ? "收起" : "显示全部保真度记录"))
             .OnClick([expanded] { expanded = !expanded.Get(); }));
     return huxerui::Column {
-        SectionTitle("配置保真度"),
+        SectionTitle(Localized("配置保真度")),
         huxerui::Column(std::move(rows))
             .With(huxerui::Spacing(4.0F),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
@@ -255,7 +263,7 @@ private:
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-const std::string kAboutText = std::format(
+const huxerui::StringVariant kAboutText = LocalizedFormat(
     "Clash-Flux v{} · sing-box 内核（桌面 spawn / Android libbox）",
     CLASHFLUX_VERSION);
 
@@ -265,7 +273,7 @@ const std::string kAboutText = std::format(
 
 // 单行导航项：整行可点，自带触控高度；用于「更多」入口段内部。
 // 手机端二级页经 NavigationStack push，因此进入/返回动画与一级页切换无关。
-[[huxerui::composable]] huxerui::View MoreNavRow(std::string label,
+[[huxerui::composable]] huxerui::View MoreNavRow(huxerui::StringVariant label,
                                                  std::function<void()> open) {
     return huxerui::Row {
         huxerui::Text(label),
@@ -275,7 +283,7 @@ const std::string kAboutText = std::format(
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
         .OnClick(std::move(open))
         .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                 .label = label},
+                                 .label = huxerui::UseString(label)},
               huxerui::Focusable(true), huxerui::Enabled(true));
 }
 
@@ -285,15 +293,15 @@ const std::string kAboutText = std::format(
     // 同组入口合并成一段，行间用 Divider 分隔；不再套分组卡——设置页整体不用
     // 卡片包裹（桌面端页面岛即唯一卡片，移动端直接铺在页面底色上）。
     return huxerui::Column {
-        SectionTitle("更多"),
+        SectionTitle(Localized("更多")),
         huxerui::Column {
-            MoreNavRow("连接",
+            MoreNavRow(Localized("连接"),
                        [navigation] { navigation.Push(AndroidConnectionsPage); }),
             huxerui::Divider(),
-            MoreNavRow("日志",
+            MoreNavRow(Localized("日志"),
                        [navigation] { navigation.Push(AndroidLogsPage); }),
             huxerui::Divider(),
-            MoreNavRow("规则", [navigation, profilesCache] {
+            MoreNavRow(Localized("规则"), [navigation, profilesCache] {
                 navigation.Push([profilesCache] {
                     return AndroidRulesPage(profilesCache);
                 });
@@ -327,6 +335,7 @@ const std::string kAboutText = std::format(
         huxerui::UseState(std::make_shared<ThemeAnimationFlag>());
     auto toast = huxerui::UseToast();
     const auto settingsModel = huxerui::UseService<SettingsModel>();
+    const SettingsView settingsView = settingsModel->view.Get();
     auto portValue = huxerui::UseState(huxerui::TextEditingValue{""});
     // 出站模式：HTTP 热更，快且可能失败 → 保留本地乐观值 + busy 单飞；
     // 成功时把权威值写透模型，失败才回落（见 applyOutboundMode）。
@@ -355,6 +364,15 @@ const std::string kAboutText = std::format(
     // 真机实测（代理页大分组）：四页同挂时每帧 1443 次测量请求 / ~20ms，
     // 只留当前页后降到 28 次 / ~0ms；因此不可见页必须返回空占位。
     if (!active) return huxerui::View{huxerui::Row{}}.Key("settings-idle");
+
+    const auto applyLanguage = [settingsModel](std::size_t index) {
+        if (index >= kLanguages.size()) return;
+        const std::string language = kLanguages[index];
+        store::coreStore().setSetting("ui.language", language);
+        settingsModel->Update([language](SettingsView& settings) {
+            settings.language = language;
+        });
+    };
 
     // 主题模式：0=自动，1=深色，2=浅色。
     const auto applyTheme = [themeMode, transition, tasks, animating,
@@ -414,7 +432,11 @@ const std::string kAboutText = std::format(
                 // 失败回落：目标值校验（busy 期间点击被早退，正常情况下界面还停在
                 // 本任务的意图值；若外部改过则不覆盖）。
                 if (modeSelection.Get() == index) modeSelection = previous;
-                toast.Show(error.empty() ? "出站模式切换失败" : error);
+                if (error.empty()) {
+                    toast.Show(Localized("出站模式切换失败"));
+                } else {
+                    toast.Show(error);
+                }
                 co_return;
             }
             // 成功不回写本地 State：把权威值写透模型，镜像与其它入口立刻一致。
@@ -425,7 +447,7 @@ const std::string kAboutText = std::format(
     };
 
     return PageScaffold(
-        "设置", huxerui::Row{},
+        Localized("设置"), huxerui::Row{},
         huxerui::ScrollView(
             huxerui::Column {
                 CLASHFLUX_MORE_SETTINGS(navPage, profilesCache),
@@ -433,26 +455,34 @@ const std::string kAboutText = std::format(
                 // 唯一卡片，移动端页面直接铺在窗口底色上；分组由 SectionTitle
                 // 与间距表达。
                 huxerui::Column {
-                    SectionTitle("通用"),
+                    SectionTitle(Localized("通用")),
                     SettingRow(
-                        "主题", "",
+                        Localized("主题"), "",
                         huxerui::SegmentedButton(
                             kThemeNames, static_cast<std::size_t>(themeMode.Get()))
                             .OnChanged([applyTheme](std::size_t index) {
                                 applyTheme(static_cast<int>(index));
                             })),
+                    SettingRow(
+                        Localized("语言"), Localized("自动跟随系统语言"),
+                        huxerui::SegmentedButton(
+                            kLanguageNames,
+                            settingsView.language == "en"
+                                ? 2U
+                                : settingsView.language == "zh" ? 1U : 0U)
+                            .OnChanged(applyLanguage)),
                     CLASHFLUX_GENERAL_PLATFORM_SECTION(),
                 }.With(huxerui::Spacing(10.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
 
                 huxerui::Column {
-                    SectionTitle("内核"),
+                    SectionTitle(Localized("内核")),
                     SettingRow(
-                        "出站模式", "",
+                        Localized("出站模式"), "",
                         CLASHFLUX_OUTBOUND_MODE_SELECTOR(
                             modeSelection, busy, applyOutboundMode)),
                     SettingRow(
-                        "混合端口", "HTTP/SOCKS 混合入站端口（下次启动生效）",
+                        Localized("混合端口"), Localized("HTTP/SOCKS 混合入站端口（下次启动生效）"),
                         huxerui::Row {
                             huxerui::TextField(portValue.Get())
                                 .Variant(huxerui::TextFieldVariant::Outlined)
@@ -461,23 +491,23 @@ const std::string kAboutText = std::format(
                                     portValue = value;
                                 })
                                 .With(huxerui::Frame{.width = 100.0F}),
-                            huxerui::IconButton(app::images::save, "保存设置")
-                                .With(huxerui::Tooltip("保存设置"))
+                            huxerui::IconButton(app::images::save, Localized("保存设置"))
+                                .With(huxerui::Tooltip(Localized("保存设置")))
                                 .OnClick([portValue, toast] {
                                 try {
                                     const int port = std::stoi(portValue.Get().text);
                                     if (port < 1 || port > 65535) throw 0;
                                     store::coreStore().setSetting(
                                         "core.mixed_port", std::to_string(port));
-                                    toast.Show("端口已保存（重启内核生效）");
+                                    toast.Show(Localized("端口已保存（重启内核生效）"));
                                 } catch (...) {
-                                    toast.Show("端口无效");
+                                    toast.Show(Localized("端口无效"));
                                 }
                             }),
                         }.With(huxerui::Spacing(8.0F))),
                     CLASHFLUX_KERNEL_PLATFORM_SECTION(),
                     SettingSwitchRow(
-                        "局域网连接", "允许局域网设备接入（下次启动生效）",
+                        Localized("局域网连接"), Localized("允许局域网设备接入（下次启动生效）"),
                         huxerui::Switch(coreView.allowLan)
                             .OnChanged([coreModel, toast](bool on) {
                                 // KV 写内存缓存是同步的：写完立刻写透模型，界面
@@ -488,11 +518,12 @@ const std::string kAboutText = std::format(
                                 coreModel->Update([on](CoreView& view) {
                                     view.allowLan = on;
                                 });
-                                toast.Show(on ? "已允许局域网连接（重启内核生效）"
-                                              : "已关闭局域网连接");
+                                toast.Show(Localized(
+                                    on ? "已允许局域网连接（重启内核生效）"
+                                       : "已关闭局域网连接"));
                             })),
                     SettingSwitchRow(
-                        "IPv6", "重启内核生效",
+                        "IPv6", Localized("重启内核生效"),
                         huxerui::Switch(coreView.ipv6Enabled)
                             .OnChanged([coreModel, toast](bool on) {
                                 store::coreStore().setSetting(
@@ -500,15 +531,16 @@ const std::string kAboutText = std::format(
                                 coreModel->Update([on](CoreView& view) {
                                     view.ipv6Enabled = on;
                                 });
-                                toast.Show(on ? "已启用 IPv6（重启内核生效）"
-                                              : "已关闭 IPv6（重启内核生效）");
+                                toast.Show(Localized(
+                                    on ? "已启用 IPv6（重启内核生效）"
+                                       : "已关闭 IPv6（重启内核生效）"));
                             })),
                     CoreFidelityReport(coreView.core.fidelity),
                 }.With(huxerui::Spacing(10.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
 
                 huxerui::Column {
-                    SectionTitle("关于"),
+                    SectionTitle(Localized("关于")),
                     huxerui::Text(kAboutText).Style(huxerui::TextStyle{
                         huxerui::Font::System(font_size::kChip),
                         theme.colors.on_surface_variant}),

@@ -1,5 +1,7 @@
 # Clash-Flux
 
+See the [v0.3.14 release notes](docs/releases/v0.3.14.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+
 [简体中文](README.md) | English
 
 Clash-Flux is a cross-platform proxy client built with C++23 and HuxerUI, bringing
