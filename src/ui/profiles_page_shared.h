@@ -129,7 +129,7 @@ void OpenProfileCreate(bool compact, huxerui::State<bool> page,
 
 huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
     std::shared_ptr<AppHttpClient> http, std::string url,
-    int timeoutSecs);
+    int timeoutSecs, bool allowInvalidCert = false);
 huxerui::Task<std::int64_t> AndroidImportRemote(
     std::shared_ptr<AppHttpClient> http, const std::string& name,
     const std::string& url, db::Profile options);

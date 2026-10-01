@@ -46,6 +46,11 @@
                             std::optional<bool> systemProxyState = std::nullopt,
                             bool speedTestOnly = false,
                             bool repairRuleSetCache = true) {
+#if defined(CLASHFLUX_IOS)
+        // iOS only has the Packet Tunnel data plane. Never accept a desktop-style
+        // proxy-only launch, even if an old preference or caller passes false.
+        tunEnabled = true;
+#endif
         std::lock_guard operationLock(lifecycleMutex_);
         ensureOpen();
         const auto serviceInfo = service::query();
@@ -68,9 +73,10 @@
             // 端口/混合端口的那个以 exit 1 收场，把「内核启动后立即退出」误报
             // 给用户。启动进行中直接拒绝重入。
             if (snap_.state == core::CoreState::Starting) return;
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
             // The Android core is libbox hosted by ClashVpnService, not an
-            // executable path discoverable by the native layer.
+            // executable path discoverable by the native layer. iOS likewise
+            // hosts Libbox inside its Packet Tunnel extension.
             binaryPath_ = "sing-box libbox";
 #else
             binaryPath_ = cfg::singboxBinary().string();
@@ -87,6 +93,8 @@
 
         const std::filesystem::path workDir = cfg::coreWorkDir();
         const std::filesystem::path configFile = workDir / "config.json";
+        std::vector<singbox::RuleSetResource> ruleSetResources;
+        [[maybe_unused]] bool residentConfigMatches = false;
         // detached spawn 把内核输出追加进 core.log：记下启动前的长度，失败时
         // 只取本次启动新增的行作为诊断尾部。
         [[maybe_unused]] std::uintmax_t detachedLogSize = 0;
@@ -96,19 +104,26 @@
         std::vector<std::string> windowsExclusions;
 #endif
         {
-            // 两遍编译：第一遍拿到远程规则集清单，直连预取 .srs 缓存（失败
+            // 两遍编译：第一遍拿到自有 GEO 资源清单，直连预取 .srs 缓存（失败
             // 不致命）；第二遍命中本地文件即以 local rule_set 生成——内核
             // 首启不再因代理不可用而拉取失败退出，预取过的缓存按周刷新。
             singbox::CompileOptions options;
             try {
-                options = routingOptions(profileYaml, tunEnabled,
-                                         speedTestOnly);
+                if (preparedOptions_) {
+                    options = std::move(*preparedOptions_);
+                    preparedOptions_.reset();
+                } else options = routingOptions(profileYaml, tunEnabled, speedTestOnly);
             } catch (const std::exception& exception) {
                 fail(std::string("读取主 VPN 路由计划失败：") + exception.what());
                 return;
             }
             auto compiled = core::generateConfig(options);
             if (compiled.json.empty() || !compiled.error.empty()) {
+                {
+                    std::lock_guard lock(mutex_);
+                    snap_.warnings = compiled.warnings;
+                    snap_.fidelity = compiled.fidelity;
+                }
                 fail("订阅编译失败：" + (compiled.error.empty()
                                              ? std::string{"未知错误"}
                                              : compiled.error));
@@ -120,17 +135,22 @@
                     fail("订阅编译结果不是合法 JSON 对象");
                     return;
                 }
-                const std::string proxyGroups = proxyGroupsFromConfig(config);
+                const std::string proxyGroups = proxyGroupsFromConfig(config, compiled.sourceObjects);
                 {
                     std::lock_guard lock(mutex_);
                     compiledProxyGroups_ = proxyGroups;
                 }
                 compiled.json = config.dump();
             }
-            prefetchRuleSets(compiled.json, workDir);
+            prefetchRuleSets(compiled.ruleSetResources, workDir);
             options.ruleSetDir = workDir.string();
             compiled = core::generateConfig(options);
             if (compiled.json.empty() || !compiled.error.empty()) {
+                {
+                    std::lock_guard lock(mutex_);
+                    snap_.warnings = compiled.warnings;
+                    snap_.fidelity = compiled.fidelity;
+                }
                 fail("订阅编译失败：" + (compiled.error.empty()
                                              ? std::string{"未知错误"}
                                              : compiled.error));
@@ -142,7 +162,7 @@
                     fail("订阅编译结果不是合法 JSON 对象");
                     return;
                 }
-                const std::string proxyGroups = proxyGroupsFromConfig(config);
+                const std::string proxyGroups = proxyGroupsFromConfig(config, compiled.sourceObjects);
                 {
                     std::lock_guard lock(mutex_);
                     compiledProxyGroups_ = proxyGroups;
@@ -166,6 +186,27 @@
                 }
             }
 #endif
+            std::string checkError;
+            if (!checkCompiledPlan(compiled, checkError)) { fail(checkError); return; }
+            ruleSetResources = compiled.ruleSetResources;
+            const auto revisionText = setting("routing.applied_revision", "0");
+            std::uint64_t appliedRevision = 0;
+            const auto parsedRevision = std::from_chars(revisionText.data(), revisionText.data() + revisionText.size(), appliedRevision);
+            if (parsedRevision.ec != std::errc() || parsedRevision.ptr != revisionText.data() + revisionText.size()) {
+                fail("已应用计划修订号格式错误；保留原设置"); return;
+            }
+            if (appliedRevision == std::numeric_limits<std::uint64_t>::max()) { fail("已应用计划修订号超出范围"); return; }
+            options.planRevision = appliedRevision + 1;
+            lastPreparedOptions_ = options;
+            {
+                std::ifstream previousConfig(configFile, std::ios::binary);
+                if (previousConfig) {
+                    const std::string previousText(std::istreambuf_iterator<char>(previousConfig), {});
+                    const auto previousJson = nlohmann::json::parse(previousText, nullptr, false);
+                    const auto candidateJson = nlohmann::json::parse(compiled.json, nullptr, false);
+                    residentConfigMatches = !previousJson.is_discarded() && previousJson == candidateJson;
+                }
+            }
             // Android's VpnService waits for this file from another thread.
             // Never expose a partially-written JSON document to libbox; an
             // atomic rename also prevents a stale config from being selected
@@ -174,8 +215,11 @@
             std::error_code staleConfigError;
             std::filesystem::remove(configFile, staleConfigError);
 #endif
-            const std::filesystem::path tempConfig =
-                configFile.string() + ".tmp";
+            const std::filesystem::path tempConfig = configFile.string() + ".tmp";
+            struct TempConfig {
+                std::filesystem::path path;
+                ~TempConfig() { std::error_code ec; std::filesystem::remove(path, ec); }
+            } tempCleanup{tempConfig};
             std::ofstream out(tempConfig, std::ios::binary | std::ios::trunc);
             if (!out) {
                 fail("无法写入运行时配置: " + configFile.string());
@@ -184,22 +228,15 @@
             out << compiled.json;
             out.flush();
             out.close();
-#ifdef _WIN32
-            // std::filesystem::rename does not replace an existing target on
-            // Windows. Remove only this app-owned runtime file after the new
-            // contents are safely closed, then commit the replacement.
-            std::error_code replaceError;
-            std::filesystem::remove(configFile, replaceError);
-#endif
-            std::error_code renameError;
-            std::filesystem::rename(tempConfig, configFile, renameError);
-            if (renameError) {
-                fail("无法提交运行时配置: " + renameError.message());
-                return;
-            }
+            if (!out) { fail("运行时配置写入失败"); return; }
+            std::string commitError;
+            if (!api::CommitFile(tempConfig, configFile, commitError)) { fail(commitError); return; }
             std::lock_guard lock(mutex_);
             snap_.warnings = std::move(compiled.warnings);
             snap_.fidelity = std::move(compiled.fidelity);
+            snap_.sourceObjects = std::make_shared<const std::vector<singbox::SourceObject>>(std::move(compiled.sourceObjects));
+            previewSourceObjects_ = snap_.sourceObjects;
+            snap_.participatingSources = std::move(compiled.participatingSources);
         }
 
         // 三种拉起方式（按优先级）：
@@ -246,7 +283,26 @@
                 core::pidAlive(residentPid)) {
                 // 接管本应用自己拉起的驻留内核（pidfile 命中且进程活着：
                 // CLI detached spawn / 上次 GUI 残留）。
-                adopted_ = true;
+                const auto image = core::pidImageName(residentPid);
+                if (!image.empty() && image.find("sing-box") == std::string::npos) {
+                    fail("驻留 PID 已不是 sing-box，拒绝接管或终止"); return;
+                }
+                if (residentConfigMatches) adopted_ = true;
+                else {
+                    // 不能用新计划的元数据冒充仍运行旧配置的驻留内核。
+                    core::killPid(residentPid);
+                    const auto stopDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+                    while (core::pidAlive(residentPid) && std::chrono::steady_clock::now() < stopDeadline)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    if (core::pidAlive(residentPid)) { fail("旧驻留内核未退出，新计划未应用"); return; }
+                    if (detached) {
+                        std::string error;
+                        if (!core::spawnDetached(binaryPath_, workDir, configFile, error)) { fail(error); return; }
+                        adopted_ = true;
+                    } else if (!process_.start(binaryPath_, workDir, configFile)) {
+                        fail(process_.lastError()); return;
+                    }
+                }
             } else if (controllerAnswering) {
                 // 控制端口有应答但不是本应用的驻留进程：多半是其他代理
                 // 软件占用了端口。明确报错，不误接管、不重复 spawn。
@@ -304,14 +360,15 @@
                     message.find("bind:") != std::string::npos) {
                     message += "（端口可能被其他代理软件占用；可在设置中修改混合端口）";
                 }
-                if (repairRuleSetCache && isRuleSetCacheFailure(message)) {
+                if (repairRuleSetCache && !ruleSetResources.empty() &&
+                    isRuleSetCacheFailure(message)) {
                     // 坏缓存会让内核每次启动都 FATAL（且按周刷新的 mtime 判断
-                    // 永远认为它新鲜）：清掉 .srs 与内核自带缓存后重试一次。
+                    // 永远认为它新鲜）：只清本次自有 GEO 与默认缓存后重试一次。
                     // 递归调用前复位状态，避开启动重入保护。
-                    purgeRuleSetCache(workDir);
+                    purgeRuleSetCache(workDir, ruleSetResources);
                     stream::logApplication(
                         "warning",
-                        "本地规则集缓存疑似损坏，已清理并重新预取后重试启动内核");
+                        "自有 GEO 缓存疑似损坏，尝试清理并重新预取后重试启动内核");
                     {
                         std::lock_guard lock(mutex_);
                         snap_.state = core::CoreState::Stopped;
@@ -362,6 +419,9 @@
         {
             std::lock_guard lock(mutex_);
             snap_.state = core::CoreState::Running;
+            snap_.planRevision = lastPreparedOptions_ ? lastPreparedOptions_->planRevision : 0;
+            lastAppliedOptions_ = lastPreparedOptions_;
+            setSetting("routing.applied_revision", std::to_string(snap_.planRevision));
         }
         stream::logApplication("info", "代理内核控制器已就绪");
         refreshRuntime();
@@ -398,6 +458,16 @@
         stream::logApplication("info", "请求停止代理内核");
 #if defined(__ANDROID__)
         clashflux_android_stop_vpn();
+        std::lock_guard lock(mutex_);
+        snap_.state = core::CoreState::Stopped;
+        snap_.version.clear();
+        snap_.tunEnabled = false;
+        return true;
+#elif defined(CLASHFLUX_IOS)
+        streams_.stop();
+        process_.stop();
+        std::error_code ec;
+        std::filesystem::remove(cfg::coreWorkDir() / "core.pid", ec);
         std::lock_guard lock(mutex_);
         snap_.state = core::CoreState::Stopped;
         snap_.version.clear();
@@ -475,25 +545,131 @@
 
     // 订阅/配置变更时重启当前内核。Android 的 libbox 由 VpnService 托管，
     // 但无 TUN 内核也要保持常驻；写完新配置后按当前 TUN 状态恢复对应服务。
-    void restartCore(const std::string& profileYaml) {
-        std::lock_guard operationLock(lifecycleMutex_);
-        const core::CoreState before = snapshot().state;
-        const bool wasActive = before == core::CoreState::Running ||
-                               before == core::CoreState::Starting;
-        const bool tunEnabled = snapshot().tunEnabled;
-        const bool systemProxyEnabled = systemProxyOurs();
-        if (!stopCore()) return;
-        startCore(profileYaml, false, tunEnabled,
-                  systemProxyEnabled ? std::optional<bool>(true)
-                                     : std::nullopt);
-#if defined(__ANDROID__)
-        if (wasActive) {
-            if (tunEnabled) {
-                clashflux_android_start_vpn();
-            } else {
-                clashflux_android_start_core();
+    auto lockPlanLifecycle() { return std::unique_lock(lifecycleMutex_); }
+
+    // 候选检查不改变持久化、运行态或组选项；适用于 UI/CLI 的写入口。
+    bool validateRoutingPlan(const std::string& profileYaml, std::string& error,
+                             const vpn::VpnPolicy* policy = nullptr,
+                             const std::optional<std::string>& main = std::nullopt) {
+        std::lock_guard lock(lifecycleMutex_);
+        ensureOpen();
+        try {
+            auto options = routingOptions(profileYaml, snapshot().tunEnabled, false, policy, main);
+            const auto compiled = core::generateConfig(options);
+            if (policy && compiled.error.empty()) {
+                for (const auto& rule : policy->rules) {
+                    if (!rule.enabled) continue;
+                    if (rule.targetKind != vpn::TargetKind::Default) {
+                        if (!std::ranges::any_of(compiled.sourceObjects, [&](const auto& object) {
+                            return object.sourceId == rule.connectionId && object.kind == rule.targetKind &&
+                                   object.objectId == rule.targetObject;
+                        })) { error = "规则目标对象不存在：" + rule.connectionId + "/" + rule.targetObject; return false; }
+                    } else if (rule.connectionId != options.mainConnectionId &&
+                        !std::ranges::any_of(options.auxiliarySources, [&](const auto& source) { return source.id == rule.connectionId; }) &&
+                        !std::ranges::any_of(options.nativeConnections, [&](const auto& source) { return source.id == rule.connectionId; })) {
+                        error = "规则目标来源不存在：" + rule.connectionId; return false;
+                    }
+                }
             }
+            return checkCompiledPlan(compiled, error);
+        } catch (const std::exception& e) { error = e.what(); return false; }
+    }
+
+    std::string currentMainContent() {
+        ensureOpen();
+        const auto file = selectedProfileFile();
+        if (file.empty()) return {};
+        std::ifstream input(file, std::ios::binary);
+        if (!input) throw std::runtime_error("无法读取 main 来源内容");
+        return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    }
+
+    bool sourceParticipates(std::int64_t id) {
+        std::lock_guard operationLock(lifecycleMutex_);
+        ensureOpen();
+        const auto connection = routing::ConnectionId(id);
+        if (std::ranges::any_of(nativeSessions_, [&](const auto& session) { return session.id == connection && session.connected; })) return true;
+        for (const auto& profile : db_->listProfiles())
+            if (profile.id == id && (profile.selected ||
+                ((profile.type == "pptp" || profile.type == "openvpn") && !routing::SplitRoutes(profile.nativeRoutes).empty()))) return true;
+        const auto policy = routing::DecodePolicy(setting("vpn.global_policy", ""));
+        return std::ranges::any_of(policy.rules, [&](const auto& rule) {
+            return rule.enabled && rule.connectionId == connection;
+        });
+    }
+
+    bool validateSourceUpdate(std::int64_t id, const std::string& content, std::string& error) {
+        std::lock_guard lock(lifecycleMutex_);
+        ensureOpen();
+        try {
+            if (content.find_first_not_of(" \t\r\n") == std::string::npos) {
+                error = "订阅内容为空"; return false;
+            }
+            const auto sourceId = routing::ConnectionId(id);
+            const singbox::ProfileSource updated{sourceId, "", content};
+            bool main = false;
+            for (const auto& profile : db_->listProfiles()) if (profile.id == id && profile.selected) main = true;
+            auto options = routingOptions(main ? content : currentMainContent(), snapshot().tunEnabled,
+                                          false, nullptr, std::nullopt, &updated);
+            if (sourceId == options.mainConnectionId) options.profileYaml = content;
+            else {
+                bool replaced = false;
+                for (auto& source : options.auxiliarySources)
+                    if (source.id == sourceId) { source.content = content; replaced = true; }
+                if (!replaced) {
+                    options.profileYaml = content; options.mainConnectionId = sourceId;
+                    options.auxiliarySources.clear(); options.globalRules.clear(); options.nativeConnections.clear();
+                }
+            }
+            return checkCompiledPlan(core::generateConfig(options), error);
+        } catch (const std::exception& e) { error = e.what(); return false; }
+    }
+
+    bool restartCore(const std::string& profileYaml) {
+        std::lock_guard operationLock(lifecycleMutex_);
+        const auto before = snapshot();
+        const bool wasActive = before.state == core::CoreState::Running || before.state == core::CoreState::Starting;
+        const bool systemProxyEnabled = systemProxyOurs();
+        singbox::CompileOptions candidate;
+        std::string error;
+        try {
+            candidate = routingOptions(profileYaml, before.tunEnabled);
+            if (!checkCompiledPlan(core::generateConfig(candidate), error)) {
+                std::lock_guard lock(mutex_); snap_.lastError = "候选计划被拒绝：" + error; return false;
+            }
+        } catch (const std::exception& e) {
+            std::lock_guard lock(mutex_); snap_.lastError = e.what(); return false;
         }
+        const auto previous = lastAppliedOptions_;
+        if (!stopCore()) return false;
+        preparedOptions_ = candidate;
+        startCore(profileYaml, false, before.tunEnabled,
+                  systemProxyEnabled ? std::optional<bool>(true) : std::nullopt);
+#if defined(__ANDROID__)
+        if (wasActive && snapshot().state != core::CoreState::Failed) {
+            if (before.tunEnabled) clashflux_android_start_vpn(); else clashflux_android_start_core();
+        }
+        return snapshot().state != core::CoreState::Failed;
+#else
+        if (snapshot().state == core::CoreState::Running) return true;
+        const auto failure = snapshot().lastError;
+        // 只有上一份计划仍拥有同一原生接口时才允许恢复，不能复活已释放的接口。
+        const bool safe = previous && std::ranges::all_of(previous->nativeConnections, [&](const auto& old) {
+            if (!old.connected) return true;
+            return std::ranges::any_of(nativeSessions_, [&](const auto& current) {
+                return current.id == old.id && current.connected && current.interfaceName == old.interfaceName &&
+                       current.nativeConfig == old.nativeConfig && current.transportAddress == old.transportAddress;
+            });
+        });
+        if (wasActive && safe && stopCore()) {
+            preparedOptions_ = *previous;
+            startCore(previous->profileYaml, false, previous->tunInbound,
+                      systemProxyEnabled ? std::optional<bool>(true) : std::nullopt);
+        }
+        const bool restored = snapshot().state == core::CoreState::Running;
+        std::lock_guard lock(mutex_);
+        snap_.lastError = failure + (restored ? "；已恢复上一份运行计划" : "；未能恢复上一份运行计划");
+        return false;
 #endif
     }
 

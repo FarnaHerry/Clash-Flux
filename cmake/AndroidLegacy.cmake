@@ -64,7 +64,8 @@ function(clashflux_prepare_android_sources output_directory output_header
         "#include <utility>\n"
         "#include <vector>\n"
         "#include <nlohmann/json.hpp>\n"
-        "#include <qrcodegen.hpp>\n\n"
+        "#include <qrcodegen.hpp>\n"
+        "#include \"wire_codec.h\"\n\n"
     )
 
     # The interface units are included as declarations/inline utility definitions.
@@ -97,6 +98,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/core.cpp"
         "${_root}/src/api.cpp"
         "${_root}/src/stream.cpp"
+        "${_root}/src/wire_codec.h"
         "${_root}/src/sqlite_schema.h"
         "${_root}/src/sqlite_schema.cpp"
         "${_root}/src/store/persistence.cpp"
@@ -130,6 +132,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/service_daemon.inc"
         "${_root}/src/service_stub.inc"
         "${_root}/src/singbox_compile.inc"
+        "${_root}/src/singbox_sources.inc"
         "${_root}/src/singbox_context_dns.inc"
         "${_root}/src/singbox_proxy.inc"
         "${_root}/src/singbox_rules.inc"

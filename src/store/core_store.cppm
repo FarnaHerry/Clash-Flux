@@ -28,6 +28,7 @@ import clashflux.stream;
 import clashflux.sysproxy;
 import clashflux.service;
 import clashflux.routing;
+import clashflux.vpn;
 import clashflux.vpn_compensation;
 
 namespace store {
@@ -53,6 +54,10 @@ export struct CoreSnapshot {
     // docs/singbox-layers-and-fidelity.md §2），不要解析 warnings 文本。
     std::vector<std::string> warnings;
     std::vector<singbox::FidelityNote> fidelity;
+    std::shared_ptr<const std::vector<singbox::SourceObject>> sourceObjects;
+    std::vector<std::string> participatingSources;
+    std::uint64_t planRevision = 0; // 实际启动成功的策略版本，停止/预览时不代表生效
+
     // 运行配置快照（Running 时有效）
     std::string mode;            // rule / global / direct
     int mixedPort = 7899;
@@ -115,6 +120,13 @@ private:
     std::once_flag initFlag_;
     CoreSnapshot snap_;
     std::string binaryPath_;
+    std::optional<singbox::CompileOptions> preparedOptions_;
+    std::optional<singbox::CompileOptions> lastAppliedOptions_;
+    std::optional<singbox::CompileOptions> lastPreparedOptions_;
+    std::shared_ptr<const std::vector<singbox::SourceObject>> previewSourceObjects_;
+    std::map<std::filesystem::path, std::pair<std::filesystem::file_time_type, std::uintmax_t>> compiledSourceFiles_;
+    std::string compiledPolicyText_;
+    std::uint64_t compiledProfilesRevision_ = 0;
     std::string lastProfileYaml_;    // 最近一次 startCore 的订阅原文（applyTun 重启用）
     std::string compiledProxyGroups_;
     // 缓存对应的订阅文件指纹：文件被重新下载/替换（手机上"传输失败后手动补

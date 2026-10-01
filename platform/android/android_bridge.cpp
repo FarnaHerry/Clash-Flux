@@ -14,10 +14,13 @@
 #include <thread>
 #include <utility>
 
+#include "wire_codec.h"
+
 #if defined(__ANDROID__)
 #include <android/log.h>
 #endif
 
+#include "android_profile_http.h"
 #include "clashflux_android_legacy.h"
 
 namespace {
@@ -67,6 +70,131 @@ JNIEnv* current_environment(bool& attached) noexcept {
 }
 
 } // namespace
+
+clashflux::android::ProfileHttpResponse
+clashflux::android::DownloadProfile(const std::string& url, int timeoutSecs,
+                                    bool allowInvalidCertificate) {
+    ProfileHttpResponse response;
+    bool attached = false;
+    JNIEnv* environment = current_environment(attached);
+    struct DetachThread final {
+        bool attached;
+        ~DetachThread() {
+            if (attached && g_vm != nullptr) g_vm->DetachCurrentThread();
+        }
+    } detach{attached};
+    if (environment == nullptr) {
+        response.error = "无法连接 Android 网络桥接";
+        return response;
+    }
+    if (environment->PushLocalFrame(64) != JNI_OK) {
+        if (environment->ExceptionCheck()) environment->ExceptionClear();
+        response.error = "无法创建 Android 网络请求上下文";
+        return response;
+    }
+    struct PopLocalFrame final {
+        JNIEnv* environment;
+        ~PopLocalFrame() { environment->PopLocalFrame(nullptr); }
+    } pop{environment};
+
+    jclass activityClass = nullptr;
+    {
+        std::lock_guard lock(g_mutex);
+        if (g_activity_class != nullptr) {
+            activityClass = static_cast<jclass>(
+                environment->NewLocalRef(g_activity_class));
+        }
+    }
+    if (activityClass == nullptr) {
+        response.error = "Android Activity 尚未初始化";
+        return response;
+    }
+
+    const jmethodID fetchProfile = environment->GetStaticMethodID(
+        activityClass, "fetchProfile",
+        "(Ljava/lang/String;IZ)Landroid/os/Bundle;");
+    if (fetchProfile == nullptr || environment->ExceptionCheck()) {
+        environment->ExceptionClear();
+        response.error = "Android 订阅下载接口不可用";
+        return response;
+    }
+    jstring javaUrl = environment->NewStringUTF(url.c_str());
+    if (javaUrl == nullptr || environment->ExceptionCheck()) {
+        environment->ExceptionClear();
+        response.error = "订阅 URL 无法转换为 Android 字符串";
+        return response;
+    }
+    jobject bundle = environment->CallStaticObjectMethod(
+        activityClass, fetchProfile, javaUrl,
+        static_cast<jint>(timeoutSecs),
+        allowInvalidCertificate ? JNI_TRUE : JNI_FALSE);
+    if (bundle == nullptr || environment->ExceptionCheck()) {
+        environment->ExceptionClear();
+        response.error = "Android 订阅下载调用失败";
+        return response;
+    }
+
+    jclass bundleClass = environment->GetObjectClass(bundle);
+    const jmethodID getInt = environment->GetMethodID(
+        bundleClass, "getInt", "(Ljava/lang/String;)I");
+    const jmethodID getString = environment->GetMethodID(
+        bundleClass, "getString",
+        "(Ljava/lang/String;)Ljava/lang/String;");
+    const jmethodID getByteArray = environment->GetMethodID(
+        bundleClass, "getByteArray", "(Ljava/lang/String;)[B");
+    if (getInt == nullptr || getString == nullptr || getByteArray == nullptr ||
+        environment->ExceptionCheck()) {
+        environment->ExceptionClear();
+        response.error = "Android 订阅下载响应格式无效";
+        return response;
+    }
+
+    const auto key = [environment](const char* text) {
+        return environment->NewStringUTF(text);
+    };
+    jstring statusKey = key("status");
+    response.status = static_cast<long>(
+        environment->CallIntMethod(bundle, getInt, statusKey));
+    jstring errorKey = key("error");
+    auto errorValue = static_cast<jstring>(
+        environment->CallObjectMethod(bundle, getString, errorKey));
+    if (errorValue != nullptr) {
+        const char* text = environment->GetStringUTFChars(errorValue, nullptr);
+        if (text != nullptr) {
+            response.error = text;
+            environment->ReleaseStringUTFChars(errorValue, text);
+        }
+    }
+    jstring headersKey = key("headers_json");
+    auto headersValue = static_cast<jstring>(
+        environment->CallObjectMethod(bundle, getString, headersKey));
+    if (headersValue != nullptr) {
+        const char* text = environment->GetStringUTFChars(headersValue, nullptr);
+        if (text != nullptr) {
+            auto headers = clashflux::wire::DecodeHeaders(text);
+            if (headers) response.headers.insert(headers.value.begin(), headers.value.end());
+            environment->ReleaseStringUTFChars(headersValue, text);
+        }
+    }
+    jstring bodyKey = key("body");
+    auto body = static_cast<jbyteArray>(
+        environment->CallObjectMethod(bundle, getByteArray, bodyKey));
+    if (body != nullptr) {
+        const jsize length = environment->GetArrayLength(body);
+        response.body.resize(static_cast<std::size_t>(length));
+        if (length > 0) {
+            environment->GetByteArrayRegion(
+                body, 0, length,
+                reinterpret_cast<jbyte*>(response.body.data()));
+        }
+    }
+    if (environment->ExceptionCheck()) {
+        environment->ExceptionClear();
+        response = {};
+        response.error = "读取 Android 订阅下载响应失败";
+    }
+    return response;
+}
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_MainActivity_nativeInit(JNIEnv* environment,

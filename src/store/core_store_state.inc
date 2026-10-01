@@ -88,6 +88,9 @@
         s.version = s.state == core::CoreState::Running ? "sing-box libbox" : "";
         s.tunEnabled = clashflux_android_vpn_state() == 1 ||
                        clashflux_android_vpn_state() == 2;
+#elif defined(CLASHFLUX_IOS)
+        s.version = s.state == core::CoreState::Running ? "sing-box libbox" : "";
+        s.tunEnabled = true;
 #endif
         s.binaryPath = binaryPath_;
         return s;
@@ -139,9 +142,23 @@
     }
 
     // 缓存是否仍是"同一个订阅文件"的快照：文件被替换/重下后自动失效。
+    auto proxySourceObjects(bool preview) {
+        std::lock_guard lock(mutex_);
+        return preview ? previewSourceObjects_ : snap_.sourceObjects;
+    }
+
     bool proxyGroupsCacheFresh() {
         const std::filesystem::path file = selectedProfileFile();
         if (file.empty()) return false;
+        if (compiledProfilesRevision_ != clashflux::persistence::persistence().profilesRevision() ||
+            compiledPolicyText_ != setting("vpn.global_policy", "")) return false;
+        for (const auto& [sourceFile, fingerprint] : compiledSourceFiles_) {
+            std::error_code error;
+            const auto stamp = std::filesystem::last_write_time(sourceFile, error);
+            if (error) return false;
+            const auto bytes = std::filesystem::file_size(sourceFile, error);
+            if (error || stamp != fingerprint.first || bytes != fingerprint.second) return false;
+        }
         std::error_code ec;
         const auto stamp = std::filesystem::last_write_time(file, ec);
         if (ec) return false;
@@ -195,7 +212,7 @@
             if (compiled.json.empty() || !compiled.error.empty()) return {};
             auto config = nlohmann::json::parse(compiled.json, nullptr, false);
             if (!config.is_object()) return {};
-            const std::string snapshot = proxyGroupsFromConfig(config);
+            const std::string snapshot = proxyGroupsFromConfig(config, compiled.sourceObjects);
             // 记下这份快照对应的订阅文件指纹（mtime + 大小）：文件被重新下载或
             // 替换后缓存自动失效，不会一直返回旧的空快照。
             const std::filesystem::path file = selectedProfileFile();
@@ -207,9 +224,26 @@
             compiledProxyGroupsStamp_ = ec ? std::filesystem::file_time_type{}
                                            : stamp;
             compiledProxyGroupsSize_ = ec ? 0 : size;
+            compiledSourceFiles_.clear();
+            for (const auto& profile : db_->listProfiles()) {
+                const auto id = routing::ConnectionId(profile.id);
+                if (profile.file.empty() || (!profile.selected &&
+                    !std::ranges::any_of(options.auxiliarySources, [&](const auto& source) { return source.id == id; }))) continue;
+                const auto sourceFile = cfg::profilesDir() / profile.file;
+                std::error_code error;
+                const auto sourceStamp = std::filesystem::last_write_time(sourceFile, error);
+                const auto bytes = error ? 0 : std::filesystem::file_size(sourceFile, error);
+                if (!error) compiledSourceFiles_[sourceFile] = {sourceStamp, bytes};
+            }
             // 预览编译同样产出保真度账本：让「配置保真度」报告在内核没跑时也
             // 有内容（startCore 那条路径看到的是同一份订阅）。
-            snap_.fidelity = compiled.fidelity;
+            previewSourceObjects_ = std::make_shared<const std::vector<singbox::SourceObject>>(compiled.sourceObjects);
+            if (snap_.state != core::CoreState::Running && snap_.state != core::CoreState::Starting) {
+                snap_.fidelity = compiled.fidelity;
+                snap_.sourceObjects = previewSourceObjects_;
+            }
+            compiledProfilesRevision_ = clashflux::persistence::persistence().profilesRevision();
+            compiledPolicyText_ = setting("vpn.global_policy", "");
             return compiledProxyGroups_;
         } catch (...) {
             return {};
@@ -219,12 +253,15 @@
     // 只编译、不启动：返回订阅原文的保真度账本。不 spawn、不写盘、不联网
     // （rule_set 只做缓存命中判断）。导入 / 刷新 / 启用订阅后用它告诉用户
     // 「这份订阅有哪些条目吃不下」。
-    std::vector<singbox::FidelityNote> compileFidelity(const std::string& profileYaml) {
+    std::vector<singbox::FidelityNote> compileFidelity(const std::string& profileYaml, const std::string& sourceId = "") {
+        std::lock_guard operationLock(lifecycleMutex_);
         if (profileYaml.empty()) return {};
         try {
-            const auto options = routingOptions(profileYaml, false);
+            auto options = routingOptions(profileYaml, false, false, nullptr, std::nullopt, nullptr, false);
+            options.auxiliarySources.clear(); options.globalRules.clear(); options.nativeConnections.clear();
+            options.mainConnectionId = sourceId;
             const auto compiled = core::generateConfig(options);
-            if (compiled.json.empty() || !compiled.error.empty()) return {};
+            // 致命失败也可能带有 MATCH/依赖等诊断，不能当成无损订阅。
             return compiled.fidelity;
         } catch (...) {
             return {};
@@ -250,7 +287,7 @@
             }
             break;
         }
-        return compileFidelity(profileYaml);
+        return compileFidelity(profileYaml, routing::ConnectionId(profileId));
     }
 
     // 指定订阅的保真度一行摘要（"跳过 3 个节点 · 降级 1 个组"）；无降级返回空串。
@@ -292,7 +329,11 @@
     std::string logLevel() { return setting("core.log_level", "info"); }
     // TUN 开关（持久化；Android 由 VpnService 交付 fd 后重启内核生效）。
     bool tunEnabled() {
-#if defined(__ANDROID__)
+#if defined(CLASHFLUX_IOS)
+        // iOS 上 Packet Tunnel 就是唯一的数据面；不存在仅启动本地代理而
+        // 绕过系统 VPN 的运行模式。
+        return true;
+#elif defined(__ANDROID__)
         // Android 的系统 VPN 由 ClashVpnService 建立；fd 就绪后 bridge 会重启
         // 内核。这里必须保留用户设置，令 generateConfig 生成 tun inbound，
         // 否则 VPN 会建立却没有数据面接管流量。
@@ -303,7 +344,7 @@
     }
     // 系统代理开关（持久化；写入 KDE kioslaverc / GNOME gsettings）。
     bool systemProxyEnabled() {
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
         return false;
 #else
         return setting("proxy.system_enabled", "false") == "true";
@@ -334,7 +375,14 @@
     // 成功更新快照。
     bool applyTun(bool enable) {
         std::lock_guard operationLock(lifecycleMutex_);
-#if defined(__ANDROID__)
+#if defined(CLASHFLUX_IOS)
+        if (!enable) return false;
+        ensureOpen();
+        setSetting("core.tun_enabled", "true");
+        std::lock_guard lock(mutex_);
+        snap_.tunEnabled = true;
+        return true;
+#elif defined(__ANDROID__)
         (void)enable;
         return false;
 #else

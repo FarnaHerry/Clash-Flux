@@ -31,6 +31,10 @@ export module clashflux.config;
 
 import std;
 
+#if defined(CLASHFLUX_IOS)
+extern "C" const char* clashflux_ios_core_work_dir() noexcept;
+#endif
+
 namespace cfg {
 
 #if defined(__ANDROID__)
@@ -146,9 +150,26 @@ export std::filesystem::path profilesDir() {
 // 内核工作目录（-D 参数）：运行时生成的 config.json、cache.db、
 // core.pid/core.log 等都落这里，与用户数据隔离在一处便于清理。
 export std::filesystem::path coreWorkDir() {
+#if defined(CLASHFLUX_IOS)
+    // sing-box runs in the Packet Tunnel extension, so its config, rule-set
+    // cache, and logs must live in the App Group shared with that extension.
+    // Keep the SQLite database and user profiles in dataDir() (the app sandbox).
+    const char* sharedDirectory = clashflux_ios_core_work_dir();
+    if (sharedDirectory == nullptr || *sharedDirectory == '\0') {
+        throw std::runtime_error(
+            "无法访问 iOS App Group；请检查应用与 Packet Tunnel 的签名 entitlement");
+    }
+    const std::filesystem::path dir =
+        std::filesystem::path(sharedDirectory) / "core";
+#else
     const std::filesystem::path dir = dataDir() / "core";
+#endif
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        throw std::filesystem::filesystem_error(
+            "无法创建 sing-box 工作目录", dir, ec);
+    }
     return dir;
 }
 

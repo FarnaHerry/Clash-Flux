@@ -146,23 +146,24 @@ huxerui::ThemeSpec FluxDarkThemeSpec() {
                                         10000.0F};
     spec.colors.primary = FluxPalette::water();
     spec.colors.on_primary = FluxPalette::abyss();
-    spec.colors.primary_container = huxerui::Color::Rgb(44, 45, 46);
+    // 卡片与浮层整体下移 10 级；底层背景回提 2 级，收窄大卡片反差。
+    spec.colors.primary_container = huxerui::Color::Rgb(34, 35, 36);
     spec.colors.on_primary_container = FluxPalette::ice();
     spec.colors.secondary = huxerui::Color::Rgb(185, 185, 185);
     spec.colors.on_secondary = huxerui::Color::Rgb(32, 32, 32);
-    spec.colors.secondary_container = huxerui::Color::Rgb(53, 53, 53);
+    spec.colors.secondary_container = huxerui::Color::Rgb(43, 43, 43);
     spec.colors.on_secondary_container = huxerui::Color::Rgb(226, 226, 226);
-    spec.colors.tertiary_container = huxerui::Color::Rgb(46, 46, 46);
+    spec.colors.tertiary_container = huxerui::Color::Rgb(36, 36, 36);
     spec.colors.on_tertiary_container = huxerui::Color::Rgb(222, 222, 222);
-    spec.colors.background = huxerui::Color::Rgb(28, 29, 30);
-    spec.colors.surface = huxerui::Color::Rgb(32, 33, 34);
-    spec.colors.surface_container_low = huxerui::Color::Rgb(36, 37, 38);
-    spec.colors.surface_container = huxerui::Color::Rgb(40, 41, 42);
-    spec.colors.surface_container_high = huxerui::Color::Rgb(46, 47, 48);
-    spec.colors.surface_container_highest = huxerui::Color::Rgb(52, 53, 54);
+    spec.colors.background = huxerui::Color::Rgb(20, 21, 22);
+    spec.colors.surface = huxerui::Color::Rgb(22, 23, 24);
+    spec.colors.surface_container_low = huxerui::Color::Rgb(26, 27, 28);
+    spec.colors.surface_container = huxerui::Color::Rgb(30, 31, 32);
+    spec.colors.surface_container_high = huxerui::Color::Rgb(36, 37, 38);
+    spec.colors.surface_container_highest = huxerui::Color::Rgb(42, 43, 44);
     spec.colors.on_surface = huxerui::Color::Rgb(241, 241, 241);
     spec.colors.on_surface_variant = huxerui::Color::Rgb(176, 176, 176);
-    spec.colors.outline = huxerui::Color::Rgb(75, 75, 75);
+    spec.colors.outline = huxerui::Color::Rgb(65, 65, 65);
     spec.colors.inverse_surface = huxerui::Color::Rgb(232, 232, 232);
     spec.colors.inverse_on_surface = huxerui::Color::Rgb(32, 32, 32);
     spec.colors.scrim = huxerui::Color::Rgb(7, 7, 7, 0.66F);
@@ -191,19 +192,19 @@ huxerui::ThemeSpec FluxLightThemeSpec() {
     spec.colors.on_primary_container = huxerui::Color::Rgb(16, 73, 103);
     spec.colors.secondary = huxerui::Color::Rgb(94, 104, 114);
     spec.colors.on_secondary = huxerui::Color::White();
-    spec.colors.secondary_container = huxerui::Color::Rgb(229, 233, 237);
+    spec.colors.secondary_container = huxerui::Color::Rgb(227, 231, 235);
     spec.colors.on_secondary_container = huxerui::Color::Rgb(48, 56, 64);
-    spec.colors.tertiary_container = huxerui::Color::Rgb(238, 240, 242);
+    spec.colors.tertiary_container = huxerui::Color::Rgb(236, 238, 240);
     spec.colors.on_tertiary_container = huxerui::Color::Rgb(63, 70, 77);
     spec.colors.background = huxerui::Color::Rgb(239, 241, 244);
-    spec.colors.surface = huxerui::Color::White();
-    spec.colors.surface_container_low = huxerui::Color::Rgb(252, 253, 254);
-    spec.colors.surface_container = huxerui::Color::Rgb(245, 246, 248);
-    spec.colors.surface_container_high = huxerui::Color::Rgb(235, 238, 241);
-    spec.colors.surface_container_highest = huxerui::Color::White();
+    spec.colors.surface = huxerui::Color::Rgb(253, 253, 253);
+    spec.colors.surface_container_low = huxerui::Color::Rgb(250, 251, 252);
+    spec.colors.surface_container = huxerui::Color::Rgb(243, 244, 246);
+    spec.colors.surface_container_high = huxerui::Color::Rgb(233, 236, 239);
+    spec.colors.surface_container_highest = huxerui::Color::Rgb(253, 253, 253);
     spec.colors.on_surface = huxerui::Color::Rgb(32, 36, 41);
     spec.colors.on_surface_variant = huxerui::Color::Rgb(98, 108, 118);
-    spec.colors.outline = huxerui::Color::Rgb(211, 216, 222);
+    spec.colors.outline = huxerui::Color::Rgb(209, 214, 220);
     spec.colors.inverse_surface = huxerui::Color::Rgb(37, 42, 48);
     spec.colors.inverse_on_surface = huxerui::Color::Rgb(242, 244, 246);
     spec.colors.scrim = huxerui::Color::Rgb(17, 24, 32, 0.34F);
@@ -336,11 +337,27 @@ huxerui::View FluxThemed(bool dark, huxerui::View content) {
         huxerui::Font::System(font_size::kBody), spec.colors.on_surface_variant};
     navigationPane.selected_content = spec.colors.on_primary_container;
     navigationPane.indicator = spec.colors.primary_container;
-    navigationPane.compact_width = 72.0F;
+    navigationPane.compact_width = kTopNavigationRailWidth;
     navigationPane.expanded_min_width = 220.0F;
-    navigationPane.item_margin = huxerui::EdgeInsets::Symmetric(0.0F, 0.0F);
-    navigationPane.compact_indicator_size = huxerui::Size{44.0F, 44.0F};
+    navigationPane.item_height = kTopNavigationItemHeight;
+    navigationPane.item_margin = huxerui::EdgeInsets::Symmetric(
+        0.0F, kTopNavigationItemVerticalMargin);
+    navigationPane.compact_indicator_size =
+        huxerui::Size{kTopNavigationIndicatorSize, kTopNavigationIndicatorSize};
     navigationPane.indicator_corner_radius = spec.shapes.medium;
+    huxerui::Color navigationHover = spec.colors.on_surface;
+    navigationHover.alpha = 0.08F;
+    huxerui::Color navigationPress = spec.colors.on_surface;
+    navigationPress.alpha = 0.14F;
+    navigationPane.indication = huxerui::Indication{
+        .geometry = huxerui::IndicationGeometry{
+            .layer_size = navigationPane.compact_indicator_size,
+            .clip_corner_radii =
+                huxerui::CornerRadii{navigationPane.indicator_corner_radius},
+        },
+        .hover = huxerui::IndicationLayer{.fill = navigationHover},
+        .press = huxerui::IndicationLayer{.fill = navigationPress},
+    };
     definition.Set(navigationPane);
 
     // 顶部状态栏与底部系统导航栏的底色统一取页面海面底色（background），
@@ -604,6 +621,7 @@ void StartCliRequestWatcher(huxerui::TaskScope tasks,
     huxerui::State<std::size_t> navPage, huxerui::State<std::size_t>,
     huxerui::State<int> themeMode, const IslandTheme& islands,
     const huxerui::ThemeSpec&, ProfilesCache profilesCache) {
+    static_cast<void>(islands);
     std::vector<huxerui::View> pages;
     pages.reserve(7);
     // 不可见的一级页仍挂载（保住 State/Lifecycle）但不构建内容：IndexedPages 让
@@ -629,8 +647,8 @@ void StartCliRequestWatcher(huxerui::TaskScope tasks,
         DesktopNavigationSurface(navPage),
         huxerui::IndexedPages(std::move(pages), navPage.Get())
             .With(huxerui::Grow(1.0F)),
-    }.With(huxerui::Spacing(islands.page_gap),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
+    // 侧栏宽度已经包含左右留白，因此这里不再给 NavigationPane 额外加 row gap。
+    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
            huxerui::Grow(1.0F));
 }
 

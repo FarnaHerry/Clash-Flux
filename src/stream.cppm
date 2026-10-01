@@ -69,9 +69,9 @@ public:
     std::vector<LogLine> drainLogs();
     // 取最新流量帧；无新帧返回 false（槽位取走后清空）。
     bool takeTraffic(TrafficPoint& out);
-    // 取最新连接快照（原始 JSON 文本）；消费新帧标记但保留快照缓存，
-    // 无新帧返回 false。
-    bool takeConnections(std::string& out);
+    // 取最新有效连接总量。解码在 WebSocket 工作线程完成，首页只读整数；
+    // 消费标记不影响连接页的原文快照。非法帧不会替换有效总量。
+    bool takeConnectionTotals(std::int64_t& upload, std::int64_t& download);
     // 读取最近一次连接快照但不消费。页面切换/重新挂载后仍能立即显示
     // 当前连接，而不必等待下一帧 WebSocket 推送。
     bool readConnections(std::string& out) const;

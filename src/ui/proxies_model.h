@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "wire_codec.h"
 #include "ui.h" // ProxyGroupSnapshot
 
 namespace clashflux::ui {
@@ -33,13 +34,20 @@ enum class ProxiesSource {
 
 struct ProxiesSnapshot {
     std::vector<ProxyGroupSnapshot> groups; // 扁平表示（首页卡片 / 托盘菜单）
-    std::string body;                       // 原文（代理页解析嵌套分组用）
+    std::map<std::string, std::string> labels; // 稳定 tag → 来源限定的显示名
+    std::string body;                       // 内容版本比较用的原文
+    std::shared_ptr<const wire::Proxies> proxies; // 工作线程生成的不可变拥有型 DTO
     ProxiesSource source = ProxiesSource::Empty;
     // 回落成 Preview 时的原因（REST 失败文本）；Live 时为空。把静默降级变成
     // 可显示的信息。
     std::string error;
 
-    bool operator==(const ProxiesSnapshot&) const = default;
+    bool operator==(const ProxiesSnapshot& other) const {
+        // DTO is a deterministic projection of body. Pointer identity changes
+        // on each fetch and must not force State notifications for equal data.
+        return labels == other.labels && groups == other.groups && body == other.body && source == other.source &&
+               error == other.error;
+    }
 };
 
 // 应用级单例：在 application_hooks 里 Provide，组件用 UseService<ProxiesModel>()。

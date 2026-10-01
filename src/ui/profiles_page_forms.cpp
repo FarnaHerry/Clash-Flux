@@ -77,13 +77,18 @@ huxerui::Task<std::pair<std::int64_t, std::string>> ImportProfileContent(
         danger);
 }
 
-// 订阅表单中的平台字段由平台函数整体负责。Android 不需要也不显示桌面
-// 系统代理、内核代理和证书绕过开关；桌面函数保持原有三项。
+// 订阅表单中的平台字段由平台函数整体负责。Android 不提供桌面系统代理与
+// 内核代理选项，但证书校验开关由各自平台的订阅下载器支持。
 #if defined(__ANDROID__)
 
 [[huxerui::composable]] huxerui::View AndroidProfileOptions(
-    huxerui::State<bool>, huxerui::State<bool>, huxerui::State<bool>) {
-    return {};
+    huxerui::State<bool>, huxerui::State<bool>,
+    huxerui::State<bool> invalid_cert) {
+    return huxerui::Column {
+        ToggleRow("允许无效证书（危险）", "跳过 HTTPS 证书校验，仅用于可信来源",
+                  true, invalid_cert),
+    }.With(huxerui::Spacing(12.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 huxerui::View ProfilePlatformOptions(

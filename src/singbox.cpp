@@ -21,6 +21,7 @@ namespace {
 #include "singbox_proxy.inc"
 #include "singbox_rules.inc"
 #include "singbox_compile.inc"
+#include "singbox_sources.inc"
 } // namespace
 
 std::string FidelitySummary(const std::vector<FidelityNote>& notes) {
@@ -31,6 +32,7 @@ std::string FidelitySummary(const std::vector<FidelityNote>& notes) {
     std::size_t ruleSkip = 0;
     std::size_t ruleApprox = 0;
     std::size_t dnsMiss = 0;
+    std::size_t dnsApprox = 0;
     std::size_t fieldMiss = 0;
     std::size_t fieldApprox = 0;
     for (const FidelityNote& note : notes) {
@@ -47,7 +49,7 @@ std::string FidelitySummary(const std::vector<FidelityNote>& notes) {
             if (approx) ++ruleApprox; else ++ruleSkip;
             break;
         case FidelityScope::Dns:
-            ++dnsMiss;
+            if (approx) ++dnsApprox; else ++dnsMiss;
             break;
         case FidelityScope::Field:
             if (approx) ++fieldApprox; else ++fieldMiss;
@@ -64,6 +66,7 @@ std::string FidelitySummary(const std::vector<FidelityNote>& notes) {
     if (nodeApprox > 0) parts.push_back(std::format("近似 {} 个节点", nodeApprox));
     if (groupApprox > 0) parts.push_back(std::format("降级 {} 个组", groupApprox));
     if (ruleApprox > 0) parts.push_back(std::format("近似 {} 条规则", ruleApprox));
+    if (dnsApprox > 0) parts.push_back(std::format("近似 {} 项 DNS", dnsApprox));
     if (fieldApprox > 0) parts.push_back(std::format("近似 {} 个字段", fieldApprox));
     std::string summary;
     for (const std::string& part : parts) {
@@ -75,6 +78,9 @@ std::string FidelitySummary(const std::vector<FidelityNote>& notes) {
 
 CompileResult compileConfig(const CompileOptions& options) {
     Context ctx{options};
+    ctx.sourceId = options.mainConnectionId;
+    ctx.result.planRevision = options.planRevision;
+    if (!vpn::ValidatePolicyRules(options.globalRules, ctx.result.error)) return std::move(ctx.result);
     const std::string trimmed = trimCopy(options.profileYaml);
 
     if (!trimmed.empty() && trimmed.front() == '{') {
@@ -87,7 +93,22 @@ CompileResult compileConfig(const CompileOptions& options) {
         ctx.config = std::move(parsed);
         try {
             applyManagedSkeleton(ctx, options);
-            if (!ctx.result.error.empty() || !applyConnectionRules(ctx)) return std::move(ctx.result);
+            if (!ctx.result.error.empty()) return std::move(ctx.result);
+            ctx.outbounds = ctx.config.value("outbounds", nlohmann::json::array());
+            for (const auto& item : ctx.outbounds) ctx.knownTags.push_back(item.value("tag", ""));
+            collectSourceObjects(ctx, options.mainConnectionId, options.mainSourceName);
+            for (const auto& item : ctx.config.value("endpoints", nlohmann::json::array())) {
+                const auto tag = item.value("tag", "");
+                ctx.knownTags.push_back(tag);
+                ctx.result.sourceObjects.push_back({options.mainConnectionId, options.mainSourceName, vpn::TargetKind::Node, tag, tag});
+            }
+            if (!options.mainConnectionId.empty()) {
+                ctx.sourceDefaults[options.mainConnectionId] = {ctx.config["route"].value("final", "")};
+                ctx.result.participatingSources.push_back(options.mainConnectionId);
+            }
+            if (!compileAuxiliarySources(ctx)) return std::move(ctx.result);
+            ctx.config["outbounds"] = ctx.outbounds;
+            if (!applyConnectionRules(ctx)) return std::move(ctx.result);
         } catch (const std::exception& error) {
             ctx.result.error = std::format("原生 sing-box 配置合并失败：{}", error.what());
             return std::move(ctx.result);
@@ -111,22 +132,24 @@ CompileResult compileConfig(const CompileOptions& options) {
             ctx.result.error = std::format("订阅 YAML 解析失败：{}", error.what());
             return std::move(ctx.result);
         }
+        if (!ctx.result.error.empty()) return std::move(ctx.result);
     }
 
-    // final：MATCH 目标优先；REJECT 目标转成兜底 reject 规则；缺省回落首个组。
+    // Explicit MATCH is authoritative, including DIRECT. The first selector
+    // is only an application default when the source has no terminal rule.
     std::string finalOutbound = ctx.finalTarget;
     if (finalOutbound == "REJECT" || finalOutbound == "REJECT-DROP") {
-        ctx.config["route"]["rules"].push_back({{"action", "reject"}});
+        ctx.config["route"]["rules"].push_back(rejectRule(finalOutbound));
         finalOutbound = "DIRECT";
     }
-    if (finalOutbound.empty() || finalOutbound == "PASS") finalOutbound = "DIRECT";
-    if (finalOutbound != "DIRECT" && !ctx.tagKnown(finalOutbound)) {
-        ctx.note(FidelityScope::Rule, Fidelity::Approx, "MATCH",
-                 std::format("MATCH 目标「{}」不存在，回落 DIRECT", finalOutbound),
-                 "订阅里的兜底规则引用了一个不存在的节点/组；确认它没有被编译器跳过");
-        finalOutbound = "DIRECT";
+    if (finalOutbound.empty()) finalOutbound = "DIRECT";
+    if (finalOutbound != "DIRECT" && !std::ranges::any_of(ctx.outbounds, [&](const auto& output) { return output.value("tag", "") == finalOutbound; })) {
+        ctx.result.error = std::format("MATCH 目标「{}」不可用，无法应用配置", finalOutbound);
+        ctx.note(FidelityScope::Rule, Fidelity::Unsupported, "MATCH", ctx.result.error,
+                 "修正兜底目标；不会改成 DIRECT 或首个代理组");
+        return std::move(ctx.result);
     }
-    if (finalOutbound == "DIRECT") {
+    if (ctx.finalTarget.empty()) {
         // 无订阅/无 MATCH：默认全局指向首个 selector 组，保持「有订阅即可用代理」。
         for (const auto& outbound : ctx.outbounds) {
             if (outbound.value("type", "") == "selector") {
@@ -136,6 +159,13 @@ CompileResult compileConfig(const CompileOptions& options) {
         }
     }
     ctx.config["route"]["final"] = finalOutbound;
+    if (!options.mainConnectionId.empty()) {
+        namespaceClashSource(ctx, options.mainConnectionId, options.mainSourceName);
+        ctx.sourceDefaults[options.mainConnectionId] = {ctx.config["route"]["final"].get<std::string>(),
+            ctx.finalTarget == "REJECT" || ctx.finalTarget == "REJECT-DROP", ctx.finalTarget == "REJECT-DROP"};
+        ctx.result.participatingSources.push_back(options.mainConnectionId);
+    }
+    if (!compileAuxiliarySources(ctx)) return std::move(ctx.result);
 
     if (!ctx.ruleSets.empty()) {
         ctx.config["route"]["rule_set"] = std::move(ctx.ruleSets);
@@ -146,19 +176,44 @@ CompileResult compileConfig(const CompileOptions& options) {
     return std::move(ctx.result);
 }
 
+std::string BuiltinRuleSetUrl(std::string_view tag) {
+    std::string_view kind;
+    std::string_view name;
+    if (tag.starts_with("geoip-")) {
+        kind = "geoip";
+        name = tag.substr(6);
+        if (name.size() != 2 || !std::ranges::all_of(name, [](char c) {
+                return c >= 'a' && c <= 'z';
+            })) return {};
+    } else if (tag.starts_with("geosite-")) {
+        kind = "geosite";
+        name = tag.substr(8);
+        if (name.empty() || !std::ranges::all_of(name, [](char c) {
+                return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                       c == '-' || c == '_';
+            })) return {};
+    } else {
+        return {};
+    }
+    return "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/" +
+           std::string(kind) + "/" + std::string(name) + ".srs";
+}
+
 bool RuleSetCacheValid(const std::filesystem::path& path) {
-    // 头部 = "SRS" 魔数 + 版本号；只做低成本校验，完整校验需要解压 zlib 流。
-    constexpr std::size_t kHeaderBytes = 4;
-    constexpr std::string_view kMagic = "SRS";
+    // 1.14.2 common/srs/binary.go：SRS + version（<=5）+ zlib stream。
+    // 这里只筛掉错误页、短头、未来版本和非法 zlib 头；不替代内核解压/规则解析。
     std::error_code ec;
     const auto size = std::filesystem::file_size(path, ec);
-    if (ec || size < kHeaderBytes) return false;
+    if (ec || size < 12) return false;
     std::ifstream in(path, std::ios::binary);
-    if (!in) return false;
-    char magic[kMagic.size()]{};
-    in.read(magic, static_cast<std::streamsize>(sizeof(magic)));
-    return in.gcount() == static_cast<std::streamsize>(sizeof(magic)) &&
-           std::string_view(magic, sizeof(magic)) == kMagic;
+    std::array<unsigned char, 6> header{};
+    in.read(reinterpret_cast<char*>(header.data()), header.size());
+    if (in.gcount() != static_cast<std::streamsize>(header.size())) return false;
+    const unsigned int cmf = header[4];
+    const unsigned int flg = header[5];
+    return header[0] == 'S' && header[1] == 'R' && header[2] == 'S' &&
+           header[3] <= 5 && (cmf & 0x0f) == 8 && (cmf >> 4) <= 7 &&
+           ((cmf << 8) + flg) % 31 == 0;
 }
 
 } // namespace singbox

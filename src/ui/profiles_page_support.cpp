@@ -16,6 +16,9 @@
 
 #include "ui.h"
 #include "task_bridge.h"
+#if defined(__ANDROID__)
+#include "android_profile_http.h"
+#endif
 
 import clashflux.db;
 import clashflux.openvpn;
@@ -247,12 +250,32 @@ void OpenProfileCreate(bool compact, huxerui::State<bool> page,
     });
 }
 
-// HuxerUI HttpClient 订阅抓取：GET + UA + 全程超时，响应转 store::FetchedProfile。
-// 必须在 UI 线程任务协程里 co_await（HTTP 自带平台异步通道，禁入阻塞线程池）。
+// Android 默认走 HuxerUI 的平台异步 HTTP。仅用户显式开启证书绕过时，改用
+// app 自己的 HttpURLConnection 请求级信任策略；同步请求必须留在任务线程。
 huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
     std::shared_ptr<AppHttpClient> http, std::string url,
-    int timeoutSecs) {
+    int timeoutSecs, bool allowInvalidCert) {
     store::FetchedProfile fetched;
+#if defined(__ANDROID__)
+    if (allowInvalidCert) {
+        fetched = co_await RunOnTaskThread(
+            [url = std::move(url), timeoutSecs]() {
+                const auto response = clashflux::android::DownloadProfile(
+                    url, timeoutSecs, true);
+                store::FetchedProfile result;
+                result.status = response.status;
+                result.error = response.error;
+                result.headers = response.headers;
+                result.body = response.body;
+                result.ok = result.error.empty() && result.status >= 200 &&
+                            result.status < 300;
+                return result;
+            });
+        co_return fetched;
+    }
+#else
+    static_cast<void>(allowInvalidCert);
+#endif
     if (!http) {
         fetched.error = "HTTP 服务不可用";
         co_return fetched;
@@ -299,7 +322,7 @@ huxerui::Task<std::int64_t> AndroidImportRemote(
                                    name, url, options); });
     if (nid == 0) co_return 0;
     const store::FetchedProfile fetched = co_await AndroidFetchProfile(
-        std::move(http), url, options.timeoutSecs);
+        std::move(http), url, options.timeoutSecs, options.allowInvalidCert);
     const bool ok = co_await RunOnTaskThread(
         [nid, fetched] { return store::profilesStore().completeRemote(
                              nid, fetched, true); });
@@ -325,7 +348,7 @@ huxerui::Task<std::string> AndroidRefreshRemote(
         co_return err;
     }
     const store::FetchedProfile fetched = co_await AndroidFetchProfile(
-        std::move(http), row->url, row->timeoutSecs);
+        std::move(http), row->url, row->timeoutSecs, row->allowInvalidCert);
     const bool ok = co_await RunOnTaskThread(
         [id, fetched] { return store::profilesStore().completeRemote(
                              id, fetched, false); });
@@ -421,7 +444,8 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
     int updated = 0;
     for (const auto& row : due) {
         const store::FetchedProfile fetched = co_await
-            profile_detail::AndroidFetchProfile(http, row.url, row.timeoutSecs);
+            profile_detail::AndroidFetchProfile(
+                http, row.url, row.timeoutSecs, row.allowInvalidCert);
         const bool ok = co_await RunOnTaskThread(
             [id = row.id, fetched] {
                 return store::profilesStore().completeRemote(id, fetched, false);

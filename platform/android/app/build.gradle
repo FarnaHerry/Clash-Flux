@@ -34,30 +34,58 @@ abstract class StageHuxerUIAssets extends DefaultTask {
 }
 
 def singboxAar = layout.buildDirectory.file("libs/libbox-arm64.aar")
+def singboxAarMetadata = layout.buildDirectory.file("libs/libbox-arm64.aar.metadata.json")
+def singboxVersion = "1.14.2"
+def singboxRevision = "af6e64c3b69e6132ebaee0e1a3d24e93903f6709"
 def suppliedSingboxAar = providers.environmentVariable("CLASHFLUX_SINGBOX_AAR")
 def stageSingboxAar = tasks.register("stageSingboxAar") {
-    inputs.property("revision", "0b8995879f29a9b98ee027bc17b75e101445b238")
+    inputs.property("version", singboxVersion)
+    inputs.property("revision", singboxRevision)
     // The AAR is deliberately supplied by the release/build script.  Mark the
     // provider optional so Gradle reaches the task's actionable diagnostic
     // below instead of failing configuration validation with an unnamed input.
     inputs.file(suppliedSingboxAar).optional()
+    inputs.file(suppliedSingboxAar.map { it + ".metadata.json" }).optional()
     outputs.file(singboxAar)
+    outputs.file(singboxAarMetadata)
     doLast {
         def target = singboxAar.get().asFile
+        def targetMetadata = singboxAarMetadata.get().asFile
         def source = suppliedSingboxAar.orNull == null ? null : file(suppliedSingboxAar.get())
-        if (source == null || !source.isFile()) {
-            // A checked build can reuse the already-staged pinned artifact.
-            // CI/release builds still provide CLASHFLUX_SINGBOX_AAR to refresh it.
-            if (target.isFile()) {
-                return
+        def validateArtifact = { File artifact, File metadata ->
+            if (!artifact.isFile() || !metadata.isFile()) {
+                throw new GradleException("Missing sing-box AAR or revision metadata; rebuild with platform/android/build-singbox-libbox.sh.")
             }
-            throw new GradleException("Missing arm64 sing-box libbox AAR; run platform/android/build-singbox-libbox.sh first.")
+            def identity = new JsonSlurper().parse(metadata)
+            if (identity.version != singboxVersion || identity.revision != singboxRevision || identity.abi != "arm64-v8a") {
+                throw new GradleException("sing-box AAR source revision/ABI differs from the project pin; rebuild libbox.")
+            }
+            MessageDigest digest = MessageDigest.getInstance("SHA-256")
+            artifact.withInputStream { stream ->
+                byte[] buffer = new byte[16384]
+                for (int count = stream.read(buffer); count >= 0; count = stream.read(buffer)) {
+                    if (count > 0) digest.update(buffer, 0, count)
+                }
+            }
+            if (digest.digest().encodeHex().toString() != identity.sha256) {
+                throw new GradleException("sing-box AAR SHA256 differs from its build metadata; rebuild libbox.")
+            }
         }
+        if (source == null || !source.isFile()) {
+            if (suppliedSingboxAar.orNull != null) {
+                throw new GradleException("CLASHFLUX_SINGBOX_AAR points to a missing AAR.")
+            }
+            validateArtifact(target, targetMetadata)
+            return
+        }
+        def sourceMetadata = file(source.path + ".metadata.json")
+        validateArtifact(source, sourceMetadata)
         if (source.canonicalFile == target.canonicalFile) {
             return
         }
         target.parentFile.mkdirs()
         copy { from source; into target.parentFile; rename { target.name } }
+        copy { from sourceMetadata; into target.parentFile; rename { targetMetadata.name } }
     }
 }
 

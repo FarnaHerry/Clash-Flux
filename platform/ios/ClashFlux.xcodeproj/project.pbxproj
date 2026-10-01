@@ -1,0 +1,345 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A00000000000000000000001 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000001 /* main.mm */; };
+		A00000000000000000000002 /* ClashFluxBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000002 /* ClashFluxBridge.mm */; };
+		A00000000000000000000003 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000003 /* PacketTunnelProvider.swift */; };
+		A00000000000000000000004 /* ClashFluxPlatformInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000004 /* ClashFluxPlatformInterface.swift */; };
+		A00000000000000000000005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000005 /* Assets.xcassets */; };
+		A00000000000000000000006 /* PacketTunnel.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = B00000000000000000000014 /* PacketTunnel.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A00000000000000000000007 /* Libbox.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000000000000000000006 /* Libbox.xcframework */; };
+		A00000000000000000000008 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000000000000000000007 /* NetworkExtension.framework */; };
+		A00000000000000000000009 /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000000000000000000008 /* Network.framework */; };
+		A00000000000000000000010 /* CFNetwork.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000000000000000000020 /* CFNetwork.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		C00000000000000000000001 /* PacketTunnel proxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F00000000000000000000001;
+			proxyType = 1;
+			remoteGlobalIDString = D00000000000000000000002;
+			remoteInfo = PacketTunnel;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		E00000000000000000000001 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (A00000000000000000000006 /* PacketTunnel.appex in Embed App Extensions */, );
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		B00000000000000000000001 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+		B00000000000000000000002 /* ClashFluxBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = ClashFluxBridge.mm; sourceTree = "<group>"; };
+		B00000000000000000000003 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
+		B00000000000000000000004 /* ClashFluxPlatformInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClashFluxPlatformInterface.swift; sourceTree = "<group>"; };
+		B00000000000000000000005 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B00000000000000000000006 /* Libbox.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Build/Libbox.xcframework; sourceTree = SOURCE_ROOT; };
+		B00000000000000000000007 /* NetworkExtension.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NetworkExtension.framework; path = System/Library/Frameworks/NetworkExtension.framework; sourceTree = SDKROOT; };
+		B00000000000000000000008 /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
+		B00000000000000000000009 /* App Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B00000000000000000000010 /* ClashFlux.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClashFlux.entitlements; sourceTree = "<group>"; };
+		B00000000000000000000011 /* Packet Tunnel Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B00000000000000000000012 /* PacketTunnel.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PacketTunnel.entitlements; sourceTree = "<group>"; };
+		B00000000000000000000014 /* PacketTunnel.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PacketTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B00000000000000000000015 /* ClashFlux.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClashFlux.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B00000000000000000000016 /* Build HuxerUI core */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = build_huxerui_core.sh; sourceTree = "<group>"; };
+		B00000000000000000000017 /* Stage HuxerUI resources */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = stage_huxerui_resources.sh; sourceTree = "<group>"; };
+		B00000000000000000000018 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		B00000000000000000000019 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		B00000000000000000000020 /* CFNetwork.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CFNetwork.framework; path = System/Library/Frameworks/CFNetwork.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		E00000000000000000000002 /* App Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000010 /* CFNetwork.framework in Frameworks */, ); runOnlyForDeploymentPostprocessing = 0; };
+		E00000000000000000000003 /* Packet Tunnel Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00000000000000000000007 /* Libbox.xcframework in Frameworks */,
+				A00000000000000000000008 /* NetworkExtension.framework in Frameworks */,
+				A00000000000000000000009 /* Network.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		F00000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000003 /* App */,
+				F00000000000000000000004 /* PacketTunnel */,
+				F00000000000000000000005 /* Config */,
+				F00000000000000000000006 /* Scripts */,
+				F00000000000000000000007 /* Frameworks */,
+				F00000000000000000000008 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		F00000000000000000000003 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000001 /* main.mm */,
+				B00000000000000000000002 /* ClashFluxBridge.mm */,
+				B00000000000000000000009 /* App Info.plist */,
+				B00000000000000000000010 /* ClashFlux.entitlements */,
+				B00000000000000000000005 /* Assets.xcassets */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		F00000000000000000000004 /* PacketTunnel */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000003 /* PacketTunnelProvider.swift */,
+				B00000000000000000000004 /* ClashFluxPlatformInterface.swift */,
+				B00000000000000000000011 /* Packet Tunnel Info.plist */,
+				B00000000000000000000012 /* PacketTunnel.entitlements */,
+			);
+			path = PacketTunnel;
+			sourceTree = "<group>";
+		};
+		F00000000000000000000005 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000018 /* Debug.xcconfig */,
+				B00000000000000000000019 /* Release.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		F00000000000000000000006 /* Scripts */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000016 /* Build HuxerUI core */,
+				B00000000000000000000017 /* Stage HuxerUI resources */,
+			);
+			path = Scripts;
+			sourceTree = "<group>";
+		};
+		F00000000000000000000007 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000006 /* Libbox.xcframework */,
+				B00000000000000000000007 /* NetworkExtension.framework */,
+				B00000000000000000000008 /* Network.framework */,
+				B00000000000000000000020 /* CFNetwork.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		F00000000000000000000008 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000015 /* ClashFlux.app */,
+				B00000000000000000000014 /* PacketTunnel.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		D00000000000000000000001 /* ClashFlux */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 700000000000000000000002;
+			buildPhases = (
+				800000000000000000000001 /* Build HuxerUI core */,
+				E00000000000000000000004 /* App Sources */,
+				E00000000000000000000002 /* App Frameworks */,
+				E00000000000000000000005 /* App Resources */,
+				800000000000000000000002 /* Stage HuxerUI resources */,
+				E00000000000000000000001 /* Embed App Extensions */,
+			);
+			buildRules = ();
+			dependencies = (C00000000000000000000002 /* PacketTunnel dependency */, );
+			name = ClashFlux;
+			productName = ClashFlux;
+			productReference = B00000000000000000000015 /* ClashFlux.app */;
+			productType = "com.apple.product-type.application";
+		};
+		D00000000000000000000002 /* PacketTunnel */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 700000000000000000000003;
+			buildPhases = (
+				E00000000000000000000006 /* Packet Tunnel Sources */,
+				E00000000000000000000003 /* Packet Tunnel Frameworks */,
+				E00000000000000000000007 /* Packet Tunnel Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = PacketTunnel;
+			productName = PacketTunnel;
+			productReference = B00000000000000000000014 /* PacketTunnel.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		F00000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					D00000000000000000000001 = {CreatedOnToolsVersion = 16.0; };
+					D00000000000000000000002 = {CreatedOnToolsVersion = 16.0; };
+				};
+			};
+			buildConfigurationList = 700000000000000000000001;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base, );
+			mainGroup = F00000000000000000000002;
+			productRefGroup = F00000000000000000000008;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				D00000000000000000000001 /* ClashFlux */,
+				D00000000000000000000002 /* PacketTunnel */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E00000000000000000000005 /* App Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000005 /* Assets.xcassets in Resources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		E00000000000000000000007 /* Packet Tunnel Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		800000000000000000000001 /* Build HuxerUI core */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputFileListPaths = ();
+			inputPaths = ();
+			name = "Build HuxerUI core";
+			outputFileListPaths = ();
+			outputPaths = ();
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "bash \"$PROJECT_DIR/Scripts/build_huxerui_core.sh\"";
+		};
+		800000000000000000000002 /* Stage HuxerUI resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputFileListPaths = ();
+			inputPaths = ();
+			name = "Stage HuxerUI resources";
+			outputFileListPaths = ();
+			outputPaths = ();
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "bash \"$PROJECT_DIR/Scripts/stage_huxerui_resources.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		E00000000000000000000004 /* App Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* main.mm in Sources */, A00000000000000000000002 /* ClashFluxBridge.mm in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		E00000000000000000000006 /* Packet Tunnel Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000003 /* PacketTunnelProvider.swift in Sources */, A00000000000000000000004 /* ClashFluxPlatformInterface.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		C00000000000000000000002 /* PacketTunnel dependency */ = {isa = PBXTargetDependency; target = D00000000000000000000002 /* PacketTunnel */; targetProxy = C00000000000000000000001 /* PacketTunnel proxy */; };
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		900000000000000000000001 /* Debug Project */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Debug; };
+		900000000000000000000002 /* Release Project */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Release; };
+		900000000000000000000003 /* Debug App */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = B00000000000000000000018;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = App/ClashFlux.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = $(CLASHFLUX_APP_BUNDLE_IDENTIFIER);
+				PRODUCT_NAME = ClashFlux;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		900000000000000000000004 /* Release App */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = B00000000000000000000019;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = App/ClashFlux.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = $(CLASHFLUX_APP_BUNDLE_IDENTIFIER);
+				PRODUCT_NAME = ClashFlux;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		900000000000000000000005 /* Debug Packet Tunnel */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = B00000000000000000000018;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				FRAMEWORK_SEARCH_PATHS = "$(inherited) $(PROJECT_DIR)/Build";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PacketTunnel/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = $(CLASHFLUX_EXTENSION_BUNDLE_IDENTIFIER);
+				PRODUCT_NAME = PacketTunnel;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		900000000000000000000006 /* Release Packet Tunnel */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = B00000000000000000000019;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				FRAMEWORK_SEARCH_PATHS = "$(inherited) $(PROJECT_DIR)/Build";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PacketTunnel/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = $(CLASHFLUX_EXTENSION_BUNDLE_IDENTIFIER);
+				PRODUCT_NAME = PacketTunnel;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		700000000000000000000001 /* Project configuration list */ = {isa = XCConfigurationList; buildConfigurations = (900000000000000000000001 /* Debug Project */, 900000000000000000000002 /* Release Project */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		700000000000000000000002 /* App configuration list */ = {isa = XCConfigurationList; buildConfigurations = (900000000000000000000003 /* Debug App */, 900000000000000000000004 /* Release App */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		700000000000000000000003 /* Packet Tunnel configuration list */ = {isa = XCConfigurationList; buildConfigurations = (900000000000000000000005 /* Debug Packet Tunnel */, 900000000000000000000006 /* Release Packet Tunnel */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = F00000000000000000000001 /* Project object */;
+}

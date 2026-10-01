@@ -6,13 +6,13 @@ module;
 
 #include <ixwebsocket/IXWebSocket.h>
 #include <ixwebsocket/IXNetSystem.h>
+#include "wire_codec.h"
 
 module clashflux.stream;
 
 import std;
 import clashflux.config;
 import clashflux.core;
-import nlohmann.json;
 import clashflux.utils;
 
 namespace stream {
@@ -113,18 +113,12 @@ void loadLogsLocked(PersistentLogStore& store) {
         std::ifstream input(store.path, std::ios::binary);
         std::string line;
         while (std::getline(input, line)) {
-            const auto json = nlohmann::json::parse(line, nullptr, false);
-            if (!json.is_object() || !json.contains("payload") ||
-                !json["payload"].is_string()) {
-                continue;
-            }
+            auto decoded = clashflux::wire::DecodeStoredLog(line);
+            if (!decoded) continue;
             store.history.push_back(LogLine{
-                .level = normalizeLevel(json.value("level", "info")),
-                // 载入时也去 ANSI：写入侧统一清理是后来的修复，磁盘上早先写入
-                // 的行仍带颜色转义（真机实测过 [36mINFO[0m），只清新增会留下
-                // 一段永远难看的历史。
-                .payload = core::stripAnsi(json.value("payload", "")),
-                .at = json.value("at", std::int64_t{0}),
+                .level = normalizeLevel(std::move(decoded.value.level)),
+                .payload = core::stripAnsi(decoded.value.payload),
+                .at = decoded.value.at,
             });
         }
         trimLogs(store.history);
@@ -138,11 +132,9 @@ void persistLogsLocked(const PersistentLogStore& store) noexcept {
         std::ofstream output(store.path, std::ios::binary | std::ios::trunc);
         if (!output) return;
         for (const auto& line : store.history) {
-            output << nlohmann::json{
-                {"at", line.at}, {"level", line.level},
-                {"payload", line.payload}}
-                              .dump()
-                     << '\n';
+            const auto encoded = clashflux::wire::EncodeStoredLog(
+                {line.at, line.level, line.payload});
+            if (encoded) output << encoded.value << '\n';
         }
     } catch (...) {
         // Diagnostics must never affect the operation being diagnosed.
@@ -154,11 +146,9 @@ void appendLogLineLocked(const PersistentLogStore& store,
     try {
         std::ofstream output(store.path, std::ios::binary | std::ios::app);
         if (!output) return;
-        output << nlohmann::json{
-            {"at", line.at}, {"level", line.level},
-            {"payload", line.payload}}
-                          .dump()
-                 << '\n';
+        const auto encoded = clashflux::wire::EncodeStoredLog(
+            {line.at, line.level, line.payload});
+        if (encoded) output << encoded.value << '\n';
     } catch (...) {
         // Diagnostics must never affect the operation being diagnosed.
     }
@@ -318,7 +308,8 @@ struct CoreStreams::Impl {
     TrafficPoint latestTraffic;
     bool trafficDirty = false;
     std::string latestConnections;
-    bool connectionsDirty = false;
+    clashflux::wire::ConnectionTotals latestConnectionTotals;
+    bool connectionTotalsDirty = false;
 
     ~Impl() { stopAll(); }
 
@@ -331,10 +322,10 @@ struct CoreStreams::Impl {
     void pushLog(const std::string& text) {
         LogLine line;
         line.at = nowUnix();
-        const auto j = nlohmann::json::parse(text, nullptr, false);
-        if (j.is_object()) {
-            line.level = normalizeLevel(j.value("type", "info"));
-            line.payload = j.value("payload", "");
+        auto decoded = clashflux::wire::DecodeLog(text);
+        if (decoded) {
+            line.level = normalizeLevel(std::move(decoded.value.type));
+            line.payload = std::move(decoded.value.payload);
         } else {
             line.level = "info";
             line.payload = text;
@@ -343,12 +334,12 @@ struct CoreStreams::Impl {
     }
 
     void pushTraffic(const std::string& text) {
-        const auto j = nlohmann::json::parse(text, nullptr, false);
-        if (!j.is_object()) return;
+        const auto decoded = clashflux::wire::DecodeTraffic(text);
+        if (!decoded) return;
         {
             std::lock_guard lock(mutex);
-            latestTraffic.up = j.value("up", std::int64_t{0});
-            latestTraffic.down = j.value("down", std::int64_t{0});
+            latestTraffic.up = decoded.value.up;
+            latestTraffic.down = decoded.value.down;
             latestTraffic.at = nowUnix();
             trafficDirty = true;
         }
@@ -357,10 +348,15 @@ struct CoreStreams::Impl {
     }
 
     void pushConnections(const std::string& text) {
+        // Decode on the WebSocket worker; the home UI only consumes integers.
+        const auto totals = clashflux::wire::DecodeConnectionTotals(text);
         {
             std::lock_guard lock(mutex);
             latestConnections = text;
-            connectionsDirty = true;
+            if (totals) {
+                latestConnectionTotals = totals.value;
+                connectionTotalsDirty = true;
+            }
         }
         notifyStreamUpdate(StreamKind::Connections);
     }
@@ -382,7 +378,7 @@ void CoreStreams::start(const std::string& wsBase, const std::string& secret,
         std::lock_guard lock(impl_->mutex);
         impl_->trafficDirty = false;
         impl_->latestConnections.clear();
-        impl_->connectionsDirty = false;
+        impl_->connectionTotalsDirty = false;
     }
 
     Impl* impl = impl_.get();
@@ -466,13 +462,12 @@ bool CoreStreams::takeTraffic(TrafficPoint& out) {
     return true;
 }
 
-bool CoreStreams::takeConnections(std::string& out) {
+bool CoreStreams::takeConnectionTotals(std::int64_t& upload, std::int64_t& download) {
     std::lock_guard lock(impl_->mutex);
-    if (!impl_->connectionsDirty) return false;
-    // 保留缓存供连接页在切页后立即恢复；首页和连接页可能同时消费同一条
-    // 全量快照，不能通过 move 把另一个页面看到的数据清空。
-    out = impl_->latestConnections;
-    impl_->connectionsDirty = false;
+    if (!impl_->connectionTotalsDirty) return false;
+    upload = impl_->latestConnectionTotals.uploadTotal;
+    download = impl_->latestConnectionTotals.downloadTotal;
+    impl_->connectionTotalsDirty = false;
     return true;
 }
 

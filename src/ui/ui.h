@@ -17,6 +17,16 @@
 
 namespace clashflux::ui {
 
+// 桌面图标栏和标题栏 logo 共用几何，保证两者中心线由同一宽度定义。
+inline constexpr float kTopNavigationIndicatorSize = 44.0F;
+inline constexpr float kTopNavigationItemHeight = 48.0F;
+inline constexpr float kTopNavigationSpacing = 12.0F;
+inline constexpr float kTopNavigationItemVerticalMargin =
+    (kTopNavigationSpacing -
+     (kTopNavigationItemHeight - kTopNavigationIndicatorSize)) / 2.0F;
+inline constexpr float kTopNavigationRailWidth =
+    kTopNavigationIndicatorSize + 2.0F * kTopNavigationSpacing;
+
 // Android VPN 隧道开关（设置页 VPN 卡 → VpnService consent/前台服务）。
 // 这些是 Android bridge 的平台前缀函数；桌面目标提供空操作桩，避免通用
 // 组件在控件内部再写平台分支。
@@ -83,7 +93,9 @@ void ReplaceStateList(huxerui::StateList<T> list, std::vector<T> values) {
 // 当前运行内核公开的可切换策略组快照。桌面来自 clash_api，Android 来自
 // libbox CommandClient；UI 只依赖这份跨平台模型，不直接知道平台 API。
 struct ProxyGroupSnapshot {
-    std::string name;
+    std::string name; // 内核 tag，始终用于 API 与持久化
+    std::string displayName;
+    std::map<std::string, std::string> nodeLabels;
     std::string type;
     std::string current;
     std::vector<std::string> nodes;

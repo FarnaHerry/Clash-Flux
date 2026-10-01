@@ -21,6 +21,33 @@ huxerui build android --profile debug
 `--source` 时，则两者一起使用该指定源码。构建配置会打印 Gradle 实际选中的 Android Java
 模块或 AAR 路径，可用于确认没有混用版本。
 
+## sing-box libbox 来源与缓存
+
+当前固定 sing-box 1.14.2，源码 revision
+`af6e64c3b69e6132ebaee0e1a3d24e93903f6709`，与桌面发布内核一致。
+`platform/android/build-singbox-libbox.sh /absolute/path/libbox-arm64.aar` 会同时生成
+`libbox-arm64.aar.metadata.json`，包含正式版本、实际 checkout revision、arm64-v8a ABI 与 AAR
+SHA256。设置 `CLASHFLUX_SINGBOX_AAR` 时，两份文件必须在一起。
+
+Gradle `stageSingboxAar` 验证来源和摘要后再复制；无环境变量时只复用身份校验通过的
+已暂存 AAR。旧 AAR 缺少元数据或版本不符会明确失败，须重新运行构建脚本；不能直接
+给旧产物手写新 revision 元数据。CI 使用同一脚本生成两份文件，不下载第三方 APK
+中的 native 库。此流程不改变 `stageBundledRuleSets` 的强制规则集打包。
+
+Android libbox 构建只浅取正式版本 tag，核对 tag 对应的 HEAD 与固定 revision；
+保留真实 tag，避免上游 `ReadTag()` 在浅取裸 commit 后把版本写成 unknown。
+AAR 元数据包含 version，Gradle 同时核验版本、revision、ABI 与内容摘要。
+自定义 pin 时必须同时提供 `SINGBOX_VERSION` 和 `SINGBOX_COMMIT`，不伪造版本标签。
+
+上游构建要求 OpenJDK 17，脚本在获取源码前检查 JAVA_HOME；Gradle 使用的 JDK
+可以单独配置。完整升级记录见[稳定内核升级](singbox-stable-upgrade.md)。
+
+共享 JSON codec 使用固定 Glaze 9.0.0；Android Legacy 头只引用拥有型 DTO，
+`clashflux_wire` 单独编译 Glaze，不合入领域模块的兼容大 TU。接入与验证边界见
+[迁移记录](glaze-migration.md)。inline provider 与逻辑规则子集也用于 Android，
+但不增加手机多订阅；routing-mark 不能因 Android 的 `__linux__` 宏而开放。
+PROCESS-NAME/正则转原生包名匹配，仍通过后台 owner 查询；应用选择 UI 尚未实现。
+
 ## 发布 APK 签名
 
 Android Release APK 必须同时启用 v1（JAR 签名，包含 `META-INF` 签名文件）和 v2 签名。

@@ -47,38 +47,20 @@
         try {
             const bool tunEnabled = snapshot().tunEnabled;
             const bool systemProxyEnabled = systemProxyOurs();
-            auto options = routingOptions(lastProfileYaml_, tunEnabled);
+            const auto content = currentMainContent();
+            auto options = routingOptions(content, tunEnabled);
             const auto compiled = core::generateConfig(std::move(options));
             if (!compiled.error.empty() || compiled.json.empty()) {
                 error = "路由计划编译失败：" + compiled.error;
                 return false;
             }
             if (!running) return true;
-            if (!stopCore()) {
-                error = snapshot().lastError;
-                return false;
-            }
-            startCore(lastProfileYaml_, false, tunEnabled,
-                      systemProxyEnabled ? std::optional<bool>(true)
-                                         : std::nullopt);
-#if defined(__ANDROID__)
-            if (snapshot().state != core::CoreState::Failed) {
-                if (tunEnabled) {
-                    clashflux_android_start_vpn();
-                } else {
-                    clashflux_android_start_core();
-                }
-                return true;
-            }
-#else
-            if (snapshot().state == core::CoreState::Running) return true;
-#endif
+            if (restartCore(content)) return true;
             error = snapshot().lastError;
             if (error.empty()) error = "应用路由计划后主 VPN 未能启动";
             // Never leave the old core using an interface that is being
             // released. Stopping the main core is also required on failure.
-            stopCore();
-            fail(error);
+            if (snapshot().state != core::CoreState::Running) { stopCore(); fail(error); }
             return false;
         } catch (const std::exception& exception) {
             error = exception.what();

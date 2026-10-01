@@ -185,6 +185,7 @@ public:
         lastError_.clear();
         db::Profile p = options;
         p.id = 0;
+        p.selected = false;
         p.type = "remote";
         p.name = name.empty() ? url : name;
         p.url = url;
@@ -211,6 +212,7 @@ public:
         lastError_.clear();
         db::Profile p = options;
         p.id = 0;
+        p.selected = false;
         p.type = "remote";
         p.name = name.empty() ? url : name;
         p.url = url;
@@ -227,6 +229,7 @@ public:
     // 行更新；失败写行 error，import=true（新建流程行已先建）回滚删行。
     bool completeRemote(std::int64_t id, const FetchedProfile& fetched,
                         bool import) {
+        auto planLock = coreStore().lockPlanLifecycle();
         lastError_.clear();
         auto profile = findById(id);
         if (!profile) {
@@ -243,16 +246,7 @@ public:
         } else {
             std::error_code ec;
             std::filesystem::create_directories(cfg::profilesDir(), ec);
-            std::ofstream out(cfg::profilesDir() / p.file,
-                              std::ios::binary | std::ios::trunc);
-            if (!out) {
-                failure = "无法写入订阅文件";
-            } else {
-                out.write(fetched.body.data(),
-                          static_cast<std::streamsize>(fetched.body.size()));
-                out.flush();
-                if (!out) failure = "写入订阅文件失败";
-            }
+            if (!saveYaml(p.id, fetched.body)) failure = lastError_;
         }
         if (failure.empty()) {
             if (const auto it = fetched.headers.find("subscription-userinfo");
@@ -313,6 +307,7 @@ public:
         lastError_.clear();
         db::Profile p = options;
         p.id = 0;
+        p.selected = false;
         p.type = "local";
         p.url.clear();
         p.name = name.empty() ? source.filename().string() : name;
@@ -340,6 +335,7 @@ public:
         lastError_.clear();
         db::Profile p = options;
         p.id = 0;
+        p.selected = false;
         p.type = "local";
         p.url.clear();
         p.file.clear();
@@ -382,6 +378,7 @@ public:
         lastError_.clear();
         db::Profile p = options;
         p.id = 0;
+        p.selected = false;
         p.type = type;
         p.url.clear();
         p.file.clear();
@@ -402,10 +399,14 @@ public:
     // updatedAt/error）保留库中现值。仅落库——URL 等在下次「更新」拉取时生效。
     bool updateProfile(std::int64_t id, const db::Profile& fields) {
         lastError_.clear();
+        auto planLock = coreStore().lockPlanLifecycle();
         auto p = findById(id);
         if (!p) {
             lastError_ = "订阅不存在";
             return false;
+        }
+        if (!fields.type.empty() && fields.type != p->type && coreStore().sourceParticipates(id)) {
+            lastError_ = "被编排引用的来源不能变更类型；请先解除引用"; return false;
         }
         p->name = fields.name.empty()
                       ? (fields.url.empty() ? p->name : fields.url)
@@ -484,66 +485,66 @@ public:
     // 若该订阅启用中且内核在跑，重启内核使改动生效。阻塞。
     bool saveYaml(std::int64_t id, const std::string& content) {
         lastError_.clear();
-        const auto p = findById(id);
-        if (!p || p->file.empty()) {
-            lastError_ = "订阅不存在";
+        auto planLock = coreStore().lockPlanLifecycle();
+        auto profile = findById(id);
+        if (!profile) { lastError_ = "订阅不存在"; return false; }
+        if (profile->file.empty()) profile->file = std::format("{}.yaml", id);
+        if (!coreStore().validateSourceUpdate(id, content, lastError_)) return false;
+        const auto previous = yamlOf(*profile);
+        if (!writeContent(*profile, content, lastError_)) return false;
+        coreStore().invalidateProxyGroupsSnapshot();
+        if (coreStore().sourceParticipates(id) && coreStore().snapshot().state == core::CoreState::Running &&
+            !coreStore().restartCore(coreStore().currentMainContent())) {
+            lastError_ = coreStore().snapshot().lastError;
+            std::string restoreError;
+            if (!writeContent(*profile, previous, restoreError)) lastError_ += "；来源文件恢复失败：" + restoreError;
             return false;
         }
         try {
-            std::ofstream out(cfg::profilesDir() / p->file,
-                              std::ios::binary | std::ios::trunc);
-            if (!out) {
-                lastError_ = "无法写入订阅文件";
-                return false;
-            }
-            out << content;
-            out.flush();
-            if (!out) {
-                lastError_ = "写入订阅文件失败";
-                return false;
-            }
-            db::Profile row = *p;
-            row.updatedAt = nowUnix();
-            row.error.clear();
+            auto row = *profile; row.updatedAt = nowUnix(); row.error.clear();
             coreStore().db().saveProfile(row);
+            return true;
         } catch (const std::exception& e) {
             lastError_ = e.what();
+            restoreSource(*profile, previous, lastError_, true);
             return false;
         }
-        coreStore().invalidateProxyGroupsSnapshot();
-        if (p->selected && coreStore().snapshot().state == core::CoreState::Running) {
-            coreStore().restartCore(selectedYaml());
-        }
-        return true;
     }
 
-    // 启用订阅：标记 selected，若内核在跑则重启内核使配置生效。阻塞。
+    // selected 是主来源的兼容持久化字段；候选通过检查后才切换，应用失败还原。
     bool activate(std::int64_t id) {
         lastError_.clear();
+        auto planLock = coreStore().lockPlanLifecycle();
         const auto profile = findById(id);
-        if (!profile) {
-            lastError_ = "订阅不存在";
-            return false;
-        }
+        if (!profile) { lastError_ = "订阅不存在"; return false; }
         if (profile->type == "pptp" || profile->type == "openvpn") {
-            lastError_ = "原生 VPN 连接不能作为代理订阅启用";
-            return false;
+            lastError_ = "当前原生 VPN 只作为规则来源参与，不能设为 main"; return false;
         }
+        const auto content = yamlOf(*profile);
+        if (content.empty()) { lastError_ = "主来源没有有效内容"; return false; }
+        const auto previous = selected();
+        if (!coreStore().validateRoutingPlan(content, lastError_, nullptr,
+                                             "profile-" + std::to_string(id))) return false;
         try {
             coreStore().db().setSelectedProfile(id);
             coreStore().invalidateProxyGroupsSnapshot();
-        } catch (const std::exception& e) {
-            lastError_ = e.what();
-            return false;
-        }
-        if (coreStore().snapshot().state == core::CoreState::Running) {
-            coreStore().restartCore(selectedYaml());
-        }
-        return true;
+            if (coreStore().snapshot().state == core::CoreState::Running && !coreStore().restartCore(content)) {
+                lastError_ = coreStore().snapshot().lastError;
+                coreStore().db().setSelectedProfile(previous ? previous->id : 0);
+                coreStore().invalidateProxyGroupsSnapshot();
+                return false;
+            }
+            return true;
+        } catch (const std::exception& e) { lastError_ = e.what(); return false; }
     }
 
     void remove(std::int64_t id) {
         lastError_.clear();
+        auto planLock = coreStore().lockPlanLifecycle();
+        if (coreStore().sourceParticipates(id)) {
+            lastError_ = "该来源是 main 或被路由引用；请先更换 main、禁用/改绑规则或清空原生内网路由";
+            return;
+        }
         std::string file;
         bool wasSelected = false;
         for (const auto& p : list()) {
@@ -570,6 +571,38 @@ public:
     }
 
 private:
+    static void restoreSource(const db::Profile& profile, const std::string& previous,
+                              std::string& error, bool restoreRuntime) {
+        std::string failure;
+        if (!writeContent(profile, previous, failure)) {
+            error += "；来源恢复失败：" + failure;
+            coreStore().stopCore(); return;
+        }
+        coreStore().invalidateProxyGroupsSnapshot();
+        try {
+            coreStore().db().saveProfile(profile);
+            if (restoreRuntime && coreStore().sourceParticipates(profile.id) &&
+                coreStore().snapshot().state == core::CoreState::Running &&
+                !coreStore().restartCore(coreStore().currentMainContent())) {
+                error += "；恢复运行配置失败：" + coreStore().snapshot().lastError;
+                coreStore().stopCore();
+            }
+        } catch (const std::exception& e) { error += "；恢复失败：" + std::string(e.what()); coreStore().stopCore(); }
+    }
+
+    static bool writeContent(const db::Profile& profile, const std::string& content, std::string& error) {
+        const auto dest = cfg::profilesDir() / profile.file;
+        const auto temp = std::filesystem::path(dest.string() + "." + cfg::randomSecret() + ".tmp");
+        struct TempFile {
+            std::filesystem::path path;
+            ~TempFile() { std::error_code ec; std::filesystem::remove(path, ec); }
+        } cleanup{temp};
+        std::ofstream output(temp, std::ios::binary | std::ios::trunc);
+        output.write(content.data(), static_cast<std::streamsize>(content.size())); output.close();
+        if (!output) { error = "订阅文件写入失败"; return false; }
+        return api::CommitFile(temp, dest, error);
+    }
+
     std::optional<db::Profile> findById(std::int64_t id) {
         for (const auto& p : list()) {
             if (p.id == id) return p;
@@ -615,6 +648,9 @@ private:
     // 下载 p.url 到 profiles/<id>.yaml 并更新行（updated_at/error）。
     // 代理三态按订阅选项组装：内核代理 > 系统环境代理 > 强制直连。
     bool download(db::Profile& p) {
+        auto planLock = coreStore().lockPlanLifecycle();
+        const auto previousContent = yamlOf(p);
+        const auto previousProfile = p;
         p.file = std::format("{}.yaml", p.id);
         api::ClashApi::DownloadOptions opts;
         opts.timeoutSecs = p.timeoutSecs > 0 ? p.timeoutSecs : 60;
@@ -625,12 +661,27 @@ private:
         } else {
             opts.allowProxyEnv = p.useSystemProxy;
         }
+        opts.validate = [&](const std::filesystem::path& file) {
+            std::ifstream input(file, std::ios::binary);
+            if (!input) return std::string{"无法读取候选订阅"};
+            const std::string content(std::istreambuf_iterator<char>(input), {});
+            std::string error;
+            return coreStore().validateSourceUpdate(p.id, content, error) ? std::string{} : error;
+        };
         const auto r = coreStore().api().downloadToFile(
             p.url, cfg::profilesDir() / p.file, opts);
         if (!r.ok) {
             p.error = r.error;
             try { coreStore().db().saveProfile(p); } catch (...) {}
             lastError_ = std::format("下载失败：{}", r.error);
+            return false;
+        }
+        coreStore().invalidateProxyGroupsSnapshot();
+        if (coreStore().sourceParticipates(p.id) && coreStore().snapshot().state == core::CoreState::Running &&
+            !coreStore().restartCore(coreStore().currentMainContent())) {
+            lastError_ = coreStore().snapshot().lastError;
+            std::string restoreError;
+            if (!writeContent(p, previousContent, restoreError)) lastError_ += "；来源文件恢复失败：" + restoreError;
             return false;
         }
         // 订阅响应头：subscription-userinfo（流量）/ profile-web-page-url
@@ -654,6 +705,7 @@ private:
             coreStore().db().saveProfile(p);
         } catch (const std::exception& e) {
             lastError_ = e.what();
+            restoreSource(previousProfile, previousContent, lastError_, true);
             return false;
         }
         if (p.selected) coreStore().invalidateProxyGroupsSnapshot();

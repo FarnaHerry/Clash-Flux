@@ -36,10 +36,20 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   上游尚未修复的差异。每个保留补丁须针对新 revision 通过 `git apply --check --unidiff-zero`，并接入
   所有适用平台。上游已合并的修复应删除本地补丁及对应 CI 应用步骤，所有 CI 平台统一
   使用同一固定 SHA。
-- iOS CI 用固定 HuxerUI revision 和 iOS Simulator SDK 编译 Clash-Flux 的
-  `clash-flux_huxerui_ios_core` 静态目标（arm64）。它是非阻塞源码编译检查，不生成
-  `.app`/IPA，也不属于 Release 门禁；当前配置不含 curl TLS 或 sing-box 子进程。
-  完成可分发 iOS 应用壳、Network Extension 和 sing-box iOS 接入后，再评估 iOS 发布包。
+- **iOS 当前按 TODO 暂缓，不承诺支持或发布**：iOS CI 用固定 HuxerUI revision 和 iOS Simulator SDK 编译 Clash-Flux app 与 Packet Tunnel
+  extension，并从与 Android 相同的 sing-box revision 构建 iOS device/Simulator
+  `Libbox.xcframework`。这仍是非阻塞编译检查：只生成未签名 Simulator 构建，不生成 IPA，
+  也不属于 Release 门禁；除非项目未来明确恢复 iOS 支持，否则不要把它加入 Release 目标。签名设备包和真机 VPN 生命周期仍需另行验证。
+- iOS 订阅与规则集下载使用 `platform/ios/App/ClashFluxBridge.mm` 的 `NSURLSession`，因为 iOS
+  curl 构建不含 TLS。默认必须保留系统证书校验；只有订阅显式启用 `allowInvalidCert` 时，
+  该请求的 URLSession delegate 才接受无效服务器证书。证书跳过逻辑只维护在 Clash-Flux iOS
+  桥接层，不修改 HuxerUI 公共 HTTP API，也不得改动全局 URLSession 信任设置。
+- iOS 设备与 Release 签名必须使用 Apple 开发团队签发并由匹配 provisioning profile 授权的身份；
+  不得使用随机值或自签名证书伪造可安装包。Packet Tunnel 的 profile 必须授权
+  `packet-tunnel-provider` entitlement。签名私钥和 profiles 不入库，管理流程见 `docs/ios-build.md`。
+- iOS sing-box 必须由 Packet Tunnel extension 内的 Libbox 托管；不得调用 `posix_spawn`、
+  `fork` 或 CLI 子进程路径。应用与 extension 间经 App Group 原子文件共享配置，extension
+  不打开或写入应用 SQLite/CoreStore。
 - Android Gradle 构建会按固定 revision/SHA256 生成并打包国内 GEOIP/GEOSITE
   规则集；不得跳过 `stageBundledRuleSets` 或改为运行时下载。
 - Android Gradle 的 HuxerUI Java 模块必须与 CMake 选中的 native HuxerUI 来自同一源码版本：
@@ -51,9 +61,10 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   详见 `docs/android-build.md`。
 - **Android 图标分工是固定的，不要互相替换**：应用图标（`mipmap-*/ic_launcher.png` 与
   adaptive 前景 `drawable/ic_launcher_foreground.xml`，前景 inset `@drawable/ic_launcher_mascot`、
-  背景 `@color/ic_launcher_background`）用**平滑猫头吉祥物**；快捷开关磁贴徽章
+  背景 `@color/ic_launcher_background`）用**黑猫探出盒子的应用 Logo**；快捷开关磁贴徽章
   `drawable/ic_qs_clash_flux.xml` + `drawable-night/ic_qs_clash_flux.xml` 用**猫爪**
-  （深浅色各一版）。改图标只改对应那一个，别把猫爪铺到启动图标上（也不要反过来）。
+  （深浅色各一版）。应用 Logo 的透明源图为 `resources/images/clash_flux_logo.png`；
+  改图标只改对应那一个，别把猫爪铺到启动图标上（也不要反过来）。
 - Android 常驻服务不得等待 `POST_NOTIFICATIONS` 才启动前台服务或继续 VPN 授权；该权限只影响通知栏展示。
   返回 `START_STICKY` 的服务必须处理空 Intent，并从持久化状态恢复运行模式，不能猜测为 TUN。
 - Android sing-box 所有者固定在 `:background`：`ClashVpnService` 持有 libbox/VpnService，
@@ -192,13 +203,41 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
      ——KV 意图，而不是内核运行时回读的 `CoreSnapshot::allowLan`），否则下一个泵节拍会把
      写透的值打回去。
 
+### JSON codec 边界
+
+应用运行时 JSON 与内部 policy 使用 `src/wire_codec.h/.cpp`（固定 Glaze 9.0.0）。
+头文件只提供拥有型普通 C++ DTO 和 Result；Glaze 头、metadata 和模板只留在独立
+`clashflux_wire` 普通 TU，不导出到 modules 或 UI codegen，也不合入 Android Legacy
+超大 TU。页面从共享模型读 typed 数据，连接快照解码与投影放任务线程；首页总量
+在 WebSocket 线程解码，UI 只读整数。持久键名用显式 metadata 固定。
+运行时 API 可投影未知字段；订阅与原生配置不得照搬这个跳过策略。保留 yaml-cpp、
+原生 JSON DOM、专用协议解析和局部规则文本编辑，迁移见 `docs/glaze-migration.md`。
+
 ## 架构分层与保真度契约（sing-box 内核）
 
 本项目定位：**内核贴 sing-box、输入贴 Clash 生态、产品层用 Clash 的词汇只暴露内核真有的
 能力**，并把 sing-box 独有能力产品化为 Clash 客户端给不了的差异点。完整契约、当前基线与
 保真度账本形态见 `docs/singbox-layers-and-fidelity.md`（两者冲突时以该文档为准）。
 
-- **L1 内核层（紧贴）**：官方二进制（桌面 spawn）/ libbox（Android）同版本同 SHA256；
+**桌面最终形态为唯一主订阅 + 多次订阅按规则编排**，设计见
+`docs/desktop-subscription-orchestration.md`；当前已接入桌面 Clash YAML 次来源按启用规则
+参与的一份配置。原生 JSON 次来源、跨来源 detour 与完整崩溃恢复仍未实现。
+固定顺序为前置动作 → UserOverride → SourcePolicy → 模式规则 → MainPolicy →
+MainFallback；priority 只在同层比较，再按 order。无启用规则的普通次来源不载入，
+目标不可用保留匹配并执行 Reject（默认）/UseMain（默认出口，不重跑主规则）/Direct。
+对象身份为 source ID + kind + 原始唯一名称，改对象名即引用失效；不要宣称已有对象 UUID。
+policy format_version=2，旧 v1 保留排序后迁移；拒绝未知字段和未来版本，SQLite schema 不变。
+桌面候选先经内核 check 再停止旧实例，启动失败仅在旧原生资源仍有效时恢复；
+CoreSnapshot.planRevision 表示成功应用后的运行序号，预览目录不能覆盖运行来源映射。
+近期先适配固定 sing-box 能力，官方 GUI 交互研究见 `docs/singbox-official-gui-review.md`。
+**手机端不增加多订阅编排**：保留单活动代理订阅与现有原生辅助连接限制；UI、CLI、
+导入和持久化写入口都必须遵守平台能力，不能用视口宽度开放桌面功能。
+
+- **L1 内核层（紧贴）**：官方二进制（桌面 spawn）/ libbox（Android）同版本同源码 revision，
+  各平台资产分别校验 SHA256；当前稳定基线 1.14.2（`af6e64c3b69e6132ebaee0e1a3d24e93903f6709`）。
+  桌面缓存按版本和资产摘要隔离；Android 浅取正式 tag 后核对固定 revision，保留真实版本标签供上游 ReadTag；
+  AAR 必须带构建脚本生成的 version/revision/ABI/SHA256
+  元数据，缺失、版本不符或校验失败时重新构建，不得只凭旧 AAR 文件存在就继续打包。
   不 fork、不臆造字段（sing-box 对未知字段直接拒绝启动），能力一律以上游文档/源码为准；
   控制面走内核自带的 `clash_api`，内核没有的概念不在这一层做兼容包装。
 - **L2 翻译层（处理 Clash 生态）**：Clash YAML、sing-box 原生 JSON、原生连接（PPTP /
@@ -218,10 +257,42 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
 - `urltest` 不支持手动锁定：`PUT /proxies/{name}` 只接受 `Selector`（400
   `Must be a Selector`），也没有 `fixed` 字段；`fallback` / `load-balance` 在 sing-box
   无对应语义，编译为 `urltest` 并记降级。
-- `interval` 必须 ≤ `idle_timeout`（缺省 30m），否则内核启动失败；组的 `lazy` / `timeout` /
-  `max-failed-times` / `expected-status` 无对应字段。
+- `interval` 必须 ≤ `idle_timeout`（缺省 30m）；编译器保留长间隔并同步延长空闲超时，
+  该变化须记保真度账本。`tolerance: 0` 在内核中等于默认 50ms，不能宣称零容差。
+  组的 `lazy` / `timeout` / `max-failed-times` / `expected-status` 无对应字段。
 - sing-box clashapi 不返回 `selectable` 与组的 `testUrl`，`/providers/proxies` 是空壳：
   依赖这些字段的 Clash 面板能力一律视为「能打开但残缺」。
+
+- `dialer-proxy` 映射原生 `detour`；编译完成后检查全部出站依赖，包括组候选成员。
+  缺失目标、编译后重复 tag 或循环必须报错，不能去掉代理链后直连。桌面 Clash 来源命名空间已接入，跨来源原始 dialer-proxy 仍不支持。
+- 拨号字段按平台限制：bind_interface 只给桌面；非零 routing_mark 只给 Linux
+  桌面，不能因 Android 有 `__linux__` 就开放。detour 忽略物理选项、MPTCP IPv6
+  差异必须记 approx。DNS bootstrap/节点 resolver 与出站组共同做循环检查。
+- Android PROCESS-NAME/正则使用 package_name/package_name_regex，不写桌面进程字段；
+  UID 只映射 Linux 桌面的 user_id，不能把它当作 Android app UID。
+- AND/OR/NOT 和 inline provider 转换子集必须原子完成；不删除失败子条件后扩大
+  匹配，不把显式声明但转换失败的 provider 换成同名国内别名。外部下载仍是缺口。
+- 匹配条件共用转换器，但 route 与 HeadlessRule schema 不同：UID/IP-VERSION
+  不能进入 inline provider。重名 provider 整体拒绝；payload 失败带条目位置。
+  第一个有效 MATCH 终止规则列表，显式 DIRECT 不改成首个 selector；不可用兜底
+  目标编译失败。REJECT-DROP 使用原生 method: drop。
+- 节点专用 DNS policy 只在可用 proxy-server-nameserver 存在时生效，不能插入
+  普通 DNS rules；普通/节点策略共用精确与最长后缀优先级，并参与依赖图检查。
+- 未映射组字段、provider 引用/定义必须显式记账；`no-resolve` 暂记 approx，未知
+  规则修饰符整条拒绝，不得截断附加字段后当作 exact。
+
+- 编译器只读取 GEO 缓存，不删除/下载文件；`CompileResult.ruleSetResources` 明确
+  输出自有 GEO 来源，启动任务负责预取、按周刷新及坏缓存清理。禁止扫描原生 JSON
+  的任意 tag 拼下载路径，也禁止清理不属于当前资源清单的 .srs。Android 打包 GEO
+  不参与运行时更新或清理。SRS 文件头筛查不等于完整解析，完整校验仍由内核负责。
+- 通用下载使用独占临时目录与 RAII 清理；先关闭并检查写入，再执行调用方的
+  `DownloadOptions.validate`，最后替换目标。Windows 覆盖不能先删旧文件。
+  GEO 预取、普通订阅刷新与编辑接入候选校验；本地首次导入仍可先保存为未参与来源，
+  启用时检查。Android 完整检查仍在后台 libbox，不得宣称有桌面 CLI 预检查。
+- 编译失败仍保留已产生的 fidelity 明细，并发布到失败状态；不能因 JSON 为空
+  把已经记账的 MATCH/依赖错误误判成没有保真度问题。
+
+升级步骤、六平台资产摘要及 AAR 来源约定见 `docs/singbox-stable-upgrade.md`。
 
 **维护**：改编译器映射或升级 sing-box 时必须同步 `docs/singbox-layers-and-fidelity.md`
 的保真度基线表。判定标准：**用户订阅里的条目消失或语义改变 → 用
@@ -235,5 +306,5 @@ toast、代理页分组标签的 `!` 角标（`SectionTab.badge`）、CLI `profi
 
 ## 文档同步
 
-如果构建、运行、发布或开发流程发生变化，必须同步更新 `README.md`、本文件和相关
+如果构建、运行、发布或开发流程发生变化，必须同步更新 `README.md`、`README.en.md`、本文件和相关
 `docs/` 文档，保持命令与实际工程一致。

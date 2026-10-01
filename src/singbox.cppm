@@ -41,8 +41,30 @@ export struct FidelityNote {
     std::string subject;
     std::string detail;
     std::string action;
+    std::string sourceId;
 
     bool operator==(const FidelityNote&) const = default;
+};
+
+// 仅编译器生成的 GEO 资源进入应用预取；原生 JSON 的 rule_set 仍由内核管理。
+export struct RuleSetResource {
+    std::string tag;
+    std::string url;
+};
+
+export struct SourceObject {
+    std::string sourceId;
+    std::string sourceName;
+    vpn::TargetKind kind = vpn::TargetKind::Node;
+    std::string objectId; // 来源内原名，删除/改名不自动改绑
+    std::string tag;
+    bool operator==(const SourceObject&) const = default;
+};
+export struct ProfileSource {
+    std::string id;
+    std::string name;
+    std::string content;
+    bool available = true;
 };
 
 export struct CompileResult {
@@ -52,6 +74,10 @@ export struct CompileResult {
     std::vector<std::string> warnings;
     // 结构化保真度账本（不阻断启动）
     std::vector<FidelityNote> fidelity;
+    std::vector<RuleSetResource> ruleSetResources;
+    std::vector<SourceObject> sourceObjects;
+    std::vector<std::string> participatingSources;
+    std::uint64_t planRevision = 0;
 };
 
 // 把账本汇总成一行提示（"跳过 3 个节点 · 降级 1 个组"）；无降级返回空串。
@@ -92,6 +118,9 @@ export struct CompileOptions {
     std::string ruleSetDir;                      // 非空时 GEOIP/GEOSITE .srs 本地命中即以
                                                  // local rule_set 生成（core_store
                                                  // 预取缓存目录；未命中回落 remote）
+    std::string mainSourceName;
+    std::vector<ProfileSource> auxiliarySources; // 桌面：只由启用的显式规则引用
+    std::uint64_t planRevision = 0;
     std::string mainConnectionId;                // 本次加载的 sing-box profile 连接 ID
     std::vector<vpn::RouteRule> globalRules;      // 优先于模式和订阅的全局连接规则
     std::vector<NativeConnection> nativeConnections;
@@ -105,8 +134,10 @@ export CompileResult compileConfig(const CompileOptions& options);
 // sing-box 二进制规则集（.srs）以 "SRS" 魔数开头。0 字节、被写入错误内容
 // （例如把 HTTP 错误页落盘）或非规则集内容的缓存文件会让内核在启动期直接
 // FATAL（parse rule-set: read rule: unexpected EOF），因此缓存命中与预取
-// 落盘后都必须先校验。
+// 替换前都必须先校验；仅校验文件头，不替代内核完整解析。
 export bool RuleSetCacheValid(const std::filesystem::path& path);
+// 返回应用自有 GEO tag 的固定下载来源；非法 tag 返回空，不能拼成路径。
+export std::string BuiltinRuleSetUrl(std::string_view tag);
 
 // 把编译产物拍成代理页使用的 /proxies 形状快照：
 //   * 组出站（selector/urltest）→ {type, now, all, selectable}

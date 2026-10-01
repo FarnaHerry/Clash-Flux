@@ -17,7 +17,7 @@ int main() {
                        .nativeRoutes = " 10.2.0.0/16,\n10.3.0.0/16\r\n10.2.0.0/16 "};
     vpn::VpnPolicy policy{.defaultMainId = "profile-2",
         .rules = {{vpn::MatchKind::DomainSuffix, "example.test", "profile-3", 100}}};
-    const auto encoded = routing::EncodePolicy(policy).dump();
+    const auto encoded = routing::EncodePolicy(policy);
     assert(routing::DecodePolicy(encoded) == policy);
     assert(routing::DecodePolicy("").rules.empty());
     for (const std::string invalid : {"null", "[]", "{", "{\"rules\":3}",

@@ -87,15 +87,100 @@ export inline std::optional<MatchKind> ParseMatchKind(
     return std::nullopt;
 }
 
-// 主 VPN 选择规则。priority 越大越先匹配；同优先级时更具体的匹配类型优先。
+// L3 的固定层级；priority 仅在同一层内比较。main 的两层由编译器产生。
+export inline bool SupportsMultiProxySources() {
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
+    return false;
+#else
+    return true;
+#endif
+}
+
+export enum class RuleTier { MainFallback = 0, MainPolicy = 1, SourcePolicy = 2, UserOverride = 3 };
+export enum class UnavailablePolicy { Reject, UseMain, Direct };
+export enum class TargetKind { Default, Group, Node };
+
+export inline std::string_view RuleTierKey(RuleTier value) {
+    switch (value) {
+    case RuleTier::MainFallback: return "main_fallback";
+    case RuleTier::MainPolicy: return "main_policy";
+    case RuleTier::SourcePolicy: return "source_policy";
+    case RuleTier::UserOverride: return "user_override";
+    }
+    return {};
+}
+export inline std::optional<RuleTier> ParseRuleTier(std::string_view value) {
+    for (auto tier : {RuleTier::MainFallback, RuleTier::MainPolicy,
+                      RuleTier::SourcePolicy, RuleTier::UserOverride})
+        if (RuleTierKey(tier) == value) return tier;
+    return std::nullopt;
+}
+export inline std::string_view UnavailablePolicyKey(UnavailablePolicy value) {
+    switch (value) {
+    case UnavailablePolicy::Reject: return "reject";
+    case UnavailablePolicy::UseMain: return "use_main";
+    case UnavailablePolicy::Direct: return "direct";
+    }
+    return {};
+}
+export inline std::optional<UnavailablePolicy> ParseUnavailablePolicy(std::string_view value) {
+    for (auto policy : {UnavailablePolicy::Reject, UnavailablePolicy::UseMain, UnavailablePolicy::Direct})
+        if (UnavailablePolicyKey(policy) == value) return policy;
+    return std::nullopt;
+}
+export inline std::string_view TargetKindKey(TargetKind value) {
+    switch (value) {
+    case TargetKind::Default: return "default";
+    case TargetKind::Group: return "group";
+    case TargetKind::Node: return "node";
+    }
+    return {};
+}
+export inline std::optional<TargetKind> ParseTargetKind(std::string_view value) {
+    for (auto kind : {TargetKind::Default, TargetKind::Group, TargetKind::Node})
+        if (TargetKindKey(kind) == value) return kind;
+    return std::nullopt;
+}
+
 export struct RouteRule {
     MatchKind match = MatchKind::Any;
     std::string pattern;
-    std::string connectionId;
+    std::string connectionId; // 稳定 profile-N 来源身份
     int priority = 0;
+    std::string id;
+    RuleTier tier = RuleTier::UserOverride;
+    bool enabled = true;
+    UnavailablePolicy unavailable = UnavailablePolicy::Reject;
+    TargetKind targetKind = TargetKind::Default;
+    std::string targetObject; // 来源内唯一原始对象名；改名视为引用失效
+    std::int64_t order = 0;
 
     bool operator==(const RouteRule&) const = default;
 };
+
+export inline bool RulePrecedes(const RouteRule& left, const RouteRule& right) {
+    if (left.tier != right.tier) return left.tier > right.tier;
+    if (left.priority != right.priority) return left.priority > right.priority;
+    return left.order < right.order;
+}
+export inline bool ValidatePolicyRules(const std::vector<RouteRule>& rules, std::string& error) {
+    std::set<std::string> ids;
+    for (const auto& rule : rules) {
+        if (rule.connectionId.empty() ||
+            (rule.tier != RuleTier::SourcePolicy && rule.tier != RuleTier::UserOverride) ||
+            UnavailablePolicyKey(rule.unavailable).empty() || TargetKindKey(rule.targetKind).empty() ||
+            (rule.targetKind == TargetKind::Default ? !rule.targetObject.empty() : rule.targetObject.empty())) {
+            error = "编排规则缺少目标、目标身份无效或使用了保留的 main 层级";
+            return false;
+        }
+        if (!rule.id.empty() && !ids.insert(rule.id).second) {
+            error = "编排规则 ID 重复";
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
 
 // Routing sees the destination host, not an encrypted HTTP path.
 export inline std::optional<std::string> NormalizeRuleDomain(std::string_view input) {
@@ -180,6 +265,7 @@ export struct VpnPolicy {
     // 空值表示没有默认主 VPN；匹配不到规则时保持直连/系统默认路由。
     std::string defaultMainId;
     std::vector<RouteRule> rules;
+    std::uint64_t revision = 0;
 
     bool operator==(const VpnPolicy&) const = default;
 };
@@ -547,6 +633,7 @@ public:
     // 路由所有权。策略只在全部连接成功后提交；任一失败会还原已尝试的
     // 连接，包括可能已部分修改系统路由的失败连接。
     inline bool applyPolicy(VpnPolicy policy, std::string& error) {
+        if (!ValidatePolicyRules(policy.rules, error)) return false;
         struct Change {
             VpnConnection* connection;
             EngineAdapter* adapter;
@@ -629,14 +716,6 @@ public:
         if (main != nullptr && main->enabled && main->canBeMain &&
             selectEngine(main->id).ok()) {
             return main->id;
-        }
-        // 配置的主 VPN 不可用时，按声明顺序选举第一个可用候选，避免默认
-        // 引擎缺失时整机路由直接失去出口。
-        for (const VpnConnection& connection : connections_) {
-            if (connection.enabled && connection.canBeMain &&
-                selectEngine(connection.id).ok()) {
-                return connection.id;
-            }
         }
         return {};
     }
@@ -783,21 +862,18 @@ public:
     std::string resolveConnection(std::string_view target) const {
         const RouteRule* selected = nullptr;
         for (const RouteRule& rule : policy_.rules) {
-            const VpnConnection* connection = findConnection(rule.connectionId);
-            if (connection == nullptr || !connection->enabled ||
-                (detail::nativeConnection(*connection) &&
-                 connection->state != ConnectionState::Connected) ||
-                !detail::matches(rule, target)) {
-                continue;
-            }
-            if (selected == nullptr || rule.priority > selected->priority ||
-                (rule.priority == selected->priority &&
-                 detail::specificity(rule.match) >
-                     detail::specificity(selected->match))) {
-                selected = &rule;
-            }
+            if (!rule.enabled || !detail::matches(rule, target)) continue;
+            if (selected == nullptr || RulePrecedes(rule, *selected)) selected = &rule;
         }
-        return selected == nullptr ? mainConnectionId() : selected->connectionId;
+        if (selected == nullptr) return mainConnectionId();
+        const auto* connection = findConnection(selected->connectionId);
+        if (connection && connection->enabled &&
+            (!detail::nativeConnection(*connection) || connection->state == ConnectionState::Connected))
+            return selected->connectionId;
+        if (selected->unavailable == UnavailablePolicy::UseMain) return mainConnectionId();
+        if (selected->unavailable == UnavailablePolicy::Direct) return {};
+        throw std::runtime_error("匹配目标不可用，路由策略要求阻断");
+
     }
 
 private:
@@ -828,7 +904,7 @@ private:
             }
         }
         for (const RouteRule& rule : policy.rules) {
-            if (rule.connectionId != id) continue;
+            if (!rule.enabled || rule.connectionId != id) continue;
             if (const auto destination = detail::nativeDestination(rule);
                 destination.has_value() &&
                 std::ranges::find(routes, *destination) == routes.end()) {
@@ -893,6 +969,7 @@ export inline TunRoutePlan BuildTunRoutePlan(const VpnManager& manager,
     }
 
     for (const RouteRule& rule : manager.policy().rules) {
+        if (!rule.enabled) continue;
         const VpnConnection* connection = manager.findConnection(rule.connectionId);
         if (connection == nullptr || !connection->enabled ||
             !detail::nativeConnection(*connection) ||

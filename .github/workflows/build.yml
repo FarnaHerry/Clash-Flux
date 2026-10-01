@@ -1,4 +1,4 @@
-# build.yml — Clash-Flux 多平台 CI 矩阵（Linux / Windows / macOS / Android + iOS Simulator core）。
+# build.yml — Clash-Flux 多平台 CI 矩阵（Linux / Windows / macOS / Android + iOS Simulator app）。
 #
 # 形态蓝本：姊妹项目 apitab 的 .github/workflows/build.yml（已跑通的 HuxerUI +
 # C++23 modules + import std 解法），按本仓库适配（无 sweetedit、目标名
@@ -29,9 +29,10 @@
 #   * build-linux-arm64：ubuntu-24.04-arm 原生 runner + ubuntu:24.04 容器，
 #     配方与 x86_64 完全相同，但 arm64 runner 的 LLVM 源仓库可用性未经首跑验证；
 #     连续绿后摘掉 continue-on-error。
-#   * build-ios-simulator-arm64：macOS 上用 iOS Simulator SDK 编译 Clash-Flux 自己的 CMake
-#     app core。它不生成 IPA、不上传 Release 产物，也不在 publish-release 的
-#     needs 中；Network Extension 和 sing-box iOS 集成仍是 TODO。
+#   * build-ios-simulator-arm64：macOS 上编译 Clash-Flux 的 HuxerUI app 壳与
+#     Packet Tunnel extension，并由与其他平台相同的 sing-box revision 生成
+#     iOS device/Simulator Libbox.xcframework。它生成的只是未签名 Simulator 构建，
+#     不生成 IPA、不上传 Release 产物，也不在 publish-release 的 needs 中。
 #
 # Windows、macOS 和 Android 已纳入发布门禁：完整 Release 构建或 smoke test
 # 失败时，workflow 失败，不会进入发布 job。Android 使用 AndroidLegacy.cmake
@@ -81,7 +82,7 @@ env:
   # CI 必须自行 clone 并钉 commit，保证可复现）。上游活跃开发中，追新时
   # 同步更新本机 checkout 与此 pin。
   HUXERUI_COMMIT: '0c5126235d43c2b703166bcc00781b850f2d1c39'
-  SINGBOX_COMMIT: '0b8995879f29a9b98ee027bc17b75e101445b238' # v1.14.0
+  SINGBOX_COMMIT: 'af6e64c3b69e6132ebaee0e1a3d24e93903f6709' # v1.14.2
 
 jobs:
   # ------------------------------------------------------------------ Linux
@@ -526,9 +527,10 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # ------------------------------------------------------- iOS Simulator core
-  # Compile the actual Clash-Flux sources and HuxerUI static platform library
-  # for the iOS Simulator. This is an advisory compile check, not an app/IPA.
+  # ------------------------------------- iOS Simulator app + Packet Tunnel
+  # Compile the real HuxerUI app shell, Packet Tunnel extension, and pinned
+  # sing-box Libbox for Simulator. Advisory until a signed device archive and
+  # real-device VPN lifecycle are available; this job never creates an IPA.
   build-ios-simulator-arm64:
     name: build-ios-simulator-arm64
     runs-on: macos-15
@@ -536,6 +538,12 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
+      - name: Set up Go for pinned sing-box Libbox
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.7'
+          cache: false
 
       - name: Fetch HuxerUI source (pinned) and apply compatibility patches
         run: |
@@ -561,58 +569,52 @@ jobs:
           for f in std.cppm std.compat.cppm; do
             test -f "$mod_dir/$f" || { echo "missing $mod_dir/$f (brew llvm layout changed?)" >&2; exit 1; }
           done
-          python3 - "$mod_dir" "$llvm_prefix/lib/libc++.modules.json" <<'PY'
-          import json, sys
-          mod_dir, out = sys.argv[1], sys.argv[2]
-          mod = lambda name: {"logical-name": name, "source-path": mod_dir + "/" + name + ".cppm", "is-std-library": True, "local-arguments": {"system-include-directories": [mod_dir]}}
-          json.dump({"version": 1, "revision": 1, "modules": [mod("std"), mod("std.compat")]}, open(out, "w"), indent=1)
-          PY
-          echo "LLVM_PREFIX=$llvm_prefix" >> "$GITHUB_ENV"
+          echo "CLASHFLUX_LLVM_PREFIX=$llvm_prefix" >> "$GITHUB_ENV"
           cmake --version
           ninja --version
 
-      - name: Configure Clash-Flux for iOS Simulator
+      - name: Build pinned sing-box Libbox for iOS device and Simulator
+        id: ios-libbox
         run: |
           set -euo pipefail
-          cmake -S . -B build/ios-simulator -G Ninja \
-            -DCMAKE_SYSTEM_NAME=iOS \
-            -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphonesimulator --show-sdk-path)" \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
-            -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
-            -DCMAKE_OBJCXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
-            -DCMAKE_CXX_FLAGS='-stdlib=libc++ -D_LIBCPP_DISABLE_AVAILABILITY' \
-            -DCMAKE_OBJCXX_FLAGS='-stdlib=libc++ -D_LIBCPP_DISABLE_AVAILABILITY' \
-            -DCMAKE_CXX_STDLIB_MODULES_JSON="$LLVM_PREFIX/lib/libc++.modules.json" \
-            -DHUXERUI_BUILD_SHARED=OFF \
-            -DHUXERUI_BUILD_STATIC=ON \
-            -DHUXERUI_BUILD_TESTS=OFF \
-            -DHUXERUI_BUILD_EXAMPLES=OFF \
-            -DHUXERUI_BUILD_CLI=OFF \
-            -DCLASHFLUX_BUILD_TESTS=OFF \
-            -DCLASHFLUX_BUNDLE_SINGBOX=OFF
+          platform/ios/build-singbox-libbox.sh \
+            "$RUNNER_TEMP/Libbox.xcframework"
+          test -s "$RUNNER_TEMP/Libbox.xcframework/Info.plist"
+          mkdir -p platform/ios/Build
+          cp -R "$RUNNER_TEMP/Libbox.xcframework" platform/ios/Build/
 
-      - name: Build Clash-Flux iOS Simulator app core
-        id: ios-core
+      - name: Build unsigned iOS Simulator app and Packet Tunnel
+        id: ios-app
         run: |
           set -euo pipefail
-          cmake --build build/ios-simulator \
-            --target clash-flux_huxerui_ios_core --parallel
-          test -f build/ios-simulator/huxerui-ios/clash-flux/libclash-flux_huxerui.a
+          derived="$RUNNER_TEMP/ClashFluxDerivedData"
+          xcodebuild \
+            -project platform/ios/ClashFlux.xcodeproj \
+            -scheme ClashFlux \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$derived" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+          app="$derived/Build/Products/Release-iphonesimulator/ClashFlux.app"
+          test -d "$app/PlugIns/PacketTunnel.appex"
+          /usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' \
+            "$app/PlugIns/PacketTunnel.appex/Info.plist" \
+            | grep -Fx 'com.apple.networkextension.packet-tunnel'
 
       - name: Report iOS integration status
         if: always()
         env:
-          IOS_CORE_OUTCOME: ${{ steps.ios-core.outcome }}
+          IOS_LIBBOX_OUTCOME: ${{ steps.ios-libbox.outcome }}
+          IOS_APP_OUTCOME: ${{ steps.ios-app.outcome }}
         run: |
-          if [[ "$IOS_CORE_OUTCOME" == "success" ]]; then
-            echo "::notice title=Clash-Flux iOS source compile passed::Clash-Flux and the pinned HuxerUI static platform library compiled for the arm64 iOS Simulator."
+          if [[ "$IOS_APP_OUTCOME" == "success" && "$IOS_LIBBOX_OUTCOME" == "success" ]]; then
+            echo "::notice title=Clash-Flux iOS app and Packet Tunnel compile passed::The unsigned HuxerUI app and Network Extension compiled for iOS Simulator with the pinned sing-box Libbox framework."
           else
-            echo "::warning title=Clash-Flux iOS source compile failed::The Clash-Flux iOS Simulator app core did not build; keep iOS distribution on TODO."
+            echo "::warning title=Clash-Flux iOS integration compile failed::The app, Packet Tunnel extension, or pinned sing-box Libbox.xcframework did not build; keep iOS distribution out of Release."
           fi
-          echo "::notice title=iOS packaging TODO::This compile job creates no .app, IPA, Network Extension, or Release artifact."
+          echo "::notice title=iOS release gate::This job builds Simulator binaries only; signed device archive, HTTPS profile downloads, and real-device VPN lifecycle verification remain required before publishing an IPA."
 
   # ---------------------------------------------------------------- Android
   # Android 发布门禁：验证 GUI/native shell 与 pinned sing-box libbox 能编出
@@ -656,6 +658,7 @@ jobs:
           ANDROID_NDK_HOME="${{ steps.singbox-ndk.outputs.ndk-path }}" \
             platform/android/build-singbox-libbox.sh "$output"
           test -s "$output"
+          test -s "$output.metadata.json"
           echo "CLASHFLUX_SINGBOX_AAR=$output" >> "$GITHUB_ENV"
 
       - name: Ensure CMake >= 3.31 (pip) and expose to Gradle
@@ -769,8 +772,8 @@ jobs:
   publish-release:
     name: publish-release
     if: startsWith(github.ref, 'refs/tags/v')
-    # build-ios-simulator-arm64 is intentionally advisory and excluded; it compiles the
-    # app core only and creates no iOS release artifact.
+    # build-ios-simulator-arm64 is intentionally advisory and excluded; it builds only
+    # unsigned Simulator binaries and creates no iOS release artifact.
     needs: [build-linux, build-windows, build-macos, build-android,
             build-windows-installer]
     runs-on: ubuntu-24.04

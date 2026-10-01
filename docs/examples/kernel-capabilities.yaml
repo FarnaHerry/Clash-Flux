@@ -1,0 +1,91 @@
+# Clash YAML 示例：本文件用于展示映射字段，服务器和密码均为占位值。
+# 请替换为实际服务端信息后导入 Clash-Flux；它不是可用订阅。
+dns:
+  enable: true
+  ipv6: false
+  default-nameserver: [223.5.5.5]
+  # 节点域名的解析不能依赖正在解析的代理链。
+  proxy-server-nameserver: [tls://9.9.9.9]
+  # 只影响代理节点解析，不覆盖普通 nameserver-policy。
+  proxy-server-nameserver-policy:
+    'anytls.example.com': 'udp://223.5.5.5'
+  nameserver:
+    - 'https://1.1.1.1/dns-query#手动选择&h3=true'
+  nameserver-policy:
+    '+.example.com': 'tls://9.9.9.9'
+    'internal.example.com': system
+    '+.private.example.com': 'quic://1.1.1.1:853'
+
+proxies:
+  - name: AnyTLS
+    type: anytls
+    server: anytls.example.com
+    port: 443
+    password: replace-with-your-password
+    udp: true
+    sni: anytls.example.com
+    client-fingerprint: chrome
+    alpn: [h2, http/1.1]
+    idle-session-check-interval: 30
+    idle-session-timeout: 30
+    min-idle-session: 1
+    client-metadata: ""
+    tfo: true
+    # interface-name: eth0  # 桌面接口；须按本机接口名填写
+    # routing-mark: 100    # 仅 Linux 桌面，可能需要网络权限
+  - name: Snell-v4
+    type: snell
+    server: snell.example.com
+    port: 443
+    version: 4
+    psk: replace-with-your-psk
+    udp: true
+    reuse: true
+    # 经 AnyTLS 连接 Snell；这是同一订阅内的代理链。
+    dialer-proxy: AnyTLS
+    obfs-opts:
+      mode: http
+      host: www.example.com
+
+proxy-groups:
+  - name: 手动选择
+    type: select
+    proxies: [AnyTLS, Snell-v4, DIRECT]
+    default-selected: Snell-v4
+  - name: 自动选择
+    type: url-test
+    proxies: [AnyTLS, Snell-v4]
+    url: https://www.gstatic.com/generate_204
+    interval: 3600
+    tolerance: 100
+
+rule-providers:
+  internal-domains:
+    type: inline
+    behavior: domain
+    payload: ['+.corp.example.com', internal.example.com]
+  internal-networks:
+    type: inline
+    behavior: ipcidr
+    payload: [10.0.0.0/8, fd00::/8]
+  https-tcp:
+    type: inline
+    behavior: classical
+    payload:
+      - 'AND,((NETWORK,TCP),(DST-PORT,443))'
+      - 'DOMAIN-REGEX,^api[.]corp[.]example[.]com$'
+
+rules:
+  - RULE-SET,internal-domains,DIRECT
+  - RULE-SET,internal-networks,DIRECT
+  - 'AND,((DOMAIN-SUFFIX,example.com),(NETWORK,TCP)),手动选择'
+  - 'NOT,((DST-PORT,53)),手动选择'
+  - 'AND,((IP-VERSION,4),(DST-PORT,443)),手动选择'
+  - SRC-IP-CIDR,192.168.1.0/24,DIRECT
+  - SRC-IP-CIDR,fd00::/8,DIRECT
+  - SRC-PORT,10000-20000/5353,DIRECT
+  - DST-PORT,80/443/8000-9000,手动选择
+  - NETWORK,UDP,自动选择
+  - MATCH,手动选择
+  # 默认直连时用 MATCH,DIRECT；默认静默丢包时用 MATCH,REJECT-DROP。
+  # 第一个有效 MATCH 之后的规则不会执行。
