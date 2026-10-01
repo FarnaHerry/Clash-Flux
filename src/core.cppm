@@ -4,7 +4,8 @@
 // posix_spawn / Windows CreateProcessW 拉起 sing-box 子进程（stdout+stderr 合并进
 // 一根管道），监视线程按 \r / \n 拆行入队（内核自身的启动日志，日志页在 WS
 // 断线时也能看到这些）；stop() POSIX 先 SIGTERM，2s 宽限后 SIGKILL；Windows 无
-// SIGTERM 语义，直接 TerminateProcess。
+// SIGTERM 语义，直接 TerminateProcess。iOS 不走子进程路径，必须通过 Network
+// Extension 中的 Libbox runtime 启动。
 //
 // 运行时配置：generateConfig() 经 clashflux.singbox 编译器把订阅（Clash YAML、
 // 原生 sing-box JSON 或空）与本应用托管的设置（clash_api / mixed 入站 / tun /
@@ -79,6 +80,10 @@ export void openInBrowser(const std::string& url);
 // 返回的 CompileResult.json 可直接 `sing-box run -c`；失败 json 为空并填
 // error；订阅降级细节（不支持的节点/规则）经 warnings 带回。
 export singbox::CompileResult generateConfig(singbox::CompileOptions options);
+// 桌面候选配置的固定内核检查；调用方任务线程，Windows 无控制台。
+export bool checkConfig(const std::filesystem::path& binary,
+                       const std::filesystem::path& workDir,
+                       const std::filesystem::path& configFile, std::string& error);
 
 export class CoreProcess {
 public:

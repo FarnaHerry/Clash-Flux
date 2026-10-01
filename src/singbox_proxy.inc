@@ -1,14 +1,15 @@
 // singbox_proxy.inc — 代理节点、传输层与代理组转换
 // 由 src/singbox.cpp 在同一匿名命名空间中包含。
 
-void appendTls(Context& ctx, const YAML::Node& item, nlohmann::json& out) {
+void appendTls(Context& ctx, const YAML::Node& item, nlohmann::json& out,
+               bool required = false) {
     const std::string sni = [] (const YAML::Node& node) {
         std::string value = ytext(node, "servername");
         if (value.empty()) value = ytext(node, "sni");
         return value;
     }(item);
     const bool skipVerify = ybool(item, "skip-cert-verify");
-    if (!ybool(item, "tls") && sni.empty() && !skipVerify) return;
+    if (!required && !ybool(item, "tls") && sni.empty() && !skipVerify) return;
     nlohmann::json tls = {{"enabled", true}};
     if (!sni.empty()) tls["server_name"] = sni;
     if (skipVerify) tls["insecure"] = true;
@@ -116,6 +117,94 @@ bool appendTransport(Context& ctx, const YAML::Node& item, nlohmann::json& out,
 
 // ---- 节点转换 ---------------------------------------------------------------
 
+bool proxyFieldsSupported(Context& ctx, const YAML::Node& item, const std::string& name,
+                          std::initializer_list<std::string_view> supported) {
+    for (const auto& field : item) {
+        const std::string key = field.first.IsScalar() ? field.first.Scalar() : "(无效字段名)";
+        if (std::ranges::find(supported, key) != supported.end()) continue;
+        ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+                 std::format("节点「{}」的 {} 尚未映射，已跳过", name, key),
+                 "请用原生 sing-box JSON 表达该线路；编译器不会省略未映射字段后改变线路语义");
+        return false;
+    }
+    return true;
+}
+
+bool proxyBooleansValid(Context& ctx, const YAML::Node& item, const std::string& name,
+                        std::initializer_list<const char*> fields) {
+    for (const char* field : fields) {
+        if (!item[field]) continue;
+        const std::string value = lowerCopy(ytext(item, field));
+        if (value == "true" || value == "false" || value == "yes" || value == "no" ||
+            value == "1" || value == "0") continue;
+        ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+                 std::format("节点「{}」的 {} 不是有效布尔值，已跳过", name, field),
+                 "使用 true/false，避免无效字段被当成关闭状态");
+        return false;
+    }
+    return true;
+}
+
+// Shared native dialer options. Validate presence before platform filtering so
+// malformed values never silently turn into the defaults.
+bool appendProxyDialer(Context& ctx, const YAML::Node& item, nlohmann::json& out,
+                       const std::string& name) {
+    const auto invalid = [&](std::string_view field, std::string_view reason) {
+        ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+                 std::format("节点「{}」的 {} {}，已跳过", name, field, reason));
+        return false;
+    };
+    if (!proxyBooleansValid(ctx, item, name, {"tfo", "mptcp"})) return false;
+    if (const YAML::Node dialer = item["dialer-proxy"]; dialer) {
+        if (!dialer.IsScalar() || trimCopy(dialer.Scalar()).empty())
+            return invalid("dialer-proxy", "必须为非空出站名");
+        out["detour"] = trimCopy(dialer.Scalar());
+    }
+    bool activeOptions = false;
+    if (const YAML::Node interface = item["interface-name"]; interface) {
+        if (!interface.IsScalar()) return invalid("interface-name", "必须为接口名字符串");
+        const std::string value = trimCopy(interface.Scalar());
+        if (!value.empty()) {
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
+            if (!out.contains("detour")) return invalid("interface-name", "在当前手机平台没有原生等价");
+#endif
+            out["bind_interface"] = value;
+            activeOptions = true;
+        }
+    }
+    if (const YAML::Node mark = item["routing-mark"]; mark) {
+        if (!mark.IsScalar()) return invalid("routing-mark", "必须为 uint32 整数");
+        const std::string text = trimCopy(mark.Scalar());
+        unsigned long long value = 0;
+        const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+        if (text.empty() || error != std::errc{} || end != text.data() + text.size() ||
+            value > 4294967295ULL) return invalid("routing-mark", "必须在 0–4294967295 之间");
+#if !defined(__linux__) || defined(__ANDROID__)
+        if (value != 0 && !out.contains("detour"))
+            return invalid("routing-mark", "仅支持 Linux 桌面");
+#endif
+        out["routing_mark"] = value;
+        activeOptions = activeOptions || value != 0;
+    }
+    for (const auto& [source, destination] : {
+             std::pair{"tfo", "tcp_fast_open"}, std::pair{"mptcp", "tcp_multi_path"}}) {
+        if (!item[source]) continue;
+        const bool value = ybool(item, source);
+        out[destination] = value;
+        activeOptions = activeOptions || value;
+    }
+    if (out.contains("detour") && activeOptions) {
+        ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                 std::format("节点「{}」使用 dialer-proxy，内核会忽略本节点的接口、路由标记及 TCP 拨号选项", name),
+                 "物理网络选项需要放到代理链最终拨号的出站；不会自动迁移或继承这些字段");
+    } else if (ybool(item, "mptcp")) {
+        ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                 std::format("节点「{}」已启用原生 TCP Multi Path；1.14.2 普通 IPv6 拨号路径未启用此选项", name),
+                 "实际多路径还依赖操作系统与对端；不能承诺所有地址族都启用 MPTCP");
+    }
+    return true;
+}
+
 std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item) {
     const std::string name = ytext(item, "name");
     const std::string type = lowerCopy(ytext(item, "type"));
@@ -160,6 +249,92 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
             return std::nullopt;
         }
         if (ybool(item, "udp-over-tcp")) out["udp_over_tcp"] = true;
+    } else if (singboxType == "anytls") {
+        // AnyTLS 必须启用 TLS，即使订阅没有额外的 tls/sni 字段。
+        // 组合伪装不能省掉后继续连普通 TLS，否则实际线路已改变。
+        if (!proxyFieldsSupported(ctx, item, name,
+                {"name", "type", "server", "port", "password", "udp", "tls",
+                 "sni", "servername", "skip-cert-verify", "client-fingerprint", "alpn",
+                 "idle-session-check-interval", "idle-session-timeout", "min-idle-session",
+                 "client-metadata", "dialer-proxy", "interface-name", "routing-mark", "tfo", "mptcp"})) return std::nullopt;
+        if (!proxyBooleansValid(ctx, item, name, {"udp", "tls", "skip-cert-verify"})) {
+            return std::nullopt;
+        }
+        // 凭据与客户端元数据不能 trim：前后空白也是用户输入的一部分。
+        const YAML::Node credential = item["password"];
+        const std::string password = credential && credential.IsScalar() ? credential.Scalar() : "";
+        if (password.empty()) {
+            ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+                     std::format("AnyTLS 节点「{}」缺少 password，已跳过", name),
+                     "补上 AnyTLS 密码后重新导入");
+            return std::nullopt;
+        }
+        out["password"] = password;
+        for (const auto& [source, destination] : {
+                 std::pair{"idle-session-check-interval", "idle_session_check_interval"},
+                 std::pair{"idle-session-timeout", "idle_session_timeout"},
+                 std::pair{"min-idle-session", "min_idle_session"}}) {
+            if (!item[source]) continue;
+            const auto value = yint(item, source);
+            if (!value || *value < 0) {
+                ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+                         std::format("AnyTLS 节点「{}」的 {} 必须为非负整数，已跳过", name, source),
+                         "会话时间使用秒数，最少空闲会话使用数量");
+                return std::nullopt;
+            }
+            if (std::string_view(source) == "min-idle-session") out[destination] = *value;
+            else out[destination] = std::format("{}s", *value);
+        }
+        if (const YAML::Node metadata = item["client-metadata"]; metadata) {
+            if (!metadata.IsScalar()) {
+                ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+                         std::format("AnyTLS 节点「{}」的 client-metadata 必须为字符串，已跳过", name),
+                         "client-metadata 可为空字符串，但不能为对象或列表");
+                return std::nullopt;
+            }
+            out["client_metadata"] = metadata.Scalar();
+        }
+        appendTls(ctx, item, out, true);
+        if (!ybool(item, "udp")) {
+            ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                     std::format("AnyTLS 节点「{}」未启用 UDP，但 sing-box AnyTLS 出站固定支持 TCP/UDP", name),
+                     "sing-box 没有该出站的 network 限制；如需禁止 UDP，请在路由中显式拒绝");
+        }
+    } else if (singboxType == "snell") {
+        if (!proxyFieldsSupported(ctx, item, name,
+                {"name", "type", "server", "port", "version", "psk", "udp", "reuse",
+                 "obfs-opts", "dialer-proxy", "interface-name", "routing-mark", "tfo", "mptcp"})) return std::nullopt;
+        if (!proxyBooleansValid(ctx, item, name, {"udp", "reuse"})) return std::nullopt;
+        // 1.14 的 Snell 出站仅有 v4/v6；Clash 未指定版本时按旧版本处理，
+        // 不能擅自改成 v4。v6 目前仅通过原生 JSON 使用。
+        const auto version = yint(item, "version");
+        const YAML::Node credential = item["psk"];
+        const std::string psk = credential && credential.IsScalar() ? credential.Scalar() : "";
+        if (!version || *version != 4 || psk.empty()) {
+            ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+                     std::format("Snell 节点「{}」需要显式 version: 4 和非空 psk，已跳过", name),
+                     "sing-box 1.14 不支持 Clash 的 Snell v1/v2/v3/v5；版本不能自动替换");
+            return std::nullopt;
+        }
+        out["version"] = 4;
+        out["psk"] = psk;
+        out["reuse"] = ybool(item, "reuse");
+        if (!ybool(item, "udp")) out["network"] = "tcp";
+        if (const YAML::Node obfs = item["obfs-opts"]; obfs) {
+            const std::string mode = obfs.IsMap() ? lowerCopy(ytext(obfs, "mode")) : "(无效)";
+            if (!mode.empty() && mode != "http" && mode != "tls") {
+                ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+                         std::format("Snell 节点「{}」的 obfs 模式 {} 尚未映射，已跳过", name, mode),
+                         "仅支持 http/tls 伪装；shadow-tls/restls/jls 不会降成无伪装连接");
+                return std::nullopt;
+            }
+            if (!proxyFieldsSupported(ctx, obfs, name, {"mode", "host"})) return std::nullopt;
+            if (!mode.empty()) {
+                out["obfs_mode"] = mode;
+                const std::string host = ytext(obfs, "host");
+                out["obfs_host"] = host.empty() ? "bing.com" : host;
+            }
+        }
     } else if (singboxType == "vmess") {
         out["uuid"] = ytext(item, "uuid");
         std::string security = ytext(item, "cipher");
@@ -270,6 +445,7 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
                  "该节点已从所有组中移除；可在订阅里删除它，或等编译器补上该协议");
         return std::nullopt;
     }
+    if (!appendProxyDialer(ctx, item, out, name)) return std::nullopt;
     return out;
 }
 
@@ -279,6 +455,16 @@ std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
                                            const std::string& name,
                                            const std::vector<std::string>& members) {
     const std::string clashType = lowerCopy(ytext(item, "type"));
+    for (const auto& field : item) {
+        const std::string key = field.first.IsScalar() ? field.first.Scalar() : "(无效字段名)";
+        if (key == "name" || key == "type" || key == "proxies" || key == "default-selected" ||
+            key == "use" || key == "include-all" || key == "include-all-proxies" || key == "include-all-providers") continue;
+        if ((clashType == "url-test" || clashType == "fallback" || clashType == "load-balance") &&
+            (key == "url" || key == "interval" || key == "tolerance")) continue;
+        ctx.note(FidelityScope::Group, Fidelity::Approx, name,
+                 std::format("代理组「{}」的 {} 未映射，仍使用内核组行为", name, key),
+                 "该字段不会写入内核；lazy/timeout/expected-status 等不能假装有等价设置");
+    }
     nlohmann::json out = {{"tag", name}};
     if (clashType == "select") {
         out["type"] = "selector";
@@ -306,6 +492,26 @@ std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
             out["url"] = url;
             if (const auto interval = yint(item, "interval"); interval && *interval > 0) {
                 out["interval"] = std::format("{}s", *interval);
+                if (*interval > 1800) {
+                    out["idle_timeout"] = std::format("{}s", *interval);
+                    ctx.note(FidelityScope::Group, Fidelity::Approx, name,
+                             std::format("代理组「{}」保留 {}s 测速间隔，并把 idle_timeout 从默认 30m 延长到同一值", name, *interval),
+                             "sing-box 要求 interval ≤ idle_timeout；空闲时停止巡检的时间因此延长");
+                }
+            } else if (item["interval"]) {
+                ctx.note(FidelityScope::Group, Fidelity::Approx, name,
+                         std::format("代理组「{}」的 interval 无效，使用 sing-box 默认 3m", name),
+                         "interval 必须为正整数秒数");
+            }
+            if (item["tolerance"]) {
+                const auto tolerance = yint(item, "tolerance");
+                if (tolerance && *tolerance > 0 && *tolerance <= 65535) {
+                    out["tolerance"] = *tolerance;
+                } else {
+                    ctx.note(FidelityScope::Group, Fidelity::Approx, name,
+                             std::format("代理组「{}」的 tolerance 无法原样表达，使用 sing-box 默认 50ms", name),
+                             "sing-box 接受 1–65535ms；0 会被内核替换成 50ms，不能表示零容差");
+                }
             }
         }
     } else {
@@ -335,8 +541,92 @@ std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
         filtered.push_back(member);
     }
     if (filtered.empty()) filtered.push_back("DIRECT");
+    if (const YAML::Node initial = item["default-selected"]; initial) {
+        const std::string selected = ytext(item, "default-selected");
+        if (out.value("type", "") == "selector" && initial.IsScalar() && !selected.empty() &&
+            std::find(filtered.begin(), filtered.end(), nlohmann::json(selected)) != filtered.end()) {
+            out["default"] = selected;
+        } else {
+            ctx.note(FidelityScope::Group, Fidelity::Approx, name,
+                     std::format("代理组「{}」的 default-selected 未生效", name),
+                     "仅 selector 支持默认选择，目标必须是该组编译后的成员；其它情况沿用内核默认行为");
+        }
+    }
     out["outbounds"] = std::move(filtered);
     return out;
+}
+
+// A detour may point forward to a node or group. Validate the completed graph,
+// including every selectable member, so switching groups cannot create a loop.
+// Use an explicit stack: untrusted subscriptions can contain long chains.
+bool validateOutboundDependencies(Context& ctx) {
+    const std::size_t count = ctx.outbounds.size();
+    std::map<std::string, std::size_t> indices;
+    std::vector<std::string> tags;
+    tags.reserve(count);
+    auto fail = [&](std::size_t index, const std::string& detail) {
+        const bool group = ctx.outbounds[index].value("type", "") == "selector" ||
+                           ctx.outbounds[index].value("type", "") == "urltest";
+        ctx.note(group ? FidelityScope::Group : FidelityScope::Node, Fidelity::Unsupported,
+                 tags[index], detail, "修正引用或代理链；编译器不会移除 detour 后改成直连");
+        ctx.result.error = detail;
+        return false;
+    };
+    for (std::size_t index = 0; index < count; ++index) {
+        tags.push_back(ctx.outbounds[index].value("tag", ""));
+        if (!indices.emplace(tags.back(), index).second) {
+            return fail(index, std::format("出站「{}」重名，无法唯一解析依赖", tags.back()));
+        }
+    }
+    std::vector<std::vector<std::size_t>> edges(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto& outbound = ctx.outbounds[index];
+        std::vector<std::string> dependencies;
+        if (outbound.contains("detour")) dependencies.push_back(outbound["detour"].get<std::string>());
+        if (outbound.contains("outbounds")) {
+            for (const auto& member : outbound["outbounds"]) dependencies.push_back(member.get<std::string>());
+        }
+        for (const auto& target : dependencies) {
+            const auto found = indices.find(target);
+            if (found == indices.end()) {
+                return fail(index, std::format("出站「{}」依赖的「{}」未成功编译", tags[index], target));
+            }
+            edges[index].push_back(found->second);
+        }
+    }
+    struct Frame { std::size_t index; std::size_t next = 0; };
+    std::vector<unsigned char> colors(count, 0);
+    std::vector<Frame> stack;
+    for (std::size_t start = 0; start < count; ++start) {
+        if (colors[start] != 0) continue;
+        stack.push_back({start});
+        colors[start] = 1;
+        while (!stack.empty()) {
+            auto& frame = stack.back();
+            if (frame.next == edges[frame.index].size()) {
+                colors[frame.index] = 2;
+                stack.pop_back();
+                continue;
+            }
+            const std::size_t target = edges[frame.index][frame.next++];
+            if (colors[target] == 1) {
+                std::string path;
+                const auto beginning = std::find_if(stack.begin(), stack.end(),
+                    [&](const Frame& entry) { return entry.index == target; });
+                for (auto cursor = beginning; cursor != stack.end(); ++cursor) {
+                    if (!path.empty()) path += " → ";
+                    path += tags[cursor->index];
+                }
+                path += " → " + tags[target];
+                return fail(frame.index, "出站依赖形成循环：" + path);
+            }
+            if (colors[target] == 0) {
+                colors[target] = 1;
+                stack.push_back({target});
+            }
+        }
+    }
+    return true;
 }
 
 // ---- 规则转换 -----------------------------------------------------------------

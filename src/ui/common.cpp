@@ -16,7 +16,7 @@
 #include "task_bridge.h"
 #include "ui.h"
 
-import nlohmann.json;
+#include "wire_codec.h"
 import clashflux.config;
 import clashflux.core;
 import clashflux.db;
@@ -76,41 +76,25 @@ DesktopModeApplyResult ApplyDesktopTun(bool enabled) {
 
 namespace {
 
-// 只服务于 FetchProxiesSnapshot：策略组原文 → 扁平快照。不再是公开 API——
+// 只服务于 FetchProxiesSnapshot：拥有型策略组 DTO → 扁平快照。不再是公开 API——
 // 消费方一律读 ProxiesModel，避免又出现第二个「各自解析」的入口。
-std::vector<ProxyGroupSnapshot> ParseProxyGroups(const std::string& body) {
+std::vector<ProxyGroupSnapshot> ParseProxyGroups(const wire::Proxies& snapshot, const std::map<std::string, std::string>& labels) {
     std::vector<ProxyGroupSnapshot> groups;
-    const auto json = nlohmann::json::parse(body, nullptr, false);
-    if (!json.is_object() || !json.contains("proxies") ||
-        !json["proxies"].is_object()) {
-        return groups;
-    }
-
-    const auto& proxies = json["proxies"];
-    for (auto it = proxies.begin(); it != proxies.end(); ++it) {
-        const auto& value = it.value();
-        if (!value.is_object() || !value.contains("all") ||
-            !value["all"].is_array()) {
-            continue;
-        }
+    const auto& proxies = snapshot.entries;
+    for (const auto& [name, value] : proxies) {
+        if (!value.members) continue;
         ProxyGroupSnapshot group;
-        group.name = it.key();
-        group.type = value.value("type", "");
-        group.current = value.value("now", "");
-        group.selectable = value.value("selectable", isSelectorType(group.type));
-        for (const auto& node : value["all"]) {
-            if (!node.is_string()) continue;
-            const std::string name = node.get<std::string>();
-            group.nodes.push_back(name);
-            if (proxies.contains(name) && proxies[name].is_object()) {
-                const auto& info = proxies[name];
-                if (info.contains("history") && info["history"].is_array() &&
-                    !info["history"].empty()) {
-                    const auto& last = info["history"].back();
-                    group.delays[name] = last.is_object() ? last.value("delay", 0) : 0;
-                } else {
-                    group.delays[name] = 0;
-                }
+        group.name = name;
+        group.displayName = labels.contains(name) ? labels.at(name) : name;
+
+        group.type = value.type;
+        group.current = value.now;
+        group.selectable = value.selectable.value_or(isSelectorType(group.type));
+        group.nodes = *value.members;
+        for (const auto& node : group.nodes) {
+            if (labels.contains(node)) group.nodeLabels[node] = labels.at(node);
+            if (const auto found = proxies.find(node); found != proxies.end()) {
+                group.delays[node] = found->second.historyDelay;
             }
         }
         groups.push_back(std::move(group));
@@ -127,13 +111,13 @@ std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
     for (const ProxyGroupSnapshot& group : groups) {
         if (!group.selectable) {
             entries.push_back(huxerui::MenuItem(
-                group.name + "（自动测速，不支持手动切换）", [] {}).Enabled(false));
+                group.displayName + "（自动测速，不支持手动切换）", [] {}).Enabled(false));
             continue;
         }
         std::vector<huxerui::MenuEntry> nodes;
         for (const std::string& node : group.nodes) {
             nodes.push_back(huxerui::MenuItem(
-                                node,
+                                group.nodeLabels.contains(node) ? group.nodeLabels.at(node) : node,
                                 [on_select, groupName = group.name, node] {
                                     on_select(groupName, node);
                                 })
@@ -144,7 +128,7 @@ std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
                 huxerui::MenuItem("暂无可切换线路", [] {}).Enabled(false));
         }
         entries.push_back(
-            huxerui::MenuItem(group.name, std::move(nodes)));
+            huxerui::MenuItem(group.displayName, std::move(nodes)));
     }
     if (entries.empty()) {
         entries.push_back(
@@ -184,7 +168,21 @@ ProxiesSnapshot FetchProxiesSnapshot() {
     }
 #endif
     next.body = std::move(body);
-    next.groups = ParseProxyGroups(next.body);
+    if (!next.body.empty()) {
+        auto decoded = wire::DecodeProxies(next.body);
+        if (decoded) {
+            next.proxies = std::make_shared<const wire::Proxies>(std::move(decoded.value));
+            const auto catalog = store::coreStore().proxySourceObjects(next.source == ProxiesSource::Preview);
+            if (catalog) for (const auto& object : *catalog) {
+                next.labels[object.tag] = object.sourceName.empty() ? object.objectId
+                    : object.objectId + " · " + object.sourceName;
+            }
+            next.groups = ParseProxyGroups(*next.proxies, next.labels);
+        } else {
+            next.error = "代理快照解析失败：" + decoded.error;
+            next.source = ProxiesSource::Empty;
+        }
+    }
     return next;
 }
 

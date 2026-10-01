@@ -5,11 +5,30 @@
 module;
 
 #include <curl/curl.h>
+#include "wire_codec.h"
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+#if defined(CLASHFLUX_IOS)
+#include <cstddef>
+extern "C" bool clashflux_ios_download_to_file(
+    const char* url, const char* temp_path, long timeout_seconds,
+    bool allow_invalid_certificate, const char* proxy_url,
+    bool allow_system_proxy, long* http_status, long long* expected_bytes,
+    char* response_headers_json, std::size_t response_headers_capacity,
+    char* error_buffer, std::size_t error_buffer_capacity) noexcept;
+#endif
 
 module clashflux.api;
 
 import std;
-import nlohmann.json;
 import clashflux.utils;
 
 namespace api {
@@ -37,34 +56,88 @@ size_t onFileWrite(char* ptr, size_t size, size_t nmemb, void* userdata) noexcep
     }
 }
 
-// 订阅响应头收集（名字统一小写；重定向多跳时后值覆盖前值 = 最后一跳生效）。
+// 每一跳响应单独收集，重定向跳转的订阅元数据不能泄漏到最终响应。
 size_t onHeaderLine(char* ptr, size_t size, size_t nmemb, void* userdata) noexcept {
-    auto* headers = static_cast<std::map<std::string, std::string>*>(userdata);
-    const std::string line(ptr, size * nmemb);
-    const auto colon = line.find(':');
-    if (colon == std::string::npos) return size * nmemb;
-    std::string name = line.substr(0, colon);
-    for (char& c : name) {
-        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+    try {
+        auto* headers = static_cast<std::map<std::string, std::string>*>(userdata);
+        const std::string_view line(ptr, size * nmemb);
+        if (line.starts_with("HTTP/")) {
+            headers->clear();
+            return line.size();
+        }
+        const auto colon = line.find(':');
+        if (colon == std::string_view::npos) return line.size();
+        std::string name(line.substr(0, colon));
+        for (char& c : name) {
+            if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        }
+        auto value = line.substr(colon + 1);
+        const auto whitespace = [](char c) {
+            return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+        };
+        while (!value.empty() && whitespace(value.front())) value.remove_prefix(1);
+        while (!value.empty() && whitespace(value.back())) value.remove_suffix(1);
+        (*headers)[std::move(name)] = std::string(value);
+        return line.size();
+    } catch (...) {
+        return CURL_WRITEFUNC_ERROR;
     }
-    std::string value = line.substr(colon + 1);
-    while (!value.empty() && (value.front() == ' ' || value.front() == '\t' ||
-                              value.front() == '\r' || value.front() == '\n')) {
-        value.erase(value.begin());
+}
+
+// 原子创建同目录独占临时目录，避免同一目标的并发请求共用 .part。
+// 必须先声明本对象、后声明输出流，让析构顺序先关文件再清理（Windows）。
+class DownloadTemp {
+public:
+    explicit DownloadTemp(const std::filesystem::path& dest) {
+        auto parent = dest.parent_path();
+        if (parent.empty()) parent = ".";
+        std::random_device random;
+        for (int attempt = 0; attempt < 8; ++attempt) {
+            auto candidate = parent / (".clash-flux-download-" +
+                std::to_string(random()) + "-" + std::to_string(random()));
+            auto payload = candidate / "payload";
+            std::error_code ec;
+            if (std::filesystem::create_directory(candidate, ec)) {
+                directory_ = std::move(candidate);
+                payload_ = std::move(payload);
+                return;
+            }
+            if (ec && ec != std::errc::file_exists) return;
+        }
     }
-    while (!value.empty() && (value.back() == ' ' || value.back() == '\t' ||
-                              value.back() == '\r' || value.back() == '\n')) {
-        value.pop_back();
+    ~DownloadTemp() {
+        if (directory_.empty()) return;
+        std::error_code ec;
+        std::filesystem::remove(payload_, ec);
+        std::filesystem::remove(directory_, ec);
     }
-    (*headers)[std::move(name)] = std::move(value);
-    return size * nmemb;
+    DownloadTemp(const DownloadTemp&) = delete;
+    DownloadTemp& operator=(const DownloadTemp&) = delete;
+    explicit operator bool() const noexcept { return !directory_.empty(); }
+    const std::filesystem::path& path() const noexcept { return payload_; }
+private:
+    std::filesystem::path directory_;
+    std::filesystem::path payload_;
+};
+
+std::error_code replaceDownload(const std::filesystem::path& temp,
+                                const std::filesystem::path& dest) {
+#ifdef _WIN32
+    // filesystem::rename 在 Windows 不覆盖已有目标；不能先删除旧文件。
+    if (MoveFileExW(temp.c_str(), dest.c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return {};
+    return {static_cast<int>(GetLastError()), std::system_category()};
+#else
+    std::error_code ec;
+    std::filesystem::rename(temp, dest, ec);
+    return ec;
+#endif
 }
 
 // 从错误响应体提取 message 字段（{"message": "..."}）。
 std::string extractMessage(const std::string& body) {
-    const auto j = nlohmann::json::parse(body, nullptr, false);
-    if (j.is_object()) return j.value("message", "");
-    return "";
+    auto decoded = clashflux::wire::DecodeMessage(body);
+    return decoded ? std::move(decoded.value) : std::string{};
 }
 
 // curl C API 的 RAII 包装：easy handle 与 header list 原本要在每条返回路径
@@ -198,8 +271,9 @@ ApiResult ClashApi::patchConfigs(const std::string& jsonBody) {
 ApiResult ClashApi::proxies() { return impl_->request("", "/proxies"); }
 
 ApiResult ClashApi::selectProxy(const std::string& group, const std::string& name) {
-    const nlohmann::json body = {{"name", name}};
-    return impl_->request("PUT", "/proxies/" + percentEncode(group), body.dump());
+    const auto body = clashflux::wire::EncodeSelection(name);
+    if (!body) return {.error = body.error};
+    return impl_->request("PUT", "/proxies/" + percentEncode(group), body.value);
 }
 
 ApiResult ClashApi::proxyDelay(const std::string& name, const std::string& testUrl,
@@ -221,25 +295,73 @@ ApiResult ClashApi::closeAllConnections() {
     return impl_->request("DELETE", "/connections");
 }
 
+bool CommitFile(const std::filesystem::path& temp, const std::filesystem::path& dest,
+                std::string& error) {
+    const auto ec = replaceDownload(temp, dest);
+    if (ec) { error = "无法替换目标文件: " + dest.string() + "：" + ec.message(); return false; }
+    error.clear(); return true;
+}
+
 ApiResult ClashApi::downloadToFile(const std::string& url,
                                    const std::filesystem::path& dest,
                                    const DownloadOptions& options) {
     ApiResult result;
-    // 先写同目录临时文件，成功后才原子替换目标：旧实现直接 truncate 目标，
-    // 刷新失败（订阅/规则集）会把上一份可用文件删掉。失败时只清理临时文件，
-    // 已有内容原样保留。
-    const std::filesystem::path temp = dest.string() + ".part";
+    DownloadTemp temporary(dest);
+    if (!temporary) {
+        result.error = "无法创建下载临时目录: " + dest.string();
+        return result;
+    }
+    const auto temp = temporary.path();
     std::ofstream out(temp, std::ios::binary | std::ios::trunc);
     if (!out) {
         result.error = "无法写入: " + dest.string();
         return result;
     }
+#if defined(CLASHFLUX_IOS)
+    // iOS 的 curl 构建不含 TLS。订阅和规则集下载改用系统 URLSession，
+    // 默认走 Apple 信任链校验证书；只有用户显式开启危险选项时才跳过校验。
+    out.close();
+    std::vector<char> responseHeaders(64 * 1024, '\0');
+    std::vector<char> errorBuffer(2048, '\0');
+    long status = 0;
+    long long expectedBytes = -1;
+    const bool transferred = clashflux_ios_download_to_file(
+        url.c_str(), temp.string().c_str(),
+        options.timeoutSecs > 0 ? options.timeoutSecs : 60L,
+        options.allowInvalidCert, options.proxyUrl.c_str(),
+        options.allowProxyEnv, &status, &expectedBytes,
+        responseHeaders.data(), responseHeaders.size(),
+        errorBuffer.data(), errorBuffer.size());
+    if (!transferred) {
+        result.error = errorBuffer.front() == '\0'
+                           ? "iOS URLSession 下载失败"
+                           : std::string(errorBuffer.data());
+    } else {
+        result.status = status;
+        result.ok = status >= 200 && status < 300;
+        if (!result.ok) {
+            result.error = "HTTP " + std::to_string(status);
+        } else {
+            auto headers = clashflux::wire::DecodeHeaders(responseHeaders.data());
+            if (headers) result.headers = std::move(headers.value);
+            if (expectedBytes > 0) {
+                std::error_code sizeError;
+                const auto received = std::filesystem::file_size(temp, sizeError);
+                if (sizeError) {
+                    result.ok = false;
+                    result.error = "无法检查下载文件长度: " + sizeError.message();
+                } else if (received < static_cast<std::uintmax_t>(expectedBytes)) {
+                    result.ok = false;
+                    result.error = "下载不完整（收到 " + std::to_string(received) +
+                                   "/" + std::to_string(expectedBytes) + " 字节）";
+                }
+            }
+        }
+    }
+#else
     CurlHandle handle;
     if (!handle) {
         result.error = "curl_easy_init failed";
-        out.close();
-        std::error_code removeError;
-        std::filesystem::remove(temp, removeError);
         return result;
     }
     CURL* const easy = handle.get();
@@ -319,18 +441,30 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
             result.error = detail + "（curl " + codeText + "）";
         }
     }
-    std::error_code ec;
-    if (result.ok) {
+#endif
+    if (out.is_open()) {
         out.close();
-        std::filesystem::rename(temp, dest, ec);
-        if (ec) {
+        if (result.ok && out.fail()) {
             result.ok = false;
-            result.error = "无法替换目标文件: " + dest.string();
+            result.error = "无法完成下载文件写入: " + dest.string();
         }
     }
-    if (!result.ok) {
-        std::error_code removeError;
-        std::filesystem::remove(temp, removeError);
+    if (result.ok && options.validate) {
+        try {
+            result.error = options.validate(temp);
+        } catch (const std::exception& error) {
+            result.error = std::string("下载内容校验失败: ") + error.what();
+        } catch (...) {
+            result.error = "下载内容校验失败";
+        }
+        result.ok = result.error.empty();
+    }
+    if (result.ok) {
+        const auto ec = replaceDownload(temp, dest);
+        if (ec) {
+            result.ok = false;
+            result.error = "无法替换目标文件: " + dest.string() + "：" + ec.message();
+        }
     }
     return result;
 }

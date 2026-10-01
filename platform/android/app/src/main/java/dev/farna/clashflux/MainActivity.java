@@ -20,13 +20,30 @@ import android.os.RemoteException;
 import android.provider.Settings;
 import android.util.Log;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.RandomAccessFile;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
+
+import org.json.JSONObject;
 
 import org.huxerui.HuxerUIActivity;
 
@@ -60,6 +77,142 @@ public final class MainActivity extends HuxerUIActivity {
             int coreState, int vpnState, long uploadRate, long downloadRate,
             long uploadTotal, long downloadTotal, int connections, String message);
     private static native void nativeClearTunPreference();
+
+    /**
+     * Fetch a remote subscription on a worker thread. The optional trust
+     * override is applied only to this request's HTTPS connections; it never
+     * mutates Android's process-wide TLS defaults.
+     */
+    public static Bundle fetchProfile(String address, int timeoutSeconds,
+                                      boolean allowInvalidCertificate) {
+        Bundle result = new Bundle();
+        HttpURLConnection connection = null;
+        try {
+            URL target = new URL(address);
+            int timeoutMillis = (int) Math.min(Integer.MAX_VALUE,
+                    Math.max(1L, (long) timeoutSeconds) * 1000L);
+            long deadlineNanos = System.nanoTime()
+                    + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+            SSLContext permissiveTls = null;
+            if (allowInvalidCertificate) {
+                permissiveTls = SSLContext.getInstance("TLS");
+                permissiveTls.init(null, new TrustManager[]{new X509TrustManager() {
+                    @Override public void checkClientTrusted(
+                            X509Certificate[] chain, String authType) {}
+                    @Override public void checkServerTrusted(
+                            X509Certificate[] chain, String authType) {}
+                    @Override public X509Certificate[] getAcceptedIssuers() {
+                        return new X509Certificate[0];
+                    }
+                }}, new SecureRandom());
+            }
+
+            for (int redirects = 0; ; redirects++) {
+                String protocol = target.getProtocol().toLowerCase(Locale.ROOT);
+                if (!"http".equals(protocol) && !"https".equals(protocol)) {
+                    throw new IOException("订阅下载仅支持 HTTP 或 HTTPS URL");
+                }
+                URLConnection opened = target.openConnection();
+                if (!(opened instanceof HttpURLConnection)) {
+                    throw new IOException("订阅 URL 不是 HTTP 连接");
+                }
+                connection = (HttpURLConnection) opened;
+                connection.setInstanceFollowRedirects(false);
+                connection.setUseCaches(false);
+                connection.setRequestProperty("User-Agent", "clash-flux/0.1");
+                connection.setRequestProperty("Accept-Encoding", "identity");
+                int remainingMillis = remainingTimeoutMillis(deadlineNanos);
+                connection.setConnectTimeout(remainingMillis);
+                connection.setReadTimeout(remainingMillis);
+                if (allowInvalidCertificate
+                        && connection instanceof HttpsURLConnection) {
+                    HttpsURLConnection https = (HttpsURLConnection) connection;
+                    https.setSSLSocketFactory(permissiveTls.getSocketFactory());
+                    https.setHostnameVerifier((host, session) -> true);
+                }
+
+                int status = connection.getResponseCode();
+                String location = connection.getHeaderField("Location");
+                if (isRedirect(status) && location != null && !location.isEmpty()) {
+                    if (redirects >= 10) {
+                        throw new IOException("订阅下载重定向次数过多");
+                    }
+                    URL redirected = new URL(target, location);
+                    String redirectedProtocol =
+                            redirected.getProtocol().toLowerCase(Locale.ROOT);
+                    if (!"http".equals(redirectedProtocol)
+                            && !"https".equals(redirectedProtocol)) {
+                        throw new IOException("订阅重定向仅支持 HTTP 或 HTTPS URL");
+                    }
+                    connection.disconnect();
+                    connection = null;
+                    target = redirected;
+                    continue;
+                }
+
+                result.putInt("status", status);
+                JSONObject headers = new JSONObject();
+                for (Map.Entry<String, List<String>> entry
+                        : connection.getHeaderFields().entrySet()) {
+                    String name = entry.getKey();
+                    List<String> values = entry.getValue();
+                    if (name == null || values == null || values.isEmpty()) continue;
+                    StringBuilder value = new StringBuilder();
+                    for (String part : values) {
+                        if (part == null) continue;
+                        if (value.length() > 0) value.append(", ");
+                        value.append(part);
+                    }
+                    headers.put(name.toLowerCase(Locale.ROOT), value.toString());
+                }
+                result.putString("headers_json", headers.toString());
+
+                ByteArrayOutputStream body = new ByteArrayOutputStream();
+                connection.setReadTimeout(remainingTimeoutMillis(deadlineNanos));
+                InputStream input = status >= 400
+                        ? connection.getErrorStream() : connection.getInputStream();
+                if (input != null) {
+                    try (InputStream stream = input) {
+                        byte[] buffer = new byte[16 * 1024];
+                        while (true) {
+                            connection.setReadTimeout(
+                                    remainingTimeoutMillis(deadlineNanos));
+                            int count = stream.read(buffer);
+                            if (count == -1) break;
+                            body.write(buffer, 0, count);
+                        }
+                    }
+                }
+                result.putByteArray("body", body.toByteArray());
+                result.putString("error", "");
+                return result;
+            }
+        } catch (Exception error) {
+            String message = error.getMessage();
+            result.putString("error", message == null || message.isEmpty()
+                    ? error.getClass().getSimpleName() : message);
+            return result;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private static int remainingTimeoutMillis(long deadlineNanos)
+            throws java.net.SocketTimeoutException {
+        long remainingNanos = deadlineNanos - System.nanoTime();
+        if (remainingNanos <= 0) {
+            throw new java.net.SocketTimeoutException("订阅下载超时");
+        }
+        long millis = TimeUnit.NANOSECONDS.toMillis(remainingNanos);
+        return (int) Math.max(1L, Math.min(Integer.MAX_VALUE, millis));
+    }
+
+    private static boolean isRedirect(int status) {
+        return status == HttpURLConnection.HTTP_MOVED_PERM
+                || status == HttpURLConnection.HTTP_MOVED_TEMP
+                || status == HttpURLConnection.HTTP_SEE_OTHER
+                || status == 307 || status == 308;
+    }
 
     private final Handler runtimeHandler = new Handler(Looper.getMainLooper());
     private boolean runtimeServiceBound;

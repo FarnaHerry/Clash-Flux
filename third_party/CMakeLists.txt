@@ -17,6 +17,23 @@
 # 桌面平台在顶层解析 OpenSSL；Android/iOS 显式使用无 TLS 的 curl 构建。
 include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/clashflux_vendor.cmake")
 
+# Glaze JSON is isolated in a normal C++ translation unit. Keep its templates
+# out of HuxerUI codegen and exported C++ module interfaces on every platform.
+set(_glaze_archive "${CMAKE_CURRENT_SOURCE_DIR}/tarballs/glaze-9.0.0-headers.tar.gz")
+set(_glaze_sha "872764412db2ba94cf57e39cf6518f86c0e13728c1c668f7ed398801aadff812")
+file(SHA256 "${_glaze_archive}" _glaze_actual_sha)
+if (NOT _glaze_actual_sha STREQUAL _glaze_sha)
+    message(FATAL_ERROR "Glaze vendor archive SHA256 mismatch")
+endif ()
+clashflux_extract(glaze "${_glaze_archive}" "${_glaze_sha}" "glaze-9.0.0")
+add_library(clashflux_wire STATIC "${CMAKE_CURRENT_SOURCE_DIR}/../src/wire_codec.cpp")
+target_compile_features(clashflux_wire PRIVATE cxx_std_23)
+target_include_directories(clashflux_wire PRIVATE "${glaze_SOURCE_DIR}/include")
+set_target_properties(clashflux_wire PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if (MSVC)
+    target_compile_options(clashflux_wire PRIVATE /Zc:preprocessor /permissive- /Zc:lambda /utf-8)
+endif ()
+
 if(NOT OpenSSL_FOUND AND NOT ANDROID AND NOT IOS)
     # Android/iOS 走 curl 无 TLS 路径（见上面的 CURL_USE_OPENSSL 分支），
     # 顶层不解析 OpenSSL。

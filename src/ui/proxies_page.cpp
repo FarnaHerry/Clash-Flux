@@ -47,7 +47,7 @@
 #include "ui.h"
 #include "task_bridge.h"
 
-import nlohmann.json;
+#include "wire_codec.h"
 import clashflux.core;
 import clashflux.singbox;
 import clashflux.store.core;
@@ -65,6 +65,7 @@ const std::vector<std::string> kModes{"rule", "global", "direct"};
 
 struct ProxyNode {
     std::string name;
+    std::string displayName;
     std::string type;
     int delay = 0;      // 0 = 未测；来自 history 或测速结果
     std::int64_t urlTestTime = 0;
@@ -80,6 +81,7 @@ struct ProxyNode {
 
 struct ProxyGroup {
     std::string name;
+    std::string displayName;
     std::string type;   // Selector / URLTest / Fallback / LoadBalance / Relay
     std::string now;    // 当前选中节点
     bool selectable = false;
@@ -112,47 +114,34 @@ bool isSelectorType(const std::string& t) {
 // 卡片第二行元数据（定义在 NodeCard 之前，声明放这里供解析期调用）。
 std::string BuildNodeDetail(const ProxyNode& node);
 
-std::vector<ProxyGroup> parseProxies(const std::string& body) {
+std::vector<ProxyGroup> parseProxies(const std::shared_ptr<const wire::Proxies>& snapshot,
+    const std::map<std::string, std::string>& labels) {
     std::vector<ProxyGroup> groups;
-    const auto j = nlohmann::json::parse(body, nullptr, false);
-    if (!j.is_object() || !j.contains("proxies") || !j["proxies"].is_object()) {
-        return groups;
-    }
-    const auto& all = j["proxies"];
-    // 不用 .items() 结构化绑定：nlohmann 模块导出不含迭代代理的 get<>，
-    // 迭代器 + key()/value() 在模块下可用。
-    for (auto it = all.begin(); it != all.end(); ++it) {
-        const auto& v = it.value();
-        if (!v.is_object()) continue;
-        const std::string type = v.value("type", "");
-        if (!isGroupType(type) || !v.contains("all") || !v["all"].is_array()) continue;
-        ProxyGroup g;
-        g.name = it.key();
-        g.type = type;
-        g.now = v.value("now", "");
-        g.selectable = v.value("selectable", isSelectorType(type));
-        for (const auto& nodeName : v["all"]) {
-            if (!nodeName.is_string()) continue;
+    if (!snapshot) return groups;
+    const auto& all = snapshot->entries;
+    for (const auto& [name, value] : all) {
+        if (!isGroupType(value.type) || !value.members) continue;
+        ProxyGroup group;
+        group.name = name;
+        group.displayName = labels.contains(name) ? labels.at(name) : name;
+        group.type = value.type;
+        group.now = value.now;
+        group.selectable = value.selectable.value_or(isSelectorType(value.type));
+        for (const auto& member : *value.members) {
             ProxyNode node;
-            node.name = nodeName.get<std::string>();
-            const auto nit = all.find(node.name);
-            if (nit != all.end() && nit->is_object()) {
-                node.type = nit->value("type", "");
-                node.udp = nit->value("udp", false);
+            node.name = member;
+            node.displayName = labels.contains(member) ? labels.at(member) : member;
+            if (const auto found = all.find(member); found != all.end()) {
+                node.type = found->second.type;
+                node.udp = found->second.udp;
                 node.isGroup = isGroupType(node.type);
-                // history 最新一条延迟（unified-delay 下含完整耗时）。
-                if (nit->contains("history") && (*nit)["history"].is_array() &&
-                    !(*nit)["history"].empty()) {
-                    const auto& last = (*nit)["history"].back();
-                    if (last.is_object()) node.delay = last.value("delay", 0);
-                }
-                node.delay = nit->value("urlTestDelay", node.delay);
-                node.urlTestTime = nit->value("urlTestTime", std::int64_t{0});
+                node.delay = found->second.delay;
+                node.urlTestTime = found->second.testTime;
             }
             node.detail = BuildNodeDetail(node);
-            g.nodes.push_back(std::move(node));
+            group.nodes.push_back(std::move(node));
         }
-        groups.push_back(std::move(g));
+        groups.push_back(std::move(group));
     }
     // GLOBAL 组太长且无意义时沉底（clash_api 兼容组，列出全部节点）。
     std::ranges::stable_sort(groups, [](const ProxyGroup& a, const ProxyGroup& b) {
@@ -304,9 +293,8 @@ constexpr std::size_t kNodeMetaChars = 8;
                                     "http://connectivitycheck.gstatic.com/generate_204",
                                     3000);
                                 if (!result.ok) return 0;
-                                const auto body = nlohmann::json::parse(
-                                    result.body, nullptr, false);
-                                return body.is_object() ? body.value("delay", 0) : 0;
+                                const auto delay = wire::DecodeDelay(result.body);
+                                return delay ? delay.value : 0;
                             });
 
                             ProbeState completed = probe.Get();
@@ -420,7 +408,7 @@ constexpr std::size_t kNodeMetaChars = 8;
     // 形状的标准（订阅卡等其它列表项同样复用它）。
     return SelectableTile(
         huxerui::Column {
-            huxerui::Text(truncateOneLine(node.name, nameLimit))
+            huxerui::Text(truncateOneLine(node.displayName, nameLimit))
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kBodySmall), tile.fg}),
             huxerui::Row {
@@ -431,7 +419,7 @@ constexpr std::size_t kNodeMetaChars = 8;
             }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::End)),
         }.With(huxerui::Spacing(2.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-        selected, node.name,
+        selected, node.displayName,
         interactive ? std::move(onSelect) : std::function<void()>{});
 }
 
@@ -501,28 +489,34 @@ std::function<void()> NodeSelectAction(
     // 横向滑动：按下点与"是否已认领本次指针会话"。
     auto swipeOrigin = huxerui::UseState<huxerui::Point>(huxerui::Point{0.0F, 0.0F});
     auto swipeOwned = huxerui::UseState(false);
-    // 已经解析过的快照原文：只在原文变化时重新解析（模型的 State 去重已保证
+    // 已经投影过的快照原文：只在内容变化时重新投影（模型的 State 去重已保证
     // 通知只在内容变化时发生）。
+    auto parsedLabels = huxerui::UseState<std::map<std::string, std::string>>({});
     auto parsedBody = huxerui::UseState<std::string>("");
+    auto projectionGeneration = huxerui::UseState<std::uint64_t>(0);
     // 乐观选中意图（见 SelectionIntent）：只写这个小组 State，不动 groups。
     auto selectionIntent = huxerui::UseState<SelectionIntent>(SelectionIntent{});
 
     // 数据流完全由模型驱动（见 *_model.h）：内核状态、策略组快照任一变化才
-    // 重新解析嵌套分组，**没有定时器**。解析放任务线程——大订阅的 /proxies
-    // 原文在 UI 线程解析会掉帧。
+    // 重新投影嵌套分组，**没有定时器**。唯一数据泵已完成 JSON 解码，
+    // 页面在任务线程投影普通 DTO，UI 线程只发布模型。
     huxerui::Lifecycle(
         [tasks, groups, coreState, mode, modePending, proxiesModel, coreModel,
-         parsedBody, selectionIntent] {
+         parsedLabels, parsedBody, projectionGeneration, selectionIntent] {
             const store::CoreSnapshot core = coreModel->view.Get().core;
             coreState = core.state;
             if (!modePending.Get() && !core.mode.empty()) mode = core.mode;
             const ProxiesSnapshot& current = proxiesModel->snapshot.Get();
-            if (current.body != parsedBody.Get()) {
+            if (current.body != parsedBody.Get() || current.labels != parsedLabels.Get()) {
+                parsedLabels = current.labels;
                 parsedBody = current.body;
-                tasks.Launch([groups, selectionIntent, body = current.body]()
-                                 -> huxerui::Task<void> {
+                const auto ticket = projectionGeneration.Get() + 1;
+                projectionGeneration = ticket;
+                tasks.Launch([groups, selectionIntent, projectionGeneration, ticket,
+                              snapshot = current.proxies, labels = current.labels]() -> huxerui::Task<void> {
                     auto parsed = co_await RunOnTaskThread(
-                        [body] { return parseProxies(body); });
+                        [snapshot = std::move(snapshot), labels = std::move(labels)] { return parseProxies(snapshot, labels); });
+                    if (projectionGeneration.Get() != ticket) co_return;
                     // 未确认的乐观选中：模型追平就清意图，否则继续用意图值
                     // 覆盖解析结果（点击立刻上屏，不等 2s 那拍）。
                     const SelectionIntent pending = selectionIntent.Get();
@@ -861,17 +855,22 @@ std::function<void()> NodeSelectAction(
         // （见 docs/singbox-layers-and-fidelity.md §2）。
         const std::vector<singbox::FidelityNote> fidelity =
             coreModel->view.Get().core.fidelity;
-        const auto groupHasFidelityNote = [&fidelity](const std::string& name) {
+        const auto catalog = coreModel->view.Get().core.sourceObjects;
+        const auto groupHasFidelityNote = [&fidelity, &catalog](const std::string& name) {
+            std::string source, object = name;
+            if (catalog) for (const auto& entry : *catalog) if (entry.tag == name) {
+                source = entry.sourceId; object = entry.objectId; break;
+            }
             return std::any_of(
                 fidelity.begin(), fidelity.end(),
-                [&name](const singbox::FidelityNote& note) {
+                [&source, &object](const singbox::FidelityNote& note) {
                     return note.scope == singbox::FidelityScope::Group &&
-                           note.subject == name;
+                           note.subject == object && note.sourceId == source;
                 });
         };
         for (const std::string& name : tabNames) {
             groupTabs.push_back(SectionTab{
-                name, name,
+                name, findGroup(all, name) ? findGroup(all, name)->displayName : name,
                 groupHasFidelityNote(name) ? std::string{"!"} : std::string{}});
         }
         columnChildren.push_back(

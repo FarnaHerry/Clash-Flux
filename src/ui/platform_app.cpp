@@ -97,6 +97,16 @@ void DesktopPreparePlatformDataDirectory(
     static_cast<void>(application);
 }
 
+bool HasDesktopCoreRuntime() {
+#if defined(CLASHFLUX_IOS)
+    // sing-box is linked into the Packet Tunnel extension, not shipped as an
+    // executable beside the iOS app.
+    return true;
+#else
+    return !cfg::singboxBinary().empty();
+#endif
+}
+
 [[huxerui::composable]] huxerui::View DesktopProfileRefreshPump() {
     auto tasks = huxerui::UseTaskScope();
     huxerui::Lifecycle(
@@ -254,7 +264,7 @@ struct TrayOperationResult {
                     // 若上次异常退出把系统代理留在本应用端口上，先撤销。
                     // 仅限确实指向本应用的设置，不动其他代理软件的接管。
                     core.releaseStaleOwnedSystemProxy();
-                    if (!cfg::singboxBinary().empty()) {
+                    if (HasDesktopCoreRuntime()) {
                         // 清理上次异常退出留下的旧内核（含仍持有旧 TUN 配置
                         // 的进程）。
                         core.stopCore();
@@ -264,8 +274,7 @@ struct TrayOperationResult {
                         // 才在这里拉起，并按已记录的 TUN / 系统代理意图恢复接管。
                         if (core.setting("app.auto_run", "false") == "true") {
                             const bool resumeSysProxy = core.systemProxyEnabled();
-                            const bool resumeTun =
-                                core.setting("core.tun_enabled", "false") == "true";
+                            const bool resumeTun = core.tunEnabled();
                             core.startCore(
                                 store::profilesStore().selectedYaml(), false,
                                 resumeTun, resumeSysProxy);
@@ -471,9 +480,7 @@ struct TrayOperationResult {
                                             }
                                             const bool resumeSysProxy =
                                                 core.systemProxyEnabled();
-                                            const bool resumeTun =
-                                                core.setting("core.tun_enabled",
-                                                             "false") == "true";
+                                            const bool resumeTun = core.tunEnabled();
                                             core.startCore(
                                                 store::profilesStore().selectedYaml(),
                                                 false, resumeTun, resumeSysProxy);
@@ -721,15 +728,14 @@ struct TrayOperationResult {
     return huxerui::Column {
         huxerui::WindowTitleBar {
             huxerui::Row {
-                // The standard navy logo needs a pale brand tile to stay visible in dark mode.
                 huxerui::Image(app::images::clash_flux_logo)
                     .Fit(huxerui::ImageFit::Contain)
                     .With(huxerui::Frame{.width = 20.0F, .height = 20.0F},
-                          huxerui::Background(
-                              huxerui::Color::Rgb(220, 238, 255)),
-                          huxerui::CornerRadius(4.0F)),
+                          huxerui::Background(huxerui::Color::White()),
+                          huxerui::CornerRadius(4.0F), huxerui::ClipChildren()),
             }
-                .With(huxerui::Frame{.width = 72.0F, .height = 20.0F},
+                .With(huxerui::Frame{.width = kTopNavigationRailWidth,
+                                     .height = 20.0F},
                       huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
                       huxerui::WindowDragRegion{}),

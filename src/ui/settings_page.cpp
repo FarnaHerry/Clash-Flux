@@ -31,7 +31,7 @@ namespace {
 
 const std::vector<std::string> kModes{"rule", "global", "direct"};
 const std::vector<huxerui::StringVariant> kModeNames{"规则", "全局", "直连"};
-const std::vector<huxerui::StringVariant> kThemeNames{"跟随系统", "深色", "浅色"};
+const std::vector<huxerui::StringVariant> kThemeNames{"自动", "深色", "浅色"};
 
 std::size_t ModeIndex(const std::string& mode) {
     for (std::size_t i = 0; i < kModes.size(); ++i) {
@@ -218,17 +218,18 @@ private:
 // 代理页给被降级的组打角标），这里直接展示可读的 detail + 建议动作。
 [[huxerui::composable]] huxerui::View CoreFidelityReport(
     const std::vector<singbox::FidelityNote>& notes) {
-    if (notes.empty()) return huxerui::View{huxerui::Row{}};
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    auto expanded = huxerui::UseState(false);
+    if (notes.empty()) return huxerui::View{huxerui::Row{}};
     constexpr std::size_t kMaxRows = 6;
-    const std::size_t shown = std::min(notes.size(), kMaxRows);
+    const std::size_t shown = expanded.Get() ? notes.size() : std::min(notes.size(), kMaxRows);
     std::vector<huxerui::View> rows;
     rows.reserve(shown + 1);
     for (std::size_t i = 0; i < shown; ++i) {
         const singbox::FidelityNote& note = notes[i];
         const char* level =
             note.level == singbox::Fidelity::Unsupported ? "不支持" : "已近似";
-        std::string text = std::format("· [{}] {}", level, note.detail);
+        std::string text = std::format("· [{}] {}{}", level, note.sourceId.empty() ? "" : note.sourceId + " · ", note.detail);
         if (!note.action.empty()) text += std::format("（{}）", note.action);
         rows.push_back(huxerui::Text(std::move(text))
                            .Style(huxerui::TextStyle{
@@ -242,6 +243,9 @@ private:
                                huxerui::Font::System(font_size::kCaption),
                                theme.colors.on_surface_variant}));
     }
+    if (notes.size() > kMaxRows) rows.push_back(
+        huxerui::Button(expanded.Get() ? "收起" : "显示全部保真度记录")
+            .OnClick([expanded] { expanded = !expanded.Get(); }));
     return huxerui::Column {
         SectionTitle("配置保真度"),
         huxerui::Column(std::move(rows))
@@ -352,7 +356,7 @@ const std::string kAboutText = std::format(
     // 只留当前页后降到 28 次 / ~0ms；因此不可见页必须返回空占位。
     if (!active) return huxerui::View{huxerui::Row{}}.Key("settings-idle");
 
-    // 主题模式：0=跟随系统，1=深色，2=浅色。
+    // 主题模式：0=自动，1=深色，2=浅色。
     const auto applyTheme = [themeMode, transition, tasks, animating,
                              settingsModel](int mode) {
         if (animating.Get()->animating) return;

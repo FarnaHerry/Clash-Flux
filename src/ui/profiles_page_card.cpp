@@ -24,6 +24,7 @@ import clashflux.utils;
 import clashflux.vpn;
 
 #include "profiles_page_shared.h"
+#include "core_model.h"
 
 namespace clashflux::ui {
 
@@ -71,6 +72,8 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     // Android rejects during the next frame with "anchor must be mounted on only
     // one View" when the subscription page contains more than one card.
     auto menu = huxerui::UseMenu();
+    const auto coreModel = huxerui::UseService<CoreModel>();
+    const auto& runtime = coreModel->view.Get().core;
     const IslandTheme islands = ResolveIslandTheme(theme);
     const std::int64_t id = profile.id;
     const bool nativeVpn = isNativeVpnType(profile.type);
@@ -94,7 +97,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     };
 
     auto activateProfile = [tasks, toast, profiles,
-                            selectionPending](std::int64_t profileId) {
+                            selectionPending, coreModel](std::int64_t profileId) {
         if (selectionPending.Get()) return;
         const std::optional<std::int64_t> previous =
             CurrentSelectedProfile(profiles);
@@ -102,15 +105,16 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         SetSelectedProfile(profiles, profileId);
         selectionPending = true;
         tasks.Launch([tasks, toast, profiles, selectionPending, previous,
-                      profileId]() -> huxerui::Task<void> {
+                      profileId, coreModel]() -> huxerui::Task<void> {
             std::string error;
             try {
-                error = co_await RunOnTaskThread([profileId] {
+                const auto outcome = co_await RunOnTaskThread([profileId] {
                     auto& profileStore = store::profilesStore();
-                    if (!profileStore.activate(profileId))
-                        return profileStore.lastError();
-                    return std::string{};
+                    const bool ok = profileStore.activate(profileId);
+                    return std::pair{ok ? std::string{} : profileStore.lastError(), store::coreStore().snapshot()};
                 });
+                error = outcome.first;
+                coreModel->Update([&](CoreView& view) { view.core = outcome.second; });
             } catch (const std::exception& exception) {
                 error = exception.what();
             }
@@ -122,7 +126,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 const std::string summary = co_await RunOnTaskThread(
                     [profileId] { return ProfileFidelitySummary(profileId); });
                 if (!summary.empty()) {
-                    toast.Show("订阅已启用 · " + summary,
+                    toast.Show("已设为主订阅 · " + summary,
                                huxerui::ToastOptions{6.0});
                 }
             }
@@ -205,6 +209,8 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                     [=] {
                                         context.Dismiss();
                                         action([=]() -> std::string {
+                                            if (store::coreStore().sourceParticipates(id))
+                                                return std::string{"该来源是主订阅、被路由引用或仍连接中；请先更换主订阅、解除规则引用并断开连接"};
                                             if (nativeVpn) {
                                                 if (openVpn) {
                                                     store::vpnStore().forgetOpenVpn(id);
@@ -237,7 +243,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                    confirmDelete, errorColor = theme.colors.error] {
         std::vector<huxerui::MenuEntry> entries;
         if (!selected && !nativeVpn) {
-            entries.push_back(huxerui::MenuItem("使用", [activateProfile, id] {
+            entries.push_back(huxerui::MenuItem("设为主订阅", [activateProfile, id] {
                 activateProfile(id);
             }));
         }
@@ -397,7 +403,10 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         huxerui::Row {
             huxerui::Text(nativeVpn
                               ? profile.type == "openvpn" ? "OpenVPN" : "PPTP"
-                              : profile.type == "local" ? "本地" : "远程")
+                              : selected ? "主订阅"
+                              : (runtime.state == core::CoreState::Running &&
+                                 std::ranges::find(runtime.participatingSources, store::ProfileConnectionId(id)) != runtime.participatingSources.end())
+                                    ? "次订阅 · 按规则参与" : "已保存 · 未参与")
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kCaption), muted}),
             !nativeVpn && profile.autoUpdate && profile.intervalMins > 0

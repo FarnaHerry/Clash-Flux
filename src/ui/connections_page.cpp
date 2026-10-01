@@ -2,7 +2,7 @@
 // 表头（总量 + 关闭全部）+ VirtualList 行（链 | 目标 | 上/下行 | 规则 | 关闭）。
 //
 // 数据流：IX 线程把每帧原文推进 CoreStreams 槽位并通知一次；UI 线程收到通知
-// 才解析写 StateList（全量快照语义，直接整表替换，无需差分）。
+// 启动任务线程读取与解析，回到 UI 线程发布 StateList；旧任务不能覆盖新快照。
 #include <huxerui/huxerui.h>
 
 #include <chrono>
@@ -14,7 +14,7 @@
 #include "ui.h"
 #include "task_bridge.h"
 
-import nlohmann.json;
+#include "wire_codec.h"
 import clashflux.core;
 import clashflux.store.core;
 import clashflux.stream;
@@ -47,57 +47,33 @@ struct ConnectionsSnapshot {
     bool operator==(const ConnectionsSnapshot&) const = default;
 };
 
-ConnectionsSnapshot parseConnections(const std::string& body) {
+std::optional<ConnectionsSnapshot> parseConnections(const std::string& body) {
     ConnectionsSnapshot snap;
-    const auto j = nlohmann::json::parse(body, nullptr, false);
-    if (!j.is_object()) return snap;
-    snap.totalUp = j.value("uploadTotal", std::int64_t{0});
-    snap.totalDown = j.value("downloadTotal", std::int64_t{0});
-    if (!j.contains("connections") || !j["connections"].is_array()) return snap;
-    for (const auto& c : j["connections"]) {
-        if (!c.is_object()) continue;
+    const auto decoded = wire::DecodeConnections(body);
+    if (!decoded) return std::nullopt;
+    snap.totalUp = decoded.value.uploadTotal;
+    snap.totalDown = decoded.value.downloadTotal;
+    std::map<std::string, std::string> labels;
+    const auto catalog = store::coreStore().snapshot().sourceObjects;
+    if (catalog) for (const auto& object : *catalog)
+        labels[object.tag] = object.objectId + (object.sourceName.empty() ? "" : " · " + object.sourceName);
+    for (const auto& connection : decoded.value.entries) {
         ConnectionRow row;
-        row.id = c.value("id", "");
-        row.up = c.value("upload", std::int64_t{0});
-        row.down = c.value("download", std::int64_t{0});
-        if (c.contains("metadata") && c["metadata"].is_object()) {
-            const auto& m = c["metadata"];
-            row.host = m.value("host", "");
-            if (row.host.empty()) {
-                row.host = m.value("destinationIP", "");
-            }
-            if (row.host.empty() && m.contains("destination") &&
-                m["destination"].is_string()) {
-                row.host = m["destination"].get<std::string>();
-            }
-            const std::string port = m.value("destinationPort", "");
-            if (!port.empty()) row.host += ":" + port;
-            row.network = m.value("network", "");
+        row.id = connection.id;
+        row.up = connection.upload;
+        row.down = connection.download;
+        row.host = connection.host;
+        if (row.host.empty()) row.host = connection.destinationIP;
+        if (row.host.empty()) row.host = connection.destination;
+        if (!connection.destinationPort.empty()) row.host += ":" + connection.destinationPort;
+        row.network = connection.network;
+        for (const auto& hop : connection.chains) {
+            if (!row.chains.empty()) row.chains += " ← ";
+            row.chains += labels.contains(hop) ? labels.at(hop) : hop;
         }
-        if (row.host.empty() && c.contains("destination") &&
-            c["destination"].is_string()) {
-            row.host = c["destination"].get<std::string>();
-        }
-        if (row.network.empty() && c.contains("network") &&
-            c["network"].is_string()) {
-            row.network = c["network"].get<std::string>();
-        }
-        if (c.contains("chains") && c["chains"].is_array()) {
-            std::string chains;
-            for (const auto& hop : c["chains"]) {
-                if (!hop.is_string()) continue;
-                if (!chains.empty()) chains += " ← ";
-                chains += hop.get<std::string>();
-            }
-            row.chains = std::move(chains);
-        }
-        if (row.chains.empty() && c.contains("chain") &&
-            c["chain"].is_string()) {
-            row.chains = c["chain"].get<std::string>();
-        }
-        row.rule = c.value("rule", "");
-        const std::string payload = c.value("rulePayload", "");
-        if (!payload.empty()) row.rule += "(" + payload + ")";
+        if (row.chains.empty()) row.chains = labels.contains(connection.chain) ? labels.at(connection.chain) : connection.chain;
+        row.rule = connection.rule;
+        if (!connection.rulePayload.empty()) row.rule += "(" + connection.rulePayload + ")";
         if (row.host.empty()) row.host = "未知目标";
         if (row.network.empty()) row.network = "—";
         if (row.chains.empty()) row.chains = "DIRECT";
@@ -164,17 +140,31 @@ void closeAllConnectionsForPlatform() {
         [tasks, rows, totalUp, totalDown, streamOpen] {
             // 帧原文比较用共享对象保存：页面重进的首次读取与后续推送共用同一份。
             auto lastFrame = std::make_shared<std::string>();
-            const auto applyFrame = [rows, totalUp, totalDown, streamOpen,
-                                     lastFrame] {
-                const ConnectionFrame frame = readConnectionFrame();
-                streamOpen = frame.open;
-                if (!frame.body.empty() && frame.body != *lastFrame) {
-                    *lastFrame = frame.body;
-                    ConnectionsSnapshot snapshot = parseConnections(frame.body);
-                    totalUp = snapshot.totalUp;
-                    totalDown = snapshot.totalDown;
-                    ReplaceStateList(rows, std::move(snapshot.rows));
-                }
+            auto generation = std::make_shared<std::uint64_t>(0);
+            const auto applyFrame = [tasks, rows, totalUp, totalDown, streamOpen,
+                                     lastFrame, generation] {
+                const auto ticket = ++*generation;
+                tasks.Launch([=]() -> huxerui::Task<void> {
+                    try {
+                        auto frame = co_await RunOnTaskThread(readConnectionFrame);
+                        if (ticket != *generation) co_return;
+                        streamOpen = frame.open;
+                        if (frame.body.empty() || frame.body == *lastFrame) co_return;
+                        *lastFrame = frame.body;
+                        auto snapshot = co_await RunOnTaskThread(
+                            [body = std::move(frame.body)] { return parseConnections(body); });
+                        if (ticket != *generation) co_return;
+                        if (!snapshot) {
+                            stream::logApplication("warning", "连接快照格式错误，保留最近有效快照");
+                            co_return;
+                        }
+                        totalUp = snapshot->totalUp;
+                        totalDown = snapshot->totalDown;
+                        ReplaceStateList(rows, std::move(snapshot->rows));
+                    } catch (const std::exception& error) {
+                        stream::logApplication("error", std::string("读取连接快照失败：") + error.what());
+                    }
+                });
             };
             // 先消费最近一次快照：切页/重挂载不必等下一帧推送。
             applyFrame();

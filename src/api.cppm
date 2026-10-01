@@ -22,6 +22,10 @@ import std;
 
 namespace api {
 
+// 同一文件系统提交临时文件；Windows 覆盖不先删除旧目标。
+export bool CommitFile(const std::filesystem::path& temp, const std::filesystem::path& dest,
+                       std::string& error);
+
 export struct ApiResult {
     bool ok = false;
     long status = 0;          // HTTP 状态码；传输失败为 0
@@ -62,6 +66,9 @@ public:
         bool allowInvalidCert = false;
         std::string proxyUrl;        // 非空 = 经该代理（如 http://127.0.0.1:7899）
         bool allowProxyEnv = false;  // proxyUrl 为空时是否允许环境变量代理
+        // 在临时文件关闭后、替换目标前校验；空字符串表示通过。
+        // 同步运行于调用方任务线程；失败/异常保留旧文件。
+        std::function<std::string(const std::filesystem::path&)> validate;
     };
 
     // 订阅下载：GET url 落盘到 dest（覆盖写）。options 必传（模块接口下

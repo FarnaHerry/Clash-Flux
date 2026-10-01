@@ -1,6 +1,8 @@
 // singbox_context_dns.inc — 编译上下文与 Clash DNS 转换
 // 由 src/singbox.cpp 在同一匿名命名空间中包含。
 
+struct SourceDefault { std::string tag; bool reject = false; bool drop = false; };
+
 struct Context {
     const CompileOptions& opt;
     CompileResult result;
@@ -11,6 +13,11 @@ struct Context {
     std::map<std::string, std::string> geoipTags;     // 国家码 → rule_set tag
     std::map<std::string, std::string> geositeTags;   // 站点类别 → rule_set tag
     std::map<std::string, std::string> dnsServerTags; // Clash DNS 地址 → typed server tag
+    std::map<std::string, std::string> providerTags; // source name -> inline native tag
+    std::set<std::string> declaredProviders;        // rejected declarations also shadow aliases
+    std::string dnsBootstrapTag = "local";
+    std::map<std::string, SourceDefault> sourceDefaults;
+    std::string sourceId;
     std::string finalTarget;                          // MATCH 目标
 
     explicit Context(const CompileOptions& options) : opt(options) {}
@@ -23,7 +30,7 @@ struct Context {
               std::string detail, std::string action = {}) {
         result.fidelity.push_back(FidelityNote{scope, level, std::move(subject),
                                                std::move(detail),
-                                               std::move(action)});
+                                               std::move(action), sourceId});
         result.warnings.push_back(result.fidelity.back().detail);
     }
     bool tagKnown(const std::string& tag) const {
@@ -40,7 +47,14 @@ struct DnsEndpoint {
     std::string path;
     std::string detour;
     int port = 0;
+    bool http3 = false;
 };
+
+int dnsDefaultPort(std::string_view scheme) {
+    if (scheme == "tls" || scheme == "quic") return 853;
+    if (scheme == "https" || scheme == "h3") return 443;
+    return 53;
+}
 
 bool isPortText(std::string_view value) {
     if (value.empty()) return false;
@@ -56,20 +70,34 @@ std::optional<DnsEndpoint> parseDnsEndpoint(std::string_view rawValue) {
 
     DnsEndpoint endpoint;
     if (const std::size_t fragment = value.find('#'); fragment != std::string::npos) {
-        endpoint.detour = trimCopy(std::string_view{value}.substr(fragment + 1));
+        std::string_view parameters{value.data() + fragment + 1, value.size() - fragment - 1};
+        if (parameters.empty()) return std::nullopt;
+        bool hasH3 = false;
+        while (!parameters.empty()) {
+            const auto separator = parameters.find('&');
+            const std::string parameter = trimCopy(parameters.substr(0, separator));
+            if (parameter == "h3=true" || parameter == "h3=false") {
+                if (hasH3) return std::nullopt;
+                hasH3 = true;
+                endpoint.http3 = parameter == "h3=true";
+            } else if (parameter.empty() || parameter.find('=') != std::string::npos ||
+                       parameter == "RULES" || !endpoint.detour.empty()) {
+                return std::nullopt;
+            } else {
+                endpoint.detour = parameter;
+            }
+            if (separator == std::string_view::npos) break;
+            parameters.remove_prefix(separator + 1);
+            if (parameters.empty()) return std::nullopt;
+        }
         value.resize(fragment);
     }
 
     const std::size_t schemeEnd = value.find("://");
-    if (schemeEnd == std::string::npos) {
-        endpoint.scheme = "udp";
-        endpoint.host = value;
-        endpoint.port = 53;
-        return endpoint.host.empty() ? std::nullopt : std::optional{std::move(endpoint)};
-    }
-
-    endpoint.scheme = lowerCopy(value.substr(0, schemeEnd));
-    std::string authorityAndPath = value.substr(schemeEnd + 3);
+    endpoint.scheme = schemeEnd == std::string::npos ? "udp" : lowerCopy(value.substr(0, schemeEnd));
+    if (endpoint.http3 && endpoint.scheme != "https") return std::nullopt;
+    if (endpoint.http3) endpoint.scheme = "h3";
+    std::string authorityAndPath = schemeEnd == std::string::npos ? value : value.substr(schemeEnd + 3);
     const std::size_t pathStart = authorityAndPath.find('/');
     const std::string authority = pathStart == std::string::npos
                                       ? authorityAndPath
@@ -92,8 +120,8 @@ std::optional<DnsEndpoint> parseDnsEndpoint(std::string_view rawValue) {
         }
     } else {
         const std::size_t colon = authority.rfind(':');
-        if (colon != std::string::npos && authority.find(':') == colon &&
-            isPortText(std::string_view{authority}.substr(colon + 1))) {
+        if (colon != std::string::npos && authority.find(':') == colon) {
+            if (!isPortText(std::string_view{authority}.substr(colon + 1))) return std::nullopt;
             endpoint.host = authority.substr(0, colon);
             endpoint.port = std::stoi(authority.substr(colon + 1));
         } else {
@@ -102,7 +130,7 @@ std::optional<DnsEndpoint> parseDnsEndpoint(std::string_view rawValue) {
     }
     if (endpoint.host.empty()) return std::nullopt;
     if (endpoint.port == 0) {
-        endpoint.port = endpoint.scheme == "https" || endpoint.scheme == "tls" ? 443 : 53;
+        endpoint.port = dnsDefaultPort(endpoint.scheme);
     }
     return endpoint;
 }
@@ -118,32 +146,44 @@ bool dnsHostIsDomain(std::string_view host) {
     return hasLetter;
 }
 
+std::optional<std::string> addressCidr(std::string_view raw, bool ipv4Only, bool requirePrefix);
+
 std::string appendDnsServer(Context& ctx, std::string_view rawValue) {
     const std::string raw = trimCopy(rawValue);
-    if (raw.empty()) return {};
+    if (raw.empty()) {
+        ctx.note(FidelityScope::Dns, Fidelity::Unsupported, "<空地址>", "DNS 服务器地址为空，已忽略");
+        return {};
+    }
     if (const auto known = ctx.dnsServerTags.find(raw); known != ctx.dnsServerTags.end()) {
         return known->second;
     }
+    if (raw == "system") return "local";
 
-    // rcode:// and other legacy Clash pseudo-servers are DNS rules in sing-box
-    // 1.14, not transport servers. They are intentionally ignored here rather
-    // than emitting an invalid typed server and preventing the whole core from
-    // starting.
+    // Typed DHCP/FakeIP exist in the kernel but their Clash input conversion
+    // is not implemented here. Do not describe an application gap as a core limit.
     const std::optional<DnsEndpoint> endpoint = parseDnsEndpoint(raw);
     if (!endpoint || endpoint->scheme == "rcode" || endpoint->scheme == "fakeip" ||
         endpoint->scheme == "dhcp") {
         ctx.note(FidelityScope::Dns, Fidelity::Unsupported, raw,
                  std::format("DNS 服务器「{}」格式暂不支持，已忽略", raw),
-                 "rcode:// / fakeip:// / dhcp:// 在 sing-box 1.14 是 DNS 规则而不是传输"
-                 "服务器；该服务器已从 DNS 列表移除");
+                 "该地址或附加参数尚未转换；支持 #出站名、#h3=true/false 及两者组合，"
+                 "其它参数不会被当成出站名后静默丢弃");
         return {};
     }
-    const std::string scheme = endpoint->scheme == "http" ? "https" : endpoint->scheme;
+    const std::string& scheme = endpoint->scheme;
     if (scheme != "udp" && scheme != "tcp" && scheme != "tls" && scheme != "https" &&
-        scheme != "quic") {
+        scheme != "quic" && scheme != "h3") {
         ctx.note(FidelityScope::Dns, Fidelity::Unsupported, raw,
                  std::format("DNS 服务器「{}」协议 {} 暂不支持，已忽略", raw, scheme),
-                 "sing-box 只接受 udp/tcp/tls/https/quic 五种 DNS 传输");
+                 "当前转换支持 udp/tcp/tls/https/quic 与 HTTPS #h3=true；"
+                 "http:// 不会自动改成 HTTPS");
+        return {};
+    }
+    if ((!endpoint->path.empty() && scheme != "https" && scheme != "h3") ||
+        endpoint->host.find_first_of(" \t\r\n?@#") != std::string::npos) {
+        ctx.note(FidelityScope::Dns, Fidelity::Unsupported, raw,
+                 std::format("DNS 服务器「{}」地址无效，已忽略", raw),
+                 "非 DoH 传输不接受 URL 路径；服务器地址不能包含用户信息或查询参数");
         return {};
     }
 
@@ -153,24 +193,29 @@ std::string appendDnsServer(Context& ctx, std::string_view rawValue) {
         {"tag", tag},
         {"server", endpoint->host},
     };
-    const int defaultPort = scheme == "https" || scheme == "tls" ? 443 : 53;
+    const int defaultPort = dnsDefaultPort(scheme);
     if (endpoint->port != defaultPort) server["server_port"] = endpoint->port;
-    if (scheme == "https" && !endpoint->path.empty() && endpoint->path != "/dns-query") {
+    if ((scheme == "https" || scheme == "h3") && !endpoint->path.empty() && endpoint->path != "/dns-query") {
         server["path"] = endpoint->path;
     }
     if (dnsHostIsDomain(endpoint->host)) {
-        // Resolve the DoH/DoT endpoint through the Android protected local
-        // resolver. The DNS payload itself still follows the requested detour.
-        server["domain_resolver"] = {{"server", "local"}};
+        // Endpoint bootstrap is independent of payload routing. The default
+        // protected local resolver can be replaced by explicit IP DNS servers.
+        server["domain_resolver"] = {{"server", ctx.dnsBootstrapTag}};
     }
     if (!endpoint->detour.empty()) {
-        if (ctx.tagKnown(endpoint->detour)) {
+        // knownTags also contains forward declarations for groups. Only an
+        // actual compiled outbound is a valid DNS detour.
+        if (std::ranges::any_of(ctx.outbounds, [&](const auto& outbound) {
+                return outbound.value("tag", "") == endpoint->detour;
+            })) {
             server["detour"] = endpoint->detour;
         } else {
-            ctx.note(FidelityScope::Dns, Fidelity::Approx, raw,
-                     std::format("DNS 服务器「{}」引用了未知出站「{}」，已按直连处理",
+            ctx.note(FidelityScope::Dns, Fidelity::Unsupported, raw,
+                     std::format("DNS 服务器「{}」引用了未知出站「{}」，已忽略",
                                  raw, endpoint->detour),
-                     "该 DNS 查询不走代理；确认出站名是否写错或该出站是否被跳过");
+                     "接口绑定暂未映射；确认代理名是否写错或出站是否被跳过");
+            return {};
         }
     }
     ctx.config["dns"]["servers"].push_back(std::move(server));
@@ -178,20 +223,264 @@ std::string appendDnsServer(Context& ctx, std::string_view rawValue) {
     return tag;
 }
 
-void applyClashDns(Context& ctx, const YAML::Node& dns) {
-    if (!dns || !dns.IsMap()) return;
-
-    std::vector<std::string> nameservers = ylist(dns, "nameserver");
-    if (nameservers.empty()) nameservers = ylist(dns, "fallback");
+std::string selectDnsServer(Context& ctx, const YAML::Node& value, const std::string& subject,
+                            bool bootstrapOnly = false) {
+    if (!value) return {};
+    std::vector<std::string> addresses;
+    if (value.IsScalar()) addresses.push_back(trimCopy(value.Scalar()));
+    else if (value.IsSequence()) {
+        for (const auto& address : value) {
+            if (!address.IsScalar()) {
+                ctx.note(FidelityScope::Dns, Fidelity::Unsupported, subject,
+                         std::format("DNS「{}」必须为地址或地址数组，已忽略", subject));
+                return {};
+            }
+            addresses.push_back(trimCopy(address.Scalar()));
+        }
+    } else {
+        ctx.note(FidelityScope::Dns, Fidelity::Unsupported, subject,
+                 std::format("DNS「{}」必须为地址或地址数组，已忽略", subject));
+        return {};
+    }
     std::string primary;
-    for (const std::string& raw : nameservers) {
+    for (const auto& raw : addresses) {
+        if (bootstrapOnly) {
+            const auto endpoint = parseDnsEndpoint(raw);
+            if (!endpoint || !endpoint->detour.empty() ||
+                endpoint->host.find('/') != std::string::npos ||
+                !addressCidr(endpoint->host, false, false)) {
+                ctx.note(FidelityScope::Dns, Fidelity::Unsupported, subject,
+                         std::format("DNS bootstrap「{}」必须使用 IP 地址且不依赖代理，已忽略", raw),
+                         "域名或代理链会引入未定义的解析依赖；保留加密 IP DNS 的证书校验");
+                continue;
+            }
+        }
         const std::string tag = appendDnsServer(ctx, raw);
         if (primary.empty() && !tag.empty()) primary = tag;
     }
-    if (primary.empty()) return;
+    if (addresses.size() > 1 && !primary.empty()) {
+        ctx.note(FidelityScope::Dns, Fidelity::Approx, subject,
+                 std::format("DNS「{}」使用首个可转换服务器，不执行并发查询或故障切换", subject),
+                 "原生 DNS route/final 绑定单个服务器；数组中的其余服务器不会作为后备使用");
+    }
+    return primary;
+}
 
-    ctx.config["dns"]["final"] = primary;
+std::optional<std::string> dnsPolicyDomain(std::string domain) {
+    domain = lowerCopy(trimCopy(domain));
+    if (!domain.empty() && domain.back() == '.') domain.pop_back();
+    if (domain.empty() || domain.size() > 253) return std::nullopt;
+    std::size_t labelSize = 0;
+    for (const unsigned char c : domain) {
+        if (c == '.') {
+            if (labelSize == 0 || labelSize > 63) return std::nullopt;
+            labelSize = 0;
+        } else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+            ++labelSize;
+        } else return std::nullopt;
+    }
+    if (labelSize == 0 || labelSize > 63) return std::nullopt;
+    return domain;
+}
+
+std::vector<nlohmann::json> compileDnsPolicy(Context& ctx, const YAML::Node& policy,
+                                           const std::string& subject) {
+    if (!policy) return {};
+    if (!policy.IsMap()) {
+        ctx.note(FidelityScope::Dns, Fidelity::Unsupported, subject,
+                 subject + " 必须为域名到 DNS 地址的映射，已忽略");
+        return {};
+    }
+    struct PolicyRule {
+        bool exact;
+        std::size_t specificity;
+        nlohmann::json rule;
+    };
+    std::vector<PolicyRule> rules;
+    for (const auto& item : policy) {
+        const std::string pattern = item.first.IsScalar() ? trimCopy(item.first.Scalar()) : "<非标量>";
+        const bool suffix = pattern.starts_with("+.");
+        const auto domain = dnsPolicyDomain(suffix ? pattern.substr(2) : pattern);
+        if (!domain) {
+            ctx.note(FidelityScope::Dns, Fidelity::Unsupported, subject + ":" + pattern,
+                     std::format("DNS 策略「{}」匹配模式尚未转换，已忽略", pattern),
+                     "当前支持完整域名及 +.域名；*.、.、geosite: 和 rule-set: 不会改写成更宽的匹配");
+            continue;
+        }
+        const std::string tag = selectDnsServer(ctx, item.second, subject + ":" + pattern);
+        if (tag.empty()) {
+            ctx.note(FidelityScope::Dns, Fidelity::Unsupported, subject + ":" + pattern,
+                     std::format("DNS 策略「{}」没有可转换服务器，已忽略", pattern));
+            continue;
+        }
+        rules.push_back({!suffix, domain->size(), {
+            {suffix ? "domain_suffix" : "domain", nlohmann::json::array({*domain})},
+            {"action", "route"}, {"server", tag},
+        }});
+    }
+    // Clash's domain trie prefers an exact match and then the longest suffix;
+    // sing-box rules use first-match order, independent of YAML insertion order.
+    std::stable_sort(rules.begin(), rules.end(), [](const auto& lhs, const auto& rhs) {
+        if (lhs.exact != rhs.exact) return lhs.exact;
+        return lhs.specificity > rhs.specificity;
+    });
+    std::vector<nlohmann::json> compiled;
+    for (auto& rule : rules) compiled.push_back(std::move(rule.rule));
+    return compiled;
+}
+
+// Both ordinary DNS and static node resolution use the same ordered matcher.
+// This deliberately only accepts exact/suffix policies; no wildcard widening.
+std::string policyResolver(const std::vector<nlohmann::json>& rules, const std::string& host,
+                           std::string fallback) {
+    for (const auto& rule : rules) {
+        bool matches = false;
+        if (rule.contains("domain")) {
+            for (const auto& domain : rule["domain"])
+                matches = matches || host == domain.get<std::string>();
+        }
+        if (rule.contains("domain_suffix")) {
+            for (const auto& domain : rule["domain_suffix"]) {
+                const auto suffix = domain.get<std::string>();
+                matches = matches || host == suffix || host.ends_with("." + suffix);
+            }
+        }
+        if (matches) return rule.value("server", fallback);
+    }
+    return fallback;
+}
+
+void applyClashDns(Context& ctx, const YAML::Node& dns) {
+    if (!dns) return;
+    if (!dns.IsMap()) {
+        ctx.note(FidelityScope::Dns, Fidelity::Unsupported, "dns", "Clash dns 必须为映射，已忽略");
+        return;
+    }
+    for (const auto* key : {"enable", "ipv6"}) {
+        if (!dns[key]) continue;
+        const std::string value = lowerCopy(ytext(dns, key));
+        if (value != "true" && value != "yes" && value != "1" &&
+            value != "false" && value != "no" && value != "0") {
+            ctx.note(FidelityScope::Dns, Fidelity::Unsupported, std::string{"dns."} + key,
+                     std::format("DNS 字段「{}」不是布尔值，已使用默认行为", key));
+        }
+    }
+    const std::string enabled = lowerCopy(ytext(dns, "enable"));
+    if (enabled == "false" || enabled == "no" || enabled == "0") {
+        // The managed local server is the system resolver. DNS disabled in
+        // the source must not leave its custom policy active.
+        return;
+    }
+    for (const auto& item : dns) {
+        const std::string key = item.first.IsScalar() ? item.first.Scalar() : "<非标量>";
+        if (key == "enable" || key == "ipv6" || key == "nameserver" || key == "fallback" ||
+            key == "nameserver-policy" || key == "default-nameserver" ||
+            key == "proxy-server-nameserver" || key == "proxy-server-nameserver-policy" || key == "direct-nameserver" || (key == "enhanced-mode" && ytext(dns, "enhanced-mode") == "redir-host")) continue;
+        ctx.note(FidelityScope::Dns, Fidelity::Unsupported, "dns." + key,
+                 std::format("Clash DNS 字段「{}」尚未转换，已忽略", key),
+                 "这是输入转换的缺口；需要完整原生策略时使用 sing-box JSON，不能据此认定内核不支持");
+    }
+    if (const auto bootstrap = selectDnsServer(ctx, dns["default-nameserver"], "default-nameserver", true);
+        !bootstrap.empty()) ctx.dnsBootstrapTag = bootstrap;
+    const bool hasNameserver = dns["nameserver"] &&
+        (!dns["nameserver"].IsSequence() || dns["nameserver"].size() != 0);
+    const auto primary = selectDnsServer(ctx, hasNameserver ? dns["nameserver"] : dns["fallback"],
+                                         hasNameserver ? "nameserver" : "fallback");
+    if (!primary.empty()) ctx.config["dns"]["final"] = primary;
+    if (dns["fallback"] && (!dns["fallback"].IsSequence() || dns["fallback"].size() != 0)) {
+        ctx.note(FidelityScope::Dns, Fidelity::Approx, "fallback",
+                 hasNameserver ? "Clash fallback 未参与 DNS 查询；保留 nameserver 作为默认解析路径"
+                               : "Clash fallback 被用作默认 DNS，不执行污染判断或后备查询",
+                 "尚未实现 fallback-filter 与并发后备语义");
+    }
     ctx.config["dns"]["strategy"] = ybool(dns, "ipv6") ? "prefer_ipv4" : "ipv4_only";
+    const auto policy = compileDnsPolicy(ctx, dns["nameserver-policy"], "nameserver-policy");
+    if (!policy.empty()) ctx.config["dns"]["rules"] = policy;
+    const std::string proxyResolver = selectDnsServer(ctx, dns["proxy-server-nameserver"],
+                                                     "proxy-server-nameserver");
+    const auto proxyPolicy = proxyResolver.empty() ? std::vector<nlohmann::json>{}
+        : compileDnsPolicy(ctx, dns["proxy-server-nameserver-policy"], "proxy-server-nameserver-policy");
+    const std::string directResolver = selectDnsServer(ctx, dns["direct-nameserver"], "direct-nameserver");
+    const std::string strategy = ybool(dns, "ipv6") ? "prefer_ipv4" : "ipv4_only";
+    for (auto& outbound : ctx.outbounds) {
+        if (outbound.value("type", "") == "direct") {
+            if (!directResolver.empty()) outbound["domain_resolver"] = {
+                {"server", directResolver}, {"strategy", strategy}};
+            continue;
+        }
+        const std::string sourceHost = lowerCopy(outbound.value("server", ""));
+        if (!dnsHostIsDomain(sourceHost)) continue;
+        const std::string host = dnsPolicyDomain(sourceHost).value_or(sourceHost);
+        std::string resolver;
+        if (!proxyResolver.empty()) {
+            resolver = policyResolver(proxyPolicy, host, proxyResolver);
+        } else {
+            resolver = policyResolver(policy, host, ctx.config["dns"].value("final", "local"));
+        }
+        outbound["domain_resolver"] = {{"server", resolver}, {"strategy", strategy}};
+    }
+    if (!directResolver.empty()) {
+        ctx.note(FidelityScope::Dns, Fidelity::Approx, "direct-nameserver",
+                 "已设置 DIRECT 的原生解析器；托管路由前置 resolve 已解析的连接不会再次经它查询",
+                 "仅覆盖到达 DIRECT 时仍为域名的请求，不宣称复现全部 Clash 直连解析时机");
+    }
 }
 
 // ---- TLS / 传输层（vmess/vless/trojan 共用）--------------------------------
+
+
+bool validateDnsDependencies(Context& ctx) {
+    std::map<std::string, std::vector<std::string>> graph;
+    for (const auto& server : ctx.config["dns"]["servers"]) {
+        auto& edges = graph["dns/" + server.value("tag", "")];
+        if (server.contains("domain_resolver"))
+            edges.push_back("dns/" + server["domain_resolver"].value("server", ""));
+        if (server.contains("detour")) edges.push_back("out/" + server["detour"].get<std::string>());
+    }
+    for (const auto& outbound : ctx.outbounds) {
+        auto& edges = graph["out/" + outbound.value("tag", "")];
+        if (outbound.contains("detour")) edges.push_back("out/" + outbound["detour"].get<std::string>());
+        if (outbound.contains("outbounds")) {
+            for (const auto& member : outbound["outbounds"]) edges.push_back("out/" + member.get<std::string>());
+        }
+        // DNS endpoint addresses reach DIRECT as IPs; its resolver only acts
+        // on user domains, so it cannot create a bootstrap edge here.
+        if (outbound.value("type", "") != "direct" && outbound.contains("domain_resolver"))
+            edges.push_back("dns/" + outbound["domain_resolver"].value("server", ""));
+    }
+    std::map<std::string, unsigned char> colors;
+    struct Frame { std::string node; std::size_t next = 0; };
+    std::vector<Frame> stack;
+    for (const auto& [start, unused] : graph) {
+        if (colors[start] != 0) continue;
+        colors[start] = 1;
+        stack.push_back({start});
+        while (!stack.empty()) {
+            auto& frame = stack.back();
+            const auto& edges = graph.at(frame.node);
+            if (frame.next == edges.size()) {
+                colors[frame.node] = 2;
+                stack.pop_back();
+                continue;
+            }
+            const std::string target = edges[frame.next++];
+            if (!graph.contains(target) || colors[target] == 1) {
+                std::string path;
+                for (const auto& entry : stack) {
+                    if (!path.empty()) path += " → ";
+                    path += entry.node;
+                }
+                path += " → " + target;
+                ctx.result.error = "DNS/出站解析依赖无效或形成循环：" + path;
+                ctx.note(FidelityScope::Dns, Fidelity::Unsupported, target, ctx.result.error,
+                         "为代理节点配置不依赖该代理链的 proxy-server-nameserver；不会改直连绕过循环");
+                return false;
+            }
+            if (colors[target] == 0) {
+                colors[target] = 1;
+                stack.push_back({target});
+            }
+        }
+    }
+    return true;
+}

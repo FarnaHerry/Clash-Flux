@@ -1,5 +1,7 @@
 # Clash-Flux
 
+简体中文 | [English](README.en.md)
+
 Clash-Flux 是一个使用 C++23 和 HuxerUI 构建的全平台代理客户端，复刻 Clash Verge Rev
 的核心体验：以 sing-box 为内核（桌面 spawn 官方二进制、Android 后台进程内运行 libbox），
 桌面经 clash_api 的 REST API 与 WebSocket 推送交互，Android 经官方 libbox CommandClient
@@ -25,12 +27,29 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   CIDR 由 sing-box 路由规则直接指向各 endpoint，PPTP 才由平台后端安装系统路由
 - 内核控制：应用启动即拉起内核（没有选中订阅时用最小配置保持就绪），TUN 与系统
   代理只按实际设置恢复，不反过来决定内核是否启动；出站模式（规则/全局/直连）、
-  混合端口、局域网连接、日志级别；GEOIP/GEOSITE 规则集缓存落盘前校验，损坏时
-  自动清理并重新预取
+  混合端口、局域网连接、日志级别；桌面自有 GEOIP/GEOSITE 缓存在替换前校验
+  SRS/版本/zlib 文件头，启动时按周刷新，失败保留旧文件；原生规则集交给内核管理。
+  Android 国内规则集保持固定构建资产，完整规则解析由内核负责
 - 订阅转换：Clash YAML → sing-box JSON 编译器（ss/vmess/vless/trojan/hysteria2/
-  tuic 等协议、策略组、域名/IP/GEOIP/GEOSITE 规则，并将 Mihomo 常见的
-  `RULE-SET,cn` / `RULE-SET,cn-ip` 映射到内置国内规则集；不支持的条目显式提示而非静默丢弃；
+  tuic/AnyTLS/Snell v4 等协议、策略组、域名/IP/GEOIP/GEOSITE 与源地址/端口/TCP/UDP
+  规则，支持测速容差并保留长测速间隔；未声明的 `RULE-SET,cn` / `RULE-SET,cn-ip` 近似映射到内置国内规则集；不支持的条目显式提示而非静默丢弃；
   原生 sing-box JSON 订阅直通）
+- 代理链：节点的 `dialer-proxy` 转为原生 `detour`，支持节点/组前向引用；编译期拒绝
+  缺失目标和循环依赖。手动组支持 `default-selected`，未映射组字段与 `no-resolve`
+  的当前语义差异进入保真度报告。
+- DNS 转换：UDP/TCP/DoT/DoH/DoQ、HTTPS `#h3=true`、系统解析和 DNS 出站绑定；
+  `nameserver-policy` 和节点专用 `proxy-server-nameserver-policy` 支持完整域名与
+  `+.域名`，接入 IP bootstrap 和节点专用解析，
+  检查 DNS 与代理链循环。直连解析时机、多服务器、fallback 与未转换字段进入
+  保真度报告，不宣称支持 Clash 全部 DNS 策略。
+- 高级映射：桌面接口绑定、Linux uint32 路由标记、TCP Fast Open/Multi Path；
+  detour 忽略物理选项与 MPTCP 的 IPv6 差异明确记账。AND/OR/NOT 与任意名称 inline
+  rule-providers 支持域名/正则、CIDR、端口、网络及平台进程/包名条件子集；路由还支持
+  IP 版本和 Linux UID。保留显式 MATCH 默认出口与 REJECT-DROP；外部 provider 下载
+  和应用选择界面仍未接入。具体边界见保真度契约。
+- JSON codec：Glaze 9.0.0 固定归档负责运行时快照、API 和内部路由策略；页面消费
+  普通 C++ 数据，连接解析在任务线程。Clash YAML 与原生配置 DOM 保留现有适配器，
+  迁移范围见 [开发记录](docs/glaze-migration.md)。
 - 系统代理（Windows、macOS、KDE / GNOME）与 TUN 模式开关（sing-box TUN，切换即重启内核生效）；Windows 后台代理操作直接使用系统 API，不弹命令行窗口
 - 服务模式（可选）：统一 root systemd 服务托管 sing-box 和 Linux PPTP，
   TUN、PPTP 拨号和原生路由无需每次授权；OpenVPN 不依赖系统 CLI，随 sing-box
@@ -56,7 +75,9 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 - Linux 源码构建 HuxerUI 需要 GTK ≥4.14、libepoxy ≥1.5 与 libsoup ≥3.0 开发包；
   缺失时自动回落已安装/离线 0.3.0 SDK
 - sing-box 内核由项目自带：configure 期自动下载官方 release（按本机
-  平台/arch，哈希钉死，与 Android libbox 同为 1.14.0），无需手动放置；
+  平台/arch，哈希钉死，与 Android libbox 同为 1.14.2），无需手动放置；
+  桌面缓存按版本及资产 SHA256 隔离，升级时不会复用旧版本内核；Android 构建
+  核对正式 tag 与固定 revision，并校验 AAR 的版本、ABI 与 SHA256 元数据。
   `-DCLASHFLUX_BUNDLE_SINGBOX=OFF` 可关闭
 
 Fedora：
@@ -139,6 +160,16 @@ YAML、sing-box 原生 JSON 与原生连接（PPTP、OpenVPN）统一由内置�
 exact / approx / unsupported 记入保真度账本，不静默降级，也不在界面里假装支持内核没有
 的能力。分层职责、决策流程、协议/端点/规则覆盖基线与已知边界见
 [内核分层与 Clash → sing-box 保真度契约](docs/singbox-layers-and-fidelity.md)。
+当前接入程度、字段边界与下一批能力见
+[sing-box 能力审查](docs/singbox-capability-audit.md)，稳定版版本与资产校验见
+[内核升级记录](docs/singbox-stable-upgrade.md)，新增映射示例见
+[Clash YAML 示例](docs/examples/kernel-capabilities.yaml)。
+桌面已接入[唯一主订阅 + 规则驱动的多次来源编排](docs/desktop-subscription-orchestration.md)：
+Clash YAML 次来源只通过启用规则参与，同名组/节点隔离；全局覆盖、来源分流、主规则、
+主兜底使用固定层级，权重只在层内比较。目标不可用默认阻断，可明确选择主默认出口或直连。
+主来源支持 Clash YAML / 原生 JSON，原生 JSON 次来源和跨来源代理链仍未开放；
+手机保持单活动代理订阅，不增加多订阅编排。
+交互参考与接入次序见[sing-box 官方 GUI 研究](docs/singbox-official-gui-review.md)。
 
 ## CLI
 
@@ -187,13 +218,15 @@ GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议�
 | build-macos-arm64 | macos-15 + brew LLVM | 实验性 |
 | build-macos-x86_64 | macos-13 + brew LLVM | 实验性 |
 | build-android | HuxerUI CLI 打 APK（GUI/native shell + sing-box libbox） | 实验性 |
-| build-ios-simulator-arm64 | macOS + iOS Simulator SDK，编译 Clash-Flux app core | 诊断性，不阻塞发布 |
+| build-ios-simulator-arm64 | macOS + iOS Simulator SDK 编译未签名 app/Packet Tunnel，并构建固定 sing-box 的 iOS device/Simulator Libbox.xcframework | TODO / 暂缓；实验性诊断，不阻塞发布 |
 
-CI 使用固定 revision 的 HuxerUI iOS 平台源码，并从 Clash-Flux 自己的 CMake
-项目编译 `clash-flux_huxerui_ios_core`（arm64 iOS Simulator）。此诊断 job 验证
-Clash-Flux C++ 源码和 HuxerUI 静态平台库能够为模拟器编译；它不生成 `.app`/IPA，
-也不上传 Release 资产或作为发布门禁。iOS Network Extension、sing-box 移动端
-接入和完整应用壳仍列为后续 TODO；当前编译配置也不包含 curl TLS。
+CI 使用固定 revision 的 HuxerUI iOS 平台源码，从 Clash-Flux 自己的 CMake
+项目编译 `clash-flux_huxerui_ios_core`（arm64 iOS Simulator），并从与 Android
+相同的 sing-box revision 构建 `Libbox.xcframework`（iOS device + Simulator）。此诊断
+job 验证 app、Packet Tunnel 与引擎可为 Simulator 编译；它不生成 IPA、不上传 Release 资产，也不作为
+发布门禁。iOS 订阅下载由原生 URLSession 提供 TLS：默认验证系统证书，订阅可单独选择允许无效证书。
+**iOS 当前按 TODO 暂缓，不属于受支持平台，也没有 TestFlight/App Store 发布承诺。**现有工作只验证 Simulator 编译；可分发的签名设备包和真机 VPN 生命周期尚未完成，是否恢复支持由后续项目决策确定。
+构建和 Apple 签名说明见 [iOS 构建文档](docs/ios-build.md)。
 
 Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用菜单图标
 （.desktop + hicolor 图标）；应用本体自包含安装于 `/opt/clash-flux`。

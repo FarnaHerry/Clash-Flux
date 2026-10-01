@@ -162,7 +162,7 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
     if (!config.contains("route") || !config["route"].is_object()) {
         config["route"] = nlohmann::json::object();
     }
-    if (!config["route"].contains("final")) {
+    if (!config["route"].contains("final") || config["route"].value("final", "").empty()) {
         // Native JSON without final uses the first outbound, matching
         // sing-box's own default instead of referencing a missing DIRECT.
         std::string final = "DIRECT";
@@ -193,17 +193,24 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
                                   : nlohmann::json::object();
     clashApi["external_controller"] = opt.controller;
     if (!opt.secret.empty()) clashApi["secret"] = opt.secret;
-    // mode_list 不能写进配置（1.14 里是 json:"-"，写了直接拒绝启动）：
+    // mode_list 不是可写配置字段（1.14.2 已移除旧内部 ModeList 成员）：
     // 内核从 route rules 的 clash_mode 值自动推导模式列表，default_mode
     // 不在列表里时会被自动补头——因此小写 rule/global/direct 全部可用。
     clashApi["default_mode"] = opt.mode;
     config["experimental"]["clash_api"] = std::move(clashApi);
 #endif
-    config["experimental"]["cache_file"] = {{"enabled", true}};
+    // 原生配置的 FakeIP/RDRC 持久化、路径和 cache_id 属于用户策略，不能
+    // 为启用应用缓存而把整个对象覆盖掉。应用只管理 enabled。
+    nlohmann::json cacheFile = config["experimental"].contains("cache_file") &&
+                                      config["experimental"]["cache_file"].is_object()
+                                  ? config["experimental"]["cache_file"]
+                                  : nlohmann::json::object();
+    cacheFile["enabled"] = true;
+    config["experimental"]["cache_file"] = std::move(cacheFile);
 }
 
 // 解析 Clash YAML 文档并转换节点/组/规则（调用方负责异常捕获）。
-void compileClashDocument(Context& ctx, const std::string& trimmed) {
+void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportOnly = false) {
     YAML::Node root = YAML::Load(trimmed);
     if (!root.IsMap()) {
         ctx.result.error = "订阅不是有效的 Clash YAML 配置";
@@ -223,10 +230,6 @@ void compileClashDocument(Context& ctx, const std::string& trimmed) {
         if (!name.empty() && !ctx.tagKnown(name)) ctx.knownTags.push_back(name);
     }
 
-    // Clash 的 nameserver 不是 sing-box 1.14 可接受的 legacy 字符串格式。
-    // 先登记代理组，再转换 `#出站组` 绑定，保证 DoH/DoT 能沿指定代理出站。
-    applyClashDns(ctx, root["dns"]);
-
     if (const YAML::Node proxies = root["proxies"]; proxies && proxies.IsSequence()) {
         for (const YAML::Node& proxy : proxies) {
             if (!proxy.IsMap()) continue;
@@ -241,13 +244,16 @@ void compileClashDocument(Context& ctx, const std::string& trimmed) {
         const std::string name = ytext(group, "name");
         if (name.empty()) continue;
         std::vector<std::string> members = ylist(group, "proxies");
-        if (ybool(group, "include-all") || !ytext(group, "use").empty()) {
+        const YAML::Node providers = group["use"];
+        const bool usesProviders = providers && (!providers.IsSequence() || providers.size() != 0);
+        if (ybool(group, "include-all") || ybool(group, "include-all-proxies") ||
+            ybool(group, "include-all-providers") || usesProviders) {
             ctx.note(FidelityScope::Group, Fidelity::Unsupported, name,
-                     std::format("代理组「{}」使用了 provider（use/include-all），"
+                     std::format("代理组「{}」使用了未接入的成员展开（use/include-all），"
                                  "sing-box 编译暂不支持，仅保留显式成员",
                                  name),
-                     "sing-box 侧没有 provider 概念：provider 提供的节点不会出现在"
-                     "这个组里，只有 proxies 里显式写出的成员会生效");
+                     "成员展开由应用翻译层处理，当前仅保留 proxies 的显式成员；"
+                     "use 数组、include-all-proxies/providers 均不会静默漏报");
         }
         if (auto converted = convertGroup(ctx, group, name, members)) {
             ctx.outbounds.push_back(std::move(*converted));
@@ -258,9 +264,60 @@ void compileClashDocument(Context& ctx, const std::string& trimmed) {
         }
     }
 
-    if (const YAML::Node rules = root["rules"]; rules && rules.IsSequence()) {
+    if (!validateOutboundDependencies(ctx)) return;
+    for (const auto* field : {"proxy-providers"}) {
+        if (root[field]) {
+            ctx.note(FidelityScope::Field, Fidelity::Unsupported, field,
+                     std::format("Clash {} 尚未解析、下载或展开，已忽略", field),
+                     "这是应用输入转换的缺口；固定国内规则别名不等于通用 provider 支持");
+        }
+    }
+
+    if (!exportOnly) compileRuleProviders(ctx, root["rule-providers"]);
+
+    // DNS detours must resolve against actual converted nodes/groups, including
+    // nodes declared after dns and excluding rejected group declarations.
+    applyClashDns(ctx, root["dns"]);
+    if (!validateDnsDependencies(ctx)) return;
+    if (root["hosts"] && (!root["dns"] || !root["dns"].IsMap() ||
+        lowerCopy(ytext(root["dns"], "use-hosts")) != "false")) {
+        ctx.note(FidelityScope::Dns, Fidelity::Unsupported, "hosts",
+                 "Clash hosts 尚未转换，已忽略", "可使用原生 hosts DNS 服务器；不会静默假装已应用主机映射");
+    }
+
+    if (exportOnly) {
+        // MATCH 只声明来源的默认导出对象，不进入全局规则。
+        if (root["rules"] || root["rule-providers"])
+            ctx.note(FidelityScope::Field, Fidelity::Approx, "source.rules",
+                     "次来源不导入全局订阅规则或 rule-providers；MATCH 仅定义默认导出目标",
+                     "请在编排规则中显式定义此来源的匹配范围");
+        if (root["dns"])
+            ctx.note(FidelityScope::Dns, Fidelity::Approx, "source.dns",
+                     "次来源仅保留被出站引用的 DNS 依赖，不覆盖主来源的全局 DNS 策略");
+        if (const auto rules = root["rules"]; rules && rules.IsSequence()) {
+            for (const auto& item : rules) {
+                if (!item.IsScalar()) continue;
+                const auto text = trimCopy(item.Scalar());
+                if (lowerCopy(text.substr(0, text.find(','))) == "match" && !convertRule(ctx, text)) break;
+            }
+        }
+        return;
+    }
+    if (const YAML::Node rules = root["rules"]; rules) {
+        if (!rules.IsSequence()) {
+            ctx.note(FidelityScope::Rule, Fidelity::Unsupported, "rules",
+                     "Clash rules 必须为字符串数组，已忽略");
+            return;
+        }
+        std::size_t index = 0;
         for (const YAML::Node& rule : rules) {
-            if (rule.IsScalar()) convertRule(ctx, rule.Scalar());
+            if (!rule.IsScalar()) {
+                ctx.note(FidelityScope::Rule, Fidelity::Unsupported,
+                         "rules[" + std::to_string(index) + "]", "规则不是字符串，已跳过");
+            } else if (!convertRule(ctx, rule.Scalar())) {
+                break; // First valid MATCH terminates the source rule list.
+            }
+            ++index;
         }
     }
 }

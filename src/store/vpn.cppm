@@ -6,8 +6,8 @@
 export module clashflux.store.vpn;
 
 import std;
-import nlohmann.json;
 import clashflux.db;
+import clashflux.config;
 import clashflux.core;
 import clashflux.openvpn;
 import clashflux.pptp;
@@ -26,7 +26,7 @@ export inline std::string ProfileConnectionId(std::int64_t profileId) {
 
 namespace detail {
 
-inline nlohmann::json EncodePolicy(const vpn::VpnPolicy& policy) {
+inline std::string EncodePolicy(const vpn::VpnPolicy& policy) {
     return routing::EncodePolicy(policy);
 }
 
@@ -98,8 +98,25 @@ public:
     bool saveGlobalPolicy(vpn::VpnPolicy policy, std::string& error) {
         ensureLoaded();
         std::lock_guard lock(operationMutex_);
+        auto planLock = coreStore().lockPlanLifecycle();
         const auto previous = manager_.policy();
+        policy.revision = previous.revision;
         if (previous == policy) { error.clear(); return true; }
+        if (!routing::ValidatePlatformPolicy(policy, coreStore().db().listProfiles(), error)) return false;
+        if (previous.revision == std::numeric_limits<std::uint64_t>::max()) { error = "计划修订号超出范围"; return false; }
+        policy.revision = previous.revision + 1;
+        for (std::size_t i = 0; i < policy.rules.size(); ++i) {
+            auto& rule = policy.rules[i];
+            if (rule.id.empty()) rule.id = "route-" + cfg::randomSecret();
+            rule.order = static_cast<std::int64_t>(i);
+        }
+        std::string mainYaml;
+        for (const auto& profile : coreStore().db().listProfiles()) {
+            if (!profile.selected || profile.type == "pptp" || profile.type == "openvpn") continue;
+            std::ifstream input(cfg::profilesDir() / profile.file, std::ios::binary);
+            if (input) mainYaml.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+        }
+        if (!coreStore().validateRoutingPlan(mainYaml, error, &policy)) return false;
         try {
             if (!manager_.applyPolicy(policy, error)) {
                 // A failed rollback means the native route state is unknown.
@@ -107,11 +124,12 @@ public:
                 return false;
             }
             coreStore().db().setSetting("vpn.global_policy",
-                                       detail::EncodePolicy(policy).dump());
+                                       detail::EncodePolicy(policy));
+            coreStore().invalidateProxyGroupsSnapshot();
             if (!publishRouting(error)) {
                 const auto failure = error;
                 coreStore().db().setSetting("vpn.global_policy",
-                                           detail::EncodePolicy(previous).dump());
+                                           detail::EncodePolicy(previous));
                 std::string rollbackError;
                 const bool restored = manager_.applyPolicy(previous, rollbackError);
                 if (!restored) {
@@ -131,7 +149,7 @@ public:
             if (!manager_.applyPolicy(previous, ignored)) coreStore().stopCore();
             try {
                 coreStore().db().setSetting("vpn.global_policy",
-                                           detail::EncodePolicy(previous).dump());
+                                           detail::EncodePolicy(previous));
                 if (!publishRouting(ignored)) coreStore().stopCore();
             } catch (...) { coreStore().stopCore(); }
             return false;

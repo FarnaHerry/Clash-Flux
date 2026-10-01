@@ -36,6 +36,15 @@ extern char** environ;
 extern "C" void clashflux_android_open_url(const char* url) noexcept;
 #endif
 
+#if defined(CLASHFLUX_IOS)
+extern "C" bool clashflux_ios_start_tunnel(const char* config_path,
+                                            char* error_buffer,
+                                            std::size_t error_buffer_size) noexcept;
+extern "C" void clashflux_ios_stop_tunnel() noexcept;
+extern "C" bool clashflux_ios_tunnel_running() noexcept;
+extern "C" void clashflux_ios_open_url(const char* url) noexcept;
+#endif
+
 module clashflux.core;
 
 import std;
@@ -83,6 +92,10 @@ TunGate tunGate() {
 #ifdef _WIN32
     if (tokenElevated()) return TunGate::Ok;
     return relaunchElevated() ? TunGate::Elevated : TunGate::Denied;
+#elif defined(CLASHFLUX_IOS)
+    // iOS presents its own VPN authorization prompt when the Packet Tunnel is
+    // first started; there is no root/euid gate in the app process.
+    return TunGate::Ok;
 #else
     if (::geteuid() == 0) return TunGate::Ok;
 #ifdef __linux__
@@ -106,6 +119,8 @@ void openInBrowser(const std::string& url) {
                   SW_SHOWNORMAL);
 #elif defined(__ANDROID__)
     clashflux_android_open_url(url.c_str());
+#elif defined(CLASHFLUX_IOS)
+    clashflux_ios_open_url(url.c_str());
 #else
     // fork + exec 不经 shell：URL 里的 & 等字符无注入面。
     const char* opener =
@@ -149,6 +164,106 @@ singbox::CompileResult generateConfig(singbox::CompileOptions options) {
     return singbox::compileConfig(options);
 }
 
+bool checkConfig(const std::filesystem::path& binary, const std::filesystem::path& workDir,
+                 const std::filesystem::path& configFile, std::string& error) {
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
+    error = "此平台的配置检查由 libbox 服务执行";
+    return false;
+#else
+    const auto diagnostic = std::filesystem::path(configFile.string() + ".check.log");
+    struct DiagnosticFile {
+        std::filesystem::path path;
+        ~DiagnosticFile() { std::error_code ec; std::filesystem::remove(path, ec); }
+    } cleanup{diagnostic};
+    bool success = false;
+#ifdef _WIN32
+    SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+    clashflux::win32::UniqueHandle log{CreateFileW(diagnostic.c_str(), GENERIC_WRITE,
+        FILE_SHARE_READ, &attributes, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr)};
+    if (!log.valid()) { error = "无法创建内核检查日志"; return false; }
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup); startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdOutput = log.get(); startup.hStdError = log.get();
+    startup.hStdInput = nullptr;
+    const auto quote = [](const std::filesystem::path& path) {
+        // Windows argv 的反斜杠/引号规则，包括尾部反斜杠。
+        std::wstring result = L"\"";
+        std::size_t slashes = 0;
+        for (wchar_t c : path.wstring()) {
+            if (c == L'\\') { ++slashes; continue; }
+            result.append(c == L'\"' ? slashes * 2 + 1 : slashes, L'\\');
+            slashes = 0; result += c;
+        }
+        result.append(slashes * 2, L'\\'); result += L'\"'; return result;
+    };
+    auto command = quote(binary) + L" check -c " + quote(configFile) + L" -D " + quote(workDir);
+    PROCESS_INFORMATION info{};
+    if (!CreateProcessW(binary.c_str(), command.data(), nullptr, nullptr, TRUE,
+                        CREATE_NO_WINDOW, nullptr, nullptr, &startup, &info)) {
+        error = "无法启动固定内核配置检查"; return false;
+    }
+    clashflux::win32::UniqueHandle process{info.hProcess}, thread{info.hThread};
+    if (WaitForSingleObject(process.get(), 15000) != WAIT_OBJECT_0) {
+        TerminateProcess(process.get(), 1);
+        WaitForSingleObject(process.get(), INFINITE);
+        error = "内核配置检查超时";
+    } else {
+        DWORD code = 1; GetExitCodeProcess(process.get(), &code); success = code == 0;
+    }
+    log.reset();
+#else
+    struct SpawnActions {
+        posix_spawn_file_actions_t value;
+        bool initialized;
+        SpawnActions() : initialized(posix_spawn_file_actions_init(&value) == 0) {}
+        ~SpawnActions() { if (initialized) posix_spawn_file_actions_destroy(&value); }
+    } actions;
+    if (!actions.initialized ||
+        posix_spawn_file_actions_addopen(&actions.value, STDOUT_FILENO, diagnostic.c_str(),
+                                        O_WRONLY | O_CREAT | O_TRUNC, 0600) != 0 ||
+        posix_spawn_file_actions_adddup2(&actions.value, STDOUT_FILENO, STDERR_FILENO) != 0) {
+        error = "无法准备内核配置检查"; return false;
+    }
+    std::string bin = binary.string(), config = configFile.string(), dir = workDir.string();
+    std::array<char*, 7> args{bin.data(), const_cast<char*>("check"), const_cast<char*>("-c"),
+                            config.data(), const_cast<char*>("-D"), dir.data(), nullptr};
+    pid_t child = -1;
+    const auto spawnError = posix_spawnp(&child, bin.c_str(), &actions.value, nullptr, args.data(), environ);
+    if (spawnError != 0) { error = "内核检查启动失败：" + std::string(std::strerror(spawnError)); return false; }
+    // child 必须回收，即使读取/轮询发生异常也不能遗留后台检查进程。
+    struct CheckChild {
+        pid_t pid;
+        ~CheckChild() {
+            if (pid <= 0) return;
+            kill(pid, SIGKILL);
+            while (waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {}
+        }
+    } owner{child};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    while (std::chrono::steady_clock::now() < deadline) {
+        int status = 0;
+        const auto waited = waitpid(child, &status, WNOHANG);
+        if (waited == child) {
+            owner.pid = -1; success = WIFEXITED(status) && WEXITSTATUS(status) == 0; break;
+        }
+        if (waited < 0 && errno != EINTR) { owner.pid = -1; error = "无法回收内核检查进程"; break; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    if (owner.pid > 0) error = "内核配置检查超时";
+#endif
+    if (!success && error.empty()) {
+        std::ifstream input(diagnostic, std::ios::binary);
+        std::string text;
+        std::array<char, 4096> buffer{};
+        input.read(buffer.data(), buffer.size());
+        text.assign(buffer.data(), static_cast<std::size_t>(input.gcount()));
+        error = "内核配置检查失败：" + stripAnsi(std::move(text));
+    }
+    if (success) error.clear();
+    return success;
+#endif
+}
+
 // ---- detached spawn / killPid（接管与 CLI 驻留形态）----
 namespace {
 
@@ -166,6 +281,8 @@ void killPid(long pid) {
     clashflux::win32::UniqueHandle process{
         OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid))};
     if (process.valid()) TerminateProcess(process.get(), 1);
+#elif defined(CLASHFLUX_IOS)
+    static_cast<void>(pid);
 #else
     if (pid > 0) ::kill(static_cast<pid_t>(pid), SIGTERM);
 #endif
@@ -177,6 +294,9 @@ bool pidAlive(long pid) {
     clashflux::win32::UniqueHandle process{OpenProcess(
         PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid))};
     return process.valid();
+#elif defined(CLASHFLUX_IOS)
+    static_cast<void>(pid);
+    return false;
 #else
     if (::kill(static_cast<pid_t>(pid), 0) == 0) return true;
     // EPERM：进程存在但属其他用户（root 服务托管的内核），同样视为存活。
@@ -232,6 +352,13 @@ bool spawnDetached(const std::filesystem::path& binary,
                    const std::filesystem::path& workDir,
                    const std::filesystem::path& configFile,
                    std::string& error) {
+#if defined(CLASHFLUX_IOS)
+    static_cast<void>(binary);
+    static_cast<void>(workDir);
+    static_cast<void>(configFile);
+    error = "iOS sing-box 必须由 Packet Tunnel extension 内的 Libbox 托管";
+    return false;
+#else
     if (binary.empty() || !std::filesystem::exists(binary)) {
         error = "未找到 sing-box 内核（engines/ 或 PATH）";
         return false;
@@ -338,6 +465,7 @@ bool spawnDetached(const std::filesystem::path& binary,
     return true;
 #endif
 #endif
+#endif
 }
 
 // ---- CoreProcess ----
@@ -374,6 +502,15 @@ struct CoreProcessImpl {
     }
 
     void stop() {
+#if defined(CLASHFLUX_IOS)
+        // Ask the OS-managed provider to stop even if this CoreProcess instance
+        // did not observe its initial start (for example after app relaunch).
+        clashflux_ios_stop_tunnel();
+        stopRequested.store(true);
+        running.store(false);
+        exitCode.store(0);
+        return;
+#else
         if (!running.load()) return;
         stopRequested.store(true);
 #if defined(__ANDROID__)
@@ -387,6 +524,7 @@ struct CoreProcessImpl {
         if (childProcess.valid()) TerminateProcess(childProcess.get(), 1);
 #else
         if (childPid > 0) ::kill(childPid, SIGTERM);
+#endif
 #endif
     }
 
@@ -432,9 +570,9 @@ struct CoreProcessImpl {
         clashflux::win32::UniqueHandle thread{pi.hThread};
         return true;
 #else
-#if defined(__ANDROID__)
-        // Android CoreProcess::start is implemented through the Java
-        // C-shared lifecycle. Never fall back to child-process execution.
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
+        // Mobile CoreProcess startup is owned by a platform service. Never
+        // fall back to child-process execution on Android or iOS.
         static_cast<void>(binary);
         static_cast<void>(workDir);
         static_cast<void>(configFile);
@@ -610,7 +748,22 @@ bool CoreProcess::start(const std::filesystem::path& binary,
     impl_->exitCode.store(-1);
     impl_->lastError.clear();
 
-#if defined(__ANDROID__)
+#if defined(CLASHFLUX_IOS)
+    // iOS cannot launch the desktop sing-box executable. The Network Extension
+    // owns Libbox and reads its config from the shared App Group directory.
+    static_cast<void>(binary);
+    static_cast<void>(workDir);
+    std::array<char, 1024> error{};
+    if (!clashflux_ios_start_tunnel(configFile.string().c_str(), error.data(),
+                                    error.size())) {
+        impl_->lastError = error.front() == '\0'
+                               ? "iOS Packet Tunnel 启动失败"
+                               : std::string(error.data());
+        return false;
+    }
+    impl_->running.store(true);
+    return true;
+#elif defined(__ANDROID__)
     // Android's engine is sing-box libbox, owned by ClashVpnService rather
     // than a native child process.  CoreProcess remains a lightweight state
     // holder so the desktop orchestration interface stays platform-neutral.
@@ -652,6 +805,8 @@ bool CoreProcess::running() const {
         return WaitForSingleObject(impl_->childProcess.get(), 0) == WAIT_TIMEOUT;
     }
     return true;
+#elif defined(CLASHFLUX_IOS)
+    return impl_->running.load() && clashflux_ios_tunnel_running();
 #else
     return impl_->running.load();
 #endif
