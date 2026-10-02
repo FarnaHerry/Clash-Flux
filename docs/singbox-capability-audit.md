@@ -16,16 +16,17 @@
 主要缺口是 **Clash 输入转换和原生能力的编辑入口**，尤其是 DNS 策略、通用规则集、
 高级路由、更多拨号字段及端点。现阶段不能把原生 JSON 能导入等同于完整产品支持。
 
-本轮之前 Clash YAML 覆盖 8 个代理协议类型，本轮增加到 **10/15**。该数字只统计
+早期 Clash YAML 覆盖 8 个代理协议类型，首轮增加到 10/15；当前工作区接入
+Hysteria v1 UDP 子集与 SSH 认证/公钥子集后为 **12/15**。该数字只统计
 固定内核的代理协议家族，不含 direct/bridge/block/selector/urltest，也不代表每个
 家族所有字段都已支持。原文的 8/16 把已经移除的 WireGuard 出站计入了分母，本轮纠正。
 各领域投入、平台限制和使用价值不同，不用一个“总开发百分比”概括。
 
 | 领域 | 当前应用接入 | 尚未充分接入的内核能力 |
 |---|---|---|
-| 代理协议 | Clash 转换 10/15：SS、VMess、VLESS、Trojan、Hysteria2、TUIC、HTTP、SOCKS、AnyTLS、Snell v4 | Hysteria v1、ShadowTLS、SSH、Tor、Naive 的 Clash 转换；现有协议的插件及更多 TLS/拨号字段 |
+| 代理协议 | Clash 转换 12/15：SS、VMess、VLESS、Trojan、Hysteria v1 UDP 子集、Hysteria2、TUIC、HTTP、SOCKS、AnyTLS、Snell v4、SSH 认证/公钥子集；SS 内置 simple-obfs/v2ray-plugin 子集 | ShadowTLS、Tor、Naive 的 Clash 转换；SSH 外部私钥路径及更多字段；HY1 单边窗口/快速打开/非 UDP 伪装/兼容速率字段、其它 SS 插件、插件 headers/证书/ECH 与更多 TLS/拨号字段 |
 | 策略组 | selector/urltest 两种原生组；原生测速容差、间隔；detour 代理链、selector 初始选择 | idle_timeout 和 interrupt_exist_connections 的专门设置入口；不能模拟 fallback/load-balance 或 urltest 手动锁定 |
-| 路由 | 域名、目标/源 CIDR、目标/源端口及范围、TCP/UDP、IP-VERSION、地理规则集、桌面进程路径、Linux UID、Android 包名/正则、AND/OR/NOT 子集 | 更多逻辑条件、应用选择入口、Wi-Fi/接口等原生网络匹配、更多原生路由动作 |
+| 路由 | 域名、目标/源 CIDR、目标/源端口及范围、TCP/UDP、IP-VERSION、地理规则集、桌面进程路径、Linux UID、Android 包名/正则、AND/OR/NOT（含嵌套 GEO/已转换 RULE-SET） | 更多逻辑条件、外部 provider、应用选择入口、Wi-Fi/接口等原生网络匹配、更多原生路由动作 |
 | DNS | local、UDP/TCP/DoT/DoH/DoQ/强制 HTTP3；完整域名与 +. 后缀 nameserver-policy；节点专用 proxy-server-nameserver-policy；bootstrap、节点解析器与依赖图检查；直连解析时机、多 DNS/fallback 明确记账 | 更多通配/规则集策略、fallback-filter、hosts、FakeIP、direct follow-policy、缓存及原生设置入口 |
 | 端点 | 原生连接编辑器支持 openvpn-client（1/5）；PPTP 是系统补充路径，不计入内核端点 | WireGuard、Tailscale、OpenConnect、OpenVPN server 的连接对象、字段编辑及生命周期管理 |
 | 规则集 | 自有 GEO 显式资源清单、文件头筛查后提交、桌面启动按周刷新/失败留旧、国内 RULE-SET 别名及任意名称 inline provider 子集 | 外部 rule-providers、local/remote rule_set 管理界面及下载路径选择 |
@@ -92,7 +93,7 @@ Linux 托管 TUN 会关闭 auto_redirect。它不是原样执行任意 JSON 的�
 `dialer-proxy` 转 native detour，出站图支持向后引用并拒绝缺失目标和循环；
 selector 可配置 `default-selected`。未映射组字段、provider 数组引用与根级
 provider 定义显式记账；规则 `no-resolve` 记 approx，未知修饰符不再静默接受。
-实际构建和平台边界见[升级记录](singbox-stable-upgrade.md)。协议覆盖仍为 10/15，
+实际构建和平台边界见[升级记录](singbox-stable-upgrade.md)。该升级批次协议覆盖为 10/15，
 这些新增项是现有协议的字段与依赖语义，不能重复算作新协议。
 
 ## 2026-10-01 后续实现
@@ -150,7 +151,7 @@ provider 定义显式记账；规则 `no-resolve` 记 approx，未知修饰符�
    Android 版本、UID 查询失败与共享 UID 场景要分别验证。
 4. **WireGuard/Tailscale/OpenConnect 端点**：以连接对象建模，包含凭据、状态、启停与
    路由目标，不放进旧的 WireGuard outbound；平台支持与失败回滚先于 UI 承诺。
-5. **剩余拨号与协议字段**：更多连接选项、TLS/ECH、SS 插件及其它协议，
+5. **剩余拨号与协议字段**：更多连接选项、TLS/ECH、其它 SS 插件及插件未映射参数，
    逐项核对固定版本；detour、引用图检查与桌面 Clash 来源命名空间已经接入，
    原生 JSON 次来源及跨来源 detour 仍待实现。
 
@@ -235,3 +236,75 @@ random 指纹分布和内核折叠的 chrome PSK/PQ 别名按 approx 记账。
 扩充的 10 协议样本包含带空白的凭据、原文 header 和全局/节点指纹，生产转换结果
 通过固定 1.14.2 `check`。Android arm64 Debug 已重新构建，未安装或验收远程握手。
 类型覆盖仍为 10/15；这批交付不包含新的协议、外部 provider 或完整 DNS 适配。
+
+## L2 后续字段交付：UDP / VMess 填充 / HY2（2026-10-02）
+
+v0.3.18 后的工作区补 VMess/VLESS UDP 编码及历史布尔开关、VMess 填充选项，
+HY2 salamander/gecko、Gecko 包尺寸、严格端口范围与 hop-interval 秒数/范围。
+不再只凭 obfs-password 强制转 salamander，不再把缺混淆密码的线路降为普通连接。
+固定内核要求单个 hopping 端口也输出 `n:n`，已通过真实 `check` 核对；ports-only
+节点可省略单个 port。默认、限制、不适用字段与非法输入按保真度边界处理，见
+[字段基线](singbox-layers-and-fidelity.md)。
+
+Linux 主目标、永久转换回归和 9 项项目测试、扩充的 10 协议样本内核检查、Android
+Debug 构建通过。三份本地订阅的节点/组回归分别保留 32/32、30/30、34/34 节点；
+规则/provider 使用独立测试副本规范化，未验收原规则与远程连接。
+协议类型覆盖仍为 10/15，外部 provider、更多 DNS/TLS/QUIC 字段继续待实现。
+
+## L2 后续字段交付：SS 插件 / UOT 版本（2026-10-02）
+
+内置 simple-obfs HTTP/TLS 与 v2ray-plugin WebSocket/TLS/mux 子集已接入。
+host/path 按原文转义到 SIP003，补 Clash 的 host/mux 默认，显式 TLS false 不再
+有机会被原生的键存在语义开启。非空自定义 headers、跳过证书校验、HTTPUpgrade、
+证书/ECH 与其它插件仍拒绝并记账。UOT 写对象并显式选择 Clash 的 legacy v1 默认，
+支持输入 v1/v2；不把未知整数窄化后继续运行。保真度边界见[契约](singbox-layers-and-fidelity.md)。
+
+新增永久回归实现前复现 16 项失败，修复后通过；项目 9 项测试、Linux 主目标、
+8 节点插件/UOT 样本的固定内核检查、Android Debug 构建通过。规范化的三份订阅
+副本保留全部 32/30/34 个节点，原订阅和凭据未改动；未验收远程握手。
+类型覆盖仍为 10/15，本批没有增加新的协议家族或 L3 编辑入口。
+
+## L2 后续路由交付：嵌套 GEO / RULE-SET（2026-10-02）
+
+AND/OR/NOT 路由子条件新增 GEOIP/GEOSITE、private/lan 和已转换 inline RULE-SET。
+共用顶层资源转换，保持 outer action 与 NOT；不从逻辑中的 CN 条件推导全局 DNS。
+未知子条件、非法资源或失败 provider 原子拒绝整条规则，并撤回本条新建资源及
+tag 缓存，保留前后有效规则；国内别名仍 approx。HeadlessRule 继续拒绝 GEO/RULE-SET，
+外部下载和 Android 缺失本地 GEO 的行为没有扩大支持范围。
+
+实现前永久回归复现 5 项失败，修复后通过；双来源嵌套运行 tag 与原始缓存身份
+回归通过。公开样本的 6 条逻辑规则、3 份 inline provider、2 份 GEO 资源全部生成，
+固定 1.14.2 内核 check 通过。Linux 主目标、项目 9 项测试、Android Debug 构建通过；
+之前两个字段样本仍通过内核检查，三份规范化订阅副本保留全部 32/30/34 节点。
+验证范围及命令见[开发复核](l1-l2-l3-status.md)，保真度分类见[契约](singbox-layers-and-fidelity.md)。
+协议类型覆盖仍为 10/15，hosts/FakeIP、外部 provider 与其它 DNS/协议字段仍待实现。
+
+## L2 后续协议交付：Hysteria v1 UDP 子集（2026-10-02）
+
+Clash 转换新增 Hysteria v1，类型覆盖为 **11/15**。保留原文认证、Base64 auth 的
+优先级、XPlus 密码、必需 QUIC TLS、UDP 限制、严格端口范围和 10 秒跳端口默认；
+使用原生 QUIC 窗口字段，成对非零 exact，默认初始分配差异记 approx。
+单边窗口、非 UDP 伪装、fast-open:true、空 ALPN 与未映射证书/ECH/兼容字段仍拒绝。
+共享带宽修复 HY2 的 MBps/Mbps 大小写折叠错误，字节单位乘 8 并检查整数范围。
+
+实现前回归复现 16 项失败，修复后通过；认证解码/长度、窗口、TLS、hopping、
+单位和拒绝节点 MATCH 的永久回归通过。项目测试 9/9、Linux 主目标、Android
+Debug 构建通过；HY1 的 5 节点样本、扩充的 11 协议/12 节点样本以及之前 SS/逻辑
+样本均通过固定内核 check。三份规范化私有订阅副本保留全部 32/30/34 节点。
+未验收远端握手、原订阅全部规则或真机生命周期；该批随后并入 v0.3.19。
+边界与复现命令见[开发复核](l1-l2-l3-status.md)及[保真度契约](singbox-layers-and-fidelity.md)。
+
+## L2 后续协议交付：SSH 子集（2026-10-02）
+
+Clash 转换增加 SSH，当前类型覆盖为 **12/15**。密码、内联/加密 PEM 私钥、主机
+公钥和原生库算法偏好列表原文保留；双认证的尝试顺序与请求 UDP 的差异明确记账。
+外部私钥路径、空用户名、异常/未知算法及未映射字段拒绝整条节点；不补假 TLS/network。
+通用 detour 依赖检查和双来源同名对象隔离回归通过，失败 MATCH 保留已有诊断。
+
+Linux 主目标、版本校验、项目测试 9/9、Android Debug 构建和 diff 检查通过。
+5 节点公开 SSH 样本以及总协议/HY1/SS/逻辑样本通过固定 1.14.2 check；内核拒绝
+错误私钥解密口令与无效主机公钥的两个候选。三份规范化订阅副本保留 32/30/34 节点。
+这些检查不等于 SSH 远端握手、全部原规则或真机生命周期验收；该批随后并入 v0.3.19。
+SSH 详细分类和来源见[保真度契约](singbox-layers-and-fidelity.md)，命令与完成度见
+[开发复核](l1-l2-l3-status.md)。ShadowTLS/Tor/Naive、更多协议字段、外部 provider
+和 L3 原生编辑入口继续待实现。

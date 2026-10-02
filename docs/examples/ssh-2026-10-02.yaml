@@ -1,0 +1,107 @@
+# Configuration-check fixture only. All keys below were generated solely for this public test.
+# Never use these public test private keys for real authentication. No remote connection is tested.
+dns:
+  nameserver:
+  - 223.5.5.5
+proxies:
+- type: ssh
+  server: example.test
+  port: 22
+  username: test-only
+  name: ssh-password
+  password: ' sample password '
+  host-key:
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICNx6SsDR/4ncHTwycGP7TfCO2VbrNq0WxJwdK7muonz
+    clash-flux-public-test-only
+  host-key-algorithms:
+  - ssh-ed25519
+  udp: false
+- type: ssh
+  server: example.test
+  port: 22
+  username: test-only
+  name: ssh-key
+  private-key: '-----BEGIN OPENSSH PRIVATE KEY-----
+
+    b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+
+    QyNTUxOQAAACAjcekrA0f+J3B08MnBj+03wjtlW6zatFsScHSu5rqJ8wAAAKCH/jw5h/48
+
+    OQAAAAtzc2gtZWQyNTUxOQAAACAjcekrA0f+J3B08MnBj+03wjtlW6zatFsScHSu5rqJ8w
+
+    AAAEAWgDeM6v+Ti/BC3huMyCq8NuVV31QVuKfXxHkbvGkfZiNx6SsDR/4ncHTwycGP7TfC
+
+    O2VbrNq0WxJwdK7muonzAAAAG2NsYXNoLWZsdXgtcHVibGljLXRlc3Qtb25seQEC
+
+    -----END OPENSSH PRIVATE KEY-----
+
+    '
+  host-key:
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICNx6SsDR/4ncHTwycGP7TfCO2VbrNq0WxJwdK7muonz
+    clash-flux-public-test-only
+- type: ssh
+  server: example.test
+  port: 22
+  username: test-only
+  name: ssh-encrypted
+  private-key: '-----BEGIN OPENSSH PRIVATE KEY-----
+
+    b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jdHIAAAAGYmNyeXB0AAAAGAAAABDgZfWDgh
+
+    socdW+GcNVXAxjAAAAGAAAAAEAAAAzAAAAC3NzaC1lZDI1NTE5AAAAIM4ONz9EYrt0B/9M
+
+    4Jzbxu8epo32P1/TaVDK3dqtNQTpAAAAoM8aQeMWbcQ11w0+my7CV0O3NLpZcSAiCEQjTW
+
+    9LwsOyzRRxKuD/lzy4TQn6KtERCX19b7uCamigsKhRNlcTSZ3FcFQEHAGH1HGL5Zr5qAdT
+
+    GHD/G+09h9Lw8v/DWTa5R63JkVVQGMZiEfeJF7L8KgaVmPH+R62EL4obPnZbTyreTeAAYz
+
+    gwaPskFyefGBxIqk5BbD9B7qlW6AQOMMxL4EE=
+
+    -----END OPENSSH PRIVATE KEY-----
+
+    '
+  private-key-passphrase: ' test-only-passphrase '
+- type: ssh
+  server: example.test
+  port: 22
+  username: test-only
+  name: ssh-dual
+  password: sample
+  private-key: '-----BEGIN OPENSSH PRIVATE KEY-----
+
+    b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+
+    QyNTUxOQAAACAjcekrA0f+J3B08MnBj+03wjtlW6zatFsScHSu5rqJ8wAAAKCH/jw5h/48
+
+    OQAAAAtzc2gtZWQyNTUxOQAAACAjcekrA0f+J3B08MnBj+03wjtlW6zatFsScHSu5rqJ8w
+
+    AAAEAWgDeM6v+Ti/BC3huMyCq8NuVV31QVuKfXxHkbvGkfZiNx6SsDR/4ncHTwycGP7TfC
+
+    O2VbrNq0WxJwdK7muonzAAAAG2NsYXNoLWZsdXgtcHVibGljLXRlc3Qtb25seQEC
+
+    -----END OPENSSH PRIVATE KEY-----
+
+    '
+- type: ssh
+  server: example.test
+  port: 22
+  username: test-only
+  name: ssh-detour
+  password: sample
+  dialer-proxy: ssh-password
+  udp: true
+proxy-groups:
+- name: selector
+  type: select
+  proxies:
+  - ssh-password
+  - ssh-key
+  - ssh-encrypted
+  - ssh-dual
+  - ssh-detour
+  - DIRECT
+rules:
+- RULE-SET,cn,DIRECT
+- RULE-SET,cn-ip,DIRECT
+- MATCH,selector

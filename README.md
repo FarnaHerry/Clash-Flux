@@ -1,6 +1,6 @@
 # Clash-Flux
 
-版本更新见 [v0.3.18 发布说明](docs/releases/v0.3.18.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.19 发布说明](docs/releases/v0.3.19.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -35,8 +35,8 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   混合端口、局域网连接、日志级别；桌面自有 GEOIP/GEOSITE 缓存在替换前校验
   SRS/版本/zlib 文件头，启动时按周刷新，失败保留旧文件；原生规则集交给内核管理。
   Android 国内规则集保持固定构建资产，完整规则解析由内核负责
-- 订阅转换：Clash YAML → sing-box JSON 编译器（ss/vmess/vless/trojan/hysteria2/
-  tuic/AnyTLS/Snell v4 等协议、策略组、域名/IP/GEOIP/GEOSITE 与源地址/端口/TCP/UDP
+- 订阅转换：Clash YAML → sing-box JSON 编译器（SS/VMess/VLESS/Trojan/Hysteria v1/v2/
+  SSH/TUIC/AnyTLS/Snell v4 等协议、SS 插件子集、策略组、域名/IP/GEOIP/GEOSITE 与源地址/端口/TCP/UDP
   规则，支持测速容差并保留长测速间隔；未声明的 `RULE-SET,cn` / `RULE-SET,cn-ip` 近似映射到内置国内规则集；不支持的条目显式提示而非静默丢弃；
   原生 sing-box JSON 订阅直通）
 - 代理链：节点的 `dialer-proxy` 转为原生 `detour`，支持节点/组前向引用；编译期拒绝
@@ -176,7 +176,18 @@ exact / approx / unsupported 记入保真度账本，不静默降级，也不在
 [L1 / L2 / L3 开发复核](docs/l1-l2-l3-status.md)。该快照区分代码接入与实机验收，
 不代表已发布安装包的全部能力。
 首批 L2 已关闭凭据原文、TLS/传输异常值和全局指纹漏记问题，包含永久回归；
-协议类型覆盖仍为 10/15，更多字段与 provider 适配继续按复核清单推进。
+后续工作区补 VMess/VLESS UDP 编码、VMess 填充参数、Hysteria2 Gecko 与跳端口映射，
+保留协议默认并明确记录不适用参数，配置样本经固定内核检查。
+SS 另支持 simple-obfs HTTP/TLS 与 v2ray-plugin WebSocket/TLS/mux 子集，
+UDP-over-TCP 显式保留 Clash 的 v1 默认；边界见保真度契约，另附
+[插件样本](docs/examples/ss-plugins-2026-10-02.yaml)。
+AND/OR/NOT 路由另支持嵌套 GEO 与 inline RULE-SET 引用；失败时整条拒绝并撤回
+未使用资源，示例见[逻辑规则样本](docs/examples/logical-rules-2026-10-02.yaml)。
+工作区另接入 Hysteria v1 UDP 子集，保留认证优先级与 10 秒跳端口默认，默认窗口差异
+明确记账；并修复 HY1/HY2 的 MBps/Mbps 单位区别，见[样本](docs/examples/hysteria1-2026-10-02.yaml)。
+SSH 另支持密码、内联/加密私钥和主机公钥/算法列表；双认证顺序差异明确记账，
+外部私钥路径仍拒绝，见[SSH 样本](docs/examples/ssh-2026-10-02.yaml)。
+协议类型覆盖为 12/15；不表示每种协议的全部字段已支持，更多字段与 provider 适配继续推进。
 桌面已接入[唯一主订阅 + 规则驱动的多次来源编排](docs/desktop-subscription-orchestration.md)：
 Clash YAML 次来源只通过启用规则参与，同名组/节点隔离；全局覆盖、来源分流、主规则、
 主兜底使用固定层级，权重只在层内比较。目标不可用默认阻断，可明确选择主默认出口或直连。

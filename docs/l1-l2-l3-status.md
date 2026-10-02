@@ -1,8 +1,10 @@
 # L1 / L2 / L3 开发完成度复核
 
-日期：2026-10-02。检查对象是 **HEAD `7085978` + 当前未提交工作区**，应用版本
-仍为 v0.3.16，包含订阅唤醒链接与 L2 首批 F01–F03 修复。这里不是已发布 v0.3.16
-安装包的能力声明，也不把本地验证等同于线上 CI 或全平台实机验收。
+日期：2026-10-02。检查基线为 **v0.3.18**；后续 L2 工作已并入 **v0.3.19**。
+v0.3.18 包含凭据/TLS 修复及 VLESS encryption、旧 WS 字段兼容修复；随后补
+L2 UDP 编码、VMess 填充、HY2 混淆/跳端口、SS 插件/UOT 版本，以及逻辑路由
+嵌套 GEO/RULE-SET、Hysteria v1 UDP 子集与带宽单位修复、SSH 认证/公钥子集。
+以下明确区分当前批次与历史验证，不把本地检查等同于线上 CI 或全平台实机验收。
 
 固定内核为 sing-box **1.14.2**，revision
 `af6e64c3b69e6132ebaee0e1a3d24e93903f6709`；职责和约束以
@@ -18,7 +20,7 @@
 | 层 | 当前结论 | 可量化范围 | 距离完成的主要缺口 |
 |---|---|---|---|
 | L1 内核层 | 固定版本、资产校验、桌面/Android 控制链已接入；平台运行验收部分完成 | 官方桌面资产表 6 项；实际桌面 CI 4 项；本机验证 Linux x86_64 与 Android arm64 构建 | 其它平台实机、网络/权限/后台生命周期、故障恢复验收 |
-| L2 翻译层 | 常用转换与结构化账本已接入，F01–F03 已修复；整体仍部分完成 | Clash 代理协议类型 10/15；端点编辑转换 1/5；类型覆盖不表示字段完整 | 外部 provider、更多 DNS/协议字段及剩余取值边界审查 |
+| L2 翻译层 | 常用转换与结构化账本已接入，F01–F03 与兼容退化已修复；后续补 UDP/填充/HY2、SS 插件/UOT、嵌套 GEO/RULE-SET、Hysteria v1、SSH，整体仍部分完成 | Clash 代理协议类型 12/15；端点编辑转换 1/5；类型覆盖不表示字段完整 | 外部 provider、更多 DNS/协议字段及剩余取值边界审查 |
 | L3 产品层 | 常用客户端页面、桌面编排首阶段、订阅唤醒已接入；最终产品形态部分完成 | 桌面 7 个一级页、手机 4 个一级页；支持的原生端点编辑器仍只有 OpenVPN client | 完整编排恢复、对象选择/追溯、原生 DNS/端点/规则集编辑、跨平台交互验收 |
 
 不计算总完成百分比：内核有某个协议、编译器能生成它、界面能编辑它、真机能稳定
@@ -56,13 +58,13 @@ IPA、不进入 Release 门禁；不计为完成的平台支持。
 
 | 领域 | 已完成范围 | 未完成/近似范围 |
 |---|---|---|
-| 代理协议 | SS、VMess、VLESS、Trojan、HY2、TUIC、HTTP、SOCKS、AnyTLS、Snell v4，共 10 类 | Hysteria v1、ShadowTLS、SSH、Tor、Naive 的 Clash 转换未接入；现有 10 类仍非全部字段覆盖 |
-| TLS/传输 | TCP、WS、gRPC、HTTP/h2、HTTPUpgrade；SNI、ALPN、客户端指纹及部分 Reality 字段；F02/F03 异常值/未启用字段显式拒绝 | SS 插件、更多 TLS/ECH/证书约束未映射；random 指纹分布及 PSK/PQ 别名折叠记 approx |
+| 代理协议 | SS、VMess、VLESS、Trojan、Hysteria v1 UDP 子集、HY2、TUIC、HTTP、SOCKS、AnyTLS、Snell v4、SSH，共 12 类 | ShadowTLS、Tor、Naive 的 Clash 转换未接入；12 类仍非全部字段覆盖，HY1 窗口/快速打开/伪装等边界见本批说明 |
+| TLS/传输 | TCP、WS、gRPC、HTTP/h2、HTTPUpgrade；SS simple-obfs HTTP/TLS 与 v2ray-plugin WebSocket/TLS/mux 子集；SNI、ALPN、客户端指纹及部分 Reality 字段；F02/F03 异常值/未启用字段显式拒绝 | 其它 SS 插件和插件自定义 headers/证书/ECH 等仍未映射；random 指纹分布及 PSK/PQ 别名折叠记 approx |
 | 策略组 | selector/urltest、初始选择、间隔/容差；过长间隔保留并延长 idle_timeout、记近似 | fallback/load-balance 只能近似成 urltest；锁定、lazy/timeout 等不能伪装支持 |
 | 拨号/依赖 | `dialer-proxy`→detour，组成员与 DNS resolver 共同检查循环；接口、mark、TFO、MPTCP 按平台处理 | detour 忽略物理选项、MPTCP IPv6 差异记 approx；跨来源原始代理链未开放 |
 | DNS | local、UDP/TCP、DoT/DoH/DoQ/h3、bootstrap；完整域名/最长后缀 nameserver-policy 和节点专用 policy | 更多通配/规则集 policy、fallback-filter、hosts/FakeIP、direct follow-policy 转换未完成；多服务器/fallback/直连解析时机有近似 |
 | 普通路由 | 域名/正则、源/目标 CIDR、端口/范围、TCP/UDP、IP-VERSION、GEO、桌面进程；Linux UID、Android 包名/正则 | 平台不适用字段拒绝；Android owner 查询失败/共享 UID 的实际行为未验收 |
-| 逻辑与 inline provider | AND/OR/NOT 有界子集、domain/ipcidr/classical inline；失败子条件/整份 payload 原子拒绝，拒绝重名 provider | 嵌套 GEO/RULE-SET 等更多条件未接入；HeadlessRule 不接受 route 的 UID/IP-VERSION |
+| 逻辑与 inline provider | AND/OR/NOT 有界子集，路由支持嵌套 GEO/已转换 RULE-SET；domain/ipcidr/classical inline；失败子条件/整份 payload 原子拒绝，回滚新建资源，拒绝重名 provider | HeadlessRule 不接受 route 的 UID/IP-VERSION/GEO/RULE-SET；外部 provider 与其它未映射条件仍待实现 |
 | 规则集下载 | 自有 GEO 显式资源清单、桌面按周刷新、独占临时文件与提交前筛查；Android 固定打包 CN 资产 | 外部 HTTP/file provider、YAML/text/MRS 全格式生命周期和管理 UI 未实现；SRS 文件头筛查不是完整解析 |
 | 规则终止/失败 | 首个有效 MATCH 终止；DIRECT 不改成 selector；无效兜底失败；REJECT-DROP 使用原生 drop；失败仍返回已产生账本 | 保留原生内核语义，不提供停核后的系统 kill switch |
 | 原生配置/连接 | 原生 JSON 保留用户字段并合并托管项；OpenVPN `.ovpn`→openvpn-client；PPTP 走平台补充路径 | JSON 不是完整可视化编辑器；原生 JSON 次来源不支持；WireGuard/Tailscale/OpenConnect/OpenVPN server 编辑转换未接入 |
@@ -82,7 +84,7 @@ sing-box 端点分母；WireGuard 已从 outbound 移除，不能算作未接入
   approx；无效布尔/HY2 带宽拒绝，HTTP 多 path 取首项记 approx。
 - Trojan/HY2/TUIC 默认 TLS、QUIC 不注入 TCP uTLS、TUIC `tls.disable_sni` 与 ALPN/SNI
   共用转换已修复。SOCKS TLS 及 QUIC 不支持的 uTLS/Reality 明确拒绝。
-- 固定 1.14.2 内核 `check` 已接受本轮 **10 类协议**组成的配置；这没有证明服务器握手。
+- 固定 1.14.2 内核 `check` 已接受当前 **11 类协议**组成的配置；这没有证明服务器握手。
 - F01–F03 修复及永久回归已接入，见下表；同时修复 OpenVPN inline 凭据按空格拆词的问题。
 
 ### F01–F03：初始复现与首批修复（2026-10-02）
@@ -132,7 +134,162 @@ firefox/safari，并验证无全局值的次来源不会继承主来源指纹。
 次来源明确失败并记账；`a→b→a` detour 循环明确失败。不能再把首阶段写成“完全未实现”，
 也不能把这些配置检查称作已完成切主、刷新、故障注入与真实流量的端到端验收。
 
-## 本次验证记录与复现
+## 前序 L2 批次：UDP / VMess 填充 / HY2（2026-10-02）
+
+- VMess/VLESS `packet-encoding` 与历史 `packet-addr`/`xudp` 映射，保留各协议默认
+  和输入优先级；VMess `global-padding`、`authenticated-length` 直接写原生字段。
+- HY2 salamander/gecko 按实际类型映射，缺密码与未知混淆拒绝；密码单独出现不再
+  擅自开启混淆，非活动参数记账。Gecko 包尺寸按固定内核默认和上限校验。
+- HY2 ports 原子解析，单端口输出原生 singleton 范围，支持只有 ports 的节点；
+  hop-interval 支持秒数/范围，缺省 30 秒、最小 5 秒限制和不生效字段均明确处理。
+- 新永久回归在实现前复现 43 项失败；修复后 `test_singbox` 及项目 9 项测试通过。
+  更新的 [配置样本](examples/layers-audit-2026-10-02.yaml) 当批包含 10 协议、11 个节点（后续 HY1 批扩至 11 协议、12 节点），
+  生产编译器输出通过 sing-box 1.14.2 `check`（退出码 0）。
+- 三份本地订阅的独立测试副本保留节点及代理组字段；为满足现有 harness 的国内
+  规则断言，替换 rules 并去掉 rule-providers 声明。节点保留 32/32、30/30、34/34，
+  三份输出均通过固定内核 check；这不验证原订阅全部规则/provider。私有凭据未入库。
+- `cmake --build build --target clash-flux test_singbox`、`./run.sh --version`
+  （v0.3.18）通过；Android `:app:assembleDebug --offline --no-daemon` 重新构建成功。
+  `git diff --check` 通过。本批未提交、打标签、推送或发布；未做远程线路握手或真机安装。
+
+字段及保真度细节见[分层契约](singbox-layers-and-fidelity.md)。L1 固定版本不变，
+L3 没有新增编辑入口；类型覆盖仍为 10/15，不能把字段补齐计作新增协议或整体完成。
+
+## 后续 L2 批次：SS 插件与 UOT 版本（2026-10-02）
+
+- 接入内核内置 simple-obfs HTTP/TLS 和 v2ray-plugin WebSocket/TLS/mux 子集，
+  保留 Clash 的 host/path/mux 默认，选项字符串按 SIP003 转义，TLS false 不输出启用键。
+  未映射参数、重复键、异常类型和缺 mode 整条拒绝并记账；不调用外部插件进程。
+- 修复 SS UOT 默认版本差异：此前 `udp-over-tcp:true` 写布尔值会走原生 v2，
+  现在显式写 v1，与 Clash 缺省/0 的有效版本一致；输入显式 v1/v2 均支持。
+- 永久回归实现前复现 16 项失败，修复后通过；`ctest` 指定的 9 项项目测试全部通过。
+  并行样本检查还复现了 harness 共用 /tmp 目录互相覆盖的问题；规则集测试现在
+  独占临时目录并由 RAII 清理，8 个并行测试进程全部通过。
+  [8 节点样本](examples/ss-plugins-2026-10-02.yaml) 全部保留，生成配置通过固定
+  sing-box 1.14.2 `check`。之前的 UDP/HY2 样本仍通过同一编译器回归。
+- 三份订阅节点/组的规范化副本再次保留 32/32、30/30、34/34，输出均通过内核
+  check；测试仅替换 rules、去除 rule-providers，未改源订阅或验证全部原规则，凭据未入库。
+- Linux `cmake --build build --target clash-flux test_singbox`、`./run.sh --version`
+  （v0.3.18）、Android `:app:assembleDebug --offline --no-daemon` 和 `git diff --check`
+  通过；未进行远程握手/真机安装，未提交、打标签、推送或发布。
+
+复现配置检查：
+
+```bash
+build/test_singbox docs/examples/ss-plugins-2026-10-02.yaml \
+  platform/android/app/build/generated/rule-set-assets/rules \
+  /tmp/clash-flux-l2-ss-audit.json
+build/engines/sing-box check -c /tmp/clash-flux-l2-ss-audit.json
+```
+
+## 后续 L2 批次：逻辑路由嵌套 GEO / RULE-SET（2026-10-02）
+
+- AND/OR/NOT 路由接入 GEOIP/GEOSITE、private/lan 和已转换 inline RULE-SET 引用；
+  顶层和子条件共用资源转换，保持原生 logical/mode/invert，动作只位于最外层。
+  未声明的国内别名仍记 approx；失败声明不能替换成同名国内别名。
+- 子条件失败时整条逻辑规则拒绝，保留保真度明细，RAII 撤回本条新增 rule_set、
+  自有 GEO 资源及 tag 缓存；既有资源保留，后续有效规则仍能生成。未知路由目标
+  在解析子树前拒绝，不产生无用 GEO 资源。
+- 子条件不推导全局 CN DNS 分流，避免 NOT/复合匹配扩大 DNS 策略。HeadlessRule
+  继续拒绝 GEO/RULE-SET，不把路由字段写进 inline classical；Android 本地 GEO
+  与手机单来源限制保持。桌面双来源回归确认嵌套引用正确改写，缓存 tag 保持原名。
+- 永久回归在实现前复现 5 项失败，修复后全部通过；项目 `ctest` 9/9 通过。
+  [公开逻辑样本](examples/logical-rules-2026-10-02.yaml) 的 6 条逻辑规则、3 份 inline
+  provider 和 2 份 GEO 资源全部生成，输出通过固定 sing-box 1.14.2 `check`。
+  UDP/HY2、SS 插件样本仍通过同一生产编译器和固定内核检查。
+- 三份私有订阅再次使用独占临时副本，仅替换 rules 并去除 rule-providers；节点/组
+  字段保留，32/32、30/30、34/34 节点均生成且配置 check 通过。副本已清理，
+  不验证源订阅全部规则/provider 或远程握手，凭据未入库。
+- Linux `cmake --build build --target clash-flux test_singbox`、`./run.sh --version`
+  （v0.3.18）、Android `:app:assembleDebug --offline --no-daemon` 和 `git diff --check`
+  通过。未进行真机安装，未提交、打标签、推送或发布。
+
+复现配置检查：
+
+```bash
+build/test_singbox docs/examples/logical-rules-2026-10-02.yaml \
+  platform/android/app/build/generated/rule-set-assets/rules \
+  /tmp/clash-flux-l2-logical-audit.json
+build/engines/sing-box check -c /tmp/clash-flux-l2-logical-audit.json
+```
+
+该逻辑批次时 L2 类型覆盖为 10/15；外部 provider、hosts/FakeIP、更多 DNS/TLS
+字段及 L3 原生编辑入口不在此批交付范围。
+
+## 后续 L2 批次：Hysteria v1 UDP 子集 / 带宽单位（2026-10-02）
+
+- 新增 Hysteria v1 的 UDP 转换，协议类型覆盖为 **11/15**；认证、XPlus 混淆、
+  正整数带宽、协议 TLS/SNI/ALPN、严格 ports 和 10 秒 hopping 默认已接入。
+  auth 的 Base64 字节优先于 auth-str；凭据保留原文并验证 65535 字节线上长度。
+- 接收窗口按实际输入生态的 stream/connection 方向映射；成对非零窗口 exact，
+  默认窗口保留 15/64 MiB 上限但初始分配不同，明确记 approx；单边窗口组合尚未接入。
+  非 UDP 伪装、fast-open:true、显式空 ALPN、证书/ECH/指纹约束及兼容 up-speed/
+  down-speed 等字段拒绝整条节点，不省略后继续连接。
+- HY1/HY2 共用带宽转换，修复旧 HY2 将 `3 MBps` 当作 `3 Mbps` 的问题，现在
+  写 24 Mbps；大小写、类型、正数及乘法范围检查不允许静默回落自动带宽。
+- 永久回归在实现前复现 16 项失败，修复后通过，并新增认证 padding/CRLF/二进制、
+  16 位长度边界和失败 MATCH 保留账本回归。项目 `ctest` 9/9 通过。
+  [HY1 样本](examples/hysteria1-2026-10-02.yaml) 5/5 节点保留；总协议样本扩充为
+  11 类、12 个节点，全部生成。两者及 SS 插件、逻辑路由样本均通过固定 1.14.2
+  内核 `check`；这些配置检查不验证远端握手或真实流量。
+- 三份私有订阅独占临时副本继续保留 32/32、30/30、34/34 节点，配置 check
+  通过；仅替换 rules 并去除 rule-providers，未改源订阅或验收全部原规则，副本已清理。
+- `cmake --build build --target clash-flux test_singbox`、`./run.sh --version`
+  （v0.3.18）、Android `:app:assembleDebug --offline --no-daemon`、`git diff --check`
+  通过。本批未真机安装、提交、打标签、推送或发布，L1 固定内核不变，L3 无新增编辑器。
+
+复现配置检查：
+
+```bash
+build/test_singbox docs/examples/hysteria1-2026-10-02.yaml \
+  platform/android/app/build/generated/rule-set-assets/rules \
+  /tmp/clash-flux-l2-hy1-audit.json
+build/engines/sing-box check -c /tmp/clash-flux-l2-hy1-audit.json
+```
+
+本批结束时尚未完成 ShadowTLS/SSH/Tor/Naive 的 Clash 转换；更多 HY1/HY2 字段、外部
+provider、DNS/hosts/FakeIP 与 L3 编辑入口继续按契约推进。
+
+## 后续 L2 批次：SSH 认证 / 主机公钥子集（2026-10-02）
+
+- 新增 SSH 的 Clash YAML 转换，协议类型覆盖为 **12/15**；密码、内联 PEM 私钥、
+  加密私钥口令、主机公钥和固定原生库的 20 种主机算法偏好列表已接入。
+  所有认证字段保留原文，列表完整校验，不删异常成员后保留部分配置。
+- 双认证完整保留两种凭据，密码/私钥尝试顺序差异记 `Node/Approx`；无私钥的非空
+  口令记不生效。显式缺失/空用户名拒绝，避免被原生默认 root 改写。
+  外部私钥路径、显式空算法列表和其它未映射字段拒绝整条节点。
+  SSH 不输出原生不存在的 TLS/network 字段，请求 UDP 则明确记 TCP-only 降级。
+- 通用 dialer/platform 限制不变。永久回归覆盖缺失/循环 detour、失败 MATCH 保留
+  账本、双来源同名 SSH 的认证字段和 detour 命名空间隔离；首组回归在旧实现复现
+  9 项失败，修复后通过，另补所有算法、列表与来源边界。项目 `ctest` **9/9** 通过。
+- [公开 SSH 样本](examples/ssh-2026-10-02.yaml) 5/5 节点保留，包含专门生成的公开
+  测试私钥、加密私钥、固定公钥、双认证和代理链；固定 1.14.2 `check` 通过。
+  内核还正确拒绝了错误解密口令与无效主机公钥两个临时候选。
+  总协议样本为 12 类、13/13 节点，HY1 5/5、SS 插件 8/8 及逻辑规则样本再次通过 check。
+- 三份规范化私有订阅副本保留 32/32、30/30、34/34 节点，并通过内核 check；只替换
+  rules、去除 rule-providers，源订阅未改，独占临时副本已清理。这不验证全部原规则。
+- `cmake --build build --target clash-flux test_singbox`、`./run.sh --version`
+  （v0.3.19）、Android `:app:assembleDebug --offline --no-daemon`、`git diff --check`
+  均通过；Android 构建日志为 `/tmp/clash-flux-l2-ssh-android-build.log`。
+  未验收远端 SSH 握手、真实流量或本批真机生命周期；L1 pin 不变，L3 未新增编辑器。
+
+复现配置检查与构建：
+
+```bash
+build/test_singbox docs/examples/ssh-2026-10-02.yaml \
+  platform/android/app/build/generated/rule-set-assets/rules \
+  /tmp/clash-flux-l2-ssh-audit.json
+build/engines/sing-box check -c /tmp/clash-flux-l2-ssh-audit.json
+# 在 platform/android 下运行：
+JAVA_HOME=/opt/android-studio/jbr ANDROID_HOME=/home/farna/Android/Sdk \
+  HUXERUI_HOME=/home/farna/.local/share/HuxerUI \
+  ./gradlew :app:assembleDebug --offline --no-daemon
+```
+
+当前仍缺 ShadowTLS/Tor/Naive 的 Clash 转换、外部 provider 和更多 DNS/协议字段。
+保真度分类与上游依据见[契约](singbox-layers-and-fidelity.md#ssh-认证与主机公钥子集2026-10-02)。
+
+## 历史首批验证记录与复现（v0.3.16 工作区）
 
 | 验证 | 结果/范围 |
 |---|---|

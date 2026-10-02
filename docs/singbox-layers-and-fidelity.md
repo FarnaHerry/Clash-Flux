@@ -103,7 +103,7 @@
 
 仍缺（下一批）：
 
-1. **协议与端点补面**：Clash 出站类型已覆盖 10/15、端点编辑入口仍为 1/5
+1. **协议与端点补面**：Clash 出站类型已覆盖 12/15、端点编辑入口仍为 1/5
    （见 §4.1 / §4.2；类型覆盖不代表所有字段均已映射）；
 2. 外部 `RULE-SET` / rule-providers 下载与完整格式转换（已有 inline 子集与国内别名）；
 3. Android 应用选择入口及 owner 查询失败/共享 UID 等运行边界（包名/正则输入已接入）。
@@ -170,25 +170,27 @@ std::string FidelitySummary(const std::vector<FidelityNote>& notes);
 原生 JSON 合并托管项时，`experimental.cache_file` 仅强制 `enabled: true`，保留
 `path`、`cache_id`、`store_fakeip`、`store_rdrc` 等用户配置，不整对象重建。
 
-### 4.1 出站协议（Clash 转换覆盖 10 / 15 个代理协议类型）
+### 4.1 出站协议（Clash 转换覆盖 12 / 15 个代理协议类型）
 
 已映射（`src/singbox_proxy.inc`；按协议类型计，不计 direct/bridge/block 和策略组）：
 
 | 订阅类型 | sing-box 出站 |
 |---|---|
-| `ss` | `shadowsocks` |
+| `ss` | `shadowsocks`；simple-obfs/v2ray-plugin 子集、显式 UOT v1/v2 |
 | `vmess` | `vmess` |
 | `vless` | `vless` |
 | `trojan` | `trojan` |
+| `hysteria` | `hysteria`：UDP 子集；auth/auth-str、XPlus、带宽、TLS、跳端口与窗口边界见下表 |
 | `hysteria2` / `hy2` | `hysteria2` |
 | `tuic` | `tuic` |
 | `http` | `http` |
 | `socks5` | `socks` |
+| `ssh` | `ssh`：密码、内联私钥/口令、主机公钥与算法列表；认证顺序及路径边界见下表 |
 | `anytls` | `anytls`：密码、强制 TLS、SNI/ALPN/uTLS、会话池参数、客户端元数据 |
 | `snell` | `snell`：仅显式 v4；PSK、reuse、UDP 开关、http/tls 伪装 |
 
-sing-box 1.14 官方还提供、但尚未从 Clash YAML 映射：`hysteria`(v1)、`shadowtls`、
-`ssh`、`tor`、`naive`。**WireGuard 出站在 1.13 已移除，应使用 endpoint**，不能再放进
+sing-box 1.14 官方还提供、但尚未从 Clash YAML 映射：`shadowtls`、
+`tor`、`naive`。**WireGuard 出站在 1.13 已移除，应使用 endpoint**，不能再放进
 出站覆盖率的分母。依据为固定 revision 的
 [出站注册表](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/include/registry.go)
 与 [QUIC 注册表](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/include/quic.go)。
@@ -208,12 +210,13 @@ VLESS 的空 `encryption` 或 `none` 是 mihomo 的兼容默认，省略后按 e
 TLS ALPN 接受 scalar/字符串数组，保持原文和顺序，每项 1–255 字节，允许空数组；
 WS header 只接受字符串键值对象，拒绝重复键，path/header 不 trim。
 其它未审查字段不能仅凭键名白名单就宣称取值完整。
-SS/VMess/VLESS/Trojan/HY2/TUIC/SOCKS 显式 `udp: false` → `network: tcp`（exact）；
-HTTP 出站仅支持 TCP，`udp: true` 记 approx。无效布尔值拒绝；HY2 仅映射正整数
-Mbps（整数或 `30 Mbps` 字符串），其它单位、小数与无效值拒绝并记 unsupported，
+SS/VMess/VLESS/Trojan/HY1/HY2/TUIC/SOCKS 显式 `udp: false` → `network: tcp`（exact）；
+HTTP 出站仅支持 TCP，`udp: true` 记 approx。无效布尔值拒绝；HY1/HY2 仅映射正整数
+Mbps（整数或 `30 Mbps` 字符串）及整数 MBps（乘 8），单位大小写区分；其它单位、
+小数与无效值拒绝并记 unsupported，
 不截断后改成默认自适应带宽。HTTP 传输多路径只取首项并记 approx。
-Trojan/HY2/TUIC 保留协议自带 TLS，不要求订阅额外声明 `tls: true`；显式关闭 TLS
-拒绝。HY2/TUIC 使用原生 QUIC TLS，不注入 TCP uTLS；显式 uTLS/Reality 与 SOCKS
+Trojan/HY1/HY2/TUIC 保留协议自带 TLS，不要求订阅额外声明 `tls: true`；显式关闭 TLS
+拒绝。HY1/HY2/TUIC 使用原生 QUIC TLS，不注入 TCP uTLS；显式 uTLS/Reality 与 SOCKS
 TLS 字段拒绝并记 unsupported。TUIC 的 `disable-sni` 映射到 `tls.disable_sni`，
 ALPN 与 servername/SNI 共用 TLS 转换，不因 ALPN 分支丢失其它设置。
 `global-client-fingerprint` 是来源内的历史兼容输入：节点 `client-fingerprint` 优先，
@@ -240,6 +243,131 @@ ALPN 与 servername/SNI 共用 TLS 转换，不因 ALPN 分支丢失其它设置
 | 凭据/TLS/传输类型异常或不适用的 TLS 字段 | unsupported；拒绝整条节点，记录字段；引用其 MATCH/依赖仍失败 |
 | 全局指纹为空、类型异常或内核不认识 | unsupported；拒绝整份来源并保留字段账本 |
 | random 分布、固定内核折叠的 PSK/PQ 指纹别名 | approx；保留内核行为并记语义差异 |
+
+### 协议 UDP、填充与 Hysteria2 扩展（2026-10-02）
+
+这批补现有协议的字段，类型覆盖仍为 10/15；不代表其它 TLS/QUIC 参数已经完整映射。
+
+| Clash 输入 | 固定 sing-box 输出与保真度 |
+|---|---|
+| VMess/VLESS `packet-encoding` | exact；`packetaddr` / `packet` → `packet_encoding: packetaddr`，`xudp` → 原生编码；空值按各协议的 Clash 有效默认处理 |
+| 历史 `packet-addr` / `xudp` | exact；与 `packet-encoding` 按 Mihomo 各协议优先级合成，严格校验布尔值 |
+| VMess `global-padding` / `authenticated-length` | exact；对应 `global_padding` / `authenticated_length`，显式 false 也保留 |
+| HY2 `ports` | exact；完整校验逗号分隔的端口和范围（反向范围按 Clash 排序）；`40000` → `40000:40000`，`20000-30000` → `20000:30000`；启用时不输出被忽略的 `server_port`，允许缺省 port 或 port: 0 |
+| HY2 `hop-interval` | exact 整数秒或秒数范围（反向范围按 Clash 排序） → `hop_interval` / `hop_interval_max`；ports 启用时缺省/空字符串/0 显式写 30s，非零小于 5 秒按 Clash 限制调整并记 approx；无 ports 时显式字段不生效并记 approx |
+| HY2 `obfs: salamander/gecko` + 密码 | exact；尊重类型与原文密码，不再只凭密码强制开启 salamander |
+| HY2 `obfs-min-packet-size` / `obfs-max-packet-size` | exact Gecko 原生字段；0 使用内核默认 512/1200，有效 min ≤ max ≤ 2048；非 Gecko 下字段不生效，记 approx |
+| 仅有 HY2 `obfs-password`，未启用 obfs | approx；与 Clash 一致保留无混淆连接，并记录密码不生效 |
+| 上述字段类型错误、未知编码/混淆、活动混淆缺密码、非法端口/时长/Gecko 范围 | unsupported；整条节点拒绝，不保留部分范围或改成其它混淆；诊断不回显密码 |
+
+VMess 默认是普通 UDP，VLESS 默认 XUDP；两者均省略编码控制时保留原生默认。
+显式空 `packet-encoding` 也按 Clash 有效默认处理。VMess 的 xudp 开关优先于
+packetaddr；VLESS 显式 `packetaddr`/`packet` 则优先于历史 xudp，其它情况下
+packet-addr 与 xudp 的组合按来源实现解析。这些差异不能用一个统一默认掩盖。
+`hop-interval` 只接受不会溢出 Go time.Duration 的秒数（最大 9223372036），反向范围按 Clash 归一为升序。
+
+依据：[固定 VMess 选项](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/vmess.go)、
+[固定 VLESS 默认](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/protocol/vless/outbound.go)、
+[固定 HY2 实现](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/protocol/hysteria2/outbound.go)、
+[固定 sing-quic Gecko](https://github.com/SagerNet/sing-quic/blob/6a3a24d65b99/hysteria2/gecko.go)；
+Clash 有效默认与优先级核对 [Mihomo VMess](https://github.com/MetaCubeX/mihomo/blob/Meta/adapter/outbound/vmess.go)、
+[VLESS](https://github.com/MetaCubeX/mihomo/blob/Meta/adapter/outbound/vless.go) 和
+[HY2](https://github.com/MetaCubeX/mihomo/blob/Meta/adapter/outbound/hysteria2.go)（2026-10-02 检查）。
+
+### SSH 认证与主机公钥子集（2026-10-02）
+
+当前工作区新增 `type: ssh`，协议类型覆盖为 12/15；仍不表示所有字段或 L3 编辑入口完成。
+
+| 输入 | 分类与输出 |
+|---|---|
+| server / 显式 port / 非空 username | exact；用户名按原文写 `user`；缺失/空用户名 unsupported，避免内核默认 root 改变身份 |
+| password；空/未给凭据 | exact；保留密码原文；不自动生成认证方式 |
+| 内联 PEM private-key / private-key-passphrase | exact；原文写 `private_key` / `private_key_passphrase`；私钥格式与解密结果由候选内核检查，不在翻译层实现密码学解析 |
+| 密码与私钥均非空 | approx；两种凭据均保留，但固定内核先尝试密码，Mihomo 先尝试私钥；不伪造认证顺序字段 |
+| 无私钥而 passphrase 非空 | approx；记录不参与认证，诊断不回显口令 |
+| host-key | exact；完整保留允许公钥列表、次序及原文；任一无效类型/空成员拒绝整条节点，公钥密码学格式由内核校验；省略/空列表沿用输入默认 |
+| host-key-algorithms | exact；保留固定原生 SSH 库支持的 20 种普通/证书/SK 算法和偏好次序；未知或异常成员整条拒绝，不过滤；显式空列表尚未支持 |
+| dialer-proxy / 通用拨号参数 | 复用平台约束、依赖图与来源命名空间；缺失/循环失败，不去掉代理链后直连；物理选项被 detour 忽略仍记 approx |
+| udp:false / 未给 | exact；原生 SSH 仅 TCP，不输出不存在的 `network` 字段；udp:true 记 approx |
+| 外部私钥路径、TLS/uTLS/传输层字段及其它未映射字段 | unsupported；拒绝整条节点，不读取订阅提供的本地路径，也不去掉约束后保留普通线路 |
+
+公开[SSH 样本](examples/ssh-2026-10-02.yaml)内的私钥是专门生成的公开测试材料，
+仅用于配置检查；5 个节点包括加密私钥、固定主机公钥、双认证和代理链。
+内核 check 不验证远端公钥匹配、认证协商或真实流量。
+依据：[固定 schema](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/ssh.go)、
+[固定出站实现](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/protocol/ssh/outbound.go)、
+[Mihomo SSH](https://github.com/MetaCubeX/mihomo/blob/Meta/adapter/outbound/ssh.go)（2026-10-02 核对）、
+[原生库算法](https://github.com/golang/crypto/blob/v0.54.0/ssh/keys.go)及
+[证书算法](https://github.com/golang/crypto/blob/v0.54.0/ssh/certs.go)。
+
+### Hysteria v1 UDP 子集与带宽单位（2026-10-02）
+
+当前工作区支持 `type: hysteria`；协议类型覆盖增加为 11/15。它与 HY2 使用各自
+认证、混淆、跳端口和 QUIC 字段，不把旧协议替换成新协议。
+
+| 输入 | 分类与输出 |
+|---|---|
+| 协议缺省/空值/udp；obfs-protocol 非空时优先 | exact；只接受最终 UDP 传输，不输出不存在的 protocol 字段 |
+| auth 非空 | exact；标准 Base64 字节写 native auth，优先于 auth-str，不同时输出原生高优先级 auth_str；遵守 Go 解码的 CR/LF、padding 行为 |
+| auth 为空/未给 + auth-str；两者未给 | exact；保留 auth-str 原文或匿名认证；不 trim、替换或自动添加密码 |
+| auth / auth-str 长度 | 超过 65535 字节 unsupported；auth 按解码后的长度检查，防止 16 位线上认证长度截断；诊断不输出凭据 |
+| up/down | HY1 两侧必需；正整数裸值/Mbps 和整数 MBps → up_mbps/down_mbps exact；MBps 字节乘 8。HY2 仍可不指定，指定时复用相同校验 |
+| obfs | exact；XPlus 密码原文写字符串，不当成 HY2 的混淆类型；空值不启用 |
+| TLS / SNI / ALPN / skip-cert-verify | 保留协议必需 TLS，使用 QUIC，不继承 TCP uTLS；显式空 ALPN unsupported，因为内核会恢复 hysteria 默认而输入生态保留空列表 |
+| ports | exact；严格解析、整份提交，单端口也写 n:n，移除不生效的单个 port；支持 ports-only 节点 |
+| 活动 hop-interval | 缺省/0 → 10s exact；非零整数 ≥5 秒保留。显式 1–4 秒 unsupported，不拉长后冒充保真；秒数范围不适用于 HY1 |
+| 无 ports 的 hop-interval | approx 记不生效；不输出无作用的内核字段 |
+| recv-window-conn / recv-window 同时非零 | exact；按实际 Mihomo 实现分别映射 stream_receive_window / connection_receive_window。使用 0–2147483647 字节整数，不按旧字段名字猜方向 |
+| 两窗口缺省/同时 0 | approx；保留 Clash 的 stream 15 MiB、connection 64 MiB 上限，原生初始值等于上限，输入生态为上限的 1/10，无法分别表达 |
+| 单侧非零窗口 | unsupported；本批未转换上游不同的单侧默认/覆盖逻辑，不忽略已指定窗口 |
+| disable-mtu-discovery；fast-open:false | 前者映射 disable_path_mtu_discovery；后者保留关闭语义，不输出不存在的快速打开字段 |
+| 最终非 UDP protocol/obfs-protocol；fast-open:true | unsupported；整条拒绝，不删伪装后继续连接 |
+| up-speed/down-speed、证书/私钥/指纹约束、ECH/uTLS/Reality、其它未映射字段 | unsupported；保留诊断并拒绝节点，不能宣称所有 Hysteria v1 参数完整支持 |
+
+共享带宽转换修复了原 HY2 将 `3 MBps` 错作 `3 Mbps` 的问题，现在输出 24 Mbps。
+非法单位、小数、数组、非正数和整数溢出均拒绝，不退回自动带宽。窗口默认近似会进入
+Node 账本与现有摘要，不因内核 check 成功而消失。样本见
+[hysteria1-2026-10-02.yaml](examples/hysteria1-2026-10-02.yaml)。
+核对依据：
+[固定 Hysteria schema](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/hysteria.go)、
+[固定 QUIC schema](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/http.go)、
+[固定窗口应用](https://github.com/SagerNet/sing-quic/blob/6a3a24d65b99/quic.go)、
+[固定 hopping](https://github.com/SagerNet/sing-quic/blob/6a3a24d65b99/hysteria/hop.go)、
+[Mihomo Hysteria](https://github.com/MetaCubeX/mihomo/blob/Meta/adapter/outbound/hysteria.go)、
+[Mihomo 带宽单位](https://github.com/MetaCubeX/mihomo/blob/Meta/common/utils/mbps.go)（2026-10-02 核对）。
+
+### Shadowsocks 插件与 UDP-over-TCP（2026-10-02）
+
+SS 不再一律拒绝插件，当前只转换固定内核内置的 simple-obfs 和 v2ray-plugin 子集；
+不启动外部插件程序，不省略无法表达的参数后保留普通 SS 线路。
+
+| Clash 输入 | 级别与处理 |
+|---|---|
+| `plugin: obfs`、`plugin-opts.mode: http/tls` | exact；写入 `plugin: obfs-local` 和原生 `obfs` / `obfs-host` 参数，缺省 host 显式保留 Clash 的 bing.com |
+| `plugin: v2ray-plugin`、`mode: websocket` | exact；写原生 WebSocket 插件，host 缺省 bing.com、path 缺省 /、mux 缺省启用；显式 host/path 保留原文 |
+| v2ray-plugin `tls` / `mux` | exact；布尔完整校验。TLS 为 true 才输出 tls 键，为 false 则省略；mux 写 1/0。不能写 tls=false，因为原生按键存在启用 TLS |
+| 空 `headers: {}`，显式 false 的 skip-cert-verify / HTTPUpgrade 选项 | exact 兼容默认；保持原生证书校验和普通 WebSocket，不注入不支持的原生参数 |
+| plugin-opts 字符串参数 | exact；SIP003 的反斜杠、分号、等号转义一次，不裁内容、不让 host/path 注入额外选项 |
+| `udp-over-tcp` / `udp-over-tcp-version` | exact；输出原生 enabled/version 对象。缺省或显式 0 使用 Clash 的 v1，显式 1/2 原样；false 保持禁用，不因版本字段开启 UOT |
+| 非法插件/选项类型、重复选项键、空 host、缺失或非法 mode | unsupported；整条节点拒绝并记账，不按原生不同的默认值偷偷补 mode |
+| 非空自定义 headers、skip-cert-verify:true、HTTPUpgrade:true、证书/ECH/其它未映射参数、其它插件 | unsupported；固定 SIP003 接口不能等价表达，拒绝整条节点；需要时使用完整原生 JSON 方案 |
+| 非法 UOT 版本，包括超出 0/1/2、非整数或异常 YAML 类型 | unsupported；拒绝节点，不截断到 uint8 或回落默认 |
+
+这里的 simple-obfs TLS 是伪装模式，不是 TLS 证书加密选项。v2ray-plugin 的 TLS
+使用内核实际证书校验；自定义 headers/证书/ECH 等仍未接入，插件支持不能当成完整
+SS 字段覆盖。类型覆盖仍为 10/15。正向样本见
+[ss-plugins-2026-10-02.yaml](examples/ss-plugins-2026-10-02.yaml)。
+
+依据：[固定 obfs-local](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/transport/sip003/obfs.go)、
+[固定 v2ray-plugin](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/transport/sip003/v2ray.go)、
+[SIP003 参数解析](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/transport/sip003/args.go)、
+[固定 UOT 选项](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/udp_over_tcp.go)、
+[固定 sing UOT 默认](https://github.com/SagerNet/sing/blob/87c33f17688f/common/uot/client.go) 与
+[Mihomo SS 输入及默认](https://github.com/MetaCubeX/mihomo/blob/Meta/adapter/outbound/shadowsocks.go)
+（2026-10-02 核对）。
+
+### AnyTLS / Snell 的边界
+
 AnyTLS 的时间字段使用整数秒数，最少空闲会话为非负整数；未启用 `udp` 时记
 `Node/Approx`，因为内核 AnyTLS 出站固定支持 TCP/UDP，没有 `network` 限制。
 Snell v1/v2/v3/v5、缺省版本与未映射的伪装均拒绝，不自动改成 v4；内核 v6 可由原生
@@ -381,11 +509,32 @@ libbox procfs 路径；查不到 owner、共享 UID 与旧系统的权限边界�
 
 `AND/OR/NOT` 的明确子集已递归转换到原生 logical + mode/invert。子条件支持
 DOMAIN、DOMAIN-SUFFIX、DOMAIN-KEYWORD、DOMAIN-REGEX、NETWORK、源/目标端口与 CIDR，
-以及上述平台进程/包名条件；路由还可使用 UID/IP-VERSION。最多
+以及上述平台进程/包名条件；路由还可使用 UID/IP-VERSION、GEOIP/GEOSITE 和
+已转换的 RULE-SET 引用。最多
 24 层、256 个条件；括号扫描最多 32 层。只有外层携带 action/outbound。
 未支持子条件、非法括号或子条件修饰符会拒绝整条规则，不删除条件后扩大匹配。
-嵌套 GEO/RULE-SET 暂不在此子集中，原生 JSON 可表达更多逻辑。无效普通目标 CIDR
-也由共用转换器拒绝，不再原样写入启动配置。
+无效普通目标 CIDR 也由共用转换器拒绝，不再原样写入启动配置。
+
+嵌套资源条件的保真度基线（2026-10-02）：
+
+| 输入 | 分类与输出 |
+|---|---|
+| 路由逻辑中的 GEOIP 两位国家码 / GEOSITE 已接入类别 | exact；生成同顶层的自有 GEO rule_set 引用与资源清单，保留 AND/OR/NOT 结构 |
+| `GEOIP,private/lan` | exact；使用原生 ip_is_private，无需外部资源 |
+| 逻辑中的已转换 inline RULE-SET | exact；引用原生 inline 集合，只有逻辑最外层携带 action/outbound |
+| 未声明的国内 RULE-SET 别名 | approx；与顶层相同记账，不能证明内置 CN 数据等于外部 provider |
+| 已声明但失败的 provider、非法 GEO、未知引用、未接入子条件/修饰符 | unsupported；整条逻辑规则拒绝，保留失败明细；撤回本条新建资源及 GEO tag 缓存，不影响前后有效规则 |
+| inline classical 中的 GEO/RULE-SET | unsupported；固定 HeadlessRule 无 rule_set，继续拒绝整份 payload，不写入 route-only 字段 |
+
+逻辑子条件不推导全局 DNS 分流：即便内部包含 GEOSITE CN + 外层 DIRECT，也不能
+等同于顶层正向 CN 规则，尤其 NOT 不能生成 CN 直连 DNS。原有顶层正向 DNS 策略
+保留。桌面来源命名空间递归改写嵌套运行 tag，自有 GEO 缓存身份仍使用原始 tag。
+Android 仍只使用打包/可用本地 GEO，没有缓存则记 unsupported 并原子撤回资源；
+此批未增加在线 provider 下载或手机多来源编排。复现样本见
+[logical-rules-2026-10-02.yaml](examples/logical-rules-2026-10-02.yaml)。
+原生结构边界核对
+[固定 route schema](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/rule.go)、
+[固定 HeadlessRule schema](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/rule_set.go)。
 
 inline rule-providers 支持任意名称：domain 的完整域名/+.后缀、ipcidr 的 IPv4/IPv6，
 classical 复用以上逻辑条件子集。整份 payload 必须可转换才生成原生 inline rule_set，
@@ -475,7 +624,7 @@ sing-box 侧可用但未映射：Android 应用选择入口、`user` / 更多逻
 
 | 阶段 | 主题 | 内容 |
 |---|---|---|
-| M1 | 翻译层补面 | 协议类型已覆盖 10/15、`interval`/`tolerance` 与源地址/端口/网络规则已补齐；拨号字段、DNS 解析依赖、inline provider 与逻辑规则子集已补齐；继续补外部 provider、更多 DNS/协议字段，详见能力审查 |
+| M1 | 翻译层补面 | 协议类型已覆盖 12/15、`interval`/`tolerance` 与源地址/端口/网络规则已补齐；拨号字段、DNS 解析依赖、inline provider 与逻辑规则子集已补齐；继续补外部 provider、更多 DNS/协议字段，详见能力审查 |
 | M2 | 产品层 Clash 化 | 代理页排序/筛选/定位/组导航/滚动记忆、订阅 merge/script 覆写链、连接页 / 日志页 / 设置页补齐 |
 | M3 | 差异化 | 端点作为一等连接对象 + 路由策略、`rule_set` 管理界面、进程规则、移动端能力 |
 

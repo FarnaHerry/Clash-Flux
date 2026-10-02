@@ -1,0 +1,29 @@
+# Public L2 regression fixture; no live subscription credentials.
+dns:
+  nameserver: [223.5.5.5]
+rule-providers:
+  precise:
+    type: inline
+    behavior: domain
+    payload: [example.test, '+.example.org']
+  private-net:
+    type: inline
+    behavior: ipcidr
+    payload: [192.168.0.0/16, 'fd00::/8']
+  secure:
+    type: inline
+    behavior: classical
+    payload:
+      - AND,((NETWORK,TCP),(DST-PORT,443))
+rules:
+  - AND,((RULE-SET,precise),(RULE-SET,secure)),DIRECT
+  - OR,((GEOIP,CN),(AND,((GEOSITE,CN),(NETWORK,TCP)))),DIRECT
+  - AND,((NOT,((GEOIP,private))),(DST-PORT,443)),DIRECT
+  - NOT,((RULE-SET,private-net)),REJECT-DROP
+  - NOT,((RULE-SET,cn)),DIRECT
+  - AND,((GEOSITE,CN),(NETWORK,UDP)),REJECT
+  # Top-level aliases retain the existing positive CN DNS policy and allow the
+  # test_singbox sample harness to assert its historical CN mappings.
+  - RULE-SET,cn,DIRECT
+  - RULE-SET,cn-ip,DIRECT
+  - MATCH,DIRECT

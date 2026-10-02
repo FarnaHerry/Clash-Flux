@@ -1,0 +1,18 @@
+# Configuration-check fixture only; no real server or credential is provided.
+dns:
+  nameserver: [223.5.5.5]
+proxies:
+  - {name: ss-plain, type: ss, server: example.test, port: 443, cipher: aes-256-gcm, password: sample, udp: true}
+  - {name: ss-obfs-http, type: ss, server: example.test, port: 443, cipher: aes-256-gcm, password: sample, plugin: obfs, plugin-opts: {mode: http}, udp: false}
+  - {name: ss-obfs-tls, type: ss, server: example.test, port: 443, cipher: aes-256-gcm, password: sample, plugin: obfs, plugin-opts: {mode: tls, host: cover.example.test}, udp: true}
+  - {name: ss-ws, type: ss, server: example.test, port: 443, cipher: aes-256-gcm, password: sample, plugin: v2ray-plugin, plugin-opts: {mode: websocket, host: ws.example.test, path: '/socket?token=a;b=c', tls: false, mux: false}, udp: true, udp-over-tcp: true}
+  - {name: ss-ws-mux, type: ss, server: example.test, port: 443, cipher: aes-256-gcm, password: sample, plugin: v2ray-plugin, plugin-opts: {mode: websocket}, udp: false}
+  - {name: ss-wss, type: ss, server: example.test, port: 443, cipher: aes-256-gcm, password: sample, plugin: v2ray-plugin, plugin-opts: {mode: websocket, tls: true, mux: true, skip-cert-verify: false}, udp: true}
+  - {name: ss-uot-v1, type: ss, server: example.test, port: 443, cipher: aes-256-gcm, password: sample, udp: true, udp-over-tcp: true, udp-over-tcp-version: 1}
+  - {name: ss-uot-v2, type: ss, server: example.test, port: 443, cipher: aes-256-gcm, password: sample, udp: true, udp-over-tcp: true, udp-over-tcp-version: 2}
+proxy-groups:
+  - {name: selector, type: select, proxies: [ss-plain, ss-obfs-http, ss-obfs-tls, ss-ws, ss-ws-mux, ss-wss, ss-uot-v1, ss-uot-v2, DIRECT]}
+rules:
+  - RULE-SET,cn,DIRECT
+  - RULE-SET,cn-ip,DIRECT
+  - MATCH,selector

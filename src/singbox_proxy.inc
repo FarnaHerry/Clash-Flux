@@ -280,17 +280,23 @@ bool legacyProxyFieldsSupported(Context& ctx, const YAML::Node& item,
     const auto add = [&](std::initializer_list<std::string_view> keys) {
         fields.insert(fields.end(), keys.begin(), keys.end());
     };
-    if (type == "shadowsocks") add({"cipher", "password", "plugin", "plugin-opts", "udp-over-tcp"});
-    else if (type == "vmess") add({"uuid", "cipher", "alterId"});
-    else if (type == "vless") add({"uuid", "flow", "encryption"});
+    if (type == "shadowsocks") add({"cipher", "password", "plugin", "plugin-opts", "udp-over-tcp", "udp-over-tcp-version"});
+    else if (type == "vmess") add({"uuid", "cipher", "alterId", "packet-encoding", "packet-addr", "xudp",
+                                    "global-padding", "authenticated-length"});
+    else if (type == "vless") add({"uuid", "flow", "encryption", "packet-encoding", "packet-addr", "xudp"});
     else if (type == "trojan") add({"password"});
-    else if (type == "hysteria2") add({"password", "up", "down", "obfs", "obfs-password", "ports"});
+    else if (type == "hysteria") add({"auth", "auth-str", "up", "down", "obfs", "protocol", "obfs-protocol",
+                                     "ports", "hop-interval", "fast-open", "recv-window", "recv-window-conn", "disable-mtu-discovery"});
+    else if (type == "hysteria2") add({"password", "up", "down", "obfs", "obfs-password", "ports", "hop-interval",
+                                      "obfs-min-packet-size", "obfs-max-packet-size"});
     else if (type == "tuic") add({"uuid", "password", "congestion-controller", "reduce-rtt", "disable-sni"});
     else if (type == "http" || type == "socks5") add({"username", "password"});
+    else if (type == "ssh") add({"username", "password", "private-key", "private-key-passphrase",
+                                "host-key", "host-key-algorithms"});
     else return true; // The protocol branch below reports an unknown type.
-    if (type != "shadowsocks" && type != "socks5") {
+    if (type != "shadowsocks" && type != "socks5" && type != "ssh") {
         add({"tls", "sni", "servername", "skip-cert-verify", "alpn"});
-        if (type != "hysteria2" && type != "tuic") add({"client-fingerprint", "reality-opts"});
+        if (type != "hysteria" && type != "hysteria2" && type != "tuic") add({"client-fingerprint", "reality-opts"});
     }
     const std::string network = lowerCopy(ytext(item, "network"));
     if (type == "vmess" || type == "vless" || type == "trojan") {
@@ -331,7 +337,7 @@ bool legacyProxyFieldsSupported(Context& ctx, const YAML::Node& item,
             std::format("节点「{}」包含未启用插件的 plugin-opts，已跳过", name));
         valid = false;
     }
-    if ((type == "trojan" || type == "hysteria2" || type == "tuic") &&
+    if ((type == "trojan" || type == "hysteria" || type == "hysteria2" || type == "tuic") &&
         item["tls"] && !ybool(item, "tls")) {
         ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
             std::format("节点「{}」的协议不能关闭 TLS，已跳过", name));
@@ -351,6 +357,324 @@ bool proxyBooleansValid(Context& ctx, const YAML::Node& item, const std::string&
                  std::format("节点「{}」的 {} 不是有效布尔值，已跳过", name, field),
                  "使用 true/false，避免无效字段被当成关闭状态");
         return false;
+    }
+    return true;
+}
+
+bool appendProxyUdpEncoding(Context& ctx, const YAML::Node& item, nlohmann::json& out,
+                            const std::string& name, bool vless) {
+    if (!proxyBooleansValid(ctx, item, name, {"packet-addr", "xudp"})) return false;
+    if (!item["packet-encoding"] && !item["packet-addr"] && !item["xudp"]) return true;
+    std::string encoding;
+    if (item["packet-encoding"] &&
+        !proxyString(ctx, item["packet-encoding"], name, "packet-encoding", encoding)) return false;
+    if (encoding != "" && encoding != "packetaddr" && encoding != "packet" && encoding != "xudp")
+        return proxyValueInvalid(ctx, name, "packet-encoding", "仅支持空字符串、packetaddr/packet 或 xudp");
+    bool packetAddr = ybool(item, "packet-addr"), xudp = ybool(item, "xudp");
+    // Mihomo NewVmess and NewVless intentionally differ. VLESS enables XUDP
+    // by default, and its explicit packetaddr overrides the legacy XUDP flag.
+    if (encoding == "packetaddr" || encoding == "packet") {
+        packetAddr = true;
+        if (vless) xudp = false;
+    } else if (vless) {
+        if (!packetAddr) xudp = true;
+    } else if (encoding == "xudp") {
+        xudp = true;
+    }
+    if (xudp) packetAddr = false;
+    out["packet_encoding"] = xudp ? "xudp" : packetAddr ? "packetaddr" : "";
+    return true;
+}
+
+std::optional<unsigned long long> proxyUnsigned(std::string_view value, unsigned long long max) {
+    const std::string text = trimCopy(value);
+    unsigned long long number = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
+    if (text.empty() || error != std::errc{} || end != text.data() + text.size() || number > max)
+        return std::nullopt;
+    return number;
+}
+
+// Input bandwidth units are case-sensitive: MBps is bytes, Mbps is bits.
+// Keep an integer Mbps subset and reject units/values we cannot express exactly.
+std::optional<int> proxyMbps(std::string_view raw) {
+    const std::string text = trimCopy(raw);
+    std::size_t end = 0;
+    while (end < text.size() && text[end] >= '0' && text[end] <= '9') ++end;
+    const std::string unit = trimCopy(std::string_view(text).substr(end));
+    if (unit != "" && unit != "Mbps" && unit != "MBps") return std::nullopt;
+    const unsigned long long multiplier = unit == "MBps" ? 8 : 1;
+    const auto number = proxyUnsigned(std::string_view(text).substr(0, end),
+                                      static_cast<unsigned long long>(std::numeric_limits<int>::max()) / multiplier);
+    if (!number || *number == 0) return std::nullopt;
+    return static_cast<int>(*number * multiplier);
+}
+
+bool appendProxyBandwidth(Context& ctx, const YAML::Node& item, nlohmann::json& out,
+                           const std::string& name, bool required) {
+    for (const auto& [source, target] : {std::pair{"up", "up_mbps"}, std::pair{"down", "down_mbps"}}) {
+        if (!required && !item[source]) continue;
+        const auto value = item[source] && item[source].IsScalar() ? proxyMbps(item[source].Scalar()) : std::nullopt;
+        if (!value) return proxyValueInvalid(ctx, name, source,
+            "必须为正整数 Mbps（裸整数或 Mbps 单位），MBps 按字节转换；其它单位/小数尚未接入或数值超限");
+        out[target] = *value;
+    }
+    return true;
+}
+
+// Go base64.StdEncoding ignores CR/LF, requires standard padding, and accepts
+// nonzero unused padding bits. Preserve the encoded input for native []byte JSON.
+std::optional<std::size_t> proxyBase64Size(std::string_view encoded) {
+    std::string text;
+    for (char c : encoded) if (c != '\r' && c != '\n') text.push_back(c);
+    if (text.size() % 4 != 0) return std::nullopt;
+    if (text.empty()) return 0;
+    const std::size_t padding = text.ends_with("==") ? 2 : text.ends_with("=") ? 1 : 0;
+    for (std::size_t i = 0; i < text.size() - padding; ++i) {
+        const unsigned char c = text[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '+' || c == '/')) return std::nullopt;
+    }
+    return text.size() / 4 * 3 - padding;
+}
+
+std::string sip003Escape(std::string_view value) {
+    std::string escaped;
+    for (const char ch : value) {
+        if (ch == '\\' || ch == ';' || ch == '=') escaped += '\\';
+        escaped += ch;
+    }
+    return escaped;
+}
+
+bool appendShadowsocksPlugin(Context& ctx, const YAML::Node& item, nlohmann::json& out,
+                             const std::string& name) {
+    std::string plugin;
+    if (item["plugin"] && !proxyString(ctx, item["plugin"], name, "plugin", plugin)) return false;
+    if (plugin.empty()) return true;
+    if (plugin != "obfs" && plugin != "v2ray-plugin")
+        return proxyValueInvalid(ctx, name, "plugin", "尚未映射此插件，不能改成普通 SS 线路");
+    const YAML::Node options = item["plugin-opts"];
+    if (!options || !options.IsMap())
+        return proxyValueInvalid(ctx, name, "plugin-opts", "插件需要选项对象和显式 mode");
+    std::vector<std::string> keys;
+    for (const auto& field : options) {
+        if (!field.first.IsScalar()) return proxyValueInvalid(ctx, name, "plugin-opts", "键必须为字符串");
+        const std::string key = field.first.Scalar();
+        if (std::ranges::find(keys, key) != keys.end())
+            return proxyValueInvalid(ctx, name, "plugin-opts", "不能包含重复键");
+        keys.push_back(key);
+    }
+    if (plugin == "obfs") {
+        if (!proxyFieldsSupported(ctx, options, name, {"mode", "host"})) return false;
+    } else {
+        if (!proxyFieldsSupported(ctx, options, name,
+                {"mode", "host", "path", "tls", "mux", "headers", "skip-cert-verify",
+                 "v2ray-http-upgrade", "v2ray-http-upgrade-fast-open"}) ||
+            !proxyBooleansValid(ctx, options, name,
+                {"tls", "mux", "skip-cert-verify", "v2ray-http-upgrade", "v2ray-http-upgrade-fast-open"})) return false;
+        for (const char* field : {"skip-cert-verify", "v2ray-http-upgrade", "v2ray-http-upgrade-fast-open"})
+            if (ybool(options, field)) return proxyValueInvalid(ctx, name, std::format("plugin-opts.{}", field),
+                "固定内核的 SIP003 插件没有等价选项");
+        if (options["headers"]) {
+            nlohmann::json headers;
+            if (!proxyHeaders(ctx, options["headers"], name, "plugin-opts.headers", headers)) return false;
+            if (!headers.empty()) return proxyValueInvalid(ctx, name, "plugin-opts.headers",
+                "固定内核的 SIP003 插件不能传入自定义 headers");
+        }
+    }
+    std::string mode, host = "bing.com";
+    if (!options["mode"] || !proxyString(ctx, options["mode"], name, "plugin-opts.mode", mode, true)) {
+        if (!options["mode"]) proxyValueInvalid(ctx, name, "plugin-opts.mode", "必须显式指定");
+        return false;
+    }
+    if (options["host"] && !proxyString(ctx, options["host"], name, "plugin-opts.host", host, true)) return false;
+    if (plugin == "obfs") {
+        if (mode != "http" && mode != "tls")
+            return proxyValueInvalid(ctx, name, "plugin-opts.mode", "simple-obfs 仅支持 http/tls");
+        out["plugin"] = "obfs-local";
+        out["plugin_opts"] = "obfs=" + sip003Escape(mode) + ";obfs-host=" + sip003Escape(host);
+    } else {
+        if (mode != "websocket")
+            return proxyValueInvalid(ctx, name, "plugin-opts.mode", "Clash v2ray-plugin 仅支持 websocket，不能改写模式");
+        std::string path = "/";
+        if (options["path"] && !proxyString(ctx, options["path"], name, "plugin-opts.path", path)) return false;
+        const bool mux = options["mux"] ? ybool(options, "mux") : true;
+        out["plugin"] = "v2ray-plugin";
+        std::string args = "mode=websocket;host=" + sip003Escape(host) + ";path=" + sip003Escape(path) +
+                           (mux ? ";mux=1" : ";mux=0");
+        // Native TLS is enabled by key presence, even tls=false would enable it.
+        if (ybool(options, "tls")) args += ";tls";
+        out["plugin_opts"] = std::move(args);
+    }
+    return true;
+}
+
+bool appendShadowsocksUot(Context& ctx, const YAML::Node& item, nlohmann::json& out,
+                          const std::string& name) {
+    if (!item["udp-over-tcp"] && !item["udp-over-tcp-version"]) return true;
+    int version = 1; // Clash defaults to legacy UOT, native bool defaults to v2.
+    if (item["udp-over-tcp-version"]) {
+        const auto value = yint(item, "udp-over-tcp-version");
+        if (!value || *value < 0 || *value > 2)
+            return proxyValueInvalid(ctx, name, "udp-over-tcp-version", "仅支持 0（Clash 默认 v1）、1 或 2");
+        if (*value != 0) version = *value;
+    }
+    out["udp_over_tcp"] = {{"enabled", ybool(item, "udp-over-tcp")}, {"version", version}};
+    return true;
+}
+
+bool appendHysteriaPorts(Context& ctx, const YAML::Node& item, nlohmann::json& out,
+                          const std::string& name) {
+    std::string ports;
+    if (item["ports"] && !proxyString(ctx, item["ports"], name, "ports", ports)) return false;
+    if (!ports.empty()) {
+        nlohmann::json serverPorts = nlohmann::json::array();
+        std::string_view rest{ports};
+        while (true) {
+            const auto comma = rest.find(',');
+            const std::string piece = trimCopy(rest.substr(0, comma));
+            const auto dash = piece.find('-');
+            const auto first = proxyUnsigned(std::string_view(piece).substr(0, dash), 65535);
+            const auto last = dash == std::string::npos ? first :
+                proxyUnsigned(std::string_view(piece).substr(dash + 1), 65535);
+            if (!first || !last || *first == 0 || *last == 0)
+                return proxyValueInvalid(ctx, name, "ports", "每项必须为 1–65535 端口或端口范围，不能有空项");
+            // Native ParsePorts requires a colon even for singleton ports.
+            // Mihomo NewRange normalizes reversed endpoints.
+            serverPorts.push_back(std::format("{}:{}", std::min(*first, *last), std::max(*first, *last)));
+            if (comma == std::string_view::npos) break;
+            rest.remove_prefix(comma + 1);
+        }
+        out["server_ports"] = std::move(serverPorts);
+        // Clash ignores the single port whenever hopping ports are configured.
+        out.erase("server_port");
+    }
+    return true;
+}
+
+bool appendHysteria1Options(Context& ctx, const YAML::Node& item, nlohmann::json& out,
+                            const std::string& name) {
+    if (!appendProxyBandwidth(ctx, item, out, name, true) ||
+        !proxyBooleansValid(ctx, item, name, {"fast-open", "disable-mtu-discovery"})) return false;
+    std::string protocol, obfsProtocol, auth, authString, obfs;
+    for (const auto& [field, value] : {std::pair{"protocol", &protocol}, std::pair{"obfs-protocol", &obfsProtocol},
+            std::pair{"auth", &auth}, std::pair{"auth-str", &authString}, std::pair{"obfs", &obfs}}) {
+        if (item[field] && !proxyString(ctx, item[field], name, field, *value)) return false;
+    }
+    // Mihomo's Stash-compatible obfs-protocol overrides protocol when nonempty.
+    if (!obfsProtocol.empty()) protocol = obfsProtocol;
+    if (!protocol.empty() && protocol != "udp")
+        return proxyValueInvalid(ctx, name, "protocol/obfs-protocol", "固定内核仅支持 UDP 传输，不能改成普通 UDP 线路");
+    if (ybool(item, "fast-open"))
+        return proxyValueInvalid(ctx, name, "fast-open", "固定内核没有等价的协议快速打开选项");
+    if (!auth.empty()) {
+        const auto size = proxyBase64Size(auth);
+        if (!size || *size > 65535) return proxyValueInvalid(ctx, name, "auth", "必须为标准 Base64，解码后不能超过 65535 字节");
+        out["auth"] = std::move(auth); // Auth bytes override auth-str in Clash.
+    } else {
+        if (authString.size() > 65535) return proxyValueInvalid(ctx, name, "auth-str", "不能超过 65535 字节");
+        if (item["auth-str"]) out["auth_str"] = std::move(authString);
+    }
+    if (item["obfs"]) out["obfs"] = std::move(obfs);
+    if (item["disable-mtu-discovery"]) out["disable_path_mtu_discovery"] = ybool(item, "disable-mtu-discovery");
+    unsigned long long streamWindow = 0, connectionWindow = 0;
+    // Follow the actual Mihomo axes, not the misleading legacy names: its
+    // recv-window-conn sets the stream window, recv-window the connection window.
+    for (const auto& [field, value] : {std::pair{"recv-window-conn", &streamWindow}, std::pair{"recv-window", &connectionWindow}}) {
+        if (!item[field]) continue;
+        const auto parsed = item[field].IsScalar() ? proxyUnsigned(item[field].Scalar(), 2147483647) : std::nullopt;
+        if (!parsed) return proxyValueInvalid(ctx, name, field, "必须为 0–2147483647 的字节数");
+        *value = *parsed;
+    }
+    if ((streamWindow == 0) != (connectionWindow == 0))
+        return proxyValueInvalid(ctx, name, "recv-window/recv-window-conn", "本批仅支持两者同时非零或同时使用默认值，单边窗口尚未保真");
+    if (streamWindow == 0) {
+        streamWindow = 15728640;
+        connectionWindow = 67108864;
+        ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                 std::format("Hysteria 节点「{}」保留 Clash 默认窗口上限，原生 QUIC 初始窗口与 Clash 的渐增分配不同", name),
+                 "固定内核窗口字段不能分别设置初始值与上限；需要完全一致时请显式设置两侧非零窗口");
+    }
+    out["stream_receive_window"] = streamWindow;
+    out["connection_receive_window"] = connectionWindow;
+    if (item["alpn"] && item["alpn"].IsSequence() && item["alpn"].size() == 0)
+        return proxyValueInvalid(ctx, name, "alpn", "原生 Hysteria 将空列表恢复为协议默认，不能保留显式空 ALPN");
+    if (!appendHysteriaPorts(ctx, item, out, name)) return false;
+    unsigned long long interval = 10; // HY1 Clash default, native default is 30s.
+    if (item["hop-interval"]) {
+        const auto parsed = item["hop-interval"].IsScalar() ? proxyUnsigned(item["hop-interval"].Scalar(), 9223372036ULL) : std::nullopt;
+        if (!parsed) return proxyValueInvalid(ctx, name, "hop-interval", "必须为非负整数秒，不能超出内核时长上限");
+        if (*parsed != 0) interval = *parsed;
+        if (!out.contains("server_ports")) ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+            std::format("节点「{}」未启用 ports，hop-interval 不生效", name));
+    }
+    if (out.contains("server_ports")) {
+        if (interval < 5) return proxyValueInvalid(ctx, name, "hop-interval", "固定内核最小为 5 秒，不能改变显式跳端口间隔");
+        out["hop_interval"] = std::format("{}s", interval);
+    }
+    return true;
+}
+
+bool appendHysteria2Options(Context& ctx, const YAML::Node& item, nlohmann::json& out,
+                            const std::string& name) {
+    std::string obfs;
+    if (item["obfs"] && !proxyString(ctx, item["obfs"], name, "obfs", obfs)) return false;
+    const std::string password = yliteral(item, "obfs-password");
+    if (!obfs.empty()) {
+        if (obfs != "salamander" && obfs != "gecko")
+            return proxyValueInvalid(ctx, name, "obfs", "仅支持 salamander 或 gecko");
+        if (password.empty()) return proxyValueInvalid(ctx, name, "obfs-password", "启用混淆时不能为空");
+        out["obfs"] = {{"type", obfs}, {"password", password}};
+    } else if (!password.empty()) {
+        ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                 std::format("节点「{}」未启用 obfs，obfs-password 不生效", name),
+                 "与 Clash 行为一致；启用混淆需要显式指定 obfs 类型");
+    }
+    unsigned long long minSize = 0, maxSize = 0;
+    for (const auto& [source, target, size] : {
+             std::tuple{"obfs-min-packet-size", "min_packet_size", &minSize},
+             std::tuple{"obfs-max-packet-size", "max_packet_size", &maxSize}}) {
+        if (!item[source]) continue;
+        const auto value = item[source].IsScalar() ? proxyUnsigned(item[source].Scalar(), 2048) : std::nullopt;
+        if (!value) return proxyValueInvalid(ctx, name, source, "必须为 0–2048 的整数");
+        *size = *value;
+        if (obfs == "gecko") out["obfs"][target] = *value;
+        else ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                      std::format("节点「{}」未启用 gecko，{} 不生效", name, source));
+    }
+    // Fixed sing-quic gecko defaults: 512/1200, on-wire maximum 2048.
+    if (obfs == "gecko" && (minSize == 0 ? 512 : minSize) > (maxSize == 0 ? 1200 : maxSize))
+        return proxyValueInvalid(ctx, name, "obfs-min/max-packet-size", "有效最小值不能大于最大值");
+
+    if (!appendHysteriaPorts(ctx, item, out, name)) return false;
+    unsigned long long hopMin = 30, hopMax = 30;
+    if (item["hop-interval"]) {
+        std::string interval;
+        if (!proxyString(ctx, item["hop-interval"], name, "hop-interval", interval)) return false;
+        if (trimCopy(interval).empty()) interval = "0";
+        const auto dash = interval.find('-');
+        // Go time.Duration is signed nanoseconds: larger seconds overflow.
+        const auto first = proxyUnsigned(std::string_view(interval).substr(0, dash), 9223372036ULL);
+        const auto last = dash == std::string::npos ? first :
+            proxyUnsigned(std::string_view(interval).substr(dash + 1), 9223372036ULL);
+        if (!first || !last)
+            return proxyValueInvalid(ctx, name, "hop-interval", "必须为空、非负整数秒或秒数范围，且不能超出内核时长上限");
+        const auto lower = std::min(*first, *last), upper = std::max(*first, *last);
+        hopMin = lower == 0 ? 30 : std::max(5ULL, lower);
+        hopMax = std::max(hopMin, upper);
+        if (!out.contains("server_ports")) {
+            ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                     std::format("节点「{}」未启用 ports，hop-interval 不生效", name));
+        } else if ((lower > 0 && lower < 5) || (dash != std::string::npos && upper < hopMin)) {
+            ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                     std::format("节点「{}」的 hop-interval 按 Clash 默认和最小 5 秒限制调整", name),
+                     "0 为默认 30 秒；非零间隔小于 5 秒时使用 5 秒，范围上限不低于有效下限");
+        }
+    }
+    if (out.contains("server_ports")) {
+        out["hop_interval"] = std::format("{}s", hopMin);
+        out["hop_interval_max"] = std::format("{}s", hopMax);
     }
     return true;
 }
@@ -415,6 +739,63 @@ bool appendProxyDialer(Context& ctx, const YAML::Node& item, nlohmann::json& out
     return true;
 }
 
+bool appendSshOptions(Context& ctx, const YAML::Node& item, nlohmann::json& out,
+                      const std::string& name) {
+    // Native SSH defaults an empty user to root, whereas Clash keeps it empty.
+    std::string user;
+    if (!item["username"]) return proxyValueInvalid(ctx, name, "username", "必须显式指定非空用户名");
+    if (!proxyString(ctx, item["username"], name, "username", user, true)) return false;
+    out["user"] = std::move(user);
+    std::string password, key, passphrase;
+    for (const auto& [field, value] : {
+             std::pair{"password", &password}, std::pair{"private-key", &key},
+             std::pair{"private-key-passphrase", &passphrase}}) {
+        if (item[field] && !proxyString(ctx, item[field], name, field, *value)) return false;
+    }
+    if (item["password"]) out["password"] = password;
+    if (!key.empty()) {
+        // Clash also accepts local paths, with its own safe-path resolver.
+        // Do not pass subscription-controlled paths to the native file reader.
+        if (key.find("-----BEGIN ") == std::string::npos || key.find("PRIVATE KEY-----") == std::string::npos)
+            return proxyValueInvalid(ctx, name, "private-key", "仅支持内联 PEM 私钥，文件路径尚未接入");
+        out["private_key"] = std::move(key);
+        if (item["private-key-passphrase"]) out["private_key_passphrase"] = std::move(passphrase);
+        if (!password.empty()) ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+            std::format("SSH 节点「{}」同时配置密码和私钥，原生认证顺序为密码优先，Clash 为私钥优先", name),
+            "需要固定认证顺序时只配置一种认证方式；两种凭据均保留，不重写内核认证流程");
+    } else if (!passphrase.empty()) {
+        ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+            std::format("SSH 节点「{}」未启用私钥，private-key-passphrase 不参与认证", name));
+    }
+    for (const auto& [source, destination] : {
+             std::pair{"host-key", "host_key"}, std::pair{"host-key-algorithms", "host_key_algorithms"}}) {
+        if (!item[source]) continue;
+        std::vector<std::string> values;
+        if (!proxyStringList(ctx, item, source, name, values, true)) return false;
+        // An empty preference list must not accidentally restore library defaults.
+        if (std::string_view(source) == "host-key-algorithms" && values.empty())
+            return proxyValueInvalid(ctx, name, source, "显式空算法列表尚未支持");
+        if (std::string_view(source) == "host-key-algorithms") {
+            // Fixed sing-box go.mod: golang.org/x/crypto v0.54.0,
+            // ssh/keys.go and ssh/certs.go. Never filter individual preferences.
+            static constexpr std::string_view algorithms[]{
+                "ssh-rsa", "ssh-dss", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
+                "sk-ecdsa-sha2-nistp256@openssh.com", "ssh-ed25519", "sk-ssh-ed25519@openssh.com",
+                "rsa-sha2-256", "rsa-sha2-512", "ssh-rsa-cert-v01@openssh.com", "ssh-dss-cert-v01@openssh.com",
+                "ecdsa-sha2-nistp256-cert-v01@openssh.com", "ecdsa-sha2-nistp384-cert-v01@openssh.com",
+                "ecdsa-sha2-nistp521-cert-v01@openssh.com", "sk-ecdsa-sha2-nistp256-cert-v01@openssh.com",
+                "ssh-ed25519-cert-v01@openssh.com", "sk-ssh-ed25519-cert-v01@openssh.com",
+                "rsa-sha2-256-cert-v01@openssh.com", "rsa-sha2-512-cert-v01@openssh.com"};
+            for (std::size_t i = 0; i < values.size(); ++i) {
+                if (std::ranges::find(algorithms, values[i]) == std::end(algorithms))
+                    return proxyValueInvalid(ctx, name, std::format("{}[{}]", source, i), "不是固定内核支持的主机公钥算法");
+            }
+        }
+        out[destination] = std::move(values);
+    }
+    return true;
+}
+
 std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item) {
     const std::string name = ytext(item, "name");
     const std::string type = lowerCopy(ytext(item, "type"));
@@ -432,7 +813,10 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
     }
     const std::string server = ytext(item, "server");
     const auto port = yint(item, "port");
-    if (server.empty() || !port || *port <= 0 || *port > 65535) {
+    const bool hopping = (type == "hysteria" || type == "hysteria2" || type == "hy2") &&
+                         item["ports"] && item["ports"].IsScalar() && !item["ports"].Scalar().empty();
+    const bool unusedPort = hopping && (!item["port"] || (port && *port == 0));
+    if (server.empty() || (!unusedPort && (!port || *port <= 0 || *port > 65535))) {
         ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
                  std::format("节点「{}」缺少有效的 server/port，已跳过", name),
                  "补上 server/port 之后该节点才会生效");
@@ -445,7 +829,7 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
     if (type == "hy2") singboxType = "hysteria2";
     out["type"] = singboxType;
     out["server"] = server;
-    out["server_port"] = *port;
+    if (port && *port > 0) out["server_port"] = *port;
 
     if (!legacyProxyFieldsSupported(ctx, item, name, singboxType)) return std::nullopt;
     if (singboxType != "anytls" && singboxType != "snell" &&
@@ -463,13 +847,8 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
     if (singboxType == "shadowsocks") {
         out["method"] = ytext(item, "cipher");
         if (item["password"]) out["password"] = yliteral(item, "password");
-        if (!ytext(item, "plugin").empty()) {
-            ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
-                     std::format("节点「{}」使用 SS 插件（obfs/v2ray-plugin），暂不支持，已跳过", name),
-                     "该节点已从所有组中移除；需要插件时请改用 sing-box 支持的协议");
-            return std::nullopt;
-        }
-        if (ybool(item, "udp-over-tcp")) out["udp_over_tcp"] = true;
+        if (!appendShadowsocksPlugin(ctx, item, out, name) ||
+            !appendShadowsocksUot(ctx, item, out, name)) return std::nullopt;
     } else if (singboxType == "anytls") {
         // AnyTLS 必须启用 TLS，即使订阅没有额外的 tls/sni 字段。
         // 组合伪装不能省掉后继续连普通 TLS，否则实际线路已改变。
@@ -557,6 +936,11 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
             }
         }
     } else if (singboxType == "vmess") {
+        if (!appendProxyUdpEncoding(ctx, item, out, name, false) ||
+            !proxyBooleansValid(ctx, item, name, {"global-padding", "authenticated-length"})) return std::nullopt;
+        for (const auto& [source, target] : {std::pair{"global-padding", "global_padding"},
+                                           std::pair{"authenticated-length", "authenticated_length"}})
+            if (item[source]) out[target] = ybool(item, source);
         out["uuid"] = ytext(item, "uuid");
         std::string security = ytext(item, "cipher");
         if (security.empty()) security = "auto";
@@ -567,6 +951,7 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
         if (!appendTransport(ctx, item, out, name)) return std::nullopt;
         if (!appendTls(ctx, item, out)) return std::nullopt;
     } else if (singboxType == "vless") {
+        if (!appendProxyUdpEncoding(ctx, item, out, name, true)) return std::nullopt;
         if (item["encryption"]) {
             std::string encryption;
             if (!proxyString(ctx, item["encryption"], name, "encryption", encryption)) return std::nullopt;
@@ -587,63 +972,13 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
         if (item["password"]) out["password"] = yliteral(item, "password");
         if (!appendTransport(ctx, item, out, name)) return std::nullopt;
         if (!appendTls(ctx, item, out, true)) return std::nullopt;
+    } else if (singboxType == "hysteria") {
+        if (!appendHysteria1Options(ctx, item, out, name) ||
+            !appendTls(ctx, item, out, true, false)) return std::nullopt;
     } else if (singboxType == "hysteria2") {
         if (item["password"]) out["password"] = yliteral(item, "password");
-        // 整数 Mbps 可精确映射；不能把小数或其它单位截断后改变带宽。
-        const auto leadingNumber = [](std::string_view text) -> std::optional<int> {
-            // 拷贝到稳定存储：trimCopy 返回的临时 string 赋回 string_view 会
-            // 悬垂（libstdc++ 的 SSO 缓冲恰好能读到，libc++ 下即出错）。
-            const std::string trimmed = trimCopy(text);
-            std::string_view digits{trimmed};
-            std::size_t end = 0;
-            while (end < digits.size() && digits[end] >= '0' && digits[end] <= '9') {
-                ++end;
-            }
-            if (end == 0) return std::nullopt;
-            const std::string unit = lowerCopy(trimCopy(digits.substr(end)));
-            if (!unit.empty() && unit != "mbps") return std::nullopt;
-            int parsed = 0;
-            const auto [ptr, ec] =
-                std::from_chars(digits.data(), digits.data() + end, parsed);
-            if (ec != std::errc()) return std::nullopt;
-            return parsed;
-        };
-        for (const auto& [source, target] : {std::pair{"up", "up_mbps"}, std::pair{"down", "down_mbps"}}) {
-            if (!item[source]) continue;
-            const auto value = leadingNumber(ytext(item, source));
-            if (!value || *value <= 0) {
-                ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
-                    std::format("节点「{}」的 {} 不是有效的正数带宽，已跳过", name, source));
-                return std::nullopt;
-            }
-            out[target] = *value;
-        }
-        if (const std::string obfsPassword = yliteral(item, "obfs-password"); !obfsPassword.empty()) {
-            out["obfs"] = {{"type", "salamander"}, {"password", obfsPassword}};
-        } else if (const std::string obfs = ytext(item, "obfs");
-                   !obfs.empty() && lowerCopy(obfs) != "none") {
-            ctx.note(FidelityScope::Node, Fidelity::Approx, name,
-                     std::format("节点「{}」的 obfs 配置缺少 obfs-password，已忽略", name),
-                     "该节点会以不带 obfs 的方式连接；补上 obfs-password 才会带伪装");
-        }
-        if (const std::string ports = ytext(item, "ports"); !ports.empty()) {
-            // Clash "20000-30000,40000" → sing-box server_ports ["20000:30000","40000"]。
-            nlohmann::json serverPorts = nlohmann::json::array();
-            std::string_view rest{ports};
-            while (!rest.empty()) {
-                const auto comma = rest.find(',');
-                std::string piece = trimCopy(rest.substr(0, comma));
-                if (!piece.empty()) {
-                    const auto dash = piece.find('-');
-                    if (dash != std::string::npos) piece.replace(dash, 1, ":");
-                    serverPorts.push_back(std::move(piece));
-                }
-                rest = comma == std::string_view::npos
-                           ? std::string_view{}
-                           : rest.substr(comma + 1);
-            }
-            if (!serverPorts.empty()) out["server_ports"] = std::move(serverPorts);
-        }
+        if (!appendProxyBandwidth(ctx, item, out, name, false)) return std::nullopt;
+        if (!appendHysteria2Options(ctx, item, out, name)) return std::nullopt;
         if (!appendTls(ctx, item, out, true, false)) return std::nullopt;
     } else if (singboxType == "tuic") {
         out["uuid"] = ytext(item, "uuid");
@@ -654,6 +989,8 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
         }
         if (ybool(item, "reduce-rtt")) out["zero_rtt_handshake"] = true;
         if (!appendTls(ctx, item, out, true, false)) return std::nullopt;
+    } else if (singboxType == "ssh") {
+        if (!appendSshOptions(ctx, item, out, name)) return std::nullopt;
     } else if (singboxType == "http" || singboxType == "socks5") {
         if (singboxType == "socks5") out["type"] = "socks";
         if (item["username"]) out["username"] = yliteral(item, "username");
@@ -667,9 +1004,9 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
     }
     if (!appendProxyDialer(ctx, item, out, name)) return std::nullopt;
     if (item["udp"] && singboxType != "anytls" && singboxType != "snell") {
-        if (singboxType == "http") {
+        if (singboxType == "http" || singboxType == "ssh") {
             if (ybool(item, "udp")) ctx.note(FidelityScope::Node, Fidelity::Approx, name,
-                std::format("HTTP 节点「{}」启用了 UDP，但原生 HTTP 出站仅转发 TCP", name));
+                std::format("{} 节点「{}」启用了 UDP，但原生出站仅转发 TCP", singboxType, name));
         } else if (!ybool(item, "udp")) {
             out["network"] = "tcp";
         }
