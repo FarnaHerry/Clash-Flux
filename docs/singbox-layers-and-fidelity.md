@@ -200,6 +200,10 @@ sing-box 1.14 官方还提供、但尚未从 Clash YAML 映射：`hysteria`(v1)�
 仍按缺失目标失败，保留已产生的账本。
 F01–F03 已修复：凭据按 literal scalar 原文读取；ALPN、WS headers 和相邻传输字段
 完整校验类型，异常成员导致整条节点拒绝并记 unsupported，不保留部分列表。
+订阅生态仍会同时输出 `ws-path`/`ws-headers` 与 `ws-opts`；两套值相同按 exact
+合并，冲突时采用显式 `ws-opts` 并记 `Node/Approx`，异常旧字段仍拒绝整条节点。
+VLESS 的空 `encryption` 或 `none` 是 mihomo 的兼容默认，省略后按 exact 保留节点；
+其它 VLESS 加密字符串在固定 sing-box 版本没有等价实现，记 `Node/Unsupported` 并拒绝节点。
 凭据诊断不回显输入值。HTTP/SOCKS 可选空凭据保留；AnyTLS/Snell 仍要求非空凭据。
 TLS ALPN 接受 scalar/字符串数组，保持原文和顺序，每项 1–255 字节，允许空数组；
 WS header 只接受字符串键值对象，拒绝重复键，path/header 不 trim。
@@ -229,6 +233,9 @@ ALPN 与 servername/SNI 共用 TLS 转换，不因 ALPN 分支丢失其它设置
 |---|---|
 | 凭据 scalar 原文、可选空 HTTP/SOCKS 凭据 | exact；原文写入，不裁空白或丢空字段 |
 | ALPN scalar/字符串数组、WS 字符串 headers、传输字符串 | exact；保持内容与顺序，完整校验；不接受异常成员或重复 header 键 |
+| 旧版 `ws-path`/`ws-headers` 与 `ws-opts` | 相同值 exact 合并；冲突使用 `ws-opts` 并记 approx；异常类型 unsupported |
+| VLESS `encryption: ""` / `none` | exact 兼容默认，省略后使用 sing-box 原生 VLESS |
+| 其它 VLESS `encryption` | unsupported；固定内核没有等价实现，拒绝整条节点 |
 | 来源级全局指纹继承、节点覆盖 | exact 历史兼容映射；不同来源不共享默认值 |
 | 凭据/TLS/传输类型异常或不适用的 TLS 字段 | unsupported；拒绝整条节点，记录字段；引用其 MATCH/依赖仍失败 |
 | 全局指纹为空、类型异常或内核不认识 | unsupported；拒绝整份来源并保留字段账本 |

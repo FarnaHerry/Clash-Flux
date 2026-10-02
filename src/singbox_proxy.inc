@@ -38,6 +38,20 @@ bool proxyStringList(Context& ctx, const YAML::Node& map, const char* field,
     return true;
 }
 
+bool proxyHeaders(Context& ctx, const YAML::Node& headers, const std::string& name,
+                  std::string_view field, nlohmann::json& result) {
+    if (!headers.IsMap()) return proxyValueInvalid(ctx, name, field, "必须为对象");
+    result = nlohmann::json::object();
+    for (auto it = headers.begin(); it != headers.end(); ++it) {
+        std::string key, value;
+        if (!proxyString(ctx, it->first, name, std::format("{} 的键", field), key, true) ||
+            !proxyString(ctx, it->second, name, std::format("{} 的值", field), value)) return false;
+        if (result.contains(key)) return proxyValueInvalid(ctx, name, field, "不能包含重复键");
+        result[key] = std::move(value);
+    }
+    return true;
+}
+
 bool proxyFingerprintSupported(std::string_view value) {
     // Fixed 1.14.2 common/tls/utls_client.go, not guessed browser names.
     static constexpr std::string_view fingerprints[]{
@@ -134,22 +148,33 @@ bool appendTransport(Context& ctx, const YAML::Node& item, nlohmann::json& out,
     if (network == "ws") {
         // sing-box 的类型名是 "ws"（"websocket" 会直接解码失败）。
         nlohmann::json transport = {{"type", "ws"}};
+        if (item["ws-path"]) {
+            std::string path;
+            if (!proxyString(ctx, item["ws-path"], name, "ws-path", path)) return false;
+            transport["path"] = std::move(path);
+        }
+        if (item["ws-headers"]) {
+            nlohmann::json headers;
+            if (!proxyHeaders(ctx, item["ws-headers"], name, "ws-headers", headers)) return false;
+            transport["headers"] = std::move(headers);
+        }
+        const auto noteOverride = [&](const char* field, const nlohmann::json& value) {
+            if (transport.contains(field) && transport[field] != value)
+                ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                    std::format("节点「{}」的 ws-opts.{} 覆盖不同的旧版 ws-{}", name, field, field),
+                    "统一新旧 WebSocket 字段；相同的重复值不会导致节点降级");
+        };
         if (const YAML::Node opts = item["ws-opts"]; opts && opts.IsMap()) {
             if (opts["path"]) {
                 std::string path;
                 if (!proxyString(ctx, opts["path"], name, "ws-opts.path", path)) return false;
+                noteOverride("path", path);
                 transport["path"] = std::move(path);
             }
             if (const YAML::Node headers = opts["headers"]; headers) {
-                if (!headers.IsMap()) return proxyValueInvalid(ctx, name, "ws-opts.headers", "必须为对象");
-                nlohmann::json mapped = nlohmann::json::object();
-                for (auto it = headers.begin(); it != headers.end(); ++it) {
-                    std::string key, value;
-                    if (!proxyString(ctx, it->first, name, "ws-opts.headers 的键", key, true) ||
-                        !proxyString(ctx, it->second, name, "ws-opts.headers 的值", value)) return false;
-                    if (mapped.contains(key)) return proxyValueInvalid(ctx, name, "ws-opts.headers", "不能包含重复键");
-                    mapped[key] = std::move(value);
-                }
+                nlohmann::json mapped;
+                if (!proxyHeaders(ctx, headers, name, "ws-opts.headers", mapped)) return false;
+                noteOverride("headers", mapped);
                 transport["headers"] = std::move(mapped);
             }
             if (opts["max-early-data"]) {
@@ -257,7 +282,7 @@ bool legacyProxyFieldsSupported(Context& ctx, const YAML::Node& item,
     };
     if (type == "shadowsocks") add({"cipher", "password", "plugin", "plugin-opts", "udp-over-tcp"});
     else if (type == "vmess") add({"uuid", "cipher", "alterId"});
-    else if (type == "vless") add({"uuid", "flow"});
+    else if (type == "vless") add({"uuid", "flow", "encryption"});
     else if (type == "trojan") add({"password"});
     else if (type == "hysteria2") add({"password", "up", "down", "obfs", "obfs-password", "ports"});
     else if (type == "tuic") add({"uuid", "password", "congestion-controller", "reduce-rtt", "disable-sni"});
@@ -270,7 +295,7 @@ bool legacyProxyFieldsSupported(Context& ctx, const YAML::Node& item,
     const std::string network = lowerCopy(ytext(item, "network"));
     if (type == "vmess" || type == "vless" || type == "trojan") {
         add({"network"});
-        if (network == "ws") add({"ws-opts"});
+        if (network == "ws") add({"ws-opts", "ws-path", "ws-headers"});
         else if (network == "grpc") add({"grpc-opts", "grpc-service-name"});
         else if (network == "h2") add({"h2-opts"});
         else if (network == "http") add({"http-opts"});
@@ -542,6 +567,16 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
         if (!appendTransport(ctx, item, out, name)) return std::nullopt;
         if (!appendTls(ctx, item, out)) return std::nullopt;
     } else if (singboxType == "vless") {
+        if (item["encryption"]) {
+            std::string encryption;
+            if (!proxyString(ctx, item["encryption"], name, "encryption", encryption)) return std::nullopt;
+            // Fixed sing-box VLESS implements the original unencrypted protocol;
+            // these explicit defaults are equivalent to omitting the field.
+            if (!encryption.empty() && encryption != "none") {
+                proxyValueInvalid(ctx, name, "encryption", "在固定内核中没有对应的加密实现");
+                return std::nullopt;
+            }
+        }
         out["uuid"] = ytext(item, "uuid");
         if (const std::string flow = ytext(item, "flow"); !flow.empty()) {
             out["flow"] = flow;
