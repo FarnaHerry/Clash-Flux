@@ -44,6 +44,7 @@ import clashflux.utils;
 import clashflux.vpn;
 
 #include "profiles_cache.h"
+#include "profiles_model.h"
 #include "profiles_page_shared.h"
 #include "vpn_model.h"
 
@@ -157,13 +158,20 @@ namespace clashflux::ui {
     // 四个一级页同时挂载，隐藏页即使不重组，其已挂载子树仍随每一帧被重新测量。
     // 真机实测（代理页大分组）：四页同挂时每帧 1443 次测量请求 / ~20ms，
     // 只留当前页后降到 28 次 / ~0ms；因此不可见页必须返回空占位。
-    if (!active) return huxerui::View{huxerui::Row{}}.Key("profiles-idle");
+    const auto profilesModel = huxerui::UseService<ProfilesModel>();
+    auto linkEffects = ProfileLinkImportEffects(profilesModel, navigation,
+                                                navigation_enabled, active);
+    if (!active) return huxerui::Column{linkEffects, huxerui::Row{}}
+        .With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+        .Key("profiles-page");
 
     const auto buildContent = [&]() -> huxerui::View {
 #include "ui/profiles_page_actions.inc"
 #include "ui/profiles_page_layout.inc"
     };
-    return buildContent();
+    return huxerui::Column{linkEffects, buildContent()}
+        .With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+        .Key("profiles-page");
 }
 
 [[huxerui::composable]] huxerui::View ProfilesPage(

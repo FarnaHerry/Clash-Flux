@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.16 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.17 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -319,6 +319,7 @@ if (ANDROID)
     set(APP_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/app.cpp")
     list(APPEND APP_SOURCE_FILES
         "${CLASHFLUX_ANDROID_LEGACY_CORE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/profile_link.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/qr_photo_decoder.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/platform/android/android_bridge.cpp"
         ${CLASHFLUX_ANDROID_LEGACY_UI}
@@ -701,9 +702,9 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     if (WIN32 AND HUXERUI_WINDOWS_RESOURCE)
         target_sources(clash-flux PRIVATE "${HUXERUI_WINDOWS_RESOURCE}")
     endif ()
-    if (APPLE AND NOT IOS AND HUXERUI_MACOS_INFO_PLIST)
+    if (APPLE AND NOT IOS)
         set_target_properties(clash-flux PROPERTIES
-            MACOSX_BUNDLE_INFO_PLIST "${HUXERUI_MACOS_INFO_PLIST}")
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/platform/macos/Info.plist.in")
     endif ()
 
     # ---- 自带 sing-box 内核 -------------------------------------------------
@@ -844,6 +845,10 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         set_target_properties(test_smoke PROPERTIES CXX_MODULE_STD ON)
         target_compile_features(test_smoke PRIVATE cxx_std_23)
         add_test(NAME smoke COMMAND test_smoke)
+
+        add_executable(test_profile_links tests/test_profile_links.cpp src/profile_link.cpp)
+        target_compile_features(test_profile_links PRIVATE cxx_std_23)
+        add_test(NAME profile_links COMMAND test_profile_links)
 
         # 页内分区切换：无窗口 Runtime 验证生产 Pager 的跟手、回弹、嵌套边界、
         # 快速反向切换、滚动保留以及大组的有界虚拟化。

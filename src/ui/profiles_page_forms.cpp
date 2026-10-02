@@ -27,6 +27,7 @@ import clashflux.utils;
 import clashflux.vpn;
 
 #include "profiles_page_shared.h"
+#include "profiles_model.h"
 
 namespace clashflux::ui {
 
@@ -47,7 +48,9 @@ huxerui::PageTransition ProfileSecondaryTransition(
 }
 
 bool IsHttpProfileUrl(const std::string& value) {
-    return value.starts_with("https://") || value.starts_with("http://");
+    if (profile_link::IsHttpUrl(value)) return true;
+    std::string error;
+    return profile_link::Parse(value, error).has_value();
 }
 
 huxerui::Task<std::pair<std::int64_t, std::string>> ImportProfileContent(
@@ -928,6 +931,19 @@ void PushProfileQrScanner(
         } else if (isDirect && !pptp && !openvpn) {
             inlineConfig = fields.config_content.Get().text;
         }
+        if (remote && profile_link::IsSupportedScheme(
+                std::string_view(url).substr(0, url.find(':')))) {
+            std::string error;
+            const auto link = profile_link::Parse(url, error);
+            if (!link) { toast.Show(error); return; }
+            url = link->url;
+            if (fields.name.Get().text.empty() && !link->name.empty())
+                fields.name = huxerui::TextEditingValue{link->name};
+        }
+        if (remote && !profile_link::IsHttpUrl(url)) {
+            toast.Show(Localized("订阅下载仅支持 HTTP 或 HTTPS URL"));
+            return;
+        }
         if ((remote && url.empty()) || (isQr && qrContent.empty())) {
             toast.Show(Localized(isQr ? "请先扫描二维码" : "订阅 URL 不能为空"));
             return;
@@ -1151,6 +1167,81 @@ void PushProfileQrScanner(
     return ProfileFlowPage(huxerui::Text(title, huxerui::TextRole::Title),
                            huxerui::View{}, std::move(content),
                            std::move(on_back));
+}
+
+[[huxerui::composable]] huxerui::View ProfileLinkImportPage(
+    profile_link::RemoteProfile request,
+    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    std::shared_ptr<AppHttpClient> http, huxerui::NavigationController navigation,
+    std::function<void()> close, huxerui::State<bool> showing) {
+    auto tasks = huxerui::UseTaskScope();
+    huxerui::Lifecycle([showing] { return [showing] { showing = false; }; }, 0);
+    // Separate form state preserves an unfinished ordinary import when a
+    // website opens another subscription. All State cells have initial values.
+    const ProfileCreateFields fields{
+        huxerui::UseState(huxerui::TextEditingValue{request.name}),
+        huxerui::UseState(huxerui::TextEditingValue{request.url}),
+        huxerui::UseState(huxerui::TextEditingValue{}),
+        huxerui::UseState(huxerui::TextEditingValue{}),
+        huxerui::UseState<std::size_t>(0),
+        huxerui::UseState(huxerui::TextEditingValue{}),
+        huxerui::UseState(huxerui::TextEditingValue{"60"}),
+        huxerui::UseState(huxerui::TextEditingValue{"1440"}),
+        huxerui::UseState(true), huxerui::UseState(false),
+        huxerui::UseState(false), huxerui::UseState(false),
+        huxerui::UseState(huxerui::TextEditingValue{}),
+        huxerui::UseState(huxerui::TextEditingValue{}),
+        huxerui::UseState(huxerui::TextEditingValue{}),
+        huxerui::UseState(huxerui::TextEditingValue{"30"}),
+        huxerui::UseState(huxerui::TextEditingValue{}),
+        huxerui::UseState(true),
+        huxerui::UseState(huxerui::TextEditingValue{}),
+        huxerui::UseState(huxerui::TextEditingValue{}),
+        huxerui::UseState(std::string{}), huxerui::UseState(false)};
+    return ProfileCreateMethodPage(ProfileAddMethod::Url, fields, tasks, toast,
+        picker, http, false, false, navigation, close, close);
+}
+
+[[huxerui::composable]] huxerui::View ProfileLinkImportEffects(
+    std::shared_ptr<ProfilesModel> model, huxerui::NavigationController navigation,
+    bool navigation_enabled, bool active) {
+    auto tasks = huxerui::UseTaskScope();
+    auto toast = huxerui::UseToast();
+    auto dialog = huxerui::UseDialog();
+    auto picker = huxerui::UseService<huxerui::FilePicker>();
+    auto http = huxerui::UseService<AppHttpClient>();
+    auto showing = huxerui::UseState(false);
+    huxerui::Lifecycle([=] {
+        if (active && !showing.Get() && !model->importLinks.Get().empty()) {
+            tasks.Post([=] {
+                if (showing.Get()) return;
+                auto links = model->importLinks.Get();
+                if (links.empty()) return;
+                const auto request = links.front();
+                links.erase(links.begin());
+                model->importLinks = std::move(links);
+                showing = true;
+                if (navigation_enabled) {
+                    navigation.Push([=] {
+                        const auto close = [navigation] { static_cast<void>(navigation.Pop()); };
+                        return ProfileLinkImportPage(request, toast, picker,
+                            http, navigation, close, showing);
+                    });
+                } else {
+                    dialog.Show([=](huxerui::DialogContext context) {
+                        const auto close = [context] { static_cast<void>(context.Dismiss()); };
+                        return huxerui::NavigationStack([=] {
+                            return ProfileLinkImportPage(request, toast, picker,
+                                http, navigation, close, showing);
+                        })
+                            .With(huxerui::Frame{.width = 520.0F, .height = 560.0F});
+                    });
+                }
+            });
+        }
+        return [] {};
+    }, active, model->importLinks, showing);
+    return huxerui::Row{}.Key("profile-link-effects");
 }
 
 [[huxerui::composable]] huxerui::View ProfileEditPage(

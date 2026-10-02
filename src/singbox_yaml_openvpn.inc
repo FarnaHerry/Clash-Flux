@@ -29,6 +29,14 @@ std::string ytext(const YAML::Node& map, const char* key) {
     return trimCopy(value.Scalar());
 }
 
+// Opaque credentials and payloads must not use the normalized ytext reader.
+// Callers validate declared values before using this literal scalar reader.
+std::string yliteral(const YAML::Node& map, const char* key) {
+    if (!map) return {};
+    const YAML::Node value = map[key];
+    return value && value.IsScalar() ? value.Scalar() : std::string{};
+}
+
 std::optional<int> yint(const YAML::Node& map, const char* key) {
     const std::string text = ytext(map, key);
     if (text.empty()) return std::nullopt;
@@ -327,23 +335,24 @@ std::optional<nlohmann::json> compileOpenVpnEndpoint(
         }
         endpoint["tls"] = std::move(tls);
         if (!option("key-direction").empty()) endpoint["key_direction"] = option("key-direction");
-        if (const std::string authUserPass = block("auth-user-pass"); !authUserPass.empty()) {
-            const auto credentials = openVpnWords(authUserPass);
-            if (credentials.size() >= 2) {
-                endpoint["username"] = credentials[0];
-                endpoint["password"] = credentials[1];
-            } else {
-                std::vector<std::string> values;
-                std::istringstream credentialLines(authUserPass);
-                std::string credentialLine;
-                while (std::getline(credentialLines, credentialLine)) {
-                    values.push_back(trimCopy(credentialLine));
-                }
-                if (values.size() >= 2) {
-                    endpoint["username"] = values[0];
-                    endpoint["password"] = values[1];
-                }
+        if (input.inlineBlocks.contains("auth-user-pass")) {
+            // This block is two literal credential lines, not option words.
+            // Quotes/spaces/tabs belong to the credential; only CRLF is a line
+            // delimiter. Like OpenVPN, consume the first two lines.
+            std::istringstream credentialLines(block("auth-user-pass"));
+            std::string username, password;
+            if (!std::getline(credentialLines, username) || !std::getline(credentialLines, password)) {
+                error = "OpenVPN inline auth-user-pass 需要用户名和密码两行";
+                return std::nullopt;
             }
+            if (username.ends_with('\r')) username.pop_back();
+            if (password.ends_with('\r')) password.pop_back();
+            if (username.empty() || password.empty()) {
+                error = "OpenVPN 空用户名/密码需要交互输入，托管 endpoint 不支持";
+                return std::nullopt;
+            }
+            endpoint["username"] = std::move(username);
+            endpoint["password"] = std::move(password);
         }
         if (!option("auth-user-pass").empty() && block("auth-user-pass").empty()) {
             error = "OpenVPN 外部 auth-user-pass 文件不能交给 sing-box，请使用 inline <auth-user-pass> 配置";

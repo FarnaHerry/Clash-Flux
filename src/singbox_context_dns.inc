@@ -18,6 +18,7 @@ struct Context {
     std::string dnsBootstrapTag = "local";
     std::map<std::string, SourceDefault> sourceDefaults;
     std::string sourceId;
+    std::string defaultFingerprint = "chrome";       // Scoped to this Clash source.
     std::string finalTarget;                          // MATCH 目标
 
     explicit Context(const CompileOptions& options) : opt(options) {}

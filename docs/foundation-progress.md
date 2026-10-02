@@ -3,6 +3,9 @@
 日期：2026-10-01。延续已有 sing-box 1.14.2 与 Glaze 9.0.0 基线；本轮处理
 编译语义、输入校验和诊断，不增加移动端多订阅编排或新 UI。
 
+下文保留该批开发历史（含 v0.3.10 验证记录）；当前工作区和最新验收范围见
+[2026-10-02 L1 / L2 / L3 开发复核](l1-l2-l3-status.md)。
+
 ## 规则条件共用转换
 
 `compileLeafCondition` 仅生成匹配条件，动作由外层规则添加。普通规则、AND/OR/NOT
@@ -83,7 +86,7 @@ Debug APK 路径仍为 `platform/android/app/build/outputs/apk/debug/app-debug.a
   仍不会虚构保真度条目。
 
 这批改动建立后续外部 provider 所需的下载提交边界；没有实现外部 HTTP/file
-provider 或普通订阅内容校验，没有新增多订阅功能。
+provider；普通订阅内容校验与桌面多来源是后续接入的能力，见下方更新。
 
 
 ### 此批验证范围
@@ -94,3 +97,30 @@ Linux `cmake --build build --target clash-flux` 与 `./run.sh --version`
 `apksigner verify --verbose --min-sdk-version 23` 的 v1/v2 均为 true，
 APK 中两个国内 GEO 资产均存在。仍未新增/执行测试套件、实际下载回滚场景或
 真机验证；Windows 的替换路径未在 Windows 编译运行，macOS/iOS 未编译。
+
+## 后续状态更新（2026-10-02）
+
+桌面普通订阅刷新/编辑已接入候选编译和固定内核检查；本地首次导入允许先保存为
+未参与来源，启用时检查；Android 仍由后台 libbox 检查，不能宣称桌面 CLI 预检查。
+桌面 Clash 次来源通过启用规则参与同一份配置，来源命名空间已经接入；原生 JSON
+次来源、跨来源代理链和持久崩溃恢复未完成。外部 HTTP/file provider 仍未接入。
+
+本轮旧协议字段守卫和唤醒链接已有回归，9 项项目测试通过；完整的构建、配置检查、
+Android 签名及未验收范围见 [最新开发复核](l1-l2-l3-status.md)。初次复核的 F01–F03
+由下方首批修复关闭；不能用这批构建结果宣称整个保真度契约已闭合。
+
+## L2 首批修复（2026-10-02）
+
+- `yliteral()` 读取旧协议凭据原文；拒绝声明为对象/数组/null 的凭据，诊断不回显值。
+  HTTP/SOCKS 可选空用户名/密码保留，AnyTLS/Snell 继续要求非空密码/PSK。
+- ALPN 整份类型/长度校验，WS headers 整份键值校验，重复键拒绝；path/header 不 trim。
+  HTTP/h2 字符串列表、gRPC/HTTPUpgrade 字符串、WS early-data 数值一并校验。
+- 全局指纹按 Clash 来源独立继承；节点值优先，未声明时保留 chrome 默认。
+  非法全局值失败并记账；未启用 TLS 的显式 TLS 字段拒绝，显式 tls:false 不会被偷开。
+  random 分布和固定内核折叠的指纹别名记 approx。
+- OpenVPN inline auth-user-pass 按两行读取，保留空格/引号/制表符，只处理 CRLF 分隔；
+  缺行或空凭据需要交互时明确失败并保留来源账本。
+
+新增回归在修复前有 48 项失败，修复后连同来源指纹隔离及 OpenVPN LF/CRLF 场景通过。
+Linux 主目标、版本 v0.3.16、9 项项目测试和扩充的 10 协议配置内核 check 通过；
+Android arm64 Debug 已重新构建。实机、远程握手与性能范围没有扩展。

@@ -16,6 +16,10 @@
 
 namespace clashflux::ui {
 
+struct ProfilesModel;
+huxerui::View ProfileLinkImportEffects(std::shared_ptr<ProfilesModel> model,
+    huxerui::NavigationController navigation, bool navigation_enabled, bool active);
+
 inline constexpr float kCardWidth = 340.0F;
 inline constexpr float kCardHeight = 180.0F;
 inline constexpr float kDialogFormHeight = 340.0F;

@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <variant>
 
 #include "ui.h"
 #include "app.h"
@@ -616,6 +617,19 @@ void StartCliRequestWatcher(huxerui::TaskScope tasks,
 #endif
 }
 
+void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
+                            const std::shared_ptr<ProfilesModel>& profiles) {
+    const auto* payload = std::get_if<huxerui::UrlActivation>(&activation);
+    if (!payload) return;
+    const auto& uri = payload->url;
+    if (!profile_link::IsSupportedScheme(uri.Scheme())) return;
+    std::string error;
+    auto profile = profile_link::ParseParts(uri.Scheme(), uri.Authority().value_or(""),
+        uri.Path(), uri.Query().value_or(""), uri.Fragment().value_or(""), error);
+    if (!profile || !profile_link::Submit(std::move(*profile), error))
+        profiles->linkError = error;
+}
+
 // 桌面：侧边导航 + 七页 IndexedPages（规则/连接/日志是一级页）。
 [[huxerui::composable]] huxerui::View DesktopMainContent(
     huxerui::State<std::size_t> navPage, huxerui::State<std::size_t>,
@@ -783,6 +797,13 @@ huxerui::PageTransition SecondaryPageTransition(
 }
 #endif
 
+void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
+                                 std::shared_ptr<ProfilesModel> profiles) {
+    context.OnActivation([profiles](huxerui::ApplicationActivation activation) {
+        QueueProfileActivation(activation, profiles);
+    });
+}
+
 [[huxerui::composable]] huxerui::View AppRoot() {
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
     const huxerui::Locale systemLocale =
@@ -822,6 +843,42 @@ huxerui::PageTransition SecondaryPageTransition(
     // （settings 与 profiles 都是「写缓存 + 异步落库」）。user_version=0 的老库
     // 由 open 里的 0→1 迁移重建表并保留数据。
     auto tasks = huxerui::UseTaskScope();
+    const auto linkToast = huxerui::UseToast();
+    const auto linkWindow = huxerui::UseWindow();
+    huxerui::Lifecycle([application, profilesModel] {
+        if (const auto& startup = application.StartupActivation(); startup)
+            QueueProfileActivation(*startup, profilesModel);
+        return [] {};
+    }, 0);
+    huxerui::Lifecycle([profilesModel, linkToast] {
+        const auto error = profilesModel->linkError.Get();
+        if (!error.empty()) {
+            linkToast.Show(error);
+            profilesModel->linkError = std::string{};
+        }
+        return [] {};
+    }, profilesModel->linkError);
+    huxerui::Lifecycle([tasks, profilesModel, navPage, pagerPage, linkWindow, linkToast] {
+        profile_link::SetWakeHandler([tasks, profilesModel, navPage, pagerPage, linkWindow, linkToast] {
+            tasks.Post([profilesModel, navPage, pagerPage, linkWindow, linkToast] {
+                auto incoming = profile_link::TakePending();
+                if (incoming.empty()) return;
+                auto links = profilesModel->importLinks.Get();
+                for (auto& request : incoming) {
+                    if (links.size() >= 16) {
+                        linkToast.Show("待处理的订阅链接过多，请先完成导入");
+                        break;
+                    }
+                    links.push_back(std::move(request));
+                }
+                profilesModel->importLinks = std::move(links);
+                navPage = pages::kProfiles;
+                pagerPage = 2;
+                linkWindow.Activate();
+            });
+        });
+        return [] { profile_link::SetWakeHandler({}); };
+    }, 0);
     huxerui::Lifecycle(
         [tasks, application, profilesModel, settingsModel] {
             tasks.Launch([application, profilesModel,

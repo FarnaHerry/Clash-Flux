@@ -119,6 +119,11 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   悬浮按钮表达，用户自己清楚当前状态；这类横幅只是噪音（代理页顶部那条已删除，
   以后不要再加回来）。仅保留真正需要用户处置的瞬时反馈（操作失败 toast 等）。
 - 阻塞的内核、网络、路由和系统设置操作必须放到任务线程，不能阻塞 UI 线程。
+- 订阅唤醒链接统一由 `src/profile_link.*` 解析：sing-box 的 `import-remote-profile`
+  与 FlClash/Clash 的 `install-config`，仅百分号解码一次，只接受 HTTP(S) 订阅。
+  桌面复用单实例 IPC，Android/macOS 复用 HuxerUI application activation；收到链接
+  只预填独立导入表单，由用户确认，不直接切换活动订阅。粘贴/扫码与网页入口共享解析，
+  平台协议注册和限制见 `docs/profile-links.md`；不得绕过平台订阅能力或默认证书校验。
 - Windows 后台系统操作必须安静执行，不得闪出命令行窗口。优先调用 Win32 API；确实
   需要启动子进程时使用 `CreateProcessW` 的 `CREATE_NO_WINDOW` 并重定向标准句柄，
   不要在后台使用 `std::system`、`_popen` 或会显示终端的 shell 启动方式。只有明确
@@ -296,6 +301,16 @@ CoreSnapshot.planRevision 表示成功应用后的运行序号，预览目录不
   普通 DNS rules；普通/节点策略共用精确与最长后缀优先级，并参与依赖图检查。
 - 未映射组字段、provider 引用/定义必须显式记账；`no-resolve` 暂记 approx，未知
   规则修饰符整条拒绝，不得截断附加字段后当作 exact。
+- 全部 Clash 节点分支均检查字段白名单与传输层子字段；证书 `fingerprint`、未映射
+  组合伪装等不能静默消失，须记 unsupported 并拒绝整条节点。显式 `udp: false`
+  按原生 network 限制，HTTP 的 `udp: true` 记 approx；无效布尔值或 HY2 带宽拒绝，
+  HTTP 多 path 只用首项须记 approx。
+  Trojan/HY2/TUIC 默认启用协议 TLS；QUIC 不注入 TCP uTLS，SOCKS 不输出无原生
+  等价的 TLS 字段。TUIC disable-sni 放到 TLS 对象，不能写成不存在的出站根字段。
+- 凭据必须按原文读取，不能用 trim 型 `ytext()`；OpenVPN inline auth-user-pass
+  按两行读取，不能按空格拆词。ALPN/WS header/传输列表异常时整条拒绝并记账，
+  不能筛掉异常成员。全局客户端指纹按来源继承、节点优先；非法全局值拒绝来源，
+  未启用 TLS 的显式 TLS 字段拒绝节点。random 分布和内核指纹别名折叠必须记 approx。
 
 - 编译器只读取 GEO 缓存，不删除/下载文件；`CompileResult.ruleSetResources` 明确
   输出自有 GEO 来源，启动任务负责预取、按周刷新及坏缓存清理。禁止扫描原生 JSON
@@ -321,6 +336,9 @@ toast、代理页分组标签的 `!` 角标（`SectionTab.badge`）、CLI `profi
 触发的重编译）不得重复提示。
 
 ## 文档同步
+
+L1/L2/L3 的实际完成度与验收证据维护在 `docs/l1-l2-l3-status.md`；更新时注明
+日期、代码快照、已接入/未完成边界和实际执行的检查，不把构建或配置检查写成实机验收。
 
 发布说明维护在 `docs/releases/<标签>.md`（中英文）。`v*` 标签触发 CI，在发布门禁通过且产物收集完成后一次创建带安装包的 Release；存在对应文件时优先用它，缺省才使用自动生成说明。
 

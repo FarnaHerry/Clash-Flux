@@ -1,36 +1,129 @@
 // singbox_proxy.inc — 代理节点、传输层与代理组转换
 // 由 src/singbox.cpp 在同一匿名命名空间中包含。
 
-void appendTls(Context& ctx, const YAML::Node& item, nlohmann::json& out,
-               bool required = false) {
-    const std::string sni = [] (const YAML::Node& node) {
-        std::string value = ytext(node, "servername");
-        if (value.empty()) value = ytext(node, "sni");
-        return value;
-    }(item);
+bool proxyValueInvalid(Context& ctx, const std::string& name,
+                       std::string_view field, std::string_view reason) {
+    // Do not include input values: these fields may carry authentication data.
+    ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+             std::format("节点「{}」的 {} {}，已跳过", name, field, reason),
+             "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置");
+    return false;
+}
+
+bool proxyString(Context& ctx, const YAML::Node& value, const std::string& name,
+                 std::string_view field, std::string& result, bool nonempty = false) {
+    if (!value.IsScalar()) return proxyValueInvalid(ctx, name, field, "必须为字符串");
+    result = value.Scalar();
+    if (nonempty && result.empty()) return proxyValueInvalid(ctx, name, field, "不能为空");
+    return true;
+}
+
+bool proxyStringList(Context& ctx, const YAML::Node& map, const char* field,
+                     const std::string& name, std::vector<std::string>& result,
+                     bool nonempty = false) {
+    const YAML::Node value = map[field];
+    if (!value) return true;
+    if (value.IsScalar()) {
+        std::string text;
+        if (!proxyString(ctx, value, name, field, text, nonempty)) return false;
+        result.push_back(std::move(text));
+        return true;
+    }
+    if (!value.IsSequence()) return proxyValueInvalid(ctx, name, field, "必须为字符串或字符串数组");
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        std::string text;
+        if (!proxyString(ctx, value[i], name, std::format("{}[{}]", field, i), text, nonempty)) return false;
+        result.push_back(std::move(text));
+    }
+    return true;
+}
+
+bool proxyFingerprintSupported(std::string_view value) {
+    // Fixed 1.14.2 common/tls/utls_client.go, not guessed browser names.
+    static constexpr std::string_view fingerprints[]{
+        "chrome", "firefox", "edge", "safari", "360", "qq", "ios", "android",
+        "random", "randomized", "chrome_psk", "chrome_psk_shuffle",
+        "chrome_padding_psk_shuffle", "chrome_pq", "chrome_pq_psk"};
+    return std::ranges::find(fingerprints, value) != std::end(fingerprints);
+}
+
+bool applyClashFingerprint(Context& ctx, const YAML::Node& root) {
+    const YAML::Node value = root["global-client-fingerprint"];
+    if (!value) return true;
+    if (!value.IsScalar() || !proxyFingerprintSupported(value.Scalar())) {
+        ctx.result.error = "global-client-fingerprint 必须为固定内核支持的非空指纹字符串";
+        ctx.note(FidelityScope::Field, Fidelity::Unsupported, "global-client-fingerprint",
+                 ctx.result.error, "在节点中指定支持的 client-fingerprint；不会自动换成 chrome");
+        return false;
+    }
+    ctx.defaultFingerprint = value.Scalar();
+    return true;
+}
+
+bool appendTls(Context& ctx, const YAML::Node& item, nlohmann::json& out,
+               bool required = false, bool allowUtls = true) {
+    const std::string name = ytext(item, "name");
+    std::string sni, servername;
+    if (item["sni"] && !proxyString(ctx, item["sni"], name, "sni", sni)) return false;
+    if (item["servername"] && !proxyString(ctx, item["servername"], name, "servername", servername)) return false;
+    if (!servername.empty()) {
+        if (!sni.empty() && sni != servername)
+            ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                     std::format("节点「{}」同时指定不同的 sni/servername，使用 servername", name));
+        sni = std::move(servername);
+    }
     const bool skipVerify = ybool(item, "skip-cert-verify");
-    if (!required && !ybool(item, "tls") && sni.empty() && !skipVerify) return;
+    if (required && item["tls"] && !ybool(item, "tls"))
+        return proxyValueInvalid(ctx, name, "tls", "不能关闭该协议必需的 TLS");
+    // Preserve the existing implicit SNI/Reality activation only when tls was
+    // omitted; an explicit tls:false must never turn into an encrypted node.
+    const bool enabled = required || (item["tls"] ? ybool(item, "tls") :
+        !sni.empty() || skipVerify || bool(item["reality-opts"]));
+    if (!enabled) {
+        bool valid = true;
+        for (const char* field : {"sni", "servername", "skip-cert-verify", "alpn",
+                                  "client-fingerprint", "reality-opts"})
+            if (item[field]) valid = proxyValueInvalid(ctx, name, field, "不能在未启用 TLS 时应用") && valid;
+        return valid;
+    }
     nlohmann::json tls = {{"enabled", true}};
     if (!sni.empty()) tls["server_name"] = sni;
     if (skipVerify) tls["insecure"] = true;
-    if (const std::vector<std::string> alpn = ylist(item, "alpn"); !alpn.empty()) {
-        tls["alpn"] = alpn;
+    std::vector<std::string> alpn;
+    if (!proxyStringList(ctx, item, "alpn", name, alpn, true)) return false;
+    if (std::ranges::any_of(alpn, [](const auto& protocol) { return protocol.size() > 255; }))
+        return proxyValueInvalid(ctx, name, "alpn", "协议名长度必须为 1–255 字节");
+    if (item["alpn"]) tls["alpn"] = std::move(alpn);
+    if (item["client-fingerprint"] && !allowUtls)
+        return proxyValueInvalid(ctx, name, "client-fingerprint", "不适用于该协议的 TLS");
+    std::string fingerprint = ctx.defaultFingerprint;
+    if (item["client-fingerprint"] &&
+        !proxyString(ctx, item["client-fingerprint"], name, "client-fingerprint", fingerprint, true)) return false;
+    if (allowUtls && !proxyFingerprintSupported(fingerprint))
+        return proxyValueInvalid(ctx, name, "client-fingerprint", "不是固定内核支持的指纹");
+    if (allowUtls) {
+        tls["utls"] = {{"enabled", true}, {"fingerprint", fingerprint}};
+        if (fingerprint.starts_with("chrome_"))
+            ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                     std::format("节点「{}」的指纹别名在固定内核中按普通 chrome 处理", name),
+                     "固定 1.14.2 不保留这些 PSK/PQ 别名差异；需要区别时请更换配置");
+        else if (fingerprint == "random")
+            ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                     std::format("节点「{}」使用内核 random 指纹，其抽样分布与 Clash 不保证一致", name));
     }
-    // mihomo 全局 uTLS 指纹的历史行为：无节点级指纹时按 chrome 处理。
-    std::string fingerprint = ytext(item, "client-fingerprint");
-    if (fingerprint.empty()) fingerprint = "chrome";
-    tls["utls"] = {{"enabled", true}, {"fingerprint", fingerprint}};
-    if (const YAML::Node reality = item["reality-opts"]; reality && reality.IsMap()) {
+    if (ybool(item, "disable-sni")) tls["disable_sni"] = true;
+    if (const YAML::Node reality = item["reality-opts"]; reality) {
+        if (!reality.IsMap()) return proxyValueInvalid(ctx, name, "reality-opts", "必须为对象");
+        std::string publicKey, shortId;
+        if (!proxyString(ctx, reality["public-key"], name, "reality-opts.public-key", publicKey, true)) return false;
+        if (reality["short-id"] && !proxyString(ctx, reality["short-id"], name, "reality-opts.short-id", shortId)) return false;
         nlohmann::json realityOut = {{"enabled", true}};
-        if (const std::string publicKey = ytext(reality, "public-key"); !publicKey.empty()) {
-            realityOut["public_key"] = publicKey;
-        }
-        if (const std::string shortId = ytext(reality, "short-id"); !shortId.empty()) {
-            realityOut["short_id"] = shortId;
-        }
+        realityOut["public_key"] = std::move(publicKey);
+        if (reality["short-id"]) realityOut["short_id"] = std::move(shortId);
         tls["reality"] = realityOut;
     }
     out["tls"] = std::move(tls);
+    return true;
 }
 
 // Clash 把传输层放在 network + *-opts；sing-box 用 typed transport 对象。
@@ -42,26 +135,34 @@ bool appendTransport(Context& ctx, const YAML::Node& item, nlohmann::json& out,
         // sing-box 的类型名是 "ws"（"websocket" 会直接解码失败）。
         nlohmann::json transport = {{"type", "ws"}};
         if (const YAML::Node opts = item["ws-opts"]; opts && opts.IsMap()) {
-            if (const std::string path = ytext(opts, "path"); !path.empty()) {
-                transport["path"] = path;
+            if (opts["path"]) {
+                std::string path;
+                if (!proxyString(ctx, opts["path"], name, "ws-opts.path", path)) return false;
+                transport["path"] = std::move(path);
             }
-            if (const YAML::Node headers = opts["headers"]; headers && headers.IsMap()) {
+            if (const YAML::Node headers = opts["headers"]; headers) {
+                if (!headers.IsMap()) return proxyValueInvalid(ctx, name, "ws-opts.headers", "必须为对象");
                 nlohmann::json mapped = nlohmann::json::object();
                 for (auto it = headers.begin(); it != headers.end(); ++it) {
-                    const YAML::Node key = it->first;
-                    const YAML::Node value = it->second;
-                    if (key.IsScalar() && value.IsScalar()) {
-                        mapped[key.Scalar()] = trimCopy(value.Scalar());
-                    }
+                    std::string key, value;
+                    if (!proxyString(ctx, it->first, name, "ws-opts.headers 的键", key, true) ||
+                        !proxyString(ctx, it->second, name, "ws-opts.headers 的值", value)) return false;
+                    if (mapped.contains(key)) return proxyValueInvalid(ctx, name, "ws-opts.headers", "不能包含重复键");
+                    mapped[key] = std::move(value);
                 }
-                if (!mapped.empty()) transport["headers"] = std::move(mapped);
+                transport["headers"] = std::move(mapped);
             }
-            if (const auto earlyData = yint(opts, "max-early-data"); earlyData) {
+            if (opts["max-early-data"]) {
+                const auto earlyData = yint(opts, "max-early-data");
+                if (!earlyData || *earlyData < 0)
+                    return proxyValueInvalid(ctx, name, "ws-opts.max-early-data", "必须为非负整数");
                 transport["max_early_data"] = *earlyData;
             }
-            if (const std::string earlyHeader = ytext(opts, "early-data-header-name");
-                !earlyHeader.empty()) {
-                transport["early_data_header_name"] = earlyHeader;
+            if (opts["early-data-header-name"]) {
+                std::string earlyHeader;
+                if (!proxyString(ctx, opts["early-data-header-name"], name,
+                                 "ws-opts.early-data-header-name", earlyHeader)) return false;
+                transport["early_data_header_name"] = std::move(earlyHeader);
             }
         }
         out["transport"] = std::move(transport);
@@ -69,10 +170,18 @@ bool appendTransport(Context& ctx, const YAML::Node& item, nlohmann::json& out,
     }
     if (network == "grpc") {
         nlohmann::json transport = {{"type", "grpc"}};
-        std::string service = ytext(item, "grpc-service-name");
+        std::string service;
+        if (item["grpc-service-name"] &&
+            !proxyString(ctx, item["grpc-service-name"], name, "grpc-service-name", service)) return false;
         if (const YAML::Node opts = item["grpc-opts"]; opts && opts.IsMap()) {
-            const std::string nested = ytext(opts, "grpc-service-name");
-            if (!nested.empty()) service = nested;
+            if (opts["grpc-service-name"]) {
+                std::string nested;
+                if (!proxyString(ctx, opts["grpc-service-name"], name, "grpc-opts.grpc-service-name", nested)) return false;
+                if (!service.empty() && service != nested)
+                    ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                             std::format("节点「{}」的嵌套 grpc-service-name 覆盖顶层值", name));
+                service = std::move(nested);
+            }
         }
         if (!service.empty()) transport["service_name"] = service;
         out["transport"] = std::move(transport);
@@ -82,16 +191,16 @@ bool appendTransport(Context& ctx, const YAML::Node& item, nlohmann::json& out,
         nlohmann::json transport = {{"type", "http"}};
         const YAML::Node opts = network == "h2" ? item["h2-opts"] : item["http-opts"];
         if (opts && opts.IsMap()) {
-            if (const std::vector<std::string> paths = ylist(opts, "path"); !paths.empty()) {
+            std::vector<std::string> paths, hosts;
+            if (!proxyStringList(ctx, opts, "path", name, paths) ||
+                !proxyStringList(ctx, opts, "host", name, hosts)) return false;
+            if (!paths.empty()) {
                 transport["path"] = paths.front();
+                if (paths.size() > 1) ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                    std::format("节点「{}」的 HTTP 传输 path 列表仅使用首项", name),
+                    "sing-box 客户端只接受一个请求路径；请明确指定要使用的路径");
             }
-            if (const YAML::Node host = opts["host"]; host && host.IsSequence()) {
-                std::vector<std::string> hosts;
-                for (const YAML::Node& entry : host) {
-                    if (entry.IsScalar()) hosts.push_back(trimCopy(entry.Scalar()));
-                }
-                if (!hosts.empty()) transport["host"] = std::move(hosts);
-            }
+            if (opts["host"]) transport["host"] = std::move(hosts);
         }
         out["transport"] = std::move(transport);
         return true;
@@ -99,11 +208,15 @@ bool appendTransport(Context& ctx, const YAML::Node& item, nlohmann::json& out,
     if (network == "httpupgrade") {
         nlohmann::json transport = {{"type", "httpupgrade"}};
         if (const YAML::Node opts = item["httpupgrade-opts"]; opts && opts.IsMap()) {
-            if (const std::string path = ytext(opts, "path"); !path.empty()) {
-                transport["path"] = path;
+            if (opts["path"]) {
+                std::string path;
+                if (!proxyString(ctx, opts["path"], name, "httpupgrade-opts.path", path)) return false;
+                transport["path"] = std::move(path);
             }
-            if (const std::string host = ytext(opts, "host"); !host.empty()) {
-                transport["host"] = host;
+            if (opts["host"]) {
+                std::string host;
+                if (!proxyString(ctx, opts["host"], name, "httpupgrade-opts.host", host)) return false;
+                transport["host"] = std::move(host);
             }
         }
         out["transport"] = std::move(transport);
@@ -119,15 +232,87 @@ bool appendTransport(Context& ctx, const YAML::Node& item, nlohmann::json& out,
 
 bool proxyFieldsSupported(Context& ctx, const YAML::Node& item, const std::string& name,
                           std::initializer_list<std::string_view> supported) {
+    bool valid = true;
     for (const auto& field : item) {
         const std::string key = field.first.IsScalar() ? field.first.Scalar() : "(无效字段名)";
         if (std::ranges::find(supported, key) != supported.end()) continue;
         ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
                  std::format("节点「{}」的 {} 尚未映射，已跳过", name, key),
                  "请用原生 sing-box JSON 表达该线路；编译器不会省略未映射字段后改变线路语义");
-        return false;
+        valid = false;
     }
-    return true;
+    return valid;
+}
+
+// Older protocol branches must enforce the same fidelity boundary as AnyTLS
+// and Snell. In particular, certificate constraints and combination transports
+// cannot disappear while the plain node is kept.
+bool legacyProxyFieldsSupported(Context& ctx, const YAML::Node& item,
+                                const std::string& name, const std::string& type) {
+    std::vector<std::string_view> fields{
+        "name", "type", "server", "port", "udp", "dialer-proxy",
+        "interface-name", "routing-mark", "tfo", "mptcp"};
+    const auto add = [&](std::initializer_list<std::string_view> keys) {
+        fields.insert(fields.end(), keys.begin(), keys.end());
+    };
+    if (type == "shadowsocks") add({"cipher", "password", "plugin", "plugin-opts", "udp-over-tcp"});
+    else if (type == "vmess") add({"uuid", "cipher", "alterId"});
+    else if (type == "vless") add({"uuid", "flow"});
+    else if (type == "trojan") add({"password"});
+    else if (type == "hysteria2") add({"password", "up", "down", "obfs", "obfs-password", "ports"});
+    else if (type == "tuic") add({"uuid", "password", "congestion-controller", "reduce-rtt", "disable-sni"});
+    else if (type == "http" || type == "socks5") add({"username", "password"});
+    else return true; // The protocol branch below reports an unknown type.
+    if (type != "shadowsocks" && type != "socks5") {
+        add({"tls", "sni", "servername", "skip-cert-verify", "alpn"});
+        if (type != "hysteria2" && type != "tuic") add({"client-fingerprint", "reality-opts"});
+    }
+    const std::string network = lowerCopy(ytext(item, "network"));
+    if (type == "vmess" || type == "vless" || type == "trojan") {
+        add({"network"});
+        if (network == "ws") add({"ws-opts"});
+        else if (network == "grpc") add({"grpc-opts", "grpc-service-name"});
+        else if (network == "h2") add({"h2-opts"});
+        else if (network == "http") add({"http-opts"});
+        else if (network == "httpupgrade") add({"httpupgrade-opts"});
+    }
+    bool valid = true;
+    for (const auto& field : item) {
+        const std::string key = field.first.IsScalar() ? field.first.Scalar() : "(无效字段名)";
+        if (std::ranges::find(fields, key) != fields.end()) continue;
+        ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+            std::format("节点「{}」的 {} 尚未映射，已跳过", name, key),
+            "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义");
+        valid = false;
+    }
+    const auto nested = [&](const char* key, std::initializer_list<std::string_view> supported) {
+        const auto value = item[key];
+        if (!value) return true;
+        if (!value.IsMap()) {
+            ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+                std::format("节点「{}」的 {} 必须为对象，已跳过", name, key));
+            return false;
+        }
+        return proxyFieldsSupported(ctx, value, name, supported);
+    };
+    valid = nested("reality-opts", {"public-key", "short-id"}) && valid;
+    valid = nested("ws-opts", {"path", "headers", "max-early-data", "early-data-header-name"}) && valid;
+    valid = nested("grpc-opts", {"grpc-service-name"}) && valid;
+    valid = nested("h2-opts", {"path", "host"}) && valid;
+    valid = nested("http-opts", {"path", "host"}) && valid;
+    valid = nested("httpupgrade-opts", {"path", "host"}) && valid;
+    if (item["plugin-opts"] && ytext(item, "plugin").empty()) {
+        ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+            std::format("节点「{}」包含未启用插件的 plugin-opts，已跳过", name));
+        valid = false;
+    }
+    if ((type == "trojan" || type == "hysteria2" || type == "tuic") &&
+        item["tls"] && !ybool(item, "tls")) {
+        ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+            std::format("节点「{}」的协议不能关闭 TLS，已跳过", name));
+        valid = false;
+    }
+    return valid;
 }
 
 bool proxyBooleansValid(Context& ctx, const YAML::Node& item, const std::string& name,
@@ -237,11 +422,22 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
     out["server"] = server;
     out["server_port"] = *port;
 
+    if (!legacyProxyFieldsSupported(ctx, item, name, singboxType)) return std::nullopt;
+    if (singboxType != "anytls" && singboxType != "snell" &&
+        !proxyBooleansValid(ctx, item, name,
+            {"udp", "tls", "skip-cert-verify", "udp-over-tcp", "reduce-rtt", "disable-sni"}))
+        return std::nullopt;
+
+    for (const char* field : {"password", "username", "psk", "obfs-password"}) {
+        if (item[field] && !item[field].IsScalar()) {
+            proxyValueInvalid(ctx, name, field, "必须为凭据字符串");
+            return std::nullopt;
+        }
+    }
+
     if (singboxType == "shadowsocks") {
         out["method"] = ytext(item, "cipher");
-        if (const std::string password = ytext(item, "password"); !password.empty()) {
-            out["password"] = password;
-        }
+        if (item["password"]) out["password"] = yliteral(item, "password");
         if (!ytext(item, "plugin").empty()) {
             ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
                      std::format("节点「{}」使用 SS 插件（obfs/v2ray-plugin），暂不支持，已跳过", name),
@@ -294,7 +490,7 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
             }
             out["client_metadata"] = metadata.Scalar();
         }
-        appendTls(ctx, item, out, true);
+        if (!appendTls(ctx, item, out, true)) return std::nullopt;
         if (!ybool(item, "udp")) {
             ctx.note(FidelityScope::Node, Fidelity::Approx, name,
                      std::format("AnyTLS 节点「{}」未启用 UDP，但 sing-box AnyTLS 出站固定支持 TCP/UDP", name),
@@ -344,25 +540,21 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
             out["alter_id"] = *alterId;
         }
         if (!appendTransport(ctx, item, out, name)) return std::nullopt;
-        appendTls(ctx, item, out);
+        if (!appendTls(ctx, item, out)) return std::nullopt;
     } else if (singboxType == "vless") {
         out["uuid"] = ytext(item, "uuid");
         if (const std::string flow = ytext(item, "flow"); !flow.empty()) {
             out["flow"] = flow;
         }
         if (!appendTransport(ctx, item, out, name)) return std::nullopt;
-        appendTls(ctx, item, out);
+        if (!appendTls(ctx, item, out)) return std::nullopt;
     } else if (singboxType == "trojan") {
-        if (const std::string password = ytext(item, "password"); !password.empty()) {
-            out["password"] = password;
-        }
+        if (item["password"]) out["password"] = yliteral(item, "password");
         if (!appendTransport(ctx, item, out, name)) return std::nullopt;
-        appendTls(ctx, item, out);
+        if (!appendTls(ctx, item, out, true)) return std::nullopt;
     } else if (singboxType == "hysteria2") {
-        if (const std::string password = ytext(item, "password"); !password.empty()) {
-            out["password"] = password;
-        }
-        // 带宽字段 "30 Mbps" / "30" 之类取前导数字；无效则省略（内核自适应）。
+        if (item["password"]) out["password"] = yliteral(item, "password");
+        // 整数 Mbps 可精确映射；不能把小数或其它单位截断后改变带宽。
         const auto leadingNumber = [](std::string_view text) -> std::optional<int> {
             // 拷贝到稳定存储：trimCopy 返回的临时 string 赋回 string_view 会
             // 悬垂（libstdc++ 的 SSO 缓冲恰好能读到，libc++ 下即出错）。
@@ -373,15 +565,25 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
                 ++end;
             }
             if (end == 0) return std::nullopt;
+            const std::string unit = lowerCopy(trimCopy(digits.substr(end)));
+            if (!unit.empty() && unit != "mbps") return std::nullopt;
             int parsed = 0;
             const auto [ptr, ec] =
                 std::from_chars(digits.data(), digits.data() + end, parsed);
             if (ec != std::errc()) return std::nullopt;
             return parsed;
         };
-        if (const auto up = leadingNumber(ytext(item, "up")); up) out["up_mbps"] = *up;
-        if (const auto down = leadingNumber(ytext(item, "down")); down) out["down_mbps"] = *down;
-        if (const std::string obfsPassword = ytext(item, "obfs-password"); !obfsPassword.empty()) {
+        for (const auto& [source, target] : {std::pair{"up", "up_mbps"}, std::pair{"down", "down_mbps"}}) {
+            if (!item[source]) continue;
+            const auto value = leadingNumber(ytext(item, source));
+            if (!value || *value <= 0) {
+                ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
+                    std::format("节点「{}」的 {} 不是有效的正数带宽，已跳过", name, source));
+                return std::nullopt;
+            }
+            out[target] = *value;
+        }
+        if (const std::string obfsPassword = yliteral(item, "obfs-password"); !obfsPassword.empty()) {
             out["obfs"] = {{"type", "salamander"}, {"password", obfsPassword}};
         } else if (const std::string obfs = ytext(item, "obfs");
                    !obfs.empty() && lowerCopy(obfs) != "none") {
@@ -407,38 +609,21 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
             }
             if (!serverPorts.empty()) out["server_ports"] = std::move(serverPorts);
         }
-        appendTls(ctx, item, out);
+        if (!appendTls(ctx, item, out, true, false)) return std::nullopt;
     } else if (singboxType == "tuic") {
         out["uuid"] = ytext(item, "uuid");
-        if (const std::string password = ytext(item, "password"); !password.empty()) {
-            out["password"] = password;
-        }
+        if (item["password"]) out["password"] = yliteral(item, "password");
         if (const std::string congestion =
                 ytext(item, "congestion-controller"); !congestion.empty()) {
             out["congestion_control"] = congestion;
         }
         if (ybool(item, "reduce-rtt")) out["zero_rtt_handshake"] = true;
-        if (ybool(item, "disable-sni")) out["disable_sni"] = true;
-        if (const std::vector<std::string> alpn = ylist(item, "alpn"); !alpn.empty()) {
-            nlohmann::json tls = {{"enabled", true}};
-            if (const std::string sni = ytext(item, "sni"); !sni.empty()) {
-                tls["server_name"] = sni;
-            }
-            if (ybool(item, "skip-cert-verify")) tls["insecure"] = true;
-            tls["alpn"] = alpn;
-            out["tls"] = std::move(tls);
-        } else {
-            appendTls(ctx, item, out);
-        }
+        if (!appendTls(ctx, item, out, true, false)) return std::nullopt;
     } else if (singboxType == "http" || singboxType == "socks5") {
         if (singboxType == "socks5") out["type"] = "socks";
-        if (const std::string username = ytext(item, "username"); !username.empty()) {
-            out["username"] = username;
-        }
-        if (const std::string password = ytext(item, "password"); !password.empty()) {
-            out["password"] = password;
-        }
-        appendTls(ctx, item, out);
+        if (item["username"]) out["username"] = yliteral(item, "username");
+        if (item["password"]) out["password"] = yliteral(item, "password");
+        if (!appendTls(ctx, item, out)) return std::nullopt;
     } else {
         ctx.note(FidelityScope::Node, Fidelity::Unsupported, name,
                  std::format("节点「{}」的协议 {} 暂不支持，已跳过", name, type),
@@ -446,6 +631,14 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
         return std::nullopt;
     }
     if (!appendProxyDialer(ctx, item, out, name)) return std::nullopt;
+    if (item["udp"] && singboxType != "anytls" && singboxType != "snell") {
+        if (singboxType == "http") {
+            if (ybool(item, "udp")) ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+                std::format("HTTP 节点「{}」启用了 UDP，但原生 HTTP 出站仅转发 TCP", name));
+        } else if (!ybool(item, "udp")) {
+            out["network"] = "tcp";
+        }
+    }
     return out;
 }
 

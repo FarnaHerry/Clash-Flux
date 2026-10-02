@@ -6,6 +6,9 @@
 namespace clashflux::ui {
 
 // 应用根：自定义标题栏 + 左侧导航 + 页面切换。由 src/app.cpp 注册到 Application。
+struct ProfilesModel;
 huxerui::View AppRoot();
+void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
+                                 std::shared_ptr<ProfilesModel> profiles);
 
 } // namespace clashflux::ui

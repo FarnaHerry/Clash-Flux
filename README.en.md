@@ -1,6 +1,6 @@
 # Clash-Flux
 
-See the [v0.3.16 release notes](docs/releases/v0.3.16.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.17 release notes](docs/releases/v0.3.17.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -19,6 +19,9 @@ application-managed settings before being passed to sing-box.
 - Subscription and profile management: cards with context menus, double-click
   activation and refresh actions; URL import, update, activation, deletion and rule
   editing; local storage; Clash YAML and native sing-box JSON file import.
+- Browser subscription links: accept sing-box and FlClash links and open an import
+  form with the name and URL filled in. Pasting and QR import accept these links too;
+  see [formats and platform registration](docs/profile-links.md).
 - Subscription downloads: choose the sing-box core, system environment proxy or a
   direct connection for each subscription, with an explicit option to allow invalid
   certificates. On Windows, HTTPS downloads use the Windows certificate store for
@@ -219,6 +222,14 @@ See the [core capability audit](docs/singbox-capability-audit.md) for integratio
 gaps and field limits, and the [Clash YAML example](docs/examples/kernel-capabilities.yaml)
 for the newly mapped capabilities.
 
+See the [L1 / L2 / L3 development review](docs/l1-l2-l3-status.md) for the
+2026-10-02 workspace snapshot, remaining fidelity defects and validation scope.
+It distinguishes implementation from device validation and does not describe
+every capability of the published packages.
+The first L2 batch fixes literal credentials, malformed TLS/transport values and
+global fingerprint handling, with permanent regressions. Protocol type coverage
+remains 10/15; further field and provider adaptation remains in the review backlog.
+
 Desktop now implements [one main source with rule-driven secondary sources](docs/desktop-subscription-orchestration.md).
 Clash YAML secondary sources participate only through enabled rules, with isolated
 group and node names. Fixed tiers order user overrides, source policies, main rules
@@ -280,12 +291,15 @@ Jobs follow the `build-<os>-<arch>` naming convention:
 |-----|--------|--------|
 | build-linux-x86_64 | Ubuntu container + clang-21/libc++ | Supported |
 | build-linux-arm64 | Native ubuntu-24.04-arm | Experimental |
-| build-windows-x86_64 | MSVC + Chocolatey OpenSSL + HuxerUI installer | Supported |
-| build-windows-arm64 | windows-11-arm + vcpkg OpenSSL | Experimental |
-| build-macos-arm64 | macos-15 + Homebrew LLVM | Experimental |
-| build-macos-x86_64 | macos-13 + Homebrew LLVM | Experimental |
-| build-android | HuxerUI CLI APK build: GUI/native shell + sing-box libbox | Experimental |
+| build-windows-x86_64 | MSVC + preinstalled runner OpenSSL + HuxerUI installer | Supported |
+| build-macos-arm64 | macos-15 + Homebrew LLVM | Release gate |
+| build-android | HuxerUI CLI arm64 APK build: GUI/native shell + sing-box libbox | Release gate |
 | build-ios-simulator-arm64 | macOS + iOS Simulator SDK; unsigned app/Packet Tunnel and pinned sing-box device/Simulator Libbox.xcframework | TODO / deferred; experimental diagnostics, does not block releases |
+
+The Windows installer has a separate `build-windows-installer` gate. There are
+currently no Windows arm64 or macOS x86_64 jobs; Linux arm64 is non-blocking.
+These statuses describe workflow gates, not a fresh check of hosted CI results
+or completed device validation.
 
 The iOS diagnostic job builds `clash-flux_huxerui_ios_core` for the arm64 Simulator
 from the project's CMake configuration using a pinned HuxerUI iOS source revision.
@@ -305,7 +319,8 @@ Linux RPM/DEB packages include `/usr/bin/clash-flux`, desktop menu integration
 through a `.desktop` file and hicolor icons. The application is installed under
 `/opt/clash-flux`.
 
-Desktop build coverage follows sing-box's released platforms and architectures.
+The official desktop core asset table contains six pinned mappings; client build
+coverage follows the actual CI matrix above.
 Android libbox builds verify the official release tag against the pinned revision;
 Gradle validates version, revision, ABI and AAR SHA256 metadata before packaging.
 Core asset SHA256 hashes are pinned in `cmake/singbox_bundle.cmake`, with automatic
