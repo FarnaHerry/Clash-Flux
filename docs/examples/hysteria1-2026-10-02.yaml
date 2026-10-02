@@ -1,0 +1,59 @@
+# Public regression fixture. Domains and credentials are placeholders.
+dns:
+  nameserver: [223.5.5.5]
+proxies:
+  - name: HY1-defaults
+    type: hysteria
+    server: example.test
+    port: 443
+    up: 20 Mbps
+    down: 100
+    auth-str: ' sample secret '
+    obfs: ' obfs secret '
+    sni: example.test
+  - name: HY1-explicit-windows
+    type: hysteria
+    server: example.test
+    port: 443
+    protocol: udp
+    up: 3 MBps
+    down: 100 Mbps
+    auth: c2FtcGxl
+    auth-str: ignored-by-auth
+    recv-window-conn: 1048576
+    recv-window: 4194304
+    disable-mtu-discovery: true
+    fast-open: false
+    udp: false
+    alpn: [hysteria]
+  - name: HY1-hopping
+    type: hysteria
+    server: example.test
+    ports: 443,5000-5002
+    up: 20
+    down: 100
+    auth-str: sample
+    hop-interval: 0
+  - name: HY1-obfs-protocol
+    type: hysteria
+    server: example.test
+    port: 443
+    protocol: faketcp
+    obfs-protocol: udp
+    up: 20
+    down: 100
+  - name: HY2-byte-bandwidth
+    type: hysteria2
+    server: example.test
+    port: 443
+    password: sample
+    up: 3 MBps
+    down: 100 Mbps
+proxy-groups:
+  - name: Manual
+    type: select
+    proxies: [HY1-defaults, HY1-explicit-windows, HY1-hopping, HY1-obfs-protocol, HY2-byte-bandwidth, DIRECT]
+rules:
+  - RULE-SET,cn,DIRECT
+  - RULE-SET,cn-ip,DIRECT
+  - MATCH,Manual

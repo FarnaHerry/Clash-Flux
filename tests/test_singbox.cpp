@@ -131,6 +131,29 @@ json valuesNode(const singbox::CompileResult& result) {
     return {};
 }
 
+class RuleSetTestDirectory {
+public:
+    RuleSetTestDirectory() {
+        std::random_device random;
+        for (int attempt = 0; attempt < 32; ++attempt) {
+            auto candidate = std::filesystem::temp_directory_path() /
+                std::format("clashflux-test-ruleset-{:x}-{:x}", random(), random());
+            if (!std::filesystem::create_directory(candidate)) continue;
+            path = std::move(candidate);
+            return;
+        }
+        throw std::runtime_error("cannot allocate exclusive rule-set test directory");
+    }
+    ~RuleSetTestDirectory() {
+        std::error_code ignored;
+        std::filesystem::remove_all(path, ignored);
+    }
+    RuleSetTestDirectory(const RuleSetTestDirectory&) = delete;
+    RuleSetTestDirectory& operator=(const RuleSetTestDirectory&) = delete;
+
+    std::filesystem::path path;
+};
+
 void testProxyValues() {
     // Subscription generators still emit these valid compatibility fields.
     // A field allowlist must distinguish inactive/duplicate settings from an
@@ -335,10 +358,478 @@ void testProxyValues() {
 #endif
 }
 
+void testProxyUdpOptions() {
+    const auto mapped = [](std::string_view type, std::string_view fields) {
+        return compileProxyValues(std::format("    type: {}\n{}", type, fields));
+    };
+    for (const char* type : {"vmess", "vless"}) {
+        const auto defaults = mapped(type, "");
+        check(!valuesNode(defaults).empty() && !valuesNode(defaults).contains("packet_encoding") &&
+              defaults.fidelity.empty(), "UDP encoding absent preserves protocol-specific native default");
+        for (const char* encoding : {"packetaddr", "packet", "xudp", "''"}) {
+            const auto result = mapped(type, std::format("    packet-encoding: {}\n", encoding));
+            const std::string expected = std::string_view(encoding) == "packet" ? "packetaddr" :
+                std::string_view(encoding) == "''" ? (std::string_view(type) == "vless" ? "xudp" : "") : encoding;
+            check(!valuesNode(result).empty() && valuesNode(result)["packet_encoding"] == expected &&
+                  result.fidelity.empty(), "UDP encoding aliases preserve Clash effective behavior");
+        }
+        for (const char* invalid : {"mystery", "[xudp]", "null"}) {
+            const auto result = mapped(type, std::format("    packet-encoding: {}\n", invalid));
+            check(valuesNode(result).empty() && !result.fidelity.empty(), "invalid UDP encoding rejects node with ledger");
+        }
+        for (const auto& [fields, expected] : std::vector<std::pair<std::string, std::string>>{
+            {"    packet-addr: true\n", "packetaddr"},
+            {"    xudp: true\n", "xudp"},
+            {"    packet-addr: true\n    xudp: true\n", "xudp"},
+            {"    packet-addr: false\n    xudp: false\n", std::string_view(type) == "vless" ? "xudp" : ""},
+            {"    packet-encoding: packetaddr\n    xudp: true\n", std::string_view(type) == "vless" ? "packetaddr" : "xudp"},
+            {"    packet-encoding: xudp\n    packet-addr: true\n", std::string_view(type) == "vless" ? "packetaddr" : "xudp"}}) {
+            const auto result = mapped(type, fields);
+            check(!valuesNode(result).empty() && valuesNode(result)["packet_encoding"] == expected &&
+                  result.fidelity.empty(), "legacy UDP switches follow each Clash protocol's precedence");
+        }
+        for (const char* field : {"packet-addr", "xudp"}) {
+            const auto result = mapped(type, std::format("    {}: [true]\n", field));
+            check(valuesNode(result).empty() && !result.fidelity.empty(), "invalid legacy UDP boolean rejects node");
+        }
+    }
+    for (const char* value : {"true", "false"}) {
+        const auto result = mapped("vmess", std::format("    global-padding: {}\n    authenticated-length: {}\n", value, value));
+        const auto node = valuesNode(result);
+        check(!node.empty() && node["global_padding"] == (std::string_view(value) == "true") &&
+              node["authenticated_length"] == (std::string_view(value) == "true") && result.fidelity.empty(),
+              "VMess padding flags map exactly including explicit false");
+    }
+    for (const char* field : {"global-padding", "authenticated-length"}) {
+        const auto result = mapped("vmess", std::format("    {}: invalid\n", field));
+        check(valuesNode(result).empty() && !result.fidelity.empty(), "malformed VMess padding flag rejects node");
+    }
+    const auto hy2 = [&](std::string_view fields) { return mapped("hysteria2", "    password: sample\n" + std::string(fields)); };
+    for (const char* type : {"salamander", "gecko"}) {
+        const auto result = hy2(std::format("    obfs: {}\n    obfs-password: ' exact secret '\n", type));
+        const auto node = valuesNode(result);
+        check(!node.empty() && node["obfs"]["type"] == type && node["obfs"]["password"] == " exact secret " &&
+              result.fidelity.empty(), "HY2 respects obfs type and literal credential");
+    }
+    const auto gecko = hy2("    obfs: gecko\n    obfs-password: sample\n    obfs-min-packet-size: 600\n    obfs-max-packet-size: 1400\n");
+    check(!valuesNode(gecko).empty() && valuesNode(gecko)["obfs"]["min_packet_size"] == 600 &&
+          valuesNode(gecko)["obfs"]["max_packet_size"] == 1400 && gecko.fidelity.empty(), "HY2 Gecko sizes map to fixed native schema");
+    const auto geckoDefaults = hy2("    obfs: gecko\n    obfs-password: sample\n    obfs-min-packet-size: 0\n    obfs-max-packet-size: 0\n");
+    check(!valuesNode(geckoDefaults).empty() && valuesNode(geckoDefaults)["obfs"]["min_packet_size"] == 0 &&
+          valuesNode(geckoDefaults)["obfs"]["max_packet_size"] == 0 && geckoDefaults.fidelity.empty(),
+          "HY2 Gecko explicit zero preserves native default sizes");
+    for (const char* fields : {"    obfs: salamander\n", "    obfs: gecko\n    obfs-password: ''\n",
+         "    obfs: unknown\n    obfs-password: sample\n", "    obfs: [gecko]\n",
+         "    obfs: gecko\n    obfs-password: sample\n    obfs-max-packet-size: [1200]\n",
+         "    obfs: gecko\n    obfs-password: sample\n    obfs-max-packet-size: 500\n",
+         "    obfs: gecko\n    obfs-password: sample\n    obfs-min-packet-size: 1500\n",
+         "    obfs: gecko\n    obfs-password: sample\n    obfs-max-packet-size: 2049\n",
+         "    obfs: gecko\n    obfs-password: sample\n    obfs-min-packet-size: -1\n"}) {
+        const auto result = hy2(fields);
+        check(valuesNode(result).empty() && !result.fidelity.empty(), "invalid HY2 obfs never becomes plain/salamander connection");
+    }
+    const auto inactive = hy2("    obfs-password: sample\n");
+    check(!valuesNode(inactive).empty() && !valuesNode(inactive).contains("obfs") && !inactive.fidelity.empty(),
+          "password alone does not enable HY2 obfs and ignored setting is reported");
+    for (const char* fields : {"    hop-interval: 30\n", "    obfs-min-packet-size: 600\n",
+                              "    obfs: salamander\n    obfs-password: sample\n    obfs-max-packet-size: 1400\n"}) {
+        const auto result = hy2(fields);
+        check(!valuesNode(result).empty() && !valuesNode(result).contains("hop_interval") &&
+              std::ranges::any_of(result.fidelity, [](const auto& note) {
+                  return note.level == singbox::Fidelity::Approx;
+              }), "inactive HY2 option is reported without silently enabling hopping or Gecko");
+    }
+    for (const char* hop : {"30", "15-30", "30-15"}) {
+        const auto result = hy2(std::format("    ports: '20000-30000,40000'\n    hop-interval: {}\n", hop));
+        const auto node = valuesNode(result);
+        check(!node.empty() && node["server_ports"] == json{"20000:30000", "40000:40000"} &&
+              !node.contains("server_port") &&
+              node["hop_interval"] == (std::string_view(hop) == "30" ? "30s" : "15s") &&
+              node["hop_interval_max"] == "30s" && result.fidelity.empty(), "HY2 port hopping and interval range map exactly");
+    }
+    const auto reversedPorts = hy2("    ports: 400-200\n");
+    check(!valuesNode(reversedPorts).empty() && valuesNode(reversedPorts)["server_ports"] == json{"200:400"} &&
+          reversedPorts.fidelity.empty(), "HY2 reversed ports normalize exactly as Clash");
+    for (const char* ports : {"0", "65536", "100,,200", "100,", "[100, 200]", "null", "100:200"}) {
+        const auto result = hy2(std::format("    ports: {}\n", ports));
+        check(valuesNode(result).empty() && !result.fidelity.empty(), "HY2 malformed port list rejects atomically");
+    }
+    for (const char* hop : {"-1", "15-30-40", "1.5", "9223372037", "[30]", "null"}) {
+        const auto result = hy2(std::format("    ports: '100-200'\n    hop-interval: {}\n", hop));
+        check(valuesNode(result).empty() && !result.fidelity.empty(), "HY2 malformed or overflowing duration rejects node");
+    }
+    for (const char* hop : {"0", "''", "2"}) {
+        const auto result = hy2(std::format("    ports: '100-200'\n    hop-interval: {}\n", hop));
+        check(!valuesNode(result).empty() && valuesNode(result)["hop_interval"] ==
+              (std::string_view(hop) == "2" ? "5s" : "30s") &&
+              (std::string_view(hop) == "2" ? !result.fidelity.empty() : result.fidelity.empty()),
+              "HY2 mirrors Clash default and minimum hop interval with clamp ledger");
+    }
+    for (const char* port : {"", "    port: 0\n"}) {
+        singbox::CompileOptions options;
+        options.profileYaml = "proxies:\n  - name: values\n    type: hysteria2\n    server: example.test\n"
+            "    password: sample\n    ports: '100-200'\n" + std::string(port) + "rules:\n  - MATCH,DIRECT\n";
+        const auto result = singbox::compileConfig(options);
+        check(!valuesNode(result).empty() && !valuesNode(result).contains("server_port") && result.fidelity.empty(),
+              "HY2 ports-only endpoint does not require unused single port");
+        check(!valuesNode(result).empty() && valuesNode(result)["hop_interval"] == "30s" &&
+              valuesNode(result)["hop_interval_max"] == "30s", "HY2 absent hop interval is explicitly the Clash default");
+    }
+}
+
+void testShadowsocksPlugins() {
+    const auto ss = [](std::string_view fields) {
+        return compileProxyValues("    type: ss\n    cipher: aes-256-gcm\n    password: sample\n" + std::string(fields));
+    };
+    for (const char* mode : {"http", "tls"}) {
+        const auto result = ss(std::format("    plugin: obfs\n    plugin-opts: {{mode: {}}}\n", mode));
+        const auto node = valuesNode(result);
+        check(!node.empty() && node["plugin"] == "obfs-local" &&
+              node["plugin_opts"] == std::format("obfs={};obfs-host=bing.com", mode) && result.fidelity.empty(),
+              "SS simple-obfs maps mode and explicit Clash default host");
+    }
+    const auto escaped = valuesNode(ss("    plugin: obfs\n    plugin-opts: {mode: http, host: 'example.test;tls=1\\suffix'}\n"));
+    check(!escaped.empty() && escaped["plugin_opts"] == "obfs=http;obfs-host=example.test\\;tls\\=1\\\\suffix",
+          "SIP003 values escape separators without injecting extra plugin options");
+    for (const char* tls : {"true", "false"}) {
+        for (const char* mux : {"true", "false"}) {
+            const auto result = ss(std::format("    plugin: v2ray-plugin\n    plugin-opts: {{mode: websocket, tls: {}, mux: {}}}\n", tls, mux));
+            const auto node = valuesNode(result);
+            const auto expected = std::format("mode=websocket;host=bing.com;path=/;mux={}{}", std::string_view(mux) == "true" ? 1 : 0,
+                                               std::string_view(tls) == "true" ? ";tls" : "");
+            check(!node.empty() && node["plugin"] == "v2ray-plugin" && node["plugin_opts"] == expected &&
+                  result.fidelity.empty(), "SS v2ray-plugin preserves TLS presence and mux boolean semantics");
+        }
+    }
+    const auto defaults = ss("    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket}\n");
+    check(!valuesNode(defaults).empty() && valuesNode(defaults)["plugin_opts"] ==
+          "mode=websocket;host=bing.com;path=/;mux=1" && defaults.fidelity.empty(),
+          "SS v2ray-plugin keeps Clash host/path/mux defaults");
+    const auto explicitOptions = ss("    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, host: ws.example.test, path: '/p?q=a;b=c', headers: {}, skip-cert-verify: false, v2ray-http-upgrade: false, v2ray-http-upgrade-fast-open: false}\n");
+    check(!valuesNode(explicitOptions).empty() && valuesNode(explicitOptions)["plugin_opts"] ==
+          "mode=websocket;host=ws.example.test;path=/p?q\\=a\\;b\\=c;mux=1" && explicitOptions.fidelity.empty(),
+          "SS v2ray-plugin keeps explicit strings and inactive compatibility defaults");
+    for (const char* fields : {
+        "    plugin: [obfs]\n", "    plugin: null\n", "    plugin: restls\n    plugin-opts: {mode: http}\n",
+        "    plugin: obfs\n", "    plugin: obfs\n    plugin-opts: null\n", "    plugin: obfs\n    plugin-opts: [http]\n",
+        "    plugin: obfs\n    plugin-opts: {mode: unknown}\n", "    plugin: obfs\n    plugin-opts: {mode: http, host: [bad]}\n",
+        "    plugin: obfs\n    plugin-opts: {mode: http, host: ''}\n", "    plugin: obfs\n    plugin-opts: {mode: http, extra: true}\n",
+        "    plugin: obfs\n    plugin-opts: {mode: http, mode: tls}\n",
+        "    plugin: v2ray-plugin\n    plugin-opts: {mode: quic}\n",
+        "    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, tls: maybe}\n",
+        "    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, mux: [false]}\n",
+        "    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, path: null}\n",
+        "    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, tls: true, skip-cert-verify: true}\n",
+        "    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, headers: {X-Test: sample}}\n",
+        "    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, headers: {Host: [bad]}}\n",
+        "    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, v2ray-http-upgrade: true}\n",
+        "    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, v2ray-http-upgrade-fast-open: true}\n",
+        "    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, fingerprint: sample}\n"}) {
+        const auto result = ss(fields);
+        check(valuesNode(result).empty() && std::ranges::any_of(result.fidelity, [](const auto& note) {
+            return note.level == singbox::Fidelity::Unsupported;
+        }), "SS invalid or unmapped plugin options reject whole node with ledger");
+    }
+    for (const char* version : {"0", "1", "2"}) {
+        const auto result = ss(std::format("    udp-over-tcp: true\n    udp-over-tcp-version: {}\n", version));
+        check(!valuesNode(result).empty() && valuesNode(result)["udp_over_tcp"] ==
+              json{{"enabled", true}, {"version", std::string_view(version) == "2" ? 2 : 1}} && result.fidelity.empty(),
+              "SS UOT version zero/default is legacy v1 and v2 stays explicit");
+    }
+    const auto defaultUot = ss("    udp-over-tcp: true\n");
+    check(!valuesNode(defaultUot).empty() && valuesNode(defaultUot)["udp_over_tcp"] == json{{"enabled", true}, {"version", 1}} &&
+          defaultUot.fidelity.empty(), "SS UOT enabled without version retains Clash legacy v1 instead of native v2");
+    const auto disabledUot = ss("    udp-over-tcp: false\n    udp-over-tcp-version: 2\n");
+    check(!valuesNode(disabledUot).empty() && valuesNode(disabledUot)["udp_over_tcp"] == json{{"enabled", false}, {"version", 2}} &&
+          disabledUot.fidelity.empty(), "SS UOT explicit disabled flag keeps version without enabling transport");
+    for (const char* version : {"-1", "3", "257", "[1]", "null", "1.5"}) {
+        const auto result = ss(std::format("    udp-over-tcp-version: {}\n", version));
+        check(valuesNode(result).empty() && !result.fidelity.empty(), "SS invalid UOT version rejects without narrowing or defaulting");
+    }
+    singbox::CompileOptions target;
+    target.profileYaml = "proxies:\n  - {name: invalid-plugin, type: ss, server: example.test, port: 443, cipher: aes-256-gcm, password: sample, plugin: v2ray-plugin, plugin-opts: {mode: websocket, headers: {X-Test: sample}}}\n"
+        "rules:\n  - MATCH,invalid-plugin\n";
+    const auto rejected = singbox::compileConfig(target);
+    check(!rejected.error.empty() && !rejected.fidelity.empty(), "SS plugin rejection keeps fidelity when referenced MATCH fails");
+}
+
+void testLogicalRuleResources() {
+    const auto compile = [](std::string_view rules, std::string_view providers = {}) {
+        singbox::CompileOptions options;
+        options.profileYaml = std::string(providers) + "\nrules:\n" + std::string(rules) + "  - MATCH,DIRECT\n";
+        return singbox::compileConfig(options);
+    };
+    const auto routeRules = [](const auto& result) {
+        return result.json.empty() ? json::array() : json::parse(result.json)["route"]["rules"];
+    };
+    const auto logicalRules = [&](const auto& result) {
+        json found = json::array();
+        for (const auto& rule : routeRules(result)) if (rule.value("type", "") == "logical") found.push_back(rule);
+        return found;
+    };
+    const auto privateGeo = compile("  - AND,((NETWORK,TCP),(NOT,((GEOIP,private)))),REJECT-DROP\n");
+    const auto privateRules = logicalRules(privateGeo);
+    check(privateGeo.error.empty() && privateGeo.fidelity.empty() && privateRules.size() == 1 &&
+          privateRules[0]["method"] == "drop" && privateRules[0]["rules"][1]["invert"] == true &&
+          privateRules[0]["rules"][1]["rules"][0]["ip_is_private"] == true && privateGeo.ruleSetResources.empty(),
+          "nested private GEO retains NOT and outer reject-drop without resources");
+    const auto countries = compile("  - OR,((GEOIP,CN),(AND,((GEOSITE,CN),(NETWORK,TCP)))),DIRECT\n");
+    const auto countryRules = logicalRules(countries);
+    check(countries.error.empty() && countries.fidelity.empty() && countryRules.size() == 1 &&
+          countryRules[0]["rules"][0]["rule_set"] == json{"geoip-cn"} &&
+          countryRules[0]["rules"][1]["rules"][0]["rule_set"] == json{"geosite-cn"} &&
+          countries.ruleSetResources.size() == 2, "nested GEOIP/GEOSITE create typed references and resource manifest");
+    const std::string providers = "rule-providers:\n  precise:\n    type: inline\n    behavior: domain\n    payload: [example.test]\n";
+    const auto inlineSet = compile("  - AND,((RULE-SET,precise),(DST-PORT,443)),DIRECT\n", providers);
+    const auto inlineRules = logicalRules(inlineSet);
+    check(inlineSet.error.empty() && inlineSet.fidelity.empty() && inlineRules.size() == 1 &&
+          inlineRules[0]["rules"][0]["rule_set"] == json{"clash-provider-0"} &&
+          !inlineRules[0]["rules"][0].contains("outbound"), "logical RULE-SET references exact inline provider with only outer action");
+    const auto alias = compile("  - NOT,((RULE-SET,cn)),DIRECT\n");
+    const auto aliasRules = logicalRules(alias);
+    check(aliasRules.size() == 1 && aliasRules[0]["invert"] == true && alias.ruleSetResources.size() == 1 &&
+          std::ranges::any_of(alias.fidelity, [](const auto& note) { return note.level == singbox::Fidelity::Approx; }),
+          "nested China alias remains approximate and preserves NOT");
+    if (!alias.json.empty()) check(json::parse(alias.json)["dns"].value("rules", json::array()).empty(),
+          "negated China condition does not insert a global China DNS rule");
+    const auto failedProvider = compile("  - AND,((RULE-SET,cn),(NETWORK,TCP)),DIRECT\n",
+        "rule-providers:\n  cn: {type: http, behavior: domain, url: https://example.test/rules.yaml}\n");
+    check(logicalRules(failedProvider).empty() && failedProvider.ruleSetResources.empty() &&
+          !failedProvider.fidelity.empty(), "failed declared provider never falls back to same-named China alias in logical rule");
+    for (const char* child : {"GEOIP,TELEGRAM", "GEOSITE,invalid!", "RULE-SET,missing", "UNKNOWN,x", "GEOIP,CN,bogus"}) {
+        const auto failed = compile(std::format("  - AND,((GEOSITE,CN),({})),DIRECT\n", child));
+        check(logicalRules(failed).empty() && failed.ruleSetResources.empty() &&
+              !failed.fidelity.empty() && !failed.json.empty() && json::parse(failed.json)["route"].value("rule_set", json::array()).empty(),
+              "one invalid logical child rejects entire tree and rolls back newly staged GEO resources");
+    }
+    const auto retained = compile("  - GEOIP,CN,DIRECT\n  - AND,((GEOSITE,CN),(UNKNOWN,x)),DIRECT\n  - GEOSITE,CN,DIRECT\n");
+    check(logicalRules(retained).empty() && retained.ruleSetResources.size() == 2 &&
+          routeRules(retained).size() >= 2, "failed logical rule preserves earlier resources and permits later valid GEO rule");
+    const auto unknownTarget = compile("  - AND,((GEOSITE,CN),(NETWORK,TCP)),missing\n");
+    check(logicalRules(unknownTarget).empty() && unknownTarget.ruleSetResources.empty() && !unknownTarget.fidelity.empty(),
+          "invalid logical action target does not allocate unused rule-set resources");
+    const auto headless = compile("  - RULE-SET,rejected,DIRECT\n",
+        "rule-providers:\n  rejected:\n    type: inline\n    behavior: classical\n    payload: ['AND,((GEOSITE,CN),(NETWORK,TCP))']\n");
+    check(headless.ruleSetResources.empty() && !headless.fidelity.empty() && !headless.json.empty() &&
+          json::parse(headless.json)["route"].value("rule_set", json::array()).empty(),
+          "headless provider continues rejecting GEO/RULE-SET references instead of writing route-only fields");
+    const auto noResolve = compile("  - AND,((GEOIP,private),(NETWORK,TCP)),DIRECT,no-resolve\n");
+    check(logicalRules(noResolve).size() == 1 && std::ranges::any_of(noResolve.fidelity, [](const auto& note) {
+          return note.level == singbox::Fidelity::Approx; }), "logical no-resolve modifier retains existing approximate contract");
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+    singbox::CompileOptions sources;
+    sources.mainConnectionId = "logical-main";
+    sources.profileYaml = providers + "rules:\n  - AND,((RULE-SET,precise),(NOT,((GEOSITE,CN)))),DIRECT\n  - MATCH,DIRECT\n";
+    sources.auxiliarySources = {{"logical-secondary", "secondary", providers + "rules:\n  - MATCH,DIRECT\n", true}};
+    sources.globalRules = {{.match = vpn::MatchKind::DomainSuffix, .pattern = "secondary.test",
+        .connectionId = "logical-secondary", .id = "logical-source", .tier = vpn::RuleTier::SourcePolicy,
+        .targetKind = vpn::TargetKind::Default}};
+    const auto namespaced = singbox::compileConfig(sources);
+    const auto scopedRules = logicalRules(namespaced);
+    check(namespaced.error.empty() && scopedRules.size() == 1 && namespaced.participatingSources.size() == 2,
+          "nested resource rule compiles with two desktop sources");
+    if (scopedRules.size() == 1) {
+        const auto config = json::parse(namespaced.json);
+        const auto& providerRef = scopedRules[0]["rules"][0]["rule_set"][0];
+        const auto& geoRef = scopedRules[0]["rules"][1]["rules"][0]["rule_set"][0];
+        const auto hasTag = [&](const auto& tag) {
+            return std::ranges::any_of(config["route"]["rule_set"], [&](const auto& set) { return set["tag"] == tag; });
+        };
+        check(providerRef != "clash-provider-0" && geoRef != "geosite-cn" && hasTag(providerRef) && hasTag(geoRef) &&
+              namespaced.ruleSetResources.size() == 1 && namespaced.ruleSetResources[0].tag == "geosite-cn",
+              "nested provider/GEO runtime tags are namespaced while owned cache identity stays canonical");
+    }
+#endif
+}
+
+void testHysteria1() {
+    const auto hy1 = [](std::string_view fields = {}) {
+        return compileProxyValues("    type: hysteria\n    up: 20 Mbps\n    down: 100\n" + std::string(fields));
+    };
+    const auto basic = hy1("    auth-str: ' sample secret '\n    obfs: ' obfs secret '\n");
+    const auto node = valuesNode(basic);
+    check(basic.error.empty() && !node.empty() && node.value("type", "") == "hysteria" &&
+          node.value("auth_str", "") == " sample secret " && node.value("obfs", "") == " obfs secret " &&
+          node.value("up_mbps", 0) == 20 && node.value("down_mbps", 0) == 100 &&
+          node.value("stream_receive_window", 0) == 15728640 && node.value("connection_receive_window", 0) == 67108864 &&
+          node.value("tls", json::object()).value("enabled", false) && !node["tls"].contains("utls") &&
+          std::ranges::any_of(basic.fidelity, [](const auto& note) { return note.level == singbox::Fidelity::Approx; }),
+          "HY1 keeps literal authentication/obfs, required QUIC TLS and bandwidth, reports initial-window difference");
+    const auto exact = hy1("    auth: 'c2FtcGxl'\n    auth-str: ignored\n    protocol: udp\n    recv-window-conn: 1048576\n    recv-window: 4194304\n    disable-mtu-discovery: true\n    fast-open: false\n    udp: false\n");
+    const auto exactNode = valuesNode(exact);
+    check(!exactNode.empty() && exact.fidelity.empty() && exactNode.value("auth", "") == "c2FtcGxl" &&
+          !exactNode.contains("auth_str") && exactNode.value("stream_receive_window", 0) == 1048576 &&
+          exactNode.value("connection_receive_window", 0) == 4194304 && exactNode.value("disable_path_mtu_discovery", false) &&
+          exactNode.value("network", "") == "tcp", "HY1 auth bytes take priority, window fields follow actual Clash axes, explicit UDP restriction survives");
+    for (const char* fields : {"", "    auth: ''\n", "    auth-str: ''\n", "    protocol: ''\n", "    protocol: faketcp\n    obfs-protocol: udp\n"}) {
+        check(!valuesNode(hy1(fields)).empty(), "HY1 anonymous authentication and active UDP transport defaults compile");
+    }
+    for (const char* fields : {"    ports: '443,5000-5002'\n", "    ports: '443'\n    hop-interval: 0\n", "    ports: '443'\n    hop-interval: 15\n"}) {
+        const auto hopping = valuesNode(hy1(fields));
+        check(!hopping.empty() && !hopping.contains("server_port") && hopping.contains("server_ports") &&
+              hopping.value("hop_interval", "") == (std::string_view(fields).find("15") == std::string_view::npos ? "10s" : "15s") &&
+              !hopping.contains("hop_interval_max"), "HY1 port hopping preserves its own 10-second default without HY2-only fields");
+    }
+    singbox::CompileOptions portsOnly;
+    portsOnly.profileYaml = "proxies:\n  - {name: values, type: hysteria, server: example.test, ports: '5000-5001', up: 20, down: 100}\nrules:\n  - MATCH,DIRECT\n";
+    check(!valuesNode(singbox::compileConfig(portsOnly)).empty(), "HY1 hopping does not require an unused single port");
+    for (const char* fields : {"    protocol: faketcp\n", "    obfs-protocol: wechat-video\n", "    fast-open: true\n",
+          "    auth: not_base64\n", "    auth: ' c2FtcGxl '\n", "    auth: 'YQ'\n", "    auth: 'YQ==='\n", "    auth: []\n", "    auth-str: {}\n", "    obfs: []\n",
+          "    hop-interval: -1\n", "    ports: '443'\n    hop-interval: 4\n", "    hop-interval: '5-10'\n", "    ports: '443,bad'\n",
+          "    recv-window: 1048576\n", "    recv-window-conn: 1048576\n", "    recv-window: -1\n", "    disable-mtu-discovery: perhaps\n",
+          "    alpn: []\n", "    tls: false\n", "    client-fingerprint: chrome\n", "    fingerprint: sample\n", "    certificate: sample\n"}) {
+        const auto failed = hy1(fields);
+        check(valuesNode(failed).empty() && std::ranges::any_of(failed.fidelity, [](const auto& note) {
+              return note.level == singbox::Fidelity::Unsupported; }), "HY1 unrepresentable transport, invalid credential/options and certificate constraints reject whole node");
+    }
+    for (const char* type : {"hysteria", "hysteria2"}) {
+        const auto bytes = valuesNode(compileProxyValues(std::format("    type: {}\n    up: 3 MBps\n    down: 10 Mbps\n", type)));
+        check(!bytes.empty() && bytes.value("up_mbps", 0) == 24, "Mbps and MBps are distinct and bytes convert without truncation");
+        for (const char* fields : {"    up: auto\n", "    up: 30 mbps\n", "    up: 1.5 Mbps\n", "    up: 0\n", "    up: 268435456 MBps\n", "    up: []\n"}) {
+            const auto failed = compileProxyValues(std::format("    type: {}\n    down: 10\n{}", type, fields));
+            check(valuesNode(failed).empty() && !failed.fidelity.empty(), "HY1/HY2 bandwidth invalid units, values and overflow reject node");
+        }
+    }
+    const auto absent = compileProxyValues("    type: hysteria\n    auth-str: sample\n");
+    check(valuesNode(absent).empty() && !absent.fidelity.empty(), "HY1 requires both bandwidth directions instead of native failure at startup");
+    for (const char* auth : {"YQ==", "YWI=", "YWJj", "AP8=", "YR==", "YQ==\\r\\n"}) {
+        const auto encoded = valuesNode(hy1(std::format("    auth: \"{}\"\n", auth)));
+        check(!encoded.empty() && encoded.contains("auth") && !encoded.contains("auth_str"),
+              "HY1 standard Base64 accepts padding, binary bytes, Go-compatible padding bits and CR/LF");
+    }
+    for (const std::size_t size : {65535, 65536}) {
+        const auto credential = hy1("    auth-str: '" + std::string(size, 's') + "'\n");
+        check(valuesNode(credential).empty() == (size > 65535), "HY1 literal credential respects 16-bit wire length without truncation");
+    }
+    const auto rejectedBytes = hy1("    auth: '" + std::string(87384, 'A') + "'\n");
+    check(valuesNode(rejectedBytes).empty() && !rejectedBytes.fidelity.empty(), "HY1 encoded credential enforces decoded wire length");
+    singbox::CompileOptions invalidMatch;
+    invalidMatch.profileYaml = "proxies:\n  - {name: rejected, type: hysteria, server: example.test, port: 443, up: 20, down: 100, protocol: faketcp}\nrules:\n  - MATCH,rejected\n";
+    const auto failedMatch = singbox::compileConfig(invalidMatch);
+    check(!failedMatch.error.empty() && failedMatch.json.empty() && !failedMatch.fidelity.empty(),
+          "rejected HY1 target fails MATCH and keeps fidelity instead of becoming direct");
+    const auto detached = hy1("    hop-interval: 15\n");
+    check(!valuesNode(detached).contains("hop_interval") && std::ranges::any_of(detached.fidelity, [](const auto& note) {
+        return note.detail.find("hop-interval") != std::string::npos;
+    }), "HY1 interval without port hopping stays inactive with ledger entry");
+}
+
+void testSsh() {
+    const auto ssh = [](std::string_view fields = {}) {
+        return compileProxyValues("    type: ssh\n    username: ' test user '\n" + std::string(fields));
+    };
+    const auto password = ssh("    password: ' sample password '\n    udp: false\n");
+    const auto node = valuesNode(password);
+    check(password.error.empty() && !node.empty() && password.fidelity.empty() &&
+          node.value("type", "") == "ssh" && node.value("user", "") == " test user " &&
+          node.value("password", "") == " sample password " && !node.contains("username") &&
+          !node.contains("network") && !node.contains("tls"),
+          "SSH maps literal user/password without unsupported TLS or network fields");
+    const std::string key = "    private-key: |\n      -----BEGIN OPENSSH PRIVATE KEY-----\n      test-only-key\n      -----END OPENSSH PRIVATE KEY-----\n";
+    const auto keyed = ssh(key + "    private-key-passphrase: ' test passphrase '\n");
+    const auto keyedNode = valuesNode(keyed);
+    check(!keyedNode.empty() && keyed.fidelity.empty() &&
+          keyedNode.value("private_key", "") == "-----BEGIN OPENSSH PRIVATE KEY-----\ntest-only-key\n-----END OPENSSH PRIVATE KEY-----\n" &&
+          keyedNode.value("private_key_passphrase", "") == " test passphrase " && !keyedNode.contains("private_key_path"),
+          "SSH inline key and encrypted-key passphrase remain literal; native check validates cryptographic syntax");
+    const auto dual = ssh(key + "    password: sample\n");
+    check(!valuesNode(dual).empty() && std::ranges::any_of(dual.fidelity, [](const auto& note) {
+        return note.level == singbox::Fidelity::Approx && note.detail.find("认证顺序") != std::string::npos;
+    }), "SSH dual authentication reports native password-before-key order");
+    const auto pins = ssh("    host-key: ['ssh-ed25519 test-only', 'ssh-rsa test-only']\n"
+                          "    host-key-algorithms: [ssh-ed25519, rsa-sha2-512]\n");
+    const auto pinnedNode = valuesNode(pins);
+    check(!pinnedNode.empty() && pins.fidelity.empty() &&
+          pinnedNode.value("host_key", json::array()) == json::array({"ssh-ed25519 test-only", "ssh-rsa test-only"}) &&
+          pinnedNode.value("host_key_algorithms", json::array()) == json::array({"ssh-ed25519", "rsa-sha2-512"}),
+          "SSH host pins and algorithm preference lists preserve every member and order");
+    const auto unpinned = ssh("    private-key: ''\n    password: ''\n    host-key: []\n");
+    check(!valuesNode(unpinned).empty() && unpinned.fidelity.empty(), "SSH optional empty credentials/pins keep source defaults");
+    const auto scalarPin = valuesNode(ssh("    host-key: 'ssh-ed25519 test-only'\n    host-key-algorithms: ssh-ed25519\n"));
+    check(!scalarPin.empty() && scalarPin.value("host_key", json::array()) == json::array({"ssh-ed25519 test-only"}) &&
+          scalarPin.value("host_key_algorithms", json::array()) == json::array({"ssh-ed25519"}), "SSH scalar pin/algorithm keeps single-member compatibility");
+    for (const char* algorithm : {"ssh-rsa", "ssh-dss", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
+          "sk-ecdsa-sha2-nistp256@openssh.com", "ssh-ed25519", "sk-ssh-ed25519@openssh.com", "rsa-sha2-256", "rsa-sha2-512",
+          "ssh-rsa-cert-v01@openssh.com", "ssh-dss-cert-v01@openssh.com", "ecdsa-sha2-nistp256-cert-v01@openssh.com",
+          "ecdsa-sha2-nistp384-cert-v01@openssh.com", "ecdsa-sha2-nistp521-cert-v01@openssh.com", "sk-ecdsa-sha2-nistp256-cert-v01@openssh.com",
+          "ssh-ed25519-cert-v01@openssh.com", "sk-ssh-ed25519-cert-v01@openssh.com", "rsa-sha2-256-cert-v01@openssh.com", "rsa-sha2-512-cert-v01@openssh.com"}) {
+        check(!valuesNode(ssh(std::format("    host-key-algorithms: ['{}']\n", algorithm))).empty(),
+              "SSH accepts fixed native host-key algorithms including certificates and security keys");
+    }
+    const auto orphan = ssh("    private-key-passphrase: 'inactive secret'\n");
+    check(!valuesNode(orphan).contains("private_key_passphrase") && std::ranges::any_of(orphan.fidelity, [](const auto& note) {
+        return note.level == singbox::Fidelity::Approx && note.detail.find("private-key-passphrase") != std::string::npos &&
+               note.detail.find("inactive secret") == std::string::npos;
+    }), "SSH inactive passphrase is reported without leaking its value");
+    const auto udp = ssh("    udp: true\n");
+    check(!valuesNode(udp).empty() && !valuesNode(udp).contains("network") && !udp.fidelity.empty(),
+          "SSH requested UDP reports TCP-only native capability without invented fields");
+    for (const char* fields : {"    private-key: ./id_ed25519\n", "    private-key: []\n",
+          "    private-key-passphrase: {}\n", "    password: []\n", "    host-key: [valid, {}]\n", "    host-key: ['']\n",
+          "    host-key-algorithms: {}\n", "    host-key-algorithms: [ssh-ed25519, null]\n", "    host-key-algorithms: []\n",
+          "    host-key-algorithms: [ssh-ed25519, unknown-algorithm]\n",
+          "    tls: true\n", "    network: tcp\n", "    client-fingerprint: chrome\n", "    cipher: aes128-ctr\n", "    udp: perhaps\n"}) {
+        const auto failed = ssh(fields);
+        check(valuesNode(failed).empty() && std::ranges::any_of(failed.fidelity, [](const auto& note) {
+            return note.level == singbox::Fidelity::Unsupported;
+        }), "SSH paths, invalid list members and unrepresentable fields reject the whole node");
+    }
+    for (const char* user : {"", "    username: ''\n", "    username: null\n", "    username: []\n"}) {
+        const auto failed = compileProxyValues(std::string("    type: ssh\n") + user);
+        check(valuesNode(failed).empty() && !failed.fidelity.empty(), "SSH missing/empty user never silently becomes root");
+    }
+    for (const char* target : {"missing", "values"}) {
+        const auto failed = ssh(std::format("    dialer-proxy: {}\n", target));
+        check(!failed.error.empty() && failed.json.empty() && !failed.fidelity.empty(),
+              "SSH missing or cyclic detour fails compilation instead of direct fallback");
+    }
+    singbox::CompileOptions failedMatch;
+    failedMatch.profileYaml = "proxies:\n  - {name: rejected, type: ssh, server: example.test, port: 22, username: test, private-key: ./id}\nrules:\n  - MATCH,rejected\n";
+    const auto rejected = singbox::compileConfig(failedMatch);
+    check(!rejected.error.empty() && rejected.json.empty() && !rejected.fidelity.empty(),
+          "SSH rejected target keeps failure ledger and cannot turn MATCH into direct");
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+    singbox::CompileOptions sources;
+    const auto content = [](std::string_view user) {
+        return std::format("proxies:\n  - {{name: same, type: ssh, server: example.test, port: 22, username: {}, dialer-proxy: base}}\n"
+            "  - {{name: base, type: ssh, server: example.test, port: 22, username: {}}}\nrules:\n  - MATCH,same\n", user, user);
+    };
+    sources.mainConnectionId = "profile-1";
+    sources.profileYaml = content("main-user");
+    sources.auxiliarySources = {{"profile-2", "secondary", content("secondary-user"), true}};
+    sources.globalRules = {{.match = vpn::MatchKind::DomainSuffix, .pattern = "secondary.test",
+        .connectionId = "profile-2", .id = "ssh-scope", .tier = vpn::RuleTier::SourcePolicy,
+        .targetKind = vpn::TargetKind::Node, .targetObject = "same"}};
+    const auto namespaced = singbox::compileConfig(sources);
+    check(namespaced.error.empty() && !namespaced.json.empty(), "SSH namespaced sources compile with their detour closure");
+    if (!namespaced.json.empty()) {
+        const auto config = json::parse(namespaced.json);
+        int verified = 0;
+        for (const auto& object : namespaced.sourceObjects) {
+            if (object.objectId != "same") continue;
+            const auto node = std::ranges::find_if(config["outbounds"], [&](const auto& out) { return out.value("tag", "") == object.tag; });
+            const auto base = std::ranges::find_if(namespaced.sourceObjects, [&](const auto& value) {
+                return value.sourceId == object.sourceId && value.objectId == "base";
+            });
+            check(node != config["outbounds"].end() && base != namespaced.sourceObjects.end() &&
+                  node->value("user", "") == (object.sourceId == "profile-1" ? "main-user" : "secondary-user") &&
+                  node->value("detour", "") == base->tag, "SSH credentials and detours stay inside their own source namespace");
+            ++verified;
+        }
+        check(verified == 2, "both namespaced SSH targets remain available");
+    }
+#endif
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     testProxyValues();
+    testProxyUdpOptions();
+    testShadowsocksPlugins();
+    testLogicalRuleResources();
+    testHysteria1();
+    testSsh();
     // A plain node must never replace an unsupported certificate constraint or
     // combination transport without a fidelity entry (legacy protocol paths).
     for (const auto& [type, credentials] : std::vector<std::pair<std::string, std::string>>{
@@ -957,10 +1448,10 @@ rules:
 
     // ---- 本地规则集命中与坏缓存拒绝 -------------------------------------------
     {
-        const std::string dir = "/tmp/clashflux-test-ruleset";
+        const RuleSetTestDirectory testDirectory;
+        const std::string dir = testDirectory.path.string();
         const auto geoipPath = std::filesystem::path(dir) / "geoip-cn.srs";
         const auto geositePath = std::filesystem::path(dir) / "geosite-cn.srs";
-        std::filesystem::create_directories(dir);
         // .srs 头部包含魔数、版本与合法 zlib 头；这里只验证筛查边界，不解压。
         { std::ofstream out(geoipPath, std::ios::binary); out << "SRS\x02\x78\x9c" << "stub-stub"; }
         { std::ofstream out(geositePath, std::ios::binary); out << "SRS\x02\x78\x9c" << "stub-stub"; }

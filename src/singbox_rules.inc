@@ -254,6 +254,68 @@ nlohmann::json rejectRule(const std::string& target) {
     return rule;
 }
 
+// Route-only references: HeadlessRule cannot contain rule_set. Resolve names
+// identically at the top level and inside logical trees, without DNS side effects.
+RuleCondition compileResourceCondition(Context& ctx, const std::string& kind,
+                                       const std::string& value,
+                                       const std::string& subject) {
+    RuleCondition result;
+    const std::string name = lowerCopy(value);
+    if (kind == "geoip" && (name == "private" || name == "lan")) {
+        result.rule["ip_is_private"] = true;
+    } else if (kind == "geoip") {
+        if (ensureGeoipRuleSet(ctx, name)) result.rule["rule_set"] = {ctx.geoipTags.at(name)};
+        else result.error = "GEOIP 规则集不可用";
+    } else if (kind == "geosite") {
+        if (ensureGeositeRuleSet(ctx, name)) result.rule["rule_set"] = {ctx.geositeTags.at(name)};
+        else result.error = "GEOSITE 规则集不可用";
+    } else if (const auto found = ctx.providerTags.find(value); found != ctx.providerTags.end()) {
+        result.rule["rule_set"] = {found->second};
+    } else if (ctx.declaredProviders.contains(value)) {
+        result.error = "provider 未成功转换；声明的规则集不会被同名国内别名替换";
+    } else if (name == "cn" || name == "china" || name == "geosite-cn") {
+        ctx.note(FidelityScope::Rule, Fidelity::Approx, subject,
+                 "未声明的国内 RULE-SET 别名使用内置 GEOSITE CN，不能证明与原 provider 内容相同");
+        if (ensureGeositeRuleSet(ctx, "cn")) result.rule["rule_set"] = {ctx.geositeTags.at("cn")};
+        else result.error = "GEOSITE CN 规则集不可用";
+    } else if (name == "cn-ip" || name == "china-ip" || name == "geoip-cn") {
+        ctx.note(FidelityScope::Rule, Fidelity::Approx, subject,
+                 "未声明的国内 RULE-SET 别名使用内置 GEOIP CN，不能证明与原 provider 内容相同");
+        if (ensureGeoipRuleSet(ctx, "cn")) result.rule["rule_set"] = {ctx.geoipTags.at("cn")};
+        else result.error = "GEOIP CN 规则集不可用";
+    } else {
+        result.error = "RULE-SET 未引用已转换的 inline provider 或已接入的国内别名";
+    }
+    return result;
+}
+
+// A rejected logical tree must not leave resources to download or failed tag
+// memoization behind. Keep fidelity notes, and preserve earlier committed rules.
+class LogicalRuleResources {
+public:
+    explicit LogicalRuleResources(Context& ctx)
+        : ctx_(ctx), ruleSetCount_(ctx.ruleSets.size()),
+          resourceCount_(ctx.result.ruleSetResources.size()),
+          geoipTags_(ctx.geoipTags), geositeTags_(ctx.geositeTags) {}
+    LogicalRuleResources(const LogicalRuleResources&) = delete;
+    LogicalRuleResources& operator=(const LogicalRuleResources&) = delete;
+    ~LogicalRuleResources() {
+        if (committed_) return;
+        while (ctx_.ruleSets.size() > ruleSetCount_) ctx_.ruleSets.erase(ctx_.ruleSets.end() - 1);
+        ctx_.result.ruleSetResources.resize(resourceCount_);
+        ctx_.geoipTags.swap(geoipTags_);
+        ctx_.geositeTags.swap(geositeTags_);
+    }
+    void commit() { committed_ = true; }
+private:
+    Context& ctx_;
+    std::size_t ruleSetCount_;
+    std::size_t resourceCount_;
+    std::map<std::string, std::string> geoipTags_;
+    std::map<std::string, std::string> geositeTags_;
+    bool committed_ = false;
+};
+
 // Parentheses belong to the Clash logical-rule grammar here. Leaves use a
 // deliberately bounded subset; an unsupported child rejects the entire tree.
 std::optional<std::vector<std::string>> splitLogicalParts(std::string_view text) {
@@ -276,7 +338,7 @@ std::optional<std::vector<std::string>> splitLogicalParts(std::string_view text)
     return parts;
 }
 
-std::optional<nlohmann::json> logicalCondition(std::string_view text, unsigned depth,
+std::optional<nlohmann::json> logicalCondition(Context& ctx, std::string_view text, unsigned depth,
                                                unsigned& count, bool headless,
                                                std::string& error) {
     if (depth > 24 || ++count > 256) return std::nullopt;
@@ -292,7 +354,7 @@ std::optional<nlohmann::json> logicalCondition(std::string_view text, unsigned d
         nlohmann::json rules = nlohmann::json::array();
         for (const std::string& child : *children) {
             if (child.size() < 3 || child.front() != '(' || child.back() != ')') return std::nullopt;
-            auto compiled = logicalCondition(std::string_view(child).substr(1, child.size() - 2),
+            auto compiled = logicalCondition(ctx, std::string_view(child).substr(1, child.size() - 2),
                                              depth + 1, count, headless, error);
             if (!compiled) return std::nullopt;
             rules.push_back(std::move(*compiled));
@@ -302,7 +364,13 @@ std::optional<nlohmann::json> logicalCondition(std::string_view text, unsigned d
         if (kind == "not") rule["invert"] = true;
         return rule;
     }
-    auto condition = compileLeafCondition(kind, value, headless);
+    const bool resource = kind == "geoip" || kind == "geosite" || kind == "rule-set";
+    if (headless && resource) {
+        error = kind + ": inline HeadlessRule 不接受 GEO/RULE-SET 引用";
+        return std::nullopt;
+    }
+    auto condition = resource ? compileResourceCondition(ctx, kind, value, std::string(text))
+                              : compileLeafCondition(kind, value, headless);
     if (!condition) { error = kind + ": " + condition.error; return std::nullopt; }
     return std::move(condition.rule);
 }
@@ -384,7 +452,7 @@ void compileRuleProviders(Context& ctx, const YAML::Node& providers) {
                     condition = nlohmann::json{{"ip_cidr", {*cidr}}};
             } else {
                 unsigned count = 0;
-                condition = logicalCondition(value, 0, count, true, failure);
+                condition = logicalCondition(ctx, value, 0, count, true, failure);
             }
             if (!condition) {
                 valid = false;
@@ -463,19 +531,6 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
     }
 
     nlohmann::json rule = nlohmann::json::object();
-    if (logical) {
-        unsigned count = 0;
-        std::string error;
-        auto condition = logicalCondition(parts[0] + "," + value, 0, count, false, error);
-        if (!condition) {
-            ctx.note(FidelityScope::Rule, Fidelity::Unsupported, line,
-                     std::format("逻辑规则 {} 含无效或未接入的子条件：{}，整条跳过", line,
-                                 error.empty() ? "括号、层数或条件数无效" : error),
-                     "逻辑条件按路由 schema 转换，不删除子条件后扩大匹配");
-            return true;
-        }
-        rule = std::move(*condition);
-    }
     if (target == "REJECT" || target == "REJECT-DROP") {
         rule.update(rejectRule(target));
     } else if (target == "PASS") {
@@ -493,54 +548,37 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
     }
 
     if (logical) {
-        // Conditions are already compiled; only the outer rule carries action.
-    } else if (kind == "geoip") {
-        const std::string code = lowerCopy(value);
-        if (code == "private" || code == "lan") {
-            rule["ip_is_private"] = true;
-        } else {
-            if (!ensureGeoipRuleSet(ctx, code)) return true;
-            rule["rule_set"] = {ctx.geoipTags.at(code)};
-        }
-    } else if (kind == "geosite") {
-        const std::string category = lowerCopy(value);
-        if (!ensureGeositeRuleSet(ctx, category)) return true;
-        const std::string& tag = ctx.geositeTags.at(category);
-        rule["rule_set"] = {tag};
-        if (category == "cn" && target == "DIRECT") {
-            ensureChinaDnsRule(ctx, tag);
-        }
-    } else if (kind == "rule-set") {
-        // Explicit providers own their names, including failed declarations.
-        // Undeclared historical China aliases remain approximate: bundled GEO
-        // content is not proof that it equals an external provider's payload.
-        const std::string provider = lowerCopy(value);
-        if (const auto found = ctx.providerTags.find(value); found != ctx.providerTags.end()) {
-            rule["rule_set"] = {found->second};
-        } else if (ctx.declaredProviders.contains(value)) {
+        LogicalRuleResources resources(ctx);
+        unsigned count = 0;
+        std::string error;
+        auto condition = logicalCondition(ctx, parts[0] + "," + value, 0, count, false, error);
+        if (!condition) {
             ctx.note(FidelityScope::Rule, Fidelity::Unsupported, line,
-                     std::format("规则 {} 的 provider 未成功转换，已跳过", line),
-                     "声明的规则集不会被同名国内别名替换");
+                     std::format("逻辑规则 {} 含无效或未接入的子条件：{}，整条跳过", line,
+                                 error.empty() ? "括号、层数或条件数无效" : error),
+                     "逻辑条件按路由 schema 转换，不删除子条件后扩大匹配");
             return true;
-        } else if (provider == "cn" || provider == "china" ||
-            provider == "geosite-cn") {
-            ctx.note(FidelityScope::Rule, Fidelity::Approx, line,
-                     "未声明的国内 RULE-SET 别名使用内置 GEOSITE CN，不能证明与原 provider 内容相同");
-            if (!ensureGeositeRuleSet(ctx, "cn")) return true;
-            const std::string& tag = ctx.geositeTags.at("cn");
-            rule["rule_set"] = {tag};
-            if (target == "DIRECT") ensureChinaDnsRule(ctx, tag);
-        } else if (provider == "cn-ip" || provider == "china-ip" ||
-                   provider == "geoip-cn") {
-            ctx.note(FidelityScope::Rule, Fidelity::Approx, line,
-                     "未声明的国内 RULE-SET 别名使用内置 GEOIP CN，不能证明与原 provider 内容相同");
-            if (!ensureGeoipRuleSet(ctx, "cn")) return true;
-            rule["rule_set"] = {ctx.geoipTags.at("cn")};
-        } else {
-            ctx.note(FidelityScope::Rule, Fidelity::Unsupported, value,
-                     std::format("规则集 RULE-SET {} 的格式暂不支持，已跳过", value),
-                     "支持已转换的 inline provider 及 GEOIP/GEOSITE；该条规则已丢弃");
+        }
+        rule.update(*condition);
+        resources.commit();
+    } else if (kind == "geoip" || kind == "geosite" || kind == "rule-set") {
+        const std::size_t noteCount = ctx.result.fidelity.size();
+        auto condition = compileResourceCondition(ctx, kind, value, line);
+        if (!condition) {
+            const bool alreadyNoted = std::any_of(ctx.result.fidelity.begin() + noteCount,
+                ctx.result.fidelity.end(), [](const auto& note) {
+                    return note.level == Fidelity::Unsupported;
+                });
+            if (!alreadyNoted) ctx.note(FidelityScope::Rule, Fidelity::Unsupported, line,
+                "规则 " + line + " 无法转换：" + condition.error + "，已跳过");
             return true;
+        }
+        rule.update(condition.rule);
+        // Only a whole positive top-level CN domain rule implies the existing
+        // direct DNS policy. A nested CN leaf (especially NOT) does not.
+        if (target == "DIRECT" && kind != "geoip" &&
+            rule.value("rule_set", nlohmann::json::array()) == nlohmann::json::array({"geosite-cn"})) {
+            ensureChinaDnsRule(ctx, "geosite-cn");
         }
     } else {
         auto condition = compileLeafCondition(kind, value, false);

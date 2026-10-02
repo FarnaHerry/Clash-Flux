@@ -1,6 +1,6 @@
 # Clash-Flux
 
-See the [v0.3.18 release notes](docs/releases/v0.3.18.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.19 release notes](docs/releases/v0.3.19.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -50,7 +50,7 @@ application-managed settings before being passed to sing-box.
   and retain the old file on failure. Native rule sets remain managed by the core;
   Android China rule sets remain pinned build assets. The core performs full parsing.
 - Subscription conversion: compile Clash YAML to sing-box JSON, including
-  ss/vmess/vless/trojan/hysteria2/tuic/AnyTLS/Snell v4 protocols, policy groups,
+  SS/VMess/VLESS/Trojan/Hysteria v1/v2/SSH/TUIC/AnyTLS/Snell v4 and an SS plugin subset, policy groups,
   domain/IP/GEOIP/GEOSITE rules, source addresses, port lists/ranges and TCP/UDP
   matching. Test tolerance and long test intervals are preserved within documented
   core limits. Undeclared legacy entries `RULE-SET,cn` and `RULE-SET,cn-ip` map
@@ -227,8 +227,23 @@ See the [L1 / L2 / L3 development review](docs/l1-l2-l3-status.md) for the
 It distinguishes implementation from device validation and does not describe
 every capability of the published packages.
 The first L2 batch fixes literal credentials, malformed TLS/transport values and
-global fingerprint handling, with permanent regressions. Protocol type coverage
-remains 10/15; further field and provider adaptation remains in the review backlog.
+global fingerprint handling, with permanent regressions. The subsequent workspace
+adds VMess/VLESS UDP encoding, VMess padding flags, and Hysteria2 Gecko and port
+hopping mappings, preserving protocol defaults and reporting inactive settings.
+SS also supports simple-obfs HTTP/TLS and a v2ray-plugin WebSocket/TLS/mux subset,
+with Clash's UOT v1 default preserved explicitly; see the
+[plugin sample](docs/examples/ss-plugins-2026-10-02.yaml) and fidelity contract for limits.
+AND/OR/NOT routes also support nested GEO and inline RULE-SET references; a failed
+child rejects the whole rule and rolls back unused resources. See the
+[logical rule sample](docs/examples/logical-rules-2026-10-02.yaml).
+The generated sample passes the pinned kernel's configuration check. Protocol type
+coverage is now 12/15 with the Hysteria v1 UDP and SSH subsets. Hysteria preserves authentication
+precedence and its 10-second hopping default while reporting initial-window differences.
+HY1/HY2 also distinguish MBps from Mbps; see the
+[Hysteria sample](docs/examples/hysteria1-2026-10-02.yaml). SSH maps passwords, inline/encrypted
+private keys, host-key pins and algorithm preferences, reports dual-authentication order
+differences and rejects external key paths; see the [SSH sample](docs/examples/ssh-2026-10-02.yaml). This does not imply complete
+field coverage; further field and provider adaptation remains in the review backlog.
 
 Desktop now implements [one main source with rule-driven secondary sources](docs/desktop-subscription-orchestration.md).
 Clash YAML secondary sources participate only through enabled rules, with isolated

@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -96,6 +97,7 @@ void RemoveDatabase(const std::filesystem::path& path) {
     std::filesystem::remove(path, error);
     std::filesystem::remove(path.string() + "-wal", error);
     std::filesystem::remove(path.string() + "-shm", error);
+    std::filesystem::remove_all(path.string() + ".profiles", error);
 }
 
 Task<void> RunTest() {
@@ -203,6 +205,16 @@ Task<void> RunTest() {
         // ALTER 追加）必须由 0→1 迁移重建表并保留全部数据；应用不删除任何文件。
         {
             const std::filesystem::path legacy = TempPath();
+            const std::filesystem::path profileFiles = legacy.string() + ".profiles";
+            std::filesystem::create_directories(profileFiles);
+            {
+                std::ofstream remoteFile(profileFiles / "legacy-remote.yaml", std::ios::binary);
+                std::ofstream localFile(profileFiles / "legacy-local.json", std::ios::binary);
+                remoteFile << "proxies: []\nrules: [MATCH, DIRECT]\n";
+                localFile << "{\"outbounds\": []}\n";
+                Check(static_cast<bool>(remoteFile) && static_cast<bool>(localFile),
+                      "legacy subscription files must be created for the migration check");
+            }
             {
                 auto opened = co_await sqlite::Database::OpenAsync(
                     File{legacy.string()}, db_schema::openOptions());
@@ -230,9 +242,13 @@ Task<void> RunTest() {
                       "ALTER TABLE profiles ADD COLUMN total_bytes INTEGER NOT NULL DEFAULT 0",
                       "ALTER TABLE profiles ADD COLUMN native_config TEXT NOT NULL DEFAULT ''",
                       "ALTER TABLE profiles ADD COLUMN native_routes TEXT NOT NULL DEFAULT ''",
-                      "INSERT INTO profiles (name, url, file, type, selected) "
-                      "VALUES ('旧订阅', 'https://example.com/legacy.yaml', "
-                      "'1.yaml', 'remote', 1)",
+                      "INSERT INTO profiles (id, name, url, file, selected, updated_at, error, type, description, "
+                      "timeout_secs, interval_mins, auto_update, use_system_proxy, use_core_proxy, allow_invalid_cert, "
+                      "homepage, used_bytes, total_bytes, native_config, native_routes) VALUES "
+                      "(41, '旧远程订阅', 'https://example.com/legacy.yaml', 'legacy-remote.yaml', 1, 1700000001, '', 'remote', "
+                      "'保留的远程订阅', 75, 180, 1, 0, 1, 1, 'https://example.com', 1234, 9876, '', ''), "
+                      "(42, '旧本地配置', '', 'legacy-local.json', 0, 1700000002, '上次刷新失败', 'local', "
+                      "'保留的原生 JSON', 90, 0, 0, 1, 0, 0, '', 0, 0, '{\"outbounds\":[]}', '[{\"rule\":1}]')",
                       "INSERT INTO settings (key, value) "
                       "VALUES ('ui.theme_mode', '2')"}) {
                     auto result = co_await raw.ExecuteAsync(statement);
@@ -249,10 +265,28 @@ Task<void> RunTest() {
             Check(store.setting("ui.theme_mode", "") == "2",
                   "legacy setting lost by migration");
             const auto migrated = store.listProfiles();
-            Check(migrated.size() == 1 && migrated.front().name == "旧订阅" &&
-                      migrated.front().url == "https://example.com/legacy.yaml" &&
-                      migrated.front().selected,
-                  "legacy profile lost or corrupted by migration");
+            Check(migrated.size() == 2 && migrated[0].id == 41 && migrated[1].id == 42,
+                  "migration must retain every subscription row and its stable id");
+            if (migrated.size() == 2) {
+                const auto& remote = migrated[0];
+                const auto& local = migrated[1];
+                Check(remote.name == "旧远程订阅" && remote.url == "https://example.com/legacy.yaml" &&
+                          remote.file == "legacy-remote.yaml" && remote.selected && remote.updatedAt == 1700000001 &&
+                          remote.type == "remote" && remote.description == "保留的远程订阅" &&
+                          remote.timeoutSecs == 75 && remote.intervalMins == 180 && remote.autoUpdate &&
+                          remote.useCoreProxy && remote.allowInvalidCert && remote.homepage == "https://example.com" &&
+                          remote.usedBytes == 1234 && remote.totalBytes == 9876,
+                      "remote subscription settings and usage data must survive migration");
+                Check(local.name == "旧本地配置" && local.file == "legacy-local.json" && !local.selected &&
+                          local.updatedAt == 1700000002 && local.error == "上次刷新失败" && local.type == "local" &&
+                          local.description == "保留的原生 JSON" && local.timeoutSecs == 90 &&
+                          local.useSystemProxy && local.nativeConfig == "{\"outbounds\":[]}" &&
+                          local.nativeRoutes == "[{\"rule\":1}]",
+                      "local subscription source, failure state and native configuration must survive migration");
+            }
+            Check(std::filesystem::exists(profileFiles / "legacy-remote.yaml") &&
+                      std::filesystem::exists(profileFiles / "legacy-local.json"),
+                  "migration must never delete the referenced subscription files");
             // 迁移后的库必须可写。
             store.setSetting("ui.theme_mode", "1");
             Check(co_await store.flushSettings(), "legacy: flush failed");
@@ -265,6 +299,13 @@ Task<void> RunTest() {
                   "legacy reopen after migration failed");
             Check(reopened.setting("ui.theme_mode", "") == "1",
                   "write after migration did not persist");
+            const auto migratedAgain = reopened.listProfiles();
+            Check(migratedAgain.size() == 2 && migratedAgain[0].id == 41 &&
+                      migratedAgain[0].name == "旧远程订阅" && migratedAgain[1].id == 42 &&
+                      migratedAgain[1].name == "旧本地配置" &&
+                      std::filesystem::exists(profileFiles / "legacy-remote.yaml") &&
+                      std::filesystem::exists(profileFiles / "legacy-local.json"),
+                  "all migrated subscription rows and files must survive close/reopen");
             co_await reopened.close();
             RemoveDatabase(legacy);
         }

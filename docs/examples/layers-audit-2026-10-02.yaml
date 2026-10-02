@@ -4,17 +4,20 @@ dns:
   nameserver: [223.5.5.5]
 proxies:
   - {name: ss, type: ss, server: example.test, port: 8388, cipher: aes-256-gcm, password: ' sample ', udp: false}
-  - {name: vmess, type: vmess, server: example.test, port: 443, uuid: 11111111-2222-3333-4444-555555555555, tls: true, client-fingerprint: safari, alpn: [h2, http/1.1], network: ws, ws-opts: {path: /a, headers: {Host: example.test, X-Audit: ' exact value '}}}
-  - {name: vless, type: vless, server: example.test, port: 443, uuid: 11111111-2222-3333-4444-555555555555, tls: true}
+  - {name: vmess, type: vmess, server: example.test, port: 443, uuid: 11111111-2222-3333-4444-555555555555, packet-encoding: xudp, global-padding: true, authenticated-length: true, tls: true, client-fingerprint: safari, alpn: [h2, http/1.1], network: ws, ws-opts: {path: /a, headers: {Host: example.test, X-Audit: ' exact value '}}}
+  - {name: vless, type: vless, server: example.test, port: 443, uuid: 11111111-2222-3333-4444-555555555555, packet-encoding: packetaddr, tls: true}
   - {name: trojan, type: trojan, server: example.test, port: 443, password: ' sample '}
+  - {name: hy1, type: hysteria, server: example.test, port: 443, auth-str: ' sample ', up: 20 Mbps, down: 100, recv-window-conn: 1048576, recv-window: 4194304}
   - {name: hy2, type: hysteria2, server: example.test, port: 443, password: ' sample ', obfs: salamander, obfs-password: ' obfs sample ', up: 30 Mbps, down: 200 Mbps}
+  - {name: hy2-gecko, type: hysteria2, server: example.test, ports: '20000-30000,40000', hop-interval: 15-30, password: ' sample ', obfs: gecko, obfs-password: ' obfs sample ', obfs-min-packet-size: 600, obfs-max-packet-size: 1400}
   - {name: tuic, type: tuic, server: example.test, port: 443, uuid: 11111111-2222-3333-4444-555555555555, password: ' sample ', servername: example.test, alpn: [h3], disable-sni: true}
   - {name: http, type: http, server: 127.0.0.1, port: 8080, username: ' user ', password: ''}
   - {name: socks, type: socks5, server: 127.0.0.1, port: 1080, username: ' user ', password: ' sample ', udp: false}
+  - {name: ssh, type: ssh, server: example.test, port: 22, username: test-only, password: ' sample ', udp: false}
   - {name: anytls, type: anytls, server: example.test, port: 443, password: ' sample ', udp: true}
   - {name: snell, type: snell, server: example.test, port: 443, psk: sample, version: 4, udp: false}
 proxy-groups:
-  - {name: selector, type: select, proxies: [ss, vmess, vless, trojan, hy2, tuic, http, socks, anytls, snell, DIRECT]}
+  - {name: selector, type: select, proxies: [ss, vmess, vless, trojan, hy1, hy2, hy2-gecko, tuic, http, socks, ssh, anytls, snell, DIRECT]}
 rules:
   - RULE-SET,cn,DIRECT
   - RULE-SET,cn-ip,DIRECT
