@@ -216,6 +216,7 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
         ctx.result.error = "订阅不是有效的 Clash YAML 配置";
         return;
     }
+    if (!applyClashFingerprint(ctx, root)) return;
 
     std::vector<YAML::Node> groups;
     if (const YAML::Node proxyGroups = root["proxy-groups"];

@@ -4,6 +4,9 @@
 什么」。`AGENTS.md` 的「架构分层与保真度契约」是本文的强制摘要；两者冲突时以本文为准，
 并回头修订摘要。
 
+实际完成度与本轮验证见 [2026-10-02 L1 / L2 / L3 开发复核](l1-l2-l3-status.md)。
+本文是能力和保真度契约；复核中的 F01–F03 首批修复已完成，完整字段与产品覆盖仍未完成。
+
 一句话定位：**内核贴 sing-box，输入贴 Clash 生态，产品层用 Clash 的词汇只暴露内核真有的
 能力，并把 sing-box 独有能力产品化成 Clash 客户端给不了的差异点。**
 
@@ -190,8 +193,46 @@ sing-box 1.14 官方还提供、但尚未从 Clash YAML 映射：`hysteria`(v1)�
 [出站注册表](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/include/registry.go)
 与 [QUIC 注册表](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/include/quic.go)。
 
-新接入的 AnyTLS / Snell 使用明确的字段白名单；未映射的组合伪装、证书约束
+全部已接入节点使用明确的字段白名单（含传输层子字段）；未映射的组合伪装、证书约束
 或其它字段会使整条节点被跳过并记 `Node/Unsupported`，不会悄悄改成普通线路。
+旧协议分支的 `fingerprint` / `shadow-tls-opts` 同样逐字段记账，不与
+`client-fingerprint`（uTLS 客户端指纹）混用。节点拒绝后，引用它的 MATCH / detour
+仍按缺失目标失败，保留已产生的账本。
+F01–F03 已修复：凭据按 literal scalar 原文读取；ALPN、WS headers 和相邻传输字段
+完整校验类型，异常成员导致整条节点拒绝并记 unsupported，不保留部分列表。
+凭据诊断不回显输入值。HTTP/SOCKS 可选空凭据保留；AnyTLS/Snell 仍要求非空凭据。
+TLS ALPN 接受 scalar/字符串数组，保持原文和顺序，每项 1–255 字节，允许空数组；
+WS header 只接受字符串键值对象，拒绝重复键，path/header 不 trim。
+其它未审查字段不能仅凭键名白名单就宣称取值完整。
+SS/VMess/VLESS/Trojan/HY2/TUIC/SOCKS 显式 `udp: false` → `network: tcp`（exact）；
+HTTP 出站仅支持 TCP，`udp: true` 记 approx。无效布尔值拒绝；HY2 仅映射正整数
+Mbps（整数或 `30 Mbps` 字符串），其它单位、小数与无效值拒绝并记 unsupported，
+不截断后改成默认自适应带宽。HTTP 传输多路径只取首项并记 approx。
+Trojan/HY2/TUIC 保留协议自带 TLS，不要求订阅额外声明 `tls: true`；显式关闭 TLS
+拒绝。HY2/TUIC 使用原生 QUIC TLS，不注入 TCP uTLS；显式 uTLS/Reality 与 SOCKS
+TLS 字段拒绝并记 unsupported。TUIC 的 `disable-sni` 映射到 `tls.disable_sni`，
+ALPN 与 servername/SNI 共用 TLS 转换，不因 ALPN 分支丢失其它设置。
+`global-client-fingerprint` 是来源内的历史兼容输入：节点 `client-fingerprint` 优先，
+否则继承该来源值，两者均省略时保留 chrome 基线；主/次来源互不继承。
+全局指纹类型不符、为空或内核不认识时整份来源失败并记 `Field/Unsupported`；
+节点无效指纹拒绝整条节点。未启用 TLS 的显式 SNI/ALPN/指纹/Reality 等字段也拒绝，
+显式 `tls: false` 不会因 SNI/Reality 被重新开启；省略 tls 的历史 SNI/Reality 隐式启用
+行为仍保留。QUIC 不使用这个 TCP uTLS 默认。`random` 指纹分布与 Clash 不保证相同，
+`chrome_psk*` / `chrome_padding_psk_shuffle` / `chrome_pq*` 在固定内核里折成普通 chrome，
+均记 `Node/Approx`。依据：[固定 uTLS 实现](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/common/tls/utls_client.go)、
+[Clash TLS 输入](https://wiki.metacubex.one/config/proxies/tls/)；Mihomo 已弃用全局指纹，
+新配置应优先指定节点值。
+
+本批取值保真度基线：
+
+| 输入边界 | 级别与处理 |
+|---|---|
+| 凭据 scalar 原文、可选空 HTTP/SOCKS 凭据 | exact；原文写入，不裁空白或丢空字段 |
+| ALPN scalar/字符串数组、WS 字符串 headers、传输字符串 | exact；保持内容与顺序，完整校验；不接受异常成员或重复 header 键 |
+| 来源级全局指纹继承、节点覆盖 | exact 历史兼容映射；不同来源不共享默认值 |
+| 凭据/TLS/传输类型异常或不适用的 TLS 字段 | unsupported；拒绝整条节点，记录字段；引用其 MATCH/依赖仍失败 |
+| 全局指纹为空、类型异常或内核不认识 | unsupported；拒绝整份来源并保留字段账本 |
+| random 分布、固定内核折叠的 PSK/PQ 指纹别名 | approx；保留内核行为并记语义差异 |
 AnyTLS 的时间字段使用整数秒数，最少空闲会话为非负整数；未启用 `udp` 时记
 `Node/Approx`，因为内核 AnyTLS 出站固定支持 TCP/UDP，没有 `network` 限制。
 Snell v1/v2/v3/v5、缺省版本与未映射的伪装均拒绝，不自动改成 v4；内核 v6 可由原生
@@ -245,6 +286,9 @@ JSON 使用，本轮不把它当成 Clash 版本转换。字段边界及后续�
 多 `remote` / `remote-random` / static-key / TLS 内联 `ca`/`cert`/`key` / `peer-fingerprint` /
 `tls-auth`/`tls-crypt`/`tls-crypt-v2` / 内联 `auth-user-pass`；**外部文件路径一律拒绝并提示
 改为内联**。
+内联 auth-user-pass 按用户名/密码两行读取，保留空格、制表符和引号，只移除
+CRLF 分隔符，不使用选项拆词器。缺行或空凭据需要交互输入时拒绝转换，失败带来源
+账本；无法伪装成已有凭据。依据：[OpenVPN 凭据读取](https://github.com/OpenVPN/openvpn/blob/master/src/openvpn/misc.c)。
 
 sing-box 1.14 另有：`openvpn-server`、`openconnect`、`wireguard`、`tailscale`。
 
@@ -291,8 +335,8 @@ filter 与界面字段。`use` 数组及 include-all 系列无法展开时记 `G
 JSON 配置保留；Clash 的 `*.域名`（一级子域）和 `.域名`（不含根域）暂不转换，
 不能都改写成包含根域的 suffix。DNS 服务域名使用显式 bootstrap 或 protected local。
 DNS server resolver、DNS detour、节点 resolver 与组候选共同检查依赖，缺失目标或循环
-返回编译错误；不去掉 detour 后直连。`proxy-server-nameserver-policy`、
-`direct-nameserver-follow-policy`、fallback-filter、FakeIP 与 hosts 输入转换仍待实现。
+返回编译错误；不去掉 detour 后直连。`direct-nameserver-follow-policy`、
+fallback-filter、FakeIP 与 hosts 输入转换仍待实现。
 DNS approx 和 unsupported 在摘要中分别计为“近似”和“忽略”。原生 JSON 不经过此
 Clash 图检查，仍保留原始字段并由固定内核校验。
 

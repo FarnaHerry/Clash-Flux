@@ -114,10 +114,296 @@ void check(bool condition, std::string_view what) {
     }
 }
 
+singbox::CompileResult compileProxyValues(std::string_view fields,
+                                         std::string_view root = {}) {
+    singbox::CompileOptions options;
+    options.profileYaml = std::string(root) + "\nproxies:\n  - name: values\n"
+        "    server: example.test\n    port: 443\n" + std::string(fields) +
+        "\nrules:\n  - MATCH,DIRECT\n";
+    return singbox::compileConfig(options);
+}
+
+json valuesNode(const singbox::CompileResult& result) {
+    if (result.json.empty()) return {};
+    const auto config = json::parse(result.json);
+    for (const auto& node : config["outbounds"])
+        if (node.value("tag", "") == "values") return node;
+    return {};
+}
+
+void testProxyValues() {
+    // Literal credentials are opaque bytes, including whitespace and explicit
+    // empty optional HTTP/SOCKS values. Never print them in fidelity messages.
+    for (const auto& [type, extra] : std::vector<std::pair<std::string, std::string>>{
+        {"ss", "    cipher: aes-256-gcm\n"}, {"trojan", ""},
+        {"hysteria2", "    obfs: salamander\n    obfs-password: ' obfs secret '\n"},
+        {"tuic", "    uuid: 11111111-2222-3333-4444-555555555555\n"},
+        {"http", "    username: ' user name '\n"},
+        {"socks5", "    username: ' user name '\n"}, {"anytls", "    udp: true\n"}}) {
+        const auto result = compileProxyValues("    type: " + type + "\n" + extra +
+            "    password: \" \\t sample \\n \"\n");
+        const auto node = valuesNode(result);
+        check(result.error.empty() && !node.empty() &&
+              node.value("password", "") == " \t sample \n ",
+              std::format("{} preserves literal credential bytes", type));
+        if (type == "http" || type == "socks5")
+            check(node.value("username", "") == " user name ", "username whitespace is literal");
+        if (type == "hysteria2")
+            check(node.value("obfs", json{}).value("password", "") == " obfs secret ",
+                  "HY2 obfs credential whitespace is literal");
+    }
+    for (const char* type : {"http", "socks5"}) {
+        const auto node = valuesNode(compileProxyValues(std::format(
+            "    type: {}\n    username: ''\n    password: ''\n", type)));
+        check(node.contains("username") && node["username"] == "" &&
+              node.contains("password") && node["password"] == "",
+              "explicit empty optional credentials are retained");
+    }
+    const auto snell = valuesNode(compileProxyValues(
+        "    type: snell\n    version: 4\n    psk: ' psk secret '\n"));
+    check(snell.value("psk", "") == " psk secret ", "Snell PSK whitespace remains literal");
+    for (const char* fields : {
+        "type: trojan\n    password: [sample]", "type: ss\n    cipher: aes-256-gcm\n    password: null",
+        "type: http\n    username: {user: sample}", "type: socks5\n    password: [sample]",
+        "type: hysteria2\n    obfs-password: {password: sample}",
+        "type: anytls\n    password: [sample]", "type: snell\n    version: 4\n    psk: [sample]"}) {
+        const auto result = compileProxyValues(std::string("    ") + fields + "\n");
+        check(valuesNode(result).empty() && !result.fidelity.empty(),
+              "malformed credentials reject the entire node and enter fidelity");
+        check(std::ranges::none_of(result.fidelity, [](const auto& note) {
+            return note.detail.find("sample") != std::string::npos;
+        }), "fidelity does not echo credential values");
+    }
+
+    for (const char* fields : {
+        "alpn: {protocol: h2}", "alpn: [h2, {protocol: http/1.1}]", "alpn: [h2, null]",
+        "alpn: ['']", "alpn: null", "client-fingerprint: [firefox]",
+        "client-fingerprint: unknown-browser", "client-fingerprint: ''", "sni: [example.test]",
+        "reality-opts: {public-key: [sample], short-id: '12'}"}) {
+        const auto result = compileProxyValues(std::string("    type: vless\n    tls: true\n    ") + fields + "\n");
+        check(valuesNode(result).empty() && !result.fidelity.empty(),
+              std::format("malformed TLS {} rejects whole node", fields));
+    }
+    for (const char* opts : {
+        "{headers: {Host: [example.test]}}", "{headers: {Host: {value: example.test}}}",
+        "{headers: {Host: null}}", "{headers: [example.test]}", "{path: [/a]}",
+        "{max-early-data: lots}", "{max-early-data: -1}", "{early-data-header-name: [X-Test]}",
+        "{headers: {X-Test: a, X-Test: b}}"}) {
+        const auto result = compileProxyValues(std::string("    type: vmess\n    network: ws\n    ws-opts: ") + opts + "\n");
+        check(valuesNode(result).empty() && !result.fidelity.empty(),
+              "malformed WS values reject node atomically");
+    }
+    for (const char* opts : {"{host: [example.test, {host: other.test}]}",
+                            "{path: [/a, {path: /b}]}", "{host: null}"}) {
+        const auto result = compileProxyValues(std::string("    type: vmess\n    network: http\n    http-opts: ") + opts + "\n");
+        check(valuesNode(result).empty() && !result.fidelity.empty(),
+              "malformed HTTP transport lists cannot be partially accepted");
+    }
+    const auto wsResult = compileProxyValues(
+        "    type: vmess\n    tls: true\n    alpn: [h2, http/1.1]\n    network: ws\n"
+        "    ws-opts: {path: '/ exact path ', headers: {X-Test: ' exact value ', Host: example.test}}\n");
+    const auto ws = valuesNode(wsResult);
+    check(!ws.empty() && ws["tls"]["alpn"] == json::array({"h2", "http/1.1"}) &&
+          ws["transport"]["path"] == "/ exact path " &&
+          ws["transport"]["headers"]["X-Test"] == " exact value " && wsResult.fidelity.empty(),
+          "valid ALPN, WS path and headers retain exact content and order");
+    for (const char* alpn : {"h2", "[h2]", "[]"}) {
+        const auto result = compileProxyValues(std::string("    type: trojan\n    alpn: ") + alpn + "\n");
+        check(!valuesNode(result).empty() && result.fidelity.empty(),
+              "scalar/list/empty-list ALPN remain supported");
+    }
+    const auto oversized = compileProxyValues("    type: trojan\n    alpn: '" + std::string(256, 'a') + "'\n");
+    check(valuesNode(oversized).empty() && !oversized.fidelity.empty(), "oversized ALPN is rejected");
+    for (const char* fields : {"network: grpc\n    grpc-service-name: [service]",
+                              "network: grpc\n    grpc-opts: {grpc-service-name: {service: test}}",
+                              "network: httpupgrade\n    httpupgrade-opts: {host: [example.test]}"}) {
+        const auto result = compileProxyValues(std::string("    type: vmess\n    ") + fields + "\n");
+        check(valuesNode(result).empty() && !result.fidelity.empty(), "other transport scalar values are validated");
+    }
+
+    for (const char* fields : {"alpn: [h2]", "client-fingerprint: firefox",
+                              "tls: false\n    sni: example.test", "tls: false\n    reality-opts: {public-key: sample}"}) {
+        const auto result = compileProxyValues(std::string("    type: vless\n    ") + fields + "\n");
+        check(valuesNode(result).empty() && !result.fidelity.empty(),
+              "inactive TLS fields cannot disappear or silently enable TLS");
+    }
+    const auto inherited = valuesNode(compileProxyValues("    type: trojan\n",
+                                     "global-client-fingerprint: firefox\n"));
+    check(!inherited.empty() && inherited["tls"]["utls"]["fingerprint"] == "firefox",
+          "node inherits its source global fingerprint");
+    const auto explicitNode = valuesNode(compileProxyValues(
+        "    type: trojan\n    client-fingerprint: safari\n", "global-client-fingerprint: firefox\n"));
+    check(!explicitNode.empty() && explicitNode["tls"]["utls"]["fingerprint"] == "safari",
+          "node fingerprint overrides source global fingerprint");
+    for (const char* global : {"[firefox]", "{fingerprint: firefox}", "null", "''", "unknown-browser"}) {
+        const auto result = compileProxyValues("    type: trojan\n",
+            std::string("global-client-fingerprint: ") + global + "\n");
+        check(!result.error.empty() && result.json.empty() && !result.fidelity.empty(),
+              "invalid global fingerprint fails source and retains ledger");
+    }
+    const auto quic = valuesNode(compileProxyValues("    type: hysteria2\n",
+                                "global-client-fingerprint: firefox\n"));
+    check(!quic.empty() && !quic["tls"].contains("utls"), "global TCP fingerprint is not applied to QUIC");
+    for (const char* fingerprint : {"random", "chrome_psk", "chrome_pq"}) {
+        const auto result = compileProxyValues(std::string("    type: trojan\n    client-fingerprint: ") + fingerprint + "\n");
+        check(!valuesNode(result).empty() && result.fidelity.size() == 1 &&
+              result.fidelity.front().level == singbox::Fidelity::Approx,
+              "random distributions and native folded aliases are explicitly approximate");
+    }
+    const auto mandatory = compileProxyValues("    type: anytls\n    password: sample\n    tls: false\n");
+    check(valuesNode(mandatory).empty() && !mandatory.fidelity.empty(), "AnyTLS cannot disable mandatory TLS");
+    auto failedMatchOptions = singbox::CompileOptions{};
+    failedMatchOptions.profileYaml = "proxies:\n  - {name: invalid, type: trojan, alpn: {protocol: h2}, "
+        "server: example.test, port: 443, password: sample}\nrules:\n  - MATCH,invalid\n";
+    const auto failedMatch = singbox::compileConfig(failedMatchOptions);
+    check(!failedMatch.error.empty() && failedMatch.json.empty() && !failedMatch.fidelity.empty(),
+          "rejected value MATCH target fails and retains fidelity instead of direct fallback");
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+    singbox::CompileOptions sources;
+    sources.mainConnectionId = "profile-1";
+    sources.profileYaml = "global-client-fingerprint: firefox\nproxies:\n"
+        "  - {name: same, type: trojan, server: example.test, port: 443, password: sample}\n"
+        "rules:\n  - MATCH,same\n";
+    sources.auxiliarySources = {{"profile-2", "secondary", "global-client-fingerprint: safari\nproxies:\n"
+        "  - {name: same, type: trojan, server: example.test, port: 443, password: sample}\n"
+        "rules:\n  - MATCH,same\n", true}};
+    sources.globalRules = {{.match = vpn::MatchKind::DomainSuffix, .pattern = "secondary.test",
+        .connectionId = "profile-2", .id = "fp-scope", .tier = vpn::RuleTier::SourcePolicy,
+        .targetKind = vpn::TargetKind::Node, .targetObject = "same"}};
+    for (const char* secondaryFingerprint : {"safari", "chrome"}) {
+        if (std::string_view(secondaryFingerprint) == "chrome")
+            sources.auxiliarySources[0].content.erase(0, sources.auxiliarySources[0].content.find('\n') + 1);
+        const auto result = singbox::compileConfig(sources);
+        check(result.error.empty() && !result.json.empty(), "two sources with distinct global fingerprints compile");
+        if (result.json.empty()) continue;
+        const auto config = json::parse(result.json);
+        for (const auto& object : result.sourceObjects) {
+            if (object.objectId != "same") continue;
+            const auto node = std::ranges::find_if(config["outbounds"], [&](const auto& out) {
+                return out.value("tag", "") == object.tag;
+            });
+            check(node != config["outbounds"].end() &&
+                  (*node)["tls"]["utls"]["fingerprint"] ==
+                    (object.sourceId == "profile-1" ? "firefox" : secondaryFingerprint),
+                  "global fingerprint never leaks between namespaced sources");
+        }
+    }
+#endif
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
+    testProxyValues();
+    // A plain node must never replace an unsupported certificate constraint or
+    // combination transport without a fidelity entry (legacy protocol paths).
+    for (const auto& [type, credentials] : std::vector<std::pair<std::string, std::string>>{
+        {"trojan", "    password: sample\n"},
+        {"vless", "    uuid: 11111111-2222-3333-4444-555555555555\n"},
+        {"vmess", "    uuid: 11111111-2222-3333-4444-555555555555\n"},
+        {"ss", "    cipher: aes-256-gcm\n    password: sample\n"},
+        {"hysteria2", "    password: sample\n"},
+        {"tuic", "    uuid: 11111111-2222-3333-4444-555555555555\n    password: sample\n"},
+        {"http", "    username: sample\n"}, {"socks5", "    username: sample\n"}}) {
+        singbox::CompileOptions legacy;
+        legacy.profileYaml = "proxies:\n  - name: guarded\n    type: " + type +
+            "\n    server: 127.0.0.1\n    port: 443\n" + credentials +
+            "    fingerprint: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+            "    shadow-tls-opts: {version: 3, password: sample}\n"
+            "rules:\n  - MATCH,DIRECT\n";
+        const auto guarded = singbox::compileConfig(legacy);
+        check(guarded.error.empty(), "unsupported legacy node does not invalidate unrelated DIRECT rules");
+        check(guarded.fidelity.size() == 2 && guarded.warnings.size() == 2,
+              std::format("{} certificate and combination fields both enter ledger", type));
+        if (!guarded.json.empty()) {
+            const auto config = json::parse(guarded.json);
+            check(std::ranges::none_of(config["outbounds"], [](const auto& out) {
+                return out.value("tag", "") == "guarded";
+            }), "unsupported combination is rejected as a whole node");
+        }
+        legacy.profileYaml.replace(legacy.profileYaml.find("  - MATCH,DIRECT"),
+                                  std::string::npos, "  - MATCH,guarded\n");
+        const auto failed = singbox::compileConfig(legacy);
+        check(!failed.error.empty() && failed.json.empty() && failed.fidelity.size() >= 2,
+              "missing guarded MATCH target fails and preserves fidelity");
+    }
+    {
+        singbox::CompileOptions nested;
+        nested.profileYaml = "proxies:\n  - {name: ws, type: vless, server: 127.0.0.1, port: 443, "
+            "uuid: 11111111-2222-3333-4444-555555555555, network: ws, "
+            "ws-opts: {path: /a, v2ray-http-upgrade: true}}\nrules:\n  - MATCH,DIRECT\n";
+        const auto guarded = singbox::compileConfig(nested);
+        check(guarded.fidelity.size() == 1 && guarded.fidelity.front().level == singbox::Fidelity::Unsupported,
+              "unknown nested transport field rejects node and enters ledger");
+    }
     // ---- 订阅编译 -----------------------------------------------------------
+    for (const char* type : {"ss", "vmess", "vless", "trojan", "hysteria2", "tuic", "socks5"}) {
+        singbox::CompileOptions udp;
+        udp.profileYaml = std::format(
+            "proxies:\n  - {{name: tcp-only, type: {}, server: 127.0.0.1, port: 443, udp: false}}\n"
+            "rules:\n  - MATCH,DIRECT\n", type);
+        const auto result = singbox::compileConfig(udp);
+        check(result.error.empty() && !result.json.empty(), "explicit UDP disable compiles");
+        if (!result.json.empty()) {
+            const auto config = json::parse(result.json);
+            const auto found = std::ranges::find_if(config["outbounds"], [](const auto& out) {
+                return out.value("tag", "") == "tcp-only";
+            });
+            check(found != config["outbounds"].end() && found->value("network", "") == "tcp",
+                  std::format("{} explicit udp:false becomes native TCP restriction", type));
+        }
+    }
+    for (const char* field : {"udp: perhaps", "tls: []", "up: auto", "up: 0", "down: 30.5 Mbps", "up: 30 Kbps"}) {
+        singbox::CompileOptions invalid;
+        invalid.profileYaml = std::format(
+            "proxies:\n  - {{name: invalid, type: hysteria2, server: 127.0.0.1, port: 443, {}}}\n"
+            "rules:\n  - MATCH,DIRECT\n", field);
+        const auto result = singbox::compileConfig(invalid);
+        check(!result.fidelity.empty() && result.fidelity.front().level == singbox::Fidelity::Unsupported,
+              std::format("{} cannot silently become default", field));
+    }
+    {
+        singbox::CompileOptions paths;
+        paths.profileYaml = "proxies:\n  - {name: http-paths, type: vless, server: 127.0.0.1, port: 443, "
+            "uuid: 11111111-2222-3333-4444-555555555555, network: http, "
+            "http-opts: {path: [/first, /second], host: [example.test]}}\nrules:\n  - MATCH,DIRECT\n";
+        const auto result = singbox::compileConfig(paths);
+        check(result.fidelity.size() == 1 && result.fidelity.front().level == singbox::Fidelity::Approx,
+              "HTTP multi-path reduction enters fidelity ledger");
+    }
+    for (const char* type : {"trojan", "hysteria2", "tuic"}) {
+        singbox::CompileOptions tls;
+        tls.profileYaml = std::format(
+            "proxies:\n  - {{name: secure, type: {}, server: example.test, port: 443, "
+            "password: sample, uuid: 11111111-2222-3333-4444-555555555555}}\nrules:\n  - MATCH,DIRECT\n", type);
+        // Only TUIC has a UUID field.
+        if (std::string_view(type) != "tuic") {
+            const auto begin = tls.profileYaml.find(", uuid:");
+            tls.profileYaml.erase(begin, tls.profileYaml.find('}', begin) - begin);
+        }
+        const auto result = singbox::compileConfig(tls);
+        check(!result.json.empty(), "implicit TLS node compiles");
+        if (!result.json.empty()) {
+            const auto config = json::parse(result.json);
+            const auto found = std::ranges::find_if(config["outbounds"], [](const auto& out) {
+                return out.value("tag", "") == "secure";
+            });
+            check(found != config["outbounds"].end() && (*found)["tls"].value("enabled", false),
+                  std::format("{} enables its protocol TLS without optional subscription fields", type));
+            if (found != config["outbounds"].end() && std::string_view(type) != "trojan")
+                check(!(*found)["tls"].contains("utls"), "QUIC TLS does not inject TCP uTLS");
+        }
+    }
+    for (const char* proxy : {
+        "{name: unsupported, type: socks5, server: 127.0.0.1, port: 1080, tls: true}",
+        "{name: unsupported, type: hysteria2, server: example.test, port: 443, client-fingerprint: chrome}",
+        "{name: unsupported, type: tuic, server: example.test, port: 443, reality-opts: {public-key: x}}"}) {
+        singbox::CompileOptions invalid;
+        invalid.profileYaml = std::string("proxies:\n  - ") + proxy + "\nrules:\n  - MATCH,DIRECT\n";
+        const auto result = singbox::compileConfig(invalid);
+        check(!result.fidelity.empty() && result.fidelity.front().level == singbox::Fidelity::Unsupported,
+              "protocol-specific unsupported TLS fields reject node and enter ledger");
+    }
     singbox::CompileOptions options;
     options.controller = "127.0.0.1:9097";
     options.secret = "s3cret";
@@ -545,6 +831,34 @@ rules:
             }
         }
         check(sawEndpointRoute, "全局网段规则直接指向 OpenVPN endpoint");
+    }
+    for (const char* delimiter : {"\n", "\r\n"}) {
+        auto literalOpenVpn = openVpnOptions;
+        auto& config = literalOpenVpn.nativeConnections[0].nativeConfig;
+        const auto start = config.find("<auth-user-pass>\n") + std::string("<auth-user-pass>\n").size();
+        const auto end = config.find("</auth-user-pass>", start);
+        config.replace(start, end - start, std::string(" \t user name ") + delimiter +
+                       " 'quoted password' \t " + delimiter);
+        const auto compiled = singbox::compileConfig(literalOpenVpn);
+        check(compiled.error.empty() && !compiled.json.empty(), "literal OpenVPN credentials compile");
+        if (!compiled.json.empty()) {
+            const auto endpoint = json::parse(compiled.json)["endpoints"][0];
+            check(endpoint["username"] == " \t user name " &&
+                  endpoint["password"] == " 'quoted password' \t ",
+                  "OpenVPN reads credential lines literally, removing only CRLF delimiters");
+        }
+    }
+    for (const char* credentials : {"user secret\n", "user\n\n", "\nsecret\n", ""}) {
+        auto malformed = openVpnOptions;
+        auto& config = malformed.nativeConnections[0].nativeConfig;
+        const auto start = config.find("<auth-user-pass>\n") + std::string("<auth-user-pass>\n").size();
+        const auto end = config.find("</auth-user-pass>", start);
+        config.replace(start, end - start, credentials);
+        const auto failed = singbox::compileConfig(malformed);
+        check(!failed.error.empty() && failed.json.empty() &&
+              std::ranges::any_of(failed.fidelity, [](const auto& note) {
+                  return note.sourceId == "profile:openvpn-a" && note.level == singbox::Fidelity::Unsupported;
+              }), "missing/interactive OpenVPN credentials fail with source fidelity");
     }
 
     auto catchAll = compensation;

@@ -48,6 +48,10 @@ AAR 元数据包含 version，Gradle 同时核验版本、revision、ABI 与内�
 但不增加手机多订阅；routing-mark 不能因 Android 的 `__linux__` 宏而开放。
 PROCESS-NAME/正则转原生包名匹配，仍通过后台 owner 查询；应用选择 UI 尚未实现。
 
+MainActivity 的 BROWSABLE/VIEW intent filter 接收 sing-box 与 FlClash 订阅链接；
+冷启动和运行中 intent 都经同版本 HuxerUI application activation 打开导入二级页，
+不新增普通订阅多选能力。格式、解析约束与验证方式见[订阅唤醒链接](profile-links.md)。
+
 ## 发布 APK 签名
 
 Android Release APK 必须同时启用 v1（JAR 签名，包含 `META-INF` 签名文件）和 v2 签名。

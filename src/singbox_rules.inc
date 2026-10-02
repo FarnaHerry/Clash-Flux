@@ -752,6 +752,9 @@ bool applyConnectionRules(Context& ctx) {
             if (!endpoint) {
                 ctx.result.error = std::format("OpenVPN「{}」配置转换失败：{}",
                                                native.id, endpointError);
+                ctx.note(FidelityScope::Node, Fidelity::Unsupported, native.id,
+                         ctx.result.error, "修正原生连接配置；不会省略失败字段后继续建立连接");
+                ctx.result.fidelity.back().sourceId = native.id;
                 return false;
             }
             config["endpoints"].push_back(std::move(*endpoint));

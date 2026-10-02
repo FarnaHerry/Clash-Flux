@@ -29,6 +29,7 @@ import clashflux.store.vpn;
 import clashflux.vpn;
 
 #include "profiles_page_shared.h"
+#include "../profile_link.h"
 
 namespace clashflux::ui::profile_detail {
 
@@ -375,9 +376,25 @@ void RefreshProfileForPlatform(
 
 // 导入流程的网络差异也在平台函数内收束：Android remote 走平台 HttpClient，
 // 桌面及本地/原生订阅走阻塞 store。弹窗只提交 request，不再判断平台。
+std::string NormalizeProfileImportLink(ProfileImportRequest& request) {
+    if (!request.remote) return {};
+    const auto scheme = request.url.substr(0, request.url.find(':'));
+    if (profile_link::IsSupportedScheme(scheme)) {
+        std::string error;
+        auto link = profile_link::Parse(request.url, error);
+        if (!link) return error;
+        request.url = std::move(link->url);
+        if (request.name.empty()) request.name = std::move(link->name);
+    }
+    return profile_link::IsHttpUrl(request.url)
+        ? std::string{} : "订阅下载仅支持 HTTP 或 HTTPS URL";
+}
+
 #if defined(__ANDROID__)
 huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
     std::shared_ptr<AppHttpClient> http, ProfileImportRequest request) {
+    if (auto error = NormalizeProfileImportLink(request); !error.empty())
+        co_return ProfileImportResult{0, std::move(error)};
     if (request.remote) {
         const std::int64_t id = co_await AndroidImportRemote(
             std::move(http), request.name, request.url, request.options);
@@ -405,6 +422,8 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
 #else
 huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
     std::shared_ptr<AppHttpClient>, ProfileImportRequest request) {
+    if (auto error = NormalizeProfileImportLink(request); !error.empty())
+        co_return ProfileImportResult{0, std::move(error)};
     const ProfileImportResult result = co_await RunOnTaskThread(
         [request = std::move(request)] {
             auto& ps = store::profilesStore();

@@ -1,0 +1,21 @@
+# Configuration-check fixture only; example.test and sample credentials cannot verify a remote connection.
+global-client-fingerprint: firefox
+dns:
+  nameserver: [223.5.5.5]
+proxies:
+  - {name: ss, type: ss, server: example.test, port: 8388, cipher: aes-256-gcm, password: ' sample ', udp: false}
+  - {name: vmess, type: vmess, server: example.test, port: 443, uuid: 11111111-2222-3333-4444-555555555555, tls: true, client-fingerprint: safari, alpn: [h2, http/1.1], network: ws, ws-opts: {path: /a, headers: {Host: example.test, X-Audit: ' exact value '}}}
+  - {name: vless, type: vless, server: example.test, port: 443, uuid: 11111111-2222-3333-4444-555555555555, tls: true}
+  - {name: trojan, type: trojan, server: example.test, port: 443, password: ' sample '}
+  - {name: hy2, type: hysteria2, server: example.test, port: 443, password: ' sample ', obfs: salamander, obfs-password: ' obfs sample ', up: 30 Mbps, down: 200 Mbps}
+  - {name: tuic, type: tuic, server: example.test, port: 443, uuid: 11111111-2222-3333-4444-555555555555, password: ' sample ', servername: example.test, alpn: [h3], disable-sni: true}
+  - {name: http, type: http, server: 127.0.0.1, port: 8080, username: ' user ', password: ''}
+  - {name: socks, type: socks5, server: 127.0.0.1, port: 1080, username: ' user ', password: ' sample ', udp: false}
+  - {name: anytls, type: anytls, server: example.test, port: 443, password: ' sample ', udp: true}
+  - {name: snell, type: snell, server: example.test, port: 443, psk: sample, version: 4, udp: false}
+proxy-groups:
+  - {name: selector, type: select, proxies: [ss, vmess, vless, trojan, hy2, tuic, http, socks, anytls, snell, DIRECT]}
+rules:
+  - RULE-SET,cn,DIRECT
+  - RULE-SET,cn-ip,DIRECT
+  - MATCH,selector

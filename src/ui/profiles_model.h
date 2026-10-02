@@ -18,6 +18,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "../profile_link.h"
+
 #include "ui.h"
 
 namespace clashflux::ui {
@@ -32,6 +34,9 @@ struct ProfilesModel {
     huxerui::State<bool> selectionPending{false};
     // 显式请求立即同步（CRUD/激活/CLI 转发之后）。
     huxerui::State<std::uint64_t> syncTick{0};
+    huxerui::State<std::vector<profile_link::RemoteProfile>> importLinks{
+        std::vector<profile_link::RemoteProfile>{}};
+    huxerui::State<std::string> linkError{std::string{}};
 
     void RequestSync() { syncTick = syncTick.Get() + 1; }
 };

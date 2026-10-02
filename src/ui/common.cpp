@@ -15,6 +15,7 @@
 #include "proxies_model.h"
 #include "task_bridge.h"
 #include "ui.h"
+#include "app.h"
 
 #include "wire_codec.h"
 import clashflux.config;
@@ -190,7 +191,9 @@ ProxiesSnapshot FetchProxiesSnapshot() {
 void InstallClashFluxUiModels(huxerui::ApplicationContext& context) {
     context.Provide(std::make_shared<ProxiesModel>());
     context.Provide(std::make_shared<CoreModel>());
-    context.Provide(std::make_shared<ProfilesModel>());
+    auto profiles = std::make_shared<ProfilesModel>();
+    context.Provide(profiles);
+    InstallProfileLinkActivation(context, profiles);
     context.Provide(std::make_shared<VpnModel>());
     context.Provide(std::make_shared<SettingsModel>());
 }

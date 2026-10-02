@@ -6,7 +6,8 @@ Comment=sing-box proxy client (Clash Verge Rev style)
 Comment[zh_CN]=sing-box 代理客户端
 # 路径与顶层 CMakeLists 的 CPACK_PACKAGING_INSTALL_PREFIX 一致；经
 # /proc/self/exe 解析真实路径，engines/、resources 相对布局不受调用方式影响。
-Exec=/opt/clash-flux/clash-flux
+Exec=/opt/clash-flux/clash-flux %u
+MimeType=x-scheme-handler/clash-flux;x-scheme-handler/sing-box;x-scheme-handler/flclash;x-scheme-handler/clash;x-scheme-handler/clashmeta;
 Icon=clash-flux
 Terminal=false
 Categories=Network;Utility;

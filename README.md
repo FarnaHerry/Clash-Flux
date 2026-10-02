@@ -1,6 +1,6 @@
 # Clash-Flux
 
-版本更新见 [v0.3.16 发布说明](docs/releases/v0.3.16.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.17 发布说明](docs/releases/v0.3.17.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -14,6 +14,8 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 
 - 订阅与代理配置管理：卡片式布局（右键菜单 / 双击切换 / 卡片内刷新）、URL 导入 /
   更新 / 启用 / 删除 / 规则编辑，本地落盘；支持 Clash YAML 和 sing-box 原生 JSON 文件导入
+- 网页唤醒导入：兼容 sing-box 与 FlClash 订阅链接，打开预填名称与 URL 的导入表单；
+  支持粘贴和扫码解析，格式与平台注册方式见[订阅唤醒链接](docs/profile-links.md)
 - 订阅下载：订阅级三态代理（内核 / 系统环境 / 直连）与「允许无效证书」开关；
   Windows 没有系统 CA 目录，https 订阅改用 Windows 证书存储校验，与系统浏览器
   的信任结论一致
@@ -170,6 +172,11 @@ exact / approx / unsupported 记入保真度账本，不静默降级，也不在
 [sing-box 能力审查](docs/singbox-capability-audit.md)，稳定版版本与资产校验见
 [内核升级记录](docs/singbox-stable-upgrade.md)，新增映射示例见
 [Clash YAML 示例](docs/examples/kernel-capabilities.yaml)。
+2026-10-02 工作区的逐层完成度、实际验证范围和剩余保真度问题见
+[L1 / L2 / L3 开发复核](docs/l1-l2-l3-status.md)。该快照区分代码接入与实机验收，
+不代表已发布安装包的全部能力。
+首批 L2 已关闭凭据原文、TLS/传输异常值和全局指纹漏记问题，包含永久回归；
+协议类型覆盖仍为 10/15，更多字段与 provider 适配继续按复核清单推进。
 桌面已接入[唯一主订阅 + 规则驱动的多次来源编排](docs/desktop-subscription-orchestration.md)：
 Clash YAML 次来源只通过启用规则参与，同名组/节点隔离；全局覆盖、来源分流、主规则、
 主兜底使用固定层级，权重只在层内比较。目标不可用默认阻断，可明确选择主默认出口或直连。
@@ -220,11 +227,13 @@ GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议�
 | build-linux-x86_64 | ubuntu 容器 + clang-21/libc++ | 正式 |
 | build-linux-arm64 | ubuntu-24.04-arm 原生 | 实验性 |
 | build-windows-x86_64 | MSVC + runner 预装 OpenSSL + HuxerUI 安装器 | 正式 |
-| build-windows-arm64 | windows-11-arm + vcpkg OpenSSL | 实验性 |
-| build-macos-arm64 | macos-15 + brew LLVM | 实验性 |
-| build-macos-x86_64 | macos-13 + brew LLVM | 实验性 |
-| build-android | HuxerUI CLI 打 APK（GUI/native shell + sing-box libbox） | 实验性 |
+| build-macos-arm64 | macos-15 + brew LLVM | 正式发布门禁 |
+| build-android | HuxerUI CLI 打 arm64 APK（GUI/native shell + sing-box libbox） | 正式发布门禁 |
 | build-ios-simulator-arm64 | macOS + iOS Simulator SDK 编译未签名 app/Packet Tunnel，并构建固定 sing-box 的 iOS device/Simulator Libbox.xcframework | TODO / 暂缓；实验性诊断，不阻塞发布 |
+
+Windows 安装器另有 `build-windows-installer` 门禁。当前矩阵没有 Windows arm64 或
+macOS x86_64 job；Linux arm64 为非阻塞实验项。表中状态描述工作流门禁，
+不表示本次已经查询线上 CI 结果或完成平台实机验收。
 
 CI 使用固定 revision 的 HuxerUI iOS 平台源码，从 Clash-Flux 自己的 CMake
 项目编译 `clash-flux_huxerui_ios_core`（arm64 iOS Simulator），并从与 Android
@@ -237,8 +246,8 @@ job 验证 app、Packet Tunnel 与引擎可为 Simulator 编译；它不生成 I
 Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用菜单图标
 （.desktop + hicolor 图标）；应用本体自包含安装于 `/opt/clash-flux`。
 
-覆盖面原则：sing-box 内核发布什么桌面平台/arch，就构建什么目标（内核资产
-SHA256 钉在 `cmake/singbox_bundle.cmake`，configure 期自动下载）。桌面 job
+官方桌面内核资产表保留 6 项版本/摘要映射，客户端构建范围以实际 CI 矩阵为准
+（内核资产 SHA256 钉在 `cmake/singbox_bundle.cmake`，configure 期自动下载）。桌面 job
 统一走 HuxerUI 源码通道（钉 commit clone 上游）。Linux、Windows、macOS、Android
 和 iOS Simulator 源码构建统一固定 HuxerUI `0c5126235d43c2b703166bcc00781b850f2d1c39`，
 并应用 `cmake/patches/` 中仍未被上游修复的拖动跟手、Linux 帧生命周期和 macOS/iOS

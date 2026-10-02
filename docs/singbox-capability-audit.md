@@ -7,6 +7,9 @@
 本次升级的检查见 1.14.2 升级文档。分层与保真度规则以
 [契约文档](singbox-layers-and-fidelity.md) 为准。
 
+本文保留 2026-10-01 的开发和验证历史；2026-10-02 当前工作区的逐层完成度、
+语义探针及未关闭问题见 [L1 / L2 / L3 开发复核](l1-l2-l3-status.md)。
+
 ## 结论与计数口径
 
 内核控制已经覆盖日常使用：启停、模式、TUN、代理组选择、测速、连接与日志。
@@ -22,8 +25,8 @@
 |---|---|---|
 | 代理协议 | Clash 转换 10/15：SS、VMess、VLESS、Trojan、Hysteria2、TUIC、HTTP、SOCKS、AnyTLS、Snell v4 | Hysteria v1、ShadowTLS、SSH、Tor、Naive 的 Clash 转换；现有协议的插件及更多 TLS/拨号字段 |
 | 策略组 | selector/urltest 两种原生组；原生测速容差、间隔；detour 代理链、selector 初始选择 | idle_timeout 和 interrupt_exist_connections 的专门设置入口；不能模拟 fallback/load-balance 或 urltest 手动锁定 |
-| 路由 | 域名、目标/源 CIDR、目标/源端口及范围、TCP/UDP、地理规则集、桌面进程路径、Linux UID、Android 包名/正则、AND/OR/NOT 子集 | 更多逻辑条件、应用选择入口、IP 版本、网络类型、Wi-Fi、接口地址、更多原生路由动作 |
-| DNS | local、UDP/TCP/DoT/DoH/DoQ/强制 HTTP3；完整域名与 +. 后缀 nameserver-policy；bootstrap、节点解析器与依赖图检查；直连解析时机、多 DNS/fallback 明确记账 | 更多通配/规则集策略、fallback-filter、hosts、FakeIP、专用 policy、缓存及原生设置入口 |
+| 路由 | 域名、目标/源 CIDR、目标/源端口及范围、TCP/UDP、IP-VERSION、地理规则集、桌面进程路径、Linux UID、Android 包名/正则、AND/OR/NOT 子集 | 更多逻辑条件、应用选择入口、Wi-Fi/接口等原生网络匹配、更多原生路由动作 |
+| DNS | local、UDP/TCP/DoT/DoH/DoQ/强制 HTTP3；完整域名与 +. 后缀 nameserver-policy；节点专用 proxy-server-nameserver-policy；bootstrap、节点解析器与依赖图检查；直连解析时机、多 DNS/fallback 明确记账 | 更多通配/规则集策略、fallback-filter、hosts、FakeIP、direct follow-policy、缓存及原生设置入口 |
 | 端点 | 原生连接编辑器支持 openvpn-client（1/5）；PPTP 是系统补充路径，不计入内核端点 | WireGuard、Tailscale、OpenConnect、OpenVPN server 的连接对象、字段编辑及生命周期管理 |
 | 规则集 | 自有 GEO 显式资源清单、文件头筛查后提交、桌面启动按周刷新/失败留旧、国内 RULE-SET 别名及任意名称 inline provider 子集 | 外部 rule-providers、local/remote rule_set 管理界面及下载路径选择 |
 | 控制与可见性 | 桌面 clash_api / Android CommandClient；保真度报告与 CLI | 独立 DNS 诊断、更多内核状态展示；不依赖空壳 providers API 或不存在的 selectable/testUrl 字段 |
@@ -129,12 +132,15 @@ provider 定义显式记账；规则 `no-resolve` 记 approx，未知修饰符�
 - 下载增加独占临时文件、写入检查和提交前校验入口；GEO 预取接入文件头筛查。
   原生 JSON 不再进入应用预取，Android 国内资产不在线刷新或删除。
 - 缓存命中也进入桌面按周刷新清单；只读编译不删文件。致命编译失败保留已有账本。
-  SRS 完整解压/校验仍依赖内核，普通订阅内容校验与外部 provider 尚未接入。
+  SRS 完整解压/校验仍依赖内核。后续已接入桌面普通订阅刷新/编辑的候选校验；
+  本地首次导入可保存为未参与来源，启用时检查；Android 由后台 libbox 检查。
+  外部 provider 下载仍未接入。
 
 实现与本轮验证见 [基础补齐记录](foundation-progress.md)。外部 provider 下载、
-完整配置 IR、hosts/FakeIP 与跨订阅编排仍未实现，手机约束保持。
+完整配置 IR、hosts/FakeIP 与完整编排恢复仍未实现；桌面 Clash 多来源首阶段已实现，
+原生 JSON 次来源和跨来源 detour 未开放，手机约束保持。
 
-1. **原生 DNS 设置与剩余策略**：补节点/直连专用 policy 与解析时机、
+1. **原生 DNS 设置与剩余策略**：扩展现有节点专用 policy，补直连策略与解析时机、
    更多通配、规则集、hosts/FakeIP 与过滤模式；再做原生编辑入口。已接入的完整域名/
    后缀策略与强制 HTTP3 不等于支持全部 Clash DNS；fallback-filter 仍未实现。
 2. **规则集与逻辑路由**：通用本地/远程 .srs、规则集管理，补齐已接入 AND/OR/NOT
@@ -145,7 +151,8 @@ provider 定义显式记账；规则 `no-resolve` 记 approx，未知修饰符�
 4. **WireGuard/Tailscale/OpenConnect 端点**：以连接对象建模，包含凭据、状态、启停与
    路由目标，不放进旧的 WireGuard outbound；平台支持与失败回滚先于 UI 承诺。
 5. **剩余拨号与协议字段**：更多连接选项、TLS/ECH、SS 插件及其它协议，
-   逐项核对固定版本；detour 及其引用图检查已经接入，跨订阅命名空间仍属桌面规划。
+   逐项核对固定版本；detour、引用图检查与桌面 Clash 来源命名空间已经接入，
+   原生 JSON 次来源及跨来源 detour 仍待实现。
 
 这些条目是后续工作，未记为本轮已完成的功能。iOS 仍按项目约定暂缓。
 
@@ -204,3 +211,27 @@ libbox 脚本语法和 diff 检查通过。新增代理链和默认选择未在�
 原生 JSON 次来源、跨来源代理链、UUID 对象跟踪和崩溃恢复仍未完成。
 手机未增加普通多订阅。具体交互与能力边界见
 [桌面编排 §7](desktop-subscription-orchestration.md#7-已实现的-l3-重构)。
+
+## L1 / L2 / L3 再复核（2026-10-02）
+
+- L1 固定版本和校验链已接入；实际 CI 不含 Windows arm64/macOS Intel，iOS 暂缓。
+- L2 旧协议未知字段、UDP/TLS 和传输子字段的若干静默降级已关闭；10 类协议配置
+  通过固定内核 check；初次复核发现凭据 trim、异常 ALPN/WS header 值、根级/不适用
+  指纹漏记，列为 F01–F03，后续首批 L2 修复已关闭，见下节。
+- L3 Clash 来源隔离和启用规则参与已通过定向编译检查；唤醒链接已接入独立导入表单，
+  Linux 冷启动/IPC 与 Android 构建已验证，完整下载、其它系统与真机交互未验收。
+- Linux 构建和版本 v0.3.16、9 项项目测试、10 协议配置检查、Android Debug 构建及
+  v1/v2 签名核验通过。测试和平台范围的完整记录见 [开发复核](l1-l2-l3-status.md)。
+
+## L2 首批交付：凭据与 TLS/传输取值（2026-10-02）
+
+F01–F03 已修复并加入永久 `test_singbox` 回归。凭据保留原文，异常 ALPN/headers
+及相邻传输取值整条拒绝并记账；全局指纹按来源独立继承，节点优先，不适用 TLS 字段
+不再消失或触发隐式启用。OpenVPN inline auth-user-pass 一并改成两行原文读取，
+LF/CRLF 均保留凭据空格/引号/制表符；缺行或空凭据需要交互时拒绝并保留来源账本。
+random 指纹分布和内核折叠的 chrome PSK/PQ 别名按 approx 记账。
+
+新增回归在修复前复现 48 项失败；修复及扩展回归后，Linux 9 项项目测试通过。
+扩充的 10 协议样本包含带空白的凭据、原文 header 和全局/节点指纹，生产转换结果
+通过固定 1.14.2 `check`。Android arm64 Debug 已重新构建，未安装或验收远程握手。
+类型覆盖仍为 10/15；这批交付不包含新的协议、外部 provider 或完整 DNS 适配。

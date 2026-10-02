@@ -35,6 +35,22 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="sing-box" android:host="import-remote-profile" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="clash-flux" />
+                <data android:scheme="flclash" />
+                <data android:scheme="clash" />
+                <data android:scheme="clashmeta" />
+                <data android:host="install-config" />
+            </intent-filter>
         </activity>
 
         <activity

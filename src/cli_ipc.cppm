@@ -17,6 +17,7 @@ module;
 #include <fstream>
 #include <string>
 #include <vector>
+#include "profile_link.h"
 
 #if defined(_WIN32)
 #include <fcntl.h>
@@ -46,6 +47,8 @@ namespace {
 // 输出文本写在 footer 之前，客户端按尾部 8 字节解析。
 constexpr std::uint32_t kMagic = 0x43464C31U;  // 'CFL1'
 constexpr auto kClientTimeout = std::chrono::seconds{60};
+const auto processStarted = std::filesystem::file_time_type::clock::now();
+std::mutex commandServerMutex;
 
 std::filesystem::path requestDir() {
     const std::filesystem::path dir = cfg::dataDir() / "cli-requests";
@@ -54,9 +57,10 @@ std::filesystem::path requestDir() {
     return dir;
 }
 
-void WriteArgs(const std::filesystem::path& path,
+bool WriteArgs(const std::filesystem::path& path,
                const std::vector<std::string>& args) {
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    const std::filesystem::path temporary = path.string() + ".tmp";
+    std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
     const auto count = static_cast<std::uint32_t>(args.size());
     out.write(reinterpret_cast<const char*>(&count), sizeof(count));
     for (const std::string& arg : args) {
@@ -64,6 +68,14 @@ void WriteArgs(const std::filesystem::path& path,
         out.write(reinterpret_cast<const char*>(&length), sizeof(length));
         out.write(arg.data(), static_cast<std::streamsize>(arg.size()));
     }
+    out.close();
+    std::error_code error;
+    if (out) std::filesystem::rename(temporary, path, error);
+    if (!out || error) {
+        std::filesystem::remove(temporary, error);
+        return false;
+    }
+    return true;
 }
 
 bool ReadArgs(const std::filesystem::path& path,
@@ -173,6 +185,10 @@ export void startCommandServer() {
         if (error) break;
         const std::string name = entry.path().filename().string();
         if (name.ends_with(".req") || name.ends_with(".res")) {
+            // Preserve requests forwarded while the owner hydrates its cache.
+            std::error_code timeError;
+            const auto modified = entry.last_write_time(timeError);
+            if (!timeError && modified >= processStarted) continue;
             std::error_code removeError;
             std::filesystem::remove(entry.path(), removeError);
         }
@@ -182,6 +198,9 @@ export void startCommandServer() {
 /// owner 进程：服务所有待处理请求。在启动泵里调用（命令会阻塞，调用方应放到
 /// 任务线程）。返回本次服务的请求数。
 export int servePendingCommands() {
+    // inotify wakes and the periodic fallback can reach separate task workers.
+    // Serialize claiming requests and process-wide stdout redirection.
+    const std::lock_guard lock(commandServerMutex);
     const std::filesystem::path dir = requestDir();
     std::error_code error;
     std::vector<std::filesystem::path> requests;
@@ -204,7 +223,17 @@ export int servePendingCommands() {
             request.parent_path() / (request.stem().string() + ".res");
         {
             OutputRedirect redirect(response);
-            const int code = cli::run(args);
+            int code = 0;
+            if (args.size() == 2 && args.front() == "open-profile-link") {
+                std::string failure;
+                auto profile = clashflux::profile_link::Parse(args[1], failure);
+                if (!profile || !clashflux::profile_link::Submit(std::move(*profile), failure)) {
+                    std::fprintf(stderr, "%s\n", failure.c_str());
+                    code = 2;
+                }
+            } else {
+                code = cli::run(args);
+            }
             redirect.Restore();
             WriteFooter(response, code);
         }
@@ -261,8 +290,7 @@ export bool tryForwardCommand(const std::vector<std::string>& args, int& code) {
     const std::filesystem::path response = ResponsePath(pid);
     std::error_code error;
     std::filesystem::remove(response, error);
-    WriteArgs(request, args);
-    if (!std::filesystem::exists(request, error)) return false;
+    if (!WriteArgs(request, args)) return false;
 
     const auto deadline = std::chrono::steady_clock::now() + kClientTimeout;
     // 20ms 一拍等 owner 回写响应：这是有界的 IPC 等待（≤60s），不是常驻轮询。
