@@ -132,6 +132,50 @@ json valuesNode(const singbox::CompileResult& result) {
 }
 
 void testProxyValues() {
+    // Subscription generators still emit these valid compatibility fields.
+    // A field allowlist must distinguish inactive/duplicate settings from an
+    // unsupported encrypted transport, rather than remove every such node.
+    for (const char* encryption : {"none", "''"}) {
+        const auto result = compileProxyValues(std::string("    type: vless\n    encryption: ") + encryption + "\n");
+        const auto node = valuesNode(result);
+        check(!node.empty() && !node.contains("encryption") && result.fidelity.empty(),
+              "plain VLESS encryption compatibility values preserve node exactly");
+    }
+    for (const char* encryption : {"mlkem768x25519plus.native.1rtt.sample", "[none]", "null"}) {
+        const auto result = compileProxyValues(std::string("    type: vless\n    encryption: ") + encryption + "\n");
+        check(valuesNode(result).empty() && !result.fidelity.empty(),
+              "unsupported VLESS encryption is not silently removed");
+    }
+    for (const char* type : {"vmess", "vless", "trojan"}) {
+        const std::string base = std::format("    type: {}\n    network: ws\n", type);
+        for (const char* fields : {
+            "    ws-path: '/ exact path '\n    ws-headers: {Host: example.test, X-Test: ' exact value '}\n",
+            "    ws-path: '/ exact path '\n    ws-headers: {Host: example.test, X-Test: ' exact value '}\n"
+            "    ws-opts: {path: '/ exact path ', headers: {Host: example.test, X-Test: ' exact value '}}\n"}) {
+            const auto result = compileProxyValues(base + fields);
+            const auto node = valuesNode(result);
+            check(!node.empty() && node["transport"]["path"] == "/ exact path " &&
+                  node["transport"]["headers"]["Host"] == "example.test" &&
+                  node["transport"]["headers"]["X-Test"] == " exact value " && result.fidelity.empty(),
+                  "legacy WS fields and matching duplicate modern fields preserve node exactly");
+        }
+        const auto override = compileProxyValues(base +
+            "    ws-path: /legacy\n    ws-headers: {Host: old.test, X-Legacy: legacy}\n"
+            "    ws-opts: {path: /modern, headers: {Host: new.test}}\n");
+        const auto node = valuesNode(override);
+        check(!node.empty() && node["transport"]["path"] == "/modern" &&
+              node["transport"]["headers"] == json{{"Host", "new.test"}} &&
+              std::ranges::any_of(override.fidelity, [](const auto& note) {
+                  return note.level == singbox::Fidelity::Approx;
+              }), "conflicting modern WS options override legacy values with ledger");
+        for (const char* fields : {"    ws-path: [/bad]\n", "    ws-headers: {Host: [bad]}\n",
+                                   "    ws-headers: {Host: a, Host: b}\n",
+                                   "    ws-headers: null\n"}) {
+            const auto result = compileProxyValues(base + fields);
+            check(valuesNode(result).empty() && !result.fidelity.empty(),
+                  "malformed legacy WS values reject the whole node");
+        }
+    }
     // Literal credentials are opaque bytes, including whitespace and explicit
     // empty optional HTTP/SOCKS values. Never print them in fidelity messages.
     for (const auto& [type, extra] : std::vector<std::pair<std::string, std::string>>{
