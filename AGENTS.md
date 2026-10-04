@@ -22,6 +22,18 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
 
 编译失败、可执行文件不存在或 `run.sh` 验证失败时，不得在回复中声称改动已完成。
 
+DNS 运行回归用 `test_singbox` + 固定打包内核，CTest 的 dns_hosts_runtime /
+dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CLI；缺少前提导致未注册不算通过。
+证书拒绝场景同时检查 TLS certificate alert 与没有 DNS payload，不能拿任意超时
+冒充证书验证。测试临时信任根只留在独占测试配置，不进入生产编译器或系统信任库。
+
+桌面 CI 必须配置 `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`，按
+`cmake/ProjectTestGate.cmake` 核对必跑测试已注册且未禁用，CTest 使用
+`--no-tests=error`。当前为 15 项；只有已记录的 MSVC C4737 编译器缺陷允许
+跳过直接 ORM 测试（14 项），persistence 必跑。Python、固定打包内核、
+可执行的 OpenSSL CLI 缺失必须失败；下载回归传入明确的 OpenSSL 路径及
+`--require-tls`，不能用跳过证书拒绝场景换取发布通过。手机构建不启用此桌面门禁。
+
 ## 代码与工作区约定
 
 - 修改前先检查 `git status`，保留用户已有改动，不得擅自 reset、restore 或清理无关文件。
@@ -77,6 +89,16 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   数据面启动放在服务工作线程；网络变化、亮屏/退出 Doze 时先更新 sing-box 物理接口，再关闭旧连接。
   详见 `docs/android-background-lifecycle.md`。
 - HuxerUI composable 函数体内不能使用条件编译；普通 UI 源文件按项目现有 DSL 约定编写。
+- 桌面 Medium/Expanded 外层使用平面布局：Logo 与导航为左栏，标题与内容为右栏，保留栏间竖线与右侧标题下横线；
+  页内区块和条目使用卡片，保留底色、圆角与选中填色。一级页名称显示在自定义标题栏，
+  内容区不重复标题或顶部动作行；页面动作挂在本页 `PageScaffold` 的标题栏中，位于原生窗口
+  控件左侧，保留页面状态与回调作用域。Compact（包含桌面窄窗口）使用底部四项导航与页内标题；桌面窄窗口保留独立系统窗口标题栏，
+  规则/连接/日志从设置「更多」进入并提供返回，覆盖底部导航。宽窄切换保留页面状态；
+  平台能力仍由平台判断，不得根据视口改变订阅编排权限。
+- 窗口外框、标题栏和一级侧栏用主题 `background`；页面骨架内容区统一用
+  `IslandTheme::base`（`surface_container_low`），卡片沿用 `raised`。宽窄屏、一级和
+  二级页都复用骨架层级色，不在各页硬编码背景。明度顺序固定为外框较亮、内容区较暗、
+  卡片再次提亮，浅色和深色主题都遵守此顺序。
 - 可排序卡片的拖动预览要持续跟随原始抓取点；滚动网格应在滚动视口注册拖放目标，
   使卡片间隙和视口边缘的拖动继续有效并触发边缘自动滚动。
 - 手机端二级页面（详情、编辑或从一级页内部入口继续进入的页面）必须覆盖一级底部导航，
@@ -115,6 +137,8 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   重新尽量居中；点击和菜单选择也适用。保持 ScrollView 的 Key 与
   容器结构稳定，不能因溢出菜单出现/消失而重挂载并丢失偏移。手动滚动浏览其它标签时
   不持续拉回当前选中项；生产组件与交互测试见 `section_tabs.cpp` / `test_page_transition.cpp`。
+- 桌面关闭按钮只由 `tray.enabled` 控制：启用且系统托盘可用时隐藏到托盘，否则确认退出。
+  不再读取旧 `tray.close_behavior`，退出确认框不提供最小化到托盘操作。
 - **不要在界面里加「内核未运行 / 请到设置页启动内核」这类常驻提示**：内核启停由首页
   悬浮按钮表达，用户自己清楚当前状态；这类横幅只是噪音（代理页顶部那条已删除，
   以后不要再加回来）。仅保留真正需要用户处置的瞬时反馈（操作失败 toast 等）。
@@ -134,7 +158,28 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
 - 修改完成后运行 `git diff --check`，并在回复中说明实际执行过的验证命令及结果。
 - 除非用户明确要求，不要提交、打标签、推送或发布版本。
 
+## C++ 模块与内联性能
+
+- 命名模块中的普通类内函数不隐式 `inline`；在 `.cppm` 导出类体中包含的 `.inc`
+  同样遵循此规则。接口内的小访问器、状态判断与轻量转发函数，若需要供导入方展开，
+  显式写 `inline` 并保持定义在接口定义域，不能只给声明加 inline 后把定义藏在 `.cpp`。
+- 普通头文件/全局模块片段中的类内函数，以及 `constexpr`、`consteval`、首次声明即
+  `= default` 的函数（含比较运算符）仍隐式 inline；纯字段 DTO 不需要补构造函数。
+  不把“模块不隐式 inline”误推广到所有头文件、默认比较或模板。
+- `inline` 不保证调用展开，也不允许在多个命名模块单元重复定义；实现单元内部可见的
+  小函数仍可由优化器自动展开。不得批量给 I/O、解析、JSON 构建、锁与大对象复制函数
+  加 inline，不把 HuxerUI composable 改成 inline，也不全局启用 `always_inline` 或
+  有 ABI 影响的 `-fmodule-implicit-inline` 作为捷径。
+- 性能检查先核对实际 Debug/Release 优化参数与 LTO，再比较导入真实模块的独立消费
+  单元的优化汇编；调用消失与端到端提速分开记录。当前本地 Debug 只有 `-g`，不能
+  用它推断 Release 的内联效果。字符串/容器复制、分配、锁和系统调用需独立评估。
+  项目案例、11 处修正及验证范围见 `docs/cpp-modules-development.md`。
+
 ## 资源与生命周期约定
+
+- `UseString()` / `UseEnvironment()` 等组合期读取不能放进点击回调或任务协程；
+  文件选择器筛选名称、导入默认名称等先在组合期解析为拥有型字符串/DTO，再按值捕获。
+  已发生过点击“选择文件”因协程内解析本地化资源而崩溃；文件选择失败应反馈并恢复 busy 状态。
 
 - **一次性注册 API 不得直接写在 composable 函数体里**。凡语义为“每个 Runtime
   只能连接/注册一次”的框架 API（例如 `SystemTrayHandle::OnActivate`，重复调用抛
@@ -143,6 +188,11 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   必须选其一：用 `Lifecycle` 包装、用 `std::call_once` 保证进程内只注册一次、或放进
   ApplicationHook。`window.OnCloseRequest`、`application.OnLifecycleChanged` 这类
   框架内部已做 Lifecycle 包装/多观察者处理的 API 不受此限。
+- 订阅导入会提交应用数据，结果回传不得绑定易重建的表单/页面 TaskScope。URL 导入
+  使用 `src/ui/profile_import_task.h` 的 `LaunchProfileImport`：应用级任务持有工作与
+  回调，UI 线程统一先结束 busy 再反馈结果；异常转换为失败反馈，拒绝重复点击。
+  选择器、相机和导航延时仍使用各自页面任务生命周期，不把所有任务改为后台常驻。
+  回归需让导入发起视图在 await 中真正卸载，并验证成功/异常后 loading 结束及可重试。
 - **本进程拥有的 OS 资源用 RAII 包装，不在多个返回分支手写释放**：服务 IPC 的 fd 用
   `src/service.cppm` 的 `UniqueFd`，Win32 HANDLE / HKEY 用 `src/win32_raii.h` 的
   `clashflux::win32::UniqueHandle` / `UniqueHkey`，curl easy handle 与 header list 用
@@ -164,6 +214,11 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
   批量删除元数据。Hydrate 未完成前不能将空缓存当成“没有订阅”写回。每次触及以上边界，
   回归必须至少含多个 profile、不同来源、稳定 ID、被引用文件和迁移后成功重开检查；CI 失败
   不能用删除用户数据库或订阅目录作为恢复步骤。
+  异步 flush 必须按 key/ID 的写入版本确认，不能在 await 后无条件清脏（包括 ABA）；
+  同类 flush 串行，失败保留待写版本。用户删除文件由 persistence 在删除事务提交后
+  核对持久化与当前缓存引用，再在任务线程清理，仅使用 open 显式传入的文件根；
+  未配置根、越界/无法确认安全的路径保留，不扫描补删。并发回归必须让生产 flush
+  在真实 SQLite 写锁后挂起，再插入新动作并核对提交/重开；不要只测试顺序写入。
   日志不进库**（高频追加会与写事务抢锁/IO），仍直接写 `core/*.log`。需要数据库
   的 CLI 命令必须在应用运行时内执行（`clashflux.cli` 的伪 CLI：`setPendingCommand`
   → 启动任务 `cli::run` → flush → 退出），不要在运行时之外直接读写持久化层。
@@ -233,6 +288,46 @@ CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
      ——KV 意图，而不是内核运行时回读的 `CoreSnapshot::allowLan`），否则下一个泵节拍会把
      写透的值打回去。
 
+### 空状态占位
+
+页面/分区/列表编辑区域无内容时统一用 `src/ui/empty_state.h` 的 `EmptyState(message, icon)`，
+不要各页重复声明提示布局。图标尺寸、字号、颜色、居中、换行宽度与留白由该组件管理；
+提示文字和页面操作入口由调用方保留。字段缺省值、表单说明和菜单禁用项不使用页级空状态。
+
+### 应用内菜单
+
+代理页溢出标签入口使用 `SectionTabPickerMode::ResponsiveGroups`：按响应式宽度（Compact 底部、
+Medium/Expanded 右侧）展示分组抽屉，不按桌面/手机平台硬编码。窗口层服务由
+`InstallSectionPickerLayers` 一次安装；选择、标签点击与横滑共用受控索引。抽屉保留保真度角标，
+提供关闭、透明外部点击区域及取消/系统返回关闭，内容滚动不替换 Pager。实现见 `section_tab_picker.h`。
+
+同类应用内弹出操作菜单统一使用 `src/ui/action_menu.h`：普通菜单通过
+`UseActionMenu()` + `ActionMenuItem` / `ActionMenuSection` 声明；自定义 hover 多级菜单
+共用 `ActionMenuItemView` / `ActionMenuSurface`，只自行管理子面板打开/关闭。
+圆角、hover、面板裁剪、4pt 外围留白与 2pt 项间距都由通用控件维护，不要在页面复制一套。
+删除/清空等危险操作用 `.Danger()` 或 View 的 danger 参数，统一使用主题 error 色。
+事件回调只创建拥有型描述，不读取 UseTheme/UseEnvironment/UseString；面板通过 Scope 在
+组合期读取样式。每个独立入口持有自己的 anchor。系统托盘原生菜单继续用框架原生 MenuItem，
+不改成应用 Popup；选择器等框架控件继续使用框架自身实现。使用与验收见 `docs/ui-development.md`。
+
+### 主题颜色
+
+`Image.Tint` 仅支持矢量图，不能用于 PNG 等位图（运行时会抛异常并导致启动崩溃）。
+位图按主题选用独立资源；涉及首帧图像或主题路径的修改，编译和 version 检查之外必须实际启动 GUI。
+
+颜色值统一配置在 `src/ui/theme_colors.h`，页面只消费 ThemeSpec 角色或集中语义颜色函数；
+阴影色使用 `ThemeShadowColor`，危险按钮继承当前 ButtonStyle 并使用 `OnErrorColor`。
+不得在页面写 RGB 或固定黑白界面颜色；二维码的编码黑白模块及固定图标资源是明确例外。
+
+### 首帧主题读取
+
+主题是首帧唯一允许同步读取的持久化配置：`AppRoot` 在构建任何可见内容前通过
+`persistence::readStartupTheme` 读取一次 `ui.theme_mode`，不要先画默认主题再异步切换。
+该读取使用临时只读连接，不创建文件、不迁移 schema、不改 journal、不 hydrate 或修改订阅缓存；
+读取失败明确终止启动并保留原库。运行期仍从 SettingsModel 读取，订阅与其它设置仍由原 ORM
+启动任务 hydrate。同步读取 API 由 `cmake/patches/huxerui-lib-sqlite-startup-read.patch` 维护，
+CMake 在所有平台加入 SQLite 依赖前幂等应用，本地源码与固定 revision 下载均适用；升级时校验。
+
 ### JSON codec 边界
 
 应用运行时 JSON 与内部 policy 使用 `src/wire_codec.h/.cpp`（固定 Glaze 9.0.0）。
@@ -259,7 +354,11 @@ MainFallback；priority 只在同层比较，再按 order。无启用规则的�
 policy format_version=2，旧 v1 保留排序后迁移；拒绝未知字段和未来版本，SQLite schema 不变。
 桌面候选先经内核 check 再停止旧实例，启动失败仅在旧原生资源仍有效时恢复；
 CoreSnapshot.planRevision 表示成功应用后的运行序号，预览目录不能覆盖运行来源映射。
-近期先适配固定 sing-box 能力，官方 GUI 交互研究见 `docs/singbox-official-gui-review.md`。
+当前按用户意图转向 L3 产品完善，L1/L2 按使用反馈补齐且保持订阅/保真度门禁。
+规则编辑器的 Clash 对象目录必须只读并独立于运行/预览映射，包含未参与来源；
+异步结果按请求序号、来源身份与内容修订检查，切源清空旧选择，失效引用保留原名，
+不得自动选择第一项或匹配其它来源同名对象。手机、原生连接/JSON 仍只开放默认出口。
+官方 GUI 交互研究见 `docs/singbox-official-gui-review.md`。
 **手机端不增加多订阅编排**：保留单活动代理订阅与现有原生辅助连接限制；UI、CLI、
 导入和持久化写入口都必须遵守平台能力，不能用视口宽度开放桌面功能。
 
@@ -293,6 +392,13 @@ CoreSnapshot.planRevision 表示成功应用后的运行序号，预览目录不
 - sing-box clashapi 不返回 `selectable` 与组的 `testUrl`，`/providers/proxies` 是空壳：
   依赖这些字段的 Clash 面板能力一律视为「能打开但残缺」。
 
+- `include-all-proxies` 只追加本 Clash 来源实际编译成功的顶层节点，按原名称字节序
+  排序；显式成员在前，保留重复，不加入内置 DIRECT、组或其它来源节点。展开本身
+  exact；被拒绝节点另记 Group/Approx，并保留 Node 明细。尚未转换的非空 filter /
+  exclude-filter / exclude-type 或 use/include-all/providers 组合拒绝候选，不能扩大
+  成员范围。显式空字符串筛选和 use 空数组可用；非法布尔、重复声明、残缺 proxies
+  数组拒绝。空展开只在有有效显式成员时可用，不暗加 DIRECT；空组回退仍未接入。
+
 - `dialer-proxy` 映射原生 `detour`；编译完成后检查全部出站依赖，包括组候选成员。
   缺失目标、编译后重复 tag 或循环必须报错，不能去掉代理链后直连。桌面 Clash 来源命名空间已接入，跨来源原始 dialer-proxy 仍不支持。
 - 拨号字段按平台限制：bind_interface 只给桌面；非零 routing_mark 只给 Linux
@@ -307,7 +413,25 @@ CoreSnapshot.planRevision 表示成功应用后的运行序号，预览目录不
   第一个有效 MATCH 终止规则列表，显式 DIRECT 不改成首个 selector；不可用兜底
   目标编译失败。REJECT-DROP 使用原生 method: drop。
 - 节点专用 DNS policy 只在可用 proxy-server-nameserver 存在时生效，不能插入
-  普通 DNS rules；普通/节点策略共用精确与最长后缀优先级，并参与依赖图检查。
+  普通 DNS rules；普通/节点策略共用从右向左的固定标签 > 整层 * > 前缀 . 优先级，
+  并参与依赖图检查。* 只匹配一层，. 只匹配非根子域，+. 展开为独立根/子域分支；
+  后声明只覆盖同一规范化分支，不能用全局「精确优先」或字符串长度代替 trie 次序。
+  编译期节点选择用同一模式元数据，生成的锚定原生 regex 不经另一个 regex 引擎解释；
+  元数据不写入内核 JSON。非法部分标签通配整条拒绝，不改成更宽 suffix。
+- 加密 DNS URL 的 skip-cert-verify 只接受显式 true/false，映射单个端点的 tls.insecure；
+  缺省保持证书验证，不能扩散到 bootstrap、其它端点或订阅下载。重复/非法参数与
+  非加密传输上的证书参数整台服务器拒绝并记账；h3 参数仅用于 HTTPS。name-cert-verify
+  只改变证书 DNSName 校验、不改变 SNI，不能拿 server_name 替代后冒充等价支持。
+- Clash hosts 只映射精确域名到 IP/完整 IP 数组，规范化后重名全部拒绝；异常列表
+  不能只保留合法前缀。未接入的通配、别名/lan、CIDR/带点分 IPv4 的 IPv6 等逐条
+  unsupported，不扩大匹配；其它独立映射可继续转换。DNS 应答只限 A/AAAA，位于
+  policy 前并把 TTL 改为 10 秒；`dns.use-hosts:false` / `dns.enable:false` 不关闭
+  全局 hosts 的节点、DNS 端点及托管连接解析。显式 hosts 路径必须 `disable_cache:true`，
+  防普通 DNS 旧结果覆盖映射；不改节点原 server/SNI，不引用订阅指定外部 hosts 文件。
+  次来源只导出被出站引用的 hosts DNS 依赖，不导入主 DNS/连接规则。
+  来源命名空间化后同步 Context 的 hostsDnsTag，后置生成的前置规则不能硬编码旧 tag；
+  普通 resolve 必须排除已按 hosts 解析的域名，防再次解析覆盖显式地址。
+  缓存和多地址拨号选择差异记 approx；系统 hosts 开关、通配/别名仍未保真。
 - 未映射组字段、provider 引用/定义必须显式记账；`no-resolve` 暂记 approx，未知
   规则修饰符整条拒绝，不得截断附加字段后当作 exact。
 - 全部 Clash 节点分支均检查字段白名单与传输层子字段；证书 `fingerprint`、未映射
@@ -335,6 +459,30 @@ CoreSnapshot.planRevision 表示成功应用后的运行序号，预览目录不
   输出自有 GEO 来源，启动任务负责预取、按周刷新及坏缓存清理。禁止扫描原生 JSON
   的任意 tag 拼下载路径，也禁止清理不属于当前资源清单的 .srs。Android 打包 GEO
   不参与运行时更新或清理。SRS 文件头筛查不等于完整解析，完整校验仍由内核负责。
+- file rule-provider 仅从显式 `ruleProviderDir`（应用传 `cfg::dataDir()`）读取相对路径，
+  canonical 后检查仍在根内，禁止绝对路径/父目录跳转/越界符号链接/非普通文件；
+  读取上限 8 MiB，YAML/text 整份转换，不写入或纳入 GEO 清理。文件失败必须让
+  候选编译失败并保留账本/旧订阅，不能只跳过坏条目后提交。inline 快照缺少
+  Mihomo 文件监听须记 approx；MRSv1 domain/ipcidr 已接入，classical/未来版本和文件管理 UI 仍未接入。
+- HTTP provider 由编译器输出 `httpRuleProviders` 清单，编译器只读缓存/任务快照，
+  不联网。任务层只支持 HTTP(S) YAML/text、直连或显式 DIRECT；header 仅支持
+  非空单值数组的普通 ASCII 请求头（总量 16 KiB），跨平台传输保留字段、异常/重复
+  成员拒绝整份声明。其它 proxy、MRS classical/未来版本及未映射字段仍拒绝。请求头值进入完整缓存身份，
+  不进入原生配置或诊断；空 header 保留旧缓存身份。带头下载禁用重定向并记 approx，
+  不向跳转目标转发凭据；iOS 仍暂缓且明确拒绝带头下载。下载默认验证证书，8 MiB 上限或更小 size-limit 在
+  传输时拒绝，不截断提交；Android 复用 Java TLS 桥接，不用无 TLS curl。
+  先独占暂存全部来源、整份转换与候选/目标检查，通过后才原子替换各自缓存；失败
+  保留旧缓存/订阅，不删坏缓存或任意 path。自有 `core/rule-providers` 缓存核对完整
+  来源身份/格式版本，文件名摘要不是安全校验；未来版本/身份冲突拒绝覆盖。
+  path 只作数据目录内的只读种子，不写用户文件。运行计划持有 raw 快照，回滚不
+  重新下载；interval 只在应用配置时检查到期、无定时热更新，须记 approx。
+  缓存提交没有多文件崩溃事务，Android 仍没有桌面 CLI 预检查，不宣称实机回滚完成。
+- ASN 只由编译器声明固定 ipverse JSON 资源，任务层经 HTTP 缓存准备；完整校验编号及
+  双地址族 CIDR 后展开为原生 IP 条件并记 approx，不能输出伪造 ASN 字段或丢条件。
+  HTTP classical 语法校验与依赖准备分开，最终完整候选通过前不能提交任何暂存缓存。
+  MRSv1 domain/ipcidr 用固定 Zstandard 1.5.7 归档解码，SHA256 在 CMake 检查；输入
+  8 MiB、解压 32 MiB 与集合数量均有界，未知版本/扩展、畸形结构和不支持域名整份拒绝。
+  添加/升级该构建依赖要同步 `third_party/README.md`，所有平台链接同一静态目标。
 - 通用下载使用独占临时目录与 RAII 清理；先关闭并检查写入，再执行调用方的
   `DownloadOptions.validate`，最后替换目标。Windows 覆盖不能先删旧文件。
   GEO 预取、普通订阅刷新与编辑接入候选校验；本地首次导入仍可先保存为未参与来源，
@@ -363,3 +511,5 @@ L1/L2/L3 的实际完成度与验收证据维护在 `docs/l1-l2-l3-status.md`；
 
 如果构建、运行、发布或开发流程发生变化，必须同步更新 `README.md`、`README.en.md`、本文件和相关
 `docs/` 文档，保持命令与实际工程一致。
+
+代理分组抽屉不叠加遮罩颜色；右侧抽屉通过 `SectionTabPickerInsets` 从桌面标题栏分割线下方开始，标题栏不被抽屉覆盖。底部抽屉仅局部覆盖 `BottomSheetStyle.scrim` 为透明，保留其它模态组件的样式。

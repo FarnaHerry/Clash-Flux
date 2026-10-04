@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "wire_codec.h"
+#include "http_request_headers.h"
 
 #if defined(__ANDROID__)
 #include <android/log.h>
@@ -73,8 +74,14 @@ JNIEnv* current_environment(bool& attached) noexcept {
 
 clashflux::android::ProfileHttpResponse
 clashflux::android::DownloadProfile(const std::string& url, int timeoutSecs,
-                                    bool allowInvalidCertificate) {
+                                    bool allowInvalidCertificate, std::size_t maxBytes,
+                                    bool forceDirect,
+                                    const std::map<std::string, std::string>& headers) {
     ProfileHttpResponse response;
+    if (!clashflux::http_request::ValidHeaders(headers)) {
+        response.error = "下载请求头非法或不支持";
+        return response;
+    }
     bool attached = false;
     JNIEnv* environment = current_environment(attached);
     struct DetachThread final {
@@ -112,7 +119,7 @@ clashflux::android::DownloadProfile(const std::string& url, int timeoutSecs,
 
     const jmethodID fetchProfile = environment->GetStaticMethodID(
         activityClass, "fetchProfile",
-        "(Ljava/lang/String;IZ)Landroid/os/Bundle;");
+        "(Ljava/lang/String;IZJZ[Ljava/lang/String;)Landroid/os/Bundle;");
     if (fetchProfile == nullptr || environment->ExceptionCheck()) {
         environment->ExceptionClear();
         response.error = "Android 订阅下载接口不可用";
@@ -124,10 +131,34 @@ clashflux::android::DownloadProfile(const std::string& url, int timeoutSecs,
         response.error = "订阅 URL 无法转换为 Android 字符串";
         return response;
     }
+    jclass stringClass = environment->FindClass("java/lang/String");
+    jobjectArray javaHeaders = stringClass == nullptr ? nullptr : environment->NewObjectArray(
+        static_cast<jsize>(headers.size() * 2), stringClass, nullptr);
+    if (javaHeaders == nullptr || environment->ExceptionCheck()) {
+        environment->ExceptionClear();
+        response.error = "无法创建 Android 请求头";
+        return response;
+    }
+    jsize index = 0;
+    for (const auto& [name, value] : headers) {
+        for (const auto* text : {&name, &value}) {
+            jstring item = environment->NewStringUTF(text->c_str());
+            if (item != nullptr) {
+                environment->SetObjectArrayElement(javaHeaders, index++, item);
+                environment->DeleteLocalRef(item);
+            }
+            if (item == nullptr || environment->ExceptionCheck()) {
+                environment->ExceptionClear();
+                response.error = "无法转换 Android 请求头";
+                return response;
+            }
+        }
+    }
     jobject bundle = environment->CallStaticObjectMethod(
         activityClass, fetchProfile, javaUrl,
         static_cast<jint>(timeoutSecs),
-        allowInvalidCertificate ? JNI_TRUE : JNI_FALSE);
+        allowInvalidCertificate ? JNI_TRUE : JNI_FALSE,
+        static_cast<jlong>(maxBytes), forceDirect ? JNI_TRUE : JNI_FALSE, javaHeaders);
     if (bundle == nullptr || environment->ExceptionCheck()) {
         environment->ExceptionClear();
         response.error = "Android 订阅下载调用失败";

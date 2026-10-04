@@ -14,6 +14,13 @@ import clashflux.model;
 
 namespace clashflux::persistence {
 
+// 首帧唯一的同步磁盘读：临时只读连接，不创建/迁移数据库，不填充订阅缓存。
+export struct StartupTheme {
+    int mode = 1;
+    std::string error;
+};
+export StartupTheme readStartupTheme(const std::filesystem::path& file);
+
 /// 进程内唯一的 ORM 数据库句柄与设置缓存。
 ///
 /// 生命周期由启动流程（ApplicationHook/应用任务）管理：open 一次、close 一次；
@@ -32,16 +39,16 @@ public:
     /// 老库（user_version=0）由 0→1 迁移重建表并保留全部数据；迁移不了的库
     /// open 返回 false，应用不删除任何文件，lastError 有诊断文本。
     /// @return true 表示库已就绪；失败时 lastError 有诊断文本。
-    huxerui::Task<bool> open(const std::filesystem::path& file);
+    huxerui::Task<bool> open(const std::filesystem::path& file,
+                           const std::filesystem::path& profileDirectory = {});
 
     /// 落库所有标脏设置后关闭连接。
     huxerui::Task<void> close();
 
     [[nodiscard]] bool ready() const noexcept;
 
-    /// 是否处于"降级运行"：库未能打开/迁移，所有写入只留在内存缓存里，重启即
-    /// 丢失。与 ready()==false 的区别是"之后也不会再成功"——flush* 在这种情况下
-    /// 返回失败而不是假装成功，调用方必须把这件事暴露给用户。
+    /// 打开/hydrate 失败；不是允许空缓存继续运行的模式。订阅写入口拒绝操作，
+    /// 启动方必须报告失败并停止正常初始化，保留原库与文件。
     [[nodiscard]] bool degraded() const noexcept;
 
     /// 同步读缓存；未 hydrate 或键不存在返回 fallback。
@@ -59,10 +66,12 @@ public:
     // ---- profiles（内存缓存 + 异步落库；与 settings 同样的写后缓存模型）----
     /// 列出订阅（id 升序），读内存缓存。
     [[nodiscard]] std::vector<model::Profile> listProfiles() const;
-    /// 保存：id==0 时由应用分配新 id；同步更新缓存并标脏。返回保存后的 id。
+    /// 保存：id==0 时由应用分配新 id；未 hydrate/打开失败/关闭中抛异常。
     std::int64_t saveProfile(model::Profile profile);
     /// 从缓存删除并标脏（落库由 flushProfiles 完成）。
-    bool deleteProfile(std::int64_t id);
+    /// removeFile 仅供用户明确删除；数据库删除提交且无磁盘/缓存引用后才清理。
+    /// 未提供 profileDirectory 时保留文件，绝不猜测路径或启动扫描清理。
+    bool deleteProfile(std::int64_t id, bool removeFile = false);
     /// 把 id 设为唯一启用（id==0 表示全部取消），同步改缓存并标脏。
     bool setSelectedProfile(std::int64_t id);
     [[nodiscard]] bool hasPendingProfiles() const noexcept;

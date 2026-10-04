@@ -1,0 +1,14 @@
+# Offline loopback sample. Replace ports with your local SOCKS listeners.
+proxies:
+  - {name: z-node, type: socks5, server: 127.0.0.1, port: 11082}
+  - {name: a-node, type: socks5, server: 127.0.0.1, port: 11081}
+proxy-groups:
+  - {name: all, type: select, include-all-proxies: true}
+  - name: with-explicit
+    type: select
+    proxies: [z-node, all]
+    include-all-proxies: true
+    default-selected: a-node
+  - {name: other, type: select, proxies: [DIRECT]}
+rules:
+  - MATCH,with-explicit

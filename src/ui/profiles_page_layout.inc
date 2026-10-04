@@ -187,19 +187,9 @@
                 .OnClick(openCreate),
         },
         profiles.Empty()
-            ? huxerui::View{
-                  huxerui::Column {
-                      huxerui::Text(Localized("还没有订阅。点击右上角「新建订阅」导入。"))
-                          .Style(huxerui::TextStyle{
-                              huxerui::Font::System(font_size::kBody),
-                              theme.colors.on_surface_variant}),
-                  }.With(huxerui::Padding(32.0F),
-                         huxerui::Grow(1.0F),
-                         huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-                         huxerui::CrossAlign(
-                             huxerui::CrossAxisAlignment::Center))}
+            ? EmptyState(Localized("还没有订阅。点击右上角「新建订阅」导入。"), app::images::request)
             : std::move(profileBody),
-        true, true);
+        true, true, true);
 
     // IndexedPages 要求每一页都是挂载节点；平台函数负责 Android 编辑页是否
     // 存在，ProfilesPage 只提交同一份表单状态。

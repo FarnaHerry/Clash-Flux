@@ -30,8 +30,10 @@
 #include <vector>
 
 #include "ui.h"
+#include "empty_state.h"
 #include "app_resources.h"
 #include "task_bridge.h"
+#include "profile_import_task.h"
 
 import clashflux.core;
 import clashflux.db;

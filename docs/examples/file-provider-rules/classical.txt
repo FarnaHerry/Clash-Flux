@@ -1,0 +1,3 @@
+// Text providers accept full-line comments and blank lines.
+AND,((DOMAIN-SUFFIX,blocked.test),(DST-PORT,443))
+NOT,((NETWORK,TCP))

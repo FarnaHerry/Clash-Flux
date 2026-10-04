@@ -1,0 +1,21 @@
+# Public fixture. The runtime test replaces the local test service ports.
+hosts:
+  exact.test: [192.0.2.10, 192.0.2.11, '2001:db8::10']
+  only4.test: 192.0.2.20
+  only6.test: '2001:db8::20'
+  echo.test: 127.0.0.1
+  node.test: 127.0.0.1
+  resolver.test: 127.0.0.1
+dns:
+  enable: true
+  ipv6: true
+  use-hosts: true
+  nameserver: [udp://resolver.test:15353]
+  proxy-server-nameserver: [udp://127.0.0.1:15354]
+  nameserver-policy:
+    exact.test: udp://127.0.0.1:15354
+proxies:
+  - {name: local-node, type: socks5, server: node.test, port: 11080}
+rules:
+  - DOMAIN,through-node.test,local-node
+  - MATCH,DIRECT

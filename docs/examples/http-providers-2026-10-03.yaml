@@ -1,0 +1,33 @@
+# Public offline fixture: the test harness uses companion files as read-only
+# seeds and an exclusive temporary cache. The app resolves path under dataDir().
+rule-providers:
+  remote-domains:
+    type: http
+    behavior: domain
+    url: https://example.test/domains.yaml
+    header:
+      User-Agent: [clash-flux-fixture/1]
+      X-Token: [public-example-only]
+    path: file-provider-rules/domains.yaml
+  remote-networks:
+    type: http
+    behavior: ipcidr
+    format: text
+    url: https://example.test/networks.txt
+    path: file-provider-rules/networks.txt
+    proxy: DIRECT
+    interval: 3600
+    size-limit: 65536
+  remote-classical:
+    type: http
+    behavior: classical
+    format: text
+    url: https://example.test/classical.txt
+    path: file-provider-rules/classical.txt
+rules:
+  - AND,((RULE-SET,remote-domains),(NETWORK,TCP)),DIRECT
+  - RULE-SET,remote-networks,DIRECT
+  - RULE-SET,remote-classical,REJECT-DROP
+  - RULE-SET,cn,DIRECT
+  - RULE-SET,cn-ip,DIRECT
+  - MATCH,DIRECT

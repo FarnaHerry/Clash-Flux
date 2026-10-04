@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="6 17 116 105">
+  <!-- Small-size dark UI mark: opaque eyes, continuous contours, no backdrop. -->
+  <g fill="#111318" stroke="#e8edf0" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M90 65 C91 56 90 47 95 40 C98 35 105 34 109 37 C114 41 110 46 104 48 C101 50 100 57 99 62 Z"/>
+    <path d="M25 60 L35 56 L37 65 Z"/>
+    <path d="M100 58 L105 60 L100 63 Z"/>
+    <path d="M39 23 C41 20 51 30 55 35 C60 33 66 33 71 35 C77 29 85 21 87 23 C91 30 91 38 89 44 C93 51 94 59 90 65 L92 69 L64 78 L37 69 L39 65 C35 58 35 51 38 44 C35 38 35 30 39 23 Z"/>
+    <path d="M24 82 L60 79 L60 116 L26 98 Q24 97 24 94 Z"/>
+    <path d="M68 79 L103 82 L103 94 Q103 97 101 98 L68 116 Z"/>
+    <path d="M22 63 L59 79 L44 90 L12 74 Q10 73 12 71 Z"/>
+    <path d="M106 63 L117 72 Q119 74 117 75 L82 90 L68 79 Z"/>
+  </g>
+  <g fill="#e8edf0">
+    <ellipse cx="52" cy="54" rx="3.6" ry="6.4"/>
+    <ellipse cx="75" cy="54" rx="3.6" ry="6.4"/>
+  </g>
+</svg>

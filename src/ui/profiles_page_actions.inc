@@ -375,13 +375,8 @@
                     // 规则行（动态列表：键用行号；行内无状态）。
                     huxerui::View ruleList;
                     if (editRules.Empty()) {
-                        ruleList = huxerui::Column {
-                            huxerui::Text(Localized("订阅没有 rules 规则"))
-                                .Style(huxerui::TextStyle{
-                                    huxerui::Font::System(font_size::kCaption),
-                                    hintColor}),
-                        }.With(huxerui::Padding(12.0F),
-                               huxerui::Frame{.height = 300.0F});
+                        ruleList = EmptyState(Localized("订阅没有 rules 规则"), app::images::route)
+                            .With(huxerui::Frame{.height = 300.0F});
                     } else {
                         ruleList = huxerui::VirtualList(
                                        editRules.Size(),
@@ -823,8 +818,7 @@
                                           }
                                           nativeConfig = newOpenVpnConfig.Get().text;
                                       }
-                                      importing = true;
-                                      tasks.Launch([=]() -> huxerui::Task<void> {
+                                      LaunchProfileImport(importing, [=]() -> huxerui::Task<ProfileImportResult> {
                                           db::Profile options;
                                           options.description =
                                               newDesc.Get().text;
@@ -847,8 +841,7 @@
                                           }
                                           const std::string name =
                                               newName.Get().text;
-                                          const auto [rid, err] =
-                                              co_await ImportProfileForPlatform(
+                                          co_return co_await ImportProfileForPlatform(
                                                   http,
                                                   ProfileImportRequest{
                                                       .remote = remote,
@@ -859,7 +852,8 @@
                                                       .url = url,
                                                       .picked_path = pickedPath.Get(),
                                                       .options = std::move(options)});
-                                          importing = false;
+                                      }, [=](ProfileImportResult result) {
+                                          const auto& [rid, err] = result;
                                           if (rid == 0) {
                                               if (err.empty()) {
                                                   toast.Show(Localized("导入失败"));
@@ -868,6 +862,7 @@
                                               }
                                           } else {
                                               ctx.Dismiss();
+                                              huxerui::UseApplicationTaskScope().Launch([rid, toast]() -> huxerui::Task<void> {
                                               // 导入即告知「这份订阅有什么吃不下」：
                                               // 账本来自一次只编译不启动的编译（见
                                               // docs/singbox-layers-and-fidelity.md §2）。
@@ -881,6 +876,7 @@
                                                       : LocalizedFormat(
                                                             "配置已导入 · {}", summary),
                                                   huxerui::ToastOptions{6.0});
+                                              });
                                           }
                                       });
                                   })},

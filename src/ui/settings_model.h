@@ -4,7 +4,8 @@
 // 缓存**，而缓存在**首帧之后**的启动任务里才 hydrate。组合期直接
 // `UseState(setting(...))` 只会拿到默认值，且之后没有任何东西再同步它——表现为
 // 「关闭窗口时」高亮成默认的“每次询问」、开机自启/托盘开关显示错、首页保存过的
-// 自定义布局在启动时丢失（主题当年被 AppRoot 显式校正过，其它项没有）。
+// 自定义布局在启动时丢失。主题首帧现由 AppRoot 同步只读启动快照初始化，
+// 运行期仍由本模型发布。
 //
 // 现在所有“组合期要读的应用设置”都从这里取：驱动循环每拍读一次（便宜的内存
 // 读），内容变化才发布（State 去重），并把 hydrate 是否完成（ready）一起发布，
@@ -27,7 +28,6 @@ struct SettingsView {
     bool autoRun = false;         // app.auto_run
     bool trayEnabled = true;      // tray.enabled
     bool startMinimized = false;  // tray.start_minimized
-    int closeBehavior = 0;        // tray.close_behavior: 0 询问 / 1 退出 / 2 最小化
     std::string envShell;         // ui.env_shell（空 = 未保存，用探测值）
     std::string language = "system"; // ui.language: system / zh / en
 

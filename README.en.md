@@ -1,6 +1,6 @@
 # Clash-Flux
 
-See the [v0.3.19 release notes](docs/releases/v0.3.19.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.20 release notes](docs/releases/v0.3.20.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -16,9 +16,15 @@ application-managed settings before being passed to sing-box.
 
 ## Features
 
-- Subscription and profile management: cards with context menus, double-click
+- Desktop uses separators for its outer layout and cards inside pages. Page names and actions
+  share the custom title bar, with actions before the window controls. Mobile keeps its existing
+  layout; see [UI conventions](docs/ui-development.md).
+- Subscription and profile management: entries with context menus, double-click
   activation and refresh actions; URL import, update, activation, deletion and rule
   editing; local storage; Clash YAML and native sing-box JSON file import.
+- Desktop rule targets: search and select groups or nodes from Clash subscriptions,
+  including inactive sources; preserve missing references. Mobile, native connections
+  and JSON use the default outbound. See [orchestration](docs/desktop-subscription-orchestration.md).
 - Browser subscription links: accept sing-box and FlClash links and open an import
   form with the name and URL filled in. Pasting and QR import accept these links too;
   see [formats and platform registration](docs/profile-links.md).
@@ -56,10 +62,15 @@ application-managed settings before being passed to sing-box.
   core limits. Undeclared legacy entries `RULE-SET,cn` and `RULE-SET,cn-ip` map
   approximately to the bundled China rule sets. Unsupported entries are reported explicitly. Native
   sing-box JSON subscriptions pass through the native configuration path.
-- DNS conversion: UDP/TCP/DoT/DoH/DoQ, HTTPS `#h3=true`, the system resolver
-  and DNS outbound binding. `nameserver-policy` and node-specific
-  `proxy-server-nameserver-policy` support exact domains and
-  `+.domain` suffixes, IP bootstrap and node resolvers, with DNS/proxy dependency
+- DNS conversion: UDP/TCP/DoT/DoH/DoQ, HTTPS `#h3=true`, system resolution and DNS outbound binding.
+  Encrypted DNS accepts explicit `#skip-cert-verify=true/false`; omitted flags keep certificate checks enabled.
+  Exact `hosts` domain-to-IP/list mappings apply to DNS, nodes and connections.
+  Explicit mappings bypass the DNS cache; invalid entries are accounted as a
+  whole. Wildcards, aliases and the system-hosts switch remain unimplemented;
+  `nameserver-policy` and node-specific
+  `proxy-server-nameserver-policy` support exact domains, whole-label `*`, and
+  leading `.`/`+.` patterns with shared right-to-left label priorities.
+  IP bootstrap and node resolvers include DNS/proxy dependency
   cycle checks. Direct resolver timing, multiple-server, fallback and unmapped semantics appear in
   the fidelity report; full Clash DNS policy compatibility is not claimed.
 - Proxy chains: `dialer-proxy` maps to native `detour`, with forward references
@@ -71,7 +82,8 @@ application-managed settings before being passed to sing-box.
   are reported. AND/OR/NOT and arbitrary inline rule providers support a defined
   domain/regex/CIDR/port/network and platform process/package subset. Route rules also
   support IP version and Linux UID. Explicit MATCH targets and REJECT-DROP are preserved;
-  external provider downloads and an app picker remain unfinished. See the fidelity contract
+  file and DIRECT HTTP providers accept YAML/text and MRSv1 domain/ipcidr; named proxies and an app picker
+  remain unfinished. See the fidelity contract
   for schema and platform limits.
 - JSON codec: pinned Glaze 9.0.0 handles runtime snapshots, API messages and internal
   routing policies. Pages consume ordinary C++ data; connection decoding runs on
@@ -89,7 +101,8 @@ application-managed settings before being passed to sing-box.
   `service` commands. Launch without arguments to open the GUI.
 - Light and dark themes with system theme detection, an island-style interface,
   custom window title bars, a system tray and responsive layouts for narrow windows.
-  Windows tray menus follow the application theme.
+  Windows tray menus follow the application theme. Closing hides to the tray when enabled;
+  otherwise, the app asks for confirmation before exiting.
 - A dashboard pie chart shows cumulative upload/download shares, totals and
   percentages.
 - Android: sing-box libbox uses the same version as the desktop core and runs in a
@@ -161,6 +174,30 @@ Section content uses the framework Pager for direct dragging, rebound, and retai
 Source builds automatically apply the Pager retargeting and hidden virtual page layout patches; all CI platforms apply them as well.
 See [UI development notes](docs/ui-development.md).
 
+For small named-module functions, distinguish explicit inline semantics from optimizer
+substitution and check Debug/Release flags. See [C++ module development](docs/cpp-modules-development.md).
+
+For local DNS runtime regressions, build `test_singbox`, then run
+`ctest --test-dir build --output-on-failure -R '^(dns_hosts_runtime|dns_policy_runtime|dns_tls_runtime)$'`.
+These require Python and the pinned bundled core. The TLS test also needs the
+OpenSSL CLI for isolated temporary certificates; CMake reports when it cannot
+register that test. See [validation evidence](docs/l1-l2-l3-status.md).
+
+Desktop CI sets `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`: missing or disabled required
+tests fail configuration. Python, the pinned bundled core and a runnable OpenSSL
+CLI are required; the download regression must include default certificate rejection.
+There are 15 required tests. Only the documented MSVC C4737 defect permits skipping
+the direct ORM test (14 tests); subscription persistence remains mandatory.
+Use the same gate locally:
+
+```bash
+cmake -S . -B build -DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON
+cmake --build build
+ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required
+```
+
+The option defaults to OFF for development and does not apply to Android/iOS builds.
+
 By default, `run.sh` starts the existing `build/clash-flux` executable and does not
 build it implicitly. A failed build must not be reported as complete. For another
 build directory, explicitly select its executable with
@@ -223,9 +260,15 @@ gaps and field limits, and the [Clash YAML example](docs/examples/kernel-capabil
 for the newly mapped capabilities.
 
 See the [L1 / L2 / L3 development review](docs/l1-l2-l3-status.md) for the
-2026-10-02 workspace snapshot, remaining fidelity defects and validation scope.
+2026-10-03 workspace snapshot, remaining fidelity defects and validation scope.
 It distinguishes implementation from device validation and does not describe
 every capability of the published packages.
+See the [project review (2026-10-03)](docs/project-review-2026-10-03.md) for a
+consolidated change summary, open subscription protection defects and priorities.
+The follow-up fixes fail startup when storage cannot open, reject profile writes
+before hydration, acknowledge only the flushed revision, and defer file cleanup
+until the database delete commits and remaining references are checked. See the
+review's follow-up section for validation limits.
 The first L2 batch fixes literal credentials, malformed TLS/transport values and
 global fingerprint handling, with permanent regressions. The subsequent workspace
 adds VMess/VLESS UDP encoding, VMess padding flags, and Hysteria2 Gecko and port
@@ -244,6 +287,30 @@ HY1/HY2 also distinguish MBps from Mbps; see the
 private keys, host-key pins and algorithm preferences, reports dual-authentication order
 differences and rejects external key paths; see the [SSH sample](docs/examples/ssh-2026-10-02.yaml). This does not imply complete
 field coverage; further field and provider adaptation remains in the review backlog.
+Groups support static `include-all-proxies: true` expansion: successfully compiled
+nodes from that source are appended in name order after explicit members, excluding
+other groups and subscriptions. Unsupported nonempty filters and proxy-provider
+combinations reject the candidate; an empty group never silently becomes DIRECT.
+See the [offline expansion sample](docs/examples/group-expansion-2026-10-03.yaml).
+Local `type: file` rule providers now accept a defined YAML/text domain/ipcidr/classical
+subset. Paths are relative to the application data directory (Linux defaults to
+`~/.local/share/clash-flux`), with an 8 MiB read limit. They compile into inline
+snapshots; reapply the configuration after file changes. Missing file watching is
+reported as approximate, and file errors reject the candidate while preserving the
+old subscription. MRSv1 domain/ipcidr is supported; classical/future MRS versions and file management UI remain unfinished. See the
+[sample and companion files](docs/examples/file-providers-2026-10-03.yaml) and
+[fidelity contract](docs/singbox-layers-and-fidelity.md).
+HTTP providers also accept the YAML/text direct-download subset. Task downloads,
+complete conversion and candidate checks precede app-owned cache replacement;
+failed updates keep verified old content, and applied plans hold separate raw snapshots.
+`interval` is checked when applying a configuration, without periodic hot updates;
+`path` is a read-only seed. `header` supports single-value ASCII arrays, such as
+`User-Agent: [my-client/1]`, and participates in cache identity. Downloads with
+headers reject redirects and report that difference as approximate. Multiple
+values, reserved transport headers, named download proxies and classical/future MRS formats are rejected.
+Android uses the system TLS bridge with certificate verification. Transfers exceeding
+8 MiB or a smaller `size-limit` fail rather than truncate. See the
+[offline HTTP sample](docs/examples/http-providers-2026-10-03.yaml).
 
 Desktop now implements [one main source with rule-driven secondary sources](docs/desktop-subscription-orchestration.md).
 Clash YAML secondary sources participate only through enabled rules, with isolated
@@ -355,3 +422,10 @@ installation wizard: Burn bundles an MSI and a HuxerUI installer interface with
 destination selection, desktop shortcuts, repair and uninstall. The installer
 supports Simplified Chinese, Traditional Chinese and English. GitHub Release
 Windows archives include both `clash-flux-Setup-<version>.exe` and portable files.
+
+The saved theme is read synchronously through a temporary read-only connection before the first frame is built. Other settings and subscriptions still load asynchronously. CMake applies the Lib-SQLite startup query patch before adding the dependency; see [UI development](docs/ui-development.md).
+
+ASN rules expand a complete ipverse IPv4/IPv6 announcement snapshot and are recorded as approximate.
+Missing data rejects the candidate while preserving existing subscriptions. MRS decoding statically links
+vendored Zstandard 1.5.7, with its archive SHA256 checked by CMake on every platform; no system package is needed.
+See the [fidelity contract](docs/singbox-layers-and-fidelity.md) for limits.

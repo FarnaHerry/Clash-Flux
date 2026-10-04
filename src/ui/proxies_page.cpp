@@ -45,6 +45,7 @@
 
 #include "proxies_model.h"
 #include "ui.h"
+#include "empty_state.h"
 #include "task_bridge.h"
 
 #include "wire_codec.h"
@@ -773,28 +774,10 @@ std::function<void()> NodeSelectAction(
 
     huxerui::View body;
     if (direct) {
-        body = huxerui::Column {
-            huxerui::Text(Localized("直连模式 —— 流量不经过任何代理节点"))
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kBody),
-                    theme.colors.on_surface_variant}),
-        }
-            .With(huxerui::Padding(32.0F),
-                  huxerui::Grow(1.0F),
-                  huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+        body = EmptyState(Localized("直连模式 —— 流量不经过任何代理节点"), app::images::proxies);
     } else if (rootGroups.empty()) {
-        body = huxerui::Column {
-            huxerui::Text(Localized(global ? "全局模式暂无可用策略组"
-                                           : "暂无策略组（检查订阅配置）"))
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kBody),
-                    theme.colors.on_surface_variant}),
-        }
-            .With(huxerui::Padding(32.0F),
-                  huxerui::Grow(1.0F),
-                  huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+        body = EmptyState(Localized(global ? "全局模式暂无可用策略组"
+                                           : "暂无策略组（检查订阅配置）"), app::images::proxies);
     } else {
         body = SectionTabPages(groupPages, selectedTab, [selectGroup, tabNames](std::size_t index) {
             if (index < tabNames.size()) selectGroup(tabNames[index]);
@@ -830,7 +813,8 @@ std::function<void()> NodeSelectAction(
                 groupHasFidelityNote(name) ? std::string{"!"} : std::string{}});
         }
         columnChildren.push_back(
-            SectionTabBar(groupTabs, selectedRoot, selectGroup, sectionMotion));
+            SectionTabBar(groupTabs, selectedRoot, selectGroup, sectionMotion,
+                          SectionTabPickerMode::ResponsiveGroups));
     }
     huxerui::View content = std::move(body);
     if (!columnChildren.empty()) {
@@ -845,7 +829,7 @@ std::function<void()> NodeSelectAction(
 
     // 出站模式按钮与「代理」标题同处标题行、左右对齐。
     huxerui::View page = PageScaffold(Localized("代理"), std::move(modeSwitch),
-                                      std::move(content), true, true);
+                                      std::move(content), true, true, true);
     // 延迟测试按钮统一收在页面右下角：测试当前选中的分组。Compact 下要避开
     // 悬浮底部导航，桌面只留常规外边距。
     if (!direct && current != nullptr) {
@@ -857,7 +841,7 @@ std::function<void()> NodeSelectAction(
                       huxerui::Background(theme.colors.primary),
                       huxerui::Foreground(theme.colors.on_primary),
                       huxerui::CornerRadius(28.0F),
-                      huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.28F),
+                      huxerui::Shadow{ThemeShadowColor(theme, 0.28F),
                                       {}, 14.0F, 2.0F},
                       huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                          .label = huxerui::UseString(

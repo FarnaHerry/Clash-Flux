@@ -11,6 +11,7 @@
 
 #include "app_resources.h"
 #include "ui.h"
+#include "action_menu.h"
 #include "task_bridge.h"
 
 import clashflux.core;
@@ -71,7 +72,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     // across compact cards mounts the same LayerAnchor on multiple Views, which
     // Android rejects during the next frame with "anchor must be mounted on only
     // one View" when the subscription page contains more than one card.
-    auto menu = huxerui::UseMenu();
+    auto menu = UseActionMenu();
     const auto coreModel = huxerui::UseService<CoreModel>();
     const auto& runtime = coreModel->view.Get().core;
     const IslandTheme islands = ResolveIslandTheme(theme);
@@ -181,17 +182,19 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         profile_detail::RefreshProfileForPlatform(pid, httpRefresh, desktopRefresh);
     };
 
+    const auto themedButtonStyle = huxerui::UseEnvironment<huxerui::ButtonStyle>();
     const auto confirmDelete = [dialog, tasks, action, id, nativeVpn,
                                 openVpn = profile.type == "openvpn",
                                 profileName = profile.name,
                                 errorColor = theme.colors.error,
-                                onErrorColor = huxerui::Color::White(),
+                                onErrorColor = OnErrorColor(theme),
+                                themedButtonStyle,
                                 textColor = theme.colors.on_surface] {
         tasks.Launch([=]() -> huxerui::Task<void> {
             co_await huxerui::Delay(std::chrono::duration<double>{0});
             dialog.Show(
                 [=](huxerui::DialogContext context) -> huxerui::View {
-                    huxerui::ButtonStyle danger = huxerui::ButtonStyle::Default();
+                    huxerui::ButtonStyle danger = themedButtonStyle;
                     danger.background = errorColor;
                     danger.label_style = huxerui::TextStyle{
                         huxerui::Font::System(font_size::kBody), onErrorColor};
@@ -241,20 +244,20 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                    openEditFile, openQr, id,
                                    homepage = profile.homepage, url = profile.url,
                                    selected, nativeVpn,
-                                   confirmDelete, errorColor = theme.colors.error] {
-        std::vector<huxerui::MenuEntry> entries;
+                                   confirmDelete] {
+        std::vector<ActionMenuEntry> entries;
         if (!selected && !nativeVpn) {
-            entries.push_back(huxerui::MenuItem(Localized("设为主订阅"), [activateProfile, id] {
+            entries.push_back(ActionMenuItem(Localized("设为主订阅"), [activateProfile, id] {
                 activateProfile(id);
             }));
         }
         if (!nativeVpn) {
-            entries.push_back(huxerui::MenuItem(Localized("更新"), [refresh, id] {
+            entries.push_back(ActionMenuItem(Localized("更新"), [refresh, id] {
                 refresh(id);
             }));
         }
         if (!nativeVpn && !homepage.empty()) {
-            entries.push_back(huxerui::MenuItem(Localized("首页"), [action, homepage] {
+            entries.push_back(ActionMenuItem(Localized("首页"), [action, homepage] {
                 action([homepage]() -> std::string {
                     core::openInBrowser(homepage);
                     return "";
@@ -262,28 +265,27 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
             }));
         }
         if (!nativeVpn && !url.empty()) {
-            entries.push_back(huxerui::MenuItem(Localized("分享二维码"), [openQr, id] {
+            entries.push_back(ActionMenuItem(Localized("分享二维码"), [openQr, id] {
                 openQr(id);
             }));
         }
-        // 原生 VPN 卡片没有“使用/更新”等前置菜单项，不能在菜单开头
-        // 插入分隔线；HuxerUI 要求 MenuSection 必须夹在两个菜单项之间。
-        if (!entries.empty()) entries.push_back(huxerui::MenuSection{});
-        entries.push_back(huxerui::MenuItem(Localized("编辑信息"), [openEditInfo, id] {
+        // 原生 VPN 没有前置操作，只有已有菜单项时才加入分区线。
+        if (!entries.empty()) entries.push_back(ActionMenuSection{});
+        entries.push_back(ActionMenuItem(Localized("编辑信息"), [openEditInfo, id] {
             openEditInfo(id);
         }));
         if (!nativeVpn) {
-            entries.push_back(huxerui::MenuItem(Localized("编辑规则"), [openEditRules, id] {
+            entries.push_back(ActionMenuItem(Localized("编辑规则"), [openEditRules, id] {
                 openEditRules(id);
             }));
-            entries.push_back(huxerui::MenuItem(Localized("编辑文件"), [openEditFile, id] {
+            entries.push_back(ActionMenuItem(Localized("编辑文件"), [openEditFile, id] {
                 openEditFile(id);
             }));
         }
-        entries.push_back(huxerui::MenuSection{});
+        entries.push_back(ActionMenuSection{});
         entries.push_back(
-            huxerui::MenuItem(app::images::trash, Localized("删除"), confirmDelete)
-                .IconTint(errorColor));
+            ActionMenuItem(app::images::trash, Localized("删除"), confirmDelete)
+                .Danger());
         return entries;
     };
 

@@ -1,0 +1,30 @@
+# Keep CI from succeeding after a conditional add_test silently disappears.
+# The sole exception is the documented direct-ORM MSVC compiler defect;
+# persistence (including migration and file preservation) remains mandatory.
+function(clashflux_check_required_tests)
+    set(required smoke profile_links page_transition singbox rule_provider_download
+        dns_hosts_runtime dns_policy_runtime dns_tls_runtime vpn routing compensation
+        persistence project_test_gate group_expansion_runtime)
+    if (NOT CLASHFLUX_MSVC_C4737_HARD_ERROR)
+        list(APPEND required sqlite_orm)
+    endif ()
+    get_directory_property(registered TESTS)
+    set(missing)
+    foreach (name IN LISTS required)
+        if (NOT name IN_LIST registered)
+            list(APPEND missing "${name} (not registered)")
+        else ()
+            get_test_property("${name}" DISABLED disabled)
+            if (disabled)
+                list(APPEND missing "${name} (disabled)")
+            endif ()
+            set_property(TEST "${name}" APPEND PROPERTY LABELS clashflux-required)
+        endif ()
+    endforeach ()
+    if (missing)
+        list(JOIN missing ", " detail)
+        message(FATAL_ERROR "Required Clash-Flux regressions unavailable: ${detail}")
+    endif ()
+    list(LENGTH required count)
+    message(STATUS "clash-flux: all ${count} required project tests registered and enabled")
+endfunction()

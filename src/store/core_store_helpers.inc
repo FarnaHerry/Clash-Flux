@@ -43,6 +43,8 @@
         options.tunInbound = tunEnabled;
         options.speedTestOnly = speedTestOnly;
         options.ruleSetDir = cfg::coreWorkDir().string();
+        options.ruleProviderDir = cfg::dataDir().string();
+        options.ruleProviderCacheDir = (cfg::coreWorkDir() / "rule-providers").string();
         auto profiles = db_->listProfiles();
         if (mainOverride) {
             for (auto& profile : profiles)
@@ -94,6 +96,80 @@
         // libbox 在后台启动时核验；没有谎报成桌面的 CLI 预检查。
         error.clear(); return true;
 #endif
+    }
+
+    bool validatePlanTargets(const singbox::CompileOptions& options,
+                             const singbox::CompileResult& compiled,
+                             const vpn::VpnPolicy* policy, std::string& error) {
+        if (!policy) return true;
+        for (const auto& rule : policy->rules) {
+            if (!rule.enabled) continue;
+            if (rule.targetKind != vpn::TargetKind::Default) {
+                if (!std::ranges::any_of(compiled.sourceObjects, [&](const auto& object) {
+                    return object.sourceId == rule.connectionId && object.kind == rule.targetKind &&
+                           object.objectId == rule.targetObject;
+                })) { error = "规则目标对象不存在：" + rule.connectionId + "/" + rule.targetObject; return false; }
+            } else if (rule.connectionId != options.mainConnectionId &&
+                !std::ranges::any_of(options.auxiliarySources, [&](const auto& source) { return source.id == rule.connectionId; }) &&
+                !std::ranges::any_of(options.nativeConnections, [&](const auto& source) { return source.id == rule.connectionId; })) {
+                error = "规则目标来源不存在：" + rule.connectionId; return false;
+            }
+        }
+        return true;
+    }
+
+    bool prepareHttpRuleProviders(singbox::CompileOptions& options,
+                                 singbox::CompileResult& compiled, std::string& error,
+                                 const vpn::VpnPolicy* policy = nullptr) {
+        rule_provider_cache::Operations operations;
+        operations.fetch = [this](const singbox::HttpRuleProviderResource& resource,
+                                 const std::filesystem::path& file, std::string& reason) {
+#if defined(__ANDROID__)
+            // curl has no TLS here. Reuse the platform bridge on the task
+            // thread, with system trust, a bounded body, and explicit direct IO.
+            const auto response = clashflux::android::DownloadProfile(
+                resource.url, 20, false, resource.maxBytes, true, resource.headers);
+            if (!response.error.empty() || response.status < 200 || response.status >= 300) {
+                reason = response.error.empty() ? "HTTP " + std::to_string(response.status) : response.error;
+                return false;
+            }
+            std::ofstream output(file, std::ios::binary | std::ios::trunc);
+            output << response.body;
+            output.close();
+            if (!output) { reason = "无法完成平台规则集临时文件写入"; return false; }
+            return true;
+#else
+            api::ClashApi::DownloadOptions download;
+            download.timeoutSecs = 20;
+            download.maxBytes = resource.maxBytes;
+            download.headers = resource.headers;
+            download.validate = [&resource](const auto& temp) {
+                std::string failure;
+                const auto text = singbox::ReadRuleProviderText(temp, resource.maxBytes, failure);
+                if (text) singbox::ValidateHttpRuleProvider(resource, *text, failure);
+                return failure;
+            };
+            const auto response = api_->downloadToFile(resource.url, file, download);
+            reason = response.error; return response.ok;
+#endif
+        };
+        operations.check = [this, policy](const auto& candidate, const auto& result, std::string& reason) {
+            if (!validatePlanTargets(candidate, result, policy, reason)) return false;
+            prefetchRuleSets(result.ruleSetResources, cfg::coreWorkDir());
+            // Only GEO prefetch can change compiler inputs here. HTTP/ASN
+            // snapshots are already fully lowered and must still pass check.
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+            if (result.ruleSetResources.empty()) return checkCompiledPlan(result, reason);
+#endif
+            return checkCompiledPlan(core::generateConfig(candidate), reason);
+        };
+        operations.commit = [](const auto& temp, const auto& dest, std::string& reason) {
+            return api::CommitFile(temp, dest, reason);
+        };
+        const bool ready = rule_provider_cache::Prepare(options, operations, compiled, error);
+        if (ready) for (const auto& warning : compiled.warnings)
+            if (warning.starts_with("HTTP 规则集「")) stream::logApplication("warning", warning);
+        return ready;
     }
 
     // 三种托管形态的存活判定：服务托管问服务、接管的外部实例看 pidfile、

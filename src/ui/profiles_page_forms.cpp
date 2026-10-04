@@ -10,8 +10,11 @@
 #include <utility>
 #include <vector>
 
+#include "profile_import_task.h"
 #include "app_resources.h"
 #include "ui.h"
+#include "empty_state.h"
+#include "profile_file_picker.h"
 #include "task_bridge.h"
 #if defined(__ANDROID__)
 #include "qr_photo_decoder.h"
@@ -247,6 +250,7 @@ huxerui::View ProfilePlatformOptions(
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     bool openvpn_supported, std::function<void()> on_back) {
+    const auto configFileFilter = ProfileConfigFileFilter();
     const auto typeIndex = fields.type_index.Get();
     const bool remote = typeIndex == 0;
     const bool local = typeIndex == 1;
@@ -270,13 +274,9 @@ huxerui::View ProfilePlatformOptions(
     } else if (local) {
         typeFields = huxerui::Column {
             huxerui::Button(Localized("选择文件")).OnClick(
-                [tasks, picker, path = fields.picked_path] {
-                    tasks.Launch([picker, path]() -> huxerui::Task<void> {
-                        const auto picked = co_await picker->OpenFileAsync(
-                            huxerui::FilePickerFilter{
-                                .name = huxerui::UseString(
-                                    Localized("sing-box / Clash 配置")),
-                                .extensions = {"json", "yaml", "yml"}});
+                [tasks, picker, toast, configFileFilter, path = fields.picked_path] {
+                    tasks.Launch([picker, path, toast, configFileFilter]() -> huxerui::Task<void> {
+                        const auto picked = co_await PickProfileConfigFile(picker, configFileFilter, toast);
                         if (!picked) co_return;
                         if (const auto file = picked->AsFile()) path = file->Path();
                     });
@@ -322,8 +322,7 @@ huxerui::View ProfilePlatformOptions(
             }
             nativeConfig = fields.openvpn_config.Get().text;
         }
-        fields.importing = true;
-        tasks.Launch([=]() -> huxerui::Task<void> {
+        LaunchProfileImport(fields.importing, [=]() -> huxerui::Task<ProfileImportResult> {
             db::Profile options;
             options.description = fields.desc.Get().text;
             if (!pptp && !openvpn) {
@@ -340,7 +339,7 @@ huxerui::View ProfilePlatformOptions(
                     pptp ? fields.pptp_routes.Get().text
                          : fields.openvpn_routes.Get().text));
             }
-            const auto [id, error] = co_await ImportProfileForPlatform(
+            co_return co_await ImportProfileForPlatform(
                 http, ProfileImportRequest{
                           .remote = remote,
                           .local = local,
@@ -350,12 +349,15 @@ huxerui::View ProfilePlatformOptions(
                           .url = url,
                           .picked_path = fields.picked_path.Get(),
                           .options = std::move(options)});
-            fields.importing = false;
+        }, [=](ProfileImportResult result) {
+            const auto& [id, error] = result;
             if (id == 0) {
                 toast.Show(error.empty() ? Localized("导入失败")
                                          : huxerui::StringVariant(error));
-                co_return;
+                return;
             }
+            on_back();
+            huxerui::UseApplicationTaskScope().Launch([id, toast]() -> huxerui::Task<void> {
             // 导入即告知「这份订阅有什么吃不下」（只编译不启动，见
             // docs/singbox-layers-and-fidelity.md §2）。
             const std::string summary = co_await RunOnTaskThread(
@@ -363,7 +365,7 @@ huxerui::View ProfilePlatformOptions(
             toast.Show(summary.empty() ? Localized("配置已导入")
                                        : LocalizedFormat("配置已导入 · {}", summary),
                        huxerui::ToastOptions{6.0});
-            on_back();
+            });
         });
     };
 
@@ -686,6 +688,8 @@ void PushProfileQrScanner(
     std::shared_ptr<AppHttpClient> http,
     bool pptp_supported, bool openvpn_supported,
     huxerui::NavigationController navigation) {
+    const auto configFileFilter = ProfileConfigFileFilter();
+    const std::string qrConfigName = huxerui::UseString(Localized("二维码配置"));
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto dialog = huxerui::UseDialog();
     auto urlInput = huxerui::UseState(huxerui::TextEditingValue{""});
@@ -703,34 +707,31 @@ void PushProfileQrScanner(
         toast.Show(Localized("配置已添加"));
         static_cast<void>(navigation.Pop());
     };
-    const auto importRemote = [fields, tasks, http, finishImport](
+    const auto importRemote = [fields, http, finishImport](
                                   std::string url) {
         if (fields.importing.Get()) return;
-        fields.importing = true;
         db::Profile options;
         options.autoUpdate = true;
         options.intervalMins = 1440;
         options.timeoutSecs = 60;
-        tasks.Launch([http, url = std::move(url), options,
-                      finishImport]() mutable -> huxerui::Task<void> {
+        LaunchProfileImport(fields.importing,
+            [http, url = std::move(url), options]() mutable -> huxerui::Task<ProfileImportResult> {
             ProfileImportRequest request;
             request.remote = true;
             request.url = std::move(url);
             request.options = options;
-            finishImport(co_await ImportProfileForPlatform(
-                http, std::move(request)));
-        });
+            co_return co_await ImportProfileForPlatform(http, std::move(request));
+        }, finishImport);
     };
-    const auto importInline = [fields, tasks, finishImport](
+    const auto importInline = [fields, tasks, finishImport, qrConfigName](
                                   std::string content) {
         if (fields.importing.Get()) return;
         fields.importing = true;
         db::Profile options;
         tasks.Launch([content = std::move(content), options,
-                      finishImport]() mutable -> huxerui::Task<void> {
+                      finishImport, qrConfigName]() mutable -> huxerui::Task<void> {
             const auto [id, error] = co_await ImportProfileContent(
-                    huxerui::UseString(Localized("二维码配置")),
-                    std::move(content), options);
+                    qrConfigName, std::move(content), options);
             finishImport(ProfileImportResult{id, error});
         });
     };
@@ -771,20 +772,16 @@ void PushProfileQrScanner(
                 on_complete);
         });
     };
-    const auto chooseFile = [fields, tasks, toast, picker, http, finishImport] {
+    const auto chooseFile = [fields, tasks, toast, picker, http, finishImport, configFileFilter] {
         if (fields.importing.Get()) return;
         if (!picker) {
             toast.Show(Localized("文件选择器不可用"));
             return;
         }
         fields.importing = true;
-        tasks.Launch([fields, picker, http, finishImport]() mutable
+        tasks.Launch([fields, picker, http, finishImport, toast, configFileFilter]() mutable
                          -> huxerui::Task<void> {
-            const auto picked = co_await picker->OpenFileAsync(
-                huxerui::FilePickerFilter{
-                    .name = huxerui::UseString(
-                        Localized("sing-box / Clash 配置")),
-                    .extensions = {"json", "yaml", "yml"}});
+            const auto picked = co_await PickProfileConfigFile(picker, configFileFilter, toast);
             if (!picked) {
                 fields.importing = false;
                 co_return;
@@ -899,6 +896,8 @@ void PushProfileQrScanner(
     bool pptp_supported, bool openvpn_supported,
     huxerui::NavigationController navigation, std::function<void()> on_back,
     std::function<void()> on_complete) {
+    const auto configFileFilter = ProfileConfigFileFilter();
+    const std::string manualConfigName = huxerui::UseString(Localized("手动配置"));
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const std::string qrContent = fields.qr_content.Get().text;
     const bool qrRemote = method == ProfileAddMethod::Qr &&
@@ -996,14 +995,13 @@ void PushProfileQrScanner(
                 parseRouteField(fields.openvpn_routes.Get().text));
         }
 
-        fields.importing = true;
         const std::string name = fields.name.Get().text;
         const std::string pickedPath = fields.picked_path.Get();
-        tasks.Launch([=]() mutable -> huxerui::Task<void> {
+        LaunchProfileImport(fields.importing, [=]() mutable -> huxerui::Task<ProfileImportResult> {
             std::pair<std::int64_t, std::string> result;
             if (!inlineConfig.empty()) {
                 result = co_await ImportProfileContent(
-                    name.empty() ? huxerui::UseString(Localized("手动配置"))
+                    name.empty() ? manualConfigName
                                  : name,
                     inlineConfig, options);
             } else {
@@ -1018,11 +1016,12 @@ void PushProfileQrScanner(
                               .picked_path = pickedPath,
                               .options = options});
             }
-            fields.importing = false;
+            co_return result;
+        }, [=](ProfileImportResult result) {
             if (result.first == 0) {
                 toast.Show(result.second.empty() ? Localized("导入失败")
                                                  : huxerui::StringVariant(result.second));
-                co_return;
+                return;
             }
             toast.Show(Localized("配置已导入"));
             on_complete();
@@ -1042,13 +1041,9 @@ void PushProfileQrScanner(
     } else if (isFile) {
         typeFields = huxerui::Column {
             huxerui::Button(Localized("选择配置文件")).OnClick(
-                [tasks, picker, path = fields.picked_path] {
-                    tasks.Launch([picker, path]() -> huxerui::Task<void> {
-                        const auto picked = co_await picker->OpenFileAsync(
-                            huxerui::FilePickerFilter{
-                                .name = huxerui::UseString(
-                                    Localized("sing-box / Clash 配置")),
-                                .extensions = {"json", "yaml", "yml"}});
+                [tasks, picker, toast, configFileFilter, path = fields.picked_path] {
+                    tasks.Launch([picker, path, toast, configFileFilter]() -> huxerui::Task<void> {
+                        const auto picked = co_await PickProfileConfigFile(picker, configFileFilter, toast);
                         if (!picked) co_return;
                         if (const auto file = picked->AsFile()) path = file->Path();
                     });
@@ -1502,7 +1497,7 @@ void PushProfileQrScanner(
         });
     };
     huxerui::View list = rules.Empty()
-        ? huxerui::View{huxerui::Text(Localized("订阅没有 rules 规则"))}
+        ? EmptyState(Localized("订阅没有 rules 规则"), app::images::route)
         : huxerui::View{huxerui::VirtualList(
               rules.Size(), [rules](std::size_t index) {
                   return huxerui::Text(std::format("{}  {}", index + 1,

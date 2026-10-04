@@ -49,7 +49,8 @@
             const bool systemProxyEnabled = systemProxyOurs();
             const auto content = currentMainContent();
             auto options = routingOptions(content, tunEnabled);
-            const auto compiled = core::generateConfig(std::move(options));
+            singbox::CompileResult compiled;
+            if (!prepareHttpRuleProviders(options, compiled, error)) return false;
             if (!compiled.error.empty() || compiled.json.empty()) {
                 error = "路由计划编译失败：" + compiled.error;
                 return false;

@@ -66,6 +66,10 @@ public:
         bool allowInvalidCert = false;
         std::string proxyUrl;        // 非空 = 经该代理（如 http://127.0.0.1:7899）
         bool allowProxyEnv = false;  // proxyUrl 为空时是否允许环境变量代理
+        std::size_t maxBytes = 0;    // 0=不限；非零在 curl 写入时拒绝超限，不截断提交
+        // Common single-value ASCII subset. Nonempty headers disable redirects
+        // on supported transports; iOS explicitly rejects this option.
+        std::map<std::string, std::string> headers;
         // 在临时文件关闭后、替换目标前校验；空字符串表示通过。
         // 同步运行于调用方任务线程；失败/异常保留旧文件。
         std::function<std::string(const std::filesystem::path&)> validate;

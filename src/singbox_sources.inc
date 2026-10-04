@@ -48,6 +48,7 @@ void namespaceClashSource(Context& ctx, const std::string& source, const std::st
             }
         }
     };
+    if (!ctx.hostsDnsTag.empty()) ctx.hostsDnsTag = servers.at(ctx.hostsDnsTag);
     for (auto& item : ctx.outbounds) {
         rewrite(item["tag"], outputs);
         for (const auto* key : {"detour", "outbounds", "default"})

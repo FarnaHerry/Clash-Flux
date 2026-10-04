@@ -22,6 +22,7 @@
 #endif
 
 #include "ui.h"
+#include "page_layout.h"
 #include "app_resources.h"
 #include "proxies_model.h"
 #include "settings_model.h"
@@ -638,9 +639,8 @@ struct TrayOperationResult {
 
     }
 
-    // 关闭窗口行为：托盘可用时按设置询问/退出/最小化到托盘。
-    // trayAvailable 只是当前帧的快照；关闭事件可能在托盘宿主晚就绪后
-    // 才发生，因此事件处理必须动态查询 tray.IsAvailable()。
+    // 关闭按钮只由托盘开关控制。托盘宿主尚未就绪时仍需确认退出，
+    // 避免隐藏后没有入口唤回窗口；事件中动态查询宿主可用性。
     const huxerui::Color closeHintColor = rootSpec.colors.on_surface_variant;
     auto hideWindow = [tasks, window] {
         // GTK/Win32/macOS 的关闭回调都在平台事件栈中执行。把 Hide 推迟
@@ -653,16 +653,7 @@ struct TrayOperationResult {
     window.OnCloseRequest(
         [=]() mutable -> bool {
             if (exitRequested.Get()) return true;
-            if (!tray.IsAvailable() || !settingsModel->view.Get().trayEnabled) {
-                finishExit();
-                return true;
-            }
-            const int behavior = settingsModel->view.Get().closeBehavior;
-            if (behavior == 1) {
-                finishExit();
-                return true;
-            }
-            if (behavior == 2) {
+            if (settingsModel->view.Get().trayEnabled && tray.IsAvailable()) {
                 hideWindow();
                 return true;
             }
@@ -672,20 +663,15 @@ struct TrayOperationResult {
                 [=](huxerui::DialogContext ctx) -> huxerui::View {
                     return DialogCard(huxerui::Column{
                         huxerui::Text(Localized("关闭 Clash-Flux？"), huxerui::TextRole::Title),
-                        huxerui::Text(Localized("直接关闭会停止代理；最小化到托盘后代理继续运行。"))
+                        huxerui::Text(Localized("关闭应用会停止代理，是否继续？"))
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::System(font_size::kCaption),
                                 closeHintColor}),
                         huxerui::Row{
-                            huxerui::Button(Localized("直接关闭")).OnClick([=] {
+                            huxerui::Button(Localized("关闭")).OnClick([=] {
                                 ctx.Dismiss();
                                 closeDialogOpen = false;
                                 finishExit();
-                            }),
-                            huxerui::Button(Localized("最小化到托盘")).OnClick([=] {
-                                ctx.Dismiss();
-                                closeDialogOpen = false;
-                                hideWindow();
                             }),
                             huxerui::Button(Localized("取消")).OnClick([=] {
                                 ctx.Dismiss();
@@ -728,32 +714,9 @@ struct TrayOperationResult {
 
 [[huxerui::composable]] huxerui::View DesktopAppContent(
     huxerui::View mainRow, const huxerui::ThemeSpec& rootSpec) {
-    // 桌面标题栏和拖拽区只存在于桌面壳函数，Android 不会组合这些节点。
-    huxerui::View content = mainRow;
-    return huxerui::Column {
-        huxerui::WindowTitleBar {
-            huxerui::Row {
-                huxerui::Image(app::images::clash_flux_logo)
-                    .Fit(huxerui::ImageFit::Contain)
-                    .With(huxerui::Frame{.width = 20.0F, .height = 20.0F},
-                          huxerui::Background(huxerui::Color::White()),
-                          huxerui::CornerRadius(4.0F), huxerui::ClipChildren()),
-            }
-                .With(huxerui::Frame{.width = kTopNavigationRailWidth,
-                                     .height = 20.0F},
-                      huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
-                      huxerui::WindowDragRegion{}),
-            huxerui::Spacer{}.With(huxerui::Grow(1.0F),
-                                   huxerui::WindowDragRegion{}),
-        }
-            .With(huxerui::Spacing(rootSpec.spacing.small)),
-        std::move(content),
-    }
-        .With(huxerui::Spacing(rootSpec.spacing.extra_small),
-              huxerui::Background(rootSpec.colors.background),
-              huxerui::ClipChildren(),
-              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    // 每页骨架持有自己的标题栏与动作，保留页面状态及原始回调作用域。
+    return huxerui::View{mainRow}.With(
+        huxerui::Background(rootSpec.colors.background), huxerui::ClipChildren());
 }
 
 #endif

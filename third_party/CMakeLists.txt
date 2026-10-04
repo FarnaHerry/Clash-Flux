@@ -40,6 +40,22 @@ if(NOT OpenSSL_FOUND AND NOT ANDROID AND NOT IOS)
     message(FATAL_ERROR "third_party：顶层应已完成 OpenSSL 解析")
 endif()
 
+# Zstandard: private MRS decoder, fixed archive and hash on every platform.
+set(_zstd_archive "${CMAKE_CURRENT_SOURCE_DIR}/tarballs/zstd-1.5.7.tar.gz")
+set(_zstd_sha "37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3")
+file(SHA256 "${_zstd_archive}" _zstd_actual)
+if (NOT _zstd_actual STREQUAL _zstd_sha)
+    message(FATAL_ERROR "Zstandard vendor archive SHA256 mismatch")
+endif ()
+clashflux_extract(zstd "${_zstd_archive}" "${_zstd_sha}" "zstd-1.5.7")
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
+add_subdirectory("${zstd_SOURCE_DIR}/build/cmake" "${CMAKE_CURRENT_BINARY_DIR}/zstd" EXCLUDE_FROM_ALL)
+target_include_directories(libzstd_static INTERFACE "$<BUILD_INTERFACE:${zstd_SOURCE_DIR}/lib>")
+
 # ---- nlohmann::json 3.12.0（single header + `import nlohmann.json` 模块）------
 # AndroidLegacy.cmake 直接包含 single header；不要在 NDK 上额外编译依赖
 # `import std` 的 nlohmann.json 模块。

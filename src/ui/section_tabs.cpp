@@ -12,6 +12,8 @@
 #include <vector>
 
 #include "ui.h"
+#include "action_menu.h"
+#include "section_tab_picker.h"
 
 namespace clashflux::ui {
 
@@ -29,6 +31,7 @@ public:
     huxerui::Rect viewport{};
     std::vector<Page> pages;
     std::weak_ptr<std::function<void()>> repaint;
+    std::vector<std::weak_ptr<std::function<void()>>> labelRepaints;
     bool connected = false;
 
     std::optional<Position> PresentedPosition() const {
@@ -44,8 +47,15 @@ public:
             std::clamp(-left->offset / distance, 0.0F, 1.0F)};
     }
 
-    void InvalidateIndicator() const {
+    void InvalidateIndicator() {
         if (const auto callback = repaint.lock()) (*callback)();
+        std::erase_if(labelRepaints, [](const auto& weak) {
+            if (const auto callback = weak.lock()) {
+                (*callback)();
+                return false;
+            }
+            return true;
+        });
     }
 };
 
@@ -115,6 +125,57 @@ public:
 private:
     SectionTabMotionHandle motion_;
     std::size_t index_ = 0;
+};
+
+// 普通 Text 负责测量与语义，透明文字上由保留扩展绘制同一字体的标签。
+// 颜色在绘制阶段读取完整的 Pager 样本，避免几何回调先后顺序造成一帧滞后。
+// 不逐帧写 State，也不改变字体、布局或警示角标的颜色。
+struct SectionTabLabel {
+    class Extension;
+    SectionTabMotionHandle motion;
+    std::size_t index;
+    bool selected;
+    std::string text;
+    huxerui::TextStyle style;
+    huxerui::Color normal;
+    huxerui::Color primary;
+    bool operator==(const SectionTabLabel&) const = default;
+};
+
+class SectionTabLabel::Extension final : public huxerui::NodeExtension {
+public:
+    Extension(huxerui::ViewNode& node, const SectionTabLabel& spec) {
+        repaint_ = std::make_shared<std::function<void()>>([this] { InvalidatePaint(); });
+        Update(node, spec);
+    }
+    void Update(huxerui::ViewNode&, const SectionTabLabel& spec) {
+        if (spec_.motion != spec.motion) {
+            // 旧通道只保留 weak_ptr；切换 handle 时旧回调自动失效。
+            repaint_ = std::make_shared<std::function<void()>>([this] { InvalidatePaint(); });
+            spec.motion->labelRepaints.push_back(repaint_);
+        }
+        spec_ = spec;
+        InvalidatePaint();
+    }
+    void PaintAboveContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
+        float weight = spec_.selected ? 1.0F : 0.0F;
+        if (const auto position = spec_.motion->PresentedPosition()) {
+            weight = 0.0F;
+            if (spec_.index == position->left) weight += 1.0F - position->progress;
+            if (spec_.index == position->right) weight += position->progress;
+        }
+        auto style = spec_.style;
+        style.foreground = {
+            std::lerp(spec_.normal.red, spec_.primary.red, weight),
+            std::lerp(spec_.normal.green, spec_.primary.green, weight),
+            std::lerp(spec_.normal.blue, spec_.primary.blue, weight),
+            std::lerp(spec_.normal.alpha, spec_.primary.alpha, weight),
+        };
+        paint.DrawText(node.ContentBounds(), spec_.text, style);
+    }
+private:
+    SectionTabLabel spec_{};
+    std::shared_ptr<std::function<void()>> repaint_;
 };
 
 // ScrollView 没有按普通子节点 reveal 的 API；在挂载后的实际布局中定位选中标签。
@@ -330,16 +391,21 @@ private:
 // 横向纯文本标签，无外框、无填充——非选中为次级文字色，选中为主色文字 +
 // 底部 2pt 主色短线；指示线在标签之间连续滑动，透明占位保证布局不跳。"选择中"
 // （hover/press）只叠普通按钮那层填充，与选中态互不混淆。标签条本身横向可
-// 滚动；**只在标签条溢出时**尾部出现下箭头入口，点开是全部标签的菜单（见
-// 下方说明）。key 参与选中匹配与节点 Key，label 是展示文本。
-[[huxerui::composable]] huxerui::View SectionTabBar(
+// 滚动；仅在溢出时尾部出现箭头入口。默认使用标签菜单，代理分组使用响应式
+// 抽屉。key 参与选中匹配与节点 Key，label 是展示文本。
+[[huxerui::composable]] huxerui::View SectionTabBarContent(
     const std::vector<SectionTab>& tabs, const std::string& selectedKey,
-    std::function<void(const std::string&)> onSelect, SectionTabMotionHandle motion) {
+    std::function<void(const std::string&)> onSelect, SectionTabMotionHandle motion, SectionTabPickerMode pickerMode) {
     constexpr float kTabIndicatorHeight = 2.0F;
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const auto insets = huxerui::UseEnvironment<SectionTabContentInsets>();
+    const auto pickerInsets = huxerui::UseEnvironment<SectionTabPickerInsets>();
     auto scroll = huxerui::UseScrollController();
-    auto menu = huxerui::UseMenu();
+    auto menu = UseActionMenu();
+    auto sheets = huxerui::UseBottomSheet();
+    const bool narrow = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    const auto drawerLayers = pickerMode == SectionTabPickerMode::ResponsiveGroups
+        ? huxerui::UseService<SectionPickerLayers>() : nullptr;
     huxerui::Color hoverFill = theme.colors.on_surface;
     hoverFill.alpha = 0.08F;
     huxerui::Color pressFill = theme.colors.on_surface;
@@ -362,6 +428,14 @@ private:
         huxerui::View labelView =
             huxerui::Text(tab.label, huxerui::TextRole::Label)
                 .With(huxerui::Foreground(labelColor));
+        if (motion) {
+            const auto text = huxerui::UseString(tab.label);
+            const auto style = huxerui::detail::DefaultTextStyle(theme, huxerui::TextRole::Label);
+            labelView = huxerui::Text(text, huxerui::TextRole::Label).Style(style)
+                .With(huxerui::Foreground(huxerui::Color::Transparent()),
+                      SectionTabLabel{motion, items.size(), active, text, style,
+                          theme.colors.on_surface_variant, theme.colors.primary});
+        }
         if (!tab.badge.empty()) {
             // 角标用语义警示色，和 label 同字号但更小的心智权重：它只是提示
             // 「这个分区有降级信息」，明细在设置页「配置保真度」。
@@ -414,11 +488,11 @@ private:
     // MaxOffset 会把本组件订阅到标签条的滚动几何上，代价只限这一条标签栏子树，
     // 而且只在标签条自身滚动时触发（真机 profiler 未见此项开销）。
     // 箭头旋转只作用于字形；外层保持普通点击区域和辅助功能语义。
-    std::vector<huxerui::MenuEntry> pickerEntries;
+    std::vector<ActionMenuEntry> pickerEntries;
     pickerEntries.reserve(tabs.size());
     for (const SectionTab& tab : tabs) {
         const std::string label = huxerui::UseString(tab.label);
-        pickerEntries.emplace_back(huxerui::MenuItem(
+        pickerEntries.emplace_back(ActionMenuItem(
             tab.key == selectedKey ? "✓ " + label : label,
             [onSelect, key = tab.key] { onSelect(key); }));
     }
@@ -435,8 +509,20 @@ private:
                                      .label = huxerui::UseString(
                                          Localized("选择标签"))},
                   huxerui::Focusable(true), huxerui::Enabled(true), menu.Anchor())
-            .OnClick([menu, entries = std::move(pickerEntries)] {
-                menu.Show(entries);
+            .OnClick([menu, entries = std::move(pickerEntries), pickerMode, narrow,
+                      sheets, drawerLayers, tabs, selectedKey, onSelect, pickerInsets] {
+                if (pickerMode == SectionTabPickerMode::Menu) { menu.Show(entries); return; }
+                if (!narrow) {
+                    ShowGroupSideDrawer(drawerLayers->layers, tabs, selectedKey, onSelect, pickerInsets.top);
+                } else {
+                    sheets.Show([tabs, selectedKey, onSelect](huxerui::BottomSheetContext context) {
+                        return huxerui::Scope([=] {
+                            return GroupPickerContent(tabs, selectedKey, onSelect,
+                                [context] { context.Dismiss(); })
+                                .With(huxerui::Frame{.height = 480.0F}).Key("group-picker-bottom");
+                        });
+                    });
+                }
             })
             .Key("section-tab-picker");
     // 始终保留同一 Row/ScrollView 结构；箭头出现/消失不会重挂载标签条，
@@ -452,6 +538,17 @@ private:
 // 与 ACGU 首页相同：标签栏留在 Pager 外，内容跟手移动；受控索引变化由
 // 框架处理完整的出入场、反向重定向、取消回弹、嵌套滚动边界与 reduced motion。
 // 页根由调用方以语义 Key 标识，Pager 传递有界高度，虚拟列表只构造视口附近的条目。
+// 仅分组抽屉覆盖 BottomSheet 样式，不影响其它页面的模态展示。
+[[huxerui::composable]] huxerui::View SectionTabBar(
+    const std::vector<SectionTab>& tabs, const std::string& selectedKey,
+    std::function<void(const std::string&)> onSelect, SectionTabMotionHandle motion,
+    SectionTabPickerMode pickerMode) {
+    auto sheetStyle = huxerui::UseEnvironment<huxerui::BottomSheetStyle>();
+    sheetStyle.scrim = huxerui::Color::Transparent();
+    return huxerui::ProvideEnvironment(sheetStyle,
+        SectionTabBarContent(tabs, selectedKey, std::move(onSelect), std::move(motion), pickerMode));
+}
+
 [[huxerui::composable]] huxerui::View SectionTabPages(std::vector<huxerui::View> pages, std::size_t selectedIndex,
                               std::function<void(std::size_t)> onSelect, SectionTabMotionHandle motion) {
     const auto insets = huxerui::UseEnvironment<SectionTabContentInsets>();

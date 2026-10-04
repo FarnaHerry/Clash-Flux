@@ -1,0 +1,24 @@
+# Test harness resolves paths relative to this fixture directory. In the app,
+# copy file-provider-rules/ under cfg::dataDir(), not next to the subscription.
+rule-providers:
+  local-domains:
+    type: file
+    behavior: domain
+    path: file-provider-rules/domains.yaml
+  local-networks:
+    type: file
+    behavior: ipcidr
+    format: text
+    path: file-provider-rules/networks.txt
+  local-classical:
+    type: file
+    behavior: classical
+    format: text
+    path: file-provider-rules/classical.txt
+rules:
+  - AND,((RULE-SET,local-domains),(NETWORK,TCP)),DIRECT
+  - RULE-SET,local-networks,DIRECT
+  - RULE-SET,local-classical,REJECT-DROP
+  - RULE-SET,cn,DIRECT
+  - RULE-SET,cn-ip,DIRECT
+  - MATCH,DIRECT

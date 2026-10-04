@@ -65,6 +65,32 @@
 再迁移生成器。不能直接用完整 DTO 替换原生 JSON，否则会丢掉尚未建模的内核字段。
 本轮没有以两次序列化绕接旧 DOM 的方式宣称生成器已迁移。
 
+## 2026-10-04 性能复核与下一步边界
+
+本次只核对解析入口和固定依赖，没有更换解析器或新增解析性能基准。
+Glaze 并非覆盖全部输入；具体库和可优化方向如下：
+
+| 路径 | 当前实现 | 收益判断 |
+|---|---|---|
+| 流量、日志、连接/代理快照、内部 policy | `wire_codec.cpp`，Glaze 9.0.0 typed JSON | 已迁移；剩余 raw_json 逐条校验与 DTO/投影分配需独立测量，不能再次“换库”取得收益 |
+| Clash 订阅和 YAML rule-provider | `YAML::Load/LoadAll`，yaml-cpp 0.8.0 | Glaze YAML 可评估，但须先满足现有语法、重复键检测、标量原文、未知字段与保真度契约 |
+| sing-box 配置生成与原生 JSON 合并 | nlohmann JSON 3.12.0 动态 DOM | 规范化配置模型 + Glaze 直接序列化可能减少 DOM 分配；纯换成另一个 generic DOM 不等于 typed 路径的收益 |
+| 内核启动时代理组投影、候选与旧配置比较 | `core_store_lifecycle.inc` 的 JSON parse/dump；其它回读也仍用 DOM | 优先测量并减少整份配置的重复 parse/dump，保持失败、相等性与回滚语义，再决定 codec 迁移 |
+| MRSv1 domain/ipcidr | Zstandard + 专用二进制解析，直接聚合原生规则字段 | 不是 JSON/YAML 输入；Glaze 不替代解压和 MRS 语义转换 |
+
+Glaze 的 typed JSON 直接读写对象，能够减少中间表示，但上游 benchmark 不能证明
+它在本项目所有 JSON/YAML 场景都最快，更不能推成订阅切换的加速倍数。
+固定 v9.0.0 的 [YAML 文档](https://github.com/stephenberry/glaze/blob/v9.0.0/docs/yaml.md)
+仍列出 merge key 未支持、block collection anchor/alias key 支持有限等边界；
+现有 yaml-cpp 在应用中是否支持某一语义也须按实际转换器验证，不能假定完整 merge 支持。
+直接把用户 YAML 读入封闭 DTO 并忽略未知键，会破坏保真度账本；原生 JSON 也须
+保留未建模字段、整数精度、缺省与显式值、规则顺序和严格失败策略。
+
+后续性能比较应使用优化构建与相同缓存状态，将输入解析、领域转换、配置序列化、
+内核 check 和启动分别计时，记录 CPU/内存及完整配置语义对比。
+先消除冗余工作，再评估 typed 生成器与 YAML 适配器；不把解析器替换与
+`inline` 调用消除混为同一种收益。模块案例见 [C++ 模块开发](cpp-modules-development.md)。
+
 ## 实际验证与限制
 
 - `cmake --build build --target clash-flux`：Linux GCC 16 构建通过，包含 HuxerUI codegen。

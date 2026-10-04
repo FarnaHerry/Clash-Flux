@@ -194,6 +194,97 @@ struct RuleCondition {
     explicit operator bool() const { return error.empty(); }
 };
 
+// ASN matching is not native in sing-box. Expand a task-prepared, validated
+// IPv4+IPv6 announcement snapshot; never perform network IO in the compiler.
+std::string httpProviderKey(std::string_view identity);
+
+HttpRuleProviderResource asnResource(std::uint32_t asn) {
+    HttpRuleProviderResource resource;
+    resource.asn = asn;
+    resource.name = "AS" + std::to_string(asn);
+    resource.behavior = "asn";
+    resource.format = "json";
+    resource.url = "https://raw.githubusercontent.com/ipverse/as-ip-blocks/master/as/" +
+        std::to_string(asn) + "/aggregated.json";
+    resource.identity = "ipverse-asn-v1:" + resource.url;
+    resource.cacheKey = httpProviderKey(resource.identity);
+    resource.intervalSeconds = 86400;
+    return resource;
+}
+
+std::optional<nlohmann::json> asnPrefixes(const HttpRuleProviderResource& resource,
+        const std::string& content, std::string& error) {
+    const auto fail = [&](std::string reason) -> std::optional<nlohmann::json> {
+        error = std::move(reason); return std::nullopt;
+    };
+    const auto expected = asnResource(resource.asn);
+    if (!resource.asn || resource.url != expected.url || resource.identity != expected.identity ||
+        resource.cacheKey != expected.cacheKey || resource.behavior != "asn" ||
+        resource.format != "json" || !resource.headers.empty() ||
+        content.size() > resource.maxBytes || resource.maxBytes > 8 * 1024 * 1024)
+        return fail("ASN 数据身份或大小无效");
+    const auto data = nlohmann::json::parse(content, nullptr, false);
+    if (!data.is_object() || !data.contains("asn") || !data["asn"].is_number_unsigned() ||
+        data["asn"].get<std::uint64_t>() != resource.asn || !data.contains("prefixes") ||
+        !data["prefixes"].is_object()) return fail("ASN 数据编号或 prefixes 无效");
+    const auto& prefixes = data["prefixes"];
+    if (prefixes.size() != 2 || !prefixes.contains("ipv4") || !prefixes.contains("ipv6"))
+        return fail("ASN 数据必须同时包含 IPv4/IPv6 列表");
+    nlohmann::json result = nlohmann::json::array();
+    for (const auto* family : {"ipv4", "ipv6"}) {
+        if (!prefixes[family].is_array()) return fail("ASN 网段列表无效");
+        for (const auto& entry : prefixes[family]) {
+            if (!entry.is_string() || result.size() >= 100000) return fail("ASN 网段类型或数量无效");
+            const auto raw = entry.get<std::string>();
+            const bool ipv4 = std::string_view(family) == "ipv4";
+            const auto cidr = addressCidr(raw, ipv4, true);
+            if (!cidr || (!ipv4 && raw.find(':') == std::string::npos))
+                return fail("ASN " + std::string(family) + " 网段无效");
+            result.push_back(*cidr);
+        }
+    }
+    if (result.empty()) return fail("ASN 网段为空，不能扩大或删除匹配条件");
+    return result;
+}
+
+RuleCondition compileAsnCondition(Context& ctx, const std::string& kind,
+        const std::string& value, const std::string& subject) {
+    RuleCondition result;
+    std::uint32_t asn = 0;
+    const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), asn);
+    if (value.empty() || ec != std::errc{} || end != value.data() + value.size() || !asn) {
+        result.error = "ASN 必须为非零 32 位十进制编号";
+        if (!ctx.providerSyntaxOnly && ctx.result.error.empty()) ctx.result.error = result.error;
+        return result;
+    }
+    if (ctx.providerSyntaxOnly) {
+        // Only validates shape before dependencies are prepared. This context
+        // is confined to ValidateHttpRuleProvider; no config can escape it.
+        result.rule[kind == "src-ip-asn" ? "source_ip_cidr" : "ip_cidr"] = {"192.0.2.0/24"};
+        return result;
+    }
+    const auto resource = asnResource(asn);
+    if (!std::ranges::any_of(ctx.result.httpRuleProviders, [&](const auto& item) {
+            return item.identity == resource.identity;
+        })) ctx.result.httpRuleProviders.push_back(resource);
+    std::string error;
+    std::optional<std::string> content;
+    const auto found = ctx.opt.ruleProviderContents.find(resource.cacheKey);
+    if (found != ctx.opt.ruleProviderContents.end()) content = found->second;
+    else content = ReadHttpRuleProviderCache(resource, ctx.opt.ruleProviderCacheDir, error);
+    auto prefixes = content ? asnPrefixes(resource, *content, error) : std::nullopt;
+    if (!prefixes) {
+        result.error = "AS" + std::to_string(asn) + " 网段快照未准备：" + error;
+        if (ctx.result.error.empty()) ctx.result.error = result.error;
+        return result;
+    }
+    result.rule[kind == "src-ip-asn" ? "source_ip_cidr" : "ip_cidr"] = std::move(*prefixes);
+    ctx.note(FidelityScope::Rule, Fidelity::Approx, subject,
+             "ASN 使用 ipverse IPv4/IPv6 公告网段快照，与 Clash ASN 数据库及实时归属可能不同",
+             "按应用配置时检查每日缓存到期；下载或校验失败保留旧配置");
+    return result;
+}
+
 // Shared match-only lowering. A provider is a HeadlessRule, not a route rule:
 // notably user_id and ip_version do not exist in its fixed-version schema.
 RuleCondition compileLeafCondition(const std::string& kind, const std::string& value,
@@ -343,9 +434,21 @@ std::optional<nlohmann::json> logicalCondition(Context& ctx, std::string_view te
                                                std::string& error) {
     if (depth > 24 || ++count > 256) return std::nullopt;
     const auto parts = splitLogicalParts(text);
-    if (!parts || parts->size() != 2 || (*parts)[1].empty()) return std::nullopt;
+    if (!parts || parts->size() < 2 || (*parts)[1].empty()) return std::nullopt;
     const std::string kind = lowerCopy((*parts)[0]);
     const std::string& value = (*parts)[1];
+    bool noResolve = false;
+    if (parts->size() != 2) {
+        // Classical provider entries omit the route target, so their modifier
+        // is the third field. Never truncate unknown/additional fields.
+        if (!headless || (kind != "ip-cidr" && kind != "ip-cidr6" && kind != "src-ip-cidr" &&
+                          kind != "ip-asn" && kind != "src-ip-asn") ||
+            parts->size() != 3 || lowerCopy((*parts)[2]) != "no-resolve") {
+            error = "不支持的规则集修饰符或附加字段";
+            return std::nullopt;
+        }
+        noResolve = true;
+    }
     if (kind == "and" || kind == "or" || kind == "not") {
         if (value.size() < 3 || value.front() != '(' || value.back() != ')') return std::nullopt;
         const auto children = splitLogicalParts(std::string_view(value).substr(1, value.size() - 2));
@@ -370,9 +473,252 @@ std::optional<nlohmann::json> logicalCondition(Context& ctx, std::string_view te
         return std::nullopt;
     }
     auto condition = resource ? compileResourceCondition(ctx, kind, value, std::string(text))
-                              : compileLeafCondition(kind, value, headless);
+                              : (kind == "ip-asn" || kind == "src-ip-asn")
+                                  ? compileAsnCondition(ctx, kind, value, std::string(text))
+                                  : compileLeafCondition(kind, value, headless);
     if (!condition) { error = kind + ": " + condition.error; return std::nullopt; }
+    if (noResolve) {
+        ctx.note(FidelityScope::Rule, Fidelity::Approx, std::string(text),
+                 "规则集条目的 no-resolve 尚未保真，托管路由仍可能执行前置解析",
+                 "保留完整 IP 匹配条件；不输出内核不存在的 no-resolve 字段");
+    }
     return std::move(condition.rule);
+}
+
+std::optional<std::filesystem::path> ruleProviderPath(
+        const std::string& directory, const std::string& rawPath, std::string& failure) {
+    const auto fail = [&](std::string reason) -> std::optional<std::filesystem::path> {
+        failure = std::move(reason);
+        return std::nullopt;
+    };
+    if (directory.empty())
+        return fail("需要显式文件根目录与非空相对 path");
+    const std::filesystem::path relative(rawPath);
+    if (rawPath.empty() || rawPath.find('\0') != std::string::npos ||
+        relative.is_absolute() || relative.has_root_name() || relative.has_root_directory())
+        return fail("path 必须为根目录内的相对路径");
+    for (const auto& part : relative)
+        if (part == "..") return fail("path 不允许父目录跳转");
+    std::error_code error;
+    const auto root = std::filesystem::canonical(directory, error);
+    if (error) return fail("文件根目录不可用");
+    const auto resolved = std::filesystem::canonical(root / relative, error);
+    if (error) return fail("文件不存在或无法解析路径");
+    const auto inside = resolved.lexically_relative(root);
+    if (inside.empty() || inside == "." || inside.is_absolute())
+        return fail("path 不在文件根目录内");
+    for (const auto& part : inside)
+        if (part == "..") return fail("path 或符号链接越过文件根目录");
+    if (!std::filesystem::is_regular_file(resolved, error) || error)
+        return fail("path 不是可读的普通文件");
+    return resolved;
+}
+
+std::optional<YAML::Node> ruleProviderPayload(const std::string& content,
+        std::string_view format, std::string& failure) {
+    const auto fail = [&](std::string reason) -> std::optional<YAML::Node> {
+        failure = std::move(reason); return std::nullopt;
+    };
+    if (content.find('\0') != std::string::npos) return fail("文本文件含 NUL 字节");
+    YAML::Node payload;
+    if (format == "text") {
+        payload = YAML::Node(YAML::NodeType::Sequence);
+        std::istringstream lines(content);
+        std::string line;
+        while (std::getline(lines, line)) {
+            const auto value = trimCopy(line);
+            if (value.empty() || value.starts_with('#') || value.starts_with("//")) continue;
+            payload.push_back(value);
+        }
+    } else {
+        try {
+            const auto documents = YAML::LoadAll(content);
+            if (documents.size() != 1 || !documents[0].IsMap())
+                return fail("YAML 必须为单个 payload 映射文档");
+            unsigned keys = 0;
+            for (const auto& field : documents[0]) {
+                if (!field.first.IsScalar() || field.first.Scalar() != "payload" || ++keys != 1)
+                    return fail("YAML 仅接受唯一 payload 字段");
+            }
+            payload = documents[0]["payload"];
+        } catch (const YAML::Exception&) {
+            return fail("YAML 语法无效");
+        }
+    }
+    if (!payload || !payload.IsSequence()) return fail("payload 必须为数组");
+    return payload;
+}
+
+std::optional<std::string> readRuleProviderFile(
+        const Context& ctx, const YAML::Node& provider,
+        std::string& failure) {
+    const auto path = provider["path"];
+    if (!path || !path.IsScalar()) { failure = "需要非空相对 path"; return std::nullopt; }
+    const auto resolved = ruleProviderPath(ctx.opt.ruleProviderDir, path.Scalar(), failure);
+    if (!resolved) return std::nullopt;
+    return ReadRuleProviderText(*resolved, 8 * 1024 * 1024, failure);
+}
+
+template<class Payload>
+std::optional<nlohmann::json> ruleProviderRules(Context& ctx, const Payload& payload,
+        const std::string& behavior, std::string& failure, bool compact = false) {
+    nlohmann::json rules = nlohmann::json::array();
+    std::map<std::string, nlohmann::json> fields;
+    const auto append = [&](const std::string& field, std::string value) {
+        auto [it, inserted] = fields.try_emplace(field);
+        if (inserted) it->second = nlohmann::json::array();
+        it->second.push_back(std::move(value));
+    };
+    std::size_t index = 0;
+    for (const auto& item : payload) {
+        std::string value;
+        if constexpr (std::is_same_v<Payload, YAML::Node>) {
+            if (!item.IsScalar()) {
+                failure = "payload[" + std::to_string(index) + "] 不是字符串";
+                return std::nullopt;
+            }
+            value = trimCopy(item.Scalar());
+        } else {
+            value = trimCopy(item);
+        }
+        std::optional<nlohmann::json> condition;
+        if (behavior == "domain") {
+            const auto plainSuffix = value.starts_with("+.") ? dnsPolicyDomain(value.substr(2)) : std::nullopt;
+            const auto patterns = dnsPolicyPatterns(value);
+            if (compact && plainSuffix) {
+                append("domain_suffix", *plainSuffix); ++index; continue;
+            }
+            if (compact && patterns.size() == 1) {
+                auto [field, entry] = patterns[0].fieldValue();
+                append(field, std::move(entry)); ++index; continue;
+            }
+            if (plainSuffix) condition = nlohmann::json{{"domain_suffix", {*plainSuffix}}};
+            else if (patterns.size() == 1) condition = patterns[0].condition();
+            else if (patterns.size() == 2) {
+                condition = nlohmann::json{{"type", "logical"}, {"mode", "or"},
+                    {"rules", nlohmann::json::array({patterns[0].condition(), patterns[1].condition()})}};
+            }
+        } else if (behavior == "ipcidr") {
+            if (const auto cidr = addressCidr(value, false, true)) {
+                if (compact) { append("ip_cidr", *cidr); ++index; continue; }
+                condition = nlohmann::json{{"ip_cidr", {*cidr}}};
+            }
+        } else {
+            unsigned count = 0;
+            condition = logicalCondition(ctx, value, 0, count, true, failure);
+        }
+        if (!condition) {
+            failure = "payload[" + std::to_string(index) + "]「" + value + "」无效：" +
+                (failure.empty() ? "匹配格式或类型未接入" : failure);
+            return std::nullopt;
+        }
+        if (compact) {
+            // MRS is a union. Aggregate each match field as entries are
+            // decoded, without retaining a YAML node/JSON object per entry.
+            for (const auto& field : condition->items()) {
+                auto [it, inserted] = fields.try_emplace(field.key());
+                if (inserted) it->second = nlohmann::json::array();
+                for (const auto& value : field.value()) it->second.push_back(value);
+            }
+        } else {
+            rules.push_back(std::move(*condition));
+        }
+        ++index;
+    }
+    for (auto& [field, values] : fields) rules.push_back({{field, std::move(values)}});
+    return rules;
+}
+
+std::optional<nlohmann::json> ruleProviderContentRules(Context& ctx, const std::string& content,
+        const std::string& format, const std::string& behavior, std::string& failure) {
+    if (format == "mrs") {
+        const auto entries = mrsEntries(content, behavior, failure);
+        return entries ? ruleProviderRules(ctx, *entries, behavior, failure, true) : std::nullopt;
+    }
+    const auto payload = ruleProviderPayload(content, format, failure);
+    return payload ? ruleProviderRules(ctx, *payload, behavior, failure) : std::nullopt;
+}
+
+std::string httpProviderKey(std::string_view identity) {
+    // Stable, platform-independent filename only. Full identity is verified
+    // before reuse/overwrite; never treat this non-cryptographic hash as trust.
+    std::uint64_t first = 14695981039346656037ULL, second = 7809847782465536322ULL;
+    for (const unsigned char c : identity) {
+        first = (first ^ c) * 1099511628211ULL;
+        second = (second ^ c) * 14029467366897019727ULL;
+    }
+    return std::format("{:016x}{:016x}", first, second);
+}
+
+std::optional<HttpRuleProviderResource> httpProviderResource(Context& ctx,
+        const YAML::Node& provider, const std::string& name, const std::string& behavior,
+        const std::string& format, std::string& failure) {
+    const auto fail = [&](std::string reason) -> std::optional<HttpRuleProviderResource> {
+        failure = std::move(reason); return std::nullopt;
+    };
+    HttpRuleProviderResource resource;
+    resource.name = name; resource.sourceId = ctx.sourceId;
+    resource.behavior = behavior; resource.format = format.empty() ? "yaml" : format;
+    const auto url = provider["url"];
+    if (!url || !url.IsScalar() || url.Scalar().size() > 8192 ||
+        !clashflux::profile_link::IsHttpUrl(url.Scalar())) return fail("需要有效 HTTP(S) url");
+    resource.url = url.Scalar();
+    const auto authorityStart = resource.url.find("://") + 3;
+    const auto authorityEnd = resource.url.find_first_of("/?#", authorityStart);
+    if (resource.url.substr(authorityStart, authorityEnd - authorityStart).find('@') != std::string::npos)
+        return fail("URL userinfo 鉴权尚未跨平台接入，不能静默丢弃凭据");
+    for (const auto* field : {"interval", "size-limit"}) {
+        const auto value = provider[field];
+        if (!value) continue;
+        std::uint64_t number = 0;
+        if (!value.IsScalar()) return fail(std::string(field) + " 必须为非负整数");
+        const auto text = value.Scalar();
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), number);
+        if (text.empty() || parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size())
+            return fail(std::string(field) + " 必须为非负整数");
+        if (std::string_view(field) == "interval") {
+            if (number > 2147483647ULL) return fail("interval 超过支持范围");
+            resource.intervalSeconds = number;
+        } else if (number > 0) {
+            if (number > resource.maxBytes) return fail("size-limit 超过 8 MiB 支持上限");
+            resource.maxBytes = static_cast<std::size_t>(number);
+        }
+    }
+    if (const auto proxy = provider["proxy"]; proxy &&
+        (!proxy.IsScalar() || proxy.Scalar() != "DIRECT"))
+        return fail("proxy 仅支持显式 DIRECT，不能改写指定代理下载语义");
+    if (const auto headers = provider["header"]; headers) {
+        if (!headers.IsMap()) return fail("header 必须为单值字符串数组的映射");
+        for (const auto& entry : headers) {
+            if (!entry.first.IsScalar() || !entry.second.IsSequence() ||
+                entry.second.size() != 1 || !entry.second[0].IsScalar())
+                return fail("header 仅支持每项一个字符串，不能忽略或合并异常成员");
+            const auto key = clashflux::http_request::LowerHeaderName(entry.first.Scalar());
+            if (!resource.headers.emplace(key, entry.second[0].Scalar()).second ||
+                !clashflux::http_request::ValidHeaders(resource.headers))
+                return fail("header 含重复、非法、超限或跨平台不支持的传输字段");
+        }
+#if defined(CLASHFLUX_IOS)
+        if (!resource.headers.empty()) return fail("iOS 请求头下载尚未接入");
+#endif
+    }
+    if (const auto path = provider["path"]; path) {
+        if (!path.IsScalar() || path.Scalar().empty()) return fail("path 必须为非空相对路径");
+        resource.seedPath = path.Scalar();
+        const std::filesystem::path relative(resource.seedPath);
+        if (relative.is_absolute() || relative.has_root_name() || relative.has_root_directory() ||
+            resource.seedPath.find('\0') != std::string::npos) return fail("path 必须为根内相对路径");
+        for (const auto& part : relative) if (part == "..") return fail("path 不允许父目录跳转");
+    }
+    auto identity = nlohmann::json::array({1, resource.sourceId, name, resource.url,
+        behavior, resource.format, resource.seedPath, resource.maxBytes});
+    // Preserve existing no-header identities. Header names are case insensitive;
+    // exact values must isolate credentials without ever entering diagnostics.
+    if (!resource.headers.empty()) identity.push_back(resource.headers);
+    resource.identity = identity.dump();
+    if (resource.identity.size() > 32 * 1024) return fail("来源身份过长");
+    resource.cacheKey = httpProviderKey(resource.identity);
+    return resource;
 }
 
 void compileRuleProviders(Context& ctx, const YAML::Node& providers) {
@@ -383,19 +729,31 @@ void compileRuleProviders(Context& ctx, const YAML::Node& providers) {
         return;
     }
     std::map<std::string, unsigned> nameCounts;
+    std::set<std::string> fileNames;
     for (const auto& entry : providers) {
         if (entry.first.IsScalar()) {
             ++nameCounts[entry.first.Scalar()];
             ctx.declaredProviders.insert(entry.first.Scalar());
+            if (entry.second.IsMap()) for (const auto& field : entry.second)
+                if (field.first.IsScalar() && field.first.Scalar() == "type" &&
+                    field.second.IsScalar() && (lowerCopy(trimCopy(field.second.Scalar())) == "file" ||
+                                                lowerCopy(trimCopy(field.second.Scalar())) == "http"))
+                    fileNames.insert(entry.first.Scalar());
         }
     }
     std::set<std::string> reportedDuplicates;
     for (const auto& entry : providers) {
         const std::string name = entry.first.IsScalar() ? entry.first.Scalar() : "<非标量>";
+        const YAML::Node provider = entry.second;
+        const std::string type = provider.IsMap() ? lowerCopy(ytext(provider, "type")) : "";
         const auto reject = [&](std::string_view reason) {
+            const auto detail = std::format("规则集「{}」{}，整份规则集未加载", name, reason);
             ctx.note(FidelityScope::Field, Fidelity::Unsupported, "rule-providers." + name,
-                     std::format("规则集「{}」{}，整份规则集未加载", name, reason),
-                     "当前支持 inline domain/ipcidr/classical 的明确子集；外部 YAML/text/MRS 下载尚未接入");
+                     detail, "支持 inline/file 与 HTTP 直连 YAML/text 子集；MRS 和指定代理下载尚未接入");
+            // A failed file reload must not turn a good running configuration
+            // into one with missing rules during candidate refresh/edit.
+            if ((type == "file" || type == "http" || fileNames.contains(name)) && ctx.result.error.empty())
+                ctx.result.error = detail;
         };
         if (!entry.first.IsScalar() || name.empty()) {
             reject("名称无效");
@@ -405,8 +763,7 @@ void compileRuleProviders(Context& ctx, const YAML::Node& providers) {
             if (reportedDuplicates.insert(name).second) reject("名称重复，所有同名声明均拒绝");
             continue;
         }
-        const YAML::Node provider = entry.second;
-        if (!provider.IsMap() || lowerCopy(ytext(provider, "type")) != "inline") {
+        if (!provider.IsMap() || (type != "inline" && type != "file" && type != "http")) {
             reject("尚未接入此来源类型");
             continue;
         }
@@ -416,57 +773,67 @@ void compileRuleProviders(Context& ctx, const YAML::Node& providers) {
             continue;
         }
         bool fieldsValid = true;
+        std::set<std::string> fieldNames;
         for (const auto& field : provider) {
             const auto key = field.first.IsScalar() ? field.first.Scalar() : "<非标量>";
-            if (key != "type" && key != "behavior" && key != "payload" && key != "format") {
+            const bool allowed = key == "type" || key == "behavior" || key == "format" ||
+                (type == "inline" && key == "payload") ||
+                (type == "file" && key == "path") ||
+                (type == "http" && (key == "path" || key == "url" || key == "interval" ||
+                                    key == "size-limit" || key == "proxy" || key == "header"));
+            if (!fieldNames.insert(key).second || !allowed) {
                 fieldsValid = false;
                 break;
             }
         }
         const std::string format = lowerCopy(ytext(provider, "format"));
-        if (!fieldsValid || (!format.empty() && format != "yaml" && format != "text")) {
-            reject("含未映射字段或格式");
+        const auto declaredFormat = provider["format"];
+        if (!fieldsValid || (declaredFormat.IsDefined() &&
+                (!declaredFormat.IsScalar() || format.empty())) ||
+            (!format.empty() && format != "yaml" && format != "text" && format != "mrs") ||
+            (format == "mrs" && (type == "inline" || behavior == "classical"))) {
+            reject("含重复/未映射字段或格式");
             continue;
         }
-        const YAML::Node payload = provider["payload"];
-        if (!payload || !payload.IsSequence()) {
-            reject("payload 必须为数组");
-            continue;
-        }
-        nlohmann::json rules = nlohmann::json::array();
-        bool valid = true;
         std::string failure;
-        std::size_t index = 0;
-        for (const auto& item : payload) {
-            if (!item.IsScalar()) {
-                valid = false; failure = "payload[" + std::to_string(index) + "] 不是字符串"; break;
+        std::optional<nlohmann::json> rules;
+        if (type == "file") {
+            const auto content = readRuleProviderFile(ctx, provider, failure);
+            if (content) rules = ruleProviderContentRules(ctx, *content, format, behavior, failure);
+        } else if (type == "http") {
+            const auto resource = httpProviderResource(ctx, provider, name, behavior, format, failure);
+            if (!resource) { reject(failure); continue; }
+            ctx.result.httpRuleProviders.push_back(*resource);
+            const auto supplied = ctx.opt.ruleProviderContents.find(resource->cacheKey);
+            const auto content = supplied != ctx.opt.ruleProviderContents.end()
+                ? std::optional<std::string>{supplied->second}
+                : ReadHttpRuleProviderCache(*resource, ctx.opt.ruleProviderCacheDir, failure);
+            if (!content || content->size() > resource->maxBytes) {
+                reject(content ? "内容超过 size-limit/8 MiB 上限" : "HTTP 缓存未准备好：" + failure);
+                continue;
             }
-            const std::string value = trimCopy(item.Scalar());
-            std::optional<nlohmann::json> condition;
-            if (behavior == "domain") {
-                const bool suffix = value.starts_with("+.");
-                const auto domain = dnsPolicyDomain(suffix ? value.substr(2) : value);
-                if (domain) condition = nlohmann::json{{suffix ? "domain_suffix" : "domain", {*domain}}};
-            } else if (behavior == "ipcidr") {
-                if (const auto cidr = addressCidr(value, false, true))
-                    condition = nlohmann::json{{"ip_cidr", {*cidr}}};
-            } else {
-                unsigned count = 0;
-                condition = logicalCondition(ctx, value, 0, count, true, failure);
-            }
-            if (!condition) {
-                valid = false;
-                failure = "payload[" + std::to_string(index) + "]「" + value + "」无效：" +
-                          (failure.empty() ? "匹配格式或类型未接入" : failure);
-                break;
-            }
-            rules.push_back(std::move(*condition));
-            ++index;
+            rules = ruleProviderContentRules(ctx, *content, resource->format, behavior, failure);
+        } else {
+            const auto payload = provider["payload"];
+            if (!payload || !payload.IsSequence()) { reject("payload 必须为数组"); continue; }
+            rules = ruleProviderRules(ctx, payload, behavior, failure);
         }
-        if (!valid) { reject(failure); continue; }
+        if (!rules) { reject(failure); continue; }
         const std::string tag = "clash-provider-" + std::to_string(ctx.providerTags.size());
         ctx.providerTags.emplace(name, tag);
-        ctx.ruleSets.push_back({{"type", "inline"}, {"tag", tag}, {"rules", std::move(rules)}});
+        ctx.ruleSets.push_back({{"type", "inline"}, {"tag", tag}, {"rules", std::move(*rules)}});
+        if (type == "file")
+            ctx.note(FidelityScope::Field, Fidelity::Approx, "rule-providers." + name,
+                     "文件规则集已编译为 inline 快照；未接入文件监听，不会自动热更新",
+                     "文件更新后重新应用配置；读取或转换失败会拒绝候选，规则文件始终只读");
+        if (type == "http")
+            ctx.note(FidelityScope::Field, Fidelity::Approx, "rule-providers." + name,
+                     "HTTP 规则集采用直连下载与应用自有缓存，编译为 inline 快照；interval 仅在应用配置时检查到期，不定时热更新；path 仅作只读种子",
+                     "重新应用配置触发到期刷新；不覆盖 path 文件，不将指定代理下载改成直连；size-limit 默认限制为 8 MiB，超限拒绝而非截断");
+        if (type == "http" && provider["header"] && provider["header"].size() != 0)
+            ctx.note(FidelityScope::Field, Fidelity::Approx, "rule-providers." + name + ".header",
+                     "单值 ASCII 请求头保持原文；带请求头的下载不跟随重定向，与上游自动跳转不同",
+                     "使用最终 HTTP(S) URL；请求失败沿用已验证缓存，不向跳转目标发送请求头");
     }
 }
 
@@ -581,7 +948,9 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
             ensureChinaDnsRule(ctx, "geosite-cn");
         }
     } else {
-        auto condition = compileLeafCondition(kind, value, false);
+        auto condition = (kind == "ip-asn" || kind == "src-ip-asn")
+            ? compileAsnCondition(ctx, kind, value, line)
+            : compileLeafCondition(kind, value, false);
         if (!condition) {
             ctx.note(FidelityScope::Rule, Fidelity::Unsupported, line,
                      "规则 " + line + " 无法转换：" + condition.error + "，已跳过");
@@ -849,8 +1218,11 @@ bool applyConnectionRules(Context& ctx) {
     nlohmann::json precedence = nlohmann::json::array({
         {{"action", "sniff"}},
         {{"protocol", "dns"}, {"action", "hijack-dns"}},
-        {{"action", "resolve"}},
     });
+    if (!ctx.hostsDomains.empty()) precedence.push_back({
+        {"domain", ctx.hostsDomains}, {"action", "resolve"}, {"server", ctx.hostsDnsTag}, {"disable_cache", true}});
+    if (ctx.hostsDomains.empty()) precedence.push_back({{"action", "resolve"}});
+    else precedence.push_back({{"domain", ctx.hostsDomains}, {"invert", true}, {"action", "resolve"}});
     auto rules = ctx.opt.globalRules;
     // 原生内网规则进入同一 SourcePolicy 层；显式 UserOverride 始终在其前面。
     struct InternalRule { std::string cidr; std::string connectionId; int prefix; };

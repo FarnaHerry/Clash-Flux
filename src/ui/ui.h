@@ -14,11 +14,16 @@
 #include <vector>
 
 #include "app_http_client.h"
+#include "theme_colors.h"
 
 namespace clashflux::ui {
 
 // Section edge inset and card grid spacing share one rhythm across the app.
 inline constexpr float kSectionCardSpacing = 8.0F;
+
+// Shared gap below the desktop title bar for page content and the navigation rail.
+inline constexpr float kDesktopTopContentGap = 4.0F;
+inline constexpr float kDesktopTitleBarHeight = 40.0F;
 
 // 桌面图标栏和标题栏 logo 共用几何，保证两者中心线由同一宽度定义。
 inline constexpr float kTopNavigationIndicatorSize = 44.0F;
@@ -137,24 +142,6 @@ struct ProxyGroupSnapshot {
 
     bool operator==(const ProxyGroupSnapshot&) const = default;
 };
-
-inline bool IsDarkTheme(const huxerui::ThemeSpec& theme) noexcept {
-    const huxerui::Color background = theme.colors.background;
-    const float brightness = 0.2126F * background.red +
-                             0.7152F * background.green +
-                             0.0722F * background.blue;
-    return brightness < 0.5F;
-}
-
-inline huxerui::Color SemanticSuccessColor(const huxerui::ThemeSpec& theme) {
-    return IsDarkTheme(theme) ? huxerui::Color::Rgb(108, 202, 145)
-                              : huxerui::Color::Rgb(47, 128, 86);
-}
-
-inline huxerui::Color SemanticWarningColor(const huxerui::ThemeSpec& theme) {
-    return IsDarkTheme(theme) ? huxerui::Color::Rgb(230, 184, 102)
-                              : huxerui::Color::Rgb(144, 96, 8);
-}
 
 inline huxerui::Color DelayLevelColor(const huxerui::ThemeSpec& theme, int delay,
                                       bool unavailable = false) {
@@ -331,7 +318,8 @@ huxerui::View PasswordField(
 huxerui::View PageScaffold(huxerui::StringVariant title, huxerui::View actions,
                            huxerui::View content,
                            bool inlineCompactActions = false,
-                           bool fullWidthSections = false);
+                           bool fullWidthSections = false,
+                           bool windowTitle = false);
 huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     huxerui::View actions, huxerui::View content,
                                     std::function<void()> onBack,
@@ -412,11 +400,18 @@ struct SectionTabContentInsets {
     static SectionTabContentInsets Default() { return {}; }
     bool operator==(const SectionTabContentInsets&) const = default;
 };
+struct SectionTabPickerInsets {
+    float top = 0.0F;
+    static SectionTabPickerInsets Default() { return {}; }
+    bool operator==(const SectionTabPickerInsets&) const = default;
+};
+enum class SectionTabPickerMode { Menu, ResponsiveGroups };
 SectionTabMotionHandle UseSectionTabMotion();
 huxerui::View SectionTabBar(const std::vector<SectionTab>& tabs,
                             const std::string& selectedKey,
                             std::function<void(const std::string&)> onSelect,
-                            SectionTabMotionHandle motion = {});
+                            SectionTabMotionHandle motion = {},
+                            SectionTabPickerMode pickerMode = SectionTabPickerMode::Menu);
 
 // 通用二级内容分页：标签栏留在外侧。点击、菜单与跟手滑动共用受控索引，
 // 页面有界并保持挂载；滚动边界交给框架，取消时回弹，reduced motion 由主题控制。

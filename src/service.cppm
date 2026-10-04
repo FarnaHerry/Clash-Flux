@@ -72,7 +72,7 @@ export struct ServiceInfo {
     std::string applicationVersion;
     std::string error;
 
-    bool compatible() const { return reachable && error.empty(); }
+    inline bool compatible() const { return reachable && error.empty(); }
 };
 
 // Returned by native VPN start calls on every platform.  The service backend

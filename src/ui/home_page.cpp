@@ -29,6 +29,7 @@
 #include "app_resources.h"
 #include "proxies_model.h"
 #include "ui.h"
+#include "empty_state.h"
 #include "task_bridge.h"
 
 import clashflux.core;
@@ -1118,7 +1119,7 @@ huxerui::StringVariant HomeKernelStatusText(const HomeState& s) {
                                           ? theme.colors.on_primary_container
                                           : theme.colors.on_primary),
                   huxerui::CornerRadius(28.0F),
-                  huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.28F), {}, 14.0F,
+                  huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F,
                                   2.0F},
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                      .label = huxerui::UseString(Localized(
@@ -1385,7 +1386,7 @@ huxerui::StringVariant HomeKernelStatusText(const HomeState& s) {
                                           ? theme.colors.on_primary_container
                                           : theme.colors.on_primary),
                   huxerui::CornerRadius(28.0F),
-                  huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.28F), {}, 14.0F,
+                  huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F,
                                   2.0F},
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                      .label = huxerui::UseString(Localized(
@@ -1494,10 +1495,7 @@ huxerui::StringVariant HomeKernelStatusText(const HomeState& s) {
     }
 
     huxerui::View cardArea = cards.empty()
-        ? huxerui::View{Card(huxerui::Text(Localized("首页还没有卡片"))
-                                 .Style(huxerui::TextStyle{
-                                     huxerui::Font::System(font_size::kBody),
-                                     theme.colors.on_surface_variant}))}
+        ? EmptyState(Localized("首页还没有卡片"), app::images::home)
         : huxerui::View{HomeGrid(std::move(cards)).With(huxerui::Grow(1.0F))};
     huxerui::View grid = huxerui::Column {
         std::move(cardArea),
@@ -1528,7 +1526,7 @@ huxerui::StringVariant HomeKernelStatusText(const HomeState& s) {
     huxerui::View scrollContent =
         huxerui::ScrollView(std::move(pageBody)).With(huxerui::Grow(1.0F));
     huxerui::View page = PageScaffold(
-        Localized("首页"), std::move(headerActions), std::move(scrollContent), true);
+        Localized("首页"), std::move(headerActions), std::move(scrollContent), true, false, true);
 
     // 移动端启动/停止按钮脱离滚动内容，固定在底部悬浮导航之上的位置。
     huxerui::View shell = CLASHFLUX_HOME_FLOATING_ACTION(

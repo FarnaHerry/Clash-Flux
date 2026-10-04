@@ -1,0 +1,12 @@
+# Sanitized fixture: reserved documentation addresses, no subscription credentials.
+rule-providers:
+  sample:
+    type: inline
+    behavior: classical
+    payload:
+      - IP-CIDR,192.0.2.28/32,no-resolve
+      - IP-CIDR6,2001:db8::/32,no-resolve
+      - AND,((IP-CIDR,198.51.100.0/24,no-resolve),(NETWORK,TCP))
+rules:
+  - RULE-SET,sample,DIRECT
+  - MATCH,DIRECT

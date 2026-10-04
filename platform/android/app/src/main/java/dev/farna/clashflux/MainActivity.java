@@ -85,9 +85,25 @@ public final class MainActivity extends HuxerUIActivity {
      */
     public static Bundle fetchProfile(String address, int timeoutSeconds,
                                       boolean allowInvalidCertificate) {
+        return fetchProfile(address, timeoutSeconds, allowInvalidCertificate, 0L, false);
+    }
+
+    public static Bundle fetchProfile(String address, int timeoutSeconds,
+                                      boolean allowInvalidCertificate, long maxBytes,
+                                      boolean forceDirect) {
+        return fetchProfile(address, timeoutSeconds, allowInvalidCertificate,
+                maxBytes, forceDirect, new String[0]);
+    }
+
+    public static Bundle fetchProfile(String address, int timeoutSeconds,
+                                      boolean allowInvalidCertificate, long maxBytes,
+                                      boolean forceDirect, String[] requestHeaders) {
         Bundle result = new Bundle();
         HttpURLConnection connection = null;
         try {
+            if (requestHeaders == null || requestHeaders.length % 2 != 0) {
+                throw new IOException("下载请求头格式无效");
+            }
             URL target = new URL(address);
             int timeoutMillis = (int) Math.min(Integer.MAX_VALUE,
                     Math.max(1L, (long) timeoutSeconds) * 1000L);
@@ -112,7 +128,8 @@ public final class MainActivity extends HuxerUIActivity {
                 if (!"http".equals(protocol) && !"https".equals(protocol)) {
                     throw new IOException("订阅下载仅支持 HTTP 或 HTTPS URL");
                 }
-                URLConnection opened = target.openConnection();
+                URLConnection opened = forceDirect ? target.openConnection(java.net.Proxy.NO_PROXY)
+                                                  : target.openConnection();
                 if (!(opened instanceof HttpURLConnection)) {
                     throw new IOException("订阅 URL 不是 HTTP 连接");
                 }
@@ -121,6 +138,10 @@ public final class MainActivity extends HuxerUIActivity {
                 connection.setUseCaches(false);
                 connection.setRequestProperty("User-Agent", "clash-flux/0.1");
                 connection.setRequestProperty("Accept-Encoding", "identity");
+                // Compiler/JNI validate the common subset before this call.
+                for (int i = 0; i < requestHeaders.length; i += 2) {
+                    connection.setRequestProperty(requestHeaders[i], requestHeaders[i + 1]);
+                }
                 int remainingMillis = remainingTimeoutMillis(deadlineNanos);
                 connection.setConnectTimeout(remainingMillis);
                 connection.setReadTimeout(remainingMillis);
@@ -134,6 +155,9 @@ public final class MainActivity extends HuxerUIActivity {
                 int status = connection.getResponseCode();
                 String location = connection.getHeaderField("Location");
                 if (isRedirect(status) && location != null && !location.isEmpty()) {
+                    if (requestHeaders.length != 0) {
+                        throw new IOException("带请求头的规则集下载不支持重定向");
+                    }
                     if (redirects >= 10) {
                         throw new IOException("订阅下载重定向次数过多");
                     }
@@ -179,6 +203,9 @@ public final class MainActivity extends HuxerUIActivity {
                                     remainingTimeoutMillis(deadlineNanos));
                             int count = stream.read(buffer);
                             if (count == -1) break;
+                            if (maxBytes > 0 && count > maxBytes - body.size()) {
+                                throw new IOException("规则集下载超过大小上限");
+                            }
                             body.write(buffer, 0, count);
                         }
                     }
