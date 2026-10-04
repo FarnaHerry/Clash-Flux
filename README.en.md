@@ -1,6 +1,6 @@
 # Clash-Flux
 
-See the [v0.3.20 release notes](docs/releases/v0.3.20.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.21 release notes](docs/releases/v0.3.21.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
