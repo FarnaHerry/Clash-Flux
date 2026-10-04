@@ -274,6 +274,12 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Exclude workspace from Defender realtime scan
+        shell: pwsh
+        # 编译大量小 .obj/.ifc 时 Windows Defender 实时扫描是主要瓶颈之一；
+        # runner 以管理员身份运行，可直接把检出根目录加入排除列表。
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE
+
       - name: Fetch HuxerUI source (pinned)
         shell: bash
         run: |
@@ -305,7 +311,11 @@ jobs:
           # （cmake/CxxImportStdGate.cmake）；runner 自带版本不够时 pip 补齐。
           python -m pip install --quiet "cmake==4.4.2"
           cmake --version | Select-Object -First 1
-          choco install ninja -y --no-progress
+          # windows-latest 镜像自带 ninja，缺失时才走 choco。
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+            choco install ninja -y --no-progress
+          }
+          ninja --version
 
       - name: Verify preinstalled OpenSSL
         shell: pwsh
@@ -320,6 +330,25 @@ jobs:
           }
           "OPENSSL_ROOT_DIR=$opensslRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Capture runner image version
+        shell: pwsh
+        # ImageVersion 随 runner 镜像更新（MSVC toolset 路径随之变化），
+        # 需要进缓存 key，避免跨镜像恢复到指向旧编译器的 CMakeCache。
+        run: |
+          "IMAGE_VERSION=$env:ImageVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # 缓存整个构建树：HuxerUI 框架及其依赖（约占 Windows 编译时间一半）
+      # 只在 HUXERUI_COMMIT / cmake/patches 变化时才需要重编；命中时 ninja
+      # 增量重建只编译改动的应用 TU。必须放在 HuxerUI clone 之后，保证恢复
+      # 出的目标文件 mtime 比源码新。
+      - name: Cache build tree
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: build-windows-${{ runner.os }}-${{ env.IMAGE_VERSION }}-${{ env.HUXERUI_COMMIT }}-${{ hashFiles('cmake/patches/**') }}
+          restore-keys: |
+            build-windows-${{ runner.os }}-${{ env.IMAGE_VERSION }}-${{ env.HUXERUI_COMMIT }}-
+
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
 
@@ -332,11 +361,24 @@ jobs:
           $wixRoot = Join-Path (Get-Location) '.huxerui/package/windows/dependencies/wix'
           New-Item -ItemType Directory -Force $wixRoot | Out-Null
           dotnet --list-runtimes
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
-            '-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON' `
-            "-DOPENSSL_ROOT_DIR=$env:OPENSSL_ROOT_DIR" `
-            '-DHUXERUI_PACKAGE=ON' `
+          $configureArgs = @(
+            '-B', 'build', '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
+            '-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON',
+            "-DOPENSSL_ROOT_DIR=$env:OPENSSL_ROOT_DIR",
+            '-DHUXERUI_PACKAGE=ON',
             "-DHUXERUI_WIX_ROOT=$wixRoot"
+          )
+          cmake @configureArgs
+          if ($LASTEXITCODE -ne 0) {
+            # 恢复出的构建树若与新环境不兼容（如 toolset 路径变化），
+            # 清空后全量重配一次，而不是让 job 直接失败。
+            if (Test-Path 'build/CMakeCache.txt') {
+              Write-Host 'Configure failed on the restored build tree; wiping build/ and retrying once.'
+              Remove-Item -Recurse -Force build
+              cmake @configureArgs
+            }
+            if ($LASTEXITCODE -ne 0) { throw 'cmake configure failed' }
+          }
 
       - name: Build release
         run: cmake --build build --config Release --parallel
