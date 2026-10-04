@@ -108,8 +108,8 @@ struct Fixture {
     std::filesystem::path files = path.string() + ".profiles";
     Fixture() {
         std::filesystem::create_directory(files);
-        std::ofstream(files / "shared.yaml") << "remote and local stable content\n";
-        std::ofstream(files / "unique.yaml") << "other remote stable content\n";
+        std::ofstream(files / "shared.yaml", std::ios::binary) << "remote and local stable content\n";
+        std::ofstream(files / "unique.yaml", std::ios::binary) << "other remote stable content\n";
     }
     ~Fixture() { RemoveDatabase(path); }
 };
@@ -337,7 +337,7 @@ Task<void> DeletionPhaseUnsafeCleanup(const Fixture& fixture) {
     Check(co_await finalStore.flushProfiles(), "last explicit shared deletion");
     Check(!std::filesystem::exists(fixture.files / "shared.yaml"), "last committed reference permits cleanup");
     const auto outside = fixture.files.parent_path() / (fixture.files.filename().string() + "-outside.yaml");
-    std::ofstream(outside) << "protected outside file\n";
+    std::ofstream(outside, std::ios::binary) << "protected outside file\n";
     struct OutsideFile { std::filesystem::path path; ~OutsideFile() { std::error_code ec; std::filesystem::remove(path, ec); } } outsideCleanup{outside};
     db::Profile escaped;
     escaped.id = 45; escaped.file = "../" + outside.filename().string();
@@ -364,7 +364,7 @@ Task<void> DeletionPhaseRetry(const Fixture& fixture) {
     persistence::Persistence finalStore;
     Check(co_await finalStore.open(fixture.path, fixture.files), "retry phase reopen");
     const auto outside = fixture.files.parent_path() / (fixture.files.filename().string() + "-outside.yaml");
-    std::ofstream(outside) << "protected outside file\n";
+    std::ofstream(outside, std::ios::binary) << "protected outside file\n";
     struct OutsideFile { std::filesystem::path path; ~OutsideFile() { std::error_code ec; std::filesystem::remove(path, ec); } } outsideCleanup{outside};
     auto opened = co_await sqlite::Database::OpenAsync(File{fixture.path.string()}, db_schema::openOptions());
     Check(static_cast<bool>(opened), "retry phase observer open");
@@ -373,7 +373,7 @@ Task<void> DeletionPhaseRetry(const Fixture& fixture) {
     Check(static_cast<bool>(co_await raw.ExecuteAsync(
         "CREATE TRIGGER refuse_insert BEFORE INSERT ON profiles WHEN NEW.id = 47 BEGIN SELECT RAISE(ABORT, 'test insert refused'); END")), "install upsert failure trigger");
     db::Profile retry;
-    std::ofstream(fixture.files / "retry.yaml") << "protected retry source\n";
+    std::ofstream(fixture.files / "retry.yaml", std::ios::binary) << "protected retry source\n";
     retry.id = 47; retry.name = "retry source"; retry.type = "local"; retry.file = "retry.yaml";
     finalStore.saveProfile(retry);
     Check(!co_await finalStore.flushProfiles() && finalStore.hasPendingProfiles(), "failed upsert keeps pending version");
@@ -381,7 +381,7 @@ Task<void> DeletionPhaseRetry(const Fixture& fixture) {
     Check(ReadFile(fixture.files / "retry.yaml") == "protected retry source\n", "failed upsert retains its referenced file");
     Check(static_cast<bool>(co_await raw.ExecuteAsync("DROP TRIGGER refuse_insert")), "remove injected insert failure");
     Check(co_await finalStore.flushProfiles() && !finalStore.hasPendingProfiles(), "retry persists acknowledged version");
-    std::ofstream(fixture.files / "retained-import.yaml") << "retained failed import\n";
+    std::ofstream(fixture.files / "retained-import.yaml", std::ios::binary) << "retained failed import\n";
     auto abandoned = retry;
     abandoned.id = 48; abandoned.file = "retained-import.yaml";
     finalStore.saveProfile(abandoned);
