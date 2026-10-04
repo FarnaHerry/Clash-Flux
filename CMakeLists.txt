@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.20 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.21 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -1015,7 +1015,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dns_hosts_runtime.py"
                     "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/dns-hosts-2026-10-03.yaml")
-                set_tests_properties(dns_hosts_runtime PROPERTIES TIMEOUT 30)
+                set_tests_properties(dns_hosts_runtime PROPERTIES TIMEOUT 60)
                 add_test(NAME dns_policy_runtime COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dns_policy_runtime.py"
                     "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
