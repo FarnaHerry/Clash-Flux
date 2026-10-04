@@ -286,8 +286,7 @@ Task<void> InterleavedPhase(TaskScope tasks) {
     }
 }
 
-Task<void> DeletionPhase() {
-    const Fixture fixture;
+Task<void> DeletionPhaseSetup(const Fixture& fixture) {
     persistence::Persistence store;
     Check(co_await store.open(fixture.path, fixture.files), "deletion fixture open");
     SeedProfiles(store);
@@ -326,6 +325,10 @@ Task<void> DeletionPhase() {
     Check(co_await reopened.flushProfiles(), "delete while another source owns shared file");
     Check(std::filesystem::exists(fixture.files / "shared.yaml"), "pending cached reference prevents cleanup");
     co_await reopened.close();
+    Check(static_cast<bool>(co_await raw.CloseAsync()), "close deletion observer");
+}
+
+Task<void> DeletionPhaseUnsafeCleanup(const Fixture& fixture) {
     persistence::Persistence finalStore;
     Check(co_await finalStore.open(fixture.path, fixture.files), "final delete reopen");
     const auto finalRows = finalStore.listProfiles();
@@ -354,6 +357,18 @@ Task<void> DeletionPhase() {
         Check(ReadFile(outside) == "protected outside file\n" && std::filesystem::is_symlink(fixture.files / "escape.yaml"),
               "unsafe symlink cleanup is conservatively skipped");
     }
+    co_await finalStore.close();
+}
+
+Task<void> DeletionPhaseRetry(const Fixture& fixture) {
+    persistence::Persistence finalStore;
+    Check(co_await finalStore.open(fixture.path, fixture.files), "retry phase reopen");
+    const auto outside = fixture.files.parent_path() / (fixture.files.filename().string() + "-outside.yaml");
+    std::ofstream(outside) << "protected outside file\n";
+    struct OutsideFile { std::filesystem::path path; ~OutsideFile() { std::error_code ec; std::filesystem::remove(path, ec); } } outsideCleanup{outside};
+    auto opened = co_await sqlite::Database::OpenAsync(File{fixture.path.string()}, db_schema::openOptions());
+    Check(static_cast<bool>(opened), "retry phase observer open");
+    sqlite::Database raw = std::move(*opened);
     // A rejected upsert must retain the pending version and other source files.
     Check(static_cast<bool>(co_await raw.ExecuteAsync(
         "CREATE TRIGGER refuse_insert BEFORE INSERT ON profiles WHEN NEW.id = 47 BEGIN SELECT RAISE(ABORT, 'test insert refused'); END")), "install upsert failure trigger");
@@ -383,6 +398,13 @@ Task<void> DeletionPhase() {
               retryReopen.listProfiles()[0].name == "retry source", "failed/retried upsert survives reopen with stable identity");
     Check(ReadFile(fixture.files / "retry.yaml") == "protected retry source\n", "successful retry/reopen preserves source bytes");
     co_await retryReopen.close();
+}
+
+Task<void> DeletionPhase() {
+    const Fixture fixture;
+    co_await DeletionPhaseSetup(fixture);
+    co_await DeletionPhaseUnsafeCleanup(fixture);
+    co_await DeletionPhaseRetry(fixture);
 }
 
 Task<void> RunTest(TaskScope tasks) {
