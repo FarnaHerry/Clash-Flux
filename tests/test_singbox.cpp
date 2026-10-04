@@ -1598,13 +1598,13 @@ void testHttpRuleProviders() {
     auto seed = base;
     seed.profileYaml = "rule-providers:\n  seed: {type: http, behavior: domain, url: https://example.test/seed, path: seed.yaml}\n"
         "rules:\n  - RULE-SET,seed,DIRECT\n  - MATCH,DIRECT\n";
-    std::ofstream(directory.path / "seed.yaml") << "payload: [seed.test]\n";
+    std::ofstream(directory.path / "seed.yaml", std::ios::binary) << "payload: [seed.test]\n";
     const int beforeSeed = fetched;
     check(rule_provider_cache::Prepare(seed, operations, prepared, reason) && fetched == beforeSeed && committed == 3,
           "HTTP interval=0 uses valid read-only seed offline and stores app-owned cache");
     check(*singbox::ReadRuleProviderText(directory.path / "seed.yaml", 100, reason) == "payload: [seed.test]\n",
           "HTTP seed path is never rewritten as download cache");
-    std::ofstream(file, std::ios::trunc) << "clash-flux-rule-provider-v2\nother identity\npayload: [wrong.test]\n";
+    std::ofstream(file, std::ios::binary | std::ios::trunc) << "clash-flux-rule-provider-v2\nother identity\npayload: [wrong.test]\n";
     auto mismatch = base;
     check(!rule_provider_cache::Prepare(mismatch, operations, prepared, reason) && fetched == beforeSeed && committed == 3,
           "cache identity/future version mismatch refuses reuse and overwrite");
@@ -1634,7 +1634,7 @@ void testHttpRuleProviders() {
     auto headerOperations = operations;
     headerOperations.fetch = [&](const auto& request, const auto& path, std::string&) {
         check(request.headers == headerResource.headers, "task fetch receives exact compiler-owned headers");
-        std::ofstream output(path); output << "payload: [authorized.test]\n"; output.close();
+        std::ofstream output(path, std::ios::binary); output << "payload: [authorized.test]\n"; output.close();
         return output.good();
     };
     check(rule_provider_cache::Prepare(withHeaders, headerOperations, prepared, reason) &&
