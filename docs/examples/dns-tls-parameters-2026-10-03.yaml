@@ -1,0 +1,18 @@
+# Compile/check fixture only; addresses are documentation placeholders.
+# skip-cert-verify:true is explicit sample input, not a production default.
+dns:
+  enable: true
+  ipv6: false
+  default-nameserver:
+    - 'tls://192.0.2.1:8853#skip-cert-verify=false'
+  nameserver:
+    - 'https://resolver.example.test:9443/custom-query#skip-cert-verify=false'
+  nameserver-policy:
+    'h3.example.test': 'https://192.0.2.2/dns-query#DIRECT&h3=true&skip-cert-verify=false'
+    '+.quic.example.test': 'quic://192.0.2.3:8853#skip-cert-verify=true'
+  proxy-server-nameserver:
+    - 'https://192.0.2.4/dns-query#h3=false&skip-cert-verify=false'
+proxies:
+  - {name: fixture-node, type: socks5, server: node.example.test, port: 1080}
+rules:
+  - MATCH,DIRECT

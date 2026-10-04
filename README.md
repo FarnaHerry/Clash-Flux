@@ -1,6 +1,6 @@
 # Clash-Flux
 
-版本更新见 [v0.3.19 发布说明](docs/releases/v0.3.19.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.20 发布说明](docs/releases/v0.3.20.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -12,7 +12,10 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 
 ## 功能
 
-- 订阅与代理配置管理：卡片式布局（右键菜单 / 双击切换 / 卡片内刷新）、URL 导入 /
+- 桌面外层使用分隔线，页内保留卡片；页名和顶部动作位于自定义标题栏，动作排列在窗口控件左侧。
+  手机保留现有页面布局。
+  界面约定见 [UI 开发约定](docs/ui-development.md)。
+- 订阅与代理配置管理：条目右键菜单 / 双击切换 / 刷新、URL 导入 /
   更新 / 启用 / 删除 / 规则编辑，本地落盘；支持 Clash YAML 和 sing-box 原生 JSON 文件导入
 - 网页唤醒导入：兼容 sing-box 与 FlClash 订阅链接，打开预填名称与 URL 的导入表单；
   支持粘贴和扫码解析，格式与平台注册方式见[订阅唤醒链接](docs/profile-links.md)
@@ -23,6 +26,8 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   标签菜单与内容左右滑动按标签顺序切换，下划线与标签栏跟手移动、目标标签尽量居中；
   内容跟手翻页并在取消时回弹，切回保留滚动位置）、节点切换、整组测速
   （延迟着色），测速按钮固定在页面右下角
+- 桌面编排目标：从 Clash 订阅的可搜索目录选择策略组或节点，包含尚未参与的来源；
+  失效旧引用保留原名。手机、原生连接与 JSON 使用默认出口，详见[编排设计](docs/desktop-subscription-orchestration.md)
 - 多重规则 / 连接 / 日志：按订阅查看各自规则，使用全局路由规则把域名/IP/CIDR
   分配给不同连接；连接快照（可逐条/全部关闭）、内核与应用日志分开保存并可恢复
 - 原生 VPN 订阅：PPTP 保留系统拨号/特权服务路径（Windows 走系统 RAS，条目固定
@@ -43,15 +48,18 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   缺失目标和循环依赖。手动组支持 `default-selected`，未映射组字段与 `no-resolve`
   的当前语义差异进入保真度报告。
 - DNS 转换：UDP/TCP/DoT/DoH/DoQ、HTTPS `#h3=true`、系统解析和 DNS 出站绑定；
-  `nameserver-policy` 和节点专用 `proxy-server-nameserver-policy` 支持完整域名与
-  `+.域名`，接入 IP bootstrap 和节点专用解析，
+  加密 DNS 支持显式 `#skip-cert-verify=true/false`，缺省保留证书校验；
+  精确 `hosts` 域名到 IP/完整 IP 数组用于 DNS、节点和连接解析，异常条目整条记账；
+  显式映射绕过普通 DNS 缓存，通配/别名/系统 hosts 开关仍未转换；
+  `nameserver-policy` 和节点专用 `proxy-server-nameserver-policy` 支持完整域名、整层
+  `*`、前缀 `.`/`+.`，共用从右向左的标签优先级；接入 IP bootstrap 和节点专用解析，
   检查 DNS 与代理链循环。直连解析时机、多服务器、fallback 与未转换字段进入
   保真度报告，不宣称支持 Clash 全部 DNS 策略。
 - 高级映射：桌面接口绑定、Linux uint32 路由标记、TCP Fast Open/Multi Path；
   detour 忽略物理选项与 MPTCP 的 IPv6 差异明确记账。AND/OR/NOT 与任意名称 inline
   rule-providers 支持域名/正则、CIDR、端口、网络及平台进程/包名条件子集；路由还支持
-  IP 版本和 Linux UID。保留显式 MATCH 默认出口与 REJECT-DROP；外部 provider 下载
-  和应用选择界面仍未接入。具体边界见保真度契约。
+  IP 版本和 Linux UID。保留显式 MATCH 默认出口与 REJECT-DROP；file 与 DIRECT HTTP
+  provider 的 YAML/text 和 MRSv1 domain/ipcidr 已接入，指定代理与应用选择界面仍未接入。具体边界见保真度契约。
 - JSON codec：Glaze 9.0.0 固定归档负责运行时快照、API 和内部路由策略；页面消费
   普通 C++ 数据，连接解析在任务线程。Clash YAML 与原生配置 DOM 保留现有适配器，
   迁移范围见 [开发记录](docs/glaze-migration.md)。
@@ -62,7 +70,7 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   未安装时回落「接管外部实例 → 直接 spawn」
 - 完整 CLI：同一二进制带子命令（core / mode / tun / proxy / profile / service），
   无参数启动进入 GUI
-- 浅色/深色主题（跟随系统）、岛屿风界面、自定义窗口标题栏、系统托盘（Windows 托盘菜单跟随应用主题）、
+- 浅色/深色主题（跟随系统）、岛屿风界面、自定义窗口标题栏、系统托盘（Windows 托盘菜单跟随应用主题；启用托盘后关闭窗口隐藏到托盘，停用后询问是否退出）、
   窄窗口响应式布局
 - 首页流量统计卡片用饼图展示累计上传/下载占比，并同时显示各自流量总量与百分比
 - Android：sing-box libbox（与桌面内核同版本）运行在独立 `:background` 进程，
@@ -126,6 +134,27 @@ cmake --build build --target clash-flux
 二级标签内容使用框架 Pager；源码配置会自动应用反向切换与隐藏虚拟页测量补丁，所有 CI 平台同步应用。
 详见 [UI 开发约定](docs/ui-development.md)。
 
+命名模块的小函数需区分显式 inline 与优化器展开，检查时核对 Debug/Release 参数；
+规则与汇编验证见 [C++ 模块开发](docs/cpp-modules-development.md)。
+
+DNS 本地内核运行回归先构建 `test_singbox`，再执行
+`ctest --test-dir build --output-on-failure -R '^(dns_hosts_runtime|dns_policy_runtime|dns_tls_runtime)$'`。
+需要 Python 和固定打包内核；TLS 回归另需 OpenSSL CLI 生成独占临时证书，缺少时
+CMake 明确报告未注册。验证范围与证据见[分层完成度记录](docs/l1-l2-l3-status.md)。
+
+桌面 CI 配置 `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`，缺失或禁用必跑回归会让
+配置失败；Python、固定打包内核和可执行 OpenSSL CLI 均为必要前提，下载测试
+也必须执行默认证书拒绝场景。必跑清单为 15 项，只有已记录的 MSVC C4737
+缺陷允许跳过直接 ORM 测试（14 项），订阅持久化测试始终必跑。本地可使用同一门禁：
+
+```bash
+cmake -S . -B build -DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON
+cmake --build build
+ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required
+```
+
+普通开发配置该选项默认关闭；Android/iOS 不适用此桌面测试清单。
+
 `run.sh` 默认只启动仓库 `build/clash-flux` 中已编译的程序，不负责隐式编译；
 因此构建失败时不得把改动标记为已完成。若使用其他构建目录，需显式设置
 `CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version` 验证对应产物可运行；需要
@@ -172,9 +201,13 @@ exact / approx / unsupported 记入保真度账本，不静默降级，也不在
 [sing-box 能力审查](docs/singbox-capability-audit.md)，稳定版版本与资产校验见
 [内核升级记录](docs/singbox-stable-upgrade.md)，新增映射示例见
 [Clash YAML 示例](docs/examples/kernel-capabilities.yaml)。
-2026-10-02 工作区的逐层完成度、实际验证范围和剩余保真度问题见
+2026-10-03 工作区的逐层完成度、实际验证范围和剩余保真度问题见
 [L1 / L2 / L3 开发复核](docs/l1-l2-l3-status.md)。该快照区分代码接入与实机验收，
 不代表已发布安装包的全部能力。
+最近增量的集中整理、新发现的订阅保护缺口和优先级见
+[项目复审（2026-10-03）](docs/project-review-2026-10-03.md)。
+后续已修复失败启动、异步清脏和删除文件引用边界：数据库无法打开时停止正常启动，
+订阅未 hydrate 时拒绝写入，删除文件等待数据库提交并核对所有引用；回归范围见复审文末。
 首批 L2 已关闭凭据原文、TLS/传输异常值和全局指纹漏记问题，包含永久回归；
 后续工作区补 VMess/VLESS UDP 编码、VMess 填充参数、Hysteria2 Gecko 与跳端口映射，
 保留协议默认并明确记录不适用参数，配置样本经固定内核检查。
@@ -187,7 +220,22 @@ AND/OR/NOT 路由另支持嵌套 GEO 与 inline RULE-SET 引用；失败时整�
 明确记账；并修复 HY1/HY2 的 MBps/Mbps 单位区别，见[样本](docs/examples/hysteria1-2026-10-02.yaml)。
 SSH 另支持密码、内联/加密私钥和主机公钥/算法列表；双认证顺序差异明确记账，
 外部私钥路径仍拒绝，见[SSH 样本](docs/examples/ssh-2026-10-02.yaml)。
+本地 `type: file` rule-provider 支持 YAML/text 的 domain/ipcidr/classical 子集，
+`path` 相对应用数据目录（Linux 默认 `~/.local/share/clash-flux`），最多 8 MiB。
+转换为 inline 快照，文件修改后须重新应用配置，缺少自动监听明确记 approx；
+文件错误会阻止候选应用，保留旧订阅。MRSv1 domain/ipcidr 已接入，classical/未来版本和文件管理界面仍待接入，见
+[样本与配套文件](docs/examples/file-providers-2026-10-03.yaml)及[保真度契约](docs/singbox-layers-and-fidelity.md)。
+HTTP provider 也支持 YAML/text 直连子集：任务下载、完整转换与候选检查后才更新
+自有缓存，失败沿用已验证旧缓存，运行计划保留独立内容快照。`interval` 在应用
+配置时检查到期，尚无定时热更新；`path` 只读不回写。支持 `header` 的单值 ASCII
+数组子集（如 `User-Agent: [my-client/1]`），请求头参与缓存身份；带头下载不跟随
+重定向并记 approx。多值、传输保留头、指定代理及 MRS classical/未来版本仍拒绝整份声明。
+Android 使用系统 TLS 下载桥接，默认校验证书；8 MiB 或更小 `size-limit` 超限拒绝，
+见[HTTP 离线样本](docs/examples/http-providers-2026-10-03.yaml)。
 协议类型覆盖为 12/15；不表示每种协议的全部字段已支持，更多字段与 provider 适配继续推进。
+代理组支持 `include-all-proxies: true` 的静态来源展开：本来源节点按名称排序追加到
+显式成员之后，不引入其它组或其它订阅节点。非空筛选和代理集合组合尚未转换，
+候选会明确拒绝；空组不会隐式直连。见[离线展开样本](docs/examples/group-expansion-2026-10-03.yaml)。
 桌面已接入[唯一主订阅 + 规则驱动的多次来源编排](docs/desktop-subscription-orchestration.md)：
 Clash YAML 次来源只通过启用规则参与，同名组/节点隔离；全局覆盖、来源分流、主规则、
 主兜底使用固定层级，权重只在层内比较。目标不可用默认阻断，可明确选择主默认出口或直连。
@@ -270,3 +318,9 @@ Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、
 修复/卸载；界面字符串含简中/繁中/英文）。GitHub Release 的 Windows 归档中同时
 包含 `clash-flux-Setup-<版本>.exe` 安装包和便携版文件。
+
+启动时在首帧构建前同步、只读地读取保存的主题，避免默认主题切换闪烁；其余设置与订阅仍异步加载。Lib-SQLite 启动只读补丁由 CMake 在加入依赖前自动应用，详见 [UI 开发约定](docs/ui-development.md)。
+
+ASN 规则以完整 ipverse IPv4/IPv6 公告网段快照转换，标为近似，数据缺失时拒绝候选并保留旧订阅。
+MRS 使用 vendored Zstandard 1.5.7 静态解码，无需额外安装系统库；固定归档 SHA256 由 CMake 校验。
+详细限制见 [保真度契约](docs/singbox-layers-and-fidelity.md)。

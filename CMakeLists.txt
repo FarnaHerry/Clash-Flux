@@ -38,12 +38,17 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.19 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.20 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
 # （huxerui::testing::UiTest），所以必须在加入 HuxerUI 之前就确定是否开启。
 option(CLASHFLUX_BUILD_TESTS "Build clash-flux test executables" ON)
+option(CLASHFLUX_REQUIRE_PROJECT_TESTS "Require the complete desktop regression suite (CI)" OFF)
+if (CLASHFLUX_REQUIRE_PROJECT_TESTS AND
+    (NOT CLASHFLUX_BUILD_TESTS OR ANDROID OR IOS OR HUXERUI_LIBRARY_GRAPH_ONLY))
+    message(FATAL_ERROR "CLASHFLUX_REQUIRE_PROJECT_TESTS requires a desktop test build")
+endif ()
 
 # Windows 没有 RPATH：链接共享版 HuxerUI 的可执行文件必须在**同目录**拿到
 # huxerui.dll。共享库在 build/huxerui-sdk/bin，加载器找不到时会弹出模态错误框，
@@ -363,6 +368,7 @@ set(CLASHFLUX_MODULE_UNITS
     # sing-box 核心：进程生命周期 / 订阅编译 / REST API / 推送流 / 系统代理
     src/core.cppm
     src/singbox.cppm
+    src/rule_provider_cache.cppm
     src/routing.cppm
     src/api.cppm
     src/stream.cppm
@@ -502,13 +508,83 @@ set(CLASHFLUX_HUXERUI_SQLITE_URL "https://github.com/HuxerUI/Lib-SQLite.git")
 set(CLASHFLUX_HUXERUI_SQLITE_COMMIT "5e3d040079629e698ca2f456ad79042cbbcd6aba")
 set(CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lib-sqlite")
+set(CLASHFLUX_HUXERUI_SQLITE_PATCHES
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/huxerui-lib-sqlite-startup-read.patch")
+if (NOT EXISTS "${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}/CMakeLists.txt"
+        AND NOT HUXERUI_LIBRARY_GRAPH_ONLY)
+    # Populate the pinned source before huxerui_use_library() adds its CMake project,
+    # so the maintained startup read patch is applied before any library targets exist.
+    set(CLASHFLUX_HUXERUI_SQLITE_ORIGIN
+        "${CLASHFLUX_HUXERUI_SQLITE_URL}@${CLASHFLUX_HUXERUI_SQLITE_COMMIT}")
+    string(SHA256 CLASHFLUX_HUXERUI_SQLITE_FETCH_HASH
+        "${CLASHFLUX_HUXERUI_SQLITE_ORIGIN}")
+    string(SUBSTRING "${CLASHFLUX_HUXERUI_SQLITE_FETCH_HASH}" 0 16
+        CLASHFLUX_HUXERUI_SQLITE_FETCH_HASH)
+    set(CLASHFLUX_HUXERUI_SQLITE_FETCH_NAME
+        "clashflux_huxerui_sqlite_${CLASHFLUX_HUXERUI_SQLITE_FETCH_HASH}")
+    FetchContent_Declare(${CLASHFLUX_HUXERUI_SQLITE_FETCH_NAME}
+        GIT_REPOSITORY "${CLASHFLUX_HUXERUI_SQLITE_URL}"
+        GIT_TAG "${CLASHFLUX_HUXERUI_SQLITE_COMMIT}"
+        GIT_SHALLOW FALSE
+    )
+    FetchContent_GetProperties(${CLASHFLUX_HUXERUI_SQLITE_FETCH_NAME}
+        SOURCE_DIR CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR
+        POPULATED CLASHFLUX_HUXERUI_SQLITE_POPULATED
+    )
+    if (NOT CLASHFLUX_HUXERUI_SQLITE_POPULATED)
+        cmake_policy(PUSH)
+        if (POLICY CMP0169)
+            cmake_policy(SET CMP0169 OLD)
+        endif ()
+        FetchContent_Populate(${CLASHFLUX_HUXERUI_SQLITE_FETCH_NAME})
+        cmake_policy(POP)
+        FetchContent_GetProperties(${CLASHFLUX_HUXERUI_SQLITE_FETCH_NAME}
+            SOURCE_DIR CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR
+        )
+    endif ()
+endif ()
+
 if (EXISTS "${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}/CMakeLists.txt")
-    message(STATUS "clash-flux: HuxerUI::SQLite 使用本地源码 ${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}")
+    message(STATUS "clash-flux: HuxerUI::SQLite 使用源码 ${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}")
+    foreach (CLASHFLUX_HUXERUI_SQLITE_PATCH IN LISTS CLASHFLUX_HUXERUI_SQLITE_PATCHES)
+        execute_process(
+            COMMAND git apply --check --unidiff-zero "${CLASHFLUX_HUXERUI_SQLITE_PATCH}"
+            WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}"
+            RESULT_VARIABLE CLASHFLUX_HUXERUI_SQLITE_PATCH_CHECK
+            ERROR_VARIABLE CLASHFLUX_HUXERUI_SQLITE_PATCH_ERROR
+        )
+        if (CLASHFLUX_HUXERUI_SQLITE_PATCH_CHECK EQUAL 0)
+            execute_process(
+                COMMAND git apply --unidiff-zero "${CLASHFLUX_HUXERUI_SQLITE_PATCH}"
+                WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}"
+                RESULT_VARIABLE CLASHFLUX_HUXERUI_SQLITE_PATCH_RESULT
+                ERROR_VARIABLE CLASHFLUX_HUXERUI_SQLITE_PATCH_ERROR
+            )
+            if (NOT CLASHFLUX_HUXERUI_SQLITE_PATCH_RESULT EQUAL 0)
+                message(FATAL_ERROR
+                    "HuxerUI::SQLite patch ${CLASHFLUX_HUXERUI_SQLITE_PATCH} failed: ${CLASHFLUX_HUXERUI_SQLITE_PATCH_ERROR}")
+            endif ()
+        else ()
+            execute_process(
+                COMMAND git apply --reverse --check --unidiff-zero "${CLASHFLUX_HUXERUI_SQLITE_PATCH}"
+                WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}"
+                RESULT_VARIABLE CLASHFLUX_HUXERUI_SQLITE_PATCH_REVERSE_CHECK
+                ERROR_VARIABLE CLASHFLUX_HUXERUI_SQLITE_PATCH_ERROR
+            )
+            if (NOT CLASHFLUX_HUXERUI_SQLITE_PATCH_REVERSE_CHECK EQUAL 0)
+                message(FATAL_ERROR
+                    "HuxerUI::SQLite patch ${CLASHFLUX_HUXERUI_SQLITE_PATCH} no longer applies to the pinned source: ${CLASHFLUX_HUXERUI_SQLITE_PATCH_ERROR}")
+            endif ()
+            message(STATUS "clash-flux: HuxerUI::SQLite patch ${CLASHFLUX_HUXERUI_SQLITE_PATCH} already applied")
+        endif ()
+    endforeach ()
     huxerui_use_library(clash-flux
         TARGET HuxerUI::SQLite
         PATH "${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}"
     )
 else ()
+    # Library graph-only configurations need the upstream identity but do not build
+    # SQLite sources, so keep their acquisition declarative.
     huxerui_use_library(clash-flux
         TARGET HuxerUI::SQLite
         URL "${CLASHFLUX_HUXERUI_SQLITE_URL}"
@@ -677,6 +753,7 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         clashflux_wire
         clashflux_qrcode
         yaml-cpp
+        libzstd_static
         Threads::Threads
     )
     if (APPLE AND NOT IOS)
@@ -873,15 +950,88 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         endif ()
 
         # clashflux.singbox 订阅编译器：只依赖 std + nlohmann.json 模块 + yaml-cpp。
-        add_executable(test_singbox tests/test_singbox.cpp src/singbox.cpp)
+        add_executable(test_singbox tests/test_singbox.cpp src/singbox.cpp src/profile_link.cpp)
         target_sources(test_singbox PRIVATE FILE_SET clashflux_singbox_modules
             TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-            FILES src/singbox.cppm src/vpn.cppm)
+            FILES src/singbox.cppm src/rule_provider_cache.cppm src/vpn.cppm)
         set_target_properties(test_singbox PROPERTIES CXX_MODULE_STD ON)
         target_compile_features(test_singbox PRIVATE cxx_std_23)
-        target_link_libraries(test_singbox PRIVATE clashflux_json yaml-cpp)
+        target_link_libraries(test_singbox PRIVATE clashflux_json yaml-cpp libzstd_static)
         add_test(NAME singbox COMMAND test_singbox)
+
+        if (CLASHFLUX_REQUIRE_PROJECT_TESTS)
+            find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        else ()
+            find_package(Python3 COMPONENTS Interpreter QUIET)
+        endif ()
+        if (Python3_Interpreter_FOUND)
+            find_program(CLASHFLUX_TEST_OPENSSL NAMES openssl
+                HINTS "${OPENSSL_ROOT_DIR}/bin" "$ENV{OPENSSL_ROOT_DIR}/bin"
+                    "C:/Program Files/OpenSSL/bin" "C:/Program Files/OpenSSL-Win64/bin")
+            set(CLASHFLUX_DOWNLOAD_TEST_ARGS)
+            if (CLASHFLUX_TEST_OPENSSL)
+                list(APPEND CLASHFLUX_DOWNLOAD_TEST_ARGS --openssl "${CLASHFLUX_TEST_OPENSSL}")
+            endif ()
+            if (CLASHFLUX_REQUIRE_PROJECT_TESTS)
+                if (NOT CLASHFLUX_TEST_OPENSSL)
+                    message(FATAL_ERROR "Required TLS regressions need the OpenSSL CLI")
+                endif ()
+                execute_process(COMMAND "${CLASHFLUX_TEST_OPENSSL}" version
+                    RESULT_VARIABLE CLASHFLUX_TEST_OPENSSL_RESULT
+                    OUTPUT_QUIET ERROR_QUIET TIMEOUT 10)
+                if (NOT CLASHFLUX_TEST_OPENSSL_RESULT STREQUAL "0")
+                    message(FATAL_ERROR "Required OpenSSL CLI cannot run: ${CLASHFLUX_TEST_OPENSSL}")
+                endif ()
+                list(APPEND CLASHFLUX_DOWNLOAD_TEST_ARGS --require-tls)
+            endif ()
+            add_executable(test_rule_provider_download tests/test_rule_provider_download.cpp
+                src/api.cpp src/singbox.cpp src/profile_link.cpp)
+            target_sources(test_rule_provider_download PRIVATE FILE_SET download_modules TYPE CXX_MODULES
+                BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+                FILES src/api.cppm src/utils.cppm src/singbox.cppm src/vpn.cppm)
+            set_target_properties(test_rule_provider_download PROPERTIES CXX_MODULE_STD ON)
+            target_compile_features(test_rule_provider_download PRIVATE cxx_std_23)
+            target_link_libraries(test_rule_provider_download PRIVATE
+                clashflux_wire clashflux_json yaml-cpp libzstd_static CURL::libcurl OpenSSL::SSL OpenSSL::Crypto)
+            if (WIN32)
+                target_compile_definitions(test_rule_provider_download PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+            endif ()
+            add_test(NAME rule_provider_download COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_rule_provider_download.py"
+                "$<TARGET_FILE:test_rule_provider_download>" ${CLASHFLUX_DOWNLOAD_TEST_ARGS})
+            add_test(NAME project_test_gate COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_project_test_gate.py"
+                "${CMAKE_COMMAND}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ProjectTestGate.cmake"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_rule_provider_download.py")
+            set_tests_properties(project_test_gate PROPERTIES TIMEOUT 45)
+            if (CLASHFLUX_BUNDLE_SINGBOX AND CLASHFLUX_SINGBOX_BUNDLED_BINARY)
+                add_test(NAME group_expansion_runtime COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_group_expansion_runtime.py"
+                    "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/group-expansion-2026-10-03.yaml")
+                set_tests_properties(group_expansion_runtime PROPERTIES TIMEOUT 30)
+                add_test(NAME dns_hosts_runtime COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dns_hosts_runtime.py"
+                    "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/dns-hosts-2026-10-03.yaml")
+                set_tests_properties(dns_hosts_runtime PROPERTIES TIMEOUT 30)
+                add_test(NAME dns_policy_runtime COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dns_policy_runtime.py"
+                    "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/dns-wildcard-policy-2026-10-03.yaml")
+                set_tests_properties(dns_policy_runtime PROPERTIES TIMEOUT 30)
+                if (CLASHFLUX_TEST_OPENSSL)
+                    add_test(NAME dns_tls_runtime COMMAND "${Python3_EXECUTABLE}"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dns_tls_runtime.py"
+                        "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
+                        "${CLASHFLUX_TEST_OPENSSL}")
+                    set_tests_properties(dns_tls_runtime PROPERTIES TIMEOUT 45)
+                else ()
+                    message(STATUS "DNS TLS runtime test unavailable: OpenSSL CLI not found")
+                endif ()
+            endif ()
+        endif ()
 
         add_executable(test_vpn tests/test_vpn.cpp)
         target_sources(test_vpn PRIVATE src/pptp.cpp src/openvpn.cpp src/vpn_compensation.cpp src/vpn_compensation_windows.cpp)
@@ -991,6 +1141,11 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             clashflux_deploy_huxerui_dll(test_persistence)
             add_test(NAME persistence COMMAND test_persistence)
         endif ()
+    endif ()
+
+    if (CLASHFLUX_REQUIRE_PROJECT_TESTS)
+        include(cmake/ProjectTestGate.cmake)
+        clashflux_check_required_tests()
     endif ()
 
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")

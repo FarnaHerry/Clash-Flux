@@ -12,6 +12,8 @@
 
 #include "app_resources.h"
 #include "ui.h"
+#include "empty_state.h"
+#include "page_layout.h"
 #include "task_bridge.h"
 
 #include "wire_codec.h"
@@ -189,14 +191,10 @@ void closeAllConnectionsForPlatform() {
     };
 
     const std::string query = searchValue.Get().text;
-    huxerui::View body = huxerui::Column {
-        huxerui::Text(Localized(!query.empty() ? "没有匹配的连接"
-                                   : streamOpen.Get() ? "暂无活动连接"
-                                                      : "连接流未就绪（内核未运行？）"))
-            .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
-                                      theme.colors.on_surface_variant}),
-    }.With(huxerui::Padding(32.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    huxerui::View body = EmptyState(
+        Localized(!query.empty() ? "没有匹配的连接"
+                  : streamOpen.Get() ? "暂无活动连接" : "连接流未就绪（内核未运行？）"),
+        app::images::connections);
 
     std::vector<std::size_t> visibleRows;
     for (std::size_t index = 0; index < rows.Size(); ++index) {
@@ -306,10 +304,14 @@ void closeAllConnectionsForPlatform() {
                   }),
           }.With(huxerui::Spacing(6.0F),
                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))};
+    if (!onBack && kPageTitlesInWindow && searching.Get()) {
+        actions = huxerui::View{title}.With(
+            huxerui::Frame{.width = 240.0F}, huxerui::Grow(0.0F));
+    }
     return onBack
         ? SecondaryPageScaffold(std::move(title), std::move(actions),
                                 std::move(body), onBack, searching.Get())
-        : PageScaffold(Localized("连接"), std::move(actions), std::move(body));
+        : PageScaffold(Localized("连接"), std::move(actions), std::move(body), false, false, true);
 }
 
 } // namespace clashflux::ui

@@ -310,12 +310,12 @@ export struct TunRoutePlan {
     std::vector<RouteRule> logicalRules;
     std::vector<TunNativeRoute> nativeRoutes;
 
-    bool ready() const noexcept {
+    inline bool ready() const noexcept {
         return capture.ready && capture.mode == TunCaptureMode::FullDevice &&
                !mainConnectionId.empty();
     }
 
-    bool requiresNativeRouteBackend() const noexcept {
+    inline bool requiresNativeRouteBackend() const noexcept {
         return !nativeRoutes.empty();
     }
 };
@@ -333,7 +333,7 @@ export struct EngineSelection {
     std::optional<EngineKind> engine;
     std::string reason;
 
-    bool ok() const noexcept { return engine.has_value(); }
+    inline bool ok() const noexcept { return engine.has_value(); }
 };
 
 // 平台/引擎适配器的最小运行时契约。编排层不直接调用 pppd、RAS 或 sing-box；
@@ -694,15 +694,15 @@ public:
         return true;
     }
 
-    const std::vector<EngineDescriptor>& engines() const noexcept {
+    inline const std::vector<EngineDescriptor>& engines() const noexcept {
         return engines_;
     }
 
-    const std::vector<VpnConnection>& connections() const noexcept {
+    inline const std::vector<VpnConnection>& connections() const noexcept {
         return connections_;
     }
 
-    const VpnPolicy& policy() const noexcept { return policy_; }
+    inline const VpnPolicy& policy() const noexcept { return policy_; }
 
     const VpnConnection* findConnection(std::string_view id) const noexcept {
         for (const VpnConnection& connection : connections_) {

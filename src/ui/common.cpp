@@ -15,6 +15,7 @@
 #include "proxies_model.h"
 #include "task_bridge.h"
 #include "ui.h"
+#include "page_layout.h"
 #include "app.h"
 
 #include "wire_codec.h"
@@ -568,51 +569,64 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                                                    huxerui::View actions,
                                                    huxerui::View content,
                                                    bool inlineCompactActions,
-                                                   bool fullWidthSections) {
+                                                   bool fullWidthSections,
+                                                   bool windowTitle) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     // 响应式：Compact(<600) 收窄一级岛内边距。
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
-    // 一级岛（仅桌面）：页面根本身是岛（Grow + Stretch 占满页面区块，圆角
-    // 16pt，base 表面），内容在岛内部滚动；海面底色经岛间缝隙透出。
-    // 移动端不再把页面套成外部卡片：去掉表面与圆角，内容直接落在窗口海面
-    // 底色上（内部卡片/分组仍按各自层级表达）。
-    // composable 形参被 codegen 固定为 const：拷贝到局部再走右值链。
-    // 窄屏时把标题和操作区改为上下布局，避免 Select/按钮挤出页面。
-    huxerui::View header;
-    if (compact && !inlineCompactActions) {
-        header = huxerui::Column {
-            huxerui::Text(title, huxerui::TextRole::Title),
-            std::move(actions),
-        }.With(huxerui::Spacing(theme.spacing.small),
+    if (kPageTitlesInWindow && !compact) {
+        // 桌面动作直接挂在本页标题栏中，不经共享 State 转交 View 或复制回调。
+        huxerui::View desktopBody = huxerui::View{content}.With(huxerui::Grow(1.0F));
+        if (fullWidthSections) desktopBody = huxerui::ProvideEnvironment(
+            SectionTabContentInsets{kSectionCardSpacing}, desktopBody);
+        desktopBody = huxerui::ProvideEnvironment(
+            SectionTabPickerInsets{kDesktopTitleBarHeight + 1.0F}, std::move(desktopBody));
+        return huxerui::Column{
+            huxerui::WindowTitleBar{
+                PageTitleText(theme, title).With(
+                    huxerui::Padding(huxerui::EdgeInsets{.left = kDesktopPageHorizontalInset})),
+                huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
+                huxerui::Row{actions}.With(
+                    huxerui::Padding(huxerui::EdgeInsets{.right = 8.0F}),
+                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+            }.With(huxerui::Frame{.height = kDesktopTitleBarHeight}, huxerui::Spacing(0.0F)),
+            huxerui::Row{}.With(huxerui::Frame{.height = 1.0F},
+                                huxerui::Background(theme.colors.outline)),
+            huxerui::Column{std::move(desktopBody)}.With(
+                huxerui::Padding(PageContentInsets(theme, false,
+                    fullWidthSections ? 0.0F : kDesktopPageHorizontalInset)),
+                huxerui::Grow(1.0F),
+                huxerui::Background(islands.base),
+                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+        }.With(huxerui::Spacing(0.0F), huxerui::Grow(1.0F),
+               huxerui::ClipChildren(),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    } else {
-        header = huxerui::Row {
-            huxerui::Text(title, huxerui::TextRole::Title),
-            huxerui::Spacer(),
-            std::move(actions),
-        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     }
+    static_cast<void>(windowTitle);
+    // Compact 共用页内标题与动作；桌面窗口控件由外壳独立保留。
+    huxerui::View header = PageHeaderLayout(theme,
+        PageTitleText(theme, title),
+        std::move(actions), compact && !inlineCompactActions);
     const float horizontal = fullWidthSections
         ? kSectionCardSpacing
-        : (compact ? 4.0F : theme.spacing.large);
+        : (compact ? 4.0F : kDesktopPageHorizontalInset);
     huxerui::View body = huxerui::View{content}.With(huxerui::Grow(1.0F));
     if (fullWidthSections) {
-        header = huxerui::View{header}.With(
-            huxerui::Padding(huxerui::EdgeInsets::Symmetric(horizontal, 0.0F)));
+        if (header) header = huxerui::View{header}.With(
+            huxerui::Padding(huxerui::EdgeInsets::Symmetric(
+                compact ? horizontal : kDesktopPageHorizontalInset, 0.0F)));
         body = huxerui::ProvideEnvironment(SectionTabContentInsets{horizontal}, body);
     }
-    return huxerui::Column {
-        std::move(header),
-        std::move(body),
-    }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(
-               fullWidthSections ? 0.0F : horizontal,
-               compact ? theme.spacing.medium : theme.spacing.large)),
+    std::vector<huxerui::View> children;
+    if (header) children.push_back(std::move(header));
+    children.push_back(std::move(body));
+    return huxerui::Column(std::move(children)).With(huxerui::Padding(PageContentInsets(theme, compact,
+               fullWidthSections ? 0.0F : horizontal)),
            huxerui::Spacing(theme.spacing.medium),
-           huxerui::Background(compact ? huxerui::Color::Transparent()
-                                       : islands.base),
-           huxerui::CornerRadius(compact ? 0.0F : islands.island_radius),
+           huxerui::Background(islands.base),
+           huxerui::CornerRadius(kPageTitlesInWindow || compact ? 0.0F : islands.island_radius),
            huxerui::ClipChildren(),
            huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -641,22 +655,24 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
               std::move(actions),
           }.With(huxerui::Spacing(theme.spacing.small),
                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
-    const float horizontal = fullWidthSections ? kSectionCardSpacing : 4.0F;
+    header = std::move(header).With(huxerui::Frame{.min_height = kPageHeaderHeight});
+    const float horizontal = fullWidthSections ? kSectionCardSpacing
+        : (compact ? 4.0F : kDesktopPageHorizontalInset);
     if (fullWidthSections) {
         header = huxerui::View{header}.With(
-            huxerui::Padding(huxerui::EdgeInsets::Symmetric(horizontal, 0.0F)));
+            huxerui::Padding(huxerui::EdgeInsets::Symmetric(
+                compact ? horizontal : kDesktopPageHorizontalInset, 0.0F)));
         body = huxerui::ProvideEnvironment(SectionTabContentInsets{horizontal}, body);
     }
-    // 与 PageScaffold 同规则：移动端二级页也直接落在海面底色上，不套外卡。
+    // 一级/二级页共用内容层底色，保持与窗口外框的颜色区分，不套外卡。
     huxerui::View scaffold = huxerui::Column {
         std::move(header),
         std::move(body),
-    }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(
-                   fullWidthSections ? 0.0F : horizontal, theme.spacing.medium)),
+    }.With(huxerui::Padding(PageContentInsets(theme, compact,
+                   fullWidthSections ? 0.0F : horizontal)),
            huxerui::Spacing(theme.spacing.medium),
-           huxerui::Background(compact ? huxerui::Color::Transparent()
-                                       : islands.base),
-           huxerui::CornerRadius(compact ? 0.0F : islands.island_radius),
+           huxerui::Background(islands.base),
+           huxerui::CornerRadius(kPageTitlesInWindow || compact ? 0.0F : islands.island_radius),
            huxerui::ClipChildren(), huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     if (backAction && !hideBack) {
@@ -681,7 +697,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     inputStyle.standard.hovered_border = huxerui::Color::Transparent();
     inputStyle.standard.focused_border = huxerui::Color::Transparent();
     inputStyle.standard.disabled_border = huxerui::Color::Transparent();
-    inputStyle.standard.minimum_height = 48.0F;
+    inputStyle.standard.minimum_height = kPageTitlesInWindow ? kDesktopTitleBarHeight : 48.0F;
     inputStyle.padding = huxerui::EdgeInsets::Symmetric(0.0F, 0.0F);
     huxerui::ThemeDefinition inputTheme;
     inputTheme.Set(inputStyle);
@@ -712,16 +728,16 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
            huxerui::Grow(1.0F));
 
-    // 使用 Row 做背景容器，高度与标签栏一致（48dp），圆角 24dp，无边框线。
+    // 桌面搜索框适配标题栏高度，手机保持 48dp 的页内搜索框。
     huxerui::View pill = huxerui::Row {
         std::move(pillContent),
-    }.With(huxerui::Frame{.height = 48.0F},
+    }.With(huxerui::Frame{.height = kPageTitlesInWindow ? kDesktopTitleBarHeight : 48.0F},
            huxerui::Padding(huxerui::EdgeInsets{
                .right = 4.0F,
                .left = 14.0F,
            }),
            huxerui::Background(theme.colors.surface_container_highest),
-           huxerui::CornerRadius(24.0F),
+           huxerui::CornerRadius(kPageTitlesInWindow ? kDesktopTitleBarHeight / 2.0F : 24.0F),
            huxerui::ClipChildren(),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
            huxerui::Grow(1.0F));
@@ -837,7 +853,7 @@ huxerui::View SelectedProgressBar(float progress, huxerui::Color foreground,
     const IslandTheme islands = ResolveIslandTheme(theme);
     huxerui::View card = content;
     return std::move(card).With(
-        huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.30F), {}, 28.0F, 2.0F},
+        huxerui::Shadow{ThemeShadowColor(theme, 0.30F), {}, 28.0F, 2.0F},
         huxerui::Background(islands.overlay),
         huxerui::CornerRadius(islands.island_radius),
         huxerui::Border(islands.outline_soft, 1.0F),
@@ -896,11 +912,6 @@ void DriveSettingsModel(huxerui::TaskScope tasks,
             next.trayEnabled = core.setting("tray.enabled", "true") == "true";
             next.startMinimized =
                 core.setting("tray.start_minimized", "false") == "true";
-            const std::string closeBehavior =
-                core.setting("tray.close_behavior", "0");
-            next.closeBehavior = closeBehavior == "1" ? 1
-                                 : closeBehavior == "2" ? 2
-                                                        : 0;
             next.envShell = core.setting("ui.env_shell", "");
             next.language = core.setting("ui.language", "system");
             // 都是内存读；State 按 operator== 去重，只有真的变了才通知订阅者。

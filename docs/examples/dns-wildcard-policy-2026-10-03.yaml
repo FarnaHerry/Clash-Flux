@@ -1,0 +1,25 @@
+# Loopback fixture: runtime test supplies the servers and replaces these ports.
+dns:
+  ipv6: false
+  nameserver: ['udp://127.0.0.1:15301']
+  nameserver-policy:
+    '+.example.test': 'udp://127.0.0.1:15310'
+    '.example.test': 'udp://127.0.0.1:15311'
+    '*.example.test': 'udp://127.0.0.1:15312'
+    'fixed.example.test': 'udp://127.0.0.1:15313'
+    '*.deep.example.test': 'udp://127.0.0.1:15314'
+    '.deep.example.test': 'udp://127.0.0.1:15315'
+    'left.*.example.test': 'udp://127.0.0.1:15316'
+    '*.a.example.test': 'udp://127.0.0.1:15317'
+    '.a.example.test': 'udp://127.0.0.1:15318'
+    'deep.*.test': 'udp://127.0.0.1:15319'
+    '.a.test': 'udp://127.0.0.1:15320'
+    '*.*.example.test': 'udp://127.0.0.1:15321'
+    '*': 'udp://127.0.0.1:15322'
+    '+.scope.*.test': 'udp://127.0.0.1:15323'
+    '.tail.*.test': 'udp://127.0.0.1:15324'
+proxies:
+  - {name: node-proxy, type: socks5, server: left.node.example.test, port: 11080}
+rules:
+  - DOMAIN,through-node.test,node-proxy
+  - MATCH,DIRECT

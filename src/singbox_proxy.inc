@@ -1024,6 +1024,8 @@ std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
         const std::string key = field.first.IsScalar() ? field.first.Scalar() : "(无效字段名)";
         if (key == "name" || key == "type" || key == "proxies" || key == "default-selected" ||
             key == "use" || key == "include-all" || key == "include-all-proxies" || key == "include-all-providers") continue;
+        if (ybool(item, "include-all-proxies") &&
+            (key == "filter" || key == "exclude-filter" || key == "exclude-type")) continue;
         if ((clashType == "url-test" || clashType == "fallback" || clashType == "load-balance") &&
             (key == "url" || key == "interval" || key == "tolerance")) continue;
         ctx.note(FidelityScope::Group, Fidelity::Approx, name,
@@ -1105,7 +1107,15 @@ std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
         }
         filtered.push_back(member);
     }
-    if (filtered.empty()) filtered.push_back("DIRECT");
+    if (filtered.empty()) {
+        if (ybool(item, "include-all-proxies")) {
+            ctx.note(FidelityScope::Group, Fidelity::Unsupported, name,
+                     "自动展开组没有编译后可用成员，空组回退尚未转换，拒绝候选而不改成 DIRECT");
+            ctx.result.error = std::format("代理组「{}」没有可用成员", name);
+            return std::nullopt;
+        }
+        filtered.push_back("DIRECT");
+    }
     if (const YAML::Node initial = item["default-selected"]; initial) {
         const std::string selected = ytext(item, "default-selected");
         if (out.value("type", "") == "selector" && initial.IsScalar() && !selected.empty() &&

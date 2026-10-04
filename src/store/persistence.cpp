@@ -66,17 +66,57 @@ model::Profile ToProfile(const db_schema::ProfileRow& row) {
 
 } // namespace
 
+StartupTheme readStartupTheme(const std::filesystem::path& file) {
+    StartupTheme theme;
+    std::error_code error;
+    const bool exists = std::filesystem::exists(file, error);
+    if (error) { theme.error = "读取启动主题失败：" + error.message(); return theme; }
+    if (!exists) return theme;
+    bool hasSettings = false;
+    auto inspected = sqlite::Database::QueryReadOnlySync(huxerui::File{file.string()},
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'",
+        [&hasSettings](const sqlite::RowView&) -> sqlite::Result<void> {
+            hasSettings = true;
+            return {};
+        });
+    if (!inspected) { theme.error = "读取启动主题失败：" + inspected.Error().Message(); return theme; }
+    if (!hasSettings) return theme;
+    auto read = sqlite::Database::QueryReadOnlySync(huxerui::File{file.string()},
+        "SELECT value FROM settings WHERE key='ui.theme_mode'",
+        [&theme](const sqlite::RowView& row) -> sqlite::Result<void> {
+            auto value = row.Get<std::string>("value");
+            if (!value) return value.Error();
+            theme.mode = *value == "0" ? 0 : *value == "2" ? 2 : 1;
+            return {};
+        });
+    if (!read) theme.error = "读取启动主题失败：" + read.Error().Message();
+    return theme;
+}
+
 struct Persistence::Impl {
     std::optional<sqlite::Database> database;
     bool ready = false;
-    // 库打不开/迁移不了 → 降级运行；此后不再尝试落库，也不假装成功。
+    // 打开失败的状态，仅供诊断；不允许继续订阅写入。
     bool degraded = false;
     mutable std::mutex mutex;
     std::unordered_map<std::string, std::string> settings;
-    std::unordered_set<std::string> dirty;
+    std::unordered_map<std::string, std::uint64_t> dirty;
     std::vector<model::Profile> profiles;
-    std::unordered_set<std::int64_t> dirtyProfiles;
-    std::unordered_set<std::int64_t> deletedProfiles;
+    std::unordered_map<std::int64_t, std::uint64_t> dirtyProfiles;
+    struct Deletion { std::uint64_t revision; std::string file; bool removeFile; };
+    std::unordered_map<std::int64_t, Deletion> deletedProfiles;
+    std::filesystem::path profileDirectory;
+    std::uint64_t settingsRevision = 0;
+    bool flushingSettings = false, flushingProfiles = false, closing = false;
+    struct FlushGuard {
+        Impl* impl;
+        bool Impl::* flag;
+        ~FlushGuard() { std::lock_guard lock(impl->mutex); impl->*flag = false; }
+    };
+    void requireProfilesReady() const {
+        if (!ready || !database || closing)
+            throw std::runtime_error("订阅持久化未就绪，操作已拒绝；原数据库与订阅文件保持不变");
+    }
     // 订阅修订号：三个变更入口各 +1，供 UI 侧做脏检查（见 profilesRevision）。
     std::uint64_t profilesRevision = 0;
     std::string lastError;
@@ -85,11 +125,12 @@ struct Persistence::Impl {
 Persistence::Persistence() : impl_(std::make_unique<Impl>()) {}
 Persistence::~Persistence() = default;
 
-huxerui::Task<bool> Persistence::open(const std::filesystem::path& file) {
+huxerui::Task<bool> Persistence::open(const std::filesystem::path& file,
+                                     const std::filesystem::path& profileDirectory) {
     Impl* impl = impl_.get();
     // 老库（user_version=0 的 SQLiteCpp / 早期 ORM 结构）由 0→1 迁移在事务内
     // 重建表并保留数据；真正迁移不了的库 open 失败并记录错误——应用不删除任何
-    // 文件，此时降级为内存缓存运行（重启丢数据），错误经 lastError 露出。
+    // 文件；订阅写入在 hydrate 完成前一律拒绝，失败停止正常启动。
     auto opened = co_await sqlite::Database::OpenAsync(
         huxerui::File{file.string()}, db_schema::schema(),
         db_schema::migrations(), db_schema::openOptions());
@@ -128,27 +169,21 @@ huxerui::Task<bool> Persistence::open(const std::filesystem::path& file) {
 
     // 打开前可能已有 setSetting（例如先写意图再启动内核）：hydrate 不能把它们
     // 冲掉，装完缓存后重新覆盖并保持标脏。
-    std::unordered_map<std::string, std::string> preOpenDirty;
     {
         std::lock_guard lock(impl->mutex);
-        for (const std::string& key : impl->dirty) {
+        std::unordered_map<std::string, std::string> preOpenDirty;
+        for (const auto& [key, revision] : impl->dirty) {
             const auto found = impl->settings.find(key);
             if (found != impl->settings.end()) {
                 preOpenDirty.emplace(found->first, found->second);
             }
         }
-    }
-
-    {
-        std::lock_guard lock(impl->mutex);
         impl->settings.clear();
         for (const db_schema::SettingRow& row : *rows) {
             impl->settings[row.key] = row.value;
         }
-        impl->dirty.clear();
         for (auto& [key, value] : preOpenDirty) {
             impl->settings[key] = std::move(value);
-            impl->dirty.insert(key);
         }
         impl->profiles.clear();
         impl->profiles.reserve(profileRows->size());
@@ -157,6 +192,8 @@ huxerui::Task<bool> Persistence::open(const std::filesystem::path& file) {
         }
         impl->dirtyProfiles.clear();
         impl->deletedProfiles.clear();
+        impl->profileDirectory = profileDirectory;
+        impl->closing = false;
         impl->ready = true;
         impl->degraded = false;
         impl->lastError.clear();
@@ -170,6 +207,7 @@ huxerui::Task<bool> Persistence::open(const std::filesystem::path& file) {
 
 huxerui::Task<void> Persistence::close() {
     Impl* impl = impl_.get();
+    { std::lock_guard lock(impl->mutex); impl->closing = true; }
     co_await flushSettings();
     co_await flushProfiles();
     if (impl->database.has_value()) {
@@ -186,7 +224,7 @@ huxerui::Task<void> Persistence::close() {
 
 bool Persistence::ready() const noexcept {
     std::lock_guard lock(impl_->mutex);
-    return impl_->ready && impl_->database.has_value();
+    return impl_->ready && impl_->database.has_value() && !impl_->closing;
 }
 
 bool Persistence::degraded() const noexcept {
@@ -204,8 +242,10 @@ std::string Persistence::setting(const std::string& key,
 void Persistence::setSetting(const std::string& key, const std::string& value) {
     if (key.empty()) return;
     std::lock_guard lock(impl_->mutex);
+    if (impl_->degraded || impl_->closing)
+        throw std::runtime_error("设置持久化不可用，操作已拒绝");
     impl_->settings[key] = value;
-    impl_->dirty.insert(key);
+    impl_->dirty[key] = ++impl_->settingsRevision;
 }
 
 bool Persistence::hasPendingSettings() const noexcept {
@@ -215,26 +255,33 @@ bool Persistence::hasPendingSettings() const noexcept {
 
 huxerui::Task<bool> Persistence::flushSettings() {
     Impl* impl = impl_.get();
-    std::vector<std::pair<std::string, std::string>> pending;
+    for (;;) {
+        { std::lock_guard lock(impl->mutex);
+          if (!impl->flushingSettings) { impl->flushingSettings = true; break; } }
+        co_await huxerui::Delay(std::chrono::milliseconds{1});
+    }
+    Impl::FlushGuard guard{impl, &Impl::flushingSettings};
+    struct Pending { std::string key, value; std::uint64_t revision; };
+    std::vector<Pending> pending;
     {
         std::lock_guard lock(impl->mutex);
         if (!impl->ready || !impl->database.has_value()) {
             if (impl->degraded) {
                 impl->lastError =
-                    "持久化不可用（数据库未打开/迁移失败），本次改动只在内存中，重启会丢失";
+                    "持久化不可用（数据库未打开/迁移失败），写入已拒绝";
                 co_return false;
             }
             co_return true;  // 尚未 open：没有需要落库的东西
         }
         pending.reserve(impl->dirty.size());
-        for (const std::string& key : impl->dirty) {
+        for (const auto& [key, revision] : impl->dirty) {
             const auto found = impl->settings.find(key);
             if (found != impl->settings.end()) {
-                pending.emplace_back(found->first, found->second);
+                pending.push_back({found->first, found->second, revision});
             }
         }
     }
-    for (const auto& [key, value] : pending) {
+    for (const auto& [key, value, revision] : pending) {
         auto result = co_await impl->database->InsertAsync(
             db_schema::settings(), db_schema::SettingRow{key, value},
             sqlite::ConflictPolicy::Replace);
@@ -243,9 +290,10 @@ huxerui::Task<bool> Persistence::flushSettings() {
             impl->lastError = "写入设置失败：" + result.Error().Message();
             co_return false;
         }
-        // 只清除本次真正写入的键；期间新标脏的同名键会重新入队。
+        // 只确认本次快照；等待期间的新写入（包括 ABA）保留待写版本。
         std::lock_guard lock(impl->mutex);
-        impl->dirty.erase(key);
+        if (const auto found = impl->dirty.find(key);
+            found != impl->dirty.end() && found->second == revision) impl->dirty.erase(found);
     }
     co_return true;
 }
@@ -257,6 +305,7 @@ std::vector<model::Profile> Persistence::listProfiles() const {
 
 std::int64_t Persistence::saveProfile(model::Profile profile) {
     std::lock_guard lock(impl_->mutex);
+    impl_->requireProfilesReady();
     if (profile.id == 0) {
         std::int64_t next = 1;
         for (const model::Profile& existing : impl_->profiles) {
@@ -274,31 +323,34 @@ std::int64_t Persistence::saveProfile(model::Profile profile) {
     } else {
         *found = profile;
     }
-    impl_->dirtyProfiles.insert(profile.id);
+    impl_->dirtyProfiles[profile.id] = ++impl_->profilesRevision;
     impl_->deletedProfiles.erase(profile.id);
-    ++impl_->profilesRevision;
     return profile.id;
 }
 
-bool Persistence::deleteProfile(std::int64_t id) {
+bool Persistence::deleteProfile(std::int64_t id, bool removeFile) {
     std::lock_guard lock(impl_->mutex);
+    impl_->requireProfilesReady();
+    const auto found = std::ranges::find(impl_->profiles, id, &model::Profile::id);
+    if (found == impl_->profiles.end()) return false;
+    Impl::Deletion deletion{++impl_->profilesRevision, found->file, removeFile};
     std::erase_if(impl_->profiles, [id](const model::Profile& existing) {
         return existing.id == id;
     });
     impl_->dirtyProfiles.erase(id);
-    impl_->deletedProfiles.insert(id);
-    ++impl_->profilesRevision;
+    impl_->deletedProfiles[id] = std::move(deletion);
     return true;
 }
 
 bool Persistence::setSelectedProfile(std::int64_t id) {
     std::lock_guard lock(impl_->mutex);
+    impl_->requireProfilesReady();
+    const auto revision = ++impl_->profilesRevision;
     for (model::Profile& profile : impl_->profiles) {
         profile.selected = profile.id == id;
         // 选中态可能从 1→0，统一标脏交给 flush upsert。
-        impl_->dirtyProfiles.insert(profile.id);
+        impl_->dirtyProfiles[profile.id] = revision;
     }
-    ++impl_->profilesRevision;
     return true;
 }
 
@@ -309,29 +361,35 @@ bool Persistence::hasPendingProfiles() const noexcept {
 
 huxerui::Task<bool> Persistence::flushProfiles() {
     Impl* impl = impl_.get();
-    std::vector<model::Profile> updates;
-    std::vector<std::int64_t> removals;
+    for (;;) {
+        { std::lock_guard lock(impl->mutex);
+          if (!impl->flushingProfiles) { impl->flushingProfiles = true; break; } }
+        co_await huxerui::Delay(std::chrono::milliseconds{1});
+    }
+    Impl::FlushGuard guard{impl, &Impl::flushingProfiles};
+    std::vector<std::pair<model::Profile, std::uint64_t>> updates;
+    std::unordered_map<std::int64_t, Impl::Deletion> removals;
     {
         std::lock_guard lock(impl->mutex);
         if (!impl->ready || !impl->database.has_value()) {
             if (impl->degraded) {
                 impl->lastError =
-                    "持久化不可用（数据库未打开/迁移失败），本次改动只在内存中，重启会丢失";
+                    "持久化不可用（数据库未打开/迁移失败），写入已拒绝";
                 co_return false;
             }
             co_return true;  // 尚未 open：没有需要落库的东西
         }
-        removals.assign(impl->deletedProfiles.begin(), impl->deletedProfiles.end());
-        for (const std::int64_t id : impl->dirtyProfiles) {
+        removals = impl->deletedProfiles;
+        for (const auto& [id, revision] : impl->dirtyProfiles) {
             const auto found = std::ranges::find_if(
                 impl->profiles, [id](const model::Profile& profile) {
                     return profile.id == id;
                 });
-            if (found != impl->profiles.end()) updates.push_back(*found);
+            if (found != impl->profiles.end()) updates.emplace_back(*found, revision);
         }
     }
 
-    for (const model::Profile& profile : updates) {
+    for (const auto& [profile, revision] : updates) {
         const db_schema::ProfileRow row = ToRow(profile);
         // PK 由应用分配（非自增），InsertAsync 会带上 id；Replace 让它同时
         // 承担插入与按主键覆盖两种语义。
@@ -343,17 +401,72 @@ huxerui::Task<bool> Persistence::flushProfiles() {
             co_return false;
         }
         std::lock_guard lock(impl->mutex);
-        impl->dirtyProfiles.erase(profile.id);
+        if (const auto found = impl->dirtyProfiles.find(profile.id);
+            found != impl->dirtyProfiles.end() && found->second == revision) impl->dirtyProfiles.erase(found);
     }
-    for (const std::int64_t id : removals) {
-        auto result = co_await impl->database->DeleteAsync(db_schema::profiles(), id);
+    for (const auto& [id, deletion] : removals) {
+        { std::lock_guard lock(impl->mutex);
+          const auto found = impl->deletedProfiles.find(id);
+          if (found == impl->deletedProfiles.end() || found->second.revision != deletion.revision) continue; }
+        // Capture remaining persisted references in the same transaction as
+        // deletion. No file is touched until the commit has succeeded.
+        auto result = co_await impl->database->TransactionAsync(
+            [id](sqlite::Transaction& transaction) -> sqlite::Result<std::vector<db_schema::ProfileRow>> {
+                auto removed = transaction.Delete(db_schema::profiles(), id);
+                if (!removed) return removed.Error();
+                return transaction.Select(db_schema::profiles()).All();
+            });
         if (!result) {
             std::lock_guard lock(impl->mutex);
             impl->lastError = "删除订阅失败：" + result.Error().Message();
             co_return false;
         }
-        std::lock_guard lock(impl->mutex);
-        impl->deletedProfiles.erase(id);
+        const auto rows = std::move(*result);
+        const auto cleanupError = co_await huxerui::RunWorker([impl, id, deletion, rows] {
+            std::lock_guard lock(impl->mutex);
+            const auto found = impl->deletedProfiles.find(id);
+            if (found == impl->deletedProfiles.end() || found->second.revision != deletion.revision)
+                return std::string{}; // restored/changed during the await
+            if (deletion.removeFile && !deletion.file.empty() && !impl->profileDirectory.empty()) {
+                // Unsafe/unresolvable paths are retained, never guessed or repaired.
+                const auto resolve = [&](const std::string& file) -> std::optional<std::filesystem::path> {
+                    const std::filesystem::path relative(file);
+                    if (file.empty() || file.find('\0') != std::string::npos || relative.is_absolute() ||
+                        relative.has_root_name() || relative.has_root_directory()) return std::nullopt;
+                    for (const auto& part : relative) if (part == "..") return std::nullopt;
+                    std::error_code ec;
+                    const auto root = std::filesystem::canonical(impl->profileDirectory, ec);
+                    if (ec) return std::nullopt;
+                    const auto path = std::filesystem::weakly_canonical(root / relative, ec);
+                    if (ec) return std::nullopt;
+                    const auto inside = path.lexically_relative(root);
+                    if (inside.empty() || inside == "." || inside.is_absolute()) return std::nullopt;
+                    for (const auto& part : inside) if (part == "..") return std::nullopt;
+                    return path;
+                };
+                const auto target = resolve(deletion.file);
+                // An unresolved reference makes cleanup unsafe as well.
+                const auto references = [&](const auto& profile) {
+                    if (profile.file.empty()) return false;
+                    const auto path = resolve(profile.file);
+                    return !path || (target && *path == *target);
+                };
+                if (target && !std::ranges::any_of(rows, references) &&
+                    !std::ranges::any_of(impl->profiles, references)) {
+                    std::error_code ec;
+                    const auto original = impl->profileDirectory / deletion.file;
+                    if (std::filesystem::is_regular_file(original, ec)) {
+                        std::filesystem::remove(original, ec);
+                        if (ec) return "订阅记录已删除，文件清理失败：" + ec.message();
+                    }
+                }
+            }
+            impl->deletedProfiles.erase(found);
+            return std::string{};
+        });
+        if (!cleanupError.empty()) {
+            std::lock_guard lock(impl->mutex); impl->lastError = cleanupError; co_return false;
+        }
     }
     co_return true;
 }

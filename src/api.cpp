@@ -6,6 +6,7 @@ module;
 
 #include <curl/curl.h>
 #include "wire_codec.h"
+#include "http_request_headers.h"
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -45,12 +46,23 @@ size_t onBodyWrite(char* ptr, size_t size, size_t nmemb, void* userdata) noexcep
     }
 }
 
+struct DownloadSink {
+    std::ofstream& out;
+    std::size_t maxBytes = 0, received = 0;
+    bool limitExceeded = false;
+};
+
 size_t onFileWrite(char* ptr, size_t size, size_t nmemb, void* userdata) noexcept {
     try {
+        if (size && nmemb > std::numeric_limits<std::size_t>::max() / size) return CURL_WRITEFUNC_ERROR;
         const size_t n = size * nmemb;
-        auto* out = static_cast<std::ofstream*>(userdata);
-        out->write(ptr, static_cast<std::streamsize>(n));
-        return out->good() ? n : CURL_WRITEFUNC_ERROR;
+        auto& sink = *static_cast<DownloadSink*>(userdata);
+        if (sink.maxBytes && n > sink.maxBytes - sink.received) {
+            sink.limitExceeded = true; return CURL_WRITEFUNC_ERROR;
+        }
+        sink.out.write(ptr, static_cast<std::streamsize>(n));
+        sink.received += n;
+        return sink.out.good() ? n : CURL_WRITEFUNC_ERROR;
     } catch (...) {
         return CURL_WRITEFUNC_ERROR;
     }
@@ -306,6 +318,16 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
                                    const std::filesystem::path& dest,
                                    const DownloadOptions& options) {
     ApiResult result;
+    if (!clashflux::http_request::ValidHeaders(options.headers)) {
+        result.error = "下载请求头非法或不支持";
+        return result;
+    }
+#if defined(CLASHFLUX_IOS)
+    if (!options.headers.empty()) {
+        result.error = "iOS 请求头下载尚未接入";
+        return result;
+    }
+#endif
     DownloadTemp temporary(dest);
     if (!temporary) {
         result.error = "无法创建下载临时目录: " + dest.string();
@@ -359,6 +381,7 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
         }
     }
 #else
+    CurlHeaderList requestHeaders;
     CurlHandle handle;
     if (!handle) {
         result.error = "curl_easy_init failed";
@@ -368,9 +391,19 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
     curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(easy, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
-    curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, options.headers.empty() ? 1L : 0L);
+    for (const auto& [name, value] : options.headers) {
+        const auto line = name + ": " + value;
+        if (!requestHeaders.append(line.c_str())) {
+            result.error = "无法分配下载请求头";
+            return result;
+        }
+    }
+    curl_easy_setopt(easy, CURLOPT_HTTPHEADER, requestHeaders.get());
+    curl_easy_setopt(easy, CURLOPT_HEADEROPT, CURLHEADER_SEPARATE);
     curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &onFileWrite);
-    curl_easy_setopt(easy, CURLOPT_WRITEDATA, &out);
+    DownloadSink sink{out, options.maxBytes};
+    curl_easy_setopt(easy, CURLOPT_WRITEDATA, &sink);
     curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, &onHeaderLine);
     curl_easy_setopt(easy, CURLOPT_HEADERDATA, &result.headers);
     curl_easy_setopt(easy, CURLOPT_TIMEOUT,
@@ -441,12 +474,20 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
             result.error = detail + "（curl " + codeText + "）";
         }
     }
+    if (sink.limitExceeded) result.error = "下载超过大小上限";
 #endif
     if (out.is_open()) {
         out.close();
         if (result.ok && out.fail()) {
             result.ok = false;
             result.error = "无法完成下载文件写入: " + dest.string();
+        }
+    }
+    if (result.ok && options.maxBytes) {
+        std::error_code sizeError;
+        const auto size = std::filesystem::file_size(temp, sizeError);
+        if (sizeError || size > options.maxBytes) {
+            result.ok = false; result.error = "下载超过大小上限或无法核对长度";
         }
     }
     if (result.ok && options.validate) {

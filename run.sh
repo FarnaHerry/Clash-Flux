@@ -7,4 +7,7 @@ if [ ! -x "$BIN" ]; then
     exit 1
 fi
 export INTEL_FORCE_PROBE="${INTEL_FORCE_PROBE:-1}"   # Intel Arc B390 iris DRI workaround
+if [[ "$BIN" = /* ]]; then
+    exec "$BIN" "$@"
+fi
 exec "./$BIN" "$@"

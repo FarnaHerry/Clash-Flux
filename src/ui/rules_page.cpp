@@ -9,15 +9,20 @@
 #include <charconv>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "app_resources.h"
 #include "ui.h"
+#include "empty_state.h"
 #include "task_bridge.h"
+#include "rule_target_picker.h"
 
 import clashflux.db;
+import clashflux.config;
+import clashflux.singbox;
 import clashflux.core;
 import clashflux.persistence;
 import clashflux.store.core;
@@ -44,22 +49,17 @@ const std::vector<std::string> kMatchKinds{
 
 const std::vector<std::string> kTierNames{"来源分流", "全局覆盖"};
 const std::vector<std::string> kUnavailableNames{"阻断", "主默认出口", "直连"};
-const std::vector<std::string> kTargetKindNames{"默认出口", "策略组", "节点"};
 
 huxerui::View RuleOptions(huxerui::State<std::size_t> tier,
     huxerui::State<std::size_t> unavailable, huxerui::State<std::size_t> kind,
-    huxerui::State<huxerui::TextEditingValue> object, huxerui::State<bool> enabled) {
+    huxerui::State<huxerui::TextEditingValue> object, huxerui::State<bool> enabled,
+    huxerui::State<RuleTargetCatalog> catalog,
+    huxerui::State<huxerui::TextEditingValue> search) {
     return huxerui::Column {
       huxerui::Text(Localized("规则层级")),
       huxerui::Select(kTierNames, tier.Get(), [](const std::string& text) { return huxerui::Text(Localized(text)); })
           .OnChanged([tier](std::size_t index) { tier = index; }),
-      huxerui::Text(Localized("目标对象（原生连接使用默认出口）")),
-      huxerui::Select(kTargetKindNames, kind.Get(), [](const std::string& text) { return huxerui::Text(Localized(text)); })
-          .OnChanged([kind](std::size_t index) { kind = index; }),
-      kind.Get() == 0 ? huxerui::View{huxerui::Row {}} : huxerui::View{
-          huxerui::TextField(object.Get()).Label(Localized("来源内的原始组名或节点名"))
-              .Variant(huxerui::TextFieldVariant::Outlined)
-              .OnChanged([object](const huxerui::TextEditingValue& value) { object = value; })},
+      RuleTargetPicker(catalog, kind, object, search),
       huxerui::Text(Localized("目标不可用时")),
       huxerui::Select(kUnavailableNames, unavailable.Get(), [](const std::string& text) { return huxerui::Text(Localized(text)); })
           .OnChanged([unavailable](std::size_t index) { unavailable = index; }),
@@ -214,6 +214,57 @@ std::vector<std::string> TargetNames(const std::vector<RuleSourceChoice>& profil
     return result;
 }
 
+// Editor inventory is read-only and independent of both running and preview plans.
+// Inactive Clash subscriptions are inspectable without downloading providers.
+RuleTargetCatalog LoadRuleTargetCatalog(std::int64_t id) {
+    RuleTargetCatalog catalog{.profileId = id, .ready = true};
+    if (!persistence::persistence().ready()) {
+        catalog.error = "订阅尚未加载完成"; return catalog;
+    }
+    const auto profiles = store::profilesStore().list();
+    const auto profile = std::ranges::find_if(profiles, [id](const auto& item) { return item.id == id; });
+    if (profile == profiles.end()) {
+        catalog.error = "目标来源已失效，请重新选择"; return catalog;
+    }
+    if (!vpn::SupportsMultiProxySources() || profile->type == "pptp" || profile->type == "openvpn") {
+        catalog.defaultOnly = true; return catalog;
+    }
+    const auto root = std::filesystem::canonical(cfg::dataDir() / "profiles");
+    const auto relative = std::filesystem::path(profile->file);
+    if (relative.empty() || relative.is_absolute()) {
+        catalog.error = "订阅文件路径无效"; return catalog;
+    }
+    const auto path = std::filesystem::canonical(root / relative);
+    const auto within = path.lexically_relative(root);
+    if (within.empty() || *within.begin() == "..") {
+        catalog.error = "订阅文件路径越界"; return catalog;
+    }
+    auto content = singbox::ReadRuleProviderText(path, 8 * 1024 * 1024, catalog.error);
+    if (!content) return catalog;
+    const auto trimmed = Trim(*content);
+    if (!trimmed.empty() && trimmed.front() == '{') {
+        catalog.defaultOnly = true; return catalog;
+    }
+    singbox::CompileOptions options;
+    options.profileYaml = std::move(*content);
+    options.mainConnectionId = store::ProfileConnectionId(id);
+    options.mainSourceName = profile->name;
+    const auto inspected = singbox::inspectClashSourceObjects(options);
+    catalog.error = inspected.error;
+    if (catalog.error.empty()) {
+        for (const auto& object : inspected.sourceObjects) {
+            // DIRECT is a built-in, not a user-declared node. Direct has its own
+            // unavailable policy; do not present it as a subscription object.
+            if (object.objectId == "DIRECT") continue;
+            catalog.objects.push_back({static_cast<std::size_t>(object.kind), object.objectId});
+        }
+        std::ranges::sort(catalog.objects, [](const auto& a, const auto& b) {
+            return a.kind == b.kind ? a.name < b.name : a.kind < b.kind;
+        });
+    }
+    return catalog;
+}
+
 // 当前"生效中"的连接：主连接（内核在跑且订阅已选中）+ 已连上的原生连接。
 // 纯函数、只读模型值——由 Lifecycle 以模型 State 为依赖驱动，不再每秒读 store。
 std::vector<std::string> ActiveRuleConnections(
@@ -285,6 +336,10 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
     auto editKind = huxerui::UseState<std::size_t>(0);
     auto editObject = huxerui::UseState(huxerui::TextEditingValue{});
     auto editEnabled = huxerui::UseState(true);
+    auto editCatalog = huxerui::UseState(RuleTargetCatalog{});
+    auto editSearch = huxerui::UseState(huxerui::TextEditingValue{});
+    auto catalogRequest = huxerui::UseState<std::uint64_t>(0);
+    auto catalogGeneration = huxerui::UseState<std::uint64_t>(0);
     auto policySaving = huxerui::UseState(false);
     auto loadGeneration = huxerui::UseState<std::uint64_t>(0);
 
@@ -361,6 +416,50 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
         },
         profilesModel->list, refreshTick);
 
+    huxerui::Lifecycle([=] {
+        if (catalogRequest.Get() == 0) return;
+        const auto ticket = catalogGeneration.Get() + 1;
+        catalogGeneration = ticket;
+        const auto& sources = editSources.Get();
+        const auto index = editTarget.Get();
+        const auto id = index < sources.size() ? sources[index].id : 0;
+        editCatalog = RuleTargetCatalog{.profileId = id};
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            const auto revision = persistence::persistence().profilesRevision();
+            RuleTargetCatalog result;
+            try {
+                result = co_await RunOnTaskThread([id] { return LoadRuleTargetCatalog(id); });
+            } catch (const std::exception& error) {
+                result = RuleTargetCatalog{.profileId = id, .ready = true, .error = error.what()};
+            }
+            if (ticket != catalogGeneration.Get() || index != editTarget.Get() ||
+                index >= editSources.Get().size() || editSources.Get()[index].id != id) co_return;
+            if (revision != persistence::persistence().profilesRevision()) {
+                catalogRequest = catalogRequest.Get() + 1; co_return;
+            }
+            editCatalog = std::move(result);
+        });
+    }, editTarget, editSources, catalogRequest, profilesModel->list, refreshTick);
+
+    const auto selectRuleSource = [editTarget, editObject, editSearch, editCatalog, catalogRequest](std::size_t index) {
+        if (editTarget.Get() == index) return;
+        editTarget = index;
+        ResetRuleTargetSelection(editCatalog, editObject, editSearch);
+        catalogRequest = catalogRequest.Get() + 1;
+    };
+    const auto targetSelectionValid = [=](std::int64_t id) {
+        // Keep an unchanged broken reference editable so the user can disable it
+        // or choose an unavailable policy. Never silently rebind it.
+        const auto index = editIndex.Get();
+        if (index >= 0 && static_cast<std::size_t>(index) < globalRules.Size()) {
+            const auto& old = globalRules[static_cast<std::size_t>(index)];
+            if (old.connectionId == store::ProfileConnectionId(id) &&
+                static_cast<std::size_t>(old.targetKind) == editKind.Get() &&
+                old.targetObject == editObject.Get().text) return true;
+        }
+        return RuleTargetSelectionValid(editCatalog.Get(), id, editKind.Get(), editObject.Get().text);
+    };
+
     // 生效中的连接：模型依赖驱动（内核状态 / 订阅列表 / 两条原生连接状态），
     // 不再是每秒一次 store 读取。
     huxerui::Lifecycle(
@@ -388,7 +487,8 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                                  editTarget, editPriority, globalRules,
                                  persistGlobalPolicy, globalEditorOpen, theme,
                                  editIndex, toast, editTier, editUnavailable, editKind,
-                                 editObject, editEnabled, policySaving, editSources](int index) {
+                                 editObject, editEnabled, policySaving, editSources, editCatalog, editSearch,
+                                 catalogRequest, selectRuleSource, targetSelectionValid](int index) {
         if (policySaving.Get()) return;
         const auto targetProfiles = TargetProfiles(profiles);
         editSources = targetProfiles;
@@ -414,6 +514,9 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
             for (std::size_t i = 0; i < targetProfiles.size(); ++i)
                 if (store::ProfileConnectionId(targetProfiles[i].id) == rule.connectionId) editTarget = i;
         }
+        editSearch = huxerui::TextEditingValue{};
+        editCatalog = RuleTargetCatalog{};
+        catalogRequest = catalogRequest.Get() + 1;
         if (compact) {
             globalEditorOpen = true;
             return;
@@ -421,7 +524,8 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
         dialog.Show(
             [profiles, editMatch, editPattern, editTarget, editPriority,
              globalRules, persistGlobalPolicy, theme, editIndex, toast, targetProfiles,
-             editTier, editUnavailable, editKind, editObject, editEnabled, policySaving](huxerui::DialogContext ctx)
+             editTier, editUnavailable, editKind, editObject, editEnabled, policySaving,
+             editCatalog, editSearch, selectRuleSource, targetSelectionValid](huxerui::DialogContext ctx)
                 -> huxerui::View {
                 auto targets = TargetNames(targetProfiles);
                 if (!targets.empty() && editTarget.Get() >= targets.size()) targets.push_back(huxerui::UseString(Localized("目标来源已失效，请重新选择")));
@@ -459,9 +563,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                                   [](const std::string& value) {
                                       return huxerui::Text(value);
                                   })
-                                  .OnChanged([editTarget](std::size_t index) {
-                                      editTarget = index;
-                                  })},
+                                  .OnChanged(selectRuleSource)},
                         huxerui::TextField(editPriority.Get())
                             .Label(Localized("层内优先级（数字越大越先匹配）"))
                             .Variant(huxerui::TextFieldVariant::Outlined)
@@ -469,7 +571,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                                            const huxerui::TextEditingValue& value) {
                                 editPriority = value;
                             }),
-                        RuleOptions(editTier, editUnavailable, editKind, editObject, editEnabled),
+                        RuleOptions(editTier, editUnavailable, editKind, editObject, editEnabled, editCatalog, editSearch),
                         huxerui::Row{
                             huxerui::Button(Localized("取消")).OnClick(
                                 [ctx] { ctx.Dismiss(); }),
@@ -478,6 +580,9 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                                 if (targets.empty() || editTarget.Get() >= targetProfiles.size()) {
                                     toast.Show(Localized("请选择目标连接"));
                                     return;
+                                }
+                                if (!targetSelectionValid(targetProfiles[editTarget.Get()].id)) {
+                                    toast.Show(Localized("请选择当前来源中的有效组或节点")); return;
                                 }
                                 int priority = 0;
                                 const std::string priorityText =
@@ -507,7 +612,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                                     .enabled = editEnabled.Get(),
                                     .unavailable = static_cast<vpn::UnavailablePolicy>(editUnavailable.Get()),
                                     .targetKind = static_cast<vpn::TargetKind>(editKind.Get()),
-                                    .targetObject = editKind.Get() == 0 ? "" : Trim(editObject.Get().text),
+                                    .targetObject = editKind.Get() == 0 ? "" : editObject.Get().text,
                                 };
                                 if (editIndex.Get() >= 0 && static_cast<std::size_t>(editIndex.Get()) < globalRules.Size())
                                     rule.id = globalRules[static_cast<std::size_t>(editIndex.Get())].id;
@@ -541,11 +646,8 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
         if (page == 0) {
             const std::size_t count = subscriptionRules.Size();
             body = count == 0
-                       ? huxerui::View{huxerui::Text(Localized("还没有订阅规则"))
-                                           .Style(huxerui::TextStyle{
-                                               huxerui::Font::System(font_size::kBody),
-                                               theme.colors.on_surface_variant})}
-                       : huxerui::View{};
+                ? EmptyState(Localized("还没有订阅规则"), app::images::route)
+                : huxerui::View{};
             if (count != 0) {
                 auto subscriptionList = huxerui::VirtualList(
                     count + (compact ? 1U : 0U),
@@ -639,15 +741,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
         } else {
             const std::size_t count = globalRules.Size();
             if (count == 0) {
-                body = huxerui::Column{
-                           huxerui::Text(Localized("还没有全局路由规则"))
-                               .Style(huxerui::TextStyle{
-                                   huxerui::Font::System(font_size::kBody),
-                                   theme.colors.on_surface_variant}),
-                       }
-                           .With(huxerui::CrossAlign(
-                                     huxerui::CrossAxisAlignment::Stretch),
-                                 huxerui::Grow(1.0F));
+                body = EmptyState(Localized("还没有全局路由规则"), app::images::route);
             } else {
                 auto globalList = huxerui::VirtualList(
                     count + (compact ? 1U : 0U),
@@ -760,7 +854,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
 
     huxerui::View listPage = onBack
         ? SecondaryPageScaffold(huxerui::Text(Localized("规则"), huxerui::TextRole::Title), std::move(actions), std::move(body), onBack, false, true)
-        : PageScaffold(Localized("规则"), std::move(actions), std::move(body), false, true);
+        : PageScaffold(Localized("规则"), std::move(actions), std::move(body), false, true, true);
     const auto editorProfiles = editSources.Get();
     auto editorTargets = TargetNames(editorProfiles);
     if (!editorTargets.empty() && editTarget.Get() >= editorTargets.size()) editorTargets.push_back(huxerui::UseString(Localized("目标来源已失效，请重新选择")));
@@ -769,6 +863,9 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
         if (editorTargets.empty() || editTarget.Get() >= editorProfiles.size()) {
             toast.Show(Localized("请选择目标连接"));
             return;
+        }
+        if (!targetSelectionValid(editorProfiles[editTarget.Get()].id)) {
+            toast.Show(Localized("请选择当前来源中的有效组或节点")); return;
         }
         int priority = 0;
         const std::string priorityText = editPriority.Get().text;
@@ -794,7 +891,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
             .enabled = editEnabled.Get(),
             .unavailable = static_cast<vpn::UnavailablePolicy>(editUnavailable.Get()),
             .targetKind = static_cast<vpn::TargetKind>(editKind.Get()),
-            .targetObject = editKind.Get() == 0 ? "" : Trim(editObject.Get().text),
+            .targetObject = editKind.Get() == 0 ? "" : editObject.Get().text,
         };
         if (editIndex.Get() >= 0 && static_cast<std::size_t>(editIndex.Get()) < globalRules.Size())
             rule.id = globalRules[static_cast<std::size_t>(editIndex.Get())].id;
@@ -853,9 +950,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                               [](const std::string& value) {
                                   return huxerui::Text(value);
                               })
-                              .OnChanged([editTarget](std::size_t index) {
-                                  editTarget = index;
-                              })},
+                              .OnChanged(selectRuleSource)},
                     huxerui::TextField(editPriority.Get())
                         .Label(Localized("层内优先级（数字越大越先匹配）"))
                         .Variant(huxerui::TextFieldVariant::Outlined)
@@ -863,7 +958,7 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                                        const huxerui::TextEditingValue& value) {
                             editPriority = value;
                         }),
-                    RuleOptions(editTier, editUnavailable, editKind, editObject, editEnabled),
+                    RuleOptions(editTier, editUnavailable, editKind, editObject, editEnabled, editCatalog, editSearch),
                 }.With(huxerui::Spacing(12.0F),
                        huxerui::CrossAlign(
                            huxerui::CrossAxisAlignment::Stretch))),

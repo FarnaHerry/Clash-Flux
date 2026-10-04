@@ -398,7 +398,7 @@ JSON 使用，本轮不把它当成 Clash 版本转换。字段边界及后续�
 依据：[固定拨号文档](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/docs/configuration/shared/dial.md)、
 [DefaultDialer](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/common/dialer/default.go)。
 
-### 4.1c L3 桌面来源编排基线（2026-10-01）
+### 4.1c L3 桌面来源编排基线（2026-10-03）
 
 | 能力 | 当前契约 |
 |---|---|
@@ -409,6 +409,7 @@ JSON 使用，本轮不把它当成 Clash 版本转换。字段边界及后续�
 | 原生 JSON 次来源 | 尚未开放，显式 Unsupported + 候选拒绝；主 JSON 未知字段继续保留 |
 | 目标缺失/未连接 | 匹配条件保留，Reject / 主默认出口 / Direct 由显式 unavailable 决定；运行事件进 warning |
 | 原生内部 CIDR | SourcePolicy 层，最长前缀作为同权重顺序；全局覆盖始终在前 |
+| 编辑目标目录 | Clash 来源的异步只读可搜索目录，包含未参与来源；不发布运行/预览映射。旧失效引用保留，新引用校验；手机、原生连接/JSON 只选默认出口 |
 | 手机 | 不载入普通次来源；所有可写入口保持单活动普通订阅限制 |
 
 运行预览不覆盖实际来源映射；保真度角标按 sourceId + 原始对象名关联，避免同名组误标。
@@ -444,36 +445,112 @@ sing-box 1.14 另有：`openvpn-server`、`openconnect`、`wireguard`、`tailsca
 仍存在的成员；无效值或用于 urltest 时记 approx，不伪造手动锁定。缓存中已经保存
 的选择可能优先于初始 default，这不是一次强制切换命令。
 未映射的组字段逐字段记 `Group/Approx`，包括 lazy、timeout、expected-status、
-filter 与界面字段。`use` 数组及 include-all 系列无法展开时记 `Group/Unsupported`，
+filter 与界面字段（下述展开子集的空筛选除外）。`use` 数组及 include-all/providers 无法展开时记 `Group/Unsupported`，
 只保留显式成员；proxy-providers 当前不下载或展开。rule-providers 的 inline 子集已接入，
-外部 http/file/MRS 来源逐声明记 unsupported，未成功转换的声明不会被同名国内别名替换。
+本地 file 与 HTTP 直连 YAML/text 子集也已接入（见下文）；未映射来源字段记 unsupported；MRSv1 domain/ipcidr 已接入，
+未成功转换的声明不会被同名国内别名替换。
 
-### 4.3a DNS（2026-10-01 更新）
+`include-all-proxies` 静态来源展开基线（2026-10-03）：
+
+| 输入/边界 | 映射与保真度 |
+|---|---|
+| `include-all-proxies: true` | exact；收集本来源实际编译成功的顶层节点，按名称字节序排序，追加在显式 proxies 后；保留重复，不自动加入组、内置出站或其它来源节点 |
+| 显式组成员/default-selected | 保留原顺序及前向组引用；selector default 可指向展开节点；urltest/仅测速 selector 都复用同一成员列表 |
+| 有被拒绝的节点 | 节点自身 Unsupported 不丢失，组另记 Approx 说明成员减少；不声称整个订阅全保真 |
+| false/no/0；空 filter/exclude-filter/exclude-type 字符串、use 空数组 | 关闭展开保留既有显式成员；空筛选/use 不影响合法展开 |
+| 非空筛选、use/include-all/providers 的展开组合 | 整个候选 Unsupported 失败，不忽略筛选后扩大范围，不只提交部分集合；正则引擎兼容与 proxy-providers 仍未接入 |
+| 非法布尔、重复声明、残缺/非数组 proxies、无可用成员 | Unsupported 并保留失败账本；不保留合法列表前缀，不隐式填 DIRECT；空组回退仍未接入 |
+| 依赖及次来源 | 展开后走原出站依赖图校验，detour/组循环拒绝；主/次来源分别收集后再命名空间化，导出闭包不会混入其它来源 |
+
+上游依据：Mihomo `88dcbf7f1614a67c3b36b848ee3592dfa92ada36` 的
+[AllProxies 收集/排序](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/config/config.go)、
+[显式成员后追加](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outboundgroup/parser.go)
+与 [筛选语义](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outboundgroup/groupbase.go)。
+固定 sing-box selector/urltest 使用原生 outbounds 数组；不向内核写 include-all 或筛选字段。
+样本见 [group-expansion-2026-10-03.yaml](examples/group-expansion-2026-10-03.yaml)。
+
+### 4.3a DNS（2026-10-03 更新）
 
 | Clash 输入 | 当前映射与保真度 |
 |---|---|
 | UDP/TCP/DoT/DoH/DoQ 地址 | typed server；DoT/DoQ 默认 853、DoH 默认 443，显式其它端口保留 |
 | HTTPS `#h3=true` | `type: h3`（内核字段不是 `http3`），证书校验保持开启；`h3=false` 保留普通 DoH |
+| DoT/DoH/DoQ、HTTPS 强制 H3 的 `skip-cert-verify=true/false` | exact；只写该端点 `tls.enabled:true` / `tls.insecure`；缺省不注入 TLS 选项，保留原服务器、SNI 和默认证书验证；可与 h3/出站参数组合 |
+| 证书参数的非法布尔/重名/未知组合、非加密传输；非 HTTPS 的 h3 | unsupported，整台服务器拒绝，不保留有效的半组参数；`name-cert-verify` 暂不映射，不用改变 SNI 的 `server_name` 冒充仅校验证书名称 |
 | `#出站名` / `#出站名&h3=true` | 绑定已实际编译的节点或组；未知出站/未接入的接口绑定拒绝服务器并记 unsupported |
 | `system` / `dns.enable: false` | 使用托管 local 系统解析；禁用时不激活源 DNS 自定义策略 |
-| 单服务器 `nameserver-policy`：完整域名 / `+.域名` | `dns.rules` 的 domain / domain_suffix + route server；精确匹配在先、后缀由长到短，保留最佳匹配优先级 |
+| 单服务器 `nameserver-policy`：ASCII 完整域名、整层 `*`、前缀 `.`/`+.` | exact 子集；domain / 锚定 domain_regex + route server，从右向左按固定标签 > * > . 选择，不按总字符串长度排序；保留已有大小写/尾点规范化 |
+| `*` / `*.域名` / 中间或多层 `*` | 每个 * 只吃一个非空标签；裸 * 只匹配单标签名称，不含根域或额外层级；可与 . / +. 前缀组合 |
+| `.域名` / `+.域名` | . 匹配一层以上子域，不含根域；+. 展开为根分支与子域分支。后声明只覆盖同一规范化分支，Exact 条目追踪覆盖，不改变其它分支 |
 | `default-nameserver` | IP DNS bootstrap，允许已接入的加密 IP DNS；域名和 detour 依赖拒绝并记 unsupported，数组仍记 approx |
-| `proxy-server-nameserver` | 域名代理节点的原生 domain_resolver；未指定时按已有精确/后缀 policy 或 DNS final 选择；显式策略尚未覆盖更多通配 |
-| `proxy-server-nameserver-policy` | 完整域名/+.后缀按同一优先级匹配，仅在 proxy-server-nameserver 有可转换默认服务器时生效；只设置节点解析器，不进入普通 DNS 查询规则 |
+| `proxy-server-nameserver` | 域名代理节点的原生 domain_resolver；未指定时按同一完整域名/整层通配 policy 或 DNS final 选择；合法域名下划线也进入解析依赖 |
+| `proxy-server-nameserver-policy` | 与普通 policy 共用模式元数据/优先级，仅在 proxy-server-nameserver 有可转换默认服务器时生效；只设置节点解析器，不进入普通 DNS 查询规则 |
 | `direct-nameserver` | 写入 DIRECT domain_resolver，approx：托管前置 resolve 已解析的请求不会重查此解析器 |
 | DNS 地址数组 | 首个可转换服务器作为默认/策略目标，不执行并发或后备，记 approx |
 | `fallback` | nameserver 存在时不参与查询，缺省时作为默认来源；两者都记 approx，不冒充污染筛选 |
 | `http://` DNS | unsupported；内核 HTTPS transport 强制 TLS，不改写用户 HTTP 地址 |
-| 其它 DNS 字段 / hosts / 模式、规则集通配及未映射 URL 参数 | 显式 unsupported；不把 Clash 转换缺口描述成内核缺少 FakeIP/DHCP/hosts 等能力 |
+| 精确 `hosts` 域名到单个 IP/完整 IP 数组 | 地址和域名条件 exact 子集，来源整体 approx；原生 hosts `predefined`、DNS A/AAAA rule、节点/DNS 端点 domain_resolver 与主连接前置 resolve；保留 server/SNI 原文 |
+| `dns.use-hosts` / `dns.enable:false` | false/no/0 仅关闭 hosts DNS 应答；全局 hosts 的节点/端点/主连接解析仍有效；非法 use-hosts 记 unsupported 且不猜测启用 |
+| hosts TTL/缓存/多 IP 拨号 | DNS 应答 rewrite_ttl:10；显式 hosts 路径 disable_cache:true，避免共用缓存里普通 DNS 覆盖映射；多地址连接选择不同于 Clash 的随机选择，来源记 approx |
+| hosts 通配/别名/lan/CIDR/非 IP 或异常数组、含点分 IPv4 的 IPv6、重名 | unsupported，拒绝整条映射；不删除坏地址后保留前缀，不把通配改成后缀。域名规范化后重名全部拒绝，独立合法映射仍可保留 |
+| 其它 DNS 字段 / 系统 hosts 开关 / 模式、规则集通配及未映射 URL 参数 | 显式 unsupported；不把 Clash 转换缺口描述成内核缺少 FakeIP/DHCP/hosts 等能力 |
 
 策略只在无 nameserver 时也会生成，默认路径继续为 local。完整 DNS 策略可通过原生
-JSON 配置保留；Clash 的 `*.域名`（一级子域）和 `.域名`（不含根域）暂不转换，
-不能都改写成包含根域的 suffix。DNS 服务域名使用显式 bootstrap 或 protected local。
+JSON 配置保留；`*.域名`（一级子域）和 `.域名`（不含根域）分别生成精确层级的
+锚定 regex，不能都改写成包含根域的 suffix。部分标签通配、非前缀位置的 +、非法空
+标签/超长标签、非 ASCII 字面量、geosite:/rule-set: 和其它未接入格式整条 unsupported。
+DNS 服务域名使用显式 bootstrap 或 protected local。
 DNS server resolver、DNS detour、节点 resolver 与组候选共同检查依赖，缺失目标或循环
 返回编译错误；不去掉 detour 后直连。`direct-nameserver-follow-policy`、
-fallback-filter、FakeIP 与 hosts 输入转换仍待实现。
+fallback-filter、FakeIP、hosts 通配/别名与系统 hosts 开关仍待实现。
 DNS approx 和 unsupported 在摘要中分别计为“近似”和“忽略”。原生 JSON 不经过此
 Clash 图检查，仍保留原始字段并由固定内核校验。
+
+策略样本：[dns-wildcard-policy-2026-10-03.yaml](examples/dns-wildcard-policy-2026-10-03.yaml)。
+`dns_policy_runtime` 用生产编译器（含主来源 namespace）、固定官方 1.14.2、独占
+临时目录及 loopback DNS/SOCKS 服务，按实际被查询服务器断言 **63 场景**：根域/
+单层/多层、边界/大小写/下划线、中间/连续 *、. 与 +. 的组合、trie 固定分支优先、
+普通与节点专用 resolver 隔离（含普通 DNS 已缓存节点同名应答），以及实际 SOCKS 节点连接。不是公网/TUN/Android
+实机验收。节点选择保持模式元数据，原生匹配使用生成的 Go regex；元数据不进入 JSON。
+上游依据（2026-10-03）：[域名通配语法](https://wiki.metacubex.one/handbook/syntax/#域名通配符)、
+[Mihomo trie](https://github.com/MetaCubeX/mihomo/blob/Meta/component/trie/domain.go)、
+[DNS trie 插入顺序](https://github.com/MetaCubeX/mihomo/blob/Meta/dns/resolver.go)、
+[固定内核 regex 匹配](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/route/rule/rule_item_domain_regex.go)。
+
+证书参数样本：[dns-tls-parameters-2026-10-03.yaml](examples/dns-tls-parameters-2026-10-03.yaml)。
+`dns_tls_runtime` 使用生产编译器、固定内核和独占临时证书/loopback DoT/DoH 服务；
+验证未声明/false 拒绝不受信任证书、显式 true 成功，SNI/HTTP Host/路径保持原值。
+测试注入的临时信任根仅用于将证书链信任与名称校验分开验证，不进入生产编译器；
+信任根匹配且名称正确时 false 成功，名称不匹配时仍失败。DoQ/H3 本批仅转换与
+配置 check，没有真实 QUIC 握手验收。该 CTest 需要 Python、打包内核和 OpenSSL CLI，
+缺少 CLI 时 CMake 明确报告不注册；不得把缺少前提算为测试通过。
+上游依据（2026-10-03）：[Mihomo DNS 参数](https://wiki.metacubex.one/config/dns/#附加参数)、
+[DoT](https://github.com/MetaCubeX/mihomo/blob/Meta/dns/dot.go)、
+[DoH](https://github.com/MetaCubeX/mihomo/blob/Meta/dns/doh.go)、
+[DoQ](https://github.com/MetaCubeX/mihomo/blob/Meta/dns/doq.go)、
+[固定 TLS 选项](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/tls.go)、
+[固定 DoT](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/dns/transport/tls.go)、
+[固定 DoH](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/dns/transport/https.go)。
+
+hosts DNS 应答置于 nameserver-policy 和 GEO DNS policy 之前，只匹配明确的域名与
+A/AAAA，不改变 TXT/MX 等查询或扩大到子域。连接阶段在嗅探/DNS 劫持后、普通
+resolve 前增加精确域名 resolve，并让普通 resolve 排除这些域名，防再次解析覆盖
+映射；来源命名空间化时同步缓存的 hosts DNS tag。仍属于前置动作，不改变 UserOverride/
+SourcePolicy 的层次。次来源只保留出站引用的命名空间 hosts 解析依赖，不导入主
+DNS 应答/连接前置规则；该差异单独记 source.hosts/approx。未匹配的名称不访问
+新 hosts server，因此不会借该服务器的默认 path 导入额外系统 hosts 策略；本批
+不写系统 hosts、不读订阅指定的外部文件，不修改数据库/订阅文件。
+
+公开样本：[dns-hosts-2026-10-03.yaml](examples/dns-hosts-2026-10-03.yaml)。
+`dns_hosts_runtime` 使用生产编译器与固定官方内核，在独占临时目录及 loopback
+DNS/HTTP/SOCKS 端口运行；不打开应用运行时/数据库、不使用真实订阅或远端服务。
+这是 Linux 本地受控 DNS/连接验证，不等同于公网/Android 实机验收。
+上游依据（2026-10-03）：
+[固定 hosts schema](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/dns.go)、
+[原生 hosts 实现](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/dns/transport/hosts/hosts.go)、
+[resolver 选项](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/outbound.go)、
+[Clash hosts 应答/use-hosts](https://github.com/MetaCubeX/mihomo/blob/Meta/dns/middleware.go)、
+[Clash hosts 解析/多地址选择](https://github.com/MetaCubeX/mihomo/blob/Meta/component/resolver/host.go)。
 
 ### 4.4 规则
 
@@ -492,6 +569,31 @@ sniff、DNS 劫持等前置规则。
 `no-resolve` 修饰符目前保留匹配条件但记 `Rule/Approx`：托管路由的前置 resolve
 仍可能解析域名，不能宣称复现 Clash 的“不解析”语义。未知附加修饰符和缺少字段的
 规则整条跳过并记 unsupported，不再截断第三个字段以后的内容后静默接受。
+
+2026-10-04：classical inline/file/HTTP provider 的 `IP-CIDR` / `IP-CIDR6` /
+`SRC-IP-CIDR` 条目及嵌套逻辑子条件也接受第三字段 `no-resolve`；IP 匹配完整保留，
+修饰符仍按上述契约记 `Rule/Approx`。未知、空或重复的附加字段拒绝整份 provider，
+错误保留 payload 位置，不提交有效前缀。回归同时覆盖 HTTP 暂存校验与最终候选编译。
+
+2026-10-04 ASN/MRS 增量：
+
+| 输入 | 翻译与保真度 |
+| --- | --- |
+| `IP-ASN` / `SRC-IP-ASN` | approx；使用 [ipverse 公告网段](https://github.com/ipverse/as-ip-blocks)的完整 IPv4/IPv6 JSON 快照，展开为 `ip_cidr` / `source_ip_cidr`。不输出不存在的 ASN 字段；数据与 Mihomo ASN 数据库、实时归属可能不同 |
+| ASN 在 classical inline/file/HTTP 与 AND/OR/NOT 中 | 同一转换器；非零 uint32 编号、完整双地址族列表、ASN 身份与 CIDR 全量校验。数据缺失拒绝候选，不能忽略条件；`no-resolve` 另记 approx |
+| HTTP provider → ASN 依赖 | 编译器只声明资源、读缓存；任务层有界重复发现（最多 256 个不同资源/256 轮），全部暂存、完整候选检查后替换。每日到期仅在应用配置时刷新；可用旧缓存允许失败回退，无缓存则保留旧配置并失败 |
+| MRSv1 domain/ipcidr（file/HTTP） | exact 解码已支持的 ASCII 域名集合与 IPv4/IPv6 区间；后续 inline 快照/定时刷新差异仍 approx。域名精确项、仅子域及整层 `*` 分开保留；地址区间分解为不扩大的 CIDR 集合 |
+| MRS 不合法/不支持的集合 | classical、非 ASCII 域名、未知格式/集合版本、扩展头、损坏位图、逆序/交叠/跨地址族区间与附加数据均整份拒绝。压缩输入 8 MiB、解压 32 MiB、规则上限 100 万、字典边上限 400 万；不截断提交 |
+
+MRS 格式依据 [Mihomo MRS reader](https://github.com/MetaCubeX/mihomo/blob/Meta/rules/provider/mrs_reader.go)、
+[域名二进制集合](https://github.com/MetaCubeX/mihomo/blob/Meta/component/trie/domain_set_bin.go)及
+[IP 区间集合](https://github.com/MetaCubeX/mihomo/blob/Meta/component/cidr/ipcidr_set_bin.go)。
+解码使用固定 Zstandard 1.5.7 本地归档和 SHA256；没有引入第二个代理内核。
+MRS 展开后的匹配集合在原生配置中按字段合并为分立 OR 分支，避免每个域名单建一条规则。
+解码直接使用有界字符串集合并累计字段数组，不先构建逐条 YAML/JSON 中间树；
+此优化保留相同匹配、完整校验与保真度条目，性能证据见分层完成度记录。
+ASN 数据为独立自有 HTTP 资源，不改变 Android 打包国内 GEO 和数据库 schema；手机最终检查仍由后台 libbox 承担。
+失败替换回归验证旧 provider/ASN 缓存逐字节保留，不宣称多文件提交具备崩溃事务。
 
 `process_name` / `process_path` / `process_path_regex` **只在 Linux/Windows/macOS 生效**。
 Android 的 `PROCESS-NAME` → `package_name`、`PROCESS-NAME-REGEX` →
@@ -543,8 +645,100 @@ classical 复用以上逻辑条件子集。整份 payload 必须可转换才生�
 原条目与原因，整份 payload 不会部分提交。
 显式声明优先于国内别名：声明转换失败时引用规则拒绝，不替换成 GEOSITE/GEOIP CN。
 未声明的历史国内别名仍保留，但记 approx，因为无法证明与原 provider 内容相同。
-外部 YAML/text/MRS 下载、文件来源与规则集管理界面仍未接入；不改变 Android 国内
+HTTP 指定代理下载、MRS classical/未来版本、文件监听与规则集管理界面仍未接入；不改变 Android 国内
 GEO 规则集的固定构建打包流程。
+
+#### 本地 file provider 快照（2026-10-03）
+
+`type: file` 与 inline 共用 domain/ipcidr/classical 的匹配转换器。默认 `format: yaml`，
+inline/file/HTTP 的 format 仅在字段缺失时取缺省；显式对象、数组、null、空字符串/
+空白均整份拒绝并记 unsupported，不能经 ytext 变成缺省 YAML（R04，见项目复审）。
+只接受单文档、唯一 `payload` 数组；`format: text` 按行读取，忽略空行、`#`/`//`
+整行注释，支持 CRLF 与无末尾换行。未知顶层字段、重复 payload、非标量条目、
+未映射条件均拒绝整份来源；不筛掉失败成员。Mihomo 的 `rules` 别名和宽松逐行
+YAML 解析不在此严格子集内，明确拒绝而非假装转换成功。
+
+| 输入/生命周期 | 当前映射与保真度 |
+|---|---|
+| 有效 file YAML/text 的 domain/ipcidr/classical 子集 | 条件与已有 inline 转换器相同；原位置引用原生 inline rule_set，来源整体 approx |
+| 文件自动更新 | approx；Mihomo 监听文件，当前只在编译时取快照，重新应用配置才加载新内容 |
+| path | 相对于 `CompileOptions.ruleProviderDir`，应用统一传 `cfg::dataDir()`；不用 cwd 或订阅文件目录 |
+| 越界/缺失/异常文件或无效 payload | unsupported + 候选编译失败，保留失败账本；不以同名 CN 别名替代，不输出部分配置 |
+| 其它 file 字段、MRS classical/未来版本 | unsupported；HTTP 基础子集见下一节，不伪造热更新支持 |
+
+只读边界：非空相对路径，禁止 `..` 与绝对路径，canonical 后仍须位于根内，
+拒绝越界符号链接和非普通文件；最多读取 8 MiB，NUL 拒绝。编译器不下载、写入、
+删除或登记这些文件到 GEO 资源清单。刷新/编辑/启用的候选检查复用同一根目录，
+file 声明失败（即使尚未引用）会阻止候选应用；停核时仍可编译诊断。既有桌面
+候选失败路径保留旧订阅与运行配置，手机异步恢复边界未因此宣称完成。
+Android 的根是应用私有数据目录，本批未提供复制/管理文件的 UI。
+桌面默认根分别为 Linux `$XDG_DATA_HOME/clash-flux`（缺省
+`~/.local/share/clash-flux`）、Windows `%APPDATA%\clash-flux`、macOS
+`~/Library/Application Support/clash-flux`。
+
+复现：[file-providers-2026-10-03.yaml](examples/file-providers-2026-10-03.yaml)。
+测试入口显式把样本所在目录作为根；实际应用请把附带 `file-provider-rules/` 复制到
+应用数据目录下。上游依据（2026-10-03 核对）：
+[Mihomo provider 文档](https://wiki.metacubex.one/config/rule-providers/)、
+[文件/text/YAML 解析](https://github.com/MetaCubeX/mihomo/blob/Meta/rules/provider/provider.go)、
+[文件监听与更新](https://github.com/MetaCubeX/mihomo/blob/Meta/component/resource/fetcher.go)。
+
+#### HTTP provider 的任务下载与缓存快照（2026-10-03）
+
+`type: http` 支持上述 YAML/text domain/ipcidr/classical 子集，条件转换共用 inline/file
+转换器。声明先校验并输出 `CompileResult.httpRuleProviders`；缓存未准备好时返回
+编译失败和账本，仍保留资源清单。编译器不联网；预览/保真度诊断只读已有缓存，
+首次远程内容由启动、应用路由计划、候选验证与订阅刷新/编辑的任务线程准备。
+
+| 声明/能力 | 当前映射与保真度 |
+|---|---|
+| `url` | 仅 HTTP(S)，保持原文，不降级协议或证书校验；URL userinfo 鉴权未跨平台接入，拒绝而非丢凭据；无完整内容时拒绝候选 |
+| `proxy` | 缺省使用直连，显式仅支持 `DIRECT`；其它值整份 unsupported，不用当前 mixed-port 冒充指定出站 |
+| `interval` | 非负整数秒，缺省/0 只在无可用内容时下载；正值在应用配置时按自有缓存 mtime 检查到期 |
+| 更新生命周期 | approx；inline 快照不随后台计时器热更新，直连路径不等同于 Mihomo 缺省的路由选择 |
+| `size-limit` | 非负整数，0/缺省上限 8 MiB，正值只支持 ≤8 MiB；超限拒绝整份，不截断成可解析前缀（与 Mihomo LimitReader 不同，approx） |
+| `path` | 数据目录内的只读种子，仅在无可用自有缓存时尝试；下载写自有缓存，不覆盖 path（缓存布局差异记 approx） |
+| `header` 的单值普通请求头 | exact 子集；映射的每项须为一个非空 ASCII 字符串的数组，保留值/内部空格；名称按大小写无关处理；总量（名称+值+分隔符）≤16 KiB |
+| 带 `header` 的重定向 | approx；跨平台统一拒绝跳转，使用最终 URL；已有验证缓存时沿用旧内容，首次无内容拒绝候选；无 header 的既有跳转路径不变 |
+| 多值/空值/非 ASCII/首尾空格/控制字节/重复 header、传输保留字段 | unsupported，拒绝整份声明；不选择首值、不合并、不让平台静默抑制。保留字段含 Host、Content-Length、Connection、Accept-Encoding、Proxy-Authorization、Origin 等，完整列表见 `src/http_request_headers.h` |
+| fallback `payload` / `path-in-bundle` / MRS classical/未来版本 | unsupported，拒绝整份 HTTP 声明；不存在静默忽略后仍下载的路径 |
+
+来源整体记一条 Field/Approx，覆盖下载路径、缓存布局、大小和更新生命周期差异；
+匹配子条件仍逐项沿用现有账本。下载失败沿用已验证缓存/种子是运行事件，记录
+warning/application log，不重复记成匹配语义损失或启停 toast。
+
+缓存位于 `coreWorkDir()/rule-providers`，与 GEO `.srs` 和用户文件分开。身份包含
+源码格式版本、稳定来源 ID、原 provider 名、原 URL、behavior/format、种子 path
+和大小上限；非空 header 的规范化名称与原始值追加到身份，鉴权更换不能复用旧内容。
+无 header / 空映射保留原身份，避免升级导致已有离线缓存失效；header 大小写变化不改身份。
+头值只存在来源声明/任务/缓存身份，不进入生成的内核配置、保真度或错误诊断。
+运行命名空间 tag、预览目录不参与身份。文件名使用平台无关的非密码
+摘要，读取前比较缓存头中的完整身份与 v1 标记；冲突/未来版本失败且不覆盖。
+缓存不按文件名猜 URL，不进行坏缓存删除、目录扫描清理或订阅元数据修复。
+
+任务先创建独占临时目录，下载与转换全部完成后，把 raw 内容注入候选
+`ruleProviderContents`。完整编译、策略目标与桌面内核 check 通过才提交缓存；
+失败保留旧缓存与调用方 options。各文件使用 `api::CommitFile` 原子替换，Windows
+不先删旧目标。成功后运行 options 持有已准备的 raw 快照，缓存后续改变不会改写
+上一份计划，回滚/启动该计划不再下载。**多文件提交中途磁盘错误/崩溃没有统一
+事务回滚**，部分已通过检查的缓存可能已更新；当前不宣称有崩溃 journal。
+
+桌面 curl 在写回调限制字节数、校验关闭后的文件再提交。Android curl 无 TLS，
+HTTP provider 复用 Java `DownloadProfile`，增加有界 body、强制直连与 JNI 请求头数组，使用
+系统证书校验；普通订阅调用的默认参数不变。Android 只做编译/转换候选检查，
+完整原生核验仍在后台 libbox，不能当成桌面 CLI 预检查。iOS 继续暂缓。
+
+公开离线样本：[http-providers-2026-10-03.yaml](examples/http-providers-2026-10-03.yaml)。
+`test_singbox` 用配套文件作只读种子、独占临时缓存且禁用网络，之后由固定内核
+check 检查输出。真实 HTTP(S) 下载/原子提交另由 `rule_provider_download` 回归覆盖；
+两者均不表示远端规则站可用或实机热更新已验收。
+上游依据（2026-10-03 核对）：
+[Mihomo 声明与路径](https://github.com/MetaCubeX/mihomo/blob/Meta/rules/provider/parse.go)、
+[下载/size-limit](https://github.com/MetaCubeX/mihomo/blob/Meta/component/resource/vehicle.go)、
+[缺省下载拨号/请求头](https://github.com/MetaCubeX/mihomo/blob/Meta/component/http/http.go)、
+[curl 请求头与重定向传播](https://curl.se/libcurl/c/CURLOPT_HTTPHEADER.html)、
+[刷新调度与失败保留](https://github.com/MetaCubeX/mihomo/blob/Meta/component/resource/fetcher.go)、
+[固定原生 rule_set schema](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/rule_set.go)。
 
 GEO 缓存由编译器的 `CompileResult.ruleSetResources` 显式声明，覆盖本地命中与
 未命中情况。桌面启动任务按周检查刷新，不再只扫描 remote 配置；原生 JSON 的
@@ -628,7 +822,8 @@ sing-box 侧可用但未映射：Android 应用选择入口、`user` / 更多逻
 | M2 | 产品层 Clash 化 | 代理页排序/筛选/定位/组导航/滚动记忆、订阅 merge/script 覆写链、连接页 / 日志页 / 设置页补齐 |
 | M3 | 差异化 | 端点作为一等连接对象 + 路由策略、`rule_set` 管理界面、进程规则、移动端能力 |
 
-顺序理由：**L2 决定能吃下多少订阅，L3 决定好不好看，差异化决定为什么不用 Verge。**
+2026-10-03 按用户意图转向 M2 产品完善；M1 继续按实际使用反馈补齐，订阅保护与保真度门禁不降低。
+首批已接入桌面 Clash 编排目标目录/搜索。未完成范围与验收见 [状态记录](l1-l2-l3-status.md)。
 
 ## 8. 维护要求
 

@@ -7,6 +7,9 @@
 module;
 
 #include <yaml-cpp/yaml.h>
+#include <zstd.h>
+#include "profile_link.h"
+#include "http_request_headers.h"
 
 module clashflux.singbox;
 
@@ -19,6 +22,7 @@ namespace {
 #include "singbox_yaml_openvpn.inc"
 #include "singbox_context_dns.inc"
 #include "singbox_proxy.inc"
+#include "singbox_mrs.inc"
 #include "singbox_rules.inc"
 #include "singbox_compile.inc"
 #include "singbox_sources.inc"
@@ -174,6 +178,114 @@ CompileResult compileConfig(const CompileOptions& options) {
     if (!applyConnectionRules(ctx)) return std::move(ctx.result);
     ctx.result.json = ctx.config.dump();
     return std::move(ctx.result);
+}
+
+CompileResult inspectClashSourceObjects(const CompileOptions& options) {
+    Context ctx{options};
+    ctx.sourceId = options.mainConnectionId;
+    if (ctx.sourceId.empty()) {
+        ctx.result.error = "对象目录需要稳定的来源 ID";
+        return std::move(ctx.result);
+    }
+    const auto text = trimCopy(options.profileYaml);
+    if (text.empty() || text.front() == '{') {
+        ctx.result.error = "对象目录需要 Clash YAML；原生连接或 JSON 请使用默认出口";
+        return std::move(ctx.result);
+    }
+    try {
+        ctx.config = nlohmann::json::object();
+        applyManagedSkeleton(ctx, options);
+        ctx.outbounds.push_back({{"type", "direct"}, {"tag", "DIRECT"}});
+        ctx.knownTags.push_back("DIRECT");
+        compileClashDocument(ctx, text, true);
+        if (!ctx.result.error.empty()) return std::move(ctx.result);
+        if (!ctx.finalTarget.empty() && ctx.finalTarget != "REJECT" && ctx.finalTarget != "REJECT-DROP" &&
+            !std::ranges::any_of(ctx.outbounds, [&](const auto& out) {
+                return out.value("tag", "") == ctx.finalTarget;
+            })) {
+            ctx.result.error = "来源默认目标不存在：" + ctx.finalTarget;
+            return std::move(ctx.result);
+        }
+        namespaceClashSource(ctx, options.mainConnectionId, options.mainSourceName);
+    } catch (const std::exception& error) {
+        ctx.result.sourceObjects.clear();
+        ctx.result.error = std::format("对象目录读取失败：{}", error.what());
+    }
+    return std::move(ctx.result);
+}
+
+std::optional<std::string> ReadRuleProviderText(const std::filesystem::path& path,
+        std::size_t maxBytes, std::string& error) {
+    error.clear();
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec) || ec) {
+        error = "不是可读的普通文件"; return std::nullopt;
+    }
+    std::ifstream input(path, std::ios::binary);
+    if (!input) { error = "文件无法打开"; return std::nullopt; }
+    std::string content;
+    std::array<char, 16 * 1024> buffer;
+    while (input) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const auto bytes = static_cast<std::size_t>(input.gcount());
+        if (bytes > maxBytes - content.size()) {
+            error = "文件超过读取上限"; return std::nullopt;
+        }
+        content.append(buffer.data(), bytes);
+    }
+    if (input.bad() || (input.fail() && !input.eof())) {
+        error = "文件读取失败"; return std::nullopt;
+    }
+    return content;
+}
+
+std::string HttpRuleProviderCacheImage(const HttpRuleProviderResource& resource,
+        const std::string& content) {
+    if (resource.cacheKey != httpProviderKey(resource.identity) || resource.identity.size() > 32 * 1024 ||
+        resource.identity.find('\n') != std::string::npos || content.size() > resource.maxBytes ||
+        resource.maxBytes > 8 * 1024 * 1024) return {};
+    return "clash-flux-rule-provider-v1\n" + resource.identity + "\n" + content;
+}
+
+std::optional<std::string> ReadHttpRuleProviderCache(const HttpRuleProviderResource& resource,
+        const std::filesystem::path& directory, std::string& error) {
+    if (resource.cacheKey != httpProviderKey(resource.identity) || resource.identity.size() > 32 * 1024 ||
+        resource.maxBytes > 8 * 1024 * 1024) {
+        error = "HTTP 缓存资源身份无效"; return std::nullopt;
+    }
+    const auto path = ruleProviderPath(directory.string(), resource.cacheKey + ".cache", error);
+    if (!path) return std::nullopt;
+    const auto image = ReadRuleProviderText(*path, resource.maxBytes + 32 * 1024 + 64, error);
+    if (!image) return std::nullopt;
+    const std::string prefix = "clash-flux-rule-provider-v1\n" + resource.identity + "\n";
+    if (!image->starts_with(prefix)) {
+        error = "HTTP 规则集缓存身份或版本不匹配"; return std::nullopt;
+    }
+    auto content = image->substr(prefix.size());
+    if (content.size() > resource.maxBytes) { error = "缓存内容超过读取上限"; return std::nullopt; }
+    return content;
+}
+
+bool ValidateHttpRuleProvider(const HttpRuleProviderResource& resource,
+        const std::string& content, std::string& error) {
+    error.clear();
+    if (resource.asn || resource.behavior == "asn")
+        return asnPrefixes(resource, content, error).has_value();
+    if (content.size() > resource.maxBytes || resource.maxBytes > 8 * 1024 * 1024 ||
+        (resource.format != "yaml" && resource.format != "text" && resource.format != "mrs") ||
+        (resource.behavior != "domain" && resource.behavior != "ipcidr" && resource.behavior != "classical")) {
+        error = "规则集格式、behavior 或大小不在支持范围"; return false;
+    }
+    CompileOptions options;
+    Context context{options};
+    context.providerSyntaxOnly = true;
+    return ruleProviderContentRules(context, content, resource.format, resource.behavior, error).has_value();
+}
+
+std::optional<std::string> ReadHttpRuleProviderSeed(const HttpRuleProviderResource& resource,
+        const std::filesystem::path& directory, std::string& error) {
+    const auto path = ruleProviderPath(directory.string(), resource.seedPath, error);
+    return path ? ReadRuleProviderText(*path, resource.maxBytes, error) : std::nullopt;
 }
 
 std::string BuiltinRuleSetUrl(std::string_view tag) {

@@ -38,7 +38,9 @@ int main(int argc, char** argv) {
             return clashflux::cli_ipc::tryForwardCommand({"open-profile-link", argv[1]}, code) ? code : 1;
         }
         if (!clashflux::profile_link::Submit(std::move(*profile), error)) return 2;
-        return huxerui::RunApplication();
+        const int runtimeCode = huxerui::RunApplication();
+        const int code = cli::pendingExitCode();
+        return code != 0 ? code : runtimeCode;
     }
     if (argc > 1) {
         std::vector<std::string> args(argv + 1, argv + argc);
@@ -55,5 +57,7 @@ int main(int argc, char** argv) {
         return code != 0 ? code : runtimeCode;
     }
     if (!clashflux::instance::acquireOrActivate()) return 0;
-    return huxerui::RunApplication();
+    const int runtimeCode = huxerui::RunApplication();
+    const int code = cli::pendingExitCode();
+    return code != 0 ? code : runtimeCode;
 }

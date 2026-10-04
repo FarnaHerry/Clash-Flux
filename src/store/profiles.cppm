@@ -10,6 +10,7 @@ import clashflux.config;
 import clashflux.utils;
 import clashflux.api;
 import clashflux.db;
+import clashflux.persistence;
 import clashflux.core;
 import clashflux.store.core;
 
@@ -166,7 +167,7 @@ public:
         return std::nullopt;
     }
 
-    std::string lastError() const { return lastError_; }
+    inline std::string lastError() const { return lastError_; }
 
     // 读取启用订阅的 YAML 原文（无订阅 / 读失败 = 空串）。
     std::string selectedYaml() {
@@ -280,8 +281,9 @@ public:
                 coreStore().db().deleteProfile(p.id);
             } catch (...) {
             }
-            std::error_code ec;
-            std::filesystem::remove(cfg::profilesDir() / p.file, ec);
+            // A failed import may leave an unreferenced completed file. Do not
+            // unlink it before the asynchronous row deletion is acknowledged;
+            // only an explicit user removal requests persistent file cleanup.
         }
         return failure.empty();
     }
@@ -360,10 +362,8 @@ public:
             if (p.id != 0) {
                 try { coreStore().db().deleteProfile(p.id); } catch (...) {}
             }
-            if (!p.file.empty()) {
-                std::error_code ec;
-                std::filesystem::remove(cfg::profilesDir() / p.file, ec);
-            }
+            // Retain completed files on failure; no repair-style unlink of a
+            // path whose persisted references have not been checked.
             return 0;
         }
         return p.id;
@@ -545,24 +545,23 @@ public:
             lastError_ = "该来源是 main 或被路由引用；请先更换 main、禁用/改绑规则或清空原生内网路由";
             return;
         }
-        std::string file;
         bool wasSelected = false;
+        bool found = false;
         for (const auto& p : list()) {
             if (p.id == id) {
-                file = p.file;
+                found = true;
                 wasSelected = p.selected;
             }
         }
+        if (!found) { lastError_ = "订阅不存在"; return; }
         try {
-            coreStore().db().deleteProfile(id);
+            clashflux::persistence::persistence().deleteProfile(id, true);
         } catch (const std::exception& e) {
             lastError_ = e.what();
             return;
         }
-        if (!file.empty()) {
-            std::error_code ec;
-            std::filesystem::remove(cfg::profilesDir() / file, ec);
-        }
+        // File cleanup is performed by persistence only after the delete
+        // commits and no other persisted or cached source references it.
         if (wasSelected) coreStore().invalidateProxyGroupsSnapshot();
         // 删掉的是启用订阅且内核在跑：用空配置重启（代理全断比跑旧配置直观）。
         if (wasSelected && coreStore().snapshot().state == core::CoreState::Running) {
@@ -604,6 +603,10 @@ private:
     }
 
     std::optional<db::Profile> findById(std::int64_t id) {
+        if (!clashflux::persistence::persistence().ready()) {
+            lastError_ = "订阅持久化未就绪，操作已拒绝";
+            return std::nullopt;
+        }
         for (const auto& p : list()) {
             if (p.id == id) return p;
         }

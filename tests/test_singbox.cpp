@@ -7,10 +7,12 @@
 // 断言风格与 test_vpn 一致（check 计数 + main）。
 #include <cassert>
 #include <cstdio>
+#include <zstd.h>
 
 import std;
 import nlohmann.json;
 import clashflux.singbox;
+import clashflux.rule_provider_cache;
 import clashflux.vpn;
 
 namespace {
@@ -821,13 +823,1099 @@ void testSsh() {
 #endif
 }
 
+void testFileRuleProviders() {
+    const RuleSetTestDirectory directory;
+    const RuleSetTestDirectory outside;
+    std::filesystem::create_directory(directory.path / "rules");
+    const auto write = [&](const std::string& name, const std::string& content) {
+        std::ofstream file(directory.path / name, std::ios::binary | std::ios::trunc);
+        file << content;
+        check(file.good(), "file provider fixture written");
+    };
+    const auto compile = [&](const std::string& path, const std::string& behavior = "domain",
+                             const std::string& format = "yaml", const std::string& extra = "") {
+        singbox::CompileOptions options;
+        options.ruleProviderDir = directory.path.string();
+        options.profileYaml = std::format(
+            "rule-providers:\n  cn:\n    type: file\n    path: '{}'\n    behavior: {}\n    format: {}\n{}"
+            "rules:\n  - AND,((RULE-SET,cn),(NETWORK,TCP)),DIRECT\n  - MATCH,DIRECT\n",
+            path, behavior, format, extra);
+        return singbox::compileConfig(options);
+    };
+    const auto sets = [](const auto& result) {
+        return result.json.empty() ? json::array() :
+            json::parse(result.json)["route"].value("rule_set", json::array());
+    };
+    const auto routeRules = [](const auto& result) {
+        return result.json.empty() ? json::array() :
+            json::parse(result.json)["route"].value("rules", json::array());
+    };
+    write("rules/domain.yaml", "payload:\n  - example.test\n  - '+.suffix.test'\n");
+    const auto domain = compile("rules/domain.yaml");
+    const auto domainSets = sets(domain);
+    check(domain.error.empty() && domainSets.size() == 1 &&
+          domainSets[0]["rules"][0]["domain"] == json{"example.test"} &&
+          domainSets[0]["rules"][1]["domain_suffix"] == json{"suffix.test"} &&
+          domain.ruleSetResources.empty() && std::ranges::any_of(routeRules(domain), [](const auto& rule) {
+              return rule.value("type", "") == "logical" && rule["rules"][0]["rule_set"] == json{"clash-provider-0"};
+          }),
+          "file YAML provider keeps all conditions and logical reference without GEO ownership");
+    check(domain.fidelity.size() == 1 && domain.fidelity[0].level == singbox::Fidelity::Approx &&
+          domain.fidelity[0].subject == "rule-providers.cn",
+          "file snapshot lifecycle is explicitly approximate rather than pretending to watch");
+    write("rules/ip.txt", "# comment\r\n // premium comment\r\n\r\n192.0.2.0/24\r\n2001:db8::/32");
+    const auto ip = compile("rules/ip.txt", "ipcidr", "text");
+    check(ip.error.empty() && sets(ip).size() == 1 && sets(ip)[0]["rules"].size() == 2 &&
+          sets(ip)[0]["rules"][1]["ip_cidr"] == json{"2001:db8::/32"},
+          "text file accepts comments, CRLF, IPv6 and last line without newline");
+    write("rules/classical.txt", "AND,((DOMAIN-SUFFIX,example.test),(DST-PORT,443))\nNOT,((NETWORK,UDP))\n");
+    const auto classical = compile("rules/classical.txt", "classical", "text");
+    check(classical.error.empty() && sets(classical)[0]["rules"].size() == 2 &&
+          sets(classical)[0]["rules"][1]["invert"] == true,
+          "classical file uses atomic headless logical converter");
+    const std::string modifiers = "IP-CIDR,192.0.2.28/32,no-resolve\n"
+        "IP-CIDR6,2001:db8::/32,no-resolve\n"
+        "AND,((IP-CIDR,198.51.100.0/24,no-resolve),(NETWORK,TCP))\n";
+    write("rules/modifiers.txt", modifiers);
+    const auto modified = compile("rules/modifiers.txt", "classical", "text");
+    check(modified.error.empty() && sets(modified).size() == 1 &&
+          sets(modified)[0]["rules"].size() == 3 &&
+          sets(modified)[0]["rules"][0]["ip_cidr"] == json{"192.0.2.28/32"} &&
+          sets(modified)[0]["rules"][1]["ip_cidr"] == json{"2001:db8::/32"} &&
+          sets(modified)[0]["rules"][2]["rules"][0]["ip_cidr"] == json{"198.51.100.0/24"} &&
+          std::ranges::count_if(modified.fidelity, [](const auto& note) {
+              return note.scope == singbox::FidelityScope::Rule && note.level == singbox::Fidelity::Approx &&
+                     note.subject.find("no-resolve") != std::string::npos;
+          }) == 3,
+          "classical provider preserves IPv4/IPv6 and nested no-resolve matches with approximation ledger");
+    singbox::CompileOptions inlineModifiers;
+    inlineModifiers.profileYaml = "rule-providers:\n  sample:\n    type: inline\n    behavior: classical\n"
+        "    payload: ['IP-CIDR,192.0.2.28/32,no-resolve']\nrules: ['RULE-SET,sample,DIRECT','MATCH,DIRECT']\n";
+    const auto inlineModified = singbox::compileConfig(inlineModifiers);
+    check(inlineModified.error.empty() && sets(inlineModified).size() == 1 &&
+          sets(inlineModified)[0]["rules"][0]["ip_cidr"] == json{"192.0.2.28/32"},
+          "inline classical provider shares no-resolve conversion");
+    auto httpModifiers = inlineModifiers;
+    httpModifiers.profileYaml = "rule-providers:\n  sample: {type: http, behavior: classical, format: text, url: https://example.test/rules}\n"
+        "rules: ['RULE-SET,sample,DIRECT','MATCH,DIRECT']\n";
+    const auto discovered = singbox::compileConfig(httpModifiers);
+    check(discovered.httpRuleProviders.size() == 1, "HTTP classical modifier fixture discovers resource");
+    if (!discovered.httpRuleProviders.empty()) {
+        const auto& resource = discovered.httpRuleProviders[0];
+        std::string reason;
+        check(singbox::ValidateHttpRuleProvider(resource, modifiers, reason),
+              "HTTP staging validator accepts complete classical no-resolve payload");
+        httpModifiers.ruleProviderContents[resource.cacheKey] = modifiers;
+        const auto httpModified = singbox::compileConfig(httpModifiers);
+        check(httpModified.error.empty() && sets(httpModified).size() == 1 &&
+              sets(httpModified)[0]["rules"].size() == 3,
+              "HTTP candidate compiles all staged no-resolve entries");
+        check(!singbox::ValidateHttpRuleProvider(resource,
+              "DOMAIN,valid.test\nIP-CIDR,192.0.2.0/24,unknown\n", reason) &&
+              reason.find("payload[1]") != std::string::npos,
+              "HTTP unknown modifier rejects whole payload with position");
+    }
+    write("rules/domain.yaml", "payload: [updated.test]\n");
+    const auto updated = compile("rules/domain.yaml");
+    check(updated.error.empty() && sets(updated)[0]["rules"][0]["domain"] == json{"updated.test"} &&
+          domainSets[0]["rules"][0]["domain"] == json{"example.test"},
+          "recompilation reads new file while previous candidate snapshot stays intact");
+    const auto rejected = [&](const auto& result, std::string_view message) {
+        check(!result.error.empty() && result.json.empty() && !result.fidelity.empty() &&
+              result.ruleSetResources.empty() && std::ranges::any_of(result.fidelity, [](const auto& note) {
+                  return note.level == singbox::Fidelity::Unsupported;
+              }), message);
+    };
+    rejected(compile("missing.yaml"), "missing declared cn file fails candidate without substituting China alias");
+    rejected(compile("../outside.yaml"), "file parent traversal rejected");
+    rejected(compile((directory.path / "rules/domain.yaml").string()), "absolute provider path rejected");
+    rejected(compile("rules"), "directory provider rejected");
+    rejected(compile("rules/domain.yaml", "domain", "mrs"), "file MRS format rejected");
+    for (const auto* format : {"{bad: yaml}", "[yaml]", "null", "''", "'  '"})
+        rejected(compile("rules/domain.yaml", "domain", format), "file explicit malformed format cannot become default YAML");
+    rejected(compile("rules/domain.yaml", "domain", "yaml", "    url: https://example.test/rules\n"),
+             "file unmapped field rejects entire candidate");
+    rejected(compile("rules/domain.yaml", "domain", "yaml", "    path: missing.yaml\n"),
+             "duplicate file field cannot silently pick a path");
+    for (const bool fileFirst : {false, true}) {
+        singbox::CompileOptions duplicate;
+        duplicate.ruleProviderDir = directory.path.string();
+        const std::string file = "  cn: {type: file, path: rules/domain.yaml, behavior: domain}\n";
+        const std::string inlineSet = "  cn: {type: inline, behavior: domain, payload: [inline.test]}\n";
+        duplicate.profileYaml = "rule-providers:\n" + (fileFirst ? file + inlineSet : inlineSet + file) +
+            "rules:\n  - RULE-SET,cn,DIRECT\n  - MATCH,DIRECT\n";
+        rejected(singbox::compileConfig(duplicate), "duplicate file/inline name fails candidate regardless of declaration order");
+    }
+    write("rules/invalid.yaml", "payload: [valid.test, 'part*.unsupported.test']\n");
+    const auto invalid = compile("rules/invalid.yaml");
+    rejected(invalid, "invalid payload child never commits valid prefix");
+    check(invalid.error.find("payload[1]") != std::string::npos, "file failure carries payload position");
+    std::ifstream retained(directory.path / "rules/invalid.yaml");
+    check(std::string(std::istreambuf_iterator<char>(retained), {}) ==
+          "payload: [valid.test, 'part*.unsupported.test']\n", "failed compilation does not modify source file");
+    for (const auto& content : {"payload: [valid.test]\nunknown: x\n", "payload: [a.test]\npayload: [b.test]\n",
+                               "payload: [a.test]\n---\npayload: [b.test]\n", "payload: [\n", "payload: scalar\n"}) {
+        write("rules/bad.yaml", content);
+        rejected(compile("rules/bad.yaml"), "file schema/duplicate/multiple-document/parse failures reject candidate");
+    }
+    write("rules/invalid.txt", "DOMAIN,valid.test\nGEOIP,CN\n");
+    rejected(compile("rules/invalid.txt", "classical", "text"), "file HeadlessRule rejects route-only GEO fields atomically");
+    for (const auto* invalidModifier : {"unknown", "no-resolve,unknown", "no-resolve,", "no-resolve,no-resolve"}) {
+        write("rules/modifiers.txt", std::format("DOMAIN,valid.test\nIP-CIDR,192.0.2.0/24,{}\n", invalidModifier));
+        const auto rejectedModifier = compile("rules/modifiers.txt", "classical", "text");
+        rejected(rejectedModifier, "unknown/extra classical modifiers reject entire file candidate");
+        check(rejectedModifier.error.find("payload[1]") != std::string::npos,
+              "classical modifier rejection retains failing item position");
+    }
+    write("rules/nul.txt", std::string("valid.test\n\0bad", 15));
+    rejected(compile("rules/nul.txt", "domain", "text"), "binary NUL file rejected");
+    write("rules/large.txt", std::string(8 * 1024 * 1024 + 1, 'x'));
+    rejected(compile("rules/large.txt", "domain", "text"), "file read bounded to 8 MiB");
+#ifndef _WIN32
+    // Windows fixture creation may require privileges; native Unix runners
+    // cover both outside-root and allowed inside-root symlink resolution.
+    std::ofstream(outside.path / "external.yaml") << "payload: [outside.test]\n";
+    std::filesystem::create_symlink(outside.path / "external.yaml", directory.path / "escape.yaml");
+    rejected(compile("escape.yaml"), "file symlink escape rejected");
+    std::filesystem::create_symlink(directory.path / "rules/domain.yaml", directory.path / "inside.yaml");
+    check(compile("inside.yaml").error.empty(), "inside-root symlink accepted");
+#endif
+    singbox::CompileOptions unset;
+    unset.profileYaml = "rule-providers:\n  cn: {type: file, path: rules/domain.yaml, behavior: domain}\n";
+    rejected(singbox::compileConfig(unset), "no implicit cwd fallback when file root absent");
+}
+
+void testDnsWildcardPolicies() {
+    const std::vector<std::pair<std::string, int>> policies = {
+        {"+.example.test", 10}, {".example.test", 11}, {"*.example.test", 12},
+        {"fixed.example.test", 13}, {"*.deep.example.test", 14}, {".deep.example.test", 15},
+        {"left.*.example.test", 16}, {"*.a.example.test", 17}, {".a.example.test", 18},
+        {"deep.*.test", 19}, {".a.test", 20}, {"*.*.example.test", 21}, {"*", 22},
+        {"+.scope.*.test", 23}, {".tail.*.test", 24},
+    };
+    const std::vector<std::pair<std::string, int>> cases = {
+        {"example.test", 10}, {"child.example.test", 12}, {"fixed.example.test", 13},
+        {"child.fixed.example.test", 21}, {"a.deep.example.test", 14}, {"x.a.deep.example.test", 15},
+        {"deep.example.test", 12}, {"left.a.example.test", 17}, {"left.b.example.test", 16},
+        {"other.b.example.test", 21}, {"other.a.example.test", 17}, {"x.other.a.example.test", 18},
+        {"deep.a.test", 20}, {"localhost", 22}, {"x.localhost", 1},
+        {"notexample.test", 1}, {"example.test.evil", 1}, {"UPPER.EXAMPLE.TEST.", 12},
+        {"scope.b.test", 23}, {"x.scope.b.test", 23}, {"scope.b.c.test", 1},
+        {"tail.b.test", 1}, {"x.tail.b.test", 24}, {"x.y.tail.b.test", 24}, {"x.tail.b.c.test", 1},
+        {"_node.example.test", 12}, {"left._node.example.test", 16}, {"_service", 22},
+        {"a..example.test", 1},
+    };
+    const auto fixture = [&](bool dedicated, bool reverse) {
+        auto ordered = policies;
+        if (reverse) std::reverse(ordered.begin() + 2, ordered.end()); // Preserve intentional +./. overwrite order.
+        std::string input = "dns:\n  nameserver: [192.0.2.1]\n  nameserver-policy:\n";
+        for (const auto& [pattern, index] : ordered)
+            input += std::format("    '{}': 192.0.2.{}\n", pattern, index);
+        if (dedicated) {
+            input += "  proxy-server-nameserver: [198.51.100.1]\n  proxy-server-nameserver-policy:\n";
+            for (const auto& [pattern, index] : ordered)
+                input += std::format("    '{}': 198.51.100.{}\n", pattern, index);
+        }
+        input += "proxies:\n";
+        for (std::size_t i = 0; i < cases.size(); ++i)
+            input += std::format("  - {{name: node-{}, type: socks5, server: '{}', port: 1080}}\n", i, cases[i].first);
+        return input + "rules: ['MATCH,DIRECT']\n";
+    };
+    for (const auto& [dedicated, reverse] : std::vector<std::pair<bool, bool>>{
+            {false, false}, {true, false}, {false, true}, {true, true}}) {
+        singbox::CompileOptions options;
+        options.profileYaml = fixture(dedicated, reverse);
+        const auto result = singbox::compileConfig(options);
+        check(result.error.empty() && std::ranges::none_of(result.fidelity, [](const auto& note) {
+            return note.level != singbox::Fidelity::Exact;
+        }), "whole-label wildcard DNS policies preserve semantics without approximation");
+        const auto config = json::parse(result.json);
+        std::map<std::string, std::string> servers;
+        for (const auto& server : config["dns"]["servers"]) servers.emplace(server["tag"], server.value("server", ""));
+        for (std::size_t i = 0; i < cases.size(); ++i) {
+            const auto node = std::ranges::find_if(config["outbounds"], [&](const auto& item) {
+                return item.value("tag", "") == std::format("node-{}", i);
+            });
+            check(node != config["outbounds"].end() &&
+                  servers.at((*node)["domain_resolver"]["server"]) ==
+                      std::format("{}{}", dedicated ? "198.51.100." : "192.0.2.", cases[i].second),
+                  std::format("DNS trie priority and boundaries for node {} (dedicated={})", cases[i].first, dedicated));
+        }
+        check(std::ranges::all_of(config["dns"]["rules"], [&](const auto& rule) {
+            return servers.at(rule["server"]).starts_with("192.0.2.") &&
+                   !rule.contains("labels") && !rule.contains("priority");
+        }), "node-specific wildcard policy never leaks into ordinary DNS rules or emits private matcher metadata");
+    }
+    for (const auto* invalid : {"part*.test", "*part.test", "part+word.test", "part.+.test", "**.test",
+            "..test", "+.", "foo..test", "foo..", "foo$.test", "geosite:cn", "rule-set:cn", "中文.test", "a,b.test"}) {
+        singbox::CompileOptions options;
+        options.profileYaml = std::format("dns:\n  nameserver: [192.0.2.1]\n  nameserver-policy:\n"
+            "    '{}': 192.0.2.2\nproxies:\n  - {{name: kept, type: socks5, server: a.test, port: 1080}}\n"
+            "rules: ['MATCH,DIRECT']\n", invalid);
+        const auto result = singbox::compileConfig(options);
+        const auto config = json::parse(result.json);
+        check(result.error.empty() && config["dns"]["servers"].size() == 2 &&
+              config["dns"].value("rules", json::array()).empty() &&
+              std::ranges::any_of(result.fidelity, [](const auto& note) {
+                  return note.scope == singbox::FidelityScope::Dns && note.level == singbox::Fidelity::Unsupported;
+              }), "invalid/unmapped DNS patterns reject entire entry before creating resolver or widening match");
+    }
+    singbox::CompileOptions overwrite;
+    overwrite.profileYaml = R"yaml(dns:
+  nameserver: [192.0.2.1]
+  nameserver-policy:
+    '.overwritten.test': 192.0.2.2
+    '+.overwritten.test': 192.0.2.3
+    'OVERWRITTEN.test': 192.0.2.4
+proxies:
+  - {name: root, type: socks5, server: overwritten.test, port: 1080}
+  - {name: child, type: socks5, server: child.overwritten.test, port: 1080}
+rules: ['MATCH,DIRECT']
+)yaml";
+    const auto overwritten = singbox::compileConfig(overwrite);
+    const auto config = json::parse(overwritten.json);
+    check(overwritten.error.empty() && config["dns"]["rules"].size() == 2 &&
+          config["outbounds"][1]["domain_resolver"]["server"] == "dns-3" &&
+          config["outbounds"][2]["domain_resolver"]["server"] == "dns-2" &&
+          std::ranges::all_of(overwritten.fidelity, [](const auto& note) { return note.level == singbox::Fidelity::Exact; }),
+          "later +. replaces root/subdomain independently, later exact replaces only root, canonical overlap recorded exact");
+    singbox::CompileOptions cycle;
+    cycle.profileYaml = "dns:\n  nameserver: [192.0.2.1]\n  nameserver-policy:\n"
+        "    '*.nodes.test': 'https://192.0.2.2#node'\nproxies:\n"
+        "  - {name: node, type: socks5, server: a.nodes.test, port: 1080}\nrules: ['MATCH,DIRECT']\n";
+    const auto cyclic = singbox::compileConfig(cycle);
+    check(!cyclic.error.empty() && cyclic.json.empty() && !cyclic.fidelity.empty(),
+          "wildcard-selected node resolver participates in DNS/detour cycle validation without direct fallback");
+}
+
+void testDnsCertificateParameters() {
+    const auto compile = [](const std::string& address) {
+        singbox::CompileOptions options;
+        options.profileYaml = "dns:\n  nameserver: ['" + address +
+            "']\nrules:\n  - MATCH,DIRECT\n";
+        return singbox::compileConfig(options);
+    };
+    for (const auto* scheme : {"tls", "https", "quic"}) {
+        for (const auto* flag : {"true", "false"}) {
+            const auto result = compile(std::string(scheme) + "://dns.example.test#skip-cert-verify=" + flag);
+            check(result.error.empty() && result.fidelity.empty(), "DNS TLS certificate flag maps without semantic downgrade");
+            const auto servers = json::parse(result.json)["dns"]["servers"];
+            check(servers.size() == 2 && servers[1]["tls"]["enabled"] == true &&
+                  servers[1]["tls"]["insecure"] == (std::string_view(flag) == "true") &&
+                  !servers[1]["tls"].contains("server_name") && servers[1]["server"] == "dns.example.test",
+                  "explicit flag affects only endpoint verification, not server identity/SNI");
+        }
+        const auto secure = json::parse(compile(std::string(scheme) + "://dns.example.test").json);
+        check(!secure["dns"]["servers"][1].contains("tls"), "omitted DNS certificate flag preserves kernel trust defaults");
+    }
+    const auto combined = compile("https://127.0.0.1:9443/custom-query#DIRECT&skip-cert-verify=true&h3=true");
+    const auto server = json::parse(combined.json)["dns"]["servers"][1];
+    check(combined.fidelity.empty() && server["type"] == "h3" && server["detour"] == "DIRECT" &&
+          server["server_port"] == 9443 && server["path"] == "/custom-query" && server["tls"]["insecure"] == true,
+          "TLS flag composes with H3, explicit port/path and compiled detour");
+    check(json::parse(compile("https://127.0.0.1#h3=false&skip-cert-verify=false").json)
+              ["dns"]["servers"][1]["type"] == "https", "explicit h3 false remains ordinary verified DoH");
+    for (const auto* address : {
+        "tls://127.0.0.1#skip-cert-verify=yes", "https://127.0.0.1#skip-cert-verify=TRUE",
+        "quic://127.0.0.1#skip-cert-verify=1", "https://127.0.0.1#skip-cert-verify=",
+        "https://127.0.0.1#skip-cert-verify=true&skip-cert-verify=false",
+        "tls://127.0.0.1#skip-cert-verify=false&skip-cert-verify=false",
+        "https://127.0.0.1#skip-cert-verify=true&name-cert-verify=other.test",
+        "https://127.0.0.1#skip-cert-verify=true&ecs=192.0.2.1/24",
+        "https://127.0.0.1#skip-cert-verify=true&",
+        "https://127.0.0.1# skip-cert-verify=true", "https://127.0.0.1#skip-cert-verify=true &DIRECT",
+        "udp://127.0.0.1#skip-cert-verify=true", "tcp://127.0.0.1#skip-cert-verify=false",
+        "tls://127.0.0.1#h3=false", "quic://127.0.0.1#h3=true",
+        "https://127.0.0.1#skip-cert-verify=true&missing-outbound"}) {
+        const auto rejected = compile(address);
+        check(rejected.error.empty() && json::parse(rejected.json)["dns"]["servers"].size() == 1 &&
+              std::ranges::any_of(rejected.fidelity, [](const auto& note) {
+                  return note.scope == singbox::FidelityScope::Dns && note.level == singbox::Fidelity::Unsupported;
+              }), "invalid/duplicate/unknown/misplaced DNS parameter rejects entire server and records loss");
+    }
+    singbox::CompileOptions scoped;
+    scoped.mainConnectionId = "certificate-source";
+    scoped.profileYaml = R"yaml(dns:
+  default-nameserver: ['tls://192.0.2.1#skip-cert-verify=false']
+  nameserver: ['https://resolver.test/custom-query#skip-cert-verify=true']
+  nameserver-policy: {exact.test: 'tls://192.0.2.2#skip-cert-verify=false'}
+  proxy-server-nameserver: ['quic://192.0.2.3#skip-cert-verify=true']
+proxies:
+  - {name: node, type: socks5, server: node.test, port: 1080}
+rules:
+  - MATCH,DIRECT
+)yaml";
+    const auto scopedResult = singbox::compileConfig(scoped);
+    check(scopedResult.error.empty() && scopedResult.fidelity.empty(), "TLS flags compose with DNS bootstrap/policy/node resolvers and source namespace");
+    const auto config = json::parse(scopedResult.json);
+    const auto& servers = config["dns"]["servers"];
+    check(servers.size() == 5 && servers[1]["tls"]["insecure"] == false &&
+          servers[2]["tls"]["insecure"] == true && servers[3]["tls"]["insecure"] == false &&
+          servers[4]["tls"]["insecure"] == true && !servers[0].contains("tls"),
+          "certificate relaxation remains per endpoint, not inherited by bootstrap/local/other servers");
+    check(servers[2]["domain_resolver"]["server"] == servers[1]["tag"] &&
+          config["dns"]["rules"][0]["server"] == servers[3]["tag"],
+          "namespace preserves bootstrap and policy references with TLS options");
+}
+
+void testClashHosts() {
+    singbox::CompileOptions base;
+    base.profileYaml = R"yaml(
+hosts:
+  Node.Test.: [192.0.2.1, '2001:db8::1']
+  resolver.test: 192.0.2.53
+  only6.test: '2001:db8::6'
+dns:
+  enable: true
+  ipv6: true
+  use-hosts: true
+  nameserver: [https://resolver.test/dns-query]
+  proxy-server-nameserver: [9.9.9.9]
+  nameserver-policy: {node.test: 8.8.8.8}
+proxies:
+  - {name: mapped, type: trojan, server: node.test, port: 443, password: test-only}
+  - {name: ordinary, type: socks5, server: ordinary.test, port: 1080}
+rules: ["MATCH,DIRECT"]
+)yaml";
+    const auto result = singbox::compileConfig(base);
+    check(result.error.empty() && !result.json.empty(), "exact hosts fixture compiles");
+    const auto config = json::parse(result.json);
+    const auto& dnsRules = config["dns"]["rules"];
+    const auto hostsServer = std::ranges::find_if(config["dns"]["servers"], [](const auto& server) {
+        return server.value("type", "") == "hosts";
+    });
+    check(hostsServer != config["dns"]["servers"].end() &&
+          (*hostsServer)["predefined"]["node.test"] == json::array({"192.0.2.1", "2001:db8::1"}) &&
+          !hostsServer->contains("path"), "hosts preserves full IP list and canonical exact names, no external file paths");
+    check(dnsRules[0]["server"] == "clash-hosts" && dnsRules[0]["query_type"] == json::array({"A", "AAAA"}) &&
+          dnsRules[0]["rewrite_ttl"] == 10 && dnsRules[1]["server"] != "clash-hosts",
+          "hosts A/AAAA reply precedes nameserver policy, preserving normal non-address query routing");
+    for (const auto& server : config["dns"]["servers"])
+        if (server.value("server", "") == "resolver.test") check(server["domain_resolver"]["server"] == "clash-hosts",
+            "mapped DNS endpoint uses hosts instead of recursive bootstrap");
+    for (const auto& out : config["outbounds"]) {
+        if (out.value("tag", "") == "mapped") check(out["domain_resolver"]["server"] == "clash-hosts" &&
+            out["server"] == "node.test" && out["tls"]["enabled"] == true,
+            "node uses hosts ahead of proxy resolver while retaining original server/TLS identity");
+        if (out.value("tag", "") == "ordinary") check(out["domain_resolver"]["server"] != "clash-hosts",
+            "unmapped node keeps its declared DNS resolver");
+    }
+    check(config["route"]["rules"][2]["server"] == "clash-hosts" &&
+          config["route"]["rules"][3]["action"] == "resolve" && config["route"]["rules"][3]["invert"] == true,
+          "main hosts resolution is a pre-action before normal resolve and product policy rules");
+    check(std::ranges::any_of(result.fidelity, [](const auto& note) {
+        return note.scope == singbox::FidelityScope::Dns && note.subject == "hosts" && note.level == singbox::Fidelity::Approx;
+    }), "hosts native cache/selection differences enter fidelity ledger");
+    for (const auto flag : {"use-hosts: false", "use-hosts: no", "use-hosts: 0", "enable: false"}) {
+        auto disabled = base;
+        const std::string field = std::string_view(flag).starts_with("enable") ? "enable: true" : "use-hosts: true";
+        disabled.profileYaml.replace(disabled.profileYaml.find(field), field.size(), flag);
+        const auto noReply = json::parse(singbox::compileConfig(disabled).json);
+        check(std::ranges::none_of(noReply["dns"].value("rules", json::array()), [](const auto& rule) {
+            return rule.value("server", "") == "clash-hosts";
+        }) && noReply["route"]["rules"][2]["server"] == "clash-hosts",
+            "dns use-hosts/enable false disables replies, not global hosts connection resolution");
+    }
+    for (const char* bad : {"'*.wild.test': 192.0.2.2", "'+.wild.test': 192.0.2.2",
+        "bad.test: alias.test", "bad.test: lan", "bad.test: []", "bad.test: null",
+        "bad.test: [192.0.2.2, invalid]", "bad.test: [192.0.2.2, {nested: value}]",
+        "bad.test: 192.0.2.0/24", "bad.test: '::ffff:192.0.2.2'", "bad.test: '192.0.2.999'",
+        "bad.test: 'fe80::1%eth0'", "' bad.test': 192.0.2.2"}) {
+        auto invalid = base;
+        invalid.profileYaml.insert(invalid.profileYaml.find("dns:"), std::string("  ") + bad + "\n");
+        const auto rejected = singbox::compileConfig(invalid);
+        const auto parsed = json::parse(rejected.json);
+        for (const auto& server : parsed["dns"]["servers"]) if (server.value("type", "") == "hosts")
+            check(server["predefined"].size() == 3 && !server["predefined"].contains("bad.test"),
+                "unsupported hosts entry rejects entire IP list without discarding independent valid mappings");
+        check(std::ranges::any_of(rejected.fidelity, [](const auto& note) { return note.level == singbox::Fidelity::Unsupported; }),
+              "every failed hosts entry is explicitly accounted");
+    }
+    auto duplicate = base;
+    duplicate.profileYaml.insert(duplicate.profileYaml.find("dns:"), "  node.test: 192.0.2.9\n");
+    const auto repeated = json::parse(singbox::compileConfig(duplicate).json);
+    for (const auto& server : repeated["dns"]["servers"]) if (server.value("type", "") == "hosts")
+        check(!server["predefined"].contains("node.test"), "canonical duplicate hosts names all rejected, never last-wins");
+    auto malformedFlag = base;
+    malformedFlag.profileYaml.replace(malformedFlag.profileYaml.find("use-hosts: true"), 15, "use-hosts: [true]");
+    const auto flagResult = singbox::compileConfig(malformedFlag);
+    check(std::ranges::any_of(flagResult.fidelity, [](const auto& note) {
+        return note.subject == "dns.use-hosts" && note.level == singbox::Fidelity::Unsupported;
+    }), "malformed use-hosts flag explicitly rejected without guessing true");
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+    auto sources = base;
+    sources.mainConnectionId = "main";
+    sources.auxiliarySources = {{"secondary", "secondary", base.profileYaml}};
+    vpn::RouteRule rule;
+    rule.id = "hosts-secondary"; rule.connectionId = "secondary";
+    rule.targetKind = vpn::TargetKind::Node; rule.targetObject = "mapped";
+    rule.match = vpn::MatchKind::ExactDomain; rule.pattern = "selected.test";
+    sources.globalRules = {rule};
+    const auto combined = singbox::compileConfig(sources);
+    check(combined.error.empty(), "secondary source with hosts resolver compiles with isolated DNS dependency");
+    const auto multi = json::parse(combined.json);
+    int hostsCount = 0;
+    for (const auto& server : multi["dns"]["servers"]) hostsCount += server.value("type", "") == "hosts";
+    check(hostsCount == 2 && std::ranges::none_of(multi["dns"]["rules"], [](const auto& item) {
+        return item.value("server", "").starts_with("cf_7365636f6e64617279_d_");
+    }), "secondary hosts DNS dependency retained without injecting secondary DNS response policy");
+    check(multi["route"]["rules"][2]["server"] == multi["dns"]["rules"][0]["server"],
+          "main hosts pre-action follows actual namespaced DNS tag after orchestration");
+#endif
+}
+
+std::string mrsFrame(std::string_view decoded) {
+    std::string compressed(ZSTD_compressBound(decoded.size()), '\0');
+    const auto size = ZSTD_compress(compressed.data(), compressed.size(), decoded.data(), decoded.size(), 1);
+    check(!ZSTD_isError(size), "MRS fixture compression succeeds");
+    compressed.resize(size); return compressed;
+}
+
+void testMrsRuleProviders() {
+    const auto integer = [](std::string& body, std::uint64_t value) {
+        for (unsigned i = 8; i-- > 0;) body.push_back(static_cast<char>(value >> (i * 8)));
+    };
+    const auto header = [&](unsigned behavior) {
+        std::string body = "MRS"; body.push_back(1); body.push_back(behavior);
+        integer(body, 3); integer(body, 0); body.push_back(1); return body;
+    };
+    // Independent BFS trie fixture builder, with explicit exact, subdomain-only,
+    // root+subdomain and single-label wildcard paths.
+    struct Node { bool leaf = false; std::map<char, unsigned> children; };
+    std::vector<std::string> keys{"example.test", "+.only.test", "root.test", "+.root.test", "*.wild.test"};
+    for (unsigned i = 0; i < 4096; ++i) keys.push_back("entry" + std::to_string(i) + ".bulk.test");
+    std::vector<Node> tree(1);
+    for (std::string key : keys) {
+        std::reverse(key.begin(), key.end()); unsigned node = 0;
+        for (const char c : key) {
+            auto found = tree[node].children.find(c);
+            if (found == tree[node].children.end()) {
+                const unsigned next = tree.size(); tree.emplace_back();
+                tree[node].children[c] = next; node = next;
+            } else node = found->second;
+        }
+        tree[node].leaf = true;
+    }
+    std::vector<std::uint64_t> leaves, edges;
+    const auto set = [](auto& words, std::size_t index) {
+        if (words.size() <= index / 64) words.resize(index / 64 + 1);
+        words[index / 64] |= std::uint64_t{1} << (index % 64);
+    };
+    std::vector<unsigned> queue{0}; std::size_t position = 0;
+    std::string labels;
+    for (std::size_t i = 0; i < queue.size(); ++i) {
+        const auto node = queue[i]; if (tree[node].leaf) set(leaves, i);
+        for (const auto& [c, child] : tree[node].children) { labels.push_back(c); queue.push_back(child); ++position; }
+        set(edges, position++);
+    }
+    std::string domain = header(0);
+    for (const auto& words : {leaves, edges}) { integer(domain, words.size()); for (const auto word : words) integer(domain, word); }
+    integer(domain, labels.size()); domain += labels;
+    singbox::CompileOptions base;
+    base.profileYaml = "rule-providers:\n  test: {type: http, behavior: domain, format: mrs, url: https://example.test/test.mrs}\n"
+        "rules: [\"RULE-SET,test,DIRECT\", \"MATCH,DIRECT\"]";
+    const auto resource = singbox::compileConfig(base).httpRuleProviders[0];
+    const auto compressed = mrsFrame(domain);
+    std::string error;
+    check(singbox::ValidateHttpRuleProvider(resource, compressed, error), "MRS domain dictionary validates");
+    base.ruleProviderContents[resource.cacheKey] = compressed;
+    const auto result = singbox::compileConfig(base);
+    check(result.error.empty() && !result.json.empty(), "MRS HTTP domain lowers complete trie");
+    if (!result.json.empty()) {
+        const auto rules = json::parse(result.json)["route"]["rule_set"][0]["rules"];
+        check(rules.size() == 2 && rules.dump().find("domain_regex") != std::string::npos &&
+              rules.dump().find("only") != std::string::npos && rules.dump().find("wild") != std::string::npos,
+              "MRS compacts exact and strict suffix/wildcard conditions into separate OR branches");
+        const auto& exact = rules[0]["domain"];
+        const auto exactValues = exact.get<std::vector<std::string>>();
+        const std::set<std::string> exactSet(exactValues.begin(), exactValues.end());
+        check(exact.size() == 4098 && std::ranges::all_of(keys, [&](const auto& key) {
+            return !key.ends_with(".bulk.test") || exactSet.contains(key);
+        }), "large MRS compaction preserves every exact entry and keeps native branch count bounded");
+        check(std::ranges::find(exact, "only.test") == exact.end() &&
+              std::ranges::find(exact, "root.test") != exact.end(), "subdomain-only never gains a root match");
+    }
+    auto badMagic = domain; badMagic[0] = 'X';
+    auto badVersion = domain; badVersion[3] = 2;
+    auto badBehavior = domain; badBehavior[4] = 1;
+    auto badExtra = domain; badExtra[20] = 1;
+    for (const auto& invalid : {mrsFrame(badMagic), mrsFrame(badVersion), mrsFrame(badBehavior),
+                               mrsFrame(badExtra), mrsFrame(domain + "extra"),
+                               compressed.substr(0, compressed.size() - 1), compressed + "extra",
+                               mrsFrame(std::string(33 * 1024 * 1024, 'x'))})
+        check(!singbox::ValidateHttpRuleProvider(resource, invalid, error),
+              "MRS wrong header/behavior/extensions, truncation, trailing data and expansion bomb reject whole body");
+    std::string ip = header(1); integer(ip, 2);
+    for (unsigned end : {1u, 6u}) {
+        ip.append(10, '\0'); ip.append(2, static_cast<char>(255));
+        for (unsigned b : {192u, 0u, 2u, end}) ip.push_back(b);
+    }
+    // Go netip sorts IPv4 before IPv6, even when IPv6 bytes (::) sort lower.
+    const std::array<unsigned char,16> v6{};
+    for (unsigned end : {0u, 3u}) { auto a = v6; a.back() = end; for (auto b : a) ip.push_back(b); }
+    auto ipOptions = base;
+    ipOptions.ruleProviderContents.clear();
+    ipOptions.profileYaml = "rule-providers:\n  test: {type: http, behavior: ipcidr, format: mrs, url: https://example.test/ip.mrs}\n"
+        "rules: [\"RULE-SET,test,DIRECT\", \"MATCH,DIRECT\"]";
+    const auto ipResource = singbox::compileConfig(ipOptions).httpRuleProviders[0];
+    check(singbox::ValidateHttpRuleProvider(ipResource, mrsFrame(ip), error), "MRS IPv4-mapped and IPv6 ranges validate");
+    ipOptions.ruleProviderContents[ipResource.cacheKey] = mrsFrame(ip);
+    const auto ipResult = singbox::compileConfig(ipOptions);
+    check(ipResult.error.empty() && !ipResult.json.empty(), "MRS ranges compile without invented range fields");
+    if (!ipResult.json.empty()) {
+        const auto cidrs = json::parse(ipResult.json)["route"]["rule_set"][0]["rules"][0]["ip_cidr"];
+        check(cidrs.size() == 5 && cidrs[0] == "192.0.2.1/32" && cidrs[1] == "192.0.2.2/31" &&
+              cidrs[2] == "192.0.2.4/31" && cidrs[3] == "192.0.2.6/32",
+              "range decomposition retains boundaries instead of widening to containing CIDR");
+    }
+    auto reversed = ip; reversed[37] = 7;
+    check(!singbox::ValidateHttpRuleProvider(ipResource, mrsFrame(reversed), error), "reversed MRS IP range rejects whole body");
+    const RuleSetTestDirectory directory;
+    std::ofstream(directory.path / "test.mrs", std::ios::binary) << compressed;
+    auto file = base; file.ruleProviderContents.clear(); file.ruleProviderDir = directory.path.string();
+    file.profileYaml = "rule-providers:\n  test: {type: file, behavior: domain, format: mrs, path: test.mrs}\n"
+        "rules: [\"RULE-SET,test,DIRECT\", \"MATCH,DIRECT\"]";
+    check(singbox::compileConfig(file).error.empty(), "MRS file shares strict decoder and safe read-only root");
+}
+
+void testAsnRuleProviders() {
+    const RuleSetTestDirectory directory;
+    singbox::CompileOptions base;
+    base.ruleProviderCacheDir = (directory.path / "cache").string();
+    base.profileYaml = "rule-providers:\n  ai: {type: http, behavior: classical, url: https://example.test/ai.yaml}\n"
+        "rules: [\"RULE-SET,ai,DIRECT\", \"MATCH,DIRECT\"]\n";
+    const std::string body = "payload: [\"IP-ASN,14061,no-resolve\", \"NOT,((SRC-IP-ASN,14061))\"]\n";
+    const std::string snapshot = R"({"asn":14061,"prefixes":{"ipv4":["192.0.2.0/24"],"ipv6":["2001:db8::/32"]}})";
+    int fetches = 0, checks = 0, commits = 0;
+    bool rejectCheck = false, badAsn = false;
+    singbox::HttpRuleProviderResource asnResource;
+    rule_provider_cache::Operations operations;
+    operations.fetch = [&](const auto& resource, const auto& path, std::string&) {
+        ++fetches;
+        if (resource.asn) asnResource = resource;
+        std::ofstream output(path);
+        output << (resource.asn ? (badAsn ? "{}" : snapshot) : body);
+        output.close(); return output.good();
+    };
+    operations.check = [&](const auto&, const auto& result, std::string& error) {
+        ++checks;
+        check(commits == 0, "ASN and provider replacements wait for complete candidate check");
+        if (rejectCheck) { error = "kernel rejects fixture"; return false; }
+        return result.error.empty() && !result.json.empty();
+    };
+    operations.commit = [&](const auto& source, const auto& destination, std::string&) {
+        ++commits;
+        std::filesystem::copy_file(source, destination, std::filesystem::copy_options::overwrite_existing);
+        return true;
+    };
+    auto candidate = base;
+    singbox::CompileResult result;
+    std::string error;
+    check(rule_provider_cache::Prepare(candidate, operations, result, error) &&
+          fetches == 2 && checks == 1 && commits == 2 && candidate.ruleProviderContents.size() == 2,
+          "HTTP classical payload discovers and prepares one shared ASN snapshot in another round");
+    if (!result.json.empty()) {
+        const auto config = json::parse(result.json);
+        const auto& rules = config["route"]["rule_set"][0]["rules"];
+        check(rules.size() == 2 && rules[0]["ip_cidr"] == json::array({"192.0.2.0/24", "2001:db8::/32"}) &&
+              rules[1]["invert"] == true && rules[1]["rules"][0].contains("source_ip_cidr"),
+              "ASN preserves both families and nested NOT/source match without invented fields");
+        check(std::count_if(result.fidelity.begin(), result.fidelity.end(), [](const auto& note) {
+                  return note.level == singbox::Fidelity::Approx && note.scope == singbox::FidelityScope::Rule;
+              }) >= 3, "ASN snapshot and no-resolve differences enter fidelity ledger");
+    }
+    for (const auto* invalid : {
+            R"({"asn":14062,"prefixes":{"ipv4":["192.0.2.0/24"],"ipv6":[]}})",
+            R"({"asn":14061,"prefixes":{"ipv4":["192.0.2.0/24","bad"],"ipv6":[]}})",
+            R"({"asn":14061,"prefixes":{"ipv4":[],"ipv6":["192.0.2.0/24"]}})",
+            R"({"asn":14061,"prefixes":{"ipv4":[],"ipv6":[]}})",
+            R"({"asn":14061,"prefixes":{"ipv4":["192.0.2.0/24"]}})"}) {
+        check(!singbox::ValidateHttpRuleProvider(asnResource, invalid, error),
+              "ASN wrong identity, malformed member, family mismatch or empty/incomplete union rejects whole snapshot");
+    }
+    singbox::CompileOptions direct = candidate;
+    direct.profileYaml = "rules: [\"IP-ASN,14061,DIRECT,no-resolve\", \"SRC-IP-ASN,14061,DIRECT\", \"MATCH,DIRECT\"]";
+    const auto directResult = singbox::compileConfig(direct);
+    check(directResult.error.empty() && !directResult.json.empty(), "top-level ASN uses same prepared snapshot");
+    direct.ruleProviderContents.clear(); direct.ruleProviderCacheDir.clear();
+    const auto missing = singbox::compileConfig(direct);
+    check(!missing.error.empty() && missing.json.empty() && missing.httpRuleProviders.size() == 1,
+          "missing ASN cannot publish a config with silently omitted rules");
+    auto inlineOptions = candidate;
+    inlineOptions.profileYaml = "rule-providers:\n  ai: {type: inline, behavior: classical, payload: [\"IP-ASN,14061,no-resolve\"]}\n"
+        "rules: [\"RULE-SET,ai,DIRECT\", \"MATCH,DIRECT\"]";
+    check(singbox::compileConfig(inlineOptions).error.empty(), "inline ASN expands to headless ip_cidr");
+    for (const auto* invalid : {"IP-ASN,0", "IP-ASN,-1", "IP-ASN,4294967296", "IP-ASN,14061,unknown",
+                               "IP-ASN,14061,no-resolve,extra", "IP-ASN,AS14061"}) {
+        const auto provider = singbox::compileConfig(base).httpRuleProviders[0];
+        check(!singbox::ValidateHttpRuleProvider(provider, "payload: [\"" + std::string(invalid) + "\"]", error),
+              "HTTP syntax validation rejects invalid ASN/modifiers before staging dependencies");
+    }
+    // Existing provider+ASN files survive a rejected replacement. Use expired
+    // valid caches so both replacement downloads stage before kernel refusal.
+    std::map<std::filesystem::path, std::string> oldImages;
+    for (const auto& resource : result.httpRuleProviders) {
+        const auto file = std::filesystem::path(base.ruleProviderCacheDir) / (resource.cacheKey + ".cache");
+        std::ifstream input(file); oldImages[file] = std::string(std::istreambuf_iterator<char>(input), {});
+        std::filesystem::last_write_time(file, std::filesystem::file_time_type::clock::now() - std::chrono::hours(48));
+    }
+    auto refresh = base;
+    refresh.profileYaml = "rule-providers:\n  ai: {type: http, behavior: classical, url: https://example.test/ai.yaml, interval: 1}\n"
+        "rules: [\"RULE-SET,ai,DIRECT\", \"MATCH,DIRECT\"]";
+    commits = checks = 0; rejectCheck = true;
+    check(!rule_provider_cache::Prepare(refresh, operations, result, error) && commits == 0 && checks == 1 &&
+          refresh.ruleProviderContents.empty(), "rejected full ASN candidate never publishes snapshots or replaces caches");
+    for (const auto& [file, image] : oldImages) {
+        std::ifstream input(file);
+        check(std::string(std::istreambuf_iterator<char>(input), {}) == image, "rejected ASN refresh retains each old cache byte");
+    }
+    auto fresh = base; fresh.ruleProviderCacheDir = (directory.path / "bad-cache").string();
+    badAsn = true; rejectCheck = false; commits = checks = 0;
+    check(!rule_provider_cache::Prepare(fresh, operations, result, error) && commits == 0 && checks == 0 &&
+          fresh.ruleProviderContents.empty(), "invalid ASN download rejects staged classical body before any commit");
+}
+
+void testHttpRuleProviders() {
+    const RuleSetTestDirectory directory;
+    const auto cache = directory.path / "cache";
+    std::filesystem::create_directory(cache);
+    singbox::CompileOptions base;
+    base.ruleProviderDir = directory.path.string();
+    base.ruleProviderCacheDir = cache.string();
+    base.mainConnectionId = "http-main";
+    base.profileYaml = "rule-providers:\n  cn: {type: http, behavior: domain, url: https://example.test/rules.yaml, interval: 1}\n"
+        "rules:\n  - AND,((RULE-SET,cn),(NETWORK,TCP)),DIRECT\n  - MATCH,DIRECT\n";
+    const auto missing = singbox::compileConfig(base);
+    check(!missing.error.empty() && missing.json.empty() && missing.httpRuleProviders.size() == 1 &&
+          !missing.fidelity.empty() && missing.ruleSetResources.empty(),
+          "HTTP discovery returns owned manifest on cache miss without CN alias substitution/network IO");
+    const auto resource = missing.httpRuleProviders[0];
+    const auto file = cache / (resource.cacheKey + ".cache");
+    std::string body = "payload: [first.test]\n", reason;
+    int fetched = 0, committed = 0, checked = 0;
+    bool offline = false, rejectNative = false;
+    rule_provider_cache::Operations operations;
+    operations.fetch = [&](const auto&, const auto& path, std::string& error) {
+        ++fetched;
+        if (offline) { error = "test offline"; return false; }
+        std::ofstream output(path, std::ios::binary);
+        output << body; output.close(); return output.good();
+    };
+    operations.check = [&](const auto&, const auto& result, std::string& error) {
+        ++checked;
+        if (rejectNative) { error = "test kernel rejects"; return false; }
+        return result.error.empty() && !result.json.empty();
+    };
+    operations.commit = [&](const auto& source, const auto& destination, std::string&) {
+        ++committed;
+        // Fake replace adapter; production uses api::CommitFile on all OSes.
+        std::filesystem::copy_file(source, destination, std::filesystem::copy_options::overwrite_existing);
+        return true;
+    };
+    auto first = base;
+    singbox::CompileResult prepared;
+    check(rule_provider_cache::Prepare(first, operations, prepared, reason) && fetched == 1 &&
+          committed == 1 && checked == 1 && prepared.fidelity.size() == 1 &&
+          prepared.fidelity[0].level == singbox::Fidelity::Approx,
+          "HTTP first load converts/checks before cache commit and reports snapshot approximation");
+    check(singbox::ReadHttpRuleProviderCache(resource, cache, reason) == body &&
+          first.ruleProviderContents[resource.cacheKey] == body,
+          "HTTP committed cache and applied candidate contain same complete raw snapshot");
+    const auto original = *singbox::ReadRuleProviderText(file, 9 * 1024 * 1024, reason);
+    const auto expire = [&] {
+        std::filesystem::last_write_time(file, std::filesystem::file_time_type::clock::now() - std::chrono::seconds(10));
+    };
+    expire(); offline = true;
+    auto cached = base;
+    check(rule_provider_cache::Prepare(cached, operations, prepared, reason) &&
+          cached.ruleProviderContents[resource.cacheKey] == body && committed == 1 &&
+          std::ranges::any_of(prepared.warnings, [](const auto& warning) { return warning.find("沿用") != std::string::npos; }),
+          "stale offline HTTP source keeps verified cache with runtime warning, no destructive repair");
+    offline = false; body = "payload: [valid.test, 'part*.unsupported.test']\n";
+    auto bad = base;
+    check(rule_provider_cache::Prepare(bad, operations, prepared, reason) && committed == 1 &&
+          *singbox::ReadRuleProviderText(file, 9 * 1024 * 1024, reason) == original,
+          "invalid refreshed payload never replaces good cache or commits a valid prefix");
+    body = "payload: [second.test]\n"; rejectNative = true;
+    auto rejected = base;
+    check(!rule_provider_cache::Prepare(rejected, operations, prepared, reason) && committed == 1 &&
+          rejected.ruleProviderContents.empty() &&
+          *singbox::ReadRuleProviderText(file, 9 * 1024 * 1024, reason) == original,
+          "complete candidate/kernel rejection preserves old cache and caller options");
+    rejectNative = false;
+    auto second = base;
+    check(rule_provider_cache::Prepare(second, operations, prepared, reason) && committed == 2,
+          "valid refreshed HTTP snapshot can replace cache after complete candidate check");
+    const int fetches = fetched;
+    check(rule_provider_cache::Prepare(first, operations, prepared, reason) && fetched == fetches &&
+          first.ruleProviderContents[resource.cacheKey] == "payload: [first.test]\n",
+          "pinned prior plan remains old snapshot after global cache update, without redownload on rollback");
+    rejectNative = true;
+    const auto pinnedContents = first.ruleProviderContents;
+    const int previousChecks = checked;
+    check(!rule_provider_cache::Prepare(first, operations, prepared, reason) &&
+          checked == previousChecks + 1 && fetched == fetches && committed == 2 &&
+          first.ruleProviderContents == pinnedContents,
+          "pinned snapshot fast path still checks complete candidate and preserves options/cache on rejection");
+    rejectNative = false;
+    for (const char* extra : {"header: {X-Test: sample}", "header: {X-Test: [one, two]}",
+                             "header: {X-Test: []}", "header: {X-Test: [null]}",
+                             "header: {X-Test: [sample], x-test: [duplicate]}",
+                             "header: {Host: [other.test]}", "header: {Accept-Encoding: [gzip]}",
+                             "header: {X-Test: [' leading ']}", "header: {X-Test: [中文]}",
+                             "header: {'Bad Name': [sample]}", "header: {X-Test: [\"bad\\r\\nInjected: yes\"]}",
+                             "proxy: selected", "format: unknown", "format: {bad: yaml}",
+                             "format: [yaml]", "format: null", "format: ''", "format: '  '",
+                             "interval: -1", "interval: 1.5", "size-limit: 8388609", "size-limit: invalid",
+                             "path: '../escape'", "url: file:///tmp/rules", "url: https://sample:pass@example.test/rules"}) {
+        auto unsupported = base;
+        unsupported.profileYaml = "rule-providers:\n  cn:\n    type: http\n    behavior: domain\n";
+        if (!std::string_view(extra).starts_with("url:")) unsupported.profileYaml += "    url: https://example.test/rules\n";
+        unsupported.profileYaml += std::string("    ") + extra + "\nrules:\n  - RULE-SET,cn,DIRECT\n  - MATCH,DIRECT\n";
+        const auto result = singbox::compileConfig(unsupported);
+        check(!result.error.empty() && result.json.empty() && result.httpRuleProviders.empty() && !result.fidelity.empty(),
+              "HTTP unsupported/invalid download semantics fail declaration before resource enqueue");
+    }
+    auto changedSource = base;
+    changedSource.mainConnectionId = "other-source";
+    const auto different = singbox::compileConfig(changedSource);
+    check(different.httpRuleProviders[0].cacheKey != resource.cacheKey,
+          "HTTP cache identity isolates stable source IDs rather than runtime tag/preview directory");
+    auto limited = base;
+    limited.ruleProviderContents.clear();
+    limited.profileYaml = "rule-providers:\n  tiny: {type: http, behavior: domain, format: text, url: https://example.test/tiny, size-limit: 4, proxy: DIRECT}\n"
+        "rules:\n  - RULE-SET,tiny,DIRECT\n  - MATCH,DIRECT\n";
+    body = "valid.test\n";
+    check(!rule_provider_cache::Prepare(limited, operations, prepared, reason) && committed == 2 &&
+          limited.ruleProviderContents.empty(), "HTTP body over declared size-limit rejects without truncation or cache commit");
+    auto multiple = base;
+    multiple.profileYaml = "rule-providers:\n  good: {type: http, behavior: domain, url: https://example.test/good}\n"
+        "  bad: {type: http, behavior: ipcidr, url: https://example.test/bad}\n"
+        "rules:\n  - RULE-SET,good,DIRECT\n  - RULE-SET,bad,DIRECT\n  - MATCH,DIRECT\n";
+    body = "payload: [valid.test]\n";
+    check(!rule_provider_cache::Prepare(multiple, operations, prepared, reason) && committed == 2 &&
+          multiple.ruleProviderContents.empty(), "one invalid HTTP provider prevents all staged candidate cache commits");
+    auto seed = base;
+    seed.profileYaml = "rule-providers:\n  seed: {type: http, behavior: domain, url: https://example.test/seed, path: seed.yaml}\n"
+        "rules:\n  - RULE-SET,seed,DIRECT\n  - MATCH,DIRECT\n";
+    std::ofstream(directory.path / "seed.yaml") << "payload: [seed.test]\n";
+    const int beforeSeed = fetched;
+    check(rule_provider_cache::Prepare(seed, operations, prepared, reason) && fetched == beforeSeed && committed == 3,
+          "HTTP interval=0 uses valid read-only seed offline and stores app-owned cache");
+    check(*singbox::ReadRuleProviderText(directory.path / "seed.yaml", 100, reason) == "payload: [seed.test]\n",
+          "HTTP seed path is never rewritten as download cache");
+    std::ofstream(file, std::ios::trunc) << "clash-flux-rule-provider-v2\nother identity\npayload: [wrong.test]\n";
+    auto mismatch = base;
+    check(!rule_provider_cache::Prepare(mismatch, operations, prepared, reason) && fetched == beforeSeed && committed == 3,
+          "cache identity/future version mismatch refuses reuse and overwrite");
+    auto exceptionOptions = base;
+    exceptionOptions.mainConnectionId = "throwing-fetch";
+    auto exceptions = operations;
+    exceptions.fetch = [](const auto&, const auto&, std::string&) -> bool {
+        throw std::runtime_error("test transfer exception");
+    };
+    check(!rule_provider_cache::Prepare(exceptionOptions, exceptions, prepared, reason) &&
+          !reason.empty() && exceptionOptions.ruleProviderContents.empty() && committed == 3,
+          "HTTP transfer exceptions return failure without escaping task/coroutine or touching cache/options");
+    check(std::ranges::none_of(std::filesystem::directory_iterator(cache), [](const auto& entry) {
+        return entry.path().filename().string().starts_with(".stage-");
+    }), "HTTP exclusive stage directories cleaned on every success/failure path");
+
+    auto withHeaders = base;
+    withHeaders.profileYaml = "rule-providers:\n  cn: {type: http, behavior: domain, url: https://example.test/rules.yaml, "
+        "header: {User-Agent: [provider-test/1], Authorization: [Bearer test-only], X-Token: [sample]}}\n"
+        "rules:\n  - RULE-SET,cn,DIRECT\n  - MATCH,DIRECT\n";
+    const auto headerManifest = singbox::compileConfig(withHeaders);
+    check(headerManifest.httpRuleProviders.size() == 1, "valid single-value header map enters resource manifest");
+    const auto headerResource = headerManifest.httpRuleProviders[0];
+    check(headerResource.headers.at("authorization") == "Bearer test-only" &&
+          headerResource.cacheKey != resource.cacheKey,
+          "header values retained exactly and cache identity isolated from no-header downloads");
+    auto headerOperations = operations;
+    headerOperations.fetch = [&](const auto& request, const auto& path, std::string&) {
+        check(request.headers == headerResource.headers, "task fetch receives exact compiler-owned headers");
+        std::ofstream output(path); output << "payload: [authorized.test]\n"; output.close();
+        return output.good();
+    };
+    check(rule_provider_cache::Prepare(withHeaders, headerOperations, prepared, reason) &&
+          prepared.fidelity.size() == 2 && prepared.json.find("Bearer test-only") == std::string::npos,
+          "header snapshot checked/committed without credentials in native config, redirect difference is accounted");
+    auto otherHeader = withHeaders;
+    auto& yaml = otherHeader.profileYaml;
+    yaml.replace(yaml.find("Bearer test-only"), std::string("Bearer test-only").size(), "Bearer another-test");
+    const auto otherManifest = singbox::compileConfig(otherHeader);
+    check(!otherManifest.error.empty() && otherManifest.httpRuleProviders.size() == 1 &&
+          otherManifest.httpRuleProviders[0].cacheKey != headerResource.cacheKey &&
+          otherManifest.error.find("Bearer") == std::string::npos,
+          "changed credentials cannot reuse old raw pins/cache and never appear in failure diagnostics");
+    const auto authorizedCache = cache / (headerResource.cacheKey + ".cache");
+    const auto authorizedImage = *singbox::ReadRuleProviderText(authorizedCache, 9 * 1024 * 1024, reason);
+    const auto previousPins = otherHeader.ruleProviderContents;
+    offline = true;
+    check(!rule_provider_cache::Prepare(otherHeader, operations, prepared, reason) &&
+          otherHeader.ruleProviderContents == previousPins &&
+          *singbox::ReadRuleProviderText(authorizedCache, 9 * 1024 * 1024, reason) == authorizedImage &&
+          !std::filesystem::exists(cache / (otherManifest.httpRuleProviders[0].cacheKey + ".cache")),
+          "failed changed-credential download keeps old cache/options without using another header identity as fallback");
+    offline = false;
+    const int beforeHeaderRollback = fetched;
+    check(rule_provider_cache::Prepare(withHeaders, operations, prepared, reason) &&
+          fetched == beforeHeaderRollback && withHeaders.ruleProviderContents.at(headerResource.cacheKey) ==
+          "payload: [authorized.test]\n", "previous authorized plan rolls back using its pinned raw snapshot without fetch");
+    auto noHeader = base;
+    noHeader.profileYaml.insert(noHeader.profileYaml.find("interval: 1"), "header: {}, ");
+    check(singbox::compileConfig(noHeader).httpRuleProviders[0].cacheKey == resource.cacheKey,
+          "empty header map preserves prior cache identity for upgrade compatibility");
+    auto caseHeader = withHeaders;
+    caseHeader.profileYaml.replace(caseHeader.profileYaml.find("User-Agent"), 10, "user-agent");
+    check(singbox::compileConfig(caseHeader).httpRuleProviders[0].cacheKey == headerResource.cacheKey,
+          "case-insensitive header names produce stable identities");
+    auto oversized = base;
+    oversized.profileYaml = "rule-providers:\n  cn: {type: http, behavior: domain, url: https://example.test/rules.yaml, header: {X-Token: ['" +
+        std::string(16385, 's') + "']}}\nrules: [MATCH,DIRECT]\n";
+    const auto tooLarge = singbox::compileConfig(oversized);
+    check(!tooLarge.error.empty() && tooLarge.httpRuleProviders.empty() && tooLarge.error.size() < 1000,
+          "oversized headers reject declaration without exposing raw header values");
+}
+
+void testGroupProxyExpansion() {
+    const std::string nodes = R"YAML(proxies:
+  - {name: z-node, type: socks5, server: 192.0.2.1, port: 1080}
+  - {name: a-node, type: socks5, server: 192.0.2.2, port: 1080}
+)YAML";
+    const auto compile = [&](const std::string& fields, std::string source = {}) {
+        singbox::CompileOptions options;
+        options.profileYaml = (source.empty() ? nodes : source) +
+            "proxy-groups:\n  - name: all\n    type: select\n" + fields +
+            "  - {name: other, type: select, proxies: [DIRECT]}\nrules: ['MATCH,all']\n";
+        return singbox::compileConfig(options);
+    };
+    const auto group = [](const auto& result) {
+        if (result.json.empty()) return json::object();
+        const auto config = json::parse(result.json);
+        for (const auto& outbound : config["outbounds"])
+            if (outbound.value("tag", "") == "all") return outbound;
+        return json::object();
+    };
+    const auto exact = [](const auto& result) {
+        return std::ranges::any_of(result.fidelity, [](const auto& note) {
+            return note.scope == singbox::FidelityScope::Group && note.subject == "all" &&
+                   note.level == singbox::Fidelity::Exact;
+        });
+    };
+    for (const auto* value : {"true", "yes", "1"}) {
+        const auto result = compile(std::format("    include-all-proxies: {}\n", value));
+        check(result.error.empty() && group(result)["outbounds"] == json::array({"a-node", "z-node"}) && exact(result),
+              "include-all-proxies sorts only source nodes, excluding other groups and managed DIRECT");
+    }
+    const auto explicitFirst = compile("    include-all-proxies: true\n    proxies: [other, z-node]\n"
+                                       "    default-selected: a-node\n    filter: ''\n    use: []\n");
+    check(explicitFirst.error.empty() && group(explicitFirst)["outbounds"] ==
+          json::array({"other", "z-node", "a-node", "z-node"}) &&
+          group(explicitFirst)["default"] == "a-node", "explicit members precede expansion; repeated members and selector default survive");
+    for (const auto* value : {"false", "no", "0"}) {
+        const auto result = compile(std::format("    include-all-proxies: {}\n    proxies: [DIRECT]\n", value));
+        check(result.error.empty() && group(result)["outbounds"] == json::array({"DIRECT"}) && !exact(result),
+              "false expansion flag preserves explicit members without a false expansion ledger");
+    }
+    for (const auto* field : {"include-all", "include-all-proxies", "include-all-providers"})
+        for (const auto* invalid : {"null", "{}", "[]", "''", "maybe"}) {
+            const auto result = compile(std::format("    {}: {}\n    proxies: [DIRECT]\n", field, invalid));
+            check(!result.error.empty() && result.json.empty() && !result.fidelity.empty(),
+                  "invalid expansion booleans reject candidate with retained fidelity");
+        }
+    for (const auto* fields : {
+        "    filter: 'a'\n", "    exclude-filter: 'z'\n", "    exclude-type: Socks5\n",
+        "    filter: null\n", "    exclude-filter: []\n", "    exclude-type: {}\n",
+        "    filter: ' '\n", "    use: [remote]\n", "    use: null\n",
+        "    include-all: true\n", "    include-all-providers: true\n",
+        "    proxies: DIRECT\n", "    proxies: [DIRECT, null]\n", "    proxies: [DIRECT, {}]\n",
+        "    proxies: ['']\n", "    include-all-proxies: false\n", "    filter: ''\n    filter: a\n"}) {
+        const auto result = compile(std::string("    include-all-proxies: true\n") + fields);
+        check(!result.error.empty() && result.json.empty() && std::ranges::any_of(result.fidelity, [](const auto& note) {
+                  return note.level == singbox::Fidelity::Unsupported && note.subject == "all";
+              }), "partial expansion, unsupported filters and malformed/duplicate members fail atomically");
+    }
+    const auto partial = compile("    include-all-proxies: true\n", nodes +
+        "  - {name: rejected, type: unsupported, server: 192.0.2.3, port: 1080}\n");
+    check(partial.error.empty() && group(partial)["outbounds"] == json::array({"a-node", "z-node"}) &&
+          std::ranges::any_of(partial.fidelity, [](const auto& note) {
+              return note.scope == singbox::FidelityScope::Group && note.subject == "all" &&
+                     note.level == singbox::Fidelity::Approx;
+          }), "rejected source nodes remain recorded in expanded group fidelity");
+    for (const auto* members : {"", "    proxies: [REJECT]\n", "    proxies: [missing]\n"}) {
+        const auto result = compile(std::string("    include-all-proxies: true\n") + members, "proxies: []\n");
+        check(!result.error.empty() && result.json.empty(), "empty expansion never silently falls back to DIRECT");
+    }
+    const auto cycle = compile("    include-all-proxies: true\n",
+        "proxies:\n  - {name: chain, type: socks5, server: 192.0.2.1, port: 1080, dialer-proxy: all}\n");
+    check(!cycle.error.empty() && cycle.json.empty(), "expanded group membership participates in detour cycle validation");
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+    singbox::CompileOptions sources;
+    sources.mainConnectionId = "expansion-main";
+    sources.profileYaml = nodes + "proxy-groups:\n  - {name: all, type: select, include-all-proxies: true}\nrules: ['MATCH,all']\n";
+    sources.auxiliarySources = {{"expansion-secondary", "secondary",
+        "proxies:\n  - {name: a-node, type: socks5, server: 192.0.2.3, port: 1080}\n"
+        "  - {name: secondary-only, type: socks5, server: 192.0.2.4, port: 1080}\n"
+        "proxy-groups:\n  - {name: all, type: select, include-all-proxies: true}\nrules: ['MATCH,all']\n", true}};
+    sources.globalRules = {{.match = vpn::MatchKind::DomainSuffix, .pattern = "secondary.test",
+        .connectionId = "expansion-secondary", .id = "expansion-source", .tier = vpn::RuleTier::SourcePolicy,
+        .targetKind = vpn::TargetKind::Group, .targetObject = "all"}};
+    const auto scoped = singbox::compileConfig(sources);
+    check(scoped.error.empty() && !scoped.json.empty(), "expanded groups compile in independent main and secondary sources");
+    if (!scoped.json.empty()) {
+        const auto config = json::parse(scoped.json);
+        int verified = 0;
+        for (const auto& object : scoped.sourceObjects) {
+            if (object.objectId != "all" || object.kind != vpn::TargetKind::Group) continue;
+            const auto found = std::ranges::find_if(config["outbounds"], [&](const auto& value) {
+                return value.value("tag", "") == object.tag;
+            });
+            check(found != config["outbounds"].end() && (*found)["outbounds"].size() == 2,
+                  "each source exports its own two expanded nodes");
+            if (found == config["outbounds"].end()) continue;
+            for (const auto& member : (*found)["outbounds"])
+                check(std::ranges::any_of(scoped.sourceObjects, [&](const auto& value) {
+                    return value.sourceId == object.sourceId && value.kind == vpn::TargetKind::Node && value.tag == member.get<std::string>();
+                }), "expanded member references stay within their source namespace");
+            ++verified;
+        }
+        check(verified == 2, "both source groups retain their expansion after namespace rewriting");
+    }
+#endif
+    for (const bool speedOnly : {false, true}) {
+        singbox::CompileOptions options;
+        options.speedTestOnly = speedOnly;
+        options.profileYaml = nodes +
+            "proxy-groups:\n  - {name: all, type: url-test, include-all-proxies: true, interval: 60}\nrules: ['MATCH,all']\n";
+        const auto result = singbox::compileConfig(options);
+        check(result.error.empty() && group(result)["outbounds"] == json::array({"a-node", "z-node"}) &&
+              group(result).value("type", "") == (speedOnly ? "selector" : "urltest"),
+              "expanded URLTest members survive ordinary and speed-only compilation");
+    }
+}
+
 } // namespace
 
+// Inactive-source inspection uses the same export compiler as orchestration,
+// without building/applying a plan or staging provider resources.
+void testSourceObjectDirectory() {
+    singbox::CompileOptions options;
+    options.mainConnectionId = "profile-17";
+    options.mainSourceName = "inactive";
+    options.profileYaml = R"yaml(
+proxies:
+  - {name: A, type: socks5, server: 127.0.0.1, port: 1080}
+  - {name: B, type: socks5, server: 127.0.0.1, port: 1081}
+  - {name: rejected, type: unknown, server: bad.test, port: 443}
+proxy-groups:
+  - {name: Pick, type: select, include-all-proxies: true}
+rule-providers:
+  external: {type: http, behavior: domain, url: 'https://invalid.test/provider', path: absent.yaml}
+rules: ['RULE-SET,external,Pick', 'MATCH,Pick']
+)yaml";
+    auto missingIdentity = options;
+    missingIdentity.mainConnectionId.clear();
+    check(!singbox::inspectClashSourceObjects(missingIdentity).error.empty(), "object inventory requires a stable source ID");
+    const auto inventory = singbox::inspectClashSourceObjects(options);
+    check(inventory.error.empty(), "inactive source object inspection does not require provider download");
+    check(inventory.json.empty() && inventory.httpRuleProviders.empty() && inventory.ruleSetResources.empty(),
+          "object inspection is not a runnable plan or a resource-staging request");
+    const auto contains = [&](const auto& result, vpn::TargetKind kind, const std::string& name) {
+        return std::ranges::any_of(result.sourceObjects, [&](const auto& item) {
+            return item.sourceId == options.mainConnectionId && item.kind == kind && item.objectId == name && item.tag != name;
+        });
+    };
+    check(contains(inventory, vpn::TargetKind::Node, "A") && contains(inventory, vpn::TargetKind::Node, "B") &&
+          contains(inventory, vpn::TargetKind::Group, "Pick"), "directory includes compiled nodes and expanded groups with original names");
+    check(!contains(inventory, vpn::TargetKind::Node, "rejected") && !inventory.fidelity.empty(),
+          "rejected nodes remain absent and inspection retains fidelity notes");
+    options.mainConnectionId = "profile-18";
+    const auto second = singbox::inspectClashSourceObjects(options);
+    check(contains(second, vpn::TargetKind::Group, "Pick") &&
+          second.sourceObjects.back().tag != inventory.sourceObjects.back().tag,
+          "same object name in another source has a distinct identity");
+    for (const auto* invalid : {"", "{\"outbounds\": []}", "proxies: [", "proxy-groups: [{name: loop, type: select, proxies: [loop]}]",
+                              "proxy-groups: [{name: empty, type: select, include-all-proxies: true}]", "rules: ['MATCH,missing']"}) {
+        options.profileYaml = invalid;
+        const auto result = singbox::inspectClashSourceObjects(options);
+        check(!result.error.empty() && result.sourceObjects.empty(), "unreadable or invalid sources never publish a partial object directory");
+    }
+}
+
 int main(int argc, char** argv) {
+    // Test-only compiler entry for isolated native runtime fixtures; no app
+    // Runtime, user database, network downloads or persistent paths involved.
+    if (argc == 5 && std::string_view(argv[1]) == "--prepare-config") {
+        const std::filesystem::path root(argv[3]);
+        std::ifstream input(argv[2]);
+        singbox::CompileOptions options;
+        options.profileYaml.assign(std::istreambuf_iterator<char>(input), {});
+        options.ruleProviderCacheDir = (root / "cache").string();
+        options.ruleProviderDir = root.string();
+        options.ruleSetDir = (root / "geo").string();
+        rule_provider_cache::Operations operations;
+        operations.fetch = [&](const auto& resource, const auto& target, std::string& error) {
+            std::error_code ec;
+            std::filesystem::copy_file(root / (resource.cacheKey + ".download"), target,
+                                      std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec) error = "missing offline fixture";
+            return !ec;
+        };
+        operations.check = [](const auto&, const auto& result, std::string&) {
+            return result.error.empty() && !result.json.empty();
+        };
+        operations.commit = [](const auto& source, const auto& target, std::string& error) {
+            std::error_code ec; std::filesystem::rename(source, target, ec);
+            error = ec ? ec.message() : ""; return !ec;
+        };
+        singbox::CompileResult result; std::string error;
+        const bool ok = rule_provider_cache::Prepare(options, operations, result, error);
+        json manifest = json::array();
+        for (const auto& resource : result.httpRuleProviders)
+            manifest.push_back({{"key", resource.cacheKey}, {"url", resource.url},
+                                {"headers", resource.headers}, {"max_bytes", resource.maxBytes}});
+        std::ofstream(root / "manifest.json") << manifest.dump();
+        if (!ok) { std::println(stderr, "{}", error); return 1; }
+        std::ofstream output(argv[4]); output << result.json; output.close();
+        std::println("prepared providers={}, fidelity={}", result.httpRuleProviders.size(), result.fidelity.size());
+        return output ? 0 : 1;
+    }
+    if (argc == 4 && std::string_view(argv[1]) == "--compile-config") {
+        std::ifstream input(argv[2], std::ios::binary);
+        singbox::CompileOptions options;
+        options.mainConnectionId = "runtime-main";
+        options.profileYaml.assign(std::istreambuf_iterator<char>(input), {});
+        const auto result = singbox::compileConfig(options);
+        if (!input || !result.error.empty() || result.json.empty()) return 1;
+        std::ofstream output(argv[3]); output << result.json; output.close();
+        return output ? 0 : 1;
+    }
     testProxyValues();
+    testGroupProxyExpansion();
+    testSourceObjectDirectory();
     testProxyUdpOptions();
     testShadowsocksPlugins();
     testLogicalRuleResources();
+    testFileRuleProviders();
+    testHttpRuleProviders();
+    testAsnRuleProviders();
+    testMrsRuleProviders();
+    for (const auto* format : {"{bad: yaml}", "[yaml]", "null", "''", "'  '"}) {
+        singbox::CompileOptions options;
+        options.profileYaml = std::format(
+            "rule-providers:\n  sample: {{type: inline, behavior: domain, format: {}, payload: [valid.test]}}\n"
+            "rules: ['RULE-SET,sample,DIRECT', 'MATCH,DIRECT']\n", format);
+        const auto result = singbox::compileConfig(options);
+        check(std::ranges::any_of(result.fidelity, [](const auto& note) {
+            return note.level == singbox::Fidelity::Unsupported && note.subject == "rule-providers.sample";
+        }), "inline explicit malformed format is rejected with ledger rather than defaulted");
+        if (!result.json.empty()) check(json::parse(result.json)["route"].value("rule_set", json::array()).empty(),
+                                       "inline malformed format emits no usable provider");
+    }
+    testDnsCertificateParameters();
+    testDnsWildcardPolicies();
+    testClashHosts();
     testHysteria1();
     testSsh();
     // A plain node must never replace an unsupported certificate constraint or
@@ -1519,9 +2607,31 @@ rules:
         realOptions.mode = "rule";
         realOptions.tunInbound = true;
         realOptions.ruleSetDir = argv[2];
+        realOptions.ruleProviderDir = std::filesystem::absolute(argv[1]).parent_path().string();
+        const RuleSetTestDirectory httpCache;
+        realOptions.ruleProviderCacheDir = httpCache.path.string();
         realOptions.profileYaml = std::string(std::istreambuf_iterator<char>(input),
                                               std::istreambuf_iterator<char>());
-        const auto realResult = singbox::compileConfig(realOptions);
+        auto realResult = singbox::compileConfig(realOptions);
+        if (!realResult.httpRuleProviders.empty()) {
+            // Public offline HTTP fixtures seed content from companion files.
+            // No user cache is written and no fixture ever makes network calls.
+            rule_provider_cache::Operations operations;
+            operations.fetch = [](const auto&, const auto&, std::string& error) {
+                error = "fixture network disabled"; return false;
+            };
+            operations.check = [](const auto&, const auto& compiled, std::string&) {
+                return compiled.error.empty() && !compiled.json.empty();
+            };
+            operations.commit = [](const auto& temp, const auto& dest, std::string& error) {
+                std::error_code ec;
+                std::filesystem::rename(temp, dest, ec);
+                error = ec ? ec.message() : ""; return !ec;
+            };
+            std::string error;
+            check(rule_provider_cache::Prepare(realOptions, operations, realResult, error),
+                  "HTTP fixture prepares read-only seeds into isolated temporary cache");
+        }
         check(realResult.error.empty(),
               std::format("真实订阅编译无错（实际: {}）", realResult.error));
         if (!realResult.json.empty()) {

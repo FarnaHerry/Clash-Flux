@@ -52,6 +52,18 @@ export struct RuleSetResource {
     std::string url;
 };
 
+// Only compiler-declared HTTP providers and ASN snapshots enter this cache.
+// Identity is checked in full on every read; cacheKey is a filename, not a trust
+// or cryptographic checksum. Original provider paths are read-only seed files.
+export struct HttpRuleProviderResource {
+    std::string name, sourceId, url, behavior, format, seedPath;
+    std::map<std::string, std::string> headers;
+    std::string identity, cacheKey;
+    std::uint32_t asn = 0; // Internal ipverse snapshot only; not a Clash provider field.
+    std::uint64_t intervalSeconds = 0;
+    std::size_t maxBytes = 8 * 1024 * 1024;
+};
+
 export struct SourceObject {
     std::string sourceId;
     std::string sourceName;
@@ -68,13 +80,14 @@ export struct ProfileSource {
 };
 
 export struct CompileResult {
-    std::string json;                    // sing-box 配置 JSON；失败为空
+    std::string json;                    // compileConfig 配置 JSON；失败或仅目录检查为空
     std::string error;                   // 致命错误（YAML 解析失败等）
     // 自由文本投影（历史消费方与内核启动诊断沿用；每条 = fidelity[i].detail）
     std::vector<std::string> warnings;
     // 结构化保真度账本（不阻断启动）
     std::vector<FidelityNote> fidelity;
     std::vector<RuleSetResource> ruleSetResources;
+    std::vector<HttpRuleProviderResource> httpRuleProviders;
     std::vector<SourceObject> sourceObjects;
     std::vector<std::string> participatingSources;
     std::uint64_t planRevision = 0;
@@ -118,6 +131,10 @@ export struct CompileOptions {
     std::string ruleSetDir;                      // 非空时 GEOIP/GEOSITE .srs 本地命中即以
                                                  // local rule_set 生成（core_store
                                                  // 预取缓存目录；未命中回落 remote）
+    std::string ruleProviderDir;                 // type:file 只读根；仅允许根内相对路径，
+                                                 // 编译为 inline 快照，不监听或写入文件
+    std::string ruleProviderCacheDir;            // 应用自有 HTTP 缓存，与 file/GEO 分离
+    std::map<std::string, std::string> ruleProviderContents; // 任务层准备的不可变 raw 快照
     std::string mainSourceName;
     std::vector<ProfileSource> auxiliarySources; // 桌面：只由启用的显式规则引用
     std::uint64_t planRevision = 0;
@@ -130,6 +147,20 @@ export struct CompileOptions {
 // 编译 options.profileYaml 为 sing-box 配置 JSON。可为空（最小可用配置）、
 // Clash YAML，或以 "{" 开头的原生 sing-box JSON（直通并合并托管设置）。
 export CompileResult compileConfig(const CompileOptions& options);
+// Read-only Clash object directory, including sources not yet referenced by a
+// plan. Uses the same export compiler as secondary sources; no download/check,
+// persistence mutation or running/preview mapping publication.
+export CompileResult inspectClashSourceObjects(const CompileOptions& options);
+export std::optional<std::string> ReadRuleProviderText(const std::filesystem::path& path,
+    std::size_t maxBytes, std::string& error);
+export std::optional<std::string> ReadHttpRuleProviderCache(const HttpRuleProviderResource& resource,
+    const std::filesystem::path& directory, std::string& error);
+export std::optional<std::string> ReadHttpRuleProviderSeed(const HttpRuleProviderResource& resource,
+    const std::filesystem::path& directory, std::string& error);
+export std::string HttpRuleProviderCacheImage(const HttpRuleProviderResource& resource,
+    const std::string& content);
+export bool ValidateHttpRuleProvider(const HttpRuleProviderResource& resource,
+    const std::string& content, std::string& error);
 
 // sing-box 二进制规则集（.srs）以 "SRS" 魔数开头。0 字节、被写入错误内容
 // （例如把 HTTP 错误页落盘）或非规则集内容的缓存文件会让内核在启动期直接

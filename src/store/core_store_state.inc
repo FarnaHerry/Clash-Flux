@@ -62,8 +62,8 @@
         return *api_;
     }
 
-    stream::CoreStreams& streams() { return streams_; }
-    core::CoreProcess& process() { return process_; }
+    inline stream::CoreStreams& streams() { return streams_; }
+    inline core::CoreProcess& process() { return process_; }
 
     std::string secret() {
         ensureOpen();

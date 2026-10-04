@@ -6,6 +6,7 @@ struct SourceDefault { std::string tag; bool reject = false; bool drop = false; 
 struct Context {
     const CompileOptions& opt;
     CompileResult result;
+    bool providerSyntaxOnly = false; // HTTP body validation, never a published candidate.
     nlohmann::json config;
     nlohmann::json outbounds = nlohmann::json::array();
     nlohmann::json ruleSets = nlohmann::json::array();
@@ -16,6 +17,8 @@ struct Context {
     std::map<std::string, std::string> providerTags; // source name -> inline native tag
     std::set<std::string> declaredProviders;        // rejected declarations also shadow aliases
     std::string dnsBootstrapTag = "local";
+    nlohmann::json hostsDomains = nlohmann::json::array(); // Main-only connection resolution.
+    std::string hostsDnsTag;
     std::map<std::string, SourceDefault> sourceDefaults;
     std::string sourceId;
     std::string defaultFingerprint = "chrome";       // Scoped to this Clash source.
@@ -49,6 +52,7 @@ struct DnsEndpoint {
     std::string detour;
     int port = 0;
     bool http3 = false;
+    std::optional<bool> skipCertVerify;
 };
 
 int dnsDefaultPort(std::string_view scheme) {
@@ -70,17 +74,21 @@ std::optional<DnsEndpoint> parseDnsEndpoint(std::string_view rawValue) {
     if (value.empty()) return std::nullopt;
 
     DnsEndpoint endpoint;
+    bool hasH3 = false;
     if (const std::size_t fragment = value.find('#'); fragment != std::string::npos) {
         std::string_view parameters{value.data() + fragment + 1, value.size() - fragment - 1};
         if (parameters.empty()) return std::nullopt;
-        bool hasH3 = false;
         while (!parameters.empty()) {
             const auto separator = parameters.find('&');
-            const std::string parameter = trimCopy(parameters.substr(0, separator));
+            const std::string parameter{parameters.substr(0, separator)};
+            if (parameter != trimCopy(parameter)) return std::nullopt;
             if (parameter == "h3=true" || parameter == "h3=false") {
                 if (hasH3) return std::nullopt;
                 hasH3 = true;
                 endpoint.http3 = parameter == "h3=true";
+            } else if (parameter == "skip-cert-verify=true" || parameter == "skip-cert-verify=false") {
+                if (endpoint.skipCertVerify.has_value()) return std::nullopt;
+                endpoint.skipCertVerify = parameter == "skip-cert-verify=true";
             } else if (parameter.empty() || parameter.find('=') != std::string::npos ||
                        parameter == "RULES" || !endpoint.detour.empty()) {
                 return std::nullopt;
@@ -96,7 +104,9 @@ std::optional<DnsEndpoint> parseDnsEndpoint(std::string_view rawValue) {
 
     const std::size_t schemeEnd = value.find("://");
     endpoint.scheme = schemeEnd == std::string::npos ? "udp" : lowerCopy(value.substr(0, schemeEnd));
-    if (endpoint.http3 && endpoint.scheme != "https") return std::nullopt;
+    if (hasH3 && endpoint.scheme != "https") return std::nullopt;
+    if (endpoint.skipCertVerify.has_value() && endpoint.scheme != "tls" &&
+        endpoint.scheme != "https" && endpoint.scheme != "quic") return std::nullopt;
     if (endpoint.http3) endpoint.scheme = "h3";
     std::string authorityAndPath = schemeEnd == std::string::npos ? value : value.substr(schemeEnd + 3);
     const std::size_t pathStart = authorityAndPath.find('/');
@@ -141,7 +151,7 @@ bool dnsHostIsDomain(std::string_view host) {
     bool hasLetter = false;
     for (const unsigned char c : host) {
         if (std::isalpha(c)) hasLetter = true;
-        if (std::isalpha(c) || std::isdigit(c) || c == '.' || c == '-') continue;
+        if (std::isalpha(c) || std::isdigit(c) || c == '.' || c == '-' || c == '_') continue;
         return false;
     }
     return hasLetter;
@@ -167,7 +177,8 @@ std::string appendDnsServer(Context& ctx, std::string_view rawValue) {
         endpoint->scheme == "dhcp") {
         ctx.note(FidelityScope::Dns, Fidelity::Unsupported, raw,
                  std::format("DNS 服务器「{}」格式暂不支持，已忽略", raw),
-                 "该地址或附加参数尚未转换；支持 #出站名、#h3=true/false 及两者组合，"
+                 "该地址或附加参数尚未转换；支持 #出站名、HTTPS h3=true/false、"
+                 "加密 DNS skip-cert-verify=true/false 及其组合，"
                  "其它参数不会被当成出站名后静默丢弃");
         return {};
     }
@@ -196,6 +207,11 @@ std::string appendDnsServer(Context& ctx, std::string_view rawValue) {
     };
     const int defaultPort = dnsDefaultPort(scheme);
     if (endpoint->port != defaultPort) server["server_port"] = endpoint->port;
+    if (endpoint->skipCertVerify.has_value()) {
+        // Only the explicit source flag may relax this endpoint's trust.
+        // Never change server_name/SNI or the protected bootstrap resolver.
+        server["tls"] = {{"enabled", true}, {"insecure", *endpoint->skipCertVerify}};
+    }
     if ((scheme == "https" || scheme == "h3") && !endpoint->path.empty() && endpoint->path != "/dns-query") {
         server["path"] = endpoint->path;
     }
@@ -284,7 +300,80 @@ std::optional<std::string> dnsPolicyDomain(std::string domain) {
     return domain;
 }
 
-std::vector<nlohmann::json> compileDnsPolicy(Context& ctx, const YAML::Node& policy,
+struct DnsPolicyPattern {
+    std::vector<std::string> labels;
+    bool subdomains = false; // One or more extra labels; never the root.
+
+    std::vector<unsigned> priority() const {
+        std::vector<unsigned> result;
+        for (auto it = labels.rbegin(); it != labels.rend(); ++it)
+            result.push_back(*it == "*" ? 1 : 2);
+        if (subdomains) result.push_back(0);
+        return result;
+    }
+    bool matches(const std::vector<std::string>& host) const {
+        if (subdomains ? host.size() <= labels.size() : host.size() != labels.size()) return false;
+        for (std::size_t i = 0; i < labels.size(); ++i) {
+            const auto& label = labels[labels.size() - i - 1];
+            if (label != "*" && label != host[host.size() - i - 1]) return false;
+        }
+        return true;
+    }
+    std::pair<std::string, std::string> fieldValue() const {
+        const bool wildcard = std::ranges::find(labels, "*") != labels.end();
+        std::string expression;
+        for (const auto& label : labels) {
+            if (!expression.empty()) expression += wildcard || subdomains ? "\\." : ".";
+            expression += label == "*" ? "[^.]+" : label;
+        }
+        if (!wildcard && !subdomains) return {"domain", std::move(expression)};
+        // Generated from validated literal labels, with no user regex syntax.
+        return {"domain_regex", std::string{"^"} + (subdomains ? "([^.]+\\.)+" : "") + expression + "$"};
+    }
+    nlohmann::json condition() const {
+        auto [field, value] = fieldValue();
+        return {{field, nlohmann::json::array({std::move(value)})}};
+    }
+};
+
+std::vector<std::string> dnsDomainLabels(std::string_view domain) {
+    std::vector<std::string> labels;
+    while (!domain.empty()) {
+        const auto dot = domain.find('.');
+        labels.emplace_back(domain.substr(0, dot));
+        if (dot == std::string_view::npos) break;
+        domain.remove_prefix(dot + 1);
+    }
+    return labels;
+}
+
+std::vector<DnsPolicyPattern> dnsPolicyPatterns(std::string pattern) {
+    pattern = lowerCopy(trimCopy(pattern));
+    const bool includeRoot = pattern.starts_with("+.");
+    const bool subdomains = includeRoot || pattern.starts_with('.');
+    if (subdomains) pattern.erase(0, includeRoot ? 2 : 1);
+    if (!pattern.empty() && pattern.back() == '.') pattern.pop_back(); // Existing canonicalization.
+    if (pattern.empty() || pattern.back() == '.' || pattern.size() > 253) return {};
+    auto labels = dnsDomainLabels(pattern);
+    for (const auto& label : labels) {
+        if (label.empty() || label.size() > 63) return {};
+        if (label == "*") continue;
+        for (const unsigned char c : label)
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_')) return {};
+    }
+    std::vector<DnsPolicyPattern> result;
+    if (includeRoot) result.push_back({labels, false});
+    result.push_back({std::move(labels), subdomains});
+    return result;
+}
+
+struct DnsPolicyRule {
+    DnsPolicyPattern pattern;
+    std::vector<unsigned> priority;
+    nlohmann::json rule;
+};
+
+std::vector<DnsPolicyRule> compileDnsPolicy(Context& ctx, const YAML::Node& policy,
                                            const std::string& subject) {
     if (!policy) return {};
     if (!policy.IsMap()) {
@@ -292,20 +381,16 @@ std::vector<nlohmann::json> compileDnsPolicy(Context& ctx, const YAML::Node& pol
                  subject + " 必须为域名到 DNS 地址的映射，已忽略");
         return {};
     }
-    struct PolicyRule {
-        bool exact;
-        std::size_t specificity;
-        nlohmann::json rule;
-    };
-    std::vector<PolicyRule> rules;
+    std::vector<DnsPolicyRule> rules;
+    std::map<std::pair<std::vector<std::string>, bool>, std::size_t> branches;
     for (const auto& item : policy) {
         const std::string pattern = item.first.IsScalar() ? trimCopy(item.first.Scalar()) : "<非标量>";
-        const bool suffix = pattern.starts_with("+.");
-        const auto domain = dnsPolicyDomain(suffix ? pattern.substr(2) : pattern);
-        if (!domain) {
+        auto patterns = dnsPolicyPatterns(pattern);
+        if (patterns.empty()) {
             ctx.note(FidelityScope::Dns, Fidelity::Unsupported, subject + ":" + pattern,
                      std::format("DNS 策略「{}」匹配模式尚未转换，已忽略", pattern),
-                     "当前支持完整域名及 +.域名；*.、.、geosite: 和 rule-set: 不会改写成更宽的匹配");
+                     "支持完整域名、整层 *、前缀 . 与 +.；部分标签通配、geosite:、rule-set: "
+                     "和其它格式不会改写成更宽的匹配");
             continue;
         }
         const std::string tag = selectDnsServer(ctx, item.second, subject + ":" + pattern);
@@ -314,40 +399,42 @@ std::vector<nlohmann::json> compileDnsPolicy(Context& ctx, const YAML::Node& pol
                      std::format("DNS 策略「{}」没有可转换服务器，已忽略", pattern));
             continue;
         }
-        rules.push_back({!suffix, domain->size(), {
-            {suffix ? "domain_suffix" : "domain", nlohmann::json::array({*domain})},
-            {"action", "route"}, {"server", tag},
-        }});
+        for (auto& matcher : patterns) {
+            auto rule = matcher.condition();
+            rule["action"] = "route";
+            rule["server"] = tag;
+            auto priority = matcher.priority();
+            const auto [slot, inserted] = branches.try_emplace(
+                std::pair{matcher.labels, matcher.subdomains}, rules.size());
+            DnsPolicyRule compiled{std::move(matcher), std::move(priority), std::move(rule)};
+            if (!inserted) {
+                // Clash Insert overwrites this trie branch in declaration order;
+                // +. contributes independent root and subdomain branches.
+                rules[slot->second] = std::move(compiled);
+                ctx.note(FidelityScope::Dns, Fidelity::Exact, subject + ":" + pattern,
+                         "后声明 DNS 策略覆盖同一规范化匹配分支，保持 Clash 的插入顺序语义");
+            } else rules.push_back(std::move(compiled));
+        }
     }
-    // Clash's domain trie prefers an exact match and then the longest suffix;
-    // sing-box rules use first-match order, independent of YAML insertion order.
+    // Trie DFS examines labels from right to left: literal, *, then dot.
+    // Reverse-label lexicographic rank reproduces that choice among matching
+    // patterns; total length or a global "exact first" sort cannot do so.
     std::stable_sort(rules.begin(), rules.end(), [](const auto& lhs, const auto& rhs) {
-        if (lhs.exact != rhs.exact) return lhs.exact;
-        return lhs.specificity > rhs.specificity;
+        return lhs.priority > rhs.priority;
     });
-    std::vector<nlohmann::json> compiled;
-    for (auto& rule : rules) compiled.push_back(std::move(rule.rule));
-    return compiled;
+    return rules;
 }
 
 // Both ordinary DNS and static node resolution use the same ordered matcher.
-// This deliberately only accepts exact/suffix policies; no wildcard widening.
-std::string policyResolver(const std::vector<nlohmann::json>& rules, const std::string& host,
+// Metadata stays outside emitted JSON; node selection does not reinterpret Go
+// regex using a different regex engine or maintain an independent priority.
+std::string policyResolver(const std::vector<DnsPolicyRule>& rules, const std::string& host,
                            std::string fallback) {
-    for (const auto& rule : rules) {
-        bool matches = false;
-        if (rule.contains("domain")) {
-            for (const auto& domain : rule["domain"])
-                matches = matches || host == domain.get<std::string>();
-        }
-        if (rule.contains("domain_suffix")) {
-            for (const auto& domain : rule["domain_suffix"]) {
-                const auto suffix = domain.get<std::string>();
-                matches = matches || host == suffix || host.ends_with("." + suffix);
-            }
-        }
-        if (matches) return rule.value("server", fallback);
-    }
+    const auto domain = dnsPolicyDomain(host);
+    if (!domain) return fallback;
+    const auto labels = dnsDomainLabels(*domain);
+    for (const auto& rule : rules)
+        if (rule.pattern.matches(labels)) return rule.rule.value("server", fallback);
     return fallback;
 }
 
@@ -375,7 +462,7 @@ void applyClashDns(Context& ctx, const YAML::Node& dns) {
     for (const auto& item : dns) {
         const std::string key = item.first.IsScalar() ? item.first.Scalar() : "<非标量>";
         if (key == "enable" || key == "ipv6" || key == "nameserver" || key == "fallback" ||
-            key == "nameserver-policy" || key == "default-nameserver" ||
+            key == "nameserver-policy" || key == "default-nameserver" || key == "use-hosts" ||
             key == "proxy-server-nameserver" || key == "proxy-server-nameserver-policy" || key == "direct-nameserver" || (key == "enhanced-mode" && ytext(dns, "enhanced-mode") == "redir-host")) continue;
         ctx.note(FidelityScope::Dns, Fidelity::Unsupported, "dns." + key,
                  std::format("Clash DNS 字段「{}」尚未转换，已忽略", key),
@@ -396,10 +483,14 @@ void applyClashDns(Context& ctx, const YAML::Node& dns) {
     }
     ctx.config["dns"]["strategy"] = ybool(dns, "ipv6") ? "prefer_ipv4" : "ipv4_only";
     const auto policy = compileDnsPolicy(ctx, dns["nameserver-policy"], "nameserver-policy");
-    if (!policy.empty()) ctx.config["dns"]["rules"] = policy;
+    if (!policy.empty()) {
+        auto rules = nlohmann::json::array();
+        for (const auto& compiled : policy) rules.push_back(compiled.rule);
+        ctx.config["dns"]["rules"] = std::move(rules);
+    }
     const std::string proxyResolver = selectDnsServer(ctx, dns["proxy-server-nameserver"],
                                                      "proxy-server-nameserver");
-    const auto proxyPolicy = proxyResolver.empty() ? std::vector<nlohmann::json>{}
+    const auto proxyPolicy = proxyResolver.empty() ? std::vector<DnsPolicyRule>{}
         : compileDnsPolicy(ctx, dns["proxy-server-nameserver-policy"], "proxy-server-nameserver-policy");
     const std::string directResolver = selectDnsServer(ctx, dns["direct-nameserver"], "direct-nameserver");
     const std::string strategy = ybool(dns, "ipv6") ? "prefer_ipv4" : "ipv4_only";
@@ -425,6 +516,99 @@ void applyClashDns(Context& ctx, const YAML::Node& dns) {
                  "已设置 DIRECT 的原生解析器；托管路由前置 resolve 已解析的连接不会再次经它查询",
                  "仅覆盖到达 DIRECT 时仍为域名的请求，不宣称复现全部 Clash 直连解析时机");
     }
+}
+
+void applyClashHosts(Context& ctx, const YAML::Node& root, bool exportOnly) {
+    const auto dns = root["dns"];
+    bool useHosts = true;
+    if (dns && dns.IsMap() && dns["use-hosts"]) {
+        const auto flag = dns["use-hosts"];
+        const auto text = flag.IsScalar() ? lowerCopy(flag.Scalar()) : std::string{};
+        if (text == "false" || text == "no" || text == "0") useHosts = false;
+        else if (text != "true" && text != "yes" && text != "1") {
+            useHosts = false;
+            ctx.note(FidelityScope::Dns, Fidelity::Unsupported, "dns.use-hosts",
+                     "dns.use-hosts 不是布尔值，不启用配置 hosts 的 DNS 应答");
+        }
+    }
+    const auto hosts = root["hosts"];
+    if (!hosts) return;
+    const auto reject = [&](const std::string& subject, std::string reason) {
+        ctx.note(FidelityScope::Dns, Fidelity::Unsupported, subject,
+                 "Clash hosts 条目" + std::move(reason) + "，整条未转换",
+                 "仅支持精确域名到 IP/完整 IP 数组；不裁掉坏地址或扩大通配匹配");
+    };
+    if (!hosts.IsMap()) { reject("hosts", "必须为映射"); return; }
+    std::map<std::string, unsigned> counts;
+    for (const auto& entry : hosts) if (entry.first.IsScalar()) {
+        const auto domain = dnsPolicyDomain(entry.first.Scalar());
+        if (domain) ++counts[*domain];
+    }
+    std::set<std::string> reported;
+    nlohmann::json predefined = nlohmann::json::object();
+    for (const auto& entry : hosts) {
+        const auto raw = entry.first.IsScalar() ? entry.first.Scalar() : std::string{};
+        const auto domain = dnsPolicyDomain(raw);
+        const auto subject = raw.empty() ? "hosts" : "hosts." + raw;
+        if (!domain || raw != trimCopy(raw) || addressCidr(raw, false, false)) {
+            reject(subject, "名称或匹配模式未接入"); continue;
+        }
+        if (counts[*domain] != 1) {
+            if (reported.insert(*domain).second) reject(subject, "规范化域名重复，所有同名映射拒绝");
+            continue;
+        }
+        std::vector<YAML::Node> values;
+        if (entry.second.IsScalar()) values.push_back(entry.second);
+        else if (entry.second.IsSequence()) for (const auto& value : entry.second) values.push_back(value);
+        nlohmann::json addresses = nlohmann::json::array();
+        bool valid = !values.empty();
+        for (const auto& value : values) {
+            if (!value.IsScalar()) { valid = false; break; }
+            const auto address = value.Scalar();
+            if (address != trimCopy(address) || address.find('/') != std::string::npos ||
+                // Mihomo unmaps mapped IPv6; this subset must not classify it
+                // as native AAAA and silently change its address family.
+                (address.find(':') != std::string::npos && address.find('.') != std::string::npos) ||
+                !addressCidr(address, false, false)) { valid = false; break; }
+            addresses.push_back(address);
+        }
+        if (!valid) { reject(subject, "地址或列表未接入（别名、lan、CIDR、异常成员等）"); continue; }
+        predefined[*domain] = std::move(addresses);
+    }
+    if (predefined.empty()) return;
+    constexpr auto tag = "clash-hosts";
+    ctx.config["dns"]["servers"].push_back({{"type", "hosts"}, {"tag", tag}, {"predefined", predefined}});
+    const bool dnsEnabled = !dns || !dns.IsMap() ||
+        (lowerCopy(ytext(dns, "enable")) != "false" && lowerCopy(ytext(dns, "enable")) != "no" &&
+         lowerCopy(ytext(dns, "enable")) != "0");
+    nlohmann::json domains = nlohmann::json::array();
+    for (auto entry = predefined.begin(); entry != predefined.end(); ++entry) domains.push_back(entry.key());
+    if (!exportOnly) {
+        ctx.hostsDomains = domains;
+        ctx.hostsDnsTag = tag;
+        if (useHosts && dnsEnabled) {
+            auto& rules = ctx.config["dns"]["rules"];
+            if (!rules.is_array()) rules = nlohmann::json::array();
+            rules.insert(rules.begin(), nlohmann::json{{"domain", domains}, {"query_type", {"A", "AAAA"}},
+                         {"action", "route"}, {"server", tag}, {"rewrite_ttl", 10}, {"disable_cache", true}});
+        }
+    }
+    // Global Clash hosts is also consulted before node and DNS endpoint
+    // resolution, independently of dns.use-hosts (which controls DNS replies).
+    for (auto& outbound : ctx.outbounds) {
+        const auto host = dnsPolicyDomain(outbound.value("server", ""));
+        if (host && predefined.contains(*host)) outbound["domain_resolver"] = {
+            {"server", tag}, {"strategy", ctx.config["dns"].value("strategy", "prefer_ipv4")}, {"disable_cache", true}};
+    }
+    for (auto& server : ctx.config["dns"]["servers"]) {
+        const auto host = dnsPolicyDomain(server.value("server", ""));
+        if (host && predefined.contains(*host)) server["domain_resolver"] = {{"server", tag}, {"disable_cache", true}};
+    }
+    ctx.note(FidelityScope::Dns, Fidelity::Approx, "hosts",
+             "精确 hosts IP 映射已接入原生 hosts DNS、节点与 DNS 端点解析；显式映射绕过 DNS 缓存，多 IP 拨号选择与 Clash 不同",
+             "DNS 应答限 A/AAAA 并重写 TTL 为 10 秒；未映射条目单独记账，系统 hosts 开关仍未转换");
+    if (exportOnly) ctx.note(FidelityScope::Dns, Fidelity::Approx, "source.hosts",
+        "次来源 hosts 仅保留出站引用的解析依赖，不导入主来源 DNS 应答或连接解析规则");
 }
 
 // ---- TLS / 传输层（vmess/vless/trojan 共用）--------------------------------

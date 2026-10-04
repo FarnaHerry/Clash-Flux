@@ -32,11 +32,13 @@ namespace {
 const std::vector<std::string> kModes{"rule", "global", "direct"};
 const std::vector<huxerui::StringVariant> kModeNames{
     Localized("规则"), Localized("全局"), Localized("直连")};
-const std::vector<huxerui::StringVariant> kThemeNames{
-    Localized("自动"), Localized("深色"), Localized("浅色")};
+const std::vector<huxerui::SegmentedButtonItem> kThemeItems{
+    huxerui::SegmentedButtonItem::IconOnly(app::images::sun_moon, Localized("自动")),
+    huxerui::SegmentedButtonItem::IconOnly(app::images::moon, Localized("深色")),
+    huxerui::SegmentedButtonItem::IconOnly(app::images::sun, Localized("浅色"))};
 const std::vector<std::string> kLanguages{"system", "zh", "en"};
 const std::vector<huxerui::StringVariant> kLanguageNames{
-    Localized("自动"), Localized("简体中文"), Localized("English")};
+    Localized("自动"), "简体中文", "English"};
 
 std::size_t ModeIndex(const std::string& mode) {
     for (std::size_t i = 0; i < kModes.size(); ++i) {
@@ -314,8 +316,15 @@ const huxerui::StringVariant kAboutText = LocalizedFormat(
 #else
 
 [[huxerui::composable]] huxerui::View DesktopMoreSettings(
-    huxerui::State<std::size_t>, ProfilesCache) {
-    return huxerui::View{};
+    huxerui::State<std::size_t> navPage, ProfilesCache) {
+    if (huxerui::UseViewportClass() != huxerui::ViewportClass::Compact) return huxerui::View{};
+    return huxerui::Column{
+        SectionTitle(Localized("更多")),
+        huxerui::Button(Localized("连接")).OnClick([navPage] { navPage = 4U; }),
+        huxerui::Button(Localized("日志")).OnClick([navPage] { navPage = 5U; }),
+        huxerui::Button(Localized("规则")).OnClick([navPage] { navPage = 3U; }),
+    }.With(huxerui::Spacing(10.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 #endif
@@ -447,30 +456,32 @@ const huxerui::StringVariant kAboutText = LocalizedFormat(
     };
 
     return PageScaffold(
-        Localized("设置"), huxerui::Row{},
+        Localized("设置"), huxerui::View{},
         huxerui::ScrollView(
             huxerui::Column {
                 CLASHFLUX_MORE_SETTINGS(navPage, profilesCache),
-                // 分区（通用/内核/关于）不再各自套一层卡片：桌面端页面岛本身就是
-                // 唯一卡片，移动端页面直接铺在窗口底色上；分组由 SectionTitle
-                // 与间距表达。
+                // 分区（通用/内核/关于）由 SectionTitle 与间距表达。
                 huxerui::Column {
                     SectionTitle(Localized("通用")),
                     SettingRow(
                         Localized("主题"), "",
                         huxerui::SegmentedButton(
-                            kThemeNames, static_cast<std::size_t>(themeMode.Get()))
+                            kThemeItems, static_cast<std::size_t>(themeMode.Get()))
                             .OnChanged([applyTheme](std::size_t index) {
                                 applyTheme(static_cast<int>(index));
                             })),
                     SettingRow(
                         Localized("语言"), Localized("自动跟随系统语言"),
-                        huxerui::SegmentedButton(
+                        huxerui::Select(
                             kLanguageNames,
                             settingsView.language == "en"
                                 ? 2U
-                                : settingsView.language == "zh" ? 1U : 0U)
-                            .OnChanged(applyLanguage)),
+                                : settingsView.language == "zh" ? 1U : 0U,
+                            [](const huxerui::StringVariant& name) {
+                                return huxerui::Text(name);
+                            })
+                            .OnChanged(applyLanguage)
+                            .With(huxerui::Frame{.width = 180.0F})),
                     CLASHFLUX_GENERAL_PLATFORM_SECTION(),
                 }.With(huxerui::Spacing(10.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
@@ -549,7 +560,7 @@ const huxerui::StringVariant kAboutText = LocalizedFormat(
                 compact ? CompactFloatingNavigationFooter() : huxerui::View{},
             }.With(huxerui::Spacing(12.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
-            .With(huxerui::Grow(1.0F)));
+            .With(huxerui::Grow(1.0F)), false, false, true);
 }
 
 #undef CLASHFLUX_GENERAL_PLATFORM_SECTION

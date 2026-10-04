@@ -117,7 +117,12 @@
                 fail(std::string("读取主 VPN 路由计划失败：") + exception.what());
                 return;
             }
-            auto compiled = core::generateConfig(options);
+            singbox::CompileResult compiled;
+            std::string providerError;
+            if (!prepareHttpRuleProviders(options, compiled, providerError)) {
+                { std::lock_guard lock(mutex_); snap_.warnings = compiled.warnings; snap_.fidelity = compiled.fidelity; }
+                fail("规则集/订阅准备失败：" + providerError); return;
+            }
             if (compiled.json.empty() || !compiled.error.empty()) {
                 {
                     std::lock_guard lock(mutex_);
@@ -143,8 +148,14 @@
                 compiled.json = config.dump();
             }
             prefetchRuleSets(compiled.ruleSetResources, workDir);
+            [[maybe_unused]] const bool geoInputsChanged = !compiled.ruleSetResources.empty() || options.ruleSetDir != workDir.string();
             options.ruleSetDir = workDir.string();
+#if defined(__ANDROID__)
+            // generateConfig applies Android's strict-route policy.
             compiled = core::generateConfig(options);
+#else
+            if (geoInputsChanged) compiled = core::generateConfig(options);
+#endif
             if (compiled.json.empty() || !compiled.error.empty()) {
                 {
                     std::lock_guard lock(mutex_);
@@ -547,7 +558,8 @@
     // 但无 TUN 内核也要保持常驻；写完新配置后按当前 TUN 状态恢复对应服务。
     auto lockPlanLifecycle() { return std::unique_lock(lifecycleMutex_); }
 
-    // 候选检查不改变持久化、运行态或组选项；适用于 UI/CLI 的写入口。
+    // 候选检查不改变订阅数据库、运行态或组选项；HTTP 自有缓存只在转换与
+    // 候选检查成功后提交。适用于 UI/CLI 的写入口。
     bool validateRoutingPlan(const std::string& profileYaml, std::string& error,
                              const vpn::VpnPolicy* policy = nullptr,
                              const std::optional<std::string>& main = std::nullopt) {
@@ -555,22 +567,9 @@
         ensureOpen();
         try {
             auto options = routingOptions(profileYaml, snapshot().tunEnabled, false, policy, main);
-            const auto compiled = core::generateConfig(options);
-            if (policy && compiled.error.empty()) {
-                for (const auto& rule : policy->rules) {
-                    if (!rule.enabled) continue;
-                    if (rule.targetKind != vpn::TargetKind::Default) {
-                        if (!std::ranges::any_of(compiled.sourceObjects, [&](const auto& object) {
-                            return object.sourceId == rule.connectionId && object.kind == rule.targetKind &&
-                                   object.objectId == rule.targetObject;
-                        })) { error = "规则目标对象不存在：" + rule.connectionId + "/" + rule.targetObject; return false; }
-                    } else if (rule.connectionId != options.mainConnectionId &&
-                        !std::ranges::any_of(options.auxiliarySources, [&](const auto& source) { return source.id == rule.connectionId; }) &&
-                        !std::ranges::any_of(options.nativeConnections, [&](const auto& source) { return source.id == rule.connectionId; })) {
-                        error = "规则目标来源不存在：" + rule.connectionId; return false;
-                    }
-                }
-            }
+            singbox::CompileResult compiled;
+            if (!prepareHttpRuleProviders(options, compiled, error, policy) ||
+                !validatePlanTargets(options, compiled, policy, error)) return false;
             return checkCompiledPlan(compiled, error);
         } catch (const std::exception& e) { error = e.what(); return false; }
     }
@@ -621,7 +620,8 @@
                     options.auxiliarySources.clear(); options.globalRules.clear(); options.nativeConnections.clear();
                 }
             }
-            return checkCompiledPlan(core::generateConfig(options), error);
+            singbox::CompileResult compiled;
+            return prepareHttpRuleProviders(options, compiled, error) && checkCompiledPlan(compiled, error);
         } catch (const std::exception& e) { error = e.what(); return false; }
     }
 
@@ -634,7 +634,8 @@
         std::string error;
         try {
             candidate = routingOptions(profileYaml, before.tunEnabled);
-            if (!checkCompiledPlan(core::generateConfig(candidate), error)) {
+            singbox::CompileResult compiled;
+            if (!prepareHttpRuleProviders(candidate, compiled, error) || !checkCompiledPlan(compiled, error)) {
                 std::lock_guard lock(mutex_); snap_.lastError = "候选计划被拒绝：" + error; return false;
             }
         } catch (const std::exception& e) {

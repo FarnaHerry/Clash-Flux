@@ -209,6 +209,63 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
     config["experimental"]["cache_file"] = std::move(cacheFile);
 }
 
+// Expand only this source's successfully compiled top-level proxies. Forward
+// group declarations, built-ins and objects from other sources are excluded.
+bool expandGroupProxies(Context& ctx, const YAML::Node& group, const std::string& name,
+                        const std::vector<std::string>& proxies, bool rejectedProxy,
+                        std::vector<std::string>& members) {
+    const auto reject = [&](const std::string& field, const std::string& detail) {
+        ctx.note(FidelityScope::Group, Fidelity::Unsupported, name,
+                 std::format("代理组「{}」的 {} 无法安全展开：{}", name, field, detail),
+                 "保留原订阅和运行配置；修正声明或改为显式 proxies，不能忽略筛选后扩大成员范围");
+        ctx.result.error = std::format("代理组「{}」成员展开失败：{}", name, field);
+        return false;
+    };
+    std::set<std::string> declarations;
+    for (const auto& item : group) {
+        if (!item.first.IsScalar()) continue;
+        const auto field = item.first.Scalar();
+        if (field != "include-all" && field != "include-all-proxies" && field != "include-all-providers" &&
+            field != "proxies" && field != "use" && field != "filter" && field != "exclude-filter" &&
+            field != "exclude-type") continue;
+        if (!declarations.insert(field).second) return reject(field, "重复声明，不能猜测生效值");
+    }
+    for (const char* field : {"include-all", "include-all-proxies", "include-all-providers"}) {
+        const auto declared = group[field];
+        if (!declared.IsDefined()) continue;
+        const auto value = lowerCopy(ytext(group, field));
+        if (!declared.IsScalar() || (value != "true" && value != "false" &&
+            value != "yes" && value != "no" && value != "1" && value != "0"))
+            return reject(field, "必须是有效布尔值");
+    }
+    if (!ybool(group, "include-all-proxies")) return true;
+    const auto use = group["use"];
+    if (ybool(group, "include-all") || ybool(group, "include-all-providers") ||
+        (use.IsDefined() && (!use.IsSequence() || use.size() != 0)))
+        return reject("use/include-all", "代理集合尚未接入，不提交部分展开");
+    for (const char* field : {"filter", "exclude-filter", "exclude-type"}) {
+        const auto declared = group[field];
+        if (declared.IsDefined() && (!declared.IsScalar() || !declared.Scalar().empty()))
+            return reject(field, "筛选转换尚未接入，不改成无筛选的全部节点");
+    }
+    if (const auto explicitMembers = group["proxies"]; explicitMembers.IsDefined()) {
+        if (!explicitMembers.IsSequence()) return reject("proxies", "必须为完整成员数组");
+        for (const auto& member : explicitMembers)
+            if (!member.IsScalar() || trimCopy(member.Scalar()).empty())
+                return reject("proxies", "数组包含无效成员，不保留合法前缀");
+    }
+    members.insert(members.end(), proxies.begin(), proxies.end());
+    if (members.empty())
+        return reject("include-all-proxies", "没有可用成员；空组回退尚未转换，不隐式改为 DIRECT");
+    ctx.note(FidelityScope::Group, Fidelity::Exact, name,
+             "include-all-proxies 按名称排序追加当前来源节点，显式成员在前，不包含内置出站或其它组");
+    if (rejectedProxy)
+        ctx.note(FidelityScope::Group, Fidelity::Approx, name,
+                 "自动展开成员中有无法转换的节点，已随节点拒绝明细从该组移除",
+                 "检查 Node/Unsupported 明细；该组只包含实际编译成功的本来源节点");
+    return true;
+}
+
 // 解析 Clash YAML 文档并转换节点/组/规则（调用方负责异常捕获）。
 void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportOnly = false) {
     YAML::Node root = YAML::Load(trimmed);
@@ -231,30 +288,35 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
         if (!name.empty() && !ctx.tagKnown(name)) ctx.knownTags.push_back(name);
     }
 
+    std::vector<std::string> localProxies;
+    bool rejectedProxy = false;
     if (const YAML::Node proxies = root["proxies"]; proxies && proxies.IsSequence()) {
         for (const YAML::Node& proxy : proxies) {
-            if (!proxy.IsMap()) continue;
+            if (!proxy.IsMap()) { rejectedProxy = true; continue; }
             if (auto converted = convertProxy(ctx, proxy)) {
+                localProxies.push_back(converted->at("tag").get<std::string>());
                 ctx.knownTags.push_back(converted->at("tag").get<std::string>());
                 ctx.outbounds.push_back(std::move(*converted));
-            }
+            } else rejectedProxy = true;
         }
     }
+    std::ranges::sort(localProxies); // Mihomo AllProxies uses bytewise name order.
 
     for (const YAML::Node& group : groups) {
         const std::string name = ytext(group, "name");
         if (name.empty()) continue;
         std::vector<std::string> members = ylist(group, "proxies");
+        if (!expandGroupProxies(ctx, group, name, localProxies, rejectedProxy, members)) return;
         const YAML::Node providers = group["use"];
         const bool usesProviders = providers && (!providers.IsSequence() || providers.size() != 0);
-        if (ybool(group, "include-all") || ybool(group, "include-all-proxies") ||
+        if (ybool(group, "include-all") ||
             ybool(group, "include-all-providers") || usesProviders) {
             ctx.note(FidelityScope::Group, Fidelity::Unsupported, name,
                      std::format("代理组「{}」使用了未接入的成员展开（use/include-all），"
                                  "sing-box 编译暂不支持，仅保留显式成员",
                                  name),
                      "成员展开由应用翻译层处理，当前仅保留 proxies 的显式成员；"
-                     "use 数组、include-all-proxies/providers 均不会静默漏报");
+                     "use 数组、include-all/providers 均不会静默漏报；include-all-proxies 有独立转换子集");
         }
         if (auto converted = convertGroup(ctx, group, name, members)) {
             ctx.outbounds.push_back(std::move(*converted));
@@ -275,16 +337,13 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
     }
 
     if (!exportOnly) compileRuleProviders(ctx, root["rule-providers"]);
+    if (!ctx.result.error.empty()) return;
 
     // DNS detours must resolve against actual converted nodes/groups, including
     // nodes declared after dns and excluding rejected group declarations.
     applyClashDns(ctx, root["dns"]);
+    applyClashHosts(ctx, root, exportOnly);
     if (!validateDnsDependencies(ctx)) return;
-    if (root["hosts"] && (!root["dns"] || !root["dns"].IsMap() ||
-        lowerCopy(ytext(root["dns"], "use-hosts")) != "false")) {
-        ctx.note(FidelityScope::Dns, Fidelity::Unsupported, "hosts",
-                 "Clash hosts 尚未转换，已忽略", "可使用原生 hosts DNS 服务器；不会静默假装已应用主机映射");
-    }
 
     if (exportOnly) {
         // MATCH 只声明来源的默认导出对象，不进入全局规则。

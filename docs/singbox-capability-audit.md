@@ -7,8 +7,11 @@
 本次升级的检查见 1.14.2 升级文档。分层与保真度规则以
 [契约文档](singbox-layers-and-fidelity.md) 为准。
 
-本文保留 2026-10-01 的开发和验证历史；2026-10-02 当前工作区的逐层完成度、
+本文保留 2026-10-01 的开发和验证历史；2026-10-03 当前工作区的逐层完成度、
 语义探针及未关闭问题见 [L1 / L2 / L3 开发复核](l1-l2-l3-status.md)。
+最近增量的统一整理与新发现的订阅保护/输入类型缺陷见
+[2026-10-03 项目复审](project-review-2026-10-03.md)；R01–R04 后续已修复并补本地
+失败/交错/重开回归，跨平台实机与完整崩溃事务仍待验收。
 
 ## 结论与计数口径
 
@@ -27,9 +30,9 @@ Hysteria v1 UDP 子集与 SSH 认证/公钥子集后为 **12/15**。该数字只
 | 代理协议 | Clash 转换 12/15：SS、VMess、VLESS、Trojan、Hysteria v1 UDP 子集、Hysteria2、TUIC、HTTP、SOCKS、AnyTLS、Snell v4、SSH 认证/公钥子集；SS 内置 simple-obfs/v2ray-plugin 子集 | ShadowTLS、Tor、Naive 的 Clash 转换；SSH 外部私钥路径及更多字段；HY1 单边窗口/快速打开/非 UDP 伪装/兼容速率字段、其它 SS 插件、插件 headers/证书/ECH 与更多 TLS/拨号字段 |
 | 策略组 | selector/urltest 两种原生组；原生测速容差、间隔；detour 代理链、selector 初始选择 | idle_timeout 和 interrupt_exist_connections 的专门设置入口；不能模拟 fallback/load-balance 或 urltest 手动锁定 |
 | 路由 | 域名、目标/源 CIDR、目标/源端口及范围、TCP/UDP、IP-VERSION、地理规则集、桌面进程路径、Linux UID、Android 包名/正则、AND/OR/NOT（含嵌套 GEO/已转换 RULE-SET） | 更多逻辑条件、外部 provider、应用选择入口、Wi-Fi/接口等原生网络匹配、更多原生路由动作 |
-| DNS | local、UDP/TCP/DoT/DoH/DoQ/强制 HTTP3；完整域名与 +. 后缀 nameserver-policy；节点专用 proxy-server-nameserver-policy；bootstrap、节点解析器与依赖图检查；直连解析时机、多 DNS/fallback 明确记账 | 更多通配/规则集策略、fallback-filter、hosts、FakeIP、direct follow-policy、缓存及原生设置入口 |
+| DNS | local、UDP/TCP/DoT/DoH/DoQ/强制 HTTP3；加密端点显式 skip-cert-verify；完整域名/整层 */前缀 . 与 +. policy；节点专用 proxy-server-nameserver-policy；bootstrap、节点解析器与依赖图检查；精确 hosts IP/列表用于 DNS、节点/端点及连接解析 | 更多 URL 参数/name-cert-verify、规则集策略/其它模式、fallback-filter、hosts 通配/别名/系统开关、FakeIP、direct follow-policy、缓存及原生设置入口；多 DNS/fallback/多 IP hosts 选择有近似 |
 | 端点 | 原生连接编辑器支持 openvpn-client（1/5）；PPTP 是系统补充路径，不计入内核端点 | WireGuard、Tailscale、OpenConnect、OpenVPN server 的连接对象、字段编辑及生命周期管理 |
-| 规则集 | 自有 GEO 显式资源清单、文件头筛查后提交、桌面启动按周刷新/失败留旧、国内 RULE-SET 别名及任意名称 inline provider 子集 | 外部 rule-providers、local/remote rule_set 管理界面及下载路径选择 |
+| 规则集 | 自有 GEO 显式资源清单、桌面按周刷新/失败留旧、国内别名及 inline；file YAML/text 只读快照、HTTP 直连任务下载/校验/缓存快照与单值 ASCII header 子集 | HTTP 指定代理/多值或传输保留 header/MRS、定时热更新、文件监听、local/remote rule_set 管理界面 |
 | 控制与可见性 | 桌面 clash_api / Android CommandClient；保真度报告与 CLI | 独立 DNS 诊断、更多内核状态展示；不依赖空壳 providers API 或不存在的 selectable/testUrl 字段 |
 
 原生 JSON 路径会保留 outbounds、endpoints、DNS 和路由等配置，并合并托管项。
@@ -38,6 +41,62 @@ Linux 托管 TUN 会关闭 auto_redirect。它不是原样执行任意 JSON 的�
 不保证对应功能在每个平台有编译支持、权限或完整状态展示。
 
 ## 本轮已接入
+
+### file rule-provider（2026-10-03 工作区增量）
+
+- 本地 YAML/text 与 inline 共用 domain/ipcidr/classical 原子转换；路径相对应用数据
+  目录、根内校验、只读最多 8 MiB，不纳入 GEO 下载/清理资源。
+- 来源整体记 approx：生成原生 inline 快照，缺少 Mihomo 文件监听，重新应用才读新文件。
+- 缺文件、越界、坏 YAML、无效成员、未映射字段让候选编译失败并保留账本，
+  不提交部分规则或替换成同名 CN 别名；MRS 与文件管理 UI 尚未接入。
+- 上游依据、样本和验证范围见[分层契约](singbox-layers-and-fidelity.md)及
+  [L2 完成度](l1-l2-l3-status.md)。协议计数仍为 12/15。
+
+### 精确 hosts（2026-10-03 后续工作区增量）
+
+- 精确域名到单 IP/完整 IP 数组用于原生 hosts DNS、节点/DNS 端点和主连接解析；
+  保留节点原 server/SNI。A/AAAA DNS rule 优先于 policy，TTL=10；非地址查询不拦截。
+- use-hosts/enable 关闭 DNS 应答映射，不关闭全局连接 hosts；显式路径绕过 DNS 缓存，
+  普通 resolve 排除映射域名，来源 tag 随命名空间同步。次来源只导出所需解析依赖。
+- 异常条目整条 unsupported，独立合法映射继续；规范化重名全部拒绝。通配、别名、
+  lan、CIDR、带点分 IPv4 的 IPv6、系统 hosts 开关仍未接入。整体缓存/多 IP 选择记 approx。
+- `dns_hosts_runtime` 用生产编译器与固定 1.14.2 在 loopback 实际验证 DNS、直连、
+  SOCKS 节点和 DNS 端点解析，共 12 个场景；不是公网或 Android 实机验收。
+
+### 加密 DNS 证书参数（2026-10-03 后续工作区增量）
+
+- DoT/DoH/DoQ 与 HTTPS 强制 H3 接入显式 skip-cert-verify=true/false，端点级 exact；
+  保留原地址、SNI 和默认证书验证，可组合 h3 与已编译出站。非法/重复/未知组合
+  整台服务器 unsupported；非 HTTPS 的 h3=false 也不再静默忽略。
+- name-cert-verify 仍拒绝，不能用修改 SNI 的 server_name 代替其仅校验证书名的语义。
+- 新增 `dns_tls_runtime`，固定官方内核与 loopback DoT/DoH 服务共 12 场景，验证
+  证书信任、显式 true/false、SNI/HTTP Host/路径和独立的名称校验；临时信任根仅测试注入。
+  DoQ/H3 只有配置 check，Android 只有本地构建，不算 QUIC/真机流量验收。
+- 样本、分类、上游依据与检查命令见[分层契约](singbox-layers-and-fidelity.md#43a-dns2026-10-03-更新)
+  与[完成度记录](l1-l2-l3-status.md)。协议类型覆盖仍为 12/15。
+
+### DNS 策略通配（2026-10-03 后续工作区增量）
+
+- 普通与节点专用 policy 共用 ASCII 完整域名/整层 */前缀 . 与 +. 模式；每个 *
+  只匹配一层，. 排除根域，+. 拆为独立根/子域分支，保持 trie 从右向左的标签优先级。
+  中间/连续 * 及与前缀组合已接入，不是把所有形式宽化为 domain_suffix。
+- 后声明覆盖同一规范化分支，Exact 账本追踪覆盖。节点选择使用同一模式元数据，
+  原生 DNS 发出锚定 regex；元数据不入 JSON。节点域名下划线已进入 DNS 依赖。
+- 永久回归验证声明顺序、覆盖与边界、拒绝非法模式/regex 注入和 DNS/detour 循环。
+  `dns_policy_runtime` 在固定官方内核实际验证 **63 场景**，包括实际 SOCKS 节点连接
+  与普通/节点专用 resolver 隔离、同名普通 DNS 缓存不替代节点策略；Android 仅构建，未验收真机流量。
+- geosite:/rule-set:、更多策略/URL 参数、hosts 通配/别名仍未接入；协议覆盖仍 12/15。
+  分类、样本、依据与命令见[分层契约](singbox-layers-and-fidelity.md)和[完成度记录](l1-l2-l3-status.md)。
+
+### HTTP rule-provider（2026-10-03 后续工作区增量）
+
+- YAML/text 的三个 behavior 复用整份转换器；编译器输出显式资源清单，任务线程
+  直连下载、默认验证证书，独占暂存全部内容，候选编译/目标/桌面 check 后原子提交。
+- 自有缓存核对完整身份/版本，失败保留旧内容，计划持有 raw 快照，回滚不重下载。
+  `path` 只作只读种子，`interval` 在应用配置时检查，缺少定时热更新等差异记 approx。
+- 默认 8 MiB 或更小 size-limit 超限拒绝；Android 走有界 Java TLS 桥接，不用无 TLS
+  curl。后续接入单值 ASCII header，值纳入缓存身份；带头下载拒绝重定向并记 approx。
+  指定代理/多值或传输保留 header/MRS 仍拒绝，不宣称多文件崩溃事务或实机异步恢复已完成。
 
 ### AnyTLS
 
@@ -58,6 +117,10 @@ Linux 托管 TUN 会关闭 auto_redirect。它不是原样执行任意 JSON 的�
   原生 JSON 使用，本轮没有把它当成 Clash v5 的替代品。
 
 ### 路由与测速
+
+- `include-all-proxies` 已接入静态来源子集：本来源成功节点按名称排序追加，显式成员
+  在前；跨来源分开展开后再命名空间化。非空筛选与代理集合组合拒绝候选，空组不
+  隐式补 DIRECT；详见[保真度基线](singbox-layers-and-fidelity.md)。
 
 - `SRC-IP-CIDR` 支持 IPv4/IPv6；`SRC-PORT`、`DST-PORT` 支持单端口、`/` 列表和
   `-` 范围，转换成原生的端口数组与 `:` 范围。混合列表保留 OR 匹配。
@@ -137,13 +200,15 @@ provider 定义显式记账；规则 `no-resolve` 记 approx，未知修饰符�
   本地首次导入可保存为未参与来源，启用时检查；Android 由后台 libbox 检查。
   外部 provider 下载仍未接入。
 
-实现与本轮验证见 [基础补齐记录](foundation-progress.md)。外部 provider 下载、
-完整配置 IR、hosts/FakeIP 与完整编排恢复仍未实现；桌面 Clash 多来源首阶段已实现，
+上述“外部 provider 下载仍未接入”是 2026-10-01 的历史状态；2026-10-03 已接入
+HTTP 直连 YAML/text 子集与单值请求头，当前剩余指定代理、MRS、定时更新等边界。
+实现与当时验证见 [基础补齐记录](foundation-progress.md)。
+完整配置 IR、hosts 通配/别名/FakeIP 与完整编排恢复仍未实现；桌面 Clash 多来源首阶段已实现，
 原生 JSON 次来源和跨来源 detour 未开放，手机约束保持。
 
 1. **原生 DNS 设置与剩余策略**：扩展现有节点专用 policy，补直连策略与解析时机、
-   更多通配、规则集、hosts/FakeIP 与过滤模式；再做原生编辑入口。已接入的完整域名/
-   后缀策略与强制 HTTP3 不等于支持全部 Clash DNS；fallback-filter 仍未实现。
+   规则集策略、hosts 通配/别名/FakeIP 与过滤模式；再做原生编辑入口。已接入的完整域名/
+   整层通配策略与强制 HTTP3 不等于支持全部 Clash DNS；fallback-filter 仍未实现。
 2. **规则集与逻辑路由**：通用本地/远程 .srs、规则集管理，补齐已接入 AND/OR/NOT
    子集的其余条件；下载来源、失败处理和规则顺序必须明确，不能继续只按国内别名替换。
 3. **Android 应用路由**：后台已经实现连接 owner/包名查询与包名/正则规则输入，

@@ -150,7 +150,7 @@ jobs:
         run: |
           apt-get install -y --no-install-recommends \
             clang-21 libc++-21-dev g++ ninja-build pkg-config file binutils gzip \
-            python3 python3-pip libssl-dev patchelf \
+            python3 python3-pip openssl libssl-dev patchelf \
             libgtk-4-dev libepoxy-dev libsoup-3.0-dev dpkg-dev rpm
           # Ubuntu 24.04 的 apt cmake/clang 版本不满足 import-std，固定 CMake
           # 并从 apt.llvm.org 安装 LLVM 21。
@@ -174,6 +174,7 @@ jobs:
           # configure 期同时下载 sing-box（按本机 arch 选资产，
           # CLASHFLUX_BUNDLE_SINGBOX=ON）。
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON \
             -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
             -DCMAKE_CXX_FLAGS='-stdlib=libc++' \
             -DCMAKE_EXE_LINKER_FLAGS='-stdlib=libc++' \
@@ -184,7 +185,7 @@ jobs:
 
       - name: Smoke test
         # 单测卡死不能拖住整个 job：ctest 超时后杀掉测试并打印其输出。
-        run: ctest --test-dir build --output-on-failure --timeout 300
+        run: ctest --test-dir build --output-on-failure --no-tests=error --timeout 300
 
       - name: Stage runtime bundle
         shell: bash
@@ -332,6 +333,7 @@ jobs:
           New-Item -ItemType Directory -Force $wixRoot | Out-Null
           dotnet --list-runtimes
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            '-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON' `
             "-DOPENSSL_ROOT_DIR=$env:OPENSSL_ROOT_DIR" `
             '-DHUXERUI_PACKAGE=ON' `
             "-DHUXERUI_WIX_ROOT=$wixRoot"
@@ -341,7 +343,7 @@ jobs:
 
       - name: Smoke test
         # 单测卡死不能拖住整个 job：ctest 超时后杀掉测试并打印其输出。
-        run: ctest --test-dir build --output-on-failure --timeout 300
+        run: ctest --test-dir build --output-on-failure --no-tests=error --timeout 300
 
       - name: Stage Windows runtime and installer inputs
         shell: pwsh
@@ -518,6 +520,7 @@ jobs:
           # （本链链 brew 自带 dylib）；CMAKE_CXX_STDLIB_MODULES_JSON 显式注入
           # 上一步生成的元数据。部署目标 14.0（框架已用 macOS 14 API）。
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON \
             -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
             -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
             -DCMAKE_OBJCXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
@@ -535,7 +538,7 @@ jobs:
 
       - name: Smoke test
         # 单测卡死不能拖住整个 job：ctest 超时后杀掉测试并打印其输出。
-        run: ctest --test-dir build --output-on-failure --timeout 300
+        run: ctest --test-dir build --output-on-failure --no-tests=error --timeout 300
 
       - name: Stage app bundle
         run: |

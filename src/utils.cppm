@@ -61,7 +61,7 @@ export std::string formatClock(std::int64_t unixSec) {
     return std::format("{:02d}:{:02d}:{:02d}", tm.tm_hour, tm.tm_min, tm.tm_sec);
 }
 
-export std::int64_t nowUnix() {
+export inline std::int64_t nowUnix() {
     return std::chrono::duration_cast<std::chrono::seconds>(
                std::chrono::system_clock::now().time_since_epoch())
         .count();

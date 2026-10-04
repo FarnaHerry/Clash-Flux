@@ -1,9 +1,7 @@
-// app.cpp — 应用壳（岛屿架构 + 自定义标题栏 + 托盘，对齐 apitab 岛屿风）：
-//   标题栏：应用名 + 内核状态胶囊 + 框架窗口按钮；收窄为 24px 高、去背景直接
-//     融入窗口底色。品牌水蓝只用于主要交互和少量强调，大面积区域使用中性灰阶；
-//     深浅模式共享品牌色，仅调整底色明度与文本对比度。
-//   下方：左侧图标侧边栏（无岛屿包裹，直接落在窗口背景上）｜内容区（页面自己的
-//   一级岛屿划分区域——PageScaffold，外壳不再套岛）。根节点刷整窗海面底色
+// app.cpp — 应用壳（桌面平面布局 + 自定义标题栏 + 托盘）：
+//   桌面页名放在顶部标题栏；侧栏、标题栏与内容分区以细线分隔，不套卡片。
+//   手机保留现有页面与卡片布局。品牌水蓝用于交互与选中态，中性灰用于大面积底色。
+//   根节点刷整窗底色
 //   （rootSpec.colors.background——AppRoot 在主题 provider 之上，UseTheme 只能
 //   拿到默认浅色 spec，须按 dark 自选；子树在 provider 之下 UseTheme 正常）。
 //
@@ -16,6 +14,7 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -23,6 +22,7 @@
 
 #include "ui.h"
 #include "app.h"
+#include "responsive_shell.h"
 #include "app_resources.h"
 #include "proxies_model.h"
 #include "task_bridge.h"
@@ -113,24 +113,6 @@ int CliRun(const std::vector<std::string>& args) { return cli::run(args); }
 } // namespace
 #endif
 
-struct FluxPalette {
-    static constexpr huxerui::Color abyss() noexcept {
-        return huxerui::Color::Rgb(6, 20, 39); // 深蓝字色，用于品牌色按钮
-    }
-
-    static constexpr huxerui::Color water() noexcept {
-        return huxerui::Color::Rgb(63, 184, 255); // 品牌亮水蓝 #3FB8FF
-    }
-
-    static constexpr huxerui::Color water_deep() noexcept {
-        return huxerui::Color::Rgb(18, 137, 204); // 浅色模式交互蓝
-    }
-
-    static constexpr huxerui::Color ice() noexcept {
-        return huxerui::Color::Rgb(182, 242, 255); // 品牌冰青 #B6F2FF
-    }
-};
-
 // 品牌蓝只出现在主交互和选中态。页面、卡片、导航与浮层使用中性灰阶，
 // 通过稳定的明度差区分层级，避免整页被蓝色表面染色。
 huxerui::ThemeSpec FluxDarkThemeSpec() {
@@ -145,30 +127,7 @@ huxerui::ThemeSpec FluxDarkThemeSpec() {
     };
     spec.shapes = huxerui::ShapeScheme{6.0F, 12.0F, 16.0F, 22.0F, 28.0F,
                                         10000.0F};
-    spec.colors.primary = FluxPalette::water();
-    spec.colors.on_primary = FluxPalette::abyss();
-    // 卡片与浮层整体下移 10 级；底层背景回提 2 级，收窄大卡片反差。
-    spec.colors.primary_container = huxerui::Color::Rgb(34, 35, 36);
-    spec.colors.on_primary_container = FluxPalette::ice();
-    spec.colors.secondary = huxerui::Color::Rgb(185, 185, 185);
-    spec.colors.on_secondary = huxerui::Color::Rgb(32, 32, 32);
-    spec.colors.secondary_container = huxerui::Color::Rgb(43, 43, 43);
-    spec.colors.on_secondary_container = huxerui::Color::Rgb(226, 226, 226);
-    spec.colors.tertiary_container = huxerui::Color::Rgb(36, 36, 36);
-    spec.colors.on_tertiary_container = huxerui::Color::Rgb(222, 222, 222);
-    spec.colors.background = huxerui::Color::Rgb(20, 21, 22);
-    spec.colors.surface = huxerui::Color::Rgb(22, 23, 24);
-    spec.colors.surface_container_low = huxerui::Color::Rgb(26, 27, 28);
-    spec.colors.surface_container = huxerui::Color::Rgb(30, 31, 32);
-    spec.colors.surface_container_high = huxerui::Color::Rgb(36, 37, 38);
-    spec.colors.surface_container_highest = huxerui::Color::Rgb(42, 43, 44);
-    spec.colors.on_surface = huxerui::Color::Rgb(241, 241, 241);
-    spec.colors.on_surface_variant = huxerui::Color::Rgb(176, 176, 176);
-    spec.colors.outline = huxerui::Color::Rgb(65, 65, 65);
-    spec.colors.inverse_surface = huxerui::Color::Rgb(232, 232, 232);
-    spec.colors.inverse_on_surface = huxerui::Color::Rgb(32, 32, 32);
-    spec.colors.scrim = huxerui::Color::Rgb(7, 7, 7, 0.66F);
-    spec.colors.error = huxerui::Color::Rgb(255, 144, 153);
+    spec.colors = FluxDarkColors();
     spec.interactions.focus_ring = huxerui::FocusRing{FluxPalette::ice(), 2.0F, 2.0F};
     return spec;
 }
@@ -187,29 +146,7 @@ huxerui::ThemeSpec FluxLightThemeSpec() {
     };
     spec.shapes = huxerui::ShapeScheme{6.0F, 12.0F, 16.0F, 22.0F, 28.0F,
                                         10000.0F};
-    spec.colors.primary = FluxPalette::water_deep();
-    spec.colors.on_primary = FluxPalette::abyss();
-    spec.colors.primary_container = huxerui::Color::Rgb(220, 238, 255);
-    spec.colors.on_primary_container = huxerui::Color::Rgb(16, 73, 103);
-    spec.colors.secondary = huxerui::Color::Rgb(94, 104, 114);
-    spec.colors.on_secondary = huxerui::Color::White();
-    spec.colors.secondary_container = huxerui::Color::Rgb(227, 231, 235);
-    spec.colors.on_secondary_container = huxerui::Color::Rgb(48, 56, 64);
-    spec.colors.tertiary_container = huxerui::Color::Rgb(236, 238, 240);
-    spec.colors.on_tertiary_container = huxerui::Color::Rgb(63, 70, 77);
-    spec.colors.background = huxerui::Color::Rgb(239, 241, 244);
-    spec.colors.surface = huxerui::Color::Rgb(253, 253, 253);
-    spec.colors.surface_container_low = huxerui::Color::Rgb(250, 251, 252);
-    spec.colors.surface_container = huxerui::Color::Rgb(243, 244, 246);
-    spec.colors.surface_container_high = huxerui::Color::Rgb(233, 236, 239);
-    spec.colors.surface_container_highest = huxerui::Color::Rgb(253, 253, 253);
-    spec.colors.on_surface = huxerui::Color::Rgb(32, 36, 41);
-    spec.colors.on_surface_variant = huxerui::Color::Rgb(98, 108, 118);
-    spec.colors.outline = huxerui::Color::Rgb(209, 214, 220);
-    spec.colors.inverse_surface = huxerui::Color::Rgb(37, 42, 48);
-    spec.colors.inverse_on_surface = huxerui::Color::Rgb(242, 244, 246);
-    spec.colors.scrim = huxerui::Color::Rgb(17, 24, 32, 0.34F);
-    spec.colors.error = huxerui::Color::Rgb(180, 35, 50);
+    spec.colors = FluxLightColors();
     spec.interactions.focus_ring = huxerui::FocusRing{FluxPalette::water(), 2.0F, 2.0F};
     return spec;
 }
@@ -283,7 +220,7 @@ huxerui::View FluxThemed(bool dark, huxerui::View content) {
     selects.trigger_padding = huxerui::EdgeInsets::Symmetric(spec.spacing.medium,
                                                              spec.spacing.small);
     selects.item_padding = selects.trigger_padding;
-    selects.popup_shadow = huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.24F), {}, 8.0F, 0.0F};
+    selects.popup_shadow = huxerui::Shadow{ThemeShadowColor(spec, 0.24F), {}, 8.0F, 0.0F};
     selects.content_spacing = spec.spacing.small;
     selects.validation_spacing = spec.spacing.extra_small;
     selects.minimum_height = 48.0F;
@@ -305,7 +242,7 @@ huxerui::View FluxThemed(bool dark, huxerui::View content) {
     menus.foreground = spec.colors.on_surface;
     menus.icon_tint = spec.colors.on_surface_variant;
     menus.separator_color = spec.colors.outline;
-    menus.shadow = huxerui::Shadow{huxerui::Color::Rgb(0, 0, 0, 0.24F), {}, 8.0F, 0.0F};
+    menus.shadow = huxerui::Shadow{ThemeShadowColor(spec, 0.24F), {}, 8.0F, 0.0F};
     menus.corner_radii = spec.shapes.small;
     menus.item_indication = selectIndication;
     definition.Set(menus);
@@ -487,7 +424,8 @@ private:
     huxerui::State<std::size_t> navPage) {
     const std::vector<huxerui::NavigationItem> items = DesktopNavigationItems();
     const auto onChanged = [navPage](std::size_t index) { navPage = index; };
-    return huxerui::NavigationPane(items, navPage, false).OnChanged(onChanged);
+    return huxerui::NavigationPane(items, navPage, false).OnChanged(onChanged)
+        .With(huxerui::Padding(huxerui::EdgeInsets{.top = kDesktopTopContentGap}));
 }
 
 // 底部导航：选中态把 icon 与文字作为一个整体包进胶囊，而不是只高亮 icon。
@@ -634,8 +572,11 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
 [[huxerui::composable]] huxerui::View DesktopMainContent(
     huxerui::State<std::size_t> navPage, huxerui::State<std::size_t>,
     huxerui::State<int> themeMode, const IslandTheme& islands,
-    const huxerui::ThemeSpec&, ProfilesCache profilesCache) {
+    const huxerui::ThemeSpec& spec, ProfilesCache profilesCache) {
     static_cast<void>(islands);
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    const auto backToSettings = compact ? std::function<void()>{[navPage] { navPage = pages::kSettings; }}
+                                        : std::function<void()>{};
     std::vector<huxerui::View> pages;
     pages.reserve(7);
     // 不可见的一级页仍挂载（保住 State/Lifecycle）但不构建内容：IndexedPages 让
@@ -647,23 +588,45 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
                         .Key("profiles").With(huxerui::Grow(1.0F)));
     pages.push_back(ProxiesPage(desktopActivePage == pages::kProxies)
                         .Key("proxies").With(huxerui::Grow(1.0F)));
-    pages.push_back(RulesPage(profilesCache, {},
+    pages.push_back(RulesPage(profilesCache, backToSettings,
                               desktopActivePage == pages::kRules)
                         .Key("rules").With(huxerui::Grow(1.0F)));
-    pages.push_back(ConnectionsPage({}, desktopActivePage == pages::kConnections)
+    pages.push_back(ConnectionsPage(backToSettings, desktopActivePage == pages::kConnections)
                         .Key("connections").With(huxerui::Grow(1.0F)));
-    pages.push_back(LogsPage({}, desktopActivePage == pages::kLogs)
+    pages.push_back(LogsPage(backToSettings, desktopActivePage == pages::kLogs)
                         .Key("logs").With(huxerui::Grow(1.0F)));
     pages.push_back(SettingsPage(themeMode, navPage, profilesCache,
                                  desktopActivePage == pages::kSettings)
                         .Key("settings").With(huxerui::Grow(1.0F)));
-    return huxerui::Row {
-        DesktopNavigationSurface(navPage),
-        huxerui::IndexedPages(std::move(pages), navPage.Get())
-            .With(huxerui::Grow(1.0F)),
-    // 侧栏宽度已经包含左右留白，因此这里不再给 NavigationPane 额外加 row gap。
-    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
-           huxerui::Grow(1.0F));
+    huxerui::View sidebarLogo = huxerui::Image(
+        IsDarkTheme(spec) ? app::images::clash_flux_logo_vector_dark_refined
+                         : app::images::clash_flux_logo_vector_light_refined)
+        .Fit(huxerui::ImageFit::Contain);
+    huxerui::View sidebar = huxerui::Row {
+        huxerui::Column{
+            huxerui::Row{
+                std::move(sidebarLogo).With(huxerui::Frame{.width = 32.0F, .height = 32.0F}),
+            }.With(huxerui::Frame{.height = kDesktopTitleBarHeight},
+                   huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
+                   huxerui::WindowDragRegion{}),
+            DesktopNavigationSurface(navPage).With(huxerui::Grow(1.0F)),
+        }.With(huxerui::Frame{.width = kTopNavigationRailWidth},
+               huxerui::Spacing(0.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+        huxerui::Row{}.With(huxerui::Frame{.width = 1.0F},
+                            huxerui::Background(spec.colors.outline)),
+    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    huxerui::View chrome = huxerui::WindowTitleBar{
+        huxerui::Text("Clash-Flux").With(huxerui::Padding(8.0F)),
+        huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
+    }.With(huxerui::Frame{.height = kDesktopTitleBarHeight});
+    const bool secondary = desktopActivePage == pages::kRules ||
+        desktopActivePage == pages::kConnections || desktopActivePage == pages::kLogs;
+    huxerui::View navigation;
+    if (!secondary) navigation = AndroidNavigationSurface(navPage);
+    return ResponsiveDesktopShell(huxerui::IndexedPages(std::move(pages), navPage.Get()),
+        std::move(sidebar), std::move(chrome), std::move(navigation));
 }
 
 #if defined(__ANDROID__)
@@ -810,8 +773,16 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
         huxerui::UseEnvironment<huxerui::Locale>();
     CLASHFLUX_PREPARE_PLATFORM_DATA(application);
 
-    // 首帧先用品牌深色；设置模型 hydrate 后再镜像持久化主题值。
-    auto themeMode = huxerui::UseState<int>(1);
+    // 阻塞首帧构建，先读取保存的主题。启动快照只取一次，不在重组时读磁盘。
+    // 临时连接只读；设置/订阅的 ORM hydrate 与运行期写入仍走原异步流程。
+    static const auto startupTheme = clashflux::persistence::readStartupTheme(cfg::databaseFile());
+    if (!startupTheme.error.empty()) {
+        std::fprintf(stderr, "Clash-Flux 启动失败：%s；原数据库与订阅文件已保留\n", startupTheme.error.c_str());
+        CliSetPendingExitCode(1);
+        application.Quit();
+        return huxerui::Row{};
+    }
+    auto themeMode = huxerui::UseState<int>(int{startupTheme.mode});
     // TEMP-PERF-ONLY: 直接落到指定一级页做帧分析，测完删除。
     std::size_t initialNavPage = pages::kHome;
     if (const char* perf_page = std::getenv("CLASHFLUX_PERF_PAGE")) {
@@ -885,20 +856,20 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
                           settingsModel]() -> huxerui::Task<void> {
                 try {
                     auto& db = clashflux::persistence::persistence();
-                    if (!db.ready() && !co_await db.open(cfg::databaseFile())) {
-                        // 旧版本数据库不兼容：只记录并降级运行，不删除任何文件。
+                    if (!db.ready() && !co_await db.open(cfg::databaseFile(), cfg::profilesDir())) {
+                        // A failed hydrate must never initialize an empty
+                        // writable session or allocate IDs over existing files.
                         stream::logApplication("error", db.lastError());
-                        if (CliRuntimeCommandMode()) {
-                            CliSetPendingExitCode(1);
-                            application.Quit();
-                            co_return;
-                        }
+                        std::fprintf(stderr, "Clash-Flux 启动失败：%s；原数据库与订阅文件已保留\n", db.lastError().c_str());
+                        CliSetPendingExitCode(1);
+                        application.Quit();
+                        co_return;
                     }
                     store::coreStore().init();
                     store::coreStore().ensureSecret();
                     if (db.ready()) {
-                        // hydrate 只是填充缓存、不算一次「变更」，修订号不会动；
-                        // 这里显式请模型同步一次，否则首帧之后不会再发布。
+                        // hydrate advances the content revision; explicitly
+                        // request the initial model publication as well.
                         profilesModel->RequestSync();
                         // 设置同理：让依赖「hydrate 完成后补读」的消费者（首页布局、
                         // 环境 shell 选择）立刻拿到库里的值，而不是等下一拍。
@@ -911,10 +882,14 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
                     // 伪 CLI：命令在运行时内执行（窗口隐藏到托盘），落库后退出。
                     auto args = CliTakePendingCommand();
                     if (!args.empty()) {
-                        const int code = co_await RunOnTaskThread(
+                        int code = co_await RunOnTaskThread(
                             [args = std::move(args)] { return CliRun(args); });
-                        co_await db.flushSettings();
-                        co_await db.flushProfiles();
+                        const bool settingsSaved = co_await db.flushSettings();
+                        const bool profilesSaved = co_await db.flushProfiles();
+                        if (!settingsSaved || !profilesSaved) {
+                            std::fprintf(stderr, "Clash-Flux 命令落库失败：%s\n", db.lastError().c_str());
+                            code = 1;
+                        }
                         CliSetPendingExitCode(code);
                         application.Quit();
                         co_return;
@@ -952,11 +927,9 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
                 } catch (...) {
                     stream::logApplication("error", "持久化启动任务未知异常");
                 }
-                // 兜底退出：CLI 模式必须给出确定退出码，不能再启动第二个运行时。
-                if (CliRuntimeCommandMode()) {
-                    CliSetPendingExitCode(1);
-                    application.Quit();
-                }
+                // Startup exceptions fail closed in GUI and CLI alike.
+                CliSetPendingExitCode(1);
+                application.Quit();
             });
             return [] {};
         },

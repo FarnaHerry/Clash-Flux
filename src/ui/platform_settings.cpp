@@ -462,7 +462,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         [on](SettingsView& view) { view.autoRun = on; });
                 })),
         SettingSwitchRow(
-            Localized("启用托盘图标"), Localized("关闭后托盘不可用，关闭窗口即退出"),
+            Localized("启用托盘"), Localized("启用后关闭窗口隐藏到托盘；停用后关闭窗口询问是否退出"),
             huxerui::Switch(settings.trayEnabled)
                 .OnChanged([settingsModel](bool on) {
                     store::coreStore().setSetting("tray.enabled",
@@ -478,21 +478,6 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         "tray.start_minimized", on ? "true" : "false");
                     settingsModel->Update(
                         [on](SettingsView& view) { view.startMinimized = on; });
-                })),
-        SettingRow(
-            Localized("关闭窗口时"),
-            Localized("托盘可用时的驻留行为（代理继续后台运行 = 最小化到托盘）"),
-            huxerui::SegmentedButton(
-                std::vector<huxerui::StringVariant>{
-                    Localized("每次询问"), Localized("直接退出"),
-                    Localized("最小化到托盘")},
-                static_cast<std::size_t>(settings.closeBehavior))
-                .OnChanged([settingsModel](std::size_t index) {
-                    store::coreStore().setSetting("tray.close_behavior",
-                                                  std::to_string(index));
-                    settingsModel->Update([index](SettingsView& view) {
-                        view.closeBehavior = static_cast<int>(index);
-                    });
                 })),
     }.With(huxerui::Spacing(10.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));

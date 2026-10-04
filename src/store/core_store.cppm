@@ -13,6 +13,10 @@
 //   3. spawn `sing-box run -c <config> -D <workdir>`，轮询 /version 等
 //      clash_api 就绪（≤30s，覆盖远程规则集首启下载；进程提前退出仍立即判失败）
 //   4. 就绪 → Running，拉起 /logs /traffic /connections 三条 WS 流
+module;
+#if defined(__ANDROID__)
+#include "android_profile_http.h"
+#endif
 export module clashflux.store.core;
 
 import std;
@@ -24,6 +28,7 @@ import clashflux.persistence;
 import clashflux.api;
 import clashflux.core;
 import clashflux.singbox;
+import clashflux.rule_provider_cache;
 import clashflux.stream;
 import clashflux.sysproxy;
 import clashflux.service;
