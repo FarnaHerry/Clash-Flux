@@ -191,6 +191,7 @@ public final class MainActivity extends HuxerUIActivity {
                 }
                 result.putString("headers_json", headers.toString());
 
+                long expectedBodyLength = connection.getContentLengthLong();
                 ByteArrayOutputStream body = new ByteArrayOutputStream();
                 connection.setReadTimeout(remainingTimeoutMillis(deadlineNanos));
                 InputStream input = status >= 400
@@ -199,9 +200,15 @@ public final class MainActivity extends HuxerUIActivity {
                     try (InputStream stream = input) {
                         byte[] buffer = new byte[16 * 1024];
                         while (true) {
-                            connection.setReadTimeout(
-                                    remainingTimeoutMillis(deadlineNanos));
-                            int count = stream.read(buffer);
+                            int count;
+                            try {
+                                connection.setReadTimeout(
+                                        remainingTimeoutMillis(deadlineNanos));
+                                count = stream.read(buffer);
+                            } catch (IOException readError) {
+                                result.putBoolean("retryable", true);
+                                throw readError;
+                            }
                             if (count == -1) break;
                             if (maxBytes > 0 && count > maxBytes - body.size()) {
                                 throw new IOException("规则集下载超过大小上限");
@@ -209,6 +216,11 @@ public final class MainActivity extends HuxerUIActivity {
                             body.write(buffer, 0, count);
                         }
                     }
+                }
+                if (expectedBodyLength >= 0 && body.size() != expectedBodyLength) {
+                    result.putBoolean("retryable", true);
+                    throw new IOException("下载不完整（收到 " + body.size()
+                            + "/" + expectedBodyLength + " 字节）");
                 }
                 result.putByteArray("body", body.toByteArray());
                 result.putString("error", "");

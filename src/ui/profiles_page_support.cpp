@@ -18,6 +18,9 @@
 #include "task_bridge.h"
 #if defined(__ANDROID__)
 #include "android_profile_http.h"
+#if !defined(NDEBUG)
+#include <android/log.h>
+#endif
 #endif
 
 import clashflux.db;
@@ -32,6 +35,12 @@ import clashflux.vpn;
 #include "../profile_link.h"
 
 namespace clashflux::ui::profile_detail {
+namespace {
+
+// ISO/IEC 18004 requires a four-module quiet zone around a QR symbol.
+constexpr int kQrQuietZoneModules = 4;
+
+} // namespace
 
 huxerui::StringVariant profileTypeLabel(std::string_view type) {
     if (type == "remote") return Localized("远程订阅");
@@ -99,7 +108,7 @@ std::string truncateOneLine(const std::string& s, std::size_t maxCodePoints) {
 }
 
 // 订阅链接二维码画笔：白底 + 近黑模块（固定高对比，不随主题翻转，保证
-// 扫码成功率）。模块居中（DialogCard 自带边距当静区）。
+// 扫码成功率）。白色画布内包含标准四模块静区，不依赖弹窗背景。
 huxerui::CanvasPainter QrPainter(const std::string& text) {
     return [text](huxerui::PaintContext& paint, huxerui::Size size) {
         const float side = std::min(size.width, size.height);
@@ -107,19 +116,24 @@ huxerui::CanvasPainter QrPainter(const std::string& text) {
         qrcodegen::QrCode qr = qrcodegen::QrCode::encodeText(
             text.c_str(), qrcodegen::QrCode::Ecc::MEDIUM);
         const int n = qr.getSize();
-        const float cell = side / static_cast<float>(n);
+        const int totalModules = n + 2 * kQrQuietZoneModules;
+        const float cell = side / static_cast<float>(totalModules);
         const float ox = (size.width - side) / 2.0F;
         const float oy = (size.height - side) / 2.0F;
+        const float qrOffset =
+            static_cast<float>(kQrQuietZoneModules) * cell;
         paint.DrawRect({ox, oy, side, side},
                        huxerui::Color::Rgb(255, 255, 255), {});
         const huxerui::Color moduleColor = huxerui::Color::Rgb(17, 17, 17);
         for (int y = 0; y < n; ++y) {
             for (int x = 0; x < n; ++x) {
                 if (qr.getModule(x, y)) {
-                    paint.DrawRect({ox + static_cast<float>(x) * cell,
-                                    oy + static_cast<float>(y) * cell, cell,
-                                    cell},
-                                   moduleColor, {});
+                    const float moduleX =
+                        ox + qrOffset + static_cast<float>(x) * cell;
+                    const float moduleY =
+                        oy + qrOffset + static_cast<float>(y) * cell;
+                    paint.DrawRect({moduleX, moduleY, cell, cell}, moduleColor,
+                                   {});
                 }
             }
         }
@@ -258,32 +272,46 @@ void OpenProfileCreate(bool compact, huxerui::State<bool> page,
     });
 }
 
-// Android 默认走 HuxerUI 的平台异步 HTTP。仅用户显式开启证书绕过时，改用
-// app 自己的 HttpURLConnection 请求级信任策略；同步请求必须留在任务线程。
+// Android 订阅下载统一走 app 的 HttpURLConnection 桥接：保留系统证书校验，
+// 并在读完响应后校验 Content-Length，避免平台异步 HTTP 返回被截断的配置。
+// 显式允许无效证书时，只对本次请求放宽信任；同步请求必须留在任务线程。
 huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
     std::shared_ptr<AppHttpClient> http, std::string url,
     int timeoutSecs, bool allowInvalidCert) {
     store::FetchedProfile fetched;
 #if defined(__ANDROID__)
-    if (allowInvalidCert) {
-        fetched = co_await RunOnTaskThread(
-            [url = std::move(url), timeoutSecs]() {
-                const auto response = clashflux::android::DownloadProfile(
-                    url, timeoutSecs, true);
-                store::FetchedProfile result;
-                result.status = response.status;
-                result.error = response.error;
-                result.headers = response.headers;
-                result.body = response.body;
-                result.ok = result.error.empty() && result.status >= 200 &&
-                            result.status < 300;
-                return result;
-            });
-        co_return fetched;
-    }
+    static_cast<void>(http);
+    fetched = co_await RunOnTaskThread(
+        [url = std::move(url), timeoutSecs, allowInvalidCert]() {
+#if !defined(NDEBUG)
+            const auto started = std::chrono::steady_clock::now();
+            __android_log_print(ANDROID_LOG_INFO, "ClashFluxImport",
+                                "subscription request begin timeout=%d allowInvalidCert=%d",
+                                timeoutSecs, allowInvalidCert ? 1 : 0);
+#endif
+            const auto response = clashflux::android::DownloadProfile(
+                url, timeoutSecs, allowInvalidCert);
+#if !defined(NDEBUG)
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started).count();
+            __android_log_print(ANDROID_LOG_INFO, "ClashFluxImport",
+                                "subscription response status=%ld bytes=%zu error=%d elapsed_ms=%lld",
+                                response.status, response.body.size(),
+                                response.error.empty() ? 0 : 1,
+                                static_cast<long long>(elapsed));
+#endif
+            store::FetchedProfile result;
+            result.status = response.status;
+            result.error = response.error;
+            result.headers = response.headers;
+            result.body = response.body;
+            result.ok = result.error.empty() && result.status >= 200 &&
+                        result.status < 300;
+            return result;
+        });
+    co_return fetched;
 #else
     static_cast<void>(allowInvalidCert);
-#endif
     if (!http) {
         fetched.error = "HTTP 服务不可用";
         co_return fetched;
@@ -318,6 +346,7 @@ huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
         reinterpret_cast<const char*>(response.body.data()),
         static_cast<std::size_t>(response.body.size()));
     co_return fetched;
+#endif
 }
 
 // Android 订阅导入：store 建行 → 平台栈抓取 → store 落盘。返回新订阅 id
@@ -329,11 +358,39 @@ huxerui::Task<std::int64_t> AndroidImportRemote(
         [name, url, options] { return store::profilesStore().createRemote(
                                    name, url, options); });
     if (nid == 0) co_return 0;
+#if defined(__ANDROID__) && !defined(NDEBUG)
+    const auto snapshotProfile = [nid] {
+        const auto profiles = store::profilesStore().list();
+        const bool found = std::any_of(
+            profiles.begin(), profiles.end(), [nid](const auto& profile) {
+                return profile.id == nid;
+            });
+        return std::pair{profiles.size(), found};
+    };
+    const auto afterCreate = co_await RunOnTaskThread(snapshotProfile);
+    __android_log_print(ANDROID_LOG_INFO, "ClashFluxImport",
+                        "profile created id=%lld count=%zu present=%d",
+                        static_cast<long long>(nid), afterCreate.first,
+                        afterCreate.second ? 1 : 0);
+#endif
     const store::FetchedProfile fetched = co_await AndroidFetchProfile(
         std::move(http), url, options.timeoutSecs, options.allowInvalidCert);
+#if defined(__ANDROID__) && !defined(NDEBUG)
+    const auto beforeComplete = co_await RunOnTaskThread(snapshotProfile);
+    __android_log_print(ANDROID_LOG_INFO, "ClashFluxImport",
+                        "profile before complete id=%lld count=%zu present=%d fetched_ok=%d status=%ld bytes=%zu",
+                        static_cast<long long>(nid), beforeComplete.first,
+                        beforeComplete.second ? 1 : 0, fetched.ok ? 1 : 0,
+                        fetched.status, fetched.body.size());
+#endif
     const bool ok = co_await RunOnTaskThread(
         [nid, fetched] { return store::profilesStore().completeRemote(
                              nid, fetched, true); });
+#if defined(__ANDROID__) && !defined(NDEBUG)
+    __android_log_print(ANDROID_LOG_INFO, "ClashFluxImport",
+                        "profile complete id=%lld result=%d",
+                        static_cast<long long>(nid), ok ? 1 : 0);
+#endif
     co_return ok ? nid : 0;
 }
 

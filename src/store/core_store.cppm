@@ -16,6 +16,9 @@
 module;
 #if defined(__ANDROID__)
 #include "android_profile_http.h"
+#if !defined(NDEBUG)
+#include <android/log.h>
+#endif
 #endif
 export module clashflux.store.core;
 
