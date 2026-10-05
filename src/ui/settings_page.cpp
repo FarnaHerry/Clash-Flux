@@ -87,8 +87,6 @@ std::size_t ModeIndex(const std::string& mode) {
     return 0;
 }
 
-#if defined(__ANDROID__)
-
 struct SettingsModeIndicator {
     class Extension;
 
@@ -171,7 +169,7 @@ private:
     bool geometry_pending_ = false;
 };
 
-[[huxerui::composable]] huxerui::View AndroidOutboundModeSelector(
+[[huxerui::composable]] huxerui::View CompactOutboundModeSelector(
     huxerui::State<std::size_t> selected,
     huxerui::State<bool> busy,
     std::function<void(std::size_t)> onChanged) {
@@ -227,12 +225,7 @@ private:
               SettingsModeIndicator{active, indicator});
 }
 
-#endif
-
-#if defined(__ANDROID__)
-#define CLASHFLUX_OUTBOUND_MODE_SELECTOR AndroidOutboundModeSelector
-#else
-[[huxerui::composable]] huxerui::View DesktopOutboundModeSelector(
+[[huxerui::composable]] huxerui::View WideOutboundModeSelector(
     huxerui::State<std::size_t> selected,
     huxerui::State<bool> busy,
     std::function<void(std::size_t)> onChanged) {
@@ -246,8 +239,15 @@ private:
     return huxerui::SegmentedButton(kModeNames, shown)
         .OnChanged(std::move(onChanged));
 }
-#define CLASHFLUX_OUTBOUND_MODE_SELECTOR DesktopOutboundModeSelector
-#endif
+
+[[huxerui::composable]] huxerui::View ResponsiveOutboundModeSelector(
+    huxerui::State<std::size_t> selected,
+    huxerui::State<bool> busy,
+    std::function<void(std::size_t)> onChanged) {
+    if (huxerui::UseViewportClass() == huxerui::ViewportClass::Compact)
+        return CompactOutboundModeSelector(selected, busy, std::move(onChanged));
+    return WideOutboundModeSelector(selected, busy, std::move(onChanged));
+}
 
 // 宏只选择模块级平台函数，不把平台能力拆成控件级过滤条件。
 #if defined(__ANDROID__)
@@ -930,7 +930,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                     SectionTitle(Localized("内核")),
                     SettingRow(
                         Localized("出站模式"), "",
-                        CLASHFLUX_OUTBOUND_MODE_SELECTOR(
+                        ResponsiveOutboundModeSelector(
                             modeSelection, busy, applyOutboundMode), app::images::route),
                     PortSettingsEntry(),
                     CLASHFLUX_KERNEL_PLATFORM_SECTION(),

@@ -1,6 +1,6 @@
 # Clash-Flux
 
-版本更新见 [v0.3.25 发布说明](docs/releases/v0.3.25.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.26 发布说明](docs/releases/v0.3.26.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
