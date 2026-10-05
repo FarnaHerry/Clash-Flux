@@ -115,7 +115,7 @@ int CliRun(const std::vector<std::string>& args) { return cli::run(args); }
 
 // 品牌蓝只出现在主交互和选中态。页面、卡片、导航与浮层使用中性灰阶，
 // 通过稳定的明度差区分层级，避免整页被蓝色表面染色。
-huxerui::ThemeSpec FluxDarkThemeSpec() {
+huxerui::ThemeSpec FluxDarkThemeSpec(std::string_view accent) {
     huxerui::ThemeSpec spec = huxerui::MaterialDarkThemeSpec();
     spec.typography = huxerui::TypographyScheme{
         .body_large = 16.0F,
@@ -127,14 +127,14 @@ huxerui::ThemeSpec FluxDarkThemeSpec() {
     };
     spec.shapes = huxerui::ShapeScheme{6.0F, 12.0F, 16.0F, 22.0F, 28.0F,
                                         10000.0F};
-    spec.colors = FluxDarkColors();
-    spec.interactions.focus_ring = huxerui::FocusRing{FluxPalette::ice(), 2.0F, 2.0F};
+    spec.colors = FluxDarkColors(accent);
+    spec.interactions.focus_ring = huxerui::FocusRing{spec.colors.on_primary_container, 2.0F, 2.0F};
     return spec;
 }
 
 // 浅色模式用干净的中性白灰做底，主色容器只保留浅水蓝色调；正文和边界使用
 // 石墨灰，保证内容层级清晰，品牌色不会扩散到大面积背景。
-huxerui::ThemeSpec FluxLightThemeSpec() {
+huxerui::ThemeSpec FluxLightThemeSpec(std::string_view accent) {
     huxerui::ThemeSpec spec = huxerui::MaterialLightThemeSpec();
     spec.typography = huxerui::TypographyScheme{
         .body_large = 16.0F,
@@ -146,16 +146,15 @@ huxerui::ThemeSpec FluxLightThemeSpec() {
     };
     spec.shapes = huxerui::ShapeScheme{6.0F, 12.0F, 16.0F, 22.0F, 28.0F,
                                         10000.0F};
-    spec.colors = FluxLightColors();
-    spec.interactions.focus_ring = huxerui::FocusRing{FluxPalette::water(), 2.0F, 2.0F};
+    spec.colors = FluxLightColors(accent);
+    spec.interactions.focus_ring = huxerui::FocusRing{ResolveFluxAccent(accent).dark, 2.0F, 2.0F};
     return spec;
 }
 
 // 主题边界：MaterialThemeDefinition(spec) 之上用 typed style 覆盖组件样式——
 // 按钮/分段按钮/菜单圆角统一 8px（M3 默认全圆胶囊），叠加层用 on_surface
 // 半透明，让深浅模式的交互反馈都留在品牌色相内。
-huxerui::View FluxThemed(bool dark, huxerui::View content) {
-    const huxerui::ThemeSpec spec = dark ? FluxDarkThemeSpec() : FluxLightThemeSpec();
+huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) {
     huxerui::ThemeDefinition definition = huxerui::MaterialThemeDefinition(spec);
 
     const auto withAlpha = [](huxerui::Color c, float a) {
@@ -568,12 +567,18 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
         profiles->linkError = error;
 }
 
-// 桌面：侧边导航 + 七页 IndexedPages（规则/连接/日志是一级页）。
-[[huxerui::composable]] huxerui::View DesktopMainContent(
-    huxerui::State<std::size_t> navPage, huxerui::State<std::size_t>,
-    huxerui::State<int> themeMode, const IslandTheme& islands,
-    const huxerui::ThemeSpec& spec, ProfilesCache profilesCache) {
-    static_cast<void>(islands);
+// 桌面主内容保留七个一级页面；二级设置只覆盖这个内容槽。
+[[huxerui::composable]] huxerui::View DesktopPrimaryPages(
+    huxerui::State<std::size_t> navPage, huxerui::State<int> themeMode,
+    ProfilesCache profilesCache) {
+    const auto navigation = huxerui::UseNavigation();
+    const auto model = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
+    huxerui::Lifecycle([navPage, navigation, model] {
+        if (model->secondaryOpen.Get() && navPage.Get() != pages::kSettings) {
+            static_cast<void>(navigation.Pop());
+        }
+        return [] {};
+    }, navPage);
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const auto backToSettings = compact ? std::function<void()>{[navPage] { navPage = pages::kSettings; }}
                                         : std::function<void()>{};
@@ -598,6 +603,17 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
     pages.push_back(SettingsPage(themeMode, navPage, profilesCache,
                                  desktopActivePage == pages::kSettings)
                         .Key("settings").With(huxerui::Grow(1.0F)));
+    return huxerui::IndexedPages(std::move(pages), navPage.Get()).With(huxerui::Grow(1.0F));
+}
+
+// 导航栈只占内容区域，左侧栏和 Compact 系统标题栏留在持久外壳中。
+[[huxerui::composable]] huxerui::View DesktopMainContent(
+    huxerui::State<std::size_t> navPage, huxerui::State<std::size_t>,
+    huxerui::State<int> themeMode, const IslandTheme& islands,
+    const huxerui::ThemeSpec& spec, ProfilesCache profilesCache) {
+    static_cast<void>(islands);
+    const auto model = huxerui::UseState(std::make_shared<DesktopSettingsNavigationModel>()).Get();
+    const std::size_t desktopActivePage = navPage.Get();
     huxerui::View sidebarLogo = huxerui::Image(
         IsDarkTheme(spec) ? app::images::clash_flux_logo_vector_dark_refined
                          : app::images::clash_flux_logo_vector_light_refined)
@@ -622,15 +638,20 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
         huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
     }.With(huxerui::Frame{.height = kDesktopTitleBarHeight});
     const bool secondary = desktopActivePage == pages::kRules ||
-        desktopActivePage == pages::kConnections || desktopActivePage == pages::kLogs;
+        desktopActivePage == pages::kConnections || desktopActivePage == pages::kLogs ||
+        model->secondaryOpen.Get();
     huxerui::View navigation;
     if (!secondary) navigation = AndroidNavigationSurface(navPage);
-    return ResponsiveDesktopShell(huxerui::IndexedPages(std::move(pages), navPage.Get()),
-        std::move(sidebar), std::move(chrome), std::move(navigation));
+    // Environment 只提供作用域；外层真实布局承接骨架的 Grow/Key 行为。
+    huxerui::View content = huxerui::Column {
+      huxerui::ProvideEnvironment(DesktopSettingsNavigation{model},
+          huxerui::NavigationStack(DesktopPrimaryPages, navPage, themeMode, profilesCache)
+              .With(huxerui::Grow(1.0F))),
+    }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    return ResponsiveDesktopShell(content, sidebar, chrome, navigation);
 }
 
-#if defined(__ANDROID__)
-// 二级页（规则/连接/日志）的进入与返回动画：新页自右缘滑入、父页左移 20%，
+// 二级页的进入与返回动画：新页自右缘滑入、父页左移 20%，
 // 返回时反向滑回。它只作用于 NavigationStack 的页面 push/pop，与一级页 Pager
 // 的左右翻页动画相互独立。
 huxerui::PageTransition SecondaryPageTransition(
@@ -647,6 +668,7 @@ huxerui::PageTransition SecondaryPageTransition(
         .replace = enter};
 }
 
+#if defined(__ANDROID__)
 // 一级外壳：四个一级页由 Pager 承载，悬浮 dock 与一级页同属 NavigationStack
 // 的根页面；二级页 push 后整页覆盖 dock，弹出后一级页状态原样保留。
 [[huxerui::composable]] huxerui::View AndroidPrimaryShell(
@@ -756,6 +778,30 @@ huxerui::PageTransition SecondaryPageTransition(
 [[huxerui::composable]] huxerui::View AndroidLogsPage() {
     const huxerui::NavigationController navigation = huxerui::UseNavigation();
     return LogsPage([navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+
+[[huxerui::composable]] huxerui::View AndroidLanguagePage() {
+    const huxerui::NavigationController navigation = huxerui::UseNavigation();
+    return LanguagePage([navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+
+[[huxerui::composable]] huxerui::View AndroidThemePage(huxerui::State<int> themeMode) {
+    const huxerui::NavigationController navigation = huxerui::UseNavigation();
+    return ThemePage(themeMode, [navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+#endif
+
+#if !defined(__ANDROID__)
+[[huxerui::composable]] huxerui::View DesktopThemePage(huxerui::State<int> themeMode) {
+    const huxerui::NavigationController navigation = huxerui::UseNavigation();
+    const auto model = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
+    huxerui::Lifecycle([model] {
+        return [model] { model->secondaryOpen = false; };
+    }, 0);
+    return ThemePage(themeMode, [navigation] { static_cast<void>(navigation.Pop()); }, true)
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
 #endif
@@ -1004,7 +1050,9 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
     // 主题派生（托盘 TUN 引导弹窗也要取 rootSpec 配色，故先于托盘块计算）。
     const bool dark =
         themeMode.Get() == 1 || (themeMode.Get() == 0 && cfg::systemPrefersDark());
-    const huxerui::ThemeSpec rootSpec = dark ? FluxDarkThemeSpec() : FluxLightThemeSpec();
+    const SettingsView settings = settingsModel->view.Get();
+    const std::string& accent = settings.ready ? settings.themeColor : startupTheme.color;
+    const huxerui::ThemeSpec rootSpec = dark ? FluxDarkThemeSpec(accent) : FluxLightThemeSpec(accent);
     const IslandTheme rootIslands = ResolveIslandTheme(rootSpec);
     const std::string language = settingsModel->view.Get().language;
     const huxerui::Locale locale =
@@ -1019,7 +1067,7 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
     huxerui::View content = CLASHFLUX_APP_CONTENT(std::move(mainRow), rootSpec);
 
     return huxerui::ProvideEnvironment(locale, FluxThemed(
-        dark,
+        rootSpec,
         huxerui::Column {
             std::move(profileRefreshPump),
             std::move(applicationEffects),

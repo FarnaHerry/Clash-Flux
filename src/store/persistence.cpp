@@ -82,11 +82,14 @@ StartupTheme readStartupTheme(const std::filesystem::path& file) {
     if (!inspected) { theme.error = "读取启动主题失败：" + inspected.Error().Message(); return theme; }
     if (!hasSettings) return theme;
     auto read = sqlite::Database::QueryReadOnlySync(huxerui::File{file.string()},
-        "SELECT value FROM settings WHERE key='ui.theme_mode'",
+        "SELECT key, value FROM settings WHERE key IN ('ui.theme_mode', 'ui.theme_color')",
         [&theme](const sqlite::RowView& row) -> sqlite::Result<void> {
+            auto key = row.Get<std::string>("key");
+            if (!key) return key.Error();
             auto value = row.Get<std::string>("value");
             if (!value) return value.Error();
-            theme.mode = *value == "0" ? 0 : *value == "2" ? 2 : 1;
+            if (*key == "ui.theme_color") theme.color = *value;
+            else theme.mode = *value == "0" ? 0 : *value == "2" ? 2 : 1;
             return {};
         });
     if (!read) theme.error = "读取启动主题失败：" + read.Error().Message();

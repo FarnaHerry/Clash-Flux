@@ -101,13 +101,24 @@ cmake --build build --target clash-flux
 
 ## 启动主题
 
-`AppRoot` 在首帧构建前同步读取保存的 `ui.theme_mode`，选择深色、浅色或跟随系统后才构建
+`AppRoot` 在首帧构建前同步读取保存的 `ui.theme_mode` 与 `ui.theme_color`，选择外观模式和主题色后才构建
 可见内容。启动快照只读取一次，重组不重复磁盘 IO；后续主题变更仍由 SettingsModel 写透。
 `persistence::readStartupTheme` 使用临时只读 SQLite 查询，兼容迁移前旧库；不存在的数据库
 不创建，损坏或无法读取的数据库明确报告失败并停止启动。订阅/其余设置仍按原异步流程 hydrate。
 Lib-SQLite 的同步只读 API 补丁位于 `cmake/patches/huxerui-lib-sqlite-startup-read.patch`，
 CMake 在各平台加入依赖前应用，不能只改本地第三方源码。回归覆盖三种模式、首次启动、旧库、
 损坏库保留与原有多订阅迁移/重开保护；构建和自动化回归不代表真机首帧验收。
+
+主题页「模式」使用横向排列的三个独立图标加文字卡片（自动/深色/浅色），「主题色」使用整卡色块选择，
+不显示颜色名称或色值，保留居中的对钩与无障碍名称。
+模式、色块和添加入口共用 `theme_color_card.h` 的正方形表面、圆角、居中图标和交互样式；
+Compact 使用较小的共用边长，三种模式仍保持横向一行；模式卡片保留图标与文字。
+间距、圆角、图标尺寸、选中描边与切换时长取 ThemeSpec，页面特有尺寸集中为命名常量。`ui.theme_color` 使用稳定的 blue/purple/green/orange/pink/teal ID，
+自定义颜色使用规范化的 `#RRGGBB` 作为 ID，`ui.custom_theme_colors` 按换行保存完整列表；
+输入校验、去重和 RGB/HEX 转换集中在 `theme_colors.h`，缺省或未知值显示品牌蓝色。
+主题色卡片用 Flow 自动换行，添加弹窗提供 RGB 滑块、HEX 输入与实时预览；保存后即时选中。
+自定义颜色按深浅模式调整亮度，并选择对比度足够的按钮文字色。预设配对色集中在 `theme_colors.h`，切换通过 SettingsModel
+即时写透；主题色更新 primary/容器前景与焦点颜色，深浅模式共用选择且保留中性背景层级。
 
 ## 通用操作菜单
 

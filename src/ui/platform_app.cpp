@@ -188,6 +188,20 @@ void ApplyWindowsNativeMenuTheme(bool dark) noexcept {
 void ApplyWindowsNativeMenuTheme(bool) noexcept {}
 #endif
 
+// 原生托盘按应用级 ResourceConfiguration 解析资源，不继承窗口的 Locale。
+// 在组合期解析为拥有型文字，再把同一语言的菜单交给平台托盘。
+struct TrayMenuText {
+    std::string showWindow;
+    std::string noProfiles;
+    std::string selectProfile;
+    std::string selectLine;
+    std::string startCore;
+    std::string stopCore;
+    std::string systemProxy;
+    std::string tun;
+    std::string quit;
+};
+
 struct TrayOperationResult {
     bool ok = false;
     std::string error;
@@ -368,6 +382,48 @@ struct TrayOperationResult {
     });
 
     if (trayAvailable) {
+        const huxerui::Locale trayLocale = huxerui::UseEnvironment<huxerui::Locale>();
+        const auto resolveLabel = [](huxerui::StringVariant label) {
+            return huxerui::UseString(label);
+        };
+        const TrayMenuText menuText{
+            .showWindow = resolveLabel(Localized("显示主窗口")),
+            .noProfiles = resolveLabel(Localized("暂无可用订阅")),
+            .selectProfile = resolveLabel(Localized("选择订阅")),
+            .selectLine = resolveLabel(Localized("切换当前订阅线路")),
+            .startCore = resolveLabel(Localized("启动")),
+            .stopCore = resolveLabel(Localized("停止内核")),
+            .systemProxy = resolveLabel(Localized("系统代理")),
+            .tun = resolveLabel(Localized("TUN 模式")),
+            .quit = resolveLabel(Localized("退出")),
+        };
+        const auto proxyLineMenu = BuildProxyLineMenu(
+            trayProxyGroups.Get(),
+            [tasks, toast, trayProxyGroups](
+                const std::string& group, const std::string& name) {
+                tasks.Launch([toast, trayProxyGroups, group, name]()
+                                 -> huxerui::Task<void> {
+                    const bool ok = co_await RunOnTaskThread(
+                        [group, name] {
+                            return SelectProxyLine(group, name);
+                        });
+                    if (!ok) {
+                        const std::string error =
+                            store::coreStore().snapshot().lastError;
+                        toast.Show(error.empty()
+                                       ? Localized("线路切换失败")
+                                       : huxerui::StringVariant(error));
+                        co_return;
+                    }
+                    auto groups = trayProxyGroups.Get();
+                    for (ProxyGroupSnapshot& proxyGroup : groups) {
+                        if (proxyGroup.name == group) {
+                            proxyGroup.current = name;
+                        }
+                    }
+                    trayProxyGroups = std::move(groups);
+                });
+            }, resolveLabel);
         huxerui::Lifecycle(
             [tray, window, application, tasks, trayCoreRunning,
              trayCoreMenuRunning, traySysProxy, trayTun, traySysProxyActive,
@@ -375,13 +431,13 @@ struct TrayOperationResult {
              trayTunPending, dialog, clipboard, toast,
              trayProfiles, trayProxyGroups, settingsModel, proxiesModel,
              coreModel, profilesModel,
-             finishExit,
+             finishExit, menuText, proxyLineMenu,
              textColor = rootSpec.colors.on_surface,
              hintColor = rootSpec.colors.on_surface_variant] {
                 if (settingsModel->view.Get().trayEnabled) {
                     std::vector<huxerui::MenuEntry> menuEntries;
                     menuEntries.push_back(
-                        huxerui::MenuItem(Localized("显示主窗口"), [window] {
+                        huxerui::MenuItem(menuText.showWindow, [window] {
                             window.Show();
                             window.Activate();
                         }));
@@ -424,44 +480,17 @@ struct TrayOperationResult {
                     }
                     if (profileEntries.empty()) {
                         profileEntries.push_back(
-                            huxerui::MenuItem(Localized("暂无可用订阅"), [] {}).Enabled(false));
+                            huxerui::MenuItem(menuText.noProfiles, [] {}).Enabled(false));
                     }
                     menuEntries.push_back(huxerui::MenuItem(
-                        Localized("选择订阅"), std::move(profileEntries)));
+                        menuText.selectProfile, std::move(profileEntries)));
                     menuEntries.push_back(huxerui::MenuItem(
-                        Localized("切换当前订阅线路"),
-                        BuildProxyLineMenu(
-                            trayProxyGroups.Get(),
-                            [tasks, toast, trayProxyGroups](
-                                const std::string& group, const std::string& name) {
-                                tasks.Launch([toast, trayProxyGroups, group, name]()
-                                                 -> huxerui::Task<void> {
-                                    const bool ok = co_await RunOnTaskThread(
-                                        [group, name] {
-                                            return SelectProxyLine(group, name);
-                                        });
-                                    if (!ok) {
-                                        const std::string error =
-                                            store::coreStore().snapshot().lastError;
-                                        toast.Show(error.empty()
-                                                       ? Localized("线路切换失败")
-                                                       : huxerui::StringVariant(error));
-                                        co_return;
-                                    }
-                                    auto groups = trayProxyGroups.Get();
-                                    for (ProxyGroupSnapshot& proxyGroup : groups) {
-                                        if (proxyGroup.name == group) {
-                                            proxyGroup.current = name;
-                                        }
-                                    }
-                                    trayProxyGroups = std::move(groups);
-                                });
-                            })));
+                        menuText.selectLine, proxyLineMenu));
                     // 内核启停是独立动作（与系统代理/TUN 解耦）：启动时按已
                     // 记录的 TUN / 系统代理意图恢复接管。
                     menuEntries.push_back(
                         huxerui::MenuItem(
-                            Localized(trayCoreMenuRunning.Get() ? "停止内核" : "启动"),
+                            trayCoreMenuRunning.Get() ? menuText.stopCore : menuText.startCore,
                             [tasks, toast, trayCoreMenuRunning, trayCorePending,
                              coreModel] {
                                 if (trayCorePending.Get()) return;
@@ -512,7 +541,7 @@ struct TrayOperationResult {
                             .Enabled(!trayCorePending.Get()));
                     menuEntries.push_back(
                         huxerui::MenuItem(
-                            Localized("系统代理"), [tasks, traySysProxy,
+                            menuText.systemProxy, [tasks, traySysProxy,
                                          traySysProxyActive, traySysProxyPending,
                                          trayCoreRunning, coreModel, toast] {
                                 if (traySysProxyPending.Get()) return;
@@ -556,7 +585,7 @@ struct TrayOperationResult {
                             .Enabled(!traySysProxyPending.Get()));
                     menuEntries.push_back(
                         huxerui::MenuItem(
-                            Localized("TUN 模式"),
+                            menuText.tun,
                             [tasks, trayTun, trayTunActive, trayTunPending,
                              trayCoreRunning, coreModel, window, dialog,
                              clipboard, toast, textColor, hintColor] {
@@ -607,7 +636,7 @@ struct TrayOperationResult {
                             .Enabled(!trayTunPending.Get()));
                     menuEntries.push_back(huxerui::MenuSection{});
                     menuEntries.push_back(
-                        huxerui::MenuItem(Localized("退出"), [finishExit] { finishExit(); }));
+                        huxerui::MenuItem(menuText.quit, [finishExit] { finishExit(); }));
                     huxerui::ImageVariant trayIcon = app::images::tray_default;
                     if (trayCoreRunning.Get()) {
                         if (trayTunActive.Get()) {
@@ -632,10 +661,11 @@ struct TrayOperationResult {
             // 会出现「菜单在镜像填充之前就建好、之后再也不会重建」——表现为
             // 缩到托盘后菜单里只剩「暂无可用订阅 / 暂无可切换线路」，而窗口可见时
             // 因为内核/接管状态变化顺带重建才看起来正常。
+            // 有效 Locale 也必须作为依赖：语言切换及系统语言变化都刷新托盘文案。
             trayCoreRunning, trayCoreMenuRunning, traySysProxy, trayTun,
             traySysProxyActive, trayTunActive, trayCorePending,
             traySysProxyPending, trayTunPending, trayProfiles,
-            trayProxyGroups, settingsModel->view);
+            trayProxyGroups, settingsModel->view, trayLocale);
 
     }
 

@@ -20,6 +20,8 @@
 #include "section_tab_picker.h"
 #include "responsive_shell.h"
 #include "empty_state.h"
+#include "theme_colors.h"
+#include "theme_color_card.h"
 
 namespace {
 using huxerui::testing::UiSelector;
@@ -666,9 +668,122 @@ void testProfileImportCompletion() {
     check(ui.Find(UiSelector::Text("IMPORT-SUCCESS")).Exists() && ui.Find(UiSelector::Text("IMPORT-ATTEMPTS:3")).Exists(),
           "failed import remains retryable without retaining busy or creating duplicate operations");
 }
+[[huxerui::composable]] huxerui::View ThemeColorSurfaceContent() {
+    using namespace clashflux::ui;
+    const auto& theme = huxerui::UseTheme();
+    const float edge = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact ?
+        kThemeColorCompactCardEdge : kThemeColorCardEdge;
+    auto mode = huxerui::UseState(0);
+    auto selected = huxerui::UseState(0);
+    auto added = huxerui::UseState(false);
+    std::vector<huxerui::View> cards;
+    for (int index = 0; index < 2; ++index) {
+        const auto accent = ResolveFluxAccent(index == 0 ? "blue" : "purple");
+        const bool active = selected.Get() == index;
+        cards.push_back(ThemeColorCardSurface(theme,
+            IsDarkTheme(theme) ? accent.dark : accent.light,
+            IsDarkTheme(theme) ? accent.onDark : accent.onLight,
+            active ? std::optional<huxerui::ImageResource>{{"app", "images/check"}} : std::nullopt,
+            active, accent.name, [selected, index] { selected = index; }, std::nullopt, edge)
+            .Key("test-color-" + std::to_string(index)));
+    }
+    cards.push_back(ThemeColorCardSurface(theme, theme.colors.surface_container, theme.colors.on_surface,
+        huxerui::ImageResource{"app", "images/add"}, false, "Add color", [added] { added = true; }, std::nullopt, edge)
+        .Key("test-color-add"));
+    std::vector<huxerui::View> modes;
+    const std::array<huxerui::ImageResource, 3> icons{{
+        {"app", "images/sun_moon"}, {"app", "images/moon"}, {"app", "images/sun"}}};
+    const std::array<std::string, 3> labels{"Automatic", "Dark", "Light"};
+    for (int index = 0; index < 3; ++index)
+        modes.push_back(ThemeColorCardSurface(theme, theme.colors.surface_container, theme.colors.on_surface,
+            icons[index], mode.Get() == index, labels[index], [mode, index] { mode = index; },
+            huxerui::StringVariant{labels[index]}, edge).Key("test-mode-" + std::to_string(index)));
+    return huxerui::Column {
+      huxerui::Row(std::move(modes)).With(huxerui::Spacing(kSectionCardSpacing)),
+      huxerui::Flow(std::move(cards)).With(huxerui::Spacing(clashflux::ui::kSectionCardSpacing)),
+      huxerui::Text(added.Get() ? "color-added" : "color-idle"),
+    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
+huxerui::View ThemeColorSurfaceLightRoot() {
+    auto theme = huxerui::MaterialLightThemeSpec();
+    theme.colors = clashflux::ui::FluxLightColors();
+    return huxerui::MaterialTheme(theme, ThemeColorSurfaceContent());
+}
+huxerui::View ThemeColorSurfaceDarkRoot() {
+    auto theme = huxerui::MaterialDarkThemeSpec();
+    theme.colors = clashflux::ui::FluxDarkColors();
+    theme.spacing.extra_large = 40.0F;
+    theme.shapes.medium = 18.0F;
+    return huxerui::MaterialTheme(theme, ThemeColorSurfaceContent());
+}
+const huxerui::Application kThemeColorSurfaceLight{ThemeColorSurfaceLightRoot, {.show_debug_overlay = false}};
+const huxerui::Application kThemeColorSurfaceDark{ThemeColorSurfaceDarkRoot, {.show_debug_overlay = false}};
+
+void testThemeColorSurfaces() {
+    for (const auto* application : {&kThemeColorSurfaceLight, &kThemeColorSurfaceDark}) {
+        for (float width : {320.0F, 800.0F}) {
+            huxerui::testing::UiTest ui(*application, {
+                .viewport = {width, 500.0F}, .resource_provider = AppResources()});
+            ui.PumpAndSettle();
+            const auto color = ui.Find(UiSelector::Key("test-color-0")).One();
+            const auto other = ui.Find(UiSelector::Key("test-color-1")).One();
+            const auto add = ui.Find(UiSelector::Key("test-color-add")).One();
+            check(color.size.width == color.size.height && other.size == color.size && add.size == color.size,
+                  "color and add cards remain equal squares in narrow and wide themes");
+            for (const char* key : {"test-mode-0", "test-mode-1", "test-mode-2"}) {
+                const auto mode = ui.Find(UiSelector::Key(key)).One();
+                const auto first = ui.Find(UiSelector::Key("test-mode-0")).One();
+                check(mode.size == color.size && mode.bounds.y == first.bounds.y && mode.in_viewport,
+                      "all mode cards use the same square style and remain in one horizontal row");
+            }
+            const auto checkCenter = [&ui](const char* key) {
+                const auto card = ui.Find(UiSelector::Key(key)).One().bounds;
+                const auto symbol = ui.Find(UiSelector::Key(key)).Find(UiSelector::Key("theme-color-symbol")).One().bounds;
+                check(std::abs(card.x + card.width / 2 - symbol.x - symbol.width / 2) < 0.1F &&
+                          std::abs(card.y + card.height / 2 - symbol.y - symbol.height / 2) < 0.1F,
+                      "selection check and add icon stay centered in their card");
+            };
+            checkCenter("test-color-0");
+            checkCenter("test-color-add");
+            ui.Find(UiSelector::Key("test-color-1")).Tap();
+            ui.PumpAndSettle();
+            check(!ui.Find(UiSelector::Key("test-color-0")).Find(UiSelector::Key("theme-color-symbol")).Exists(),
+                  "previous selection mark clears after selecting another color");
+            checkCenter("test-color-1");
+            ui.Find(UiSelector::Key("test-color-add")).Tap();
+            ui.PumpAndSettle();
+            check(ui.Find(UiSelector::Text("color-added")).Exists(), "matching add card retains its click action");
+        }
+    }
+}
 } // namespace
 
+void testCustomThemeColors() {
+    using namespace clashflux::ui;
+    check(NormalizeThemeColor("  aA44cC ") == "#AA44CC", "normalize custom color input");
+    for (const auto invalid : {"", "#123", "#12345678", "#GG1234", "#12 3456"})
+        check(!NormalizeThemeColor(invalid), "reject incomplete or invalid custom colors");
+    const auto saved = ReadCustomThemeColors("#336699\ninvalid\n336699\n#aa44cc");
+    check(saved == std::vector<std::string>{"#336699", "#AA44CC"}, "custom colors normalize and deduplicate");
+    check(ReadCustomThemeColors(SaveCustomThemeColors(saved)) == saved, "custom colors round trip");
+    check(ThemeColorFromHex("#336699") == huxerui::Color::Rgb(51, 102, 153), "hex channels decode correctly");
+    check(ResolveFluxAccent("invalid").id == "blue", "invalid saved color uses default");
+    for (const auto hex : {"#000000", "#FFFFFF", "#FFFF00", "#0000FF", "#FF00FF", "#336699"}) {
+        const auto accent = ResolveFluxAccent(hex);
+        check(accent.id == hex, "custom color retains its stable identity");
+        for (bool dark : {false, true}) {
+            const auto colors = dark ? FluxDarkColors(hex) : FluxLightColors(hex);
+            const float a = ThemeColorLuminance(colors.primary), b = ThemeColorLuminance(colors.on_primary);
+            check((std::max(a, b) + 0.05F) / (std::min(a, b) + 0.05F) >= 4.5F,
+                  "custom button text retains readable contrast in both modes");
+        }
+    }
+}
+
 int main() {
+    testCustomThemeColors();
+    testThemeColorSurfaces();
     {
         huxerui::testing::UiTest ui(kMotionApplication, {.viewport = {800.0F, 700.0F}, .resource_provider = AppResources()});
         ui.PumpAndSettle();

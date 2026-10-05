@@ -322,7 +322,7 @@ Medium/Expanded 右侧）展示分组抽屉，不按桌面/手机平台硬编码
 ### 首帧主题读取
 
 主题是首帧唯一允许同步读取的持久化配置：`AppRoot` 在构建任何可见内容前通过
-`persistence::readStartupTheme` 读取一次 `ui.theme_mode`，不要先画默认主题再异步切换。
+`persistence::readStartupTheme` 读取一次 `ui.theme_mode` 与 `ui.theme_color`，不要先画默认主题再异步切换。
 该读取使用临时只读连接，不创建文件、不迁移 schema、不改 journal、不 hydrate 或修改订阅缓存；
 读取失败明确终止启动并保留原库。运行期仍从 SettingsModel 读取，订阅与其它设置仍由原 ORM
 启动任务 hydrate。同步读取 API 由 `cmake/patches/huxerui-lib-sqlite-startup-read.patch` 维护，

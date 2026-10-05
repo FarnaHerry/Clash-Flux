@@ -1,6 +1,6 @@
 # Clash-Flux
 
-See the [v0.3.23 release notes](docs/releases/v0.3.23.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.24 release notes](docs/releases/v0.3.24.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -15,6 +15,8 @@ to sing-box configuration, or as native sing-box JSON, which is merged with
 application-managed settings before being passed to sing-box.
 
 ## Features
+
+- Light, dark and system appearance modes with preset or custom theme colors.
 
 - Desktop uses separators for its outer layout and cards inside pages. Page names and actions
   share the custom title bar, with actions before the window controls. Mobile keeps its existing

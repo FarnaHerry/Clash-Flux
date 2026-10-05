@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -152,9 +153,11 @@ inline huxerui::Color DelayLevelColor(const huxerui::ThemeSpec& theme, int delay
     return theme.colors.error;
 }
 
+// 由组合期调用，resolveLabel 将应用 Locale 的资源解析为拥有型菜单文案。
 std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
     const std::vector<ProxyGroupSnapshot>& groups,
-    std::function<void(const std::string&, const std::string&)> on_select);
+    std::function<void(const std::string&, const std::string&)> on_select,
+    const std::function<std::string(huxerui::StringVariant)>& resolveLabel);
 
 // 策略组快照不在本层暴露取数接口：唯一来源是 ProxiesModel（proxies_model.h），
 // 由 AppRoot 驱动刷新，页面/托盘只读它的 State。下面两个调用均可能触发阻塞
@@ -275,7 +278,24 @@ huxerui::View AndroidProfilesPage(
 huxerui::View AndroidRulesPage(ProfilesCache profiles);
 huxerui::View AndroidConnectionsPage();
 huxerui::View AndroidLogsPage();
+huxerui::View AndroidLanguagePage();
+huxerui::View AndroidThemePage(huxerui::State<int> themeMode);
 #endif
+huxerui::View LanguagePage(std::function<void()> onBack);
+huxerui::View ThemePage(huxerui::State<int> themeMode, std::function<void()> onBack,
+                        bool windowTitle = false);
+struct DesktopSettingsNavigationModel {
+    huxerui::State<bool> secondaryOpen{false};
+};
+struct DesktopSettingsNavigation {
+    std::shared_ptr<DesktopSettingsNavigationModel> model;
+    static DesktopSettingsNavigation Default() { return {}; }
+    bool operator==(const DesktopSettingsNavigation&) const = default;
+};
+#if !defined(__ANDROID__)
+huxerui::View DesktopThemePage(huxerui::State<int> themeMode);
+#endif
+
 // 设置页持有主题模式 State（AppRoot 传入）。
 huxerui::View SettingsPage(huxerui::State<int> themeMode,
                            huxerui::State<std::size_t> navPage,
@@ -315,11 +335,14 @@ huxerui::View PasswordField(
 
 // 页面骨架（一级岛）：标题行（标题 + 右缘动作）+ 内容区，整体为 16pt 圆角岛，
 // 落在窗口海面底色上（岛间缝隙经壳层 Spacing 透出）。
+// contentSpacing 可统一顶部、左右留白和 Compact 标题下间距（首页沿用卡片间距）。
 huxerui::View PageScaffold(huxerui::StringVariant title, huxerui::View actions,
                            huxerui::View content,
                            bool inlineCompactActions = false,
                            bool fullWidthSections = false,
-                           bool windowTitle = false);
+                           bool windowTitle = false,
+                           std::optional<float> contentSpacing = std::nullopt,
+                           huxerui::View leading = {});
 huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     huxerui::View actions, huxerui::View content,
                                     std::function<void()> onBack,
@@ -373,13 +396,16 @@ huxerui::View UnifiedListRow(huxerui::View content, std::string key,
                              bool compact = false, bool divider = true);
 
 // 通用设置排版部件；这里不做任何平台判断。
+huxerui::View SettingItemIcon(huxerui::ImageResource icon, bool danger = false);
 huxerui::View SettingRow(huxerui::StringVariant label,
                          huxerui::StringVariant hint,
-                         huxerui::View control);
+                         huxerui::View control,
+                         std::optional<huxerui::ImageResource> icon = std::nullopt);
 // Switch 专用设置行：主名称与小字描述在左侧列，开关固定在右侧。
 huxerui::View SettingSwitchRow(huxerui::StringVariant label,
                                huxerui::StringVariant hint,
-                               huxerui::View control, bool danger = false);
+                               huxerui::View control, bool danger = false,
+                               std::optional<huxerui::ImageResource> icon = std::nullopt);
 huxerui::View SectionTitle(huxerui::StringVariant title);
 
 // 二级分区标签栏（全项目统一的页内分区切换，实现与样式说明见 section_tabs.cpp）：
