@@ -156,20 +156,13 @@ constexpr float kHomeGridGap = 12.0F; // 卡片间距，同时用于首页顶部
 constexpr float kHomeGridUnitHeight = 88.0F;
 constexpr float kHomeGridFallbackWidth = 360.0F;
 
-// 页面逻辑宽度分档（网格布局与卡片内容粗分档共用阈值）：
-//   桌面：3 列起步，宽屏 4 列——对齐 FlClash 桌面仪表盘的 3 列网格；
-//   移动端：2 列起步（手机屏这种最小逻辑宽度也 2 列，1/2 格宽度才有意义）。
-#if defined(__ANDROID__)
+// 页面逻辑宽度分档只由可用宽度决定，使手机与桌面 Compact 窗口在同宽时
+// 使用相同卡片网格；更宽视口逐步增加列数。
 constexpr int HomeGridColumns(float width) {
     if (width < 840.0F) return 2;
     if (width < 1200.0F) return 3;
     return 4;
 }
-#else
-constexpr int HomeGridColumns(float width) {
-    return width < 1200.0F ? 3 : 4;
-}
-#endif
 
 // 自定义网格布局：按声明顺序把每张卡片放进第一个放得下的空位（左上紧凑），
 // 宽度按当前列数均分。卡片尺寸由布局给（不是内容撑开），因此编辑态与运行态
