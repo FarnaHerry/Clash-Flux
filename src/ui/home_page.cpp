@@ -151,7 +151,7 @@ using HomeLayout = std::vector<HomeCardEntry>;
 constexpr float kHomeFloatingButtonInset = 72.0F;
 
 constexpr int kHomeGridMaxSpan = 4;   // 卡片宽高上限（格）
-constexpr float kHomeGridGap = 12.0F; // 格间距，与页面卡片间距一致
+constexpr float kHomeGridGap = 12.0F; // 卡片间距，同时用于首页顶部与左右留白
 // 一行单位高度：h=1 的卡片刚好容纳标题 + 一行控件。
 constexpr float kHomeGridUnitHeight = 88.0F;
 constexpr float kHomeGridFallbackWidth = 360.0F;
@@ -1509,7 +1509,7 @@ huxerui::StringVariant HomeKernelStatusText(const HomeState& s) {
         compact ? CompactFloatingNavigationFooter()
                 : huxerui::View{huxerui::Row{}.With(
                       huxerui::Frame{.height = kHomeFloatingButtonInset})},
-    }.With(huxerui::Spacing(12.0F),
+    }.With(huxerui::Spacing(kHomeGridGap),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
     // 标题行右缘只剩内核状态图标：首页布局固定，不再有编辑/保存入口。
@@ -1526,7 +1526,7 @@ huxerui::StringVariant HomeKernelStatusText(const HomeState& s) {
     huxerui::View scrollContent =
         huxerui::ScrollView(std::move(pageBody)).With(huxerui::Grow(1.0F));
     huxerui::View page = PageScaffold(
-        Localized("首页"), std::move(headerActions), std::move(scrollContent), true, false, true);
+        Localized("首页"), std::move(headerActions), std::move(scrollContent), true, false, true, kHomeGridGap);
 
     // 移动端启动/停止按钮脱离滚动内容，固定在底部悬浮导航之上的位置。
     huxerui::View shell = CLASHFLUX_HOME_FLOATING_ACTION(

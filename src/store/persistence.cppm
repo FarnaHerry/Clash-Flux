@@ -17,6 +17,7 @@ namespace clashflux::persistence {
 // 首帧唯一的同步磁盘读：临时只读连接，不创建/迁移数据库，不填充订阅缓存。
 export struct StartupTheme {
     int mode = 1;
+    std::string color = "blue";
     std::string error;
 };
 export StartupTheme readStartupTheme(const std::filesystem::path& file);

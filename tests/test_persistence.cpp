@@ -410,7 +410,8 @@ Task<void> DeletionPhase() {
 Task<void> RunTest(TaskScope tasks) {
     const std::filesystem::path path = TempPath();
     const auto missingTheme = persistence::readStartupTheme(path);
-    Check(missingTheme.mode == 1 && missingTheme.error.empty() && !std::filesystem::exists(path),
+    Check(missingTheme.mode == 1 && missingTheme.color == "blue" &&
+              missingTheme.error.empty() && !std::filesystem::exists(path),
           "startup theme read must not create a missing database");
     const auto corruptThemePath = path.string() + ".corrupt";
     { std::ofstream corrupt(corruptThemePath, std::ios::binary); corrupt << "not a SQLite database"; }
@@ -435,6 +436,8 @@ Task<void> RunTest(TaskScope tasks) {
                   "missing key must return the fallback after hydrate");
 
             store.setSetting("ui.theme_mode", "2");
+            store.setSetting("ui.theme_color", "#336699");
+            store.setSetting("ui.custom_theme_colors", "#336699\n#AA44CC");
             store.setSetting("core.tun_enabled", "true");
             // 同步可见：读路径不依赖落库。
             Check(store.setting("ui.theme_mode", "") == "2",
@@ -445,7 +448,7 @@ Task<void> RunTest(TaskScope tasks) {
             Check(co_await store.flushSettings(), "flush failed");
             Check(!store.hasPendingSettings(), "flush must clear dirty keys");
             const auto startupTheme = persistence::readStartupTheme(path);
-            Check(startupTheme.mode == 2 && startupTheme.error.empty(),
+            Check(startupTheme.mode == 2 && startupTheme.color == "#336699" && startupTheme.error.empty(),
                   "synchronous startup theme must see the saved light mode before hydrate");
             Check(store.ready() && !store.hasPendingSettings(),
                   "read-only startup query must not alter the persistence session");
@@ -456,6 +459,7 @@ Task<void> RunTest(TaskScope tasks) {
                 const auto savedTheme = persistence::readStartupTheme(path);
                 Check(savedTheme.error.empty() && savedTheme.mode == std::stoi(mode),
                       "startup theme must preserve system, dark and light modes");
+                Check(savedTheme.color == "#336699", "appearance changes must retain the saved accent");
             }
             Trace(4, "profiles 缓存操作");
             // ---- profiles：插入/列出/更新/独占选中/删除 ----
@@ -510,6 +514,10 @@ Task<void> RunTest(TaskScope tasks) {
             Check(co_await store.open(path), "reopen failed");
             Check(store.setting("ui.theme_mode", "") == "2",
                   "setting did not persist through the ORM database");
+            Check(store.setting("ui.theme_color", "") == "#336699",
+                  "theme color must persist through reopen");
+            Check(store.setting("ui.custom_theme_colors", "") == "#336699\n#AA44CC",
+                  "all custom color cards must survive reopen");
             Check(store.setting("core.tun_enabled", "") == "true",
                   "second setting did not persist");
             const auto reopened = store.listProfiles();
@@ -580,7 +588,7 @@ Task<void> RunTest(TaskScope tasks) {
                       "(42, '旧本地配置', '', 'legacy-local.json', 0, 1700000002, '上次刷新失败', 'local', "
                       "'保留的原生 JSON', 90, 0, 0, 1, 0, 0, '', 0, 0, '{\"outbounds\":[]}', '[{\"rule\":1}]')",
                       "INSERT INTO settings (key, value) "
-                      "VALUES ('ui.theme_mode', '2')"}) {
+                      "VALUES ('ui.theme_mode', '2'), ('ui.theme_color', 'green')"}) {
                     auto result = co_await raw.ExecuteAsync(statement);
                     Check(static_cast<bool>(result), "legacy: ddl failed");
                 }
@@ -588,7 +596,7 @@ Task<void> RunTest(TaskScope tasks) {
                 Check(static_cast<bool>(closed), "legacy: close failed");
             }
             const auto legacyTheme = persistence::readStartupTheme(legacy);
-            Check(legacyTheme.mode == 2 && legacyTheme.error.empty(),
+            Check(legacyTheme.mode == 2 && legacyTheme.color == "green" && legacyTheme.error.empty(),
                   "startup theme must read the legacy database before migration");
             persistence::Persistence store;
             Check(co_await store.open(legacy),
@@ -632,6 +640,8 @@ Task<void> RunTest(TaskScope tasks) {
                   "legacy reopen after migration failed");
             Check(reopened.setting("ui.theme_mode", "") == "1",
                   "write after migration did not persist");
+            Check(reopened.setting("ui.theme_color", "") == "green",
+                  "startup color must survive legacy migration and reopen with all profiles");
             const auto migratedAgain = reopened.listProfiles();
             Check(migratedAgain.size() == 2 && migratedAgain[0].id == 41 &&
                       migratedAgain[0].name == "旧远程订阅" && migratedAgain[1].id == 42 &&

@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "ui.h"
+#include "app_resources.h"
 #include "task_bridge.h"
 
 import clashflux.config;
@@ -204,7 +205,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         toast.Show(error.what());
                     }
                 });
-            }));
+            }), app::images::gear);
 }
 
 #else
@@ -282,7 +283,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
         SettingRow(Localized("隧道状态"), status,
                    huxerui::Text(Localized(state == 2 ? "已连接"
                                             : state == 1 ? "连接中"
-                                            : state == 3 ? "失败" : "未连接"))),
+                                            : state == 3 ? "失败" : "未连接")), app::images::tun),
         SettingSwitchRow(
             Localized("VPN 代理"),
             Localized("系统 VPN 由此服务持有；内核出站 socket 会自动绕过 TUN"),
@@ -401,7 +402,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                                                     : "VPN 隧道已关闭"));
                         }
                     });
-                })),
+                }), false, app::images::tun),
         SettingSwitchRow(
             Localized("后台保活"),
             Localized("申请忽略电池优化，防止后台被杀；建议同时在系统设置中允许本应用自启动"),
@@ -417,7 +418,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         toast.Show(Localized("请在系统电池设置中关闭本应用的电池优化豁免"));
                     }
                     battery_ignored = AndroidIsIgnoringBattery();
-                })),
+                }), false, app::images::battery),
     }.With(huxerui::Spacing(10.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -449,7 +450,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         "app.autostart", on ? "true" : "false");
                     settingsModel->Update(
                         [on](SettingsView& view) { view.autoStart = on; });
-                })),
+                }), false, app::images::power),
         // 内核启停与流量接管解耦后的「启动入口」之一：默认不随应用启动内核
         // （内核只是本地端口 + 控制接口），需要时用首页右下角悬浮按钮启动。
         SettingSwitchRow(
@@ -460,7 +461,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                                                   on ? "true" : "false");
                     settingsModel->Update(
                         [on](SettingsView& view) { view.autoRun = on; });
-                })),
+                }), false, app::images::play),
         SettingSwitchRow(
             Localized("启用托盘"), Localized("启用后关闭窗口隐藏到托盘；停用后关闭窗口询问是否退出"),
             huxerui::Switch(settings.trayEnabled)
@@ -469,7 +470,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                                                   on ? "true" : "false");
                     settingsModel->Update(
                         [on](SettingsView& view) { view.trayEnabled = on; });
-                })),
+                }), false, app::images::tray),
         SettingSwitchRow(
             Localized("启动时隐藏到托盘"), Localized("下次启动不显示主窗口，经托盘唤出"),
             huxerui::Switch(settings.startMinimized)
@@ -478,7 +479,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         "tray.start_minimized", on ? "true" : "false");
                     settingsModel->Update(
                         [on](SettingsView& view) { view.startMinimized = on; });
-                })),
+                }), false, app::images::visibility_off),
     }.With(huxerui::Spacing(10.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -553,10 +554,15 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
     };
 
     return huxerui::Column {
-        huxerui::Text(state_text).Style(huxerui::TextStyle{
+        huxerui::Row {
+          SettingItemIcon(app::images::bolt),
+          huxerui::Text(state_text).Style(huxerui::TextStyle{
             huxerui::Font::System(font_size::kBody),
             s.state == core::CoreState::Failed ? theme.colors.error
-                                                : theme.colors.on_surface}),
+                                                : theme.colors.on_surface})
+              .With(huxerui::Grow(1.0F)),
+        }.With(huxerui::Spacing(12.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         huxerui::Row {
             running
                 ? huxerui::View{huxerui::Button(Localized("停止")).OnClick(
@@ -629,7 +635,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                             toast.Show(Localized(on ? "系统代理已开启" : "系统代理已关闭"));
                         }
                     });
-                })),
+                }), false, app::images::system_proxy),
         SettingSwitchRow(
             Localized("TUN 模式"),
             Localized(running ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
@@ -677,7 +683,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                                        ? Localized("TUN 切换失败")
                                        : huxerui::StringVariant(result.error));
                     });
-                })),
+                }), false, app::images::tun),
         SettingRow(
             Localized("复制环境变量"),
             LocalizedFormat("当前检测到 {}；复制当前混合端口的代理变量",
@@ -708,7 +714,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                             toast.Show(Localized("复制失败"));
                         }
                     }),
-            }.With(huxerui::Spacing(8.0F))),
+            }.With(huxerui::Spacing(8.0F)), app::images::terminal),
     }.With(huxerui::Spacing(12.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }

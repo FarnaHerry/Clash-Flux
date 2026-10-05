@@ -1,8 +1,23 @@
 #pragma once
 
 #include <huxerui/huxerui.h>
+#include <array>
+#include <algorithm>
+#include <cmath>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace clashflux::ui {
+
+inline constexpr int kRgbChannelMax = 255;
+inline constexpr float kThemeAccentLightLuminanceCeiling = 0.25F;
+inline constexpr float kThemeAccentDarkLuminanceFloor = 0.36F;
+inline constexpr float kThemeAccentMixStep = 0.05F;
+inline constexpr float kThemeAccentLightContainerTint = 0.88F;
+// 两个候选文字色（黑/白）的 WCAG 对比度相等时的相对明度。
+inline constexpr float kThemeColorBlackWhiteSplit = 0.179F;
 
 // 应用颜色唯一配置入口：品牌色、深浅色角色与扩展语义色均集中在此。
 struct FluxPalette {
@@ -27,7 +42,127 @@ struct FluxPalette {
     }
 };
 
-inline huxerui::ColorScheme FluxDarkColors() {
+struct FluxAccent {
+    std::string id;
+    std::string name;
+    huxerui::Color light, dark, onLight, onDark, lightContainer, onLightContainer;
+};
+
+inline const std::array<FluxAccent, 6> kFluxAccents{{
+    {"blue", "蓝色", FluxPalette::water_deep(), FluxPalette::water(),
+     FluxPalette::abyss(), FluxPalette::abyss(),
+     huxerui::Color::Rgb(220, 238, 255), huxerui::Color::Rgb(16, 73, 103)},
+    {"purple", "紫色", huxerui::Color::Rgb(108, 69, 189), huxerui::Color::Rgb(192, 165, 255),
+     huxerui::Color::White(), huxerui::Color::Rgb(33, 17, 57),
+     huxerui::Color::Rgb(237, 224, 255), huxerui::Color::Rgb(60, 27, 107)},
+    {"green", "绿色", huxerui::Color::Rgb(38, 117, 70), huxerui::Color::Rgb(130, 220, 166),
+     huxerui::Color::White(), huxerui::Color::Rgb(9, 38, 22),
+     huxerui::Color::Rgb(207, 242, 218), huxerui::Color::Rgb(18, 65, 35)},
+    {"orange", "橙色", huxerui::Color::Rgb(162, 78, 8), huxerui::Color::Rgb(255, 184, 119),
+     huxerui::Color::White(), huxerui::Color::Rgb(48, 24, 4),
+     huxerui::Color::Rgb(255, 227, 201), huxerui::Color::Rgb(100, 46, 5)},
+    {"pink", "粉色", huxerui::Color::Rgb(178, 50, 121), huxerui::Color::Rgb(251, 166, 209),
+     huxerui::Color::White(), huxerui::Color::Rgb(48, 13, 33),
+     huxerui::Color::Rgb(255, 222, 238), huxerui::Color::Rgb(105, 23, 67)},
+    {"teal", "青色", huxerui::Color::Rgb(0, 117, 117), huxerui::Color::Rgb(108, 214, 210),
+     huxerui::Color::White(), huxerui::Color::Rgb(0, 36, 35),
+     huxerui::Color::Rgb(196, 242, 237), huxerui::Color::Rgb(0, 69, 67)},
+}};
+
+inline std::optional<std::string> NormalizeThemeColor(std::string_view value) {
+    const auto start = value.find_first_not_of(" \t\r\n");
+    if (start == std::string_view::npos) return {};
+    value = value.substr(start, value.find_last_not_of(" \t\r\n") - start + 1);
+    if (value.starts_with('#')) value.remove_prefix(1);
+    if (value.size() != 6) return {};
+    std::string result = "#";
+    for (char ch : value) {
+        if (ch >= 'a' && ch <= 'f') ch -= 'a' - 'A';
+        if (!((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'F'))) return {};
+        result += ch;
+    }
+    return result;
+}
+
+inline huxerui::Color ThemeColorFromHex(std::string_view normalized) {
+    unsigned value = 0;
+    for (const char ch : normalized.substr(1))
+        value = value * 16 + static_cast<unsigned>(ch <= '9' ? ch - '0' : ch - 'A' + 10);
+    return huxerui::Color::Rgb((value >> 16) & 255, (value >> 8) & 255, value & 255);
+}
+
+inline std::string ThemeColorToHex(huxerui::Color color) {
+    constexpr char digits[] = "0123456789ABCDEF";
+    std::string value = "#";
+    for (float channel : {color.red, color.green, color.blue}) {
+        const int byte = static_cast<int>(std::round(std::clamp(channel, 0.0F, 1.0F) * kRgbChannelMax));
+        value += digits[byte >> 4]; value += digits[byte & 15];
+    }
+    return value;
+}
+
+inline std::vector<std::string> ReadCustomThemeColors(std::string_view saved) {
+    std::vector<std::string> colors;
+    while (!saved.empty()) {
+        const auto end = saved.find('\n');
+        const auto color = NormalizeThemeColor(saved.substr(0, end));
+        if (color && std::find(colors.begin(), colors.end(), *color) == colors.end()) colors.push_back(*color);
+        if (end == std::string_view::npos) break;
+        saved.remove_prefix(end + 1);
+    }
+    return colors;
+}
+
+inline std::string SaveCustomThemeColors(const std::vector<std::string>& colors) {
+    std::string saved;
+    for (const auto& color : colors) { if (!saved.empty()) saved += '\n'; saved += color; }
+    return saved;
+}
+
+inline float ThemeColorLuminance(huxerui::Color color) {
+    const auto linear = [](float value) {
+        return value <= 0.04045F ? value / 12.92F : std::pow((value + 0.055F) / 1.055F, 2.4F);
+    };
+    return 0.2126F * linear(color.red) + 0.7152F * linear(color.green) + 0.0722F * linear(color.blue);
+}
+
+inline huxerui::Color MixThemeColor(huxerui::Color color, huxerui::Color target, float weight) {
+    return {color.red + (target.red - color.red) * weight,
+            color.green + (target.green - color.green) * weight,
+            color.blue + (target.blue - color.blue) * weight, 1.0F};
+}
+
+inline FluxAccent ResolveFluxAccent(std::string_view id) {
+    for (const auto& accent : kFluxAccents) if (accent.id == id) return accent;
+    if (id.starts_with('#')) if (const auto hex = NormalizeThemeColor(id)) {
+        const auto base = ThemeColorFromHex(*hex);
+        auto light = base, dark = base;
+        // 深浅模式分别调整亮度，保持色相，并保证按钮与控件的可见对比。
+        while (ThemeColorLuminance(light) > kThemeAccentLightLuminanceCeiling)
+            light = MixThemeColor(light, huxerui::Color::Black(), kThemeAccentMixStep);
+        while (ThemeColorLuminance(dark) < kThemeAccentDarkLuminanceFloor)
+            dark = MixThemeColor(dark, huxerui::Color::White(), kThemeAccentMixStep);
+        const auto onLight = ThemeColorLuminance(light) > kThemeColorBlackWhiteSplit ?
+            huxerui::Color::Black() : huxerui::Color::White();
+        return {*hex, *hex, light, dark, onLight, huxerui::Color::Black(),
+                MixThemeColor(base, huxerui::Color::White(), kThemeAccentLightContainerTint), FluxPalette::abyss()};
+    }
+    return kFluxAccents.front();
+}
+
+inline void ApplyFluxAccent(huxerui::ColorScheme& colors, bool dark, std::string_view id) {
+    const auto& accent = ResolveFluxAccent(id);
+    colors.primary = dark ? accent.dark : accent.light;
+    colors.on_primary = dark ? accent.onDark : accent.onLight;
+    if (dark) {
+        colors.on_primary_container = accent.id == "blue" ? FluxPalette::ice() : accent.dark;
+    } else {
+        colors.primary_container = accent.lightContainer;
+        colors.on_primary_container = accent.onLightContainer;
+    }
+}
+
+inline huxerui::ColorScheme FluxDarkColors(std::string_view accent = "blue") {
     auto colors = huxerui::MaterialDarkThemeSpec().colors;
     colors.primary = FluxPalette::water();
     colors.on_primary = FluxPalette::abyss();
@@ -53,10 +188,11 @@ inline huxerui::ColorScheme FluxDarkColors() {
     colors.inverse_on_surface = huxerui::Color::Rgb(32, 32, 32);
     colors.scrim = huxerui::Color::Rgb(7, 7, 7, 0.66F);
     colors.error = huxerui::Color::Rgb(255, 144, 153);
+    ApplyFluxAccent(colors, true, accent);
     return colors;
 }
 
-inline huxerui::ColorScheme FluxLightColors() {
+inline huxerui::ColorScheme FluxLightColors(std::string_view accent = "blue") {
     auto colors = huxerui::MaterialLightThemeSpec().colors;
     colors.primary = FluxPalette::water_deep();
     colors.on_primary = FluxPalette::abyss();
@@ -81,6 +217,7 @@ inline huxerui::ColorScheme FluxLightColors() {
     colors.inverse_on_surface = huxerui::Color::Rgb(242, 244, 246);
     colors.scrim = huxerui::Color::Rgb(17, 24, 32, 0.34F);
     colors.error = huxerui::Color::Rgb(180, 35, 50);
+    ApplyFluxAccent(colors, false, accent);
     return colors;
 }
 

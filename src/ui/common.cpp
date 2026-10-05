@@ -108,12 +108,13 @@ std::vector<ProxyGroupSnapshot> ParseProxyGroups(const wire::Proxies& snapshot, 
 
 std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
     const std::vector<ProxyGroupSnapshot>& groups,
-    std::function<void(const std::string&, const std::string&)> on_select) {
+    std::function<void(const std::string&, const std::string&)> on_select,
+    const std::function<std::string(huxerui::StringVariant)>& resolveLabel) {
     std::vector<huxerui::MenuEntry> entries;
     for (const ProxyGroupSnapshot& group : groups) {
         if (!group.selectable) {
             entries.push_back(huxerui::MenuItem(
-                LocalizedFormat("{}（自动测速，不支持手动切换）", group.displayName),
+                resolveLabel(LocalizedFormat("{}（自动测速，不支持手动切换）", group.displayName)),
                 [] {}).Enabled(false));
             continue;
         }
@@ -128,14 +129,14 @@ std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
         }
         if (nodes.empty()) {
             nodes.push_back(
-                huxerui::MenuItem(Localized("暂无可切换线路"), [] {}).Enabled(false));
+                huxerui::MenuItem(resolveLabel(Localized("暂无可切换线路")), [] {}).Enabled(false));
         }
         entries.push_back(
             huxerui::MenuItem(group.displayName, std::move(nodes)));
     }
     if (entries.empty()) {
         entries.push_back(
-            huxerui::MenuItem(Localized("暂无可切换线路"), [] {}).Enabled(false));
+            huxerui::MenuItem(resolveLabel(Localized("暂无可切换线路")), [] {}).Enabled(false));
     }
     return entries;
 }
@@ -303,9 +304,18 @@ void WaitForAndroidVpnStopped() noexcept {
 #endif
 }
 
+[[huxerui::composable]] huxerui::View SettingItemIcon(huxerui::ImageResource icon, bool danger) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    return huxerui::Image(icon)
+        .Fit(huxerui::ImageFit::Contain)
+        .Tint(danger ? theme.colors.error : theme.colors.on_surface_variant)
+        .With(huxerui::Frame{.width = 20.0F, .height = 20.0F});
+}
+
 [[huxerui::composable]] huxerui::View SettingRow(huxerui::StringVariant label,
                                                  huxerui::StringVariant hint,
-                                                 huxerui::View control) {
+                                                 huxerui::View control,
+                                                 std::optional<huxerui::ImageResource> icon) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
@@ -318,26 +328,34 @@ void WaitForAndroidVpnStopped() noexcept {
                   huxerui::Font::System(font_size::kCaption),
                   theme.colors.on_surface_variant})},
     }.With(huxerui::Spacing(2.0F));
+    if (icon) {
+        description = huxerui::Row {
+          SettingItemIcon(*icon),
+          std::move(description).With(huxerui::Grow(1.0F)),
+        }.With(huxerui::Spacing(12.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    }
 
     if (compact) {
+        huxerui::View compactControl = control;
+        if (icon) compactControl = std::move(compactControl).With(huxerui::Padding(huxerui::EdgeInsets{.left = 32.0F}));
         return huxerui::Column {
-            std::move(description),
-            std::move(control),
+          description,
+          compactControl,
         }.With(huxerui::Spacing(8.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }
 
     return huxerui::Row {
-        std::move(description),
-        huxerui::Spacer(),
-        std::move(control),
+      std::move(description).With(huxerui::Grow(1.0F)),
+      control,
     }.With(huxerui::Spacing(12.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 }
 
 [[huxerui::composable]] huxerui::View SettingSwitchRow(
     huxerui::StringVariant label, huxerui::StringVariant hint, huxerui::View control,
-    bool danger) {
+    bool danger, std::optional<huxerui::ImageResource> icon) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     huxerui::View text = huxerui::Column {
         huxerui::Text(label).Style(huxerui::TextStyle{
@@ -349,6 +367,14 @@ void WaitForAndroidVpnStopped() noexcept {
                   huxerui::Font::System(font_size::kCaption),
                   theme.colors.on_surface_variant})},
     }.With(huxerui::Spacing(2.0F), huxerui::Grow(1.0F));
+    if (icon) {
+        return huxerui::Row {
+          SettingItemIcon(*icon, danger),
+          text,
+          control,
+        }.With(huxerui::Spacing(12.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    }
     return huxerui::Row {
         std::move(text),
         control,
@@ -570,12 +596,17 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                                                    huxerui::View content,
                                                    bool inlineCompactActions,
                                                    bool fullWidthSections,
-                                                   bool windowTitle) {
+                                                   bool windowTitle,
+                                                   std::optional<float> contentSpacing,
+                                                   huxerui::View leading) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     // 响应式：Compact(<600) 收窄一级岛内边距。
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    auto contentInsets = PageContentInsets(theme, compact,
+        fullWidthSections ? 0.0F : contentSpacing.value_or(compact ? 4.0F : kDesktopPageHorizontalInset));
+    if (contentSpacing) contentInsets.top = *contentSpacing;
     if (kPageTitlesInWindow && !compact) {
         // 桌面动作直接挂在本页标题栏中，不经共享 State 转交 View 或复制回调。
         huxerui::View desktopBody = huxerui::View{content}.With(huxerui::Grow(1.0F));
@@ -585,8 +616,10 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             SectionTabPickerInsets{kDesktopTitleBarHeight + 1.0F}, std::move(desktopBody));
         return huxerui::Column{
             huxerui::WindowTitleBar{
-                PageTitleText(theme, title).With(
-                    huxerui::Padding(huxerui::EdgeInsets{.left = kDesktopPageHorizontalInset})),
+                huxerui::Row{leading}.With(huxerui::Padding(huxerui::EdgeInsets{
+                    .left = leading ? kDesktopPageHorizontalInset : 0.0F})),
+                PageTitleText(theme, title).With(huxerui::Padding(huxerui::EdgeInsets{
+                    .left = leading ? 0.0F : kDesktopPageHorizontalInset})),
                 huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
                 huxerui::Row{actions}.With(
                     huxerui::Padding(huxerui::EdgeInsets{.right = 8.0F}),
@@ -595,8 +628,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             huxerui::Row{}.With(huxerui::Frame{.height = 1.0F},
                                 huxerui::Background(theme.colors.outline)),
             huxerui::Column{std::move(desktopBody)}.With(
-                huxerui::Padding(PageContentInsets(theme, false,
-                    fullWidthSections ? 0.0F : kDesktopPageHorizontalInset)),
+                huxerui::Padding(contentInsets),
                 huxerui::Grow(1.0F),
                 huxerui::Background(islands.base),
                 huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
@@ -606,8 +638,12 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     }
     static_cast<void>(windowTitle);
     // Compact 共用页内标题与动作；桌面窗口控件由外壳独立保留。
+    huxerui::View titleView = PageTitleText(theme, title);
+    if (leading) titleView = huxerui::Row{leading, titleView}.With(
+        huxerui::Spacing(theme.spacing.small),
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     huxerui::View header = PageHeaderLayout(theme,
-        PageTitleText(theme, title),
+        titleView,
         std::move(actions), compact && !inlineCompactActions);
     const float horizontal = fullWidthSections
         ? kSectionCardSpacing
@@ -622,9 +658,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     std::vector<huxerui::View> children;
     if (header) children.push_back(std::move(header));
     children.push_back(std::move(body));
-    return huxerui::Column(std::move(children)).With(huxerui::Padding(PageContentInsets(theme, compact,
-               fullWidthSections ? 0.0F : horizontal)),
-           huxerui::Spacing(theme.spacing.medium),
+    return huxerui::Column(std::move(children)).With(huxerui::Padding(contentInsets),
+           huxerui::Spacing(contentSpacing.value_or(theme.spacing.medium)),
            huxerui::Background(islands.base),
            huxerui::CornerRadius(kPageTitlesInWindow || compact ? 0.0F : islands.island_radius),
            huxerui::ClipChildren(),
@@ -907,6 +942,8 @@ void DriveSettingsModel(huxerui::TaskScope tasks,
             next.ready = clashflux::persistence::persistence().ready();
             const std::string themeMode = core.setting("ui.theme_mode", "1");
             next.themeMode = themeMode == "0" ? 0 : themeMode == "2" ? 2 : 1;
+            next.themeColor = core.setting("ui.theme_color", "blue");
+            next.customThemeColors = core.setting("ui.custom_theme_colors", "");
             next.autoStart = core.setting("app.autostart", "false") == "true";
             next.autoRun = core.setting("app.auto_run", "false") == "true";
             next.trayEnabled = core.setting("tray.enabled", "true") == "true";
