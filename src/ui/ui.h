@@ -317,10 +317,12 @@ huxerui::View AndroidProfileRefreshPump();
 huxerui::View DesktopProfileRefreshPump();
 huxerui::View AndroidApplicationEffects(
     const huxerui::ApplicationHandle& application,
-    const huxerui::ThemeSpec& rootSpec);
+    const huxerui::ThemeSpec& rootSpec,
+    bool startupTrayEnabled, bool startupMinimized);
 huxerui::View DesktopApplicationEffects(
     const huxerui::ApplicationHandle& application,
-    const huxerui::ThemeSpec& rootSpec);
+    const huxerui::ThemeSpec& rootSpec,
+    bool startupTrayEnabled, bool startupMinimized);
 huxerui::View AndroidAppContent(huxerui::View mainRow,
                                const huxerui::ThemeSpec& rootSpec);
 huxerui::View DesktopAppContent(huxerui::View mainRow,

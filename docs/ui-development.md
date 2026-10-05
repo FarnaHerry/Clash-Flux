@@ -11,6 +11,10 @@
   该限制。开发目标见[桌面订阅编排](desktop-subscription-orchestration.md)，状态、
   诊断与能力门控交互参考[官方 GUI 研究](singbox-official-gui-review.md)。
 - 多字段编辑在 Compact 视口进入独立页面；简单确认操作（例如删除确认）继续使用对话框。
+- Android 在 `AppOptions::window.content_mode` 启用 `EdgeToEdge`，由 `AndroidAppContent`
+  用 `IslandTheme::base` 绘制完整视口并统一消费 `SafeAreaPadding`。系统栏的
+  `SystemBarsAppearance` 使用同一底色，图标明暗自动跟随；一级页、二级页和底部导航
+  不重复增加安全区留白，不在 Java 或各页硬编码状态栏高度与颜色。
 
 ## 操作控件
 
@@ -99,12 +103,15 @@ cmake --build build --target clash-flux
 不得跳过本地编译，也不得只依赖旧的可执行文件判断改动有效。使用其他构建目录时，
 用 `CLASHFLUX_BIN` 显式指定对应产物；需要确认 GUI 启动或交互时，再执行 `./run.sh`。
 
-## 启动主题
+## 启动设置快照
 
-`AppRoot` 在首帧构建前同步读取保存的 `ui.theme_mode` 与 `ui.theme_color`，选择外观模式和主题色后才构建
-可见内容。启动快照只读取一次，重组不重复磁盘 IO；后续主题变更仍由 SettingsModel 写透。
-`persistence::readStartupTheme` 使用临时只读 SQLite 查询，兼容迁移前旧库；不存在的数据库
-不创建，损坏或无法读取的数据库明确报告失败并停止启动。订阅/其余设置仍按原异步流程 hydrate。
+`AppRoot` 在首帧构建前通过 `persistence::readStartupSettings` 同步读取必须先于设置 hydrate 确定的
+`ui.theme_mode`、`ui.theme_color`、`ui.language`、`tray.enabled` 与 `tray.start_minimized`。
+它们控制首帧外观、初始语言、托盘显示和初始窗口可见性，避免加载设置前短暂呈现错误状态。
+快照只读取一次，重组不重复磁盘 IO；SettingsModel 就绪后以模型值接管运行期行为。
+该 API 使用临时只读 SQLite 查询，兼容迁移前旧库；不存在的数据库不创建，损坏或无法读取的数据库明确
+报告失败并停止启动。其它设置仍按原异步流程 hydrate；启动内核等操作等待 SettingsModel ready，
+不为它们扩大同步读取范围。
 Lib-SQLite 的同步只读 API 补丁位于 `cmake/patches/huxerui-lib-sqlite-startup-read.patch`，
 CMake 在各平台加入依赖前应用，不能只改本地第三方源码。回归覆盖三种模式、首次启动、旧库、
 损坏库保留与原有多订阅迁移/重开保护；构建和自动化回归不代表真机首帧验收。
@@ -115,15 +122,15 @@ CMake 在各平台加入依赖前应用，不能只改本地第三方源码。�
 Compact 使用较小的共用边长，三种模式仍保持横向一行；模式卡片保留图标与文字。
 间距、圆角、图标尺寸、选中描边与切换时长取 ThemeSpec，页面特有尺寸集中为命名常量。`ui.theme_color` 使用稳定的 blue/purple/green/orange/pink/teal ID，
 自定义颜色使用规范化的 `#RRGGBB` 作为 ID，`ui.custom_theme_colors` 按换行保存完整列表；
-输入校验、去重和 RGB/HEX 转换集中在 `theme_colors.h`，缺省或未知值显示品牌蓝色。
-主题色卡片用 Flow 自动换行，添加弹窗提供 RGB 滑块、HEX 输入与实时预览；保存后即时选中。
+输入校验、去重和 HSB/HEX 转换集中在 `theme_colors.h`，缺省或未知值显示品牌蓝色。
+主题色卡片用 Flow 自动换行，添加弹窗提供 HSB（色相/饱和度/亮度）滑块、HEX 输入与实时预览；保存后即时选中。
 自定义颜色按深浅模式调整亮度，并选择对比度足够的按钮文字色。预设配对色集中在 `theme_colors.h`，切换通过 SettingsModel
 即时写透；主题色更新 primary/容器前景与焦点颜色，深浅模式共用选择且保留中性背景层级。
 
 ## 通用操作菜单
 
 应用内同类弹出操作菜单统一使用 [action_menu.h](../src/ui/action_menu.h)，当前日志菜单、
-二级标签溢出菜单、订阅卡片操作菜单已接入。菜单项圆角、hover/press、禁用、勾选、图标、
+二级标签溢出菜单、订阅卡片操作菜单、主题色块右键菜单已接入。菜单项圆角、hover/press、禁用、勾选、图标、
 危险色、面板裁剪和留白都在该控件维护。长菜单使用框架 ScrollView，在浮层约束内滚动。
 
 ```cpp

@@ -324,6 +324,18 @@
             return 7899;
         }
     }
+    int optionalInboundPort(const char* key) {
+        const std::string value = setting(key, "");
+        if (value.empty() || value == "0") return 0;
+        std::size_t parsed = 0;
+        const int port = std::stoi(value, &parsed);
+        if (parsed != value.size() || port < 1 || port > 65535) {
+            throw std::runtime_error(std::format("设置 {} 的端口无效", key));
+        }
+        return port;
+    }
+    int httpPort() { return optionalInboundPort("core.http_port"); }
+    int socksPort() { return optionalInboundPort("core.socks_port"); }
     bool allowLan() { return setting("core.allow_lan", "false") == "true"; }
     bool ipv6Enabled() { return setting("core.ipv6_enabled", "false") == "true"; }
     std::string logLevel() { return setting("core.log_level", "info"); }

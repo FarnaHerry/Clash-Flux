@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <array>
 #include <optional>
 #include <string>
 #include <vector>
@@ -10,6 +11,12 @@
 namespace clashflux::ui {
 
 inline const std::vector<std::string> kLogLevelNames{"全部", "信息", "警告", "错误", "调试"};
+inline const std::array<huxerui::ImageResource, 5> kLogLevelIcons{
+    huxerui::ImageResource{"app", "images/logs"},
+    huxerui::ImageResource{"app", "images/info"},
+    huxerui::ImageResource{"app", "images/warning"},
+    huxerui::ImageResource{"app", "images/error"},
+    huxerui::ImageResource{"app", "images/terminal"}};
 
 struct LogEntry {
     std::string text;
@@ -64,7 +71,8 @@ inline huxerui::View LogMenuPanel(huxerui::PopupContext context, std::size_t sel
                 for (std::size_t index = 0; index < kLogLevelNames.size(); ++index) {
                     items.push_back(ActionMenuItemView(Localized(kLogLevelNames[index]),
                         [=] { dismiss(); selectLevel(index); },
-                        index == selectedLevel ? "✓" : "", index == selectedLevel));
+                        index == selectedLevel ? "✓" : "", index == selectedLevel,
+                        true, false, kLogLevelIcons[index]));
                 }
                 return ActionMenuSurface(std::move(items));
             });
@@ -77,23 +85,30 @@ inline huxerui::View LogMenuPanel(huxerui::PopupContext context, std::size_t sel
         child = exportPopup.Show([=] {
             return huxerui::Scope([=] {
                 return ActionMenuSurface({
-                    ActionMenuItemView(Localized("剪贴板"), [=] { dismiss(); copy(); }),
-                    ActionMenuItemView(Localized("文件"), [=] { dismiss(); exportFile(); }, "", {}, canExportFile),
+                    ActionMenuItemView(Localized("剪贴板"), [=] { dismiss(); copy(); },
+                        "", {}, true, false, huxerui::ImageResource{"app", "images/copy"}),
+                    ActionMenuItemView(Localized("文件"), [=] { dismiss(); exportFile(); },
+                        "", {}, canExportFile, false, huxerui::ImageResource{"app", "images/save"}),
                 });
             });
         }, options);
         opened = 2;
     };
     return ActionMenuSurface({
-        ActionMenuItemView(Localized("级别"), openLevels, "›").With(levelPopup.Anchor())
+        ActionMenuItemView(Localized("级别"), openLevels, "›", {}, true, false,
+            huxerui::ImageResource{"app", "images/logs"})
+            .With(levelPopup.Anchor())
             .On<huxerui::ViewEvents::Hover>([openLevels](const huxerui::HoverEvent& event) {
                 if (event.type == huxerui::HoverEventType::Enter) openLevels();
             }),
-        ActionMenuItemView(Localized("导出"), openExport, "›").With(exportPopup.Anchor())
+        ActionMenuItemView(Localized("导出"), openExport, "›", {}, true, false,
+            huxerui::ImageResource{"app", "images/save"})
+            .With(exportPopup.Anchor())
             .On<huxerui::ViewEvents::Hover>([openExport](const huxerui::HoverEvent& event) {
                 if (event.type == huxerui::HoverEventType::Enter) openExport();
             }),
-        ActionMenuItemView(Localized("清空"), [=] { dismiss(); clear(); }, "", {}, true, true)
+        ActionMenuItemView(Localized("清空"), [=] { dismiss(); clear(); },
+            "", {}, true, true, huxerui::ImageResource{"app", "images/clear_all"})
             .On<huxerui::ViewEvents::Hover>([closeChild](const huxerui::HoverEvent& event) {
                 if (event.type == huxerui::HoverEventType::Enter) closeChild();
             }),

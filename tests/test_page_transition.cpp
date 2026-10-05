@@ -767,7 +767,89 @@ void testCustomThemeColors() {
     const auto saved = ReadCustomThemeColors("#336699\ninvalid\n336699\n#aa44cc");
     check(saved == std::vector<std::string>{"#336699", "#AA44CC"}, "custom colors normalize and deduplicate");
     check(ReadCustomThemeColors(SaveCustomThemeColors(saved)) == saved, "custom colors round trip");
+    check(ReplaceCustomThemeColor(saved, "#336699", "#AA44CC") ==
+              std::vector<std::string>{"#AA44CC"},
+          "editing a custom color replaces its entry and deduplicates collisions");
+    check(RemoveCustomThemeColor(saved, "#AA44CC") == std::vector<std::string>{"#336699"},
+          "deleting a custom color only removes the requested swatch");
+    const auto hiddenPresets = ReadHiddenThemeColors("blue\nunknown\nblue\norange");
+    check(hiddenPresets == std::vector<std::string>{"blue", "orange"},
+          "hidden preset colors accept only known IDs and deduplicate them");
+    check(HidePresetThemeColor(hiddenPresets, "teal") ==
+              std::vector<std::string>{"blue", "orange", "teal"},
+          "hiding a preset preserves existing hidden colors and appends its ID");
+    check(SaveHiddenThemeColors(hiddenPresets) == "blue\norange",
+          "hidden preset colors round trip using newline-separated stable IDs");
     check(ThemeColorFromHex("#336699") == huxerui::Color::Rgb(51, 102, 153), "hex channels decode correctly");
+    const auto red = ThemeColorToHsb(huxerui::Color::Rgb(255, 0, 0));
+    const auto green = ThemeColorToHsb(huxerui::Color::Rgb(0, 255, 0));
+    const auto blue = ThemeColorToHsb(huxerui::Color::Rgb(0, 0, 255));
+    check(std::abs(red.hue) < 0.01F && std::abs(red.saturation - 1.0F) < 0.01F &&
+              std::abs(red.brightness - 1.0F) < 0.01F,
+          "HSB conversion maps red to zero hue with full saturation and brightness");
+    check(std::abs(green.hue - 120.0F) < 0.01F &&
+              std::abs(blue.hue - 240.0F) < 0.01F,
+          "HSB conversion maps the green and blue hue sectors");
+    const HsbColor sample{217.0F, 0.73F, 0.82F};
+    const auto roundTrip = ThemeColorToHsb(ThemeColorFromHsb(sample));
+    check(std::abs(roundTrip.hue - sample.hue) < 0.01F &&
+              std::abs(roundTrip.saturation - sample.saturation) < 0.01F &&
+              std::abs(roundTrip.brightness - sample.brightness) < 0.01F,
+          "HSB-to-RGB conversion preserves a representative color");
+    check(ThemeColorToHex(ThemeColorFromHsb({kHsbTurnDegrees, 1.0F, 1.0F})) == "#FF0000",
+          "the hue slider's 360-degree endpoint wraps to red");
+    const auto hueAdjusted = UpdateHsbChannel(sample, HsbChannel::Hue, 120.0F);
+    check(std::abs(hueAdjusted.hue - 120.0F) < 0.01F &&
+              std::abs(hueAdjusted.saturation - sample.saturation) < 0.01F &&
+              std::abs(hueAdjusted.brightness - sample.brightness) < 0.01F,
+          "hue slider changes hue while preserving saturation and brightness");
+    const auto saturationAdjusted = UpdateHsbChannel(sample, HsbChannel::Saturation, 45.0F);
+    check(std::abs(saturationAdjusted.hue - sample.hue) < 0.01F &&
+              std::abs(saturationAdjusted.saturation - 0.45F) < 0.01F &&
+              std::abs(saturationAdjusted.brightness - sample.brightness) < 0.01F,
+          "saturation slider changes saturation under the current hue and brightness");
+    const auto brightnessAdjusted = UpdateHsbChannel(sample, HsbChannel::Brightness, 61.0F);
+    check(std::abs(brightnessAdjusted.hue - sample.hue) < 0.01F &&
+              std::abs(brightnessAdjusted.saturation - sample.saturation) < 0.01F &&
+              std::abs(brightnessAdjusted.brightness - 0.61F) < 0.01F,
+          "brightness slider changes brightness while preserving hue and saturation");
+    const auto hueGradient = HsbChannelGradient(sample, HsbChannel::Hue);
+    check(hueGradient.stops.size() == kHsbHueSectorCount + 1U &&
+              hueGradient.stops.front().color == huxerui::Color::Rgb(255, 0, 0) &&
+              hueGradient.stops.back().color == huxerui::Color::Rgb(255, 0, 0) &&
+              hueGradient.stops[1].color == huxerui::Color::Rgb(255, 255, 0) &&
+              hueGradient.stops[3].color == huxerui::Color::Rgb(0, 255, 255),
+          "hue slider displays the full rainbow spectrum");
+    const auto saturationGradient = HsbChannelGradient(sample, HsbChannel::Saturation);
+    check(saturationGradient.stops.size() == 2U &&
+              saturationGradient.stops.front().color ==
+                  ThemeColorFromHsb({sample.hue, kHsbUnitMinimum, sample.brightness}) &&
+              saturationGradient.stops.back().color ==
+                  ThemeColorFromHsb({sample.hue, kHsbUnitMaximum, sample.brightness}),
+          "saturation slider ranges from gray to the current hue at current brightness");
+    const auto brightnessGradient = HsbChannelGradient(sample, HsbChannel::Brightness);
+    check(brightnessGradient.stops.size() == 2U &&
+              brightnessGradient.stops.front().color == huxerui::Color::Black() &&
+              brightnessGradient.stops.back().color ==
+                  ThemeColorFromHsb({sample.hue, sample.saturation, kHsbUnitMaximum}),
+          "brightness slider ranges from black to the current hue and saturation");
+    auto baseSliderStyle = huxerui::SliderStyle::Default();
+    baseSliderStyle.width = 211.0F;
+    baseSliderStyle.inactive_track = huxerui::Color::Rgb(42, 54, 66);
+    baseSliderStyle.active_track = huxerui::Color::Rgb(0, 0, 255);
+    baseSliderStyle.disabled_thumb.alpha = 0.38F;
+    baseSliderStyle.focus_ring = huxerui::FocusRing{huxerui::Color::Rgb(0, 0, 255), 2.0F, 3.0F};
+    const auto sliderTarget = huxerui::Color::Rgb(240, 72, 24);
+    const auto gradientSlider = HsbGradientSliderStyle(baseSliderStyle, sliderTarget);
+    const auto transparent = huxerui::Color::Transparent();
+    check(gradientSlider.active_track == transparent && gradientSlider.inactive_track == transparent &&
+              gradientSlider.active_tick == transparent && gradientSlider.inactive_tick == transparent &&
+              gradientSlider.stop_indicator == transparent,
+          "HSB sliders expose their independent gradient rails without theme-colored overlays");
+    check(gradientSlider.thumb == sliderTarget && gradientSlider.width == baseSliderStyle.width &&
+              gradientSlider.focus_ring->color == sliderTarget &&
+              std::abs(gradientSlider.disabled_thumb.alpha - 0.38F) < 0.001F,
+          "HSB slider keeps the selected-color thumb and themed geometry");
     check(ResolveFluxAccent("invalid").id == "blue", "invalid saved color uses default");
     for (const auto hex : {"#000000", "#FFFFFF", "#FFFF00", "#0000FF", "#FF00FF", "#336699"}) {
         const auto accent = ResolveFluxAccent(hex);

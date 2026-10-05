@@ -21,6 +21,10 @@ const huxerui::Application application{
             .initial_size = {1080.0F, 720.0F},
             // 允许桌面窗口缩到手机竖屏尺寸，内容按视口宽度响应。
             .minimum_size = huxerui::Size{320.0F, 480.0F},
+#if defined(__ANDROID__)
+            // 壳层在完整视口绘制背景，再用 SafeAreaPadding 保护交互内容。
+            .content_mode = huxerui::WindowContentMode::EdgeToEdge,
+#endif
             .chrome_mode = huxerui::WindowChromeMode::Custom,
             .title_bar_height = clashflux::ui::kDesktopTitleBarHeight,
         },

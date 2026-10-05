@@ -493,7 +493,7 @@ private:
     for (const SectionTab& tab : tabs) {
         const std::string label = huxerui::UseString(tab.label);
         pickerEntries.emplace_back(ActionMenuItem(
-            tab.key == selectedKey ? "✓ " + label : label,
+            SectionTabPickerIcon(tab.key), tab.key == selectedKey ? "✓ " + label : label,
             [onSelect, key = tab.key] { onSelect(key); }));
     }
     huxerui::View picker =

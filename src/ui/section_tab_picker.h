@@ -5,12 +5,25 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "ui.h"
 
 namespace clashflux::ui {
+
+inline huxerui::ImageResource SectionTabPickerIcon(std::string_view key) {
+    if (key == "remote") return {"app", "images/globe"};
+    if (key == "local") return {"app", "images/manual_config"};
+    if (key == "pptp") return {"app", "images/tcp"};
+    if (key == "openvpn") return {"app", "images/shield_check"};
+    if (key == "subscription") return {"app", "images/route"};
+    if (key == "global") return {"app", "images/globe"};
+    if (key == "core") return {"app", "images/terminal"};
+    if (key == "application") return {"app", "images/logs"};
+    return {"app", "images/proxies"};
+}
 
 struct SectionPickerLayers {
     explicit SectionPickerLayers(huxerui::LayerController controller) : layers(std::move(controller)) {}

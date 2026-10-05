@@ -944,11 +944,15 @@ void DriveSettingsModel(huxerui::TaskScope tasks,
             next.themeMode = themeMode == "0" ? 0 : themeMode == "2" ? 2 : 1;
             next.themeColor = core.setting("ui.theme_color", "blue");
             next.customThemeColors = core.setting("ui.custom_theme_colors", "");
+            next.hiddenThemeColors = core.setting("ui.hidden_theme_colors", "");
             next.autoStart = core.setting("app.autostart", "false") == "true";
             next.autoRun = core.setting("app.auto_run", "false") == "true";
             next.trayEnabled = core.setting("tray.enabled", "true") == "true";
             next.startMinimized =
                 core.setting("tray.start_minimized", "false") == "true";
+            next.mixedPort = core.setting("core.mixed_port", "7899");
+            next.httpPort = core.setting("core.http_port", "");
+            next.socksPort = core.setting("core.socks_port", "");
             next.envShell = core.setting("ui.env_shell", "");
             next.language = core.setting("ui.language", "system");
             // 都是内存读；State 按 operator== 去重，只有真的变了才通知订阅者。

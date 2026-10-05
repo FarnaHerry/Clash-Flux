@@ -597,45 +597,17 @@
     };
 
     // ---- 分享二维码 ----
-    auto showQr = [dialog, tasks, toast, profiles, findProfile, clipboard,
-                   hintColor = theme.colors.on_surface_variant](std::int64_t id) {
+    auto showQr = [dialog, tasks, findProfile](std::int64_t id) {
         tasks.Launch([=]() -> huxerui::Task<void> {
             co_await huxerui::Delay(std::chrono::duration<double>{0});
             const auto profile = findProfile(id);
             if (!profile || profile->url.empty()) co_return;
             const std::string url = profile->url;
             dialog.Show(
-                [url, clipboard, toast,
-                 hintColor](huxerui::DialogContext ctx) -> huxerui::View {
-                    return DialogCard(huxerui::Column {
-                        huxerui::Text(Localized("分享订阅"), huxerui::TextRole::Title),
-                        huxerui::Text(truncateOneLine(url, 60))
-                            .Style(huxerui::TextStyle{
-                                huxerui::Font::Monospace(font_size::kChip),
-                                hintColor}),
-                        huxerui::Canvas(QrPainter(url))
-                            .With(huxerui::Frame{.width = 240.0F,
-                                                 .height = 240.0F}),
-                        huxerui::Row {
-                            huxerui::Button(Localized("复制链接")).OnClick(
-                                [clipboard, toast, url] {
-                                    if (clipboard->WriteText(url)) {
-                                        toast.Show(Localized("已复制到剪贴板"));
-                                    } else {
-                                        toast.Show(Localized("复制失败"));
-                                    }
-                                }),
-                            huxerui::Button(Localized("关闭")).OnClick(
-                                [ctx] { ctx.Dismiss(); }),
-                        }.With(huxerui::MainAlign(
-                                   huxerui::MainAxisAlignment::End),
-                               huxerui::Spacing(8.0F)),
-                    }
-                                      .With(huxerui::Spacing(12.0F),
-                                            huxerui::Frame{.width = 320.0F},
-                                            huxerui::CrossAlign(
-                                                huxerui::CrossAxisAlignment::
-                                                    Stretch)));
+                [url]() -> huxerui::View {
+                    return DialogCard(huxerui::Canvas(QrPainter(url))
+                        .With(huxerui::Frame{.width = 240.0F,
+                                             .height = 240.0F}));
                 },
                 huxerui::DialogOptions{});
         });

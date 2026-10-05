@@ -67,7 +67,14 @@ std::optional<ConnectionsSnapshot> parseConnections(const std::string& body) {
         row.host = connection.host;
         if (row.host.empty()) row.host = connection.destinationIP;
         if (row.host.empty()) row.host = connection.destination;
-        if (!connection.destinationPort.empty()) row.host += ":" + connection.destinationPort;
+        if (!connection.destinationPort.empty()) {
+            const std::string portSuffix = ":" + connection.destinationPort;
+            // Android libbox returns metadata.destination as host:port when no
+            // domain is available, while still providing destinationPort.
+            // Desktop snapshots usually keep those fields separate. Avoid
+            // rendering the Android fallback as host:port:port.
+            if (!row.host.ends_with(portSuffix)) row.host += portSuffix;
+        }
         row.network = connection.network;
         for (const auto& hop : connection.chains) {
             if (!row.chains.empty()) row.chains += " ← ";

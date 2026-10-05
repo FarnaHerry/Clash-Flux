@@ -15,12 +15,16 @@ import clashflux.model;
 namespace clashflux::persistence {
 
 // 首帧唯一的同步磁盘读：临时只读连接，不创建/迁移数据库，不填充订阅缓存。
-export struct StartupTheme {
-    int mode = 1;
-    std::string color = "blue";
+// 只包含必须在 SettingsModel hydrate 前决定首帧外观或平台副作用的设置。
+export struct StartupSettings {
+    int themeMode = 1;
+    std::string themeColor = "blue";
+    std::string language = "system";
+    bool trayEnabled = true;
+    bool startMinimized = false;
     std::string error;
 };
-export StartupTheme readStartupTheme(const std::filesystem::path& file);
+export StartupSettings readStartupSettings(const std::filesystem::path& file);
 
 /// 进程内唯一的 ORM 数据库句柄与设置缓存。
 ///

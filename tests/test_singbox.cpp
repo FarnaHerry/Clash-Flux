@@ -2060,10 +2060,42 @@ int main(int argc, char** argv) {
         }
     }
     check(hasMixed, "mixed 入站 127.0.0.1:7899");
+    check(std::none_of(config["inbounds"].begin(), config["inbounds"].end(),
+                       [](const json& inbound) {
+                           const std::string type = inbound.value("type", "");
+                           return type == "http" || type == "socks";
+                       }),
+          "未配置时不额外启用 HTTP 与 SOCKS 入站");
     check(!config.contains("inbounds") ||
               std::none_of(config["inbounds"].begin(), config["inbounds"].end(),
                            [](const json& i) { return i.value("type", "") == "tun"; }),
           "未启用 TUN 时无 tun inbound");
+
+    singbox::CompileOptions inboundOptions;
+    inboundOptions.profileYaml = kFixture;
+    inboundOptions.mixedPort = 19090;
+    inboundOptions.httpPort = 19091;
+    inboundOptions.socksPort = 19092;
+    const auto inboundResult = singbox::compileConfig(inboundOptions);
+    check(inboundResult.error.empty(), "可配置混合、HTTP 与 SOCKS 入站端口");
+    if (!inboundResult.json.empty()) {
+        const json inboundConfig = json::parse(inboundResult.json);
+        auto hasPort = [&inboundConfig](std::string_view type, int port) {
+            return std::any_of(inboundConfig["inbounds"].begin(),
+                               inboundConfig["inbounds"].end(),
+                               [type, port](const json& inbound) {
+                                   return inbound.value("type", "") == type &&
+                                          inbound.value("listen_port", 0) == port;
+                               });
+        };
+        check(hasPort("mixed", 19090), "混合入站使用设置的端口");
+        check(hasPort("http", 19091), "HTTP 入站使用独立设置的端口");
+        check(hasPort("socks", 19092), "SOCKS 入站使用独立设置的端口");
+    }
+    auto duplicateInboundPorts = inboundOptions;
+    duplicateInboundPorts.httpPort = duplicateInboundPorts.socksPort;
+    check(!singbox::compileConfig(duplicateInboundPorts).error.empty(),
+          "拒绝重复的托管入站端口");
 
     // 节点映射。
     const json& outbounds = config["outbounds"];
