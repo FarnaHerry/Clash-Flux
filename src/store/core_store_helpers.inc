@@ -129,8 +129,39 @@
 #if defined(__ANDROID__)
             // curl has no TLS here. Reuse the platform bridge on the task
             // thread, with system trust, a bounded body, and explicit direct IO.
-            const auto response = clashflux::android::DownloadProfile(
-                resource.url, 20, false, resource.maxBytes, true, resource.headers);
+            constexpr int kDownloadTimeoutSecs = 20;
+            constexpr int kDownloadAttempts = 2;
+            constexpr auto kRetryDelay = std::chrono::milliseconds{250};
+#if !defined(NDEBUG)
+            const auto started = std::chrono::steady_clock::now();
+#endif
+            clashflux::android::ProfileHttpResponse response;
+            for (int attempt = 1; attempt <= kDownloadAttempts; ++attempt) {
+#if !defined(NDEBUG)
+                __android_log_print(ANDROID_LOG_INFO, "ClashFluxImport",
+                                    "rule-set begin name=%s attempt=%d max_bytes=%zu",
+                                    resource.name.c_str(), attempt, resource.maxBytes);
+#endif
+                response = clashflux::android::DownloadProfile(
+                    resource.url, kDownloadTimeoutSecs, false,
+                    resource.maxBytes, true, resource.headers);
+#if !defined(NDEBUG)
+                const auto elapsed = std::chrono::duration_cast<
+                    std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - started).count();
+                __android_log_print(ANDROID_LOG_INFO, "ClashFluxImport",
+                                    "rule-set end name=%s attempt=%d status=%ld bytes=%zu error=%d retryable=%d elapsed_ms=%lld",
+                                    resource.name.c_str(), attempt, response.status,
+                                    response.body.size(), response.error.empty() ? 0 : 1,
+                                    response.retryable ? 1 : 0,
+                                    static_cast<long long>(elapsed));
+#endif
+                const bool completeHttpResponse = response.status >= 200 &&
+                    response.status < 300 && response.error.empty();
+                if (completeHttpResponse || !response.retryable ||
+                    attempt == kDownloadAttempts) break;
+                std::this_thread::sleep_for(kRetryDelay);
+            }
             if (!response.error.empty() || response.status < 200 || response.status >= 300) {
                 reason = response.error.empty() ? "HTTP " + std::to_string(response.status) : response.error;
                 return false;

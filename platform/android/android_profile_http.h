@@ -8,6 +8,7 @@ namespace clashflux::android {
 
 struct ProfileHttpResponse {
     long status = 0;
+    bool retryable = false;
     std::string error;
     std::multimap<std::string, std::string> headers;
     std::string body;

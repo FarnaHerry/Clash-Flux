@@ -297,13 +297,18 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     };
     definition.Set(navigationPane);
 
-    // 顶部状态栏与底部系统导航栏的底色统一取页面海面底色（background），
-    // 避免状态栏出现一条与页面不同色的横条；Automatic 亮度会按底色深浅
-    // 自动选择图标明暗。
+    // Android 的主题级回退也必须跟随页面壳层的内容底色；否则状态栏候选
+    // 暂不可见的过渡帧会露出 Material 默认白色。桌面仍沿用 background。
     huxerui::SystemBarsAppearance systemBars =
         huxerui::SystemBarsAppearance::Default();
+#if defined(__ANDROID__)
+    const huxerui::Color pageBackground = ResolveIslandTheme(spec).base;
+    systemBars.status_bar_background = pageBackground;
+    systemBars.navigation_bar_background = pageBackground;
+#else
     systemBars.status_bar_background = spec.colors.background;
     systemBars.navigation_bar_background = spec.colors.background;
+#endif
     definition.Set(systemBars);
 
     return huxerui::Theme(std::move(definition), content);

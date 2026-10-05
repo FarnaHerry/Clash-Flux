@@ -168,12 +168,15 @@ clashflux::android::DownloadProfile(const std::string& url, int timeoutSecs,
     jclass bundleClass = environment->GetObjectClass(bundle);
     const jmethodID getInt = environment->GetMethodID(
         bundleClass, "getInt", "(Ljava/lang/String;)I");
+    const jmethodID getBoolean = environment->GetMethodID(
+        bundleClass, "getBoolean", "(Ljava/lang/String;Z)Z");
     const jmethodID getString = environment->GetMethodID(
         bundleClass, "getString",
         "(Ljava/lang/String;)Ljava/lang/String;");
     const jmethodID getByteArray = environment->GetMethodID(
         bundleClass, "getByteArray", "(Ljava/lang/String;)[B");
-    if (getInt == nullptr || getString == nullptr || getByteArray == nullptr ||
+    if (getInt == nullptr || getBoolean == nullptr || getString == nullptr ||
+        getByteArray == nullptr ||
         environment->ExceptionCheck()) {
         environment->ExceptionClear();
         response.error = "Android 订阅下载响应格式无效";
@@ -186,6 +189,9 @@ clashflux::android::DownloadProfile(const std::string& url, int timeoutSecs,
     jstring statusKey = key("status");
     response.status = static_cast<long>(
         environment->CallIntMethod(bundle, getInt, statusKey));
+    jstring retryableKey = key("retryable");
+    response.retryable = environment->CallBooleanMethod(
+        bundle, getBoolean, retryableKey, JNI_FALSE) == JNI_TRUE;
     jstring errorKey = key("error");
     auto errorValue = static_cast<jstring>(
         environment->CallObjectMethod(bundle, getString, errorKey));
