@@ -66,12 +66,12 @@ model::Profile ToProfile(const db_schema::ProfileRow& row) {
 
 } // namespace
 
-StartupTheme readStartupTheme(const std::filesystem::path& file) {
-    StartupTheme theme;
+StartupSettings readStartupSettings(const std::filesystem::path& file) {
+    StartupSettings settings;
     std::error_code error;
     const bool exists = std::filesystem::exists(file, error);
-    if (error) { theme.error = "读取启动主题失败：" + error.message(); return theme; }
-    if (!exists) return theme;
+    if (error) { settings.error = "读取启动配置失败：" + error.message(); return settings; }
+    if (!exists) return settings;
     bool hasSettings = false;
     auto inspected = sqlite::Database::QueryReadOnlySync(huxerui::File{file.string()},
         "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'",
@@ -79,21 +79,26 @@ StartupTheme readStartupTheme(const std::filesystem::path& file) {
             hasSettings = true;
             return {};
         });
-    if (!inspected) { theme.error = "读取启动主题失败：" + inspected.Error().Message(); return theme; }
-    if (!hasSettings) return theme;
+    if (!inspected) { settings.error = "读取启动配置失败：" + inspected.Error().Message(); return settings; }
+    if (!hasSettings) return settings;
     auto read = sqlite::Database::QueryReadOnlySync(huxerui::File{file.string()},
-        "SELECT key, value FROM settings WHERE key IN ('ui.theme_mode', 'ui.theme_color')",
-        [&theme](const sqlite::RowView& row) -> sqlite::Result<void> {
+        "SELECT key, value FROM settings WHERE key IN "
+        "('ui.theme_mode', 'ui.theme_color', 'ui.language', "
+        "'tray.enabled', 'tray.start_minimized')",
+        [&settings](const sqlite::RowView& row) -> sqlite::Result<void> {
             auto key = row.Get<std::string>("key");
             if (!key) return key.Error();
             auto value = row.Get<std::string>("value");
             if (!value) return value.Error();
-            if (*key == "ui.theme_color") theme.color = *value;
-            else theme.mode = *value == "0" ? 0 : *value == "2" ? 2 : 1;
+            if (*key == "ui.theme_color") settings.themeColor = *value;
+            else if (*key == "ui.language") settings.language = *value;
+            else if (*key == "tray.enabled") settings.trayEnabled = *value == "true";
+            else if (*key == "tray.start_minimized") settings.startMinimized = *value == "true";
+            else settings.themeMode = *value == "0" ? 0 : *value == "2" ? 2 : 1;
             return {};
         });
-    if (!read) theme.error = "读取启动主题失败：" + read.Error().Message();
-    return theme;
+    if (!read) settings.error = "读取启动配置失败：" + read.Error().Message();
+    return settings;
 }
 
 struct Persistence::Impl {

@@ -819,16 +819,17 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
         huxerui::UseEnvironment<huxerui::Locale>();
     CLASHFLUX_PREPARE_PLATFORM_DATA(application);
 
-    // 阻塞首帧构建，先读取保存的主题。启动快照只取一次，不在重组时读磁盘。
-    // 临时连接只读；设置/订阅的 ORM hydrate 与运行期写入仍走原异步流程。
-    static const auto startupTheme = clashflux::persistence::readStartupTheme(cfg::databaseFile());
-    if (!startupTheme.error.empty()) {
-        std::fprintf(stderr, "Clash-Flux 启动失败：%s；原数据库与订阅文件已保留\n", startupTheme.error.c_str());
+    // 阻塞首帧构建，集中读取首帧外观和启动副作用所需配置。快照只取一次，
+    // 不在重组时读磁盘；临时连接只读，设置/订阅的 ORM hydrate 仍走异步流程。
+    static const auto startupSettings =
+        clashflux::persistence::readStartupSettings(cfg::databaseFile());
+    if (!startupSettings.error.empty()) {
+        std::fprintf(stderr, "Clash-Flux 启动失败：%s；原数据库与订阅文件已保留\n", startupSettings.error.c_str());
         CliSetPendingExitCode(1);
         application.Quit();
         return huxerui::Row{};
     }
-    auto themeMode = huxerui::UseState<int>(int{startupTheme.mode});
+    auto themeMode = huxerui::UseState<int>(int{startupSettings.themeMode});
     // TEMP-PERF-ONLY: 直接落到指定一级页做帧分析，测完删除。
     std::size_t initialNavPage = pages::kHome;
     if (const char* perf_page = std::getenv("CLASHFLUX_PERF_PAGE")) {
@@ -1051,17 +1052,19 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
     const bool dark =
         themeMode.Get() == 1 || (themeMode.Get() == 0 && cfg::systemPrefersDark());
     const SettingsView settings = settingsModel->view.Get();
-    const std::string& accent = settings.ready ? settings.themeColor : startupTheme.color;
+    const std::string& accent = settings.ready ? settings.themeColor : startupSettings.themeColor;
     const huxerui::ThemeSpec rootSpec = dark ? FluxDarkThemeSpec(accent) : FluxLightThemeSpec(accent);
     const IslandTheme rootIslands = ResolveIslandTheme(rootSpec);
-    const std::string language = settingsModel->view.Get().language;
+    const std::string& language = settings.ready ? settings.language : startupSettings.language;
     const huxerui::Locale locale =
         language == "zh" ? huxerui::Locale::FromLanguageTag("zh")
         : language == "en" ? huxerui::Locale::FromLanguageTag("en")
                             : systemLocale;
 
     huxerui::View applicationEffects =
-        CLASHFLUX_APPLICATION_EFFECTS(application, rootSpec);
+        CLASHFLUX_APPLICATION_EFFECTS(application, rootSpec,
+                                      startupSettings.trayEnabled,
+                                      startupSettings.startMinimized);
     huxerui::View mainRow = CLASHFLUX_MAIN_CONTENT(
         navPage, pagerPage, themeMode, rootIslands, rootSpec, profilesCache);
     huxerui::View content = CLASHFLUX_APP_CONTENT(std::move(mainRow), rootSpec);

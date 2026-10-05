@@ -10,6 +10,19 @@ std::string mappedLogLevel(const std::string& level) {
 void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
     nlohmann::json& config = ctx.config;
 
+    const auto validPort = [](int port) { return port >= 1 && port <= 65535; };
+    if (!validPort(opt.mixedPort) || opt.httpPort < 0 || opt.httpPort > 65535 ||
+        opt.socksPort < 0 || opt.socksPort > 65535) {
+        ctx.result.error = "托管代理入站端口无效，端口范围必须为 1–65535";
+        return;
+    }
+    if ((opt.httpPort > 0 &&
+         (opt.httpPort == opt.mixedPort || opt.httpPort == opt.socksPort)) ||
+        (opt.socksPort > 0 && opt.socksPort == opt.mixedPort)) {
+        ctx.result.error = "混合、HTTP 与 SOCKS 入站端口不能重复";
+        return;
+    }
+
     // Validate policy input even on platforms that cannot create a managed
     // TUN, so host names never cross the routing boundary as address values.
     for (const auto& address : opt.tunExcludeAddresses) {
@@ -60,10 +73,14 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
         }), inbounds.end());
     }
     bool hasMixed = false;
+    bool hasHttp = false;
+    bool hasSocks = false;
     bool hasTun = false;
     for (const auto& inbound : config["inbounds"]) {
         const std::string type = inbound.value("type", "");
         if (type == "mixed") hasMixed = true;
+        if (type == "http") hasHttp = true;
+        if (type == "socks") hasSocks = true;
         if (type == "tun") {
             if (hasTun) {
                 ctx.result.error = "主 VPN 仅允许一个托管 TUN；请移除配置中的额外 TUN 入站";
@@ -78,6 +95,22 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
             {"tag", "mixed-in"},
             {"listen", opt.allowLan ? "0.0.0.0" : "127.0.0.1"},
             {"listen_port", opt.mixedPort},
+        });
+    }
+    if (opt.httpPort > 0 && !hasHttp) {
+        config["inbounds"].push_back({
+            {"type", "http"},
+            {"tag", "http-in"},
+            {"listen", opt.allowLan ? "0.0.0.0" : "127.0.0.1"},
+            {"listen_port", opt.httpPort},
+        });
+    }
+    if (opt.socksPort > 0 && !hasSocks) {
+        config["inbounds"].push_back({
+            {"type", "socks"},
+            {"tag", "socks-in"},
+            {"listen", opt.allowLan ? "0.0.0.0" : "127.0.0.1"},
+            {"listen_port", opt.socksPort},
         });
     }
     if (opt.tunInbound && !hasTun) {

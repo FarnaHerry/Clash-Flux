@@ -409,14 +409,17 @@ Task<void> DeletionPhase() {
 
 Task<void> RunTest(TaskScope tasks) {
     const std::filesystem::path path = TempPath();
-    const auto missingTheme = persistence::readStartupTheme(path);
-    Check(missingTheme.mode == 1 && missingTheme.color == "blue" &&
-              missingTheme.error.empty() && !std::filesystem::exists(path),
-          "startup theme read must not create a missing database");
+    const auto missingSettings = persistence::readStartupSettings(path);
+    Check(missingSettings.themeMode == 1 && missingSettings.themeColor == "blue" &&
+              missingSettings.language == "system" &&
+              missingSettings.trayEnabled && !missingSettings.startMinimized &&
+              missingSettings.error.empty() &&
+              !std::filesystem::exists(path),
+          "startup settings read must not create a missing database");
     const auto corruptThemePath = path.string() + ".corrupt";
     { std::ofstream corrupt(corruptThemePath, std::ios::binary); corrupt << "not a SQLite database"; }
-    const auto corruptTheme = persistence::readStartupTheme(corruptThemePath);
-    Check(!corruptTheme.error.empty(), "corrupt startup database must report failure");
+    const auto corruptSettings = persistence::readStartupSettings(corruptThemePath);
+    Check(!corruptSettings.error.empty(), "corrupt startup database must report failure");
     { std::ifstream original(corruptThemePath, std::ios::binary);
       const std::string bytes((std::istreambuf_iterator<char>(original)), {});
       Check(bytes == "not a SQLite database", "startup query must preserve a corrupt database"); }
@@ -434,9 +437,20 @@ Task<void> RunTest(TaskScope tasks) {
             Check(store.ready(), "store must be ready after open");
             Check(store.setting("ui.theme_mode", "fallback") == "fallback",
                   "missing key must return the fallback after hydrate");
+            const auto defaultStartupSettings = persistence::readStartupSettings(path);
+            Check(defaultStartupSettings.themeMode == 1 &&
+                      defaultStartupSettings.themeColor == "blue" &&
+                      defaultStartupSettings.language == "system" &&
+                      defaultStartupSettings.trayEnabled &&
+                      !defaultStartupSettings.startMinimized &&
+                      defaultStartupSettings.error.empty(),
+                  "startup settings must apply defaults for keys absent from an existing database");
 
             store.setSetting("ui.theme_mode", "2");
             store.setSetting("ui.theme_color", "#336699");
+            store.setSetting("ui.language", "zh");
+            store.setSetting("tray.enabled", "false");
+            store.setSetting("tray.start_minimized", "true");
             store.setSetting("ui.custom_theme_colors", "#336699\n#AA44CC");
             store.setSetting("core.tun_enabled", "true");
             // 同步可见：读路径不依赖落库。
@@ -447,20 +461,28 @@ Task<void> RunTest(TaskScope tasks) {
             Trace(3, "flush settings");
             Check(co_await store.flushSettings(), "flush failed");
             Check(!store.hasPendingSettings(), "flush must clear dirty keys");
-            const auto startupTheme = persistence::readStartupTheme(path);
-            Check(startupTheme.mode == 2 && startupTheme.color == "#336699" && startupTheme.error.empty(),
-                  "synchronous startup theme must see the saved light mode before hydrate");
+            const auto startupSettings = persistence::readStartupSettings(path);
+            Check(startupSettings.themeMode == 2 && startupSettings.themeColor == "#336699" &&
+                      startupSettings.language == "zh" &&
+                      !startupSettings.trayEnabled && startupSettings.startMinimized &&
+                      startupSettings.error.empty(),
+                  "startup snapshot must synchronously read appearance and startup behavior settings");
             Check(store.ready() && !store.hasPendingSettings(),
                   "read-only startup query must not alter the persistence session");
 
             for (const std::string mode : {"0", "1", "2"}) {
                 store.setSetting("ui.theme_mode", mode);
                 Check(co_await store.flushSettings(), "theme flush failed");
-                const auto savedTheme = persistence::readStartupTheme(path);
-                Check(savedTheme.error.empty() && savedTheme.mode == std::stoi(mode),
+                const auto savedSettings = persistence::readStartupSettings(path);
+                Check(savedSettings.error.empty() && savedSettings.themeMode == std::stoi(mode),
                       "startup theme must preserve system, dark and light modes");
-                Check(savedTheme.color == "#336699", "appearance changes must retain the saved accent");
+                Check(savedSettings.themeColor == "#336699", "appearance changes must retain the saved accent");
+                Check(!savedSettings.trayEnabled, "appearance changes must retain the disabled tray setting");
             }
+            store.setSetting("tray.enabled", "true");
+            Check(co_await store.flushSettings(), "tray settings flush failed");
+            Check(persistence::readStartupSettings(path).trayEnabled,
+                  "startup snapshot must read an enabled tray setting");
             Trace(4, "profiles 缓存操作");
             // ---- profiles：插入/列出/更新/独占选中/删除 ----
             db::Profile first;
@@ -588,16 +610,21 @@ Task<void> RunTest(TaskScope tasks) {
                       "(42, '旧本地配置', '', 'legacy-local.json', 0, 1700000002, '上次刷新失败', 'local', "
                       "'保留的原生 JSON', 90, 0, 0, 1, 0, 0, '', 0, 0, '{\"outbounds\":[]}', '[{\"rule\":1}]')",
                       "INSERT INTO settings (key, value) "
-                      "VALUES ('ui.theme_mode', '2'), ('ui.theme_color', 'green')"}) {
+                      "VALUES ('ui.theme_mode', '2'), ('ui.theme_color', 'green'), "
+                      "('ui.language', 'en'), "
+                      "('tray.enabled', 'false'), ('tray.start_minimized', 'true')"}) {
                     auto result = co_await raw.ExecuteAsync(statement);
                     Check(static_cast<bool>(result), "legacy: ddl failed");
                 }
                 auto closed = co_await raw.CloseAsync();
                 Check(static_cast<bool>(closed), "legacy: close failed");
             }
-            const auto legacyTheme = persistence::readStartupTheme(legacy);
-            Check(legacyTheme.mode == 2 && legacyTheme.color == "green" && legacyTheme.error.empty(),
-                  "startup theme must read the legacy database before migration");
+            const auto legacySettings = persistence::readStartupSettings(legacy);
+            Check(legacySettings.themeMode == 2 && legacySettings.themeColor == "green" &&
+                      legacySettings.language == "en" &&
+                      !legacySettings.trayEnabled && legacySettings.startMinimized &&
+                      legacySettings.error.empty(),
+                  "startup snapshot must read legacy settings before migration");
             persistence::Persistence store;
             Check(co_await store.open(legacy),
                   "legacy database must open through the 0->1 migration: " +

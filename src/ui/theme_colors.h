@@ -4,14 +4,24 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace clashflux::ui {
 
 inline constexpr int kRgbChannelMax = 255;
+inline constexpr float kHsbTurnDegrees = 360.0F;
+inline constexpr float kHsbHueSectorDegrees = 60.0F;
+inline constexpr std::size_t kHsbHueSectorCount =
+    static_cast<std::size_t>(kHsbTurnDegrees / kHsbHueSectorDegrees);
+inline constexpr float kHsbHueSliderMaximum = kHsbTurnDegrees;
+inline constexpr float kHsbPercentMaximum = 100.0F;
+inline constexpr float kHsbUnitMinimum = 0.0F;
+inline constexpr float kHsbUnitMaximum = 1.0F;
 inline constexpr float kThemeAccentLightLuminanceCeiling = 0.25F;
 inline constexpr float kThemeAccentDarkLuminanceFloor = 0.36F;
 inline constexpr float kThemeAccentMixStep = 0.05F;
@@ -47,6 +57,14 @@ struct FluxAccent {
     std::string name;
     huxerui::Color light, dark, onLight, onDark, lightContainer, onLightContainer;
 };
+
+struct HsbColor {
+    float hue = 0.0F;
+    float saturation = 0.0F;
+    float brightness = 0.0F;
+};
+
+enum class HsbChannel { Hue, Saturation, Brightness };
 
 inline const std::array<FluxAccent, 6> kFluxAccents{{
     {"blue", "蓝色", FluxPalette::water_deep(), FluxPalette::water(),
@@ -91,6 +109,92 @@ inline huxerui::Color ThemeColorFromHex(std::string_view normalized) {
     return huxerui::Color::Rgb((value >> 16) & 255, (value >> 8) & 255, value & 255);
 }
 
+inline HsbColor ThemeColorToHsb(huxerui::Color color) noexcept {
+    const float maximum = std::max({color.red, color.green, color.blue});
+    const float minimum = std::min({color.red, color.green, color.blue});
+    const float delta = maximum - minimum;
+    float hue = 0.0F;
+    if (delta > 0.0F) {
+        if (maximum == color.red) {
+            hue = kHsbHueSectorDegrees * std::fmod((color.green - color.blue) / delta, 6.0F);
+        } else if (maximum == color.green) {
+            hue = kHsbHueSectorDegrees * (((color.blue - color.red) / delta) + 2.0F);
+        } else {
+            hue = kHsbHueSectorDegrees * (((color.red - color.green) / delta) + 4.0F);
+        }
+        if (hue < 0.0F) hue += kHsbTurnDegrees;
+    }
+    return {hue, maximum == 0.0F ? 0.0F : delta / maximum, maximum};
+}
+
+inline huxerui::Color ThemeColorFromHsb(HsbColor color) noexcept {
+    float hue = std::fmod(color.hue, kHsbTurnDegrees);
+    if (hue < 0.0F) hue += kHsbTurnDegrees;
+    const float saturation = std::clamp(color.saturation, 0.0F, 1.0F);
+    const float brightness = std::clamp(color.brightness, 0.0F, 1.0F);
+    const float chroma = brightness * saturation;
+    const float sector = std::fmod(hue / kHsbHueSectorDegrees, 2.0F);
+    const float second = chroma * (1.0F - std::abs(sector - 1.0F));
+    const float offset = brightness - chroma;
+    float red = 0.0F, green = 0.0F, blue = 0.0F;
+    if (hue < kHsbHueSectorDegrees) {
+        red = chroma; green = second;
+    } else if (hue < 2.0F * kHsbHueSectorDegrees) {
+        red = second; green = chroma;
+    } else if (hue < 3.0F * kHsbHueSectorDegrees) {
+        green = chroma; blue = second;
+    } else if (hue < 4.0F * kHsbHueSectorDegrees) {
+        green = second; blue = chroma;
+    } else if (hue < 5.0F * kHsbHueSectorDegrees) {
+        red = second; blue = chroma;
+    } else {
+        red = chroma; blue = second;
+    }
+    return {red + offset, green + offset, blue + offset, 1.0F};
+}
+
+inline HsbColor UpdateHsbChannel(HsbColor color, HsbChannel channel, float sliderValue) noexcept {
+    switch (channel) {
+    case HsbChannel::Hue:
+        color.hue = std::clamp(sliderValue, kHsbUnitMinimum, kHsbHueSliderMaximum);
+        break;
+    case HsbChannel::Saturation:
+        color.saturation = std::clamp(sliderValue / kHsbPercentMaximum, kHsbUnitMinimum, kHsbUnitMaximum);
+        break;
+    case HsbChannel::Brightness:
+        color.brightness = std::clamp(sliderValue / kHsbPercentMaximum, kHsbUnitMinimum, kHsbUnitMaximum);
+        break;
+    }
+    return color;
+}
+
+inline huxerui::LinearGradient HsbChannelGradient(HsbColor selected, HsbChannel channel) {
+    huxerui::LinearGradient gradient;
+    switch (channel) {
+    case HsbChannel::Hue:
+        gradient.stops.reserve(kHsbHueSectorCount + 1U);
+        for (std::size_t sector = 0; sector <= kHsbHueSectorCount; ++sector) {
+            const float hue = static_cast<float>(sector) * kHsbHueSectorDegrees;
+            gradient.stops.push_back({hue / kHsbTurnDegrees,
+                ThemeColorFromHsb({hue, kHsbUnitMaximum, kHsbUnitMaximum})});
+        }
+        break;
+    case HsbChannel::Saturation:
+        gradient.stops = {
+            {kHsbUnitMinimum, ThemeColorFromHsb({selected.hue, kHsbUnitMinimum, selected.brightness})},
+            {kHsbUnitMaximum, ThemeColorFromHsb({selected.hue, kHsbUnitMaximum, selected.brightness})},
+        };
+        break;
+    case HsbChannel::Brightness:
+        gradient.stops = {
+            {kHsbUnitMinimum, ThemeColorFromHsb({selected.hue, selected.saturation, kHsbUnitMinimum})},
+            {kHsbUnitMaximum, ThemeColorFromHsb({selected.hue, selected.saturation, kHsbUnitMaximum})},
+        };
+        break;
+    }
+    return gradient;
+}
+
 inline std::string ThemeColorToHex(huxerui::Color color) {
     constexpr char digits[] = "0123456789ABCDEF";
     std::string value = "#";
@@ -117,6 +221,64 @@ inline std::string SaveCustomThemeColors(const std::vector<std::string>& colors)
     std::string saved;
     for (const auto& color : colors) { if (!saved.empty()) saved += '\n'; saved += color; }
     return saved;
+}
+
+inline bool IsPresetThemeColor(std::string_view id) {
+    return std::any_of(kFluxAccents.begin(), kFluxAccents.end(),
+        [id](const FluxAccent& accent) { return accent.id == id; });
+}
+
+inline std::vector<std::string> ReadHiddenThemeColors(std::string_view saved) {
+    std::vector<std::string> colors;
+    while (!saved.empty()) {
+        const auto end = saved.find('\n');
+        const auto id = saved.substr(0, end);
+        if (IsPresetThemeColor(id) && std::find(colors.begin(), colors.end(), id) == colors.end())
+            colors.emplace_back(id);
+        if (end == std::string_view::npos) break;
+        saved.remove_prefix(end + 1);
+    }
+    return colors;
+}
+
+inline std::string SaveHiddenThemeColors(const std::vector<std::string>& colors) {
+    std::string saved;
+    for (const auto& color : colors) { if (!saved.empty()) saved += '\n'; saved += color; }
+    return saved;
+}
+
+inline std::vector<std::string> HidePresetThemeColor(
+    std::vector<std::string> hidden, std::string_view id) {
+    if (IsPresetThemeColor(id) &&
+        std::find(hidden.begin(), hidden.end(), id) == hidden.end())
+        hidden.emplace_back(id);
+    return hidden;
+}
+
+inline std::vector<std::string> ReplaceCustomThemeColor(
+    std::vector<std::string> colors, std::string_view existing, std::string_view replacement) {
+    const auto normalized = NormalizeThemeColor(replacement);
+    if (!normalized) return colors;
+    bool replaced = false;
+    for (auto& color : colors) {
+        if (color == existing) {
+            color = *normalized;
+            replaced = true;
+        }
+    }
+    if (!replaced) colors.push_back(*normalized);
+    std::vector<std::string> unique;
+    for (auto& color : colors) {
+        if (std::find(unique.begin(), unique.end(), color) == unique.end())
+            unique.push_back(std::move(color));
+    }
+    return unique;
+}
+
+inline std::vector<std::string> RemoveCustomThemeColor(
+    std::vector<std::string> colors, std::string_view removed) {
+    std::erase_if(colors, [removed](const std::string& color) { return color == removed; });
+    return colors;
 }
 
 inline float ThemeColorLuminance(huxerui::Color color) {

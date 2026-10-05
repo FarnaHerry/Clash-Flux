@@ -26,10 +26,14 @@ struct SettingsView {
     int themeMode = 1;             // ui.theme_mode: 0 系统 / 1 深色 / 2 浅色
     std::string themeColor = "blue"; // ui.theme_color: kFluxAccents 的稳定 ID
     std::string customThemeColors;  // ui.custom_theme_colors: 换行分隔的 #RRGGBB
+    std::string hiddenThemeColors;  // ui.hidden_theme_colors: 换行分隔的隐藏预设 ID
     bool autoStart = false;       // app.autostart
     bool autoRun = false;         // app.auto_run
     bool trayEnabled = true;      // tray.enabled
     bool startMinimized = false;  // tray.start_minimized
+    std::string mixedPort = "7899"; // core.mixed_port
+    std::string httpPort;         // core.http_port; empty disables the inbound
+    std::string socksPort;        // core.socks_port; empty disables the inbound
     std::string envShell;         // ui.env_shell（空 = 未保存，用探测值）
     std::string language = "system"; // ui.language: system / zh / en
 

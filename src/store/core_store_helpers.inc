@@ -36,6 +36,8 @@
         options.controller = cfg::controllerAddress();
         options.secret = secret_;
         options.mixedPort = mixedPort();
+        options.httpPort = httpPort();
+        options.socksPort = socksPort();
         options.mode = mode();
         options.allowLan = allowLan();
         options.ipv6 = ipv6Enabled();

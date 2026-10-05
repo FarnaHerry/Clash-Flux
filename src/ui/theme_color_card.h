@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <functional>
 #include <optional>
 #include <string>
@@ -13,6 +14,45 @@ inline constexpr float kThemeColorCardEdge = 112.0F;
 inline constexpr float kThemeColorCompactCardEdge = 80.0F;
 inline constexpr float kThemeColorDialogWidth = 280.0F;
 inline constexpr float kThemeColorPreviewHeight = 48.0F;
+inline constexpr float kThemeColorSliderTrackRadiusFactor = 0.5F;
+inline constexpr float kThemeColorSliderThumbInsetFactor = 0.5F;
+
+// HSB channel gradients are painted beneath the native Slider; the native component keeps input,
+// semantics, focus, and the selected-color thumb while its own theme-colored tracks are hidden.
+inline huxerui::SliderStyle HsbGradientSliderStyle(huxerui::SliderStyle style, huxerui::Color selected) {
+    const auto disabledColor = [selected](huxerui::Color appearance) {
+        huxerui::Color color = selected;
+        color.alpha *= appearance.alpha;
+        return color;
+    };
+    const auto transparent = huxerui::Color::Transparent();
+    style.active_track = transparent;
+    style.inactive_track = transparent;
+    style.active_tick = transparent;
+    style.inactive_tick = transparent;
+    style.stop_indicator = transparent;
+    style.disabled_active_track = transparent;
+    style.disabled_inactive_track = transparent;
+    style.disabled_active_tick = transparent;
+    style.disabled_inactive_tick = transparent;
+    style.disabled_stop_indicator = transparent;
+    style.thumb = selected;
+    style.disabled_thumb = disabledColor(style.disabled_thumb);
+    if (style.focus_ring) style.focus_ring->color = selected;
+    return style;
+}
+
+inline huxerui::View HsbGradientSliderTrack(
+    huxerui::LinearGradient gradient, const huxerui::SliderStyle& style) {
+    const float thumbInset = std::max({style.thumb_width, style.hovered_thumb_width,
+                                       style.pressed_thumb_width}) * kThemeColorSliderThumbInsetFactor;
+    return huxerui::Row {
+      huxerui::Row {}.With(huxerui::Grow(1.0F), huxerui::Frame{.height = style.track_height},
+          huxerui::Background(std::move(gradient)),
+          huxerui::CornerRadius(style.track_height * kThemeColorSliderTrackRadiusFactor)),
+    }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(thumbInset, 0.0F)),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
 
 // 模式、预设、自定义色及添加入口共用同一个正方形卡片表面。
 inline huxerui::View ThemeColorCardSurface(const huxerui::ThemeSpec& theme,

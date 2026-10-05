@@ -56,7 +56,6 @@ namespace clashflux::ui {
     huxerui::NavigationController navigation, bool navigation_enabled,
     ProfilesCache profilesCache, bool active) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const huxerui::ApplicationHandle application = huxerui::UseApplication();
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
@@ -64,7 +63,6 @@ namespace clashflux::ui {
     // 应用级共享 HTTP 客户端；Android 订阅导入/刷新使用平台网络栈。
     auto http = huxerui::UseService<AppHttpClient>();
     auto dialog = huxerui::UseDialog();
-    auto clipboard = application.Clipboard();
     // 订阅列表来自 ProfilesModel 的镜像（唯一来源与数据泵见
     // profiles_model.h），本页不再自维护副本；乐观选中标记与模型共享。
     const auto profiles = profilesCache.list;

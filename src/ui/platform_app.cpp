@@ -79,15 +79,24 @@ void AndroidPreparePlatformDataDirectory(
 }
 
 [[huxerui::composable]] huxerui::View AndroidApplicationEffects(
-    const huxerui::ApplicationHandle&, const huxerui::ThemeSpec&) {
+    const huxerui::ApplicationHandle&, const huxerui::ThemeSpec&,
+    bool, bool) {
     return {};
 }
 
 [[huxerui::composable]] huxerui::View AndroidAppContent(
     huxerui::View mainRow, const huxerui::ThemeSpec& rootSpec) {
-    huxerui::View content = mainRow;
-    return std::move(content).With(
-        huxerui::Background(rootSpec.colors.background),
+    const huxerui::Color pageBackground = ResolveIslandTheme(rootSpec).base;
+    huxerui::SystemBarsAppearance systemBars =
+        huxerui::UseEnvironment<huxerui::SystemBarsAppearance>();
+    systemBars.status_bar_background = pageBackground;
+    systemBars.navigation_bar_background = pageBackground;
+    // EdgeToEdge 下背景覆盖系统栏，内容在壳层统一消费安全区。
+    // 一级、二级页与底部导航不重复增加 inset，状态栏图标明暗跟随实际底色。
+    return huxerui::View{mainRow}.With(
+        huxerui::SafeAreaPadding{},
+        huxerui::Background(pageBackground),
+        systemBars,
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
@@ -211,7 +220,8 @@ struct TrayOperationResult {
 
 [[huxerui::composable]] huxerui::View DesktopApplicationEffects(
     const huxerui::ApplicationHandle& application,
-    const huxerui::ThemeSpec& rootSpec) {
+    const huxerui::ThemeSpec& rootSpec,
+    bool startupTrayEnabled, bool startupMinimized) {
     const huxerui::WindowHandle window = huxerui::UseWindow();
     // 策略组快照 / 内核与接管状态的全局唯一来源（见 *_model.h）：托盘菜单只读。
     const auto proxiesModel = huxerui::UseService<ProxiesModel>();
@@ -235,6 +245,7 @@ struct TrayOperationResult {
     auto trayProfiles = huxerui::UseState<std::vector<db::Profile>>({});
     auto trayProxyGroups = huxerui::UseState<std::vector<ProxyGroupSnapshot>>({});
     auto startupVisibilityHandled = huxerui::UseState(false);
+    auto startupRuntimeHandled = huxerui::UseState(false);
     auto closeDialogOpen = huxerui::UseState(false);
     auto exitRequested = huxerui::UseState(false);
     auto dialog = huxerui::UseDialog();
@@ -271,9 +282,15 @@ struct TrayOperationResult {
     huxerui::Lifecycle(
         [tasks, trayCoreRunning, trayCoreMenuRunning, traySysProxy, trayTun,
          traySysProxyActive, trayTunActive, trayCorePending,
-         traySysProxyPending, trayTunPending, coreModel] {
+         traySysProxyPending, trayTunPending, coreModel, settingsModel,
+         startupRuntimeHandled] {
+            const auto noCleanup = [] {};
+            const SettingsView settings = settingsModel->view.Get();
+            if (!settings.ready || startupRuntimeHandled.Get()) return noCleanup;
+            startupRuntimeHandled = true;
+            const bool startupAutoRun = settings.autoRun;
             tasks.Launch([=]() -> huxerui::Task<void> {
-                co_await RunOnTaskThread([] {
+                co_await RunOnTaskThread([startupAutoRun] {
                     auto& core = store::coreStore();
                     core.init();
                     // 若上次异常退出把系统代理留在本应用端口上，先撤销。
@@ -287,7 +304,7 @@ struct TrayOperationResult {
                         // （内核只是本地混合端口 + 控制接口，需要时由首页右下角
                         // 悬浮按钮显式启动）；只有用户打开「启动时自动运行内核」
                         // 才在这里拉起，并按已记录的 TUN / 系统代理意图恢复接管。
-                        if (core.setting("app.auto_run", "false") == "true") {
+                        if (startupAutoRun) {
                             const bool resumeSysProxy = core.systemProxyEnabled();
                             const bool resumeTun = core.tunEnabled();
                             core.startCore(
@@ -298,9 +315,9 @@ struct TrayOperationResult {
                 });
 
             });
-            return [] {};
+            return noCleanup;
         },
-        0);
+        settingsModel->view);
 
     // 托盘运行态镜像：以 CoreModel 的 State 作依赖——模型一变就重新镜像一次，
     // 不再是 0.5s 定时器。动作进行中（pending）保留乐观值，避免图标闪回。
@@ -432,9 +449,13 @@ struct TrayOperationResult {
              trayProfiles, trayProxyGroups, settingsModel, proxiesModel,
              coreModel, profilesModel,
              finishExit, menuText, proxyLineMenu,
+             startupTrayEnabled,
              textColor = rootSpec.colors.on_surface,
              hintColor = rootSpec.colors.on_surface_variant] {
-                if (settingsModel->view.Get().trayEnabled) {
+                const SettingsView settings = settingsModel->view.Get();
+                const bool trayEnabled = settings.ready
+                    ? settings.trayEnabled : startupTrayEnabled;
+                if (trayEnabled) {
                     std::vector<huxerui::MenuEntry> menuEntries;
                     menuEntries.push_back(
                         huxerui::MenuItem(menuText.showWindow, [window] {
@@ -683,7 +704,10 @@ struct TrayOperationResult {
     window.OnCloseRequest(
         [=]() mutable -> bool {
             if (exitRequested.Get()) return true;
-            if (settingsModel->view.Get().trayEnabled && tray.IsAvailable()) {
+            const SettingsView settings = settingsModel->view.Get();
+            const bool trayEnabled = settings.ready
+                ? settings.trayEnabled : startupTrayEnabled;
+            if (trayEnabled && tray.IsAvailable()) {
                 hideWindow();
                 return true;
             }
@@ -722,23 +746,22 @@ struct TrayOperationResult {
         },
         0);
 
-    // 只在这个壳层生命周期首次挂载时执行一次。此前直接写在组合函数末尾，
-    // 页面切换造成重组后会再次 Hide，表现为“切换页面就缩到托盘”。
-    // 伪 CLI 模式同样不渲染窗口：命令在运行时内执行，完成即退出。
+    // 用首帧快照决定初始窗口可见性，不等设置 hydrate 后再隐藏造成窗口闪现。
+    // 只在壳层首次挂载时处理一次；伪 CLI 模式同样不渲染窗口。
     huxerui::Lifecycle(
-        [window, tray, settingsModel, startupVisibilityHandled] {
+        [window, tray, startupVisibilityHandled,
+         startupTrayEnabled, startupMinimized] {
             const bool commandMode = cli::runtimeCommandMode();
-            const SettingsView settings = settingsModel->view.Get();
-            if (!startupVisibilityHandled.Get() && (commandMode || settings.ready)) {
+            if (!startupVisibilityHandled.Get()) {
                 startupVisibilityHandled = true;
                 if (commandMode ||
-                    (tray.IsAvailable() && settings.trayEnabled && settings.startMinimized)) {
+                    (tray.IsAvailable() && startupTrayEnabled && startupMinimized)) {
                     window.Hide();
                 }
             }
             return [] {};
         },
-        settingsModel->view);
+        0);
     return {};
 }
 

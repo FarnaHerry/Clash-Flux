@@ -118,6 +118,8 @@ export struct CompileOptions {
     std::string controller = "127.0.0.1:29097";  // clash_api external_controller
     std::string secret;                          // clash_api secret（可空）
     int mixedPort = 7899;
+    int httpPort = 0;                            // optional HTTP-only inbound; 0 disables
+    int socksPort = 0;                           // optional SOCKS-only inbound; 0 disables
     std::string mode = "rule";                   // rule / global / direct
     bool allowLan = false;
     std::string logLevel = "info";               // silent/error/warning/info/debug

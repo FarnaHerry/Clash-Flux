@@ -68,6 +68,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     const std::function<void(std::int64_t)>& openQr,
     huxerui::DialogHandle dialog) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    auto clipboard = huxerui::UseApplication().Clipboard();
     // Each card owns its presentation anchor. Sharing one page-level MenuHandle
     // across compact cards mounts the same LayerAnchor on multiple Views, which
     // Android rejects during the next frame with "anchor must be mounted on only
@@ -241,23 +242,23 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     // 桌面端由右键触发，Compact 由卡片上的触控按钮触发；菜单内容只维护
     // 一份，避免移动端和桌面端的订阅操作逐渐产生行为差异。
     const auto buildMenuEntries = [action, activateProfile, refresh, openEditInfo, openEditRules,
-                                   openEditFile, openQr, id,
+                                   openEditFile, openQr, clipboard, toast, id,
                                    homepage = profile.homepage, url = profile.url,
                                    selected, nativeVpn,
                                    confirmDelete] {
         std::vector<ActionMenuEntry> entries;
         if (!selected && !nativeVpn) {
-            entries.push_back(ActionMenuItem(Localized("设为主订阅"), [activateProfile, id] {
+            entries.push_back(ActionMenuItem(app::images::check, Localized("设为主订阅"), [activateProfile, id] {
                 activateProfile(id);
             }));
         }
         if (!nativeVpn) {
-            entries.push_back(ActionMenuItem(Localized("更新"), [refresh, id] {
+            entries.push_back(ActionMenuItem(app::images::refresh, Localized("更新"), [refresh, id] {
                 refresh(id);
             }));
         }
         if (!nativeVpn && !homepage.empty()) {
-            entries.push_back(ActionMenuItem(Localized("首页"), [action, homepage] {
+            entries.push_back(ActionMenuItem(app::images::home, Localized("首页"), [action, homepage] {
                 action([homepage]() -> std::string {
                     core::openInBrowser(homepage);
                     return "";
@@ -265,20 +266,23 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
             }));
         }
         if (!nativeVpn && !url.empty()) {
-            entries.push_back(ActionMenuItem(Localized("分享二维码"), [openQr, id] {
+            entries.push_back(ActionMenuItem(app::images::qr_scan, Localized("分享二维码"), [openQr, id] {
                 openQr(id);
+            }));
+            entries.push_back(ActionMenuItem(app::images::link, Localized("复制链接"), [clipboard, toast, url] {
+                toast.Show(Localized(clipboard->WriteText(url) ? "已复制到剪贴板" : "复制失败"));
             }));
         }
         // 原生 VPN 没有前置操作，只有已有菜单项时才加入分区线。
         if (!entries.empty()) entries.push_back(ActionMenuSection{});
-        entries.push_back(ActionMenuItem(Localized("编辑信息"), [openEditInfo, id] {
+        entries.push_back(ActionMenuItem(app::images::edit, Localized("编辑信息"), [openEditInfo, id] {
             openEditInfo(id);
         }));
         if (!nativeVpn) {
-            entries.push_back(ActionMenuItem(Localized("编辑规则"), [openEditRules, id] {
+            entries.push_back(ActionMenuItem(app::images::route, Localized("编辑规则"), [openEditRules, id] {
                 openEditRules(id);
             }));
-            entries.push_back(ActionMenuItem(Localized("编辑文件"), [openEditFile, id] {
+            entries.push_back(ActionMenuItem(app::images::manual_config, Localized("编辑文件"), [openEditFile, id] {
                 openEditFile(id);
             }));
         }
