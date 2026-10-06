@@ -46,6 +46,7 @@
 #include "proxies_model.h"
 #include "ui.h"
 #include "empty_state.h"
+#include "search_text.h"
 #include "task_bridge.h"
 
 #include "wire_codec.h"
@@ -476,6 +477,7 @@ std::function<void()> NodeSelectAction(
     auto groups = huxerui::UseStateList<ProxyGroup>();
     auto coreState = huxerui::UseState<core::CoreState>(core::CoreState::Stopped);
     auto mode = huxerui::UseState<std::string>("rule");
+    auto proxySearch = huxerui::UseState(huxerui::TextEditingValue{});
     auto sectionMotion = UseSectionTabMotion();
     auto modePending = huxerui::UseState(false);
     auto testGeneration = huxerui::UseState(0);
@@ -707,11 +709,31 @@ std::function<void()> NodeSelectAction(
             (selectedPage && current != nullptr) ? current : &rootGroup;
 
         const std::string contentGroupName = contentGroup->name;
-        const std::size_t nodeCount = contentGroup->nodes.size();
+        const std::string query = proxySearch.Get().text;
+        std::vector<std::size_t> visibleNodes;
+        for (std::size_t index = 0; index < contentGroup->nodes.size(); ++index) {
+            const ProxyNode& node = contentGroup->nodes[index];
+            if (SearchTextMatches(node.name, query) ||
+                SearchTextMatches(node.displayName, query) ||
+                SearchTextMatches(node.type, query) ||
+                SearchTextMatches(node.detail, query)) {
+                visibleNodes.push_back(index);
+            }
+        }
+        const std::size_t nodeCount = visibleNodes.size();
         const std::size_t footerCount = compact ? kCompactFooterItems : 0;
+        if (!query.empty() && nodeCount == 0) {
+            groupPages.push_back(huxerui::Column{
+                EmptyState(Localized("没有匹配的节点"), app::images::search),
+            }.With(huxerui::Grow(1.0F),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+                 .Key("group-page-" + rootGroup.name));
+            continue;
+        }
         huxerui::View grid = huxerui::VirtualGrid(
                                  nodeCount + footerCount,
-                                 [groups, testGeneration, testGroup,
+                                 [groups, visibleNodes = std::move(visibleNodes),
+                                  testGeneration, testGroup,
                                   detailLimit,
                                   tasks, toast, nodeNameLimit, contentGroupName,
                                   nodeCount, compact, proxiesModel,
@@ -725,11 +747,12 @@ std::function<void()> NodeSelectAction(
                                      }
                                      const ProxyGroup* group =
                                          findGroup(groups, contentGroupName);
-                                     if (group == nullptr ||
-                                         index >= group->nodes.size()) {
+                                     if (group == nullptr || index >= nodeCount ||
+                                         visibleNodes[index] >= group->nodes.size()) {
                                          return huxerui::View{};
                                      }
-                                     const ProxyNode& node = group->nodes[index];
+                                     const ProxyNode& node =
+                                         group->nodes[visibleNodes[index]];
                                      const std::string nodeName = node.name;
                                      // 乐观意图优先于模型快照里的 now。
                                      const SelectionIntent pending =
@@ -828,8 +851,11 @@ std::function<void()> NodeSelectAction(
     }
 
     // 出站模式按钮与「代理」标题同处标题行、左右对齐。
+    huxerui::View searchField = PillSearchField(
+        proxySearch, Localized("搜索节点"));
     huxerui::View page = PageScaffold(Localized("代理"), std::move(modeSwitch),
-                                      std::move(content), true, true, true);
+                                      std::move(content), false, true, true,
+                                      std::nullopt, {}, std::move(searchField));
     // 延迟测试按钮统一收在页面右下角：测试当前选中的分组。Compact 下要避开
     // 悬浮底部导航，桌面只留常规外边距。
     if (!direct && current != nullptr) {

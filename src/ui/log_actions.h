@@ -4,9 +4,11 @@
 #include <array>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "action_menu.h"
+#include "search_text.h"
 
 namespace clashflux::ui {
 
@@ -24,10 +26,13 @@ struct LogEntry {
 };
 
 // 导出与可见列表共用级别过滤，按原始顺序保留时间戳与文本。
-inline std::string ExportLogText(const std::vector<LogEntry>& entries, std::size_t filter) {
+inline std::string ExportLogText(const std::vector<LogEntry>& entries,
+                                 std::size_t filter,
+                                 std::string_view query = {}) {
     std::string text;
     for (const auto& entry : entries) {
         if (filter != 0 && entry.level != static_cast<int>(filter)) continue;
+        if (!SearchTextMatches(entry.text, query)) continue;
         text += entry.text;
         text += '\n';
     }
@@ -108,7 +113,7 @@ inline huxerui::View LogMenuPanel(huxerui::PopupContext context, std::size_t sel
                 if (event.type == huxerui::HoverEventType::Enter) openExport();
             }),
         ActionMenuItemView(Localized("清空"), [=] { dismiss(); clear(); },
-            "", {}, true, true, huxerui::ImageResource{"app", "images/clear_all"})
+            "", {}, true, true, huxerui::ImageResource{"app", "images/trash"})
             .On<huxerui::ViewEvents::Hover>([closeChild](const huxerui::HoverEvent& event) {
                 if (event.type == huxerui::HoverEventType::Enter) closeChild();
             }),

@@ -14,6 +14,7 @@
 #include "ui.h"
 #include "empty_state.h"
 #include "page_layout.h"
+#include "search_text.h"
 #include "task_bridge.h"
 
 #include "wire_codec.h"
@@ -141,7 +142,6 @@ void closeAllConnectionsForPlatform() {
     auto totalUp = huxerui::UseState<std::int64_t>(0);
     auto totalDown = huxerui::UseState<std::int64_t>(0);
     auto streamOpen = huxerui::UseState(false);
-    auto searching = huxerui::UseState(false);
     auto searchValue = huxerui::UseState(huxerui::TextEditingValue{""});
     const auto scroll = huxerui::UseScrollController();
 
@@ -205,7 +205,11 @@ void closeAllConnectionsForPlatform() {
 
     std::vector<std::size_t> visibleRows;
     for (std::size_t index = 0; index < rows.Size(); ++index) {
-        if (query.empty() || rows[index].host.find(query) != std::string::npos) {
+        const ConnectionRow& row = rows[index];
+        if (SearchTextMatches(row.host, query) ||
+            SearchTextMatches(row.network, query) ||
+            SearchTextMatches(row.chains, query) ||
+            SearchTextMatches(row.rule, query)) {
             visibleRows.push_back(index);
         }
     }
@@ -288,37 +292,25 @@ void closeAllConnectionsForPlatform() {
                    .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     }
 
-    huxerui::View title = searching.Get()
-        ? PillSearchField(searchValue, Localized("搜索连接"), [searching, searchValue] {
-              searchValue = huxerui::TextEditingValue{""};
-              searching = false;
-          })
-        : huxerui::View{huxerui::Text(Localized("连接"), huxerui::TextRole::Title)};
-    huxerui::View actions = searching.Get()
-        ? huxerui::View{huxerui::Row{}}
-        : huxerui::View{huxerui::Row {
-              huxerui::IconButton(app::images::search, Localized("搜索连接"))
-                  .With(huxerui::Tooltip(Localized("搜索连接")))
-                  .OnClick([searching] { searching = true; }),
-              huxerui::IconButton(app::images::clear_all, Localized("关闭全部"))
-                  .With(huxerui::Tooltip(Localized("关闭全部连接")))
-                  .OnClick([tasks] {
-                    tasks.Launch([=]() -> huxerui::Task<void> {
-                        co_await RunOnTaskThread([] {
-                            closeAllConnectionsForPlatform();
-                        });
-                    });
-                  }),
-          }.With(huxerui::Spacing(6.0F),
-                 huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))};
-    if (!onBack && kPageTitlesInWindow && searching.Get()) {
-        actions = huxerui::View{title}.With(
-            huxerui::Frame{.width = 240.0F}, huxerui::Grow(0.0F));
-    }
+    huxerui::View searchField = PillSearchField(
+        searchValue, Localized("搜索连接"));
+    huxerui::View closeAllButton = huxerui::IconButton(
+        app::images::trash, Localized("关闭全部"))
+        .With(huxerui::Tooltip(Localized("关闭全部连接")))
+        .OnClick([tasks] {
+            tasks.Launch([=]() -> huxerui::Task<void> {
+                co_await RunOnTaskThread([] {
+                    closeAllConnectionsForPlatform();
+                });
+            });
+        });
+    huxerui::View actions = std::move(closeAllButton);
     return onBack
-        ? SecondaryPageScaffold(std::move(title), std::move(actions),
-                                std::move(body), onBack, searching.Get())
-        : PageScaffold(Localized("连接"), std::move(actions), std::move(body), false, false, true);
+        ? SecondaryPageScaffold(std::move(searchField), std::move(actions),
+                                std::move(body), onBack)
+        : PageScaffold(Localized("连接"), std::move(actions), std::move(body),
+                       false, false, true, std::nullopt, {},
+                       std::move(searchField));
 }
 
 } // namespace clashflux::ui

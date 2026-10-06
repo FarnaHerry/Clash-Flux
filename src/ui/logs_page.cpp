@@ -20,6 +20,7 @@
 #include "app_resources.h"
 #include "ui.h"
 #include "empty_state.h"
+#include "search_text.h"
 #include "log_actions.h"
 #include "task_bridge.h"
 
@@ -99,6 +100,7 @@ int levelRank(const std::string& level) {
     auto source = huxerui::UseState<std::size_t>(0);
     auto sectionMotion = UseSectionTabMotion();
     auto filter = huxerui::UseState<std::size_t>(0);
+    auto logSearch = huxerui::UseState(huxerui::TextEditingValue{});
     const auto coreScroll = huxerui::UseScrollController();
     const auto applicationScroll = huxerui::UseScrollController();
 
@@ -171,16 +173,20 @@ int levelRank(const std::string& level) {
         // 每个来源保留自己的过滤列表与滚动连接。
         const auto scroll = page == 0 ? coreScroll : applicationScroll;
         const auto entries = page == 0 ? coreEntries : applicationEntries;
+        const std::string query = logSearch.Get().text;
         std::vector<std::size_t> visible;
         for (std::size_t i = 0; i < entries.Size(); ++i) {
-            if (filter.Get() == 0 ||
-                entries[i].level == static_cast<int>(filter.Get())) {
+            if ((filter.Get() == 0 ||
+                 entries[i].level == static_cast<int>(filter.Get())) &&
+                SearchTextMatches(entries[i].text, query)) {
                 visible.push_back(i);
             }
         }
 
         huxerui::View body = EmptyState(
-            Localized(page == 0 ? "暂无内核日志" : "暂无应用日志"), app::images::logs);
+            Localized(entries.Empty()
+                ? (page == 0 ? "暂无内核日志" : "暂无应用日志")
+                : "没有匹配的日志"), app::images::logs);
 
         if (!visible.empty()) {
             const std::size_t visibleCount = visible.size();
@@ -221,12 +227,12 @@ int levelRank(const std::string& level) {
         [source](const std::string& key) {
             source = key == "application" ? 1 : 0;
         }, sectionMotion);
-    const auto exportText = [source, filter, coreEntries, applicationEntries] {
+    const auto exportText = [source, filter, logSearch, coreEntries, applicationEntries] {
         const auto entries = source.Get() == 0 ? coreEntries : applicationEntries;
         std::vector<LogEntry> snapshot;
         snapshot.reserve(entries.Size());
         for (std::size_t index = 0; index < entries.Size(); ++index) snapshot.push_back(entries[index]);
-        return ExportLogText(snapshot, filter.Get());
+        return ExportLogText(snapshot, filter.Get(), logSearch.Get().text);
     };
     const auto copy = [clipboard, toast, exportText] {
         toast.Show(Localized(clipboard->WriteText(exportText()) ? "已复制到剪贴板" : "复制失败"));
@@ -270,9 +276,13 @@ int levelRank(const std::string& level) {
     }.With(huxerui::Spacing(10.0F), huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
-    if (onBack) return SecondaryPageScaffold(huxerui::Text(Localized("日志"), huxerui::TextRole::Title), std::move(actions),
+    huxerui::View searchField = PillSearchField(
+        logSearch, Localized("搜索日志"));
+    if (onBack) return SecondaryPageScaffold(std::move(searchField), std::move(actions),
                                               std::move(body), onBack, false, true);
-    return PageScaffold(Localized("日志"), std::move(actions), std::move(body), false, true, true);
+    return PageScaffold(Localized("日志"), std::move(actions), std::move(body),
+                        false, true, true, std::nullopt, {},
+                        std::move(searchField));
 }
 
 } // namespace clashflux::ui

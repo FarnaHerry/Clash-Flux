@@ -25,6 +25,7 @@ inline constexpr float kSectionCardSpacing = 8.0F;
 // Shared gap below the desktop title bar for page content and the navigation rail.
 inline constexpr float kDesktopTopContentGap = 4.0F;
 inline constexpr float kDesktopTitleBarHeight = 40.0F;
+inline constexpr float kDesktopTitleBarSearchWidth = 320.0F;
 
 // 桌面图标栏和标题栏 logo 共用几何，保证两者中心线由同一宽度定义。
 inline constexpr float kTopNavigationIndicatorSize = 44.0F;
@@ -344,15 +345,15 @@ huxerui::View PageScaffold(huxerui::StringVariant title, huxerui::View actions,
                            bool fullWidthSections = false,
                            bool windowTitle = false,
                            std::optional<float> contentSpacing = std::nullopt,
-                           huxerui::View leading = {});
+                           huxerui::View leading = {},
+                           huxerui::View titleSearchField = {});
 huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     huxerui::View actions, huxerui::View content,
                                     std::function<void()> onBack,
                                     bool hideBack = false,
                                     bool fullWidthSections = false);
 huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
-                              huxerui::StringVariant placeholder,
-                              std::function<void()> onClose);
+                              huxerui::StringVariant placeholder);
 
 // 卡片容器（二级岛）：raised 表面 + 8pt 圆角 + 内边距。outlined=false 去掉
 // 1pt 描边，仅靠表面层级区分卡片（移动端设置页等无边框场景）。

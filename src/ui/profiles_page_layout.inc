@@ -11,11 +11,18 @@
             profileTypes.push_back(profile.type);
         }
     }
-    // 只给有订阅的类型出标签。
+    const std::string profileQuery = profileSearch.Get().text;
+    const auto matchesProfile = [&profileQuery](const db::Profile& profile) {
+        return SearchTextMatches(profile.name, profileQuery) ||
+               SearchTextMatches(profile.description, profileQuery) ||
+               SearchTextMatches(profile.url, profileQuery) ||
+               SearchTextMatches(profile.type, profileQuery);
+    };
+    // 只给当前搜索结果覆盖到的类型出标签；清空搜索后恢复完整类型集合。
     std::vector<std::string> visibleTypes;
     for (const std::string& type : profileTypes) {
-        const auto hasType = [&type](const db::Profile& profile) {
-            return profile.type == type;
+        const auto hasType = [&type, &matchesProfile](const db::Profile& profile) {
+            return profile.type == type && matchesProfile(profile);
         };
         if (std::any_of(profiles.begin(), profiles.end(), hasType)) {
             visibleTypes.push_back(type);
@@ -49,7 +56,9 @@
         const std::string& type = visibleTypes[page];
         std::vector<std::size_t> typeIndices;
         for (std::size_t index = 0; index < profiles.Size(); ++index) {
-            if (profiles[index].type == type) typeIndices.push_back(index);
+            if (profiles[index].type == type && matchesProfile(profiles[index])) {
+                typeIndices.push_back(index);
+            }
         }
         const std::size_t typeCount = typeIndices.size();
         huxerui::View grid = huxerui::VirtualGrid(
@@ -111,10 +120,12 @@
             .Key("type-page-" + type));
     }
 
-    huxerui::View profileBody = SectionTabPages(typePages, selectedType,
-        [activeType, visibleTypes](std::size_t index) {
-            if (index < visibleTypes.size()) activeType = visibleTypes[index];
-        }, sectionMotion);
+    huxerui::View profileBody = visibleTypes.empty()
+        ? EmptyState(Localized("没有匹配的订阅"), app::images::search)
+        : SectionTabPages(typePages, selectedType,
+            [activeType, visibleTypes](std::size_t index) {
+                if (index < visibleTypes.size()) activeType = visibleTypes[index];
+            }, sectionMotion);
     if (!typeTabs.empty()) {
         profileBody = huxerui::Column {
             SectionTabBar(typeTabs, currentType,
@@ -178,6 +189,8 @@
         OpenProfileCreate(compact, createPageOpen, tasks, showCreateDialog);
     };
 
+    huxerui::View profileSearchField = PillSearchField(
+        profileSearch, Localized("搜索订阅"));
     huxerui::View profileListPage = PageScaffold(
         Localized("订阅"),
         huxerui::Row {
@@ -189,7 +202,7 @@
         profiles.Empty()
             ? EmptyState(Localized("还没有订阅。点击右上角「新建订阅」导入。"), app::images::request)
             : std::move(profileBody),
-        true, true, true);
+        false, true, true, std::nullopt, {}, std::move(profileSearchField));
 
     // IndexedPages 要求每一页都是挂载节点；平台函数负责 Android 编辑页是否
     // 存在，ProfilesPage 只提交同一份表单状态。

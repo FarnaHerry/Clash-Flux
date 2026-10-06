@@ -31,6 +31,7 @@
 
 #include "ui.h"
 #include "empty_state.h"
+#include "search_text.h"
 #include "app_resources.h"
 #include "task_bridge.h"
 #include "profile_import_task.h"
@@ -73,6 +74,7 @@ namespace clashflux::ui {
     // 当前选中的类型分区标签（remote/local/pptp/openvpn/…）；无效或为空时
     // 回落到第一个有订阅的类型。
     auto activeType = huxerui::UseState<std::string>("");
+    auto profileSearch = huxerui::UseState(huxerui::TextEditingValue{});
     auto sectionMotion = UseSectionTabMotion();
     // ---- 新建订阅弹窗 ----
     auto newName = huxerui::UseState(huxerui::TextEditingValue{""});
