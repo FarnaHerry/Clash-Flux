@@ -30,6 +30,7 @@
 import clashflux.config;
 import clashflux.cli;
 import clashflux.cli_ipc;
+import clashflux.core;
 import clashflux.db;
 import clashflux.store.core;
 import clashflux.store.profiles;
@@ -618,15 +619,62 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
     const huxerui::ThemeSpec& spec, ProfilesCache profilesCache) {
     static_cast<void>(islands);
     const auto model = huxerui::UseState(std::make_shared<DesktopSettingsNavigationModel>()).Get();
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const auto coreModel = huxerui::UseService<CoreModel>();
+    const CoreView coreView = coreModel->view.Get();
+    huxerui::Color coreStatusColor = theme.colors.on_surface_variant;
+    huxerui::StringVariant coreStatusLabel = Localized("内核已停止");
+    switch (coreView.core.state) {
+    case core::CoreState::Running:
+        coreStatusColor = theme.colors.primary;
+        coreStatusLabel = LocalizedFormat(
+            "内核运行中 · {}", coreView.core.version.empty()
+                                  ? std::string{"sing-box"}
+                                  : coreView.core.version);
+        break;
+    case core::CoreState::Starting:
+        coreStatusColor = SemanticWarningColor(theme);
+        coreStatusLabel = Localized("内核启动中");
+        break;
+    case core::CoreState::Failed:
+        coreStatusColor = theme.colors.error;
+        coreStatusLabel = Localized("内核启动失败");
+        break;
+    case core::CoreState::Stopped:
+        break;
+    }
     const std::size_t desktopActivePage = navPage.Get();
-    huxerui::View sidebarLogo = huxerui::Image(
+    huxerui::View logoArt = huxerui::Image(
         IsDarkTheme(spec) ? app::images::clash_flux_logo_vector_dark_refined
                          : app::images::clash_flux_logo_vector_light_refined)
-        .Fit(huxerui::ImageFit::Contain);
+        .Fit(huxerui::ImageFit::Contain)
+        .With(huxerui::Frame{.width = 32.0F, .height = 32.0F});
+    huxerui::View coreStatusDot = huxerui::Stack{}.With(
+        huxerui::Frame{.width = 9.0F, .height = 9.0F},
+        huxerui::Background(coreStatusColor),
+        huxerui::Border{theme.colors.background, 1.5F},
+        huxerui::CornerRadius(4.5F));
+    huxerui::View logoStatusPlacement = huxerui::Column {
+        huxerui::Row {
+            huxerui::Spacer(),
+            std::move(coreStatusDot),
+        }.With(huxerui::Frame{.height = 11.0F},
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        huxerui::Spacer(),
+    }.With(huxerui::Frame{.width = 32.0F, .height = 32.0F},
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    huxerui::View sidebarLogo = huxerui::Stack {
+        std::move(logoArt),
+        std::move(logoStatusPlacement),
+    }.With(huxerui::Frame{.width = 32.0F, .height = 32.0F},
+           huxerui::Tooltip(coreStatusLabel),
+           huxerui::Semantics{.role = huxerui::SemanticRole::Image,
+                              .label = huxerui::UseString(coreStatusLabel)})
+        .Key("desktop-brand-logo");
     huxerui::View sidebar = huxerui::Row {
         huxerui::Column{
             huxerui::Row{
-                std::move(sidebarLogo).With(huxerui::Frame{.width = 32.0F, .height = 32.0F}),
+                std::move(sidebarLogo),
             }.With(huxerui::Frame{.height = kDesktopTitleBarHeight},
                    huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),

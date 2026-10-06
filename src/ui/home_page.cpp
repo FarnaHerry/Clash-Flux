@@ -93,7 +93,6 @@ constexpr HomeCardSpec kHomeCards[] = {
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
     {HomeCardKind::Vpn, "vpn", "隧道状态", 1, 2},
 };
-constexpr std::string_view kDefaultCoreName = "sing-box libbox";
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     AndroidHomePlatformCard(homeState, kind)
 #define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact) \
@@ -115,7 +114,6 @@ constexpr HomeCardSpec kHomeCards[] = {
     {HomeCardKind::Proxy, "proxy", "系统代理", 1, 1},
     {HomeCardKind::Tun, "tun", "TUN 模式", 1, 1},
 };
-constexpr std::string_view kDefaultCoreName = "sing-box";
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     DesktopHomePlatformCard(kind)
 #define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact) \
@@ -878,44 +876,6 @@ private:
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-// 内核状态文字：标题行状态图标的提示文本（内核状态不再单独占一张卡片）。
-huxerui::StringVariant HomeKernelStatusText(const HomeState& s) {
-    switch (s.core.state) {
-    case core::CoreState::Running:
-        return LocalizedFormat("内核运行中 · {}", s.core.version.empty()
-                                                       ? std::string{kDefaultCoreName}
-                                                       : s.core.version);
-    case core::CoreState::Stopped: return Localized("内核已停止");
-    case core::CoreState::Starting: return Localized("内核启动中");
-    case core::CoreState::Failed: return Localized("内核启动失败");
-    }
-    return Localized("内核状态未知");
-}
-
-// 标题行内核状态图标（放在编辑按钮之前）：运行中主色、启动中琥珀、失败错误色、
-// 未运行次级色；详细状态走 Tooltip。
-[[huxerui::composable]] huxerui::View HomeKernelStatusIcon(
-    huxerui::State<HomeState> state) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const HomeState& s = state.Get();
-    huxerui::Color color = theme.colors.on_surface_variant;
-    if (s.core.state == core::CoreState::Running) {
-        color = theme.colors.primary;
-    } else if (s.core.state == core::CoreState::Starting) {
-        color = SemanticWarningColor(theme);
-    } else if (s.core.state == core::CoreState::Failed) {
-        color = theme.colors.error;
-    }
-    return huxerui::Image(app::images::bolt)
-        .Fit(huxerui::ImageFit::Contain)
-        .Tint(color)
-        .With(huxerui::Frame{.width = 20.0F, .height = 20.0F},
-              huxerui::Tooltip(HomeKernelStatusText(s)),
-              huxerui::Semantics{.role = huxerui::SemanticRole::Image,
-                                 .label = huxerui::UseString(
-                                     HomeKernelStatusText(s))});
-}
-
 // ---- 平台专属卡片（整个函数由编译宏在调用点选择）---------------------------
 
 #if defined(__ANDROID__)
@@ -1505,13 +1465,11 @@ huxerui::StringVariant HomeKernelStatusText(const HomeState& s) {
     }.With(huxerui::Spacing(kHomeGridGap),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
-    // 标题行右缘只剩内核状态图标：首页布局固定，不再有编辑/保存入口。
+    // 首页标题栏不重复展示内核状态；状态统一显示在左侧品牌 Logo。
     huxerui::View headerActions = huxerui::Row {
         // 运行态泵是空 View（无布局），挂在这里即可让它内部的 Lifecycle 注册。
         std::move(runtimePump),
-        HomeKernelStatusIcon(state),
-    }.With(huxerui::Spacing(4.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    };
 
     // 注意：首页不要在滚动内容里声明 Focusable(true)——运行时会自动把初始
     // 焦点所在的节点滚入视野，导致首页一打开就被滚到中途（且随后每次重组都可能

@@ -598,7 +598,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                                                    bool fullWidthSections,
                                                    bool windowTitle,
                                                    std::optional<float> contentSpacing,
-                                                   huxerui::View leading) {
+                                                   huxerui::View leading,
+                                                   huxerui::View titleSearchField) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     // 响应式：Compact(<600) 收窄一级岛内边距。
@@ -614,16 +615,34 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             SectionTabContentInsets{kSectionCardSpacing}, desktopBody);
         desktopBody = huxerui::ProvideEnvironment(
             SectionTabPickerInsets{kDesktopTitleBarHeight + 1.0F}, std::move(desktopBody));
+        huxerui::View titleBarContent = huxerui::Row{
+            PageTitleText(theme, title).With(huxerui::Padding(huxerui::EdgeInsets{
+                .left = leading ? 0.0F : kDesktopPageHorizontalInset})),
+            huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
+            huxerui::Row{actions}.With(
+                huxerui::Padding(huxerui::EdgeInsets{.right = 8.0F}),
+                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        }.With(huxerui::Grow(1.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+        if (titleSearchField) {
+            titleBarContent = huxerui::Stack{
+                std::move(titleBarContent),
+                huxerui::Row{
+                    huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
+                    huxerui::View{titleSearchField}.With(
+                        huxerui::Frame{.width = kDesktopTitleBarSearchWidth},
+                        huxerui::Grow(0.0F)),
+                    huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
+                }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+            }.With(huxerui::Grow(1.0F),
+                   huxerui::Align(huxerui::HorizontalAlignment::Stretch,
+                                  huxerui::VerticalAlignment::Stretch));
+        }
         return huxerui::Column{
             huxerui::WindowTitleBar{
                 huxerui::Row{leading}.With(huxerui::Padding(huxerui::EdgeInsets{
                     .left = leading ? kDesktopPageHorizontalInset : 0.0F})),
-                PageTitleText(theme, title).With(huxerui::Padding(huxerui::EdgeInsets{
-                    .left = leading ? 0.0F : kDesktopPageHorizontalInset})),
-                huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
-                huxerui::Row{actions}.With(
-                    huxerui::Padding(huxerui::EdgeInsets{.right = 8.0F}),
-                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+                std::move(titleBarContent),
             }.With(huxerui::Frame{.height = kDesktopTitleBarHeight}, huxerui::Spacing(0.0F)),
             huxerui::Row{}.With(huxerui::Frame{.height = 1.0F},
                                 huxerui::Background(theme.colors.outline)),
@@ -638,7 +657,9 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     }
     static_cast<void>(windowTitle);
     // Compact 共用页内标题与动作；桌面窗口控件由外壳独立保留。
-    huxerui::View titleView = PageTitleText(theme, title);
+    huxerui::View titleView = titleSearchField
+        ? huxerui::View{titleSearchField}
+        : PageTitleText(theme, title);
     if (leading) titleView = huxerui::Row{leading, titleView}.With(
         huxerui::Spacing(theme.spacing.small),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
@@ -719,8 +740,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 
 [[huxerui::composable]] huxerui::View PillSearchField(
     huxerui::State<huxerui::TextEditingValue> value,
-    huxerui::StringVariant placeholder,
-    std::function<void()> onClose) {
+    huxerui::StringVariant placeholder) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     huxerui::TextFieldStyle inputStyle = huxerui::UseEnvironment<huxerui::TextFieldStyle>();
     inputStyle.border_width = 0.0F;
@@ -746,9 +766,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             })
             .With(huxerui::Grow(1.0F)));
 
-    // 胶囊体内容：搜索图标、无框输入文本框、退出搜索按钮。
-    auto closeAction = onClose;
-    huxerui::View pillContent = huxerui::Row {
+    // 胶囊体内容：搜索图标、无框输入文本框，输入后显示清空按钮。
+    std::vector<huxerui::View> pillChildren{
         huxerui::Image(app::images::search)
             .Fit(huxerui::ImageFit::Contain)
             .Align(huxerui::HorizontalAlignment::Center,
@@ -756,10 +775,15 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             .Tint(theme.colors.on_surface_variant)
             .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
         std::move(input),
-        huxerui::IconButton(app::images::close, Localized("退出搜索"))
-            .With(huxerui::Tooltip(Localized("退出搜索")))
-            .OnClick(std::move(onClose)),
-    }.With(huxerui::Spacing(6.0F),
+    };
+    if (!value.Get().text.empty()) {
+        pillChildren.push_back(
+            huxerui::IconButton(app::images::close, Localized("清除搜索"))
+                .With(huxerui::Tooltip(Localized("清除搜索")))
+                .OnClick([value] { value = huxerui::TextEditingValue{}; }));
+    }
+    huxerui::View pillContent = huxerui::Row(std::move(pillChildren)).With(
+           huxerui::Spacing(6.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
            huxerui::Grow(1.0F));
 
@@ -777,12 +801,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
            huxerui::Grow(1.0F));
 
-    // 吸收系统返回事件：收到系统返回指令相当于触发退出搜索（叉号）。
-    if (closeAction) {
-        pill = std::move(pill).On<huxerui::ViewEvents::BackRequested>(
-            std::move(closeAction));
-    }
-    return pill;
+    return std::move(pill).Key("pill-search-field");
 }
 
 [[huxerui::composable]] huxerui::View Card(huxerui::View content,
