@@ -131,7 +131,7 @@ cmake --build build --target clash-flux
 ./run.sh --version
 ```
 
-二级标签内容使用框架 Pager；源码配置会自动应用反向切换与隐藏虚拟页测量补丁，所有 CI 平台同步应用。
+二级标签内容使用框架 Pager；反向切换与隐藏虚拟页测量修复已包含在所用 fork 的固定提交中，所有 CI 平台共用同一版本。
 详见 [UI 开发约定](docs/ui-development.md)。
 
 命名模块的小函数需区分显式 inline 与优化器展开，检查时核对 Debug/Release 参数；
@@ -310,7 +310,8 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 统一走 HuxerUI 源码通道，从 [FarnaHerry/HuxerUI](https://github.com/FarnaHerry/HuxerUI) 的
 `farna/main` 检出经验证的固定 SHA；Linux、Windows、macOS、Android 和 iOS Simulator
 共用 `.github/workflows/build.yml` 的 `HUXERUI_COMMIT`。框架补丁集中维护在 fork，
-`main` 保留官方基线；独立的 Lib-Camera、Lib-Charts、Lib-SQLite 补丁继续由 CMake 应用。
+`main` 保留官方基线；Lib-Camera、Lib-Charts、Lib-SQLite 也从各自 `FarnaHerry` fork 的
+`farna/main` 按固定 SHA 获取，原生构建与 Android 库图共用同一依赖身份。
 本地检出、补丁归属与升级流程见 [HuxerUI fork](docs/huxerui-fork.md)。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
@@ -318,7 +319,7 @@ Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 修复/卸载；界面字符串含简中/繁中/英文）。GitHub Release 的 Windows 归档中同时
 包含 `clash-flux-Setup-<版本>.exe` 安装包和便携版文件。
 
-启动时在首帧构建前同步、只读地读取保存的主题，避免默认主题切换闪烁；其余设置与订阅仍异步加载。Lib-SQLite 启动只读补丁由 CMake 在加入依赖前自动应用，详见 [UI 开发约定](docs/ui-development.md)。
+启动时在首帧构建前同步、只读地读取保存的主题，避免默认主题切换闪烁；其余设置与订阅仍异步加载。Lib-SQLite 启动只读查询已合入所用 fork 的固定提交，详见 [UI 开发约定](docs/ui-development.md)。
 
 ASN 规则以完整 ipverse IPv4/IPv6 公告网段快照转换，标为近似，数据缺失时拒绝候选并保留旧订阅。
 MRS 使用 vendored Zstandard 1.5.7 静态解码，无需额外安装系统库；固定归档 SHA256 由 CMake 校验。

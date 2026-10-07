@@ -42,15 +42,16 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   `/home/farna/dev/cpp/mcpp/HuxerUI-fork`；`main` 保留官方基线，更新通过 merge 上游进入集成分支。
   Clash-Flux 使用独立的 `third_party/huxerui` checkout，CI 与本机固定到同一经验证 SHA，
   不直接消费可变维护工作树。升级流程见 `docs/huxerui-fork.md`。
-  Lib-Charts、Lib-SQLite、Lib-Camera 等独立依赖的未合入修复仍维护在 `cmake/patches/`，
-  在 CMake 加入依赖前应用；不要重复给集成框架打已合入的补丁。
-- 固定的 HuxerUI Lib-Charts 尚无饼图；Clash-Flux 的 `PieChartData` / `PieChart` 扩展由
-  `cmake/patches/huxerui-lib-charts-pie-chart.patch` 维护，必须在 CMake 加入该依赖前应用；
-  升级 Lib-Charts 时核对上游 API，并在饼图已上游实现后移除本地补丁。
+  Lib-Charts、Lib-SQLite、Lib-Camera 的修复也集中维护在各自 `FarnaHerry` fork 的
+  `farna/main`，独立维护目录为 `/home/farna/dev/cpp/mcpp/HuxerUI-libs`。应用通过
+  `huxerui_use_library(URL, COMMIT)` 获取固定 SHA，不自动消费本地可变 clone，
+  不在 CMake 或 CI 重复打已合入的框架/扩展补丁。
+- `PieChartData` / `PieChart` 与紧凑图表高度由 Lib-Charts fork 维护；升级固定 SHA 时
+  核对上游 API 并验证首页图表，不能丢失这些已采用的行为。
 - 同步 HuxerUI 时先在独立维护仓库 fetch 上游最新 revision，逐项审查集成差异，再 merge 到
   `farna/main`，不 rebase 或 force push。已被上游修复的差异不再保留；应用完成构建和回归后
-  才更新固定 SHA，所有 CI 平台统一使用该 SHA。独立依赖保留补丁须针对其固定 revision
-  通过 `git apply --check --unidiff-zero`，并接入所有适用平台。
+  才更新固定 SHA，所有 CI 平台统一使用该 SHA。扩展库采用相同的维护与升级流程，
+  固定 SHA 由 CMake 统一声明，原生构建与 Android 库图必须使用同一 URL/COMMIT 身份。
 - **iOS 当前按 TODO 暂缓，不承诺支持或发布**：iOS CI 用固定 HuxerUI revision 和 iOS Simulator SDK 编译 Clash-Flux app 与 Packet Tunnel
   extension，并从与 Android 相同的 sing-box revision 构建 iOS device/Simulator
   `Libbox.xcframework`。这仍是非阻塞编译检查：只生成未签名 Simulator 构建，不生成 IPA，
@@ -327,8 +328,8 @@ Medium/Expanded 右侧）展示分组抽屉，不按桌面/手机平台硬编码
 其余设置等待 SettingsModel ready 后使用；启动内核等慢操作要等模型 ready，不扩大同步读取范围。
 该读取使用临时只读连接，不创建文件、不迁移 schema、不改 journal、不 hydrate 或修改订阅缓存；
 读取失败明确终止启动并保留原库。运行期仍从 SettingsModel 读取，订阅与其它设置仍由原 ORM
-启动任务 hydrate。同步读取 API 由 `cmake/patches/huxerui-lib-sqlite-startup-read.patch` 维护，
-CMake 在所有平台加入 SQLite 依赖前幂等应用，本地源码与固定 revision 下载均适用；升级时校验。
+启动任务 hydrate。同步读取 API 由 Lib-SQLite fork 的 `farna/main` 维护，所有平台
+使用 CMake 声明的同一固定 SHA；升级时验证只读、无文件创建、无迁移和失败保留行为。
 
 ### JSON codec 边界
 

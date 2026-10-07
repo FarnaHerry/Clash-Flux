@@ -1,6 +1,0 @@
-diff --git a/src/chart_view.cpp b/src/chart_view.cpp
---- a/src/chart_view.cpp
-+++ b/src/chart_view.cpp
-@@ -948 +948 @@ View BuildChart(std::shared_ptr<const Config> config) {
--            Frame{.min_width = 240.0F, .min_height = 180.0F})
-+            Frame{.min_width = 240.0F, .min_height = 96.0F})

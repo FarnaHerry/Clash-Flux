@@ -173,7 +173,7 @@ cmake --build build --target clash-flux
 ```
 
 Section content uses the framework Pager for direct dragging, rebound, and retained scroll positions.
-Source builds automatically apply the Pager retargeting and hidden virtual page layout patches; all CI platforms apply them as well.
+Pager retargeting and hidden virtual page layout fixes are included in the pinned framework fork; all CI platforms use that same revision.
 See [UI development notes](docs/ui-development.md).
 
 For small named-module functions, distinguish explicit inline semantics from optimizer
@@ -411,9 +411,10 @@ Core asset SHA256 hashes are pinned in `cmake/singbox_bundle.cmake`, with automa
 downloads during configuration. All platforms consume the same tested commit SHA from
 [FarnaHerry/HuxerUI](https://github.com/FarnaHerry/HuxerUI)'s `farna/main`, pinned by
 `HUXERUI_COMMIT` in `.github/workflows/build.yml`. Framework fixes are maintained in
-that integration branch; `main` remains the official upstream baseline. CMake still
-applies the independent Lib-Camera, Lib-Charts and Lib-SQLite patches before adding
-those libraries. See [HuxerUI fork maintenance](docs/huxerui-fork.md) for local
+that integration branch; `main` remains the official upstream baseline. Lib-Camera,
+Lib-Charts and Lib-SQLite also use pinned commits from their `FarnaHerry` forks'
+`farna/main` branches, with the same URL/COMMIT identities in native builds and the
+Android library graph. See [HuxerUI fork maintenance](docs/huxerui-fork.md) for local
 checkout, patch ownership and upgrade instructions.
 
 Windows packaging with `huxerui package windows` creates a `setup.exe` with an
@@ -422,7 +423,7 @@ destination selection, desktop shortcuts, repair and uninstall. The installer
 supports Simplified Chinese, Traditional Chinese and English. GitHub Release
 Windows archives include both `clash-flux-Setup-<version>.exe` and portable files.
 
-The saved theme is read synchronously through a temporary read-only connection before the first frame is built. Other settings and subscriptions still load asynchronously. CMake applies the Lib-SQLite startup query patch before adding the dependency; see [UI development](docs/ui-development.md).
+The saved theme is read synchronously through a temporary read-only connection before the first frame is built. Other settings and subscriptions still load asynchronously. The Lib-SQLite startup query is included in the pinned fork commit; see [UI development](docs/ui-development.md).
 
 ASN rules expand a complete ipverse IPv4/IPv6 announcement snapshot and are recorded as approximate.
 Missing data rejects the candidate while preserving existing subscriptions. MRS decoding statically links
