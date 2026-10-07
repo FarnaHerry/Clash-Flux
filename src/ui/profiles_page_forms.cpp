@@ -245,6 +245,22 @@ huxerui::View ProfilePlatformOptions(
 // 仍由调用方使用 Dialog。表单 State 由 ProfilesPage 持有，页面与弹窗共用一份
 // 数据和保存逻辑。
 
+huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
+                                  std::function<void()> onImport) {
+    if (importing) {
+        return huxerui::Row{
+            huxerui::ProgressCircle().With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
+        }.With(huxerui::Frame{.width = 40.0F, .height = 40.0F},
+               huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
+            .Key("profile-create-progress");
+    }
+    return huxerui::IconButton(app::images::add, label)
+        .With(huxerui::Tooltip(label), huxerui::Frame{.width = 40.0F, .height = 40.0F})
+        .OnClick(std::move(onImport))
+        .Key("profile-create-submit");
+}
+
 [[huxerui::composable]] huxerui::View ProfileCreatePage(
     ProfileCreateFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
@@ -383,19 +399,10 @@ huxerui::View ProfilePlatformOptions(
                   fields.auto_update, fields.system_proxy, fields.core_proxy,
                   fields.invalid_cert)};
 
-    return PageScaffold(
-        Localized("新建订阅"),
-        huxerui::Row {
-            huxerui::IconButton(app::images::arrow_back, Localized("返回"))
-                .With(huxerui::Tooltip(Localized("返回订阅列表")))
-                .OnClick(on_back),
-            fields.importing.Get()
-                ? huxerui::View{huxerui::ProgressCircle().With(
-                      huxerui::Frame{.width = 20.0F, .height = 20.0F})}
-                : huxerui::View{huxerui::IconButton(app::images::add, Localized("导入订阅"))
-                                    .With(huxerui::Tooltip(Localized("导入订阅")))
-                                    .OnClick(importProfile)},
-        }.With(huxerui::Spacing(8.0F)),
+    return SecondaryPageScaffold(
+        huxerui::Text(Localized("新建订阅"), huxerui::TextRole::Title)
+            .Key("profile-create-title"),
+        ProfileImportAction(fields.importing.Get(), Localized("导入订阅"), importProfile),
         huxerui::ScrollView(
             huxerui::Column {
                 Card(huxerui::Column {
@@ -418,14 +425,15 @@ huxerui::View ProfilePlatformOptions(
                 CompactFloatingNavigationFooter(),
             }.With(huxerui::Spacing(12.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
-        ).With(huxerui::Grow(1.0F)));
+        ).With(huxerui::Grow(1.0F)), std::move(on_back), false, false, true);
 }
 
 [[huxerui::composable]] huxerui::View ProfileFlowPage(
     huxerui::View title, huxerui::View actions, huxerui::View content,
-    std::function<void()> on_back) {
+    std::function<void()> on_back, bool centerTitle = false) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    return SecondaryPageScaffold(title, actions, content, std::move(on_back))
+    return SecondaryPageScaffold(title, actions, content, std::move(on_back),
+                                 false, false, centerTitle)
         .With(ProfileSecondaryTransition(theme.motion));
 }
 
@@ -882,7 +890,7 @@ void PushProfileQrScanner(
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
         .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     return ProfileFlowPage(huxerui::Text(Localized("添加配置"), huxerui::TextRole::Title),
-                            huxerui::View{}, std::move(content), on_back)
+                            huxerui::View{}, std::move(content), on_back, true)
         .With(huxerui::Semantics{.role = huxerui::SemanticRole::Navigation,
                                  .label = huxerui::UseString(
                                      Localized("添加配置"))});
@@ -1141,13 +1149,6 @@ void PushProfileQrScanner(
                                  name = value;
                              }));
     if (hasCommonFields) formFields.push_back(std::move(commonFields));
-    formFields.push_back(
-        fields.importing.Get()
-            ? huxerui::View{huxerui::ProgressCircle().With(
-                  huxerui::Frame{.width = 28.0F, .height = 28.0F})}
-            : huxerui::View{huxerui::Button(Localized("导入配置"))
-                                .With(huxerui::Grow(1.0F))
-                                .OnClick(import_profile)});
     formFields.push_back(CompactFloatingNavigationFooter());
     const huxerui::StringVariant title = Localized(
         method == ProfileAddMethod::Qr ? "扫码导入"
@@ -1160,8 +1161,9 @@ void PushProfileQrScanner(
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
                                 .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     return ProfileFlowPage(huxerui::Text(title, huxerui::TextRole::Title),
-                           huxerui::View{}, std::move(content),
-                           std::move(on_back));
+                           ProfileImportAction(fields.importing.Get(), Localized("导入配置"), import_profile),
+                           std::move(content),
+                           std::move(on_back), true);
 }
 
 [[huxerui::composable]] huxerui::View ProfileLinkImportPage(

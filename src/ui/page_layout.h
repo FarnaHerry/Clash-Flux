@@ -31,13 +31,15 @@ inline huxerui::View PageTitleText(const huxerui::ThemeSpec& theme,
 }
 
 inline huxerui::View PageHeaderLayout(const huxerui::ThemeSpec& theme,
-    huxerui::View title, huxerui::View actions, bool stackedActions) {
+    huxerui::View title, huxerui::View actions, bool stackedActions,
+    bool expandTitle = false) {
     if (!title) {
         if (!actions) return {};
         return huxerui::Row{huxerui::Spacer(), std::move(actions)}
             .With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
             .Key("page-actions");
     }
+    if (expandTitle) title = std::move(title).With(huxerui::Grow(1.0F));
     if (stackedActions) {
         return huxerui::Column{
             huxerui::Row{std::move(title)}.With(
@@ -48,11 +50,38 @@ inline huxerui::View PageHeaderLayout(const huxerui::ThemeSpec& theme,
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
             .Key("page-header");
     }
+    if (expandTitle) {
+        // Spacer 默认也会增长；搜索标题行不让它分走输入框的可用宽度。
+        return huxerui::Row{std::move(title), std::move(actions)}
+            .With(huxerui::Frame{.min_height = kPageHeaderHeight},
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
+            .Key("page-header");
+    }
     return huxerui::Row{
         std::move(title), huxerui::Spacer(), std::move(actions),
     }.With(huxerui::Frame{.min_height = kPageHeaderHeight},
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
         .Key("page-header");
+}
+
+inline huxerui::View CenteredPageHeader(const huxerui::ThemeSpec& theme,
+    huxerui::View title, huxerui::View leading, huxerui::View trailing) {
+    const auto actionSlot = [](huxerui::View action) {
+        return huxerui::Row{std::move(action)}
+            .With(huxerui::Frame{.width = 40.0F, .height = 40.0F},
+                  huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    };
+    return huxerui::Row{
+        actionSlot(std::move(leading)),
+        huxerui::Row{std::move(title)}.With(huxerui::Grow(1.0F),
+            huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        actionSlot(std::move(trailing)),
+    }.With(huxerui::Frame{.min_height = kPageHeaderHeight},
+           huxerui::Spacing(theme.spacing.small),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
+        .Key("centered-page-header");
 }
 
 } // namespace clashflux::ui

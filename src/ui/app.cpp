@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <string>
 #include <vector>
 #include <variant>
@@ -349,6 +350,8 @@ struct AndroidNavigationIndicator {
 
     std::size_t selected_index = 0;
     huxerui::Color fill = huxerui::Color::Transparent();
+    huxerui::AnimationSpec animation = huxerui::TweenSpec{0.2};
+    bool reduced_motion = false;
 
     bool operator==(const AndroidNavigationIndicator&) const = default;
 };
@@ -368,6 +371,8 @@ public:
             selected_index_ != spec.selected_index;
         selected_index_ = spec.selected_index;
         fill_ = spec.fill;
+        animation_ = spec.animation;
+        reduced_motion_ = spec.reduced_motion;
         initialized_ = true;
     }
 
@@ -389,20 +394,31 @@ public:
             return PaintInvalidation::None;
         }
         const huxerui::ViewNode& selected = node.ChildAt(selected_index_);
+        const float width = std::clamp(selected.LayoutSize().width - 12.0F,
+                                       0.0F, 76.0F);
+        const float y = selected.LayoutOffset().y +
+                        (selected.LayoutSize().height - 50.0F) * 0.5F;
         const float target = selected.LayoutOffset().x +
-                             (selected.LayoutSize().width - kIndicatorWidth) *
+                             (selected.LayoutSize().width - width) *
                                  0.5F;
+        const bool resized = viewport_width_ != node.LayoutSize().width;
+        const bool shape_changed = indicator_width_ != width || indicator_y_ != y;
+        viewport_width_ = node.LayoutSize().width;
+        indicator_width_ = width;
+        indicator_y_ = y;
         geometry_pending_ = false;
-        if (!geometry_initialized_) {
+        // 首帧、缩放和减少动态效果时直接定位，避免旧宽度的轨道越过新槽位。
+        if (!geometry_initialized_ || resized || reduced_motion_) {
+            const bool changed = !geometry_initialized_ || shape_changed ||
+                                 offset_.Value() != target;
             geometry_initialized_ = true;
             offset_.Set(target);
-            return PaintInvalidation::Content;
+            return changed ? PaintInvalidation::Content : PaintInvalidation::None;
         }
         if (offset_.Target() == target) {
-            return PaintInvalidation::None;
+            return shape_changed ? PaintInvalidation::Content : PaintInvalidation::None;
         }
-        offset_.AnimateTo(
-            target, huxerui::TweenSpec{0.24, huxerui::Easing::EaseOut});
+        offset_.AnimateTo(target, animation_);
         return PaintInvalidation::Content;
     }
 
@@ -410,15 +426,19 @@ public:
                             huxerui::PaintContext& context) const override {
         if (!geometry_initialized_ || fill_.alpha <= 0.0F) return;
         context.DrawRect(
-            huxerui::Rect{offset_.Value(), 4.0F, kIndicatorWidth, 56.0F},
-            fill_, 30.0F);
+            huxerui::Rect{offset_.Value(), indicator_y_, indicator_width_, 50.0F},
+            fill_, 25.0F);
     }
 
 private:
-    static constexpr float kIndicatorWidth = 88.0F;
     std::size_t selected_index_ = 0;
     huxerui::Color fill_ = huxerui::Color::Transparent();
     huxerui::MotionController offset_;
+    huxerui::AnimationSpec animation_ = huxerui::TweenSpec{0.2};
+    bool reduced_motion_ = false;
+    float viewport_width_ = 0.0F;
+    float indicator_width_ = 0.0F;
+    float indicator_y_ = 0.0F;
     bool initialized_ = false;
     bool geometry_initialized_ = false;
     bool geometry_pending_ = false;
@@ -437,7 +457,8 @@ private:
 // 内建 NavigationBar 的指示器只覆盖图标层，所以这里自绘条目；同时保留底部
 // 安全区消费与系统导航栏底色，行为对齐原先的内建组件。
 [[huxerui::composable]] huxerui::View AndroidNavigationSurface(
-    huxerui::State<std::size_t> navPage) {
+    huxerui::State<std::size_t> navPage, bool fromSwipe = false,
+    std::function<void()> onSelect = {}) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const std::size_t selected = navPage.Get() == pages::kHome
         ? 0U
@@ -446,58 +467,52 @@ private:
 
     std::vector<huxerui::View> entries;
     entries.reserve(kAndroidNavDestinations.size());
-
-    // 点击/悬停反馈的几何与选中胶囊完全一致（88×56、圆角 30）：默认指示层
-    // 会按条目方框铺满，点按时能看到直角方框。
-    huxerui::Color stateHover = theme.colors.on_surface;
-    stateHover.alpha = 0.08F;
-    huxerui::Color statePress = theme.colors.on_surface;
-    statePress.alpha = 0.14F;
-    const huxerui::Indication itemIndication{
-        .geometry = huxerui::IndicationGeometry{
-            .layer_size = huxerui::Size{88.0F, 56.0F},
-            .clip_corner_radii = huxerui::CornerRadii{30.0F},
-        },
-        .hover = huxerui::IndicationLayer{.fill = stateHover},
-        .press = huxerui::IndicationLayer{.fill = statePress},
-    };
+    const double duration = theme.motion.reduced_motion ? 0.0 : 0.2;
+    const huxerui::AnimationSpec indicatorMotion = fromSwipe
+        ? huxerui::AnimationSpec(huxerui::TweenSpec{0.2, huxerui::Easing::EaseOut})
+        : huxerui::AnimationSpec(huxerui::SpringSpec{
+              .stiffness = 240.0F, .damping_ratio = 0.78F});
 
     for (std::size_t index = 0; index < kAndroidNavDestinations.size(); ++index) {
         const std::size_t destination = kAndroidNavDestinations[index];
         const NavigationEntry& entry = kNavigationEntries[destination];
         const bool isSelected = index == selected;
-        const huxerui::Color content =
-            isSelected ? theme.colors.on_primary_container
-                       : theme.colors.on_surface_variant;
-        // 整块胶囊（图标 + 文字）由 AndroidNavigationIndicator 绘制并滑动；
-        // 内容色随选中态即时切换。
-        huxerui::View pill = huxerui::Column {
-            huxerui::Image(entry.icon)
-                .Tint(content)
-                .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
-            huxerui::Text(entry.label).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kCaption), content}),
-        }.With(huxerui::Frame{.height = 56.0F, .min_width = 88.0F},
-               huxerui::Spacing(2.0F),
-               huxerui::Padding(huxerui::EdgeInsets::Symmetric(16.0F, 0.0F)),
-               huxerui::Background(huxerui::Color::Transparent()),
-               huxerui::CornerRadius(30.0F),
-               huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+        // Tint/文字色没有动画值接口：保留普通色底层，仅渐变选中色覆盖层。
+        // 动画是框架的呈现修饰符，不逐帧写 State，也不参与槽位布局。
+        const auto content = [entry](huxerui::Color color) {
+            return huxerui::Column {
+                huxerui::Image(entry.icon)
+                    .Tint(color)
+                    .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
+                huxerui::Text(entry.label).Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kCaption), color})
+                    .Align(huxerui::TextAlign::Center),
+            }.With(huxerui::Spacing(2.0F),
+                   huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+        };
         entries.push_back(
-            huxerui::Row { std::move(pill) }
-                .With(huxerui::Grow(1.0F),
-                      // 负向水平内边距：放宽条目的内容约束，让选中胶囊可以越过
-                      // 自身方框（不再被单个条目的槽位宽度裁掉）。
+            huxerui::Stack {
+                content(theme.colors.on_surface_variant),
+                content(theme.colors.on_primary_container)
+                    .With(huxerui::Opacity(huxerui::AnimateTo(
+                        isSelected ? 1.0F : 0.0F,
+                        huxerui::TweenSpec{duration, huxerui::Easing::EaseOut}))),
+            }.With(huxerui::Grow(1.0F),
+                      huxerui::Frame{.height = 64.0F},
                       huxerui::Padding(
-                          huxerui::EdgeInsets::Symmetric(-7.0F, 0.0F)),
-                      huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
-                .OnClick([navPage, destination] { navPage = destination; })
+                          huxerui::EdgeInsets::Symmetric(2.0F, 0.0F)),
+                      huxerui::Align(huxerui::HorizontalAlignment::Center,
+                                     huxerui::VerticalAlignment::Center))
+                .OnClick([navPage, destination, onSelect] {
+                    if (onSelect) onSelect();
+                    navPage = destination;
+                })
                 .With(huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                          .label = huxerui::UseString(entry.label),
                                          .selected = isSelected},
-                      itemIndication,
+                      // 显式覆盖 OnClick 的默认指示层，保留纯选中态过渡。
+                      huxerui::Indication{},
                       huxerui::Focusable(true), huxerui::Enabled(true))
                 .Key(index));
     }
@@ -510,18 +525,15 @@ private:
     return huxerui::Column {
         huxerui::Row(std::move(entries))
             .With(huxerui::Frame{.height = 64.0F},
-                  // 与条目负内边距配合：给越界胶囊留出空间，并在最左/最右
-                  // 条目与外层胶囊之间形成一道间隙（HuxerUI 无 Margin，
-                  // 用 Padding 表达）。
-                  huxerui::Padding(
-                      huxerui::EdgeInsets::Symmetric(14.0F, 0.0F)),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
                   AndroidNavigationIndicator{selected,
-                                             theme.colors.primary_container}),
+                                             theme.colors.primary_container,
+                                             indicatorMotion,
+                                             theme.motion.reduced_motion}),
     }.With(huxerui::SafeAreaPadding{.top = false},
            systemBars,
            huxerui::Semantics{.role = huxerui::SemanticRole::Navigation},
-           huxerui::Background(theme.colors.surface_container_low),
+           huxerui::Background(CompactNavigationSurfaceColor(theme)),
            huxerui::CornerRadius(20.0F), huxerui::ClipChildren(),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -728,6 +740,7 @@ huxerui::PageTransition SecondaryPageTransition(
     huxerui::State<std::size_t> navPage, huxerui::State<std::size_t> pagerPage,
     huxerui::State<int> themeMode, const IslandTheme& islands,
     const huxerui::ThemeSpec& spec, ProfilesCache profilesCache) {
+    auto fromSwipe = huxerui::UseState(false);
     // Home/settings 卡片仍按绝对页号导航，这里把 Pager 的四槽索引与共享
     // 页号状态同步；二级页不属于 Pager，不参与该同步。
     huxerui::Lifecycle(
@@ -764,31 +777,21 @@ huxerui::PageTransition SecondaryPageTransition(
         huxerui::Pager(std::move(primaryPages), pagerPage)
         .ScrollAxis(huxerui::Axis::Horizontal)
         .DragEnabled(true)
-        .OnChanged([navPage, pagerPage](std::size_t index) {
+        .OnChanged([navPage, pagerPage, fromSwipe](std::size_t index) {
             constexpr std::array<std::size_t, 4> kDestinations{
                 pages::kHome, pages::kProxies, pages::kProfiles, pages::kSettings};
             const std::size_t clamped =
                 std::min(index, kDestinations.size() - 1);
+            // 只有真正改变目标的 Pager 提交才来自横滑；同页通知不改点击的弹簧轨道。
+            if (navPage.Get() != kDestinations[clamped]) fromSwipe = true;
             pagerPage = clamped;
             navPage = kDestinations[clamped];
         })
         .With(huxerui::Grow(1.0F));
 
-    // 底部悬浮导航不描边也不投影：只保留表面底色与圆角，直接落在窗口海面
-    // 底色上；胶囊边缘不再出现 1pt 描边或投影形成的暗色轮廓线。
-    huxerui::View floatingNavigation = AndroidNavigationSurface(navPage).With(
-        huxerui::Frame{.max_width = 520.0F},
-        huxerui::Background(islands.base), huxerui::CornerRadius(34.0F),
-        huxerui::ClipChildren());
-    huxerui::View dock = huxerui::Column {
-        std::move(floatingNavigation),
-    }.With(huxerui::Padding(huxerui::EdgeInsets{
-               .right = spec.spacing.medium,
-               .bottom = spec.spacing.small,
-               .left = spec.spacing.medium,
-           }),
-           huxerui::MainAlign(huxerui::MainAxisAlignment::End),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    // 只给胶囊底色添加 Alpha；不叠加不透明外层，也不淡化文字和图标。
+    huxerui::View dock = CompactNavigationDock(
+        AndroidNavigationSurface(navPage, fromSwipe.Get(), [fromSwipe] { fromSwipe = false; }), spec);
     return huxerui::Stack {
         std::move(pager),
         std::move(dock),

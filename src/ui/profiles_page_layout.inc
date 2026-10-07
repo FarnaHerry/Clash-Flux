@@ -189,20 +189,26 @@
         OpenProfileCreate(compact, createPageOpen, tasks, showCreateDialog);
     };
 
+    huxerui::View addAction =
+        huxerui::IconButton(app::images::add, Localized("新建订阅"))
+            .With(huxerui::Tooltip(Localized("新建订阅")))
+            .OnClick(openCreate)
+            .Key("profile-add-subscription");
     huxerui::View profileSearchField = PillSearchField(
-        profileSearch, Localized("搜索订阅"));
+        profileSearch, Localized("搜索订阅"), compact ? addAction : huxerui::View{});
+    // composable 的外层 Scope 也要声明 Grow，标题行才会把剩余宽度交给搜索胶囊。
+    if (compact) profileSearchField = std::move(profileSearchField).With(huxerui::Grow(1.0F));
+    huxerui::View pageActions = connectionSelection.Size() > 0
+        ? batchActions : huxerui::View{};
+    if (!compact) pageActions = huxerui::Row{std::move(pageActions), std::move(addAction)};
     huxerui::View profileListPage = PageScaffold(
         Localized("订阅"),
-        huxerui::Row {
-            std::move(batchActions),
-            huxerui::IconButton(app::images::add, Localized("新建订阅"))
-                .With(huxerui::Tooltip(Localized("新建订阅")))
-                .OnClick(openCreate),
-        },
+        std::move(pageActions),
         profiles.Empty()
             ? EmptyState(Localized("还没有订阅。点击右上角「新建订阅」导入。"), app::images::request)
             : std::move(profileBody),
-        false, true, true, std::nullopt, {}, std::move(profileSearchField));
+        compact && connectionSelection.Size() == 0, true, true,
+        std::nullopt, {}, std::move(profileSearchField));
 
     // IndexedPages 要求每一页都是挂载节点；平台函数负责 Android 编辑页是否
     // 存在，ProfilesPage 只提交同一份表单状态。

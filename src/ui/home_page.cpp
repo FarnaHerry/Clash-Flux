@@ -1256,7 +1256,6 @@ private:
 // 系统代理意图恢复；不再由各个开关隐式触发内核。
 [[huxerui::composable]] huxerui::View DesktopHomeFloatingAction(
     huxerui::View page, bool compact) {
-    static_cast<void>(compact);
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
@@ -1349,7 +1348,7 @@ private:
         std::move(floating),
     }.With(huxerui::Padding(huxerui::EdgeInsets{
                  .right = theme.spacing.medium,
-                 .bottom = theme.spacing.medium,
+                 .bottom = compact ? kCompactFloatingNavigationInset : theme.spacing.medium,
                  .left = theme.spacing.medium,
              }),
              huxerui::MainAlign(huxerui::MainAxisAlignment::End),

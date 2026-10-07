@@ -351,9 +351,11 @@ huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     huxerui::View actions, huxerui::View content,
                                     std::function<void()> onBack,
                                     bool hideBack = false,
-                                    bool fullWidthSections = false);
+                                    bool fullWidthSections = false,
+                                    bool centerTitle = false);
 huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
-                              huxerui::StringVariant placeholder);
+                              huxerui::StringVariant placeholder,
+                              huxerui::View trailingAction = {});
 
 // 卡片容器（二级岛）：raised 表面 + 8pt 圆角 + 内边距。outlined=false 去掉
 // 1pt 描边，仅靠表面层级区分卡片（移动端设置页等无边框场景）。
