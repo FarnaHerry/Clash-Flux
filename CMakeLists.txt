@@ -105,8 +105,8 @@ endif ()
 # ---- HuxerUI（0.3.0 SDK / 源码双通道，HUXERUI_HOME 契约）-------------------
 # 优先级（固定顺序，与 apitab 一致）：
 #   1. 显式 HUXERUI_HOME 源码（有 CMakeLists.txt + include/huxerui/huxerui.h）。
-#   2. third_party/huxerui 源码（本地 git clone 的上游仓库，add_subdirectory 编译，
-#      跟踪上游 `git pull` 即可；不入库，.gitignore 已忽略）。
+#   2. third_party/huxerui 源码（FarnaHerry/HuxerUI 的 farna/main 固定 SHA，
+#      add_subdirectory 编译；不入库，.gitignore 已忽略）。
 #      CLI 自动注入的已安装 SDK 前缀（HUXERUI_HOME 指向 SDK）不得越过前两级。
 #   3. 已安装 SDK（HUXERUI_HOME 指向含 lib/cmake/HuxerUI 的 SDK 目录）。
 #   4. 仓库离线 SDK（tarball，Linux 专用；macOS/Windows 不提供离线包）。
@@ -188,45 +188,8 @@ if (CLASHFLUX_HUXERUI_SOURCE_DIR)
         # 测试用 huxerui::testing::UiTest 在无窗口 Runtime 里驱动 Application 与任务。
         set(HUXERUI_BUILD_TESTING_LIBRARY ON CACHE BOOL "" FORCE)
     endif ()
-    # Native Pager retargeting must retain a slot for the departing peer. Apply
-    # before adding HuxerUI, also for explicit HUXERUI_HOME source checkouts.
-    set(CLASHFLUX_PAGER_PATCH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/huxerui-pager-retarget.patch")
-    execute_process(COMMAND git apply --reverse --check --unidiff-zero "${CLASHFLUX_PAGER_PATCH}"
-        WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SOURCE_DIR}"
-        RESULT_VARIABLE CLASHFLUX_PAGER_PATCH_APPLIED ERROR_QUIET)
-    if (NOT CLASHFLUX_PAGER_PATCH_APPLIED EQUAL 0)
-        execute_process(COMMAND git apply --check --unidiff-zero "${CLASHFLUX_PAGER_PATCH}"
-            WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SOURCE_DIR}"
-            RESULT_VARIABLE CLASHFLUX_PAGER_PATCH_CHECK ERROR_VARIABLE CLASHFLUX_PAGER_PATCH_ERROR)
-        if (NOT CLASHFLUX_PAGER_PATCH_CHECK EQUAL 0)
-            message(FATAL_ERROR "HuxerUI Pager patch is incompatible with this source: ${CLASHFLUX_PAGER_PATCH_ERROR}")
-        endif ()
-        execute_process(COMMAND git apply --unidiff-zero "${CLASHFLUX_PAGER_PATCH}"
-            WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SOURCE_DIR}"
-            RESULT_VARIABLE CLASHFLUX_PAGER_PATCH_RESULT ERROR_VARIABLE CLASHFLUX_PAGER_PATCH_ERROR)
-        if (NOT CLASHFLUX_PAGER_PATCH_RESULT EQUAL 0)
-            message(FATAL_ERROR "HuxerUI Pager patch failed: ${CLASHFLUX_PAGER_PATCH_ERROR}")
-        endif ()
-    endif ()
-    # Hidden virtual pages retain pending viewport work without invalidating visible layout every frame.
-    set(CLASHFLUX_HIDDEN_VIRTUAL_PATCH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/huxerui-hidden-virtual-layout.patch")
-    execute_process(COMMAND git apply --reverse --check --unidiff-zero "${CLASHFLUX_HIDDEN_VIRTUAL_PATCH}"
-        WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SOURCE_DIR}"
-        RESULT_VARIABLE CLASHFLUX_HIDDEN_VIRTUAL_PATCH_APPLIED ERROR_QUIET)
-    if (NOT CLASHFLUX_HIDDEN_VIRTUAL_PATCH_APPLIED EQUAL 0)
-        execute_process(COMMAND git apply --check --unidiff-zero "${CLASHFLUX_HIDDEN_VIRTUAL_PATCH}"
-            WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SOURCE_DIR}"
-            RESULT_VARIABLE CLASHFLUX_HIDDEN_VIRTUAL_PATCH_CHECK ERROR_VARIABLE CLASHFLUX_HIDDEN_VIRTUAL_PATCH_ERROR)
-        if (NOT CLASHFLUX_HIDDEN_VIRTUAL_PATCH_CHECK EQUAL 0)
-            message(FATAL_ERROR "HuxerUI hidden virtual layout patch is incompatible: ${CLASHFLUX_HIDDEN_VIRTUAL_PATCH_ERROR}")
-        endif ()
-        execute_process(COMMAND git apply --unidiff-zero "${CLASHFLUX_HIDDEN_VIRTUAL_PATCH}"
-            WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SOURCE_DIR}"
-            RESULT_VARIABLE CLASHFLUX_HIDDEN_VIRTUAL_PATCH_RESULT ERROR_VARIABLE CLASHFLUX_HIDDEN_VIRTUAL_PATCH_ERROR)
-        if (NOT CLASHFLUX_HIDDEN_VIRTUAL_PATCH_RESULT EQUAL 0)
-            message(FATAL_ERROR "HuxerUI hidden virtual layout patch failed: ${CLASHFLUX_HIDDEN_VIRTUAL_PATCH_ERROR}")
-        endif ()
-    endif ()
+    # Framework fixes are committed on farna/main; configuring an application
+    # must not mutate its framework checkout. Extension-library patches remain below.
     add_subdirectory("${CLASHFLUX_HUXERUI_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/huxerui-sdk"
         EXCLUDE_FROM_ALL)
     # 打印实际来源与 commit，使 `huxerui build/run` 默认输出可见

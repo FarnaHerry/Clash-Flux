@@ -16,7 +16,7 @@ UI 工作先读 skill：`.claude/skills/huxerui-app-development/SKILL.md`（refe
 含 dsl-style、components、fundamentals、layout-and-ui 等分册）。要点：
 
 - HuxerUI 接入“SDK 工程契约驱动、源码解析优先”：开发构建优先
-  `third_party/huxerui` 源码（git clone 上游，`add_subdirectory` 编译，不入库）；
+  `third_party/huxerui` 源码（git clone 集成 fork，`add_subdirectory` 编译，不入库）；
   缺 GTK ≥4.14 / libepoxy ≥1.5 / libsoup ≥3.0 开发包时自动回落已安装 SDK
   （`HUXERUI_HOME`）或 `third_party/tarballs` 的 Linux 0.3.0 离线包。强制 SDK：
   `-DCLASHFLUX_HUXERUI_FORCE_SDK=ON`。本机（Fedora）缺 libepoxy-devel，当前走
@@ -131,12 +131,12 @@ cmake --build build --target clash-flux
   `build-<os>-<arch>`）：build-linux-x86_64（ubuntu:24.04 容器 + apt.llvm.org
   clang-21/libc++-21 + pip cmake 4.4.2）正式；linux-arm64（ubuntu-24.04-arm 原生）/
   windows-x86_64（MSVC + choco OpenSSL）/ windows-arm64（windows-11-arm +
-  vcpkg OpenSSL）/ macos-arm64（macos-15 + brew LLVM + 内联 P0960 补丁）/
+  vcpkg OpenSSL）/ macos-arm64（macos-15 + brew LLVM）/
   macos-x86_64（macos-13）/ Android（HuxerUI CLI 打 APK，GUI 壳 + libbox 数据面）实验性
   continue-on-error。桌面 job 走 HuxerUI 源码通道（钉 commit clone 到
-  `third_party/huxerui/`；上游活跃开发中，本机同步到上游后更新 workflow 的
-  HUXERUI_COMMIT，当前 0c5126235d43c2b703166bcc00781b850f2d1c39。逐项审查本地补丁，
-  上游已修复的补丁要移除，保留的补丁必须在新 revision 上通过 `git apply --check --unidiff-zero`。
+  `third_party/huxerui/`；来自 `FarnaHerry/HuxerUI` 的 `farna/main`，固定 SHA 见
+  workflow 的 `HUXERUI_COMMIT`。框架补丁在独立 fork 维护，官方 `main` 保留基线；
+  不重复打框架补丁，独立扩展库补丁仍由 CMake 应用。升级与验证见 `docs/huxerui-fork.md`。
 - **Windows 自定义安装向导**（`platform/windows/package/`）：`huxerui package
   windows` 产出自含 Burn setup.exe = MSI + 托管安装器 UI（HuxerUI 写的向导，
   `UseInstaller()` 会话驱动：安装目录选择/桌面快捷方式/修复/卸载/进度/回滚）。

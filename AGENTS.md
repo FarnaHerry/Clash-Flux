@@ -38,16 +38,19 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
 
 - 修改前先检查 `git status`，保留用户已有改动，不得擅自 reset、restore 或清理无关文件。
 - 优先使用 Ninja/CMake 的增量构建；UI 修改必须经过 HuxerUI codegen 和目标构建。
-- HuxerUI 及其依赖源码构建所需的本地修复应维护为 `cmake/patches/` 中的补丁；
-  HuxerUI 补丁接入所有对应平台的源码检出步骤，依赖补丁在 CMake 加入依赖前应用。
-  升级固定版本时先确认补丁仍可应用。
+- HuxerUI 框架修复集中在 `FarnaHerry/HuxerUI` 的 `farna/main` 维护，独立维护目录为
+  `/home/farna/dev/cpp/mcpp/HuxerUI-fork`；`main` 保留官方基线，更新通过 merge 上游进入集成分支。
+  Clash-Flux 使用独立的 `third_party/huxerui` checkout，CI 与本机固定到同一经验证 SHA，
+  不直接消费可变维护工作树。升级流程见 `docs/huxerui-fork.md`。
+  Lib-Charts、Lib-SQLite、Lib-Camera 等独立依赖的未合入修复仍维护在 `cmake/patches/`，
+  在 CMake 加入依赖前应用；不要重复给集成框架打已合入的补丁。
 - 固定的 HuxerUI Lib-Charts 尚无饼图；Clash-Flux 的 `PieChartData` / `PieChart` 扩展由
   `cmake/patches/huxerui-lib-charts-pie-chart.patch` 维护，必须在 CMake 加入该依赖前应用；
   升级 Lib-Charts 时核对上游 API，并在饼图已上游实现后移除本地补丁。
-- 同步 HuxerUI 时先 fetch 上游最新 revision，再逐项审查本地差异和维护补丁；只保留
-  上游尚未修复的差异。每个保留补丁须针对新 revision 通过 `git apply --check --unidiff-zero`，并接入
-  所有适用平台。上游已合并的修复应删除本地补丁及对应 CI 应用步骤，所有 CI 平台统一
-  使用同一固定 SHA。
+- 同步 HuxerUI 时先在独立维护仓库 fetch 上游最新 revision，逐项审查集成差异，再 merge 到
+  `farna/main`，不 rebase 或 force push。已被上游修复的差异不再保留；应用完成构建和回归后
+  才更新固定 SHA，所有 CI 平台统一使用该 SHA。独立依赖保留补丁须针对其固定 revision
+  通过 `git apply --check --unidiff-zero`，并接入所有适用平台。
 - **iOS 当前按 TODO 暂缓，不承诺支持或发布**：iOS CI 用固定 HuxerUI revision 和 iOS Simulator SDK 编译 Clash-Flux app 与 Packet Tunnel
   extension，并从与 Android 相同的 sing-box revision 构建 iOS device/Simulator
   `Libbox.xcframework`。这仍是非阻塞编译检查：只生成未签名 Simulator 构建，不生成 IPA，
@@ -123,14 +126,10 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   `kSectionCardSpacing` 计算。滑动时相邻页面合起来正好是一份卡片间距，翻页步长仍为
   完整视口宽度。
   页根水平 Padding 由通用分页管理，卡片自身内边距仍由卡片决定。
-- **Pager 反向切换补丁**维护在 `cmake/patches/huxerui-pager-retarget.patch`：固定
-  HuxerUI 在跨多标签动画中切回起始页会复用旧 drag target，导致缺少布局 slot。
-  补丁清除已结束的拖动目标，并保留回弹/反向轨道中的离场页。CMake 在加入源码前
-  幂等应用，所有平台源码检出步骤也应用；升级 HuxerUI 时重新校验或移除上游已修复项。
-- **隐藏虚拟页不得持续使可见布局失效**：`cmake/patches/huxerui-hidden-virtual-layout.patch`
-  修复未参与布局的 VirtualGrid/List 将待测量 viewport 标记逐帧传到可见祖先的问题。
-  隐藏子树仍保留测量失效状态，重新显示时正常更新；只有参与布局的路径传播失效。
-  CMake 在加入源码前幂等应用，所有平台源码检出步骤同步应用。
+- **Pager 反向切换与隐藏虚拟页布局修复**已合入 HuxerUI fork 的 `farna/main`，
+  不再在应用 CMake 或 CI 重复打补丁。Pager 清除已结束的拖动目标并保留反向轨道离场页；
+  隐藏 VirtualGrid/List 保留待测量状态，只有参与布局的路径向可见祖先传播失效。
+  升级集成 SHA 时必须保留这些行为并运行生产分页交互回归。
 - **二级标签栏必须随内容横滑居中目标项**：使用实际标签几何计算每项居中偏移，
   先限制到滚动边界，再按 Pager 呈现进度插值；拖动、松手收敛和取消回弹期间标签条
   都要跟随，不能等索引切换完成才揭示目标。选中变化、标签尺寸变化或窗口缩放后

@@ -408,16 +408,13 @@ coverage follows the actual CI matrix above.
 Android libbox builds verify the official release tag against the pinned revision;
 Gradle validates version, revision, ABI and AAR SHA256 metadata before packaging.
 Core asset SHA256 hashes are pinned in `cmake/singbox_bundle.cmake`, with automatic
-downloads during configuration. Desktop jobs build HuxerUI from a pinned upstream
-source checkout. Linux, Windows, macOS, Android and iOS Simulator all use HuxerUI
-revision `0c5126235d43c2b703166bcc00781b850f2d1c39` and apply the remaining local
-patches under `cmake/patches/` for drag previews, Linux frame lifecycle and macOS/iOS
-aggregate initialization. Before building, CMake also adapts the pinned Lib-Camera
-revision to the HuxerUI `ApplicationContext` API.
-
-When upgrading HuxerUI, review every patch against upstream. Remove fixes already
-included upstream; retained patches must pass `git apply --check --unidiff-zero`
-for every applicable platform.
+downloads during configuration. All platforms consume the same tested commit SHA from
+[FarnaHerry/HuxerUI](https://github.com/FarnaHerry/HuxerUI)'s `farna/main`, pinned by
+`HUXERUI_COMMIT` in `.github/workflows/build.yml`. Framework fixes are maintained in
+that integration branch; `main` remains the official upstream baseline. CMake still
+applies the independent Lib-Camera, Lib-Charts and Lib-SQLite patches before adding
+those libraries. See [HuxerUI fork maintenance](docs/huxerui-fork.md) for local
+checkout, patch ownership and upgrade instructions.
 
 Windows packaging with `huxerui package windows` creates a `setup.exe` with an
 installation wizard: Burn bundles an MSI and a HuxerUI installer interface with
