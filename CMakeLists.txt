@@ -368,286 +368,31 @@ huxerui_add_app(clash-flux
 # Windows 下手动运行构建树里的 clash-flux.exe 也需要同目录的 huxerui.dll。
 clashflux_deploy_huxerui_dll(clash-flux)
 
-set(CLASHFLUX_HUXERUI_CAMERA_URL "https://github.com/HuxerUI/Lib-Camera.git")
-set(CLASHFLUX_HUXERUI_CAMERA_COMMIT "cada0539098791019bc5330ffd87009acc29d68a")
-# Lib-Camera is pinned independently and has not migrated its installer hooks
-# to HuxerUI's ApplicationContext API. Apply the narrow compatibility patch
-# before FetchContent_MakeAvailable adds the library to this project.
-include(FetchContent)
-set(CLASHFLUX_HUXERUI_CAMERA_ORIGIN
-    "URL:${CLASHFLUX_HUXERUI_CAMERA_URL}@COMMIT:${CLASHFLUX_HUXERUI_CAMERA_COMMIT}")
-string(SHA256 CLASHFLUX_HUXERUI_CAMERA_HASH
-    "${CLASHFLUX_HUXERUI_CAMERA_ORIGIN}")
-string(SUBSTRING "${CLASHFLUX_HUXERUI_CAMERA_HASH}" 0 16
-    CLASHFLUX_HUXERUI_CAMERA_HASH)
-set(CLASHFLUX_HUXERUI_CAMERA_FETCH_NAME
-    "huxerui_library_${CLASHFLUX_HUXERUI_CAMERA_HASH}")
-FetchContent_Declare(${CLASHFLUX_HUXERUI_CAMERA_FETCH_NAME}
-    GIT_REPOSITORY "${CLASHFLUX_HUXERUI_CAMERA_URL}"
-    GIT_TAG "${CLASHFLUX_HUXERUI_CAMERA_COMMIT}"
-    GIT_SHALLOW FALSE
-)
-FetchContent_GetProperties(${CLASHFLUX_HUXERUI_CAMERA_FETCH_NAME}
-    SOURCE_DIR CLASHFLUX_HUXERUI_CAMERA_SOURCE_DIR
-    POPULATED CLASHFLUX_HUXERUI_CAMERA_POPULATED
-)
-if (NOT CLASHFLUX_HUXERUI_CAMERA_POPULATED)
-    cmake_policy(PUSH)
-    if (POLICY CMP0169)
-        cmake_policy(SET CMP0169 OLD)
-    endif ()
-    FetchContent_Populate(${CLASHFLUX_HUXERUI_CAMERA_FETCH_NAME})
-    cmake_policy(POP)
-    FetchContent_GetProperties(${CLASHFLUX_HUXERUI_CAMERA_FETCH_NAME}
-        SOURCE_DIR CLASHFLUX_HUXERUI_CAMERA_SOURCE_DIR
-    )
-endif ()
-file(READ "${CLASHFLUX_HUXERUI_CAMERA_SOURCE_DIR}/include/huxerui/camera.h"
-    CLASHFLUX_HUXERUI_CAMERA_HEADER)
-if (CLASHFLUX_HUXERUI_CAMERA_HEADER MATCHES "<huxerui/root[.]h>")
-    set(CLASHFLUX_HUXERUI_CAMERA_PATCH
-        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/huxerui-lib-camera-application-context.patch")
-    execute_process(
-        COMMAND git apply --check --unidiff-zero "${CLASHFLUX_HUXERUI_CAMERA_PATCH}"
-        WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_CAMERA_SOURCE_DIR}"
-        RESULT_VARIABLE CLASHFLUX_HUXERUI_CAMERA_PATCH_CHECK
-        ERROR_VARIABLE CLASHFLUX_HUXERUI_CAMERA_PATCH_ERROR
-    )
-    if (NOT CLASHFLUX_HUXERUI_CAMERA_PATCH_CHECK EQUAL 0)
-        message(FATAL_ERROR
-            "Lib-Camera compatibility patch does not apply: ${CLASHFLUX_HUXERUI_CAMERA_PATCH_ERROR}")
-    endif ()
-    execute_process(
-        COMMAND git apply --unidiff-zero "${CLASHFLUX_HUXERUI_CAMERA_PATCH}"
-        WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_CAMERA_SOURCE_DIR}"
-        RESULT_VARIABLE CLASHFLUX_HUXERUI_CAMERA_PATCH_RESULT
-        ERROR_VARIABLE CLASHFLUX_HUXERUI_CAMERA_PATCH_ERROR
-    )
-    if (NOT CLASHFLUX_HUXERUI_CAMERA_PATCH_RESULT EQUAL 0)
-        message(FATAL_ERROR
-            "Lib-Camera compatibility patch failed: ${CLASHFLUX_HUXERUI_CAMERA_PATCH_ERROR}")
-    endif ()
-elseif (NOT CLASHFLUX_HUXERUI_CAMERA_HEADER MATCHES "<huxerui/app[.]h>")
-    message(FATAL_ERROR "Lib-Camera's public API is incompatible with HuxerUI ApplicationContext")
-endif ()
+# Extension fixes are maintained on each FarnaHerry fork's farna/main branch.
+# Use immutable URL/COMMIT identities for native builds and the Android library graph;
+# no application configure step patches or consumes mutable local library clones.
+set(CLASHFLUX_HUXERUI_CAMERA_URL "https://github.com/FarnaHerry/Lib-Camera.git")
+set(CLASHFLUX_HUXERUI_CAMERA_COMMIT "b8b3b9304646cdc1afb9722ead16d85cf2160610")
+set(CLASHFLUX_HUXERUI_SQLITE_URL "https://github.com/FarnaHerry/Lib-SQLite.git")
+set(CLASHFLUX_HUXERUI_SQLITE_COMMIT "88f610fe66c57260b1ac38e676fc36b23c900fc2")
+set(CLASHFLUX_HUXERUI_CHARTS_URL "https://github.com/FarnaHerry/Lib-Charts.git")
+set(CLASHFLUX_HUXERUI_CHARTS_COMMIT "9c183e87393ef589f3bf20dd8d80281a1fe9c9cd")
 
-if (HUXERUI_LIBRARY_GRAPH_ONLY)
-    # This Lib-Camera revision adds include directories unconditionally after
-    # huxerui_add_library(). In graph-only mode that helper creates an INTERFACE
-    # target, so predeclare its source-backed identity without adding the broken
-    # library subdirectory; huxerui_use_library still emits the same dependency graph.
-    add_library(huxerui_camera INTERFACE)
-    add_library(HuxerUI::Camera ALIAS huxerui_camera)
-    set_property(TARGET huxerui_camera PROPERTY HUXERUI_LIBRARY TRUE)
-    set_property(TARGET huxerui_camera PROPERTY HUXERUI_LIBRARY_SOURCE_ROOT
-        "${CLASHFLUX_HUXERUI_CAMERA_SOURCE_DIR}")
-    set_property(TARGET huxerui_camera PROPERTY HUXERUI_LIBRARY_ORIGIN
-        "${CLASHFLUX_HUXERUI_CAMERA_ORIGIN}")
-else ()
-    string(SHA256 CLASHFLUX_HUXERUI_CAMERA_BINARY_HASH
-        "${CLASHFLUX_HUXERUI_CAMERA_ORIGIN}")
-    string(SUBSTRING "${CLASHFLUX_HUXERUI_CAMERA_BINARY_HASH}" 0 16
-        CLASHFLUX_HUXERUI_CAMERA_BINARY_HASH)
-    get_target_property(CLASHFLUX_APP_BINARY_DIR clash-flux BINARY_DIR)
-    add_subdirectory(
-        "${CLASHFLUX_HUXERUI_CAMERA_SOURCE_DIR}"
-        "${CLASHFLUX_APP_BINARY_DIR}/huxerui-libraries/sources/${CLASHFLUX_HUXERUI_CAMERA_BINARY_HASH}"
-    )
-    set_property(TARGET huxerui_camera PROPERTY HUXERUI_LIBRARY_ORIGIN
-        "${CLASHFLUX_HUXERUI_CAMERA_ORIGIN}")
-endif ()
 huxerui_use_library(clash-flux
     TARGET HuxerUI::Camera
     URL "${CLASHFLUX_HUXERUI_CAMERA_URL}"
     COMMIT "${CLASHFLUX_HUXERUI_CAMERA_COMMIT}"
 )
-
-# ---- HuxerUI::SQLite（huxerui::sqlite ORM，持久化层）------------------------
-# 源码获取优先本地 clone（third_party/lib-sqlite，已 gitignore）：可以随时
-# pull 上游、或直接换成自己的 fork（改 remote 即可），本地改完立即生效。
-# 没有本地 clone 时回落 FetchContent 拉固定 commit（与 Lib-Camera 同机制），
-# 因此 CI 不需要任何额外 checkout 步骤；升级=改下面的 COMMIT 常量。
-set(CLASHFLUX_HUXERUI_SQLITE_URL "https://github.com/HuxerUI/Lib-SQLite.git")
-set(CLASHFLUX_HUXERUI_SQLITE_COMMIT "5e3d040079629e698ca2f456ad79042cbbcd6aba")
-set(CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lib-sqlite")
-set(CLASHFLUX_HUXERUI_SQLITE_PATCHES
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/huxerui-lib-sqlite-startup-read.patch")
-if (NOT EXISTS "${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}/CMakeLists.txt"
-        AND NOT HUXERUI_LIBRARY_GRAPH_ONLY)
-    # Populate the pinned source before huxerui_use_library() adds its CMake project,
-    # so the maintained startup read patch is applied before any library targets exist.
-    set(CLASHFLUX_HUXERUI_SQLITE_ORIGIN
-        "${CLASHFLUX_HUXERUI_SQLITE_URL}@${CLASHFLUX_HUXERUI_SQLITE_COMMIT}")
-    string(SHA256 CLASHFLUX_HUXERUI_SQLITE_FETCH_HASH
-        "${CLASHFLUX_HUXERUI_SQLITE_ORIGIN}")
-    string(SUBSTRING "${CLASHFLUX_HUXERUI_SQLITE_FETCH_HASH}" 0 16
-        CLASHFLUX_HUXERUI_SQLITE_FETCH_HASH)
-    set(CLASHFLUX_HUXERUI_SQLITE_FETCH_NAME
-        "clashflux_huxerui_sqlite_${CLASHFLUX_HUXERUI_SQLITE_FETCH_HASH}")
-    FetchContent_Declare(${CLASHFLUX_HUXERUI_SQLITE_FETCH_NAME}
-        GIT_REPOSITORY "${CLASHFLUX_HUXERUI_SQLITE_URL}"
-        GIT_TAG "${CLASHFLUX_HUXERUI_SQLITE_COMMIT}"
-        GIT_SHALLOW FALSE
-    )
-    FetchContent_GetProperties(${CLASHFLUX_HUXERUI_SQLITE_FETCH_NAME}
-        SOURCE_DIR CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR
-        POPULATED CLASHFLUX_HUXERUI_SQLITE_POPULATED
-    )
-    if (NOT CLASHFLUX_HUXERUI_SQLITE_POPULATED)
-        cmake_policy(PUSH)
-        if (POLICY CMP0169)
-            cmake_policy(SET CMP0169 OLD)
-        endif ()
-        FetchContent_Populate(${CLASHFLUX_HUXERUI_SQLITE_FETCH_NAME})
-        cmake_policy(POP)
-        FetchContent_GetProperties(${CLASHFLUX_HUXERUI_SQLITE_FETCH_NAME}
-            SOURCE_DIR CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR
-        )
-    endif ()
-endif ()
-
-if (EXISTS "${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}/CMakeLists.txt")
-    message(STATUS "clash-flux: HuxerUI::SQLite 使用源码 ${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}")
-    foreach (CLASHFLUX_HUXERUI_SQLITE_PATCH IN LISTS CLASHFLUX_HUXERUI_SQLITE_PATCHES)
-        execute_process(
-            COMMAND git apply --check --unidiff-zero "${CLASHFLUX_HUXERUI_SQLITE_PATCH}"
-            WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}"
-            RESULT_VARIABLE CLASHFLUX_HUXERUI_SQLITE_PATCH_CHECK
-            ERROR_VARIABLE CLASHFLUX_HUXERUI_SQLITE_PATCH_ERROR
-        )
-        if (CLASHFLUX_HUXERUI_SQLITE_PATCH_CHECK EQUAL 0)
-            execute_process(
-                COMMAND git apply --unidiff-zero "${CLASHFLUX_HUXERUI_SQLITE_PATCH}"
-                WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}"
-                RESULT_VARIABLE CLASHFLUX_HUXERUI_SQLITE_PATCH_RESULT
-                ERROR_VARIABLE CLASHFLUX_HUXERUI_SQLITE_PATCH_ERROR
-            )
-            if (NOT CLASHFLUX_HUXERUI_SQLITE_PATCH_RESULT EQUAL 0)
-                message(FATAL_ERROR
-                    "HuxerUI::SQLite patch ${CLASHFLUX_HUXERUI_SQLITE_PATCH} failed: ${CLASHFLUX_HUXERUI_SQLITE_PATCH_ERROR}")
-            endif ()
-        else ()
-            execute_process(
-                COMMAND git apply --reverse --check --unidiff-zero "${CLASHFLUX_HUXERUI_SQLITE_PATCH}"
-                WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}"
-                RESULT_VARIABLE CLASHFLUX_HUXERUI_SQLITE_PATCH_REVERSE_CHECK
-                ERROR_VARIABLE CLASHFLUX_HUXERUI_SQLITE_PATCH_ERROR
-            )
-            if (NOT CLASHFLUX_HUXERUI_SQLITE_PATCH_REVERSE_CHECK EQUAL 0)
-                message(FATAL_ERROR
-                    "HuxerUI::SQLite patch ${CLASHFLUX_HUXERUI_SQLITE_PATCH} no longer applies to the pinned source: ${CLASHFLUX_HUXERUI_SQLITE_PATCH_ERROR}")
-            endif ()
-            message(STATUS "clash-flux: HuxerUI::SQLite patch ${CLASHFLUX_HUXERUI_SQLITE_PATCH} already applied")
-        endif ()
-    endforeach ()
-    huxerui_use_library(clash-flux
-        TARGET HuxerUI::SQLite
-        PATH "${CLASHFLUX_HUXERUI_SQLITE_SOURCE_DIR}"
-    )
-else ()
-    # Library graph-only configurations need the upstream identity but do not build
-    # SQLite sources, so keep their acquisition declarative.
-    huxerui_use_library(clash-flux
-        TARGET HuxerUI::SQLite
-        URL "${CLASHFLUX_HUXERUI_SQLITE_URL}"
-        COMMIT "${CLASHFLUX_HUXERUI_SQLITE_COMMIT}"
-    )
-endif ()
-
-# ---- HuxerUI::Charts（折线/面积/柱/散点，首页流量曲线）------------------------
-# 与 SQLite 同机制：本地 clone（third_party/lib-charts，已 gitignore）优先，
-# 缺失时由 huxerui_use_library 拉固定 commit；升级 = 改下面的 COMMIT。
-# 注意：不要用 v0.1.0 tag —— 那个版本用 TooltipStyle::corner_radius，编译不过
-# 当前 HuxerUI（0.3.0-47 起字段名是 corner_radii）；main 的 c42ad9c 才对齐。
-set(CLASHFLUX_HUXERUI_CHARTS_URL "https://github.com/HuxerUI/Lib-Charts.git")
-set(CLASHFLUX_HUXERUI_CHARTS_COMMIT "cf7c28655e1b6cdaa15a1c0fc2612000e1ef9301")
-set(CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lib-charts")
-set(CLASHFLUX_HUXERUI_CHARTS_PATCHES
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/huxerui-lib-charts-pie-chart.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/huxerui-lib-charts-compact-plot.patch")
-if (NOT EXISTS "${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}/CMakeLists.txt"
-        AND NOT HUXERUI_LIBRARY_GRAPH_ONLY)
-    # Populate the pinned source before huxerui_use_library() adds its CMake project,
-    # so the maintained chart patches are applied before any library targets exist.
-    set(CLASHFLUX_HUXERUI_CHARTS_ORIGIN
-        "${CLASHFLUX_HUXERUI_CHARTS_URL}@${CLASHFLUX_HUXERUI_CHARTS_COMMIT}")
-    string(SHA256 CLASHFLUX_HUXERUI_CHARTS_FETCH_HASH
-        "${CLASHFLUX_HUXERUI_CHARTS_ORIGIN}")
-    string(SUBSTRING "${CLASHFLUX_HUXERUI_CHARTS_FETCH_HASH}" 0 16
-        CLASHFLUX_HUXERUI_CHARTS_FETCH_HASH)
-    set(CLASHFLUX_HUXERUI_CHARTS_FETCH_NAME
-        "clashflux_huxerui_charts_${CLASHFLUX_HUXERUI_CHARTS_FETCH_HASH}")
-    FetchContent_Declare(${CLASHFLUX_HUXERUI_CHARTS_FETCH_NAME}
-        GIT_REPOSITORY "${CLASHFLUX_HUXERUI_CHARTS_URL}"
-        GIT_TAG "${CLASHFLUX_HUXERUI_CHARTS_COMMIT}"
-        GIT_SHALLOW FALSE
-    )
-    FetchContent_GetProperties(${CLASHFLUX_HUXERUI_CHARTS_FETCH_NAME}
-        SOURCE_DIR CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR
-        POPULATED CLASHFLUX_HUXERUI_CHARTS_POPULATED
-    )
-    if (NOT CLASHFLUX_HUXERUI_CHARTS_POPULATED)
-        cmake_policy(PUSH)
-        if (POLICY CMP0169)
-            cmake_policy(SET CMP0169 OLD)
-        endif ()
-        FetchContent_Populate(${CLASHFLUX_HUXERUI_CHARTS_FETCH_NAME})
-        cmake_policy(POP)
-        FetchContent_GetProperties(${CLASHFLUX_HUXERUI_CHARTS_FETCH_NAME}
-            SOURCE_DIR CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR
-        )
-    endif ()
-endif ()
-
-if (EXISTS "${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}/CMakeLists.txt")
-    message(STATUS "clash-flux: HuxerUI::Charts 使用源码 ${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}")
-    foreach (CLASHFLUX_HUXERUI_CHARTS_PATCH IN LISTS CLASHFLUX_HUXERUI_CHARTS_PATCHES)
-        execute_process(
-            COMMAND git apply --check --unidiff-zero "${CLASHFLUX_HUXERUI_CHARTS_PATCH}"
-            WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}"
-            RESULT_VARIABLE CLASHFLUX_HUXERUI_CHARTS_PATCH_CHECK
-            ERROR_VARIABLE CLASHFLUX_HUXERUI_CHARTS_PATCH_ERROR
-        )
-        if (CLASHFLUX_HUXERUI_CHARTS_PATCH_CHECK EQUAL 0)
-            execute_process(
-                COMMAND git apply --unidiff-zero "${CLASHFLUX_HUXERUI_CHARTS_PATCH}"
-                WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}"
-                RESULT_VARIABLE CLASHFLUX_HUXERUI_CHARTS_PATCH_RESULT
-                ERROR_VARIABLE CLASHFLUX_HUXERUI_CHARTS_PATCH_ERROR
-            )
-            if (NOT CLASHFLUX_HUXERUI_CHARTS_PATCH_RESULT EQUAL 0)
-                message(FATAL_ERROR
-                    "HuxerUI::Charts patch ${CLASHFLUX_HUXERUI_CHARTS_PATCH} failed: ${CLASHFLUX_HUXERUI_CHARTS_PATCH_ERROR}")
-            endif ()
-        else ()
-            execute_process(
-                COMMAND git apply --reverse --check --unidiff-zero "${CLASHFLUX_HUXERUI_CHARTS_PATCH}"
-                WORKING_DIRECTORY "${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}"
-                RESULT_VARIABLE CLASHFLUX_HUXERUI_CHARTS_PATCH_REVERSE_CHECK
-                ERROR_VARIABLE CLASHFLUX_HUXERUI_CHARTS_PATCH_ERROR
-            )
-            if (NOT CLASHFLUX_HUXERUI_CHARTS_PATCH_REVERSE_CHECK EQUAL 0)
-                message(FATAL_ERROR
-                    "HuxerUI::Charts patch ${CLASHFLUX_HUXERUI_CHARTS_PATCH} no longer applies to the pinned source: ${CLASHFLUX_HUXERUI_CHARTS_PATCH_ERROR}")
-            endif ()
-            message(STATUS "clash-flux: HuxerUI::Charts patch ${CLASHFLUX_HUXERUI_CHARTS_PATCH} already applied")
-        endif ()
-    endforeach ()
-    huxerui_use_library(clash-flux
-        TARGET HuxerUI::Charts
-        PATH "${CLASHFLUX_HUXERUI_CHARTS_SOURCE_DIR}"
-    )
-else ()
-    # Library graph-only configurations need the upstream identity but do not build
-    # chart sources, so keep their acquisition declarative.
-    huxerui_use_library(clash-flux
-        TARGET HuxerUI::Charts
-        URL "${CLASHFLUX_HUXERUI_CHARTS_URL}"
-        COMMIT "${CLASHFLUX_HUXERUI_CHARTS_COMMIT}"
-    )
-endif ()
+huxerui_use_library(clash-flux
+    TARGET HuxerUI::SQLite
+    URL "${CLASHFLUX_HUXERUI_SQLITE_URL}"
+    COMMIT "${CLASHFLUX_HUXERUI_SQLITE_COMMIT}"
+)
+huxerui_use_library(clash-flux
+    TARGET HuxerUI::Charts
+    URL "${CLASHFLUX_HUXERUI_CHARTS_URL}"
+    COMMIT "${CLASHFLUX_HUXERUI_CHARTS_COMMIT}"
+)
 
 if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     if (ANDROID)

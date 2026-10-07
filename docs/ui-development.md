@@ -80,13 +80,11 @@
 - 拖动反馈层保持卡片原尺寸，并持续跟随按下时的抓取点；不要复用会在视口边缘翻转或夹位的弹出层放置规则。
 - 排序由卡片布局几何决定，原位置保留半透明占位；滚动视口注册宽域拖放目标，让卡片间隙和视口边缘仍能接收拖动并触发边缘自动滚动。
 - HuxerUI 通用拖动预览、Linux 窗口帧生命周期和 Objective-C++ 聚合初始化兼容修复已合入 `farna/main`，由同一固定 SHA 覆盖所有平台。维护与升级见 [HuxerUI fork](huxerui-fork.md)。
-- CMake 在加入固定的 HuxerUI/Lib-Camera 依赖前，会按 `cmake/patches/huxerui-lib-camera-application-context.patch` 适配 Lib-Camera 的安装钩子和各平台 factory，使其兼容 HuxerUI `ApplicationContext` API。该补丁保持在 CMake 外部依赖源码中，不改写上游 checkout。
-- 当前固定的 HuxerUI Lib-Charts 没有饼图组件；Clash-Flux 通过 `cmake/patches/huxerui-lib-charts-pie-chart.patch` 给该扩展库补充 `PieChartData` / `PieChart`，并在 `huxerui_use_library()` 加入源码前应用。升级 Lib-Charts revision 时先确认补丁仍可 `git apply --check --unidiff-zero`，若上游新增等价 API 则删除补丁和对应 CMake 接入。
-- 首页流量曲线卡片占 2 行。`cmake/patches/huxerui-lib-charts-compact-plot.patch` 将 Lib-Charts 绘图面的最小高度降至 96pt，以容纳卡片内边距和标题；CMake 在加入依赖前应用此补丁，升级固定 revision 时需重新校验。
+- Camera 的 ApplicationContext/UiWindow 兼容、Charts 的 `PieChartData` / `PieChart` 与 96pt 绘图面高度、SQLite 的启动只读查询均由各自 `FarnaHerry` fork 的 `farna/main` 维护。应用原生构建与 Android 库图共用 CMake 固定的 URL/COMMIT，不再在配置时修改依赖源码。升级记录与固定版本见 [HuxerUI fork](huxerui-fork.md)。
 - 饼图通过 `PieChartData` 保存稳定 key、标签和值，`PieChart` 使用显式帧约束；标签与数值放在普通 HuxerUI Views 中，图形本身提供图像语义摘要。
 - iOS CI 使用固定 HuxerUI revision 构建未签名 Simulator app/Packet Tunnel，并用与 Android 相同的固定 sing-box revision 生成 iOS device/Simulator `Libbox.xcframework`。它不生成 IPA 或 Release 资产；订阅下载由 Clash-Flux iOS `URLSession` 桥接，默认校验证书，按订阅选项显式允许无效证书。签名设备包和真机 VPN 生命周期验证完成前，iOS Release 仍不纳入门禁。
 
-HuxerUI 更新先在独立维护仓库 merge 官方 main 到 `farna/main`，审查差异并验证框架与应用后再更新应用固定 SHA；官方 main 保留为对照基线。Lib-Charts、Lib-SQLite、Lib-Camera 的补丁按各自固定 revision 校验，不因框架迁移而删除。
+HuxerUI 更新先在独立维护仓库 merge 官方 main 到 `farna/main`，审查差异并验证框架与应用后再更新应用固定 SHA；官方 main 保留为对照基线。Lib-Charts、Lib-SQLite、Lib-Camera 在各自 fork 中采用同一流程，各平台和 Android Java/native 共用固定 SHA。
 
 ## 改动后的构建验证
 
@@ -110,8 +108,8 @@ cmake --build build --target clash-flux
 该 API 使用临时只读 SQLite 查询，兼容迁移前旧库；不存在的数据库不创建，损坏或无法读取的数据库明确
 报告失败并停止启动。其它设置仍按原异步流程 hydrate；启动内核等操作等待 SettingsModel ready，
 不为它们扩大同步读取范围。
-Lib-SQLite 的同步只读 API 补丁位于 `cmake/patches/huxerui-lib-sqlite-startup-read.patch`，
-CMake 在各平台加入依赖前应用，不能只改本地第三方源码。回归覆盖三种模式、首次启动、旧库、
+Lib-SQLite 的同步只读 API 已合入 `FarnaHerry/Lib-SQLite` 的 `farna/main`，
+各平台通过 CMake 获取同一固定 SHA，不能只改本地第三方源码。回归覆盖三种模式、首次启动、旧库、
 损坏库保留与原有多订阅迁移/重开保护；构建和自动化回归不代表真机首帧验收。
 
 主题页「模式」使用横向排列的三个独立图标加文字卡片（自动/深色/浅色），「主题色」使用整卡色块选择，

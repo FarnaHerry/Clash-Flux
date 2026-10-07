@@ -81,8 +81,8 @@ cmake --build build --target clash-flux
   nlohmann::json 3.12.0、yaml-cpp 0.8.0（订阅
   YAML 解析）、OpenSSL 3.5.1（linux x86_64 兜底静态包）。SQLite 不再单独
   vendor：订阅/设置走 HuxerUI 官方持久化库 `HuxerUI::SQLite`（`huxerui::sqlite`
-  ORM），本地 `third_party/lib-sqlite/` clone 优先、缺失时 FetchContent 拉固定
-  commit（见 `CMakeLists.txt` 的 `huxerui_use_library`）。
+  ORM），与 Camera/Charts 一起使用各自 `FarnaHerry` fork 的 `farna/main` 固定提交，
+  通过 `huxerui_use_library(URL, COMMIT)` 获取，不自动采用本地可变 clone。
 - **sing-box 由项目自带（桌面）**：configure 期下载官方 release（1.14.0，
   SHA256 钉死，资产表见 `cmake/singbox_bundle.cmake`，与 Android libbox 同
   版本），POST_BUILD 拷到 `<exe>/engines/sing-box`；
@@ -136,7 +136,7 @@ cmake --build build --target clash-flux
   continue-on-error。桌面 job 走 HuxerUI 源码通道（钉 commit clone 到
   `third_party/huxerui/`；来自 `FarnaHerry/HuxerUI` 的 `farna/main`，固定 SHA 见
   workflow 的 `HUXERUI_COMMIT`。框架补丁在独立 fork 维护，官方 `main` 保留基线；
-  不重复打框架补丁，独立扩展库补丁仍由 CMake 应用。升级与验证见 `docs/huxerui-fork.md`。
+  框架与扩展库修复均在各自 fork 维护，应用不重复打补丁。升级与验证见 `docs/huxerui-fork.md`。
 - **Windows 自定义安装向导**（`platform/windows/package/`）：`huxerui package
   windows` 产出自含 Burn setup.exe = MSI + 托管安装器 UI（HuxerUI 写的向导，
   `UseInstaller()` 会话驱动：安装目录选择/桌面快捷方式/修复/卸载/进度/回滚）。

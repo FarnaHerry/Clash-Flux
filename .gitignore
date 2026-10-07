@@ -25,10 +25,8 @@ engines/
 # HuxerUI 上游源码 clone（存在时优先于 third_party/tarballs 的预编译 SDK）
 third_party/huxerui/
 third_party/huxerui-before-farna/
-# HuxerUI Lib-SQLite 源码 clone（可指向自己的 fork / 随时 pull；不存在时
-# CMake 回落 FetchContent 拉固定 commit，见 CMakeLists.txt）
+# 保留迁移前的 Lib-SQLite/Charts 工作树；构建使用 FetchContent 的固定 fork SHA。
 third_party/lib-sqlite/
-# HuxerUI Lib-Charts 源码 clone（首页流量曲线；不存在时 CMake 回落 FetchContent）
 third_party/lib-charts/
 # 用当前 huxerui 源码本地构建的宿主工具（hcg/hrc；上游 linux 预置可能落后于源码）
 third_party/huxerui-tools/
