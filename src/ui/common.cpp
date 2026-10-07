@@ -665,7 +665,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     huxerui::View header = PageHeaderLayout(theme,
         titleView,
-        std::move(actions), compact && !inlineCompactActions);
+        std::move(actions), compact && !inlineCompactActions,
+        compact && static_cast<bool>(titleSearchField));
     const float horizontal = fullWidthSections
         ? kSectionCardSpacing
         : (compact ? 4.0F : kDesktopPageHorizontalInset);
@@ -690,7 +691,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 
 [[huxerui::composable]] huxerui::View SecondaryPageScaffold(
     huxerui::View title, huxerui::View actions, huxerui::View content,
-    std::function<void()> onBack, bool hideBack, bool fullWidthSections) {
+    std::function<void()> onBack, bool hideBack, bool fullWidthSections,
+    bool centerTitle) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     const bool compact =
@@ -698,15 +700,20 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     huxerui::View body = huxerui::View{content}.With(huxerui::Grow(1.0F));
     huxerui::View titleView = title;
     auto backAction = onBack;
-    huxerui::View header = hideBack
+    huxerui::View backButton;
+    if (!hideBack) backButton =
+        huxerui::IconButton(app::images::arrow_back, Localized("返回上一页"))
+            .With(huxerui::Tooltip(Localized("返回上一页")))
+            .OnClick(onBack);
+    huxerui::View header = centerTitle
+        ? CenteredPageHeader(theme, std::move(titleView), std::move(backButton), std::move(actions))
+        : hideBack
         ? huxerui::Row {
               std::move(titleView).With(huxerui::Grow(1.0F)),
               std::move(actions),
           }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
         : huxerui::Row {
-              huxerui::IconButton(app::images::arrow_back, Localized("返回上一页"))
-                  .With(huxerui::Tooltip(Localized("返回上一页")))
-                  .OnClick(std::move(onBack)),
+              std::move(backButton),
               std::move(titleView).With(huxerui::Grow(1.0F)),
               std::move(actions),
           }.With(huxerui::Spacing(theme.spacing.small),
@@ -740,7 +747,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 
 [[huxerui::composable]] huxerui::View PillSearchField(
     huxerui::State<huxerui::TextEditingValue> value,
-    huxerui::StringVariant placeholder) {
+    huxerui::StringVariant placeholder, huxerui::View trailingAction) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     huxerui::TextFieldStyle inputStyle = huxerui::UseEnvironment<huxerui::TextFieldStyle>();
     inputStyle.border_width = 0.0F;
@@ -766,7 +773,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             })
             .With(huxerui::Grow(1.0F)));
 
-    // 胶囊体内容：搜索图标、无框输入文本框，输入后显示清空按钮。
+    // 胶囊体内容：搜索图标、无框输入、按需清空，页面动作始终在最右侧。
     std::vector<huxerui::View> pillChildren{
         huxerui::Image(app::images::search)
             .Fit(huxerui::ImageFit::Contain)
@@ -782,6 +789,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                 .With(huxerui::Tooltip(Localized("清除搜索")))
                 .OnClick([value] { value = huxerui::TextEditingValue{}; }));
     }
+    if (trailingAction) pillChildren.push_back(std::move(trailingAction));
     huxerui::View pillContent = huxerui::Row(std::move(pillChildren)).With(
            huxerui::Spacing(6.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),

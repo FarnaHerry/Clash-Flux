@@ -19,6 +19,7 @@
 #include "profile_import_task.h"
 #include "section_tab_picker.h"
 #include "responsive_shell.h"
+#include "page_layout.h"
 #include "empty_state.h"
 #include "theme_colors.h"
 #include "theme_color_card.h"
@@ -499,13 +500,67 @@ void testResponsiveDesktopShell() {
               ui.Find(UiSelector::Text("BOTTOM")).Exists() && ui.Find(UiSelector::Text("CHROME")).Exists(),
               "桌面窄屏隐藏侧栏，显示底部导航并保留窗口控件行");
         const auto content = ui.Find(UiSelector::Key("responsive-pages")).One().bounds;
+        const auto bottom = ui.Find(UiSelector::Text("BOTTOM")).One().bounds;
         check(std::abs(content.width - width) < 0.5F && std::abs(content.y - 40.0F) < 0.5F &&
-              content.y + content.height <= 416.5F, "Compact 内容占满宽度并避开窗口栏和底部导航");
+              std::abs(content.y + content.height - 480.0F) < 0.5F,
+              "Compact 内容占满窗口栏下方，延伸到悬浮导航后面");
+        check(bottom.y > content.y && bottom.y + bottom.height < 480.0F &&
+              bottom.x > 0.0F && bottom.x + bottom.width < width,
+              "窄屏导航悬浮在内容上方并保留四周间隙");
         check(ui.Find(UiSelector::Text("RETAINED-1")).Exists(), "缩窄窗口保留页面 State");
     }
     ui.SetWindowMetrics({.viewport = {600.0F, 700.0F}}); ui.PumpAndSettle();
     check(ui.Find(UiSelector::Text("SIDEBAR")).Exists() && !ui.Find(UiSelector::Text("BOTTOM")).Exists() &&
           ui.Find(UiSelector::Text("RETAINED-1")).Exists(), "600pt 恢复桌面布局且页面不重挂载");
+}
+
+huxerui::View HeaderGeometryRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        const auto& theme = huxerui::UseTheme();
+        const auto search = [](const char* surfaceKey) {
+            return huxerui::Scope([surfaceKey] {
+                return huxerui::Row{
+                    huxerui::Text("SEARCH"), huxerui::Spacer{}, huxerui::Button("ADD"),
+                }.With(huxerui::Frame{.height = 40.0F}, huxerui::Grow(1.0F))
+                    .Key(surfaceKey);
+            }).With(huxerui::Grow(1.0F));
+        };
+        return huxerui::Column{
+            clashflux::ui::PageHeaderLayout(theme, search("search-single-line"), {}, false, true)
+                .Key("single-search-header"),
+            clashflux::ui::PageHeaderLayout(theme, search("search-with-batch"),
+                huxerui::Text("BATCH"), true, true).Key("batch-search-header"),
+            clashflux::ui::CenteredPageHeader(theme,
+                huxerui::Text("CREATE").Key("create-centered-title"),
+                huxerui::Button("BACK").With(huxerui::Frame{.width = 32.0F, .height = 32.0F}),
+                huxerui::Button("SAVE").With(huxerui::Frame{.width = 40.0F, .height = 40.0F}))
+                .Key("create-header"),
+            clashflux::ui::CenteredPageHeader(theme,
+                huxerui::Text("IMPORTING").Key("busy-centered-title"),
+                huxerui::Button("BACK").With(huxerui::Frame{.width = 32.0F, .height = 32.0F}),
+                huxerui::Row{}.With(huxerui::Frame{.width = 20.0F, .height = 20.0F}))
+                .Key("busy-header"),
+        }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(8.0F, 0.0F)),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    })};
+}
+const huxerui::Application kHeaderGeometryApplication{HeaderGeometryRoot, {.show_debug_overlay = false}};
+void testHeaderGeometry() {
+    huxerui::testing::UiTest ui(kHeaderGeometryApplication, {.viewport = {320.0F, 740.0F}});
+    for (float width : {320.0F, 420.0F}) {
+        ui.SetWindowMetrics({.viewport = {width, 740.0F}}); ui.PumpAndSettle();
+        for (const char* name : {"search-single-line", "search-with-batch"}) {
+            const auto bounds = ui.Find(UiSelector::Key(name)).One().bounds;
+            check(std::abs(bounds.x - 8.0F) < 0.5F &&
+                  std::abs(bounds.width - (width - 16.0F)) < 0.5F,
+                  "窄屏搜索表面铺满骨架可用宽度，无 Spacer 分走一半宽度（含批量动作）");
+        }
+        for (const char* name : {"create-centered-title", "busy-centered-title"}) {
+            const auto bounds = ui.Find(UiSelector::Key(name)).One().bounds;
+            check(std::abs(bounds.x + bounds.width * 0.5F - width * 0.5F) < 0.5F,
+                  "新建页面标题居于窗口中心，左右按钮大小不同及加载中仍保持居中");
+        }
+    }
 }
 
 void testGroupDrawers() {
@@ -926,6 +981,7 @@ int main() {
     testCommonMenu();
     testGroupDrawers();
     testResponsiveDesktopShell();
+    testHeaderGeometry();
     testEmptyState();
     testThemeSwitch();
     testProfileFileFilter();

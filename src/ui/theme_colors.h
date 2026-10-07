@@ -413,4 +413,11 @@ inline huxerui::Color ThemeShadowColor(const huxerui::ThemeSpec& theme, float op
     return color;
 }
 
+inline huxerui::Color CompactNavigationSurfaceColor(const huxerui::ThemeSpec& theme) {
+    // 与 IslandTheme::raised 共用卡片角色，半透明导航仍高于页面 base 层。
+    auto color = theme.colors.surface_container;
+    color.alpha = 0.78F;
+    return color;
+}
+
 } // namespace clashflux::ui
