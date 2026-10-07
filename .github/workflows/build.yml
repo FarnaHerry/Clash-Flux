@@ -11,8 +11,8 @@
 # riscv64/loong64/freebsd 等资产，壳编不到的目标暂不入矩阵。
 #
 # HuxerUI SDK 来源假设（关键）：
-#   * 上游 https://github.com/HuxerUI/HuxerUI.git 公开可匿名 clone —— 三个桌面
-#     job 全部走「源码通道」：把上游钉在 env.HUXERUI_COMMIT clone 到
+#   * 集成 fork https://github.com/FarnaHerry/HuxerUI.git 公开可匿名 clone —— 三个桌面
+#     job 全部走「源码通道」：把 farna/main 钉在 env.HUXERUI_COMMIT clone 到
 #     third_party/huxerui/（该路径已 gitignore，不入库），由顶层 CMakeLists 的
 #     优先级 2 add_subdirectory 编译，与本机开发形态一致。
 #   * 宿主工具 hcg/hrc 用上游源码内预置（tools/prebuilt/<platform>/<arch>）：
@@ -77,11 +77,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  HUXERUI_REPO: 'https://github.com/HuxerUI/HuxerUI.git'
+  HUXERUI_REPO: 'https://github.com/FarnaHerry/HuxerUI.git'
   # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
-  # CI 必须自行 clone 并钉 commit，保证可复现）。上游活跃开发中，追新时
-  # 同步更新本机 checkout 与此 pin。
-  HUXERUI_COMMIT: '0c5126235d43c2b703166bcc00781b850f2d1c39'
+  # CI 必须自行 clone 并钉 commit，保证可复现）。框架补丁集中维护在
+  # farna/main；main 保留官方基线。验证集成更新后同步本机 checkout 与此 pin。
+  HUXERUI_COMMIT: '3e16bf4ccb02aa3dfd7699f3342fe3a911e3e550'
   SINGBOX_COMMIT: 'af6e64c3b69e6132ebaee0e1a3d24e93903f6709' # v1.14.2
 
 jobs:
@@ -132,19 +132,6 @@ jobs:
           set -euo pipefail
           git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
           git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
-          # HuxerUI 0.3.0 can dispatch one already-ready frame source after
-          # GTK has destroyed the drawing widget during window close. Keep
-          # this app-side patch until the fix lands upstream.
-          git -C third_party/huxerui apply --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-linux-close-frame.patch"
-          # Drag previews must keep their grab point at the pointer instead of
-          # inheriting popover viewport clamping and side-flipping behavior.
-          git -C third_party/huxerui apply --ignore-space-change --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
-          git -C third_party/huxerui apply --ignore-space-change --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-pager-retarget.patch"
-          git -C third_party/huxerui apply --ignore-space-change --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-hidden-virtual-layout.patch"
 
       - name: Install dependencies
         run: |
@@ -286,23 +273,6 @@ jobs:
           set -euo pipefail
           git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
           git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
-          # The Windows runner defaults to CRLF checkout. Keep this vendored
-          # source on LF so zero-context compatibility patches match reliably.
-          git -C third_party/huxerui config core.autocrlf false
-          git -C third_party/huxerui checkout --force "$HUXERUI_COMMIT"
-          for source in \
-            src/runtime/runtime_pointer_interaction.cpp \
-            src/runtime/ui_window.cpp \
-            src/runtime/ui_window_internal.h \
-            src/components/pager.cpp; do
-            sed -i 's/\r$//' "third_party/huxerui/$source"
-          done
-          git -C third_party/huxerui apply --ignore-space-change --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
-          git -C third_party/huxerui apply --ignore-space-change --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-pager-retarget.patch"
-          git -C third_party/huxerui apply --ignore-space-change --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-hidden-virtual-layout.patch"
 
       - name: Ensure CMake >= 4.4 and Ninja
         shell: pwsh
@@ -512,23 +482,11 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Fetch HuxerUI source (pinned) + P0960 patch
+      - name: Fetch HuxerUI fork source (pinned)
         run: |
           set -euo pipefail
           git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
           git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
-          # P0960 聚合函数式转型 → 花括号初始化（clang ObjC++ 不支持 P0960；
-          # 上游 window.h 在钉住的 commit 仍未修）。补丁内容与 apitab 的
-          # The shared patch is also applied by the iOS Simulator core job below.
-          git -C third_party/huxerui apply --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-window-p0960.patch"
-          # Keep drag feedback anchored to the grab point on every platform edge.
-          git -C third_party/huxerui apply --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
-          git -C third_party/huxerui apply --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-pager-retarget.patch"
-          git -C third_party/huxerui apply --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-hidden-virtual-layout.patch"
 
       - name: Install dependencies (brew llvm + openssl)
         run: |
@@ -626,14 +584,6 @@ jobs:
           set -euo pipefail
           git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
           git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
-          git -C third_party/huxerui apply --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-window-p0960.patch"
-          git -C third_party/huxerui apply --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
-          git -C third_party/huxerui apply --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-pager-retarget.patch"
-          git -C third_party/huxerui apply --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-hidden-virtual-layout.patch"
 
       - name: Install CMake, Ninja, and LLVM
         run: |
@@ -769,12 +719,6 @@ jobs:
           test -x huxerui-sdk/bin/huxerui
           git clone --filter=blob:none "$HUXERUI_REPO" huxerui-source
           git -C huxerui-source checkout "$HUXERUI_COMMIT"
-          git -C huxerui-source apply --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-drag-preview-follows-pointer.patch"
-          git -C huxerui-source apply --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-pager-retarget.patch"
-          git -C huxerui-source apply --unidiff-zero \
-            "$GITHUB_WORKSPACE/cmake/patches/huxerui-hidden-virtual-layout.patch"
           test -f huxerui-source/CMakeLists.txt
           test -f huxerui-source/platform/android/huxerui/build.gradle
           echo "HUXERUI_HOME=$PWD/huxerui-sdk" >> "$GITHUB_ENV"

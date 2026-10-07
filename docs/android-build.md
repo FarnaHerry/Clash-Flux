@@ -10,6 +10,10 @@ Android UI 由 HuxerUI Java 模块和 C++ native 模块共同组成，两者必�
 AAR 混装，否则 Java 层可能调用 native 层已经移除或改变的入口，导致应用在首帧创建时崩溃，
 例如 `HuxerUI Android application has not been initialized`。
 
+框架源码来自 `FarnaHerry/HuxerUI` 的 `farna/main`，与 CI 固定到同一个 SHA；
+源码包含 Android 整个宿主视图的默认焦点高亮修复。框架真机 instrumentation 仍待完成，
+不能把 Linux 回归或 APK 编译成功记作 Android 真机测试通过。维护流程见 [HuxerUI fork](huxerui-fork.md)。
+
 本地构建仍需提供 CLI 和 SDK 元数据所需的 `HUXERUI_HOME`：
 
 ```bash

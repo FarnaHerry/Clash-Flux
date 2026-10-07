@@ -307,12 +307,11 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 
 官方桌面内核资产表保留 6 项版本/摘要映射，客户端构建范围以实际 CI 矩阵为准
 （内核资产 SHA256 钉在 `cmake/singbox_bundle.cmake`，configure 期自动下载）。桌面 job
-统一走 HuxerUI 源码通道（钉 commit clone 上游）。Linux、Windows、macOS、Android
-和 iOS Simulator 源码构建统一固定 HuxerUI `0c5126235d43c2b703166bcc00781b850f2d1c39`，
-并应用 `cmake/patches/` 中仍未被上游修复的拖动跟手、Linux 帧生命周期和 macOS/iOS
-聚合初始化补丁。CMake 还会在构建前适配固定的 Lib-Camera revision，使它兼容 HuxerUI
-`ApplicationContext` API。升级 HuxerUI revision 时先对照上游逐项审查补丁；上游已有修复的
-补丁直接移除，其余补丁须在所有适用平台通过 `git apply --check --unidiff-zero`。
+统一走 HuxerUI 源码通道，从 [FarnaHerry/HuxerUI](https://github.com/FarnaHerry/HuxerUI) 的
+`farna/main` 检出经验证的固定 SHA；Linux、Windows、macOS、Android 和 iOS Simulator
+共用 `.github/workflows/build.yml` 的 `HUXERUI_COMMIT`。框架补丁集中维护在 fork，
+`main` 保留官方基线；独立的 Lib-Camera、Lib-Charts、Lib-SQLite 补丁继续由 CMake 应用。
+本地检出、补丁归属与升级流程见 [HuxerUI fork](docs/huxerui-fork.md)。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、

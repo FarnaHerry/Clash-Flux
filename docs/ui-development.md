@@ -62,8 +62,8 @@
 - 页面根用稳定语义 Key 与有界 Column，Pager 只测量显示轨道中的页。代理组仅声明轻量 VirtualGrid，卡片按视口构建，避免无界 IndexedPages 让大组节点全量构建；切回分区保留各页滚动位置。
 - 分页视口占满页面骨架可用宽度，水平内容边距放进每个分页，与内容一起移动。对照 [FlClash 的代理分组实现](https://github.com/chen08209/FlClash/blob/main/lib/views/proxies/tab.dart)：`TabBarView` 占满宽度，每页网格设置左右 16 的 padding，卡片间距另由网格设置。我们的四种二级标签页启用骨架的 `fullWidthSections`：骨架通过 `SectionTabContentInsets` 提供边距，标题和标签条也用相同值；`SectionTabPages` 将其一半应用在每个稳定页根上。代理/订阅网格的行列间距与分页边距均由 `kSectionCardSpacing`（8pt）计算，页面每侧留 4pt，滑动中的两页边距合成 8pt，恰好等于卡片间距。Pager 外侧不加水平 Padding，翻页步长始终是完整视口宽度，形成连续的卡片节奏。
 - 标签栏用实际标签几何计算各项居中偏移，先限制到滚动范围，再按 Pager 呈现进度在两端偏移间插值（与 Flutter TabBar 相同）。内容拖动期间提前揭示目标，松手收敛、反向和取消回弹时标签条同步跟随；选择变化、标签尺寸变化与窗口缩放重新尽量居中。首尾标签按滚动边界对齐，手动滚动保持浏览位置。滚动请求在保留扩展的帧更新中执行，不逐帧写页面 State；溢出菜单的显隐不能重挂载 ScrollView。
-- `cmake/patches/huxerui-pager-retarget.patch` 修复固定 HuxerUI 的过期 drag target 与跨标签动画反向时的离场页 slot。CMake 在加入源码前幂等应用，Linux、Windows、macOS、Android 和 iOS Simulator 源码检出步骤都应用；升级时校验并移除上游已修复的补丁。已有预编译 SDK 不会由 CMake 原地打补丁，此修复需使用已修复的 SDK 或源码构建。
-- `cmake/patches/huxerui-hidden-virtual-layout.patch` 阻止隐藏虚拟页的 viewport dirty 标记每帧使可见祖先失效，同时在隐藏子树保留测量失效状态供重新显示时使用。未应用时保留多个分区会持续重复测量当前网格，动画帧尤为明显；CMake 与所有 CI 源码检出步骤应用此补丁，预编译 SDK 需包含同一修复。
+- Pager 反向切换修复已合入 HuxerUI fork 的 `farna/main`：清除过期 drag target，保留跨标签反向动画的离场页 slot。应用使用固定集成 SHA，不再在 CMake 或 CI 打框架补丁。
+- 隐藏虚拟页布局修复同样由 `farna/main` 维护：viewport dirty 留在隐藏子树，重新显示时恢复测量，避免逐帧使可见祖先失效。
 - `tests/test_page_transition.cpp` 直接调用生产组件，验证分页全宽、拖动中的相邻内容间距、方向、跟手与取消、嵌套边界、自动揭示、窗口缩放、滚动保留、快速反向、reduced motion 和万节点虚拟化。
 - 所有一级导航共用 `src/ui/app.cpp` 的 `kNavigationEntries`，每个条目只定义一个线条图标。桌面侧栏与手机底栏选中时保持同一轮廓与线宽，仅改变内容颜色和选中指示器，不配置填充版选中图标。
 - 代理导航使用地球网络图标 `proxies.svg`，连接导航使用链环图标 `connections.svg`；日志使用纸张图标 `logs.svg`，规则使用分流路径图标 `route.svg`。
@@ -79,16 +79,14 @@
 
 - 拖动反馈层保持卡片原尺寸，并持续跟随按下时的抓取点；不要复用会在视口边缘翻转或夹位的弹出层放置规则。
 - 排序由卡片布局几何决定，原位置保留半透明占位；滚动视口注册宽域拖放目标，让卡片间隙和视口边缘仍能接收拖动并触发边缘自动滚动。
-- HuxerUI 通用拖动预览行为通过 `cmake/patches/huxerui-drag-preview-follows-pointer.patch` 维护。改动该补丁或更新 HuxerUI 固定版本时，确认 Linux、Windows、macOS、Android 和 iOS Simulator 的源码构建步骤都应用它。
-- Linux GTK 窗口显示、隐藏和关闭时的帧生命周期由 `cmake/patches/huxerui-linux-close-frame.patch` 维护，只应用于 Linux 源码构建。
-- macOS 与 iOS Simulator CI 通过 `cmake/patches/huxerui-window-p0960.patch` 修复固定 HuxerUI revision 在 Objective-C++ 中的聚合初始化兼容问题；升级 HuxerUI 固定版本时确认补丁仍可应用。
+- HuxerUI 通用拖动预览、Linux 窗口帧生命周期和 Objective-C++ 聚合初始化兼容修复已合入 `farna/main`，由同一固定 SHA 覆盖所有平台。维护与升级见 [HuxerUI fork](huxerui-fork.md)。
 - CMake 在加入固定的 HuxerUI/Lib-Camera 依赖前，会按 `cmake/patches/huxerui-lib-camera-application-context.patch` 适配 Lib-Camera 的安装钩子和各平台 factory，使其兼容 HuxerUI `ApplicationContext` API。该补丁保持在 CMake 外部依赖源码中，不改写上游 checkout。
 - 当前固定的 HuxerUI Lib-Charts 没有饼图组件；Clash-Flux 通过 `cmake/patches/huxerui-lib-charts-pie-chart.patch` 给该扩展库补充 `PieChartData` / `PieChart`，并在 `huxerui_use_library()` 加入源码前应用。升级 Lib-Charts revision 时先确认补丁仍可 `git apply --check --unidiff-zero`，若上游新增等价 API 则删除补丁和对应 CMake 接入。
 - 首页流量曲线卡片占 2 行。`cmake/patches/huxerui-lib-charts-compact-plot.patch` 将 Lib-Charts 绘图面的最小高度降至 96pt，以容纳卡片内边距和标题；CMake 在加入依赖前应用此补丁，升级固定 revision 时需重新校验。
 - 饼图通过 `PieChartData` 保存稳定 key、标签和值，`PieChart` 使用显式帧约束；标签与数值放在普通 HuxerUI Views 中，图形本身提供图像语义摘要。
 - iOS CI 使用固定 HuxerUI revision 构建未签名 Simulator app/Packet Tunnel，并用与 Android 相同的固定 sing-box revision 生成 iOS device/Simulator `Libbox.xcframework`。它不生成 IPA 或 Release 资产；订阅下载由 Clash-Flux iOS `URLSession` 桥接，默认校验证书，按订阅选项显式允许无效证书。签名设备包和真机 VPN 生命周期验证完成前，iOS Release 仍不纳入门禁。
 
-HuxerUI revision 更新到上游最新后，先对照每个维护补丁的变更；上游已包含的改动要移除补丁和 CI 应用步骤。保留的补丁必须在最新源码 checkout 上通过 `git apply --check --unidiff-zero`，并让所有适用平台继续使用同一个固定 SHA。
+HuxerUI 更新先在独立维护仓库 merge 官方 main 到 `farna/main`，审查差异并验证框架与应用后再更新应用固定 SHA；官方 main 保留为对照基线。Lib-Charts、Lib-SQLite、Lib-Camera 的补丁按各自固定 revision 校验，不因框架迁移而删除。
 
 ## 改动后的构建验证
 

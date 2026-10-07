@@ -24,6 +24,7 @@ engines/
 
 # HuxerUI 上游源码 clone（存在时优先于 third_party/tarballs 的预编译 SDK）
 third_party/huxerui/
+third_party/huxerui-before-farna/
 # HuxerUI Lib-SQLite 源码 clone（可指向自己的 fork / 随时 pull；不存在时
 # CMake 回落 FetchContent 拉固定 commit，见 CMakeLists.txt）
 third_party/lib-sqlite/
