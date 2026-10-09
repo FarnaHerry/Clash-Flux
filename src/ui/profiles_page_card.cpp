@@ -74,6 +74,8 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     // Android rejects during the next frame with "anchor must be mounted on only
     // one View" when the subscription page contains more than one card.
     auto menu = UseActionMenu();
+    const auto navigation = huxerui::UseNavigation();
+    const auto desktopNavigation = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
     const auto coreModel = huxerui::UseService<CoreModel>();
     const auto& runtime = coreModel->view.Get().core;
     const IslandTheme islands = ResolveIslandTheme(theme);
@@ -242,7 +244,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     // 桌面端由右键触发，Compact 由卡片上的触控按钮触发；菜单内容只维护
     // 一份，避免移动端和桌面端的订阅操作逐渐产生行为差异。
     const auto buildMenuEntries = [action, activateProfile, refresh, openEditInfo, openEditRules,
-                                   openEditFile, openQr, clipboard, toast, id,
+                                   openEditFile, openQr, clipboard, toast, id, navigation, desktopNavigation,
                                    homepage = profile.homepage, url = profile.url,
                                    selected, nativeVpn,
                                    confirmDelete] {
@@ -286,6 +288,10 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 openEditFile(id);
             }));
         }
+        entries.push_back(ActionMenuItem(app::images::shield_check, Localized("配置保真度"),
+            [navigation, desktopNavigation, id] {
+                OpenProfileFidelityPage(navigation, desktopNavigation, id);
+            }));
         entries.push_back(ActionMenuSection{});
         entries.push_back(
             ActionMenuItem(app::images::trash, Localized("删除"), confirmDelete)

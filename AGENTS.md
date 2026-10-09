@@ -225,7 +225,7 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   核对持久化与当前缓存引用，再在任务线程清理，仅使用 open 显式传入的文件根；
   未配置根、越界/无法确认安全的路径保留，不扫描补删。并发回归必须让生产 flush
   在真实 SQLite 写锁后挂起，再插入新动作并核对提交/重开；不要只测试顺序写入。
-  日志不进库**（高频追加会与写事务抢锁/IO），仍直接写 `core/*.log`。需要数据库
+  日志不进库**（高频追加会与写事务抢锁/IO），应用与内核推送统一写 `core/logs.log`，不迁移旧分离日志；内核 stdout/stderr 仍保留进程诊断文件。需要数据库
   的 CLI 命令必须在应用运行时内执行（`clashflux.cli` 的伪 CLI：`setPendingCommand`
   → 启动任务 `cli::run` → flush → 退出），不要在运行时之外直接读写持久化层。
 - **单实例**：GUI 与 CLI 都先抢 `clashflux::instance::acquireOrActivate()`。owner
@@ -506,7 +506,7 @@ CoreSnapshot.planRevision 表示成功应用后的运行序号，预览目录不
 `ctx.note(scope, level, subject, detail, action)` 进账本；运行期事件、语义不变 → 留在
 `ctx.warn()`**（如规则集缓存不可用改走在线拉取、托管 TUN 关掉 auto_redirect）。账本为
 `CompileResult.fidelity` → `CoreSnapshot.fidelity`，`warnings` 只是它的自由文本投影；
-账本的消费点：设置页「配置保真度」完整明细、`singbox::FidelitySummary()` 折成的一行
+账本的消费点：各配置卡片菜单进入的独立「配置保真度」页面完整明细（只读指定 profile，不切换活动配置）、`singbox::FidelitySummary()` 折成的一行
 toast、代理页分组标签的 `!` 角标（`SectionTab.badge`）、CLI `profile check`。
 **toast 只在用户动作后发**（导入 / 刷新 / 启用订阅），内核重启（启停、TUN 或模式切换
 触发的重编译）不得重复提示。

@@ -322,6 +322,7 @@ set(CLASHFLUX_MODULE_UNITS
     src/config.cppm
     src/app_instance.cppm
     src/utils.cppm
+    src/netinfo.cppm
     src/model.cppm
     src/db.cppm
     src/vpn.cppm

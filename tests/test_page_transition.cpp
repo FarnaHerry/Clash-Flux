@@ -15,6 +15,7 @@
 #include "ui.h"
 #include "rule_target_picker.h"
 #include "log_actions.h"
+#include "filtered_indices.h"
 #include "profile_file_picker.h"
 #include "profile_import_task.h"
 #include "section_tab_picker.h"
@@ -347,7 +348,136 @@ void testRuleTargetPicker() {
 huxerui::View LogMenuRoot() { return huxerui::FlatTheme{LogMenuContent()}; }
 const huxerui::Application kLogMenuApplication{LogMenuRoot};
 
+huxerui::View UnifiedLogHistoryRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        auto entries = huxerui::UseStateList<clashflux::ui::LogEntry>();
+        huxerui::Lifecycle([entries] {
+            using clashflux::ui::AppendLogEntry;
+            AppendLogEntry(entries, {"application-new", 1, 20}, 3);
+            AppendLogEntry(entries, {"core-old", 1, 10}, 3);
+            AppendLogEntry(entries, {"core-late", 2, 15}, 3);
+            AppendLogEntry(entries, {"application-same-second", 3, 20}, 3);
+            return [] {};
+        }, 0);
+        const std::vector<clashflux::ui::LogEntry> snapshot(entries.begin(), entries.end());
+        return huxerui::Column {
+            huxerui::Text(clashflux::ui::ExportLogText(snapshot, 0)),
+            huxerui::Text(clashflux::ui::ExportLogText(snapshot, 2)),
+            huxerui::Text(clashflux::ui::ExportLogText(snapshot, 0, "application")),
+            huxerui::Button("CLEAR-UNIFIED").OnClick([entries] { entries.Clear(); }),
+            huxerui::Text(entries.Empty() ? "UNIFIED-EMPTY" : "UNIFIED-READY"),
+        };
+    })};
+}
+const huxerui::Application kUnifiedLogHistoryApplication{UnifiedLogHistoryRoot};
+
+void testFilteredRuleIndices() {
+    clashflux::ui::FilteredIndicesCache cache;
+    constexpr std::size_t count = 100000;
+    std::size_t visits = 0;
+    const auto match = [&visits](std::size_t index) { ++visits; return index % 10000 == 0; };
+    const auto all = cache.Resolve(1, count, "", match);
+    check(all.Size() == count && !all.matches && all.SourceIndex(count - 1) == count - 1 && visits == 0,
+          "十万条规则空搜索直接映射原表，不扫描、不分配全量索引");
+    const auto filtered = cache.Resolve(1, count, "match", match);
+    for (int frame = 0; frame < 100; ++frame) {
+        const auto next = cache.Resolve(1, count, "match", match);
+        check(next.matches == filtered.matches, "无关重组共享同一筛选索引快照");
+    }
+    check(visits == count && filtered.Size() == 10 && filtered.SourceIndex(9) == 90000,
+          "搜索只在内容或查询变化时扫描，保持来源索引顺序");
+    const auto changed = cache.Resolve(2, count, "match", [](std::size_t index) { return index == 99999; });
+    check(changed.Size() == 1 && changed.SourceIndex(0) == 99999,
+          "同样行数下的编辑和重排仍按内容修订刷新筛选");
+    const auto cleared = cache.Resolve(2, count, "", match);
+    check(!cleared.matches && cleared.Size() == count, "清空搜索恢复原列表映射");
+}
+
+std::size_t ruleFixtureBuilt = 0;
+huxerui::View LargeRuleListRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        const auto scroll = huxerui::UseScrollController();
+        const auto section = huxerui::UseState<std::size_t>(0);
+        const auto motion = clashflux::ui::UseSectionTabMotion();
+        const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+        clashflux::ui::FilteredIndicesCache cache;
+        const auto indices = cache.Resolve(1, 100000, "", [](std::size_t) { return true; });
+        huxerui::View list = huxerui::VirtualList(indices.Size(), [indices, compact](std::size_t index) {
+            const auto source = indices.SourceIndex(index);
+            return huxerui::Scope([source, compact] {
+                ++ruleFixtureBuilt;
+                const auto text = [](std::string value) {
+                    return huxerui::Text(value).Style(huxerui::TextStyle{huxerui::Font::Monospace(13.0F)});
+                };
+                huxerui::View fields = compact
+                    ? huxerui::View{huxerui::Column{text("subscription"), text("DOMAIN-SUFFIX · DIRECT"),
+                        text("rule-" + std::to_string(source) + ".example.com")}}
+                    : huxerui::View{huxerui::Row{
+                        text("subscription").With(huxerui::Frame{.width = 180.0F}),
+                        text("DOMAIN-SUFFIX").With(huxerui::Frame{.width = 145.0F}),
+                        text("rule-" + std::to_string(source) + ".example.com").With(huxerui::Grow(1.0F)),
+                        text("DIRECT").With(huxerui::Frame{.width = 180.0F})}};
+                // UnifiedListRow is itself composable: keep both Scope boundaries.
+                return huxerui::Scope([fields, source] {
+                    return huxerui::Column{
+                        huxerui::View{fields}.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(8.0F, 6.0F)),
+                            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                        huxerui::Divider(),
+                    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+                        .Key("rule-fixture-" + std::to_string(source));
+                });
+            });
+        }).EstimatedItemExtent(compact ? 86.0F : 42.0F).Controller(scroll).With(huxerui::Grow(1.0F));
+        std::vector<huxerui::View> pages{
+            huxerui::Column{huxerui::Text("HEADERS"), huxerui::Divider(), list}
+                .With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).Key("subscription"),
+            huxerui::Column{huxerui::Text("GLOBAL")}.With(huxerui::Grow(1.0F)).Key("global"),
+        };
+        huxerui::View listPage = huxerui::Column {
+            huxerui::Button("JUMP-RULE").OnClick([scroll] { scroll.ScrollToItem(90000); }),
+            clashflux::ui::SectionTabBar({{"subscription", "Subscription"}, {"global", "Global"}},
+                section.Get() == 0 ? "subscription" : "global",
+                [section](const std::string& key) { section = key == "global" ? 1 : 0; }, motion),
+            clashflux::ui::SectionTabPages(pages, section.Get(), [section](std::size_t next) { section = next; }, motion),
+        }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        // Match RulesPage's effect sibling and composable scaffold boundary.
+        const huxerui::View scaffold = huxerui::Scope([listPage] { return listPage; });
+        listPage = huxerui::Column{huxerui::Scope([] { return huxerui::Row{}; }), scaffold}
+            .With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        return huxerui::IndexedPages(std::vector<huxerui::View>{listPage, huxerui::Row{}}, 0)
+            .With(huxerui::Grow(1.0F));
+    })};
+}
+const huxerui::Application kLargeRuleListApplication{LargeRuleListRoot};
+void testLargeRuleList() {
+    for (const auto viewport : {huxerui::Size{1000.0F, 700.0F}, huxerui::Size{390.0F, 700.0F}}) {
+        ruleFixtureBuilt = 0;
+        huxerui::testing::UiTest ui(kLargeRuleListApplication, {.viewport = viewport, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        check(ruleFixtureBuilt < 200, "十万规则在分页、多列布局内仍只构建视口及缓存区行");
+        const auto initialBuilt = ruleFixtureBuilt;
+        for (int frame = 0; frame < 60; ++frame) ui.Pump(std::chrono::milliseconds(16));
+        check(ruleFixtureBuilt == initialBuilt, "规则页连续帧不重复构建静止列表行");
+        ui.Find(UiSelector::Text("JUMP-RULE")).Tap();
+        ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Key("rule-fixture-90000")).Exists() && ruleFixtureBuilt < 400,
+              "跳至第九万条仍保持有界虚拟化");
+    }
+}
+
 void testLogActions() {
+    {
+        huxerui::testing::UiTest ui(kUnifiedLogHistoryApplication, {.viewport = {600.0F, 500.0F}});
+        ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Text("core-late\napplication-new\napplication-same-second\n")).Exists(),
+              "合并日志按时间排列，晚到行插入正确位置，同秒保留接收顺序且只留最新行");
+        check(ui.Find(UiSelector::Text("core-late\n")).Exists() &&
+              ui.Find(UiSelector::Text("application-new\napplication-same-second\n")).Exists(),
+              "统一列表的级别与搜索筛选作用于两种来源");
+        ui.Find(UiSelector::Text("CLEAR-UNIFIED")).Tap();
+        ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Text("UNIFIED-EMPTY")).Exists(), "清空统一列表后无来源缓存残留");
+    }
     const std::vector<clashflux::ui::LogEntry> entries{{"[10:00] info 中文", 1}, {"[10:01] warning", 2}, {"[10:02] error", 3}};
     check(clashflux::ui::ExportLogText(entries, 0) == "[10:00] info 中文\n[10:01] warning\n[10:02] error\n",
         "全部级别导出保持 Unicode、时间戳和原始顺序");
@@ -484,10 +614,13 @@ huxerui::View ResponsiveShellRoot() {
             }),
             huxerui::Text("SIDEBAR").With(huxerui::Frame{.width = 80.0F}),
             huxerui::Text("CHROME").With(huxerui::Frame{.height = 40.0F}),
-            huxerui::Text("BOTTOM").With(huxerui::Frame{.height = 64.0F}));
+            huxerui::Column {
+                huxerui::Text("BOTTOM").With(huxerui::Frame{.height = 64.0F}),
+            }.With(huxerui::SafeAreaPadding{.top = false}));
     })};
 }
-const huxerui::Application kResponsiveShellApplication{ResponsiveShellRoot, {.show_debug_overlay = false}};
+const huxerui::Application kResponsiveShellApplication{ResponsiveShellRoot,
+    {.window = {.content_mode = huxerui::WindowContentMode::EdgeToEdge}, .show_debug_overlay = false}};
 void testResponsiveDesktopShell() {
     huxerui::testing::UiTest ui(kResponsiveShellApplication, {.viewport = {1000.0F, 700.0F}});
     ui.PumpAndSettle();
@@ -507,9 +640,25 @@ void testResponsiveDesktopShell() {
         check(bottom.y > content.y && bottom.y + bottom.height < 480.0F &&
               bottom.x > 0.0F && bottom.x + bottom.width < width,
               "窄屏导航悬浮在内容上方并保留四周间隙");
+        const auto fade = ui.Find(UiSelector::Key("compact-navigation-fade")).One().bounds;
+        check(std::abs(fade.y - bottom.y - bottom.height * 0.5F) < 0.5F &&
+              std::abs(fade.y + fade.height - 480.0F) < 0.5F &&
+              std::abs(fade.width - width) < 0.5F,
+              "渐隐只从胶囊导航行中线向下覆盖到视口底边");
         check(ui.Find(UiSelector::Text("RETAINED-1")).Exists(), "缩窄窗口保留页面 State");
     }
+    for (float inset : {24.0F, 48.0F}) {
+        ui.SetWindowMetrics({.viewport = {320.0F, 480.0F}, .safe_area = {.bottom = inset}});
+        ui.PumpAndSettle();
+        const auto bottom = ui.Find(UiSelector::Text("BOTTOM")).One().bounds;
+        const auto fade = ui.Find(UiSelector::Key("compact-navigation-fade")).One().bounds;
+        check(std::abs(fade.y - bottom.y - bottom.height * 0.5F) < 0.5F &&
+              std::abs(fade.y + fade.height - 480.0F) < 0.5F,
+              "底部安全区变化后渐隐起点仍对齐胶囊导航行中线");
+    }
     ui.SetWindowMetrics({.viewport = {600.0F, 700.0F}}); ui.PumpAndSettle();
+    check(!ui.Find(UiSelector::Key("compact-navigation-fade")).Exists(),
+          "宽屏移除胶囊及其渐隐层");
     check(ui.Find(UiSelector::Text("SIDEBAR")).Exists() && !ui.Find(UiSelector::Text("BOTTOM")).Exists() &&
           ui.Find(UiSelector::Text("RETAINED-1")).Exists(), "600pt 恢复桌面布局且页面不重挂载");
 }
@@ -560,6 +709,31 @@ void testHeaderGeometry() {
             check(std::abs(bounds.x + bounds.width * 0.5F - width * 0.5F) < 0.5F,
                   "新建页面标题居于窗口中心，左右按钮大小不同及加载中仍保持居中");
         }
+    }
+}
+
+huxerui::View CompactPageBottomRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        const auto& theme = huxerui::UseTheme();
+        return huxerui::Column{
+            huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
+            huxerui::Text("PAGE-END").Key("compact-page-end"),
+        }.With(huxerui::Grow(1.0F),
+               huxerui::Padding(clashflux::ui::PageContentInsets(theme, true, 8.0F)),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    })};
+}
+const huxerui::Application kCompactPageBottomApplication{
+    CompactPageBottomRoot, {.show_debug_overlay = false}};
+void testCompactPageBottom() {
+    huxerui::testing::UiTest ui(kCompactPageBottomApplication,
+                                {.viewport = {320.0F, 480.0F}});
+    for (float height : {480.0F, 640.0F}) {
+        ui.SetWindowMetrics({.viewport = {320.0F, height}});
+        ui.PumpAndSettle();
+        const auto bounds = ui.Find(UiSelector::Key("compact-page-end")).One().bounds;
+        check(std::abs(bounds.y + bounds.height - height) < 0.5F,
+              "Compact 页面内容容器延伸到视口底边，不留骨架底部间距");
     }
 }
 
@@ -978,10 +1152,13 @@ int main() {
 
     testRuleTargetPicker();
     testLogActions();
+    testFilteredRuleIndices();
+    testLargeRuleList();
     testCommonMenu();
     testGroupDrawers();
     testResponsiveDesktopShell();
     testHeaderGeometry();
+    testCompactPageBottom();
     testEmptyState();
     testThemeSwitch();
     testProfileFileFilter();

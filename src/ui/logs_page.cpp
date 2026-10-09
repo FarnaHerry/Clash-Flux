@@ -1,11 +1,5 @@
-// logs_page.cpp — 日志页：内核 /logs + stdout/stderr 兜底行，或应用自身诊断日志；
-// 「内核日志/应用日志」来源分区走全项目统一的下划线标签栏（SectionTabBar，与
-// 代理页分组、规则页「订阅规则/全局路由」同款）+ 左右滑动切换；级别过滤
-// （全部/信息/警告/错误/调试）+ 清空 + 自动滚底。
-//
-// 数据流：推送驱动——内核 WS 日志 / 应用日志 / 内核 stdout 任一写入都会通知
-// （同一路合并），UI 线程一次性 drain 增量、拼时间戳后 append 进各自 StateList
-// （上限 800 行防爆内存）；两类日志分开缓存，切换来源不会丢数据。
+// logs_page.cpp — 统一日志页：内核 WS、stdout/stderr 与应用诊断共用时间线。
+// 历史与推送增量按时间合并，保留最新 800 行；共用搜索、级别过滤、导出与清空。
 #include <huxerui/huxerui.h>
 
 #include <chrono>
@@ -38,9 +32,6 @@ namespace {
 constexpr std::size_t kMaxLines = 800;
 
 // 过滤级别：0=全部 1=信息 2=警告 3=错误 4=调试。
-// 日志来源分区：key 参与标签选中匹配，label 是展示文本（见 SectionTabBar）。
-const std::vector<SectionTab> kSourceTabs{{"core", Localized("内核日志")},
-                                          {"application", Localized("应用日志")}};
 
 // 文件选择器只导出已准备好的本地文件。每次操作独占一个目录，
 // 选择器结束或任务取消时由 RAII 清理，不能覆盖运行中的日志文件。
@@ -95,70 +86,31 @@ int levelRank(const std::string& level) {
     auto clipboard = huxerui::UseApplication().Clipboard();
     auto picker = huxerui::UseService<huxerui::FilePicker>();
     auto exporting = huxerui::UseState(false);
-    auto coreEntries = huxerui::UseStateList<LogEntry>();
-    auto applicationEntries = huxerui::UseStateList<LogEntry>();
-    auto source = huxerui::UseState<std::size_t>(0);
-    auto sectionMotion = UseSectionTabMotion();
+    auto entries = huxerui::UseStateList<LogEntry>();
     auto filter = huxerui::UseState<std::size_t>(0);
     auto logSearch = huxerui::UseState(huxerui::TextEditingValue{});
-    const auto coreScroll = huxerui::UseScrollController();
-    const auto applicationScroll = huxerui::UseScrollController();
+    const auto scroll = huxerui::UseScrollController();
 
     huxerui::Lifecycle(
-        [tasks, coreEntries, applicationEntries] {
-            // 初始历史：页面重进时恢复已持久化的日志（同时消费掉 pending）。
-            const auto coreHistory = stream::coreLogHistory();
-            const std::size_t firstCore =
-                coreHistory.size() > kMaxLines ? coreHistory.size() - kMaxLines : 0;
-            for (std::size_t i = firstCore; i < coreHistory.size(); ++i) {
-                const auto& line = coreHistory[i];
-                coreEntries.PushBack(LogEntry{
-                    .text = std::format("[{}] {}", formatClock(line.at),
-                                        line.payload),
+        [tasks, entries] {
+            const auto append = [entries](const stream::LogLine& line) {
+                AppendLogEntry(entries, LogEntry{
+                    .text = std::format("[{}] {}", formatClock(line.at), line.payload),
                     .level = levelRank(line.level),
-                });
-            }
-            const auto applicationHistory = stream::applicationLogHistory();
-            const std::size_t firstApplication =
-                applicationHistory.size() > kMaxLines
-                    ? applicationHistory.size() - kMaxLines
-                    : 0;
-            for (std::size_t i = firstApplication;
-                 i < applicationHistory.size(); ++i) {
-                const auto& line = applicationHistory[i];
-                applicationEntries.PushBack(LogEntry{
-                    .text = std::format("[{}] {}", formatClock(line.at),
-                                        line.payload),
-                    .level = levelRank(line.level),
-                });
-            }
-            // 之后由推送驱动：内核 WS 日志、应用日志、内核 stdout/stderr 任一
-            // 写入都会通知一次（同一路合并），这里一次性 drain 全部增量。
+                    .at = line.at,
+                }, kMaxLines);
+            };
+            // 历史读取同时消费 pending，避免首个推送重复显示旧行。
+            for (const auto& line : stream::logHistory()) append(line);
             const std::uint64_t subscription = SubscribeStreamUpdates(
-                tasks, [coreEntries, applicationEntries](stream::StreamKind kind) {
+                tasks, [entries, append](stream::StreamKind kind) {
                     if (kind != stream::StreamKind::Logs) return;
-                    for (const auto& l : stream::drainCoreLogs()) {
-                        coreEntries.PushBack(LogEntry{
-                            .text = std::format("[{}] {}", formatClock(l.at),
-                                                l.payload),
-                            .level = levelRank(l.level),
-                        });
-                    }
-                    // WS 断线时的兜底：内核 stdout/stderr 行（启动期日志）。
-                    for (auto& l : store::coreStore().process().drainOutput()) {
-                        coreEntries.PushBack(
-                            LogEntry{.text = std::move(l), .level = 1});
-                    }
-                    for (const auto& l : stream::drainApplicationLogs()) {
-                        applicationEntries.PushBack(LogEntry{
-                            .text = std::format("[{}] {}", formatClock(l.at),
-                                                l.payload),
-                            .level = levelRank(l.level),
-                        });
-                    }
-                    while (coreEntries.Size() > kMaxLines) coreEntries.Erase(0);
-                    while (applicationEntries.Size() > kMaxLines) {
-                        applicationEntries.Erase(0);
+                    for (const auto& line : stream::drainLogs()) append(line);
+                    // stdout/stderr 无结构化时间，按本次接收时间插入统一列表。
+                    for (auto& line : store::coreStore().process().drainOutput()) {
+                        AppendLogEntry(entries, LogEntry{
+                            .text = std::move(line), .level = 1, .at = nowUnix(),
+                        }, kMaxLines);
                     }
                 });
             return [subscription] { UnsubscribeStreamUpdates(subscription); };
@@ -168,81 +120,47 @@ int levelRank(const std::string& level) {
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     if (!active) return huxerui::View{huxerui::Row{}}.Key("logs-idle");
 
-    std::vector<huxerui::View> sourcePages;
-    for (std::size_t page = 0; page < kSourceTabs.size(); ++page) {
-        // 每个来源保留自己的过滤列表与滚动连接。
-        const auto scroll = page == 0 ? coreScroll : applicationScroll;
-        const auto entries = page == 0 ? coreEntries : applicationEntries;
-        const std::string query = logSearch.Get().text;
-        std::vector<std::size_t> visible;
-        for (std::size_t i = 0; i < entries.Size(); ++i) {
-            if ((filter.Get() == 0 ||
-                 entries[i].level == static_cast<int>(filter.Get())) &&
-                SearchTextMatches(entries[i].text, query)) {
-                visible.push_back(i);
-            }
+    const std::string query = logSearch.Get().text;
+    std::vector<std::size_t> visible;
+    for (std::size_t i = 0; i < entries.Size(); ++i) {
+        if ((filter.Get() == 0 || entries[i].level == static_cast<int>(filter.Get())) &&
+            SearchTextMatches(entries[i].text, query)) {
+            visible.push_back(i);
         }
-
-        huxerui::View body = EmptyState(
-            Localized(entries.Empty()
-                ? (page == 0 ? "暂无内核日志" : "暂无应用日志")
-                : "没有匹配的日志"), app::images::logs);
-
-        if (!visible.empty()) {
-            const std::size_t visibleCount = visible.size();
-            huxerui::View list =
-                huxerui::VirtualList(
-                    visibleCount + (compact ? 1U : 0U),
-                    [entries, visible, theme, compact, visibleCount](
-                        std::size_t index) -> huxerui::View {
-                        if (compact && index == visibleCount) {
-                            return CompactFloatingNavigationFooter()
-                                .Key("compact-floating-footer");
-                        }
-                        const std::size_t sourceIndex = visible[index];
-                        const std::string& text = entries[sourceIndex].text;
-                        return UnifiedListRow(
-                            huxerui::Text(text).Style(huxerui::TextStyle{
-                                huxerui::Font::Monospace(font_size::kMonoBody),
-                                theme.colors.on_surface}),
-                            std::format("log-{}", sourceIndex), compact,
-                            index + 1 < visibleCount);
-                    })
-                    .EstimatedItemExtent(compact ? 38.0F : 34.0F)
-                    .Controller(scroll)
-                    .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
-            body = std::move(list);
-        }
-
-        sourcePages.push_back(huxerui::Column {body}.With(
-            huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
-            .Key("log-source-" + kSourceTabs[page].key));
     }
-    huxerui::View body = SectionTabPages(sourcePages, source.Get(),
-        [source](std::size_t index) { source = index; }, sectionMotion);
-
-    // 来源分区与代理页/规则页/订阅页共用同一下划线标签栏（SectionTabBar）。
-    huxerui::View sourceTabs = SectionTabBar(
-        kSourceTabs, source.Get() == 0 ? "core" : "application",
-        [source](const std::string& key) {
-            source = key == "application" ? 1 : 0;
-        }, sectionMotion);
-    const auto exportText = [source, filter, logSearch, coreEntries, applicationEntries] {
-        const auto entries = source.Get() == 0 ? coreEntries : applicationEntries;
-        std::vector<LogEntry> snapshot;
-        snapshot.reserve(entries.Size());
-        for (std::size_t index = 0; index < entries.Size(); ++index) snapshot.push_back(entries[index]);
+    huxerui::View body = EmptyState(
+        Localized(entries.Empty() ? "暂无日志" : "没有匹配的日志"), app::images::logs);
+    if (!visible.empty()) {
+        const std::size_t visibleCount = visible.size();
+        body = huxerui::VirtualList(
+            visibleCount + (compact ? 1U : 0U),
+            [entries, visible, theme, compact, visibleCount](std::size_t index) -> huxerui::View {
+                if (compact && index == visibleCount) {
+                    return CompactFloatingNavigationFooter().Key("compact-floating-footer");
+                }
+                const std::size_t sourceIndex = visible[index];
+                return UnifiedListRow(
+                    huxerui::Text(entries[sourceIndex].text).Style(huxerui::TextStyle{
+                        huxerui::Font::Monospace(font_size::kMonoBody), theme.colors.on_surface}),
+                    std::format("log-{}", sourceIndex), compact, index + 1 < visibleCount);
+            })
+            .EstimatedItemExtent(compact ? 38.0F : 34.0F)
+            .Controller(scroll)
+            .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
+    }
+    const auto exportText = [filter, logSearch, entries] {
+        std::vector<LogEntry> snapshot(entries.begin(), entries.end());
         return ExportLogText(snapshot, filter.Get(), logSearch.Get().text);
     };
     const auto copy = [clipboard, toast, exportText] {
         toast.Show(Localized(clipboard->WriteText(exportText()) ? "已复制到剪贴板" : "复制失败"));
     };
     const std::string logFileType = huxerui::UseString(Localized("日志文件"));
-    const auto exportFile = [tasks, toast, picker, exporting, source, exportText, logFileType] {
+    const auto exportFile = [tasks, toast, picker, exporting, exportText, logFileType] {
         if (exporting.Get()) return;
         exporting = true;
         const std::string text = exportText();
-        const std::string name = source.Get() == 0 ? "clash-flux-core.log" : "clash-flux-application.log";
+        const std::string name = "clash-flux.log";
         tasks.Launch([=]() -> huxerui::Task<void> {
             try {
                 const auto prepared = co_await RunOnTaskThread([text] { return LogExportFile::Prepare(text); });
@@ -259,29 +177,21 @@ int levelRank(const std::string& level) {
             exporting = false;
         });
     };
-    const auto clear = [coreEntries, applicationEntries] {
-        coreEntries.Clear();
-        applicationEntries.Clear();
+    const auto clear = [entries] {
+        entries.Clear();
         // 丢弃已排队的旧行，避免清空后马上被补回来。
         store::coreStore().process().drainOutput();
-        stream::clearCoreLogs();
-        stream::clearApplicationLogs();
+        stream::clearLogs();
     };
     huxerui::View actions = LogActionsMenu(filter.Get(),
         [filter](std::size_t index) { filter = index; }, copy, exportFile, clear,
         picker->CanSaveFiles() && !exporting.Get());
-    body = huxerui::Column {
-        std::move(sourceTabs),
-        std::move(body),
-    }.With(huxerui::Spacing(10.0F), huxerui::Grow(1.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-
     huxerui::View searchField = PillSearchField(
         logSearch, Localized("搜索日志"));
     if (onBack) return SecondaryPageScaffold(std::move(searchField), std::move(actions),
-                                              std::move(body), onBack, false, true);
+                                              std::move(body), onBack);
     return PageScaffold(Localized("日志"), std::move(actions), std::move(body),
-                        false, true, true, std::nullopt, {},
+                        false, false, true, std::nullopt, {},
                         std::move(searchField));
 }
 

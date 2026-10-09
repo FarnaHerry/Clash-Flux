@@ -16,11 +16,13 @@
 #include <huxerui/charts.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -32,8 +34,10 @@
 #include "empty_state.h"
 #include "task_bridge.h"
 
+import clashflux.api;
 import clashflux.core;
 import clashflux.db;
+import clashflux.netinfo;
 import clashflux.stream;
 import clashflux.store.core;
 import clashflux.store.profiles;
@@ -71,6 +75,8 @@ enum class HomeCardKind {
     Proxy,      // 系统代理（桌面）
     Tun,        // TUN 模式（桌面）
     Vpn,        // 隧道状态（移动端）
+    LanIp,      // 内网 IP（本机局域网地址）
+    NetCheck,   // 网络检测（公网出口 IP）
 };
 
 struct HomeCardSpec {
@@ -83,15 +89,19 @@ struct HomeCardSpec {
 
 #if defined(__ANDROID__)
 // 移动端可选卡片：桌面独有的系统代理/TUN 换成隧道状态。
-// 手机屏是 2 列：需要整宽的（图表、横排出站模式、开关行）给 2 格，信息卡 1 格；
-// 高度仍按 FlClash 跨度（图表/信息卡 2 行，开关行 1 行）。
+// 手机屏是 2 列：需要整宽的（图表）给 2 格，信息/单选卡 1 格；
+// 高度仍按 FlClash 跨度（图表/信息卡/出站模式 2 行，开关与网络信息卡 1 行）。
 constexpr HomeCardSpec kHomeCards[] = {
     // Lib-Charts 的紧凑绘图面最小 240×96，适配 2 行（188pt）的卡片。
     {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 2},
     {HomeCardKind::Total, "total", "流量统计", 1, 2},
-    {HomeCardKind::Mode, "mode", "出站模式", 2, 1},
+    // 出站模式是纵向单选列表（标题 + 3 个选项），占 1x2。
+    {HomeCardKind::Mode, "mode", "出站模式", 1, 2},
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
     {HomeCardKind::Vpn, "vpn", "隧道状态", 1, 2},
+    // 两张 1x1 网络信息卡并排占一行。
+    {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 1},
+    {HomeCardKind::NetCheck, "netcheck", "网络检测", 1, 1},
 };
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     AndroidHomePlatformCard(homeState, kind)
@@ -103,16 +113,19 @@ constexpr HomeCardSpec kHomeCards[] = {
 // 初始宽高按 FlClash 仪表盘实测跨度（其 3 列网格：单元 264x79.5、间距 14 逻辑 px）：
 //   网络速度 2x2 → 流量曲线 2x2   流量统计 1x2 → 流量统计 1x2
 //   系统代理 1x1 → 系统代理 1x1   TUN 1x1      → TUN 模式 1x1
-//   出站模式(竖排) 1x2 / V2(横排) → 出站模式取 2x1（横排三段按钮吃宽度）
+//   出站模式(竖排) 1x2 → 出站模式取 1x2（纵向单选列表）
 //   其余信息类卡片（当前订阅）与 FlClash 的信息卡同级，取 1x2。
 constexpr HomeCardSpec kHomeCards[] = {
     // 与移动端共用紧凑绘图面，流量卡片高度降为 2 行。
     {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 2},
     {HomeCardKind::Total, "total", "流量统计", 1, 2},
-    {HomeCardKind::Mode, "mode", "出站模式", 2, 1},
+    {HomeCardKind::Mode, "mode", "出站模式", 1, 2},
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
     {HomeCardKind::Proxy, "proxy", "系统代理", 1, 1},
     {HomeCardKind::Tun, "tun", "TUN 模式", 1, 1},
+    // 网络信息卡与开关卡同高（1 行），宽屏时与系统代理/TUN 同排。
+    {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 1},
+    {HomeCardKind::NetCheck, "netcheck", "网络检测", 1, 1},
 };
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     DesktopHomePlatformCard(kind)
@@ -528,104 +541,6 @@ huxerui::XYChartData BuildTrafficChartData(
     });
 }
 
-// 等宽分段选择器的滑动指示块：选中项下方自绘圆角色块，切换时按补间滑动。
-// 修饰符契约 = 嵌套 Extension 类型（见 huxerui NodeExtension 文档注释）。
-struct HomeSlidingSegments {
-    class Extension;
-
-    std::size_t selected_index = 0;
-    huxerui::Color indicator = huxerui::Color::Transparent();
-    float corner_radius = 8.0F;
-    double duration = 0.18;
-
-    bool operator==(const HomeSlidingSegments&) const = default;
-};
-
-class HomeSlidingSegments::Extension final : public huxerui::NodeExtension {
-public:
-    Extension(huxerui::ViewNode& node, const HomeSlidingSegments& spec) {
-        Update(node, spec);
-    }
-
-    void Update(huxerui::ViewNode& node, const HomeSlidingSegments& spec) {
-        static_cast<void>(node);
-        const bool selection_changed =
-            initialized_ && selected_index_ != spec.selected_index;
-        selected_index_ = spec.selected_index;
-        indicator_ = spec.indicator;
-        corner_radius_ = spec.corner_radius;
-        duration_ = spec.duration;
-        geometry_pending_ = geometry_pending_ || !initialized_ || selection_changed;
-        initialized_ = true;
-    }
-
-    FrameResult OnFrame(huxerui::ViewNode& node, const huxerui::FrameInfo& frame) override {
-        static_cast<void>(node);
-        const huxerui::MotionAdvanceResult result = offset_.Advance(frame);
-        if (result.changed) InvalidatePaint(PaintInvalidation::Content);
-        return FrameResult{.needs_frame = geometry_pending_ || result.needs_frame,
-                           .wake_after = result.wake_after};
-    }
-
-    PaintInvalidation PrepareGeometry(huxerui::ViewNode& node,
-                                      huxerui::TextMeasurer&) override {
-        if (selected_index_ >= node.ChildCount()) {
-            return PaintInvalidation::None;
-        }
-        const huxerui::ViewNode& selected = node.ChildAt(selected_index_);
-        const float target = selected.LayoutOffset().x;
-        const float width = selected.LayoutSize().width;
-        geometry_pending_ = false;
-        if (!geometry_initialized_) {
-            geometry_initialized_ = true;
-            width_ = width;
-            offset_.Set(target);
-            return PaintInvalidation::Content;
-        }
-        bool changed = false;
-        if (width_ != width) {
-            width_ = width;
-            changed = true;
-        }
-        if (offset_.Target() != target) {
-            if (duration_ > 0.0) {
-                offset_.AnimateTo(
-                    target, huxerui::TweenSpec{
-                                duration_, huxerui::Easing::EaseOut});
-            } else {
-                offset_.Set(target);
-            }
-            changed = true;
-        }
-        return changed ? PaintInvalidation::Content : PaintInvalidation::None;
-    }
-
-    // 画在内容之下：node.Bounds() 是节点本地坐标（原点 0,0），子项偏移不含
-    // 本节点的 padding（这里本就没有 padding）。
-    void PaintBehindContent(const huxerui::ViewNode& node,
-                            huxerui::PaintContext& context) const override {
-        if (!geometry_initialized_ || width_ <= 0.0F ||
-            indicator_.alpha <= 0.0F) {
-            return;
-        }
-        const huxerui::Rect frame = node.Bounds();
-        context.DrawRect(
-            huxerui::Rect{offset_.Value(), 0.0F, width_, frame.height},
-            indicator_, corner_radius_);
-    }
-
-private:
-    std::size_t selected_index_ = 0;
-    huxerui::Color indicator_ = huxerui::Color::Transparent();
-    float corner_radius_ = 8.0F;
-    double duration_ = 0.18;
-    huxerui::MotionController offset_;
-    float width_ = 0.0F;
-    bool initialized_ = false;
-    bool geometry_initialized_ = false;
-    bool geometry_pending_ = false;
-};
-
 // ---- 卡片内容 --------------------------------------------------------------
 
 // 流量统计：饼图展示上传/下载累计占比，右侧保留各自总量与百分比。
@@ -749,8 +664,8 @@ private:
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-// 出站模式：三枚等宽按钮（无标题文字）。选中指示块由 HomeSlidingSegments
-// 在内容之下自绘，切换时做滑动补间。
+// 出站模式：纵向单选列表（规则/全局/直连），排布参考 FlClash；单选圈、配色
+// 与圆角沿用主题。点击乐观更新，失败做目标值校验后回落。
 [[huxerui::composable]] huxerui::View HomeModeCard(
     huxerui::State<std::size_t> mode,
     huxerui::State<bool> modePending,
@@ -758,8 +673,6 @@ private:
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const std::size_t selected = mode.Get();
 
-    huxerui::Color indicator = theme.colors.primary;
-    indicator.alpha = 0.22F;
     huxerui::Color hoverFill = theme.colors.on_surface;
     hoverFill.alpha = 0.08F;
     huxerui::Color pressFill = theme.colors.on_surface;
@@ -771,29 +684,46 @@ private:
             .fill = huxerui::VisualFill{huxerui::Brush{pressFill}}},
     };
 
-    std::vector<huxerui::View> segments;
-    segments.reserve(kModeLabels.size());
+    std::vector<huxerui::View> options;
+    options.reserve(kModeLabels.size());
     for (std::size_t i = 0; i < kModeLabels.size(); ++i) {
         const bool active = i == selected;
-        segments.push_back(
+        // 单选圈：18pt 外环（选中 primary / 未选 outline），选中时中心实心点。
+        huxerui::View dot =
+            active ? huxerui::View{huxerui::Row{}.With(
+                         huxerui::Frame{.width = 8.0F, .height = 8.0F},
+                         huxerui::CornerRadius(4.0F),
+                         huxerui::Background(theme.colors.primary))}
+                   : huxerui::View{huxerui::Row{}};
+        huxerui::View ring = huxerui::Column {
+            std::move(dot),
+        }.With(huxerui::Frame{.width = 18.0F, .height = 18.0F},
+               huxerui::CornerRadius(9.0F),
+               huxerui::Border(active ? theme.colors.primary
+                                      : theme.colors.outline,
+                               2.0F),
+               huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+        options.push_back(
             huxerui::Row {
+                std::move(ring),
                 huxerui::Text(Localized(kModeLabels[i])).Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kBody)
                         .WithWeight(active ? huxerui::FontWeight::SemiBold
                                            : huxerui::FontWeight::Regular),
                     active ? theme.colors.primary
-                           : theme.colors.on_surface_variant}),
+                           : theme.colors.on_surface}),
             }
-                .With(huxerui::Grow(1.0F),
+                .With(huxerui::Spacing(10.0F),
+                      huxerui::Grow(1.0F),
                       huxerui::Padding(
-                          huxerui::EdgeInsets::Symmetric(0.0F, 9.0F)),
-                      huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-                      huxerui::CrossAlign(
-                          huxerui::CrossAxisAlignment::Center),
+                          huxerui::EdgeInsets::Symmetric(6.0F, 4.0F)),
+                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
                       huxerui::CornerRadius(8.0F),
+                      huxerui::ClipChildren(),
                       indication,
                       huxerui::Semantics{
-                          .role = huxerui::SemanticRole::Tab,
+                          .role = huxerui::SemanticRole::RadioButton,
                           .label = Localized(kModeLabels[i]),
                           .selected = active})
                 .OnClick([tasks, toast, mode, modePending, i] {
@@ -821,12 +751,15 @@ private:
                 .Key("home-mode-" + std::to_string(i)));
     }
 
-    return huxerui::Row(std::move(segments))
-        .With(huxerui::Spacing(4.0F),
-              huxerui::Background(theme.colors.surface_container_high),
-              huxerui::CornerRadius(12.0F),
-              huxerui::ClipChildren(),
-              HomeSlidingSegments{selected, indicator, 8.0F, 0.22});
+    return huxerui::Column {
+        HomeCardHeading(Localized("出站模式")),
+        huxerui::Column(std::move(options))
+            .With(huxerui::Spacing(2.0F),
+                  huxerui::Grow(1.0F),
+                  huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+    }.With(huxerui::Spacing(4.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 // 当前订阅卡：普通首页卡片，和别的卡片一样是 raised 表面 + on_surface 文字。
@@ -873,6 +806,202 @@ private:
                                        .With(huxerui::Frame{.height = 3.0F})}
                    : huxerui::View{huxerui::Row{}},
     }.With(huxerui::Spacing(6.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
+// ---- 网络信息卡片（双平台共用；平台差异只在公网取数函数）--------------------
+
+// 公网 IP 回显服务（仅 HTTPS，返回纯文本地址）。
+constexpr std::string_view kPublicIpEchoUrl = "https://api.ipify.org";
+
+// 响应原文必须是纯 IPv4/IPv6 文本：防止代理劫持或错误页内容被当成地址展示。
+bool LooksLikeIpAddress(std::string_view text) {
+    if (text.empty() || text.size() > 45) return false;
+    return std::ranges::all_of(text, [](unsigned char c) {
+        return std::isdigit(c) != 0 || c == '.' || c == ':' ||
+               (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    });
+}
+
+// 取公网出口 IP；失败返回空串。桌面与 Android 各一份完整实现（composable
+// 体内不做条件编译，平台差异只出现在文件作用域）。
+#if defined(__ANDROID__)
+// Android：应用自身流量不经自家 VPN 隧道，直连测量即设备真实出口；
+// 经 Java TLS 桥接的 HttpClient（Android 的 curl 构建不含 TLS）。
+huxerui::Task<std::string> FetchPublicIp(std::shared_ptr<AppHttpClient> http,
+                                         bool coreRunning,
+                                         const std::string& mixedPort) {
+    static_cast<void>(coreRunning);
+    static_cast<void>(mixedPort);
+    huxerui::HttpRequest request{};
+    request.url = std::string(kPublicIpEchoUrl);
+    request.timeout = std::chrono::milliseconds{8000};
+    auto response = co_await http->SendAsync(std::move(request));
+    if (!response.Succeeded()) co_return std::string{};
+    const huxerui::HttpResponse& body0 = response.Value();
+    if (body0.status_code < 200 || body0.status_code >= 300) {
+        co_return std::string{};
+    }
+    std::string body(reinterpret_cast<const char*>(body0.body.data()),
+                     body0.body.size());
+    body = trim(body);
+    co_return LooksLikeIpAddress(body) ? body : std::string{};
+}
+#else
+// 桌面：内核运行中经 mixed 入站测量「代理出口」的公网 IP，未运行时测直连
+// （强制直连，忽略 http_proxy 环境变量）。curl 调用阻塞，放任务线程。
+huxerui::Task<std::string> FetchPublicIp(std::shared_ptr<AppHttpClient> http,
+                                         bool coreRunning, std::string mixedPort) {
+    static_cast<void>(http);
+    co_return co_await RunOnTaskThread(
+        [coreRunning, mixedPort = std::move(mixedPort)] {
+            const api::ApiResult result = api::fetchText(
+                std::string(kPublicIpEchoUrl),
+                coreRunning ? "http://127.0.0.1:" + mixedPort : std::string{},
+                8);
+            if (!result.ok) return std::string{};
+            std::string body = trim(result.body);
+            return LooksLikeIpAddress(body) ? body : std::string{};
+        });
+}
+#endif
+
+// 内网 IP：枚举活动接口的本机 IPv4，每 5 秒刷新一次（getifaddrs 级别的
+// 便宜系统调用，仍按约定放任务线程）。
+[[huxerui::composable]] huxerui::View HomeLanIpCard() {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    auto tasks = huxerui::UseTaskScope();
+    auto addresses = huxerui::UseState<std::vector<netinfo::LanAddress>>({});
+    huxerui::Lifecycle(
+        [tasks, addresses] {
+            tasks.Launch([addresses]() -> huxerui::Task<void> {
+                for (;;) {
+                    auto list = co_await RunOnTaskThread(
+                        [] { return netinfo::lanIpv4Addresses(); });
+                    addresses = std::move(list);
+                    co_await huxerui::Delay(std::chrono::duration<double>{5.0});
+                }
+            });
+            return [] {};
+        },
+        0);
+
+    const std::vector<netinfo::LanAddress>& list = addresses.Get();
+    std::vector<huxerui::View> lines;
+    // 1 行卡片高度只够两条明细，更多接口折叠成「+N」。
+    constexpr std::size_t kMaxLines = 2;
+    const std::size_t shown = std::min(list.size(), kMaxLines);
+    for (std::size_t i = 0; i < shown; ++i) {
+        lines.push_back(
+            huxerui::Row {
+                huxerui::Text(list[i].iface).Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kCaption),
+                    theme.colors.on_surface_variant}),
+                huxerui::Spacer(),
+                huxerui::Text(list[i].address).Style(huxerui::TextStyle{
+                    huxerui::Font::Monospace(font_size::kChip),
+                    theme.colors.on_surface}),
+            }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
+    }
+    if (list.size() > kMaxLines) {
+        lines.push_back(huxerui::Text("+" +
+                                      std::to_string(list.size() - kMaxLines))
+                            .Style(huxerui::TextStyle{
+                                huxerui::Font::System(font_size::kCaption),
+                                theme.colors.on_surface_variant}));
+    }
+    if (list.empty()) {
+        lines.push_back(huxerui::Text(Localized("未检测到内网地址"))
+                            .Style(huxerui::TextStyle{
+                                huxerui::Font::System(font_size::kCaption),
+                                theme.colors.on_surface_variant}));
+    }
+
+    return huxerui::Column {
+        HomeCardHeading(Localized("内网 IP")),
+        huxerui::Column(std::move(lines))
+            .With(huxerui::Spacing(3.0F),
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+        huxerui::Spacer(),
+    }.With(huxerui::Spacing(4.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
+// 网络检测：显示当前公网出口 IP。挂载即检测，内核启停（出口变化）时自动
+// 重测，也可点右上角刷新按钮手动重测。
+[[huxerui::composable]] huxerui::View HomeNetCheckCard() {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    auto tasks = huxerui::UseTaskScope();
+    const auto http = huxerui::UseService<AppHttpClient>();
+    const auto coreModel = huxerui::UseService<CoreModel>();
+    const auto settingsModel = huxerui::UseService<SettingsModel>();
+    const bool coreRunning =
+        coreModel->view.Get().core.state == core::CoreState::Running;
+    const std::string mixedPort = settingsModel->view.Get().mixedPort;
+    auto ip = huxerui::UseState<std::string>({});
+    auto loading = huxerui::UseState(true);
+    auto failed = huxerui::UseState(false);
+
+    const auto refresh = [tasks, http, coreRunning, mixedPort, ip, loading,
+                          failed] {
+        if (loading.Get()) return;
+        loading = true;
+        failed = false;
+        tasks.Launch([http, coreRunning, mixedPort, ip, loading,
+                      failed]() -> huxerui::Task<void> {
+            const std::string result =
+                co_await FetchPublicIp(http, coreRunning, mixedPort);
+            loading = false;
+            if (result.empty()) {
+                failed = true;
+            } else {
+                ip = result;
+                failed = false;
+            }
+        });
+    };
+    // 挂载即检测；内核启停 / 入站端口变化都会改变出口，跟着重测。
+    huxerui::Lifecycle([refresh] {
+        refresh();
+        return [] {};
+    },
+                       coreRunning, mixedPort);
+
+    huxerui::View status =
+        loading.Get()
+            ? huxerui::View{huxerui::Text(Localized("检测中…"))
+                                .Style(huxerui::TextStyle{
+                                    huxerui::Font::System(font_size::kChip),
+                                    theme.colors.on_surface_variant})}
+        : failed.Get()
+            ? huxerui::View{huxerui::Text(Localized("检测失败"))
+                                .Style(huxerui::TextStyle{
+                                    huxerui::Font::System(font_size::kChip),
+                                    theme.colors.error})}
+            : huxerui::View{huxerui::Text(ip.Get())
+                                .Style(huxerui::TextStyle{
+                                    huxerui::Font::Monospace(font_size::kBody),
+                                    theme.colors.on_surface})};
+
+    huxerui::View refreshButton =
+        huxerui::IconButton(app::images::refresh, Localized("重新检测"))
+            .OnClick(refresh)
+            .With(huxerui::Frame{.width = 24.0F, .height = 24.0F},
+                  huxerui::Enabled(!loading.Get()),
+                  huxerui::Semantics{
+                      .role = huxerui::SemanticRole::Button,
+                      .label = huxerui::UseString(Localized("重新检测"))});
+    refreshButton = WithoutIconButtonOutlines(std::move(refreshButton));
+
+    return huxerui::Column {
+        huxerui::Row {
+            HomeCardHeading(Localized("网络检测")),
+            huxerui::Spacer(),
+            std::move(refreshButton),
+        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        std::move(status),
+        huxerui::Spacer(),
+    }.With(huxerui::Spacing(4.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
@@ -1101,21 +1230,24 @@ private:
 
 [[huxerui::composable]] huxerui::View DesktopModeSwitchRow(
     huxerui::ImageVariant icon, huxerui::StringVariant label,
-    huxerui::StringVariant hint, huxerui::View control) {
+    std::optional<huxerui::StringVariant> hint, huxerui::View control) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    std::vector<huxerui::View> labelColumn;
+    labelColumn.push_back(huxerui::Text(label).Style(huxerui::TextStyle{
+        huxerui::Font::System(font_size::kBody),
+        theme.colors.on_surface}));
+    if (hint.has_value()) {
+        labelColumn.push_back(huxerui::Text(*hint).Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kCaption),
+            theme.colors.on_surface_variant}));
+    }
     return huxerui::Row {
         huxerui::Image(std::move(icon))
             .Fit(huxerui::ImageFit::Contain)
             .Tint(theme.colors.primary)
             .With(huxerui::Frame{.width = 22.0F, .height = 22.0F}),
-        huxerui::Column {
-            huxerui::Text(label).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody),
-                theme.colors.on_surface}),
-            huxerui::Text(hint).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kCaption),
-                theme.colors.on_surface_variant}),
-        }.With(huxerui::Spacing(2.0F), huxerui::Grow(1.0F)),
+        huxerui::Column(std::move(labelColumn))
+            .With(huxerui::Spacing(2.0F), huxerui::Grow(1.0F)),
         std::move(control),
     }.With(huxerui::Spacing(12.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
@@ -1138,8 +1270,7 @@ private:
 
     return huxerui::Column {
         DesktopModeSwitchRow(
-            app::images::system_proxy, Localized("系统代理"),
-            Localized("为桌面应用设置系统代理"),
+            app::images::system_proxy, Localized("系统代理"), std::nullopt,
             huxerui::Switch(shownProxy)
                 .OnChanged([tasks, toast, proxyEnabled, pending, modelProxy,
                             coreModel](bool on) {
@@ -1377,6 +1508,8 @@ private:
         return HomeModeCard(homeMode, modePending, tasks, toast);
     }
     if (kind == HomeCardKind::Profile) return HomeProfileCard(s);
+    if (kind == HomeCardKind::LanIp) return HomeLanIpCard();
+    if (kind == HomeCardKind::NetCheck) return HomeNetCheckCard();
     return CLASHFLUX_HOME_PLATFORM_CARD(s, state, kind);
 }
 

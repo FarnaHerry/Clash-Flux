@@ -20,18 +20,13 @@ export struct LogLine {
     std::int64_t at = 0;   // Unix 秒
 };
 
-// 内核日志与应用自身的诊断日志分别持久化；Android 的 libbox CommandClient
-// 与桌面 clash_api 推送都写入同一条内核日志流。history 用于页面重进恢复，
-// drain 只消费增量队列。
+// 内核、应用诊断与 Android libbox 共用 core/logs.log、历史与增量队列。
+// 两个写入口保留调用方语义，UI 不再区分来源；旧分离日志不迁移、不读取。
 export void logCore(std::string level, std::string payload) noexcept;
-export std::vector<LogLine> coreLogHistory();
-export std::vector<LogLine> drainCoreLogs();
-export void clearCoreLogs();
-
 export void logApplication(std::string level, std::string payload) noexcept;
-export std::vector<LogLine> applicationLogHistory();
-export std::vector<LogLine> drainApplicationLogs();
-export void clearApplicationLogs();
+export std::vector<LogLine> logHistory();
+export std::vector<LogLine> drainLogs();
+export void clearLogs();
 
 export struct TrafficPoint {
     std::int64_t up = 0;    // 上传速率，字节/秒

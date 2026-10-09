@@ -18,7 +18,9 @@ inline huxerui::EdgeInsets PageContentInsets(const huxerui::ThemeSpec& theme,
     return {
         .top = compact ? theme.spacing.medium : kDesktopTopContentGap,
         .right = horizontal,
-        .bottom = compact ? theme.spacing.medium : theme.spacing.large,
+        // 页面铺到窗口（Compact 含系统安全区）底边；桌面右下角悬浮按钮与
+        // Compact 悬浮导航的避让由可滚动内容尾部的 footer 提供，不缩短整页容器。
+        .bottom = 0.0F,
         .left = horizontal,
     };
 }

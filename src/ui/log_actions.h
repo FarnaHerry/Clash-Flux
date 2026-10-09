@@ -1,7 +1,9 @@
 #pragma once
 
 #include <functional>
+#include <algorithm>
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -23,7 +25,19 @@ inline const std::array<huxerui::ImageResource, 5> kLogLevelIcons{
 struct LogEntry {
     std::string text;
     int level = 1;
+    std::int64_t at = 0;
 };
+
+// 两种来源共用按时间排列的日志列表；同秒条目按接收顺序插入，保留最新行。
+inline void AppendLogEntry(huxerui::StateList<LogEntry> entries, LogEntry entry,
+                           std::size_t maxLines) {
+    const auto position = std::upper_bound(entries.begin(), entries.end(), entry.at,
+        [](std::int64_t at, const LogEntry& existing) { return at < existing.at; });
+    const auto index = static_cast<std::size_t>(position - entries.begin());
+    if (index == entries.Size()) entries.PushBack(std::move(entry));
+    else entries.Insert(index, std::move(entry));
+    while (entries.Size() > maxLines) entries.Erase(0);
+}
 
 // 导出与可见列表共用级别过滤，按原始顺序保留时间戳与文本。
 inline std::string ExportLogText(const std::vector<LogEntry>& entries,

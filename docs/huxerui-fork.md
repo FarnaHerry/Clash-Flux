@@ -4,7 +4,7 @@
 `/home/farna/dev/cpp/mcpp/HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `3e16bf4ccb02aa3dfd7699f3342fe3a911e3e550`，各平台 CI 共用
+Clash-Flux 当前固定 `446a5a90a9e5e7e167eedd20c7580f7905f6fd3f`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
@@ -40,7 +40,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 3e16bf4ccb02aa3dfd7699f3342fe3a911e3e550
+git -C third_party/huxerui checkout 446a5a90a9e5e7e167eedd20c7580f7905f6fd3f
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
@@ -54,6 +54,14 @@ Clash-Flux 必须重新运行 `cmake --build build --target clash-flux`、`./run
 同源约束，桌面门禁和 iOS 暂缓政策保持不变。
 
 ## 验证边界
+
+2026-10-08 固定版本包含 `c40a2da` 的深层拉伸布局修复和 `446a5a9` 的 Windows 图标句柄成员位置修正。
+主轴有界且拉伸交叉轴已确定时，Row/Column 直接用最终分配尺寸测量 Grow 子树，避免逐层重复测量；松交叉轴与无界主轴仍保留自然尺寸计算。
+独立回归中，12 层 Row/Column 的叶子测量从 4096 次降为 1 次，同时验证加权分配、固定项、缩放和十万项虚拟列表滚动。
+框架 Linux Debug 构建、5 个新增回归及全部 4 组 common CTest 通过；Clash-Flux 用独立 checkout 重新构建，启用 `CLASHFLUX_REQUIRE_PROJECT_TESTS=ON` 后 15 项必跑回归全部通过，`./run.sh --version` 为 v0.3.28。
+隔离复制当前三个配置的 Linux Debug/X11 GUI 滚动采样中，测量阶段最大耗时从约 1663ms 降至约 42ms，新版本 228 个采样帧均未超过 100ms；这是当前桌面 Debug 测量，不代表 Release 或其它平台帧率。
+本轮未执行 Windows/macOS/iOS/Android 原生构建与运行；Windows 图标改动只修正已有提交的成员声明位置，仍需对应平台 CI 验证。
+
 
 此次框架合入通过 Linux Debug 运行时与独立头文件构建、Release 框架构建和四个 common
 CTest 套件（含 953 个 runtime 用例）。新增回归覆盖跨标签反向时的几何连续性、视口边缘
