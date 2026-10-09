@@ -743,5 +743,10 @@ Windows 仍必跑 16 项。原生服务测试使用隔离服务和假内核，�
   后端来规避 SDK 差异。因此不能宣称完整 Windows 构建已通过。
 - `git diff --check` 通过。
 
-未执行 Windows/MSVC 完整应用构建或原生 SCM 测试；未新增 Windows GUI/UAC/TUN
-数据流/PPTP 实机验收，未安装真实服务或更改当前机器代理、数据库与订阅。
+完整发布候选的 [GitHub CI](https://github.com/FarnaHerry/Clash-Flux/actions/runs/37951900040)
+已通过 Windows/MSVC Release 构建及全部项目回归（含原生 SCM 服务），Linux x64、
+Linux ARM64、macOS ARM64 与 Android 也通过。标签发布再执行门禁及 WiX 安装器构建。
+iOS 暂缓路径的现有 Xcode 工程解析失败仍为非阻塞，不生成 iOS 发布包。
+
+未新增 Windows GUI/UAC/TUN 数据流/PPTP 实机验收；本机未安装真实服务，未更改
+当前机器代理、数据库与订阅。
