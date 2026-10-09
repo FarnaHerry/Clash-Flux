@@ -1,6 +1,6 @@
-// service.cppm — clashflux.service：服务模式（接口即实现，单文件模块）。
+// service.cppm — shared network service facade (Linux systemd / Windows SCM).
 //
-// 对齐 Clash Verge Rev 的 service mode：TUN/PPTP 需要 root/CAP_NET_ADMIN，一次性
+// Linux service mode：TUN/PPTP 需要 root/CAP_NET_ADMIN，一次性
 // 首次安装可通过 pkexec 执行 `clash-flux service install` 安装一个 systemd
 // 服务；服务以 root 常驻（`clash-flux service run`），统一代替用户态 GUI/CLI
 // 管理 sing-box 和系统 PPTP 连接。已安装服务的版本升级由 root 服务
@@ -8,7 +8,9 @@
 // 客户端协议、安装升级、守护循环和跨平台 stub 分置在同目录 .inc 文件，
 // 仍由本模块单元编译，避免改变模块导出边界。
 //
-// 进程间通道：unix socket /run/clash-flux/service.sock（安装用户 + root 可连）。
+// Windows uses service_windows.inc + windows_service.cpp; only SCM owns the
+// data plane, RAS sessions and route leases. See docs/windows-service.md.
+// Linux 进程间通道：unix socket /run/clash-flux/service.sock（安装用户 + root 可连）。
 // 协议为每条连接一行命令（\n 结尾）、一行回复：
 //   START <configPath>  → OK / ERR <原因>
 //   STOP                → OK / ERR <原因>
@@ -29,8 +31,14 @@
 // `run -c <config> -D <parent(config)>`，configPath 必须是不含 ".." 的 .json
 // 绝对路径。PPTP 请求的字段经过十六进制编码，服务端只接受固定协议字段。
 module;
+#include <cstdio>
 
-// 服务模式仅 Linux（systemd + unix socket）；非 Linux 平台下方导出同签名 stub。
+#ifdef _WIN32
+#include "windows_service.h"
+#include "service_protocol.h"
+#endif
+
+// Linux uses systemd + Unix sockets; Windows uses SCM + authenticated named pipes.
 #if defined(__linux__) && !defined(__ANDROID__)
 #include <unistd.h>     // fork, execv, setsid, geteuid, readlink, access, unlink, close
 #include <sys/socket.h> // socket, bind, listen, accept, connect
@@ -52,6 +60,9 @@ export module clashflux.service;
 import std;
 import clashflux.config;
 import clashflux.pptp;
+#ifdef _WIN32
+import clashflux.vpn_compensation;
+#endif
 
 #ifndef CLASHFLUX_VERSION
 #define CLASHFLUX_VERSION "unknown"
@@ -75,12 +86,12 @@ export struct ServiceInfo {
     inline bool compatible() const { return reachable && error.empty(); }
 };
 
-// Returned by native VPN start calls on every platform.  The service backend
-// is Linux-only, but the client API and its non-Linux stubs must share the
-// same public signature so the Android legacy source can include this module.
+// Native VPN replies use owning fields on both desktop service backends.
+// Mobile stubs preserve the same public signature for the legacy source build.
 export struct PptpSessionInfo {
     std::string interfaceName;
     std::string gateway;
+    std::string transportAddress;
 };
 
 #if defined(__linux__) && !defined(__ANDROID__)
@@ -117,7 +128,9 @@ private:
 #include "service_admin.inc"
 #include "service_daemon.inc"
 
-#else  // !__linux__：服务模式仅 Linux，导出同签名 stub（core_store/cli/UI 无条件 import）。
+#elif defined(_WIN32)
+#include "service_windows.inc"
+#else  // Mobile/macOS currently use the same public stubs.
 #include "service_stub.inc"
 #endif
 

@@ -1,6 +1,6 @@
 # Clash-Flux
 
-版本更新见 [v0.3.26 发布说明](docs/releases/v0.3.26.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.29 发布说明](docs/releases/v0.3.29.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -64,10 +64,13 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   普通 C++ 数据，连接解析在任务线程。Clash YAML 与原生配置 DOM 保留现有适配器，
   迁移范围见 [开发记录](docs/glaze-migration.md)。
 - 系统代理（Windows、macOS、KDE / GNOME）与 TUN 模式开关（sing-box TUN，切换即重启内核生效）；Windows 后台代理操作直接使用系统 API，不弹命令行窗口
-- 服务模式（可选）：统一 root systemd 服务托管 sing-box 和 Linux PPTP，
+- Linux 服务模式（可选）：统一 root systemd 服务托管 sing-box 和 Linux PPTP，
   TUN、PPTP 拨号和原生路由无需每次授权；OpenVPN 不依赖系统 CLI，随 sing-box
   内核生命周期运行；
   未安装时回落「接管外部实例 → 直接 spawn」
+- Windows 原生服务：SCM LocalSystem 服务托管 sing-box、TUN 与 PPTP，应用保持普通
+  用户权限；设置中安装/更新服务时授权一次。控制使用受限命名管道，服务不打开用户
+  数据库，详见 [Windows 服务](docs/windows-service.md)。
 - 完整 CLI：同一二进制带子命令（core / mode / tun / proxy / profile / service），
   无参数启动进入 GUI
 - 浅色/深色/自动主题模式与可自定义主题色、岛屿风界面、自定义窗口标题栏、系统托盘（Windows 托盘菜单跟随应用主题；启用托盘后关闭窗口隐藏到托盘，停用后询问是否退出）、
@@ -144,8 +147,8 @@ CMake 明确报告未注册。验证范围与证据见[分层完成度记录](do
 
 桌面 CI 配置 `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`，缺失或禁用必跑回归会让
 配置失败；Python、固定打包内核和可执行 OpenSSL CLI 均为必要前提，下载测试
-也必须执行默认证书拒绝场景。必跑清单为 15 项，只有已记录的 MSVC C4737
-缺陷允许跳过直接 ORM 测试（14 项），订阅持久化测试始终必跑。本地可使用同一门禁：
+也必须执行默认证书拒绝场景。通用桌面必跑 16 项，Windows 另加原生服务回归（17 项）；只有已记录的 MSVC C4737
+缺陷允许跳过直接 ORM 测试（Windows 为 16 项），订阅持久化测试始终必跑。本地可使用同一门禁：
 
 ```bash
 cmake -S . -B build -DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON
@@ -270,6 +273,11 @@ GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议�
 不再直接执行 `pppd` 或 `ip route`；安装时记录提权前用户 UID，socket 只允许该
 用户和 root 访问。TUN/PPTP 开箱可用，OpenVPN 由 sing-box 用户态 endpoint
 建立；未安装服务时 Linux 的 TUN/PPTP 不会静默尝试 root 操作，而是明确提示安装服务。
+
+Windows 使用原生 SCM 服务 `ClashFluxService`，首次在设置的内核服务安装，软件升级后
+通过「更新服务」同步版本；UAC 只提升服务管理子命令，GUI 不需要管理员运行。
+管理员终端也可执行 `clash-flux.exe service install|uninstall`。Windows 内核不再由
+GUI 直接启动，详细授权、退出行为和验证范围见 [Windows 服务](docs/windows-service.md)。
 
 ## 多平台 CI
 

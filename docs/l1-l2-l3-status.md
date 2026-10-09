@@ -712,3 +712,48 @@ git diff --check
 `urltest` 手动锁定、原生 fallback/load-balance、真实 providers 面板等固定内核没有的
 能力归为“不做”，不放进待修 bug 或待完成百分比。iOS 是否恢复支持由后续项目决策
 决定，本清单不产生 iOS 发布承诺。
+
+
+## 2026-10-09：Windows 原生服务分离
+
+代码快照：当前未提交工作区（本批不提交、不推送）。Windows 新增 SCM
+`ClashFluxService` / LocalSystem 服务，通过受限命名管道控制 sing-box、PPTP/RAS
+与 TUN 路由补偿；GUI/CLI 保留数据库、订阅和当前用户系统代理，TUN 不提权 GUI。
+服务管理走 UAC 子命令、原始用户 SID 授权、受保护 Program Files 载荷与版本门禁；
+正常更新失败尝试恢复旧载荷，不承诺完整多文件崩溃事务。详细契约见
+[Windows 服务](windows-service.md)。
+
+新增 `service_protocol`（所有桌面）与 `windows_service`（Windows 管理员环境）
+回归，项目门禁现在为通用桌面 16 项、Windows 17 项；MSVC C4737 仅豁免直接 ORM，
+Windows 仍必跑 16 项。原生服务测试使用隔离服务和假内核，不代替真实 VPN 流量验收。
+
+本批实际验证：
+
+- `cmake --build build --target clash-flux`（包含 HuxerUI codegen）与
+  `./run.sh --version` 成功，版本仍为 0.3.28。
+- 构建 `test_service_protocol`、`test_vpn`、`test_compensation`、`test_pptp_connect`
+  及其余项目回归目标；`ctest --test-dir build --output-on-failure --no-tests=error
+  -L clashflux-required`：16/16 通过。
+- LLVM-MinGW 20261006：原生 `windows_service.cpp` 和 Windows SCM 测试程序以
+  `-std=c++20 -Wall -Wextra -Werror` 编译、链接为 PE 成功；假内核 PE 编译成功。
+  Windows 的 config/vpn/pptp/vpn_compensation/service/singbox/core 接口，以及
+  `pptp.cpp` / `core.cpp` 实现交叉编译成功。
+- 扩大到原有 `vpn_compensation_windows.cpp` 时，MinGW 的 `windns.h` 缺少
+  `DNS_ADDR_ARRAY`、`DNS_QUERY_REQUEST`、`DnsQueryEx` 声明而失败；本批不改 DNS
+  后端来规避 SDK 差异。因此不能宣称完整 Windows 构建已通过。
+- `git diff --check` 通过。
+
+未执行 Windows/MSVC 完整应用构建或原生 SCM 测试；未新增 Windows GUI/UAC/TUN
+数据流/PPTP 实机验收，未安装真实服务或更改当前机器代理、数据库与订阅。
+
+## 2026-10-09：v0.3.29 发布候选
+
+发布候选只包含 Windows 原生服务及相关门禁，不包含此前尚未发布的首页、日志、
+分页和保真度 UI 改动，也不包含 `traces/`。独立工作树使用现有发布基线的 HuxerUI
+固定 SHA `3e16bf4ccb02aa3dfd7699f3342fe3a911e3e550`，与该候选的 CI 配置一致。
+
+本地重新构建 `clash-flux` 及全部项目门禁目标成功，`./run.sh --version` 返回
+0.3.29；`ctest --test-dir build --output-on-failure --no-tests=error
+-L clashflux-required` 16/16 通过，`git diff --check` 通过。
+Windows/MSVC 构建和隔离 SCM 回归由 GitHub CI 验证；通过全部发布门禁后才创建
+带安装包的 Release，不把候选提交或 CI 启动当作验证完成。

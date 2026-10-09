@@ -1,6 +1,6 @@
 # Clash-Flux
 
-See the [v0.3.26 release notes](docs/releases/v0.3.26.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.29 release notes](docs/releases/v0.3.29.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -94,11 +94,15 @@ application-managed settings before being passed to sing-box.
 - System proxy support for Windows, macOS, KDE and GNOME, plus sing-box TUN mode.
   Changing TUN restarts the core to apply the setting. Windows background proxy
   operations use system APIs without opening command windows.
-- Optional service mode: one root systemd service manages sing-box and Linux PPTP,
+- Optional Linux service mode: one root systemd service manages sing-box and Linux PPTP,
   avoiding repeated authorization for TUN, PPTP dialing and native routes. OpenVPN
   follows the sing-box lifecycle and does not require a system OpenVPN CLI. Without
   the service, the application first tries to adopt an external instance, then
   falls back to launching the core directly.
+- Native Windows service: SCM runs `ClashFluxService` as LocalSystem to own sing-box,
+  TUN, PPTP and route compensation. The GUI stays unelevated and uses a restricted
+  named pipe. Installation/updates request UAC only for the service command.
+  See [Windows service](docs/windows-service.md).
 - A full CLI in the same executable: `core`, `mode`, `tun`, `proxy`, `profile` and
   `service` commands. Launch without arguments to open the GUI.
 - Light and dark themes with system theme detection, an island-style interface,
@@ -188,8 +192,8 @@ register that test. See [validation evidence](docs/l1-l2-l3-status.md).
 Desktop CI sets `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`: missing or disabled required
 tests fail configuration. Python, the pinned bundled core and a runnable OpenSSL
 CLI are required; the download regression must include default certificate rejection.
-There are 15 required tests. Only the documented MSVC C4737 defect permits skipping
-the direct ORM test (14 tests); subscription persistence remains mandatory.
+There are 16 common desktop tests, plus the native service regression on Windows (17).
+Only the documented MSVC C4737 defect permits skipping the direct ORM test (16 on Windows); subscription persistence remains mandatory.
 Use the same gate locally:
 
 ```bash
@@ -359,6 +363,11 @@ The GUI sends fixed-protocol requests through the restricted Unix socket
 installation it records the user UID before privilege elevation; only that user
 and root can access the socket. Linux TUN/PPTP requires the service and prompts
 for its installation when absent. OpenVPN uses sing-box userspace endpoints.
+
+On Windows, install `ClashFluxService` under Kernel service in Settings and update it
+there after upgrading the application. UAC elevates only the management command.
+An administrator terminal can also run `clash-flux.exe service install|uninstall`.
+All Windows core startup now goes through SCM. See [service deployment and validation](docs/windows-service.md).
 
 ## Cross-platform CI
 

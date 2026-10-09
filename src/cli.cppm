@@ -59,7 +59,7 @@ void printUsage() {
         "用法：clash-flux [命令] [参数]    （无参数 = 启动 GUI）\n"
         "\n"
         "  version                          版本信息\n"
-        "  service install|uninstall|status 安装/卸载/查看 root 网络服务\n"
+        "  service install|uninstall|status 安装/卸载/查看特权网络服务\n"
         "  core start|stop|restart|status   内核生命周期\n"
         "  mode [rule|global|direct]        查/切出站模式\n"
         "  tun on|off                       TUN 透明代理开关\n"
@@ -78,9 +78,15 @@ int cmdService(const std::vector<std::string>& args) {
         std::println(stderr, "service 需要子命令：install|uninstall|status");
         return 2;
     }
-    if (args[0] == "install") return service::install();
+    if (args[0] == "install") {
+#ifdef _WIN32
+        if (args.size() == 3 && args[1] == "--owner-sid") return service::installForUser(args[2]);
+#endif
+        if (args.size() != 1) return 2;
+        return service::install();
+    }
     if (args[0] == "uninstall") return service::uninstall();
-    if (args[0] == "run") return service::run();  // systemd ExecStart 专用
+    if (args[0] == "run") return service::run();  // systemd / SCM entry, no application Runtime
     if (args[0] == "status") {
         const bool installed = service::installed();
         const auto info = service::query();
@@ -103,7 +109,7 @@ int cmdService(const std::vector<std::string>& args) {
                          ? "运行中（服务托管）"
                          : "未运行",
                      info.compatible() && service::pptpAvailable()
-                         ? "root 后端可用"
+                         ? "系统服务后端可用"
                          : "不可用",
                      "sing-box endpoint");
         if (!info.error.empty() && info.reachable) {

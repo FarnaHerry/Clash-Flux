@@ -29,8 +29,8 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
 
 桌面 CI 必须配置 `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`，按
 `cmake/ProjectTestGate.cmake` 核对必跑测试已注册且未禁用，CTest 使用
-`--no-tests=error`。当前为 15 项；只有已记录的 MSVC C4737 编译器缺陷允许
-跳过直接 ORM 测试（14 项），persistence 必跑。Python、固定打包内核、
+`--no-tests=error`。通用桌面必跑 16 项，Windows 另加 windows_service（17 项）；
+只有已记录的 MSVC C4737 编译器缺陷允许跳过直接 ORM 测试（Windows 为 16 项），persistence 必跑。Python、固定打包内核、
 可执行的 OpenSSL CLI 缺失必须失败；下载回归传入明确的 OpenSSL 路径及
 `--require-tls`，不能用跳过证书拒绝场景换取发布通过。手机构建不启用此桌面门禁。
 
@@ -153,6 +153,12 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   不要在后台使用 `std::system`、`_popen` 或会显示终端的 shell 启动方式。只有明确
   需要用户交互的授权流程（例如 UAC）才显示系统提示；启动、轮询和退出清理中的类似
   操作也必须遵守此规则。
+- Windows 数据面必须由 SCM 的 `ClashFluxService`（LocalSystem）托管，GUI/CLI 不直接
+  spawn 内核、不提权 GUI；PPTP/RAS 与 TUN 路由补偿也由服务持有。数据库、订阅和
+  当前用户系统代理仍在 GUI 侧。安装/更新/卸载只提权服务子命令，原始 SID 在 UAC 前
+  读取；管道必须限制安装用户/SYSTEM/管理员并核对双方身份。服务载荷使用受保护的
+  Program Files 独立目录，版本不符拒绝运行并经 UAC 更新，卸载不得触碰用户订阅。
+  生命周期、部署与专属回归见 `docs/windows-service.md`。
 - Windows CI 使用 runner 预装的 OpenSSL（`Program Files/OpenSSL`），构建前检查
   可执行文件和开发头文件；不要在发布门禁重新调用 Chocolatey 安装 OpenSSL。
 - 修改完成后运行 `git diff --check`，并在回复中说明实际执行过的验证命令及结果。

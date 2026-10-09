@@ -54,44 +54,11 @@ import clashflux.singbox;
 namespace core {
 
 // ---- TUN 打开门禁（见 core.cppm 注释）----
-namespace {
-
-#ifdef _WIN32
-// 当前进程是否以管理员令牌运行。
-bool tokenElevated() {
-    BOOL elevated = FALSE;
-    HANDLE raw = nullptr;
-    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw)) {
-        clashflux::win32::UniqueHandle token{raw};
-        TOKEN_ELEVATION elevation{};
-        DWORD ret = 0;
-        if (GetTokenInformation(token.get(), TokenElevation, &elevation,
-                                sizeof(elevation), &ret)) {
-            elevated = elevation.TokenIsElevated;
-        }
-    }
-    return elevated != FALSE;
-}
-
-// 以管理员重新启动自身（runas → UAC）。用户取消 / 失败返回 false。
-bool relaunchElevated() {
-    wchar_t path[MAX_PATH]{};
-    if (GetModuleFileNameW(nullptr, path, MAX_PATH) == 0) return false;
-    SHELLEXECUTEINFOW sei{};
-    sei.cbSize = sizeof(sei);
-    sei.lpVerb = L"runas";
-    sei.lpFile = path;
-    sei.nShow = SW_SHOWNORMAL;
-    return ShellExecuteExW(&sei) != FALSE;
-}
-#endif
-
-} // namespace
-
 TunGate tunGate() {
 #ifdef _WIN32
-    if (tokenElevated()) return TunGate::Ok;
-    return relaunchElevated() ? TunGate::Elevated : TunGate::Denied;
+    // Only the SCM service owns privileged networking. Never elevate the GUI.
+    std::string error;
+    return service::ensureCompatible(error) ? TunGate::Ok : TunGate::Denied;
 #elif defined(CLASHFLUX_IOS)
     // iOS presents its own VPN authorization prompt when the Packet Tunnel is
     // first started; there is no root/euid gate in the app process.
@@ -352,7 +319,13 @@ bool spawnDetached(const std::filesystem::path& binary,
                    const std::filesystem::path& workDir,
                    const std::filesystem::path& configFile,
                    std::string& error) {
-#if defined(CLASHFLUX_IOS)
+#if defined(_WIN32)
+    static_cast<void>(binary);
+    static_cast<void>(workDir);
+    static_cast<void>(configFile);
+    error = "Windows 内核必须由系统网络服务托管";
+    return false;
+#elif defined(CLASHFLUX_IOS)
     static_cast<void>(binary);
     static_cast<void>(workDir);
     static_cast<void>(configFile);
@@ -748,7 +721,13 @@ bool CoreProcess::start(const std::filesystem::path& binary,
     impl_->exitCode.store(-1);
     impl_->lastError.clear();
 
-#if defined(CLASHFLUX_IOS)
+#if defined(_WIN32)
+    static_cast<void>(binary);
+    static_cast<void>(workDir);
+    static_cast<void>(configFile);
+    impl_->lastError = "Windows 内核必须由系统网络服务托管";
+    return false;
+#elif defined(CLASHFLUX_IOS)
     // iOS cannot launch the desktop sing-box executable. The Network Extension
     // owns Libbox and reads its config from the shared App Group directory.
     static_cast<void>(binary);

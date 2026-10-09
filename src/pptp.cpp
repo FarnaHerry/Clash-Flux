@@ -407,49 +407,6 @@ std::shared_ptr<Runtime> privilegedRuntime() {
     return runtime;
 }
 
-bool connectLinux(const std::shared_ptr<Runtime>& runtime,
-                  vpn::VpnConnection& connection, std::string& error) {
-    std::string serviceError;
-    if (!service::ensureCompatible(serviceError)) {
-        error = serviceError.empty()
-                    ? "Clash-Flux root 服务未运行；请先在设置中安装/启动服务"
-                    : serviceError;
-        return false;
-    }
-    if (!service::pptpAvailable()) {
-        error = "root 服务侧缺少 pppd、pptp 或 ip 命令";
-        return false;
-    }
-    std::string parseError;
-    if (!ParsePptpConfig(connection.nativeConfig, parseError)) {
-        error = parseError;
-        return false;
-    }
-    service::PptpSessionInfo session;
-    if (!service::startPptp(connection.id, connection.nativeConfig, {}, session,
-                             error)) {
-        return false;
-    }
-    connection.interfaceName = std::move(session.interfaceName);
-    connection.gateway = std::move(session.gateway);
-    return true;
-}
-
-bool applyLinuxRoutes(const std::shared_ptr<Runtime>&,
-                      vpn::VpnConnection& connection,
-                      std::span<const std::string> routes,
-                      std::string& error) {
-    if (!service::applyPptpRoutes(connection.id, routes, error)) return false;
-    return true;
-}
-
-void disconnectLinux(const std::shared_ptr<Runtime>&,
-                     vpn::VpnConnection& connection) {
-    std::string ignored;
-    service::stopPptp(connection.id, ignored);
-    connection.interfaceName.clear();
-    connection.gateway.clear();
-}
 
 #elif defined(_WIN32)
 
@@ -613,7 +570,7 @@ bool connectWindows(const std::shared_ptr<Runtime>& runtime,
     }
 
     const std::filesystem::path phonebookPath =
-        std::filesystem::temp_directory_path() /
+        service::privilegedWorkDir() /
         std::format("clash-flux-pptp-{}-{}.pbk", GetCurrentProcessId(),
                     GetTickCount64());
     const std::wstring phonebook = phonebookPath.wstring();
@@ -747,6 +704,55 @@ struct Runtime {};
 
 #endif
 
+#if (defined(__linux__) && !defined(__ANDROID__)) || defined(_WIN32)
+bool connectService(const std::shared_ptr<Runtime>& runtime,
+                  vpn::VpnConnection& connection, std::string& error) {
+    std::string serviceError;
+    if (!service::ensureCompatible(serviceError)) {
+        error = serviceError.empty()
+                    ? "Clash-Flux 网络服务未运行；请先在设置中安装/启动服务"
+                    : serviceError;
+        return false;
+    }
+    if (!service::pptpAvailable()) {
+        error = "网络服务侧 PPTP 后端不可用";
+        return false;
+    }
+    std::string parseError;
+    if (!ParsePptpConfig(connection.nativeConfig, parseError)) {
+        error = parseError;
+        return false;
+    }
+    service::PptpSessionInfo session;
+    if (!service::startPptp(connection.id, connection.nativeConfig, {}, session,
+                             error)) {
+        return false;
+    }
+    connection.interfaceName = std::move(session.interfaceName);
+    connection.gateway = std::move(session.gateway);
+    connection.transportAddress = std::move(session.transportAddress);
+    return true;
+}
+
+bool applyServiceRoutes(const std::shared_ptr<Runtime>&,
+                      vpn::VpnConnection& connection,
+                      std::span<const std::string> routes,
+                      std::string& error) {
+    if (!service::applyPptpRoutes(connection.id, routes, error)) return false;
+    return true;
+}
+
+void disconnectService(const std::shared_ptr<Runtime>&,
+                     vpn::VpnConnection& connection) {
+    std::string ignored;
+    service::stopPptp(connection.id, ignored);
+    connection.interfaceName.clear();
+    connection.gateway.clear();
+    connection.transportAddress.clear();
+}
+
+#endif
+
 std::shared_ptr<Runtime> adapterRuntime() {
     static const auto runtime = std::make_shared<Runtime>();
     return runtime;
@@ -781,7 +787,8 @@ bool PrivilegedPptpConnect(std::string_view connectionId,
                            std::span<const std::string> routes,
                            std::string& interfaceName,
                            std::string& gateway,
-                           std::string& error) {
+                           std::string& error,
+                           std::string* transportAddress) {
     vpn::VpnConnection connection{
         .id = std::string(connectionId),
         .kind = vpn::ConnectionKind::Pptp,
@@ -797,6 +804,7 @@ bool PrivilegedPptpConnect(std::string_view connectionId,
     }
     interfaceName = std::move(connection.interfaceName);
     gateway = std::move(connection.gateway);
+    if (transportAddress) *transportAddress = std::move(connection.transportAddress);
     return true;
 }
 
@@ -829,13 +837,15 @@ void PrivilegedPptpShutdown() {
     for (const std::string& id : ids) PrivilegedPptpDisconnect(id);
 }
 
-#endif
-
-bool PptpSessionAlive(std::string_view connectionId) {
-#if defined(__linux__) && !defined(__ANDROID__)
-    return service::pptpSessionAlive(connectionId);
 #elif defined(_WIN32)
-    const auto runtime = adapterRuntime();
+
+std::shared_ptr<Runtime> privilegedRuntime() {
+    static const auto runtime = std::make_shared<Runtime>();
+    return runtime;
+}
+bool PrivilegedPptpAvailable() { return true; }
+bool PrivilegedPptpSessionAlive(std::string_view connectionId) {
+    const auto runtime = privilegedRuntime();
     std::lock_guard lock(runtime->mutex);
     const auto it = runtime->windowsSessions.find(std::string(connectionId));
     if (it == runtime->windowsSessions.end() || it->second.connection == nullptr) {
@@ -847,6 +857,45 @@ bool PptpSessionAlive(std::string_view connectionId) {
     return RasGetConnectStatusW(it->second.connection, &status) == ERROR_SUCCESS &&
            status.rasconnstate == RASCS_Connected && iface &&
            iface->InterfaceLuid.Value == it->second.interfaceLuid.Value;
+}
+bool PrivilegedPptpConnect(std::string_view id, std::string_view config,
+                          std::span<const std::string> routes, std::string& interfaceName,
+                          std::string& gateway, std::string& error, std::string* transportAddress) {
+    vpn::VpnConnection connection{.id = std::string(id), .kind = vpn::ConnectionKind::Pptp,
+                                  .enabled = true, .nativeConfig = std::string(config)};
+    const auto runtime = privilegedRuntime();
+    if (!connectWindows(runtime, connection, error)) return false;
+    if (!routes.empty() && !applyWindowsRoutes(runtime, connection, routes, error)) {
+        disconnectWindows(runtime, connection); return false;
+    }
+    interfaceName = std::move(connection.interfaceName);
+    gateway = std::move(connection.gateway);
+    if (transportAddress) *transportAddress = std::move(connection.transportAddress);
+    return true;
+}
+bool PrivilegedPptpApplyRoutes(std::string_view id, std::span<const std::string> routes, std::string& error) {
+    vpn::VpnConnection connection{.id = std::string(id), .kind = vpn::ConnectionKind::Pptp};
+    return applyWindowsRoutes(privilegedRuntime(), connection, routes, error);
+}
+void PrivilegedPptpDisconnect(std::string_view id) {
+    vpn::VpnConnection connection{.id = std::string(id), .kind = vpn::ConnectionKind::Pptp};
+    disconnectWindows(privilegedRuntime(), connection);
+}
+void PrivilegedPptpShutdown() {
+    const auto runtime = privilegedRuntime();
+    std::vector<std::string> ids;
+    { std::lock_guard lock(runtime->mutex);
+      for (const auto& [id, session] : runtime->windowsSessions) ids.push_back(id); }
+    for (const auto& id : ids) PrivilegedPptpDisconnect(id);
+}
+
+#endif
+
+bool PptpSessionAlive(std::string_view connectionId) {
+#if defined(__linux__) && !defined(__ANDROID__)
+    return service::pptpSessionAlive(connectionId);
+#elif defined(_WIN32)
+    return service::pptpSessionAlive(connectionId);
 #else
     (void)connectionId;
     return false;
@@ -858,7 +907,7 @@ bool PptpToolsAvailable() {
     // 普通进程不直接探测/执行本地 pppd；能力以 root service 的环境为准。
     return service::available() && service::pptpAvailable();
 #elif defined(_WIN32)
-    return true;
+    return service::available() && service::pptpAvailable();
 #else
     return false;
 #endif
@@ -874,31 +923,18 @@ vpn::EngineAdapter MakePptpAdapter() {
             .connectionKinds = {vpn::ConnectionKind::Pptp},
         },
     };
-#if defined(__linux__) && !defined(__ANDROID__)
+#if (defined(__linux__) && !defined(__ANDROID__)) || defined(_WIN32)
     adapter.connect = [runtime](vpn::VpnConnection& connection,
                                  std::string& error) {
-        return connectLinux(runtime, connection, error);
+        return connectService(runtime, connection, error);
     };
     adapter.applyRoutes = [runtime](vpn::VpnConnection& connection,
                                     std::span<const std::string> routes,
                                     std::string& error) {
-        return applyLinuxRoutes(runtime, connection, routes, error);
+        return applyServiceRoutes(runtime, connection, routes, error);
     };
     adapter.disconnect = [runtime](vpn::VpnConnection& connection) {
-        disconnectLinux(runtime, connection);
-    };
-#elif defined(_WIN32)
-    adapter.connect = [runtime](vpn::VpnConnection& connection,
-                                std::string& error) {
-        return connectWindows(runtime, connection, error);
-    };
-    adapter.applyRoutes = [runtime](vpn::VpnConnection& connection,
-                                    std::span<const std::string> routes,
-                                    std::string& error) {
-        return applyWindowsRoutes(runtime, connection, routes, error);
-    };
-    adapter.disconnect = [runtime](vpn::VpnConnection& connection) {
-        disconnectWindows(runtime, connection);
+        disconnectService(runtime, connection);
     };
 #else
     adapter.connect = [](vpn::VpnConnection&, std::string& error) {

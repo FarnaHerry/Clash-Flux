@@ -95,10 +95,15 @@ public:
         // 析构阶段不能把异常带出进程；正常 UI 关闭仍由 AppRoot 的任务
         // 线程路径负责，避免阻塞交互线程。
         try {
+#ifdef _WIN32
+            // A status-only CLI client does not own an existing SCM core.
+            const bool serviceOwnsCore = managedByService_ && !serviceDetached_;
+#else
             const bool serviceOwnsCore =
                 managedByService_ ||
                 (!process_.running() && service::reachable() &&
                  service::coreRunning());
+#endif
             if (serviceOwnsCore || process_.running()) stopCore();
         } catch (...) {
         }
@@ -122,9 +127,6 @@ private:
     std::mutex mutex_;
     std::recursive_mutex lifecycleMutex_;
     std::vector<singbox::NativeConnection> nativeSessions_;
-#ifdef _WIN32
-    vpn::compensation::RouteLease windowsRouting_;
-#endif
     std::once_flag initFlag_;
     CoreSnapshot snap_;
     std::string binaryPath_;
@@ -141,7 +143,10 @@ private:
     // 文件"就是这样）时必须重编，否则进程内会一直返回旧的空快照。
     std::filesystem::file_time_type compiledProxyGroupsStamp_{};
     std::uintmax_t compiledProxyGroupsSize_ = 0;
-    bool managedByService_ = false;  // 内核由 root 服务托管
+    bool managedByService_ = false;  // 内核由系统网络服务托管
+#ifdef _WIN32
+    bool serviceDetached_ = false;   // standalone CLI start survives Runtime exit
+#endif
     bool adopted_ = false;           // 接管的外部内核实例（非本进程 spawn）
 };
 

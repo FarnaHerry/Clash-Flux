@@ -53,6 +53,14 @@
 #endif
         std::lock_guard operationLock(lifecycleMutex_);
         ensureOpen();
+#ifdef _WIN32
+        // All Windows data-plane work belongs to SCM, including non-TUN mode.
+        std::string windowsServiceError;
+        if (!service::ensureCompatible(windowsServiceError)) {
+            fail(windowsServiceError);
+            return;
+        }
+#endif
         const auto serviceInfo = service::query();
         if (serviceInfo.reachable && !serviceInfo.compatible()) {
             std::string upgradeError;
@@ -280,13 +288,22 @@
         }
         return;
 #else
-        if (service::available()) {
+        const bool useService =
+#ifdef _WIN32
+            true; // A failed/restarting SCM service must never trigger GUI spawn.
+#else
+            service::available();
+#endif
+        if (useService) {
             std::string err;
             if (!service::startCore(configFile, err)) {
                 fail("服务托管启动失败：" + err);
                 return;
             }
             managedByService_ = true;
+#ifdef _WIN32
+            serviceDetached_ = detached;
+#endif
         } else {
             const bool controllerAnswering = api_->version().ok;
             const long residentPid = readPidFile();
@@ -417,9 +434,8 @@
 #ifdef _WIN32
         if (!windowsNativeInterfaces.empty()) {
             std::string error;
-            windowsRouting_ = vpn::compensation::PrepareWindowsTun(
-                windowsTunInterface, windowsNativeInterfaces, windowsExclusions, error);
-            if (!windowsRouting_) {
+            if (!service::prepareWindowsTun(
+                    windowsTunInterface, windowsNativeInterfaces, windowsExclusions, error)) {
                 stopCore();
                 fail("Windows PPTP/TUN 补偿失败：" + error);
                 return;
@@ -462,9 +478,7 @@
     bool stopCore() {
         std::lock_guard operationLock(lifecycleMutex_);
 #ifdef _WIN32
-        // Remove native interface fallback defaults while TUN still captures
-        // ordinary traffic. PPTP's server route remains owned by its session.
-        windowsRouting_.reset();
+        serviceDetached_ = false;
 #endif
         stream::logApplication("info", "请求停止代理内核");
 #if defined(__ANDROID__)

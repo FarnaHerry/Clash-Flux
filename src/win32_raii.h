@@ -19,6 +19,30 @@
 
 namespace clashflux::win32 {
 
+// SCM handles have a distinct closer; CloseHandle is not valid for SC_HANDLE.
+class UniqueServiceHandle {
+public:
+    UniqueServiceHandle() = default;
+    explicit UniqueServiceHandle(SC_HANDLE handle) noexcept : handle_(handle) {}
+    ~UniqueServiceHandle() { reset(); }
+    UniqueServiceHandle(const UniqueServiceHandle&) = delete;
+    UniqueServiceHandle& operator=(const UniqueServiceHandle&) = delete;
+    UniqueServiceHandle(UniqueServiceHandle&& other) noexcept
+        : handle_(std::exchange(other.handle_, nullptr)) {}
+    UniqueServiceHandle& operator=(UniqueServiceHandle&& other) noexcept {
+        if (this != &other) reset(std::exchange(other.handle_, nullptr));
+        return *this;
+    }
+    [[nodiscard]] SC_HANDLE get() const noexcept { return handle_; }
+    [[nodiscard]] bool valid() const noexcept { return handle_ != nullptr; }
+    void reset(SC_HANDLE handle = nullptr) noexcept {
+        if (handle_) ::CloseServiceHandle(handle_);
+        handle_ = handle;
+    }
+private:
+    SC_HANDLE handle_ = nullptr;
+};
+
 // CloseHandle 所有权；nullptr 与 INVALID_HANDLE_VALUE 都视为「无句柄」。
 class UniqueHandle {
 public:
