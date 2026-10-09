@@ -240,6 +240,9 @@ std::string BuildNodeDetail(const ProxyNode& node) {
 // 1428 逻辑 px，1428 / (225 + 8) ≈ 6.1 → 6 列（每张约 231 px）。
 constexpr float kProxyNodeWidth = 225.0F;
 
+// 桌面右下角悬浮测速按钮的滚动尾部净空：56pt 按钮 + 24pt 底部外边距。
+constexpr float kSpeedFabFooterHeight = 80.0F;
+
 // 延迟槽能放下的字符数（"测速中…"/"99999 ms"），超出截断成省略号。
 constexpr std::size_t kNodeMetaChars = 8;
 
@@ -699,6 +702,9 @@ std::function<void()> NodeSelectAction(
     // 每个根组仅声明轻量虚拟网格；Pager 提供有界视口并只测量参与显示的页。
     // 不给各页叠加单独入场动画，避免与 Pager 的完整出入场轨道冲突。
     constexpr std::size_t kCompactFooterItems = 2;
+    // 桌面悬浮测速按钮存在时，滚动尾部要留出它的净空，否则最后一行节点
+    // 会被按钮遮住。
+    const bool showSpeedFab = !direct && current != nullptr;
     std::vector<huxerui::View> groupPages;
     groupPages.reserve(rootGroups.size());
     for (std::size_t page = 0; page < rootGroups.size(); ++page) {
@@ -721,7 +727,8 @@ std::function<void()> NodeSelectAction(
             }
         }
         const std::size_t nodeCount = visibleNodes.size();
-        const std::size_t footerCount = compact ? kCompactFooterItems : 0;
+        const std::size_t footerCount =
+            compact ? kCompactFooterItems : (showSpeedFab ? 1U : 0U);
         if (!query.empty() && nodeCount == 0) {
             groupPages.push_back(huxerui::Column{
                 EmptyState(Localized("没有匹配的节点"), app::images::search),
@@ -740,10 +747,16 @@ std::function<void()> NodeSelectAction(
                                   selectionIntent](std::size_t index)
                                      -> huxerui::View {
                                      if (index >= nodeCount) {
-                                         if (!compact) return huxerui::View{};
-                                         return CompactFloatingNavigationFooter()
-                                             .Key("compact-floating-footer-" +
-                                                  std::to_string(index - nodeCount));
+                                         huxerui::View footer =
+                                             compact
+                                                 ? CompactFloatingNavigationFooter()
+                                                 : huxerui::View{huxerui::Row{}.With(
+                                                       huxerui::Frame{
+                                                           .height =
+                                                               kSpeedFabFooterHeight})};
+                                         return std::move(footer).Key(
+                                             "floating-footer-" +
+                                             std::to_string(index - nodeCount));
                                      }
                                      const ProxyGroup* group =
                                          findGroup(groups, contentGroupName);
@@ -770,7 +783,7 @@ std::function<void()> NodeSelectAction(
                                                     proxiesModel,
                                                     [toast] {
                                                         toast.Show(
-                                                            Localized("线路切换失败，请查看应用日志"));
+                                                            Localized("线路切换失败，请查看日志"));
                                                     },
                                                     *group, node),
                                                 nodeNameLimit, detailLimit)

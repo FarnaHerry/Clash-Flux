@@ -510,4 +510,47 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     return result;
 }
 
+ApiResult fetchText(const std::string& url, const std::string& proxyUrl,
+                    long timeoutSec) {
+    ApiResult result;
+    CurlHandle handle;
+    if (!handle) {
+        result.error = "curl_easy_init failed";
+        return result;
+    }
+    CURL* const easy = handle.get();
+    curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "https");
+    curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &onBodyWrite);
+    curl_easy_setopt(easy, CURLOPT_WRITEDATA, &result.body);
+    curl_easy_setopt(easy, CURLOPT_TIMEOUT, timeoutSec > 0 ? timeoutSec : 8L);
+    curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 4L);
+    curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(easy, CURLOPT_USERAGENT, "clash-flux/0.1");
+    char errorDetail[CURL_ERROR_SIZE]{};
+    curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, errorDetail);
+#if defined(_WIN32) && defined(CURLSSLOPT_NATIVE_CA)
+    // 与 downloadToFile 同理：Windows vendored curl 没有 CA bundle，
+    // 改用系统信任库。
+    curl_easy_setopt(easy, CURLOPT_SSL_OPTIONS,
+                     static_cast<long>(CURLSSLOPT_NATIVE_CA));
+#endif
+    // 代理二态：指定代理 > 强制直连（清空代理，防 http_proxy env 干扰）。
+    curl_easy_setopt(easy, CURLOPT_PROXY,
+                     proxyUrl.empty() ? "" : proxyUrl.c_str());
+    const CURLcode code = curl_easy_perform(easy);
+    if (code == CURLE_OK) {
+        curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status);
+        result.ok = result.status >= 200 && result.status < 300;
+        if (!result.ok) {
+            result.error = "HTTP " + std::to_string(result.status);
+        }
+    } else {
+        result.error = errorDetail[0] != '\0'
+                           ? std::string(errorDetail)
+                           : std::string(curl_easy_strerror(code));
+    }
+    return result;
+}
+
 } // namespace api

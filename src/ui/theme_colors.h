@@ -413,11 +413,30 @@ inline huxerui::Color ThemeShadowColor(const huxerui::ThemeSpec& theme, float op
     return color;
 }
 
-inline huxerui::Color CompactNavigationSurfaceColor(const huxerui::ThemeSpec& theme) {
-    // 与 IslandTheme::raised 共用卡片角色，半透明导航仍高于页面 base 层。
-    auto color = theme.colors.surface_container;
-    color.alpha = 0.78F;
+inline huxerui::Color CompactNavigationIndicatorColor(const huxerui::ThemeSpec& theme) {
+    auto color = theme.colors.primary;
+    color.alpha = 0.16F;
     return color;
+}
+
+inline huxerui::Color CompactNavigationSurfaceColor(const huxerui::ThemeSpec& theme) {
+    // Telegram 的纯色回退先合成背景和叠色，得到不透明的导航目标色。
+    // 深色用更亮的浮层角色，浅色用略深于白色卡片的角色，以边缘建立层次。
+    auto color = IsDarkTheme(theme) ? theme.colors.surface_container_highest
+                                  : theme.colors.surface_container_high;
+    color.alpha = 1.0F;
+    return color;
+}
+
+inline huxerui::Color CompactNavigationBorderColor(const huxerui::ThemeSpec& theme) {
+    // HuxerUI Border 为单色，取 Telegram 上下边缘强度的平均值。
+    auto color = theme.colors.on_surface;
+    color.alpha = (IsDarkTheme(theme) ? 11.5F : 24.5F) / 255.0F;
+    return color;
+}
+
+inline huxerui::Color CompactNavigationShadowColor(const huxerui::ThemeSpec& theme) {
+    return ThemeShadowColor(theme, (IsDarkTheme(theme) ? 4.0F : 32.0F) / 255.0F);
 }
 
 } // namespace clashflux::ui

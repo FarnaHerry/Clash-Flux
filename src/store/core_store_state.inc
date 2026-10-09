@@ -268,26 +268,64 @@
         }
     }
 
-    // 指定订阅的完整保真度账本（只编译不启动，见 compileFidelity）。原生连接
-    // （PPTP/OpenVPN）没有可编译的 YAML，返回空。
-    std::vector<singbox::FidelityNote> fidelityForProfile(std::int64_t profileId) {
+    // 单配置只读报告：不启用来源、不下载、不写运行/预览映射或用户文件。
+    ProfileFidelityReport fidelityReportForProfile(std::int64_t profileId) {
         ensureOpen();
-        std::string profileYaml;
-        for (const auto& profile : db_->listProfiles()) {
-            if (profile.id != profileId) continue;
-            if (profile.type == "pptp" || profile.type == "openvpn" ||
-                profile.file.empty()) {
-                return {};
+        std::lock_guard operationLock(lifecycleMutex_);
+        ProfileFidelityReport report;
+        try {
+            for (const auto& profile : db_->listProfiles()) {
+                if (profile.id != profileId) continue;
+                report.profileName = profile.name;
+                if (profile.type == "pptp" || profile.type == "openvpn") {
+                    report.supported = false;
+                    return report;
+                }
+                std::error_code error;
+                const auto root = std::filesystem::canonical(cfg::profilesDir(), error);
+                if (error || profile.file.empty()) {
+                    report.error = "无法读取配置文件";
+                    return report;
+                }
+                const auto path = std::filesystem::canonical(root / profile.file, error);
+                const auto relative = path.lexically_relative(root);
+                if (error || relative.empty() || relative.is_absolute() ||
+                    *relative.begin() == ".." || !std::filesystem::is_regular_file(path, error) || error) {
+                    report.error = "配置文件路径无效";
+                    return report;
+                }
+                const auto size = std::filesystem::file_size(path, error);
+                if (error || size == 0 || size > 8U * 1024U * 1024U) {
+                    report.error = "配置文件为空、无法读取或超过 8 MiB";
+                    return report;
+                }
+                std::ifstream input(path, std::ios::binary);
+                std::string content(static_cast<std::size_t>(size), '\0');
+                input.read(content.data(), static_cast<std::streamsize>(size));
+                if (input.gcount() != static_cast<std::streamsize>(size) ||
+                    input.peek() != std::char_traits<char>::eof()) {
+                    report.error = "读取配置文件失败或文件已变化";
+                    return report;
+                }
+                auto options = routingOptions(content, false, false, nullptr, std::nullopt, nullptr, false);
+                options.auxiliarySources.clear(); options.globalRules.clear(); options.nativeConnections.clear();
+                options.mainConnectionId = routing::ConnectionId(profileId);
+                auto compiled = core::generateConfig(options);
+                report.notes = std::move(compiled.fidelity);
+                report.error = std::move(compiled.error);
+                return report;
             }
-            std::ifstream input(cfg::profilesDir() / profile.file,
-                                std::ios::binary);
-            if (input) {
-                profileYaml.assign(std::istreambuf_iterator<char>(input),
-                                   std::istreambuf_iterator<char>());
-            }
-            break;
+            report.error = "配置不存在";
+        } catch (const std::exception& exception) {
+            report.error = exception.what();
+        } catch (...) {
+            report.error = "配置保真度检查失败";
         }
-        return compileFidelity(profileYaml, routing::ConnectionId(profileId));
+        return report;
+    }
+
+    std::vector<singbox::FidelityNote> fidelityForProfile(std::int64_t profileId) {
+        return fidelityReportForProfile(profileId).notes;
     }
 
     // 指定订阅的保真度一行摘要（"跳过 3 个节点 · 降级 1 个组"）；无降级返回空串。

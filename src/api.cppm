@@ -85,4 +85,11 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// 网络检测（桌面）：GET 一个返回纯文本的公网回显服务，body 即响应原文
+// （由调用方校验内容）。proxyUrl 非空时经该 HTTP 代理出口
+// （http://127.0.0.1:<mixedPort>），为空时强制直连并忽略环境变量代理，
+// 保证「直连出口」测量不被系统环境干扰。同步阻塞，调用方放任务线程。
+export ApiResult fetchText(const std::string& url, const std::string& proxyUrl,
+                           long timeoutSec);
+
 } // namespace api

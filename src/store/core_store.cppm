@@ -52,6 +52,15 @@ extern "C" bool clashflux_android_set_clash_mode(const char*) noexcept;
 extern "C" bool clashflux_android_select_outbound(const char*, const char*) noexcept;
 #endif
 
+export struct ProfileFidelityReport {
+    std::string profileName;
+    std::vector<singbox::FidelityNote> notes;
+    std::string error;
+    bool supported = true;
+
+    bool operator==(const ProfileFidelityReport&) const = default;
+};
+
 export struct CoreSnapshot {
     core::CoreState state = core::CoreState::Stopped;
     std::string binaryPath;      // 解析到的内核路径（空 = 未安装）

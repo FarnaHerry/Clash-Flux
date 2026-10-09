@@ -43,7 +43,7 @@ application-managed settings before being passed to sing-box.
 - Rules, connections and logs: view each subscription's rules; assign domains,
   IP addresses and CIDRs to different connections through global routing rules;
   inspect connection snapshots and close individual or all connections. Core and
-  application logs are stored separately and restored for viewing.
+  application logs share one searchable list and export, with history restored for viewing.
 - Native VPN profiles: PPTP uses system dialing and privileged service integration.
   Windows uses RAS with MS-CHAPv2; enabling MPPE-128 requires encryption, while
   disabling that option lets the server negotiate its requirements. OpenVPN

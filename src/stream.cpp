@@ -33,21 +33,8 @@ struct PersistentLogStore {
     std::filesystem::path path;
 };
 
-std::filesystem::path coreLogPath() {
-    return cfg::coreWorkDir() / "kernel-ui.log";
-}
-
-std::filesystem::path applicationLogPath() {
-    return cfg::coreWorkDir() / "app.log";
-}
-
-PersistentLogStore& coreLogStore() {
-    static PersistentLogStore store{coreLogPath()};
-    return store;
-}
-
-PersistentLogStore& applicationLogStore() {
-    static PersistentLogStore store{applicationLogPath()};
+PersistentLogStore& logStore() {
+    static PersistentLogStore store{cfg::coreWorkDir() / "logs.log"};
     return store;
 }
 
@@ -176,7 +163,7 @@ void appendLog(PersistentLogStore& store, LogLine line) {
     // 锁外通知：观察者不得触碰 State，UI 层负责 Post 回 UI 线程。
 }
 
-std::vector<LogLine> logHistory(PersistentLogStore& store) {
+std::vector<LogLine> readLogHistory(PersistentLogStore& store) {
     std::lock_guard lock(store.mutex);
     loadLogsLocked(store);
     // The snapshot already includes queued entries; consume them to avoid
@@ -244,59 +231,34 @@ struct Channel {
 
 } // namespace
 
-void logCore(std::string level, std::string payload) noexcept {
-    try {
-        if (payload.empty()) return;
-        // 统一在这里去掉 ANSI 颜色转义：Android 的 libbox 日志带颜色（桌面进程
-        // 输出在 core.cpp 已单独处理过），不清理会原样显示成 "[36mINFO[0m"。
-        payload = core::stripAnsi(std::move(payload));
-        appendLog(coreLogStore(), LogLine{
-            .level = normalizeLevel(std::move(level)),
-            .payload = std::move(payload),
-            .at = nowUnix(),
-        });
-        notifyStreamUpdate(StreamKind::Logs);
-    } catch (...) {
-        // Kernel diagnostics are best-effort and must not crash the app.
-    }
-}
-
-std::vector<LogLine> coreLogHistory() {
-    return logHistory(coreLogStore());
-}
-
-std::vector<LogLine> drainCoreLogs() {
-    return drainLogQueue(coreLogStore());
-}
-
-void clearCoreLogs() {
-    clearLogHistory(coreLogStore());
-}
-
 void logApplication(std::string level, std::string payload) noexcept {
     try {
         if (payload.empty()) return;
-        appendLog(applicationLogStore(), LogLine{
+        appendLog(logStore(), LogLine{
             .level = normalizeLevel(std::move(level)),
-            .payload = std::move(payload),
+            .payload = core::stripAnsi(std::move(payload)),
             .at = nowUnix(),
         });
         notifyStreamUpdate(StreamKind::Logs);
     } catch (...) {
-        // Application diagnostics are best-effort and must not crash the app.
+        // Diagnostics are best-effort and must not crash the app.
     }
 }
 
-std::vector<LogLine> applicationLogHistory() {
-    return logHistory(applicationLogStore());
+void logCore(std::string level, std::string payload) noexcept {
+    logApplication(std::move(level), std::move(payload));
 }
 
-std::vector<LogLine> drainApplicationLogs() {
-    return drainLogQueue(applicationLogStore());
+std::vector<LogLine> logHistory() {
+    return readLogHistory(logStore());
 }
 
-void clearApplicationLogs() {
-    clearLogHistory(applicationLogStore());
+std::vector<LogLine> drainLogs() {
+    return drainLogQueue(logStore());
+}
+
+void clearLogs() {
+    clearLogHistory(logStore());
 }
 
 struct CoreStreams::Impl {
@@ -451,7 +413,7 @@ bool CoreStreams::trafficOpen() const { return impl_->traffic.open.load(); }
 bool CoreStreams::connectionsOpen() const { return impl_->connections.open.load(); }
 
 std::vector<LogLine> CoreStreams::drainLogs() {
-    return drainCoreLogs();
+    return stream::drainLogs();
 }
 
 bool CoreStreams::takeTraffic(TrafficPoint& out) {

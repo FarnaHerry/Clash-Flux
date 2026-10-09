@@ -264,55 +264,6 @@ private:
 #define CLASHFLUX_THEME_SETTING DesktopThemeSetting
 #endif
 
-// 编译保真度报告（见 docs/singbox-layers-and-fidelity.md §2）：订阅里存在降级 /
-// 跳过时才渲染，空报告返回空占位——不做常驻提示。subject 留给程序化消费（例如
-// 代理页给被降级的组打角标），这里直接展示可读的 detail + 建议动作。
-[[huxerui::composable]] huxerui::View CoreFidelityReport(
-    const std::vector<singbox::FidelityNote>& notes) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    auto expanded = huxerui::UseState(false);
-    if (notes.empty()) return huxerui::View{huxerui::Row{}};
-    constexpr std::size_t kMaxRows = 6;
-    const std::size_t shown = expanded.Get() ? notes.size() : std::min(notes.size(), kMaxRows);
-    std::vector<huxerui::View> rows;
-    rows.reserve(shown + 1);
-    for (std::size_t i = 0; i < shown; ++i) {
-        const singbox::FidelityNote& note = notes[i];
-        const std::string level = huxerui::UseString(Localized(
-            note.level == singbox::Fidelity::Unsupported ? "不支持" : "已近似"));
-        std::string text = huxerui::UseString(
-            LocalizedFormat("· [{}] {}", level, (note.sourceId.empty() ? "" : note.sourceId + " · ") + note.detail));
-        if (!note.action.empty()) {
-            text += huxerui::UseString(LocalizedFormat("（{}）", note.action));
-        }
-        rows.push_back(huxerui::Text(std::move(text))
-                           .Style(huxerui::TextStyle{
-                               huxerui::Font::System(font_size::kCaption),
-                               theme.colors.on_surface_variant}));
-    }
-    if (notes.size() > shown) {
-        rows.push_back(huxerui::Text(LocalizedFormat(
-                           "· 另有 {} 条降级 / 跳过记录", notes.size() - shown))
-                           .Style(huxerui::TextStyle{
-                               huxerui::Font::System(font_size::kCaption),
-                               theme.colors.on_surface_variant}));
-    }
-    if (notes.size() > kMaxRows) rows.push_back(
-        huxerui::Button(Localized(expanded.Get() ? "收起" : "显示全部保真度记录"))
-            .OnClick([expanded] { expanded = !expanded.Get(); }));
-    return huxerui::Column {
-        huxerui::Row {
-          SettingItemIcon(app::images::shield_check),
-          SectionTitle(Localized("配置保真度")),
-        }.With(huxerui::Spacing(12.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        huxerui::Column(std::move(rows))
-            .With(huxerui::Spacing(4.0F),
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-    }.With(huxerui::Spacing(6.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-}
-
 const huxerui::StringVariant kAboutText = LocalizedFormat(
     "Clash-Flux v{} · sing-box 内核（桌面 spawn / Android libbox）",
     CLASHFLUX_VERSION);
@@ -963,7 +914,6 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                                     on ? "已启用 IPv6（重启内核生效）"
                                        : "已关闭 IPv6（重启内核生效）"));
                             }), false, app::images::globe),
-                    CoreFidelityReport(coreView.core.fidelity),
                 }.With(huxerui::Spacing(10.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
 

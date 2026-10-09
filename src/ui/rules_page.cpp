@@ -2,7 +2,7 @@
 //
 // 订阅规则是每个 Profile 自己携带的 rules/nativeRoutes；全局规则是独立
 // 持久化的 VpnPolicy，用来把目标交给具体订阅连接。两种列表都使用
-// StateList + VirtualList，避免大订阅在重组时复制整张表。
+// 不可变订阅快照 / 可编辑 StateList + VirtualList，筛选索引按内容修订缓存。
 #include <huxerui/huxerui.h>
 
 #include <algorithm>
@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -18,6 +19,7 @@
 #include "ui.h"
 #include "empty_state.h"
 #include "search_text.h"
+#include "filtered_indices.h"
 #include "task_bridge.h"
 #include "rule_target_picker.h"
 
@@ -266,17 +268,6 @@ RuleTargetCatalog LoadRuleTargetCatalog(std::int64_t id) {
     return catalog;
 }
 
-// 当前"生效中"的连接：主连接（内核在跑且订阅已选中）+ 已连上的原生连接。
-// 纯函数、只读模型值——由 Lifecycle 以模型 State 为依赖驱动，不再每秒读 store。
-std::vector<std::string> ActiveRuleConnections(
-    const store::CoreSnapshot& core,
-    const std::vector<db::Profile>& profiles,
-    const std::vector<store::PptpState>& pptpStates,
-    const std::vector<store::OpenVpnState>& openVpnStates) {
-    static_cast<void>(profiles); static_cast<void>(pptpStates); static_cast<void>(openVpnStates);
-    return core.state == core::CoreState::Running ? core.participatingSources : std::vector<std::string>{};
-}
-
 bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
     if (!vpn::ValidatePolicyRules(std::vector<vpn::RouteRule>{rule}, error)) return false;
     if (rule.match == vpn::MatchKind::Any) {
@@ -301,6 +292,25 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
 
 } // namespace
 
+using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObject>>;
+
+// 运行统计的高频变化只重组这个轻量副作用节点，不重建整页的规则列表。
+[[huxerui::composable]] huxerui::View RuleRuntimeEffects(
+    huxerui::StateList<std::string> activeConnections,
+    huxerui::State<RuleSourceObjects> sourceObjects) {
+    const auto coreModel = huxerui::UseService<CoreModel>();
+    huxerui::Lifecycle([activeConnections, sourceObjects, coreModel] {
+        const auto& core = coreModel->view.Get().core;
+        const auto connections = core.state == core::CoreState::Running
+            ? core.participatingSources : std::vector<std::string>{};
+        if (!std::ranges::equal(activeConnections, connections))
+            ReplaceStateList(activeConnections, connections);
+        sourceObjects = core.sourceObjects;
+        return [] {};
+    }, coreModel->view);
+    return huxerui::Row{};
+}
+
 [[huxerui::composable]] huxerui::View RulesPage(
     ProfilesCache profilesCache, std::function<void()> onBack, bool active) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
@@ -312,16 +322,21 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
     // 共享数据一律来自 application service（见 *_model.h）。
     const auto coreModel = huxerui::UseService<CoreModel>();
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
-    const auto vpnModel = huxerui::UseService<VpnModel>();
     auto section = huxerui::UseState<std::size_t>(0);
     auto sectionMotion = UseSectionTabMotion();
     auto ruleSearch = huxerui::UseState(huxerui::TextEditingValue{});
-    auto subscriptionRules = huxerui::UseStateList<SubscriptionRuleRow>();
+    auto subscriptionRules = huxerui::UseState(
+        std::make_shared<const std::vector<SubscriptionRuleRow>>());
+    auto subscriptionRevision = huxerui::UseState<std::uint64_t>(0);
+    auto globalRevision = huxerui::UseState<std::uint64_t>(0);
+    auto subscriptionFilter = huxerui::UseState(std::make_shared<FilteredIndicesCache>()).Get();
+    auto globalFilter = huxerui::UseState(std::make_shared<FilteredIndicesCache>()).Get();
     auto globalRules = huxerui::UseStateList<vpn::RouteRule>();
     // 订阅列表来自 ProfilesModel 的镜像（唯一来源见 profiles_model.h），
     // 本页不再自维护副本。
     auto profiles = profilesCache.list;
     auto activeConnections = huxerui::UseStateList<std::string>();
+    auto sourceObjects = huxerui::UseState(RuleSourceObjects{});
     auto refreshTick = huxerui::UseState(0);
     auto refreshSpin = huxerui::UseState(0);
     // 编辑器状态归页面持有，弹窗只负责渲染；不会在每一行里创建 hook。
@@ -345,7 +360,8 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
     auto policySaving = huxerui::UseState(false);
     auto loadGeneration = huxerui::UseState<std::uint64_t>(0);
 
-    auto persistGlobalPolicy = [tasks, globalRules, toast, refreshTick, policySaving, loadGeneration, coreModel] {
+    auto persistGlobalPolicy = [tasks, globalRules, toast, refreshTick, policySaving, loadGeneration, coreModel, globalRevision] {
+        globalRevision = globalRevision.Get() + 1;
         if (policySaving.Get()) return;
         policySaving = true;
         loadGeneration = loadGeneration.Get() + 1;
@@ -387,7 +403,8 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
     // 重载一次（订阅模型在 hydrate 完成后会发布，天然覆盖启动竞态），不再靠
     // 每秒轮询。存储读取在 worker，State 写回在 UI 线程。
     huxerui::Lifecycle(
-        [tasks, subscriptionRules, globalRules, refreshTick, profilesModel, loadGeneration] {
+        [tasks, subscriptionRules, globalRules, refreshTick, profilesModel, loadGeneration, subscriptionRevision, globalRevision] {
+            globalRevision = globalRevision.Get() + 1;
             const auto ticket = loadGeneration.Get() + 1;
             loadGeneration = ticket;
             // 选中的主连接先从模型取（UI 线程、借用引用），再按值带进 worker，
@@ -401,18 +418,18 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
                 }
             }
             tasks.Launch([subscriptionRules, globalRules,
-                          selectedMainId, loadGeneration, ticket]() -> huxerui::Task<void> {
-                const auto loaded = co_await RunOnTaskThread(
+                          selectedMainId, loadGeneration, ticket, subscriptionRevision, globalRevision]() -> huxerui::Task<void> {
+                auto loaded = co_await RunOnTaskThread(
                     [selectedMainId] {
-                        const auto rules = LoadSubscriptionRules();
+                        auto rules = std::make_shared<const std::vector<SubscriptionRuleRow>>(LoadSubscriptionRules());
                         auto policy = store::vpnStore().globalPolicy();
-                        return std::tuple{rules, policy};
+                        return std::tuple{std::move(rules), std::move(policy)};
                     });
                 if (loadGeneration.Get() != ticket) co_return;
-                ReplaceStateList(subscriptionRules,
-                                 std::move(std::get<0>(loaded)));
-                const vpn::VpnPolicy& policy = std::get<1>(loaded);
-                ReplaceStateList(globalRules, policy.rules);
+                subscriptionRules = std::move(std::get<0>(loaded));
+                subscriptionRevision = subscriptionRevision.Get() + 1;
+                ReplaceStateList(globalRules, std::move(std::get<1>(loaded).rules));
+                globalRevision = globalRevision.Get() + 1;
             });
             return [] {};
         },
@@ -462,23 +479,13 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
         return RuleTargetSelectionValid(editCatalog.Get(), id, editKind.Get(), editObject.Get().text);
     };
 
-    // 生效中的连接：模型依赖驱动（内核状态 / 订阅列表 / 两条原生连接状态），
-    // 不再是每秒一次 store 读取。
-    huxerui::Lifecycle(
-        [activeConnections, coreModel, profilesModel, vpnModel] {
-            ReplaceStateList(
-                activeConnections,
-                ActiveRuleConnections(coreModel->view.Get().core,
-                                      profilesModel->list.Get(),
-                                      vpnModel->pptp.Get(),
-                                      vpnModel->openvpn.Get()));
-            return [] {};
-        },
-        coreModel->view, profilesModel->list, vpnModel->pptp, vpnModel->openvpn);
+    huxerui::Lifecycle([globalRevision] {
+        globalRevision = globalRevision.Get() + 1;
+        return [] {};
+    }, profiles);
 
-    // 不可见时只保留本页 State/Lifecycle，不构建内容：桌面 IndexedPages 让七个
-    // 一级页同帧参与测量，隐藏页（日志/连接有推送流更新）的重子树会拖慢每一次渲染。
-    if (!active) return huxerui::View{huxerui::Row{}}.Key("rules-idle");
+    const huxerui::View runtimeEffects = RuleRuntimeEffects(activeConnections, sourceObjects);
+    if (!active) return huxerui::Column{runtimeEffects}.Key("rules-idle");
 
     const auto mono = [](const std::string& text, huxerui::Color color) {
         return huxerui::Text(text).Style(huxerui::TextStyle{
@@ -646,19 +653,16 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
     for (std::size_t page = 0; page < kRuleTabs.size(); ++page) {
         huxerui::View body;
         if (page == 0) {
-            const std::size_t count = subscriptionRules.Size();
+            const auto rows = subscriptionRules.Get();
+            const std::size_t count = rows->size();
             const std::string query = ruleSearch.Get().text;
-            std::vector<std::size_t> visibleRules;
-            for (std::size_t index = 0; index < count; ++index) {
-                const SubscriptionRuleRow& rule = subscriptionRules[index];
-                if (SearchTextMatches(rule.profile, query) ||
-                    SearchTextMatches(rule.type, query) ||
-                    SearchTextMatches(rule.payload, query) ||
-                    SearchTextMatches(rule.target, query)) {
-                    visibleRules.push_back(index);
-                }
-            }
-            const std::size_t visibleCount = visibleRules.size();
+            const auto visibleRules = subscriptionFilter->Resolve(subscriptionRevision.Get(), count, query,
+                [&rows, &query](std::size_t index) {
+                    const auto& rule = (*rows)[index];
+                    return SearchTextMatches(rule.profile, query) || SearchTextMatches(rule.type, query) ||
+                           SearchTextMatches(rule.payload, query) || SearchTextMatches(rule.target, query);
+                });
+            const std::size_t visibleCount = visibleRules.Size();
             body = count == 0
                 ? EmptyState(Localized("还没有订阅规则"), app::images::route)
                 : huxerui::View{};
@@ -667,18 +671,18 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
             } else if (count != 0) {
                 auto subscriptionList = huxerui::VirtualList(
                     visibleCount + (compact ? 1U : 0U),
-                    [subscriptionRules, visibleRules = std::move(visibleRules),
+                    [rows, visibleRules,
                      mono, theme, compact, visibleCount](
                         std::size_t index) -> huxerui::View {
                         const std::size_t ruleIndex =
-                            index < visibleCount ? visibleRules[index] : 0;
+                            index < visibleCount ? visibleRules.SourceIndex(index) : 0;
                         // 测量 factory 无组合上下文，文本解析必须延迟到 Scope 挂载。
                         return huxerui::Scope([=]() -> huxerui::View {
                         if (compact && index == visibleCount) {
                             return CompactFloatingNavigationFooter()
                                 .Key("compact-floating-footer");
                         }
-                        const SubscriptionRuleRow& rule = subscriptionRules[ruleIndex];
+                        const SubscriptionRuleRow& rule = (*rows)[ruleIndex];
                         const std::string payload =
                             rule.payload == "未配置内置规则"
                                 ? huxerui::UseString(Localized("未配置内置规则"))
@@ -760,20 +764,15 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
         } else {
             const std::size_t count = globalRules.Size();
             const std::string query = ruleSearch.Get().text;
-            std::vector<std::size_t> visibleRules;
-            for (std::size_t index = 0; index < count; ++index) {
-                const vpn::RouteRule& rule = globalRules[index];
-                const std::string connection =
-                    ConnectionName(profiles, rule.connectionId);
-                if (SearchTextMatches(rule.pattern, query) ||
-                    SearchTextMatches(rule.targetObject, query) ||
-                    SearchTextMatches(connection, query) ||
-                    SearchTextMatches(vpn::MatchKindName(rule.match), query) ||
-                    SearchTextMatches(std::to_string(rule.priority), query)) {
-                    visibleRules.push_back(index);
-                }
-            }
-            const std::size_t visibleCount = visibleRules.size();
+            const auto visibleRules = globalFilter->Resolve(globalRevision.Get(), count, query,
+                [&globalRules, &profiles, &query](std::size_t index) {
+                    const auto& rule = globalRules[index];
+                    return SearchTextMatches(rule.pattern, query) || SearchTextMatches(rule.targetObject, query) ||
+                           SearchTextMatches(ConnectionName(profiles, rule.connectionId), query) ||
+                           SearchTextMatches(vpn::MatchKindName(rule.match), query) ||
+                           SearchTextMatches(std::to_string(rule.priority), query);
+                });
+            const std::size_t visibleCount = visibleRules.Size();
             if (count == 0) {
                 body = EmptyState(Localized("还没有全局路由规则"), app::images::route);
             } else if (visibleCount == 0 && !query.empty()) {
@@ -781,19 +780,19 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
             } else {
                 auto globalList = huxerui::VirtualList(
                     visibleCount + (compact ? 1U : 0U),
-                    [globalRules, visibleRules = std::move(visibleRules),
+                    [globalRules, visibleRules,
                      profiles, mono, theme, compact, visibleCount,
                      persistGlobalPolicy, openGlobalRuleEditor, activeConnections,
-                     policySaving, coreModel](std::size_t index) -> huxerui::View {
+                     policySaving, sourceObjects](std::size_t index) -> huxerui::View {
                         const std::size_t ruleIndex =
-                            index < visibleCount ? visibleRules[index] : 0;
+                            index < visibleCount ? visibleRules.SourceIndex(index) : 0;
                         // 与订阅规则相同：只在测量 factory 中声明 Scope。
                         return huxerui::Scope([=]() -> huxerui::View {
                           if (compact && index == visibleCount) {
                               return CompactFloatingNavigationFooter().Key("compact-floating-footer");
                           }
                           const auto& rule = globalRules[ruleIndex];
-                          const auto catalog = coreModel->view.Get().core.sourceObjects;
+                          const auto catalog = sourceObjects.Get();
                           const bool objectExists = rule.targetKind == vpn::TargetKind::Default || (catalog &&
                               std::ranges::any_of(*catalog, [&](const auto& object) {
                                   return object.sourceId == rule.connectionId && object.kind == rule.targetKind && object.objectId == rule.targetObject;
@@ -900,6 +899,8 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
         : PageScaffold(Localized("规则"), std::move(actions), std::move(body),
                        false, true, true, std::nullopt, {},
                        std::move(searchField));
+    listPage = huxerui::Column{runtimeEffects, listPage}.With(
+        huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     const auto editorProfiles = editSources.Get();
     auto editorTargets = TargetNames(editorProfiles);
     if (!editorTargets.empty() && editTarget.Get() >= editorTargets.size()) editorTargets.push_back(huxerui::UseString(Localized("目标来源已失效，请重新选择")));

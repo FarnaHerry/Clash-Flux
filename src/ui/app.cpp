@@ -494,7 +494,7 @@ private:
         entries.push_back(
             huxerui::Stack {
                 content(theme.colors.on_surface_variant),
-                content(theme.colors.on_primary_container)
+                content(theme.colors.primary)
                     .With(huxerui::Opacity(huxerui::AnimateTo(
                         isSelected ? 1.0F : 0.0F,
                         huxerui::TweenSpec{duration, huxerui::Easing::EaseOut}))),
@@ -527,14 +527,12 @@ private:
             .With(huxerui::Frame{.height = 64.0F},
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
                   AndroidNavigationIndicator{selected,
-                                             theme.colors.primary_container,
+                                             CompactNavigationIndicatorColor(theme),
                                              indicatorMotion,
                                              theme.motion.reduced_motion}),
     }.With(huxerui::SafeAreaPadding{.top = false},
            systemBars,
            huxerui::Semantics{.role = huxerui::SemanticRole::Navigation},
-           huxerui::Background(CompactNavigationSurfaceColor(theme)),
-           huxerui::CornerRadius(20.0F), huxerui::ClipChildren(),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
@@ -592,7 +590,8 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
     const auto navigation = huxerui::UseNavigation();
     const auto model = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
     huxerui::Lifecycle([navPage, navigation, model] {
-        if (model->secondaryOpen.Get() && navPage.Get() != pages::kSettings) {
+        if (model->secondaryOpen.Get() &&
+            navPage.Get() != model->secondaryOwner.Get().value_or(pages::kSettings)) {
             static_cast<void>(navigation.Pop());
         }
         return [] {};
@@ -789,11 +788,13 @@ huxerui::PageTransition SecondaryPageTransition(
         })
         .With(huxerui::Grow(1.0F));
 
-    // 只给胶囊底色添加 Alpha；不叠加不透明外层，也不淡化文字和图标。
+    // Dock 统一提供导航表面、细边缘与阴影，导航内容保留自己的状态与安全区。
     huxerui::View dock = CompactNavigationDock(
         AndroidNavigationSurface(navPage, fromSwipe.Get(), [fromSwipe] { fromSwipe = false; }), spec);
     return huxerui::Stack {
         std::move(pager),
+        // 与桌面 Compact 相同：内容从胶囊导航行中线向下渐隐到页面底色。
+        CompactNavigationScrim(spec),
         std::move(dock),
     }.With(huxerui::Grow(1.0F),
            huxerui::Align(huxerui::HorizontalAlignment::Stretch,
@@ -848,6 +849,12 @@ huxerui::PageTransition SecondaryPageTransition(
     return ThemePage(themeMode, [navigation] { static_cast<void>(navigation.Pop()); })
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
+
+[[huxerui::composable]] huxerui::View AndroidFidelityPage(std::int64_t profileId) {
+    const auto navigation = huxerui::UseNavigation();
+    return FidelityPage(profileId, [navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
 #endif
 
 #if !defined(__ANDROID__)
@@ -860,7 +867,31 @@ huxerui::PageTransition SecondaryPageTransition(
     return ThemePage(themeMode, [navigation] { static_cast<void>(navigation.Pop()); }, true)
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
+
+[[huxerui::composable]] huxerui::View DesktopFidelityPage(std::int64_t profileId) {
+    const auto navigation = huxerui::UseNavigation();
+    const auto model = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
+    huxerui::Lifecycle([model] {
+        return [model] { model->secondaryOpen = false; model->secondaryOwner = std::nullopt; };
+    }, 0);
+    return FidelityPage(profileId, [navigation] { static_cast<void>(navigation.Pop()); }, true)
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
 #endif
+
+void OpenProfileFidelityPage(huxerui::NavigationController navigation,
+    std::shared_ptr<DesktopSettingsNavigationModel> desktopNavigation, std::int64_t profileId) {
+#if defined(__ANDROID__)
+    static_cast<void>(desktopNavigation);
+    navigation.Push(AndroidFidelityPage, profileId);
+#else
+    if (desktopNavigation) {
+        desktopNavigation->secondaryOwner = pages::kProfiles;
+        desktopNavigation->secondaryOpen = true;
+    }
+    navigation.Push(DesktopFidelityPage, profileId);
+#endif
+}
 
 void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
                                  std::shared_ptr<ProfilesModel> profiles) {

@@ -270,6 +270,8 @@ huxerui::View ConnectionsPage(std::function<void()> onBack = {},
                               bool active = true);                // 连接
 huxerui::View LogsPage(std::function<void()> onBack = {},
                        bool active = true);                       // 日志
+huxerui::View FidelityPage(std::int64_t profileId, std::function<void()> onBack,
+                           bool windowTitle = false);
 // 手机端二级页：由设置页「更多」入口 push 到 NavigationStack，页面自带的
 // 进入/返回动画与一级页切换动画互相独立；返回箭头与系统返回键统一弹栈。
 #if defined(__ANDROID__)
@@ -281,12 +283,14 @@ huxerui::View AndroidConnectionsPage();
 huxerui::View AndroidLogsPage();
 huxerui::View AndroidLanguagePage();
 huxerui::View AndroidThemePage(huxerui::State<int> themeMode);
+huxerui::View AndroidFidelityPage(std::int64_t profileId);
 #endif
 huxerui::View LanguagePage(std::function<void()> onBack);
 huxerui::View ThemePage(huxerui::State<int> themeMode, std::function<void()> onBack,
                         bool windowTitle = false);
 struct DesktopSettingsNavigationModel {
     huxerui::State<bool> secondaryOpen{false};
+    huxerui::State<std::optional<std::size_t>> secondaryOwner{std::nullopt};
 };
 struct DesktopSettingsNavigation {
     std::shared_ptr<DesktopSettingsNavigationModel> model;
@@ -295,7 +299,10 @@ struct DesktopSettingsNavigation {
 };
 #if !defined(__ANDROID__)
 huxerui::View DesktopThemePage(huxerui::State<int> themeMode);
+huxerui::View DesktopFidelityPage(std::int64_t profileId);
 #endif
+void OpenProfileFidelityPage(huxerui::NavigationController navigation,
+    std::shared_ptr<DesktopSettingsNavigationModel> desktopNavigation, std::int64_t profileId);
 
 // 设置页持有主题模式 State（AppRoot 传入）。
 huxerui::View SettingsPage(huxerui::State<int> themeMode,

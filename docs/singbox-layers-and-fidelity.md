@@ -88,8 +88,7 @@
 - `singbox::FidelitySummary()`：把账本折成一行「跳过 3 个节点 · 降级 1 个组」，
   只报计数不报明细。
 - 消费点：
-  1. **设置页**「内核」段的「配置保真度」报告（`CoreFidelityReport`，空报告渲染为
-     空占位，不做常驻提示）——可回看的完整明细；
+  1. **独立页面**「配置保真度」（`FidelityPage`，入口位于各配置卡片右键/更多菜单，只读检查该 profile；空报告使用通用空状态，不做常驻提示）——可回看的完整明细；
   2. **toast 通知**：导入订阅 / 手动刷新 / 启用订阅成功后，`ProfileFidelitySummary()`
      （`src/ui/profiles_page_support.cpp`）给出一行摘要，非空才补一条 6 秒 toast
      （`配置已导入 · 跳过 3 个节点 · 降级 1 个组`）。**只在用户动作后提示**：内核重启
@@ -138,7 +137,7 @@ std::string FidelitySummary(const std::vector<FidelityNote>& notes);
 
 消费点（✅ 已实现 / ⬜ 待做）：
 
-- ✅ 设置页：完整明细「配置保真度」（`CoreFidelityReport`）；
+- ✅ 配置卡片菜单 → 独立页面：完整明细「配置保真度」（`FidelityPage`）；
 - ✅ 订阅页动作后的 toast 摘要（导入 / 刷新 / 启用，非空才提示）；
 - ✅ 代理页分组标签角标（`SectionTab.badge`，只标组级条目）；
 - ✅ CLI `profile check [<id>]`（明细 + 退出码）；
