@@ -60,12 +60,12 @@ export bool spawnDetached(const std::filesystem::path& binary,
 // TUN 需要内核侧持有 root/CAP_NET_ADMIN（Linux 建虚拟网卡）或 Windows 管理员。
 export enum class TunGate {
     Ok,        // 权限足够，可直接 applyTun
-    Elevated,  // 仅 Windows：已拉起 UAC 提权重启自身，本次放弃（新实例里操作）
+    Elevated,  // Legacy value; desktop backends no longer elevate the application.
     Denied,    // 权限不足且无自动提权路径（UI 弹终端指令引导框）
 };
 
 // 打开 TUN 前的门禁（阻塞：Linux 会连服务 socket 探测 root 服务托管；任务线程
-// 调用）。判定：Windows 看 TokenElevation（不足时顺带尝试提权重启自身）；
+// 调用）。Windows 检查 SCM 网络服务，权限只由服务提供，不提权 GUI；
 // Linux 的设计取向是应用自身保持非 root（更安全），root 只在服务侧——服务模式
 // 可用即 Ok；euid==0 仅作兜底事实判断（已经 root 的环境 TUN 本就能建）；
 // macOS 同理。Denied 时 UI 引导安装服务。

@@ -25,6 +25,7 @@ import clashflux.service;
 import clashflux.stream;
 import clashflux.store.core;
 import clashflux.store.profiles;
+import clashflux.store.vpn;
 
 #include "core_model.h"
 #include "settings_model.h"
@@ -170,7 +171,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 
 #if defined(__linux__)
 
-[[huxerui::composable]] huxerui::View LinuxServiceRow(
+[[huxerui::composable]] huxerui::View DesktopServiceRow(
     huxerui::State<bool> service_installed, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast) {
     return SettingRow(
@@ -208,17 +209,69 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
             }), app::images::gear);
 }
 
+#elif defined(_WIN32)
+
+[[huxerui::composable]] huxerui::View DesktopServiceRow(
+    huxerui::State<bool> service_installed, huxerui::TaskScope tasks,
+    huxerui::ToastHandle toast) {
+    auto busy = huxerui::UseState(false);
+    const auto model = huxerui::UseService<CoreModel>();
+    const auto manage = [service_installed, tasks, toast, busy, model](bool remove) {
+        if (busy.Get()) return;
+        busy = true;
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            std::string error;
+            bool ok = false;
+            try {
+                const auto result = co_await RunOnTaskThread([remove] {
+                    std::string failure;
+                    const bool success = service::manageElevated(remove, failure);
+                    // UAC cancellation leaves the current data plane untouched.
+                    // Once SCM changes succeed, retire the client's old session
+                    // state and per-user proxy settings on the task thread.
+                    if (success) {
+                        store::vpnStore().shutdown();
+                        store::coreStore().stopCore();
+                    }
+                    return std::pair{success, std::move(failure)};
+                });
+                ok = result.first;
+                error = result.second;
+            } catch (const std::exception& exception) { error = exception.what(); }
+            busy = false;
+            // Publish actual SCM state, never infer it from a button click.
+            const bool installed = co_await RunOnTaskThread([] { return service::installed(); });
+            service_installed = installed;
+            model->Update([installed](CoreView& view) { view.serviceInstalled = installed; });
+            model->RequestRefresh();
+            if (ok) toast.Show(Localized(remove ? "服务已卸载" : "服务已安装"));
+            else toast.Show(error.empty() ? Localized("服务操作失败") : huxerui::StringVariant(error));
+        });
+    };
+    return SettingRow(
+        Localized("内核服务"),
+        Localized("Windows 系统服务托管内核、TUN 与 PPTP；安装或更新时需要管理员授权"),
+        huxerui::Row {
+            huxerui::Button(Localized(service_installed.Get() ? "更新服务" : "安装服务"))
+                .OnClick([manage] { manage(false); }).With(huxerui::Enabled(!busy.Get())),
+            service_installed.Get()
+                ? huxerui::View{huxerui::Button(Localized("卸载服务"))
+                    .OnClick([manage] { manage(true); }).With(huxerui::Enabled(!busy.Get()))}
+                : huxerui::View{},
+        }.With(huxerui::Spacing(8.0F)), app::images::gear);
+}
+
 #else
 
-[[huxerui::composable]] huxerui::View LinuxServiceRow(
+[[huxerui::composable]] huxerui::View DesktopServiceRow(
     huxerui::State<bool>, huxerui::TaskScope, huxerui::ToastHandle) {
     return {};
 }
 
 #endif
 
-// 由宏只在桌面内核模块中选择 Linux 专属行；没有跨页面能力表。
-#define CLASHFLUX_LINUX_SERVICE_ROW LinuxServiceRow
+// Platform choice stays outside composable bodies.
+#define CLASHFLUX_DESKTOP_SERVICE_ROW DesktopServiceRow
 
 #if defined(__ANDROID__)
 
@@ -492,7 +545,8 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
     auto dialog = huxerui::UseDialog();
     auto clipboard = application.Clipboard();
     auto snap = huxerui::UseState<store::CoreSnapshot>({});
-    auto service_installed = huxerui::UseState(service::installed());
+    // SCM queries run in the shared model pump, never on the composition thread.
+    auto service_installed = huxerui::UseState(false);
     auto proxyEnabled =
         huxerui::UseState(store::coreStore().systemProxyEnabled());
     auto tunEnabled = huxerui::UseState(store::coreStore().snapshot().tunEnabled);
@@ -593,7 +647,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                 .With(huxerui::Enabled(running)),
         }.With(huxerui::Spacing(8.0F)),
 
-        CLASHFLUX_LINUX_SERVICE_ROW(service_installed, tasks, toast),
+        CLASHFLUX_DESKTOP_SERVICE_ROW(service_installed, tasks, toast),
         SettingSwitchRow(
             Localized("系统代理"),
             LocalizedFormat("写入桌面系统代理（127.0.0.1:{}）", s.mixedPort),
@@ -721,6 +775,6 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 
 #endif
 
-#undef CLASHFLUX_LINUX_SERVICE_ROW
+#undef CLASHFLUX_DESKTOP_SERVICE_ROW
 
 } // namespace clashflux::ui

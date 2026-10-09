@@ -188,7 +188,7 @@ export bool PptpToolsAvailable();
 // Read-only session liveness; cleanup follows only after the main TUN stops.
 export bool PptpSessionAlive(std::string_view connectionId);
 
-#if defined(__linux__) && !defined(__ANDROID__)
+#if (defined(__linux__) && !defined(__ANDROID__)) || defined(_WIN32)
 // 这些接口只供 clash-flux.service 的 root daemon 使用。普通 GUI 进程不应
 // 直接调用 pppd/ip；它通过 service 模块的 IPC 客户端调用同一 daemon。
 export bool PrivilegedPptpAvailable();
@@ -198,7 +198,8 @@ export bool PrivilegedPptpConnect(std::string_view connectionId,
                                   std::span<const std::string> routes,
                                   std::string& interfaceName,
                                   std::string& gateway,
-                                  std::string& error);
+                                  std::string& error,
+                                  std::string* transportAddress = nullptr);
 export bool PrivilegedPptpApplyRoutes(std::string_view connectionId,
                                       std::span<const std::string> routes,
                                       std::string& error);

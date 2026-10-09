@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.28 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.29 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -427,8 +427,8 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # TU 里的 std::max/std::min（MSVC C2589）；宏不跨 TU，必须整个目标定义。
     if (WIN32)
         target_compile_definitions(clash-flux PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-        # TUN 门禁：ShellExecuteExW（runas 提权重启）+ TokenElevation 查询。
-        target_link_libraries(clash-flux PRIVATE shell32 advapi32 wininet rasapi32 iphlpapi ws2_32 dnsapi)
+        # SCM service and service-only UAC management; GUI stays unelevated.
+        target_link_libraries(clash-flux PRIVATE shell32 advapi32 ole32 uuid wininet rasapi32 iphlpapi ws2_32 dnsapi)
         # GUI 子系统入口（CLI 子命令运行时经 AttachConsole 附着父控制台，
         # 见 cli.cppm）。
         if (MSVC)
@@ -741,6 +741,33 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             endif ()
         endif ()
 
+        add_executable(test_service_protocol tests/test_service_protocol.cpp)
+        target_compile_features(test_service_protocol PRIVATE cxx_std_20)
+        if (MSVC)
+            target_compile_options(test_service_protocol PRIVATE /utf-8)
+        endif ()
+        add_test(NAME service_protocol COMMAND test_service_protocol)
+        if (WIN32)
+            # Isolated SCM fixture and fake core, no actual TUN/network changes.
+            add_executable(test_windows_service tests/test_windows_service.cpp src/windows_service.cpp)
+            target_compile_features(test_windows_service PRIVATE cxx_std_20)
+            target_link_libraries(test_windows_service PRIVATE shell32 advapi32 ole32 uuid)
+            set_target_properties(test_windows_service PROPERTIES
+                RUNTIME_OUTPUT_DIRECTORY "$<1:${CMAKE_CURRENT_BINARY_DIR}/windows-service-fixture>")
+            add_executable(test_windows_service_engine tests/test_windows_service.cpp)
+            target_compile_features(test_windows_service_engine PRIVATE cxx_std_20)
+            target_compile_definitions(test_windows_service_engine PRIVATE CLASHFLUX_TEST_SERVICE_ENGINE=1)
+            set_target_properties(test_windows_service_engine PROPERTIES OUTPUT_NAME sing-box
+                RUNTIME_OUTPUT_DIRECTORY "$<1:${CMAKE_CURRENT_BINARY_DIR}/windows-service-fixture/engines>")
+            if (MSVC)
+                target_compile_options(test_windows_service PRIVATE /utf-8)
+                target_compile_options(test_windows_service_engine PRIVATE /utf-8)
+            endif ()
+            add_dependencies(test_windows_service test_windows_service_engine)
+            add_test(NAME windows_service COMMAND test_windows_service)
+            set_tests_properties(windows_service PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+        endif ()
+
         add_executable(test_vpn tests/test_vpn.cpp)
         target_sources(test_vpn PRIVATE src/pptp.cpp src/openvpn.cpp src/vpn_compensation.cpp src/vpn_compensation_windows.cpp)
         target_sources(test_vpn PRIVATE FILE_SET clashflux_vpn_modules TYPE CXX_MODULES
@@ -754,7 +781,8 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         endif ()
         target_compile_features(test_vpn PRIVATE cxx_std_23)
         if (WIN32)
-            target_link_libraries(test_vpn PRIVATE rasapi32 iphlpapi ws2_32 dnsapi)
+            target_sources(test_vpn PRIVATE src/windows_service.cpp)
+            target_link_libraries(test_vpn PRIVATE shell32 advapi32 ole32 uuid rasapi32 iphlpapi ws2_32 dnsapi)
         endif ()
         add_test(NAME vpn COMMAND test_vpn)
 
@@ -795,7 +823,8 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         endif ()
         target_compile_features(test_pptp_connect PRIVATE cxx_std_23)
         if (WIN32)
-            target_link_libraries(test_pptp_connect PRIVATE rasapi32 iphlpapi ws2_32 dnsapi)
+            target_sources(test_pptp_connect PRIVATE src/windows_service.cpp)
+            target_link_libraries(test_pptp_connect PRIVATE shell32 advapi32 ole32 uuid rasapi32 iphlpapi ws2_32 dnsapi)
         endif ()
 
         # huxerui::sqlite ORM：schema 声明与全新建库的 CRUD。

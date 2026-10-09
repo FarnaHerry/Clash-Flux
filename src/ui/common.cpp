@@ -444,6 +444,17 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
     (void)hintColor;
     toast.Show(Localized("请在设置页的“VPN 代理”中管理 Android VPN 隧道"));
     return;
+#elif defined(_WIN32)
+    (void)clipboard;
+    dialog.Show([textColor, hintColor](huxerui::DialogContext ctx) -> huxerui::View {
+        return DialogCard(huxerui::Column {
+            huxerui::Text(Localized("TUN 需要安装服务模式"), huxerui::TextRole::Title)
+                .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody), textColor}),
+            huxerui::Text(Localized("请到设置的内核服务安装或更新 Windows 服务，授权后再开启 TUN"))
+                .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), hintColor}),
+            huxerui::Button(Localized("关闭")).OnClick([ctx] { ctx.Dismiss(); }),
+        }.With(huxerui::Spacing(12.0F), huxerui::Frame{.width = 460.0F}));
+    });
 #else
     namespace fs = std::filesystem;
     const std::string exe = [] {
