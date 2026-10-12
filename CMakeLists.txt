@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.30 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.31 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -746,6 +746,14 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         if (WIN32)
             # Isolated SCM fixture and fake core, no actual TUN/network changes.
             add_executable(test_windows_service tests/test_windows_service.cpp src/windows_service.cpp)
+            add_executable(test_windows_service_v2 tests/test_windows_service.cpp src/windows_service.cpp)
+            target_compile_features(test_windows_service_v2 PRIVATE cxx_std_20)
+            target_compile_definitions(test_windows_service_v2 PRIVATE CLASHFLUX_TEST_SERVICE_VERSION="fixture-v2")
+            target_link_libraries(test_windows_service_v2 PRIVATE shell32 advapi32 ole32 uuid)
+            set_target_properties(test_windows_service_v2 PROPERTIES OUTPUT_NAME clash-flux
+                RUNTIME_OUTPUT_DIRECTORY "$<1:${CMAKE_CURRENT_BINARY_DIR}/windows-service-upgrade-fixture>")
+            target_compile_definitions(test_windows_service PRIVATE
+                CLASHFLUX_TEST_SERVICE_V2_PATH="$<TARGET_FILE:test_windows_service_v2>")
             target_compile_features(test_windows_service PRIVATE cxx_std_20)
             target_link_libraries(test_windows_service PRIVATE shell32 advapi32 ole32 uuid)
             set_target_properties(test_windows_service PROPERTIES
@@ -758,10 +766,11 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             if (MSVC)
                 target_compile_options(test_windows_service PRIVATE /utf-8)
                 target_compile_options(test_windows_service_engine PRIVATE /utf-8)
+                target_compile_options(test_windows_service_v2 PRIVATE /utf-8)
             endif ()
-            add_dependencies(test_windows_service test_windows_service_engine)
+            add_dependencies(test_windows_service test_windows_service_engine test_windows_service_v2)
             add_test(NAME windows_service COMMAND test_windows_service)
-            set_tests_properties(windows_service PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+            set_tests_properties(windows_service PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE)
         endif ()
 
         add_executable(test_vpn tests/test_vpn.cpp)

@@ -82,6 +82,12 @@ export bool ensureCompatible(std::string& error) {
 export bool manageElevated(bool remove, std::string& error) {
     return native_service::manageElevated(remove, error);
 }
+export int applyUpgrade(std::uintptr_t readyEvent) {
+    std::string error;
+    const int code = native_service::applyUpgrade(readyEvent, error);
+    if (code) std::fprintf(stderr, "%s\n", error.c_str());
+    return code;
+}
 export int installForUser(std::string_view sid) {
     std::string error;
     const int code = native_service::install(sid, error);

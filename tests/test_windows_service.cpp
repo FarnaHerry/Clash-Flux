@@ -4,9 +4,13 @@
 #include "../src/service_protocol.h"
 #include "../src/win32_raii.h"
 #include <shlobj.h>
+#include <sddl.h>
+#include <aclapi.h>
+#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <future>
 #include <stdexcept>
 #include <thread>
@@ -15,6 +19,9 @@ using namespace clashflux;
 using win32::UniqueHandle;
 using win32::UniqueServiceHandle;
 namespace ws = windows_service;
+#ifndef CLASHFLUX_TEST_SERVICE_VERSION
+#define CLASHFLUX_TEST_SERVICE_VERSION "fixture-v1"
+#endif
 void check(bool value, const std::string& message) { if (!value) throw std::runtime_error(message); }
 std::filesystem::path executable() {
     wchar_t buffer[32768];
@@ -27,6 +34,30 @@ ws::Options optionsFor(const std::filesystem::path& root) {
     options.pipe = L"\\\\.\\pipe\\" + options.name;
     return options;
 }
+void protectFixture(const std::filesystem::path& path, bool userWritable = false) {
+    PSECURITY_DESCRIPTOR raw = nullptr;
+    const wchar_t* sddl = userWritable ? L"O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;BU)"
+                                     : L"O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)";
+    check(ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &raw, nullptr), "fixture ACL");
+    const std::unique_ptr<void, decltype(&LocalFree)> descriptor(raw, &LocalFree);
+    PACL acl = nullptr; PSID owner = nullptr; BOOL present, defaulted;
+    check(GetSecurityDescriptorDacl(raw, &present, &acl, &defaulted), "fixture DACL");
+    check(GetSecurityDescriptorOwner(raw, &owner, &defaulted), "fixture owner");
+    check(SetNamedSecurityInfoW(const_cast<wchar_t*>(path.c_str()), SE_FILE_OBJECT,
+        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+        owner, nullptr, acl, nullptr) == ERROR_SUCCESS, "protect fixture source");
+}
+UniqueHandle ownerToken() {
+    HANDLE tokenRaw = nullptr;
+    check(OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE | TOKEN_QUERY, &tokenRaw), "owner token");
+    const UniqueHandle token{tokenRaw};
+    HANDLE restrictedRaw = nullptr;
+    BYTE adminSid[SECURITY_MAX_SID_SIZE]; DWORD size = sizeof(adminSid);
+    check(CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, adminSid, &size), "owner admin SID");
+    SID_AND_ATTRIBUTES disabled{adminSid, 0};
+    check(CreateRestrictedToken(token.get(), DISABLE_MAX_PRIVILEGE, 1, &disabled, 0, nullptr, 0, nullptr, &restrictedRaw), "owner restricted token");
+    return UniqueHandle{restrictedRaw};
+}
 #ifdef CLASHFLUX_TEST_SERVICE_ENGINE
 int main(int argc, char** argv) {
     if (argc != 6 || std::string(argv[1]) != "run" || std::string(argv[2]) != "-c" || std::string(argv[4]) != "-D") return 3;
@@ -35,9 +66,31 @@ int main(int argc, char** argv) {
 }
 #else
 int main(int argc, char** argv) {
+    if (argc == 4 && std::string(argv[1]) == "service" && std::string(argv[2]) == "apply-upgrade") {
+        std::uintptr_t handle = 0;
+        const std::string value(argv[3]);
+        const auto [end, code] = std::from_chars(value.data(), value.data() + value.size(), handle);
+        if (code != std::errc{} || end != value.data() + value.size()) return 2;
+        std::string error;
+        const int result = ws::applyUpgrade(handle, error, optionsFor(executable().parent_path().parent_path()));
+        if (result) std::cerr << error << '\n';
+        return result;
+    }
+    if (argc == 2 && (std::string(argv[1]) == "client-upgrade" || std::string(argv[1]) == "client-reject")) {
+        try {
+            const auto token = ownerToken();
+            check(ImpersonateLoggedOnUser(token.get()), "ordinary owner impersonation");
+            struct Revert { ~Revert() { RevertToSelf(); } } revert;
+            std::string error;
+            const bool ok = ws::ensureCompatible("fixture-v2", error, optionsFor(executable().parent_path().parent_path()));
+            if (std::string(argv[1]) == "client-reject") return !ok && error.find("writable") != std::string::npos ? 0 : 1;
+            if (!ok) std::cerr << error << '\n';
+            return ok ? 0 : 1;
+        } catch (const std::exception& exception) { std::cerr << exception.what() << '\n'; return 1; }
+    }
     if (argc == 3 && std::string(argv[1]) == "service" && std::string(argv[2]) == "run") {
         const auto root = executable().parent_path().parent_path();
-        return ws::run("fixture-v1", {
+        return ws::run(CLASHFLUX_TEST_SERVICE_VERSION, {
             .command = [root](std::string_view command) -> std::string {
                 if (command == "PPTP_AVAILABLE") return "YES";
                 if (command.starts_with("PPTP_STATUS ")) return "DISCONNECTED";
@@ -187,6 +240,41 @@ int main(int argc, char** argv) {
         check(ws::ensureCompatible("fixture-v1", error, options), "owner restarts stopped service");
         check(ws::request("PPTP_AVAILABLE", error, 2000, options) == "YES", "PPTP capability after SCM restart");
         service.reset();
+#ifdef CLASHFLUX_TEST_SERVICE_V2_PATH
+        // An ordinary writable build path cannot be used for SYSTEM self-update.
+        const auto rejected = ws::request("UPGRADE", error, 30000, options);
+        check(rejected && rejected->starts_with("ERR "), "untrusted client source rejected");
+        check(ws::query("fixture-v1", options).error.empty(), "source rejection preserves old service");
+        check(ws::applyUpgrade(0, error, options) != 0, "helper cannot run as an administrator GUI");
+        const auto clientDir = root / L"client";
+        std::filesystem::create_directory(clientDir); protectFixture(clientDir);
+        std::filesystem::create_directory(clientDir / L"engines"); protectFixture(clientDir / L"engines");
+        const auto clientExe = clientDir / L"clash-flux.exe";
+        std::filesystem::copy_file(CLASHFLUX_TEST_SERVICE_V2_PATH, clientExe); protectFixture(clientExe);
+        std::filesystem::copy_file(sourceEngine, clientDir / L"engines" / L"sing-box.exe");
+        protectFixture(clientDir / L"engines" / L"sing-box.exe");
+        const auto runClient = [&](const wchar_t* action) {
+            auto command = L"\"" + clientExe.wstring() + L"\" " + action;
+            STARTUPINFOW startup{}; startup.cb = sizeof(startup);
+            PROCESS_INFORMATION process{};
+            check(CreateProcessW(clientExe.c_str(), command.data(), nullptr, nullptr, FALSE,
+                CREATE_NO_WINDOW, nullptr, clientDir.c_str(), &startup, &process), "trusted update client");
+            const UniqueHandle child{process.hProcess}, thread{process.hThread};
+            check(WaitForSingleObject(child.get(), 100000) == WAIT_OBJECT_0, "update client completed");
+            DWORD code = 1; check(GetExitCodeProcess(child.get(), &code) && !code, "update client result");
+        };
+        const auto writableDll = clientDir / L"untrusted.dll";
+        std::ofstream(writableDll) << "untrusted fixture"; protectFixture(writableDll, true);
+        runClient(L"client-reject");
+        check(ws::query("fixture-v1", options).error.empty(), "writable DLL rejection preserves old service");
+        std::filesystem::remove(writableDll);
+        // The service launches the v1 protected helper as SYSTEM, switches to
+        // v2, restarts SCM, and preserves the original installation user SID.
+        runClient(L"client-upgrade");
+        check(ws::query("fixture-v2", options).error.empty(), "self-update activated v2");
+        runClient(L"client-upgrade"); // Same version does not launch a helper again.
+        check(ws::request("PPTP_AVAILABLE", error, 2000, options) == "YES", "capability after self-update");
+#endif
         // Leave a silent pipe client connected: SCM stop must cancel pending IO.
         UniqueHandle silent{CreateFileW(options.pipe.c_str(), GENERIC_READ | FILE_WRITE_DATA,
             0, nullptr, OPEN_EXISTING, 0, nullptr)};

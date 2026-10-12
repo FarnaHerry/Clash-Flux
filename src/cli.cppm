@@ -78,6 +78,16 @@ int cmdService(const std::vector<std::string>& args) {
         std::println(stderr, "service 需要子命令：install|uninstall|status");
         return 2;
     }
+#ifdef _WIN32
+    if (args[0] == "apply-upgrade") {
+        if (args.size() != 2) return 2;
+        std::uintptr_t event = 0;
+        const auto& value = args[1];
+        const auto [end, code] = std::from_chars(value.data(), value.data() + value.size(), event);
+        if (code != std::errc{} || end != value.data() + value.size() || !event) return 2;
+        return service::applyUpgrade(event);
+    }
+#endif
     if (args[0] == "install") {
 #ifdef _WIN32
         if (args.size() == 3 && args[1] == "--owner-sid") return service::installForUser(args[2]);

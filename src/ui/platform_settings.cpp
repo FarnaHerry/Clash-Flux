@@ -174,36 +174,51 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 [[huxerui::composable]] huxerui::View DesktopServiceRow(
     huxerui::State<bool> service_installed, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast) {
+    const auto model = huxerui::UseService<CoreModel>();
+    const auto serviceTasks = huxerui::UseApplicationTaskScope();
     return SettingRow(
         Localized("内核服务"),
         service_installed.Get()
             ? Localized("已安装（sing-box、PPTP 与 TUN 由 root 服务托管）")
             : Localized("安装 root 服务后，TUN/PPTP 无需每次授权（经 pkexec 一次性提权）"),
         huxerui::Button(Localized(service_installed.Get() ? "卸载服务" : "安装服务"))
-            .OnClick([service_installed, tasks, toast] {
+            .With(huxerui::Enabled(!model->serviceChecking.Get()))
+            .OnClick([service_installed, tasks = serviceTasks, toast, model] {
+                if (model->serviceChecking.Get()) return;
+                model->serviceChecking = true;
                 const bool installed = service_installed.Get();
-                tasks.Launch([service_installed, tasks, toast,
+                tasks.Launch([service_installed, tasks, toast, model,
                               installed]() -> huxerui::Task<void> {
                     try {
-                        const int result = co_await RunOnTaskThread([installed] {
+                        const auto result = co_await RunOnTaskThread([installed] {
                             const std::string executable =
                                 std::filesystem::read_symlink("/proc/self/exe")
                                     .string();
-                            return std::system(
+                            const int code = std::system(
                                 std::format("pkexec \"{}\" service {}", executable,
                                             installed ? "uninstall" : "install")
                                     .c_str());
+                            return std::pair{code, service::installed()};
                         });
-                        if (result != 0) {
+                        service_installed = result.second;
+                        model->Update([installed = result.second](CoreView& view) {
+                            view.serviceInstalled = installed;
+                        });
+                        model->RequestRefresh();
+                        model->serviceChecking = false;
+                        if (result.first != 0) {
                             toast.Show(Localized(
                                 installed ? "卸载被取消或失败"
                                           : "安装被取消或失败（需要授权）"));
                             co_return;
                         }
-                        service_installed = !installed;
                         toast.Show(Localized(installed ? "服务已卸载" : "服务已安装"));
                     } catch (const std::exception& error) {
+                        model->serviceChecking = false;
                         toast.Show(error.what());
+                    } catch (...) {
+                        model->serviceChecking = false;
+                        toast.Show(Localized("服务操作失败"));
                     }
                 });
             }), app::images::gear);
@@ -216,9 +231,11 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
     huxerui::ToastHandle toast) {
     auto busy = huxerui::UseState(false);
     const auto model = huxerui::UseService<CoreModel>();
-    const auto manage = [service_installed, tasks, toast, busy, model](bool remove) {
-        if (busy.Get()) return;
+    const auto serviceTasks = huxerui::UseApplicationTaskScope();
+    const auto manage = [service_installed, tasks = serviceTasks, toast, busy, model](bool remove) {
+        if (busy.Get() || model->serviceChecking.Get()) return;
         busy = true;
+        model->serviceChecking = true;
         tasks.Launch([=]() -> huxerui::Task<void> {
             std::string error;
             bool ok = false;
@@ -238,7 +255,9 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                 ok = result.first;
                 error = result.second;
             } catch (const std::exception& exception) { error = exception.what(); }
+              catch (...) { error = "服务操作失败"; }
             busy = false;
+            model->serviceChecking = false;
             // Publish actual SCM state, never infer it from a button click.
             const bool installed = co_await RunOnTaskThread([] { return service::installed(); });
             service_installed = installed;
@@ -250,13 +269,13 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
     };
     return SettingRow(
         Localized("内核服务"),
-        Localized("Windows 系统服务托管内核、TUN 与 PPTP；安装或更新时需要管理员授权"),
+        Localized("Windows 系统服务托管内核、TUN 与 PPTP；启动后自动检查更新，手动安装或更新需要管理员授权"),
         huxerui::Row {
             huxerui::Button(Localized(service_installed.Get() ? "更新服务" : "安装服务"))
-                .OnClick([manage] { manage(false); }).With(huxerui::Enabled(!busy.Get())),
+                .OnClick([manage] { manage(false); }).With(huxerui::Enabled(!busy.Get() && !model->serviceChecking.Get())),
             service_installed.Get()
                 ? huxerui::View{huxerui::Button(Localized("卸载服务"))
-                    .OnClick([manage] { manage(true); }).With(huxerui::Enabled(!busy.Get()))}
+                    .OnClick([manage] { manage(true); }).With(huxerui::Enabled(!busy.Get() && !model->serviceChecking.Get()))}
                 : huxerui::View{},
         }.With(huxerui::Spacing(8.0F)), app::images::gear);
 }

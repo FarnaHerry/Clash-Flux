@@ -41,6 +41,7 @@ struct CoreView {
 };
 
 struct CoreModel {
+    huxerui::State<bool> serviceChecking{false};
     // 唯一订阅点。必须带初值：huxerui::State 的默认构造是「空 cell」，
     // 读取（DriveCoreModel 每拍读一次）会抛 "Lifecycle dependency State is empty"。
     huxerui::State<CoreView> view{CoreView{}};

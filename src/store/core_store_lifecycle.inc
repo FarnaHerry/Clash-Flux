@@ -1,6 +1,13 @@
 // core_store_lifecycle.inc — sing-box 内核生命周期
 // 由 src/store/core_store.cppm 在 CoreStore 类体内包含。
 
+    // Blocking startup maintenance shares the core lifecycle lock: an explicit
+    // start/reconfigure cannot race a service payload replacement.
+    service::StartupResult synchronizeService() {
+        std::lock_guard operationLock(lifecycleMutex_);
+        return service::synchronizeInstalled();
+    }
+
     // 内核把规则集解析失败报成启动 FATAL（parse rule-set: read rule:
     // unexpected EOF）：本地 .srs 缓存被截断或内容错误时会发生。清掉缓存后
     // 重新预取（curl 会校验 Content-Length）即可自愈；其他启动失败不重试。
