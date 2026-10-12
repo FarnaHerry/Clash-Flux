@@ -53,7 +53,7 @@
 
 ## 页内标签与导航图标
 
-- 应用 Logo 使用 `resources/images/clash_flux_logo.png` 中的黑猫探出盒子图形。桌面标题栏和 Windows 安装器将透明图放在白色底托上，以适配深色主题；Linux/Windows 任务栏应用图标使用透明背景和细白描边，Android 启动图标仍使用白底版本。桌面托盘图标由 `scripts/generate-tray-icons.sh` 从同一透明源图生成，背景保持透明，默认、TUN 和系统代理状态分别使用深蓝、青绿和紫色图形，并加细白描边以适配深色系统托盘。Android 快捷开关磁贴仍使用独立的猫爪图标。
+- 应用 Logo 使用 `resources/images/clash_flux_logo.png` 中的黑猫探出盒子图形。桌面标题栏和 Windows 安装器将透明图放在白色底托上，以适配深色主题；Linux/Windows 任务栏应用图标使用透明背景和细白描边，Android 启动图标仍使用白底版本。桌面托盘使用同一黑猫盒子图形的矢量源 `assets/tray/logo.svg`，由 `scripts/generate-tray-icons.sh` 按 32/64/96 像素分别栅格化（框架托盘接口接收位图）；收紧源图留白以扩大图案，背景保持透明，默认、TUN 和系统代理状态分别使用深蓝、青绿和紫色图形，并加细白描边以适配深色系统托盘。Android 快捷开关磁贴仍使用独立的猫爪图标。
 - 桌面与移动端共用设置页主题选项，三个标签统一为“自动 / 深色 / 浅色”；“自动”按系统深浅模式选择主题。
 
 - 二级标签共用 `src/ui/section_tabs.cpp` 的 `SectionTabBar` 与 `SectionTabPages`，代理、订阅、规则页都接入。标签栏固定在 Pager 外，点击、溢出菜单与内容横滑写回同一受控选择。

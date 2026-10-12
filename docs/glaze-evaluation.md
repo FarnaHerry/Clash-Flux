@@ -89,7 +89,8 @@ DNS 的字符串/数组/对象多形态、规则引号与未知协议都须逐�
 
 - 保持 C++23，使用显式 metadata 固定外部字段名；不因这次重构启用 C++26 reflection。
 - 上游 CMake 最低 3.31。实际接入只编译头文件的私有 codec target，不运行上游
-  CMake；本项目最低 CMake 3.30 保持有效。以后若改成 add_subdirectory 再同步要求。
+  CMake；评估时项目最低 CMake 为 3.30。当前依赖管理已迁移至 CMake 4.4 / CPS，
+  仍不运行 Glaze 上游 CMake，见 [CPS 依赖管理](cps-dependencies.md)。
 - 当前本地源码未发现官方 .cppm/.ixx 模块接口。初期把 Glaze include 与实例化隔离
   在普通 .cpp 内，用函数向项目模块提供纯 C++ DTO/expected；不导出 Glaze 模板或
   模仿 nlohmann 包装后假定跨编译器模块问题已经解决。

@@ -1,7 +1,10 @@
 # third_party — vendored 依赖
 
-第三方 tarball 提交在 `tarballs/`，configure 根据版本与 SHA 记录解包到
-`build/vendor/`，展开源码树不入库；Glaze 归档另外显式校验实际 SHA256。
+第三方 tarball 提交在 `tarballs/`，版本、来源与 SHA 的唯一构建声明位于
+`cmake/dependencies/Lock.cmake`。配置时验证归档与直提源码（包括热缓存），
+独立 producer 构建、安装七个 CPS 包，应用通过 `find_package` 消费。展开源码
+仍在 `build/vendor/`；包缓存区分平台、编译器、flags 与配置。详见
+[依赖管理](../docs/cps-dependencies.md)。
 nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归档可离线解包；HuxerUI 插件与内核首次获取仍可能需要网络。
 归档版本及来源以本项目清单为准。
 
@@ -28,7 +31,9 @@ Camera、Charts、SQLite 通过 `huxerui_use_library(URL, COMMIT)` 获取到构�
 
 ## 更新某个依赖
 
-1. 用新版本源码打 tarball（保持顶层目录名，或同步改 `third_party/CMakeLists.txt`
-   里 `clashflux_extract` 的 `topdir` 参数）；
-2. `sha256sum` 新值写回 `third_party/CMakeLists.txt`；
-3. 跑一次 configure 验证解包与 SHA 校验。
+1. 更新归档或直提源码，并核对来源、许可证与实际 SHA256；
+2. 更新 `cmake/dependencies/Lock.cmake` 中的版本、文件名和 SHA（不使用浮动分支）；
+3. 更新独立 producer 的构建选项或 CPS 导出接口（如果上游 API 改变）；
+4. 重新编译应用并运行必跑回归，包含 `cps_dependencies`、下载 TLS 与持久化。
+
+HuxerUI 与其扩展仍遵守独立 fork 维护、固定提交和 Java/native 同源规则。

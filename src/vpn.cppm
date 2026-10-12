@@ -593,6 +593,17 @@ public:
         }
     }
 
+    // Capability polling must not replace adapters: setAdapters disconnects
+    // every active session and would release unrelated connections/routes.
+    inline void setEngineAvailable(EngineKind kind, bool available) noexcept {
+        for (auto& adapter : adapters_) {
+            if (adapter.descriptor.kind == kind) adapter.descriptor.available = available;
+        }
+        for (auto& engine : engines_) {
+            if (engine.kind == kind) engine.available = available;
+        }
+    }
+
     void setConnections(std::vector<VpnConnection> connections) {
         disconnectAll();
         connections_ = std::move(connections);

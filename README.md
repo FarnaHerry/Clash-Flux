@@ -1,6 +1,6 @@
 # Clash-Flux
 
-版本更新见 [v0.3.29 发布说明](docs/releases/v0.3.29.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.30 发布说明](docs/releases/v0.3.30.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -70,7 +70,7 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   未安装时回落「接管外部实例 → 直接 spawn」
 - Windows 原生服务：SCM LocalSystem 服务托管 sing-box、TUN 与 PPTP，应用保持普通
   用户权限；设置中安装/更新服务时授权一次。控制使用受限命名管道，服务不打开用户
-  数据库，详见 [Windows 服务](docs/windows-service.md)。
+  数据库；GUI 运行中安装或重启服务后会重新检测 PPTP 能力，详见 [Windows 服务](docs/windows-service.md)。
 - 完整 CLI：同一二进制带子命令（core / mode / tun / proxy / profile / service），
   无参数启动进入 GUI
 - 浅色/深色/自动主题模式与可自定义主题色、岛屿风界面、自定义窗口标题栏、系统托盘（Windows 托盘菜单跟随应用主题；启用托盘后关闭窗口隐藏到托盘，停用后询问是否退出）、
@@ -85,7 +85,8 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 
 ## 构建要求
 
-- CMake 3.30 或更高版本
+- CMake 4.4 或更高版本（本机与 CI 验证基线为 4.4.2）
+- 通用第三方库通过 CPS 包消费；首次配置自动构建固定依赖，后续校验并复用工具链缓存。详见 [CPS 依赖管理](docs/cps-dependencies.md)
 - 支持 C++23 modules / `import std` 的编译器（本机 GCC 16）
 - Ninja（推荐）
 - Linux 源码构建 HuxerUI 需要 GTK ≥4.14、libepoxy ≥1.5 与 libsoup ≥3.0 开发包；
@@ -147,8 +148,8 @@ CMake 明确报告未注册。验证范围与证据见[分层完成度记录](do
 
 桌面 CI 配置 `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`，缺失或禁用必跑回归会让
 配置失败；Python、固定打包内核和可执行 OpenSSL CLI 均为必要前提，下载测试
-也必须执行默认证书拒绝场景。通用桌面必跑 16 项，Windows 另加原生服务回归（17 项）；只有已记录的 MSVC C4737
-缺陷允许跳过直接 ORM 测试（Windows 为 16 项），订阅持久化测试始终必跑。本地可使用同一门禁：
+也必须执行默认证书拒绝场景。通用桌面必跑 17 项（含 CPS），Windows 另加原生服务回归（18 项）；只有已记录的 MSVC C4737
+缺陷允许跳过直接 ORM 测试（Windows 为 17 项），订阅持久化测试始终必跑。本地可使用同一门禁：
 
 ```bash
 cmake -S . -B build -DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON

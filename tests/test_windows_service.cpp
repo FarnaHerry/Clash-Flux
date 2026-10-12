@@ -39,6 +39,8 @@ int main(int argc, char** argv) {
         const auto root = executable().parent_path().parent_path();
         return ws::run("fixture-v1", {
             .command = [root](std::string_view command) -> std::string {
+                if (command == "PPTP_AVAILABLE") return "YES";
+                if (command.starts_with("PPTP_STATUS ")) return "DISCONNECTED";
                 if (command == "TEST_DELAY") {
                     std::ofstream(root / L"delay-started.txt") << "started";
                     Sleep(3000); return "OK";
@@ -62,12 +64,14 @@ int main(int argc, char** argv) {
         } cleanup{options};
         std::string error;
         check(!ws::installed(options), "fixture service must not already exist");
+        check(!ws::request("PPTP_AVAILABLE", error, 500, options), "PPTP capability before installation");
         check(ws::install(ws::currentUserSid(), error, options) == 0, "install: " + error);
         check(ws::installed(options), "SCM registration");
         check(ws::query("fixture-v1", options).error.empty(), "VERSION handshake");
         const auto mismatch = ws::query("fixture-v2", options);
         check(mismatch.reachable && !mismatch.error.empty(), "version mismatch must fail");
         check(ws::request("STATUS", error, 2000, options) == "STOPPED", "initial status");
+        check(ws::request("PPTP_AVAILABLE", error, 2000, options) == "YES", "PPTP capability after installation");
         // A pipe with the right protocol but the wrong server PID is rejected
         // before any control command is sent to it.
         auto spoofOptions = options; spoofOptions.pipe += L".Spoof";
@@ -96,6 +100,7 @@ int main(int argc, char** argv) {
         check(std::filesystem::exists(root / L"delay-started.txt"), "long command actually started");
         check(ws::query("fixture-v1", options).error.empty(), "VERSION stays responsive during a long operation");
         check(ws::request("STATUS", error, 2000, options) == "STOPPED", "STATUS stays responsive during a long operation");
+        check(ws::request("PPTP_AVAILABLE", error, 2000, options) == "YES", "PPTP capability during a long operation");
         check(slowOperation.get() == "OK", "long operation result");
 
         check(!ws::request("VERSION\nSTOP", error, 2000, options), "reject command injection");
@@ -180,6 +185,7 @@ int main(int argc, char** argv) {
         check(status.dwCurrentState == SERVICE_STOPPED &&
               std::filesystem::exists(root / L"session-cleanup.txt"), "SCM stop releases session hooks");
         check(ws::ensureCompatible("fixture-v1", error, options), "owner restarts stopped service");
+        check(ws::request("PPTP_AVAILABLE", error, 2000, options) == "YES", "PPTP capability after SCM restart");
         service.reset();
         // Leave a silent pipe client connected: SCM stop must cancel pending IO.
         UniqueHandle silent{CreateFileW(options.pipe.c_str(), GENERIC_READ | FILE_WRITE_DATA,

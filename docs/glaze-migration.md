@@ -12,7 +12,7 @@
 - 归档 SHA256：`872764412db2ba94cf57e39cf6518f86c0e13728c1c668f7ed398801aadff812`；
   configure 时显式校验后解包，不依赖用户 Downloads 目录。
 - `clashflux_wire` 编译唯一的 `src/wire_codec.cpp`；Glaze 头和 metadata 保持私有。
-  项目仍为 C++23、最低 CMake 3.30，没有执行 Glaze 的上游 CMake 工程。
+  项目仍为 C++23，当前最低 CMake 4.4；Glaze 由独立 producer 导出头文件 CPS 包，没有执行 Glaze 的上游 CMake 工程。
 - `src/wire_codec.h` 仅提供拥有字符串、数组和明确整数类型的 C++ DTO/Result。
   不导出 Glaze 模板，不让 UI codegen 或 C++ module 接口携带 JSON 库类型。
 - Android/iOS Legacy 兼容头引用同一 DTO，codec 单独编译，避免把 Glaze 模板

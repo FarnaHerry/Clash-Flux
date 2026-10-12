@@ -209,6 +209,8 @@ std::optional<std::string> makePptpConfig(
 }
 
 huxerui::StringVariant pptpStateText(const store::PptpState& state) {
+    if (state.state == vpn::ConnectionState::Failed && !state.error.empty())
+        return LocalizedFormat("连接失败：{}", state.error);
     if (!state.toolsAvailable) return Localized("PPTP 引擎不可用");
     switch (state.state) {
     case vpn::ConnectionState::Connected:

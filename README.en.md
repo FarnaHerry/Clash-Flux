@@ -1,6 +1,6 @@
 # Clash-Flux
 
-See the [v0.3.29 release notes](docs/releases/v0.3.29.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.30 release notes](docs/releases/v0.3.30.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -102,6 +102,7 @@ application-managed settings before being passed to sing-box.
 - Native Windows service: SCM runs `ClashFluxService` as LocalSystem to own sing-box,
   TUN, PPTP and route compensation. The GUI stays unelevated and uses a restricted
   named pipe. Installation/updates request UAC only for the service command.
+  PPTP capability is refreshed after installation or restart while the GUI is running.
   See [Windows service](docs/windows-service.md).
 - A full CLI in the same executable: `core`, `mode`, `tun`, `proxy`, `profile` and
   `service` commands. Launch without arguments to open the GUI.
@@ -124,7 +125,8 @@ The project is under development; interfaces and data structures may change.
 
 ## Build requirements
 
-- CMake 3.30 or newer.
+- CMake 4.4 or newer; local and CI validation uses 4.4.2.
+- Common third-party libraries are consumed as CPS packages. Initial configuration builds pinned dependencies; later configurations verify and reuse the toolchain cache. See [CPS dependencies](docs/cps-dependencies.md).
 - A compiler supporting C++23 modules and `import std` (GCC 16 on the development
   machine).
 - Ninja, recommended.
@@ -192,8 +194,8 @@ register that test. See [validation evidence](docs/l1-l2-l3-status.md).
 Desktop CI sets `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`: missing or disabled required
 tests fail configuration. Python, the pinned bundled core and a runnable OpenSSL
 CLI are required; the download regression must include default certificate rejection.
-There are 16 common desktop tests, plus the native service regression on Windows (17).
-Only the documented MSVC C4737 defect permits skipping the direct ORM test (16 on Windows); subscription persistence remains mandatory.
+There are 17 common desktop tests (including CPS), plus the native service regression on Windows (18).
+Only the documented MSVC C4737 defect permits skipping the direct ORM test (17 on Windows); subscription persistence remains mandatory.
 Use the same gate locally:
 
 ```bash

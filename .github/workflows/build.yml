@@ -42,7 +42,7 @@
 # 已知风险：
 #   * apt.llvm.org 的 clang-21/libc++-21 包名或 Ubuntu 24.04 的仓库配置若调整需同步改。
 #   * `import std` 依赖 pip 固定的 cmake==4.4.2（CxxImportStdGate.cmake 的 UUID
-#     表覆盖 3.30–4.4）；升级 CMake 时先查 gate 文件是否已支持新版本。
+#     只保留当前 4.4 基线）；升级 CMake 时先查 gate 文件是否已支持新版本。
 #   * configure 期从 GitHub releases 下载 sing-box（SHA256 钉死），GitHub 资产
 #     不可用会让 Linux job 在 configure 阶段失败。
 
@@ -81,7 +81,7 @@ env:
   # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
   # CI 必须自行 clone 并钉 commit，保证可复现）。框架补丁集中维护在
   # farna/main；main 保留官方基线。验证集成更新后同步本机 checkout 与此 pin。
-  HUXERUI_COMMIT: '446a5a90a9e5e7e167eedd20c7580f7905f6fd3f'
+  HUXERUI_COMMIT: 'ba8a900e659cda012ab02c127627cabdab0b74f2'
   SINGBOX_COMMIT: 'af6e64c3b69e6132ebaee0e1a3d24e93903f6709' # v1.14.2
 
 jobs:
@@ -308,7 +308,7 @@ jobs:
           "IMAGE_VERSION=$env:ImageVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       # 缓存整个构建树：HuxerUI 框架及其依赖（约占 Windows 编译时间一半）
-      # 只在 HUXERUI_COMMIT / cmake/patches 变化时才需要重编；命中时 ninja
+      # HuxerUI revision 或锁定的 CPS 配方/输入变化时更新缓存；命中时 ninja
       # 增量重建只编译改动的应用 TU。必须放在 HuxerUI clone 之后，保证恢复
       # 出的目标文件 mtime 比源码新。
       - name: Cache build tree
@@ -318,7 +318,7 @@ jobs:
           # save-always：actions/cache 默认只在 job 成功时保存；冒烟测试失败
           # 不应浪费已经成功完成的编译成果，否则下次仍要全量重编。
           save-always: true
-          key: build-windows-${{ runner.os }}-${{ env.IMAGE_VERSION }}-${{ env.HUXERUI_COMMIT }}-${{ hashFiles('cmake/patches/**') }}
+          key: build-windows-${{ runner.os }}-${{ env.IMAGE_VERSION }}-${{ env.HUXERUI_COMMIT }}-${{ hashFiles('cmake/dependencies/**', 'cmake/clashflux_vendor.cmake', 'third_party/tarballs/**', 'third_party/json/**', 'third_party/qrcodegen/**') }}
           restore-keys: |
             build-windows-${{ runner.os }}-${{ env.IMAGE_VERSION }}-${{ env.HUXERUI_COMMIT }}-
 
@@ -492,6 +492,8 @@ jobs:
         run: |
           brew list openssl@3 &>/dev/null || brew install openssl@3
           brew install llvm
+          python3 -m pip install --break-system-packages -q cmake==4.4.2
+          echo "$(python3 -c 'import sysconfig; print(sysconfig.get_path("scripts"))')" >> "$GITHUB_PATH"
           llvm_prefix="$(brew --prefix llvm)"
           mod_dir="$llvm_prefix/share/libc++/v1"
           # brew llvm 只装模块源不带 libc++.modules.json（formula 未开
@@ -691,13 +693,12 @@ jobs:
           test -s "$output.metadata.json"
           echo "CLASHFLUX_SINGBOX_AAR=$output" >> "$GITHUB_ENV"
 
-      - name: Ensure CMake >= 3.31 (pip) and expose to Gradle
+      - name: Ensure CMake 4.4.2 (pip) and expose to Gradle
         run: |
           set -euo pipefail
-          # SDK 自带的 3.22.1 不够，AGP 也不会自动装 3.31.1 —— 直接 pip 装
-          # 3.31.6，经用户级 gradle
-          # 属性 cmake.dir 指给 AGP（不进仓库）。
-          python3 -m pip install --break-system-packages -q cmake==3.31.6
+          # CPS requires the same CMake 4.4 baseline as desktop builds.
+          # Expose the pip installation to AGP via cmake.dir (not committed).
+          python3 -m pip install --break-system-packages -q cmake==4.4.2
           cmake_root="$(dirname "$(dirname "$(command -v cmake)")")"
           "$cmake_root/bin/cmake" --version | head -1
           # 诊断：SDK 里有哪些 cmake 版本（PATH 搜索失败时的备选）。
@@ -893,6 +894,13 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
+      - name: Pin CMake
+        shell: pwsh
+        run: |
+          python -m pip install --quiet "cmake==4.4.2"
+          if ($LASTEXITCODE -ne 0) { throw 'CMake installation failed' }
+          cmake --version | Select-Object -First 1
 
       - name: Fetch HuxerUI packaging script
         shell: bash

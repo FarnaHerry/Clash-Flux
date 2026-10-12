@@ -4,7 +4,7 @@
 `<HOME>/dev/cpp/mcpp/HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `446a5a90a9e5e7e167eedd20c7580f7905f6fd3f`，各平台 CI 共用
+Clash-Flux 当前固定 `ba8a900e659cda012ab02c127627cabdab0b74f2`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
@@ -40,7 +40,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 446a5a90a9e5e7e167eedd20c7580f7905f6fd3f
+git -C third_party/huxerui checkout ba8a900e659cda012ab02c127627cabdab0b74f2
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
@@ -54,6 +54,15 @@ Clash-Flux 必须重新运行 `cmake --build build --target clash-flux`、`./run
 同源约束，桌面门禁和 iOS 暂缓政策保持不变。
 
 ## 验证边界
+
+2026-10-11 固定版本更新到 `ba8a900`，相对 `446a5a9` 新增三项：`ImageFit::Cover`
+源矩形按固有尺寸收口（运行时渲染修复）、Android 宿主 focus instrumentation 检查
+加载 native HuxerUI、fork 集成文档记录 10月7日真机验证。Clash-Flux 已用独立
+checkout 重新编译并通过 `./run.sh --version`（v0.3.29），启用
+`CLASHFLUX_REQUIRE_PROJECT_TESTS=ON` 后全部 17 项 `clashflux-required` 桌面回归
+通过（含 page_transition 分页交互、persistence、cps_dependencies）。本轮在 Linux
+Debug 执行；Windows/macOS/iOS 原生与 Android 真机构建未运行，`ImageFit::Cover`
+修复需随对应平台 CI 验证。
 
 2026-10-08 固定版本包含 `c40a2da` 的深层拉伸布局修复和 `446a5a9` 的 Windows 图标句柄成员位置修正。
 主轴有界且拉伸交叉轴已确定时，Row/Column 直接用最终分配尺寸测量 Grow 子树，避免逐层重复测量；松交叉轴与无界主轴仍保留自然尺寸计算。
@@ -81,3 +90,10 @@ Android arm64 Debug APK 构建也通过。独立的全新库图配置成功；�
 [集成文档](https://github.com/FarnaHerry/HuxerUI/blob/farna/main/docs/development/farna-integration.md)。
 Android 真机框架 instrumentation 尚未完成，Windows/macOS/iOS 原生运行也未在此 Linux
 主机验证；不能把编译通过或 common 回归通过表述为这些平台运行验证通过。
+
+## 应用 CPS 接入边界
+
+扩展库 URL/COMMIT 的唯一声明移至 `cmake/dependencies/Lock.cmake`，原生构建
+和 Android 库图继续通过 `huxerui_use_library` 获取同一身份，不升级当前固定提交。
+HuxerUI 的 codegen、资源、宿主工具和 Java/native 图仍走框架接入；通用依赖的
+CPS 迁移不替代这些流程，见 [依赖管理](cps-dependencies.md)。

@@ -12,7 +12,7 @@
 #   cmake -B build -G Ninja && cmake --build build  # 直接 CMake 流程（仍然可用）
 #   ctest --test-dir build                          # 冒烟测试
 #   ./run.sh                                        # 运行 build/ 出的 GUI
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 4.4)
 
 # ---- HuxerUI CLI 项目自省 --------------------------------------------------
 # `huxerui build/run/package` 先用 -DHUXERUI_PROJECT_PLAN_ONLY=ON 配置本项目，
@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.29 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.30 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -213,10 +213,7 @@ else ()
             "请用 HUXERUI_HOME 指向 0.3.0 源码或已安装 SDK，"
             "或 clone third_party/huxerui 后默认以源码模式编译")
     else ()
-        clashflux_extract(huxerui
-            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tarballs/huxerui-sdk-0.3.0-linux-x86_64.tar.gz"
-            "5413ccd9d35d0ad50c08c67045d73cb9faff23c04005a554af0faa7a914eb916"
-            "huxerui-sdk-0.3.0-linux-x86_64")
+        clashflux_dependency_source(huxerui)
         set(HUXERUI_SDK_DIR "${huxerui_SOURCE_DIR}" CACHE INTERNAL "HuxerUI SDK root" FORCE)
         message(STATUS "clash-flux: HuxerUI SDK（离线 tarball，${HUXERUI_SDK_DIR}）")
     endif ()
@@ -244,19 +241,17 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # 优先系统 OpenSSL；系统没有时，linux x86_64 使用 vendor 的静态 3.5.1。
     # Android/iOS 的交叉工具链没有仓库支持的 OpenSSL 包；curl 在这两个
     # 平台以无 TLS 方式构建（见 third_party/CMakeLists），目标链接跳过 OpenSSL。
+    include(cmake/dependencies/OpenSSL.cmake)
     if (ANDROID OR IOS)
         message(STATUS "clash-flux: Android/iOS 构建不使用 OpenSSL，curl 以无 TLS 构建")
     else ()
-        find_package(OpenSSL QUIET)
+        clashflux_find_openssl(QUIET)
         if (NOT OpenSSL_FOUND)
             if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64)")
-                clashflux_extract(openssl
-                    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tarballs/openssl-3.5.1-linux-x86_64.tar.gz"
-                    "d749ee7ec6bda301dba4a67dc7196d4a04b310f664dc360d6ab2e49298b731cf"
-                    "openssl-3.5.1-linux-x86_64")
+                clashflux_dependency_source(openssl)
                 set(OPENSSL_ROOT_DIR "${openssl_SOURCE_DIR}" CACHE PATH "vendored OpenSSL" FORCE)
                 set(OPENSSL_USE_STATIC_LIBS TRUE CACHE BOOL "" FORCE)
-                find_package(OpenSSL REQUIRED)
+                clashflux_find_openssl(REQUIRED)
                 message(STATUS "clash-flux: using vendored OpenSSL ${OPENSSL_VERSION} (static)")
             else ()
                 message(FATAL_ERROR
@@ -372,12 +367,6 @@ clashflux_deploy_huxerui_dll(clash-flux)
 # Extension fixes are maintained on each FarnaHerry fork's farna/main branch.
 # Use immutable URL/COMMIT identities for native builds and the Android library graph;
 # no application configure step patches or consumes mutable local library clones.
-set(CLASHFLUX_HUXERUI_CAMERA_URL "https://github.com/FarnaHerry/Lib-Camera.git")
-set(CLASHFLUX_HUXERUI_CAMERA_COMMIT "b8b3b9304646cdc1afb9722ead16d85cf2160610")
-set(CLASHFLUX_HUXERUI_SQLITE_URL "https://github.com/FarnaHerry/Lib-SQLite.git")
-set(CLASHFLUX_HUXERUI_SQLITE_COMMIT "88f610fe66c57260b1ac38e676fc36b23c900fc2")
-set(CLASHFLUX_HUXERUI_CHARTS_URL "https://github.com/FarnaHerry/Lib-Charts.git")
-set(CLASHFLUX_HUXERUI_CHARTS_COMMIT "9c183e87393ef589f3bf20dd8d80281a1fe9c9cd")
 
 huxerui_use_library(clash-flux
     TARGET HuxerUI::Camera
@@ -456,13 +445,13 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         )
     endif ()
     target_link_libraries(clash-flux PRIVATE
-        ixwebsocket
+        IXWebSocket::ixwebsocket
         CURL::libcurl
         clashflux_json
         clashflux_wire
-        clashflux_qrcode
-        yaml-cpp
-        libzstd_static
+        QrCode::qrcodegen
+        yaml-cpp::yaml-cpp
+        zstd::libzstd_static
         Threads::Threads
     )
     if (APPLE AND NOT IOS)
@@ -666,7 +655,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             FILES src/singbox.cppm src/rule_provider_cache.cppm src/vpn.cppm)
         set_target_properties(test_singbox PROPERTIES CXX_MODULE_STD ON)
         target_compile_features(test_singbox PRIVATE cxx_std_23)
-        target_link_libraries(test_singbox PRIVATE clashflux_json yaml-cpp libzstd_static)
+        target_link_libraries(test_singbox PRIVATE clashflux_json yaml-cpp::yaml-cpp zstd::libzstd_static)
         add_test(NAME singbox COMMAND test_singbox)
 
         if (CLASHFLUX_REQUIRE_PROJECT_TESTS)
@@ -702,7 +691,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             set_target_properties(test_rule_provider_download PROPERTIES CXX_MODULE_STD ON)
             target_compile_features(test_rule_provider_download PRIVATE cxx_std_23)
             target_link_libraries(test_rule_provider_download PRIVATE
-                clashflux_wire clashflux_json yaml-cpp libzstd_static CURL::libcurl OpenSSL::SSL OpenSSL::Crypto)
+                clashflux_wire clashflux_json yaml-cpp::yaml-cpp zstd::libzstd_static CURL::libcurl OpenSSL::SSL OpenSSL::Crypto)
             if (WIN32)
                 target_compile_definitions(test_rule_provider_download PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
             endif ()
@@ -714,6 +703,12 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                 "${CMAKE_COMMAND}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ProjectTestGate.cmake"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_rule_provider_download.py")
             set_tests_properties(project_test_gate PROPERTIES TIMEOUT 45)
+            add_test(NAME cps_dependencies COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cps_dependencies.py"
+                "${CMAKE_COMMAND}" "${CLASHFLUX_DEPENDENCY_PREFIX}"
+                "${CLASHFLUX_DEPENDENCY_TOOLCHAIN}" "${CMAKE_CURRENT_SOURCE_DIR}"
+                "$<CONFIG>")
+            set_tests_properties(cps_dependencies PROPERTIES TIMEOUT 180)
             if (CLASHFLUX_BUNDLE_SINGBOX AND CLASHFLUX_SINGBOX_BUNDLED_BINARY)
                 add_test(NAME group_expansion_runtime COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_group_expansion_runtime.py"

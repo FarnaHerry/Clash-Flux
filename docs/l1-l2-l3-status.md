@@ -750,3 +750,27 @@ iOS 暂缓路径的现有 Xcode 工程解析失败仍为非阻塞，不生成 iO
 
 未新增 Windows GUI/UAC/TUN 数据流/PPTP 实机验收；本机未安装真实服务，未更改
 当前机器代理、数据库与订阅。
+
+
+## 2026-10-12：服务变化后的 PPTP 能力恢复
+
+代码快照：v0.3.29 工作区修复，未提交/发布。服务分离后，PPTP 适配器只在
+构造时探测一次可用性；GUI 在服务安装或恢复前启动时，旧的不可用结果会永久
+留在引擎选择与订阅卡片中。现有原生连接监视线程持续检测能力，使用
+`VpnManager::setEngineAvailable` 更新选择，不替换适配器或断开其它连接。
+
+能力与连接状态经同一个 `VpnSnapshot` 发布到应用级 `VpnModel`。未拨号的
+订阅也读模型能力，页面不再直接构造/查询 VpnStore。显式连接先检查服务版本、
+启动已安装的停止服务并重查能力，再修改主 TUN；失败保留主内核。具体失败
+原因优先于通用的“PPTP 引擎不可用”。未改变 RAS 认证、凭据、路由与服务所有权。
+
+实际验证：`cmake --build build --target clash-flux test_vpn`、
+`./run.sh --version` 通过；完整目标构建后 `ctest --test-dir build
+--output-on-failure --no-tests=error -L clashflux-required` 为 17/17。新增 VPN
+回归实际验证不可用→可用→不可用→可用、拨号与路由执行，以及其它连接和已有
+会话不被能力刷新重置。隔离临时数据目录的 GUI 连续运行 12 秒，未提前退出。
+`huxerui build android --profile debug --source third_party/huxerui` 构建通过，
+确认共用模型/Legacy 路径与 UI codegen 仍可编译；不把 APK 构建当作 VPN 实机验收。
+
+Windows SCM 回归新增安装前后、长操作中与重启后的 PPTP 能力查询检查，本机
+未执行该 Windows 专属用例；未新增 Windows 实机 RAS/PPTP 连接验收。

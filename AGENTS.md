@@ -29,14 +29,15 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
 
 桌面 CI 必须配置 `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`，按
 `cmake/ProjectTestGate.cmake` 核对必跑测试已注册且未禁用，CTest 使用
-`--no-tests=error`。通用桌面必跑 16 项，Windows 另加 windows_service（17 项）；
-只有已记录的 MSVC C4737 编译器缺陷允许跳过直接 ORM 测试（Windows 为 16 项），persistence 必跑。Python、固定打包内核、
+`--no-tests=error`。通用桌面必跑 17 项（含 cps_dependencies），Windows 另加 windows_service（18 项）；
+只有已记录的 MSVC C4737 编译器缺陷允许跳过直接 ORM 测试（Windows 为 17 项），persistence 必跑。Python、固定打包内核、
 可执行的 OpenSSL CLI 缺失必须失败；下载回归传入明确的 OpenSSL 路径及
 `--require-tls`，不能用跳过证书拒绝场景换取发布通过。手机构建不启用此桌面门禁。
 
 ## 代码与工作区约定
 
 - 修改前先检查 `git status`，保留用户已有改动，不得擅自 reset、restore 或清理无关文件。
+- CMake 最低 4.4，本机/CI 基线 4.4.2。通用第三方库走 `cmake/dependencies/Lock.cmake` 的固定来源与 SHA、独立 CPS producer 和 `find_package`；保留 HuxerUI codegen/资源/Android 图与应用模块源码编译。改包边界须运行 CPS 重定位、版本拒绝、缓存完整性及 TLS 回归，流程见 `docs/cps-dependencies.md`。
 - 优先使用 Ninja/CMake 的增量构建；UI 修改必须经过 HuxerUI codegen 和目标构建。
 - HuxerUI 框架修复集中在 `FarnaHerry/HuxerUI` 的 `farna/main` 维护，独立维护目录为
   `<HOME>/dev/cpp/mcpp/HuxerUI-fork`；`main` 保留官方基线，更新通过 merge 上游进入集成分支。
@@ -159,6 +160,7 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   读取；管道必须限制安装用户/SYSTEM/管理员并核对双方身份。服务载荷使用受保护的
   Program Files 独立目录，版本不符拒绝运行并经 UAC 更新，卸载不得触碰用户订阅。
   生命周期、部署与专属回归见 `docs/windows-service.md`。
+- 原生 VPN 的服务能力由 `VpnStore` 的任务线程监视并随 `VpnSnapshot` 发布，不能永久冻结启动时的 PPTP 可用状态。能力刷新用 `VpnManager::setEngineAvailable`，不得用会断开现有连接的 `setAdapters`；订阅卡片只读应用级 `VpnModel`，不得在渲染时探测服务。显式连接先检查服务与能力，再停止主 TUN；具体失败原因优先于通用不可用提示。
 - Windows CI 使用 runner 预装的 OpenSSL（`Program Files/OpenSSL`），构建前检查
   可执行文件和开发头文件；不要在发布门禁重新调用 Chocolatey 安装 OpenSSL。
 - 修改完成后运行 `git diff --check`，并在回复中说明实际执行过的验证命令及结果。

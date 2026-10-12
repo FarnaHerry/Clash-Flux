@@ -1,0 +1,150 @@
+# Standalone, target-toolchain package producer. No UI/codegen or C++ BMIs here.
+cmake_minimum_required(VERSION 4.4)
+project(ClashFluxDependencies LANGUAGES C CXX)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_MODULE_STD OFF)
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+set(CMAKE_INSTALL_LIBDIR lib CACHE STRING "" FORCE)
+set(CMAKE_INSTALL_INCLUDEDIR include CACHE STRING "" FORCE)
+include("${CMAKE_CURRENT_LIST_DIR}/Lock.cmake")
+include("${CLASHFLUX_DEPENDENCY_REPO}/cmake/clashflux_vendor.cmake")
+if(CLASHFLUX_DEPENDENCY_SOURCE_CACHE)
+    set(CLASHFLUX_VENDOR_DIR "${CLASHFLUX_DEPENDENCY_SOURCE_CACHE}")
+endif()
+clashflux_verify_dependency_inputs()
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
+# Each package owns an export; consumers receive real CPS imported targets.
+function(clashflux_export_package name version target)
+    get_target_property(component ${target} EXPORT_NAME)
+    if(NOT component)
+        set(component "${target}")
+    endif()
+    install(TARGETS ${target} EXPORT ClashFlux${name}Targets
+        ARCHIVE DESTINATION "lib/$<CONFIG>" COMPONENT ClashFluxDependencies
+        LIBRARY DESTINATION "lib/$<CONFIG>" COMPONENT ClashFluxDependencies
+        RUNTIME DESTINATION "bin/$<CONFIG>" COMPONENT ClashFluxDependencies)
+    install(PACKAGE_INFO ${name} EXPORT ClashFlux${name}Targets VERSION ${version}
+        DEFAULT_TARGETS ${component} DESTINATION "lib/cps/${name}"
+        COMPONENT ClashFluxDependencies)
+endfunction()
+function(clashflux_install_headers source)
+    install(DIRECTORY "${source}/" DESTINATION include
+        COMPONENT ClashFluxDependencies FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp")
+endfunction()
+
+clashflux_dependency_source(glaze)
+add_library(glaze INTERFACE)
+target_include_directories(glaze INTERFACE "$<INSTALL_INTERFACE:include>")
+target_compile_features(glaze INTERFACE cxx_std_23)
+clashflux_install_headers("${glaze_SOURCE_DIR}/include")
+clashflux_export_package(Glaze ${CLASHFLUX_DEP_glaze_VERSION} glaze)
+
+add_library(nlohmann_json INTERFACE)
+target_include_directories(nlohmann_json INTERFACE "$<INSTALL_INTERFACE:include>")
+clashflux_install_headers("${CLASHFLUX_DEPENDENCY_REPO}/third_party/json")
+clashflux_export_package(nlohmann_json ${CLASHFLUX_DEP_JSON_VERSION} nlohmann_json)
+
+add_library(qrcodegen STATIC "${CLASHFLUX_DEPENDENCY_REPO}/third_party/qrcodegen/qrcodegen.cpp")
+target_include_directories(qrcodegen INTERFACE "$<INSTALL_INTERFACE:include>")
+target_compile_features(qrcodegen PUBLIC cxx_std_17)
+clashflux_install_headers("${CLASHFLUX_DEPENDENCY_REPO}/third_party/qrcodegen")
+clashflux_export_package(QrCode ${CLASHFLUX_DEP_QRCODE_VERSION} qrcodegen)
+
+clashflux_dependency_source(zstd)
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
+add_subdirectory("${zstd_SOURCE_DIR}/build/cmake" zstd EXCLUDE_FROM_ALL)
+target_include_directories(libzstd_static INTERFACE "$<INSTALL_INTERFACE:include>")
+install(FILES "${zstd_SOURCE_DIR}/lib/zstd.h" "${zstd_SOURCE_DIR}/lib/zstd_errors.h"
+    DESTINATION include COMPONENT ClashFluxDependencies)
+clashflux_export_package(zstd ${CLASHFLUX_DEP_zstd_VERSION} libzstd_static)
+
+clashflux_dependency_source(yamlcpp)
+set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_INSTALL OFF CACHE BOOL "" FORCE)
+set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+# Old policy declarations are scoped to this dependency producer.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+add_subdirectory("${yamlcpp_SOURCE_DIR}" yamlcpp EXCLUDE_FROM_ALL)
+# The upstream expression is a constant false/true static-build decision.
+# Record its evaluated contract, not a nonportable NOT/BOOL expression in CPS.
+set_property(TARGET yaml-cpp PROPERTY INTERFACE_COMPILE_DEFINITIONS YAML_CPP_STATIC_DEFINE)
+clashflux_install_headers("${yamlcpp_SOURCE_DIR}/include")
+clashflux_export_package(yaml-cpp ${CLASHFLUX_DEP_yamlcpp_VERSION} yaml-cpp)
+
+clashflux_dependency_source(curl)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+set(CURL_ENABLE_EXPORT_TARGET OFF CACHE BOOL "" FORCE)
+set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "" FORCE)
+set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
+set(CURL_BROTLI OFF CACHE BOOL "" FORCE)
+set(CURL_ZSTD OFF CACHE BOOL "" FORCE)
+set(CURL_DISABLE_LDAP ON CACHE BOOL "" FORCE)
+set(CURL_DISABLE_LDAPS ON CACHE BOOL "" FORCE)
+if(ANDROID OR IOS)
+    set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
+    set(CURL_ENABLE_SSL OFF CACHE BOOL "" FORCE)
+else()
+    include("${CMAKE_CURRENT_LIST_DIR}/OpenSSL.cmake")
+    clashflux_find_openssl(REQUIRED)
+    set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/SystemComponents.cmake")
+set(CMAKE_PROJECT_CURL_INCLUDE "${CMAKE_CURRENT_LIST_DIR}/CurlPackage.cmake")
+add_subdirectory("${curl_SOURCE_DIR}" curl EXCLUDE_FROM_ALL)
+get_target_property(curl_target CURL::libcurl ALIASED_TARGET)
+set_target_properties(${curl_target} PROPERTIES EXPORT_NAME libcurl)
+get_property(system_targets GLOBAL PROPERTY CLASHFLUX_CURL_SYSTEM_TARGETS)
+if(system_targets)
+    install(TARGETS ${system_targets} EXPORT ClashFluxCURLTargets
+        COMPONENT ClashFluxDependencies)
+endif()
+clashflux_install_headers("${curl_SOURCE_DIR}/include")
+clashflux_export_package(CURL ${CLASHFLUX_DEP_curl_VERSION} ${curl_target})
+clashflux_install_system_configurations()
+
+clashflux_dependency_source(ixwebsocket)
+file(GLOB ix_sources "${ixwebsocket_SOURCE_DIR}/ixwebsocket/*.cpp")
+list(FILTER ix_sources EXCLUDE REGEX
+    "(IXSocketServer|IXHttpServer|IXWebSocketServer|IXWebSocketProxyServer|IXSocketOpenSSL|IXSocketMbedTLS|IXSocketAppleSSL)\\.cpp$")
+add_library(ixwebsocket STATIC ${ix_sources})
+target_include_directories(ixwebsocket PRIVATE "${ixwebsocket_SOURCE_DIR}"
+    INTERFACE "$<INSTALL_INTERFACE:include>")
+target_compile_features(ixwebsocket PUBLIC cxx_std_17)
+if(WIN32)
+    target_link_libraries(ixwebsocket PUBLIC ws2_32)
+endif()
+install(DIRECTORY "${ixwebsocket_SOURCE_DIR}/ixwebsocket" DESTINATION include
+    COMPONENT ClashFluxDependencies FILES_MATCHING PATTERN "*.h")
+clashflux_export_package(IXWebSocket ${CLASHFLUX_DEP_ixwebsocket_VERSION} ixwebsocket)
+
+# Build only the selected library payload, even though upstream exports/tools exist.
+add_custom_target(clashflux_dependency_payload ALL
+    DEPENDS qrcodegen libzstd_static yaml-cpp ${curl_target} ixwebsocket)
+
+# The bootstrap checks these files before reusing a package cache.
+get_property(external_files GLOBAL PROPERTY CLASHFLUX_CPS_EXTERNAL_FILES)
+list(REMOVE_DUPLICATES external_files)
+file(WRITE "${CMAKE_BINARY_DIR}/external-inputs.txt" "")
+foreach(path IN LISTS external_files)
+    if(EXISTS "${path}")
+        file(SHA256 "${path}" digest)
+        file(APPEND "${CMAKE_BINARY_DIR}/external-inputs.txt" "${digest}|${path}\n")
+    endif()
+endforeach()

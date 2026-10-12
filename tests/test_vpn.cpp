@@ -182,6 +182,65 @@ int main() {
     assert(routesApplied);
     manager.disconnect("company-a");
 
+    // A service absent at application startup can be installed/restarted later.
+    // Both selection and actual dialing must recover without replacing adapters
+    // (which would disconnect sessions and release their route leases).
+    int recoveredDialCalls = 0;
+    int recoveredRouteCalls = 0;
+    int recoveredDisconnectCalls = 0;
+    int otherDisconnectCalls = 0;
+    {
+        VpnManager recovering;
+        recovering.setAdapters({
+            EngineAdapter{
+                .descriptor = {EngineKind::SystemPptp, 80, false, {ConnectionKind::Pptp}},
+                .connect = [&](VpnConnection& connection, std::string&) {
+                    ++recoveredDialCalls;
+                    connection.interfaceName = "service-ppp";
+                    return true;
+                },
+                .applyRoutes = [&](VpnConnection&, std::span<const std::string> routes, std::string&) {
+                    ++recoveredRouteCalls;
+                    return std::ranges::find(routes, "10.90.0.0/16") != routes.end();
+                },
+                .disconnect = [&](VpnConnection&) { ++recoveredDisconnectCalls; },
+            },
+            EngineAdapter{
+                .descriptor = {EngineKind::SingBox, 95, true, {ConnectionKind::OpenVpn}},
+                .connect = [](VpnConnection&, std::string&) { return true; },
+                .applyRoutes = {},
+                .disconnect = [&](VpnConnection&) { ++otherDisconnectCalls; },
+            },
+        });
+        recovering.setConnections({
+            VpnConnection{.id = "recovering", .kind = ConnectionKind::Pptp,
+                          .enginePreference = {EngineKind::SystemPptp},
+                          .internalRoutes = {"10.90.0.0/16"}},
+            VpnConnection{.id = "unrelated", .kind = ConnectionKind::OpenVpn,
+                          .enginePreference = {EngineKind::SingBox}},
+        });
+        assert(recovering.connect("unrelated", error));
+        assert(!recovering.selectEngine("recovering").ok());
+        assert(!recovering.connect("recovering", error));
+        assert(recoveredDialCalls == 0);
+        recovering.setEngineAvailable(EngineKind::Unknown, true);
+        assert(!recovering.selectEngine("recovering").ok());
+        recovering.setEngineAvailable(EngineKind::SystemPptp, true);
+        assert(recovering.selectEngine("recovering").engine == EngineKind::SystemPptp);
+        assert(recovering.connect("recovering", error));
+        assert(recoveredDialCalls == 1 && recoveredRouteCalls == 1);
+        recovering.setEngineAvailable(EngineKind::SystemPptp, false);
+        assert(!recovering.selectEngine("recovering").ok());
+        assert(recovering.selectEngine("unrelated").engine == EngineKind::SingBox);
+        assert(recovering.findConnection("unrelated")->state == ConnectionState::Connected);
+        assert(recovering.findConnection("recovering")->interfaceName == "service-ppp");
+        assert(recoveredDisconnectCalls == 0 && otherDisconnectCalls == 0);
+        recovering.setEngineAvailable(EngineKind::SystemPptp, true);
+        assert(recovering.connect("recovering", error));
+        assert(recoveredDialCalls == 1 && recoveredRouteCalls == 1);
+    }
+    assert(recoveredDisconnectCalls == 1 && otherDisconnectCalls == 1);
+
     int disconnectCalls = 0;
     int dialCalls = 0;
     {

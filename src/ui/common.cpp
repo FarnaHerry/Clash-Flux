@@ -1008,17 +1008,10 @@ void DriveVpnModel(huxerui::TaskScope tasks, std::shared_ptr<VpnModel> model) {
         for (;;) {
             const std::uint64_t before = model->syncTick.Get();
             auto next = co_await RunOnTaskThread([] {
-                return std::pair{store::vpnStore().states(),
-                                 store::vpnStore().openVpnStates()};
+                return store::vpnStore().snapshot();
             });
-            // 快照很小：逐字段比较判脏，变了才写 State（State 本身也按
-            // operator== 去重，这里比较是为了不产生无谓的临时拷贝）。
-            if (model->pptp.Get() != next.first) {
-                model->pptp = std::move(next.first);
-            }
-            if (model->openvpn.Get() != next.second) {
-                model->openvpn = std::move(next.second);
-            }
+            // 能力与连接状态一并发布；State 按 operator== 去重。
+            model->view = std::move(next);
             if (model->syncTick.Get() != before) continue;
             co_await huxerui::Delay(std::chrono::duration<double>{1.0});
         }
