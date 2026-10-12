@@ -1,1 +1,4 @@
 /cmake/patches/*.patch text eol=lf
+/third_party/json/nlohmann/json.hpp text eol=lf
+/third_party/qrcodegen/qrcodegen.cpp text eol=lf
+/third_party/qrcodegen/qrcodegen.hpp text eol=lf
