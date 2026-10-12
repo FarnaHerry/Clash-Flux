@@ -277,35 +277,42 @@
             for (const auto& profile : db_->listProfiles()) {
                 if (profile.id != profileId) continue;
                 report.profileName = profile.name;
-                if (profile.type == "pptp" || profile.type == "openvpn") {
+                if (profile.type == "pptp") {
                     report.supported = false;
                     return report;
                 }
-                std::error_code error;
-                const auto root = std::filesystem::canonical(cfg::profilesDir(), error);
-                if (error || profile.file.empty()) {
-                    report.error = "无法读取配置文件";
-                    return report;
-                }
-                const auto path = std::filesystem::canonical(root / profile.file, error);
-                const auto relative = path.lexically_relative(root);
-                if (error || relative.empty() || relative.is_absolute() ||
-                    *relative.begin() == ".." || !std::filesystem::is_regular_file(path, error) || error) {
-                    report.error = "配置文件路径无效";
-                    return report;
-                }
-                const auto size = std::filesystem::file_size(path, error);
-                if (error || size == 0 || size > 8U * 1024U * 1024U) {
-                    report.error = "配置文件为空、无法读取或超过 8 MiB";
-                    return report;
-                }
-                std::ifstream input(path, std::ios::binary);
-                std::string content(static_cast<std::size_t>(size), '\0');
-                input.read(content.data(), static_cast<std::streamsize>(size));
-                if (input.gcount() != static_cast<std::streamsize>(size) ||
-                    input.peek() != std::char_traits<char>::eof()) {
-                    report.error = "读取配置文件失败或文件已变化";
-                    return report;
+                std::string content;
+                if (profile.type == "openvpn") {
+                    // Compatibility read only: keep legacy credentials, routes
+                    // and stable IDs in their original records.
+                    content = profile.nativeConfig;
+                } else {
+                    std::error_code error;
+                    const auto root = std::filesystem::canonical(cfg::profilesDir(), error);
+                    if (error || profile.file.empty()) {
+                        report.error = "无法读取配置文件";
+                        return report;
+                    }
+                    const auto path = std::filesystem::canonical(root / profile.file, error);
+                    const auto relative = path.lexically_relative(root);
+                    if (error || relative.empty() || relative.is_absolute() ||
+                        *relative.begin() == ".." || !std::filesystem::is_regular_file(path, error) || error) {
+                        report.error = "配置文件路径无效";
+                        return report;
+                    }
+                    const auto size = std::filesystem::file_size(path, error);
+                    if (error || size == 0 || size > 8U * 1024U * 1024U) {
+                        report.error = "配置文件为空、无法读取或超过 8 MiB";
+                        return report;
+                    }
+                    std::ifstream input(path, std::ios::binary);
+                    content.assign(static_cast<std::size_t>(size), '\0');
+                    input.read(content.data(), static_cast<std::streamsize>(size));
+                    if (input.gcount() != static_cast<std::streamsize>(size) ||
+                        input.peek() != std::char_traits<char>::eof()) {
+                        report.error = "读取配置文件失败或文件已变化";
+                        return report;
+                    }
                 }
                 auto options = routingOptions(content, false, false, nullptr, std::nullopt, nullptr, false);
                 options.auxiliarySources.clear(); options.globalRules.clear(); options.nativeConnections.clear();

@@ -28,6 +28,31 @@ namespace {
 #include "singbox_sources.inc"
 } // namespace
 
+ProfileFormat DetectProfileFormat(std::string_view content) {
+    if (content.starts_with("\xEF\xBB\xBF")) content.remove_prefix(3);
+    while (!content.empty()) {
+        const auto end = content.find('\n');
+        auto line = content.substr(0, end);
+        const auto begin = line.find_first_not_of(" \t\r");
+        if (begin != std::string_view::npos) {
+            line.remove_prefix(begin);
+            if (line.front() == '{' || line.front() == '[') return ProfileFormat::SingBoxJson;
+            if (line.front() != '#' && line.front() != ';' && line != "---" && line != "---\r") {
+                auto key = line.substr(0, line.find_first_of(" \t\r"));
+                if (key.starts_with("--")) key.remove_prefix(2);
+                if (key.find(':') != std::string_view::npos) return ProfileFormat::ClashYaml;
+                if (key == "client" || key == "remote" || key == "dev" || key == "proto" ||
+                    key == "nobind" || key == "persist-key" || key == "persist-tun" ||
+                    key == "resolv-retry" || key == "auth-user-pass" || key == "tls-client" ||
+                    key == "remote-cert-tls" || key.starts_with('<')) return ProfileFormat::OpenVpn;
+            }
+        }
+        if (end == std::string_view::npos) break;
+        content.remove_prefix(end + 1);
+    }
+    return ProfileFormat::ClashYaml;
+}
+
 std::string FidelitySummary(const std::vector<FidelityNote>& notes) {
     std::size_t nodeSkip = 0;
     std::size_t nodeApprox = 0;
@@ -85,9 +110,12 @@ CompileResult compileConfig(const CompileOptions& options) {
     ctx.sourceId = options.mainConnectionId;
     ctx.result.planRevision = options.planRevision;
     if (!vpn::ValidatePolicyRules(options.globalRules, ctx.result.error)) return std::move(ctx.result);
-    const std::string trimmed = trimCopy(options.profileYaml);
+    std::string_view original = options.profileYaml;
+    if (original.starts_with("\xEF\xBB\xBF")) original.remove_prefix(3);
+    const std::string trimmed = trimCopy(original);
+    const auto format = DetectProfileFormat(trimmed);
 
-    if (!trimmed.empty() && trimmed.front() == '{') {
+    if (format == ProfileFormat::SingBoxJson) {
         // 原生 sing-box JSON：直通，只合并托管设置。
         nlohmann::json parsed = nlohmann::json::parse(trimmed, nullptr, false);
         if (parsed.is_discarded() || !parsed.is_object()) {
@@ -131,7 +159,10 @@ CompileResult compileConfig(const CompileOptions& options) {
     if (!trimmed.empty()) {
         // 订阅内容不可控：任何 yaml-cpp 访问异常都降级为编译错误，不崩应用。
         try {
-            compileClashDocument(ctx, trimmed);
+            if (format == ProfileFormat::OpenVpn) {
+                if (!compileOpenVpnSource(ctx, trimmed, options.mainConnectionId, options.mainSourceName))
+                    return std::move(ctx.result);
+            } else compileClashDocument(ctx, trimmed);
         } catch (const std::exception& error) {
             ctx.result.error = std::format("订阅 YAML 解析失败：{}", error.what());
             return std::move(ctx.result);
@@ -147,7 +178,9 @@ CompileResult compileConfig(const CompileOptions& options) {
         finalOutbound = "DIRECT";
     }
     if (finalOutbound.empty()) finalOutbound = "DIRECT";
-    if (finalOutbound != "DIRECT" && !std::ranges::any_of(ctx.outbounds, [&](const auto& output) { return output.value("tag", "") == finalOutbound; })) {
+    if (finalOutbound != "DIRECT" &&
+        !std::ranges::any_of(ctx.outbounds, [&](const auto& output) { return output.value("tag", "") == finalOutbound; }) &&
+        !std::ranges::any_of(ctx.config.value("endpoints", nlohmann::json::array()), [&](const auto& output) { return output.value("tag", "") == finalOutbound; })) {
         ctx.result.error = std::format("MATCH 目标「{}」不可用，无法应用配置", finalOutbound);
         ctx.note(FidelityScope::Rule, Fidelity::Unsupported, "MATCH", ctx.result.error,
                  "修正兜底目标；不会改成 DIRECT 或首个代理组");
@@ -164,7 +197,8 @@ CompileResult compileConfig(const CompileOptions& options) {
     }
     ctx.config["route"]["final"] = finalOutbound;
     if (!options.mainConnectionId.empty()) {
-        namespaceClashSource(ctx, options.mainConnectionId, options.mainSourceName);
+        if (format != ProfileFormat::OpenVpn)
+            namespaceClashSource(ctx, options.mainConnectionId, options.mainSourceName);
         ctx.sourceDefaults[options.mainConnectionId] = {ctx.config["route"]["final"].get<std::string>(),
             ctx.finalTarget == "REJECT" || ctx.finalTarget == "REJECT-DROP", ctx.finalTarget == "REJECT-DROP"};
         ctx.result.participatingSources.push_back(options.mainConnectionId);
@@ -180,7 +214,7 @@ CompileResult compileConfig(const CompileOptions& options) {
     return std::move(ctx.result);
 }
 
-CompileResult inspectClashSourceObjects(const CompileOptions& options) {
+CompileResult inspectProfileSourceObjects(const CompileOptions& options) {
     Context ctx{options};
     ctx.sourceId = options.mainConnectionId;
     if (ctx.sourceId.empty()) {
@@ -188,6 +222,12 @@ CompileResult inspectClashSourceObjects(const CompileOptions& options) {
         return std::move(ctx.result);
     }
     const auto text = trimCopy(options.profileYaml);
+    if (DetectProfileFormat(text) == ProfileFormat::OpenVpn) {
+        ctx.config = nlohmann::json::object();
+        applyManagedSkeleton(ctx, options);
+        compileOpenVpnSource(ctx, text, options.mainConnectionId, options.mainSourceName);
+        return std::move(ctx.result);
+    }
     if (text.empty() || text.front() == '{') {
         ctx.result.error = "对象目录需要 Clash YAML；原生连接或 JSON 请使用默认出口";
         return std::move(ctx.result);

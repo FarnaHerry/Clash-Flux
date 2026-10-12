@@ -10,6 +10,90 @@ std::string sourceTag(std::string_view source, char kind, std::string_view name)
     return result;
 }
 
+// A portable .ovpn exports one stable endpoint. The original document stays
+// in the source file, so refresh/edit/export use the ordinary profile path.
+bool compileOpenVpnSource(Context& ctx, std::string_view text,
+                          const std::string& source, const std::string& name) {
+    if (text.starts_with("\xEF\xBB\xBF")) text.remove_prefix(3);
+    const auto tag = source.empty() ? "OpenVPN" : sourceTag(source, 'e', "OpenVPN");
+    const auto fail = [&](std::string error) {
+        ctx.result.error = std::move(error);
+        ctx.note(FidelityScope::Node, Fidelity::Unsupported, "OpenVPN", ctx.result.error,
+                 "修正 .ovpn 配置；不支持的字段不会被静默省略");
+        return false;
+    };
+    if (text.size() > 20000 || text.find('\0') != std::string_view::npos)
+        return fail("OpenVPN 配置包含 NUL 或超过 20 KiB");
+    std::string error;
+    const auto input = parseOpenVpnEndpointInput(text, error);
+    if (!input) return fail(std::move(error));
+    if (input->connectionBlocks) return fail("OpenVPN connection 分块内的独立选项尚未转换");
+    if (input->unsupportedRemoteOptions) return fail("OpenVPN remote 的协议约束或附加参数尚未转换");
+    static const std::set<std::string> mapped{
+        "remote", "proto", "remote-random", "ca", "cert", "key", "secret",
+        "tls-auth", "tls-crypt", "tls-crypt-v2", "key-direction", "peer-fingerprint",
+        "remote-cert-tls", "verify-x509-name", "tls-version-min", "tls-version-max",
+        "tls-cipher", "auth-user-pass", "data-ciphers", "data-ciphers-fallback",
+        "auth", "cipher", "comp-lzo", "compress", "allow-compression", "topology",
+        "mssfix", "fragment", "ping", "ping-restart", "reneg-sec", "explicit-exit-notify"};
+    static const std::set<std::string> managed{
+        "client", "tls-client", "dev", "nobind", "persist-key", "persist-tun",
+        "resolv-retry", "verb", "mute", "connect-retry", "connect-retry-max", "connect-timeout"};
+    static const std::set<std::string> blocks{
+        "ca", "cert", "key", "secret", "tls-auth", "tls-crypt", "tls-crypt-v2", "auth-user-pass"};
+    for (const auto* key : {"ca", "cert", "key", "secret", "tls-auth", "tls-crypt", "tls-crypt-v2", "auth-user-pass"}) {
+        const auto it = input->options.find(key);
+        if (it != input->options.end() && !it->second.empty() && it->second != "[inline]")
+            return fail(std::string("OpenVPN 外部 ") + key + " 文件或附加参数尚未转换；请使用 inline 配置");
+    }
+    for (const auto* key : {"mssfix", "fragment", "ping", "ping-restart", "reneg-sec", "explicit-exit-notify"}) {
+        const auto it = input->options.find(key);
+        if (it == input->options.end()) continue;
+        int value = 0;
+        const auto [end, ec] = std::from_chars(it->second.data(), it->second.data() + it->second.size(), value);
+        if (ec != std::errc() || end != it->second.data() + it->second.size() || value < 0)
+            return fail(std::string("OpenVPN ") + key + " 参数无效或尚未转换");
+    }
+    if (input->options.contains("remote-cert-tls") && input->options.at("remote-cert-tls") != "server" &&
+        input->options.at("remote-cert-tls") != "client") return fail("OpenVPN remote-cert-tls 参数无效");
+    if (input->options.contains("proto")) {
+        const auto& proto = input->options.at("proto");
+        if (proto != "udp" && proto != "tcp" && proto != "tcp-client")
+            return fail("OpenVPN proto 参数无效或尚未转换");
+    }
+    for (const auto& [key, value] : input->options) {
+        if (mapped.contains(key)) {
+            if (value.empty() && key != "remote-random" && !blocks.contains(key))
+                return fail("OpenVPN 指令缺少参数：" + key);
+            if (key == "remote-random" && !value.empty()) return fail("OpenVPN remote-random 参数无效");
+            continue;
+        }
+        if (!managed.contains(key)) return fail("OpenVPN 指令尚未转换：" + key);
+        if (key == "dev" && value != "tun") return fail("OpenVPN 托管 endpoint 只支持 dev tun");
+        ctx.note(FidelityScope::Field, Fidelity::Approx, key,
+                 "OpenVPN 的 " + key + " 由 sing-box 用户态 endpoint 生命周期管理，原 CLI 行为不逐项保留");
+    }
+    for (const auto& [key, value] : input->inlineBlocks)
+        if (!blocks.contains(key))
+            return fail("OpenVPN inline 配置块尚未转换：" + key);
+    if (input->options.contains("auth-user-pass") && !input->inlineBlocks.contains("auth-user-pass"))
+        return fail("OpenVPN auth-user-pass 需要 inline 用户名和密码；不支持交互输入或外部文件");
+    NativeConnection native{.id = source, .kind = vpn::ConnectionKind::OpenVpn, .nativeConfig = std::string(text)};
+    std::optional<nlohmann::json> endpoint;
+    try { endpoint = compileOpenVpnEndpoint(native, tag, error); }
+    catch (...) { return fail("OpenVPN 指令参数无效"); }
+    if (!endpoint) return fail(std::move(error));
+    if (ctx.tagKnown(tag)) return fail("OpenVPN endpoint tag 与主配置冲突");
+    if (!ctx.config.contains("endpoints")) ctx.config["endpoints"] = nlohmann::json::array();
+    for (const auto& item : ctx.config["endpoints"])
+        if (item.value("tag", "") == tag) return fail("OpenVPN endpoint tag 重复");
+    ctx.config["endpoints"].push_back(std::move(*endpoint));
+    ctx.knownTags.push_back(tag);
+    ctx.finalTarget = tag;
+    if (!source.empty()) ctx.result.sourceObjects.push_back({source, name, vpn::TargetKind::Node, "OpenVPN", tag});
+    return true;
+}
+
 void collectSourceObjects(Context& ctx, const std::string& source, const std::string& name) {
     if (source.empty()) return;
     const auto& outputs = ctx.outbounds;
@@ -101,6 +185,19 @@ bool compileAuxiliarySources(Context& ctx) {
         if (!referenced) continue;
         if (!source.available) {
             ctx.warn("次来源「" + source.name + "」文件不可用；保留分流规则并执行其不可用策略");
+            continue;
+        }
+        if (DetectProfileFormat(source.content) == ProfileFormat::OpenVpn) {
+            const auto previousSource = ctx.sourceId;
+            const auto previousFinal = ctx.finalTarget;
+            ctx.sourceId = source.id;
+            const bool ok = compileOpenVpnSource(ctx, source.content, source.id, source.name);
+            const auto tag = ctx.finalTarget;
+            ctx.sourceId = previousSource;
+            ctx.finalTarget = previousFinal;
+            if (!ok) return false;
+            ctx.sourceDefaults[source.id] = {tag};
+            ctx.result.participatingSources.push_back(source.id);
             continue;
         }
         auto options = ctx.opt;

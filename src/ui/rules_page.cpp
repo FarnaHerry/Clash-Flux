@@ -245,14 +245,14 @@ RuleTargetCatalog LoadRuleTargetCatalog(std::int64_t id) {
     auto content = singbox::ReadRuleProviderText(path, 8 * 1024 * 1024, catalog.error);
     if (!content) return catalog;
     const auto trimmed = Trim(*content);
-    if (!trimmed.empty() && trimmed.front() == '{') {
+    if (singbox::DetectProfileFormat(trimmed) == singbox::ProfileFormat::SingBoxJson) {
         catalog.defaultOnly = true; return catalog;
     }
     singbox::CompileOptions options;
     options.profileYaml = std::move(*content);
     options.mainConnectionId = store::ProfileConnectionId(id);
     options.mainSourceName = profile->name;
-    const auto inspected = singbox::inspectClashSourceObjects(options);
+    const auto inspected = singbox::inspectProfileSourceObjects(options);
     catalog.error = inspected.error;
     if (catalog.error.empty()) {
         for (const auto& object : inspected.sourceObjects) {

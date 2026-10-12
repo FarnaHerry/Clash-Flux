@@ -1,6 +1,6 @@
 # Clash-Flux
 
-版本更新见 [v0.3.31 发布说明](docs/releases/v0.3.31.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.32 发布说明](docs/releases/v0.3.32.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -16,7 +16,7 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   手机保留现有页面布局。
   界面约定见 [UI 开发约定](docs/ui-development.md)。
 - 订阅与代理配置管理：条目右键菜单 / 双击切换 / 刷新、URL 导入 /
-  更新 / 启用 / 删除 / 规则编辑，本地落盘；支持 Clash YAML 和 sing-box 原生 JSON 文件导入
+  更新 / 启用 / 删除 / 规则编辑，本地落盘；支持 Clash YAML、sing-box 原生 JSON 和 OpenVPN .ovpn 文件导入
 - 网页唤醒导入：兼容 sing-box 与 FlClash 订阅链接，打开预填名称与 URL 的导入表单；
   支持粘贴和扫码解析，格式与平台注册方式见[订阅唤醒链接](docs/profile-links.md)
 - 订阅下载：订阅级三态代理（内核 / 系统环境 / 直连）与「允许无效证书」开关；
@@ -113,7 +113,12 @@ sudo dnf install ppp pptp iproute
 sudo apt install ppp pptp iproute2
 ```
 
-OpenVPN 配置保存为原生 `.ovpn` 文本。为了让 sing-box 能在运行时直接接管连接，建议使用
+OpenVPN `.ovpn` 与 Clash YAML、sing-box JSON 共用远程订阅、本地文件和配置文本入口，
+自动按内容识别，新建界面不再提供独立 OpenVPN 类型。源文件保留原文；可设为主订阅，
+桌面也可通过启用的编排规则作为次来源，手机仍保持单活动普通订阅。
+已有 `openvpn` 记录保留 ID、凭据、内网路由与辅助连接操作，归到本地来源分区，
+不自动迁移或启用。兼容与限制见 [OpenVPN 导入](docs/openvpn-import.md)。
+为了让 sing-box 能在运行时直接接管连接，建议使用
 `<ca>`、`<cert>`、`<key>`、`<tls-auth>` 和 `<auth-user-pass>` inline 块；当前转换器
 把这些内容交给 sing-box，外部文件路径和脚本/系统路由指令不会被静默执行。
 

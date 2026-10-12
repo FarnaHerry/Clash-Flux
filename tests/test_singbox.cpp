@@ -1816,8 +1816,8 @@ rules: ['RULE-SET,external,Pick', 'MATCH,Pick']
 )yaml";
     auto missingIdentity = options;
     missingIdentity.mainConnectionId.clear();
-    check(!singbox::inspectClashSourceObjects(missingIdentity).error.empty(), "object inventory requires a stable source ID");
-    const auto inventory = singbox::inspectClashSourceObjects(options);
+    check(!singbox::inspectProfileSourceObjects(missingIdentity).error.empty(), "object inventory requires a stable source ID");
+    const auto inventory = singbox::inspectProfileSourceObjects(options);
     check(inventory.error.empty(), "inactive source object inspection does not require provider download");
     check(inventory.json.empty() && inventory.httpRuleProviders.empty() && inventory.ruleSetResources.empty(),
           "object inspection is not a runnable plan or a resource-staging request");
@@ -1831,14 +1831,14 @@ rules: ['RULE-SET,external,Pick', 'MATCH,Pick']
     check(!contains(inventory, vpn::TargetKind::Node, "rejected") && !inventory.fidelity.empty(),
           "rejected nodes remain absent and inspection retains fidelity notes");
     options.mainConnectionId = "profile-18";
-    const auto second = singbox::inspectClashSourceObjects(options);
+    const auto second = singbox::inspectProfileSourceObjects(options);
     check(contains(second, vpn::TargetKind::Group, "Pick") &&
           second.sourceObjects.back().tag != inventory.sourceObjects.back().tag,
           "same object name in another source has a distinct identity");
     for (const auto* invalid : {"", "{\"outbounds\": []}", "proxies: [", "proxy-groups: [{name: loop, type: select, proxies: [loop]}]",
                               "proxy-groups: [{name: empty, type: select, include-all-proxies: true}]", "rules: ['MATCH,missing']"}) {
         options.profileYaml = invalid;
-        const auto result = singbox::inspectClashSourceObjects(options);
+        const auto result = singbox::inspectProfileSourceObjects(options);
         check(!result.error.empty() && result.sourceObjects.empty(), "unreadable or invalid sources never publish a partial object directory");
     }
 }
@@ -2447,6 +2447,93 @@ rules:
         "secret\n"
         "</auth-user-pass>\n"
         "remote-cert-tls server\n";
+    // Ordinary source transports share the same content classifier/compiler.
+    check(singbox::DetectProfileFormat("\xEF\xBB\xBF# comment\r\n; comment\r\nclient\r\n") ==
+              singbox::ProfileFormat::OpenVpn, "OpenVPN detection accepts BOM/CRLF/comments");
+    check(singbox::DetectProfileFormat("remote: [value]\n") == singbox::ProfileFormat::ClashYaml &&
+          singbox::DetectProfileFormat("# client\nrules: ['MATCH,DIRECT']\n") == singbox::ProfileFormat::ClashYaml,
+          "YAML keys/comments are not classified as OpenVPN directives");
+    check(singbox::DetectProfileFormat(" {\"outbounds\":[]} ") == singbox::ProfileFormat::SingBoxJson,
+          "JSON detection remains separate from source transport");
+    singbox::CompileOptions ordinaryOpenVpn;
+    ordinaryOpenVpn.profileYaml = openVpnConfig;
+    ordinaryOpenVpn.mainConnectionId = "profile-remote-ovpn";
+    ordinaryOpenVpn.mainSourceName = "remote .ovpn";
+    const auto ordinaryResult = singbox::compileConfig(ordinaryOpenVpn);
+    check(ordinaryResult.error.empty() && !ordinaryResult.json.empty(), "ordinary .ovpn can be the main source");
+    std::string ordinaryTag;
+    if (!ordinaryResult.json.empty()) {
+        const auto config = json::parse(ordinaryResult.json);
+        ordinaryTag = config["endpoints"][0].value("tag", "");
+        check(config["route"]["final"] == ordinaryTag && config["endpoints"][0]["system"] == false,
+              "main .ovpn default routes to its userspace endpoint");
+        check(config["endpoints"][0]["username"] == "alice" && config["endpoints"][0]["password"] == "secret",
+              "ordinary import preserves inline credentials");
+        check(ordinaryResult.sourceObjects.size() == 1 && ordinaryResult.sourceObjects[0].objectId == "OpenVPN" &&
+              ordinaryResult.sourceObjects[0].sourceId == ordinaryOpenVpn.mainConnectionId,
+              "ordinary .ovpn exports one stable source object");
+    }
+    auto localOpenVpn = ordinaryOpenVpn;
+    localOpenVpn.mainConnectionId = "profile-local-ovpn";
+    auto localResult = singbox::compileConfig(localOpenVpn);
+    check(localResult.error.empty() && !localResult.json.empty() &&
+          json::parse(localResult.json)["endpoints"][0]["tag"] != ordinaryTag,
+          "independent local .ovpn retains its source namespace");
+    const auto inventory = singbox::inspectProfileSourceObjects(ordinaryOpenVpn);
+    check(inventory.error.empty() && inventory.sourceObjects == ordinaryResult.sourceObjects,
+          "inactive .ovpn object inventory uses the same compiler and identity");
+    auto auxiliaryOpenVpn = ordinaryOpenVpn;
+    auxiliaryOpenVpn.profileYaml = "rules: ['MATCH,DIRECT']\n";
+    auxiliaryOpenVpn.mainConnectionId = "profile-main";
+    auxiliaryOpenVpn.auxiliarySources = {{"profile-ovpn-a", "same", openVpnConfig},
+                                       {"profile-ovpn-b", "same", openVpnConfig}};
+    auxiliaryOpenVpn.globalRules = {
+        {.match = vpn::MatchKind::Ipv4Cidr, .pattern = "10.20.0.0/16", .connectionId = "profile-ovpn-a"},
+        {.match = vpn::MatchKind::ExactDomain, .pattern = "internal.example", .connectionId = "profile-ovpn-b",
+         .targetKind = vpn::TargetKind::Node, .targetObject = "OpenVPN"}};
+    if (vpn::SupportsMultiProxySources()) {
+        const auto compiled = singbox::compileConfig(auxiliaryOpenVpn);
+        check(compiled.error.empty() && !compiled.json.empty(), "desktop ordinary .ovpn sources participate through enabled rules");
+        if (!compiled.json.empty()) {
+            const auto config = json::parse(compiled.json);
+            check(config["endpoints"].size() == 2 && config["endpoints"][0]["tag"] != config["endpoints"][1]["tag"],
+                  "same-name OpenVPN sources have independent endpoint tags");
+            check(config["route"]["final"].get<std::string>().find("OpenVPN") == std::string::npos &&
+                  config["route"]["final"] != config["endpoints"][0]["tag"] &&
+                  config["route"]["final"] != config["endpoints"][1]["tag"],
+                  "secondary .ovpn sources do not take over main fallback");
+            bool sawCidr = false, sawDomain = false;
+            for (const auto& rule : config["route"]["rules"]) {
+                if (rule.contains("ip_cidr") && rule["ip_cidr"] == json{"10.20.0.0/16"})
+                    sawCidr = rule.value("outbound", "") == config["endpoints"][0]["tag"].get<std::string>();
+                if (rule.contains("domain") && rule["domain"] == json{"internal.example"})
+                    sawDomain = rule.value("outbound", "") == config["endpoints"][1]["tag"].get<std::string>();
+            }
+            check(sawCidr && sawDomain, "CIDR/default and domain/node rules route to their own .ovpn source");
+        }
+        auxiliaryOpenVpn.globalRules.clear();
+        const auto unreferenced = singbox::compileConfig(auxiliaryOpenVpn);
+        check(unreferenced.error.empty() && json::parse(unreferenced.json).value("endpoints", json::array()).empty(),
+              "saved .ovpn sources are not loaded without enabled rules");
+    } else {
+        check(!singbox::compileConfig(auxiliaryOpenVpn).error.empty(), "phone .ovpn import does not enable multiple ordinary sources");
+    }
+    for (const auto* directive : {"up malicious-script\n", "ca /tmp/external.pem\n", "route 10.0.0.0 255.0.0.0\n",
+                                 "dhcp-option DNS 1.1.1.1\n", "unknown-directive value\n", "proto invalid\n",
+                                 "mssfix 1200 invalid\n", "tls-version-min\n", "remote other.example 1194 tcp6-client\n",
+                                 "<connection>\nremote alternate.example 443 tcp-client\n</connection>\n"}) {
+        auto unsupported = ordinaryOpenVpn;
+        unsupported.profileYaml += directive;
+        const auto result = singbox::compileConfig(unsupported);
+        check(!result.error.empty() && result.json.empty() &&
+              std::ranges::any_of(result.fidelity, [&](const auto& note) {
+                  return note.sourceId == ordinaryOpenVpn.mainConnectionId && note.level == singbox::Fidelity::Unsupported;
+              }), std::format("unsupported ordinary .ovpn directive '{}' fails with source fidelity", directive));
+    }
+    auto managedOpenVpn = ordinaryOpenVpn;
+    managedOpenVpn.profileYaml += "dev tun\nverb 3\npersist-tun\n";
+    const auto managedResult = singbox::compileConfig(managedOpenVpn);
+    check(managedResult.error.empty() && !managedResult.fidelity.empty(), "managed .ovpn CLI differences remain visible in fidelity");
     singbox::CompileOptions openVpnOptions;
     openVpnOptions.nativeConnections = {
         {.id = "profile:openvpn-a", .internalRoutes = {"10.20.0.0/16"},

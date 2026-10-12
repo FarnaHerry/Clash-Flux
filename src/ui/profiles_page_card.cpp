@@ -26,6 +26,7 @@ import clashflux.vpn;
 
 #include "profiles_page_shared.h"
 #include "core_model.h"
+#include "profiles_model.h"
 
 namespace clashflux::ui {
 
@@ -81,6 +82,9 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     const IslandTheme islands = ResolveIslandTheme(theme);
     const std::int64_t id = profile.id;
     const bool nativeVpn = isNativeVpnType(profile.type);
+    const auto profilesModel = huxerui::UseService<ProfilesModel>();
+    const auto& clashSources = profilesModel->clashSources.Get();
+    const bool clashEditable = std::ranges::find(clashSources, id) != clashSources.end();
     const bool selected = profile.selected;
     // 表面/文字色与选中态都来自统一原语 SelectableTileColors（形状以代理页节点卡
     // 为标准，见 ui.h）。次级文字选中时是同色降透明度；错误信息保持 error
@@ -246,7 +250,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     const auto buildMenuEntries = [action, activateProfile, refresh, openEditInfo, openEditRules,
                                    openEditFile, openQr, clipboard, toast, id, navigation, desktopNavigation,
                                    homepage = profile.homepage, url = profile.url,
-                                   selected, nativeVpn,
+                                   selected, nativeVpn, clashEditable,
                                    confirmDelete] {
         std::vector<ActionMenuEntry> entries;
         if (!selected && !nativeVpn) {
@@ -280,10 +284,12 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         entries.push_back(ActionMenuItem(app::images::edit, Localized("编辑信息"), [openEditInfo, id] {
             openEditInfo(id);
         }));
-        if (!nativeVpn) {
+        if (!nativeVpn && clashEditable) {
             entries.push_back(ActionMenuItem(app::images::route, Localized("编辑规则"), [openEditRules, id] {
                 openEditRules(id);
             }));
+        }
+        if (!nativeVpn) {
             entries.push_back(ActionMenuItem(app::images::manual_config, Localized("编辑文件"), [openEditFile, id] {
                 openEditFile(id);
             }));

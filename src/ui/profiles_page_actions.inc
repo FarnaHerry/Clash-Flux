@@ -55,67 +55,77 @@
         connectionSelection.PushBack(id);
     };
 
-    auto openSelectedConnections = [tasks, toast, connectionSelection] {
+    auto openSelectedConnections = [tasks, toast, connectionSelection, vpnModel] {
         std::vector<std::int64_t> ids;
         for (const std::int64_t id : connectionSelection) ids.push_back(id);
         if (ids.empty()) {
             toast.Show(Localized("请先选择 PPTP 或 OpenVPN 订阅"));
             return;
         }
-        tasks.Launch([ids, toast, connectionSelection]() -> huxerui::Task<void> {
-            const auto result = co_await RunOnTaskThread([ids] {
-                int opened = 0;
-                int failed = 0;
-                std::string firstError;
-                const auto all = store::profilesStore().list();
-                for (const std::int64_t id : ids) {
+        tasks.Launch([ids, toast, connectionSelection, vpnModel]() -> huxerui::Task<void> {
+            int opened = 0;
+            int failed = 0;
+            std::string firstError;
+            for (const std::int64_t id : ids) {
+                const auto result = co_await RunOnTaskThread([id] {
+                    const auto all = store::profilesStore().list();
                     const auto it = std::ranges::find_if(
                         all, [id](const db::Profile& profile) { return profile.id == id; });
-                    if (it == all.end() || !isNativeVpnType(it->type)) continue;
+                    if (it == all.end() || !isNativeVpnType(it->type)) {
+                        return std::tuple{false, false, std::string{},
+                                          store::vpnStore().snapshot()};
+                    }
                     std::string error;
                     const bool connected = it->type == "openvpn"
                                                ? store::vpnStore().connectOpenVpn(*it, error)
                                                : store::vpnStore().connectPptp(*it, error);
-                    if (connected) {
-                        ++opened;
-                    } else {
-                        ++failed;
-                        if (firstError.empty()) firstError = error;
-                    }
+                    return std::tuple{true, connected, std::move(error),
+                                      store::vpnStore().snapshot()};
+                });
+                // 每条连接完成就发布，不等待下一拍或整批拨号结束。
+                vpnModel->Publish(std::get<3>(result));
+                if (!std::get<0>(result)) continue;
+                if (std::get<1>(result)) {
+                    ++opened;
+                } else {
+                    ++failed;
+                    if (firstError.empty()) firstError = std::get<2>(result);
                 }
-                return std::tuple{opened, failed, firstError};
-            });
+            }
             connectionSelection.Clear();
-            if (std::get<1>(result) == 0) {
-                toast.Show(LocalizedFormat("已打开 {} 个连接", std::get<0>(result)));
+            if (failed == 0) {
+                toast.Show(LocalizedFormat("已打开 {} 个连接", opened));
             } else {
                 toast.Show(LocalizedFormat(
-                    "已打开 {} 个，失败 {} 个{}", std::get<0>(result),
-                    std::get<1>(result), std::get<2>(result).empty()
+                    "已打开 {} 个，失败 {} 个{}", opened,
+                    failed, firstError.empty()
                         ? std::string{}
-                        : "：" + std::get<2>(result)));
+                        : "：" + firstError));
             }
         });
     };
 
-    auto closeSelectedConnections = [tasks, toast, connectionSelection] {
+    auto closeSelectedConnections = [tasks, toast, connectionSelection, vpnModel] {
         std::vector<std::int64_t> ids;
         for (const std::int64_t id : connectionSelection) ids.push_back(id);
         if (ids.empty()) {
             toast.Show(Localized("请先选择 PPTP 或 OpenVPN 订阅"));
             return;
         }
-        tasks.Launch([ids, toast, connectionSelection]() -> huxerui::Task<void> {
-            co_await RunOnTaskThread([ids] {
-                const auto all = store::profilesStore().list();
-                for (const std::int64_t id : ids) {
+        tasks.Launch([ids, toast, connectionSelection, vpnModel]() -> huxerui::Task<void> {
+            for (const std::int64_t id : ids) {
+                auto next = co_await RunOnTaskThread([id] {
+                    const auto all = store::profilesStore().list();
                     const auto it = std::ranges::find_if(
                         all, [id](const db::Profile& profile) { return profile.id == id; });
-                    if (it == all.end()) continue;
-                    if (it->type == "openvpn") store::vpnStore().disconnectOpenVpn(id);
-                    else if (it->type == "pptp") store::vpnStore().disconnectPptp(id);
-                }
-            });
+                    if (it != all.end()) {
+                        if (it->type == "openvpn") store::vpnStore().disconnectOpenVpn(id);
+                        else if (it->type == "pptp") store::vpnStore().disconnectPptp(id);
+                    }
+                    return store::vpnStore().snapshot();
+                });
+                vpnModel->Publish(std::move(next));
+            }
             connectionSelection.Clear();
             toast.Show(Localized("已关闭选中的连接"));
         });
@@ -310,7 +320,6 @@
 
     const NativeProfileSupport profileSupport = profile_detail::profileSupport();
     const bool pptpSupported = profileSupport.pptp;
-    const bool openvpnSupported = profileSupport.openvpn;
     auto openEditInfo = [compact, navigation, navigation_enabled, tasks, toast,
                          loadEditInfo, showEditInfo, editPageId,
                          editName, editUrl, editType, editDesc, editTimeout,
@@ -351,6 +360,10 @@
                 co_await RunOnTaskThread([id] {
                     return store::profilesStore().yamlOf(id);
                 });
+            if (singbox::DetectProfileFormat(yaml) != singbox::ProfileFormat::ClashYaml) {
+                toast.Show(Localized("此格式请使用全局路由或编辑配置文件"));
+                co_return;
+            }
             editYamlText = yaml;
             ReplaceStateList(editRules, store::parseRules(yaml));
             editRuleInput = huxerui::TextEditingValue{""};
@@ -476,7 +489,7 @@
     // ---- 编辑文件（懒加载 YAML + 非受控多行编辑：OnChanged 只写 shared_ptr
     // 指向的内容，不触发 State 写 → 无逐键全文重排版；保存取现值）----
     auto showEditFile = [compact, navigation, navigation_enabled, dialog, tasks,
-                         toast, fileContent, fileLoading, filePageId,
+                         toast, fileContent, fileLoading, filePageId, profilesModel,
                          hintColor = theme.colors.on_surface_variant](
                             std::int64_t id) {
         tasks.Launch([=]() -> huxerui::Task<void> {
@@ -506,7 +519,7 @@
                 co_return;
             }
             dialog.Show(
-                [tasks, toast, fileContent, fileLoading, id, hintColor](
+                [tasks, toast, fileContent, fileLoading, id, hintColor, profilesModel](
                     huxerui::DialogContext ctx) -> huxerui::View {
                     const huxerui::View body =
                         fileLoading.Get()
@@ -551,8 +564,7 @@
                     return DialogCard(huxerui::Column {
                         huxerui::Text(Localized("编辑文件"), huxerui::TextRole::Title),
                         huxerui::Text(Localized(
-                            "直接编辑订阅 YAML 原文；保存后若该订阅"
-                            "启用中，内核将重启使改动生效。"))
+                            "直接编辑配置原文；保存后若该来源参与运行，内核将重启使改动生效。"))
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::System(font_size::kCaption),
                                 hintColor}),
@@ -574,6 +586,7 @@
                                         });
                                     toast.Show(err.empty() ? Localized("已保存")
                                                            : huxerui::StringVariant(err));
+                                    if (err.empty()) profilesModel->RequestSync();
                                 });
                             }),
                         }.With(huxerui::MainAlign(
@@ -614,253 +627,3 @@
     };
 
     // ---- 新建订阅弹窗 ----
-    // 类型（远程/本地/PPTP/OpenVPN）+ 名称 + 类型表单；远程导入是网络下载（阻塞），走任务
-    // 线程，成功才关弹窗。打开前清空上一轮的输入。
-    auto showCreateDialog = [dialog, tasks, toast, picker, http, newName,
-                             newUrl,
-                             newTypeIdx, newDesc, newTimeout, newInterval,
-                             newAuto, newSys, newCore, newCert, newPptpServer,
-                             newPptpUsername, newPptpPassword, newPptpTimeout,
-                             newPptpRoutes, newPptpMppe, newOpenVpnConfig,
-                             newOpenVpnRoutes, pickedPath, importing,
-                             pptpSupported, openvpnSupported,
-                             hintColor = theme.colors.on_surface_variant] {
-        newName = huxerui::TextEditingValue{""};
-        newUrl = huxerui::TextEditingValue{""};
-        newTypeIdx = 0;
-        newDesc = huxerui::TextEditingValue{""};
-        newTimeout = huxerui::TextEditingValue{""};
-        newInterval = huxerui::TextEditingValue{""};
-        newAuto = false;
-        newSys = false;
-        newCore = false;
-        newCert = false;
-        newPptpServer = huxerui::TextEditingValue{""};
-        newPptpUsername = huxerui::TextEditingValue{""};
-        newPptpPassword = huxerui::TextEditingValue{""};
-        newPptpTimeout = huxerui::TextEditingValue{"30"};
-        newPptpRoutes = huxerui::TextEditingValue{""};
-        newPptpMppe = true;
-        newOpenVpnConfig = huxerui::TextEditingValue{""};
-        newOpenVpnRoutes = huxerui::TextEditingValue{""};
-        pickedPath = "";
-        dialog.Show(
-            [tasks, toast, picker, http, newName, newUrl, newTypeIdx, newDesc,
-             newTimeout, newInterval, newAuto, newSys, newCore, newCert,
-             newPptpServer, newPptpUsername, newPptpPassword, newPptpTimeout,
-             newPptpRoutes, newPptpMppe, newOpenVpnConfig, newOpenVpnRoutes,
-             pickedPath, importing, pptpSupported, openvpnSupported,
-             hintColor](huxerui::DialogContext ctx) -> huxerui::View {
-                const std::size_t typeIndex = newTypeIdx.Get();
-                const bool remote = typeIndex == 0;
-                const bool local = typeIndex == 1;
-                const bool pptp = pptpSupported && typeIndex == 2;
-                const bool openvpn = openvpnSupported &&
-                                     typeIndex == (pptpSupported ? 3 : 2);
-                huxerui::View typeFields;
-                if (remote) {
-                    typeFields = huxerui::TextField(newUrl.Get())
-                                     .Label(Localized("订阅链接"))
-                                     .Placeholder("https://...")
-                                     .Variant(huxerui::TextFieldVariant::Outlined)
-                                     .OnChanged([newUrl](
-                                                    const huxerui::TextEditingValue& v) {
-                                         newUrl = v;
-                                     });
-                } else if (local) {
-                    typeFields = huxerui::Row {
-                        huxerui::Button(Localized("选择文件"))
-                            .OnClick([tasks, picker, pickedPath] {
-                                tasks.Launch([=]() -> huxerui::Task<void> {
-                                    const auto picked = co_await picker->OpenFileAsync(
-                                        huxerui::FilePickerFilter{
-                                            .name = huxerui::UseString(
-                                                Localized("sing-box / Clash 配置")),
-                                            .extensions = {"json", "yaml", "yml"}});
-                                    if (!picked) co_return;
-                                    if (const auto f = picked->AsFile()) {
-                                        pickedPath = f->Path();
-                                    } else {
-                                        pickedPath = "";
-                                    }
-                                });
-                            }),
-                        huxerui::Text(pickedPath.Get())
-                            .Style(huxerui::TextStyle{
-                                huxerui::Font::Monospace(font_size::kChip),
-                                hintColor}),
-                    }.With(huxerui::Spacing(8.0F),
-                          huxerui::CrossAlign(
-                              huxerui::CrossAxisAlignment::Center));
-                } else if (pptp) {
-                    typeFields = PptpOptionsForm(
-                        newPptpServer, newPptpUsername, newPptpPassword,
-                        newPptpTimeout, newPptpRoutes, newPptpMppe);
-                } else if (openvpn) {
-                    typeFields = OpenVpnOptionsForm(newOpenVpnConfig,
-                                                    newOpenVpnRoutes);
-                } else {
-                    typeFields = huxerui::TextField(newUrl.Get())
-                                     .Label(Localized("订阅链接"))
-                                     .Placeholder("https://...")
-                                     .Variant(huxerui::TextFieldVariant::Outlined)
-                                     .OnChanged([newUrl](
-                                                    const huxerui::TextEditingValue& v) {
-                                         newUrl = v;
-                                     });
-                }
-                huxerui::View commonFields =
-                    (pptp || openvpn) ? huxerui::View{huxerui::TextField(newDesc.Get())
-                                              .Label(Localized("描述（可选）"))
-                                              .Variant(huxerui::TextFieldVariant::Outlined)
-                                              .OnChanged([newDesc](
-                                                             const huxerui::TextEditingValue& v) {
-                                                  newDesc = v;
-                                              })}
-                         : huxerui::View{ProfileOptionsForm(
-                               newDesc, newTimeout, newInterval, newAuto, newSys,
-                               newCore, newCert)};
-                return DialogCard(huxerui::Column {
-                    huxerui::Text(Localized("新建订阅"), huxerui::TextRole::Title),
-                    huxerui::ScrollView(huxerui::Column {
-                        huxerui::SegmentedButton(
-                            [&]() {
-                                std::vector<huxerui::StringVariant> types{
-                                    Localized("远程订阅"), Localized("本地文件")};
-                                if (pptpSupported) {
-                                    types.push_back(Localized("PPTP 内网"));
-                                }
-                                if (openvpnSupported) {
-                                    types.push_back(Localized("OpenVPN 内网"));
-                                }
-                                return types;
-                            }(),
-                            newTypeIdx.Get())
-                            .OnChanged([newTypeIdx](std::size_t idx) {
-                                newTypeIdx = idx;
-                            }),
-                        std::move(typeFields),
-                        huxerui::TextField(newName.Get())
-                            .Label(Localized("名称（可选）"))
-                            .Variant(huxerui::TextFieldVariant::Outlined)
-                            .OnChanged([newName](const huxerui::TextEditingValue& v) {
-                                newName = v;
-                            }),
-                        std::move(commonFields),
-                    }
-                                       .With(huxerui::Spacing(12.0F),
-                                             huxerui::CrossAlign(
-                                                 huxerui::CrossAxisAlignment::Stretch)))
-                        .With(huxerui::Frame{.height = kDialogFormHeight}),
-                    huxerui::Row {
-                        huxerui::Button(Localized("取消")).OnClick([ctx] { ctx.Dismiss(); }),
-                        importing.Get()
-                            ? huxerui::View{
-                                  huxerui::ProgressCircle()
-                                      .With(huxerui::Frame{.width = 20.0F,
-                                                           .height = 20.0F})}
-                            : huxerui::View{
-                                  huxerui::Button(Localized("导入")).OnClick([=] {
-                                      const std::string url = newUrl.Get().text;
-                                      if (remote && url.empty()) {
-                                          toast.Show(Localized("订阅链接不能为空"));
-                                          return;
-                                      }
-                                      if (local && pickedPath.Get().empty()) {
-                                          toast.Show(Localized("请先选择订阅文件"));
-                                          return;
-                                      }
-                                      std::string configError;
-                                      std::optional<std::string> nativeConfig;
-                                      if (pptp) {
-                                          nativeConfig = makePptpConfig(
-                                              newPptpServer.Get(), newPptpUsername.Get(),
-                                              newPptpPassword.Get(), newPptpTimeout.Get(),
-                                              newPptpMppe.Get(), configError);
-                                          if (!nativeConfig) {
-                                              toast.Show(configError);
-                                              return;
-                                          }
-                                      } else if (openvpn) {
-                                          if (!openvpn::ParseOpenVpnConfig(
-                                                  newOpenVpnConfig.Get().text,
-                                                  configError)) {
-                                              toast.Show(configError);
-                                              return;
-                                          }
-                                          nativeConfig = newOpenVpnConfig.Get().text;
-                                      }
-                                      LaunchProfileImport(importing, [=]() -> huxerui::Task<ProfileImportResult> {
-                                          db::Profile options;
-                                          options.description =
-                                              newDesc.Get().text;
-                                          if (!pptp && !openvpn) {
-                                              options.timeoutSecs =
-                                                  parseNumber(newTimeout.Get(), 60);
-                                              options.intervalMins =
-                                                  parseNumber(newInterval.Get(), 0);
-                                              options.autoUpdate = newAuto.Get();
-                                              options.useSystemProxy = newSys.Get();
-                                              options.useCoreProxy = newCore.Get();
-                                              options.allowInvalidCert = newCert.Get();
-                                          } else {
-                                              options.type = pptp ? "pptp" : "openvpn";
-                                              options.nativeConfig = *nativeConfig;
-                                              options.nativeRoutes = joinRoutes(
-                                                  parseRouteField(pptp
-                                                                      ? newPptpRoutes.Get().text
-                                                                      : newOpenVpnRoutes.Get().text));
-                                          }
-                                          const std::string name =
-                                              newName.Get().text;
-                                          co_return co_await ImportProfileForPlatform(
-                                                  http,
-                                                  ProfileImportRequest{
-                                                      .remote = remote,
-                                                      .local = local,
-                                                      .pptp = pptp,
-                                                      .openvpn = openvpn,
-                                                      .name = name,
-                                                      .url = url,
-                                                      .picked_path = pickedPath.Get(),
-                                                      .options = std::move(options)});
-                                      }, [=](ProfileImportResult result) {
-                                          const auto& [rid, err] = result;
-                                          if (rid == 0) {
-                                              if (err.empty()) {
-                                                  toast.Show(Localized("导入失败"));
-                                              } else {
-                                                  toast.Show(err);
-                                              }
-                                          } else {
-                                              ctx.Dismiss();
-                                              huxerui::UseApplicationTaskScope().Launch([rid, toast]() -> huxerui::Task<void> {
-                                              // 导入即告知「这份订阅有什么吃不下」：
-                                              // 账本来自一次只编译不启动的编译（见
-                                              // docs/singbox-layers-and-fidelity.md §2）。
-                                              const std::string summary =
-                                                  co_await RunOnTaskThread([rid] {
-                                                      return ProfileFidelitySummary(rid);
-                                                  });
-                                              toast.Show(
-                                                  summary.empty()
-                                                      ? Localized("配置已导入")
-                                                      : LocalizedFormat(
-                                                            "配置已导入 · {}", summary),
-                                                  huxerui::ToastOptions{6.0});
-                                              });
-                                          }
-                                      });
-                                  })},
-                    }.With(huxerui::MainAlign(
-                               huxerui::MainAxisAlignment::SpaceBetween),
-                           huxerui::CrossAlign(
-                               huxerui::CrossAxisAlignment::Center)),
-                }
-                                  .With(huxerui::Spacing(12.0F),
-                                        huxerui::Frame{.width = 420.0F},
-                                        huxerui::CrossAlign(
-                                            huxerui::CrossAxisAlignment::Stretch)));
-            },
-            huxerui::DialogOptions{});
-    };

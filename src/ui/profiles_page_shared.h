@@ -26,7 +26,6 @@ inline constexpr float kDialogFormHeight = 340.0F;
 
 struct NativeProfileSupport {
     bool pptp = false;
-    bool openvpn = false;
 };
 
 using ProfileEditLoader =
@@ -52,8 +51,6 @@ struct ProfileCreateFields {
     huxerui::State<huxerui::TextEditingValue> pptp_timeout;
     huxerui::State<huxerui::TextEditingValue> pptp_routes;
     huxerui::State<bool> pptp_mppe;
-    huxerui::State<huxerui::TextEditingValue> openvpn_config;
-    huxerui::State<huxerui::TextEditingValue> openvpn_routes;
     huxerui::State<std::string> picked_path;
     huxerui::State<bool> importing;
 };
@@ -64,7 +61,6 @@ struct ProfileImportRequest {
     bool remote = false;
     bool local = false;
     bool pptp = false;
-    bool openvpn = false;
     std::string name;
     std::string url;
     std::string picked_path;
@@ -204,23 +200,26 @@ huxerui::View ProfileCard(
 huxerui::View ResponsiveProfileEditSurface(
     std::int64_t id, ProfileEditFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::function<void()> on_back);
+huxerui::View ProfileCreatePage(
+    ProfileCreateFields fields, huxerui::TaskScope tasks,
+    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    std::shared_ptr<AppHttpClient> http, bool pptp_supported,
+    std::function<void()> on_back);
 huxerui::View ResponsiveProfileCreateSurface(
     bool open, ProfileCreateFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
-    bool openvpn_supported, std::function<void()> on_back);
+    std::function<void()> on_back);
 huxerui::View ProfileAddMethodPage(
     ProfileCreateFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
-    bool openvpn_supported,
     huxerui::NavigationController navigation);
 huxerui::View ProfileCreateMethodPage(
     ProfileAddMethod method, ProfileCreateFields fields,
     huxerui::TaskScope tasks, huxerui::ToastHandle toast,
     std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
-    bool openvpn_supported,
     huxerui::NavigationController navigation, std::function<void()> on_back,
     std::function<void()> on_complete);
 huxerui::View ProfileEditRoutePage(

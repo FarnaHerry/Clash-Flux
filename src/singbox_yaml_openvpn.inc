@@ -82,6 +82,8 @@ struct OpenVpnEndpointInput {
     std::map<std::string, std::string> options;
     std::map<std::string, std::string> inlineBlocks;
     std::string network = "udp";
+    bool connectionBlocks = false;
+    bool unsupportedRemoteOptions = false;
 };
 
 std::vector<std::string> openVpnWords(std::string_view input) {
@@ -137,7 +139,10 @@ std::optional<OpenVpnEndpointInput> parseOpenVpnEndpointInput(
         }
         if (value.empty() || value.starts_with('#') || value.starts_with(';')) continue;
         if (value.starts_with('<') && value.ends_with('>')) {
-            if (value == "<connection>" || value == "</connection>") continue;
+            if (value == "<connection>" || value == "</connection>") {
+                input.connectionBlocks = true;
+                continue;
+            }
             if (value.starts_with("</")) {
                 error = "OpenVPN inline 配置块不匹配";
                 return std::nullopt;
@@ -177,6 +182,8 @@ std::optional<OpenVpnEndpointInput> parseOpenVpnEndpointInput(
                 }
                 remote.port = port;
             }
+            if (words.size() > 4 || (words.size() == 4 && words[3] != "udp" && words[3] != "tcp" && words[3] != "tcp-client"))
+                input.unsupportedRemoteOptions = true;
             if (words.size() >= 4) remote.network = openVpnNetwork(words[3]);
             input.remotes.push_back(std::move(remote));
         } else if (key == "proto") {

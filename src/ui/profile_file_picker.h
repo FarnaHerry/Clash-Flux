@@ -10,8 +10,8 @@ namespace clashflux::ui {
 
 // 只在组合期解析本地化资源；交给事件/协程的是拥有型普通 DTO。
 inline huxerui::FilePickerFilter ProfileConfigFileFilter() {
-    return {.name = huxerui::UseString(Localized("sing-box / Clash 配置")),
-            .extensions = {"json", "yaml", "yml"}};
+    return {.name = huxerui::UseString(Localized("sing-box / Clash / OpenVPN 配置")),
+            .extensions = {"json", "yaml", "yml", "ovpn"}};
 }
 
 inline huxerui::Task<std::optional<huxerui::FileReference>> PickProfileConfigFile(
