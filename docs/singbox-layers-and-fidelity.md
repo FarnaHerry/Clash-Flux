@@ -29,8 +29,8 @@
 
 ### L2 翻译层（处理 Clash 生态）
 
-- 输入有三类：Clash YAML（远程/本地订阅）、sing-box 原生 JSON（直通并合并托管设置）、
-  原生连接订阅（PPTP、OpenVPN `.ovpn`）。三者都经 `clashflux.singbox` 出口。
+- 普通来源按内容识别 Clash YAML、sing-box 原生 JSON、OpenVPN `.ovpn`，共用远程/本地/文本导入；
+  PPTP 与旧 OpenVPN 辅助记录保留兼容路径。所有来源都经 `clashflux.singbox` 出口。
 - 每条条目——协议、组、规则、单个字段——必须归入三档之一，并写入保真度账本（§2）：
   - **exact**：与 sing-box 语义 1:1；
   - **approx**：语义近似或字段被忽略（例：`fallback`/`load-balance` → `urltest`）；
@@ -421,6 +421,14 @@ JSON 使用，本轮不把它当成 Clash 版本转换。字段边界及后续�
 多 `remote` / `remote-random` / static-key / TLS 内联 `ca`/`cert`/`key` / `peer-fingerprint` /
 `tls-auth`/`tls-crypt`/`tls-crypt-v2` / 内联 `auth-user-pass`；**外部文件路径一律拒绝并提示
 改为内联**。
+2026-10-12：普通远程/本地/文本 `.ovpn` 可作为主来源，默认出口指向其 endpoint；
+桌面次来源只在启用规则引用时加载，使用来源隔离的单对象 `OpenVPN`，不修改主来源
+默认出口。来源传输方式与格式独立，原文件不转换保存；手机多来源限制保持。
+新入口对未知指令、外部文件、脚本、`route`/`redirect-gateway`/`dhcp-option` 等尚未
+转换的路由/DNS 指令整份拒绝并记 unsupported。`client`、`dev tun`、`nobind`、
+`persist-key`/`persist-tun`、`resolv-retry`、日志和重试参数由内核生命周期管理，记 approx。
+旧 OpenVPN 记录不迁移，保留原辅助控制和内网 CIDR；新旧来源可查看同一只读保真度报告。
+完整导入与兼容约定见 [OpenVPN 导入](openvpn-import.md)。
 内联 auth-user-pass 按用户名/密码两行读取，保留空格、制表符和引号，只移除
 CRLF 分隔符，不使用选项拆词器。缺行或空凭据需要交互输入时拒绝转换，失败带来源
 账本；无法伪装成已有凭据。依据：[OpenVPN 凭据读取](https://github.com/OpenVPN/openvpn/blob/master/src/openvpn/misc.c)。

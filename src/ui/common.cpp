@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <thread>
@@ -24,6 +25,7 @@ import clashflux.core;
 import clashflux.db;
 import clashflux.persistence;
 import clashflux.service;
+import clashflux.singbox;
 import clashflux.stream;
 import clashflux.store.core;
 import clashflux.store.profiles;
@@ -955,11 +957,27 @@ void DriveProfilesModel(huxerui::TaskScope tasks,
                 first = false;
                 seenRevision = revision;
                 seenSync = before;
-                auto next = co_await RunOnTaskThread(
-                    [] { return store::profilesStore().list(); });
+                auto next = co_await RunOnTaskThread([] {
+                    auto profiles = store::profilesStore().list();
+                    std::vector<std::int64_t> clashSources;
+                    const auto root = cfg::profilesDir();
+                    for (const auto& profile : profiles) {
+                        if (profile.type == "pptp" || profile.type == "openvpn" || profile.file.empty()) continue;
+                        // Classification only needs a bounded prefix; portable
+                        // .ovpn is limited to 20 KiB by the compiler.
+                        std::ifstream input(root / profile.file, std::ios::binary);
+                        std::string prefix(20001, '\0');
+                        input.read(prefix.data(), static_cast<std::streamsize>(prefix.size()));
+                        prefix.resize(static_cast<std::size_t>(input.gcount()));
+                        if (!prefix.empty() && singbox::DetectProfileFormat(prefix) == singbox::ProfileFormat::ClashYaml)
+                            clashSources.push_back(profile.id);
+                    }
+                    return std::pair{std::move(profiles), std::move(clashSources)};
+                });
                 // 乐观选中期间不发布；等页面确认后再由修订号驱动同步。
                 if (!model->selectionPending.Get()) {
-                    model->list = std::move(next);
+                    model->clashSources = std::move(next.second);
+                    model->list = std::move(next.first);
                 }
             }
             if (model->syncTick.Get() != before) continue;
@@ -1010,9 +1028,8 @@ void DriveVpnModel(huxerui::TaskScope tasks, std::shared_ptr<VpnModel> model) {
             auto next = co_await RunOnTaskThread([] {
                 return store::vpnStore().snapshot();
             });
-            // 能力与连接状态一并发布；State 按 operator== 去重。
-            model->view = std::move(next);
-            if (model->syncTick.Get() != before) continue;
+            // 动作完成回调可能已发布更新的快照，不能用在途旧轮询覆盖它。
+            if (!model->PublishPolled(before, std::move(next))) continue;
             co_await huxerui::Delay(std::chrono::duration<double>{1.0});
         }
     });

@@ -407,6 +407,38 @@ Task<void> DeletionPhase() {
     co_await DeletionPhaseRetry(fixture);
 }
 
+Task<void> OpenVpnSourceCompatibilityPhase() {
+    const Fixture fixture;
+    const std::string ovpn = "client\nremote vpn.example.test 1194 udp\n<auth-user-pass>\n user name \n secret password \n</auth-user-pass>\n";
+    std::ofstream(fixture.files / "remote-ovpn.yaml", std::ios::binary) << ovpn;
+    std::ofstream(fixture.files / "local-ovpn.yaml", std::ios::binary) << ovpn;
+    std::vector<db::Profile> expected(4);
+    expected[0].id = 81; expected[0].name = "remote OpenVPN"; expected[0].type = "remote";
+    expected[0].file = "remote-ovpn.yaml"; expected[0].url = "https://example.test/config.ovpn";
+    expected[0].selected = true; expected[0].autoUpdate = true; expected[0].intervalMins = 1440;
+    expected[1].id = 82; expected[1].name = "local OpenVPN"; expected[1].type = "local";
+    expected[1].file = "local-ovpn.yaml";
+    expected[2].id = 83; expected[2].name = "legacy auxiliary"; expected[2].type = "openvpn";
+    expected[2].nativeConfig = ovpn; expected[2].nativeRoutes = "10.20.0.0/16,10.21.0.0/16";
+    expected[3].id = 84; expected[3].name = "other local source"; expected[3].type = "local";
+    expected[3].file = "shared.yaml";
+    const std::string policy = "legacy profile-83 and ordinary profile-82 stable references";
+    persistence::Persistence store;
+    Check(co_await store.open(fixture.path, fixture.files), "OpenVPN compatibility fixture open");
+    for (const auto& profile : expected) store.saveProfile(profile);
+    store.setSetting("vpn.global_policy", policy);
+    Check(co_await store.flushProfiles() && co_await store.flushSettings(), "all OpenVPN source types persist");
+    co_await store.close();
+    persistence::Persistence reopened;
+    Check(co_await reopened.open(fixture.path, fixture.files), "mixed OpenVPN sources reopen");
+    Check(reopened.listProfiles() == expected && reopened.setting("vpn.global_policy") == policy,
+          "legacy/remote/local OpenVPN keep all IDs, inline credentials, routes, source settings and references");
+    Check(ReadFile(fixture.files / "remote-ovpn.yaml") == ovpn && ReadFile(fixture.files / "local-ovpn.yaml") == ovpn &&
+          ReadFile(fixture.files / "shared.yaml") == "remote and local stable content\n",
+          "OpenVPN compatibility reads preserve all referenced source files byte for byte");
+    co_await reopened.close();
+}
+
 Task<void> RunTest(TaskScope tasks) {
     const std::filesystem::path path = TempPath();
     const auto missingSettings = persistence::readStartupSettings(path);
@@ -686,7 +718,9 @@ Task<void> RunTest(TaskScope tasks) {
         co_await InterleavedPhase(tasks);
         Trace(11, "删除失败/共享引用/确认后文件清理");
         co_await DeletionPhase();
-        Trace(12, "完成");
+        Trace(12, "OpenVPN 新旧来源与引用保留");
+        co_await OpenVpnSourceCompatibilityPhase();
+        Trace(13, "完成");
         RemoveDatabase(path);
         Finish();
     } catch (const std::exception& exception) {

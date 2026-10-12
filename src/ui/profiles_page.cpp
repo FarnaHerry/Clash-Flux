@@ -40,6 +40,7 @@ import clashflux.core;
 import clashflux.db;
 import clashflux.openvpn;
 import clashflux.pptp;
+import clashflux.singbox;
 import clashflux.store.core;
 import clashflux.store.profiles;
 import clashflux.store.vpn;
@@ -95,8 +96,6 @@ namespace clashflux::ui {
     auto newPptpTimeout = huxerui::UseState(huxerui::TextEditingValue{"30"});
     auto newPptpRoutes = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newPptpMppe = huxerui::UseState(true);
-    auto newOpenVpnConfig = huxerui::UseState(huxerui::TextEditingValue{""});
-    auto newOpenVpnRoutes = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newQrContent = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newConfigContent = huxerui::UseState(huxerui::TextEditingValue{""});
     auto pickedPath = huxerui::UseState<std::string>("");
@@ -142,8 +141,11 @@ namespace clashflux::ui {
     huxerui::Lifecycle(
         [tasks, vpnModel] {
             tasks.Launch([vpnModel]() -> huxerui::Task<void> {
-                co_await RunOnTaskThread([] { store::vpnStore().init(); });
-                vpnModel->RequestSync();
+                auto next = co_await RunOnTaskThread([] {
+                    store::vpnStore().init();
+                    return store::vpnStore().snapshot();
+                });
+                vpnModel->Publish(std::move(next));
             });
             return [] {};
         },

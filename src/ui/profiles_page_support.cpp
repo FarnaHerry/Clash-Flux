@@ -65,16 +65,10 @@ bool isNativeVpnType(std::string_view type) {
 }
 
 NativeProfileSupport profileSupport() {
-#if defined(__ANDROID__)
-    return {.openvpn = true};
-#elif defined(__linux__)
-    return {.pptp = true, .openvpn = true};
-#elif defined(_WIN32)
-    return {.pptp = true, .openvpn = true};
-#elif defined(__APPLE__)
-    return {.openvpn = true};
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+    return {.pptp = true};
 #else
-    return {.openvpn = true};
+    return {};
 #endif
 }
 
@@ -470,7 +464,7 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
                           ? ps.importFile(request.name, request.picked_path,
                                           request.options)
                           : ps.importNative(request.name,
-                                            request.pptp ? "pptp" : "openvpn",
+                                            "pptp",
                                             request.options.nativeConfig,
                                             request.options.nativeRoutes,
                                             request.options);
@@ -493,7 +487,7 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
                           ? ps.importFile(request.name, request.picked_path,
                                           request.options)
                           : ps.importNative(request.name,
-                                            request.pptp ? "pptp" : "openvpn",
+                                            "pptp",
                                             request.options.nativeConfig,
                                             request.options.nativeRoutes,
                                             request.options);

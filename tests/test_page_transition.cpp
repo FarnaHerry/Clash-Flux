@@ -24,6 +24,7 @@
 #include "empty_state.h"
 #include "theme_colors.h"
 #include "theme_color_card.h"
+#include "vpn_snapshot_model.h"
 
 namespace {
 using huxerui::testing::UiSelector;
@@ -822,7 +823,7 @@ void testCommonMenu() {
             tasks.Launch([toast, filter, result]() -> huxerui::Task<void> {
                 // 消费生产筛选 DTO 的真实事件协程；不需要宿主文件窗口即可验证资源边界。
                 const auto picked = co_await clashflux::ui::PickProfileConfigFile(nullptr, filter, toast);
-                if (!picked) result = filter.name + ":" + filter.extensions[0] + "," + filter.extensions[1] + "," + filter.extensions[2];
+                if (!picked) result = filter.name + ":" + filter.extensions[0] + "," + filter.extensions[1] + "," + filter.extensions[2] + "," + filter.extensions[3];
             });
         }),
         huxerui::Text(result.Get()),
@@ -837,7 +838,7 @@ void testProfileFileFilter() {
             .resources = {.locale = huxerui::Locale::FromLanguageTag(language)}, .resource_provider = AppResources()});
         ui.PumpAndSettle();
         ui.Find(UiSelector::Text("Choose profile file")).Tap(); ui.Pump(kSettle);
-        const std::string expected = std::string(language) == "zh" ? "sing-box / Clash 配置:json,yaml,yml" : "sing-box / Clash configuration:json,yaml,yml";
+        const std::string expected = std::string(language) == "zh" ? "sing-box / Clash / OpenVPN 配置:json,yaml,yml,ovpn" : "sing-box / Clash / OpenVPN configuration:json,yaml,yml,ovpn";
         check(ui.Find(UiSelector::Text(expected)).Exists(), "文件选择事件协程使用预解析的本地化筛选 DTO，不读取组合环境");
         ui.Find(UiSelector::Text("Choose profile file")).Tap(); ui.Pump(kSettle);
         check(ui.Find(UiSelector::Text(expected)).Exists(), "文件选择不可用时允许再次操作，不终止运行时");
@@ -896,6 +897,90 @@ void testProfileImportCompletion() {
     ui.Find(UiSelector::Text("Import fixture")).Tap(); ui.Pump(std::chrono::milliseconds(400)); ui.PumpAndSettle();
     check(ui.Find(UiSelector::Text("IMPORT-SUCCESS")).Exists() && ui.Find(UiSelector::Text("IMPORT-ATTEMPTS:3")).Exists(),
           "failed import remains retryable without retaining busy or creating duplicate operations");
+}
+
+// Use the production publication model and the subscription page's
+// Lifecycle -> StateList -> VirtualGrid chain, without dialing a real VPN.
+using TestVpnModel = clashflux::ui::VpnSnapshotModel<std::vector<std::string>>;
+void InstallTestVpnModel(huxerui::ApplicationContext& context) {
+    auto model = std::make_shared<TestVpnModel>();
+    model->Publish({"VPN-1:idle", "VPN-2:idle"});
+    context.Provide(model);
+}
+
+[[huxerui::composable]] huxerui::View VpnPublicationContent() {
+    auto model = huxerui::UseService<TestVpnModel>();
+    auto tasks = huxerui::UseTaskScope();
+    auto cards = huxerui::UseStateList<std::string>();
+    auto pollResult = huxerui::UseState(std::string{"POLL-idle"});
+    huxerui::Lifecycle([model, cards] {
+        clashflux::ui::ReplaceStateList(cards, model->view.Get());
+        return [] {};
+    }, model->view);
+    return huxerui::Column{
+        huxerui::Button("Start delayed VPN poll").OnClick([model, tasks, pollResult] {
+            const auto before = model->syncTick.Get();
+            auto next = model->view.Get();
+            next[0] = "VPN-1:external";
+            pollResult = "POLL-pending";
+            tasks.Launch([model, pollResult, before, next]() -> huxerui::Task<void> {
+                co_await huxerui::Delay(std::chrono::milliseconds(400));
+                pollResult = model->PublishPolled(before, next)
+                    ? "POLL-accepted" : "POLL-rejected";
+            });
+        }),
+        huxerui::Button("First VPN connected").OnClick([model] {
+            model->Publish({"VPN-1:connected", "VPN-2:connecting"});
+        }),
+        huxerui::Button("Second VPN failed").OnClick([model] {
+            model->Publish({"VPN-1:connected", "VPN-2:failed"});
+        }),
+        huxerui::Button("First VPN disconnected").OnClick([model] {
+            model->Publish({"VPN-1:idle", "VPN-2:failed"});
+        }),
+        huxerui::Button("Publish identical VPN result").OnClick([model] {
+            model->Publish(model->view.Get());
+        }),
+        huxerui::Text(pollResult.Get()),
+        huxerui::VirtualGrid(cards.Size(), [cards](std::size_t index) {
+            return huxerui::Text(cards[index]).Key(static_cast<std::int64_t>(index));
+        }).Columns(huxerui::GridColumns::Fixed(1)).EstimatedRowExtent(40.0F)
+            .With(huxerui::Grow(1.0F)),
+    }.With(huxerui::Grow(1.0F));
+}
+huxerui::View VpnPublicationRoot() { return huxerui::FlatTheme{VpnPublicationContent()}; }
+const huxerui::Application kVpnPublicationApplication{VpnPublicationRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallTestVpnModel}}};
+
+void testVpnPublication() {
+    huxerui::testing::UiTest ui(kVpnPublicationApplication, {.viewport = {700.0F, 700.0F}});
+    ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("VPN-1:idle")).Exists(), "VPN cards receive the initial snapshot");
+    ui.Find(UiSelector::Text("Start delayed VPN poll")).Tap(); ui.Pump();
+    ui.Find(UiSelector::Text("First VPN connected")).Tap(); ui.Pump();
+    check(ui.Find(UiSelector::Text("VPN-1:connected")).Exists() &&
+          ui.Find(UiSelector::Text("VPN-2:connecting")).Exists(),
+          "first VPN card updates in the completion frame while the next connection is pending");
+    ui.Pump(std::chrono::milliseconds(500)); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("POLL-rejected")).Exists() &&
+          ui.Find(UiSelector::Text("VPN-1:connected")).Exists(),
+          "late poll cannot replace an action's connected snapshot");
+    ui.Find(UiSelector::Text("Second VPN failed")).Tap(); ui.Pump();
+    check(ui.Find(UiSelector::Text("VPN-2:failed")).Exists(), "VPN failure updates without waiting for the one-second pump");
+    ui.Find(UiSelector::Text("Start delayed VPN poll")).Tap(); ui.Pump();
+    ui.Find(UiSelector::Text("First VPN disconnected")).Tap(); ui.Pump();
+    check(ui.Find(UiSelector::Text("VPN-1:idle")).Exists(), "VPN disconnect immediately clears the connected card");
+    ui.Pump(std::chrono::milliseconds(500)); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("POLL-rejected")).Exists() &&
+          ui.Find(UiSelector::Text("VPN-1:idle")).Exists(), "late connected poll cannot resurrect a disconnected card");
+    ui.Find(UiSelector::Text("Start delayed VPN poll")).Tap(); ui.Pump();
+    ui.Find(UiSelector::Text("Publish identical VPN result")).Tap(); ui.Pump();
+    ui.Pump(std::chrono::milliseconds(500)); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("POLL-rejected")).Exists(), "equal action snapshots still invalidate in-flight polls (ABA)");
+    ui.Find(UiSelector::Text("Start delayed VPN poll")).Tap(); ui.Pump();
+    ui.Pump(std::chrono::milliseconds(500)); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("POLL-accepted")).Exists() &&
+          ui.Find(UiSelector::Text("VPN-1:external")).Exists(), "unchanged polling continues to publish external VPN changes");
 }
 [[huxerui::composable]] huxerui::View ThemeColorSurfaceContent() {
     using namespace clashflux::ui;
@@ -1093,6 +1178,7 @@ void testCustomThemeColors() {
 }
 
 int main() {
+    testVpnPublication();
     testCustomThemeColors();
     testThemeColorSurfaces();
     {

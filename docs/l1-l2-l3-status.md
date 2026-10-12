@@ -1,5 +1,33 @@
 # L1 / L2 / L3 开发完成度复核
 
+2026-10-12 L3 增量：OpenVPN 导入并入普通来源。
+代码快照为 `3b83bbb8fb15` 加当前未提交工作区；远程/本地/文本自动识别 .ovpn，
+新建弹窗与页面移除独立 OpenVPN 类型，桌面弹窗复用创建页面表单；PPTP 保留。
+普通 .ovpn 可作为主来源，桌面次来源按启用规则加载隔离 endpoint；源原文不转换保存，
+手机仍保留单活动普通来源。旧 OpenVPN 记录归本地分区，保留 ID、凭据、内网路由、
+引用和辅助操作，不改 schema 或启动迁移。未知/外部文件/未转换指令拒绝并保留账本。
+JSON/.ovpn 不显示 YAML 规则编辑菜单，文件编辑保存后请求刷新格式能力。
+Linux 本地执行 HuxerUI codegen 与 `cmake --build build --target clash-flux test_singbox
+test_page_transition test_persistence test_routing test_rule_provider_download` 成功；
+`ctest --test-dir build -L clashflux-required --output-on-failure --no-tests=error` 17/17，
+`./run.sh --version`（0.3.29）与 `git diff --check` 通过。
+独占临时 XDG 数据目录中的应用运行时 CLI 验证无后缀 URL .ovpn 导入、本地 .ovpn
+设为主来源并引用远程次来源、四份新旧来源重开、旧配置保真度报告与失败刷新保留
+原字节/所有 ID/活动来源/旧凭据和路由；生成主配置经固定 sing-box 1.14.2 check。
+未建立真实 VPN 连接，未执行本批 Windows/Android/macOS 构建或线上 CI。
+实现与限制见 [OpenVPN 导入](openvpn-import.md)。
+
+2026-10-12 L3 修复：原生 VPN 连接成功后卡片未及时同步。
+代码快照为 `3b83bbb8fb15` 加当前工作区改动；连接与断开改为逐条完成后携带
+权威快照回到 UI 线程，通过 `VpnModel::Publish` 立即发布，不等一秒泵或整批结束。
+数据泵按发布序号拒绝在途旧快照，初始化完成也直接发布。PPTP/OpenVPN 共用此路径。
+`page_transition` 使用生产发布模型及 Lifecycle → StateList → VirtualGrid 链路，
+验证首条连接在后续连接未完成时刷新、失败/断开立即同步、旧轮询拒绝、相等结果
+仍使旧请求失效与外部变化正常轮询。Linux 本地 HuxerUI codegen 与构建通过；
+`cmake --build build --target clash-flux test_page_transition test_vpn`、
+`./run.sh --version`、`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|vpn)$'`
+（2/2）与 `git diff --check` 通过。未执行 Windows 真实 PPTP 拨号或本批线上 CI。
+
 2026-10-04 订阅切换性能：修复大 MRS 来源反复构造 YAML 节点、逐条 JSON 后再合并的
 开销，改为有界字符串集合直接累计原生字段数组；固定快照未变化时不重复编译，
 桌面没有 GEO 预取依赖时复用完整编译结果执行内核 check。没有跳过规则转换、

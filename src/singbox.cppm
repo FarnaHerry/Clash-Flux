@@ -14,6 +14,10 @@ import clashflux.vpn;
 
 namespace singbox {
 
+// Source transport (remote/local) is independent of the document format.
+export enum class ProfileFormat { ClashYaml, SingBoxJson, OpenVpn };
+export ProfileFormat DetectProfileFormat(std::string_view content);
+
 // 保真度级别（见 docs/singbox-layers-and-fidelity.md §2）：翻译层对订阅里每个条目
 // （协议 / 组 / 规则 / 字段）的映射结果。Exact 不产生条目，因此只出现后两级。
 export enum class Fidelity {
@@ -114,7 +118,7 @@ export struct NativeConnection {
 
 export struct CompileOptions {
     std::string profileYaml;                     // 订阅/手写配置原文（Clash YAML、
-                                                 // 原生 sing-box JSON 或空）
+                                                 // 原生 sing-box JSON、OpenVPN .ovpn 或空）
     std::string controller = "127.0.0.1:29097";  // clash_api external_controller
     std::string secret;                          // clash_api secret（可空）
     int mixedPort = 7899;
@@ -149,10 +153,10 @@ export struct CompileOptions {
 // 编译 options.profileYaml 为 sing-box 配置 JSON。可为空（最小可用配置）、
 // Clash YAML，或以 "{" 开头的原生 sing-box JSON（直通并合并托管设置）。
 export CompileResult compileConfig(const CompileOptions& options);
-// Read-only Clash object directory, including sources not yet referenced by a
+// Read-only Clash/.ovpn object directory, including sources not yet referenced by a
 // plan. Uses the same export compiler as secondary sources; no download/check,
 // persistence mutation or running/preview mapping publication.
-export CompileResult inspectClashSourceObjects(const CompileOptions& options);
+export CompileResult inspectProfileSourceObjects(const CompileOptions& options);
 export std::optional<std::string> ReadRuleProviderText(const std::filesystem::path& path,
     std::size_t maxBytes, std::string& error);
 export std::optional<std::string> ReadHttpRuleProviderCache(const HttpRuleProviderResource& resource,

@@ -1,6 +1,6 @@
 # Clash-Flux
 
-See the [v0.3.31 release notes](docs/releases/v0.3.31.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.32 release notes](docs/releases/v0.3.32.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -23,7 +23,7 @@ application-managed settings before being passed to sing-box.
   layout; see [UI conventions](docs/ui-development.md).
 - Subscription and profile management: entries with context menus, double-click
   activation and refresh actions; URL import, update, activation, deletion and rule
-  editing; local storage; Clash YAML and native sing-box JSON file import.
+  editing; local storage; Clash YAML, native sing-box JSON and OpenVPN .ovpn file import.
 - Desktop rule targets: search and select groups or nodes from Clash subscriptions,
   including inactive sources; preserve missing references. Mobile, native connections
   and JSON use the default outbound. See [orchestration](docs/desktop-subscription-orchestration.md).
@@ -155,7 +155,14 @@ sudo dnf install ppp pptp iproute
 sudo apt install ppp pptp iproute2
 ```
 
-OpenVPN profiles are stored as native `.ovpn` text. To let sing-box manage the
+OpenVPN `.ovpn` uses the same URL, local-file and pasted-text import paths as
+Clash YAML and sing-box JSON. Content detection replaces the separate OpenVPN
+creation type and the original document is retained. It can be the main source
+or a rule-driven secondary source on desktop; mobile keeps one active ordinary
+source. Existing `openvpn` records retain IDs, credentials, private routes and
+auxiliary controls, and appear in the local-source section without automatic
+migration or activation. See [OpenVPN import](docs/openvpn-import.md).
+To let sing-box manage the
 connection at runtime, use inline `<ca>`, `<cert>`, `<key>`, `<tls-auth>` and
 `<auth-user-pass>` blocks. The compiler passes these to sing-box. External file
 paths, scripts and system routing directives are not executed silently.
@@ -321,11 +328,11 @@ Android uses the system TLS bridge with certificate verification. Transfers exce
 [offline HTTP sample](docs/examples/http-providers-2026-10-03.yaml).
 
 Desktop now implements [one main source with rule-driven secondary sources](docs/desktop-subscription-orchestration.md).
-Clash YAML secondary sources participate only through enabled rules, with isolated
+Clash YAML and OpenVPN .ovpn secondary sources participate only through enabled rules, with isolated
 group and node names. Fixed tiers order user overrides, source policies, main rules
 and the main fallback; priority applies within a tier. Unavailable targets default
 to rejection, with explicit main-default or direct alternatives. The main source
-can be Clash YAML or native JSON; native JSON secondary sources and cross-source
+can be Clash YAML, native JSON or OpenVPN .ovpn; native JSON secondary sources and cross-source
 proxy chains remain unsupported. Mobile keeps one active ordinary proxy source.
 See the [official GUI review](docs/singbox-official-gui-review.md) for interaction
 references and implementation priorities.

@@ -4,11 +4,16 @@
     // 订阅按类型分区：与代理页/规则页共用 SectionTabBar（统一样式）；每个
     // 类型一页，Pager 保留各页滚动位置并负责跟手切换。不再把分组头
     // 混排在同一张网格里。
-    std::vector<std::string> profileTypes{"remote", "local", "pptp", "openvpn"};
+    // Legacy inline OpenVPN records are local sources in the UI. Their stored
+    // type and explicit auxiliary lifecycle remain intact for compatibility.
+    const auto sectionType = [](const db::Profile& profile) -> std::string_view {
+        return profile.type == "openvpn" ? std::string_view{"local"} : profile.type;
+    };
+    std::vector<std::string> profileTypes{"remote", "local", "pptp"};
     for (const db::Profile& profile : profiles) {
-        if (std::find(profileTypes.begin(), profileTypes.end(), profile.type) ==
+        if (std::find(profileTypes.begin(), profileTypes.end(), sectionType(profile)) ==
             profileTypes.end()) {
-            profileTypes.push_back(profile.type);
+            profileTypes.emplace_back(sectionType(profile));
         }
     }
     const std::string profileQuery = profileSearch.Get().text;
@@ -21,8 +26,8 @@
     // 只给当前搜索结果覆盖到的类型出标签；清空搜索后恢复完整类型集合。
     std::vector<std::string> visibleTypes;
     for (const std::string& type : profileTypes) {
-        const auto hasType = [&type, &matchesProfile](const db::Profile& profile) {
-            return profile.type == type && matchesProfile(profile);
+        const auto hasType = [&type, &matchesProfile, &sectionType](const db::Profile& profile) {
+            return sectionType(profile) == type && matchesProfile(profile);
         };
         if (std::any_of(profiles.begin(), profiles.end(), hasType)) {
             visibleTypes.push_back(type);
@@ -56,7 +61,7 @@
         const std::string& type = visibleTypes[page];
         std::vector<std::size_t> typeIndices;
         for (std::size_t index = 0; index < profiles.Size(); ++index) {
-            if (profiles[index].type == type && matchesProfile(profiles[index])) {
+            if (sectionType(profiles[index]) == type && matchesProfile(profiles[index])) {
                 typeIndices.push_back(index);
             }
         }
@@ -163,8 +168,6 @@
         newPptpTimeout = huxerui::TextEditingValue{"30"};
         newPptpRoutes = huxerui::TextEditingValue{""};
         newPptpMppe = true;
-        newOpenVpnConfig = huxerui::TextEditingValue{""};
-        newOpenVpnRoutes = huxerui::TextEditingValue{""};
         newQrContent = huxerui::TextEditingValue{""};
         newConfigContent = huxerui::TextEditingValue{""};
         pickedPath = "";
@@ -173,15 +176,26 @@
         newName, newUrl, newQrContent, newConfigContent, newTypeIdx, newDesc,
         newTimeout, newInterval, newAuto, newSys, newCore, newCert,
         newPptpServer, newPptpUsername, newPptpPassword, newPptpTimeout,
-        newPptpRoutes, newPptpMppe, newOpenVpnConfig, newOpenVpnRoutes,
+        newPptpRoutes, newPptpMppe,
         pickedPath, importing};
+    // Desktop dialog and compact page mount the same creation form.
+    const auto showCreateDialog = [createFields, tasks, toast, picker, http,
+                                    pptpSupported, dialog] {
+        dialog.Show([=](huxerui::DialogContext ctx) {
+            return DialogCard(huxerui::Column{
+                ProfileCreatePage(createFields, tasks, toast, picker, http,
+                                  pptpSupported, [ctx] { ctx.Dismiss(); }),
+            }.With(huxerui::Frame{.width = 520.0F, .height = 560.0F},
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+        });
+    };
     const auto openCreate = [=] {
         resetCreateFields();
         if (navigation_enabled) {
             navigation.Push([=] {
                 return ProfileAddMethodPage(createFields, tasks, toast,
                                             picker, http, pptpSupported,
-                                            openvpnSupported, navigation);
+                                            navigation);
             });
             return;
         }
@@ -222,7 +236,7 @@
 
     huxerui::View mobileCreatePage = ResponsiveProfileCreateSurface(
         createPageOpen.Get(), createFields,
-        tasks, toast, picker, http, pptpSupported, openvpnSupported,
+        tasks, toast, picker, http, pptpSupported,
         [createPageOpen] { createPageOpen = false; });
 
     huxerui::View mobileFilePage = ProfileFilePage(

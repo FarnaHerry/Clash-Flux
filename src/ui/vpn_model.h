@@ -17,18 +17,13 @@
 #include <vector>
 
 #include "ui.h"
+#include "vpn_snapshot_model.h"
 
 namespace clashflux::ui {
 
-struct VpnModel {
-    // 必须带初值：huxerui::State 的默认构造是「空 cell」，读取/写入都会抛
-    // "Lifecycle dependency State is empty"。
-    huxerui::State<store::VpnSnapshot> view{store::VpnSnapshot{}};
-    // 请求下一次泵同步（init / 连接 / 断开之后）。
-    huxerui::State<std::uint64_t> syncTick{0};
-
-    void RequestSync() { syncTick = syncTick.Get() + 1; }
-};
+// 用户动作在任务线程取得权威快照，恢复 UI 线程后 Publish 立即写透。
+// RequestSync 仅请求下一拍，不能唤醒 Delay；旧轮询由 PublishPolled 拒绝。
+struct VpnModel : VpnSnapshotModel<store::VpnSnapshot> {};
 
 // 启动唯一的数据泵（组合期调用一次）：1s 一拍取回能力/连接快照，变化才发布。
 void DriveVpnModel(huxerui::TaskScope tasks, std::shared_ptr<VpnModel> model);
