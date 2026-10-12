@@ -1,6 +1,7 @@
 // Native Windows SCM/IPC backend. Plain TU: no UI, modules or persistence.
 #pragma once
 #ifdef _WIN32
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -36,6 +37,9 @@ std::optional<std::string> request(std::string_view command, std::string& error,
 int install(std::string_view ownerSid, std::string& error, const Options& options = {});
 int uninstall(std::string& error, const Options& options = {});
 bool manageElevated(bool remove, std::string& error);
+// Internal LocalSystem helper. Only the protected updater copy may invoke it;
+// the inherited event gates replacement until the UPGRADE reply is delivered.
+int applyUpgrade(std::uintptr_t readyEvent, std::string& error, const Options& options = {});
 int run(std::string_view version, Hooks hooks, const Options& options = {});
 } // namespace clashflux::windows_service
 #endif

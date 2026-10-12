@@ -135,6 +135,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/service_client.inc"
         "${_root}/src/service_daemon.inc"
         "${_root}/src/service_stub.inc"
+        "${_root}/src/service_startup.h"
         "${_root}/src/singbox_compile.inc"
         "${_root}/src/singbox_sources.inc"
         "${_root}/src/singbox_context_dns.inc"

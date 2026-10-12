@@ -1,6 +1,6 @@
 # Clash-Flux
 
-See the [v0.3.30 release notes](docs/releases/v0.3.30.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.31 release notes](docs/releases/v0.3.31.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -351,8 +351,8 @@ It installs `clash-flux.service`, after which one root daemon manages sing-box a
 Linux PPTP. OpenVPN endpoints are created by sing-box and do not require the
 OpenVPN CLI.
 
-At the next core startup, an installed service checks its version and synchronizes
-Clash-Flux and sing-box from the current client. Upgrade files are written to
+On every GUI startup, an asynchronous check synchronizes an installed service's
+Clash-Flux and sing-box binaries from the current client before core auto-start. Upgrade files are written to
 temporary files in the same directory and atomically replaced, allowing systemd
 to restart into the new version even while older processes are running. For the
 first installation, or an older service without self-upgrade support, run
@@ -366,8 +366,13 @@ installation it records the user UID before privilege elevation; only that user
 and root can access the socket. Linux TUN/PPTP requires the service and prompts
 for its installation when absent. OpenVPN uses sing-box userspace endpoints.
 
-On Windows, install `ClashFluxService` under Kernel service in Settings and update it
-there after upgrading the application. UAC elevates only the management command.
+On Windows, install `ClashFluxService` under Kernel service in Settings. Every GUI
+startup checks the service asynchronously. A LocalSystem helper updates it from a
+protected Program Files installation and restarts SCM without UAC. Matching versions
+are left alone and absent services are not installed automatically. A failed update
+pauses core auto-start and reports the failure. Older services need one manual update
+to enable self-upgrade; portable copies in user-writable directories still require
+the Settings update button and authorization. UAC elevates only the management command.
 An administrator terminal can also run `clash-flux.exe service install|uninstall`.
 All Windows core startup now goes through SCM. See [service deployment and validation](docs/windows-service.md).
 

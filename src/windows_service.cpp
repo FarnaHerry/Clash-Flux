@@ -225,13 +225,13 @@ void secureDirectory(const std::filesystem::path& path) {
 // grants no ordinary-user access and uses a distinct identity for test fixtures.
 class ManagementLock {
 public:
-    explicit ManagementLock(const Options& options) {
+    explicit ManagementLock(const Options& options, DWORD timeoutMs = 30000) {
         auto security = descriptor(L"D:P(A;;GA;;;SY)(A;;GA;;;BA)");
         SECURITY_ATTRIBUTES attributes{sizeof(attributes), security.get(), FALSE};
         const auto name = L"Global\\" + options.name + L".Management";
         mutex_.reset(CreateMutexW(&attributes, FALSE, name.c_str()));
         if (!mutex_.valid()) throw std::runtime_error(winError("Service management lock"));
-        const auto result = WaitForSingleObject(mutex_.get(), 30000);
+        const auto result = WaitForSingleObject(mutex_.get(), timeoutMs);
         if (result != WAIT_OBJECT_0 && result != WAIT_ABANDONED)
             throw std::runtime_error("Another service management command is running");
     }
@@ -239,6 +239,82 @@ public:
 private:
     UniqueHandle mutex_;
 };
+
+bool privilegedSid(PSID sid) {
+    if (!sid || !IsValidSid(sid)) return false;
+    if (IsWellKnownSid(sid, WinLocalSystemSid) || IsWellKnownSid(sid, WinBuiltinAdministratorsSid)) return true;
+    // Program Files may be owned by the Windows Modules Installer service.
+    PSID raw = nullptr;
+    if (!ConvertStringSidToSidW(L"S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464", &raw)) return false;
+    const LocalMemory trustedInstaller(raw, &LocalFree);
+    return EqualSid(sid, trustedInstaller.get()) != FALSE;
+}
+
+void requireProtectedPath(const std::filesystem::path& path) {
+    // No unsigned executable from Downloads/AppData can become SYSTEM code.
+    // Check every component down from Program Files, including the file ACL;
+    // location alone is insufficient when an installer grants user write access.
+    const auto programFiles = directory({}).parent_path();
+    const auto candidate = path.lexically_normal().wstring();
+    const auto prefix = programFiles.wstring() + L"\\";
+    if (!path.is_absolute() || candidate.size() <= prefix.size() ||
+        _wcsnicmp(candidate.c_str(), prefix.c_str(), prefix.size()) != 0)
+        throw std::runtime_error("Automatic service update requires a protected Program Files installation; update the service from Settings");
+    for (auto current = path; !current.empty(); current = current.parent_path()) {
+        const DWORD attributes = GetFileAttributesW(current.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
+            throw std::runtime_error("Automatic service update rejects missing files and reparse points");
+        PSID owner = nullptr; PACL acl = nullptr; PSECURITY_DESCRIPTOR raw = nullptr;
+        const DWORD code = GetNamedSecurityInfoW(current.c_str(), SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            &owner, nullptr, &acl, nullptr, &raw);
+        const LocalMemory security(raw, &LocalFree);
+        if (code != ERROR_SUCCESS || !privilegedSid(owner) || !acl)
+            throw std::runtime_error("Automatic service update source has an untrusted owner or ACL");
+        for (DWORD index = 0; index < acl->AceCount; ++index) {
+            void* aceRaw = nullptr;
+            if (!GetAce(acl, index, &aceRaw)) throw std::runtime_error(winError("Read update ACL"));
+            const auto* header = static_cast<ACE_HEADER*>(aceRaw);
+            if (header->AceFlags & INHERIT_ONLY_ACE) continue;
+            if (header->AceType == ACCESS_DENIED_ACE_TYPE) continue;
+            if (header->AceType != ACCESS_ALLOWED_ACE_TYPE)
+                throw std::runtime_error("Automatic service update source has an unsupported ACL");
+            const auto* ace = static_cast<ACCESS_ALLOWED_ACE*>(aceRaw);
+            constexpr DWORD mutation = FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA |
+                FILE_WRITE_ATTRIBUTES | FILE_DELETE_CHILD | DELETE | WRITE_DAC | WRITE_OWNER |
+                GENERIC_WRITE | GENERIC_ALL;
+            if ((ace->Mask & mutation) && !privilegedSid(const_cast<DWORD*>(&ace->SidStart)))
+                throw std::runtime_error("Automatic service update source is writable by an ordinary user; update the service from Settings");
+        }
+        if (_wcsicmp(current.c_str(), programFiles.c_str()) == 0) return;
+    }
+    throw std::runtime_error("Cannot validate automatic service update source");
+}
+
+void stagePayload(const std::filesystem::path& source, const std::filesystem::path& staging,
+                  bool requireTrust = false) {
+    const auto sourceDir = source.parent_path();
+    if (std::filesystem::exists(staging)) std::filesystem::remove_all(staging);
+    secureDirectory(staging);
+    secureDirectory(staging / L"engines");
+    const auto copy = [&](const auto& from, const auto& to) {
+        if (requireTrust) requireProtectedPath(from);
+        std::filesystem::copy_file(from, to);
+        secureDirectory(to); // Do not retain source executable/DLL permissions.
+    };
+    copy(source, staging / L"clash-flux.exe");
+    copy(sourceDir / L"engines" / L"sing-box.exe", staging / L"engines" / L"sing-box.exe");
+    for (const auto& base : {sourceDir, sourceDir / L"engines"}) {
+        for (const auto& entry : std::filesystem::directory_iterator(base)) {
+            if (_wcsicmp(entry.path().extension().c_str(), L".dll") == 0) {
+                if (!entry.is_regular_file()) throw std::runtime_error("Invalid update DLL");
+                copy(entry.path(), base == sourceDir ? staging / entry.path().filename()
+                                                    : staging / L"engines" / entry.path().filename());
+            }
+        }
+    }
+}
+
 struct Server {
     Options options;
     Hooks hooks;
@@ -250,6 +326,8 @@ struct Server {
     std::mutex engineMutex;
     UniqueHandle engine;
     UniqueHandle job;
+    UniqueHandle upgradeProcess;
+    UniqueHandle upgradeGate;
     SERVICE_STATUS_HANDLE statusHandle = nullptr; // SCM-owned, not CloseHandle.
     std::mutex statusMutex;
     DWORD checkpoint = 0;
@@ -362,6 +440,50 @@ struct Server {
         BOOL member = FALSE;
         return CheckTokenMembership(token.get(), admin.get(), &member) && member;
     }
+    bool prepareUpgrade(HANDLE pipe, std::string& error) {
+        if (upgradeProcess.valid() && WaitForSingleObject(upgradeProcess.get(), 0) == WAIT_TIMEOUT) {
+            error = "A service update is already running"; return false;
+        }
+        upgradeGate.reset(); upgradeProcess.reset();
+        // An elevated installer may hold this lock while waiting for SCM STOP.
+        // The daemon must reject contention promptly instead of blocking STOP.
+        const ManagementLock lock(options, 0);
+        // The request contains no executable path: bind the source to the
+        // authenticated local pipe client and retain its process identity by handle.
+        ULONG pid = 0;
+        if (!GetNamedPipeClientProcessId(pipe, &pid)) throw std::runtime_error(winError("Update client PID"));
+        const UniqueHandle client{OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)};
+        if (!client.valid()) throw std::runtime_error(winError("Open update client"));
+        std::wstring image(32768, L'\0'); DWORD size = static_cast<DWORD>(image.size());
+        if (!QueryFullProcessImageNameW(client.get(), 0, image.data(), &size))
+            throw std::runtime_error(winError("Update client executable"));
+        image.resize(size);
+        const std::filesystem::path source(image);
+        requireProtectedPath(source);
+        const auto root = directory(options);
+        // All user-side files are validated/staged before touching live data.
+        stagePayload(source, root / L"upgrade-source", true);
+        // Run the already installed trusted code from a separate protected copy.
+        // It survives the daemon stop and is never part of the core Job Object.
+        stagePayload(selfExe(), root / L"updater", true);
+        SECURITY_ATTRIBUTES attributes{sizeof(attributes), nullptr, TRUE};
+        upgradeGate.reset(CreateEventW(&attributes, TRUE, FALSE, nullptr));
+        const UniqueHandle log{CreateFileW((root / L"upgrade.log").c_str(), FILE_APPEND_DATA,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, &attributes, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr)};
+        if (!upgradeGate.valid() || !log.valid()) throw std::runtime_error(winError("Create update resources"));
+        const auto helper = root / L"updater" / L"clash-flux.exe";
+        auto command = quote(helper.wstring()) + L" service apply-upgrade " +
+            std::to_wstring(reinterpret_cast<std::uintptr_t>(upgradeGate.get()));
+        STARTUPINFOW startup{}; startup.cb = sizeof(startup); startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdOutput = log.get(); startup.hStdError = log.get(); startup.hStdInput = nullptr;
+        PROCESS_INFORMATION child{};
+        if (!CreateProcessW(helper.c_str(), command.data(), nullptr, nullptr, TRUE,
+            CREATE_NO_WINDOW, nullptr, helper.parent_path().c_str(), &startup, &child))
+            throw std::runtime_error(winError("Start service update helper"));
+        upgradeProcess.reset(child.hProcess);
+        const UniqueHandle thread{child.hThread};
+        return true;
+    }
     void loop(bool queries = false) {
         const auto pipeName = options.pipe + (queries ? L".Query" : L"");
         const auto security = descriptor(L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x0012019b;;;" + wide(ownerSid) + L")");
@@ -401,6 +523,10 @@ struct Server {
                     else reply = "ERR Read-only query pipe";
                 }
                 else if (command == "STOP") { stopEngine(); reply = "OK"; }
+                else if (command == "UPGRADE") {
+                    std::string error;
+                    reply = prepareUpgrade(pipe.get(), error) ? "OK" : "ERR " + error;
+                }
                 else if (command.starts_with("START ")) {
                     std::string error;
                     reply = startEngine(command.substr(6), pipe.get(), error) ? "OK" : "ERR " + error;
@@ -412,6 +538,7 @@ struct Server {
             if (writeLine(pipe.get(), reply, 2000, stop.get())) {
                 char ack = 0; DWORD received = 0;
                 transfer(pipe.get(), &ack, 1, false, received, 2000, stop.get());
+                if (!queries && command == "UPGRADE" && reply == "OK") SetEvent(upgradeGate.get());
             }
             DisconnectNamedPipe(pipe.get());
             if (!queries && !running() && engine.valid()) stopEngine();
@@ -505,10 +632,11 @@ Info query(std::string_view version, const Options& options) {
     }
     info.reachable = true; info.protocol = fields[1]; info.version = fields[3];
     if (info.protocol != "1" || info.version != version)
-        info.error = "Windows service version differs; reinstall the service from Settings";
+        info.error = "Windows service version differs from the application";
     return info;
 }
 bool ensureCompatible(std::string_view version, std::string& error, const Options& options) {
+    error.clear();
     auto info = query(version, options);
     if (!info.reachable) {
         const auto service = openService(options, SERVICE_QUERY_STATUS | SERVICE_START);
@@ -516,9 +644,29 @@ bool ensureCompatible(std::string_view version, std::string& error, const Option
         if (!startService(service.get(), error)) return false;
         info = query(version, options);
     }
-    error = info.error; return info.reachable && error.empty();
+    if (info.reachable && info.error.empty()) return true;
+    if (!info.reachable) { error = info.error; return false; }
+    const auto reply = request("UPGRADE", error, 30000, options);
+    if (!reply || *reply != "OK") {
+        if (reply) error = reply->starts_with("ERR ") ? reply->substr(4) : *reply;
+        if (error.find("Unknown") != std::string::npos)
+            error = "This older service needs one update from Settings to enable automatic updates";
+        error = "Automatic Windows service update failed: " + error;
+        return false;
+    }
+    // The service launches an independent SYSTEM helper after replying. It
+    // stops SCM, switches protected payloads, and restarts SCM before returning.
+    const auto deadline = GetTickCount64() + 90000;
+    do {
+        info = query(version, options);
+        if (info.reachable && info.error.empty()) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    } while (GetTickCount64() < deadline);
+    error = "Windows service update did not activate the expected version: " + info.error + "; inspect the service upgrade.log";
+    return false;
 }
-int install(std::string_view requestedSid, std::string& error, const Options& options) {
+static int installFrom(std::string_view requestedSid, std::string& error, const Options& options,
+                       const std::filesystem::path& source, bool selfUpgrade = false) {
     error.clear();
     try {
         const ManagementLock lock(options);
@@ -531,32 +679,36 @@ int install(std::string_view requestedSid, std::string& error, const Options& op
         const auto root = directory(options);
         secureDirectory(root);
         const auto staging = root / L"staging";
-        if (std::filesystem::exists(staging)) std::filesystem::remove_all(staging);
-        secureDirectory(staging);
-        const auto source = selfExe();
-        const auto sourceDir = source.parent_path();
-        std::filesystem::copy_file(source, staging / L"clash-flux.exe");
-        for (const auto& entry : std::filesystem::directory_iterator(sourceDir))
-            if (entry.is_regular_file() && _wcsicmp(entry.path().extension().c_str(), L".dll") == 0)
-                std::filesystem::copy_file(entry.path(), staging / entry.path().filename());
-        secureDirectory(staging / L"engines");
-        std::filesystem::copy_file(sourceDir / L"engines" / L"sing-box.exe", staging / L"engines" / L"sing-box.exe");
-        for (const auto& entry : std::filesystem::directory_iterator(sourceDir / L"engines"))
-            if (entry.is_regular_file() && _wcsicmp(entry.path().extension().c_str(), L".dll") == 0)
-                std::filesystem::copy_file(entry.path(), staging / L"engines" / entry.path().filename());
-        // CopyFile may carry source permissions; explicitly protect every staged
-        // executable/DLL and its owner before SCM can load it as LocalSystem.
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(staging))
-            secureDirectory(entry.path());
-        std::string previousSid;
-        { std::ifstream owner(root / L"owner.sid"); std::getline(owner, previousSid); }
-        if (service.valid() && !stopService(service.get(), error)) return 1;
+        stagePayload(source, staging);
         const auto payload = root / L"bin", previous = root / L"previous";
         if (std::filesystem::exists(previous)) std::filesystem::remove_all(previous);
         const bool hadPayload = std::filesystem::exists(payload);
-        if (hadPayload) std::filesystem::rename(payload, previous);
+        std::string previousSid;
+        { std::ifstream owner(root / L"owner.sid"); std::getline(owner, previousSid); }
+        struct RestoreStart {
+            SC_HANDLE service;
+            bool disabled = false;
+            void restore() {
+                if (disabled) ChangeServiceConfigW(service, SERVICE_NO_CHANGE, SERVICE_AUTO_START,
+                    SERVICE_NO_CHANGE, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+                disabled = false;
+            }
+            ~RestoreStart() { restore(); }
+        } restoreStart{service.get()};
+        if (selfUpgrade && service.valid()) {
+            // Ordinary clients must not restart the old image while the helper
+            // has stopped SCM and is replacing DLLs/executables.
+            if (!ChangeServiceConfigW(service.get(), SERVICE_NO_CHANGE, SERVICE_DISABLED,
+                SERVICE_NO_CHANGE, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr))
+                throw std::runtime_error(winError("Pause service starts during update"));
+            restoreStart.disabled = true;
+        }
+        if (service.valid() && !stopService(service.get(), error)) return 1;
+        bool movedOld = false, movedNew = false;
         try {
+            if (hadPayload) { std::filesystem::rename(payload, previous); movedOld = true; }
             std::filesystem::rename(staging, payload);
+            movedNew = true;
             const auto command = quote((payload / L"clash-flux.exe").wstring()) + L" service run";
             if (!service.valid()) {
                 service = UniqueServiceHandle{CreateServiceW(manager.get(), options.name.c_str(), L"Clash-Flux Network Service",
@@ -566,6 +718,7 @@ int install(std::string_view requestedSid, std::string& error, const Options& op
             } else if (!ChangeServiceConfigW(service.get(), SERVICE_WIN32_OWN_PROCESS, SERVICE_AUTO_START,
                 SERVICE_ERROR_NORMAL, command.c_str(), nullptr, nullptr, nullptr, L"LocalSystem", nullptr, nullptr))
                 throw std::runtime_error(winError("ChangeServiceConfig"));
+            restoreStart.disabled = false; // SCM is now configured to auto-start again.
             // Normal owner may query/start; changing configuration or stopping
             // the service itself remains an administrator-only SCM operation.
             auto security = descriptor(L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;LCRP;;;" + wide(sid) + L")");
@@ -583,10 +736,11 @@ int install(std::string_view requestedSid, std::string& error, const Options& op
                 throw std::runtime_error(winError("Service failure recovery flag"));
             if (!startService(service.get(), error)) throw std::runtime_error(error);
         } catch (...) {
+            restoreStart.restore();
             if (service.valid()) { std::string ignored; stopService(service.get(), ignored); }
-            std::filesystem::remove_all(payload);
+            if (movedNew) std::filesystem::remove_all(payload);
             if (hadPayload) {
-                std::filesystem::rename(previous, payload);
+                if (movedOld) std::filesystem::rename(previous, payload);
                 if (validSid(previousSid)) {
                     std::ofstream(root / L"owner.sid", std::ios::trunc) << previousSid << '\n';
                     auto security = descriptor(L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;LCRP;;;" + wide(previousSid) + L")");
@@ -599,6 +753,33 @@ int install(std::string_view requestedSid, std::string& error, const Options& op
         }
         if (hadPayload) std::filesystem::remove_all(previous);
         return 0;
+    } catch (const std::exception& exception) { error = exception.what(); return 1; }
+}
+int install(std::string_view requestedSid, std::string& error, const Options& options) {
+    try { return installFrom(requestedSid, error, options, selfExe()); }
+    catch (const std::exception& exception) { error = exception.what(); return 1; }
+}
+int applyUpgrade(std::uintptr_t readyEvent, std::string& error, const Options& options) {
+    error.clear();
+    try {
+        // Neither an ordinary caller nor an elevated GUI can invoke the helper
+        // to bypass source validation; it runs only as SYSTEM from our copy.
+        if (currentUserSid() != "S-1-5-18") throw std::runtime_error("Service updater requires LocalSystem");
+        const auto root = directory(options);
+        const auto helper = root / L"updater" / L"clash-flux.exe";
+        requireProtectedPath(helper);
+        if (!std::filesystem::equivalent(selfExe(), helper)) throw std::runtime_error("Invalid service updater location");
+        const UniqueHandle ready{reinterpret_cast<HANDLE>(readyEvent)};
+        if (!ready.valid() || WaitForSingleObject(ready.get(), 10000) != WAIT_OBJECT_0)
+            throw std::runtime_error("Service updater did not receive its activation event");
+        std::string sid;
+        { std::ifstream owner(root / L"owner.sid"); std::getline(owner, sid); }
+        if (!validSid(sid)) throw std::runtime_error("Missing original service owner");
+        // This source was snapshotted by the authenticated daemon before the
+        // reply, so later changes to the application directory are irrelevant.
+        const auto source = root / L"upgrade-source" / L"clash-flux.exe";
+        requireProtectedPath(source);
+        return installFrom(sid, error, options, source, true);
     } catch (const std::exception& exception) { error = exception.what(); return 1; }
 }
 int uninstall(std::string& error, const Options& options) {

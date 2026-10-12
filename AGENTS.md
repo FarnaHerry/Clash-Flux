@@ -158,8 +158,14 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   spawn 内核、不提权 GUI；PPTP/RAS 与 TUN 路由补偿也由服务持有。数据库、订阅和
   当前用户系统代理仍在 GUI 侧。安装/更新/卸载只提权服务子命令，原始 SID 在 UAC 前
   读取；管道必须限制安装用户/SYSTEM/管理员并核对双方身份。服务载荷使用受保护的
-  Program Files 独立目录，版本不符拒绝运行并经 UAC 更新，卸载不得触碰用户订阅。
+  Program Files 独立目录，版本不符优先由服务自更新、失败拒绝运行并保留手动 UAC 更新，卸载不得触碰用户订阅。
   生命周期、部署与专属回归见 `docs/windows-service.md`。
+- 每次桌面 GUI 启动后异步检查已安装服务，并在内核自启前完成版本同步；同版本跳过、
+  未安装不主动安装，失败一次反馈且不自动请求 UAC。Windows 自更新仅消费真实管道
+  客户端进程的受保护 Program Files 载荷，逐级核对 owner/DACL 并拒绝可写文件与
+  reparse point；先暂存，再由受保护旧服务副本的 LocalSystem 助手替换并重启 SCM，
+  保留原安装 SID。旧版无 UPGRADE 和可写目录便携版保留手动授权入口，不能为了免
+  UAC 允许普通用户替换 SYSTEM 代码。macOS 无独立服务，手机服务随应用包更新。
 - 原生 VPN 的服务能力由 `VpnStore` 的任务线程监视并随 `VpnSnapshot` 发布，不能永久冻结启动时的 PPTP 可用状态。能力刷新用 `VpnManager::setEngineAvailable`，不得用会断开现有连接的 `setAdapters`；订阅卡片只读应用级 `VpnModel`，不得在渲染时探测服务。显式连接先检查服务与能力，再停止主 TUN；具体失败原因优先于通用不可用提示。
 - Windows CI 使用 runner 预装的 OpenSSL（`Program Files/OpenSSL`），构建前检查
   可执行文件和开发头文件；不要在发布门禁重新调用 Chocolatey 安装 OpenSSL。

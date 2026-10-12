@@ -278,46 +278,78 @@ struct TrayOperationResult {
         },
         0);
 
-    // 内核自启 + 崩溃检测泵：启动和存活检查全部在任务线程执行。
+    // 每次 GUI 启动都检查已安装服务，随后按设置自启内核；任务线程执行
+    // 阻塞 IPC/升级，应用级保留状态避免重组重复检查；不主动安装或触发 UAC。
     huxerui::Lifecycle(
         [tasks, trayCoreRunning, trayCoreMenuRunning, traySysProxy, trayTun,
          traySysProxyActive, trayTunActive, trayCorePending,
          traySysProxyPending, trayTunPending, coreModel, settingsModel,
-         startupRuntimeHandled] {
+         startupRuntimeHandled, toast] {
             const auto noCleanup = [] {};
             const SettingsView settings = settingsModel->view.Get();
-            if (!settings.ready || startupRuntimeHandled.Get()) return noCleanup;
+            if (!settings.ready || startupRuntimeHandled.Get() ||
+                coreModel->serviceChecking.Get() || cli::runtimeCommandMode()) return noCleanup;
             startupRuntimeHandled = true;
+            coreModel->serviceChecking = true;
             const bool startupAutoRun = settings.autoRun;
             tasks.Launch([=]() -> huxerui::Task<void> {
-                co_await RunOnTaskThread([startupAutoRun] {
-                    auto& core = store::coreStore();
-                    core.init();
-                    // 若上次异常退出把系统代理留在本应用端口上，先撤销。
-                    // 仅限确实指向本应用的设置，不动其他代理软件的接管。
-                    core.releaseStaleOwnedSystemProxy();
-                    if (HasDesktopCoreRuntime()) {
-                        // 清理上次异常退出留下的旧内核（含仍持有旧 TUN 配置
-                        // 的进程）。
-                        core.stopCore();
-                        // 内核启停与流量接管解耦：默认不在启动应用时拉起内核
-                        // （内核只是本地混合端口 + 控制接口，需要时由首页右下角
-                        // 悬浮按钮显式启动）；只有用户打开「启动时自动运行内核」
-                        // 才在这里拉起，并按已记录的 TUN / 系统代理意图恢复接管。
-                        if (startupAutoRun) {
-                            const bool resumeSysProxy = core.systemProxyEnabled();
-                            const bool resumeTun = core.tunEnabled();
-                            core.startCore(
-                                store::profilesStore().selectedYaml(), false,
-                                resumeTun, resumeSysProxy);
+                try {
+                    const auto maintenance = co_await RunOnTaskThread([startupAutoRun] {
+                        auto& core = store::coreStore();
+                        core.init();
+                        // 若上次异常退出把系统代理留在本应用端口上，先撤销。
+                        // 仅限确实指向本应用的设置，不动其他代理软件的接管。
+                        core.releaseStaleOwnedSystemProxy();
+                        if (HasDesktopCoreRuntime()) {
+                            // 清理上次异常退出留下的旧内核（含仍持有旧 TUN 配置
+                            // 的进程）。
+                            core.stopCore();
                         }
-                    }
-                });
-
+                        const auto maintenance = core.synchronizeService();
+                        if (!maintenance.ready) {
+                            stream::logApplication("warning", "启动服务检查/更新失败：" + maintenance.error);
+                            return maintenance;
+                        }
+                        if (maintenance.updated)
+                            stream::logApplication("info", "已将后台网络服务更新到当前应用版本");
+                        if (HasDesktopCoreRuntime()) {
+                            // 内核启停与流量接管解耦：默认不在启动应用时拉起内核
+                            // （内核只是本地混合端口 + 控制接口，需要时由首页右下角
+                            // 悬浮按钮显式启动）；只有用户打开「启动时自动运行内核」
+                            // 才在这里拉起，并按已记录的 TUN / 系统代理意图恢复接管。
+                            if (startupAutoRun) {
+                                const bool resumeSysProxy = core.systemProxyEnabled();
+                                const bool resumeTun = core.tunEnabled();
+                                core.startCore(
+                                    store::profilesStore().selectedYaml(), false,
+                                    resumeTun, resumeSysProxy);
+                            }
+                        }
+                        return maintenance;
+                    });
+                    coreModel->serviceChecking = false;
+                    coreModel->Update([installed = maintenance.installed](CoreView& view) {
+                        view.serviceInstalled = installed;
+                    });
+                    coreModel->RequestRefresh();
+                    if (!maintenance.ready)
+                        toast.Show(maintenance.error.empty() ? Localized("服务操作失败")
+                                                            : huxerui::StringVariant(maintenance.error));
+                } catch (const std::exception& exception) {
+                    coreModel->serviceChecking = false;
+                    coreModel->RequestRefresh();
+                    stream::logApplication("error", std::string{"启动服务任务异常："} + exception.what());
+                    toast.Show(exception.what());
+                } catch (...) {
+                    coreModel->serviceChecking = false;
+                    coreModel->RequestRefresh();
+                    stream::logApplication("error", "启动服务任务未知异常");
+                    toast.Show(Localized("服务操作失败"));
+                }
             });
             return noCleanup;
         },
-        settingsModel->view);
+        settingsModel->view, coreModel->serviceChecking);
 
     // 托盘运行态镜像：以 CoreModel 的 State 作依赖——模型一变就重新镜像一次，
     // 不再是 0.5s 定时器。动作进行中（pending）保留乐观值，避免图标闪回。

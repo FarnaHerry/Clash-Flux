@@ -29,8 +29,25 @@ Windows 数据面由原生 SCM 服务 `ClashFluxService` 托管，服务类型�
 该用户可以查询/启动 SCM 服务并使用控制管道；更改服务配置、卸载与停止服务本身
 仍需管理员权限。每台机器只有一份服务，目前只授权一个安装用户。
 
-Windows 服务版本必须与客户端完全相同。软件更新后，在设置中更新服务；版本不符
-会拒绝启动数据面，不自动从普通用户可写目录替换 LocalSystem 的代码。
+Windows 服务版本必须与客户端完全相同。每次 GUI 启动、设置 hydrate 完成后，
+应用在任务线程检查已安装服务，并在自动运行内核之前完成版本同步；同版本不重装，
+未安装不主动安装。检查/更新失败只反馈一次并记日志，暂停本次自动运行内核，
+设置页仍可手动安装/更新。服务检查期间禁用设置页的服务管理按钮，更新与内核启停
+复用 CoreStore 生命周期锁；CLI 查询不发起 GUI 启动维护或 UAC。
+
+版本不符时，服务收到无路径参数的 `UPGRADE`，通过命名管道实际客户端 PID 取得
+其可执行文件路径。自更新仅接受位于 Program Files、逐级目录/文件均由
+SYSTEM/管理员/TrustedInstaller 持有且不允许普通用户修改的载荷；拒绝用户可写
+目录、可写 DLL、reparse point 与异常 ACL。应用、相邻 DLL 与固定内核先复制到受保护
+的 `upgrade-source`，然后从旧服务载荷制作独立的 `updater` 副本，用 LocalSystem
+静默启动 `service apply-upgrade <继承的事件句柄>`。助手只有收到服务在回复后触发的
+事件才切换载荷；不运行 UI、不接受客户端提供的源路径或安装用户 SID，保留原授权用户。
+助手不在内核 Job Object 中，能够在 SCM 停止旧服务后替换文件并重新启动 SCM。
+客户端重试 VERSION 握手，确认新服务匹配当前版本才继续启动内核。
+
+**Program Files 安装版的上述服务同步不请求 UAC**；可写目录中的便携版仍通过设置
+按钮授权更新。没有 UPGRADE 指令的旧版服务需手动更新一次，此后使用自更新。
+不自动从普通用户可写目录替换 LocalSystem 的代码，也不在自动检查失败后请求 UAC。
 更新先暂存全部载荷，再停止服务、切换载荷并重启；失败尝试恢复旧载荷和授权 SID。
 卸载只移除专用服务目录和 SCM 注册，不删除用户数据库、订阅或 GUI 安装目录。
 卸载应用安装包前应先卸载其独立网络服务。
@@ -72,6 +89,11 @@ Windows 专属 `windows_service` 回归使用独占 SCM 服务、受保护的测
 需要管理员运行，不配置真实 VPN、TUN、系统代理或订阅。覆盖安装、版本握手、普通
 安装用户控制、异常回复、长操作期间查询、Job Object 清理、服务崩溃重启、卡住的管道客户端、卸载
 及用户配置保留。Windows CI 的项目门禁要求注册且启用该测试，不允许静默跳过。
+自更新回归用两份不同版本的假服务验证普通安装用户发起 UPGRADE、SYSTEM 助手跨
+进程停止/替换/重启、版本重新握手与原用户授权保留；同时检查不可信客户端目录、
+普通用户可写 DLL 被拒绝且旧服务保持可用，以及普通管理员不能直接调用内部助手。
+通用 `service_protocol` 还覆盖启动策略的同版本跳过、未安装跳过、更新失败、不可达
+与停止服务恢复，确认失败结果不被当作更新成功。
 PPTP 能力查询还覆盖安装前、安装后、长操作中和 SCM 重启后；通用 `vpn` 回归
 覆盖能力从不可用恢复、再次失效与恢复，检查实际拨号/路由和其它连接不被重置。
 
@@ -81,3 +103,5 @@ TUN 数据流与远端 PPTP 连接仍需 Windows 机器验收，不能以假内�
 实现使用微软的 [SCM 入口](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-startservicectrldispatcherw)、
 [命名管道访问控制](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights)
 和 [客户端模拟](https://learn.microsoft.com/en-us/windows/win32/ipc/impersonating-a-named-pipe-client) API。
+自更新来源使用 [管道客户端 PID](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getnamedpipeclientprocessid)
+与 [文件安全描述符](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getnamedsecurityinfow) 校验。

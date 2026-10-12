@@ -1,6 +1,6 @@
 # Clash-Flux
 
-版本更新见 [v0.3.30 发布说明](docs/releases/v0.3.30.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.31 发布说明](docs/releases/v0.3.31.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -265,7 +265,7 @@ clash-flux service install|uninstall|status|run
 `service install` 需 root（GUI 设置页经 pkexec 提权调用）：安装 systemd 单元
 `clash-flux.service`，此后 sing-box 和 Linux PPTP 都由同一个 root daemon 托管；
 OpenVPN endpoint 由 sing-box 自己建立，不再要求安装 OpenVPN CLI。
-已安装服务会在下一次启动内核时检查版本，并从当前客户端同步 Clash-Flux 与
+每次 GUI 启动后都会异步检查已安装服务，在内核自启前同步 Clash-Flux 与
 sing-box；升级文件先写入同目录临时文件，再原子替换，因此即使旧服务或内核仍在运行，
 也能由 systemd 平滑重启到新版本。首次安装或旧服务不支持自升级时，仍需执行一次
 `sudo clash-flux service install`。出于 root 安全校验，客户端也必须位于 root 管理且
@@ -276,7 +276,10 @@ GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议�
 建立；未安装服务时 Linux 的 TUN/PPTP 不会静默尝试 root 操作，而是明确提示安装服务。
 
 Windows 使用原生 SCM 服务 `ClashFluxService`，首次在设置的内核服务安装，软件升级后
-通过「更新服务」同步版本；UAC 只提升服务管理子命令，GUI 不需要管理员运行。
+启动应用会异步检查版本，由服务自己的 LocalSystem 助手同步受保护 Program Files
+安装目录中的载荷并重启，不请求 UAC。同版本不更新，未安装不主动安装；更新失败
+保留手动入口并暂停本次内核自启。旧服务需要先手动更新一次启用此能力；用户可写
+目录中的便携版仍通过「更新服务」授权更新。UAC 只提升服务管理子命令，GUI 不需要管理员运行。
 管理员终端也可执行 `clash-flux.exe service install|uninstall`。Windows 内核不再由
 GUI 直接启动，详细授权、退出行为和验证范围见 [Windows 服务](docs/windows-service.md)。
 

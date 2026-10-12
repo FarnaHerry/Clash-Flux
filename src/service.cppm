@@ -32,6 +32,7 @@
 // 绝对路径。PPTP 请求的字段经过十六进制编码，服务端只接受固定协议字段。
 module;
 #include <cstdio>
+#include "service_startup.h"
 
 #ifdef _WIN32
 #include "windows_service.h"
@@ -133,5 +134,23 @@ private:
 #else  // Mobile/macOS currently use the same public stubs.
 #include "service_stub.inc"
 #endif
+
+export using StartupResult = clashflux::service_startup::Result;
+
+#if defined(__ANDROID__) || defined(CLASHFLUX_ANDROID_LEGACY)
+inline
+#else
+export
+#endif
+StartupResult synchronizeInstalled() {
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+    return clashflux::service_startup::synchronize(
+        [] { return installed(); }, [] { return query(); },
+        [](std::string& error) { return ensureCompatible(error); });
+#else
+    // macOS has no separately installed daemon; mobile services ship in the app.
+    return {};
+#endif
+}
 
 } // namespace service
