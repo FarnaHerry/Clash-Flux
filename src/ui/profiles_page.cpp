@@ -150,11 +150,12 @@ namespace clashflux::ui {
         0);
     huxerui::Lifecycle(
         [pptpStates, openVpnStates, vpnModel] {
-            ReplaceStateList(pptpStates, vpnModel->pptp.Get());
-            ReplaceStateList(openVpnStates, vpnModel->openvpn.Get());
+            const auto& view = vpnModel->view.Get();
+            ReplaceStateList(pptpStates, view.pptp);
+            ReplaceStateList(openVpnStates, view.openvpn);
             return [] {};
         },
-        vpnModel->pptp, vpnModel->openvpn);
+        vpnModel->view);
 
     // 不可见时只保留本页 State/Lifecycle，不构建重子树：huxerui 的 Pager 会把
     // 四个一级页同时挂载，隐藏页即使不重组，其已挂载子树仍随每一帧被重新测量。

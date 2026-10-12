@@ -7,7 +7,7 @@ import tempfile
 REQUIRED = ["smoke", "profile_links", "page_transition", "singbox",
             "rule_provider_download", "dns_hosts_runtime", "dns_policy_runtime",
             "dns_tls_runtime", "vpn", "routing", "compensation", "sqlite_orm",
-            "persistence", "project_test_gate", "group_expansion_runtime", "service_protocol"]
+            "persistence", "project_test_gate", "group_expansion_runtime", "service_protocol", "cps_dependencies"]
 
 
 def main():
@@ -21,7 +21,7 @@ def main():
             nonlocal cases
             folder = root / str(cases)
             folder.mkdir()
-            lines = ["cmake_minimum_required(VERSION 3.30)",
+            lines = ["cmake_minimum_required(VERSION 4.4)",
                      "project(GateRegression LANGUAGES NONE)", "enable_testing()",
                      f'set(CLASHFLUX_MSVC_C4737_HARD_ERROR {"TRUE" if msvc else "FALSE"})']
             lines.append(f'set(WIN32 {"TRUE" if windows else "FALSE"})')

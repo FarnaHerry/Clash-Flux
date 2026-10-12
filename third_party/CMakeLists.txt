@@ -1,151 +1,41 @@
-# third_party/CMakeLists.txt — vendor 依赖的解包与构建。
-#
-# 所有第三方库以 tarball 形式提交在 third_party/tarballs/（来源与版本见
-# third_party/README.md），configure 期校验 SHA256 后解包到
-# ${CMAKE_BINARY_DIR}/vendor/ 再 add_subdirectory —— 仓库不提交解包后的源码树，
-# 构建完全离线、可复现。
-#
-# 产物 target：
-#   HuxerUI::huxerui  HuxerUI 0.3.0 SDK（shared；见文件尾 find_package）
-#   ixwebsocket   IXWebSocket 12.0.1（client-only，无 TLS/无 zlib）
-#   CURL::libcurl curl 8.22.0（桌面 OpenSSL 后端；Android/iOS 无 TLS，静态库）
-#   SQLite：HuxerUI::SQLite（huxerui::sqlite ORM，自带 sqlite3 amalgamation）
-#   clashflux_json nlohmann::json 3.12.0（single header）+ `import nlohmann.json`
-#   clashflux_qrcode Nayuki QR-Code-generator 1.8.0（订阅分享二维码；源码直提）
-#
-# OpenSSL 在顶层 CMakeLists 解析（imported target 需要全局可见），
-# 桌面平台在顶层解析 OpenSSL；Android/iOS 显式使用无 TLS 的 curl 构建。
-include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/clashflux_vendor.cmake")
+# Application-facing dependency layer: verified CPS packages + local module glue.
+# The separate producer preserves each library's locked source/options; no upstream
+# CMake targets are added to the application graph here.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/dependencies/Bootstrap.cmake")
+clashflux_prepare_dependencies()
+clashflux_find_cps(Glaze ${CLASHFLUX_DEP_glaze_VERSION} glaze)
+clashflux_find_cps(nlohmann_json ${CLASHFLUX_DEP_JSON_VERSION} nlohmann_json)
+clashflux_find_cps(QrCode ${CLASHFLUX_DEP_QRCODE_VERSION} qrcodegen)
+clashflux_find_cps(zstd ${CLASHFLUX_DEP_zstd_VERSION} libzstd_static)
+clashflux_find_cps(yaml-cpp ${CLASHFLUX_DEP_yamlcpp_VERSION} yaml-cpp)
+clashflux_find_cps(CURL ${CLASHFLUX_DEP_curl_VERSION} libcurl)
+clashflux_find_cps(IXWebSocket ${CLASHFLUX_DEP_ixwebsocket_VERSION} ixwebsocket)
 
-# Glaze JSON is isolated in a normal C++ translation unit. Keep its templates
-# out of HuxerUI codegen and exported C++ module interfaces on every platform.
-set(_glaze_archive "${CMAKE_CURRENT_SOURCE_DIR}/tarballs/glaze-9.0.0-headers.tar.gz")
-set(_glaze_sha "872764412db2ba94cf57e39cf6518f86c0e13728c1c668f7ed398801aadff812")
-file(SHA256 "${_glaze_archive}" _glaze_actual_sha)
-if (NOT _glaze_actual_sha STREQUAL _glaze_sha)
-    message(FATAL_ERROR "Glaze vendor archive SHA256 mismatch")
-endif ()
-clashflux_extract(glaze "${_glaze_archive}" "${_glaze_sha}" "glaze-9.0.0")
+# Keep Glaze templates private and outside codegen/exported module interfaces.
 add_library(clashflux_wire STATIC "${CMAKE_CURRENT_SOURCE_DIR}/../src/wire_codec.cpp")
 target_compile_features(clashflux_wire PRIVATE cxx_std_23)
-target_include_directories(clashflux_wire PRIVATE "${glaze_SOURCE_DIR}/include")
+target_link_libraries(clashflux_wire PRIVATE Glaze::glaze)
 set_target_properties(clashflux_wire PROPERTIES POSITION_INDEPENDENT_CODE ON)
-if (MSVC)
+if(MSVC)
     target_compile_options(clashflux_wire PRIVATE /Zc:preprocessor /permissive- /Zc:lambda /utf-8)
-endif ()
-
-if(NOT OpenSSL_FOUND AND NOT ANDROID AND NOT IOS)
-    # Android/iOS 走 curl 无 TLS 路径（见上面的 CURL_USE_OPENSSL 分支），
-    # 顶层不解析 OpenSSL。
-    message(FATAL_ERROR "third_party：顶层应已完成 OpenSSL 解析")
 endif()
 
-# Zstandard: private MRS decoder, fixed archive and hash on every platform.
-set(_zstd_archive "${CMAKE_CURRENT_SOURCE_DIR}/tarballs/zstd-1.5.7.tar.gz")
-set(_zstd_sha "37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3")
-file(SHA256 "${_zstd_archive}" _zstd_actual)
-if (NOT _zstd_actual STREQUAL _zstd_sha)
-    message(FATAL_ERROR "Zstandard vendor archive SHA256 mismatch")
-endif ()
-clashflux_extract(zstd "${_zstd_archive}" "${_zstd_sha}" "zstd-1.5.7")
-set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
-set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
-set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
-add_subdirectory("${zstd_SOURCE_DIR}/build/cmake" "${CMAKE_CURRENT_BINARY_DIR}/zstd" EXCLUDE_FROM_ALL)
-target_include_directories(libzstd_static INTERFACE "$<BUILD_INTERFACE:${zstd_SOURCE_DIR}/lib>")
-
-# ---- nlohmann::json 3.12.0（single header + `import nlohmann.json` 模块）------
-# AndroidLegacy.cmake 直接包含 single header；不要在 NDK 上额外编译依赖
-# `import std` 的 nlohmann.json 模块。
-if (ANDROID)
+# BMIs belong to the application's compiler/configuration, not to the CPS cache.
+# Android keeps its ordinary-header Legacy adaptation of the same JSON package.
+if(ANDROID)
     add_library(clashflux_json INTERFACE)
-else ()
+    target_link_libraries(clashflux_json INTERFACE nlohmann_json::nlohmann_json)
+else()
     add_library(clashflux_json STATIC)
     target_sources(clashflux_json PUBLIC FILE_SET json_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/.."
         FILES "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/nlohmann.json.cppm")
-    set_target_properties(clashflux_json PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON CXX_MODULE_STD ON)
-endif ()
-if (ANDROID)
-    target_include_directories(clashflux_json INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/json")
-else ()
-    target_include_directories(clashflux_json PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/json")
-endif ()
-
-# ---- Nayuki QR-Code-generator 1.8.0（订阅分享二维码；源码直提，同 json 先例）----
-add_library(clashflux_qrcode STATIC "${CMAKE_CURRENT_SOURCE_DIR}/qrcodegen/qrcodegen.cpp")
-target_compile_features(clashflux_qrcode PRIVATE cxx_std_17)
-target_include_directories(clashflux_qrcode PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/qrcodegen")
-
-# ---- yaml-cpp 0.8.0（Clash 订阅 YAML 解析，sing-box 配置编译器输入）---------
-clashflux_extract(yamlcpp
-    "${CMAKE_CURRENT_SOURCE_DIR}/tarballs/yaml-cpp-0.8.0.tar.gz"
-    "fbe74bbdcee21d656715688706da3c8becfd946d92cd44705cc6098bb23b3a16"
-    "yaml-cpp-0.8.0")
-set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
-set(YAML_CPP_INSTALL OFF CACHE BOOL "" FORCE)
-set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-# yaml-cpp 0.8.0 声明 cmake_minimum_required(3.4)，CMake 4.x 已移除 <3.5 兼容。
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
-add_subdirectory("${yamlcpp_SOURCE_DIR}" "yaml-cpp-build")
-
-# ---- curl 8.22.0（静态库，OpenSSL 后端，仅 lib）------------------------------
-# 用途：sing-box clash_api REST 与订阅下载。
-clashflux_extract(curl
-    "${CMAKE_CURRENT_SOURCE_DIR}/tarballs/curl-8.22.0.tar.gz"
-    "d54dd598bf05927a726deb38df31c6a255ba83ff1de57c5d1464dac3ed8f44a1"
-    "curl-8.22.0")
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
-set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "" FORCE)
-set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-if (ANDROID OR IOS)
-    # Android/iOS 构建没有 OpenSSL 依赖：curl 以无 TLS 构建。Android REST
-    # 走 127.0.0.1 http；iOS 目前只编译 Simulator app core，不作为可发布应用。
-    set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
-    set(CURL_ENABLE_SSL OFF CACHE BOOL "" FORCE)
-else ()
-    set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
-endif ()
-set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
-set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
-set(CURL_BROTLI OFF CACHE BOOL "" FORCE)
-set(CURL_ZSTD OFF CACHE BOOL "" FORCE)
-set(CURL_DISABLE_LDAP ON CACHE BOOL "" FORCE)
-set(CURL_DISABLE_LDAPS ON CACHE BOOL "" FORCE)
-add_subdirectory("${curl_SOURCE_DIR}" "curl-build")
-
-# ---- IXWebSocket 12.0.1：client-only -----------------------------------------
-# 用途：clash_api /logs /traffic /connections 推送流（纯 ws:// 本地回环，
-# 不需要 TLS/zlib）。
-clashflux_extract(ixwebsocket
-    "${CMAKE_CURRENT_SOURCE_DIR}/tarballs/ixwebsocket-12.0.1.tar.gz"
-    "d23bdc91dbfe2b9ae13c322d539392d7a6b8b506560f41c90e227fa0f86a2405"
-    "IXWebSocket-12.0.1")
-file(GLOB IXWS_SOURCES "${ixwebsocket_SOURCE_DIR}/ixwebsocket/*.cpp")
-list(FILTER IXWS_SOURCES EXCLUDE REGEX
-    "(IXSocketServer|IXHttpServer|IXWebSocketServer|IXWebSocketProxyServer|IXSocketOpenSSL|IXSocketMbedTLS|IXSocketAppleSSL)\\.cpp$")
-add_library(ixwebsocket STATIC ${IXWS_SOURCES})
-target_include_directories(ixwebsocket PUBLIC "${ixwebsocket_SOURCE_DIR}")
-target_compile_features(ixwebsocket PUBLIC cxx_std_17)
-if(WIN32)
-    target_link_libraries(ixwebsocket PUBLIC ws2_32)
+    set_target_properties(clashflux_json PROPERTIES CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON CXX_MODULE_STD ON)
+    target_link_libraries(clashflux_json PUBLIC nlohmann_json::nlohmann_json)
 endif()
 
-# ---- SQLite：由 HuxerUI::SQLite（huxerui_sqlite）提供 ------------------------
-# 订阅（profiles）与应用设置（settings）的本地持久化已迁移到 huxerui::sqlite
-# ORM；它自带钉死版本的 sqlite3 amalgamation，不再单独 vendor SQLiteCpp。
-# 该库的源码获取在顶层 CMakeLists 通过 huxerui_use_library 完成。
-
-# ---- HuxerUI（源码 third_party/huxerui 或预编译 SDK，由顶层选择）--------------
-# Linux 后端为 GTK4/Cairo，运行时需要系统 libgtk-4-1/libsoup-3.0-0；
-# SDK 模式直接链接预编译 libhuxerui.so，源码模式需要 gtk4-devel/libsoup3-devel。
-if (NOT CLASHFLUX_HUXERUI_FROM_SOURCE)
-    # SDK 自带的资源包（运行时按 HUXERUI_RESOURCES_DIR 或 <exe>.resources/ 查找）
+# HuxerUI and its extensions retain their codegen/resource/Android graph contract.
+if(NOT CLASHFLUX_HUXERUI_FROM_SOURCE)
     set(HUXERUI_RESOURCES_BIN "${HUXERUI_SDK_DIR}/share/huxerui/resources/huxerui/resources.bin" CACHE INTERNAL "")
-endif ()
+endif()

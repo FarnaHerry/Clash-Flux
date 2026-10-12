@@ -11,6 +11,7 @@ import clashflux.config;
 import clashflux.core;
 import clashflux.openvpn;
 import clashflux.pptp;
+import clashflux.service;
 import clashflux.vpn;
 import clashflux.routing;
 import clashflux.singbox;
@@ -58,6 +59,16 @@ export struct OpenVpnState {
     std::string error;
 
     bool operator==(const OpenVpnState&) const = default;
+};
+
+// Capability and session states are published together, including before any
+// connection has been dialed. Rendering never probes or constructs VpnStore.
+export struct VpnSnapshot {
+    bool pptpAvailable = false;
+    bool openVpnAvailable = true;
+    std::vector<PptpState> pptp;
+    std::vector<OpenVpnState> openvpn;
+    bool operator==(const VpnSnapshot&) const = default;
 };
 
 export class VpnStore {
@@ -193,6 +204,17 @@ public:
         return result;
     }
 
+    VpnSnapshot snapshot() {
+        std::lock_guard lock(mutex_);
+        VpnSnapshot result{.pptpAvailable = adapter_.descriptor.available,
+                           .openVpnAvailable = openVpnAdapter_.descriptor.available};
+        result.pptp.reserve(snapshots_.size());
+        for (const auto& [id, state] : snapshots_) result.pptp.push_back(state);
+        result.openvpn.reserve(openVpnSnapshots_.size());
+        for (const auto& [id, state] : openVpnSnapshots_) result.openvpn.push_back(state);
+        return result;
+    }
+
     OpenVpnState openVpnState(std::int64_t profileId) {
         std::lock_guard lock(mutex_);
         return openVpnStateLocked(profileId);
@@ -235,6 +257,20 @@ public:
 
         const std::string id = connectionId(profile.id);
         std::unique_lock operationLock(operationMutex_);
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+        // An installed service may be stopped or may have changed since the
+        // last poll. Check/start it before engine selection or stopping TUN.
+        if (!service::ensureCompatible(error)) {
+            refreshPptpAvailability();
+            setError(profile.id, error);
+            return false;
+        }
+#endif
+        if (!refreshPptpAvailability()) {
+            error = "网络服务侧 PPTP 后端不可用";
+            setError(profile.id, error);
+            return false;
+        }
 #ifdef _WIN32
         auto mainOperation = coreStore().lockNativeLifecycle();
         const bool mainWasRunning = coreStore().snapshot().state == core::CoreState::Running;
@@ -388,10 +424,22 @@ public:
     }
 
 private:
+    // Called only on worker threads while holding operationMutex_. Keep the
+    // cached capability and existing snapshots consistent under the UI lock.
+    bool refreshPptpAvailability() {
+        const bool available = pptp::PptpToolsAvailable();
+        manager_.setEngineAvailable(vpn::EngineKind::SystemPptp, available);
+        std::lock_guard lock(mutex_);
+        adapter_.descriptor.available = available;
+        for (auto& [id, snapshot] : snapshots_) snapshot.toolsAvailable = available;
+        return available;
+    }
+
     // PPTP can die independently of UI actions. OpenVPN endpoint liveness is
     // owned by the resident sing-box instance and follows the core lifecycle.
     inline void refreshSessions() {
         std::lock_guard operationLock(operationMutex_);
+        refreshPptpAvailability();
         for (const auto& connection : manager_.connections()) {
             if (connection.state != vpn::ConnectionState::Connected ||
                 connection.kind != vpn::ConnectionKind::Pptp) continue;

@@ -66,6 +66,8 @@
                                  [profiles, typeIndices = std::move(typeIndices),
                                   typeCount, compact, tasks, toast, http, reload,
                                   pptpStates, openVpnStates, isConnectionSelected,
+                                  pptpAvailable = vpnModel->view.Get().pptpAvailable,
+                                  openVpnAvailable = vpnModel->view.Get().openVpnAvailable,
                                   toggleConnection, openEditInfo, showEditRules,
                                   showEditFile, showQr, selectionPending, theme,
                                   dialog](std::size_t index) -> huxerui::View {
@@ -75,21 +77,18 @@
                                      }
                                      const db::Profile& profile =
                                          profiles[typeIndices[index]];
-                                     store::PptpState pptpState =
-                                         profile.type == "pptp"
-                                             ? store::vpnStore().state(profile.id)
-                                             : store::PptpState{};
+                                     store::PptpState pptpState{
+                                         .profileId = profile.id,
+                                         .toolsAvailable = pptpAvailable};
                                      for (const auto& state : pptpStates) {
                                          if (state.profileId == profile.id) {
                                              pptpState = state;
                                              break;
                                          }
                                      }
-                                     store::OpenVpnState openVpnState =
-                                         profile.type == "openvpn"
-                                             ? store::vpnStore().openVpnState(
-                                                   profile.id)
-                                             : store::OpenVpnState{};
+                                     store::OpenVpnState openVpnState{
+                                         .profileId = profile.id,
+                                         .toolsAvailable = openVpnAvailable};
                                      for (const auto& state : openVpnStates) {
                                          if (state.profileId == profile.id) {
                                              openVpnState = state;

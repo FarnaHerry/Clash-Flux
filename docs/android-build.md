@@ -63,3 +63,12 @@ Android Release APK 必须同时启用 v1（JAR 签名，包含 `META-INF` 签�
 报告为未签名。GitHub Actions 使用 `apksigner verify --verbose --min-sdk-version 23` 并分别
 断言 v1、v2 均为 `true`；由于应用的 minSdk 是 24，默认核验会跳过 v1，因此只检查默认命令
 退出成功不能防止该兼容性回归。
+
+## CMake / CPS 依赖基线
+
+Android native 与桌面统一要求 CMake 4.4，验证版本为 4.4.2。Gradle 的 CMake
+版本声明和 CI 的 pip 安装必须一致；`local.properties` 或用户 Gradle 属性中的
+`cmake.dir` 应指向该安装前缀。通用 C/C++ 依赖由目标 NDK 工具链构建为 CPS 包，
+缓存区分 ABI、API、编译器、flags 和配置；不能拿宿主机包给 Android 链接。
+HuxerUI Java/native 同源、固定 libbox revision 和 `stageBundledRuleSets` 保持原约束。
+流程见 [CPS 依赖管理](cps-dependencies.md)。
