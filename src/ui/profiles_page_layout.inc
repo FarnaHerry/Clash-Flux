@@ -169,11 +169,10 @@
         newPptpRoutes = huxerui::TextEditingValue{""};
         newPptpMppe = true;
         newQrContent = huxerui::TextEditingValue{""};
-        newConfigContent = huxerui::TextEditingValue{""};
         pickedPath = "";
     };
     const ProfileCreateFields createFields{
-        newName, newUrl, newQrContent, newConfigContent, newTypeIdx, newDesc,
+        newName, newUrl, newQrContent, newTypeIdx, newDesc,
         newTimeout, newInterval, newAuto, newSys, newCore, newCert,
         newPptpServer, newPptpUsername, newPptpPassword, newPptpTimeout,
         newPptpRoutes, newPptpMppe,

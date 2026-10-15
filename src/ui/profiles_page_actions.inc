@@ -24,7 +24,7 @@
     };
 
     auto toggleConnection = [connectionSelection, pptpStates, openVpnStates,
-                             toast](std::int64_t id, bool checked) {
+                             toast, findProfile](std::int64_t id, bool checked) {
         for (std::size_t index = 0; index < connectionSelection.Size(); ++index) {
             if (connectionSelection[index] != id) continue;
             if (!checked) connectionSelection.Erase(index);
@@ -50,6 +50,22 @@
             if (hasOtherActive(pptpStates) || hasOtherActive(openVpnStates)) {
                 toast.Show(Localized("请先断开当前内网连接，再连接其他配置"));
                 return;
+            }
+        }
+        if (vpn::PptpSingleSession()) {
+            // Windows 的 PPTP 是单连接槽位：选择前就给出平台原因，避免选中
+            // 后在拨号阶段才失败（批量打开由存储层同一检查兜底）。
+            const auto profile = findProfile(id);
+            if (profile && profile->type == "pptp") {
+                for (const auto& state : pptpStates) {
+                    if (state.profileId != id &&
+                        (state.state == vpn::ConnectionState::Connected ||
+                         state.state == vpn::ConnectionState::Connecting)) {
+                        toast.Show(Localized(
+                            "Windows 系统拨号同一时间只支持一条 PPTP，请先断开当前连接"));
+                        return;
+                    }
+                }
             }
         }
         connectionSelection.PushBack(id);

@@ -121,13 +121,15 @@ public:
             if (rule.id.empty()) rule.id = "route-" + cfg::randomSecret();
             rule.order = static_cast<std::int64_t>(i);
         }
-        std::string mainYaml;
-        for (const auto& profile : coreStore().db().listProfiles()) {
-            if (!profile.selected || profile.type == "pptp" || profile.type == "openvpn") continue;
-            std::ifstream input(cfg::profilesDir() / profile.file, std::ios::binary);
-            if (input) mainYaml.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+        // 内核运行时，publishRouting → restartCore 会用同一份候选（相同 TUN
+        // 状态 + 新落库策略）在停止旧实例前做「编译 + 内核 check」，拒绝时走
+        // 下方回滚；这里再预编译一次纯属重复，且是保存全局规则卡顿的主因。
+        // 内核未运行时没有候选门禁，这里做唯一一次「编译 + check」验证。
+        if (coreStore().snapshot().state != core::CoreState::Running &&
+            !coreStore().validateRoutingPlan(coreStore().currentMainContent(),
+                                             error, &policy)) {
+            return false;
         }
-        if (!coreStore().validateRoutingPlan(mainYaml, error, &policy)) return false;
         try {
             if (!manager_.applyPolicy(policy, error)) {
                 // A failed rollback means the native route state is unknown.
@@ -270,6 +272,21 @@ public:
             error = "网络服务侧 PPTP 后端不可用";
             setError(profile.id, error);
             return false;
+        }
+        if (vpn::PptpSingleSession()) {
+            // Windows RAS 只有一条 PPTP 会话槽位。在停止主内核之前先拒绝
+            // 第二条拨号，不为注定失败的拨号扰动正在运行的 TUN/内核。
+            for (const auto& other : manager_.connections()) {
+                if (other.kind == vpn::ConnectionKind::Pptp && other.id != id &&
+                    (other.state == vpn::ConnectionState::Connected ||
+                     other.state == vpn::ConnectionState::Connecting)) {
+                    error = std::format(
+                        "Windows 系统拨号同一时间只支持一条 PPTP；请先断开「{}」",
+                        other.name);
+                    setError(profile.id, error);
+                    return false;
+                }
+            }
         }
 #ifdef _WIN32
         auto mainOperation = coreStore().lockNativeLifecycle();

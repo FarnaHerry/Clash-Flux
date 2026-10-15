@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -290,6 +291,64 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
     return true;
 }
 
+void DispatchGlobalPolicySave(
+    huxerui::TaskScope tasks,
+    huxerui::StateList<vpn::RouteRule> globalRules,
+    huxerui::ToastHandle toast,
+    huxerui::State<int> refreshTick,
+    huxerui::State<bool> policySaving,
+    huxerui::State<bool> policySavePending,
+    huxerui::State<std::uint64_t> loadGeneration,
+    std::shared_ptr<CoreModel> coreModel) {
+    policySaving = true;
+    loadGeneration = loadGeneration.Get() + 1;
+    vpn::VpnPolicy policy;
+    policy.rules.reserve(globalRules.Size());
+    for (const vpn::RouteRule& rule : globalRules) {
+        policy.rules.push_back(rule);
+    }
+    tasks.Launch([tasks, globalRules, toast, refreshTick, policySaving,
+                  policySavePending, loadGeneration, coreModel,
+                  policy = std::move(policy)]() mutable -> huxerui::Task<void> {
+        std::string error;
+        bool ok = false;
+        try {
+            const auto outcome = co_await RunOnTaskThread(
+                [policy = std::move(policy), &error]() mutable {
+                    // 未命中的流量始终跟随当前启用的代理订阅；原生 PPTP/
+                    // OpenVPN 只通过全局路由规则接管自己的目标网段。
+                    for (const db::Profile& profile : store::profilesStore().list()) {
+                        if (profile.selected && profile.type != "pptp" &&
+                            profile.type != "openvpn") {
+                            policy.defaultMainId =
+                                store::ProfileConnectionId(profile.id);
+                            break;
+                        }
+                    }
+                    const bool saved = store::vpnStore().saveGlobalPolicy(
+                        std::move(policy), error);
+                    return std::pair{saved, store::coreStore().snapshot()};
+                });
+            ok = outcome.first;
+            coreModel->Update([&](CoreView& view) { view.core = outcome.second; });
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
+        policySaving = false;
+        toast.Show(ok ? Localized("编排规则已保存")
+                      : LocalizedFormat("全局规则保存失败：{}", error));
+        // 失败不触发重载：列表保留用户编辑（含失败规则），修正后可重试；
+        // 成功才从存储回读，拿到落库后的规则 ID 与顺序。
+        if (ok) refreshTick = refreshTick.Get() + 1;
+        if (policySavePending.Get()) {
+            policySavePending = false;
+            DispatchGlobalPolicySave(tasks, globalRules, toast, refreshTick,
+                                     policySaving, policySavePending,
+                                     loadGeneration, coreModel);
+        }
+    });
+}
+
 } // namespace
 
 using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObject>>;
@@ -360,43 +419,25 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
     auto policySaving = huxerui::UseState(false);
     auto loadGeneration = huxerui::UseState<std::uint64_t>(0);
 
-    auto persistGlobalPolicy = [tasks, globalRules, toast, refreshTick, policySaving, loadGeneration, coreModel, globalRevision] {
+    auto policySavePending = huxerui::UseState(false);
+    // 一次保存要「编译 + 内核 check + 重启内核」，耗时数秒；期间用户可能继续
+    // 编辑（新增/开关/删除都会触发保存）。在途时只标 pending，完成后用最新
+    // 列表补一次保存——直接丢弃会让刚写的规则在下一次重载时被存储值覆盖。
+    auto dispatchPolicySave = [tasks, globalRules, toast, refreshTick,
+                               policySaving, policySavePending, loadGeneration,
+                               coreModel] {
+        DispatchGlobalPolicySave(tasks, globalRules, toast, refreshTick,
+                                 policySaving, policySavePending,
+                                 loadGeneration, coreModel);
+    };
+    auto persistGlobalPolicy = [globalRevision, policySaving, policySavePending,
+                                dispatchPolicySave] {
         globalRevision = globalRevision.Get() + 1;
-        if (policySaving.Get()) return;
-        policySaving = true;
-        loadGeneration = loadGeneration.Get() + 1;
-        vpn::VpnPolicy policy;
-        policy.rules.reserve(globalRules.Size());
-        for (const vpn::RouteRule& rule : globalRules) {
-            policy.rules.push_back(rule);
+        if (policySaving.Get()) {
+            policySavePending = true;
+            return;
         }
-        tasks.Launch([policy = std::move(policy), toast, refreshTick, policySaving, coreModel]() mutable
-                         -> huxerui::Task<void> {
-            std::string error;
-            bool ok = false;
-            try { const auto outcome = co_await RunOnTaskThread([policy = std::move(policy),
-                                                       &error]() mutable {
-                // 未命中的流量始终跟随当前启用的代理订阅；原生 PPTP/
-                // OpenVPN 只通过全局路由规则接管自己的目标网段。
-                for (const db::Profile& profile : store::profilesStore().list()) {
-                    if (profile.selected && profile.type != "pptp" &&
-                        profile.type != "openvpn") {
-                        policy.defaultMainId =
-                            store::ProfileConnectionId(profile.id);
-                        break;
-                    }
-                }
-                const bool saved = store::vpnStore().saveGlobalPolicy(std::move(policy), error);
-                return std::pair{saved, store::coreStore().snapshot()};
-            });
-            ok = outcome.first;
-            coreModel->Update([&](CoreView& view) { view.core = outcome.second; });
-            } catch (const std::exception& e) { error = e.what(); }
-            policySaving = false;
-            toast.Show(ok ? Localized("编排规则已保存")
-                          : LocalizedFormat("全局规则保存失败：{}", error));
-            refreshTick = refreshTick.Get() + 1;
-        });
+        dispatchPolicySave();
     };
 
     // 规则加载：以「订阅列表 + 手动刷新计数」为依赖——订阅变化或用户点刷新时

@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.32 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.33 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -628,7 +628,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         # 页内分区切换：无窗口 Runtime 验证生产 Pager 的跟手、回弹、嵌套边界、
         # 快速反向切换、滚动保留以及大组的有界虚拟化。
         if (TARGET HuxerUI::testing)
-            add_executable(test_page_transition tests/test_page_transition.cpp src/ui/section_tabs.cpp)
+            add_executable(test_page_transition tests/test_page_transition.cpp src/ui/section_tabs.cpp src/ui/title_bar_search.cpp)
             target_include_directories(test_page_transition PRIVATE src/ui)
             target_compile_features(test_page_transition PRIVATE cxx_std_23)
             target_link_libraries(test_page_transition PRIVATE HuxerUI::testing)

@@ -261,6 +261,17 @@ export inline std::size_t MaxConcurrentAuxiliaryConnections() noexcept {
 #endif
 }
 
+// Windows 系统拨号（RAS）的客户端栈同一时间只支持一条 PPTP 会话，这是平台
+// 能力边界而不是实现限制：存储层在停止主内核之前按它拒绝第二条拨号并给出
+// 具体原因，UI 在选择与卡片上如实体现；OpenVPN 等 sing-box endpoint 不受影响。
+export inline bool PptpSingleSession() noexcept {
+#if defined(_WIN32)
+    return true;
+#else
+    return false;
+#endif
+}
+
 export struct VpnPolicy {
     // 空值表示没有默认主 VPN；匹配不到规则时保持直连/系统默认路由。
     std::string defaultMainId;

@@ -189,6 +189,19 @@ Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上�
 现有提示文字及页面动作入口保留；首页卡片中的字段缺省值、选择器帮助说明和菜单禁用项
 不属于空页面占位。组件用 Scope 延迟读取主题，供弹窗与懒加载工厂安全复用。
 
+## 文件拖入选区
+
+「拖入或点击选择文件」的输入区域统一使用 `src/ui/file_drop_zone.h` 的
+`FileDropZone(icon, title, picked_path, tasks, toast, picker, filter, key)`，
+定义在 `common.cpp`，不自行拼接 Column/FileDropTarget。外观跟控件族：
+圆角 `theme.shapes.small`、常态 `surface_container_high` 底加 `outline_soft`
+描边，拖入悬停切换 `primary_container` 底、`primary` 加粗描边与
+`on_primary_container` 文字；未选择时副行显示 `filter.name`，选中后主行显示
+文件名、副行显示完整路径。交互契约：`FileDropTarget` 按扩展名整批校验外部拖入
+（要么全收要么拒绝，失败 toast），点击仍走 FilePicker 并复用
+`PickProfileConfigFile` 的错误反馈——键盘、触摸与不支持拖入的宿主依赖该等价
+入口。`picked_path` 由调用方持有并回写，导入与解析不在控件内进行。
+
 内容与外框统一使用主题层级：标题栏、一级侧栏与窗口外框用 `colors.background`，
 `PageScaffold` / `SecondaryPageScaffold` 的内容区域用 `IslandTheme::base`
 （`surface_container_low`），页内卡片沿用 `raised`（`surface_container`）。

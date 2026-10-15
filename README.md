@@ -1,6 +1,6 @@
 # Clash-Flux
 
-版本更新见 [v0.3.32 发布说明](docs/releases/v0.3.32.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.33 发布说明](docs/releases/v0.3.33.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -31,7 +31,8 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 - 多重规则 / 连接 / 日志：按订阅查看各自规则，使用全局路由规则把域名/IP/CIDR
   分配给不同连接；连接快照（可逐条/全部关闭）、内核与应用日志统一显示、搜索与导出，历史可恢复
 - 原生 VPN 订阅：PPTP 保留系统拨号/特权服务路径（Windows 走系统 RAS，条目固定
-  使用 MS-CHAPv2，MPPE-128 由订阅开关控制：勾选强制、不勾选按服务端要求协商）；
+  使用 MS-CHAPv2，MPPE-128 由订阅开关控制：勾选强制、不勾选按服务端要求协商；
+  Windows 系统拨号同一时间仅支持一条 PPTP，连接第二条前需先断开，UI 会明确提示）；
   OpenVPN `.ovpn` 由 sing-box 1.14 的 `openvpn-client` endpoint 承载，可同时
   启用多个连接；内网
   CIDR 由 sing-box 路由规则直接指向各 endpoint，PPTP 才由平台后端安装系统路由
@@ -113,8 +114,10 @@ sudo dnf install ppp pptp iproute
 sudo apt install ppp pptp iproute2
 ```
 
-OpenVPN `.ovpn` 与 Clash YAML、sing-box JSON 共用远程订阅、本地文件和配置文本入口，
-自动按内容识别，新建界面不再提供独立 OpenVPN 类型。源文件保留原文；可设为主订阅，
+OpenVPN `.ovpn` 与 Clash YAML、sing-box JSON 共用远程订阅和本地文件入口，
+自动按内容识别（扫码得到的文本同样按内容识别），新建界面不再提供独立 OpenVPN 类型或
+配置文本粘贴入口，粘贴内容请保存为文件后从「本地文件」导入；本地文件入口是可拖入
+文件的选区，点击仍打开系统文件选择器。源文件保留原文；可设为主订阅，
 桌面也可通过启用的编排规则作为次来源，手机仍保持单活动普通订阅。
 已有 `openvpn` 记录保留 ID、凭据、内网路由与辅助连接操作，归到本地来源分区，
 不自动迁移或启用。兼容与限制见 [OpenVPN 导入](docs/openvpn-import.md)。

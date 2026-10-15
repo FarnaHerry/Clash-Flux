@@ -14,6 +14,7 @@
 #include "app_resources.h"
 #include "ui.h"
 #include "empty_state.h"
+#include "file_drop_zone.h"
 #include "profile_file_picker.h"
 #include "task_bridge.h"
 #if defined(__ANDROID__)
@@ -261,6 +262,9 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
         .Key("profile-create-submit");
 }
 
+// 可拖入也可点击的配置文件选择区：统一使用 src/ui/file_drop_zone.h 的共享控件
+// （圆角/描边随控件族，悬停高亮，整批扩展名校验）。
+
 [[huxerui::composable]] huxerui::View ProfileCreatePage(
     ProfileCreateFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
@@ -270,12 +274,12 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
     const auto typeIndex = fields.type_index.Get();
     const bool remote = typeIndex == 0;
     const bool local = typeIndex == 1;
-    const bool pptp = pptp_supported && typeIndex == 2;
-    const bool inlineConfig = !remote && !local && !pptp;
+    // 配置文本粘贴入口已并入「本地文件」：内容按 DetectProfileFormat 识别，
+    // 选择器过滤同样接受 .ovpn。
+    const bool pptp = !remote && !local;
     std::vector<huxerui::StringVariant> types{
         Localized("远程订阅"), Localized("本地文件")};
     if (pptp_supported) types.push_back(Localized("PPTP 内网"));
-    types.push_back(Localized("配置文本"));
 
     huxerui::View typeFields;
     if (remote) {
@@ -287,31 +291,14 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                              url = value;
                          });
     } else if (local) {
-        typeFields = huxerui::Column {
-            huxerui::Button(Localized("选择文件")).OnClick(
-                [tasks, picker, toast, configFileFilter, path = fields.picked_path] {
-                    tasks.Launch([picker, path, toast, configFileFilter]() -> huxerui::Task<void> {
-                        const auto picked = co_await PickProfileConfigFile(picker, configFileFilter, toast);
-                        if (!picked) co_return;
-                        if (const auto file = picked->AsFile()) path = file->Path();
-                    });
-                }),
-            huxerui::Text(fields.picked_path.Get()),
-        }.With(huxerui::Spacing(8.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    } else if (pptp) {
+        typeFields = FileDropZone(app::images::file_import,
+                                  Localized("拖入或点击选择配置文件"),
+                                  fields.picked_path, tasks, toast, picker,
+                                  configFileFilter, "profile-file-drop-zone");
+    } else {
         typeFields = PptpOptionsForm(
             fields.pptp_server, fields.pptp_username, fields.pptp_password,
             fields.pptp_timeout, fields.pptp_routes, fields.pptp_mppe);
-    } else {
-        typeFields = huxerui::TextField(fields.config_content.Get())
-            .Label(Localized("配置内容"))
-            .Placeholder(Localized("粘贴 sing-box JSON、Clash YAML 或 OpenVPN .ovpn 配置"))
-            .LineLimits(huxerui::TextFieldLineLimits::MultiLine(8, 16))
-            .Variant(huxerui::TextFieldVariant::Outlined)
-            .OnChanged([config = fields.config_content](const huxerui::TextEditingValue& value) {
-                config = value;
-            });
     }
 
     const auto importProfile = [=] {
@@ -336,11 +323,6 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                 return;
             }
         }
-        if (inlineConfig && fields.config_content.Get().text.empty()) {
-            toast.Show(Localized("配置内容不能为空"));
-            return;
-        }
-        const std::string content = fields.config_content.Get().text;
         LaunchProfileImport(fields.importing, [=]() -> huxerui::Task<ProfileImportResult> {
             db::Profile options;
             options.description = fields.desc.Get().text;
@@ -357,8 +339,6 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                 options.nativeRoutes = joinRoutes(parseRouteField(
                     fields.pptp_routes.Get().text));
             }
-            if (inlineConfig)
-                co_return co_await ImportProfileContent(fields.name.Get().text, content, options);
             co_return co_await ImportProfileForPlatform(
                 http, ProfileImportRequest{
                           .remote = remote,
@@ -763,8 +743,6 @@ void PushProfileQrScanner(
                              pptp_supported, navigation,
                              on_back, popDuration = theme.motion.normal] {
         if (fields.importing.Get()) return;
-        fields.config_content = huxerui::TextEditingValue{""};
-        fields.type_index = 0;
         const auto on_complete = [tasks, navigation, popDuration] {
             tasks.Launch([navigation, popDuration]() -> huxerui::Task<void> {
                 if (navigation.Depth() < 3) co_return;
@@ -870,18 +848,21 @@ void PushProfileQrScanner(
         ProfileAddMethodRow(
             app::images::file_import, Localized("文件"),
             Localized(fields.importing.Get() ? "正在导入配置…"
-                                             : "选择 sing-box JSON 或 Clash YAML 配置文件"),
+                                             : "选择 sing-box JSON、Clash YAML 或 OpenVPN .ovpn 配置文件"),
             "profile-add-file", true,
             chooseFile),
         ProfileAddMethodRow(
             app::images::link, "URL", Localized("输入订阅链接并自动获取配置"),
-            "profile-add-url", true,
+            "profile-add-url", pptp_supported,
             openUrlDialog),
-        ProfileAddMethodRow(
-            app::images::manual_config, Localized("直接配置"),
-            Localized("粘贴配置内容或填写 VPN 参数"),
-            "profile-add-direct", false,
-            openDirect),
+        // 配置文本粘贴入口已并入「文件」；直接配置只剩原生 VPN 表单。
+        pptp_supported
+            ? huxerui::View{ProfileAddMethodRow(
+                  app::images::manual_config, Localized("PPTP 内网"),
+                  Localized("填写 PPTP 内网拨号参数"),
+                  "profile-add-direct", false,
+                  openDirect)}
+            : huxerui::View{huxerui::Row{}},
     }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     huxerui::View content = huxerui::ScrollView(huxerui::Column {
         huxerui::Text(Localized("选择添加方式"))
@@ -917,8 +898,8 @@ void PushProfileQrScanner(
     const bool isFile = method == ProfileAddMethod::File;
     const bool isQr = method == ProfileAddMethod::Qr;
     const bool isDirect = method == ProfileAddMethod::Direct;
-    const std::size_t directIndex = fields.type_index.Get();
-    const bool directPptp = isDirect && pptp_supported && directIndex == 1;
+    // 直接配置页只剩原生 VPN 表单（文本粘贴并入「文件」入口）。
+    const bool directPptp = isDirect && pptp_supported;
 
     const auto import_profile = [=] {
         std::string url;
@@ -934,8 +915,6 @@ void PushProfileQrScanner(
                 remote = false;
                 inlineConfig = qrContent;
             }
-        } else if (isDirect && !pptp) {
-            inlineConfig = fields.config_content.Get().text;
         }
         if (remote && profile_link::IsSupportedScheme(
                 std::string_view(url).substr(0, url.find(':')))) {
@@ -958,8 +937,7 @@ void PushProfileQrScanner(
             toast.Show(Localized("请先选择配置文件"));
             return;
         }
-        if ((isDirect && !pptp) ||
-            (isQr && !IsHttpProfileUrl(qrContent))) {
+        if (isQr && !IsHttpProfileUrl(qrContent)) {
             if (inlineConfig.empty()) {
                 toast.Show(Localized("配置内容不能为空"));
                 return;
@@ -1034,20 +1012,10 @@ void PushProfileQrScanner(
                              url = value;
                          });
     } else if (isFile) {
-        typeFields = huxerui::Column {
-            huxerui::Button(Localized("选择配置文件")).OnClick(
-                [tasks, picker, toast, configFileFilter, path = fields.picked_path] {
-                    tasks.Launch([picker, path, toast, configFileFilter]() -> huxerui::Task<void> {
-                        const auto picked = co_await PickProfileConfigFile(picker, configFileFilter, toast);
-                        if (!picked) co_return;
-                        if (const auto file = picked->AsFile()) path = file->Path();
-                    });
-                }),
-            huxerui::Text(fields.picked_path.Get())
-                .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption),
-                                          theme.colors.on_surface_variant}),
-        }.With(huxerui::Spacing(8.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        typeFields = FileDropZone(app::images::file_import,
+                                  Localized("拖入或点击选择配置文件"),
+                                  fields.picked_path, tasks, toast, picker,
+                                  configFileFilter, "profile-file-drop-zone");
     } else if (isQr) {
         const bool scanned = !qrContent.empty();
         typeFields = huxerui::Column {
@@ -1075,32 +1043,11 @@ void PushProfileQrScanner(
                 : huxerui::View{huxerui::Row{}},
         }.With(huxerui::Spacing(12.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    } else if (isDirect && directPptp) {
+    } else if (isDirect) {
         typeFields = PptpOptionsForm(
             fields.pptp_server, fields.pptp_username, fields.pptp_password,
             fields.pptp_timeout, fields.pptp_routes, fields.pptp_mppe);
-    } else if (isDirect) {
-        typeFields = huxerui::TextField(fields.config_content.Get())
-                         .Label(Localized("配置内容"))
-                         .Placeholder(Localized("粘贴 sing-box JSON、Clash YAML 或 OpenVPN .ovpn 配置"))
-                         .LineLimits(huxerui::TextFieldLineLimits::MultiLine(12, 28))
-                         .Variant(huxerui::TextFieldVariant::Outlined)
-                         .OnChanged([config = fields.config_content](
-                                        const huxerui::TextEditingValue& value) {
-                             config = value;
-                         });
     }
-
-    std::vector<huxerui::StringVariant> directTypes{Localized("配置文本")};
-    if (pptp_supported) directTypes.push_back(Localized("PPTP 内网"));
-    huxerui::View directTypeSelector =
-        isDirect && directTypes.size() > 1
-            ? huxerui::View{huxerui::SegmentedButton(directTypes, directIndex)
-                                .OnChanged([type = fields.type_index](
-                                               std::size_t index) {
-                                    type = index;
-                                })}
-            : huxerui::View{huxerui::Row{}};
 
     huxerui::View commonFields;
     bool hasCommonFields = false;
@@ -1122,7 +1069,6 @@ void PushProfileQrScanner(
     }
 
     std::vector<huxerui::View> formFields;
-    formFields.push_back(std::move(directTypeSelector));
     formFields.push_back(std::move(typeFields));
     formFields.push_back(huxerui::TextField(fields.name.Get())
                              .Label(Localized("名称（可选）"))
@@ -1137,7 +1083,7 @@ void PushProfileQrScanner(
         method == ProfileAddMethod::Qr ? "扫码导入"
         : isFile                         ? "从文件导入"
         : method == ProfileAddMethod::Url ? "从 URL 导入"
-                                          : "直接配置");
+                                          : "PPTP 内网");
     huxerui::View content = huxerui::ScrollView(
         huxerui::Column(std::move(formFields))
             .With(huxerui::Spacing(12.0F),
@@ -1161,7 +1107,6 @@ void PushProfileQrScanner(
     const ProfileCreateFields fields{
         huxerui::UseState(huxerui::TextEditingValue{request.name}),
         huxerui::UseState(huxerui::TextEditingValue{request.url}),
-        huxerui::UseState(huxerui::TextEditingValue{}),
         huxerui::UseState(huxerui::TextEditingValue{}),
         huxerui::UseState<std::size_t>(0),
         huxerui::UseState(huxerui::TextEditingValue{}),

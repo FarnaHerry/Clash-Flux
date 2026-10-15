@@ -166,8 +166,8 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   reparse point；先暂存，再由受保护旧服务副本的 LocalSystem 助手替换并重启 SCM，
   保留原安装 SID。旧版无 UPGRADE 和可写目录便携版保留手动授权入口，不能为了免
   UAC 允许普通用户替换 SYSTEM 代码。macOS 无独立服务，手机服务随应用包更新。
-- 原生 VPN 的服务能力由 `VpnStore` 的任务线程监视并随 `VpnSnapshot` 发布，不能永久冻结启动时的 PPTP 可用状态。能力刷新用 `VpnManager::setEngineAvailable`，不得用会断开现有连接的 `setAdapters`；订阅卡片只读应用级 `VpnModel`，不得在渲染时探测服务。显式连接先检查服务与能力，再停止主 TUN；具体失败原因优先于通用不可用提示。
-- 新 OpenVPN `.ovpn` 通过普通远程/本地/文本入口按内容识别，编译成同一 sing-box 的 endpoint；不恢复独立新建类型。主来源可提供默认出口，桌面次来源只在启用规则引用时加载，手机保持单活动普通来源。旧 `type=openvpn` 只作兼容，不改写其 ID、凭据、内网路由和规则引用；归入本地分区并保留原辅助连接语义。外部文件、脚本及尚未转换的路由/DNS 指令必须拒绝并进入来源保真度，不能猜测或静默省略。详见 `docs/openvpn-import.md`。
+- 原生 VPN 的服务能力由 `VpnStore` 的任务线程监视并随 `VpnSnapshot` 发布，不能永久冻结启动时的 PPTP 可用状态。能力刷新用 `VpnManager::setEngineAvailable`，不得用会断开现有连接的 `setAdapters`；订阅卡片只读应用级 `VpnModel`，不得在渲染时探测服务。显式连接先检查服务与能力，再停止主 TUN；具体失败原因优先于通用不可用提示。Windows 系统拨号同一时间仅支持一条 PPTP（`vpn::PptpSingleSession()`）：存储层在停止主内核前拒绝第二条拨号并指明占用连接，UI 在勾选前给出同样原因，PPTP 卡片展示该平台边界；不得为绕过它把 PPTP 改成静默自动断开或假装支持并发。
+- 新 OpenVPN `.ovpn` 通过普通远程/本地入口按内容识别，编译成同一 sing-box 的 endpoint；不恢复独立新建类型，也不再提供配置文本粘贴入口（粘贴内容保存为文件后走本地导入，扫码文本仍按内容识别）。主来源可提供默认出口，桌面次来源只在启用规则引用时加载，手机保持单活动普通来源。旧 `type=openvpn` 只作兼容，不改写其 ID、凭据、内网路由和规则引用；归入本地分区并保留原辅助连接语义。外部文件、脚本及尚未转换的路由/DNS 指令必须拒绝并进入来源保真度，不能猜测或静默省略。详见 `docs/openvpn-import.md`。
 - Windows CI 使用 runner 预装的 OpenSSL（`Program Files/OpenSSL`），构建前检查
   可执行文件和开发头文件；不要在发布门禁重新调用 Chocolatey 安装 OpenSSL。
 - 修改完成后运行 `git diff --check`，并在回复中说明实际执行过的验证命令及结果。
