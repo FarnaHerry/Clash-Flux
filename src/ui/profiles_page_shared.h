@@ -36,7 +36,6 @@ struct ProfileCreateFields {
     huxerui::State<huxerui::TextEditingValue> name;
     huxerui::State<huxerui::TextEditingValue> url;
     huxerui::State<huxerui::TextEditingValue> qr_content;
-    huxerui::State<huxerui::TextEditingValue> config_content;
     huxerui::State<std::size_t> type_index;
     huxerui::State<huxerui::TextEditingValue> desc;
     huxerui::State<huxerui::TextEditingValue> timeout;

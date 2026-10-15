@@ -1,6 +1,6 @@
 # Clash-Flux
 
-See the [v0.3.32 release notes](docs/releases/v0.3.32.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.33 release notes](docs/releases/v0.3.33.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -46,7 +46,9 @@ application-managed settings before being passed to sing-box.
   application logs share one searchable list and export, with history restored for viewing.
 - Native VPN profiles: PPTP uses system dialing and privileged service integration.
   Windows uses RAS with MS-CHAPv2; enabling MPPE-128 requires encryption, while
-  disabling that option lets the server negotiate its requirements. OpenVPN
+  disabling that option lets the server negotiate its requirements. Windows
+  dial-up supports only one PPTP connection at a time — disconnect the current
+  one before dialing another; the UI states this explicitly. OpenVPN
   `.ovpn` profiles use sing-box 1.14's `openvpn-client` endpoint and support multiple
   active connections. Private-network CIDRs route directly to these endpoints;
   only PPTP installs system routes through the platform backend.
@@ -155,9 +157,12 @@ sudo dnf install ppp pptp iproute
 sudo apt install ppp pptp iproute2
 ```
 
-OpenVPN `.ovpn` uses the same URL, local-file and pasted-text import paths as
+OpenVPN `.ovpn` uses the same URL and local-file import paths as
 Clash YAML and sing-box JSON. Content detection replaces the separate OpenVPN
-creation type and the original document is retained. It can be the main source
+creation type and the pasted-text entry; scanned QR text is still detected by
+content, and content you would paste can be saved to a file and imported
+through the local-file entry, which is a drop zone that also opens the system
+file picker on click. The original document is retained. It can be the main source
 or a rule-driven secondary source on desktop; mobile keeps one active ordinary
 source. Existing `openvpn` records retain IDs, credentials, private routes and
 auxiliary controls, and appear in the local-source section without automatic

@@ -34,7 +34,6 @@
 #include "empty_state.h"
 #include "task_bridge.h"
 
-import clashflux.api;
 import clashflux.core;
 import clashflux.db;
 import clashflux.netinfo;
@@ -76,7 +75,6 @@ enum class HomeCardKind {
     Tun,        // TUN 模式（桌面）
     Vpn,        // 隧道状态（移动端）
     LanIp,      // 内网 IP（本机局域网地址）
-    NetCheck,   // 网络检测（公网出口 IP）
 };
 
 struct HomeCardSpec {
@@ -99,9 +97,8 @@ constexpr HomeCardSpec kHomeCards[] = {
     {HomeCardKind::Mode, "mode", "出站模式", 1, 2},
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
     {HomeCardKind::Vpn, "vpn", "隧道状态", 1, 2},
-    // 两张 1x1 网络信息卡并排占一行。
+    // 网络信息卡 1x1。
     {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 1},
-    {HomeCardKind::NetCheck, "netcheck", "网络检测", 1, 1},
 };
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     AndroidHomePlatformCard(homeState, kind)
@@ -125,7 +122,6 @@ constexpr HomeCardSpec kHomeCards[] = {
     {HomeCardKind::Tun, "tun", "TUN 模式", 1, 1},
     // 网络信息卡与开关卡同高（1 行），宽屏时与系统代理/TUN 同排。
     {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 1},
-    {HomeCardKind::NetCheck, "netcheck", "网络检测", 1, 1},
 };
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     DesktopHomePlatformCard(kind)
@@ -607,8 +603,8 @@ huxerui::XYChartData BuildTrafficChartData(
 }
 
 // 流量卡片：标题行 + 曲线；曲线吃掉卡片剩余高度，任意高度都成立。曲线用
-// HuxerUI Lib-Charts（面积图），替掉原先手绘的 Canvas：多了坐标轴刻度（速率格式化）
-// 与 hover tooltip，外观仍保持「下载实心面积 + 上传细线」。
+// HuxerUI Lib-Charts（面积图），替掉原先手绘的 Canvas：只保留曲线本身与
+// hover tooltip（速率数字在标题行），外观保持「下载实心面积 + 上传细线」。
 [[huxerui::composable]] huxerui::View HomeTrafficCard(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::Color downColor = theme.colors.primary;
@@ -633,12 +629,12 @@ huxerui::XYChartData BuildTrafficChartData(
             huxerui::UseString(Localized("↑ 上传"))))
             .Baseline(0.0)
             .Interpolation(huxerui::ChartInterpolation::Linear)
-            // 小卡片里 X 轴（窗口内索引）没有信息量，只留 Y 轴刻度；刻度文本按速率
-            // 格式化，比原先「按窗口峰值归一化、无任何数字」可读。
-            .XAxis(huxerui::ChartAxis::Linear().Labels(false).Grid(false))
+            // 只显示折线：两轴的轴线/刻度数字/网格全部隐藏（Visible(false)
+            // 不改变标度域）。Y 轴 formatter 仍供 tooltip 与语义读数使用。
+            .XAxis(huxerui::ChartAxis::Linear().Visible(false))
             .YAxis(huxerui::ChartAxis::Linear()
                        .IncludeZero()
-                       .TickCount(3)
+                       .Visible(false)
                        .Formatter([](double value) {
                            return formatRate(static_cast<std::int64_t>(value));
                        }))
@@ -809,62 +805,7 @@ huxerui::XYChartData BuildTrafficChartData(
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-// ---- 网络信息卡片（双平台共用；平台差异只在公网取数函数）--------------------
-
-// 公网 IP 回显服务（仅 HTTPS，返回纯文本地址）。
-constexpr std::string_view kPublicIpEchoUrl = "https://api.ipify.org";
-
-// 响应原文必须是纯 IPv4/IPv6 文本：防止代理劫持或错误页内容被当成地址展示。
-bool LooksLikeIpAddress(std::string_view text) {
-    if (text.empty() || text.size() > 45) return false;
-    return std::ranges::all_of(text, [](unsigned char c) {
-        return std::isdigit(c) != 0 || c == '.' || c == ':' ||
-               (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-    });
-}
-
-// 取公网出口 IP；失败返回空串。桌面与 Android 各一份完整实现（composable
-// 体内不做条件编译，平台差异只出现在文件作用域）。
-#if defined(__ANDROID__)
-// Android：应用自身流量不经自家 VPN 隧道，直连测量即设备真实出口；
-// 经 Java TLS 桥接的 HttpClient（Android 的 curl 构建不含 TLS）。
-huxerui::Task<std::string> FetchPublicIp(std::shared_ptr<AppHttpClient> http,
-                                         bool coreRunning,
-                                         const std::string& mixedPort) {
-    static_cast<void>(coreRunning);
-    static_cast<void>(mixedPort);
-    huxerui::HttpRequest request{};
-    request.url = std::string(kPublicIpEchoUrl);
-    request.timeout = std::chrono::milliseconds{8000};
-    auto response = co_await http->SendAsync(std::move(request));
-    if (!response.Succeeded()) co_return std::string{};
-    const huxerui::HttpResponse& body0 = response.Value();
-    if (body0.status_code < 200 || body0.status_code >= 300) {
-        co_return std::string{};
-    }
-    std::string body(reinterpret_cast<const char*>(body0.body.data()),
-                     body0.body.size());
-    body = trim(body);
-    co_return LooksLikeIpAddress(body) ? body : std::string{};
-}
-#else
-// 桌面：内核运行中经 mixed 入站测量「代理出口」的公网 IP，未运行时测直连
-// （强制直连，忽略 http_proxy 环境变量）。curl 调用阻塞，放任务线程。
-huxerui::Task<std::string> FetchPublicIp(std::shared_ptr<AppHttpClient> http,
-                                         bool coreRunning, std::string mixedPort) {
-    static_cast<void>(http);
-    co_return co_await RunOnTaskThread(
-        [coreRunning, mixedPort = std::move(mixedPort)] {
-            const api::ApiResult result = api::fetchText(
-                std::string(kPublicIpEchoUrl),
-                coreRunning ? "http://127.0.0.1:" + mixedPort : std::string{},
-                8);
-            if (!result.ok) return std::string{};
-            std::string body = trim(result.body);
-            return LooksLikeIpAddress(body) ? body : std::string{};
-        });
-}
-#endif
+// ---- 网络信息卡片（双平台共用）--------------------------------------------
 
 // 内网 IP：枚举活动接口的本机 IPv4，每 5 秒刷新一次（getifaddrs 级别的
 // 便宜系统调用，仍按约定放任务线程）。
@@ -922,84 +863,6 @@ huxerui::Task<std::string> FetchPublicIp(std::shared_ptr<AppHttpClient> http,
         huxerui::Column(std::move(lines))
             .With(huxerui::Spacing(3.0F),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-        huxerui::Spacer(),
-    }.With(huxerui::Spacing(4.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-}
-
-// 网络检测：显示当前公网出口 IP。挂载即检测，内核启停（出口变化）时自动
-// 重测，也可点右上角刷新按钮手动重测。
-[[huxerui::composable]] huxerui::View HomeNetCheckCard() {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    auto tasks = huxerui::UseTaskScope();
-    const auto http = huxerui::UseService<AppHttpClient>();
-    const auto coreModel = huxerui::UseService<CoreModel>();
-    const auto settingsModel = huxerui::UseService<SettingsModel>();
-    const bool coreRunning =
-        coreModel->view.Get().core.state == core::CoreState::Running;
-    const std::string mixedPort = settingsModel->view.Get().mixedPort;
-    auto ip = huxerui::UseState<std::string>({});
-    auto loading = huxerui::UseState(true);
-    auto failed = huxerui::UseState(false);
-
-    const auto refresh = [tasks, http, coreRunning, mixedPort, ip, loading,
-                          failed] {
-        if (loading.Get()) return;
-        loading = true;
-        failed = false;
-        tasks.Launch([http, coreRunning, mixedPort, ip, loading,
-                      failed]() -> huxerui::Task<void> {
-            const std::string result =
-                co_await FetchPublicIp(http, coreRunning, mixedPort);
-            loading = false;
-            if (result.empty()) {
-                failed = true;
-            } else {
-                ip = result;
-                failed = false;
-            }
-        });
-    };
-    // 挂载即检测；内核启停 / 入站端口变化都会改变出口，跟着重测。
-    huxerui::Lifecycle([refresh] {
-        refresh();
-        return [] {};
-    },
-                       coreRunning, mixedPort);
-
-    huxerui::View status =
-        loading.Get()
-            ? huxerui::View{huxerui::Text(Localized("检测中…"))
-                                .Style(huxerui::TextStyle{
-                                    huxerui::Font::System(font_size::kChip),
-                                    theme.colors.on_surface_variant})}
-        : failed.Get()
-            ? huxerui::View{huxerui::Text(Localized("检测失败"))
-                                .Style(huxerui::TextStyle{
-                                    huxerui::Font::System(font_size::kChip),
-                                    theme.colors.error})}
-            : huxerui::View{huxerui::Text(ip.Get())
-                                .Style(huxerui::TextStyle{
-                                    huxerui::Font::Monospace(font_size::kBody),
-                                    theme.colors.on_surface})};
-
-    huxerui::View refreshButton =
-        huxerui::IconButton(app::images::refresh, Localized("重新检测"))
-            .OnClick(refresh)
-            .With(huxerui::Frame{.width = 24.0F, .height = 24.0F},
-                  huxerui::Enabled(!loading.Get()),
-                  huxerui::Semantics{
-                      .role = huxerui::SemanticRole::Button,
-                      .label = huxerui::UseString(Localized("重新检测"))});
-    refreshButton = WithoutIconButtonOutlines(std::move(refreshButton));
-
-    return huxerui::Column {
-        huxerui::Row {
-            HomeCardHeading(Localized("网络检测")),
-            huxerui::Spacer(),
-            std::move(refreshButton),
-        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        std::move(status),
         huxerui::Spacer(),
     }.With(huxerui::Spacing(4.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -1509,7 +1372,6 @@ huxerui::Task<std::string> FetchPublicIp(std::shared_ptr<AppHttpClient> http,
     }
     if (kind == HomeCardKind::Profile) return HomeProfileCard(s);
     if (kind == HomeCardKind::LanIp) return HomeLanIpCard();
-    if (kind == HomeCardKind::NetCheck) return HomeNetCheckCard();
     return CLASHFLUX_HOME_PLATFORM_CARD(s, state, kind);
 }
 

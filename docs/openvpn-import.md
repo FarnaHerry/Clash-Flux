@@ -1,10 +1,11 @@
 # OpenVPN 普通来源导入
 
-远程订阅、本地文件和粘贴文本表示内容来源；Clash YAML、sing-box JSON、OpenVPN
-`.ovpn` 表示内容格式。`singbox::DetectProfileFormat` 按内容识别，支持 UTF-8 BOM、
-CRLF 和 OpenVPN 注释，文件扩展名及 URL 后缀不决定编译路径。
+远程订阅和本地文件表示内容来源（扫码得到的文本同样进入内容识别）；Clash YAML、
+sing-box JSON、OpenVPN `.ovpn` 表示内容格式。`singbox::DetectProfileFormat`
+按内容识别，支持 UTF-8 BOM、CRLF 和 OpenVPN 注释，文件扩展名及 URL 后缀不决定
+编译路径；配置文本粘贴入口已并入本地文件导入。
 新建界面不再有独立 OpenVPN 类型；桌面弹窗和窄屏页面复用同一创建表单，手机
-的 URL、文件、直接配置入口也使用普通导入服务。
+的 URL、文件入口与 PPTP 表单也使用普通导入服务。
 
 ## 运行角色
 

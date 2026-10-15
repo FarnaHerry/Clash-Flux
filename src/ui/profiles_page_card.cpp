@@ -425,6 +425,14 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
             .Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kCaption),
                 nativeVpn || profile.description.empty() ? faint : muted}),
+        // 平台能力如实展示：Windows RAS 客户端只有一条 PPTP 会话槽位。
+        profile.type == "pptp" && vpn::PptpSingleSession()
+            ? huxerui::View{huxerui::Text(huxerui::UseString(Localized(
+                                              "Windows 系统拨号同一时间仅支持一条 PPTP 连接")))
+                                .Style(huxerui::TextStyle{
+                                    huxerui::Font::System(font_size::kCaption),
+                                    faint})}
+            : huxerui::View{huxerui::Row{}},
         huxerui::Row {
             huxerui::Text(nativeVpn
                               ? profile.type == "openvpn" ? huxerui::StringVariant{"OpenVPN"} : huxerui::StringVariant{"PPTP"}

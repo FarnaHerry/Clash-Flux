@@ -97,7 +97,6 @@ namespace clashflux::ui {
     auto newPptpRoutes = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newPptpMppe = huxerui::UseState(true);
     auto newQrContent = huxerui::UseState(huxerui::TextEditingValue{""});
-    auto newConfigContent = huxerui::UseState(huxerui::TextEditingValue{""});
     auto pickedPath = huxerui::UseState<std::string>("");
     auto createPageOpen = huxerui::UseState(false);
 

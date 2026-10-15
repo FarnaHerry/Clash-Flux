@@ -1,6 +1,7 @@
 // common.cpp — 岛屿原语（ResolveIslandTheme/IslandSurface/IslandSection）、
 // 页面骨架（一级岛）/ 卡片（二级岛）等跨页通用部件。
 #include <huxerui/huxerui.h>
+#include <huxerui/file_drop.h>
 
 #include <algorithm>
 #include <chrono>
@@ -18,6 +19,9 @@
 #include "ui.h"
 #include "page_layout.h"
 #include "app.h"
+#include "title_bar_search.h"
+#include "file_drop_zone.h"
+#include "profile_file_picker.h"
 
 #include "wire_codec.h"
 import clashflux.config;
@@ -638,18 +642,9 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         }.With(huxerui::Grow(1.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
         if (titleSearchField) {
-            titleBarContent = huxerui::Stack{
-                std::move(titleBarContent),
-                huxerui::Row{
-                    huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
-                    huxerui::View{titleSearchField}.With(
-                        huxerui::Frame{.width = kDesktopTitleBarSearchWidth},
-                        huxerui::Grow(0.0F)),
-                    huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
-                }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-            }.With(huxerui::Grow(1.0F),
-                   huxerui::Align(huxerui::HorizontalAlignment::Stretch,
-                                  huxerui::VerticalAlignment::Stretch));
+            // 响应式布局见 title_bar_search.cpp（独立 TU 供无头几何回归直链）。
+            titleBarContent = TitleBarSearchStack(std::move(titleBarContent),
+                                                  std::move(titleSearchField));
         }
         return huxerui::Column{
             huxerui::WindowTitleBar{
@@ -846,6 +841,99 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                               outlined ? 1.0F : 0.0F),
               huxerui::ClipChildren(),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
+// 通用「拖入或点击」文件选区（声明见 file_drop_zone.h）。FileDropTarget 只做
+// 外部文件的整批元数据校验（扩展名/MIME，整批要么全收要么拒绝），读取与导入
+// 仍由调用方决定；点击走 FilePicker——键盘、触摸与不支持拖入的宿主都依赖这个
+// 等价入口（框架 file_drop.h 的契约要求）。悬停由 Entered/Exited 翻本地 State
+// 驱动重组，物理松手在 Exited 之后才投递 Dropped。圆角/描边跟控件族
+// （shapes.small + outline_soft），与按钮、下拉、菜单同族。
+[[huxerui::composable]] huxerui::View FileDropZone(
+    huxerui::ImageVariant icon, huxerui::StringVariant title,
+    huxerui::State<std::string> picked_path, huxerui::TaskScope tasks,
+    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    huxerui::FilePickerFilter filter, std::string key) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const IslandTheme islands = ResolveIslandTheme(theme);
+    auto hovering = huxerui::UseState(false);
+    const bool hover = hovering.Get();
+    const std::string pickedPath = picked_path.Get();
+    std::string fileName = pickedPath;
+    const std::size_t slash = pickedPath.find_last_of("/\\");
+    if (slash != std::string::npos) fileName = pickedPath.substr(slash + 1);
+
+    huxerui::FileDropOptions dropOptions;
+    dropOptions.extensions = filter.extensions;
+    dropOptions.allows_multiple = false;
+
+    const auto open_picker = [tasks, picker, toast, filter, picked_path] {
+        tasks.Launch([picker, toast, filter, picked_path]() -> huxerui::Task<void> {
+            const auto picked = co_await PickProfileConfigFile(picker, filter, toast);
+            if (!picked) co_return;
+            if (const auto file = picked->AsFile()) picked_path = file->Path();
+        });
+    };
+
+    const huxerui::Color captionColor = hover ? theme.colors.on_primary_container
+                                              : theme.colors.on_surface_variant;
+    return huxerui::Column {
+        huxerui::Image(icon)
+            .Tint(hover ? theme.colors.primary : theme.colors.on_surface_variant)
+            .With(huxerui::Frame{.width = 30.0F, .height = 30.0F}),
+        huxerui::Text(fileName.empty() ? title : huxerui::StringVariant(fileName))
+            .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
+                                      hover ? theme.colors.on_primary_container
+                                            : theme.colors.on_surface})
+            .Align(huxerui::TextAlign::Center),
+        pickedPath.empty()
+            ? huxerui::View{huxerui::Text(huxerui::StringVariant(filter.name))
+                                .Style(huxerui::TextStyle{
+                                    huxerui::Font::System(font_size::kCaption),
+                                    captionColor})
+                                .Align(huxerui::TextAlign::Center)}
+            : huxerui::View{huxerui::Text(pickedPath)
+                                .Style(huxerui::TextStyle{
+                                    huxerui::Font::System(font_size::kCaption),
+                                    captionColor})
+                                .Align(huxerui::TextAlign::Center)},
+    }
+        .With(huxerui::Spacing(6.0F),
+              huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
+              huxerui::Frame{.height = 128.0F},
+              huxerui::Padding(huxerui::EdgeInsets::Symmetric(20.0F, 12.0F)),
+              huxerui::Background(hover ? theme.colors.primary_container
+                                        : theme.colors.surface_container_high),
+              huxerui::CornerRadius(theme.shapes.small),
+              huxerui::Border(hover ? theme.colors.primary : islands.outline_soft,
+                              hover ? 1.5F : 1.0F),
+              huxerui::ClipChildren(),
+              huxerui::FileDropTarget::Accepts(std::move(dropOptions)),
+              huxerui::PointerCursor(huxerui::PointerCursorKind::Hand))
+        .On<huxerui::FileDropEvents::Entered>(
+            [hovering](const huxerui::FileDropOffer&, const huxerui::FileDropEvent&) {
+                hovering = true;
+            })
+        .On<huxerui::FileDropEvents::Exited>(
+            [hovering](const huxerui::FileDropOffer&, const huxerui::FileDropEvent&) {
+                hovering = false;
+            })
+        .On<huxerui::FileDropEvents::Dropped>(
+            [picked_path](const std::vector<huxerui::FileReference>& files,
+                          const huxerui::FileDropEvent&) {
+                if (files.empty()) return;
+                if (const auto file = files.front().AsFile()) picked_path = file->Path();
+            })
+        .On<huxerui::FileDropEvents::Failed>(
+            [toast](const huxerui::IoError& error, const huxerui::FileDropEvent&) {
+                toast.Show(LocalizedFormat("接收文件失败：{}", error.message));
+            })
+        .OnClick(open_picker)
+        .With(huxerui::Focusable(true),
+              huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                 .label = huxerui::UseString(title)})
+        .Key(std::move(key));
 }
 
 // 可选中卡片的形状常量（代理页节点卡为标准，见 ui.h 的说明）。
