@@ -20,14 +20,15 @@
                    bool tunEnabled = false,
                    std::optional<bool> systemProxyState = std::nullopt,
                    bool speedTestOnly = false,
-                   bool repairRuleSetCache = true) {
+                   bool repairRuleSetCache = true,
+                   bool startVpn = true) {
         // 任何未捕获异常都必须让状态离开 Starting：以前 json::parse /
         // filesystem 抛出会越过 fail()，把 snap_.state 永久留在 Starting，而
         // 「启动中拒绝重入」的保护会因此挡掉之后所有启动，直到重启应用。
         try {
             startCoreUnchecked(profileYaml, detached, tunEnabled,
                                systemProxyState, speedTestOnly,
-                               repairRuleSetCache);
+                               repairRuleSetCache, startVpn);
         } catch (const std::exception& exception) {
             settleStartFailure(std::string{"内核启动异常："} + exception.what());
         } catch (...) {
@@ -52,7 +53,8 @@
                             bool tunEnabled = false,
                             std::optional<bool> systemProxyState = std::nullopt,
                             bool speedTestOnly = false,
-                            bool repairRuleSetCache = true) {
+                            bool repairRuleSetCache = true,
+                            bool startVpn = true) {
 #if defined(CLASHFLUX_IOS)
         // iOS only has the Packet Tunnel data plane. Never accept a desktop-style
         // proxy-only launch, even if an old preference or caller passes false.
@@ -281,13 +283,19 @@
             snap_.mixedPort = mixedPort();
             snap_.allowLan = false;
             snap_.logLevel = logLevel();
-            snap_.tunEnabled = tunEnabled;
-            snap_.state = tunEnabled || speedTestOnly
+            snap_.tunEnabled = tunEnabled && startVpn;
+            snap_.state = (tunEnabled && startVpn) || speedTestOnly
                               ? core::CoreState::Stopped
                               : core::CoreState::Starting;
         }
         if (!speedTestOnly) {
-            if (tunEnabled) {
+            // startVpn=false：按持久化 TUN 意图编译（保留 config.json 的 TUN
+            // inbound，供服务被系统回收后按 VPN 模式恢复），但只以 core-only
+            // 拉起常驻服务——Java 侧对 core-only 请求已有保护：VPN 存活时保留
+            // 隧道模式且不重启数据面，未运行则只起无 TUN 内核。UI 打开软件因此
+            // 不会自动启动代理；TUN 只由用户显式操作（首页悬浮按钮/设置开关/
+            // 快捷磁贴）或服务回收恢复拉起。
+            if (tunEnabled && startVpn) {
                 clashflux_android_start_vpn();
             } else if (!clashflux_android_start_core()) {
                 fail("无法启动 Android sing-box 内核服务");
@@ -411,7 +419,7 @@
                     }
                     startCoreUnchecked(profileYaml, detached, tunEnabled,
                                        systemProxyState, speedTestOnly,
-                                       /*repairRuleSetCache=*/false);
+                                       /*repairRuleSetCache=*/false, startVpn);
                     return;
                 }
                 fail(std::move(message));

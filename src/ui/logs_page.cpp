@@ -2,6 +2,7 @@
 // 历史与推送增量按时间合并，保留最新 800 行；共用搜索、级别过滤、导出与清空。
 #include <huxerui/huxerui.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -77,6 +78,59 @@ int levelRank(const std::string& level) {
     return 1;
 }
 
+// 行首等级标签：rank 反解回等级名（levelRank 的逆映射，未知/silent 归 info），
+// 按等级着色——info 灰、warning 警示色、error 错误色、debug 更弱。
+std::string_view levelName(int rank) {
+    switch (rank) {
+    case 2: return "warning";
+    case 3: return "error";
+    case 4: return "debug";
+    default: return "info";
+    }
+}
+
+huxerui::Color levelColor(const huxerui::ThemeSpec& theme, int rank) {
+    switch (rank) {
+    case 3: return theme.colors.error;
+    case 2: return SemanticWarningColor(theme);
+    case 4: return theme.colors.outline;
+    default: return theme.colors.on_surface_variant;
+    }
+}
+
+// 终端式填充：URL、selector 名、哈希这类超长 token 在 UAX-14 里没有断行
+// 机会，词法换行会把整块挪到下一行、上一行提前留白。仅在渲染层给 token
+// 内补零宽空格断点（分隔符后至少 6 字符，纯哈希每 24 字符强制一个），
+// 导出/复制仍消费原始文本。
+std::string BreakableLogText(std::string_view text) {
+    constexpr std::string_view kBreakAfter = "/\\:;,=])}>|#?!&%~-_.@";
+    std::string out;
+    out.reserve(text.size() + 16);
+    std::size_t sinceBreak = 0;
+    for (std::size_t i = 0; i < text.size();) {
+        const unsigned char lead = static_cast<unsigned char>(text[i]);
+        std::size_t length = 1;
+        if (lead >= 0xF0) length = 4;
+        else if (lead >= 0xE0) length = 3;
+        else if (lead >= 0xC0) length = 2;
+        length = std::min(length, text.size() - i);
+        out.append(text.substr(i, length));
+        const char c = text[i];
+        i += length;
+        if (c == ' ' || c == '\t' || length > 1) {
+            sinceBreak = 0;
+            continue;
+        }
+        ++sinceBreak;
+        const bool candidate = kBreakAfter.find(c) != std::string_view::npos;
+        if (sinceBreak >= 24 || (candidate && sinceBreak >= 6)) {
+            out.append("\xE2\x80\x8B");
+            sinceBreak = 0;
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 [[huxerui::composable]] huxerui::View LogsPage(std::function<void()> onBack, bool active) {
@@ -90,6 +144,9 @@ int levelRank(const std::string& level) {
     auto filter = huxerui::UseState<std::size_t>(0);
     auto logSearch = huxerui::UseState(huxerui::TextEditingValue{});
     const auto scroll = huxerui::UseScrollController();
+    // 水平留白与 SectionTabPages 同约定：骨架 fullWidthSections 后由页面根
+    // 持有半份卡片间距，不再叠加旧的 24pt 桌面岛内边距。
+    const auto sectionInsets = huxerui::UseEnvironment<SectionTabContentInsets>();
 
     huxerui::Lifecycle(
         [tasks, entries] {
@@ -139,12 +196,27 @@ int levelRank(const std::string& level) {
                     return CompactFloatingNavigationFooter().Key("compact-floating-footer");
                 }
                 const std::size_t sourceIndex = visible[index];
-                return UnifiedListRow(
-                    huxerui::Text(entries[sourceIndex].text).Style(huxerui::TextStyle{
-                        huxerui::Font::Monospace(font_size::kMonoBody), theme.colors.on_surface}),
-                    std::format("log-{}", sourceIndex), compact, index + 1 < visibleCount);
+                const LogEntry& entry = entries[sourceIndex];
+                // 等级/时间戳/消息融为单一段落（text 已含时间戳）：换行在整段
+                // 内自然流动，不存在固定标签列与消息列各自的断行错位。等级
+                // 前缀按等级着色，消息体保持常规前景色。
+                const auto attributed = huxerui::AttributedText{
+                    huxerui::TextSpan(std::string(levelName(entry.level)) + " ")
+                        .Style(huxerui::TextSpanStyle{
+                            .foreground = levelColor(theme, entry.level)}),
+                    huxerui::TextSpan(BreakableLogText(entry.text)),
+                };
+                // 每条日志一张密集卡片：dense 圆角 + 减半内边距，底部外边距
+                // 提供行间距（VirtualList 无行间距修饰符）。
+                return DenseCard(huxerui::Text(attributed)
+                                     .Style(huxerui::TextStyle{
+                                         huxerui::Font::Monospace(font_size::kMonoBody),
+                                         theme.colors.on_surface}))
+                    .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = 6.0F}))
+                    .Key(std::format("log-{}", sourceIndex));
             })
-            .EstimatedItemExtent(compact ? 38.0F : 34.0F)
+            // 密集卡片行高估算：减半内边距（8×2）+ 单行文本 + 底部外边距。
+            .EstimatedItemExtent(compact ? 46.0F : 44.0F)
             .Controller(scroll)
             .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     }
@@ -188,10 +260,12 @@ int levelRank(const std::string& level) {
         picker->CanSaveFiles() && !exporting.Get());
     huxerui::View searchField = PillSearchField(
         logSearch, Localized("搜索日志"));
+    body = huxerui::View{std::move(body)}.With(huxerui::Padding(
+        huxerui::EdgeInsets::Symmetric(sectionInsets.horizontal * 0.5F, 0.0F)));
     if (onBack) return SecondaryPageScaffold(std::move(searchField), std::move(actions),
-                                              std::move(body), onBack);
+                                              std::move(body), onBack, false, true);
     return PageScaffold(Localized("日志"), std::move(actions), std::move(body),
-                        false, false, true, std::nullopt, {},
+                        false, true, true, std::nullopt, {},
                         std::move(searchField));
 }
 

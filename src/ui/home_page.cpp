@@ -3,7 +3,7 @@
 // 结构：
 //   kHomeCards   文件作用域 #if 选出的平台卡片表（composable 体内禁止条件编译，
 //                平台差异只出现在这里和平台函数选择宏上）；顺序与尺寸即最终布局；
-//   HomeGrid     把「页面逻辑宽度」分成 1..4 列，按卡片声明的宽高（HomeCardSpan）
+//   HomeGrid     把「页面逻辑宽度」分成 1..5 列，按卡片声明的宽高（HomeCardSpan）
 //                做左上紧凑的二维打包；
 //   HomeCardContent 按种类组装卡片内容，平台专属卡片经宏选择完整函数。
 // 布局是**编译期常量**（见 AGENTS.md / CLAUDE.md 第 13 条）：没有编辑态、拖动排序、
@@ -96,9 +96,9 @@ constexpr HomeCardSpec kHomeCards[] = {
     // 出站模式是纵向单选列表（标题 + 3 个选项），占 1x2。
     {HomeCardKind::Mode, "mode", "出站模式", 1, 2},
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
+    // 内网 IP 紧跟当前订阅，1x2：两行高度可容纳更多接口明细。
+    {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 2},
     {HomeCardKind::Vpn, "vpn", "隧道状态", 1, 2},
-    // 网络信息卡 1x1。
-    {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 1},
 };
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     AndroidHomePlatformCard(homeState, kind)
@@ -118,10 +118,10 @@ constexpr HomeCardSpec kHomeCards[] = {
     {HomeCardKind::Total, "total", "流量统计", 1, 2},
     {HomeCardKind::Mode, "mode", "出站模式", 1, 2},
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
+    // 内网 IP 紧跟当前订阅，1x2：两行高度可容纳更多接口明细。
+    {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 2},
     {HomeCardKind::Proxy, "proxy", "系统代理", 1, 1},
     {HomeCardKind::Tun, "tun", "TUN 模式", 1, 1},
-    // 网络信息卡与开关卡同高（1 行），宽屏时与系统代理/TUN 同排。
-    {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 1},
 };
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     DesktopHomePlatformCard(kind)
@@ -164,11 +164,11 @@ constexpr float kHomeGridUnitHeight = 88.0F;
 constexpr float kHomeGridFallbackWidth = 360.0F;
 
 // 页面逻辑宽度分档只由可用宽度决定，使手机与桌面 Compact 窗口在同宽时
-// 使用相同卡片网格；更宽视口逐步增加列数。
+// 使用相同卡片网格；更宽视口逐步增加列数（顶部档 5 列）。
 constexpr int HomeGridColumns(float width) {
     if (width < 840.0F) return 2;
     if (width < 1200.0F) return 3;
-    return 4;
+    return 5;
 }
 
 // 自定义网格布局：按声明顺序把每张卡片放进第一个放得下的空位（左上紧凑），
@@ -581,13 +581,26 @@ huxerui::XYChartData BuildTrafficChartData(
          static_cast<double>(download)},
     });
 
+    // 圆环样式（fork 新增 inner_radius）：上传/下载两段弧，环心写占比最大
+    // 一方的百分比。
+    const std::string centerShare = shareText(std::max(upload, download));
     return huxerui::Column {
         HomeCardHeading(Localized("流量统计")),
         huxerui::Row {
-            huxerui::PieChart(data)
-                .SliceStyle("upload", {.fill = huxerui::Brush(upColor)})
-                .SliceStyle("download", {.fill = huxerui::Brush(downColor)})
-                .With(huxerui::Frame{.width = 72.0F, .height = 72.0F}),
+            huxerui::Stack {
+                huxerui::PieChart(data)
+                    .Style(huxerui::PieChartStyle{.inner_radius = 0.62F})
+                    .SliceStyle("upload", {.fill = huxerui::Brush(upColor)})
+                    .SliceStyle("download", {.fill = huxerui::Brush(downColor)})
+                    .With(huxerui::Frame{.width = 72.0F, .height = 72.0F}),
+                huxerui::Text(centerShare)
+                    .Style(huxerui::TextStyle{
+                        huxerui::Font::System(font_size::kCaption)
+                            .WithWeight(huxerui::FontWeight::Bold),
+                        theme.colors.on_surface}),
+            }.With(huxerui::Frame{.width = 72.0F, .height = 72.0F},
+                   huxerui::Align(huxerui::HorizontalAlignment::Center,
+                                  huxerui::VerticalAlignment::Center)),
             huxerui::Column {
                 totalMetric(Localized("↑ 上传"), upColor, formatBytes(upload), shareText(upload)),
                 totalMetric(Localized("↓ 下载"), downColor, formatBytes(download), shareText(download)),
@@ -829,8 +842,8 @@ huxerui::XYChartData BuildTrafficChartData(
 
     const std::vector<netinfo::LanAddress>& list = addresses.Get();
     std::vector<huxerui::View> lines;
-    // 1 行卡片高度只够两条明细，更多接口折叠成「+N」。
-    constexpr std::size_t kMaxLines = 2;
+    // 卡片 1x2（两行高）：标题 + 最多五条明细，更多的接口折叠成「+N」。
+    constexpr std::size_t kMaxLines = 5;
     const std::size_t shown = std::min(list.size(), kMaxLines);
     for (std::size_t i = 0; i < shown; ++i) {
         lines.push_back(

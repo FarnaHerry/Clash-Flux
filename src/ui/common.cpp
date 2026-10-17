@@ -19,7 +19,6 @@
 #include "ui.h"
 #include "page_layout.h"
 #include "app.h"
-#include "title_bar_search.h"
 #include "file_drop_zone.h"
 #include "profile_file_picker.h"
 
@@ -521,6 +520,7 @@ IslandTheme ResolveIslandTheme(const huxerui::ThemeSpec& theme) {
         .island_padding = theme.spacing.medium,
         .island_radius = 22.0F,
         .nested_radius = 14.0F,
+        .dense_radius = 6.0F,
         .ocean = theme.colors.background,
         .base = theme.colors.surface_container_low,
         .raised = theme.colors.surface_container,
@@ -632,20 +632,31 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             SectionTabContentInsets{kSectionCardSpacing}, desktopBody);
         desktopBody = huxerui::ProvideEnvironment(
             SectionTabPickerInsets{kDesktopTitleBarHeight + 1.0F}, std::move(desktopBody));
-        huxerui::View titleBarContent = huxerui::Row{
-            PageTitleText(theme, title).With(huxerui::Padding(huxerui::EdgeInsets{
-                .left = leading ? 0.0F : kDesktopPageHorizontalInset})),
-            huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
-            huxerui::Row{actions}.With(
-                huxerui::Padding(huxerui::EdgeInsets{.right = 8.0F}),
-                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        }.With(huxerui::Grow(1.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
-        if (titleSearchField) {
-            // 响应式布局见 title_bar_search.cpp（独立 TU 供无头几何回归直链）。
-            titleBarContent = TitleBarSearchStack(std::move(titleBarContent),
-                                                  std::move(titleSearchField));
-        }
+        huxerui::View pageTitle = PageTitleText(theme, title).With(huxerui::Padding(
+            huxerui::EdgeInsets{.left = leading ? 0.0F : kDesktopPageHorizontalInset}));
+        // 搜索胶囊存在时排在标题与动作之间、占满中间全部剩余空间：胶囊是行内
+        // 唯一的 Grow 子项，紧约束即全份剩余宽，窄窗口随标题/动作自动收敛；
+        // 没有搜索框时保留弹性 Spacer 把动作推到最右。composable 形参被
+        // codegen 固定为 const：拷贝到局部再走右值 With 链。
+        huxerui::View actionRow = huxerui::Row{actions}.With(
+            huxerui::Padding(huxerui::EdgeInsets{.right = 8.0F}),
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+        huxerui::View titleBarContent =
+            titleSearchField
+                ? huxerui::Row{
+                      std::move(pageTitle),
+                      huxerui::View{titleSearchField}.With(huxerui::Grow(1.0F)),
+                      std::move(actionRow),
+                  }
+                : huxerui::Row{
+                      std::move(pageTitle),
+                      huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
+                      std::move(actionRow),
+                  };
+        titleBarContent = std::move(titleBarContent).With(
+            huxerui::Spacing(12.0F),
+            huxerui::Grow(1.0F),
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
         return huxerui::Column{
             huxerui::WindowTitleBar{
                 huxerui::Row{leading}.With(huxerui::Padding(huxerui::EdgeInsets{
@@ -803,7 +814,9 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
            huxerui::Grow(1.0F));
 
-    // 桌面搜索框适配标题栏高度，手机保持 48dp 的页内搜索框。
+    // 桌面搜索框适配标题栏高度，手机保持 48dp 的页内搜索框。描边必须有：
+    // 浅色主题里胶囊底（surface_container_highest ≈ #FDFDFD）与标题栏/页面
+    // 岛底色（#FAFBFC / #EFF1F4）几乎同色，无描边时整个胶囊不可见。
     huxerui::View pill = huxerui::Row {
         std::move(pillContent),
     }.With(huxerui::Frame{.height = kPageTitlesInWindow ? kDesktopTitleBarHeight : 48.0F},
@@ -812,6 +825,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                .left = 14.0F,
            }),
            huxerui::Background(theme.colors.surface_container_highest),
+           huxerui::Border(theme.colors.outline, 1.0F),
            huxerui::CornerRadius(kPageTitlesInWindow ? kDesktopTitleBarHeight / 2.0F : 24.0F),
            huxerui::ClipChildren(),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
@@ -934,6 +948,20 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
               huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                  .label = huxerui::UseString(title)})
         .Key(std::move(key));
+}
+
+// 密集卡片（声明见 ui.h）：圆角阶梯的 dense 档（dense_radius 6pt），内边距
+// 减半（island_padding/2）让高密度内容（日志行等）单行更紧凑；raised 表面
+// 与卡片同层，靠圆角与留白密度区分。
+[[huxerui::composable]] huxerui::View DenseCard(huxerui::View content) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const IslandTheme islands = ResolveIslandTheme(theme);
+    return huxerui::Column { std::move(content) }
+        .With(huxerui::Padding(islands.island_padding * 0.5F),
+              huxerui::Background(islands.raised),
+              huxerui::CornerRadius(islands.dense_radius),
+              huxerui::ClipChildren(),
+              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 // 可选中卡片的形状常量（代理页节点卡为标准，见 ui.h 的说明）。

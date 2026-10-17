@@ -1,6 +1,6 @@
 # Clash-Flux
 
-See the [v0.3.33 release notes](docs/releases/v0.3.33.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.34 release notes](docs/releases/v0.3.34.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -112,7 +112,7 @@ application-managed settings before being passed to sing-box.
   custom window title bars, a system tray and responsive layouts for narrow windows.
   Windows tray menus follow the application theme. Closing hides to the tray when enabled;
   otherwise, the app asks for confirmation before exiting.
-- A dashboard pie chart shows cumulative upload/download shares, totals and
+- A dashboard donut chart shows cumulative upload/download shares (the largest share's percentage in the center), totals and
   percentages.
 - Android: sing-box libbox uses the same version as the desktop core and runs in a
   separate `:background` process. VpnService creates the TUN interface, while the UI

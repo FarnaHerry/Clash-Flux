@@ -33,3 +33,6 @@ third_party/huxerui-tools/
 
 # huxerui_add_app 生成物
 .agents/
+
+# HuxerUI runtime debug trace dumps（GUI 运行产生，不入库）
+traces/

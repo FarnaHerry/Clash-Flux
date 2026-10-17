@@ -10,6 +10,7 @@
 #include <chrono>
 #include <exception>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -355,7 +356,14 @@ Java_dev_farna_clashflux_MainActivity_nativeStartCore(JNIEnv*, jclass) {
                 // overwrite a live VPN config with a proxy-only config before
                 // the background service is reclaimed or restarted.
                 const bool tunEnabled = core.tunEnabled();
-                core.startCore(store::profilesStore().selectedYaml(), false, tunEnabled);
+                // 编译保留持久化 TUN 意图（config.json 的 TUN inbound 供服务
+                // 被系统回收后按 VPN 模式恢复），但 startVpn=false：打开软件只
+                // 确保常驻内核就绪，不自动启动代理；TUN 由用户显式操作（首页
+                // 悬浮按钮 / 设置开关 / 快捷磁贴）或服务回收恢复拉起。Java 侧
+                // 对 core-only 请求自带保护：VPN 存活时保留隧道模式不重启。
+                core.startCore(store::profilesStore().selectedYaml(), false,
+                               tunEnabled, std::nullopt, false, true,
+                               /*startVpn=*/false);
                 log_android(tunEnabled
                     ? "Android sing-box core started with the persisted VPN/TUN mode"
                     : "Android sing-box core started without VPN/TUN");

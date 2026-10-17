@@ -1,5 +1,6 @@
-// proxies_page.cpp — 代理页：出站模式（规则/全局/直连）按钮挂在「代理」标题
-// 行右侧，与标题左右对齐；下面是分组标签栏 + 选中分组的节点卡网格。
+// proxies_page.cpp — 代理页：分组标签栏 + 选中分组的节点卡网格。出站模式
+// （规则/全局/直连）的切换入口只在首页「出站模式」卡片；本页只跟随内核当前
+// 模式渲染对应内容，不重复提供切换按钮。
 //
 // 分组切换（标签栏）：一个根分组一个横向标签，纯文字、无边框无填充；选中项
 // 高亮文字并在底部画一条主题色加粗指示线。标签过多时标签栏横向滚动；内容区
@@ -60,11 +61,6 @@ import clashflux.utils;
 
 namespace clashflux::ui {
 namespace {
-
-// 与首页模式卡同源（home_page.cpp 匿名命名空间各持一份）。
-const std::vector<huxerui::StringVariant> kModeNames{
-    Localized("规则"), Localized("全局"), Localized("直连")};
-const std::vector<std::string> kModes{"rule", "global", "direct"};
 
 struct ProxyNode {
     std::string name;
@@ -236,9 +232,10 @@ std::string BuildNodeDetail(const ProxyNode& node) {
 }
 
 // 节点卡自适应列的最小宽度：值越小同宽窗口下卡片越窄（列数更多）。
-// 225 是"满屏 6 列"的阈值：1560 逻辑宽的满屏窗口去掉侧栏与岛内边距后约
-// 1428 逻辑 px，1428 / (225 + 8) ≈ 6.1 → 6 列（每张约 231 px）。
-constexpr float kProxyNodeWidth = 225.0F;
+// 196 是"满屏 7 列"的阈值：1560 逻辑宽的满屏窗口去掉侧栏与岛内边距后约
+// 1428 逻辑 px，1428 / (196 + 8) ≈ 7.0 → 7 列（每张约 197 px）；更宽的窗口
+// 列数继续增加，更窄时逐级回落（卡片文本截断省略，窄列不溢出）。
+constexpr float kProxyNodeWidth = 196.0F;
 
 // 桌面右下角悬浮测速按钮的滚动尾部净空：56pt 按钮 + 24pt 底部外边距。
 constexpr float kSpeedFabFooterHeight = 80.0F;
@@ -482,7 +479,6 @@ std::function<void()> NodeSelectAction(
     auto mode = huxerui::UseState<std::string>("rule");
     auto proxySearch = huxerui::UseState(huxerui::TextEditingValue{});
     auto sectionMotion = UseSectionTabMotion();
-    auto modePending = huxerui::UseState(false);
     auto testGeneration = huxerui::UseState(0);
     auto testGroup = huxerui::UseState<std::string>("");
     // 分支路径按模式独立（互不共享）：规则模式 path[0] = 标签栏选中的订阅组，
@@ -501,11 +497,12 @@ std::function<void()> NodeSelectAction(
     // 重新投影嵌套分组，**没有定时器**。唯一数据泵已完成 JSON 解码，
     // 页面在任务线程投影普通 DTO，UI 线程只发布模型。
     huxerui::Lifecycle(
-        [tasks, groups, coreState, mode, modePending, proxiesModel, coreModel,
+        [tasks, groups, coreState, mode, proxiesModel, coreModel,
          parsedLabels, parsedBody, projectionGeneration, selectionIntent] {
             const store::CoreSnapshot core = coreModel->view.Get().core;
             coreState = core.state;
-            if (!modePending.Get() && !core.mode.empty()) mode = core.mode;
+            // 出站模式只读跟随内核（切换入口在首页出站模式卡片）。
+            if (!core.mode.empty()) mode = core.mode;
             const ProxiesSnapshot& current = proxiesModel->snapshot.Get();
             if (current.body != parsedBody.Get() || current.labels != parsedLabels.Get()) {
                 parsedLabels = current.labels;
@@ -561,37 +558,6 @@ std::function<void()> NodeSelectAction(
                 co_return;
             });
         };
-
-    // 顶部收束区：出站模式切换（同首页 SegmentedButton），挂到标题行右侧。
-    std::size_t modeIndex = 0;
-    for (std::size_t i = 0; i < kModes.size(); ++i) {
-        if (mode.Get() == kModes[i]) modeIndex = i;
-    }
-    huxerui::View modeSwitch =
-        huxerui::SegmentedButton(kModeNames, modeIndex)
-            .OnChanged([tasks, toast, mode, modePending](std::size_t idx) {
-                if (idx >= kModes.size() || modePending.Get()) return;
-                const std::string previous = mode.Get();
-                mode = kModes[idx];
-                modePending = true;
-                tasks.Launch([=]() -> huxerui::Task<void> {
-                    bool ok = false;
-                    std::string error;
-                    try {
-                        ok = co_await RunOnTaskThread(
-                            [idx] { return store::coreStore().applyMode(kModes[idx]); });
-                    } catch (const std::exception& exception) {
-                        error = exception.what();
-                    }
-                    modePending = false;
-                    if (!ok) {
-                        mode = previous;
-                        toast.Show(error.empty()
-                                       ? Localized("切换失败（内核未运行？）")
-                                       : huxerui::StringVariant(error));
-                    }
-                });
-            });
 
     // 按出站模式解析根分组与当前组（渲染期校验：组消失回落，嵌套前缀逐级
     // 校验）。直连不经过节点，不展示订阅组。
@@ -863,10 +829,10 @@ std::function<void()> NodeSelectAction(
                           huxerui::CrossAxisAlignment::Stretch));
     }
 
-    // 出站模式按钮与「代理」标题同处标题行、左右对齐。
+    // 出站模式切换入口在首页卡片；代理页标题行只保留节点搜索胶囊。
     huxerui::View searchField = PillSearchField(
         proxySearch, Localized("搜索节点"));
-    huxerui::View page = PageScaffold(Localized("代理"), std::move(modeSwitch),
+    huxerui::View page = PageScaffold(Localized("代理"), huxerui::View{},
                                       std::move(content), false, true, true,
                                       std::nullopt, {}, std::move(searchField));
     // 延迟测试按钮统一收在页面右下角：测试当前选中的分组。Compact 下要避开

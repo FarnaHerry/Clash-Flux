@@ -272,7 +272,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = "$(CLASHFLUX_APP_BUNDLE_IDENTIFIER)";
+				PRODUCT_BUNDLE_IDENTIFIER = $(CLASHFLUX_APP_BUNDLE_IDENTIFIER);
 				PRODUCT_NAME = ClashFlux;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
@@ -288,7 +288,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = "$(CLASHFLUX_APP_BUNDLE_IDENTIFIER)";
+				PRODUCT_BUNDLE_IDENTIFIER = $(CLASHFLUX_APP_BUNDLE_IDENTIFIER);
 				PRODUCT_NAME = ClashFlux;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
@@ -306,7 +306,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PacketTunnel/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = "$(CLASHFLUX_EXTENSION_BUNDLE_IDENTIFIER)";
+				PRODUCT_BUNDLE_IDENTIFIER = $(CLASHFLUX_EXTENSION_BUNDLE_IDENTIFIER);
 				PRODUCT_NAME = PacketTunnel;
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -325,7 +325,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PacketTunnel/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = "$(CLASHFLUX_EXTENSION_BUNDLE_IDENTIFIER)";
+				PRODUCT_BUNDLE_IDENTIFIER = $(CLASHFLUX_EXTENSION_BUNDLE_IDENTIFIER);
 				PRODUCT_NAME = PacketTunnel;
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
