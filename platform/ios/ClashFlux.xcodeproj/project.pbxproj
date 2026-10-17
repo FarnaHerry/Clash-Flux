@@ -175,6 +175,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 700000000000000000000003;
 			buildPhases = (
+				800000000000000000000003 /* Build HuxerUI core */,
 				E00000000000000000000006 /* Packet Tunnel Sources */,
 				E00000000000000000000003 /* Packet Tunnel Frameworks */,
 				E00000000000000000000007 /* Packet Tunnel Resources */,
@@ -222,6 +223,20 @@
 
 /* Begin PBXShellScriptBuildPhase section */
 		800000000000000000000001 /* Build HuxerUI core */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputFileListPaths = ();
+			inputPaths = ();
+			name = "Build HuxerUI core";
+			outputFileListPaths = ();
+			outputPaths = ();
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "bash \"$PROJECT_DIR/Scripts/build_huxerui_core.sh\"";
+		};
+		800000000000000000000003 /* Build HuxerUI core */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
