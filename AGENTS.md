@@ -76,6 +76,12 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   Android CI 必须使用 `apksigner verify --verbose --min-sdk-version 23` 分别断言 v1、v2 均为 `true`；
   应用 minSdk 为 24 时，默认核验会跳过 v1，不能仅检查默认命令成功。
   详见 `docs/android-build.md`。
+- **发布时 Android 版本号必须随 CMake 一起更新**：`platform/android/app/build.gradle` 的
+  `versionCode` 在上一发布基础上 +1，`versionName` 与 `CMakeLists.txt` 的 project VERSION
+  完全一致，两者与 CMake 版本号放进同一次发布提交。CI 不校验两侧版本号一致性，漏改或被
+  冲突解决退回都不会让流水线失败，只会在用户安装包里体现（v0.3.34 曾因此把 0.3.28 打进
+  发布包）。发布提交前用 `git show <tag>:platform/android/app/build.gradle | grep version`
+  核对已提交内容，不要只看工作区。
 - **Android 图标分工是固定的，不要互相替换**：应用图标（`mipmap-*/ic_launcher.png` 与
   adaptive 前景 `drawable/ic_launcher_foreground.xml`，前景 inset `@drawable/ic_launcher_mascot`、
   背景 `@color/ic_launcher_background`）用**黑猫探出盒子的应用 Logo**；快捷开关磁贴徽章
