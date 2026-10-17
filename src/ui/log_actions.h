@@ -28,7 +28,8 @@ struct LogEntry {
     std::int64_t at = 0;
 };
 
-// 两种来源共用按时间排列的日志列表；同秒条目按接收顺序插入，保留最新行。
+// 两种来源共用按时间升序存储的日志列表；同秒条目按接收顺序插入，保留最新行。
+// 展示层（logs_page）倒序遍历实现「最新在顶」，导出/复制仍按此正序输出。
 inline void AppendLogEntry(huxerui::StateList<LogEntry> entries, LogEntry entry,
                            std::size_t maxLines) {
     const auto position = std::upper_bound(entries.begin(), entries.end(), entry.at,

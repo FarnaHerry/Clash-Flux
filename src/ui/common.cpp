@@ -970,16 +970,21 @@ constexpr float kSelectableTileRadius = 8.0F;
 SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme,
                                                  bool selected) {
     SelectableTileColors colors;
-    colors.surface =
-        selected ? theme.colors.primary : ResolveIslandTheme(theme).active;
-    colors.fg = selected ? theme.colors.on_primary : theme.colors.on_surface;
-    colors.muted =
-        selected ? theme.colors.on_primary : theme.colors.on_surface_variant;
-    colors.faint = selected ? theme.colors.on_primary : theme.colors.outline;
     if (selected) {
-        // 选中态是实心底：次级/更弱信息用同色降透明度，保持可读层次。
+        // 选中态是「容器淡染底 + 主色描边」（描边由 SelectableTile 落笔）：
+        // 实心 primary 铺满整卡过重，primary_container 保持表面层次，文字用
+        // on_primary_container 常规对比，标题不再整段反色。
+        colors.surface = theme.colors.primary_container;
+        colors.fg = theme.colors.on_primary_container;
+        colors.muted = theme.colors.on_primary_container;
+        colors.faint = theme.colors.on_primary_container;
         colors.muted.alpha = 0.78F;
         colors.faint.alpha = 0.62F;
+    } else {
+        colors.surface = ResolveIslandTheme(theme).active;
+        colors.fg = theme.colors.on_surface;
+        colors.muted = theme.colors.on_surface_variant;
+        colors.faint = theme.colors.outline;
     }
     return colors;
 }
@@ -991,13 +996,17 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
     const SelectableTileColors colors =
         ResolveSelectableTileColors(theme, selected);
     const bool interactive = static_cast<bool>(on_click);
-    // 表面与圆角在建树时就落在 Column 上（不能在返回值外面补修饰符，原因见 Card
-    // 的注释）：未选中 islands.active、选中 primary 实心底。
+    // 表面/圆角/描边在建树时就落在 Column 上（不能在返回值外面补修饰符，原因见
+    // Card 的注释）：未选中 islands.active，选中 primary_container 淡染底 +
+    // primary 描边。
     huxerui::View tile =
         huxerui::Column {std::move(content)}
             .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(10.0F, 8.0F)),
                   huxerui::Background(colors.surface),
                   huxerui::CornerRadius(kSelectableTileRadius),
+                  huxerui::Border(selected ? theme.colors.primary
+                                           : huxerui::Color::Transparent(),
+                                  selected ? 1.0F : 0.0F),
                   huxerui::ClipChildren(),
                   huxerui::Grow(1.0F),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
@@ -1009,34 +1018,6 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
         tile = std::move(tile).OnClick(std::move(on_click));
     }
     return tile;
-}
-
-// 选中容器（primary 实心底）里的进度条：ProgressBar 的轨道/指示色来自主题，
-// 铺在 primary 底上会看不见，因此选中态改用 on_primary 前后景自绘同尺寸圆角条。
-// 未选中的容器继续用 ProgressBar（主题色正常显示）。
-huxerui::View SelectedProgressBar(float progress, huxerui::Color foreground,
-                                  float height) {
-    const float ratio = std::clamp(progress, 0.0F, 1.0F);
-    huxerui::Color track = foreground;
-    track.alpha = 0.28F;
-    return huxerui::Canvas(
-               [ratio, foreground, track](huxerui::PaintContext& paint,
-                                          huxerui::Size size) {
-                   if (size.width <= 0.0F || size.height <= 0.0F) return;
-                   const huxerui::CornerRadii radii{size.height / 2.0F};
-                   paint.FillPath(
-                       huxerui::Path::RoundedRect(
-                           {0.0F, 0.0F, size.width, size.height}, radii),
-                       track);
-                   const float filled = size.width * ratio;
-                   if (filled > 0.0F) {
-                       paint.FillPath(
-                           huxerui::Path::RoundedRect(
-                               {0.0F, 0.0F, filled, size.height}, radii),
-                           foreground);
-                   }
-               })
-        .With(huxerui::Frame{.height = height});
 }
 
 [[huxerui::composable]] huxerui::View DialogCard(huxerui::View content) {

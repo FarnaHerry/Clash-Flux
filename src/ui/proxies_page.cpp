@@ -378,7 +378,8 @@ constexpr std::size_t kNodeMetaChars = 8;
                                      ? truncateOneLine(localizedMeta, kNodeMetaChars)
                                      : localizedMeta;
 
-    // 卡片表面与文字色来自统一原语：未选中 islands.active、选中 primary 实心底。
+    // 卡片表面与文字色来自统一原语：未选中 islands.active，选中
+    // primary_container 淡染底（描边由 SelectableTile 落笔）。
     const SelectableTileColors tile =
         ResolveSelectableTileColors(theme, selected);
     const huxerui::Color detailColor = selected ? tile.fg : tile.muted;

@@ -374,12 +374,12 @@ huxerui::View Card(huxerui::View content, bool outlined = true);
 huxerui::View DenseCard(huxerui::View content);
 
 // 可选中卡片（全项目统一的列表项原语，形状以代理页节点卡为标准）：
-// 8pt 圆角、Symmetric(10, 8) 内边距、未选中 islands.active 表面 / 选中 primary
-// 实心底、整卡可点、Semantics 为 Button。`on_click` 为空 = 不可交互（去掉焦点与点击，
-// 例如 urltest 组里的节点）。
+// 8pt 圆角、Symmetric(10, 8) 内边距、未选中 islands.active 表面 / 选中
+// primary_container 淡染底 + primary 描边、整卡可点、Semantics 为 Button。
+// `on_click` 为空 = 不可交互（去掉焦点与点击，例如 urltest 组里的节点）。
 //
 // 文字色由 ResolveSelectableTileColors() 给出同一套：主文字 fg、次级 muted、更弱
-// faint；选中时一律 on_primary（次级用降透明度），错误色仍由调用方用
+// faint；选中态用 on_primary_container（次级降透明度），错误色仍由调用方用
 // theme.colors.error。解析函数用 Resolve 前缀：结构体与工厂同名会被函数名遮蔽。
 struct SelectableTileColors {
     huxerui::Color surface;
@@ -399,12 +399,6 @@ huxerui::View SelectableTile(huxerui::View content, bool selected,
 // 背后，从子节点圆角差里漏出一圈底色（首页「当前订阅」卡、订阅卡都出现过「深灰卡 +
 // 蓝色圆角边」）。表面/圆角/描边必须在建树时确定：要么写进 `Card`/`SelectableTile`
 // 这类建树型 composable，要么直接写在返回的 `Column{...}.With(...)` 上。
-
-// 选中容器（primary 实心底）里的进度条：ProgressBar 的轨道/指示色来自主题，
-// 铺在 primary 底上会看不见，因此选中态改用 on_primary 前后景自绘同尺寸圆角条。
-// 未选中的容器继续用 ProgressBar（主题色正常显示）。
-huxerui::View SelectedProgressBar(float progress, huxerui::Color foreground,
-                                  float height);
 
 // 日志、连接、规则等信息列表的统一行容器。内容由页面自己组织，容器统一
 // 内边距；行平铺在一级岛表面上（不逐行套卡），行间画细分隔线，divider=false

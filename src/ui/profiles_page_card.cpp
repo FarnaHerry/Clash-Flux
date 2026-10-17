@@ -94,7 +94,10 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     const huxerui::Color fg = tile.fg;
     const huxerui::Color muted = tile.muted;
     const huxerui::Color faint = tile.faint;
-    auto refreshSpin = huxerui::UseState(0);
+    // 刷新忙态与实际任务同生命周期：按钮/菜单触发时置位，任务线程回到 UI
+    // 线程后清除；忙态中图标换成 ProgressCircle 并忽略重复触发，不再用
+    // 与真实时长无关的「点击转一圈」装饰动画。
+    auto refreshBusy = huxerui::UseState(false);
 
     auto action = [tasks, toast, reload](std::function<std::string()> job) {
         tasks.Launch([=]() -> huxerui::Task<void> {
@@ -143,9 +146,9 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     };
 
     // 平台栈刷新路径（Android）：HttpClient 不许进阻塞线程池，走协程抓取。
-    auto httpRefresh = [tasks, toast, reload,
+    auto httpRefresh = [tasks, toast, reload, refreshBusy,
                         http](std::int64_t pid) {
-        tasks.Launch([toast, reload, http, pid]() -> huxerui::Task<void> {
+        tasks.Launch([toast, reload, refreshBusy, http, pid]() -> huxerui::Task<void> {
             const std::string err =
                 co_await AndroidRefreshRemote(http, pid);
             if (!err.empty()) {
@@ -158,13 +161,14 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                huxerui::ToastOptions{6.0});
                 }
             }
+            refreshBusy = false;
             reload();
         });
     };
     // 刷新成功后补一条保真度提示：订阅内容变了，用户要知道这次「少吃了什么」。
-    const ProfileRefreshAction desktopRefresh = [tasks, toast, reload](
+    const ProfileRefreshAction desktopRefresh = [tasks, toast, reload, refreshBusy](
                                                     std::int64_t pid) {
-        tasks.Launch([toast, reload, pid]() -> huxerui::Task<void> {
+        tasks.Launch([toast, reload, refreshBusy, pid]() -> huxerui::Task<void> {
             const std::string err =
                 co_await RunOnTaskThread([pid]() -> std::string {
                     auto& ps = store::profilesStore();
@@ -181,12 +185,19 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                huxerui::ToastOptions{6.0});
                 }
             }
+            refreshBusy = false;
             reload();
         });
     };
     const ProfileRefreshAction refresh = [httpRefresh, desktopRefresh](
                                              std::int64_t pid) {
         profile_detail::RefreshProfileForPlatform(pid, httpRefresh, desktopRefresh);
+    };
+    // 统一刷新入口：忙态中忽略重复触发（按钮与菜单共用同一行为）。
+    const auto startRefresh = [refresh, refreshBusy](std::int64_t pid) {
+        if (refreshBusy.Get()) return;
+        refreshBusy = true;
+        refresh(pid);
     };
 
     const auto themedButtonStyle = huxerui::UseEnvironment<huxerui::ButtonStyle>();
@@ -247,7 +258,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
 
     // 桌面端由右键触发，Compact 由卡片上的触控按钮触发；菜单内容只维护
     // 一份，避免移动端和桌面端的订阅操作逐渐产生行为差异。
-    const auto buildMenuEntries = [action, activateProfile, refresh, openEditInfo, openEditRules,
+    const auto buildMenuEntries = [action, activateProfile, startRefresh, openEditInfo, openEditRules,
                                    openEditFile, openQr, clipboard, toast, id, navigation, desktopNavigation,
                                    homepage = profile.homepage, url = profile.url,
                                    selected, nativeVpn, clashEditable,
@@ -259,8 +270,8 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
             }));
         }
         if (!nativeVpn) {
-            entries.push_back(ActionMenuItem(app::images::refresh, Localized("更新"), [refresh, id] {
-                refresh(id);
+            entries.push_back(ActionMenuItem(app::images::refresh, Localized("更新"), [startRefresh, id] {
+                startRefresh(id);
             }));
         }
         if (!nativeVpn && !homepage.empty()) {
@@ -306,21 +317,25 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     };
 
     // 右上角刷新图标：裸 Image + Tint 着色（IconButton 不着色矢量资源；
-    // 同 apitab 标题栏齿轮配方），自绘 24pt 正方形热区。
+    // 同 apitab 标题栏齿轮配方），自绘 24pt 正方形热区。刷新进行中换成
+    // ProgressCircle——指示器的起止由真实任务驱动，而不是固定时长动画。
     huxerui::View refreshButton = huxerui::Row{};
     if (!nativeVpn) {
+        huxerui::View refreshGlyph;
+        if (refreshBusy.Get()) {
+            refreshGlyph = huxerui::View{huxerui::ProgressCircle()}.With(
+                huxerui::Frame{.width = 14.0F, .height = 14.0F});
+        } else {
+            refreshGlyph =
+                huxerui::View{huxerui::Image(app::images::refresh)
+                                  .Fit(huxerui::ImageFit::Contain)
+                                  .Align(huxerui::HorizontalAlignment::Center,
+                                         huxerui::VerticalAlignment::Center)
+                                  .Tint(muted)}
+                    .With(huxerui::Frame{.width = 14.0F, .height = 14.0F});
+        }
         refreshButton = huxerui::Row {
-            huxerui::Image(app::images::refresh)
-                .Fit(huxerui::ImageFit::Contain)
-                .Align(huxerui::HorizontalAlignment::Center,
-                       huxerui::VerticalAlignment::Center)
-                .Tint(muted)
-                .With(huxerui::Frame{.width = 14.0F, .height = 14.0F},
-                      huxerui::Rotation(huxerui::AnimateTo(
-                          static_cast<float>(refreshSpin.Get()) * 360.0F,
-                          huxerui::TweenSpec{
-                              .duration = 0.6,
-                              .easing = huxerui::Easing::Linear}))),
+            refreshGlyph,
         }
             .With(huxerui::Padding(5.0F),
                   huxerui::CornerRadius(islands.nested_radius),
@@ -329,10 +344,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                      .label = huxerui::UseString(
                                          Localized("更新订阅"))})
-            .OnClick([refresh, id, refreshSpin] {
-                refreshSpin = refreshSpin.Get() + 1;
-                refresh(id);
-            });
+            .OnClick([startRefresh, id] { startRefresh(id); });
     }
 
     huxerui::View moreButton = huxerui::Row{};
@@ -381,8 +393,8 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     }();
 
     // 订阅卡复用代理页节点卡的形状原语（SelectableTile）：同一套内边距、圆角、
-    // 表面色与选中态（选中 = primary 实心底 + on_primary 文字）。不再自己叠描边
-    // 或第二层选中背景。
+    // 表面色与选中态（选中 = primary_container 淡染底 + primary 描边 +
+    // on_primary_container 文字）。不再自己叠描边或第二层选中背景。
     huxerui::View card = SelectableTile(
         huxerui::Column {
         huxerui::Row {
@@ -508,21 +520,13 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                   }
                       .With(huxerui::CrossAlign(
                           huxerui::CrossAxisAlignment::Center)),
-                  // 选中态铺在 primary 实心底上，ProgressBar 的主题色会看不见：
-                  // 换 on_primary 自绘条（与首页「当前订阅」卡同一处理）。
-                  selected
-                      ? SelectedProgressBar(
-                            std::clamp(static_cast<float>(profile.usedBytes) /
-                                           static_cast<float>(
-                                               profile.totalBytes),
-                                       0.0F, 1.0F),
-                            theme.colors.on_primary, 4.0F)
-                      : huxerui::View{
-                            huxerui::ProgressBar(std::clamp(
-                                static_cast<float>(profile.usedBytes) /
-                                    static_cast<float>(profile.totalBytes),
-                                0.0F, 1.0F))
-                                .With(huxerui::Frame{.height = 4.0F})},
+                  // 选中态是 primary_container 淡染底，ProgressBar 的主题
+                  // 轨道/指示色直接可读，不再需要 on_primary 自绘条。
+                  huxerui::View{huxerui::ProgressBar(std::clamp(
+                                    static_cast<float>(profile.usedBytes) /
+                                        static_cast<float>(profile.totalBytes),
+                                    0.0F, 1.0F))
+                                    .With(huxerui::Frame{.height = 4.0F})},
               }
                                 .With(huxerui::Spacing(4.0F),
                                       huxerui::CrossAlign(

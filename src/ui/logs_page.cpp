@@ -178,8 +178,11 @@ std::string BreakableLogText(std::string_view text) {
     if (!active) return huxerui::View{huxerui::Row{}}.Key("logs-idle");
 
     const std::string query = logSearch.Get().text;
+    // 展示顺序最新在顶：内部仍按时间升序存储（AppendLogEntry 二分插入、
+    // 800 行环形淘汰、导出/复制保持正序），仅显示时倒序遍历——打开页面
+    // 第一眼就是刚发生的日志，新行到达时出现在顶部，无需滚动跟随。
     std::vector<std::size_t> visible;
-    for (std::size_t i = 0; i < entries.Size(); ++i) {
+    for (std::size_t i = entries.Size(); i-- > 0;) {
         if ((filter.Get() == 0 || entries[i].level == static_cast<int>(filter.Get())) &&
             SearchTextMatches(entries[i].text, query)) {
             visible.push_back(i);
