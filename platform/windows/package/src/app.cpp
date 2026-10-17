@@ -14,6 +14,9 @@ using namespace huxerui;
 using namespace huxerui::windows;
 namespace installer_strings = installer::strings;
 
+// 与主应用一致的自定义标题栏高度（kDesktopTitleBarHeight = 40）。
+constexpr float kInstallerTitleBarHeight = 40.0F;
+
 std::string InstallPathText(const std::filesystem::path& path) {
   const std::u8string value = path.u8string();
   return {value.begin(), value.end()};
@@ -398,9 +401,6 @@ View InstallerPage() {
     }.With(Grow(), CrossAlign(CrossAxisAlignment::Stretch)),
   };
 }
-
-// 与主应用一致的自定义标题栏高度（kDesktopTitleBarHeight = 40）。
-constexpr float kInstallerTitleBarHeight = 40.0F;
 
 const Application application{
     InstallerPage,
