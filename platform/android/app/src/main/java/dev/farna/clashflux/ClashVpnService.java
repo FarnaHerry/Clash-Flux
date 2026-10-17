@@ -260,6 +260,11 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 persistServiceMode(MODE_CORE_ONLY);
                 coreOnly = true;
                 speedTestOnly = false;
+                // The C++ side persists a TUN intent for config compilation.
+                // Starting the resident core without the tunnel makes that
+                // intent stale; flag it so the UI clears its switch to OFF
+                // (the reclaim restore will also come back as core-only).
+                markTunPreferenceResetPending();
             }
         } else if (i != null && requestedSpeedTest) {
             // A speed-test request can share an already-running resident core.

@@ -227,8 +227,9 @@ enum class IslandLevel {
 struct IslandTheme {
     float page_gap;        // 岛间缝隙（透出窗口底色「海面」）
     float island_padding;  // 一级岛内边距
-    float island_radius;   // 一级岛圆角 16pt
-    float nested_radius;   // 二级岛/浮动菜单圆角 8pt
+    float island_radius;   // 一级岛圆角 22pt
+    float nested_radius;   // 二级岛/卡片圆角 14pt
+    float dense_radius;    // 密集内容卡圆角 6pt（日志行等高密度表面）
     huxerui::Color ocean;   // 海面（窗口背景）
     huxerui::Color base;    // 一级岛表面
     huxerui::Color raised;  // 二级岛表面
@@ -364,9 +365,13 @@ huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
                               huxerui::StringVariant placeholder,
                               huxerui::View trailingAction = {});
 
-// 卡片容器（二级岛）：raised 表面 + 8pt 圆角 + 内边距。outlined=false 去掉
+// 卡片容器（二级岛）：raised 表面 + nested 圆角 + 内边距。outlined=false 去掉
 // 1pt 描边，仅靠表面层级区分卡片（移动端设置页等无边框场景）。
 huxerui::View Card(huxerui::View content, bool outlined = true);
+
+// 密集卡片：圆角阶梯新增的 dense 档（IslandTheme::dense_radius 6pt）+ 减半
+// 内边距，用于日志行等高密度内容——嵌套圆角 14pt 在密集列表里过圆。
+huxerui::View DenseCard(huxerui::View content);
 
 // 可选中卡片（全项目统一的列表项原语，形状以代理页节点卡为标准）：
 // 8pt 圆角、Symmetric(10, 8) 内边距、未选中 islands.active 表面 / 选中 primary

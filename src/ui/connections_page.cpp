@@ -144,6 +144,9 @@ void closeAllConnectionsForPlatform() {
     auto streamOpen = huxerui::UseState(false);
     auto searchValue = huxerui::UseState(huxerui::TextEditingValue{""});
     const auto scroll = huxerui::UseScrollController();
+    // 水平留白与 SectionTabPages 同约定：骨架 fullWidthSections 后由页面根
+    // 持有半份卡片间距，不再叠加旧的 24pt 桌面岛内边距。
+    const auto sectionInsets = huxerui::UseEnvironment<SectionTabContentInsets>();
 
     huxerui::Lifecycle(
         [tasks, rows, totalUp, totalDown, streamOpen] {
@@ -305,11 +308,13 @@ void closeAllConnectionsForPlatform() {
             });
         });
     huxerui::View actions = std::move(closeAllButton);
+    body = huxerui::View{std::move(body)}.With(huxerui::Padding(
+        huxerui::EdgeInsets::Symmetric(sectionInsets.horizontal * 0.5F, 0.0F)));
     return onBack
         ? SecondaryPageScaffold(std::move(searchField), std::move(actions),
-                                std::move(body), onBack)
+                                std::move(body), onBack, false, true)
         : PageScaffold(Localized("连接"), std::move(actions), std::move(body),
-                       false, false, true, std::nullopt, {},
+                       false, true, true, std::nullopt, {},
                        std::move(searchField));
 }
 

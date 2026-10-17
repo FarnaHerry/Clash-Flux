@@ -4,7 +4,7 @@
 `<HOME>/dev/cpp/mcpp/HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `ba8a900e659cda012ab02c127627cabdab0b74f2`，各平台 CI 共用
+Clash-Flux 当前固定 `45bd21171cbf5df81f10c29b14c1963b8932ab6d`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
@@ -12,8 +12,10 @@ Clash-Flux 当前固定 `ba8a900e659cda012ab02c127627cabdab0b74f2`，各平台 C
 ## 补丁归属
 
 此固定提交包含 acgu 的五个补丁提交、28 个未提交文件快照、Android 宿主默认焦点高亮修复，
-以及 Clash-Flux 的五项框架修复：拖动预览跟随抓取点、Pager 反向切换、隐藏虚拟页布局、
-Linux 窗口帧生命周期和 Objective-C++ 的 WindowTitleBar 聚合初始化兼容。
+以及 Clash-Flux 的七项框架修复：拖动预览跟随抓取点、Pager 反向切换、隐藏虚拟页布局、
+Linux 窗口帧生命周期、Objective-C++ 的 WindowTitleBar 聚合初始化兼容、
+composition 锚点在结构替换间转移（响应式断点切换不再抛 presentation anchor
+logic_error）和 Windows 自定义标题栏窗口的 DWM 圆角。
 这些修复已从应用 `cmake/patches/` 和 CMake/CI 应用步骤中移除，配置应用不会修改框架源码。
 
 Lib-Charts、Lib-SQLite、Lib-Camera 的项目修复已收录到各自 fork 的 `farna/main`，
@@ -23,7 +25,7 @@ Lib-Charts、Lib-SQLite、Lib-Camera 的项目修复已收录到各自 fork 的 
 
 | 库 | 固定提交 | 项目补丁审核 |
 | --- | --- | --- |
-| [Lib-Charts](https://github.com/FarnaHerry/Lib-Charts/tree/farna/main) | `9c183e87393ef589f3bf20dd8d80281a1fe9c9cd` | 饼图与 96pt 紧凑绘图面均已包含，原两份补丁 reverse check 通过。 |
+| [Lib-Charts](https://github.com/FarnaHerry/Lib-Charts/tree/farna/main) |  `8ed3e03ff265ae396b064617e2010e7229d581f2` | 饼图、96pt 紧凑绘图面与 `inner_radius` 圆环样式（环形段外弧+反向内弧、NonZero 填充，取全图最大解析值）均已包含，原两份补丁 reverse check 通过。 |
 | [Lib-SQLite](https://github.com/FarnaHerry/Lib-SQLite/tree/farna/main) | `88f610fe66c57260b1ac38e676fc36b23c900fc2` | 启动临时只读查询已包含，原补丁 reverse check 通过；另保留逐值 UTF-8 校验与主键 schema 兼容修复。 |
 | [Lib-Camera](https://github.com/FarnaHerry/Lib-Camera/tree/farna/main) | `b8b3b9304646cdc1afb9722ead16d85cf2160610` | 已采用 ApplicationContext/UiWindow；Android/iOS/Windows/Linux 行为覆盖原补丁。macOS 用直接 UiWindow factory，当前 backend 不消费 NSWindow，因此与原 typed wrapper 等价；库图模式早退也已包含。 |
 
@@ -40,7 +42,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout ba8a900e659cda012ab02c127627cabdab0b74f2
+git -C third_party/huxerui checkout 45bd21171cbf5df81f10c29b14c1963b8932ab6d
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
@@ -54,6 +56,19 @@ Clash-Flux 必须重新运行 `cmake --build build --target clash-flux`、`./run
 同源约束，桌面门禁和 iOS 暂缓政策保持不变。
 
 ## 验证边界
+
+2026-10-17 固定版本更新到 `45bd211`，相对 `ba8a900` 新增两项：composition 锚点
+在结构替换间转移（`UsePopup`/`UseMenu` 锚点视图在响应式断点切换时不再抛
+`presentation anchor must be mounted on only one View`，回归见应用侧
+`tests/test_page_transition.cpp` 的 `testResponsiveAnchorMount`）与 Windows 自定义
+标题栏窗口的 DWM 圆角（`DWMWA_WINDOW_CORNER_PREFERENCE`，Windows 10 忽略）。
+推送时发现 `bd8fb05` 曾把维护工作树里进行中的 backdrop_effect 代码一起提交
+（依赖未提交的 `effects.h` / `effects_internal.h` 与样式字段，树不完整无法编译），
+`45bd211` 移除这些代码块后固定树恢复自洽；backdrop 特性仍完整保留在维护仓库
+工作区，等待作为完整提交集成。Clash-Flux 已用新 checkout 重新编译并通过
+`./run.sh --version`；锚点转移语义与 `Unmount` 幂等性在 Linux Debug 下由
+分页交互回归覆盖。本轮 Windows 圆角与响应式窗口实际表现、Android 真机、
+macOS/iOS 原生仍未运行，需随对应平台 CI 与真机验证。
 
 2026-10-11 固定版本更新到 `ba8a900`，相对 `446a5a9` 新增三项：`ImageFit::Cover`
 源矩形按固有尺寸收口（运行时渲染修复）、Android 宿主 focus instrumentation 检查

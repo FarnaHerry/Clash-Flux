@@ -202,6 +202,16 @@ Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上�
 `PickProfileConfigFile` 的错误反馈——键盘、触摸与不支持拖入的宿主依赖该等价
 入口。`picked_path` 由调用方持有并回写，导入与解析不在控件内进行。
 
+## 圆角阶梯与密集卡片
+
+圆角自上而下共用一套阶梯（`IslandTheme` + 主题 ShapeScheme）：一级岛
+`island_radius` 22pt → 卡片/二级岛 `nested_radius` 14pt → 控件
+`theme.shapes.small` 8pt → **密集内容卡 `dense_radius` 6pt**（新档，日志行等
+高密度表面）→ 同心下限 4pt。高密度列表（日志页等）统一使用 `DenseCard`
+（`common.cpp`，声明见 `ui.h`）：dense 圆角 + 减半内边距（island_padding/2）
++ raised 表面、无描边；不要再为密集场景单独手拼圆角或把 `Card` 的
+`nested_radius` 调小。
+
 内容与外框统一使用主题层级：标题栏、一级侧栏与窗口外框用 `colors.background`，
 `PageScaffold` / `SecondaryPageScaffold` 的内容区域用 `IslandTheme::base`
 （`surface_container_low`），页内卡片沿用 `raised`（`surface_container`）。

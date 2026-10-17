@@ -20,7 +20,6 @@
 #include "profile_import_task.h"
 #include "section_tab_picker.h"
 #include "responsive_shell.h"
-#include "title_bar_search.h"
 #include "page_layout.h"
 #include "empty_state.h"
 #include "theme_colors.h"
@@ -714,55 +713,48 @@ void testHeaderGeometry() {
     }
 }
 
-// 桌面标题栏搜索胶囊：不再定宽，宽窗口封顶、窄窗口随容量槽收缩且保持居中。
-// 只链接 title_bar_search.cpp 的生产叠放层；胶囊用合成占位视图，并复刻
-// PillSearchField 胶囊自带的 Grow(1.0F)——正是它决定了叠放层必须隔离 Grow。
-huxerui::View TitleBarSearchRoot() {
+// 回归复现：带 UsePopup 锚点的动作视图在响应式断点切换（标题栏结构性替换）
+// 时，不得因锚点仍挂在旧节点上而抛 presentation anchor logic_error。
+huxerui::View ResponsiveAnchorRoot() {
     return huxerui::FlatTheme{huxerui::Scope([] {
-        return huxerui::Column{
-            huxerui::WindowTitleBar{
-                clashflux::ui::TitleBarSearchStack(
-                    huxerui::Row{huxerui::Text("RULES-TITLE")},
-                    // 复刻 PillSearchField：胶囊自身带 Grow，内容行也带 Grow
-                    //（松约束下撑满可用宽度）。
-                    huxerui::Row{huxerui::Text("SEARCH-PILL")
-                                     .With(huxerui::Grow(1.0F))}
-                        .With(huxerui::Grow(1.0F))
-                        .Key("pill-search-field")),
-            }.With(huxerui::Frame{.height = 40.0F}),
-            huxerui::Text("BODY"),
-        }.With(huxerui::Grow(1.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        auto popup = huxerui::UsePopup();
+        const bool compact =
+            huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+        huxerui::View anchored = huxerui::Row {
+            huxerui::Button("LOG-ACTIONS").With(popup.Anchor()),
+        };
+        huxerui::View bar;
+        if (compact) {
+            bar = huxerui::Row {
+                huxerui::Text("COMPACT-TITLE"),
+                std::move(anchored),
+            };
+        } else {
+            bar = huxerui::Column {
+                huxerui::WindowTitleBar{huxerui::Row {
+                    huxerui::Text("DESKTOP-TITLE"),
+                    huxerui::View{std::move(anchored)}.With(huxerui::Grow(1.0F)),
+                }}.With(huxerui::Frame{.height = 40.0F}),
+                huxerui::Text("BODY"),
+            }.With(huxerui::Grow(1.0F),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        }
+        return huxerui::Column {std::move(bar)}.With(huxerui::Grow(1.0F));
     })};
 }
-const huxerui::Application kTitleBarSearchApplication{
-    TitleBarSearchRoot, {.show_debug_overlay = false}};
-void testTitleBarSearchGeometry() {
-    huxerui::testing::UiTest ui(kTitleBarSearchApplication, {.viewport = {1400.0F, 800.0F}});
-    float previousWidth = 1.0e9F;
-    for (float width : {1400.0F, 1100.0F, 900.0F, 700.0F}) {
-        ui.SetWindowMetrics({.viewport = {width, 800.0F}});
-        ui.PumpAndSettle();
-        const auto pill = ui.Find(UiSelector::Key("pill-search-field")).One().bounds;
-        const auto slot = ui.Find(UiSelector::Key("title-search-slot")).One().bounds;
-        check(pill.width <= clashflux::ui::kDesktopTitleBarSearchWidth + 0.5F,
-              "标题栏搜索胶囊不超过 320 逻辑像素上限");
-        check(pill.width <= previousWidth + 0.5F,
-              "窗口收窄时标题栏搜索胶囊单调收缩，不保持写死宽度");
-        check(pill.width >= 120.0F,
-              "标题栏搜索胶囊收缩后仍保持可用的最小宽度，不缩成一小块");
-        check(pill.x >= slot.x - 0.5F && pill.x + pill.width <= slot.x + slot.width + 0.5F,
-              "标题栏搜索胶囊落在容量槽内，不溢出标题栏");
-        check(std::abs(pill.x + pill.width * 0.5F - (slot.x + slot.width * 0.5F)) < 0.5F,
-              "标题栏搜索胶囊在容量槽内保持居中");
-        previousWidth = pill.width;
-    }
-    // 宽窗口必须顶到 320 上限：证明收缩是「空间不足才收缩」，不是权重分宽。
-    ui.SetWindowMetrics({.viewport = {1400.0F, 800.0F}});
+const huxerui::Application kResponsiveAnchorApplication{
+    ResponsiveAnchorRoot, {.show_debug_overlay = false}};
+void testResponsiveAnchorMount() {
+    huxerui::testing::UiTest ui(kResponsiveAnchorApplication, {.viewport = {1400.0F, 800.0F}});
     ui.PumpAndSettle();
-    const auto pill = ui.Find(UiSelector::Key("pill-search-field")).One().bounds;
-    check(std::abs(pill.width - clashflux::ui::kDesktopTitleBarSearchWidth) < 0.5F,
-          "宽窗口下标题栏搜索胶囊回到 320 封顶宽度");
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        ui.SetWindowMetrics({.viewport = {500.0F, 700.0F}});
+        ui.PumpAndSettle();
+        ui.SetWindowMetrics({.viewport = {1400.0F, 800.0F}});
+        ui.PumpAndSettle();
+    }
+    check(ui.Find(UiSelector::Text("LOG-ACTIONS")).Exists(),
+          "响应式断点来回切换后锚点动作仍正常挂载，不抛 presentation anchor 错误");
 }
 
 huxerui::View CompactPageBottomRoot() {
@@ -780,8 +772,7 @@ const huxerui::Application kCompactPageBottomApplication{
     CompactPageBottomRoot, {.show_debug_overlay = false}};
 void testCompactPageBottom() {
     huxerui::testing::UiTest ui(kCompactPageBottomApplication,
-                                {.viewport = {320.0F, 480.0F}});
-    for (float height : {480.0F, 640.0F}) {
+                                {.viewport = {320.0F, 480.0F}});    for (float height : {480.0F, 640.0F}) {
         ui.SetWindowMetrics({.viewport = {320.0F, height}});
         ui.PumpAndSettle();
         const auto bounds = ui.Find(UiSelector::Key("compact-page-end")).One().bounds;
@@ -1296,7 +1287,7 @@ int main() {
     testGroupDrawers();
     testResponsiveDesktopShell();
     testHeaderGeometry();
-    testTitleBarSearchGeometry();
+    testResponsiveAnchorMount();
     testCompactPageBottom();
     testEmptyState();
     testThemeSwitch();

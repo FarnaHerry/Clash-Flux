@@ -84,6 +84,7 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   改图标只改对应那一个，别把猫爪铺到启动图标上（也不要反过来）。
 - Android 常驻服务不得等待 `POST_NOTIFICATIONS` 才启动前台服务或继续 VPN 授权；该权限只影响通知栏展示。
   返回 `START_STICKY` 的服务必须处理空 Intent，并从持久化状态恢复运行模式，不能猜测为 TUN。
+  打开应用只拉起常驻内核、不自动启动代理（`startCore` 的 `startVpn=false`：配置仍按持久化 TUN 意图编译以保住回收恢复的 TUN inbound，服务以 core-only 运行时标记 `tun_preference_reset_pending` 让 UI 开关回读为关）；TUN 只由用户显式操作（首页悬浮按钮/设置开关/快捷磁贴）或服务按持久化模式回收恢复拉起。
 - Android sing-box 所有者固定在 `:background`：`ClashVpnService` 持有 libbox/VpnService，
   `RuntimeControlService` 提供 AIDL/Binder 控制与状态查询。UI 进程通过 JNI 接收后台快照，
   不得再依赖跨进程不可见的 Java 静态字段。
