@@ -64,6 +64,15 @@ Android Release APK 必须同时启用 v1（JAR 签名，包含 `META-INF` 签�
 断言 v1、v2 均为 `true`；由于应用的 minSdk 是 24，默认核验会跳过 v1，因此只检查默认命令
 退出成功不能防止该兼容性回归。
 
+## 发布版本号
+
+发布时 `platform/android/app/build.gradle` 的 `versionCode` 在上一发布基础上 +1，
+`versionName` 与 `CMakeLists.txt` 的 project VERSION 保持完全一致，并与 CMake 版本号
+放进同一次发布提交。CI 不校验两侧版本号的一致性：漏改或冲突解决把该文件退回旧值都不会
+让流水线失败，只会体现在用户安装包上（v0.3.34 曾因此把 0.3.28 的版本号打进发布包）。
+发布推送前用 `git show <tag>:platform/android/app/build.gradle | grep version` 核对已
+提交内容。
+
 ## CMake / CPS 依赖基线
 
 Android native 与桌面统一要求 CMake 4.4，验证版本为 4.4.2。Gradle 的 CMake
