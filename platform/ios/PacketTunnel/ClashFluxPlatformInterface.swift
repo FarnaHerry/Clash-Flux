@@ -199,18 +199,24 @@ final class ClashFluxPlatformInterface: NSObject, LibboxPlatformInterfaceProtoco
     }
 
     func getInterfaces() throws -> LibboxNetworkInterfaceIteratorProtocol {
-        let interfaces = pathMonitor?.currentPath.availableInterfaces.map { item in
-            let value = LibboxNetworkInterface()
-            value.name = item.name
-            value.index = Int32(item.index)
-            switch item.type {
-            case .wifi: value.type = LibboxInterfaceTypeWIFI
-            case .cellular: value.type = LibboxInterfaceTypeCellular
-            case .wiredEthernet: value.type = LibboxInterfaceTypeEthernet
-            default: value.type = LibboxInterfaceTypeOther
+        // 显式循环而不是 optional-chaining + map：gobind 绑定的类在这里曾被
+        // 类型检查器退化成 [Any]，只报下游转换错、闭包体错误被吞；显式
+        // 类型让任何残留问题都能精确落在对应行。
+        var interfaces: [LibboxNetworkInterface] = []
+        if let current = pathMonitor?.currentPath {
+            for item in current.availableInterfaces {
+                let value = LibboxNetworkInterface()
+                value.name = item.name
+                value.index = Int32(item.index)
+                switch item.type {
+                case .wifi: value.type = LibboxInterfaceTypeWIFI
+                case .cellular: value.type = LibboxInterfaceTypeCellular
+                case .wiredEthernet: value.type = LibboxInterfaceTypeEthernet
+                default: value.type = LibboxInterfaceTypeOther
+                }
+                interfaces.append(value)
             }
-            return value
-        } ?? []
+        }
         return ClashFluxNetworkInterfaceIterator(interfaces)
     }
 
