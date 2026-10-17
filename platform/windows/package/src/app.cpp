@@ -197,17 +197,19 @@ View InstallerContent() {
     details.push_back(
         Text(installer_strings::already_installed).With(Foreground(theme.colors.on_surface_variant))
     );
+    // 维护页的主操作是"重新安装"（Repair 重铺程序文件），不再引导用户先去
+    // 卸载旧版本——升级/重装一条路径直达，卸载仅作为次级选项保留。
     actions.push_back(
-        SecondaryAction(Button(installer_strings::cancel).OnClick([window] { window.Close(); }), theme)
+        Button(installer_strings::reinstall)
+            .OnClick([installer] { installer.Repair(); })
+            .With(Frame{.min_width = 112.0F})
     );
     actions.push_back(SecondaryAction(
         Button(installer_strings::uninstall).OnClick([installer] { installer.Uninstall(); }), theme
     ));
-    actions.push_back(
-        Button(installer_strings::repair)
-            .OnClick([installer] { installer.Repair(); })
-            .With(Frame{.min_width = 112.0F})
-    );
+    actions.push_back(SecondaryAction(
+        Button(installer_strings::cancel).OnClick([window] { window.Close(); }), theme
+    ));
   } else if (status.phase == InstallerPhase::Ready && status.product == InstallerProductState::Absent) {
     const TextEditingValue destination_value = destination.Get().value_or(
         TextEditingValue::FromText(InstallPathText(status.default_destination))
