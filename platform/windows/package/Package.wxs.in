@@ -36,10 +36,22 @@
     <Feature Id="Application" Title="Clash-Flux" Level="1">
       <ComponentGroupRef Id="ApplicationFiles" />
       <ComponentRef Id="ApplicationShortcut" />
+      <ComponentRef Id="ServiceCleanup" />
     </Feature>
     <Feature Id="DesktopShortcut" Title="Desktop shortcut" Level="2" AllowAbsent="yes">
       <Level Value="1" Condition="CREATE_DESKTOP_SHORTCUT = 1" />
       <ComponentRef Id="ApplicationDesktopShortcut" />
     </Feature>
+
+    <!-- 应用卸载时同步停止并移除独立网络服务（ServiceControl 只发停止/删除
+         命令，不要求服务 exe 属于本包）。MajorUpgrade 卸旧装新时
+         UPGRADINGPRODUCTCODE 存在，组件被条件跳过——升级不删服务，代理
+         存活；只有彻底卸载才清理服务注册，不再遗留开机自启的孤儿服务。 -->
+    <Component Id="ServiceCleanup" Directory="INSTALLFOLDER" Condition="NOT UPGRADINGPRODUCTCODE">
+      <RegistryValue Root="HKLM" Key="Software\dev.farna.clashflux\Clash-Flux" Name="serviceCleanup"
+                     Type="integer" Value="1" KeyPath="yes" />
+      <ServiceControl Id="ClashFluxServiceControl" Name="ClashFluxService"
+                      Stop="uninstall" Remove="uninstall" Wait="yes" />
+    </Component>
   </Package>
 </Wix>
