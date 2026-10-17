@@ -4,7 +4,7 @@
 `<HOME>/dev/cpp/mcpp/HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `45bd21171cbf5df81f10c29b14c1963b8932ab6d`，各平台 CI 共用
+Clash-Flux 当前固定 `3517ea2944662ca9c5ec59365d3c9f494e811d02`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
@@ -12,10 +12,11 @@ Clash-Flux 当前固定 `45bd21171cbf5df81f10c29b14c1963b8932ab6d`，各平台 C
 ## 补丁归属
 
 此固定提交包含 acgu 的五个补丁提交、28 个未提交文件快照、Android 宿主默认焦点高亮修复，
-以及 Clash-Flux 的七项框架修复：拖动预览跟随抓取点、Pager 反向切换、隐藏虚拟页布局、
+以及 Clash-Flux 的八项框架修复：拖动预览跟随抓取点、Pager 反向切换、隐藏虚拟页布局、
 Linux 窗口帧生命周期、Objective-C++ 的 WindowTitleBar 聚合初始化兼容、
 composition 锚点在结构替换间转移（响应式断点切换不再抛 presentation anchor
-logic_error）和 Windows 自定义标题栏窗口的 DWM 圆角。
+logic_error）、Windows 自定义标题栏窗口的 DWM 圆角和 Windows 安装器引擎错误
+提示移除"忽略继续"（防止卸载失败被忽略后新旧两套程序文件并存）。
 这些修复已从应用 `cmake/patches/` 和 CMake/CI 应用步骤中移除，配置应用不会修改框架源码。
 
 Lib-Charts、Lib-SQLite、Lib-Camera 的项目修复已收录到各自 fork 的 `farna/main`，
@@ -42,7 +43,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 45bd21171cbf5df81f10c29b14c1963b8932ab6d
+git -C third_party/huxerui checkout 3517ea2944662ca9c5ec59365d3c9f494e811d02
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
@@ -56,6 +57,11 @@ Clash-Flux 必须重新运行 `cmake --build build --target clash-flux`、`./run
 同源约束，桌面门禁和 iOS 暂缓政策保持不变。
 
 ## 验证边界
+
+2026-10-17 固定版本更新到 `3517ea2`：Windows 安装器（windows_installer.cpp）的
+引擎错误提示不再提供"忽略继续"选项——忽略 MajorUpgrade 卸载旧版本失败会同时
+留下新旧两套程序文件，是升级残留的直接来源；错误现在只能重试或中止。本轮为
+安装器专用改动，不影响应用运行时；安装/升级/卸载行为需 Windows 真机验证。
 
 2026-10-17 固定版本更新到 `45bd211`，相对 `ba8a900` 新增两项：composition 锚点
 在结构替换间转移（`UsePopup`/`UseMenu` 锚点视图在响应式断点切换时不再抛
