@@ -377,9 +377,28 @@ View InstallerContent() {
   }.With(CrossAlign(CrossAxisAlignment::Stretch), Background(theme.colors.surface), Grow());
 }
 
+[[huxerui::composable]]
 View InstallerPage() {
-  return MaterialTheme {InstallerContent()};
+  // 自定义标题栏与主应用同款（WindowChromeMode::Custom）：拖拽区 +
+  // 平台标准控件由 WindowTitleBar/框架处理，品牌侧栏从标题栏下方铺满。
+  const ThemeSpec& theme = UseTheme();
+  return MaterialTheme {
+    Column {
+      WindowTitleBar {
+        Text(installer_strings::application_setup)
+            .Style(TextStyle{Font::System(12.0F).WithWeight(FontWeight::SemiBold),
+                             theme.colors.on_surface_variant})
+            .With(Padding(EdgeInsets::Symmetric(12.0F, 0.0F))),
+        Spacer().With(Grow()),
+      }.With(Frame{.height = kInstallerTitleBarHeight},
+             Background(theme.colors.surface)),
+      InstallerContent(),
+    }.With(Grow(), CrossAlign(CrossAxisAlignment::Stretch)),
+  };
 }
+
+// 与主应用一致的自定义标题栏高度（kDesktopTitleBarHeight = 40）。
+constexpr float kInstallerTitleBarHeight = 40.0F;
 
 const Application application{
     InstallerPage,
@@ -388,6 +407,8 @@ const Application application{
             .title = "Clash-Flux",
             .initial_size = {780.0F, 500.0F},
             .minimum_size = Size{720.0F, 460.0F},
+            .chrome_mode = WindowChromeMode::Custom,
+            .title_bar_height = kInstallerTitleBarHeight,
         },
         .show_debug_overlay = false,
         .window_hooks = {InstallInstallerSession},
