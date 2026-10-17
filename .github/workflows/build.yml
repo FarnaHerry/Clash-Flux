@@ -876,11 +876,18 @@ jobs:
           else
             note_args=(--generate-notes)
           fi
-          gh release create "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Clash-Flux $GITHUB_REF_NAME" \
-            "${note_args[@]}" \
-            release/*
+          # 标签可能被强制重打（例如修复发布包内容后移动标签）：Release 已存在
+          # 时改为覆盖上传同名产物，保证 Release 内容始终对应当前标签的构建，
+          # 否则 gh release create 会撞 "already exists" 让发布半途而废。
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber release/*
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Clash-Flux $GITHUB_REF_NAME" \
+              "${note_args[@]}" \
+              release/*
+          fi
 
   # WiX only consumes the already-staged Windows payload; it never recompiles
   # the application. It starts as soon as build-windows finishes and runs in
