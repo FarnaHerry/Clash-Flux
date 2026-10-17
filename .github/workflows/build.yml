@@ -620,6 +620,9 @@ jobs:
         run: |
           set -euo pipefail
           derived="$RUNNER_TEMP/ClashFluxDerivedData"
+          # 单架构构建：C++20 std 模块（std.cppm）依赖 clang -fmodule-output，
+          # 该选项不允许与多个 -arch 同用；模拟器冒烟检查在 arm64 runner 上
+          # 编 arm64 切片即可覆盖编译验证，x86_64 切片没有额外价值。
           xcodebuild \
             -project platform/ios/ClashFlux.xcodeproj \
             -scheme ClashFlux \
@@ -628,6 +631,7 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath "$derived" \
             CODE_SIGNING_ALLOWED=NO \
+            ARCHS=arm64 \
             build
           app="$derived/Build/Products/Release-iphonesimulator/ClashFlux.app"
           test -d "$app/PlugIns/PacketTunnel.appex"
