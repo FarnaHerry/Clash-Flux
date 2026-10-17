@@ -132,6 +132,11 @@ function(huxerui_configure_windows_project_package target_name install_component
             INTEGRATION_OUTPUT
                 "${HUXERUI_WINDOWS_PACKAGE_DIRECTORY}/$<CONFIG>/installer.json"
     )
+    # 安装器壳子复用 src/ui/theme_colors.h 的产品配色（深浅两态），
+    # 只加只读 include，不引入其它应用源码依赖。
+    target_include_directories(${target_name}_installer PRIVATE
+            "${PROJECT_SOURCE_DIR}/src/ui"
+    )
     set_target_properties(${target_name}_installer PROPERTIES
             OUTPUT_NAME "clash-flux-Installer"
     )
