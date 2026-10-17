@@ -138,11 +138,10 @@ private:
 export using StartupResult = clashflux::service_startup::Result;
 
 #if defined(__ANDROID__) || defined(CLASHFLUX_ANDROID_LEGACY)
-inline
+inline StartupResult synchronizeInstalled() {
 #else
-export
+export StartupResult synchronizeInstalled() {
 #endif
-StartupResult synchronizeInstalled() {
 #if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
     return clashflux::service_startup::synchronize(
         [] { return installed(); }, [] { return query(); },
