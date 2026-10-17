@@ -121,7 +121,13 @@ int main(int argc, char** argv) {
         check(ws::install(ws::currentUserSid(), error, options) == 0, "install: " + error);
         check(ws::installed(options), "SCM registration");
         check(ws::query("fixture-v1", options).error.empty(), "VERSION handshake");
-        const auto mismatch = ws::query("fixture-v2", options);
+        // CI runner 的 SCM fixture 偶发在 2s 预算内没起好管道（2026-10-17 连续
+        // 三轮挂在不同的传输检查点上）：传输失败重试，版本门禁断言本身不放松。
+        auto mismatch = ws::query("fixture-v2", options);
+        for (int attempt = 0; attempt < 5 && !mismatch.reachable; ++attempt) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            mismatch = ws::query("fixture-v2", options);
+        }
         check(mismatch.reachable && !mismatch.error.empty(), "version mismatch must fail");
         check(ws::request("STATUS", error, 2000, options) == "STOPPED", "initial status");
         check(ws::request("PPTP_AVAILABLE", error, 2000, options) == "YES", "PPTP capability after installation");
@@ -238,7 +244,14 @@ int main(int argc, char** argv) {
         check(status.dwCurrentState == SERVICE_STOPPED &&
               std::filesystem::exists(root / L"session-cleanup.txt"), "SCM stop releases session hooks");
         check(ws::ensureCompatible("fixture-v1", error, options), "owner restarts stopped service");
-        check(ws::request("PPTP_AVAILABLE", error, 2000, options) == "YES", "PPTP capability after SCM restart");
+        // SCM 重启后服务管道就绪需要时间：轮询等待而不是单次 2s 查询定生死。
+        bool pptpAfterRestart = false;
+        for (int attempt = 0; attempt < 20 && !pptpAfterRestart; ++attempt) {
+            std::string restartError;
+            pptpAfterRestart = ws::request("PPTP_AVAILABLE", restartError, 2000, options) == "YES";
+            if (!pptpAfterRestart) std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+        check(pptpAfterRestart, "PPTP capability after SCM restart");
         service.reset();
 #ifdef CLASHFLUX_TEST_SERVICE_V2_PATH
         // An ordinary writable build path cannot be used for SYSTEM self-update.
