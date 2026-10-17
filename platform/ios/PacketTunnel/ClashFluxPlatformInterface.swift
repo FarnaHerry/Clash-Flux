@@ -148,7 +148,10 @@ final class ClashFluxPlatformInterface: NSObject, LibboxPlatformInterfaceProtoco
         return values
     }
 
-    func usePlatformAutoDetectInterfaceControl() -> Bool { false }
+    // gobind 的 Swift 绑定对 ObjC 协议方法做 Swift 3 改名迁移：Go 侧
+    // UsePlatformAutoDetectInterfaceControl 在 Swift 里是
+    // usePlatformAutoDetectControl（旧名标记 obsoleted+renamed）。
+    func usePlatformAutoDetectControl() -> Bool { false }
     func autoDetectControl(_ fd: Int32) throws {}
     func useProcFS() -> Bool { false }
 
