@@ -4,7 +4,7 @@
 `<HOME>/dev/cpp/mcpp/HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `8fd9d0e1fa95617b63c046b4ff65ab903ddc75f8`，各平台 CI 共用
+Clash-Flux 当前固定 `42f0069d59e7e0295f6ed41cb512cf565817eb97`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
@@ -47,7 +47,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 8fd9d0e1fa95617b63c046b4ff65ab903ddc75f8
+git -C third_party/huxerui checkout 42f0069d59e7e0295f6ed41cb512cf565817eb97
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
@@ -61,6 +61,18 @@ Clash-Flux 必须重新运行 `cmake --build build --target clash-flux`、`./run
 同源约束，桌面门禁和 iOS 暂缓政策保持不变。
 
 ## 验证边界
+
+2026-10-18 固定版本更新到 `42f0069`：安装器同版本检测（`InstallerProductState::SameVersion`——
+重开同一版 Setup.exe 此前因 Burn 的 forward-compatible 回调一律置为 NewerVersion 而误报
+"已安装新版本"，真正的旧版本升级反而从未被识别；现在按版本序比较，同版本进维护页、
+更新版本仍拦截降级、旧版本并入 Present）与安装器检测/命令策略的 Burn 字符串探针修正；
+iOS 链接解析重构为 `cmake/HuxerUIIosLink.cmake`（生成器表达式先求值再解析目标依赖，
+保留库参数与传递链接选项，含 `tests/cmake/ios_link.cmake` 用例，替代本应用上一轮贡献的
+闭包实现）。分支验证记录：Linux 增量构建、196 单元 + 979 运行时用例、5 个 iOS CLI 用例、
+Ninja 单/多配置链接夹具；Windows 与 iOS 原生构建在该 Linux 主机不可用。Clash-Flux 已用
+新 checkout 重新编译并通过 `./run.sh --version`，桌面 17 项回归通过；iOS 链接与 Windows
+安装器行为随对应平台 CI 验证。`feat/multi-window`（窗口关系/多窗口）尚未并入 `farna/main`，
+应用不消费。
 
 2026-10-17 固定版本更新到 `8fd9d0e`：合入 PR #5 的 Windows 安装器命令驱动修复
 （嵌入式 related-bundle 卸载此前被"已安装新版本"页面拦下并按成功退出 0，
