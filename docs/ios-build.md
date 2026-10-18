@@ -22,6 +22,29 @@ iOS 订阅和规则集下载由 `src/api.cpp` 转到 `platform/ios/App/ClashFlux
 下载请求的 server-trust challenge；未勾选时 delegate 执行系统默认校验。不要通过修改全局
 URLSession 信任设置或 HuxerUI 通用 API 实现证书跳过。
 
+## 工具链 ABI 约束（核心构建与 Xcode 侧必须同源）
+
+iOS 核心库（`clash-flux_huxerui_ios_core`）与 Xcode 侧 app/extension 必须使用**同一套
+libc++ ABI**，历史上有三层坑，改动 `platform/ios/Scripts/build_huxerui_core.sh` 或工作流
+iOS 工具链时逐条核对：
+
+1. **单架构**：C++20 std 模块依赖 clang `-fmodule-output`，不允许与多个 `-arch` 同用；
+   CI 的 xcodebuild 显式 `ARCHS=arm64`。
+2. **头文件统一 SDK**：核心 cmake 构建 `-nostdinc++ -isystem $SDKROOT/usr/include/c++/v1`。
+   若用工具链自带的 libc++ 头（brew llvm 最新是 20+ 世代），其新 ABI 运行时符号
+   （`__atomic_monitor_global` 等）在 OS libc++ dylib 里不存在，app 链接成批未定义。
+3. **工具链钉 llvm@19**：`brew install llvm@19`（`CLASHFLUX_LLVM_PREFIX` 指向它）。
+   编译器仍用 brew clang（std 模块支持），但版本与 SDK/OS dylib 的 libc++（19 世代）
+   同族——std 模块包装（`std.cppm`）用工具链自带的（SDK 不自带模块源），与 SDK 头同
+   版本家族，不会导出 SDK 缺失的新时代头（如 `<flat_map>`）。
+
+另外 Apple 的 SDK libc++ 默认定义 `_LIBCPP_HAS_NO_EXPERIMENTAL_STOP_TOKEN`（实验特性
+总开关），`huxerui/task.h` 依赖的 `std::stop_token` 需要显式定义
+`_LIBCPP_ENABLE_EXPERIMENTAL`（Xcode 侧经 `GCC_PREPROCESSOR_DEFINITIONS`，核心构建在
+脚本 CXX flags 里）；stop_token 是纯头文件实现，无 dylib 符号依赖。Xcode 侧目标关闭
+`CLANG_ENABLE_MODULES`（无 `@import` 依赖，统一文本包含）。升级 Xcode/brew llvm 时，
+三者（工具链世代、SDK libc++、模块包装）必须重新对齐。
+
 在 macOS + Xcode 环境中可单独生成 Libbox framework：
 
 ```bash
