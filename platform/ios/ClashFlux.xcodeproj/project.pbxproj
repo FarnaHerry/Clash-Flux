@@ -16,6 +16,7 @@
 		A00000000000000000000008 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000000000000000000007 /* NetworkExtension.framework */; };
 		A00000000000000000000009 /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000000000000000000008 /* Network.framework */; };
 		A00000000000000000000010 /* CFNetwork.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000000000000000000020 /* CFNetwork.framework */; };
+		A00000000000000000000011 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000000000000000000007 /* NetworkExtension.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -63,7 +64,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		E00000000000000000000002 /* App Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000010 /* CFNetwork.framework in Frameworks */, ); runOnlyForDeploymentPostprocessing = 0; };
+		E00000000000000000000002 /* App Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000010 /* CFNetwork.framework in Frameworks */, A00000000000000000000011 /* NetworkExtension.framework in Frameworks */, ); runOnlyForDeploymentPostprocessing = 0; };
 		E00000000000000000000003 /* Packet Tunnel Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
