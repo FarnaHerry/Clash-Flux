@@ -590,16 +590,19 @@ jobs:
       - name: Install CMake, Ninja, and LLVM
         run: |
           set -euo pipefail
-          brew install llvm
+          # 核心工具链钉在 LLVM 19：iOS SDK/OS 的 libc++ 是 19 世代，brew
+          # 最新 llvm（20+）的新 ABI 运行时符号（__atomic_monitor_global
+          # 等）在 OS dylib 里不存在，app 链接成批未定义。
+          brew install llvm@19
           python3 -m venv "$RUNNER_TEMP/clash-flux-ios-tools"
           "$RUNNER_TEMP/clash-flux-ios-tools/bin/python" -m pip install \
             cmake==4.4.2 ninja
           export PATH="$RUNNER_TEMP/clash-flux-ios-tools/bin:$PATH"
           echo "$RUNNER_TEMP/clash-flux-ios-tools/bin" >> "$GITHUB_PATH"
-          llvm_prefix="$(brew --prefix llvm)"
+          llvm_prefix="$(brew --prefix llvm@19)"
           mod_dir="$llvm_prefix/share/libc++/v1"
           for f in std.cppm std.compat.cppm; do
-            test -f "$mod_dir/$f" || { echo "missing $mod_dir/$f (brew llvm layout changed?)" >&2; exit 1; }
+            test -f "$mod_dir/$f" || { echo "missing $mod_dir/$f (brew llvm@19 layout changed?)" >&2; exit 1; }
           done
           echo "CLASHFLUX_LLVM_PREFIX=$llvm_prefix" >> "$GITHUB_ENV"
           cmake --version

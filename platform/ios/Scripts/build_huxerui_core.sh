@@ -5,32 +5,32 @@ set -euo pipefail
 : "${HUXERUI_CORE_BUILD_DIR:?Xcode must provide HUXERUI_CORE_BUILD_DIR}"
 : "${SDKROOT:?Xcode must provide SDKROOT}"
 
-llvm_prefix="${CLASHFLUX_LLVM_PREFIX:-$(brew --prefix llvm)}"
+llvm_prefix="${CLASHFLUX_LLVM_PREFIX:-$(brew --prefix llvm@19)}"
+module_dir="$llvm_prefix/share/libc++/v1"
 modules_json="$HUXERUI_CORE_BUILD_DIR/libc++.modules.json"
 
-# 核心库必须与 Xcode 侧 app/extension 使用同一套 libc++：全部采用 iOS SDK
-# 的头文件（-nostdinc++ 屏蔽 brew llvm 自带的 libc++ 头），否则 brew 的
-# 新版 ABI 运行时符号（__atomic_monitor_global 等）在 OS libc++ 里不存在，
-# app 链接时成批未定义。std 模块源也必须来自 SDK：brew 的 std.cppm 会导出
-# SDK 头没有的新时代头（如 flat_map），模块包装与头文件版本必须一致。
+# 核心库必须与 Xcode 侧 app/extension 使用同一套 libc++ ABI：头文件统一
+# 采用 iOS SDK 的（-nostdinc++ 屏蔽工具链自带的头），工具链钉在 LLVM 19
+# 与 SDK/OS dylib 同世代；std 模块包装用工具链自带的 std.cppm（与 SDK 头
+# 同版本家族，不会导出 SDK 缺失的头），其中的 #include 按名字解析到 SDK 头。
 sdk_cxx_include="$SDKROOT/usr/include/c++/v1"
 test -d "$sdk_cxx_include" || {
     echo "Missing SDK libc++ headers: $sdk_cxx_include" >&2
     exit 1
 }
 for module in std.cppm std.compat.cppm; do
-    test -f "$sdk_cxx_include/$module" || {
-        echo "Missing std module source in SDK: $sdk_cxx_include/$module" >&2
+    test -f "$module_dir/$module" || {
+        echo "Missing std module source: $module_dir/$module" >&2
         exit 1
     }
 done
 
 mkdir -p "$HUXERUI_CORE_BUILD_DIR"
-python3 - "$sdk_cxx_include" "$modules_json" <<'PY'
+python3 - "$module_dir" "$sdk_cxx_include" "$modules_json" <<'PY'
 import json
 import sys
 
-module_dir, output = sys.argv[1:]
+module_dir, sdk_include, output = sys.argv[1:]
 modules = []
 for name in ("std", "std.compat"):
     modules.append({
@@ -38,7 +38,7 @@ for name in ("std", "std.compat"):
         "source-path": f"{module_dir}/{name}.cppm",
         "is-std-library": True,
         "local-arguments": {
-            "system-include-directories": [module_dir],
+            "system-include-directories": [sdk_include],
         },
     })
 with open(output, "w", encoding="utf-8") as stream:
