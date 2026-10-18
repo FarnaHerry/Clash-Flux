@@ -4,7 +4,7 @@
 `<HOME>/dev/cpp/mcpp/HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `42f0069d59e7e0295f6ed41cb512cf565817eb97`，各平台 CI 共用
+Clash-Flux 当前固定 `7abe0fc2812de8aac509ed27eee254c8d58da1b2`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
@@ -47,7 +47,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 42f0069d59e7e0295f6ed41cb512cf565817eb97
+git -C third_party/huxerui checkout 7abe0fc2812de8aac509ed27eee254c8d58da1b2
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
@@ -61,6 +61,23 @@ Clash-Flux 必须重新运行 `cmake --build build --target clash-flux`、`./run
 同源约束，桌面门禁和 iOS 暂缓政策保持不变。
 
 ## 验证边界
+
+2026-10-18 固定版本更新到 `7abe0fc`（上游官方 main 自 fork 基线 `0c51262` 起无新提交；
+本次是 fork 侧经 PR #6/#7/#8 合入 `farna/main` 的 28 个提交）：macOS 多窗口预览与
+输入重入修复、Linux GTK 运行时多窗口移植、X11 可选链接在两套构建系统保留、
+glass/backdrop 材质与 Android/Linux 加速、Windows 渐变与路径阴影资源复用、
+Windows 原生自定义 chrome 检查、macOS 退出不再模态等待。公共 API 只增不减
+（window/effects/paint/theme/app 新增多窗口与材质声明，`InternalAccess::InitializeWindow`
+签名变更导致测试二进制需全量重链——只重编 `clash-flux` 目标会让旧测试可执行文件
+对新 so 报 symbol lookup error）。`feat/multi-window` 已并入 `farna/main`，应用暂
+不消费其 API。分支验证记录：Linux Debug 增量构建与 34 项 CTest（32 通过；
+`HuxerUILinuxTests` 的 RTL caret 往返与 `HuxerUIRuntimeDependencyTests` 的重定位
+运行时两项失败已在旧固定点 `42f0069` 临时 worktree 复现同签名，属本机预存环境
+问题而非本次回归，本机不跑 Windows/iOS 原生）。Clash-Flux 已用新 checkout 全量
+重编译，`./run.sh --version` 通过，17 项 `clashflux-required` 桌面回归全部通过
+（含 page_transition 分页交互），并实际启动 GUI 确认首帧渲染无崩溃。维护仓库
+更新前把进行中的工作区（多为已落地内容的落地前变体）快照到
+`farna/worktree-snapshot-20261018` 分支后快进 `farna/main`，未做 rebase/force push。
 
 2026-10-18 固定版本更新到 `42f0069`：安装器同版本检测（`InstallerProductState::SameVersion`——
 重开同一版 Setup.exe 此前因 Burn 的 forward-compatible 回调一律置为 NewerVersion 而误报
