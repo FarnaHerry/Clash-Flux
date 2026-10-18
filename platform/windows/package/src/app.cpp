@@ -235,25 +235,46 @@ View InstallerContent() {
     actions.push_back(
         Button(installer_strings::close).OnClick([window] { window.Close(); }).With(Frame{.min_width = 112.0F})
     );
-  } else if (status.phase == InstallerPhase::Ready && status.product == InstallerProductState::Present) {
-    eyebrow = installer_strings::maintenance;
-    heading = installer_strings::manage_installation;
+  } else if (status.phase == InstallerPhase::Ready &&
+             status.product == InstallerProductState::Present) {
+    // 旧版本升级页（对齐 llm-switch 安装器分页）：主操作按已注册位置重铺
+    // 新版本（Install 不触碰用户数据），修复与卸载作为次级选项。
+    eyebrow = installer_strings::upgrade;
+    heading = installer_strings::existing_installation_detected;
     details.push_back(
-        Text(installer_strings::already_installed).With(Foreground(theme.colors.on_surface_variant))
-    );
-    // 维护页的主操作是"重新安装"（Repair 重铺程序文件），不再引导用户先去
-    // 卸载旧版本——升级/重装一条路径直达，卸载仅作为次级选项保留。
-    actions.push_back(
-        Button(installer_strings::reinstall)
-            .OnClick([installer] { installer.Repair(); })
-            .With(Frame{.min_width = 112.0F})
+        Text(installer_strings::upgrade_keep_data_message).With(Foreground(theme.colors.on_surface_variant))
     );
     actions.push_back(SecondaryAction(
         Button(installer_strings::uninstall).OnClick([installer] { installer.Uninstall(); }), theme
     ));
     actions.push_back(SecondaryAction(
-        Button(installer_strings::cancel).OnClick([window] { window.Close(); }), theme
+        Button(installer_strings::repair).OnClick([installer] { installer.Repair(); }), theme
     ));
+    actions.push_back(
+        Button(installer_strings::upgrade_keep_data)
+            .OnClick([installer] { installer.Install(); })
+            .With(Frame{.min_width = 152.0F})
+    );
+  } else if (status.phase == InstallerPhase::Ready &&
+             status.product == InstallerProductState::SameVersion) {
+    // 同版本维护页：重新打开同一版安装包不再当作升级，主操作按已注册
+    // 位置重装并保留数据；修复与卸载保留为次级选项。
+    eyebrow = installer_strings::maintenance;
+    heading = installer_strings::same_version_installed;
+    details.push_back(
+        Text(installer_strings::same_version_message).With(Foreground(theme.colors.on_surface_variant))
+    );
+    actions.push_back(SecondaryAction(
+        Button(installer_strings::uninstall).OnClick([installer] { installer.Uninstall(); }), theme
+    ));
+    actions.push_back(SecondaryAction(
+        Button(installer_strings::repair).OnClick([installer] { installer.Repair(); }), theme
+    ));
+    actions.push_back(
+        Button(installer_strings::reinstall_keep_data)
+            .OnClick([installer] { installer.Install(); })
+            .With(Frame{.min_width = 152.0F})
+    );
   } else if (status.phase == InstallerPhase::Ready && status.product == InstallerProductState::Absent) {
     const TextEditingValue destination_value = destination.Get().value_or(
         TextEditingValue::FromText(InstallPathText(status.default_destination))

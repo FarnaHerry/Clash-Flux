@@ -210,16 +210,16 @@ std::string BreakableLogText(std::string_view text) {
                     huxerui::TextSpan(BreakableLogText(entry.text)),
                 };
                 // 每条日志一张密集卡片：dense 圆角 + 减半内边距，底部外边距
-                // 提供行间距（VirtualList 无行间距修饰符）。
+                // 提供行间距（VirtualList 无行间距修饰符），与 4pt 档圆角同阶。
                 return DenseCard(huxerui::Text(attributed)
                                      .Style(huxerui::TextStyle{
                                          huxerui::Font::Monospace(font_size::kMonoBody),
                                          theme.colors.on_surface}))
-                    .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = 6.0F}))
+                    .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = 4.0F}))
                     .Key(std::format("log-{}", sourceIndex));
             })
             // 密集卡片行高估算：减半内边距（8×2）+ 单行文本 + 底部外边距。
-            .EstimatedItemExtent(compact ? 46.0F : 44.0F)
+            .EstimatedItemExtent(compact ? 44.0F : 42.0F)
             .Controller(scroll)
             .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     }
