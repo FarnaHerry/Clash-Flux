@@ -229,7 +229,7 @@ struct IslandTheme {
     float island_padding;  // 一级岛内边距
     float island_radius;   // 一级岛圆角 22pt
     float nested_radius;   // 二级岛/卡片圆角 14pt
-    float dense_radius;    // 密集内容卡圆角 6pt（日志行等高密度表面）
+    float dense_radius;    // 密集内容卡圆角 4pt（日志行等高密度表面）
     huxerui::Color ocean;   // 海面（窗口背景）
     huxerui::Color base;    // 一级岛表面
     huxerui::Color raised;  // 二级岛表面
@@ -369,7 +369,7 @@ huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
 // 1pt 描边，仅靠表面层级区分卡片（移动端设置页等无边框场景）。
 huxerui::View Card(huxerui::View content, bool outlined = true);
 
-// 密集卡片：圆角阶梯新增的 dense 档（IslandTheme::dense_radius 6pt）+ 减半
+// 密集卡片：圆角阶梯的 dense 档（IslandTheme::dense_radius 4pt）+ 减半
 // 内边距，用于日志行等高密度内容——嵌套圆角 14pt 在密集列表里过圆。
 huxerui::View DenseCard(huxerui::View content);
 

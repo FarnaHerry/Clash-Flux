@@ -520,7 +520,7 @@ IslandTheme ResolveIslandTheme(const huxerui::ThemeSpec& theme) {
         .island_padding = theme.spacing.medium,
         .island_radius = 22.0F,
         .nested_radius = 14.0F,
-        .dense_radius = 6.0F,
+        .dense_radius = 4.0F,
         .ocean = theme.colors.background,
         .base = theme.colors.surface_container_low,
         .raised = theme.colors.surface_container,
@@ -950,7 +950,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         .Key(std::move(key));
 }
 
-// 密集卡片（声明见 ui.h）：圆角阶梯的 dense 档（dense_radius 6pt），内边距
+// 密集卡片（声明见 ui.h）：圆角阶梯的 dense 档（dense_radius 4pt），内边距
 // 减半（island_padding/2）让高密度内容（日志行等）单行更紧凑；raised 表面
 // 与卡片同层，靠圆角与留白密度区分。
 [[huxerui::composable]] huxerui::View DenseCard(huxerui::View content) {
