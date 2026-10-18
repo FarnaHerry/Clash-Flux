@@ -11,10 +11,13 @@ ENABLE_BITCODE = NO
 ENABLE_USER_SCRIPT_SANDBOXING = NO
 SWIFT_VERSION = 5.0
 CLANG_CXX_LANGUAGE_STANDARD = c++23
-// ObjC 模块（-fmodules）会让 SDK libc++ 头经模块缓存暴露不全——
-// <stop_token> 在 ObjC++ TU 里解析为空模块（std::stop_token 缺失）；
-// 代码全部使用经典 #import，模块化没有收益，整体关闭。
+// 关闭 ObjC 模块：全部代码使用经典 #import，统一走文本包含，避免模块
+// 缓存对 libc++ 头的额外处理。
 CLANG_ENABLE_MODULES = NO
+// Apple 的 SDK libc++ 默认定义 _LIBCPP_HAS_NO_EXPERIMENTAL_STOP_TOKEN
+// （__config 的实验特性开关），task.h 依赖的 std::stop_token 因此不存在；
+// stop_token 是纯头文件实现，无 dylib 符号依赖，显式打开实验特性即可。
+GCC_PREPROCESSOR_DEFINITIONS = $(inherited) _LIBCPP_ENABLE_EXPERIMENTAL
 CLANG_ENABLE_OBJC_ARC = YES
 CLANG_CXX_LIBRARY = libc++
 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon

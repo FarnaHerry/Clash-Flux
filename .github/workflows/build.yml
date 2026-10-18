@@ -587,35 +587,6 @@ jobs:
           git clone --filter=blob:none "$HUXERUI_REPO" third_party/huxerui
           git -C third_party/huxerui checkout "$HUXERUI_COMMIT"
 
-      - name: Diagnose SDK stop_token gating
-        # 一次性诊断：SDK libc++ 头在 ObjC++ TU 里解析不出 std::stop_token，
-        # 直接读 SDK 头文件守卫并做探针编译（部署目标 15/16 与 -std 变体）。
-        run: |
-          sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
-          echo "== stop_token guards =="
-          grep -nE "_LIBCPP|STD_VER|THREADS|AVAIL|EXPERIMENTAL" \
-            "$sdk/usr/include/c++/v1/stop_token" | head -20
-          echo "== config defines =="
-          grep -rnE "EXPERIMENTAL_STOP_TOKEN|define _LIBCPP_HAS_NO_THREADS" \
-            "$sdk/usr/include/c++/v1/__config" "$sdk/usr/include/c++/v1/__configuration/"*.h 2>/dev/null | head -15
-          echo "== predefines =="
-          printf '' | xcrun clang++ -std=c++23 -stdlib=libc++ \
-            -target arm64-apple-ios15.0-simulator -dM -E -x c++ - \
-            | grep -E "__cplusplus|_LIBCPP_STD_VER" | head -5
-          echo "== probes =="
-          printf '#include <stop_token>\nstd::stop_token t;\n' > /tmp/probe.cpp
-          for flags in "-target arm64-apple-ios15.0-simulator -std=c++23" \
-                       "-target arm64-apple-ios16.0-simulator -std=c++23" \
-                       "-target arm64-apple-ios15.0-simulator -std=c++2b" \
-                       "-target arm64-apple-ios15.0-simulator -std=c++23 -D_LIBCPP_DISABLE_AVAILABILITY"; do
-            if xcrun clang++ $flags -stdlib=libc++ -c /tmp/probe.cpp -o /tmp/probe.o 2>/tmp/probe.err; then
-              echo "PROBE_OK: $flags"
-            else
-              echo "PROBE_FAIL: $flags"
-              head -3 /tmp/probe.err
-            fi
-          done
-
       - name: Install CMake, Ninja, and LLVM
         run: |
           set -euo pipefail
