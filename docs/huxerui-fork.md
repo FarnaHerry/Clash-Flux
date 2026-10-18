@@ -4,7 +4,7 @@
 `<HOME>/dev/cpp/mcpp/HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `3517ea2944662ca9c5ec59365d3c9f494e811d02`，各平台 CI 共用
+Clash-Flux 当前固定 `8fd9d0e1fa95617b63c046b4ff65ab903ddc75f8`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
@@ -12,11 +12,15 @@ Clash-Flux 当前固定 `3517ea2944662ca9c5ec59365d3c9f494e811d02`，各平台 C
 ## 补丁归属
 
 此固定提交包含 acgu 的五个补丁提交、28 个未提交文件快照、Android 宿主默认焦点高亮修复，
-以及 Clash-Flux 的八项框架修复：拖动预览跟随抓取点、Pager 反向切换、隐藏虚拟页布局、
+以及 Clash-Flux 的十项框架修复：拖动预览跟随抓取点、Pager 反向切换、隐藏虚拟页布局、
 Linux 窗口帧生命周期、Objective-C++ 的 WindowTitleBar 聚合初始化兼容、
 composition 锚点在结构替换间转移（响应式断点切换不再抛 presentation anchor
-logic_error）、Windows 自定义标题栏窗口的 DWM 圆角和 Windows 安装器引擎错误
-提示移除"忽略继续"（防止卸载失败被忽略后新旧两套程序文件并存）。
+logic_error）、Windows 自定义标题栏窗口的 DWM 圆角、Windows 安装器引擎错误
+提示移除"忽略继续"（防止卸载失败被忽略后新旧两套程序文件并存）、Windows 安装器
+命令驱动运行修复（命令式安装/卸载绕过新版本闩锁、不阻塞收尾并按终端状态映射
+退出码、保留引擎停止与 bundle 注销，修复升级时每个陈旧 bundle 注册弹一页且
+注册跨版本累积的根因）与 iOS 链接闭包修复（link.rsp 解析 app 目标自有传递
+依赖 + IOS 平台补 CoreMedia 框架声明）。
 这些修复已从应用 `cmake/patches/` 和 CMake/CI 应用步骤中移除，配置应用不会修改框架源码。
 
 Lib-Charts、Lib-SQLite、Lib-Camera 的项目修复已收录到各自 fork 的 `farna/main`，
@@ -43,7 +47,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 3517ea2944662ca9c5ec59365d3c9f494e811d02
+git -C third_party/huxerui checkout 8fd9d0e1fa95617b63c046b4ff65ab903ddc75f8
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
@@ -57,6 +61,19 @@ Clash-Flux 必须重新运行 `cmake --build build --target clash-flux`、`./run
 同源约束，桌面门禁和 iOS 暂缓政策保持不变。
 
 ## 验证边界
+
+2026-10-17 固定版本更新到 `8fd9d0e`：合入 PR #5 的 Windows 安装器命令驱动修复
+（嵌入式 related-bundle 卸载此前被"已安装新版本"页面拦下并按成功退出 0，
+bundle 注册跨版本累积——实测一个产品攒了 0.3.29-0.3.35 七个条目、每次升级每个
+陈旧条目弹一页；现在命令式运行绕过交互闩锁、自行收尾并保留引擎停止与 bundle
+注销），新增 iOS 链接闭包修复（`HuxerUIApp.cmake` 把 app 静态库目标自己的
+LINK_LIBRARIES 传递闭包解析进 link.rsp，`$<TARGET_FILE:>` 交
+`file(GENERATE)` 求值；`IOS.cmake` 补 `-framework CoreMedia`）。Clash-Flux 同步
+把 iOS 模拟器 CI 改为单架构 arm64（C++20 std 模块 `-fmodule-output` 不支持
+多 `-arch`）并让 PacketTunnel 不再消费 app 的 link.rsp。应用已用新 checkout
+重新编译并通过 `./run.sh --version`，`clashflux-required` 桌面 17 项回归通过。
+iOS 链接与 Windows 命令式安装/卸载行为随对应平台 CI 验证；真机安装/升级/卸载
+仍需 Windows 实机复核。
 
 2026-10-17 固定版本更新到 `3517ea2`：Windows 安装器（windows_installer.cpp）的
 引擎错误提示不再提供"忽略继续"选项——忽略 MajorUpgrade 卸载旧版本失败会同时
