@@ -11,7 +11,10 @@ ENABLE_BITCODE = NO
 ENABLE_USER_SCRIPT_SANDBOXING = NO
 SWIFT_VERSION = 5.0
 CLANG_CXX_LANGUAGE_STANDARD = c++23
-CLANG_ENABLE_MODULES = YES
+// ObjC 模块（-fmodules）会让 SDK libc++ 头经模块缓存暴露不全——
+// <stop_token> 在 ObjC++ TU 里解析为空模块（std::stop_token 缺失）；
+// 代码全部使用经典 #import，模块化没有收益，整体关闭。
+CLANG_ENABLE_MODULES = NO
 CLANG_ENABLE_OBJC_ARC = YES
 CLANG_CXX_LIBRARY = libc++
 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon

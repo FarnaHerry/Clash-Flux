@@ -276,8 +276,8 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		900000000000000000000001 /* Debug Project */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Debug; };
-		900000000000000000000002 /* Release Project */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Release; };
+		900000000000000000000001 /* Debug Project */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = NO; IPHONEOS_DEPLOYMENT_TARGET = 15.0; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Debug; };
+		900000000000000000000002 /* Release Project */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = NO; IPHONEOS_DEPLOYMENT_TARGET = 15.0; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Release; };
 		900000000000000000000003 /* Debug App */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = B00000000000000000000018;
