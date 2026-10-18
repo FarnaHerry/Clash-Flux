@@ -15,7 +15,7 @@
 namespace {
 
 std::mutex gManagerMutex;
-__strong NEPacketTunnelProviderManager* gManager = nil;
+__strong NETunnelProviderManager* gManager = nil;
 std::atomic_bool gTunnelRunning{false};
 
 NSString* appGroupIdentifier() {
@@ -65,12 +65,12 @@ bool copyString(char* output, std::size_t capacity, NSString* value) {
     return true;
 }
 
-NEPacketTunnelProviderManager* findManager(NSError** error) {
+NETunnelProviderManager* findManager(NSError** error) {
     dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-    __block NSArray<NEPacketTunnelProviderManager*>* managers = nil;
+    __block NSArray<NETunnelProviderManager*>* managers = nil;
     __block NSError* loadError = nil;
-    [NEPacketTunnelProviderManager loadAllFromPreferencesWithCompletionHandler:
-        ^(NSArray<NEPacketTunnelProviderManager*>* loaded, NSError* resultError) {
+    [NETunnelProviderManager loadAllFromPreferencesWithCompletionHandler:
+        ^(NSArray<NETunnelProviderManager*>* loaded, NSError* resultError) {
             managers = loaded;
             loadError = resultError;
             dispatch_semaphore_signal(semaphore);
@@ -90,7 +90,7 @@ NEPacketTunnelProviderManager* findManager(NSError** error) {
     }
 
     NSString* expectedIdentifier = extensionBundleIdentifier();
-    for (NEPacketTunnelProviderManager* manager in managers) {
+    for (NETunnelProviderManager* manager in managers) {
         NETunnelProviderProtocol* protocol =
             [manager.protocolConfiguration isKindOfClass:NETunnelProviderProtocol.class]
                 ? (NETunnelProviderProtocol*)manager.protocolConfiguration
@@ -99,10 +99,10 @@ NEPacketTunnelProviderManager* findManager(NSError** error) {
             return manager;
         }
     }
-    return [NEPacketTunnelProviderManager new];
+    return [NETunnelProviderManager new];
 }
 
-bool saveManager(NEPacketTunnelProviderManager* manager, NSError** error) {
+bool saveManager(NETunnelProviderManager* manager, NSError** error) {
     dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
     __block NSError* saveError = nil;
     [manager saveToPreferencesWithCompletionHandler:^(NSError* resultError) {
@@ -204,7 +204,7 @@ extern "C" bool clashflux_ios_start_tunnel(const char* configPath,
             }
 
             NSError* error = nil;
-            NEPacketTunnelProviderManager* manager = findManager(&error);
+            NETunnelProviderManager* manager = findManager(&error);
             if (manager == nil) {
                 setError(errorBuffer, errorBufferSize,
                          error.localizedDescription ?: @"读取 VPN 配置失败");
@@ -284,7 +284,7 @@ extern "C" bool clashflux_ios_start_tunnel(const char* configPath,
 extern "C" void clashflux_ios_stop_tunnel() noexcept {
     try {
         @autoreleasepool {
-            NEPacketTunnelProviderManager* manager = nil;
+            NETunnelProviderManager* manager = nil;
             {
                 std::lock_guard lock(gManagerMutex);
                 manager = gManager;
@@ -317,7 +317,7 @@ extern "C" void clashflux_ios_stop_tunnel() noexcept {
 }
 
 extern "C" bool clashflux_ios_tunnel_running() noexcept {
-    NEPacketTunnelProviderManager* manager = nil;
+    NETunnelProviderManager* manager = nil;
     {
         std::lock_guard lock(gManagerMutex);
         manager = gManager;
@@ -404,19 +404,19 @@ extern "C" bool clashflux_ios_download_to_file(
                 }
                 NSNumber* proxyPort = @(port);
                 NSString* proxyHost = components.host;
+                // iOS 头文件把 kCFNetworkProxiesHTTPS* 常量标记为不可用；
+                // HTTPS 代理键经 CFStream 的同名运行时键提供，NSURLSession
+                // 的 connectionProxyDictionary 按此解释 https 代理。
                 configuration.connectionProxyDictionary = @{
                     (__bridge NSString*)kCFNetworkProxiesHTTPEnable: @YES,
                     (__bridge NSString*)kCFNetworkProxiesHTTPProxy: proxyHost,
                     (__bridge NSString*)kCFNetworkProxiesHTTPPort: proxyPort,
-                    (__bridge NSString*)kCFNetworkProxiesHTTPSEnable: @YES,
-                    (__bridge NSString*)kCFNetworkProxiesHTTPSProxy: proxyHost,
-                    (__bridge NSString*)kCFNetworkProxiesHTTPSPort: proxyPort,
+                    (__bridge NSString*)kCFStreamPropertyHTTPSProxyHost: proxyHost,
+                    (__bridge NSString*)kCFStreamPropertyHTTPSProxyPort: proxyPort,
                 };
             } else if (!allowSystemProxy) {
-                configuration.connectionProxyDictionary = @{
-                    (__bridge NSString*)kCFNetworkProxiesHTTPEnable: @NO,
-                    (__bridge NSString*)kCFNetworkProxiesHTTPSEnable: @NO,
-                };
+                // 空代理字典 = 明确不走系统代理。
+                configuration.connectionProxyDictionary = @{};
             }
 
             NSMutableURLRequest* request = [NSMutableURLRequest
