@@ -441,7 +441,18 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 BootReceiver.setVpnActive(this, true);
                 publishVpnState(2, "sing-box 已附着 TUN；socket protect 已启用");
                 updateForegroundNotification("sing-box VPN 隧道运行中");
-                MainActivity.appLog("sing-box 已成功附着 Android TUN，控制通道按需连接", false);
+                MainActivity.appLog("sing-box 已成功附着 Android TUN", false);
+            }
+            // 数据面就绪后立即连接控制通道：CommandClient 订阅的状态/连接推送
+            // 是 connections.json、通知栏速率与首页流量的唯一来源；此前只靠代理
+            // 组读取、测速等路径懒连接，打开应用直接启动代理后只看连接页时，
+            // 连接快照不会开始写入。
+            if (startRequested && !stopRequested.get()) {
+                try {
+                    controlClient();
+                } catch (Exception error) {
+                    MainActivity.appLog("连接 libbox 控制通道失败：" + error.getMessage(), true);
+                }
             }
             String queuedGroup;
             synchronized (URL_TEST_LOCK) {
@@ -1092,7 +1103,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         synchronized (clientLock) {
             if (client != null) return client;
             if (!startRequested) throw new IllegalStateException("VPN 未在运行");
-            MainActivity.appLog("线路切换：按需连接 libbox 控制通道", false);
+            MainActivity.appLog("连接 libbox 控制通道", false);
             CommandClientOptions options = new CommandClientOptions();
             // CommandClient 默认不订阅任何数据流。显式订阅代理组、状态、日志、
             // 出站模式和连接流；Android 的内核日志必须经 CommandLog 转到 C++ 日志页。

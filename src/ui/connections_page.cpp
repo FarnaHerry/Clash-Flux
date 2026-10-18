@@ -7,6 +7,9 @@
 
 #include <chrono>
 #include <algorithm>
+#include <atomic>
+#include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -130,6 +133,32 @@ void closeAllConnectionsForPlatform() {
 #endif
 }
 
+// Android 没有 /connections WS 通道（libbox 状态走 Java CommandClient），也没
+// 有人发布 StreamKind::Connections 通知：页面激活期间必须按固定节拍重读跨进
+// 程快照文件，否则挂载之后才启动代理时，页面会永远停在挂载时刻读到的空快照。
+// 桌面由 WS 推送驱动（SubscribeStreamUpdates），不轮询。条件编译留在文件作用
+// 域 helper，composable 函数体内不做条件编译。
+void StartSnapshotPoll(huxerui::TaskScope tasks, bool active,
+                       std::shared_ptr<std::atomic<bool>> polling,
+                       std::function<void()> applyFrame) {
+#if defined(__ANDROID__)
+    if (!active) return;
+    tasks.Launch([tasks, polling, applyFrame]() -> huxerui::Task<void> {
+        co_await PollWhile(std::chrono::duration<double>{1.0},
+                           [polling, applyFrame] {
+                               if (!polling->load()) return false;
+                               applyFrame();
+                               return true;
+                           });
+    });
+#else
+    static_cast<void>(tasks);
+    static_cast<void>(active);
+    static_cast<void>(polling);
+    static_cast<void>(applyFrame);
+#endif
+}
+
 } // namespace
 
 [[huxerui::composable]] huxerui::View ConnectionsPage(
@@ -149,10 +178,15 @@ void closeAllConnectionsForPlatform() {
     const auto sectionInsets = huxerui::UseEnvironment<SectionTabContentInsets>();
 
     huxerui::Lifecycle(
-        [tasks, rows, totalUp, totalDown, streamOpen] {
-            // 帧原文比较用共享对象保存：页面重进的首次读取与后续推送共用同一份。
+        [tasks, rows, totalUp, totalDown, streamOpen, active] {
+            // 帧原文比较用共享对象保存：本次激活内的首次读取与后续推送共用
+            // 同一份；重新激活（依赖变化）重建后强制重新解析，拿到最新快照。
             auto lastFrame = std::make_shared<std::string>();
             auto generation = std::make_shared<std::uint64_t>(0);
+            // 节拍泵的在位标志：依赖变化/卸载的 cleanup 置 false，让上一轮
+            // 轮询在下一个节拍退出（TaskScope 活整个页面生命周期，不会随
+            // Lifecycle 依赖变化取消已 Launch 的协程）。
+            auto polling = std::make_shared<std::atomic<bool>>(true);
             const auto applyFrame = [tasks, rows, totalUp, totalDown, streamOpen,
                                      lastFrame, generation] {
                 const auto ticket = ++*generation;
@@ -185,9 +219,13 @@ void closeAllConnectionsForPlatform() {
                     if (kind != stream::StreamKind::Connections) return;
                     applyFrame();
                 });
-            return [subscription] { UnsubscribeStreamUpdates(subscription); };
+            StartSnapshotPoll(tasks, active, polling, applyFrame);
+            return [subscription, polling] {
+                UnsubscribeStreamUpdates(subscription);
+                polling->store(false);
+            };
         },
-        0);
+        active);
 
     // 不可见时只保留本页 State/Lifecycle，不构建内容：桌面 IndexedPages 让七个
     // 一级页同帧参与测量，隐藏页（日志/连接有推送流更新）的重子树会拖慢每一次渲染。
