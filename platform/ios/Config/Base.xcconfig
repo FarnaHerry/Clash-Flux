@@ -23,6 +23,8 @@ HUXERUI_LINK_OPTIONS_FILE = $(HUXERUI_CORE_BUILD_DIR)/huxerui-ios/clash-flux/lin
 CLASHFLUX_LIBBOX_XCFRAMEWORK = $(PROJECT_DIR)/Build/Libbox.xcframework
 
 HEADER_SEARCH_PATHS = $(inherited) "$(CLASHFLUX_PROJECT_ROOT)/third_party/huxerui/include"
-OTHER_LDFLAGS = $(inherited) @"$(HUXERUI_LINK_OPTIONS_FILE)"
+// Libbox 的 Go runtime 需要 libresolv（res_9_*），UIKit 侧依赖由
+// HuxerUI 平台清单（app）/扩展自己的覆盖值提供。
+OTHER_LDFLAGS = $(inherited) -lresolv @"$(HUXERUI_LINK_OPTIONS_FILE)"
 
 #include? "Local.xcconfig"

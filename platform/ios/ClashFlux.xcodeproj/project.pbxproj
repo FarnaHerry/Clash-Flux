@@ -321,7 +321,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PacketTunnel/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
-				OTHER_LDFLAGS = "";
+				OTHER_LDFLAGS = "-lresolv" "-framework" UIKit;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(CLASHFLUX_EXTENSION_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = PacketTunnel;
 				SKIP_INSTALL = YES;
@@ -341,7 +341,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PacketTunnel/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
-				OTHER_LDFLAGS = "";
+				OTHER_LDFLAGS = "-lresolv" "-framework" UIKit;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(CLASHFLUX_EXTENSION_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = PacketTunnel;
 				SKIP_INSTALL = YES;
