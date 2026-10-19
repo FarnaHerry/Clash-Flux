@@ -40,7 +40,7 @@ extern "C" void clashflux_android_open_url(const char* url) noexcept;
 extern "C" bool clashflux_ios_start_tunnel(const char* config_path,
                                             char* error_buffer,
                                             std::size_t error_buffer_size) noexcept;
-extern "C" void clashflux_ios_stop_tunnel() noexcept;
+extern "C" bool clashflux_ios_stop_tunnel() noexcept;
 extern "C" bool clashflux_ios_tunnel_running() noexcept;
 extern "C" void clashflux_ios_open_url(const char* url) noexcept;
 #endif
@@ -478,7 +478,10 @@ struct CoreProcessImpl {
 #if defined(CLASHFLUX_IOS)
         // Ask the OS-managed provider to stop even if this CoreProcess instance
         // did not observe its initial start (for example after app relaunch).
-        clashflux_ios_stop_tunnel();
+        if (!clashflux_ios_stop_tunnel()) {
+            lastError = "iOS Packet Tunnel 未确认退出";
+            return;
+        }
         stopRequested.store(true);
         running.store(false);
         exitCode.store(0);
@@ -624,20 +627,18 @@ struct CoreProcessImpl {
             if (!ReadFile(readPipe.get(), buf, sizeof(buf), &n, nullptr) || n == 0) break;
             splitLines(pending, buf, n);
 #else
+            if (stopRequested.load() && childPid > 0) {
+                const auto now = std::chrono::steady_clock::now();
+                if (killDeadline == std::chrono::steady_clock::time_point::max()) {
+                    killDeadline = now + kGracePeriod;
+                } else if (now >= killDeadline) {
+                    ::kill(childPid, SIGKILL);
+                    killDeadline = std::chrono::steady_clock::time_point::max();
+                }
+            }
             pollfd pfd{readFd, POLLIN, 0};
             const int pr = ::poll(&pfd, 1, 200);
-            if (pr == 0) {
-                if (stopRequested.load() && childPid > 0) {
-                    const auto now = std::chrono::steady_clock::now();
-                    if (killDeadline == std::chrono::steady_clock::time_point::max()) {
-                        killDeadline = now + kGracePeriod;
-                    } else if (now >= killDeadline) {
-                        ::kill(childPid, SIGKILL);
-                        killDeadline = std::chrono::steady_clock::time_point::max();
-                    }
-                }
-                continue;
-            }
+            if (pr == 0) continue;
             if (pr < 0) break;
             if (pfd.revents & (POLLHUP | POLLERR)) {
                 char buf[4096];

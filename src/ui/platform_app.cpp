@@ -5,9 +5,11 @@
 #include <huxerui/huxerui.h>
 
 #include <chrono>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <format>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -372,11 +374,22 @@ struct TrayMenuText {
         clashflux::instance::markClosing();
         tray.Hide();
         window.Hide();
-        tasks.Launch([application]() -> huxerui::Task<void> {
-            co_await RunOnTaskThread([] {
+        auto coreStopped = std::make_shared<std::atomic_bool>(false);
+        auto cleanupFinished = std::make_shared<std::atomic_bool>(false);
+        tasks.Launch([application, coreStopped, cleanupFinished]() -> huxerui::Task<void> {
+            bool stopped = co_await RunOnTaskThread([] {
                 store::vpnStore().shutdown();
-                store::coreStore().stopCore();
+                return store::coreStore().stopCore();
             });
+            if (!stopped) {
+                stopped = co_await RunOnTaskThread([] {
+                    return store::coreStore().stopCore();
+                });
+                if (!stopped)
+                    stream::logApplication("error", "退出时停止内核失败：" +
+                        store::coreStore().snapshot().lastError);
+            }
+            coreStopped->store(stopped);
             // 写后缓存模型：退出前把 settings/profiles 的脏数据落库。失败只能
             // 记日志（退出路径没有界面），但绝不能再静默——那等于用户改动凭空消失。
             auto& store = clashflux::persistence::persistence();
@@ -389,10 +402,14 @@ struct TrayMenuText {
                                              ? std::string{"未知原因"}
                                              : store.lastError()));
             }
+            cleanupFinished->store(true);
             application.Quit();
         });
-        // 退出保底看门狗：避免任何底层阻塞（网络断开超时、平台事件循环等）导致后台残留僵尸进程
-        std::thread([] {
+        std::thread([coreStopped, cleanupFinished] {
+            std::this_thread::sleep_for(std::chrono::seconds(3));
+            if (!coreStopped->load()) store::coreStore().stopCore();
+            while (!cleanupFinished->load())
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
             std::this_thread::sleep_for(std::chrono::seconds(3));
             std::_Exit(0);
         }).detach();

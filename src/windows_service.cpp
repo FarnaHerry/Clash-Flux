@@ -351,12 +351,24 @@ struct Server {
         return engine.valid() && WaitForSingleObject(engine.get(), 0) == WAIT_TIMEOUT
             ? "RUNNING " + std::to_string(GetProcessId(engine.get())) : "STOPPED";
     }
-    void stopEngine() {
+    bool stopEngine(std::string* error = nullptr) {
         if (hooks.resetTun) hooks.resetTun(); // Release routes before capture device.
-        if (job.valid()) TerminateJobObject(job.get(), 0);
-        if (engine.valid()) WaitForSingleObject(engine.get(), 2000);
+        if (job.valid() && !TerminateJobObject(job.get(), 0)) {
+            if (error) *error = winError("Terminate core job");
+            return false;
+        }
+        if (engine.valid()) {
+            const DWORD result = WaitForSingleObject(engine.get(), 2000);
+            if (result != WAIT_OBJECT_0) {
+                if (error) *error = result == WAIT_TIMEOUT
+                    ? "Core did not exit after job termination"
+                    : winError("Wait for core exit");
+                return false;
+            }
+        }
         { std::lock_guard lock(engineMutex); engine.reset(); }
         job.reset();
+        return true;
     }
     ~Server() { try { stopEngine(); if (hooks.shutdown) hooks.shutdown(); } catch (...) {} }
     bool startEngine(std::string_view field, HANDLE pipe, std::string& error) {
@@ -393,7 +405,7 @@ struct Server {
         { std::ofstream out(snapshot, std::ios::binary | std::ios::trunc);
           out.write(content.data(), static_cast<std::streamsize>(content.size())); out.close();
           if (!out) { error = "Cannot write service configuration snapshot"; return false; } }
-        stopEngine();
+        if (!stopEngine(&error)) return false;
         job.reset(CreateJobObjectW(nullptr, nullptr));
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -522,7 +534,10 @@ struct Server {
                         reply = hooks.command(command);
                     else reply = "ERR Read-only query pipe";
                 }
-                else if (command == "STOP") { stopEngine(); reply = "OK"; }
+                else if (command == "STOP") {
+                    std::string error;
+                    reply = stopEngine(&error) ? "OK" : "ERR " + error;
+                }
                 else if (command == "UPGRADE") {
                     std::string error;
                     reply = prepareUpgrade(pipe.get(), error) ? "OK" : "ERR " + error;
@@ -580,7 +595,10 @@ void WINAPI serviceMain(DWORD, wchar_t**) {
     SetEvent(server.stop.get());
     if (queryWorker.joinable()) queryWorker.join();
     server.report(SERVICE_STOP_PENDING);
-    try { server.stopEngine(); if (server.hooks.shutdown) server.hooks.shutdown(); }
+    try {
+        if (!server.stopEngine()) code = ERROR_SERVICE_SPECIFIC_ERROR;
+        if (server.hooks.shutdown) server.hooks.shutdown();
+    }
     catch (...) { code = ERROR_SERVICE_SPECIFIC_ERROR; }
     server.report(SERVICE_STOPPED, code);
 }

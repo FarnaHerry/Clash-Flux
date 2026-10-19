@@ -497,7 +497,12 @@
 #endif
         stream::logApplication("info", "请求停止代理内核");
 #if defined(__ANDROID__)
-        clashflux_android_stop_vpn();
+        if (!clashflux_android_stop_vpn()) {
+            std::lock_guard lock(mutex_);
+            snap_.state = core::CoreState::Failed;
+            snap_.lastError = "Android 后台服务未确认内核退出";
+            return false;
+        }
         std::lock_guard lock(mutex_);
         snap_.state = core::CoreState::Stopped;
         snap_.version.clear();
@@ -505,6 +510,12 @@
         return true;
 #elif defined(CLASHFLUX_IOS)
         streams_.stop();
+        if (!clashflux_ios_stop_tunnel()) {
+            std::lock_guard lock(mutex_);
+            snap_.state = core::CoreState::Failed;
+            snap_.lastError = "iOS Packet Tunnel 未确认退出";
+            return false;
+        }
         process_.stop();
         std::error_code ec;
         std::filesystem::remove(cfg::coreWorkDir() / "core.pid", ec);
@@ -565,6 +576,12 @@
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
         while (process_.running() && std::chrono::steady_clock::now() < deadline) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        if (process_.running()) {
+            std::lock_guard lock(mutex_);
+            snap_.state = core::CoreState::Failed;
+            snap_.lastError = "内核停止超时，进程仍在运行";
+            return false;
         }
         std::error_code ec;
         std::filesystem::remove(cfg::coreWorkDir() / "core.pid", ec);

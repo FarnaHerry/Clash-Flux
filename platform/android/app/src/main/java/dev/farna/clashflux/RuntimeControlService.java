@@ -95,6 +95,6 @@ public final class RuntimeControlService extends Service {
     private boolean stopRuntimeService() {
         if (ClashVpnService.stopCurrent()) return true;
         ClashVpnService.stopServiceFallback(this);
-        return true;
+        return ClashVpnService.runtimeSnapshot().getInt("coreState") == 0;
     }
 }

@@ -552,20 +552,29 @@ extern "C" void clashflux_android_start_vpn() noexcept {
     if (attached) g_vm->DetachCurrentThread();
 }
 
-extern "C" void clashflux_android_stop_vpn() noexcept {
+extern "C" bool clashflux_android_stop_vpn() noexcept {
     std::lock_guard lock(g_mutex);
     bool attached = false;
     JNIEnv* environment = current_environment(attached);
     if (environment == nullptr || g_activity_class == nullptr) {
         if (attached) g_vm->DetachCurrentThread();
-        return;
+        return false;
     }
+    bool stopped = false;
     if (jmethodID method = environment->GetStaticMethodID(
-            g_activity_class, "stopVpn", "()V")) {
-        environment->CallStaticVoidMethod(g_activity_class, method);
-        if (environment->ExceptionCheck()) environment->ExceptionClear();
+            g_activity_class, "stopVpn", "()Z")) {
+        stopped = environment->CallStaticBooleanMethod(g_activity_class, method) == JNI_TRUE;
+        if (environment->ExceptionCheck()) {
+            environment->ExceptionClear();
+            stopped = false;
+        }
     }
     if (attached) g_vm->DetachCurrentThread();
+    if (stopped) {
+        g_core_state.store(0);
+        g_vpn_state.store(0);
+    }
+    return stopped;
 }
 
 // 后台保活由 Activity 统一串接通知权限、前台服务和电池优化豁免页面。

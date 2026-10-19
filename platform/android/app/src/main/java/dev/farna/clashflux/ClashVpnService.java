@@ -90,6 +90,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private volatile boolean starting;
     private volatile boolean startRequested;
     private final AtomicBoolean stopRequested = new AtomicBoolean();
+    private final Object stopLock = new Object();
     private volatile Network defaultNetwork;
     private volatile InterfaceUpdateListener defaultInterfaceListener;
     private volatile String lastPhysicalInterface = "";
@@ -407,6 +408,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             String configContent = new String(
                     Files.readAllBytes(config.toPath()), StandardCharsets.UTF_8);
             Libbox.checkConfig(configContent);
+            if (!startRequested) return;
             MainActivity.appLog("运行配置校验通过", false);
             MainActivity.appLog("正在创建 libbox CommandServer", false);
             server = new CommandServer(this, this);
@@ -418,8 +420,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 return;
             }
             MainActivity.appLog("正在启动 libbox 服务数据面", false);
-            server.startOrReloadService(
-                configContent, new OverrideOptions());
+            server.startOrReloadService(configContent, new OverrideOptions());
             MainActivity.appLog("libbox 服务数据面启动完成", false);
             if (!startRequested) {
                 close("VPN 启动已取消");
@@ -1120,8 +1121,8 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             return candidate;
         }
     }
-    private void close(String msg) { close(msg, true); }
-    private void close(String msg, boolean reportStopped) {
+    private boolean close(String msg) { return close(msg, true); }
+    private boolean close(String msg, boolean reportStopped) {
         final boolean noTun = speedTestOnly || coreOnly;
         startRequested = false;
         MainActivity.appLog("VPN 数据面关闭：" + msg, false);
@@ -1130,7 +1131,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 if (noTun) publishCoreState(0, msg);
                 else publishVpnState(0, msg);
             }
-            return;
+            return true;
         }
         started = false;
         BootReceiver.setVpnActive(this, false);
@@ -1149,37 +1150,66 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             client = null;
         }
         try { if (activeClient != null) activeClient.disconnect(); } catch (Exception ignored) {}
-        try { if (server != null) server.closeService(); } catch (Exception ignored) {}
-        try { if (server != null) server.close(); } catch (Exception ignored) {}
+        try {
+            if (server != null) server.closeService();
+        } catch (Exception error) {
+            MainActivity.appLog("关闭 sing-box 数据面失败：" + error.getMessage(), true);
+            if (noTun) publishCoreState(3, "关闭 sing-box 数据面失败");
+            else publishVpnState(3, "关闭 sing-box 数据面失败");
+            return false;
+        }
+        boolean closed = true;
+        try { if (server != null) server.close(); }
+        catch (Exception error) {
+            MainActivity.appLog("关闭 sing-box 服务失败：" + error.getMessage(), true);
+            closed = false;
+        }
         server = null;
-        try { if (tunnel != null) tunnel.close(); } catch (Exception ignored) {}
+        try { if (tunnel != null) tunnel.close(); }
+        catch (Exception error) {
+            MainActivity.appLog("关闭 Android TUN 失败：" + error.getMessage(), true);
+            closed = false;
+        }
         tunnel = null;
         publishStats(0, 0, 0, 0, 0);
-        if (reportStopped && !failureReported) {
+        if (!closed) {
+            if (noTun) publishCoreState(3, "Android 内核资源未完全关闭");
+            else publishVpnState(3, "Android 内核资源未完全关闭");
+        } else if (reportStopped && !failureReported) {
             if (noTun) publishCoreState(0, msg);
             else publishVpnState(0, msg);
         }
+        return closed;
     }
 
     /** Stops the current data plane before asking Android to destroy the service. */
     public static boolean stopCurrent() {
         ClashVpnService service = current;
         if (service == null) return false;
-        if (!service.stopRequested.compareAndSet(false, true)) return true;
-        if (!service.coreOnly && !service.speedTestOnly) {
-            service.markTunPreferenceResetPending();
+        synchronized (service.stopLock) {
+            service.stopRequested.set(true);
+            if (!service.coreOnly && !service.speedTestOnly) {
+                service.markTunPreferenceResetPending();
+            }
+            clearPersistentServiceMode(service);
+            BootReceiver.setVpnActive(service, false);
+            service.startRequested = false;
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+            while (service.starting && System.nanoTime() < deadline) {
+                try { Thread.sleep(25); }
+                catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+            if (service.starting) return false;
+            boolean stopped = service.close("用户请求关闭 Android VPN");
+            if (stopped) {
+                service.stopForeground(STOP_FOREGROUND_REMOVE);
+                service.stopSelf();
+            }
+            return stopped;
         }
-        clearPersistentServiceMode(service);
-        BootReceiver.setVpnActive(service, false);
-        service.startRequested = false;
-        // Keep stop and the following profile-restart start command ordered.
-        // The old background stop thread could let startVpn() observe
-        // started=true, after which the new config was never loaded and the
-        // service finally stopped underneath the newly selected subscription.
-        service.close("用户请求关闭 Android VPN");
-        service.stopForeground(STOP_FOREGROUND_REMOVE);
-        service.stopSelf();
-        return true;
     }
 
     static void stopServiceFallback(Context context) {

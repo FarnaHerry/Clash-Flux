@@ -47,9 +47,12 @@ extern "C" int clashflux_android_vpn_state() noexcept;
 extern "C" int clashflux_android_core_state() noexcept;
 extern "C" bool clashflux_android_start_core() noexcept;
 extern "C" void clashflux_android_start_vpn() noexcept;
-extern "C" void clashflux_android_stop_vpn() noexcept;
+extern "C" bool clashflux_android_stop_vpn() noexcept;
 extern "C" bool clashflux_android_set_clash_mode(const char*) noexcept;
 extern "C" bool clashflux_android_select_outbound(const char*, const char*) noexcept;
+#endif
+#if defined(CLASHFLUX_IOS)
+extern "C" bool clashflux_ios_stop_tunnel() noexcept;
 #endif
 
 export struct ProfileFidelityReport {

@@ -34,7 +34,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
@@ -552,29 +554,49 @@ public final class MainActivity extends HuxerUIActivity {
         activity.runOnUiThread(activity::beginVpnStart);
     }
 
-    public static void stopVpn() {
+    public static boolean stopVpn() {
         MainActivity activity = current;
         Context context = activity != null ? activity : applicationContext;
         if (context == null) {
             appLog("无法关闭 Android VPN：Activity 尚未就绪", true);
-            return;
+            return false;
         }
-        Runnable stop = () -> {
-            appLog("用户请求关闭 Android VPN", false);
-            IClashRuntime service = runtimeControl;
-            try {
-                if (service != null && service.stopRuntime()) return;
-            } catch (RemoteException | RuntimeException error) {
-                Log.w(TAG, "Runtime stop IPC failed; queuing a service stop", error);
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            appLog("Android VPN 停止操作不能在界面线程执行", true);
+            return false;
+        }
+        IClashRuntime service = runtimeControl;
+        if (service != null) {
+            try { return service.stopRuntime(); }
+            catch (RemoteException | RuntimeException error) {
+                Log.w(TAG, "Runtime stop IPC failed; reconnecting", error);
             }
-            RuntimeControlService.requestStop(context);
+        }
+        CountDownLatch connected = new CountDownLatch(1);
+        AtomicReference<IClashRuntime> connection = new AtomicReference<>();
+        ServiceConnection temporary = new ServiceConnection() {
+            @Override public void onServiceConnected(ComponentName name, IBinder binder) {
+                connection.set(IClashRuntime.Stub.asInterface(binder));
+                connected.countDown();
+            }
+            @Override public void onServiceDisconnected(ComponentName name) {
+                connection.set(null);
+            }
         };
-        // ClashVpnService.close() disconnects libbox and can wait on native
-        // shutdown. Never run it on the Activity main thread; the button is
-        // updated optimistically by the UI while this worker tears it down.
-        Thread worker = new Thread(stop, "clashflux-vpn-stop");
-        worker.setDaemon(true);
-        worker.start();
+        boolean bound = false;
+        try {
+            bound = context.bindService(new Intent(context, RuntimeControlService.class),
+                    temporary, Context.BIND_AUTO_CREATE);
+            if (!bound || !connected.await(5, TimeUnit.SECONDS)) return false;
+            service = connection.get();
+            return service != null && service.stopRuntime();
+        } catch (RemoteException | RuntimeException | InterruptedException error) {
+            if (error instanceof InterruptedException) Thread.currentThread().interrupt();
+            Log.e(TAG, "Unable to confirm sing-box runtime stop", error);
+            return false;
+        } finally {
+            if (bound) context.unbindService(temporary);
+        }
     }
 
     /** Starts libbox without requesting VPN consent for proxy-page speed tests. */

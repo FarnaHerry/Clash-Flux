@@ -281,7 +281,7 @@ extern "C" bool clashflux_ios_start_tunnel(const char* configPath,
     }
 }
 
-extern "C" void clashflux_ios_stop_tunnel() noexcept {
+extern "C" bool clashflux_ios_stop_tunnel() noexcept {
     try {
         @autoreleasepool {
             NETunnelProviderManager* manager = nil;
@@ -294,8 +294,7 @@ extern "C" void clashflux_ios_stop_tunnel() noexcept {
                 manager = findManager(&error);
             }
             if (manager == nil) {
-                gTunnelRunning.store(false);
-                return;
+                return false;
             }
             NETunnelProviderSession* session = (NETunnelProviderSession*)manager.connection;
             if (session.status != NEVPNStatusDisconnected &&
@@ -309,10 +308,13 @@ extern "C" void clashflux_ios_stop_tunnel() noexcept {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
             }
-            gTunnelRunning.store(false);
+            const bool stopped = session.status == NEVPNStatusDisconnected ||
+                                 session.status == NEVPNStatusInvalid;
+            gTunnelRunning.store(!stopped);
+            return stopped;
         }
     } catch (...) {
-        gTunnelRunning.store(false);
+        return false;
     }
 }
 

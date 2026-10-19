@@ -70,9 +70,9 @@ huxerui::StringVariant LocalizedFormat(std::string_view source,
 // 组件在控件内部再写平台分支。
 #ifdef __ANDROID__
 extern "C" void clashflux_android_start_vpn() noexcept;
-extern "C" void clashflux_android_stop_vpn() noexcept;
+extern "C" bool clashflux_android_stop_vpn() noexcept;
 inline void AndroidStartVpn() noexcept { clashflux_android_start_vpn(); }
-inline void AndroidStopVpn() noexcept { clashflux_android_stop_vpn(); }
+inline bool AndroidStopVpn() noexcept { return clashflux_android_stop_vpn(); }
 extern "C" void clashflux_android_request_background_keep_alive() noexcept;
 inline void AndroidRequestBackgroundKeepAlive() noexcept {
     clashflux_android_request_background_keep_alive();
@@ -104,7 +104,7 @@ inline bool TriggerProxyGroupTest(const std::string& group) noexcept {
 inline constexpr bool ProxyTestUsesNativeGroup() noexcept { return true; }
 #else
 inline void AndroidStartVpn() noexcept {}
-inline void AndroidStopVpn() noexcept {}
+inline bool AndroidStopVpn() noexcept { return false; }
 inline void AndroidRequestBackgroundKeepAlive() noexcept {}
 inline void AndroidRequestIgnoreBattery() noexcept {}
 inline void AndroidOpenBatterySettings() noexcept {}
@@ -172,10 +172,6 @@ bool StartProxyGroupTest(const std::string& group);
 // 无降级或无法编译时返回空串。见 docs/singbox-layers-and-fidelity.md §2。
 std::string ProfileFidelitySummary(std::int64_t profileId);
 
-
-// Android stop requests only enqueue the service shutdown. Call this from a
-// task thread when a caller needs to wait for the optimistic UI state to settle.
-void WaitForAndroidVpnStopped() noexcept;
 
 // 全项目统一字号阶梯（pt）：控件/正文跟随 SDK 默认 14，不再散落硬编码字面量。
 namespace font_size {
@@ -454,6 +450,12 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                         std::shared_ptr<huxerui::Clipboard> clipboard,
                         huxerui::ToastHandle toast, huxerui::Color textColor,
                         huxerui::Color hintColor);
+
+#if defined(__linux__) || defined(_WIN32)
+struct CoreModel;
+void InstallDesktopService(std::shared_ptr<CoreModel> model,
+                           huxerui::TaskScope tasks, huxerui::ToastHandle toast);
+#endif
 
 // Android 订阅自动更新：任务线程列出到期订阅，应用共享 HTTP 客户端在 UI
 // 协程中抓取并由 store 收尾。桌面刷新由 DesktopProfileRefreshPump 走 curl。

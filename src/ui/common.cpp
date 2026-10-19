@@ -101,8 +101,10 @@ CoreApplyResult ExecuteCoreCommand(const CoreCommand& command) {
 #if defined(__ANDROID__)
             coreStore.setSetting("core.tun_enabled", command.enabled ? "true" : "false");
             if (!command.enabled) {
-                AndroidStopVpn();
-                WaitForAndroidVpnStopped();
+                if (!AndroidStopVpn()) {
+                    return {.status = CoreApplyStatus::Failed,
+                            .error = "Android 后台服务未确认内核退出"};
+                }
             }
             coreStore.startCore(store::profilesStore().selectedYaml(), false, command.enabled);
             // Authorization/service completion is awaited by the application task.
@@ -213,6 +215,12 @@ void CoreControl::Run(CoreCommand command) const {
         if (result.status == CoreApplyStatus::PermissionDenied) {
             control.window.Show();
             control.window.Activate();
+#if defined(__linux__) || defined(_WIN32)
+            if (!control.model->view.Get().serviceInstalled) {
+                InstallDesktopService(control.model, control.tasks, control.toast);
+                return;
+            }
+#endif
             ShowTunGuideDialog(control.dialog, control.clipboard, control.toast,
                                control.textColor, control.hintColor);
         } else if (result.status == CoreApplyStatus::ElevationRequested) {
@@ -489,16 +497,6 @@ bool StartProxyGroupTest(const std::string& group) {
         return false;
     }
     return TriggerProxyGroupTest(group);
-#endif
-}
-
-void WaitForAndroidVpnStopped() noexcept {
-#if defined(__ANDROID__)
-    for (int attempt = 0; attempt < 60; ++attempt) {
-        const int state = clashflux_android_vpn_state();
-        if (state != 1 && state != 2) return;
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
 #endif
 }
 

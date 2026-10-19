@@ -282,7 +282,7 @@ export bool startCore(const std::filesystem::path& config, std::string& err) {
     // 错误做一次 stop + retry，升级应用后无需用户手动 sudo stop。
     if (reply->starts_with("ERR ") && reply->find("先 STOP") != std::string::npos) {
         std::string stopError;
-        const auto stopped = request("STOP", stopError);
+        const auto stopped = request("STOP", stopError, 5);
         if (!stopped || *stopped != "OK") {
             if (stopped && !stopped->empty()) stopError = *stopped;
             err = "旧 root 服务要求先停止内核，但 STOP 失败：" + stopError;
@@ -303,7 +303,7 @@ export bool startCore(const std::filesystem::path& config, std::string& err) {
 
 export bool stopCore(std::string& err) {
     err.clear();
-    const auto reply = request("STOP", err);
+    const auto reply = request("STOP", err, 5);
     if (!reply) return false;
     if (*reply == "OK") return true;
     err = reply->starts_with("ERR ") ? reply->substr(4) : *reply;

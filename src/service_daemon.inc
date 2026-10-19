@@ -73,22 +73,43 @@ pid_t spawnEngine(const std::filesystem::path& binary, const std::string& config
     return pid;
 }
 
-// STOP：SIGTERM → 2s 宽限 → SIGKILL。childPid 出参清零。
-void stopEngine(pid_t& childPid) {
-    if (childPid <= 0) return;
+// STOP：SIGTERM → 2s 宽限 → SIGKILL。确认退出后清零 childPid。
+bool stopEngine(pid_t& childPid, std::string* error = nullptr) {
+    if (childPid <= 0) return true;
     ::kill(childPid, SIGTERM);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     int status = 0;
     while (std::chrono::steady_clock::now() < deadline) {
-        if (::waitpid(childPid, &status, WNOHANG) == childPid) {
+        const pid_t result = ::waitpid(childPid, &status, WNOHANG);
+        if (result == childPid || (result < 0 && errno == ECHILD)) {
             childPid = 0;
-            return;
+            return true;
+        }
+        if (result < 0 && errno != EINTR) {
+            if (error) *error = errnoText("waitpid 失败");
+            return false;
         }
         ::usleep(10 * 1000);
     }
-    ::kill(childPid, SIGKILL);
-    ::waitpid(childPid, &status, 0);
-    childPid = 0;
+    if (::kill(childPid, SIGKILL) != 0 && errno != ESRCH) {
+        if (error) *error = errnoText("强制停止内核失败");
+        return false;
+    }
+    const auto killDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < killDeadline) {
+        const pid_t result = ::waitpid(childPid, &status, WNOHANG);
+        if (result == childPid || (result < 0 && errno == ECHILD)) {
+            childPid = 0;
+            return true;
+        }
+        if (result < 0 && errno != EINTR) {
+            if (error) *error = errnoText("强制停止内核后 waitpid 失败");
+            return false;
+        }
+        ::usleep(10 * 1000);
+    }
+    if (error) *error = "内核收到 SIGKILL 后仍未退出";
+    return false;
 }
 
 void replyLine(int fd, std::string_view line) {
@@ -267,8 +288,9 @@ export int run() {
             if (childPid <= 0) {
                 replyLine(fd, "OK");  // 本就没在跑：幂等成功
             } else {
-                stopEngine(childPid);
-                replyLine(fd, "OK");
+                std::string error;
+                replyLine(fd, stopEngine(childPid, &error)
+                    ? "OK" : std::format("ERR {}", error));
             }
         } else if (cmd.starts_with("START ")) {
             const std::string config = cmd.substr(6);

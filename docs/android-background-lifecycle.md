@@ -41,6 +41,7 @@
 - 服务以 `START_STICKY` 返回。系统传入空 Intent 时，从服务专属持久状态精确恢复 `core_only`
   或 `vpn`；状态不明确时停止空服务，绝不猜测为 TUN。
 - 用户关闭、VPN 授权撤回、启动失败会清除恢复模式。普通进程回收不依赖 `onDestroy()` 清理恢复状态。
+- UI 的显式停止在任务线程通过 Binder 等待 libbox 关闭结果；启动中的停止先取消启动并等待工作线程收尾，关闭失败不得回报“已停止”。Activity 销毁本身仍不停止常驻内核。
 - `BootReceiver` 仅在先前 TUN 状态仍启用时启动 VpnService；它不加载 HuxerUI，也不初始化 UI 数据库。
 - 旧的同进程 `CoreService` 常驻通知已移除；无 TUN 内核与 VPN 共用 libbox/VpnService 生命周期，
   避免两个常驻前台服务和重复通知。
