@@ -22,6 +22,7 @@
 #include <variant>
 
 #include "ui.h"
+#include "connection_row.h"
 #include "app.h"
 #include "responsive_shell.h"
 #include "app_resources.h"
@@ -832,6 +833,14 @@ huxerui::PageTransition SecondaryPageTransition(
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
 
+[[huxerui::composable]] huxerui::View AndroidConnectionDetailPage(
+    ConnectionRow initial) {
+    const huxerui::NavigationController navigation = huxerui::UseNavigation();
+    return ConnectionDetailPage(initial,
+        [navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+
 [[huxerui::composable]] huxerui::View AndroidLogsPage() {
     const huxerui::NavigationController navigation = huxerui::UseNavigation();
     return LogsPage([navigation] { static_cast<void>(navigation.Pop()); })
@@ -877,6 +886,21 @@ huxerui::PageTransition SecondaryPageTransition(
     return FidelityPage(profileId, [navigation] { static_cast<void>(navigation.Pop()); }, true)
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
+
+[[huxerui::composable]] huxerui::View DesktopConnectionDetailPage(
+    ConnectionRow initial) {
+    const auto navigation = huxerui::UseNavigation();
+    const auto model = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
+    huxerui::Lifecycle([model] {
+        return [model] {
+            model->secondaryOpen = false;
+            model->secondaryOwner = std::nullopt;
+        };
+    }, 0);
+    return ConnectionDetailPage(initial,
+        [navigation] { static_cast<void>(navigation.Pop()); }, true)
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
 #endif
 
 void OpenProfileFidelityPage(huxerui::NavigationController navigation,
@@ -890,6 +914,21 @@ void OpenProfileFidelityPage(huxerui::NavigationController navigation,
         desktopNavigation->secondaryOpen = true;
     }
     navigation.Push(DesktopFidelityPage, profileId);
+#endif
+}
+
+void OpenConnectionDetailPage(huxerui::NavigationController navigation,
+    std::shared_ptr<DesktopSettingsNavigationModel> desktopNavigation,
+    ConnectionRow initial) {
+#if defined(__ANDROID__)
+    static_cast<void>(desktopNavigation);
+    navigation.Push(AndroidConnectionDetailPage, std::move(initial));
+#else
+    if (desktopNavigation) {
+        desktopNavigation->secondaryOwner = pages::kConnections;
+        desktopNavigation->secondaryOpen = true;
+    }
+    navigation.Push(DesktopConnectionDetailPage, std::move(initial));
 #endif
 }
 

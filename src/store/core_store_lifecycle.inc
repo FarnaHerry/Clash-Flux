@@ -76,7 +76,7 @@
             if (!service::ensureCompatible(upgradeError)) {
                 fail(upgradeError.empty()
                          ? (serviceInfo.error.empty()
-                                ? "root 服务版本检查失败"
+                                ? "内核服务版本检查失败"
                                 : serviceInfo.error)
                          : upgradeError);
                 return;
@@ -545,7 +545,7 @@
             if (!service::stopCore(err)) {
                 std::lock_guard lock(mutex_);
                 snap_.state = core::CoreState::Failed;
-                snap_.lastError = "root 服务停止内核失败：" + err;
+                snap_.lastError = "内核服务停止内核失败：" + err;
                 return false;
             } else {
                 managedByService_ = false;

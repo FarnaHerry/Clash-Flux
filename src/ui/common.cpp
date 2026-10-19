@@ -51,7 +51,7 @@ bool isSelectorType(const std::string& type) {
     return type == "Selector" || type == "selector";
 }
 
-enum class CoreApplyStatus { Applied, ElevationRequested, PermissionDenied, Failed };
+enum class CoreApplyStatus { Applied, PermissionDenied, Failed };
 struct CoreApplyResult {
     CoreApplyStatus status = CoreApplyStatus::Failed;
     std::string error;
@@ -71,8 +71,6 @@ CoreApplyResult ApplyDesktopTun(bool enabled) {
         switch (core::tunGate()) {
             case core::TunGate::Ok:
                 break;
-            case core::TunGate::Elevated:
-                return {.status = CoreApplyStatus::ElevationRequested};
             case core::TunGate::Denied:
                 return {.status = CoreApplyStatus::PermissionDenied};
         }
@@ -223,8 +221,6 @@ void CoreControl::Run(CoreCommand command) const {
 #endif
             ShowTunGuideDialog(control.dialog, control.clipboard, control.toast,
                                control.textColor, control.hintColor);
-        } else if (result.status == CoreApplyStatus::ElevationRequested) {
-            control.toast.Show(Localized("已请求管理员权限重启，请在新窗口开启 TUN"));
         } else if (result.status != CoreApplyStatus::Applied) {
             control.toast.Show(result.error.empty() ? CoreActionFailure(action)
                                                     : huxerui::StringVariant(result.error));

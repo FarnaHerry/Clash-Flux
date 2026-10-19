@@ -57,11 +57,10 @@ export bool spawnDetached(const std::filesystem::path& binary,
                           std::string& error);
 
 // ---- TUN 打开门禁 -----------------------------------------------------------
-// TUN 需要内核侧持有 root/CAP_NET_ADMIN（Linux 建虚拟网卡）或 Windows 管理员。
+// Linux TUN 由 root 服务创建虚拟网卡；Windows TUN 由 SCM 服务管理。
 export enum class TunGate {
-    Ok,        // 权限足够，可直接 applyTun
-    Elevated,  // Legacy value; desktop backends no longer elevate the application.
-    Denied,    // 权限不足且无自动提权路径（UI 弹终端指令引导框）
+    Ok,      // 服务可用，可直接 applyTun
+    Denied,  // 服务不可用，UI 引导安装或更新
 };
 
 // 打开 TUN 前的门禁（阻塞：Linux 会连服务 socket 探测 root 服务托管；任务线程

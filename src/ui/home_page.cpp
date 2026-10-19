@@ -1,13 +1,13 @@
 // home_page.cpp — 固定网格首页：卡片目录 + 网格摆放（宽/高各 1..4 单位）。
 //
 // 结构：
-//   kHomeCards   文件作用域 #if 选出的平台卡片表（composable 体内禁止条件编译，
-//                平台差异只出现在这里和平台函数选择宏上）；顺序与尺寸即最终布局；
-//   HomeGrid     把「页面逻辑宽度」分成 1..5 列，按卡片声明的宽高（HomeCardSpan）
+//   kHomeCards   文件作用域 #if 选出的平台基础卡片表（composable 体内禁止条件编译，
+//                平台差异只出现在这里和平台函数选择宏上）；运行中的桌面控制卡追加在尾部；
+//   HomeGrid     把「页面逻辑宽度」分成 2..5 列，按卡片声明的宽高（HomeCardSpan）
 //                做左上紧凑的二维打包；
 //   HomeCardContent 按种类组装卡片内容，平台专属卡片经宏选择完整函数。
-// 布局是**编译期常量**（见 AGENTS.md / CLAUDE.md 第 13 条）：没有编辑态、拖动排序、
-// 增删卡片，也没有 home.layout.* 持久化，因此首帧就是最终布局。
+// 基础布局是编译期常量：没有编辑态、拖动排序、用户增删卡片或 home.layout.* 持久化。
+// 桌面控制卡由实际内核状态决定是否在尾部出现。
 //
 // 数据流：UI 泵每 500ms 从 CoreStreams 取最新流量帧追加进 60 点环形历史
 // （State<vector<TrafficPoint>>），连接快照帧只取总量字段；内核状态与启用
@@ -23,13 +23,13 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "app_resources.h"
-#include "proxies_model.h"
 #include "ui.h"
 #include "empty_state.h"
 #include "task_bridge.h"
@@ -54,6 +54,8 @@ namespace clashflux::ui {
 namespace {
 
 constexpr std::size_t kHistoryPoints = 60;  // 60 拍 ≈ 30s 窗口
+constexpr huxerui::TweenSpec kHomeControlMotion{
+    .duration = 0.42, .easing = huxerui::Easing::EaseInOut};
 
 const std::vector<std::string> kModeLabels{"规则", "全局", "直连"};
 const std::vector<std::string> kModes{"rule", "global", "direct"};
@@ -74,7 +76,6 @@ enum class HomeCardKind {
     Profile,    // 当前订阅
     Proxy,      // 系统代理（桌面）
     Tun,        // TUN 模式（桌面）
-    Vpn,        // 隧道状态（移动端）
     LanIp,      // 内网 IP（本机局域网地址）
 };
 
@@ -87,7 +88,7 @@ struct HomeCardSpec {
 };
 
 #if defined(__ANDROID__)
-// 移动端可选卡片：桌面独有的系统代理/TUN 换成隧道状态。
+// 移动端由悬浮按钮展示隧道状态，不再重复一张状态卡片。
 // 手机屏是 2 列：需要整宽的（图表）给 2 格，信息/单选卡 1 格；
 // 高度仍按 FlClash 跨度（图表/信息卡/出站模式 2 行，开关与网络信息卡 1 行）。
 constexpr HomeCardSpec kHomeCards[] = {
@@ -99,11 +100,12 @@ constexpr HomeCardSpec kHomeCards[] = {
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
     // 内网 IP 紧跟当前订阅，1x2：两行高度可容纳更多接口明细。
     {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 2},
-    {HomeCardKind::Vpn, "vpn", "隧道状态", 1, 2},
 };
+constexpr bool kDesktopHomeControl = false;
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
-    AndroidHomePlatformCard(homeState, kind)
-#define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact) \
+    huxerui::Row{}
+#define CLASHFLUX_HOME_CONTROL_CARD() huxerui::Row{}
+#define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact, shown, transition) \
     AndroidHomeFloatingAction(std::move(page), state, compact)
 #else
 // 桌面可选卡片：系统代理/TUN 开关是桌面专有能力。
@@ -124,10 +126,12 @@ constexpr HomeCardSpec kHomeCards[] = {
     {HomeCardKind::Proxy, "proxy", "系统代理", 1, 1},
     {HomeCardKind::Tun, "tun", "TUN 模式", 1, 1},
 };
+constexpr bool kDesktopHomeControl = true;
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     DesktopHomePlatformCard(kind)
-#define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact) \
-    DesktopHomeFloatingAction(std::move(page), compact)
+#define CLASHFLUX_HOME_CONTROL_CARD() DesktopHomeStatusCard()
+#define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact, shown, transition) \
+    DesktopHomeFloatingAction(std::move(page), compact, shown, transition)
 #endif
 
 // ---- 卡片网格尺寸模型 ------------------------------------------------------
@@ -144,6 +148,14 @@ struct HomeCardSize {
 // 布局值（Grow/Spacing 等）的语义混淆。
 struct HomeCardSpan {
     using Value = HomeCardSize;
+};
+
+struct HomeControlSpan {
+    using Value = bool;
+};
+
+struct HomeGridCompact {
+    using Value = bool;
 };
 
 struct HomeCardEntry {
@@ -164,10 +176,10 @@ constexpr float kHomeGridGap = 12.0F; // 卡片间距，同时用于首页顶部
 constexpr float kHomeGridUnitHeight = 88.0F;
 constexpr float kHomeGridFallbackWidth = 360.0F;
 
-// 页面逻辑宽度分档只由可用宽度决定，使手机与桌面 Compact 窗口在同宽时
-// 使用相同卡片网格；更宽视口逐步增加列数（顶部档 5 列）。
-constexpr int HomeGridColumns(float width) {
-    if (width < 840.0F) return 2;
+// 两列与页面的 Compact 切换同步；Medium/Expanded 至少三列，
+// 更宽的内容区仍可扩展到五列。
+constexpr int HomeGridColumns(float width, bool compact) {
+    if (compact) return 2;
     if (width < 1200.0F) return 3;
     return 5;
 }
@@ -191,7 +203,8 @@ huxerui::LayoutResult HomeGrid::Measure(huxerui::LayoutContext& context,
     const float available = constraints.HasBoundedWidth()
                                 ? constraints.max_width
                                 : kHomeGridFallbackWidth;
-    const int columns = HomeGridColumns(available);
+    const int columns = HomeGridColumns(
+        available, node.LayoutValueOr<HomeGridCompact>(false));
     const float column_width =
         std::max(0.0F, (available - kHomeGridGap * static_cast<float>(columns - 1)) /
                            static_cast<float>(columns));
@@ -207,8 +220,10 @@ huxerui::LayoutResult HomeGrid::Measure(huxerui::LayoutContext& context,
     std::vector<Placement> placements;
     placements.reserve(node.Children().Size());
     for (huxerui::ViewNode& child : node.Children()) {
-        const HomeCardSize span =
-            child.LayoutValueOr<HomeCardSpan>(HomeCardSize{});
+        HomeCardSize span = child.LayoutValueOr<HomeCardSpan>(HomeCardSize{});
+        if (child.LayoutValueOr<HomeControlSpan>(false)) {
+            span.width = columns >= 5 ? 2 : 1;
+        }
         placements.push_back(Placement{
             &child,
             std::clamp(span.width, 1, columns),
@@ -298,8 +313,6 @@ struct HomeState {
     std::string profileUpdated;
     std::int64_t profileUsedBytes = 0;
     std::int64_t profileTotalBytes = 0;
-    std::vector<ProxyGroupSnapshot> proxyGroups;
-
     bool operator==(const HomeState&) const = default;
 };
 
@@ -324,14 +337,6 @@ HomeLayout DefaultHomeLayout() {
 }
 
 // ---- 运行期状态泵 ----------------------------------------------------------
-
-std::string currentProxyLine(const std::vector<ProxyGroupSnapshot>& groups) {
-    for (const ProxyGroupSnapshot& group : groups) {
-        if (!group.current.empty()) return group.displayName + " · " +
-            (group.nodeLabels.contains(group.current) ? group.nodeLabels.at(group.current) : group.current);
-    }
-    return {};
-}
 
 // Kept outside the composable body: HuxerUI's code generator deliberately
 // rejects conditional compilation within a composable function.
@@ -397,8 +402,7 @@ std::uint64_t SubscribeHomeStreams(huxerui::TaskScope tasks,
 // （模型只在数值变化时通知，空闲时不会有事件），因此两处共用本函数。
 void MirrorHomeState(huxerui::State<HomeState> state,
                      const std::shared_ptr<CoreModel>& coreModel,
-                     const std::shared_ptr<ProfilesModel>& profilesModel,
-                     const std::shared_ptr<ProxiesModel>& proxiesModel) {
+                     const std::shared_ptr<ProfilesModel>& profilesModel) {
     auto& core = store::coreStore();
     HomeState s = state.Get();
     // 内核状态来自唯一来源 CoreModel。
@@ -431,8 +435,6 @@ void MirrorHomeState(huxerui::State<HomeState> state,
         s.profileUsedBytes = 0;
         s.profileTotalBytes = 0;
     }
-    // 策略组取自全局唯一的 ProxiesModel（由 AppRoot 驱动刷新）。
-    s.proxyGroups = proxiesModel->snapshot.Get().groups;
     state = s;
 }
 
@@ -442,17 +444,13 @@ void MirrorHomeState(huxerui::State<HomeState> state,
 // Android：libbox 速率只在快照里、且模型空闲时不通知，需要固定节拍采样。
 [[huxerui::composable]] huxerui::View HomeRuntimePump(
     huxerui::State<HomeState> state, std::shared_ptr<CoreModel> coreModel,
-    std::shared_ptr<ProfilesModel> profilesModel,
-    std::shared_ptr<ProxiesModel> proxiesModel) {
+    std::shared_ptr<ProfilesModel> profilesModel) {
     auto tasks = huxerui::UseTaskScope();
     huxerui::Lifecycle(
-        [tasks, state, coreModel, profilesModel,
-         proxiesModel] {
-            tasks.Launch([state, coreModel, profilesModel,
-                          proxiesModel]() -> huxerui::Task<void> {
+        [tasks, state, coreModel, profilesModel] {
+            tasks.Launch([state, coreModel, profilesModel]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{0.5}, [=] {
-                    MirrorHomeState(state, coreModel,
-                                    profilesModel, proxiesModel);
+                    MirrorHomeState(state, coreModel, profilesModel);
                     return true;
                 });
             });
@@ -466,15 +464,13 @@ void MirrorHomeState(huxerui::State<HomeState> state,
 // （见 SubscribeHomeStreams）。
 [[huxerui::composable]] huxerui::View HomeRuntimePump(
     huxerui::State<HomeState> state, std::shared_ptr<CoreModel> coreModel,
-    std::shared_ptr<ProfilesModel> profilesModel,
-    std::shared_ptr<ProxiesModel> proxiesModel) {
+    std::shared_ptr<ProfilesModel> profilesModel) {
     huxerui::Lifecycle(
-        [state, coreModel, profilesModel, proxiesModel] {
-            MirrorHomeState(state, coreModel,
-                            profilesModel, proxiesModel);
+        [state, coreModel, profilesModel] {
+            MirrorHomeState(state, coreModel, profilesModel);
             return [] {};
         },
-        coreModel->view, profilesModel->list, proxiesModel->snapshot);
+        coreModel->view, profilesModel->list);
     return {};
 }
 #endif
@@ -535,7 +531,7 @@ huxerui::XYChartData BuildTrafficChartData(
 
 // ---- 卡片内容 --------------------------------------------------------------
 
-// 流量统计：饼图展示上传/下载累计占比，右侧保留各自总量与百分比。
+// 流量统计：箭头与占比同列，累计量在下一行；饼图仍区分两个方向。
 [[huxerui::composable]] huxerui::View HomeTotalCard(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::Color upColor = SemanticWarningColor(theme);
@@ -548,21 +544,14 @@ huxerui::XYChartData BuildTrafficChartData(
         const int percent = static_cast<int>(static_cast<double>(value) / total * 100.0 + 0.5);
         return std::to_string(percent) + "%";
     };
-    const auto totalMetric = [&theme](huxerui::StringVariant label, huxerui::Color color,
+    const auto totalMetric = [&theme](std::string direction, huxerui::Color color,
                                       const std::string& value,
                                       const std::string& share) {
         return huxerui::Column {
-            huxerui::Row {
-                huxerui::Text(label).Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kCaption)
-                        .WithWeight(huxerui::FontWeight::Medium),
-                    color}),
-                huxerui::Spacer(),
-                huxerui::Text(share).Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kCaption)
-                        .WithWeight(huxerui::FontWeight::SemiBold),
-                    color}),
-            }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+            huxerui::Text(direction + " " + share).Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kCaption)
+                    .WithWeight(huxerui::FontWeight::SemiBold),
+                color}),
             huxerui::Text(value).Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kBody)
                     .WithWeight(huxerui::FontWeight::SemiBold),
@@ -571,9 +560,9 @@ huxerui::XYChartData BuildTrafficChartData(
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     };
     const huxerui::PieChartData data({
-        {"upload", huxerui::UseString(Localized("上传")),
+        {"upload", "↑",
          static_cast<double>(upload)},
-        {"download", huxerui::UseString(Localized("下载")),
+        {"download", "↓",
          static_cast<double>(download)},
     });
 
@@ -587,8 +576,8 @@ huxerui::XYChartData BuildTrafficChartData(
                 .SliceStyle("download", {.fill = huxerui::Brush(downColor)})
                 .With(huxerui::Frame{.width = 72.0F, .height = 72.0F}),
             huxerui::Column {
-                totalMetric(Localized("↑ 上传"), upColor, formatBytes(upload), shareText(upload)),
-                totalMetric(Localized("↓ 下载"), downColor, formatBytes(download), shareText(download)),
+                totalMetric("↑", upColor, formatBytes(upload), shareText(upload)),
+                totalMetric("↓", downColor, formatBytes(download), shareText(download)),
             }.With(huxerui::Grow(1.0F),
                    huxerui::Spacing(12.0F),
                    huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
@@ -850,91 +839,64 @@ huxerui::XYChartData BuildTrafficChartData(
 
 #if defined(__ANDROID__)
 
-// Android 隧道状态：只读展示 VpnService 状态与当前线路（启动/停止仍由首页
-// 右下角的固定悬浮按钮负责，卡片不重复一套控制）。
-[[huxerui::composable]] huxerui::View AndroidHomeVpnCard(const HomeState& state) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const auto model = huxerui::UseService<CoreModel>();
-    const int vpnStatus = model->view.Get().vpnState;
-    const huxerui::StringVariant status = Localized(
-        vpnStatus == 2   ? "已连接"
-        : vpnStatus == 1 ? "正在连接"
-        : vpnStatus == 3 ? "启动失败"
-                         : "未连接");
-    const huxerui::Color statusColor =
-        vpnStatus == 2   ? theme.colors.primary
-        : vpnStatus == 1 ? SemanticWarningColor(theme)
-        : vpnStatus == 3 ? theme.colors.error
-                         : theme.colors.on_surface_variant;
-    const std::string proxyLine = currentProxyLine(state.proxyGroups);
-
-    return huxerui::Column {
-        HomeCardHeading(Localized("隧道状态")),
-        huxerui::Row {
-            huxerui::Text(Localized("状态")).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody),
-                theme.colors.on_surface_variant}),
-            huxerui::Spacer(),
-            huxerui::Text(status).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody)
-                    .WithWeight(huxerui::FontWeight::SemiBold),
-                statusColor}),
-        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        huxerui::Row {
-            huxerui::Text(Localized("当前线路")).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody),
-                theme.colors.on_surface_variant}),
-            huxerui::Spacer(),
-            huxerui::Text(proxyLine.empty() ? Localized("暂无当前线路")
-                                            : huxerui::StringVariant(proxyLine))
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kChip),
-                    theme.colors.on_surface}),
-        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        huxerui::Spacer(),
-    }.With(huxerui::Spacing(8.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-}
-
-[[huxerui::composable]] huxerui::View AndroidHomePlatformCard(
-    const HomeState& state, HomeCardKind kind) {
-    if (kind == HomeCardKind::Vpn) return AndroidHomeVpnCard(state);
-    return huxerui::Row{};
-}
-
 [[huxerui::composable]] huxerui::View AndroidHomeFloatingAction(
     huxerui::View page, huxerui::State<HomeState> homeState, bool compact) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const HomeState& state = homeState.Get();
     const auto control = UseCoreControl();
     huxerui::View base = page;
-    const bool active = control.VpnEnabled();
-    const bool enabled = !control.Busy() && (active || state.profileId != 0);
+    const int vpnStatus = control.model->view.Get().vpnState;
+    const bool active = vpnStatus == 2;
+    const CoreCommand command = control.model->operations.command.Get();
+    const bool changing = command.action == CoreAction::Tun || vpnStatus == 1;
+    const bool failed = vpnStatus == 3 && !changing;
+    const bool enabled = !control.Busy() && !changing &&
+                         (active || state.profileId != 0);
     const auto toggle = [control, active] {
         control.Run({.action = CoreAction::Tun, .enabled = !active});
     };
 
-    // 三角（play）启动、双竖线（pause）暂停；与代理页悬浮测速按钮共用
-    // 固定悬浮层定位（主轴末端 + 交叉轴末端，避开底部悬浮导航）。
-    huxerui::View floating =
+    const huxerui::StringVariant actionLabel =
+        Localized(active ? "停止 VPN" : "启动 VPN");
+    const huxerui::StringVariant statusLabel =
+        Localized(command.action == CoreAction::Tun && !command.enabled
+                      ? "正在断开"
+                      : changing ? "正在连接"
+                      : failed ? "启动失败"
+                               : active ? "已连接" : "未连接");
+    // 过程态保留按钮的位置和尺寸，进度环替代图标；结果由后台快照确认。
+    huxerui::View button =
         huxerui::IconButton(active ? app::images::pause : app::images::play,
-                            Localized(active ? "停止 VPN" : "启动 VPN"))
+                            actionLabel)
             .OnClick(toggle)
-            .With(huxerui::Tooltip(Localized(active ? "停止 VPN" : "启动 VPN")),
+            .With(huxerui::Tooltip(actionLabel),
                   huxerui::Frame{.width = 56.0F, .height = 56.0F},
                   huxerui::Enabled(enabled),
-                  huxerui::Background(active ? theme.colors.primary_container
-                                             : theme.colors.primary),
-                  huxerui::Foreground(active
-                                          ? theme.colors.on_primary_container
-                                          : theme.colors.on_primary),
-                  huxerui::CornerRadius(28.0F),
-                  huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F,
-                                  2.0F},
+                  huxerui::Opacity(changing ? 0.0F : 1.0F),
+                  huxerui::Foreground(failed ? OnErrorColor(theme)
+                      : active ? theme.colors.on_primary_container
+                               : theme.colors.on_primary),
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                     .label = huxerui::UseString(Localized(
-                                         active ? "停止 VPN" : "启动 VPN"))});
-    floating = WithoutIconButtonOutlines(floating);
+                                     .label = huxerui::UseString(actionLabel)});
+    button = WithoutIconButtonOutlines(button);
+    huxerui::View floating = huxerui::Stack {
+        std::move(button),
+        changing ? huxerui::View{huxerui::ProgressCircle().With(
+                       huxerui::Frame{.width = 28.0F, .height = 28.0F},
+                       huxerui::Align(huxerui::HorizontalAlignment::Center,
+                                      huxerui::VerticalAlignment::Center))}
+                 : huxerui::View{huxerui::Row{}},
+    }.With(huxerui::Frame{.width = 56.0F, .height = 56.0F},
+           huxerui::Background(failed ? theme.colors.error
+               : active || changing ? theme.colors.primary_container
+                                    : theme.colors.primary),
+           huxerui::CornerRadius(28.0F),
+           huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F, 2.0F},
+           huxerui::Scale(huxerui::AnimateTo(
+               changing ? 0.94F : 1.0F,
+               huxerui::TweenSpec{.duration = 0.18,
+                                  .easing = huxerui::Easing::EaseOut})),
+           huxerui::Semantics{.label = huxerui::UseString(statusLabel)});
     // 与 Android 底部悬浮导航栏相同：按钮放在独立的全屏覆盖层中，
     // 由覆盖层的 Column 在主轴末端、交叉轴末端定位，不依赖页面内容容器。
     huxerui::View dock = huxerui::Column {
@@ -955,6 +917,23 @@ huxerui::XYChartData BuildTrafficChartData(
 }
 
 #else
+
+struct HomeControlArc {
+    float lift = 24.0F;
+
+    huxerui::Rect Evaluate(huxerui::Rect from, huxerui::Rect to,
+                           float progress) const {
+        return {
+            from.x + (to.x - from.x) * progress,
+            from.y + (to.y - from.y) * progress -
+                lift * 4.0F * progress * (1.0F - progress),
+            from.width + (to.width - from.width) * progress,
+            from.height + (to.height - from.height) * progress,
+        };
+    }
+
+    bool operator==(const HomeControlArc&) const = default;
+};
 
 [[huxerui::composable]] huxerui::View DesktopModeSwitchRow(
     huxerui::ImageVariant icon, huxerui::StringVariant label,
@@ -1001,7 +980,7 @@ huxerui::XYChartData BuildTrafficChartData(
     return huxerui::Column {
         DesktopModeSwitchRow(
             app::images::tun, Localized("TUN 模式"),
-            Localized("全局透明代理（需管理员权限）"),
+            Localized("全局透明代理"),
             huxerui::Switch(control.TunEnabled())
                 .With(huxerui::Enabled(!control.Busy()))
                 .OnChanged([control](bool on) {
@@ -1018,39 +997,116 @@ huxerui::XYChartData BuildTrafficChartData(
     return huxerui::Row{};
 }
 
+[[huxerui::composable]] huxerui::View DesktopHomeStatusCard() {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const auto control = UseCoreControl();
+    const CoreAction action = control.model->operations.command.Get().action;
+    const bool changing = action == CoreAction::Start ||
+                          action == CoreAction::Stop;
+    const huxerui::StringVariant status = Localized(
+        action == CoreAction::Start ? "正在启动"
+        : action == CoreAction::Stop ? "正在停止"
+                                     : "运行中");
+    huxerui::View icon = changing
+        ? huxerui::View{huxerui::ProgressCircle().With(
+              huxerui::Frame{.width = 24.0F, .height = 24.0F})}
+        : huxerui::View{huxerui::Image(app::images::pause)
+              .Fit(huxerui::ImageFit::Contain)
+              .Tint(theme.colors.on_primary_container)
+              .With(huxerui::Frame{.width = 22.0F, .height = 22.0F})};
+    icon = std::move(icon).With(huxerui::Align(
+        huxerui::HorizontalAlignment::Center,
+        huxerui::VerticalAlignment::Center));
+    huxerui::View content = huxerui::Row {
+        huxerui::Stack { std::move(icon) }
+            .With(huxerui::Frame{.width = 36.0F, .height = 36.0F},
+                  huxerui::Background(theme.colors.primary_container),
+                  huxerui::CornerRadius(18.0F),
+                  huxerui::Scale(huxerui::AnimateTo(
+                      changing ? 0.78F : 1.0F,
+                      huxerui::TweenSpec{.duration = 0.28,
+                                         .easing = huxerui::Easing::EaseOut}))),
+        huxerui::Column {
+            huxerui::Text(status).Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kCaption)
+                    .WithWeight(huxerui::FontWeight::SemiBold),
+                theme.colors.on_surface}),
+            huxerui::Text(Localized("停止内核")).Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kCaption),
+                theme.colors.on_surface_variant}),
+        }.With(huxerui::Spacing(2.0F)),
+    }.With(huxerui::Spacing(6.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
+           huxerui::MainAlign(huxerui::MainAxisAlignment::Center));
+    return huxerui::View{Card(std::move(content))}
+        .OnClick([control] {
+            control.Run({.action = CoreAction::Stop});
+        })
+        .With(huxerui::Enabled(!control.Busy()),
+              huxerui::Indication{},
+              huxerui::SharedBounds("home-core-control")
+                  .BoundsTransform(HomeControlArc{}),
+              huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                 .label = huxerui::UseString(
+                                     Localized("停止内核"))});
+}
+
 // 桌面：内核启动/停止悬浮按钮（右下角，与移动端的 VPN 悬浮按钮同形制）。
 // 「正式启动」是独立动作：只负责拉起/停止内核，启动时按已记录的 TUN 与
 // 系统代理意图恢复；不再由各个开关隐式触发内核。
 [[huxerui::composable]] huxerui::View DesktopHomeFloatingAction(
-    huxerui::View page, bool compact) {
+    huxerui::View page, bool compact, huxerui::State<bool> cardShown,
+    huxerui::SharedTransitionHandle transition) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const auto control = UseCoreControl();
     huxerui::View base = page;
     const bool active = control.Running();
     const bool enabled = !control.Busy();
-    const auto toggle = [control, active] {
+    const CoreAction command = control.model->operations.command.Get().action;
+    const bool changing = command == CoreAction::Start ||
+                          command == CoreAction::Stop;
+    const auto toggle = [control, active, compact, cardShown, transition] {
+        if (control.Busy()) return;
+        if (!compact && !active) {
+            transition.Run(kHomeControlMotion, [cardShown] { cardShown = true; });
+        }
         control.Run({.action = active ? CoreAction::Stop : CoreAction::Start});
     };
 
-    huxerui::View floating =
+    huxerui::View button =
         huxerui::IconButton(active ? app::images::pause : app::images::play,
                             Localized(active ? "停止内核" : "启动内核"))
             .OnClick(toggle)
             .With(huxerui::Tooltip(Localized(active ? "停止内核" : "启动内核")),
                   huxerui::Frame{.width = 56.0F, .height = 56.0F},
                   huxerui::Enabled(enabled),
-                  huxerui::Background(active ? theme.colors.primary_container
-                                             : theme.colors.primary),
+                  huxerui::Opacity(changing ? 0.0F : 1.0F),
                   huxerui::Foreground(active
                                           ? theme.colors.on_primary_container
                                           : theme.colors.on_primary),
-                  huxerui::CornerRadius(28.0F),
-                  huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F,
-                                  2.0F},
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                      .label = huxerui::UseString(Localized(
                                          active ? "停止内核" : "启动内核"))});
-    floating = WithoutIconButtonOutlines(floating);
+    button = WithoutIconButtonOutlines(button);
+    huxerui::View floating = huxerui::Stack {
+        std::move(button),
+        changing ? huxerui::View{huxerui::ProgressCircle().With(
+                       huxerui::Frame{.width = 28.0F, .height = 28.0F},
+                       huxerui::Align(huxerui::HorizontalAlignment::Center,
+                                      huxerui::VerticalAlignment::Center))}
+                 : huxerui::View{huxerui::Row{}},
+    }.With(huxerui::Frame{.width = 56.0F, .height = 56.0F},
+           huxerui::Background(active || changing
+                                   ? theme.colors.primary_container
+                                   : theme.colors.primary),
+           huxerui::CornerRadius(28.0F),
+           huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F, 2.0F},
+           huxerui::Scale(huxerui::AnimateTo(
+               changing ? 0.94F : 1.0F,
+               huxerui::TweenSpec{.duration = 0.18,
+                                  .easing = huxerui::Easing::EaseOut})),
+           huxerui::SharedBounds("home-core-control")
+               .BoundsTransform(HomeControlArc{}));
     huxerui::View dock = huxerui::Column {
         std::move(floating),
     }.With(huxerui::Padding(huxerui::EdgeInsets{
@@ -1062,10 +1118,13 @@ huxerui::XYChartData BuildTrafficChartData(
              huxerui::CrossAlign(huxerui::CrossAxisAlignment::End));
     return huxerui::Stack {
         std::move(base),
-        std::move(dock),
+        compact || !cardShown.Get() ? std::move(dock)
+                                    : huxerui::View{huxerui::Row{}},
     }.With(huxerui::Grow(1.0F),
            huxerui::Align(huxerui::HorizontalAlignment::Stretch,
-                          huxerui::VerticalAlignment::Stretch));
+                          huxerui::VerticalAlignment::Stretch),
+           transition.Scope())
+        .Key("home-control-transition-scope");
 }
 
 #endif
@@ -1095,14 +1154,16 @@ huxerui::XYChartData BuildTrafficChartData(
     auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
     // 策略组快照 / 内核与接管状态的全局唯一来源（见 *_model.h）。
-    const auto proxiesModel = huxerui::UseService<ProxiesModel>();
     const auto coreModel = huxerui::UseService<CoreModel>();
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     const auto settingsModel = huxerui::UseService<SettingsModel>();
     auto state = huxerui::UseState<HomeState>({});
-    // 首页布局是**编译期常量**（见 AGENTS.md / CLAUDE.md 第 13 条）：顺序与尺寸只由
-    // kHomeCards 决定，没有编辑态、拖动排序、增删卡片与 home.layout.* 持久化，也就
-    // 没有"先画默认、persistence hydrate 之后再换一份库里的布局"的首帧跳变。
+    auto controlCardShown = huxerui::UseState<bool>(
+        coreModel->view.Get().core.state == core::CoreState::Running);
+    auto controlCardSynced = huxerui::UseState<bool>(false);
+    const auto controlTransition = huxerui::UseSharedTransition();
+    // 基础卡片顺序与尺寸只由 kHomeCards 决定，没有布局持久化；尾部控制卡
+    // 只随桌面运行状态出现，不改变其它卡片的声明跨度。
     const HomeLayout order = DefaultHomeLayout();
 
     // 桌面：流量/连接由推送驱动（见 SubscribeHomeStreams），不占用轮询。
@@ -1112,6 +1173,36 @@ huxerui::XYChartData BuildTrafficChartData(
             return [subscription] { UnsubscribeStreamUpdates(subscription); };
         },
         0);
+
+    if (kDesktopHomeControl) {
+        huxerui::Lifecycle(
+            [coreModel, controlCardShown, controlCardSynced,
+             controlTransition, active, compact] {
+                const CoreView& view = coreModel->view.Get();
+                if (view.ready) {
+                    const bool running =
+                        view.core.state == core::CoreState::Running;
+                    if (!controlCardSynced.Get() || !active || compact) {
+                        controlCardSynced = true;
+                        controlCardShown = running;
+                    } else if (!coreModel->operations.Busy() &&
+                               controlCardShown.Get() != running) {
+                        try {
+                            controlTransition.Run(kHomeControlMotion,
+                                [controlCardShown, running] {
+                                    controlCardShown = running;
+                                });
+                        } catch (const std::logic_error&) {
+                            // 页面切换期间作用域可能暂时卸载，直接同步真实状态。
+                            controlCardShown = running;
+                        }
+                    }
+                }
+                return [] {};
+            },
+            coreModel->view, coreModel->operations.command,
+            active, compact);
+    }
 
     // 不可见时只保留本页 State/Lifecycle，不构建重子树：huxerui 的 Pager 会把
     // 四个一级页同时挂载，隐藏页即使不重组，其已挂载子树仍随每一帧被重新测量。
@@ -1127,7 +1218,7 @@ huxerui::XYChartData BuildTrafficChartData(
     // 里面的 Lifecycle 永不注册、MirrorHomeState 一次都不跑，HomeState 保持
     // 默认值（首页订阅/流量/总量全空）——Android 真机上实测过的回归。
     huxerui::View runtimePump = CLASHFLUX_HOME_RUNTIME_PUMP(
-        state, coreModel, profilesModel, proxiesModel);
+        state, coreModel, profilesModel);
 
     std::vector<huxerui::View> cards;
     cards.reserve(order.size());
@@ -1146,10 +1237,18 @@ huxerui::XYChartData BuildTrafficChartData(
                             .LayoutValue<HomeCardSpan>(size)
                             .Key("home-card-" + id));
     }
+    if (kDesktopHomeControl && !compact && controlCardShown.Get()) {
+        cards.push_back(huxerui::View{CLASHFLUX_HOME_CONTROL_CARD()}
+                            .LayoutValue<HomeCardSpan>({1, 1})
+                            .LayoutValue<HomeControlSpan>(true)
+                            .Key("home-card-control"));
+    }
 
     huxerui::View cardArea = cards.empty()
         ? EmptyState(Localized("首页还没有卡片"), app::images::home)
-        : huxerui::View{HomeGrid(std::move(cards)).With(huxerui::Grow(1.0F))};
+        : huxerui::View{HomeGrid(std::move(cards))
+                            .LayoutValue<HomeGridCompact>(compact)
+                            .With(huxerui::Grow(1.0F))};
     huxerui::View grid = huxerui::Column {
         std::move(cardArea),
     }.With(huxerui::Grow(1.0F),
@@ -1161,7 +1260,9 @@ huxerui::XYChartData BuildTrafficChartData(
         // 卡片被按钮遮住（紧凑视口本来就带底部悬浮导航的空白）。
         compact ? CompactFloatingNavigationFooter()
                 : huxerui::View{huxerui::Row{}.With(
-                      huxerui::Frame{.height = kHomeFloatingButtonInset})},
+                      huxerui::Frame{.height =
+                          kDesktopHomeControl && controlCardShown.Get()
+                              ? 0.0F : kHomeFloatingButtonInset})},
     }.With(huxerui::Spacing(kHomeGridGap),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
@@ -1181,12 +1282,14 @@ huxerui::XYChartData BuildTrafficChartData(
 
     // 移动端启动/停止按钮脱离滚动内容，固定在底部悬浮导航之上的位置。
     huxerui::View shell = CLASHFLUX_HOME_FLOATING_ACTION(
-        std::move(page), state, compact);
+        std::move(page), state, compact, controlCardShown,
+        controlTransition);
 
     return std::move(shell).With(huxerui::Grow(1.0F));
 }
 
 #undef CLASHFLUX_HOME_PLATFORM_CARD
+#undef CLASHFLUX_HOME_CONTROL_CARD
 #undef CLASHFLUX_HOME_FLOATING_ACTION
 
 } // namespace clashflux::ui

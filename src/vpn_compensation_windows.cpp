@@ -18,14 +18,14 @@ import std;
 namespace vpn::compensation {
 namespace {
 
-// 错误文本必须给出真实原因：IP Helper 的路由操作并不都需要管理员权限
-// （5 = ACCESS_DENIED 才需要），把每个失败都归因于提权会让用户误判。
+// Windows 路由操作由系统服务执行；ACCESS_DENIED 表示服务操作被系统拒绝，
+// 不能引导用户提权 GUI。
 std::string winError(std::string_view operation, std::string_view detail,
                      ULONG status) {
     std::string_view note;
     switch (status) {
     case ERROR_ACCESS_DENIED:
-        note = "，需要管理员权限";
+        note = "，系统拒绝访问";
         break;
     case ERROR_OBJECT_ALREADY_EXISTS:
         note = "，系统已存在相同接口/网段/下一跳的路由";

@@ -236,6 +236,7 @@ huxerui::View IslandSection(std::string title, huxerui::View content);
 // 定义）；这里只前向声明，函数声明按值传不完整类型是合法的，用到定义的
 // 翻译单元在 import clashflux.db 之后包含 profiles_cache.h。
 struct ProfilesCache;
+struct ConnectionRow;
 
 // ---- 页面（定义在各自 .cpp，均为 [[huxerui::composable]]）----
 // active=false 表示该一级页当前不可见（Pager/IndexedPages 的其它页）：页面仍
@@ -252,6 +253,9 @@ huxerui::View LogsPage(std::function<void()> onBack = {},
                        bool active = true);                       // 日志
 huxerui::View FidelityPage(std::int64_t profileId, std::function<void()> onBack,
                            bool windowTitle = false);
+huxerui::View ConnectionDetailPage(ConnectionRow initial,
+                                   std::function<void()> onBack,
+                                   bool windowTitle = false);
 // 手机端二级页：由设置页「更多」入口 push 到 NavigationStack，页面自带的
 // 进入/返回动画与一级页切换动画互相独立；返回箭头与系统返回键统一弹栈。
 #if defined(__ANDROID__)
@@ -264,6 +268,7 @@ huxerui::View AndroidLogsPage();
 huxerui::View AndroidLanguagePage();
 huxerui::View AndroidThemePage(huxerui::State<int> themeMode);
 huxerui::View AndroidFidelityPage(std::int64_t profileId);
+huxerui::View AndroidConnectionDetailPage(ConnectionRow initial);
 #endif
 huxerui::View LanguagePage(std::function<void()> onBack);
 huxerui::View ThemePage(huxerui::State<int> themeMode, std::function<void()> onBack,
@@ -280,9 +285,13 @@ struct DesktopSettingsNavigation {
 #if !defined(__ANDROID__)
 huxerui::View DesktopThemePage(huxerui::State<int> themeMode);
 huxerui::View DesktopFidelityPage(std::int64_t profileId);
+huxerui::View DesktopConnectionDetailPage(ConnectionRow initial);
 #endif
 void OpenProfileFidelityPage(huxerui::NavigationController navigation,
     std::shared_ptr<DesktopSettingsNavigationModel> desktopNavigation, std::int64_t profileId);
+void OpenConnectionDetailPage(huxerui::NavigationController navigation,
+    std::shared_ptr<DesktopSettingsNavigationModel> desktopNavigation,
+    ConnectionRow initial);
 
 // 设置页持有主题模式 State（AppRoot 传入）。
 huxerui::View SettingsPage(huxerui::State<int> themeMode,

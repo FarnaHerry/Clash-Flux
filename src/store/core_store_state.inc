@@ -427,7 +427,7 @@
 
     // 切换 TUN（阻塞）。TUN 是与内核启停解耦的独立开关：
     // - 内核在跑：sing-box 的 clash_api 不支持热更 tun → 重新合成 config.json
-    //   并重启内核生效；失败（如无 root/CAP_NET_ADMIN）回滚设置并恢复无 TUN 运行；
+    //   并重启内核生效；失败时回滚设置并恢复原运行状态；
     // - 内核没跑：只写配置（下次启动内核时带上 tun），不再隐式拉起内核。
     // 成功更新快照。
     bool applyTun(bool enable) {
@@ -464,17 +464,21 @@
         }
         startCore(lastProfileYaml_, false, enable, restoreSystemProxy);
         if (snapshot().state == core::CoreState::Running) return true;
+        const std::string startError = snapshot().lastError;
+        const std::string failure = std::format("TUN {}失败{}", enable ? "开启" : "关闭",
+                                                startError.empty() ? "" : "：" + startError);
         setSetting("core.tun_enabled", enable ? "false" : "true");
         {
             std::lock_guard lock(mutex_);
             snap_.tunEnabled = !enable;
-            snap_.lastError =
-                std::format("TUN {}失败（可能需要 root/CAP_NET_ADMIN）",
-                            enable ? "开启" : "关闭");
         }
-        // 恢复无 TUN 的可用状态（best effort）。
+        // 尽量恢复切换前的状态；重启成功会清除 lastError，因此最后再发布失败原因。
         stopCore();
         startCore(lastProfileYaml_, false, !enable, restoreSystemProxy);
+        {
+            std::lock_guard lock(mutex_);
+            snap_.lastError = failure;
+        }
         return false;
 #endif
     }
