@@ -919,21 +919,39 @@ huxerui::XYChartData BuildTrafficChartData(
 
 #else
 
-struct HomeControlArc {
-    float lift = 24.0F;
+struct HomeControlMoveExpand {
+    static constexpr float kMoveFraction = 0.48F;
+
+    static huxerui::Rect Expand(huxerui::Rect button,
+                                huxerui::Rect card, float progress) {
+        const float move = std::clamp(progress / kMoveFraction, 0.0F, 1.0F);
+        const float grow = std::clamp((progress - kMoveFraction) /
+                                          (1.0F - kMoveFraction), 0.0F, 1.0F);
+        const float buttonCenterX = button.x + button.width / 2.0F;
+        const float buttonCenterY = button.y + button.height / 2.0F;
+        const float cardCenterX = card.x + card.width / 2.0F;
+        const float cardCenterY = card.y + card.height / 2.0F;
+        const float centerX = buttonCenterX + (cardCenterX - buttonCenterX) * move;
+        const float centerY = buttonCenterY + (cardCenterY - buttonCenterY) * move;
+        const float width = button.width + (card.width - button.width) * grow;
+        const float height = button.height + (card.height - button.height) * grow;
+        return {centerX - width / 2.0F, centerY - height / 2.0F,
+                width, height};
+    }
 
     huxerui::Rect Evaluate(huxerui::Rect from, huxerui::Rect to,
                            float progress) const {
-        return {
-            from.x + (to.x - from.x) * progress,
-            from.y + (to.y - from.y) * progress -
-                lift * 4.0F * progress * (1.0F - progress),
-            from.width + (to.width - from.width) * progress,
-            from.height + (to.height - from.height) * progress,
-        };
+        if (progress <= 0.0F) return from;
+        if (progress >= 1.0F) return to;
+        // The status card is larger than the floating button. Reversing the
+        // endpoints plays the same path backwards: shrink, then move home.
+        if (from.width * from.height > to.width * to.height) {
+            return Expand(to, from, 1.0F - progress);
+        }
+        return Expand(from, to, progress);
     }
 
-    bool operator==(const HomeControlArc&) const = default;
+    bool operator==(const HomeControlMoveExpand&) const = default;
 };
 
 [[huxerui::composable]] huxerui::View DesktopModeSwitchRow(
@@ -1072,7 +1090,7 @@ struct HomeControlArc {
               huxerui::Tooltip(Localized("停止内核")),
               huxerui::Indication{},
               huxerui::SharedBounds("home-core-control")
-                  .BoundsTransform(HomeControlArc{}),
+                  .BoundsTransform(HomeControlMoveExpand{}),
               huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                  .label = huxerui::UseString(
                                      Localized("停止内核"))});
@@ -1092,11 +1110,11 @@ struct HomeControlArc {
     const CoreAction command = control.model->operations.command.Get().action;
     const bool changing = command == CoreAction::Start ||
                           command == CoreAction::Stop;
-    const auto toggle = [control, active, compact, cardShown, transition] {
+    const auto toggle = [control, active] {
         if (control.Busy()) return;
-        if (!compact && !active) {
-            transition.Run(kHomeControlMotion, [cardShown] { cardShown = true; });
-        }
+        // Keep the button visible while the command is pending. The HomePage
+        // lifecycle starts the shared transition once the new state is read
+        // back, so both directions animate against stable content.
         control.Run({.action = active ? CoreAction::Stop : CoreAction::Start});
     };
 
@@ -1133,7 +1151,7 @@ struct HomeControlArc {
                huxerui::TweenSpec{.duration = 0.18,
                                   .easing = huxerui::Easing::EaseOut})),
            huxerui::SharedBounds("home-core-control")
-               .BoundsTransform(HomeControlArc{}));
+               .BoundsTransform(HomeControlMoveExpand{}));
     huxerui::View dock = huxerui::Column {
         std::move(floating),
     }.With(huxerui::Padding(huxerui::EdgeInsets{

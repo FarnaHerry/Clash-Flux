@@ -74,7 +74,11 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   详见 `docs/android-build.md`。
 - Android 发布 APK 必须同时启用 v1（JAR/META-INF）和 v2 签名，以兼容仍依赖传统签名文件的 OEM 安装器；
   Android CI 必须使用 `apksigner verify --verbose --min-sdk-version 23` 分别断言 v1、v2 均为 `true`；
-  应用 minSdk 为 24 时，默认核验会跳过 v1，不能仅检查默认命令成功。
+  应用 minSdk 为 24 时，默认核验会跳过 v1，不能仅检查默认命令成功。Release 包必须使用
+  长期 Android 发布密钥，不能使用 debug keystore；发布前还要用 `apksigner verify --print-certs`
+  核对签名证书 SHA-256 为 `a4a0bc09a3dc76d7ac37f92043d2be6e153bda1347ce344013828e15472419f4`
+  （现有正式版本的签名身份）。Release 打包缺少发布密钥时必须失败，不能生成或上传 debug 签名包。
+  GitHub Actions 必须验证 v1、v2 和该证书指纹，任一不匹配都阻断发布。
   详见 `docs/android-build.md`。
 - **发布时 Android 版本号必须随 CMake 一起更新**：`platform/android/app/build.gradle` 的
   `versionCode` 在上一发布基础上 +1，`versionName` 与 `CMakeLists.txt` 的 project VERSION

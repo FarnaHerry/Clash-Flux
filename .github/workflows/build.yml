@@ -788,10 +788,11 @@ jobs:
           test -n "$apksigner"
           # Lower the verifier's minimum to API 23 so apksigner checks the
           # legacy v1 signature even though this app's minSdk is 24.
-          report="$("$apksigner" verify --verbose --min-sdk-version 23 "$apk")"
+          report="$("$apksigner" verify --verbose --min-sdk-version 23 --print-certs "$apk")"
           printf '%s\n' "$report"
           grep -Fq 'Verified using v1 scheme (JAR signing): true' <<<"$report"
           grep -Fq 'Verified using v2 scheme (APK Signature Scheme v2): true' <<<"$report"
+          grep -Fq 'Signer #1 certificate SHA-256 digest: a4a0bc09a3dc76d7ac37f92043d2be6e153bda1347ce344013828e15472419f4' <<<"$report"
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4

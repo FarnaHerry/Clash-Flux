@@ -64,6 +64,11 @@ Android Release APK 必须同时启用 v1（JAR 签名，包含 `META-INF` 签�
 断言 v1、v2 均为 `true`；由于应用的 minSdk 是 24，默认核验会跳过 v1，因此只检查默认命令
 退出成功不能防止该兼容性回归。
 
+Release APK 必须使用长期发布 keystore，不能使用 Gradle 生成的 debug keystore。正式发布证书
+SHA-256 指纹为 `a4a0bc09a3dc76d7ac37f92043d2be6e153bda1347ce344013828e15472419f4`；CI 用
+`apksigner verify --print-certs` 同时核对 v1、v2 签名和该指纹。Release 打包任务缺少发布密钥
+时会失败，不能以 debug 签名包替代。
+
 ## 发布版本号
 
 发布时 `platform/android/app/build.gradle` 的 `versionCode` 在上一发布基础上 +1，

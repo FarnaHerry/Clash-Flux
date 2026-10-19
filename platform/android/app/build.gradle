@@ -192,8 +192,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 123
-        versionName = "0.3.45"
+        versionCode = 124
+        versionName = "0.3.46"
 
         externalNativeBuild {
             cmake {
@@ -241,8 +241,8 @@ android {
     buildTypes {
         release {
             minifyEnabled = false
-            // Local builds use the generated debug key. CI passes a stable
-            // release keystore through Gradle project properties.
+            // Release builds use the stable release key. Developer debug builds
+            // keep using the generated debug key through the debug build type.
             signingConfig = hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
@@ -266,6 +266,20 @@ android {
     lintOptions {
         checkReleaseBuilds = false
         abortOnError = false
+    }
+}
+
+// A locally invoked Release build must never silently fall back to the debug
+// keystore. CI also sets clashfluxRequireReleaseSigning=true before Gradle
+// configuration so a missing key fails even earlier.
+tasks.configureEach { task ->
+    if (task.name == "packageRelease" || task.name == "bundleRelease") {
+        task.doFirst {
+            if (!hasReleaseSigning) {
+                throw new GradleException(
+                        "Android Release packaging requires the Clash-Flux release keystore")
+            }
+        }
     }
 }
 
