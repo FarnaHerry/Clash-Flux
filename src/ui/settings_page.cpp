@@ -1,11 +1,10 @@
-// settings_page.cpp — 设置页的三个固定模块：通用 / 内核 / 关于。
+// settings_page.cpp — 通用、网络参数、平台维护与关于；日常运行控制放在首页。
 //
 // 平台专属内容由模块入口处的编译宏选择，平台函数内部自洽管理状态、
 // 任务、权限和控件；这里不维护 Android/桌面能力矩阵。
 #include <huxerui/huxerui.h>
 
 #include <algorithm>
-#include <charconv>
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -20,6 +19,7 @@
 #include "task_bridge.h"
 
 import clashflux.config;
+import clashflux.core;
 import clashflux.db;
 import clashflux.singbox;
 import clashflux.stream;
@@ -27,6 +27,7 @@ import clashflux.store.core;
 import clashflux.store.profiles;
 
 #include "core_model.h"
+#include "core_control.h"
 #include "profiles_cache.h"
 #include "settings_model.h"
 #include "theme_colors.h"
@@ -35,9 +36,6 @@ import clashflux.store.profiles;
 namespace clashflux::ui {
 namespace {
 
-const std::vector<std::string> kModes{"rule", "global", "direct"};
-const std::vector<huxerui::StringVariant> kModeNames{
-    Localized("规则"), Localized("全局"), Localized("直连")};
 const std::vector<huxerui::StringVariant> kThemeNames{
     Localized("自动"), Localized("深色"), Localized("浅色")};
 const std::vector<std::string> kLanguages{"system", "zh", "en"};
@@ -46,27 +44,6 @@ const std::vector<huxerui::StringVariant> kLanguageNames{
 constexpr float kPortSettingsDialogWidth = 320.0F;
 constexpr float kPortSettingsEntryMinHeight = 48.0F;
 constexpr float kPortSettingsEntryHorizontalInset = 10.0F;
-
-std::optional<int> ParsePortText(const huxerui::TextEditingValue& value,
-                                 bool optional) {
-    std::string_view text = value.text;
-    while (!text.empty() && (text.front() == ' ' || text.front() == '\t' ||
-                             text.front() == '\r' || text.front() == '\n')) {
-        text.remove_prefix(1);
-    }
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t' ||
-                             text.back() == '\r' || text.back() == '\n')) {
-        text.remove_suffix(1);
-    }
-    if (text.empty()) return optional ? std::optional<int>{0} : std::nullopt;
-    int port = 0;
-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), port);
-    if (error != std::errc{} || end != text.data() + text.size() ||
-        port < 1 || port > 65535) {
-        return std::nullopt;
-    }
-    return port;
-}
 
 std::size_t LanguageIndex(const std::string& language) {
     const auto found = std::find(kLanguages.begin(), kLanguages.end(), language);
@@ -80,185 +57,18 @@ void ApplyLanguage(const std::shared_ptr<SettingsModel>& model, std::size_t inde
     model->Update([language](SettingsView& settings) { settings.language = language; });
 }
 
-std::size_t ModeIndex(const std::string& mode) {
-    for (std::size_t i = 0; i < kModes.size(); ++i) {
-        if (mode == kModes[i]) return i;
-    }
-    return 0;
-}
-
-struct SettingsModeIndicator {
-    class Extension;
-
-    std::size_t selected_index = 0;
-    huxerui::Color fill = huxerui::Color::Transparent();
-
-    bool operator==(const SettingsModeIndicator&) const = default;
-};
-
-class SettingsModeIndicator::Extension final : public huxerui::NodeExtension {
-public:
-    Extension(huxerui::ViewNode& node, const SettingsModeIndicator& spec) {
-        Update(node, spec);
-    }
-
-    void Update(huxerui::ViewNode& node, const SettingsModeIndicator& spec) {
-        static_cast<void>(node);
-        geometry_pending_ =
-            geometry_pending_ || !initialized_ ||
-            selected_index_ != spec.selected_index;
-        selected_index_ = spec.selected_index;
-        fill_ = spec.fill;
-        initialized_ = true;
-    }
-
-    FrameResult OnFrame(huxerui::ViewNode& node,
-                        const huxerui::FrameInfo& frame) override {
-        static_cast<void>(node);
-        const huxerui::MotionAdvanceResult result = offset_.Advance(frame);
-        if (result.changed) InvalidatePaint(PaintInvalidation::Content);
-        return FrameResult{
-            .needs_frame = geometry_pending_ || result.needs_frame,
-            .wake_after = result.wake_after};
-    }
-
-    PaintInvalidation PrepareGeometry(
-        huxerui::ViewNode& node, huxerui::TextMeasurer&) override {
-        if (selected_index_ >= node.ChildCount()) {
-            return PaintInvalidation::None;
-        }
-        const float target = node.ChildAt(selected_index_).LayoutOffset().x;
-        const float width = node.ChildAt(selected_index_).LayoutSize().width;
-        geometry_pending_ = false;
-        if (!geometry_initialized_) {
-            geometry_initialized_ = true;
-            width_ = width;
-            offset_.Set(target);
-            return PaintInvalidation::Content;
-        }
-        bool changed = false;
-        if (width_ != width) {
-            width_ = width;
-            changed = true;
-        }
-        if (offset_.Target() != target) {
-            offset_.AnimateTo(
-                target, huxerui::TweenSpec{0.22, huxerui::Easing::EaseOut});
-            changed = true;
-        }
-        return changed ? PaintInvalidation::Content : PaintInvalidation::None;
-    }
-
-    void PaintBehindContent(const huxerui::ViewNode& node,
-                            huxerui::PaintContext& context) const override {
-        if (!geometry_initialized_ || width_ <= 0.0F || fill_.alpha <= 0.0F) {
-            return;
-        }
-        context.DrawRect(
-            huxerui::Rect{offset_.Value(), 0.0F, width_, node.Bounds().height},
-            fill_, 8.0F);
-    }
-
-private:
-    std::size_t selected_index_ = 0;
-    huxerui::Color fill_ = huxerui::Color::Transparent();
-    huxerui::MotionController offset_;
-    float width_ = 0.0F;
-    bool initialized_ = false;
-    bool geometry_initialized_ = false;
-    bool geometry_pending_ = false;
-};
-
-[[huxerui::composable]] huxerui::View CompactOutboundModeSelector(
-    huxerui::State<std::size_t> selected,
-    huxerui::State<bool> busy,
-    std::function<void(std::size_t)> onChanged) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const std::size_t active = selected.Get();
-    huxerui::Color indicator = theme.colors.primary_container;
-    huxerui::Color hover = theme.colors.on_surface;
-    hover.alpha = 0.08F;
-    huxerui::Color press = theme.colors.on_surface;
-    press.alpha = 0.14F;
-    const huxerui::Indication indication{
-        .hover = huxerui::IndicationLayer{
-            .fill = huxerui::VisualFill{huxerui::Brush{hover}}},
-        .press = huxerui::IndicationLayer{
-            .fill = huxerui::VisualFill{huxerui::Brush{press}}},
-    };
-
-    std::vector<huxerui::View> entries;
-    entries.reserve(kModeNames.size());
-    for (std::size_t i = 0; i < kModeNames.size(); ++i) {
-        const bool isSelected = i == active;
-        const huxerui::Color content =
-            isSelected ? theme.colors.on_primary_container
-                       : theme.colors.on_surface_variant;
-        entries.push_back(
-            huxerui::Row {
-                huxerui::Text(kModeNames[i]).Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kBody)
-                        .WithWeight(isSelected ? huxerui::FontWeight::SemiBold
-                                               : huxerui::FontWeight::Regular),
-                    content}),
-            }
-                .With(huxerui::Grow(1.0F),
-                      huxerui::Frame{.height = 38.0F},
-                      huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
-                      huxerui::CornerRadius(8.0F), indication,
-                      huxerui::Semantics{
-                          .role = huxerui::SemanticRole::Tab,
-                          .label = kModeNames[i],
-                          .selected = isSelected},
-                      huxerui::Focusable(true),
-                      huxerui::Enabled(!busy.Get()))
-                .OnClick([busy, onChanged, i] {
-                    if (!busy.Get()) onChanged(i);
-                })
-                .Key("settings-outbound-" + std::to_string(i)));
-    }
-
-    return huxerui::Row(std::move(entries))
-        .With(huxerui::Background(theme.colors.surface_container_high),
-              huxerui::CornerRadius(10.0F), huxerui::ClipChildren(),
-              SettingsModeIndicator{active, indicator});
-}
-
-[[huxerui::composable]] huxerui::View WideOutboundModeSelector(
-    huxerui::State<std::size_t> selected,
-    huxerui::State<bool> busy,
-    std::function<void(std::size_t)> onChanged) {
-    // 组合期读 busy + 模型值：切换进行中显示乐观值，空闲显示内核权威值。这既让
-    // 外部（CLI/托盘）改模式能反映出来，也保证 busy 翻转会触发重组——否则点击被
-    // busy 早退时控件已经视觉翻转、却没有任何 State 变化去把它拉回来。
-    const auto coreModel = huxerui::UseService<CoreModel>();
-    const std::size_t shown =
-        busy.Get() ? selected.Get()
-                   : ModeIndex(coreModel->view.Get().core.mode);
-    return huxerui::SegmentedButton(kModeNames, shown)
-        .OnChanged(std::move(onChanged));
-}
-
-[[huxerui::composable]] huxerui::View ResponsiveOutboundModeSelector(
-    huxerui::State<std::size_t> selected,
-    huxerui::State<bool> busy,
-    std::function<void(std::size_t)> onChanged) {
-    if (huxerui::UseViewportClass() == huxerui::ViewportClass::Compact)
-        return CompactOutboundModeSelector(selected, busy, std::move(onChanged));
-    return WideOutboundModeSelector(selected, busy, std::move(onChanged));
-}
-
 // 宏只选择模块级平台函数，不把平台能力拆成控件级过滤条件。
 #if defined(__ANDROID__)
 #define CLASHFLUX_GENERAL_PLATFORM_SECTION AndroidGeneralSettings
-#define CLASHFLUX_KERNEL_PLATFORM_SECTION AndroidKernelSettings
+#define CLASHFLUX_NETWORK_PLATFORM_SECTION AndroidNetworkSettings
+#define CLASHFLUX_MAINTENANCE_PLATFORM_SECTION AndroidKernelSettings
 #define CLASHFLUX_MORE_SETTINGS AndroidMoreSettings
 #define CLASHFLUX_LANGUAGE_SETTING AndroidLanguageSetting
 #define CLASHFLUX_THEME_SETTING AndroidThemeSetting
 #else
 #define CLASHFLUX_GENERAL_PLATFORM_SECTION DesktopGeneralSettings
-#define CLASHFLUX_KERNEL_PLATFORM_SECTION DesktopKernelSettings
+#define CLASHFLUX_NETWORK_PLATFORM_SECTION DesktopNetworkSettings
+#define CLASHFLUX_MAINTENANCE_PLATFORM_SECTION DesktopKernelSettings
 #define CLASHFLUX_MORE_SETTINGS DesktopMoreSettings
 #define CLASHFLUX_LANGUAGE_SETTING DesktopLanguageSetting
 #define CLASHFLUX_THEME_SETTING DesktopThemeSetting
@@ -663,31 +473,13 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const auto toast = huxerui::UseToast();
     const auto save = [context, mixedPort, httpPort, socksPort, settingsModel, toast] {
-        const auto mixed = ParsePortText(mixedPort.Get(), false);
-        const auto http = ParsePortText(httpPort.Get(), true);
-        const auto socks = ParsePortText(socksPort.Get(), true);
-        if (!mixed || !http || !socks) {
-            toast.Show(Localized("端口无效"));
+        const auto error = settingsModel->SetPorts(mixedPort.Get().text,
+            httpPort.Get().text, socksPort.Get().text);
+        if (error != PortSettingsError::None) {
+            toast.Show(error == PortSettingsError::Duplicate
+                ? Localized("不同类型的端口不能重复") : Localized("端口无效"));
             return;
         }
-        if ((*http > 0 && (*http == *mixed || *http == *socks)) ||
-            (*socks > 0 && *socks == *mixed)) {
-            toast.Show(Localized("不同类型的端口不能重复"));
-            return;
-        }
-
-        const std::string mixedValue = std::to_string(*mixed);
-        const std::string httpValue = *http == 0 ? std::string{} : std::to_string(*http);
-        const std::string socksValue = *socks == 0 ? std::string{} : std::to_string(*socks);
-        auto& core = store::coreStore();
-        core.setSetting("core.mixed_port", mixedValue);
-        core.setSetting("core.http_port", httpValue);
-        core.setSetting("core.socks_port", socksValue);
-        settingsModel->Update([mixedValue, httpValue, socksValue](SettingsView& view) {
-            view.mixedPort = mixedValue;
-            view.httpPort = httpValue;
-            view.socksPort = socksValue;
-        });
         toast.Show(Localized("端口已保存（重启内核生效）"));
         context.Dismiss();
     };
@@ -797,78 +589,22 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
-    auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
-    // 出站模式：HTTP 热更，快且可能失败 → 保留本地乐观值 + busy 单飞；
-    // 成功时把权威值写透模型，失败才回落（见 applyOutboundMode）。
-    auto busy = huxerui::UseState(false);
-    auto modeSelection = huxerui::UseState(
-        ModeIndex(store::coreStore().snapshot().mode));
-
-    // 内核/接管状态来自唯一来源 CoreModel（见 core_model.h）：以模型的 State
-    // 作依赖镜像到本页的受控值——模型一变就同步一次，不再是 1s 定时器。
-    const auto coreModel = huxerui::UseService<CoreModel>();
+    const auto control = UseCoreControl();
+    const auto coreModel = control.model;
     const CoreView coreView = coreModel->view.Get();
-    huxerui::Lifecycle(
-        [busy, modeSelection, coreModel] {
-            const CoreView view = coreModel->view.Get();
-            if (!busy.Get()) modeSelection = ModeIndex(view.core.mode);
-            return [] {};
-        },
-        coreModel->view);
-
     // 不可见时只保留本页 State/Lifecycle，不构建重子树：huxerui 的 Pager 会把
     // 四个一级页同时挂载，隐藏页即使不重组，其已挂载子树仍随每一帧被重新测量。
     // 真机实测（代理页大分组）：四页同挂时每帧 1443 次测量请求 / ~20ms，
     // 只留当前页后降到 28 次 / ~0ms；因此不可见页必须返回空占位。
     if (!active) return huxerui::View{huxerui::Row{}}.Key("settings-idle");
 
-    // 出站模式：HTTP 热更，快但可能失败 → 本地乐观值 + busy 单飞；成功把权威值
-    // 写透模型，失败做目标值校验后回落。
-    const auto applyOutboundMode = [tasks, toast, busy, modeSelection,
-                                    coreModel](
-                                       std::size_t index) {
-        if (busy.Get() || index >= kModes.size()) return;
-        const std::size_t previous = modeSelection.Get();
-        if (index == previous) return;
-        modeSelection = index;
-        busy = true;
-        tasks.Launch([=]() -> huxerui::Task<void> {
-            bool ok = false;
-            std::string error;
-            try {
-                ok = co_await RunOnTaskThread(
-                    [index] { return store::coreStore().applyMode(kModes[index]); });
-            } catch (const std::exception& exception) {
-                error = exception.what();
-                stream::logApplication(
-                    "error", std::format("出站模式切换失败：{}", error));
-            }
-            busy = false;
-            if (!ok) {
-                // 失败回落：目标值校验（busy 期间点击被早退，正常情况下界面还停在
-                // 本任务的意图值；若外部改过则不覆盖）。
-                if (modeSelection.Get() == index) modeSelection = previous;
-                if (error.empty()) {
-                    toast.Show(Localized("出站模式切换失败"));
-                } else {
-                    toast.Show(error);
-                }
-                co_return;
-            }
-            // 成功不回写本地 State：把权威值写透模型，镜像与其它入口立刻一致。
-            const std::string mode = kModes[index];
-            coreModel->Update(
-                [mode](CoreView& view) { view.core.mode = mode; });
-        });
-    };
-
     return PageScaffold(
         Localized("设置"), huxerui::View{},
         huxerui::ScrollView(
             huxerui::Column {
                 CLASHFLUX_MORE_SETTINGS(navPage, profilesCache),
-                // 分区（通用/内核/关于）由 SectionTitle 与间距表达。
+                // 参数与维护分区；首页独占日常模式与接管控制。
                 huxerui::Column {
                     SectionTitle(Localized("通用")),
                     CLASHFLUX_THEME_SETTING(themeMode),
@@ -878,25 +614,15 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
 
                 huxerui::Column {
-                    SectionTitle(Localized("内核")),
-                    SettingRow(
-                        Localized("出站模式"), "",
-                        ResponsiveOutboundModeSelector(
-                            modeSelection, busy, applyOutboundMode), app::images::route),
+                    SectionTitle(Localized("网络")),
                     PortSettingsEntry(),
-                    CLASHFLUX_KERNEL_PLATFORM_SECTION(),
+                    CLASHFLUX_NETWORK_PLATFORM_SECTION(),
                     SettingSwitchRow(
                         Localized("局域网连接"), Localized("允许局域网设备接入（下次启动生效）"),
                         huxerui::Switch(coreView.allowLan)
+                            .With(huxerui::Enabled(coreView.ready && !control.Busy()))
                             .OnChanged([coreModel, toast](bool on) {
-                                // KV 写内存缓存是同步的：写完立刻写透模型，界面
-                                // 不需要 pending，也不会被下一个泵节拍打回去
-                                // （显示值取 KV 意图，见 CoreView::allowLan）。
-                                store::coreStore().setSetting(
-                                    "core.allow_lan", on ? "true" : "false");
-                                coreModel->Update([on](CoreView& view) {
-                                    view.allowLan = on;
-                                });
+                                coreModel->SetAllowLan(on);
                                 toast.Show(Localized(
                                     on ? "已允许局域网连接（重启内核生效）"
                                        : "已关闭局域网连接"));
@@ -904,18 +630,17 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                     SettingSwitchRow(
                         "IPv6", Localized("重启内核生效"),
                         huxerui::Switch(coreView.ipv6Enabled)
+                            .With(huxerui::Enabled(coreView.ready && !control.Busy()))
                             .OnChanged([coreModel, toast](bool on) {
-                                store::coreStore().setSetting(
-                                    "core.ipv6_enabled", on ? "true" : "false");
-                                coreModel->Update([on](CoreView& view) {
-                                    view.ipv6Enabled = on;
-                                });
+                                coreModel->SetIpv6(on);
                                 toast.Show(Localized(
                                     on ? "已启用 IPv6（重启内核生效）"
                                        : "已关闭 IPv6（重启内核生效）"));
                             }), false, app::images::globe),
                 }.With(huxerui::Spacing(10.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+
+                CLASHFLUX_MAINTENANCE_PLATFORM_SECTION(),
 
                 huxerui::Column {
                     SectionTitle(Localized("关于")),
@@ -935,7 +660,8 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 }
 
 #undef CLASHFLUX_GENERAL_PLATFORM_SECTION
-#undef CLASHFLUX_KERNEL_PLATFORM_SECTION
+#undef CLASHFLUX_NETWORK_PLATFORM_SECTION
+#undef CLASHFLUX_MAINTENANCE_PLATFORM_SECTION
 #undef CLASHFLUX_MORE_SETTINGS
 #undef CLASHFLUX_LANGUAGE_SETTING
 #undef CLASHFLUX_THEME_SETTING

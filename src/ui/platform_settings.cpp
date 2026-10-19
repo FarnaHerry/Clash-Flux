@@ -11,7 +11,7 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <type_traits>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -28,40 +28,12 @@ import clashflux.store.profiles;
 import clashflux.store.vpn;
 
 #include "core_model.h"
+#include "core_control.h"
 #include "settings_model.h"
 
 namespace clashflux::ui {
 
 namespace {
-
-template <typename Job>
-void LaunchSettingsAction(huxerui::TaskScope tasks, huxerui::ToastHandle toast,
-                          huxerui::State<bool> busy, Job job,
-                          std::optional<huxerui::StringVariant> ok_message = {},
-                          std::function<void(bool)> finished = {}) {
-    if (busy.Get()) return;
-    busy = true;
-    tasks.Launch([tasks, toast, busy, job = std::move(job),
-                  ok_message = std::move(ok_message),
-                  finished = std::move(finished)]() mutable
-                     -> huxerui::Task<void> {
-        bool ok = false;
-        try {
-            using Result = std::invoke_result_t<Job&>;
-            if constexpr (std::is_same_v<Result, bool>) {
-                ok = co_await RunOnTaskThread(std::move(job));
-            } else {
-                co_await RunOnTaskThread(std::move(job));
-                ok = true;
-            }
-            if (ok && ok_message) toast.Show(*ok_message);
-        } catch (const std::exception& error) {
-            toast.Show(error.what());
-        }
-        if (finished) finished(ok);
-        busy = false;
-    });
-}
 
 #if !defined(__ANDROID__)
 
@@ -172,21 +144,21 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 #if defined(__linux__)
 
 [[huxerui::composable]] huxerui::View DesktopServiceRow(
-    huxerui::State<bool> service_installed, huxerui::TaskScope tasks,
+    bool service_installed, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast) {
     const auto model = huxerui::UseService<CoreModel>();
     const auto serviceTasks = huxerui::UseApplicationTaskScope();
     return SettingRow(
         Localized("内核服务"),
-        service_installed.Get()
+        service_installed
             ? Localized("已安装（sing-box、PPTP 与 TUN 由 root 服务托管）")
             : Localized("安装 root 服务后，TUN/PPTP 无需每次授权（经 pkexec 一次性提权）"),
-        huxerui::Button(Localized(service_installed.Get() ? "卸载服务" : "安装服务"))
-            .With(huxerui::Enabled(!model->serviceChecking.Get()))
+        huxerui::Button(Localized(service_installed ? "卸载服务" : "安装服务"))
+            .With(huxerui::Enabled(!model->serviceChecking.Get() && !model->operations.Busy()))
             .OnClick([service_installed, tasks = serviceTasks, toast, model] {
-                if (model->serviceChecking.Get()) return;
+                if (model->serviceChecking.Get() || model->operations.Busy()) return;
                 model->serviceChecking = true;
-                const bool installed = service_installed.Get();
+                const bool installed = service_installed;
                 tasks.Launch([service_installed, tasks, toast, model,
                               installed]() -> huxerui::Task<void> {
                     try {
@@ -200,7 +172,6 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                                     .c_str());
                             return std::pair{code, service::installed()};
                         });
-                        service_installed = result.second;
                         model->Update([installed = result.second](CoreView& view) {
                             view.serviceInstalled = installed;
                         });
@@ -227,13 +198,13 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 #elif defined(_WIN32)
 
 [[huxerui::composable]] huxerui::View DesktopServiceRow(
-    huxerui::State<bool> service_installed, huxerui::TaskScope tasks,
+    bool service_installed, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast) {
     auto busy = huxerui::UseState(false);
     const auto model = huxerui::UseService<CoreModel>();
     const auto serviceTasks = huxerui::UseApplicationTaskScope();
     const auto manage = [service_installed, tasks = serviceTasks, toast, busy, model](bool remove) {
-        if (busy.Get() || model->serviceChecking.Get()) return;
+        if (busy.Get() || model->serviceChecking.Get() || model->operations.Busy()) return;
         busy = true;
         model->serviceChecking = true;
         tasks.Launch([=]() -> huxerui::Task<void> {
@@ -250,18 +221,16 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         store::vpnStore().shutdown();
                         store::coreStore().stopCore();
                     }
-                    return std::pair{success, std::move(failure)};
+                    return std::tuple{success, std::move(failure), service::installed()};
                 });
-                ok = result.first;
-                error = result.second;
+                ok = std::get<0>(result);
+                error = std::get<1>(result);
+                const bool installed = std::get<2>(result);
+                model->Update([installed](CoreView& view) { view.serviceInstalled = installed; });
             } catch (const std::exception& exception) { error = exception.what(); }
               catch (...) { error = "服务操作失败"; }
             busy = false;
             model->serviceChecking = false;
-            // Publish actual SCM state, never infer it from a button click.
-            const bool installed = co_await RunOnTaskThread([] { return service::installed(); });
-            service_installed = installed;
-            model->Update([installed](CoreView& view) { view.serviceInstalled = installed; });
             model->RequestRefresh();
             if (ok) toast.Show(Localized(remove ? "服务已卸载" : "服务已安装"));
             else toast.Show(error.empty() ? Localized("服务操作失败") : huxerui::StringVariant(error));
@@ -271,11 +240,11 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
         Localized("内核服务"),
         Localized("Windows 系统服务托管内核、TUN 与 PPTP；启动后自动检查更新，手动安装或更新需要管理员授权"),
         huxerui::Row {
-            huxerui::Button(Localized(service_installed.Get() ? "更新服务" : "安装服务"))
-                .OnClick([manage] { manage(false); }).With(huxerui::Enabled(!busy.Get() && !model->serviceChecking.Get())),
-            service_installed.Get()
+            huxerui::Button(Localized(service_installed ? "更新服务" : "安装服务"))
+                .OnClick([manage] { manage(false); }).With(huxerui::Enabled(!busy.Get() && !model->serviceChecking.Get() && !model->operations.Busy())),
+            service_installed
                 ? huxerui::View{huxerui::Button(Localized("卸载服务"))
-                    .OnClick([manage] { manage(true); }).With(huxerui::Enabled(!busy.Get() && !model->serviceChecking.Get()))}
+                    .OnClick([manage] { manage(true); }).With(huxerui::Enabled(!busy.Get() && !model->serviceChecking.Get() && !model->operations.Busy()))}
                 : huxerui::View{},
         }.With(huxerui::Spacing(8.0F)), app::images::gear);
 }
@@ -283,7 +252,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 #else
 
 [[huxerui::composable]] huxerui::View DesktopServiceRow(
-    huxerui::State<bool>, huxerui::TaskScope, huxerui::ToastHandle) {
+    bool, huxerui::TaskScope, huxerui::ToastHandle) {
     return {};
 }
 
@@ -302,186 +271,27 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
     return {};
 }
 
+[[huxerui::composable]] huxerui::View AndroidNetworkSettings() { return {}; }
+
+[[huxerui::composable]] huxerui::View DesktopNetworkSettings() { return {}; }
+
 [[huxerui::composable]] huxerui::View AndroidKernelSettings() {
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
-    auto tasks = huxerui::UseTaskScope();
     auto toast = huxerui::UseToast();
-    auto tun_enabled = huxerui::UseState(
-        store::coreStore().setting("core.tun_enabled", "false") == "true");
-    auto vpn_state = huxerui::UseState(AndroidVpnState());
-    auto vpn_enabled = huxerui::UseState(
-        tun_enabled.Get() || vpn_state.Get() == 1 || vpn_state.Get() == 2);
-    auto vpn_pending = huxerui::UseState(false);
-    auto battery_ignored = huxerui::UseState(AndroidIsIgnoringBattery());
-    auto busy = huxerui::UseState(false);
-
-    // Android 的授权页会暂时遮住 Activity；回到前台时立即重读系统状态，
-    // 不依赖用户再次点击控件或等待后台轮询恢复。
-    application.OnLifecycleChanged(
-        [battery_ignored](huxerui::ApplicationLifecycleState state) {
-            if (state == huxerui::ApplicationLifecycleState::Active) {
-                battery_ignored = AndroidIsIgnoringBattery();
-            }
-        });
-
-    huxerui::Lifecycle(
-        [tasks, tun_enabled, vpn_state, vpn_enabled, vpn_pending,
-         battery_ignored] {
-            tasks.Launch([=]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{1.0}, [=] {
-                    tun_enabled = store::coreStore().setting(
-                                      "core.tun_enabled", "false") == "true";
-                    vpn_state = AndroidVpnState();
-                    battery_ignored = AndroidIsIgnoringBattery();
-                    if (!vpn_pending.Get()) {
-                        vpn_enabled = tun_enabled.Get() ||
-                                      vpn_state.Get() == 1 ||
-                                      vpn_state.Get() == 2;
-                    }
-                    return true;
-                });
-            });
-            return [] {};
-        },
-        0);
-
-    const int state = vpn_state.Get();
-    const huxerui::StringVariant status = Localized(
-        state == 2 ? "已附着：sing-box 正通过 protect(fd) 使用物理网络"
-        : state == 1 ? "正在建立系统 VPN 与 TUN 数据面"
-        : state == 3 ? "启动失败：请查看日志页中的 Android VPN 错误"
-                     : "未连接；开启后将请求系统 VPN 授权");
+    const auto control = UseCoreControl();
+    const auto model = control.model;
+    const CoreView view = model->view.Get();
+    application.OnLifecycleChanged([model](huxerui::ApplicationLifecycleState state) {
+        if (state == huxerui::ApplicationLifecycleState::Active) model->RequestRefresh();
+    });
     return huxerui::Column {
-        SettingRow(Localized("隧道状态"), status,
-                   huxerui::Text(Localized(state == 2 ? "已连接"
-                                            : state == 1 ? "连接中"
-                                            : state == 3 ? "失败" : "未连接")), app::images::tun),
-        SettingSwitchRow(
-            Localized("VPN 代理"),
-            Localized("系统 VPN 由此服务持有；内核出站 socket 会自动绕过 TUN"),
-            huxerui::Switch(vpn_enabled.Get())
-                .OnChanged([tasks, toast, busy, tun_enabled, vpn_state,
-                            vpn_enabled, vpn_pending](bool on) {
-                    if (busy.Get() || vpn_pending.Get()) return;
-                    const bool previous = vpn_enabled.Get();
-                    vpn_enabled = on;
-                    vpn_pending = true;
-                    busy = true;
-                    stream::logApplication(
-                        "info", on ? "用户请求开启 Android VPN"
-                                   : "用户请求关闭 Android VPN");
-                    tasks.Launch([toast, busy, tun_enabled, vpn_state,
-                                  vpn_enabled, vpn_pending, on,
-                                  previous]() -> huxerui::Task<void> {
-                        bool ok = false;
-                        std::string error;
-                        try {
-                            co_await RunOnTaskThread([on] {
-                                store::coreStore().setSetting(
-                                    "core.tun_enabled", on ? "true" : "false");
-                                if (on) {
-                                    store::coreStore().startCore(
-                                        store::profilesStore().selectedYaml(),
-                                        false, true);
-                                    AndroidStartVpn();
-                                } else {
-                                    AndroidStopVpn();
-                                    WaitForAndroidVpnStopped();
-                                    store::coreStore().startCore(
-                                        store::profilesStore().selectedYaml(),
-                                        false, false);
-                                }
-                            });
-
-                            if (on) {
-                                for (int attempt = 0; attempt < 300; ++attempt) {
-                                    const auto [current, requested] =
-                                        co_await RunOnTaskThread([] {
-                                            return std::pair{
-                                                AndroidVpnState(),
-                                                store::coreStore().setting(
-                                                    "core.tun_enabled", "false") == "true"};
-                                        });
-                                    if (current == 1 || current == 2) {
-                                        ok = true;
-                                        break;
-                                    }
-                                    if (current == 3 || !requested) break;
-                                    co_await huxerui::Delay(
-                                        std::chrono::duration<double>{0.2});
-                                }
-                            } else {
-                                for (int attempt = 0; attempt < 300; ++attempt) {
-                                    const auto [current, requested] =
-                                        co_await RunOnTaskThread([] {
-                                            return std::pair{
-                                                AndroidVpnState(),
-                                                store::coreStore().setting(
-                                                    "core.tun_enabled", "false") == "true"};
-                                        });
-                                    if (current != 1 && current != 2 && !requested) {
-                                        ok = true;
-                                        break;
-                                    }
-                                    co_await huxerui::Delay(
-                                        std::chrono::duration<double>{0.2});
-                                }
-                            }
-                        } catch (const std::exception& exception) {
-                            error = exception.what();
-                        }
-
-                        if (!ok) {
-                            try {
-                                co_await RunOnTaskThread([previous] {
-                                    store::coreStore().setSetting(
-                                        "core.tun_enabled",
-                                        previous ? "true" : "false");
-                                });
-                            } catch (const std::exception& exception) {
-                                if (error.empty()) error = exception.what();
-                            }
-                            if (error.empty()) error = store::coreStore().snapshot().lastError;
-                        }
-
-                        try {
-                            const auto [current, requested] =
-                                co_await RunOnTaskThread([] {
-                                    return std::pair{
-                                        AndroidVpnState(),
-                                        store::coreStore().setting(
-                                            "core.tun_enabled", "false") == "true"};
-                                });
-                            vpn_state = current;
-                            tun_enabled = requested;
-                        } catch (const std::exception& exception) {
-                            if (error.empty()) error = exception.what();
-                        }
-
-                        vpn_pending = false;
-                        busy = false;
-                        if (!ok) {
-                            vpn_enabled = previous;
-                            if (!error.empty()) {
-                                toast.Show(error);
-                            } else {
-                                toast.Show(Localized(on
-                                                         ? "VPN 启动已取消或失败"
-                                                         : "VPN 隧道未能关闭"));
-                            }
-                        } else {
-                            toast.Show(Localized(on ? "正在请求建立 VPN 隧道"
-                                                    : "VPN 隧道已关闭"));
-                        }
-                    });
-                }), false, app::images::tun),
+        SectionTitle(Localized("后台运行")),
         SettingSwitchRow(
             Localized("后台保活"),
             Localized("申请忽略电池优化，防止后台被杀；建议同时在系统设置中允许本应用自启动"),
-            huxerui::Switch(battery_ignored.Get())
-                .OnChanged([battery_ignored, toast](bool on) {
+            huxerui::Switch(view.ignoringBattery)
+                .OnChanged([model, toast](bool on) {
                     if (on) {
-                        battery_ignored = false;
                         AndroidRequestBackgroundKeepAlive();
                     } else {
                         // Android 不允许普通应用静默撤销自身的电池优化豁免，
@@ -489,13 +299,15 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         AndroidOpenBatterySettings();
                         toast.Show(Localized("请在系统电池设置中关闭本应用的电池优化豁免"));
                     }
-                    battery_ignored = AndroidIsIgnoringBattery();
+                    model->RequestRefresh();
                 }), false, app::images::battery),
     }.With(huxerui::Spacing(10.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 #else
+
+[[huxerui::composable]] huxerui::View AndroidNetworkSettings() { return {}; }
 
 [[huxerui::composable]] huxerui::View AndroidGeneralSettings() {
     return {};
@@ -556,207 +368,18 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-[[huxerui::composable]] huxerui::View DesktopKernelSettings() {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const huxerui::ApplicationHandle application = huxerui::UseApplication();
-    auto tasks = huxerui::UseTaskScope();
-    auto toast = huxerui::UseToast();
-    auto dialog = huxerui::UseDialog();
-    auto clipboard = application.Clipboard();
-    auto snap = huxerui::UseState<store::CoreSnapshot>({});
-    // SCM queries run in the shared model pump, never on the composition thread.
-    auto service_installed = huxerui::UseState(false);
-    auto proxyEnabled =
-        huxerui::UseState(store::coreStore().systemProxyEnabled());
-    auto tunEnabled = huxerui::UseState(store::coreStore().snapshot().tunEnabled);
-    auto proxyPending = huxerui::UseState(false);
-    auto tunPending = huxerui::UseState(false);
-    const std::string detectedShell = CurrentEnvironmentShell();
-    auto envShell = huxerui::UseState(EnvironmentShellIndex(detectedShell));
-    // 首帧组合使用探测值；模型报 ready 后用持久化选择覆盖（见 settings_model.h）。
-    const auto settingsModel = huxerui::UseService<SettingsModel>();
-    auto envShellHydrated = huxerui::UseState(false);
-    huxerui::Lifecycle(
-        [envShell, envShellHydrated, settingsModel, detectedShell] {
-            const SettingsView settings = settingsModel->view.Get();
-            if (!envShellHydrated.Get() && settings.ready) {
-                envShellHydrated = true;
-                envShell = EnvironmentShellIndex(
-                    settings.envShell.empty() ? detectedShell
-                                              : settings.envShell);
-            }
-            return [] {};
-        },
-        settingsModel->view);
-    const std::vector<std::string> envShellLabels = EnvironmentShellLabels();
-    auto busy = huxerui::UseState(false);
-
-    // 内核/接管状态来自唯一来源 CoreModel（见 core_model.h）：以模型的 State 作
-    // 依赖镜像到本段的受控值——模型一变就同步一次，不再是 1s 定时器。
+[[huxerui::composable]] huxerui::View DesktopNetworkSettings() {
+    const auto application = huxerui::UseApplication();
+    const auto clipboard = application.Clipboard();
+    const auto toast = huxerui::UseToast();
     const auto coreModel = huxerui::UseService<CoreModel>();
-    huxerui::Lifecycle(
-        [snap, service_installed, proxyEnabled, tunEnabled, proxyPending,
-         tunPending, coreModel] {
-            const CoreView view = coreModel->view.Get();
-            snap = view.core;
-            service_installed = view.serviceInstalled;
-            if (!proxyPending.Get()) proxyEnabled = view.systemProxyIntent;
-            if (!tunPending.Get()) tunEnabled = view.core.tunEnabled;
-            return [] {};
-        },
-        coreModel->view);
-
-    const store::CoreSnapshot s = snap.Get();
-    const bool running = s.state == core::CoreState::Running;
-    const huxerui::StringVariant state_text =
-        s.binaryPath.empty()
-            ? Localized("未找到内核运行时")
-            : LocalizedFormat("{} · {}{}",
-                              huxerui::UseString(Localized(core::stateName(s.state))),
-                              s.version.empty() ? "sing-box" : s.version,
-                              s.lastError.empty() ? "" : " · " + s.lastError);
-
-    const auto core_action = [tasks, toast, busy,
-                              coreModel](std::function<void()> job,
-                                         huxerui::StringVariant ok_message) {
-        // finished 回调在 UI 线程执行：动作一完成就请模型重读，权威值不必等下一拍。
-        LaunchSettingsAction(tasks, toast, busy, std::move(job),
-                             std::optional<huxerui::StringVariant>{
-                                 std::move(ok_message)},
-                             [coreModel](bool) { coreModel->RequestRefresh(); });
-    };
-
+    const auto settingsModel = huxerui::UseService<SettingsModel>();
+    const SettingsView settings = settingsModel->view.Get();
+    const std::string detectedShell = CurrentEnvironmentShell();
+    const std::size_t envShell = EnvironmentShellIndex(
+        settings.envShell.empty() ? detectedShell : settings.envShell);
+    const std::vector<std::string> envShellLabels = EnvironmentShellLabels();
     return huxerui::Column {
-        huxerui::Row {
-          SettingItemIcon(app::images::bolt),
-          huxerui::Text(state_text).Style(huxerui::TextStyle{
-            huxerui::Font::System(font_size::kBody),
-            s.state == core::CoreState::Failed ? theme.colors.error
-                                                : theme.colors.on_surface})
-              .With(huxerui::Grow(1.0F)),
-        }.With(huxerui::Spacing(12.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        huxerui::Row {
-            running
-                ? huxerui::View{huxerui::Button(Localized("停止")).OnClick(
-                      [core_action] {
-                          core_action(
-                              [] { store::coreStore().stopCore(); },
-                              Localized("内核已停止"));
-                      })}
-                : huxerui::View{huxerui::Button(Localized("启动")).OnClick(
-                      [core_action] {
-                          core_action(
-                              [] {
-                                  store::coreStore().startCore(
-                                      store::profilesStore().selectedYaml());
-                              },
-                              Localized("内核已启动"));
-                      })},
-            huxerui::Button(Localized("重启"))
-                .OnClick([core_action] {
-                    core_action(
-                        [] {
-                            store::coreStore().stopCore();
-                            store::coreStore().startCore(
-                                store::profilesStore().selectedYaml());
-                        },
-                        Localized("内核已重启"));
-                })
-                .With(huxerui::Enabled(running)),
-        }.With(huxerui::Spacing(8.0F)),
-
-        CLASHFLUX_DESKTOP_SERVICE_ROW(service_installed, tasks, toast),
-        SettingSwitchRow(
-            Localized("系统代理"),
-            LocalizedFormat("写入桌面系统代理（127.0.0.1:{}）", s.mixedPort),
-            huxerui::Switch(proxyPending.Get()
-                                ? proxyEnabled.Get()
-                                : coreModel->view.Get().systemProxyIntent)
-                .OnChanged([tasks, toast, proxyEnabled, proxyPending,
-                            coreModel](bool on) {
-                    if (proxyPending.Get()) return;
-                    const bool previous = proxyEnabled.Get();
-                    proxyEnabled = on;
-                    proxyPending = true;
-                    tasks.Launch([toast, proxyEnabled, proxyPending, previous, on,
-                                  coreModel]() -> huxerui::Task<void> {
-                        DesktopModeApplyResult result;
-                        try {
-                            result = co_await RunOnTaskThread([on] {
-                                return ApplyDesktopSystemProxy(on);
-                            });
-                        } catch (const std::exception& exception) {
-                            result.error = exception.what();
-                        }
-                        proxyPending = false;
-                        if (result.status != DesktopModeApplyStatus::Applied) {
-                            // 失败回落要做目标值校验：只有界面仍停在本任务的意图
-                            // 值时才回退；用户若已经点到别处，说明有更新的意图，
-                            // 不覆盖它（避免"失败回落把新状态打回去"）。
-                            if (proxyEnabled.Get() == on) proxyEnabled = previous;
-                            toast.Show(result.error.empty()
-                                           ? Localized("系统代理设置失败")
-                                           : huxerui::StringVariant(result.error));
-                        } else {
-                            // 成功不回写本地 State（它已经等于 on）：把权威值写透
-                            // 进模型即可，首页卡/托盘下一帧跟随，也不会二次闪烁。
-                            coreModel->Update([on](CoreView& view) {
-                                view.systemProxyIntent = on;
-                                view.systemProxyActive = on;
-                            });
-                            toast.Show(Localized(on ? "系统代理已开启" : "系统代理已关闭"));
-                        }
-                    });
-                }), false, app::images::system_proxy),
-        SettingSwitchRow(
-            Localized("TUN 模式"),
-            Localized(running ? "全局透明代理（需 root/CAP_NET_ADMIN，立即生效）"
-                              : "全局透明代理（下次启动生效）"),
-            huxerui::Switch(tunPending.Get()
-                                ? tunEnabled.Get()
-                                : coreModel->view.Get().core.tunEnabled)
-                .OnChanged([s, tasks, toast, dialog, clipboard, tunEnabled,
-                           tunPending, coreModel,
-                           textColor = theme.colors.on_surface,
-                           hintColor = theme.colors.on_surface_variant](bool on) {
-                    if (tunPending.Get()) return;
-                    const bool previous = tunEnabled.Get();
-                    tunEnabled = on;
-                    tunPending = true;
-                    tasks.Launch([=]() -> huxerui::Task<void> {
-                        DesktopModeApplyResult result;
-                        try {
-                            result = co_await RunOnTaskThread(
-                                [on] { return ApplyDesktopTun(on); });
-                        } catch (const std::exception& exception) {
-                            result.error = exception.what();
-                        }
-                        tunPending = false;
-                        if (result.status == DesktopModeApplyStatus::Applied) {
-                            // 成功：权威值写透模型，不再用 RequestRefresh 赌下一拍。
-                            coreModel->Update([on](CoreView& view) {
-                                view.core.tunEnabled = on;
-                            });
-                            toast.Show(Localized(on ? "TUN 已开启" : "TUN 已关闭"));
-                            co_return;
-                        }
-                        // 失败回落同样做目标值校验（见系统代理处的说明）。
-                        if (tunEnabled.Get() == on) tunEnabled = previous;
-                        if (result.status == DesktopModeApplyStatus::ElevationRequested) {
-                            toast.Show(Localized("已请求管理员权限重启，请在新窗口开启 TUN"));
-                            co_return;
-                        }
-                        if (result.status == DesktopModeApplyStatus::PermissionDenied) {
-                            ShowTunGuideDialog(dialog, clipboard, toast,
-                                               textColor, hintColor);
-                            co_return;
-                        }
-                        toast.Show(result.error.empty()
-                                       ? Localized("TUN 切换失败")
-                                       : huxerui::StringVariant(result.error));
-                    });
-                }), false, app::images::tun),
         SettingRow(
             Localized("复制环境变量"),
             LocalizedFormat("当前检测到 {}；复制当前混合端口的代理变量",
@@ -764,23 +387,27 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
             huxerui::Row {
                 huxerui::Select(
                     envShellLabels,
-                    envShell.Get(),
+                    envShell,
                     [](const std::string& name) {
                         return huxerui::Text(name == "命令提示符（cmd）"
                                                  ? Localized("命令提示符（cmd）")
                                                  : huxerui::StringVariant(name));
                     })
-                    .OnChanged([envShell](std::size_t index) {
-                        envShell = index;
-                        store::coreStore().setSetting(
-                            "ui.env_shell", kEnvironmentShells[index].id);
+                    .OnChanged([settingsModel](std::size_t index) {
+                        if (index < std::size(kEnvironmentShells))
+                            settingsModel->SetEnvShell(kEnvironmentShells[index].id);
                     })
-                    .With(huxerui::Frame{.width = 170.0F}),
-                huxerui::Button(Localized("复制")).OnClick(
-                    [clipboard, toast, envShell, s] {
+                    .With(huxerui::Grow(1.0F), huxerui::Frame{.max_width = 170.0F},
+                          huxerui::Enabled(settings.ready)),
+                huxerui::Button(Localized("复制")).With(huxerui::Enabled(settings.ready)).OnClick(
+                    [clipboard, toast, settingsModel, detectedShell, coreModel] {
+                        const SettingsView current = settingsModel->view.Get();
+                        if (!current.ready) return;
+                        const CoreView runtime = coreModel->view.Get();
+                        const int port = runtime.core.state == core::CoreState::Running
+                            ? runtime.core.mixedPort : std::atoi(current.mixedPort.c_str());
                         const std::string command = ProxyEnvironmentCommand(
-                            kEnvironmentShells[envShell.Get()].id,
-                            s.mixedPort);
+                            current.envShell.empty() ? detectedShell : current.envShell, port);
                         if (clipboard->WriteText(command)) {
                             toast.Show(Localized("环境变量命令已复制"));
                         } else {
@@ -788,7 +415,25 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
                         }
                     }),
             }.With(huxerui::Spacing(8.0F)), app::images::terminal),
-    }.With(huxerui::Spacing(12.0F),
+    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
+[[huxerui::composable]] huxerui::View DesktopKernelSettings() {
+    const auto control = UseCoreControl();
+    const auto view = control.model->view.Get();
+    const auto tasks = huxerui::UseApplicationTaskScope();
+    const auto toast = huxerui::UseToast();
+    const bool running = view.core.state == core::CoreState::Running;
+    const auto version = view.core.version.empty() ? std::string("sing-box") : view.core.version;
+    return huxerui::Column {
+        SectionTitle(Localized("运行与维护")),
+        SettingRow(Localized("内核"), version,
+            huxerui::Button(Localized("重启"))
+                .With(huxerui::Enabled(running && !control.Busy()))
+                .OnClick([control] { control.Run({.action = CoreAction::Restart}); }),
+            app::images::bolt),
+        CLASHFLUX_DESKTOP_SERVICE_ROW(view.serviceInstalled, tasks, toast),
+    }.With(huxerui::Spacing(10.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 

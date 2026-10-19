@@ -502,8 +502,8 @@ std::function<void()> NodeSelectAction(
          parsedLabels, parsedBody, projectionGeneration, selectionIntent] {
             const store::CoreSnapshot core = coreModel->view.Get().core;
             coreState = core.state;
-            // 出站模式只读跟随内核（切换入口在首页出站模式卡片）。
-            if (!core.mode.empty()) mode = core.mode;
+            // Preview while stopped and live rendering share the saved mode.
+            mode = coreModel->view.Get().modeIntent;
             const ProxiesSnapshot& current = proxiesModel->snapshot.Get();
             if (current.body != parsedBody.Get() || current.labels != parsedLabels.Get()) {
                 parsedLabels = current.labels;

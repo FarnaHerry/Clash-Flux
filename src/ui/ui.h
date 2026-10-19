@@ -65,7 +65,7 @@ huxerui::StringVariant LocalizedFormat(std::string_view source,
         LocalizedResource(source), std::forward<Arguments>(arguments)...);
 }
 
-// Android VPN 隧道开关（设置页 VPN 卡 → VpnService consent/前台服务）。
+// Android VPN 隧道开关（首页悬浮按钮 → VpnService consent/前台服务）。
 // 这些是 Android bridge 的平台前缀函数；桌面目标提供空操作桩，避免通用
 // 组件在控件内部再写平台分支。
 #ifdef __ANDROID__
@@ -172,23 +172,6 @@ bool StartProxyGroupTest(const std::string& group);
 // 无降级或无法编译时返回空串。见 docs/singbox-layers-and-fidelity.md §2。
 std::string ProfileFidelitySummary(std::int64_t profileId);
 
-
-// 桌面端系统代理/TUN 开关共用的操作结果。实际切换包含阻塞的系统或内核
-// 操作，调用方必须把 ApplyDesktop* 放到 RunOnTaskThread 中执行。
-enum class DesktopModeApplyStatus {
-    Applied,
-    ElevationRequested,
-    PermissionDenied,
-    Failed,
-};
-
-struct DesktopModeApplyResult {
-    DesktopModeApplyStatus status = DesktopModeApplyStatus::Failed;
-    std::string error;
-};
-
-DesktopModeApplyResult ApplyDesktopSystemProxy(bool enabled);
-DesktopModeApplyResult ApplyDesktopTun(bool enabled);
 
 // Android stop requests only enqueue the service shutdown. Call this from a
 // task thread when a caller needs to wait for the optimistic UI state to settle.
@@ -310,10 +293,12 @@ huxerui::View SettingsPage(huxerui::State<int> themeMode,
                            huxerui::State<std::size_t> navPage,
                            ProfilesCache profiles, bool active);
 
-// 设置页的三个固定模块：通用 / 内核 / 关于。平台宏只在模块入口选择
+// 设置页按通用 / 网络 / 维护 / 关于组织。平台宏只在模块入口选择
 // 平台函数；函数自己管理平台相关状态、任务、权限和控件。
 huxerui::View DesktopGeneralSettings();
 huxerui::View AndroidGeneralSettings();
+huxerui::View DesktopNetworkSettings();
+huxerui::View AndroidNetworkSettings();
 huxerui::View DesktopKernelSettings();
 huxerui::View AndroidKernelSettings();
 

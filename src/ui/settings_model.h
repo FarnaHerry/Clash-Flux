@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <string>
+#include "inbound_settings.h"
 
 namespace clashflux::ui {
 
@@ -49,6 +50,10 @@ struct SettingsModel {
     huxerui::State<std::uint64_t> syncTick{0};
 
     void RequestSync() { syncTick = syncTick.Get() + 1; }
+
+    // Validate once, then synchronously update the cache and publish the same values.
+    PortSettingsError SetPorts(std::string mixed, std::string http, std::string socks);
+    void SetEnvShell(std::string shell);
 
     // 写透：设置项的内存缓存写完（setSetting 是同步写缓存）后，直接把同一个值
     // 发布进模型。UI 真值与缓存真值同一时刻成立，因此 KV 类设置不需要 pending、

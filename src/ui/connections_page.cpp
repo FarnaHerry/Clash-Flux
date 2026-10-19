@@ -1,5 +1,5 @@
 // connections_page.cpp — 连接页：WS /connections 推送快照（约 1Hz 全量），
-// 表头（总量 + 关闭全部）+ VirtualList 行（链 | 目标 | 上/下行 | 规则 | 关闭）。
+// 表头（总量 + 关闭全部）+ VirtualList 密集卡片（链 | 目标 | 上/下行 | 规则 | 关闭）。
 //
 // 数据流：IX 线程把每帧原文推进 CoreStreams 槽位并通知一次；UI 线程收到通知
 // 启动任务线程读取与解析，回到 UI 线程发布 StateList；旧任务不能覆盖新快照。
@@ -15,6 +15,7 @@
 
 #include "app_resources.h"
 #include "ui.h"
+#include "connection_row.h"
 #include "empty_state.h"
 #include "page_layout.h"
 #include "search_text.h"
@@ -31,19 +32,6 @@ import clashflux.utils;
 
 namespace clashflux::ui {
 namespace {
-
-struct ConnectionRow {
-    std::string id;
-    std::string host;       // metadata.host 或 destinationIP:port
-    std::string network;    // tcp / udp
-    std::string chains;     // 节点链 "DIRECT" / "节点 ← 策略组"
-    std::string rule;       // 命中规则
-    std::int64_t up = 0;
-    std::int64_t down = 0;
-    std::string start;      // HH:MM:SS
-
-    bool operator==(const ConnectionRow&) const = default;
-};
 
 struct ConnectionsSnapshot {
     std::vector<ConnectionRow> rows;
@@ -163,9 +151,10 @@ void StartSnapshotPoll(huxerui::TaskScope tasks, bool active,
 
 [[huxerui::composable]] huxerui::View ConnectionsPage(
     std::function<void()> onBack, bool active) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    const bool stacked =
+        huxerui::UseViewportClass() != huxerui::ViewportClass::Expanded;
     auto tasks = huxerui::UseTaskScope();
     auto rows = huxerui::UseStateList<ConnectionRow>();
     auto totalUp = huxerui::UseState<std::int64_t>(0);
@@ -231,13 +220,6 @@ void StartSnapshotPoll(huxerui::TaskScope tasks, bool active,
     // 一级页同帧参与测量，隐藏页（日志/连接有推送流更新）的重子树会拖慢每一次渲染。
     if (!active) return huxerui::View{huxerui::Row{}}.Key("connections-idle");
 
-    auto mono = [](const std::string& text, huxerui::Color color, float width) {
-        huxerui::View t = huxerui::Text(text).Style(huxerui::TextStyle{
-            huxerui::Font::Monospace(font_size::kMonoBody), color});
-        if (width > 0.0F) return std::move(t).With(huxerui::Frame{.width = width});
-        return std::move(t).With(huxerui::Grow(1.0F));
-    };
-
     const std::string query = searchValue.Get().text;
     huxerui::View body = EmptyState(
         Localized(!query.empty() ? "没有匹配的连接"
@@ -258,21 +240,13 @@ void StartSnapshotPoll(huxerui::TaskScope tasks, bool active,
         const std::size_t rowCount = visibleRows.size();
         body = huxerui::VirtualList(
                    rowCount + (compact ? 1U : 0U),
-                   [rows, visibleRows, tasks, mono, theme, compact, rowCount](
+                   [rows, visibleRows, tasks, compact, stacked, rowCount](
                        std::size_t index) -> huxerui::View {
                        if (compact && index == rowCount) {
                            return CompactFloatingNavigationFooter()
                                .Key("compact-floating-footer");
                        }
                        const ConnectionRow& row = rows[visibleRows[index]];
-                       const std::string host =
-                           row.host == "未知目标"
-                               ? huxerui::UseString(Localized("未知目标"))
-                               : row.host;
-                       const std::string rule =
-                           row.rule == "未匹配规则"
-                               ? huxerui::UseString(Localized("未匹配规则"))
-                               : row.rule;
                        const std::string id = row.id;
                        const std::string key = id.empty()
                                                    ? std::format("connection-{}", index)
@@ -290,45 +264,16 @@ void StartSnapshotPoll(huxerui::TaskScope tasks, bool active,
                                    });
                                });
                        };
-                       if (compact) {
-                           return UnifiedListRow(
-                               huxerui::Column{
-                                   huxerui::Row{
-                                       mono(host, theme.colors.on_surface, 0.0F),
-                                       mono(row.network,
-                                            theme.colors.on_surface_variant, 55.0F),
-                                       closeButton(),
-                                   }
-                                       .With(huxerui::Spacing(6.0F),
-                                             huxerui::CrossAlign(
-                                                 huxerui::CrossAxisAlignment::Center)),
-                                   mono(huxerui::UseString(LocalizedFormat("链路：{}", row.chains)),
-                                        theme.colors.on_surface_variant, 0.0F),
-                                   huxerui::Row{
-                                       mono(std::format("↑{}/s ↓{}/s", formatBytes(row.up),
-                                                        formatBytes(row.down)),
-                                            theme.colors.on_surface_variant, 0.0F),
-                                   mono(huxerui::UseString(LocalizedFormat("规则：{}", rule)),
-                                            theme.colors.on_surface_variant, 0.0F),
-                                   }
-                                       .With(huxerui::Spacing(8.0F)),
-                               },
-                               key, true, index + 1 < rowCount);
-                       }
-                       return UnifiedListRow(
-                           huxerui::Row{
-                               mono(host, theme.colors.on_surface, 0.0F),
-                               mono(row.network, theme.colors.on_surface_variant, 50.0F),
-                               mono(row.chains, theme.colors.on_surface_variant, 220.0F),
-                               mono(std::format("↑{}/s ↓{}/s", formatBytes(row.up),
-                                                formatBytes(row.down)),
-                                    theme.colors.on_surface_variant, 160.0F),
-                               mono(rule, theme.colors.on_surface_variant, 140.0F),
-                               closeButton(),
-                           },
-                           key, false, index + 1 < rowCount);
+                       return DenseCard(ConnectionRowContent(row,
+                               std::format("↑{}/s ↓{}/s", formatBytes(row.up), formatBytes(row.down)),
+                               stacked, closeButton()).With(
+                                   huxerui::Spacing(stacked ? 5.0F : 8.0F),
+                                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+                           .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = 4.0F}))
+                           .Key(key);
                    })
-                   .EstimatedItemExtent(compact ? 92.0F : 44.0F)
+                   // 16pt 卡内留白 + 内容 + 4pt 卡间距，与 DenseCard 的密度档一致。
+                   .EstimatedItemExtent(stacked ? 104.0F : 52.0F)
                    .Controller(scroll)
                    .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     }

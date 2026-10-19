@@ -37,6 +37,7 @@ import clashflux.store.vpn;
 // CoreView 含 store::CoreSnapshot、ProfilesModel 含 db::Profile，必须放在模块
 // 导入之后（同 profiles_cache.h）。
 #include "core_model.h"
+#include "core_control.h"
 #include "profiles_model.h"
 #include "settings_model.h"
 #include "stream_updates.h"
@@ -50,35 +51,212 @@ bool isSelectorType(const std::string& type) {
     return type == "Selector" || type == "selector";
 }
 
-} // namespace
+enum class CoreApplyStatus { Applied, ElevationRequested, PermissionDenied, Failed };
+struct CoreApplyResult {
+    CoreApplyStatus status = CoreApplyStatus::Failed;
+    std::string error;
+};
 
-DesktopModeApplyResult ApplyDesktopSystemProxy(bool enabled) {
+CoreApplyResult ApplyDesktopSystemProxy(bool enabled) {
     auto& coreStore = store::coreStore();
     if (coreStore.applySystemProxy(enabled)) {
-        return {.status = DesktopModeApplyStatus::Applied};
+        return {.status = CoreApplyStatus::Applied};
     }
-    return {.status = DesktopModeApplyStatus::Failed,
+    return {.status = CoreApplyStatus::Failed,
             .error = coreStore.snapshot().lastError};
 }
 
-DesktopModeApplyResult ApplyDesktopTun(bool enabled) {
+CoreApplyResult ApplyDesktopTun(bool enabled) {
     if (enabled) {
         switch (core::tunGate()) {
             case core::TunGate::Ok:
                 break;
             case core::TunGate::Elevated:
-                return {.status = DesktopModeApplyStatus::ElevationRequested};
+                return {.status = CoreApplyStatus::ElevationRequested};
             case core::TunGate::Denied:
-                return {.status = DesktopModeApplyStatus::PermissionDenied};
+                return {.status = CoreApplyStatus::PermissionDenied};
         }
     }
 
     auto& coreStore = store::coreStore();
     if (coreStore.applyTun(enabled)) {
-        return {.status = DesktopModeApplyStatus::Applied};
+        return {.status = CoreApplyStatus::Applied};
     }
-    return {.status = DesktopModeApplyStatus::Failed,
+    return {.status = CoreApplyStatus::Failed,
             .error = coreStore.snapshot().lastError};
+}
+
+CoreApplyResult ExecuteCoreCommand(const CoreCommand& command) {
+    auto& coreStore = store::coreStore();
+    bool ok = false;
+    switch (command.action) {
+        case CoreAction::Mode:
+            if (command.mode != "rule" && command.mode != "global" && command.mode != "direct")
+                return {.error = "无效的出站模式"};
+            ok = coreStore.applyMode(command.mode);
+            break;
+        case CoreAction::SystemProxy:
+            return ApplyDesktopSystemProxy(command.enabled);
+        case CoreAction::Tun:
+#if defined(__ANDROID__)
+            coreStore.setSetting("core.tun_enabled", command.enabled ? "true" : "false");
+            if (!command.enabled) {
+                AndroidStopVpn();
+                WaitForAndroidVpnStopped();
+            }
+            coreStore.startCore(store::profilesStore().selectedYaml(), false, command.enabled);
+            // Authorization/service completion is awaited by the application task.
+            return {.status = CoreApplyStatus::Applied};
+#else
+            return ApplyDesktopTun(command.enabled);
+#endif
+        case CoreAction::Stop:
+            ok = coreStore.stopCore();
+            break;
+        case CoreAction::Restart:
+            ok = coreStore.restartCore(store::profilesStore().selectedYaml());
+            break;
+        case CoreAction::Start:
+            coreStore.startCore(store::profilesStore().selectedYaml(), false,
+                                coreStore.tunEnabled(), coreStore.systemProxyEnabled());
+            ok = coreStore.snapshot().state == core::CoreState::Running;
+            break;
+        case CoreAction::Idle:
+            return {};
+    }
+    return {.status = ok ? CoreApplyStatus::Applied : CoreApplyStatus::Failed,
+            .error = ok ? std::string{} : coreStore.snapshot().lastError};
+}
+
+huxerui::StringVariant CoreActionFailure(CoreAction action) {
+    switch (action) {
+        case CoreAction::Start: return Localized("启动内核失败");
+        case CoreAction::Stop: return Localized("停止内核失败");
+        case CoreAction::Restart: return Localized("启动内核失败");
+        case CoreAction::Mode: return Localized("出站模式切换失败");
+        case CoreAction::SystemProxy: return Localized("系统代理设置失败");
+        default: return Localized("TUN 切换失败");
+    }
+}
+
+} // namespace
+
+void CoreControl::Run(CoreCommand command) const {
+    if (Busy() || command.action == CoreAction::Idle) return;
+    const CoreControl control = *this;
+    const bool previousTun = model->view.Get().tunIntent;
+    const CoreAction action = command.action;
+    LaunchCoreOperation<CoreApplyResult>(tasks, model, std::move(command),
+        [control, previousTun](CoreCommand command) -> huxerui::Task<CoreApplyResult> {
+            CoreApplyResult result;
+            try {
+                result = co_await RunOnTaskThread([command] { return ExecuteCoreCommand(command); });
+    #if defined(__ANDROID__)
+                if (command.action == CoreAction::Tun && result.status == CoreApplyStatus::Applied) {
+                    bool accepted = false;
+                    for (int attempt = 0; attempt < 300; ++attempt) {
+                        const auto [state, requested] = co_await RunOnTaskThread([] {
+                            return std::pair{AndroidVpnState(), store::coreStore().tunEnabled()};
+                        });
+                        const bool active = state == 1 || state == 2;
+                        if (command.enabled ? active : (!active && !requested)) {
+                            accepted = true;
+                            break;
+                        }
+                        if (command.enabled && (state == 3 || !requested)) break;
+                        co_await huxerui::Delay(std::chrono::duration<double>{0.2});
+                    }
+                    if (!accepted) result.status = CoreApplyStatus::Failed;
+                }
+    #else
+                static_cast<void>(previousTun);
+    #endif
+            } catch (const std::exception& error) {
+                result.error = error.what();
+                result.status = CoreApplyStatus::Failed;
+            } catch (...) {
+                result.status = CoreApplyStatus::Failed;
+            }
+            try {
+    #if defined(__ANDROID__)
+                if (command.action == CoreAction::Tun && result.status != CoreApplyStatus::Applied) {
+                    co_await RunOnTaskThread([command, previousTun] {
+                        auto& coreStore = store::coreStore();
+                        // Do not overwrite a newer service/tile intent or a connected tunnel.
+                        if (coreStore.tunEnabled() == command.enabled && AndroidVpnState() != 2)
+                            coreStore.setSetting("core.tun_enabled", previousTun ? "true" : "false");
+                    });
+                }
+    #endif
+                for (;;) {
+                    const auto revision = control.model->operations.revision.Get();
+                    auto next = co_await RunOnTaskThread([] { return ReadCoreView(true, false); });
+                    if (control.model->operations.revision.Get() != revision) continue;
+                    control.model->Update([next = std::move(next)](CoreView& view) { view = next; });
+                    break;
+                }
+            } catch (const std::exception& error) {
+                if (result.error.empty()) result.error = error.what();
+                result.status = CoreApplyStatus::Failed;
+            } catch (...) {
+                result.status = CoreApplyStatus::Failed;
+            }
+            co_return result;
+    }, [control, action](std::optional<CoreApplyResult> completed, std::exception_ptr error) {
+        CoreApplyResult result = completed.value_or(CoreApplyResult{});
+        if (error) {
+            try { std::rethrow_exception(error); }
+            catch (const std::exception& exception) { result.error = exception.what(); }
+            catch (...) {}
+        }
+        control.model->RequestRefresh();
+        if (result.status == CoreApplyStatus::PermissionDenied) {
+            control.window.Show();
+            control.window.Activate();
+            ShowTunGuideDialog(control.dialog, control.clipboard, control.toast,
+                               control.textColor, control.hintColor);
+        } else if (result.status == CoreApplyStatus::ElevationRequested) {
+            control.toast.Show(Localized("已请求管理员权限重启，请在新窗口开启 TUN"));
+        } else if (result.status != CoreApplyStatus::Applied) {
+            control.toast.Show(result.error.empty() ? CoreActionFailure(action)
+                                                    : huxerui::StringVariant(result.error));
+        }
+    });
+}
+
+void CoreModel::SetAllowLan(bool enabled) {
+    if (!view.Get().ready) return;
+    store::coreStore().setSetting("core.allow_lan", enabled ? "true" : "false");
+    Update([enabled](CoreView& next) { next.allowLan = enabled; });
+}
+
+void CoreModel::SetIpv6(bool enabled) {
+    if (!view.Get().ready) return;
+    store::coreStore().setSetting("core.ipv6_enabled", enabled ? "true" : "false");
+    Update([enabled](CoreView& next) { next.ipv6Enabled = enabled; });
+}
+
+PortSettingsError SettingsModel::SetPorts(std::string mixed, std::string http, std::string socks) {
+    if (!view.Get().ready) return PortSettingsError::NotReady;
+    const auto parsed = ParseInboundPorts(mixed, http, socks);
+    if (parsed.error != PortSettingsError::None) return parsed.error;
+    const auto& ports = parsed.ports;
+    auto& coreStore = store::coreStore();
+    coreStore.setSetting("core.mixed_port", ports.mixed);
+    coreStore.setSetting("core.http_port", ports.http);
+    coreStore.setSetting("core.socks_port", ports.socks);
+    Update([&](SettingsView& next) {
+        next.mixedPort = ports.mixed;
+        next.httpPort = ports.http;
+        next.socksPort = ports.socks;
+    });
+    return PortSettingsError::None;
+}
+
+void SettingsModel::SetEnvShell(std::string shell) {
+    if (!view.Get().ready) return;
+    store::coreStore().setSetting("ui.env_shell", shell);
+    Update([&](SettingsView& next) { next.envShell = shell; });
 }
 
 namespace {
@@ -229,6 +407,11 @@ CoreView ReadCoreView(bool slowProbes, bool previousSystemProxyActive) {
     core.checkAlive();
     CoreView view;
     view.core = core.snapshot();
+    view.ready = clashflux::persistence::persistence().ready();
+    view.tunIntent = core.tunEnabled();
+    view.modeIntent = core.mode();
+    view.vpnState = AndroidVpnState();
+    view.ignoringBattery = AndroidIsIgnoringBattery();
     view.systemProxyIntent = core.systemProxyEnabled();
     // 系统代理实际指向在 GNOME 下是 3 次 popen：只在慢探测拍或动作请求时查，
     // 其余时候沿用上一次的结果（State 只能在 UI 线程读，故由调用方按值传入）。
@@ -245,18 +428,28 @@ CoreView ReadCoreView(bool slowProbes, bool previousSystemProxyActive) {
 void DriveCoreModel(huxerui::TaskScope tasks, std::shared_ptr<CoreModel> model) {
     tasks.Launch([model]() -> huxerui::Task<void> {
         // 昂贵探测（系统代理实际指向）每 kSlowProbeInterval 拍做一次；显式的
-        // RequestRefresh 也会立刻做一次（动作完成后要让权威值尽快跟上）。
+        // RequestRefresh 在下一次可发布的读取时补做慢探测，不承担操作结果回传。
         constexpr int kSlowProbeInterval = 15;
         int slowCountdown = 0;
+        std::uint64_t seenRefresh = 0;
         for (;;) {
+            if (model->operations.Busy() || model->serviceChecking.Get()) {
+                co_await huxerui::Delay(std::chrono::duration<double>{0.1});
+                continue;
+            }
             const std::uint64_t before = model->refreshTick.Get();
-            const bool slowProbes = slowCountdown <= 0;
+            const auto revision = model->operations.revision.Get();
+            const bool slowProbes = slowCountdown <= 0 || before != seenRefresh;
             const CoreView previous = model->view.Get();
             CoreView next = co_await RunOnTaskThread(
                 [slowProbes, active = previous.systemProxyActive] {
                     return ReadCoreView(slowProbes, active);
                 });
-            model->view = std::move(next);
+            if (!model->PublishPolled(revision, std::move(next))) {
+                co_await huxerui::Delay(std::chrono::duration<double>{0.1});
+                continue;
+            }
+            seenRefresh = before;
             slowCountdown = slowProbes ? kSlowProbeInterval : slowCountdown - 1;
             if (model->refreshTick.Get() != before) continue;
             co_await huxerui::Delay(std::chrono::duration<double>{1.0});
@@ -447,7 +640,7 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
     (void)clipboard;
     (void)textColor;
     (void)hintColor;
-    toast.Show(Localized("请在设置页的“VPN 代理”中管理 Android VPN 隧道"));
+    toast.Show(Localized("请在首页通过悬浮按钮管理 VPN 连接"));
     return;
 #elif defined(_WIN32)
     (void)clipboard;

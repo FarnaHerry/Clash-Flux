@@ -30,7 +30,7 @@ Lib-Charts、Lib-SQLite、Lib-Camera 的项目修复已收录到各自 fork 的 
 
 | 库 | 固定提交 | 项目补丁审核 |
 | --- | --- | --- |
-| [Lib-Charts](https://github.com/FarnaHerry/Lib-Charts/tree/farna/main) |  `8ed3e03ff265ae396b064617e2010e7229d581f2` | 饼图、96pt 紧凑绘图面与 `inner_radius` 圆环样式（环形段外弧+反向内弧、NonZero 填充，取全图最大解析值）均已包含，原两份补丁 reverse check 通过。 |
+| [Lib-Charts](https://github.com/FarnaHerry/Lib-Charts/tree/farna/main) | `e90cfa84707bdf72eb6029410bf05c420efa62fc` | 饼图、96pt 紧凑绘图面与 `inner_radius` 圆环样式（环形段外弧+反向内弧、NonZero 填充，取全图最大解析值）均已包含，原两份补丁 reverse check 通过；包含 `rounded_caps`、中心占比/180ms 悬停动画，全零数据按条目数等分且中心保持 0%。 |
 | [Lib-SQLite](https://github.com/FarnaHerry/Lib-SQLite/tree/farna/main) | `88f610fe66c57260b1ac38e676fc36b23c900fc2` | 启动临时只读查询已包含，原补丁 reverse check 通过；另保留逐值 UTF-8 校验与主键 schema 兼容修复。 |
 | [Lib-Camera](https://github.com/FarnaHerry/Lib-Camera/tree/farna/main) | `b8b3b9304646cdc1afb9722ead16d85cf2160610` | 已采用 ApplicationContext/UiWindow；Android/iOS/Windows/Linux 行为覆盖原补丁。macOS 用直接 UiWindow factory，当前 backend 不消费 NSWindow，因此与原 typed wrapper 等价；库图模式早退也已包含。 |
 
@@ -164,3 +164,22 @@ Android 真机框架 instrumentation 尚未完成，Windows/macOS/iOS 原生运�
 和 Android 库图继续通过 `huxerui_use_library` 获取同一身份，不升级当前固定提交。
 HuxerUI 的 codegen、资源、宿主工具和 Java/native 图仍走框架接入；通用依赖的
 CPS 迁移不替代这些流程，见 [依赖管理](cps-dependencies.md)。
+
+2026-10-19：Lib-Charts 固定到 `5fcdc5a0ab9e99125652f7ffc8712267b61e2128`。
+独立维护仓库先 fetch `origin/farna/main` 与 `upstream/main`，官方基线仍为
+`cf7c286`，fork 在原固定点上增加一项圆角饼图提交，审查后快进维护分支。
+公共接口新增可选 `PieChartStyle::rounded_caps`，原实心/普通圆环行为保留；
+首页显式启用新样式，并移除应用覆盖的静态中心百分比。独立 Charts 构建与
+`charts_tests` 通过（461 checks），Clash-Flux Linux HCG/目标构建、17 项
+`clashflux-required` 桌面回归、CPS 重定位/版本拒绝/缓存完整性及 TLS 回归通过。
+实际 GUI 检查了首页图表与宽窄切换。Android arm64-v8a native 目标编译通过；
+这些检查不代替 Android 触摸/授权或 Windows/macOS 原生验收。
+
+2026-10-19：Lib-Charts 固定到 `e90cfa84707bdf72eb6029410bf05c420efa62fc`，
+加入全零数据特例：按传入条目数等分绘制，圆角饼图中心与悬停占比仍为 `0%`；
+恢复非零数据后使用真实比例，空列表保留中性空状态。首页沿用现有上传/下载数据、
+颜色、72pt 图表与卡片布局，通过升级固定依赖获得新行为。独立 Charts 构建与
+`charts_tests` 已通过（519 checks），覆盖 1/2/3/5 项、悬停、全零/非零切换与空列表。
+应用 Linux HCG/目标构建、`./run.sh --version` 与 17 项 `clashflux-required`
+回归通过（含分页、CPS 重定位/版本拒绝/缓存完整性及 DNS/TLS）。隔离数据的真实
+首页已验证中英文、320/390pt 窄屏及宽窄切换，全零时呈现上传/下载等分且中心 `0%`。

@@ -45,6 +45,7 @@ import clashflux.utils;
 // CoreView 含 store::CoreSnapshot、ProfilesModel 含 db::Profile，必须在模块导入
 // 之后（同 profiles_cache.h）。
 #include "core_model.h"
+#include "core_control.h"
 #include "profiles_model.h"
 #include "settings_model.h"
 #include "stream_updates.h"
@@ -395,8 +396,6 @@ std::uint64_t SubscribeHomeStreams(huxerui::TaskScope tasks,
 // HomeRuntimePump 的桌面实现）；Android 额外需要固定节拍采样 libbox 速率
 // （模型只在数值变化时通知，空闲时不会有事件），因此两处共用本函数。
 void MirrorHomeState(huxerui::State<HomeState> state,
-                     huxerui::State<std::size_t> homeMode,
-                     huxerui::State<bool> modePending,
                      const std::shared_ptr<CoreModel>& coreModel,
                      const std::shared_ptr<ProfilesModel>& profilesModel,
                      const std::shared_ptr<ProxiesModel>& proxiesModel) {
@@ -405,7 +404,6 @@ void MirrorHomeState(huxerui::State<HomeState> state,
     // 内核状态来自唯一来源 CoreModel。
     s.core = coreModel->view.Get().core;
     updateRuntime(s, core);
-    if (!modePending.Get()) homeMode = HomeModeIndex(s.core.mode);
 
     // 选中订阅来自 ProfilesModel：直接扫它的列表（借用引用，不做整表拷贝），
     // 不再每次调用 profilesStore().selected()。
@@ -443,18 +441,17 @@ void MirrorHomeState(huxerui::State<HomeState> state,
 #if defined(__ANDROID__)
 // Android：libbox 速率只在快照里、且模型空闲时不通知，需要固定节拍采样。
 [[huxerui::composable]] huxerui::View HomeRuntimePump(
-    huxerui::State<HomeState> state, huxerui::State<std::size_t> homeMode,
-    huxerui::State<bool> modePending, std::shared_ptr<CoreModel> coreModel,
+    huxerui::State<HomeState> state, std::shared_ptr<CoreModel> coreModel,
     std::shared_ptr<ProfilesModel> profilesModel,
     std::shared_ptr<ProxiesModel> proxiesModel) {
     auto tasks = huxerui::UseTaskScope();
     huxerui::Lifecycle(
-        [tasks, state, homeMode, modePending, coreModel, profilesModel,
+        [tasks, state, coreModel, profilesModel,
          proxiesModel] {
-            tasks.Launch([state, homeMode, modePending, coreModel, profilesModel,
+            tasks.Launch([state, coreModel, profilesModel,
                           proxiesModel]() -> huxerui::Task<void> {
                 co_await PollWhile(std::chrono::duration<double>{0.5}, [=] {
-                    MirrorHomeState(state, homeMode, modePending, coreModel,
+                    MirrorHomeState(state, coreModel,
                                     profilesModel, proxiesModel);
                     return true;
                 });
@@ -468,13 +465,12 @@ void MirrorHomeState(huxerui::State<HomeState> state,
 // 桌面：模型一变就镜像，没有任何定时器；流量/总量由推送订阅写入
 // （见 SubscribeHomeStreams）。
 [[huxerui::composable]] huxerui::View HomeRuntimePump(
-    huxerui::State<HomeState> state, huxerui::State<std::size_t> homeMode,
-    huxerui::State<bool> modePending, std::shared_ptr<CoreModel> coreModel,
+    huxerui::State<HomeState> state, std::shared_ptr<CoreModel> coreModel,
     std::shared_ptr<ProfilesModel> profilesModel,
     std::shared_ptr<ProxiesModel> proxiesModel) {
     huxerui::Lifecycle(
-        [state, homeMode, modePending, coreModel, profilesModel, proxiesModel] {
-            MirrorHomeState(state, homeMode, modePending, coreModel,
+        [state, coreModel, profilesModel, proxiesModel] {
+            MirrorHomeState(state, coreModel,
                             profilesModel, proxiesModel);
             return [] {};
         },
@@ -581,26 +577,15 @@ huxerui::XYChartData BuildTrafficChartData(
          static_cast<double>(download)},
     });
 
-    // 圆环样式（fork 新增 inner_radius）：上传/下载两段弧，环心写占比最大
-    // 一方的百分比。
-    const std::string centerShare = shareText(std::max(upload, download));
+    // fork 自带圆角段、中心占比与悬停动画，不再覆盖一份静态中心文字。
     return huxerui::Column {
         HomeCardHeading(Localized("流量统计")),
         huxerui::Row {
-            huxerui::Stack {
-                huxerui::PieChart(data)
-                    .Style(huxerui::PieChartStyle{.inner_radius = 0.62F})
-                    .SliceStyle("upload", {.fill = huxerui::Brush(upColor)})
-                    .SliceStyle("download", {.fill = huxerui::Brush(downColor)})
-                    .With(huxerui::Frame{.width = 72.0F, .height = 72.0F}),
-                huxerui::Text(centerShare)
-                    .Style(huxerui::TextStyle{
-                        huxerui::Font::System(font_size::kCaption)
-                            .WithWeight(huxerui::FontWeight::Bold),
-                        theme.colors.on_surface}),
-            }.With(huxerui::Frame{.width = 72.0F, .height = 72.0F},
-                   huxerui::Align(huxerui::HorizontalAlignment::Center,
-                                  huxerui::VerticalAlignment::Center)),
+            huxerui::PieChart(data)
+                .Style(huxerui::PieChartStyle{.inner_radius = 0.62F, .rounded_caps = true})
+                .SliceStyle("upload", {.fill = huxerui::Brush(upColor)})
+                .SliceStyle("download", {.fill = huxerui::Brush(downColor)})
+                .With(huxerui::Frame{.width = 72.0F, .height = 72.0F}),
             huxerui::Column {
                 totalMetric(Localized("↑ 上传"), upColor, formatBytes(upload), shareText(upload)),
                 totalMetric(Localized("↓ 下载"), downColor, formatBytes(download), shareText(download)),
@@ -675,12 +660,10 @@ huxerui::XYChartData BuildTrafficChartData(
 
 // 出站模式：纵向单选列表（规则/全局/直连），排布参考 FlClash；单选圈、配色
 // 与圆角沿用主题。点击乐观更新，失败做目标值校验后回落。
-[[huxerui::composable]] huxerui::View HomeModeCard(
-    huxerui::State<std::size_t> mode,
-    huxerui::State<bool> modePending,
-    huxerui::TaskScope tasks, huxerui::ToastHandle toast) {
+[[huxerui::composable]] huxerui::View HomeModeCard() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const std::size_t selected = mode.Get();
+    const auto control = UseCoreControl();
+    const std::size_t selected = HomeModeIndex(control.Mode());
 
     huxerui::Color hoverFill = theme.colors.on_surface;
     hoverFill.alpha = 0.08F;
@@ -735,27 +718,9 @@ huxerui::XYChartData BuildTrafficChartData(
                           .role = huxerui::SemanticRole::RadioButton,
                           .label = Localized(kModeLabels[i]),
                           .selected = active})
-                .OnClick([tasks, toast, mode, modePending, i] {
-                    if (modePending.Get()) return;
-                    const std::size_t previous = mode.Get();
-                    mode = i;
-                    modePending = true;
-                    tasks.Launch([=]() -> huxerui::Task<void> {
-                        bool ok = false;
-                        std::string error;
-                        try {
-                            ok = co_await RunOnTaskThread(
-                                [i] { return store::coreStore().applyMode(kModes[i]); });
-                        } catch (const std::exception& exception) {
-                            error = exception.what();
-                        }
-                        modePending = false;
-                        if (!ok) {
-                            mode = previous;
-                            toast.Show(error.empty() ? Localized("出站模式切换失败")
-                                                     : huxerui::StringVariant(error));
-                        }
-                    });
+                .With(huxerui::Enabled(!control.Busy()))
+                .OnClick([control, i] {
+                    control.Run({.action = CoreAction::Mode, .mode = kModes[i]});
                 })
                 .Key("home-mode-" + std::to_string(i)));
     }
@@ -889,23 +854,8 @@ huxerui::XYChartData BuildTrafficChartData(
 // 右下角的固定悬浮按钮负责，卡片不重复一套控制）。
 [[huxerui::composable]] huxerui::View AndroidHomeVpnCard(const HomeState& state) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    auto tasks = huxerui::UseTaskScope();
-    auto vpn_state = huxerui::UseState(AndroidVpnState());
-
-    huxerui::Lifecycle(
-        [tasks, vpn_state] {
-            tasks.Launch([vpn_state]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{1.0},
-                                   [vpn_state] {
-                                       vpn_state = AndroidVpnState();
-                                       return true;
-                                   });
-            });
-            return [] {};
-        },
-        0);
-
-    const int vpnStatus = vpn_state.Get();
+    const auto model = huxerui::UseService<CoreModel>();
+    const int vpnStatus = model->view.Get().vpnState;
     const huxerui::StringVariant status = Localized(
         vpnStatus == 2   ? "已连接"
         : vpnStatus == 1 ? "正在连接"
@@ -956,110 +906,12 @@ huxerui::XYChartData BuildTrafficChartData(
     huxerui::View page, huxerui::State<HomeState> homeState, bool compact) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const HomeState& state = homeState.Get();
-    auto tasks = huxerui::UseTaskScope();
-    auto toast = huxerui::UseToast();
-    auto busy = huxerui::UseState(false);
-    auto activeState = huxerui::UseState(AndroidVpnState() == 1 ||
-                                         AndroidVpnState() == 2);
-    auto pending = huxerui::UseState(false);
-    // composable 形参被 codegen 固定为 const：拷贝到局部再走右值链。
+    const auto control = UseCoreControl();
     huxerui::View base = page;
-    if (!compact) return base;
-
-    const bool active = activeState.Get();
-    const bool canStart = state.profileId != 0;
-    const bool enabled = !busy.Get() && (active || canStart);
-    huxerui::Lifecycle(
-        [tasks, activeState, pending] {
-            tasks.Launch([activeState, pending]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{0.5},
-                                   [activeState, pending] {
-                    if (!pending.Get()) {
-                        const int current = AndroidVpnState();
-                        activeState = current == 1 || current == 2;
-                    }
-                    return true;
-                });
-            });
-            return [] {};
-        },
-        0);
-    const auto toggle = [tasks, toast, busy, activeState, pending] {
-        if (busy.Get() || pending.Get()) return;
-        const bool previous = activeState.Get();
-        activeState = !previous;
-        pending = true;
-        busy = true;
-        tasks.Launch([toast, busy, activeState, pending,
-                      previous]() -> huxerui::Task<void> {
-            bool succeeded = false;
-            std::string error;
-            try {
-                co_await RunOnTaskThread([previous] {
-                    auto& core = store::coreStore();
-                    core.setSetting("core.tun_enabled",
-                                    previous ? "false" : "true");
-                    if (previous) {
-                        AndroidStopVpn();
-                        WaitForAndroidVpnStopped();
-                        core.startCore(store::profilesStore().selectedYaml(),
-                                       false, false);
-                    } else {
-                        core.startCore(store::profilesStore().selectedYaml(),
-                                       false, true);
-                        AndroidStartVpn();
-                    }
-                });
-                if (previous) {
-                    const auto [state, tunEnabled] = co_await RunOnTaskThread([] {
-                        return std::pair{AndroidVpnState(),
-                                         store::coreStore().setting(
-                                             "core.tun_enabled", "false") == "true"};
-                    });
-                    succeeded = state != 1 && state != 2 && !tunEnabled;
-                } else {
-                    for (int attempt = 0; attempt < 300; ++attempt) {
-                        const auto [state, tunEnabled] = co_await RunOnTaskThread([] {
-                            return std::pair{AndroidVpnState(),
-                                             store::coreStore().setting(
-                                                 "core.tun_enabled", "false") == "true"};
-                        });
-                        if (state == 1 || state == 2) {
-                            succeeded = true;
-                            break;
-                        }
-                        if (state == 3 || !tunEnabled) break;
-                        co_await huxerui::Delay(std::chrono::duration<double>{0.2});
-                    }
-                }
-            } catch (const std::exception& exception) {
-                error = exception.what();
-            }
-            if (!succeeded) {
-                try {
-                    co_await RunOnTaskThread([previous] {
-                        store::coreStore().setSetting(
-                            "core.tun_enabled", previous ? "true" : "false");
-                    });
-                } catch (const std::exception& exception) {
-                    if (error.empty()) error = exception.what();
-                }
-                if (error.empty()) error = store::coreStore().snapshot().lastError;
-            }
-            pending = false;
-            busy = false;
-            if (!succeeded) {
-                activeState = previous;
-                toast.Show(error.empty()
-                               ? Localized(previous ? "VPN 隧道未能关闭"
-                                                    : "VPN 启动已取消或超时")
-                               : huxerui::StringVariant(error));
-            } else if (previous) {
-                toast.Show(Localized("VPN 隧道已关闭"));
-            } else {
-                toast.Show(Localized("正在启动 VPN 隧道"));
-            }
-        });
+    const bool active = control.VpnEnabled();
+    const bool enabled = !control.Busy() && (active || state.profileId != 0);
+    const auto toggle = [control, active] {
+        control.Run({.action = CoreAction::Tun, .enabled = !active});
     };
 
     // 三角（play）启动、双竖线（pause）暂停；与代理页悬浮测速按钮共用
@@ -1089,7 +941,7 @@ huxerui::XYChartData BuildTrafficChartData(
         std::move(floating),
     }.With(huxerui::Padding(huxerui::EdgeInsets{
                  .right = theme.spacing.medium,
-                 .bottom = kCompactFloatingNavigationInset,
+                 .bottom = compact ? kCompactFloatingNavigationInset : theme.spacing.medium,
                  .left = theme.spacing.medium,
              }),
              huxerui::MainAlign(huxerui::MainAxisAlignment::End),
@@ -1129,123 +981,31 @@ huxerui::XYChartData BuildTrafficChartData(
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 }
 
-// 桌面：系统代理开关卡片（自洽管理自己的任务、乐观状态和失败提示）。
+// Desktop entry points share application state, operation lifetime and feedback.
 [[huxerui::composable]] huxerui::View DesktopHomeProxyCard() {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    auto tasks = huxerui::UseTaskScope();
-    auto toast = huxerui::UseToast();
-    // 内核/接管状态的全局唯一来源（见 core_model.h）：本卡片不再自己轮询
-    // coreStore()，组合期读模型即可，模型变化时本卡片自动重组。
-    const auto coreModel = huxerui::UseService<CoreModel>();
-    const CoreView coreView = coreModel->view.Get();
-    // 动作期间显示乐观值，动作结束后回到模型的权威值。
-    const bool modelProxy = coreView.systemProxyIntent;
-    auto proxyEnabled = huxerui::UseState(modelProxy);
-    auto pending = huxerui::UseState(false);
-    const bool shownProxy = pending.Get() ? proxyEnabled.Get() : modelProxy;
-
+    const auto control = UseCoreControl();
     return huxerui::Column {
         DesktopModeSwitchRow(
             app::images::system_proxy, Localized("系统代理"), std::nullopt,
-            huxerui::Switch(shownProxy)
-                .OnChanged([tasks, toast, proxyEnabled, pending, modelProxy,
-                            coreModel](bool on) {
-                    if (pending.Get()) return;
-                    const bool previous = modelProxy;
-                    proxyEnabled = on;
-                    pending = true;
-                    tasks.Launch([toast, proxyEnabled, pending, previous, on,
-                                  coreModel]() -> huxerui::Task<void> {
-                        DesktopModeApplyResult result;
-                        try {
-                            result = co_await RunOnTaskThread([on] {
-                                return ApplyDesktopSystemProxy(on);
-                            });
-                        } catch (const std::exception& exception) {
-                            result.error = exception.what();
-                        }
-                        // 成功：权威值写透模型（本卡片与设置页/托盘读同一份），
-                        // 失败：目标值校验后回落，不覆盖用户更新的意图。
-                        pending = false;
-                        if (result.status != DesktopModeApplyStatus::Applied) {
-                            if (proxyEnabled.Get() == on) proxyEnabled = previous;
-                            toast.Show(result.error.empty()
-                                           ? Localized("系统代理设置失败")
-                                           : huxerui::StringVariant(result.error));
-                        } else {
-                            coreModel->Update([on](CoreView& view) {
-                                view.systemProxyIntent = on;
-                                view.systemProxyActive = on;
-                            });
-                        }
-                    });
+            huxerui::Switch(control.SystemProxyEnabled())
+                .With(huxerui::Enabled(!control.Busy()))
+                .OnChanged([control](bool on) {
+                    control.Run({.action = CoreAction::SystemProxy, .enabled = on});
                 })),
         huxerui::Spacer(),
     }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-// 桌面：TUN 模式开关卡片（需要管理员权限；权限不足时引导装服务模式）。
 [[huxerui::composable]] huxerui::View DesktopHomeTunCard() {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const huxerui::ApplicationHandle application = huxerui::UseApplication();
-    auto tasks = huxerui::UseTaskScope();
-    auto toast = huxerui::UseToast();
-    auto dialog = huxerui::UseDialog();
-    auto clipboard = application.Clipboard();
-    auto tunEnabled = huxerui::UseState(false);
-    auto pending = huxerui::UseState(false);
-    const huxerui::Color text_color = theme.colors.on_surface;
-    const huxerui::Color hint_color = theme.colors.on_surface_variant;
-
-    // 内核/接管状态的全局唯一来源（见 core_model.h）：TUN 意图来自模型。
-    const auto coreModel = huxerui::UseService<CoreModel>();
-    const CoreView coreView = coreModel->view.Get();
-    const bool modelTun = coreView.core.tunEnabled;
-    const bool shownTun = pending.Get() ? tunEnabled.Get() : modelTun;
-
+    const auto control = UseCoreControl();
     return huxerui::Column {
         DesktopModeSwitchRow(
             app::images::tun, Localized("TUN 模式"),
             Localized("全局透明代理（需管理员权限）"),
-            huxerui::Switch(shownTun)
-                .OnChanged([tasks, toast, dialog, clipboard, text_color,
-                            hint_color, tunEnabled, pending, modelTun,
-                            coreModel](bool on) {
-                    if (pending.Get()) return;
-                    const bool previous = modelTun;
-                    tunEnabled = on;
-                    pending = true;
-                    tasks.Launch([=]() -> huxerui::Task<void> {
-                        DesktopModeApplyResult result;
-                        try {
-                            result = co_await RunOnTaskThread(
-                                [on] { return ApplyDesktopTun(on); });
-                        } catch (const std::exception& exception) {
-                            result.error = exception.what();
-                        }
-                        // 成功：TUN 切换在内核运行时是重启流程（耗时较长），权威值
-                        // 立刻写透模型，不必等下一拍；失败目标值校验后回落。
-                        pending = false;
-                        if (result.status == DesktopModeApplyStatus::Applied) {
-                            coreModel->Update([on](CoreView& view) {
-                                view.core.tunEnabled = on;
-                            });
-                            co_return;
-                        }
-                        if (tunEnabled.Get() == on) tunEnabled = previous;
-                        if (result.status == DesktopModeApplyStatus::ElevationRequested) {
-                            toast.Show(Localized("已请求管理员权限重启，请在新窗口开启 TUN"));
-                            co_return;
-                        }
-                        if (result.status == DesktopModeApplyStatus::PermissionDenied) {
-                            ShowTunGuideDialog(dialog, clipboard, toast,
-                                               text_color, hint_color);
-                            co_return;
-                        }
-                        toast.Show(result.error.empty()
-                                       ? Localized("TUN 设置失败")
-                                       : huxerui::StringVariant(result.error));
-                    });
+            huxerui::Switch(control.TunEnabled())
+                .With(huxerui::Enabled(!control.Busy()))
+                .OnChanged([control](bool on) {
+                    control.Run({.action = CoreAction::Tun, .enabled = on});
                 })),
         huxerui::Spacer(),
     }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -1264,72 +1024,12 @@ huxerui::XYChartData BuildTrafficChartData(
 [[huxerui::composable]] huxerui::View DesktopHomeFloatingAction(
     huxerui::View page, bool compact) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    auto tasks = huxerui::UseTaskScope();
-    auto toast = huxerui::UseToast();
-    auto busy = huxerui::UseState(false);
-    auto pending = huxerui::UseState(false);
-    // 内核状态来自 CoreModel（见 core_model.h）：本按钮不再自己 0.5s 轮询。
-    const auto coreModel = huxerui::UseService<CoreModel>();
-    const CoreView coreView = coreModel->view.Get();
-    const core::CoreState modelState = coreView.core.state;
-    auto coreState = huxerui::UseState(modelState);
-    const core::CoreState shownState = pending.Get() ? coreState.Get() : modelState;
-
+    const auto control = UseCoreControl();
     huxerui::View base = page;
-    const bool running = shownState == core::CoreState::Running;
-    const bool starting = shownState == core::CoreState::Starting;
-    const bool active = running;
-    const bool enabled = !busy.Get() && !starting;
-
-    const auto toggle = [tasks, toast, busy, pending, coreState, running,
-                         modelState, coreModel] {
-        if (busy.Get() || pending.Get()) return;
-        const core::CoreState previous = modelState;
-        if (previous == core::CoreState::Starting) return;
-        coreState = running ? core::CoreState::Stopped : core::CoreState::Running;
-        pending = true;
-        busy = true;
-        tasks.Launch([toast, busy, pending, coreState, previous, running,
-                      coreModel]() -> huxerui::Task<void> {
-            std::string error;
-            bool failed = false;
-            try {
-                const bool ok = co_await RunOnTaskThread([running] {
-                    auto& core = store::coreStore();
-                    if (running) return core.stopCore();
-                    const bool resumeSysProxy = core.systemProxyEnabled();
-                    const bool resumeTun = core.tunEnabled();
-                    core.startCore(store::profilesStore().selectedYaml(), false,
-                                   resumeTun, resumeSysProxy);
-                    return core.snapshot().state == core::CoreState::Running;
-                });
-                if (!ok) {
-                    failed = true;
-                    error = store::coreStore().snapshot().lastError;
-                }
-            } catch (const std::exception& exception) {
-                failed = true;
-                error = exception.what();
-            }
-            // 成功：把权威值（内核状态）写透模型，界面不必等下一拍；失败做
-            // 目标值校验后回落（用户若已再点一次就不覆盖新意图）。
-            pending = false;
-            busy = false;
-            if (failed) {
-                const core::CoreState target =
-                    running ? core::CoreState::Stopped : core::CoreState::Running;
-                if (coreState.Get() == target) coreState = previous;
-                toast.Show(error.empty()
-                               ? Localized(running ? "停止内核失败" : "启动内核失败")
-                               : huxerui::StringVariant(error));
-                co_return;
-            }
-            const core::CoreState landed = running ? core::CoreState::Stopped
-                                                   : core::CoreState::Running;
-            coreModel->Update([landed](CoreView& view) {
-                view.core.state = landed;
-            });
-        });
+    const bool active = control.Running();
+    const bool enabled = !control.Busy();
+    const auto toggle = [control, active] {
+        control.Run({.action = active ? CoreAction::Stop : CoreAction::Start});
     };
 
     huxerui::View floating =
@@ -1373,15 +1073,12 @@ huxerui::XYChartData BuildTrafficChartData(
 // ---- 卡片内容分发 ----------------------------------------------------------
 
 [[huxerui::composable]] huxerui::View HomeCardContent(
-    HomeCardKind kind, huxerui::State<HomeState> state,
-    huxerui::State<std::size_t> homeMode,
-    huxerui::State<bool> modePending,
-    huxerui::TaskScope tasks, huxerui::ToastHandle toast) {
+    HomeCardKind kind, huxerui::State<HomeState> state) {
     const HomeState& s = state.Get();
     if (kind == HomeCardKind::Traffic) return HomeTrafficCard(s);
     if (kind == HomeCardKind::Total) return HomeTotalCard(s);
     if (kind == HomeCardKind::Mode) {
-        return HomeModeCard(homeMode, modePending, tasks, toast);
+        return HomeModeCard();
     }
     if (kind == HomeCardKind::Profile) return HomeProfileCard(s);
     if (kind == HomeCardKind::LanIp) return HomeLanIpCard();
@@ -1403,9 +1100,6 @@ huxerui::XYChartData BuildTrafficChartData(
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     const auto settingsModel = huxerui::UseService<SettingsModel>();
     auto state = huxerui::UseState<HomeState>({});
-    auto homeMode = huxerui::UseState<std::size_t>(
-        HomeModeIndex(store::coreStore().snapshot().mode));
-    auto modePending = huxerui::UseState(false);
     // 首页布局是**编译期常量**（见 AGENTS.md / CLAUDE.md 第 13 条）：顺序与尺寸只由
     // kHomeCards 决定，没有编辑态、拖动排序、增删卡片与 home.layout.* 持久化，也就
     // 没有"先画默认、persistence hydrate 之后再换一份库里的布局"的首帧跳变。
@@ -1433,7 +1127,7 @@ huxerui::XYChartData BuildTrafficChartData(
     // 里面的 Lifecycle 永不注册、MirrorHomeState 一次都不跑，HomeState 保持
     // 默认值（首页订阅/流量/总量全空）——Android 真机上实测过的回归。
     huxerui::View runtimePump = CLASHFLUX_HOME_RUNTIME_PUMP(
-        state, homeMode, modePending, coreModel, profilesModel, proxiesModel);
+        state, coreModel, profilesModel, proxiesModel);
 
     std::vector<huxerui::View> cards;
     cards.reserve(order.size());
@@ -1446,8 +1140,7 @@ huxerui::XYChartData BuildTrafficChartData(
 
         // 首页所有卡片一视同仁：都是 raised 二级岛外壳。「当前订阅」不显示选中态
         // （哪个订阅在使用中由订阅页的选中卡承担）。
-        huxerui::View body = HomeCardContent(kind, state, homeMode, modePending,
-                                             tasks, toast);
+        huxerui::View body = HomeCardContent(kind, state);
         huxerui::View cardView = Card(std::move(body));
         cards.push_back(std::move(cardView)
                             .LayoutValue<HomeCardSpan>(size)

@@ -45,6 +45,7 @@ import clashflux.instance;
 // CoreView 含 store::CoreSnapshot、ProfilesModel 含 db::Profile，必须在模块导入
 // 之后（同 profiles_cache.h）。
 #include "core_model.h"
+#include "core_control.h"
 #include "profiles_model.h"
 
 namespace clashflux::ui {
@@ -211,11 +212,6 @@ struct TrayMenuText {
     std::string quit;
 };
 
-struct TrayOperationResult {
-    bool ok = false;
-    std::string error;
-};
-
 } // namespace
 
 [[huxerui::composable]] huxerui::View DesktopApplicationEffects(
@@ -231,17 +227,14 @@ struct TrayOperationResult {
     const huxerui::SystemTrayHandle tray = application.SystemTray();
     const bool trayAvailable = tray.IsAvailable();
     auto tasks = huxerui::UseTaskScope();
-    // 运行态只负责图标配色；菜单的乐观态独立保存，这样启动/停止耗时期间
-    // 菜单立即响应，但状态图标仍等到后台确认内核运行后才改变。
+    const auto control = UseCoreControl();
+    // Native menu/icon projections are read-only mirrors of the application model.
     auto trayCoreRunning = huxerui::UseState(false);
     auto trayCoreMenuRunning = huxerui::UseState(false);
     auto traySysProxy = huxerui::UseState(false);
     auto trayTun = huxerui::UseState(false);
     auto traySysProxyActive = huxerui::UseState(false);
     auto trayTunActive = huxerui::UseState(false);
-    auto trayCorePending = huxerui::UseState(false);
-    auto traySysProxyPending = huxerui::UseState(false);
-    auto trayTunPending = huxerui::UseState(false);
     auto trayProfiles = huxerui::UseState<std::vector<db::Profile>>({});
     auto trayProxyGroups = huxerui::UseState<std::vector<ProxyGroupSnapshot>>({});
     auto startupVisibilityHandled = huxerui::UseState(false);
@@ -282,19 +275,18 @@ struct TrayOperationResult {
     // 阻塞 IPC/升级，应用级保留状态避免重组重复检查；不主动安装或触发 UAC。
     huxerui::Lifecycle(
         [tasks, trayCoreRunning, trayCoreMenuRunning, traySysProxy, trayTun,
-         traySysProxyActive, trayTunActive, trayCorePending,
-         traySysProxyPending, trayTunPending, coreModel, settingsModel,
-         startupRuntimeHandled, toast] {
+         traySysProxyActive, trayTunActive, coreModel, settingsModel,
+         startupRuntimeHandled, toast, control] {
             const auto noCleanup = [] {};
             const SettingsView settings = settingsModel->view.Get();
             if (!settings.ready || startupRuntimeHandled.Get() ||
-                coreModel->serviceChecking.Get() || cli::runtimeCommandMode()) return noCleanup;
+                coreModel->serviceChecking.Get() || coreModel->operations.Busy() || cli::runtimeCommandMode()) return noCleanup;
             startupRuntimeHandled = true;
             coreModel->serviceChecking = true;
             const bool startupAutoRun = settings.autoRun;
             tasks.Launch([=]() -> huxerui::Task<void> {
                 try {
-                    const auto maintenance = co_await RunOnTaskThread([startupAutoRun] {
+                    const auto maintenance = co_await RunOnTaskThread([] {
                         auto& core = store::coreStore();
                         core.init();
                         // 若上次异常退出把系统代理留在本应用端口上，先撤销。
@@ -312,26 +304,14 @@ struct TrayOperationResult {
                         }
                         if (maintenance.updated)
                             stream::logApplication("info", "已将后台网络服务更新到当前应用版本");
-                        if (HasDesktopCoreRuntime()) {
-                            // 内核启停与流量接管解耦：默认不在启动应用时拉起内核
-                            // （内核只是本地混合端口 + 控制接口，需要时由首页右下角
-                            // 悬浮按钮显式启动）；只有用户打开「启动时自动运行内核」
-                            // 才在这里拉起，并按已记录的 TUN / 系统代理意图恢复接管。
-                            if (startupAutoRun) {
-                                const bool resumeSysProxy = core.systemProxyEnabled();
-                                const bool resumeTun = core.tunEnabled();
-                                core.startCore(
-                                    store::profilesStore().selectedYaml(), false,
-                                    resumeTun, resumeSysProxy);
-                            }
-                        }
                         return maintenance;
                     });
+                    auto next = co_await RunOnTaskThread([] { return ReadCoreView(true, false); });
+                    coreModel->Update([next = std::move(next)](CoreView& view) { view = next; });
                     coreModel->serviceChecking = false;
-                    coreModel->Update([installed = maintenance.installed](CoreView& view) {
-                        view.serviceInstalled = installed;
-                    });
                     coreModel->RequestRefresh();
+                    if (maintenance.ready && startupAutoRun && HasDesktopCoreRuntime())
+                        control.Run({.action = CoreAction::Start});
                     if (!maintenance.ready)
                         toast.Show(maintenance.error.empty() ? Localized("服务操作失败")
                                                             : huxerui::StringVariant(maintenance.error));
@@ -349,29 +329,24 @@ struct TrayOperationResult {
             });
             return noCleanup;
         },
-        settingsModel->view, coreModel->serviceChecking);
+        settingsModel->view, coreModel->serviceChecking, coreModel->operations.command);
 
-    // 托盘运行态镜像：以 CoreModel 的 State 作依赖——模型一变就重新镜像一次，
-    // 不再是 0.5s 定时器。动作进行中（pending）保留乐观值，避免图标闪回。
+    // Rendering projections share the same command target and authoritative result.
     huxerui::Lifecycle(
         [trayCoreRunning, trayCoreMenuRunning, traySysProxy, traySysProxyActive,
-         trayTun, trayTunActive, trayCorePending,
-         traySysProxyPending, trayTunPending, coreModel] {
+         trayTun, trayTunActive, coreModel, control] {
             const CoreView view = coreModel->view.Get();
             const bool running = view.core.state == core::CoreState::Running;
-            if (!trayTunPending.Get()) trayCoreRunning = running;
-            if (!trayCorePending.Get()) trayCoreMenuRunning = running;
-            if (!trayTunPending.Get() && !traySysProxyPending.Get()) {
-                traySysProxy = view.systemProxyIntent;
-                traySysProxyActive = running && view.systemProxyActive;
-            }
-            if (!trayTunPending.Get()) {
-                trayTun = view.core.tunEnabled;
-                trayTunActive = running && view.core.tunEnabled;
-            }
+            trayCoreRunning = running;
+            trayCoreMenuRunning = control.Running();
+            traySysProxy = control.SystemProxyEnabled();
+            traySysProxyActive = running && view.systemProxyActive;
+            trayTun = control.TunEnabled();
+            trayTunActive = view.TunActive();
             return [] {};
         },
-        coreModel->view);
+        coreModel->view, coreModel->operations.command);
+
 
     // 托盘菜单需要的是当前可选订阅和运行中的策略组快照。数据库/API 读取
     // 全部放到任务线程，菜单本身只消费最近一次轻量快照。
@@ -476,8 +451,7 @@ struct TrayOperationResult {
         huxerui::Lifecycle(
             [tray, window, application, tasks, trayCoreRunning,
              trayCoreMenuRunning, traySysProxy, trayTun, traySysProxyActive,
-             trayTunActive, trayCorePending, traySysProxyPending,
-             trayTunPending, dialog, clipboard, toast,
+             trayTunActive, control, dialog, clipboard, toast,
              trayProfiles, trayProxyGroups, settingsModel, proxiesModel,
              coreModel, profilesModel,
              finishExit, menuText, proxyLineMenu,
@@ -539,154 +513,21 @@ struct TrayOperationResult {
                         menuText.selectProfile, std::move(profileEntries)));
                     menuEntries.push_back(huxerui::MenuItem(
                         menuText.selectLine, proxyLineMenu));
-                    // 内核启停是独立动作（与系统代理/TUN 解耦）：启动时按已
-                    // 记录的 TUN / 系统代理意图恢复接管。
                     menuEntries.push_back(
-                        huxerui::MenuItem(
-                            trayCoreMenuRunning.Get() ? menuText.stopCore : menuText.startCore,
-                            [tasks, toast, trayCoreMenuRunning, trayCorePending,
-                             coreModel] {
-                                if (trayCorePending.Get()) return;
-                                const bool previous = trayCoreMenuRunning.Get();
-                                const bool next = !previous;
-                                trayCorePending = true;
-                                trayCoreMenuRunning = next;
-                                coreModel->RequestRefresh();
-                                tasks.Launch([=]() -> huxerui::Task<void> {
-                                    TrayOperationResult result;
-                                    try {
-                                        result = co_await RunOnTaskThread([next] {
-                                            auto& core = store::coreStore();
-                                            if (!next) {
-                                                const bool ok = core.stopCore();
-                                                return TrayOperationResult{
-                                                    .ok = ok,
-                                                    .error = core.snapshot().lastError};
-                                            }
-                                            const bool resumeSysProxy =
-                                                core.systemProxyEnabled();
-                                            const bool resumeTun = core.tunEnabled();
-                                            core.startCore(
-                                                store::profilesStore().selectedYaml(),
-                                                false, resumeTun, resumeSysProxy);
-                                            const auto snapshot = core.snapshot();
-                                            return TrayOperationResult{
-                                                .ok = snapshot.state ==
-                                                      core::CoreState::Running,
-                                                .error = snapshot.lastError};
-                                        });
-                                    } catch (const std::exception& error) {
-                                        result.error = error.what();
-                                    }
-                                    trayCorePending = false;
-                                    coreModel->RequestRefresh();
-                                    if (!result.ok) {
-                                        trayCoreMenuRunning = previous;
-                                        toast.Show(result.error.empty()
-                                                       ? Localized(next ? "启动内核失败"
-                                                                        : "停止内核失败")
-                                                       : huxerui::StringVariant(
-                                                             result.error));
-                                    }
-                                });
+                        huxerui::MenuItem(control.Running() ? menuText.stopCore : menuText.startCore,
+                            [control] {
+                                control.Run({.action = control.Running() ? CoreAction::Stop : CoreAction::Start});
                             })
-                            .Checked(trayCoreMenuRunning.Get())
-                            .Enabled(!trayCorePending.Get()));
+                            .Checked(control.Running()).Enabled(!control.Busy()));
                     menuEntries.push_back(
-                        huxerui::MenuItem(
-                            menuText.systemProxy, [tasks, traySysProxy,
-                                         traySysProxyActive, traySysProxyPending,
-                                         trayCoreRunning, coreModel, toast] {
-                                if (traySysProxyPending.Get()) return;
-                                const bool previous = traySysProxy.Get();
-                                const bool previousActive =
-                                    traySysProxyActive.Get();
-                                const bool next = !previous;
-                                traySysProxyPending = true;
-                                traySysProxy = next;
-                                if (trayCoreRunning.Get()) {
-                                    traySysProxyActive = next;
-                                }
-                                coreModel->RequestRefresh();
-                                tasks.Launch([=]() -> huxerui::Task<void> {
-                                    TrayOperationResult result;
-                                    try {
-                                        const DesktopModeApplyResult applyResult =
-                                            co_await RunOnTaskThread([next] {
-                                                return ApplyDesktopSystemProxy(next);
-                                            });
-                                        result = TrayOperationResult{
-                                            .ok = applyResult.status ==
-                                                  DesktopModeApplyStatus::Applied,
-                                            .error = applyResult.error};
-                                    } catch (const std::exception& error) {
-                                        result.error = error.what();
-                                    }
-                                    traySysProxyPending = false;
-                                    coreModel->RequestRefresh();
-                                    if (!result.ok) {
-                                        traySysProxy = previous;
-                                        traySysProxyActive = previousActive;
-                                        toast.Show(result.error.empty()
-                                                       ? Localized("系统代理切换失败")
-                                                       : huxerui::StringVariant(
-                                                             result.error));
-                                    }
-                                });
-                            })
-                            .Checked(traySysProxy.Get())
-                            .Enabled(!traySysProxyPending.Get()));
+                        huxerui::MenuItem(menuText.systemProxy, [control] {
+                            control.Run({.action = CoreAction::SystemProxy,
+                                         .enabled = !control.SystemProxyEnabled()});
+                        }).Checked(control.SystemProxyEnabled()).Enabled(!control.Busy()));
                     menuEntries.push_back(
-                        huxerui::MenuItem(
-                            menuText.tun,
-                            [tasks, trayTun, trayTunActive, trayTunPending,
-                             trayCoreRunning, coreModel, window, dialog,
-                             clipboard, toast, textColor, hintColor] {
-                                if (trayTunPending.Get()) return;
-                                const bool previous = trayTun.Get();
-                                const bool previousActive = trayTunActive.Get();
-                                const bool next = !previous;
-                                trayTunPending = true;
-                                trayTun = next;
-                                if (trayCoreRunning.Get()) {
-                                    trayTunActive = next;
-                                }
-                                coreModel->RequestRefresh();
-                                tasks.Launch([=]() -> huxerui::Task<void> {
-                                    DesktopModeApplyResult result;
-                                    try {
-                                        result = co_await RunOnTaskThread([next] {
-                                            return ApplyDesktopTun(next);
-                                        });
-                                    } catch (const std::exception& error) {
-                                        result.error = error.what();
-                                    }
-                                    trayTunPending = false;
-                                    coreModel->RequestRefresh();
-                                    if (result.status !=
-                                        DesktopModeApplyStatus::Applied) {
-                                        trayTun = previous;
-                                        trayTunActive = previousActive;
-                                        if (result.status ==
-                                            DesktopModeApplyStatus::ElevationRequested) {
-                                            toast.Show(Localized("已请求管理员权限重启，请在新窗口开启 TUN"));
-                                        } else if (result.status ==
-                                                   DesktopModeApplyStatus::PermissionDenied) {
-                                            window.Activate();
-                                            ShowTunGuideDialog(
-                                                dialog, clipboard, toast,
-                                                textColor, hintColor);
-                                        } else {
-                                            toast.Show(result.error.empty()
-                                                           ? Localized("TUN 模式切换失败")
-                                                           : huxerui::StringVariant(
-                                                                 result.error));
-                                        }
-                                    }
-                                });
-                            })
-                            .Checked(trayTun.Get())
-                            .Enabled(!trayTunPending.Get()));
+                        huxerui::MenuItem(menuText.tun, [control, window] {
+                            control.Run({.action = CoreAction::Tun, .enabled = !control.TunEnabled()});
+                        }).Checked(control.TunEnabled()).Enabled(!control.Busy()));
                     menuEntries.push_back(huxerui::MenuSection{});
                     menuEntries.push_back(
                         huxerui::MenuItem(menuText.quit, [finishExit] { finishExit(); }));
@@ -716,8 +557,8 @@ struct TrayOperationResult {
             // 因为内核/接管状态变化顺带重建才看起来正常。
             // 有效 Locale 也必须作为依赖：语言切换及系统语言变化都刷新托盘文案。
             trayCoreRunning, trayCoreMenuRunning, traySysProxy, trayTun,
-            traySysProxyActive, trayTunActive, trayCorePending,
-            traySysProxyPending, trayTunPending, trayProfiles,
+            traySysProxyActive, trayTunActive, coreModel->operations.command,
+            coreModel->view, coreModel->serviceChecking, trayProfiles,
             trayProxyGroups, settingsModel->view, trayLocale);
 
     }

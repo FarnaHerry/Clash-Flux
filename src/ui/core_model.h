@@ -21,6 +21,7 @@
 #include <string>
 
 #include "ui.h"
+#include "core_operation.h"
 
 namespace clashflux::ui {
 
@@ -29,6 +30,11 @@ namespace clashflux::ui {
 // 这里只补 UI 需要、但不在内核快照里的几项设置与探测结果。
 struct CoreView {
     store::CoreSnapshot core;
+    bool ready = false;
+    bool tunIntent = false;          // persisted preference, independent of core lifetime
+    std::string modeIntent = "rule";
+    int vpnState = 0;                // Android background-service snapshot
+    bool ignoringBattery = false;
     bool systemProxyIntent = false;   // 用户意图（proxy.system_enabled）
     bool systemProxyActive = false;   // 系统代理是否确实指向本应用（昂贵探测）
     bool ipv6Enabled = false;         // core.ipv6_enabled
@@ -37,10 +43,15 @@ struct CoreView {
     bool allowLan = false;
     bool serviceInstalled = false;    // root 服务单元是否存在
 
+    bool TunActive() const {
+        return core.state == decltype(core.state)::Running && core.tunEnabled;
+    }
+
     bool operator==(const CoreView&) const = default;
 };
 
 struct CoreModel {
+    CoreOperations operations;
     huxerui::State<bool> serviceChecking{false};
     // 唯一订阅点。必须带初值：huxerui::State 的默认构造是「空 cell」，
     // 读取（DriveCoreModel 每拍读一次）会抛 "Lifecycle dependency State is empty"。
@@ -50,15 +61,27 @@ struct CoreModel {
     // 所以用户自己的动作要在完成回调里用 Update() 写透，不要靠它刷新界面。
     huxerui::State<std::uint64_t> refreshTick{0};
 
-    void RequestRefresh() { refreshTick = refreshTick.Get() + 1; }
+    void RequestRefresh() {
+        operations.Invalidate();
+        refreshTick = refreshTick.Get() + 1;
+    }
 
     // 写透：动作完成时（协程已经在 UI 线程）把权威值直接发布进模型，界面不必
     // 等下一个泵节拍，也不会出现"只改了控件本地 State、没人回写"的闪回。
     template <class Change> void Update(Change&& change) {
+        operations.Invalidate();
         CoreView next = view.Get();
         change(next);
         view = std::move(next);
     }
+
+    bool PublishPolled(std::uint64_t revision, CoreView next) {
+        if (!operations.AcceptsPoll(revision)) return false;
+        view = std::move(next);
+        return true;
+    }
+    void SetAllowLan(bool enabled);
+    void SetIpv6(bool enabled);
 };
 
 // 在 worker 线程读一次内核/接管状态（会做 checkAlive 崩溃检测；slowProbes

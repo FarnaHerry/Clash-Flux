@@ -35,7 +35,7 @@ set(CLASHFLUX_HUXERUI_CAMERA_COMMIT "b8b3b9304646cdc1afb9722ead16d85cf2160610")
 set(CLASHFLUX_HUXERUI_SQLITE_URL "https://github.com/FarnaHerry/Lib-SQLite.git")
 set(CLASHFLUX_HUXERUI_SQLITE_COMMIT "88f610fe66c57260b1ac38e676fc36b23c900fc2")
 set(CLASHFLUX_HUXERUI_CHARTS_URL "https://github.com/FarnaHerry/Lib-Charts.git")
-set(CLASHFLUX_HUXERUI_CHARTS_COMMIT "8ed3e03ff265ae396b064617e2010e7229d581f2")
+set(CLASHFLUX_HUXERUI_CHARTS_COMMIT "e90cfa84707bdf72eb6029410bf05c420efa62fc")
 
 function(clashflux_dependency_source name)
     clashflux_extract(${name} "${CLASHFLUX_DEP_${name}_ARCHIVE}"

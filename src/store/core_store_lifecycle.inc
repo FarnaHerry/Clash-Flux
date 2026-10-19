@@ -732,6 +732,7 @@
     // 只写库（下次 startCore 用新配置生成 clash_mode 前置规则），内核真的在
     // 跑时才热切换；只有热切换被内核拒绝才算失败。
     bool applyMode(const std::string& m) {
+        std::lock_guard operationLock(lifecycleMutex_);
         ensureOpen();
         bool live = false;
 #if defined(__ANDROID__)

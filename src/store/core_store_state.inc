@@ -509,13 +509,14 @@
         setSetting("proxy.system_enabled", "true");
         if (snapshot().state != core::CoreState::Running) return true;
         std::string err;
-        if (!sysproxy::enable("127.0.0.1", mixedPort(), err)) {
+        const int activePort = snapshot().mixedPort;
+        if (!sysproxy::enable("127.0.0.1", activePort, err)) {
             setSetting("proxy.system_enabled", previousSetting);
             std::lock_guard lock(mutex_);
             snap_.lastError = "系统代理开启失败：" + err;
             return false;
         }
-        setSetting("proxy.system_port", std::to_string(mixedPort()));
+        setSetting("proxy.system_port", std::to_string(activePort));
         return true;
 #endif
     }

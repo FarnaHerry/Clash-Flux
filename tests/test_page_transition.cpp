@@ -7,6 +7,7 @@
 #include <optional>
 #include <regex>
 #include <string>
+#include <stdexcept>
 #include <vector>
 
 #include <huxerui/huxerui.h>
@@ -22,9 +23,12 @@
 #include "responsive_shell.h"
 #include "page_layout.h"
 #include "empty_state.h"
+#include "connection_row.h"
 #include "theme_colors.h"
 #include "theme_color_card.h"
 #include "vpn_snapshot_model.h"
+#include "core_operation.h"
+#include "inbound_settings.h"
 
 namespace {
 using huxerui::testing::UiSelector;
@@ -107,6 +111,72 @@ public:
 std::shared_ptr<AppResourceProvider> AppResources() {
     static const auto provider = std::make_shared<AppResourceProvider>();
     return provider;
+}
+
+std::size_t connectionRowsBuilt = 0;
+huxerui::View ConnectionListRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        const auto active = huxerui::UseState(false);
+        const auto shortList = huxerui::UseState(false);
+        const auto closed = huxerui::UseState(std::string{});
+        const auto scroll = huxerui::UseScrollController();
+        const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+        const std::size_t count = shortList.Get() ? 1 : 1000;
+        huxerui::View list = huxerui::Row{};
+        if (active.Get()) {
+            list = huxerui::VirtualList(count, [compact, closed](std::size_t index) {
+                ++connectionRowsBuilt;
+                const std::string id = std::to_string(index);
+                const clashflux::ui::ConnectionRow row{
+                    .id = id, .host = index == 0 ? "未知目标" : "host-" + id,
+                    .network = "tcp", .chains = "DIRECT", .rule = "未匹配规则"};
+                // 调用生产行组件，factory 本身没有活动组合上下文。
+                return clashflux::ui::ConnectionRowContent(row, "↑1KB/s ↓2KB/s", compact,
+                    huxerui::Button("CLOSE-" + id).OnClick([closed, id] { closed = id; }))
+                    .Key("connection-fixture-" + id);
+            }).EstimatedItemExtent(compact ? 92.0F : 44.0F).Controller(scroll)
+                .With(huxerui::Grow(1.0F)).Key("connection-fixture-list");
+        }
+        return huxerui::Column {
+          huxerui::Button("ENTER-CONNECTIONS").OnClick([active] { active = !active.Get(); }),
+          huxerui::Button("UPDATE-CONNECTIONS").OnClick([shortList] { shortList = !shortList.Get(); }),
+          huxerui::Button("SCROLL-CONNECTIONS").OnClick([scroll] { scroll.ScrollToItem(900); }),
+          huxerui::Text("CLOSED-" + closed.Get()),
+          list,
+        }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    })};
+}
+const huxerui::Application kConnectionListApplication{ConnectionListRoot};
+
+void testConnectionList() {
+    connectionRowsBuilt = 0;
+    huxerui::testing::UiTest ui(kConnectionListApplication,
+        {.viewport = {390.0F, 700.0F}, .resource_provider = AppResources()});
+    ui.UpdateResourceConfiguration({.locale = huxerui::Locale::FromLanguageTag("zh")});
+    ui.PumpAndSettle();
+    check(connectionRowsBuilt == 0, "未进入连接页不构建连接行");
+    ui.Find(UiSelector::Text("ENTER-CONNECTIONS")).Tap(); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("链路：DIRECT")).Exists() &&
+          ui.Find(UiSelector::Text("规则：未匹配规则")).Exists() &&
+          ui.Find(UiSelector::Text("未知目标")).Exists(), "窄屏生产连接行安全解析本地化模板及缺省字段");
+    check(connectionRowsBuilt > 0 && connectionRowsBuilt < 100, "一千条连接仅构造视口附近行");
+    ui.Find(UiSelector::Text("CLOSE-0")).Tap(); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("CLOSED-0")).Exists(), "关闭连接回调保留正确 ID");
+    ui.Find(UiSelector::Text("SCROLL-CONNECTIONS")).Tap(); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("host-900")).Exists(), "滚动后懒构建的窄屏连接行仍能解析资源");
+    ui.Find(UiSelector::Text("UPDATE-CONNECTIONS")).Tap(); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("未知目标")).Exists(), "连接快照缩短后列表正常显示");
+    ui.SetWindowMetrics({.viewport = {1080.0F, 700.0F}}); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("未匹配规则")).Exists(), "宽屏缺省字段也在组合期解析");
+    ui.SetWindowMetrics({.viewport = {320.0F, 700.0F}}); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("规则：未匹配规则")).Exists(), "宽屏切回窄屏可重建连接行");
+    ui.Find(UiSelector::Text("ENTER-CONNECTIONS")).Tap(); ui.PumpAndSettle();
+    ui.Find(UiSelector::Text("ENTER-CONNECTIONS")).Tap(); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("规则：未匹配规则")).Exists(), "离开后重进连接页安全挂载");
+    ui.UpdateResourceConfiguration({.locale = huxerui::Locale::FromLanguageTag("en")});
+    ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("Rule: No matching rule")).Exists() &&
+          ui.Find(UiSelector::Text("Unknown destination")).Exists(), "已挂载连接行响应语言切换");
 }
 
 huxerui::View TestRoot() {
@@ -1220,7 +1290,133 @@ void testCustomThemeColors() {
     }
 }
 
+namespace {
+struct ControlFixture {
+    clashflux::ui::CoreOperations operations;
+    huxerui::State<std::string> result{std::string{"CONTROL-IDLE"}};
+    huxerui::State<std::string> poll{std::string{}};
+    huxerui::State<int> executions{0};
+};
+void CheckCoreOperationsGate() {
+    using namespace clashflux::ui;
+    // Exercise the production version gate, including equal-value/ABA changes.
+    CoreOperations gate;
+    const auto oldPoll = gate.revision.Get();
+    const auto first = gate.Begin({.action = CoreAction::Start});
+    check(first.has_value() && !gate.Begin({.action = CoreAction::Stop}),
+          "all runtime entry points share one in-flight command");
+    check(!gate.AcceptsPoll(gate.revision.Get()), "polls cannot publish intermediate restart state");
+    check(gate.Finish(*first), "owner can settle a completed command");
+    const auto second = gate.Begin({.action = CoreAction::Start});
+    check(!gate.Finish(*first) && gate.Busy(), "old completion cannot clear a newer operation (ABA)");
+    gate.Finish(*second);
+    check(!gate.AcceptsPoll(oldPoll), "old snapshot is rejected even when both commands return to idle");
+    const auto current = gate.revision.Get();
+    check(gate.AcceptsPoll(current), "current external snapshot can publish while idle");
+    gate.Invalidate();
+    check(!gate.AcceptsPoll(current), "synchronous configuration edit invalidates an in-flight read");
+
+}
+void InstallControlFixture(huxerui::ApplicationContext& context) {
+    CheckCoreOperationsGate();
+    context.Provide(std::make_shared<ControlFixture>());
+}
+[[huxerui::composable]] huxerui::View ControlOrigin() {
+    using namespace clashflux::ui;
+    const auto model = huxerui::UseService<ControlFixture>();
+    const auto tasks = huxerui::UseApplicationTaskScope();
+    const auto run = [model, tasks](bool fail) {
+        const bool launched = LaunchCoreOperation<bool>(tasks, model,
+            {.action = CoreAction::Mode, .mode = "global"},
+            [fail](CoreCommand) -> huxerui::Task<bool> {
+                co_await huxerui::Delay(std::chrono::milliseconds(200));
+                if (fail) throw std::runtime_error("control fixture");
+                co_return true;
+            }, [model](std::optional<bool> result, std::exception_ptr error) {
+                check(!model->operations.Busy(), "production launcher clears pending before result feedback");
+                model->result = std::string{result && !error ? "CONTROL-SUCCESS" : "CONTROL-FAILED"};
+            });
+        if (launched) model->executions = model->executions.Get() + 1;
+    };
+    return huxerui::Row {
+        huxerui::Button("Run control").OnClick([run] { run(false); }),
+        huxerui::Button("Fail control").OnClick([run] { run(true); }),
+    }.Key("control-origin");
+}
+[[huxerui::composable]] huxerui::View ControlFixtureContent() {
+    using namespace clashflux::ui;
+    const auto model = huxerui::UseService<ControlFixture>();
+    const auto tasks = huxerui::UseApplicationTaskScope();
+    auto retired = huxerui::UseState(false);
+    return huxerui::Column {
+        retired.Get() ? huxerui::View{huxerui::Text("ORIGIN-RETIRED")} : ControlOrigin(),
+        huxerui::Button("Retire control origin").OnClick([retired] { retired = true; }),
+        huxerui::Button("Restore control origin").OnClick([retired] { retired = false; }),
+        huxerui::Button("Try second control entry").OnClick([model] {
+            auto ticket = model->operations.Begin({.action = CoreAction::Tun, .enabled = true});
+            if (ticket) {
+                model->executions = model->executions.Get() + 1;
+                model->operations.Finish(*ticket);
+            }
+        }),
+        huxerui::Button("Start control poll").OnClick([model, tasks] {
+            const auto before = model->operations.revision.Get();
+            tasks.Launch([model, before]() -> huxerui::Task<void> {
+                co_await huxerui::Delay(std::chrono::milliseconds(400));
+                model->poll = std::string{model->operations.AcceptsPoll(before) ? "CONTROL-POLL-ACCEPTED" : "CONTROL-POLL-REJECTED"};
+            });
+        }),
+        huxerui::Text(model->operations.Busy() ? "CONTROL-BUSY" : "CONTROL-READY"),
+        huxerui::Text(model->result.Get()),
+        huxerui::Text(model->poll.Get()),
+        huxerui::Text("CONTROL-EXECUTIONS:" + std::to_string(model->executions.Get())),
+    }.With(huxerui::Grow(1.0F));
+}
+huxerui::View ControlFixtureRoot() { return huxerui::FlatTheme{ControlFixtureContent()}; }
+const huxerui::Application kControlApplication{ControlFixtureRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallControlFixture}}};
+
+void testCoreOperations() {
+    using namespace clashflux::ui;
+    huxerui::testing::UiTest ui(kControlApplication, {.viewport = {700.0F, 600.0F}});
+    ui.PumpAndSettle();
+    ui.Find(UiSelector::Text("Start control poll")).Tap(); ui.Pump();
+    ui.Find(UiSelector::Text("Run control")).Tap(); ui.Pump();
+    ui.Find(UiSelector::Text("Try second control entry")).Tap(); ui.Pump();
+    check(ui.Find(UiSelector::Text("CONTROL-BUSY")).Exists() &&
+          ui.Find(UiSelector::Text("CONTROL-EXECUTIONS:1")).Exists(), "second entry sees pending and cannot launch conflicting work");
+    ui.Find(UiSelector::Text("Retire control origin")).Tap(); ui.Pump();
+    check(ui.Find(UiSelector::Text("ORIGIN-RETIRED")).Exists(), "control origin really unmounts during application work");
+    ui.SetWindowMetrics({.viewport = {390.0F, 700.0F}});
+    ui.Pump(std::chrono::milliseconds(500)); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("CONTROL-SUCCESS")).Exists() &&
+          ui.Find(UiSelector::Text("CONTROL-READY")).Exists() &&
+          ui.Find(UiSelector::Text("CONTROL-POLL-REJECTED")).Exists(), "application task settles after origin retirement/resize and rejects stale poll");
+    ui.Find(UiSelector::Text("Restore control origin")).Tap(); ui.PumpAndSettle();
+    ui.Find(UiSelector::Text("Fail control")).Tap(); ui.Pump(std::chrono::milliseconds(300)); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("CONTROL-FAILED")).Exists() && ui.Find(UiSelector::Text("CONTROL-READY")).Exists(), "failed work releases shared pending");
+    ui.Find(UiSelector::Text("Run control")).Tap(); ui.Pump(std::chrono::milliseconds(300)); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("CONTROL-SUCCESS")).Exists() && ui.Find(UiSelector::Text("CONTROL-EXECUTIONS:3")).Exists(), "failed operation remains retryable");
+}
+
+void testInboundSettings() {
+    using namespace clashflux::ui;
+    const auto ports = ParseInboundPorts(" 07899\n", "", " 1080 ");
+    check(ports.error == PortSettingsError::None && ports.ports.mixed == "7899" &&
+          ports.ports.http.empty() && ports.ports.socks == "1080", "shared port validation trims and normalizes optional listeners");
+    check(ParseInboundPorts("65535", "1", "").error == PortSettingsError::None, "port boundaries remain accepted");
+    for (const auto* invalid : {"", "0", "65536", "7899x", "-1", "999999999999999"})
+        check(ParseInboundPorts(invalid, "", "").error == PortSettingsError::Invalid, "invalid mixed port rejected before writing settings");
+    check(ParseInboundPorts("7899", "7899", "").error == PortSettingsError::Duplicate &&
+          ParseInboundPorts("7899", "8080", "8080").error == PortSettingsError::Duplicate,
+          "shared validation rejects collisions among all listener types");
+}
+} // namespace
+
 int main() {
+    testCoreOperations();
+    testInboundSettings();
+    testConnectionList();
     testVpnPublication();
     testCustomThemeColors();
     testThemeColorSurfaces();

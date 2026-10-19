@@ -90,7 +90,7 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   改图标只改对应那一个，别把猫爪铺到启动图标上（也不要反过来）。
 - Android 常驻服务不得等待 `POST_NOTIFICATIONS` 才启动前台服务或继续 VPN 授权；该权限只影响通知栏展示。
   返回 `START_STICKY` 的服务必须处理空 Intent，并从持久化状态恢复运行模式，不能猜测为 TUN。
-  打开应用只拉起常驻内核、不自动启动代理（`startCore` 的 `startVpn=false`：配置仍按持久化 TUN 意图编译以保住回收恢复的 TUN inbound，服务以 core-only 运行时标记 `tun_preference_reset_pending` 让 UI 开关回读为关）；TUN 只由用户显式操作（首页悬浮按钮/设置开关/快捷磁贴）或服务按持久化模式回收恢复拉起。
+  打开应用只拉起常驻内核、不自动启动代理（`startCore` 的 `startVpn=false`：配置仍按持久化 TUN 意图编译以保住回收恢复的 TUN inbound，服务以 core-only 运行时标记 `tun_preference_reset_pending` 让 UI 开关回读为关）；TUN 只由用户显式操作（首页悬浮按钮/快捷磁贴）或服务按持久化模式回收恢复拉起。
 - Android sing-box 所有者固定在 `:background`：`ClashVpnService` 持有 libbox/VpnService，
   `RuntimeControlService` 提供 AIDL/Binder 控制与状态查询。UI 进程通过 JNI 接收后台快照，
   不得再依赖跨进程不可见的 Java 静态字段。
@@ -260,6 +260,36 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   `pidAlive` / socket 协议管理，不属于本进程 RAII 的范畴。
 
 ### HuxerUI 应用级模型（application service）
+
+**跨入口运行控制统一约定**：首页、设置页与桌面托盘通过 `UseCoreControl()` /
+`CoreControl::Run()` 发起内核启停、重启、出站模式、系统代理和 TUN/VPN 操作。
+`CoreModel::operations` 保存全应用唯一的进行中命令和版本；互相冲突的动作单飞，
+不能在卡片、设置行或托盘里各存一份 busy/pending、授权等待或失败回退。
+运行操作使用应用级 TaskScope，切页/缩放卸载发起控件后仍完成结果发布与反馈；
+UI 回调不调用阻塞的 store/系统操作。安装服务与退出清理保留各自生命周期边界。
+
+配置意图与实际状态分别读取：`CoreView::tunIntent`、`modeIntent`、
+`systemProxyIntent` 是配置；`TunActive()`、`vpnState`、`systemProxyActive` 与
+`core` 是运行/系统回读。停止内核不能把保存的 TUN 意图显示成已关闭；保存代理
+意图不能伪造系统已接管。配置端口来自 `SettingsModel`，运行端口来自内核快照；
+系统代理与运行期间复制的环境变量使用实际监听端口，端口修改仍在重启后生效。
+端口校验和写透使用 `SettingsModel::SetPorts`，环境 shell 使用 `SetEnvShell`，
+LAN/IPv6 使用 `CoreModel::SetAllowLan/SetIpv6`，页面不重复校验或复制写入流程。
+
+动作结果在应用任务中回读并发布，失败不显示成功；轮询发布必须先校验操作版本，
+拒绝在途旧结果（包括 ABA），不能先写模型再检查。Android VPN 状态只由应用泵
+读后台快照，页面不再单独轮询；授权等待由共享操作持有，打开应用仍只启动
+core-only，系统授权与后台服务恢复规则不变。
+
+日常运行控制集中在首页：出站模式、桌面系统代理/TUN 与内核悬浮启停按钮；手机
+使用 VPN 悬浮按钮。首页保留原有卡片顺序、跨度和从左上空位紧凑填充的网格，
+桌面窄屏也保留系统代理/TUN 两张独立卡片，不自动合并或放大其它卡片。两个开关
+不能改成互斥模式，也不能因窄屏隐藏桌面能力。托盘仍共用同一控制入口。
+设置页保留网络参数与维护：
+端口/LAN/IPv6/桌面环境变量、运行中重启、内核版本与服务管理；Android 保留后台
+保活，不再重复放日常模式/接管/启停开关。配置页只维护来源与规则。
+连接条目使用 DenseCard，4pt 卡间距与 dense 圆角密度一致，保留虚拟化、稳定 ID
+及组合期资源读取；估算高度要计入卡片内外留白。
 
 跨页面共享数据统一走 `application_hooks` 安装的 application service：`context.Provide`
 模型、组件用 `UseService<T>()` 取用，模型内持 `State`/`StateList`；由 `src/ui/common.cpp`
