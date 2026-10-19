@@ -11,8 +11,8 @@
   `startForeground()`，JNI 初始化、libbox setup、配置校验和数据面启动都在服务工作线程执行。
 - [NekoBox](https://github.com/MatsuriDayo/NekoBoxForAndroid) 把代理服务、VPN 服务、启动广播
   和磁贴放在后台进程中。其网络设置也提供“网络变化后重置连接”和“设备唤醒后重置连接”的思路；
-  Clash-Flux 在检测到物理接口变化、退出 Doze 或亮屏后，先更新 libbox 默认接口，再延迟关闭旧连接，
-  让 sing-box 通过新网络重新拨出。
+  Clash-Flux 在检测到物理网络、接口或 DNS 服务器变化、退出 Doze 或亮屏后，先更新 libbox
+  默认接口，再延迟关闭旧连接，让 sing-box 通过新网络重新拨出。
 - 不照搬任何客户端的单个版本的启动顺序。官方 sing-box Android 在 1.14.0 的
   [Android 16 前台启动问题](https://github.com/SagerNet/sing-box/issues/4494)记录了磁贴/Always-on
   启动时异步启动服务、未及时调用 `startForeground()` 的失败路径；Clash-Flux 保持先提升前台、后做异步初始化。
@@ -48,9 +48,11 @@
 
 ## 网络切换和唤醒
 
-服务监听带 Internet 能力的网络与默认物理接口。物理网络或接口变化时更新 libbox 的
-`InterfaceUpdateListener`，稍作合并后关闭现有出站连接。屏幕点亮或设备退出 Doze 时执行同一连接
-重置，恢复休眠前卡住的上游连接。若服务未在运行，不创建额外内核，也不持有额外 wake lock。
+服务监听带 Internet 能力的网络与默认物理接口。物理网络、接口或当前物理网络的 DNS
+服务器列表变化时更新 libbox 的 `InterfaceUpdateListener`；DNS 变化使用回调携带的
+`LinkProperties`，保证 libbox 刷新接口时读到新列表，然后稍作合并关闭现有出站连接。
+屏幕点亮或设备退出 Doze 时执行同一连接重置，恢复休眠前卡住的上游连接。若服务未在运行，
+不创建额外内核，也不持有额外 wake lock。
 
 ## 限制与诊断
 

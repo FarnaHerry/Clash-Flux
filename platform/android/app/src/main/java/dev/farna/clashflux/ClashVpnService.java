@@ -93,7 +93,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private final Object stopLock = new Object();
     private volatile Network defaultNetwork;
     private volatile InterfaceUpdateListener defaultInterfaceListener;
-    private volatile String lastPhysicalInterface = "";
+    private volatile PhysicalLink physicalLink = new PhysicalLink(null, null);
     private volatile long networkChangeGeneration;
     private ConnectivityManager connectivityManager;
     private HandlerThread networkThread;
@@ -111,7 +111,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
 
                 @Override public void onLinkPropertiesChanged(Network network,
                                                                LinkProperties properties) {
-                    handlePhysicalNetworkChanged("Android 网络接口已更新");
+                    handlePhysicalNetworkChanged("Android 网络配置已更新", network, properties);
                 }
             };
     private final BroadcastReceiver wakeReceiver = new BroadcastReceiver() {
@@ -477,6 +477,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             MainActivity.appLog("后台进程正在初始化 JNI 与 libbox", false);
             MainActivity.bootstrapNative(this);
             defaultNetwork = findPhysicalNetwork();
+            physicalLink = readPhysicalLink(defaultNetwork, null, null);
             setup();
             if (!libboxReady) throw new IllegalStateException("libbox 初始化失败");
             runtimeBootstrapReady = true;
@@ -854,11 +855,41 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         return null;
     }
 
+    private static final class PhysicalLink {
+        final Network network;
+        final LinkProperties properties;
+        final String interfaceName;
+        final List<String> dnsServers;
+
+        PhysicalLink(Network network, LinkProperties properties) {
+            this.network = network;
+            this.properties = properties;
+            interfaceName = this.properties == null || this.properties.getInterfaceName() == null
+                    ? "" : this.properties.getInterfaceName();
+            dnsServers = new ArrayList<>();
+            if (this.properties != null) {
+                for (InetAddress dns : this.properties.getDnsServers()) {
+                    if (dns != null) dnsServers.add(stripAddressScope(dns));
+                }
+            }
+        }
+    }
+
+    private PhysicalLink readPhysicalLink(Network network, Network changedNetwork,
+                                          LinkProperties changedProperties) {
+        LinkProperties properties = network == null || connectivityManager == null ? null
+                : java.util.Objects.equals(network, changedNetwork) && changedProperties != null
+                        ? changedProperties : connectivityManager.getLinkProperties(network);
+        return new PhysicalLink(network, properties);
+    }
+
     private void registerNetworkMonitor() {
         connectivityManager =
                 (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         if (connectivityManager == null) return;
         try {
+            defaultNetwork = findPhysicalNetwork();
+            physicalLink = readPhysicalLink(defaultNetwork, null, null);
             NetworkRequest request = new NetworkRequest.Builder()
                     .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                     .build();
@@ -871,8 +902,6 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 connectivityManager.registerNetworkCallback(request, networkCallback);
             }
             networkMonitorRegistered = true;
-            defaultNetwork = findPhysicalNetwork();
-            lastPhysicalInterface = physicalInterface(defaultNetwork);
         } catch (RuntimeException error) {
             MainActivity.appLog("注册 Android 网络变化监听失败：" + error.getMessage(), true);
         }
@@ -915,24 +944,24 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         }
     }
 
-    private String physicalInterface(Network network) {
-        if (connectivityManager == null || network == null) return "";
-        LinkProperties properties = connectivityManager.getLinkProperties(network);
-        return properties == null || properties.getInterfaceName() == null
-                ? "" : properties.getInterfaceName();
+    private void handlePhysicalNetworkChanged(String reason) {
+        handlePhysicalNetworkChanged(reason, null, null);
     }
 
-    private void handlePhysicalNetworkChanged(String reason) {
+    private synchronized void handlePhysicalNetworkChanged(String reason, Network changedNetwork,
+                                                           LinkProperties changedProperties) {
         Network physical = findPhysicalNetwork();
-        String interfaceName = physicalInterface(physical);
-        boolean changed = !java.util.Objects.equals(defaultNetwork, physical)
-                || !java.util.Objects.equals(lastPhysicalInterface, interfaceName);
+        PhysicalLink next = readPhysicalLink(physical, changedNetwork, changedProperties);
+        PhysicalLink previous = physicalLink;
+        boolean changed = !java.util.Objects.equals(previous.network, next.network)
+                || !previous.interfaceName.equals(next.interfaceName)
+                || !previous.dnsServers.equals(next.dnsServers);
         defaultNetwork = physical;
-        lastPhysicalInterface = interfaceName;
+        physicalLink = next;
         if (!changed) return;
 
         MainActivity.appLog(reason + "，物理接口="
-                + (interfaceName.isEmpty() ? "不可用" : interfaceName), false);
+                + (next.interfaceName.isEmpty() ? "不可用" : next.interfaceName), false);
         InterfaceUpdateListener listener = defaultInterfaceListener;
         if (listener != null) notifyDefaultInterface(listener);
         if (started) scheduleUpstreamReset(reason);
@@ -969,13 +998,17 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             if (manager == null || !isPhysicalNetwork(manager, physical)) {
                 physical = findPhysicalNetwork();
                 defaultNetwork = physical;
+                physicalLink = readPhysicalLink(physical, null, null);
             }
             if (manager == null || physical == null) {
                 listener.updateDefaultInterface("", -1, false, false);
                 MainActivity.appLog("Android 未找到默认物理网络接口", true);
                 return;
             }
-            LinkProperties link = manager.getLinkProperties(physical);
+            PhysicalLink snapshot = physicalLink;
+            LinkProperties link = snapshot.properties != null
+                    && java.util.Objects.equals(snapshot.network, physical)
+                    ? snapshot.properties : manager.getLinkProperties(physical);
             if (link == null || link.getInterfaceName() == null) {
                 listener.updateDefaultInterface("", -1, false, false);
                 MainActivity.appLog("Android 默认物理网络缺少接口信息", true);
@@ -1014,7 +1047,12 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             // Linux interface. This avoids exposing the VPN's own tun device
             // as a candidate physical default interface.
             for (Network network : manager.getAllNetworks()) {
-                LinkProperties link = manager.getLinkProperties(network);
+                PhysicalLink snapshot = physicalLink;
+                // Use the callback's LinkProperties until ConnectivityManager's
+                // synchronous view catches up, so libbox sees DNS-only changes.
+                LinkProperties link = snapshot.properties != null
+                        && java.util.Objects.equals(snapshot.network, network)
+                        ? snapshot.properties : manager.getLinkProperties(network);
                 NetworkCapabilities capabilities = manager.getNetworkCapabilities(network);
                 if (link == null || capabilities == null
                         || link.getInterfaceName() == null) continue;

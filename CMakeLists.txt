@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.49 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.50 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -492,6 +492,10 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # libbox 由 Gradle 统一打进 APK。
     include(cmake/singbox_bundle.cmake)
     clashflux_bundle_singbox(clash-flux)
+    # 内核版本编译期常量（设置页内核行/首页状态的回落展示）：唯一来源是上面
+    # singbox_bundle.cmake 的 CLASHFLUX_SINGBOX_VERSION pin，升级改一处全联动。
+    target_compile_definitions(clash-flux
+        PRIVATE CLASHFLUX_SINGBOX_VERSION="${CLASHFLUX_SINGBOX_VERSION}")
 
     # ---- Windows 自定义安装向导 ---------------------------------------------
     # `huxerui package windows` 时生效（日常构建零开销）：platform/windows/

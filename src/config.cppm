@@ -225,6 +225,17 @@ export std::filesystem::path singboxBinary() {
     return findInPath(exeName);
 }
 
+#ifndef CLASHFLUX_SINGBOX_VERSION
+#define CLASHFLUX_SINGBOX_VERSION "unknown"
+#endif
+
+// 内核标识回落（快照无版本、内核未运行时展示）：固定 pin 版本拼在内核名后。
+// 版本唯一来源是 cmake/singbox_bundle.cmake 的 CLASHFLUX_SINGBOX_VERSION，
+// 升级 sing-box 时改那一处，设置页与首页标识即全量联动。
+export std::string singboxFallbackLabel() {
+    return std::string{"sing-box "} + CLASHFLUX_SINGBOX_VERSION;
+}
+
 // ---- external-controller 端点（本地回环，仅本进程与内核通信）----------------
 export constexpr std::string_view kControllerHost = "127.0.0.1";
 // 高位端口，与其他代理软件的常用默认彻底避让：9090（mihomo/FlClash 控制

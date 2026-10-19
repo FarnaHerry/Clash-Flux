@@ -481,7 +481,8 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
     const auto tasks = huxerui::UseApplicationTaskScope();
     const auto toast = huxerui::UseToast();
     const bool running = view.core.state == core::CoreState::Running;
-    const auto version = view.core.version.empty() ? std::string("sing-box") : view.core.version;
+    const auto version = view.core.version.empty() ? cfg::singboxFallbackLabel()
+                                                   : view.core.version;
     return huxerui::Column {
         SectionTitle(Localized("运行与维护")),
         SettingRow(Localized("内核"), version,

@@ -21,6 +21,11 @@
 option(CLASHFLUX_BUNDLE_SINGBOX
        "Download and bundle the sing-box kernel next to the executable" ON)
 
+# 固定内核版本 pin：与 Android libbox（Gradle）、CI SINGBOX_COMMIT 同一版本，
+# 升级 sing-box 时与六平台资产 SHA256 一同更新。经 CMakeLists 注入
+# CLASHFLUX_SINGBOX_VERSION 编译常量，设置页/首页的内核标识据此联动展示。
+set(CLASHFLUX_SINGBOX_VERSION "1.14.3")
+
 function(clashflux_bundle_singbox target)
     if (NOT CLASHFLUX_BUNDLE_SINGBOX)
         return()
@@ -37,7 +42,6 @@ function(clashflux_bundle_singbox target)
         return()
     endif ()
 
-    set(CLASHFLUX_SINGBOX_VERSION "1.14.3")
     set(_base_url "https://github.com/SagerNet/sing-box/releases/download/v${CLASHFLUX_SINGBOX_VERSION}")
 
     # ---- 平台资产选择 -----------------------------------------------------

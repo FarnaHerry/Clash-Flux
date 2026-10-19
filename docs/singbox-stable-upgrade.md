@@ -89,6 +89,8 @@ iOS xcframework 未在本机重新构建。源接口对比和版本对齐不能�
 
 1. 查询官方 latest stable，核对非 prerelease、release tag 对应源码 revision 和六个
    桌面资产摘要；同时更新 CMake、CI、Android Gradle / 脚本及 iOS 脚本默认 pin。
+   `cmake/singbox_bundle.cmake` 的 `CLASHFLUX_SINGBOX_VERSION` 是 UI 内核标识
+   （`cfg::singboxFallbackLabel()`）的唯一来源，更新 pin 后设置页/首页展示自动联动。
 2. 对比配置结构、Clash API 与 libbox 导出接口，必要时更新调用方，禁止写入未知字段。
 3. 由固定源码重新生成 Android AAR 和 metadata，不能沿用旧二进制补新身份。
 4. 重新构建桌面，核对实际 `engines/sing-box version`；执行仓库要求的应用版本

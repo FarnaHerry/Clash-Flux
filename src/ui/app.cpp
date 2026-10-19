@@ -641,7 +641,7 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
         coreStatusColor = theme.colors.primary;
         coreStatusLabel = LocalizedFormat(
             "内核运行中 · {}", coreView.core.version.empty()
-                                  ? std::string{"sing-box"}
+                                  ? cfg::singboxFallbackLabel()
                                   : coreView.core.version);
         break;
     case core::CoreState::Starting:
