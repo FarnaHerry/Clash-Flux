@@ -66,6 +66,7 @@ export struct ProfileFidelityReport {
 
 export struct CoreSnapshot {
     core::CoreState state = core::CoreState::Stopped;
+    std::chrono::steady_clock::time_point runningSince{}; // 控制器确认就绪的时间
     std::string binaryPath;      // 解析到的内核路径（空 = 未安装）
     std::string version;         // 内核版本（Running 时）
     std::string lastError;

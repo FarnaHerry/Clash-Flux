@@ -186,6 +186,8 @@ inline constexpr float kTitle = 20.0F;    // 页面/弹窗标题
 // Compact 悬浮导航覆盖在内容岛底部时，滚动内容需要一个真正属于滚动内容
 // 的尾部空白，确保最后一项可以滑到悬浮岛上方，而不是被悬浮层遮住。
 inline constexpr float kCompactFloatingNavigationInset = 96.0F;
+// 56pt 悬浮操作按钮采用圆角方形，与页面卡片的圆角语言一致。
+inline constexpr float kFloatingActionCornerRadius = 18.0F;
 
 inline huxerui::View CompactFloatingNavigationFooter() {
     return huxerui::Spacer{}.With(

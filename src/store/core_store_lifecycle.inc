@@ -104,6 +104,7 @@
             }
 #endif
             snap_.state = core::CoreState::Starting;
+            snap_.runningSince = {};
             snap_.lastError.clear();
         }
         lastProfileYaml_ = profileYaml;
@@ -461,6 +462,7 @@
         {
             std::lock_guard lock(mutex_);
             snap_.state = core::CoreState::Running;
+            snap_.runningSince = std::chrono::steady_clock::now();
             snap_.planRevision = lastPreparedOptions_ ? lastPreparedOptions_->planRevision : 0;
             lastAppliedOptions_ = lastPreparedOptions_;
             setSetting("routing.applied_revision", std::to_string(snap_.planRevision));
@@ -505,6 +507,7 @@
         }
         std::lock_guard lock(mutex_);
         snap_.state = core::CoreState::Stopped;
+        snap_.runningSince = {};
         snap_.version.clear();
         snap_.tunEnabled = false;
         return true;
@@ -521,6 +524,7 @@
         std::filesystem::remove(cfg::coreWorkDir() / "core.pid", ec);
         std::lock_guard lock(mutex_);
         snap_.state = core::CoreState::Stopped;
+        snap_.runningSince = {};
         snap_.version.clear();
         snap_.tunEnabled = false;
         return true;
@@ -595,6 +599,7 @@
 #endif
         std::lock_guard lock(mutex_);
         snap_.state = core::CoreState::Stopped;
+        snap_.runningSince = {};
         snap_.version.clear();
         return true;
 #endif

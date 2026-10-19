@@ -19,6 +19,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <format>
 #include <functional>
 #include <iterator>
 #include <memory>
@@ -882,15 +883,15 @@ huxerui::XYChartData BuildTrafficChartData(
     huxerui::View floating = huxerui::Stack {
         std::move(button),
         changing ? huxerui::View{huxerui::ProgressCircle().With(
-                       huxerui::Frame{.width = 28.0F, .height = 28.0F},
-                       huxerui::Align(huxerui::HorizontalAlignment::Center,
-                                      huxerui::VerticalAlignment::Center))}
+                       huxerui::Frame{.width = 28.0F, .height = 28.0F})}
                  : huxerui::View{huxerui::Row{}},
     }.With(huxerui::Frame{.width = 56.0F, .height = 56.0F},
+           huxerui::Align(huxerui::HorizontalAlignment::Center,
+                          huxerui::VerticalAlignment::Center),
            huxerui::Background(failed ? theme.colors.error
                : active || changing ? theme.colors.primary_container
                                     : theme.colors.primary),
-           huxerui::CornerRadius(28.0F),
+           huxerui::CornerRadius(kFloatingActionCornerRadius),
            huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F, 2.0F},
            huxerui::Scale(huxerui::AnimateTo(
                changing ? 0.94F : 1.0F,
@@ -1000,6 +1001,20 @@ struct HomeControlArc {
 [[huxerui::composable]] huxerui::View DesktopHomeStatusCard() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const auto control = UseCoreControl();
+    const auto tasks = huxerui::UseTaskScope();
+    auto clock = huxerui::UseState<std::chrono::steady_clock::time_point>(
+        std::chrono::steady_clock::now());
+    huxerui::Lifecycle(
+        [tasks, clock] {
+            tasks.Launch([clock]() -> huxerui::Task<void> {
+                for (;;) {
+                    co_await huxerui::Delay(std::chrono::seconds{1});
+                    clock = std::chrono::steady_clock::now();
+                }
+            });
+            return [] {};
+        },
+        0);
     const CoreAction action = control.model->operations.command.Get().action;
     const bool changing = action == CoreAction::Start ||
                           action == CoreAction::Stop;
@@ -1007,6 +1022,15 @@ struct HomeControlArc {
         action == CoreAction::Start ? "正在启动"
         : action == CoreAction::Stop ? "正在停止"
                                      : "运行中");
+    const auto runningSince = control.model->view.Get().core.runningSince;
+    const auto elapsed = runningSince == std::chrono::steady_clock::time_point{}
+        ? std::chrono::seconds{0}
+        : std::max(std::chrono::seconds{0},
+                   std::chrono::duration_cast<std::chrono::seconds>(
+                       clock.Get() - runningSince));
+    const auto seconds = elapsed.count();
+    const std::string uptime = std::format("{:02}:{:02}:{:02}",
+        seconds / 3600, (seconds / 60) % 60, seconds % 60);
     huxerui::View icon = changing
         ? huxerui::View{huxerui::ProgressCircle().With(
               huxerui::Frame{.width = 24.0F, .height = 24.0F})}
@@ -1014,12 +1038,11 @@ struct HomeControlArc {
               .Fit(huxerui::ImageFit::Contain)
               .Tint(theme.colors.on_primary_container)
               .With(huxerui::Frame{.width = 22.0F, .height = 22.0F})};
-    icon = std::move(icon).With(huxerui::Align(
-        huxerui::HorizontalAlignment::Center,
-        huxerui::VerticalAlignment::Center));
     huxerui::View content = huxerui::Row {
         huxerui::Stack { std::move(icon) }
             .With(huxerui::Frame{.width = 36.0F, .height = 36.0F},
+                  huxerui::Align(huxerui::HorizontalAlignment::Center,
+                                 huxerui::VerticalAlignment::Center),
                   huxerui::Background(theme.colors.primary_container),
                   huxerui::CornerRadius(18.0F),
                   huxerui::Scale(huxerui::AnimateTo(
@@ -1031,8 +1054,8 @@ struct HomeControlArc {
                 huxerui::Font::System(font_size::kCaption)
                     .WithWeight(huxerui::FontWeight::SemiBold),
                 theme.colors.on_surface}),
-            huxerui::Text(Localized("停止内核")).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kCaption),
+            huxerui::Text(uptime).Style(huxerui::TextStyle{
+                huxerui::Font::Monospace(font_size::kCaption),
                 theme.colors.on_surface_variant}),
         }.With(huxerui::Spacing(2.0F)),
     }.With(huxerui::Spacing(6.0F),
@@ -1043,6 +1066,7 @@ struct HomeControlArc {
             control.Run({.action = CoreAction::Stop});
         })
         .With(huxerui::Enabled(!control.Busy()),
+              huxerui::Tooltip(Localized("停止内核")),
               huxerui::Indication{},
               huxerui::SharedBounds("home-core-control")
                   .BoundsTransform(HomeControlArc{}),
@@ -1091,15 +1115,15 @@ struct HomeControlArc {
     huxerui::View floating = huxerui::Stack {
         std::move(button),
         changing ? huxerui::View{huxerui::ProgressCircle().With(
-                       huxerui::Frame{.width = 28.0F, .height = 28.0F},
-                       huxerui::Align(huxerui::HorizontalAlignment::Center,
-                                      huxerui::VerticalAlignment::Center))}
+                       huxerui::Frame{.width = 28.0F, .height = 28.0F})}
                  : huxerui::View{huxerui::Row{}},
     }.With(huxerui::Frame{.width = 56.0F, .height = 56.0F},
+           huxerui::Align(huxerui::HorizontalAlignment::Center,
+                          huxerui::VerticalAlignment::Center),
            huxerui::Background(active || changing
                                    ? theme.colors.primary_container
                                    : theme.colors.primary),
-           huxerui::CornerRadius(28.0F),
+           huxerui::CornerRadius(kFloatingActionCornerRadius),
            huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F, 2.0F},
            huxerui::Scale(huxerui::AnimateTo(
                changing ? 0.94F : 1.0F,

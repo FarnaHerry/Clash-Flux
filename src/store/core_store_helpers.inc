@@ -395,5 +395,6 @@
         stream::logApplication("error", "内核操作失败：" + error);
         std::lock_guard lock(mutex_);
         snap_.state = core::CoreState::Failed;
+        snap_.runningSince = {};
         snap_.lastError = std::move(error);
     }
