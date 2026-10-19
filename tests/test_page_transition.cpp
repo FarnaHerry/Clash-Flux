@@ -131,10 +131,11 @@ huxerui::View ConnectionListRoot() {
                     .id = id, .host = index == 0 ? "未知目标" : "host-" + id,
                     .network = "tcp", .chains = "DIRECT", .rule = "未匹配规则"};
                 // 调用生产行组件，factory 本身没有活动组合上下文。
-                return clashflux::ui::ConnectionRowContent(row, "↑1KB/s ↓2KB/s", compact,
+                return clashflux::ui::ConnectionRowContent(row, "1KB/s", "2KB/s",
+                    "10KB", "20KB", compact,
                     huxerui::Button("CLOSE-" + id).OnClick([closed, id] { closed = id; }))
                     .Key("connection-fixture-" + id);
-            }).EstimatedItemExtent(compact ? 92.0F : 44.0F).Controller(scroll)
+            }).EstimatedItemExtent(compact ? 138.0F : 96.0F).Controller(scroll)
                 .With(huxerui::Grow(1.0F)).Key("connection-fixture-list");
         }
         return huxerui::Column {
@@ -156,9 +157,11 @@ void testConnectionList() {
     ui.PumpAndSettle();
     check(connectionRowsBuilt == 0, "未进入连接页不构建连接行");
     ui.Find(UiSelector::Text("ENTER-CONNECTIONS")).Tap(); ui.PumpAndSettle();
-    check(ui.Find(UiSelector::Text("链路：DIRECT")).Exists() &&
-          ui.Find(UiSelector::Text("规则：未匹配规则")).Exists() &&
-          ui.Find(UiSelector::Text("未知目标")).Exists(), "窄屏生产连接行安全解析本地化模板及缺省字段");
+    check(ui.Find(UiSelector::Text("DIRECT")).Exists() &&
+          ui.Find(UiSelector::Text("未匹配规则")).Exists() &&
+          ui.Find(UiSelector::Text("↑ 1KB/s")).Exists() &&
+          ui.Find(UiSelector::Text("↓ 2KB/s")).Exists() &&
+          ui.Find(UiSelector::Text("未知目标")).Exists(), "窄屏生产连接行展示实时流量和缺省字段");
     check(connectionRowsBuilt > 0 && connectionRowsBuilt < 100, "一千条连接仅构造视口附近行");
     ui.Find(UiSelector::Text("CLOSE-0")).Tap(); ui.PumpAndSettle();
     check(ui.Find(UiSelector::Text("CLOSED-0")).Exists(), "关闭连接回调保留正确 ID");
@@ -169,13 +172,13 @@ void testConnectionList() {
     ui.SetWindowMetrics({.viewport = {1080.0F, 700.0F}}); ui.PumpAndSettle();
     check(ui.Find(UiSelector::Text("未匹配规则")).Exists(), "宽屏缺省字段也在组合期解析");
     ui.SetWindowMetrics({.viewport = {320.0F, 700.0F}}); ui.PumpAndSettle();
-    check(ui.Find(UiSelector::Text("规则：未匹配规则")).Exists(), "宽屏切回窄屏可重建连接行");
+    check(ui.Find(UiSelector::Text("未匹配规则")).Exists(), "宽屏切回窄屏可重建连接行");
     ui.Find(UiSelector::Text("ENTER-CONNECTIONS")).Tap(); ui.PumpAndSettle();
     ui.Find(UiSelector::Text("ENTER-CONNECTIONS")).Tap(); ui.PumpAndSettle();
-    check(ui.Find(UiSelector::Text("规则：未匹配规则")).Exists(), "离开后重进连接页安全挂载");
+    check(ui.Find(UiSelector::Text("未匹配规则")).Exists(), "离开后重进连接页安全挂载");
     ui.UpdateResourceConfiguration({.locale = huxerui::Locale::FromLanguageTag("en")});
     ui.PumpAndSettle();
-    check(ui.Find(UiSelector::Text("Rule: No matching rule")).Exists() &&
+    check(ui.Find(UiSelector::Text("No matching rule")).Exists() &&
           ui.Find(UiSelector::Text("Unknown destination")).Exists(), "已挂载连接行响应语言切换");
 }
 
