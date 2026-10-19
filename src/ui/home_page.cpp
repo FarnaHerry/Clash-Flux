@@ -105,7 +105,7 @@ constexpr HomeCardSpec kHomeCards[] = {
 constexpr bool kDesktopHomeControl = false;
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     huxerui::Row{}
-#define CLASHFLUX_HOME_CONTROL_CARD() huxerui::Row{}
+#define CLASHFLUX_HOME_CONTROL_CARD(shown, transition) huxerui::Row{}
 #define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact, shown, transition) \
     AndroidHomeFloatingAction(std::move(page), state, compact)
 #else
@@ -130,7 +130,8 @@ constexpr HomeCardSpec kHomeCards[] = {
 constexpr bool kDesktopHomeControl = true;
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     DesktopHomePlatformCard(kind)
-#define CLASHFLUX_HOME_CONTROL_CARD() DesktopHomeStatusCard()
+#define CLASHFLUX_HOME_CONTROL_CARD(shown, transition) \
+    DesktopHomeStatusCard(shown, transition)
 #define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact, shown, transition) \
     DesktopHomeFloatingAction(std::move(page), compact, shown, transition)
 #endif
@@ -1019,7 +1020,29 @@ struct HomeControlMoveExpand {
     return huxerui::Row{};
 }
 
-[[huxerui::composable]] huxerui::View DesktopHomeStatusCard() {
+void RunDesktopHomeCoreAction(const CoreControl& control,
+                              huxerui::State<bool> cardShown,
+                              huxerui::SharedTransitionHandle transition,
+                              CoreAction action) {
+    if (control.Busy()) return;
+    control.Run({.action = action});
+    // Start the shared motion in the click frame. The command state is already
+    // pending, so the expanded card can show its loading indicator immediately.
+    const bool showCard = action == CoreAction::Start;
+    try {
+        transition.Run(kHomeControlMotion, [cardShown, showCard] {
+            cardShown = showCard;
+        });
+    } catch (const std::logic_error&) {
+        // The scope can retire during a viewport change; keep the command's
+        // presentation in sync even when the shared animation cannot run.
+        cardShown = showCard;
+    }
+}
+
+[[huxerui::composable]] huxerui::View DesktopHomeStatusCard(
+    huxerui::State<bool> cardShown,
+    huxerui::SharedTransitionHandle transition) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const auto control = UseCoreControl();
     const auto tasks = huxerui::UseTaskScope();
@@ -1083,8 +1106,9 @@ struct HomeControlMoveExpand {
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
            huxerui::MainAlign(huxerui::MainAxisAlignment::Center));
     return huxerui::View{Card(std::move(content))}
-        .OnClick([control] {
-            control.Run({.action = CoreAction::Stop});
+        .OnClick([control, cardShown, transition] {
+            RunDesktopHomeCoreAction(control, cardShown, transition,
+                                     CoreAction::Stop);
         })
         .With(huxerui::Enabled(!control.Busy()),
               huxerui::Tooltip(Localized("停止内核")),
@@ -1110,12 +1134,13 @@ struct HomeControlMoveExpand {
     const CoreAction command = control.model->operations.command.Get().action;
     const bool changing = command == CoreAction::Start ||
                           command == CoreAction::Stop;
-    const auto toggle = [control, active] {
-        if (control.Busy()) return;
-        // Keep the button visible while the command is pending. The HomePage
-        // lifecycle starts the shared transition once the new state is read
-        // back, so both directions animate against stable content.
-        control.Run({.action = active ? CoreAction::Stop : CoreAction::Start});
+    const auto toggle = [control, active, compact, cardShown, transition] {
+        const CoreAction action = active ? CoreAction::Stop : CoreAction::Start;
+        if (compact) {
+            control.Run({.action = action});
+        } else {
+            RunDesktopHomeCoreAction(control, cardShown, transition, action);
+        }
     };
 
     huxerui::View button =
@@ -1283,7 +1308,8 @@ struct HomeControlMoveExpand {
                             .Key("home-card-" + id));
     }
     if (kDesktopHomeControl && !compact && controlCardShown.Get()) {
-        cards.push_back(huxerui::View{CLASHFLUX_HOME_CONTROL_CARD()}
+        cards.push_back(huxerui::View{CLASHFLUX_HOME_CONTROL_CARD(
+                            controlCardShown, controlTransition)}
                             .LayoutValue<HomeCardSpan>({1, 1})
                             .LayoutValue<HomeControlSpan>(true)
                             .Key("home-card-control"));
