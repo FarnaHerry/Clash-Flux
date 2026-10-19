@@ -22,7 +22,7 @@
 
 - sing-box 对未知字段**直接拒绝启动**，因此配置里出现的每个键都必须能在上游文档或源码里
   找到出处；不要靠「看起来像」猜字段。
-- 版本固定：桌面二进制与 Android libbox 必须是同一版本、同一源码 revision（当前 1.14.2）；平台资产分别校验 SHA256；升级
+- 版本固定：桌面二进制与 Android libbox 必须是同一版本、同一源码 revision（当前 1.14.3）；平台资产分别校验 SHA256；升级
   时按上游逐项复核，而不是就地改内核行为。
 - 控制面走内核自带的 `clash_api`（sing-box 官方提供的兼容层，不是本项目的发明）；内核
   没有的概念（endpoint、rule_set、selector/urltest 语义）不在这一层做兼容包装。
@@ -164,7 +164,7 @@ std::string FidelitySummary(const std::vector<FidelityNote>& notes);
    c. 否则**不做**。
 4. **任何情况下不得在 UI 假装支持。**
 
-## 4. 当前基线（sing-box 1.14.2）
+## 4. 当前基线（sing-box 1.14.3）
 
 原生 JSON 合并托管项时，`experimental.cache_file` 仅强制 `enabled: true`，保留
 `path`、`cache_id`、`store_fakeip`、`store_rdrc` 等用户配置，不整对象重建。
@@ -191,8 +191,8 @@ std::string FidelitySummary(const std::vector<FidelityNote>& notes);
 sing-box 1.14 官方还提供、但尚未从 Clash YAML 映射：`shadowtls`、
 `tor`、`naive`。**WireGuard 出站在 1.13 已移除，应使用 endpoint**，不能再放进
 出站覆盖率的分母。依据为固定 revision 的
-[出站注册表](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/include/registry.go)
-与 [QUIC 注册表](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/include/quic.go)。
+[出站注册表](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/include/registry.go)
+与 [QUIC 注册表](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/include/quic.go)。
 
 全部已接入节点使用明确的字段白名单（含传输层子字段）；未映射的组合伪装、证书约束
 或其它字段会使整条节点被跳过并记 `Node/Unsupported`，不会悄悄改成普通线路。
@@ -225,7 +225,7 @@ ALPN 与 servername/SNI 共用 TLS 转换，不因 ALPN 分支丢失其它设置
 显式 `tls: false` 不会因 SNI/Reality 被重新开启；省略 tls 的历史 SNI/Reality 隐式启用
 行为仍保留。QUIC 不使用这个 TCP uTLS 默认。`random` 指纹分布与 Clash 不保证相同，
 `chrome_psk*` / `chrome_padding_psk_shuffle` / `chrome_pq*` 在固定内核里折成普通 chrome，
-均记 `Node/Approx`。依据：[固定 uTLS 实现](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/common/tls/utls_client.go)、
+均记 `Node/Approx`。依据：[固定 uTLS 实现](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/common/tls/utls_client.go)、
 [Clash TLS 输入](https://wiki.metacubex.one/config/proxies/tls/)；Mihomo 已弃用全局指纹，
 新配置应优先指定节点值。
 
@@ -265,9 +265,9 @@ packetaddr；VLESS 显式 `packetaddr`/`packet` 则优先于历史 xudp，其它
 packet-addr 与 xudp 的组合按来源实现解析。这些差异不能用一个统一默认掩盖。
 `hop-interval` 只接受不会溢出 Go time.Duration 的秒数（最大 9223372036），反向范围按 Clash 归一为升序。
 
-依据：[固定 VMess 选项](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/vmess.go)、
-[固定 VLESS 默认](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/protocol/vless/outbound.go)、
-[固定 HY2 实现](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/protocol/hysteria2/outbound.go)、
+依据：[固定 VMess 选项](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/option/vmess.go)、
+[固定 VLESS 默认](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/protocol/vless/outbound.go)、
+[固定 HY2 实现](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/protocol/hysteria2/outbound.go)、
 [固定 sing-quic Gecko](https://github.com/SagerNet/sing-quic/blob/6a3a24d65b99/hysteria2/gecko.go)；
 Clash 有效默认与优先级核对 [Mihomo VMess](https://github.com/MetaCubeX/mihomo/blob/Meta/adapter/outbound/vmess.go)、
 [VLESS](https://github.com/MetaCubeX/mihomo/blob/Meta/adapter/outbound/vless.go) 和
@@ -293,8 +293,8 @@ Clash 有效默认与优先级核对 [Mihomo VMess](https://github.com/MetaCubeX
 公开[SSH 样本](examples/ssh-2026-10-02.yaml)内的私钥是专门生成的公开测试材料，
 仅用于配置检查；5 个节点包括加密私钥、固定主机公钥、双认证和代理链。
 内核 check 不验证远端公钥匹配、认证协商或真实流量。
-依据：[固定 schema](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/ssh.go)、
-[固定出站实现](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/protocol/ssh/outbound.go)、
+依据：[固定 schema](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/option/ssh.go)、
+[固定出站实现](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/protocol/ssh/outbound.go)、
 [Mihomo SSH](https://github.com/MetaCubeX/mihomo/blob/Meta/adapter/outbound/ssh.go)（2026-10-02 核对）、
 [原生库算法](https://github.com/golang/crypto/blob/v0.54.0/ssh/keys.go)及
 [证书算法](https://github.com/golang/crypto/blob/v0.54.0/ssh/certs.go)。
@@ -328,8 +328,8 @@ Clash 有效默认与优先级核对 [Mihomo VMess](https://github.com/MetaCubeX
 Node 账本与现有摘要，不因内核 check 成功而消失。样本见
 [hysteria1-2026-10-02.yaml](examples/hysteria1-2026-10-02.yaml)。
 核对依据：
-[固定 Hysteria schema](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/hysteria.go)、
-[固定 QUIC schema](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/http.go)、
+[固定 Hysteria schema](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/option/hysteria.go)、
+[固定 QUIC schema](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/option/http.go)、
 [固定窗口应用](https://github.com/SagerNet/sing-quic/blob/6a3a24d65b99/quic.go)、
 [固定 hopping](https://github.com/SagerNet/sing-quic/blob/6a3a24d65b99/hysteria/hop.go)、
 [Mihomo Hysteria](https://github.com/MetaCubeX/mihomo/blob/Meta/adapter/outbound/hysteria.go)、
@@ -357,10 +357,10 @@ SS 不再一律拒绝插件，当前只转换固定内核内置的 simple-obfs �
 SS 字段覆盖。类型覆盖仍为 10/15。正向样本见
 [ss-plugins-2026-10-02.yaml](examples/ss-plugins-2026-10-02.yaml)。
 
-依据：[固定 obfs-local](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/transport/sip003/obfs.go)、
-[固定 v2ray-plugin](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/transport/sip003/v2ray.go)、
-[SIP003 参数解析](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/transport/sip003/args.go)、
-[固定 UOT 选项](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/udp_over_tcp.go)、
+依据：[固定 obfs-local](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/transport/sip003/obfs.go)、
+[固定 v2ray-plugin](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/transport/sip003/v2ray.go)、
+[SIP003 参数解析](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/transport/sip003/args.go)、
+[固定 UOT 选项](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/option/udp_over_tcp.go)、
 [固定 sing UOT 默认](https://github.com/SagerNet/sing/blob/87c33f17688f/common/uot/client.go) 与
 [Mihomo SS 输入及默认](https://github.com/MetaCubeX/mihomo/blob/Meta/adapter/outbound/shadowsocks.go)
 （2026-10-02 核对）。
@@ -394,8 +394,8 @@ JSON 使用，本轮不把它当成 Clash 版本转换。字段边界及后续�
 非法值整条节点拒绝，不把字符串或溢出整数转成默认值。Android 编译器的 `__linux__`
 不能作为 GoOS Linux 能力判断，routing_mark 明确排除 Android。
 接口存在性、权限和对端 TCP 支持由实际运行环境决定，本轮未作线路握手验证。
-依据：[固定拨号文档](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/docs/configuration/shared/dial.md)、
-[DefaultDialer](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/common/dialer/default.go)。
+依据：[固定拨号文档](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/docs/configuration/shared/dial.md)、
+[DefaultDialer](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/common/dialer/default.go)。
 
 ### 4.1c L3 桌面来源编排基线（2026-10-03）
 
@@ -522,7 +522,7 @@ Clash 图检查，仍保留原始字段并由固定内核校验。
 上游依据（2026-10-03）：[域名通配语法](https://wiki.metacubex.one/handbook/syntax/#域名通配符)、
 [Mihomo trie](https://github.com/MetaCubeX/mihomo/blob/Meta/component/trie/domain.go)、
 [DNS trie 插入顺序](https://github.com/MetaCubeX/mihomo/blob/Meta/dns/resolver.go)、
-[固定内核 regex 匹配](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/route/rule/rule_item_domain_regex.go)。
+[固定内核 regex 匹配](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/route/rule/rule_item_domain_regex.go)。
 
 证书参数样本：[dns-tls-parameters-2026-10-03.yaml](examples/dns-tls-parameters-2026-10-03.yaml)。
 `dns_tls_runtime` 使用生产编译器、固定内核和独占临时证书/loopback DoT/DoH 服务；
@@ -535,9 +535,9 @@ Clash 图检查，仍保留原始字段并由固定内核校验。
 [DoT](https://github.com/MetaCubeX/mihomo/blob/Meta/dns/dot.go)、
 [DoH](https://github.com/MetaCubeX/mihomo/blob/Meta/dns/doh.go)、
 [DoQ](https://github.com/MetaCubeX/mihomo/blob/Meta/dns/doq.go)、
-[固定 TLS 选项](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/tls.go)、
-[固定 DoT](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/dns/transport/tls.go)、
-[固定 DoH](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/dns/transport/https.go)。
+[固定 TLS 选项](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/option/tls.go)、
+[固定 DoT](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/dns/transport/tls.go)、
+[固定 DoH](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/dns/transport/https.go)。
 
 hosts DNS 应答置于 nameserver-policy 和 GEO DNS policy 之前，只匹配明确的域名与
 A/AAAA，不改变 TXT/MX 等查询或扩大到子域。连接阶段在嗅探/DNS 劫持后、普通
@@ -553,9 +553,9 @@ DNS 应答/连接前置规则；该差异单独记 source.hosts/approx。未匹�
 DNS/HTTP/SOCKS 端口运行；不打开应用运行时/数据库、不使用真实订阅或远端服务。
 这是 Linux 本地受控 DNS/连接验证，不等同于公网/Android 实机验收。
 上游依据（2026-10-03）：
-[固定 hosts schema](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/dns.go)、
-[原生 hosts 实现](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/dns/transport/hosts/hosts.go)、
-[resolver 选项](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/outbound.go)、
+[固定 hosts schema](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/option/dns.go)、
+[原生 hosts 实现](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/dns/transport/hosts/hosts.go)、
+[resolver 选项](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/option/outbound.go)、
 [Clash hosts 应答/use-hosts](https://github.com/MetaCubeX/mihomo/blob/Meta/dns/middleware.go)、
 [Clash hosts 解析/多地址选择](https://github.com/MetaCubeX/mihomo/blob/Meta/component/resolver/host.go)。
 
@@ -642,8 +642,8 @@ Android 仍只使用打包/可用本地 GEO，没有缓存则记 unsupported 并
 此批未增加在线 provider 下载或手机多来源编排。复现样本见
 [logical-rules-2026-10-02.yaml](examples/logical-rules-2026-10-02.yaml)。
 原生结构边界核对
-[固定 route schema](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/rule.go)、
-[固定 HeadlessRule schema](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/rule_set.go)。
+[固定 route schema](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/option/rule.go)、
+[固定 HeadlessRule schema](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/option/rule_set.go)。
 
 inline rule-providers 支持任意名称：domain 的完整域名/+.后缀、ipcidr 的 IPv4/IPv6，
 classical 复用以上逻辑条件子集。整份 payload 必须可转换才生成原生 inline rule_set，
@@ -745,7 +745,7 @@ check 检查输出。真实 HTTP(S) 下载/原子提交另由 `rule_provider_dow
 [缺省下载拨号/请求头](https://github.com/MetaCubeX/mihomo/blob/Meta/component/http/http.go)、
 [curl 请求头与重定向传播](https://curl.se/libcurl/c/CURLOPT_HTTPHEADER.html)、
 [刷新调度与失败保留](https://github.com/MetaCubeX/mihomo/blob/Meta/component/resource/fetcher.go)、
-[固定原生 rule_set schema](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/option/rule_set.go)。
+[固定原生 rule_set schema](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/option/rule_set.go)。
 
 GEO 缓存由编译器的 `CompileResult.ruleSetResources` 显式声明，覆盖本地命中与
 未命中情况。桌面启动任务按周检查刷新，不再只扫描 remote 配置；原生 JSON 的
@@ -753,8 +753,8 @@ rule_set 来源、format、download_detour 和 tag 不进入应用预取。编�
 坏文件清理由任务层处理，启动修复仅清理当前清单的自有 GEO，Android 不清理或
 在线刷新固定打包的 GEO。提交下载前检查 SRS/版本/zlib 文件头，失败保留旧文件；
 这是轻量筛查，不能宣称完成解压、校验和或规则语义校验。原生版本与 SRS 上限对齐
-固定 [1.14.2 常量](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/constant/rule.go)
-和 [二进制读取实现](https://github.com/SagerNet/sing-box/blob/af6e64c3b69e6132ebaee0e1a3d24e93903f6709/common/srs/binary.go)。
+固定 [1.14.2 常量](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/constant/rule.go)
+和 [二进制读取实现](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/common/srs/binary.go)。
 
 编译失败时已有 fidelity 条目继续向只读明细与失败状态返回；空 JSON 不代表没有
 保真度问题。未生成结构化条目的纯语法错误仍经 error 报告。

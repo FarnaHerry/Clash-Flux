@@ -5,7 +5,7 @@ set -euo pipefail
 # Libbox.xcframework. This produces engine slices only; the Xcode app and
 # Packet Tunnel targets consume the framework in a later integration step.
 readonly repo='https://github.com/SagerNet/sing-box.git'
-readonly revision="${SINGBOX_COMMIT:-af6e64c3b69e6132ebaee0e1a3d24e93903f6709}" # v1.14.2
+readonly revision="${SINGBOX_COMMIT:-7054cac5124465ffdb145870d7c01885566711b1}" # v1.14.3
 readonly output_arg="${1:?usage: build-singbox-libbox.sh OUTPUT_XCFRAMEWORK}"
 
 for command in go git make xcodebuild xcrun ditto; do

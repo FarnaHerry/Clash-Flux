@@ -35,8 +35,8 @@ abstract class StageHuxerUIAssets extends DefaultTask {
 
 def singboxAar = layout.buildDirectory.file("libs/libbox-arm64.aar")
 def singboxAarMetadata = layout.buildDirectory.file("libs/libbox-arm64.aar.metadata.json")
-def singboxVersion = "1.14.2"
-def singboxRevision = "af6e64c3b69e6132ebaee0e1a3d24e93903f6709"
+def singboxVersion = "1.14.3"
+def singboxRevision = "7054cac5124465ffdb145870d7c01885566711b1"
 def suppliedSingboxAar = providers.environmentVariable("CLASHFLUX_SINGBOX_AAR")
 def stageSingboxAar = tasks.register("stageSingboxAar") {
     inputs.property("version", singboxVersion)
@@ -192,8 +192,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 126
-        versionName = "0.3.48"
+        versionCode = 127
+        versionName = "0.3.49"
 
         externalNativeBuild {
             cmake {

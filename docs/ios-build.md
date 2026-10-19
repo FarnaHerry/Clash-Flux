@@ -86,8 +86,8 @@ Release job 只有在以下项目完成后才纳入 iOS：
 
 ## 内核版本对齐
 
-构建脚本默认使用 sing-box 1.14.2 revision
-`af6e64c3b69e6132ebaee0e1a3d24e93903f6709`，与 Android/libbox 和桌面一致。
+构建脚本默认使用 sing-box 1.14.3 revision
+`7054cac5124465ffdb145870d7c01885566711b1`，与 Android/libbox 和桌面一致。
 本次本地验证只覆盖 Linux；未构建新的 iOS xcframework 或验证真机生命周期。
 iOS 仍按 TODO 暂缓，不属于 Release 目标。升级记录见
 [稳定内核升级](singbox-stable-upgrade.md)。

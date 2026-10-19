@@ -137,3 +137,52 @@ Temurin OpenJDK 17.0.20.1+1 归档校验 SHA256：
   APK 包含 `assets/rules/geoip-cn.srs` 与 `assets/rules/geosite-cn.srs`。
 
 没有安装 APK、运行真机 VPN、远端握手或性能基准。构建产物与临时工具不入库。
+
+## 2026-10-19：升级到 1.14.3
+
+由 1.14.2 升级到官方最新稳定版 **1.14.3**，发布于 2026-10-14；源码 revision：
+`7054cac5124465ffdb145870d7c01885566711b1`（v1.14.3 tag 直指该 commit）。
+不跟随 1.15 alpha。依据为[官方 Release](https://github.com/SagerNet/sing-box/releases/tag/v1.14.3)
+和[发布资产 API](https://api.github.com/repos/SagerNet/sing-box/releases/tags/v1.14.3)。
+
+桌面官方归档摘要固定在 `cmake/singbox_bundle.cmake`，六个资产在本机
+`sha256sum` 与发布资产 API digest 逐一核对一致：
+
+| 1.14.3 资产后缀 | 官方 SHA256 |
+|---|---|
+| `linux-amd64.tar.gz` | `e2bdf179c15a3652955dc44867e33ca0965c9c9b91b34267dcc5a5d639a5feee` |
+| `linux-arm64.tar.gz` | `29dae24d76bea3bc62d07dd3e60cfc12003de7debbd6b768df9be9c68360174e` |
+| `windows-amd64.zip` | `d8b86ef58936dba9230ec6a57ffa4243933f3c14ef4809828b6c553440ed1518` |
+| `windows-arm64.zip` | `195b35424c6e3f5913954c7f08c5d8ba2d2199f6d18eb27a3972a5a29cdaa78c` |
+| `darwin-amd64.tar.gz` | `6d002b74d03b478547349cc10af89e007868596e5aa931816d45da9f544715a9` |
+| `darwin-arm64.tar.gz` | `0360ce634a04c26a6b4fd957517987bb4f6c8950f63435ce3c5af2fcae5860c5` |
+
+上游兼容性审查（对比 v1.14.2…v1.14.3 共 30 个提交）：
+
+- `option/` 目录零变更，配置 schema 完全一致；`docs/changelog.md` 对 1.14.3
+  仅记 "Fixes and improvements"。编译器映射与保真度账本内容不变，仅更新
+  版本/固定 revision 引用。
+- `experimental/clashapi/proxies.go` 未变，selector/urltest 控制语义保持；
+  `clashapi/server.go` 只是把 HTTP server 关闭改挂到启动 scope 的内部重构。
+- `experimental/libbox/command_client.go` 未变；libbox 增量新增
+  `SetupOptions.PlatformMetadata` 与 `CommandServer.WakeNow`/`RecordScreenState`，
+  Android 的 `Pause()` 额外调用 `CloseIdleConnections()`（与本应用
+  「先更新物理接口再关闭旧连接」的后台生命周期一致）。AAR 由 CI 按固定
+  revision 重新生成，未在本地沿用旧二进制。
+- 组出站新增内部 `adapter.Referrer` 实现，`SelectOutbound` 选择语义未变；
+  urltest 对多路复用出站在计时前做 keep-session 预热，属测量精度修复。
+
+实际执行并通过：
+
+- `cmake --build build --target clash-flux`：configure 期下载 1.14.3
+  linux-amd64 归档并通过 EXPECTED_HASH 校验，POST_BUILD 打包 v1.14.3。
+- `./run.sh --version` 与 `build/engines/sing-box version`：1.14.3，
+  revision 与 pin 一致，Go 1.26.8、CGO disabled。
+- `ctest --test-dir build -L clashflux-required --output-on-failure
+  --no-tests=error`：17/17 通过（含 project_test_gate、cps_dependencies、
+  dns_hosts/policy/tls_runtime、persistence）。
+- `git diff --check`：通过。
+
+本机未重新构建 Android AAR 与 iOS xcframework；两者由 CI 与各平台脚本按
+同一固定 revision 生成，AAR 版本/revision/ABI/SHA256 元数据校验不通过会
+直接失败。真机 VPN、远端握手与服务端兼容性仍需实机验证。

@@ -427,7 +427,7 @@ CoreSnapshot.planRevision 表示成功应用后的运行序号，预览目录不
 导入和持久化写入口都必须遵守平台能力，不能用视口宽度开放桌面功能。
 
 - **L1 内核层（紧贴）**：官方二进制（桌面 spawn）/ libbox（Android）同版本同源码 revision，
-  各平台资产分别校验 SHA256；当前稳定基线 1.14.2（`af6e64c3b69e6132ebaee0e1a3d24e93903f6709`）。
+  各平台资产分别校验 SHA256；当前稳定基线 1.14.3（`7054cac5124465ffdb145870d7c01885566711b1`）。
   桌面缓存按版本和资产摘要隔离；Android 浅取正式 tag 后核对固定 revision，保留真实版本标签供上游 ReadTag；
   AAR 必须带构建脚本生成的 version/revision/ABI/SHA256
   元数据，缺失、版本不符或校验失败时重新构建，不得只凭旧 AAR 文件存在就继续打包。

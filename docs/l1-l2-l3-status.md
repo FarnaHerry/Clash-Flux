@@ -95,8 +95,8 @@ L2 UDP 编码、VMess 填充、HY2 混淆/跳端口、SS 插件/UOT 版本，以
 嵌套 GEO/RULE-SET、Hysteria v1 UDP 子集与带宽单位修复、SSH 认证/公钥子集。
 以下明确区分当前批次与历史验证，不把本地检查等同于线上 CI 或全平台实机验收。
 
-固定内核为 sing-box **1.14.2**，revision
-`af6e64c3b69e6132ebaee0e1a3d24e93903f6709`；职责和约束以
+固定内核为 sing-box **1.14.3**（2026-10-19 升级；下文历史批次中 "1.14.2 check" 为当时的验证记录），revision
+`7054cac5124465ffdb145870d7c01885566711b1`；职责和约束以
 [分层契约](singbox-layers-and-fidelity.md)为准，桌面最终模型以
 [订阅编排设计](desktop-subscription-orchestration.md)为准。
 

@@ -6,14 +6,14 @@
 # 构建产物开箱即可启动内核。-DCLASHFLUX_BUNDLE_SINGBOX=OFF 关闭（回落
 # <repo>/engines 与 PATH 解析）。
 #
-# 平台资产表（v1.14.2，https://github.com/SagerNet/sing-box/releases，与
+# 平台资产表（v1.14.3，https://github.com/SagerNet/sing-box/releases，与
 # Android libbox 同版本）：
-#   linux   x86_64  sing-box-1.14.2-linux-amd64.tar.gz    （内含 sing-box-1.14.2-linux-amd64/sing-box）
-#   linux   arm64   sing-box-1.14.2-linux-arm64.tar.gz
-#   windows x86_64  sing-box-1.14.2-windows-amd64.zip     （内含 sing-box-1.14.2-windows-amd64/sing-box.exe）
-#   windows arm64   sing-box-1.14.2-windows-arm64.zip
-#   darwin  x86_64  sing-box-1.14.2-darwin-amd64.tar.gz
-#   darwin  arm64   sing-box-1.14.2-darwin-arm64.tar.gz
+#   linux   x86_64  sing-box-1.14.3-linux-amd64.tar.gz    （内含 sing-box-1.14.3-linux-amd64/sing-box）
+#   linux   arm64   sing-box-1.14.3-linux-arm64.tar.gz
+#   windows x86_64  sing-box-1.14.3-windows-amd64.zip     （内含 sing-box-1.14.3-windows-amd64/sing-box.exe）
+#   windows arm64   sing-box-1.14.3-windows-arm64.zip
+#   darwin  x86_64  sing-box-1.14.3-darwin-amd64.tar.gz
+#   darwin  arm64   sing-box-1.14.3-darwin-arm64.tar.gz
 # sing-box 发布什么桌面平台/arch，本表就钉什么——GUI 壳能编到的目标都自带
 # 内核。新增资产/升版本时：`gh api repos/SagerNet/sing-box/releases/tags/<v>`
 # 取 digest，或下载后 sha256sum 钉进下表。
@@ -37,7 +37,7 @@ function(clashflux_bundle_singbox target)
         return()
     endif ()
 
-    set(CLASHFLUX_SINGBOX_VERSION "1.14.2")
+    set(CLASHFLUX_SINGBOX_VERSION "1.14.3")
     set(_base_url "https://github.com/SagerNet/sing-box/releases/download/v${CLASHFLUX_SINGBOX_VERSION}")
 
     # ---- 平台资产选择 -----------------------------------------------------
@@ -47,28 +47,28 @@ function(clashflux_bundle_singbox target)
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux"
             AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64)")
         set(_asset "sing-box-${CLASHFLUX_SINGBOX_VERSION}-linux-amd64.tar.gz")
-        set(_sha "a684484d7477d1437282ee411f4d131d0340aaad60a7868841ebd5d87dd8a0c6")
+        set(_sha "e2bdf179c15a3652955dc44867e33ca0965c9c9b91b34267dcc5a5d639a5feee")
         set(_inner_dir "sing-box-${CLASHFLUX_SINGBOX_VERSION}-linux-amd64")
     elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux"
             AND CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64|ARM64)")
         set(_asset "sing-box-${CLASHFLUX_SINGBOX_VERSION}-linux-arm64.tar.gz")
-        set(_sha "b43a1fb1bda131c6653576741ce527eb2bdeab7c9308ca90ee8b972abb7e4a7f")
+        set(_sha "29dae24d76bea3bc62d07dd3e60cfc12003de7debbd6b768df9be9c68360174e")
         set(_inner_dir "sing-box-${CLASHFLUX_SINGBOX_VERSION}-linux-arm64")
     elseif (WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64)")
         set(_asset "sing-box-${CLASHFLUX_SINGBOX_VERSION}-windows-amd64.zip")
-        set(_sha "c2d8bfff918755808781dfdeeb8581b6c91eb3a243d9a7b55483cfc0c0684d32")
+        set(_sha "d8b86ef58936dba9230ec6a57ffa4243933f3c14ef4809828b6c553440ed1518")
         set(_inner_dir "sing-box-${CLASHFLUX_SINGBOX_VERSION}-windows-amd64")
     elseif (WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64|ARM64)")
         set(_asset "sing-box-${CLASHFLUX_SINGBOX_VERSION}-windows-arm64.zip")
-        set(_sha "2bb467039310452380958b821983d5bb4f78fb70a2583914e4bea8b011582b64")
+        set(_sha "195b35424c6e3f5913954c7f08c5d8ba2d2199f6d18eb27a3972a5a29cdaa78c")
         set(_inner_dir "sing-box-${CLASHFLUX_SINGBOX_VERSION}-windows-arm64")
     elseif (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64)")
         set(_asset "sing-box-${CLASHFLUX_SINGBOX_VERSION}-darwin-amd64.tar.gz")
-        set(_sha "b0bfb0dc70a5fc708710b9f5ea98b9ee76d40fa4169928d25d73edc4331df2fe")
+        set(_sha "6d002b74d03b478547349cc10af89e007868596e5aa931816d45da9f544715a9")
         set(_inner_dir "sing-box-${CLASHFLUX_SINGBOX_VERSION}-darwin-amd64")
     elseif (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "(arm64|aarch64)")
         set(_asset "sing-box-${CLASHFLUX_SINGBOX_VERSION}-darwin-arm64.tar.gz")
-        set(_sha "925c5382eca8492b0150f868a6db20b18290a38700e621724b3703fd453e032d")
+        set(_sha "0360ce634a04c26a6b4fd957517987bb4f6c8950f63435ce3c5af2fcae5860c5")
         set(_inner_dir "sing-box-${CLASHFLUX_SINGBOX_VERSION}-darwin-arm64")
     else ()
         message(FATAL_ERROR
