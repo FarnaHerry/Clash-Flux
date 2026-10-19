@@ -938,27 +938,29 @@ struct HomeControlArc {
 
 [[huxerui::composable]] huxerui::View DesktopModeSwitchRow(
     huxerui::ImageVariant icon, huxerui::StringVariant label,
-    std::optional<huxerui::StringVariant> hint, huxerui::View control) {
+    huxerui::StringVariant description, huxerui::View control) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    std::vector<huxerui::View> labelColumn;
-    labelColumn.push_back(huxerui::Text(label).Style(huxerui::TextStyle{
-        huxerui::Font::System(font_size::kBody),
-        theme.colors.on_surface}));
-    if (hint.has_value()) {
-        labelColumn.push_back(huxerui::Text(*hint).Style(huxerui::TextStyle{
-            huxerui::Font::System(font_size::kCaption),
-            theme.colors.on_surface_variant}));
-    }
-    return huxerui::Row {
-        huxerui::Image(std::move(icon))
-            .Fit(huxerui::ImageFit::Contain)
-            .Tint(theme.colors.primary)
-            .With(huxerui::Frame{.width = 22.0F, .height = 22.0F}),
-        huxerui::Column(std::move(labelColumn))
-            .With(huxerui::Spacing(2.0F), huxerui::Grow(1.0F)),
-        std::move(control),
-    }.With(huxerui::Spacing(12.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    return huxerui::Column {
+        huxerui::Row {
+            huxerui::Image(icon)
+                .Fit(huxerui::ImageFit::Contain)
+                .Tint(theme.colors.primary)
+                .With(huxerui::Frame{.width = 22.0F, .height = 22.0F}),
+            huxerui::Text(label).Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBody),
+                theme.colors.on_surface}),
+        }.With(huxerui::Spacing(10.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        huxerui::Row {
+            huxerui::Text(description).Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kCaption),
+                theme.colors.on_surface_variant})
+                .With(huxerui::Grow(1.0F)),
+            control,
+        }.With(huxerui::Spacing(8.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+    }.With(huxerui::Spacing(2.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 // Desktop entry points share application state, operation lifetime and feedback.
@@ -966,7 +968,8 @@ struct HomeControlArc {
     const auto control = UseCoreControl();
     return huxerui::Column {
         DesktopModeSwitchRow(
-            app::images::system_proxy, Localized("系统代理"), std::nullopt,
+            app::images::system_proxy, Localized("系统代理"),
+            Localized("应用代理"),
             huxerui::Switch(control.SystemProxyEnabled())
                 .With(huxerui::Enabled(!control.Busy()))
                 .OnChanged([control](bool on) {
@@ -981,7 +984,7 @@ struct HomeControlArc {
     return huxerui::Column {
         DesktopModeSwitchRow(
             app::images::tun, Localized("TUN 模式"),
-            Localized("全局透明代理"),
+            Localized("全局接管"),
             huxerui::Switch(control.TunEnabled())
                 .With(huxerui::Enabled(!control.Busy()))
                 .OnChanged([control](bool on) {
