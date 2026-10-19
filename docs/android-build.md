@@ -27,8 +27,8 @@ huxerui build android --profile debug
 
 ## sing-box libbox 来源与缓存
 
-当前固定 sing-box 1.14.2，源码 revision
-`af6e64c3b69e6132ebaee0e1a3d24e93903f6709`，与桌面发布内核一致。
+当前固定 sing-box 1.14.3，源码 revision
+`7054cac5124465ffdb145870d7c01885566711b1`，与桌面发布内核一致。
 `platform/android/build-singbox-libbox.sh /absolute/path/libbox-arm64.aar` 会同时生成
 `libbox-arm64.aar.metadata.json`，包含正式版本、实际 checkout revision、arm64-v8a ABI 与 AAR
 SHA256。设置 `CLASHFLUX_SINGBOX_AAR` 时，两份文件必须在一起。
