@@ -49,6 +49,19 @@ export std::string formatTime(std::int64_t unixSec) {
                        tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min);
 }
 
+// Unix 秒 -> "YYYY-MM-DD"（本地时间；订阅到期时间只关心到日）。
+export std::string formatDate(std::int64_t unixSec) {
+    const std::time_t t = static_cast<std::time_t>(unixSec);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    return std::format("{:04d}-{:02d}-{:02d}",
+                       tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+}
+
 // Unix 秒 -> "HH:MM:SS"（日志行时间戳）。
 export std::string formatClock(std::int64_t unixSec) {
     const std::time_t t = static_cast<std::time_t>(unixSec);

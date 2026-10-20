@@ -36,6 +36,10 @@ void Db::setSelectedProfile(std::int64_t id) {
     static_cast<void>(clashflux::persistence::persistence().setSelectedProfile(id));
 }
 
+void Db::setProfileOrder(const std::vector<std::int64_t>& orderIds) {
+    clashflux::persistence::persistence().setProfileOrder(orderIds);
+}
+
 std::string Db::getSetting(const std::string& key,
                            const std::string& fallback) {
     return clashflux::persistence::persistence().setting(key, fallback);

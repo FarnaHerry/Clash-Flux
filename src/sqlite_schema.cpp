@@ -31,6 +31,7 @@ const sqlite::Table<ProfileRow> kProfiles{
     sqlite::Column<&ProfileRow::homepage>{"homepage"},
     sqlite::Column<&ProfileRow::used_bytes>{"used_bytes"},
     sqlite::Column<&ProfileRow::total_bytes>{"total_bytes"},
+    sqlite::Column<&ProfileRow::expire_at>{"expire_at"},
     sqlite::Column<&ProfileRow::native_config>{"native_config"},
     sqlite::Column<&ProfileRow::native_routes>{"native_routes"},
 };
@@ -45,7 +46,8 @@ const sqlite::Table<SettingRow> kSettings{
 // 存在，而 PK 列在 PRAGMA table_info 里是 notnull=0；ORM 对非空列（含 PK）
 // 一律生成 NOT NULL，ValidateSchema 会拒绝。SQLite 不能 ALTER 加 NOT NULL，
 // 按官方做法在事务内建新表 → 搬数据 → 删旧表 → 改名，老数据全部保留。
-// 列顺序/类型必须与上面的声明一致。
+// 这里重建的是**当时的 v1 结构**（没有后加的列）；后续版本由各自的迁移
+// （1→2 等）继续补列，最终形态与当前声明一致。
 sqlite::Result<void> RebuildLegacyTables(sqlite::MigrationContext& context) {
     const std::vector<std::string> statements{
         "CREATE TABLE profiles_v1 ("
@@ -85,13 +87,26 @@ sqlite::Result<void> RebuildLegacyTables(sqlite::MigrationContext& context) {
     return {};
 }
 
-// schema 版本 1。0→1 迁移把老库（user_version=0）重建为当前结构并保留全部
-// 数据；schema 再变就继续升版本并追加 Migration 链，不让老库 open 静默失败
-// 后降级成纯内存运行。
-const sqlite::Schema kSchema{1, kProfiles, kSettings};
+// Migration 1→2：profiles 追加 expire_at（订阅响应头 subscription-userinfo 的
+// expire 字段）。ALTER ADD COLUMN 带非空默认值即可保留全部既有行；ORM 的
+// ValidateSchema 按列名/亲和性核对、不比较列顺序，追加列与声明位置无关。
+sqlite::Result<void> AddProfileExpiryColumn(sqlite::MigrationContext& context) {
+    auto result = context.Execute(
+        "ALTER TABLE profiles ADD COLUMN expire_at INTEGER NOT NULL DEFAULT 0");
+    if (!result) {
+        return result.Error();
+    }
+    return {};
+}
+
+// schema 版本 2。0→1 迁移把老库（user_version=0）重建为 v1 结构并保留全部
+// 数据，1→2 再补新列；schema 再变就继续升版本并追加 Migration 链，不让老库
+// open 静默失败后降级成纯内存运行。
+const sqlite::Schema kSchema{2, kProfiles, kSettings};
 
 const sqlite::Migrations kMigrations{
     sqlite::Migration{0, 1, &RebuildLegacyTables},
+    sqlite::Migration{1, 2, &AddProfileExpiryColumn},
 };
 
 const sqlite::OpenOptions kOpenOptions{

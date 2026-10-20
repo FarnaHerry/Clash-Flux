@@ -139,8 +139,37 @@ void SeedProfiles(persistence::Persistence& store) {
     db::Profile other;
     other.id = 43; other.name = "other"; other.file = "unique.yaml";
     other.url = "https://example.test/other";
+    other.expireAt = 1893456000;  // 2030-01-01 UTC：非零到期时间必须原样往返
     store.saveProfile(other);
     store.setSetting("test.value", "A");
+}
+
+Task<void> ProfileOrderPhase() {
+    const Fixture fixture;
+    const auto shared = ReadFile(fixture.files / "shared.yaml");
+    const auto unique = ReadFile(fixture.files / "unique.yaml");
+    persistence::Persistence store;
+    Check(co_await store.open(fixture.path, fixture.files), "order fixture open");
+    SeedProfiles(store);
+    store.setProfileOrder({43, 41, 42});
+    store.setProfileOrder({42, 43, 41});  // 连续拖放，以最后一次顺序为准。
+    Check(co_await store.flushProfiles() && co_await store.flushSettings(),
+          "ordered profiles and setting must flush");
+    co_await store.close();
+
+    persistence::Persistence reopened;
+    Check(co_await reopened.open(fixture.path, fixture.files), "ordered profiles reopen");
+    const auto rows = reopened.listProfiles();
+    Check(rows.size() == 3 && rows[0].id == 42 && rows[1].id == 43 &&
+              rows[2].id == 41 && rows[0].type == "local" &&
+              rows[1].url == "https://example.test/other" &&
+              rows[2].url == "https://example.test/remote" &&
+              rows[0].file == "./shared.yaml" && rows[2].file == "shared.yaml",
+          "latest card order must survive reopen with all sources and stable references");
+    Check(ReadFile(fixture.files / "shared.yaml") == shared &&
+              ReadFile(fixture.files / "unique.yaml") == unique,
+          "sorting must preserve referenced subscription files");
+    co_await reopened.close();
 }
 
 template<class Function> void Refused(Function action) {
@@ -180,7 +209,12 @@ Task<void> FailedOpenPhase() {
           "failed hydrate retains both referenced files byte for byte");
     // Test-only repair of the intentionally injected future version. Production
     // never rewrites an incompatible database to recover from a startup failure.
-    Check(static_cast<bool>(co_await raw.ExecuteAsync("PRAGMA user_version = 1")), "reset injected version");
+    // 重置目标是当前声明的 schema 版本（不能写死 1：库是按声明版本新建的，
+    // 回到旧版本号会再次触发已应用过的迁移）。
+    Check(static_cast<bool>(co_await raw.ExecuteAsync(
+              "PRAGMA user_version = " +
+              std::to_string(db_schema::schema().Version()))),
+          "reset injected version");
     Check(static_cast<bool>(co_await raw.CloseAsync()), "close failure observer");
     Check(co_await failed.open(fixture.path, fixture.files), "subsequent valid reopen must succeed");
     const auto recovered = failed.listProfiles();
@@ -277,6 +311,12 @@ Task<void> InterleavedPhase(TaskScope tasks) {
         const auto rows = reopened.listProfiles();
         Check(rows.size() == (scenario == 3 ? 2 : 3) && rows.back().id == (scenario == 6 ? 44 : 43),
               "interleaved reopen retains all independent sources/stable IDs");
+        for (const db::Profile& row : rows) {
+            if (row.id == 43) {
+                Check(row.expireAt == 1893456000,
+                      "subscription expiry timestamp survives flush and reopen");
+            }
+        }
         if (settings) Check(reopened.setting("test.value") == (scenario == 1 ? "snapshot" : "newest"), "latest setting survives reopen");
         else if (scenario == 6) Check(rows.back().file == "unique.yaml" && rows.back().type == "local",
                                     "not-yet-persisted file owner survives cleanup and reopen");
@@ -552,6 +592,19 @@ Task<void> RunTest(TaskScope tasks) {
             Check(!list[0].selected && list[1].selected,
                   "setSelectedProfile must leave exactly one selected row");
 
+            db::Profile third;
+            third.name = "第三订阅";
+            third.file = "3.yaml";
+            const std::int64_t third_id = store.saveProfile(third);
+            Check(third_id == second_id + 1, "third insert must continue sequence");
+            store.setProfileOrder({third_id, first_id, second_id});
+            list = store.listProfiles();
+            Check(list.size() == 3 && list[0].id == third_id && list[1].id == first_id && list[2].id == second_id,
+                  "setProfileOrder must reorder profiles cache and update profiles.order setting");
+            Check(store.setting("profiles.order") == std::to_string(third_id) + "," + std::to_string(first_id) + "," + std::to_string(second_id),
+                  "profiles.order setting must match custom order");
+            Check(store.deleteProfile(third_id), "delete third_id");
+
             Check(store.deleteProfile(second_id), "deleteProfile failed");
             list = store.listProfiles();
             Check(list.size() == 1 && list.front().id == first_id,
@@ -675,7 +728,8 @@ Task<void> RunTest(TaskScope tasks) {
                           remote.type == "remote" && remote.description == "保留的远程订阅" &&
                           remote.timeoutSecs == 75 && remote.intervalMins == 180 && remote.autoUpdate &&
                           remote.useCoreProxy && remote.allowInvalidCert && remote.homepage == "https://example.com" &&
-                          remote.usedBytes == 1234 && remote.totalBytes == 9876,
+                          remote.usedBytes == 1234 && remote.totalBytes == 9876 &&
+                          remote.expireAt == 0,
                       "remote subscription settings and usage data must survive migration");
                 Check(local.name == "旧本地配置" && local.file == "legacy-local.json" && !local.selected &&
                           local.updatedAt == 1700000002 && local.error == "上次刷新失败" && local.type == "local" &&
@@ -720,7 +774,9 @@ Task<void> RunTest(TaskScope tasks) {
         co_await DeletionPhase();
         Trace(12, "OpenVPN 新旧来源与引用保留");
         co_await OpenVpnSourceCompatibilityPhase();
-        Trace(13, "完成");
+        Trace(13, "连续排序与重开保留");
+        co_await ProfileOrderPhase();
+        Trace(14, "完成");
         RemoveDatabase(path);
         Finish();
     } catch (const std::exception& exception) {

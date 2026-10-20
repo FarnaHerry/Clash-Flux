@@ -29,6 +29,7 @@ public:
     void deleteProfile(std::int64_t id);
     // 把 id 设为唯一启用（其余置 0）；id==0 表示全部取消启用。
     void setSelectedProfile(std::int64_t id);
+    void setProfileOrder(const std::vector<std::int64_t>& orderIds);
 
     // ---- settings（KV）----
     std::string getSetting(const std::string& key, const std::string& fallback = "");

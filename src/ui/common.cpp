@@ -114,9 +114,19 @@ CoreApplyResult ExecuteCoreCommand(const CoreCommand& command) {
             ok = coreStore.stopCore();
             break;
         case CoreAction::Restart:
+#if defined(_WIN32)
+            if (!service::installed()) {
+                return {.status = CoreApplyStatus::PermissionDenied};
+            }
+#endif
             ok = coreStore.restartCore(store::profilesStore().selectedYaml());
             break;
         case CoreAction::Start:
+#if defined(_WIN32)
+            if (!service::installed()) {
+                return {.status = CoreApplyStatus::PermissionDenied};
+            }
+#endif
             coreStore.startCore(store::profilesStore().selectedYaml(), false,
                                 coreStore.tunEnabled(), coreStore.systemProxyEnabled());
             ok = coreStore.snapshot().state == core::CoreState::Running;
@@ -1151,8 +1161,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-// 可选中卡片的形状常量（代理页节点卡为标准，见 ui.h 的说明）。
-constexpr float kSelectableTileRadius = 8.0F;
+// 可选中卡片的形状常量见 ui.h（代理页节点卡为标准）。
 
 SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme,
                                                  bool selected) {
@@ -1259,7 +1268,9 @@ void DriveProfilesModel(huxerui::TaskScope tasks,
                     return std::pair{std::move(profiles), std::move(clashSources)};
                 });
                 // 乐观选中期间不发布；等页面确认后再由修订号驱动同步。
-                if (!model->selectionPending.Get()) {
+                if (!model->selectionPending.Get() &&
+                    !model->reorderPending.Get() &&
+                    model->syncTick.Get() == before) {
                     model->clashSources = std::move(next.second);
                     model->list = std::move(next.first);
                 }

@@ -1,13 +1,15 @@
 // test_sqlite_orm.cpp — huxerui::sqlite ORM 接入验证。
 //
-// 三条路径：
+// 四条路径：
 //   1) 全新库：用生产 schema（src/sqlite_schema.*）建表，跑一遍 CRUD，关库后
 //      重开确认数据还在（此时 user_version 已是 schema 版本，不再走迁移）。
 //   2) 旧 SQLiteCpp 库：老 DDL 建的库 user_version=0，且 PK 列在
 //      PRAGMA table_info 里是 notnull=0，而 ORM 对非空列（含 PK）一律生成
 //      NOT NULL，ValidateSchema 会拒绝。必须经 Migration 0→1 在事务内重建表，
 //      验证迁移后 schema 通过、订阅与设置数据无损。
-//   3) 真实老库快照（仅本地，CLASHFLUX_ORM_LEGACY_DB 指向一份 0.2.x 库）：
+//   3) v1 库：0→1 迁移产物（无 expire_at）打开时经 1→2 补列，行数据保留、
+//      新列默认 0，迁移后到期时间可写可读。
+//   4) 真实老库快照（仅本地，CLASHFLUX_ORM_LEGACY_DB 指向一份 0.2.x 库）：
 //      迁移前后行数必须一致，验证线上数据零丢失。
 //
 // 用 HuxerUI 公开无窗口测试库驱动异步任务；DB 操作跑在 ORM 自己的
@@ -280,7 +282,8 @@ Task<void> LegacyMigrationPhase(const std::filesystem::path& path) {
         Require(co_await database.CloseAsync(), "legacy: close");
     }
 
-    // 3) 再开一次：user_version=1，直接校验 schema，迁移只应执行一次。
+    // 3) 再开一次：迁移已完成（user_version 已是当前声明版本），直接校验
+    // schema，迁移只应执行一次。
     {
         sqlite::Database database = Require(
             co_await sqlite::Database::OpenAsync(File{path.string()}, kSchema,
@@ -290,6 +293,84 @@ Task<void> LegacyMigrationPhase(const std::filesystem::path& path) {
             co_await database.Select(kProfiles).CountAsync(), "legacy reopen: count");
         Check(count == 2, "legacy reopen: migrated data missing");
         Require(co_await database.CloseAsync(), "legacy reopen: close");
+    }
+}
+
+// V1→V2 迁移：v1 形状（0→1 迁移产物，没有 expire_at）的库打开时必须补列成功，
+// 既有行全部保留、新列落到默认值 0，迁移后可以正常写入到期时间。
+Task<void> V1MigrationPhase(const std::filesystem::path& path) {
+    // 1) 手工造一个 user_version=1 的 v1 库（与 0→1 重建产物同形）+ 样本数据。
+    {
+        sqlite::Database database = Require(
+            co_await sqlite::Database::OpenAsync(File{path.string()}, kOpenOptions),
+            "v1: open raw");
+        Require(co_await database.ExecuteAsync(
+                    "CREATE TABLE profiles ("
+                    "id INTEGER NOT NULL PRIMARY KEY, "
+                    "name TEXT NOT NULL, url TEXT NOT NULL, file TEXT NOT NULL, "
+                    "selected INTEGER NOT NULL, updated_at INTEGER NOT NULL, "
+                    "error TEXT NOT NULL, type TEXT NOT NULL, description TEXT NOT NULL, "
+                    "timeout_secs INTEGER NOT NULL, interval_mins INTEGER NOT NULL, "
+                    "auto_update INTEGER NOT NULL, use_system_proxy INTEGER NOT NULL, "
+                    "use_core_proxy INTEGER NOT NULL, allow_invalid_cert INTEGER NOT NULL, "
+                    "homepage TEXT NOT NULL, used_bytes INTEGER NOT NULL, "
+                    "total_bytes INTEGER NOT NULL, native_config TEXT NOT NULL, "
+                    "native_routes TEXT NOT NULL)"),
+                "v1: create profiles");
+        Require(co_await database.ExecuteAsync(
+                    "CREATE TABLE settings (key TEXT NOT NULL PRIMARY KEY, "
+                    "value TEXT NOT NULL)"),
+                "v1: create settings");
+        Require(co_await database.ExecuteAsync(
+                    "INSERT INTO profiles (id, name, url, file, selected, "
+                    "updated_at, error, type, description, timeout_secs, "
+                    "interval_mins, auto_update, use_system_proxy, "
+                    "use_core_proxy, allow_invalid_cert, homepage, used_bytes, "
+                    "total_bytes, native_config, native_routes) VALUES "
+                    "(1, 'V1订阅', 'https://example.com/v1.yaml', '1.yaml', 1, "
+                    "1700000000, '', 'remote', '', 60, 0, 0, 0, 0, 0, '', "
+                    "1024, 4096, '', '')"),
+                "v1: insert profile");
+        Require(co_await database.ExecuteAsync("PRAGMA user_version = 1"),
+                "v1: stamp user_version");
+        Require(co_await database.CloseAsync(), "v1: close raw");
+    }
+
+    // 2) 生产 schema 打开：1→2 补列成功、行数据与新列默认值都正确。
+    {
+        auto opened = co_await sqlite::Database::OpenAsync(
+            File{path.string()}, kSchema, kMigrations, kOpenOptions);
+        if (!opened) {
+            throw std::runtime_error("v1: open with migration failed: " +
+                                     opened.Error().Message() + " (" +
+                                     opened.Error().Operation() + ")");
+        }
+        sqlite::Database database = std::move(*opened);
+
+        const auto rows = Require(
+            co_await database.Select(kProfiles).AllAsync(), "v1: select all");
+        Check(rows.size() == 1, "v1: profile row lost by migration");
+        if (rows.size() == 1) {
+            Check(rows.front().name == "V1订阅" &&
+                      rows.front().used_bytes == 1024 &&
+                      rows.front().total_bytes == 4096 &&
+                      rows.front().expire_at == 0,
+                  "v1: usage data must survive and expiry must default to 0");
+        }
+
+        // 迁移后的库必须能写入到期时间并读回。
+        Require(co_await database.InsertAsync(
+                    kProfiles, ProfileRow{.id = 2,
+                                          .name = "V2订阅",
+                                          .file = "2.yaml",
+                                          .expire_at = 1893456000}),
+                "v1: insert with expiry");
+        const auto found = Require(
+            co_await database.FindAsync(kProfiles, std::int64_t{2}), "v1: find");
+        Check(found.has_value() && found->expire_at == 1893456000,
+              "v1: expiry did not round-trip after migration");
+
+        Require(co_await database.CloseAsync(), "v1: close");
     }
 }
 
@@ -355,10 +436,12 @@ Task<void> RealLegacySnapshotPhase(const std::filesystem::path& source) {
 Task<void> RunTest() {
     const std::filesystem::path fresh = TempPath("fresh");
     const std::filesystem::path legacy = TempPath("legacy");
+    const std::filesystem::path v1 = TempPath("v1");
     try {
         co_await FreshSchemaPhase(fresh);
         co_await ReopenPhase(fresh);
         co_await LegacyMigrationPhase(legacy);
+        co_await V1MigrationPhase(v1);
         // 仅本地联调：对一份真实老库快照跑同一套迁移，验证真实数据无损。
         // CI 不设该变量，因此不依赖用户数据目录。
         if (const char* real = std::getenv("CLASHFLUX_ORM_LEGACY_DB");
@@ -367,14 +450,17 @@ Task<void> RunTest() {
         }
         RemoveDatabase(fresh);
         RemoveDatabase(legacy);
+        RemoveDatabase(v1);
         Finish();
     } catch (const std::exception& exception) {
         RemoveDatabase(fresh);
         RemoveDatabase(legacy);
+        RemoveDatabase(v1);
         Finish(exception.what());
     } catch (...) {
         RemoveDatabase(fresh);
         RemoveDatabase(legacy);
+        RemoveDatabase(v1);
         Finish("unknown sqlite ORM test failure");
     }
 }

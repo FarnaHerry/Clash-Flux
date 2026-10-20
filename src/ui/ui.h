@@ -4,6 +4,8 @@
 
 #include <huxerui/huxerui.h>
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -63,6 +65,45 @@ huxerui::StringVariant LocalizedFormat(std::string_view source,
                                        Arguments&&... arguments) {
     return huxerui::StringVariant::Format(
         LocalizedResource(source), std::forward<Arguments>(arguments)...);
+}
+
+// 相对时间格式化（订阅卡片等展示）：
+// < 60s: "刚刚"
+// < 3600s: "N分钟前"
+// < 86400s: "N小时前"
+// < 30天: "N天前"
+// < 365天: "N个月前"
+// >= 365天: "N年前"
+// unixSec <= 0: "未拉取"
+inline huxerui::StringVariant FormatRelativeTime(std::int64_t unixSec) {
+    if (unixSec <= 0) {
+        return Localized("未拉取");
+    }
+    const auto now = std::chrono::system_clock::now();
+    const auto nowSec = std::chrono::duration_cast<std::chrono::seconds>(
+        now.time_since_epoch()).count();
+    const std::int64_t diff = nowSec - unixSec;
+    if (diff < 60) {
+        return Localized("刚刚");
+    }
+    if (diff < 3600) {
+        const auto minutes = std::max<std::int64_t>(1, diff / 60);
+        return LocalizedFormat("{}分钟前", minutes);
+    }
+    if (diff < 86400) {
+        const auto hours = std::max<std::int64_t>(1, diff / 3600);
+        return LocalizedFormat("{}小时前", hours);
+    }
+    if (diff < 86400 * 30) {
+        const auto days = std::max<std::int64_t>(1, diff / 86400);
+        return LocalizedFormat("{}天前", days);
+    }
+    if (diff < 86400 * 365) {
+        const auto months = std::max<std::int64_t>(1, diff / (86400 * 30));
+        return LocalizedFormat("{}个月前", months);
+    }
+    const auto years = std::max<std::int64_t>(1, diff / (86400 * 365));
+    return LocalizedFormat("{}年前", years);
 }
 
 // Android VPN 隧道开关（首页悬浮按钮 → VpnService consent/前台服务）。
@@ -379,6 +420,8 @@ struct SelectableTileColors {
     huxerui::Color muted;
     huxerui::Color faint;
 };
+
+constexpr float kSelectableTileRadius = 8.0F;
 
 SelectableTileColors ResolveSelectableTileColors(
     const huxerui::ThemeSpec& theme, bool selected);

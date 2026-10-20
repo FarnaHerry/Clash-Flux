@@ -67,7 +67,8 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     const std::function<void(std::int64_t)>& openEditRules,
     const std::function<void(std::int64_t)>& openEditFile,
     const std::function<void(std::int64_t)>& openQr,
-    huxerui::DialogHandle dialog) {
+    huxerui::DialogHandle dialog,
+    ProfileReorderActions reorder) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto clipboard = huxerui::UseApplication().Clipboard();
     // Each card owns its presentation anchor. Sharing one page-level MenuHandle
@@ -75,6 +76,8 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     // Android rejects during the next frame with "anchor must be mounted on only
     // one View" when the subscription page contains more than one card.
     auto menu = UseActionMenu();
+    auto isDropOver = huxerui::UseState(false);
+    auto isDragging = huxerui::UseState(false);
     const auto navigation = huxerui::UseNavigation();
     const auto desktopNavigation = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
     const auto coreModel = huxerui::UseService<CoreModel>();
@@ -261,6 +264,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     const auto buildMenuEntries = [action, activateProfile, startRefresh, openEditInfo, openEditRules,
                                    openEditFile, openQr, clipboard, toast, id, navigation, desktopNavigation,
                                    homepage = profile.homepage, url = profile.url,
+                                   profileType = profile.type,
                                    selected, nativeVpn, clashEditable,
                                    confirmDelete] {
         std::vector<ActionMenuEntry> entries;
@@ -305,10 +309,12 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 openEditFile(id);
             }));
         }
-        entries.push_back(ActionMenuItem(app::images::shield_check, Localized("配置保真度"),
-            [navigation, desktopNavigation, id] {
-                OpenProfileFidelityPage(navigation, desktopNavigation, id);
-            }));
+        if (profileType != "pptp") {
+            entries.push_back(ActionMenuItem(app::images::shield_check, Localized("配置保真度"),
+                [navigation, desktopNavigation, id] {
+                    OpenProfileFidelityPage(navigation, desktopNavigation, id);
+                }));
+        }
         entries.push_back(ActionMenuSection{});
         entries.push_back(
             ActionMenuItem(app::images::trash, Localized("删除"), confirmDelete)
@@ -317,14 +323,14 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     };
 
     // 右上角刷新图标：裸 Image + Tint 着色（IconButton 不着色矢量资源；
-    // 同 apitab 标题栏齿轮配方），自绘 24pt 正方形热区。刷新进行中换成
+    // 同 apitab 标题栏齿轮配方），正常 20pt 尺寸与 4pt 内边距。刷新进行中换成
     // ProgressCircle——指示器的起止由真实任务驱动，而不是固定时长动画。
     huxerui::View refreshButton = huxerui::Row{};
     if (!nativeVpn) {
         huxerui::View refreshGlyph;
         if (refreshBusy.Get()) {
             refreshGlyph = huxerui::View{huxerui::ProgressCircle()}.With(
-                huxerui::Frame{.width = 14.0F, .height = 14.0F});
+                huxerui::Frame{.width = 20.0F, .height = 20.0F});
         } else {
             refreshGlyph =
                 huxerui::View{huxerui::Image(app::images::refresh)
@@ -332,12 +338,12 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                   .Align(huxerui::HorizontalAlignment::Center,
                                          huxerui::VerticalAlignment::Center)
                                   .Tint(muted)}
-                    .With(huxerui::Frame{.width = 14.0F, .height = 14.0F});
+                    .With(huxerui::Frame{.width = 20.0F, .height = 20.0F});
         }
         refreshButton = huxerui::Row {
             refreshGlyph,
         }
-            .With(huxerui::Padding(5.0F),
+            .With(huxerui::Padding(4.0F),
                   huxerui::CornerRadius(islands.nested_radius),
                   huxerui::Tooltip(Localized("更新订阅")),
                   huxerui::Focusable(true),
@@ -355,7 +361,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
             huxerui::Image(app::images::more_vertical)
                 .Fit(huxerui::ImageFit::Contain)
                 .Tint(muted)
-                .With(huxerui::Frame{.width = 16.0F, .height = 16.0F}),
+                .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
         }
                          .With(menu.Anchor(),
                                huxerui::Padding(4.0F),
@@ -370,6 +376,72 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                              menu.Show(buildMenuEntries());
                          });
     }
+
+    huxerui::Color dragShadowColor = theme.colors.scrim;
+    dragShadowColor.alpha = 0.24F;
+    const std::string profileNameText = profile.name;
+
+    huxerui::View dragHandle =
+        huxerui::Image(app::images::drag_indicator)
+            .Fit(huxerui::ImageFit::Contain)
+            .Tint(muted)
+            .With(
+                huxerui::Frame{.width = 18.0F, .height = 18.0F},
+                huxerui::Padding(1.0F),
+                huxerui::PointerCursor(huxerui::PointerCursorKind::Grab),
+                huxerui::Tooltip(Localized("拖动排序")),
+                huxerui::Focusable(false),
+                huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                   .label = huxerui::UseString(
+                                       Localized("拖动排序"))},
+                huxerui::DragSource(
+                    ProfileDragPayload{id},
+                    std::function<huxerui::View()>{
+                        [profileNameText, theme, islands, dragShadowColor]() -> huxerui::View {
+                            return huxerui::Row {
+                                huxerui::Image(app::images::drag_indicator)
+                                    .Fit(huxerui::ImageFit::Contain)
+                                    .Tint(theme.colors.primary)
+                                    .With(huxerui::Frame{.width = 18.0F, .height = 18.0F}),
+                                huxerui::Text(truncateOneLine(profileNameText, 16))
+                                    .Style(huxerui::TextStyle{
+                                        huxerui::Font::System(font_size::kBody)
+                                            .WithWeight(huxerui::FontWeight::SemiBold),
+                                        theme.colors.on_surface}),
+                            }.With(
+                                huxerui::Frame{.height = 36.0F},
+                                huxerui::Padding(huxerui::EdgeInsets{
+                                    .top = 4.0F, .right = 12.0F, .bottom = 4.0F, .left = 8.0F}),
+                                huxerui::Spacing(8.0F),
+                                huxerui::Background(theme.colors.surface_container_highest),
+                                huxerui::CornerRadius(islands.nested_radius),
+                                huxerui::Border(theme.colors.primary, 1.5F),
+                                huxerui::Shadow{
+                                    .color = dragShadowColor,
+                                    .blur_radius = 16.0F,
+                                    .spread = -2.0F,
+                                },
+                                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)
+                            );
+                        }
+                    }
+                )
+            )
+            .On<huxerui::DragSourceEvents::Started>(
+                [isDragging, reorder, id](const huxerui::DragEvent&) {
+                    isDragging = true;
+                    if (reorder.begin) reorder.begin(id);
+                })
+            .On<huxerui::DragSourceEvents::Ended>(
+                [isDragging, reorder, id](const huxerui::DragDropResult&) {
+                    isDragging = false;
+                    if (reorder.cancel) reorder.cancel(id);
+                })
+            .On<huxerui::DragSourceEvents::Canceled>(
+                [isDragging, reorder, id](const huxerui::DragEvent&) {
+                    isDragging = false;
+                    if (reorder.cancel) reorder.cancel(id);
+                });
 
     huxerui::View profileName =
         huxerui::Text(truncateOneLine(profile.name, compact ? 9 : 20)).Style(
@@ -392,12 +464,71 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                       : huxerui::UseString(Localized("PPTP 配置无效"));
     }();
 
+    const bool hasTraffic =
+        !nativeVpn && (profile.usedBytes > 0 || profile.totalBytes > 0);
+    const bool hasExpiry = !nativeVpn && profile.expireAt > 0;
+    const int percent = profile.totalBytes > 0
+                            ? static_cast<int>(std::clamp(
+                                  static_cast<double>(profile.usedBytes) /
+                                      static_cast<double>(profile.totalBytes),
+                                  0.0, 1.0) *
+                              100.0)
+                            : 0;
+
+    huxerui::View trafficSection = huxerui::Row{};
+    if (!nativeVpn) {
+        std::vector<huxerui::View> subviews;
+        if (hasTraffic || hasExpiry) {
+            subviews.push_back(
+                huxerui::Row {
+                    hasTraffic
+                        ? huxerui::View{huxerui::Text(
+                              profile.totalBytes > 0
+                                  ? LocalizedFormat(
+                                        "{}% {} / {}",
+                                        percent,
+                                        formatBytes(profile.usedBytes),
+                                        formatBytes(profile.totalBytes))
+                                  : LocalizedFormat(
+                                        "{} / 不限量",
+                                        formatBytes(profile.usedBytes)))
+                              .Style(huxerui::TextStyle{
+                                  huxerui::Font::System(font_size::kCaption),
+                                  muted})}
+                        : huxerui::View{huxerui::Row{}},
+                    huxerui::Spacer(),
+                    hasExpiry
+                        ? huxerui::View{huxerui::Text(
+                              LocalizedFormat("到期时间 {}",
+                                              formatDate(profile.expireAt)))
+                              .Style(huxerui::TextStyle{
+                                  huxerui::Font::System(font_size::kCaption),
+                                  muted})}
+                        : huxerui::View{huxerui::Row{}},
+                }.With(huxerui::CrossAlign(
+                    huxerui::CrossAxisAlignment::Center)));
+        }
+        subviews.push_back(
+            huxerui::ProgressBar(std::clamp(
+                profile.totalBytes > 0
+                    ? static_cast<float>(profile.usedBytes) /
+                          static_cast<float>(profile.totalBytes)
+                    : 1.0F,
+                0.0F, 1.0F))
+                .With(huxerui::Frame{.height = 3.0F}));
+        trafficSection = huxerui::Column(std::move(subviews))
+                             .With(huxerui::Spacing(4.0F),
+                                   huxerui::CrossAlign(
+                                       huxerui::CrossAxisAlignment::Stretch));
+    }
+
     // 订阅卡复用代理页节点卡的形状原语（SelectableTile）：同一套内边距、圆角、
     // 表面色与选中态（选中 = primary_container 淡染底 + primary 描边 +
     // on_primary_container 文字）。不再自己叠描边或第二层选中背景。
     huxerui::View card = SelectableTile(
         huxerui::Column {
         huxerui::Row {
+            std::move(dragHandle),
             std::move(profileName),
             nativeVpn
                 ? huxerui::View{huxerui::Checkbox(connectionSelected)
@@ -480,10 +611,8 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                               nativeVpn
                                   ? ""
                                   : profile.error.empty()
-                                  ? (profile.updatedAt > 0
-                                         ? huxerui::UseString(LocalizedFormat(
-                                               "更新于 {}", formatTime(profile.updatedAt)))
-                                         : huxerui::UseString(Localized("未拉取")))
+                                  ? huxerui::UseString(
+                                        FormatRelativeTime(profile.updatedAt))
                                   : huxerui::UseString(LocalizedFormat(
                                         "错误：{}", profile.error)),
                               52))
@@ -494,45 +623,10 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         }
             .With(huxerui::Spacing(8.0F),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        // 流量行 + 进度条（订阅响应头 subscription-userinfo；total 未知不显示）。
-        !nativeVpn && profile.totalBytes > 0
-            ? huxerui::View{huxerui::Column {
-                  huxerui::Row {
-                      huxerui::Text(LocalizedFormat(
-                                        "已用 {} / {}",
-                                        formatBytes(profile.usedBytes),
-                                        formatBytes(profile.totalBytes)))
-                          .Style(huxerui::TextStyle{
-                              huxerui::Font::System(font_size::kCaption),
-                              muted}),
-                      huxerui::Spacer(),
-                      huxerui::Text(std::format(
-                          "{}%", static_cast<int>(
-                                     std::clamp(
-                                         static_cast<double>(profile.usedBytes) /
-                                             static_cast<double>(
-                                                 profile.totalBytes),
-                                         0.0, 1.0) *
-                                     100.0)))
-                          .Style(huxerui::TextStyle{
-                              huxerui::Font::System(font_size::kCaption),
-                              muted}),
-                  }
-                      .With(huxerui::CrossAlign(
-                          huxerui::CrossAxisAlignment::Center)),
-                  // 选中态是 primary_container 淡染底，ProgressBar 的主题
-                  // 轨道/指示色直接可读，不再需要 on_primary 自绘条。
-                  huxerui::View{huxerui::ProgressBar(std::clamp(
-                                    static_cast<float>(profile.usedBytes) /
-                                        static_cast<float>(profile.totalBytes),
-                                    0.0F, 1.0F))
-                                    .With(huxerui::Frame{.height = 4.0F})},
-              }
-                                .With(huxerui::Spacing(4.0F),
-                                      huxerui::CrossAlign(
-                                          huxerui::CrossAxisAlignment::Stretch))}
-            : huxerui::View{huxerui::Row{}},
+        huxerui::Spacer(),
+        std::move(trafficSection),
     }.With(huxerui::Spacing(6.0F),
+           huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
         selected, profile.name,
         // 远程/本地代理订阅暂时保持单选：点击哪张卡片，哪张就是当前订阅。
@@ -545,7 +639,33 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     // 矩形卡统一高度；宽度由虚拟网格的轨道均分，铺满页面而不固定尺寸
     // （内容已单行截断，ClipChildren 兜底）。
     card = std::move(card).With(huxerui::Frame{.height = kCardHeight},
-                                huxerui::ClipChildren());
+                                huxerui::ClipChildren(),
+                                huxerui::DropTarget::Accepts<ProfileDragPayload>())
+        .On<huxerui::DropEvents<ProfileDragPayload>::Entered>(
+            [isDropOver, reorder, id](const ProfileDragPayload& payload, const huxerui::DropEvent&) {
+                if (payload.id != id) {
+                    isDropOver = true;
+                    if (reorder.preview) reorder.preview(payload.id, id);
+                }
+            })
+        .On<huxerui::DropEvents<ProfileDragPayload>::Exited>(
+            [isDropOver](const ProfileDragPayload&, const huxerui::DropEvent&) {
+                isDropOver = false;
+            })
+        .On<huxerui::DropEvents<ProfileDragPayload>::Dropped>(
+            [isDropOver, reorder, id](const ProfileDragPayload& payload, const huxerui::DropEvent&) {
+                isDropOver = false;
+                if (reorder.drop) reorder.drop(payload.id, id);
+            });
+
+    if (isDropOver.Get()) {
+        card = std::move(card).With(
+            huxerui::Border(theme.colors.primary, 2.0F),
+            huxerui::CornerRadius(kSelectableTileRadius));
+    }
+    if (isDragging.Get()) {
+        card = std::move(card).With(huxerui::Opacity(0.4F));
+    }
     return std::move(card)
         // 右键上下文菜单（跟随点击位置弹出）。
         .On<huxerui::ViewEvents::ContextMenuRequested>(

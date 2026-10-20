@@ -66,6 +66,7 @@
             }
         }
         const std::size_t typeCount = typeIndices.size();
+        const std::int64_t lastProfileId = typeIndices.empty() ? 0 : profiles[typeIndices.back()].id;
         huxerui::View grid = huxerui::VirtualGrid(
                                  typeCount + (compact ? 1U : 0U),
                                  [profiles, typeIndices = std::move(typeIndices),
@@ -75,7 +76,7 @@
                                   openVpnAvailable = vpnModel->view.Get().openVpnAvailable,
                                   toggleConnection, openEditInfo, showEditRules,
                                   showEditFile, showQr, selectionPending, theme,
-                                  dialog](std::size_t index) -> huxerui::View {
+                                  dialog, reorderProfile](std::size_t index) -> huxerui::View {
                                      if (index >= typeCount) {
                                          return CompactFloatingNavigationFooter()
                                              .Key("compact-floating-footer");
@@ -108,7 +109,7 @@
                                                 isConnectionSelected(profile.id),
                                                 toggleConnection, openEditInfo,
                                                 showEditRules, showEditFile,
-                                                showQr, dialog)
+                                                showQr, dialog, reorderProfile)
                                          .Key(profile.id);
                                  })
                                  .Columns(compact
@@ -118,7 +119,15 @@
                                  .EstimatedRowExtent(kCardHeight)
                                  .RowSpacing(kSectionCardSpacing)
                                  .ColumnSpacing(kSectionCardSpacing)
-                                 .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
+                                 .With(huxerui::Grow(1.0F), huxerui::ScrollBar(),
+                                       huxerui::DropTarget::Accepts<ProfileDragPayload>())
+                                 .On<huxerui::DropEvents<ProfileDragPayload>::Dropped>(
+                                     [reorderProfile, lastProfileId](
+                                         const ProfileDragPayload& payload, const huxerui::DropEvent&) {
+                                         if (lastProfileId != 0 && reorderProfile.drop) {
+                                             reorderProfile.drop(payload.id, lastProfileId);
+                                         }
+                                     });
         typePages.push_back(huxerui::Column {grid}.With(
             huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
             .Key("type-page-" + type));

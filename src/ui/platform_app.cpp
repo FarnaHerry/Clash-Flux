@@ -226,6 +226,7 @@ struct TrayMenuText {
     const auto coreModel = huxerui::UseService<CoreModel>();
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     const auto settingsModel = huxerui::UseService<SettingsModel>();
+    const auto startupTasks = huxerui::UseApplicationTaskScope();
     const huxerui::SystemTrayHandle tray = application.SystemTray();
     const bool trayAvailable = tray.IsAvailable();
     auto tasks = huxerui::UseTaskScope();
@@ -240,7 +241,6 @@ struct TrayMenuText {
     auto trayProfiles = huxerui::UseState<std::vector<db::Profile>>({});
     auto trayProxyGroups = huxerui::UseState<std::vector<ProxyGroupSnapshot>>({});
     auto startupVisibilityHandled = huxerui::UseState(false);
-    auto startupRuntimeHandled = huxerui::UseState(false);
     auto closeDialogOpen = huxerui::UseState(false);
     auto exitRequested = huxerui::UseState(false);
     auto dialog = huxerui::UseDialog();
@@ -276,17 +276,15 @@ struct TrayMenuText {
     // 每次 GUI 启动都检查已安装服务，随后按设置自启内核；任务线程执行
     // 阻塞 IPC/升级，应用级保留状态避免重组重复检查；不主动安装或触发 UAC。
     huxerui::Lifecycle(
-        [tasks, trayCoreRunning, trayCoreMenuRunning, traySysProxy, trayTun,
-         traySysProxyActive, trayTunActive, coreModel, settingsModel,
-         startupRuntimeHandled, toast, control] {
+        [startupTasks, coreModel, settingsModel, toast, control] {
             const auto noCleanup = [] {};
             const SettingsView settings = settingsModel->view.Get();
-            if (!settings.ready || startupRuntimeHandled.Get() ||
+            if (!settings.ready || coreModel->startupServiceMaintenanceStarted ||
                 coreModel->serviceChecking.Get() || coreModel->operations.Busy() || cli::runtimeCommandMode()) return noCleanup;
-            startupRuntimeHandled = true;
+            coreModel->startupServiceMaintenanceStarted = true;
             coreModel->serviceChecking = true;
             const bool startupAutoRun = settings.autoRun;
-            tasks.Launch([=]() -> huxerui::Task<void> {
+            startupTasks.Launch([=]() -> huxerui::Task<void> {
                 try {
                     const auto maintenance = co_await RunOnTaskThread([] {
                         auto& core = store::coreStore();

@@ -336,7 +336,11 @@ huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
     fetched.status = response.status_code;
     fetched.ok = response.status_code >= 200 && response.status_code < 300;
     for (const auto& header : response.headers) {
-        fetched.headers.emplace(header.name, header.value);
+        std::string lowerName = header.name;
+        for (char& c : lowerName) {
+            if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        }
+        fetched.headers.emplace(std::move(lowerName), header.value);
     }
     fetched.body.assign(
         reinterpret_cast<const char*>(response.body.data()),

@@ -526,11 +526,11 @@ huxerui::XYChartData ConnectionChartData(
     const auto metric = [&theme](std::string direction, std::string rate,
                                  std::string total) {
         return huxerui::Row{
-            huxerui::Text(std::move(direction)).With(huxerui::Frame{.width = 24.0F}),
+            huxerui::Text(direction).With(huxerui::Frame{.width = 24.0F}),
             huxerui::Text(std::move(rate)).Style(huxerui::TextStyle{
                 huxerui::Font::Monospace(font_size::kMonoBody), theme.colors.on_surface})
                 .With(huxerui::Frame{.width = 130.0F}),
-            huxerui::Text(std::move(total)).Style(huxerui::TextStyle{
+            huxerui::Text(direction + " " + std::move(total)).Style(huxerui::TextStyle{
                 huxerui::Font::Monospace(font_size::kMonoBody), theme.colors.on_surface_variant}),
         }.With(huxerui::Spacing(8.0F));
     };

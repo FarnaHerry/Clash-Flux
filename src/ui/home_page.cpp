@@ -321,6 +321,7 @@ struct HomeState {
     std::string profileUpdated;
     std::int64_t profileUsedBytes = 0;
     std::int64_t profileTotalBytes = 0;
+    std::int64_t profileExpireAt = 0;  // Unix 秒；0 = 订阅未提供，不显示到期行
     bool operator==(const HomeState&) const = default;
 };
 
@@ -432,6 +433,7 @@ void MirrorHomeState(huxerui::State<HomeState> state,
         s.profileName = selected->name;
         s.profileUsedBytes = selected->usedBytes;
         s.profileTotalBytes = selected->totalBytes;
+        s.profileExpireAt = selected->expireAt;
         s.profileUpdated = selected->updatedAt > 0
                                ? "更新于 " + formatTime(selected->updatedAt)
                                : "未拉取";
@@ -442,6 +444,7 @@ void MirrorHomeState(huxerui::State<HomeState> state,
         s.profileUpdated = "";
         s.profileUsedBytes = 0;
         s.profileTotalBytes = 0;
+        s.profileExpireAt = 0;
     }
     state = s;
 }
@@ -487,14 +490,21 @@ void MirrorHomeState(huxerui::State<HomeState> state,
 // ---- 通用卡片部件 ----------------------------------------------------------
 
 // 卡片标题：所有卡片共用同一排版；卡片外壳由卡片槽统一提供。
-// 首页卡片没有选中态（「当前订阅」也是普通卡片），标题一律用 on_surface。
+// 首页卡片左上角均带有契合卡片功能的语义图标（规范见 AGENTS.md）。
 [[huxerui::composable]] huxerui::View HomeCardHeading(
-    huxerui::StringVariant title) {
+    huxerui::ImageResource icon, huxerui::StringVariant title) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    return huxerui::Text(title).Style(huxerui::TextStyle{
-        huxerui::Font::System(font_size::kBody)
-            .WithWeight(huxerui::FontWeight::SemiBold),
-        theme.colors.on_surface});
+    return huxerui::Row {
+        huxerui::Image(icon)
+            .Fit(huxerui::ImageFit::Contain)
+            .Tint(theme.colors.primary)
+            .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
+        huxerui::Text(title).Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kBody)
+                .WithWeight(huxerui::FontWeight::SemiBold),
+            theme.colors.on_surface}),
+    }.With(huxerui::Spacing(8.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 }
 
 // 统计列：统计带内的一列指标；不带卡片外壳，由外层统计带统一包卡。
@@ -576,7 +586,7 @@ huxerui::XYChartData BuildTrafficChartData(
 
     // fork 自带圆角段、中心占比与悬停动画，不再覆盖一份静态中心文字。
     return huxerui::Column {
-        HomeCardHeading(Localized("流量统计")),
+        HomeCardHeading(app::images::swap, Localized("流量统计")),
         huxerui::Row {
             huxerui::PieChart(data)
                 .Style(huxerui::PieChartStyle{.inner_radius = 0.62F, .rounded_caps = true})
@@ -609,7 +619,7 @@ huxerui::XYChartData BuildTrafficChartData(
 
     return huxerui::Column {
         huxerui::Row {
-            HomeCardHeading(Localized("流量")),
+            HomeCardHeading(app::images::speed, Localized("流量")),
             huxerui::Spacer(),
             huxerui::Text("↑ " + formatRate(s.latest.up))
                 .Style(huxerui::TextStyle{
@@ -723,7 +733,7 @@ huxerui::XYChartData BuildTrafficChartData(
     }
 
     return huxerui::Column {
-        HomeCardHeading(Localized("出站模式")),
+        HomeCardHeading(app::images::route, Localized("出站模式")),
         huxerui::Column(std::move(options))
             .With(huxerui::Spacing(2.0F),
                   huxerui::Grow(1.0F),
@@ -733,13 +743,13 @@ huxerui::XYChartData BuildTrafficChartData(
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-// 当前订阅卡：普通首页卡片，和别的卡片一样是 raised 表面 + on_surface 文字。
-// 「哪个订阅在使用中」由订阅页承担（那边是 primary 实心底的选中卡），首页不再
-// 复刻一套选中态/进度条配色。
+// 当前订阅卡：标题直接用订阅名（不再放「当前订阅」标签；哪张订阅在用由订阅页
+// 的选中态表达，首页只汇报这份订阅自身的状态）。流量行只在解析到
+// subscription-userinfo 数据时显示——total 未知（不限量）时进度条摆满；
+// 到期时间只在订阅提供了 expire 时显示，否则整行不占位。
 [[huxerui::composable]] huxerui::View HomeProfileCard(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool hasProfile = s.profileId != 0;
-    const huxerui::Color fg = theme.colors.on_surface;
     const huxerui::Color muted = theme.colors.on_surface_variant;
     const std::string profileName =
         s.profileName == "未启用订阅"
@@ -755,29 +765,61 @@ huxerui::XYChartData BuildTrafficChartData(
         }
         return huxerui::StringVariant(s.profileUpdated);
     }();
+    const bool hasTraffic =
+        hasProfile && (s.profileTotalBytes > 0 || s.profileUsedBytes > 0);
+    const int percent = s.profileTotalBytes > 0
+                            ? static_cast<int>(std::clamp(
+                                  static_cast<double>(s.profileUsedBytes) /
+                                      static_cast<double>(s.profileTotalBytes),
+                                  0.0, 1.0) *
+                              100.0)
+                            : 0;
+    const huxerui::StringVariant trafficLine =
+        s.profileTotalBytes > 0
+            ? LocalizedFormat("{}% {} / {}", percent,
+                              formatBytes(s.profileUsedBytes),
+                              formatBytes(s.profileTotalBytes))
+            : LocalizedFormat("{} / 不限量",
+                              formatBytes(s.profileUsedBytes));
+    // total 未知/不限量时没有可用比例，按「满」呈现（解析到数据前也一致）。
     const float progress =
         s.profileTotalBytes > 0
             ? std::clamp(static_cast<float>(s.profileUsedBytes) /
                              static_cast<float>(s.profileTotalBytes),
                          0.0F, 1.0F)
             : (hasProfile ? 1.0F : 0.0F);
+    const bool hasExpiry = hasProfile && s.profileExpireAt > 0;
 
-    return huxerui::Column {
-        HomeCardHeading(Localized("当前订阅")),
-        huxerui::Text(profileName).Style(huxerui::TextStyle{
-            huxerui::Font::System(font_size::kBody), fg}),
-        s.profileUpdated.empty()
-            ? huxerui::View{huxerui::Row{}}
-            : huxerui::View{
-                  huxerui::Text(profileUpdated)
-                      .Style(huxerui::TextStyle{
-                          huxerui::Font::System(font_size::kCaption), muted})},
-        huxerui::Spacer(),
-        hasProfile ? huxerui::View{huxerui::ProgressBar(progress)
-                                       .With(huxerui::Frame{.height = 3.0F})}
-                   : huxerui::View{huxerui::Row{}},
-    }.With(huxerui::Spacing(6.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    std::vector<huxerui::View> children;
+    children.push_back(HomeCardHeading(app::images::request, profileName));
+    if (!s.profileUpdated.empty()) {
+        children.push_back(
+            huxerui::Text(profileUpdated)
+                .Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kCaption), muted}));
+    }
+    if (hasExpiry) {
+        children.push_back(
+            huxerui::Text(LocalizedFormat(
+                "到期时间 {}", formatDate(s.profileExpireAt)))
+                .Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kCaption), muted}));
+    }
+    children.push_back(huxerui::Spacer());
+    if (hasTraffic) {
+        children.push_back(
+            huxerui::Text(trafficLine)
+                .Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kCaption), muted}));
+    }
+    if (hasProfile) {
+        children.push_back(
+            huxerui::ProgressBar(progress).With(huxerui::Frame{.height = 3.0F}));
+    }
+
+    return huxerui::Column(std::move(children))
+        .With(huxerui::Spacing(6.0F),
+              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 // ---- 网络信息卡片（双平台共用）--------------------------------------------
@@ -834,7 +876,7 @@ huxerui::XYChartData BuildTrafficChartData(
     }
 
     return huxerui::Column {
-        HomeCardHeading(Localized("内网 IP")),
+        HomeCardHeading(app::images::network, Localized("内网 IP")),
         huxerui::Column(std::move(lines))
             .With(huxerui::Spacing(3.0F),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
@@ -970,11 +1012,12 @@ struct HomeControlMoveExpand {
             huxerui::Image(icon)
                 .Fit(huxerui::ImageFit::Contain)
                 .Tint(theme.colors.primary)
-                .With(huxerui::Frame{.width = 22.0F, .height = 22.0F}),
+                .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
             huxerui::Text(label).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody),
+                huxerui::Font::System(font_size::kBody)
+                    .WithWeight(huxerui::FontWeight::SemiBold),
                 theme.colors.on_surface}),
-        }.With(huxerui::Spacing(10.0F),
+        }.With(huxerui::Spacing(8.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         huxerui::Row {
             huxerui::Text(description).Style(huxerui::TextStyle{

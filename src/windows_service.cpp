@@ -240,9 +240,16 @@ private:
     UniqueHandle mutex_;
 };
 
-bool privilegedSid(PSID sid) {
+bool privilegedSid(PSID sid, std::string_view ownerSid = {}) {
     if (!sid || !IsValidSid(sid)) return false;
     if (IsWellKnownSid(sid, WinLocalSystemSid) || IsWellKnownSid(sid, WinBuiltinAdministratorsSid)) return true;
+    if (!ownerSid.empty()) {
+        LPWSTR raw = nullptr;
+        if (ConvertSidToStringSidW(sid, &raw)) {
+            const std::unique_ptr<wchar_t, decltype(&LocalFree)> str(raw, &LocalFree);
+            if (wide(ownerSid) == raw) return true;
+        }
+    }
     // Program Files may be owned by the Windows Modules Installer service.
     PSID raw = nullptr;
     if (!ConvertStringSidToSidW(L"S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464", &raw)) return false;
@@ -250,15 +257,36 @@ bool privilegedSid(PSID sid) {
     return EqualSid(sid, trustedInstaller.get()) != FALSE;
 }
 
-void requireProtectedPath(const std::filesystem::path& path) {
+std::vector<std::filesystem::path> protectedRoots(const Options& options = {}) {
+    std::vector<std::filesystem::path> roots;
+    if (!options.directory.empty()) roots.push_back(options.directory.parent_path());
+    for (const auto& id : {FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86}) {
+        PWSTR raw = nullptr;
+        if (SUCCEEDED(SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, nullptr, &raw))) {
+            const std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> owner(raw, &CoTaskMemFree);
+            roots.push_back(raw);
+        }
+    }
+    return roots;
+}
+
+void requireProtectedPath(const std::filesystem::path& path, const Options& options = {},
+                          std::string_view ownerSid = {}) {
     // No unsigned executable from Downloads/AppData can become SYSTEM code.
     // Check every component down from Program Files, including the file ACL;
     // location alone is insufficient when an installer grants user write access.
-    const auto programFiles = directory({}).parent_path();
     const auto candidate = path.lexically_normal().wstring();
-    const auto prefix = programFiles.wstring() + L"\\";
-    if (!path.is_absolute() || candidate.size() <= prefix.size() ||
-        _wcsnicmp(candidate.c_str(), prefix.c_str(), prefix.size()) != 0)
+    const auto roots = protectedRoots(options);
+    std::filesystem::path matchedRoot;
+    for (const auto& root : roots) {
+        const auto prefix = root.wstring() + L"\\";
+        if (path.is_absolute() && candidate.size() > prefix.size() &&
+            _wcsnicmp(candidate.c_str(), prefix.c_str(), prefix.size()) == 0) {
+            matchedRoot = root;
+            break;
+        }
+    }
+    if (matchedRoot.empty())
         throw std::runtime_error("Automatic service update requires a protected Program Files installation; update the service from Settings");
     for (auto current = path; !current.empty(); current = current.parent_path()) {
         const DWORD attributes = GetFileAttributesW(current.c_str());
@@ -269,7 +297,7 @@ void requireProtectedPath(const std::filesystem::path& path) {
             OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
             &owner, nullptr, &acl, nullptr, &raw);
         const LocalMemory security(raw, &LocalFree);
-        if (code != ERROR_SUCCESS || !privilegedSid(owner) || !acl)
+        if (code != ERROR_SUCCESS || !privilegedSid(owner, ownerSid) || !acl)
             throw std::runtime_error("Automatic service update source has an untrusted owner or ACL");
         for (DWORD index = 0; index < acl->AceCount; ++index) {
             void* aceRaw = nullptr;
@@ -283,22 +311,23 @@ void requireProtectedPath(const std::filesystem::path& path) {
             constexpr DWORD mutation = FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA |
                 FILE_WRITE_ATTRIBUTES | FILE_DELETE_CHILD | DELETE | WRITE_DAC | WRITE_OWNER |
                 GENERIC_WRITE | GENERIC_ALL;
-            if ((ace->Mask & mutation) && !privilegedSid(const_cast<DWORD*>(&ace->SidStart)))
+            if ((ace->Mask & mutation) && !privilegedSid(const_cast<DWORD*>(&ace->SidStart), ownerSid))
                 throw std::runtime_error("Automatic service update source is writable by an ordinary user; update the service from Settings");
         }
-        if (_wcsicmp(current.c_str(), programFiles.c_str()) == 0) return;
+        if (_wcsicmp(current.c_str(), matchedRoot.c_str()) == 0) return;
     }
     throw std::runtime_error("Cannot validate automatic service update source");
 }
 
 void stagePayload(const std::filesystem::path& source, const std::filesystem::path& staging,
-                  bool requireTrust = false) {
+                  bool requireTrust = false, const Options& options = {},
+                  std::string_view ownerSid = {}) {
     const auto sourceDir = source.parent_path();
     if (std::filesystem::exists(staging)) std::filesystem::remove_all(staging);
     secureDirectory(staging);
     secureDirectory(staging / L"engines");
     const auto copy = [&](const auto& from, const auto& to) {
-        if (requireTrust) requireProtectedPath(from);
+        if (requireTrust) requireProtectedPath(from, options, ownerSid);
         std::filesystem::copy_file(from, to);
         secureDirectory(to); // Do not retain source executable/DLL permissions.
     };
@@ -471,13 +500,13 @@ struct Server {
             throw std::runtime_error(winError("Update client executable"));
         image.resize(size);
         const std::filesystem::path source(image);
-        requireProtectedPath(source);
+        requireProtectedPath(source, options, ownerSid);
         const auto root = directory(options);
         // All user-side files are validated/staged before touching live data.
-        stagePayload(source, root / L"upgrade-source", true);
+        stagePayload(source, root / L"upgrade-source", true, options, ownerSid);
         // Run the already installed trusted code from a separate protected copy.
         // It survives the daemon stop and is never part of the core Job Object.
-        stagePayload(selfExe(), root / L"updater", true);
+        stagePayload(selfExe(), root / L"updater", true, options, ownerSid);
         SECURITY_ATTRIBUTES attributes{sizeof(attributes), nullptr, TRUE};
         upgradeGate.reset(CreateEventW(&attributes, TRUE, FALSE, nullptr));
         const UniqueHandle log{CreateFileW((root / L"upgrade.log").c_str(), FILE_APPEND_DATA,
@@ -660,7 +689,12 @@ bool ensureCompatible(std::string_view version, std::string& error, const Option
         const auto service = openService(options, SERVICE_QUERY_STATUS | SERVICE_START);
         if (!service.valid()) { error = "Windows service is not installed; install it from Settings"; return false; }
         if (!startService(service.get(), error)) return false;
-        info = query(version, options);
+        const auto deadline = GetTickCount64() + 15000;
+        do {
+            info = query(version, options);
+            if (info.reachable) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        } while (GetTickCount64() < deadline);
     }
     if (info.reachable && info.error.empty()) return true;
     if (!info.reachable) { error = info.error; return false; }
@@ -785,7 +819,7 @@ int applyUpgrade(std::uintptr_t readyEvent, std::string& error, const Options& o
         if (currentUserSid() != "S-1-5-18") throw std::runtime_error("Service updater requires LocalSystem");
         const auto root = directory(options);
         const auto helper = root / L"updater" / L"clash-flux.exe";
-        requireProtectedPath(helper);
+        requireProtectedPath(helper, options);
         if (!std::filesystem::equivalent(selfExe(), helper)) throw std::runtime_error("Invalid service updater location");
         const UniqueHandle ready{reinterpret_cast<HANDLE>(readyEvent)};
         if (!ready.valid() || WaitForSingleObject(ready.get(), 10000) != WAIT_OBJECT_0)
@@ -796,7 +830,7 @@ int applyUpgrade(std::uintptr_t readyEvent, std::string& error, const Options& o
         // This source was snapshotted by the authenticated daemon before the
         // reply, so later changes to the application directory are irrelevant.
         const auto source = root / L"upgrade-source" / L"clash-flux.exe";
-        requireProtectedPath(source);
+        requireProtectedPath(source, options, sid);
         return installFrom(sid, error, options, source, true);
     } catch (const std::exception& exception) { error = exception.what(); return 1; }
 }

@@ -34,6 +34,7 @@ db_schema::ProfileRow ToRow(const model::Profile& profile) {
         .homepage = profile.homepage,
         .used_bytes = profile.usedBytes,
         .total_bytes = profile.totalBytes,
+        .expire_at = profile.expireAt,
         .native_config = profile.nativeConfig,
         .native_routes = profile.nativeRoutes,
     };
@@ -59,9 +60,46 @@ model::Profile ToProfile(const db_schema::ProfileRow& row) {
     profile.homepage = row.homepage;
     profile.usedBytes = row.used_bytes;
     profile.totalBytes = row.total_bytes;
+    profile.expireAt = row.expire_at;
     profile.nativeConfig = row.native_config;
     profile.nativeRoutes = row.native_routes;
     return profile;
+}
+
+void applyProfileOrder(std::vector<model::Profile>& profiles,
+                       std::string_view orderStr) {
+    if (orderStr.empty()) return;
+    std::vector<std::int64_t> orderIds;
+    std::string_view sv = orderStr;
+    while (!sv.empty()) {
+        const auto comma = sv.find(',');
+        const auto token = sv.substr(0, comma);
+        if (!token.empty()) {
+            std::int64_t val = 0;
+            if (auto [p, ec] = std::from_chars(token.data(), token.data() + token.size(), val); ec == std::errc{}) {
+                orderIds.push_back(val);
+            }
+        }
+        if (comma == std::string_view::npos) break;
+        sv.remove_prefix(comma + 1);
+    }
+    if (orderIds.empty()) return;
+    std::unordered_map<std::int64_t, std::size_t> orderMap;
+    for (std::size_t i = 0; i < orderIds.size(); ++i) {
+        orderMap[orderIds[i]] = i;
+    }
+    std::stable_sort(profiles.begin(), profiles.end(),
+                     [&](const model::Profile& a, const model::Profile& b) {
+                         const auto itA = orderMap.find(a.id);
+                         const auto itB = orderMap.find(b.id);
+                         const std::size_t posA = itA != orderMap.end()
+                                                      ? itA->second
+                                                      : (std::numeric_limits<std::size_t>::max() / 2 + a.id);
+                         const std::size_t posB = itB != orderMap.end()
+                                                      ? itB->second
+                                                      : (std::numeric_limits<std::size_t>::max() / 2 + b.id);
+                         return posA < posB;
+                     });
 }
 
 } // namespace
@@ -198,6 +236,10 @@ huxerui::Task<bool> Persistence::open(const std::filesystem::path& file,
         for (const db_schema::ProfileRow& row : *profileRows) {
             impl->profiles.push_back(ToProfile(row));
         }
+        const auto orderFound = impl->settings.find("profiles.order");
+        if (orderFound != impl->settings.end()) {
+            applyProfileOrder(impl->profiles, orderFound->second);
+        }
         impl->dirtyProfiles.clear();
         impl->deletedProfiles.clear();
         impl->profileDirectory = profileDirectory;
@@ -327,7 +369,14 @@ std::int64_t Persistence::saveProfile(model::Profile profile) {
         });
     if (found == impl_->profiles.end()) {
         impl_->profiles.push_back(profile);
-        std::ranges::sort(impl_->profiles, {}, &model::Profile::id);
+        const auto orderFound = impl_->settings.find("profiles.order");
+        if (orderFound == impl_->settings.end() || orderFound->second.empty()) {
+            std::ranges::sort(impl_->profiles, {}, &model::Profile::id);
+        } else {
+            if (!orderFound->second.empty()) orderFound->second += ',';
+            orderFound->second += std::to_string(profile.id);
+            impl_->dirty["profiles.order"] = ++impl_->settingsRevision;
+        }
     } else {
         *found = profile;
     }
@@ -345,9 +394,64 @@ bool Persistence::deleteProfile(std::int64_t id, bool removeFile) {
     std::erase_if(impl_->profiles, [id](const model::Profile& existing) {
         return existing.id == id;
     });
+    const auto orderFound = impl_->settings.find("profiles.order");
+    if (orderFound != impl_->settings.end() && !orderFound->second.empty()) {
+        std::string newOrder;
+        std::string_view sv = orderFound->second;
+        while (!sv.empty()) {
+            const auto comma = sv.find(',');
+            const auto token = sv.substr(0, comma);
+            if (!token.empty()) {
+                std::int64_t val = 0;
+                if (auto [p, ec] = std::from_chars(token.data(), token.data() + token.size(), val); ec == std::errc{}) {
+                    if (val != id) {
+                        if (!newOrder.empty()) newOrder += ',';
+                        newOrder.append(token);
+                    }
+                }
+            }
+            if (comma == std::string_view::npos) break;
+            sv.remove_prefix(comma + 1);
+        }
+        orderFound->second = std::move(newOrder);
+        impl_->dirty["profiles.order"] = ++impl_->settingsRevision;
+    }
     impl_->dirtyProfiles.erase(id);
     impl_->deletedProfiles[id] = std::move(deletion);
     return true;
+}
+
+void Persistence::setProfileOrder(const std::vector<std::int64_t>& orderIds) {
+    std::lock_guard lock(impl_->mutex);
+    impl_->requireProfilesReady();
+    if (orderIds.empty()) return;
+
+    std::unordered_map<std::int64_t, std::size_t> orderMap;
+    for (std::size_t i = 0; i < orderIds.size(); ++i) {
+        orderMap[orderIds[i]] = i;
+    }
+
+    std::stable_sort(impl_->profiles.begin(), impl_->profiles.end(),
+                     [&](const model::Profile& a, const model::Profile& b) {
+                         const auto itA = orderMap.find(a.id);
+                         const auto itB = orderMap.find(b.id);
+                         const std::size_t posA = itA != orderMap.end()
+                                                      ? itA->second
+                                                      : (std::numeric_limits<std::size_t>::max() / 2 + a.id);
+                         const std::size_t posB = itB != orderMap.end()
+                                                      ? itB->second
+                                                      : (std::numeric_limits<std::size_t>::max() / 2 + b.id);
+                         return posA < posB;
+                     });
+
+    std::string orderStr;
+    for (std::size_t i = 0; i < impl_->profiles.size(); ++i) {
+        if (i > 0) orderStr += ',';
+        orderStr += std::to_string(impl_->profiles[i].id);
+    }
+    impl_->settings["profiles.order"] = orderStr;
+    impl_->dirty["profiles.order"] = ++impl_->settingsRevision;
+    ++impl_->profilesRevision;
 }
 
 bool Persistence::setSelectedProfile(std::int64_t id) {

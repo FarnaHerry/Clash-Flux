@@ -249,6 +249,20 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     menus.item_indication = selectIndication;
     definition.Set(menus);
 
+    // 进度条样式：去掉 Material 3 自带的末端停止点（stop_indicator_size = 4pt）
+    // 与轨道间隔（track_gap = 4pt），恢复连续平滑的线性进度条呈现。
+    huxerui::ProgressBarStyle progressBar;
+    progressBar.track_color = spec.colors.secondary_container;
+    progressBar.indicator_color = spec.colors.primary;
+    progressBar.corner_radius = 2.0F;
+    progressBar.track_gap = 0.0F;
+    progressBar.stop_indicator_size = 0.0F;
+    progressBar.indeterminate_motion =
+        huxerui::ProgressBarIndeterminateMotion::Segmented;
+    progressBar.indeterminate_fraction = 0.35F;
+    progressBar.animation_duration = spec.motion.reduced_motion ? 0.0 : 1.75;
+    definition.Set(progressBar);
+
     // 响应式导航跟随品牌主题：Compact 使用底部 NavigationBar，Medium/Expanded
     // 使用官方 NavigationPane；不再由应用手工拼接侧栏几何。
     huxerui::NavigationBarStyle navigationBar =
@@ -1134,7 +1148,9 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
     // StateList 是它的镜像——模型一变就同步一次，不再是 2s 全量泵。
     huxerui::Lifecycle(
         [profilesCache, profilesModel] {
-            ReplaceStateList(profilesCache.list, profilesModel->list.Get());
+            if (!profilesModel->reorderPending.Get()) {
+                ReplaceStateList(profilesCache.list, profilesModel->list.Get());
+            }
             return [] {};
         },
         profilesModel->list);

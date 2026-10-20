@@ -79,6 +79,8 @@ public:
     bool deleteProfile(std::int64_t id, bool removeFile = false);
     /// 把 id 设为唯一启用（id==0 表示全部取消），同步改缓存并标脏。
     bool setSelectedProfile(std::int64_t id);
+    /// 设置订阅排序（保存 ID 顺序并写缓存与设置项 "profiles.order"）。
+    void setProfileOrder(const std::vector<std::int64_t>& orderIds);
     [[nodiscard]] bool hasPendingProfiles() const noexcept;
     /// 把标脏的订阅 upsert、已删除的订阅删除，一次落库。
     huxerui::Task<bool> flushProfiles();

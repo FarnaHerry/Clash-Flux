@@ -35,6 +35,8 @@ struct ProfilesModel {
     // 乐观选中标记：为 true 时泵暂停发布，避免未确认的选中态被闪回。
     // 页面与模型共享同一个 State。
     huxerui::State<bool> selectionPending{false};
+    // 拖动预览期间暂停列表泵和页面镜像，避免旧快照覆盖临时顺序。
+    huxerui::State<bool> reorderPending{false};
     // 显式请求立即同步（CRUD/激活/CLI 转发之后）。
     huxerui::State<std::uint64_t> syncTick{0};
     huxerui::State<std::vector<profile_link::RemoteProfile>> importLinks{

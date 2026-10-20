@@ -159,6 +159,17 @@ public:
         }
     }
 
+    bool setOrder(const std::vector<std::int64_t>& orderIds) {
+        try {
+            coreStore().db().setProfileOrder(orderIds);
+            lastError_.clear();
+            return true;
+        } catch (const std::exception& e) {
+            lastError_ = e.what();
+            return false;
+        }
+    }
+
     // 当前启用的订阅；无 = nullptr。
     std::optional<db::Profile> selected() {
         for (const auto& p : list()) {
@@ -179,6 +190,23 @@ public:
                            std::istreambuf_iterator<char>());
     }
 
+    // 远程订阅的空名字兜底：解析 URL 主机名作为可读名字（去掉 www. 前缀、
+    // 凭据、端口与路径），解析不出主机时回落「远程订阅」标签。
+    std::string RemoteFallbackName(const std::string& url) {
+        std::string host = url;
+        const auto scheme = host.find("://");
+        if (scheme != std::string::npos) host = host.substr(scheme + 3);
+        const auto path = host.find_first_of("/?#");
+        if (path != std::string::npos) host = host.substr(0, path);
+        const auto userinfo = host.rfind('@');
+        if (userinfo != std::string::npos) host = host.substr(userinfo + 1);
+        const auto port = host.rfind(':');
+        if (port != std::string::npos) host = host.substr(0, port);
+        if (host.empty()) return "远程订阅";
+        if (host.starts_with("www.")) host = host.substr(4);
+        return host;
+    }
+
     // 新增订阅（remote）：先建行拿 id，再下载到 profiles/<id>.yaml。阻塞（网络）。
     // options 携带弹窗里的订阅选项（type 强制 remote）。成功返回新 id；失败返回 0。
     std::int64_t importUrl(const std::string& name, const std::string& url,
@@ -188,7 +216,7 @@ public:
         p.id = 0;
         p.selected = false;
         p.type = "remote";
-        p.name = name.empty() ? url : name;
+        p.name = name.empty() ? RemoteFallbackName(url) : name;
         p.url = url;
         try {
             p.id = coreStore().db().saveProfile(p);
@@ -215,7 +243,7 @@ public:
         p.id = 0;
         p.selected = false;
         p.type = "remote";
-        p.name = name.empty() ? url : name;
+        p.name = name.empty() ? RemoteFallbackName(url) : name;
         p.url = url;
         try {
             p.id = coreStore().db().saveProfile(p);
@@ -250,16 +278,15 @@ public:
             if (!saveYaml(p.id, fetched.body)) failure = lastError_;
         }
         if (failure.empty()) {
-            if (const auto it = fetched.headers.find("subscription-userinfo");
-                it != fetched.headers.end()) {
-                parseUserInfo(it->second, p.usedBytes, p.totalBytes);
+            if (const auto userinfo = findHeader(fetched.headers, "subscription-userinfo")) {
+                parseUserInfo(*userinfo, p.usedBytes, p.totalBytes, p.expireAt);
             } else {
                 p.usedBytes = 0;
                 p.totalBytes = 0;
+                p.expireAt = 0;
             }
-            if (const auto it = fetched.headers.find("profile-web-page-url");
-                it != fetched.headers.end()) {
-                p.homepage = it->second;
+            if (const auto webUrl = findHeader(fetched.headers, "profile-web-page-url")) {
+                p.homepage = *webUrl;
             } else {
                 p.homepage.clear();
             }
@@ -408,9 +435,7 @@ public:
         if (!fields.type.empty() && fields.type != p->type && coreStore().sourceParticipates(id)) {
             lastError_ = "被编排引用的来源不能变更类型；请先解除引用"; return false;
         }
-        p->name = fields.name.empty()
-                      ? (fields.url.empty() ? p->name : fields.url)
-                      : fields.name;
+p->name = fields.name.empty() ? p->name : fields.name;
         p->url = fields.url;
         p->type = fields.type.empty() ? p->type : fields.type;
         p->description = fields.description;
@@ -613,25 +638,51 @@ private:
         return std::nullopt;
     }
 
+    template <class HeaderMap>
+    static std::optional<std::string> findHeader(
+        const HeaderMap& headers, std::string_view target) {
+        for (const auto& [name, val] : headers) {
+            if (name.size() == target.size()) {
+                bool match = true;
+                for (std::size_t i = 0; i < name.size(); ++i) {
+                    if (std::tolower(static_cast<unsigned char>(name[i])) !=
+                        std::tolower(static_cast<unsigned char>(target[i]))) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) return val;
+            }
+        }
+        return std::nullopt;
+    }
+
     // 解析 subscription-userinfo：upload=..; download=..; total=..; expire=..
-    // （单位字节；键值两侧空白容忍；未知键忽略）。
-    void parseUserInfo(const std::string& value, std::int64_t& used,
-                       std::int64_t& total) {
+    // （单位字节；expire 为 Unix 秒；键值两侧空白容忍；未知键忽略）。
+    static void parseUserInfo(const std::string& value, std::int64_t& used,
+                              std::int64_t& total, std::int64_t& expire) {
         std::int64_t upload = 0;
         std::int64_t download = 0;
         std::int64_t totalIn = 0;
-        std::int64_t begin = 0;
-        while (begin <= value.size()) {
+        std::int64_t expireIn = 0;
+        std::size_t begin = 0;
+        const auto isSpace = [](char c) {
+            return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+        };
+        while (begin < value.size()) {
             const auto end = value.find(';', begin);
             const std::string pair = value.substr(
                 begin, end == std::string::npos ? std::string::npos : end - begin);
             const auto eq = pair.find('=');
             if (eq != std::string::npos) {
-                const std::string key = pair.substr(0, eq);
+                std::string key = pair.substr(0, eq);
                 std::string num = pair.substr(eq + 1);
-                while (!num.empty() && (num.front() == ' ' || num.front() == '\t')) {
-                    num.erase(num.begin());
-                }
+                while (!key.empty() && isSpace(key.front())) key.erase(key.begin());
+                while (!key.empty() && isSpace(key.back())) key.pop_back();
+                for (char& c : key) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+                while (!num.empty() && isSpace(num.front())) num.erase(num.begin());
+                while (!num.empty() && isSpace(num.back())) num.pop_back();
+
                 std::int64_t parsed = 0;
                 const auto [ptr, ec] = std::from_chars(
                     num.data(), num.data() + num.size(), parsed);
@@ -639,6 +690,7 @@ private:
                     if (key == "upload") upload = parsed;
                     else if (key == "download") download = parsed;
                     else if (key == "total") totalIn = parsed;
+                    else if (key == "expire") expireIn = parsed;
                 }
             }
             if (end == std::string::npos) break;
@@ -646,6 +698,7 @@ private:
         }
         used = upload + download;
         total = totalIn;
+        expire = expireIn;
     }
 
     // 下载 p.url 到 profiles/<id>.yaml 并更新行（updated_at/error）。
@@ -687,18 +740,17 @@ private:
             if (!writeContent(p, previousContent, restoreError)) lastError_ += "；来源文件恢复失败：" + restoreError;
             return false;
         }
-        // 订阅响应头：subscription-userinfo（流量）/ profile-web-page-url
+        // 订阅响应头：subscription-userinfo（流量/到期）/ profile-web-page-url
         // （提供方首页）。缺头时清零/清空——以最新一跳为准。
-        if (const auto it = r.headers.find("subscription-userinfo");
-            it != r.headers.end()) {
-            parseUserInfo(it->second, p.usedBytes, p.totalBytes);
+        if (const auto userinfo = findHeader(r.headers, "subscription-userinfo")) {
+            parseUserInfo(*userinfo, p.usedBytes, p.totalBytes, p.expireAt);
         } else {
             p.usedBytes = 0;
             p.totalBytes = 0;
+            p.expireAt = 0;
         }
-        if (const auto it = r.headers.find("profile-web-page-url");
-            it != r.headers.end()) {
-            p.homepage = it->second;
+        if (const auto webUrl = findHeader(r.headers, "profile-web-page-url")) {
+            p.homepage = *webUrl;
         } else {
             p.homepage.clear();
         }

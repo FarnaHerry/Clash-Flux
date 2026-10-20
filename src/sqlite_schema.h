@@ -42,6 +42,7 @@ struct ProfileRow {
     std::string homepage;
     std::int64_t used_bytes = 0;
     std::int64_t total_bytes = 0;
+    std::int64_t expire_at = 0;
     std::string native_config;
     std::string native_routes;
 };

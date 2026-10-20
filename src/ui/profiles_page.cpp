@@ -54,6 +54,12 @@ import clashflux.vpn;
 
 namespace clashflux::ui {
 
+struct ProfileReorderSession {
+    std::int64_t activeId = 0;
+    std::int64_t previewTargetId = 0;
+    std::vector<std::int64_t> originalOrder;
+};
+
 [[huxerui::composable]] huxerui::View ProfilesPageCore(
     huxerui::NavigationController navigation, bool navigation_enabled,
     ProfilesCache profilesCache, bool active) {
@@ -69,6 +75,8 @@ namespace clashflux::ui {
     // profiles_model.h），本页不再自维护副本；乐观选中标记与模型共享。
     const auto profiles = profilesCache.list;
     const auto selectionPending = profilesCache.selection_pending;
+    auto reorderSession = huxerui::UseState(
+        std::make_shared<ProfileReorderSession>());
     auto pptpStates = huxerui::UseStateList<store::PptpState>();
     auto openVpnStates = huxerui::UseStateList<store::OpenVpnState>();
     auto connectionSelection = huxerui::UseStateList<std::int64_t>();

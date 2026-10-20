@@ -16,6 +16,85 @@
         return std::nullopt;
     };
 
+    auto reorderIds = [profiles] {
+        std::vector<std::int64_t> ids;
+        ids.reserve(profiles.Size());
+        for (std::size_t i = 0; i < profiles.Size(); ++i) ids.push_back(profiles[i].id);
+        return ids;
+    };
+
+    auto restoreOrder = [profiles](const std::vector<std::int64_t>& ids) {
+        for (std::size_t target = 0; target < ids.size(); ++target) {
+            for (std::size_t current = target; current < profiles.Size(); ++current) {
+                if (profiles[current].id != ids[target]) continue;
+                profiles.Move(current, target);
+                break;
+            }
+        }
+    };
+
+    ProfileReorderActions reorderProfile;
+    reorderProfile.begin = [reorderSession, reorderIds, profilesModel](std::int64_t id) {
+        auto& session = *reorderSession.Get();
+        if (session.activeId != 0) return;
+        session.activeId = id;
+        session.previewTargetId = 0;
+        session.originalOrder = reorderIds();
+        profilesModel->reorderPending = true;
+        // 让已经在途的旧列表快照失效；松手后再请求一次新快照。
+        profilesModel->RequestSync();
+    };
+    reorderProfile.preview = [profiles, reorderSession](std::int64_t fromId,
+                                                          std::int64_t toId) {
+        auto& session = *reorderSession.Get();
+        if (fromId == toId || session.activeId != fromId ||
+            session.previewTargetId == toId) return;
+        std::size_t fromIdx = profiles.Size();
+        std::size_t toIdx = profiles.Size();
+        for (std::size_t i = 0; i < profiles.Size(); ++i) {
+            if (profiles[i].id == fromId) fromIdx = i;
+            if (profiles[i].id == toId) toIdx = i;
+        }
+        if (fromIdx >= profiles.Size() || toIdx >= profiles.Size() || fromIdx == toIdx) {
+            return;
+        }
+        profiles.Move(fromIdx, toIdx);
+        session.previewTargetId = toId;
+    };
+    reorderProfile.drop = [reorderSession, reorderIds, restoreOrder,
+                           profilesModel, toast, preview = reorderProfile.preview](
+                              std::int64_t fromId, std::int64_t toId) {
+        auto& session = *reorderSession.Get();
+        if (session.activeId != fromId) return;
+        if (session.previewTargetId != toId && fromId != toId) preview(fromId, toId);
+        const auto ids = reorderIds();
+        if (ids != session.originalOrder) {
+            // setOrder 只排序内存缓存并标记异步落库；拖动过程中不写存储。
+            // 在 UI 线程按投放顺序提交，避免连续 worker 任务反序覆盖。
+            auto& profileStore = store::profilesStore();
+            if (!profileStore.setOrder(ids)) {
+                restoreOrder(session.originalOrder);
+                toast.Show(profileStore.lastError());
+            }
+        }
+        session.activeId = 0;
+        session.previewTargetId = 0;
+        session.originalOrder.clear();
+        profilesModel->reorderPending = false;
+        profilesModel->RequestSync();
+    };
+    reorderProfile.cancel = [reorderSession, restoreOrder,
+                             profilesModel](std::int64_t id) {
+        auto& session = *reorderSession.Get();
+        if (session.activeId != id) return;
+        restoreOrder(session.originalOrder);
+        session.activeId = 0;
+        session.previewTargetId = 0;
+        session.originalOrder.clear();
+        profilesModel->reorderPending = false;
+        profilesModel->RequestSync();
+    };
+
     auto isConnectionSelected = [connectionSelection](std::int64_t id) {
         for (const std::int64_t selected : connectionSelection) {
             if (selected == id) return true;

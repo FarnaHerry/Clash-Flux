@@ -28,6 +28,13 @@ struct NativeProfileSupport {
     bool pptp = false;
 };
 
+struct ProfileReorderActions {
+    std::function<void(std::int64_t)> begin;
+    std::function<void(std::int64_t, std::int64_t)> preview;
+    std::function<void(std::int64_t, std::int64_t)> drop;
+    std::function<void(std::int64_t)> cancel;
+};
+
 using ProfileEditLoader =
     std::function<void(std::int64_t, std::function<void()>)>;
 using ProfileEditDialog = std::function<void(std::int64_t)>;
@@ -64,6 +71,11 @@ struct ProfileImportRequest {
     std::string url;
     std::string picked_path;
     db::Profile options;
+};
+
+struct ProfileDragPayload {
+    std::int64_t id = 0;
+    bool operator==(const ProfileDragPayload&) const = default;
 };
 
 using ProfileImportResult = std::pair<std::int64_t, std::string>;
@@ -194,7 +206,8 @@ huxerui::View ProfileCard(
     const std::function<void(std::int64_t)>& openEditRules,
     const std::function<void(std::int64_t)>& openEditFile,
     const std::function<void(std::int64_t)>& openQr,
-    huxerui::DialogHandle dialog);
+    huxerui::DialogHandle dialog,
+    ProfileReorderActions reorder = {});
 
 huxerui::View ResponsiveProfileEditSurface(
     std::int64_t id, ProfileEditFields fields, huxerui::TaskScope tasks,
