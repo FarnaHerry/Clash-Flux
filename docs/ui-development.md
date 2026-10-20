@@ -220,6 +220,22 @@ Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上�
 
 浅色层级：外框 `#FAFBFC`、内容 `#EFF1F4`、普通卡片 `#FDFDFD`、未选中可选卡片 `#FAFBFC`。深色层级：外框 `#1A1B1C`、内容 `#141516`、普通卡片 `#1E1F20`、未选中可选卡片 `#242526`。选中卡片保留品牌色。
 
+输入框（TextField）经窗口根部的 `WithUnifiedFieldStyle`（`app.cpp`）全局对齐下拉
+触发框：圆角与高度 `theme.shapes.small` + 48pt、文字 `body_medium`、垂直内边距置零
+（占位符/文字/光标在完整框内居中，悬浮标签骑在边框上）。不要在页面单独覆盖
+`TextFieldStyle`；搜索胶囊 `PillSearchField` 的局部覆盖（去描边/透明底）在该全局
+样式之上生效。
+
+## 界面文案与字符串资源
+
+`Localized()` / `LocalizedFormat()` 把源文案按 FNV-1a-64 哈希到
+`resources/strings/{default,en,zh}.properties`（default/en 为英文、zh 为中文，按
+msg id 排序）。**新增或修改界面文案必须同步这三张表**：漏了不在编译期报错，而是
+文案首次组合时（含 tooltip、占位符、悬浮标签等懒渲染路径）直接抛 `std::logic_error`
+终止进程。排查：对 src/ui 全部字符串字面量按同算法哈希对照资源表，三元表达式与
+数组间接来源（`Localized(kXxx[i])`）也要核对；源码里相邻字面量拼接按拼接后的
+完整串核对。
+
 ## 主题颜色审查（2026-10-04）
 
 颜色集中配置入口为 `src/ui/theme_colors.h`：`FluxDarkColors()` / `FluxLightColors()`

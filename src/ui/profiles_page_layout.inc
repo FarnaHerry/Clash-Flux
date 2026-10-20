@@ -182,9 +182,11 @@
                                     pptpSupported, dialog] {
         dialog.Show([=](huxerui::DialogContext ctx) {
             return DialogCard(huxerui::Column{
+                // embedded：DialogCard 是唯一容器层，布局与编辑订阅弹窗一致。
                 ProfileCreatePage(createFields, tasks, toast, picker, http,
-                                  pptpSupported, [ctx] { ctx.Dismiss(); }),
-            }.With(huxerui::Frame{.width = 520.0F, .height = 560.0F},
+                                  pptpSupported, [ctx] { ctx.Dismiss(); },
+                                  /*embedded=*/true),
+            }.With(huxerui::Frame{.width = 420.0F},
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
         });
     };

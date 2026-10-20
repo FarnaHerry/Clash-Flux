@@ -380,6 +380,16 @@ Medium/Expanded 右侧）展示分组抽屉，不按桌面/手机平台硬编码
 阴影色使用 `ThemeShadowColor`，危险按钮继承当前 ButtonStyle 并使用 `OnErrorColor`。
 不得在页面写 RGB 或固定黑白界面颜色；二维码的编码黑白模块及固定图标资源是明确例外。
 
+### 界面文案与字符串资源
+
+`Localized()` / `LocalizedFormat()` 把源文案按 FNV-1a-64 哈希成 `msg_<id>`，运行时到
+`resources/strings/{default,en,zh}.properties` 查资源（default/en 为英文、zh 为中文，
+按 msg id 排序）。**新增或修改界面文案必须同步改这三个表**：漏了不在编译期报错，
+而是文案首次组合时（含 tooltip、占位符、悬浮标签等懒渲染路径）直接抛
+`std::logic_error` 终止进程。排查用全量扫描：对 src/ui 全部字符串字面量按同算法
+算哈希对照资源表，三元表达式与数组间接来源（`Localized(kXxx[i])`）也要核对；
+源码里相邻字面量拼接按拼接后的完整串核对。
+
 ### 首帧启动配置读取
 
 启动快照是首帧唯一允许同步读取的持久化配置：`AppRoot` 在构建任何可见内容前通过

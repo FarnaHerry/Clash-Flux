@@ -317,6 +317,29 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     return huxerui::Theme(std::move(definition), content);
 }
 
+// 输入框对齐下拉触发框（Select 全局覆盖为 shapes.small + 48pt，见
+// FluxThemed）：读取当前主题的 TextFieldStyle 后改圆角/高度/字号/内边距
+// 再提供回子树——配色与字体族原样保留；对话框层在 Attach 时捕获环境，
+// 同样生效。PillSearchField 的局部覆盖（去描边/透明底）在其之上继续生效。
+[[huxerui::composable]] huxerui::View WithUnifiedFieldStyle(huxerui::View content) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    huxerui::TextFieldStyle fields = huxerui::UseEnvironment<huxerui::TextFieldStyle>();
+    fields.outlined.corner_radii = huxerui::CornerRadii{theme.shapes.small};
+    fields.standard.corner_radii = huxerui::CornerRadii{theme.shapes.small};
+    // 垂直内边距置零（作者建议的免改框架方案）：frame 高度 = minimum_height
+    // = 48pt，与下拉触发框同高；占位符/输入文字/光标在完整框内居中，不再被
+    // 悬浮标签带压到偏下。水平 10pt 保留常规边框内缩。
+    fields.outlined.minimum_height = 48.0F;
+    fields.standard.minimum_height = 48.0F;
+    fields.padding = huxerui::EdgeInsets::Symmetric(10.0F, 0.0F);
+    // 输入文字从 body_large(16pt) 降到 body_medium(14pt)，与下拉触发器的
+    // 默认字号一致。
+    fields.text_style.font = huxerui::Font::System(theme.typography.body_medium);
+    fields.label_style.font = huxerui::Font::System(theme.typography.body_medium);
+    fields.placeholder_style.font = huxerui::Font::System(theme.typography.body_medium);
+    return huxerui::ProvideEnvironment(std::move(fields), std::move(content));
+}
+
 // 桌面与手机共用图标定义；选中只改变内容色和指示器，不替换图标轮廓。
 struct NavigationEntry {
     huxerui::ImageResource icon;
@@ -1197,12 +1220,13 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
 
     return huxerui::ProvideEnvironment(locale, FluxThemed(
         rootSpec,
-        huxerui::Column {
-            std::move(profileRefreshPump),
-            std::move(applicationEffects),
-            std::move(content),
-        }.With(huxerui::Grow(1.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))));
+        WithUnifiedFieldStyle(
+            huxerui::Column {
+                std::move(profileRefreshPump),
+                std::move(applicationEffects),
+                std::move(content),
+            }.With(huxerui::Grow(1.0F),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))));
 }
 
 } // namespace clashflux::ui

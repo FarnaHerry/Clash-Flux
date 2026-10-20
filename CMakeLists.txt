@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.50 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.51 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -496,6 +496,20 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # singbox_bundle.cmake 的 CLASHFLUX_SINGBOX_VERSION pin，升级改一处全联动。
     target_compile_definitions(clash-flux
         PRIVATE CLASHFLUX_SINGBOX_VERSION="${CLASHFLUX_SINGBOX_VERSION}")
+    # Linux 任务栏身份：platform/linux/main.cpp 用 g_set_prgname 设定 GTK 的
+    # Wayland app_id / X11 WM_CLASS（GTK4 缺省落 "GTK Application"，匹配不到
+    # clash-flux.desktop，任务栏只能给通用字母图标），因此显式链接 glib-2.0。
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(PkgConfig QUIET)
+        if (PkgConfig_FOUND)
+            pkg_check_modules(CLASHFLUX_APP_GLIB2 QUIET IMPORTED_TARGET glib-2.0)
+        endif ()
+        if (NOT CLASHFLUX_APP_GLIB2_FOUND)
+            message(FATAL_ERROR
+                "clash-flux: Linux 桌面构建需要 glib-2.0（glib2-devel / libglib2.0-dev）")
+        endif ()
+        target_link_libraries(clash-flux PRIVATE PkgConfig::CLASHFLUX_APP_GLIB2)
+    endif ()
 
     # ---- Windows 自定义安装向导 ---------------------------------------------
     # `huxerui package windows` 时生效（日常构建零开销）：platform/windows/

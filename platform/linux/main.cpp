@@ -17,7 +17,17 @@ import clashflux.cli;
 import clashflux.cli_ipc;
 import clashflux.instance;
 
+#if defined(__linux__)
+// GTK4 不再从 argv 推导 prgname，缺省时 Wayland app_id 落到 "GTK Application"，
+// 匹配不到 clash-flux.desktop，任务栏只能显示通用字母图标。GTK 的 Wayland
+// app_id 与 X11 WM_CLASS 都取自 GLib prgname，须在首次 GTK 初始化前设定。
+extern "C" void g_set_prgname(const char* program_name);
+#endif
+
 int main(int argc, char** argv) {
+#if defined(__linux__)
+    g_set_prgname("clash-flux");
+#endif
     if (argc == 2 && clashflux::profile_link::IsSupportedScheme(
             std::string_view(argv[1]).substr(0, std::string_view(argv[1]).find(':')))) {
         std::string error;

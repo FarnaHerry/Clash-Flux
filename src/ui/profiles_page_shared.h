@@ -203,7 +203,7 @@ huxerui::View ProfileCreatePage(
     ProfileCreateFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
-    std::function<void()> on_back);
+    std::function<void()> on_back, bool embedded = false);
 huxerui::View ResponsiveProfileCreateSurface(
     bool open, ProfileCreateFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,

@@ -53,9 +53,9 @@ inline huxerui::View ConnectionRowContent(ConnectionRow row, std::string upRate,
         };
         huxerui::View metrics = huxerui::Column{
             huxerui::Row{mono("↑ " + upRate, 114.0F),
-                         mono(upTotal, 88.0F)}.With(huxerui::Spacing(8.0F)),
+                         mono("↑ " + upTotal, 100.0F)}.With(huxerui::Spacing(8.0F)),
             huxerui::Row{mono("↓ " + downRate, 114.0F),
-                         mono(downTotal, 88.0F)}.With(huxerui::Spacing(8.0F)),
+                         mono("↓ " + downTotal, 100.0F)}.With(huxerui::Spacing(8.0F)),
         }.With(huxerui::Spacing(2.0F));
         huxerui::View metadata = huxerui::Column{
             huxerui::Text(ConnectionPreviewText(row.chains, 24)),

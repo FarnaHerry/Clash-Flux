@@ -11,4 +11,6 @@ MimeType=x-scheme-handler/clash-flux;x-scheme-handler/sing-box;x-scheme-handler/
 Icon=clash-flux
 Terminal=false
 Categories=Network;Utility;
-StartupWMClass=dev.farna.clashflux
+# 与 Linux 窗口身份一致：Wayland app_id / X11 WM_CLASS 均来自 GLib prgname
+# （platform/linux/main.cpp 显式设为 clash-flux），据此匹配任务栏图标。
+StartupWMClass=clash-flux

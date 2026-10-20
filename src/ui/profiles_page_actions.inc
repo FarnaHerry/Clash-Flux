@@ -258,7 +258,7 @@
                                                     })}
                                 : huxerui::View{huxerui::Row{}},
                         }
-                                           .With(huxerui::Spacing(12.0F),
+                                           .With(huxerui::Spacing(16.0F),
                                                  huxerui::CrossAlign(
                                                      huxerui::CrossAxisAlignment::
                                                          Stretch)))
@@ -324,7 +324,7 @@
                         }.With(huxerui::MainAlign(
                                    huxerui::MainAxisAlignment::SpaceBetween)),
                     }
-                                      .With(huxerui::Spacing(12.0F),
+                                      .With(huxerui::Spacing(16.0F),
                                             huxerui::Frame{.width = 420.0F},
                                             huxerui::CrossAlign(
                                                 huxerui::CrossAxisAlignment::
@@ -492,7 +492,7 @@
                         }.With(huxerui::MainAlign(
                                    huxerui::MainAxisAlignment::SpaceBetween)),
                     }
-                                      .With(huxerui::Spacing(12.0F),
+                                      .With(huxerui::Spacing(16.0F),
                                             huxerui::Frame{.width = 620.0F},
                                             huxerui::CrossAlign(
                                                 huxerui::CrossAxisAlignment::
@@ -608,7 +608,7 @@
                         }.With(huxerui::MainAlign(
                                    huxerui::MainAxisAlignment::SpaceBetween)),
                     }
-                                      .With(huxerui::Spacing(12.0F),
+                                      .With(huxerui::Spacing(16.0F),
                                             huxerui::Frame{.width = 640.0F},
                                             huxerui::CrossAlign(
                                                 huxerui::CrossAxisAlignment::

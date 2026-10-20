@@ -662,7 +662,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                             .With(huxerui::MainAlign(
                                 huxerui::MainAxisAlignment::SpaceBetween)),
                     }
-                        .With(huxerui::Spacing(12.0F),
+                        .With(huxerui::Spacing(16.0F),
                               huxerui::CrossAlign(
                                   huxerui::CrossAxisAlignment::Stretch)))
                     .With(huxerui::Frame{.max_width = 520.0F, .max_height = 640.0F}, huxerui::ScrollBar()));
@@ -1010,11 +1010,11 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                             editPriority = value;
                         }),
                     RuleOptions(editTier, editUnavailable, editKind, editObject, editEnabled, editCatalog, editSearch),
-                }.With(huxerui::Spacing(12.0F),
+                }.With(huxerui::Spacing(16.0F),
                        huxerui::CrossAlign(
                            huxerui::CrossAxisAlignment::Stretch))),
                 CompactFloatingNavigationFooter(),
-            }.With(huxerui::Spacing(12.0F),
+            }.With(huxerui::Spacing(16.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
             .With(huxerui::Grow(1.0F)));
     if (compact && globalEditorOpen.Get()) {

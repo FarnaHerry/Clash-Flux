@@ -442,36 +442,45 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
             LocalizedFormat("当前检测到 {}；复制当前混合端口的代理变量",
                             detectedShell),
             huxerui::Row {
+                // 与「添加全局路由规则」弹窗的下拉同款：固定 220pt 宽，
+                // 样式走 FluxThemed 的全局 SelectStyle（8pt 圆角 + 48pt 高）。
                 huxerui::Select(
                     envShellLabels,
                     envShell,
                     [](const std::string& name) {
-                        return huxerui::Text(name == "命令提示符（cmd）"
-                                                 ? Localized("命令提示符（cmd）")
-                                                 : huxerui::StringVariant(name));
+                        return huxerui::Text(
+                            name == "命令提示符（cmd）"
+                                ? Localized("命令提示符（cmd）")
+                                : huxerui::StringVariant(name));
                     })
                     .OnChanged([settingsModel](std::size_t index) {
                         if (index < std::size(kEnvironmentShells))
-                            settingsModel->SetEnvShell(kEnvironmentShells[index].id);
+                            settingsModel->SetEnvShell(
+                                kEnvironmentShells[index].id);
                     })
-                    .With(huxerui::Grow(1.0F), huxerui::Frame{.max_width = 170.0F},
+                    .With(huxerui::Frame{.width = 220.0F},
                           huxerui::Enabled(settings.ready)),
-                huxerui::Button(Localized("复制")).With(huxerui::Enabled(settings.ready)).OnClick(
-                    [clipboard, toast, settingsModel, detectedShell, coreModel] {
-                        const SettingsView current = settingsModel->view.Get();
-                        if (!current.ready) return;
-                        const CoreView runtime = coreModel->view.Get();
-                        const int port = runtime.core.state == core::CoreState::Running
-                            ? runtime.core.mixedPort : std::atoi(current.mixedPort.c_str());
-                        const std::string command = ProxyEnvironmentCommand(
-                            current.envShell.empty() ? detectedShell : current.envShell, port);
-                        if (clipboard->WriteText(command)) {
-                            toast.Show(Localized("环境变量命令已复制"));
-                        } else {
-                            toast.Show(Localized("复制失败"));
-                        }
-                    }),
-            }.With(huxerui::Spacing(8.0F)), app::images::terminal),
+                huxerui::IconButton(app::images::copy, Localized("复制"))
+                    .With(huxerui::Tooltip(Localized("复制环境变量命令")),
+                          huxerui::Enabled(settings.ready))
+                    .OnClick(
+                        [clipboard, toast, settingsModel, detectedShell, coreModel] {
+                            const SettingsView current = settingsModel->view.Get();
+                            if (!current.ready) return;
+                            const CoreView runtime = coreModel->view.Get();
+                            const int port = runtime.core.state == core::CoreState::Running
+                                ? runtime.core.mixedPort : std::atoi(current.mixedPort.c_str());
+                            const std::string command = ProxyEnvironmentCommand(
+                                current.envShell.empty() ? detectedShell : current.envShell, port);
+                            if (clipboard->WriteText(command)) {
+                                toast.Show(Localized("环境变量命令已复制"));
+                            } else {
+                                toast.Show(Localized("复制失败"));
+                            }
+                        }),
+            }.With(huxerui::Spacing(8.0F),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+                app::images::terminal),
     }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
