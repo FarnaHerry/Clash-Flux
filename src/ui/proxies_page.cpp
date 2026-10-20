@@ -331,7 +331,7 @@ constexpr std::size_t kNodeMetaChars = 8;
     huxerui::State<int> testGeneration, huxerui::State<std::string> testGroup,
     huxerui::State<GroupTestProgress> testProgress,
     huxerui::State<int> testPending,
-    bool interactive, std::function<void()> onSelect, std::size_t nameLimit,
+    bool selectable, std::function<void()> onActivate, std::size_t nameLimit,
     std::size_t detailLimit) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
@@ -502,6 +502,8 @@ constexpr std::size_t kNodeMetaChars = 8;
     // 两行：第一行名称，第二行是「元数据（左）＋ 测速（右）」同一基线左右对齐。
     // 表面 / 内边距 / 圆角 / 交互全部交给 SelectableTile——代理页节点卡就是这套
     // 形状的标准（订阅卡等其它列表项同样复用它）。
+    // URLTest 等只读组没有手动选择动作；整卡交互与正常节点一致，点击只提示。
+    // Windows 的禁用透明度会为每张卡创建单独的 Direct2D 图层。
     return SelectableTile(
         huxerui::Column {
             NodeTitle(node.displayName, nameLimit, tile.fg),
@@ -514,7 +516,9 @@ constexpr std::size_t kNodeMetaChars = 8;
         }.With(huxerui::Spacing(2.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
         selected, node.displayName,
-        interactive ? std::move(onSelect) : std::function<void()>{});
+        std::move(onActivate),
+        selectable ? SelectableTileInteraction::Selectable
+                    : SelectableTileInteraction::ReadOnly);
 }
 
 // 页面级「乐观选中意图」：点击后渲染立刻读到目标节点。以前直接改 `groups`
@@ -534,10 +538,11 @@ struct SelectionIntent {
 std::function<void()> NodeSelectAction(
     huxerui::State<SelectionIntent> intent, huxerui::TaskScope tasks,
     std::shared_ptr<ProxiesModel> proxiesModel, std::function<void()> onFailure,
+    std::function<void()> onReadOnly,
     const ProxyGroup& group, const ProxyNode& node) {
     const std::string groupName = group.name;
     const std::string nodeName = node.name;
-    if (!group.selectable) return [] {};
+    if (!group.selectable) return onReadOnly;
     const SelectionIntent target{groupName, nodeName};
     return [intent, tasks, proxiesModel, onFailure, target, groupName,
             nodeName] {
@@ -869,6 +874,10 @@ std::function<void()> NodeSelectAction(
                                                     [toast] {
                                                         toast.Show(
                                                             Localized("线路切换失败，请查看日志"));
+                                                    },
+                                                    [toast] {
+                                                        toast.Show(Localized(
+                                                            "此分组不支持手动切换节点，仅作展示"));
                                                     },
                                                     *group, node),
                                                 nodeNameLimit, detailLimit)

@@ -631,10 +631,16 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         selected, profile.name,
         // 远程/本地代理订阅暂时保持单选：点击哪张卡片，哪张就是当前订阅。
         // PPTP 仍使用系统接口；OpenVPN 已由 sing-box endpoint 统一承载。
-        [activateProfile, id, selected, nativeVpn] {
-            if (selected || nativeVpn) return;
+        [activateProfile, id, selected, nativeVpn, toast] {
+            if (nativeVpn) {
+                toast.Show(Localized(
+                    "此连接配置用于内网连接，不能设为主订阅"));
+                return;
+            }
+            if (selected) return;
             activateProfile(id);
-        });
+        }, nativeVpn ? SelectableTileInteraction::ReadOnly
+                     : SelectableTileInteraction::Selectable);
 
     // 矩形卡统一高度；宽度由虚拟网格的轨道均分，铺满页面而不固定尺寸
     // （内容已单行截断，ClipChildren 兜底）。

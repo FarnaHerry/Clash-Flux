@@ -408,8 +408,10 @@ huxerui::View DenseCard(huxerui::View content);
 
 // 可选中卡片（全项目统一的列表项原语，形状以代理页节点卡为标准）：
 // 8pt 圆角、Symmetric(10, 8) 内边距、未选中 islands.active 表面 / 选中
-// primary_container 淡染底 + primary 描边、整卡可点、Semantics 为 Button。
-// `on_click` 为空 = 不可交互（去掉焦点与点击，例如 urltest 组里的节点）。
+// primary_container 淡染底 + primary 描边。交互状态由调用方显式指定：
+// ReadOnly 保持正常外观、焦点与点击反馈，但回调只提示、不执行选择
+// （例如 urltest 组里的节点）；
+// Disabled 用于真正禁用的卡片。
 //
 // 文字色由 ResolveSelectableTileColors() 给出同一套：主文字 fg、次级 muted、更弱
 // faint；选中态用 on_primary_container（次级降透明度），错误色仍由调用方用
@@ -423,11 +425,14 @@ struct SelectableTileColors {
 
 constexpr float kSelectableTileRadius = 8.0F;
 
+enum class SelectableTileInteraction { Selectable, ReadOnly, Disabled };
+
 SelectableTileColors ResolveSelectableTileColors(
     const huxerui::ThemeSpec& theme, bool selected);
 huxerui::View SelectableTile(huxerui::View content, bool selected,
                              std::string semantics_label,
-                             std::function<void()> on_click);
+                             std::function<void()> on_click,
+                             SelectableTileInteraction interaction);
 
 // 注意（踩过的坑）：**不要在 composable 的返回值上补 `Background/Border/CornerRadius`**。
 // composable 返回的是 hcg 生成的 Scope 包装节点，那些 paint 修饰符只会画在整棵子树
