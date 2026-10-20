@@ -40,6 +40,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <vector>
@@ -51,6 +53,7 @@
 #include "task_bridge.h"
 
 #include "wire_codec.h"
+import clashflux.config;
 import clashflux.core;
 import clashflux.singbox;
 import clashflux.store.core;
@@ -230,6 +233,68 @@ std::string truncateOneLine(const std::string& s, std::size_t maxCodePoints) {
         ++count;
     }
     return s;
+}
+
+// Windows' bundled emoji font displays regional-indicator pairs as country
+// letters. Draw only the leading flag from the packaged atlas; keep the
+// original UTF-8 name for proxy identity, search and accessibility.
+huxerui::View NodeTitle(const std::string& name, std::size_t limit,
+                        huxerui::Color foreground) {
+    const auto plain = [&] {
+        return huxerui::View{huxerui::Text(truncateOneLine(name, limit))
+            .Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBodySmall), foreground})};
+    };
+#ifdef _WIN32
+    if (name.size() < 8) return plain();
+    const auto* bytes = reinterpret_cast<const unsigned char*>(name.data());
+    if (bytes[0] != 0xF0 || bytes[1] != 0x9F || bytes[2] != 0x87 ||
+        bytes[4] != 0xF0 || bytes[5] != 0x9F || bytes[6] != 0x87 ||
+        bytes[3] < 0xA6 || bytes[3] > 0xBF ||
+        bytes[7] < 0xA6 || bytes[7] > 0xBF) return plain();
+    struct Atlas {
+        huxerui::ImageAsset image;
+        std::string codes;
+    };
+    static const std::optional<Atlas> atlas = []() -> std::optional<Atlas> {
+        try {
+            const auto directory = cfg::executableDir() / "assets";
+            std::ifstream codesFile(directory / "flags.codes", std::ios::binary);
+            if (!codesFile) return std::nullopt;
+            std::string codes(std::istreambuf_iterator<char>{codesFile}, {});
+            return Atlas{huxerui::ImageAsset::FromFile(directory / "flags.png"),
+                         std::move(codes)};
+        } catch (const std::exception&) {
+            return std::nullopt;
+        }
+    }();
+    if (!atlas) return plain();
+    const std::string code{
+        static_cast<char>('a' + bytes[3] - 0xA6),
+        static_cast<char>('a' + bytes[7] - 0xA6)};
+    const auto position = atlas->codes.find(code);
+    if (position == std::string::npos || position % 3 != 0) return plain();
+    const std::size_t index = position / 3;
+    constexpr float cellWidth = 48.0F, cellHeight = 36.0F;
+    constexpr std::size_t columns = 16;
+    auto flag = huxerui::Canvas([image = atlas->image, index](
+            huxerui::PaintContext& paint, huxerui::Size size) {
+        paint.DrawImageRect(image,
+            {static_cast<float>(index % columns) * cellWidth,
+             static_cast<float>(index / columns) * cellHeight,
+             cellWidth, cellHeight},
+            {0.0F, 0.0F, size.width, size.height});
+    }).With(huxerui::Frame{.width = 20.0F, .height = 15.0F});
+    return huxerui::Row {
+        std::move(flag),
+        huxerui::Text(truncateOneLine(name.substr(8), limit > 2 ? limit - 2 : 0))
+            .Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBodySmall), foreground}),
+    }.With(huxerui::Spacing(4.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+#else
+    return plain();
+#endif
 }
 
 // 卡片第二行元数据：协议（大写）+ UDP 标记；组节点写「组 · 当前分支」。
@@ -439,9 +504,7 @@ constexpr std::size_t kNodeMetaChars = 8;
     // 形状的标准（订阅卡等其它列表项同样复用它）。
     return SelectableTile(
         huxerui::Column {
-            huxerui::Text(truncateOneLine(node.displayName, nameLimit))
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kBodySmall), tile.fg}),
+            NodeTitle(node.displayName, nameLimit, tile.fg),
             huxerui::Row {
                 huxerui::Text(detail).Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kCaption), detailColor}),

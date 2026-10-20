@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.52 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.53 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -667,6 +667,9 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
 
         # clashflux.singbox 订阅编译器：只依赖 std + nlohmann.json 模块 + yaml-cpp。
         add_executable(test_singbox tests/test_singbox.cpp src/singbox.cpp src/profile_link.cpp)
+        if(MSVC)
+            target_compile_options(test_singbox PRIVATE /utf-8)
+        endif()
         target_sources(test_singbox PRIVATE FILE_SET clashflux_singbox_modules
             TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"

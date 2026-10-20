@@ -589,7 +589,7 @@ sniff、DNS 劫持等前置规则。
 | `IP-ASN` / `SRC-IP-ASN` | approx；使用 [ipverse 公告网段](https://github.com/ipverse/as-ip-blocks)的完整 IPv4/IPv6 JSON 快照，展开为 `ip_cidr` / `source_ip_cidr`。不输出不存在的 ASN 字段；数据与 Mihomo ASN 数据库、实时归属可能不同 |
 | ASN 在 classical inline/file/HTTP 与 AND/OR/NOT 中 | 同一转换器；非零 uint32 编号、完整双地址族列表、ASN 身份与 CIDR 全量校验。数据缺失拒绝候选，不能忽略条件；`no-resolve` 另记 approx |
 | HTTP provider → ASN 依赖 | 编译器只声明资源、读缓存；任务层有界重复发现（最多 256 个不同资源/256 轮），全部暂存、完整候选检查后替换。每日到期仅在应用配置时刷新；可用旧缓存允许失败回退，无缓存则保留旧配置并失败 |
-| MRSv1 domain/ipcidr（file/HTTP） | exact 解码已支持的 ASCII 域名集合与 IPv4/IPv6 区间；后续 inline 快照/定时刷新差异仍 approx。域名精确项、仅子域及整层 `*` 分开保留；地址区间分解为不扩大的 CIDR 集合 |
+| MRSv1 domain/ipcidr（file/HTTP） | exact 解码已支持的 ASCII 域名集合与 IPv4/IPv6 区间；后续 inline 快照/定时刷新差异仍 approx。同域名的精确项与仅子域项合并为无前导点 `domain_suffix`；未成对的仅子域项和整层 `*` 保持原匹配边界；地址区间分解为不扩大的 CIDR 集合 |
 | MRS 不合法/不支持的集合 | classical、非 ASCII 域名、未知格式/集合版本、扩展头、损坏位图、逆序/交叠/跨地址族区间与附加数据均整份拒绝。压缩输入 8 MiB、解压 32 MiB、规则上限 100 万、字典边上限 400 万；不截断提交 |
 
 MRS 格式依据 [Mihomo MRS reader](https://github.com/MetaCubeX/mihomo/blob/Meta/rules/provider/mrs_reader.go)、
@@ -597,6 +597,9 @@ MRS 格式依据 [Mihomo MRS reader](https://github.com/MetaCubeX/mihomo/blob/Me
 [IP 区间集合](https://github.com/MetaCubeX/mihomo/blob/Meta/component/cidr/ipcidr_set_bin.go)。
 解码使用固定 Zstandard 1.5.7 本地归档和 SHA256；没有引入第二个代理内核。
 MRS 展开后的匹配集合在原生配置中按字段合并为分立 OR 分支，避免每个域名单建一条规则。
+2026-10-20 起，同一规范化域名同时有精确匹配和仅子域匹配时，在 JSON 生成阶段合为
+一项 `domain_suffix`，避免为每个子域匹配生成正则；未成对的仅子域项仍用锚定正则，
+不额外匹配根域名。依据 [sing-box 1.9.0 的 domain_suffix 语义](https://sing-box.sagernet.org/migration/#domain_suffix-behavior-update)。
 解码直接使用有界字符串集合并累计字段数组，不先构建逐条 YAML/JSON 中间树；
 此优化保留相同匹配、完整校验与保真度条目，性能证据见分层完成度记录。
 ASN 数据为独立自有 HTTP 资源，不改变 Android 打包国内 GEO 和数据库 schema；手机最终检查仍由后台 libbox 承担。

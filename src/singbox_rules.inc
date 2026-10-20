@@ -564,6 +564,7 @@ std::optional<nlohmann::json> ruleProviderRules(Context& ctx, const Payload& pay
         const std::string& behavior, std::string& failure, bool compact = false) {
     nlohmann::json rules = nlohmann::json::array();
     std::map<std::string, nlohmann::json> fields;
+    std::vector<std::string> strictSuffixes;
     const auto append = [&](const std::string& field, std::string value) {
         auto [it, inserted] = fields.try_emplace(field);
         if (inserted) it->second = nlohmann::json::array();
@@ -587,6 +588,15 @@ std::optional<nlohmann::json> ruleProviderRules(Context& ctx, const Payload& pay
             const auto patterns = dnsPolicyPatterns(value);
             if (compact && plainSuffix) {
                 append("domain_suffix", *plainSuffix); ++index; continue;
+            }
+            if (compact && value.starts_with(".")) {
+                if (auto suffix = dnsPolicyDomain(value.substr(1)); suffix && patterns.size() == 1) {
+                    // MRS often stores the root and its strict subdomains as
+                    // separate trie leaves. Defer the strict suffix until all
+                    // exact domains are known, so a pair can use one native
+                    // domain_suffix instead of compiling a regex per domain.
+                    strictSuffixes.push_back(std::move(*suffix)); ++index; continue;
+                }
             }
             if (compact && patterns.size() == 1) {
                 auto [field, entry] = patterns[0].fieldValue();
@@ -624,6 +634,25 @@ std::optional<nlohmann::json> ruleProviderRules(Context& ctx, const Payload& pay
             rules.push_back(std::move(*condition));
         }
         ++index;
+    }
+    if (!strictSuffixes.empty()) {
+        std::unordered_set<std::string> remaining(strictSuffixes.begin(), strictSuffixes.end());
+        if (auto exact = fields.find("domain"); exact != fields.end()) {
+            nlohmann::json unpaired = nlohmann::json::array();
+            for (auto& domain : exact->second) {
+                const auto& name = domain.get_ref<const std::string&>();
+                if (remaining.erase(name)) append("domain_suffix", name);
+                else unpaired.push_back(std::move(domain));
+            }
+            if (unpaired.empty()) fields.erase(exact);
+            else exact->second = std::move(unpaired);
+        }
+        for (const auto& suffix : strictSuffixes) {
+            if (!remaining.erase(suffix)) continue;
+            // An unpaired strict suffix must still exclude the root domain.
+            auto [field, expression] = dnsPolicyPatterns("." + suffix).front().fieldValue();
+            append(field, std::move(expression));
+        }
     }
     for (auto& [field, values] : fields) rules.push_back({{field, std::move(values)}});
     return rules;

@@ -152,19 +152,6 @@
                                              : compiled.error));
                 return;
             }
-            {
-                auto config = nlohmann::json::parse(compiled.json, nullptr, false);
-                if (!config.is_object()) {
-                    fail("订阅编译结果不是合法 JSON 对象");
-                    return;
-                }
-                const std::string proxyGroups = proxyGroupsFromConfig(config, compiled.sourceObjects);
-                {
-                    std::lock_guard lock(mutex_);
-                    compiledProxyGroups_ = proxyGroups;
-                }
-                compiled.json = config.dump();
-            }
             prefetchRuleSets(compiled.ruleSetResources, workDir);
             [[maybe_unused]] const bool geoInputsChanged = !compiled.ruleSetResources.empty() || options.ruleSetDir != workDir.string();
             options.ruleSetDir = workDir.string();
@@ -196,25 +183,31 @@
                     std::lock_guard lock(mutex_);
                     compiledProxyGroups_ = proxyGroups;
                 }
+                // BuildProxySnapshot writes persisted selector defaults into
+                // config; the candidate check and on-disk file need those edits.
                 compiled.json = config.dump();
-            }
 #ifdef _WIN32
-            if (options.tunInbound) {
-                for (const auto& native : options.nativeConnections) {
-                    if (native.connected && !native.interfaceName.empty())
-                        windowsNativeInterfaces.push_back(native.interfaceName);
-                }
-                if (!windowsNativeInterfaces.empty()) {
-                    const auto config =
-                        nlohmann::json::parse(compiled.json, nullptr, false);
-                    for (const auto& inbound : config["inbounds"]) {
-                        if (inbound.value("type", "") != "tun") continue;
-                        windowsTunInterface = inbound.value("interface_name", "ClashFlux");
-                        windowsExclusions = inbound.value("route_exclude_address", std::vector<std::string>{});
+                if (options.tunInbound) {
+                    for (const auto& native : options.nativeConnections) {
+                        if (native.connected && !native.interfaceName.empty())
+                            windowsNativeInterfaces.push_back(native.interfaceName);
+                    }
+                    if (!windowsNativeInterfaces.empty()) {
+                        for (const auto& inbound : config["inbounds"]) {
+                            if (inbound.value("type", "") != "tun") continue;
+                            windowsTunInterface = inbound.value("interface_name", "ClashFlux");
+                            windowsExclusions = inbound.value("route_exclude_address", std::vector<std::string>{});
+                        }
                     }
                 }
-            }
 #endif
+                std::ifstream previousConfig(configFile, std::ios::binary);
+                if (previousConfig) {
+                    const std::string previousText(std::istreambuf_iterator<char>(previousConfig), {});
+                    const auto previousJson = nlohmann::json::parse(previousText, nullptr, false);
+                    residentConfigMatches = !previousJson.is_discarded() && previousJson == config;
+                }
+            }
             std::string checkError;
             if (!checkCompiledPlan(compiled, checkError)) { fail(checkError); return; }
             ruleSetResources = compiled.ruleSetResources;
@@ -227,15 +220,6 @@
             if (appliedRevision == std::numeric_limits<std::uint64_t>::max()) { fail("已应用计划修订号超出范围"); return; }
             options.planRevision = appliedRevision + 1;
             lastPreparedOptions_ = options;
-            {
-                std::ifstream previousConfig(configFile, std::ios::binary);
-                if (previousConfig) {
-                    const std::string previousText(std::istreambuf_iterator<char>(previousConfig), {});
-                    const auto previousJson = nlohmann::json::parse(previousText, nullptr, false);
-                    const auto candidateJson = nlohmann::json::parse(compiled.json, nullptr, false);
-                    residentConfigMatches = !previousJson.is_discarded() && previousJson == candidateJson;
-                }
-            }
             // Android's VpnService waits for this file from another thread.
             // Never expose a partially-written JSON document to libbox; an
             // atomic rename also prevents a stale config from being selected

@@ -1323,17 +1323,47 @@ void testMrsRuleProviders() {
     check(result.error.empty() && !result.json.empty(), "MRS HTTP domain lowers complete trie");
     if (!result.json.empty()) {
         const auto rules = json::parse(result.json)["route"]["rule_set"][0]["rules"];
-        check(rules.size() == 2 && rules.dump().find("domain_regex") != std::string::npos &&
-              rules.dump().find("only") != std::string::npos && rules.dump().find("wild") != std::string::npos,
-              "MRS compacts exact and strict suffix/wildcard conditions into separate OR branches");
+        check(rules.size() == 3 && rules[0].contains("domain") &&
+              rules[1].contains("domain_regex") && rules[2].contains("domain_suffix"),
+              "MRS merges paired exact/subdomain entries into a native suffix branch");
         const auto& exact = rules[0]["domain"];
+        const auto& regex = rules[1]["domain_regex"];
+        const auto& suffix = rules[2]["domain_suffix"];
         const auto exactValues = exact.get<std::vector<std::string>>();
         const std::set<std::string> exactSet(exactValues.begin(), exactValues.end());
-        check(exact.size() == 4098 && std::ranges::all_of(keys, [&](const auto& key) {
+        check(exact.size() == 4097 && std::ranges::all_of(keys, [&](const auto& key) {
             return !key.ends_with(".bulk.test") || exactSet.contains(key);
-        }), "large MRS compaction preserves every exact entry and keeps native branch count bounded");
+        }), "large MRS compaction preserves bulk exact entries and keeps native branch count bounded");
         check(std::ranges::find(exact, "only.test") == exact.end() &&
-              std::ranges::find(exact, "root.test") != exact.end(), "subdomain-only never gains a root match");
+              std::ranges::find(exact, "root.test") == exact.end() &&
+              std::ranges::find(suffix, "root.test") != suffix.end() &&
+              std::ranges::find(regex, "^([^.]+\\.)+only\\.test$") != regex.end() &&
+              std::ranges::find(regex, "^([^.]+\\.)+root\\.test$") == regex.end() &&
+              regex.size() == 2,
+              "paired root and subdomains share domain_suffix; unpaired strict suffix stays root-exclusive");
+    }
+    auto withUserRule = base;
+    withUserRule.mainConnectionId = "main";
+    withUserRule.globalRules = {{.match = vpn::MatchKind::ExactDomain,
+                                 .pattern = "root.test", .connectionId = "main"}};
+    withUserRule.ruleProviderContents.clear();
+    const auto userResource = singbox::compileConfig(withUserRule).httpRuleProviders[0];
+    withUserRule.ruleProviderContents[userResource.cacheKey] = compressed;
+    const auto merged = singbox::compileConfig(withUserRule);
+    check(merged.error.empty() && !merged.json.empty(),
+          "user rule and MRS subscription compile into one candidate: " + merged.error);
+    if (!merged.json.empty()) {
+        const auto mergedConfig = json::parse(merged.json);
+        const auto& routeRules = mergedConfig["route"]["rules"];
+        std::size_t userIndex = routeRules.size(), providerIndex = routeRules.size();
+        for (std::size_t i = 0; i < routeRules.size(); ++i) {
+            if (routeRules[i].contains("domain") &&
+                std::ranges::find(routeRules[i]["domain"], "root.test") != routeRules[i]["domain"].end())
+                userIndex = i;
+            if (routeRules[i].contains("rule_set")) providerIndex = i;
+        }
+        check(userIndex < providerIndex,
+              "user rule precedes subscription rule set in the same route.rules");
     }
     auto badMagic = domain; badMagic[0] = 'X';
     auto badVersion = domain; badVersion[3] = 2;
