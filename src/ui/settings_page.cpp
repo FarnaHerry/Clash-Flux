@@ -426,16 +426,14 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 [[huxerui::composable]] huxerui::View AndroidMoreSettings(
     huxerui::State<std::size_t>, ProfilesCache profilesCache) {
     const huxerui::NavigationController navigation = huxerui::UseNavigation();
-    // 同组入口合并成一段，行间用 Divider 分隔；外层由设置页统一加一层卡片。
+    // 同组入口合并成一段；外层由设置页统一加一层卡片。
     return huxerui::Column {
         SectionTitle(Localized("更多")),
         huxerui::Column {
             MoreNavRow(Localized("连接"), app::images::connections,
                        [navigation] { navigation.Push(AndroidConnectionsPage); }),
-            huxerui::Divider(),
             MoreNavRow(Localized("日志"), app::images::logs,
                        [navigation] { navigation.Push(AndroidLogsPage); }),
-            huxerui::Divider(),
             MoreNavRow(Localized("规则"), app::images::route, [navigation, profilesCache] {
                 navigation.Push([profilesCache] {
                     return AndroidRulesPage(profilesCache);
@@ -584,9 +582,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         SectionTitle(Localized("更多")),
         huxerui::Column {
           MoreNavRow(Localized("连接"), app::images::connections, [navPage] { navPage = 4U; }),
-          huxerui::Divider(),
           MoreNavRow(Localized("日志"), app::images::logs, [navPage] { navPage = 5U; }),
-          huxerui::Divider(),
           MoreNavRow(Localized("规则"), app::images::route, [navPage] { navPage = 3U; }),
         }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
     }.With(huxerui::Spacing(10.0F),
