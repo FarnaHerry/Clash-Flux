@@ -40,6 +40,7 @@ import clashflux.store.vpn;
 #include "core_control.h"
 #include "profiles_model.h"
 #include "settings_model.h"
+#include "app_runtime_services.h"
 #include "stream_updates.h"
 #include "vpn_model.h"
 
@@ -231,6 +232,12 @@ void CoreControl::Run(CoreCommand command) const {
             catch (...) {}
         }
         control.model->RequestRefresh();
+        if (control.presentationAvailable && !control.presentationAvailable()) {
+            if (result.status != CoreApplyStatus::Applied && control.onHeadlessFailure)
+                control.onHeadlessFailure(
+                    result.status == CoreApplyStatus::PermissionDenied, result.error);
+            return;
+        }
         if (result.status == CoreApplyStatus::PermissionDenied) {
             control.window.Show();
             control.window.Activate();
@@ -399,11 +406,13 @@ ProxiesSnapshot FetchProxiesSnapshot() {
 }
 
 void InstallClashFluxUiModels(huxerui::ApplicationContext& context) {
+    auto runtimeServices = std::make_shared<AppRuntimeServices>();
+    context.Provide(runtimeServices);
     context.Provide(std::make_shared<ProxiesModel>());
     context.Provide(std::make_shared<CoreModel>());
     auto profiles = std::make_shared<ProfilesModel>();
     context.Provide(profiles);
-    InstallProfileLinkActivation(context, profiles);
+    InstallProfileLinkActivation(context, profiles, runtimeServices);
     context.Provide(std::make_shared<VpnModel>());
     context.Provide(std::make_shared<SettingsModel>());
 }
@@ -1314,6 +1323,8 @@ void DriveSettingsModel(huxerui::TaskScope tasks,
             next.trayEnabled = core.setting("tray.enabled", "true") == "true";
             next.startMinimized =
                 core.setting("tray.start_minimized", "false") == "true";
+            next.lightweightTray =
+                core.setting("tray.lightweight", "false") == "true";
             next.mixedPort = core.setting("core.mixed_port", "7899");
             next.httpPort = core.setting("core.http_port", "");
             next.socksPort = core.setting("core.socks_port", "");
@@ -1332,13 +1343,17 @@ void DriveSettingsModel(huxerui::TaskScope tasks,
 void DriveVpnModel(huxerui::TaskScope tasks, std::shared_ptr<VpnModel> model) {
     tasks.Launch([model]() -> huxerui::Task<void> {
         for (;;) {
+            if (model->operation.Get().Busy()) {
+                co_await huxerui::Delay(std::chrono::duration<double>{0.1});
+                continue;
+            }
             const std::uint64_t before = model->syncTick.Get();
             auto next = co_await RunOnTaskThread([] {
                 return store::vpnStore().snapshot();
             });
             // 动作完成回调可能已发布更新的快照，不能用在途旧轮询覆盖它。
             if (!model->PublishPolled(before, std::move(next))) continue;
-            co_await huxerui::Delay(std::chrono::duration<double>{1.0});
+            co_await huxerui::Delay(std::chrono::duration<double>{0.25});
         }
     });
 }

@@ -361,6 +361,28 @@ const huxerui::Application kLargeApplication{LargeRoot};
 const huxerui::Application kApplication{TestRoot};
 const huxerui::Application kReducedApplication{ReducedRoot};
 
+void testDesktopTouchpadSectionPager() {
+    huxerui::testing::UiTest ui(kApplication, {
+        .viewport = {400.0F, 700.0F}, .resource_provider = AppResources(),
+    });
+    ui.PumpAndSettle();
+    const auto scroll = [&ui](huxerui::ScrollInputPhase phase, float delta) {
+        return ui.SendScroll({{200.0F, 300.0F}, delta, 0.0F, {},
+                              huxerui::ScrollInputKind::Touchpad, phase});
+    };
+    static_cast<void>(scroll(huxerui::ScrollInputPhase::Begin, 0.0F));
+    check(scroll(huxerui::ScrollInputPhase::Update, 240.0F).x > 0.0F,
+          "桌面触摸板横滑由生产分区 Pager 消费");
+    static_cast<void>(scroll(huxerui::ScrollInputPhase::End, 0.0F));
+    ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("SELECTED-1")).Exists(),
+          "桌面触摸板释放后写回分区受控索引");
+    static_cast<void>(ui.SendScroll({{200.0F, 300.0F}, 240.0F, 0.0F}));
+    ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("SELECTED-1")).Exists(),
+          "离散滚轮不触发分区翻页");
+}
+
 void checkVisible(huxerui::testing::UiTest& ui, int index, const char* what) {
     const auto tab = ui.Find(UiSelector::Key("section-tab-" + key(index))).One();
     const auto strip = ui.Find(UiSelector::Key("section-tab-scroll")).One();
@@ -1660,6 +1682,7 @@ int main() {
     testLogActions();
     testFilteredRuleIndices();
     testLargeRuleList();
+    testDesktopTouchpadSectionPager();
     testCommonMenu();
     testGroupDrawers();
     testResponsiveDesktopShell();

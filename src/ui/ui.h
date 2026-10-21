@@ -355,16 +355,17 @@ void AndroidPreparePlatformDataDirectory(
     const huxerui::ApplicationHandle& application);
 void DesktopPreparePlatformDataDirectory(
     const huxerui::ApplicationHandle& application);
+void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context);
 huxerui::View AndroidProfileRefreshPump();
 huxerui::View DesktopProfileRefreshPump();
 huxerui::View AndroidApplicationEffects(
     const huxerui::ApplicationHandle& application,
     const huxerui::ThemeSpec& rootSpec,
-    bool startupTrayEnabled, bool startupMinimized);
+    bool startupTrayEnabled, bool startupMinimized, bool startupLightweight);
 huxerui::View DesktopApplicationEffects(
     const huxerui::ApplicationHandle& application,
     const huxerui::ThemeSpec& rootSpec,
-    bool startupTrayEnabled, bool startupMinimized);
+    bool startupTrayEnabled, bool startupMinimized, bool startupLightweight);
 huxerui::View AndroidAppContent(huxerui::View mainRow,
                                const huxerui::ThemeSpec& rootSpec);
 huxerui::View DesktopAppContent(huxerui::View mainRow,

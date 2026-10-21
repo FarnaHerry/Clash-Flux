@@ -202,6 +202,7 @@ huxerui::View ProfileCard(
     huxerui::State<bool> selectionPending,
     const store::PptpState& pptpState,
     const store::OpenVpnState& openVpnState, bool connectionSelected,
+    bool connectionPending, bool openingConnection, bool connectionActionsBusy,
     const std::function<void(std::int64_t, bool)>& toggleConnection,
     const std::function<void(std::int64_t)>& openEditInfo,
     const std::function<void(std::int64_t)>& openEditRules,

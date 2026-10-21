@@ -4,7 +4,7 @@
 `<HOME>/dev/cpp/mcpp/HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `7abe0fc2812de8aac509ed27eee254c8d58da1b2`，各平台 CI 共用
+Clash-Flux 当前固定 `2a741e751fed69ccf590e3a8badf0ab31d9b4d05`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
@@ -47,7 +47,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 7abe0fc2812de8aac509ed27eee254c8d58da1b2
+git -C third_party/huxerui checkout 2a741e751fed69ccf590e3a8badf0ab31d9b4d05
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
@@ -61,6 +61,17 @@ Clash-Flux 必须重新运行 `cmake --build build --target clash-flux`、`./run
 同源约束，桌面门禁和 iOS 暂缓政策保持不变。
 
 ## 验证边界
+
+2026-10-21 固定版本更新到 `2a741e7`：相对 `7abe0fc` 新增应用范围的跨窗口拖放与
+桌面触摸板连续翻页。独立维护仓库已分别 fetch fork 和上游；上游 `main` 仍为
+`0c51262`，新提交均来自 fork，维护目录原有未提交内容保持原状。触摸板输入在
+Linux/Windows/macOS 适配器进入框架滚动事务，Pager 只消费连续横向手势，内层
+同轴滚动优先，离散滚轮不翻页。应用宽屏一级页改用 Pager；Compact 保留同一节点
+和页面状态，但禁用一级横滑，以免规则、连接、日志绕过「更多」入口。二级分区
+本来使用 Pager，更新后直接获得触摸板横滑。Linux Debug 本地重新构建
+`clash-flux` 与全部测试目标，`./run.sh --version` 通过，17 项桌面必跑回归全部
+通过；生产分区测试新增触摸板翻页与离散滚轮隔离检查。隔离 XDG 目录的 GUI
+启动运行 8 秒未退出。本机未验证 Windows/macOS 原生触摸板与 Android 真机。
 
 2026-10-18 固定版本更新到 `7abe0fc`（上游官方 main 自 fork 基线 `0c51262` 起无新提交；
 本次是 fork 侧经 PR #6/#7/#8 合入 `farna/main` 的 28 个提交）：macOS 多窗口预览与

@@ -421,6 +421,15 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                     settingsModel->Update(
                         [on](SettingsView& view) { view.startMinimized = on; });
                 }), false, app::images::visibility_off),
+        SettingSwitchRow(
+            Localized("轻量级托盘模式"),
+            Localized("隐藏到托盘时销毁主窗口和界面，唤出时重新创建"),
+            huxerui::Switch(settings.lightweightTray)
+                .OnChanged([settingsModel](bool on) {
+                    store::coreStore().setSetting("tray.lightweight", on ? "true" : "false");
+                    settingsModel->Update(
+                        [on](SettingsView& view) { view.lightweightTray = on; });
+                }), false, app::images::tray),
     }.With(huxerui::Spacing(10.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }

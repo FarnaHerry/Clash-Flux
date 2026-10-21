@@ -22,6 +22,7 @@ export struct StartupSettings {
     std::string language = "system";
     bool trayEnabled = true;
     bool startMinimized = false;
+    bool lightweightTray = false;
     std::string error;
 };
 export StartupSettings readStartupSettings(const std::filesystem::path& file);

@@ -9,8 +9,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <format>
+#include <functional>
 #include <memory>
-#include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -28,6 +29,7 @@
 #include "app_resources.h"
 #include "proxies_model.h"
 #include "settings_model.h"
+#include "app_runtime_services.h"
 #include "task_bridge.h"
 
 import clashflux.config;
@@ -83,7 +85,7 @@ void AndroidPreparePlatformDataDirectory(
 
 [[huxerui::composable]] huxerui::View AndroidApplicationEffects(
     const huxerui::ApplicationHandle&, const huxerui::ThemeSpec&,
-    bool, bool) {
+    bool, bool, bool) {
     return {};
 }
 
@@ -105,6 +107,80 @@ void AndroidPreparePlatformDataDirectory(
 
 #else
 
+struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
+    std::optional<huxerui::ApplicationHandle> application;
+    std::optional<huxerui::WindowHandle> window;
+    std::optional<CoreControl> control;
+    std::function<void()> refresh;
+    bool started = false;
+    bool startupVisibilityHandled = false;
+    bool retired = false;
+    bool exitRequested = false;
+    std::uint64_t windowGeneration = 0;
+    std::string presentationKey;
+
+    CoreControl MenuControl() {
+        CoreControl next = *control;
+        const std::weak_ptr<DesktopTrayRuntime> weak = shared_from_this();
+        const auto generation = windowGeneration;
+        next.presentationAvailable = [weak, generation] {
+            const auto runtime = weak.lock();
+            return runtime && !runtime->retired &&
+                   runtime->windowGeneration == generation;
+        };
+        next.onHeadlessFailure = [weak](bool permissionDenied,
+                                        const std::string& error) {
+            if (const auto runtime = weak.lock()) {
+                stream::logApplication("error", error.empty()
+                    ? "托盘内核操作失败" : error);
+                if (permissionDenied) runtime->ShowWindow();
+            }
+        };
+        return next;
+    }
+
+    void ShowWindow() {
+        if (!application) return;
+        bool opening = retired;
+        try {
+            if (retired) {
+                ++windowGeneration;
+                retired = false;
+                window = application->OpenWindow(huxerui::WindowOptions{
+                    .title = "Clash-Flux",
+                    .initial_size = {1080.0F, 720.0F},
+                    .minimum_size = huxerui::Size{320.0F, 480.0F},
+                    .chrome_mode = huxerui::WindowChromeMode::Custom,
+                    .title_bar_height = kDesktopTitleBarHeight,
+                });
+                opening = false;
+                presentationKey.clear();
+            }
+            if (window) {
+                window->Show();
+                window->Activate();
+            }
+        } catch (const std::exception& error) {
+            if (opening) retired = true;
+            stream::logApplication("error", std::string{"唤出主窗口失败："} + error.what());
+        }
+    }
+
+    void HideWindow(bool lightweight) {
+        if (!window) return;
+        if (lightweight) {
+            retired = true;
+            window->Retire();
+        } else {
+            window->Hide();
+        }
+    }
+};
+
+void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
+    context.Provide(std::make_shared<DesktopTrayRuntime>());
+}
+
 void DesktopPreparePlatformDataDirectory(
     const huxerui::ApplicationHandle& application) {
     static_cast<void>(application);
@@ -121,17 +197,21 @@ bool HasDesktopCoreRuntime() {
 }
 
 [[huxerui::composable]] huxerui::View DesktopProfileRefreshPump() {
-    auto tasks = huxerui::UseTaskScope();
+    auto tasks = huxerui::UseApplicationTaskScope();
+    auto runtimeServices = huxerui::UseService<AppRuntimeServices>();
     huxerui::Lifecycle(
-        [tasks] {
-            tasks.Launch([]() -> huxerui::Task<void> {
-                for (;;) {
-                    co_await huxerui::Delay(std::chrono::duration<double>{30.0});
-                    co_await RunOnTaskThread([] {
-                        store::profilesStore().refreshDue();
-                    });
-                }
-            });
+        [tasks, runtimeServices] {
+            if (!runtimeServices->profileRefreshStarted) {
+                runtimeServices->profileRefreshStarted = true;
+                tasks.Launch([]() -> huxerui::Task<void> {
+                    for (;;) {
+                        co_await huxerui::Delay(std::chrono::duration<double>{30.0});
+                        co_await RunOnTaskThread([] {
+                            store::profilesStore().refreshDue();
+                        });
+                    }
+                });
+            }
             return [] {};
         },
         0);
@@ -139,14 +219,6 @@ bool HasDesktopCoreRuntime() {
 }
 
 namespace {
-
-// 托盘激活处理器是整个 Runtime 的一次性连接，不是组合生命周期订阅：HuxerUI
-// 固定 revision 的 SystemTrayHandle::OnActivate 直接连接服务，第二次调用抛
-// std::logic_error("... already connected")。它写在组合函数体里，任何一次
-// 外层重组都会重复连接，未捕获异常冒泡到 LinuxUiWindow::Run 后 abort，表现
-// 为「打开 TUN / 系统代理等任意开关就闪退」。按框架约定用 call_once 保证
-// 进程内只连接一次；handler 常驻到 Runtime 结束，与托盘宿主是否就绪无关。
-std::once_flag g_trayActivationOnce;
 
 #if defined(_WIN32)
 // HuxerUI's Windows tray menu is a native HMENU and SystemTrayOptions does not
@@ -207,10 +279,13 @@ struct TrayMenuText {
     std::string noProfiles;
     std::string selectProfile;
     std::string selectLine;
+    std::string noLines;
+    std::string autoLineSuffix;
     std::string startCore;
     std::string stopCore;
     std::string systemProxy;
     std::string tun;
+    std::string lightweight;
     std::string quit;
 };
 
@@ -219,32 +294,23 @@ struct TrayMenuText {
 [[huxerui::composable]] huxerui::View DesktopApplicationEffects(
     const huxerui::ApplicationHandle& application,
     const huxerui::ThemeSpec& rootSpec,
-    bool startupTrayEnabled, bool startupMinimized) {
+    bool startupTrayEnabled, bool startupMinimized, bool startupLightweight) {
     const huxerui::WindowHandle window = huxerui::UseWindow();
     // 策略组快照 / 内核与接管状态的全局唯一来源（见 *_model.h）：托盘菜单只读。
     const auto proxiesModel = huxerui::UseService<ProxiesModel>();
     const auto coreModel = huxerui::UseService<CoreModel>();
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     const auto settingsModel = huxerui::UseService<SettingsModel>();
+    const auto trayRuntime = huxerui::UseService<DesktopTrayRuntime>();
     const auto startupTasks = huxerui::UseApplicationTaskScope();
     const huxerui::SystemTrayHandle tray = application.SystemTray();
     const bool trayAvailable = tray.IsAvailable();
-    auto tasks = huxerui::UseTaskScope();
     const auto control = UseCoreControl();
-    // Native menu/icon projections are read-only mirrors of the application model.
-    auto trayCoreRunning = huxerui::UseState(false);
-    auto trayCoreMenuRunning = huxerui::UseState(false);
-    auto traySysProxy = huxerui::UseState(false);
-    auto trayTun = huxerui::UseState(false);
-    auto traySysProxyActive = huxerui::UseState(false);
-    auto trayTunActive = huxerui::UseState(false);
-    auto trayProfiles = huxerui::UseState<std::vector<db::Profile>>({});
-    auto trayProxyGroups = huxerui::UseState<std::vector<ProxyGroupSnapshot>>({});
-    auto startupVisibilityHandled = huxerui::UseState(false);
+    trayRuntime->application = application;
+    trayRuntime->window = window;
+    trayRuntime->control = control;
     auto closeDialogOpen = huxerui::UseState(false);
-    auto exitRequested = huxerui::UseState(false);
     auto dialog = huxerui::UseDialog();
-    auto clipboard = application.Clipboard();
     auto toast = huxerui::UseToast();
     const bool darkTheme = IsDarkTheme(rootSpec);
 
@@ -255,20 +321,28 @@ struct TrayMenuText {
         },
         darkTheme);
 
-    // 第二次启动通过单实例通道只发一个唤醒事件；这里在 UI 线程轻量轮询
-    // （0.25s：唤醒延迟肉眼无差，但不参与内核/REST 工作），确保隐藏到托盘后
-    // 也能被再次打开。改成阻塞等待需要信号掩码/命名事件层面的改动，收益不足。
+    // 托盘与单实例唤醒在应用级任务中运行，主窗口 Retire 后继续响应。
     huxerui::Lifecycle(
-        [tasks, window] {
-            tasks.Launch([window]() -> huxerui::Task<void> {
-                co_await PollWhile(std::chrono::duration<double>{0.25}, [window] {
-                    if (instance::consumeActivation()) {
-                        window.Show();
-                        window.Activate();
+        [startupTasks, trayRuntime, tray, settingsModel] {
+            if (!trayRuntime->started) {
+                trayRuntime->started = true;
+                tray.OnActivate([trayRuntime] { trayRuntime->ShowWindow(); });
+                startupTasks.Launch([trayRuntime, tray, settingsModel]() -> huxerui::Task<void> {
+                    for (;;) {
+                        if (instance::consumeActivation()) trayRuntime->ShowWindow();
+                        const SettingsView settings = settingsModel->view.Get();
+                        if (trayRuntime->retired &&
+                            (!tray.IsAvailable() || (settings.ready && !settings.trayEnabled)))
+                            trayRuntime->ShowWindow();
+                        try {
+                            if (trayRuntime->refresh) trayRuntime->refresh();
+                        } catch (const std::exception& error) {
+                            stream::logApplication("error", std::string{"刷新托盘菜单失败："} + error.what());
+                        }
+                        co_await huxerui::Delay(std::chrono::duration<double>{0.25});
                     }
-                    return true;
                 });
-            });
+            }
             return [] {};
         },
         0);
@@ -335,50 +409,20 @@ struct TrayMenuText {
         },
         settingsModel->view, coreModel->serviceChecking, coreModel->operations.command);
 
-    // Rendering projections share the same command target and authoritative result.
-    huxerui::Lifecycle(
-        [trayCoreRunning, trayCoreMenuRunning, traySysProxy, traySysProxyActive,
-         trayTun, trayTunActive, coreModel, control] {
-            const CoreView view = coreModel->view.Get();
-            const bool running = view.core.state == core::CoreState::Running;
-            trayCoreRunning = running;
-            trayCoreMenuRunning = control.Running();
-            traySysProxy = control.SystemProxyEnabled();
-            traySysProxyActive = running && view.systemProxyActive;
-            trayTun = control.TunEnabled();
-            trayTunActive = view.TunActive();
-            return [] {};
-        },
-        coreModel->view, coreModel->operations.command);
-
-
-    // 托盘菜单需要的是当前可选订阅和运行中的策略组快照。数据库/API 读取
-    // 全部放到任务线程，菜单本身只消费最近一次轻量快照。
-    // 托盘菜单的运行态/列表镜像：都以模型 State 为依赖，模型一变就同步一次，
-    // 不再有 1s 轮询，也不再自己读存储层（第三份订阅拷贝就此消失）。
-    huxerui::Lifecycle(
-        [trayProfiles, profilesModel] {
-            trayProfiles = profilesModel->list.Get();
-            return [] {};
-        },
-        profilesModel->list);
-    huxerui::Lifecycle(
-        [trayProxyGroups, proxiesModel] {
-            trayProxyGroups = proxiesModel->snapshot.Get().groups;
-            return [] {};
-        },
-        proxiesModel->snapshot);
-
     // 系统 VPN 的断开可能要等待 pppd/RAS 收尾，先完成清理再关闭窗口。
-    auto finishExit = [tasks, application, tray, window, exitRequested]() {
-        if (exitRequested.Get()) return;
-        exitRequested = true;
+    const std::weak_ptr<DesktopTrayRuntime> weakTrayRuntime = trayRuntime;
+    auto finishExit = [startupTasks, application, tray, weakTrayRuntime]() {
+        const auto trayRuntime = weakTrayRuntime.lock();
+        if (!trayRuntime) return;
+        if (trayRuntime->exitRequested) return;
+        trayRuntime->exitRequested = true;
+        trayRuntime->refresh = {};
         clashflux::instance::markClosing();
         tray.Hide();
-        window.Hide();
+        if (trayRuntime->window) trayRuntime->window->Hide();
         auto coreStopped = std::make_shared<std::atomic_bool>(false);
         auto cleanupFinished = std::make_shared<std::atomic_bool>(false);
-        tasks.Launch([application, coreStopped, cleanupFinished]() -> huxerui::Task<void> {
+        startupTasks.Launch([application, coreStopped, cleanupFinished]() -> huxerui::Task<void> {
             bool stopped = co_await RunOnTaskThread([] {
                 store::vpnStore().shutdown();
                 return store::coreStore().stopCore();
@@ -417,185 +461,32 @@ struct TrayMenuText {
         }).detach();
     };
 
-    std::call_once(g_trayActivationOnce, [tray, window] {
-        tray.OnActivate([window] {
-            window.Show();
-            window.Activate();
-        });
-    });
-
-    if (trayAvailable) {
-        const huxerui::Locale trayLocale = huxerui::UseEnvironment<huxerui::Locale>();
-        const auto resolveLabel = [](huxerui::StringVariant label) {
-            return huxerui::UseString(label);
-        };
-        const TrayMenuText menuText{
-            .showWindow = resolveLabel(Localized("显示主窗口")),
-            .noProfiles = resolveLabel(Localized("暂无可用订阅")),
-            .selectProfile = resolveLabel(Localized("选择订阅")),
-            .selectLine = resolveLabel(Localized("切换当前订阅线路")),
-            .startCore = resolveLabel(Localized("启动")),
-            .stopCore = resolveLabel(Localized("停止内核")),
-            .systemProxy = resolveLabel(Localized("系统代理")),
-            .tun = resolveLabel(Localized("TUN 模式")),
-            .quit = resolveLabel(Localized("退出")),
-        };
-        const auto proxyLineMenu = BuildProxyLineMenu(
-            trayProxyGroups.Get(),
-            [tasks, toast, trayProxyGroups](
-                const std::string& group, const std::string& name) {
-                tasks.Launch([toast, trayProxyGroups, group, name]()
-                                 -> huxerui::Task<void> {
-                    const bool ok = co_await RunOnTaskThread(
-                        [group, name] {
-                            return SelectProxyLine(group, name);
-                        });
-                    if (!ok) {
-                        const std::string error =
-                            store::coreStore().snapshot().lastError;
-                        toast.Show(error.empty()
-                                       ? Localized("线路切换失败")
-                                       : huxerui::StringVariant(error));
-                        co_return;
-                    }
-                    auto groups = trayProxyGroups.Get();
-                    for (ProxyGroupSnapshot& proxyGroup : groups) {
-                        if (proxyGroup.name == group) {
-                            proxyGroup.current = name;
-                        }
-                    }
-                    trayProxyGroups = std::move(groups);
-                });
-            }, resolveLabel);
-        huxerui::Lifecycle(
-            [tray, window, application, tasks, trayCoreRunning,
-             trayCoreMenuRunning, traySysProxy, trayTun, traySysProxyActive,
-             trayTunActive, control, dialog, clipboard, toast,
-             trayProfiles, trayProxyGroups, settingsModel, proxiesModel,
-             coreModel, profilesModel,
-             finishExit, menuText, proxyLineMenu,
-             startupTrayEnabled,
-             textColor = rootSpec.colors.on_surface,
-             hintColor = rootSpec.colors.on_surface_variant] {
-                const SettingsView settings = settingsModel->view.Get();
-                const bool trayEnabled = settings.ready
-                    ? settings.trayEnabled : startupTrayEnabled;
-                if (trayEnabled) {
-                    std::vector<huxerui::MenuEntry> menuEntries;
-                    menuEntries.push_back(
-                        huxerui::MenuItem(menuText.showWindow, [window] {
-                            window.Show();
-                            window.Activate();
-                        }));
-                    menuEntries.push_back(huxerui::MenuSection{});
-                    std::vector<huxerui::MenuEntry> profileEntries;
-                    for (const db::Profile& profile : trayProfiles.Get()) {
-                        if (profile.type == "pptp" || profile.type == "openvpn") {
-                            continue;
-                        }
-                        profileEntries.push_back(
-                            huxerui::MenuItem(
-                                profile.name,
-                                [tasks, toast, trayProfiles, trayProxyGroups,
-                                 proxiesModel, profilesModel, id = profile.id] {
-                                    tasks.Launch(
-                                        [tasks, toast, trayProfiles,
-                                         trayProxyGroups, proxiesModel,
-                                         profilesModel, id]()
-                                            -> huxerui::Task<void> {
-                                            const std::string error =
-                                                co_await RunOnTaskThread([id] {
-                                                    auto& profiles =
-                                                        store::profilesStore();
-                                                    return profiles.activate(id)
-                                                               ? std::string{}
-                                                               : profiles.lastError();
-                                            });
-                                            if (!error.empty()) toast.Show(error);
-                                            // 切换订阅会改选中态与策略组，两个模型都
-                                            // 立刻补一拍（镜像会跟着更新）。
-                                            profilesModel->RequestSync();
-                                            if (error.empty()) {
-                                                // 切换订阅会换掉整组策略：请共享模型
-                                                // 立即补一拍，托盘与各页面同一份数据。
-                                                proxiesModel->RequestRefresh();
-                                            }
-                                        });
-                                })
-                                .Checked(profile.selected));
-                    }
-                    if (profileEntries.empty()) {
-                        profileEntries.push_back(
-                            huxerui::MenuItem(menuText.noProfiles, [] {}).Enabled(false));
-                    }
-                    menuEntries.push_back(huxerui::MenuItem(
-                        menuText.selectProfile, std::move(profileEntries)));
-                    menuEntries.push_back(huxerui::MenuItem(
-                        menuText.selectLine, proxyLineMenu));
-                    menuEntries.push_back(
-                        huxerui::MenuItem(control.Running() ? menuText.stopCore : menuText.startCore,
-                            [control] {
-                                control.Run({.action = control.Running() ? CoreAction::Stop : CoreAction::Start});
-                            })
-                            .Checked(control.Running()).Enabled(!control.Busy()));
-                    menuEntries.push_back(
-                        huxerui::MenuItem(menuText.systemProxy, [control] {
-                            control.Run({.action = CoreAction::SystemProxy,
-                                         .enabled = !control.SystemProxyEnabled()});
-                        }).Checked(control.SystemProxyEnabled()).Enabled(!control.Busy()));
-                    menuEntries.push_back(
-                        huxerui::MenuItem(menuText.tun, [control, window] {
-                            control.Run({.action = CoreAction::Tun, .enabled = !control.TunEnabled()});
-                        }).Checked(control.TunEnabled()).Enabled(!control.Busy()));
-                    menuEntries.push_back(huxerui::MenuSection{});
-                    menuEntries.push_back(
-                        huxerui::MenuItem(menuText.quit, [finishExit] { finishExit(); }));
-                    huxerui::ImageVariant trayIcon = app::images::tray_default;
-                    if (trayCoreRunning.Get()) {
-                        if (trayTunActive.Get()) {
-                            trayIcon = app::images::tray_tun;
-                        } else if (traySysProxyActive.Get()) {
-                            trayIcon = app::images::tray_system_proxy;
-                        }
-                    }
-                    tray.Show(std::move(trayIcon),
-                              huxerui::SystemTrayOptions{
-                                  .tooltip = "Clash-Flux",
-                                  .menu = std::move(menuEntries)});
-                } else {
-                    // 关掉托盘图标后不能只停在「不再 Show」：托盘项是上一次
-                    // Show 注册的，必须显式撤掉，否则图标会一直留在托盘里。
-                    tray.Hide();
-                }
-                return [tray] { tray.Hide(); };
-            },
-            // 依赖必须覆盖菜单真正读到的每一份状态：订阅列表与线路快照是
-            // **镜像 State**（由上面两个 Lifecycle 在模型变化时写入），漏掉它们
-            // 会出现「菜单在镜像填充之前就建好、之后再也不会重建」——表现为
-            // 缩到托盘后菜单里只剩「暂无可用订阅 / 暂无可切换线路」，而窗口可见时
-            // 因为内核/接管状态变化顺带重建才看起来正常。
-            // 有效 Locale 也必须作为依赖：语言切换及系统语言变化都刷新托盘文案。
-            trayCoreRunning, trayCoreMenuRunning, traySysProxy, trayTun,
-            traySysProxyActive, trayTunActive, coreModel->operations.command,
-            coreModel->view, coreModel->serviceChecking, trayProfiles,
-            trayProxyGroups, settingsModel->view, trayLocale);
-
-    }
+#include "ui/platform_tray_menu.inc"
 
     // 关闭按钮只由托盘开关控制。托盘宿主尚未就绪时仍需确认退出，
     // 避免隐藏后没有入口唤回窗口；事件中动态查询宿主可用性。
     const huxerui::Color closeHintColor = rootSpec.colors.on_surface_variant;
-    auto hideWindow = [tasks, window] {
-        // GTK/Win32/macOS 的关闭回调都在平台事件栈中执行。把 Hide 推迟
-        // 到下一帧，避免隐藏最后一个窗口时让运行时在回调中途拆毁自己。
-        tasks.Launch([window]() -> huxerui::Task<void> {
+    auto hideWindow = [startupTasks, trayRuntime, settingsModel] {
+        const bool lightweight = settingsModel->view.Get().lightweightTray;
+        // Native close callbacks must finish before the host window is retired.
+        startupTasks.Launch([trayRuntime, lightweight]() -> huxerui::Task<void> {
             co_await huxerui::Delay(std::chrono::duration<double>{0});
-            window.Hide();
+            trayRuntime->HideWindow(lightweight);
         });
     };
+    window.OnMinimizeRequest([=]() -> bool {
+        const SettingsView settings = settingsModel->view.Get();
+        if (settings.lightweightTray &&
+            (settings.ready ? settings.trayEnabled : startupTrayEnabled) &&
+            tray.IsAvailable()) {
+            hideWindow();
+            return true;
+        }
+        return false;
+    }, 0);
     window.OnCloseRequest(
         [=]() mutable -> bool {
-            if (exitRequested.Get()) return true;
+            if (trayRuntime->exitRequested) return true;
             const SettingsView settings = settingsModel->view.Get();
             const bool trayEnabled = settings.ready
                 ? settings.trayEnabled : startupTrayEnabled;
@@ -641,14 +532,23 @@ struct TrayMenuText {
     // 用首帧快照决定初始窗口可见性，不等设置 hydrate 后再隐藏造成窗口闪现。
     // 只在壳层首次挂载时处理一次；伪 CLI 模式同样不渲染窗口。
     huxerui::Lifecycle(
-        [window, tray, startupVisibilityHandled,
-         startupTrayEnabled, startupMinimized] {
+        [window, tray, startupTasks, trayRuntime, startupTrayEnabled,
+         startupMinimized, startupLightweight] {
             const bool commandMode = cli::runtimeCommandMode();
-            if (!startupVisibilityHandled.Get()) {
-                startupVisibilityHandled = true;
-                if (commandMode ||
-                    (tray.IsAvailable() && startupTrayEnabled && startupMinimized)) {
+            if (!trayRuntime->startupVisibilityHandled) {
+                trayRuntime->startupVisibilityHandled = true;
+                if (commandMode) {
                     window.Hide();
+                } else if (tray.IsAvailable() && startupTrayEnabled && startupMinimized) {
+                    if (startupLightweight) {
+                        startupTasks.Launch([trayRuntime]() -> huxerui::Task<void> {
+                            co_await huxerui::Delay(std::chrono::duration<double>{0});
+                            if (trayRuntime->refresh) trayRuntime->refresh();
+                            trayRuntime->HideWindow(true);
+                        });
+                    } else {
+                        window.Hide();
+                    }
                 }
             }
             return [] {};

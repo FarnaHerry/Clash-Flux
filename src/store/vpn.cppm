@@ -313,6 +313,14 @@ public:
 
         const std::string id = connectionId(profile.id);
         std::unique_lock operationLock(operationMutex_);
+        if (const auto* current = manager_.findConnection(id);
+            current && current->state == vpn::ConnectionState::Connected &&
+            current->nativeConfig == profile.nativeConfig &&
+            current->internalRoutes == connection.internalRoutes &&
+            pptp::PptpSessionAlive(id)) {
+            error.clear();
+            return true;
+        }
 #if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
         // An installed service may be stopped or may have changed since the
         // last poll. Check/start it before engine selection or stopping TUN.
@@ -441,6 +449,14 @@ public:
 
         const std::string id = connectionId(profile.id);
         std::unique_lock operationLock(operationMutex_);
+        if (const auto* current = manager_.findConnection(id);
+            current && current->state == vpn::ConnectionState::Connected &&
+            current->nativeConfig == profile.nativeConfig &&
+            current->internalRoutes == connection.internalRoutes &&
+            coreStore().snapshot().state == core::CoreState::Running) {
+            error.clear();
+            return true;
+        }
         blockBeforeDisconnect(id);
         manager_.disconnect(id);
         {

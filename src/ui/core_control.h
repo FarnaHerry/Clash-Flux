@@ -16,6 +16,9 @@ struct CoreControl {
     std::shared_ptr<huxerui::Clipboard> clipboard;
     huxerui::Color textColor;
     huxerui::Color hintColor;
+    // Tray actions may outlive the window that supplied presentation handles.
+    std::function<bool()> presentationAvailable;
+    std::function<void(bool, const std::string&)> onHeadlessFailure;
 
     bool Busy() const {
         return !model->view.Get().ready || model->operations.Busy() ||

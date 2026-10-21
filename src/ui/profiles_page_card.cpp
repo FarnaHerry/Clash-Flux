@@ -148,6 +148,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     huxerui::State<bool> selectionPending,
     const store::PptpState& pptpState,
     const store::OpenVpnState& openVpnState, bool connectionSelected,
+    bool connectionPending, bool openingConnection, bool connectionActionsBusy,
     const std::function<void(std::int64_t, bool)>& toggleConnection,
     const std::function<void(std::int64_t)>& openEditInfo,
     const std::function<void(std::int64_t)>& openEditRules,
@@ -609,7 +610,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                                 std::chrono::duration<double>{0});
                                             toggleConnection(id, checked);
                                         });
-                                    })}
+                                    }).With(huxerui::Enabled(!connectionActionsBusy))}
                 : huxerui::View{huxerui::Row{}},
             huxerui::Spacer(),
             std::move(refreshButton),
@@ -659,12 +660,15 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 : huxerui::View{huxerui::Row{}},
             huxerui::Spacer(),
             nativeVpn
-                ? huxerui::View{huxerui::Text(profile.type == "openvpn"
-                                                   ? openVpnStateText(openVpnState)
-                                                   : pptpStateText(pptpState))
+                ? huxerui::View{huxerui::Text(connectionPending
+                                                   ? openingConnection ? Localized("连接中…")
+                                                                       : Localized("断开中…")
+                                                   : profile.type == "openvpn"
+                                                       ? openVpnStateText(openVpnState)
+                                                       : pptpStateText(pptpState))
                                     .Style(huxerui::TextStyle{
                                         huxerui::Font::System(font_size::kCaption),
-                                        (profile.type == "openvpn"
+                                        !connectionPending && (profile.type == "openvpn"
                                              ? openVpnState.state
                                              : pptpState.state) ==
                                                 vpn::ConnectionState::Failed

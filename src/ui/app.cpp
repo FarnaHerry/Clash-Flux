@@ -46,6 +46,7 @@ import clashflux.stream;
 #include "profiles_model.h"
 #include "settings_model.h"
 #include "vpn_model.h"
+#include "app_runtime_services.h"
 
 #include "profiles_cache.h"
 
@@ -609,10 +610,17 @@ void StartCliRequestWatcher(huxerui::TaskScope tasks,
 }
 
 void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
-                            const std::shared_ptr<ProfilesModel>& profiles) {
+                            const std::shared_ptr<ProfilesModel>& profiles,
+                            const std::shared_ptr<AppRuntimeServices>& runtimeServices) {
     const auto* payload = std::get_if<huxerui::UrlActivation>(&activation);
     if (!payload) return;
     const auto& uri = payload->url;
+    if (uri.Scheme() == "clash-flux" && uri.Authority() == "app" &&
+        uri.Path() == "/settings/background") {
+        runtimeServices->backgroundSettingsRequests =
+            runtimeServices->backgroundSettingsRequests.Get() + 1;
+        return;
+    }
     if (!profile_link::IsSupportedScheme(uri.Scheme())) return;
     std::string error;
     auto profile = profile_link::ParseParts(uri.Scheme(), uri.Authority().value_or(""),
@@ -639,8 +647,8 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
                                         : std::function<void()>{};
     std::vector<huxerui::View> pages;
     pages.reserve(7);
-    // 不可见的一级页仍挂载（保住 State/Lifecycle）但不构建内容：IndexedPages 让
-    // 所有页同帧参与测量，隐藏页的重子树会拖慢每一次渲染。
+    // 不可见的一级页仍挂载（保住 State/Lifecycle）但不构建内容；宽屏 Pager
+    // 接收桌面触摸板横滑，嵌套的二级 Pager 会先消费自己的横向滚动。
     const std::size_t desktopActivePage = navPage.Get();
     pages.push_back(HomePage(navPage, desktopActivePage == pages::kHome)
                         .Key("home").With(huxerui::Grow(1.0F)));
@@ -658,7 +666,13 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
     pages.push_back(SettingsPage(themeMode, navPage, profilesCache,
                                  desktopActivePage == pages::kSettings)
                         .Key("settings").With(huxerui::Grow(1.0F)));
-    return huxerui::IndexedPages(std::move(pages), navPage.Get()).With(huxerui::Grow(1.0F));
+    // Compact 的规则、连接、日志从「更多」进入，不让横滑暴露这些页面。
+    // 保持同一个 Pager 节点，使窗口越过断点时各页状态仍然保留。
+    return huxerui::Pager(std::move(pages), navPage.Get())
+        .ScrollAxis(huxerui::Axis::Horizontal)
+        .DragEnabled(!compact)
+        .OnChanged([navPage](std::size_t index) { navPage = index; })
+        .With(huxerui::Grow(1.0F));
 }
 
 // 导航栈只占内容区域，左侧栏和 Compact 系统标题栏留在持久外壳中。
@@ -970,9 +984,10 @@ void OpenConnectionDetailPage(huxerui::NavigationController navigation,
 }
 
 void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
-                                 std::shared_ptr<ProfilesModel> profiles) {
-    context.OnActivation([profiles](huxerui::ApplicationActivation activation) {
-        QueueProfileActivation(activation, profiles);
+                                 std::shared_ptr<ProfilesModel> profiles,
+                                 std::shared_ptr<AppRuntimeServices> runtimeServices) {
+    context.OnActivation([profiles, runtimeServices](huxerui::ApplicationActivation activation) {
+        QueueProfileActivation(activation, profiles, runtimeServices);
     });
 }
 
@@ -1024,13 +1039,27 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
     // （settings 与 profiles 都是「写缓存 + 异步落库」）。user_version=0 的老库
     // 由 open 里的 0→1 迁移重建表并保留数据。
     auto tasks = huxerui::UseTaskScope();
+    auto applicationTasks = huxerui::UseApplicationTaskScope();
+    const auto runtimeServices = huxerui::UseService<AppRuntimeServices>();
     const auto linkToast = huxerui::UseToast();
     const auto linkWindow = huxerui::UseWindow();
-    huxerui::Lifecycle([application, profilesModel] {
-        if (const auto& startup = application.StartupActivation(); startup)
-            QueueProfileActivation(*startup, profilesModel);
+    huxerui::Lifecycle([application, profilesModel, runtimeServices] {
+        if (!runtimeServices->startupActivationHandled) {
+            runtimeServices->startupActivationHandled = true;
+            if (const auto& startup = application.StartupActivation(); startup)
+                QueueProfileActivation(*startup, profilesModel, runtimeServices);
+        }
         return [] {};
     }, 0);
+    huxerui::Lifecycle([runtimeServices, navPage, pagerPage] {
+        const auto requests = runtimeServices->backgroundSettingsRequests.Get();
+        if (requests != runtimeServices->handledBackgroundSettingsRequests) {
+            runtimeServices->handledBackgroundSettingsRequests = requests;
+            navPage = pages::kSettings;
+            pagerPage = 3;
+        }
+        return [] {};
+    }, runtimeServices->backgroundSettingsRequests);
     huxerui::Lifecycle([profilesModel, linkToast] {
         const auto error = profilesModel->linkError.Get();
         if (!error.empty()) {
@@ -1061,8 +1090,10 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
         return [] { profile_link::SetWakeHandler({}); };
     }, 0);
     huxerui::Lifecycle(
-        [tasks, application, profilesModel, settingsModel] {
-            tasks.Launch([application, profilesModel,
+        [applicationTasks, runtimeServices, application, profilesModel, settingsModel] {
+            if (!runtimeServices->persistenceStarted) {
+                runtimeServices->persistenceStarted = true;
+                applicationTasks.Launch([application, profilesModel,
                           settingsModel]() -> huxerui::Task<void> {
                 try {
                     auto& db = clashflux::persistence::persistence();
@@ -1140,7 +1171,8 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
                 // Startup exceptions fail closed in GUI and CLI alike.
                 CliSetPendingExitCode(1);
                 application.Quit();
-            });
+                });
+            }
             return [] {};
         },
         0);
@@ -1156,8 +1188,11 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
         profilesModel->list);
     // 唯一的数据泵：1s 修订号脏检查（变了才拷贝），显式 RequestSync 时立刻同步。
     huxerui::Lifecycle(
-        [tasks, profilesModel] {
-            DriveProfilesModel(tasks, profilesModel);
+        [applicationTasks, runtimeServices, profilesModel] {
+            if (!runtimeServices->profilesPumpStarted) {
+                runtimeServices->profilesPumpStarted = true;
+                DriveProfilesModel(applicationTasks, profilesModel);
+            }
             return [] {};
         },
         0);
@@ -1165,8 +1200,11 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
     // CLI 请求目录监视：Linux 上 inotify 事件驱动——新请求一到立刻服务，不再
     // 靠 0.25s 扫目录；其他平台该调用是 no-op，由下面的兜底轮询负责。
     huxerui::Lifecycle(
-        [tasks, profilesModel] {
-            StartCliRequestWatcher(tasks, profilesModel);
+        [applicationTasks, runtimeServices, profilesModel] {
+            if (!runtimeServices->cliWatcherStarted) {
+                runtimeServices->cliWatcherStarted = true;
+                StartCliRequestWatcher(applicationTasks, profilesModel);
+            }
             return [] {};
         },
         0);
@@ -1178,8 +1216,11 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
     // 的 State，不再各自拉 /proxies（此前是 2s/3s/1s 三条独立轮询 + 三次解析）。
     const auto proxiesModel = huxerui::UseService<ProxiesModel>();
     huxerui::Lifecycle(
-        [tasks, proxiesModel] {
-            DriveProxiesModel(tasks, proxiesModel);
+        [applicationTasks, runtimeServices, proxiesModel] {
+            if (!runtimeServices->proxiesPumpStarted) {
+                runtimeServices->proxiesPumpStarted = true;
+                DriveProxiesModel(applicationTasks, proxiesModel);
+            }
             return [] {};
         },
         0);
@@ -1189,8 +1230,11 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
     // 0.5s×4 + 1s×2 六条轮询，托盘那条还带 2Hz 的子进程/HTTP 探测）。
     const auto coreModel = huxerui::UseService<CoreModel>();
     huxerui::Lifecycle(
-        [tasks, coreModel] {
-            DriveCoreModel(tasks, coreModel);
+        [applicationTasks, runtimeServices, coreModel] {
+            if (!runtimeServices->corePumpStarted) {
+                runtimeServices->corePumpStarted = true;
+                DriveCoreModel(applicationTasks, coreModel);
+            }
             return [] {};
         },
         0);
@@ -1198,8 +1242,11 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
     // 原生连接（PPTP/OpenVPN）状态的唯一数据泵：订阅页不再自建 0.5s 泵。
     const auto vpnModel = huxerui::UseService<VpnModel>();
     huxerui::Lifecycle(
-        [tasks, vpnModel] {
-            DriveVpnModel(tasks, vpnModel);
+        [applicationTasks, runtimeServices, vpnModel] {
+            if (!runtimeServices->vpnPumpStarted) {
+                runtimeServices->vpnPumpStarted = true;
+                DriveVpnModel(applicationTasks, vpnModel);
+            }
             return [] {};
         },
         0);
@@ -1207,8 +1254,11 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
     // 应用级设置（KV）的唯一读取点：组合期不再直接 setting(...)，否则首帧会拿到
     // hydrate 之前的默认值（见 settings_model.h）。
     huxerui::Lifecycle(
-        [tasks, settingsModel] {
-            DriveSettingsModel(tasks, settingsModel);
+        [applicationTasks, runtimeServices, settingsModel] {
+            if (!runtimeServices->settingsPumpStarted) {
+                runtimeServices->settingsPumpStarted = true;
+                DriveSettingsModel(applicationTasks, settingsModel);
+            }
             return [] {};
         },
         0);
@@ -1229,7 +1279,8 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
     huxerui::View applicationEffects =
         CLASHFLUX_APPLICATION_EFFECTS(application, rootSpec,
                                       startupSettings.trayEnabled,
-                                      startupSettings.startMinimized);
+                                      startupSettings.startMinimized,
+                                      startupSettings.lightweightTray);
     huxerui::View mainRow = CLASHFLUX_MAIN_CONTENT(
         navPage, pagerPage, themeMode, rootIslands, rootSpec, profilesCache);
     huxerui::View content = CLASHFLUX_APP_CONTENT(std::move(mainRow), rootSpec);

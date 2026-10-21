@@ -32,6 +32,9 @@ const huxerui::Application application{
             huxerui::camera::Install,
             clashflux::ui::InstallAppHttpClient,
             clashflux::ui::InstallClashFluxUiModels,
+#if !defined(__ANDROID__)
+            clashflux::ui::InstallDesktopTrayRuntime,
+#endif
 #if defined(__ANDROID__)
             clashflux::ui::InstallQrPhotoDecoder,
 #endif

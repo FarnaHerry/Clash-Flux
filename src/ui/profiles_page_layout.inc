@@ -92,6 +92,7 @@
                                  [profiles, typeIndices = std::move(typeIndices), typeIds = std::move(typeIds),
                                   typeCount, compact, tasks, toast, http, reload,
                                   pptpStates, openVpnStates, isConnectionSelected,
+                                  vpnOperation,
                                   pptpAvailable = vpnModel->view.Get().pptpAvailable,
                                   openVpnAvailable = vpnModel->view.Get().openVpnAvailable,
                                   toggleConnection, openEditInfo, showEditRules,
@@ -148,6 +149,9 @@
                                                 profiles, selectionPending,
                                                 pptpState, openVpnState,
                                                 isConnectionSelected(profile.id),
+                                                vpnOperation.Pending(profile.id),
+                                                vpnOperation.action == VpnAction::Open,
+                                                vpnOperation.Busy(),
                                                 toggleConnection, openEditInfo,
                                                 showEditRules, showEditFile,
                                                 showQr, dialog, pageReorder)
@@ -213,8 +217,10 @@
     if (connectionSelection.Size() > 0) {
         batchActions = huxerui::Row {
             huxerui::Text(LocalizedFormat("已选 {} 个连接", connectionSelection.Size())),
-            huxerui::Button(Localized("打开")).OnClick(openSelectedConnections),
-            huxerui::Button(Localized("关闭")).OnClick(closeSelectedConnections),
+            huxerui::Button(Localized("打开")).OnClick(openSelectedConnections)
+                .With(huxerui::Enabled(!vpnOperation.Busy())),
+            huxerui::Button(Localized("关闭")).OnClick(closeSelectedConnections)
+                .With(huxerui::Enabled(!vpnOperation.Busy())),
         }.With(huxerui::Spacing(8.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     }

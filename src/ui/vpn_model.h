@@ -13,7 +13,9 @@
 
 #include <huxerui/huxerui.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "ui.h"
@@ -23,9 +25,47 @@ namespace clashflux::ui {
 
 // 用户动作在任务线程取得权威快照，恢复 UI 线程后 Publish 立即写透。
 // RequestSync 仅请求下一拍，不能唤醒 Delay；旧轮询由 PublishPolled 拒绝。
-struct VpnModel : VpnSnapshotModel<store::VpnSnapshot> {};
+enum class VpnAction { Idle, Open, Close };
 
-// 启动唯一的数据泵（组合期调用一次）：1s 一拍取回能力/连接快照，变化才发布。
+struct VpnOperation {
+    VpnAction action = VpnAction::Idle;
+    std::vector<std::int64_t> pendingIds;
+
+    bool Busy() const { return action != VpnAction::Idle; }
+    bool Pending(std::int64_t id) const {
+        return std::find(pendingIds.begin(), pendingIds.end(), id) != pendingIds.end();
+    }
+    bool operator==(const VpnOperation&) const = default;
+};
+
+struct VpnModel : VpnSnapshotModel<store::VpnSnapshot> {
+    huxerui::State<VpnOperation> operation{VpnOperation{}};
+
+    bool Begin(VpnAction action, std::vector<std::int64_t> ids) {
+        if (operation.Get().Busy() || action == VpnAction::Idle || ids.empty()) return false;
+        RequestSync();
+        operation = VpnOperation{action, std::move(ids)};
+        return true;
+    }
+
+    void Complete(std::int64_t id) {
+        VpnOperation next = operation.Get();
+        std::erase(next.pendingIds, id);
+        operation = std::move(next);
+    }
+
+    void Finish() {
+        operation = VpnOperation{};
+        RequestSync();
+    }
+
+    bool PublishPolled(std::uint64_t before, store::VpnSnapshot next) {
+        return !operation.Get().Busy() &&
+               VpnSnapshotModel<store::VpnSnapshot>::PublishPolled(before, std::move(next));
+    }
+};
+
+// 启动唯一的数据泵（组合期调用一次）：250ms 一拍取回轻量快照，变化才发布。
 void DriveVpnModel(huxerui::TaskScope tasks, std::shared_ptr<VpnModel> model);
 
 } // namespace clashflux::ui

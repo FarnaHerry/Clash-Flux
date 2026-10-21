@@ -105,7 +105,8 @@
     };
 
     auto toggleConnection = [connectionSelection, pptpStates, openVpnStates,
-                             toast, findProfile](std::int64_t id, bool checked) {
+                             toast, findProfile, vpnModel](std::int64_t id, bool checked) {
+        if (vpnModel->operation.Get().Busy()) return;
         for (std::size_t index = 0; index < connectionSelection.Size(); ++index) {
             if (connectionSelection[index] != id) continue;
             if (!checked) connectionSelection.Erase(index);
@@ -152,44 +153,78 @@
         connectionSelection.PushBack(id);
     };
 
-    auto openSelectedConnections = [tasks, toast, connectionSelection, vpnModel] {
+    auto openSelectedConnections = [applicationTasks, toast, connectionSelection,
+                                    vpnModel, coreControl] {
+        if (vpnModel->operation.Get().Busy()) return;
         std::vector<std::int64_t> ids;
         for (const std::int64_t id : connectionSelection) ids.push_back(id);
         if (ids.empty()) {
             toast.Show(Localized("请先选择 PPTP 或 OpenVPN 订阅"));
             return;
         }
-        tasks.Launch([ids, toast, connectionSelection, vpnModel]() -> huxerui::Task<void> {
+        if (!vpnModel->Begin(VpnAction::Open, ids)) return;
+        connectionSelection.Clear();
+        applicationTasks.Launch([ids, toast, vpnModel, coreControl]() -> huxerui::Task<void> {
             int opened = 0;
             int failed = 0;
             std::string firstError;
             for (const std::int64_t id : ids) {
-                const auto result = co_await RunOnTaskThread([id] {
-                    const auto all = store::profilesStore().list();
-                    const auto it = std::ranges::find_if(
-                        all, [id](const db::Profile& profile) { return profile.id == id; });
-                    if (it == all.end() || !isNativeVpnType(it->type)) {
-                        return std::tuple{false, false, std::string{},
+                try {
+                    const auto result = co_await RunOnTaskThread([id] {
+                        const auto all = store::profilesStore().list();
+                        const auto it = std::ranges::find_if(
+                            all, [id](const db::Profile& profile) { return profile.id == id; });
+                        if (it == all.end() || !isNativeVpnType(it->type)) {
+                            return std::tuple{false, std::string{"订阅不存在或不是原生连接"},
+                                              store::vpnStore().snapshot()};
+                        }
+                        std::string error;
+                        const bool connected = it->type == "openvpn"
+                                                   ? store::vpnStore().connectOpenVpn(*it, error)
+                                                   : store::vpnStore().connectPptp(*it, error);
+                        return std::tuple{connected, std::move(error),
                                           store::vpnStore().snapshot()};
+                    });
+                    // 每条连接完成就发布，不等待下一拍或整批拨号结束。
+                    vpnModel->Publish(std::get<2>(result));
+                    if (std::get<0>(result)) {
+                        ++opened;
+                    } else {
+                        ++failed;
+                        if (firstError.empty()) firstError = std::get<1>(result);
                     }
-                    std::string error;
-                    const bool connected = it->type == "openvpn"
-                                               ? store::vpnStore().connectOpenVpn(*it, error)
-                                               : store::vpnStore().connectPptp(*it, error);
-                    return std::tuple{true, connected, std::move(error),
-                                      store::vpnStore().snapshot()};
-                });
-                // 每条连接完成就发布，不等待下一拍或整批拨号结束。
-                vpnModel->Publish(std::get<3>(result));
-                if (!std::get<0>(result)) continue;
-                if (std::get<1>(result)) {
-                    ++opened;
-                } else {
+                } catch (const std::exception& exception) {
                     ++failed;
-                    if (firstError.empty()) firstError = std::get<2>(result);
+                    if (firstError.empty()) firstError = exception.what();
+                } catch (...) {
+                    ++failed;
+                    if (firstError.empty()) firstError = "未知连接错误";
+                }
+                vpnModel->Complete(id);
+            }
+            if (opened > 0) {
+                try {
+                    const auto coreSnapshot = co_await RunOnTaskThread([] {
+                        return store::coreStore().snapshot();
+                    });
+                    if (!coreControl.Busy()) {
+                        coreControl.model->Update([&](CoreView& view) { view.core = coreSnapshot; });
+                        if (coreSnapshot.state == core::CoreState::Stopped ||
+                            coreSnapshot.state == core::CoreState::Failed) {
+                            coreControl.Run(CoreCommand{.action = CoreAction::Start});
+                        }
+                    } else {
+                        coreControl.model->RequestRefresh();
+                        if (coreSnapshot.state != core::CoreState::Running)
+                            toast.Show(Localized("连接已建立；主内核正在处理其他操作，请稍后启动"));
+                    }
+                } catch (const std::exception& exception) {
+                    toast.Show(LocalizedFormat("连接已建立，读取主内核状态失败：{}", exception.what()));
+                } catch (...) {
+                    toast.Show(Localized("连接已建立，读取主内核状态失败"));
                 }
             }
-            connectionSelection.Clear();
+            vpnModel->Finish();
             if (failed == 0) {
                 toast.Show(LocalizedFormat("已打开 {} 个连接", opened));
             } else {
@@ -202,29 +237,46 @@
         });
     };
 
-    auto closeSelectedConnections = [tasks, toast, connectionSelection, vpnModel] {
+    auto closeSelectedConnections = [applicationTasks, toast, connectionSelection, vpnModel] {
+        if (vpnModel->operation.Get().Busy()) return;
         std::vector<std::int64_t> ids;
         for (const std::int64_t id : connectionSelection) ids.push_back(id);
         if (ids.empty()) {
             toast.Show(Localized("请先选择 PPTP 或 OpenVPN 订阅"));
             return;
         }
-        tasks.Launch([ids, toast, connectionSelection, vpnModel]() -> huxerui::Task<void> {
+        if (!vpnModel->Begin(VpnAction::Close, ids)) return;
+        connectionSelection.Clear();
+        applicationTasks.Launch([ids, toast, vpnModel]() -> huxerui::Task<void> {
+            int closed = 0;
+            int failed = 0;
+            std::string firstError;
             for (const std::int64_t id : ids) {
-                auto next = co_await RunOnTaskThread([id] {
-                    const auto all = store::profilesStore().list();
-                    const auto it = std::ranges::find_if(
-                        all, [id](const db::Profile& profile) { return profile.id == id; });
-                    if (it != all.end()) {
+                try {
+                    auto next = co_await RunOnTaskThread([id] {
+                        const auto all = store::profilesStore().list();
+                        const auto it = std::ranges::find_if(
+                            all, [id](const db::Profile& profile) { return profile.id == id; });
+                        if (it == all.end() || !isNativeVpnType(it->type))
+                            throw std::runtime_error("订阅不存在或不是原生连接");
                         if (it->type == "openvpn") store::vpnStore().disconnectOpenVpn(id);
-                        else if (it->type == "pptp") store::vpnStore().disconnectPptp(id);
-                    }
-                    return store::vpnStore().snapshot();
-                });
-                vpnModel->Publish(std::move(next));
+                        else store::vpnStore().disconnectPptp(id);
+                        return store::vpnStore().snapshot();
+                    });
+                    vpnModel->Publish(std::move(next));
+                    ++closed;
+                } catch (const std::exception& exception) {
+                    ++failed;
+                    if (firstError.empty()) firstError = exception.what();
+                } catch (...) {
+                    ++failed;
+                    if (firstError.empty()) firstError = "未知断开错误";
+                }
+                vpnModel->Complete(id);
             }
-            connectionSelection.Clear();
-            toast.Show(Localized("已关闭选中的连接"));
+            vpnModel->Finish();
+            if (failed == 0) toast.Show(LocalizedFormat("已关闭 {} 个连接", closed));
+            else toast.Show(LocalizedFormat("已关闭 {} 个，失败 {} 个：{}", closed, failed, firstError));
         });
     };
 

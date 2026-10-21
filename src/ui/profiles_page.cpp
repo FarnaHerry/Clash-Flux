@@ -51,6 +51,7 @@ import clashflux.vpn;
 #include "profiles_cache.h"
 #include "profiles_model.h"
 #include "profiles_page_shared.h"
+#include "core_control.h"
 #include "vpn_model.h"
 
 namespace clashflux::ui {
@@ -68,6 +69,8 @@ struct ProfileReorderSession {
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
+    auto applicationTasks = huxerui::UseApplicationTaskScope();
+    const auto coreControl = UseCoreControl();
     auto toast = huxerui::UseToast();
     // 应用级共享 HTTP 客户端；Android 订阅导入/刷新使用平台网络栈。
     auto http = huxerui::UseService<AppHttpClient>();
@@ -148,14 +151,16 @@ struct ProfileReorderSession {
     // 原生连接状态：唯一来源是 VpnModel（见 vpn_model.h）。挂载时加载一次
     // 持久化的连接配置并请模型立刻同步，之后由模型 State 驱动镜像。
     const auto vpnModel = huxerui::UseService<VpnModel>();
+    const auto vpnOperation = vpnModel->operation.Get();
     huxerui::Lifecycle(
         [tasks, vpnModel] {
-            tasks.Launch([vpnModel]() -> huxerui::Task<void> {
+            const auto before = vpnModel->syncTick.Get();
+            tasks.Launch([vpnModel, before]() -> huxerui::Task<void> {
                 auto next = co_await RunOnTaskThread([] {
                     store::vpnStore().init();
                     return store::vpnStore().snapshot();
                 });
-                vpnModel->Publish(std::move(next));
+                vpnModel->PublishPolled(before, std::move(next));
             });
             return [] {};
         },

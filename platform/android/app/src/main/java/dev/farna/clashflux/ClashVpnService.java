@@ -1688,6 +1688,14 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         }
     }
     private android.app.Notification buildForegroundNotification(String text) {
+        Intent openBackgroundSettings = new Intent(Intent.ACTION_VIEW,
+                android.net.Uri.parse("clash-flux://app/settings/background"),
+                this, MainActivity.class);
+        openBackgroundSettings.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP
+                | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent openApp = PendingIntent.getActivity(this, NOTIFICATION_ID,
+                openBackgroundSettings,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         android.app.Notification.Builder builder = Build.VERSION.SDK_INT >= 26
                 ? new android.app.Notification.Builder(this, CHANNEL_ID)
                 : new android.app.Notification.Builder(this);
@@ -1696,6 +1704,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
                 .setCategory(android.app.Notification.CATEGORY_SERVICE)
+                .setContentIntent(openApp)
                 .setOngoing(true)
                 .build();
     }

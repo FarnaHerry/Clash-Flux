@@ -122,7 +122,7 @@ StartupSettings readStartupSettings(const std::filesystem::path& file) {
     auto read = sqlite::Database::QueryReadOnlySync(huxerui::File{file.string()},
         "SELECT key, value FROM settings WHERE key IN "
         "('ui.theme_mode', 'ui.theme_color', 'ui.language', "
-        "'tray.enabled', 'tray.start_minimized')",
+        "'tray.enabled', 'tray.start_minimized', 'tray.lightweight')",
         [&settings](const sqlite::RowView& row) -> sqlite::Result<void> {
             auto key = row.Get<std::string>("key");
             if (!key) return key.Error();
@@ -132,6 +132,7 @@ StartupSettings readStartupSettings(const std::filesystem::path& file) {
             else if (*key == "ui.language") settings.language = *value;
             else if (*key == "tray.enabled") settings.trayEnabled = *value == "true";
             else if (*key == "tray.start_minimized") settings.startMinimized = *value == "true";
+            else if (*key == "tray.lightweight") settings.lightweightTray = *value == "true";
             else settings.themeMode = *value == "0" ? 0 : *value == "2" ? 2 : 1;
             return {};
         });
