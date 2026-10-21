@@ -4,7 +4,7 @@
 `<HOME>/dev/cpp/mcpp/HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `2a741e751fed69ccf590e3a8badf0ab31d9b4d05`，各平台 CI 共用
+Clash-Flux 当前固定 `99fd7ba2c2e84df24db41de01146ed4893143c62`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
@@ -61,6 +61,15 @@ Clash-Flux 必须重新运行 `cmake --build build --target clash-flux`、`./run
 同源约束，桌面门禁和 iOS 暂缓政策保持不变。
 
 ## 验证边界
+
+2026-10-22 固定版本更新到 `99fd7ba`，修复 Linux 托盘轻量模式退役窗口后仍由 Runtime 持有，
+GTK 控件保留回调、输入法上下文未销毁，以及外部直接销毁 GTK 窗口时输入法委托释放顺序错误；
+同时修复任意线程调用 `WindowHandle::Retire()` 与 Runtime 退出的竞争。新增 1,000 次窗口创建/退役、
+旧句柄和所有者链回归，定向 ThreadSanitizer 检查不再报告该竞争；X11 与 Wayland 各 4 项 Linux 原生
+退役回归均通过（27 assertions），HuxerUI 公共 CTest 4/4 通过。Clash-Flux Linux 构建、版本命令与
+17 项必跑 CTest 全部通过。隔离 XDG 配置下的 Debug 程序实测，普通隐藏 PSS 约 136.9 MiB，轻量模式
+三次隐藏约 95.5、90.2、76.4 MiB；进程共享库、图形驱动和分配器缓存会影响读数，这不是所有机器的
+固定内存指标。Windows/macOS 原生行为未在本次 Linux 主机验证。
 
 2026-10-21 固定版本更新到 `2a741e7`：相对 `7abe0fc` 新增应用范围的跨窗口拖放与
 桌面触摸板连续翻页。独立维护仓库已分别 fetch fork 和上游；上游 `main` 仍为
