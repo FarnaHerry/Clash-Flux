@@ -52,6 +52,92 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     }
 }
 
+[[huxerui::composable]] huxerui::View ProfileDragPreview(
+    const db::Profile& profile, bool compact, bool participating) {
+    const auto& theme = huxerui::UseTheme();
+    const bool nativeVpn = isNativeVpnType(profile.type);
+    const auto colors = ResolveSelectableTileColors(theme, profile.selected);
+    const std::string primaryLine = [&] {
+        if (!nativeVpn)
+            return profile.url.empty() ? huxerui::UseString(Localized("本地导入")) : profile.url;
+        if (profile.type == "openvpn") return std::string{"OpenVPN · sing-box endpoint"};
+        std::string error;
+        const auto config = pptp::ParsePptpConfig(profile.nativeConfig, error);
+        return config ? "PPTP · " + config->server
+                      : huxerui::UseString(Localized("PPTP 配置无效"));
+    }();
+    const std::string detailLine = nativeVpn
+        ? (profile.nativeRoutes.empty()
+               ? huxerui::UseString(Localized("未设置内网路由"))
+               : huxerui::UseString(LocalizedFormat("路由：{}", profile.nativeRoutes)))
+        : (profile.description.empty() ? "—" : profile.description);
+    const std::string statusLine = nativeVpn
+        ? (profile.type == "openvpn" ? "OpenVPN" : "PPTP")
+        : profile.selected ? huxerui::UseString(Localized("主订阅"))
+        : participating ? huxerui::UseString(Localized("次订阅 · 按规则参与"))
+                        : huxerui::UseString(Localized("已保存 · 未参与"));
+
+    huxerui::View preview = SelectableTile(
+        huxerui::Column {
+            huxerui::Row {
+                huxerui::Image(app::images::drag_indicator)
+                    .Fit(huxerui::ImageFit::Contain)
+                    .Tint(colors.muted)
+                    .With(huxerui::Frame{.width = 18.0F, .height = 18.0F},
+                          huxerui::Padding(1.0F)),
+                huxerui::Text(truncateOneLine(profile.name, compact ? 9 : 20))
+                    .Style(huxerui::TextStyle{
+                        huxerui::Font::System(font_size::kBody)
+                            .WithWeight(huxerui::FontWeight::SemiBold),
+                        colors.fg}),
+                huxerui::Spacer(),
+                nativeVpn ? huxerui::View{huxerui::Row{}}
+                          : huxerui::View{huxerui::Image(app::images::refresh)
+                                .Fit(huxerui::ImageFit::Contain)
+                                .Tint(colors.muted)
+                                .With(huxerui::Frame{.width = 20.0F, .height = 20.0F},
+                                      huxerui::Padding(4.0F))},
+            }.With(huxerui::Spacing(6.0F),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+            huxerui::Text(truncateOneLine(primaryLine, 48))
+                .Style(huxerui::TextStyle{
+                    huxerui::Font::Monospace(font_size::kChip), colors.muted}),
+            huxerui::Text(truncateOneLine(detailLine, 52))
+                .Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kCaption), colors.muted}),
+            huxerui::Row {
+                huxerui::Text(statusLine)
+                    .Style(huxerui::TextStyle{
+                        huxerui::Font::System(font_size::kCaption), colors.muted}),
+                huxerui::Spacer(),
+                huxerui::Text(nativeVpn ? "" : huxerui::UseString(
+                    FormatRelativeTime(profile.updatedAt)))
+                    .Style(huxerui::TextStyle{
+                        huxerui::Font::System(font_size::kCaption), colors.muted}),
+            }.With(huxerui::Spacing(8.0F),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+            huxerui::Spacer(),
+            nativeVpn ? huxerui::View{huxerui::Row{}}
+                      : huxerui::View{huxerui::ProgressBar(std::clamp(
+                            profile.totalBytes > 0
+                                ? static_cast<float>(profile.usedBytes) /
+                                      static_cast<float>(profile.totalBytes)
+                                : 1.0F,
+                            0.0F, 1.0F)).With(huxerui::Frame{.height = 3.0F})},
+        }.With(huxerui::Spacing(6.0F), huxerui::Grow(1.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+        profile.selected, profile.name, {}, SelectableTileInteraction::ReadOnly);
+    huxerui::Color shadow = theme.colors.scrim;
+    shadow.alpha = 0.24F;
+    return std::move(preview).With(
+        huxerui::Frame{.width = kCardWidth, .height = kCardHeight},
+        huxerui::Border(theme.colors.primary, 1.5F),
+        huxerui::CornerRadius(kSelectableTileRadius),
+        huxerui::Shadow{.color = shadow, .blur_radius = 16.0F, .spread = -2.0F},
+        // DragSource 位于卡片内左上角的手柄；补偿卡片留白，使抓取点保持在手柄上。
+        huxerui::Offset(huxerui::Point{-10.0F, -8.0F}));
+}
+
 } // namespace
 
 [[huxerui::composable]] huxerui::View ProfileCard(
@@ -76,7 +162,6 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     // Android rejects during the next frame with "anchor must be mounted on only
     // one View" when the subscription page contains more than one card.
     auto menu = UseActionMenu();
-    auto isDropOver = huxerui::UseState(false);
     auto isDragging = huxerui::UseState(false);
     const auto navigation = huxerui::UseNavigation();
     const auto desktopNavigation = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
@@ -377,10 +462,6 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                          });
     }
 
-    huxerui::Color dragShadowColor = theme.colors.scrim;
-    dragShadowColor.alpha = 0.24F;
-    const std::string profileNameText = profile.name;
-
     huxerui::View dragHandle =
         huxerui::Image(app::images::drag_indicator)
             .Fit(huxerui::ImageFit::Contain)
@@ -397,32 +478,11 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 huxerui::DragSource(
                     ProfileDragPayload{id},
                     std::function<huxerui::View()>{
-                        [profileNameText, theme, islands, dragShadowColor]() -> huxerui::View {
-                            return huxerui::Row {
-                                huxerui::Image(app::images::drag_indicator)
-                                    .Fit(huxerui::ImageFit::Contain)
-                                    .Tint(theme.colors.primary)
-                                    .With(huxerui::Frame{.width = 18.0F, .height = 18.0F}),
-                                huxerui::Text(truncateOneLine(profileNameText, 16))
-                                    .Style(huxerui::TextStyle{
-                                        huxerui::Font::System(font_size::kBody)
-                                            .WithWeight(huxerui::FontWeight::SemiBold),
-                                        theme.colors.on_surface}),
-                            }.With(
-                                huxerui::Frame{.height = 36.0F},
-                                huxerui::Padding(huxerui::EdgeInsets{
-                                    .top = 4.0F, .right = 12.0F, .bottom = 4.0F, .left = 8.0F}),
-                                huxerui::Spacing(8.0F),
-                                huxerui::Background(theme.colors.surface_container_highest),
-                                huxerui::CornerRadius(islands.nested_radius),
-                                huxerui::Border(theme.colors.primary, 1.5F),
-                                huxerui::Shadow{
-                                    .color = dragShadowColor,
-                                    .blur_radius = 16.0F,
-                                    .spread = -2.0F,
-                                },
-                                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)
-                            );
+                        [profile, compact, participating =
+                             std::ranges::find(runtime.participatingSources,
+                                               store::ProfileConnectionId(id)) !=
+                             runtime.participatingSources.end()]() -> huxerui::View {
+                            return ProfileDragPreview(profile, compact, participating);
                         }
                     }
                 )
@@ -431,6 +491,10 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 [isDragging, reorder, id](const huxerui::DragEvent&) {
                     isDragging = true;
                     if (reorder.begin) reorder.begin(id);
+                })
+            .On<huxerui::DragSourceEvents::Changed>(
+                [reorder, id](const huxerui::DragEvent& event) {
+                    if (reorder.movePointer) reorder.movePointer(id, event.window_position);
                 })
             .On<huxerui::DragSourceEvents::Ended>(
                 [isDragging, reorder, id](const huxerui::DragDropResult&) {
@@ -645,30 +709,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     // 矩形卡统一高度；宽度由虚拟网格的轨道均分，铺满页面而不固定尺寸
     // （内容已单行截断，ClipChildren 兜底）。
     card = std::move(card).With(huxerui::Frame{.height = kCardHeight},
-                                huxerui::ClipChildren(),
-                                huxerui::DropTarget::Accepts<ProfileDragPayload>())
-        .On<huxerui::DropEvents<ProfileDragPayload>::Entered>(
-            [isDropOver, reorder, id](const ProfileDragPayload& payload, const huxerui::DropEvent&) {
-                if (payload.id != id) {
-                    isDropOver = true;
-                    if (reorder.preview) reorder.preview(payload.id, id);
-                }
-            })
-        .On<huxerui::DropEvents<ProfileDragPayload>::Exited>(
-            [isDropOver](const ProfileDragPayload&, const huxerui::DropEvent&) {
-                isDropOver = false;
-            })
-        .On<huxerui::DropEvents<ProfileDragPayload>::Dropped>(
-            [isDropOver, reorder, id](const ProfileDragPayload& payload, const huxerui::DropEvent&) {
-                isDropOver = false;
-                if (reorder.drop) reorder.drop(payload.id, id);
-            });
-
-    if (isDropOver.Get()) {
-        card = std::move(card).With(
-            huxerui::Border(theme.colors.primary, 2.0F),
-            huxerui::CornerRadius(kSelectableTileRadius));
-    }
+                                huxerui::ClipChildren());
     if (isDragging.Get()) {
         card = std::move(card).With(huxerui::Opacity(0.4F));
     }

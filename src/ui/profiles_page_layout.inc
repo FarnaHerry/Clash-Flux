@@ -57,6 +57,10 @@
     // StateList 持有，卡片由 VirtualGrid 懒加载。
     std::vector<huxerui::View> typePages;
     typePages.reserve(visibleTypes.size());
+    // VirtualGrid 的 item factory 在布局阶段调用；在这里订阅 State，目标变化才会
+    // 更新网格声明并重建可见卡片。只在 factory 内 Get() 不会触发页面重组。
+    const std::int64_t previewActiveId = reorderSession.Get()->activeId;
+    const std::int64_t previewTargetId = reorderTarget.Get();
     for (std::size_t page = 0; page < visibleTypes.size(); ++page) {
         const std::string& type = visibleTypes[page];
         std::vector<std::size_t> typeIndices;
@@ -66,17 +70,35 @@
             }
         }
         const std::size_t typeCount = typeIndices.size();
-        const std::int64_t lastProfileId = typeIndices.empty() ? 0 : profiles[typeIndices.back()].id;
+        std::vector<std::int64_t> typeIds;
+        typeIds.reserve(typeCount);
+        for (const std::size_t profileIndex : typeIndices)
+            typeIds.push_back(profiles[profileIndex].id);
+        ProfileReorderActions pageReorder = reorderProfile;
+        pageReorder.movePointer = [ids = typeIds, geometry = gridGeometry.Get(),
+                                   preview = reorderProfile.preview](
+                                      std::int64_t fromId, huxerui::Point position) {
+            const std::int64_t closestId = geometry->Closest(ids, position);
+            if (closestId != 0 && preview) preview(fromId, closestId);
+        };
+        const auto dropAtPointer = [ids = typeIds, geometry = gridGeometry.Get(),
+                                    drop = reorderProfile.drop](
+                                       std::int64_t fromId, huxerui::Point position) {
+            const std::int64_t closestId = geometry->Closest(ids, position);
+            if (closestId != 0 && drop) drop(fromId, closestId);
+        };
         huxerui::View grid = huxerui::VirtualGrid(
                                  typeCount + (compact ? 1U : 0U),
-                                 [profiles, typeIndices = std::move(typeIndices),
+                                 [profiles, typeIndices = std::move(typeIndices), typeIds = std::move(typeIds),
                                   typeCount, compact, tasks, toast, http, reload,
                                   pptpStates, openVpnStates, isConnectionSelected,
                                   pptpAvailable = vpnModel->view.Get().pptpAvailable,
                                   openVpnAvailable = vpnModel->view.Get().openVpnAvailable,
                                   toggleConnection, openEditInfo, showEditRules,
                                   showEditFile, showQr, selectionPending, theme,
-                                  dialog, reorderProfile](std::size_t index) -> huxerui::View {
+                                  dialog, pageReorder, dropAtPointer,
+                                  previewActiveId, previewTargetId,
+                                  geometry = gridGeometry.Get()](std::size_t index) -> huxerui::View {
                                      if (index >= typeCount) {
                                          return CompactFloatingNavigationFooter()
                                              .Key("compact-floating-footer");
@@ -101,7 +123,26 @@
                                              break;
                                          }
                                      }
-                                     return ProfileCard(
+                                     huxerui::Point cardOffset{};
+                                     const auto from = std::find(typeIds.begin(), typeIds.end(), previewActiveId);
+                                     const auto to = std::find(typeIds.begin(), typeIds.end(), previewTargetId);
+                                     if (from != typeIds.end() && to != typeIds.end()) {
+                                         const std::size_t fromIndex = static_cast<std::size_t>(from - typeIds.begin());
+                                         const std::size_t toIndex = static_cast<std::size_t>(to - typeIds.begin());
+                                         const std::size_t destination =
+                                             ProfileReorderDestination(index, fromIndex, toIndex);
+                                         if (destination != index) {
+                                             const auto sourceBounds = geometry->slots.find(profile.id);
+                                             const auto targetBounds = geometry->slots.find(typeIds[destination]);
+                                             if (sourceBounds != geometry->slots.end() &&
+                                                 targetBounds != geometry->slots.end()) {
+                                                 cardOffset = {
+                                                     targetBounds->second.x - sourceBounds->second.x,
+                                                     targetBounds->second.y - sourceBounds->second.y};
+                                             }
+                                         }
+                                     }
+                                     huxerui::View card = ProfileCard(
                                                 profile, compact, tasks,
                                                 toast, http, reload,
                                                 profiles, selectionPending,
@@ -109,8 +150,28 @@
                                                 isConnectionSelected(profile.id),
                                                 toggleConnection, openEditInfo,
                                                 showEditRules, showEditFile,
-                                                showQr, dialog, reorderProfile)
-                                         .Key(profile.id);
+                                                showQr, dialog, pageReorder)
+                                         .Key(profile.id)
+                                         .With(huxerui::Offset(huxerui::AnimateTo(
+                                             cardOffset,
+                                             huxerui::TweenSpec{.duration = theme.motion.reduced_motion ? 0.0 : 0.18,
+                                                                .easing = huxerui::Easing::EaseOut})));
+                                     huxerui::View slot = huxerui::Column {card}
+                                         .With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
+                                               ProfileSlotBounds{geometry, profile.id},
+                                               huxerui::DropTarget::Accepts<ProfileDragPayload>())
+                                         .On<huxerui::DropEvents<ProfileDragPayload>::Dropped>(
+                                             [dropAtPointer](
+                                                 const ProfileDragPayload& payload, const huxerui::DropEvent& event) {
+                                                 dropAtPointer(payload.id, event.window_position);
+                                             });
+                                     if (previewActiveId != 0 && previewTargetId == profile.id &&
+                                         previewTargetId != previewActiveId) {
+                                         slot = std::move(slot).With(
+                                             huxerui::Border(theme.colors.primary, 2.0F),
+                                             huxerui::CornerRadius(kSelectableTileRadius));
+                                     }
+                                     return std::move(slot).Key("profile-slot-" + std::to_string(index));
                                  })
                                  .Columns(compact
                                               ? huxerui::GridColumns::Fixed(1)
@@ -122,11 +183,9 @@
                                  .With(huxerui::Grow(1.0F), huxerui::ScrollBar(),
                                        huxerui::DropTarget::Accepts<ProfileDragPayload>())
                                  .On<huxerui::DropEvents<ProfileDragPayload>::Dropped>(
-                                     [reorderProfile, lastProfileId](
-                                         const ProfileDragPayload& payload, const huxerui::DropEvent&) {
-                                         if (lastProfileId != 0 && reorderProfile.drop) {
-                                             reorderProfile.drop(payload.id, lastProfileId);
-                                         }
+                                     [dropAtPointer](
+                                         const ProfileDragPayload& payload, const huxerui::DropEvent& event) {
+                                         dropAtPointer(payload.id, event.window_position);
                                      });
         typePages.push_back(huxerui::Column {grid}.With(
             huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))

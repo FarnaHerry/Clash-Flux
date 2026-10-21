@@ -35,6 +35,7 @@
 #include "app_resources.h"
 #include "task_bridge.h"
 #include "profile_import_task.h"
+#include "profile_reorder_geometry.h"
 
 import clashflux.core;
 import clashflux.db;
@@ -77,6 +78,8 @@ struct ProfileReorderSession {
     const auto selectionPending = profilesCache.selection_pending;
     auto reorderSession = huxerui::UseState(
         std::make_shared<ProfileReorderSession>());
+    auto reorderTarget = huxerui::UseState<std::int64_t>(0);
+    auto gridGeometry = huxerui::UseState(std::make_shared<ProfileGridGeometry>());
     auto pptpStates = huxerui::UseStateList<store::PptpState>();
     auto openVpnStates = huxerui::UseStateList<store::OpenVpnState>();
     auto connectionSelection = huxerui::UseStateList<std::int64_t>();

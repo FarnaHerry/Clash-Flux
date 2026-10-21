@@ -19,6 +19,7 @@
 #include "filtered_indices.h"
 #include "profile_file_picker.h"
 #include "profile_import_task.h"
+#include "profile_reorder_geometry.h"
 #include "section_tab_picker.h"
 #include "responsive_shell.h"
 #include "page_layout.h"
@@ -112,6 +113,101 @@ std::shared_ptr<AppResourceProvider> AppResources() {
     static const auto provider = std::make_shared<AppResourceProvider>();
     return provider;
 }
+
+std::shared_ptr<clashflux::ui::ProfileGridGeometry> reorderGeometryFixture;
+
+huxerui::View ProfileReorderGeometryRoot() {
+    return huxerui::FlatTheme{huxerui::VirtualGrid(3, [](std::size_t index) {
+        const auto id = static_cast<std::int64_t>(index + 1);
+        return huxerui::Text("profile-" + std::to_string(id))
+            .With(huxerui::Frame{.height = 180.0F},
+                  clashflux::ui::ProfileSlotBounds{reorderGeometryFixture, id})
+            .Key(id);
+    }).Columns(huxerui::GridColumns::Fixed(3))
+      .ColumnSpacing(12.0F).EstimatedRowExtent(180.0F)};
+}
+const huxerui::Application kProfileReorderGeometryApplication{ProfileReorderGeometryRoot};
+
+huxerui::View ProfileReorderDragRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        auto order = huxerui::UseState(std::vector<std::int64_t>{1, 2, 3});
+        auto active = huxerui::UseState<std::int64_t>(0);
+        auto target = huxerui::UseState<std::int64_t>(0);
+        const auto ids = order.Get();
+        const std::int64_t activeId = active.Get();
+        const std::int64_t targetId = target.Get();
+        const auto drop = [order, active, target, ids](std::int64_t from,
+                                                        huxerui::Point position) {
+            const auto to = reorderGeometryFixture->Closest(ids, position);
+            if (from != to && to != 0) {
+                auto reordered = ids;
+                const auto source = std::find(reordered.begin(), reordered.end(), from);
+                const auto destination = std::find(reordered.begin(), reordered.end(), to);
+                if (source != reordered.end() && destination != reordered.end()) {
+                    const auto value = *source;
+                    const auto fromIndex = source - reordered.begin();
+                    const auto toIndex = destination - reordered.begin();
+                    reordered.erase(reordered.begin() + fromIndex);
+                    reordered.insert(reordered.begin() + toIndex, value);
+                    order = std::move(reordered);
+                }
+            }
+            active = 0;
+            target = 0;
+        };
+        return huxerui::VirtualGrid(ids.size(), [=](std::size_t index) {
+            const auto id = ids[index];
+            huxerui::Point offset{};
+            const auto from = std::find(ids.begin(), ids.end(), activeId);
+            const auto to = std::find(ids.begin(), ids.end(), targetId);
+            if (from != ids.end() && to != ids.end()) {
+                const auto destination = clashflux::ui::ProfileReorderDestination(
+                    index, static_cast<std::size_t>(from - ids.begin()),
+                    static_cast<std::size_t>(to - ids.begin()));
+                if (destination != index) {
+                    const auto& sourceBounds = reorderGeometryFixture->slots.at(id);
+                    const auto& targetBounds = reorderGeometryFixture->slots.at(ids[destination]);
+                    offset = {targetBounds.x - sourceBounds.x,
+                              targetBounds.y - sourceBounds.y};
+                }
+            }
+            auto handle = huxerui::Text("profile-" + std::to_string(id))
+                .With(huxerui::Frame{.height = 180.0F},
+                      huxerui::DragSource(id, [id] {
+                          return huxerui::Text("preview-" + std::to_string(id));
+                      }))
+                .On<huxerui::DragSourceEvents::Started>([active, id](const auto&) {
+                    active = id;
+                })
+                .On<huxerui::DragSourceEvents::Changed>([target, ids, id](
+                    const huxerui::DragEvent& event) {
+                    if (const auto closest = reorderGeometryFixture->Closest(ids, event.window_position)) {
+                        target = closest;
+                    }
+                })
+                .On<huxerui::DragSourceEvents::Ended>([active, target](const auto&) {
+                    active = 0;
+                    target = 0;
+                });
+            return huxerui::Column{std::move(handle).With(huxerui::Offset(
+                       huxerui::AnimateTo(offset, huxerui::TweenSpec{.duration = 0.18})))}
+                .With(clashflux::ui::ProfileSlotBounds{reorderGeometryFixture, id},
+                      huxerui::DropTarget::Accepts<std::int64_t>())
+                .On<huxerui::DropEvents<std::int64_t>::Dropped>(
+                    [drop](const std::int64_t& source, const huxerui::DropEvent& event) {
+                        drop(source, event.window_position);
+                    })
+                .Key("reorder-slot-" + std::to_string(index));
+        }).Columns(huxerui::GridColumns::Fixed(3))
+          .ColumnSpacing(12.0F).EstimatedRowExtent(180.0F)
+          .With(huxerui::DropTarget::Accepts<std::int64_t>())
+          .On<huxerui::DropEvents<std::int64_t>::Dropped>(
+              [drop](const std::int64_t& source, const huxerui::DropEvent& event) {
+                  drop(source, event.window_position);
+              });
+    })};
+}
+const huxerui::Application kProfileReorderDragApplication{ProfileReorderDragRoot};
 
 std::size_t connectionRowsBuilt = 0;
 huxerui::View ConnectionListRoot() {
@@ -1417,6 +1513,80 @@ void testInboundSettings() {
 } // namespace
 
 int main() {
+    reorderGeometryFixture = std::make_shared<clashflux::ui::ProfileGridGeometry>();
+    {
+        huxerui::testing::UiTest ui(kProfileReorderGeometryApplication,
+                                     {.viewport = {1200.0F, 300.0F}});
+        ui.PumpAndSettle();
+        const auto& slots = reorderGeometryFixture->slots;
+        check(slots.size() == 3 && slots.at(1).x < slots.at(2).x &&
+              slots.at(2).x < slots.at(3).x,
+              "虚拟网格实际记录三个稳定槽位的窗口坐标");
+        check(reorderGeometryFixture->Closest({1, 2, 3},
+              {slots.at(2).x + 10.0F, slots.at(2).y + 10.0F}) == 2,
+              "真实虚拟网格的第二槽位可由指针命中");
+    }
+    reorderGeometryFixture->slots.clear();
+    {
+        huxerui::testing::UiTest ui(kProfileReorderDragApplication,
+                                     {.viewport = {1200.0F, 300.0F}});
+        ui.PumpAndSettle();
+        const float secondX = reorderGeometryFixture->slots.at(2).x;
+        const float thirdX = reorderGeometryFixture->slots.at(3).x;
+        huxerui::PointerEvent event{.type = huxerui::PointerEventType::Down,
+            .pointer_id = 81, .position = {thirdX + 20.0F, 20.0F},
+            .device_kind = huxerui::PointerDeviceKind::Mouse,
+            .changed_button = huxerui::PointerButton::Primary,
+            .pressed_buttons = huxerui::PointerButton::Primary};
+        ui.SendPointer(event); ui.Pump();
+        event.type = huxerui::PointerEventType::Move;
+        event.changed_button = huxerui::PointerButton::None;
+        event.position.x -= 30.0F;
+        ui.SendPointer(event); ui.Pump();
+        event.position = {secondX + 20.0F, 20.0F};
+        ui.SendPointer(event); ui.Pump();
+        ui.Pump(std::chrono::milliseconds(220));
+        const auto dragged = ui.Find(UiSelector::Text("profile-3")).One();
+        const auto shifted = ui.Find(UiSelector::Text("profile-2")).One();
+        check(std::abs(dragged.bounds.x - secondX) < 5.0F &&
+              std::abs(shifted.bounds.x - thirdX) < 5.0F,
+              "拖动中第三张进入第二槽，第二张平滑让位到第三槽");
+        event.type = huxerui::PointerEventType::Up;
+        event.changed_button = huxerui::PointerButton::Primary;
+        event.pressed_buttons = huxerui::PointerButton::None;
+        ui.SendPointer(event); ui.PumpAndSettle();
+        check(std::abs(ui.Find(UiSelector::Text("profile-3")).One().bounds.x - secondX) < 5.0F &&
+              std::abs(ui.Find(UiSelector::Text("profile-2")).One().bounds.x - thirdX) < 5.0F,
+              "松手后第三张确实提交到第二槽");
+        const float firstX = reorderGeometryFixture->slots.at(1).x;
+        ui.Drag({firstX + 20.0F, 20.0F}, {secondX + 20.0F, 20.0F},
+                {.duration = std::chrono::milliseconds(300), .segments = 12,
+                 .pointer = {.device_kind = huxerui::PointerDeviceKind::Mouse,
+                             .pointer_id = 82}});
+        ui.PumpAndSettle();
+        check(std::abs(ui.Find(UiSelector::Text("profile-1")).One().bounds.x - secondX) < 5.0F &&
+              std::abs(ui.Find(UiSelector::Text("profile-3")).One().bounds.x - firstX) < 5.0F,
+              "从第一槽拖到第二槽也能提交排序");
+    }
+    {
+        clashflux::ui::ProfileGridGeometry geometry;
+        geometry.slots.emplace(1, huxerui::Rect{0.0F, 80.0F, 620.0F, 310.0F});
+        geometry.slots.emplace(2, huxerui::Rect{640.0F, 80.0F, 620.0F, 310.0F});
+        geometry.slots.emplace(3, huxerui::Rect{1280.0F, 80.0F, 620.0F, 310.0F});
+        const std::vector<std::int64_t> ids{1, 2, 3};
+        check(geometry.Closest(ids, {690.0F, 160.0F}) == 2,
+              "三张订阅卡时第二个固定槽位可命中");
+        check(geometry.Closest(ids, {635.0F, 160.0F}) == 2,
+              "卡片间隙落到最近的固定槽位");
+        check(clashflux::ui::ProfileReorderDestination(2, 2, 1) == 1 &&
+              clashflux::ui::ProfileReorderDestination(1, 2, 1) == 2 &&
+              clashflux::ui::ProfileReorderDestination(0, 2, 1) == 0,
+              "第三张拖到第二槽时拖动卡和让位卡都进入目标位置");
+        check(clashflux::ui::ProfileReorderDestination(0, 0, 1) == 1 &&
+              clashflux::ui::ProfileReorderDestination(1, 0, 1) == 0 &&
+              clashflux::ui::ProfileReorderDestination(2, 0, 1) == 2,
+              "第一张拖到第二槽时两张卡对向滑动");
+    }
     testCoreOperations();
     testInboundSettings();
     testConnectionList();

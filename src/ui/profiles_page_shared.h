@@ -31,6 +31,7 @@ struct NativeProfileSupport {
 struct ProfileReorderActions {
     std::function<void(std::int64_t)> begin;
     std::function<void(std::int64_t, std::int64_t)> preview;
+    std::function<void(std::int64_t, huxerui::Point)> movePointer;
     std::function<void(std::int64_t, std::int64_t)> drop;
     std::function<void(std::int64_t)> cancel;
 };
