@@ -203,6 +203,8 @@ export bool PrivilegedPptpConnect(std::string_view connectionId,
 export bool PrivilegedPptpApplyRoutes(std::string_view connectionId,
                                       std::span<const std::string> routes,
                                       std::string& error);
+export bool PrivilegedPptpDisconnectChecked(std::string_view connectionId,
+                                             std::string& error);
 export void PrivilegedPptpDisconnect(std::string_view connectionId);
 export void PrivilegedPptpShutdown();
 #endif

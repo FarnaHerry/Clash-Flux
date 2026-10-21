@@ -65,6 +65,7 @@ void ApplyLanguage(const std::shared_ptr<SettingsModel>& model, std::size_t inde
 #define CLASHFLUX_MORE_SETTINGS AndroidMoreSettings
 #define CLASHFLUX_LANGUAGE_SETTING AndroidLanguageSetting
 #define CLASHFLUX_THEME_SETTING AndroidThemeSetting
+constexpr bool kSettingsMoreOnWide = true;
 #else
 #define CLASHFLUX_GENERAL_PLATFORM_SECTION DesktopGeneralSettings
 #define CLASHFLUX_NETWORK_PLATFORM_SECTION DesktopNetworkSettings
@@ -72,6 +73,7 @@ void ApplyLanguage(const std::shared_ptr<SettingsModel>& model, std::size_t inde
 #define CLASHFLUX_MORE_SETTINGS DesktopMoreSettings
 #define CLASHFLUX_LANGUAGE_SETTING DesktopLanguageSetting
 #define CLASHFLUX_THEME_SETTING DesktopThemeSetting
+constexpr bool kSettingsMoreOnWide = false;
 #endif
 
 const huxerui::StringVariant kAboutText = LocalizedFormat(
@@ -99,6 +101,16 @@ const huxerui::StringVariant kAboutText = LocalizedFormat(
 [[huxerui::composable]] huxerui::View MoreNavRow(
     huxerui::StringVariant label, huxerui::ImageResource icon, std::function<void()> open) {
     return SettingNavigationItem(label, icon, open);
+}
+
+[[huxerui::composable]] huxerui::View SettingsSectionCard(
+    huxerui::StringVariant title, huxerui::View content) {
+    const auto& theme = huxerui::UseTheme();
+    return Card(huxerui::Column {
+        SectionTitle(std::move(title)),
+        std::move(content),
+    }.With(huxerui::Spacing(theme.spacing.small),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), false);
 }
 
 void SelectThemeColor(const std::shared_ptr<SettingsModel>& model, const std::string& id) {
@@ -414,8 +426,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 [[huxerui::composable]] huxerui::View AndroidMoreSettings(
     huxerui::State<std::size_t>, ProfilesCache profilesCache) {
     const huxerui::NavigationController navigation = huxerui::UseNavigation();
-    // 同组入口合并成一段，行间用 Divider 分隔；不再套分组卡——设置页整体不用
-    // 卡片包裹（桌面端页面岛即唯一卡片，移动端直接铺在页面底色上）。
+    // 同组入口合并成一段，行间用 Divider 分隔；外层由设置页统一加一层卡片。
     return huxerui::Column {
         SectionTitle(Localized("更多")),
         huxerui::Column {
@@ -587,6 +598,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     huxerui::State<int> themeMode, huxerui::State<std::size_t> navPage,
     ProfilesCache profilesCache, bool active) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const IslandTheme islands = ResolveIslandTheme(theme);
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto toast = huxerui::UseToast();
@@ -599,22 +611,20 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     // 只留当前页后降到 28 次 / ~0ms；因此不可见页必须返回空占位。
     if (!active) return huxerui::View{huxerui::Row{}}.Key("settings-idle");
 
-    return PageScaffold(
-        Localized("设置"), huxerui::View{},
-        huxerui::ScrollView(
-            huxerui::Column {
-                CLASHFLUX_MORE_SETTINGS(navPage, profilesCache),
-                // 参数与维护分区；首页独占日常模式与接管控制。
-                huxerui::Column {
-                    SectionTitle(Localized("通用")),
+    std::vector<huxerui::View> sections;
+    if (compact || kSettingsMoreOnWide)
+        sections.push_back(Card(CLASHFLUX_MORE_SETTINGS(navPage, profilesCache), false)
+            .Key("settings-more"));
+    // 参数与维护分区；首页独占日常模式与接管控制。
+    sections.push_back(SettingsSectionCard(Localized("通用"), huxerui::Column {
                     CLASHFLUX_THEME_SETTING(themeMode),
                     CLASHFLUX_LANGUAGE_SETTING(),
                     CLASHFLUX_GENERAL_PLATFORM_SECTION(),
                 }.With(huxerui::Spacing(10.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+        .Key("settings-general"));
 
-                huxerui::Column {
-                    SectionTitle(Localized("网络")),
+    sections.push_back(SettingsSectionCard(Localized("网络"), huxerui::Column {
                     PortSettingsEntry(),
                     CLASHFLUX_NETWORK_PLATFORM_SECTION(),
                     SettingSwitchRow(
@@ -638,25 +648,29 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                                        : "已关闭 IPv6（重启内核生效）"));
                             }), false, app::images::globe),
                 }.With(huxerui::Spacing(10.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+        .Key("settings-network"));
 
-                CLASHFLUX_MAINTENANCE_PLATFORM_SECTION(),
+    sections.push_back(Card(CLASHFLUX_MAINTENANCE_PLATFORM_SECTION(), false)
+        .Key("settings-maintenance"));
 
-                huxerui::Column {
-                    SectionTitle(Localized("关于")),
+    sections.push_back(SettingsSectionCard(Localized("关于"),
                     huxerui::Row {
                       SettingItemIcon(app::images::info),
                       huxerui::Text(kAboutText).Style(huxerui::TextStyle{
                         huxerui::Font::System(font_size::kChip),
                         theme.colors.on_surface_variant}).With(huxerui::Grow(1.0F)),
                     }.With(huxerui::Spacing(12.0F),
-                           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-                }.With(huxerui::Spacing(6.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-                compact ? CompactFloatingNavigationFooter() : huxerui::View{},
-            }.With(huxerui::Spacing(12.0F),
-                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
-            .With(huxerui::Grow(1.0F)), false, false, true);
+                           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)))
+        .Key("settings-about"));
+    if (compact) sections.push_back(CompactFloatingNavigationFooter());
+    return PageScaffold(
+        Localized("设置"), huxerui::View{},
+        huxerui::ScrollView(huxerui::Column(std::move(sections)).With(
+            huxerui::Spacing(islands.nested_radius),
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+            .With(huxerui::Grow(1.0F)), false, false, true,
+            islands.nested_radius);
 }
 
 #undef CLASHFLUX_GENERAL_PLATFORM_SECTION

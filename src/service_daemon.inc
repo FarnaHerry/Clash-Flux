@@ -386,8 +386,9 @@ export int run() {
             if (!id || id->empty() || id->size() > 128 || fields.size() != 2) {
                 replyLine(fd, "ERR 无效的 PPTP 连接标识");
             } else {
-                pptp::PrivilegedPptpDisconnect(*id);
-                replyLine(fd, "OK");
+                std::string error;
+                replyLine(fd, pptp::PrivilegedPptpDisconnectChecked(*id, error)
+                    ? "OK" : "ERR " + error);
             }
         } else if (!cmd.empty()) {
             replyLine(fd, "ERR 未知命令");

@@ -260,12 +260,27 @@ bool pidAlive(long pid) {
 #ifdef _WIN32
     clashflux::win32::UniqueHandle process{OpenProcess(
         PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid))};
-    return process.valid();
+    DWORD exitCode = 0;
+    return process.valid() && GetExitCodeProcess(process.get(), &exitCode) &&
+           exitCode == STILL_ACTIVE;
 #elif defined(CLASHFLUX_IOS)
     static_cast<void>(pid);
     return false;
 #else
-    if (::kill(static_cast<pid_t>(pid), 0) == 0) return true;
+    if (::kill(static_cast<pid_t>(pid), 0) == 0) {
+#if defined(__linux__)
+        // A reparented detached child can remain as a zombie briefly. It no
+        // longer owns listeners or routes and must not make STOP time out.
+        std::ifstream stat(std::format("/proc/{}/stat", pid));
+        std::string line;
+        if (std::getline(stat, line)) {
+            const auto end = line.rfind(')');
+            if (end != std::string::npos && end + 2 < line.size() &&
+                line[end + 2] == 'Z') return false;
+        }
+#endif
+        return true;
+    }
     // EPERM：进程存在但属其他用户（root 服务托管的内核），同样视为存活。
     return errno == EPERM;
 #endif

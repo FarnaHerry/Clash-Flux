@@ -111,7 +111,17 @@ CoreApplyResult ExecuteCoreCommand(const CoreCommand& command) {
             return ApplyDesktopTun(command.enabled);
 #endif
         case CoreAction::Stop:
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
             ok = coreStore.stopCore();
+#else
+            {
+                std::string error;
+                const bool stopped = store::vpnStore().stopTraffic(error);
+                return {.status = stopped ? CoreApplyStatus::Applied
+                                          : CoreApplyStatus::Failed,
+                        .error = std::move(error)};
+            }
+#endif
             break;
         case CoreAction::Restart:
 #if defined(_WIN32)
@@ -129,7 +139,8 @@ CoreApplyResult ExecuteCoreCommand(const CoreCommand& command) {
 #endif
             coreStore.startCore(store::profilesStore().selectedYaml(), false,
                                 coreStore.tunEnabled(), coreStore.systemProxyEnabled());
-            ok = coreStore.snapshot().state == core::CoreState::Running;
+            ok = coreStore.snapshot().state == core::CoreState::Running &&
+                 coreStore.snapshot().lastError.empty();
             break;
         case CoreAction::Idle:
             return {};

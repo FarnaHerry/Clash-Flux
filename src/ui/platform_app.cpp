@@ -295,7 +295,11 @@ struct TrayMenuText {
                         if (HasDesktopCoreRuntime()) {
                             // 清理上次异常退出留下的旧内核（含仍持有旧 TUN 配置
                             // 的进程）。
-                            core.stopCore();
+                            if (!core.stopCore()) {
+                                return service::StartupResult{
+                                    .ready = false,
+                                    .error = core.snapshot().lastError};
+                            }
                         }
                         const auto maintenance = core.synchronizeService();
                         if (!maintenance.ready) {

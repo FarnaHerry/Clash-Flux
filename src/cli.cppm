@@ -46,6 +46,7 @@ import clashflux.sysproxy;
 import clashflux.service;
 import clashflux.store.core;
 import clashflux.store.profiles;
+import clashflux.store.vpn;
 import clashflux.singbox;
 
 namespace cli {
@@ -152,7 +153,10 @@ int cmdCore(const std::vector<std::string>& args) {
         return 0;
     }
     if (args[0] == "start" || args[0] == "restart") {
-        if (args[0] == "restart") core.stopCore();
+        if (args[0] == "restart" && !core.stopCore()) {
+            std::println(stderr, "停止旧内核失败：{}", core.snapshot().lastError);
+            return 1;
+        }
         // detached：CLI 退出后内核驻留（setsid + 日志文件 + pidfile）。
         core.startCore(store::profilesStore().selectedYaml(), /*detached=*/true);
         const auto s = core.snapshot();
@@ -164,7 +168,11 @@ int cmdCore(const std::vector<std::string>& args) {
         return 0;
     }
     if (args[0] == "stop") {
-        core.stopCore();
+        std::string error;
+        if (!store::vpnStore().stopTraffic(error)) {
+            std::println(stderr, "停止失败：{}", error);
+            return 1;
+        }
         std::println("内核已停止");
         return 0;
     }

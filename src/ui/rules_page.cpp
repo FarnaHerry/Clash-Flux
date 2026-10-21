@@ -315,6 +315,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
 [[huxerui::composable]] huxerui::View RulesPage(
     ProfilesCache profilesCache, std::function<void()> onBack, bool active) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const float denseGap = ResolveIslandTheme(theme).dense_radius;
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
@@ -693,7 +694,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                 auto subscriptionList = huxerui::VirtualList(
                     visibleCount + (compact ? 1U : 0U),
                     [rows, visibleRules,
-                     mono, theme, compact, visibleCount](
+                     mono, theme, compact, visibleCount, denseGap](
                         std::size_t index) -> huxerui::View {
                         const std::size_t ruleIndex =
                             index < visibleCount ? visibleRules.SourceIndex(index) : 0;
@@ -723,17 +724,19 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                             // 紧凑窗口不再复用桌面表格的固定列宽。固定列会把
                             // VirtualList 的最小宽度推过页面岛，导致右侧内容和
                             // 操作区一起溢出屏幕；卡片字段可以在有限宽度内换行。
-                            return UnifiedListRow(
+                            return DenseCard(
                                 huxerui::Column{
                                     mono(rule.profile, theme.colors.primary),
                                     mono(huxerui::UseString(LocalizedFormat(
                                              "{} · 走向：{}", type, target)),
                                          theme.colors.on_surface_variant),
                                 mono(payload, theme.colors.on_surface),
-                            },
-                                key, true, index + 1 < visibleCount);
+                            }.With(huxerui::Spacing(5.0F),
+                                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+                                .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = denseGap}))
+                                .Key(key);
                         }
-                        return UnifiedListRow(
+                        return DenseCard(
                             huxerui::Row{
                                 mono(rule.profile, theme.colors.primary)
                                     .With(huxerui::Frame{.width = 180.0F}),
@@ -743,12 +746,15 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                                     .With(huxerui::Grow(1.0F)),
                                 mono(target, theme.colors.on_surface_variant)
                                     .With(huxerui::Frame{.width = 180.0F}),
-                            },
-                            key, false, index + 1 < visibleCount);
+                            }.With(huxerui::Spacing(8.0F),
+                                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+                            .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = denseGap}))
+                            .Key(key);
                         });
                     });
                 subscriptionList = std::move(subscriptionList)
-                                       .EstimatedItemExtent(compact ? 86.0F : 42.0F)
+                                       // 减半内边距、文字与卡间距一起计入虚拟行估算。
+                                       .EstimatedItemExtent((compact ? 82.0F : 38.0F) + denseGap)
                                        .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
                 if (compact) {
                     body = huxerui::Column{std::move(subscriptionList)}
@@ -804,7 +810,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                     [globalRules, visibleRules,
                      profiles, mono, theme, compact, visibleCount,
                      persistGlobalPolicy, openGlobalRuleEditor, activeConnections,
-                     policySaving, sourceObjects](std::size_t index) -> huxerui::View {
+                     policySaving, sourceObjects, denseGap](std::size_t index) -> huxerui::View {
                         const std::size_t ruleIndex =
                             index < visibleCount ? visibleRules.SourceIndex(index) : 0;
                         // 与订阅规则相同：只在测量 factory 中声明 Scope。
@@ -820,7 +826,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                               }));
                           const bool active = rule.enabled && objectExists && std::ranges::find(activeConnections, rule.connectionId) != activeConnections.end();
                           const auto key = rule.id.empty() ? "pending-rule-" + std::to_string(ruleIndex) : rule.id;
-                          return UnifiedListRow(
+                          return DenseCard(
                               huxerui::Column {
                                 mono(rule.match == vpn::MatchKind::Any ? huxerui::UseString(Localized("全部流量")) : rule.pattern, theme.colors.on_surface),
                                 mono(huxerui::UseString(LocalizedFormat("{} · {} · 优先级 {}", huxerui::UseString(Localized(vpn::MatchKindName(rule.match))),
@@ -859,12 +865,13 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                                       }
                                   }),
                                 }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-                              }.With(huxerui::Spacing(6.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-                              key, true, index + 1 < visibleCount);
+                              }.With(huxerui::Spacing(6.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+                              .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = denseGap}))
+                              .Key(key);
                         });
                     });
                 globalList = std::move(globalList)
-                                 .EstimatedItemExtent(116.0F)
+                                 .EstimatedItemExtent(112.0F + denseGap)
                                  .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
                 body = huxerui::Column{std::move(globalList)}
                            .With(huxerui::Spacing(8.0F),

@@ -55,8 +55,10 @@ application-managed settings before being passed to sing-box.
 - Core controls: start the core with the application, using a minimal configuration
   when no subscription is selected. Restore TUN and system proxy settings according
   to saved preferences. Select rule, global or direct outbound mode; configure the
-  mixed port, LAN access and log level. App-managed desktop GEOIP/GEOSITE caches
-  check SRS, version and zlib headers before replacement, refresh weekly on startup,
+  mixed port, LAN access and log level. Stopping from the desktop Home page or tray
+  releases the app-owned system proxy, confirms core exit and disconnects its PPTP
+  sessions; incomplete cleanup is reported as a failure. App-managed desktop
+  GEOIP/GEOSITE caches check SRS, version and zlib headers before replacement, refresh weekly on startup,
   and retain the old file on failure. Native rule sets remain managed by the core;
   Android China rule sets remain pinned build assets. The core performs full parsing.
 - Subscription conversion: compile Clash YAML to sing-box JSON, including

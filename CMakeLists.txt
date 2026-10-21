@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.54 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.55 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -67,6 +67,30 @@ function(clashflux_deploy_huxerui_dll target)
                 "$<TARGET_FILE:HuxerUI::huxerui>"
                 "$<TARGET_FILE_DIR:${target}>"
         VERBATIM)
+endfunction()
+
+# FindOpenSSL on Windows may expose only the import .lib, so TARGET_RUNTIME_DLLS
+# cannot reliably locate its DLLs. Keep the build-tree executable runnable from
+# Explorer even when PATH contains another OpenSSL version.
+function(clashflux_deploy_openssl_dlls target)
+    if (NOT WIN32 OR NOT OpenSSL_FOUND OR NOT OPENSSL_ROOT_DIR)
+        return()
+    endif ()
+    file(GLOB _openssl_release_dlls LIST_DIRECTORIES FALSE
+        "${OPENSSL_ROOT_DIR}/bin/libssl-*.dll"
+        "${OPENSSL_ROOT_DIR}/bin/libcrypto-*.dll")
+    foreach(_release_dll IN LISTS _openssl_release_dlls)
+        get_filename_component(_dll_name "${_release_dll}" NAME)
+        set(_debug_dll "${OPENSSL_ROOT_DIR}/debug/bin/${_dll_name}")
+        if (NOT EXISTS "${_debug_dll}")
+            set(_debug_dll "${_release_dll}")
+        endif ()
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<IF:$<CONFIG:Debug>,${_debug_dll},${_release_dll}>"
+                "$<TARGET_FILE_DIR:${target}>"
+            VERBATIM)
+    endforeach()
 endfunction()
 
 # HUXERUI_LIBRARY_GRAPH_ONLY：CLI 扫描 huxerui 库依赖图时的特殊配置——
@@ -363,6 +387,7 @@ huxerui_add_app(clash-flux
 
 # Windows 下手动运行构建树里的 clash-flux.exe 也需要同目录的 huxerui.dll。
 clashflux_deploy_huxerui_dll(clash-flux)
+clashflux_deploy_openssl_dlls(clash-flux)
 
 # Extension fixes are maintained on each FarnaHerry fork's farna/main branch.
 # Use immutable URL/COMMIT identities for native builds and the Android library graph;

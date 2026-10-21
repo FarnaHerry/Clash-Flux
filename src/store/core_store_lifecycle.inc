@@ -472,7 +472,11 @@
             }
         } else if (systemProxyState.has_value() && systemProxyOurs()) {
             std::string err;
-            sysproxy::disable(err);
+            if (!sysproxy::disable(err) || systemProxyOurs()) {
+                std::lock_guard lock(mutex_);
+                snap_.lastError = "系统代理撤销失败：" +
+                    (err.empty() ? std::string{"系统设置仍指向本应用"} : err);
+            }
         }
     }
 
@@ -515,9 +519,13 @@
 #else
         // 先摘系统代理：内核停掉后系统仍指向旧端口会断网。仅当当前代理
         // 确实指向本应用写入的端口时才撤销；其他代理软件接管中不动。
+        std::string cleanupError;
         if (systemProxyOurs()) {
             std::string err;
-            sysproxy::disable(err);
+            if (!sysproxy::disable(err) || systemProxyOurs()) {
+                cleanupError = "系统代理撤销失败：" +
+                    (err.empty() ? std::string{"系统设置仍指向本应用"} : err);
+            }
         }
         streams_.stop();
         // 正常情况下 managedByService_ 会记录所有权；但 GUI 可能在 START
@@ -552,6 +560,21 @@
                 const std::string image = core::pidImageName(pid);
                 if (image.empty() || image.find("sing-box") != std::string::npos) {
                     core::killPid(pid);
+                    const auto stillOurProcess = [pid] {
+                        if (!core::pidAlive(pid)) return false;
+                        const std::string current = core::pidImageName(pid);
+                        return current.empty() || current.find("sing-box") != std::string::npos;
+                    };
+                    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+                    while (stillOurProcess() && std::chrono::steady_clock::now() < deadline) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    }
+                    if (stillOurProcess()) {
+                        std::lock_guard lock(mutex_);
+                        snap_.state = core::CoreState::Failed;
+                        snap_.lastError = "驻留内核停止超时，进程仍在运行";
+                        return false;
+                    }
                 } else {
                     stream::logApplication(
                         "warning",
@@ -577,15 +600,16 @@
         std::string routeCleanupError;
         vpn::compensation::CleanupManagedLinuxRoutes(routeCleanupError);
         if (!routeCleanupError.empty()) {
-            std::lock_guard lock(mutex_);
-            snap_.lastError = "主内核已停止，但系统路由清理失败：" + routeCleanupError;
+            if (!cleanupError.empty()) cleanupError += "；";
+            cleanupError += "主内核已停止，但系统路由清理失败：" + routeCleanupError;
         }
 #endif
         std::lock_guard lock(mutex_);
         snap_.state = core::CoreState::Stopped;
         snap_.runningSince = {};
         snap_.version.clear();
-        return true;
+        snap_.lastError = cleanupError;
+        return cleanupError.empty();
 #endif
     }
 

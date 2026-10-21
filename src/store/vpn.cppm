@@ -190,6 +190,60 @@ public:
         openVpnSnapshots_.clear();
     }
 
+    // The Home/tray stop action pauses every data plane while keeping this
+    // store usable for a later explicit start or PPTP connection. Unlike
+    // shutdown(), it must not stop the session monitor permanently.
+    bool stopTraffic(std::string& error) {
+        ensureLoaded();
+        std::lock_guard operationLock(operationMutex_);
+        error.clear();
+        const bool coreStopped = coreStore().stopCore();
+        if (!coreStopped) {
+            error = coreStore().snapshot().lastError;
+            if (error.empty()) error = "主内核停止未确认";
+        }
+        // A running TUN may still capture the native interface. Keep those
+        // connections until the core is confirmed stopped.
+        if (coreStore().snapshot().state != core::CoreState::Stopped) return false;
+
+        std::vector<std::pair<std::string, vpn::ConnectionKind>> active;
+        std::unordered_map<std::string, std::string> sessionErrors;
+        for (const auto& connection : manager_.connections()) {
+            if (connection.activeEngine) active.emplace_back(connection.id, connection.kind);
+        }
+        for (const auto& [id, kind] : active) {
+            if (kind == vpn::ConnectionKind::Pptp) {
+                std::string stopError;
+                if (!service::stopPptp(id, stopError) || pptp::PptpSessionAlive(id)) {
+                    std::string sessionError = "PPTP 连接 " + id + " 未确认断开";
+                    if (!stopError.empty()) sessionError += "：" + stopError;
+                    if (!error.empty()) error += "；";
+                    error += sessionError;
+                    sessionErrors.emplace(id, std::move(sessionError));
+                    continue;
+                }
+            }
+            manager_.disconnect(id);
+        }
+        std::string routingError;
+        if (!publishRouting(routingError)) {
+            if (!error.empty()) error += "；";
+            error += "停止后路由状态更新失败：" + routingError;
+        }
+        {
+            std::lock_guard snapshotLock(mutex_);
+            for (auto& [profileId, snapshot] : snapshots_) {
+                const auto it = sessionErrors.find(connectionId(profileId));
+                updateSnapshotLocked(profileId, it == sessionErrors.end()
+                    ? std::string_view{} : std::string_view{it->second});
+            }
+            for (auto& [profileId, snapshot] : openVpnSnapshots_) {
+                updateOpenVpnSnapshotLocked(profileId, {});
+            }
+        }
+        return error.empty();
+    }
+
     PptpState state(std::int64_t profileId) {
         std::lock_guard lock(mutex_);
         return stateLocked(profileId);

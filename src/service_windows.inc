@@ -44,7 +44,9 @@ std::string privilegedCommand(std::string_view command) {
     if (fields[0] == "PPTP_STATUS" && fields.size() == 2)
         return pptp::PrivilegedPptpSessionAlive(*id) ? "CONNECTED" : "DISCONNECTED";
     if (fields[0] == "PPTP_STOP" && fields.size() == 2) {
-        pptp::PrivilegedPptpDisconnect(*id); return "OK";
+        std::string error;
+        return pptp::PrivilegedPptpDisconnectChecked(*id, error)
+            ? "OK" : "ERR " + error;
     }
     const bool start = fields[0] == "PPTP_START";
     if ((!start && fields[0] != "PPTP_ROUTES") || (start && fields.size() < 3))

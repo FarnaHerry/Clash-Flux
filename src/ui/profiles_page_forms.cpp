@@ -1428,6 +1428,7 @@ void PushProfileQrScanner(
     huxerui::ToastHandle toast, std::function<void()> on_back) {
     // 同编辑页：未打开时不得挂载受控输入框（见 ResponsiveProfileEditSurface）。
     if (id == 0) return huxerui::Row{};
+    const float denseGap = ResolveIslandTheme(huxerui::UseTheme()).dense_radius;
     const auto add = [=](bool prepend) {
         const std::string text = input.Get().text;
         if (text.empty()) return;
@@ -1460,12 +1461,13 @@ void PushProfileQrScanner(
     huxerui::View list = rules.Empty()
         ? EmptyState(Localized("订阅没有 rules 规则"), app::images::route)
         : huxerui::View{huxerui::VirtualList(
-              rules.Size(), [rules](std::size_t index) {
-                  return huxerui::Text(std::format("{}  {}", index + 1,
-                                                   rules[index]))
+              rules.Size(), [rules, denseGap](std::size_t index) {
+                  return DenseCard(huxerui::Text(std::format("{}  {}", index + 1,
+                                                              rules[index])))
+                      .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = denseGap}))
                       .Key(std::to_string(index));
               })
-              .ItemExtent(32.0F)
+              .EstimatedItemExtent(38.0F + denseGap)
               .With(huxerui::Grow(1.0F), huxerui::ScrollBar())};
     return ProfileFlowPage(
         huxerui::Text(Localized("编辑订阅规则"), huxerui::TextRole::Title),

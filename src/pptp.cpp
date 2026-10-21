@@ -822,6 +822,32 @@ void PrivilegedPptpDisconnect(std::string_view connectionId) {
                                   .kind = vpn::ConnectionKind::Pptp};
     disconnectLinuxPrivileged(privilegedRuntime(), connection);
 }
+bool PrivilegedPptpDisconnectChecked(std::string_view connectionId,
+                                     std::string& error) {
+    error.clear();
+    const auto runtime = privilegedRuntime();
+    pid_t group = -1;
+    unsigned int interfaceIndex = 0;
+    std::string interfaceName;
+    {
+        std::lock_guard lock(runtime->mutex);
+        if (const auto it = runtime->linuxSessions.find(std::string(connectionId));
+            it != runtime->linuxSessions.end()) {
+            group = it->second.processGroup;
+            interfaceIndex = it->second.interfaceIndex;
+            interfaceName = it->second.interfaceName;
+        } else return true;
+    }
+    PrivilegedPptpDisconnect(connectionId);
+    const bool groupAlive = group > 0 && (::kill(-group, 0) == 0 || errno == EPERM);
+    const bool interfaceAlive = interfaceIndex != 0 &&
+        ::if_nametoindex(interfaceName.c_str()) == interfaceIndex;
+    if (groupAlive || interfaceAlive) {
+        error = "PPTP 进程或接口在断开后仍存在";
+        return false;
+    }
+    return true;
+}
 
 void PrivilegedPptpShutdown() {
     const auto runtime = privilegedRuntime();
@@ -880,6 +906,43 @@ bool PrivilegedPptpApplyRoutes(std::string_view id, std::span<const std::string>
 void PrivilegedPptpDisconnect(std::string_view id) {
     vpn::VpnConnection connection{.id = std::string(id), .kind = vpn::ConnectionKind::Pptp};
     disconnectWindows(privilegedRuntime(), connection);
+}
+bool PrivilegedPptpDisconnectChecked(std::string_view id, std::string& error) {
+    error.clear();
+    const auto runtime = privilegedRuntime();
+    HRASCONN handle = nullptr;
+    {
+        std::lock_guard lock(runtime->mutex);
+        if (const auto it = runtime->windowsSessions.find(std::string(id));
+            it != runtime->windowsSessions.end()) handle = it->second.connection;
+        else return true;
+    }
+    if (handle != nullptr) {
+        const DWORD result = RasHangUpW(handle);
+        if (result != ERROR_SUCCESS && result != ERROR_INVALID_HANDLE) {
+            error = windowsError("断开 PPTP 失败", result);
+            return false;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        for (;;) {
+            RASCONNSTATUSW status{};
+            status.dwSize = sizeof(status);
+            const DWORD query = RasGetConnectStatusW(handle, &status);
+            if (query == ERROR_INVALID_HANDLE ||
+                (query == ERROR_SUCCESS && status.rasconnstate == RASCS_Disconnected)) break;
+            if (query != ERROR_SUCCESS) {
+                error = windowsError("确认 PPTP 断开失败", query);
+                return false;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                error = "PPTP 断开超时";
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+    PrivilegedPptpDisconnect(id);
+    return true;
 }
 void PrivilegedPptpShutdown() {
     const auto runtime = privilegedRuntime();
