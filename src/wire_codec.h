@@ -35,6 +35,9 @@ struct StoredLog {
 struct Connection {
     std::string id;
     std::string host;
+    std::string inboundType;
+    std::string inbound;
+    std::string outboundType;
     std::string destinationIP;
     std::string destination;
     std::string destinationPort;

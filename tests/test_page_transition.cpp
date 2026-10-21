@@ -225,13 +225,16 @@ huxerui::View ConnectionListRoot() {
                 const std::string id = std::to_string(index);
                 const clashflux::ui::ConnectionRow row{
                     .id = id, .host = index == 0 ? "未知目标" : "host-" + id,
-                    .network = "tcp", .chains = "DIRECT", .rule = "未匹配规则"};
+                    .inboundType = index == 0 ? "tun" : "mixed",
+                    .network = "tcp", .chains = "DIRECT",
+                    .rule = index == 0 ? "rule_set=cf_test => route(DIRECT)" : "final",
+                    .direct = index == 0};
                 // 调用生产行组件，factory 本身没有活动组合上下文。
                 return clashflux::ui::ConnectionRowContent(row, "1KB/s", "2KB/s",
                     "10KB", "20KB", compact,
                     huxerui::Button("CLOSE-" + id).OnClick([closed, id] { closed = id; }))
                     .Key("connection-fixture-" + id);
-            }).EstimatedItemExtent(compact ? 138.0F : 96.0F).Controller(scroll)
+            }).EstimatedItemExtent(90.0F).Controller(scroll)
                 .With(huxerui::Grow(1.0F)).Key("connection-fixture-list");
         }
         return huxerui::Column {
@@ -246,6 +249,11 @@ huxerui::View ConnectionListRoot() {
 const huxerui::Application kConnectionListApplication{ConnectionListRoot};
 
 void testConnectionList() {
+    check(clashflux::ui::ConnectionRuleTypes("rule_set=cf_test => route(DIRECT)") == "RULE-SET" &&
+          clashflux::ui::ConnectionRuleTypes("domain_suffix=.example port=443 => route(proxy)") ==
+              "DOMAIN-SUFFIX + PORT" &&
+          clashflux::ui::ConnectionRuleTypes("final => route(DIRECT)") == "FINAL",
+          "连接卡片从命中规则提取类型，不展示规则值或路由动作");
     connectionRowsBuilt = 0;
     huxerui::testing::UiTest ui(kConnectionListApplication,
         {.viewport = {390.0F, 700.0F}, .resource_provider = AppResources()});
@@ -253,8 +261,8 @@ void testConnectionList() {
     ui.PumpAndSettle();
     check(connectionRowsBuilt == 0, "未进入连接页不构建连接行");
     ui.Find(UiSelector::Text("ENTER-CONNECTIONS")).Tap(); ui.PumpAndSettle();
-    check(ui.Find(UiSelector::Text("DIRECT")).Exists() &&
-          ui.Find(UiSelector::Text("未匹配规则")).Exists() &&
+    check(ui.Find(UiSelector::Text("DIRECT · RULE-SET")).Exists() &&
+          ui.Find(UiSelector::Text("tun")).Exists() &&
           ui.Find(UiSelector::Text("↑ 1KB/s")).Exists() &&
           ui.Find(UiSelector::Text("↓ 2KB/s")).Exists() &&
           ui.Find(UiSelector::Text("未知目标")).Exists(), "窄屏生产连接行展示实时流量和缺省字段");
@@ -266,15 +274,15 @@ void testConnectionList() {
     ui.Find(UiSelector::Text("UPDATE-CONNECTIONS")).Tap(); ui.PumpAndSettle();
     check(ui.Find(UiSelector::Text("未知目标")).Exists(), "连接快照缩短后列表正常显示");
     ui.SetWindowMetrics({.viewport = {1080.0F, 700.0F}}); ui.PumpAndSettle();
-    check(ui.Find(UiSelector::Text("未匹配规则")).Exists(), "宽屏缺省字段也在组合期解析");
+    check(ui.Find(UiSelector::Text("DIRECT · RULE-SET")).Exists(), "宽屏显示实际直连与规则类型");
     ui.SetWindowMetrics({.viewport = {320.0F, 700.0F}}); ui.PumpAndSettle();
-    check(ui.Find(UiSelector::Text("未匹配规则")).Exists(), "宽屏切回窄屏可重建连接行");
+    check(ui.Find(UiSelector::Text("DIRECT · RULE-SET")).Exists(), "宽屏切回窄屏可重建连接行");
     ui.Find(UiSelector::Text("ENTER-CONNECTIONS")).Tap(); ui.PumpAndSettle();
     ui.Find(UiSelector::Text("ENTER-CONNECTIONS")).Tap(); ui.PumpAndSettle();
-    check(ui.Find(UiSelector::Text("未匹配规则")).Exists(), "离开后重进连接页安全挂载");
+    check(ui.Find(UiSelector::Text("DIRECT · RULE-SET")).Exists(), "离开后重进连接页安全挂载");
     ui.UpdateResourceConfiguration({.locale = huxerui::Locale::FromLanguageTag("en")});
     ui.PumpAndSettle();
-    check(ui.Find(UiSelector::Text("No matching rule")).Exists() &&
+    check(ui.Find(UiSelector::Text("DIRECT · RULE-SET")).Exists() &&
           ui.Find(UiSelector::Text("Unknown destination")).Exists(), "已挂载连接行响应语言切换");
 }
 

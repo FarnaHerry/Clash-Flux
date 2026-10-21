@@ -89,6 +89,8 @@ std::optional<ConnectionsSnapshot> parseConnections(const std::string& body) {
         row.up = connection.upload;
         row.down = connection.download;
         row.start = connection.start;
+        row.inboundType = connection.inboundType;
+        row.inbound = connection.inbound;
         row.destinationIP = connection.destinationIP;
         row.host = connection.host;
         if (row.host.empty()) row.host = connection.destinationIP;
@@ -102,6 +104,9 @@ std::optional<ConnectionsSnapshot> parseConnections(const std::string& body) {
             if (!row.host.ends_with(portSuffix)) row.host += portSuffix;
         }
         row.network = connection.network;
+        row.direct = connection.outboundType == "direct" ||
+            (!connection.chains.empty() && connection.chains.front() == "DIRECT") ||
+            connection.chain == "DIRECT";
         for (const auto& hop : connection.chains) {
             if (!row.chains.empty()) row.chains += " ← ";
             row.chains += labels.contains(hop) ? labels.at(hop) : hop;
@@ -390,8 +395,8 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
                                    ConfirmCloseConnection(dialog, tasks, toast, id, host);
                            }).Key(key);
                    })
-                   // 16pt 卡内留白 + 内容 + 4pt 卡间距，与 DenseCard 的密度档一致。
-                   .EstimatedItemExtent(stacked ? 138.0F : 96.0F)
+                   // 16pt 卡内留白 + 三行内容 + 4pt 卡间距。
+                   .EstimatedItemExtent(90.0F)
                    .Controller(scroll)
                    .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     }
@@ -583,7 +588,10 @@ huxerui::XYChartData ConnectionChartData(
         IslandSurface(huxerui::Column{
             label(Localized("目标地址"), row.host),
             label(Localized("目标 IP"), row.destinationIP.empty() ? "—" : row.destinationIP),
+            label(Localized("入站类型"), row.inboundType.empty() ? "—" : row.inboundType),
+            label(Localized("入站标签"), row.inbound.empty() ? "—" : row.inbound),
             label(Localized("链路"), row.chains),
+            label(Localized("规则类型"), ConnectionRuleTypes(row.rule)),
             label(Localized("规则"), row.rule),
             label(Localized("开始时间"), row.start.empty() ? "—" : row.start),
         }.With(huxerui::Spacing(10.0F),

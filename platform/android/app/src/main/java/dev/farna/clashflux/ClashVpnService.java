@@ -1606,12 +1606,15 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             item.put("id", safe(connection.getID()));
             item.put("upload", connection.getUplink());
             item.put("download", connection.getDownlink());
+            item.put("outboundType", safe(connection.getOutboundType()));
             JSONObject metadata = new JSONObject();
             String domain = safe(connection.getDomain());
             String destination = safe(connection.getDestination());
             metadata.put("host", domain.isEmpty() ? destination : domain);
             metadata.put("destination", destination);
             metadata.put("network", safe(connection.getNetwork()));
+            metadata.put("inboundType", safe(connection.getInboundType()));
+            metadata.put("inbound", safe(connection.getInbound()));
             metadata.put("destinationPort", destinationPort(destination));
             item.put("metadata", metadata);
             JSONArray chains = new JSONArray();

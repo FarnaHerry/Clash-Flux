@@ -31,6 +31,9 @@ template <class T> Result<std::string> encode(const T& value) {
 
 struct ConnectionMetadata {
     std::string host;
+    std::string type;
+    std::string inboundType;
+    std::string inbound;
     std::string destinationIP;
     std::string destination;
     std::string destinationPort;
@@ -38,6 +41,7 @@ struct ConnectionMetadata {
 };
 struct ConnectionInput {
     std::string id;
+    std::string outboundType;
     std::int64_t upload = 0;
     std::int64_t download = 0;
     ConnectionMetadata metadata;
@@ -142,6 +146,15 @@ Result<Connections> DecodeConnections(std::string_view text) {
         value.upload = source.upload;
         value.download = source.download;
         value.host = std::move(source.metadata.host);
+        value.inboundType = std::move(source.metadata.inboundType);
+        value.inbound = std::move(source.metadata.inbound);
+        if (value.inboundType.empty()) {
+            const auto separator = source.metadata.type.find('/');
+            value.inboundType = source.metadata.type.substr(0, separator);
+            if (separator != std::string::npos)
+                value.inbound = source.metadata.type.substr(separator + 1);
+        }
+        value.outboundType = std::move(source.outboundType);
         value.destinationIP = std::move(source.metadata.destinationIP);
         value.destination = source.metadata.destination.empty()
             ? std::move(source.destination) : std::move(source.metadata.destination);
