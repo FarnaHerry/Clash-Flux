@@ -105,9 +105,11 @@ cmake --build build --target clash-flux
 `ui.theme_mode`、`ui.theme_color`、`ui.language`、`tray.enabled` 与 `tray.start_minimized`。
 它们控制首窗外观、初始语言和托盘启动策略，避免加载设置前短暂呈现错误状态。
 快照只读取一次，重组不重复磁盘 IO；SettingsModel 就绪后以模型值接管运行期行为。
-只有托盘启用、`tray.start_minimized` 为 true 且系统托盘可用时，桌面 application hook 才以无初始窗口模式启动；
-托盘激活后再创建主窗口。设置页仅在托盘启用时显示该开关；托盘停用时运行值与启动快照都为 false，
-只读查询不改数据库，重新启用托盘后恢复历史值。托盘不可用或启动隐藏选项关闭时直接创建窗口。
+桌面始终以无初始窗口模式初始化，在 Runtime 进入 Running 后按启动快照决定是否创建主窗口。
+托盘启用且 `tray.start_minimized` 为 true 时，先启动无窗应用任务，等待最多两秒获取异步托盘可用性；
+可用且图标发布成功则保持隐藏，托盘激活后再创建主窗口；不可用或发布失败则打开主窗口，
+后续托盘刷新失败时也保留可见窗口。设置页仅在托盘启用时显示该开关；
+托盘停用时运行值与启动快照都为 false，只读查询不改数据库，重新启用托盘后恢复历史值。
 该 API 使用临时只读 SQLite 查询，兼容迁移前旧库；不存在的数据库不创建，损坏或无法读取的数据库明确
 报告失败并停止启动。其它设置仍按原异步流程 hydrate；启动内核等操作等待 SettingsModel ready，
 不为它们扩大同步读取范围。

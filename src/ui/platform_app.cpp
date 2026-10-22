@@ -122,6 +122,8 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
     std::function<void()> refresh;
     bool started = false;
     bool retired = true;
+    bool startupDecisionPending = false;
+    bool trayRefreshFailed = false;
     bool exitRequested = false;
     std::uint64_t windowGeneration = 0;
     std::string presentationKey;
@@ -355,18 +357,36 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
     runtime->tray.OnActivate([runtime] { runtime->ShowWindow(); });
 
     const bool commandMode = cli::runtimeCommandMode();
-    const bool trayCanStartHidden = !commandMode && !startupUrl &&
-        startupSettings.trayEnabled && startupSettings.startMinimized &&
-        runtime->tray.IsAvailable();
-    if (commandMode) {
-        runtime->OpenHiddenWindow();
-    } else if (!trayCanStartHidden) {
-        runtime->ShowWindow();
-    }
-
-    if (trayCanStartHidden) runtime->RefreshBasicTray();
+    const bool startupWantsHidden = !commandMode && !startupUrl &&
+        startupSettings.trayEnabled && startupSettings.startMinimized;
+    runtime->startupDecisionPending = startupWantsHidden;
     runtime->started = true;
-    if (trayCanStartHidden) StartDesktopWindowlessRuntime();
+    // Application hooks run before Runtime enters Running. Both OpenWindow()
+    // paths must wait until the platform event loop can create native windows.
+    // Linux discovers the status notifier host asynchronously after OnActivate.
+    tasks.Launch([runtime, commandMode, startupWantsHidden]() -> huxerui::Task<void> {
+        if (commandMode) {
+            runtime->OpenHiddenWindow();
+        } else if (startupWantsHidden) {
+            for (int attempt = 0; attempt < 20 && !runtime->tray.IsAvailable(); ++attempt)
+                co_await huxerui::Delay(std::chrono::duration<double>{0.1});
+            if (runtime->tray.IsAvailable()) {
+                try {
+                    runtime->RefreshBasicTray();
+                } catch (const std::exception& error) {
+                    runtime->trayRefreshFailed = true;
+                    stream::logApplication("error", std::string{"初始化托盘失败："} + error.what());
+                    runtime->ShowWindow();
+                }
+            } else {
+                runtime->ShowWindow();
+            }
+        } else {
+            runtime->ShowWindow();
+        }
+        runtime->startupDecisionPending = false;
+    });
+    if (startupWantsHidden) StartDesktopWindowlessRuntime();
 
     const auto tray = runtime->tray;
     const bool initialTrayEnabled = startupSettings.trayEnabled;
@@ -377,10 +397,24 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
             if (instance::consumeActivation()) runtime->ShowWindow();
             const SettingsView settings = settingsModel->view.Get();
             const bool enabled = settings.ready ? settings.trayEnabled : initialTrayEnabled;
-            if (runtime->retired && (!tray.IsAvailable() || !enabled))
+            if (!runtime->startupDecisionPending && runtime->retired &&
+                (!tray.IsAvailable() || !enabled))
                 runtime->ShowWindow();
-            if (enabled && tray.IsAvailable()) runtime->RefreshBasicTray();
-            else tray.Hide();
+            if (enabled && tray.IsAvailable()) {
+                try {
+                    runtime->RefreshBasicTray();
+                    runtime->trayRefreshFailed = false;
+                } catch (const std::exception& error) {
+                    if (!runtime->trayRefreshFailed) {
+                        stream::logApplication("error", std::string{"刷新托盘失败："} + error.what());
+                        runtime->ShowWindow();
+                    }
+                    runtime->trayRefreshFailed = true;
+                }
+            } else {
+                tray.Hide();
+                runtime->trayRefreshFailed = false;
+            }
             co_await huxerui::Delay(std::chrono::duration<double>{0.25});
         }
     });
@@ -696,7 +730,7 @@ struct TrayMenuText {
         const SettingsView settings = settingsModel->view.Get();
         if (settings.lightweightTray &&
             (settings.ready ? settings.trayEnabled : startupTrayEnabled) &&
-            tray.IsAvailable()) {
+            tray.IsAvailable() && !trayRuntime->trayRefreshFailed) {
             hideWindow();
             return true;
         }
@@ -708,7 +742,7 @@ struct TrayMenuText {
             const SettingsView settings = settingsModel->view.Get();
             const bool trayEnabled = settings.ready
                 ? settings.trayEnabled : startupTrayEnabled;
-            if (trayEnabled && tray.IsAvailable()) {
+            if (trayEnabled && tray.IsAvailable() && !trayRuntime->trayRefreshFailed) {
                 hideWindow();
                 return true;
             }

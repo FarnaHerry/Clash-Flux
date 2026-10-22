@@ -157,10 +157,12 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   不持续拉回当前选中项；生产组件与交互测试见 `section_tabs.cpp` / `test_page_transition.cpp`。
 - 桌面关闭按钮只由 `tray.enabled` 控制：启用且系统托盘可用时隐藏到托盘，否则确认退出。
   不再读取旧 `tray.close_behavior`，退出确认框不提供最小化到托盘操作。
-- 桌面 GUI 启动时，仅当 `tray.enabled`、`tray.start_minimized` 与系统托盘可用都为真，才设置
-  `AppOptions::create_initial_window = false`，在 application hook 启动持久化、应用级状态泵、
-  服务版本同步与内核自启；托盘激活再通过 `ApplicationHandle::OpenWindow()` 创建主窗口。
-  其它情况直接创建窗口。设置页仅在启用托盘时显示“启动时隐藏到托盘”；托盘停用时
+- 桌面应用统一设置 `AppOptions::create_initial_window = false`；application hook 读取启动快照，
+  只能在 Runtime 进入 Running 后创建窗口。`tray.enabled` 与 `tray.start_minimized` 都为真时先启动
+  无窗持久化、状态泵、服务版本同步与内核自启，并等待异步托盘可用性（Linux StatusNotifier）。
+  托盘可用且图标发布成功则保持无窗、由托盘激活调用 `ApplicationHandle::OpenWindow()`；
+  超时不可用或图标发布失败则创建主窗口，后续托盘刷新失败也不能让任务异常退出或隐藏唯一窗口。
+  其它情况在 Running 后直接创建窗口。设置页仅在启用托盘时显示“启动时隐藏到托盘”；托盘停用时
   `SettingsModel` 和启动快照将该选项视为 false，但不改写 `tray.start_minimized` 历史值，
   重新启用托盘后再读取历史值。伪 CLI 仍创建隐藏窗口执行运行时命令；订阅 URL 激活打开窗口并只预填导入表单。
 - **不要在界面里加「内核未运行 / 请到设置页启动内核」这类常驻提示**：内核启停由首页

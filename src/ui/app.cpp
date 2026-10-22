@@ -1101,7 +1101,6 @@ void StartDesktopWindowlessRuntime() {
                     const std::string message = error.empty() ? "启动内核失败" : error;
                     runtimeServices->startupError = message;
                     stream::logApplication("error", message);
-                    if (runtimeServices->showWindow) runtimeServices->showWindow();
                 };
                 control.Run({.action = CoreAction::Start});
             } else if (!maintenance.ready) {
@@ -1109,7 +1108,6 @@ void StartDesktopWindowlessRuntime() {
                     ? "启动服务检查/更新失败" : "启动服务检查/更新失败：" + maintenance.error;
                 runtimeServices->startupError = message;
                 stream::logApplication("warning", message);
-                if (runtimeServices->showWindow) runtimeServices->showWindow();
             }
 
             bool storageFailureReported = false;
