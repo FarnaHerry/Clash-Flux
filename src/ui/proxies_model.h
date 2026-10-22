@@ -33,6 +33,7 @@ enum class ProxiesSource {
 };
 
 struct ProxiesSnapshot {
+    bool loaded = false;                     // 首轮获取（成功或失败）已结束
     std::vector<ProxyGroupSnapshot> groups; // 扁平表示（首页卡片 / 托盘菜单）
     std::map<std::string, std::string> labels; // 稳定 tag → 来源限定的显示名
     std::string body;                       // 内容版本比较用的原文
@@ -45,7 +46,8 @@ struct ProxiesSnapshot {
     bool operator==(const ProxiesSnapshot& other) const {
         // DTO is a deterministic projection of body. Pointer identity changes
         // on each fetch and must not force State notifications for equal data.
-        return labels == other.labels && groups == other.groups && body == other.body && source == other.source &&
+        return loaded == other.loaded && labels == other.labels && groups == other.groups &&
+               body == other.body && source == other.source &&
                error == other.error;
     }
 };

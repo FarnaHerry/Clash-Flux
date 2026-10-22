@@ -129,8 +129,12 @@ int main(int argc, char** argv) {
             mismatch = ws::query("fixture-v2", options);
         }
         check(mismatch.reachable && !mismatch.error.empty(), "version mismatch must fail");
-        check(ws::request("STATUS", error, 2000, options) == "STOPPED", "initial status");
-        check(ws::request("PPTP_AVAILABLE", error, 2000, options) == "YES", "PPTP capability after installation");
+        const auto initialStatus = ws::request("STATUS", error, 2000, options);
+        check(initialStatus == "STOPPED",
+              "initial status: " + (initialStatus ? *initialStatus : error));
+        const auto initialPptp = ws::request("PPTP_AVAILABLE", error, 2000, options);
+        check(initialPptp == "YES",
+              "PPTP capability after installation: " + (initialPptp ? *initialPptp : error));
         // A pipe with the right protocol but the wrong server PID is rejected
         // before any control command is sent to it.
         auto spoofOptions = options; spoofOptions.pipe += L".Spoof";

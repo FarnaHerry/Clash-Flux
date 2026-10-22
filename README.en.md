@@ -118,6 +118,7 @@ application-managed settings before being passed to sing-box.
   Windows tray menus follow the application theme. Desktop startup stays in the tray when the startup option is enabled and the system tray is available;
   closing hides to the tray when enabled;
   otherwise, the app asks for confirmation before exiting.
+  Minimizing uses the platform's native behavior and keeps the Windows taskbar entry, including with lightweight tray mode enabled.
 - A dashboard donut chart shows cumulative upload/download shares (the largest share's percentage in the center), totals and
   percentages.
 - Android: sing-box libbox uses the same version as the desktop core and runs in a

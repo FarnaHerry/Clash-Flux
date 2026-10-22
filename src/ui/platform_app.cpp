@@ -738,16 +738,7 @@ struct TrayMenuText {
             trayRuntime->HideWindow(lightweight);
         });
     };
-    window.OnMinimizeRequest([=]() -> bool {
-        const SettingsView settings = settingsModel->view.Get();
-        if (settings.lightweightTray &&
-            (settings.ready ? settings.trayEnabled : startupTrayEnabled) &&
-            tray.IsAvailable() && !trayRuntime->trayRefreshFailed) {
-            hideWindow();
-            return true;
-        }
-        return false;
-    }, 0);
+    // 最小化交给平台原生行为，保留任务栏入口；轻量托盘只用于关闭隐藏。
     window.OnCloseRequest(
         [=]() mutable -> bool {
             if (trayRuntime->exitRequested) return true;

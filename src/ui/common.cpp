@@ -9,7 +9,9 @@
 #include <cstdint>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -302,6 +304,38 @@ void SettingsModel::SetEnvShell(std::string shell) {
 
 namespace {
 
+// Clash 来源的运行 tag 可逆。对象目录尚未发布时先显示来源内原名，
+// 避免把 cf_<来源十六进制>_o_<名称十六进制> 暴露给用户。
+std::optional<std::string> DecodeSourceOutboundName(std::string_view tag) {
+    if (!tag.starts_with("cf_")) return std::nullopt;
+    const auto separator = tag.find("_o_", 3);
+    if (separator == std::string_view::npos) return std::nullopt;
+    const auto decode = [](std::string_view hex) -> std::optional<std::string> {
+        if (hex.empty() || hex.size() % 2 != 0) return std::nullopt;
+        const auto digit = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            return -1;
+        };
+        std::string result;
+        result.reserve(hex.size() / 2);
+        for (std::size_t i = 0; i < hex.size(); i += 2) {
+            const int high = digit(hex[i]);
+            const int low = digit(hex[i + 1]);
+            if (high < 0 || low < 0) return std::nullopt;
+            const char value = static_cast<char>((high << 4) | low);
+            if (static_cast<unsigned char>(value) < 0x20) return std::nullopt;
+            result += value;
+        }
+        return result;
+    };
+    const auto source = decode(tag.substr(3, separator - 3));
+    if (!source || !source->starts_with("profile-") || source->size() == 8 ||
+        !std::ranges::all_of(source->substr(8), [](char c) { return c >= '0' && c <= '9'; }))
+        return std::nullopt;
+    return decode(tag.substr(separator + 3));
+}
+
 // 只服务于 FetchProxiesSnapshot：拥有型策略组 DTO → 扁平快照。不再是公开 API——
 // 消费方一律读 ProxiesModel，避免又出现第二个「各自解析」的入口。
 std::vector<ProxyGroupSnapshot> ParseProxyGroups(const wire::Proxies& snapshot, const std::map<std::string, std::string>& labels) {
@@ -369,6 +403,7 @@ std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
 
 ProxiesSnapshot FetchProxiesSnapshot() {
     ProxiesSnapshot next;
+    next.loaded = true;
     std::string body;
 #if defined(__ANDROID__)
     const char* raw = clashflux_android_proxy_groups();
@@ -404,6 +439,11 @@ ProxiesSnapshot FetchProxiesSnapshot() {
             if (catalog) for (const auto& object : *catalog) {
                 next.labels[object.tag] = object.sourceName.empty() ? object.objectId
                     : object.objectId + " · " + object.sourceName;
+            }
+            for (const auto& entry : next.proxies->entries) {
+                const auto& tag = entry.first;
+                if (next.labels.contains(tag)) continue;
+                if (const auto name = DecodeSourceOutboundName(tag)) next.labels[tag] = *name;
             }
             next.groups = ParseProxyGroups(*next.proxies, next.labels);
         } else {

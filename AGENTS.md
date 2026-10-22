@@ -157,6 +157,7 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   不持续拉回当前选中项；生产组件与交互测试见 `section_tabs.cpp` / `test_page_transition.cpp`。
 - 桌面关闭按钮只由 `tray.enabled` 控制：启用且系统托盘可用时隐藏到托盘，否则确认退出。
   不再读取旧 `tray.close_behavior`，退出确认框不提供最小化到托盘操作。
+  最小化始终使用平台原生行为（Windows 保留任务栏入口），不得因托盘或轻量模式而隐藏/退役窗口。
 - 桌面应用统一设置 `AppOptions::create_initial_window = false`；application hook 读取启动快照，
   只能在 Runtime 进入 Running 后创建窗口。`tray.enabled` 与 `tray.start_minimized` 都为真时先启动
   无窗持久化、状态泵、服务版本同步与内核自启，并等待异步托盘可用性（Linux StatusNotifier）。

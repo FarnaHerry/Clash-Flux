@@ -649,10 +649,31 @@ std::optional<std::string> request(std::string_view command, std::string& error,
     }
     const bool queries = command == "VERSION" || command == "STATUS" || command == "PPTP_AVAILABLE" || command.starts_with("PPTP_STATUS ");
     const auto pipeName = options.pipe + (queries ? L".Query" : L"");
-    if (!WaitNamedPipeW(pipeName.c_str(), timeoutMs)) { error = winError("Service pipe unavailable"); return {}; }
-    const UniqueHandle pipe{CreateFileW(pipeName.c_str(), GENERIC_READ | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE,
-        0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IMPERSONATION, nullptr)};
-    if (!pipe.valid()) { error = winError("Connect service pipe"); return {}; }
+    const auto deadline = GetTickCount64() + timeoutMs;
+    DWORD lastPipeError = ERROR_FILE_NOT_FOUND;
+    UniqueHandle pipe;
+    while (!pipe.valid()) {
+        const auto now = GetTickCount64();
+        const DWORD remaining = now >= deadline ? 0U : static_cast<DWORD>(deadline - now);
+        if (WaitNamedPipeW(pipeName.c_str(), remaining)) {
+            pipe.reset(CreateFileW(pipeName.c_str(), GENERIC_READ | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE,
+                0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IMPERSONATION, nullptr));
+            if (pipe.valid()) break;
+            lastPipeError = GetLastError();
+        } else {
+            lastPipeError = GetLastError();
+        }
+        if (lastPipeError != ERROR_FILE_NOT_FOUND && lastPipeError != ERROR_PIPE_BUSY &&
+            lastPipeError != ERROR_SEM_TIMEOUT) {
+            error = winError("Service pipe unavailable", lastPipeError);
+            return {};
+        }
+        if (GetTickCount64() >= deadline) {
+            error = winError("Service pipe unavailable", lastPipeError);
+            return {};
+        }
+        Sleep(10);
+    }
     // Bind IPC to the actual SCM-owned process, rejecting a spoofed pipe server.
     const auto service = openService(options, SERVICE_QUERY_STATUS);
     SERVICE_STATUS_PROCESS info{}; ULONG serverPid = 0;

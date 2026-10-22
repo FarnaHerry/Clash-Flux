@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.60 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.61 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -659,6 +659,12 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
     # app core. Neither platform configures the desktop `import std` test targets.
     if (CLASHFLUX_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
         enable_testing()
+        # Test targets compile application sources containing UTF-8 Chinese
+        # diagnostics too; keep MSVC's source decoding independent of the host
+        # code page just like the application target.
+        if (MSVC)
+            add_compile_options(/utf-8)
+        endif ()
         add_executable(test_smoke tests/test_smoke.cpp)
         set_target_properties(test_smoke PROPERTIES CXX_MODULE_STD ON)
         target_compile_features(test_smoke PRIVATE cxx_std_23)

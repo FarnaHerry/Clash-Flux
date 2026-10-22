@@ -180,6 +180,28 @@ void SyncProxyGroups(huxerui::StateList<ProxyGroup> groups,
     }
 }
 
+huxerui::View ProxyLoadingSkeleton(const huxerui::ThemeSpec& theme) {
+    const auto block = [fill = theme.colors.surface_container_highest](float width, float height) {
+        return huxerui::Row{}.With(huxerui::Frame{.width = width, .height = height},
+                                   huxerui::Background(fill));
+    };
+    const auto card = [&] {
+        return huxerui::Column {
+            block(112.0F, 16.0F),
+            block(68.0F, 12.0F),
+        }.With(huxerui::Padding(12.0F), huxerui::Spacing(8.0F),
+               huxerui::Background(theme.colors.surface_container_high),
+               huxerui::CornerRadius(8.0F));
+    };
+    return huxerui::Column {
+        huxerui::Row {block(92.0F, 20.0F), block(76.0F, 20.0F), block(104.0F, 20.0F)}
+            .With(huxerui::Spacing(16.0F)),
+        huxerui::Row {card(), card()}.With(huxerui::Spacing(kSectionCardSpacing)),
+    }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(kSectionCardSpacing, 12.0F)),
+           huxerui::Spacing(16.0F), huxerui::Grow(1.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
 const ProxyGroup* findGroup(const huxerui::StateList<ProxyGroup>& groups,
                             const std::string& name) {
     for (const auto& g : groups) {
@@ -783,6 +805,11 @@ std::function<void()> NodeSelectAction(
     // 真机实测（代理页大分组）：四页同挂时每帧 1443 次测量请求 / ~20ms，
     // 只留当前页后降到 28 次 / ~0ms；因此不可见页必须返回空占位。
     if (!active) return huxerui::View{huxerui::Row{}}.Key("proxies-idle");
+
+    if (!proxiesModel->snapshot.Get().loaded) {
+        return PageScaffold(Localized("代理"), huxerui::View{}, ProxyLoadingSkeleton(theme),
+                            false, true, true);
+    }
 
     // 一个根分组一页。VirtualGrid 直接用索引读取组节点，不再为所有组预先
     // 分配完整的 ProxyItem 与 span 数组；只有视口附近的节点会被构造为卡片。
