@@ -124,6 +124,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
     bool retired = true;
     bool startupDecisionPending = false;
     bool trayRefreshFailed = false;
+    bool basicTrayVisible = false;
     bool exitRequested = false;
     std::uint64_t windowGeneration = 0;
     std::string presentationKey;
@@ -247,6 +248,16 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
     void RefreshBasicTray() {
         if (exitRequested) return;
         if (refresh) {
+            // The windowless startup menu and the full window menu have
+            // different trees. Give StatusNotifier hosts one update cycle with
+            // an empty menu before publishing the replacement; otherwise KDE
+            // can retain an action from the old tree (notably a second Quit).
+            if (basicTrayVisible) {
+                tray.Hide();
+                basicTrayVisible = false;
+                presentationKey.clear();
+                return;
+            }
             refresh();
             return;
         }
@@ -292,6 +303,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
         else if (running && view.systemProxyActive) icon = app::images::tray_system_proxy;
         tray.Show(std::move(icon), huxerui::SystemTrayOptions{
             .tooltip = "Clash-Flux", .menu = std::move(entries)});
+        basicTrayVisible = true;
         presentationKey = std::string{key};
     }
 

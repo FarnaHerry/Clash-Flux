@@ -7,6 +7,7 @@ module;
 #include <poll.h>
 #include <signal.h>
 #include <spawn.h>
+#include <linux/capability.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -127,12 +128,35 @@ bool normalizeTarget(RouteTarget& target, std::string& error) {
 }
 
 int tableNumber(const nlohmann::json& value) {
-    if (value.is_number_integer()) return value.get<int>();
+    if (value.is_number_unsigned()) {
+        const auto number = value.get<std::uint64_t>();
+        return number <= std::numeric_limits<int>::max()
+            ? static_cast<int>(number) : -1;
+    }
+    if (value.is_number_integer()) {
+        const auto number = value.get<std::int64_t>();
+        return number >= 0 && number <= std::numeric_limits<int>::max()
+            ? static_cast<int>(number) : -1;
+    }
     if (!value.is_string()) return -1;
     const auto name = value.get<std::string>();
     int number = -1;
     const auto [ptr, ec] = std::from_chars(name.data(), name.data() + name.size(), number);
     return ec == std::errc{} && ptr == name.data() + name.size() ? number : -1;
+}
+
+bool equalsNumber(const nlohmann::json& value, std::uint64_t expected) {
+    if (value.is_number_unsigned()) return value.get<std::uint64_t>() == expected;
+    if (value.is_number_integer()) {
+        const auto number = value.get<std::int64_t>();
+        return number >= 0 && static_cast<std::uint64_t>(number) == expected;
+    }
+    if (!value.is_string()) return false;
+    const auto& text = value.get_ref<const std::string&>();
+    std::uint64_t number = 0;
+    const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), number);
+    return ec == std::errc{} && end == text.data() + text.size() &&
+           number == expected;
 }
 
 bool parseOccupiedTables(std::string_view output, std::set<int>& tables,
@@ -568,62 +592,99 @@ RouteRegistry& systemRegistry() {
     return registry;
 }
 
-void cleanupManagedLinuxRoutesImpl(std::string& error) {
+bool canModifyLinuxRoutes() {
+    if (::geteuid() == 0) return true;
+    std::ifstream status{"/proc/self/status"};
+    std::string line;
+    while (std::getline(status, line)) {
+        if (!line.starts_with("CapEff:")) continue;
+        const auto value = std::string_view{line}.substr(7);
+        const auto begin = value.find_first_not_of(" \t");
+        if (begin == std::string_view::npos) return false;
+        std::uint64_t effective = 0;
+        const auto [end, ec] = std::from_chars(value.data() + begin,
+                                               value.data() + value.size(),
+                                               effective, 16);
+        return ec == std::errc{} && end == value.data() + value.size() &&
+               (effective & (std::uint64_t{1} << CAP_NET_ADMIN)) != 0;
+    }
+    return false;
+}
+
+void cleanupManagedLinuxRoutesImpl(const CommandRunner& runner, bool privileged,
+                                   std::string& error) {
     error.clear();
-    bool failed = false;
     auto run = [&](std::vector<std::string> args) {
-        const auto result = runIp(args);
+        const auto result = runner(args);
         // "No such file"(rule 不存在) 与 "does not exist"(表在列举与清理之间消失)
         // 都是幂等收尾的正常结果，不当失败。
         const bool benign =
             result.output.find("No such file") != std::string::npos ||
             result.output.find("does not exist") != std::string::npos;
-        if (result.exitCode != 0 && !benign) {
-            failed = true;
-            if (error.empty()) error = result.output;
-        }
+        if (result.exitCode != 0 && !benign && error.empty())
+            error = result.output.empty() ? "清理托管 Linux 路由失败" : result.output;
+        return result.exitCode == 0 || benign;
     };
-    // The TUN compiler owns pref 9000; remove only that exact priority.
-    run({"ip", "-4", "rule", "del", "pref", "9000"});
-    // RouteRegistry uses protocol 186 and tables 52000–52999。这里只清理**确实
-    // 带该 protocol 的表**：以前对 1000 个表逐个 `ip route flush`，等于每次
-    // stopCore（应用启动与停内核各一次）串行拉起 1000 个 `ip` 子进程——实测是
-    // 启动期最大的一笔系统开销。先用一次 `ip -j route show table all proto 186`
-    // 列出候选表，再逐表 flush，且仍然只 flush proto 匹配的条目，绝不动用户的
-    // 普通路由。
-    const auto listed = runIp({"ip", "-j", "-4", "route", "show", "table", "all",
-                               "proto", std::string(RouteProtocol)});
+    // pref 9000 belongs to sing-box, not to RouteRegistry. Other sing-box
+    // instances use the same priority, so deleting by priority can remove an
+    // unrelated VPN's rule. sing-box removes its own rule when it exits.
+    // A RouteRegistry table is identified by its exact reservation sentinel;
+    // protocol 186 alone does not prove ownership.
+    const auto listed = runner({"ip", "-j", "-N", "-4", "route", "show",
+                                "table", "all", "proto", std::string(RouteProtocol)});
     if (listed.exitCode != 0) {
-        failed = true;
-        if (error.empty()) error = listed.output;
-    } else if (listed.output.find_first_not_of(" \t\r\n") != std::string::npos) {
-        const auto parsed = nlohmann::json::parse(listed.output, nullptr, false);
-        if (parsed.is_discarded()) {
-            failed = true;
-            if (error.empty()) error = "解析 ip 路由表失败";
-        } else if (parsed.is_array()) {
-            std::set<int> tables;
-            for (const auto& entry : parsed) {
-                if (!entry.is_object()) continue;
-                const auto table = entry.find("table");
-                if (table == entry.end() || !table->is_string()) continue;
-                const std::string& text = table->get_ref<const std::string&>();
-                int value = 0;
-                const auto [end, ec] = std::from_chars(
-                    text.data(), text.data() + text.size(), value);
-                if (ec == std::errc{} && end == text.data() + text.size() &&
-                    value >= FirstTable && value <= LastTable) {
-                    tables.insert(value);
-                }
-            }
-            for (const int table : tables) {
-                run({"ip", "-4", "route", "flush", "table",
-                     std::to_string(table), "proto",
-                     std::string(RouteProtocol)});
-            }
-        }
+        error = listed.output.empty() ? "读取托管 Linux 路由失败" : listed.output;
+        return;
     }
-    if (failed && error.empty()) error = "清理托管 Linux 路由失败";
+    const auto routes = nlohmann::json::parse(listed.output, nullptr, false);
+    if (!routes.is_array()) {
+        error = "解析 ip 路由表失败";
+        return;
+    }
+    std::set<int> tables;
+    for (const auto& route : routes) {
+        if (!route.is_object() || !route.contains("table") ||
+            !route.contains("metric") || !route.contains("protocol")) continue;
+        const int table = tableNumber(route["table"]);
+        if (table >= FirstTable && table <= LastTable &&
+            route.value("type", std::string{}) == "unreachable" &&
+            route.value("dst", std::string{}) == "default" &&
+            equalsNumber(route["metric"], 4278190000ULL) &&
+            equalsNumber(route["protocol"], 186)) tables.insert(table);
+    }
+    if (tables.empty()) return;
+    if (!privileged) {
+        error = "发现 Clash-Flux 残留补偿路由，但当前进程没有 CAP_NET_ADMIN；请启动 Clash-Flux root 服务后重试";
+        return;
+    }
+    const auto listedRules = runner({"ip", "-j", "-N", "-4", "rule", "show"});
+    if (listedRules.exitCode != 0) {
+        error = listedRules.output.empty() ? "读取托管 Linux 策略规则失败" : listedRules.output;
+        return;
+    }
+    const auto rules = nlohmann::json::parse(listedRules.output, nullptr, false);
+    if (!rules.is_array()) {
+        error = "解析 ip 策略规则失败";
+        return;
+    }
+    for (const int table : tables) {
+        bool rulesRemoved = true;
+        for (const auto& rule : rules) {
+            if (!rule.is_object() || !rule.contains("table") ||
+                !rule.contains("priority") || !rule.contains("protocol") ||
+                tableNumber(rule["table"]) != table ||
+                !equalsNumber(rule["protocol"], 186)) continue;
+            const int priority = tableNumber(rule["priority"]);
+            if (priority != TransportPriority && priority != BoundInterfacePriority &&
+                priority != NativeFallbackPriority) continue;
+            if (!run({"ip", "-4", "rule", "del", "pref", std::to_string(priority),
+                      "lookup", std::to_string(table), "protocol",
+                      std::string(RouteProtocol)})) rulesRemoved = false;
+        }
+        if (rulesRemoved)
+            run({"ip", "-4", "route", "flush", "table", std::to_string(table),
+                 "proto", std::string(RouteProtocol)});
+    }
 }
 
 bool physicalInterface(std::string_view name, int depth = 0) {
@@ -865,8 +926,13 @@ std::vector<std::string> queryDns(std::string_view host, std::string_view server
 } // namespace
 
 #if defined(__linux__) && !defined(__ANDROID__)
+void CleanupManagedLinuxRoutes(CommandRunner runner, bool privileged,
+                               std::string& error) {
+    cleanupManagedLinuxRoutesImpl(runner, privileged, error);
+}
+
 void CleanupManagedLinuxRoutes(std::string& error) {
-    cleanupManagedLinuxRoutesImpl(error);
+    cleanupManagedLinuxRoutesImpl(runIp, canModifyLinuxRoutes(), error);
 }
 #endif
 

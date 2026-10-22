@@ -5,10 +5,6 @@ import std;
 
 export namespace vpn::compensation {
 
-// Best-effort cleanup for process/service shutdown. It only touches the
-// application's reserved policy priority and protocol-marked tables.
-void CleanupManagedLinuxRoutes(std::string& error);
-
 // These priorities are part of the managed main TUN contract (pref 9000).
 inline constexpr int TransportPriority = 8000;
 inline constexpr int BoundInterfacePriority = 8100;
@@ -42,6 +38,13 @@ struct CommandResult {
 };
 
 using CommandRunner = std::function<CommandResult(const std::vector<std::string>&)>;
+#if defined(__linux__) && !defined(__ANDROID__)
+// Sweep only tables carrying our reservation sentinel. The injected runner
+// keeps ownership and permission handling testable without changing routes.
+void CleanupManagedLinuxRoutes(CommandRunner runner, bool privileged,
+                               std::string& error);
+void CleanupManagedLinuxRoutes(std::string& error);
+#endif
 // Copies share ownership; the final owner removes only this session's objects.
 using RouteLease = std::shared_ptr<void>;
 

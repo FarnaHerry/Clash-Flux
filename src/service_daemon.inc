@@ -285,13 +285,16 @@ export int run() {
             }
         } else if (cmd == "STOP") {
             reapChildren(childPid);
-            if (childPid <= 0) {
-                replyLine(fd, "OK");  // 本就没在跑：幂等成功
-            } else {
-                std::string error;
-                replyLine(fd, stopEngine(childPid, &error)
-                    ? "OK" : std::format("ERR {}", error));
+            std::string error;
+            const bool stopped = childPid <= 0 || stopEngine(childPid, &error);
+            if (stopped) {
+                // STOP is also used after an interrupted previous run. The
+                // privileged service may sweep only tables with our sentinel;
+                // the unprivileged GUI must never delete a foreign pref 9000.
+                vpn::compensation::CleanupManagedLinuxRoutes(error);
             }
+            replyLine(fd, stopped && error.empty()
+                ? "OK" : std::format("ERR {}", error));
         } else if (cmd.starts_with("START ")) {
             const std::string config = cmd.substr(6);
             reapChildren(childPid);

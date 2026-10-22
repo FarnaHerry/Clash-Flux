@@ -24,6 +24,64 @@ int main() {
     assert(!SelectPhysicalRoute("198.18.1.7", routes));
     assert(SelectPhysicalRoute("10.2.3.4", routes)->interfaceName == "eth0");
 
+#if defined(__linux__) && !defined(__ANDROID__)
+    // A foreign pref 9000 is not an ownership marker. With no reservation
+    // sentinel the cleanup must never issue any mutating ip command.
+    std::vector<std::vector<std::string>> cleanupCommands;
+    auto cleanupRunner = [&cleanupCommands](const std::vector<std::string>& command) {
+        cleanupCommands.push_back(command);
+        if (std::ranges::find(command, "route") != command.end() &&
+            std::ranges::find(command, "show") != command.end())
+            return CommandResult{0,
+                R"([{"table":"2022","protocol":186,"dst":"default"},{"table":"52000","protocol":186,"dst":"default","metric":12}])"};
+        if (std::ranges::find(command, "rule") != command.end() &&
+            std::ranges::find(command, "show") != command.end())
+            return CommandResult{0,
+                R"([{"priority":9000,"table":"2022"},{"priority":8000,"table":"52000","protocol":186}])"};
+        return CommandResult{0, {}};
+    };
+    std::string cleanupError;
+    CleanupManagedLinuxRoutes(cleanupRunner, false, cleanupError);
+    assert(cleanupError.empty() && cleanupCommands.size() == 1);
+
+    const std::string managedSentinel =
+        R"([{"type":"unreachable","dst":"default","table":"52000","protocol":186,"metric":4278190000},{"dst":"default","table":"52001","protocol":186,"metric":4278190000}])";
+    cleanupCommands.clear();
+    auto managedRunner = [&cleanupCommands, &managedSentinel](
+        const std::vector<std::string>& command) {
+        cleanupCommands.push_back(command);
+        if (std::ranges::find(command, "route") != command.end() &&
+            std::ranges::find(command, "show") != command.end())
+            return CommandResult{0, managedSentinel};
+        if (std::ranges::find(command, "rule") != command.end() &&
+            std::ranges::find(command, "show") != command.end())
+            return CommandResult{0,
+                R"([{"priority":9000,"table":"2022"},{"priority":8000,"table":"52000","protocol":186},{"priority":12000,"table":"52001","protocol":186}])"};
+        return CommandResult{0, {}};
+    };
+    CleanupManagedLinuxRoutes(managedRunner, false, cleanupError);
+    assert(!cleanupError.empty() && cleanupCommands.size() == 1);
+    cleanupCommands.clear();
+    CleanupManagedLinuxRoutes(managedRunner, true, cleanupError);
+    assert(cleanupError.empty() && cleanupCommands.size() == 4);
+    assert(cleanupCommands[2] == (std::vector<std::string>{
+        "ip", "-4", "rule", "del", "pref", "8000", "lookup", "52000",
+        "protocol", "186"}));
+    assert(cleanupCommands[3] == (std::vector<std::string>{
+        "ip", "-4", "route", "flush", "table", "52000", "proto", "186"}));
+    cleanupCommands.clear();
+    CleanupManagedLinuxRoutes([&](const std::vector<std::string>& command) {
+        const auto result = managedRunner(command);
+        if (std::ranges::find(command, "del") != command.end())
+            return CommandResult{2, "RTNETLINK answers: Operation not permitted"};
+        return result;
+    }, true, cleanupError);
+    assert(cleanupError.find("Operation not permitted") != std::string::npos);
+    assert(std::ranges::none_of(cleanupCommands, [](const auto& command) {
+        return std::ranges::find(command, "flush") != command.end();
+    }));
+#endif
+
     // Windows leases share a server route across sessions, borrow user routes,
     // and roll back only objects whose creation succeeded.
     std::string windowsError;

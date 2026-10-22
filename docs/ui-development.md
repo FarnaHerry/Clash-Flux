@@ -74,6 +74,7 @@
 - 启动、轮询和退出清理中的系统操作不能闪出命令行窗口。优先使用 Win32 API；确实需要子进程时，用 `CreateProcessW` 的 `CREATE_NO_WINDOW` 并重定向标准句柄。不要在后台 Windows 路径使用 `std::system` 或 `_popen`。
 - 只有需要用户明确授权的流程可以显示系统交互提示，例如 UAC 提权。普通后台操作、失败清理和状态探测都保持安静执行。
 - HuxerUI 的 Windows 系统托盘菜单是原生菜单，`SystemTrayOptions` 不提供 `MenuStyle` 参数。桌面托盘生命周期按当前应用 `ThemeSpec` 同步 Windows 原生菜单主题；Windows 10 build 17763 及以上支持此同步，旧系统保留系统原生菜单主题。修改 HuxerUI 或 Windows 平台适配时，保持托盘菜单与应用深浅模式一致。
+- Linux 启动隐藏时先使用不依赖窗口的简版托盘菜单；主窗口挂载后切换到完整菜单，先让 StatusNotifier 菜单空一轮再发布，避免 Plasma 在两种菜单结构间保留旧动作。内核停止后的路由清理不碰 sing-box 的 `pref 9000`，仅由 root 服务清理能凭保留哨兵确认属于 Clash-Flux 的补偿路由。
 
 ## 可拖动仪表盘卡片
 
