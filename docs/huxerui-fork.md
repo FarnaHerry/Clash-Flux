@@ -4,7 +4,7 @@
 `<HOME>/dev/cpp/mcpp/HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `99fd7ba2c2e84df24db41de01146ed4893143c62`，各平台 CI 共用
+Clash-Flux 当前固定 `a954965fc1f969067406979d239c2a3e2dae8cfd`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
@@ -47,7 +47,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 2a741e751fed69ccf590e3a8badf0ab31d9b4d05
+git -C third_party/huxerui checkout a954965fc1f969067406979d239c2a3e2dae8cfd
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
@@ -61,6 +61,25 @@ Clash-Flux 必须重新运行 `cmake --build build --target clash-flux`、`./run
 同源约束，桌面门禁和 iOS 暂缓政策保持不变。
 
 ## 验证边界
+
+2026-10-22 固定版本更新到 `a954965`：新增桌面应用选项
+`AppOptions::create_initial_window`，默认仍自动创建首窗；设为 `false` 时，Windows、Linux、
+macOS 跳过首窗创建及界面组合，应用级托盘、任务、定时器和事件循环继续运行，后续复用
+`ApplicationHandle::OpenWindow()` 创建窗口。`extra_windows` 独立处理，手机、Web 与嵌入式
+宿主维持平台驱动的窗口生命周期。Clash-Flux 本次只升级固定依赖，尚未将现有的
+「启动时隐藏到托盘」迁移到延迟创建首窗的流程。
+
+框架在 Windows/MSVC Release 下完成共享库、独立头文件与多窗口示例构建；公共 CTest
+4/4、Windows 平台 CTest 和新增原生启动测试四种场景通过（24 assertions），模块导出检查
+在 LF 规范化副本中通过。Clash-Flux 使用 CMake 4.4.2 重新配置并完整编译，
+`./run.sh --version` 返回 0。配置启用 `CLASHFLUX_REQUIRE_PROJECT_TESTS=ON`，显式指定
+Git for Windows 自带的 OpenSSL CLI，编译及测试环境使用 `CL=/utf-8`。
+`ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required` 实际为
+15/17 通过，包含生产分页、订阅持久化、CPS 重定位/版本拒绝/缓存完整性及 DNS/TLS 回归。
+`windows_service` 因当前进程没有管理员权限而无法安装独占 SCM fixture；`vpn` 以
+`0xc0000409` 异常退出，本轮未解决。两者的构建图和 PE 导入均不依赖 HuxerUI，不能据此
+声称全部桌面回归通过。直接 ORM 测试按已记录的 MSVC C4737 例外未注册，persistence
+保持必跑；测试和 CI 门禁均未禁用。Linux/macOS 原生及 Android/iOS 本次未在本机验证。
 
 2026-10-22 固定版本更新到 `99fd7ba`，修复 Linux 托盘轻量模式退役窗口后仍由 Runtime 持有，
 GTK 控件保留回调、输入法上下文未销毁，以及外部直接销毁 GTK 窗口时输入法委托释放顺序错误；
