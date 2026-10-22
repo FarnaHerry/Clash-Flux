@@ -29,6 +29,7 @@ struct AppRuntimeServices {
     std::string startupThemeColor = "blue";
     std::string startupLanguage = "system";
     bool startupTrayEnabled = true;
+    bool startupStartMinimized = false;
     huxerui::State<std::string> startupError{std::string{}};
     bool startupErrorReported = false;
 };

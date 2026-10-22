@@ -347,6 +347,7 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
     runtimeServices->startupThemeColor = startupSettings.themeColor;
     runtimeServices->startupLanguage = startupSettings.language;
     runtimeServices->startupTrayEnabled = startupSettings.trayEnabled;
+    runtimeServices->startupStartMinimized = startupSettings.startMinimized;
 
     const auto& startupActivation = runtime->application->StartupActivation();
     const bool startupUrl = startupActivation &&
@@ -355,7 +356,8 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
 
     const bool commandMode = cli::runtimeCommandMode();
     const bool trayCanStartHidden = !commandMode && !startupUrl &&
-        startupSettings.trayEnabled && runtime->tray.IsAvailable();
+        startupSettings.trayEnabled && startupSettings.startMinimized &&
+        runtime->tray.IsAvailable();
     if (commandMode) {
         runtime->OpenHiddenWindow();
     } else if (!trayCanStartHidden) {

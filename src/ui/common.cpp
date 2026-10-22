@@ -1330,6 +1330,8 @@ void DriveSettingsModel(huxerui::TaskScope tasks,
             next.autoStart = core.setting("app.autostart", "false") == "true";
             next.autoRun = core.setting("app.auto_run", "false") == "true";
             next.trayEnabled = core.setting("tray.enabled", "true") == "true";
+            next.startMinimized = next.trayEnabled &&
+                core.setting("tray.start_minimized", "false") == "true";
             next.lightweightTray =
                 core.setting("tray.lightweight", "false") == "true";
             next.mixedPort = core.setting("core.mixed_port", "7899");

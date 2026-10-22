@@ -1158,6 +1158,7 @@ void StartDesktopWindowlessRuntime() {
             .themeColor = runtimeServices->startupThemeColor,
             .language = runtimeServices->startupLanguage,
             .trayEnabled = runtimeServices->startupTrayEnabled,
+            .startMinimized = runtimeServices->startupStartMinimized,
         };
     }();
     if (!startupSettings.error.empty()) {

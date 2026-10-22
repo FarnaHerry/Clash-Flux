@@ -122,7 +122,7 @@ StartupSettings readStartupSettings(const std::filesystem::path& file) {
     auto read = sqlite::Database::QueryReadOnlySync(huxerui::File{file.string()},
         "SELECT key, value FROM settings WHERE key IN "
         "('ui.theme_mode', 'ui.theme_color', 'ui.language', "
-        "'tray.enabled')",
+        "'tray.enabled', 'tray.start_minimized')",
         [&settings](const sqlite::RowView& row) -> sqlite::Result<void> {
             auto key = row.Get<std::string>("key");
             if (!key) return key.Error();
@@ -131,10 +131,14 @@ StartupSettings readStartupSettings(const std::filesystem::path& file) {
             if (*key == "ui.theme_color") settings.themeColor = *value;
             else if (*key == "ui.language") settings.language = *value;
             else if (*key == "tray.enabled") settings.trayEnabled = *value == "true";
+            else if (*key == "tray.start_minimized") settings.startMinimized = *value == "true";
             else settings.themeMode = *value == "0" ? 0 : *value == "2" ? 2 : 1;
             return {};
         });
     if (!read) settings.error = "读取启动配置失败：" + read.Error().Message();
+    // A disabled tray makes this option effectively false without changing its
+    // stored value. Re-enabling the tray will expose and read the saved choice.
+    if (!settings.trayEnabled) settings.startMinimized = false;
     return settings;
 }
 

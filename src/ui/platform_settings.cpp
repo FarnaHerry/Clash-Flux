@@ -382,8 +382,8 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
     const auto settingsModel = huxerui::UseService<SettingsModel>();
     const SettingsView settings = settingsModel->view.Get();
 
-    return huxerui::Column {
-        SettingSwitchRow(
+    std::vector<huxerui::View> rows;
+    rows.push_back(SettingSwitchRow(
             Localized("开机自启动"), Localized("登录系统后自动启动 Clash-Flux（桌面端）"),
             huxerui::Switch(settings.autoStart)
                 .OnChanged([settingsModel](bool on) {
@@ -391,10 +391,10 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                         "app.autostart", on ? "true" : "false");
                     settingsModel->Update(
                         [on](SettingsView& view) { view.autoStart = on; });
-                }), false, app::images::power),
-        // 内核启停与流量接管解耦后的「启动入口」之一：默认不随应用启动内核
-        // （内核只是本地端口 + 控制接口），需要时用首页右下角悬浮按钮启动。
-        SettingSwitchRow(
+                }), false, app::images::power));
+    // 内核启停与流量接管解耦后的「启动入口」之一：默认不随应用启动内核
+    // （内核只是本地端口 + 控制接口），需要时用首页右下角悬浮按钮启动。
+    rows.push_back(SettingSwitchRow(
             Localized("启动时自动运行内核"), Localized("打开应用就拉起 sing-box，并按已记录的系统代理/TUN 恢复接管"),
             huxerui::Switch(settings.autoRun)
                 .OnChanged([settingsModel](bool on) {
@@ -402,17 +402,34 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                                                   on ? "true" : "false");
                     settingsModel->Update(
                         [on](SettingsView& view) { view.autoRun = on; });
-                }), false, app::images::play),
-        SettingSwitchRow(
+                }), false, app::images::play));
+    rows.push_back(SettingSwitchRow(
             Localized("启用托盘"), Localized("启用后关闭窗口隐藏到托盘；停用后关闭窗口询问是否退出"),
             huxerui::Switch(settings.trayEnabled)
                 .OnChanged([settingsModel](bool on) {
                     store::coreStore().setSetting("tray.enabled",
                                                   on ? "true" : "false");
-                    settingsModel->Update(
-                        [on](SettingsView& view) { view.trayEnabled = on; });
-                }), false, app::images::tray),
-        SettingSwitchRow(
+                    const bool startMinimized = on &&
+                        store::coreStore().setting("tray.start_minimized", "false") == "true";
+                    settingsModel->Update([on, startMinimized](SettingsView& view) {
+                        view.trayEnabled = on;
+                        view.startMinimized = startMinimized;
+                    });
+                }), false, app::images::tray));
+    if (settings.trayEnabled) {
+        rows.push_back(SettingSwitchRow(
+            Localized("启动时隐藏到托盘"),
+            Localized("下次启动不显示主窗口，经托盘唤出"),
+            huxerui::Switch(settings.startMinimized)
+                .OnChanged([settingsModel](bool on) {
+                    store::coreStore().setSetting(
+                        "tray.start_minimized", on ? "true" : "false");
+                    settingsModel->Update([on](SettingsView& view) {
+                        view.startMinimized = view.trayEnabled && on;
+                    });
+                }), false, app::images::visibility_off));
+    }
+    rows.push_back(SettingSwitchRow(
             Localized("轻量级托盘模式"),
             Localized("隐藏到托盘时销毁主窗口和界面，唤出时重新创建"),
             huxerui::Switch(settings.lightweightTray)
@@ -420,9 +437,10 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                     store::coreStore().setSetting("tray.lightweight", on ? "true" : "false");
                     settingsModel->Update(
                         [on](SettingsView& view) { view.lightweightTray = on; });
-                }), false, app::images::tray),
-    }.With(huxerui::Spacing(10.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+                }), false, app::images::tray));
+    return huxerui::Column(std::move(rows)).With(
+        huxerui::Spacing(10.0F),
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 [[huxerui::composable]] huxerui::View DesktopNetworkSettings() {

@@ -110,10 +110,12 @@ application-managed settings before being passed to sing-box.
   See [Windows service](docs/windows-service.md).
 - A full CLI in the same executable: `core`, `mode`, `tun`, `proxy`, `profile` and
   `service` commands. On desktop, launch without arguments to start in the system
-  tray when enabled and available; activate the tray icon to open the main window.
+  tray when the tray and “Start minimized to tray” are enabled and the tray is available;
+  activate the tray icon to open the main window. The startup option is shown only
+  while the tray is enabled, and its saved value is retained while the tray is disabled.
 - Light and dark themes with system theme detection, an island-style interface,
   custom window title bars, a system tray and responsive layouts for narrow windows.
-  Windows tray menus follow the application theme. Desktop startup stays in the tray when enabled and available;
+  Windows tray menus follow the application theme. Desktop startup stays in the tray when the startup option is enabled and the system tray is available;
   closing hides to the tray when enabled;
   otherwise, the app asks for confirmation before exiting.
 - A dashboard donut chart shows cumulative upload/download shares (the largest share's percentage in the center), totals and

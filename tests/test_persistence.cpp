@@ -485,6 +485,7 @@ Task<void> RunTest(TaskScope tasks) {
     Check(missingSettings.themeMode == 1 && missingSettings.themeColor == "blue" &&
               missingSettings.language == "system" &&
               missingSettings.trayEnabled &&
+              !missingSettings.startMinimized &&
               missingSettings.error.empty() &&
               !std::filesystem::exists(path),
           "startup settings read must not create a missing database");
@@ -514,6 +515,7 @@ Task<void> RunTest(TaskScope tasks) {
                       defaultStartupSettings.themeColor == "blue" &&
                       defaultStartupSettings.language == "system" &&
                       defaultStartupSettings.trayEnabled &&
+                      !defaultStartupSettings.startMinimized &&
                       defaultStartupSettings.error.empty(),
                   "startup settings must apply defaults for keys absent from an existing database");
 
@@ -536,8 +538,19 @@ Task<void> RunTest(TaskScope tasks) {
             Check(startupSettings.themeMode == 2 && startupSettings.themeColor == "#336699" &&
                       startupSettings.language == "zh" &&
                       !startupSettings.trayEnabled &&
+                      !startupSettings.startMinimized &&
                       startupSettings.error.empty(),
-                  "startup snapshot must synchronously read appearance and tray availability settings");
+                  "startup snapshot must suppress start-minimized when tray is disabled");
+            Check(store.setting("tray.start_minimized", "") == "true",
+                  "disabling tray must preserve the saved start-minimized preference");
+            store.setSetting("tray.enabled", "true");
+            Check(co_await store.flushSettings(), "tray enable flush failed");
+            const auto enabledTrayStartupSettings = persistence::readStartupSettings(path);
+            Check(enabledTrayStartupSettings.trayEnabled &&
+                      enabledTrayStartupSettings.startMinimized,
+                  "re-enabling tray must restore the saved start-minimized preference");
+            store.setSetting("tray.enabled", "false");
+            Check(co_await store.flushSettings(), "tray disable flush failed");
             Check(store.ready() && !store.hasPendingSettings(),
                   "read-only startup query must not alter the persistence session");
 
@@ -707,6 +720,7 @@ Task<void> RunTest(TaskScope tasks) {
             Check(legacySettings.themeMode == 2 && legacySettings.themeColor == "green" &&
                       legacySettings.language == "en" &&
                       !legacySettings.trayEnabled &&
+                      !legacySettings.startMinimized &&
                       legacySettings.error.empty(),
                   "startup snapshot must read legacy settings before migration");
             persistence::Persistence store;
@@ -716,6 +730,8 @@ Task<void> RunTest(TaskScope tasks) {
             Check(store.ready(), "legacy store must be ready after migration");
             Check(store.setting("ui.theme_mode", "") == "2",
                   "legacy setting lost by migration");
+            Check(store.setting("tray.start_minimized", "") == "true",
+                  "legacy start-minimized preference must survive migration while tray is disabled");
             const auto migrated = store.listProfiles();
             Check(migrated.size() == 2 && migrated[0].id == 41 && migrated[1].id == 42,
                   "migration must retain every subscription row and its stable id");

@@ -102,11 +102,12 @@ cmake --build build --target clash-flux
 ## 启动设置快照
 
 `persistence::readStartupSettings` 同步读取必须先于设置 hydrate 确定的
-`ui.theme_mode`、`ui.theme_color`、`ui.language` 与 `tray.enabled`。
+`ui.theme_mode`、`ui.theme_color`、`ui.language`、`tray.enabled` 与 `tray.start_minimized`。
 它们控制首窗外观、初始语言和托盘启动策略，避免加载设置前短暂呈现错误状态。
 快照只读取一次，重组不重复磁盘 IO；SettingsModel 就绪后以模型值接管运行期行为。
-桌面在托盘启用且系统托盘可用时由 application hook 读取该快照并以无初始窗口模式启动；
-托盘激活后才创建主窗口，托盘不可用或设置停用时直接创建窗口。旧 `tray.start_minimized` 值保留在数据库中，应用不再读取它。
+只有托盘启用、`tray.start_minimized` 为 true 且系统托盘可用时，桌面 application hook 才以无初始窗口模式启动；
+托盘激活后再创建主窗口。设置页仅在托盘启用时显示该开关；托盘停用时运行值与启动快照都为 false，
+只读查询不改数据库，重新启用托盘后恢复历史值。托盘不可用或启动隐藏选项关闭时直接创建窗口。
 该 API 使用临时只读 SQLite 查询，兼容迁移前旧库；不存在的数据库不创建，损坏或无法读取的数据库明确
 报告失败并停止启动。其它设置仍按原异步流程 hydrate；启动内核等操作等待 SettingsModel ready，
 不为它们扩大同步读取范围。
