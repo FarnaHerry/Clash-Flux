@@ -1,6 +1,6 @@
 # Clash-Flux
 
-See the [v0.3.57 release notes](docs/releases/v0.3.57.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.58 release notes](docs/releases/v0.3.58.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -109,10 +109,12 @@ application-managed settings before being passed to sing-box.
   PPTP capability is refreshed after installation or restart while the GUI is running.
   See [Windows service](docs/windows-service.md).
 - A full CLI in the same executable: `core`, `mode`, `tun`, `proxy`, `profile` and
-  `service` commands. Launch without arguments to open the GUI.
+  `service` commands. On desktop, launch without arguments to start in the system
+  tray when enabled and available; activate the tray icon to open the main window.
 - Light and dark themes with system theme detection, an island-style interface,
   custom window title bars, a system tray and responsive layouts for narrow windows.
-  Windows tray menus follow the application theme. Closing hides to the tray when enabled;
+  Windows tray menus follow the application theme. Desktop startup stays in the tray when enabled and available;
+  closing hides to the tray when enabled;
   otherwise, the app asks for confirmation before exiting.
 - A dashboard donut chart shows cumulative upload/download shares (the largest share's percentage in the center), totals and
   percentages.

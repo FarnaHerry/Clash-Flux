@@ -484,7 +484,7 @@ Task<void> RunTest(TaskScope tasks) {
     const auto missingSettings = persistence::readStartupSettings(path);
     Check(missingSettings.themeMode == 1 && missingSettings.themeColor == "blue" &&
               missingSettings.language == "system" &&
-              missingSettings.trayEnabled && !missingSettings.startMinimized &&
+              missingSettings.trayEnabled &&
               missingSettings.error.empty() &&
               !std::filesystem::exists(path),
           "startup settings read must not create a missing database");
@@ -514,7 +514,6 @@ Task<void> RunTest(TaskScope tasks) {
                       defaultStartupSettings.themeColor == "blue" &&
                       defaultStartupSettings.language == "system" &&
                       defaultStartupSettings.trayEnabled &&
-                      !defaultStartupSettings.startMinimized &&
                       defaultStartupSettings.error.empty(),
                   "startup settings must apply defaults for keys absent from an existing database");
 
@@ -536,9 +535,9 @@ Task<void> RunTest(TaskScope tasks) {
             const auto startupSettings = persistence::readStartupSettings(path);
             Check(startupSettings.themeMode == 2 && startupSettings.themeColor == "#336699" &&
                       startupSettings.language == "zh" &&
-                      !startupSettings.trayEnabled && startupSettings.startMinimized &&
+                      !startupSettings.trayEnabled &&
                       startupSettings.error.empty(),
-                  "startup snapshot must synchronously read appearance and startup behavior settings");
+                  "startup snapshot must synchronously read appearance and tray availability settings");
             Check(store.ready() && !store.hasPendingSettings(),
                   "read-only startup query must not alter the persistence session");
 
@@ -707,7 +706,7 @@ Task<void> RunTest(TaskScope tasks) {
             const auto legacySettings = persistence::readStartupSettings(legacy);
             Check(legacySettings.themeMode == 2 && legacySettings.themeColor == "green" &&
                       legacySettings.language == "en" &&
-                      !legacySettings.trayEnabled && legacySettings.startMinimized &&
+                      !legacySettings.trayEnabled &&
                       legacySettings.error.empty(),
                   "startup snapshot must read legacy settings before migration");
             persistence::Persistence store;

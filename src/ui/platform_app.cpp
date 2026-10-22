@@ -7,6 +7,7 @@
 #include <chrono>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <format>
 #include <functional>
@@ -25,6 +26,7 @@
 #endif
 
 #include "ui.h"
+#include "app.h"
 #include "page_layout.h"
 #include "app_resources.h"
 #include "proxies_model.h"
@@ -84,8 +86,7 @@ void AndroidPreparePlatformDataDirectory(
 }
 
 [[huxerui::composable]] huxerui::View AndroidApplicationEffects(
-    const huxerui::ApplicationHandle&, const huxerui::ThemeSpec&,
-    bool, bool, bool) {
+    const huxerui::ApplicationHandle&, const huxerui::ThemeSpec&, bool) {
     return {};
 }
 
@@ -108,13 +109,19 @@ void AndroidPreparePlatformDataDirectory(
 #else
 
 struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
+    explicit DesktopTrayRuntime(huxerui::ApplicationHandle app)
+        : application(std::move(app)), tray(application->SystemTray()) {}
+
     std::optional<huxerui::ApplicationHandle> application;
     std::optional<huxerui::WindowHandle> window;
     std::optional<CoreControl> control;
+    std::optional<huxerui::TaskScope> tasks;
+    std::shared_ptr<SettingsModel> settingsModel;
+    std::shared_ptr<AppRuntimeServices> runtimeServices;
+    huxerui::SystemTrayHandle tray;
     std::function<void()> refresh;
     bool started = false;
-    bool startupVisibilityHandled = false;
-    bool retired = false;
+    bool retired = true;
     bool exitRequested = false;
     std::uint64_t windowGeneration = 0;
     std::string presentationKey;
@@ -141,9 +148,9 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
 
     void ShowWindow() {
         if (!application) return;
-        bool opening = retired;
+        const bool opening = retired || !window;
         try {
-            if (retired) {
+            if (opening) {
                 ++windowGeneration;
                 retired = false;
                 window = application->OpenWindow(huxerui::WindowOptions{
@@ -153,7 +160,6 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
                     .chrome_mode = huxerui::WindowChromeMode::Custom,
                     .title_bar_height = kDesktopTitleBarHeight,
                 });
-                opening = false;
                 presentationKey.clear();
             }
             if (window) {
@@ -164,6 +170,127 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
             if (opening) retired = true;
             stream::logApplication("error", std::string{"唤出主窗口失败："} + error.what());
         }
+    }
+
+    void OpenHiddenWindow() {
+        if (!application || window) return;
+        window = application->OpenWindow(huxerui::WindowOptions{
+            .title = "Clash-Flux",
+            .initial_size = {1080.0F, 720.0F},
+            .minimum_size = huxerui::Size{320.0F, 480.0F},
+            .chrome_mode = huxerui::WindowChromeMode::Custom,
+            .title_bar_height = kDesktopTitleBarHeight,
+        });
+        retired = false;
+        window->Hide();
+    }
+
+    void RequestExit() {
+        if (exitRequested || !application) return;
+        exitRequested = true;
+        refresh = {};
+        instance::markClosing();
+        tray.Hide();
+        if (window) window->Hide();
+        const huxerui::ApplicationHandle app = *application;
+        auto coreStopped = std::make_shared<std::atomic_bool>(false);
+        auto cleanupFinished = std::make_shared<std::atomic_bool>(false);
+        if (!tasks) return;
+        tasks->Launch(
+            [app, coreStopped, cleanupFinished]() -> huxerui::Task<void> {
+            try {
+                bool stopped = co_await RunOnTaskThread([] {
+                    store::vpnStore().shutdown();
+                    return store::coreStore().stopCore();
+                });
+                if (!stopped) {
+                    stopped = co_await RunOnTaskThread([] {
+                        return store::coreStore().stopCore();
+                    });
+                    if (!stopped) stream::logApplication(
+                        "error", "退出时停止内核失败：" +
+                            store::coreStore().snapshot().lastError);
+                }
+                coreStopped->store(stopped);
+                auto& database = clashflux::persistence::persistence();
+                const bool settingsSaved = co_await database.flushSettings();
+                const bool profilesSaved = co_await database.flushProfiles();
+                if (!settingsSaved || !profilesSaved) {
+                    stream::logApplication("error", "退出前落库失败：" +
+                        (database.lastError().empty()
+                            ? std::string{"未知原因"} : database.lastError()));
+                }
+                cleanupFinished->store(true);
+                app.Quit();
+            } catch (const std::exception& error) {
+                stream::logApplication("error", std::string{"托盘退出清理异常："} + error.what());
+                cleanupFinished->store(true);
+                app.Quit();
+            } catch (...) {
+                stream::logApplication("error", "托盘退出清理未知异常");
+                cleanupFinished->store(true);
+                app.Quit();
+            }
+        });
+        std::thread([coreStopped, cleanupFinished] {
+            std::this_thread::sleep_for(std::chrono::seconds(3));
+            if (!coreStopped->load()) store::coreStore().stopCore();
+            while (!cleanupFinished->load())
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::seconds(3));
+            std::_Exit(0);
+        }).detach();
+    }
+
+    void RefreshBasicTray() {
+        if (exitRequested) return;
+        if (refresh) {
+            refresh();
+            return;
+        }
+        if (!tray.IsAvailable() || !control) return;
+        const bool running = control->Running();
+        const bool proxyEnabled = control->SystemProxyEnabled();
+        const bool tunEnabled = control->TunEnabled();
+        const bool busy = control->Busy();
+        const SettingsView settings = settingsModel
+            ? settingsModel->view.Get() : SettingsView{};
+        const bool english = settings.ready ? settings.language == "en"
+            : runtimeServices && runtimeServices->startupLanguage == "en";
+        const std::string key = std::format("{}:{}:{}:{}:{}", running, proxyEnabled,
+                                            tunEnabled, busy, english);
+        if (key == presentationKey) return;
+        std::vector<huxerui::MenuEntry> entries;
+        const auto self = shared_from_this();
+        entries.push_back(huxerui::MenuItem(english ? "Open main window" : "显示主窗口",
+                                            [self] { self->ShowWindow(); }));
+        entries.push_back(huxerui::MenuSection{});
+        entries.push_back(huxerui::MenuItem(
+            running ? (english ? "Stop core" : "停止内核")
+                    : (english ? "Start core" : "启动内核"), [self] {
+                if (self->control) self->MenuControl().Run({
+                    .action = self->control->Running() ? CoreAction::Stop : CoreAction::Start});
+            }).Checked(running).Enabled(!busy));
+        entries.push_back(huxerui::MenuItem(english ? "System proxy" : "系统代理", [self] {
+            if (self->control) self->MenuControl().Run({
+                .action = CoreAction::SystemProxy,
+                .enabled = !self->control->SystemProxyEnabled()});
+        }).Checked(proxyEnabled).Enabled(!busy));
+        entries.push_back(huxerui::MenuItem(english ? "TUN mode" : "TUN 模式", [self] {
+            if (self->control) self->MenuControl().Run({
+                .action = CoreAction::Tun,
+                .enabled = !self->control->TunEnabled()});
+        }).Checked(tunEnabled).Enabled(!busy));
+        entries.push_back(huxerui::MenuSection{});
+        entries.push_back(huxerui::MenuItem(english ? "Quit" : "退出",
+                                            [self] { self->RequestExit(); }));
+        huxerui::ImageVariant icon = app::images::tray_default;
+        const CoreView view = control->model->view.Get();
+        if (running && view.TunActive()) icon = app::images::tray_tun;
+        else if (running && view.systemProxyActive) icon = app::images::tray_system_proxy;
+        tray.Show(std::move(icon), huxerui::SystemTrayOptions{
+            .tooltip = "Clash-Flux", .menu = std::move(entries)});
+        presentationKey = std::string{key};
     }
 
     void HideWindow(bool lightweight) {
@@ -178,7 +305,84 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
 };
 
 void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
-    context.Provide(std::make_shared<DesktopTrayRuntime>());
+#if defined(CLASHFLUX_IOS)
+    context.Provide(std::make_shared<DesktopTrayRuntime>(huxerui::UseApplication()));
+    return;
+#else
+    auto runtime = std::make_shared<DesktopTrayRuntime>(huxerui::UseApplication());
+    context.Provide(runtime);
+    const huxerui::TaskScope tasks = huxerui::UseApplicationTaskScope();
+    const auto runtimeServices = huxerui::UseService<AppRuntimeServices>();
+    auto coreModel = huxerui::UseService<CoreModel>();
+    auto settingsModel = huxerui::UseService<SettingsModel>();
+    runtime->tasks = tasks;
+    runtime->runtimeServices = runtimeServices;
+    runtime->settingsModel = settingsModel;
+    const std::weak_ptr<DesktopTrayRuntime> weak = runtime;
+    CoreControl control;
+    control.model = coreModel;
+    control.tasks = tasks;
+    control.presentationAvailable = [] { return false; };
+    control.onHeadlessFailure = [runtimeServices, weak](bool, const std::string& error) {
+        const std::string message = error.empty() ? "托盘内核操作失败" : error;
+        runtimeServices->startupError = message;
+        stream::logApplication("error", message);
+        if (const auto trayRuntime = weak.lock()) trayRuntime->ShowWindow();
+    };
+    runtime->control = std::move(control);
+    runtimeServices->showWindow = [weak] {
+        if (const auto trayRuntime = weak.lock()) trayRuntime->ShowWindow();
+    };
+
+    const auto startupSettings = persistence::readStartupSettings(cfg::databaseFile());
+    if (!startupSettings.error.empty()) {
+        std::fprintf(stderr, "Clash-Flux 启动失败：%s；原数据库与订阅文件已保留\n",
+                     startupSettings.error.c_str());
+        cli::setPendingExitCode(1);
+        runtime->application->Quit();
+        return;
+    }
+    runtimeServices->startupSettingsLoaded = true;
+    runtimeServices->startupThemeMode = startupSettings.themeMode;
+    runtimeServices->startupThemeColor = startupSettings.themeColor;
+    runtimeServices->startupLanguage = startupSettings.language;
+    runtimeServices->startupTrayEnabled = startupSettings.trayEnabled;
+
+    const auto& startupActivation = runtime->application->StartupActivation();
+    const bool startupUrl = startupActivation &&
+        std::holds_alternative<huxerui::UrlActivation>(*startupActivation);
+    runtime->tray.OnActivate([runtime] { runtime->ShowWindow(); });
+
+    const bool commandMode = cli::runtimeCommandMode();
+    const bool trayCanStartHidden = !commandMode && !startupUrl &&
+        startupSettings.trayEnabled && runtime->tray.IsAvailable();
+    if (commandMode) {
+        runtime->OpenHiddenWindow();
+    } else if (!trayCanStartHidden) {
+        runtime->ShowWindow();
+    }
+
+    if (trayCanStartHidden) runtime->RefreshBasicTray();
+    runtime->started = true;
+    if (trayCanStartHidden) StartDesktopWindowlessRuntime();
+
+    const auto tray = runtime->tray;
+    const bool initialTrayEnabled = startupSettings.trayEnabled;
+    tasks.Launch([runtime, tray, settingsModel,
+                            initialTrayEnabled]() -> huxerui::Task<void> {
+        for (;;) {
+            if (runtime->exitRequested) co_return;
+            if (instance::consumeActivation()) runtime->ShowWindow();
+            const SettingsView settings = settingsModel->view.Get();
+            const bool enabled = settings.ready ? settings.trayEnabled : initialTrayEnabled;
+            if (runtime->retired && (!tray.IsAvailable() || !enabled))
+                runtime->ShowWindow();
+            if (enabled && tray.IsAvailable()) runtime->RefreshBasicTray();
+            else tray.Hide();
+            co_await huxerui::Delay(std::chrono::duration<double>{0.25});
+        }
+    });
+#endif
 }
 
 void DesktopPreparePlatformDataDirectory(
@@ -294,7 +498,7 @@ struct TrayMenuText {
 [[huxerui::composable]] huxerui::View DesktopApplicationEffects(
     const huxerui::ApplicationHandle& application,
     const huxerui::ThemeSpec& rootSpec,
-    bool startupTrayEnabled, bool startupMinimized, bool startupLightweight) {
+    bool startupTrayEnabled) {
     const huxerui::WindowHandle window = huxerui::UseWindow();
     // 策略组快照 / 内核与接管状态的全局唯一来源（见 *_model.h）：托盘菜单只读。
     const auto proxiesModel = huxerui::UseService<ProxiesModel>();
@@ -302,6 +506,7 @@ struct TrayMenuText {
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     const auto settingsModel = huxerui::UseService<SettingsModel>();
     const auto trayRuntime = huxerui::UseService<DesktopTrayRuntime>();
+    const auto runtimeServices = huxerui::UseService<AppRuntimeServices>();
     const auto startupTasks = huxerui::UseApplicationTaskScope();
     const huxerui::SystemTrayHandle tray = application.SystemTray();
     const bool trayAvailable = tray.IsAvailable();
@@ -313,6 +518,17 @@ struct TrayMenuText {
     auto dialog = huxerui::UseDialog();
     auto toast = huxerui::UseToast();
     const bool darkTheme = IsDarkTheme(rootSpec);
+
+    huxerui::Lifecycle(
+        [runtimeServices, toast] {
+            const std::string error = runtimeServices->startupError.Get();
+            if (!error.empty() && !runtimeServices->startupErrorReported) {
+                runtimeServices->startupErrorReported = true;
+                toast.Show(error);
+            }
+            return [] {};
+        },
+        runtimeServices->startupError);
 
     huxerui::Lifecycle(
         [darkTheme] {
@@ -529,31 +745,6 @@ struct TrayMenuText {
         },
         0);
 
-    // 用首帧快照决定初始窗口可见性，不等设置 hydrate 后再隐藏造成窗口闪现。
-    // 只在壳层首次挂载时处理一次；伪 CLI 模式同样不渲染窗口。
-    huxerui::Lifecycle(
-        [window, tray, startupTasks, trayRuntime, startupTrayEnabled,
-         startupMinimized, startupLightweight] {
-            const bool commandMode = cli::runtimeCommandMode();
-            if (!trayRuntime->startupVisibilityHandled) {
-                trayRuntime->startupVisibilityHandled = true;
-                if (commandMode) {
-                    window.Hide();
-                } else if (tray.IsAvailable() && startupTrayEnabled && startupMinimized) {
-                    if (startupLightweight) {
-                        startupTasks.Launch([trayRuntime]() -> huxerui::Task<void> {
-                            co_await huxerui::Delay(std::chrono::duration<double>{0});
-                            if (trayRuntime->refresh) trayRuntime->refresh();
-                            trayRuntime->HideWindow(true);
-                        });
-                    } else {
-                        window.Hide();
-                    }
-                }
-            }
-            return [] {};
-        },
-        0);
     return {};
 }
 

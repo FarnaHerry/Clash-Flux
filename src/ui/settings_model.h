@@ -31,7 +31,6 @@ struct SettingsView {
     bool autoStart = false;       // app.autostart
     bool autoRun = false;         // app.auto_run
     bool trayEnabled = true;      // tray.enabled
-    bool startMinimized = false;  // tray.start_minimized
     bool lightweightTray = false; // tray.lightweight
     std::string mixedPort = "7899"; // core.mixed_port
     std::string httpPort;         // core.http_port; empty disables the inbound

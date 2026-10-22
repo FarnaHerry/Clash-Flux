@@ -239,19 +239,28 @@ void CoreControl::Run(CoreCommand command) const {
             return;
         }
         if (result.status == CoreApplyStatus::PermissionDenied) {
-            control.window.Show();
-            control.window.Activate();
+            if (!control.window || !control.dialog || !control.toast) {
+                if (control.onHeadlessFailure)
+                    control.onHeadlessFailure(true, result.error);
+                return;
+            }
+            control.window->Show();
+            control.window->Activate();
 #if defined(__linux__) || defined(_WIN32)
             if (!control.model->view.Get().serviceInstalled) {
-                InstallDesktopService(control.model, control.tasks, control.toast);
+                InstallDesktopService(control.model, control.tasks, *control.toast);
                 return;
             }
 #endif
-            ShowTunGuideDialog(control.dialog, control.clipboard, control.toast,
+            ShowTunGuideDialog(*control.dialog, control.clipboard, *control.toast,
                                control.textColor, control.hintColor);
         } else if (result.status != CoreApplyStatus::Applied) {
-            control.toast.Show(result.error.empty() ? CoreActionFailure(action)
-                                                    : huxerui::StringVariant(result.error));
+            if (control.toast) {
+                control.toast->Show(result.error.empty() ? CoreActionFailure(action)
+                                                         : huxerui::StringVariant(result.error));
+            } else if (control.onHeadlessFailure) {
+                control.onHeadlessFailure(false, result.error);
+            }
         }
     });
 }
@@ -1321,8 +1330,6 @@ void DriveSettingsModel(huxerui::TaskScope tasks,
             next.autoStart = core.setting("app.autostart", "false") == "true";
             next.autoRun = core.setting("app.auto_run", "false") == "true";
             next.trayEnabled = core.setting("tray.enabled", "true") == "true";
-            next.startMinimized =
-                core.setting("tray.start_minimized", "false") == "true";
             next.lightweightTray =
                 core.setting("tray.lightweight", "false") == "true";
             next.mixedPort = core.setting("core.mixed_port", "7899");

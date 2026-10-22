@@ -1,6 +1,8 @@
 // Include after core_model.h (which requires the store module).
 #pragma once
 
+#include <optional>
+
 #include "core_model.h"
 
 namespace clashflux::ui {
@@ -10,9 +12,9 @@ namespace clashflux::ui {
 struct CoreControl {
     std::shared_ptr<CoreModel> model;
     huxerui::TaskScope tasks;
-    huxerui::ToastHandle toast;
-    huxerui::DialogHandle dialog;
-    huxerui::WindowHandle window;
+    std::optional<huxerui::ToastHandle> toast;
+    std::optional<huxerui::DialogHandle> dialog;
+    std::optional<huxerui::WindowHandle> window;
     std::shared_ptr<huxerui::Clipboard> clipboard;
     huxerui::Color textColor;
     huxerui::Color hintColor;

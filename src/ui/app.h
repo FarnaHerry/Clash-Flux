@@ -9,6 +9,7 @@ namespace clashflux::ui {
 struct ProfilesModel;
 struct AppRuntimeServices;
 huxerui::View AppRoot();
+void StartDesktopWindowlessRuntime();
 void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
                                  std::shared_ptr<ProfilesModel> profiles,
                                  std::shared_ptr<AppRuntimeServices> runtimeServices);

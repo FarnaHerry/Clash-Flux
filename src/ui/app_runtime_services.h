@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
+#include <string>
 #include <huxerui/state.h>
 
 namespace clashflux::ui {
@@ -21,6 +23,14 @@ struct AppRuntimeServices {
     bool corePumpStarted = false;
     bool vpnPumpStarted = false;
     bool settingsPumpStarted = false;
+    std::function<void()> showWindow;
+    bool startupSettingsLoaded = false;
+    int startupThemeMode = 1;
+    std::string startupThemeColor = "blue";
+    std::string startupLanguage = "system";
+    bool startupTrayEnabled = true;
+    huxerui::State<std::string> startupError{std::string{}};
+    bool startupErrorReported = false;
 };
 
 } // namespace clashflux::ui

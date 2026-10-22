@@ -157,6 +157,11 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   不持续拉回当前选中项；生产组件与交互测试见 `section_tabs.cpp` / `test_page_transition.cpp`。
 - 桌面关闭按钮只由 `tray.enabled` 控制：启用且系统托盘可用时隐藏到托盘，否则确认退出。
   不再读取旧 `tray.close_behavior`，退出确认框不提供最小化到托盘操作。
+- 桌面 GUI 启动时，如果 `tray.enabled` 且系统托盘可用，设置
+  `AppOptions::create_initial_window = false`，在 application hook 启动持久化、应用级状态泵、
+  服务版本同步与内核自启；托盘激活再通过 `ApplicationHandle::OpenWindow()` 创建主窗口。
+  托盘不可用或被设置关闭时直接创建窗口。伪 CLI 仍创建隐藏窗口执行运行时命令；订阅 URL 激活打开窗口并只预填导入表单。
+  `tray.start_minimized` 是兼容遗留设置，保留数据库值但不再读取或显示开关。
 - **不要在界面里加「内核未运行 / 请到设置页启动内核」这类常驻提示**：内核启停由首页
   悬浮按钮表达，用户自己清楚当前状态；这类横幅只是噪音（代理页顶部那条已删除，
   以后不要再加回来）。仅保留真正需要用户处置的瞬时反馈（操作失败 toast 等）。
@@ -393,9 +398,10 @@ Medium/Expanded 右侧）展示分组抽屉，不按桌面/手机平台硬编码
 
 ### 首帧启动配置读取
 
-启动快照是首帧唯一允许同步读取的持久化配置：`AppRoot` 在构建任何可见内容前通过
-`persistence::readStartupSettings` 读取一次 `ui.theme_mode`、`ui.theme_color`、`ui.language`、
-`tray.enabled` 与 `tray.start_minimized`，避免先画默认主题或显示托盘后再异步纠正。
+启动快照是启动阶段唯一允许同步读取的持久化配置：桌面 application hook 在创建托盘或首窗前通过
+`persistence::readStartupSettings` 读取一次 `ui.theme_mode`、`ui.theme_color`、`ui.language` 与
+`tray.enabled`；`AppRoot` 复用同一快照。Android 等由平台先创建窗口的入口由 `AppRoot` 读取。
+这些值避免先画默认主题或显示托盘后再异步纠正。
 新增必须在 SettingsModel hydrate 前确定的首帧外观或平台副作用设置时，统一加入此快照；
 其余设置等待 SettingsModel ready 后使用；启动内核等慢操作要等模型 ready，不扩大同步读取范围。
 该读取使用临时只读连接，不创建文件、不迁移 schema、不改 journal、不 hydrate 或修改订阅缓存；

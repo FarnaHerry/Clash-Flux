@@ -66,8 +66,9 @@ Clash-Flux 必须重新运行 `cmake --build build --target clash-flux`、`./run
 `AppOptions::create_initial_window`，默认仍自动创建首窗；设为 `false` 时，Windows、Linux、
 macOS 跳过首窗创建及界面组合，应用级托盘、任务、定时器和事件循环继续运行，后续复用
 `ApplicationHandle::OpenWindow()` 创建窗口。`extra_windows` 独立处理，手机、Web 与嵌入式
-宿主维持平台驱动的窗口生命周期。Clash-Flux 本次只升级固定依赖，尚未将现有的
-「启动时隐藏到托盘」迁移到延迟创建首窗的流程。
+宿主维持平台驱动的窗口生命周期。Clash-Flux 桌面现已采用延迟创建首窗流程：托盘启用且可用时，
+启动进入托盘，由托盘激活创建主窗口；托盘不可用时直接创建主窗口。应用级持久化、状态泵、
+服务版本同步与内核自启仍在无窗口启动期间运行。
 
 框架在 Windows/MSVC Release 下完成共享库、独立头文件与多窗口示例构建；公共 CTest
 4/4、Windows 平台 CTest 和新增原生启动测试四种场景通过（24 assertions），模块导出检查

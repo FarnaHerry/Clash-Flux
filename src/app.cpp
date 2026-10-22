@@ -28,6 +28,9 @@ const huxerui::Application application{
             .chrome_mode = huxerui::WindowChromeMode::Custom,
             .title_bar_height = clashflux::ui::kDesktopTitleBarHeight,
         },
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+        .create_initial_window = false,
+#endif
         .application_hooks = {
             huxerui::camera::Install,
             clashflux::ui::InstallAppHttpClient,

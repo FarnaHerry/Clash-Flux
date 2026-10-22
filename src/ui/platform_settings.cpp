@@ -413,15 +413,6 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                         [on](SettingsView& view) { view.trayEnabled = on; });
                 }), false, app::images::tray),
         SettingSwitchRow(
-            Localized("启动时隐藏到托盘"), Localized("下次启动不显示主窗口，经托盘唤出"),
-            huxerui::Switch(settings.startMinimized)
-                .OnChanged([settingsModel](bool on) {
-                    store::coreStore().setSetting(
-                        "tray.start_minimized", on ? "true" : "false");
-                    settingsModel->Update(
-                        [on](SettingsView& view) { view.startMinimized = on; });
-                }), false, app::images::visibility_off),
-        SettingSwitchRow(
             Localized("轻量级托盘模式"),
             Localized("隐藏到托盘时销毁主窗口和界面，唤出时重新创建"),
             huxerui::Switch(settings.lightweightTray)

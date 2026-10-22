@@ -38,11 +38,13 @@ import clashflux.store.core;
 import clashflux.store.profiles;
 import clashflux.store.vpn;
 import clashflux.persistence;
+import clashflux.service;
 import clashflux.stream;
 
 // CoreView 含 store::CoreSnapshot、ProfilesModel 含 db::Profile，必须在模块导入
 // 之后（同 profiles_cache.h）。
 #include "core_model.h"
+#include "core_control.h"
 #include "profiles_model.h"
 #include "settings_model.h"
 #include "vpn_model.h"
@@ -988,8 +990,156 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
                                  std::shared_ptr<AppRuntimeServices> runtimeServices) {
     context.OnActivation([profiles, runtimeServices](huxerui::ApplicationActivation activation) {
         QueueProfileActivation(activation, profiles, runtimeServices);
+        if (std::holds_alternative<huxerui::UrlActivation>(activation) &&
+            runtimeServices->showWindow) {
+            runtimeServices->showWindow();
+        }
     });
 }
+
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+void StartDesktopWindowlessRuntime() {
+    const auto runtimeServices = huxerui::UseService<AppRuntimeServices>();
+    if (runtimeServices->persistenceStarted) return;
+
+    const huxerui::ApplicationHandle application = huxerui::UseApplication();
+    const huxerui::TaskScope tasks = huxerui::UseApplicationTaskScope();
+    const auto profilesModel = huxerui::UseService<ProfilesModel>();
+    const auto proxiesModel = huxerui::UseService<ProxiesModel>();
+    const auto coreModel = huxerui::UseService<CoreModel>();
+    const auto vpnModel = huxerui::UseService<VpnModel>();
+    const auto settingsModel = huxerui::UseService<SettingsModel>();
+    runtimeServices->persistenceStarted = true;
+
+    tasks.Launch([=]() -> huxerui::Task<void> {
+        try {
+            auto& database = clashflux::persistence::persistence();
+            if (!database.ready() &&
+                !co_await database.open(cfg::databaseFile(), cfg::profilesDir())) {
+                stream::logApplication("error", database.lastError());
+                std::fprintf(stderr, "Clash-Flux 启动失败：%s；原数据库与订阅文件已保留\n",
+                             database.lastError().c_str());
+                CliSetPendingExitCode(1);
+                application.Quit();
+                co_return;
+            }
+
+            auto& coreStore = store::coreStore();
+            coreStore.init();
+            coreStore.ensureSecret();
+            profilesModel->RequestSync();
+            settingsModel->RequestSync();
+            CliStartCommandServer();
+
+            if (!runtimeServices->profilesPumpStarted) {
+                runtimeServices->profilesPumpStarted = true;
+                DriveProfilesModel(tasks, profilesModel);
+            }
+            if (!runtimeServices->proxiesPumpStarted) {
+                runtimeServices->proxiesPumpStarted = true;
+                DriveProxiesModel(tasks, proxiesModel);
+            }
+            if (!runtimeServices->corePumpStarted) {
+                runtimeServices->corePumpStarted = true;
+                DriveCoreModel(tasks, coreModel);
+            }
+            if (!runtimeServices->vpnPumpStarted) {
+                runtimeServices->vpnPumpStarted = true;
+                DriveVpnModel(tasks, vpnModel);
+            }
+            if (!runtimeServices->settingsPumpStarted) {
+                runtimeServices->settingsPumpStarted = true;
+                DriveSettingsModel(tasks, settingsModel);
+            }
+            if (!runtimeServices->profileRefreshStarted) {
+                runtimeServices->profileRefreshStarted = true;
+                tasks.Launch([]() -> huxerui::Task<void> {
+                    for (;;) {
+                        co_await huxerui::Delay(std::chrono::duration<double>{30.0});
+                        co_await RunOnTaskThread([] {
+                            store::profilesStore().refreshDue();
+                        });
+                    }
+                });
+            }
+            if (!runtimeServices->cliWatcherStarted) {
+                runtimeServices->cliWatcherStarted = true;
+                StartCliRequestWatcher(tasks, profilesModel);
+            }
+
+            // Claim startup service maintenance before yielding so a window opened
+            // during bootstrap cannot start a second maintenance operation.
+            coreModel->startupServiceMaintenanceStarted = true;
+            coreModel->serviceChecking = true;
+            const bool startupAutoRun =
+                coreStore.setting("app.auto_run", "false") == "true";
+            const auto maintenance = co_await RunOnTaskThread([] {
+                auto& core = store::coreStore();
+                core.init();
+                core.releaseStaleOwnedSystemProxy();
+                if (!cfg::singboxBinary().empty() && !core.stopCore()) {
+                    return service::StartupResult{
+                        .ready = false,
+                        .error = core.snapshot().lastError};
+                }
+                return core.synchronizeService();
+            });
+            CoreView initialCore = co_await RunOnTaskThread([] {
+                return ReadCoreView(true, false);
+            });
+            coreModel->Update([initialCore = std::move(initialCore)](CoreView& view) {
+                view = initialCore;
+            });
+            coreModel->serviceChecking = false;
+            coreModel->RequestRefresh();
+            if (maintenance.ready && startupAutoRun && !cfg::singboxBinary().empty()) {
+                CoreControl control;
+                control.model = coreModel;
+                control.tasks = tasks;
+                control.presentationAvailable = [] { return false; };
+                control.onHeadlessFailure = [runtimeServices](bool, const std::string& error) {
+                    const std::string message = error.empty() ? "启动内核失败" : error;
+                    runtimeServices->startupError = message;
+                    stream::logApplication("error", message);
+                    if (runtimeServices->showWindow) runtimeServices->showWindow();
+                };
+                control.Run({.action = CoreAction::Start});
+            } else if (!maintenance.ready) {
+                const std::string message = maintenance.error.empty()
+                    ? "启动服务检查/更新失败" : "启动服务检查/更新失败：" + maintenance.error;
+                runtimeServices->startupError = message;
+                stream::logApplication("warning", message);
+                if (runtimeServices->showWindow) runtimeServices->showWindow();
+            }
+
+            bool storageFailureReported = false;
+            for (;;) {
+                co_await huxerui::Delay(std::chrono::duration<double>{1.0});
+                co_await ServeCliRequests(profilesModel);
+                const bool settingsFlushed = co_await database.flushSettings();
+                const bool profilesFlushed = co_await database.flushProfiles();
+                if (settingsFlushed && profilesFlushed) {
+                    storageFailureReported = false;
+                } else if (!storageFailureReported) {
+                    storageFailureReported = true;
+                    stream::logApplication(
+                        "error",
+                        "设置/订阅未能落库：" + (database.lastError().empty()
+                            ? std::string{"未知原因"} : database.lastError()));
+                }
+            }
+        } catch (const std::exception& error) {
+            stream::logApplication("error", std::string{"托盘启动任务异常："} + error.what());
+            CliSetPendingExitCode(1);
+            application.Quit();
+        } catch (...) {
+            stream::logApplication("error", "托盘启动任务未知异常");
+            CliSetPendingExitCode(1);
+            application.Quit();
+        }
+    });
+}
+#endif
 
 [[huxerui::composable]] huxerui::View AppRoot() {
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
@@ -999,8 +1149,17 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
 
     // 阻塞首帧构建，集中读取首帧外观和启动副作用所需配置。快照只取一次，
     // 不在重组时读磁盘；临时连接只读，设置/订阅的 ORM hydrate 仍走异步流程。
-    static const auto startupSettings =
-        clashflux::persistence::readStartupSettings(cfg::databaseFile());
+    static const auto startupSettings = [] {
+        const auto runtimeServices = huxerui::UseService<AppRuntimeServices>();
+        if (!runtimeServices->startupSettingsLoaded)
+            return clashflux::persistence::readStartupSettings(cfg::databaseFile());
+        return clashflux::persistence::StartupSettings{
+            .themeMode = runtimeServices->startupThemeMode,
+            .themeColor = runtimeServices->startupThemeColor,
+            .language = runtimeServices->startupLanguage,
+            .trayEnabled = runtimeServices->startupTrayEnabled,
+        };
+    }();
     if (!startupSettings.error.empty()) {
         std::fprintf(stderr, "Clash-Flux 启动失败：%s；原数据库与订阅文件已保留\n", startupSettings.error.c_str());
         CliSetPendingExitCode(1);
@@ -1069,7 +1228,7 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
         return [] {};
     }, profilesModel->linkError);
     huxerui::Lifecycle([tasks, profilesModel, navPage, pagerPage, linkWindow, linkToast] {
-        profile_link::SetWakeHandler([tasks, profilesModel, navPage, pagerPage, linkWindow, linkToast] {
+        auto wake = [tasks, profilesModel, navPage, pagerPage, linkWindow, linkToast] {
             tasks.Post([profilesModel, navPage, pagerPage, linkWindow, linkToast] {
                 auto incoming = profile_link::TakePending();
                 if (incoming.empty()) return;
@@ -1086,7 +1245,11 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
                 pagerPage = 2;
                 linkWindow.Activate();
             });
-        });
+        };
+        profile_link::SetWakeHandler(wake);
+        // A startup activation may enqueue its URL before this window scope is
+        // mounted. Drain that queue once the window installs its wake handler.
+        wake();
         return [] { profile_link::SetWakeHandler({}); };
     }, 0);
     huxerui::Lifecycle(
@@ -1278,9 +1441,7 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
 
     huxerui::View applicationEffects =
         CLASHFLUX_APPLICATION_EFFECTS(application, rootSpec,
-                                      startupSettings.trayEnabled,
-                                      startupSettings.startMinimized,
-                                      startupSettings.lightweightTray);
+                                      startupSettings.trayEnabled);
     huxerui::View mainRow = CLASHFLUX_MAIN_CONTENT(
         navPage, pagerPage, themeMode, rootIslands, rootSpec, profilesCache);
     huxerui::View content = CLASHFLUX_APP_CONTENT(std::move(mainRow), rootSpec);
