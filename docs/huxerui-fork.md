@@ -4,7 +4,7 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `a954965fc1f969067406979d239c2a3e2dae8cfd`，各平台 CI 共用
+Clash-Flux 当前固定 `9333c98b87fb4c6ac924f905d7e6b42c385b7835`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
@@ -12,14 +12,15 @@ Clash-Flux 当前固定 `a954965fc1f969067406979d239c2a3e2dae8cfd`，各平台 C
 ## 补丁归属
 
 此固定提交包含 acgu 的五个补丁提交、28 个未提交文件快照、Android 宿主默认焦点高亮修复，
-以及 Clash-Flux 的十项框架修复：拖动预览跟随抓取点、Pager 反向切换、隐藏虚拟页布局、
+以及 Clash-Flux 的十一项框架修复：拖动预览跟随抓取点、Pager 反向切换、隐藏虚拟页布局、
 Linux 窗口帧生命周期、Objective-C++ 的 WindowTitleBar 聚合初始化兼容、
 composition 锚点在结构替换间转移（响应式断点切换不再抛 presentation anchor
 logic_error）、Windows 自定义标题栏窗口的 DWM 圆角、Windows 安装器引擎错误
 提示移除"忽略继续"（防止卸载失败被忽略后新旧两套程序文件并存）、Windows 安装器
 命令驱动运行修复（命令式安装/卸载绕过新版本闩锁、不阻塞收尾并按终端状态映射
 退出码、保留引擎停止与 bundle 注销，修复升级时每个陈旧 bundle 注册弹一页且
-注册跨版本累积的根因）与 iOS 链接闭包修复（link.rsp 解析 app 目标自有传递
+注册跨版本累积的根因）、Windows 安装器 embedded/quiet 无窗执行与退出等待修复，
+以及 iOS 链接闭包修复（link.rsp 解析 app 目标自有传递
 依赖 + IOS 平台补 CoreMedia 框架声明）。
 这些修复已从应用 `cmake/patches/` 和 CMake/CI 应用步骤中移除，配置应用不会修改框架源码。
 
@@ -47,7 +48,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout a954965fc1f969067406979d239c2a3e2dae8cfd
+git -C third_party/huxerui checkout 9333c98b87fb4c6ac924f905d7e6b42c385b7835
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
@@ -61,6 +62,15 @@ Clash-Flux 必须重新运行 `cmake --build build --target clash-flux`、`./run
 同源约束，桌面门禁和 iOS 暂缓政策保持不变。
 
 ## 验证边界
+
+2026-10-22 固定版本更新到 `9333c98`：Windows Burn 安装器在 embedded 与 quiet 模式下
+不创建 HuxerUI 窗口，直接执行检测、计划、应用和退出；普通完整界面保持原样。
+同时修复 UI 线程调用 Burn Quit 时的退出等待，并保留引擎错误与文件占用的非交互应答。
+应用 MSI 将 `RemoveExistingProducts` 排在 `InstallInitialize` 之后，使旧版移除加入 MSI 回滚事务。
+HuxerUI Windows 测试与应用独立固定源码构建的安装器目标通过；应用版本命令返回 0，
+桌面必跑回归 15/17 通过。`windows_service` 因当前机器服务管道不可用而失败，`vpn`
+仍以 `0xc0000409` 异常退出，未将两项从门禁移除。
+旧版本已缓存的 Bundle 不会因新框架发布而改变，仍需 Windows 实机完成跨版本升级复核。
 
 2026-10-22 固定版本更新到 `a954965`：新增桌面应用选项
 `AppOptions::create_initial_window`，默认仍自动创建首窗；设为 `false` 时，Windows、Linux、

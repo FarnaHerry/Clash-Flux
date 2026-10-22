@@ -1,7 +1,8 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Clash-Flux" Manufacturer="dev.farna.clashflux" Version="@HUXERUI_WINDOWS_PROJECT_VERSION@"
            UpgradeCode="@HUXERUI_WINDOWS_MSI_UPGRADE_CODE@" Scope="perMachine">
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Clash-Flux is already installed." />
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of Clash-Flux is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <Icon Id="ClashFluxApplicationIcon" SourceFile="@HUXERUI_WINDOWS_ICON_FILE@" />
     <Property Id="ARPPRODUCTICON" Value="ClashFluxApplicationIcon" />
