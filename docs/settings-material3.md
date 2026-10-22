@@ -25,7 +25,7 @@
 
 2026-10-04 收敛标题布局：Linux 隔离数据目录中逐页启动首页、订阅、代理、规则、
 连接、日志、设置并核对标题位置；分页交互回归 `page_transition` 通过。
-下方设置页截图已更新为共用标题布局。本轮未执行手机或其它桌面平台实机验收。
+本轮未执行手机或其它桌面平台实机验收。
 
 设置页局部安装 HuxerUI MaterialTheme，采用框架 Switch、Outlined TextField、
 胶囊 SegmentedButton 与 Select；主题保留分段选择，语言和关闭窗口行为用下拉，
@@ -55,10 +55,3 @@ MaterialPreference / MaterialSettingsGroup / MaterialSettingsSurface 在
 - Linux `./run.sh` 使用独占 XDG_DATA_HOME 和 X11 后端启动，核对深色英文/浅色中文
   实际界面。测试主题/语言只在停止的隔离夹具内预置，未使用用户数据库。
   截图为 GUI 视觉检查，不把它写成 TUN/系统代理/远端线路验收。
-- `git diff --check`；本批未执行 Windows/macOS 或 iOS 构建。
-
-构建与回归日志前缀 `/tmp/clash-flux-settings-m3-`。预览：
-
-![浅色中文设置页](../design-assets/settings-material3-light-zh.png)
-
-![深色英文设置页](../design-assets/settings-material3-dark-en.png)

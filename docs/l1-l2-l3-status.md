@@ -394,8 +394,8 @@ build/test_singbox docs/examples/ssh-2026-10-02.yaml \
   /tmp/clash-flux-l2-ssh-audit.json
 build/engines/sing-box check -c /tmp/clash-flux-l2-ssh-audit.json
 # 在 platform/android 下运行：
-JAVA_HOME=/opt/android-studio/jbr ANDROID_HOME=<HOME>/Android/Sdk \
-  HUXERUI_HOME=<HOME>/.local/share/HuxerUI \
+JAVA_HOME=/opt/android-studio/jbr ANDROID_HOME=$HOME/Android/Sdk \
+  HUXERUI_HOME=$HOME/.local/share/HuxerUI \
   ./gradlew :app:assembleDebug --offline --no-daemon
 ```
 

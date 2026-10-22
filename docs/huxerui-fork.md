@@ -1,7 +1,7 @@
 # HuxerUI fork 维护与应用固定版本
 
 框架维护仓库为 [FarnaHerry/HuxerUI](https://github.com/FarnaHerry/HuxerUI)，独立本地目录为
-`<HOME>/dev/cpp/mcpp/HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
+`../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
 Clash-Flux 当前固定 `a954965fc1f969067406979d239c2a3e2dae8cfd`，各平台 CI 共用
@@ -24,7 +24,7 @@ logic_error）、Windows 自定义标题栏窗口的 DWM 圆角、Windows 安装
 这些修复已从应用 `cmake/patches/` 和 CMake/CI 应用步骤中移除，配置应用不会修改框架源码。
 
 Lib-Charts、Lib-SQLite、Lib-Camera 的项目修复已收录到各自 fork 的 `farna/main`，
-独立维护目录为 `<HOME>/dev/cpp/mcpp/HuxerUI-libs`。应用已移除四份扩展库补丁和
+独立维护目录为 `../HuxerUI-libs`。应用已移除四份扩展库补丁和
 全部 CMake 自动应用步骤；通过框架的 `huxerui_use_library(URL, COMMIT)` 在构建缓存获取
 固定源码，不自动采用本地 `third_party/lib-*` 或可变的维护工作树。
 

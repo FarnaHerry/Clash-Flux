@@ -40,11 +40,11 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
 - CMake 最低 4.4，本机/CI 基线 4.4.2。通用第三方库走 `cmake/dependencies/Lock.cmake` 的固定来源与 SHA、独立 CPS producer 和 `find_package`；保留 HuxerUI codegen/资源/Android 图与应用模块源码编译。改包边界须运行 CPS 重定位、版本拒绝、缓存完整性及 TLS 回归，流程见 `docs/cps-dependencies.md`。
 - 优先使用 Ninja/CMake 的增量构建；UI 修改必须经过 HuxerUI codegen 和目标构建。
 - HuxerUI 框架修复集中在 `FarnaHerry/HuxerUI` 的 `farna/main` 维护，独立维护目录为
-  `<HOME>/dev/cpp/mcpp/HuxerUI-fork`；`main` 保留官方基线，更新通过 merge 上游进入集成分支。
+  `../HuxerUI-fork`；`main` 保留官方基线，更新通过 merge 上游进入集成分支。
   Clash-Flux 使用独立的 `third_party/huxerui` checkout，CI 与本机固定到同一经验证 SHA，
   不直接消费可变维护工作树。升级流程见 `docs/huxerui-fork.md`。
   Lib-Charts、Lib-SQLite、Lib-Camera 的修复也集中维护在各自 `FarnaHerry` fork 的
-  `farna/main`，独立维护目录为 `<HOME>/dev/cpp/mcpp/HuxerUI-libs`。应用通过
+  `farna/main`，独立维护目录为 `../HuxerUI-libs`。应用通过
   `huxerui_use_library(URL, COMMIT)` 获取固定 SHA，不自动消费本地可变 clone，
   不在 CMake 或 CI 重复打已合入的框架/扩展补丁。
 - `PieChartData` / `PieChart` 与紧凑图表高度由 Lib-Charts fork 维护；升级固定 SHA 时

@@ -7,7 +7,7 @@ nlohmann 依赖；Clash YAML 兼容入口目前保留 yaml-cpp，格式专用解
 
 ## 评估基线
 
-直接审阅用户本地 `<HOME>/Downloads/glaze`，工作区干净：
+直接审阅 `~/Downloads/glaze`，工作区干净：
 
 - revision：`52971fe5fc97d0bac361c20c9cf4cf22e4dbdd12`，2026-09-29。
 - describe：`v9.0.0-22-g52971fe5`，属于 v9.0.0 之后的 checkout，不等于发布 tag。

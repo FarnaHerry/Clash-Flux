@@ -126,7 +126,7 @@ Temurin OpenJDK 17.0.20.1+1 归档校验 SHA256：
 - AAR 元数据：version `1.14.2`、revision 与项目 pin 一致、ABI `arm64-v8a`；
   内容 SHA256 `b68f4f95851160c89d32ae27651eed557524638df617e521b2da965054e3b48c`。
 - 在 `platform/android`，设置 `JAVA_HOME=/opt/android-studio/jbr`、
-  `HUXERUI_HOME=<HOME>/.local/share/HuxerUI`、`ANDROID_HOME=<HOME>/Android/Sdk`、
+   `HUXERUI_HOME=$HOME/.local/share/HuxerUI`、`ANDROID_HOME=$HOME/Android/Sdk`、
   `CLASHFLUX_SINGBOX_AAR=/tmp/clash-flux-libbox-1.14.2/libbox-arm64.aar` 后执行
   `./gradlew :app:assembleDebug --offline --no-daemon`：成功（本地 Gradle 配置实际使用 JDK 21）。
   `stageSingboxAar` 与 `stageBundledRuleSets` 执行，Java 与固定版本 libbox 一起编译。
