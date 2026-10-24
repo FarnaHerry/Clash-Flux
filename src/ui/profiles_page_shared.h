@@ -98,14 +98,12 @@ struct ProfileEditFields {
     huxerui::State<huxerui::TextEditingValue> pptp_timeout;
     huxerui::State<huxerui::TextEditingValue> pptp_routes;
     huxerui::State<bool> pptp_mppe;
-    huxerui::State<huxerui::TextEditingValue> openvpn_config;
-    huxerui::State<huxerui::TextEditingValue> openvpn_routes;
 };
 
 namespace profile_detail {
 
 huxerui::StringVariant profileTypeLabel(std::string_view type);
-// 分区标签栏（Compact）用的短标签：只把两种长名收窄成 PPTP / OpenVPN，
+// 分区标签栏（Compact）用的短标签：只把 PPTP 长名收窄，
 // 其余与 profileTypeLabel 相同。
 huxerui::StringVariant profileTypeTabLabel(std::string_view type);
 bool isNativeVpnType(std::string_view type);
@@ -127,7 +125,6 @@ std::optional<std::string> makePptpConfig(
     const huxerui::TextEditingValue& timeout, bool requireMppe,
     std::string& error);
 huxerui::StringVariant pptpStateText(const store::PptpState& state);
-huxerui::StringVariant openVpnStateText(const store::OpenVpnState& state);
 
 std::size_t ResponsiveProfilePageIndex(
     bool compact, huxerui::State<std::int64_t> edit_page_id,
@@ -171,7 +168,6 @@ using profile_detail::ProfileRefreshAction;
 using profile_detail::QrPainter;
 using profile_detail::joinRoutes;
 using profile_detail::makePptpConfig;
-using profile_detail::openVpnStateText;
 using profile_detail::pptpStateText;
 using profile_detail::RefreshProfileForPlatform;
 using profile_detail::ResponsiveProfilePageIndex;
@@ -190,9 +186,6 @@ huxerui::View PptpOptionsForm(
     huxerui::State<huxerui::TextEditingValue> timeout,
     huxerui::State<huxerui::TextEditingValue> routes,
     huxerui::State<bool> require_mppe);
-huxerui::View OpenVpnOptionsForm(
-    huxerui::State<huxerui::TextEditingValue> config,
-    huxerui::State<huxerui::TextEditingValue> routes);
 
 huxerui::View ProfileCard(
     const db::Profile& profile, bool compact, huxerui::TaskScope tasks,
@@ -201,9 +194,8 @@ huxerui::View ProfileCard(
     huxerui::StateList<db::Profile> profiles,
     huxerui::State<bool> selectionPending,
     const store::PptpState& pptpState,
-    const store::OpenVpnState& openVpnState, bool connectionSelected,
     bool connectionPending, bool openingConnection, bool connectionActionsBusy,
-    const std::function<void(std::int64_t, bool)>& toggleConnection,
+    const std::function<void(std::int64_t)>& togglePptpConnection,
     const std::function<void(std::int64_t)>& openEditInfo,
     const std::function<void(std::int64_t)>& openEditRules,
     const std::function<void(std::int64_t)>& openEditFile,

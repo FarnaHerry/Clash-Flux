@@ -30,7 +30,7 @@
 ### L2 翻译层（处理 Clash 生态）
 
 - 普通来源按内容识别 Clash YAML、sing-box 原生 JSON、OpenVPN `.ovpn`，共用远程/本地/文本导入；
-  PPTP 与旧 OpenVPN 辅助记录保留兼容路径。所有来源都经 `clashflux.singbox` 出口。
+  独立拨号路径只保留 PPTP，旧 OpenVPN 独立记录兼容已移除。所有来源都经 `clashflux.singbox` 出口。
 - 每条条目——协议、组、规则、单个字段——必须归入三档之一，并写入保真度账本（§2）：
   - **exact**：与 sing-box 语义 1:1；
   - **approx**：语义近似或字段被忽略（例：`fallback`/`load-balance` → `urltest`）；
@@ -427,8 +427,8 @@ JSON 使用，本轮不把它当成 Clash 版本转换。字段边界及后续�
 新入口对未知指令、外部文件、脚本、`route`/`redirect-gateway`/`dhcp-option` 等尚未
 转换的路由/DNS 指令整份拒绝并记 unsupported。`client`、`dev tun`、`nobind`、
 `persist-key`/`persist-tun`、`resolv-retry`、日志和重试参数由内核生命周期管理，记 approx。
-旧 OpenVPN 记录不迁移，保留原辅助控制和内网 CIDR；新旧来源可查看同一只读保真度报告。
-完整导入与兼容约定见 [OpenVPN 导入](openvpn-import.md)。
+旧 OpenVPN 独立连接兼容已移除，无旧配置需迁移；普通 .ovpn 来源可查看只读保真度报告。
+完整导入约定见 [OpenVPN 导入](openvpn-import.md)。
 内联 auth-user-pass 按用户名/密码两行读取，保留空格、制表符和引号，只移除
 CRLF 分隔符，不使用选项拆词器。缺行或空凭据需要交互输入时拒绝转换，失败带来源
 账本；无法伪装成已有凭据。依据：[OpenVPN 凭据读取](https://github.com/OpenVPN/openvpn/blob/master/src/openvpn/misc.c)。

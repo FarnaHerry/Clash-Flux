@@ -1,7 +1,7 @@
-// vpn_model.h — 原生连接（PPTP / OpenVPN）状态的唯一来源。
+// vpn_model.h — 原生 PPTP 连接状态的唯一来源。
 //
-// 此前订阅页自己挂一个 0.5s 循环，把 vpnStore().states()/openVpnStates() 拷进
-// 两个 StateList；状态本身由 VpnStore 的 1s 监视线程维护。现在把能力与状态收进
+// 此前订阅页自己挂一个 0.5s 循环，把 vpnStore().states() 拷进
+// 页面 StateList；状态本身由 VpnStore 的 1s 监视线程维护。现在把能力与状态收进
 // 应用级模型，页面只读模型（以模型 State 为依赖做镜像），不再自建定时器。
 //
 // 与订阅不同，这里的快照只有"用户配置过的原生连接"那么多条、每条几个短字符串，

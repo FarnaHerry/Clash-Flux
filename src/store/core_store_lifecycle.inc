@@ -649,7 +649,7 @@
         if (std::ranges::any_of(nativeSessions_, [&](const auto& session) { return session.id == connection && session.connected; })) return true;
         for (const auto& profile : db_->listProfiles())
             if (profile.id == id && (profile.selected ||
-                ((profile.type == "pptp" || profile.type == "openvpn") && !routing::SplitRoutes(profile.nativeRoutes).empty()))) return true;
+                ((profile.type == "pptp") && !routing::SplitRoutes(profile.nativeRoutes).empty()))) return true;
         const auto policy = routing::DecodePolicy(setting("vpn.global_policy", ""));
         return std::ranges::any_of(policy.rules, [&](const auto& rule) {
             return rule.enabled && rule.connectionId == connection;

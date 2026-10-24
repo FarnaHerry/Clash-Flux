@@ -97,73 +97,11 @@
         profilesModel->RequestSync();
     };
 
-    auto isConnectionSelected = [connectionSelection](std::int64_t id) {
-        for (const std::int64_t selected : connectionSelection) {
-            if (selected == id) return true;
-        }
-        return false;
-    };
-
-    auto toggleConnection = [connectionSelection, pptpStates, openVpnStates,
-                             toast, findProfile, vpnModel](std::int64_t id, bool checked) {
+    auto openConnections = [applicationTasks, toast,
+                            vpnModel, coreControl](std::vector<std::int64_t> ids) {
         if (vpnModel->operation.Get().Busy()) return;
-        for (std::size_t index = 0; index < connectionSelection.Size(); ++index) {
-            if (connectionSelection[index] != id) continue;
-            if (!checked) connectionSelection.Erase(index);
-            return;
-        }
-        if (!checked) return;
-
-        const std::size_t maximum = vpn::MaxConcurrentAuxiliaryConnections();
-        if (connectionSelection.Size() >= maximum) {
-            toast.Show(LocalizedFormat("同时最多选择 {} 条内网连接", maximum));
-            return;
-        }
-        if (maximum == 1) {
-            const auto hasOtherActive = [id](const auto& states) {
-                for (const auto& state : states) {
-                    if (state.profileId != id &&
-                        state.state == vpn::ConnectionState::Connected) {
-                        return true;
-                    }
-                }
-                return false;
-            };
-            if (hasOtherActive(pptpStates) || hasOtherActive(openVpnStates)) {
-                toast.Show(Localized("请先断开当前内网连接，再连接其他配置"));
-                return;
-            }
-        }
-        if (vpn::PptpSingleSession()) {
-            // Windows 的 PPTP 是单连接槽位：选择前就给出平台原因，避免选中
-            // 后在拨号阶段才失败（批量打开由存储层同一检查兜底）。
-            const auto profile = findProfile(id);
-            if (profile && profile->type == "pptp") {
-                for (const auto& state : pptpStates) {
-                    if (state.profileId != id &&
-                        (state.state == vpn::ConnectionState::Connected ||
-                         state.state == vpn::ConnectionState::Connecting)) {
-                        toast.Show(Localized(
-                            "Windows 系统拨号同一时间只支持一条 PPTP，请先断开当前连接"));
-                        return;
-                    }
-                }
-            }
-        }
-        connectionSelection.PushBack(id);
-    };
-
-    auto openSelectedConnections = [applicationTasks, toast, connectionSelection,
-                                    vpnModel, coreControl] {
-        if (vpnModel->operation.Get().Busy()) return;
-        std::vector<std::int64_t> ids;
-        for (const std::int64_t id : connectionSelection) ids.push_back(id);
-        if (ids.empty()) {
-            toast.Show(Localized("请先选择 PPTP 或 OpenVPN 订阅"));
-            return;
-        }
+        if (ids.empty()) return;
         if (!vpnModel->Begin(VpnAction::Open, ids)) return;
-        connectionSelection.Clear();
         applicationTasks.Launch([ids, toast, vpnModel, coreControl]() -> huxerui::Task<void> {
             int opened = 0;
             int failed = 0;
@@ -179,9 +117,7 @@
                                               store::vpnStore().snapshot()};
                         }
                         std::string error;
-                        const bool connected = it->type == "openvpn"
-                                                   ? store::vpnStore().connectOpenVpn(*it, error)
-                                                   : store::vpnStore().connectPptp(*it, error);
+                        const bool connected = store::vpnStore().connectPptp(*it, error);
                         return std::tuple{connected, std::move(error),
                                           store::vpnStore().snapshot()};
                     });
@@ -237,16 +173,11 @@
         });
     };
 
-    auto closeSelectedConnections = [applicationTasks, toast, connectionSelection, vpnModel] {
+    auto closeConnections = [applicationTasks, toast,
+                             vpnModel](std::vector<std::int64_t> ids) {
         if (vpnModel->operation.Get().Busy()) return;
-        std::vector<std::int64_t> ids;
-        for (const std::int64_t id : connectionSelection) ids.push_back(id);
-        if (ids.empty()) {
-            toast.Show(Localized("请先选择 PPTP 或 OpenVPN 订阅"));
-            return;
-        }
+        if (ids.empty()) return;
         if (!vpnModel->Begin(VpnAction::Close, ids)) return;
-        connectionSelection.Clear();
         applicationTasks.Launch([ids, toast, vpnModel]() -> huxerui::Task<void> {
             int closed = 0;
             int failed = 0;
@@ -259,8 +190,7 @@
                             all, [id](const db::Profile& profile) { return profile.id == id; });
                         if (it == all.end() || !isNativeVpnType(it->type))
                             throw std::runtime_error("订阅不存在或不是原生连接");
-                        if (it->type == "openvpn") store::vpnStore().disconnectOpenVpn(id);
-                        else store::vpnStore().disconnectPptp(id);
+                        store::vpnStore().disconnectPptp(id);
                         return store::vpnStore().snapshot();
                     });
                     vpnModel->Publish(std::move(next));
@@ -280,12 +210,55 @@
         });
     };
 
+    auto togglePptpConnection = [vpnModel, toast, findProfile,
+                                 openConnections, closeConnections](std::int64_t id) {
+        if (vpnModel->operation.Get().Busy()) return;
+        const auto profile = findProfile(id);
+        if (!profile || profile->type != "pptp") return;
+        // Read the latest shared snapshot at activation, rather than the card's
+        // captured state. An external disconnect must turn the next click into Open.
+        const auto& view = vpnModel->view.Get();
+        for (const auto& state : view.pptp) {
+            if (state.profileId != id) continue;
+            if (state.state == vpn::ConnectionState::Connecting) return;
+            if (state.state == vpn::ConnectionState::Connected) {
+                closeConnections({id});
+                return;
+            }
+        }
+        if (vpn::PptpSingleSession()) {
+            for (const auto& state : view.pptp) {
+                if (state.profileId != id &&
+                    (state.state == vpn::ConnectionState::Connected ||
+                     state.state == vpn::ConnectionState::Connecting)) {
+                    toast.Show(Localized(
+                        "Windows 系统拨号同一时间只支持一条 PPTP，请先断开当前连接"));
+                    return;
+                }
+            }
+        }
+        if (vpn::MaxConcurrentAuxiliaryConnections() == 1) {
+            const auto otherActive = [id](const auto& states) {
+                return std::ranges::any_of(states, [id](const auto& state) {
+                    return state.profileId != id &&
+                        (state.state == vpn::ConnectionState::Connected ||
+                         state.state == vpn::ConnectionState::Connecting);
+                });
+            };
+            if (otherActive(view.pptp)) {
+                toast.Show(Localized("请先断开当前内网连接，再连接其他配置"));
+                return;
+            }
+        }
+        openConnections({id});
+    };
+
     // ---- 编辑信息（按订阅类型显示对应表单；仅落库，下次更新/连接生效）----
     auto loadEditInfo = [tasks, findProfile, editName, editUrl, editType, editDesc,
                          editTimeout, editInterval, editAuto, editSys, editCore,
                          editCert, editPptpServer, editPptpUsername,
                          editPptpPassword, editPptpTimeout, editPptpRoutes,
-                         editPptpMppe, editOpenVpnConfig, editOpenVpnRoutes](
+                         editPptpMppe](
         std::int64_t id, std::function<void()> next) {
         tasks.Launch([=]() -> huxerui::Task<void> {
             co_await huxerui::Delay(std::chrono::duration<double>{0});
@@ -315,8 +288,6 @@
                 config ? std::to_string(config->connectTimeoutSecs) : "30"};
             editPptpRoutes = huxerui::TextEditingValue{profile->nativeRoutes};
             editPptpMppe = config ? config->requireMppe : true;
-            editOpenVpnConfig = huxerui::TextEditingValue{profile->nativeConfig};
-            editOpenVpnRoutes = huxerui::TextEditingValue{profile->nativeRoutes};
             next();
         });
     };
@@ -325,8 +296,7 @@
                          editType, editDesc, editTimeout, editInterval, editAuto,
                          editSys, editCore, editCert, editPptpServer,
                          editPptpUsername, editPptpPassword, editPptpTimeout,
-                         editPptpRoutes, editPptpMppe, editOpenVpnConfig,
-                         editOpenVpnRoutes,
+                         editPptpRoutes, editPptpMppe,
                          textColor = theme.colors.on_surface,
                          hintColor = theme.colors.on_surface_variant](
                             std::int64_t id) {
@@ -334,22 +304,19 @@
                           editDesc, editTimeout, editInterval, editAuto, editSys,
                           editCore, editCert, editPptpServer, editPptpUsername,
                           editPptpPassword, editPptpTimeout, editPptpRoutes,
-                          editPptpMppe, editOpenVpnConfig, editOpenVpnRoutes,
+                          editPptpMppe,
                           id, textColor, hintColor] {
             dialog.Show(
                 [tasks, toast, editName, editUrl, editType, editDesc, editTimeout,
                  editInterval, editAuto, editSys, editCore, editCert,
                  editPptpServer, editPptpUsername, editPptpPassword,
-                 editPptpTimeout, editPptpRoutes, editPptpMppe, editOpenVpnConfig,
-                 editOpenVpnRoutes, id,
+                 editPptpTimeout, editPptpRoutes, editPptpMppe, id,
                  textColor, hintColor](huxerui::DialogContext ctx) -> huxerui::View {
                     const bool pptp = editType.Get() == "pptp";
-                    const bool openvpn = editType.Get() == "openvpn";
                     return DialogCard(huxerui::Column {
                         huxerui::Text(Localized("编辑订阅"), huxerui::TextRole::Title),
                         huxerui::ScrollView(huxerui::Column {
                             huxerui::Text(Localized(pptp ? "类型：PPTP 内网连接"
-                                               : openvpn ? "类型：OpenVPN 内网连接"
                                                : editType.Get() == "local"
                                                      ? "类型：本地文件"
                                                      : "类型：远程订阅")),
@@ -365,9 +332,6 @@
                                       editPptpServer, editPptpUsername,
                                       editPptpPassword, editPptpTimeout,
                                       editPptpRoutes, editPptpMppe)}
-                                : openvpn
-                                ? huxerui::View{OpenVpnOptionsForm(
-                                      editOpenVpnConfig, editOpenVpnRoutes)}
                                 : huxerui::View{huxerui::Column {
                                       huxerui::TextField(editUrl.Get())
                                           .Label(Localized("订阅链接（留空 = 本地导入）"))
@@ -381,7 +345,7 @@
                                           editDesc, editTimeout, editInterval,
                                           editAuto, editSys, editCore, editCert),
                                   }},
-                            pptp || openvpn
+                            pptp
                                 ? huxerui::View{huxerui::TextField(editDesc.Get())
                                                     .Label(Localized("描述（可选）"))
                                                     .Variant(huxerui::TextFieldVariant::Outlined)
@@ -411,13 +375,6 @@
                                         toast.Show(configError);
                                         return;
                                     }
-                                } else if (editType.Get() == "openvpn") {
-                                    if (!openvpn::ParseOpenVpnConfig(
-                                            editOpenVpnConfig.Get().text, configError)) {
-                                        toast.Show(configError);
-                                        return;
-                                    }
-                                    nativeConfig = editOpenVpnConfig.Get().text;
                                 }
                                 ctx.Dismiss();
                                 tasks.Launch([=]() -> huxerui::Task<void> {
@@ -439,9 +396,7 @@
                                     if (nativeConfig) {
                                         fields.nativeConfig = *nativeConfig;
                                         fields.nativeRoutes = joinRoutes(
-                                            parseRouteField(fields.type == "openvpn"
-                                                                ? editOpenVpnRoutes.Get().text
-                                                                : editPptpRoutes.Get().text));
+                                            parseRouteField(editPptpRoutes.Get().text));
                                     }
                                     const std::string err = co_await RunOnTaskThread(
                                         [id, fields] {
@@ -474,16 +429,14 @@
                          editName, editUrl, editType, editDesc, editTimeout,
                          editInterval, editAuto, editSys, editCore, editCert,
                          editPptpServer, editPptpUsername, editPptpPassword,
-                         editPptpTimeout, editPptpRoutes, editPptpMppe,
-                         editOpenVpnConfig, editOpenVpnRoutes](std::int64_t id) {
+                         editPptpTimeout, editPptpRoutes, editPptpMppe](std::int64_t id) {
         if (navigation_enabled) {
             loadEditInfo(id, [=] {
                 const ProfileEditFields fields{
                     editName, editUrl, editType, editDesc, editTimeout,
                     editInterval, editAuto, editSys, editCore, editCert,
                     editPptpServer, editPptpUsername, editPptpPassword,
-                    editPptpTimeout, editPptpRoutes, editPptpMppe,
-                    editOpenVpnConfig, editOpenVpnRoutes};
+                    editPptpTimeout, editPptpRoutes, editPptpMppe};
                 navigation.Push([=] {
                     return ProfileEditRoutePage(
                         id, fields, tasks, toast,

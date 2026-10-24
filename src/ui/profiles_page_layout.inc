@@ -4,16 +4,11 @@
     // 订阅按类型分区：与代理页/规则页共用 SectionTabBar（统一样式）；每个
     // 类型一页，Pager 保留各页滚动位置并负责跟手切换。不再把分组头
     // 混排在同一张网格里。
-    // Legacy inline OpenVPN records are local sources in the UI. Their stored
-    // type and explicit auxiliary lifecycle remain intact for compatibility.
-    const auto sectionType = [](const db::Profile& profile) -> std::string_view {
-        return profile.type == "openvpn" ? std::string_view{"local"} : profile.type;
-    };
     std::vector<std::string> profileTypes{"remote", "local", "pptp"};
     for (const db::Profile& profile : profiles) {
-        if (std::find(profileTypes.begin(), profileTypes.end(), sectionType(profile)) ==
+        if (std::find(profileTypes.begin(), profileTypes.end(), profile.type) ==
             profileTypes.end()) {
-            profileTypes.emplace_back(sectionType(profile));
+            profileTypes.emplace_back(profile.type);
         }
     }
     const std::string profileQuery = profileSearch.Get().text;
@@ -26,8 +21,8 @@
     // 只给当前搜索结果覆盖到的类型出标签；清空搜索后恢复完整类型集合。
     std::vector<std::string> visibleTypes;
     for (const std::string& type : profileTypes) {
-        const auto hasType = [&type, &matchesProfile, &sectionType](const db::Profile& profile) {
-            return sectionType(profile) == type && matchesProfile(profile);
+        const auto hasType = [&type, &matchesProfile](const db::Profile& profile) {
+            return profile.type == type && matchesProfile(profile);
         };
         if (std::any_of(profiles.begin(), profiles.end(), hasType)) {
             visibleTypes.push_back(type);
@@ -46,7 +41,7 @@
     std::vector<SectionTab> typeTabs;
     typeTabs.reserve(visibleTypes.size());
     for (const std::string& type : visibleTypes) {
-        // Compact 视口用短标签（PPTP / OpenVPN），否则第 4 个标签会被屏幕右缘
+        // Compact 视口用短标签（PPTP），否则第 4 个标签会被屏幕右缘
         // 截断半个字；桌面宽度充足，保留「PPTP 内网连接」这样的完整名称。
         typeTabs.push_back(
             SectionTab{type, compact ? profileTypeTabLabel(type)
@@ -65,7 +60,7 @@
         const std::string& type = visibleTypes[page];
         std::vector<std::size_t> typeIndices;
         for (std::size_t index = 0; index < profiles.Size(); ++index) {
-            if (sectionType(profiles[index]) == type && matchesProfile(profiles[index])) {
+            if (profiles[index].type == type && matchesProfile(profiles[index])) {
                 typeIndices.push_back(index);
             }
         }
@@ -91,11 +86,10 @@
                                  typeCount + (compact ? 1U : 0U),
                                  [profiles, typeIndices = std::move(typeIndices), typeIds = std::move(typeIds),
                                   typeCount, compact, tasks, toast, http, reload,
-                                  pptpStates, openVpnStates, isConnectionSelected,
+                                  pptpStates,
                                   vpnOperation,
                                   pptpAvailable = vpnModel->view.Get().pptpAvailable,
-                                  openVpnAvailable = vpnModel->view.Get().openVpnAvailable,
-                                  toggleConnection, openEditInfo, showEditRules,
+                                  togglePptpConnection, openEditInfo, showEditRules,
                                   showEditFile, showQr, selectionPending, theme,
                                   dialog, pageReorder, dropAtPointer,
                                   previewActiveId, previewTargetId,
@@ -112,15 +106,6 @@
                                      for (const auto& state : pptpStates) {
                                          if (state.profileId == profile.id) {
                                              pptpState = state;
-                                             break;
-                                         }
-                                     }
-                                     store::OpenVpnState openVpnState{
-                                         .profileId = profile.id,
-                                         .toolsAvailable = openVpnAvailable};
-                                     for (const auto& state : openVpnStates) {
-                                         if (state.profileId == profile.id) {
-                                             openVpnState = state;
                                              break;
                                          }
                                      }
@@ -147,12 +132,11 @@
                                                 profile, compact, tasks,
                                                 toast, http, reload,
                                                 profiles, selectionPending,
-                                                pptpState, openVpnState,
-                                                isConnectionSelected(profile.id),
+                                                pptpState,
                                                 vpnOperation.Pending(profile.id),
                                                 vpnOperation.action == VpnAction::Open,
                                                 vpnOperation.Busy(),
-                                                toggleConnection, openEditInfo,
+                                                togglePptpConnection, openEditInfo,
                                                 showEditRules, showEditFile,
                                                 showQr, dialog, pageReorder)
                                          .Key(profile.id)
@@ -211,18 +195,6 @@
             std::move(profileBody),
         }.With(huxerui::Spacing(theme.spacing.small), huxerui::Grow(1.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    }
-
-    huxerui::View batchActions = huxerui::Row{};
-    if (connectionSelection.Size() > 0) {
-        batchActions = huxerui::Row {
-            huxerui::Text(LocalizedFormat("已选 {} 个连接", connectionSelection.Size())),
-            huxerui::Button(Localized("打开")).OnClick(openSelectedConnections)
-                .With(huxerui::Enabled(!vpnOperation.Busy())),
-            huxerui::Button(Localized("关闭")).OnClick(closeSelectedConnections)
-                .With(huxerui::Enabled(!vpnOperation.Busy())),
-        }.With(huxerui::Spacing(8.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     }
 
     const auto resetCreateFields = [=] {
@@ -286,8 +258,7 @@
         profileSearch, Localized("搜索订阅"), compact ? addAction : huxerui::View{});
     // composable 的外层 Scope 也要声明 Grow，标题行才会把剩余宽度交给搜索胶囊。
     if (compact) profileSearchField = std::move(profileSearchField).With(huxerui::Grow(1.0F));
-    huxerui::View pageActions = connectionSelection.Size() > 0
-        ? batchActions : huxerui::View{};
+    huxerui::View pageActions;
     if (!compact) pageActions = huxerui::Row{std::move(pageActions), std::move(addAction)};
     huxerui::View profileListPage = PageScaffold(
         Localized("订阅"),
@@ -295,7 +266,7 @@
         profiles.Empty()
             ? EmptyState(Localized("还没有订阅。点击右上角「新建订阅」导入。"), app::images::request)
             : std::move(profileBody),
-        compact && connectionSelection.Size() == 0, true, true,
+        compact, true, true,
         std::nullopt, {}, std::move(profileSearchField));
 
     // IndexedPages 要求每一页都是挂载节点；平台函数负责 Android 编辑页是否
@@ -305,8 +276,7 @@
         ProfileEditFields{editName, editUrl, editType, editDesc, editTimeout,
                            editInterval, editAuto, editSys, editCore, editCert,
                            editPptpServer, editPptpUsername, editPptpPassword,
-                           editPptpTimeout, editPptpRoutes, editPptpMppe,
-                           editOpenVpnConfig, editOpenVpnRoutes},
+                           editPptpTimeout, editPptpRoutes, editPptpMppe},
         tasks, toast, [editPageId] { editPageId = 0; });
 
     huxerui::View mobileCreatePage = ResponsiveProfileCreateSurface(

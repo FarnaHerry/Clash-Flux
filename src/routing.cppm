@@ -101,7 +101,7 @@ export inline bool ValidatePlatformPolicy(const vpn::VpnPolicy& policy,
     for (const auto& rule : policy.rules) {
         for (const auto& profile : profiles) {
             if (ConnectionId(profile.id) == rule.connectionId &&
-                (profile.type == "pptp" || profile.type == "openvpn") && rule.targetKind != vpn::TargetKind::Default) {
+                (profile.type == "pptp") && rule.targetKind != vpn::TargetKind::Default) {
                 error = "原生连接只支持默认出口引用"; return false;
             }
         }
@@ -111,7 +111,7 @@ export inline bool ValidatePlatformPolicy(const vpn::VpnPolicy& policy,
         if (!rule.enabled) continue;
         for (const auto& profile : profiles) {
             if (ConnectionId(profile.id) != rule.connectionId) continue;
-            if (profile.type != "pptp" && profile.type != "openvpn" && !profile.selected) {
+            if (profile.type != "pptp" && !profile.selected) {
                 error = "手机平台只允许规则引用当前活动代理订阅";
                 return false;
             }
@@ -137,7 +137,7 @@ export inline void PopulateOptions(
     options.nativeConnections.clear();
     for (const auto& profile : profiles) {
         const auto id = ConnectionId(profile.id);
-        if (profile.type != "pptp" && profile.type != "openvpn") {
+        if (profile.type != "pptp") {
             if (profile.selected) {
                 if (!options.mainConnectionId.empty()) {
                     throw std::runtime_error("只能启用一个主 VPN 订阅");
@@ -149,21 +149,14 @@ export inline void PopulateOptions(
         }
         singbox::NativeConnection native;
         native.id = id;
-        native.kind = profile.type == "pptp" ? vpn::ConnectionKind::Pptp : vpn::ConnectionKind::OpenVpn;
+        native.kind = vpn::ConnectionKind::Pptp;
         native.internalRoutes = SplitRoutes(profile.nativeRoutes);
         for (const auto& session : sessions) {
             if (session.id != id) continue;
-            // PPTP needs a live OS interface. OpenVPN is a sing-box endpoint
-            // and deliberately has no interface name in userspace mode.
-            native.connected = session.connected &&
-                (native.kind == vpn::ConnectionKind::OpenVpn ||
-                 !session.interfaceName.empty());
-            native.interfaceName = native.connected &&
-                    native.kind == vpn::ConnectionKind::Pptp
-                ? session.interfaceName
-                : "";
+            // PPTP needs a live OS interface; saved metadata cannot establish liveness.
+            native.connected = session.connected && !session.interfaceName.empty();
+            native.interfaceName = native.connected ? session.interfaceName : "";
             native.transportAddress = native.connected ? session.transportAddress : "";
-            native.nativeConfig = native.connected ? session.nativeConfig : "";
             break;
         }
         options.nativeConnections.push_back(std::move(native));

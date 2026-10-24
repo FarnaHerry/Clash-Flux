@@ -16,7 +16,6 @@
 
 import clashflux.core;
 import clashflux.db;
-import clashflux.openvpn;
 import clashflux.pptp;
 import clashflux.store.core;
 import clashflux.store.profiles;
@@ -60,7 +59,6 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     const std::string primaryLine = [&] {
         if (!nativeVpn)
             return profile.url.empty() ? huxerui::UseString(Localized("本地导入")) : profile.url;
-        if (profile.type == "openvpn") return std::string{"OpenVPN · sing-box endpoint"};
         std::string error;
         const auto config = pptp::ParsePptpConfig(profile.nativeConfig, error);
         return config ? "PPTP · " + config->server
@@ -72,7 +70,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                : huxerui::UseString(LocalizedFormat("路由：{}", profile.nativeRoutes)))
         : (profile.description.empty() ? "—" : profile.description);
     const std::string statusLine = nativeVpn
-        ? (profile.type == "openvpn" ? "OpenVPN" : "PPTP")
+        ? "PPTP"
         : profile.selected ? huxerui::UseString(Localized("主订阅"))
         : participating ? huxerui::UseString(Localized("次订阅 · 按规则参与"))
                         : huxerui::UseString(Localized("已保存 · 未参与"));
@@ -147,9 +145,8 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     huxerui::StateList<db::Profile> profiles,
     huxerui::State<bool> selectionPending,
     const store::PptpState& pptpState,
-    const store::OpenVpnState& openVpnState, bool connectionSelected,
     bool connectionPending, bool openingConnection, bool connectionActionsBusy,
-    const std::function<void(std::int64_t, bool)>& toggleConnection,
+    const std::function<void(std::int64_t)>& togglePptpConnection,
     const std::function<void(std::int64_t)>& openEditInfo,
     const std::function<void(std::int64_t)>& openEditRules,
     const std::function<void(std::int64_t)>& openEditFile,
@@ -291,7 +288,6 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
 
     const auto themedButtonStyle = huxerui::UseEnvironment<huxerui::ButtonStyle>();
     const auto confirmDelete = [dialog, tasks, action, id, nativeVpn,
-                                openVpn = profile.type == "openvpn",
                                 profileName = profile.name,
                                 errorColor = theme.colors.error,
                                 onErrorColor = OnErrorColor(theme),
@@ -323,11 +319,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                             if (store::coreStore().sourceParticipates(id))
                                                 return std::string{"该来源是主订阅、被路由引用或仍连接中；请先更换主订阅、解除规则引用并断开连接"};
                                             if (nativeVpn) {
-                                                if (openVpn) {
-                                                    store::vpnStore().forgetOpenVpn(id);
-                                                } else {
-                                                    store::vpnStore().forgetPptp(id);
-                                                }
+                                                store::vpnStore().forgetPptp(id);
                                             }
                                             auto& ps = store::profilesStore();
                                             ps.remove(id);
@@ -522,7 +514,6 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                        ? huxerui::UseString(Localized("本地导入"))
                        : profile.url;
         }
-        if (profile.type == "openvpn") return std::string("OpenVPN · sing-box endpoint");
         std::string parseError;
         const auto config = pptp::ParsePptpConfig(profile.nativeConfig, parseError);
         return config ? "PPTP · " + config->server
@@ -587,6 +578,42 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                        huxerui::CrossAxisAlignment::Stretch));
     }
 
+    if (profile.type == "pptp") {
+        const bool loading = connectionPending ||
+            pptpState.state == vpn::ConnectionState::Connecting;
+        const bool connected = pptpState.state == vpn::ConnectionState::Connected;
+        const auto actionLabel = loading ? Localized("加载中…")
+                                        : connected ? Localized("关闭") : Localized("打开");
+        huxerui::View actionGlyph = loading
+            ? huxerui::View{huxerui::ProgressCircle()}
+            : huxerui::View{huxerui::Image(connected ? app::images::pause : app::images::play)
+                               .Fit(huxerui::ImageFit::Contain)
+                               .Tint(muted)};
+        actionGlyph = std::move(actionGlyph).With(huxerui::Frame{.width = 20.0F, .height = 20.0F});
+        trafficSection = huxerui::Row {
+          huxerui::Text(connectionPending
+                            ? openingConnection ? Localized("连接中…") : Localized("断开中…")
+                            : pptpStateText(pptpState))
+              .Style(huxerui::TextStyle{
+                  huxerui::Font::System(font_size::kCaption),
+                  !connectionPending && pptpState.state == vpn::ConnectionState::Failed
+                      ? theme.colors.error : muted})
+              .With(huxerui::Frame{.height = 18.0F}, huxerui::Grow(1.0F),
+                    huxerui::ClipChildren()),
+          huxerui::Row {actionGlyph}
+              .OnClick([togglePptpConnection, id] { togglePptpConnection(id); })
+              .With(huxerui::Enabled(!loading && !connectionActionsBusy),
+                    huxerui::Padding(6.0F),
+                    huxerui::CornerRadius(islands.nested_radius),
+                    huxerui::Tooltip(actionLabel),
+                    huxerui::Focusable(true),
+                    huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                       .label = huxerui::UseString(actionLabel)})
+              .Key("pptp-connection-action"),
+        }.With(huxerui::Spacing(8.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    }
+
     // 订阅卡复用代理页节点卡的形状原语（SelectableTile）：同一套内边距、圆角、
     // 表面色与选中态（选中 = primary_container 淡染底 + primary 描边 +
     // on_primary_container 文字）。不再自己叠描边或第二层选中背景。
@@ -595,23 +622,6 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         huxerui::Row {
             std::move(dragHandle),
             std::move(profileName),
-            nativeVpn
-                ? huxerui::View{huxerui::Checkbox(connectionSelected)
-                                    .OnChanged([toggleConnection, tasks,
-                                                id](bool checked) {
-                                        // Checkbox 的 OnChanged 仍处于指针释放事件
-                                        // 路径；延迟一拍再改 StateList，避免 VirtualGrid
-                                        // 重组导致 HuxerUI 同一事件的 pointer session
-                                        // 迭代器失效。
-                                        tasks.Launch([toggleConnection, id,
-                                                      checked]()
-                                                         -> huxerui::Task<void> {
-                                            co_await huxerui::Delay(
-                                                std::chrono::duration<double>{0});
-                                            toggleConnection(id, checked);
-                                        });
-                                    }).With(huxerui::Enabled(!connectionActionsBusy))}
-                : huxerui::View{huxerui::Row{}},
             huxerui::Spacer(),
             std::move(refreshButton),
             std::move(moreButton),
@@ -641,9 +651,9 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                     huxerui::Font::System(font_size::kCaption),
                                     faint})}
             : huxerui::View{huxerui::Row{}},
-        huxerui::Row {
+        profile.type != "pptp" ? huxerui::View{huxerui::Row {
             huxerui::Text(nativeVpn
-                              ? profile.type == "openvpn" ? huxerui::StringVariant{"OpenVPN"} : huxerui::StringVariant{"PPTP"}
+                              ? huxerui::StringVariant{"PPTP"}
                               : selected ? Localized("主订阅")
                               : (runtime.state == core::CoreState::Running &&
                                  std::ranges::find(runtime.participatingSources, store::ProfileConnectionId(id)) != runtime.participatingSources.end())
@@ -659,22 +669,6 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                         muted})}
                 : huxerui::View{huxerui::Row{}},
             huxerui::Spacer(),
-            nativeVpn
-                ? huxerui::View{huxerui::Text(connectionPending
-                                                   ? openingConnection ? Localized("连接中…")
-                                                                       : Localized("断开中…")
-                                                   : profile.type == "openvpn"
-                                                       ? openVpnStateText(openVpnState)
-                                                       : pptpStateText(pptpState))
-                                    .Style(huxerui::TextStyle{
-                                        huxerui::Font::System(font_size::kCaption),
-                                        !connectionPending && (profile.type == "openvpn"
-                                             ? openVpnState.state
-                                             : pptpState.state) ==
-                                                vpn::ConnectionState::Failed
-                                            ? theme.colors.error
-                                            : muted})}
-                : huxerui::View{huxerui::Row{}},
             huxerui::Text(truncateOneLine(
                               nativeVpn
                                   ? ""
@@ -690,7 +684,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                                        : theme.colors.error}),
         }
             .With(huxerui::Spacing(8.0F),
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))} : huxerui::View{},
         huxerui::Spacer(),
         std::move(trafficSection),
     }.With(huxerui::Spacing(6.0F),

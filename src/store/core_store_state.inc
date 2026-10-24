@@ -132,8 +132,7 @@
     // 当前选中订阅的文件路径（无选中/无文件时为空）。
     std::filesystem::path selectedProfileFile() {
         for (const auto& profile : db_->listProfiles()) {
-            if (!profile.selected || profile.type == "pptp" ||
-                profile.type == "openvpn" || profile.file.empty()) {
+            if (!profile.selected || profile.type == "pptp" || profile.file.empty()) {
                 continue;
             }
             return cfg::profilesDir() / profile.file;
@@ -192,8 +191,7 @@
 
         std::string profileYaml;
         for (const auto& profile : db_->listProfiles()) {
-            if (!profile.selected || profile.type == "pptp" ||
-                profile.type == "openvpn" || profile.file.empty()) {
+            if (!profile.selected || profile.type == "pptp" || profile.file.empty()) {
                 continue;
             }
             std::ifstream input(cfg::profilesDir() / profile.file,
@@ -282,11 +280,7 @@
                     return report;
                 }
                 std::string content;
-                if (profile.type == "openvpn") {
-                    // Compatibility read only: keep legacy credentials, routes
-                    // and stable IDs in their original records.
-                    content = profile.nativeConfig;
-                } else {
+                {
                     std::error_code error;
                     const auto root = std::filesystem::canonical(cfg::profilesDir(), error);
                     if (error || profile.file.empty()) {

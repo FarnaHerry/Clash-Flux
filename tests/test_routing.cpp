@@ -56,6 +56,26 @@ int main() {
     routing::PopulateOptions(options, profiles, policy, std::vector{active});
     assert(!options.nativeConnections.front().connected);
 
+    // Ordinary OpenVPN source files keep the normal source identity and lifecycle.
+    // Only PPTP is projected into separately controlled native sessions.
+    db::Profile localOvpn{.id = 41, .name = "local OpenVPN", .file = "41.ovpn",
+                           .selected = true, .type = "local"};
+    db::Profile remoteOvpn{.id = 42, .name = "remote OpenVPN",
+                            .url = "https://example.test/profile.ovpn", .file = "42.yaml",
+                            .type = "remote"};
+    std::vector<db::Profile> ovpnSources{localOvpn, remoteOvpn, native};
+    routing::PopulateOptions(options, ovpnSources, policy, {});
+    assert(options.mainConnectionId == "profile-41");
+    assert(options.mainSourceName == "local OpenVPN");
+    assert(options.nativeConnections.size() == 1);
+    assert(options.nativeConnections.front().id == "profile-3");
+    assert(options.nativeConnections.front().kind == vpn::ConnectionKind::Pptp);
+    ovpnSources[0].selected = false;
+    ovpnSources[1].selected = true;
+    routing::PopulateOptions(options, ovpnSources, policy, {});
+    assert(options.mainConnectionId == "profile-42");
+    assert(options.nativeConnections.size() == 1);
+
     profiles.front().selected = false;
     routing::PopulateOptions(options, profiles, policy, {});
     assert(options.mainConnectionId.empty());

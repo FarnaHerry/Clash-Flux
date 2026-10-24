@@ -173,7 +173,7 @@ public:
     // 当前启用的订阅；无 = nullptr。
     std::optional<db::Profile> selected() {
         for (const auto& p : list()) {
-            if (p.selected && p.type != "pptp" && p.type != "openvpn") return p;
+            if (p.selected && p.type != "pptp") return p;
         }
         return std::nullopt;
     }
@@ -396,13 +396,17 @@ public:
         return p.id;
     }
 
-    // 新增原生连接订阅（PPTP/OpenVPN/WireGuard 等）：不下载 YAML，连接参数
+    // 新增 PPTP 原生连接订阅：不下载 YAML，连接参数
     // 和路由由 nativeConfig/nativeRoutes 保存，具体引擎由 VPN store 解释。
     std::int64_t importNative(const std::string& name, const std::string& type,
                               const std::string& nativeConfig,
                               const std::string& nativeRoutes,
                               const db::Profile& options = {}) {
         lastError_.clear();
+        if (type != "pptp") {
+            lastError_ = "原生连接只支持 PPTP；OpenVPN 请通过普通文件或远程订阅导入";
+            return 0;
+        }
         db::Profile p = options;
         p.id = 0;
         p.selected = false;
@@ -445,8 +449,7 @@ p->name = fields.name.empty() ? p->name : fields.name;
         p->useSystemProxy = fields.useSystemProxy;
         p->useCoreProxy = fields.useCoreProxy;
         p->allowInvalidCert = fields.allowInvalidCert;
-        if (!fields.nativeConfig.empty() || fields.type == "pptp" ||
-            fields.type == "openvpn") {
+        if (!fields.nativeConfig.empty() || fields.type == "pptp") {
             p->nativeConfig = fields.nativeConfig;
             p->nativeRoutes = fields.nativeRoutes;
         }
@@ -542,7 +545,7 @@ p->name = fields.name.empty() ? p->name : fields.name;
         auto planLock = coreStore().lockPlanLifecycle();
         const auto profile = findById(id);
         if (!profile) { lastError_ = "订阅不存在"; return false; }
-        if (profile->type == "pptp" || profile->type == "openvpn") {
+        if (profile->type == "pptp") {
             lastError_ = "当前原生 VPN 只作为规则来源参与，不能设为 main"; return false;
         }
         const auto content = yamlOf(*profile);

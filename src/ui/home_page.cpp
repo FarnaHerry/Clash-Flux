@@ -422,8 +422,7 @@ void MirrorHomeState(huxerui::State<HomeState> state,
     // 不再每次调用 profilesStore().selected()。
     const db::Profile* selected = nullptr;
     for (const db::Profile& candidate : profilesModel->list.Get()) {
-        if (candidate.selected && candidate.type != "pptp" &&
-            candidate.type != "openvpn") {
+        if (candidate.selected && candidate.type != "pptp") {
             selected = &candidate;
             break;
         }

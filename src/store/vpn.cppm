@@ -1,15 +1,13 @@
 // vpn.cppm — clashflux.store.vpn：订阅化的原生 VPN 连接管理。
 //
-// Profile.type 决定 nativeConfig/nativeRoutes 的解释方式。OpenVPN 使用
-// sing-box endpoint，PPTP 保留系统原生路径；Profile 通过同一个 VpnManager
-// 管理，活动连接上限由共享领域层按平台能力统一限制。
+// 原生独立连接只保留 PPTP 系统拨号。OpenVPN 是普通订阅内容格式，
+// 由 sing-box 编译和主内核生命周期统一管理，不在本 store 创建独立会话。
 export module clashflux.store.vpn;
 
 import std;
 import clashflux.db;
 import clashflux.config;
 import clashflux.core;
-import clashflux.openvpn;
 import clashflux.pptp;
 import clashflux.service;
 import clashflux.vpn;
@@ -49,34 +47,19 @@ export struct PptpState {
     bool operator==(const PptpState&) const = default;
 };
 
-export struct OpenVpnState {
-    std::int64_t profileId = 0;
-    std::string name;
-    vpn::ConnectionState state = vpn::ConnectionState::Idle;
-    bool toolsAvailable = false;
-    std::string interfaceName;
-    std::string gateway;
-    std::string error;
-
-    bool operator==(const OpenVpnState&) const = default;
-};
-
 // Capability and session states are published together, including before any
 // connection has been dialed. Rendering never probes or constructs VpnStore.
 export struct VpnSnapshot {
     bool pptpAvailable = false;
-    bool openVpnAvailable = true;
     std::vector<PptpState> pptp;
-    std::vector<OpenVpnState> openvpn;
     bool operator==(const VpnSnapshot&) const = default;
 };
 
 export class VpnStore {
 public:
     VpnStore()
-        : adapter_(pptp::MakePptpAdapter()),
-          openVpnAdapter_(openvpn::MakeOpenVpnAdapter()) {
-        manager_.setAdapters({adapter_, openVpnAdapter_});
+        : adapter_(pptp::MakePptpAdapter()) {
+        manager_.setAdapters({adapter_});
         monitor_ = std::jthread([this](std::stop_token stop) {
             std::unique_lock lock(monitorMutex_);
             while (!stop.stop_requested()) {
@@ -187,7 +170,6 @@ public:
         manager_.disconnectAll();
         std::lock_guard snapshotLock(mutex_);
         snapshots_.clear();
-        openVpnSnapshots_.clear();
     }
 
     // The Home/tray stop action pauses every data plane while keeping this
@@ -237,9 +219,6 @@ public:
                 updateSnapshotLocked(profileId, it == sessionErrors.end()
                     ? std::string_view{} : std::string_view{it->second});
             }
-            for (auto& [profileId, snapshot] : openVpnSnapshots_) {
-                updateOpenVpnSnapshotLocked(profileId, {});
-            }
         }
         return error.empty();
     }
@@ -262,28 +241,9 @@ public:
 
     VpnSnapshot snapshot() {
         std::lock_guard lock(mutex_);
-        VpnSnapshot result{.pptpAvailable = adapter_.descriptor.available,
-                           .openVpnAvailable = openVpnAdapter_.descriptor.available};
+        VpnSnapshot result{.pptpAvailable = adapter_.descriptor.available};
         result.pptp.reserve(snapshots_.size());
         for (const auto& [id, state] : snapshots_) result.pptp.push_back(state);
-        result.openvpn.reserve(openVpnSnapshots_.size());
-        for (const auto& [id, state] : openVpnSnapshots_) result.openvpn.push_back(state);
-        return result;
-    }
-
-    OpenVpnState openVpnState(std::int64_t profileId) {
-        std::lock_guard lock(mutex_);
-        return openVpnStateLocked(profileId);
-    }
-
-    std::vector<OpenVpnState> openVpnStates() {
-        std::lock_guard lock(mutex_);
-        std::vector<OpenVpnState> result;
-        result.reserve(openVpnSnapshots_.size());
-        for (const auto& [profileId, snapshot] : openVpnSnapshots_) {
-            (void)profileId;
-            result.push_back(snapshot);
-        }
         return result;
     }
 
@@ -423,93 +383,6 @@ public:
         snapshots_.erase(profileId);
     }
 
-    // 连接一个 OpenVPN 原生订阅。阻塞，UI 必须经 RunOnTaskThread 调用。
-    bool connectOpenVpn(const db::Profile& profile, std::string& error) {
-        ensureLoaded();
-        if (profile.type != "openvpn") {
-            error = "该订阅不是 OpenVPN 类型";
-            return false;
-        }
-        std::string parseError;
-        if (!openvpn::ParseOpenVpnConfig(profile.nativeConfig, parseError)) {
-            error = parseError;
-            setOpenVpnError(profile.id, error);
-            return false;
-        }
-
-        vpn::VpnConnection connection{
-            .id = connectionId(profile.id),
-            .name = profile.name,
-            .kind = vpn::ConnectionKind::OpenVpn,
-            .canBeMain = false,
-            .enginePreference = {vpn::EngineKind::SingBox},
-            .internalRoutes = splitRoutes(profile.nativeRoutes),
-            .nativeConfig = profile.nativeConfig,
-        };
-
-        const std::string id = connectionId(profile.id);
-        std::unique_lock operationLock(operationMutex_);
-        if (const auto* current = manager_.findConnection(id);
-            current && current->state == vpn::ConnectionState::Connected &&
-            current->nativeConfig == profile.nativeConfig &&
-            current->internalRoutes == connection.internalRoutes &&
-            coreStore().snapshot().state == core::CoreState::Running) {
-            error.clear();
-            return true;
-        }
-        blockBeforeDisconnect(id);
-        manager_.disconnect(id);
-        {
-            std::lock_guard snapshotLock(mutex_);
-            manager_.upsertConnection(std::move(connection));
-            OpenVpnState& snapshot = openVpnSnapshots_[profile.id];
-            snapshot.profileId = profile.id;
-            snapshot.name = profile.name;
-            snapshot.state = vpn::ConnectionState::Connecting;
-            snapshot.toolsAvailable = openVpnAdapter_.descriptor.available;
-            snapshot.interfaceName.clear();
-            snapshot.gateway.clear();
-            snapshot.error.clear();
-        }
-
-        bool connected = manager_.connect(id, error);
-        if (connected && !publishRouting(error)) {
-            coreStore().stopCore();
-            manager_.disconnect(id);
-            const auto failure = error;
-            std::string ignored;
-            if (!publishRouting(ignored)) coreStore().stopCore();
-            error = "OpenVPN 已撤销，主 VPN 路由更新失败：" + failure;
-            connected = false;
-        }
-        {
-            std::lock_guard snapshotLock(mutex_);
-            updateOpenVpnSnapshotLocked(profile.id,
-                                        connected ? std::string_view{} : error);
-        }
-        return connected;
-    }
-
-    void disconnectOpenVpn(std::int64_t profileId) {
-        ensureLoaded();
-        std::lock_guard operationLock(operationMutex_);
-        blockBeforeDisconnect(connectionId(profileId));
-        manager_.disconnect(connectionId(profileId));
-        std::lock_guard snapshotLock(mutex_);
-        if (openVpnSnapshots_.contains(profileId)) {
-            updateOpenVpnSnapshotLocked(profileId, {});
-        }
-    }
-
-    void forgetOpenVpn(std::int64_t profileId) {
-        ensureLoaded();
-        std::lock_guard operationLock(operationMutex_);
-        blockBeforeDisconnect(connectionId(profileId));
-        manager_.removeConnection(connectionId(profileId));
-        std::lock_guard snapshotLock(mutex_);
-        openVpnSnapshots_.erase(profileId);
-    }
-
 private:
     // Called only on worker threads while holding operationMutex_. Keep the
     // cached capability and existing snapshots consistent under the UI lock.
@@ -541,11 +414,6 @@ private:
                 updateSnapshotLocked(profileId, "原生 VPN 已断开或服务不可用");
                 snapshot.state = vpn::ConnectionState::Failed;
             }
-            for (auto& [profileId, snapshot] : openVpnSnapshots_) {
-                if (connectionId(profileId) != id) continue;
-                updateOpenVpnSnapshotLocked(profileId, "原生 VPN 已断开或服务不可用");
-                snapshot.state = vpn::ConnectionState::Failed;
-            }
         }
     }
 
@@ -562,10 +430,6 @@ private:
                 : "";
             session.kind = connection.kind;
             session.transportAddress = session.connected ? connection.transportAddress : "";
-            session.nativeConfig = session.connected &&
-                    connection.kind == vpn::ConnectionKind::OpenVpn
-                ? connection.nativeConfig
-                : "";
             sessions.push_back(std::move(session));
         }
         return coreStore().updateNativeRouting(std::move(sessions), error);
@@ -614,17 +478,6 @@ private:
         };
     }
 
-    OpenVpnState openVpnStateLocked(std::int64_t profileId) const {
-        if (const auto it = openVpnSnapshots_.find(profileId);
-            it != openVpnSnapshots_.end()) {
-            return it->second;
-        }
-        return OpenVpnState{
-            .profileId = profileId,
-            .toolsAvailable = openVpnAdapter_.descriptor.available,
-        };
-    }
-
     void updateSnapshotLocked(std::int64_t profileId, std::string_view error) {
         PptpState& snapshot = snapshots_[profileId];
         snapshot.profileId = profileId;
@@ -645,31 +498,6 @@ private:
         PptpState& snapshot = snapshots_[profileId];
         snapshot.profileId = profileId;
         snapshot.toolsAvailable = adapter_.descriptor.available;
-        snapshot.state = vpn::ConnectionState::Failed;
-        snapshot.error = error;
-    }
-
-    void updateOpenVpnSnapshotLocked(std::int64_t profileId,
-                                     std::string_view error) {
-        OpenVpnState& snapshot = openVpnSnapshots_[profileId];
-        snapshot.profileId = profileId;
-        snapshot.toolsAvailable = openVpnAdapter_.descriptor.available;
-        if (const vpn::VpnConnection* connection =
-                manager_.findConnection(connectionId(profileId));
-            connection != nullptr) {
-            snapshot.name = connection->name;
-            snapshot.state = connection->state;
-            snapshot.interfaceName = connection->interfaceName;
-            snapshot.gateway = connection->gateway;
-        }
-        snapshot.error = std::string(error);
-    }
-
-    void setOpenVpnError(std::int64_t profileId, const std::string& error) {
-        std::lock_guard lock(mutex_);
-        OpenVpnState& snapshot = openVpnSnapshots_[profileId];
-        snapshot.profileId = profileId;
-        snapshot.toolsAvailable = openVpnAdapter_.descriptor.available;
         snapshot.state = vpn::ConnectionState::Failed;
         snapshot.error = error;
     }
@@ -722,10 +550,8 @@ private:
     mutable std::mutex mutex_;
     std::mutex operationMutex_;
     vpn::EngineAdapter adapter_;
-    vpn::EngineAdapter openVpnAdapter_;
     vpn::VpnManager manager_;
     std::map<std::int64_t, PptpState> snapshots_;
-    std::map<std::int64_t, OpenVpnState> openVpnSnapshots_;
     std::mutex monitorMutex_;
     std::condition_variable_any monitorWake_;
     std::jthread monitor_;

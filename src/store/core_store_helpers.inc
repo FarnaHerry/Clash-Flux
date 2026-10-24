@@ -50,7 +50,7 @@
         auto profiles = db_->listProfiles();
         if (mainOverride) {
             for (auto& profile : profiles)
-                if (profile.type != "pptp" && profile.type != "openvpn")
+                if (profile.type != "pptp")
                     profile.selected = routing::ConnectionId(profile.id) == *mainOverride;
         }
         const auto policy = !includeAuxiliary ? vpn::VpnPolicy{} : overridePolicy ? *overridePolicy
@@ -61,7 +61,7 @@
         if (updated && updated->id == options.mainConnectionId) options.profileYaml = updated->content;
 #if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
         if (includeAuxiliary) for (const auto& profile : profiles) {
-            if (profile.selected || profile.type == "pptp" || profile.type == "openvpn") continue;
+            if (profile.selected || profile.type == "pptp") continue;
             const auto id = routing::ConnectionId(profile.id);
             if (!std::ranges::any_of(policy.rules, [&](const auto& rule) {
                     return rule.enabled && rule.connectionId == id;

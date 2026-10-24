@@ -33,10 +33,10 @@ dhcp-option 等路由/DNS 指令，并保留来源级 unsupported 账本。内�
 sing-box 用户态 endpoint 生命周期管理，差异进入 approx 账本。
 原生 sing-box JSON 的 OpenVPN endpoint 继续保留原字段，不套用 .ovpn 指令白名单。
 
-## 已有记录
+## 移除旧独立连接
 
-旧 `type=openvpn` 的内联配置、稳定 ID、凭据、nativeRoutes、编排规则引用和辅助
-连接操作保持原样，不做启动迁移、文件搬移、自动启用或默认出口变更。
-UI 将这些记录放到本地来源分区，旧编辑器只用于兼容记录；只读保真度报告使用
-同一编译器。新导入只生成普通 remote/local 来源，不新增旧式 OpenVPN 记录。
-SQLite schema 不变。
+OpenVPN 只通过普通 remote/local 来源导入、编辑、启用和参与规则，不再保留旧
+`type=openvpn` 的独立会话、勾选、批量开关、专用编辑器或状态快照。
+独立系统拨号和内网路由表单只保留 PPTP；`importNative` 仅接受 PPTP。
+用户已确认没有需要保留的旧独立 OpenVPN 配置，因此不新增旧记录迁移，
+也不扫描、删除或重写现有数据库与订阅文件。SQLite schema 不变。

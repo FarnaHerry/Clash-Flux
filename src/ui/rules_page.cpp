@@ -154,7 +154,7 @@ std::vector<SubscriptionRuleRow> LoadSubscriptionRules() {
     const std::vector<db::Profile> profiles = store::profilesStore().list();
     for (const db::Profile& profile : profiles) {
         std::size_t ordinal = 0;
-        if (profile.type == "pptp" || profile.type == "openvpn") {
+        if (profile.type == "pptp") {
             for (const std::string& route : SplitRoutes(profile.nativeRoutes)) {
                 rows.push_back({
                     .profileId = profile.id,
@@ -179,7 +179,7 @@ std::vector<SubscriptionRuleRow> LoadSubscriptionRules() {
                 .profile = profile.name,
                 .type = "—",
                 .payload = "未配置内置规则",
-                .target = (profile.type == "pptp" || profile.type == "openvpn")
+                .target = (profile.type == "pptp")
                               ? "内网路由"
                               : "规则为空",
                 .ordinal = 0,
@@ -207,7 +207,7 @@ std::vector<RuleSourceChoice> TargetProfiles(const huxerui::StateList<db::Profil
     std::vector<RuleSourceChoice> result;
     for (const auto& profile : profiles) {
         if (!vpn::SupportsMultiProxySources() && !profile.selected &&
-            profile.type != "pptp" && profile.type != "openvpn") continue;
+            profile.type != "pptp") continue;
         result.push_back({profile.id, profile.name});
     }
     return result;
@@ -230,7 +230,7 @@ RuleTargetCatalog LoadRuleTargetCatalog(std::int64_t id) {
     if (profile == profiles.end()) {
         catalog.error = "目标来源已失效，请重新选择"; return catalog;
     }
-    if (!vpn::SupportsMultiProxySources() || profile->type == "pptp" || profile->type == "openvpn") {
+    if (!vpn::SupportsMultiProxySources() || profile->type == "pptp") {
         catalog.defaultOnly = true; return catalog;
     }
     const auto root = std::filesystem::canonical(cfg::dataDir() / "profiles");
@@ -383,11 +383,10 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
             bool ok = false;
             try { const auto outcome = co_await RunOnTaskThread([policy = std::move(policy),
                                                        &error]() mutable {
-                // 未命中的流量始终跟随当前启用的代理订阅；原生 PPTP/
-                // OpenVPN 只通过全局路由规则接管自己的目标网段。
+                // 未命中的流量始终跟随当前启用的代理订阅；PPTP
+                // 通过全局路由规则接管自己的目标网段。
                 for (const db::Profile& profile : store::profilesStore().list()) {
-                    if (profile.selected && profile.type != "pptp" &&
-                        profile.type != "openvpn") {
+                    if (profile.selected && profile.type != "pptp") {
                         policy.defaultMainId =
                             store::ProfileConnectionId(profile.id);
                         break;
@@ -433,8 +432,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
             // 避免 worker 里再整表拷贝一次。
             std::string selectedMainId;
             for (const db::Profile& profile : profilesModel->list.Get()) {
-                if (profile.selected && profile.type != "pptp" &&
-                    profile.type != "openvpn") {
+                if (profile.selected && profile.type != "pptp") {
                     selectedMainId = store::ProfileConnectionId(profile.id);
                     break;
                 }

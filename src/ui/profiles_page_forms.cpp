@@ -23,7 +23,6 @@
 
 import clashflux.core;
 import clashflux.db;
-import clashflux.openvpn;
 import clashflux.pptp;
 import clashflux.store.profiles;
 import clashflux.store.vpn;
@@ -204,32 +203,6 @@ huxerui::View ProfilePlatformOptions(
             Localized("要求 MPPE-128"), Localized("勾选后强制 MPPE-128；不勾选时按服务端要求协商"),
             huxerui::Switch(requireMppe.Get())
                 .OnChanged([requireMppe](bool checked) { requireMppe = checked; })),
-        huxerui::TextField(routes.Get())
-            .Label(Localized("内网 CIDR（逗号或换行分隔，可为空）"))
-            .Placeholder("10.20.0.0/16, 10.30.0.0/16")
-            .Variant(huxerui::TextFieldVariant::Outlined)
-            .OnChanged([routes](const huxerui::TextEditingValue& value) {
-                routes = value;
-            }),
-    }
-        .With(huxerui::Spacing(16.0F),
-              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-}
-
-// OpenVPN 使用原生 .ovpn 文本；支持 inline ca/cert/key/auth-user-pass，避免
-// 页面另造一套只覆盖部分 CLI 参数的配置模型。route 只由统一订阅路由字段管理。
-[[huxerui::composable]] huxerui::View OpenVpnOptionsForm(
-    huxerui::State<huxerui::TextEditingValue> config,
-    huxerui::State<huxerui::TextEditingValue> routes) {
-    return huxerui::Column {
-        huxerui::TextField(config.Get())
-            .Label(Localized("OpenVPN 配置（.ovpn 文本，支持 inline 证书）"))
-            .Placeholder("client\\ndev tun\\nremote vpn.example.com 1194 udp")
-            .LineLimits(huxerui::TextFieldLineLimits::MultiLine(8, 16))
-            .Variant(huxerui::TextFieldVariant::Outlined)
-            .OnChanged([config](const huxerui::TextEditingValue& value) {
-                config = value;
-            }),
         huxerui::TextField(routes.Get())
             .Label(Localized("内网 CIDR（逗号或换行分隔，可为空）"))
             .Placeholder("10.20.0.0/16, 10.30.0.0/16")
@@ -1213,14 +1186,12 @@ void PushProfileQrScanner(
     huxerui::State<huxerui::TextEditingValue> pptp_timeout,
     huxerui::State<huxerui::TextEditingValue> pptp_routes,
     huxerui::State<bool> pptp_mppe,
-    huxerui::State<huxerui::TextEditingValue> openvpn_config,
-    huxerui::State<huxerui::TextEditingValue> openvpn_routes,
     huxerui::TaskScope tasks, huxerui::ToastHandle toast,
     std::function<void()> on_back) {
     const auto save = [id, name, url, type, desc, timeout, interval, auto_update,
                        system_proxy, core_proxy, invalid_cert, pptp_server,
                        pptp_username, pptp_password, pptp_timeout, pptp_routes,
-                       pptp_mppe, openvpn_config, openvpn_routes, tasks, toast,
+                       pptp_mppe, tasks, toast,
                        on_back] {
         tasks.Launch([=]() -> huxerui::Task<void> {
             db::Profile fields;
@@ -1244,17 +1215,6 @@ void PushProfileQrScanner(
                 }
                 fields.nativeConfig = *config;
                 fields.nativeRoutes = joinRoutes(parseRouteField(pptp_routes.Get().text));
-                fields.url.clear();
-            } else if (fields.type == "openvpn") {
-                std::string configError;
-                if (!openvpn::ParseOpenVpnConfig(openvpn_config.Get().text,
-                                                 configError)) {
-                    toast.Show(configError);
-                    co_return;
-                }
-                fields.nativeConfig = openvpn_config.Get().text;
-                fields.nativeRoutes = joinRoutes(
-                    parseRouteField(openvpn_routes.Get().text));
                 fields.url.clear();
             } else {
                 fields.url = url.Get().text;
@@ -1283,8 +1243,6 @@ void PushProfileQrScanner(
             huxerui::Column {
                 huxerui::Text(Localized(type.Get() == "pptp"
                                   ? "类型：PPTP 内网连接"
-                                  : type.Get() == "openvpn"
-                                  ? "类型：OpenVPN 内网连接"
                                   : type.Get() == "local" ? "类型：本地文件"
                                                            : "类型：远程订阅")),
                     huxerui::TextField(name.Get())
@@ -1297,9 +1255,6 @@ void PushProfileQrScanner(
                         ? huxerui::View{PptpOptionsForm(
                               pptp_server, pptp_username, pptp_password,
                               pptp_timeout, pptp_routes, pptp_mppe)}
-                        : type.Get() == "openvpn"
-                        ? huxerui::View{OpenVpnOptionsForm(openvpn_config,
-                                                           openvpn_routes)}
                         : huxerui::View{huxerui::Column {
                               huxerui::TextField(url.Get())
                                   .Label(Localized("订阅链接（留空 = 本地导入）"))
@@ -1313,7 +1268,7 @@ void PushProfileQrScanner(
                                                  auto_update, system_proxy,
                                                  core_proxy, invalid_cert),
                           }},
-                    type.Get() == "pptp" || type.Get() == "openvpn"
+                    type.Get() == "pptp"
                         ? huxerui::View{huxerui::TextField(desc.Get())
                                             .Label(Localized("描述（可选）"))
                                             .Variant(huxerui::TextFieldVariant::Outlined)
@@ -1339,8 +1294,7 @@ void PushProfileQrScanner(
         fields.interval, fields.auto_update, fields.system_proxy,
         fields.core_proxy, fields.invalid_cert, fields.pptp_server,
         fields.pptp_username, fields.pptp_password, fields.pptp_timeout,
-        fields.pptp_routes, fields.pptp_mppe, fields.openvpn_config,
-        fields.openvpn_routes, tasks, toast, std::move(on_back));
+        fields.pptp_routes, fields.pptp_mppe, tasks, toast, std::move(on_back));
 }
 
 [[huxerui::composable]] huxerui::View ResponsiveProfileEditSurface(
@@ -1358,7 +1312,7 @@ void PushProfileQrScanner(
                 fields.system_proxy, fields.core_proxy, fields.invalid_cert,
                 fields.pptp_server, fields.pptp_username, fields.pptp_password,
                 fields.pptp_timeout, fields.pptp_routes, fields.pptp_mppe,
-                fields.openvpn_config, fields.openvpn_routes, tasks, toast,
+                tasks, toast,
                 on_back);
         });
 }

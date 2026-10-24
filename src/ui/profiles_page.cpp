@@ -39,7 +39,6 @@
 
 import clashflux.core;
 import clashflux.db;
-import clashflux.openvpn;
 import clashflux.pptp;
 import clashflux.singbox;
 import clashflux.store.core;
@@ -84,9 +83,7 @@ struct ProfileReorderSession {
     auto reorderTarget = huxerui::UseState<std::int64_t>(0);
     auto gridGeometry = huxerui::UseState(std::make_shared<ProfileGridGeometry>());
     auto pptpStates = huxerui::UseStateList<store::PptpState>();
-    auto openVpnStates = huxerui::UseStateList<store::OpenVpnState>();
-    auto connectionSelection = huxerui::UseStateList<std::int64_t>();
-    // 当前选中的类型分区标签（remote/local/pptp/openvpn/…）；无效或为空时
+    // 当前选中的类型分区标签（remote/local/pptp/…）；无效或为空时
     // 回落到第一个有订阅的类型。
     auto activeType = huxerui::UseState<std::string>("");
     auto profileSearch = huxerui::UseState(huxerui::TextEditingValue{});
@@ -131,8 +128,6 @@ struct ProfileReorderSession {
     auto editPptpTimeout = huxerui::UseState(huxerui::TextEditingValue{"30"});
     auto editPptpRoutes = huxerui::UseState(huxerui::TextEditingValue{""});
     auto editPptpMppe = huxerui::UseState(true);
-    auto editOpenVpnConfig = huxerui::UseState(huxerui::TextEditingValue{""});
-    auto editOpenVpnRoutes = huxerui::UseState(huxerui::TextEditingValue{""});
 
     // ---- 编辑规则弹窗（工作 YAML + 规则行 + 输入行 + 脏标记）----
     auto editYamlText = huxerui::UseState<std::string>("");
@@ -166,10 +161,9 @@ struct ProfileReorderSession {
         },
         0);
     huxerui::Lifecycle(
-        [pptpStates, openVpnStates, vpnModel] {
+        [pptpStates, vpnModel] {
             const auto& view = vpnModel->view.Get();
             ReplaceStateList(pptpStates, view.pptp);
-            ReplaceStateList(openVpnStates, view.openvpn);
             return [] {};
         },
         vpnModel->view);
