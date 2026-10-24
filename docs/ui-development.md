@@ -54,7 +54,7 @@
 
 ## 页内标签与导航图标
 
-- 应用 Logo 使用 `resources/images/clash_flux_logo.png` 中的黑猫探出盒子图形。桌面标题栏和 Windows 安装器将透明图放在白色底托上，以适配深色主题；Linux/Windows 任务栏应用图标使用透明背景和细白描边，Android 启动图标仍使用白底版本。桌面托盘使用同一黑猫盒子图形的矢量源 `assets/tray/logo.svg`，由 `scripts/generate-tray-icons.sh` 按 32/64/96 像素分别栅格化（框架托盘接口接收位图）；收紧源图留白以扩大图案，背景保持透明，默认、TUN 和系统代理状态分别使用深蓝、青绿和紫色图形，并加细白描边以适配深色系统托盘。Android 快捷开关磁贴仍使用独立的猫爪图标。
+- 应用 Logo 统一从 `assets/branding/logo.svg` 生成，沿用独立 demo 的完整出箱造型。界面使用透明的 `clash_flux_logo_vector_{dark,light}_current.svg`，按主题选择且不加 Tint；Linux/Windows/macOS 原生图标使用透明背景，Windows 安装器和 Android legacy launcher 保留白底。托盘保留默认、TUN 和系统代理三种状态色及 32/64/96 像素资源；Android 快捷磁贴继续使用独立猫爪。生成和预览方式见 [Logo 资源说明](branding/README.md)。
 - 桌面与移动端共用设置页主题选项，三个标签统一为“自动 / 深色 / 浅色”；“自动”按系统深浅模式选择主题。
 
 - 二级标签共用 `src/ui/section_tabs.cpp` 的 `SectionTabBar` 与 `SectionTabPages`，代理、订阅、规则页都接入。标签栏固定在 Pager 外，点击、溢出菜单与内容横滑写回同一受控选择。
@@ -76,6 +76,7 @@
 - 只有需要用户明确授权的流程可以显示系统交互提示，例如 UAC 提权。普通后台操作、失败清理和状态探测都保持安静执行。
 - HuxerUI 的 Windows 系统托盘菜单是原生菜单，`SystemTrayOptions` 不提供 `MenuStyle` 参数。桌面托盘生命周期按当前应用 `ThemeSpec` 同步 Windows 原生菜单主题；Windows 10 build 17763 及以上支持此同步，旧系统保留系统原生菜单主题。修改 HuxerUI 或 Windows 平台适配时，保持托盘菜单与应用深浅模式一致。
 - Linux 启动隐藏时先使用不依赖窗口的简版托盘菜单；主窗口挂载后切换到完整菜单，先让 StatusNotifier 菜单空一轮再发布，避免 Plasma 在两种菜单结构间保留旧动作。内核停止后的路由清理不碰 sing-box 的 `pref 9000`，仅由 root 服务清理能凭保留哨兵确认属于 Clash-Flux 的补偿路由。
+- 托盘隐藏时同时清空呈现缓存，停用后重开或宿主恢复时必须重新发布；简版菜单缓存包含实际内核与接管状态，图标使用实际状态，开关使用配置意图。完整菜单和无窗菜单统一调用应用级退出收尾。Linux 原生回归可在图形会话运行 `dbus-run-session -- /usr/bin/python3 tests/test_tray_runtime.py build/clash-flux`（需要 Gio/PyGObject 与 bubblewrap）：使用独立 D-Bus、临时数据及屏蔽已安装服务的沙箱，覆盖宿主失联/恢复、无窗唤回、菜单角色及退出；此检查单独运行，不替代 17 项桌面 CTest 门禁。
 
 ## 可拖动仪表盘卡片
 
@@ -179,7 +180,7 @@ Button("操作").With(menu.Anchor()).OnClick([menu] {
 
 桌面 Compact（宽度小于 600）由 `responsive_shell.h` 切换为四项底部导航与页内标题；独立 40pt 窗口标题栏保留拖动和系统窗口控件。规则/连接/日志通过设置「更多」进入，返回设置时恢复底部导航。内容容器 Key 与树路径保持稳定，越过断点不重挂载页面。桌面订阅编排、系统代理等能力不因窗口缩窄改变。
 
-订阅页在 Compact（手机与桌面窄窗）将「新建订阅」加号放在 `PillSearchField` 胶囊内部最右侧；有搜索内容时，清空按钮位于加号左侧。搜索框的外层 Scope 显式声明 Grow，Compact 搜索标题行不放 Spacer，避免两者平分剩余宽度；搜索表面占满标题行可用宽度，保留骨架统一的两侧留白。无批量选择时不再保留独立的动作行，批量连接操作仍在搜索栏下方；Medium/Expanded 的加号继续位于窗口标题栏。入口复用同一个新建操作，不改变平台订阅能力或导入流程。新建订阅与各添加方式的配置表单复用二级页面骨架，返回图标、居中的标题与右侧导入按钮同处顶行；新建/添加表单的左右动作使用等宽 40pt 槽位，导入中在右侧同一槽位显示 loading，不在表单底部重复导入按钮，返回键与图标使用同一返回动作。`test_page_transition` 的生产标题布局回归检查 320/420pt 搜索表面的实际宽度，以及普通/加载状态的标题中心。
+订阅页在 Compact（手机与桌面窄窗）将「新建订阅」加号放在 `PillSearchField` 胶囊内部最右侧；有搜索内容时，清空按钮位于加号左侧。搜索框的外层 Scope 显式声明 Grow，Compact 搜索标题行不放 Spacer，避免两者平分剩余宽度；搜索表面在 Compact 下占满标题行可用宽度，保留骨架统一的两侧留白。仅桌面非 Compact 的 PillSearchField 通过 PageSearchFieldLayout 共用 320pt 宽度上限，外层高度固定 40pt，胶囊高度 34pt、上下各留 3pt；在非 Grow 内层限制宽度，外层 Grow 槽位预留标题与动作后随空间收缩，搜索条在槽位内居中，两侧空白留作窗口拖动。桌面宽屏搜索框聚焦时使用 Color::Transparent() 透出所在区域的真实背景，描边改用 primary；失焦后恢复 surface_container_highest 和 outline，不改变控件尺寸。该桌面规则同时覆盖一级页和二级页；移动平台（含宽视口）和桌面 Compact 直接返回原搜索控件，不添加居中容器，移动端保留 48pt 高度。PPTP 卡片移除批量勾选与页顶批量操作，卡片底部保留一个图标按钮：打开使用现有 play，关闭使用 pause，加载中使用 ProgressCircle；保留对应 Tooltip 和无障碍标签。连接或断开期间禁用，失败后允许重试，状态读取应用级 VpnModel，动作使用应用任务域。OpenVPN 统一作为普通来源，移除旧独立连接的勾选、批量动作和专用编辑器；Medium/Expanded 的加号继续位于窗口标题栏。入口复用同一个新建操作，不改变平台订阅能力或导入流程。新建订阅与各添加方式的配置表单复用二级页面骨架，返回图标、居中的标题与右侧导入按钮同处顶行；新建/添加表单的左右动作使用等宽 40pt 槽位，导入中在右侧同一槽位显示 loading，不在表单底部重复导入按钮，返回键与图标使用同一返回动作。`test_page_transition` 的生产标题布局回归检查 320/420/600/960/1600pt 搜索表面的实际宽度、操作按钮避让与宽窄往返，以及普通/加载状态的标题中心；另检查移动端 48pt 高度、下方内容区域、输入/清空/添加及宽窄往返。
 
 Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上，桌面窄窗与手机保持相同的最大宽度、圆角和边距。表面以 Telegram Android 的纯色回退为基准：`CompactNavigationSurfaceColor` 使用独立的导航目标色，深色取 `surface_container_highest`，浅色取 `surface_container_high`，Alpha 为 1。不透出未经模糊的卡片内容，不对整个导航施加 Opacity。HuxerUI 当前没有背景模糊/折射，本实现不声称完整玻璃效果。`CompactNavigationDock` 唯一维护底色、32pt 圆角、0.4pt 单色细描边与轻阴影（模糊半径 2.667pt、向下偏移 0.85pt）；描边强度取 Telegram 上下边缘的平均值，阴影色遵守项目的 `ThemeShadowColor` 约定。选中指示底板由 `CompactNavigationIndicatorColor` 使用 0.16 Alpha 的主题 `primary`，选中文字与图标也使用 `primary`，参考 hui-test 的淡主色选中态。导航最大宽度为 352pt，四个槽位等分可用宽度；选中胶囊宽度为槽位宽度减 12pt、最多 76pt，高度 50pt，垂直居中于 64pt 导航行。窗口缩放直接重新定位，首帧不播放入场动画。图标与文字保留普通色底层，选中色覆盖层通过框架 Opacity 在 0.2 秒内渐变；点击导航时选中胶囊使用与 hui-test 相同的弹簧（stiffness 240、damping_ratio 0.78）轻微越过目标后回弹，横滑翻页提交后使用 0.2 秒缓出配合 Pager 收敛。反向改选由保留的 MotionController 从当前位移与速度继续，减少动态效果时直接切换。各导航项显式使用空 `Indication` 覆盖 `OnClick` 默认指示层，不显示悬停、按压或点击波纹，点击仍切页并移动选中胶囊。页面容器延伸到视口底边（Compact 含系统安全区，桌面也不保留骨架底部间距）；滚动内容通过 `CompactFloatingNavigationFooter` 留出导航避让，末项可滚到胶囊上方；首页启动按钮在窄窗避开导航，代理页桌面网格尾部为悬浮测速按钮保留 80pt 净空。
 
@@ -258,7 +259,16 @@ Logo 容器底色使用 surface，不再固定白色。页面代码不再直接�
 
 普通单色 SVG 由 Image.Tint 或 IconButton/NavigationPane 的主题前景色着色；源码中黑色路径不等于运行时固定黑色。回归 `page_transition` 增加已挂载 EmptyState 的浅色→深色→浅色点击切换，检查实际文字绘制颜色。
 
-## 界面 Logo 深浅版本（方案 2 保留）
+## 正式 Logo（出箱 demo 造型）
+
+当前界面采用 `clash_flux_logo_vector_dark_current.svg` / `light_current.svg`，保持 32pt、
+透明背景和相同几何。单中线与前盖相连，补全后盖透视和箱内壁，尾巴根部位于箱内。
+母版为 `assets/branding/logo.svg`；派生 PNG、托盘及平台图标通过
+`python3 scripts/generate-branding.py` 统一生成，`--check` 核对生成结果。
+`./demos/box-cat-demo/run-demo.sh --brand-preview` 在独立 HuxerUI 窗口挂载正式资源的
+深浅版本与小尺寸预览，不启动主程序。旧主 PNG 备份位于 `docs/branding/legacy/`。
+
+## 界面 Logo 历史试验（资源保留）
 
 界面 Logo 按当前 ThemeSpec 切换：浅色继续使用原 `resources/images/clash_flux_logo.png`，
 深色使用新增 `resources/images/clash_flux_logo_dark.png`（浅灰透明 PNG）。移除 Logo
@@ -266,7 +276,7 @@ Logo 容器底色使用 surface，不再固定白色。页面代码不再直接�
 提示为仅将黑猫/盒子形状改为浅灰、保留透明眼孔和轮廓；它是独立资源，不覆盖原图。
 两张方案预览继续保留在生成目录；应用/启动图标与托盘资源不跟随此次 UI 切换修改。
 
-当前界面切换为方案 3：浅色使用 `resources/images/clash_flux_logo_outline.png`，
+历史方案 3：浅色使用 `resources/images/clash_flux_logo_outline.png`，
 黑猫/盒子保持暗色，边缘加浅灰描边、背景透明。该资源由 imagegen 基于原图生成，
 提示为仅增加细浅灰描边、保留形状和透明间隙。原 `clash_flux_logo.png`、方案 2 的
 `clash_flux_logo_dark.png` 和两个预览均保留，不覆盖应用图标、启动图标或托盘素材。
@@ -298,13 +308,13 @@ HuxerUI 的 `Image.Tint` 仅支持矢量图，PNG 调用会在启动时抛出异
 
 日志页不再按应用/内核分区，两类历史与推送增量合并为一个按 Unix 秒排序的列表，同秒按 UI 接收顺序排列（不声称跨来源精确事件顺序），仅保留最新 800 行。stdout/stderr 使用接收时间排序并保留原文。搜索、级别筛选、剪贴板与文件导出共用列表，文件默认名为 `clash-flux.log`；清空统一缓存及 `core/logs.log` 文件。两种写入口共用同一日志存储，直接启用新文件，不迁移或读取旧 `app.log` / `kernel-ui.log`；内核进程自己的 stdout/stderr 文件仍供生命周期诊断使用。页面直接使用单个 VirtualList，保留 Compact 滚动尾部避让。
 
-配置保真度使用独立二级页面 `fidelity_page.cpp`，从每个配置卡片的右键菜单进入，Compact/手机的卡片「更多」菜单共用同一入口，设置页不再提供入口。菜单传入稳定 profile ID，页面任务在线程池只读该文件并独立编译报告，不启用配置、不下载、不发布运行/预览映射。标题显示配置名称，读取/编译错误明确显示并保留部分保真度记录；PPTP 明确提示暂不提供此报告，OpenVPN 普通来源与旧内联记录共用编译器报告。内容使用 VirtualList 展示完整明细，空记录不声称全部能力保真。桌面宽窗使用自定义标题栏与返回按钮，Compact/手机覆盖底部导航，返回直接父级配置列表；桌面二级导航记录所属一级页，切换侧栏时弹出报告。
+配置保真度使用独立二级页面 `fidelity_page.cpp`，从每个配置卡片的右键菜单进入，Compact/手机的卡片「更多」菜单共用同一入口，设置页不再提供入口。菜单传入稳定 profile ID，页面任务在线程池只读该文件并独立编译报告，不启用配置、不下载、不发布运行/预览映射。标题显示配置名称，读取/编译错误明确显示并保留部分保真度记录；PPTP 明确提示暂不提供此报告，OpenVPN 普通来源使用同一编译器报告。内容使用 VirtualList 展示完整明细，空记录不声称全部能力保真。桌面宽窗使用自定义标题栏与返回按钮，Compact/手机覆盖底部导航，返回直接父级配置列表；桌面二级导航记录所属一级页，切换侧栏时弹出报告。
 
 新建订阅的桌面弹窗与窄屏页面共用 `ProfileCreatePage`；移动端按添加方式继续进入
 `ProfileCreateMethodPage`，两者均通过普通来源入口导入 JSON/YAML/.ovpn。
 OpenVPN 不再拥有创建类型/单独创建字段，直接配置的专用 VPN 表单仅保留 PPTP。
 文件选择器支持 `json/yaml/yml/ovpn`，名称在组合期解析为拥有型 DTO。
-旧 OpenVPN 记录归入本地分区，保留辅助连接和旧编辑器；不通过重建记录改变 ID 或引用。
+旧 OpenVPN 独立连接兼容已移除，不进行记录迁移或数据库清理；只有 PPTP 保留独立连接界面。
 Clash YAML 的规则编辑能力由应用级订阅泵在任务线程按内容识别，卡片只读能力快照；
 JSON/.ovpn 不显示 YAML 规则编辑入口，继续提供文件编辑和全局路由。打开规则编辑器
 时再次核对实际内容，拒绝在来源格式已变更后将 YAML 写进 JSON/.ovpn 文件。

@@ -1,5 +1,9 @@
 # Clash-Flux
 
+<img src="resources/images/clash_flux_logo.png" width="112" alt="Clash-Flux Logo">
+
+项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
+
 版本更新见 [v0.3.59 发布说明](docs/releases/v0.3.59.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
@@ -30,12 +34,12 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   失效旧引用保留原名。手机、原生连接与 JSON 使用默认出口，详见[编排设计](docs/desktop-subscription-orchestration.md)
 - 多重规则 / 连接 / 日志：按订阅查看各自规则，使用全局路由规则把域名/IP/CIDR
   分配给不同连接；连接快照（可逐条/全部关闭）、内核与应用日志统一显示、搜索与导出，历史可恢复
-- 原生 VPN 订阅：PPTP 保留系统拨号/特权服务路径（Windows 走系统 RAS，条目固定
+- PPTP 独立连接：保留系统拨号/特权服务路径（Windows 走系统 RAS，条目固定
   使用 MS-CHAPv2，MPPE-128 由订阅开关控制：勾选强制、不勾选按服务端要求协商；
   Windows 系统拨号同一时间仅支持一条 PPTP，连接第二条前需先断开，UI 会明确提示）；
-  OpenVPN `.ovpn` 由 sing-box 1.14 的 `openvpn-client` endpoint 承载，可同时
-  启用多个连接；内网
-  CIDR 由 sing-box 路由规则直接指向各 endpoint，PPTP 才由平台后端安装系统路由
+  OpenVPN `.ovpn` 通过普通远程/本地来源导入，由 sing-box 1.14 的 `openvpn-client`
+  endpoint 承载；桌面次来源按启用规则参与，手机保持单活动普通来源。
+  不再提供旧 OpenVPN 独立连接或批量开关，PPTP 才由平台后端安装系统路由
 - 内核控制：应用启动即拉起内核（没有选中订阅时用最小配置保持就绪），TUN 与系统
   代理只按实际设置恢复，不反过来决定内核是否启动；出站模式（规则/全局/直连）、
   混合端口、局域网连接、日志级别；桌面首页/托盘停止会撤销自有系统代理、确认
@@ -128,6 +132,9 @@ OpenVPN `.ovpn` 与 Clash YAML、sing-box JSON 共用远程订阅和本地文件
 把这些内容交给 sing-box，外部文件路径和脚本/系统路由指令不会被静默执行。
 
 ## 构建与运行
+
+首页猫咪出箱动画有[独立 HuxerUI Demo](demos/box-cat-demo/README.md)，
+可通过 `./demos/box-cat-demo/run-demo.sh` 调试模拟启停，不影响主程序代理。
 
 ```bash
 cmake -B build -G Ninja

@@ -5,6 +5,10 @@
 
 ## 修改后的强制验证
 
+首页猫咪出箱动画的独立调试工程在 `demos/box-cat-demo`，用
+`./demos/box-cat-demo/run-demo.sh` 启动。只用模拟状态，不接入主程序内核、代理、
+数据库或订阅；调试动画不需要启动主程序 GUI，以下主目标构建与 version 验证仍必做。
+
 每次修改完成后，无论改动大小、涉及何种文件（代码、UI、脚本还是配置），都必须先
 在本地重新编译，不得依赖旧的可执行文件判断改动有效：
 
@@ -86,6 +90,10 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   冲突解决退回都不会让流水线失败，只会在用户安装包里体现（v0.3.34 曾因此把 0.3.28 打进
   发布包）。发布提交前用 `git show <tag>:platform/android/app/build.gradle | grep version`
   核对已提交内容，不要只看工作区。
+- 项目 Logo 母版为 `assets/branding/logo.svg`（猫咪出箱 demo 的完整运行态造型）。
+  修改后运行 `python3 scripts/generate-branding.py` 与 `--check`，统一生成深浅 SVG、
+  托盘和原生应用图标；不要单独覆盖派生 PNG。流程与旧版备份见 `docs/branding/README.md`。
+  正式资源可用独立 demo 的 `--brand-preview` 实际挂载预览，不启动主程序或影响代理。
 - **Android 图标分工是固定的，不要互相替换**：应用图标（`mipmap-*/ic_launcher.png` 与
   adaptive 前景 `drawable/ic_launcher_foreground.xml`，前景 inset `@drawable/ic_launcher_mascot`、
   背景 `@color/ic_launcher_background`）用**黑猫探出盒子的应用 Logo**；快捷开关磁贴徽章
@@ -105,6 +113,9 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   数据面启动放在服务工作线程；网络变化、亮屏/退出 Doze 时先更新 sing-box 物理接口，再关闭旧连接。
   详见 `docs/android-background-lifecycle.md`。
 - HuxerUI composable 函数体内不能使用条件编译；普通 UI 源文件按项目现有 DSL 约定编写。
+- 桌面样式调整默认不改移动端。搜索条的限宽居中只用于桌面非 Compact；移动平台
+  （包括宽视口）与桌面 Compact 保留原搜索控件结构，移动端保持 48pt 高度。
+  共享搜索布局修改必须回归实际高度、下方内容区域及输入/清空/添加，不能只检查宽度。
 - 桌面 Medium/Expanded 外层使用平面布局：Logo 与导航为左栏，标题与内容为右栏，保留栏间竖线与右侧标题下横线；
   页内区块和条目使用卡片，保留底色、圆角与选中填色。一级页名称显示在自定义标题栏，
   内容区不重复标题或顶部动作行；页面动作挂在本页 `PageScaffold` 的标题栏中，位于原生窗口
@@ -197,8 +208,8 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   reparse point；先暂存，再由受保护旧服务副本的 LocalSystem 助手替换并重启 SCM，
   保留原安装 SID。旧版无 UPGRADE 和可写目录便携版保留手动授权入口，不能为了免
   UAC 允许普通用户替换 SYSTEM 代码。macOS 无独立服务，手机服务随应用包更新。
-- 原生 VPN 的服务能力由 `VpnStore` 的任务线程监视并随 `VpnSnapshot` 发布，不能永久冻结启动时的 PPTP 可用状态。能力刷新用 `VpnManager::setEngineAvailable`，不得用会断开现有连接的 `setAdapters`；订阅卡片只读应用级 `VpnModel`，不得在渲染时探测服务。显式连接先检查服务与能力，再停止主 TUN；具体失败原因优先于通用不可用提示。Windows 系统拨号同一时间仅支持一条 PPTP（`vpn::PptpSingleSession()`）：存储层在停止主内核前拒绝第二条拨号并指明占用连接，UI 在勾选前给出同样原因，PPTP 卡片展示该平台边界；不得为绕过它把 PPTP 改成静默自动断开或假装支持并发。
-- 新 OpenVPN `.ovpn` 通过普通远程/本地入口按内容识别，编译成同一 sing-box 的 endpoint；不恢复独立新建类型，也不再提供配置文本粘贴入口（粘贴内容保存为文件后走本地导入，扫码文本仍按内容识别）。主来源可提供默认出口，桌面次来源只在启用规则引用时加载，手机保持单活动普通来源。旧 `type=openvpn` 只作兼容，不改写其 ID、凭据、内网路由和规则引用；归入本地分区并保留原辅助连接语义。外部文件、脚本及尚未转换的路由/DNS 指令必须拒绝并进入来源保真度，不能猜测或静默省略。详见 `docs/openvpn-import.md`。
+- 原生 VPN 的服务能力由 `VpnStore` 的任务线程监视并随 `VpnSnapshot` 发布，不能永久冻结启动时的 PPTP 可用状态。能力刷新用 `VpnManager::setEngineAvailable`，不得用会断开现有连接的 `setAdapters`；订阅卡片只读应用级 `VpnModel`，不得在渲染时探测服务。显式连接先检查服务与能力，再停止主 TUN；具体失败原因优先于通用不可用提示。Windows 系统拨号同一时间仅支持一条 PPTP（`vpn::PptpSingleSession()`）：存储层在停止主内核前拒绝第二条拨号并指明占用连接，UI 在卡片点击打开时给出同样原因，PPTP 卡片展示该平台边界；不得为绕过它把 PPTP 改成静默自动断开或假装支持并发。
+- 新 OpenVPN `.ovpn` 通过普通远程/本地入口按内容识别，编译成同一 sing-box 的 endpoint；不恢复独立新建类型，也不再提供配置文本粘贴入口（粘贴内容保存为文件后走本地导入，扫码文本仍按内容识别）。主来源可提供默认出口，桌面次来源只在启用规则引用时加载，手机保持单活动普通来源。已移除旧 `type=openvpn` 独立连接兼容，不恢复其专用编辑器、批量开关或会话状态；原生独立拨号只保留 PPTP。用户已确认无须迁移旧独立配置，不新增启动迁移或清理数据库。外部文件、脚本及尚未转换的路由/DNS 指令必须拒绝并进入来源保真度，不能猜测或静默省略。详见 `docs/openvpn-import.md`。
 - Windows CI 使用 runner 预装的 OpenSSL（`Program Files/OpenSSL`），构建前检查
   可执行文件和开发头文件；不要在发布门禁重新调用 Chocolatey 安装 OpenSSL。
 - 修改完成后运行 `git diff --check`，并在回复中说明实际执行过的验证命令及结果。

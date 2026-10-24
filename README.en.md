@@ -1,5 +1,12 @@
 # Clash-Flux
 
+<img src="resources/images/clash_flux_logo.png" width="112" alt="Clash-Flux Logo">
+
+The project logo uses the completed cat-and-box pose from the demo. See [branding assets](docs/branding/README.md) for the master SVG, legacy copies, and icon regeneration.
+
+The home control animation has a [standalone HuxerUI demo](demos/box-cat-demo/README.md).
+Run `./demos/box-cat-demo/run-demo.sh` to preview simulated start/stop animations without affecting the main app's proxy.
+
 See the [v0.3.59 release notes](docs/releases/v0.3.59.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
@@ -44,14 +51,15 @@ application-managed settings before being passed to sing-box.
   IP addresses and CIDRs to different connections through global routing rules;
   inspect connection snapshots and close individual or all connections. Core and
   application logs share one searchable list and export, with history restored for viewing.
-- Native VPN profiles: PPTP uses system dialing and privileged service integration.
+- Standalone PPTP connections use system dialing and privileged service integration.
   Windows uses RAS with MS-CHAPv2; enabling MPPE-128 requires encryption, while
   disabling that option lets the server negotiate its requirements. Windows
   dial-up supports only one PPTP connection at a time — disconnect the current
   one before dialing another; the UI states this explicitly. OpenVPN
-  `.ovpn` profiles use sing-box 1.14's `openvpn-client` endpoint and support multiple
-  active connections. Private-network CIDRs route directly to these endpoints;
-  only PPTP installs system routes through the platform backend.
+  `.ovpn` files use ordinary remote/local imports and sing-box 1.14's `openvpn-client`
+  endpoint. Desktop auxiliary sources participate through enabled routing rules;
+  mobile keeps one active ordinary source. Legacy standalone OpenVPN controls are
+  removed. Only PPTP installs system routes through the platform backend.
 - Core controls: start the core with the application, using a minimal configuration
   when no subscription is selected. Restore TUN and system proxy settings according
   to saved preferences. Select rule, global or direct outbound mode; configure the
