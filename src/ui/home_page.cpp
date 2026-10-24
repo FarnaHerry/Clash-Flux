@@ -918,6 +918,7 @@ huxerui::XYChartData BuildTrafficChartData(
                                     : theme.colors.on_primary).OnClick(toggle)
         .With(huxerui::Tooltip(actionLabel),
               huxerui::Enabled(enabled),
+              huxerui::Focusable(true),
               huxerui::Indication{},
               huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                  .label = huxerui::UseString(actionLabel)});
@@ -1185,6 +1186,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
         returning ? std::optional{BoxCatPhase::Running} : std::nullopt).OnClick(toggle)
         .With(huxerui::Tooltip(Localized(active ? "停止内核" : "启动内核")),
               huxerui::Enabled(enabled),
+              huxerui::Focusable(true),
               huxerui::Indication{},
               huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                  .label = huxerui::UseString(Localized(
