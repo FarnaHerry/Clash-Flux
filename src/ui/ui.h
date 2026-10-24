@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "../runtime_health.h"
 #include "app_http_client.h"
 #include "theme_colors.h"
 

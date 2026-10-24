@@ -27,6 +27,7 @@ CLASHFLUX_SERVICE_EXPORT bool stopCore(std::string& err) {
     err = "服务模式仅支持 Linux / Windows 桌面";
     return false;
 }
+CLASHFLUX_SERVICE_EXPORT std::optional<bool> coreRunningEvidence() { return {}; }
 CLASHFLUX_SERVICE_EXPORT bool coreRunning() { return false; }
 CLASHFLUX_SERVICE_EXPORT bool pptpAvailable() { return false; }
 CLASHFLUX_SERVICE_EXPORT bool pptpSessionAlive(std::string_view) { return false; }

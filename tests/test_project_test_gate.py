@@ -7,7 +7,7 @@ import tempfile
 REQUIRED = ["smoke", "profile_links", "page_transition", "singbox",
             "rule_provider_download", "dns_hosts_runtime", "dns_policy_runtime",
             "dns_tls_runtime", "vpn", "routing", "compensation", "sqlite_orm",
-            "persistence", "project_test_gate", "group_expansion_runtime", "service_protocol", "cps_dependencies"]
+            "persistence", "project_test_gate", "group_expansion_runtime", "service_protocol", "cps_dependencies", "runtime_health"]
 
 
 def main():

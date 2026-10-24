@@ -33,6 +33,7 @@
 module;
 #include <cstdio>
 #include "service_startup.h"
+#include "service_protocol.h"
 
 #ifdef _WIN32
 #include "windows_service.h"

@@ -116,6 +116,11 @@ export bool startCore(const std::filesystem::path& config, std::string& error) {
     return windowsOk("START " + protocol::hex(std::string(reinterpret_cast<const char*>(value.data()), value.size())), error);
 }
 export bool stopCore(std::string& error) { return windowsOk("STOP", error, 30000); }
+export std::optional<bool> coreRunningEvidence() {
+    std::string error;
+    const auto reply = native_service::request("STATUS", error);
+    return reply ? clashflux::service_protocol::runningEvidence(*reply) : std::nullopt;
+}
 export bool coreRunning() {
     std::string error;
     const auto reply = native_service::request("STATUS", error);

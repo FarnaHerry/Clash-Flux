@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <string>
+#include <stop_token>
 
 #include "ui.h"
 #include "core_operation.h"
@@ -30,6 +31,7 @@ namespace clashflux::ui {
 // 这里只补 UI 需要、但不在内核快照里的几项设置与探测结果。
 struct CoreView {
     store::CoreSnapshot core;
+    health::Snapshot health;
     bool ready = false;
     bool tunIntent = false;          // persisted preference, independent of core lifetime
     std::string modeIntent = "rule";
@@ -52,6 +54,10 @@ struct CoreView {
 
 struct CoreModel {
     CoreOperations operations;
+    huxerui::State<bool> diagnosticsBusy{false};
+    huxerui::State<std::string> diagnosticsReport{std::string{}};
+    std::stop_source diagnosticsCancel;
+    std::uint64_t diagnosticsSerial = 0;
     huxerui::State<bool> serviceChecking{false};
     // GUI 启动维护只发起一次；模型属于 application service，页面重挂载不会重跑。
     bool startupServiceMaintenanceStarted = false;

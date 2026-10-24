@@ -79,6 +79,9 @@ public final class MainActivity extends HuxerUIActivity {
             int coreState, int vpnState, long uploadRate, long downloadRate,
             long uploadTotal, long downloadTotal, int connections, String message);
     private static native void nativeClearTunPreference();
+    private static native void nativeUpdateRuntimeHealth(long epoch, long generation, long sequence,
+            long age, int repairs, boolean connected, boolean available, String state);
+    private static native void nativeRuntimeBinderAvailable(boolean available);
 
     /**
      * Fetch a remote subscription on a worker thread. The optional trust
@@ -256,23 +259,42 @@ public final class MainActivity extends HuxerUIActivity {
     }
 
     private final Handler runtimeHandler = new Handler(Looper.getMainLooper());
-    private boolean runtimeServiceBound;
+    private volatile boolean runtimeServiceBound;
+    private volatile long runtimeBindingEpoch;
+    private final Object runtimeObservationLock = new Object();
+    private final java.util.concurrent.atomic.AtomicBoolean runtimePollBusy = new java.util.concurrent.atomic.AtomicBoolean();
+    private final java.util.concurrent.ExecutorService runtimeReader = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "clashflux-runtime-reader"); thread.setDaemon(true); return thread;
+    });
     private static volatile long runtimeLogCursor;
     private final Runnable runtimePoll = new Runnable() {
         @Override public void run() {
-            pollRuntimeProcess();
+            if (runtimePollBusy.compareAndSet(false, true)) {
+                final long epoch = runtimeBindingEpoch;
+                runtimeReader.execute(() -> {
+                    try { pollRuntimeProcess(epoch); }
+                    finally { runtimePollBusy.set(false); }
+                });
+            }
             if (runtimeServiceBound) runtimeHandler.postDelayed(this, 1000);
         }
     };
     private final ServiceConnection runtimeConnection = new ServiceConnection() {
         @Override public void onServiceConnected(ComponentName name, IBinder binder) {
-            runtimeControl = IClashRuntime.Stub.asInterface(binder);
+            synchronized (runtimeObservationLock) {
+                ++runtimeBindingEpoch;
+                runtimeControl = IClashRuntime.Stub.asInterface(binder);
+            }
             runtimeHandler.removeCallbacks(runtimePoll);
             runtimeHandler.post(runtimePoll);
         }
 
         @Override public void onServiceDisconnected(ComponentName name) {
-            runtimeControl = null;
+            synchronized (runtimeObservationLock) {
+                ++runtimeBindingEpoch;
+                nativeRuntimeBinderAvailable(false);
+                runtimeControl = null;
+            }
         }
     };
 
@@ -350,6 +372,11 @@ public final class MainActivity extends HuxerUIActivity {
 
     @Override
     protected void onStop() {
+        synchronized (runtimeObservationLock) {
+            ++runtimeBindingEpoch;
+            nativeRuntimeBinderAvailable(false);
+            runtimeControl = null;
+        }
         runtimeHandler.removeCallbacks(runtimePoll);
         if (runtimeServiceBound) {
             unbindService(runtimeConnection);
@@ -359,11 +386,17 @@ public final class MainActivity extends HuxerUIActivity {
         super.onStop();
     }
 
-    private void pollRuntimeProcess() {
+    private void pollRuntimeProcess(long bindingEpoch) {
         IClashRuntime service = runtimeControl;
         if (service == null) return;
         try {
             Bundle snapshot = service.snapshot();
+            synchronized (runtimeObservationLock) {
+            if (bindingEpoch != runtimeBindingEpoch || service != runtimeControl || !runtimeServiceBound) return;
+            nativeUpdateRuntimeHealth(snapshot.getLong("runtimeEpoch"), snapshot.getLong("clientGeneration"),
+                    snapshot.getLong("statusSequence"), snapshot.getLong("statusAgeMs", -1),
+                    snapshot.getInt("statusRepairs"), snapshot.getBoolean("clientConnected"),
+                    snapshot.getBoolean("trafficAvailable"), snapshot.getString("statusHealth", "unknown"));
             runtimeCoreState = snapshot.getInt("coreState");
             runtimeVpnState = snapshot.getInt("vpnState");
             runtimeMessage = snapshot.getString("message", "");
@@ -371,12 +404,15 @@ public final class MainActivity extends HuxerUIActivity {
                     snapshot.getLong("uploadRate"), snapshot.getLong("downloadRate"),
                     snapshot.getLong("uploadTotal"), snapshot.getLong("downloadTotal"),
                     snapshot.getInt("connections"), runtimeMessage);
+            }
+            if (bindingEpoch != runtimeBindingEpoch || service != runtimeControl) return;
             if (snapshot.getBoolean("tunResetPending")) {
                 nativeClearTunPreference();
                 service.acknowledgeTunReset();
             }
 
             Bundle logs = service.logsAfter(runtimeLogCursor);
+            if (bindingEpoch != runtimeBindingEpoch || service != runtimeControl) return;
             runtimeLogCursor = logs.getLong("sequence", runtimeLogCursor);
             ArrayList<String> entries = logs.getStringArrayList("entries");
             if (entries == null) return;
@@ -393,6 +429,9 @@ public final class MainActivity extends HuxerUIActivity {
                 else nativeAppLog(level, fields[3]);
             }
         } catch (RemoteException | RuntimeException error) {
+            synchronized (runtimeObservationLock) {
+                if (bindingEpoch == runtimeBindingEpoch) nativeRuntimeBinderAvailable(false);
+            }
             Log.w(TAG, "Unable to read sing-box runtime state", error);
         }
     }
@@ -407,6 +446,7 @@ public final class MainActivity extends HuxerUIActivity {
 
     @Override
     protected void onDestroy() {
+        runtimeReader.shutdownNow();
         if (current == this) {
             current = null;
         }

@@ -8,6 +8,9 @@
 // 互斥保护的队列/最新值槽；写入后经 addStreamUpdateObserver 通知 UI 线程，
 // UI 收到通知再 drain（不再按节拍轮询）。
 // 鉴权用 ?token=<secret> 查询参数（clash 系内核对 WS 的通用鉴权方式）。
+module;
+#include "runtime_health.h"
+
 export module clashflux.stream;
 
 import std;
@@ -45,6 +48,18 @@ export enum class StreamKind {
 
 export class CoreStreams {
 public:
+    class HealthPause {
+    public:
+        explicit HealthPause(CoreStreams& owner);
+        ~HealthPause();
+        HealthPause(const HealthPause&) = delete;
+        HealthPause& operator=(const HealthPause&) = delete;
+    private:
+        CoreStreams& owner_;
+    };
+    // Nested lifecycle operations may pause observation without stopping sockets.
+    HealthPause pauseHealth();
+
     CoreStreams();
     ~CoreStreams();
 
@@ -55,6 +70,10 @@ public:
     void start(const std::string& wsBase, const std::string& secret,
                const std::string& logLevel);
     void stop();
+
+    // Immutable evidence; never interprets traffic volume as reachability.
+    clashflux::health::Snapshot health() const;
+    std::vector<std::string> recentHealthEvents() const;
 
     bool logsOpen() const;
     bool trafficOpen() const;

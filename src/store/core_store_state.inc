@@ -22,6 +22,26 @@
 #endif
     }
 
+    void setAndroidRuntimeHealth(std::uint64_t epoch, std::uint64_t generation,
+            std::uint64_t sequence, std::int64_t age, unsigned repairs,
+            bool connected, bool available, std::string state) {
+        std::lock_guard lock(mutex_);
+        snap_.runtimeEpoch = epoch;
+        snap_.clientGeneration = generation;
+        snap_.statusSequence = sequence;
+        snap_.statusAgeMs = age;
+        snap_.statusRepairs = repairs;
+        snap_.statusConnected = connected;
+        snap_.trafficAvailable = available;
+        snap_.statusHealth = std::move(state);
+        snap_.binderReceivedAt = std::chrono::steady_clock::now();
+        snap_.binderAvailable = true;
+    }
+    void setAndroidBinderAvailable(bool available) {
+        std::lock_guard lock(mutex_);
+        snap_.binderAvailable = available;
+    }
+
     void setAndroidRuntimeState(int state, const std::string& message) {
 #if defined(__ANDROID__)
         std::lock_guard lock(mutex_);
@@ -84,6 +104,12 @@
             default:
                 if (s.state != core::CoreState::Failed) s.state = core::CoreState::Stopped;
                 break;
+        }
+        if (s.binderReceivedAt != std::chrono::steady_clock::time_point{}) {
+            s.binderAgeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - s.binderReceivedAt).count();
+            if (s.statusAgeMs >= 0) s.statusAgeMs += s.binderAgeMs;
+            if (s.statusAgeMs > 5000 && s.statusHealth == "fresh") s.statusHealth = "stale";
         }
         s.version = s.state == core::CoreState::Running ? "sing-box libbox" : "";
         s.tunEnabled = clashflux_android_vpn_state() == 1 ||
@@ -426,6 +452,7 @@
     // 成功更新快照。
     bool applyTun(bool enable) {
         std::lock_guard operationLock(lifecycleMutex_);
+        auto healthPause = streams_.pauseHealth();
 #if defined(CLASHFLUX_IOS)
         if (!enable) return false;
         ensureOpen();
@@ -485,6 +512,7 @@
     //   返回成功表示「意图已记录」。
     bool applySystemProxy(bool enable) {
         std::lock_guard operationLock(lifecycleMutex_);
+        auto healthPause = streams_.pauseHealth();
 #if defined(__ANDROID__)
         (void)enable;
         return false;

@@ -5,6 +5,15 @@
 #include <string_view>
 #include <vector>
 namespace clashflux::service_protocol {
+// nullopt means unconfirmed: an IPC timeout/denial is not process exit.
+inline std::optional<bool> runningEvidence(std::string_view reply) {
+    if (reply == "STOPPED") return false;
+    if (!reply.starts_with("RUNNING ")) return {};
+    auto pid = reply.substr(8);
+    if (pid.empty() || pid.size() > 20 || pid.front() < '1' || pid.front() > '9') return {};
+    for (char c : pid) if (c < '0' || c > '9') return {};
+    return true;
+}
 inline constexpr std::size_t kMaxCommand = 65536;
 inline std::string hex(std::string_view value) {
     constexpr char digits[] = "0123456789abcdef";

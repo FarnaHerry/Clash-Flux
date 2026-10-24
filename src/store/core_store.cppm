@@ -14,6 +14,8 @@
 //      clash_api 就绪（≤30s，覆盖远程规则集首启下载；进程提前退出仍立即判失败）
 //   4. 就绪 → Running，拉起 /logs /traffic /connections 三条 WS 流
 module;
+#include "runtime_health.h"
+#include "wire_codec.h"
 #if defined(__ANDROID__)
 #include "android_profile_http.h"
 #if !defined(NDEBUG)
@@ -92,6 +94,13 @@ export struct CoreSnapshot {
     std::int64_t uploadTotal = 0;
     std::int64_t downloadTotal = 0;
     int connectionCount = 0;
+    // Android ages originate in elapsedRealtime, then age locally after receipt.
+    std::uint64_t runtimeEpoch = 0, clientGeneration = 0, statusSequence = 0;
+    std::int64_t statusAgeMs = -1, binderAgeMs = -1;
+    std::chrono::steady_clock::time_point binderReceivedAt{};
+    bool binderAvailable = false, statusConnected = false, trafficAvailable = false;
+    std::string statusHealth = "paused";
+    unsigned statusRepairs = 0;
 
     bool operator==(const CoreSnapshot&) const = default;  // State 变更检测
 };
@@ -126,6 +135,7 @@ public:
 
     // 惰性初始化（打开 Db、确保 secret 存在、准备 API 端点）。幂等。
 #include "store/core_store_state.inc"
+#include "store/core_store_diagnostics.inc"
 #include "store/core_store_routing.inc"
 #include "store/core_store_lifecycle.inc"
 private:

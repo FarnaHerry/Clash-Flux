@@ -7,6 +7,9 @@ module;
 #include <ixwebsocket/IXWebSocket.h>
 #include <ixwebsocket/IXNetSystem.h>
 #include "wire_codec.h"
+#include "runtime_health.h"
+#include <condition_variable>
+#include <thread>
 
 module clashflux.stream;
 
@@ -14,6 +17,7 @@ import std;
 import clashflux.config;
 import clashflux.core;
 import clashflux.utils;
+import clashflux.api;
 
 namespace stream {
 namespace {
@@ -210,15 +214,18 @@ std::string withToken(const std::string& url, const std::string& secret) {
 struct Channel {
     ix::WebSocket socket;
     std::atomic<bool> open{false};
+    clashflux::health::Channel health;
+    std::string url;
 
-    void start(const std::string& url) {
+    void start(const std::string& endpoint) {
+        url = endpoint;
         // 断线必须自愈：内核重启、控制器短暂不可用都会断开。以前禁用自动重连，
         // 流断了就永久死了（页面只能一直显示"未就绪"），直到内核再次重启。
         // IX 的重连等待可被 stop() 取消，所以 stopCore/startCore 的重启路径不受影响。
         socket.enableAutomaticReconnection();
         socket.setMinWaitBetweenReconnectionRetries(1000);
         socket.setMaxWaitBetweenReconnectionRetries(30000);
-        socket.setUrl(url);
+        socket.setUrl(endpoint);
         socket.setHandshakeTimeout(5);
         socket.start();
     }
@@ -266,14 +273,150 @@ struct CoreStreams::Impl {
     Channel traffic;
     Channel connections;
 
-    std::mutex mutex;
+    mutable std::mutex mutex;
+    std::mutex lifecycle;
+    std::mutex wakeMutex;
+    std::condition_variable_any wake;
+    std::jthread monitor;
+    bool active = false;
+    std::uint64_t epoch = 0, observationEpoch = 0;
+    unsigned pauses = 0;
+    std::string base, secret;
+    clashflux::health::Control control = clashflux::health::Control::Unknown;
+    std::vector<std::string> healthEvents;
     TrafficPoint latestTraffic;
     bool trafficDirty = false;
     std::string latestConnections;
     clashflux::wire::ConnectionTotals latestConnectionTotals;
     bool connectionTotalsDirty = false;
 
-    ~Impl() { stopAll(); }
+    static clashflux::health::Tick now() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+    Impl() {
+#if !defined(__ANDROID__)
+        monitor = std::jthread([this](std::stop_token token) { watch(token); });
+#endif
+    }
+    ~Impl() {
+        monitor.request_stop();
+        wake.notify_all();
+        if (monitor.joinable()) monitor.join();
+        stopAll();
+    }
+    void record(std::uint64_t identity, std::string detail) {
+        std::string line = "runtime-health epoch=" + std::to_string(identity) + " " + std::move(detail);
+        {
+            std::lock_guard lock(mutex);
+            if (!active || epoch != identity) return;
+            healthEvents.push_back(line);
+            if (healthEvents.size() > 16) healthEvents.erase(healthEvents.begin());
+        }
+        logApplication("debug", std::move(line));
+    }
+    void watch(std::stop_token token) {
+        using namespace clashflux::health;
+        Tick previous = now();
+        std::array<State, 2> reported{State::Paused, State::Paused};
+        while (!token.stop_requested()) {
+            {
+                std::unique_lock waitLock(wakeMutex);
+                wake.wait_for(waitLock, token, std::chrono::seconds(1), [] { return false; });
+            }
+            if (token.stop_requested()) break;
+            std::uint64_t requestEpoch, requestObservation;
+            std::string requestBase, requestSecret;
+            bool trafficDue, connectionsDue;
+            std::array<State, 2> states;
+            std::array<bool, 2> changed{};
+            const Tick time = now();
+            {
+                std::lock_guard lock(mutex);
+                if (!active || pauses != 0) { previous = time; continue; }
+                if (time - previous > 5000) {
+                    traffic.health.Resume(time);
+                    connections.health.Resume(time);
+                }
+                previous = time;
+                requestEpoch = epoch;
+                requestObservation = observationEpoch;
+                requestBase = base;
+                requestSecret = secret;
+                trafficDue = traffic.health.RepairDue(time);
+                connectionsDue = connections.health.RepairDue(time);
+                if (trafficDue) traffic.health.ReserveRepair(time);
+                if (connectionsDue) connections.health.ReserveRepair(time);
+                states = {traffic.health.Read(time).state, connections.health.Read(time).state};
+                for (int i = 0; i < 2; ++i) {
+                    if (states[i] == reported[i]) continue;
+                    reported[i] = states[i];
+                    changed[i] = true;
+                }
+            }
+            for (int i = 0; i < 2; ++i) if (changed[i])
+                record(requestEpoch, std::string("channel=") + (i == 0 ? "traffic" : "connections") + " state=" + std::string(Name(states[i])));
+            if (!trafficDue && !connectionsDue) continue;
+            // No snapshot/lifecycle lock during the bounded network request.
+            api::ClashApi probe(requestBase, requestSecret);
+            const auto result = probe.probeVersion();
+            Control evidence = result.status == 401 || result.status == 403 ? Control::AuthenticationError :
+                !result.ok ? Control::Unreachable :
+                clashflux::wire::DecodeVersion(result.body) ? Control::Responsive : Control::InvalidResponse;
+            record(requestEpoch, "control=" + std::string(Name(evidence)));
+            std::lock_guard owner(lifecycle);
+            {
+                std::lock_guard lock(mutex);
+                if (!active || pauses != 0 || epoch != requestEpoch || observationEpoch != requestObservation || token.stop_requested()) continue;
+                control = evidence;
+            }
+            for (Channel* channel : {&traffic, &connections}) {
+                if (channel == &traffic ? !trafficDue : !connectionsDue) continue;
+                {
+                    std::lock_guard lock(mutex);
+                    if (evidence == Control::AuthenticationError) channel->health.Block(Failure::Authentication);
+                    if (evidence != Control::Responsive || channel->health.Read(now()).state != State::Stale) continue;
+                    channel->health.Reopen(now());
+                }
+                // Owner thread only: never stop/join a socket from its callback.
+                channel->stop();
+                install(*channel, channel == &traffic ? StreamKind::Traffic : StreamKind::Connections);
+                channel->start(channel->url);
+                record(requestEpoch, std::string("repair=") + (channel == &traffic ? "traffic" : "connections"));
+            }
+        }
+    }
+    void install(Channel& channel, StreamKind kind) {
+        const auto generation = channel.health.Generation();
+        const auto runtimeEpoch = epoch;
+        channel.socket.setOnMessageCallback([this, &channel, kind, generation, runtimeEpoch](const ix::WebSocketMessagePtr& msg) {
+            {
+                std::lock_guard lock(mutex);
+                if (!active || epoch != runtimeEpoch || !channel.health.Accepts(generation)) return;
+                if (msg->type == ix::WebSocketMessageType::Open) {
+                    channel.open.store(true);
+                    channel.health.Open(generation);
+                    channel.health.Resume(now());
+                } else if (msg->type == ix::WebSocketMessageType::Close || msg->type == ix::WebSocketMessageType::Error) {
+                    channel.open.store(false);
+                    auto failure = clashflux::health::Failure::Transport;
+                    if (msg->type == ix::WebSocketMessageType::Error) {
+                        const int status = msg->errorInfo.http_status;
+                        if (status == 401) failure = clashflux::health::Failure::Authentication;
+                        else if (status == 403) failure = clashflux::health::Failure::Permission;
+                        else if (status == 404 || status == 405) failure = clashflux::health::Failure::Unsupported;
+                        if (failure != clashflux::health::Failure::Transport) channel.socket.disableAutomaticReconnection();
+                    }
+                    channel.health.Error(generation, failure);
+                }
+            }
+            if (msg->type == ix::WebSocketMessageType::Message) {
+                if (kind == StreamKind::Traffic) pushTraffic(msg->str, generation, runtimeEpoch);
+                else if (kind == StreamKind::Connections) pushConnections(msg->str, generation, runtimeEpoch);
+                else pushLog(msg->str);
+            } else notifyStreamUpdate(kind);
+        });
+    }
 
     void stopAll() {
         logs.stop();
@@ -295,11 +438,13 @@ struct CoreStreams::Impl {
         logCore(std::move(line.level), std::move(line.payload));
     }
 
-    void pushTraffic(const std::string& text) {
+    void pushTraffic(const std::string& text, std::uint64_t generation, std::uint64_t runtimeEpoch) {
         const auto decoded = clashflux::wire::DecodeTraffic(text);
-        if (!decoded) return;
         {
             std::lock_guard lock(mutex);
+            if (!active || epoch != runtimeEpoch || !traffic.health.Accepts(generation)) return;
+            traffic.health.Frame(generation, now(), static_cast<bool>(decoded));
+            if (!decoded) return;
             latestTraffic.up = decoded.value.up;
             latestTraffic.down = decoded.value.down;
             latestTraffic.at = nowUnix();
@@ -309,11 +454,14 @@ struct CoreStreams::Impl {
         notifyStreamUpdate(StreamKind::Traffic);
     }
 
-    void pushConnections(const std::string& text) {
+    void pushConnections(const std::string& text, std::uint64_t generation, std::uint64_t runtimeEpoch) {
         // Decode on the WebSocket worker; the home UI only consumes integers.
         const auto totals = clashflux::wire::DecodeConnectionTotals(text);
         {
             std::lock_guard lock(mutex);
+            if (!active || epoch != runtimeEpoch || !connections.health.Accepts(generation)) return;
+            connections.health.Frame(generation, now(), static_cast<bool>(totals));
+            if (!totals) return;
             latestConnections = text;
             if (totals) {
                 latestConnectionTotals = totals.value;
@@ -331,82 +479,81 @@ CoreStreams::CoreStreams() : impl_(std::make_unique<Impl>()) {
 #endif
 }
 
+CoreStreams::HealthPause::HealthPause(CoreStreams& owner) : owner_(owner) {
+    std::lock_guard lifecycle(owner_.impl_->lifecycle);
+    std::lock_guard lock(owner_.impl_->mutex);
+    ++owner_.impl_->pauses;
+    ++owner_.impl_->observationEpoch;
+}
+CoreStreams::HealthPause::~HealthPause() {
+    std::lock_guard lock(owner_.impl_->mutex);
+    if (--owner_.impl_->pauses == 0) {
+        ++owner_.impl_->observationEpoch;
+        owner_.impl_->traffic.health.Resume(Impl::now());
+        owner_.impl_->connections.health.Resume(Impl::now());
+    }
+}
+CoreStreams::HealthPause CoreStreams::pauseHealth() { return HealthPause{*this}; }
+
 CoreStreams::~CoreStreams() = default;
 
 void CoreStreams::start(const std::string& wsBase, const std::string& secret,
                         const std::string& logLevel) {
+    std::lock_guard owner(impl_->lifecycle);
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->active = false;
+        ++impl_->epoch;
+    }
     impl_->stopAll();
     {
         std::lock_guard lock(impl_->mutex);
         impl_->trafficDirty = false;
         impl_->latestConnections.clear();
         impl_->connectionTotalsDirty = false;
+        impl_->base = wsBase.starts_with("ws://") ? "http://" + wsBase.substr(5) : wsBase;
+        impl_->secret = secret;
+        impl_->control = clashflux::health::Control::Unknown;
+        impl_->logs.health.Reset(Impl::now(), false);
+        impl_->traffic.health.Reset(Impl::now());
+        impl_->connections.health.Reset(Impl::now());
+        impl_->active = true;
     }
-
-    Impl* impl = impl_.get();
-    impl_->logs.socket.setOnMessageCallback(
-        [impl](const ix::WebSocketMessagePtr& msg) {
-            switch (msg->type) {
-                case ix::WebSocketMessageType::Open:
-                    impl->logs.open.store(true);
-                    notifyStreamUpdate(StreamKind::Logs);
-                    break;
-                case ix::WebSocketMessageType::Message:
-                    impl->pushLog(msg->str);
-                    break;
-                case ix::WebSocketMessageType::Close:
-                case ix::WebSocketMessageType::Error:
-                    impl->logs.open.store(false);
-                    notifyStreamUpdate(StreamKind::Logs);
-                    break;
-                default: break;
-            }
-        });
-    impl_->traffic.socket.setOnMessageCallback(
-        [impl](const ix::WebSocketMessagePtr& msg) {
-            switch (msg->type) {
-                case ix::WebSocketMessageType::Open:
-                    impl->traffic.open.store(true);
-                    notifyStreamUpdate(StreamKind::Traffic);
-                    break;
-                case ix::WebSocketMessageType::Message:
-                    impl->pushTraffic(msg->str);
-                    break;
-                case ix::WebSocketMessageType::Close:
-                case ix::WebSocketMessageType::Error:
-                    impl->traffic.open.store(false);
-                    notifyStreamUpdate(StreamKind::Traffic);
-                    break;
-                default: break;
-            }
-        });
-    impl_->connections.socket.setOnMessageCallback(
-        [impl](const ix::WebSocketMessagePtr& msg) {
-            switch (msg->type) {
-                case ix::WebSocketMessageType::Open:
-                    impl->connections.open.store(true);
-                    notifyStreamUpdate(StreamKind::Connections);
-                    break;
-                case ix::WebSocketMessageType::Message:
-                    impl->pushConnections(msg->str);
-                    break;
-                case ix::WebSocketMessageType::Close:
-                case ix::WebSocketMessageType::Error:
-                    impl->connections.open.store(false);
-                    notifyStreamUpdate(StreamKind::Connections);
-                    break;
-                default: break;
-            }
-        });
-
-    impl_->logs.start(withToken(appendQuery(wsBase + "/logs",
-                                            {{"level", queryLevel(logLevel)}}),
-                                secret));
+    impl_->install(impl_->logs, StreamKind::Logs);
+    impl_->install(impl_->traffic, StreamKind::Traffic);
+    impl_->install(impl_->connections, StreamKind::Connections);
+    impl_->logs.start(withToken(appendQuery(wsBase + "/logs", {{"level", queryLevel(logLevel)}}), secret));
     impl_->traffic.start(withToken(wsBase + "/traffic", secret));
     impl_->connections.start(withToken(wsBase + "/connections", secret));
 }
 
-void CoreStreams::stop() { impl_->stopAll(); }
+void CoreStreams::stop() {
+    std::lock_guard owner(impl_->lifecycle);
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->active = false;
+        ++impl_->epoch;
+        impl_->logs.health.Stop();
+        impl_->traffic.health.Stop();
+        impl_->connections.health.Stop();
+    }
+    impl_->stopAll();
+}
+
+clashflux::health::Snapshot CoreStreams::health() const {
+    std::lock_guard lock(impl_->mutex);
+    clashflux::health::Snapshot result{impl_->epoch, impl_->control, impl_->traffic.health.Read(Impl::now()), impl_->connections.health.Read(Impl::now())};
+    if (impl_->pauses != 0) {
+        result.traffic.state = clashflux::health::State::Paused;
+        result.connections.state = clashflux::health::State::Paused;
+    }
+    return result;
+}
+
+std::vector<std::string> CoreStreams::recentHealthEvents() const {
+    std::lock_guard lock(impl_->mutex);
+    return impl_->healthEvents;
+}
 
 bool CoreStreams::logsOpen() const { return impl_->logs.open.load(); }
 bool CoreStreams::trafficOpen() const { return impl_->traffic.open.load(); }
@@ -421,6 +568,7 @@ bool CoreStreams::takeTraffic(TrafficPoint& out) {
     if (!impl_->trafficDirty) return false;
     out = impl_->latestTraffic;
     impl_->trafficDirty = false;
+    impl_->traffic.health.Consumed();
     return true;
 }
 
@@ -430,6 +578,7 @@ bool CoreStreams::takeConnectionTotals(std::int64_t& upload, std::int64_t& downl
     upload = impl_->latestConnectionTotals.uploadTotal;
     download = impl_->latestConnectionTotals.downloadTotal;
     impl_->connectionTotalsDirty = false;
+    impl_->connections.health.Consumed();
     return true;
 }
 

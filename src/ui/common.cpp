@@ -167,6 +167,7 @@ huxerui::StringVariant CoreActionFailure(CoreAction action) {
 
 void CoreControl::Run(CoreCommand command) const {
     if (Busy() || command.action == CoreAction::Idle) return;
+    model->diagnosticsCancel.request_stop();
     const CoreControl control = *this;
     const bool previousTun = model->view.Get().tunIntent;
     const CoreAction action = command.action;
@@ -490,6 +491,23 @@ CoreView ReadCoreView(bool slowProbes, bool previousSystemProxyActive) {
     core.checkAlive();
     CoreView view;
     view.core = core.snapshot();
+    view.health = core.streams().health();
+#if defined(__ANDROID__)
+    view.health.runtimeEpoch = view.core.runtimeEpoch;
+    view.health.control = !view.core.binderAvailable ? health::Control::Unreachable : health::Control::Responsive;
+    auto& status = view.health.traffic;
+    status.generation = view.core.clientGeneration;
+    status.valid = view.core.statusSequence;
+    status.validAgeMs = view.core.statusAgeMs;
+    status.connected = view.core.statusConnected;
+    status.repairs = view.core.statusRepairs;
+    const auto& state = view.core.statusHealth;
+    status.state = state == "fresh" ? health::State::Fresh : state == "stale" ? health::State::Stale :
+        state == "waiting" ? health::State::Waiting : state == "reconnecting" ? health::State::Reconnecting : health::State::Paused;
+    if (status.valid != 0 && !view.core.trafficAvailable) status.state = health::State::Unsupported;
+    view.health.connections = status;
+    view.health.connections.periodic = false;
+#endif
     view.ready = clashflux::persistence::persistence().ready();
     view.tunIntent = core.tunEnabled();
     view.modeIntent = core.mode();

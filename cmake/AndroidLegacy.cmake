@@ -101,6 +101,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/api.cpp"
         "${_root}/src/stream.cpp"
         "${_root}/src/wire_codec.h"
+        "${_root}/src/runtime_health.h"
         "${_root}/src/sqlite_schema.h"
         "${_root}/src/sqlite_schema.cpp"
         "${_root}/src/store/persistence.cpp"
@@ -131,6 +132,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/ui/section_tabs.cpp"
         "${_root}/src/ui/fidelity_page.cpp"
         "${_root}/src/ui/settings_page.cpp"
+        "${_root}/src/ui/runtime_diagnostics.cpp"
         "${_root}/src/ui/platform_settings.cpp"
         "${_root}/src/ui/platform_app.cpp"
         # The desktop module/UI sources include these implementation fragments.
@@ -152,6 +154,8 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/store/core_store_lifecycle.inc"
         "${_root}/src/store/core_store_routing.inc"
         "${_root}/src/store/core_store_state.inc"
+        "${_root}/src/store/core_store_diagnostics.inc"
+        "${_root}/src/service_protocol.h"
         "${_root}/src/ui/profiles_page_actions.inc"
         "${_root}/src/ui/profiles_page_layout.inc"
     )
@@ -222,6 +226,7 @@ function(clashflux_prepare_android_sources output_directory output_header
             "${_root}/src/ui/section_tabs.cpp"
             "${_root}/src/ui/fidelity_page.cpp"
             "${_root}/src/ui/settings_page.cpp"
+        "${_root}/src/ui/runtime_diagnostics.cpp"
             "${_root}/src/ui/platform_settings.cpp"
             "${_root}/src/ui/platform_app.cpp")
         file(READ "${_source}" _content)

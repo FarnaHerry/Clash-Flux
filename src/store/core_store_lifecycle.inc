@@ -5,6 +5,7 @@
     // start/reconfigure cannot race a service payload replacement.
     service::StartupResult synchronizeService() {
         std::lock_guard operationLock(lifecycleMutex_);
+        auto healthPause = streams_.pauseHealth();
         return service::synchronizeInstalled();
     }
 
@@ -61,6 +62,7 @@
         tunEnabled = true;
 #endif
         std::lock_guard operationLock(lifecycleMutex_);
+        auto healthPause = streams_.pauseHealth();
         ensureOpen();
 #ifdef _WIN32
         // All Windows data-plane work belongs to SCM, including non-TUN mode.
@@ -447,6 +449,7 @@
             std::lock_guard lock(mutex_);
             snap_.state = core::CoreState::Running;
             snap_.runningSince = std::chrono::steady_clock::now();
+            ++snap_.runtimeEpoch;
             snap_.planRevision = lastPreparedOptions_ ? lastPreparedOptions_->planRevision : 0;
             lastAppliedOptions_ = lastPreparedOptions_;
             setSetting("routing.applied_revision", std::to_string(snap_.planRevision));
@@ -482,6 +485,7 @@
 
     bool stopCore() {
         std::lock_guard operationLock(lifecycleMutex_);
+        auto healthPause = streams_.pauseHealth();
 #ifdef _WIN32
         serviceDetached_ = false;
 #endif
@@ -686,6 +690,7 @@
 
     bool restartCore(const std::string& profileYaml) {
         std::lock_guard operationLock(lifecycleMutex_);
+        auto healthPause = streams_.pauseHealth();
         const auto before = snapshot();
         const bool wasActive = before.state == core::CoreState::Running || before.state == core::CoreState::Starting;
         const bool systemProxyEnabled = systemProxyOurs();
@@ -763,6 +768,7 @@
     // 跑时才热切换；只有热切换被内核拒绝才算失败。
     bool applyMode(const std::string& m) {
         std::lock_guard operationLock(lifecycleMutex_);
+        auto healthPause = streams_.pauseHealth();
         ensureOpen();
         bool live = false;
 #if defined(__ANDROID__)
@@ -802,19 +808,33 @@
         }
         return;
 #else
+        bool managed, adopted;
+        std::uint64_t epoch;
+        {
+            std::unique_lock owner(lifecycleMutex_, std::try_to_lock);
+            if (!owner.owns_lock()) return; // an intentional transition owns liveness
+            std::lock_guard lock(mutex_);
+            if (snap_.state != core::CoreState::Running) return;
+            managed = managedByService_;
+            adopted = adopted_;
+            epoch = snap_.runtimeEpoch;
+        }
+        // No model or lifecycle lock during controller/service I/O.
+        std::optional<bool> alive;
+        if (managed) {
+            if (api().probeVersion().ok) alive = true;
+            else alive = service::coreRunningEvidence();
+        } else if (adopted) {
+            const long pid = readPidFile();
+            if (pid > 0) alive = core::pidAlive(pid);
+        } else alive = process_.running();
+        if (!alive || *alive) return;
         std::lock_guard lock(mutex_);
-        if (snap_.state == core::CoreState::Running && !coreAlive()) {
-            snap_.state = core::CoreState::Failed;
-            snap_.lastError =
-                std::format("sing-box 内核异常退出（exit {}）",
-                            managedByService_ || adopted_ ? -1
-                                                          : process_.exitCode());
-            if (!managedByService_ && !adopted_) {
-                if (const std::string tailText = process_.recentTail();
-                    !tailText.empty()) {
-                    snap_.lastError += "：" + tailText;
-                }
-            }
+        if (snap_.state != core::CoreState::Running || snap_.runtimeEpoch != epoch) return;
+        snap_.state = core::CoreState::Failed;
+        snap_.lastError = std::format("sing-box 内核异常退出（exit {}）", managed || adopted ? -1 : process_.exitCode());
+        if (!managed && !adopted) {
+            if (const auto tail = process_.recentTail(); !tail.empty()) snap_.lastError += "：" + tail;
         }
 #endif
     }

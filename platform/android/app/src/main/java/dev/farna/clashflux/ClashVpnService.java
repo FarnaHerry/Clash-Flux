@@ -22,6 +22,7 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.ParcelFileDescriptor;
 import android.os.Process;
+import android.os.SystemClock;
 import android.os.PowerManager;
 import android.system.ErrnoException;
 import android.util.Log;
@@ -129,6 +130,16 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         }
     };
     private final Object clientLock = new Object();
+    private final Object clientConnectLock = new Object();
+    private final RuntimeHealth health = new RuntimeHealth();
+    private final ScheduledExecutorService healthExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "clashflux-status-health");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private java.util.concurrent.ScheduledFuture<?> healthTask;
+    private boolean healthPaused;
+    private long healthTick;
     private final Object connectionsLock = new Object();
     private Connections connectionSnapshot = Libbox.newConnections();
     private static volatile ClashVpnService current;
@@ -159,6 +170,14 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                                               int connections);
 
     static Bundle runtimeSnapshot() {
+        ClashVpnService owner = current;
+        if (owner != null) synchronized (owner.clientLock) { return owner.lockedRuntimeSnapshot(); }
+        Bundle empty = new Bundle();
+        empty.putString("statusHealth", "paused");
+        empty.putLong("statusAgeMs", -1);
+        return empty;
+    }
+    private Bundle lockedRuntimeSnapshot() {
         Bundle snapshot = new Bundle();
         snapshot.putInt("coreState", runtimeCoreState);
         snapshot.putInt("vpnState", runtimeVpnState);
@@ -168,6 +187,18 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         snapshot.putLong("uploadTotal", runtimeUploadTotal);
         snapshot.putLong("downloadTotal", runtimeDownloadTotal);
         snapshot.putInt("connections", runtimeConnections);
+        ClashVpnService service = this;
+        synchronized (service.clientLock) {
+            long now = SystemClock.elapsedRealtime();
+            snapshot.putLong("runtimeEpoch", service.health.epoch);
+            snapshot.putLong("statusSequence", service.health.sequence);
+            snapshot.putLong("statusAgeMs", service.health.age(now));
+            snapshot.putLong("clientGeneration", service.health.generation);
+            snapshot.putBoolean("clientConnected", service.health.connected);
+            snapshot.putBoolean("trafficAvailable", service.health.trafficAvailable);
+            snapshot.putInt("statusRepairs", service.health.repairs);
+            snapshot.putString("statusHealth", service.health.state(now, service.healthPaused));
+        }
         return snapshot;
     }
 
@@ -345,6 +376,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         MainActivity.appLog("VPN 服务正在销毁", false);
         unregisterRuntimeMonitors();
         close("VPN 已关闭");
+        healthExecutor.shutdownNow();
         if (current == this) current = null;
         super.onDestroy();
     }
@@ -449,6 +481,11 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             // 组读取、测速等路径懒连接，打开应用直接启动代理后只看连接页时，
             // 连接快照不会开始写入。
             if (startRequested && !stopRequested.get()) {
+                synchronized (clientLock) {
+                    health.start(SystemClock.elapsedRealtime(), SystemClock.elapsedRealtimeNanos());
+                }
+                if (healthTask != null) healthTask.cancel(false);
+                healthTask = healthExecutor.scheduleWithFixedDelay(this::checkStatusHealth, 2, 2, TimeUnit.SECONDS);
                 try {
                     controlClient();
                 } catch (Exception error) {
@@ -968,6 +1005,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     }
 
     private void scheduleUpstreamReset(String reason) {
+        synchronized (clientLock) { health.resume(SystemClock.elapsedRealtime()); }
         final long generation = ++networkChangeGeneration;
         NETWORK_EXECUTOR.schedule(() -> {
             if (generation != networkChangeGeneration || !started || !startRequested
@@ -1138,31 +1176,99 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
 
     @Override public LocalDNSTransport localDNSTransport() { return SYSTEM_DNS; }
 
+    private void checkStatusHealth() {
+        if (!startRequested || stopRequested.get() || !started) return;
+        try {
+            final long now = SystemClock.elapsedRealtime();
+            PowerManager power = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            boolean paused = Build.VERSION.SDK_INT >= 23 && power != null && power.isDeviceIdleMode();
+            CommandClient expired;
+            synchronized (clientLock) {
+                if (healthPaused && !paused || healthTick != 0 && now - healthTick > 5000) health.resume(now);
+                healthPaused = paused;
+                healthTick = now;
+                if (!health.reserve(now, paused)) return;
+                expired = client;
+                client = null;
+                health.reopen(now); // reject old callbacks before disconnecting
+            }
+            // Never call gomobile disconnect/connect while holding the callback lock.
+            if (expired != null) expired.disconnect();
+            if (startRequested && !stopRequested.get()) controlClient();
+            MainActivity.appLog("runtime-health status subscription repair", false);
+        } catch (Throwable error) {
+            // Exception details may contain endpoint credentials; fixed label only.
+            MainActivity.appLog("runtime-health status subscription repair failed", true);
+        }
+    }
+
+    private CommandClientHandler clientHandler(long generation) {
+        return new CommandClientHandler() {
+            private void deliver(Runnable action) {
+                synchronized (clientLock) { if (health.accepts(generation)) action.run(); }
+            }
+            @Override public void connected() { deliver(() -> { health.connected = true; }); }
+            // libbox may report one failed optional subscription. Only stale required status
+            // authorizes repair; localized error strings do not classify all streams as dead.
+            @Override public void disconnected(String message) { deliver(() -> {
+                health.connected = false;
+            }); }
+            @Override public void clearLogs() { deliver(() -> ClashVpnService.this.clearLogs()); }
+            @Override public void initializeClashMode(StringIterator modes, String mode) { deliver(() -> ClashVpnService.this.initializeClashMode(modes, mode)); }
+            @Override public void setDefaultLogLevel(int level) { deliver(() -> ClashVpnService.this.setDefaultLogLevel(level)); }
+            @Override public void updateClashMode(String mode) { deliver(() -> ClashVpnService.this.updateClashMode(mode)); }
+            @Override public void writeConnectionEvents(ConnectionEvents events) { deliver(() -> ClashVpnService.this.writeConnectionEvents(events)); }
+            @Override public void writeGroups(OutboundGroupIterator groups) { deliver(() -> ClashVpnService.this.writeGroups(groups)); }
+            @Override public void writeLogs(LogIterator logs) { deliver(() -> ClashVpnService.this.writeLogs(logs)); }
+            @Override public void writeOutbounds(OutboundGroupItemIterator outbounds) { deliver(() -> ClashVpnService.this.writeOutbounds(outbounds)); }
+            @Override public void writeStatus(StatusMessage status) { deliver(() -> {
+                if (status == null) return;
+                ClashVpnService.this.writeStatus(status);
+                health.sample(generation, SystemClock.elapsedRealtime(), status.getTrafficAvailable());
+                health.connected = true;
+            }); }
+        };
+    }
+
     private CommandClient controlClient() throws Exception {
-        synchronized (clientLock) {
-            if (client != null) return client;
-            if (!startRequested) throw new IllegalStateException("VPN 未在运行");
-            MainActivity.appLog("连接 libbox 控制通道", false);
-            CommandClientOptions options = new CommandClientOptions();
-            // CommandClient 默认不订阅任何数据流。显式订阅代理组、状态、日志、
-            // 出站模式和连接流；Android 的内核日志必须经 CommandLog 转到 C++ 日志页。
-            options.addCommand(Libbox.CommandLog);
-            options.addCommand(Libbox.CommandGroup);
-            options.addCommand(Libbox.CommandStatus);
-            options.addCommand(Libbox.CommandClashMode);
-            options.addCommand(Libbox.CommandConnections);
-            options.setStatusInterval(1L * 1000L * 1000L * 1000L);
-            CommandClient candidate = new CommandClient(this, options);
-            candidate.connect();
-            client = candidate;
-            MainActivity.appLog("libbox 控制通道已连接", false);
-            return candidate;
+        synchronized (clientConnectLock) {
+            final CommandClient candidate;
+            final long generation;
+            synchronized (clientLock) {
+                if (client != null) return client;
+                if (!startRequested || stopRequested.get() || !health.active) throw new IllegalStateException("VPN 未在运行");
+                generation = health.reopen(SystemClock.elapsedRealtime());
+                CommandClientOptions options = new CommandClientOptions();
+                options.addCommand(Libbox.CommandLog);
+                options.addCommand(Libbox.CommandGroup);
+                options.addCommand(Libbox.CommandStatus);
+                options.addCommand(Libbox.CommandClashMode);
+                options.addCommand(Libbox.CommandConnections);
+                options.setStatusInterval(1000000000L);
+                candidate = new CommandClient(clientHandler(generation), options);
+                client = candidate;
+            }
+            try { candidate.connect(); }
+            catch (Exception error) {
+                synchronized (clientLock) {
+                    if (client == candidate) { client = null; health.reopen(SystemClock.elapsedRealtime()); }
+                }
+                try { candidate.disconnect(); } catch (Exception ignored) {}
+                throw error;
+            }
+            synchronized (clientLock) {
+                if (health.accepts(generation) && client == candidate) return candidate;
+            }
+            candidate.disconnect();
+            throw new IllegalStateException("control connection superseded");
         }
     }
     private boolean close(String msg) { return close(msg, true); }
     private boolean close(String msg, boolean reportStopped) {
         final boolean noTun = speedTestOnly || coreOnly;
         startRequested = false;
+        synchronized (clientLock) { health.stop(); }
+        if (healthTask != null) { healthTask.cancel(false); healthTask = null; }
         MainActivity.appLog("VPN 数据面关闭：" + msg, false);
         if (!started && tunnel == null && server == null) {
             if (reportStopped && !failureReported) {
@@ -1576,7 +1682,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             if (entry != null) MainActivity.coreLog(entry.getLevel(), entry.getMessage());
         }
     } @Override public void writeOutbounds(OutboundGroupItemIterator outbounds){} @Override public void writeStatus(StatusMessage status){
-        if (status == null) return;
+        if (status == null || !status.getTrafficAvailable()) return;
         try {
             uploadTotal = status.getUplinkTotal();
             downloadTotal = status.getDownlinkTotal();

@@ -15,6 +15,7 @@
     }
     inline bool resumeNativeRouting(std::string& error) {
         std::lock_guard operationLock(lifecycleMutex_);
+        auto healthPause = streams_.pauseHealth();
         const bool tunEnabled = snapshot().tunEnabled;
         const bool systemProxyEnabled = systemProxyOurs();
         startCore(lastProfileYaml_, false, tunEnabled,
@@ -32,6 +33,7 @@
     inline bool updateNativeRouting(std::vector<singbox::NativeConnection> sessions,
                                     std::string& error) {
         std::lock_guard operationLock(lifecycleMutex_);
+        auto healthPause = streams_.pauseHealth();
         nativeSessions_ = std::move(sessions);
         return refreshRouting(error);
     }
@@ -41,6 +43,7 @@
     // connect/disconnect and restore an obsolete configuration.
     inline bool refreshRouting(std::string& error) {
         std::lock_guard operationLock(lifecycleMutex_);
+        auto healthPause = streams_.pauseHealth();
         ensureOpen();
         error.clear();
         const bool running = snapshot().state == core::CoreState::Running;

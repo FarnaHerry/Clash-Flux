@@ -94,6 +94,7 @@ struct Policy {
     std::vector<RouteRule> rules;
 };
 
+Result<std::string> DecodeVersion(std::string_view text);
 Result<Traffic> DecodeTraffic(std::string_view text);
 Result<Log> DecodeLog(std::string_view text);
 Result<StoredLog> DecodeStoredLog(std::string_view text);

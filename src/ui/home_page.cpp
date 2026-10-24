@@ -605,6 +605,7 @@ huxerui::XYChartData BuildTrafficChartData(
 // hover tooltip（速率数字在标题行），外观保持「下载实心面积 + 上传细线」。
 [[huxerui::composable]] huxerui::View HomeTrafficCard(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const bool fresh = huxerui::UseService<CoreModel>()->view.Get().health.traffic.state == health::State::Fresh;
     const huxerui::Color downColor = theme.colors.primary;
     const huxerui::Color upColor = SemanticWarningColor(theme);
     huxerui::Color fillDown = theme.colors.primary;
@@ -614,10 +615,10 @@ huxerui::XYChartData BuildTrafficChartData(
         huxerui::Row {
             HomeCardHeading(app::images::speed, Localized("流量")),
             huxerui::Spacer(),
-            huxerui::Text("↑ " + formatRate(s.latest.up))
+            huxerui::Text(fresh ? "↑ " + formatRate(s.latest.up) : "↑ —")
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kCaption), upColor}),
-            huxerui::Text("↓ " + formatRate(s.latest.down))
+            huxerui::Text(fresh ? "↓ " + formatRate(s.latest.down) : "↓ —")
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kCaption), downColor}),
         }.With(huxerui::Spacing(12.0F),

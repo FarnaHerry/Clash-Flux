@@ -307,6 +307,25 @@ Java_dev_farna_clashflux_MainActivity_nativeCoreLog(JNIEnv* environment,
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_dev_farna_clashflux_MainActivity_nativeUpdateRuntimeHealth(
+    JNIEnv* environment, jclass, jlong epoch, jlong generation, jlong sequence,
+    jlong age, jint repairs, jboolean connected, jboolean available, jstring state) {
+    try {
+        std::string value = "unknown";
+        if (state != nullptr) if (const char* text = environment->GetStringUTFChars(state, nullptr)) {
+            value = text;
+            environment->ReleaseStringUTFChars(state, text);
+        }
+        store::coreStore().setAndroidRuntimeHealth(epoch, generation, sequence, age,
+            repairs, connected, available, std::move(value));
+    } catch (...) { log_android("Unable to publish runtime health", true); }
+}
+extern "C" JNIEXPORT void JNICALL
+Java_dev_farna_clashflux_MainActivity_nativeRuntimeBinderAvailable(JNIEnv*, jclass, jboolean available) {
+    try { store::coreStore().setAndroidBinderAvailable(available); } catch (...) {}
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_MainActivity_nativeUpdateRuntimeState(
     JNIEnv* environment, jclass, jint core_state, jint vpn_state,
     jlong upload_rate, jlong download_rate, jlong upload_total,

@@ -17,6 +17,7 @@
 #include "ui.h"
 #include "action_menu.h"
 #include "task_bridge.h"
+#include "runtime_diagnostics.h"
 
 import clashflux.config;
 import clashflux.core;
@@ -590,6 +591,48 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 }
 #endif
 
+[[huxerui::composable]] huxerui::View RuntimeDiagnosticsDialog(huxerui::DialogContext context) {
+    const auto control = UseCoreControl();
+    const auto model = control.model;
+    const auto clipboard = control.clipboard;
+    huxerui::State<huxerui::TextEditingValue> target{huxerui::TextEditingValue{}};
+    const bool busy = model->diagnosticsBusy.Get();
+    const std::string report = model->diagnosticsReport.Get();
+    const auto start = [control, model, target] {
+        if (control.Busy() || model->diagnosticsBusy.Get()) return;
+        model->diagnosticsCancel = std::stop_source{};
+        const auto token = model->diagnosticsCancel.get_token();
+        const auto serial = ++model->diagnosticsSerial;
+        const auto revision = model->operations.revision.Get();
+        const std::string url = target.Get().text;
+        model->diagnosticsBusy = true;
+        model->diagnosticsReport = std::string{};
+        control.tasks.Launch([model, url, token, serial, revision]() -> huxerui::Task<void> {
+            std::string result;
+            try {
+                result = co_await RunOnTaskThread([url, token] {
+                    return store::coreStore().runtimeDiagnostics(url, token);
+                });
+            } catch (...) { result = "diagnostic=failed; unable to collect evidence"; }
+            if (serial != model->diagnosticsSerial) co_return;
+            model->diagnosticsBusy = false;
+            model->diagnosticsReport = token.stop_requested() || !model->operations.AcceptsPoll(revision)
+                ? std::string("diagnostic=cancelled-or-superseded; results discarded") : std::move(result);
+        });
+    };
+    return DialogCard(RuntimeDiagnosticsContent(target, busy, !control.Busy(), report, start,
+        [model] { model->diagnosticsCancel.request_stop(); },
+        [clipboard, report] { if (clipboard) clipboard->WriteText(report); },
+        [context] { context.Dismiss(); }));
+}
+
+[[huxerui::composable]] huxerui::View RuntimeDiagnosticsEntry() {
+    const auto dialog = huxerui::UseDialog();
+    return SettingNavigationItem(Localized("运行诊断"), app::images::info, [dialog] {
+        dialog.Show([](huxerui::DialogContext context) { return RuntimeDiagnosticsDialog(context); });
+    });
+}
+
 [[huxerui::composable]] huxerui::View SettingsPage(
     huxerui::State<int> themeMode, huxerui::State<std::size_t> navPage,
     ProfilesCache profilesCache, bool active) {
@@ -622,6 +665,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 
     sections.push_back(SettingsSectionCard(Localized("网络"), huxerui::Column {
                     PortSettingsEntry(),
+                    RuntimeDiagnosticsEntry(),
                     CLASHFLUX_NETWORK_PLATFORM_SECTION(),
                     SettingSwitchRow(
                         Localized("局域网连接"), Localized("允许局域网设备接入（下次启动生效）"),

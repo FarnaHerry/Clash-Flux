@@ -33,7 +33,12 @@ export struct ApiResult {
     std::string error;        // 传输层错误描述（curl）；HTTP 错误时从 body 提取 message
     // 响应头（仅订阅下载填充；名字统一小写，重定向取最后一跳）。
     std::map<std::string, std::string> headers;
+    std::string failurePhase;
 };
+
+// Explicit, cancellable HEAD through the running mixed inbound. No target is
+// selected implicitly; the result is about this route/target only.
+export ApiResult probeThroughProxy(const std::string& target, int mixedPort, std::stop_token cancel);
 
 // REST 客户端：baseUrl 形如 "http://127.0.0.1:29097"，secret 为 Bearer token（可空）。
 export class ClashApi {
@@ -44,9 +49,11 @@ public:
     ClashApi& operator=(const ClashApi&) = delete;
 
     void setEndpoint(std::string baseUrl, std::string secret);
-    const std::string& baseUrl() const;
+    std::string baseUrl() const;
 
     ApiResult version();
+    // Local authenticated health probe: 1s total, bounded response.
+    ApiResult probeVersion();
     ApiResult configs();
     ApiResult patchConfigs(const std::string& jsonBody);
 

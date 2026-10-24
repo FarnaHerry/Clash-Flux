@@ -16,6 +16,7 @@
 
 #include "ui.h"
 #include "box_cat.h"
+#include "runtime_diagnostics.h"
 #include "home_control_motion.h"
 #include "rule_target_picker.h"
 #include "log_actions.h"
@@ -250,6 +251,38 @@ huxerui::View ConnectionListRoot() {
     })};
 }
 const huxerui::Application kConnectionListApplication{ConnectionListRoot};
+
+int diagnosticsStarts = 0, diagnosticsCopies = 0;
+[[huxerui::composable]] huxerui::View DiagnosticsFixture() {
+    auto target = huxerui::UseState(huxerui::TextEditingValue{});
+    auto busy = huxerui::UseState(false);
+    return clashflux::ui::RuntimeDiagnosticsContent(target, busy.Get(), true, "redacted-report",
+        [busy] { ++diagnosticsStarts; busy = true; }, [busy] { busy = false; },
+        [] { ++diagnosticsCopies; }, [] {});
+}
+huxerui::View DiagnosticsFixtureRoot() { return huxerui::FlatTheme{DiagnosticsFixture()}; }
+const huxerui::Application kDiagnosticsApplication{DiagnosticsFixtureRoot};
+void testDiagnosticsContent() {
+    for (auto locale : {"zh", "en", "fr"}) { // fr exercises default resource fallback
+        diagnosticsStarts = diagnosticsCopies = 0;
+        huxerui::testing::UiTest ui(kDiagnosticsApplication, {.viewport = {390.0F, 800.0F},
+            .resources = {.locale = huxerui::Locale::FromLanguageTag(locale)}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        const bool zh = std::string_view(locale) == "zh";
+        check(ui.Find(UiSelector::Text(zh ? "运行诊断" : "Runtime diagnostics")).Exists(), "运行诊断标题及默认语言资源可实际挂载");
+        ui.Find(UiSelector::Text(zh ? "复制脱敏报告" : "Copy redacted report")).Tap(); ui.PumpAndSettle();
+        check(diagnosticsCopies == 1, "诊断报告复制回调可用");
+        ui.Find(UiSelector::Text(zh ? "开始诊断" : "Run diagnostics")).Tap(); ui.PumpAndSettle();
+        check(diagnosticsStarts == 1, "开始诊断回调可用");
+        check(ui.Find(UiSelector::Text(zh ? "正在收集诊断证据…" : "Collecting diagnostic evidence…")).Exists(), "诊断过程中加载资源安全并展示状态");
+        // 框架对禁用控件的 Tap 直接抛错，用 enabled 断言防重复入口。
+        check(!ui.Find(UiSelector::Text(zh ? "开始诊断" : "Run diagnostics")).One().enabled,
+              "运行中禁用重复诊断");
+        check(diagnosticsStarts == 1, "运行中不重复启动诊断");
+        ui.Find(UiSelector::Text(zh ? "取消" : "Cancel")).Tap(); ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Text("redacted-report")).Exists(), "取消动作后恢复报告与交互");
+    }
+}
 
 void testConnectionList() {
     check(clashflux::ui::ConnectionRuleTypes("rule_set=cf_test => route(DIRECT)") == "RULE-SET" &&
@@ -2253,6 +2286,7 @@ int main() {
     testCoreOperations();
     testInboundSettings();
     testConnectionList();
+    testDiagnosticsContent();
     testVpnPublication();
     testCustomThemeColors();
     testThemeColorSurfaces();

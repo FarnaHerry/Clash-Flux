@@ -29,6 +29,10 @@ template <class T> Result<std::string> encode(const T& value) {
     return result;
 }
 
+struct VersionInput { std::optional<std::string> version; };
+struct TrafficInput { std::optional<std::int64_t> up, down; };
+struct TotalsInput { std::optional<std::int64_t> uploadTotal, downloadTotal; };
+
 struct ConnectionMetadata {
     std::string host;
     std::string type;
@@ -110,8 +114,18 @@ template <> struct meta<clashflux::wire::codec_detail::SelectionInput> {
 
 namespace clashflux::wire {
 
+Result<std::string> DecodeVersion(std::string_view text) {
+    auto input = codec_detail::decode<codec_detail::VersionInput>(text);
+    if (!input) return {{}, std::move(input.error)};
+    if (!input.value.version || input.value.version->empty()) return {{}, "missing version"};
+    return {std::move(*input.value.version), {}};
+}
 Result<Traffic> DecodeTraffic(std::string_view text) {
-    return codec_detail::decode<Traffic>(text);
+    auto input = codec_detail::decode<codec_detail::TrafficInput>(text);
+    if (!input) return {{}, std::move(input.error)};
+    if (!input.value.up || !input.value.down || *input.value.up < 0 || *input.value.down < 0)
+        return {{}, "missing or invalid traffic counters"};
+    return {{*input.value.up, *input.value.down}, {}};
 }
 Result<Log> DecodeLog(std::string_view text) {
     return codec_detail::decode<Log>(text);
@@ -128,7 +142,11 @@ Result<std::string> EncodeStoredLog(const StoredLog& log) {
     return codec_detail::encode(log);
 }
 Result<ConnectionTotals> DecodeConnectionTotals(std::string_view text) {
-    return codec_detail::decode<ConnectionTotals>(text);
+    auto input = codec_detail::decode<codec_detail::TotalsInput>(text);
+    if (!input) return {{}, std::move(input.error)};
+    if (!input.value.uploadTotal || !input.value.downloadTotal || *input.value.uploadTotal < 0 || *input.value.downloadTotal < 0)
+        return {{}, "missing or invalid connection totals"};
+    return {{*input.value.uploadTotal, *input.value.downloadTotal}, {}};
 }
 Result<Connections> DecodeConnections(std::string_view text) {
     Result<Connections> result;

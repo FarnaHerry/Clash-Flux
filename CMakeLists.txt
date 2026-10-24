@@ -681,7 +681,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         # 快速反向切换、滚动保留以及大组的有界虚拟化。
         if (TARGET HuxerUI::testing)
             add_executable(test_page_transition tests/test_page_transition.cpp
-                src/ui/section_tabs.cpp src/ui/box_cat.cpp)
+                src/ui/section_tabs.cpp src/ui/box_cat.cpp src/ui/runtime_diagnostics.cpp)
             target_include_directories(test_page_transition PRIVATE
                 src/ui "${CMAKE_CURRENT_BINARY_DIR}/huxerui-resources/clash-flux/include")
             target_compile_features(test_page_transition PRIVATE cxx_std_23)
@@ -792,6 +792,26 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                     message(STATUS "DNS TLS runtime test unavailable: OpenSSL CLI not found")
                 endif ()
             endif ()
+        endif ()
+
+        add_executable(test_runtime_health tests/test_runtime_health.cpp src/stream.cpp src/api.cpp src/core.cpp src/singbox.cpp src/profile_link.cpp
+            src/pptp.cpp src/openvpn.cpp src/vpn_compensation.cpp src/vpn_compensation_windows.cpp)
+        target_sources(test_runtime_health PRIVATE FILE_SET health_modules TYPE CXX_MODULES
+            BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+            FILES src/config.cppm src/utils.cppm src/api.cppm src/core.cppm src/stream.cppm src/singbox.cppm src/vpn.cppm src/service.cppm src/pptp.cppm src/openvpn.cppm src/vpn_compensation.cppm)
+        target_include_directories(test_runtime_health PRIVATE src)
+        set_target_properties(test_runtime_health PROPERTIES CXX_MODULE_STD ON)
+        target_compile_features(test_runtime_health PRIVATE cxx_std_23)
+        target_link_libraries(test_runtime_health PRIVATE clashflux_wire clashflux_json IXWebSocket::ixwebsocket CURL::libcurl yaml-cpp::yaml-cpp zstd::libzstd_static)
+        if (WIN32)
+            target_sources(test_runtime_health PRIVATE src/windows_service.cpp)
+            target_link_libraries(test_runtime_health PRIVATE shell32 advapi32 ole32 uuid rasapi32 iphlpapi ws2_32 dnsapi)
+        endif ()
+        if (Python3_Interpreter_FOUND AND CLASHFLUX_TEST_OPENSSL AND CLASHFLUX_BUNDLE_SINGBOX AND CLASHFLUX_SINGBOX_BUNDLED_BINARY)
+            add_test(NAME runtime_health COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runtime_health.py"
+                "$<TARGET_FILE:test_runtime_health>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}" "${CLASHFLUX_TEST_OPENSSL}")
+            set_tests_properties(runtime_health PROPERTIES TIMEOUT 70)
         endif ()
 
         add_executable(test_service_protocol tests/test_service_protocol.cpp)

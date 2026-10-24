@@ -193,13 +193,56 @@ private:
 
 } // namespace
 
+ApiResult probeThroughProxy(const std::string& target, int mixedPort, std::stop_token cancel) {
+    ApiResult result;
+    // Do not expose URL credentials or accept non-network schemes.
+    if ((!target.starts_with("http://") && !target.starts_with("https://")) ||
+        target.find('@') != std::string::npos || target.find_first_of("\r\n") != std::string::npos ||
+        target.size() > 4096 || mixedPort <= 0 || mixedPort > 65535) {
+        result.failurePhase = "invalid-target-or-port"; return result;
+    }
+    if (cancel.stop_requested()) { result.failurePhase = "cancelled"; return result; }
+    CurlHandle handle;
+    if (!handle) { result.failurePhase = "initialization"; return result; }
+    CURL* easy = handle.get();
+    const std::string proxy = "http://127.0.0.1:" + std::to_string(mixedPort);
+    curl_easy_setopt(easy, CURLOPT_URL, target.c_str());
+    curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(easy, CURLOPT_PROXY, proxy.c_str());
+    curl_easy_setopt(easy, CURLOPT_NOPROXY, "");
+    curl_easy_setopt(easy, CURLOPT_NOBODY, 1L);
+    curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 2L);
+    curl_easy_setopt(easy, CURLOPT_TIMEOUT_MS, 9000L);
+    curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, 5000L);
+    curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(easy, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(easy, CURLOPT_XFERINFODATA, &cancel);
+    curl_easy_setopt(easy, CURLOPT_XFERINFOFUNCTION, +[](void* value, curl_off_t, curl_off_t, curl_off_t, curl_off_t) -> int {
+        return static_cast<std::stop_token*>(value)->stop_requested() ? 1 : 0;
+    });
+    const CURLcode code = curl_easy_perform(easy);
+    curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status);
+    result.ok = code == CURLE_OK && result.status >= 200 && result.status < 400;
+    if (cancel.stop_requested() || code == CURLE_ABORTED_BY_CALLBACK) { result.failurePhase = "cancelled"; result.ok = false; }
+    else if (code == CURLE_COULDNT_RESOLVE_HOST || code == CURLE_COULDNT_RESOLVE_PROXY) result.failurePhase = "dns";
+    else if (code == CURLE_PEER_FAILED_VERIFICATION || code == CURLE_SSL_CONNECT_ERROR) result.failurePhase = "tls";
+    else if (code == CURLE_OPERATION_TIMEDOUT) result.failurePhase = "timeout-stage-unconfirmed";
+    else if (code != CURLE_OK) result.failurePhase = "connection-or-proxy";
+    else result.failurePhase = result.ok ? "http-response" : "http-status-origin-unconfirmed";
+    if (code != CURLE_OK) result.error = "curl-code=" + std::to_string(static_cast<int>(code));
+    return result;
+}
+
 struct ClashApi::Impl {
+    mutable std::mutex endpointMutex;
     std::string base;    // http://127.0.0.1:29097
     std::string secret;
 
     // 通用请求。method 为空 = GET；body 非空按 application/json 发送。
     ApiResult request(const std::string& method, const std::string& path,
-                      const std::string& body = {}, long timeoutSec = 10) {
+                      const std::string& body = {}, long timeoutSec = 10, bool bounded = false) {
         ApiResult result;
         CurlHandle handle;
         if (!handle) {
@@ -207,11 +250,16 @@ struct ClashApi::Impl {
             return result;
         }
         CURL* const easy = handle.get();
-        const std::string url = base + path;
+        std::string url, requestSecret;
+        {
+            std::lock_guard lock(endpointMutex);
+            url = base + path;
+            requestSecret = secret;
+        }
         CurlHeaderList headers;
         headers.append("Content-Type: application/json");
-        if (!secret.empty()) {
-            const std::string auth = "Authorization: Bearer " + secret;
+        if (!requestSecret.empty()) {
+            const std::string auth = "Authorization: Bearer " + requestSecret;
             headers.append(auth.c_str());
         }
         curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
@@ -223,7 +271,13 @@ struct ClashApi::Impl {
             curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, method.c_str());
         }
         curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers.get());
-        curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &onBodyWrite);
+        curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, bounded ? +[](char* data, size_t size, size_t count, void* context) -> size_t {
+            auto& output = *static_cast<std::string*>(context);
+            const size_t bytes = size * count;
+            if (bytes > 65536 || output.size() > 65536 - bytes) return 0;
+            try { output.append(data, bytes); return bytes; }
+            catch (...) { return 0; }
+        } : &onBodyWrite);
         curl_easy_setopt(easy, CURLOPT_WRITEDATA, &result.body);
         curl_easy_setopt(easy, CURLOPT_TIMEOUT, timeoutSec);
         curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 3L);
@@ -267,13 +321,15 @@ ClashApi::ClashApi(std::string baseUrl, std::string secret)
 ClashApi::~ClashApi() = default;
 
 void ClashApi::setEndpoint(std::string baseUrl, std::string secret) {
+    std::lock_guard lock(impl_->endpointMutex);
     impl_->base = std::move(baseUrl);
     impl_->secret = std::move(secret);
 }
 
-const std::string& ClashApi::baseUrl() const { return impl_->base; }
+std::string ClashApi::baseUrl() const { std::lock_guard lock(impl_->endpointMutex); return impl_->base; }
 
 ApiResult ClashApi::version() { return impl_->request("", "/version"); }
+ApiResult ClashApi::probeVersion() { return impl_->request("", "/version", {}, 1, true); }
 ApiResult ClashApi::configs() { return impl_->request("", "/configs"); }
 
 ApiResult ClashApi::patchConfigs(const std::string& jsonBody) {

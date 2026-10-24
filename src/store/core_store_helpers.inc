@@ -214,8 +214,9 @@
             // 超时。先查内核自己的控制器，避免 UI 存活泵在
             // PPTP 拨号期间每次阻塞 2 秒；仅在控制器不通时才向
             // root 服务确认进程状态。
-            if (api_->version().ok) return true;
-            return service::coreRunning();
+            if (api_->probeVersion().ok) return true;
+            // Unknown IPC evidence must never turn a running instance into Failed.
+            return service::coreRunningEvidence().value_or(true);
         }
         if (adopted_) {
             const long pid = readPidFile();

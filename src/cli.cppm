@@ -62,6 +62,7 @@ void printUsage() {
         "  version                          版本信息\n"
         "  service install|uninstall|status 安装/卸载/查看特权网络服务\n"
         "  core start|stop|restart|status   内核生命周期\n"
+        "  core diagnose [HTTP(S) URL]      运行诊断（显式目标经当前混合入站）\n"
         "  mode [rule|global|direct]        查/切出站模式\n"
         "  tun on|off                       TUN 透明代理开关\n"
         "  proxy on|off|status              系统代理开关\n"
@@ -139,6 +140,11 @@ int cmdCore(const std::vector<std::string>& args) {
     }
     auto& core = store::coreStore();
     core.init();
+    if (args[0] == "diagnose") {
+        if (args.size() > 2) { std::println(stderr, "core diagnose [HTTP(S) URL]"); return 2; }
+        std::println("{}", core.runtimeDiagnostics(args.size() == 2 ? args[1] : "", {}));
+        return 0;
+    }
     if (args[0] == "status") {
         // 先探控制器：CLI 是新进程，本地快照不知道别的进程（GUI/detached/
         // 服务）拉起的内核。

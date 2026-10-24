@@ -311,6 +311,11 @@ export bool stopCore(std::string& err) {
 }
 
 // 服务视角的内核存活（连不上服务 = false）。
+export std::optional<bool> coreRunningEvidence() {
+    std::string err;
+    const auto reply = request("STATUS", err);
+    return reply ? clashflux::service_protocol::runningEvidence(*reply) : std::nullopt;
+}
 export bool coreRunning() {
     std::string err;
     const auto reply = request("STATUS", err);
