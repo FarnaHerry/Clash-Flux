@@ -77,9 +77,9 @@ IdlePose RunningPose(double seconds) {
 // then retires as soon as the cat is upright, before the card expands.
 struct BoxMotion {
   class Extension;
-  VectorAsset cat, tail, rear, front, logo, catPeek, eyeOpen, eyeWink;
+  VectorAsset catHead, tail, rear, front, logo, eyeLeft, eyeOpen, eyeWink;
   VectorAsset catRunning, earLeft, earRight;
-  VectorAsset interior, catSleeping, catContent, hand, handFill;
+  VectorAsset interior, eyesSleeping, eyesContent, hand, handFill;
   std::shared_ptr<MotionProbe> probe;
   float target = 0.0F;
   double duration = 1.2;
@@ -269,7 +269,11 @@ private:
         .translate_x = 64 - c * 64 + s * 76,
         .translate_y = 12 * (1 - cat) + 76 - s * 64 - c * 76});
     const Rect full{0, 0, 128, 128};
-    paint.DrawImage(spec_.catPeek, full, {}, alpha);
+    // A solid silhouette must occlude the box throughout expression changes.
+    // Cross-fading two filled heads with source-over leaves the background visible.
+    paint.DrawImage(spec_.catHead, full);
+    paint.DrawImage(spec_.eyesSleeping, full, {}, 1 - alpha);
+    paint.DrawImage(spec_.eyeLeft, full, {}, alpha);
     const float eyeHeight = 1 - 0.92F * wink;
     paint.PushTransform(Transform2D{.m22 = eyeHeight, .translate_y = 54 * (1 - eyeHeight)});
     paint.DrawImage(spec_.eyeOpen, full, {}, alpha * (1 - wink));
@@ -279,23 +283,30 @@ private:
   }
 
   void PaintContentCat(PaintContext& paint, float headY, float sway, float alpha) const {
-    const float angle = 0.025F * sway;
+    const float angle = -0.035F * sway;
     const float c = std::cos(angle);
     const float s = std::sin(angle);
     paint.PushTransform(Transform2D{.m11 = c, .m12 = s, .m21 = -s, .m22 = c,
         .translate_x = 64 - c * 64 + s * 76,
         .translate_y = headY + 76 - s * 64 - c * 76});
-    paint.DrawImage(spec_.catContent, {0, 0, 128, 128}, {}, alpha);
+    const Rect full{0, 0, 128, 128};
+    paint.DrawImage(spec_.catHead, full);
+    paint.DrawImage(spec_.eyeLeft, full, {}, 1 - alpha);
+    paint.DrawImage(spec_.eyeOpen, full, {}, 1 - alpha);
+    paint.DrawImage(spec_.eyesContent, full, {}, alpha);
     paint.PopTransform();
-    if (spec_.probe) spec_.probe->sawContent = true;
+    if (spec_.probe && alpha > 0) spec_.probe->sawContent = true;
   }
 
   void PaintHand(PaintContext& paint, float p, float headY, float sway) const {
     const float alpha = spec_.loading ? 1 - Segment(p, 0.55F, kCatRiseEnd) : 0;
     if (alpha <= 0) return;
-    // Reach straight from the foreground, centered above the eyes without tilting.
-    paint.PushTransform(Transform2D{
-        .translate_y = headY + 0.5F * sway - 5 * (1 - alpha)});
+    const float angle = 0.07F * sway;
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    paint.PushTransform(Transform2D{.m11 = c, .m12 = s, .m21 = -s, .m22 = c,
+        .translate_x = 64 - c * 64 + s * 43 + 8 * sway,
+        .translate_y = headY + 45.5F - s * 64 - c * 43 - 5 * (1 - alpha)});
     paint.DrawImage(spec_.handFill, {0, 0, 128, 128}, {}, alpha);
     paint.DrawImage(spec_.hand, {0, 0, 128, 128}, spec_.foreground, alpha);
     paint.PopTransform();
@@ -338,23 +349,22 @@ private:
     paint.DrawImage(spec_.rear, full);
     paint.DrawImage(spec_.interior, full);
     paint.DrawImage(spec_.tail, {0, 36 * (1 - tail), 128, 128}, {}, tail);
-    const float sway = static_cast<float>(std::sin(6.2831853 * loadingSeconds_ / 1.35));
+    const float sway = static_cast<float>(std::sin(6.2831853 * loadingSeconds_ / 1.8));
     const float headY = 12 * (1 - wake) + 1.4F * (0.5F + 0.5F * sway) * petting;
-    if (spec_.loading) {
-      paint.DrawImage(spec_.cat, {0, headY, 128, 128});
-      if (petting > 0) PaintContentCat(paint, headY, sway * petting, petting);
+    if (spec_.failure) {
+      // Draw a single opaque head even at the first/last partial eye transition.
+      // The foreground covers are painted afterwards and hide the returning head.
+      paint.PushClip({0, 0, 128, 80});
+      PaintPeek(paint, p, wake, eyes);
+      paint.PopClip();
+    } else if (spec_.loading) {
+      PaintContentCat(paint, headY, sway * petting, petting);
     } else {
-      paint.DrawImage(spec_.catSleeping, {0, 12 * (1 - wake), 128, 128}, {}, 1 - eyes);
-    }
-    if (!spec_.loading && eyes > 0.001F) {
-      if (spec_.failure) {
-        // The existing wink stays behind the foreground covers.
-        paint.PushClip({0, 0, 128, 80});
-        PaintPeek(paint, p, wake, eyes);
-        paint.PopClip();
-      } else {
-        paint.DrawImage(spec_.cat, {0, 12 * (1 - wake), 128, 128}, {}, eyes);
-      }
+      const Rect head{0, 12 * (1 - wake), 128, 128};
+      paint.DrawImage(spec_.catHead, head);
+      paint.DrawImage(spec_.eyesSleeping, head, {}, 1 - eyes);
+      paint.DrawImage(spec_.eyeLeft, head, {}, eyes);
+      paint.DrawImage(spec_.eyeOpen, head, {}, eyes);
     }
     paint.DrawImage(spec_.front, full);
     PaintSleepSymbols(paint);
@@ -481,7 +491,10 @@ Task<void> WaitSettled(State<LabState> state, float target, const char* step) {
   while (state.Get().busy && std::chrono::steady_clock::now() < deadline)
     co_await Delay(25ms);
   if (state.Get().busy || state.Get().target != target)
-    throw std::runtime_error(std::string{"demo smoke failed: "} + step);
+    throw std::runtime_error(std::string{"demo smoke failed: "} + step +
+        " (busy=" + std::to_string(state.Get().busy) +
+        ", target=" + std::to_string(state.Get().target) +
+        ", status=" + state.Get().status + ")");
 }
 
 Task<void> WaitFailurePeek(State<LabState> state) {
@@ -505,15 +518,15 @@ Task<void> WaitFailurePeek(State<LabState> state) {
   auto scrub = UseState(preview);
   const auto current = state.Get();
   BoxMotion mark{
-      .cat = UseVectorImage(app::images::cat), .tail = UseVectorImage(app::images::tail),
+      .catHead = UseVectorImage(app::images::cat_head), .tail = UseVectorImage(app::images::tail),
       .rear = UseVectorImage(app::images::rear), .front = UseVectorImage(app::images::front),
-      .logo = UseVectorImage(app::images::logo_completed), .catPeek = UseVectorImage(app::images::cat_peek),
+      .logo = UseVectorImage(app::images::logo_completed), .eyeLeft = UseVectorImage(app::images::eye_left),
       .eyeOpen = UseVectorImage(app::images::eye_open), .eyeWink = UseVectorImage(app::images::eye_wink),
       .catRunning = UseVectorImage(app::images::cat_running),
       .earLeft = UseVectorImage(app::images::ear_left), .earRight = UseVectorImage(app::images::ear_right),
       .interior = UseVectorImage(app::images::interior),
-      .catSleeping = UseVectorImage(app::images::cat_sleeping),
-      .catContent = UseVectorImage(app::images::cat_content), .hand = UseVectorImage(app::images::petting_hand),
+      .eyesSleeping = UseVectorImage(app::images::eyes_sleeping),
+      .eyesContent = UseVectorImage(app::images::eyes_content), .hand = UseVectorImage(app::images::petting_hand),
       .handFill = UseVectorImage(app::images::petting_hand_fill),
       .probe = smoke ? motionProbe.Get() : nullptr,
       .target = current.target,
@@ -666,7 +679,7 @@ Task<void> WaitFailurePeek(State<LabState> state) {
         co_await WaitSettled(state, 0, "interrupted slow wake must not wake the cat");
         for (bool failure : {false, true}) {
           state.Update([failure](LabState& next) { next.failure = failure; });
-          for (float p : {0.0F, 0.15F, 0.3F, 0.45F, 0.6F, 0.72F, 0.85F, 1.0F}) {
+          for (float p : {0.0F, 0.15F, 0.3F, 0.37F, 0.45F, 0.6F, 0.72F, 0.8F, 0.85F, 1.0F}) {
             SetTarget(state, p, true, "逐阶段检查", false);
             co_await Delay(120ms);
           }

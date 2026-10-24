@@ -32,6 +32,8 @@
 
 #include "app_resources.h"
 #include "ui.h"
+#include "box_cat.h"
+#include "home_control_motion.h"
 #include "empty_state.h"
 #include "task_bridge.h"
 
@@ -55,14 +57,6 @@ namespace clashflux::ui {
 namespace {
 
 constexpr std::size_t kHistoryPoints = 60;  // 60 拍 ≈ 30s 窗口
-constexpr huxerui::TweenSpec kHomeControlMotion{
-    .duration = 0.42, .easing = huxerui::Easing::EaseInOut};
-
-struct HomeControlMotion {
-    CoreAction action = CoreAction::Idle;
-    std::uint64_t serial = 0;
-    bool operator==(const HomeControlMotion&) const = default;
-};
 
 const std::vector<std::string> kModeLabels{"规则", "全局", "直连"};
 const std::vector<std::string> kModes{"rule", "global", "direct"};
@@ -112,7 +106,7 @@ constexpr bool kDesktopHomeControl = false;
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     huxerui::Row{}
 #define CLASHFLUX_HOME_CONTROL_CARD(shown, motion, transition) huxerui::Row{}
-#define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact, shown, motion, transition) \
+#define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact, shown, motion, ready, transition) \
     AndroidHomeFloatingAction(std::move(page), state, compact)
 #else
 // 桌面可选卡片：系统代理/TUN 开关是桌面专有能力。
@@ -138,8 +132,8 @@ constexpr bool kDesktopHomeControl = true;
     DesktopHomePlatformCard(kind)
 #define CLASHFLUX_HOME_CONTROL_CARD(shown, motion, transition) \
     DesktopHomeStatusCard(shown, motion, transition)
-#define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact, shown, motion, transition) \
-    DesktopHomeFloatingAction(std::move(page), compact, shown, motion, transition)
+#define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact, shown, motion, ready, transition) \
+    DesktopHomeFloatingAction(std::move(page), compact, shown, motion, ready, transition)
 #endif
 
 // ---- 卡片网格尺寸模型 ------------------------------------------------------
@@ -913,26 +907,22 @@ huxerui::XYChartData BuildTrafficChartData(
                       : changing ? "正在连接"
                       : failed ? "启动失败"
                                : active ? "已连接" : "未连接");
-    // 过程态保留按钮的位置和尺寸，进度环替代图标；结果由后台快照确认。
-    huxerui::View button =
-        huxerui::IconButton(active ? app::images::pause : app::images::play,
-                            actionLabel)
-            .OnClick(toggle)
-            .With(huxerui::Tooltip(actionLabel),
-                  huxerui::Frame{.width = 56.0F, .height = 56.0F},
-                  huxerui::Enabled(enabled),
-                  huxerui::Opacity(changing ? 0.0F : 1.0F),
-                  huxerui::Foreground(failed ? OnErrorColor(theme)
-                      : active ? theme.colors.on_primary_container
-                               : theme.colors.on_primary),
-                  huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                     .label = huxerui::UseString(actionLabel)});
-    button = WithoutIconButtonOutlines(button);
+    const bool stopping = command.action == CoreAction::Tun && !command.enabled;
+    const BoxCatPhase catPhase = failed ? BoxCatPhase::Failed
+        : changing ? (stopping ? BoxCatPhase::Stopping : BoxCatPhase::Starting)
+        : active ? BoxCatPhase::Running : BoxCatPhase::Sleeping;
+    // 猫咪只呈现后台确认的连接状态；VPN 授权与操作仍由共享控制器持有。
+    huxerui::View button = BoxCatButtonContent(catPhase,
+        failed ? OnErrorColor(theme)
+               : active || changing ? theme.colors.on_primary_container
+                                    : theme.colors.on_primary).OnClick(toggle)
+        .With(huxerui::Tooltip(actionLabel),
+              huxerui::Enabled(enabled),
+              huxerui::Indication{},
+              huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                 .label = huxerui::UseString(actionLabel)});
     huxerui::View floating = huxerui::Stack {
         std::move(button),
-        changing ? huxerui::View{huxerui::ProgressCircle().With(
-                       huxerui::Frame{.width = 28.0F, .height = 28.0F})}
-                 : huxerui::View{huxerui::Row{}},
     }.With(huxerui::Frame{.width = 56.0F, .height = 56.0F},
            huxerui::Align(huxerui::HorizontalAlignment::Center,
                           huxerui::VerticalAlignment::Center),
@@ -966,41 +956,6 @@ huxerui::XYChartData BuildTrafficChartData(
 }
 
 #else
-
-struct HomeControlMoveExpand {
-    static constexpr float kMoveFraction = 0.48F;
-
-    static huxerui::Rect Expand(huxerui::Rect button,
-                                huxerui::Rect card, float progress) {
-        const float move = std::clamp(progress / kMoveFraction, 0.0F, 1.0F);
-        const float grow = std::clamp((progress - kMoveFraction) /
-                                          (1.0F - kMoveFraction), 0.0F, 1.0F);
-        const float buttonCenterX = button.x + button.width / 2.0F;
-        const float buttonCenterY = button.y + button.height / 2.0F;
-        const float cardCenterX = card.x + card.width / 2.0F;
-        const float cardCenterY = card.y + card.height / 2.0F;
-        const float centerX = buttonCenterX + (cardCenterX - buttonCenterX) * move;
-        const float centerY = buttonCenterY + (cardCenterY - buttonCenterY) * move;
-        const float width = button.width + (card.width - button.width) * grow;
-        const float height = button.height + (card.height - button.height) * grow;
-        return {centerX - width / 2.0F, centerY - height / 2.0F,
-                width, height};
-    }
-
-    huxerui::Rect Evaluate(huxerui::Rect from, huxerui::Rect to,
-                           float progress) const {
-        if (progress <= 0.0F) return from;
-        if (progress >= 1.0F) return to;
-        // The status card is larger than the floating button. Reversing the
-        // endpoints plays the same path backwards: shrink, then move home.
-        if (from.width * from.height > to.width * to.height) {
-            return Expand(to, from, 1.0F - progress);
-        }
-        return Expand(from, to, progress);
-    }
-
-    bool operator==(const HomeControlMoveExpand&) const = default;
-};
 
 [[huxerui::composable]] huxerui::View DesktopModeSwitchRow(
     huxerui::ImageVariant icon, huxerui::StringVariant label,
@@ -1072,28 +1027,31 @@ void RunDesktopHomeCoreAction(const CoreControl& control,
                               huxerui::State<bool> cardShown,
                               huxerui::State<HomeControlMotion> motion,
                               huxerui::SharedTransitionHandle transition,
-                              CoreAction action) {
+                              CoreAction action, bool reducedMotion) {
     if (control.Busy()) return;
-    const bool showCard = action == CoreAction::Start;
-    const std::uint64_t serial = motion.Get().serial + 1;
-    try {
-        // Capture the visible button/card before the command changes its
-        // presentation. Keep the destination stable until playback ends.
-        transition.Run(kHomeControlMotion, [cardShown, motion, showCard, action, serial] {
-            cardShown = showCard;
-            motion = HomeControlMotion{action, serial};
-        });
-    } catch (const std::logic_error&) {
-        cardShown = showCard;
-        motion = HomeControlMotion{action, serial};
-    }
+    // Startup stays in the button until real success and the cat's completion
+    // signal. Stopping still shrinks the card back into the sleeping button.
+    if (action == CoreAction::Stop)
+        AnimateHomeControlCard(false, cardShown, motion, transition, control.tasks, reducedMotion);
     control.Run({.action = action});
-    control.tasks.Launch([motion, serial]() -> huxerui::Task<void> {
-        co_await huxerui::Delay(std::chrono::duration<double>{
-            kHomeControlMotion.duration + 0.08});
-        if (motion.Get().serial == serial)
-            motion = HomeControlMotion{CoreAction::Idle, serial};
-    });
+}
+
+BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
+                                CoreAction presented = CoreAction::Idle) {
+    // A Start presentation now means the successful cat is merging into its
+    // card, rather than a kernel command that is still waiting to finish.
+    if (presented == CoreAction::Start) return BoxCatPhase::Running;
+    const CoreAction action = presented == CoreAction::Idle
+        ? control.model->operations.command.Get().action : presented;
+    if (action == CoreAction::Start) return BoxCatPhase::Starting;
+    if (action == CoreAction::Stop) return BoxCatPhase::Stopping;
+    switch (control.model->view.Get().core.state) {
+    case core::CoreState::Starting: return BoxCatPhase::Starting;
+    case core::CoreState::Running: return BoxCatPhase::Running;
+    case core::CoreState::Failed: return BoxCatPhase::Failed;
+    case core::CoreState::Stopped: return BoxCatPhase::Sleeping;
+    }
+    return BoxCatPhase::Sleeping;
 }
 
 [[huxerui::composable]] huxerui::View DesktopHomeStatusCard(
@@ -1101,6 +1059,14 @@ void RunDesktopHomeCoreAction(const CoreControl& control,
     huxerui::State<HomeControlMotion> motion,
     huxerui::SharedTransitionHandle transition) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    if (motion.Get().collapsed) {
+        return huxerui::Stack {
+            BoxCatButtonContent(BoxCatPhase::Running, theme.colors.on_surface, false)
+                .With(huxerui::SharedBounds("home-core-control")
+                    .BoundsTransform(HomeControlReturnToDock{})),
+        }.With(huxerui::Align(huxerui::HorizontalAlignment::Center,
+                             huxerui::VerticalAlignment::Center));
+    }
     const auto control = UseCoreControl();
     const auto tasks = huxerui::UseTaskScope();
     auto clock = huxerui::UseState<std::chrono::steady_clock::time_point>(
@@ -1118,13 +1084,14 @@ void RunDesktopHomeCoreAction(const CoreControl& control,
         0);
     const CoreAction action = control.model->operations.command.Get().action;
     const bool entering = motion.Get().action == CoreAction::Start;
-    // ProgressCircle repaints every frame. During shared-bounds playback the
-    // destination must stay paint-stable or the framework drops the pair.
+    const bool returning = motion.Get().action == CoreAction::Stop;
+    // Shared-bounds playback keeps the destination paint-stable; the cat's
+    // retained clocks resume as soon as the outer transition finishes.
     const bool changing = !entering && (action == CoreAction::Start ||
                                         action == CoreAction::Stop);
     const huxerui::StringVariant status = Localized(
-        entering || action == CoreAction::Start ? "正在启动"
-        : action == CoreAction::Stop ? "正在停止"
+        action == CoreAction::Start ? "正在启动"
+        : returning || action == CoreAction::Stop ? "正在停止"
                                      : "运行中");
     const auto runningSince = control.model->view.Get().core.runningSince;
     const auto elapsed = runningSince == std::chrono::steady_clock::time_point{}
@@ -1133,24 +1100,15 @@ void RunDesktopHomeCoreAction(const CoreControl& control,
                    std::chrono::duration_cast<std::chrono::seconds>(
                        clock.Get() - runningSince));
     const auto seconds = elapsed.count();
-    const std::string uptime = entering ? "00:00:00" : std::format(
+    const std::string uptime = std::format(
         "{:02}:{:02}:{:02}", seconds / 3600, (seconds / 60) % 60,
         seconds % 60);
-    huxerui::View icon = changing
-        ? huxerui::View{huxerui::ProgressCircle().With(
-              huxerui::Frame{.width = 24.0F, .height = 24.0F})}
-        : huxerui::View{huxerui::Image(app::images::pause)
-              .Fit(huxerui::ImageFit::Contain)
-              .Tint(theme.colors.on_primary_container)
-              .With(huxerui::Frame{.width = 22.0F, .height = 22.0F})};
+    huxerui::View icon = BoxCatStatusIcon(
+        DesktopHomeCatPhase(control, motion.Get().action),
+        motion.Get().action == CoreAction::Idle);
     huxerui::View content = huxerui::Row {
-        huxerui::Stack { std::move(icon) }
-            .With(huxerui::Frame{.width = 36.0F, .height = 36.0F},
-                  huxerui::Align(huxerui::HorizontalAlignment::Center,
-                                 huxerui::VerticalAlignment::Center),
-                  huxerui::Background(theme.colors.primary_container),
-                  huxerui::CornerRadius(18.0F),
-                  huxerui::Scale(huxerui::AnimateTo(
+        std::move(icon)
+            .With(huxerui::Scale(huxerui::AnimateTo(
                       changing ? 0.78F : 1.0F,
                       huxerui::TweenSpec{.duration = 0.28,
                                          .easing = huxerui::Easing::EaseOut}))),
@@ -1164,14 +1122,18 @@ void RunDesktopHomeCoreAction(const CoreControl& control,
                 theme.colors.on_surface_variant}),
         }.With(huxerui::Spacing(2.0F)),
     }.With(huxerui::Spacing(6.0F),
+           huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
            huxerui::MainAlign(huxerui::MainAxisAlignment::Center));
     return huxerui::View{Card(std::move(content))}
-        .OnClick([control, cardShown, motion, transition] {
+        .OnClick([control, cardShown, motion, transition, reducedMotion = theme.motion.reduced_motion] {
             RunDesktopHomeCoreAction(control, cardShown, motion, transition,
-                                     CoreAction::Stop);
+                                     CoreAction::Stop, reducedMotion);
         })
-        .With(huxerui::Enabled(!control.Busy() && !entering),
+        .With(huxerui::Scale(huxerui::AnimateTo(
+                  motion.Get().collapsing ? kHomeControlCollapsedScale : 1.0F,
+                  kHomeControlCollapseMotion)),
+              huxerui::Enabled(!control.Busy() && !entering && !returning),
               huxerui::Tooltip(Localized("停止内核")),
               huxerui::Indication{},
               huxerui::SharedBounds("home-core-control")
@@ -1187,6 +1149,7 @@ void RunDesktopHomeCoreAction(const CoreControl& control,
 [[huxerui::composable]] huxerui::View DesktopHomeFloatingAction(
     huxerui::View page, bool compact, huxerui::State<bool> cardShown,
     huxerui::State<HomeControlMotion> motion,
+    huxerui::State<bool> catReady,
     huxerui::SharedTransitionHandle transition) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const auto control = UseCoreControl();
@@ -1197,50 +1160,48 @@ void RunDesktopHomeCoreAction(const CoreControl& control,
     const CoreAction command = control.model->operations.command.Get().action;
     const bool changing = !returning && (command == CoreAction::Start ||
                                         command == CoreAction::Stop);
-    const auto toggle = [control, active, compact, cardShown, motion, transition] {
+    const auto toggle = [control, active, compact, cardShown, motion, transition,
+                         reducedMotion = theme.motion.reduced_motion] {
         const CoreAction action = active ? CoreAction::Stop : CoreAction::Start;
         if (compact) {
             control.Run({.action = action});
         } else {
             RunDesktopHomeCoreAction(control, cardShown, motion, transition,
-                                     action);
+                                     action, reducedMotion);
         }
     };
 
-    huxerui::View button =
-        huxerui::IconButton(active ? app::images::pause : app::images::play,
-                            Localized(active ? "停止内核" : "启动内核"))
-            .OnClick(toggle)
-            .With(huxerui::Tooltip(Localized(active ? "停止内核" : "启动内核")),
-                  huxerui::Frame{.width = 56.0F, .height = 56.0F},
-                  huxerui::Enabled(enabled),
-                  huxerui::Opacity(changing ? 0.0F : 1.0F),
-                  huxerui::Foreground(active
-                                          ? theme.colors.on_primary_container
-                                          : theme.colors.on_primary),
-                  huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                     .label = huxerui::UseString(Localized(
-                                         active ? "停止内核" : "启动内核"))});
-    button = WithoutIconButtonOutlines(button);
+    const auto onRunningReady = [control, catReady] {
+        const auto action = control.model->operations.command.Get().action;
+        if (action != CoreAction::Start && action != CoreAction::Stop &&
+            action != CoreAction::Restart &&
+            control.model->view.Get().core.state == core::CoreState::Running)
+            catReady = true;
+    };
+    huxerui::View button = BoxCatButtonContent(
+        DesktopHomeCatPhase(control, motion.Get().action),
+        theme.colors.on_surface,
+        motion.Get().action == CoreAction::Idle, {}, onRunningReady,
+        returning ? std::optional{BoxCatPhase::Running} : std::nullopt).OnClick(toggle)
+        .With(huxerui::Tooltip(Localized(active ? "停止内核" : "启动内核")),
+              huxerui::Enabled(enabled),
+              huxerui::Indication{},
+              huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                 .label = huxerui::UseString(Localized(
+                                     active ? "停止内核" : "启动内核"))});
+    auto bounds = huxerui::SharedBounds("home-core-control");
+    if (returning) bounds = std::move(bounds).BoundsTransform(HomeControlReturnToDock{});
+    else bounds = std::move(bounds).BoundsTransform(HomeControlMoveExpand{});
     huxerui::View floating = huxerui::Stack {
         std::move(button),
-        changing ? huxerui::View{huxerui::ProgressCircle().With(
-                       huxerui::Frame{.width = 28.0F, .height = 28.0F})}
-                 : huxerui::View{huxerui::Row{}},
     }.With(huxerui::Frame{.width = 56.0F, .height = 56.0F},
            huxerui::Align(huxerui::HorizontalAlignment::Center,
                           huxerui::VerticalAlignment::Center),
-           huxerui::Background(active || changing
-                                   ? theme.colors.primary_container
-                                   : theme.colors.primary),
-           huxerui::CornerRadius(kFloatingActionCornerRadius),
-           huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F, 2.0F},
            huxerui::Scale(huxerui::AnimateTo(
                changing ? 0.94F : 1.0F,
                huxerui::TweenSpec{.duration = 0.18,
                                   .easing = huxerui::Easing::EaseOut})),
-           huxerui::SharedBounds("home-core-control")
-               .BoundsTransform(HomeControlMoveExpand{}));
+           std::move(bounds));
     huxerui::View dock = huxerui::Column {
         std::move(floating),
     }.With(huxerui::Padding(huxerui::EdgeInsets{
@@ -1296,6 +1257,7 @@ void RunDesktopHomeCoreAction(const CoreControl& control,
         coreModel->view.Get().core.state == core::CoreState::Running);
     auto controlMotion = huxerui::UseState<HomeControlMotion>({});
     auto controlCardSynced = huxerui::UseState<bool>(false);
+    auto controlCatReady = huxerui::UseState<bool>(false);
     const auto controlTransition = huxerui::UseSharedTransition();
     // 基础卡片顺序与尺寸只由 kHomeCards 决定，没有布局持久化；尾部控制卡
     // 只随桌面运行状态出现，不改变其它卡片的声明跨度。
@@ -1311,8 +1273,9 @@ void RunDesktopHomeCoreAction(const CoreControl& control,
 
     if (kDesktopHomeControl) {
         huxerui::Lifecycle(
-            [coreModel, controlCardShown, controlCardSynced,
-             controlTransition, active, compact] {
+            [coreModel, controlCardShown, controlCardSynced, controlCatReady,
+             controlMotion, controlTransition, tasks, active, compact,
+             reducedMotion = theme.motion.reduced_motion] {
                 const CoreView& view = coreModel->view.Get();
                 if (view.ready) {
                     const bool running =
@@ -1320,23 +1283,24 @@ void RunDesktopHomeCoreAction(const CoreControl& control,
                     if (!controlCardSynced.Get() || !active || compact) {
                         controlCardSynced = true;
                         controlCardShown = running;
-                    } else if (!coreModel->operations.Busy() &&
-                               controlCardShown.Get() != running) {
-                        try {
-                            controlTransition.Run(kHomeControlMotion,
-                                [controlCardShown, running] {
-                                    controlCardShown = running;
-                                });
-                        } catch (const std::logic_error&) {
-                            // 页面切换期间作用域可能暂时卸载，直接同步真实状态。
-                            controlCardShown = running;
+                        controlCatReady = running;
+                    } else {
+                        const auto command = coreModel->operations.command.Get().action;
+                        if (!running || command == CoreAction::Start ||
+                            command == CoreAction::Stop || command == CoreAction::Restart)
+                            controlCatReady = false;
+                        if (!coreModel->operations.Busy() &&
+                            controlCardShown.Get() != running &&
+                            (!running || controlCatReady.Get())) {
+                            AnimateHomeControlCard(running, controlCardShown,
+                                controlMotion, controlTransition, tasks, reducedMotion);
                         }
                     }
                 }
                 return [] {};
             },
-            coreModel->view, coreModel->operations.command,
-            active, compact);
+            coreModel->view, coreModel->operations.command, controlCatReady,
+            active, compact, theme.motion.reduced_motion);
     }
 
     // 不可见时只保留本页 State/Lifecycle，不构建重子树：huxerui 的 Pager 会把
@@ -1418,7 +1382,7 @@ void RunDesktopHomeCoreAction(const CoreControl& control,
 
     // 移动端启动/停止按钮脱离滚动内容，固定在底部悬浮导航之上的位置。
     huxerui::View shell = CLASHFLUX_HOME_FLOATING_ACTION(
-        std::move(page), state, compact, controlCardShown, controlMotion,
+        std::move(page), state, compact, controlCardShown, controlMotion, controlCatReady,
         controlTransition);
 
     return std::move(shell).With(huxerui::Grow(1.0F));

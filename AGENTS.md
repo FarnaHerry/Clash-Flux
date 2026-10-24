@@ -5,9 +5,12 @@
 
 ## 修改后的强制验证
 
-首页猫咪出箱动画的独立调试工程在 `demos/box-cat-demo`，用
-`./demos/box-cat-demo/run-demo.sh` 启动。只用模拟状态，不接入主程序内核、代理、
-数据库或订阅；调试动画不需要启动主程序 GUI，以下主目标构建与 version 验证仍必做。
+首页猫咪出箱动画的生产组件在 `src/ui/box_cat.cpp`，由真实内核/VPN 状态驱动；
+独立调试工程在 `demos/box-cat-demo`，用 Linux 的 `./demos/box-cat-demo/run-demo.sh`
+或 Windows PowerShell 的 `./demos/box-cat-demo/run-demo.ps1` 启动；Windows 只编译时加
+`-BuildOnly`，产物在 `demos/box-cat-demo/build-windows/box_cat_demo.exe`，不依赖 WSL。
+Demo 只用模拟状态，不接入主程序内核、代理、数据库或订阅；调试 Demo 不需要启动
+主程序 GUI，以下主目标构建与 version 验证仍必做。
 
 每次修改完成后，无论改动大小、涉及何种文件（代码、UI、脚本还是配置），都必须先
 在本地重新编译，不得依赖旧的可执行文件判断改动有效：
@@ -24,7 +27,10 @@ cmake --build build --target clash-flux
 CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
 ```
 
-编译失败、可执行文件不存在或 `run.sh` 验证失败时，不得在回复中声称改动已完成。
+Windows PowerShell 使用等价的 `./run.ps1`（默认运行 `build/clash-flux.exe`，
+同样支持 `CLASHFLUX_BIN` 与参数透传）；也可以直接运行 `build/clash-flux.exe`。
+
+编译失败、可执行文件不存在或 `run.sh` / `run.ps1` 验证失败时，不得在回复中声称改动已完成。
 
 DNS 运行回归用 `test_singbox` + 固定打包内核，CTest 的 dns_hosts_runtime /
 dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CLI；缺少前提导致未注册不算通过。
@@ -470,7 +476,7 @@ CoreSnapshot.planRevision 表示成功应用后的运行序号，预览目录不
   AAR 必须带构建脚本生成的 version/revision/ABI/SHA256
   元数据，缺失、版本不符或校验失败时重新构建，不得只凭旧 AAR 文件存在就继续打包。
   不 fork、不臆造字段（sing-box 对未知字段直接拒绝启动），能力一律以上游文档/源码为准；
-  控制面走内核自带的 `clash_api`，内核没有的概念不在这一层做兼容包装。
+  控制面走内核自带的 `clash_api`，内核没有的概念（endpoint、rule_set、selector/urltest 语义）不在这一层做兼容包装。
 - **L2 翻译层（处理 Clash 生态）**：Clash YAML、sing-box 原生 JSON、原生连接（PPTP /
   OpenVPN）都经 `clashflux.singbox` 编译。每条映射（协议 / 组 / 规则 / 字段）必须归入
   **exact / approx / unsupported** 之一并进入保真度账本，**禁止静默丢弃**，也禁止为

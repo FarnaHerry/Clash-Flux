@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <g fill="#111318" stroke="#e8edf0" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+    <path id="inner-walls" d="M25.5 64 L64 49.8 L102.5 64 L64 78.2 Z" />
+    <path id="inner-corner" d="M64 49.8 L64 78.2" fill="none" stroke="#626a75" stroke-width="1.3" />
+  </g>
+</svg>

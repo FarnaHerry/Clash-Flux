@@ -1,6 +1,7 @@
 # 猫咪出箱动画 Demo
 
-独立的 Linux HuxerUI 应用，当前方案为「开箱睡觉 → 轻抚加载 → 猫咪醒来探头 → 运行卡片」。
+独立的 Windows / Linux HuxerUI 应用，当前方案为「开箱睡觉 → 轻抚加载 → 猫咪醒来探头 → 运行卡片」。
+主程序首页已通过 `src/ui/box_cat.cpp` 接入同一套视觉与动作，由真实内核/VPN 状态驱动；本 Demo 继续只用于隔离调试。
 箱盖始终展开，后盖、箱内后壁、前盖与箱体都保持不动；停止或失败后猫咪回去睡觉，不合箱。
 点击放大预览或实际按钮均可唤醒/停止，点击范围覆盖整个按钮，不需要精确点中细线。
 待机猫咪使用原 Logo 的轮廓和闭眼表情，三枚 z 循环由小变大向右上方飘起、淡出。
@@ -12,7 +13,29 @@
 默认使用与主程序相同的 `third_party/huxerui` 固定源码；不链接 Clash-Flux 的领域模块，不访问数据库、订阅、内核、
 系统代理或 TUN。时长和连接统计均为固定示例数据，不代表真实运行状态。
 
-从仓库根目录启动：
+Windows 从仓库根目录使用 PowerShell（需要 Visual Studio C++ 工具、Windows SDK、
+CMake 4.4+ 和 Ninja，不需要 WSL）：
+
+```powershell
+./demos/box-cat-demo/run-demo.ps1 -BuildOnly
+./demos/box-cat-demo/run-demo.ps1
+./demos/box-cat-demo/run-demo.ps1 -DemoArguments '--version'
+```
+
+脚本按需加载 Visual Studio x64 开发环境，使用仓库固定 HuxerUI 源码，
+完成 codegen、资源生成和原生编译；优先复用主工程构建缓存中的 CMake，
+也可用 `-CMakeExecutable 'C:/tools/cmake/bin/cmake.exe'` 指定 4.4+ 版本。
+独立产物在 `demos/box-cat-demo/build-windows/`，
+直接运行以下命令可跳过构建，冒烟检查会打开独立窗口并自动退出：
+
+```powershell
+& ./demos/box-cat-demo/build-windows/box_cat_demo.exe --version
+& ./demos/box-cat-demo/build-windows/box_cat_demo.exe --smoke-test | Out-Host
+& ./demos/box-cat-demo/build-windows/box_cat_demo.exe --brand-preview --smoke-test | Out-Host
+```
+
+Windows 使用 GUI 子系统和原生 DPI manifest，正常启动不弹出额外控制台。
+Linux 从仓库根目录启动：
 
 ```bash
 ./demos/box-cat-demo/run-demo.sh
@@ -45,15 +68,17 @@ C++ 编译器、项目的固定 HuxerUI checkout 与相应 GTK/epoxy/libsoup 开
 保持片刻后睁开，随后回去睡觉，箱盖不动。失败表情素材沿用现有猫咪轮廓与左眼。
 头部位移与卡片展开由保留进度驱动，手与舒服表情的轻微运动共用加载时钟。睡眠 zzz 使用保留帧时钟，
 2.8 秒一轮、三枚错开，限频 30fps，不逐帧写 State 或重新布局；窗口隐藏时暂停。
-加载轻抚同样使用保留帧时钟，1.35 秒一轮、限频 30fps，在起身进度 0.55–0.63 时抬起、淡出，0.63 起身完成即停止轻抚时钟；
+加载轻抚同样使用保留帧时钟，1.8 秒一轮、限频 30fps，在起身进度 0.55–0.63 时抬起、淡出，0.63 起身完成即停止轻抚时钟；
 卡片随后在 0.72–1.0 展开，busy 仍结束于整个模拟操作完成，不因手提前退场而改变启动状态。停止时不倒放轻抚；减少动态效果保留静态 zzz 或加载抚摸手势。
 箱体和所有开盖姿势复用完整运行态 SVG 图层，固定基线保持唤醒前后箱体位置稳定。
 当前 demo 专注深色主题和桌面效果，未接入主程序启停生命周期或手机 VPN。
 
-`resources/images/cat_sleeping.svg` 沿用原猫咪头部轮廓，只替换闭眼表情；
-`cat_content.svg` 复用原猫咪轮廓，加载时只使用弯眼，不画嘴巴；手势缩小约三分之一，从屏幕正前方居中伸向猫咪，手背朝向用户，短手腕在近处、四指朝上方伸向头顶，拇指侧伸。取消斜角与左右摆动，只保留轻微纵向抚摸；掌形收在双眼之间上方，让两只眼睛保持完整可见；视觉风格沿用项目 Logo 的深色填充与浅色圆头描边。
+猫头轮廓统一使用不透明的 `cat_head.svg`；睡脸、舒服弯眼和睁眼拆为独立表情资源，
+只对眼睛渐变，不交叉淡化两张实心猫头。失败探头、回箱和普通唤醒都保持遮挡箱内背景，
+轻微歪头时也只绘制一个实体轮廓；前盖始终最后绘制。原完整表情 SVG 作为参考保留。
+加载时只使用弯眼，不画嘴巴；手势参考 `cat.html` 的圆润线稿：右手手背朝向用户、拇指在画面左侧，四指朝上且长短错落，掌心饱满。手掌在猫咪头顶左右往返并轻转约 ±4°，掌形收在双眼之间上方，让两只眼睛保持完整可见；视觉风格沿用项目 Logo 的深色填充与浅色圆头描边。
 `petting_hand_fill.svg` 是深色掌形，`petting_hand.svg` 是轮廓与指节线稿；描边沿用前景色，实心掌形遮挡后方耳朵线条。
-正前方小幅轻拍与猫咪的轻微低头、侧倾共用加载时钟；原 `cat_wand.svg` 作为历史素材保留，不参与当前加载。
+左右轻抚与猫咪的轻微低头、反向侧倾共用加载时钟；原 `cat_wand.svg` 作为历史素材保留，不参与当前加载。
 运行造型和正式项目品牌资源不变。
 历史四折盖几何、闭箱十字盖缝与生成脚本仍保留为素材，不参与当前唤醒动画。
 尾巴仍位于后盖/后壁前方、猫咪/前盖后方，绕箱内 (92, 74) 支点轻摆。

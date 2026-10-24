@@ -133,8 +133,12 @@ OpenVPN `.ovpn` 与 Clash YAML、sing-box JSON 共用远程订阅和本地文件
 
 ## 构建与运行
 
-首页猫咪出箱动画有[独立 HuxerUI Demo](demos/box-cat-demo/README.md)，
-可通过 `./demos/box-cat-demo/run-demo.sh` 调试模拟启停，不影响主程序代理。
+首页启停按钮已接入猫咪出箱动画：桌面跟随真实内核状态，Android 跟随 VPN
+后台快照；等待时持续轻抚，成功后起身，失败探头 wink 后回到睡眠。
+[独立 HuxerUI Demo](demos/box-cat-demo/README.md) 仅用于隔离调试同一套视觉方案，
+Linux 通过 `./demos/box-cat-demo/run-demo.sh`，Windows PowerShell 通过
+`./demos/box-cat-demo/run-demo.ps1` 调试模拟启停（加 `-BuildOnly` 只编译），
+不影响主程序代理；Windows 原生构建不依赖 WSL。
 
 ```bash
 cmake -B build -G Ninja

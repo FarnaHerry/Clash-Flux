@@ -680,8 +680,10 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         # 页内分区切换：无窗口 Runtime 验证生产 Pager 的跟手、回弹、嵌套边界、
         # 快速反向切换、滚动保留以及大组的有界虚拟化。
         if (TARGET HuxerUI::testing)
-            add_executable(test_page_transition tests/test_page_transition.cpp src/ui/section_tabs.cpp)
-            target_include_directories(test_page_transition PRIVATE src/ui)
+            add_executable(test_page_transition tests/test_page_transition.cpp
+                src/ui/section_tabs.cpp src/ui/box_cat.cpp)
+            target_include_directories(test_page_transition PRIVATE
+                src/ui "${CMAKE_CURRENT_BINARY_DIR}/huxerui-resources/clash-flux/include")
             target_compile_features(test_page_transition PRIVATE cxx_std_23)
             target_link_libraries(test_page_transition PRIVATE HuxerUI::testing)
             get_target_property(CLASHFLUX_TEST_RESOURCE_PACKAGE

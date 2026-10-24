@@ -444,6 +444,8 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
 }
 
 [[huxerui::composable]] huxerui::View DesktopNetworkSettings() {
+    const auto theme = huxerui::UseTheme();
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const auto application = huxerui::UseApplication();
     const auto clipboard = application.Clipboard();
     const auto toast = huxerui::UseToast();
@@ -454,15 +456,9 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
     const std::size_t envShell = EnvironmentShellIndex(
         settings.envShell.empty() ? detectedShell : settings.envShell);
     const std::vector<std::string> envShellLabels = EnvironmentShellLabels();
-    return huxerui::Column {
-        SettingRow(
-            Localized("复制环境变量"),
-            LocalizedFormat("当前检测到 {}；复制当前混合端口的代理变量",
-                            detectedShell),
-            huxerui::Row {
-                // 与「添加全局路由规则」弹窗的下拉同款：固定 220pt 宽，
-                // 样式走 FluxThemed 的全局 SelectStyle（8pt 圆角 + 48pt 高）。
-                huxerui::Select(
+    // Keep the copy action next to its label; the shell selector is the only
+    // trailing control. Narrow desktop layouts retain a separate control line.
+    huxerui::View shellSelect = huxerui::Select(
                     envShellLabels,
                     envShell,
                     [](const std::string& name) {
@@ -477,9 +473,10 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                                 kEnvironmentShells[index].id);
                     })
                     .With(huxerui::Frame{.width = 220.0F},
-                          huxerui::Enabled(settings.ready)),
-                huxerui::IconButton(app::images::copy, Localized("复制"))
+                          huxerui::Enabled(settings.ready));
+    huxerui::View copyAction = huxerui::IconButton(app::images::copy, Localized("复制"))
                     .With(huxerui::Tooltip(Localized("复制环境变量命令")),
+                          huxerui::Frame{.width = 32.0F, .height = 32.0F},
                           huxerui::Enabled(settings.ready))
                     .OnClick(
                         [clipboard, toast, settingsModel, detectedShell, coreModel] {
@@ -495,11 +492,35 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                             } else {
                                 toast.Show(Localized("复制失败"));
                             }
-                        }),
-            }.With(huxerui::Spacing(8.0F),
+                        });
+    huxerui::View description = huxerui::Row {
+        SettingItemIcon(app::images::terminal),
+        huxerui::Column {
+            huxerui::Row {
+                huxerui::Text(Localized("复制环境变量")).Style(huxerui::TextStyle{
+                    huxerui::Font::System(font_size::kBody), theme.colors.on_surface}),
+                std::move(copyAction),
+            }.With(huxerui::Spacing(4.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-                app::images::terminal),
-    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+            huxerui::Text(LocalizedFormat("当前检测到 {}；复制当前混合端口的代理变量",
+                                         detectedShell)).Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kCaption), theme.colors.on_surface_variant}),
+        }.With(huxerui::Spacing(2.0F), huxerui::Grow(1.0F)),
+    }.With(huxerui::Spacing(12.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+    if (compact) {
+        return huxerui::Column {
+            std::move(description),
+            huxerui::Row { huxerui::Spacer(), std::move(shellSelect) }
+                .With(huxerui::Padding(huxerui::EdgeInsets{.left = 32.0F})),
+        }.With(huxerui::Spacing(8.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    }
+    return huxerui::Row {
+        std::move(description).With(huxerui::Grow(1.0F)),
+        std::move(shellSelect),
+    }.With(huxerui::Spacing(12.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 }
 
 [[huxerui::composable]] huxerui::View DesktopKernelSettings() {

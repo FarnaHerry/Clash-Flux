@@ -4,8 +4,15 @@
 
 The project logo uses the completed cat-and-box pose from the demo. See [branding assets](docs/branding/README.md) for the master SVG, legacy copies, and icon regeneration.
 
-The home control animation has a [standalone HuxerUI demo](demos/box-cat-demo/README.md).
-Run `./demos/box-cat-demo/run-demo.sh` to preview simulated start/stop animations without affecting the main app's proxy.
+The home control now uses the cat-and-box animation with real core state on desktop
+and the background VPN snapshot on Android. It pets while work is pending, rises after
+success, and returns to sleep after stopping or a one-time failure wink.
+The [standalone HuxerUI demo](demos/box-cat-demo/README.md) is only an isolated preview
+of the same visual design. Run `./demos/box-cat-demo/run-demo.sh` on Linux or
+`./demos/box-cat-demo/run-demo.ps1` in Windows PowerShell to preview simulated
+start/stop animations without affecting the main app's proxy. Use `-BuildOnly` with
+the PowerShell script to only compile; the Windows build runs natively and does not
+require WSL.
 
 See the [v0.3.59 release notes](docs/releases/v0.3.59.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 

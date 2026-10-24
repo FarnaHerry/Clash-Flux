@@ -1,3 +1,4 @@
+// Shared desktop entry; HuxerUI selects the native platform backend.
 #include <huxerui/app.h>
 #include <cstdio>
 #include <cstdlib>

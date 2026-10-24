@@ -6,6 +6,7 @@
 #include <functional>
 #include <optional>
 #include <regex>
+#include <sstream>
 #include <string>
 #include <stdexcept>
 #include <vector>
@@ -14,6 +15,8 @@
 #include <huxerui/testing/ui_test.h>
 
 #include "ui.h"
+#include "box_cat.h"
+#include "home_control_motion.h"
 #include "rule_target_picker.h"
 #include "log_actions.h"
 #include "filtered_indices.h"
@@ -406,7 +409,8 @@ huxerui::Rect indicator(huxerui::testing::UiTest& ui) {
 
 huxerui::Color paintedTextColor(huxerui::testing::UiTest& ui, const std::string& text, const std::string& channel = "foreground") {
     const auto snapshot = ui.CaptureSnapshot().ToString();
-    const std::regex pattern{channel + R"(\s+\{\s+text\s+\{\s+bounds\s+\{[^}]*\}\s+content\s+\{\s+text=")" + text +
+    const std::regex pattern{(channel.empty() ? "" : channel + R"(\s+\{\s+)") +
+        R"(text\s+\{\s+bounds\s+\{[^}]*\}\s+content\s+\{\s+text=")" + text +
         R"("[\s\S]*?foreground\s+\{\s+red=([\d.-]+)\s+green=([\d.-]+)\s+blue=([\d.-]+)\s+alpha=([\d.-]+))"};
     std::smatch match;
     check(std::regex_search(snapshot, match, pattern), "标签实际绘制颜色可读取");
@@ -1514,6 +1518,545 @@ struct ControlFixture {
     huxerui::State<std::string> poll{std::string{}};
     huxerui::State<int> executions{0};
 };
+
+struct BoxCatFixture {
+    huxerui::State<clashflux::ui::BoxCatPhase> phase{clashflux::ui::BoxCatPhase::Sleeping};
+    huxerui::State<bool> motion{true};
+    huxerui::State<bool> cardShown{false};
+    huxerui::State<clashflux::ui::HomeControlMotion> presentation{
+        clashflux::ui::HomeControlMotion{}};
+    int readyCount = 0;
+    std::shared_ptr<clashflux::ui::BoxCatProbe> probe =
+        std::make_shared<clashflux::ui::BoxCatProbe>();
+};
+std::shared_ptr<BoxCatFixture> boxCatFixture;
+clashflux::ui::BoxCatPhase boxCatInitialPhase = clashflux::ui::BoxCatPhase::Sleeping;
+
+void InstallBoxCatFixture(huxerui::ApplicationContext& context) {
+    boxCatFixture = std::make_shared<BoxCatFixture>();
+    boxCatFixture->phase = boxCatInitialPhase;
+    context.Provide(boxCatFixture);
+}
+
+[[huxerui::composable]] huxerui::View BoxCatFixtureContent(
+    bool statusIcon = false, bool morphToCard = false) {
+    const auto model = huxerui::UseService<BoxCatFixture>();
+    const auto theme = huxerui::UseTheme();
+    const auto transition = huxerui::UseSharedTransition();
+    const auto tasks = huxerui::UseTaskScope();
+    const auto presentation = model->presentation.Get();
+    const bool moving = presentation.action != clashflux::ui::CoreAction::Idle;
+    const bool returning = presentation.action == clashflux::ui::CoreAction::Stop && !presentation.collapsing;
+    const auto setPhase = [model, transition, tasks, morphToCard,
+                          reducedMotion = theme.motion.reduced_motion](clashflux::ui::BoxCatPhase phase) {
+        return [model, transition, tasks, morphToCard, reducedMotion, phase] {
+            if (morphToCard && model->cardShown.Get() &&
+                (phase == clashflux::ui::BoxCatPhase::Stopping ||
+                 phase == clashflux::ui::BoxCatPhase::Sleeping)) {
+                clashflux::ui::AnimateHomeControlCard(false, model->cardShown,
+                    model->presentation, transition, tasks, reducedMotion);
+                model->phase = phase;
+                return;
+            }
+            model->phase = phase;
+            if (phase != clashflux::ui::BoxCatPhase::Running) model->cardShown = false;
+        };
+    };
+    const auto ready = [model, transition, tasks, morphToCard,
+                       reducedMotion = theme.motion.reduced_motion] {
+        if (model->phase.Get() != clashflux::ui::BoxCatPhase::Running) return;
+        ++model->readyCount;
+        if (morphToCard) {
+            clashflux::ui::AnimateHomeControlCard(true, model->cardShown,
+                model->presentation, transition, tasks, reducedMotion);
+        }
+    };
+    huxerui::View cat = statusIcon || model->cardShown.Get() ? huxerui::View{huxerui::Row {
+        clashflux::ui::BoxCatStatusIcon(model->phase.Get(), model->motion.Get() && !moving, model->probe)
+            .Key("production-status-badge"),
+        huxerui::Column {
+            huxerui::Text("Running"), huxerui::Text("00:00:15"),
+        },
+    }.With(huxerui::Frame{.width = 280.0F, .height = 88.0F},
+           huxerui::Background(theme.colors.surface_container),
+           huxerui::CornerRadius(14.0F),
+           huxerui::Spacing(6.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
+           huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+           huxerui::Scale(huxerui::AnimateTo(presentation.collapsing
+               ? clashflux::ui::kHomeControlCollapsedScale : 1.0F,
+               clashflux::ui::kHomeControlCollapseMotion)))}
+        : clashflux::ui::BoxCatButtonContent(model->phase.Get(), theme.colors.on_surface,
+            model->motion.Get() && !moving, model->probe, ready,
+            returning ? std::optional{clashflux::ui::BoxCatPhase::Running} : std::nullopt);
+    if (morphToCard && presentation.collapsed) {
+        cat = huxerui::Stack {
+            clashflux::ui::BoxCatButtonContent(clashflux::ui::BoxCatPhase::Running,
+                theme.colors.on_surface, false, model->probe)
+                .With(huxerui::SharedBounds("home-core-control")
+                    .BoundsTransform(clashflux::ui::HomeControlReturnToDock{})),
+        }.With(huxerui::Frame{.width = 280.0F, .height = 88.0F},
+               huxerui::Align(huxerui::HorizontalAlignment::Center,
+                              huxerui::VerticalAlignment::Center));
+    } else if (morphToCard) {
+        auto bounds = huxerui::SharedBounds("home-core-control");
+        if (returning) bounds = std::move(bounds).BoundsTransform(clashflux::ui::HomeControlReturnToDock{});
+        else bounds = std::move(bounds).BoundsTransform(clashflux::ui::HomeControlMoveExpand{});
+        cat = std::move(cat).With(std::move(bounds));
+    }
+    return huxerui::Column {
+        std::move(cat).Key("production-box-cat"),
+        huxerui::Button("Cat sleep").OnClick(setPhase(clashflux::ui::BoxCatPhase::Sleeping)),
+        huxerui::Button("Cat start").OnClick(setPhase(clashflux::ui::BoxCatPhase::Starting)),
+        huxerui::Button("Cat run").OnClick(setPhase(clashflux::ui::BoxCatPhase::Running)),
+        huxerui::Button("Cat stop").OnClick(setPhase(clashflux::ui::BoxCatPhase::Stopping)),
+        huxerui::Button("Cat fail").OnClick(setPhase(clashflux::ui::BoxCatPhase::Failed)),
+        huxerui::Button("Cat motion").OnClick([model] { model->motion = !model->motion.Get(); }),
+    }.With(transition.Scope());
+}
+
+huxerui::View BoxCatFixtureRoot() {
+    return huxerui::FlatTheme{huxerui::FlatLightThemeSpec(), BoxCatFixtureContent()};
+}
+huxerui::View DarkBoxCatFixtureRoot() {
+    return huxerui::FlatTheme{huxerui::FlatDarkThemeSpec(), BoxCatFixtureContent()};
+}
+huxerui::View BoxCatStatusFixtureRoot() {
+    return huxerui::FlatTheme{huxerui::FlatDarkThemeSpec(), BoxCatFixtureContent(true)};
+}
+huxerui::View BoxCatMorphFixtureRoot() {
+    return huxerui::FlatTheme{huxerui::FlatDarkThemeSpec(), BoxCatFixtureContent(false, true)};
+}
+huxerui::View ReducedBoxCatMorphFixtureRoot() {
+    auto theme = huxerui::FlatDarkThemeSpec();
+    theme.motion.reduced_motion = true;
+    return huxerui::FlatTheme{theme, BoxCatFixtureContent(false, true)};
+}
+huxerui::View ReducedBoxCatFixtureRoot() {
+    huxerui::ThemeSpec theme = huxerui::FlatLightThemeSpec();
+    theme.motion.reduced_motion = true;
+    return huxerui::FlatTheme(theme, BoxCatFixtureContent());
+}
+const huxerui::Application kBoxCatApplication{BoxCatFixtureRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallBoxCatFixture}}};
+const huxerui::Application kReducedBoxCatApplication{ReducedBoxCatFixtureRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallBoxCatFixture}}};
+const huxerui::Application kDarkBoxCatApplication{DarkBoxCatFixtureRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallBoxCatFixture}}};
+const huxerui::Application kBoxCatStatusApplication{BoxCatStatusFixtureRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallBoxCatFixture}}};
+const huxerui::Application kBoxCatMorphApplication{BoxCatMorphFixtureRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallBoxCatFixture}}};
+const huxerui::Application kReducedBoxCatMorphApplication{ReducedBoxCatMorphFixtureRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallBoxCatFixture}}};
+
+void checkBoxCatButton(huxerui::testing::UiTest& ui, const huxerui::ThemeSpec& theme) {
+    const auto button = ui.Find(UiSelector::Key("production-box-cat")).One().bounds;
+    const auto artwork = ui.Find(UiSelector::Key("box-cat-artwork")).One().bounds;
+    check(button.width == 56.0F && button.height == 56.0F &&
+          artwork.width == 48.0F && artwork.height == 48.0F &&
+          std::abs(artwork.x + 24.0F - button.x - 28.0F) < 0.01F &&
+          std::abs(artwork.y + 24.0F - button.y - 28.0F) < 0.01F,
+          "production 48pt cat is centered inside the 56pt button");
+    // The retained animation emits transform commands before its text, unlike
+    // a Text node whose foreground sequence starts directly with DrawText.
+    const auto symbols = paintedTextColor(ui, "z", "");
+    check(colorDistance(symbols, theme.colors.on_surface) < 0.001F && symbols.alpha > 0,
+          "transparent cat sleep symbols inherit the theme's neutral foreground");
+    const auto snapshot = ui.CaptureSnapshot().ToString();
+    static const std::regex filledButton{
+        R"(rect\s+\{\s+bounds\s+\{\s+x=[\d.-]+\s+y=[\d.-]+\s+width=56\.000000\s+height=56\.000000)"};
+    check(!std::regex_search(snapshot, filledButton),
+          "the full-size cat hit target does not paint a button background");
+    const auto before = ui.CaptureSnapshot();
+    ui.Pump(std::chrono::milliseconds(100));
+    check(ui.CaptureSnapshot() != before,
+          "sleep symbols change actual paint at button size, not just the clock probe");
+}
+
+void testBoxCat() {
+    using clashflux::ui::BoxCatPhase;
+    boxCatInitialPhase = BoxCatPhase::Sleeping;
+    huxerui::testing::UiTest ui(kBoxCatApplication, {
+        .viewport = {500.0F, 700.0F}, .resource_provider = AppResources()});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    const auto model = boxCatFixture;
+    const auto tap = [&ui](const char* label) {
+        ui.Find(UiSelector::Text(label)).Tap();
+        ui.Pump();
+    };
+    const auto advance = [&ui](int milliseconds) {
+        for (int elapsed = 0; elapsed < milliseconds; elapsed += 50)
+            ui.Pump(std::chrono::milliseconds(std::min(50, milliseconds - elapsed)));
+    };
+    advance(250);
+    check(model->probe->sleepLooping && model->probe->sleepTicks > 0 &&
+          model->probe->sawSleep && model->probe->progress == 0.0F,
+          "production cat starts in the settled sleeping pose with bounded zzz frames");
+    checkBoxCatButton(ui, huxerui::FlatLightThemeSpec());
+    ui.SetWindowMetrics({.viewport = {390.0F, 700.0F}});
+    ui.Pump();
+    checkBoxCatButton(ui, huxerui::FlatLightThemeSpec());
+
+    tap("Cat start");
+    advance(550);
+    check(model->probe->loadingLooping && model->probe->handVisible &&
+          model->probe->loadingTicks > 0 && model->probe->sawPetting &&
+          std::abs(model->probe->progress - 0.30F) < 0.02F,
+          "production cat keeps petting while the real start operation is pending");
+    const auto waitingTicks = model->probe->loadingTicks;
+    advance(250);
+    check(model->probe->loadingTicks > waitingTicks &&
+          std::abs(model->probe->progress - 0.30F) < 0.02F,
+          "pending cat animation does not invent startup completion");
+
+    tap("Cat motion");
+    const auto pausedTicks = model->probe->loadingTicks;
+    const float pausedProgress = model->probe->progress;
+    advance(250);
+    check(model->probe->loadingTicks == pausedTicks &&
+          model->probe->progress == pausedProgress && !model->probe->loadingLooping,
+          "shared-bounds suspension freezes production cat paint clocks");
+    tap("Cat motion");
+
+    tap("Cat run");
+    advance(1800);
+    check(model->probe->progress == 1.0F && model->probe->looping &&
+          model->probe->ticks > 0 && model->probe->sawEars && model->probe->sawTail &&
+          model->probe->sawHandRetiredAfterRise && !model->probe->handVisible,
+          "confirmed running state completes the rise and starts ear/tail loops");
+
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background);
+    ui.Pump();
+    const auto backgroundTicks = model->probe->ticks;
+    advance(250);
+    check(model->probe->ticks == backgroundTicks && !model->probe->looping,
+          "background window suspends production cat loops");
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    advance(250);
+    check(model->probe->ticks > backgroundTicks && model->probe->looping,
+          "foreground resume continues the current running pose without a new transition");
+
+    tap("Cat stop");
+    advance(1500);
+    check(model->probe->progress == 0.0F && model->probe->sleepLooping &&
+          !model->probe->handVisible && !model->probe->looping,
+          "stopping returns the cat to sleep without reversing the petting hand");
+
+    tap("Cat fail");
+    advance(1400);
+    check(model->probe->failurePlaying && model->probe->sawWink,
+          "failure presents the production peek and wink timeline");
+    advance(1400);
+    check(model->probe->failurePlays == 1 && !model->probe->failurePlaying &&
+          model->probe->progress == 0.0F && model->probe->sleepLooping,
+          "failure finishes once and returns to the sleeping pose");
+    advance(300);
+    check(model->probe->failurePlays == 1, "persistent failure state does not replay the wink");
+    tap("Cat start");
+    advance(450);
+    tap("Cat fail");
+    advance(2800);
+    check(model->probe->failurePlays == 2 && model->probe->sleepLooping,
+          "a new start/failure cycle permits exactly one new wink");
+
+    boxCatInitialPhase = BoxCatPhase::Running;
+    huxerui::testing::UiTest settled(kBoxCatApplication, {
+        .viewport = {500.0F, 700.0F}, .resource_provider = AppResources()});
+    settled.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    settled.Pump(std::chrono::milliseconds(250));
+    check(boxCatFixture->probe->progress == 1.0F && boxCatFixture->probe->looping &&
+          !boxCatFixture->probe->transitioning && boxCatFixture->probe->failurePlays == 0,
+          "mounting an already running control does not replay the startup animation");
+
+    huxerui::testing::UiTest status(kBoxCatStatusApplication, {
+        .viewport = {500.0F, 700.0F}, .resource_provider = AppResources()});
+    status.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    const auto statusModel = boxCatFixture;
+    status.Pump(std::chrono::milliseconds(250));
+    const auto badge = status.Find(UiSelector::Key("production-status-badge")).One().bounds;
+    const auto artwork = status.Find(UiSelector::Key("box-cat-artwork")).One().bounds;
+    check(badge.width == 36.0F && badge.height == 36.0F &&
+          artwork.width == 36.0F && artwork.height == 36.0F &&
+          std::abs(artwork.x - badge.x) < 0.01F && std::abs(artwork.y - badge.y) < 0.01F,
+          "running card gives its paint-only cat a nonzero centered 36pt layout");
+    const auto statusSnapshot = status.CaptureSnapshot().ToString();
+    static const std::regex filledBadge{
+        R"(rect\s+\{\s+bounds\s+\{\s+x=[\d.-]+\s+y=[\d.-]+\s+width=36\.000000\s+height=36\.000000)"};
+    check(!std::regex_search(statusSnapshot, filledBadge),
+          "the running cat has no colored circular backing");
+    const auto statusPaint = status.CaptureSnapshot();
+    const auto statusTicks = statusModel->probe->ticks;
+    for (int i = 0; i < 20; ++i) status.Pump(std::chrono::milliseconds(50));
+    check(statusModel->probe->looping && statusModel->probe->ticks > statusTicks &&
+          statusModel->probe->sawEars && statusModel->probe->sawTail &&
+          status.CaptureSnapshot() != statusPaint,
+          "running card paints its moving ears and tail after mounting");
+    status.Find(UiSelector::Text("Cat motion")).Tap(); status.Pump();
+    const auto suspendedTicks = statusModel->probe->ticks;
+    status.Pump(std::chrono::milliseconds(250));
+    check(statusModel->probe->ticks == suspendedTicks && !statusModel->probe->looping &&
+          status.Find(UiSelector::Key("box-cat-artwork")).One().bounds.width == 36.0F,
+          "shared-bounds suspension keeps the running card artwork sized and visible");
+    status.Find(UiSelector::Text("Cat motion")).Tap(); status.Pump(std::chrono::milliseconds(100));
+    check(statusModel->probe->ticks > suspendedTicks && statusModel->probe->looping,
+          "running card resumes idle animation after shared-bounds suspension");
+
+    boxCatInitialPhase = BoxCatPhase::Sleeping;
+    huxerui::testing::UiTest reduced(kReducedBoxCatApplication, {
+        .viewport = {500.0F, 700.0F}, .resource_provider = AppResources()});
+    reduced.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    const auto reducedModel = boxCatFixture;
+    reduced.Pump(std::chrono::milliseconds(200));
+    check(!reducedModel->probe->sleepLooping && reducedModel->probe->sleepTicks == 0,
+          "reduced motion disables sleeping frame requests");
+    reduced.Find(UiSelector::Text("Cat start")).Tap(); reduced.Pump(std::chrono::milliseconds(150));
+    check(reducedModel->probe->progress == 0.30F && reducedModel->probe->handVisible &&
+          !reducedModel->probe->loadingLooping && reducedModel->probe->loadingTicks == 0,
+          "reduced motion keeps only the static petting hand");
+    reduced.Find(UiSelector::Text("Cat run")).Tap(); reduced.Pump(std::chrono::milliseconds(150));
+    check(reducedModel->probe->progress == 1.0F && !reducedModel->probe->looping &&
+          reducedModel->probe->ticks == 0,
+          "reduced motion resolves running directly without ear/tail loops");
+    reduced.Find(UiSelector::Text("Cat fail")).Tap(); reduced.Pump(std::chrono::milliseconds(150));
+    check(reducedModel->probe->progress == 0.0F && !reducedModel->probe->failurePlaying &&
+          reducedModel->probe->failurePlays == 0,
+          "reduced motion resolves failure directly to the stable sleeping pose");
+    boxCatInitialPhase = BoxCatPhase::Sleeping;
+    huxerui::testing::UiTest dark(kDarkBoxCatApplication, {
+        .viewport = {500.0F, 700.0F}, .resource_provider = AppResources()});
+    dark.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    dark.Pump(std::chrono::milliseconds(250));
+    checkBoxCatButton(dark, huxerui::FlatDarkThemeSpec());
+}
+
+// Read the actual retained render tree, including shared-overlay transforms.
+// Semantic layout bounds alone describe the destination, not the moving card.
+struct CatPaintNode {
+    std::string name, value;
+    std::vector<CatPaintNode> children;
+    const CatPaintNode* Find(std::string_view key) const {
+        for (const auto& child : children) if (child.name == key) return &child;
+        return nullptr;
+    }
+    float Number(std::string_view key, float fallback = 0) const {
+        const auto* child = Find(key);
+        return child ? std::stof(child->value) : fallback;
+    }
+};
+
+CatPaintNode readCatPaintNode(std::istream& input, std::string line) {
+    line.erase(0, line.find_first_not_of(' '));
+    CatPaintNode node;
+    if (line.ends_with(" {")) {
+        node.name = line.substr(0, line.size() - 2);
+        while (std::getline(input, line)) {
+            line.erase(0, line.find_first_not_of(' '));
+            if (line == "}") break;
+            node.children.push_back(readCatPaintNode(input, line));
+        }
+    } else {
+        const auto equals = line.find('=');
+        node.name = line.substr(0, equals);
+        if (equals != std::string::npos) node.value = line.substr(equals + 1);
+    }
+    return node;
+}
+
+huxerui::Transform2D catPaintTransform(const CatPaintNode* node) {
+    if (!node) return {};
+    return {node->Number("m11", 1), node->Number("m12"), node->Number("m21"),
+            node->Number("m22", 1), node->Number("translate_x"), node->Number("translate_y")};
+}
+
+huxerui::Transform2D composeCatPaint(huxerui::Transform2D a, huxerui::Transform2D b) {
+    return {a.m11 * b.m11 + a.m21 * b.m12, a.m12 * b.m11 + a.m22 * b.m12,
+            a.m11 * b.m21 + a.m21 * b.m22, a.m12 * b.m21 + a.m22 * b.m22,
+            a.m11 * b.translate_x + a.m21 * b.translate_y + a.translate_x,
+            a.m12 * b.translate_x + a.m22 * b.translate_y + a.translate_y};
+}
+
+std::optional<huxerui::Rect> paintedCatCard(huxerui::testing::UiTest& ui) {
+    std::istringstream input(ui.CaptureSnapshot().ToString());
+    std::string line;
+    std::getline(input, line); std::getline(input, line);
+    const auto snapshot = readCatPaintNode(input, line);
+    std::optional<huxerui::Rect> result;
+    const auto visit = [&](auto&& self, const CatPaintNode& node, huxerui::Transform2D parent) -> void {
+        auto local = catPaintTransform(node.Find("transform"));
+        if (const auto* offset = node.Find("offset")) {
+            local.translate_x += offset->Number("x");
+            local.translate_y += offset->Number("y");
+        }
+        const auto world = composeCatPaint(parent, local);
+        if (const auto* content = node.Find("content")) {
+            for (const auto& command : content->children) {
+                const auto* bounds = command.Find("bounds");
+                if (command.name == "rect" && bounds &&
+                    bounds->Number("width") == 280.0F && bounds->Number("height") == 88.0F) {
+                    result = huxerui::Rect{
+                        world.m11 * bounds->Number("x") + world.translate_x,
+                        world.m22 * bounds->Number("y") + world.translate_y,
+                        world.m11 * 280.0F, world.m22 * 88.0F};
+                }
+            }
+        }
+        if (const auto* children = node.Find("children"))
+            for (const auto& child : children->children)
+                self(self, child, composeCatPaint(world, catPaintTransform(node.Find("children_transform"))));
+    };
+    if (const auto* render = snapshot.Find("render"))
+        for (const auto& node : render->children) visit(visit, node, huxerui::Transform2D{});
+    return result;
+}
+
+void testBoxCatMorphAfterSuccess() {
+    using clashflux::ui::BoxCatPhase;
+    const clashflux::ui::HomeControlMoveExpand path;
+    const huxerui::Rect dock{800.0F, 620.0F, 56.0F, 56.0F};
+    const huxerui::Rect card{400.0F, 280.0F, 280.0F, 88.0F};
+    const auto shrinking = path.Evaluate(card, dock, 0.25F);
+    check(shrinking.width < card.width && shrinking.width > dock.width &&
+          std::abs(shrinking.x + shrinking.width / 2 - card.x - card.width / 2) < 0.001F &&
+          std::abs(shrinking.y + shrinking.height / 2 - card.y - card.height / 2) < 0.001F,
+          "collapse first shrinks the card in place before moving toward the dock");
+    const auto returning = path.Evaluate(card, dock, 0.75F);
+    check(returning.width == dock.width && returning.height == dock.height &&
+          returning.x > card.x + card.width / 2 - dock.width / 2 && returning.x < dock.x &&
+          path.Evaluate(card, dock, 1.0F) == dock,
+          "only the collapsed button moves back to its original dock bounds");
+    for (float progress : {0.0F, 0.25F, 0.5F, 0.75F, 1.0F}) {
+        const auto expand = path.Evaluate(dock, card, progress);
+        const auto collapse = path.Evaluate(card, dock, 1.0F - progress);
+        check(std::abs(expand.x - collapse.x) < 0.001F &&
+              std::abs(expand.y - collapse.y) < 0.001F &&
+              std::abs(expand.width - collapse.width) < 0.001F &&
+              std::abs(expand.height - collapse.height) < 0.001F,
+              "card collapse follows the expansion track in reverse");
+    }
+    boxCatInitialPhase = BoxCatPhase::Sleeping;
+    huxerui::testing::UiTest ui(kBoxCatMorphApplication, {
+        .viewport = {900.0F, 700.0F}, .resource_provider = AppResources()});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    const auto model = boxCatFixture;
+    const auto advance = [&ui](int milliseconds) {
+        for (int elapsed = 0; elapsed < milliseconds; elapsed += 50)
+            ui.Pump(std::chrono::milliseconds(std::min(50, milliseconds - elapsed)));
+    };
+    const auto tap = [&ui](const char* text) { ui.Find(UiSelector::Text(text)).Tap(); ui.Pump(); };
+    tap("Cat start");
+    advance(2000);
+    check(!model->cardShown.Get() && model->readyCount == 0 &&
+          model->probe->handVisible && model->probe->loadingLooping &&
+          !ui.Find(UiSelector::Key("production-status-badge")).Exists(),
+          "slow startup keeps petting in the floating button without creating a card");
+    tap("Cat run");
+    advance(300);
+    check(!model->cardShown.Get() && model->readyCount == 0 && model->probe->transitioning,
+          "confirmed success still finishes the cat's rise before merging");
+    advance(1200);
+    check(model->cardShown.Get() && model->readyCount == 1 &&
+          !model->probe->handVisible && model->probe->sawHandRetiredAfterRise &&
+          ui.Find(UiSelector::Key("production-status-badge")).Exists(),
+          "only the completed successful pose triggers the shared-bounds card merge");
+    advance(1000);
+    check(model->readyCount == 1, "running idle frames never repeat the card merge");
+    const auto fullCard = paintedCatCard(ui);
+    check(fullCard && std::abs(fullCard->width - 280.0F) < 0.01F,
+          "running card background is present at its full painted size");
+
+    tap("Cat stop"); advance(200);
+    const auto shrinkingCard = paintedCatCard(ui);
+    check(fullCard && shrinkingCard && shrinkingCard->width < fullCard->width * 0.6F &&
+          shrinkingCard->width > 56.0F && shrinkingCard->height < fullCard->height &&
+          std::abs(shrinkingCard->x + shrinkingCard->width / 2 - fullCard->x - fullCard->width / 2) < 0.1F &&
+          std::abs(shrinkingCard->y + shrinkingCard->height / 2 - fullCard->y - fullCard->height / 2) < 0.1F,
+          "the rendered card actually shrinks in place before retreating");
+    if (fullCard && shrinkingCard)
+        std::printf("cat collapse painted sizes: %.2fx%.2f -> %.2fx%.2f at center %.2f,%.2f\n",
+            fullCard->width, fullCard->height, shrinkingCard->width, shrinkingCard->height,
+            shrinkingCard->x + shrinkingCard->width / 2, shrinkingCard->y + shrinkingCard->height / 2);
+    check(ui.CaptureSnapshot().ToString().find("text=\"Running\"") != std::string::npos,
+          "the outgoing card stays painted while shrinking toward button size");
+    check(model->cardShown.Get() && model->presentation.Get().collapsing &&
+          model->probe->progress == 1.0F &&
+          !model->probe->sleepLooping && !model->probe->handVisible,
+          "the real card stays mounted with its running cat throughout the shrink stage");
+    // The real stop can finish before the shared-bounds movement. Its stopped
+    // snapshot must not discard the outgoing pose held by the new button.
+    model->phase = BoxCatPhase::Sleeping;
+    ui.Pump(); advance(200);
+    check(!paintedCatCard(ui) && !model->presentation.Get().collapsing,
+          "after shrinking, the original card is replaced by a committed small cat pose");
+    check(model->probe->progress == 1.0F && !model->probe->sleepLooping,
+          "a fast stop does not replace the returning cat with a sleeping snapshot");
+    advance(600);
+    const auto returningPaint = ui.CaptureSnapshot();
+    const float returnProgress = model->probe->progress;
+    check(returnProgress > 0.0F && returnProgress < 1.0F &&
+          model->probe->transitioning && !model->probe->sleepLooping &&
+          !model->probe->handVisible,
+          "after shrinking, the button animates from running toward sleep without petting");
+    advance(400);
+    check(model->probe->progress < returnProgress && model->probe->progress > 0.0F &&
+          ui.CaptureSnapshot() != returningPaint && !model->probe->sleepLooping,
+          "tail, head and eyelids keep painting through the reverse transition");
+    advance(1000);
+    check(model->probe->progress == 0.0F && model->probe->sleepLooping &&
+          !model->probe->transitioning && model->readyCount == 1,
+          "zzz resumes only after returning to the settled sleeping pose");
+
+    tap("Cat sleep"); advance(1500);
+    tap("Cat start"); advance(450);
+    tap("Cat fail"); advance(2800);
+    check(!model->cardShown.Get() && model->readyCount == 1 && model->probe->sleepLooping,
+          "failed startup stays in the button and returns to sleep without a card flash");
+    tap("Cat start"); advance(450);
+    tap("Cat stop"); advance(1500);
+    check(!model->cardShown.Get() && model->readyCount == 1 && !model->probe->handVisible,
+          "cancelling startup cannot create a running card");
+
+    // The command may finish between two UI samples. Even without a rendered
+    // Starting frame, a sleeping button must pet and rise before it can merge.
+    tap("Cat run"); advance(150);
+    check(!model->cardShown.Get() && model->probe->handVisible && model->probe->sawPetting,
+          "an immediately successful start still pets before merging");
+    tap("Cat stop"); advance(1500);
+    check(!model->cardShown.Get() && model->readyCount == 1,
+          "stopping during the successful rise discards the unfinished merge");
+    tap("Cat start"); advance(450);
+    tap("Cat run"); advance(1600);
+    check(model->cardShown.Get() && model->readyCount == 2,
+          "retry after failure or cancellation merges exactly once on success");
+    advance(300);
+    check(model->presentation.Get().action == clashflux::ui::CoreAction::Idle,
+          "successful card merge finishes before testing another user stop");
+    tap("Cat stop"); advance(1000);
+    check(model->probe->transitioning && model->probe->progress > 0.0F,
+          "a second stop starts another continuous return to sleep");
+    tap("Cat start"); advance(150);
+    tap("Cat run"); advance(1800);
+    check(model->cardShown.Get() && model->readyCount == 3 && !model->probe->sleepLooping,
+          "restarting during the return reverses smoothly and merges on fresh success");
+
+    huxerui::testing::UiTest reduced(kReducedBoxCatMorphApplication, {
+        .viewport = {900.0F, 700.0F}, .resource_provider = AppResources()});
+    reduced.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    const auto reducedModel = boxCatFixture;
+    reduced.Find(UiSelector::Text("Cat start")).Tap(); reduced.Pump();
+    check(!reducedModel->cardShown.Get() && reducedModel->probe->handVisible,
+          "reduced motion still waits in the static petting pose for real success");
+    reduced.Find(UiSelector::Text("Cat run")).Tap();
+    reduced.Pump(std::chrono::milliseconds(50)); reduced.Pump();
+    check(reducedModel->cardShown.Get() && reducedModel->readyCount == 1,
+          "reduced motion resolves success and merges without waiting for an animation timer");
+    reduced.Find(UiSelector::Text("Cat stop")).Tap(); reduced.Pump();
+    check(!reducedModel->cardShown.Get() && reducedModel->probe->progress == 0.0F &&
+          !reducedModel->probe->transitioning && !reducedModel->probe->sleepLooping,
+          "reduced motion returns directly to the static sleeping pose");
+    boxCatInitialPhase = BoxCatPhase::Sleeping;
+}
+
 void CheckCoreOperationsGate() {
     using namespace clashflux::ui;
     // Exercise the production version gate, including equal-value/ABA changes.
@@ -1705,6 +2248,8 @@ int main() {
               clashflux::ui::ProfileReorderDestination(2, 0, 1) == 2,
               "第一张拖到第二槽时两张卡对向滑动");
     }
+    testBoxCat();
+    testBoxCatMorphAfterSuccess();
     testCoreOperations();
     testInboundSettings();
     testConnectionList();

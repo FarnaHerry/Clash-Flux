@@ -12,15 +12,6 @@ file(GLOB_RECURSE APP_SOURCE_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cxx"
 )
-if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
-    if (WIN32)
-        list(APPEND APP_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/platform/windows/main.cpp")
-    elseif (APPLE AND NOT IOS)
-        list(APPEND APP_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/platform/macos/main.cpp")
-    elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        list(APPEND APP_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/platform/linux/main.cpp")
-    endif ()
-endif ()
 
 huxerui_add_app(box_cat_demo
         SOURCES
@@ -37,3 +28,6 @@ huxerui_add_app(box_cat_demo
 )
 
 huxerui_configure_project_app(box_cat_demo)
+if (MSVC AND NOT HUXERUI_LIBRARY_GRAPH_ONLY)
+    target_compile_options(box_cat_demo PRIVATE /utf-8)
+endif ()
