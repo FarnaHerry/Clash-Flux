@@ -13,6 +13,25 @@ inline constexpr bool kPageTitlesInWindow = false;
 inline constexpr bool kPageTitlesInWindow = true;
 #endif
 
+inline huxerui::View PageSearchFieldLayout(huxerui::View field, bool compact,
+    bool desktop = kPageTitlesInWindow) {
+    // Preserve the original mobile/compact hierarchy. A growing field inside
+    // an extra Column otherwise receives the whole page's available height.
+    if (!desktop || compact) return field;
+    // Grow receives tight constraints. Cap a non-growing column inside the
+    // flexible slot; equal spacers center it and leave the header free on both sides.
+    return huxerui::Row {
+      huxerui::Spacer(),
+      huxerui::Column {field}.With(
+          huxerui::Frame{.height = kDesktopTitleBarSearchHeight,
+                         .max_width = kDesktopTitleBarSearchWidth},
+          huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+      huxerui::Spacer(),
+    }.With(huxerui::Frame{.height = kDesktopTitleBarHeight},
+           huxerui::Grow(1.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+}
+
 inline huxerui::EdgeInsets PageContentInsets(const huxerui::ThemeSpec& theme,
     bool compact, float horizontal) {
     return {

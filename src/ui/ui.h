@@ -28,6 +28,9 @@ inline constexpr float kSectionCardSpacing = 8.0F;
 inline constexpr float kDesktopTopContentGap = 4.0F;
 inline constexpr float kDesktopTitleBarHeight = 40.0F;
 inline constexpr float kDesktopTitleBarSearchWidth = 320.0F;
+inline constexpr float kDesktopTitleBarSearchInset = 3.0F;
+inline constexpr float kDesktopTitleBarSearchHeight =
+    kDesktopTitleBarHeight - 2.0F * kDesktopTitleBarSearchInset;
 
 // 桌面图标栏和标题栏 logo 共用几何，保证两者中心线由同一宽度定义。
 inline constexpr float kTopNavigationIndicatorSize = 44.0F;

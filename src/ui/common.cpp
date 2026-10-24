@@ -900,8 +900,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             SectionTabPickerInsets{kDesktopTitleBarHeight + 1.0F}, std::move(desktopBody));
         huxerui::View pageTitle = PageTitleText(theme, title).With(huxerui::Padding(
             huxerui::EdgeInsets{.left = leading ? 0.0F : kDesktopPageHorizontalInset}));
-        // 搜索胶囊存在时排在标题与动作之间、占满中间全部剩余空间：胶囊是行内
-        // 唯一的 Grow 子项，紧约束即全份剩余宽，窄窗口随标题/动作自动收敛；
+        // 搜索槽排在标题与动作之间，胶囊内部统一封顶 320pt，剩余空白用于拖动窗口；
+        // 槽是行内唯一的 Grow 子项，窗口收窄时随标题/动作自动收敛；
         // 没有搜索框时保留弹性 Spacer 把动作推到最右。composable 形参被
         // codegen 固定为 const：拷贝到局部再走右值 With 链。
         huxerui::View actionRow = huxerui::Row{actions}.With(
@@ -1034,6 +1034,12 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     huxerui::State<huxerui::TextEditingValue> value,
     huxerui::StringVariant placeholder, huxerui::View trailingAction) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    auto inputFocused = huxerui::UseState(false);
+    const bool focused = kPageTitlesInWindow && !compact && inputFocused.Get();
+    const float height = kPageTitlesInWindow
+        ? compact ? kDesktopTitleBarHeight : kDesktopTitleBarSearchHeight
+        : 48.0F;
     huxerui::TextFieldStyle inputStyle = huxerui::UseEnvironment<huxerui::TextFieldStyle>();
     inputStyle.border_width = 0.0F;
     inputStyle.focused_border_width = 0.0F;
@@ -1044,7 +1050,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     inputStyle.standard.hovered_border = huxerui::Color::Transparent();
     inputStyle.standard.focused_border = huxerui::Color::Transparent();
     inputStyle.standard.disabled_border = huxerui::Color::Transparent();
-    inputStyle.standard.minimum_height = kPageTitlesInWindow ? kDesktopTitleBarHeight : 48.0F;
+    inputStyle.standard.minimum_height = height;
     inputStyle.padding = huxerui::EdgeInsets::Symmetric(0.0F, 0.0F);
     huxerui::ThemeDefinition inputTheme;
     inputTheme.Set(inputStyle);
@@ -1055,6 +1061,9 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             .Variant(huxerui::TextFieldVariant::Standard)
             .OnChanged([value](const huxerui::TextEditingValue& next) {
                 value = next;
+            })
+            .On<huxerui::ViewEvents::FocusChanged>([inputFocused](bool focused) {
+                inputFocused = focused;
             })
             .With(huxerui::Grow(1.0F)));
 
@@ -1080,24 +1089,25 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
            huxerui::Grow(1.0F));
 
-    // 桌面搜索框适配标题栏高度，手机保持 48dp 的页内搜索框。描边必须有：
+    // 桌面宽屏搜索框上下留白，窄屏和手机保持原有高度。描边必须有：
     // 浅色主题里胶囊底（surface_container_highest ≈ #FDFDFD）与标题栏/页面
     // 岛底色（#FAFBFC / #EFF1F4）几乎同色，无描边时整个胶囊不可见。
     huxerui::View pill = huxerui::Row {
         std::move(pillContent),
-    }.With(huxerui::Frame{.height = kPageTitlesInWindow ? kDesktopTitleBarHeight : 48.0F},
+    }.With(huxerui::Frame{.height = height},
            huxerui::Padding(huxerui::EdgeInsets{
                .right = 4.0F,
                .left = 14.0F,
            }),
-           huxerui::Background(theme.colors.surface_container_highest),
-           huxerui::Border(theme.colors.outline, 1.0F),
-           huxerui::CornerRadius(kPageTitlesInWindow ? kDesktopTitleBarHeight / 2.0F : 24.0F),
+           huxerui::Background(focused ? huxerui::Color::Transparent()
+                                      : theme.colors.surface_container_highest),
+           huxerui::Border(focused ? theme.colors.primary : theme.colors.outline, 1.0F),
+           huxerui::CornerRadius(height / 2.0F),
            huxerui::ClipChildren(),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
            huxerui::Grow(1.0F));
 
-    return std::move(pill).Key("pill-search-field");
+    return PageSearchFieldLayout(std::move(pill).Key("pill-search-field"), compact);
 }
 
 [[huxerui::composable]] huxerui::View Card(huxerui::View content,
@@ -1326,7 +1336,7 @@ void DriveProfilesModel(huxerui::TaskScope tasks,
                     std::vector<std::int64_t> clashSources;
                     const auto root = cfg::profilesDir();
                     for (const auto& profile : profiles) {
-                        if (profile.type == "pptp" || profile.type == "openvpn" || profile.file.empty()) continue;
+                        if (profile.type == "pptp" || profile.file.empty()) continue;
                         // Classification only needs a bounded prefix; portable
                         // .ovpn is limited to 20 KiB by the compiler.
                         std::ifstream input(root / profile.file, std::ios::binary);

@@ -868,10 +868,11 @@ huxerui::View HeaderGeometryRoot() {
         const auto& theme = huxerui::UseTheme();
         const auto search = [](const char* surfaceKey) {
             return huxerui::Scope([surfaceKey] {
-                return huxerui::Row{
+                return clashflux::ui::PageSearchFieldLayout(huxerui::Row{
                     huxerui::Text("SEARCH"), huxerui::Spacer{}, huxerui::Button("ADD"),
                 }.With(huxerui::Frame{.height = 40.0F}, huxerui::Grow(1.0F))
-                    .Key(surfaceKey);
+                    .Key(surfaceKey),
+                    huxerui::UseViewportClass() == huxerui::ViewportClass::Compact);
             }).With(huxerui::Grow(1.0F));
         };
         return huxerui::Column{
@@ -879,6 +880,14 @@ huxerui::View HeaderGeometryRoot() {
                 .Key("single-search-header"),
             clashflux::ui::PageHeaderLayout(theme, search("search-with-batch"),
                 huxerui::Text("BATCH"), true, true).Key("batch-search-header"),
+            huxerui::Row {
+              huxerui::Text("TITLE").With(huxerui::Frame{.width = 72.0F}),
+              search("search-between-actions"),
+              huxerui::Button("ACTION").With(huxerui::Frame{.width = 80.0F})
+                  .Key("header-trailing-action"),
+            }.With(huxerui::Spacing(12.0F),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
+                .Key("desktop-search-header"),
             clashflux::ui::CenteredPageHeader(theme,
                 huxerui::Text("CREATE").Key("create-centered-title"),
                 huxerui::Button("BACK").With(huxerui::Frame{.width = 32.0F, .height = 32.0F}),
@@ -896,13 +905,37 @@ huxerui::View HeaderGeometryRoot() {
 const huxerui::Application kHeaderGeometryApplication{HeaderGeometryRoot, {.show_debug_overlay = false}};
 void testHeaderGeometry() {
     huxerui::testing::UiTest ui(kHeaderGeometryApplication, {.viewport = {320.0F, 740.0F}});
-    for (float width : {320.0F, 420.0F}) {
+    for (float width : {320.0F, 420.0F, 600.0F, 960.0F, 1600.0F, 420.0F}) {
         ui.SetWindowMetrics({.viewport = {width, 740.0F}}); ui.PumpAndSettle();
         for (const char* name : {"search-single-line", "search-with-batch"}) {
             const auto bounds = ui.Find(UiSelector::Key(name)).One().bounds;
-            check(std::abs(bounds.x - 8.0F) < 0.5F &&
-                  std::abs(bounds.width - (width - 16.0F)) < 0.5F,
-                  "窄屏搜索表面铺满骨架可用宽度，无 Spacer 分走一半宽度（含批量动作）");
+            check(std::abs(bounds.height - (width < 600.0F ? 40.0F
+                : clashflux::ui::kDesktopTitleBarSearchHeight)) < 0.5F,
+                  "搜索栏高度固定，不能消耗整页的剩余高度");
+            check(std::abs(bounds.x + bounds.width * 0.5F - width * 0.5F) < 0.5F &&
+                  std::abs(bounds.width - (width < 600.0F ? width - 16.0F
+                      : clashflux::ui::kDesktopTitleBarSearchWidth)) < 0.5F,
+                  "搜索表面居中，桌面封顶 320pt、窄屏恢复可用宽度（含批量动作）");
+        }
+        const auto searchBounds = ui.Find(UiSelector::Key("search-between-actions")).One().bounds;
+        const auto actionBounds = ui.Find(UiSelector::Key("header-trailing-action")).One().bounds;
+        if (width >= 600.0F) {
+            const auto header = ui.Find(UiSelector::Key("desktop-search-header")).One().bounds;
+            check(std::abs(searchBounds.y - header.y - clashflux::ui::kDesktopTitleBarSearchInset) < 0.5F &&
+                  std::abs(header.y + header.height - searchBounds.y - searchBounds.height -
+                           clashflux::ui::kDesktopTitleBarSearchInset) < 0.5F,
+                  "桌面搜索胶囊上下各留 3pt，不顶满自定义标题栏");
+        }
+        check(searchBounds.width > 0.0F && searchBounds.x + searchBounds.width + 11.5F <= actionBounds.x &&
+              std::abs(actionBounds.x + actionBounds.width - (width - 8.0F)) < 0.5F,
+              "标题与动作先保留宽度，搜索随剩余空间收缩且不挤压操作按钮");
+        check(std::abs(searchBounds.x + searchBounds.width * 0.5F -
+                       (8.0F + 72.0F + actionBounds.x) * 0.5F) < 0.5F,
+              "搜索在标题与动作之间的可用区域居中");
+        if (width >= 960.0F) {
+            check(searchBounds.width <= clashflux::ui::kDesktopTitleBarSearchWidth + 0.5F &&
+                  actionBounds.x - searchBounds.x - searchBounds.width > 100.0F,
+                  "宽标题栏在搜索表面与动作间保留拖动空白");
         }
         for (const char* name : {"create-centered-title", "busy-centered-title"}) {
             const auto bounds = ui.Find(UiSelector::Key(name)).One().bounds;
@@ -910,6 +943,61 @@ void testHeaderGeometry() {
                   "新建页面标题居于窗口中心，左右按钮大小不同及加载中仍保持居中");
         }
     }
+}
+
+// Exercise the mobile policy even on the desktop test host, including wide
+// mobile viewports. The page content must keep its space below a 48pt search.
+huxerui::View MobileSearchRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        const auto& theme = huxerui::UseTheme();
+        const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+        auto query = huxerui::UseState(huxerui::TextEditingValue{});
+        auto additions = huxerui::UseState(0);
+        auto search = huxerui::Row {
+          huxerui::Text("SEARCH"),
+          huxerui::TextField(query.Get())
+              .OnChanged([query](const huxerui::TextEditingValue& value) { query = value; })
+              .With(huxerui::Grow(1.0F)).Key("mobile-search-input"),
+          huxerui::Button("CLEAR").OnClick([query] { query = huxerui::TextEditingValue{}; }),
+          huxerui::Button("ADD").OnClick([additions] { ++additions; }),
+        }.With(huxerui::Frame{.height = 48.0F}, huxerui::Grow(1.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
+            .Key("mobile-search-surface");
+        return huxerui::Column {
+          clashflux::ui::PageHeaderLayout(theme,
+              clashflux::ui::PageSearchFieldLayout(search, compact, false), {}, false, true),
+          huxerui::Column {
+            huxerui::Text("QUERY:" + query.Get().text),
+            huxerui::Text("ADDITIONS:" + std::to_string(additions.Get())),
+          }.With(huxerui::Grow(1.0F)).Key("mobile-search-content"),
+        }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(8.0F, 0.0F)),
+               huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    })};
+}
+const huxerui::Application kMobileSearchApplication{MobileSearchRoot, {.show_debug_overlay = false}};
+void testMobileSearchGeometry() {
+    huxerui::testing::UiTest ui(kMobileSearchApplication, {.viewport = {390.0F, 740.0F}});
+    ui.PumpAndSettle();
+    ui.Find(UiSelector::Key("mobile-search-input")).Tap();
+    ui.Find(UiSelector::Key("mobile-search-input")).EnterText("demo");
+    ui.Pump(kStep); // A focused editor intentionally keeps its caret clock alive.
+    int additions = 0;
+    for (float width : {320.0F, 390.0F, 420.0F, 600.0F, 960.0F, 390.0F}) {
+        ui.SetWindowMetrics({.viewport = {width, 740.0F}}); ui.Pump(kStep);
+        const auto search = ui.Find(UiSelector::Key("mobile-search-surface")).One().bounds;
+        const auto content = ui.Find(UiSelector::Key("mobile-search-content")).One().bounds;
+        check(std::abs(search.x - 8.0F) < 0.5F && std::abs(search.y) < 0.5F &&
+              std::abs(search.width - width + 16.0F) < 0.5F && std::abs(search.height - 48.0F) < 0.5F,
+              "移动搜索保持原有满宽 48pt，不受桌面限宽居中影响（含宽移动视口）");
+        check(content.y >= 47.5F && content.y < 49.0F && content.height > 680.0F,
+              "移动搜索栏不吞掉下方列表区域");
+        check(ui.Find(UiSelector::Text("QUERY:demo")).Exists(), "移动搜索内容在宽窄切换后保留");
+        ui.Find(UiSelector::Text("ADD")).Tap(); ui.Pump(kStep);
+        check(ui.Find(UiSelector::Text("ADDITIONS:" + std::to_string(++additions))).Exists(),
+              "移动搜索内添加按钮在缩放后仍可点击");
+    }
+    ui.Find(UiSelector::Text("CLEAR")).Tap(); ui.Pump(kStep);
+    check(ui.Find(UiSelector::Text("QUERY:")).Exists(), "移动搜索可正常清空");
 }
 
 // 回归复现：带 UsePopup 锚点的动作视图在响应式断点切换（标题栏结构性替换）
@@ -1687,6 +1775,7 @@ int main() {
     testGroupDrawers();
     testResponsiveDesktopShell();
     testHeaderGeometry();
+    testMobileSearchGeometry();
     testResponsiveAnchorMount();
     testCompactPageBottom();
     testEmptyState();
