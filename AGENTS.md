@@ -39,8 +39,8 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
 
 桌面 CI 必须配置 `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`，按
 `cmake/ProjectTestGate.cmake` 核对必跑测试已注册且未禁用，CTest 使用
-`--no-tests=error`。通用桌面必跑 17 项（含 cps_dependencies），Windows 另加 windows_service（18 项）；
-只有已记录的 MSVC C4737 编译器缺陷允许跳过直接 ORM 测试（Windows 为 17 项），persistence 必跑。Python、固定打包内核、
+`--no-tests=error`。通用桌面必跑 18 项（含 cps_dependencies、runtime_health），Windows 另加 windows_service（19 项）；
+只有已记录的 MSVC C4737 编译器缺陷允许跳过直接 ORM 测试（Windows 为 18 项），persistence 必跑。Python、固定打包内核、
 可执行的 OpenSSL CLI 缺失必须失败；下载回归传入明确的 OpenSSL 路径及
 `--require-tls`，不能用跳过证书拒绝场景换取发布通过。手机构建不启用此桌面门禁。
 

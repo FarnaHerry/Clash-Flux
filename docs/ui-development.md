@@ -77,7 +77,7 @@
 - 只有需要用户明确授权的流程可以显示系统交互提示，例如 UAC 提权。普通后台操作、失败清理和状态探测都保持安静执行。
 - HuxerUI 的 Windows 系统托盘菜单是原生菜单，`SystemTrayOptions` 不提供 `MenuStyle` 参数。桌面托盘生命周期按当前应用 `ThemeSpec` 同步 Windows 原生菜单主题；Windows 10 build 17763 及以上支持此同步，旧系统保留系统原生菜单主题。修改 HuxerUI 或 Windows 平台适配时，保持托盘菜单与应用深浅模式一致。
 - Linux 启动隐藏时先使用不依赖窗口的简版托盘菜单；主窗口挂载后切换到完整菜单，先让 StatusNotifier 菜单空一轮再发布，避免 Plasma 在两种菜单结构间保留旧动作。内核停止后的路由清理不碰 sing-box 的 `pref 9000`，仅由 root 服务清理能凭保留哨兵确认属于 Clash-Flux 的补偿路由。
-- 托盘隐藏时同时清空呈现缓存，停用后重开或宿主恢复时必须重新发布；简版菜单缓存包含实际内核与接管状态，图标使用实际状态，开关使用配置意图。完整菜单和无窗菜单统一调用应用级退出收尾。Linux 原生回归可在图形会话运行 `dbus-run-session -- /usr/bin/python3 tests/test_tray_runtime.py build/clash-flux`（需要 Gio/PyGObject 与 bubblewrap）：使用独立 D-Bus、临时数据及屏蔽已安装服务的沙箱，覆盖宿主失联/恢复、无窗唤回、菜单角色及退出；此检查单独运行，不替代 17 项桌面 CTest 门禁。
+- 托盘隐藏时同时清空呈现缓存，停用后重开或宿主恢复时必须重新发布；简版菜单缓存包含实际内核与接管状态，图标使用实际状态，开关使用配置意图。完整菜单和无窗菜单统一调用应用级退出收尾。Linux 原生回归可在图形会话运行 `dbus-run-session -- /usr/bin/python3 tests/test_tray_runtime.py build/clash-flux`（需要 Gio/PyGObject 与 bubblewrap）：使用独立 D-Bus、临时数据及屏蔽已安装服务的沙箱，覆盖宿主失联/恢复、无窗唤回、菜单角色及退出；此检查单独运行，不替代 18 项桌面 CTest 门禁。
 
 ## 可拖动仪表盘卡片
 
