@@ -505,6 +505,9 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     if (APPLE AND NOT IOS)
         set_target_properties(clash-flux PROPERTIES
             MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/platform/macos/Info.plist.in")
+        set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/platform/macos/AppIcon.icns"
+            PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+        target_sources(clash-flux PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/platform/macos/AppIcon.icns")
     endif ()
 
     # ---- 自带 sing-box 内核 -------------------------------------------------

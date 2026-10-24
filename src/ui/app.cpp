@@ -710,8 +710,8 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
     }
     const std::size_t desktopActivePage = navPage.Get();
     huxerui::View logoArt = huxerui::Image(
-        IsDarkTheme(spec) ? app::images::clash_flux_logo_vector_dark_refined
-                         : app::images::clash_flux_logo_vector_light_refined)
+        IsDarkTheme(spec) ? app::images::clash_flux_logo_vector_dark_current
+                         : app::images::clash_flux_logo_vector_light_current)
         .Fit(huxerui::ImageFit::Contain)
         .With(huxerui::Frame{.width = 32.0F, .height = 32.0F});
     huxerui::View coreStatusDot = huxerui::Stack{}.With(
