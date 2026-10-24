@@ -128,6 +128,16 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
     bool exitRequested = false;
     std::uint64_t windowGeneration = 0;
     std::string presentationKey;
+    std::string menuStructureKey;
+
+    void HideTray() {
+        tray.Hide();
+        // Hide discards the native presentation, so unchanged model values
+        // must still republish it after tray enablement or host recovery.
+        presentationKey.clear();
+        menuStructureKey.clear();
+        basicTrayVisible = false;
+    }
 
     CoreControl MenuControl() {
         CoreControl next = *control;
@@ -193,7 +203,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
         exitRequested = true;
         refresh = {};
         instance::markClosing();
-        tray.Hide();
+        HideTray();
         if (window) window->Hide();
         const huxerui::ApplicationHandle app = *application;
         auto coreStopped = std::make_shared<std::atomic_bool>(false);
@@ -253,9 +263,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
             // an empty menu before publishing the replacement; otherwise KDE
             // can retain an action from the old tree (notably a second Quit).
             if (basicTrayVisible) {
-                tray.Hide();
-                basicTrayVisible = false;
-                presentationKey.clear();
+                HideTray();
                 return;
             }
             refresh();
@@ -270,8 +278,10 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
             ? settingsModel->view.Get() : SettingsView{};
         const bool english = settings.ready ? settings.language == "en"
             : runtimeServices && runtimeServices->startupLanguage == "en";
-        const std::string key = std::format("{}:{}:{}:{}:{}", running, proxyEnabled,
-                                            tunEnabled, busy, english);
+        const CoreView view = control->model->view.Get();
+        const bool coreRunning = view.core.state == core::CoreState::Running;
+        const std::string key = std::format("{}:{}:{}:{}:{}:{}:{}:{}", running, proxyEnabled,
+            tunEnabled, busy, english, coreRunning, view.systemProxyActive, view.TunActive());
         if (key == presentationKey) return;
         std::vector<huxerui::MenuEntry> entries;
         const auto self = shared_from_this();
@@ -298,9 +308,8 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
         entries.push_back(huxerui::MenuItem(english ? "Quit" : "退出",
                                             [self] { self->RequestExit(); }));
         huxerui::ImageVariant icon = app::images::tray_default;
-        const CoreView view = control->model->view.Get();
-        if (running && view.TunActive()) icon = app::images::tray_tun;
-        else if (running && view.systemProxyActive) icon = app::images::tray_system_proxy;
+        if (coreRunning && view.TunActive()) icon = app::images::tray_tun;
+        else if (coreRunning && view.systemProxyActive) icon = app::images::tray_system_proxy;
         tray.Show(std::move(icon), huxerui::SystemTrayOptions{
             .tooltip = "Clash-Flux", .menu = std::move(entries)});
         basicTrayVisible = true;
@@ -424,7 +433,7 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
                     runtime->trayRefreshFailed = true;
                 }
             } else {
-                tray.Hide();
+                runtime->HideTray();
                 runtime->trayRefreshFailed = false;
             }
             co_await huxerui::Delay(std::chrono::duration<double>{0.25});
@@ -675,54 +684,8 @@ struct TrayMenuText {
 
     // 系统 VPN 的断开可能要等待 pppd/RAS 收尾，先完成清理再关闭窗口。
     const std::weak_ptr<DesktopTrayRuntime> weakTrayRuntime = trayRuntime;
-    auto finishExit = [startupTasks, application, tray, weakTrayRuntime]() {
-        const auto trayRuntime = weakTrayRuntime.lock();
-        if (!trayRuntime) return;
-        if (trayRuntime->exitRequested) return;
-        trayRuntime->exitRequested = true;
-        trayRuntime->refresh = {};
-        clashflux::instance::markClosing();
-        tray.Hide();
-        if (trayRuntime->window) trayRuntime->window->Hide();
-        auto coreStopped = std::make_shared<std::atomic_bool>(false);
-        auto cleanupFinished = std::make_shared<std::atomic_bool>(false);
-        startupTasks.Launch([application, coreStopped, cleanupFinished]() -> huxerui::Task<void> {
-            bool stopped = co_await RunOnTaskThread([] {
-                store::vpnStore().shutdown();
-                return store::coreStore().stopCore();
-            });
-            if (!stopped) {
-                stopped = co_await RunOnTaskThread([] {
-                    return store::coreStore().stopCore();
-                });
-                if (!stopped)
-                    stream::logApplication("error", "退出时停止内核失败：" +
-                        store::coreStore().snapshot().lastError);
-            }
-            coreStopped->store(stopped);
-            // 写后缓存模型：退出前把 settings/profiles 的脏数据落库。失败只能
-            // 记日志（退出路径没有界面），但绝不能再静默——那等于用户改动凭空消失。
-            auto& store = clashflux::persistence::persistence();
-            const bool settingsSaved = co_await store.flushSettings();
-            const bool profilesSaved = co_await store.flushProfiles();
-            if (!settingsSaved || !profilesSaved) {
-                stream::logApplication(
-                    "error",
-                    "退出前落库失败：" + (store.lastError().empty()
-                                             ? std::string{"未知原因"}
-                                             : store.lastError()));
-            }
-            cleanupFinished->store(true);
-            application.Quit();
-        });
-        std::thread([coreStopped, cleanupFinished] {
-            std::this_thread::sleep_for(std::chrono::seconds(3));
-            if (!coreStopped->load()) store::coreStore().stopCore();
-            while (!cleanupFinished->load())
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            std::this_thread::sleep_for(std::chrono::seconds(3));
-            std::_Exit(0);
-        }).detach();
+    auto finishExit = [weakTrayRuntime] {
+        if (const auto trayRuntime = weakTrayRuntime.lock()) trayRuntime->RequestExit();
     };
 
 #include "ui/platform_tray_menu.inc"

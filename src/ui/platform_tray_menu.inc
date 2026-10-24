@@ -26,7 +26,7 @@
             const bool enabled = settings.ready ? settings.trayEnabled : startupTrayEnabled;
             if (!enabled) {
                 if (trayRuntime->presentationKey != "hidden") {
-                    tray.Hide();
+                    trayRuntime->HideTray();
                     trayRuntime->presentationKey = "hidden";
                 }
                 return;
@@ -58,13 +58,18 @@
             key += std::format("{}{}{}{}{}{}{}{}",
                 running, menuRunning, proxyEnabled, tunEnabled, busy,
                 core.systemProxyActive, core.TunActive(), settings.lightweightTray);
+            std::size_t profileCount = 0;
             for (const db::Profile& profile : profiles) {
-                if (profile.type == "pptp" || profile.type == "openvpn") continue;
+                if (profile.type == "pptp") continue;
+                ++profileCount;
                 key += std::to_string(profile.id);
                 append(profile.name);
                 key += profile.selected ? '1' : '0';
             }
+            std::string structureKey = std::format("p{};g{};", profileCount, groups.size());
             for (const ProxyGroupSnapshot& group : groups) {
+                structureKey += std::format("{}:{};", group.selectable,
+                    group.selectable ? group.nodes.size() : 0);
                 append(group.name);
                 append(group.displayName);
                 append(group.current);
@@ -76,6 +81,14 @@
                 }
             }
             if (key == trayRuntime->presentationKey) return;
+            // Linux assigns D-Bus IDs in tree order. When the tree changes,
+            // Plasma can retain a previous checkbox or submenu at a reused ID.
+            // Publish an empty tree for one poll before replacing its structure.
+            if (!trayRuntime->menuStructureKey.empty() &&
+                trayRuntime->menuStructureKey != structureKey) {
+                trayRuntime->HideTray();
+                return;
+            }
             const auto windowGeneration = trayRuntime->windowGeneration;
 
             std::vector<huxerui::MenuEntry> entries;
@@ -84,7 +97,7 @@
             entries.push_back(huxerui::MenuSection{});
             std::vector<huxerui::MenuEntry> profileEntries;
             for (const db::Profile& profile : profiles) {
-                if (profile.type == "pptp" || profile.type == "openvpn") continue;
+                if (profile.type == "pptp") continue;
                 profileEntries.push_back(huxerui::MenuItem(profile.name,
                     [startupTasks, trayRuntime, toast, profilesModel, proxiesModel,
                      windowGeneration,
@@ -200,5 +213,6 @@
             tray.Show(std::move(icon), huxerui::SystemTrayOptions{
                 .tooltip = "Clash-Flux", .menu = std::move(entries)});
             trayRuntime->presentationKey = std::move(key);
+            trayRuntime->menuStructureKey = std::move(structureKey);
         };
     }
