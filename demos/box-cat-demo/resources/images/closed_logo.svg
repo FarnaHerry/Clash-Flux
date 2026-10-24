@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <g fill="#111318" stroke="#e8edf0" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+    <path id="closed-box-outline" d="M26 64.6 L63.2 77.9 Q64 78.2 64.8 77.9 L102.1 64.6 Q102.5 64.1 102.5 65.3 L102.5 96.1 Q102.5 97.8 101 98.6 L64.8 117.5 Q64 117.9 63.2 117.5 L27 98.6 Q25.5 97.8 25.5 96.1 L25.5 65.3 Q25.5 64.1 26 64.6 Z" />
+    <path id="box-center-seam" d="M64 78.2 L64 117.6" fill="none" />
+    <polygon points="64,49.8 102.5,64 83.25,71.1 44.75,56.9" />
+    <polygon points="25.5,64 64,78.2 83.25,71.1 44.75,56.9" />
+    <path id="lid-cross-seam" d="M44.75 71.1 L83.25 56.9" fill="none" />
+  </g>
+</svg>

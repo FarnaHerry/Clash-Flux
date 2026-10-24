@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=box-cat-demo
+Exec=box_cat_demo
+Icon=box_cat_demo
+Categories=Utility;
+Terminal=false
