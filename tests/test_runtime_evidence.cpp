@@ -102,7 +102,14 @@ int main(){try{
     network_probe::Request request;request.interfaceName=loopbackName();request.address="127.0.0.1";
     request.routeDestination=request.dnsAddress="127.0.0.1";request.dnsPort=server.port;request.dnsRoundTrip=true;
     const auto healthy=network_probe::Inspect(request);
-    require(healthy.interface==Evidence::Present&&healthy.route==Evidence::ViaTun&&healthy.dnsRoute==Evidence::ViaTun&&healthy.dns==Evidence::Response,
+#if defined(_WIN32) || defined(__linux__)
+    const bool routeEvidence=healthy.route==Evidence::ViaTun&&healthy.dnsRoute==Evidence::ViaTun;
+#else
+    // The production route reader currently has no macOS route-table backend;
+    // both route fields explicitly report Unsupported there.
+    const bool routeEvidence=healthy.route==Evidence::Unsupported&&healthy.dnsRoute==Evidence::Unsupported;
+#endif
+    require(healthy.interface==Evidence::Present&&routeEvidence&&healthy.dns==Evidence::Response,
         "real loopback OS route or bound DNS probe failed");
     server.mode=1;require(network_probe::Inspect(request).dns==Evidence::NegativeResponse,"negative DNS response misclassified");
     server.mode=2;require(network_probe::Inspect(request).dns==Evidence::InvalidResponse,"spoofed DNS response accepted");

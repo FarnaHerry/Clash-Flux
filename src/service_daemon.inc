@@ -328,8 +328,8 @@ export int run() {
             if (!id || id->empty() || id->size() > 128 || fields.size() != 2) {
                 replyLine(fd, "ERR 无效的 PPTP 连接标识");
             } else {
-                replyLine(fd, pptp::PrivilegedPptpSessionAlive(*id)
-                                  ? "CONNECTED" : "DISCONNECTED");
+                const auto alive = pptp::PrivilegedPptpSessionEvidence(*id);
+                replyLine(fd, std::string(clashflux::service_protocol::pptpEvidenceReply(alive)));
             }
         } else if (cmd.starts_with("PPTP_START ")) {
             const auto fields = splitWords(cmd);
@@ -350,14 +350,16 @@ export int run() {
             } else {
                 std::string interfaceName;
                 std::string gateway;
+                std::string transportAddress;
                 std::string error;
                 if (!pptp::PrivilegedPptpConnect(*id, *config, routes,
-                                                 interfaceName, gateway, error)) {
+                                                 interfaceName, gateway, error, &transportAddress)) {
                     replyLine(fd, std::format("ERR {}", error));
                 } else {
-                    replyLine(fd, std::format("OK {} {}",
+                    replyLine(fd, std::format("OK {} {} {}",
                                               hexEncode(interfaceName),
-                                              gateway.empty() ? "-" : hexEncode(gateway)));
+                                              gateway.empty() ? "-" : hexEncode(gateway),
+                                              transportAddress.empty() ? "-" : hexEncode(transportAddress)));
                 }
             }
         } else if (cmd.starts_with("PPTP_ROUTES ")) {

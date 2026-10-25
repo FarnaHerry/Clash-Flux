@@ -642,7 +642,10 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     };
     return DialogCard(RuntimeDiagnosticsContent(target, busy, !control.Busy(), report, start,
         [model] { model->diagnosticsCancel.request_stop(); },
-        [clipboard, report] { if (clipboard) clipboard->WriteText(report); },
+        [clipboard, report, toast] {
+            toast.Show(Localized(clipboard && clipboard->WriteText(report)
+                ? "已复制到剪贴板" : "复制失败"));
+        },
         [context] { context.Dismiss(); },save,picker->CanSaveFiles(),model->diagnosticsExportBusy.Get()));
 }
 

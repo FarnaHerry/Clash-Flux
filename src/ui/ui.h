@@ -42,6 +42,8 @@ inline constexpr float kTopNavigationItemVerticalMargin =
      (kTopNavigationItemHeight - kTopNavigationIndicatorSize)) / 2.0F;
 inline constexpr float kTopNavigationRailWidth =
     kTopNavigationIndicatorSize + 2.0F * kTopNavigationSpacing;
+// 一级侧栏与自定义标题栏共用分隔线粗细。
+inline constexpr float kDesktopChromeDividerThickness = 0.5F;
 
 // Resolve app-authored text through HuxerUI's locale-aware resource service.
 // The same UTF-8 phrase hashes to the resource key emitted in strings/*.properties.
@@ -404,7 +406,8 @@ huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
                               huxerui::View trailingAction = {});
 
 // 卡片容器（二级岛）：raised 表面 + nested 圆角 + 内边距。outlined=false 去掉
-// 1pt 描边，仅靠表面层级区分卡片（移动端设置页等无边框场景）。
+// 描边，仅靠表面层级区分卡片（移动端设置页等无边框场景）。
+// 描边宽度统一由 theme_colors.h 的卡片主题常量控制，页面不单独指定。
 huxerui::View Card(huxerui::View content, bool outlined = true);
 
 // 密集卡片：圆角阶梯的 dense 档（IslandTheme::dense_radius 4pt）+ 减半

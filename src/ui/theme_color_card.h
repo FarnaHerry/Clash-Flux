@@ -7,9 +7,11 @@
 #include <utility>
 #include <huxerui/huxerui.h>
 
+#include "theme_colors.h"
+
 namespace clashflux::ui {
 
-// 页面特有的几何；间距、圆角、图标及选中描边仍从当前 ThemeSpec 取值。
+// 页面特有的几何；间距、圆角、图标从 ThemeSpec 取值，描边使用统一卡片主题常量。
 inline constexpr float kThemeColorCardEdge = 112.0F;
 inline constexpr float kThemeColorCompactCardEdge = 80.0F;
 inline constexpr float kThemeColorDialogWidth = 280.0F;
@@ -74,7 +76,7 @@ inline huxerui::View ThemeColorCardSurface(const huxerui::ThemeSpec& theme,
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
         theme.interactions.indication, huxerui::Focusable(true),
         huxerui::Semantics{.role = huxerui::SemanticRole::Button, .label = std::move(label), .selected = selected});
-    if (selected) card = std::move(card).With(huxerui::Border{foreground, theme.interactions.focus_ring.width});
+    if (selected) card = std::move(card).With(huxerui::Border{foreground, kCardStrongOutlineWidth});
     return std::move(card).OnClick(std::move(onClick));
 }
 

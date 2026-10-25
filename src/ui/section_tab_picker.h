@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "ui.h"
+#include "page_layout.h"
 
 namespace clashflux::ui {
 
@@ -137,18 +138,21 @@ inline void ShowGroupSideDrawer(huxerui::LayerController layers,
             auto panel = GroupPickerContent(tabs, selected, select, close).With(
                 huxerui::SafeAreaPadding{},
                 huxerui::Background(theme.colors.surface_container),
+                kPageTitlesInWindow ? ResolveFluxShadows(theme).side_drawer
+                    : huxerui::Shadow{huxerui::Color::Transparent()},
                 huxerui::Enabled(!closing.Get()), huxerui::Indication{})
                 .OnClick([] {})
                 .With(huxerui::Offset(huxerui::AnimateTo(
                     huxerui::Point{shown.Get() ? 0.0F : 360.0F, 0.0F},
                     huxerui::TweenSpec{.duration = duration, .easing = huxerui::Easing::EaseOut})))
                 .Key("group-picker-side");
-            return GroupSideDrawerLayout{
+            return huxerui::Column{GroupSideDrawerLayout{
                 huxerui::Row{}.With(huxerui::Indication{})
                     .OnClick(close).Key("group-picker-scrim"),
                 std::move(panel),
-            }.With(huxerui::Padding(huxerui::EdgeInsets{.top = topInset}),
-                   huxerui::ClipChildren());
+            }.With(huxerui::Grow(1.0F), huxerui::ClipChildren())}
+                .With(huxerui::Padding(huxerui::EdgeInsets{.top = topInset}),
+                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
         });
     });
 }

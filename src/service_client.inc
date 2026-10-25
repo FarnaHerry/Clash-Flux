@@ -357,25 +357,12 @@ export bool startPptp(std::string_view connectionId, std::string_view nativeConf
     // connectTimeoutSecs 最大 300 秒；给 root daemon 留出清理和 IPC 余量。
     const auto reply = request(command, err, 310);
     if (!reply) return false;
-    if (!reply->starts_with("OK")) {
-        err = reply->starts_with("ERR ") ? reply->substr(4) : *reply;
+    const auto decoded = clashflux::service_protocol::pptpSession(*reply, true);
+    if (!decoded) {
+        err = reply->starts_with("ERR ") ? reply->substr(4) : "服务返回了无效的 PPTP 会话信息";
         return false;
     }
-    const auto fields = splitWords(*reply);
-    if (fields.size() < 2) {
-        err = "服务返回了无效的 PPTP 会话信息";
-        return false;
-    }
-    const auto interfaceName = hexDecode(fields[1]);
-    const auto gateway = fields.size() >= 3 && fields[2] != "-"
-                             ? hexDecode(fields[2])
-                             : std::optional<std::string>{std::string{}};
-    if (!interfaceName || !gateway) {
-        err = "服务返回了无效的 PPTP 会话信息";
-        return false;
-    }
-    session.interfaceName = *interfaceName;
-    session.gateway = *gateway;
+    session = {decoded->interfaceName, decoded->gateway, decoded->transportAddress};
     return true;
 }
 

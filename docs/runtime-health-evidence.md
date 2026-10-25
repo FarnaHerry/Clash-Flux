@@ -28,6 +28,10 @@ Linux 提供 getifaddrs/netlink 查询及绑定接口的 DNS 路径；macOS 仅�
 不从 UI 进程接管后台 VPN；其独立 OS 查询暂不支持。iOS 继续暂缓。
 本机验证范围是 Windows；其它平台实现不等于实机验收通过。
 
+2026-10-25 补充（`a826169` 后的工作区）：Linux PPTP 服务已接入三态证据和真实
+传输地址回传，沿用与 Windows 相同的历史记录/脱敏选路计数；未知不触发自动清理。
+Linux 子进程、接口及共享回滚边界采用隔离回归验证，尚无本批真实 PPTP 服务器验收。
+
 默认 DNS 地址按固定 sing-box 1.14 的 TUN 语义，从首个 IPv4 地址推导下一地址；
 显式 `dns_address` 则使用配置值，禁用 DNS 模式不主动探测。
 依据：[sing-box TUN](https://sing-box.sagernet.org/configuration/inbound/tun/)、
@@ -58,7 +62,8 @@ Linux 提供 getifaddrs/netlink 查询及绑定接口的 DNS 路径；macOS 仅�
 - `singbox`：生产编译器串联生产就绪/停止发布边界，覆盖保存 TUN 意图启动、PPTP
   连接/保留/断开计划、规则刷新、坏候选保留、停止及重启代次、代理模式恢复。
   这里的原生会话是编排输入，不是真实 RAS 拨号。
-- `page_transition`：生产诊断 UI 的中英文/默认资源挂载、保存入口及采集过程中禁用保存。
+- `page_transition`：生产诊断 UI 的中英文/默认资源挂载、深浅主题禁用标签绘制对比度、
+  窄屏按钮换行、空报告/长报告、保存能力/保存中状态，以及开始、取消、复制、保存交互。
 - 服务进程/Job Object、真实内核统计故障及配置热更新仍由原有独立回归覆盖。
 
 这些回归拆开验证编译、发布、服务和系统查询边界。真实服务器、完整系统 TUN/DNS、

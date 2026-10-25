@@ -2,6 +2,7 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include "../src/native_route_transaction.h"
 
 import std;
 import clashflux.vpn_compensation;
@@ -128,6 +129,58 @@ int main() {
         assert(!windows.acquire({77, "203.0.113.99", {}, 0}, windowsError));
     }
     assert(removed.back().destination == "10.0.0.0/24");
+
+    {
+        // Production capture/PPP transaction with real shared registry leases.
+        // Failed preparation, route application and exceptions must remove only
+        // newly staged routes; an existing accepted capture remains installed.
+        using clashflux::native_routes::Replace;
+        RouteLease accepted = windows.acquire({77, "10.10.0.0/16", {}, 0}, windowsError);
+        const auto original = accepted;
+        const auto before = removed.size();
+        bool applied = false;
+        auto prepare = [&](RouteLease& candidate, std::string& reason) {
+            auto captures = std::make_shared<std::vector<RouteLease>>();
+            captures->push_back(windows.acquire({77, "10.10.0.0/16", {}, 0}, reason));
+            captures->push_back(windows.acquire({77, "10.20.0.0/16", {}, 0}, reason));
+            candidate = std::move(captures);
+            return true;
+        };
+        assert(!Replace(accepted, [&](auto& candidate, auto& reason) {
+            prepare(candidate, reason); reason = "capture preparation failed"; return false;
+        }, [&](auto&) { applied = true; return true; }, windowsError));
+        assert(!applied && accepted == original && removed.size() == before + 1);
+        assert(removed.back().destination == "10.20.0.0/16");
+        assert(!Replace(accepted, prepare, [&](auto& reason) {
+            applied = true; reason = "PPP route failure"; return false;
+        }, windowsError));
+        assert(applied && accepted == original && removed.size() == before + 2);
+        try {
+            Replace(accepted, prepare, [](auto&) -> bool { throw std::runtime_error("PPP route exception"); }, windowsError);
+            assert(false);
+        } catch (const std::runtime_error&) {}
+        assert(accepted == original && removed.size() == before + 3);
+        assert(Replace(accepted, prepare, [](auto&) { return true; }, windowsError));
+        assert(accepted != original);
+        accepted.reset(); // confirmed PPTP_STOP releases its dial-only captures
+        assert(removed.size() == before + 4 && removed.back().destination == "10.20.0.0/16");
+    }
+
+    {
+        // The same withdrawal boundary is used by Windows and Linux stores.
+        // Rejecting a candidate unrelated to the accepted plan keeps that core;
+        // an interface still referenced by the plan needs a confirmed stop.
+        using clashflux::native_routes::Withdraw;
+        int stops = 0;
+        assert(Withdraw([] { return false; }, [] { return false; }, [&] { ++stops; return true; }));
+        assert(stops == 0);
+        assert(!Withdraw([] { return false; }, [] { return true; }, [&] { ++stops; return false; }));
+        assert(stops == 1);
+        assert(Withdraw([] { return false; }, [] { return true; }, [&] { ++stops; return true; }));
+        assert(stops == 2);
+        assert(Withdraw([] { return true; }, [] { return true; }, [&] { ++stops; return false; }));
+        assert(stops == 2);
+    }
 
     // Extra TUN routes preserve /32 capture and subtract exclusions without
     // merging into the broad /1 routes that would lose to native routes.

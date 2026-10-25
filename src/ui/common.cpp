@@ -20,6 +20,7 @@
 #include "task_bridge.h"
 #include "ui.h"
 #include "page_layout.h"
+#include "responsive_shell.h"
 #include "app.h"
 #include "file_drop_zone.h"
 #include "profile_file_picker.h"
@@ -900,7 +901,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         if (fullWidthSections) desktopBody = huxerui::ProvideEnvironment(
             SectionTabContentInsets{kSectionCardSpacing}, desktopBody);
         desktopBody = huxerui::ProvideEnvironment(
-            SectionTabPickerInsets{kDesktopTitleBarHeight + 1.0F}, std::move(desktopBody));
+            SectionTabPickerInsets{kDesktopTitleBarHeight + kDesktopChromeDividerThickness},
+            std::move(desktopBody));
         huxerui::View pageTitle = PageTitleText(theme, title).With(huxerui::Padding(
             huxerui::EdgeInsets{.left = leading ? 0.0F : kDesktopPageHorizontalInset}));
         // 搜索槽排在标题与动作之间，胶囊内部统一封顶 320pt，剩余空白用于拖动窗口；
@@ -932,13 +934,13 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                     .left = leading ? kDesktopPageHorizontalInset : 0.0F})),
                 std::move(titleBarContent),
             }.With(huxerui::Frame{.height = kDesktopTitleBarHeight}, huxerui::Spacing(0.0F)),
-            huxerui::Row{}.With(huxerui::Frame{.height = 1.0F},
+            huxerui::Row{}.With(huxerui::Frame{.height = kDesktopChromeDividerThickness},
                                 huxerui::Background(theme.colors.outline)),
-            huxerui::Column{std::move(desktopBody)}.With(
+            DesktopTitleBarBody(huxerui::Column{std::move(desktopBody)}.With(
                 huxerui::Padding(contentInsets),
                 huxerui::Grow(1.0F),
                 huxerui::Background(islands.base),
-                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), theme),
         }.With(huxerui::Spacing(0.0F), huxerui::Grow(1.0F),
                huxerui::ClipChildren(),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -1131,7 +1133,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
               huxerui::CornerRadius(islands.nested_radius),
               huxerui::Border(outlined ? islands.outline_soft
                                        : huxerui::Color::Transparent(),
-                              outlined ? 1.0F : 0.0F),
+                              outlined ? kCardOutlineWidth : 0.0F),
               huxerui::ClipChildren(),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -1200,7 +1202,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                                         : theme.colors.surface_container_high),
               huxerui::CornerRadius(theme.shapes.small),
               huxerui::Border(hover ? theme.colors.primary : islands.outline_soft,
-                              hover ? 1.5F : 1.0F),
+                              hover ? kCardEmphasisOutlineWidth : kCardOutlineWidth),
               huxerui::ClipChildren(),
               huxerui::FileDropTarget::Accepts(std::move(dropOptions)),
               huxerui::PointerCursor(huxerui::PointerCursorKind::Hand))
@@ -1285,7 +1287,7 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
                   huxerui::CornerRadius(kSelectableTileRadius),
                   huxerui::Border(selected ? theme.colors.primary
                                            : huxerui::Color::Transparent(),
-                                  selected ? 1.0F : 0.0F),
+                                  selected ? kCardSelectedOutlineWidth : 0.0F),
                   huxerui::ClipChildren(),
                   huxerui::Grow(1.0F),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
@@ -1305,10 +1307,11 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
     const IslandTheme islands = ResolveIslandTheme(theme);
     huxerui::View card = content;
     return std::move(card).With(
-        huxerui::Shadow{ThemeShadowColor(theme, 0.30F), {}, 28.0F, 2.0F},
+        kPageTitlesInWindow ? ResolveFluxShadows(theme).dialog
+            : huxerui::Shadow{ThemeShadowColor(theme, 0.30F), {}, 28.0F, 2.0F},
         huxerui::Background(islands.overlay),
         huxerui::CornerRadius(islands.island_radius),
-        huxerui::Border(islands.outline_soft, 1.0F),
+        huxerui::Border(islands.outline_soft, kCardOutlineWidth),
         huxerui::ClipChildren(),
         huxerui::Padding(islands.island_padding));
 }

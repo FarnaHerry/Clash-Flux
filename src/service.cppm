@@ -18,8 +18,8 @@
 //   VERSION             → clash-flux-service 1 app <Clash-Flux版本>
 //   UPGRADE             → OK / ERR <原因>（从当前客户端自身升级 root 服务）
 //   PPTP_AVAILABLE      → YES / NO
-//   PPTP_STATUS <hex id> → CONNECTED / DISCONNECTED
-//   PPTP_START <hex id> <hex config> [hex route ...] → OK <hex if> <hex gateway>
+//   PPTP_STATUS <hex id> → CONNECTED / DISCONNECTED / UNKNOWN
+//   PPTP_START <hex id> <hex config> [hex route ...] → OK <hex if> <hex gateway> <hex transport>
 //   PPTP_ROUTES <hex id> [hex route ...]            → OK / ERR <原因>
 //   PPTP_STOP <hex id>                              → OK / ERR <原因>
 //
@@ -34,6 +34,7 @@ module;
 #include <cstdio>
 #include "service_startup.h"
 #include "service_protocol.h"
+#include "native_route_transaction.h"
 
 #ifdef _WIN32
 #include "windows_service.h"

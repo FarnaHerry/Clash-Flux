@@ -5,8 +5,32 @@
 #include <huxerui/huxerui.h>
 
 #include "theme_colors.h"
+#include "ui.h"
 
 namespace clashflux::ui {
+
+// 在内容绘制之后覆盖标题栏投影，避免后绘制的不透明页面底色盖住阴影。
+// caster 位于内容上方，裁剪仅保留下沿投影；Canvas 不注册指针输入。
+inline huxerui::View DesktopTitleBarBody(huxerui::View content,
+    const huxerui::ThemeSpec& theme) {
+    const auto shadow = ResolveFluxShadows(theme).title_bar;
+    return huxerui::Stack{
+        std::move(content),
+        huxerui::Column{
+            huxerui::Canvas([shadow](huxerui::PaintContext& paint, huxerui::Size size) {
+                paint.DrawShadow({0.0F, -kDesktopTitleBarHeight,
+                                  size.width, kDesktopTitleBarHeight},
+                    shadow.color, shadow.offset, shadow.blur_radius, shadow.spread,
+                    huxerui::CornerRadii{0.0F});
+            }).With(huxerui::Frame{.height = shadow.blur_radius + shadow.offset.y})
+              .Key("desktop-title-bar-shadow"),
+            huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
+        }.With(huxerui::Spacing(0.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+    }.With(huxerui::Grow(1.0F), huxerui::ClipChildren(),
+           huxerui::Align(huxerui::HorizontalAlignment::Stretch,
+                          huxerui::VerticalAlignment::Stretch));
+}
 
 inline huxerui::View CompactNavigationDock(huxerui::View navigation,
     const huxerui::ThemeSpec& theme) {
@@ -14,7 +38,7 @@ inline huxerui::View CompactNavigationDock(huxerui::View navigation,
         std::move(navigation).With(huxerui::Frame{.max_width = 352.0F},
             huxerui::Background(CompactNavigationSurfaceColor(theme)),
             huxerui::Border{CompactNavigationBorderColor(theme), 0.4F},
-            huxerui::Shadow{CompactNavigationShadowColor(theme), {0.0F, 0.85F}, 2.667F},
+            ResolveFluxShadows(theme).compact_navigation,
             huxerui::CornerRadius(32.0F), huxerui::ClipChildren()),
     }.With(huxerui::Padding(huxerui::EdgeInsets{
         .right = theme.spacing.medium,

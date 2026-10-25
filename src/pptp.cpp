@@ -35,6 +35,7 @@ module;
 #include <cerrno>
 #include <cstring>
 #include <unistd.h>
+#include "linux_pptp_health.h"
 #endif
 
 module clashflux.pptp;
@@ -366,6 +367,7 @@ bool connectLinuxPrivileged(const std::shared_ptr<Runtime>& runtime,
     }
     connection.interfaceName = session.interfaceName;
     connection.gateway = session.gateway;
+    connection.transportAddress = session.transport.address;
     {
         std::lock_guard lock(runtime->mutex);
         runtime->linuxSessions.emplace(connection.id, std::move(session));
@@ -401,6 +403,7 @@ void disconnectLinuxPrivileged(const std::shared_ptr<Runtime>& runtime,
     stopLinuxSession(std::move(session));
     connection.interfaceName.clear();
     connection.gateway.clear();
+    connection.transportAddress.clear();
 }
 
 std::shared_ptr<Runtime> privilegedRuntime() {
@@ -768,20 +771,21 @@ bool PrivilegedPptpAvailable() {
     return ::geteuid() == 0 && linuxToolsAvailable();
 }
 
-bool PrivilegedPptpSessionAlive(std::string_view connectionId) {
+std::optional<bool> PrivilegedPptpSessionEvidence(std::string_view connectionId) {
     const auto runtime = privilegedRuntime();
     std::lock_guard lock(runtime->mutex);
     const auto it = runtime->linuxSessions.find(std::string(connectionId));
     if (it == runtime->linuxSessions.end()) return false;
     auto& session = it->second;
     if (session.pid <= 0) return false;
-    int status = 0;
-    if (childExited(session.pid, status)) {
-        session.pid = -1;
-        return false;
-    }
-    return session.interfaceIndex != 0 &&
-           ::if_nametoindex(session.interfaceName.c_str()) == session.interfaceIndex;
+    const auto process = clashflux::pptp_health::ChildEvidence(session.pid);
+    if (process && !*process) session.pid = -1;
+    return clashflux::pptp_health::SessionEvidence(process,
+        clashflux::pptp_health::InterfaceEvidence(session.interfaceName.c_str(), session.interfaceIndex));
+}
+
+bool PrivilegedPptpSessionAlive(std::string_view connectionId) {
+    return PrivilegedPptpSessionEvidence(connectionId).value_or(false);
 }
 
 bool PrivilegedPptpConnect(std::string_view connectionId,

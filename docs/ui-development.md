@@ -204,14 +204,34 @@ Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上�
 `FileDropZone(icon, title, picked_path, tasks, toast, picker, filter, key)`，
 定义在 `common.cpp`，不自行拼接 Column/FileDropTarget。外观跟控件族：
 圆角 `theme.shapes.small`、常态 `surface_container_high` 底加 `outline_soft`
-描边，拖入悬停切换 `primary_container` 底、`primary` 加粗描边与
+描边，拖入悬停切换 `primary_container` 底、`primary` 强调描边与
 `on_primary_container` 文字；未选择时副行显示 `filter.name`，选中后主行显示
 文件名、副行显示完整路径。交互契约：`FileDropTarget` 按扩展名整批校验外部拖入
 （要么全收要么拒绝，失败 toast），点击仍走 FilePicker 并复用
 `PickProfileConfigFile` 的错误反馈——键盘、触摸与不支持拖入的宿主依赖该等价
 入口。`picked_path` 由调用方持有并回写，导入与解析不在控件内进行。
 
+## 诊断弹窗与按钮可读性
+
+全局按钮样式通过 `ResolveFluxButtonStyle` 同时设置正常态与禁用态；禁用底色和文字
+从当前主题 `on_surface` 派生，不沿用 `ButtonStyle` 默认的深色标签。
+辅助操作使用 `ResolveFluxSecondaryButtonStyle` 的中性表面，主操作保留品牌色。
+诊断弹窗未生成报告时只显示说明，采集中显示进度，结果使用等宽文字和有界滚动区；
+外层可滚动以适应较矮窗口。导出与运行操作分组，通过 Flow 在窄屏和英文下换行。
+取消仅在采集中出现；无报告、采集中或不支持保存时相应导出操作禁用；
+保存中显示状态并阻止重复保存，复制成功或失败通过 toast 反馈。
+
 ## 圆角阶梯与密集卡片
+
+所有页面的卡片描边线宽集中在 `src/ui/theme_colors.h`：
+`kCardOutlineWidth` 用于普通卡片和对话框卡片；
+`kCardSelectedOutlineWidth` 用于可选条目的选中描边；
+`kCardEmphasisOutlineWidth` 用于文件拖入悬停与订阅拖动预览；
+`kCardStrongOutlineWidth` 用于订阅放置目标与主题色选中卡片。
+桌面普通与悬停/拖动预览为 0.5pt，选中与强强调为 1pt，并结合描边颜色与底色表达状态；
+手机保留原来的 1/1.5/2pt 档位。页面不单独指定卡片线宽，
+`Card` 只允许用 `outlined=false` 关闭描边。无描边的 `DenseCard` 和未选中条目
+继续靠底色区分；按钮、输入框、单选圈和键盘焦点环使用各自控件样式。
 
 圆角自上而下共用一套阶梯（`IslandTheme` + 主题 ShapeScheme）：一级岛
 `island_radius` 22pt → 卡片/二级岛 `nested_radius` 14pt → 控件

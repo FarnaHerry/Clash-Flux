@@ -304,10 +304,16 @@ RouteLease PrepareWindowsTun(std::string_view tunInterface,
         error = "主 TUN 必须使用 sing-box auto_route 的零接口 metric";
         return {};
     }
-    const auto gateway = std::ranges::find_if(*table, [&](const auto& row) {
+    auto gateway = std::ranges::find_if(*table, [&](const auto& row) {
         return row.InterfaceLuid.Value == tun->Value && row.NextHop.Ipv4.sin_addr.s_addr != 0 && row.Metric == 0;
     });
     if (gateway == table->end()) { error = "主 TUN 尚未建立全流量路由"; return {}; }
+    // A previous dial capture may also match above. Watch the broadest core
+    // route, so releasing a replaced /32 capture cannot invalidate this lease.
+    for (auto row = table->begin(); row != table->end(); ++row)
+        if (row->InterfaceLuid.Value == tun->Value && row->NextHop.Ipv4.sin_addr.s_addr != 0 &&
+            row->Metric == 0 && row->DestinationPrefix.PrefixLength < gateway->DestinationPrefix.PrefixLength)
+            gateway = row;
     std::vector<std::string> effectiveExclusions(exclusions.begin(), exclusions.end());
     MIB_UNICASTIPADDRESS_TABLE* localAddresses = nullptr;
     const auto addressStatus = GetUnicastIpAddressTable(AF_INET, &localAddresses);

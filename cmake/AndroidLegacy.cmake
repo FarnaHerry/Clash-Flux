@@ -162,6 +162,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/store/core_store_diagnostics.inc"
         "${_root}/src/store/core_store_evidence.inc"
         "${_root}/src/service_protocol.h"
+        "${_root}/src/native_route_transaction.h"
         "${_root}/src/ui/profiles_page_actions.inc"
         "${_root}/src/ui/profiles_page_layout.inc"
     )

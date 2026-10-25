@@ -13,6 +13,20 @@
 
 namespace clashflux::ui {
 
+// 全页面卡片描边的唯一线宽入口；桌面普通卡片使用细线，选中时适度加粗。
+// 手机保留普通、强调（悬停/拖动预览）、强强调（放置目标/色卡选中）的既有档位。
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
+inline constexpr float kCardOutlineWidth = 1.0F;
+inline constexpr float kCardSelectedOutlineWidth = 1.0F;
+inline constexpr float kCardEmphasisOutlineWidth = 1.5F;
+inline constexpr float kCardStrongOutlineWidth = 2.0F;
+#else
+inline constexpr float kCardOutlineWidth = 0.5F;
+inline constexpr float kCardSelectedOutlineWidth = 1.0F;
+inline constexpr float kCardEmphasisOutlineWidth = kCardOutlineWidth;
+inline constexpr float kCardStrongOutlineWidth = kCardSelectedOutlineWidth;
+#endif
+
 inline constexpr int kRgbChannelMax = 255;
 inline constexpr float kHsbTurnDegrees = 360.0F;
 inline constexpr float kHsbHueSectorDegrees = 60.0F;
@@ -391,6 +405,29 @@ inline bool IsDarkTheme(const huxerui::ThemeSpec& theme) noexcept {
     return brightness < 0.5F;
 }
 
+// 覆盖 ButtonStyle 时必须同时提供禁用态，不能带回 Default() 的深色文字。
+// 使用中性表面区分不可操作状态，同时保持标签在深浅主题下可读。
+inline huxerui::ButtonStyle ResolveFluxButtonStyle(const huxerui::ThemeSpec& theme) {
+    huxerui::ButtonStyle style;
+    style.corner_radii = huxerui::CornerRadii{theme.shapes.small};
+    style.background = theme.colors.primary;
+    style.label_style = {huxerui::Font::System(theme.typography.label_large),
+                         theme.colors.on_primary};
+    auto disabledBackground = theme.colors.on_surface;
+    disabledBackground.alpha *= 0.10F;
+    style.disabled_background = disabledBackground;
+    style.disabled_label = theme.colors.on_surface;
+    style.disabled_label.alpha *= 0.62F;
+    return style;
+}
+
+inline huxerui::ButtonStyle ResolveFluxSecondaryButtonStyle(const huxerui::ThemeSpec& theme) {
+    auto style = ResolveFluxButtonStyle(theme);
+    style.background = theme.colors.surface_container_high;
+    style.label_style.foreground = theme.colors.on_surface;
+    return style;
+}
+
 inline huxerui::Color SemanticSuccessColor(const huxerui::ThemeSpec& theme) {
     return IsDarkTheme(theme) ? huxerui::Color::Rgb(108, 202, 145)
                               : huxerui::Color::Rgb(47, 128, 86);
@@ -413,6 +450,33 @@ inline huxerui::Color ThemeShadowColor(const huxerui::ThemeSpec& theme, float op
     return color;
 }
 
+// 桌面表面的统一阴影层级；深色降低不透明度，避免中性灰背景边缘发黑。
+// 参数均为逻辑像素，不参与布局或改变控件的命中区域。
+struct FluxShadowScheme {
+    huxerui::Shadow title_bar;
+    huxerui::Shadow floating_action;
+    huxerui::Shadow popup;
+    huxerui::Shadow side_drawer;
+    huxerui::Shadow bottom_sheet;
+    huxerui::Shadow dialog;
+    huxerui::Shadow compact_navigation;
+};
+
+inline FluxShadowScheme ResolveFluxShadows(const huxerui::ThemeSpec& theme) {
+    const bool dark = IsDarkTheme(theme);
+    return {
+        {ThemeShadowColor(theme, dark ? 0.035F : 0.06F), {0.0F, 1.0F}, 4.0F, 0.0F},
+        {ThemeShadowColor(theme, dark ? 0.12F : 0.16F), {0.0F, 2.0F}, 10.0F, 0.0F},
+        {ThemeShadowColor(theme, dark ? 0.10F : 0.14F), {0.0F, 2.0F}, 8.0F, 0.0F},
+        {ThemeShadowColor(theme, dark ? 0.12F : 0.16F), {-2.0F, 0.0F}, 12.0F, 0.0F},
+        {ThemeShadowColor(theme, dark ? 0.12F : 0.16F), {0.0F, -2.0F}, 12.0F, 0.0F},
+        {ThemeShadowColor(theme, dark ? 0.14F : 0.18F), {0.0F, 4.0F}, 20.0F, 0.0F},
+        // 底部胶囊沿用既有参数，手机与桌面 Compact 的观感保持一致。
+        {ThemeShadowColor(theme, (dark ? 4.0F : 32.0F) / 255.0F),
+            {0.0F, 0.85F}, 2.667F, 0.0F},
+    };
+}
+
 inline huxerui::Color CompactNavigationIndicatorColor(const huxerui::ThemeSpec& theme) {
     auto color = theme.colors.primary;
     color.alpha = 0.16F;
@@ -433,10 +497,6 @@ inline huxerui::Color CompactNavigationBorderColor(const huxerui::ThemeSpec& the
     auto color = theme.colors.on_surface;
     color.alpha = (IsDarkTheme(theme) ? 11.5F : 24.5F) / 255.0F;
     return color;
-}
-
-inline huxerui::Color CompactNavigationShadowColor(const huxerui::ThemeSpec& theme) {
-    return ThemeShadowColor(theme, (IsDarkTheme(theme) ? 4.0F : 32.0F) / 255.0F);
 }
 
 } // namespace clashflux::ui

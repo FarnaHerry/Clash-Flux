@@ -130,7 +130,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     shadow.alpha = 0.24F;
     return std::move(preview).With(
         huxerui::Frame{.width = kCardWidth, .height = kCardHeight},
-        huxerui::Border(theme.colors.primary, 1.5F),
+        huxerui::Border(theme.colors.primary, kCardEmphasisOutlineWidth),
         huxerui::CornerRadius(kSelectableTileRadius),
         huxerui::Shadow{.color = shadow, .blur_radius = 16.0F, .spread = -2.0F},
         // DragSource 位于卡片内左上角的手柄；补偿卡片留白，使抓取点保持在手柄上。

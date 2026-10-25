@@ -43,6 +43,16 @@ int main() {
     testRuntimeHealth();
     require(pptpEvidence("CONNECTED") == true);
     require(pptpEvidence("DISCONNECTED") == false);
+    for (const auto state : {std::optional<bool>{true}, std::optional<bool>{false}, std::optional<bool>{}})
+        require(pptpEvidence(pptpEvidenceReply(state)) == state);
+    const auto session = pptpSession("OK " + hex("ppp0") + " - " + hex("192.0.2.4"));
+    require(session && session->interfaceName == "ppp0" && session->gateway.empty() &&
+        session->transportAddress == "192.0.2.4");
+    const auto legacy = pptpSession("OK " + hex("ppp0") + " -", true);
+    require(legacy && legacy->transportAddress.empty());
+    require(!pptpSession("OK " + hex("ppp0") + " -"));
+    for (const auto invalid : {"OK - - -", "OK 70707030 - xyz", "OKAY 70707030 - -", "OK 70707030 - - extra"})
+        require(!pptpSession(invalid, true));
     require(!confirmedPptpDisconnect(std::nullopt));
     require(!confirmedPptpDisconnect(pptpEvidence("CONNECTED")));
     require(confirmedPptpDisconnect(pptpEvidence("DISCONNECTED")));

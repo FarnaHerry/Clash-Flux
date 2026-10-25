@@ -134,6 +134,10 @@ application-managed settings before being passed to sing-box.
 - Runtime diagnostics distinguish native control, the compatibility API, telemetry and
   an explicit target. Telemetry repair is bounded; unconfirmed PPTP status preserves
   the session. See [runtime health review](docs/runtime-health-review.md).
+  Windows/Linux share candidate rejection and disconnect guards: preserve an
+  unrelated running plan, and withdraw referenced interfaces or confirm core stop
+  before release. Windows dial captures are session-owned and roll back on failure;
+  Linux service replies distinguish connected, disconnected and unknown evidence.
   Version 3 adds independent OS evidence, bounded local history and report saving;
   see [evidence and incident records](docs/runtime-health-evidence.md) for scope and limits.
 - Light and dark themes with system theme detection, an island-style interface,

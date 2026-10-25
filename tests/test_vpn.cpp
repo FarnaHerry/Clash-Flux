@@ -5,6 +5,9 @@
 #include <cassert>
 #ifdef _WIN32
 #include "../src/windows_pptp_health.h"
+#elif defined(__linux__) && !defined(__ANDROID__)
+#include "../src/linux_pptp_health.h"
+#include <unistd.h>
 #endif
 
 import std;
@@ -14,6 +17,51 @@ import clashflux.vpn;
 
 int main() {
     using namespace vpn;
+#if defined(__linux__) && !defined(__ANDROID__)
+    {
+        using namespace clashflux::pptp_health;
+        // Exercise the actual nonblocking waitpid/if_nametoindex backend with
+        // an owned child. No root service, PPP interface or network mutation.
+        struct Child {
+            pid_t pid = ::fork();
+            Child() {
+                if (pid < 0) throw std::runtime_error("fork fixture failed");
+                if (!pid) { for (;;) ::pause(); }
+            }
+            ~Child() {
+                int status = 0;
+                pid_t result;
+                do { result = ::waitpid(pid, &status, WNOHANG); } while (result < 0 && errno == EINTR);
+                if (result == 0) {
+                    ::kill(pid, SIGKILL);
+                    while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+                }
+            }
+        } child;
+        const auto loopback = ::if_nametoindex("lo");
+        assert(loopback != 0);
+        assert(ChildEvidence(child.pid) == true);
+        assert(InterfaceEvidence("lo", loopback) == true);
+        assert(InterfaceEvidence("lo", loopback + 1) == false);
+        assert(InterfaceEvidence("cf-health-none", loopback) == false);
+        assert(!InterfaceEvidence("lo", 0));
+        assert(!ChildEvidence(::getpid())); // live non-child: ownership unknown
+        assert(!SessionEvidence(std::nullopt, true));
+        assert(!SessionEvidence(true, std::nullopt));
+        assert(SessionEvidence(false, std::nullopt) == false);
+        assert(SessionEvidence(std::nullopt, false) == false);
+        assert(SessionEvidence(ChildEvidence(child.pid), InterfaceEvidence("lo", loopback)) == true);
+        ::kill(child.pid, SIGTERM);
+        auto evidence = ChildEvidence(child.pid);
+        for (int i = 0; i < 100 && evidence != false; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            evidence = ChildEvidence(child.pid);
+        }
+        assert(evidence == false);
+        assert(ChildEvidence(child.pid) == false); // already reaped and gone
+        assert(pptp::PrivilegedPptpSessionEvidence("missing-health-fixture") == false);
+    }
+#endif
 #ifdef _WIN32
     using clashflux::pptp_health::RasEvidence;
     assert(RasEvidence(ERROR_SUCCESS, RASCS_Connected, true) == true);

@@ -7,12 +7,21 @@ vpn::compensation::RouteLease& serviceTunRoutes() {
     static vpn::compensation::RouteLease lease;
     return lease;
 }
-std::map<std::string, PptpSessionInfo>& serviceDialSessions() {
-    static std::map<std::string, PptpSessionInfo> sessions;
+struct DialSession {
+    PptpSessionInfo info;
+    vpn::compensation::RouteLease capture;
+};
+std::map<std::string, DialSession>& serviceDialSessions() {
+    static std::map<std::string, DialSession> sessions;
     return sessions;
 }
+void resetTunCaptures() {
+    for (auto& [id, session] : serviceDialSessions()) session.capture.reset();
+    serviceTunRoutes().reset();
+}
 bool captureDialRoutes(const PptpSessionInfo& next,
-                       std::span<const std::string> prospective, std::string& error) {
+                       std::span<const std::string> prospective,
+                       vpn::compensation::RouteLease& candidate, std::string& error) {
     // Never act on a stale runtime.json or on another process's TUN.
     if (!native_service::ownsRunningCore()) return true;
     try {
@@ -20,6 +29,7 @@ bool captureDialRoutes(const PptpSessionInfo& next,
         if (!input) { error = "无法读取所属内核的 TUN 配置"; return false; }
         const auto config = nlohmann::json::parse(input);
         if (!config.contains("inbounds")) return true;
+        auto captures = std::make_shared<std::vector<vpn::compensation::RouteLease>>();
         for (const auto& inbound : config["inbounds"]) {
             if (inbound.value("type", "") != "tun") continue;
             const auto name = inbound.value("interface_name", "ClashFlux");
@@ -29,14 +39,15 @@ bool captureDialRoutes(const PptpSessionInfo& next,
             auto exclusions = inbound.value("route_exclude_address", std::vector<std::string>{});
             std::vector<std::string> interfaces{next.interfaceName};
             for (const auto& [id, session] : serviceDialSessions()) {
-                if (session.interfaceName != next.interfaceName) interfaces.push_back(session.interfaceName);
-                if (!session.transportAddress.empty()) exclusions.push_back(session.transportAddress + "/32");
+                if (session.info.interfaceName != next.interfaceName) interfaces.push_back(session.info.interfaceName);
+                if (!session.info.transportAddress.empty()) exclusions.push_back(session.info.transportAddress + "/32");
             }
             if (!next.transportAddress.empty()) exclusions.push_back(next.transportAddress + "/32");
             auto lease = vpn::compensation::PrepareWindowsTun(name, interfaces, exclusions, error, prospective);
             if (!lease) return false;
-            serviceTunRoutes() = std::move(lease);
+            captures->push_back(std::move(lease));
         }
+        if (!captures->empty()) candidate = std::move(captures);
         return true;
     } catch (const std::exception& e) {
         error = std::string("准备拨号期间的 TUN 路由失败：") + e.what(); return false;
@@ -54,7 +65,7 @@ std::string privilegedCommand(std::string_view command) {
     if (fields.empty()) return "ERR Invalid command";
     if (command == "PPTP_AVAILABLE") return pptp::PrivilegedPptpAvailable() ? "YES" : "NO";
     if (command == "PPTP_LIVE_DIAL") return "SUPPORTED 1";
-    if (command == "TUN_RESET") { serviceTunRoutes().reset(); return "OK"; }
+    if (command == "TUN_RESET") { resetTunCaptures(); return "OK"; }
     if (fields[0] == "TUN_PREPARE" && fields.size() >= 3) {
         const auto tun = protocol::unhex(fields[1]);
         std::size_t count = 0;
@@ -72,6 +83,9 @@ std::string privilegedCommand(std::string_view command) {
         auto next = vpn::compensation::PrepareWindowsTun(*tun, interfaces, exclusions, error);
         if (!next) return "ERR " + error;
         serviceTunRoutes() = std::move(next);
+        // The accepted main plan now owns its captures. Release temporary dial
+        // captures only after those overlapping leases have been acquired.
+        for (auto& [id, session] : serviceDialSessions()) session.capture.reset();
         return "OK";
     }
     if (fields.size() < 2) return "ERR Unknown command";
@@ -79,7 +93,7 @@ std::string privilegedCommand(std::string_view command) {
     if (!id || id->empty() || id->size() > 128) return "ERR Invalid PPTP ID";
     if (fields[0] == "PPTP_STATUS" && fields.size() == 2) {
         const auto alive = pptp::PrivilegedPptpSessionEvidence(*id);
-        return !alive ? "UNKNOWN" : *alive ? "CONNECTED" : "DISCONNECTED";
+        return std::string(protocol::pptpEvidenceReply(alive));
     }
     if (fields[0] == "PPTP_STOP" && fields.size() == 2) {
         std::string error;
@@ -100,22 +114,32 @@ std::string privilegedCommand(std::string_view command) {
     if (!start) {
         const auto session = serviceDialSessions().find(*id);
         if (session == serviceDialSessions().end()) return "ERR PPTP session is not owned by this service";
-        if (!captureDialRoutes(session->second, routes, error)) return "ERR " + error;
-        return pptp::PrivilegedPptpApplyRoutes(*id, routes, error) ? "OK" : "ERR " + error;
+        const bool applied = clashflux::native_routes::Replace(session->second.capture,
+            [&](auto& candidate, auto& reason) {
+                return captureDialRoutes(session->second.info, routes, candidate, reason);
+            },
+            [&](auto& reason) { return pptp::PrivilegedPptpApplyRoutes(*id, routes, reason); }, error);
+        return applied ? "OK" : "ERR " + error;
     }
     const auto config = protocol::unhex(fields[2]);
     if (!config || config->empty()) return "ERR Invalid PPTP config";
     std::string interfaceName, gateway, transportAddress;
     if (!pptp::PrivilegedPptpConnect(*id, *config, {}, interfaceName, gateway, error, &transportAddress))
         return "ERR " + error;
-    const PptpSessionInfo session{interfaceName, gateway, transportAddress};
-    if (!captureDialRoutes(session, routes, error) ||
-        (!routes.empty() && !pptp::PrivilegedPptpApplyRoutes(*id, routes, error))) {
-        std::string ignored;
-        pptp::PrivilegedPptpDisconnectChecked(*id, ignored);
+    DialSession session{{interfaceName, gateway, transportAddress}, {}};
+    if (!clashflux::native_routes::Replace(session.capture,
+            [&](auto& candidate, auto& reason) {
+                return captureDialRoutes(session.info, routes, candidate, reason);
+            },
+            [&](auto& reason) { return pptp::PrivilegedPptpApplyRoutes(*id, routes, reason); }, error)) {
+        std::string cleanupError;
+        if (!pptp::PrivilegedPptpDisconnectChecked(*id, cleanupError)) {
+            serviceDialSessions()[*id] = std::move(session);
+            error += "；PPTP 清理未确认：" + cleanupError;
+        }
         return "ERR " + error;
     }
-    serviceDialSessions()[*id] = session;
+    serviceDialSessions()[*id] = std::move(session);
     return "OK " + protocol::hex(interfaceName) + " " + protocol::hex(gateway) + " " + protocol::hex(transportAddress);
 }
 } // namespace
@@ -158,7 +182,7 @@ export int uninstall() {
 export int run() {
     return native_service::run(CLASHFLUX_VERSION, {
         .command = privilegedCommand,
-        .resetTun = [] { serviceTunRoutes().reset(); },
+        .resetTun = [] { resetTunCaptures(); },
         .shutdown = [] { pptp::PrivilegedPptpShutdown(); serviceDialSessions().clear(); },
     });
 }
@@ -214,13 +238,11 @@ export bool startPptp(std::string_view id, std::string_view config,
     for (const auto& route : routes) command += " " + protocol::hex(route);
     const auto reply = native_service::request(command, error, 90000);
     if (!reply) return false;
-    const auto fields = protocol::words(*reply);
-    if (fields.size() != 4 || fields[0] != "OK") {
+    const auto decoded = protocol::pptpSession(*reply);
+    if (!decoded) {
         error = reply->starts_with("ERR ") ? reply->substr(4) : "Invalid PPTP reply"; return false;
     }
-    const auto iface = protocol::unhex(fields[1]), gateway = protocol::unhex(fields[2]), transport = protocol::unhex(fields[3]);
-    if (!iface || !gateway || !transport) { error = "Invalid PPTP session"; return false; }
-    session = {*iface, *gateway, *transport}; return true;
+    session = {decoded->interfaceName, decoded->gateway, decoded->transportAddress}; return true;
 }
 export bool applyPptpRoutes(std::string_view id, std::span<const std::string> routes, std::string& error) {
     std::string command = "PPTP_ROUTES " + protocol::hex(id);

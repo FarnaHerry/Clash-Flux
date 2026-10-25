@@ -48,6 +48,7 @@
 
 #include "proxies_model.h"
 #include "ui.h"
+#include "page_layout.h"
 #include "empty_state.h"
 #include "search_text.h"
 #include "task_bridge.h"
@@ -1023,8 +1024,8 @@ std::function<void()> NodeSelectAction(
                huxerui::Foreground(testing ? theme.colors.on_primary_container
                                            : theme.colors.on_primary),
                huxerui::CornerRadius(kFloatingActionCornerRadius),
-               huxerui::Shadow{ThemeShadowColor(theme, 0.28F),
-                               {}, 14.0F, 2.0F},
+               kPageTitlesInWindow ? ResolveFluxShadows(theme).floating_action
+                   : huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F, 2.0F},
                huxerui::Scale(huxerui::AnimateTo(
                    testing ? 0.94F : 1.0F,
                    huxerui::TweenSpec{.duration = 0.18,

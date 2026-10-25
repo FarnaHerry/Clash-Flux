@@ -1,5 +1,5 @@
 // app.cpp — 应用壳（桌面平面布局 + 自定义标题栏 + 托盘）：
-//   桌面页名放在顶部标题栏；侧栏、标题栏与内容分区以细线分隔，不套卡片。
+//   桌面页名放在顶部标题栏；侧栏、标题栏与内容以细线分隔，不套卡片。
 //   手机保留现有页面与卡片布局。品牌水蓝用于交互与选中态，中性灰用于大面积底色。
 //   根节点刷整窗底色
 //   （rootSpec.colors.background——AppRoot 在主题 provider 之上，UseTheme 只能
@@ -25,6 +25,7 @@
 #include "connection_row.h"
 #include "app.h"
 #include "responsive_shell.h"
+#include "page_layout.h"
 #include "app_resources.h"
 #include "proxies_model.h"
 #include "task_bridge.h"
@@ -157,6 +158,13 @@ huxerui::ThemeSpec FluxLightThemeSpec(std::string_view accent) {
     return spec;
 }
 
+[[huxerui::composable]] huxerui::View FluxPresentationShadows(huxerui::View content) {
+    const auto& theme = huxerui::UseTheme();
+    auto sheetStyle = huxerui::UseEnvironment<huxerui::BottomSheetStyle>();
+    if (kPageTitlesInWindow) sheetStyle.shadow = ResolveFluxShadows(theme).bottom_sheet;
+    return huxerui::ProvideEnvironment(sheetStyle, content);
+}
+
 // 主题边界：MaterialThemeDefinition(spec) 之上用 typed style 覆盖组件样式——
 // 按钮/分段按钮/菜单圆角统一 8px（M3 默认全圆胶囊），叠加层用 on_surface
 // 半透明，让深浅模式的交互反馈都留在品牌色相内。
@@ -168,12 +176,7 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
         return c;
     };
 
-    huxerui::ButtonStyle buttons;
-    buttons.corner_radii = huxerui::CornerRadii{spec.shapes.small};
-    buttons.background = spec.colors.primary;
-    buttons.label_style = huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
-                                             spec.colors.on_primary};
-    definition.Set(buttons);
+    definition.Set(ResolveFluxButtonStyle(spec));
 
     huxerui::SegmentedButtonStyle segments; // Default()：corner_radius=8
     segments.background = spec.colors.surface;
@@ -188,6 +191,7 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     // 内置确认框跟随主题（DialogStyle 是 Environment 值，经 ThemeDefinition::Set
     // 全局覆盖）；Default() 基线是白底浅色配色，逐字段换色。
     huxerui::DialogStyle dialogs = huxerui::DialogStyle::Default();
+    if (kPageTitlesInWindow) dialogs.shadow = ResolveFluxShadows(spec).dialog;
     dialogs.background = spec.colors.surface_container_high;
     dialogs.title_style = huxerui::TextStyle{
         huxerui::Font::System(font_size::kTitle).WithWeight(huxerui::FontWeight::Bold),
@@ -226,6 +230,7 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
                                                              spec.spacing.small);
     selects.item_padding = selects.trigger_padding;
     selects.popup_shadow = huxerui::Shadow{ThemeShadowColor(spec, 0.24F), {}, 8.0F, 0.0F};
+    if (kPageTitlesInWindow) selects.popup_shadow = ResolveFluxShadows(spec).popup;
     selects.content_spacing = spec.spacing.small;
     selects.validation_spacing = spec.spacing.extra_small;
     selects.minimum_height = 48.0F;
@@ -248,6 +253,7 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     menus.icon_tint = spec.colors.on_surface_variant;
     menus.separator_color = spec.colors.outline;
     menus.shadow = huxerui::Shadow{ThemeShadowColor(spec, 0.24F), {}, 8.0F, 0.0F};
+    if (kPageTitlesInWindow) menus.shadow = ResolveFluxShadows(spec).popup;
     menus.corner_radii = spec.shapes.small;
     menus.item_indication = selectIndication;
     definition.Set(menus);
@@ -331,7 +337,7 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
 #endif
     definition.Set(systemBars);
 
-    return huxerui::Theme(std::move(definition), content);
+    return huxerui::Theme(std::move(definition), FluxPresentationShadows(content));
 }
 
 // 输入框对齐下拉触发框（Select 全局覆盖为 shapes.small + 48pt，见
@@ -748,7 +754,7 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
         }.With(huxerui::Frame{.width = kTopNavigationRailWidth},
                huxerui::Spacing(0.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-        huxerui::Row{}.With(huxerui::Frame{.width = 1.0F},
+        huxerui::Row{}.With(huxerui::Frame{.width = kDesktopChromeDividerThickness},
                             huxerui::Background(spec.colors.outline)),
     }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     huxerui::View chrome = huxerui::WindowTitleBar{

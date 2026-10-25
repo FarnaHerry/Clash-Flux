@@ -7,9 +7,9 @@
 
     // ---- 内核控制（阻塞：UI 必须 RunOnTaskThread）----
 
-#ifdef _WIN32
     // Dialing and the prepared handoff share one application lifecycle lock.
-    // The SCM service verifies that transport remains on the physical route.
+    // Platform services keep transport outside TUN; both desktops preserve the
+    // captured running mode and proxy state across candidate failure/rollback.
     inline std::unique_lock<std::recursive_mutex> lockNativeLifecycle() {
         return std::unique_lock(lifecycleMutex_);
     }
@@ -28,7 +28,6 @@
         error = snapshot().lastError;
         return false;
     }
-#endif
 
     // Called by the native store after establishing a session, or BEFORE
     // tearing one down. Suspend unavailable destinations before the interface

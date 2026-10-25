@@ -283,7 +283,7 @@ struct CoreStreams::Impl {
     mutable std::mutex mutex;
     std::mutex lifecycle;
     std::mutex wakeMutex;
-    std::condition_variable_any wake;
+    std::condition_variable wake;
     std::jthread monitor;
     bool active = false;
     std::uint64_t epoch = 0, observationEpoch = 0;
@@ -332,7 +332,10 @@ struct CoreStreams::Impl {
         while (!token.stop_requested()) {
             {
                 std::unique_lock waitLock(wakeMutex);
-                wake.wait_for(waitLock, token, std::chrono::seconds(1), [] { return false; });
+                // Keep the monitor interruptible without condition_variable_any's
+                // stop-token overload. Clang/libc++'s std module currently emits
+                // an undefined hidden atomic helper for that overload on Linux.
+                wake.wait_for(waitLock, std::chrono::seconds(1));
             }
             if (token.stop_requested()) break;
             std::uint64_t requestEpoch, requestObservation;

@@ -5,6 +5,9 @@
 #include <string_view>
 #include <vector>
 namespace clashflux::service_protocol {
+inline std::string_view pptpEvidenceReply(std::optional<bool> evidence) {
+    return !evidence ? "UNKNOWN" : *evidence ? "CONNECTED" : "DISCONNECTED";
+}
 inline std::optional<bool> pptpEvidence(std::string_view reply) {
     if (reply == "CONNECTED") return true;
     if (reply == "DISCONNECTED") return false;
@@ -56,5 +59,17 @@ inline std::vector<std::string> words(std::string_view value) {
         if (value.empty()) return {};
     }
     return result;
+}
+struct PptpSessionFields {
+    std::string interfaceName, gateway, transportAddress;
+};
+inline std::optional<PptpSessionFields> pptpSession(std::string_view reply, bool allowLegacy = false) {
+    const auto fields = words(reply);
+    if (fields.size() < (allowLegacy ? 2u : 4u) || fields.size() > 4 || fields[0] != "OK") return {};
+    const auto iface = unhex(fields[1]);
+    const auto gateway = fields.size() >= 3 ? unhex(fields[2]) : std::optional<std::string>{std::string{}};
+    const auto transport = fields.size() == 4 ? unhex(fields[3]) : std::optional<std::string>{std::string{}};
+    if (!iface || iface->empty() || !gateway || !transport) return {};
+    return PptpSessionFields{*iface, *gateway, *transport};
 }
 } // namespace clashflux::service_protocol

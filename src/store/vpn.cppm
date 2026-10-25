@@ -4,6 +4,7 @@
 // 由 sing-box 编译和主内核生命周期统一管理，不在本 store 创建独立会话。
 module;
 #include "../service_protocol.h"
+#include "../native_route_transaction.h"
 export module clashflux.store.vpn;
 
 import std;
@@ -181,6 +182,7 @@ public:
     bool stopTraffic(std::string& error) {
         ensureLoaded();
         std::lock_guard operationLock(operationMutex_);
+        auto mainOperation = coreStore().lockNativeLifecycle();
         error.clear();
         const bool coreStopped = coreStore().stopCore();
         if (!coreStopped) {
@@ -199,7 +201,9 @@ public:
         for (const auto& [id, kind] : active) {
             if (kind == vpn::ConnectionKind::Pptp) {
                 std::string stopError;
-                if (!service::stopPptp(id, stopError) || pptp::PptpSessionAlive(id)) {
+                const bool stopped = service::stopPptp(id, stopError);
+                const auto alive = stopped ? service::pptpSessionEvidence(id) : std::nullopt;
+                if (!stopped || !clashflux::service_protocol::confirmedPptpDisconnect(alive)) {
                     std::string sessionError = "PPTP 连接 " + id + " 未确认断开";
                     if (!stopError.empty()) sessionError += "：" + stopError;
                     if (!error.empty()) error += "；";
@@ -257,6 +261,7 @@ public:
             error = "该订阅不是 PPTP 类型";
             return false;
         }
+        std::unique_lock operationLock(operationMutex_);
         std::string parseError;
         if (!pptp::ParsePptpConfig(profile.nativeConfig, parseError)) {
             error = parseError;
@@ -275,7 +280,6 @@ public:
         };
 
         const std::string id = connectionId(profile.id);
-        std::unique_lock operationLock(operationMutex_);
         if (const auto* current = manager_.findConnection(id);
             current && current->state == vpn::ConnectionState::Connected &&
             current->nativeConfig == profile.nativeConfig &&
@@ -317,19 +321,21 @@ public:
                 }
             }
         }
-#ifdef _WIN32
         auto mainOperation = coreStore().lockNativeLifecycle();
         const auto mainBefore = coreStore().snapshot();
         const bool mainWasRunning = mainBefore.state == core::CoreState::Running;
         const bool proxyBefore = coreStore().systemProxyActive();
+#ifdef _WIN32
         if (mainWasRunning && mainBefore.tunEnabled && !service::supportsPptpLiveDial()) {
             error = "已安装的网络服务不支持保留 TUN 拨号，请先更新服务";
             setError(profile.id, error);
             return false;
         }
 #endif
-        blockBeforeDisconnect(id);
-        manager_.disconnect(id);
+        if (!blockBeforeDisconnect(id, error) || !disconnectConfirmed(id, error)) {
+            setError(profile.id, error);
+            return false;
+        }
         {
             std::lock_guard snapshotLock(mutex_);
             manager_.upsertConnection(std::move(connection));
@@ -352,25 +358,19 @@ public:
         if (connected && !routingApplied) {
             // Compilation can fail before refreshRouting stops the old core.
             // Never release an interface still referenced by that core.
-#ifdef _WIN32
-            if (coreStore().runningPlanUsesNative(id) ||
-                coreStore().snapshot().state != core::CoreState::Running) coreStore().stopCore();
-#else
-            coreStore().stopCore();
-#endif
-            manager_.disconnect(id);
             const auto failure = error;
-            std::string ignored;
-            if (!publishRouting(ignored)) coreStore().stopCore();
+            if (!blockBeforeDisconnect(id, error) || !disconnectConfirmed(id, error)) {
+                error = "主 VPN 路由更新失败：" + failure + "；PPTP 已保留：" + error;
+                setError(profile.id, error);
+                return false;
+            }
             error = "PPTP 已撤销，主 VPN 路由更新失败：" + failure;
             connected = false;
         }
-#ifdef _WIN32
         if (!connected && mainWasRunning && coreStore().snapshot().state != core::CoreState::Running) {
             std::string restoreError;
             if (!coreStore().resumeNativeRouting(mainBefore, proxyBefore, restoreError)) error += "；恢复主内核失败：" + restoreError;
         }
-#endif
         {
             std::lock_guard snapshotLock(mutex_);
             updateSnapshotLocked(profile.id, connected ? std::string_view{} : error);
@@ -381,8 +381,13 @@ public:
     void disconnectPptp(std::int64_t profileId) {
         ensureLoaded();
         std::lock_guard operationLock(operationMutex_);
-        blockBeforeDisconnect(connectionId(profileId));
-        manager_.disconnect(connectionId(profileId));
+        auto mainOperation = coreStore().lockNativeLifecycle();
+        std::string error;
+        if (!blockBeforeDisconnect(connectionId(profileId), error) ||
+            !disconnectConfirmed(connectionId(profileId), error)) {
+            setError(profileId, error);
+            throw std::runtime_error(error);
+        }
         std::lock_guard snapshotLock(mutex_);
         if (snapshots_.contains(profileId)) {
             updateSnapshotLocked(profileId, {});
@@ -392,7 +397,13 @@ public:
     void forgetPptp(std::int64_t profileId) {
         ensureLoaded();
         std::lock_guard operationLock(operationMutex_);
-        blockBeforeDisconnect(connectionId(profileId));
+        auto mainOperation = coreStore().lockNativeLifecycle();
+        std::string error;
+        if (!blockBeforeDisconnect(connectionId(profileId), error) ||
+            !disconnectConfirmed(connectionId(profileId), error)) {
+            setError(profileId, error);
+            throw std::runtime_error(error);
+        }
         manager_.removeConnection(connectionId(profileId));
         std::lock_guard snapshotLock(mutex_);
         snapshots_.erase(profileId);
@@ -422,7 +433,9 @@ private:
             coreStore().recordPptpEvidence(connection.id,alive);
             if (!clashflux::service_protocol::confirmedPptpDisconnect(alive)) continue;
             const std::string id = connection.id;
-            blockBeforeDisconnect(id);
+            std::string error;
+            auto mainOperation = coreStore().lockNativeLifecycle();
+            if (!blockBeforeDisconnect(id, error)) continue;
             manager_.disconnect(id);
             std::lock_guard snapshotLock(mutex_);
             for (auto& [profileId, snapshot] : snapshots_) {
@@ -451,11 +464,33 @@ private:
         return coreStore().updateNativeRouting(std::move(sessions), error);
     }
 
-    inline void blockBeforeDisconnect(std::string_view id) {
+    bool disconnectConfirmed(std::string_view id, std::string& error) {
         const auto* connection = manager_.findConnection(id);
-        if (connection == nullptr || connection->state != vpn::ConnectionState::Connected) return;
-        std::string error;
-        if (!publishRouting(error, id)) coreStore().stopCore();
+        if (connection && connection->activeEngine) {
+            if (!service::stopPptp(id, error)) return false;
+            const auto evidence = service::pptpSessionEvidence(id);
+            coreStore().recordPptpEvidence(std::string(id), evidence);
+            if (!clashflux::service_protocol::confirmedPptpDisconnect(evidence)) {
+                error = "暂时无法确认 PPTP 已断开；已保留连接状态，请稍后重试";
+                return false;
+            }
+        }
+        manager_.disconnect(id);
+        return true;
+    }
+
+    bool blockBeforeDisconnect(std::string_view id, std::string& error) {
+        const auto* connection = manager_.findConnection(id);
+        if (connection == nullptr || connection->state != vpn::ConnectionState::Connected) return true;
+        return clashflux::native_routes::Withdraw(
+            [&] { return publishRouting(error, id); },
+            [&] { return coreStore().runningPlanUsesNative(id); },
+            [&] {
+                coreStore().stopCore();
+                if (coreStore().snapshot().state == core::CoreState::Stopped) return true;
+                error += "；主内核停止未确认，保留 PPTP 接口";
+                return false;
+            });
     }
 
     static std::string connectionId(std::int64_t profileId) {
@@ -511,11 +546,13 @@ private:
 
     void setError(std::int64_t profileId, const std::string& error) {
         std::lock_guard lock(mutex_);
-        PptpState& snapshot = snapshots_[profileId];
-        snapshot.profileId = profileId;
-        snapshot.toolsAvailable = adapter_.descriptor.available;
-        snapshot.state = vpn::ConnectionState::Failed;
-        snapshot.error = error;
+        updateSnapshotLocked(profileId, error);
+        const auto* connection = manager_.findConnection(connectionId(profileId));
+        // A failed operation/unknown IPC reply does not erase a retained live
+        // session from the UI. Its monitor still owns the authoritative state.
+        if (!connection || !connection->activeEngine ||
+            connection->state != vpn::ConnectionState::Connected)
+            snapshots_[profileId].state = vpn::ConnectionState::Failed;
     }
 
     void ensureLoaded() {

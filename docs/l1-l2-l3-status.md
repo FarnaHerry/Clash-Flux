@@ -1,5 +1,16 @@
 # L1 / L2 / L3 开发完成度复核
 
+2026-10-25 Windows/Linux PPTP 对齐（`a826169` 后的未提交工作区）：两端共享
+候选拒绝后的运行计划保护及断开确认；Linux 服务补三态会话证据与真实传输地址回传。
+Windows 拨号捕获租约按会话暂存/提交/释放，准备或路由应用失败保留旧租约。
+隔离回归覆盖真实 Linux 子进程/loopback 接口、共享租约事务失败/异常与计划撤出门禁；
+详细变更及平台验证边界见 [PPTP 交接](native-pptp-handoff.md)。本批无真实 PPTP
+服务器、Windows SCM/RAS、macOS 或手机验收，不扩展平台协议支持。
+本机 Linux 已执行 `cmake --build build --target clash-flux`、`./run.sh --version`
+（v0.3.61）、全部测试目标构建与 `ctest --test-dir build --output-on-failure
+--no-tests=error -j 2`（21/21），`CLASHFLUX_REQUIRE_PROJECT_TESTS=ON`，OpenSSL 为
+`/usr/bin/openssl`；`git diff --check` 通过。Windows 编译和专属 SCM/RAS 回归未执行。
+
 2026-10-25 原生控制与运行健康联合补齐：基于 `1a1659b` 加未提交工作区，
 吸收 `d3a3813` 草稿中的原生 gRPC-Web 及 codec/固定内核回归；启动确认改用
 原生版本/实例身份，兼容接口与业务目标仍分别采证。PPTP IPC/RAS 状态未知

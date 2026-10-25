@@ -253,7 +253,8 @@ huxerui::View ConnectionListRoot() {
 }
 const huxerui::Application kConnectionListApplication{ConnectionListRoot};
 
-int diagnosticsStarts = 0, diagnosticsCopies = 0, diagnosticsSaves = 0;
+int diagnosticsStarts = 0, diagnosticsCopies = 0, diagnosticsSaves = 0,
+    diagnosticsCloses = 0;
 [[huxerui::composable]] huxerui::View PptpProgressFixture() {
     auto opening = huxerui::UseState(true);
     return huxerui::Column{
@@ -282,14 +283,26 @@ void testPptpProgressResources() {
               "PPTP 断开后可重新进入连接进度");
     }
 }
+bool diagnosticsFixtureDark = false;
+bool diagnosticsFixtureCanSave = true;
+bool diagnosticsFixtureSaving = false;
+std::string diagnosticsFixtureReport = "redacted-report";
 [[huxerui::composable]] huxerui::View DiagnosticsFixture() {
     auto target = huxerui::UseState(huxerui::TextEditingValue{});
     auto busy = huxerui::UseState(false);
-    return clashflux::ui::RuntimeDiagnosticsContent(target, busy.Get(), true, "redacted-report",
+    return clashflux::ui::RuntimeDiagnosticsContent(target, busy.Get(), true, diagnosticsFixtureReport,
         [busy] { ++diagnosticsStarts; busy = true; }, [busy] { busy = false; },
-        [] { ++diagnosticsCopies; }, [] {},[] { ++diagnosticsSaves; },true,false);
+        [] { ++diagnosticsCopies; }, [] { ++diagnosticsCloses; },[] { ++diagnosticsSaves; },
+        diagnosticsFixtureCanSave, diagnosticsFixtureSaving);
 }
-huxerui::View DiagnosticsFixtureRoot() { return huxerui::FlatTheme{DiagnosticsFixture()}; }
+huxerui::View DiagnosticsFixtureRoot() {
+    auto spec = huxerui::MaterialLightThemeSpec();
+    spec.colors = diagnosticsFixtureDark ? clashflux::ui::FluxDarkColors()
+                                        : clashflux::ui::FluxLightColors();
+    auto definition = huxerui::MaterialThemeDefinition(spec);
+    definition.Set(clashflux::ui::ResolveFluxButtonStyle(spec));
+    return huxerui::Theme(definition, DiagnosticsFixture());
+}
 const huxerui::Application kDiagnosticsApplication{DiagnosticsFixtureRoot};
 void testDiagnosticsContent() {
     for (auto locale : {"zh", "en", "fr"}) { // fr exercises default resource fallback
@@ -303,7 +316,7 @@ void testDiagnosticsContent() {
         check(diagnosticsCopies == 1, "诊断报告复制回调可用");
         ui.Find(UiSelector::Text(zh ? "保存脱敏报告" : "Save redacted report")).Tap();ui.PumpAndSettle();
         check(diagnosticsSaves==1,"脱敏报告保存入口在中英文及默认回退资源中可用");
-        ui.Find(UiSelector::Text(zh ? "开始诊断" : "Run diagnostics")).Tap(); ui.PumpAndSettle();
+        ui.Find(UiSelector::Text(zh ? "开始诊断" : "Run diagnostics")).Tap(); ui.Pump(kStep);
         check(diagnosticsStarts == 1, "开始诊断回调可用");
         check(ui.Find(UiSelector::Text(zh ? "正在收集诊断证据…" : "Collecting diagnostic evidence…")).Exists(), "诊断过程中加载资源安全并展示状态");
         // 框架对禁用控件的 Tap 直接抛错，用 enabled 断言防重复入口。
@@ -369,9 +382,11 @@ huxerui::View DrawerRoot() {
             huxerui::Button("TITLE-" + std::to_string(clicks.Get()))
                 .OnClick([clicks] { clicks = clicks.Get() + 1; })
                 .With(huxerui::Frame{.height = clashflux::ui::kDesktopTitleBarHeight}),
-            huxerui::Row{}.With(huxerui::Frame{.height = 1.0F}),
+            huxerui::Row{}.With(huxerui::Frame{
+                .height = clashflux::ui::kDesktopChromeDividerThickness}),
             huxerui::ProvideEnvironment(
-                clashflux::ui::SectionTabPickerInsets{clashflux::ui::kDesktopTitleBarHeight + 1.0F},
+                clashflux::ui::SectionTabPickerInsets{clashflux::ui::kDesktopTitleBarHeight +
+                    clashflux::ui::kDesktopChromeDividerThickness},
                 TestContent(false, true)),
         }.With(huxerui::Grow(1.0F), huxerui::Spacing(0.0F));
     })};
@@ -485,6 +500,101 @@ huxerui::Color paintedTextColor(huxerui::testing::UiTest& ui, const std::string&
 }
 huxerui::Color labelColor(huxerui::testing::UiTest& ui, int index) {
     return paintedTextColor(ui, label(index));
+}
+
+void testDiagnosticsThemeAndLayout() {
+    using namespace clashflux::ui;
+    const auto composite = [](huxerui::Color foreground, huxerui::Color background) {
+        const float a = foreground.alpha;
+        return huxerui::Color{foreground.red * a + background.red * (1 - a),
+            foreground.green * a + background.green * (1 - a),
+            foreground.blue * a + background.blue * (1 - a), 1.0F};
+    };
+    const auto contrast = [](huxerui::Color a, huxerui::Color b) {
+        const float x = ThemeColorLuminance(a), y = ThemeColorLuminance(b);
+        return (std::max(x, y) + 0.05F) / (std::min(x, y) + 0.05F);
+    };
+    for (bool dark : {false, true}) {
+        diagnosticsFixtureDark = dark;
+        for (const auto width : {320.0F, 390.0F, 960.0F}) {
+            for (const auto locale : {"zh", "en"}) {
+                const bool zh = std::string_view(locale) == "zh";
+                diagnosticsFixtureReport.clear();
+                huxerui::testing::UiTest ui(kDiagnosticsApplication,
+                    {.viewport = {width, 800.0F},
+                     .resources = {.locale = huxerui::Locale::FromLanguageTag(locale)},
+                     .resource_provider = AppResources()});
+                ui.PumpAndSettle();
+                check(!ui.Find(UiSelector::Key("diagnostics-report")).Exists(),
+                      "empty diagnostics does not reserve a blank report viewport");
+                const auto copyLabel = zh ? "复制脱敏报告" : "Copy redacted report";
+                const auto saveLabel = zh ? "保存脱敏报告" : "Save redacted report";
+                const auto copy = ui.Find(UiSelector::Text(copyLabel)).One();
+                const auto save = ui.Find(UiSelector::Text(saveLabel)).One();
+                check(!copy.enabled && !save.enabled,
+                      "empty report disables export actions without hiding their labels");
+                check(copy.bounds.x >= 0 && save.bounds.x >= 0 &&
+                          copy.bounds.x + copy.bounds.width <= width + 0.5F &&
+                          save.bounds.x + save.bounds.width <= width + 0.5F &&
+                          (copy.bounds.y + copy.bounds.height <= save.bounds.y + 0.5F ||
+                           copy.bounds.x + copy.bounds.width <= save.bounds.x + 0.5F),
+                      "Chinese and English export buttons wrap without clipping or overlap");
+                const auto colors = dark ? FluxDarkColors() : FluxLightColors();
+                auto spec = huxerui::MaterialLightThemeSpec(); spec.colors = colors;
+                const auto style = ResolveFluxButtonStyle(spec);
+                const auto disabledFill = std::get<huxerui::Color>(
+                    std::get<huxerui::Brush>(style.disabled_background.Get()).Get());
+                const auto buttonSurface = composite(disabledFill, colors.surface_container_highest);
+                const auto disabledText = paintedTextColor(ui, copyLabel, "");
+                check(contrast(composite(disabledText, buttonSurface), buttonSurface) >= 3.0F,
+                      "actual disabled diagnostic labels remain readable in light and dark themes");
+                ui.Find(UiSelector::Text(zh ? "开始诊断" : "Run diagnostics")).Tap();
+                ui.Pump(kStep);
+                check(ui.Find(UiSelector::Text(zh ? "取消" : "Cancel")).One().enabled,
+                      "running diagnostics keeps cancellation enabled");
+                check(!ui.Find(UiSelector::Text(copyLabel)).One().enabled,
+                      "running diagnostics cannot export partial reports");
+                ui.Find(UiSelector::Text(zh ? "取消" : "Cancel")).Tap(); ui.PumpAndSettle();
+                check(ui.Find(UiSelector::Text(zh ? "开始诊断" : "Run diagnostics")).One().enabled,
+                      "cancelled diagnostics can be started again");
+            }
+        }
+    }
+    diagnosticsFixtureDark = true;
+    diagnosticsFixtureReport = std::string(4000, 'x');
+    diagnosticsFixtureCanSave = false;
+    {
+        huxerui::testing::UiTest ui(kDiagnosticsApplication,
+            {.viewport = {390.0F, 800.0F}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Key("diagnostics-report")).One().bounds.height <= 200.5F,
+              "long diagnostic report remains in a bounded scroll viewport");
+        check(!ui.Find(UiSelector::Text("Save redacted report")).One().enabled &&
+                  ui.Find(UiSelector::Text("Copy redacted report")).One().enabled,
+              "platforms without save capability retain copying");
+    }
+    diagnosticsFixtureCanSave = true;
+    {
+        diagnosticsCloses = 0;
+        huxerui::testing::UiTest ui(kDiagnosticsApplication,
+            {.viewport = {320.0F, 400.0F}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        ui.Find(UiSelector::Key("runtime-diagnostics-content"))
+            .ScrollUntil(UiSelector::Text("Close")).Tap();
+        ui.PumpAndSettle();
+        check(diagnosticsCloses == 1,
+              "short diagnostic dialogs can scroll to and activate the close action");
+    }
+    diagnosticsFixtureSaving = true;
+    {
+        huxerui::testing::UiTest ui(kDiagnosticsApplication,
+            {.viewport = {390.0F, 800.0F}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        check(!ui.Find(UiSelector::Text("Saving…")).One().enabled,
+              "in-flight diagnostic export shows saving state and prevents duplicate saves");
+    }
+    diagnosticsFixtureDark = diagnosticsFixtureSaving = false;
+    diagnosticsFixtureReport = "redacted-report";
 }
 float colorDistance(huxerui::Color a, huxerui::Color b) {
     return std::abs(a.red - b.red) + std::abs(a.green - b.green) + std::abs(a.blue - b.blue);
@@ -827,23 +937,43 @@ huxerui::View ThemeSwitchRoot() {
         auto dark = huxerui::UseState(false);
         auto spec = huxerui::MaterialLightThemeSpec();
         spec.colors = dark.Get() ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
-        return huxerui::Theme(huxerui::MaterialThemeDefinition(spec), huxerui::Column{
+        return huxerui::Theme(huxerui::MaterialThemeDefinition(spec), huxerui::Scope([dark] {
+          const auto& theme = huxerui::UseTheme();
+          return clashflux::ui::DesktopTitleBarBody(huxerui::Column{
             huxerui::Button("Toggle theme").OnClick([dark] { dark = !dark.Get(); }),
             clashflux::ui::EmptyState("Theme body", huxerui::ImageResource{"app", "images/request"}),
-        }.With(huxerui::Grow(1.0F)));
+          }.With(huxerui::Grow(1.0F)), theme);
+        }));
     });
 }
 const huxerui::Application kThemeSwitchApplication{ThemeSwitchRoot, {.show_debug_overlay = false}};
+float titleShadowOpacity(huxerui::testing::UiTest& ui) {
+    const auto snapshot = ui.CaptureSnapshot().ToString();
+    const std::regex shadow{
+        R"(shadow\s+\{\s+bounds\s+\{\s+x=0\.000000\s+y=-40\.000000\s+width=[\d.]+\s+height=40\.000000\s+\}\s+color\s+\{[^}]*alpha=([\d.]+))"};
+    std::smatch match;
+    check(std::regex_search(snapshot, match, shadow), "标题栏实际绘制原生投影");
+    return match.empty() ? -1.0F : std::stof(match[1]);
+}
 void testThemeSwitch() {
     huxerui::testing::UiTest ui(kThemeSwitchApplication, {
         .viewport = {400.0F, 700.0F}, .resource_provider = AppResources()});
     ui.PumpAndSettle();
+    check(std::abs(titleShadowOpacity(ui) - 0.06F) < 0.001F,
+          "浅色标题栏使用轻柔投影");
+    const auto edge = ui.Find(UiSelector::Key("desktop-title-bar-shadow")).One().bounds;
+    check(std::abs(edge.width - 400.0F) < 0.5F && std::abs(edge.height - 5.0F) < 0.5F,
+          "投影覆盖内容宽度且不占用页面布局高度");
     check(colorDistance(paintedTextColor(ui, "Theme body", "content"), clashflux::ui::FluxLightColors().on_surface_variant) < 0.001F,
           "通用组件使用浅色主题变量");
     ui.Find(UiSelector::Text("Toggle theme")).Tap(); ui.PumpAndSettle();
+    check(std::abs(titleShadowOpacity(ui) - 0.035F) < 0.001F,
+          "深色主题立即降低投影强度，覆盖层不阻挡按钮点击");
     check(colorDistance(paintedTextColor(ui, "Theme body", "content"), clashflux::ui::FluxDarkColors().on_surface_variant) < 0.001F,
           "一次点击切为深色，已挂载组件绘制色同步切换");
     ui.Find(UiSelector::Text("Toggle theme")).Tap(); ui.PumpAndSettle();
+    check(std::abs(titleShadowOpacity(ui) - 0.06F) < 0.001F,
+          "恢复浅色后投影无旧主题残留");
     check(colorDistance(paintedTextColor(ui, "Theme body", "content"), clashflux::ui::FluxLightColors().on_surface_variant) < 0.001F,
           "再次点击恢复浅色主题，无旧颜色残留");
 }
@@ -1152,8 +1282,8 @@ void testGroupDrawers() {
     ui.PumpAndSettle();
     const auto side = ui.Find(UiSelector::Key("group-picker-side")).One().bounds;
     check(std::abs(side.x - 640.0F) < 0.5F && std::abs(side.width - 360.0F) < 0.5F &&
-          std::abs(side.y - 41.0F) < 0.5F && std::abs(side.height - 659.0F) < 0.5F,
-          "宽屏抽屉贴右侧，仅占标题栏分割线以下的内容区域且宽度 360pt");
+          std::abs(side.y - 40.5F) < 0.5F && std::abs(side.height - 659.5F) < 0.5F,
+          "宽屏抽屉贴右侧，仅占标题栏下沿以下的内容区域且宽度 360pt");
     check(!ui.Find(UiSelector::Key("group-picker-bottom")).Exists(), "宽屏不显示底部抽屉");
     ui.Find(UiSelector::Text("TITLE-0")).Tap(); ui.PumpAndSettle();
     check(ui.Find(UiSelector::Text("TITLE-1")).Exists() &&
@@ -2320,6 +2450,7 @@ int main() {
     testInboundSettings();
     testConnectionList();
     testDiagnosticsContent();
+    testDiagnosticsThemeAndLayout();
     testPptpProgressResources();
     testVpnPublication();
     testCustomThemeColors();

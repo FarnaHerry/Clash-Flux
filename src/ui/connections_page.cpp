@@ -647,7 +647,7 @@ namespace {
 
 // ---- 桌面宽屏连接详情侧抽屉 -------------------------------------------------
 // 与代理分组抽屉同一套层机制：透明点击收起区（不叠加遮罩色）、面板右滑入场、
-// Esc/系统返回关闭；顶部从桌面标题栏分割线下方开始，标题栏不被抽屉覆盖。
+// Esc/系统返回关闭；顶部从桌面标题栏下沿开始，标题栏不被抽屉覆盖。
 
 class ConnectionDetailDrawerLayout final
     : public huxerui::Layout<ConnectionDetailDrawerLayout> {
@@ -726,6 +726,7 @@ void ShowConnectionDetailDrawer(huxerui::LayerController layers,
                       huxerui::Spacing(theme.spacing.medium),
                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
                       huxerui::Background(theme.colors.surface_container),
+                      ResolveFluxShadows(theme).side_drawer,
                       huxerui::Enabled(!closing.Get()), huxerui::Indication{})
                 .OnClick([] {})
                 .With(huxerui::Offset(huxerui::AnimateTo(
@@ -733,12 +734,13 @@ void ShowConnectionDetailDrawer(huxerui::LayerController layers,
                     huxerui::TweenSpec{.duration = duration,
                                        .easing = huxerui::Easing::EaseOut})))
                 .Key("connection-detail-sheet");
-            return ConnectionDetailDrawerLayout{
+            return huxerui::Column{ConnectionDetailDrawerLayout{
                 huxerui::Row{}.With(huxerui::Indication{})
                     .OnClick(close).Key("connection-detail-scrim"),
                 std::move(panel),
-            }.With(huxerui::Padding(huxerui::EdgeInsets{.top = topInset}),
-                   huxerui::ClipChildren());
+            }.With(huxerui::Grow(1.0F), huxerui::ClipChildren())}
+                .With(huxerui::Padding(huxerui::EdgeInsets{.top = topInset}),
+                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
         });
     });
 }

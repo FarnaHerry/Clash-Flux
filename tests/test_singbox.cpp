@@ -2977,8 +2977,15 @@ rules:
         const auto firstEpoch=running.runtimeEpoch;
         singbox::NativeConnection pptp;pptp.id="health-pptp";pptp.connected=true;
         pptp.kind=vpn::ConnectionKind::Pptp;pptp.interfaceName="health-pptp0";pptp.transportAddress="203.0.113.10";
+#if !((defined(_WIN32) || defined(__linux__)) && !defined(__ANDROID__))
+        // The production compiler deliberately rejects a connected native PPTP
+        // session alongside TUN on platforms without its route compensation.
+        pptp.connected=false;
+#endif
         apply(running.tunEnabled,{pptp}); // connect
+#if (defined(_WIN32) || defined(__linux__)) && !defined(__ANDROID__)
         apply(running.tunEnabled,{pptp}); // unchanged/unknown session remains retained
+#endif
         apply(running.tunEnabled,{}); // disconnect
         apply(running.tunEnabled,{}); // profile/rules refresh
         const auto accepted=running;
