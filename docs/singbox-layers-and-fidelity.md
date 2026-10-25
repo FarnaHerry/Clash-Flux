@@ -24,8 +24,10 @@
   找到出处；不要靠「看起来像」猜字段。
 - 版本固定：桌面二进制与 Android libbox 必须是同一版本、同一源码 revision（当前 1.14.3）；平台资产分别校验 SHA256；升级
   时按上游逐项复核，而不是就地改内核行为。
-- 控制面走内核自带的 `clash_api`（sing-box 官方提供的兼容层，不是本项目的发明）；内核
-  没有的概念（endpoint、rule_set、selector/urltest 语义）不在这一层做兼容包装。
+- 启动与实例身份使用内核原生 `StartedService` 的鉴权 gRPC-Web；诊断分别记录原生接口、
+  `clash_api`、统计流和指定业务目标的结果。`clash_api` 保留现有 REST/统计通道，
+  未迁移的操作不宣称已迁移。原生 API 没有任意增删出站的无损配置补丁接口，
+  完整配置仍需预备后交接；细节见 [PPTP 连接交接](native-pptp-handoff.md)。
 
 ### L2 翻译层（处理 Clash 生态）
 

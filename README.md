@@ -78,11 +78,16 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 - Windows 原生服务：SCM LocalSystem 服务托管 sing-box、TUN 与 PPTP，应用保持普通
   用户权限；设置中安装/更新服务时授权一次。控制使用受限命名管道，服务不打开用户
   数据库；GUI 运行中安装或重启服务后会重新检测 PPTP 能力，详见 [Windows 服务](docs/windows-service.md)。
+  新服务支持保留主 TUN 拨号、候选配置预备后交接；完整配置仍需重启一次，
+  实现与验收范围见 [PPTP 连接交接](docs/native-pptp-handoff.md)。
 - 完整 CLI：同一二进制带子命令（core / mode / tun / proxy / profile / service），
   无参数启动进入 GUI
 - 浅色/深色/自动主题模式与可自定义主题色、岛屿风界面、自定义窗口标题栏、系统托盘（桌面启用托盘、打开“启动时隐藏到托盘”且系统托盘可用时启动直接驻留托盘，点击托盘打开主窗口；关闭托盘时该选项隐藏并保留历史值；托盘不可用时直接打开窗口；Windows 托盘菜单跟随应用主题；启用托盘后关闭窗口隐藏到托盘，停用后询问是否退出）、
   窄窗口响应式布局。最小化使用系统原生行为，Windows 保留任务栏入口，轻量托盘模式也不改变该行为
 - 首页流量统计卡片用圆环图展示累计上传/下载占比（环心写占比最大一方的百分比），并同时显示各自流量总量与百分比
+- 运行诊断分别检查原生控制、兼容接口、统计流和用户指定目标；统计故障按预算独立修复。
+  PPTP 状态暂时无法确认时保留连接，详见 [运行健康复核](docs/runtime-health-review.md)。
+  v3 增加独立系统查询、本地有界现场记录及保存报告，使用和限制见 [系统证据与现场记录](docs/runtime-health-evidence.md)。
 - Android：sing-box libbox（与桌面内核同版本）运行在独立 `:background` 进程，
   由 VpnService 创建 TUN；主进程独占配置数据库，使用 Binder 控制运行时并用原子快照共享线路和连接。
   前台服务在系统回收后按持久化模式恢复核心或 TUN，网络切换/设备唤醒会更新默认接口并重拨旧连接；
@@ -169,8 +174,8 @@ CMake 明确报告未注册。验证范围与证据见[分层完成度记录](do
 
 桌面 CI 配置 `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`，缺失或禁用必跑回归会让
 配置失败；Python、固定打包内核和可执行 OpenSSL CLI 均为必要前提，下载测试
-也必须执行默认证书拒绝场景。通用桌面必跑 17 项（含 CPS），Windows 另加原生服务回归（18 项）；只有已记录的 MSVC C4737
-缺陷允许跳过直接 ORM 测试（Windows 为 17 项），订阅持久化测试始终必跑。本地可使用同一门禁：
+也必须执行默认证书拒绝场景。通用桌面必跑 21 项（含 CPS、运行健康、原生控制、界面资源、系统证据），Windows 另加服务、物理 DNS 和隔离 WFP 回归（24 项）；只有已记录的 MSVC C4737
+缺陷允许跳过直接 ORM 测试（Windows 为 23 项），订阅持久化测试始终必跑。Windows 服务与 WFP 测试需要管理员环境。本地可使用同一门禁：
 
 ```bash
 cmake -S . -B build -DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON

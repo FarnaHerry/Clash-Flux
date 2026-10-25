@@ -123,11 +123,19 @@ application-managed settings before being passed to sing-box.
   named pipe. Installation/updates request UAC only for the service command.
   PPTP capability is refreshed after installation or restart while the GUI is running.
   See [Windows service](docs/windows-service.md).
+  The updated service keeps the main TUN alive while PPTP dials and prepares the
+  candidate before handoff. A full configuration still needs one restart; see
+  [PPTP handoff and validation scope](docs/native-pptp-handoff.md).
 - A full CLI in the same executable: `core`, `mode`, `tun`, `proxy`, `profile` and
   `service` commands. On desktop, launch without arguments to start in the system
   tray when the tray and “Start minimized to tray” are enabled and the tray is available;
   activate the tray icon to open the main window. The startup option is shown only
   while the tray is enabled, and its saved value is retained while the tray is disabled.
+- Runtime diagnostics distinguish native control, the compatibility API, telemetry and
+  an explicit target. Telemetry repair is bounded; unconfirmed PPTP status preserves
+  the session. See [runtime health review](docs/runtime-health-review.md).
+  Version 3 adds independent OS evidence, bounded local history and report saving;
+  see [evidence and incident records](docs/runtime-health-evidence.md) for scope and limits.
 - Light and dark themes with system theme detection, an island-style interface,
   custom window title bars, a system tray and responsive layouts for narrow windows.
   Windows tray menus follow the application theme. Desktop startup stays in the tray when the startup option is enabled and the system tray is available;
@@ -228,8 +236,8 @@ register that test. See [validation evidence](docs/l1-l2-l3-status.md).
 Desktop CI sets `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`: missing or disabled required
 tests fail configuration. Python, the pinned bundled core and a runnable OpenSSL
 CLI are required; the download regression must include default certificate rejection.
-There are 17 common desktop tests (including CPS), plus the native service regression on Windows (18).
-Only the documented MSVC C4737 defect permits skipping the direct ORM test (17 on Windows); subscription persistence remains mandatory.
+There are 21 common desktop tests (including CPS, runtime health, native control UI resources and system evidence), plus service, physical DNS and isolated WFP regressions on Windows (24).
+Only the documented MSVC C4737 defect permits skipping the direct ORM test (23 on Windows); subscription persistence remains mandatory. Windows service and WFP tests require an elevated test environment.
 Use the same gate locally:
 
 ```bash

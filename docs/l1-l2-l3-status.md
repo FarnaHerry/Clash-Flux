@@ -1,5 +1,32 @@
 # L1 / L2 / L3 开发完成度复核
 
+2026-10-25 原生控制与运行健康联合补齐：基于 `1a1659b` 加未提交工作区，
+吸收 `d3a3813` 草稿中的原生 gRPC-Web 及 codec/固定内核回归；启动确认改用
+原生版本/实例身份，兼容接口与业务目标仍分别采证。PPTP IPC/RAS 状态未知
+保留会话，确认断开才自动清理；修复退出检查发布竞态、通知消费者/复制异常
+卡住推送、并发观察者 ID 与通道 Reset 旧代次复用。Android 新代次清除旧统计能力。
+桌面完整构建与 HuxerUI codegen 通过；20 项普通 CTest 和 2 项管理员服务/WFP
+回归通过，Java RuntimeHealth 编译/回归通过。新增原生控制与 Windows DNS/WFP
+进入必跑门禁（本机 MSVC 已记录 ORM 豁免后 22 项）。
+已正常退出旧版、更新受保护服务并运行新构建，完成“双辽”真实拨号与三分钟稳定观察：
+340 次原生实例采样无缺失且实例不变，12 次经实际 mixed 入站的目标请求均为 HTTP 204。
+首次拨号 6908 ms、旧内核运行期间准备 1840 ms、交接到控制器就绪 3019 ms。
+断开验收暴露订阅卡“断开中…”缺少资源而退出，现已补齐中英文/默认资源，
+增加中英文及默认语言回退的真实资源包挂载回归。内网目标未提供，不能据此确认内网可达。
+完整边界与实机最终结果见 [运行健康实施复核](runtime-health-review.md)。
+
+2026-10-24 Windows PPTP 工作区与远端运行健康功能合并：快进至 `1a1659b`，
+保留本地未提交的 PPTP 拨号期间主 TUN、物理 DNS 原生出口和配置预备/交接实现。
+`resumeNativeRouting` 的交叉修改同时保留健康暂停与拨号前实际状态恢复；
+远端 runtime epoch、状态证据、流修复和诊断 UI 均保留。
+修复新增健康目标在 Windows 下的头文件 `max` 宏污染。
+本地 CMake 4.4.2/MSVC Release 全量构建通过，HuxerUI codegen 通过；
+`ctest --test-dir build -E '^windows_service$' --parallel 4 --output-on-failure --no-tests=error`
+18/18 通过（含 runtime_health、windows_physical_dns、DNS TLS、persistence、CPS），
+管理员独立执行 windows_service 1/1 与 `test_windows_physical_dns --require-wfp` 通过。
+未把构建/隔离 WFP 回归当作“双辽”实机拨号验收；完整配置仍需一次主内核交接。
+实现、限制与验证入口见 [PPTP 连接交接](native-pptp-handoff.md)。
+
 2026-10-24：移除旧 OpenVPN 独立连接兼容（下文较早记录描述当时的行为）。
 OpenVPN 只保留普通 remote/local 来源；移除独立启停、批量勾选、旧编辑器和会话快照。
 用户确认没有需要转换的旧独立配置，不新增迁移或删除用户数据；独立拨号只保留 PPTP。

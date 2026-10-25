@@ -39,8 +39,8 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
 
 桌面 CI 必须配置 `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`，按
 `cmake/ProjectTestGate.cmake` 核对必跑测试已注册且未禁用，CTest 使用
-`--no-tests=error`。通用桌面必跑 18 项（含 cps_dependencies、runtime_health），Windows 另加 windows_service（19 项）；
-只有已记录的 MSVC C4737 编译器缺陷允许跳过直接 ORM 测试（Windows 为 18 项），persistence 必跑。Python、固定打包内核、
+`--no-tests=error`。通用桌面必跑 21 项（含 cps_dependencies、runtime_health、native_control_runtime、ui_resources、runtime_evidence），Windows 另加 windows_service、windows_physical_dns 和 windows_physical_dns_wfp（24 项）；
+只有已记录的 MSVC C4737 编译器缺陷允许跳过直接 ORM 测试（Windows 为 23 项），persistence 必跑。Windows 服务与 WFP 回归需要管理员环境。Python、固定打包内核、
 可执行的 OpenSSL CLI 缺失必须失败；下载回归传入明确的 OpenSSL 路径及
 `--require-tls`，不能用跳过证书拒绝场景换取发布通过。手机构建不启用此桌面门禁。
 
@@ -214,7 +214,7 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   reparse point；先暂存，再由受保护旧服务副本的 LocalSystem 助手替换并重启 SCM，
   保留原安装 SID。旧版无 UPGRADE 和可写目录便携版保留手动授权入口，不能为了免
   UAC 允许普通用户替换 SYSTEM 代码。macOS 无独立服务，手机服务随应用包更新。
-- 原生 VPN 的服务能力由 `VpnStore` 的任务线程监视并随 `VpnSnapshot` 发布，不能永久冻结启动时的 PPTP 可用状态。能力刷新用 `VpnManager::setEngineAvailable`，不得用会断开现有连接的 `setAdapters`；订阅卡片只读应用级 `VpnModel`，不得在渲染时探测服务。显式连接先检查服务与能力，再停止主 TUN；具体失败原因优先于通用不可用提示。Windows 系统拨号同一时间仅支持一条 PPTP（`vpn::PptpSingleSession()`）：存储层在停止主内核前拒绝第二条拨号并指明占用连接，UI 在卡片点击打开时给出同样原因，PPTP 卡片展示该平台边界；不得为绕过它把 PPTP 改成静默自动断开或假装支持并发。
+- 原生 VPN 的服务能力由 `VpnStore` 的任务线程监视并随 `VpnSnapshot` 发布，不能永久冻结启动时的 PPTP 可用状态。能力刷新用 `VpnManager::setEngineAvailable`，不得用会断开现有连接的 `setAdapters`；订阅卡片只读应用级 `VpnModel`，不得在渲染时探测服务。显式连接先检查服务与能力；Windows 活动 TUN 下要求服务支持 `PPTP_LIVE_DIAL`，保留主 TUN 拨号并在候选准备完成后交接，旧服务拒绝拨号并提示更新。具体失败原因优先于通用不可用提示。Windows 系统拨号同一时间仅支持一条 PPTP（`vpn::PptpSingleSession()`）：存储层在扰动主内核前拒绝第二条拨号并指明占用连接，UI 在卡片点击打开时给出同样原因，PPTP 卡片展示该平台边界；不得为绕过它把 PPTP 改成静默自动断开或假装支持并发。详见 `docs/native-pptp-handoff.md`。
 - 新 OpenVPN `.ovpn` 通过普通远程/本地入口按内容识别，编译成同一 sing-box 的 endpoint；不恢复独立新建类型，也不再提供配置文本粘贴入口（粘贴内容保存为文件后走本地导入，扫码文本仍按内容识别）。主来源可提供默认出口，桌面次来源只在启用规则引用时加载，手机保持单活动普通来源。已移除旧 `type=openvpn` 独立连接兼容，不恢复其专用编辑器、批量开关或会话状态；原生独立拨号只保留 PPTP。用户已确认无须迁移旧独立配置，不新增启动迁移或清理数据库。外部文件、脚本及尚未转换的路由/DNS 指令必须拒绝并进入来源保真度，不能猜测或静默省略。详见 `docs/openvpn-import.md`。
 - Windows CI 使用 runner 预装的 OpenSSL（`Program Files/OpenSSL`），构建前检查
   可执行文件和开发头文件；不要在发布门禁重新调用 Chocolatey 安装 OpenSSL。
@@ -476,7 +476,7 @@ CoreSnapshot.planRevision 表示成功应用后的运行序号，预览目录不
   AAR 必须带构建脚本生成的 version/revision/ABI/SHA256
   元数据，缺失、版本不符或校验失败时重新构建，不得只凭旧 AAR 文件存在就继续打包。
   不 fork、不臆造字段（sing-box 对未知字段直接拒绝启动），能力一律以上游文档/源码为准；
-  控制面走内核自带的 `clash_api`，内核没有的概念（endpoint、rule_set、selector/urltest 语义）不在这一层做兼容包装。
+  启动与实例身份通过原生 `StartedService` 的鉴权 gRPC-Web 确认，健康诊断独立记录原生控制面与兼容接口；`clash_api` 保留现有 REST/统计流。优先使用内核原生能力，未迁移的操作不宣称已迁移；内核没有的概念不在这一层虚构。
 - **L2 翻译层（处理 Clash 生态）**：Clash YAML、sing-box 原生 JSON、原生连接（PPTP /
   OpenVPN）都经 `clashflux.singbox` 编译。每条映射（协议 / 组 / 规则 / 字段）必须归入
   **exact / approx / unsupported** 之一并进入保真度账本，**禁止静默丢弃**，也禁止为
