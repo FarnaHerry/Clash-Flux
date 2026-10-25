@@ -3,6 +3,10 @@
 // 原生独立连接只保留 PPTP 系统拨号。OpenVPN 是普通订阅内容格式，
 // 由 sing-box 编译和主内核生命周期统一管理，不在本 store 创建独立会话。
 module;
+// clang-21 模块可见性 workaround（llvm#149404）：本单元 GMF 引入头文件后，
+// 经 nlohmann.json 模块会失去 std::format 的 char 重载只剩 wchar 重载；
+// 按上游 workaround 文本包含 <format> 恢复两个重载的可见性。
+#include <format>
 #include "../service_protocol.h"
 #include "../native_route_transaction.h"
 export module clashflux.store.vpn;
@@ -352,8 +356,7 @@ public:
         const auto dialBegan = std::chrono::steady_clock::now();
         bool connected = manager_.connect(id, error);
         stream::logApplication("info", std::format("PPTP 拨号{}，用时 {} ms",
-            // 窄字面量实参会触发 clang-21 模块可见性问题（llvm#149404）；std::string 实参稳定。
-            std::string(connected ? "成功" : "失败"),
+            connected ? "成功" : "失败",
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - dialBegan).count()));
         bool routingApplied = connected && publishRouting(error);
         if (connected && !routingApplied) {
