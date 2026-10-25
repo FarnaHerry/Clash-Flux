@@ -62,6 +62,9 @@ export module clashflux.service;
 import std;
 import clashflux.config;
 import clashflux.pptp;
+#ifdef _WIN32
+import nlohmann.json;
+#endif
 #if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
 import clashflux.vpn_compensation;
 #endif

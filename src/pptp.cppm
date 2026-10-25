@@ -193,6 +193,9 @@ export bool PptpSessionAlive(std::string_view connectionId);
 // 直接调用 pppd/ip；它通过 service 模块的 IPC 客户端调用同一 daemon。
 export bool PrivilegedPptpAvailable();
 export bool PrivilegedPptpSessionAlive(std::string_view connectionId);
+#ifdef _WIN32
+export std::optional<bool> PrivilegedPptpSessionEvidence(std::string_view connectionId);
+#endif
 export bool PrivilegedPptpConnect(std::string_view connectionId,
                                   std::string_view nativeConfig,
                                   std::span<const std::string> routes,

@@ -8,17 +8,20 @@
     // ---- 内核控制（阻塞：UI 必须 RunOnTaskThread）----
 
 #ifdef _WIN32
-    // Native dialing must run before TUN captures are installed: an existing
-    // TUN /32 could otherwise beat the new server's physical /32 route.
+    // Dialing and the prepared handoff share one application lifecycle lock.
+    // The SCM service verifies that transport remains on the physical route.
     inline std::unique_lock<std::recursive_mutex> lockNativeLifecycle() {
         return std::unique_lock(lifecycleMutex_);
     }
-    inline bool resumeNativeRouting(std::string& error) {
+    inline bool runningPlanUsesNative(std::string_view id) const {
+        return lastAppliedOptions_ && std::ranges::any_of(lastAppliedOptions_->nativeConnections,
+            [&](const auto& connection) { return connection.id == id && connection.connected; });
+    }
+    inline bool resumeNativeRouting(const CoreSnapshot& before, bool systemProxyEnabled,
+                                    std::string& error) {
         std::lock_guard operationLock(lifecycleMutex_);
         auto healthPause = streams_.pauseHealth();
-        const bool tunEnabled = snapshot().tunEnabled;
-        const bool systemProxyEnabled = systemProxyOurs();
-        startCore(lastProfileYaml_, false, tunEnabled,
+        startCore(lastProfileYaml_, false, before.tunEnabled,
                   systemProxyEnabled ? std::optional<bool>(true)
                                      : std::nullopt);
         if (snapshot().state == core::CoreState::Running) return true;
@@ -49,17 +52,17 @@
         const bool running = snapshot().state == core::CoreState::Running;
         try {
             const bool tunEnabled = snapshot().tunEnabled;
-            const bool systemProxyEnabled = systemProxyOurs();
             const auto content = currentMainContent();
-            auto options = routingOptions(content, tunEnabled);
-            singbox::CompileResult compiled;
-            if (!prepareHttpRuleProviders(options, compiled, error)) return false;
-            if (!compiled.error.empty() || compiled.json.empty()) {
-                error = "路由计划编译失败：" + compiled.error;
-                return false;
+            if (!running) {
+                auto options = routingOptions(content, tunEnabled);
+                singbox::CompileResult compiled;
+                if (!prepareHttpRuleProviders(options, compiled, error)) return false;
+                if (compiled.json.empty() || !compiled.error.empty()) {
+                    error = "路由计划编译失败：" + compiled.error; return false;
+                }
+                return true;
             }
-            if (!running) return true;
-            if (restartCore(content)) return true;
+            if (restartCore(content, true)) return true;
             error = snapshot().lastError;
             if (error.empty()) error = "应用路由计划后主 VPN 未能启动";
             // Never leave the old core using an interface that is being

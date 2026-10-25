@@ -84,7 +84,9 @@ bool ReplaceWindowsNativeRoutes(std::uint64_t interfaceLuid,
 RouteLease PrepareWindowsTun(std::string_view tunInterface,
                             std::span<const std::string> nativeInterfaces,
                             std::span<const std::string> exclusions,
-                            std::string& error);
+                            std::string& error,
+                            std::span<const std::string> prospectiveRoutes = {});
+bool WindowsTunActive(std::string_view tunInterface);
 #endif
 
 std::optional<std::string> NormalizeIpv4Cidr(std::string_view value,

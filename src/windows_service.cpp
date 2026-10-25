@@ -559,7 +559,7 @@ struct Server {
                 else if (command == "VERSION") reply = "clash-flux-service 1 app " + version;
                 else if (command == "STATUS") reply = coreStatus();
                 else if (queries) {
-                    if (hooks.command && (command == "PPTP_AVAILABLE" || command.starts_with("PPTP_STATUS ")))
+                    if (hooks.command && (command == "PPTP_AVAILABLE" || command == "PPTP_LIVE_DIAL" || command.starts_with("PPTP_STATUS ")))
                         reply = hooks.command(command);
                     else reply = "ERR Read-only query pipe";
                 }
@@ -634,6 +634,7 @@ void WINAPI serviceMain(DWORD, wchar_t**) {
 } // namespace
 
 std::filesystem::path storageDirectory() { return directory({}); }
+bool ownsRunningCore() { return activeServer && activeServer->running(); }
 
 std::string currentUserSid() {
     HANDLE raw = nullptr;
@@ -647,7 +648,7 @@ std::optional<std::string> request(std::string_view command, std::string& error,
     if (command.empty() || command.size() > kMaxCommand || command.find_first_of("\r\n") != std::string_view::npos || command.find('\0') != std::string_view::npos) {
         error = "Invalid service command"; return {};
     }
-    const bool queries = command == "VERSION" || command == "STATUS" || command == "PPTP_AVAILABLE" || command.starts_with("PPTP_STATUS ");
+    const bool queries = command == "VERSION" || command == "STATUS" || command == "PPTP_AVAILABLE" || command == "PPTP_LIVE_DIAL" || command.starts_with("PPTP_STATUS ");
     const auto pipeName = options.pipe + (queries ? L".Query" : L"");
     const auto deadline = GetTickCount64() + timeoutMs;
     DWORD lastPipeError = ERROR_FILE_NOT_FOUND;

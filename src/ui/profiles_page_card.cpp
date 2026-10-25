@@ -13,6 +13,7 @@
 #include "ui.h"
 #include "action_menu.h"
 #include "task_bridge.h"
+#include "pptp_connection_progress.h"
 
 import clashflux.core;
 import clashflux.db;
@@ -592,7 +593,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         actionGlyph = std::move(actionGlyph).With(huxerui::Frame{.width = 20.0F, .height = 20.0F});
         trafficSection = huxerui::Row {
           huxerui::Text(connectionPending
-                            ? openingConnection ? Localized("连接中…") : Localized("断开中…")
+                            ? PptpConnectionProgress(openingConnection)
                             : pptpStateText(pptpState))
               .Style(huxerui::TextStyle{
                   huxerui::Font::System(font_size::kCaption),

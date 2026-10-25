@@ -337,6 +337,12 @@ export bool pptpSessionAlive(std::string_view connectionId) {
     const auto reply = request(std::format("PPTP_STATUS {}", hexEncode(connectionId)), err);
     return reply && *reply == "CONNECTED";
 }
+export std::optional<bool> pptpSessionEvidence(std::string_view connectionId) {
+    if (connectionId.empty() || connectionId.size() > 128) return {};
+    std::string error;
+    const auto reply = request(std::format("PPTP_STATUS {}", hexEncode(connectionId)), error);
+    return reply ? clashflux::service_protocol::pptpEvidence(*reply) : std::nullopt;
+}
 
 export bool startPptp(std::string_view connectionId, std::string_view nativeConfig,
                       std::span<const std::string> routes,

@@ -7,6 +7,41 @@ vpn::compensation::RouteLease& serviceTunRoutes() {
     static vpn::compensation::RouteLease lease;
     return lease;
 }
+std::map<std::string, PptpSessionInfo>& serviceDialSessions() {
+    static std::map<std::string, PptpSessionInfo> sessions;
+    return sessions;
+}
+bool captureDialRoutes(const PptpSessionInfo& next,
+                       std::span<const std::string> prospective, std::string& error) {
+    // Never act on a stale runtime.json or on another process's TUN.
+    if (!native_service::ownsRunningCore()) return true;
+    try {
+        std::ifstream input(native_service::storageDirectory() / "runtime.json", std::ios::binary);
+        if (!input) { error = "无法读取所属内核的 TUN 配置"; return false; }
+        const auto config = nlohmann::json::parse(input);
+        if (!config.contains("inbounds")) return true;
+        for (const auto& inbound : config["inbounds"]) {
+            if (inbound.value("type", "") != "tun") continue;
+            const auto name = inbound.value("interface_name", "ClashFlux");
+            if (!vpn::compensation::WindowsTunActive(name)) {
+                error = "所属主 TUN 路由尚未就绪，保留原内核并拒绝拨号"; return false;
+            }
+            auto exclusions = inbound.value("route_exclude_address", std::vector<std::string>{});
+            std::vector<std::string> interfaces{next.interfaceName};
+            for (const auto& [id, session] : serviceDialSessions()) {
+                if (session.interfaceName != next.interfaceName) interfaces.push_back(session.interfaceName);
+                if (!session.transportAddress.empty()) exclusions.push_back(session.transportAddress + "/32");
+            }
+            if (!next.transportAddress.empty()) exclusions.push_back(next.transportAddress + "/32");
+            auto lease = vpn::compensation::PrepareWindowsTun(name, interfaces, exclusions, error, prospective);
+            if (!lease) return false;
+            serviceTunRoutes() = std::move(lease);
+        }
+        return true;
+    } catch (const std::exception& e) {
+        error = std::string("准备拨号期间的 TUN 路由失败：") + e.what(); return false;
+    }
+}
 bool windowsOk(const std::string& command, std::string& error, unsigned timeout = 10000) {
     const auto reply = native_service::request(command, error, timeout);
     if (!reply) return false;
@@ -18,6 +53,7 @@ std::string privilegedCommand(std::string_view command) {
     const auto fields = protocol::words(command);
     if (fields.empty()) return "ERR Invalid command";
     if (command == "PPTP_AVAILABLE") return pptp::PrivilegedPptpAvailable() ? "YES" : "NO";
+    if (command == "PPTP_LIVE_DIAL") return "SUPPORTED 1";
     if (command == "TUN_RESET") { serviceTunRoutes().reset(); return "OK"; }
     if (fields[0] == "TUN_PREPARE" && fields.size() >= 3) {
         const auto tun = protocol::unhex(fields[1]);
@@ -41,12 +77,15 @@ std::string privilegedCommand(std::string_view command) {
     if (fields.size() < 2) return "ERR Unknown command";
     const auto id = protocol::unhex(fields[1]);
     if (!id || id->empty() || id->size() > 128) return "ERR Invalid PPTP ID";
-    if (fields[0] == "PPTP_STATUS" && fields.size() == 2)
-        return pptp::PrivilegedPptpSessionAlive(*id) ? "CONNECTED" : "DISCONNECTED";
+    if (fields[0] == "PPTP_STATUS" && fields.size() == 2) {
+        const auto alive = pptp::PrivilegedPptpSessionEvidence(*id);
+        return !alive ? "UNKNOWN" : *alive ? "CONNECTED" : "DISCONNECTED";
+    }
     if (fields[0] == "PPTP_STOP" && fields.size() == 2) {
         std::string error;
-        return pptp::PrivilegedPptpDisconnectChecked(*id, error)
-            ? "OK" : "ERR " + error;
+        if (!pptp::PrivilegedPptpDisconnectChecked(*id, error)) return "ERR " + error;
+        serviceDialSessions().erase(*id);
+        return "OK";
     }
     const bool start = fields[0] == "PPTP_START";
     if ((!start && fields[0] != "PPTP_ROUTES") || (start && fields.size() < 3))
@@ -58,12 +97,25 @@ std::string privilegedCommand(std::string_view command) {
         routes.push_back(std::move(*route));
     }
     std::string error;
-    if (!start) return pptp::PrivilegedPptpApplyRoutes(*id, routes, error) ? "OK" : "ERR " + error;
+    if (!start) {
+        const auto session = serviceDialSessions().find(*id);
+        if (session == serviceDialSessions().end()) return "ERR PPTP session is not owned by this service";
+        if (!captureDialRoutes(session->second, routes, error)) return "ERR " + error;
+        return pptp::PrivilegedPptpApplyRoutes(*id, routes, error) ? "OK" : "ERR " + error;
+    }
     const auto config = protocol::unhex(fields[2]);
     if (!config || config->empty()) return "ERR Invalid PPTP config";
     std::string interfaceName, gateway, transportAddress;
-    if (!pptp::PrivilegedPptpConnect(*id, *config, routes, interfaceName, gateway, error, &transportAddress))
+    if (!pptp::PrivilegedPptpConnect(*id, *config, {}, interfaceName, gateway, error, &transportAddress))
         return "ERR " + error;
+    const PptpSessionInfo session{interfaceName, gateway, transportAddress};
+    if (!captureDialRoutes(session, routes, error) ||
+        (!routes.empty() && !pptp::PrivilegedPptpApplyRoutes(*id, routes, error))) {
+        std::string ignored;
+        pptp::PrivilegedPptpDisconnectChecked(*id, ignored);
+        return "ERR " + error;
+    }
+    serviceDialSessions()[*id] = session;
     return "OK " + protocol::hex(interfaceName) + " " + protocol::hex(gateway) + " " + protocol::hex(transportAddress);
 }
 } // namespace
@@ -107,7 +159,7 @@ export int run() {
     return native_service::run(CLASHFLUX_VERSION, {
         .command = privilegedCommand,
         .resetTun = [] { serviceTunRoutes().reset(); },
-        .shutdown = [] { pptp::PrivilegedPptpShutdown(); },
+        .shutdown = [] { pptp::PrivilegedPptpShutdown(); serviceDialSessions().clear(); },
     });
 }
 export bool startCore(const std::filesystem::path& config, std::string& error) {
@@ -138,10 +190,21 @@ export bool pptpAvailable() {
     const auto reply = native_service::request("PPTP_AVAILABLE", error);
     return reply && *reply == "YES";
 }
+export bool supportsPptpLiveDial() {
+    std::string error;
+    const auto reply = native_service::request("PPTP_LIVE_DIAL", error);
+    return reply && *reply == "SUPPORTED 1";
+}
 export bool pptpSessionAlive(std::string_view id) {
     std::string error;
     const auto reply = native_service::request("PPTP_STATUS " + protocol::hex(id), error);
     return reply && *reply == "CONNECTED";
+}
+export std::optional<bool> pptpSessionEvidence(std::string_view id) {
+    if (id.empty() || id.size() > 128) return {};
+    std::string error;
+    const auto reply = native_service::request("PPTP_STATUS " + protocol::hex(id), error);
+    return reply ? protocol::pptpEvidence(*reply) : std::nullopt;
 }
 export bool startPptp(std::string_view id, std::string_view config,
                       std::span<const std::string> routes, PptpSessionInfo& session,

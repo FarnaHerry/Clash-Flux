@@ -34,6 +34,7 @@
 #include "vpn_snapshot_model.h"
 #include "core_operation.h"
 #include "inbound_settings.h"
+#include "pptp_connection_progress.h"
 
 namespace {
 using huxerui::testing::UiSelector;
@@ -252,19 +253,47 @@ huxerui::View ConnectionListRoot() {
 }
 const huxerui::Application kConnectionListApplication{ConnectionListRoot};
 
-int diagnosticsStarts = 0, diagnosticsCopies = 0;
+int diagnosticsStarts = 0, diagnosticsCopies = 0, diagnosticsSaves = 0;
+[[huxerui::composable]] huxerui::View PptpProgressFixture() {
+    auto opening = huxerui::UseState(true);
+    return huxerui::Column{
+        huxerui::Button("TOGGLE-PPTP-ACTION").OnClick([opening] { opening = !opening.Get(); }),
+        huxerui::Text(clashflux::ui::PptpConnectionProgress(opening.Get())),
+        huxerui::Text(clashflux::ui::LocalizedFormat("已关闭 {} 个连接", 1)),
+    };
+}
+huxerui::View PptpProgressRoot() { return huxerui::FlatTheme{PptpProgressFixture()}; }
+const huxerui::Application kPptpProgressApplication{PptpProgressRoot};
+void testPptpProgressResources() {
+    for (auto locale : {"zh", "en", "fr"}) {
+        huxerui::testing::UiTest ui(kPptpProgressApplication, {.viewport = {390.0F, 700.0F},
+            .resources = {.locale = huxerui::Locale::FromLanguageTag(locale)}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        const bool zh = std::string_view(locale) == "zh";
+        check(ui.Find(UiSelector::Text(zh ? "已关闭 1 个连接" : "Closed 1 connections")).Exists(),
+              "PPTP 断开完成反馈从真实资源包解析和插值");
+        check(ui.Find(UiSelector::Text(zh ? "连接中…" : "Connecting…")).Exists(),
+              "PPTP 连接进度从真实资源包解析");
+        ui.Find(UiSelector::Text("TOGGLE-PPTP-ACTION")).Tap(); ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Text(zh ? "断开中…" : "Disconnecting…")).Exists(),
+              "PPTP 断开进度从真实资源包解析，默认语言回退不抛异常");
+        ui.Find(UiSelector::Text("TOGGLE-PPTP-ACTION")).Tap(); ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Text(zh ? "连接中…" : "Connecting…")).Exists(),
+              "PPTP 断开后可重新进入连接进度");
+    }
+}
 [[huxerui::composable]] huxerui::View DiagnosticsFixture() {
     auto target = huxerui::UseState(huxerui::TextEditingValue{});
     auto busy = huxerui::UseState(false);
     return clashflux::ui::RuntimeDiagnosticsContent(target, busy.Get(), true, "redacted-report",
         [busy] { ++diagnosticsStarts; busy = true; }, [busy] { busy = false; },
-        [] { ++diagnosticsCopies; }, [] {});
+        [] { ++diagnosticsCopies; }, [] {},[] { ++diagnosticsSaves; },true,false);
 }
 huxerui::View DiagnosticsFixtureRoot() { return huxerui::FlatTheme{DiagnosticsFixture()}; }
 const huxerui::Application kDiagnosticsApplication{DiagnosticsFixtureRoot};
 void testDiagnosticsContent() {
     for (auto locale : {"zh", "en", "fr"}) { // fr exercises default resource fallback
-        diagnosticsStarts = diagnosticsCopies = 0;
+        diagnosticsStarts = diagnosticsCopies = diagnosticsSaves = 0;
         huxerui::testing::UiTest ui(kDiagnosticsApplication, {.viewport = {390.0F, 800.0F},
             .resources = {.locale = huxerui::Locale::FromLanguageTag(locale)}, .resource_provider = AppResources()});
         ui.PumpAndSettle();
@@ -272,6 +301,8 @@ void testDiagnosticsContent() {
         check(ui.Find(UiSelector::Text(zh ? "运行诊断" : "Runtime diagnostics")).Exists(), "运行诊断标题及默认语言资源可实际挂载");
         ui.Find(UiSelector::Text(zh ? "复制脱敏报告" : "Copy redacted report")).Tap(); ui.PumpAndSettle();
         check(diagnosticsCopies == 1, "诊断报告复制回调可用");
+        ui.Find(UiSelector::Text(zh ? "保存脱敏报告" : "Save redacted report")).Tap();ui.PumpAndSettle();
+        check(diagnosticsSaves==1,"脱敏报告保存入口在中英文及默认回退资源中可用");
         ui.Find(UiSelector::Text(zh ? "开始诊断" : "Run diagnostics")).Tap(); ui.PumpAndSettle();
         check(diagnosticsStarts == 1, "开始诊断回调可用");
         check(ui.Find(UiSelector::Text(zh ? "正在收集诊断证据…" : "Collecting diagnostic evidence…")).Exists(), "诊断过程中加载资源安全并展示状态");
@@ -279,6 +310,8 @@ void testDiagnosticsContent() {
         check(!ui.Find(UiSelector::Text(zh ? "开始诊断" : "Run diagnostics")).One().enabled,
               "运行中禁用重复诊断");
         check(diagnosticsStarts == 1, "运行中不重复启动诊断");
+        check(!ui.Find(UiSelector::Text(zh ? "保存脱敏报告" : "Save redacted report")).One().enabled,
+              "采集过程中禁止保存未完成报告");
         ui.Find(UiSelector::Text(zh ? "取消" : "Cancel")).Tap(); ui.PumpAndSettle();
         check(ui.Find(UiSelector::Text("redacted-report")).Exists(), "取消动作后恢复报告与交互");
     }
@@ -2287,6 +2320,7 @@ int main() {
     testInboundSettings();
     testConnectionList();
     testDiagnosticsContent();
+    testPptpProgressResources();
     testVpnPublication();
     testCustomThemeColors();
     testThemeColorSurfaces();

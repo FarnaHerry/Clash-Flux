@@ -31,6 +31,7 @@ CLASHFLUX_SERVICE_EXPORT std::optional<bool> coreRunningEvidence() { return {}; 
 CLASHFLUX_SERVICE_EXPORT bool coreRunning() { return false; }
 CLASHFLUX_SERVICE_EXPORT bool pptpAvailable() { return false; }
 CLASHFLUX_SERVICE_EXPORT bool pptpSessionAlive(std::string_view) { return false; }
+CLASHFLUX_SERVICE_EXPORT std::optional<bool> pptpSessionEvidence(std::string_view) { return {}; }
 CLASHFLUX_SERVICE_EXPORT bool startPptp(std::string_view, std::string_view,
                       std::span<const std::string>, PptpSessionInfo&, std::string& err) {
     err = "PPTP root 服务仅支持 Linux";

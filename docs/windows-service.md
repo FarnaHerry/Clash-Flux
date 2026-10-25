@@ -6,6 +6,11 @@ Windows 数据面由原生 SCM 服务 `ClashFluxService` 托管，服务类型�
 与主 TUN 的路由补偿。服务不创建 HuxerUI Runtime，不打开配置数据库，也不访问
 订阅缓存。系统代理仍由 GUI 在当前用户会话内通过 WinINet 设置。
 
+PPTP 连接保留主 TUN 拨号，候选配置完成准备后再交接一次主内核；服务拥有
+物理 DNS 原生出口、服务器绕行及拨号期间的路由捕获。旧服务必须支持
+`PPTP_LIVE_DIAL` 才允许活动 TUN 下拨号，细节和验证边界见
+[PPTP 连接交接](native-pptp-handoff.md)。
+
 ## 安装、更新与卸载
 
 设置 → 内核服务提供安装/更新和卸载按钮。只为 `service install` / `service uninstall`

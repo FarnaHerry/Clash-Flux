@@ -3,6 +3,9 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#ifdef _WIN32
+#include "../src/windows_pptp_health.h"
+#endif
 
 import std;
 import clashflux.openvpn;
@@ -11,6 +14,16 @@ import clashflux.vpn;
 
 int main() {
     using namespace vpn;
+#ifdef _WIN32
+    using clashflux::pptp_health::RasEvidence;
+    assert(RasEvidence(ERROR_SUCCESS, RASCS_Connected, true) == true);
+    assert(RasEvidence(ERROR_SUCCESS, RASCS_Connected, false) == false);
+    assert(!RasEvidence(ERROR_SUCCESS, RASCS_Connected, std::nullopt));
+    assert(!RasEvidence(ERROR_ACCESS_DENIED, RASCS_Connected, true));
+    assert(!RasEvidence(ERROR_SUCCESS, RASCS_Authenticate, true));
+    assert(RasEvidence(ERROR_SUCCESS, RASCS_Disconnected, std::nullopt) == false);
+    assert(RasEvidence(ERROR_INVALID_HANDLE, RASCS_Connected, true) == false);
+#endif
 
     std::string pptpError;
     const auto pptpConfig = pptp::ParsePptpConfig(

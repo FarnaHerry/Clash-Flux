@@ -22,6 +22,7 @@ module;
 #include <cwchar>
 #include <limits.h>
 #include <stdint.h>
+#include "windows_pptp_health.h"
 #elif defined(__linux__) && !defined(__ANDROID__)
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -599,6 +600,7 @@ bool connectWindows(const std::shared_ptr<Runtime>& runtime,
     // 矛盾（要求加密却又声明不用加密）。
     rasEntry.dwEncryptionType = config->requireMppe ? ET_Require : ET_Optional;
     rasEntry.dwfOptions = RASEO_RequireMsCHAP2;
+    rasEntry.dwfOptions2 = RASEO2_DisableClassBasedStaticRoute;
     if (config->requireMppe) {
         rasEntry.dwfOptions |= RASEO_RequireDataEncryption;
     }
@@ -870,7 +872,7 @@ std::shared_ptr<Runtime> privilegedRuntime() {
     return runtime;
 }
 bool PrivilegedPptpAvailable() { return true; }
-bool PrivilegedPptpSessionAlive(std::string_view connectionId) {
+std::optional<bool> PrivilegedPptpSessionEvidence(std::string_view connectionId) {
     const auto runtime = privilegedRuntime();
     std::lock_guard lock(runtime->mutex);
     const auto it = runtime->windowsSessions.find(std::string(connectionId));
@@ -879,10 +881,16 @@ bool PrivilegedPptpSessionAlive(std::string_view connectionId) {
     }
     RASCONNSTATUSW status{};
     status.dwSize = sizeof(status);
-    const auto iface = findPppInterface(it->second.connection, it->second.entry);
-    return RasGetConnectStatusW(it->second.connection, &status) == ERROR_SUCCESS &&
-           status.rasconnstate == RASCS_Connected && iface &&
-           iface->InterfaceLuid.Value == it->second.interfaceLuid.Value;
+    const auto result = RasGetConnectStatusW(it->second.connection, &status);
+    std::optional<bool> sameInterface;
+    if (result == ERROR_SUCCESS && status.rasconnstate == RASCS_Connected) {
+        const auto iface = findPppInterface(it->second.connection, it->second.entry);
+        if (iface) sameInterface = iface->InterfaceLuid.Value == it->second.interfaceLuid.Value;
+    }
+    return clashflux::pptp_health::RasEvidence(result, status.rasconnstate, sameInterface);
+}
+bool PrivilegedPptpSessionAlive(std::string_view connectionId) {
+    return PrivilegedPptpSessionEvidence(connectionId).value_or(false);
 }
 bool PrivilegedPptpConnect(std::string_view id, std::string_view config,
                           std::span<const std::string> routes, std::string& interfaceName,

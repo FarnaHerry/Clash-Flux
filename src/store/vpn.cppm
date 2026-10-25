@@ -2,6 +2,8 @@
 //
 // 原生独立连接只保留 PPTP 系统拨号。OpenVPN 是普通订阅内容格式，
 // 由 sing-box 编译和主内核生命周期统一管理，不在本 store 创建独立会话。
+module;
+#include "../service_protocol.h"
 export module clashflux.store.vpn;
 
 import std;
@@ -10,6 +12,7 @@ import clashflux.config;
 import clashflux.core;
 import clashflux.pptp;
 import clashflux.service;
+import clashflux.stream;
 import clashflux.vpn;
 import clashflux.routing;
 import clashflux.singbox;
@@ -276,10 +279,14 @@ public:
         if (const auto* current = manager_.findConnection(id);
             current && current->state == vpn::ConnectionState::Connected &&
             current->nativeConfig == profile.nativeConfig &&
-            current->internalRoutes == connection.internalRoutes &&
-            pptp::PptpSessionAlive(id)) {
-            error.clear();
-            return true;
+            current->internalRoutes == connection.internalRoutes) {
+            const auto evidence = service::pptpSessionEvidence(id);
+            if (!evidence) {
+                error = "暂时无法确认现有 PPTP 会话状态；已保留连接，请稍后重试";
+                setError(profile.id, error);
+                return false;
+            }
+            if (*evidence) { error.clear(); return true; }
         }
 #if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
         // An installed service may be stopped or may have changed since the
@@ -312,9 +319,11 @@ public:
         }
 #ifdef _WIN32
         auto mainOperation = coreStore().lockNativeLifecycle();
-        const bool mainWasRunning = coreStore().snapshot().state == core::CoreState::Running;
-        if (mainWasRunning && !coreStore().stopCore()) {
-            error = coreStore().snapshot().lastError;
+        const auto mainBefore = coreStore().snapshot();
+        const bool mainWasRunning = mainBefore.state == core::CoreState::Running;
+        const bool proxyBefore = coreStore().systemProxyActive();
+        if (mainWasRunning && mainBefore.tunEnabled && !service::supportsPptpLiveDial()) {
+            error = "已安装的网络服务不支持保留 TUN 拨号，请先更新服务";
             setError(profile.id, error);
             return false;
         }
@@ -334,15 +343,21 @@ public:
             snapshot.error.clear();
         }
 
+        const auto dialBegan = std::chrono::steady_clock::now();
         bool connected = manager_.connect(id, error);
+        stream::logApplication("info", std::format("PPTP 拨号{}，用时 {} ms",
+            connected ? "成功" : "失败",
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - dialBegan).count()));
         bool routingApplied = connected && publishRouting(error);
-#ifdef _WIN32
-        if (routingApplied && mainWasRunning) routingApplied = coreStore().resumeNativeRouting(error);
-#endif
         if (connected && !routingApplied) {
             // Compilation can fail before refreshRouting stops the old core.
             // Never release an interface still referenced by that core.
+#ifdef _WIN32
+            if (coreStore().runningPlanUsesNative(id) ||
+                coreStore().snapshot().state != core::CoreState::Running) coreStore().stopCore();
+#else
             coreStore().stopCore();
+#endif
             manager_.disconnect(id);
             const auto failure = error;
             std::string ignored;
@@ -353,7 +368,7 @@ public:
 #ifdef _WIN32
         if (!connected && mainWasRunning && coreStore().snapshot().state != core::CoreState::Running) {
             std::string restoreError;
-            if (!coreStore().resumeNativeRouting(restoreError)) error += "；恢复主内核失败：" + restoreError;
+            if (!coreStore().resumeNativeRouting(mainBefore, proxyBefore, restoreError)) error += "；恢复主内核失败：" + restoreError;
         }
 #endif
         {
@@ -403,15 +418,16 @@ private:
         for (const auto& connection : manager_.connections()) {
             if (connection.state != vpn::ConnectionState::Connected ||
                 connection.kind != vpn::ConnectionKind::Pptp) continue;
-            const bool alive = pptp::PptpSessionAlive(connection.id);
-            if (alive) continue;
+            const auto alive = service::pptpSessionEvidence(connection.id);
+            coreStore().recordPptpEvidence(connection.id,alive);
+            if (!clashflux::service_protocol::confirmedPptpDisconnect(alive)) continue;
             const std::string id = connection.id;
             blockBeforeDisconnect(id);
             manager_.disconnect(id);
             std::lock_guard snapshotLock(mutex_);
             for (auto& [profileId, snapshot] : snapshots_) {
                 if (connectionId(profileId) != id) continue;
-                updateSnapshotLocked(profileId, "原生 VPN 已断开或服务不可用");
+                updateSnapshotLocked(profileId, "原生 VPN 已确认断开");
                 snapshot.state = vpn::ConnectionState::Failed;
             }
         }

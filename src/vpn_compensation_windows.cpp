@@ -1,18 +1,26 @@
 // Windows IP Helper backend. All routes are temporary and owned by leases.
 module;
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <iphlpapi.h>
 #include <netioapi.h>
 #include <windns.h>
+#include "win32_raii.h"
 #endif
 
 module clashflux.vpn_compensation;
 import std;
+#ifdef _WIN32
+import nlohmann.json;
+#endif
 
 #ifdef _WIN32
 namespace vpn::compensation {
@@ -163,7 +171,19 @@ RouteLease physicalLease(std::string_view address, const std::vector<PhysicalRou
         error = "物理网卡已消失";
         return {};
     }
-    return registry().acquire({luid.Value, std::string(address) + "/32", selected->gateway, 0}, error);
+    auto lease = registry().acquire({luid.Value, std::string(address) + "/32", selected->gateway, 0}, error);
+    if (!lease) return {};
+    SOCKADDR_INET destination{};
+    destination.si_family = AF_INET;
+    InetPtonA(AF_INET, std::string(address).c_str(), &destination.Ipv4.sin_addr);
+    MIB_IPFORWARD_ROW2 best{};
+    SOCKADDR_INET source{};
+    if (GetBestRoute2(nullptr, 0, nullptr, &destination, 0, &best, &source) != NO_ERROR ||
+        best.InterfaceLuid.Value != luid.Value) {
+        error = "VPN 服务器路由仍被其它接口捕获；保留主 TUN 并拒绝拨号";
+        return {};
+    }
+    return lease;
 }
 
 std::vector<std::string> physicalDns() {
@@ -190,6 +210,9 @@ std::vector<std::string> physicalDns() {
     return result;
 }
 
+#include "windows_physical_dns.inc"
+#include "windows_native_dns_tool.inc"
+
 // Destruction joins the watcher first, then removes the interface defaults,
 // then the TUN captures. A crashed core also releases these routes promptly.
 struct TunLease {
@@ -208,44 +231,18 @@ std::optional<TransportLease> PrepareWindowsTransport(std::string_view host, std
     if (const auto ip = NormalizeIpv4Cidr(host); ip && ip->ends_with("/32")) {
         addresses.emplace_back(host);
     } else {
-        // Bypass Windows' shared resolver cache and TUN fake-IP DNS. The store
-        // suspends the main core during dialing, removing WFP's DNS block.
+        // Use the same official executable identity allowed by strict TUN,
+        // bound to the selected physical interface. Never alter global DNS.
+        const auto deadline = GetTickCount64() + 8000;
         for (const auto& server : physicalDns()) {
-            const auto physicalRoute = SelectPhysicalRoute(server, routes);
-            if (!physicalRoute) continue;
-            auto dnsRoute = physicalLease(server, routes, error);
-            if (!dnsRoute) continue;
-            DNS_ADDR_ARRAY servers{};
-            servers.MaxCount = 1;
-            servers.AddrCount = 1;
-            servers.Family = AF_INET;
-            auto* address = reinterpret_cast<sockaddr_in*>(servers.AddrArray[0].MaxSa);
-            address->sin_family = AF_INET;
-            address->sin_port = htons(53);
-            InetPtonA(AF_INET, server.c_str(), &address->sin_addr);
-            const std::wstring queryName(host.begin(), host.end()); // validated ASCII DNS name
-            DNS_QUERY_REQUEST request{};
-            request.Version = DNS_QUERY_REQUEST_VERSION1;
-            request.QueryName = queryName.c_str();
-            request.QueryType = DNS_TYPE_A;
-            request.QueryOptions = DNS_QUERY_BYPASS_CACHE | DNS_QUERY_WIRE_ONLY | DNS_QUERY_NO_HOSTS_FILE;
-            request.pDnsServerList = &servers;
-            std::from_chars(physicalRoute->interfaceName.data(),
-                physicalRoute->interfaceName.data() + physicalRoute->interfaceName.size(), request.InterfaceIndex);
-            DNS_QUERY_RESULT result{};
-            result.Version = DNS_QUERY_RESULTS_VERSION1;
-            const auto status = DnsQueryEx(&request, &result, nullptr);
-            auto* records = result.pQueryRecords;
-            if (status == ERROR_SUCCESS) {
-                for (auto* record = records; record; record = record->pNext) {
-                    if (record->wType != DNS_TYPE_A) continue;
-                    IN_ADDR value{};
-                    value.s_addr = record->Data.A.IpAddress;
-                    const auto address = addressText(value);
-                    if (SelectPhysicalRoute(address, routes)) addresses.push_back(address);
-                }
-            } else error = winError("通过物理 DNS 解析 VPN 服务器失败", {}, status);
-            if (records) DnsRecordListFree(records, DnsFreeRecordList);
+            if (GetTickCount64() >= deadline) break;
+            const auto route = SelectPhysicalRoute(server, routes);
+            if (!route) continue;
+            ULONG index = 0;
+            std::from_chars(route->interfaceName.data(),
+                route->interfaceName.data() + route->interfaceName.size(), index);
+            for (auto& address : queryNativeDnsTool(host, server, index, error))
+                if (SelectPhysicalRoute(address, routes)) addresses.push_back(std::move(address));
             if (!addresses.empty()) break;
         }
     }
@@ -275,9 +272,23 @@ bool ReplaceWindowsNativeRoutes(std::uint64_t interfaceLuid,
     return true;
 }
 
+bool WindowsTunActive(std::string_view tunInterface) {
+    const auto tun = interfaceLuid(tunInterface);
+    std::string error;
+    const auto table = routeTable(error);
+    if (!tun || !table) return false;
+    MIB_IF_ROW2 info{}; info.InterfaceLuid = *tun;
+    return GetIfEntry2(&info) == NO_ERROR && info.OperStatus == IfOperStatusUp &&
+        std::ranges::any_of(*table, [&](const auto& row) {
+            return row.InterfaceLuid.Value == tun->Value && row.Metric == 0 &&
+                row.NextHop.Ipv4.sin_addr.s_addr != 0;
+        });
+}
+
 RouteLease PrepareWindowsTun(std::string_view tunInterface,
                              std::span<const std::string> nativeInterfaces,
-                             std::span<const std::string> exclusions, std::string& error) {
+                             std::span<const std::string> exclusions, std::string& error,
+                             std::span<const std::string> prospectiveRoutes) {
     error.clear();
     const auto tun = interfaceLuid(tunInterface);
     const auto table = routeTable(error);
@@ -319,7 +330,7 @@ RouteLease PrepareWindowsTun(std::string_view tunInterface,
         nativeInfo.Family = AF_INET;
         nativeInfo.InterfaceLuid = *native;
         if (GetIpInterfaceEntry(&nativeInfo) != NO_ERROR) { error = "读取 PPP 接口 metric 失败"; return {}; }
-        std::vector<std::string> destinations;
+        std::vector<std::string> destinations(prospectiveRoutes.begin(), prospectiveRoutes.end());
         // Add exact matching routes on TUN. Putting these CIDRs in route_address
         // is insufficient: sing-tun merges adjacent/overlapping ranges again.
         for (const auto& row : *table) {

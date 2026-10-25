@@ -93,6 +93,7 @@ int main(int argc, char** argv) {
         return ws::run(CLASHFLUX_TEST_SERVICE_VERSION, {
             .command = [root](std::string_view command) -> std::string {
                 if (command == "PPTP_AVAILABLE") return "YES";
+                if (command == "PPTP_LIVE_DIAL") return "SUPPORTED 1";
                 if (command.starts_with("PPTP_STATUS ")) return "DISCONNECTED";
                 if (command == "TEST_DELAY") {
                     std::ofstream(root / L"delay-started.txt") << "started";
@@ -132,6 +133,7 @@ int main(int argc, char** argv) {
         const auto initialStatus = ws::request("STATUS", error, 2000, options);
         check(initialStatus == "STOPPED",
               "initial status: " + (initialStatus ? *initialStatus : error));
+        check(ws::request("PPTP_LIVE_DIAL", error, 2000, options) == "SUPPORTED 1", "live dial capability");
         const auto initialPptp = ws::request("PPTP_AVAILABLE", error, 2000, options);
         check(initialPptp == "YES",
               "PPTP capability after installation: " + (initialPptp ? *initialPptp : error));
@@ -164,6 +166,7 @@ int main(int argc, char** argv) {
         check(ws::query("fixture-v1", options).error.empty(), "VERSION stays responsive during a long operation");
         check(ws::request("STATUS", error, 2000, options) == "STOPPED", "STATUS stays responsive during a long operation");
         check(ws::request("PPTP_AVAILABLE", error, 2000, options) == "YES", "PPTP capability during a long operation");
+        check(ws::request("PPTP_LIVE_DIAL", error, 2000, options) == "SUPPORTED 1", "live dial query during a long operation");
         check(slowOperation.get() == "OK", "long operation result");
 
         check(!ws::request("VERSION\nSTOP", error, 2000, options), "reject command injection");

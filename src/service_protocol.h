@@ -5,6 +5,15 @@
 #include <string_view>
 #include <vector>
 namespace clashflux::service_protocol {
+inline std::optional<bool> pptpEvidence(std::string_view reply) {
+    if (reply == "CONNECTED") return true;
+    if (reply == "DISCONNECTED") return false;
+    return {};
+}
+// A missing/invalid reply can never authorize destructive session cleanup.
+inline bool confirmedPptpDisconnect(std::optional<bool> evidence) {
+    return evidence.has_value() && !*evidence;
+}
 // nullopt means unconfirmed: an IPC timeout/denial is not process exit.
 inline std::optional<bool> runningEvidence(std::string_view reply) {
     if (reply == "STOPPED") return false;

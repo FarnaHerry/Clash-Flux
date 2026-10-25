@@ -27,6 +27,8 @@ struct Info {
 };
 std::string currentUserSid();
 std::filesystem::path storageDirectory();
+// True only inside the SCM server that owns the current core process.
+bool ownsRunningCore();
 bool installed(const Options& options = {});
 Info query(std::string_view version, const Options& options = {});
 bool ensureCompatible(std::string_view version, std::string& error,
