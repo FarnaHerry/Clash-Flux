@@ -216,6 +216,11 @@ cmake --build build -j
 
 ### Required development validation
 
+[AGENTS.md](AGENTS.md) routes AI development work to version-controlled project skills in `project-skills/`,
+including [testing and builds](project-skills/clashflux-test/SKILL.md), [releases](project-skills/clashflux-release/SKILL.md),
+and [UI development](project-skills/clashflux-ui/SKILL.md). Read only the skills and linked `docs/` sections relevant
+to the current task. Update the corresponding skills and documentation when development workflows change.
+
 After every change, including code, UI, scripts and configuration, rebuild locally
 before delivering or validating functionality:
 
@@ -291,7 +296,8 @@ GitHub Release APKs use a stable Android release signing key. CI requires four
 repository secrets: `CLASHFLUX_ANDROID_KEYSTORE_BASE64`,
 `CLASHFLUX_ANDROID_KEYSTORE_PASSWORD`, `CLASHFLUX_ANDROID_KEY_ALIAS` and
 `CLASHFLUX_ANDROID_KEY_PASSWORD`. APKs include both v1 (JAR) and v2 signatures, and
-CI verifies each. Local builds without a release key use Gradle's debug signing.
+CI verifies each scheme and the official certificate fingerprint. Local Debug builds use Gradle's debug key;
+Release packaging fails without the long-term release key and never falls back to debug signing.
 
 ## Architecture and configuration fidelity
 

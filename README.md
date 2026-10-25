@@ -155,6 +155,11 @@ cmake --build build -j
 
 ### 开发验证规范
 
+项目级 AI 开发入口为 [AGENTS.md](AGENTS.md)，按任务读取受版本控制的 `project-skills/`：
+[测试与构建](project-skills/clashflux-test/SKILL.md)、[发版](project-skills/clashflux-release/SKILL.md)、
+[UI](project-skills/clashflux-ui/SKILL.md) 及其它领域技能。详细设计仍保留在各技能链接的 `docs/` 专题中，
+只加载当前任务相关内容；修改开发流程时同步对应技能和文档。
+
 每次修改完成后，无论改动大小、涉及何种文件（代码、UI、脚本还是配置），都必须先
 在本地重新编译，再交付或继续验证功能：
 
@@ -219,8 +224,8 @@ Android 进程所有权、Binder 控制、服务恢复和网络切换策略见
 GitHub Release 使用稳定的 Android 发布密钥签名。CI 需要配置
 `CLASHFLUX_ANDROID_KEYSTORE_BASE64`、`CLASHFLUX_ANDROID_KEYSTORE_PASSWORD`、
 `CLASHFLUX_ANDROID_KEY_ALIAS` 和 `CLASHFLUX_ANDROID_KEY_PASSWORD` 四个仓库
-Secrets；APK 同时包含 v1（JAR）和 v2 签名，CI 会分别校验两种签名。本地未提供发布密钥时，
-Gradle 会使用开发用 debug 签名。
+Secrets；APK 同时包含 v1（JAR）和 v2 签名，CI 会分别校验两种签名及正式证书指纹。
+本地 Debug 构建使用开发用 debug 签名；Release 打包缺少长期发布密钥时必须失败，不会回退到 debug 签名。
 
 ## 架构与保真度契约
 
