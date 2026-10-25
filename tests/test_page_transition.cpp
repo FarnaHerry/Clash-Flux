@@ -26,6 +26,7 @@
 #include "filtered_indices.h"
 #include "profile_file_picker.h"
 #include "profile_import_task.h"
+#include "profile_list_model.h"
 #include "profile_reorder_geometry.h"
 #include "section_tab_picker.h"
 #include "responsive_shell.h"
@@ -1708,6 +1709,137 @@ void testProfileImportCompletion() {
           "failed import remains retryable without retaining busy or creating duplicate operations");
 }
 
+using TestProfilesModel = clashflux::ui::ProfileListModel<std::string>;
+struct ProfileListFixture {
+    std::uint64_t revision = 1;
+    std::vector<std::string> rows{"remote-1", "remote-2", "local-3"};
+    std::chrono::milliseconds latency{10};
+};
+void InstallProfileListFixture(huxerui::ApplicationContext& context) {
+    context.Provide(std::make_shared<TestProfilesModel>());
+    context.Provide(std::make_shared<ProfileListFixture>());
+}
+huxerui::Task<clashflux::ui::ProfileListSnapshot<std::string>> ReadProfileListFixture(
+    std::shared_ptr<ProfileListFixture> fixture) {
+    clashflux::ui::ProfileListSnapshot<std::string> snapshot{.profiles = fixture->rows, .ready = true};
+    co_await huxerui::Delay(fixture->latency);
+    co_return snapshot;
+}
+[[huxerui::composable]] huxerui::View ProfileListFixtureContent() {
+    const auto model = huxerui::UseService<TestProfilesModel>();
+    const auto fixture = huxerui::UseService<ProfileListFixture>();
+    const auto tasks = huxerui::UseApplicationTaskScope();
+    auto cards = huxerui::UseStateList<std::string>();
+    huxerui::Lifecycle([model, fixture, tasks] {
+        clashflux::ui::DriveProfileList(tasks, model,
+            [fixture] { return fixture->revision; },
+            [fixture] { return ReadProfileListFixture(fixture); });
+        return [] {};
+    }, 0);
+    // Production AppRoot's model -> retained StateList -> virtual cards chain.
+    huxerui::Lifecycle([model, cards] {
+        if (!model->selectionPending.Get() && !model->reorderPending.Get())
+            clashflux::ui::ReplaceStateList(cards, model->list.Get());
+        return [] {};
+    }, model->list, model->selectionPending, model->reorderPending);
+    return huxerui::Column{
+        huxerui::Button("Remove remote").OnClick([model, fixture] {
+            std::erase(fixture->rows, "remote-2");
+            ++fixture->revision;
+            model->Publish(fixture->rows);
+        }),
+        huxerui::Button("Add local").OnClick([model, fixture] {
+            fixture->rows.push_back("local-4");
+            ++fixture->revision;
+            model->Publish(fixture->rows);
+        }),
+        huxerui::Button("Optimistic selection").OnClick([model, cards] {
+            model->selectionPending = true;
+            cards.Set(0, "optimistic-selection");
+        }),
+        huxerui::Button("Hold selection").OnClick([model] { model->selectionPending = true; }),
+        huxerui::Button("Release selection").OnClick([model] { model->selectionPending = false; }),
+        huxerui::Button("Hold reorder").OnClick([model] { model->reorderPending = true; }),
+        huxerui::Button("Release reorder").OnClick([model] { model->reorderPending = false; }),
+        huxerui::Button("External remove").OnClick([fixture] {
+            std::erase(fixture->rows, "remote-2");
+            ++fixture->revision;
+        }),
+        huxerui::Button("Slow read").OnClick([model, fixture] {
+            fixture->latency = std::chrono::milliseconds{600};
+            model->RequestSync();
+        }),
+        huxerui::VirtualGrid(cards.Size(), [cards](std::size_t index) {
+            return huxerui::Text(cards[index]).Key(cards[index]);
+        }).Columns(huxerui::GridColumns::Fixed(1)).EstimatedRowExtent(30.0F)
+            .With(huxerui::Grow(1.0F)),
+    }.With(huxerui::Grow(1.0F));
+}
+huxerui::View ProfileListFixtureRoot() { return huxerui::FlatTheme{ProfileListFixtureContent()}; }
+const huxerui::Application kProfileListFixtureApplication{ProfileListFixtureRoot,
+    {.application_hooks = {InstallProfileListFixture}}};
+void PumpProfileList(huxerui::testing::UiTest& ui, std::chrono::milliseconds elapsed) {
+    // Pump advances the clock once per frame; use bounded steps so a read's
+    // completion and the following poll both execute inside the requested span.
+    for (auto time = std::chrono::milliseconds{0}; time < elapsed;
+         time += std::chrono::milliseconds{50})
+        ui.Pump(std::chrono::milliseconds{50});
+    ui.Pump();
+}
+void testProfileListPublication() {
+    const auto makeOptions = [] {
+        return huxerui::testing::UiTestOptions{.viewport = {700.0F, 850.0F}};
+    };
+    {
+        huxerui::testing::UiTest ui(kProfileListFixtureApplication, makeOptions());
+        PumpProfileList(ui, kSettle); ui.Pump();
+        check(ui.Find(UiSelector::Text("remote-2")).Exists(), "profile list hydrates multiple remote/local rows");
+        ui.Find(UiSelector::Text("Slow read")).Tap();
+        PumpProfileList(ui, std::chrono::milliseconds{1000});
+        ui.Find(UiSelector::Text("Remove remote")).Tap(); ui.Pump();
+        check(!ui.Find(UiSelector::Text("remote-2")).Exists() &&
+              ui.Find(UiSelector::Text("remote-1")).Exists(),
+              "delete completion removes only its card without waiting for the list pump");
+        ui.Find(UiSelector::Text("Add local")).Tap(); ui.Pump();
+        check(ui.Find(UiSelector::Text("local-4")).Exists(), "import completion immediately publishes its new card");
+        PumpProfileList(ui, std::chrono::milliseconds{700}); ui.Pump();
+        check(!ui.Find(UiSelector::Text("remote-2")).Exists() && ui.Find(UiSelector::Text("local-4")).Exists(),
+              "older in-flight profile snapshot cannot resurrect a deleted row or hide an import");
+    }
+    {
+        huxerui::testing::UiTest ui(kProfileListFixtureApplication, makeOptions());
+        PumpProfileList(ui, kSettle);
+        ui.Find(UiSelector::Text("Optimistic selection")).Tap(); ui.Pump();
+        check(ui.Find(UiSelector::Text("optimistic-selection")).Exists(),
+              "pending selection preserves its optimistic card state");
+        ui.Find(UiSelector::Text("Release selection")).Tap(); ui.Pump();
+        check(ui.Find(UiSelector::Text("remote-1")).Exists() &&
+              !ui.Find(UiSelector::Text("optimistic-selection")).Exists(),
+              "failed selection restores authoritative cards even when the model list compares equal");
+    }
+    for (const bool reorder : {false, true}) {
+        huxerui::testing::UiTest ui(kProfileListFixtureApplication, makeOptions());
+        PumpProfileList(ui, kSettle); ui.Pump();
+        ui.Find(UiSelector::Text(reorder ? "Hold reorder" : "Hold selection")).Tap();
+        ui.Find(UiSelector::Text("External remove")).Tap();
+        PumpProfileList(ui, std::chrono::milliseconds{1500}); ui.Pump();
+        check(ui.Find(UiSelector::Text("remote-2")).Exists(), "pending selection/reorder defers poll publication");
+        ui.Find(UiSelector::Text(reorder ? "Release reorder" : "Release selection")).Tap();
+        PumpProfileList(ui, std::chrono::milliseconds{1500}); ui.Pump();
+        check(!ui.Find(UiSelector::Text("remote-2")).Exists(),
+              "deferred profile revision is retried after release without another database write");
+    }
+    {
+        huxerui::testing::UiTest ui(kProfileListFixtureApplication, makeOptions());
+        PumpProfileList(ui, kSettle); ui.Pump();
+        ui.Find(UiSelector::Text("Hold reorder")).Tap();
+        ui.Find(UiSelector::Text("Remove remote")).Tap(); ui.Pump();
+        ui.Find(UiSelector::Text("Release reorder")).Tap(); ui.Pump();
+        check(!ui.Find(UiSelector::Text("remote-2")).Exists(),
+              "reorder release refreshes a skipped mirror even when the authoritative list is unchanged");
+    }
+}
+
 // Use the production publication model and the subscription page's
 // Lifecycle -> StateList -> VirtualGrid chain, without dialing a real VPN.
 using TestVpnModel = clashflux::ui::VpnSnapshotModel<std::vector<std::string>>;
@@ -3173,6 +3305,7 @@ int main() {
     testThemeSwitch();
     testProfileFileFilter();
     testProfileImportCompletion();
+    testProfileListPublication();
     {
         huxerui::testing::UiTest ui(kApplication, {
             .viewport = {400.0F, 700.0F},

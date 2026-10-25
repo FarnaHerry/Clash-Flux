@@ -1343,12 +1343,12 @@ void StartDesktopWindowlessRuntime() {
     // StateList 是它的镜像——模型一变就同步一次，不再是 2s 全量泵。
     huxerui::Lifecycle(
         [profilesCache, profilesModel] {
-            if (!profilesModel->reorderPending.Get()) {
+            if (!profilesModel->selectionPending.Get() && !profilesModel->reorderPending.Get()) {
                 ReplaceStateList(profilesCache.list, profilesModel->list.Get());
             }
             return [] {};
         },
-        profilesModel->list);
+        profilesModel->list, profilesModel->selectionPending, profilesModel->reorderPending);
     // 唯一的数据泵：1s 修订号脏检查（变了才拷贝），显式 RequestSync 时立刻同步。
     huxerui::Lifecycle(
         [applicationTasks, runtimeServices, profilesModel] {

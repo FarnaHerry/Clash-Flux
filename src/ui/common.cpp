@@ -1309,55 +1309,35 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
 
 // ---- 订阅列表：唯一来源（见 profiles_model.h）-------------------------------
 
+void ProfilesModel::PublishCached() {
+    auto& database = clashflux::persistence::persistence();
+    Publish(database.listProfiles());
+    if (database.ready()) loaded = true;
+}
+
 void DriveProfilesModel(huxerui::TaskScope tasks,
                         std::shared_ptr<ProfilesModel> model) {
-    tasks.Launch([model]() -> huxerui::Task<void> {
-        std::uint64_t seenRevision = 0;
-        std::uint64_t seenSync = 0;
-        bool first = true;
-        for (;;) {
-            const std::uint64_t before = model->syncTick.Get();
-            const std::uint64_t revision =
-                clashflux::persistence::persistence().profilesRevision();
-            // 修订号只在三个写入口自增，hydrate 不动它；首帧那次读取早于
-            // hydrate 时列表会是空的，此时唯一的补救是调用方 hydrate 之后的
-            // RequestSync——所以 syncTick 变化必须强制拉一次，否则订阅列表
-            // （以及镜像它的订阅页/规则页下拉/托盘菜单）永远停在空表。
-            if (first || revision != seenRevision || before != seenSync) {
-                first = false;
-                seenRevision = revision;
-                seenSync = before;
-                auto next = co_await RunOnTaskThread([] {
-                    const bool ready = clashflux::persistence::persistence().ready();
-                    auto profiles = store::profilesStore().list();
-                    std::vector<std::int64_t> clashSources;
-                    const auto root = cfg::profilesDir();
-                    for (const auto& profile : profiles) {
-                        if (profile.type == "pptp" || profile.file.empty()) continue;
-                        // Classification only needs a bounded prefix; portable
-                        // .ovpn is limited to 20 KiB by the compiler.
-                        std::ifstream input(root / profile.file, std::ios::binary);
-                        std::string prefix(20001, '\0');
-                        input.read(prefix.data(), static_cast<std::streamsize>(prefix.size()));
-                        prefix.resize(static_cast<std::size_t>(input.gcount()));
-                        if (!prefix.empty() && singbox::DetectProfileFormat(prefix) == singbox::ProfileFormat::ClashYaml)
-                            clashSources.push_back(profile.id);
-                    }
-                    return std::tuple{std::move(profiles), std::move(clashSources), ready};
-                });
-                // 乐观选中期间不发布；等页面确认后再由修订号驱动同步。
-                if (!model->selectionPending.Get() &&
-                    !model->reorderPending.Get() &&
-                    model->syncTick.Get() == before) {
-                    model->clashSources = std::move(std::get<1>(next));
-                    model->list = std::move(std::get<0>(next));
-                    if (std::get<2>(next)) model->loaded = true;
+    DriveProfileList(tasks, model,
+        [] { return clashflux::persistence::persistence().profilesRevision(); },
+        []() -> huxerui::Task<ProfileListSnapshot<db::Profile>> {
+            co_return co_await RunOnTaskThread([] {
+                ProfileListSnapshot<db::Profile> next;
+                next.ready = clashflux::persistence::persistence().ready();
+                next.profiles = clashflux::persistence::persistence().listProfiles();
+                const auto root = cfg::profilesDir();
+                for (const auto& profile : next.profiles) {
+                    if (profile.type == "pptp" || profile.file.empty()) continue;
+                    // Classification only needs a bounded prefix.
+                    std::ifstream input(root / profile.file, std::ios::binary);
+                    std::string prefix(20001, '\0');
+                    input.read(prefix.data(), static_cast<std::streamsize>(prefix.size()));
+                    prefix.resize(static_cast<std::size_t>(input.gcount()));
+                    if (!prefix.empty() && singbox::DetectProfileFormat(prefix) == singbox::ProfileFormat::ClashYaml)
+                        next.clashSources.push_back(profile.id);
                 }
-            }
-            if (model->syncTick.Get() != before) continue;
-            co_await huxerui::Delay(std::chrono::duration<double>{1.0});
-        }
-    });
+                return next;
+            });
+        });
 }
 
 // ---- 应用级设置：唯一读取点（见 settings_model.h）---------------------------

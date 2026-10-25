@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <functional>
+#include <exception>
 #include <memory>
 #include <optional>
 #include <string>
@@ -186,15 +187,18 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     // 与真实时长无关的「点击转一圈」装饰动画。
     auto refreshBusy = huxerui::UseState(false);
 
-    auto action = [tasks, toast, reload](std::function<std::string()> job) {
-        tasks.Launch([=]() -> huxerui::Task<void> {
-            const std::string err = co_await RunOnTaskThread(std::move(job));
-            if (!err.empty()) toast.Show(err);
+    const auto applicationTasks = huxerui::UseApplicationTaskScope();
+    auto action = [applicationTasks, toast, reload](std::function<std::string()> job) {
+        applicationTasks.Launch([=]() -> huxerui::Task<void> {
+            std::string error;
+            try { error = co_await RunOnTaskThread(std::move(job)); }
+            catch (const std::exception& exception) { error = exception.what(); }
             reload();
+            if (!error.empty()) toast.Show(error);
         });
     };
 
-    auto activateProfile = [tasks, toast, profiles,
+    auto activateProfile = [applicationTasks, toast, profilesModel, profiles,
                             selectionPending, coreModel](std::int64_t profileId) {
         if (selectionPending.Get()) return;
         const std::optional<std::int64_t> previous =
@@ -202,7 +206,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         if (previous == profileId) return;
         SetSelectedProfile(profiles, profileId);
         selectionPending = true;
-        tasks.Launch([tasks, toast, profiles, selectionPending, previous,
+        applicationTasks.Launch([toast, profilesModel, selectionPending,
                       profileId, coreModel]() -> huxerui::Task<void> {
             std::string error;
             try {
@@ -216,8 +220,9 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
             } catch (const std::exception& exception) {
                 error = exception.what();
             }
+            selectionPending = false;
+            profilesModel->PublishCached();
             if (!error.empty()) {
-                SetSelectedProfile(profiles, previous);
                 toast.Show(error);
             } else {
                 // 启用订阅同样是一次「这份订阅能吃什么」的告知时机。
@@ -228,7 +233,6 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                huxerui::ToastOptions{6.0});
                 }
             }
-            selectionPending = false;
         });
     };
 

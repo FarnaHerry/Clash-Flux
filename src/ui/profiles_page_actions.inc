@@ -1,13 +1,7 @@
 // profiles_page_actions.inc — ProfilesPage 的状态操作、菜单和弹窗动作。
 // 此文件由 profiles_page.cpp 在 ProfilesPage 函数体内包含。
 
-    auto reload = [tasks] {
-        tasks.Launch([=]() -> huxerui::Task<void> {
-            co_await huxerui::Delay(std::chrono::duration<double>{0});
-            // 列表由 2s 泵刷新；这里仅给一拍推迟，保证任务内 State 写不与
-            // 点击路径叠加。
-        });
-    };
+    auto reload = [profilesModel] { profilesModel->PublishCached(); };
 
     auto findProfile = [profiles](std::int64_t id) -> std::optional<db::Profile> {
         for (const auto& p : profiles) {

@@ -21,36 +21,21 @@
 #include "../profile_link.h"
 
 #include "ui.h"
+#include "profile_list_model.h"
 
 namespace clashflux::ui {
 
-struct ProfilesModel {
-    // 权威列表：内容变化才写（State::Write 按 operator== 去重）。
-    // 必须带初值：huxerui::State 的默认构造是「空 cell」，Get/写入/作为
-    // Lifecycle 依赖都会抛 "Lifecycle dependency State is empty"。
-    huxerui::State<std::vector<db::Profile>> list{std::vector<db::Profile>{}};
-    // True only after publishing a snapshot read after persistence hydration,
-    // including an empty list. Cached data stays ready during background refreshes.
-    huxerui::State<bool> loaded{false};
-    // Format-derived UI capability, computed by the worker pump. JSON/.ovpn
-    // use the text editor and global routing, not the Clash YAML rule editor.
-    huxerui::State<std::vector<std::int64_t>> clashSources{std::vector<std::int64_t>{}};
-    // 乐观选中标记：为 true 时泵暂停发布，避免未确认的选中态被闪回。
-    // 页面与模型共享同一个 State。
-    huxerui::State<bool> selectionPending{false};
-    // 拖动预览期间暂停列表泵和页面镜像，避免旧快照覆盖临时顺序。
-    huxerui::State<bool> reorderPending{false};
-    // 显式请求立即同步（CRUD/激活/CLI 转发之后）。
-    huxerui::State<std::uint64_t> syncTick{0};
+struct ProfilesModel : ProfileListModel<db::Profile> {
+    // Read only the hydrated in-memory cache; no disk/network work on the UI
+    // thread. Action completion publishes before feedback/navigation.
+    void PublishCached();
     huxerui::State<std::vector<profile_link::RemoteProfile>> importLinks{
         std::vector<profile_link::RemoteProfile>{}};
     huxerui::State<std::string> linkError{std::string{}};
-
-    void RequestSync() { syncTick = syncTick.Get() + 1; }
 };
 
 // 启动唯一的数据泵（组合期调用一次）：1s 做一次「修订号脏检查」，变了才
-// 拷贝列表；syncTick 变化时立刻同步一次。
+// 拷贝列表；动作完成直接 PublishCached，syncTick 使在途旧快照失效。
 void DriveProfilesModel(huxerui::TaskScope tasks,
                         std::shared_ptr<ProfilesModel> model);
 
