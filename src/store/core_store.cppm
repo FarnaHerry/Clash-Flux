@@ -1,6 +1,6 @@
 // core_store.cppm — clashflux.store.core：内核编排 store（接口即实现，单例）。
 //
-// 持有 Db / CoreProcess / ClashApi / CoreStreams 四件套，是 UI 与内核之间的唯一
+// 持有 Db / CoreProcess / ClashApi / NativeApi / CoreStreams，是 UI 与内核之间的唯一
 // 入口。线程契约：snapshot() / settings 读取等轻量方法任意线程可调；标注
 // 「阻塞」的方法（startCore/stopCore/refreshRuntime/applyConfig）会做 spawn、
 // 网络等待，UI 必须经 RunOnTaskThread 调用；State 写入只在 UI 线程（UI 层在
@@ -10,12 +10,15 @@
 //   1. 解析 sing-box 二进制（cfg::singboxBinary）——缺失 → Failed
 //   2. 读启用订阅（无订阅 = 空）经 clashflux.singbox 编译为
 //      coreWorkDir/config.json（不支持的节点/规则以 warnings 带回）
-//   3. spawn `sing-box run -c <config> -D <workdir>`，轮询 /version 等
-//      clash_api 就绪（≤30s，覆盖远程规则集首启下载；进程提前退出仍立即判失败）
+//   3. spawn `sing-box run -c <config> -D <workdir>`，通过原生 GetVersion/GetStartedAt 确认
+//      实例就绪（≤30s，覆盖远程规则集首启下载；进程提前退出仍立即判失败）
 //   4. 就绪 → Running，拉起 /logs /traffic /connections 三条 WS 流
 module;
 #include "runtime_health.h"
 #include "wire_codec.h"
+#include "runtime_network_probe.h"
+#include "health_history.h"
+#include "runtime_plan_state.h"
 #if defined(__ANDROID__)
 #include "android_profile_http.h"
 #if !defined(NDEBUG)
@@ -80,6 +83,7 @@ export struct CoreSnapshot {
     std::shared_ptr<const std::vector<singbox::SourceObject>> sourceObjects;
     std::vector<std::string> participatingSources;
     std::uint64_t planRevision = 0; // 实际启动成功的策略版本，停止/预览时不代表生效
+    std::uint64_t nativeStartedAt = 0; // authenticated native instance identity
 
     // 运行配置快照（Running 时有效）
     std::string mode;            // rule / global / direct
@@ -136,6 +140,7 @@ public:
     // 惰性初始化（打开 Db、确保 secret 存在、准备 API 端点）。幂等。
 #include "store/core_store_state.inc"
 #include "store/core_store_diagnostics.inc"
+#include "store/core_store_evidence.inc"
 #include "store/core_store_routing.inc"
 #include "store/core_store_lifecycle.inc"
 private:
@@ -143,6 +148,7 @@ private:
 
     std::unique_ptr<db::Db> db_;
     std::unique_ptr<api::ClashApi> api_;
+    std::unique_ptr<api::NativeApi> nativeApi_;
     core::CoreProcess process_;
     stream::CoreStreams streams_;
     std::string secret_;
@@ -152,7 +158,19 @@ private:
     std::vector<singbox::NativeConnection> nativeSessions_;
     std::once_flag initFlag_;
     CoreSnapshot snap_;
+    clashflux::health::History healthHistory_;
+    std::atomic_bool healthCaptureFailed_{false};
+    const std::uint64_t healthSession_ = static_cast<std::uint64_t>(
+        std::chrono::system_clock::now().time_since_epoch().count());
+    clashflux::network_probe::Result observedNetwork_;
+    std::chrono::steady_clock::time_point observedNetworkAt_{};
+    std::uint64_t observedNetworkEpoch_ = 0;
+    bool observedNetworkRunning_ = false, observedNetworkTun_ = false;
+    std::optional<clashflux::network_probe::Request> lastTunProbe_;
+    std::unordered_map<std::string,std::optional<bool>> pptpEvidence_;
     std::string binaryPath_;
+    std::unique_ptr<PreparedStart> preparedStart_;
+    std::string lastPreparedJson_, lastAppliedJson_;
     std::optional<singbox::CompileOptions> preparedOptions_;
     std::optional<singbox::CompileOptions> lastAppliedOptions_;
     std::optional<singbox::CompileOptions> lastPreparedOptions_;

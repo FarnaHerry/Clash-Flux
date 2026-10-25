@@ -1,6 +1,74 @@
 // core_store_helpers.inc — 私有编排辅助函数
 // 由 src/store/core_store.cppm 在 CoreStore 类体内包含。
 
+    struct PreparedStart {
+        singbox::CompileOptions options;
+        singbox::CompileResult compiled;
+        std::string proxyGroups;
+        std::filesystem::path directory, file;
+        ~PreparedStart() {
+            std::error_code ignored;
+            if (!file.empty()) std::filesystem::remove(file, ignored);
+            if (!directory.empty()) std::filesystem::remove(directory, ignored);
+        }
+    };
+
+    // Complete downloads, compilation, selector projection and kernel check
+    // while the previous data plane is still alive. The exact staged bytes
+    // are consumed by startCore; the stopped interval performs no downloads.
+    std::unique_ptr<PreparedStart> prepareStartPlan(singbox::CompileOptions options,
+                                                   std::string& error) {
+        auto plan = std::make_unique<PreparedStart>();
+        const auto workDir = cfg::coreWorkDir();
+        const auto publishFailure = [&] {
+            std::lock_guard lock(mutex_);
+            snap_.warnings = plan->compiled.warnings;
+            snap_.fidelity = plan->compiled.fidelity;
+        };
+        if (!prepareHttpRuleProviders(options, plan->compiled, error)) { publishFailure(); return {}; }
+        prefetchRuleSets(plan->compiled.ruleSetResources, workDir);
+        const bool geoInputsChanged = !plan->compiled.ruleSetResources.empty() ||
+                                     options.ruleSetDir != workDir.string();
+        options.ruleSetDir = workDir.string();
+#if defined(__ANDROID__)
+        plan->compiled = core::generateConfig(options);
+#else
+        if (geoInputsChanged) plan->compiled = core::generateConfig(options);
+#endif
+        if (!plan->compiled.error.empty() || plan->compiled.json.empty()) {
+            error = "订阅编译失败：" + plan->compiled.error; publishFailure(); return {};
+        }
+        auto config = nlohmann::json::parse(plan->compiled.json, nullptr, false);
+        if (!config.is_object()) { error = "订阅编译结果不是合法 JSON 对象"; return {}; }
+        plan->proxyGroups = proxyGroupsFromConfig(config, plan->compiled.sourceObjects);
+        plan->compiled.json = config.dump();
+        if (!checkCompiledPlan(plan->compiled, error)) return {};
+        const auto revisionText = setting("routing.applied_revision", "0");
+        std::uint64_t revision = 0;
+        const auto parsed = std::from_chars(revisionText.data(), revisionText.data() + revisionText.size(), revision);
+        if (parsed.ec != std::errc() || parsed.ptr != revisionText.data() + revisionText.size() ||
+            revision == std::numeric_limits<std::uint64_t>::max()) {
+            error = "已应用计划修订号无效；保留原设置"; return {};
+        }
+        options.planRevision = revision + 1;
+        plan->options = std::move(options);
+        std::random_device random;
+        for (int attempt = 0; attempt < 8; ++attempt) {
+            auto directory = workDir / ("prepared-run-" + std::to_string(random()) + "-" + std::to_string(random()));
+            std::error_code ec;
+            if (std::filesystem::create_directory(directory, ec)) {
+                plan->directory = std::move(directory); break;
+            }
+            if (ec && ec != std::errc::file_exists) break;
+        }
+        if (plan->directory.empty()) { error = "无法创建候选配置目录"; return {}; }
+        plan->file = plan->directory / "config.json";
+        std::ofstream output(plan->file, std::ios::binary | std::ios::trunc);
+        output << plan->compiled.json; output.close();
+        if (!output) { error = "候选配置写入失败"; return {}; }
+        return plan;
+    }
+
     // 代理页快照（组 + 每节点 type/udp）由 clashflux.singbox 的纯函数生成，
     // 便于单测；这里只把「持久化的组选中项」从 settings 里喂进去。
     std::string proxyGroupsFromConfig(nlohmann::json& config,
@@ -34,6 +102,9 @@
         singbox::CompileOptions options;
         options.profileYaml = profileYaml;
         options.controller = cfg::controllerAddress();
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+        options.nativeControllerPort = cfg::kNativeControllerPort;
+#endif
         options.secret = secret_;
         options.mixedPort = mixedPort();
         options.httpPort = httpPort();
@@ -210,12 +281,9 @@
     // 时只好信任——WS 断流会在 UI 层表现为无数据。
     bool coreAlive() {
         if (managedByService_) {
-            // root 服务同步处理 PPTP 建链时，STATUS 可能
-            // 超时。先查内核自己的控制器，避免 UI 存活泵在
-            // PPTP 拨号期间每次阻塞 2 秒；仅在控制器不通时才向
-            // root 服务确认进程状态。
-            if (api_->probeVersion().ok) return true;
-            // Unknown IPC evidence must never turn a running instance into Failed.
+            // Controller responsiveness is independent of the service-owned
+            // child. An explicit STOPPED must win even if a port still answers.
+            // Unknown IPC evidence cannot turn the instance into Failed.
             return service::coreRunningEvidence().value_or(true);
         }
         if (adopted_) {
@@ -394,8 +462,11 @@
 
     void fail(std::string error) {
         stream::logApplication("error", "内核操作失败：" + error);
-        std::lock_guard lock(mutex_);
-        snap_.state = core::CoreState::Failed;
-        snap_.runningSince = {};
-        snap_.lastError = std::move(error);
+        {
+            std::lock_guard lock(mutex_);
+            snap_.state = core::CoreState::Failed;
+            snap_.runningSince = {};
+            snap_.lastError = std::move(error);
+        }
+        captureHealthEvidence(false);
     }
