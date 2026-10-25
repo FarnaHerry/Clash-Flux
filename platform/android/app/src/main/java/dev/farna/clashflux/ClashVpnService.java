@@ -411,6 +411,8 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         }
     }
     private void startDataPlane() {
+        final long prepareBegan = SystemClock.elapsedRealtime();
+        long checkpoint = prepareBegan;
         final boolean noTun = speedTestOnly || coreOnly;
         MainActivity.appLog(noTun ? "开始创建无 TUN 的 sing-box 内核"
                                   : "开始创建 sing-box VPN 数据面", false);
@@ -424,6 +426,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         try {
             initializeRuntime();
             if (!libboxReady) throw new IllegalStateException("libbox 尚未初始化完成");
+            checkpoint = logPreparationStage("libbox-init", checkpoint);
             // The native store compiles the selected profile into sing-box
             // JSON (clashflux.singbox). Java only hands the file content to
             // libbox — no second converter on this side.
@@ -439,13 +442,16 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             MainActivity.appLog("已找到运行配置，准备校验 libbox 配置", false);
             String configContent = new String(
                     Files.readAllBytes(config.toPath()), StandardCharsets.UTF_8);
+            checkpoint = logPreparationStage("config-wait-and-read", checkpoint);
             Libbox.checkConfig(configContent);
+            checkpoint = logPreparationStage("libbox-check", checkpoint);
             if (!startRequested) return;
             MainActivity.appLog("运行配置校验通过", false);
             MainActivity.appLog("正在创建 libbox CommandServer", false);
             server = new CommandServer(this, this);
             MainActivity.appLog("libbox CommandServer 已创建，正在监听本地命令通道", false);
             server.start();
+            checkpoint = logPreparationStage("command-server", checkpoint);
             MainActivity.appLog("libbox CommandServer 已启动", false);
             if (!startRequested) {
                 close("VPN 启动已取消");
@@ -453,6 +459,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             }
             MainActivity.appLog("正在启动 libbox 服务数据面", false);
             server.startOrReloadService(configContent, new OverrideOptions());
+            checkpoint = logPreparationStage("libbox-start", checkpoint);
             MainActivity.appLog("libbox 服务数据面启动完成", false);
             if (!startRequested) {
                 close("VPN 启动已取消");
@@ -503,8 +510,17 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         } catch (Throwable e) {
             if (startRequested) fail("sing-box 启动失败: " + e.getMessage());
         } finally {
+            MainActivity.appLog("runtime-prepare total_ms=" +
+                    (SystemClock.elapsedRealtime() - prepareBegan) + " data_plane_ready=" + started +
+                    " mode=" + (noTun ? "core-only" : "vpn"), false);
             starting = false;
         }
+    }
+
+    private long logPreparationStage(String stage, long began) {
+        long now = SystemClock.elapsedRealtime();
+        MainActivity.appLog("runtime-prepare stage=" + stage + " elapsed_ms=" + (now - began), false);
+        return now;
     }
 
     private void initializeRuntime() {
@@ -522,6 +538,8 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     }
     @Override public int openTun(TunOptions o) throws Exception {
         try {
+            String conflict = VpnConflict.find(this);
+            if (!conflict.isEmpty()) throw new IllegalStateException(conflict);
             if (VpnService.prepare(this) != null) {
                 throw new SecurityException("Android VPN 尚未获得系统授权");
             }

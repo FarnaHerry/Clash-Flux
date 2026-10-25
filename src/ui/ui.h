@@ -394,7 +394,8 @@ huxerui::View PageScaffold(huxerui::StringVariant title, huxerui::View actions,
                            bool windowTitle = false,
                            std::optional<float> contentSpacing = std::nullopt,
                            huxerui::View leading = {},
-                           huxerui::View titleSearchField = {});
+                           huxerui::View titleSearchField = {},
+                           bool showInlineHeader = true);
 huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     huxerui::View actions, huxerui::View content,
                                     std::function<void()> onBack,

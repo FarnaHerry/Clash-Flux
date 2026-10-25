@@ -13,36 +13,124 @@
         }
     };
 
+    static std::vector<clashflux::network_conflict::Tun> networkTuns(const nlohmann::json& config) {
+        std::vector<clashflux::network_conflict::Tun> result;
+        if (!config.contains("inbounds") || !config["inbounds"].is_array()) return result;
+        for (const auto& inbound : config["inbounds"]) {
+            if (!inbound.is_object() || inbound.value("type", "") != "tun") continue;
+            clashflux::network_conflict::Tun tun{inbound.value("interface_name", "")};
+            for (const char* key : {"address", "inet4_address", "inet6_address"}) {
+                if (!inbound.contains(key)) continue;
+                const auto& values = inbound[key];
+                if (values.is_string()) tun.addresses.push_back(values.get<std::string>());
+                else if (values.is_array()) for (const auto& value : values)
+                    if (value.is_string()) tun.addresses.push_back(value.get<std::string>());
+            }
+            result.push_back(std::move(tun));
+        }
+        return result;
+    }
+
+    bool checkNetworkConflicts(const singbox::CompileOptions& options,
+                               const nlohmann::json& config, std::string& error) {
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+        namespace conflicts = clashflux::network_conflict;
+        const auto observed = conflicts::Inspect();
+        conflicts::Request request;
+        request.tuns = networkTuns(config);
+        for (const auto& connection : options.nativeConnections)
+            if (connection.connected && !connection.interfaceName.empty())
+                request.nativeInterfaces.push_back(connection.interfaceName);
+        // Interface names, stale JSON and pidfiles alone never grant ownership.
+        // A new GUI may adopt its own detached/service core. In that case require
+        // both authenticated native control and independent live-owner evidence.
+        const auto expected = snapshot().nativeStartedAt;
+        const auto serviceAlive = service::coreRunningEvidence();
+        const auto resident = expected ? 0 : readPidFile();
+        const auto image = resident > 0 ? core::pidImageName(resident) : std::string{};
+        const bool liveOwner = serviceAlive.value_or(false) || process_.running() ||
+            (resident > 0 && core::pidAlive(resident) &&
+             (image.empty() || image.find("sing-box") != std::string::npos));
+        const bool hasActiveTunnel = std::ranges::any_of(observed.interfaces,
+            [](const auto& link) { return link.up && link.tunnel; });
+        if ((expected || liveOwner) && hasActiveTunnel) {
+            const auto native = nativeApi_->runtime();
+            if (native.ok && (expected ? native.startedAt == expected : liveOwner)) {
+                auto previousJson = lastAppliedJson_;
+                if (previousJson.empty()) {
+                    const auto path = cfg::coreWorkDir() / "config.json";
+                    std::error_code ec;
+                    const auto size = std::filesystem::file_size(path, ec);
+                    if (!ec && size <= 32 * 1024 * 1024) {
+                        std::ifstream input(path, std::ios::binary);
+                        previousJson.resize(static_cast<std::size_t>(size));
+                        input.read(previousJson.data(), static_cast<std::streamsize>(previousJson.size()));
+                        if (!input) previousJson.clear();
+                    }
+                }
+                const auto previous = nlohmann::json::parse(previousJson, nullptr, false);
+                if (previous.is_object()) request.owned = conflicts::OwnedInterfaces(observed, networkTuns(previous));
+            }
+        }
+        error = conflicts::Check(observed, request);
+        if (!error.empty()) return false;
+        if (!observed.interfacesKnown || !observed.routesKnown)
+            stream::logApplication("debug", "网络冲突检查部分证据不可用；未将未知状态当作无冲突");
+#else
+        // Android checks ConnectivityManager/VPN ownership before consent; iOS
+        // remains deferred and must not claim desktop route inspection support.
+        static_cast<void>(options); static_cast<void>(config); static_cast<void>(error);
+#endif
+        return true;
+    }
+
     // Complete downloads, compilation, selector projection and kernel check
     // while the previous data plane is still alive. The exact staged bytes
     // are consumed by startCore; the stopped interval performs no downloads.
     std::unique_ptr<PreparedStart> prepareStartPlan(singbox::CompileOptions options,
                                                    std::string& error) {
         auto plan = std::make_unique<PreparedStart>();
+        const auto began = std::chrono::steady_clock::now();
+        auto checkpoint = began;
+        const auto trace = [&](std::string_view stage) {
+            const auto now = std::chrono::steady_clock::now();
+            stream::logApplication("info", std::format("profile-prepare stage={} elapsed_ms={}", stage,
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - checkpoint).count()));
+            checkpoint = now;
+        };
         const auto workDir = cfg::coreWorkDir();
         const auto publishFailure = [&] {
             std::lock_guard lock(mutex_);
             snap_.warnings = plan->compiled.warnings;
             snap_.fidelity = plan->compiled.fidelity;
         };
+        // Catch another client's global interception before downloads can fail
+        // through that tunnel; address/name checks follow actual compilation.
+        if (!checkNetworkConflicts(options, nlohmann::json::object(), error)) return {};
+        trace("network-preflight");
         if (!prepareHttpRuleProviders(options, plan->compiled, error)) { publishFailure(); return {}; }
+        trace("providers-and-compile");
         prefetchRuleSets(plan->compiled.ruleSetResources, workDir);
-        const bool geoInputsChanged = !plan->compiled.ruleSetResources.empty() ||
-                                     options.ruleSetDir != workDir.string();
+        const bool geoInputsChanged = clashflux::runtime_compile::GeoInputsChanged(
+            !plan->compiled.ruleSetResources.empty(), options.ruleSetDir != workDir.string());
         options.ruleSetDir = workDir.string();
-#if defined(__ANDROID__)
-        plan->compiled = core::generateConfig(options);
-#else
         if (geoInputsChanged) plan->compiled = core::generateConfig(options);
-#endif
+        trace(geoInputsChanged ? "geo-prefetch-and-recompile" : "geo-prefetch-reuse");
         if (!plan->compiled.error.empty() || plan->compiled.json.empty()) {
             error = "订阅编译失败：" + plan->compiled.error; publishFailure(); return {};
         }
         auto config = nlohmann::json::parse(plan->compiled.json, nullptr, false);
         if (!config.is_object()) { error = "订阅编译结果不是合法 JSON 对象"; return {}; }
+        if (!checkNetworkConflicts(options, config, error)) return {};
         plan->proxyGroups = proxyGroupsFromConfig(config, plan->compiled.sourceObjects);
         plan->compiled.json = config.dump();
+        trace("projection-and-json");
         if (!checkCompiledPlan(plan->compiled, error)) return {};
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
+        trace("check-deferred-to-libbox");
+#else
+        trace("kernel-check");
+#endif
         const auto revisionText = setting("routing.applied_revision", "0");
         std::uint64_t revision = 0;
         const auto parsed = std::from_chars(revisionText.data(), revisionText.data() + revisionText.size(), revision);
@@ -66,6 +154,10 @@
         std::ofstream output(plan->file, std::ios::binary | std::ios::trunc);
         output << plan->compiled.json; output.close();
         if (!output) { error = "候选配置写入失败"; return {}; }
+        trace("stage-write");
+        stream::logApplication("info", std::format("profile-prepare total_ms={} config_bytes={}",
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count(),
+            plan->compiled.json.size()));
         return plan;
     }
 
@@ -194,6 +286,9 @@
     bool prepareHttpRuleProviders(singbox::CompileOptions& options,
                                  singbox::CompileResult& compiled, std::string& error,
                                  const vpn::VpnPolicy* policy = nullptr) {
+        clashflux::runtime_compile::Normalize(options);
+        rule_provider_cache::PreparationStats stats;
+        const auto began = std::chrono::steady_clock::now();
         rule_provider_cache::Operations operations;
         operations.fetch = [this](const singbox::HttpRuleProviderResource& resource,
                                  const std::filesystem::path& file, std::string& reason) {
@@ -262,15 +357,18 @@
             prefetchRuleSets(result.ruleSetResources, cfg::coreWorkDir());
             // Only GEO prefetch can change compiler inputs here. HTTP/ASN
             // snapshots are already fully lowered and must still pass check.
-#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
-            if (result.ruleSetResources.empty()) return checkCompiledPlan(result, reason);
-#endif
+            if (!clashflux::runtime_compile::GeoInputsChanged(!result.ruleSetResources.empty(), false))
+                return checkCompiledPlan(result, reason);
             return checkCompiledPlan(core::generateConfig(candidate), reason);
         };
         operations.commit = [](const auto& temp, const auto& dest, std::string& reason) {
             return api::CommitFile(temp, dest, reason);
         };
-        const bool ready = rule_provider_cache::Prepare(options, operations, compiled, error);
+        const bool ready = rule_provider_cache::Prepare(options, operations, compiled, error, &stats);
+        stream::logApplication("info", std::format(
+            "profile-providers ready={} total_ms={} discovery_compile_calls={} discovery_compile_us={}", ready,
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count(),
+            stats.compileCount, stats.compileMicros));
         if (ready) for (const auto& warning : compiled.warnings)
             if (warning.starts_with("HTTP 规则集「")) stream::logApplication("warning", warning);
         return ready;

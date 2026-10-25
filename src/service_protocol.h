@@ -1,10 +1,24 @@
 // Bounded, owning protocol fields shared by the Windows service and its clients.
 #pragma once
 #include <optional>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
 namespace clashflux::service_protocol {
+// Only allowlisted startup categories cross IPC. Raw kernel output can contain
+// subscription URLs, credentials and paths; the protected log stays local.
+inline std::string startupFailure(std::uint32_t code, std::string_view tail) {
+    std::string result = "服务内核启动失败（exit " + std::to_string(code) + "）";
+    if (tail.find("set ipv4 address") != std::string_view::npos || tail.find("set ipv6 address") != std::string_view::npos)
+        result += "：TUN 地址配置失败；请检查其他活动 VPN/TUN 的地址是否冲突";
+    else if (tail.find("address already in use") != std::string_view::npos || tail.find("Only one usage of each socket address") != std::string_view::npos)
+        result += "：监听地址或端口已被占用";
+    else if (tail.find("configure tun interface") != std::string_view::npos || tail.find("create tun") != std::string_view::npos)
+        result += "：TUN 接口创建或配置失败";
+    else result += "；详细原因见受保护的 sing-box.service.log";
+    return result;
+}
 inline std::string_view pptpEvidenceReply(std::optional<bool> evidence) {
     return !evidence ? "UNKNOWN" : *evidence ? "CONNECTED" : "DISCONNECTED";
 }

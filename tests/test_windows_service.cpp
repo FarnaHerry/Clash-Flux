@@ -61,6 +61,19 @@ UniqueHandle ownerToken() {
 #ifdef CLASHFLUX_TEST_SERVICE_ENGINE
 int main(int argc, char** argv) {
     if (argc != 6 || std::string(argv[1]) != "run" || std::string(argv[2]) != "-c" || std::string(argv[4]) != "-D") return 3;
+    const auto content = [&] {
+        std::ifstream config(argv[3]);
+        return std::string(std::istreambuf_iterator<char>(config), {});
+    }();
+    if (content.find("fixture-exit-immediate") != std::string::npos) {
+        std::cerr << "FATAL set ipv4 address: The object already exists. https://private.invalid/?token=password\n";
+        return 9;
+    }
+    if (content.find("fixture-exit-delayed") != std::string::npos) {
+        Sleep(350);
+        std::cerr << "FATAL fixture private-key\n";
+        return 23;
+    }
     // A stable live child whose lifetime can only end via the production Job.
     Sleep(INFINITE); return 0;
 }
@@ -180,6 +193,37 @@ int main(int argc, char** argv) {
             ~ConfigCleanup() { std::error_code ec; std::filesystem::remove_all(path, ec); }
         } configCleanup{configRoot};
         const auto config = configRoot / L"config.json";
+        const auto encodedFailure = config.u8string();
+        const auto failureCommand = "START " + service_protocol::hex(
+            std::string(reinterpret_cast<const char*>(encodedFailure.data()), encodedFailure.size()));
+        check(ws::request("CORE_ERROR", error, 2000, options) == "OK -", "no stale core error before START");
+        std::ofstream(config) << "{\"fixture\":\"fixture-exit-immediate\"}";
+        const auto immediate = ws::request(failureCommand, error, 10000, options);
+        check(immediate && (*immediate == "OK" || immediate->starts_with("ERR ")), "immediate exit response");
+        check(immediate->find("password") == std::string::npos, "startup error never exports raw credentials");
+        std::optional<std::string> immediateDetail;
+        for (unsigned attempt = 0; attempt < 60; ++attempt) {
+            const auto reply = ws::request("CORE_ERROR", error, 2000, options);
+            if (reply && reply->starts_with("OK ")) immediateDetail = service_protocol::unhex(reply->substr(3));
+            if (immediateDetail && immediateDetail->find("exit 9") != std::string::npos) break;
+            Sleep(50);
+        }
+        check(immediateDetail && immediateDetail->find("exit 9") != std::string::npos &&
+              immediateDetail->find("password") == std::string::npos, "immediate exit retains actual code without credentials");
+        std::ofstream(config) << "{\"fixture\":\"fixture-exit-delayed\"}";
+        const auto delayedStart = ws::request(failureCommand, error, 10000, options);
+        check(delayedStart && (*delayedStart == "OK" || delayedStart->starts_with("ERR ")), "delayed exit start response");
+        std::optional<std::string> delayed;
+        for (unsigned attempt = 0; attempt < 60; ++attempt) {
+            delayed = ws::request("CORE_ERROR", error, 2000, options);
+            if (delayed && *delayed != "OK -") break;
+            Sleep(50);
+        }
+        const auto detail = delayed && delayed->starts_with("OK ")
+            ? service_protocol::unhex(delayed->substr(3)) : std::nullopt;
+        check(detail && detail->find("exit 23") != std::string::npos, "delayed exit retains real code after handle cleanup");
+        check(detail->find("TUN 地址") == std::string::npos && detail->find("private-key") == std::string::npos,
+              "current-start log boundary excludes prior FATAL and redacts unknown output");
         std::ofstream(config) << "{\"log\":{\"level\":\"info\"}}";
         const auto encoded = config.u8string();
         const auto command = "START " + service_protocol::hex(std::string(reinterpret_cast<const char*>(encoded.data()), encoded.size()));
@@ -197,6 +241,7 @@ int main(int argc, char** argv) {
         const auto ordinaryReply = ws::request(command, error, 10000, options);
         RevertToSelf();
         check(ordinaryReply == "OK", "ordinary owner START: " + error);
+        check(ws::request("CORE_ERROR", error, 2000, options) == "OK -", "successful restart clears prior failure");
         const auto firstStatus = ws::request("STATUS", error, 2000, options);
         check(firstStatus && firstStatus->starts_with("RUNNING "), "running child PID");
         const DWORD childPid = std::stoul(firstStatus->substr(8));

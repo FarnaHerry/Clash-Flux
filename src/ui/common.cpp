@@ -886,7 +886,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                                                    bool windowTitle,
                                                    std::optional<float> contentSpacing,
                                                    huxerui::View leading,
-                                                   huxerui::View titleSearchField) {
+                                                   huxerui::View titleSearchField,
+                                                   bool showInlineHeader) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     // 响应式：Compact(<600) 收窄一级岛内边距。
@@ -947,15 +948,15 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     }
     static_cast<void>(windowTitle);
     // Compact 共用页内标题与动作；桌面窗口控件由外壳独立保留。
-    huxerui::View titleView = titleSearchField
-        ? huxerui::View{titleSearchField}
-        : PageTitleText(theme, title);
+    huxerui::View titleView = showInlineHeader
+        ? titleSearchField ? huxerui::View{titleSearchField} : PageTitleText(theme, title)
+        : huxerui::View{};
     if (leading) titleView = huxerui::Row{leading, titleView}.With(
         huxerui::Spacing(theme.spacing.small),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     huxerui::View header = PageHeaderLayout(theme,
         titleView,
-        std::move(actions), compact && !inlineCompactActions,
+        showInlineHeader ? huxerui::View{actions} : huxerui::View{}, compact && !inlineCompactActions,
         compact && static_cast<bool>(titleSearchField));
     const float horizontal = fullWidthSections
         ? kSectionCardSpacing

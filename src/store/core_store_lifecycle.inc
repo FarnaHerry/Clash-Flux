@@ -139,6 +139,9 @@
             auto& options = plan->options;
             auto& compiled = plan->compiled;
             auto config = nlohmann::json::parse(compiled.json);
+            // Re-read after preparation: another client may have started while
+            // downloads/checks were running. Reject before replacing config.json.
+            if (!checkNetworkConflicts(options, config, prepareError)) { fail(prepareError); return; }
 #ifdef _WIN32
             if (options.tunInbound) {
                 for (const auto& native : options.nativeConnections)
@@ -287,6 +290,12 @@
                 std::string message = std::format(
                     "内核启动后立即退出（exit {}）",
                     managedByService_ || adopted_ ? -1 : process_.exitCode());
+#ifdef _WIN32
+                if (managedByService_) {
+                    message = service::coreFailure();
+                    if (message.empty()) message = "服务确认内核已退出；当前服务未提供启动诊断，请更新服务后重试";
+                }
+#endif
                 // 直接 spawn 才有本进程输出管道；附上内核最后的报错行，
                 // 把「exit 1」背后的真实原因（端口占用、配置解析、GeoIP
                 // 拉取失败等）直接呈给用户。

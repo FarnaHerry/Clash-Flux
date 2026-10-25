@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ClashFlux</string>
+    <string name="vpn_conflict">Another VPN (%1$s) is active. Disconnect it before starting Clash-Flux.</string>
 </resources>

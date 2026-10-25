@@ -18,6 +18,7 @@
 #include "box_cat.h"
 #include "runtime_diagnostics.h"
 #include "home_control_motion.h"
+#include "home_vpn_status.h"
 #include "rule_target_picker.h"
 #include "log_actions.h"
 #include "filtered_indices.h"
@@ -2370,6 +2371,27 @@ void testInboundSettings() {
 } // namespace
 
 int main() {
+    {
+        using namespace clashflux::ui;
+        const auto disconnected = ResolveHomeVpnStatus(0, {});
+        check(disconnected.phase == BoxCatPhase::Sleeping && !disconnected.connected,
+              "后台 VPN 未连接时猫咪休眠，不能把常驻内核当作 VPN");
+        check(ResolveHomeVpnStatus(0, {.action = CoreAction::Start}).phase == BoxCatPhase::Sleeping,
+              "core-only 启动不会显示 VPN 正在连接或已连接");
+        check(ResolveHomeVpnStatus(1, {}).phase == BoxCatPhase::Starting,
+              "后台 VPN 连接中驱动猫咪等待动画");
+        check(ResolveHomeVpnStatus(0, {.action = CoreAction::Tun, .enabled = true}).phase == BoxCatPhase::Starting,
+              "共享 VPN 操作等待授权时显示正在连接");
+        const auto connected = ResolveHomeVpnStatus(2, {});
+        check(connected.phase == BoxCatPhase::Running && connected.connected,
+              "仅后台确认连接后猫咪出箱");
+        check(ResolveHomeVpnStatus(2, {.action = CoreAction::Tun, .enabled = false}).phase == BoxCatPhase::Stopping,
+              "共享断开操作驱动猫咪回箱");
+        check(ResolveHomeVpnStatus(3, {}).phase == BoxCatPhase::Failed,
+              "后台 VPN 失败驱动失败动画");
+        check(ResolveHomeVpnStatus(3, {.action = CoreAction::Tun, .enabled = true}).phase == BoxCatPhase::Starting,
+              "失败后重试不会保留旧失败动画");
+    }
     reorderGeometryFixture = std::make_shared<clashflux::ui::ProfileGridGeometry>();
     {
         huxerui::testing::UiTest ui(kProfileReorderGeometryApplication,

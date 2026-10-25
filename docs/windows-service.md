@@ -1,5 +1,8 @@
 # Windows 原生网络服务
 
+2026-10-25 已加入启动前多客户端 TUN 地址/接口与全局路由冲突检查；
+跨平台行为、验证及剩余自动选址/DNS 边界见[冲突规避实施记录](windows-tun-coexistence-plan.md)。
+
 Windows 数据面由原生 SCM 服务 `ClashFluxService` 托管，服务类型为
 `SERVICE_WIN32_OWN_PROCESS`，账户为 `LocalSystem`。GUI/CLI 保持普通用户运行；
 服务直接启动同一软件版本的 `sing-box.exe`，并拥有 PPTP RAS 会话、服务器绕行路由
@@ -73,6 +76,10 @@ START 只接受本机绝对 JSON 路径。服务以请求用户身份检查读�
 随后在受保护目录保存运行快照；内核固定为服务载荷中的 `engines/sing-box.exe`。
 `-D` 保留客户端配置父目录，以保持现有相对资源/缓存语义；stdout/stderr 写入受保护的
 `sing-box.service.log`。服务不提供任意程序、shell 或系统命令执行接口。
+
+只读 `CORE_ERROR` 返回 `OK <hex 诊断>`（无错误为 `OK -`），保留真实内核退出码，
+仅将本次启动日志映射为固定错误分类，不直接返回原始日志。客户端兼容旧服务的
+不支持回复，确认退出后提示更新服务，不再把 Windows 托管退出统一写成 `exit -1`。
 
 内核放入设置了 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job Object；服务异常退出
 也会清理内核。服务检测内核退出时释放 TUN 补偿路由；STOP 先释放补偿，再终止内核。

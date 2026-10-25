@@ -1,5 +1,27 @@
 # L1 / L2 / L3 开发完成度复核
 
+2026-10-25 Android 编译产物复用（`159e674` 加工作区）：把运行参数规范化前移至
+规则集发现前，统一保留 TUN 宽松路由和 IPv6 设置，移除检查回调与启动计划的无条件
+完整重编译。无 HTTP 依赖与固定快照各需一次发现编译；普通单轮 HTTP 新快照仍需
+发现与展开两次编译，ASN 多轮发现仍按新增输入重编译；拒绝检查、候选提交和后台
+libbox 校验边界保留。增加原生准备与 Java
+libbox 启动的分阶段计时；桌面 GEO 预取变化及目录变化仍触发重编译。
+回归核对完整 JSON/保真度相等、编译次数、失败保留快照；实际验证结果见本次记录，
+没有手机性能测量，不把减少调用次数写成真机加速倍数。
+
+本批已执行 Windows `cmake --build build --target clash-flux test_singbox
+test_rule_provider_download`；`ctest -R '^(singbox|rule_provider_download)$'
+--output-on-failure --no-tests=error` 两项通过，下载回归带明确 OpenSSL 路径及
+`--require-tls`。Android NDK 28.2 的 arm64/API24 C++23 语法检查通过，覆盖生产
+vpn/singbox/rule_provider_cache 接口的兼容转换及平台规范化 helper；不等同于完整 APK 构建。
+
+2026-10-25 多客户端网络冲突检查（`159e674` 加工作区）：桌面候选准备/应用前只读
+检查活动 TUN 接口、双地址族网段重叠及默认路由接管；自身豁免绑定已鉴权运行实例。
+Android 在 VPN 授权及建隧道入口检查系统所有权，Windows 服务补真实退出码和脱敏分类。
+Windows/Linux 只读 OS 与判定用例、Android SDK 编译及所有权判定已执行；macOS、
+Android 真机双客户端尚未验收，iOS 继续暂缓，自动选址与独立 DNS 冲突判定仍待办。
+管理员服务回归及剩余边界见[实施记录](windows-tun-coexistence-plan.md)。
+
 2026-10-25 Windows/Linux PPTP 对齐（`a826169` 后的未提交工作区）：两端共享
 候选拒绝后的运行计划保护及断开确认；Linux 服务补三态会话证据与真实传输地址回传。
 Windows 拨号捕获租约按会话暂存/提交/释放，准备或路由应用失败保留旧租约。

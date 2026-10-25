@@ -25,11 +25,33 @@ export struct Operations {
                        std::string&)> commit;
 };
 
+export struct PreparationStats {
+    unsigned compileCount = 0;
+    std::int64_t compileMicros = 0;
+};
+
 export inline bool Prepare(singbox::CompileOptions& options, const Operations& operations,
-        singbox::CompileResult& result, std::string& error) {
+        singbox::CompileResult& result, std::string& error, PreparationStats* stats = nullptr) {
     error.clear();
+    if (stats) *stats = {};
+    const auto compile = [&](const singbox::CompileOptions& candidate) {
+        const auto began = stats ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        const auto record = [&] {
+            if (stats) stats->compileMicros += std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - began).count();
+        };
+        if (stats) ++stats->compileCount;
+        try {
+            auto compiled = singbox::compileConfig(candidate);
+            record();
+            return compiled;
+        } catch (...) {
+            record();
+            throw;
+        }
+    };
     try {
-        result = singbox::compileConfig(options);
+        result = compile(options);
         if (result.httpRuleProviders.empty()) { error = result.error; return error.empty(); }
         if (options.ruleProviderCacheDir.empty() || !operations.fetch || !operations.check || !operations.commit) {
             error = "HTTP 规则集任务缺少缓存目录或操作接口"; return false;
@@ -108,7 +130,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
             }
             // The first compile already consumed every pinned snapshot. A
             // restart/rollback must not decode the identical inputs twice.
-            if (snapshotsAdded) result = singbox::compileConfig(candidate);
+            if (snapshotsAdded) result = compile(candidate);
             // Newly discovered dependencies must verify full identity even
             // when a colliding filename already has a prepared snapshot.
             for (const auto& resource : result.httpRuleProviders) {

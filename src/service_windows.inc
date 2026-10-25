@@ -192,6 +192,12 @@ export bool startCore(const std::filesystem::path& config, std::string& error) {
     return windowsOk("START " + protocol::hex(std::string(reinterpret_cast<const char*>(value.data()), value.size())), error);
 }
 export bool stopCore(std::string& error) { return windowsOk("STOP", error, 30000); }
+export std::string coreFailure() {
+    std::string error;
+    const auto reply = native_service::request("CORE_ERROR", error);
+    if (!reply || !reply->starts_with("OK ")) return {};
+    return protocol::unhex(reply->substr(3)).value_or(std::string{});
+}
 export std::optional<bool> coreRunningEvidence() {
     std::string error;
     const auto reply = native_service::request("STATUS", error);

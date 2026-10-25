@@ -354,6 +354,8 @@ struct Server {
     std::atomic<bool> queryFailed{false};
     std::mutex engineMutex;
     UniqueHandle engine;
+    std::uintmax_t engineLogOffset = 0;
+    std::string lastCoreFailure;
     UniqueHandle job;
     UniqueHandle upgradeProcess;
     UniqueHandle upgradeGate;
@@ -380,7 +382,31 @@ struct Server {
         return engine.valid() && WaitForSingleObject(engine.get(), 0) == WAIT_TIMEOUT
             ? "RUNNING " + std::to_string(GetProcessId(engine.get())) : "STOPPED";
     }
+    std::string coreFailure() {
+        std::lock_guard lock(engineMutex);
+        if (engine.valid() && WaitForSingleObject(engine.get(), 0) == WAIT_OBJECT_0) {
+            DWORD code = 0;
+            if (GetExitCodeProcess(engine.get(), &code)) {
+                std::ifstream log(directory(options) / L"sing-box.service.log", std::ios::binary | std::ios::ate);
+                std::string tail;
+                if (log) {
+                    const auto end = log.tellg();
+                    if (end >= 0 && static_cast<std::uintmax_t>(end) > engineLogOffset) {
+                        const auto size = static_cast<std::uintmax_t>(end);
+                        const auto begin = std::max(engineLogOffset, size > 4096 ? size - 4096 : 0);
+                        tail.resize(static_cast<std::size_t>(size - begin));
+                        log.seekg(static_cast<std::streamoff>(begin));
+                        log.read(tail.data(), static_cast<std::streamsize>(tail.size()));
+                        if (!log) tail.clear();
+                    }
+                }
+                lastCoreFailure = startupFailure(code, tail);
+            }
+        }
+        return lastCoreFailure;
+    }
     bool stopEngine(std::string* error = nullptr) {
+        coreFailure(); // Capture a spontaneous exit before closing its handle.
         if (hooks.resetTun) hooks.resetTun(); // Release routes before capture device.
         if (job.valid() && !TerminateJobObject(job.get(), 0)) {
             if (error) *error = winError("Terminate core job");
@@ -446,6 +472,13 @@ struct Server {
         const UniqueHandle log{CreateFileW((root / L"sing-box.service.log").c_str(), FILE_APPEND_DATA,
             FILE_SHARE_READ | FILE_SHARE_WRITE, &attributes, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr)};
         if (!log.valid()) { error = winError("Open core log"); return false; }
+        {
+            std::lock_guard lock(engineMutex);
+            std::error_code ec;
+            engineLogOffset = std::filesystem::file_size(root / L"sing-box.service.log", ec);
+            if (ec) engineLogOffset = 0;
+            lastCoreFailure.clear();
+        }
         STARTUPINFOW startup{}; startup.cb = sizeof(startup);
         startup.dwFlags = STARTF_USESTDHANDLES;
         startup.hStdOutput = log.get(); startup.hStdError = log.get(); startup.hStdInput = nullptr;
@@ -461,7 +494,7 @@ struct Server {
             error = winError("Assign core job"); TerminateProcess(engine.get(), 1); stopEngine(); return false;
         }
         if (WaitForSingleObject(engine.get(), 100) == WAIT_OBJECT_0) {
-            error = "Core exited during startup; inspect sing-box.service.log"; stopEngine(); return false;
+            error = coreFailure(); stopEngine(); return false;
         }
         return true;
     }
@@ -558,6 +591,7 @@ struct Server {
                 if (!authorized(pipe.get())) reply = "ERR Unauthorized service client";
                 else if (command == "VERSION") reply = "clash-flux-service 1 app " + version;
                 else if (command == "STATUS") reply = coreStatus();
+                else if (command == "CORE_ERROR") reply = "OK " + hex(coreFailure());
                 else if (queries) {
                     if (hooks.command && (command == "PPTP_AVAILABLE" || command == "PPTP_LIVE_DIAL" || command.starts_with("PPTP_STATUS ")))
                         reply = hooks.command(command);
@@ -648,7 +682,7 @@ std::optional<std::string> request(std::string_view command, std::string& error,
     if (command.empty() || command.size() > kMaxCommand || command.find_first_of("\r\n") != std::string_view::npos || command.find('\0') != std::string_view::npos) {
         error = "Invalid service command"; return {};
     }
-    const bool queries = command == "VERSION" || command == "STATUS" || command == "PPTP_AVAILABLE" || command == "PPTP_LIVE_DIAL" || command.starts_with("PPTP_STATUS ");
+    const bool queries = command == "VERSION" || command == "STATUS" || command == "CORE_ERROR" || command == "PPTP_AVAILABLE" || command == "PPTP_LIVE_DIAL" || command.starts_with("PPTP_STATUS ");
     const auto pipeName = options.pipe + (queries ? L".Query" : L"");
     const auto deadline = GetTickCount64() + timeoutMs;
     DWORD lastPipeError = ERROR_FILE_NOT_FOUND;

@@ -1,5 +1,21 @@
 # Android 后台服务生命周期
 
+2026-10-25 订阅准备优化：在规则集发现/首次编译前统一 Android 运行参数，TUN 继续
+使用 `strict_route=false`，保留 IPv6、端口及用户来源语义。Android 打包 GEO 预取不改输入，
+检查回调与启动计划复用已有编译产物；HTTP/ASN 新快照仍重新编译并完成候选检查后提交，
+桌面 GEO 预取改变输入或规则集目录变化时仍重编译。后台 `Libbox.checkConfig` 保留。
+日志 `profile-providers` 记录依赖发现编译次数、微秒与准备总耗时；`profile-prepare`
+区分网络检查、规则集/编译、GEO 复用/重编译、代理组/JSON、检查及暂存写入，
+`runtime-prepare` 区分 libbox 初始化、配置等待/读取、校验、CommandServer 和数据面启动。
+仅输出阶段、耗时、次数和字节数，不输出订阅地址、内容或凭据；Android 的原生检查
+标记为延后到 libbox，不能将计时标签当作桌面 CLI 校验通过。尚无手机耗时对比。
+
+2026-10-25：首页/快捷磁贴在请求 VPN 授权前、授权返回后，以及后台 `openTun`
+前检查同一用户可见的其他活动 VPN。使用系统 owner UID 或当前系统 VPN 授权区分自身，
+不依赖静态字段或持久化标记猜测所有权；证据未知时保留原授权流程。
+发现冲突只反馈并停止本次启动，不主动撤销其他 VPN；core-only 自启不触发 VPN 接管。
+范围与验证限制见[跨平台冲突检查](windows-tun-coexistence-plan.md)。
+
 ## 参考取舍
 
 - 官方 [sing-box Android 功能说明](https://sing-box.sagernet.org/clients/android/features/)

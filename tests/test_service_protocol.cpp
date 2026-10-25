@@ -8,6 +8,13 @@ using namespace clashflux::service_protocol;
 void require(bool condition) { if (!condition) throw std::runtime_error("service protocol regression"); }
 int main() {
     {
+        const auto message = startupFailure(1, "FATAL set ipv4 address: The object already exists. https://private.invalid/?token=password");
+        require(message.find("exit 1") != std::string::npos && message.find("TUN 地址") != std::string::npos);
+        require(message.find("password") == std::string::npos && message.find("private.invalid") == std::string::npos);
+        require(startupFailure(7, "unknown private-key").find("private-key") == std::string::npos);
+        require(startupFailure(2, "listen tcp: address already in use").find("端口") != std::string::npos);
+    }
+    {
         namespace native = clashflux::native_control;
         const auto frame = [](unsigned char flag, const std::string& value) {
             std::string result(5, '\0'); result[0] = static_cast<char>(flag);

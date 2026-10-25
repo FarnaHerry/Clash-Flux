@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="vpn_conflict">检测到其他活动 VPN（%1$s），请先断开后再启动 Clash-Flux。</string>
+</resources>

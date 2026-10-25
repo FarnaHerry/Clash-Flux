@@ -56,6 +56,7 @@
 
 - 应用 Logo 统一从 `assets/branding/logo.svg` 生成，沿用独立 demo 的完整出箱造型。界面使用透明的 `clash_flux_logo_vector_{dark,light}_current.svg`，按主题选择且不加 Tint；Linux/Windows/macOS 原生图标使用透明背景，Windows 安装器和 Android legacy launcher 保留白底。托盘保留默认、TUN 和系统代理三种状态色及 32/64/96 像素资源；Android 快捷磁贴继续使用独立猫爪。生成和预览方式见 [Logo 资源说明](branding/README.md)。
 - 首页猫咪动画由 `src/ui/box_cat.cpp` 提供，桌面按钮和运行卡片只映射共享 `CoreControl` 的真实内核命令/快照，Android 只映射 VPN 后台快照，不能将 core-only 当作 VPN 已连接。等待可持续轻抚，成功后才起身；失败 wink 每次进入失败态只播放一次，重开窗口或切页不重播已稳定姿势。帧时钟限频 30fps，不逐帧写 State；窗口后台、隐藏首页、SharedBounds 转场和 reduced-motion 下暂停或落到静态姿势。独立 Demo 仅用于隔离预览，不向主程序引入模拟进度。
+- 移动端与桌面 Compact 首页省略整个页内“首页”标题行及其下方间距，保留顶部安全区和内容留白。移动端顶部改为全宽 VPN 状态卡片，64pt 猫咪动画与状态文字共读后台 VPN 快照及应用级操作；桌面窄窗沿用桌面卡片布局，不添加移动端 VPN 卡片。标题图标遵守 `HomeCardHeading` 规范，原悬浮启停入口和底部导航保留。运行态泵挂在内容树中，不依赖已移除的标题行；桌面宽屏仍在窗口标题栏显示“首页”，桌面窄窗保留独立系统窗口标题栏。
 - 桌面与移动端共用设置页主题选项，三个标签统一为“自动 / 深色 / 浅色”；“自动”按系统深浅模式选择主题。
 
 - 二级标签共用 `src/ui/section_tabs.cpp` 的 `SectionTabBar` 与 `SectionTabPages`，代理、订阅、规则页都接入。标签栏固定在 Pager 外，点击、溢出菜单与内容横滑写回同一受控选择。

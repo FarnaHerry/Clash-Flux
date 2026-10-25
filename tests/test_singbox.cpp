@@ -7,6 +7,7 @@
 // 断言风格与 test_vpn 一致（check 计数 + main）。
 #include <cassert>
 #include "../src/runtime_plan_state.h"
+#include "../src/runtime_compile.h"
 #include <cstdio>
 #include <zstd.h>
 
@@ -1506,6 +1507,80 @@ void testAsnRuleProviders() {
           fresh.ruleProviderContents.empty(), "invalid ASN download rejects staged classical body before any commit");
 }
 
+void testRuntimeCompileReuse() {
+    namespace runtime = clashflux::runtime_compile;
+    const RuleSetTestDirectory directory;
+    singbox::CompileOptions options;
+    options.profileYaml = "proxies: []\nrules:\n  - MATCH,DIRECT\n";
+    options.tunInbound = true;
+    options.tunStrictRoute = true;
+    options.ipv6 = true;
+    options.mixedPort = 17899;
+    auto desktop = options;
+    runtime::Normalize(desktop, false);
+    check(desktop.tunStrictRoute, "desktop keeps strict-route policy before dependency discovery");
+    runtime::Normalize(options, true);
+    check(!options.tunStrictRoute && options.ipv6 && options.mixedPort == 17899,
+          "Android normalizes strict routing before first compile while preserving IPv6 and ports");
+    auto noTun = desktop; noTun.tunInbound = false;
+    runtime::Normalize(noTun, true);
+    check(noTun.tunStrictRoute && !noTun.tunInbound,
+          "core-only normalization does not enable TUN or rewrite unrelated policy");
+    rule_provider_cache::PreparationStats stats;
+    singbox::CompileResult result;
+    std::string error;
+    check(rule_provider_cache::Prepare(options, {}, result, error, &stats) && stats.compileCount == 1,
+          "no-provider runtime candidate needs exactly one compiler invocation");
+    const auto expected = singbox::compileConfig(options);
+    check(result.json == expected.json && result.fidelity == expected.fidelity && result.warnings == expected.warnings,
+          "reused runtime JSON and fidelity equal the formerly repeated compilation");
+    const auto config = json::parse(result.json);
+    const auto tun = std::ranges::find_if(config["inbounds"], [](const auto& inbound) {
+        return inbound.value("type", "") == "tun";
+    });
+    check(tun != config["inbounds"].end() && !tun->value("strict_route", true),
+          "first emitted TUN JSON already has Android's relaxed routing policy");
+    check(!runtime::GeoInputsChanged(true, false, true) && runtime::GeoInputsChanged(true, false, false) &&
+          runtime::GeoInputsChanged(false, true, true) && !runtime::GeoInputsChanged(false, false, false),
+          "bundled Android GEO reuses input while desktop prefetch and changed directories still recompile");
+
+    options.ruleProviderDir = directory.path.string();
+    options.ruleProviderCacheDir = (directory.path / "runtime-cache").string();
+    options.profileYaml = "rule-providers:\n  data: {type: http, behavior: domain, url: https://example.test/runtime.yaml}\n"
+        "rules:\n  - RULE-SET,data,DIRECT\n  - MATCH,DIRECT\n";
+    unsigned checks = 0, commits = 0, fetched = 0;
+    bool reject = false;
+    rule_provider_cache::Operations operations;
+    operations.fetch = [&](const auto&, const auto& path, std::string&) {
+        ++fetched; std::ofstream output(path); output << "payload: [runtime.test]\n";
+        output.close(); return output.good();
+    };
+    operations.check = [&](const auto& candidate, const auto& compiled, std::string& reason) {
+        ++checks;
+        check(!candidate.tunStrictRoute && !compiled.json.empty(),
+              "HTTP candidate check sees normalized platform options and completed JSON");
+        if (reject) { reason = "test candidate rejected"; return false; }
+        return compiled.error.empty();
+    };
+    operations.commit = [&](const auto& from, const auto& to, std::string&) {
+        ++commits; std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing); return true;
+    };
+    check(rule_provider_cache::Prepare(options, operations, result, error, &stats) && stats.compileCount == 2 &&
+          checks == 1 && commits == 1 && fetched == 1,
+          "cold HTTP preparation compiles discovery and the new snapshot once each, still checking before commit");
+    const auto legacy = singbox::compileConfig(options);
+    check(result.json == legacy.json && result.fidelity == legacy.fidelity,
+          "HTTP prepared artifact equals the old additional runtime compile");
+    check(rule_provider_cache::Prepare(options, operations, result, error, &stats) && stats.compileCount == 1 &&
+          checks == 2 && commits == 1 && fetched == 1,
+          "pinned runtime plan compiles once while retaining candidate validation");
+    const auto pinned = options.ruleProviderContents;
+    reject = true;
+    check(!rule_provider_cache::Prepare(options, operations, result, error, &stats) && stats.compileCount == 1 &&
+          checks == 3 && commits == 1 && fetched == 1 && options.ruleProviderContents == pinned,
+          "reuse never skips rejection checks or replaces pinned snapshots on failure");
+}
+
 void testHttpRuleProviders() {
     const RuleSetTestDirectory directory;
     const auto cache = directory.path / "cache";
@@ -1930,6 +2005,7 @@ int main(int argc, char** argv) {
     testLogicalRuleResources();
     testFileRuleProviders();
     testHttpRuleProviders();
+    testRuntimeCompileReuse();
     testAsnRuleProviders();
     testMrsRuleProviders();
     for (const auto* format : {"{bad: yaml}", "[yaml]", "null", "''", "'  '"}) {

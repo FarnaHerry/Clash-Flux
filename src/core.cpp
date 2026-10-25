@@ -4,6 +4,7 @@
 // CreateProcess。Android 的 sing-box libbox 由 Java VpnService 持有，
 // 此处仅保留跨平台的轻量状态接口。
 module;
+#include "runtime_compile.h"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -121,13 +122,7 @@ const char* stateName(CoreState s) {
 // ---- 配置合成（经 clashflux.singbox 编译器）----
 
 singbox::CompileResult generateConfig(singbox::CompileOptions options) {
-#if defined(__ANDROID__)
-    // Android 的 TUN 由 VpnService 建立：只有请求 TUN 时才生成 tun inbound，
-    // 普通内核常驻/测速使用同一个 libbox 服务但不创建系统 VPN 接口。
-    // IPv6 是否启用由持久化设置传入；VpnService 会按 libbox 返回的 IPv6
-    // 地址与路由配置接口。严格路由仍关闭，避免截断系统级分流。
-    if (options.tunInbound) options.tunStrictRoute = false;
-#endif
+    clashflux::runtime_compile::Normalize(options);
     return singbox::compileConfig(options);
 }
 

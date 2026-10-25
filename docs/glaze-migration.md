@@ -78,6 +78,11 @@ Glaze 并非覆盖全部输入；具体库和可优化方向如下：
 | 内核启动时代理组投影、候选与旧配置比较 | `core_store_lifecycle.inc` 的 JSON parse/dump；其它回读也仍用 DOM | 优先测量并减少整份配置的重复 parse/dump，保持失败、相等性与回滚语义，再决定 codec 迁移 |
 | MRSv1 domain/ipcidr | Zstandard + 专用二进制解析，直接聚合原生规则字段 | 不是 JSON/YAML 输入；Glaze 不替代解压和 MRS 语义转换 |
 
+2026-10-25：Android 运行参数在首次规则集编译前规范化，检查回调和启动计划复用
+已有产物，保留新 HTTP/ASN 输入的必要编译、桌面 GEO 变化重编译与后台 libbox 校验。
+新增完整 JSON/保真度与调用次数回归及 `profile-prepare` / `runtime-prepare` 分段计时，
+不把消除重复编译归因于 JSON 库迁移，也不宣称已有手机实测加速比例。
+
 Glaze 的 typed JSON 直接读写对象，能够减少中间表示，但上游 benchmark 不能证明
 它在本项目所有 JSON/YAML 场景都最快，更不能推成订阅切换的加速倍数。
 固定 v9.0.0 的 [YAML 文档](https://github.com/stephenberry/glaze/blob/v9.0.0/docs/yaml.md)

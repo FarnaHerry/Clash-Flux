@@ -1,5 +1,7 @@
 #include "../src/runtime_network_probe.h"
 #include "../src/health_history.h"
+#include "network_conflict_cases.h"
+#include "network_conflict_namespace_cases.h"
 #include "../src/ui/diagnostic_export_file.h"
 #include <atomic>
 #include <chrono>
@@ -84,7 +86,11 @@ struct DnsFixture {
     }
     ~DnsFixture(){worker.request_stop();worker.join();if(socket!=InvalidSocket)closeSocket(socket);}
 };
-int main(){try{
+int main(int argc,char** argv){try{
+    if(argc==3&&std::string(argv[1])=="--conflict-namespace") {
+        NetworkConflictNamespaceCase(argv[2]);return 0;
+    }
+    NetworkConflictCases();
 #ifdef _WIN32
     WSADATA data{};require(WSAStartup(MAKEWORD(2,2),&data)==0,"winsock fixture init");
     struct WinsockGuard{~WinsockGuard(){WSACleanup();}} guard;

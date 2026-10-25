@@ -12,6 +12,13 @@ public final class VpnTileConsentActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        String conflict = VpnConflict.find(this);
+        if (!conflict.isEmpty()) {
+            MainActivity.appLog(conflict, true);
+            android.widget.Toast.makeText(this, conflict, android.widget.Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
         Intent consent = VpnService.prepare(this);
         if (consent == null) {
             startVpn();

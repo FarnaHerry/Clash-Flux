@@ -886,6 +886,11 @@ public final class MainActivity extends HuxerUIActivity {
 
     private void continueVpnStart() {
         try {
+            String conflict = VpnConflict.find(this);
+            if (!conflict.isEmpty()) {
+                reportVpnStartFailure(conflict, new IllegalStateException(conflict));
+                return;
+            }
             appLog("开始请求系统 VPN 授权", false);
             Intent consent = VpnService.prepare(this);
             if (consent != null) {
@@ -902,6 +907,11 @@ public final class MainActivity extends HuxerUIActivity {
 
     private void startVpnService() {
         try {
+            String conflict = VpnConflict.find(this);
+            if (!conflict.isEmpty()) {
+                reportVpnStartFailure(conflict, new IllegalStateException(conflict));
+                return;
+            }
             Intent intent = new Intent(this, ClashVpnService.class);
             if (Build.VERSION.SDK_INT >= 26) {
                 startForegroundService(intent);

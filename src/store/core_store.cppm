@@ -17,8 +17,10 @@ module;
 #include "runtime_health.h"
 #include "wire_codec.h"
 #include "runtime_network_probe.h"
+#include "network_conflict.h"
 #include "health_history.h"
 #include "runtime_plan_state.h"
+#include "runtime_compile.h"
 #if defined(__ANDROID__)
 #include "android_profile_http.h"
 #if !defined(NDEBUG)

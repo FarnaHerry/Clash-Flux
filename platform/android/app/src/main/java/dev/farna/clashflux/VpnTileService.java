@@ -38,6 +38,12 @@ public final class VpnTileService extends TileService {
         }
 
         MainActivity.appLog("通知栏快捷开关请求启动 VPN", false);
+        String conflict = VpnConflict.find(this);
+        if (!conflict.isEmpty()) {
+            MainActivity.appLog(conflict, true);
+            android.widget.Toast.makeText(this, conflict, android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
         if (VpnService.prepare(this) == null) {
             startVpnService(this);
             return;
@@ -56,6 +62,8 @@ public final class VpnTileService extends TileService {
     }
 
     static void startVpnService(Context context) {
+        String conflict = VpnConflict.find(context);
+        if (!conflict.isEmpty()) throw new IllegalStateException(conflict);
         Intent service = new Intent(context, ClashVpnService.class);
         if (Build.VERSION.SDK_INT >= 26) {
             context.startForegroundService(service);

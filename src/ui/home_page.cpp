@@ -34,6 +34,7 @@
 #include "ui.h"
 #include "box_cat.h"
 #include "home_control_motion.h"
+#include "page_layout.h"
 #include "empty_state.h"
 #include "task_bridge.h"
 
@@ -49,6 +50,7 @@ import clashflux.utils;
 // 之后（同 profiles_cache.h）。
 #include "core_model.h"
 #include "core_control.h"
+#include "home_vpn_status.h"
 #include "profiles_model.h"
 #include "settings_model.h"
 #include "stream_updates.h"
@@ -89,7 +91,7 @@ struct HomeCardSpec {
 };
 
 #if defined(__ANDROID__)
-// 移动端由悬浮按钮展示隧道状态，不再重复一张状态卡片。
+// 移动端网格上方另有全宽 VPN 动画卡片；悬浮按钮保留启停入口。
 // 手机屏是 2 列：需要整宽的（图表）给 2 格，信息/单选卡 1 格；
 // 高度仍按 FlClash 跨度（图表/信息卡/出站模式 2 行，开关与网络信息卡 1 行）。
 constexpr HomeCardSpec kHomeCards[] = {
@@ -881,6 +883,27 @@ huxerui::XYChartData BuildTrafficChartData(
 
 // ---- 平台专属卡片（整个函数由编译宏在调用点选择）---------------------------
 
+[[huxerui::composable]] huxerui::View MobileHomeVpnStatusCard() {
+    const auto& theme = huxerui::UseTheme();
+    const auto control = UseCoreControl();
+    const auto status = ResolveHomeVpnStatus(control.model->view.Get().vpnState,
+                                            control.model->operations.command.Get());
+    return Card(huxerui::Row {
+        huxerui::Column {
+            HomeCardHeading(app::images::shield_check, Localized("VPN 状态")),
+            huxerui::Text(Localized(status.label)).Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBody),
+                status.failed ? theme.colors.error : theme.colors.on_surface_variant}),
+        }.With(huxerui::Spacing(8.0F), huxerui::Grow(1.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start)),
+        BoxCatAnimation(status.phase)
+            .With(huxerui::Frame{.width = 64.0F, .height = 64.0F})
+            .Key("home-vpn-cat"),
+    }.With(huxerui::Spacing(kHomeGridGap),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)))
+        .Key("home-vpn-status-card");
+}
+
 #if defined(__ANDROID__)
 
 [[huxerui::composable]] huxerui::View AndroidHomeFloatingAction(
@@ -890,10 +913,11 @@ huxerui::XYChartData BuildTrafficChartData(
     const auto control = UseCoreControl();
     huxerui::View base = page;
     const int vpnStatus = control.model->view.Get().vpnState;
-    const bool active = vpnStatus == 2;
     const CoreCommand command = control.model->operations.command.Get();
-    const bool changing = command.action == CoreAction::Tun || vpnStatus == 1;
-    const bool failed = vpnStatus == 3 && !changing;
+    const auto status = ResolveHomeVpnStatus(vpnStatus, command);
+    const bool active = status.connected;
+    const bool changing = status.changing;
+    const bool failed = status.failed;
     const bool enabled = !control.Busy() && !changing &&
                          (active || state.profileId != 0);
     const auto toggle = [control, active] {
@@ -902,18 +926,9 @@ huxerui::XYChartData BuildTrafficChartData(
 
     const huxerui::StringVariant actionLabel =
         Localized(active ? "停止 VPN" : "启动 VPN");
-    const huxerui::StringVariant statusLabel =
-        Localized(command.action == CoreAction::Tun && !command.enabled
-                      ? "正在断开"
-                      : changing ? "正在连接"
-                      : failed ? "启动失败"
-                               : active ? "已连接" : "未连接");
-    const bool stopping = command.action == CoreAction::Tun && !command.enabled;
-    const BoxCatPhase catPhase = failed ? BoxCatPhase::Failed
-        : changing ? (stopping ? BoxCatPhase::Stopping : BoxCatPhase::Starting)
-        : active ? BoxCatPhase::Running : BoxCatPhase::Sleeping;
+    const huxerui::StringVariant statusLabel = Localized(status.label);
     // 猫咪只呈现后台确认的连接状态；VPN 授权与操作仍由共享控制器持有。
-    huxerui::View button = BoxCatButtonContent(catPhase,
+    huxerui::View button = BoxCatButtonContent(status.phase,
         failed ? OnErrorColor(theme)
                : active || changing ? theme.colors.on_primary_container
                                     : theme.colors.on_primary).OnClick(toggle)
@@ -1357,31 +1372,32 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     }.With(huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
-    huxerui::View pageBody = huxerui::Column {
-        std::move(grid),
+    std::vector<huxerui::View> bodySections;
+    if (!kPageTitlesInWindow) bodySections.push_back(MobileHomeVpnStatusCard());
+    bodySections.push_back(std::move(grid));
+    bodySections.push_back(
         // 悬浮启动按钮压在滚动内容之上，尾部留出等高的空白，避免最后一张
         // 卡片被按钮遮住（紧凑视口本来就带底部悬浮导航的空白）。
         compact ? CompactFloatingNavigationFooter()
                 : huxerui::View{huxerui::Row{}.With(
                       huxerui::Frame{.height =
                           kDesktopHomeControl && controlCardShown.Get()
-                              ? 0.0F : kHomeFloatingButtonInset})},
-    }.With(huxerui::Spacing(kHomeGridGap),
+                              ? 0.0F : kHomeFloatingButtonInset})});
+    huxerui::View pageBody = huxerui::Column(std::move(bodySections))
+        .With(huxerui::Spacing(kHomeGridGap),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-
-    // 首页标题栏不重复展示内核状态；状态统一显示在左侧品牌 Logo。
-    huxerui::View headerActions = huxerui::Row {
-        // 运行态泵是空 View（无布局），挂在这里即可让它内部的 Lifecycle 注册。
-        std::move(runtimePump),
-    };
 
     // 注意：首页不要在滚动内容里声明 Focusable(true)——运行时会自动把初始
     // 焦点所在的节点滚入视野，导致首页一打开就被滚到中途（且随后每次重组都可能
     // 来回滚）。可聚焦性交给内置控件自己的默认策略，分段选择器只保留语义。
-    huxerui::View scrollContent =
-        huxerui::ScrollView(std::move(pageBody)).With(huxerui::Grow(1.0F));
+    // Keep the runtime pump mounted when mobile/desktop Compact omits the header.
+    huxerui::View scrollContent = huxerui::Stack {
+        std::move(runtimePump),
+        huxerui::ScrollView(std::move(pageBody)).With(huxerui::Grow(1.0F)),
+    }.With(huxerui::Grow(1.0F));
     huxerui::View page = PageScaffold(
-        Localized("首页"), std::move(headerActions), std::move(scrollContent), true, false, true, kHomeGridGap);
+        Localized("首页"), {}, std::move(scrollContent), true, false, true,
+        kHomeGridGap, {}, {}, kPageTitlesInWindow && !compact);
 
     // 移动端启动/停止按钮脱离滚动内容，固定在底部悬浮导航之上的位置。
     huxerui::View shell = CLASHFLUX_HOME_FLOATING_ACTION(
