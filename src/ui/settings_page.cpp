@@ -15,6 +15,7 @@
 
 #include "app_resources.h"
 #include "ui.h"
+#include "page_loading.h"
 #include "action_menu.h"
 #include "task_bridge.h"
 #include "runtime_diagnostics.h"
@@ -667,11 +668,15 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const auto control = UseCoreControl();
     const auto coreModel = control.model;
     const CoreView coreView = coreModel->view.Get();
+    const auto settingsModel = huxerui::UseService<SettingsModel>();
     // 不可见时只保留本页 State/Lifecycle，不构建重子树：huxerui 的 Pager 会把
     // 四个一级页同时挂载，隐藏页即使不重组，其已挂载子树仍随每一帧被重新测量。
     // 真机实测（代理页大分组）：四页同挂时每帧 1443 次测量请求 / ~20ms，
     // 只留当前页后降到 28 次 / ~0ms；因此不可见页必须返回空占位。
     if (!active) return huxerui::View{huxerui::Row{}}.Key("settings-idle");
+
+    if (kPageTitlesInWindow && !compact && (!coreView.ready || !settingsModel->view.Get().ready))
+        return PageLoadingScaffold(Localized("设置"), theme, true);
 
     std::vector<huxerui::View> sections;
     if (compact || kSettingsMoreOnWide)

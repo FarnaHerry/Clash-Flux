@@ -31,6 +31,7 @@
 
 #include "ui.h"
 #include "empty_state.h"
+#include "page_loading.h"
 #include "search_text.h"
 #include "app_resources.h"
 #include "task_bridge.h"
@@ -178,6 +179,14 @@ struct ProfileReorderSession {
     if (!active) return huxerui::Column{linkEffects, huxerui::Row{}}
         .With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
         .Key("profiles-page");
+
+    if (kPageTitlesInWindow && !compact && !profilesModel->loaded.Get()) {
+        return huxerui::Column {
+          linkEffects,
+          PageLoadingScaffold(Localized("订阅"), theme),
+        }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+            .Key("profiles-page");
+    }
 
     const auto buildContent = [&]() -> huxerui::View {
 #include "ui/profiles_page_actions.inc"

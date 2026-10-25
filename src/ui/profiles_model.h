@@ -29,6 +29,9 @@ struct ProfilesModel {
     // 必须带初值：huxerui::State 的默认构造是「空 cell」，Get/写入/作为
     // Lifecycle 依赖都会抛 "Lifecycle dependency State is empty"。
     huxerui::State<std::vector<db::Profile>> list{std::vector<db::Profile>{}};
+    // True only after publishing a snapshot read after persistence hydration,
+    // including an empty list. Cached data stays ready during background refreshes.
+    huxerui::State<bool> loaded{false};
     // Format-derived UI capability, computed by the worker pump. JSON/.ovpn
     // use the text editor and global routing, not the Clash YAML rule editor.
     huxerui::State<std::vector<std::int64_t>> clashSources{std::vector<std::int64_t>{}};

@@ -9,6 +9,30 @@
 
 namespace clashflux::ui {
 
+// Keep the mounted Pager across breakpoints so page State/Lifecycle survives resizing.
+// Disable motion only on this container; restore the real theme inside every page so
+// controls and section tabs retain their own animations and reduced-motion preference.
+inline huxerui::View DesktopPageSwitcher(std::vector<huxerui::View> pages,
+    huxerui::State<std::size_t> selected, bool compact, const huxerui::ThemeSpec& theme) {
+    for (std::size_t index = 0; index < pages.size(); ++index) {
+        pages[index] = huxerui::Column {
+          huxerui::ProvideEnvironment(theme, pages[index]),
+        }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+            .Key(index);
+    }
+    auto pagingTheme = theme;
+    pagingTheme.motion.reduced_motion = !compact || theme.motion.reduced_motion;
+    return huxerui::Column {
+      huxerui::ProvideEnvironment(pagingTheme,
+        huxerui::Pager(pages, selected)
+            .ScrollAxis(huxerui::Axis::Horizontal)
+            .DragEnabled(false)
+            .OnChanged([selected](std::size_t index) { selected = index; })
+            .With(huxerui::Grow(1.0F))),
+    }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+        .Key("desktop-primary-pages");
+}
+
 // 在内容绘制之后覆盖标题栏投影，避免后绘制的不透明页面底色盖住阴影。
 // caster 位于内容上方，裁剪仅保留下沿投影；Canvas 不注册指针输入。
 inline huxerui::View DesktopTitleBarBody(huxerui::View content,

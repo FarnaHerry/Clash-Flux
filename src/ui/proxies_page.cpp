@@ -49,6 +49,7 @@
 #include "proxies_model.h"
 #include "ui.h"
 #include "page_layout.h"
+#include "page_loading.h"
 #include "empty_state.h"
 #include "search_text.h"
 #include "task_bridge.h"
@@ -808,6 +809,8 @@ std::function<void()> NodeSelectAction(
     if (!active) return huxerui::View{huxerui::Row{}}.Key("proxies-idle");
 
     if (!proxiesModel->snapshot.Get().loaded) {
+        if (kPageTitlesInWindow && !compact)
+            return PageLoadingScaffold(Localized("代理"), theme);
         return PageScaffold(Localized("代理"), huxerui::View{}, ProxyLoadingSkeleton(theme),
                             false, true, true);
     }

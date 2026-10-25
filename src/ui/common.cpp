@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include "app_resources.h"
@@ -1339,6 +1340,7 @@ void DriveProfilesModel(huxerui::TaskScope tasks,
                 seenRevision = revision;
                 seenSync = before;
                 auto next = co_await RunOnTaskThread([] {
+                    const bool ready = clashflux::persistence::persistence().ready();
                     auto profiles = store::profilesStore().list();
                     std::vector<std::int64_t> clashSources;
                     const auto root = cfg::profilesDir();
@@ -1353,14 +1355,15 @@ void DriveProfilesModel(huxerui::TaskScope tasks,
                         if (!prefix.empty() && singbox::DetectProfileFormat(prefix) == singbox::ProfileFormat::ClashYaml)
                             clashSources.push_back(profile.id);
                     }
-                    return std::pair{std::move(profiles), std::move(clashSources)};
+                    return std::tuple{std::move(profiles), std::move(clashSources), ready};
                 });
                 // 乐观选中期间不发布；等页面确认后再由修订号驱动同步。
                 if (!model->selectionPending.Get() &&
                     !model->reorderPending.Get() &&
                     model->syncTick.Get() == before) {
-                    model->clashSources = std::move(next.second);
-                    model->list = std::move(next.first);
+                    model->clashSources = std::move(std::get<1>(next));
+                    model->list = std::move(std::get<0>(next));
+                    if (std::get<2>(next)) model->loaded = true;
                 }
             }
             if (model->syncTick.Get() != before) continue;

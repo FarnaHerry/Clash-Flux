@@ -19,6 +19,7 @@
 #include "app_resources.h"
 #include "ui.h"
 #include "empty_state.h"
+#include "page_loading.h"
 #include "search_text.h"
 #include "filtered_indices.h"
 #include "task_bridge.h"
@@ -360,6 +361,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
     auto catalogGeneration = huxerui::UseState<std::uint64_t>(0);
     auto policySaving = huxerui::UseState(false);
     auto loadGeneration = huxerui::UseState<std::uint64_t>(0);
+    auto loaded = huxerui::UseState(false);
 
     auto policySavePending = huxerui::UseState(false);
     // 一次保存要「编译 + 内核 check + 重启内核」，耗时数秒；期间用户可能继续
@@ -424,7 +426,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
     // 重载一次（订阅模型在 hydrate 完成后会发布，天然覆盖启动竞态），不再靠
     // 每秒轮询。存储读取在 worker，State 写回在 UI 线程。
     huxerui::Lifecycle(
-        [tasks, subscriptionRules, globalRules, refreshTick, profilesModel, loadGeneration, subscriptionRevision, globalRevision] {
+        [tasks, subscriptionRules, globalRules, refreshTick, profilesModel, loadGeneration, subscriptionRevision, globalRevision, loaded] {
             globalRevision = globalRevision.Get() + 1;
             const auto ticket = loadGeneration.Get() + 1;
             loadGeneration = ticket;
@@ -438,22 +440,24 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                 }
             }
             tasks.Launch([subscriptionRules, globalRules,
-                          selectedMainId, loadGeneration, ticket, subscriptionRevision, globalRevision]() -> huxerui::Task<void> {
-                auto loaded = co_await RunOnTaskThread(
+                          selectedMainId, loadGeneration, ticket, subscriptionRevision, globalRevision, loaded,
+                          sourcesReady = profilesModel->loaded.Get()]() -> huxerui::Task<void> {
+                auto result = co_await RunOnTaskThread(
                     [selectedMainId] {
                         auto rules = std::make_shared<const std::vector<SubscriptionRuleRow>>(LoadSubscriptionRules());
                         auto policy = store::vpnStore().globalPolicy();
                         return std::tuple{std::move(rules), std::move(policy)};
                     });
                 if (loadGeneration.Get() != ticket) co_return;
-                subscriptionRules = std::move(std::get<0>(loaded));
+                subscriptionRules = std::move(std::get<0>(result));
                 subscriptionRevision = subscriptionRevision.Get() + 1;
-                ReplaceStateList(globalRules, std::move(std::get<1>(loaded).rules));
+                ReplaceStateList(globalRules, std::move(std::get<1>(result).rules));
                 globalRevision = globalRevision.Get() + 1;
+                if (sourcesReady) loaded = true;
             });
             return [] {};
         },
-        profilesModel->list, refreshTick);
+        profilesModel->list, profilesModel->loaded, refreshTick);
 
     huxerui::Lifecycle([=] {
         if (catalogRequest.Get() == 0) return;
@@ -506,6 +510,13 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
 
     const huxerui::View runtimeEffects = RuleRuntimeEffects(activeConnections, sourceObjects);
     if (!active) return huxerui::Column{runtimeEffects}.Key("rules-idle");
+
+    if (kPageTitlesInWindow && !compact && !loaded.Get()) {
+        return huxerui::Column {
+          runtimeEffects,
+          PageLoadingScaffold(Localized("规则"), theme, true),
+        }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    }
 
     const auto mono = [](const std::string& text, huxerui::Color color) {
         return huxerui::Text(text).Style(huxerui::TextStyle{

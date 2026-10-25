@@ -28,6 +28,7 @@
 #include "section_tab_picker.h"
 #include "responsive_shell.h"
 #include "page_layout.h"
+#include "page_loading.h"
 #include "empty_state.h"
 #include "connection_row.h"
 #include "theme_colors.h"
@@ -1003,6 +1004,91 @@ void testEmptyState() {
               message.x + message.width <= size.width - 23.5F,
               "长提示限制宽度并在窄屏内换行，保留两侧留白");
     }
+}
+
+huxerui::View DesktopPageSwitcherRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        auto selected = huxerui::UseState<std::size_t>(0);
+        auto ready = huxerui::UseState(false);
+        const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+        std::vector<huxerui::View> pages;
+        for (int index = 0; index < 3; ++index) {
+            pages.push_back(huxerui::Scope([index, ready]() -> huxerui::View {
+                auto count = huxerui::UseState(0);
+                const auto& theme = huxerui::UseTheme();
+                if (index == 1 && !ready.Get()) return clashflux::ui::PageLoadingSkeleton(theme);
+                return huxerui::Column {
+                  huxerui::Text("DESTINATION-" + std::to_string(index)),
+                  huxerui::Text("MOTION-" + std::to_string(index) +
+                      (theme.motion.reduced_motion ? "-reduced" : "-normal")),
+                  huxerui::Button("COUNT-" + std::to_string(index) + "-" + std::to_string(count.Get()))
+                      .OnClick([count] { count = count.Get() + 1; }),
+                }.With(huxerui::Grow(1.0F),
+                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+            }).Key("destination-" + std::to_string(index)));
+        }
+        return huxerui::Column {
+          huxerui::Row {
+            huxerui::Button("First").OnClick([selected] { selected = 0; }),
+            huxerui::Button("Middle").OnClick([selected] { selected = 1; }),
+            huxerui::Button("Last").OnClick([selected] { selected = 2; }),
+            huxerui::Button("Ready").OnClick([ready] { ready = true; }),
+          },
+          clashflux::ui::DesktopPageSwitcher(pages, selected, compact, huxerui::UseTheme()),
+        }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    })};
+}
+const huxerui::Application kDesktopPageSwitcherApplication{DesktopPageSwitcherRoot,
+    {.show_debug_overlay = false}};
+
+void testDesktopPageSwitcher() {
+    huxerui::testing::UiTest ui(kDesktopPageSwitcherApplication, {.viewport = {1000.0F, 700.0F}});
+    ui.PumpAndSettle();
+    ui.Find(UiSelector::Text("COUNT-0-0")).Tap(); ui.PumpAndSettle();
+    for (const char* destination : {"Last", "First", "Last"}) {
+        ui.Find(UiSelector::Text(destination)).Tap();
+        ui.Pump();
+        const auto viewport = ui.Find(UiSelector::Key("desktop-primary-pages")).One().bounds;
+        const auto page = ui.Find(UiSelector::Key(destination == std::string("Last")
+            ? "destination-2" : "destination-0")).One();
+        check(page.in_viewport && std::abs(page.bounds.x - viewport.x) < 0.5F &&
+              std::abs(page.bounds.width - viewport.width) < 0.5F,
+              "wide desktop switches directly to the selected destination on the first frame");
+    }
+    ui.Drag({200.0F, 320.0F}, {800.0F, 320.0F}); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("DESTINATION-2")).One().in_viewport,
+          "wide desktop horizontal gestures do not change the primary destination");
+    for (float width : {400.0F, 1000.0F, 599.0F, 600.0F}) {
+        ui.SetWindowMetrics({.viewport = {width, 700.0F}}); ui.PumpAndSettle();
+        ui.Find(UiSelector::Text("First")).Tap(); ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Text("COUNT-0-1")).Exists(),
+              "resizing across the desktop breakpoint retains each page's local state");
+        check(ui.Find(UiSelector::Text("MOTION-0-normal")).Exists(),
+              "wide-page switching leaves the page's real motion preference unchanged");
+        if (width == 400.0F) {
+            ui.Find(UiSelector::Text("Last")).Tap(); ui.Pump(kStep);
+            check(ui.Find(UiSelector::Key("destination-2")).One().bounds.x > 1.0F,
+                  "desktop Compact retains its animated page selection");
+            ui.SetWindowMetrics({.viewport = {1000.0F, 700.0F}}); ui.Pump();
+            check(std::abs(ui.Find(UiSelector::Key("destination-2")).One().bounds.x) < 0.5F,
+                  "expanding during a Compact transition immediately settles on the target page");
+        }
+    }
+    ui.Find(UiSelector::Text("Middle")).Tap(); ui.Pump();
+    const auto skeleton = ui.Find(UiSelector::Key("page-loading-skeleton")).One();
+    const auto viewport = ui.Find(UiSelector::Key("desktop-primary-pages")).One().bounds;
+    check(skeleton.in_viewport && std::abs(skeleton.bounds.x - viewport.x) < 0.5F &&
+          std::abs(skeleton.bounds.width - viewport.width) < 0.5F,
+          "an unready destination immediately presents a bounded loading skeleton");
+    ui.Pump(std::chrono::seconds(2));
+    check(ui.Find(UiSelector::Key("page-loading-skeleton")).One().in_viewport,
+          "loading follows readiness instead of a fixed display timer");
+    ui.Find(UiSelector::Text("First")).Tap(); ui.Pump();
+    ui.Find(UiSelector::Text("Ready")).Tap(); ui.Pump();
+    ui.Find(UiSelector::Text("Middle")).Tap(); ui.Pump();
+    check(!ui.Find(UiSelector::Key("page-loading-skeleton")).Exists() &&
+          ui.Find(UiSelector::Text("DESTINATION-1")).One().in_viewport,
+          "data arriving offscreen is shown directly without replaying a skeleton");
 }
 
 huxerui::View ResponsiveShellRoot() {
@@ -2540,6 +2626,7 @@ int main() {
     testCommonMenu();
     testGroupDrawers();
     testResponsiveDesktopShell();
+    testDesktopPageSwitcher();
     testHeaderGeometry();
     testMobileSearchGeometry();
     testResponsiveAnchorMount();

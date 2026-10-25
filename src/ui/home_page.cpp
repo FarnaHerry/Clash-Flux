@@ -35,6 +35,7 @@
 #include "box_cat.h"
 #include "home_control_motion.h"
 #include "page_layout.h"
+#include "page_loading.h"
 #include "empty_state.h"
 #include "task_bridge.h"
 
@@ -927,11 +928,10 @@ huxerui::XYChartData BuildTrafficChartData(
     const huxerui::StringVariant actionLabel =
         Localized(active ? "停止 VPN" : "启动 VPN");
     const huxerui::StringVariant statusLabel = Localized(status.label);
+    // 透明按钮直接呈现猫咪动画；符号随页面主题着色，不再依赖实色底座。
     // 猫咪只呈现后台确认的连接状态；VPN 授权与操作仍由共享控制器持有。
     huxerui::View button = BoxCatButtonContent(status.phase,
-        failed ? OnErrorColor(theme)
-               : active || changing ? theme.colors.on_primary_container
-                                    : theme.colors.on_primary).OnClick(toggle)
+        failed ? theme.colors.error : theme.colors.on_surface).OnClick(toggle)
         .With(huxerui::Tooltip(actionLabel),
               huxerui::Enabled(enabled),
               huxerui::Focusable(true),
@@ -943,11 +943,6 @@ huxerui::XYChartData BuildTrafficChartData(
     }.With(huxerui::Frame{.width = 56.0F, .height = 56.0F},
            huxerui::Align(huxerui::HorizontalAlignment::Center,
                           huxerui::VerticalAlignment::Center),
-           huxerui::Background(failed ? theme.colors.error
-               : active || changing ? theme.colors.primary_container
-                                    : theme.colors.primary),
-           huxerui::CornerRadius(kFloatingActionCornerRadius),
-           huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F, 2.0F},
            huxerui::Scale(huxerui::AnimateTo(
                changing ? 0.94F : 1.0F,
                huxerui::TweenSpec{.duration = 0.18,
@@ -1336,6 +1331,14 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     // 默认值（首页订阅/流量/总量全空）——Android 真机上实测过的回归。
     huxerui::View runtimePump = CLASHFLUX_HOME_RUNTIME_PUMP(
         state, coreModel, profilesModel);
+
+    if (kPageTitlesInWindow && !compact &&
+        (!coreModel->view.Get().ready || !profilesModel->loaded.Get() || !settingsModel->view.Get().ready)) {
+        return huxerui::Column {
+          runtimePump,
+          PageLoadingScaffold(Localized("首页"), theme),
+        }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    }
 
     std::vector<huxerui::View> cards;
     cards.reserve(order.size());

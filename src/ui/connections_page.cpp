@@ -21,6 +21,7 @@
 #include "action_menu.h"
 #include "empty_state.h"
 #include "page_layout.h"
+#include "page_loading.h"
 #include "search_text.h"
 #include "section_tab_picker.h"
 #include "task_bridge.h"
@@ -261,6 +262,7 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
 
 [[huxerui::composable]] huxerui::View ConnectionsPage(
     std::function<void()> onBack, bool active) {
+    const auto& theme = huxerui::UseTheme();
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const bool stacked =
@@ -276,6 +278,7 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
     auto totalUp = huxerui::UseState<std::int64_t>(0);
     auto totalDown = huxerui::UseState<std::int64_t>(0);
     auto streamOpen = huxerui::UseState(false);
+    auto loaded = huxerui::UseState(false);
     auto searchValue = huxerui::UseState(huxerui::TextEditingValue{""});
     const auto scroll = huxerui::UseScrollController();
     // 水平留白与 SectionTabPages 同约定：骨架 fullWidthSections 后由页面根
@@ -283,7 +286,7 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
     const auto sectionInsets = huxerui::UseEnvironment<SectionTabContentInsets>();
 
     huxerui::Lifecycle(
-        [tasks, rows, totalUp, totalDown, streamOpen, active] {
+        [tasks, rows, totalUp, totalDown, streamOpen, active, loaded] {
             // 帧原文比较用共享对象保存：本次激活内的首次读取与后续推送共用
             // 同一份；重新激活（依赖变化）重建后强制重新解析，拿到最新快照。
             auto lastFrame = std::make_shared<std::string>();
@@ -294,14 +297,17 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
             // Lifecycle 依赖变化取消已 Launch 的协程）。
             auto polling = std::make_shared<std::atomic<bool>>(true);
             const auto applyFrame = [tasks, rows, totalUp, totalDown, streamOpen,
-                                     lastFrame, samples, generation] {
+                                     lastFrame, samples, generation, loaded] {
                 const auto ticket = ++*generation;
                 tasks.Launch([=]() -> huxerui::Task<void> {
                     try {
                         auto frame = co_await RunOnTaskThread(readConnectionFrame);
                         if (ticket != *generation) co_return;
                         streamOpen = frame.open;
-                        if (frame.body.empty()) co_return;
+                        if (frame.body.empty()) {
+                            loaded = true;
+                            co_return;
+                        }
                         if (frame.body == *lastFrame) {
                             std::vector<ConnectionRow> idle;
                             idle.reserve(rows.Size());
@@ -321,6 +327,7 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
                         if (ticket != *generation) co_return;
                         if (!snapshot) {
                             stream::logApplication("warning", "连接快照格式错误，保留最近有效快照");
+                            loaded = true;
                             co_return;
                         }
                         ApplyConnectionRates(*snapshot, *samples,
@@ -328,8 +335,10 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
                         totalUp = snapshot->totalUp;
                         totalDown = snapshot->totalDown;
                         ReplaceStateList(rows, std::move(snapshot->rows));
+                        loaded = true;
                     } catch (const std::exception& error) {
                         stream::logApplication("error", std::string("读取连接快照失败：") + error.what());
+                        if (ticket == *generation) loaded = true;
                     }
                 });
             };
@@ -351,6 +360,9 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
     // 不可见时只保留本页 State/Lifecycle，不构建内容：桌面 IndexedPages 让七个
     // 一级页同帧参与测量，隐藏页（日志/连接有推送流更新）的重子树会拖慢每一次渲染。
     if (!active) return huxerui::View{huxerui::Row{}}.Key("connections-idle");
+
+    if (kPageTitlesInWindow && !compact && !loaded.Get())
+        return PageLoadingScaffold(Localized("连接"), theme, true);
 
     const std::string query = searchValue.Get().text;
     huxerui::View body = EmptyState(

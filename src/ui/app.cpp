@@ -655,8 +655,8 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
                                         : std::function<void()>{};
     std::vector<huxerui::View> pages;
     pages.reserve(7);
-    // 不可见的一级页仍挂载（保住 State/Lifecycle）但不构建内容；宽屏 Pager
-    // 接收桌面触摸板横滑，嵌套的二级 Pager 会先消费自己的横向滚动。
+    // 不可见的一级页仍挂载（保住 State/Lifecycle）但不构建内容。
+    // 宽屏直接显示目标页；数据未就绪时由页面自身展示真实加载状态的骨架。
     const std::size_t desktopActivePage = navPage.Get();
     pages.push_back(HomePage(navPage, desktopActivePage == pages::kHome)
                         .Key("home").With(huxerui::Grow(1.0F)));
@@ -674,13 +674,8 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
     pages.push_back(SettingsPage(themeMode, navPage, profilesCache,
                                  desktopActivePage == pages::kSettings)
                         .Key("settings").With(huxerui::Grow(1.0F)));
-    // Compact 的规则、连接、日志从「更多」进入，不让横滑暴露这些页面。
-    // 保持同一个 Pager 节点，使窗口越过断点时各页状态仍然保留。
-    return huxerui::Pager(std::move(pages), navPage.Get())
-        .ScrollAxis(huxerui::Axis::Horizontal)
-        .DragEnabled(!compact)
-        .OnChanged([navPage](std::size_t index) { navPage = index; })
-        .With(huxerui::Grow(1.0F));
+    // Compact 保留原来的点击翻页；规则、连接、日志仍只从「更多」进入。
+    return DesktopPageSwitcher(pages, navPage, compact, huxerui::UseTheme());
 }
 
 // 导航栈只占内容区域，左侧栏和 Compact 系统标题栏留在持久外壳中。
