@@ -4,9 +4,6 @@
 // 全程 CURLOPT_NOSIGNAL（多线程必须）；超时覆盖 DNS+连接+传输。
 module;
 
-#include <curl/curl.h>
-#include "wire_codec.h"
-#include "http_request_headers.h"
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -16,6 +13,10 @@ module;
 #endif
 #include <windows.h>
 #endif
+#include <curl/curl.h>
+#include "wire_codec.h"
+#include "http_request_headers.h"
+#include "native_control_wire.h"
 
 #if defined(CLASHFLUX_IOS)
 #include <cstddef>
@@ -193,7 +194,7 @@ private:
 
 } // namespace
 
-ApiResult probeThroughProxy(const std::string& target, int mixedPort, std::stop_token cancel) {
+ApiResult probeThroughProxy(const std::string& target, int mixedPort, std::stop_token cancel, long budgetMs) {
     ApiResult result;
     // Do not expose URL credentials or accept non-network schemes.
     if ((!target.starts_with("http://") && !target.starts_with("https://")) ||
@@ -202,6 +203,8 @@ ApiResult probeThroughProxy(const std::string& target, int mixedPort, std::stop_
         result.failurePhase = "invalid-target-or-port"; return result;
     }
     if (cancel.stop_requested()) { result.failurePhase = "cancelled"; return result; }
+    if (budgetMs <= 0) { result.failurePhase = "diagnostic-budget-exhausted"; return result; }
+    budgetMs = std::min(9000L, budgetMs);
     CurlHandle handle;
     if (!handle) { result.failurePhase = "initialization"; return result; }
     CURL* easy = handle.get();
@@ -214,8 +217,8 @@ ApiResult probeThroughProxy(const std::string& target, int mixedPort, std::stop_
     curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 0L);
     curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 2L);
-    curl_easy_setopt(easy, CURLOPT_TIMEOUT_MS, 9000L);
-    curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, 5000L);
+    curl_easy_setopt(easy, CURLOPT_TIMEOUT_MS, budgetMs);
+    curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, std::min(5000L, budgetMs));
     curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(easy, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(easy, CURLOPT_XFERINFODATA, &cancel);
@@ -319,6 +322,97 @@ ClashApi::ClashApi(std::string baseUrl, std::string secret)
     impl_->secret = std::move(secret);
 }
 ClashApi::~ClashApi() = default;
+
+NativeApi::NativeApi(std::string baseUrl, std::string secret)
+    : base_(std::move(baseUrl)), secret_(std::move(secret)) {}
+
+ApiResult NativeApi::unary(const char* method, long timeoutMs, std::stop_token cancel) {
+    ApiResult result;
+    result.failurePhase = "invalid-response";
+    constexpr std::string_view prefix = "http://127.0.0.1:";
+    unsigned port = 0;
+    const auto suffix = std::string_view(base_).substr(std::min(prefix.size(), base_.size()));
+    const auto parsed = std::from_chars(suffix.data(), suffix.data() + suffix.size(), port);
+    if (!base_.starts_with(prefix) || parsed.ec != std::errc{} ||
+        parsed.ptr != suffix.data() + suffix.size() || port == 0 || port > 65535 ||
+        secret_.empty() || secret_.find_first_of("\r\n") != std::string::npos) {
+        result.error = "native API: invalid loopback endpoint or credentials"; return result;
+    }
+    if (cancel.stop_requested() || timeoutMs <= 0) {
+        result.error = "native API: cancelled or deadline exceeded";
+        result.failurePhase = cancel.stop_requested() ? "cancelled" : "transport"; return result;
+    }
+    CurlHandle handle;
+    if (!handle) { result.error = "native API: curl init failed"; return result; }
+    CurlHeaderList headers;
+    const auto auth = "Authorization: Bearer " + secret_;
+    if (!headers.append("Content-Type: application/grpc-web+proto") ||
+        !headers.append("X-Grpc-Web: 1") || !headers.append(auth.c_str())) {
+        result.error = "native API: header allocation failed"; return result;
+    }
+    const auto url = base_ + "/daemon.StartedService/" + method;
+    const std::array<char, 5> emptyMessage{};
+    auto* easy = handle.get();
+    curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http");
+    curl_easy_setopt(easy, CURLOPT_NOPROXY, "*");
+    curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers.get());
+    curl_easy_setopt(easy, CURLOPT_POSTFIELDS, emptyMessage.data());
+    curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE, 5L);
+    curl_easy_setopt(easy, CURLOPT_TIMEOUT_MS, timeoutMs);
+    curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, std::min(500L, timeoutMs));
+    curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, +[](char* data, size_t size, size_t count, void* pointer) noexcept -> size_t {
+        try {
+            auto& body = *static_cast<std::string*>(pointer);
+            if (size && count > (65536 - body.size()) / size) return CURL_WRITEFUNC_ERROR;
+            body.append(data, size * count); return size * count;
+        } catch (...) { return CURL_WRITEFUNC_ERROR; }
+    });
+    curl_easy_setopt(easy, CURLOPT_WRITEDATA, &result.body);
+    curl_easy_setopt(easy, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(easy, CURLOPT_XFERINFOFUNCTION, +[](void* pointer, curl_off_t, curl_off_t, curl_off_t, curl_off_t) -> int {
+        return static_cast<std::stop_token*>(pointer)->stop_requested() ? 1 : 0;
+    });
+    curl_easy_setopt(easy, CURLOPT_XFERINFODATA, &cancel);
+    const auto code = curl_easy_perform(easy);
+    if (code != CURLE_OK) {
+        result.error = std::string("native API: ") + method + ": " + curl_easy_strerror(code);
+        result.failurePhase = cancel.stop_requested() ? "cancelled" : "transport";
+        return result;
+    }
+    curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status);
+    int grpcStatus = -1;
+    const auto message = clashflux::native_control::UnaryMessage(result.body, &grpcStatus);
+    if (result.status != 200 || !message) {
+        result.failurePhase = result.status == 401 || grpcStatus == 16 ? "authentication" :
+            result.status == 403 || grpcStatus == 7 ? "permission" :
+            result.status == 404 || result.status == 405 || grpcStatus == 12 ? "unsupported" : "invalid-response";
+        result.error = std::string("native API: ") + method + ": " + result.failurePhase;
+        return result;
+    }
+    result.body = *message; result.ok = true; result.failurePhase.clear();
+    return result;
+}
+
+NativeRuntime NativeApi::runtime(std::stop_token cancel) {
+    // One total budget covers BOTH RPCs, including connection and body reads.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    const auto remaining = [&] {
+        return static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now()).count());
+    };
+    const auto versionResponse = unary("GetVersion", remaining(), cancel);
+    if (!versionResponse.ok) return {.error = versionResponse.error, .failurePhase = versionResponse.failurePhase};
+    const auto version = clashflux::native_control::DecodeVersion(versionResponse.body);
+    if (!version) return {.error = "native API: invalid version schema", .failurePhase = "invalid-response"};
+    if (version->api < 4) return {.error = "native API: unsupported version schema", .failurePhase = "unsupported"};
+    const auto startedResponse = unary("GetStartedAt", remaining(), cancel);
+    if (!startedResponse.ok) return {.error = startedResponse.error, .failurePhase = startedResponse.failurePhase};
+    const auto started = clashflux::native_control::DecodeStartedAt(startedResponse.body);
+    if (!started) return {.error = "native API: invalid start timestamp", .failurePhase = "invalid-response"};
+    return {.ok = true, .version = version->version, .apiVersion = version->api, .startedAt = *started};
+}
 
 void ClashApi::setEndpoint(std::string baseUrl, std::string secret) {
     std::lock_guard lock(impl_->endpointMutex);

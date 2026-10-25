@@ -4,6 +4,13 @@ import clashflux.api;
 import clashflux.singbox;
 
 int main(int argc, char** argv) {
+    if (argc == 4 && std::string_view(argv[1]) == "--native-runtime") {
+        api::NativeApi client(argv[2], argv[3]);
+        const auto result = client.runtime();
+        if (!result.ok) { std::cerr << result.failurePhase << ": " << result.error << '\n'; return 1; }
+        std::cout << result.version << ' ' << result.apiVersion << ' ' << result.startedAt << '\n';
+        return 0;
+    }
     if (argc != 5 && argc != 6) return 2;
     api::ClashApi client("http://127.0.0.1:1", "");
     api::ClashApi::DownloadOptions options;

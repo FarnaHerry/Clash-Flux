@@ -38,7 +38,25 @@ export struct ApiResult {
 
 // Explicit, cancellable HEAD through the running mixed inbound. No target is
 // selected implicitly; the result is about this route/target only.
-export ApiResult probeThroughProxy(const std::string& target, int mixedPort, std::stop_token cancel);
+export ApiResult probeThroughProxy(const std::string& target, int mixedPort, std::stop_token cancel,
+                                  long budgetMs = 9000);
+
+export struct NativeRuntime {
+    bool ok = false;
+    std::string version;
+    std::uint64_t apiVersion = 0, startedAt = 0;
+    std::string error;
+    std::string failurePhase;
+};
+// Official StartedService over loopback gRPC-Web; independent of Clash REST.
+export class NativeApi {
+public:
+    NativeApi(std::string baseUrl, std::string secret);
+    NativeRuntime runtime(std::stop_token cancel = {});
+private:
+    std::string base_, secret_;
+    ApiResult unary(const char* method, long timeoutMs, std::stop_token cancel);
+};
 
 // REST 客户端：baseUrl 形如 "http://127.0.0.1:29097"，secret 为 Bearer token（可空）。
 export class ClashApi {

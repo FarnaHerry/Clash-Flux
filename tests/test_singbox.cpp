@@ -6,6 +6,7 @@
 // clash_mode 前置规则、原生 sing-box JSON 直通、空订阅最小配置。
 // 断言风格与 test_vpn 一致（check 计数 + main）。
 #include <cassert>
+#include "../src/runtime_plan_state.h"
 #include <cstdio>
 #include <zstd.h>
 
@@ -2435,6 +2436,23 @@ rules:
 #else
     check(compensationResult.warnings.size() == 2, "不可用连接各报告一次警告");
 #endif
+    auto nativeControl = compensation;
+    nativeControl.nativeControllerPort = 29098;
+    nativeControl.secret = "native-control-test";
+    const auto nativeControlResult = singbox::compileConfig(nativeControl);
+#if !defined(__ANDROID__)
+    check(nativeControlResult.error.empty(), "原生控制监听配置可编译");
+    const auto nativeControlConfig = json::parse(nativeControlResult.json);
+    const auto& nativeService = nativeControlConfig["services"].back();
+    check(nativeService["type"] == "api" && nativeService["listen"] == "127.0.0.1" &&
+        nativeService["listen_port"] == 29098 && nativeService["secret"] == "native-control-test" &&
+        nativeService["dashboard"] == false, "原生 API 仅监听回环并保留鉴权、禁用面板下载");
+    nativeControl.secret.clear();
+    check(!singbox::compileConfig(nativeControl).error.empty(), "原生控制端点拒绝空密钥");
+    nativeControl.secret = "native-control-test";
+    nativeControl.profileYaml = R"({"services":[{"type":"api","tag":"clash-flux-control","listen":"127.0.0.1","listen_port":29100}]})";
+    check(!singbox::compileConfig(nativeControl).error.empty(), "原生控制标签冲突拒绝候选而不覆盖用户服务");
+#endif
     auto transport = compensation;
     transport.nativeConnections[0].transportAddress = "203.0.113.7";
     const auto transportConfig = json::parse(singbox::compileConfig(transport).json);
@@ -2936,6 +2954,44 @@ rules:
               "输入非法导致的条目消失同样计入摘要");
     }
 
+    {
+        // Exercise the production compiler and ready/stop publication boundary
+        // together: a saved TUN intent must survive every native handoff.
+        struct Published { bool tunEnabled=false;std::uint64_t planRevision=0,runtimeEpoch=0; } running;
+        bool savedIntent=true;
+        std::uint64_t revision=0;
+        auto apply=[&](bool tun,std::vector<singbox::NativeConnection> sessions) {
+            singbox::CompileOptions plan;plan.profileYaml="proxies: []\nrules: []\n";
+            plan.tunInbound=tun;plan.nativeConnections=std::move(sessions);
+            const auto compiled=singbox::compileConfig(plan);
+            check(compiled.error.empty(),"生命周期候选经过生产编译器");
+            if(!compiled.error.empty())return;
+            const auto config=json::parse(compiled.json);
+            bool actualTun=false;
+            for(const auto& inbound:config["inbounds"])actualTun|=inbound.value("type","")=="tun";
+            check(actualTun==tun,"启动、拨号与路由刷新配置保留 TUN 模式");
+            clashflux::runtime_plan::Ready(running,plan.tunInbound,++revision);
+            check(running.tunEnabled==actualTun,"就绪发布必须对应已接受计划而非快照旧值");
+        };
+        apply(savedIntent,{});
+        const auto firstEpoch=running.runtimeEpoch;
+        singbox::NativeConnection pptp;pptp.id="health-pptp";pptp.connected=true;
+        pptp.kind=vpn::ConnectionKind::Pptp;pptp.interfaceName="health-pptp0";pptp.transportAddress="203.0.113.10";
+        apply(running.tunEnabled,{pptp}); // connect
+        apply(running.tunEnabled,{pptp}); // unchanged/unknown session remains retained
+        apply(running.tunEnabled,{}); // disconnect
+        apply(running.tunEnabled,{}); // profile/rules refresh
+        const auto accepted=running;
+        singbox::CompileOptions bad;bad.profileYaml="proxies: [unterminated";bad.tunInbound=true;
+        check(!singbox::compileConfig(bad).error.empty(),"坏生命周期候选被拒绝");
+        check(running.runtimeEpoch==accepted.runtimeEpoch&&running.tunEnabled,"候选失败保留原运行模式及代次");
+        clashflux::runtime_plan::Stopped(running);
+        check(!running.tunEnabled&&savedIntent,"停止清运行态，保留独立持久化意图");
+        apply(savedIntent,{});
+        check(running.runtimeEpoch>firstEpoch&&running.tunEnabled,"重启产生新代次并恢复保存的 TUN 模式");
+        savedIntent=false;clashflux::runtime_plan::Stopped(running);apply(savedIntent,{});
+        check(!running.tunEnabled,"代理模式启动不沿用上次 TUN 运行态");
+    }
     if (failures != 0) {
         std::println(stderr, "test_singbox: {} 项断言失败", failures);
         return 1;

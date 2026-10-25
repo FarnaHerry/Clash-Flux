@@ -153,6 +153,7 @@
         if (secret == secret_ && api_) return;
         secret_ = std::move(secret);
         api_ = std::make_unique<api::ClashApi>(cfg::controllerBaseUrl(), secret_);
+        nativeApi_ = std::make_unique<api::NativeApi>(cfg::nativeControllerBaseUrl(), secret_);
     }
 
     // 当前选中订阅的文件路径（无选中/无文件时为空）。

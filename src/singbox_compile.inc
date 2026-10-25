@@ -231,6 +231,18 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
     // 不在列表里时会被自动补头——因此小写 rule/global/direct 全部可用。
     clashApi["default_mode"] = opt.mode;
     config["experimental"]["clash_api"] = std::move(clashApi);
+    if (opt.nativeControllerPort != 0) {
+        if (opt.secret.empty() || opt.nativeControllerPort < 1 || opt.nativeControllerPort > 65535) {
+            ctx.result.error = "原生控制接口必须使用有效端口和非空密钥"; return;
+        }
+        if (!config.contains("services")) config["services"] = nlohmann::json::array();
+        if (!config["services"].is_array() || std::ranges::any_of(config["services"], [](const auto& service) {
+            return service.is_object() && service.value("tag", "") == "clash-flux-control";
+        })) { ctx.result.error = "原生控制服务标签 clash-flux-control 冲突"; return; }
+        config["services"].push_back({{"type", "api"}, {"tag", "clash-flux-control"},
+            {"listen", "127.0.0.1"}, {"listen_port", opt.nativeControllerPort},
+            {"secret", opt.secret}, {"dashboard", false}});
+    }
 #endif
     // 原生配置的 FakeIP/RDRC 持久化、路径和 cache_id 属于用户策略，不能
     // 为启用应用缓存而把整个对象覆盖掉。应用只管理 enabled。

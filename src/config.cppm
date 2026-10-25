@@ -242,6 +242,13 @@ export constexpr std::string_view kControllerHost = "127.0.0.1";
 // 端口）、9097（clash-verge-rev 默认 external controller）、7890/7897
 // （常见 mixed 端口）。取 32768 以下的固定高位，避开 Linux 临时端口段。
 export constexpr int kControllerPort = 29097;
+export constexpr int kNativeControllerPort = 29098;
+export std::string nativeControllerAddress() {
+    return std::format("{}:{}", kControllerHost, kNativeControllerPort);
+}
+export std::string nativeControllerBaseUrl() {
+    return "http://" + nativeControllerAddress();
+}
 
 export std::string controllerAddress() {
     return std::format("{}:{}", kControllerHost, kControllerPort);
