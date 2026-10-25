@@ -119,6 +119,8 @@ using HomeLayout = std::vector<HomeCardEntry>;
 constexpr float kHomeFloatingButtonInset = 72.0F;
 
 struct HomeState {
+    bool coreReady = false;
+    bool profilesReady = false;
     stream::TrafficPoint latest;
     std::vector<stream::TrafficPoint> history;  // 旧→新
     std::int64_t totalUp = 0;
@@ -224,7 +226,15 @@ void MirrorHomeState(huxerui::State<HomeState> state,
     HomeState s = state.Get();
     // 内核状态来自唯一来源 CoreModel。
     s.core = coreModel->view.Get().core;
+    s.coreReady = coreModel->view.Get().ready;
     updateRuntime(s, core);
+
+    // Hydration has not established whether a selected profile exists yet.
+    if (!profilesModel->loaded.Get()) {
+        state = s;
+        return;
+    }
+    s.profilesReady = true;
 
     // 选中订阅来自 ProfilesModel：直接扫它的列表（借用引用，不做整表拷贝），
     // 不再每次调用 profilesStore().selected()。
@@ -288,7 +298,7 @@ void MirrorHomeState(huxerui::State<HomeState> state,
             MirrorHomeState(state, coreModel, profilesModel);
             return [] {};
         },
-        coreModel->view, profilesModel->list);
+        coreModel->view, profilesModel->list, profilesModel->loaded);
     return {};
 }
 #endif
@@ -356,7 +366,7 @@ huxerui::XYChartData BuildTrafficChartData(
 
 // ---- 卡片内容 --------------------------------------------------------------
 
-// 流量统计：箭头与占比同列，累计量在下一行；饼图仍区分两个方向。
+// 流量统计：圆环旁保留方向占比，累计上传/下载量固定排在卡片底部。
 [[huxerui::composable]] huxerui::View HomeTotalCard(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::Color upColor = SemanticWarningColor(theme);
@@ -369,20 +379,23 @@ huxerui::XYChartData BuildTrafficChartData(
         const int percent = static_cast<int>(static_cast<double>(value) / total * 100.0 + 0.5);
         return std::to_string(percent) + "%";
     };
-    const auto totalMetric = [&theme](std::string direction, huxerui::Color color,
-                                      const std::string& value,
-                                      const std::string& share) {
-        return huxerui::Column {
-            huxerui::Text(direction + " " + share).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kCaption)
-                    .WithWeight(huxerui::FontWeight::SemiBold),
+    const auto shareMetric = [](std::string direction, huxerui::Color color,
+                                const std::string& share) {
+        return huxerui::Text(direction + " " + share).Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kCaption)
+                .WithWeight(huxerui::FontWeight::SemiBold), color});
+    };
+    const auto amountMetric = [&theme](std::string direction, huxerui::Color color,
+                                       const std::string& value) {
+        return huxerui::Row {
+            huxerui::Text(direction).Style(huxerui::TextStyle{
+                huxerui::Font::System(font_size::kBody).WithWeight(huxerui::FontWeight::SemiBold),
                 color}),
             huxerui::Text(value).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody)
-                    .WithWeight(huxerui::FontWeight::SemiBold),
+                huxerui::Font::System(font_size::kBody).WithWeight(huxerui::FontWeight::SemiBold),
                 theme.colors.on_surface}),
-        }.With(huxerui::Spacing(2.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        }.With(huxerui::Spacing(6.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     };
     const huxerui::PieChartData data({
         {"upload", "↑",
@@ -401,8 +414,8 @@ huxerui::XYChartData BuildTrafficChartData(
                 .SliceStyle("download", {.fill = huxerui::Brush(downColor)})
                 .With(huxerui::Frame{.width = 72.0F, .height = 72.0F}),
             huxerui::Column {
-                totalMetric("↑", upColor, formatBytes(upload), shareText(upload)),
-                totalMetric("↓", downColor, formatBytes(download), shareText(download)),
+                shareMetric("↑", upColor, shareText(upload)),
+                shareMetric("↓", downColor, shareText(download)),
             }.With(huxerui::Grow(1.0F),
                    huxerui::Spacing(12.0F),
                    huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
@@ -410,6 +423,11 @@ huxerui::XYChartData BuildTrafficChartData(
         }.With(huxerui::Grow(1.0F),
                huxerui::Spacing(8.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        huxerui::Column {
+            amountMetric("↑", upColor, s.coreReady ? formatBytes(upload) : "—"),
+            amountMetric("↓", downColor, s.coreReady ? formatBytes(download) : "—"),
+        }.With(huxerui::Spacing(4.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
     }.With(huxerui::Spacing(8.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -560,7 +578,7 @@ huxerui::XYChartData BuildTrafficChartData(
     const bool hasProfile = s.profileId != 0;
     const huxerui::Color muted = theme.colors.on_surface_variant;
     const std::string profileName =
-        s.profileName == "未启用订阅"
+        !s.profilesReady ? "—" : s.profileName == "未启用订阅"
             ? huxerui::UseString(Localized("未启用订阅"))
             : s.profileName;
     const huxerui::StringVariant profileUpdated = [&] {
@@ -638,13 +656,15 @@ huxerui::XYChartData BuildTrafficChartData(
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
     auto addresses = huxerui::UseState<std::vector<netinfo::LanAddress>>({});
+    auto addressesReady = huxerui::UseState(false);
     huxerui::Lifecycle(
-        [tasks, addresses] {
-            tasks.Launch([addresses]() -> huxerui::Task<void> {
+        [tasks, addresses, addressesReady] {
+            tasks.Launch([addresses, addressesReady]() -> huxerui::Task<void> {
                 for (;;) {
                     auto list = co_await RunOnTaskThread(
                         [] { return netinfo::lanIpv4Addresses(); });
                     addresses = std::move(list);
+                    addressesReady = true;
                     co_await huxerui::Delay(std::chrono::duration<double>{5.0});
                 }
             });
@@ -677,7 +697,7 @@ huxerui::XYChartData BuildTrafficChartData(
                                 theme.colors.on_surface_variant}));
     }
     if (list.empty()) {
-        lines.push_back(huxerui::Text(Localized("未检测到内网地址"))
+        lines.push_back(huxerui::Text(addressesReady.Get() ? Localized("未检测到内网地址") : huxerui::StringVariant("—"))
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::System(font_size::kCaption),
                                 theme.colors.on_surface_variant}));
@@ -985,7 +1005,6 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     // 策略组快照 / 内核与接管状态的全局唯一来源（见 *_model.h）。
     const auto coreModel = huxerui::UseService<CoreModel>();
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
-    const auto settingsModel = huxerui::UseService<SettingsModel>();
     auto state = huxerui::UseState<HomeState>({});
     auto controlCardShown = huxerui::UseState<bool>(
         coreModel->view.Get().core.state == core::CoreState::Running);
@@ -1087,11 +1106,6 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     huxerui::View runtimePump = CLASHFLUX_HOME_RUNTIME_PUMP(
         state, coreModel, profilesModel);
 
-    // Keep the fixed card shells and their real layout mounted while loading.
-    // A generic adaptive grid cannot represent this page's declared spans.
-    const bool loading = kPageTitlesInWindow && !compact &&
-        (!coreModel->view.Get().ready || !profilesModel->loaded.Get() || !settingsModel->view.Get().ready);
-
     std::vector<huxerui::View> cards;
     cards.reserve(order.size());
     for (const HomeCardEntry& entry : order) {
@@ -1103,15 +1117,14 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
 
         // 首页所有卡片一视同仁：都是 raised 二级岛外壳。「当前订阅」不显示选中态
         // （哪个订阅在使用中由订阅页的选中卡承担）。
-        huxerui::View body = loading ? HomeCardSkeleton(kind, theme) : HomeCardContent(kind, state);
+        huxerui::View body = HomeCardContent(kind, state);
         huxerui::View cardView = Card(std::move(body));
         cards.push_back(std::move(cardView)
                             .LayoutValue<HomeCardSpan>(size)
                             .Key("home-card-" + id));
     }
     if (kDesktopHomeControl && !compact && controlCardShown.Get()) {
-        cards.push_back(huxerui::View{loading ? Card(HomeCardSkeleton(HomeCardKind::Proxy, theme))
-                            : CLASHFLUX_HOME_CONTROL_CARD(controlCardShown, controlMotion, controlTransition)}
+        cards.push_back(huxerui::View{CLASHFLUX_HOME_CONTROL_CARD(controlCardShown, controlMotion, controlTransition)}
                             .LayoutValue<HomeCardSpan>({1, 1})
                             .LayoutValue<HomeControlSpan>(true)
                             .Key("home-card-control"));

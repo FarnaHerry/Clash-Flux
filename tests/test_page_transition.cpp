@@ -1009,7 +1009,7 @@ void testEmptyState() {
 }
 
 struct HomeGridFixture {
-    huxerui::State<bool> loading{true};
+    huxerui::State<bool> populated{false};
 };
 std::shared_ptr<HomeGridFixture> homeGridFixture;
 bool homeGridDesktop = true;
@@ -1020,16 +1020,14 @@ void InstallHomeGridFixture(huxerui::ApplicationContext& context) {
     context.Provide(homeGridFixture);
 }
 
-huxerui::View HomeGridLoadingRoot() {
+huxerui::View HomeGridRoot() {
     return huxerui::FlatTheme{huxerui::Scope([] {
         using namespace clashflux::ui;
         const auto model = huxerui::UseService<HomeGridFixture>();
-        const auto theme = huxerui::UseTheme();
         const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
         std::vector<huxerui::View> cards;
         for (const auto& spec : HomeCardCatalog(homeGridDesktop)) {
-            huxerui::View body = model->loading.Get() ? HomeCardSkeleton(spec.kind, theme)
-                : huxerui::View{huxerui::Text("Loaded " + std::string(spec.id))};
+            huxerui::View body = huxerui::Text(model->populated.Get() ? "Live " + std::string(spec.id) : "—");
             cards.push_back(huxerui::Column {body}.With(huxerui::Padding(16.0F))
                 .LayoutValue<HomeCardSpan>({spec.width, spec.height})
                 .Key("home-card-" + std::string(spec.id)));
@@ -1042,42 +1040,42 @@ huxerui::View HomeGridLoadingRoot() {
             .With(huxerui::Grow(1.0F)).Key("home-grid-viewport");
     })};
 }
-const huxerui::Application kHomeGridLoadingApplication{HomeGridLoadingRoot,
+const huxerui::Application kHomeGridApplication{HomeGridRoot,
     {.show_debug_overlay = false, .application_hooks = {InstallHomeGridFixture}}};
 
-void testFixedHomeLoadingGeometry() {
+void testFixedHomeGeometry() {
     using namespace clashflux::ui;
     for (const bool desktop : {false, true}) {
         homeGridDesktop = desktop;
         homeGridControl = desktop;
-        huxerui::testing::UiTest ui(kHomeGridLoadingApplication, {.viewport = {960.0F, 900.0F}});
-        const auto loading = homeGridFixture->loading;
+        huxerui::testing::UiTest ui(kHomeGridApplication, {.viewport = {960.0F, 900.0F}});
+        const auto populated = homeGridFixture->populated;
         for (const float width : {320.0F, 960.0F, 1400.0F}) {
-            loading = true;
+            populated = false;
             ui.SetWindowMetrics({.viewport = {width, 900.0F}}); ui.PumpAndSettle();
             const auto catalog = HomeCardCatalog(desktop);
-            check(catalog.size() == (desktop ? 7U : 5U), "home skeleton uses the actual platform's fixed card count");
+            check(catalog.size() == (desktop ? 7U : 5U), "home uses the actual platform's fixed card count");
             std::vector<huxerui::Rect> before;
             for (const auto& spec : catalog) {
                 const auto rect = ui.Find(UiSelector::Key("home-card-" + std::string(spec.id))).One().bounds;
                 before.push_back(rect);
                 check(std::abs(rect.height - (spec.height == 1 ? 88.0F : 188.0F)) < 0.01F,
-                      "home skeleton retains the fixed 88pt/188pt card heights");
+                      "home retains the fixed 88pt/188pt card heights");
             }
             const auto traffic = before[0];
             const auto total = before[1];
             const auto mode = before[2];
             check(std::abs(total.width - mode.width) < 0.01F &&
                   std::abs(traffic.width - (total.width * 2.0F + 12.0F)) < 0.01F,
-                  "traffic skeleton spans two real columns and keeps the 12pt gap");
+                  "traffic spans two real columns and keeps the 12pt gap");
             if (width < 600.0F) {
                 check(std::abs(total.y - traffic.y - 200.0F) < 0.01F &&
                       std::abs(mode.x - total.x - total.width - 12.0F) < 0.01F,
-                      "compact home skeleton places total/mode side by side below traffic");
+                      "compact home places total/mode side by side below traffic");
             } else {
                 check(std::abs(total.y - traffic.y) < 0.01F &&
                       std::abs(total.x - traffic.x - traffic.width - 12.0F) < 0.01F,
-                      "wide home skeleton matches the fixed traffic/total first row");
+                      "wide home retains the fixed traffic/total first row");
             }
             std::optional<huxerui::Rect> control;
             if (desktop && width >= 600.0F) {
@@ -1087,7 +1085,7 @@ void testFixedHomeLoadingGeometry() {
                       "running control placeholder preserves its responsive one/two-column span");
             }
             const auto viewport = ui.Find(UiSelector::Key("home-grid-viewport")).One().bounds;
-            loading = false; ui.PumpAndSettle();
+            populated = true; ui.PumpAndSettle();
             for (std::size_t index = 0; index < catalog.size(); ++index) {
                 check(ui.Find(UiSelector::Key("home-card-" + std::string(catalog[index].id))).One().bounds == before[index],
                       "hydration changes card interiors without changing their actual positions or dimensions");
@@ -1100,6 +1098,105 @@ void testFixedHomeLoadingGeometry() {
     }
 }
 
+struct LoadingSkeletonFixture {
+    huxerui::State<bool> ready{false};
+    huxerui::State<bool> active{true};
+    huxerui::State<bool> reduced{false};
+    huxerui::State<bool> dark{false};
+    huxerui::State<int> kind{0};
+    int compositions = 0;
+};
+std::shared_ptr<LoadingSkeletonFixture> loadingSkeletonFixture;
+bool skeletonInitiallyReady = false;
+
+void InstallLoadingSkeletonFixture(huxerui::ApplicationContext& context) {
+    loadingSkeletonFixture = std::make_shared<LoadingSkeletonFixture>();
+    loadingSkeletonFixture->ready = skeletonInitiallyReady;
+    context.Provide(loadingSkeletonFixture);
+}
+
+huxerui::View LoadingSkeletonRoot() {
+    return huxerui::Scope([] {
+        const auto model = huxerui::UseService<LoadingSkeletonFixture>();
+        auto theme = model->dark.Get() ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
+        auto spec = huxerui::FlatLightThemeSpec();
+        spec.colors = theme;
+        spec.motion.reduced_motion = model->reduced.Get();
+        return huxerui::FlatTheme(spec, huxerui::Scope([model] {
+            ++model->compositions;
+            if (model->ready.Get()) return huxerui::View{huxerui::Text("SKELETON-READY")};
+            if (!model->active.Get()) return huxerui::View{huxerui::Text("SKELETON-INACTIVE")};
+            const auto& current = huxerui::UseTheme();
+            return model->kind.Get() == 2 ? clashflux::ui::ProxyLoadingSkeleton(current)
+                : clashflux::ui::PageLoadingSkeleton(current, model->kind.Get() == 1);
+        }));
+    });
+}
+const huxerui::Application kLoadingSkeletonApplication{LoadingSkeletonRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallLoadingSkeletonFixture}}};
+
+void testSkeletonShimmer() {
+    skeletonInitiallyReady = false;
+    huxerui::testing::UiTest ui(kLoadingSkeletonApplication, {.viewport = {960.0F, 600.0F}});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    const auto model = loadingSkeletonFixture;
+    for (bool dark : {false, true}) {
+        model->dark = dark;
+        for (float width : {320.0F, 960.0F}) {
+            ui.SetWindowMetrics({.viewport = {width, 600.0F}});
+            for (int kind : {0, 1, 2}) {
+                model->kind = kind;
+                for (int frame = 0; frame < 4; ++frame) ui.Pump(std::chrono::milliseconds(50));
+                const char* key = kind == 2 ? "proxy-loading-skeleton" : "page-loading-skeleton";
+                const auto bounds = ui.Find(UiSelector::Key(key)).One().bounds;
+                const auto before = ui.CaptureSnapshot();
+                const int compositions = model->compositions;
+                ui.Pump(std::chrono::milliseconds(200));
+                check(before != ui.CaptureSnapshot(), "loading placeholders paint a moving gradient in both themes");
+                check(model->compositions == compositions && ui.Find(UiSelector::Key(key)).One().bounds == bounds &&
+                      bounds.width <= width + 0.5F,
+                      "shimmer keeps narrow/wide layout and composition stable for grid, list and compact proxy cards");
+            }
+        }
+    }
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background);
+    ui.PumpAndSettle();
+    const auto background = ui.CaptureSnapshot();
+    ui.Pump(std::chrono::seconds(2));
+    check(background == ui.CaptureSnapshot(), "background skeleton stops painting and schedules no recurring work");
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    ui.Pump(std::chrono::milliseconds(100));
+    const auto foreground = ui.CaptureSnapshot();
+    ui.Pump(std::chrono::milliseconds(200));
+    check(foreground != ui.CaptureSnapshot(), "foreground skeleton resumes its shared phase");
+    model->reduced = true;
+    ui.PumpAndSettle();
+    const auto reduced = ui.CaptureSnapshot();
+    ui.Pump(std::chrono::seconds(2));
+    check(reduced == ui.CaptureSnapshot(), "reduced motion keeps a static skeleton without recurring frames");
+    model->reduced = false;
+    model->active = false;
+    ui.PumpAndSettle();
+    check(!ui.Find(UiSelector::Key("proxy-loading-skeleton")).Exists(), "leaving the page retires its shimmer");
+    model->active = true;
+    ui.Pump(std::chrono::milliseconds(50));
+    model->ready = true;
+    ui.Pump();
+    check(ui.Find(UiSelector::Text("SKELETON-READY")).Exists() &&
+          !ui.Find(UiSelector::Key("proxy-loading-skeleton")).Exists(),
+          "real data replaces an unfinished shimmer immediately");
+    ui.PumpAndSettle();
+
+    skeletonInitiallyReady = true;
+    huxerui::testing::UiTest cached(kLoadingSkeletonApplication, {.viewport = {320.0F, 600.0F}});
+    cached.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    cached.PumpAndSettle();
+    check(cached.Find(UiSelector::Text("SKELETON-READY")).Exists() &&
+          !cached.Find(UiSelector::Key("page-loading-skeleton")).Exists(),
+          "cached first-frame content never mounts a loading animation");
+    skeletonInitiallyReady = false;
+}
+
 huxerui::View DesktopPageSwitcherRoot() {
     return huxerui::FlatTheme{huxerui::Scope([] {
         auto selected = huxerui::UseState<std::size_t>(0);
@@ -1107,10 +1204,11 @@ huxerui::View DesktopPageSwitcherRoot() {
         const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
         std::vector<huxerui::View> pages;
         for (int index = 0; index < 3; ++index) {
-            pages.push_back(huxerui::Scope([index, ready]() -> huxerui::View {
+            pages.push_back(huxerui::Scope([index, ready, selected]() -> huxerui::View {
                 auto count = huxerui::UseState(0);
                 const auto& theme = huxerui::UseTheme();
-                if (index == 1 && !ready.Get()) return clashflux::ui::PageLoadingSkeleton(theme);
+                if (index == 1 && !ready.Get())
+                    return clashflux::ui::PageLoadingSkeleton(theme, false, selected.Get() == 1);
                 return huxerui::Column {
                   huxerui::Text("DESTINATION-" + std::to_string(index)),
                   huxerui::Text("MOTION-" + std::to_string(index) +
@@ -2287,6 +2385,83 @@ std::optional<huxerui::Rect> paintedCatCard(huxerui::testing::UiTest& ui) {
     return result;
 }
 
+struct PaintedHeaderCard {
+    huxerui::Rect bounds;
+    float outlineWidth;
+    float cornerRadius;
+};
+
+std::vector<huxerui::Rect> paintedHomeCats(huxerui::testing::UiTest& ui) {
+    std::istringstream input(ui.CaptureSnapshot().ToString());
+    std::string line;
+    std::getline(input, line); std::getline(input, line);
+    const auto snapshot = readCatPaintNode(input, line);
+    std::vector<huxerui::Rect> result;
+    const auto visit = [&](auto&& self, const CatPaintNode& node, huxerui::Transform2D parent,
+                           float opacity) -> void {
+        if (const auto* visible = node.Find("visible"); visible && visible->value == "false") return;
+        opacity *= node.Number("opacity", 1.0F);
+        if (opacity < 0.01F) return;
+        auto local = catPaintTransform(node.Find("transform"));
+        if (const auto* offset = node.Find("offset")) {
+            local.translate_x += offset->Number("x");
+            local.translate_y += offset->Number("y");
+        }
+        const auto world = composeCatPaint(parent, local);
+        if (const auto* foreground = node.Find("foreground"); foreground && !foreground->children.empty() &&
+            foreground->children.front().name == "push-transform") {
+            const auto artwork = composeCatPaint(world,
+                catPaintTransform(foreground->children.front().Find("transform")));
+            result.push_back({artwork.translate_x, artwork.translate_y,
+                              artwork.m11 * 128.0F, artwork.m22 * 128.0F});
+        }
+        if (const auto* children = node.Find("children"))
+            for (const auto& child : children->children)
+                self(self, child, composeCatPaint(world, catPaintTransform(node.Find("children_transform"))), opacity);
+    };
+    if (const auto* render = snapshot.Find("render"))
+        for (const auto& node : render->children) visit(visit, node, huxerui::Transform2D{}, 1.0F);
+    return result;
+}
+
+std::optional<PaintedHeaderCard> paintedHeaderCard(huxerui::testing::UiTest& ui) {
+    std::istringstream input(ui.CaptureSnapshot().ToString());
+    std::string line;
+    std::getline(input, line); std::getline(input, line);
+    const auto snapshot = readCatPaintNode(input, line);
+    std::optional<PaintedHeaderCard> result;
+    const auto visit = [&](auto&& self, const CatPaintNode& node, huxerui::Transform2D parent) -> void {
+        auto local = catPaintTransform(node.Find("transform"));
+        if (const auto* offset = node.Find("offset")) {
+            local.translate_x += offset->Number("x");
+            local.translate_y += offset->Number("y");
+        }
+        const auto world = composeCatPaint(parent, local);
+        if (const auto* content = node.Find("content")) {
+            for (const auto& command : content->children) {
+                const auto* bounds = command.Find("bounds");
+                if (command.name == "border" && bounds && bounds->Number("height") == 48.0F &&
+                    bounds->Number("width") > 200.0F) {
+                    const auto* style = command.Find("style");
+                    result = PaintedHeaderCard{
+                        {world.m11 * bounds->Number("x") + world.translate_x,
+                         world.m22 * bounds->Number("y") + world.translate_y,
+                         world.m11 * bounds->Number("width"),
+                         world.m22 * bounds->Number("height")},
+                        style ? style->Number("width") : 0.0F,
+                        command.Number("corner_radius")};
+                }
+            }
+        }
+        if (const auto* children = node.Find("children"))
+            for (const auto& child : children->children)
+                self(self, child, composeCatPaint(world, catPaintTransform(node.Find("children_transform"))));
+    };
+    if (const auto* render = snapshot.Find("render"))
+        for (const auto& node : render->children) visit(visit, node, huxerui::Transform2D{});
+    return result;
+}
+
 void testBoxCatMorphAfterSuccess() {
     using clashflux::ui::BoxCatPhase;
     const clashflux::ui::HomeControlMoveExpand path;
@@ -2611,6 +2786,7 @@ void testHomeHeaderControl() {
     advance(100);
     const auto slot = ui.Find(UiSelector::Key("home-header-slot")).One().bounds;
     const auto viewport = ui.Find(UiSelector::Key("header-scroll")).One().bounds;
+    const auto dock = ui.Find(UiSelector::Key("home-header-floating-cat")).One().bounds;
     check(slot.height == 48.0F && viewport.height > 600.0F &&
           ui.Find(UiSelector::Key("page-title")).Exists(), "idle header reserves 48pt without swallowing the content");
     ui.Find(UiSelector::Key("header-scroll")).ScrollBy({0.0F, 160.0F});
@@ -2628,6 +2804,12 @@ void testHomeHeaderControl() {
     advance(2400);
     check(model->control->shown.Get() && !ui.Find(UiSelector::Key("home-header-floating-cat")).Exists() &&
           ui.Find(UiSelector::Key("home-header-uptime")).Exists(), "successful cat merges into the production running header");
+    const auto fullHeaderCard = paintedHeaderCard(ui);
+    check(fullHeaderCard && fullHeaderCard->bounds.width == slot.width &&
+          fullHeaderCard->bounds.height == slot.height &&
+          fullHeaderCard->outlineWidth == kCardOutlineWidth &&
+          fullHeaderCard->cornerRadius == ResolveIslandTheme(huxerui::FlatLightThemeSpec()).nested_radius,
+          "compact running card paints the same outline and radius as other home cards");
     check(ui.Find(UiSelector::Key("home-header-slot")).One().bounds == slot &&
           ui.Find(UiSelector::Key("header-scroll")).One().bounds == viewport &&
           std::abs(ui.Find(UiSelector::Key("header-row-5")).One().bounds.y - contentY) < 0.5F,
@@ -2640,10 +2822,36 @@ void testHomeHeaderControl() {
     advance(150);
     check(model->toggles == 2 && model->control->motion.Get().collapsing,
           "header stop begins the in-place shrink before returning to the dock");
+    const auto shrinkingHeaderCard = paintedHeaderCard(ui);
+    check(fullHeaderCard && shrinkingHeaderCard &&
+          shrinkingHeaderCard->bounds.width < fullHeaderCard->bounds.width &&
+          shrinkingHeaderCard->bounds.height < fullHeaderCard->bounds.height &&
+          std::abs(shrinkingHeaderCard->bounds.x + shrinkingHeaderCard->bounds.width / 2.0F -
+                   fullHeaderCard->bounds.x - fullHeaderCard->bounds.width / 2.0F) < 0.5F &&
+          std::abs(shrinkingHeaderCard->bounds.y + shrinkingHeaderCard->bounds.height / 2.0F -
+                   fullHeaderCard->bounds.y - fullHeaderCard->bounds.height / 2.0F) < 0.5F,
+          "the outlined compact card stays painted while shrinking at its center");
     model->snapshot.Update([](HomeHeaderSnapshot& value) {
         value.running = false; value.busy = false; value.phase = BoxCatPhase::Sleeping; value.elapsedSeconds = 0;
     });
-    advance(1800);
+    for (int elapsed = 0; elapsed < 1000 && model->control->shown.Get(); elapsed += 50) advance(50);
+    advance(100);
+    const auto returningCats = paintedHomeCats(ui);
+    check(std::any_of(returningCats.begin(), returningCats.end(), [&](const auto& cat) {
+        const auto center = cat.y + cat.height / 2.0F;
+        return center > slot.y + slot.height && center < dock.y;
+    }), "compact return paints the cat between the header and dock instead of jumping to its destination");
+    check(!returningCats.empty() && std::all_of(returningCats.begin(), returningCats.end(), [](const auto& cat) {
+        return std::abs(cat.width - 48.0F) < 0.1F && std::abs(cat.height - 48.0F) < 0.1F;
+    }), "compact return keeps the same square 48pt artwork throughout the shared crossfade");
+    advance(100);
+    const auto laterReturningCats = paintedHomeCats(ui);
+    check(!returningCats.empty() && !laterReturningCats.empty() &&
+          laterReturningCats.back().y > returningCats.back().y &&
+          std::all_of(laterReturningCats.begin(), laterReturningCats.end(), [](const auto& cat) {
+              return std::abs(cat.width - 48.0F) < 0.1F && std::abs(cat.height - 48.0F) < 0.1F;
+          }), "successive compact return frames travel toward the dock without stretching or replaying the shrink");
+    advance(1400);
     check(!model->control->shown.Get() && ui.Find(UiSelector::Key("page-title")).Exists() &&
           ui.Find(UiSelector::Key("home-header-floating-cat")).Exists(), "fast stop restores the title and dock without stale completion");
 
@@ -2879,9 +3087,9 @@ int main() {
     testBoxCatMorphAfterSuccess();
     testHomeHeaderControl();
     testHomeHeaderColdStart();
-    try { testFixedHomeLoadingGeometry(); }
+    try { testFixedHomeGeometry(); testSkeletonShimmer(); }
     catch (const std::exception& error) {
-        std::fprintf(stderr, "FAIL: fixed home loading geometry: %s\n", error.what());
+        std::fprintf(stderr, "FAIL: home geometry / skeleton shimmer: %s\n", error.what());
         ++failures;
     }
     testCoreOperations();

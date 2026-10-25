@@ -110,27 +110,4 @@ huxerui::LayoutResult HomeGrid::Measure(huxerui::LayoutContext& context,
     return result.SetSize(constraints.Constrain({available, total_height}));
 }
 
-huxerui::View HomeCardSkeleton(HomeCardKind kind, const huxerui::ThemeSpec& theme) {
-    const auto block = [&theme](float height) {
-        return huxerui::Row {}.With(huxerui::Frame{.height = height},
-            huxerui::Background(theme.colors.surface_container_highest), huxerui::CornerRadius(4.0F));
-    };
-    std::vector<huxerui::View> lines;
-    lines.push_back(huxerui::Row {
-      huxerui::View{block(20.0F)}.With(huxerui::Frame{.width = 20.0F}),
-      huxerui::View{block(16.0F)}.With(huxerui::Grow(1.0F)),
-    }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
-    if (kind == HomeCardKind::Traffic) {
-        lines.push_back(huxerui::Row {}.With(huxerui::Grow(1.0F),
-            huxerui::Background(theme.colors.surface_container_highest), huxerui::CornerRadius(4.0F)));
-    } else {
-        const int count = kind == HomeCardKind::Mode ? 3
-            : kind == HomeCardKind::Proxy || kind == HomeCardKind::Tun ? 1 : 2;
-        for (int index = 0; index < count; ++index) lines.push_back(block(12.0F));
-        lines.push_back(huxerui::Spacer());
-    }
-    return huxerui::Column(lines).With(huxerui::Spacing(8.0F), huxerui::Grow(1.0F),
-        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).Key("home-card-skeleton");
-}
-
 } // namespace clashflux::ui

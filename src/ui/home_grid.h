@@ -89,8 +89,7 @@ inline constexpr int HomeGridColumns(float width, bool compact) {
 }
 
 // 自定义网格布局：按声明顺序把每张卡片放进第一个放得下的空位（左上紧凑），
-// 宽度按当前列数均分。卡片尺寸由布局给（不是内容撑开），因此加载态与运行态
-// 占据完全相同的大小。
+// 宽度按当前列数均分。卡片尺寸由布局给，不随字段更新而改变。
 class HomeGrid final : public huxerui::Layout<HomeGrid> {
 public:
     using Layout::Layout;
@@ -99,10 +98,5 @@ public:
                                          huxerui::ViewNode& node,
                                          huxerui::Constraints constraints);
 };
-
-
-// Only the card interior changes during hydration. The owner uses the same
-// Card shell, key, HomeCardSpan and HomeGrid for loading and ready content.
-huxerui::View HomeCardSkeleton(HomeCardKind kind, const huxerui::ThemeSpec& theme);
 
 } // namespace clashflux::ui

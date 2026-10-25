@@ -788,22 +788,6 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
 #endif
 }
 
-IslandTheme ResolveIslandTheme(const huxerui::ThemeSpec& theme) {
-    return IslandTheme{
-        .page_gap = 10.0F,
-        .island_padding = theme.spacing.medium,
-        .island_radius = 22.0F,
-        .nested_radius = 14.0F,
-        .dense_radius = 4.0F,
-        .ocean = theme.colors.background,
-        .base = theme.colors.surface_container_low,
-        .raised = theme.colors.surface_container,
-        .active = theme.colors.surface_container_high,
-        .overlay = theme.colors.surface_container_highest,
-        .outline_soft = theme.colors.outline,
-    };
-}
-
 float ConcentricRadius(float outer_radius, float inset) {
     // 内层半径 = 外层半径 − inset，保下限 4pt：更小半径与父级圆角几乎相切，
     // 视觉上出现反同心（子角比父角“尖”）。

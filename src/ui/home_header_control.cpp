@@ -1,5 +1,6 @@
 #include "home_header_control.h"
 #include "page_layout.h"
+#include "theme_colors.h"
 #include "ui.h"
 #include <stop_token>
 
@@ -10,46 +11,7 @@ constexpr const char* kHeaderMarker = "home-header-control";
 
 void MoveHeader(bool show, HomeHeaderControl control, huxerui::TaskScope tasks, bool reduced) {
     if (control.shown.Get() == show || control.motion.Get().action != CoreAction::Idle) return;
-    const auto serial = control.motion.Get().serial + 1;
-    if (reduced) {
-        control.shown = show;
-        control.motion = HomeControlMotion{CoreAction::Idle, serial};
-        return;
-    }
-    if (show) {
-        const auto present = [control, serial] {
-            control.shown = true;
-            control.motion = HomeControlMotion{CoreAction::Start, serial};
-        };
-        try { control.transition.Run(kHomeControlMotion, present); }
-        catch (const std::logic_error&) { present(); }
-        tasks.Launch([control, serial]() -> huxerui::Task<void> {
-            co_await huxerui::Delay(std::chrono::duration<double>{kHomeControlMotion.duration + 0.08});
-            if (control.motion.Get().serial == serial)
-                control.motion = HomeControlMotion{CoreAction::Idle, serial};
-        });
-        return;
-    }
-    // A header has a different aspect ratio from a desktop grid card. Capture
-    // an actual 48pt pose at its center rather than scaling by a fixed factor.
-    const auto collapse = [control, serial] {
-        control.motion = HomeControlMotion{CoreAction::Stop, serial, true, true};
-    };
-    try { control.transition.Run(kHomeControlCollapseMotion, collapse); }
-    catch (const std::logic_error&) { collapse(); }
-    tasks.Launch([control, serial]() -> huxerui::Task<void> {
-        co_await huxerui::Delay(std::chrono::duration<double>{kHomeControlCollapseMotion.duration + 0.04});
-        if (control.motion.Get().serial != serial) co_return;
-        const auto present = [control, serial] {
-            control.shown = false;
-            control.motion = HomeControlMotion{CoreAction::Stop, serial};
-        };
-        try { control.transition.Run(kHomeControlReturnMotion, present); }
-        catch (const std::logic_error&) { present(); }
-        co_await huxerui::Delay(std::chrono::duration<double>{kHomeControlReturnMotion.duration + 0.08});
-        if (control.motion.Get().serial == serial)
-            control.motion = HomeControlMotion{CoreAction::Idle, serial};
-    });
+    AnimateHomeControlCard(show, control.shown, control.motion, control.transition, tasks, reduced);
 }
 
 [[huxerui::composable]] huxerui::View HeaderRunningContent(HomeHeaderSnapshot snapshot, bool animate) {
@@ -94,6 +56,24 @@ void MoveHeader(bool show, HomeHeaderControl control, huxerui::TaskScope tasks, 
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 }
 
+[[huxerui::composable]] huxerui::View HeaderRunningCard(
+    HomeHeaderSnapshot snapshot, bool animate) {
+    const auto& theme = huxerui::UseTheme();
+    const IslandTheme islands = ResolveIslandTheme(theme);
+    // Build the surface on the real view node, as Card does. Decorating the
+    // composable's returned scope would leave the rounded corners unpainted.
+    return huxerui::Column {HeaderRunningContent(snapshot, animate)}.With(
+        huxerui::Frame{.height = kPageHeaderHeight},
+        huxerui::Padding(huxerui::EdgeInsets{
+            .right = theme.spacing.medium, .left = theme.spacing.medium}),
+        huxerui::Background(islands.raised),
+        huxerui::CornerRadius(islands.nested_radius),
+        huxerui::Border(islands.outline_soft, kCardOutlineWidth),
+        huxerui::ClipChildren(),
+        huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
 } // namespace
 
 HomeHeaderControl UseHomeHeaderControl(HomeHeaderSnapshot snapshot) {
@@ -135,6 +115,7 @@ HomeHeaderControl UseHomeHeaderControl(HomeHeaderSnapshot snapshot) {
 [[huxerui::composable]] huxerui::View HomeHeaderTitle(
     HomeHeaderControl control, std::function<void()> toggle, huxerui::StringVariant stopLabel) {
     const auto theme = huxerui::UseTheme();
+    const auto tasks = huxerui::UseTaskScope();
     const auto snapshot = control.latest.Get();
     const auto motion = control.motion.Get();
     huxerui::View content = PageTitleText(theme, Localized("首页"));
@@ -143,14 +124,18 @@ HomeHeaderControl UseHomeHeaderControl(HomeHeaderSnapshot snapshot) {
             content = huxerui::Stack {
               BoxCatAnimation(BoxCatPhase::Running, false)
                   .With(huxerui::Frame{.width = 48.0F, .height = 48.0F},
-                        huxerui::SharedBounds(kHeaderMarker).BoundsTransform(HomeControlReturnToDock{})),
+                        huxerui::SharedBounds(kHeaderMarker)
+                      .BoundsTransform(HomeControlReturnToDock{})),
             }.With(huxerui::Align(huxerui::HorizontalAlignment::Center, huxerui::VerticalAlignment::Center));
         } else {
-            content = HeaderRunningContent(snapshot, motion.action == CoreAction::Idle)
-                .OnClick(toggle)
-                .With(huxerui::Frame{.height = kPageHeaderHeight},
-                      huxerui::Background(theme.colors.surface_container),
-                      huxerui::CornerRadius(theme.shapes.medium),
+            content = HeaderRunningCard(snapshot, motion.action == CoreAction::Idle)
+                .OnClick([control, toggle, tasks, reduced = theme.motion.reduced_motion] {
+                    MoveHeader(false, control, tasks, reduced);
+                    toggle();
+                })
+                .With(huxerui::Scale(huxerui::AnimateTo(
+                          motion.collapsing ? kHomeControlCollapsedScale : 1.0F,
+                          kHomeControlCollapseMotion)),
                       huxerui::Enabled(!snapshot.busy && motion.action == CoreAction::Idle),
                       huxerui::Focusable(true), huxerui::Indication{},
                       huxerui::Tooltip(stopLabel),
@@ -173,6 +158,8 @@ HomeHeaderControl UseHomeHeaderControl(HomeHeaderSnapshot snapshot) {
     const auto snapshot = control.latest.Get();
     const auto motion = control.motion.Get();
     const bool returning = motion.action == CoreAction::Stop;
+    const bool changing = !returning &&
+        (snapshot.phase == BoxCatPhase::Starting || snapshot.phase == BoxCatPhase::Stopping);
     const bool enabled = snapshot.ready && !snapshot.busy && motion.action == CoreAction::Idle &&
         (snapshot.running || snapshot.canStart) && snapshot.phase != BoxCatPhase::Starting;
     const auto ready = [control] {
@@ -183,17 +170,33 @@ HomeHeaderControl UseHomeHeaderControl(HomeHeaderSnapshot snapshot) {
     auto bounds = huxerui::SharedBounds(kHeaderMarker);
     if (returning) bounds = std::move(bounds).BoundsTransform(HomeControlReturnToDock{});
     else bounds = std::move(bounds).BoundsTransform(HomeControlMoveExpand{});
-    huxerui::View dock = huxerui::Column {
-      BoxCatButtonContent(snapshot.phase,
+    // A 56pt marker is constrained by the 48pt header on the outgoing side.
+    // Pair the actual 48pt artwork at both ends, preserving the full 56pt hit
+    // target separately. The same cat node survives until playback resumes.
+    huxerui::View artwork = BoxCatAnimation(snapshot.phase,
+          motion.action == CoreAction::Idle, {},
           snapshot.phase == BoxCatPhase::Failed ? theme.colors.error : theme.colors.on_surface,
-          motion.action == CoreAction::Idle, {}, ready,
-          returning ? std::optional{BoxCatPhase::Running} : std::nullopt)
+          ready, returning ? std::optional{BoxCatPhase::Running} : std::nullopt)
+          .With(huxerui::Frame{.width = 48.0F, .height = 48.0F}, std::move(bounds))
+          .Key("box-cat-artwork");
+    huxerui::View button = huxerui::Stack {std::move(artwork)}
+          .With(huxerui::Frame{.width = 56.0F, .height = 56.0F},
+                huxerui::Align(huxerui::HorizontalAlignment::Center,
+                               huxerui::VerticalAlignment::Center))
           .OnClick(toggle)
           .With(huxerui::Enabled(enabled), huxerui::Focusable(true), huxerui::Indication{},
                 huxerui::Tooltip(actionLabel),
                 huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                   .label = huxerui::UseString(actionLabel)}, bounds)
-          .Key("home-header-floating-cat"),
+                                   .label = huxerui::UseString(actionLabel)})
+          .Key("home-header-floating-cat");
+    huxerui::View floating = huxerui::Stack {std::move(button)}.With(
+        huxerui::Frame{.width = 56.0F, .height = 56.0F},
+        huxerui::Align(huxerui::HorizontalAlignment::Center,
+                       huxerui::VerticalAlignment::Center),
+        huxerui::Scale(huxerui::AnimateTo(changing ? 0.94F : 1.0F,
+            huxerui::TweenSpec{.duration = 0.18, .easing = huxerui::Easing::EaseOut})));
+    huxerui::View dock = huxerui::Column {
+      std::move(floating),
     }.With(huxerui::Padding(huxerui::EdgeInsets{
                .right = theme.spacing.medium, .bottom = bottomInset, .left = theme.spacing.medium}),
            huxerui::MainAlign(huxerui::MainAxisAlignment::End),

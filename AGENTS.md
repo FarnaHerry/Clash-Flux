@@ -30,8 +30,9 @@ cmake --build build --target clash-flux
 CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version
 ```
 
-Windows PowerShell 使用等价的 `./run.ps1`（默认运行 `build/clash-flux.exe`，
-同样支持 `CLASHFLUX_BIN` 与参数透传）；也可以直接运行 `build/clash-flux.exe`。
+Windows PowerShell 使用 `./run.ps1`，默认读取 `build/CMakeCache.txt` 中的
+`CMAKE_RUNTIME_OUTPUT_DIRECTORY` 并运行该目录的 `clash-flux.exe`；未配置该目录时
+回落到 `build/clash-flux.exe`。同样支持 `CLASHFLUX_BIN` 与参数透传，不会隐式编译。
 
 编译失败、可执行文件不存在或 `run.sh` / `run.ps1` 验证失败时，不得在回复中声称改动已完成。
 
@@ -142,7 +143,7 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   悬浮操作、菜单/下拉、抽屉和对话框按语义层级取值，不在页面另写透明度/模糊参数。
   标题栏投影覆盖在内容绘制之后且不占布局、不拦截输入；抽屉投影裁剪在标题栏下方。
   普通卡片和侧栏维持底色与细线层次，移动端保留原有阴影样式。
-- 首页加载骨架与真实卡片必须共用 `src/ui/home_grid.h/.cpp` 的固定目录、`HomeGrid`、跨度与 `Card` 外壳；只替换内部占位内容，不使用通用等高自适应网格。行高 88pt、卡间距 12pt，两行卡高 188pt；新增固定卡片时同步保持骨架形状与就绪态一致。
+- 首页直接挂载真实固定卡片，不使用加载骨架；未就绪字段使用中性占位值，数据到达后原位更新。`src/ui/home_grid.h/.cpp` 统一固定目录、跨度与 `HomeGrid`，行高 88pt、卡间距 12pt，两行卡高 188pt。其它页面的骨架复用 `page_loading.h/.cpp` 的流光组件，仅首份真实数据未就绪时显示；流光只更新绘制，退出加载、切页、后台或减少动态效果时停止。
 - **首页卡片左上角标题图标规范**：首页所有卡片左上角必须配备符合卡片语义的专属图标（统一由 `HomeCardHeading(icon, title)` 或开关行组件呈现，图标尺寸统一为 20pt、着色使用 `theme.colors.primary`，间距 8pt 居中对齐 SemiBold 标题）。后续在首页添加任何新卡片或控件视图时，必须保持左上角图标规范，维持全首页卡片的一致视觉层次。
 - 可排序卡片的拖动预览要持续跟随原始抓取点；滚动网格应在滚动视口注册拖放目标，
   使卡片间隙和视口边缘的拖动继续有效并触发边缘自动滚动。
