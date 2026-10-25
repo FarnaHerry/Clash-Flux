@@ -76,7 +76,7 @@ public final class MainActivity extends HuxerUIActivity {
     private static native void nativeAppLog(int level, String message);
     private static native void nativeCoreLog(int level, String message);
     private static native void nativeUpdateRuntimeState(
-            int coreState, int vpnState, long uploadRate, long downloadRate,
+            int coreState, int vpnState, long vpnElapsedMs, long uploadRate, long downloadRate,
             long uploadTotal, long downloadTotal, int connections, String message);
     private static native void nativeClearTunPreference();
     private static native void nativeUpdateRuntimeHealth(long epoch, long generation, long sequence,
@@ -400,7 +400,7 @@ public final class MainActivity extends HuxerUIActivity {
             runtimeCoreState = snapshot.getInt("coreState");
             runtimeVpnState = snapshot.getInt("vpnState");
             runtimeMessage = snapshot.getString("message", "");
-            nativeUpdateRuntimeState(runtimeCoreState, runtimeVpnState,
+            nativeUpdateRuntimeState(runtimeCoreState, runtimeVpnState, snapshot.getLong("vpnElapsedMs"),
                     snapshot.getLong("uploadRate"), snapshot.getLong("downloadRate"),
                     snapshot.getLong("uploadTotal"), snapshot.getLong("downloadTotal"),
                     snapshot.getInt("connections"), runtimeMessage);

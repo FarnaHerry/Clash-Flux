@@ -498,7 +498,10 @@ CoreView ReadCoreView(bool slowProbes, bool previousSystemProxyActive) {
     view.ready = clashflux::persistence::persistence().ready();
     view.tunIntent = core.tunEnabled();
     view.modeIntent = core.mode();
-    view.vpnState = AndroidVpnState();
+    const auto vpnRuntime = ReadAndroidVpnRuntime();
+    view.vpnSnapshotReady = vpnRuntime.ready;
+    view.vpnState = vpnRuntime.state;
+    view.vpnElapsedMs = vpnRuntime.elapsedMs;
     view.ignoringBattery = AndroidIsIgnoringBattery();
     view.systemProxyIntent = core.systemProxyEnabled();
     // 系统代理实际指向在 GNOME 下是 3 次 popen：只在慢探测拍或动作请求时查，
@@ -888,7 +891,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                                                    std::optional<float> contentSpacing,
                                                    huxerui::View leading,
                                                    huxerui::View titleSearchField,
-                                                   bool showInlineHeader) {
+                                                   bool showInlineHeader,
+                                                   huxerui::View inlineHeader) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     // 响应式：Compact(<600) 收窄一级岛内边距。
@@ -955,7 +959,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     if (leading) titleView = huxerui::Row{leading, titleView}.With(
         huxerui::Spacing(theme.spacing.small),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
-    huxerui::View header = PageHeaderLayout(theme,
+    huxerui::View header = inlineHeader ? inlineHeader : PageHeaderLayout(theme,
         titleView,
         showInlineHeader ? huxerui::View{actions} : huxerui::View{}, compact && !inlineCompactActions,
         compact && static_cast<bool>(titleSearchField));

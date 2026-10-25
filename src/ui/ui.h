@@ -22,6 +22,12 @@
 
 namespace clashflux::ui {
 
+struct AndroidVpnRuntime {
+    bool ready = false;
+    int state = 0;
+    std::int64_t elapsedMs = 0;
+};
+
 // Section edge inset and card grid spacing share one rhythm across the app.
 inline constexpr float kSectionCardSpacing = 8.0F;
 
@@ -138,6 +144,12 @@ inline bool AndroidIsIgnoringBattery() noexcept {
 }
 extern "C" int clashflux_android_vpn_state() noexcept;
 inline int AndroidVpnState() noexcept { return clashflux_android_vpn_state(); }
+extern "C" void clashflux_android_vpn_snapshot(bool*, int*, std::int64_t*) noexcept;
+inline AndroidVpnRuntime ReadAndroidVpnRuntime() noexcept {
+    AndroidVpnRuntime result;
+    clashflux_android_vpn_snapshot(&result.ready, &result.state, &result.elapsedMs);
+    return result;
+}
 extern "C" const char* clashflux_android_proxy_groups() noexcept;
 extern "C" const char* clashflux_android_connections() noexcept;
 extern "C" bool clashflux_android_close_connection(const char*) noexcept;
@@ -157,6 +169,7 @@ inline void AndroidRequestIgnoreBattery() noexcept {}
 inline void AndroidOpenBatterySettings() noexcept {}
 inline bool AndroidIsIgnoringBattery() noexcept { return false; }
 inline int AndroidVpnState() noexcept { return 0; }
+inline AndroidVpnRuntime ReadAndroidVpnRuntime() noexcept { return {}; }
 inline const char* clashflux_android_connections() noexcept { return ""; }
 inline bool clashflux_android_close_connection(const char*) noexcept { return false; }
 inline bool clashflux_android_close_all_connections() noexcept { return false; }
@@ -395,7 +408,8 @@ huxerui::View PageScaffold(huxerui::StringVariant title, huxerui::View actions,
                            std::optional<float> contentSpacing = std::nullopt,
                            huxerui::View leading = {},
                            huxerui::View titleSearchField = {},
-                           bool showInlineHeader = true);
+                           bool showInlineHeader = true,
+                           huxerui::View inlineHeader = {});
 huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     huxerui::View actions, huxerui::View content,
                                     std::function<void()> onBack,

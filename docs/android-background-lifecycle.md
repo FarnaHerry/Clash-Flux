@@ -86,3 +86,23 @@ Android Task Manager 停止或厂商禁用后台/自启动。`START_STICKY` 是�
   `platform/android/app/src/main/aidl/dev/farna/clashflux/IClashRuntime.aidl`：跨进程控制面。
 - `platform/android/app/src/main/java/dev/farna/clashflux/RuntimeSnapshotStore.java`：共享原子快照。
 - `platform/android/android_bridge.cpp`：JNI 运行状态写回和 UI 进程快照接收。
+
+## 首页 VPN 运行时长
+
+`VpnUptime` 由 `:background` 的 `ClashVpnService` 持有，只有确认 VPN 已连接
+（state=2）才用 `SystemClock.elapsedRealtime()` 开始本次计时；core-only、授权等待、
+启动失败和取消不计时。重复发布 connected 保留起点，断开后再连接建立新会话。
+状态与 elapsedMs 在同一同步快照读取，经现有 Binder Bundle → MainActivity → JNI
+成对发布到 UI 进程，`ReadCoreView` 再发布到应用模型；界面不自行推测起点。
+因此锁屏休眠、UI 进程重建和观察者重新绑定都延续后台会话，系统墙钟调整不影响计时。
+Binder 暂时丢失只保留最后观测，不能清零会话或伪造断开；后台进程真正重启后重新连接
+自然建立新会话。首份 Binder 快照有独立就绪标志，不能把 JNI 默认值当作已确认状态。
+
+无 Android 设备也可运行纯 Java 会话时钟回归：
+
+```powershell
+javac -d build/android-clock-test platform/android/app/src/main/java/dev/farna/clashflux/VpnUptime.java tests/android/VpnUptimeTest.java
+java -cp build/android-clock-test dev.farna.clashflux.VpnUptimeTest
+```
+
+这只验证后台计时契约，不代替 APK 构建与真实 VPN 授权/连接生命周期验收。

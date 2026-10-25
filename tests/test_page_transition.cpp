@@ -18,6 +18,7 @@
 #include "box_cat.h"
 #include "runtime_diagnostics.h"
 #include "home_control_motion.h"
+#include "home_header_control.h"
 #include "home_vpn_status.h"
 #include "rule_target_picker.h"
 #include "log_actions.h"
@@ -2442,6 +2443,235 @@ void testCoreOperations() {
     check(ui.Find(UiSelector::Text("CONTROL-SUCCESS")).Exists() && ui.Find(UiSelector::Text("CONTROL-EXECUTIONS:3")).Exists(), "failed operation remains retryable");
 }
 
+struct HeaderControlFixture {
+    huxerui::State<clashflux::ui::HomeHeaderSnapshot> snapshot{
+        clashflux::ui::HomeHeaderSnapshot{.ready = true, .active = true, .canStart = true}};
+    huxerui::State<bool> reduced{false};
+    huxerui::State<bool> dark{false};
+    huxerui::State<bool> desktop{false};
+    std::optional<clashflux::ui::HomeHeaderControl> control;
+    int toggles = 0;
+};
+std::shared_ptr<HeaderControlFixture> headerFixture;
+bool headerColdStart = false;
+
+void InstallHeaderControlFixture(huxerui::ApplicationContext& context) {
+    headerFixture = std::make_shared<HeaderControlFixture>();
+    if (headerColdStart) headerFixture->snapshot.Update([](clashflux::ui::HomeHeaderSnapshot& value) {
+        value.ready = false;
+    });
+    context.Provide(headerFixture);
+}
+
+[[huxerui::composable]] huxerui::View HeaderControlFixtureContent() {
+    using namespace clashflux::ui;
+    const auto model = huxerui::UseService<HeaderControlFixture>();
+    const auto theme = huxerui::UseTheme();
+    auto snapshot = model->snapshot.Get();
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    snapshot.active = snapshot.active && (!model->desktop.Get() || compact);
+    const auto control = UseHomeHeaderControl(snapshot);
+    const auto scroll = huxerui::UseScrollController();
+    model->control = control;
+    if (!snapshot.active) return huxerui::Text("Header inactive");
+    const auto toggle = [model] {
+        ++model->toggles;
+        model->snapshot.Update([](HomeHeaderSnapshot& value) {
+            value.busy = true;
+            value.phase = value.running ? BoxCatPhase::Stopping : BoxCatPhase::Starting;
+        });
+    };
+    std::vector<huxerui::View> rows;
+    for (int index = 0; index < 25; ++index)
+        rows.push_back(huxerui::Text("Header content " + std::to_string(index))
+            .With(huxerui::Frame{.height = 80.0F}).Key("header-row-" + std::to_string(index)));
+    const auto label = Localized(model->desktop.Get() ? "停止内核" : "停止 VPN");
+    huxerui::View page = huxerui::Column {
+      HomeHeaderTitle(control, toggle, label),
+      huxerui::ScrollView(huxerui::Column(rows)).Controller(scroll)
+          .With(huxerui::Grow(1.0F)).Key("header-scroll"),
+    }.With(huxerui::Spacing(8.0F), huxerui::Padding(8.0F), huxerui::ClipChildren(),
+           huxerui::Grow(1.0F), huxerui::Background(theme.colors.surface_container_low),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    return HomeHeaderFloatingAction(page, control, toggle, label, 80.0F);
+}
+
+[[huxerui::composable]] huxerui::View HeaderControlFixtureTheme() {
+    const auto model = huxerui::UseService<HeaderControlFixture>();
+    auto theme = model->dark.Get() ? huxerui::FlatDarkThemeSpec() : huxerui::FlatLightThemeSpec();
+    theme.motion.reduced_motion = model->reduced.Get();
+    return huxerui::FlatTheme(theme, HeaderControlFixtureContent());
+}
+huxerui::View HeaderControlFixtureRoot() { return HeaderControlFixtureTheme(); }
+const huxerui::Application kHeaderControlApplication{HeaderControlFixtureRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallHeaderControlFixture}}};
+
+void testHomeHeaderControl() {
+    using namespace clashflux::ui;
+    huxerui::testing::UiTest ui(kHeaderControlApplication,
+        {.viewport = {400.0F, 800.0F}, .resource_provider = AppResources()});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    const auto model = headerFixture;
+    const auto advance = [&ui](int ms) {
+        for (int elapsed = 0; elapsed < ms; elapsed += 50) ui.Pump(std::chrono::milliseconds(50));
+    };
+    advance(100);
+    const auto slot = ui.Find(UiSelector::Key("home-header-slot")).One().bounds;
+    const auto viewport = ui.Find(UiSelector::Key("header-scroll")).One().bounds;
+    check(slot.height == 48.0F && viewport.height > 600.0F &&
+          ui.Find(UiSelector::Key("page-title")).Exists(), "idle header reserves 48pt without swallowing the content");
+    ui.Find(UiSelector::Key("header-scroll")).ScrollBy({0.0F, 160.0F});
+    ui.Pump();
+    const float contentY = ui.Find(UiSelector::Key("header-row-5")).One().bounds.y;
+    ui.Find(UiSelector::Key("home-header-floating-cat")).Tap();
+    advance(1500);
+    check(model->toggles == 1 && !model->control->shown.Get() &&
+          ui.Find(UiSelector::Key("page-title")).Exists(), "authorization/slow start keeps the title and floating cat");
+    model->snapshot.Update([](HomeHeaderSnapshot& value) {
+        value.running = true; value.busy = false; value.phase = BoxCatPhase::Running; value.elapsedSeconds = 2;
+    });
+    advance(250);
+    check(!model->control->shown.Get(), "real success waits for the completed cat rise before replacing the title");
+    advance(2400);
+    check(model->control->shown.Get() && !ui.Find(UiSelector::Key("home-header-floating-cat")).Exists() &&
+          ui.Find(UiSelector::Key("home-header-uptime")).Exists(), "successful cat merges into the production running header");
+    check(ui.Find(UiSelector::Key("home-header-slot")).One().bounds == slot &&
+          ui.Find(UiSelector::Key("header-scroll")).One().bounds == viewport &&
+          std::abs(ui.Find(UiSelector::Key("header-row-5")).One().bounds.y - contentY) < 0.5F,
+          "title replacement preserves header geometry, content viewport and scroll offset");
+    check(ui.Find(UiSelector::Text("00:00:02")).Exists(), "VPN header displays the backend session elapsed time");
+    model->snapshot.Update([](HomeHeaderSnapshot& value) { value.elapsedSeconds = 754; });
+    advance(100);
+    check(ui.Find(UiSelector::Text("00:12:34")).Exists(), "session time refreshes without replaying the merge");
+    ui.Find(UiSelector::Key("home-header-running")).Tap();
+    advance(150);
+    check(model->toggles == 2 && model->control->motion.Get().collapsing,
+          "header stop begins the in-place shrink before returning to the dock");
+    model->snapshot.Update([](HomeHeaderSnapshot& value) {
+        value.running = false; value.busy = false; value.phase = BoxCatPhase::Sleeping; value.elapsedSeconds = 0;
+    });
+    advance(1800);
+    check(!model->control->shown.Get() && ui.Find(UiSelector::Key("page-title")).Exists() &&
+          ui.Find(UiSelector::Key("home-header-floating-cat")).Exists(), "fast stop restores the title and dock without stale completion");
+
+    // Failed/cancelled start, retry, and the immediate-success path.
+    ui.Find(UiSelector::Key("home-header-floating-cat")).Tap(); advance(100);
+    model->snapshot.Update([](HomeHeaderSnapshot& value) { value.busy = false; value.phase = BoxCatPhase::Failed; });
+    advance(2200);
+    check(!model->control->shown.Get(), "failed startup never creates a running header");
+    ui.Find(UiSelector::Key("home-header-floating-cat")).Tap(); advance(100);
+    model->snapshot.Update([](HomeHeaderSnapshot& value) { value.busy = false; value.phase = BoxCatPhase::Sleeping; });
+    advance(1800);
+    check(!model->control->shown.Get(), "cancelled consent never creates a running header");
+    model->snapshot.Update([](HomeHeaderSnapshot& value) { value.running = true; value.phase = BoxCatPhase::Running; });
+    advance(100);
+    check(!model->control->shown.Get(), "instant success still completes the cat animation");
+    advance(2800);
+    ui.Find(UiSelector::Key("home-header-running")).Tap(); advance(800);
+    model->snapshot.Update([](HomeHeaderSnapshot& value) {
+        value.busy = false; value.phase = BoxCatPhase::Running; value.elapsedSeconds = 755;
+    });
+    advance(2800);
+    check(model->control->shown.Get() && ui.Find(UiSelector::Text("00:12:35")).Exists(),
+          "a rejected stop restores the running header and original session duration");
+
+    // Off-page synchronization and compact/expanded changes skip re-entry motion.
+    model->snapshot.Update([](HomeHeaderSnapshot& value) { value.active = false; }); advance(100);
+    model->snapshot.Update([](HomeHeaderSnapshot& value) { value.elapsedSeconds = 10000; }); advance(100);
+    model->snapshot.Update([](HomeHeaderSnapshot& value) { value.active = true; }); advance(100);
+    check(model->control->shown.Get() && model->control->motion.Get().action == CoreAction::Idle &&
+          ui.Find(UiSelector::Text("02:46:40")).Exists(), "returning to an already running session skips startup and preserves uptime");
+    model->desktop = true;
+    ui.SetWindowMetrics({.viewport = {1000.0F, 700.0F}}); advance(100);
+    ui.SetWindowMetrics({.viewport = {400.0F, 800.0F}}); advance(100);
+    check(model->control->shown.Get() && model->control->motion.Get().action == CoreAction::Idle,
+          "desktop compact header synchronizes directly after a wide/narrow round trip");
+    model->desktop = false;
+    for (const auto size : {huxerui::Size{320.0F, 700.0F}, huxerui::Size{900.0F, 420.0F}}) {
+        ui.SetWindowMetrics({.viewport = size}); advance(100);
+        const auto header = ui.Find(UiSelector::Key("home-header-slot")).One().bounds;
+        const auto badge = ui.Find(UiSelector::Key("box-cat-artwork")).One().bounds;
+        check(header.height == 48.0F && badge.height == 36.0F &&
+              badge.y >= header.y && badge.y + badge.height <= header.y + header.height,
+              "mobile narrow/wide headers retain the 48pt slot and unclipped centered cat");
+    }
+    model->dark = true; model->reduced = true; advance(100);
+    model->snapshot.Update([](HomeHeaderSnapshot& value) { value.running = false; value.phase = BoxCatPhase::Sleeping; });
+    advance(100);
+    check(!model->control->shown.Get() && model->control->motion.Get().action == CoreAction::Idle,
+          "reduced motion stops immediately in the dark theme");
+    model->snapshot.Update([](HomeHeaderSnapshot& value) { value.running = true; value.phase = BoxCatPhase::Running; });
+    advance(100);
+    check(model->control->shown.Get() && model->control->motion.Get().action == CoreAction::Idle,
+          "reduced motion starts immediately without a pending completion");
+    model->reduced = false;
+    model->snapshot.Update([](HomeHeaderSnapshot& value) {
+        value.running = false; value.phase = BoxCatPhase::Sleeping;
+    });
+    advance(1800);
+    model->snapshot.Update([](HomeHeaderSnapshot& value) {
+        value.running = true; value.phase = BoxCatPhase::Running;
+    });
+    for (int elapsed = 0; elapsed < 3500 && model->control->motion.Get().action != CoreAction::Start; elapsed += 50)
+        advance(50);
+    check(model->control->motion.Get().action == CoreAction::Start,
+          "retry after a reduced-motion switch can start a fresh merge");
+    model->snapshot.Update([](HomeHeaderSnapshot& value) {
+        value.running = false; value.phase = BoxCatPhase::Sleeping;
+    });
+    advance(2200);
+    check(!model->control->shown.Get() && model->control->motion.Get().action == CoreAction::Idle,
+          "disconnecting during the merge settles back to the title without a stale running header");
+    model->snapshot.Update([](HomeHeaderSnapshot& value) { value.active = false; });
+    advance(100);
+    model->snapshot.Update([](HomeHeaderSnapshot& value) {
+        value.running = true; value.phase = BoxCatPhase::Running; value.elapsedSeconds = 3601;
+    });
+    advance(100);
+    model->snapshot.Update([](HomeHeaderSnapshot& value) { value.active = true; });
+    advance(100);
+    check(model->control->shown.Get() && model->control->motion.Get().action == CoreAction::Idle &&
+          ui.Find(UiSelector::Text("01:00:01")).Exists(),
+          "a connection completed off-page restores directly with its existing duration");
+    check(FormatHomeUptime(-1) == "00:00:00" && FormatHomeUptime(360000) == "100:00:00",
+          "shared desktop/mobile format clamps negative time and keeps hours above 99");
+}
+
+void testHomeHeaderColdStart() {
+    using namespace clashflux::ui;
+    headerColdStart = true;
+    huxerui::testing::UiTest ui(kHeaderControlApplication,
+        {.viewport = {400.0F, 800.0F}, .resource_provider = AppResources()});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    ui.Pump();
+    const auto model = headerFixture;
+    check(!model->control->shown.Get() &&
+          !ui.Find(UiSelector::Key("home-header-floating-cat")).One().enabled,
+          "unobserved backend defaults cannot enable a control or create a running header");
+    model->snapshot.Update([](HomeHeaderSnapshot& value) {
+        value.ready = true; value.running = true; value.phase = BoxCatPhase::Running;
+        value.elapsedSeconds = 754;
+    });
+    ui.Pump(); ui.Pump();
+    check(model->control->shown.Get() && model->control->motion.Get().action == CoreAction::Idle &&
+          ui.Find(UiSelector::Text("00:12:34")).Exists(),
+          "first confirmed running VPN snapshot restores its header and session time without replay");
+    model->snapshot.Update([](HomeHeaderSnapshot& value) {
+        value.elapsedSeconds = 0;
+        value.runningSince = std::chrono::steady_clock::now() - std::chrono::seconds{754};
+    });
+    ui.Pump(); ui.Pump();
+    check(ui.Find(UiSelector::Text("00:12:34")).Exists(),
+          "desktop compact uses the real core-ready time instead of the VPN elapsed field");
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background);
+    ui.Pump(std::chrono::milliseconds(100));
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    ui.Pump(); ui.Pump();
+    check(model->control->motion.Get().action == CoreAction::Idle && model->control->shown.Get(),
+          "foreground restoration does not replay the startup animation");
+    headerColdStart = false;
+}
+
 void testInboundSettings() {
     using namespace clashflux::ui;
     const auto ports = ParseInboundPorts(" 07899\n", "", " 1080 ");
@@ -2554,6 +2784,8 @@ int main() {
     }
     testBoxCat();
     testBoxCatMorphAfterSuccess();
+    testHomeHeaderControl();
+    testHomeHeaderColdStart();
     testCoreOperations();
     testInboundSettings();
     testConnectionList();

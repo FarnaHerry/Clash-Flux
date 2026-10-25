@@ -6,6 +6,9 @@
 ## 修改后的强制验证
 
 首页猫咪出箱动画的生产组件在 `src/ui/box_cat.cpp`，由真实内核/VPN 状态驱动；
+移动端与桌面 Compact 的标题替换共用 `src/ui/home_header_control.cpp`：固定 48pt
+槽位显示“首页”，成功出箱后飞入并展开为“运行中 + HH:MM:SS”；桌面计内核就绪时长，
+Android 计后台 `VpnUptime` 的 VPN 会话时长，不能把 core-only 或 UI 挂载时间当起点。
 独立调试工程在 `demos/box-cat-demo`，用 Linux 的 `./demos/box-cat-demo/run-demo.sh`
 或 Windows PowerShell 的 `./demos/box-cat-demo/run-demo.ps1` 启动；Windows 只编译时加
 `-BuildOnly`，产物在 `demos/box-cat-demo/build-windows/box_cat_demo.exe`，不依赖 WSL。

@@ -23,8 +23,8 @@ inline HomeVpnStatus ResolveHomeVpnStatus(int vpnState, const CoreCommand& comma
         failed ? BoxCatPhase::Failed
             : changing ? (stopping ? BoxCatPhase::Stopping : BoxCatPhase::Starting)
             : connected ? BoxCatPhase::Running : BoxCatPhase::Sleeping,
-        stopping ? "正在断开" : changing ? "正在连接"
-            : failed ? "启动失败" : connected ? "已连接" : "未连接",
+        stopping ? "正在停止" : changing ? "正在启动"
+            : failed ? "启动失败" : connected ? "运行中" : "未连接",
         connected, changing, failed,
     };
 }

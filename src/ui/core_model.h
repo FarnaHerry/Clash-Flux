@@ -36,6 +36,8 @@ struct CoreView {
     bool tunIntent = false;          // persisted preference, independent of core lifetime
     std::string modeIntent = "rule";
     int vpnState = 0;                // Android background-service snapshot
+    bool vpnSnapshotReady = false;
+    std::int64_t vpnElapsedMs = 0;    // background-owned elapsedRealtime clock, including sleep
     bool ignoringBattery = false;
     bool systemProxyIntent = false;   // 用户意图（proxy.system_enabled）
     bool systemProxyActive = false;   // 系统代理是否确实指向本应用（昂贵探测）

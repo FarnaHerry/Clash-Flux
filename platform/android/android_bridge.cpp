@@ -6,6 +6,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <exception>
@@ -36,6 +37,16 @@ std::atomic<bool> g_system_dark{false};
 // Owned by ClashVpnService, never inferred from a saved setting.
 // 0=closed, 1=building, 2=attached, 3=failed.
 std::atomic<int> g_vpn_state{0};
+std::mutex g_vpn_snapshot_mutex;
+bool g_vpn_snapshot_ready = false;
+std::int64_t g_vpn_elapsed_ms = 0;
+
+void UpdateVpnSnapshot(int state, std::int64_t elapsedMs = 0, bool observed = false) {
+    std::lock_guard lock(g_vpn_snapshot_mutex);
+    g_vpn_state.store(state);
+    g_vpn_snapshot_ready = g_vpn_snapshot_ready || observed;
+    g_vpn_elapsed_ms = state == 2 ? std::max<std::int64_t>(0, elapsedMs) : 0;
+}
 // The libbox lifecycle is independent from the Android VPN/TUN lifecycle.
 // 0=stopped, 1=starting, 2=running, 3=failed.
 std::atomic<int> g_core_state{0};
@@ -327,11 +338,11 @@ Java_dev_farna_clashflux_MainActivity_nativeRuntimeBinderAvailable(JNIEnv*, jcla
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_MainActivity_nativeUpdateRuntimeState(
-    JNIEnv* environment, jclass, jint core_state, jint vpn_state,
+    JNIEnv* environment, jclass, jint core_state, jint vpn_state, jlong vpn_elapsed_ms,
     jlong upload_rate, jlong download_rate, jlong upload_total,
     jlong download_total, jint connections, jstring message) {
     g_core_state.store(core_state);
-    g_vpn_state.store(vpn_state);
+    UpdateVpnSnapshot(vpn_state, vpn_elapsed_ms, true);
     std::string text;
     if (message != nullptr) {
         if (const char* value = environment->GetStringUTFChars(message, nullptr)) {
@@ -417,7 +428,7 @@ Java_dev_farna_clashflux_MainActivity_nativeVpnStartCancelled(JNIEnv*, jclass) {
     // VpnService.prepare 的授权框被取消时，不能留下一个看似已启用的偏好。
     const bool noTunCoreWasRunning =
         g_vpn_state.load() == 0 && g_core_state.load() == 2;
-    g_vpn_state.store(0);
+    UpdateVpnSnapshot(0);
     if (!noTunCoreWasRunning) g_core_state.store(0);
     try {
         store::coreStore().setAndroidRuntimeState(
@@ -434,7 +445,7 @@ Java_dev_farna_clashflux_MainActivity_nativeVpnStartFailed(JNIEnv* environment,
                                                             jstring message) {
     const bool noTunCoreWasRunning =
         g_vpn_state.load() == 0 && g_core_state.load() == 2;
-    g_vpn_state.store(noTunCoreWasRunning ? 0 : 3);
+    UpdateVpnSnapshot(noTunCoreWasRunning ? 0 : 3);
     if (!noTunCoreWasRunning) g_core_state.store(3);
     std::string text = "Android VPN 启动失败";
     if (environment != nullptr && message != nullptr) {
@@ -482,7 +493,7 @@ Java_dev_farna_clashflux_ClashVpnService_nativeCoreState(JNIEnv* environment,
 extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_ClashVpnService_nativeVpnState(JNIEnv* environment, jclass,
                                                         jint state, jstring message) {
-    g_vpn_state.store(state);
+    UpdateVpnSnapshot(state);
     g_core_state.store(state);
     std::string text;
     if (message != nullptr) {
@@ -532,6 +543,13 @@ extern "C" int clashflux_android_core_state() noexcept {
 }
 
 extern "C" int clashflux_android_vpn_state() noexcept { return g_vpn_state.load(); }
+
+extern "C" void clashflux_android_vpn_snapshot(bool* ready, int* state, std::int64_t* elapsedMs) noexcept {
+    std::lock_guard lock(g_vpn_snapshot_mutex);
+    *ready = g_vpn_snapshot_ready;
+    *state = g_vpn_state.load();
+    *elapsedMs = g_vpn_elapsed_ms;
+}
 
 extern "C" bool clashflux_android_start_core() noexcept {
     std::lock_guard lock(g_mutex);
@@ -591,7 +609,7 @@ extern "C" bool clashflux_android_stop_vpn() noexcept {
     if (attached) g_vm->DetachCurrentThread();
     if (stopped) {
         g_core_state.store(0);
-        g_vpn_state.store(0);
+        UpdateVpnSnapshot(0);
     }
     return stopped;
 }

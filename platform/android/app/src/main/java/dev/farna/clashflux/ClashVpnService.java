@@ -144,7 +144,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private Connections connectionSnapshot = Libbox.newConnections();
     private static volatile ClashVpnService current;
     private static volatile int runtimeCoreState;
-    private static volatile int runtimeVpnState;
+    private static final VpnUptime vpnUptime = new VpnUptime();
     private static volatile String runtimeMessage = "";
     private static volatile long runtimeUploadRate;
     private static volatile long runtimeDownloadRate;
@@ -180,7 +180,9 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private Bundle lockedRuntimeSnapshot() {
         Bundle snapshot = new Bundle();
         snapshot.putInt("coreState", runtimeCoreState);
-        snapshot.putInt("vpnState", runtimeVpnState);
+        VpnUptime.Snapshot vpn = vpnUptime.snapshot(SystemClock.elapsedRealtime());
+        snapshot.putInt("vpnState", vpn.state);
+        snapshot.putLong("vpnElapsedMs", vpn.elapsedMs);
         snapshot.putString("message", runtimeMessage);
         snapshot.putLong("uploadRate", runtimeUploadRate);
         snapshot.putLong("downloadRate", runtimeDownloadRate);
@@ -209,7 +211,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     }
 
     private static void publishVpnState(int state, String message) {
-        runtimeVpnState = state;
+        vpnUptime.update(state, SystemClock.elapsedRealtime());
         runtimeCoreState = state;
         runtimeMessage = message == null ? "" : message;
         nativeVpnState(state, runtimeMessage);

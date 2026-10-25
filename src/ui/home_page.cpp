@@ -34,6 +34,7 @@
 #include "ui.h"
 #include "box_cat.h"
 #include "home_control_motion.h"
+#include "home_header_control.h"
 #include "page_layout.h"
 #include "page_loading.h"
 #include "empty_state.h"
@@ -92,7 +93,7 @@ struct HomeCardSpec {
 };
 
 #if defined(__ANDROID__)
-// 移动端网格上方另有全宽 VPN 动画卡片；悬浮按钮保留启停入口。
+// 移动端的 VPN 猫咪在启动后并入固定页内标题栏。
 // 手机屏是 2 列：需要整宽的（图表）给 2 格，信息/单选卡 1 格；
 // 高度仍按 FlClash 跨度（图表/信息卡/出站模式 2 行，开关与网络信息卡 1 行）。
 constexpr HomeCardSpec kHomeCards[] = {
@@ -110,7 +111,7 @@ constexpr bool kDesktopHomeControl = false;
     huxerui::Row{}
 #define CLASHFLUX_HOME_CONTROL_CARD(shown, motion, transition) huxerui::Row{}
 #define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact, shown, motion, ready, transition) \
-    AndroidHomeFloatingAction(std::move(page), state, compact)
+    page
 #else
 // 桌面可选卡片：系统代理/TUN 开关是桌面专有能力。
 //
@@ -136,7 +137,7 @@ constexpr bool kDesktopHomeControl = true;
 #define CLASHFLUX_HOME_CONTROL_CARD(shown, motion, transition) \
     DesktopHomeStatusCard(shown, motion, transition)
 #define CLASHFLUX_HOME_FLOATING_ACTION(page, state, compact, shown, motion, ready, transition) \
-    DesktopHomeFloatingAction(std::move(page), compact, shown, motion, ready, transition)
+    DesktopHomeFloatingAction(std::move(page), shown, motion, ready, transition)
 #endif
 
 // ---- 卡片网格尺寸模型 ------------------------------------------------------
@@ -884,90 +885,7 @@ huxerui::XYChartData BuildTrafficChartData(
 
 // ---- 平台专属卡片（整个函数由编译宏在调用点选择）---------------------------
 
-[[huxerui::composable]] huxerui::View MobileHomeVpnStatusCard() {
-    const auto& theme = huxerui::UseTheme();
-    const auto control = UseCoreControl();
-    const auto status = ResolveHomeVpnStatus(control.model->view.Get().vpnState,
-                                            control.model->operations.command.Get());
-    return Card(huxerui::Row {
-        huxerui::Column {
-            HomeCardHeading(app::images::shield_check, Localized("VPN 状态")),
-            huxerui::Text(Localized(status.label)).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody),
-                status.failed ? theme.colors.error : theme.colors.on_surface_variant}),
-        }.With(huxerui::Spacing(8.0F), huxerui::Grow(1.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start)),
-        BoxCatAnimation(status.phase)
-            .With(huxerui::Frame{.width = 64.0F, .height = 64.0F})
-            .Key("home-vpn-cat"),
-    }.With(huxerui::Spacing(kHomeGridGap),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)))
-        .Key("home-vpn-status-card");
-}
-
-#if defined(__ANDROID__)
-
-[[huxerui::composable]] huxerui::View AndroidHomeFloatingAction(
-    huxerui::View page, huxerui::State<HomeState> homeState, bool compact) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const HomeState& state = homeState.Get();
-    const auto control = UseCoreControl();
-    huxerui::View base = page;
-    const int vpnStatus = control.model->view.Get().vpnState;
-    const CoreCommand command = control.model->operations.command.Get();
-    const auto status = ResolveHomeVpnStatus(vpnStatus, command);
-    const bool active = status.connected;
-    const bool changing = status.changing;
-    const bool failed = status.failed;
-    const bool enabled = !control.Busy() && !changing &&
-                         (active || state.profileId != 0);
-    const auto toggle = [control, active] {
-        control.Run({.action = CoreAction::Tun, .enabled = !active});
-    };
-
-    const huxerui::StringVariant actionLabel =
-        Localized(active ? "停止 VPN" : "启动 VPN");
-    const huxerui::StringVariant statusLabel = Localized(status.label);
-    // 透明按钮直接呈现猫咪动画；符号随页面主题着色，不再依赖实色底座。
-    // 猫咪只呈现后台确认的连接状态；VPN 授权与操作仍由共享控制器持有。
-    huxerui::View button = BoxCatButtonContent(status.phase,
-        failed ? theme.colors.error : theme.colors.on_surface).OnClick(toggle)
-        .With(huxerui::Tooltip(actionLabel),
-              huxerui::Enabled(enabled),
-              huxerui::Focusable(true),
-              huxerui::Indication{},
-              huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                 .label = huxerui::UseString(actionLabel)});
-    huxerui::View floating = huxerui::Stack {
-        std::move(button),
-    }.With(huxerui::Frame{.width = 56.0F, .height = 56.0F},
-           huxerui::Align(huxerui::HorizontalAlignment::Center,
-                          huxerui::VerticalAlignment::Center),
-           huxerui::Scale(huxerui::AnimateTo(
-               changing ? 0.94F : 1.0F,
-               huxerui::TweenSpec{.duration = 0.18,
-                                  .easing = huxerui::Easing::EaseOut})),
-           huxerui::Semantics{.label = huxerui::UseString(statusLabel)});
-    // 与 Android 底部悬浮导航栏相同：按钮放在独立的全屏覆盖层中，
-    // 由覆盖层的 Column 在主轴末端、交叉轴末端定位，不依赖页面内容容器。
-    huxerui::View dock = huxerui::Column {
-        std::move(floating),
-    }.With(huxerui::Padding(huxerui::EdgeInsets{
-                 .right = theme.spacing.medium,
-                 .bottom = compact ? kCompactFloatingNavigationInset : theme.spacing.medium,
-                 .left = theme.spacing.medium,
-             }),
-             huxerui::MainAlign(huxerui::MainAxisAlignment::End),
-             huxerui::CrossAlign(huxerui::CrossAxisAlignment::End));
-    return huxerui::Stack {
-        std::move(base),
-        std::move(dock),
-    }.With(huxerui::Grow(1.0F),
-           huxerui::Align(huxerui::HorizontalAlignment::Stretch,
-                          huxerui::VerticalAlignment::Stretch));
-}
-
-#else
+#if !defined(__ANDROID__)
 
 [[huxerui::composable]] huxerui::View DesktopModeSwitchRow(
     huxerui::ImageVariant icon, huxerui::StringVariant label,
@@ -1112,9 +1030,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
                    std::chrono::duration_cast<std::chrono::seconds>(
                        clock.Get() - runningSince));
     const auto seconds = elapsed.count();
-    const std::string uptime = std::format(
-        "{:02}:{:02}:{:02}", seconds / 3600, (seconds / 60) % 60,
-        seconds % 60);
+    const std::string uptime = FormatHomeUptime(seconds);
     huxerui::View icon = BoxCatStatusIcon(
         DesktopHomeCatPhase(control, motion.Get().action),
         motion.Get().action == CoreAction::Idle);
@@ -1155,32 +1071,27 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
                                      Localized("停止内核"))});
 }
 
-// 桌面：内核启动/停止悬浮按钮（右下角，与移动端的 VPN 悬浮按钮同形制）。
+// 桌面宽窗：内核猫咪并入网格卡片；Compact 与移动端共用标题栏组件。
 // 「正式启动」是独立动作：只负责拉起/停止内核，启动时按已记录的 TUN 与
 // 系统代理意图恢复；不再由各个开关隐式触发内核。
 [[huxerui::composable]] huxerui::View DesktopHomeFloatingAction(
-    huxerui::View page, bool compact, huxerui::State<bool> cardShown,
+    huxerui::View page, huxerui::State<bool> cardShown,
     huxerui::State<HomeControlMotion> motion,
     huxerui::State<bool> catReady,
     huxerui::SharedTransitionHandle transition) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const auto control = UseCoreControl();
     huxerui::View base = page;
-    const bool returning = !compact && motion.Get().action == CoreAction::Stop;
+    const bool returning = motion.Get().action == CoreAction::Stop;
     const bool active = returning ? false : control.Running();
     const bool enabled = !control.Busy() && !returning;
     const CoreAction command = control.model->operations.command.Get().action;
     const bool changing = !returning && (command == CoreAction::Start ||
                                         command == CoreAction::Stop);
-    const auto toggle = [control, active, compact, cardShown, motion, transition,
+    const auto toggle = [control, active, cardShown, motion, transition,
                          reducedMotion = theme.motion.reduced_motion] {
-        const CoreAction action = active ? CoreAction::Stop : CoreAction::Start;
-        if (compact) {
-            control.Run({.action = action});
-        } else {
-            RunDesktopHomeCoreAction(control, cardShown, motion, transition,
-                                     action, reducedMotion);
-        }
+        RunDesktopHomeCoreAction(control, cardShown, motion, transition,
+            active ? CoreAction::Stop : CoreAction::Start, reducedMotion);
     };
 
     const auto onRunningReady = [control, catReady] {
@@ -1219,14 +1130,14 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
         std::move(floating),
     }.With(huxerui::Padding(huxerui::EdgeInsets{
                  .right = theme.spacing.medium,
-                 .bottom = compact ? kCompactFloatingNavigationInset : theme.spacing.medium,
+                 .bottom = theme.spacing.medium,
                  .left = theme.spacing.medium,
              }),
              huxerui::MainAlign(huxerui::MainAxisAlignment::End),
              huxerui::CrossAlign(huxerui::CrossAxisAlignment::End));
     return huxerui::Stack {
         std::move(base),
-        compact || !cardShown.Get() ? std::move(dock)
+        !cardShown.Get() ? std::move(dock)
                                     : huxerui::View{huxerui::Row{}},
     }.With(huxerui::Grow(1.0F),
            huxerui::Align(huxerui::HorizontalAlignment::Stretch,
@@ -1272,6 +1183,40 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     auto controlCardSynced = huxerui::UseState<bool>(false);
     auto controlCatReady = huxerui::UseState<bool>(false);
     const auto controlTransition = huxerui::UseSharedTransition();
+    const bool headerControlEnabled = !kPageTitlesInWindow || compact;
+    const auto control = UseCoreControl();
+    const auto& coreView = coreModel->view.Get();
+    const auto vpnStatus = ResolveHomeVpnStatus(coreView.vpnState, coreModel->operations.command.Get());
+    const auto action = coreModel->operations.command.Get().action;
+    const auto headerPhase = kDesktopHomeControl
+        ? (action == CoreAction::Stop ? BoxCatPhase::Stopping
+            : action == CoreAction::Start || action == CoreAction::Restart ? BoxCatPhase::Starting
+            : coreView.core.state == core::CoreState::Running ? BoxCatPhase::Running
+            : coreView.core.state == core::CoreState::Starting ? BoxCatPhase::Starting
+            : coreView.core.state == core::CoreState::Failed ? BoxCatPhase::Failed : BoxCatPhase::Sleeping)
+        : vpnStatus.phase;
+    const auto headerControl = UseHomeHeaderControl(HomeHeaderSnapshot{
+        .ready = coreView.ready && (kDesktopHomeControl || coreView.vpnSnapshotReady),
+        .active = active && headerControlEnabled,
+        .running = kDesktopHomeControl ? coreView.core.state == core::CoreState::Running : vpnStatus.connected,
+        .busy = control.Busy(),
+        .canStart = kDesktopHomeControl || state.Get().profileId != 0,
+        .phase = headerPhase,
+        .elapsedSeconds = coreView.vpnElapsedMs / 1000,
+        .runningSince = kDesktopHomeControl ? coreView.core.runningSince
+            : std::chrono::steady_clock::time_point{},
+    });
+    const auto toggleHeader = [control] {
+        if (kDesktopHomeControl) {
+            control.Run({.action = control.Running() ? CoreAction::Stop : CoreAction::Start});
+        } else {
+            control.Run({.action = CoreAction::Tun, .enabled = control.model->view.Get().vpnState != 2});
+        }
+    };
+    const auto headerStopLabel = Localized(kDesktopHomeControl ? "停止内核" : "停止 VPN");
+    const auto headerActionLabel = headerControl.latest.Get().running ? headerStopLabel
+        : Localized(kDesktopHomeControl ? "启动内核" : "启动 VPN");
+
     // 基础卡片顺序与尺寸只由 kHomeCards 决定，没有布局持久化；尾部控制卡
     // 只随桌面运行状态出现，不改变其它卡片的声明跨度。
     const HomeLayout order = DefaultHomeLayout();
@@ -1376,7 +1321,6 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
     std::vector<huxerui::View> bodySections;
-    if (!kPageTitlesInWindow) bodySections.push_back(MobileHomeVpnStatusCard());
     bodySections.push_back(std::move(grid));
     bodySections.push_back(
         // 悬浮启动按钮压在滚动内容之上，尾部留出等高的空白，避免最后一张
@@ -1393,16 +1337,20 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     // 注意：首页不要在滚动内容里声明 Focusable(true)——运行时会自动把初始
     // 焦点所在的节点滚入视野，导致首页一打开就被滚到中途（且随后每次重组都可能
     // 来回滚）。可聚焦性交给内置控件自己的默认策略，分段选择器只保留语义。
-    // Keep the runtime pump mounted when mobile/desktop Compact omits the header.
+    // Runtime effects remain mounted independently from the replaceable header.
     huxerui::View scrollContent = huxerui::Stack {
         std::move(runtimePump),
         huxerui::ScrollView(std::move(pageBody)).With(huxerui::Grow(1.0F)),
     }.With(huxerui::Grow(1.0F));
     huxerui::View page = PageScaffold(
         Localized("首页"), {}, std::move(scrollContent), true, false, true,
-        kHomeGridGap, {}, {}, kPageTitlesInWindow && !compact);
+        kHomeGridGap, {}, {}, true,
+        headerControlEnabled ? HomeHeaderTitle(headerControl, toggleHeader, headerStopLabel) : huxerui::View{});
 
-    // 移动端启动/停止按钮脱离滚动内容，固定在底部悬浮导航之上的位置。
+    // Mobile and desktop Compact share the same title/dock geometry and motion.
+    if (headerControlEnabled) return HomeHeaderFloatingAction(page, headerControl, toggleHeader,
+        headerActionLabel, compact ? kCompactFloatingNavigationInset : theme.spacing.medium);
+
     huxerui::View shell = CLASHFLUX_HOME_FLOATING_ACTION(
         std::move(page), state, compact, controlCardShown, controlMotion, controlCatReady,
         controlTransition);
