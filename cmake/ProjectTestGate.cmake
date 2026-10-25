@@ -4,9 +4,9 @@
 function(clashflux_check_required_tests)
     set(required smoke profile_links page_transition singbox rule_provider_download
         dns_hosts_runtime dns_policy_runtime dns_tls_runtime vpn routing compensation
-        persistence project_test_gate group_expansion_runtime service_protocol cps_dependencies runtime_health)
+        persistence project_test_gate group_expansion_runtime service_protocol cps_dependencies runtime_health native_control_runtime ui_resources runtime_evidence)
     if (WIN32)
-        list(APPEND required windows_service)
+        list(APPEND required windows_service windows_physical_dns windows_physical_dns_wfp)
     endif ()
     if (NOT CLASHFLUX_MSVC_C4737_HARD_ERROR)
         list(APPEND required sqlite_orm)

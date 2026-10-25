@@ -36,3 +36,7 @@ third_party/huxerui-tools/
 
 # HuxerUI runtime debug trace dumps（GUI 运行产生，不入库）
 traces/
+
+# 本地构建脚本 / 补丁 / 恢复 scratch 与 Python 缓存
+.cache/
+__pycache__/

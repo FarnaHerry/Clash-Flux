@@ -53,8 +53,9 @@ ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-require
 WebSocket 客户端；拒绝错误版本，并验证暖缓存下归档篡改仍被拒绝且旧源码保留。
 系统依赖另经真实 CPS 导出/导入验证 Debug/Release 库路径、大小写配置映射和
 显式选择无配置库的映射。
-通用桌面为 18 项（含 runtime_health），Windows 加 windows_service 为 19 项；已记录的 MSVC C4737
-豁免仅去掉直接 ORM，Windows 为 18 项，persistence 保持必跑。
+通用桌面为 21 项（含 runtime_health、native_control_runtime、ui_resources、runtime_evidence），Windows 加 windows_service、
+windows_physical_dns、windows_physical_dns_wfp 为 24 项；已记录的 MSVC C4737
+豁免仅去掉直接 ORM，Windows 为 23 项，persistence 保持必跑。Windows 服务与 WFP 测试需管理员环境。
 
 本次本地验证使用 CMake 4.4.2：Linux 应用构建与 17 项必跑回归通过；
 独立 Ninja Multi-Config producer 的 Debug/Release 包均通过重定位后的编译与运行；

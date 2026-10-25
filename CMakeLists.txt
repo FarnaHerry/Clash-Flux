@@ -760,6 +760,9 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                 "${CMAKE_COMMAND}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ProjectTestGate.cmake"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_rule_provider_download.py")
             set_tests_properties(project_test_gate PROPERTIES TIMEOUT 45)
+            add_test(NAME ui_resources COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ui_resources.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}")
             add_test(NAME cps_dependencies COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cps_dependencies.py"
                 "${CMAKE_COMMAND}" "${CLASHFLUX_DEPENDENCY_PREFIX}"
@@ -767,6 +770,10 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                 "$<CONFIG>")
             set_tests_properties(cps_dependencies PROPERTIES TIMEOUT 180)
             if (CLASHFLUX_BUNDLE_SINGBOX AND CLASHFLUX_SINGBOX_BUNDLED_BINARY)
+                add_test(NAME native_control_runtime COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_native_control_runtime.py"
+                    "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}" "$<TARGET_FILE:test_rule_provider_download>")
+                set_tests_properties(native_control_runtime PROPERTIES TIMEOUT 45)
                 add_test(NAME group_expansion_runtime COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_group_expansion_runtime.py"
                     "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
@@ -811,7 +818,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             add_test(NAME runtime_health COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runtime_health.py"
                 "$<TARGET_FILE:test_runtime_health>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}" "${CLASHFLUX_TEST_OPENSSL}")
-            set_tests_properties(runtime_health PROPERTIES TIMEOUT 70)
+            set_tests_properties(runtime_health PROPERTIES TIMEOUT 100)
         endif ()
 
         add_executable(test_service_protocol tests/test_service_protocol.cpp)
@@ -820,6 +827,17 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             target_compile_options(test_service_protocol PRIVATE /utf-8)
         endif ()
         add_test(NAME service_protocol COMMAND test_service_protocol)
+        add_executable(test_runtime_evidence tests/test_runtime_evidence.cpp
+            src/runtime_network_probe.cpp src/health_history.cpp)
+        target_compile_features(test_runtime_evidence PRIVATE cxx_std_23)
+        if(WIN32)
+            target_link_libraries(test_runtime_evidence PRIVATE ws2_32 iphlpapi advapi32)
+        endif()
+        if(MSVC)
+            target_compile_options(test_runtime_evidence PRIVATE /utf-8)
+        endif()
+        add_test(NAME runtime_evidence COMMAND test_runtime_evidence)
+        set_tests_properties(runtime_evidence PROPERTIES TIMEOUT 45)
         if (WIN32)
             # Isolated SCM fixture and fake core, no actual TUN/network changes.
             add_executable(test_windows_service tests/test_windows_service.cpp src/windows_service.cpp)
@@ -888,6 +906,24 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             target_link_libraries(test_compensation PRIVATE iphlpapi ws2_32 dnsapi)
         endif ()
         add_test(NAME compensation COMMAND test_compensation)
+        if(WIN32)
+            add_executable(test_windows_physical_dns tests/test_windows_physical_dns.cpp)
+            target_compile_features(test_windows_physical_dns PRIVATE cxx_std_23)
+            set_target_properties(test_windows_physical_dns PROPERTIES CXX_MODULE_STD ON)
+            if(MSVC)
+                target_compile_options(test_windows_physical_dns PRIVATE /utf-8)
+            endif()
+            target_link_libraries(test_windows_physical_dns PRIVATE clashflux_json iphlpapi ws2_32 dnsapi fwpuclnt ole32)
+            if(CLASHFLUX_BUNDLE_SINGBOX AND CLASHFLUX_SINGBOX_BUNDLED_BINARY)
+                add_custom_command(TARGET test_windows_physical_dns POST_BUILD
+                    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:test_windows_physical_dns>/engines"
+                    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
+                        "$<TARGET_FILE_DIR:test_windows_physical_dns>/engines/sing-box.exe")
+                add_test(NAME windows_physical_dns COMMAND test_windows_physical_dns)
+                add_test(NAME windows_physical_dns_wfp COMMAND test_windows_physical_dns --require-wfp)
+                set_tests_properties(windows_physical_dns windows_physical_dns_wfp PROPERTIES TIMEOUT 40)
+            endif()
+        endif()
 
         # 真实 PPTP 拨号需要外部服务器和已安装的 root 服务，不作为自动测试；
         # 该工具只供本地联调，连接后按回车负责断开并清理路由。

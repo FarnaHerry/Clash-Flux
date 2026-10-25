@@ -7,7 +7,7 @@ import tempfile
 REQUIRED = ["smoke", "profile_links", "page_transition", "singbox",
             "rule_provider_download", "dns_hosts_runtime", "dns_policy_runtime",
             "dns_tls_runtime", "vpn", "routing", "compensation", "sqlite_orm",
-            "persistence", "project_test_gate", "group_expansion_runtime", "service_protocol", "cps_dependencies", "runtime_health"]
+            "persistence", "project_test_gate", "group_expansion_runtime", "service_protocol", "cps_dependencies", "runtime_health", "native_control_runtime", "ui_resources", "runtime_evidence"]
 
 
 def main():
@@ -53,10 +53,12 @@ def main():
         configure(without_orm, msvc=True)
         configure([name for name in without_orm if name != "persistence"],
                   missing="persistence", msvc=True)
-        windows_required = REQUIRED + ["windows_service"]
+        windows_tests = ["windows_service", "windows_physical_dns", "windows_physical_dns_wfp"]
+        windows_required = REQUIRED + windows_tests
         configure(windows_required, windows=True)
-        configure(REQUIRED, missing="windows_service", windows=True)
-        configure(windows_required, disabled="windows_service", windows=True)
+        for name in windows_tests:
+            configure([test for test in windows_required if test != name], missing=name, windows=True)
+            configure(windows_required, disabled=name, windows=True)
         configure([name for name in windows_required if name != "sqlite_orm"], msvc=True, windows=True)
         for openssl in ("", str(root / "missing-openssl")):
             result = subprocess.run([sys.executable, download, "must-not-run",
