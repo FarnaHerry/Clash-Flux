@@ -36,4 +36,9 @@ inline void testRuntimeHealth() {
     require(c.Read(2000001).state == State::Paused && c.Read(2000001).valid == 0);
     c.Reset(0); c.Open(c.Generation()); c.Frame(c.Generation(), 1000, true); c.Frame(c.Generation(), 2000, true);
     c.Resume(600000); require(!c.RepairDue(600001)); // wake grace, no storm
+    generation = c.Generation();
+    c.Reset(700000);
+    require(!c.Accepts(generation));
+    c.Frame(generation, 700001, true);
+    require(c.Read(700001).valid == 0); // reset must also fence old callbacks
 }

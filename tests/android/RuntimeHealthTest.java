@@ -34,6 +34,9 @@ public final class RuntimeHealthTest {
         health.stop();
         health.sample(next, 850000, true);
         require(health.state(850000, false).equals("paused"));
+        health.start(900000, 2);
+        require(!health.trafficAvailable && !health.accepts(next));
+        require(health.state(900001, false).equals("reconnecting"));
         System.out.println("Android runtime health: idle, unavailable stats, cached status, generation, pause and budget passed");
     }
 }

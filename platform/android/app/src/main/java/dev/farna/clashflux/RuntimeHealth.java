@@ -12,6 +12,7 @@ final class RuntimeHealth {
         active = true;
         sequence = 0;
         lastStatus = -1;
+        trafficAvailable = false;
         repairs = 0;
         nextAttempt = 0;
         java.util.Arrays.fill(attempts, -1);

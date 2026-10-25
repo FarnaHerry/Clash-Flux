@@ -55,6 +55,7 @@ struct CoreView {
 struct CoreModel {
     CoreOperations operations;
     huxerui::State<bool> diagnosticsBusy{false};
+    huxerui::State<bool> diagnosticsExportBusy{false};
     huxerui::State<std::string> diagnosticsReport{std::string{}};
     std::stop_source diagnosticsCancel;
     std::uint64_t diagnosticsSerial = 0;

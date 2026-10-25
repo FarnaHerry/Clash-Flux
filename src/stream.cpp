@@ -4,6 +4,9 @@
 // 日志队列上限 2000 行（UI 跟不上时丢最旧的，保住内存）。
 module;
 
+#if defined(_WIN32) && !defined(NOMINMAX)
+#define NOMINMAX
+#endif
 #include <ixwebsocket/IXWebSocket.h>
 #include <ixwebsocket/IXNetSystem.h>
 #include "wire_codec.h"
@@ -83,9 +86,13 @@ void notifyStreamUpdate(StreamKind kind) noexcept {
             try {
                 observer(kind);
             } catch (...) {
+                pending.store(false); // A rejected delivery must not latch the channel.
             }
         }
     } catch (...) {
+        // Copying a registered callback may itself throw before delivery.
+        // Release the reservation even when no observer could be invoked.
+        try { updateRegistry().pending[static_cast<int>(kind)].store(false); } catch (...) {}
     }
 }
 
@@ -281,8 +288,11 @@ struct CoreStreams::Impl {
     bool active = false;
     std::uint64_t epoch = 0, observationEpoch = 0;
     unsigned pauses = 0;
-    std::string base, secret;
+    std::string base, secret, nativeBase;
     clashflux::health::Control control = clashflux::health::Control::Unknown;
+    clashflux::health::Control nativeControl = clashflux::health::Control::Unsupported;
+    clashflux::health::Tick controlAt = -1, nativeAt = -1;
+    std::uint64_t nativeStartedAt = 0;
     std::vector<std::string> healthEvents;
     TrafficPoint latestTraffic;
     bool trafficDirty = false;
@@ -305,11 +315,11 @@ struct CoreStreams::Impl {
         if (monitor.joinable()) monitor.join();
         stopAll();
     }
-    void record(std::uint64_t identity, std::string detail) {
+    void record(std::uint64_t identity, std::string detail, std::uint64_t observation) {
         std::string line = "runtime-health epoch=" + std::to_string(identity) + " " + std::move(detail);
         {
             std::lock_guard lock(mutex);
-            if (!active || epoch != identity) return;
+            if (!active || epoch != identity || pauses || observationEpoch != observation) return;
             healthEvents.push_back(line);
             if (healthEvents.size() > 16) healthEvents.erase(healthEvents.begin());
         }
@@ -326,7 +336,7 @@ struct CoreStreams::Impl {
             }
             if (token.stop_requested()) break;
             std::uint64_t requestEpoch, requestObservation;
-            std::string requestBase, requestSecret;
+            std::string requestBase, requestSecret, requestNative;
             bool trafficDue, connectionsDue;
             std::array<State, 2> states;
             std::array<bool, 2> changed{};
@@ -343,6 +353,7 @@ struct CoreStreams::Impl {
                 requestObservation = observationEpoch;
                 requestBase = base;
                 requestSecret = secret;
+                requestNative = nativeBase;
                 trafficDue = traffic.health.RepairDue(time);
                 connectionsDue = connections.health.RepairDue(time);
                 if (trafficDue) traffic.health.ReserveRepair(time);
@@ -355,26 +366,36 @@ struct CoreStreams::Impl {
                 }
             }
             for (int i = 0; i < 2; ++i) if (changed[i])
-                record(requestEpoch, std::string("channel=") + (i == 0 ? "traffic" : "connections") + " state=" + std::string(Name(states[i])));
+                record(requestEpoch, std::string("channel=") + (i == 0 ? "traffic" : "connections") + " state=" + std::string(Name(states[i])), requestObservation);
             if (!trafficDue && !connectionsDue) continue;
             // No snapshot/lifecycle lock during the bounded network request.
             api::ClashApi probe(requestBase, requestSecret);
             const auto result = probe.probeVersion();
-            Control evidence = result.status == 401 || result.status == 403 ? Control::AuthenticationError :
-                !result.ok ? Control::Unreachable :
-                clashflux::wire::DecodeVersion(result.body) ? Control::Responsive : Control::InvalidResponse;
-            record(requestEpoch, "control=" + std::string(Name(evidence)));
+            const auto evidence = ProbeControl(result.ok, result.status, static_cast<bool>(clashflux::wire::DecodeVersion(result.body)));
+            api::NativeRuntime native;
+            if (!requestNative.empty()) {
+                api::NativeApi client(requestNative, requestSecret);
+                native = client.runtime(token);
+            }
+            const auto nativeEvidence = requestNative.empty() ? Control::Unsupported : NativeControl(native.ok, native.failurePhase);
             std::lock_guard owner(lifecycle);
             {
                 std::lock_guard lock(mutex);
                 if (!active || pauses != 0 || epoch != requestEpoch || observationEpoch != requestObservation || token.stop_requested()) continue;
                 control = evidence;
+                controlAt = now();
+                nativeControl = nativeEvidence;
+                nativeAt = requestNative.empty() ? -1 : now();
+                nativeStartedAt = native.ok ? native.startedAt : 0;
             }
+            record(requestEpoch, "control=" + std::string(Name(evidence)) + " native=" + std::string(Name(nativeEvidence)), requestObservation);
             for (Channel* channel : {&traffic, &connections}) {
                 if (channel == &traffic ? !trafficDue : !connectionsDue) continue;
                 {
                     std::lock_guard lock(mutex);
                     if (evidence == Control::AuthenticationError) channel->health.Block(Failure::Authentication);
+                    if (evidence == Control::PermissionError) channel->health.Block(Failure::Permission);
+                    if (evidence == Control::Unsupported) channel->health.Block(Failure::Unsupported);
                     if (evidence != Control::Responsive || channel->health.Read(now()).state != State::Stale) continue;
                     channel->health.Reopen(now());
                 }
@@ -382,7 +403,7 @@ struct CoreStreams::Impl {
                 channel->stop();
                 install(*channel, channel == &traffic ? StreamKind::Traffic : StreamKind::Connections);
                 channel->start(channel->url);
-                record(requestEpoch, std::string("repair=") + (channel == &traffic ? "traffic" : "connections"));
+                record(requestEpoch, std::string("repair=") + (channel == &traffic ? "traffic" : "connections"), requestObservation);
             }
         }
     }
@@ -498,7 +519,7 @@ CoreStreams::HealthPause CoreStreams::pauseHealth() { return HealthPause{*this};
 CoreStreams::~CoreStreams() = default;
 
 void CoreStreams::start(const std::string& wsBase, const std::string& secret,
-                        const std::string& logLevel) {
+                        const std::string& logLevel, const std::string& nativeBase) {
     std::lock_guard owner(impl_->lifecycle);
     {
         std::lock_guard lock(impl_->mutex);
@@ -513,7 +534,11 @@ void CoreStreams::start(const std::string& wsBase, const std::string& secret,
         impl_->connectionTotalsDirty = false;
         impl_->base = wsBase.starts_with("ws://") ? "http://" + wsBase.substr(5) : wsBase;
         impl_->secret = secret;
+        impl_->nativeBase = nativeBase;
         impl_->control = clashflux::health::Control::Unknown;
+        impl_->nativeControl = nativeBase.empty() ? clashflux::health::Control::Unsupported : clashflux::health::Control::Unknown;
+        impl_->controlAt = impl_->nativeAt = -1;
+        impl_->nativeStartedAt = 0;
         impl_->logs.health.Reset(Impl::now(), false);
         impl_->traffic.health.Reset(Impl::now());
         impl_->connections.health.Reset(Impl::now());
@@ -543,6 +568,10 @@ void CoreStreams::stop() {
 clashflux::health::Snapshot CoreStreams::health() const {
     std::lock_guard lock(impl_->mutex);
     clashflux::health::Snapshot result{impl_->epoch, impl_->control, impl_->traffic.health.Read(Impl::now()), impl_->connections.health.Read(Impl::now())};
+    result.nativeControl = impl_->nativeControl;
+    result.controlAgeMs = impl_->controlAt < 0 ? -1 : std::max<clashflux::health::Tick>(0, Impl::now() - impl_->controlAt);
+    result.nativeAgeMs = impl_->nativeAt < 0 ? -1 : std::max<clashflux::health::Tick>(0, Impl::now() - impl_->nativeAt);
+    result.nativeStartedAt = impl_->nativeStartedAt;
     if (impl_->pauses != 0) {
         result.traffic.state = clashflux::health::State::Paused;
         result.connections.state = clashflux::health::State::Paused;
@@ -592,15 +621,16 @@ bool CoreStreams::readConnections(std::string& out) const {
 std::uint64_t addStreamUpdateObserver(StreamUpdateObserver observer) {
     if (!observer) return 0;
     StreamUpdateRegistry& registry = updateRegistry();
+    std::uint64_t id;
     {
         std::lock_guard lock(registry.mutex);
-        const std::uint64_t id = registry.nextId++;
+        id = registry.nextId++;
         registry.observers.emplace(id, std::move(observer));
     }
     // 新观察者（页面重挂载）必须能收到下一帧：清掉可能残留的"未确认"标记。
     // 旧观察者的 Post 因 scope 关闭被丢弃时标记会留在 true，不清就永远不再通知。
     for (std::atomic<bool>& pending : registry.pending) pending.store(false);
-    return registry.nextId - 1;
+    return id;
 }
 
 void removeStreamUpdateObserver(std::uint64_t id) {
@@ -612,6 +642,16 @@ void removeStreamUpdateObserver(std::uint64_t id) {
 
 void acknowledgeStreamUpdate(StreamKind kind) {
     updateRegistry().pending[static_cast<int>(kind)].store(false);
+}
+bool consumeStreamUpdate(StreamKind kind, const StreamUpdateObserver& consumer) noexcept {
+    struct Acknowledge {
+        StreamKind kind;
+        ~Acknowledge() { acknowledgeStreamUpdate(kind); }
+    } acknowledge{kind};
+    try {
+        if (consumer) consumer(kind);
+        return true;
+    } catch (...) { return false; }
 }
 
 } // namespace stream

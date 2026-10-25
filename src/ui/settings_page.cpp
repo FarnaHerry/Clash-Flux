@@ -18,6 +18,7 @@
 #include "action_menu.h"
 #include "task_bridge.h"
 #include "runtime_diagnostics.h"
+#include "diagnostic_export_file.h"
 
 import clashflux.config;
 import clashflux.core;
@@ -595,9 +596,28 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const auto control = UseCoreControl();
     const auto model = control.model;
     const auto clipboard = control.clipboard;
+    const auto picker=huxerui::UseService<huxerui::FilePicker>();
+    const auto toast=huxerui::UseToast();
+    const std::string reportType=huxerui::UseString(Localized("诊断报告"));
     huxerui::State<huxerui::TextEditingValue> target{huxerui::TextEditingValue{}};
     const bool busy = model->diagnosticsBusy.Get();
     const std::string report = model->diagnosticsReport.Get();
+    const auto save=[control,model,picker,toast,report,reportType] {
+        if(model->diagnosticsExportBusy.Get()||report.empty()||!picker->CanSaveFiles())return;
+        model->diagnosticsExportBusy=true;
+        control.tasks.Launch([model,picker,toast,report,reportType]() -> huxerui::Task<void> {
+            try {
+                const auto file=co_await RunOnTaskThread([report] {
+                    return DiagnosticExportFile::Prepare(cfg::dataDir(),report);
+                });
+                const bool saved=co_await picker->SaveFileAsync(huxerui::File(file->Path().string()),
+                    huxerui::SaveFileOptions{.suggested_name="clash-flux-health.txt",
+                        .filter={.name=reportType,.extensions={"txt"},.content_types={"text/plain"}}});
+                if(saved)toast.Show(Localized("诊断报告已保存"));
+            } catch(...) {toast.Show(Localized("诊断报告保存失败"));}
+            model->diagnosticsExportBusy=false;
+        });
+    };
     const auto start = [control, model, target] {
         if (control.Busy() || model->diagnosticsBusy.Get()) return;
         model->diagnosticsCancel = std::stop_source{};
@@ -623,7 +643,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     return DialogCard(RuntimeDiagnosticsContent(target, busy, !control.Busy(), report, start,
         [model] { model->diagnosticsCancel.request_stop(); },
         [clipboard, report] { if (clipboard) clipboard->WriteText(report); },
-        [context] { context.Dismiss(); }));
+        [context] { context.Dismiss(); },save,picker->CanSaveFiles(),model->diagnosticsExportBusy.Get()));
 }
 
 [[huxerui::composable]] huxerui::View RuntimeDiagnosticsEntry() {

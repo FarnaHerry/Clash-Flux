@@ -26,7 +26,7 @@ def port():
 
 def main():
     driver, core, openssl = sys.argv[1:]
-    mixed, controller = port(), port()
+    mixed, controller, native_api = port(), port(), port()
     lock = threading.Lock()
     opens = {}
     done = threading.Event()
@@ -54,7 +54,10 @@ def main():
                 return
             scenario = self.path.split('/')[1]
             if self.headers.get('Upgrade', '').lower() != 'websocket':
-                if scenario == 'timeout':
+                if scenario == 'control-down':
+                    self.send_error(503)
+                    return
+                if scenario in ('timeout', 'pause-probe'):
                     time.sleep(3)
                 try:
                     request = urllib.request.Request(f'http://127.0.0.1:{controller}/version',
@@ -109,7 +112,9 @@ def main():
         root = Path(temp)
         config = {'log': {'level': 'error'}, 'inbounds': [{'type': 'mixed', 'listen': '127.0.0.1', 'listen_port': mixed}],
                   'outbounds': [{'type': 'direct', 'tag': 'direct'}],
-                  'experimental': {'clash_api': {'external_controller': f'127.0.0.1:{controller}', 'secret': 'health-fixture-token'}}}
+                  'experimental': {'clash_api': {'external_controller': f'127.0.0.1:{controller}', 'secret': 'health-fixture-token'}},
+                  'services': [{'type': 'api', 'tag': 'native', 'listen': '127.0.0.1', 'listen_port': native_api,
+                                'secret': 'health-fixture-token', 'dashboard': False}]}
         (root / 'config.json').write_text(json.dumps(config))
         subprocess.run([openssl, 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
                         '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1',
@@ -144,17 +149,21 @@ def main():
                             failures.append(str(error))
                         done.wait(0.25)
                 threading.Thread(target=traffic, daemon=True).start()
-                env = dict(os.environ, XDG_DATA_HOME=temp, XDG_CONFIG_HOME=temp, HOME=temp)
+                env = dict(os.environ, XDG_DATA_HOME=temp, XDG_CONFIG_HOME=temp, HOME=temp,
+                           APPDATA=temp, LOCALAPPDATA=temp)
                 result = subprocess.run([driver, f'ws://127.0.0.1:{server.server_port}', str(mixed),
                                          f'http://127.0.0.1:{server.server_port}/target',
-                                         f'https://127.0.0.1:{tls_server.server_port}/target'], env=env,
-                                        capture_output=True, text=True, timeout=55)
+                                         f'https://127.0.0.1:{tls_server.server_port}/target',
+                                         f'http://127.0.0.1:{native_api}'], env=env,
+                                        capture_output=True, text=True, timeout=80)
                 assert result.returncode == 0, result.stdout + result.stderr + str(opens) + str([
                     path.read_text()[-6000:] for path in root.rglob('logs.log')])
                 assert not failures and len(forwarded) >= 30, (len(forwarded), failures)
+                assert list(root.rglob('logs.log')), 'production logs escaped the isolated test directory'
                 assert opens.get(('stall', 'traffic')) == 2, opens
                 assert opens.get(('stall', 'connections')) == 1 and opens.get(('stall', 'logs')) == 1, opens
                 assert opens.get(('timeout', 'traffic')) == 2, opens
+                assert opens.get(('control-down', 'traffic')) == 1, opens
                 assert process.poll() is None, 'telemetry repair terminated the data plane'
                 print(result.stdout.strip())
                 print(f'real sing-box forwarding stayed available for {len(forwarded)} requests during telemetry faults')

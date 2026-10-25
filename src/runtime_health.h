@@ -9,7 +9,7 @@ namespace clashflux::health {
 // Milliseconds from the adapter's monotonic clock, never wall-clock time.
 using Tick = std::int64_t;
 enum class State { Unsupported, Paused, Waiting, Fresh, Stale, Reconnecting, Blocked };
-enum class Control { Unknown, Responsive, Unreachable, AuthenticationError, InvalidResponse };
+enum class Control { Unknown, Responsive, Unreachable, AuthenticationError, InvalidResponse, PermissionError, Unsupported };
 enum class Failure { None, Transport, InvalidFrame, Authentication, Permission, Unsupported };
 inline std::string_view Name(State value) {
     switch (value) {
@@ -30,6 +30,8 @@ inline std::string_view Name(Control value) {
     case Control::Unreachable: return "unreachable";
     case Control::AuthenticationError: return "authentication-error";
     case Control::InvalidResponse: return "invalid-response";
+    case Control::PermissionError: return "permission-error";
+    case Control::Unsupported: return "unsupported";
     }
     return "unknown";
 }
@@ -52,19 +54,38 @@ struct Snapshot {
     Control control = Control::Unknown;
     ChannelSnapshot traffic;
     ChannelSnapshot connections;
+    Control nativeControl = Control::Unsupported;
+    Tick controlAgeMs = -1, nativeAgeMs = -1;
+    std::uint64_t nativeStartedAt = 0;
     bool operator==(const Snapshot&) const = default;
 };
+inline Control ProbeControl(bool ok, long status, bool valid) {
+    if (status == 401) return Control::AuthenticationError;
+    if (status == 403) return Control::PermissionError;
+    if (status == 404 || status == 405) return Control::Unsupported;
+    if (!ok) return Control::Unreachable;
+    return valid ? Control::Responsive : Control::InvalidResponse;
+}
+inline Control NativeControl(bool ok, std::string_view phase) {
+    if (ok) return Control::Responsive;
+    if (phase == "authentication") return Control::AuthenticationError;
+    if (phase == "permission") return Control::PermissionError;
+    if (phase == "unsupported") return Control::Unsupported;
+    if (phase == "transport" || phase == "cancelled") return Control::Unreachable;
+    return Control::InvalidResponse;
+}
 // Pure decision state; the owner serializes access and performs any I/O.
 // A socket handshake is not a sample. Valid zero samples are heartbeats.
 class Channel {
 public:
     void Reset(Tick now, bool periodic = true, Tick interval = 1000) {
+        const auto generation = generation_ + 1;
         *this = Channel{};
         active_ = true;
         periodic_ = periodic;
         interval_ = interval;
         graceUntil_ = now + 10000;
-        ++generation_;
+        generation_ = generation;
     }
     void Stop() { active_ = false; connected_ = false; ++generation_; }
     void Resume(Tick now) { graceUntil_ = now + 10000; consecutive_ = 0; }

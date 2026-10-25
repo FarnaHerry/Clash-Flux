@@ -489,25 +489,10 @@ CoreView ReadCoreView(bool slowProbes, bool previousSystemProxyActive) {
     // 内核崩溃检测：Running 但进程/控制器已不在 → Failed。以前由托盘的 0.5s
     // 泵顺带做，现在集中在这里每秒做一次。
     core.checkAlive();
+    core.captureHealthEvidence(slowProbes);
     CoreView view;
     view.core = core.snapshot();
-    view.health = core.streams().health();
-#if defined(__ANDROID__)
-    view.health.runtimeEpoch = view.core.runtimeEpoch;
-    view.health.control = !view.core.binderAvailable ? health::Control::Unreachable : health::Control::Responsive;
-    auto& status = view.health.traffic;
-    status.generation = view.core.clientGeneration;
-    status.valid = view.core.statusSequence;
-    status.validAgeMs = view.core.statusAgeMs;
-    status.connected = view.core.statusConnected;
-    status.repairs = view.core.statusRepairs;
-    const auto& state = view.core.statusHealth;
-    status.state = state == "fresh" ? health::State::Fresh : state == "stale" ? health::State::Stale :
-        state == "waiting" ? health::State::Waiting : state == "reconnecting" ? health::State::Reconnecting : health::State::Paused;
-    if (status.valid != 0 && !view.core.trafficAvailable) status.state = health::State::Unsupported;
-    view.health.connections = status;
-    view.health.connections.periodic = false;
-#endif
+    view.health = core.runtimeHealthSnapshot(view.core);
     view.ready = clashflux::persistence::persistence().ready();
     view.tunIntent = core.tunEnabled();
     view.modeIntent = core.mode();
@@ -1440,14 +1425,19 @@ void DriveVpnModel(huxerui::TaskScope tasks, std::shared_ptr<VpnModel> model) {
 std::uint64_t SubscribeStreamUpdates(
     huxerui::TaskScope tasks,
     std::function<void(stream::StreamKind kind)> handler) {
-    auto shared =
-        std::make_shared<std::function<void(stream::StreamKind)>>(std::move(handler));
+    struct Consumer {
+        std::function<void(stream::StreamKind)> handler;
+        bool failureReported = false;
+    };
+    auto shared = std::make_shared<Consumer>(std::move(handler));
     return stream::addStreamUpdateObserver(
         [tasks, shared](stream::StreamKind kind) {
             // 推送线程：只 Post（scope 已关闭时 Post 被忽略），不在本线程碰 State。
             tasks.Post([shared, kind] {
-                if (*shared) (*shared)(kind);
-                stream::acknowledgeStreamUpdate(kind);
+                if (!stream::consumeStreamUpdate(kind, shared->handler) && !shared->failureReported) {
+                    shared->failureReported = true;
+                    stream::logApplication("warning", "runtime-health UI stream consumer failed; subsequent samples remain enabled");
+                }
             });
         });
 }

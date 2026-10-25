@@ -1,7 +1,10 @@
 # 运行健康检查优化计划
 
 日期：2026-10-24。审查基线：`41c9291`；工作区已有首页猫咪按钮焦点修复。
-状态：**计划，尚未实施健康检查改动**。本文不把代码缺口认定为用户偶发问题的已证实根因。
+状态：**原计划与初始审查记录**。桌面与 Android 观测代码已在 `86a9b16` 接入；
+2026-10-25 的原生控制/PPTP 联合审查与补齐见 [实施复核](runtime-health-review.md)。
+后续独立系统查询、现场记录与导出见 [系统证据与现场记录](runtime-health-evidence.md)。
+本文不把代码缺口认定为用户偶发问题的已证实根因，也不把桌面回归当作手机实机验收。
 2026-10-24 补充：检索官方客户端及固定内核源码，加入订阅语义、错误分类和生命周期对照。
 
 ## 目标与本轮范围
@@ -234,7 +237,8 @@
 
 实施时每批执行主目标构建与 version、相关回归、`git diff --check`。
 最终桌面门禁使用 `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON` 和
-`ctest --test-dir build --output-on-failure --no-tests=error`，现有 17 项不能减少或禁用。
+`ctest --test-dir build --output-on-failure --no-tests=error`；通用桌面 19 项，Windows 22 项，
+仅已记录的 MSVC C4737 允许跳过直接 ORM（Windows 21 项），不可减少或禁用其它门禁。
 如新增独立必跑测试，同步 `ProjectTestGate.cmake`、测试注册及文档中的数量；
 Android 兼容源码图、AIDL/JNI 和打包也要验证，桌面通过不代表 Android 实机通过。
 

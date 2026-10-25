@@ -68,7 +68,7 @@ public:
 
     // 立即返回（握手在 IX 线程异步进行）；重复调用先 stop 旧连接。
     void start(const std::string& wsBase, const std::string& secret,
-               const std::string& logLevel);
+               const std::string& logLevel, const std::string& nativeBase = {});
     void stop();
 
     // Immutable evidence; never interprets traffic volume as reachability.
@@ -105,5 +105,7 @@ export [[nodiscard]] std::uint64_t addStreamUpdateObserver(StreamUpdateObserver 
 export void removeStreamUpdateObserver(std::uint64_t id);
 // 观察者处理完该路数据后调用，允许下一次通知。
 export void acknowledgeStreamUpdate(StreamKind kind);
+// Consumer exceptions still release the notification, allowing the next frame.
+export bool consumeStreamUpdate(StreamKind kind, const StreamUpdateObserver& consumer) noexcept;
 
 } // namespace stream

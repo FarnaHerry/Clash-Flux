@@ -102,6 +102,11 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/stream.cpp"
         "${_root}/src/wire_codec.h"
         "${_root}/src/runtime_health.h"
+        "${_root}/src/health_history.h"
+        "${_root}/src/health_history.cpp"
+        "${_root}/src/runtime_network_probe.h"
+        "${_root}/src/runtime_network_probe.cpp"
+        "${_root}/src/runtime_plan_state.h"
         "${_root}/src/sqlite_schema.h"
         "${_root}/src/sqlite_schema.cpp"
         "${_root}/src/store/persistence.cpp"
@@ -155,6 +160,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/store/core_store_routing.inc"
         "${_root}/src/store/core_store_state.inc"
         "${_root}/src/store/core_store_diagnostics.inc"
+        "${_root}/src/store/core_store_evidence.inc"
         "${_root}/src/service_protocol.h"
         "${_root}/src/ui/profiles_page_actions.inc"
         "${_root}/src/ui/profiles_page_layout.inc"
@@ -197,7 +203,9 @@ function(clashflux_prepare_android_sources output_directory output_header
             "${_root}/src/singbox.cpp"
             "${_root}/src/core.cpp"
             "${_root}/src/api.cpp"
-            "${_root}/src/stream.cpp")
+            "${_root}/src/stream.cpp"
+            "${_root}/src/health_history.cpp"
+            "${_root}/src/runtime_network_probe.cpp")
         file(READ "${_source}" _content)
         string(REPLACE "module;\n" "" _content "${_content}")
         string(REGEX REPLACE "module [A-Za-z0-9_.]+;" "" _content "${_content}")

@@ -6,7 +6,11 @@ namespace clashflux::ui {
 [[huxerui::composable]] huxerui::View RuntimeDiagnosticsContent(
     huxerui::State<huxerui::TextEditingValue> target, bool busy, bool canRun,
     std::string report, std::function<void()> start, std::function<void()> cancel,
-    std::function<void()> copy, std::function<void()> close) {
+    std::function<void()> copy, std::function<void()> close,
+    std::function<void()> save, bool canSave, bool saving) {
+    huxerui::View saveButton;
+    if(save)saveButton=huxerui::Button(Localized("保存脱敏报告"))
+        .With(huxerui::Enabled(canSave&&!saving&&!busy&&!report.empty())).OnClick(std::move(save));
     return huxerui::Column {
         huxerui::Text(Localized("运行诊断"), huxerui::TextRole::Title),
         huxerui::Text(Localized("留空仅检查运行状态；填写 HTTP(S) 目标后，通过当前代理入站检查。结果不代表全部网络。")),
@@ -20,7 +24,10 @@ namespace clashflux::ui {
         }.With(huxerui::Spacing(8.0F)),
         huxerui::Button(Localized("复制脱敏报告")).With(huxerui::Enabled(!busy && !report.empty()))
             .OnClick(std::move(copy)),
-        huxerui::Button(Localized("关闭")).OnClick(std::move(close)),
+        huxerui::Row{
+            saveButton,
+            huxerui::Button(Localized("关闭")).OnClick(std::move(close)),
+        }.With(huxerui::Spacing(8.0F)),
     }.With(huxerui::Spacing(12.0F), huxerui::Frame{.width = 320.0F},
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
