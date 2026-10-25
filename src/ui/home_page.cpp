@@ -36,7 +36,7 @@
 #include "home_control_motion.h"
 #include "home_header_control.h"
 #include "page_layout.h"
-#include "page_loading.h"
+#include "home_grid.h"
 #include "empty_state.h"
 #include "task_bridge.h"
 
@@ -74,38 +74,11 @@ std::size_t HomeModeIndex(const std::string& mode) {
 
 // ---- 卡片种类与平台目录 ----------------------------------------------------
 
-enum class HomeCardKind {
-    Traffic,    // 流量曲线（标题行带实时上/下行速率）
-    Total,      // 流量统计（总上传 / 总下载）
-    Mode,       // 出站模式
-    Profile,    // 当前订阅
-    Proxy,      // 系统代理（桌面）
-    Tun,        // TUN 模式（桌面）
-    LanIp,      // 内网 IP（本机局域网地址）
-};
-
-struct HomeCardSpec {
-    HomeCardKind kind;
-    std::string_view id;     // 持久化身份，不要改名（改名会让旧布局回落默认）
-    std::string_view title;  // 编辑态标题
-    int width = 1;           // 默认占用列数 1..4
-    int height = 1;          // 默认占用行数 1..4
-};
-
 #if defined(__ANDROID__)
 // 移动端的 VPN 猫咪在启动后并入固定页内标题栏。
 // 手机屏是 2 列：需要整宽的（图表）给 2 格，信息/单选卡 1 格；
 // 高度仍按 FlClash 跨度（图表/信息卡/出站模式 2 行，开关与网络信息卡 1 行）。
-constexpr HomeCardSpec kHomeCards[] = {
-    // Lib-Charts 的紧凑绘图面最小 240×96，适配 2 行（188pt）的卡片。
-    {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 2},
-    {HomeCardKind::Total, "total", "流量统计", 1, 2},
-    // 出站模式是纵向单选列表（标题 + 3 个选项），占 1x2。
-    {HomeCardKind::Mode, "mode", "出站模式", 1, 2},
-    {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
-    // 内网 IP 紧跟当前订阅，1x2：两行高度可容纳更多接口明细。
-    {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 2},
-};
+constexpr auto& kHomeCards = kMobileHomeCards;
 constexpr bool kDesktopHomeControl = false;
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     huxerui::Row{}
@@ -120,17 +93,7 @@ constexpr bool kDesktopHomeControl = false;
 //   系统代理 1x1 → 系统代理 1x1   TUN 1x1      → TUN 模式 1x1
 //   出站模式(竖排) 1x2 → 出站模式取 1x2（纵向单选列表）
 //   其余信息类卡片（当前订阅）与 FlClash 的信息卡同级，取 1x2。
-constexpr HomeCardSpec kHomeCards[] = {
-    // 与移动端共用紧凑绘图面，流量卡片高度降为 2 行。
-    {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 2},
-    {HomeCardKind::Total, "total", "流量统计", 1, 2},
-    {HomeCardKind::Mode, "mode", "出站模式", 1, 2},
-    {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
-    // 内网 IP 紧跟当前订阅，1x2：两行高度可容纳更多接口明细。
-    {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 2},
-    {HomeCardKind::Proxy, "proxy", "系统代理", 1, 1},
-    {HomeCardKind::Tun, "tun", "TUN 模式", 1, 1},
-};
+constexpr auto& kHomeCards = kDesktopHomeCards;
 constexpr bool kDesktopHomeControl = true;
 #define CLASHFLUX_HOME_PLATFORM_CARD(homeState, state, kind) \
     DesktopHomePlatformCard(kind)
@@ -143,27 +106,6 @@ constexpr bool kDesktopHomeControl = true;
 // ---- 卡片网格尺寸模型 ------------------------------------------------------
 
 // 卡片声明的宽高（单位格，各 1..4）。宽会被页面当前列数收窄，高不随页面变化。
-struct HomeCardSize {
-    int width = 1;
-    int height = 1;
-
-    bool operator==(const HomeCardSize&) const = default;
-};
-
-// 布局值 key：卡片在 HomeGrid 中占用的格数；Value 用独立类型，避免与其他
-// 布局值（Grow/Spacing 等）的语义混淆。
-struct HomeCardSpan {
-    using Value = HomeCardSize;
-};
-
-struct HomeControlSpan {
-    using Value = bool;
-};
-
-struct HomeGridCompact {
-    using Value = bool;
-};
-
 struct HomeCardEntry {
     HomeCardKind kind = HomeCardKind::Traffic;
     HomeCardSize size;
@@ -175,138 +117,6 @@ using HomeLayout = std::vector<HomeCardEntry>;
 
 // 首页右下角悬浮启动按钮的占位高度（滚动内容尾部留白）。
 constexpr float kHomeFloatingButtonInset = 72.0F;
-
-constexpr int kHomeGridMaxSpan = 4;   // 卡片宽高上限（格）
-constexpr float kHomeGridGap = 12.0F; // 卡片间距，同时用于首页顶部与左右留白
-// 一行单位高度：h=1 的卡片刚好容纳标题 + 一行控件。
-constexpr float kHomeGridUnitHeight = 88.0F;
-constexpr float kHomeGridFallbackWidth = 360.0F;
-
-// 两列与页面的 Compact 切换同步；Medium/Expanded 至少三列，
-// 更宽的内容区仍可扩展到五列。
-constexpr int HomeGridColumns(float width, bool compact) {
-    if (compact) return 2;
-    if (width < 1200.0F) return 3;
-    return 5;
-}
-
-// 自定义网格布局：按声明顺序把每张卡片放进第一个放得下的空位（左上紧凑），
-// 宽度按当前列数均分。卡片尺寸由布局给（不是内容撑开），因此编辑态与运行态
-// 占据完全相同的大小。
-class HomeGrid final : public huxerui::Layout<HomeGrid> {
-public:
-    using Layout::Layout;
-
-    static huxerui::LayoutResult Measure(huxerui::LayoutContext& context,
-                                         huxerui::ViewNode& node,
-                                         huxerui::Constraints constraints);
-};
-
-huxerui::LayoutResult HomeGrid::Measure(huxerui::LayoutContext& context,
-                                        huxerui::ViewNode& node,
-                                        huxerui::Constraints constraints) {
-    huxerui::LayoutResult result;
-    const float available = constraints.HasBoundedWidth()
-                                ? constraints.max_width
-                                : kHomeGridFallbackWidth;
-    const int columns = HomeGridColumns(
-        available, node.LayoutValueOr<HomeGridCompact>(false));
-    const float column_width =
-        std::max(0.0F, (available - kHomeGridGap * static_cast<float>(columns - 1)) /
-                           static_cast<float>(columns));
-
-    struct Placement {
-        huxerui::ViewNode* child;
-        int width;
-        int height;
-        int row;
-        int column;
-    };
-
-    std::vector<Placement> placements;
-    placements.reserve(node.Children().Size());
-    for (huxerui::ViewNode& child : node.Children()) {
-        HomeCardSize span = child.LayoutValueOr<HomeCardSpan>(HomeCardSize{});
-        if (child.LayoutValueOr<HomeControlSpan>(false)) {
-            span.width = columns >= 5 ? 2 : 1;
-        }
-        placements.push_back(Placement{
-            &child,
-            std::clamp(span.width, 1, columns),
-            std::clamp(span.height, 1, kHomeGridMaxSpan),
-            0,
-            0,
-        });
-    }
-
-    // 二维占位表：行按需增长（外层高度无界，不能依赖 constraints.max_height）。
-    std::vector<std::vector<bool>> occupied;
-    const auto ensure_rows = [&occupied, columns](int rows) {
-        while (static_cast<int>(occupied.size()) < rows) {
-            occupied.emplace_back(static_cast<std::size_t>(columns), false);
-        }
-    };
-    const auto fits = [&occupied](int row, int column, int width, int height) {
-        for (int r = row; r < row + height; ++r) {
-            const std::vector<bool>& line =
-                occupied[static_cast<std::size_t>(r)];
-            for (int c = column; c < column + width; ++c) {
-                if (line[static_cast<std::size_t>(c)]) return false;
-            }
-        }
-        return true;
-    };
-
-    int total_rows = 0;
-    for (Placement& placement : placements) {
-        bool placed = false;
-        for (int row = 0; !placed; ++row) {
-            ensure_rows(row + placement.height);
-            for (int column = 0; column + placement.width <= columns; ++column) {
-                if (!fits(row, column, placement.width, placement.height)) {
-                    continue;
-                }
-                placement.row = row;
-                placement.column = column;
-                for (int r = row; r < row + placement.height; ++r) {
-                    for (int c = column; c < column + placement.width; ++c) {
-                        occupied[static_cast<std::size_t>(r)]
-                                [static_cast<std::size_t>(c)] = true;
-                    }
-                }
-                total_rows = std::max(total_rows, row + placement.height);
-                placed = true;
-                break;
-            }
-        }
-    }
-
-    for (const Placement& placement : placements) {
-        const float width =
-            column_width * static_cast<float>(placement.width) +
-            kHomeGridGap * static_cast<float>(placement.width - 1);
-        const float height =
-            kHomeGridUnitHeight * static_cast<float>(placement.height) +
-            kHomeGridGap * static_cast<float>(placement.height - 1);
-        static_cast<void>(context.Measure(
-            *placement.child,
-            huxerui::Constraints{width, width, height, height}));
-        result.Place(*placement.child,
-                     huxerui::Point{
-                         (column_width + kHomeGridGap) *
-                             static_cast<float>(placement.column),
-                         (kHomeGridUnitHeight + kHomeGridGap) *
-                             static_cast<float>(placement.row),
-                     });
-    }
-
-    const float total_height =
-        total_rows == 0
-            ? 0.0F
-            : kHomeGridUnitHeight * static_cast<float>(total_rows) +
-                  kHomeGridGap * static_cast<float>(total_rows - 1);
-    return result.SetSize(constraints.Constrain({available, total_height}));
-}
 
 struct HomeState {
     stream::TrafficPoint latest;
@@ -1277,13 +1087,10 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     huxerui::View runtimePump = CLASHFLUX_HOME_RUNTIME_PUMP(
         state, coreModel, profilesModel);
 
-    if (kPageTitlesInWindow && !compact &&
-        (!coreModel->view.Get().ready || !profilesModel->loaded.Get() || !settingsModel->view.Get().ready)) {
-        return huxerui::Column {
-          runtimePump,
-          PageLoadingScaffold(Localized("首页"), theme),
-        }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    }
+    // Keep the fixed card shells and their real layout mounted while loading.
+    // A generic adaptive grid cannot represent this page's declared spans.
+    const bool loading = kPageTitlesInWindow && !compact &&
+        (!coreModel->view.Get().ready || !profilesModel->loaded.Get() || !settingsModel->view.Get().ready);
 
     std::vector<huxerui::View> cards;
     cards.reserve(order.size());
@@ -1296,15 +1103,15 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
 
         // 首页所有卡片一视同仁：都是 raised 二级岛外壳。「当前订阅」不显示选中态
         // （哪个订阅在使用中由订阅页的选中卡承担）。
-        huxerui::View body = HomeCardContent(kind, state);
+        huxerui::View body = loading ? HomeCardSkeleton(kind, theme) : HomeCardContent(kind, state);
         huxerui::View cardView = Card(std::move(body));
         cards.push_back(std::move(cardView)
                             .LayoutValue<HomeCardSpan>(size)
                             .Key("home-card-" + id));
     }
     if (kDesktopHomeControl && !compact && controlCardShown.Get()) {
-        cards.push_back(huxerui::View{CLASHFLUX_HOME_CONTROL_CARD(
-                            controlCardShown, controlMotion, controlTransition)}
+        cards.push_back(huxerui::View{loading ? Card(HomeCardSkeleton(HomeCardKind::Proxy, theme))
+                            : CLASHFLUX_HOME_CONTROL_CARD(controlCardShown, controlMotion, controlTransition)}
                             .LayoutValue<HomeCardSpan>({1, 1})
                             .LayoutValue<HomeControlSpan>(true)
                             .Key("home-card-control"));

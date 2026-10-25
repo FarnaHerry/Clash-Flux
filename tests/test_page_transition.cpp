@@ -19,6 +19,7 @@
 #include "runtime_diagnostics.h"
 #include "home_control_motion.h"
 #include "home_header_control.h"
+#include "home_grid.h"
 #include "home_vpn_status.h"
 #include "rule_target_picker.h"
 #include "log_actions.h"
@@ -1004,6 +1005,98 @@ void testEmptyState() {
         check(message.width <= 360.5F && message.x >= 23.5F &&
               message.x + message.width <= size.width - 23.5F,
               "长提示限制宽度并在窄屏内换行，保留两侧留白");
+    }
+}
+
+struct HomeGridFixture {
+    huxerui::State<bool> loading{true};
+};
+std::shared_ptr<HomeGridFixture> homeGridFixture;
+bool homeGridDesktop = true;
+bool homeGridControl = false;
+
+void InstallHomeGridFixture(huxerui::ApplicationContext& context) {
+    homeGridFixture = std::make_shared<HomeGridFixture>();
+    context.Provide(homeGridFixture);
+}
+
+huxerui::View HomeGridLoadingRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        using namespace clashflux::ui;
+        const auto model = huxerui::UseService<HomeGridFixture>();
+        const auto theme = huxerui::UseTheme();
+        const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+        std::vector<huxerui::View> cards;
+        for (const auto& spec : HomeCardCatalog(homeGridDesktop)) {
+            huxerui::View body = model->loading.Get() ? HomeCardSkeleton(spec.kind, theme)
+                : huxerui::View{huxerui::Text("Loaded " + std::string(spec.id))};
+            cards.push_back(huxerui::Column {body}.With(huxerui::Padding(16.0F))
+                .LayoutValue<HomeCardSpan>({spec.width, spec.height})
+                .Key("home-card-" + std::string(spec.id)));
+        }
+        if (homeGridDesktop && homeGridControl && !compact) {
+            cards.push_back(huxerui::Row {}.LayoutValue<HomeCardSpan>({1, 1})
+                .LayoutValue<HomeControlSpan>(true).Key("home-card-control"));
+        }
+        return huxerui::ScrollView(HomeGrid(cards).LayoutValue<HomeGridCompact>(compact))
+            .With(huxerui::Grow(1.0F)).Key("home-grid-viewport");
+    })};
+}
+const huxerui::Application kHomeGridLoadingApplication{HomeGridLoadingRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallHomeGridFixture}}};
+
+void testFixedHomeLoadingGeometry() {
+    using namespace clashflux::ui;
+    for (const bool desktop : {false, true}) {
+        homeGridDesktop = desktop;
+        homeGridControl = desktop;
+        huxerui::testing::UiTest ui(kHomeGridLoadingApplication, {.viewport = {960.0F, 900.0F}});
+        const auto loading = homeGridFixture->loading;
+        for (const float width : {320.0F, 960.0F, 1400.0F}) {
+            loading = true;
+            ui.SetWindowMetrics({.viewport = {width, 900.0F}}); ui.PumpAndSettle();
+            const auto catalog = HomeCardCatalog(desktop);
+            check(catalog.size() == (desktop ? 7U : 5U), "home skeleton uses the actual platform's fixed card count");
+            std::vector<huxerui::Rect> before;
+            for (const auto& spec : catalog) {
+                const auto rect = ui.Find(UiSelector::Key("home-card-" + std::string(spec.id))).One().bounds;
+                before.push_back(rect);
+                check(std::abs(rect.height - (spec.height == 1 ? 88.0F : 188.0F)) < 0.01F,
+                      "home skeleton retains the fixed 88pt/188pt card heights");
+            }
+            const auto traffic = before[0];
+            const auto total = before[1];
+            const auto mode = before[2];
+            check(std::abs(total.width - mode.width) < 0.01F &&
+                  std::abs(traffic.width - (total.width * 2.0F + 12.0F)) < 0.01F,
+                  "traffic skeleton spans two real columns and keeps the 12pt gap");
+            if (width < 600.0F) {
+                check(std::abs(total.y - traffic.y - 200.0F) < 0.01F &&
+                      std::abs(mode.x - total.x - total.width - 12.0F) < 0.01F,
+                      "compact home skeleton places total/mode side by side below traffic");
+            } else {
+                check(std::abs(total.y - traffic.y) < 0.01F &&
+                      std::abs(total.x - traffic.x - traffic.width - 12.0F) < 0.01F,
+                      "wide home skeleton matches the fixed traffic/total first row");
+            }
+            std::optional<huxerui::Rect> control;
+            if (desktop && width >= 600.0F) {
+                control = ui.Find(UiSelector::Key("home-card-control")).One().bounds;
+                check(std::abs(control->height - 88.0F) < 0.01F &&
+                      std::abs(control->width - (width >= 1200.0F ? traffic.width : total.width)) < 0.01F,
+                      "running control placeholder preserves its responsive one/two-column span");
+            }
+            const auto viewport = ui.Find(UiSelector::Key("home-grid-viewport")).One().bounds;
+            loading = false; ui.PumpAndSettle();
+            for (std::size_t index = 0; index < catalog.size(); ++index) {
+                check(ui.Find(UiSelector::Key("home-card-" + std::string(catalog[index].id))).One().bounds == before[index],
+                      "hydration changes card interiors without changing their actual positions or dimensions");
+            }
+            check(ui.Find(UiSelector::Key("home-grid-viewport")).One().bounds == viewport,
+                  "home hydration preserves the scroll viewport");
+            if (control) check(ui.Find(UiSelector::Key("home-card-control")).One().bounds == *control,
+                               "home hydration preserves the known running control slot");
+        }
     }
 }
 
@@ -2786,6 +2879,11 @@ int main() {
     testBoxCatMorphAfterSuccess();
     testHomeHeaderControl();
     testHomeHeaderColdStart();
+    try { testFixedHomeLoadingGeometry(); }
+    catch (const std::exception& error) {
+        std::fprintf(stderr, "FAIL: fixed home loading geometry: %s\n", error.what());
+        ++failures;
+    }
     testCoreOperations();
     testInboundSettings();
     testConnectionList();
