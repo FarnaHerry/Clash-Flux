@@ -104,13 +104,19 @@ int main(){try{
     const auto healthy=network_probe::Inspect(request);
 #if defined(_WIN32) || defined(__linux__)
     const bool routeEvidence=healthy.route==Evidence::ViaTun&&healthy.dnsRoute==Evidence::ViaTun;
+    // Route backend exists: the production gate only probes DNS via the TUN.
+    const bool dnsRoundTrip=true;
 #else
     // The production route reader currently has no macOS route-table backend;
-    // both route fields explicitly report Unsupported there.
+    // both route fields explicitly report Unsupported there, and the
+    // production gate conservatively skips the probe (no physical-network leak).
     const bool routeEvidence=healthy.route==Evidence::Unsupported&&healthy.dnsRoute==Evidence::Unsupported;
+    const bool dnsRoundTrip=false;
 #endif
-    require(healthy.interface==Evidence::Present&&routeEvidence&&healthy.dns==Evidence::Response,
+    require(healthy.interface==Evidence::Present&&routeEvidence&&
+        healthy.dns==(dnsRoundTrip?Evidence::Response:Evidence::NotChecked),
         "real loopback OS route or bound DNS probe failed");
+    if(dnsRoundTrip){
     server.mode=1;require(network_probe::Inspect(request).dns==Evidence::NegativeResponse,"negative DNS response misclassified");
     server.mode=2;require(network_probe::Inspect(request).dns==Evidence::InvalidResponse,"spoofed DNS response accepted");
     server.mode=3;require(network_probe::Inspect(request).dns==Evidence::ServerError,"DNS failure reported healthy");
@@ -119,6 +125,7 @@ int main(){try{
     const auto began=std::chrono::steady_clock::now();
     require(network_probe::Inspect(request,stop.get_token()).dns==Evidence::Cancelled,"DNS cancellation ignored");
     require(std::chrono::steady_clock::now()-began<400ms,"DNS cancellation slow");
+    }
     const auto count=server.requests.load();request.interfaceName="ClashFluxHealthMissingInterface";
     const auto missing=network_probe::Inspect(request);
     require(missing.interface!=Evidence::Present&&missing.dns==Evidence::NotChecked&&server.requests==count,"missing interface leaked DNS");

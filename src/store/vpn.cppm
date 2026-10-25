@@ -352,7 +352,8 @@ public:
         const auto dialBegan = std::chrono::steady_clock::now();
         bool connected = manager_.connect(id, error);
         stream::logApplication("info", std::format("PPTP 拨号{}，用时 {} ms",
-            connected ? "成功" : "失败",
+            // 窄字面量实参会触发 clang-21 模块可见性问题（llvm#149404）；std::string 实参稳定。
+            std::string(connected ? "成功" : "失败"),
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - dialBegan).count()));
         bool routingApplied = connected && publishRouting(error);
         if (connected && !routingApplied) {
