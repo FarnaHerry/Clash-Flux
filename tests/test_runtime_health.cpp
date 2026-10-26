@@ -62,8 +62,9 @@ int main(int argc, char** argv) {
             require(!core::importRuleSet(binary, root, root/"missing.srs", error) && !error.empty(), "missing SRS accepted");
             std::ofstream(root/"oversized.srs", std::ios::binary) << std::string(8*1024*1024+1, 'x');
             require(!core::importRuleSet(binary, root, root/"oversized.srs", error) && !error.empty(), "oversized SRS accepted");
+            const auto stagingPrefix = std::filesystem::path("rule-set-import-").native();
             for (const auto& entry : std::filesystem::directory_iterator(root))
-                require(!entry.path().filename().string().starts_with("rule-set-import-"), "import left a staging directory");
+                require(!entry.path().filename().native().starts_with(stagingPrefix), "import left a staging directory");
             std::cout << "production SRS import: valid roundtrip, malformed/missing/oversize rejection, source and staging preservation passed\n";
             return 0;
         } catch (const std::exception& exception) {
