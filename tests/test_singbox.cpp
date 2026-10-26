@@ -1508,6 +1508,269 @@ void testAsnRuleProviders() {
           fresh.ruleProviderContents.empty(), "invalid ASN download rejects staged classical body before any commit");
 }
 
+void testAsnRuleProviderBatch() {
+    const RuleSetTestDirectory directory;
+    singbox::CompileOptions base;
+    base.ruleProviderCacheDir = (directory.path / "batch").string();
+    base.profileYaml = "rule-providers:\n  batch: {type: http, behavior: classical, url: https://example.test/batch.yaml}\n"
+        "rules: ['RULE-SET,batch,DIRECT', 'MATCH,DIRECT']\n";
+    unsigned fetched = 0, checked = 0, committed = 0;
+    bool invalid = false;
+    rule_provider_cache::Operations operations;
+    operations.fetch = [&](const auto& resource, const auto& path, std::string&) {
+        ++fetched;
+        std::ofstream output(path);
+        if (!resource.asn)
+            output << "payload: ['IP-ASN,14061', 'NOT,((SRC-IP-ASN,20473))', 'DOMAIN-SUFFIX,batch.test']\n";
+        else if (invalid && resource.asn == 20473) output << "{}";
+        else output << json{{"asn", resource.asn}, {"prefixes", {
+            {"ipv4", json::array({resource.asn == 14061 ? "192.0.2.0/24" : "198.51.100.0/24"})},
+            {"ipv6", json::array({"2001:db8::/32"})}}}}.dump();
+        output.close(); return output.good();
+    };
+    operations.check = [&](const auto&, const auto& result, std::string&) {
+        ++checked;
+        check(committed == 0, "all batched ASN dependencies remain staged before the full check");
+        return result.error.empty() && !result.json.empty();
+    };
+    operations.commit = [&](const auto& from, const auto& to, std::string&) {
+        ++committed;
+        std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing);
+        return true;
+    };
+    auto candidate = base;
+    singbox::CompileResult result;
+    rule_provider_cache::PreparationStats stats;
+    std::string error;
+    check(rule_provider_cache::Prepare(candidate, operations, result, error, &stats) && stats.compileCount == 3 &&
+          fetched == 3 && checked == 1 && committed == 3 && candidate.ruleProviderContents.size() == 3,
+          "classical entries discover both ASNs together in one dependency round");
+    if (!result.json.empty()) {
+        const auto rules = json::parse(result.json)["route"]["rule_set"][0]["rules"];
+        check(rules.size() == 3 && rules[0]["ip_cidr"][0] == "192.0.2.0/24" &&
+              rules[1]["invert"] == true && rules[1]["rules"][0]["source_ip_cidr"][0] == "198.51.100.0/24" &&
+              rules[2]["domain_suffix"][0] == "batch.test", "batched discovery retains all conditions and nested inversion");
+    }
+    const auto expected = singbox::compileConfig(candidate);
+    checked = committed = 0;
+    auto warm = base;
+    check(rule_provider_cache::Prepare(warm, operations, result, error, &stats) && stats.compileCount == 1 &&
+          stats.validatedSnapshotReuses == 3 && fetched == 3 && checked == 1 && committed == 0 &&
+          result.json == expected.json && result.fidelity == expected.fidelity,
+          "warm provider and ASN caches retain exact JSON/fidelity with one compilation");
+    invalid = true; checked = committed = 0;
+    auto bad = base; bad.ruleProviderCacheDir = (directory.path / "bad-batch").string();
+    check(!rule_provider_cache::Prepare(bad, operations, result, error, &stats) && checked == 0 && committed == 0 &&
+          bad.ruleProviderContents.empty(), "one invalid ASN still rejects the entire batched candidate without commit");
+}
+
+void testProviderParallelPreparation() {
+    const RuleSetTestDirectory directory;
+    singbox::CompileOptions base;
+    base.ruleProviderCacheDir = (directory.path / "parallel").string();
+    base.profileYaml = "rule-providers:\n";
+    for (unsigned i = 0; i < 6; ++i) base.profileYaml += std::format(
+        "  p{}: {{type: http, behavior: domain, url: https://example.test/p{}.yaml}}\n", i, i);
+    base.profileYaml += "rules: ['RULE-SET,p0,DIRECT', 'MATCH,DIRECT']\n";
+    std::atomic_uint active = 0, maximum = 0, completed = 0;
+    std::mutex mutex;
+    std::condition_variable ready;
+    unsigned entered = 0, checked = 0, committed = 0;
+    bool invalid = false, throws = false;
+    rule_provider_cache::Operations operations;
+    operations.maxConcurrentFetches = 3;
+    operations.fetch = [&](const auto& resource, const auto& path, std::string&) {
+        const auto count = active.fetch_add(1) + 1;
+        auto observed = maximum.load();
+        while (observed < count && !maximum.compare_exchange_weak(observed, count)) {}
+        {
+            std::unique_lock lock(mutex);
+            ++entered; ready.notify_all();
+            if (!ready.wait_for(lock, std::chrono::seconds(5), [&] { return entered >= 3; })) {
+                --active; return false;
+            }
+        }
+        --active; ++completed;
+        if (throws && resource.name == "p0") throw std::runtime_error("parallel failure");
+        std::ofstream output(path, std::ios::binary);
+        output << (invalid && resource.name == "p0" ? "payload: ['bad*.test']\n" : "payload: [parallel-cache.test]\n");
+        output.close(); return output.good();
+    };
+    operations.check = [&](const auto&, const auto&, std::string&) {
+        ++checked;
+        check(active == 0 && completed == 6 && committed == 0,
+              "parallel workers all finish before candidate check and commit");
+        return true;
+    };
+    operations.commit = [&](const auto& from, const auto& to, std::string&) {
+        ++committed;
+        std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing); return true;
+    };
+    singbox::CompileResult result;
+    std::string error;
+    auto candidate = base;
+    check(rule_provider_cache::Prepare(candidate, operations, result, error) && maximum == 3 &&
+          checked == 1 && committed == 6 && candidate.ruleProviderContents.size() == 6,
+          "six resources use exactly three bounded download workers");
+    const auto expected = singbox::compileConfig(candidate);
+    check(result.json == expected.json && result.fidelity == expected.fidelity,
+          "parallel preparation keeps deterministic JSON and fidelity");
+    const auto oldSnapshot = candidate.ruleProviderContents;
+    for (const auto failWithException : {false, true}) {
+        invalid = !failWithException; throws = failWithException;
+        entered = checked = committed = 0; completed = maximum = 0;
+        auto failed = base;
+        failed.ruleProviderCacheDir = (directory.path / (throws ? "throws" : "invalid")).string();
+        check(!rule_provider_cache::Prepare(failed, operations, result, error) && completed == 6 &&
+              active == 0 && checked == 0 && committed == 0 && failed.ruleProviderContents.empty(),
+              "invalid or throwing parallel fetch joins every worker and publishes no candidate/cache");
+        check(candidate.ruleProviderContents == oldSnapshot &&
+              singbox::compileConfig(candidate).json == expected.json,
+              "failed concurrent preparation retains the previous immutable running snapshot");
+        check(std::ranges::none_of(std::filesystem::directory_iterator(failed.ruleProviderCacheDir),
+              [](const auto& entry) { return entry.path().filename().string().starts_with(".stage-"); }),
+              "parallel failure removes staging only after all workers finish");
+    }
+}
+
+void testProviderConversionReuse() {
+    const RuleSetTestDirectory directory;
+    const auto file = directory.path / "reuse.txt";
+    const auto write = [&](const std::string& content) { std::ofstream(file, std::ios::binary) << content; };
+    singbox::CompileOptions base;
+    base.ruleProviderDir = directory.path.string();
+    base.mainConnectionId = "conversion-a";
+    base.profileYaml = "rule-providers:\n  data: {type: file, behavior: domain, format: text, path: reuse.txt}\n"
+        "rules: ['RULE-SET,data,DIRECT', 'MATCH,DIRECT']\n";
+    write("conversion-fresh.test\n+.conversion-sub.test\n");
+    const auto first = singbox::compileConfig(base);
+    const auto second = singbox::compileConfig(base);
+    check(first.error.empty() && first.ruleProviderConversionCacheHits == 0 &&
+          second.ruleProviderConversionCacheHits == 1 && first.json == second.json &&
+          first.fidelity == second.fidelity && first.warnings == second.warnings,
+          "converted domain snapshot reuses exact bytes without changing output/fidelity");
+    auto other = base; other.mainConnectionId = "conversion-b";
+    const auto otherResult = singbox::compileConfig(other);
+    check(otherResult.ruleProviderConversionCacheHits == 1 &&
+          std::ranges::all_of(otherResult.fidelity, [](const auto& note) { return note.sourceId == "conversion-b"; }),
+          "context-free conversion reuse never carries another source's fidelity identity");
+    write("conversion-other.test\n+.conversion-sub.test\n");
+    const auto changed = singbox::compileConfig(base);
+    check(changed.error.empty() && changed.ruleProviderConversionCacheHits == 0 && changed.json != first.json,
+          "same-length different provider bytes invalidate converted snapshot");
+    write("conversion-other.test\n+.conversion-sub.test\nbad*.test\n");
+    check(!singbox::compileConfig(base).error.empty(), "cached valid prefix cannot hide an invalid tail");
+    write("conversion-fresh.test\n+.conversion-sub.test\n");
+    auto wrongFormat = base;
+    const auto format = wrongFormat.profileYaml.find("format: text");
+    wrongFormat.profileYaml.replace(format, 12, "format: yaml");
+    check(!singbox::compileConfig(wrongFormat).error.empty(), "format is part of the converted snapshot key");
+    auto classical = base;
+    classical.profileYaml.replace(classical.profileYaml.find("behavior: domain"), 16, "behavior: classical");
+    check(!singbox::compileConfig(classical).error.empty(), "behavior is part of the converted snapshot key");
+    std::atomic_uint successes = 0;
+    {
+        std::vector<std::jthread> workers;
+        for (unsigned i = 0; i < 4; ++i) workers.emplace_back([&] {
+            const auto result = singbox::compileConfig(base);
+            if (result.json == first.json && result.fidelity == first.fidelity) ++successes;
+        });
+    }
+    check(successes == 4, "converted snapshot cache supports simultaneous read-only compilations");
+    for (unsigned i = 0; i < 40; ++i) {
+        write(std::format("conversion-eviction-{}.test\n", i));
+        check(singbox::compileConfig(base).error.empty(), "bounded cache accepts independent provider bodies");
+    }
+    write("conversion-fresh.test\n+.conversion-sub.test\n");
+    const auto evicted = singbox::compileConfig(base);
+    check(evicted.error.empty() && evicted.ruleProviderConversionCacheHits == 0 && evicted.json == first.json,
+          "bounded conversion-cache eviction preserves output and can rebuild old snapshots");
+}
+
+void testProviderConditionalRefresh() {
+    const RuleSetTestDirectory directory;
+    singbox::CompileOptions base;
+    base.ruleProviderCacheDir = (directory.path / "conditional").string();
+    base.profileYaml = "rule-providers:\n  data: {type: http, behavior: domain, interval: 1, url: https://example.test/etag.yaml}\n"
+        "rules: ['RULE-SET,data,DIRECT', 'MATCH,DIRECT']\n";
+    const auto resource = singbox::compileConfig(base).httpRuleProviders[0];
+    const auto file = std::filesystem::path(base.ruleProviderCacheDir) / (resource.cacheKey + ".cache");
+    std::filesystem::create_directories(base.ruleProviderCacheDir);
+    const std::string body = "payload: [conditional-original.test]\n";
+    singbox::HttpCacheValidators validators{"\"etag-one\"", "Wed, 21 Oct 2026 07:28:00 GMT"};
+    const auto seed = [&](const auto& metadata) {
+        std::ofstream(file, std::ios::binary) << singbox::HttpRuleProviderCacheImage(resource, body, metadata);
+        std::filesystem::last_write_time(file, std::filesystem::file_time_type::clock::now() - std::chrono::hours(48));
+    };
+    unsigned checked = 0, committed = 0, fetched = 0;
+    bool reject = false, changed = false;
+    rule_provider_cache::Operations operations;
+    operations.revalidate = [&](const auto&, const auto& path, const auto& supplied) {
+        ++fetched;
+        check(supplied == validators, "conditional refresh binds both validators to the exact verified body");
+        rule_provider_cache::FetchResult response;
+        response.ok = true; response.notModified = !changed;
+        if (changed) {
+            std::ofstream(path, std::ios::binary) << "payload: [conditional-updated.test]\n";
+            response.validators.etag = "\"etag-two\"";
+        }
+        return response;
+    };
+    operations.check = [&](const auto&, const auto&, std::string& reason) {
+        ++checked;
+        if (reject) { reason = "candidate rejected"; return false; }
+        return true;
+    };
+    operations.commit = [&](const auto& from, const auto& to, std::string& reason) {
+        ++committed;
+        std::error_code ec;
+        std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing, ec);
+        reason = ec.message(); return !ec;
+    };
+    seed(validators);
+    const auto before = singbox::compileConfig(base);
+    singbox::CompileResult result;
+    rule_provider_cache::PreparationStats stats;
+    std::string error;
+    auto candidate = base;
+    check(rule_provider_cache::Prepare(candidate, operations, result, error, &stats) && fetched == 1 &&
+          checked == 1 && committed == 1 && stats.compileCount == 1 && result.json == before.json &&
+          candidate.ruleProviderContents.at(resource.cacheKey) == body,
+          "304 refresh preserves representation, avoids recompile, still checks and atomically refreshes cache");
+    singbox::HttpCacheValidators readBack;
+    check(singbox::ReadHttpRuleProviderCache(resource, base.ruleProviderCacheDir, error, &readBack) == body &&
+          readBack == validators, "v2 cache round-trips raw bytes and conditional metadata together");
+    seed(validators); reject = true;
+    const auto oldImage = singbox::ReadRuleProviderText(file, 4096, error);
+    const auto oldStamp = std::filesystem::last_write_time(file);
+    candidate = base;
+    check(!rule_provider_cache::Prepare(candidate, operations, result, error, &stats) && committed == 1 &&
+          candidate.ruleProviderContents.empty() && singbox::ReadRuleProviderText(file, 4096, error) == oldImage &&
+          std::filesystem::last_write_time(file) == oldStamp,
+          "rejected 304 candidate preserves old body, metadata, expiry and caller snapshot");
+    reject = false; changed = true; candidate = base;
+    check(rule_provider_cache::Prepare(candidate, operations, result, error, &stats) && stats.compileCount == 2 &&
+          result.json != before.json && singbox::ReadHttpRuleProviderCache(resource, base.ruleProviderCacheDir, error, &readBack) &&
+          readBack.etag == "\"etag-two\"" && readBack.lastModified.empty(),
+          "changed 200 response recompiles and replaces obsolete validators atomically");
+    seed(singbox::HttpCacheValidators{});
+    check(singbox::ReadHttpRuleProviderCache(resource, base.ruleProviderCacheDir, error, &readBack) == body &&
+          readBack.etag.empty() && readBack.lastModified.empty(), "existing v1 offline cache remains readable");
+    operations.revalidate = [&](const auto&, const auto&, const auto& supplied) {
+        check(supplied.etag.empty() && supplied.lastModified.empty(), "v1 cache sends no invented validators");
+        rule_provider_cache::FetchResult response; response.ok = true; response.notModified = true; return response;
+    };
+    candidate = base;
+    check(rule_provider_cache::Prepare(candidate, operations, result, error) && !result.warnings.empty() &&
+          result.json == before.json, "unsolicited 304 falls back to validated old cache without refreshing expiry");
+    auto empty = base; empty.ruleProviderCacheDir = (directory.path / "no-cache").string();
+    const auto commitsBefore = committed;
+    check(!rule_provider_cache::Prepare(empty, operations, result, error) && committed == commitsBefore &&
+          empty.ruleProviderContents.empty(), "unsolicited 304 without a verified body rejects the candidate");
+    auto invalid = validators; invalid.etag = "bad\r\nInjected: yes";
+    check(singbox::HttpRuleProviderCacheImage(resource, body, invalid).empty(), "validator injection cannot enter cache/request metadata");
+}
+
 void testRuntimeCompileReuse() {
     namespace runtime = clashflux::runtime_compile;
     const RuleSetTestDirectory directory;
@@ -1547,13 +1810,14 @@ void testRuntimeCompileReuse() {
 
     options.ruleProviderDir = directory.path.string();
     options.ruleProviderCacheDir = (directory.path / "runtime-cache").string();
-    options.profileYaml = "rule-providers:\n  data: {type: http, behavior: domain, url: https://example.test/runtime.yaml}\n"
+    options.profileYaml = "rule-providers:\n  data: {type: http, behavior: domain, interval: 3600, url: https://example.test/runtime.yaml}\n"
         "rules:\n  - RULE-SET,data,DIRECT\n  - MATCH,DIRECT\n";
     unsigned checks = 0, commits = 0, fetched = 0;
     bool reject = false;
+    std::string providerBody = "payload: [runtime.test]\n";
     rule_provider_cache::Operations operations;
     operations.fetch = [&](const auto&, const auto& path, std::string&) {
-        ++fetched; std::ofstream output(path); output << "payload: [runtime.test]\n";
+        ++fetched; std::ofstream output(path, std::ios::binary); output << providerBody;
         output.close(); return output.good();
     };
     operations.check = [&](const auto& candidate, const auto& compiled, std::string& reason) {
@@ -1570,6 +1834,7 @@ void testRuntimeCompileReuse() {
           checks == 1 && commits == 1 && fetched == 1,
           "cold HTTP preparation compiles discovery and the new snapshot once each, still checking before commit");
     const auto legacy = singbox::compileConfig(options);
+    check(legacy.ruleProviderContents.empty(), "pinned compilation does not retain a duplicate copy of raw provider bodies");
     check(result.json == legacy.json && result.fidelity == legacy.fidelity,
           "HTTP prepared artifact equals the old additional runtime compile");
     check(rule_provider_cache::Prepare(options, operations, result, error, &stats) && stats.compileCount == 1 &&
@@ -1580,6 +1845,33 @@ void testRuntimeCompileReuse() {
     check(!rule_provider_cache::Prepare(options, operations, result, error, &stats) && stats.compileCount == 1 &&
           checks == 3 && commits == 1 && fetched == 1 && options.ruleProviderContents == pinned,
           "reuse never skips rejection checks or replaces pinned snapshots on failure");
+
+    reject = false;
+    auto warm = options; warm.ruleProviderContents.clear();
+    check(rule_provider_cache::Prepare(warm, operations, result, error, &stats) && stats.compileCount == 1 &&
+          stats.validatedSnapshotReuses == 1 && checks == 4 && commits == 1 && fetched == 1 &&
+          warm.ruleProviderContents == pinned && result.ruleProviderContents.empty() && result.json == legacy.json &&
+          result.fidelity == legacy.fidelity && result.warnings == legacy.warnings,
+          "fresh disk inputs reuse the exact compiled artifact and publish one owning rollback snapshot");
+    const auto cacheFile = std::filesystem::path(options.ruleProviderCacheDir) / (pinned.begin()->first + ".cache");
+    const auto expire = [&] {
+        std::filesystem::last_write_time(cacheFile, std::filesystem::file_time_type::clock::now() - std::chrono::hours(48));
+    };
+    expire();
+    auto same = options; same.ruleProviderContents.clear();
+    check(rule_provider_cache::Prepare(same, operations, result, error, &stats) && stats.compileCount == 1 &&
+          checks == 5 && commits == 2 && fetched == 2 && result.json == legacy.json,
+          "byte-identical expired refresh still fetches/checks/commits without recompiling");
+    expire(); providerBody = "payload: [changed.test]\n";
+    auto changed = options; changed.ruleProviderContents.clear();
+    const bool changedReady = rule_provider_cache::Prepare(changed, operations, result, error, &stats);
+    if (!changedReady || stats.compileCount != 2 || checks != 6 || commits != 3 || fetched != 3)
+        std::println(stderr, "changed refresh ready={} compile={} checks={} commits={} fetched={} error={}",
+            changedReady, stats.compileCount, checks, commits, fetched, error);
+    check(changedReady && stats.compileCount == 2 &&
+          checks == 6 && commits == 3 && fetched == 3 && result.json != legacy.json &&
+          changed.ruleProviderContents.begin()->second == providerBody,
+          "byte-different refresh recompiles before candidate validation and cache commit");
 }
 
 void testHttpRuleProviders() {
@@ -2198,7 +2490,8 @@ int main(int argc, char** argv) {
     testPersonalRuleSets();
     // Test-only compiler entry for isolated native runtime fixtures; no app
     // Runtime, user database, network downloads or persistent paths involved.
-    if (argc == 5 && std::string_view(argv[1]) == "--prepare-config") {
+    if (argc == 5 && (std::string_view(argv[1]) == "--prepare-config" ||
+                      std::string_view(argv[1]) == "--benchmark-prepare")) {
         const std::filesystem::path root(argv[3]);
         std::ifstream input(argv[2]);
         singbox::CompileOptions options;
@@ -2207,6 +2500,7 @@ int main(int argc, char** argv) {
         options.ruleProviderDir = root.string();
         options.ruleSetDir = (root / "geo").string();
         rule_provider_cache::Operations operations;
+        operations.maxConcurrentFetches = 3;
         operations.fetch = [&](const auto& resource, const auto& target, std::string& error) {
             std::error_code ec;
             std::filesystem::copy_file(root / (resource.cacheKey + ".download"), target,
@@ -2222,15 +2516,35 @@ int main(int argc, char** argv) {
             error = ec ? ec.message() : ""; return !ec;
         };
         singbox::CompileResult result; std::string error;
-        const bool ok = rule_provider_cache::Prepare(options, operations, result, error);
+        rule_provider_cache::PreparationStats stats;
+        const auto began = std::chrono::steady_clock::now();
+        const bool ok = rule_provider_cache::Prepare(options, operations, result, error, &stats);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began).count();
+        const auto initialStats = stats;
         json manifest = json::array();
         for (const auto& resource : result.httpRuleProviders)
             manifest.push_back({{"key", resource.cacheKey}, {"url", resource.url},
-                                {"headers", resource.headers}, {"max_bytes", resource.maxBytes}});
+                                {"headers", resource.headers}, {"max_bytes", resource.maxBytes},
+                                {"format", resource.format}, {"behavior", resource.behavior}, {"asn", resource.asn}});
         std::ofstream(root / "manifest.json") << manifest.dump();
         if (!ok) { std::println(stderr, "{}", error); return 1; }
+        if (std::string_view(argv[1]) == "--benchmark-prepare") {
+            const auto expectedJson = result.json;
+            const auto expectedFidelity = result.fidelity;
+            for (unsigned repeat = 0; repeat < 5; ++repeat) {
+                auto fresh = options; fresh.ruleProviderContents.clear();
+                const auto start = std::chrono::steady_clock::now();
+                if (!rule_provider_cache::Prepare(fresh, operations, result, error, &stats) ||
+                    result.json != expectedJson || result.fidelity != expectedFidelity) return 1;
+                const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - start).count();
+                std::println("repeat={} prepare_us={} conversion_cache_hits={}", repeat, micros, stats.conversionCacheHits);
+            }
+        }
         std::ofstream output(argv[4]); output << result.json; output.close();
-        std::println("prepared providers={}, fidelity={}", result.httpRuleProviders.size(), result.fidelity.size());
+        std::println("prepared providers={} fidelity={} compile_calls={} compile_us={} prepare_us={} validated_snapshot_reuses={} conversion_cache_hits={}",
+            result.httpRuleProviders.size(), result.fidelity.size(), initialStats.compileCount, initialStats.compileMicros,
+            elapsed, initialStats.validatedSnapshotReuses, initialStats.conversionCacheHits);
         return output ? 0 : 1;
     }
     if (argc == 4 && std::string_view(argv[1]) == "--compile-config") {
@@ -2253,6 +2567,10 @@ int main(int argc, char** argv) {
     testHttpRuleProviders();
     testRuntimeCompileReuse();
     testAsnRuleProviders();
+    testAsnRuleProviderBatch();
+    testProviderParallelPreparation();
+    testProviderConversionReuse();
+    testProviderConditionalRefresh();
     testMrsRuleProviders();
     for (const auto* format : {"{bad: yaml}", "[yaml]", "null", "''", "'  '"}) {
         singbox::CompileOptions options;

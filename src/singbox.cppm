@@ -93,6 +93,12 @@ export struct HttpRuleProviderResource {
     std::size_t maxBytes = 8 * 1024 * 1024;
 };
 
+export struct HttpCacheValidators {
+    std::string etag, lastModified;
+    bool operator==(const HttpCacheValidators&) const = default;
+};
+export bool ValidHttpCacheValidators(const HttpCacheValidators& validators);
+
 export struct SourceObject {
     std::string sourceId;
     std::string sourceName;
@@ -117,6 +123,10 @@ export struct CompileResult {
     std::vector<FidelityNote> fidelity;
     std::vector<RuleSetResource> ruleSetResources;
     std::vector<HttpRuleProviderResource> httpRuleProviders;
+    // Exact disk inputs successfully lowered in this compile. Already pinned
+    // option bytes are not duplicated; preparation owns those snapshots.
+    std::map<std::string, std::string> ruleProviderContents;
+    unsigned ruleProviderConversionCacheHits = 0;
     std::vector<SourceObject> sourceObjects;
     std::vector<std::string> participatingSources;
     std::uint64_t planRevision = 0;
@@ -189,11 +199,11 @@ export CompileResult inspectProfileSourceObjects(const CompileOptions& options);
 export std::optional<std::string> ReadRuleProviderText(const std::filesystem::path& path,
     std::size_t maxBytes, std::string& error);
 export std::optional<std::string> ReadHttpRuleProviderCache(const HttpRuleProviderResource& resource,
-    const std::filesystem::path& directory, std::string& error);
+    const std::filesystem::path& directory, std::string& error, HttpCacheValidators* validators = nullptr);
 export std::optional<std::string> ReadHttpRuleProviderSeed(const HttpRuleProviderResource& resource,
     const std::filesystem::path& directory, std::string& error);
 export std::string HttpRuleProviderCacheImage(const HttpRuleProviderResource& resource,
-    const std::string& content);
+    const std::string& content, const HttpCacheValidators& validators = {});
 export bool ValidateHttpRuleProvider(const HttpRuleProviderResource& resource,
     const std::string& content, std::string& error);
 

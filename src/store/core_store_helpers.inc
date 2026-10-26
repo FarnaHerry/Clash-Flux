@@ -293,8 +293,11 @@
         rule_provider_cache::PreparationStats stats;
         const auto began = std::chrono::steady_clock::now();
         rule_provider_cache::Operations operations;
-        operations.fetch = [this](const singbox::HttpRuleProviderResource& resource,
-                                 const std::filesystem::path& file, std::string& reason) {
+        operations.maxConcurrentFetches = 3;
+        operations.revalidate = [this](const singbox::HttpRuleProviderResource& resource,
+                                 const std::filesystem::path& file, const singbox::HttpCacheValidators& validators) {
+          const auto request = [&](const std::map<std::string, std::string>& headers, bool conditional) {
+            rule_provider_cache::FetchResult fetched;
 #if defined(__ANDROID__)
             // curl has no TLS here. Reuse the platform bridge on the task
             // thread, with system trust, a bounded body, and explicit direct IO.
@@ -313,7 +316,7 @@
 #endif
                 response = clashflux::android::DownloadProfile(
                     resource.url, kDownloadTimeoutSecs, false,
-                    resource.maxBytes, true, resource.headers);
+                    resource.maxBytes, true, headers);
 #if !defined(NDEBUG)
                 const auto elapsed = std::chrono::duration_cast<
                     std::chrono::milliseconds>(
@@ -325,26 +328,26 @@
                                     response.retryable ? 1 : 0,
                                     static_cast<long long>(elapsed));
 #endif
-                const bool completeHttpResponse = response.status >= 200 &&
-                    response.status < 300 && response.error.empty();
+                const bool completeHttpResponse = ((response.status >= 200 &&
+                    response.status < 300) || (conditional && response.status == 304)) && response.error.empty();
                 if (completeHttpResponse || !response.retryable ||
                     attempt == kDownloadAttempts) break;
                 std::this_thread::sleep_for(kRetryDelay);
             }
-            if (!response.error.empty() || response.status < 200 || response.status >= 300) {
-                reason = response.error.empty() ? "HTTP " + std::to_string(response.status) : response.error;
-                return false;
+            fetched.ok = response.error.empty() && ((response.status >= 200 && response.status < 300) ||
+                (conditional && response.status == 304));
+            if (fetched.ok && response.status != 304) {
+                std::ofstream output(file, std::ios::binary | std::ios::trunc);
+                output << response.body;
+                output.close();
+                if (!output) { fetched.error = "无法完成平台规则集临时文件写入"; fetched.ok = false; return fetched; }
             }
-            std::ofstream output(file, std::ios::binary | std::ios::trunc);
-            output << response.body;
-            output.close();
-            if (!output) { reason = "无法完成平台规则集临时文件写入"; return false; }
-            return true;
 #else
             api::ClashApi::DownloadOptions download;
             download.timeoutSecs = 20;
             download.maxBytes = resource.maxBytes;
-            download.headers = resource.headers;
+            download.headers = headers;
+            download.acceptNotModified = conditional;
             download.validate = [&resource](const auto& temp) {
                 std::string failure;
                 const auto text = singbox::ReadRuleProviderText(temp, resource.maxBytes, failure);
@@ -352,8 +355,33 @@
                 return failure;
             };
             const auto response = api_->downloadToFile(resource.url, file, download);
-            reason = response.error; return response.ok;
+            fetched.ok = response.ok;
 #endif
+            fetched.status = response.status;
+            fetched.notModified = response.status == 304;
+            fetched.error = response.error;
+            if (!fetched.ok && fetched.error.empty()) fetched.error = "HTTP " + std::to_string(response.status);
+            if (const auto entry = response.headers.find("etag"); entry != response.headers.end())
+                fetched.validators.etag = entry->second;
+            if (const auto entry = response.headers.find("last-modified"); entry != response.headers.end())
+                fetched.validators.lastModified = entry->second;
+            return fetched;
+          };
+          auto headers = resource.headers;
+          std::size_t bytes = 0;
+          for (const auto& [name, value] : headers) bytes += name.size() + value.size() + 4;
+          const bool conditional = (!validators.etag.empty() || !validators.lastModified.empty()) &&
+              bytes + validators.etag.size() + validators.lastModified.size() + 40 <= 16384;
+          if (conditional) {
+              if (!validators.etag.empty()) headers.emplace("if-none-match", validators.etag);
+              if (!validators.lastModified.empty()) headers.emplace("if-modified-since", validators.lastModified);
+          }
+          auto fetched = request(headers, conditional);
+          // Conditional headers never follow redirects. Retry using the original
+          // request policy so an originally header-free URL can still redirect.
+          if (conditional && fetched.status >= 300 && fetched.status < 400 && fetched.status != 304)
+              fetched = request(resource.headers, false);
+          return fetched;
         };
         operations.check = [this, policy](const auto& candidate, const auto& result, std::string& reason) {
             if (!validatePlanTargets(candidate, result, policy, reason)) return false;
@@ -369,9 +397,9 @@
         };
         const bool ready = rule_provider_cache::Prepare(options, operations, compiled, error, &stats);
         stream::logApplication("info", std::format(
-            "profile-providers ready={} total_ms={} discovery_compile_calls={} discovery_compile_us={}", ready,
+            "profile-providers ready={} total_ms={} discovery_compile_calls={} discovery_compile_us={} validated_snapshot_reuses={} conversion_cache_hits={}", ready,
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count(),
-            stats.compileCount, stats.compileMicros));
+            stats.compileCount, stats.compileMicros, stats.validatedSnapshotReuses, stats.conversionCacheHits));
         if (ready) for (const auto& warning : compiled.warnings)
             if (warning.starts_with("HTTP 规则集「")) stream::logApplication("warning", warning);
         return ready;

@@ -68,7 +68,6 @@ void MoveHeader(bool show, HomeHeaderControl control, huxerui::TaskScope tasks, 
             .right = theme.spacing.medium, .left = theme.spacing.medium}),
         huxerui::Background(islands.raised),
         huxerui::CornerRadius(islands.nested_radius),
-        huxerui::Border(islands.outline_soft, kCardOutlineWidth),
         huxerui::ClipChildren(),
         huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));

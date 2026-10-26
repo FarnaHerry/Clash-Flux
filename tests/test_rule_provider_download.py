@@ -21,6 +21,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.visits.append(self.path)
+        if self.path == "/always304" or (self.path == "/etag" and
+                self.headers.get("If-None-Match") == '"fixture"'):
+            self.send_response(304)
+            self.send_header("ETag", '"fixture"')
+            # 304 Content-Length can describe the representation, not a body.
+            self.send_header("Content-Length", str(len(GOOD)))
+            self.end_headers()
+            return
         if self.path == "/headers" and not (
                 self.headers.get_all("User-Agent") == ["provider-test/1"]
                 and self.headers.get_all("Authorization") == ["Bearer test-only"]
@@ -54,7 +62,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             pass
 
 
-def run(binary, folder, address, name, ok, headers=None, expected=GOOD):
+def run(binary, folder, address, name, ok, headers=None, expected=GOOD, preserve=False):
     # Two files model different protected sources; requests may touch only one.
     dest, untouched = folder / "one.yaml", folder / "two.yaml"
     before = dest.read_bytes()
@@ -63,7 +71,7 @@ def run(binary, folder, address, name, ok, headers=None, expected=GOOD):
         args.append(headers)
     subprocess.run(args,
                    check=True, timeout=10, capture_output=True)
-    assert dest.read_bytes() == (expected if ok else before), name
+    assert dest.read_bytes() == (expected if ok and not preserve else before), name
     assert untouched.read_bytes() == b"other stable source", name
     assert not list(folder.glob(".clash-flux-download-*")), name
 
@@ -105,6 +113,13 @@ def main():
             visits = list(Handler.visits)
             run(args.binary, folder, address, "/redirect", False, "valid")
             assert Handler.visits == visits + ["/redirect"], "custom headers must not reach redirect target"
+            dest = folder / "one.yaml"
+            dest.write_bytes(b"verified existing representation")
+            run(args.binary, folder, address, "/etag", True, "not-modified", preserve=True)
+            run(args.binary, folder, address, "/always304", False)
+            visits = list(Handler.visits)
+            run(args.binary, folder, address, "/redirect", False, "not-modified")
+            assert Handler.visits == visits + ["/redirect"], "conditional validators must not reach redirect target"
             # No listener: transport failure must not remove an existing file.
             stopped = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
             port = stopped.server_port
@@ -125,9 +140,9 @@ def main():
                 finally:
                     tls.shutdown()
                     tls.server_close()
-                print("rule_provider_download: 15 cases passed (including headers and default TLS rejection)")
+                print("rule_provider_download: conditional caching, headers and default TLS rejection passed")
             else:
-                print("rule_provider_download: 14 cases passed; TLS fixture unavailable")
+                print("rule_provider_download: conditional caching and headers passed; TLS fixture unavailable")
         finally:
             server.shutdown()
             server.server_close()

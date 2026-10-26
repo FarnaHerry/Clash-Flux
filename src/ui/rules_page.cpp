@@ -628,7 +628,6 @@ struct RuleSetDraft {
     const auto rows = std::make_shared<const std::vector<singbox::PersonalRuleSet>>(std::move(visible));
     const auto scroll = model->rulesScrolls.try_emplace(std::pair<std::int64_t, std::size_t>{-1, 0}).first->second;
     return huxerui::Column{
-        huxerui::Text(Localized("资源库共享；仅被启用规则引用的集合参与运行。")),
         !model->ruleSetsLoaded.Get() ? PageLoadingSkeleton(theme, true) : rows->empty() ?
             EmptyState(Localized("还没有规则集，点击加号添加"), app::images::route) :
             huxerui::View{huxerui::VirtualList(rows->size() + (compact ? 1U : 0U), [=](std::size_t index) -> huxerui::View {
@@ -866,12 +865,11 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
             return PersonalRuleRow(row, source->supported, busy.Get(), PersonalRulePattern(row, source->library), openEditor, change)
                 .Key(row.editId.empty() ? row.anchor + ":" + std::to_string(index) : row.editId);
         }).Controller(scroll).EstimatedItemExtent(76.0F).With(huxerui::Grow(1.0F), huxerui::ScrollBar())};
-    return huxerui::Column{
+    std::vector<huxerui::View> content{
         huxerui::Row{
             names.empty() ? huxerui::View{huxerui::Text(Localized("请先创建一个订阅连接"))} : huxerui::View{huxerui::Select(names, selected, [](const auto& text) { return huxerui::Text(text); })
                 .With(huxerui::Grow(1.0F), huxerui::Enabled(!busy.Get()))
                 .OnChanged([=](std::size_t index) { if (index < sources.size()) profileId = sources[index].id; })},
-            huxerui::Text(Localized(source->selected ? "主订阅" : "作为主订阅时生效")),
             huxerui::IconButton(app::images::more_vertical, Localized("查看规则"))
                 .With(menu.Anchor()).OnClick([=] {
                     std::vector<ActionMenuEntry> items;
@@ -903,12 +901,14 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
                     menu.Show(std::move(items));
                 }),
         }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        huxerui::Text(Localized(kPersonalViews[view.Get()])),
-        source->error.empty() ? huxerui::View{huxerui::Row{}} : huxerui::View{
-            huxerui::Text(source->error).Style({huxerui::Font::System(font_size::kCaption), theme.colors.error})},
-        source->id && !source->supported ? huxerui::View{huxerui::Text(Localized("此格式使用连接或内网路由配置，不支持订阅个人规则。"))} : huxerui::View{huxerui::Row{}},
-        std::move(list),
-    }.With(huxerui::Spacing(8.0F), huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    };
+    if (!source->error.empty())
+        content.push_back(huxerui::Text(source->error).Style({huxerui::Font::System(font_size::kCaption), theme.colors.error}));
+    if (source->id && !source->supported)
+        content.push_back(huxerui::Text(Localized("此格式使用连接或内网路由配置，不支持订阅个人规则。")));
+    content.push_back(std::move(list));
+    return huxerui::Column{std::move(content)}.With(huxerui::Spacing(ResolveIslandTheme(theme).dense_radius),
+        huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObject>>;
@@ -1402,7 +1402,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
             })};
     body = huxerui::Column {
         std::move(sectionSwitch), std::move(body),
-    }.With(huxerui::Spacing(8.0F), huxerui::Grow(1.0F),
+    }.With(huxerui::Spacing(denseGap), huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
     huxerui::View searchField = PillSearchField(

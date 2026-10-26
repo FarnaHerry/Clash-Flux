@@ -37,6 +37,7 @@
 #include "home_header_control.h"
 #include "page_layout.h"
 #include "home_grid.h"
+#include "home_card.h"
 #include "empty_state.h"
 #include "task_bridge.h"
 
@@ -883,7 +884,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
            huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
            huxerui::MainAlign(huxerui::MainAxisAlignment::Center));
-    return huxerui::View{Card(std::move(content))}
+    return huxerui::View{HomeCardSurface(theme, std::move(content))}
         .OnClick([control, cardShown, motion, transition, reducedMotion = theme.motion.reduced_motion] {
             RunDesktopHomeCoreAction(control, cardShown, motion, transition,
                                      CoreAction::Stop, reducedMotion);
@@ -1118,7 +1119,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
         // 首页所有卡片一视同仁：都是 raised 二级岛外壳。「当前订阅」不显示选中态
         // （哪个订阅在使用中由订阅页的选中卡承担）。
         huxerui::View body = HomeCardContent(kind, state);
-        huxerui::View cardView = Card(std::move(body));
+        huxerui::View cardView = HomeCardSurface(theme, std::move(body));
         cards.push_back(std::move(cardView)
                             .LayoutValue<HomeCardSpan>(size)
                             .Key("home-card-" + id));

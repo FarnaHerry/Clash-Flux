@@ -158,6 +158,7 @@ public final class MainActivity extends HuxerUIActivity {
                 }
 
                 int status = connection.getResponseCode();
+                result.putInt("status", status);
                 String location = connection.getHeaderField("Location");
                 if (isRedirect(status) && location != null && !location.isEmpty()) {
                     if (requestHeaders.length != 0) {
@@ -195,6 +196,12 @@ public final class MainActivity extends HuxerUIActivity {
                     headers.put(name.toLowerCase(Locale.ROOT), value.toString());
                 }
                 result.putString("headers_json", headers.toString());
+
+                if (status == HttpURLConnection.HTTP_NOT_MODIFIED) {
+                    result.putByteArray("body", new byte[0]);
+                    result.putString("error", "");
+                    return result;
+                }
 
                 long expectedBodyLength = connection.getContentLengthLong();
                 ByteArrayOutputStream body = new ByteArrayOutputStream();

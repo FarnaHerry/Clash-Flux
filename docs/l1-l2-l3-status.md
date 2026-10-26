@@ -898,6 +898,28 @@ iOS 暂缓路径的现有 Xcode 工程解析失败仍为非阻塞，不生成 iO
 当前机器代理、数据库与订阅。
 
 
+## 2026-10-26：v0.3.70 CI 修复与运行时弃用告警
+
+代码快照：`v0.3.70` / `58df82517b128c1ae889e9100c24b089ae049e0a`。失败的首次标签 CI
+`40292493304` 缺少 `<algorithm>`，导致 Linux/macOS 无法编译规则集缓存；Windows
+个人规则导入回归用窄字符路径检查中文文件名，触发代码页转换异常。修复分别在
+`d1d52cb` 与 `58df825`。修复后的主分支 CI `40300803363` 与标签发布 CI
+`40313619869` 均成功。
+
+标签 CI 通过 Linux x64/arm64、Windows x64、macOS arm64、Android APK 签名校验、
+Windows Burn 安装器构建及发布汇总；Android、Windows 安装器、Linux DEB/RPM 与归档、
+macOS 归档共 10 项资产已出现在 [v0.3.70 Release](https://github.com/FarnaHerry/Clash-Flux/releases/tag/v0.3.70)。
+iOS Simulator 诊断 job 通过，但不生成发布包；没有执行 Windows 安装/升级实机验收。
+
+本机实际检查：VS 2026 MSVC 下 `cmake --build build --target clash-flux`（CMake
+4.4.2，Ninja 无待编译项）、终端 `./run.ps1 --version`（输出 v0.3.70）、
+`git diff --check` 均通过。此前修复后定向的 10 项 CTest 为 10/10。
+
+发布 CI 的 tag 快照仍有 Node 20 弃用告警：checkout v4、artifact v4。工作区已将
+checkout/cache/setup-go/setup-java/upload/download-artifact 更新到 Node 24 兼容版本；
+该工作区改动尚未推送，需后续 CI 实际运行确认新版 action 与发布流程兼容。
+
+
 ## 2026-10-12：服务变化后的 PPTP 能力恢复
 
 代码快照：v0.3.29 工作区修复，未提交/发布。服务分离后，PPTP 适配器只在
@@ -920,3 +942,93 @@ iOS 暂缓路径的现有 Xcode 工程解析失败仍为非阻塞，不生成 iO
 
 Windows SCM 回归新增安装前后、长操作中与重启后的 PPTP 能力查询检查，本机
 未执行该 Windows 专属用例；未新增 Windows 实机 RAS/PPTP 连接验收。
+
+## 2026-10-26：规则页精简说明文字
+
+代码快照：`58df825` 上的未提交工作区。删除订阅规则页的主订阅提示、列表视图名称，
+以及规则集页的共享资源库说明；同步删除两条闲置文案的 default/en/zh 资源。
+Windows/MSVC、CMake 4.4.2 下构建 `clash-flux test_page_transition`，确认规则页经过
+HuxerUI codegen；`page_transition` 与 `ui_resources` 为 2/2，终端
+`./run.ps1 --version` 输出 v0.3.70，`git diff --check` 通过。未执行 GUI 人工检查。
+
+## 2026-10-26：首页卡片无描边与悬停试样
+
+代码快照：`58df825` 上的未提交工作区。首页网格和桌面运行状态卡改用生产
+`HomeCardSurface`，无描边；框架 Indication 在内容下方淡入 5% primary 悬停底色。
+保留固定卡片尺寸与独立子控件命中，不给静态卡片添加点击动作。
+Windows/MSVC、CMake 4.4.2 下构建 `clash-flux test_page_transition`（含首页 codegen）
+通过，`page_transition` / `ui_resources` 2/2；`./run.ps1 --version` 输出 v0.3.70，
+`git diff --check` 通过。用户接手 GUI 效果检查，本轮未启动或操作应用界面。
+
+## 2026-10-26：规则页间距与首页卡片按压反馈
+
+代码快照：`58df825` 上的未提交工作区。规则页移除无内容提示的空布局节点，
+来源选择行到列表、页签到内容统一采用规则卡片的 4pt 间隙。首页卡片观察主指针，
+按下缩至 98.5% 并下移 1pt，松开/取消后弹回；reduced motion 关闭变换。
+Windows/MSVC、CMake 4.4.2 下 `cmake --build build --target clash-flux test_page_transition`
+成功（含规则页与交互回归 codegen），`page_transition` / `ui_resources` 2/2。
+新增生产卡片回归覆盖深浅主题、布局尺寸不变、取消/松开恢复、子按钮仅点击一次及
+reduced motion；`./run.ps1 --version` 输出 v0.3.70，`git diff --check` 通过。
+GUI 外观由用户检查，本轮未操作应用界面。
+
+## 2026-10-26：猫咪卡片边框与远程订阅准备性能
+
+代码快照：`58df825` 上的未提交工作区。手机/桌面 Compact 的猫咪运行标题卡去掉描边，
+保持 raised 表面、nested 圆角和 48pt 标题槽；生产绘制回归继续验证展开、收缩与滚动位置。
+
+用用户提供的私有订阅在本机临时目录复现：订阅本体 21,260 字节、32 个节点，
+11 个 HTTP provider 加 2 个 ASN 快照共 642,598 字节，生成 JSON 1,957,725 字节。
+首次订阅请求 6.119s，其中首字节等待 6.115s；网络等待与下述离线准备测量分开。
+原文、响应头、生成配置和诊断日志未加入仓库。
+
+编译器把本次从磁盘读取且已成功转换的原文快照交给准备层，避免重复读取/校验和相同字节重编译；
+已固定的 options 原文不额外保留副本。到期刷新仍执行，字节变化重新编译，完整候选检查和失败留旧不变。
+语法预检完整检查各条目但不累积废弃 JSON 树；classical 多个条目的 ASN 依赖同轮发现，整份集合仍须全部成功。
+
+Windows/MSVC Release 同机交错 A/B：旧可执行文件保存在临时目录；网络获取替换为同一份本地资源字节。
+热缓存预热一轮后各四次，中位数 **531.159ms → 207.039ms**；冷缓存各三次，
+中位数 **738.368ms → 500.090ms**。新版本热缓存编译一次并复用 13 份已验证快照，
+冷缓存编译三次。全部输出 JSON 的 SHA-256 相同，并通过固定 sing-box 1.14.3 的实际 `check`。
+这些是桌面离线准备进程耗时，不包含下载、Android 后台启动或手机性能数据。
+
+实际验证：构建 `clash-flux test_singbox test_rule_provider_download test_page_transition test_persistence`，
+通过 codegen；`page_transition`、`ui_resources`、`persistence`、`project_test_gate` 通过，
+`singbox`、`rule_provider_download` 最终 2/2（下载回归使用明确 OpenSSL 和 `--require-tls`）。
+新增回归核对缓存复用的 JSON/账本一致性、到期同字节/新字节处理、ASN 批量发现及失败零提交。
+Android Legacy 全量原生实现经现有 GUI 工具链 NDK 29.0.14206865、arm64-v8a/API24 语法检查通过；
+未重新打包 APK，未连接手机、未执行真机或 GUI 人工验收。版本命令输出 v0.3.70，`git diff --check` 通过。
+
+## 2026-10-26：规则资源有限并发、条件刷新与转换缓存
+
+代码快照：`58df825` 上的未提交工作区，延续前一节性能修复。
+生产 HTTP/ASN 准备最多 3 个工作线程，每轮先核对/去重完整身份，各资源独占暂存文件；
+全部线程结束后按原顺序检查并提交。失败/异常不会提前清理仍被写入的暂存目录。
+新增 ETag/Last-Modified 条件刷新，校验值与正文使用同一原子 v2 镜像，保留 v1 读取；
+304 只接受对应已验证正文，候选拒绝时不更新正文、校验值或到期时间。
+条件头不跨跳转传播，跳转时回到原始请求策略完整获取。
+
+domain/ipcidr 的 YAML/text/MRS 完整转换使用有界进程内 LRU，逐字节核对内容、格式与 behavior；
+不缓存上下文相关的 classical/ASN，不持久化跨版本编译产物，不改变来源账本、原订阅或生成规则。
+最多 32 项，估算计费上限 32 MiB；退出后加速缓存自然丢弃，磁盘 raw/运行快照仍保留。
+本轮没有实现 provider 到本地 SRS 的生成，也未使用预置 SRS 替换来源规则。
+
+同一份私有离线样本，Windows/MSVC Release 新旧进程交错各 3 次，冷缓存完整进程中位数
+**755.520ms → 345.981ms**；旧程序是前一节优化前保留的快照，不是紧邻本轮的工作区版本。
+新程序冷准备仍编译 3 次，13 个资源/49 条保真度记录，输出 JSON 的 SHA-256 与前一节完全相同，
+并再次通过固定 sing-box 1.14.3 的实际 `check`。
+新程序同进程重复准备 5 次，每次重新从磁盘固定 raw 输入：转换缓存命中 10 个 MRS 集合，
+准备函数耗时 34.232–39.314ms，中位数 **36.655ms**；该数字不含进程启动、网络或 Android 后台启动，
+不能直接与前一节完整进程的 207.039ms 比较。未测真实并发公网下载收益或手机耗时。
+
+构建 `clash-flux test_singbox test_rule_provider_download test_persistence` 成功；
+`singbox`、`rule_provider_download`、`persistence` 3/3。
+新增回归覆盖 3 个实际重叠工作线程、失败/异常等待与零提交、原快照保留、转换缓存内容/格式/来源隔离、
+无效尾部拒绝、有界淘汰、并发编译、304 原文保留与候选失败留旧、v1/v2 兼容及校验值注入拒绝。
+生产 curl 回归覆盖带 representation Content-Length 的 304、不接受非条件 304、条件头不随跳转传播，
+继续明确使用 OpenSSL CLI / `--require-tls` 验证默认证书拒绝。
+
+Android Legacy 全量原生代码经 NDK 29.0.14206865、arm64-v8a/API24 语法检查通过；
+从生产 MainActivity 原样提取的 HTTP 方法经 JDK 17 / Android API36 `javac` 编译检查通过。
+完整 `:app:compileDebugJavaWithJavac --offline` 在本机缺少固定版本 libbox AAR/元数据的
+`stageSingboxAar` 门禁停止，未绕过门禁或伪造产物；未完成整应用 Java 构建、APK 或真机验收。
+版本检查输出 v0.3.70，基础构建与 `git diff --check` 通过。未提交、打标签或推送。

@@ -274,10 +274,13 @@ RuleCondition compileAsnCondition(Context& ctx, const std::string& kind,
     else content = ReadHttpRuleProviderCache(resource, ctx.opt.ruleProviderCacheDir, error);
     auto prefixes = content ? asnPrefixes(resource, *content, error) : std::nullopt;
     if (!prefixes) {
+        ++ctx.unpreparedAsnConditions;
         result.error = "AS" + std::to_string(asn) + " 网段快照未准备：" + error;
         if (ctx.result.error.empty()) ctx.result.error = result.error;
         return result;
     }
+    if (found == ctx.opt.ruleProviderContents.end())
+        ctx.result.ruleProviderContents.try_emplace(resource.cacheKey, std::move(*content));
     result.rule[kind == "src-ip-asn" ? "source_ip_cidr" : "ip_cidr"] = std::move(*prefixes);
     ctx.note(FidelityScope::Rule, Fidelity::Approx, subject,
              "ASN 使用 ipverse IPv4/IPv6 公告网段快照，与 Clash ASN 数据库及实时归属可能不同",
@@ -566,11 +569,13 @@ std::optional<nlohmann::json> ruleProviderRules(Context& ctx, const Payload& pay
     std::map<std::string, nlohmann::json> fields;
     std::vector<std::string> strictSuffixes;
     const auto append = [&](const std::string& field, std::string value) {
+        if (ctx.providerSyntaxOnly) return;
         auto [it, inserted] = fields.try_emplace(field);
         if (inserted) it->second = nlohmann::json::array();
         it->second.push_back(std::move(value));
     };
     std::size_t index = 0;
+    std::string deferredFailure;
     for (const auto& item : payload) {
         std::string value;
         if constexpr (std::is_same_v<Payload, YAML::Node>) {
@@ -582,6 +587,7 @@ std::optional<nlohmann::json> ruleProviderRules(Context& ctx, const Payload& pay
         } else {
             value = trimCopy(item);
         }
+        const auto missingBefore = ctx.unpreparedAsnConditions;
         std::optional<nlohmann::json> condition;
         if (behavior == "domain") {
             const auto plainSuffix = value.starts_with("+.") ? dnsPolicyDomain(value.substr(2)) : std::nullopt;
@@ -595,7 +601,8 @@ std::optional<nlohmann::json> ruleProviderRules(Context& ctx, const Payload& pay
                     // separate trie leaves. Defer the strict suffix until all
                     // exact domains are known, so a pair can use one native
                     // domain_suffix instead of compiling a regex per domain.
-                    strictSuffixes.push_back(std::move(*suffix)); ++index; continue;
+                    if (!ctx.providerSyntaxOnly) strictSuffixes.push_back(std::move(*suffix));
+                    ++index; continue;
                 }
             }
             if (compact && patterns.size() == 1) {
@@ -620,8 +627,15 @@ std::optional<nlohmann::json> ruleProviderRules(Context& ctx, const Payload& pay
         if (!condition) {
             failure = "payload[" + std::to_string(index) + "]「" + value + "」无效：" +
                 (failure.empty() ? "匹配格式或类型未接入" : failure);
+            if (ctx.unpreparedAsnConditions != missingBefore) {
+                // Continue discovery across separate classical entries, while
+                // withholding this entire provider until every dependency works.
+                if (deferredFailure.empty()) deferredFailure = failure;
+                failure.clear(); ++index; continue;
+            }
             return std::nullopt;
         }
+        if (ctx.providerSyntaxOnly) { ++index; continue; }
         if (compact) {
             // MRS is a union. Aggregate each match field as entries are
             // decoded, without retaining a YAML node/JSON object per entry.
@@ -635,6 +649,7 @@ std::optional<nlohmann::json> ruleProviderRules(Context& ctx, const Payload& pay
         }
         ++index;
     }
+    if (!deferredFailure.empty()) { failure = std::move(deferredFailure); return std::nullopt; }
     if (!strictSuffixes.empty()) {
         std::unordered_set<std::string> remaining(strictSuffixes.begin(), strictSuffixes.end());
         if (auto exact = fields.find("domain"); exact != fields.end()) {
@@ -658,14 +673,78 @@ std::optional<nlohmann::json> ruleProviderRules(Context& ctx, const Payload& pay
     return rules;
 }
 
+// Only domain/ipcidr lowering is context independent. Classical rules can
+// discover ASNs or depend on platform capabilities and must always run normally.
+// Process-local cache: the executable fixes compiler/platform semantics. Keep
+// exact input bytes as well as format/behavior, never trust a hash alone.
+struct ProviderConversionCache {
+    struct Entry {
+        std::string content, format, behavior;
+        nlohmann::json rules;
+        std::size_t charge;
+    };
+    std::mutex mutex;
+    std::list<Entry> entries;
+    std::size_t bytes = 0;
+    static constexpr std::size_t budget = 32 * 1024 * 1024;
+
+    static std::size_t treeCharge(const nlohmann::json& value) {
+        std::size_t bytes = sizeof(nlohmann::json) + 32;
+        if (value.is_string()) bytes += value.get_ref<const std::string&>().capacity();
+        else if (value.is_structured()) for (auto it = value.begin(); it != value.end(); ++it) {
+            if (value.is_object()) bytes += it.key().capacity() + 64;
+            bytes += treeCharge(*it);
+        }
+        return bytes;
+    }
+    std::optional<nlohmann::json> find(const std::string& content, const std::string& format,
+                                     const std::string& behavior, bool syntaxOnly) {
+        std::lock_guard lock(mutex);
+        const auto found = std::ranges::find_if(entries, [&](const Entry& entry) {
+            return entry.format == format && entry.behavior == behavior && entry.content == content;
+        });
+        if (found == entries.end()) return std::nullopt;
+        entries.splice(entries.begin(), entries, found);
+        return syntaxOnly ? nlohmann::json::array() : entries.front().rules;
+    }
+    void remember(const std::string& content, const std::string& format,
+                  const std::string& behavior, const nlohmann::json& rules) {
+        const auto charge = content.size() + treeCharge(rules) + format.size() + behavior.size() + sizeof(Entry);
+        if (charge > budget) return;
+        std::lock_guard lock(mutex);
+        if (std::ranges::any_of(entries, [&](const Entry& entry) {
+            return entry.format == format && entry.behavior == behavior && entry.content == content;
+        })) return;
+        while (!entries.empty() && (bytes + charge > budget || entries.size() >= 32)) {
+            bytes -= entries.back().charge; entries.pop_back();
+        }
+        entries.push_front({content, format, behavior, rules, charge}); bytes += charge;
+    }
+};
+
+ProviderConversionCache& providerConversionCache() {
+    static ProviderConversionCache cache;
+    return cache;
+}
+
 std::optional<nlohmann::json> ruleProviderContentRules(Context& ctx, const std::string& content,
         const std::string& format, const std::string& behavior, std::string& failure) {
+    const bool cacheable = behavior == "domain" || behavior == "ipcidr";
+    if (cacheable) if (auto cached = providerConversionCache().find(content, format, behavior, ctx.providerSyntaxOnly)) {
+        ++ctx.result.ruleProviderConversionCacheHits;
+        return cached;
+    }
+    std::optional<nlohmann::json> rules;
     if (format == "mrs") {
         const auto entries = mrsEntries(content, behavior, failure);
-        return entries ? ruleProviderRules(ctx, *entries, behavior, failure, true) : std::nullopt;
+        if (entries) rules = ruleProviderRules(ctx, *entries, behavior, failure, true);
+    } else {
+        const auto payload = ruleProviderPayload(content, format, failure);
+        if (payload) rules = ruleProviderRules(ctx, *payload, behavior, failure);
     }
-    const auto payload = ruleProviderPayload(content, format, failure);
-    return payload ? ruleProviderRules(ctx, *payload, behavior, failure) : std::nullopt;
+    if (cacheable && rules && !ctx.providerSyntaxOnly)
+        providerConversionCache().remember(content, format, behavior, *rules);
+    return rules;
 }
 
 std::string httpProviderKey(std::string_view identity) {
@@ -834,7 +913,7 @@ void compileRuleProviders(Context& ctx, const YAML::Node& providers) {
             if (!resource) { reject(failure); continue; }
             ctx.result.httpRuleProviders.push_back(*resource);
             const auto supplied = ctx.opt.ruleProviderContents.find(resource->cacheKey);
-            const auto content = supplied != ctx.opt.ruleProviderContents.end()
+            auto content = supplied != ctx.opt.ruleProviderContents.end()
                 ? std::optional<std::string>{supplied->second}
                 : ReadHttpRuleProviderCache(*resource, ctx.opt.ruleProviderCacheDir, failure);
             if (!content || content->size() > resource->maxBytes) {
@@ -842,6 +921,8 @@ void compileRuleProviders(Context& ctx, const YAML::Node& providers) {
                 continue;
             }
             rules = ruleProviderContentRules(ctx, *content, resource->format, behavior, failure);
+            if (rules && supplied == ctx.opt.ruleProviderContents.end())
+                ctx.result.ruleProviderContents.try_emplace(resource->cacheKey, std::move(*content));
         } else {
             const auto payload = provider["payload"];
             if (!payload || !payload.IsSequence()) { reject("payload 必须为数组"); continue; }

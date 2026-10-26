@@ -265,7 +265,9 @@ SSH 另支持密码、内联/加密私钥和主机公钥/算法列表；双认�
 文件错误会阻止候选应用，保留旧订阅。MRSv1 domain/ipcidr 已接入，classical/未来版本和文件管理界面仍待接入，见
 [样本与配套文件](docs/examples/file-providers-2026-10-03.yaml)及[保真度契约](docs/singbox-layers-and-fidelity.md)。
 HTTP provider 也支持 YAML/text 直连子集：任务下载、完整转换与候选检查后才更新
-自有缓存，失败沿用已验证旧缓存，运行计划保留独立内容快照。`interval` 在应用
+自有缓存，失败沿用已验证旧缓存，运行计划保留独立内容快照。
+资源准备支持有限并发、ETag/Last-Modified 条件刷新及有界进程内转换缓存，
+详情见[缓存与保真度契约](docs/singbox-layers-and-fidelity.md)。`interval` 在应用
 配置时检查到期，尚无定时热更新；`path` 只读不回写。支持 `header` 的单值 ASCII
 数组子集（如 `User-Agent: [my-client/1]`），请求头参与缓存身份；带头下载不跟随
 重定向并记 approx。多值、传输保留头、指定代理及 MRS classical/未来版本仍拒绝整份声明。

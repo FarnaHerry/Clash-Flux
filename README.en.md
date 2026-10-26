@@ -368,6 +368,8 @@ old subscription. MRSv1 domain/ipcidr is supported; classical/future MRS version
 HTTP providers also accept the YAML/text direct-download subset. Task downloads,
 complete conversion and candidate checks precede app-owned cache replacement;
 failed updates keep verified old content, and applied plans hold separate raw snapshots.
+Resource preparation uses bounded concurrency, ETag/Last-Modified revalidation and
+a bounded in-process conversion cache; see the [cache contract](docs/singbox-layers-and-fidelity.md).
 `interval` is checked when applying a configuration, without periodic hot updates;
 `path` is a read-only seed. `header` supports single-value ASCII arrays, such as
 `User-Agent: [my-client/1]`, and participates in cache identity. Downloads with

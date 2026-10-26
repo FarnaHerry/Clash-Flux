@@ -20,6 +20,7 @@
 #include "home_control_motion.h"
 #include "home_header_control.h"
 #include "home_grid.h"
+#include "home_card.h"
 #include "home_vpn_status.h"
 #include "rule_target_picker.h"
 #include "log_actions.h"
@@ -2562,6 +2563,7 @@ std::optional<PaintedHeaderCard> paintedHeaderCard(huxerui::testing::UiTest& ui)
     std::getline(input, line); std::getline(input, line);
     const auto snapshot = readCatPaintNode(input, line);
     std::optional<PaintedHeaderCard> result;
+    float outlineWidth = 0.0F;
     const auto visit = [&](auto&& self, const CatPaintNode& node, huxerui::Transform2D parent) -> void {
         auto local = catPaintTransform(node.Find("transform"));
         if (const auto* offset = node.Find("offset")) {
@@ -2575,12 +2577,16 @@ std::optional<PaintedHeaderCard> paintedHeaderCard(huxerui::testing::UiTest& ui)
                 if (command.name == "border" && bounds && bounds->Number("height") == 48.0F &&
                     bounds->Number("width") > 200.0F) {
                     const auto* style = command.Find("style");
+                    outlineWidth = style ? style->Number("width") : 0.0F;
+                }
+                if (command.name == "rect" && bounds && bounds->Number("height") == 48.0F &&
+                    bounds->Number("width") > 200.0F) {
                     result = PaintedHeaderCard{
                         {world.m11 * bounds->Number("x") + world.translate_x,
                          world.m22 * bounds->Number("y") + world.translate_y,
                          world.m11 * bounds->Number("width"),
                          world.m22 * bounds->Number("height")},
-                        style ? style->Number("width") : 0.0F,
+                        0.0F,
                         command.Number("corner_radius")};
                 }
             }
@@ -2591,6 +2597,7 @@ std::optional<PaintedHeaderCard> paintedHeaderCard(huxerui::testing::UiTest& ui)
     };
     if (const auto* render = snapshot.Find("render"))
         for (const auto& node : render->children) visit(visit, node, huxerui::Transform2D{});
+    if (result) result->outlineWidth = outlineWidth;
     return result;
 }
 
@@ -2939,9 +2946,9 @@ void testHomeHeaderControl() {
     const auto fullHeaderCard = paintedHeaderCard(ui);
     check(fullHeaderCard && fullHeaderCard->bounds.width == slot.width &&
           fullHeaderCard->bounds.height == slot.height &&
-          fullHeaderCard->outlineWidth == kCardOutlineWidth &&
+          fullHeaderCard->outlineWidth == 0.0F &&
           fullHeaderCard->cornerRadius == ResolveIslandTheme(huxerui::FlatLightThemeSpec()).nested_radius,
-          "compact running card paints the same outline and radius as other home cards");
+          "compact running card shares the borderless surface and radius of other home cards");
     check(ui.Find(UiSelector::Key("home-header-slot")).One().bounds == slot &&
           ui.Find(UiSelector::Key("header-scroll")).One().bounds == viewport &&
           std::abs(ui.Find(UiSelector::Key("header-row-5")).One().bounds.y - contentY) < 0.5F,
@@ -2962,7 +2969,7 @@ void testHomeHeaderControl() {
                    fullHeaderCard->bounds.x - fullHeaderCard->bounds.width / 2.0F) < 0.5F &&
           std::abs(shrinkingHeaderCard->bounds.y + shrinkingHeaderCard->bounds.height / 2.0F -
                    fullHeaderCard->bounds.y - fullHeaderCard->bounds.height / 2.0F) < 0.5F,
-          "the outlined compact card stays painted while shrinking at its center");
+          "the borderless compact card stays painted while shrinking at its center");
     model->snapshot.Update([](HomeHeaderSnapshot& value) {
         value.running = false; value.busy = false; value.phase = BoxCatPhase::Sleeping; value.elapsedSeconds = 0;
     });
@@ -3117,6 +3124,69 @@ void testInboundSettings() {
           ParseInboundPorts("7899", "8080", "8080").error == PortSettingsError::Duplicate,
           "shared validation rejects collisions among all listener types");
 }
+int homeCardActionCount = 0;
+huxerui::View HomeCardPressRoot(bool dark, bool reduced) {
+    auto theme = huxerui::FlatLightThemeSpec();
+    theme.colors = dark ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
+    theme.motion.reduced_motion = reduced;
+    return huxerui::MaterialTheme(theme, huxerui::Column{
+        clashflux::ui::HomeCardSurface(theme, huxerui::Column{
+            huxerui::Text("Card body").With(huxerui::Grow(1.0F)),
+            huxerui::Button("Nested card action").OnClick([] { ++homeCardActionCount; }).Key("nested-card-action"),
+        }.With(huxerui::Grow(1.0F))).With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("press-card"),
+        huxerui::Spacer().With(huxerui::Frame{.height = 100.0F}),
+    });
+}
+huxerui::View HomeCardPressLightRoot() { return HomeCardPressRoot(false, false); }
+huxerui::View HomeCardPressDarkRoot() { return HomeCardPressRoot(true, false); }
+huxerui::View HomeCardPressReducedRoot() { return HomeCardPressRoot(false, true); }
+const huxerui::Application kHomeCardPressLight{HomeCardPressLightRoot, {.show_debug_overlay = false}};
+const huxerui::Application kHomeCardPressDark{HomeCardPressDarkRoot, {.show_debug_overlay = false}};
+const huxerui::Application kHomeCardPressReduced{HomeCardPressReducedRoot, {.show_debug_overlay = false}};
+
+float paintedHomeCardScale(huxerui::testing::UiTest& ui) {
+    const auto snapshot = ui.CaptureSnapshot().ToString();
+    const std::regex transform{R"(transform\s+\{\s+m11=([\d.-]+))"};
+    float result = 1.0F;
+    for (std::sregex_iterator item(snapshot.begin(), snapshot.end(), transform), end; item != end; ++item)
+        result = std::min(result, std::stof((*item)[1].str()));
+    return result;
+}
+
+void testHomeCardPress() {
+    for (const auto* app : {&kHomeCardPressLight, &kHomeCardPressDark, &kHomeCardPressReduced}) {
+        const bool reduced = app == &kHomeCardPressReduced;
+        huxerui::testing::UiTest ui(*app, {.viewport = {400.0F, 400.0F}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        const auto card = ui.Find(UiSelector::Key("press-card")).One();
+        huxerui::PointerEvent event{.type = huxerui::PointerEventType::Down, .pointer_id = 84,
+            .position = {card.bounds.x + 8.0F, card.bounds.y + 8.0F}, .device_kind = huxerui::PointerDeviceKind::Mouse,
+            .changed_button = huxerui::PointerButton::Primary, .pressed_buttons = huxerui::PointerButton::Primary};
+        ui.SendPointer(event); ui.Pump(); ui.Pump(std::chrono::milliseconds(100));
+        check(reduced ? paintedHomeCardScale(ui) == 1.0F : paintedHomeCardScale(ui) < 0.999F,
+              "home card paints a press transform in both themes and honors reduced motion");
+        check(ui.Find(UiSelector::Key("press-card")).One().size == card.size,
+              "home card press animation does not change grid layout size");
+        event.type = huxerui::PointerEventType::Cancel;
+        event.pressed_buttons = huxerui::PointerButton::None;
+        ui.SendPointer(event); ui.PumpAndSettle();
+        check(std::abs(paintedHomeCardScale(ui) - 1.0F) < 0.0001F, "cancel restores the card's painted scale");
+
+        const auto button = ui.Find(UiSelector::Key("nested-card-action")).One().bounds;
+        event.type = huxerui::PointerEventType::Down;
+        event.device_kind = huxerui::PointerDeviceKind::Touch;
+        event.position = {button.x + button.width / 2.0F, button.y + button.height / 2.0F};
+        event.pressed_buttons = huxerui::PointerButton::Primary;
+        const int previous = homeCardActionCount;
+        ui.SendPointer(event); ui.Pump(); ui.Pump(std::chrono::milliseconds(100));
+        check(reduced || paintedHomeCardScale(ui) < 0.999F, "pressing a nested control also animates its card");
+        event.type = huxerui::PointerEventType::Up;
+        event.pressed_buttons = huxerui::PointerButton::None;
+        ui.SendPointer(event); ui.PumpAndSettle();
+        check(homeCardActionCount == previous + 1, "card feedback preserves the nested button's single click");
+        check(std::abs(paintedHomeCardScale(ui) - 1.0F) < 0.0001F, "release restores the card's painted scale");
+    }
+}
 } // namespace
 
 int main() {
@@ -3233,6 +3303,7 @@ int main() {
     testVpnPublication();
     testCustomThemeColors();
     testThemeColorSurfaces();
+    testHomeCardPress();
     {
         huxerui::testing::UiTest ui(kMotionApplication, {.viewport = {800.0F, 700.0F}, .resource_provider = AppResources()});
         ui.PumpAndSettle();

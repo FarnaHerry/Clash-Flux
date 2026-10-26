@@ -589,10 +589,11 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     out.flush();
     if (code == CURLE_OK) {
         curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status);
-        result.ok = result.status >= 200 && result.status < 300;
+        result.ok = (result.status >= 200 && result.status < 300) ||
+                    (options.acceptNotModified && result.status == 304);
         if (!result.ok) {
             result.error = std::format("HTTP {}", result.status);
-        } else {
+        } else if (result.status != 304) {
             // 服务器声明了长度就核对实际写入字节数：中间设备/代理按
             // connection-close 提前收尾时 curl 会当作正常完成，落盘的却可能是
             // 截断文件（.srs 规则集被截断会让内核启动期 FATAL）。
@@ -633,6 +634,9 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
             result.error = "无法完成下载文件写入: " + dest.string();
         }
     }
+    // A 304 has no representation body. Never validate or replace the file
+    // with the empty temporary response; its RAII directory is cleaned up.
+    if (options.acceptNotModified && result.status == 304) return result;
     if (result.ok && options.maxBytes) {
         std::error_code sizeError;
         const auto size = std::filesystem::file_size(temp, sizeError);

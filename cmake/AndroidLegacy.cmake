@@ -25,6 +25,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "#include <algorithm>\n"
         "#include <array>\n"
         "#include <atomic>\n"
+        "#include <list>\n"
         "#include <chrono>\n"
         "#include <charconv>\n"
         "#include <cctype>\n"

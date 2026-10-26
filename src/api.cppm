@@ -91,6 +91,9 @@ public:
         bool allowInvalidCert = false;
         std::string proxyUrl;        // 非空 = 经该代理（如 http://127.0.0.1:7899）
         bool allowProxyEnv = false;  // proxyUrl 为空时是否允许环境变量代理
+        // Explicit conditional request only: 304 returns headers without
+        // validating/replacing dest. Caller must possess a verified snapshot.
+        bool acceptNotModified = false;
         std::size_t maxBytes = 0;    // 0=不限；非零在 curl 写入时拒绝超限，不截断提交
         // Common single-value ASCII subset. Nonempty headers disable redirects
         // on supported transports; iOS explicitly rejects this option.

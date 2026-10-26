@@ -255,6 +255,12 @@ Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上�
 `Card` 只允许用 `outlined=false` 关闭描边。无描边的 `DenseCard` 和未选中条目
 继续靠底色区分；按钮、输入框、单选圈和键盘焦点环使用各自控件样式。
 
+首页网格及桌面运行状态卡共用 `HomeCardSurface`：raised 底色、nested 圆角、无描边。
+手机与桌面窄窗标题栏的猫咪运行卡同样无描边，保留固定 48pt 标题槽和既有切换动画。
+鼠标悬停以 5% primary 色在内容下方淡入，移出淡出；使用框架 Indication，不占布局、
+不添加整卡点击动作，卡内开关和按钮维持独立命中。按下时缩至 98.5% 并下移 1pt，
+松开或取消后用弹簧回到原位；只观察指针，不夺取子控件/滚动所有权，reduced motion 关闭位移动画。
+
 圆角自上而下共用一套阶梯（`IslandTheme` + 主题 ShapeScheme）：一级岛
 `island_radius` 22pt → 卡片/二级岛 `nested_radius` 14pt → 控件
 `theme.shapes.small` 8pt → **密集内容卡 `dense_radius` 4pt**（日志行等
