@@ -11,6 +11,33 @@ import clashflux.singbox;
 import clashflux.routing;
 
 int main() {
+    singbox::RuleSetLibrary library;
+    library.revision = 9;
+    library.resources.push_back({.id="ads", .name="Ads", .type="inline", .format="source",
+        .content=R"({"version":3,"rules":[{"domain_suffix":["ads.test"]}]})", .refresh_generation=12});
+    assert(routing::DecodeRuleSetLibrary(routing::EncodeRuleSetLibrary(library)) == library);
+    assert(routing::DecodeRuleSetLibrary("").resources.empty());
+    assert(routing::DecodeRuleSetLibrary(R"({"resources":[{"id":"old","name":"Old"}]})").resources[0].refresh_generation == 0);
+    vpn::VpnPolicy setPolicy{.rules={{.match=vpn::MatchKind::RuleSet, .pattern="ads", .connectionId="profile-1"}}};
+    assert(routing::DecodePolicy(routing::EncodePolicy(setPolicy)) == setPolicy);
+    for (const std::string invalid : {"null", "[]", "{", "{\"unknown\":1}",
+            "{\"resources\":[{\"extra\":true}]}", "{\"format_version\":99}",
+            "{\"resources\":false}", "{} trailing"}) {
+        bool refused = false;
+        try { routing::DecodeRuleSetLibrary(invalid); } catch (...) { refused = true; }
+        assert(refused);
+    }
+    singbox::ProfileRuleEdits edits;
+    edits.revision = 17;
+    edits.rules.push_back({.id="r1", .operation="replace", .anchor="clash:DOMAIN,a.test,DIRECT",
+        .match="domain", .pattern="b.test", .target="Pick"});
+    assert(routing::DecodeProfileRules(routing::EncodeProfileRules(edits)) == edits);
+    assert(routing::DecodeProfileRules("").rules.empty());
+    for (const std::string invalid : {"null", "[]", "{", "{\"unknown\":1}", "{\"rules\":3}", "{\"format_version\":99}"}) {
+        bool refused = false;
+        try { routing::DecodeProfileRules(invalid); } catch (...) { refused = true; }
+        assert(refused);
+    }
     db::Profile main{.id = 1, .name = "main", .selected = true};
     db::Profile other{.id = 2, .name = "other"};
     db::Profile native{.id = 3, .name = "native", .type = "pptp",

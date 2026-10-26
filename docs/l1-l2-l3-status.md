@@ -1,5 +1,51 @@
 # L1 / L2 / L3 开发完成度复核
 
+2026-10-26 `v0.3.70` Windows 发版候选实机验证：本地生成的安装包从 0.3.69 静默升级到 0.3.70，安装器返回 0，
+但升级后 `ClashFluxService` 被旧 MSI 删除。MSI 日志显示卸载中的 0.3.69 包即使设置了 `UPGRADINGPRODUCTCODE`、
+且 `ServiceCleanup` 组件 Action 为 Absent，仍执行 Stop/Delete ServiceControl。通过新安装的程序显式重装服务后恢复运行；
+数据库完整性及 profiles/settings 逻辑摘要未变化。真实失败回滚和静默卸载未验收；该已知问题已写入发布说明。
+日志和数据库快照保存在本机 `%LOCALAPPDATA%\ClashFlux-InstallValidation\v0.3.70-20261026`，不随提交发布。
+
+2026-10-26 规则集剩余功能（v0.3.70 发布快照）：全局规则现在可引用共享规则集，
+显示名称而持久化稳定 ID，规则层级/出口/不可用策略保持不变；删除保护覆盖全局和订阅的禁用记录。
+桌面可导入本地 SRS，经固定内核有界反编译为独立 inline JSON；源文件不改，失败保留表单/旧库。
+桌面远程集合可显式重新下载：轮换单资源原生缓存身份，经候选检查和已有重启/恢复路径应用；
+未运行或未引用仅排队，不伪报下载成功。本次操作回执由应用模型持有，不冒充原生周期更新时间。
+Windows MSVC x64/Release 主目标及 UI codegen 通过；HuxerUI 固定到 `3a6c18e`；版本检查输出 v0.3.70，git diff --check 通过。
+定向 CTest `singbox|routing|vpn|persistence|page_transition|ui_resources|project_test_gate|runtime_health|native_control_runtime|personal_rule_sets_runtime`
+10/10 通过。新增 personal_rule_sets_runtime 纳入必跑门禁；本机 25 项 required 均已注册/启用，
+直接 ORM 仍按已有 MSVC C4737 硬错误例外跳过，未执行全部 25 项。
+固定 sing-box 1.14.3 的隔离运行覆盖 11 个场景：本地 inline、全局引用、生产 SRS 导入、远程 JSON/SRS、
+同身份缓存复用、强制获取新内容、坏内容强制更新拒绝、离线新缓存、旧缓存恢复和 TLS 证书拒绝。
+生产导入函数另覆盖 Unicode/空格路径、畸形/缺失/超限文件、原文件保留与独占暂存清理。
+实际 GUI 在独立测试库验证全局选择/保存、本地 SRS 文件选择和 JSON 编辑/保存、未引用远程更新排队，
+以及 1080→500pt 窄窗、独立全局编辑页；退出后只读重开 SQLite 核对稳定引用、SRS 内容和更新代次，
+两条订阅和源文件均保留。修正运行夹具提前流水发送 SOCKS/HTTP 的时序问题后，运行回归与 CTest 通过。
+手动证据在本机 LocalAppData/ClashFlux-RuleValidation/20261026/remaining-runtime-corrected；GUI 使用 remaining-gui。
+测试应用和本次原生工具/loopback 服务已退出，没有修改真实用户库或启用 TUN/系统代理；真实 SCM 运行交接、
+Android/Linux/macOS 构建/设备、原生周期刷新与完整平台门禁未验收。手动更新及 SRS 文件导入暂只对桌面开放。
+该轮结束时没有提交或发布；功能契约见[订阅个人规则](subscription-personal-rules.md)。
+收尾另限制旧 GEO EOF 自愈：只在全部文件资源可归属编译器清单时修复自有 GEO 文件，
+不删除共享原生 cache.db；生产归属判定覆盖个人远程、订阅本地、inline 与自有资源组合。
+
+2026-10-26 订阅个人规则与规则集资源库（v0.3.70 发布快照）：
+个人修改绑定 profile ID，直接编译 sing-box JSON；规则页增加「订阅规则 / 全局规则 / 规则集」，
+共享资源库支持远程 JSON/SRS、本地导入/手写 JSON，以及个人规则引用。资源改名保留稳定 ID，
+启用引用才加载，删除保护包含其它订阅与禁用记录；远程 URL/格式改变使用新的原生缓存身份。
+Windows MSVC x64/Release 主目标及 HuxerUI codegen 构建通过；定向 CTest
+`singbox|routing|persistence|page_transition|ui_resources|project_test_gate` 6/6 通过。
+固定 sing-box 1.14.3 的隔离运行回归通过本地 inline、远程 JSON、远程 SRS、服务端离线后 SRS
+缓存复用，以及不受信任 TLS 证书拒绝；每个成功场景同时核对集合命中拦截与无关流量直连。
+实际运行发现并修正 HTTP client 绕到空 direct outbound 的启动期错误，配置 check 单独未能发现。
+回归脚本为 `tests/test_personal_rule_sets_runtime.py`，当前手动执行，尚未注册到 CTest。
+隔离 GUI 验证新增本地 JSON、个人规则引用/REJECT 保存、切源隔离，以及桌面宽/窄窗、独立编辑页；
+退出后重开 SQLite 核对资源/引用已落库、另一订阅未变、远程订阅原文与受控刷新文件逐字节一致。
+真实用户数据库、订阅和 VPN 数据面未改动；Android/Linux/macOS 构建与实机、运行期定时刷新、
+手动强制刷新、资源状态展示、全局规则集合引用及本地 SRS 导入未验收或尚未提供。
+详见[功能与持久化边界](subscription-personal-rules.md)。
+
+2026-10-26 `v0.3.69` 本机真实升级：0.3.68 → 0.3.69 安装成功，旧 Burn Bundle 迁移及订阅数据保留通过；旧 MSI 卸载阶段删除服务，升级服务保留失败，随后恢复服务。真实卸载、中途失败回滚和 VPN 数据流未验收；完整机器专属证据保留在本地，不随发布提交。
+
 2026-10-26 Windows 安装器修复：应用 `ac301e5` 加工作区、框架 `6ebc621` 加隐藏 HWND 修复，在独立源码快照和 MSVC x64/Release 下完成主应用与安装器干净构建，版本命令返回 v0.3.68/0；框架公共头文件检查、4 个通用套件和安装器 10 个用例的 88 条断言均通过。原增量目录的 Runtime 视口异常在干净构建中未复现。应用 `legacy_bundle_cleanup`、`project_test_gate`、`page_transition`、`persistence`、`ui_resources`、`cps_dependencies` 六项通过；配置测试在正确加载 MSVC/Ninja 环境后重跑通过。
 
 应用独立 checkout 固定到 `abd07a3f19d2680ade6093075608f73b42a9b3a3` 后，主目标和版本检查通过。原增量目录中部分框架对象仍早于变更后的公共头文件，分页和持久化测试异常退出；保留目录与源码、按现有 MSVC 编译命令重编译框架及测试库对象，再由常规构建刷新依赖和链接后，上述六项回归全部通过。

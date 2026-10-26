@@ -58,6 +58,7 @@ export enum class MatchKind {
     DomainSuffix,
     ExactIp,
     Ipv4Cidr,
+    RuleSet,
 };
 
 export inline std::string_view MatchKindName(MatchKind kind) noexcept {
@@ -67,6 +68,7 @@ export inline std::string_view MatchKindName(MatchKind kind) noexcept {
     case MatchKind::DomainSuffix: return "域名后缀";
     case MatchKind::ExactIp: return "精确 IP";
     case MatchKind::Ipv4Cidr: return "IPv4 网段";
+    case MatchKind::RuleSet: return "规则集";
     }
     return "未知";
 }
@@ -84,6 +86,7 @@ export inline std::optional<MatchKind> ParseMatchKind(
     if (name == "IPv4 网段" || name == "ipv4-cidr") {
         return MatchKind::Ipv4Cidr;
     }
+    if (name == "规则集" || name == "rule-set") return MatchKind::RuleSet;
     return std::nullopt;
 }
 
@@ -464,6 +467,7 @@ inline int specificity(MatchKind kind) noexcept {
     case MatchKind::DomainSuffix: return 3;
     case MatchKind::Ipv4Cidr: return 2;
     case MatchKind::Any: return 1;
+    case MatchKind::RuleSet: return 0;
     }
     return 0;
 }
@@ -482,6 +486,7 @@ inline bool matches(const RouteRule& rule, std::string_view target) {
     }
     case MatchKind::ExactIp: return lower(target) == lower(rule.pattern);
     case MatchKind::Ipv4Cidr: return matchIpv4Cidr(target, rule.pattern);
+    case MatchKind::RuleSet: return false; // Only the active sing-box rule engine has the resource contents.
     }
     return false;
 }
@@ -525,6 +530,7 @@ inline std::optional<std::string> nativeDestination(const RouteRule& rule) {
     case MatchKind::Any:
     case MatchKind::ExactDomain:
     case MatchKind::DomainSuffix:
+    case MatchKind::RuleSet:
         // 域名需要 DNS/规则层解析，不能直接变成稳定的内核路由。
         return std::nullopt;
     }

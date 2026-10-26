@@ -16,6 +16,32 @@ export inline std::string ConnectionId(std::int64_t id) {
     return std::format("profile-{}", id);
 }
 
+export inline std::string ProfileRulesKey(std::int64_t id) {
+    return "profile.rules." + std::to_string(id);
+}
+export inline singbox::RuleSetLibrary DecodeRuleSetLibrary(const std::string& text) {
+    const auto decoded = clashflux::wire::DecodeRuleSetLibrary(text);
+    if (!decoded) throw std::runtime_error("规则集资源库解码失败：" + decoded.error);
+    if (decoded.value.format_version != 1) throw std::runtime_error("不支持的规则集资源库版本；保留原数据");
+    return decoded.value;
+}
+export inline std::string EncodeRuleSetLibrary(const singbox::RuleSetLibrary& library) {
+    const auto encoded = clashflux::wire::EncodeRuleSetLibrary(library);
+    if (!encoded) throw std::runtime_error("规则集资源库编码失败：" + encoded.error);
+    return encoded.value;
+}
+export inline singbox::ProfileRuleEdits DecodeProfileRules(const std::string& text) {
+    const auto decoded = clashflux::wire::DecodeProfileRuleEdits(text);
+    if (!decoded) throw std::runtime_error("订阅个人规则解码失败：" + decoded.error);
+    if (decoded.value.format_version != 1) throw std::runtime_error("不支持的订阅个人规则版本；保留原数据");
+    return decoded.value;
+}
+export inline std::string EncodeProfileRules(const singbox::ProfileRuleEdits& edits) {
+    const auto encoded = clashflux::wire::EncodeProfileRuleEdits(edits);
+    if (!encoded) throw std::runtime_error("订阅个人规则编码失败：" + encoded.error);
+    return encoded.value;
+}
+
 export inline std::string EncodePolicy(const vpn::VpnPolicy& policy) {
     clashflux::wire::Policy wire;
     wire.format_version = 2;
@@ -62,6 +88,7 @@ export inline vpn::VpnPolicy DecodePolicy(const std::string& text) {
             case vpn::MatchKind::DomainSuffix: return 3;
             case vpn::MatchKind::Ipv4Cidr: return 2;
             case vpn::MatchKind::Any: return 1;
+            case vpn::MatchKind::RuleSet: return 0;
             }
             return 0;
         };

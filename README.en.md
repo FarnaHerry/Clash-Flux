@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.69 release notes](docs/releases/v0.3.69.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.70 release notes](docs/releases/v0.3.70.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -54,8 +54,13 @@ application-managed settings before being passed to sing-box.
   the center. Content rebounds when canceled; returning to a group preserves its scroll
   position. Switch nodes and test a whole group's latency, with colored delay values and
   a test button at the bottom right.
-- Rules, connections and logs: view each subscription's rules; assign domains,
-  IP addresses and CIDRs to different connections through global routing rules;
+- Rules, connections and logs: view and customize subscription rules, with personal
+  changes saved separately across updates and compiled directly to sing-box JSON
+  ([details](docs/subscription-personal-rules.md)). Add remote JSON/SRS sets or import local
+  rule-set JSON (desktop also imports SRS), then reference them in personal or global rules.
+  Desktop can force a remote set to download again by restarting the core. Required CTest
+  `personal_rule_sets_runtime` covers import, matching, caching and TLS rejection; assign domains, IP addresses and
+  CIDRs to different connections through global rules;
   inspect connection snapshots and close individual or all connections. Core and
   application logs share one searchable list and export, with history restored for viewing.
 - Standalone PPTP connections use system dialing and privileged service integration.

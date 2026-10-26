@@ -408,6 +408,10 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
         }
         return;
     }
+    if (!ctx.opt.profileRuleEdits.rules.empty()) {
+        compilePersonalClashRules(ctx, root);
+        return;
+    }
     if (const YAML::Node rules = root["rules"]; rules) {
         if (!rules.IsSequence()) {
             ctx.note(FidelityScope::Rule, Fidelity::Unsupported, "rules",

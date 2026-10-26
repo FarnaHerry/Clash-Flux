@@ -89,6 +89,29 @@ struct StoredLogInput {
 // Persisted and outgoing contracts use explicit key lists. UI-only projections
 // can evolve without accidentally renaming serialized policy/log keys.
 namespace glz {
+template <> struct meta<clashflux::wire::PersonalRuleSet> {
+    using T = clashflux::wire::PersonalRuleSet;
+    static constexpr auto value = object("id", &T::id, "name", &T::name,
+        "type", &T::type, "format", &T::format, "url", &T::url,
+        "content", &T::content, "update_hours", &T::update_hours,
+        "refresh_generation", &T::refresh_generation);
+};
+template <> struct meta<clashflux::wire::RuleSetLibrary> {
+    using T = clashflux::wire::RuleSetLibrary;
+    static constexpr auto value = object("format_version", &T::format_version,
+        "revision", &T::revision, "resources", &T::resources);
+};
+template <> struct meta<clashflux::wire::ProfileRuleEdit> {
+    using T = clashflux::wire::ProfileRuleEdit;
+    static constexpr auto value = object("id", &T::id, "operation", &T::operation,
+        "anchor", &T::anchor, "enabled", &T::enabled, "match", &T::match,
+        "pattern", &T::pattern, "target", &T::target, "unavailable", &T::unavailable);
+};
+template <> struct meta<clashflux::wire::ProfileRuleEdits> {
+    using T = clashflux::wire::ProfileRuleEdits;
+    static constexpr auto value = object("format_version", &T::format_version,
+        "revision", &T::revision, "rules", &T::rules);
+};
 template <> struct meta<clashflux::wire::RouteRule> {
     using T = clashflux::wire::RouteRule;
     static constexpr auto value = object("match", &T::match, "pattern", &T::pattern,
@@ -245,6 +268,34 @@ Result<Policy> DecodePolicy(std::string_view text) {
 }
 Result<std::string> EncodePolicy(const Policy& policy) {
     return codec_detail::encode(policy);
+}
+Result<ProfileRuleEdits> DecodeProfileRuleEdits(std::string_view text) {
+    if (text.empty()) return {};
+    struct Options : glz::opts {
+        bool validate_trailing_whitespace = true;
+        constexpr Options() { null_terminated = false; error_on_unknown_keys = true; }
+    };
+    Result<ProfileRuleEdits> result;
+    if (const auto error = glz::read<Options{}>(result.value, text))
+        result.error = glz::format_error(error, text);
+    return result;
+}
+Result<std::string> EncodeProfileRuleEdits(const ProfileRuleEdits& edits) {
+    return codec_detail::encode(edits);
+}
+Result<RuleSetLibrary> DecodeRuleSetLibrary(std::string_view text) {
+    if (text.empty()) return {};
+    struct Options : glz::opts {
+        bool validate_trailing_whitespace = true;
+        constexpr Options() { null_terminated = false; error_on_unknown_keys = true; }
+    };
+    Result<RuleSetLibrary> result;
+    if (const auto error = glz::read<Options{}>(result.value, text))
+        result.error = glz::format_error(error, text);
+    return result;
+}
+Result<std::string> EncodeRuleSetLibrary(const RuleSetLibrary& library) {
+    return codec_detail::encode(library);
 }
 Result<std::string> EncodeSelection(std::string_view name) {
     return codec_detail::encode(codec_detail::SelectionInput{std::string(name)});

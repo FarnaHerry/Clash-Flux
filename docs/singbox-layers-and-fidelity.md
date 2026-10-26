@@ -563,6 +563,17 @@ DNS/HTTP/SOCKS 端口运行；不打开应用运行时/数据库、不使用真�
 
 ### 4.4 规则
 
+2026-10-26：个人规则集资源库支持原生 remote JSON/SRS、导入/手写 source JSON → inline，
+订阅个人及全局规则引用为原生 rule_set 匹配（exact）；桌面本地 SRS 经固定内核反编译为 inline JSON，
+不支持的二进制内容整份拒绝。远程下载与定时更新由内核管理，桌面显式重新下载轮换单资源缓存身份并重启，
+失败保留旧声明/缓存并沿既有运行计划恢复流程处理；不复用 Clash HTTP
+provider 的快照缓存。资源声明、稳定引用、候选保存与 UI 边界见[个人规则集](subscription-personal-rules.md#个人规则集资源库2026-10-26)。
+
+2026-10-26：新增[订阅个人规则](subscription-personal-rules.md)，Clash YAML / 原生 JSON
+共享解析投影，个人修改直接降低为内核 JSON，不重写源文件或生成中间 YAML。
+简单条件可编辑，复杂原规则保持只读；引用冲突拒绝刷新，出口失效按显式策略保留匹配并记账。
+个人规则仅随主来源执行，既有全局层级和普通次来源不导入内部规则的边界保持不变。
+
 已映射：`DOMAIN` / `DOMAIN-SUFFIX` / `DOMAIN-KEYWORD` / `DOMAIN-REGEX` / `IP-CIDR` /
 `IP-CIDR6` / `GEOIP`（`PRIVATE` → `ip_is_private`；国家码 → MetaCubeX `.srs`
 rule_set）/ `GEOSITE` / `RULE-SET` 国内别名 / `MATCH` / `PROCESS-NAME` → `process_name` / `PROCESS-PATH` →
@@ -755,7 +766,8 @@ check 检查输出。真实 HTTP(S) 下载/原子提交另由 `rule_provider_dow
 GEO 缓存由编译器的 `CompileResult.ruleSetResources` 显式声明，覆盖本地命中与
 未命中情况。桌面启动任务按周检查刷新，不再只扫描 remote 配置；原生 JSON 的
 rule_set 来源、format、download_detour 和 tag 不进入应用预取。编译只读缓存，
-坏文件清理由任务层处理，启动修复仅清理当前清单的自有 GEO，Android 不清理或
+坏文件清理由任务层处理，启动修复仅清理当前清单的自有 GEO；共享原生缓存保留、
+混合计划归属限制见[规则集资源契约](subscription-personal-rules.md)。Android 不清理或
 在线刷新固定打包的 GEO。提交下载前检查 SRS/版本/zlib 文件头，失败保留旧文件；
 这是轻量筛查，不能宣称完成解压、校验和或规则语义校验。原生版本与 SRS 上限对齐
 固定 [1.14.2 常量](https://github.com/SagerNet/sing-box/blob/7054cac5124465ffdb145870d7c01885566711b1/constant/rule.go)

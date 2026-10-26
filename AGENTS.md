@@ -51,7 +51,7 @@ cmake --build build --target clash-flux
 git diff --check
 ```
 
-其它构建目录用 `CLASHFLUX_BIN` 显式选择产物；完整测试/平台前提、GUI 检查和发布门禁见测试技能。
+其它构建目录用 `CLASHFLUX_BIN` 显式选择产物；完整测试/平台前提、规则集运行回归、GUI 检查和发布门禁见测试技能。
 构建或配置检查不等于实机、VPN、签名或发布验收。
 
 ## 规范维护

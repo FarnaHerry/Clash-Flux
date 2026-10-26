@@ -129,8 +129,7 @@ huxerui::StringVariant pptpStateText(const store::PptpState& state);
 std::size_t ResponsiveProfilePageIndex(
     bool compact, huxerui::State<std::int64_t> edit_page_id,
     huxerui::State<bool> create_page_open,
-    huxerui::State<std::int64_t> file_page_id,
-    huxerui::State<std::int64_t> rules_page_id);
+    huxerui::State<std::int64_t> file_page_id);
 void OpenProfileCreate(bool compact, huxerui::State<bool> page,
                        huxerui::TaskScope tasks,
                        const std::function<void()>& dialog);
@@ -235,11 +234,6 @@ huxerui::View ProfileFilePage(
     std::int64_t id, huxerui::State<std::shared_ptr<std::string>> content,
     huxerui::State<bool> loading, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::function<void()> on_back);
-huxerui::View ProfileRulesPage(
-    std::int64_t id, huxerui::State<std::string> yaml,
-    huxerui::StateList<std::string> rules,
-    huxerui::State<huxerui::TextEditingValue> input,
-    huxerui::State<bool> dirty, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::function<void()> on_back);
+
 
 } // namespace clashflux::ui

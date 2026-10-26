@@ -210,6 +210,7 @@
         options.ruleSetDir = cfg::coreWorkDir().string();
         options.ruleProviderDir = cfg::dataDir().string();
         options.ruleProviderCacheDir = (cfg::coreWorkDir() / "rule-providers").string();
+        options.ruleSetLibrary = routing::DecodeRuleSetLibrary(setting("rules.resources", ""));
         auto profiles = db_->listProfiles();
         if (mainOverride) {
             for (auto& profile : profiles)
@@ -221,6 +222,8 @@
         std::string policyError;
         if (!routing::ValidatePlatformPolicy(policy, profiles, policyError)) throw std::runtime_error(policyError);
         routing::PopulateOptions(options, profiles, policy, nativeSessions_);
+        for (const auto& profile : profiles) if (profile.selected)
+            options.profileRuleEdits = routing::DecodeProfileRules(setting(routing::ProfileRulesKey(profile.id), ""));
         if (updated && updated->id == options.mainConnectionId) options.profileYaml = updated->content;
 #if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
         if (includeAuxiliary) for (const auto& profile : profiles) {
@@ -452,9 +455,9 @@
                     });
             }
 #endif
-            const bool engineCache =
-                name == "cache.db" || name.starts_with("cache.db.");
-            if (!ruleSetCache && !engineCache) continue;
+            // The native database also contains subscription/personal resources
+            // and selector state. It is never owned by a GEO repair request.
+            if (!ruleSetCache) continue;
             std::error_code removeError;
             std::filesystem::remove(entry.path(), removeError);
         }

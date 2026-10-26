@@ -642,6 +642,10 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
     huxerui::State<std::size_t> navPage, huxerui::State<int> themeMode,
     ProfilesCache profilesCache) {
     const auto navigation = huxerui::UseNavigation();
+    const auto profilesModel = huxerui::UseService<ProfilesModel>();
+    huxerui::Lifecycle([profilesModel, navPage] {
+        if (profilesModel->rulesRequests.Get() != 0) navPage = pages::kRules;
+    }, profilesModel->rulesRequests);
     const auto model = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
     huxerui::Lifecycle([navPage, navigation, model] {
         if (model->secondaryOpen.Get() &&
@@ -956,6 +960,24 @@ huxerui::PageTransition SecondaryPageTransition(
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
 #endif
+
+[[huxerui::composable]] huxerui::View RuleEditorRoute(
+    std::shared_ptr<DesktopSettingsNavigationModel> model, std::function<huxerui::View()> editor) {
+    huxerui::Lifecycle([model] {
+        return [model] { if (model) { model->secondaryOpen = false; model->secondaryOwner = std::nullopt; } };
+    }, 0);
+    return editor().With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+
+void OpenRuleEditor(huxerui::NavigationController navigation,
+    std::shared_ptr<DesktopSettingsNavigationModel> desktopNavigation,
+    std::function<huxerui::View()> editor) {
+    if (desktopNavigation) {
+        desktopNavigation->secondaryOwner = pages::kRules;
+        desktopNavigation->secondaryOpen = true;
+    }
+    navigation.Push([desktopNavigation, editor] { return RuleEditorRoute(desktopNavigation, editor); });
+}
 
 void OpenProfileFidelityPage(huxerui::NavigationController navigation,
     std::shared_ptr<DesktopSettingsNavigationModel> desktopNavigation, std::int64_t profileId) {

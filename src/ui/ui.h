@@ -304,7 +304,7 @@ huxerui::View IslandSection(std::string title, huxerui::View content);
 
 // 订阅列表的页面句柄：唯一来源是应用级 ProfilesModel（见 profiles_model.h），
 // 这里的 StateList 只是它的镜像（AppRoot 以模型 State 为依赖同步）。订阅页、
-// 规则页（含「添加全局路由规则」的目标连接列表）等消费同一份，不再各自向存储
+// 规则页（含「添加全局规则规则」的目标连接列表）等消费同一份，不再各自向存储
 // 层要快照。selection_pending 与模型共享：为 true 时模型暂停发布，避免未确认
 // 的选中态被闪回。
 // 定义在 profiles_cache.h（成员是 StateList<db::Profile>，属于
@@ -322,7 +322,7 @@ huxerui::View ProfilesPage(ProfilesCache profiles, bool active);   // 订阅
 huxerui::View ProxiesPage(bool active);    // 代理
 huxerui::View RulesPage(ProfilesCache profiles,
                         std::function<void()> onBack = {},
-                        bool active = true);                      // 规则
+                        bool active = true, std::int64_t initialProfile = 0); // 规则
 huxerui::View ConnectionsPage(std::function<void()> onBack = {},
                               bool active = true);                // 连接
 huxerui::View LogsPage(std::function<void()> onBack = {},
@@ -365,6 +365,9 @@ huxerui::View DesktopConnectionDetailPage(ConnectionRow initial);
 #endif
 void OpenProfileFidelityPage(huxerui::NavigationController navigation,
     std::shared_ptr<DesktopSettingsNavigationModel> desktopNavigation, std::int64_t profileId);
+void OpenRuleEditor(huxerui::NavigationController navigation,
+    std::shared_ptr<DesktopSettingsNavigationModel> desktopNavigation,
+    std::function<huxerui::View()> editor);
 void OpenConnectionDetailPage(huxerui::NavigationController navigation,
     std::shared_ptr<DesktopSettingsNavigationModel> desktopNavigation,
     ConnectionRow initial);
@@ -497,7 +500,7 @@ huxerui::View SettingSwitchRow(huxerui::StringVariant label,
 huxerui::View SectionTitle(huxerui::StringVariant title);
 
 // 二级分区标签栏（全项目统一的页内分区切换，实现与样式说明见 section_tabs.cpp）：
-// 代理页分组、规则页「订阅规则/全局路由」、订阅页类型分区共用。key 参与
+// 代理页分组、规则页「订阅规则/全局规则」、订阅页类型分区共用。key 参与
 // 选中匹配与节点 Key，label 是展示文本；badge 是可选角标（非空时以警示色显示在
 // label 之后，例如被 sing-box 降级的策略组），留空即无角标。
 struct SectionTab {

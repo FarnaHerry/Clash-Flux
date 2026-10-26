@@ -126,17 +126,25 @@ singbox::CompileResult generateConfig(singbox::CompileOptions options) {
     return singbox::compileConfig(options);
 }
 
-bool checkConfig(const std::filesystem::path& binary, const std::filesystem::path& workDir,
-                 const std::filesystem::path& configFile, std::string& error) {
+namespace {
+bool runNativeConfigTool(const std::filesystem::path& binary, const std::filesystem::path& workDir,
+    const std::vector<std::filesystem::path>& arguments, const std::filesystem::path& diagnostic,
+    const std::filesystem::path& boundedOutput, std::string& error) {
 #if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
     error = "此平台的配置检查由 libbox 服务执行";
     return false;
 #else
-    const auto diagnostic = std::filesystem::path(configFile.string() + ".check.log");
     struct DiagnosticFile {
         std::filesystem::path path;
         ~DiagnosticFile() { std::error_code ec; std::filesystem::remove(path, ec); }
     } cleanup{diagnostic};
+    error.clear();
+    const auto outputTooLarge = [&] {
+        std::error_code ec;
+        if (!boundedOutput.empty() && std::filesystem::file_size(boundedOutput, ec) > 8 * 1024 * 1024 && !ec) return true;
+        ec.clear();
+        return std::filesystem::file_size(diagnostic, ec) > 64 * 1024 && !ec;
+    };
     bool success = false;
 #ifdef _WIN32
     SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
@@ -158,19 +166,28 @@ bool checkConfig(const std::filesystem::path& binary, const std::filesystem::pat
         }
         result.append(slashes * 2, L'\\'); result += L'\"'; return result;
     };
-    auto command = quote(binary) + L" check -c " + quote(configFile) + L" -D " + quote(workDir);
+    auto command = quote(binary);
+    for (const auto& argument : arguments) command += L" " + quote(argument);
     PROCESS_INFORMATION info{};
     if (!CreateProcessW(binary.c_str(), command.data(), nullptr, nullptr, TRUE,
                         CREATE_NO_WINDOW, nullptr, nullptr, &startup, &info)) {
         error = "无法启动固定内核配置检查"; return false;
     }
     clashflux::win32::UniqueHandle process{info.hProcess}, thread{info.hThread};
-    if (WaitForSingleObject(process.get(), 15000) != WAIT_OBJECT_0) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto waited = WaitForSingleObject(process.get(), 20);
+        if (waited == WAIT_OBJECT_0) {
+            DWORD code = 1; GetExitCodeProcess(process.get(), &code); success = code == 0; break;
+        }
+        if (waited == WAIT_FAILED || outputTooLarge()) {
+            error = waited == WAIT_FAILED ? "无法等待内核工具" : "内核工具输出超过大小限制"; break;
+        }
+    }
+    if (WaitForSingleObject(process.get(), 0) != WAIT_OBJECT_0) {
         TerminateProcess(process.get(), 1);
         WaitForSingleObject(process.get(), INFINITE);
-        error = "内核配置检查超时";
-    } else {
-        DWORD code = 1; GetExitCodeProcess(process.get(), &code); success = code == 0;
+        if (error.empty()) error = "内核工具超时";
     }
     log.reset();
 #else
@@ -186,9 +203,12 @@ bool checkConfig(const std::filesystem::path& binary, const std::filesystem::pat
         posix_spawn_file_actions_adddup2(&actions.value, STDOUT_FILENO, STDERR_FILENO) != 0) {
         error = "无法准备内核配置检查"; return false;
     }
-    std::string bin = binary.string(), config = configFile.string(), dir = workDir.string();
-    std::array<char*, 7> args{bin.data(), const_cast<char*>("check"), const_cast<char*>("-c"),
-                            config.data(), const_cast<char*>("-D"), dir.data(), nullptr};
+    std::string bin = binary.string();
+    std::vector<std::string> values{bin};
+    for (const auto& argument : arguments) values.push_back(argument.string());
+    std::vector<char*> args;
+    for (auto& value : values) args.push_back(value.data());
+    args.push_back(nullptr);
     pid_t child = -1;
     const auto spawnError = posix_spawnp(&child, bin.c_str(), &actions.value, nullptr, args.data(), environ);
     if (spawnError != 0) { error = "内核检查启动失败：" + std::string(std::strerror(spawnError)); return false; }
@@ -203,6 +223,7 @@ bool checkConfig(const std::filesystem::path& binary, const std::filesystem::pat
     } owner{child};
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
     while (std::chrono::steady_clock::now() < deadline) {
+        if (outputTooLarge()) { error = "内核工具输出超过大小限制"; break; }
         int status = 0;
         const auto waited = waitpid(child, &status, WNOHANG);
         if (waited == child) {
@@ -211,8 +232,9 @@ bool checkConfig(const std::filesystem::path& binary, const std::filesystem::pat
         if (waited < 0 && errno != EINTR) { owner.pid = -1; error = "无法回收内核检查进程"; break; }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
-    if (owner.pid > 0) error = "内核配置检查超时";
+    if (owner.pid > 0 && error.empty()) error = "内核工具超时";
 #endif
+    if (outputTooLarge()) { error = "内核工具输出超过大小限制"; success = false; }
     if (!success && error.empty()) {
         std::ifstream input(diagnostic, std::ios::binary);
         std::string text;
@@ -224,6 +246,49 @@ bool checkConfig(const std::filesystem::path& binary, const std::filesystem::pat
     if (success) error.clear();
     return success;
 #endif
+}
+
+} // namespace
+
+bool checkConfig(const std::filesystem::path& binary, const std::filesystem::path& workDir,
+                 const std::filesystem::path& configFile, std::string& error) {
+    auto diagnostic = configFile; diagnostic += ".check.log";
+    return runNativeConfigTool(binary, workDir, {"check", "-c", configFile, "-D", workDir}, diagnostic, {}, error);
+}
+
+std::optional<std::string> importRuleSet(const std::filesystem::path& binary,
+    const std::filesystem::path& workDir, const std::filesystem::path& source, std::string& error) {
+    error.clear();
+    if (!SupportsRuleSetTools()) { error = "此平台暂不支持 SRS 文件导入，请使用远程 SRS 或本地 JSON"; return {}; }
+    const auto bytes = singbox::ReadRuleProviderText(source, 8 * 1024 * 1024, error);
+    if (!bytes) return {};
+    // Work on a private snapshot, not a mutable user-selected path. Creation is
+    // exclusive; the guard owns only this directory and its generated files.
+    static std::atomic<std::uint64_t> sequence{0};
+    std::filesystem::create_directories(workDir);
+    std::filesystem::path staging;
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        auto candidate = workDir / ("rule-set-import-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(++sequence));
+        if (std::filesystem::create_directory(candidate)) { staging = std::move(candidate); break; }
+    }
+    if (staging.empty()) { error = "无法创建规则集导入暂存目录"; return {}; }
+    struct StagingDirectory {
+        std::filesystem::path path;
+        ~StagingDirectory() { std::error_code ec; std::filesystem::remove_all(path, ec); }
+    } cleanup{staging};
+    const auto input = staging / "source.srs", output = staging / "source.json";
+    std::ofstream snapshot(input, std::ios::binary | std::ios::trunc);
+    snapshot.write(bytes->data(), static_cast<std::streamsize>(bytes->size())); snapshot.close();
+    if (!snapshot) { error = "无法暂存规则集文件"; return {}; }
+    if (!runNativeConfigTool(binary, staging, {"rule-set", "decompile", "--output", output, input},
+        staging / "decompile.log", output, error)) return {};
+    auto text = singbox::ReadRuleProviderText(output, 8 * 1024 * 1024, error);
+    if (!text) return {};
+    singbox::RuleSetLibrary library;
+    library.resources.push_back({.id="import", .name="import", .type="inline", .format="source", .content=*text});
+    if (!singbox::ValidateRuleSetLibrary(library, error)) return {};
+    return text;
 }
 
 // ---- detached spawn / killPid（接管与 CLI 驻留形态）----

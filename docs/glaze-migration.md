@@ -59,7 +59,8 @@
 
 配置编译器仍用 nlohmann 生成/合并 sing-box JSON；原生 JSON 未知节点与大整数保持
 现有 DOM 路径。Clash YAML 保留 yaml-cpp，OpenVPN/URI/CIDR 保留格式专用解析。
-规则编辑继续局部修改源文本，不整文重写注释和格式。第三方框架解析未改动。
+2026-10-26：订阅个人规则使用独立 typed codec，直接编译 JSON；高级文件编辑保留原文路径。
+不整文重写订阅注释和格式，详见[订阅个人规则](subscription-personal-rules.md)。第三方框架解析未改动。
 
 后续配置 IR 需要协议 variant、字段 presence、扩展 raw_json、来源定位与保真度映射，
 再迁移生成器。不能直接用完整 DTO 替换原生 JSON，否则会丢掉尚未建模的内核字段。

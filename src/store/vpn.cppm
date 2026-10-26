@@ -105,6 +105,7 @@ public:
         policy.revision = previous.revision;
         if (previous == policy) { error.clear(); return true; }
         if (!routing::ValidatePlatformPolicy(policy, coreStore().db().listProfiles(), error)) return false;
+        if (!singbox::ValidateGlobalRuleSetReferences(coreStore().ruleSetLibrary(), policy.rules, error)) return false;
         if (previous.revision == std::numeric_limits<std::uint64_t>::max()) { error = "计划修订号超出范围"; return false; }
         policy.revision = previous.revision + 1;
         for (std::size_t i = 0; i < policy.rules.size(); ++i) {

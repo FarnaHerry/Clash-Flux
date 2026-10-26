@@ -4,10 +4,15 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `abd07a3f19d2680ade6093075608f73b42a9b3a3`，各平台 CI 共用
+Clash-Flux 当前固定 `3a6c18e4d5141b27f3671e33baa42b61550f83cd`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
+
+2026-10-26 更新到 `3a6c18e`：上游 `main` 的 `0c51262` HTTP streaming 修复已包含在集成分支；
+最新 fork 提交修复框架 warning，并更新 Windows renderer 头文件和多窗口测试。
+Windows MSVC 主目标、UI codegen 及 10 项定向回归通过。具体构建 warning 和平台未覆盖范围见
+[L1 / L2 / L3 验收记录](l1-l2-l3-status.md)。
 
 ## 补丁归属
 
@@ -48,7 +53,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout abd07a3f19d2680ade6093075608f73b42a9b3a3
+git -C third_party/huxerui checkout 3a6c18e4d5141b27f3671e33baa42b61550f83cd
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`

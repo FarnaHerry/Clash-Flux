@@ -16,9 +16,11 @@
 #include <huxerui/huxerui.h>
 
 #include <cstdint>
+#include <map>
 #include <vector>
 
 #include "../profile_link.h"
+#include "../profile_rules.h"
 
 #include "ui.h"
 #include "profile_list_model.h"
@@ -32,6 +34,17 @@ struct ProfilesModel : ProfileListModel<db::Profile> {
     huxerui::State<std::vector<profile_link::RemoteProfile>> importLinks{
         std::vector<profile_link::RemoteProfile>{}};
     huxerui::State<std::string> linkError{std::string{}};
+    huxerui::State<std::int64_t> rulesProfile{0};
+    huxerui::State<std::uint64_t> rulesRequests{0};
+    huxerui::State<std::size_t> rulesView{0};
+    huxerui::State<std::shared_ptr<const wire::RuleSetLibrary>> ruleSetLibrary{
+        std::make_shared<const wire::RuleSetLibrary>()};
+    huxerui::State<bool> ruleSetsLoaded{false};
+    huxerui::State<bool> ruleSetsSaving{false};
+    huxerui::State<std::uint64_t> ruleSetsRevision{0};
+    // Receipts of explicit user actions in this session, not native auto-update telemetry.
+    huxerui::State<std::map<std::string, std::string>> ruleSetRefreshReceipts{std::map<std::string, std::string>{}};
+    std::map<std::pair<std::int64_t, std::size_t>, huxerui::ScrollController> rulesScrolls;
 };
 
 // 启动唯一的数据泵（组合期调用一次）：1s 做一次「修订号脏检查」，变了才

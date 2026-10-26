@@ -255,6 +255,48 @@ Task<void> FlushWhileLocked(persistence::Persistence& store, bool settings, std:
     result->done = true;
 }
 
+Task<void> PersonalRulesPhase(TaskScope tasks) {
+    const Fixture fixture;
+    persistence::Persistence store;
+    Check(co_await store.open(fixture.path, fixture.files), "personal rules open");
+    SeedProfiles(store);
+    const std::string first = "profile.rules.41", second = "profile.rules.42";
+    store.setSetting(first, "initial"); store.setSetting(second, "independent");
+    // Owned setting flush must persist a newly cached parent in the same transaction.
+    Check(co_await store.flushSettings() && co_await store.flushProfiles(), "owned settings and parents flush");
+    auto opened = co_await sqlite::Database::OpenAsync(File{fixture.path.string()}, db_schema::openOptions());
+    Check(static_cast<bool>(opened), "personal rule observer open");
+    sqlite::Database raw = std::move(*opened);
+    const auto gate = std::make_shared<Gate>();
+    tasks.Launch([&raw, gate]() -> Task<void> { co_await HoldWriter(raw, gate); });
+    co_await WaitFor([gate] { return gate->entered.load(); });
+    store.setSetting(first, "captured-before-delete"); store.setSetting(second, "snapshot");
+    const auto settings = std::make_shared<FlushResult>();
+    tasks.Launch([&store, settings]() -> Task<void> { co_await FlushWhileLocked(store, true, settings); });
+    co_await WaitFor([settings] { return settings->started; });
+    Check(!settings->done, "owned settings flush suspended behind real SQLite writer");
+    Check(store.deleteProfile(41, true), "delete exact personal-rule owner");
+    Check(store.setting(first).empty(), "deleted owner's personal rules disappear from cache");
+    Refused([&] { store.setSetting(first, "must-not-resurrect"); });
+    store.setSetting(second, "newest"); store.setSetting(second, "snapshot");
+    const auto profiles = std::make_shared<FlushResult>();
+    tasks.Launch([&store, profiles]() -> Task<void> { co_await FlushWhileLocked(store, false, profiles); });
+    co_await WaitFor([profiles] { return profiles->started; });
+    gate->release = true;
+    co_await WaitFor([=] { return gate->writerDone.load() && settings->done && profiles->done; });
+    Check(gate->writerOk && settings->ok && profiles->ok, "old write completes before transactional owner deletion");
+    Check(store.hasPendingSettings(), "other owner's ABA revision remains dirty");
+    Check(co_await store.flushSettings(), "flush other owner's latest rule revision");
+    co_await store.close();
+    Check(static_cast<bool>(co_await raw.CloseAsync()), "close personal rule observer");
+    persistence::Persistence reopened;
+    Check(co_await reopened.open(fixture.path, fixture.files), "reopen personal rules");
+    Check(reopened.setting(first).empty() && reopened.setting(second) == "snapshot", "no resurrected edits; independent edits survive reopen");
+    Check(reopened.listProfiles().size() == 2 && ReadFile(fixture.files/"shared.yaml") == "remote and local stable content\n",
+        "owner deletion preserves shared subscription files and other profiles");
+    co_await reopened.close();
+}
+
 Task<void> InterleavedPhase(TaskScope tasks) {
     // Each case holds a second real SQLite writer while production flush takes
     // its snapshot and suspends. Mutations happen after the flush task yielded,
@@ -785,6 +827,7 @@ Task<void> RunTest(TaskScope tasks) {
         co_await FailedOpenPhase();
         Trace(10, "真实 SQLite 锁下异步交错与版本确认");
         co_await InterleavedPhase(tasks);
+        co_await PersonalRulesPhase(tasks);
         Trace(11, "删除失败/共享引用/确认后文件清理");
         co_await DeletionPhase();
         Trace(12, "OpenVPN 新旧来源与引用保留");

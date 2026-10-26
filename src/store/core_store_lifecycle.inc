@@ -117,6 +117,7 @@
         const std::filesystem::path workDir = cfg::coreWorkDir();
         const std::filesystem::path configFile = workDir / "config.json";
         std::vector<singbox::RuleSetResource> ruleSetResources;
+        bool geoRepairSafe = false;
         [[maybe_unused]] bool residentConfigMatches = false;
         // detached spawn 把内核输出追加进 core.log：记下启动前的长度，失败时
         // 只取本次启动新增的行作为诊断尾部。
@@ -162,6 +163,8 @@
             }
             previousConfig.close(); // Windows replacement needs the read handle closed.
             ruleSetResources = compiled.ruleSetResources;
+            if (config.contains("route") && config["route"].contains("rule_set"))
+                geoRepairSafe = clashflux::rule_cache::MayRepairGeo(config["route"]["rule_set"], ruleSetResources, workDir);
             std::string commitError;
             if (!api::CommitFile(plan->file, configFile, commitError)) { fail(commitError); return; }
             lastPreparedOptions_ = options;
@@ -317,10 +320,11 @@
                     message.find("bind:") != std::string::npos) {
                     message += "（端口可能被其他代理软件占用；可在设置中修改混合端口）";
                 }
-                if (repairRuleSetCache && !ruleSetResources.empty() &&
+                if (repairRuleSetCache && geoRepairSafe && !ruleSetResources.empty() &&
                     isRuleSetCacheFailure(message)) {
                     // 坏缓存会让内核每次启动都 FATAL（且按周刷新的 mtime 判断
-                    // 永远认为它新鲜）：只清本次自有 GEO 与默认缓存后重试一次。
+                    // 永远认为它新鲜）：归属明确时只清本次自有 GEO 文件；
+                    // 原生共享缓存保留，不能破坏个人/订阅资源的离线恢复。
                     // 递归调用前复位状态，避开启动重入保护。
                     purgeRuleSetCache(workDir, ruleSetResources);
                     stream::logApplication(
@@ -573,6 +577,114 @@
         } catch (const std::exception& e) { error = e.what(); return false; }
     }
 
+    singbox::RuleSetLibrary ruleSetLibrary() {
+        std::lock_guard lock(lifecycleMutex_);
+        ensureOpen();
+        return routing::DecodeRuleSetLibrary(clashflux::persistence::persistence().setting("rules.resources"));
+    }
+
+    // Shared library edits serialize with profile edits/refreshes. Validate the
+    // full proposed library before publishing settings or touching a running core.
+    bool saveRuleSetLibrary(singbox::RuleSetLibrary library, std::string& error) {
+        std::lock_guard lock(lifecycleMutex_);
+        error.clear();
+        try {
+            ensureOpen();
+            if (!clashflux::persistence::persistence().ready()) { error = "订阅尚未加载完成"; return false; }
+            const auto previous = ruleSetLibrary();
+            if (library.revision != previous.revision) { error = "规则集资源库已变化，请重新打开后编辑"; return false; }
+            if (!singbox::ValidateRuleSetLibrary(library, error)) return false;
+            const auto policy = routing::DecodePolicy(setting("vpn.global_policy", ""));
+            if (!singbox::ValidateGlobalRuleSetReferences(library, policy.rules, error)) return false;
+            // Even disabled personal records retain their references. Removal
+            // cannot turn a later re-enable into a different or missing match.
+            for (const auto& profile : db_->listProfiles()) {
+                const auto edits = routing::DecodeProfileRules(setting(routing::ProfileRulesKey(profile.id), ""));
+                if (!singbox::ValidateRuleSetReferences(library, edits, error)) { error += "：" + profile.name; return false; }
+            }
+            if (library.revision == std::numeric_limits<std::uint64_t>::max()) { error = "规则集修订号超出范围"; return false; }
+            const auto content = currentMainContent();
+            auto options = routingOptions(content, false);
+            options.ruleSetLibrary = library;
+            options.validateAllPersonalRuleSets = true;
+            singbox::CompileResult compiled;
+            if (!prepareHttpRuleProviders(options, compiled, error)) return false;
+            ++library.revision;
+            auto& data = clashflux::persistence::persistence();
+            const auto oldText = data.setting("rules.resources");
+            data.setSetting("rules.resources", routing::EncodeRuleSetLibrary(library));
+            bool ok = true;
+            try {
+                if (snapshot().state == core::CoreState::Running) ok = restartCore(content, true);
+            } catch (const std::exception& exception) { error = exception.what(); ok = false; }
+            if (!ok) {
+                data.setSetting("rules.resources", oldText);
+                if (error.empty()) error = snapshot().lastError;
+                if (error.empty()) error = "规则集未能应用";
+                return false;
+            }
+            invalidateProxyGroupsSnapshot();
+            return true;
+        } catch (const std::exception& exception) { error = exception.what(); return false; }
+    }
+
+    // The pinned native control API has no resource-update RPC. Rotate only
+    // this remote cache identity and use the existing checked restart/rollback.
+    // A stopped/unreferenced resource is queued, never reported as downloaded.
+    bool refreshPersonalRuleSet(const std::string& id, std::uint64_t expectedRevision,
+                                bool& downloaded, std::string& error) {
+        std::lock_guard lock(lifecycleMutex_);
+        downloaded = false;
+        error.clear();
+        if (!core::SupportsRuleSetTools()) { error = "此平台暂不支持手动重新下载规则集"; return false; }
+        try {
+            auto library = ruleSetLibrary();
+            if (library.revision != expectedRevision) { error = "规则集资源库已变化，请重新打开后编辑"; return false; }
+            const auto resource = std::ranges::find(library.resources, id, &singbox::PersonalRuleSet::id);
+            if (resource == library.resources.end() || resource->type != "remote") { error = "请选择远程规则集"; return false; }
+            if (resource->refresh_generation == std::numeric_limits<std::uint64_t>::max()) { error = "规则集更新次数超出范围"; return false; }
+            const auto options = routingOptions(currentMainContent(), tunEnabled());
+            const bool referenced = std::ranges::any_of(options.globalRules, [&](const auto& rule) {
+                return rule.enabled && rule.match == vpn::MatchKind::RuleSet && rule.pattern == id;
+            }) || std::ranges::any_of(options.profileRuleEdits.rules, [&](const auto& rule) {
+                return rule.enabled && rule.match == "rule_set" && rule.pattern == id &&
+                    rule.operation != "disable" && rule.operation != "final";
+            });
+            const bool running = snapshot().state == core::CoreState::Running;
+            ++resource->refresh_generation;
+            if (!saveRuleSetLibrary(std::move(library), error)) return false;
+            downloaded = running && referenced;
+            return true;
+        } catch (const std::exception& exception) { error = exception.what(); return false; }
+    }
+
+    singbox::CompileResult profileRulesPreview(std::int64_t id, const std::string& content) {
+        std::lock_guard lock(lifecycleMutex_);
+        ensureOpen();
+        auto options = routingOptions(content, false, false, nullptr,
+            routing::ConnectionId(id), nullptr, false);
+        auto result = singbox::compileConfig(options);
+        if (result.error.empty() && !result.json.empty()) {
+            auto document = nlohmann::json::parse(result.json);
+            // Editor previews do not need the application's control credentials.
+            if (document.contains("experimental") && document["experimental"].contains("clash_api"))
+                document["experimental"]["clash_api"].erase("secret");
+            if (document.contains("services") && document["services"].is_array())
+                for (auto& item : document["services"]) if (item.value("tag", "") == "clash-flux-control") item.erase("secret");
+            result.json = document.dump(2);
+        }
+        return result;
+    }
+
+    bool validateProfileRuleSource(std::int64_t id, const std::string& content, std::string& error) {
+        std::lock_guard lock(lifecycleMutex_);
+        ensureOpen();
+        auto options = routingOptions(content, false, false, nullptr,
+            routing::ConnectionId(id), nullptr, false);
+        singbox::CompileResult compiled;
+        return prepareHttpRuleProviders(options, compiled, error) && checkCompiledPlan(compiled, error);
+    }
+
     std::string currentMainContent() {
         ensureOpen();
         const auto file = selectedProfileFile();
@@ -600,6 +712,11 @@
         std::lock_guard lock(lifecycleMutex_);
         ensureOpen();
         try {
+            const auto edits = routing::DecodeProfileRules(setting(routing::ProfileRulesKey(id), ""));
+            if (!edits.rules.empty()) {
+                const auto plan = singbox::InspectProfileRules(content, edits);
+                if (!plan.error.empty()) { error = plan.error; return false; }
+            }
             if (content.find_first_not_of(" \t\r\n") == std::string::npos) {
                 error = "订阅内容为空"; return false;
             }
@@ -616,6 +733,7 @@
                     if (source.id == sourceId) { source.content = content; replaced = true; }
                 if (!replaced) {
                     options.profileYaml = content; options.mainConnectionId = sourceId;
+                    options.profileRuleEdits = edits;
                     options.auxiliarySources.clear(); options.globalRules.clear(); options.nativeConnections.clear();
                 }
             }

@@ -131,10 +131,6 @@ struct ProfileReorderSession {
     auto editPptpMppe = huxerui::UseState(true);
 
     // ---- 编辑规则弹窗（工作 YAML + 规则行 + 输入行 + 脏标记）----
-    auto editYamlText = huxerui::UseState<std::string>("");
-    auto editRules = huxerui::UseStateList<std::string>();
-    auto editRuleInput = huxerui::UseState(huxerui::TextEditingValue{""});
-    auto editRulesDirty = huxerui::UseState(false);
 
     // ---- 编辑文件弹窗（懒加载 + 非受控大文本：shared_ptr 原地写，逐键零重组）----
     auto fileContent = huxerui::UseState(std::make_shared<std::string>());
@@ -142,7 +138,6 @@ struct ProfileReorderSession {
     // Android 编辑订阅时切换到页面；0 表示仍在订阅列表。
     auto editPageId = huxerui::UseState<std::int64_t>(0);
     auto filePageId = huxerui::UseState<std::int64_t>(0);
-    auto rulesPageId = huxerui::UseState<std::int64_t>(0);
 
     // 原生连接状态：唯一来源是 VpnModel（见 vpn_model.h）。挂载时加载一次
     // 持久化的连接配置并请模型立刻同步，之后由模型 State 驱动镜像。

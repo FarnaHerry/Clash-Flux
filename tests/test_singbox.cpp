@@ -8,6 +8,7 @@
 #include <cassert>
 #include "../src/runtime_plan_state.h"
 #include "../src/runtime_compile.h"
+#include "../src/rule_set_cache_ownership.h"
 #include <cstdio>
 #include <zstd.h>
 
@@ -1949,7 +1950,252 @@ rules: ['RULE-SET,external,Pick', 'MATCH,Pick']
     }
 }
 
+void testPersonalRuleSets(const std::filesystem::path& fixtures = {}) {
+    const auto cacheRoot = std::filesystem::temp_directory_path() / "clashflux-owned-cache";
+    const std::vector<singbox::RuleSetResource> owned{{"geosite-cn", "https://example.test/owned-cn.srs"}};
+    auto cacheInputs = json::array({{{"type", "local"}, {"path", (cacheRoot/"geosite-cn.srs").string()}}});
+    check(clashflux::rule_cache::MayRepairGeo(cacheInputs, owned, cacheRoot), "an explicit owned GEO file can be repaired");
+    cacheInputs.push_back({{"type", "remote"}, {"url", "https://example.test/personal.srs"}});
+    check(!clashflux::rule_cache::MayRepairGeo(cacheInputs, owned, cacheRoot), "a personal remote EOF cannot trigger GEO cache deletion");
+    cacheInputs.back() = {{"type", "local"}, {"path", (cacheRoot/"user.srs").string()}};
+    check(!clashflux::rule_cache::MayRepairGeo(cacheInputs, owned, cacheRoot), "subscription-local resources prevent ambiguous automatic repair");
+    cacheInputs.back() = {{"type", "remote"}, {"url", owned[0].url}};
+    check(clashflux::rule_cache::MayRepairGeo(cacheInputs, owned, cacheRoot), "the explicit owned remote identity allows GEO repair");
+    cacheInputs.back() = {{"type", "inline"}, {"rules", json::array()}};
+    check(clashflux::rule_cache::MayRepairGeo(cacheInputs, owned, cacheRoot), "inline sets do not depend on binary file caches");
+    singbox::CompileOptions options;
+    options.mainConnectionId = "profile-81";
+    options.profileYaml = "rules: ['MATCH,DIRECT']\n";
+    options.ruleSetLibrary.resources = {
+        {.id="ads", .name="Ads", .type="inline", .format="source",
+            .content=R"({"version":5,"rules":[{"domain_suffix":["ads.test"]},{"type":"logical","mode":"or","rules":[{"domain":["tracking.test"]},{"ip_cidr":["192.0.2.0/24"]}]}]})"},
+        {.id="remote", .name="Remote", .type="remote", .format="binary", .url="https://example.test/rules.srs", .update_hours=48}};
+    options.profileRuleEdits.rules = {{.id="ref", .match="rule_set", .pattern="ads", .target="REJECT"}};
+    const auto result = singbox::compileConfig(options);
+    check(result.error.empty(), "library resource lowers with a Clash subscription");
+    if (result.json.empty()) return;
+    const auto config = json::parse(result.json);
+    const auto& sets = config["route"]["rule_set"];
+    check(sets.size() == 1 && sets[0]["tag"] == "cf_personal_set_ads" && sets[0]["rules"].size() == 2,
+        "only referenced resources are loaded; complex headless rules survive");
+    check(config["route"]["rules"].back()["rule_set"] == json::array({"cf_personal_set_ads"}) &&
+        config["route"]["rules"].back()["action"] == "reject", "resource match retains action after source namespacing");
+    if (!fixtures.empty()) std::ofstream(fixtures/"personal-library-inline.json") << result.json;
+    auto global = options;
+    global.profileRuleEdits = {};
+    global.globalRules = {{.match=vpn::MatchKind::RuleSet, .pattern="ads", .connectionId="missing-target",
+        .priority=100, .id="global-set", .tier=vpn::RuleTier::UserOverride}};
+    const auto globalResult = singbox::compileConfig(global);
+    check(globalResult.error.empty(), "global rules can reference the shared library without personal subscription edits");
+    if (!globalResult.json.empty()) {
+        const auto document = json::parse(globalResult.json);
+        const auto& rules = document["route"]["rules"];
+        const auto match = std::ranges::find_if(rules, [](const auto& rule) { return rule.contains("rule_set"); });
+        const auto mode = std::ranges::find_if(rules, [](const auto& rule) { return rule.contains("clash_mode"); });
+        check(match != rules.end() && mode != rules.end() && match < mode && (*match)["action"] == "reject" &&
+            (*match)["rule_set"] == json::array({"cf_personal_set_ads"}),
+            "global rule-set conditions keep tier precedence and unavailable-target rejection");
+        if (!fixtures.empty()) std::ofstream(fixtures/"personal-library-global.json") << globalResult.json;
+    }
+    auto deduplicated = global;
+    deduplicated.profileRuleEdits = options.profileRuleEdits;
+    check(json::parse(singbox::compileConfig(deduplicated).json)["route"]["rule_set"].size() == 1,
+        "global and subscription references share one resource definition");
+    global.globalRules[0].enabled = false;
+    check(singbox::compileConfig(global).json.find("cf_personal_set_ads") == std::string::npos,
+        "disabled global references do not activate resources");
+    auto missingGlobal = global;
+    missingGlobal.globalRules[0].enabled = true;
+    missingGlobal.ruleSetLibrary.resources.clear();
+    const auto missingGlobalResult = singbox::compileConfig(missingGlobal);
+    check(!missingGlobalResult.error.empty() && missingGlobalResult.json.empty() && !missingGlobalResult.fidelity.empty(),
+        "a missing global rule set rejects the candidate rather than matching everything");
+    std::string globalError;
+    check(!singbox::ValidateGlobalRuleSetReferences(missingGlobal.ruleSetLibrary, global.globalRules, globalError),
+        "deletion protection includes disabled global references");
+    auto renamed = options;
+    renamed.ruleSetLibrary.resources[0].name = "Renamed";
+    check(singbox::compileConfig(renamed).json == result.json, "renaming a library label preserves its stable reference");
+    auto other = options;
+    other.profileRuleEdits = {};
+    check(singbox::compileConfig(other).json.find("cf_personal_set_ads") == std::string::npos,
+        "resource library does not automatically affect a second profile");
+    auto disabled = options;
+    disabled.profileRuleEdits.rules[0].enabled = false;
+    check(singbox::compileConfig(disabled).json.find("cf_personal_set_ads") == std::string::npos,
+        "disabled personal rules do not trigger resource downloads");
+    auto missing = options;
+    missing.ruleSetLibrary.resources.clear();
+    const auto rejected = singbox::compileConfig(missing);
+    check(!rejected.error.empty() && rejected.json.empty() && !rejected.fidelity.empty(),
+        "missing resource rejects the complete plan rather than broadening the match");
+    auto remote = options;
+    remote.profileRuleEdits.rules[0].pattern = "remote";
+    const auto remoteResult = singbox::compileConfig(remote);
+    check(remoteResult.error.empty(), "native remote resource is supported");
+    if (!remoteResult.json.empty()) {
+        const auto document = json::parse(remoteResult.json);
+        const auto& resource = document["route"]["rule_set"][0];
+        check(resource["format"] == "binary" && resource["update_interval"] == "48h" &&
+            resource["http_client"].contains("domain_resolver") && !resource["http_client"].contains("detour"),
+            "remote resource keeps format and interval with an explicit direct HTTP client and bootstrap resolver");
+        remote.ruleSetLibrary.resources[1].url = "https://another.test/rules.srs";
+        const auto changed = json::parse(singbox::compileConfig(remote).json);
+        check(changed["route"]["rule_set"][0]["tag"] != resource["tag"],
+            "changing a remote URL cannot reuse the previous download identity");
+        auto forced = options;
+        forced.profileRuleEdits.rules[0].pattern = "remote";
+        forced.ruleSetLibrary.resources[1].refresh_generation = 1;
+        const auto forcedResult = singbox::compileConfig(forced);
+        const auto forcedDocument = json::parse(forcedResult.json);
+        check(forcedDocument["route"]["rule_set"][0]["tag"] != resource["tag"] &&
+            forcedDocument["route"]["rule_set"][0]["url"] == resource["url"] &&
+            forcedDocument["route"]["rules"].back()["rule_set"][0] == forcedDocument["route"]["rule_set"][0]["tag"],
+            "an explicit forced update rotates only the native cache identity and every reference together");
+        if (!fixtures.empty()) std::ofstream(fixtures/"personal-library-forced.json") << forcedResult.json;
+        if (!fixtures.empty()) std::ofstream(fixtures/"personal-library-remote.json") << remoteResult.json;
+    }
+    auto native = options;
+    native.profileYaml = R"({"outbounds":[{"type":"direct","tag":"plain"}],"route":{"rules":[{"rule_set":["original"],"outbound":"plain"}],"rule_set":[{"type":"inline","tag":"original","rules":[{"domain":["source.test"]}]}],"final":"plain"}})";
+    const auto nativeResult = singbox::compileConfig(native);
+    check(nativeResult.error.empty() && json::parse(nativeResult.json)["route"]["rule_set"].size() == 2 &&
+        nativeResult.json.find("source.test") != std::string::npos, "native subscription resources are preserved alongside personal resources");
+    if (!fixtures.empty() && !nativeResult.json.empty()) std::ofstream(fixtures/"personal-library-native.json") << nativeResult.json;
+    auto bootstrap = remote;
+    bootstrap.profileYaml = R"({"dns":{"servers":[{"type":"udp","tag":"original-dns","server":"192.0.2.53"}],"final":"original-dns"},"outbounds":[{"type":"direct","tag":"plain"}],"route":{"final":"plain"}})";
+    const auto bootstrapResult = singbox::compileConfig(bootstrap);
+    check(bootstrapResult.error.empty(), "native remote resource gains an independent local bootstrap resolver");
+    if (!bootstrapResult.json.empty()) {
+        const auto document = json::parse(bootstrapResult.json);
+        check(document["route"]["default_domain_resolver"]["server"] == "original-dns" &&
+            document["dns"]["final"] == "original-dns" && document["dns"]["servers"].size() == 2,
+            "adding a bootstrap resolver preserves native single-server resolution semantics");
+    }
+    native.profileYaml = R"({"outbounds":[{"type":"direct","tag":"plain"}],"route":{"rule_set":[{"type":"inline","tag":["cf_personal_set_ads","other"],"rules":[]}],"final":"plain"}})";
+    check(!singbox::compileConfig(native).error.empty(), "a native tag collision, including multi-tag definitions, fails closed");
+    auto all = options;
+    all.profileRuleEdits = {};
+    all.validateAllPersonalRuleSets = true;
+    check(json::parse(singbox::compileConfig(all).json)["route"]["rule_set"].size() == 2,
+        "library editor validates unreferenced resources without activating match rules");
+    std::string error;
+    check(singbox::ValidateRuleSetReferences(options.ruleSetLibrary, options.profileRuleEdits, error),
+        "library updates retain valid personal references");
+    check(!singbox::ValidateRuleSetReferences(missing.ruleSetLibrary, options.profileRuleEdits, error) &&
+        !singbox::ValidateRuleSetReferences(missing.ruleSetLibrary, disabled.profileRuleEdits, error),
+        "deletion guard checks enabled and disabled records without changing them");
+    check(singbox::ValidateRuleSetReferences(missing.ruleSetLibrary, {}, error), "unreferenced resources can be removed");
+    for (const auto& content : {R"({"version":99,"rules":[]})", R"({"version":3,"rules":[],"extra":1})",
+            R"({"version":3,"rules":[false]})", R"({"outbounds":[],"route":{}})", "rules: []"}) {
+        auto invalid = options.ruleSetLibrary;
+        invalid.resources[0].content = content;
+        check(!singbox::ValidateRuleSetLibrary(invalid, error), "malformed, foreign, or future source format is refused");
+    }
+    auto invalid = options.ruleSetLibrary;
+    invalid.resources[0].id = "../escape";
+    check(!singbox::ValidateRuleSetLibrary(invalid, error), "resource IDs cannot become paths or ambiguous tags");
+    invalid = options.ruleSetLibrary; invalid.resources.push_back(invalid.resources[0]);
+    check(!singbox::ValidateRuleSetLibrary(invalid, error), "duplicate resource identity is refused");
+    invalid = options.ruleSetLibrary; invalid.resources[1].url = "file:///private/rules.srs";
+    check(!singbox::ValidateRuleSetLibrary(invalid, error), "remote resources only accept HTTP(S)");
+    invalid = options.ruleSetLibrary; invalid.resources[1].update_hours = 0;
+    check(!singbox::ValidateRuleSetLibrary(invalid, error), "zero update interval is refused");
+}
+
+void testPersonalRules(const std::filesystem::path& fixtures = {}) {
+    singbox::CompileOptions options;
+    options.mainConnectionId = "profile-71";
+    options.profileYaml = "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\n"
+        "rules: ['DOMAIN,original.test,DIRECT', 'MATCH,Pick']\n";
+    const auto original = options.profileYaml;
+    const auto inventory = singbox::InspectProfileRules(original);
+    check(inventory.error.empty() && inventory.rules.size() == 2 && inventory.rules[0].editable &&
+        inventory.rules.back().terminal, "source inventory uses parsed rules and explicit fallback");
+    options.profileRuleEdits.rules = {
+        {.id="head", .operation="prepend", .match="domain_suffix", .pattern="head.test", .target="Pick"},
+        {.id="tail", .operation="before_final", .match="domain", .pattern="tail.test", .target="REJECT"},
+        {.id="disabled", .operation="disable", .anchor=inventory.rules[0].anchor},
+    };
+    const auto compiled = singbox::compileConfig(options);
+    check(compiled.error.empty() && options.profileYaml == original, "personal edits compile without rewriting subscription bytes");
+    if (!compiled.json.empty()) {
+        const auto config = json::parse(compiled.json);
+        const auto& rules = config["route"]["rules"];
+        check(rules[rules.size()-2]["domain_suffix"] == json::array({"head.test"}) &&
+            rules.back()["domain"] == json::array({"tail.test"}) && rules.back()["action"] == "reject",
+            "head and before-fallback positions are inside the main policy after mode rules");
+        check(compiled.json.find("original.test") == std::string::npos, "disabled source rule is not lowered");
+        check(rules[rules.size()-2]["outbound"] == config["route"]["final"], "source-local targets are namespaced once");
+        if (!fixtures.empty()) { std::filesystem::create_directories(fixtures); std::ofstream(fixtures/"personal-clash.json") << compiled.json; }
+    }
+    auto refreshed = options;
+    refreshed.profileYaml = "# refreshed\n" + original;
+    check(singbox::compileConfig(refreshed).json == compiled.json, "refresh keeps independent edits when source rule identities survive");
+    refreshed.profileYaml = "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: ['MATCH,Pick']\n";
+    check(!singbox::compileConfig(refreshed).error.empty(), "missing original rule rejects the candidate instead of rebinding by index");
+    refreshed.profileYaml = original + "";
+    refreshed.profileYaml.replace(refreshed.profileYaml.find("'MATCH"), 0, "'DOMAIN,original.test,DIRECT', ");
+    check(!singbox::compileConfig(refreshed).error.empty(), "ambiguous duplicate source rules reject active edits");
+    options.profileRuleEdits.rules.back().enabled = false;
+    check(singbox::compileConfig(options).json.find("original.test") != std::string::npos,
+          "disabling an edit restores the original source rule");
+    options.profileRuleEdits.rules.back() = {.id="replace", .operation="replace", .anchor=inventory.rules[0].anchor,
+        .match="ip_cidr", .pattern="192.0.2.1", .target="REJECT-DROP"};
+    auto replaced = singbox::compileConfig(options);
+    check(replaced.error.empty() && replaced.json.find("192.0.2.1/32") != std::string::npos &&
+        replaced.json.find("original.test") == std::string::npos && replaced.json.find("\"method\":\"drop\"") != std::string::npos,
+        "replacement emits a native rule and preserves reject-drop action");
+    options.profileRuleEdits.rules.push_back({.id="fallback", .operation="final", .target="REJECT"});
+    auto rejected = singbox::compileConfig(options);
+    check(rejected.error.empty() && json::parse(rejected.json)["route"]["rules"].back()["action"] == "reject",
+        "explicit default rejection remains terminal and follows before-fallback additions");
+    options.profileRuleEdits.rules = {{.id="implicit", .operation="before_final", .pattern="implicit.test"}};
+    options.profileYaml = "rules: []\n";
+    check(singbox::compileConfig(options).error.empty() &&
+        singbox::compileConfig(options).json.find("implicit.test") != std::string::npos, "missing MATCH still permits before-default additions");
+    options.profileRuleEdits.rules[0].pattern = "bad domain !";
+    check(!singbox::compileConfig(options).error.empty(), "invalid personal conditions fail the complete candidate");
+    options.profileRuleEdits.format_version = 99;
+    check(!singbox::compileConfig(options).error.empty(), "future personal rule formats cannot become an empty policy");
+    options.profileRuleEdits = {};
+    options.profileYaml = R"json({"outbounds":[{"type":"direct","tag":"plain"}],"route":{"rules":[
+        {"domain":["original.test"],"outbound":"plain"},
+        {"type":"logical","mode":"or","rules":[{"domain":["complex.test"]}],"outbound":"plain"}],"final":"plain"}})json";
+    const auto native = singbox::InspectProfileRules(options.profileYaml);
+    check(native.error.empty() && native.rules[0].editable && !native.rules[1].editable,
+        "native source fields are projected conservatively; complex rules stay read-only");
+    options.profileRuleEdits.rules = {{.id="native-head", .pattern="native.test"},
+        {.id="native-disable", .operation="disable", .anchor=native.rules[0].anchor},
+        {.id="native-final", .operation="final", .target="REJECT-DROP"}};
+    const auto nativeResult = singbox::compileConfig(options);
+    check(nativeResult.error.empty() && nativeResult.json.find("complex.test") != std::string::npos &&
+        nativeResult.json.find("original.test") == std::string::npos && nativeResult.json.find("native.test") != std::string::npos,
+        "native JSON edits retain unknown complex rule objects and remove only the anchored rule");
+    if (!fixtures.empty() && !nativeResult.json.empty()) std::ofstream(fixtures/"personal-native.json") << nativeResult.json;
+    auto second = options;
+    second.mainConnectionId = "profile-72"; second.profileRuleEdits = {};
+    const auto other = singbox::compileConfig(second);
+    check(other.error.empty() && other.json.find("native.test") == std::string::npos &&
+        other.json.find("original.test") != std::string::npos, "another profile has no inherited personal edits");
+    auto fallback = options;
+    fallback.profileRuleEdits.rules = {{.id="missing", .pattern="missing.test", .target="deleted-object"}};
+    const auto failedClosed = singbox::compileConfig(fallback);
+    check(failedClosed.error.empty() && !failedClosed.fidelity.empty() &&
+        failedClosed.json.find("\"action\":\"reject\"") != std::string::npos, "missing personal targets retain their match and fail closed with fidelity");
+    auto catchAll = options;
+    catchAll.profileYaml = R"json({"outbounds":[{"type":"direct","tag":"plain"}],"route":{"rules":[{"outbound":"plain"}],"final":"plain"}})json";
+    catchAll.profileRuleEdits.rules = {{.id="before-catch-all", .operation="before_final", .pattern="reachable.test", .target="plain"}};
+    const auto reachable = singbox::compileConfig(catchAll);
+    check(reachable.error.empty() && json::parse(reachable.json)["route"]["rules"][5]["domain_suffix"] == json::array({"reachable.test"}),
+        "native before-fallback additions precede an explicit unconditional route rule");
+}
+
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string_view(argv[1]) == "--personal-rule-fixtures") {
+        testPersonalRules(argv[2]); testPersonalRuleSets(argv[2]); return failures ? 1 : 0;
+    }
+    testPersonalRules();
+    testPersonalRuleSets();
     // Test-only compiler entry for isolated native runtime fixtures; no app
     // Runtime, user database, network downloads or persistent paths involved.
     if (argc == 5 && std::string_view(argv[1]) == "--prepare-config") {

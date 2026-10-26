@@ -6,6 +6,8 @@
 // 与 UI 硬编码字符串一致）。保真度第一期：基础协议/组/规则 + GEOIP/GEOSITE
 // → .srs 规则集；不支持的条目（RULE-SET、小众协议等）以警告返回而不是静默
 // 丢弃，调用方呈现给用户。
+module;
+#include "profile_rules.h"
 export module clashflux.singbox;
 
 import std;
@@ -13,6 +15,29 @@ import nlohmann.json;
 import clashflux.vpn;
 
 namespace singbox {
+export using ProfileRuleEdit = clashflux::wire::ProfileRuleEdit;
+export using ProfileRuleEdits = clashflux::wire::ProfileRuleEdits;
+export using PersonalRuleSet = clashflux::wire::PersonalRuleSet;
+export using RuleSetLibrary = clashflux::wire::RuleSetLibrary;
+export bool ValidateRuleSetLibrary(const RuleSetLibrary& library, std::string& error);
+export bool ValidateGlobalRuleSetReferences(const RuleSetLibrary& library,
+    const std::vector<vpn::RouteRule>& rules, std::string& error);
+export bool ValidateRuleSetReferences(const RuleSetLibrary& library,
+    const ProfileRuleEdits& edits, std::string& error);
+export struct ProfileRule {
+    std::string anchor, raw, type, pattern, target;
+    std::string editId, origin = "source", position;
+    bool editable = false, enabled = true, terminal = false, implicit = false;
+    bool operator==(const ProfileRule&) const = default;
+};
+export struct ProfileRules {
+    std::vector<ProfileRule> rules;
+    std::string error;
+    std::vector<ProfileRule> original;
+};
+export bool ValidateProfileRuleEdits(const ProfileRuleEdits& edits, std::string& error);
+export ProfileRules InspectProfileRules(const std::string& content,
+    const ProfileRuleEdits& edits = {});
 
 // Source transport (remote/local) is independent of the document format.
 export enum class ProfileFormat { ClashYaml, SingBoxJson, OpenVpn };
@@ -147,6 +172,9 @@ export struct CompileOptions {
     std::uint64_t planRevision = 0;
     std::string mainConnectionId;                // 本次加载的 sing-box profile 连接 ID
     std::vector<vpn::RouteRule> globalRules;      // 优先于模式和订阅的全局连接规则
+    ProfileRuleEdits profileRuleEdits;            // Main source only; secondary rules stay isolated.
+    RuleSetLibrary ruleSetLibrary;
+    bool validateAllPersonalRuleSets = false;    // Library editor candidate, never a running plan.
     std::vector<NativeConnection> nativeConnections;
     std::vector<std::string> tunExcludeAddresses; // 原生 VPN 服务器传输地址（IP/CIDR）
 };

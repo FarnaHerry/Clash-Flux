@@ -84,6 +84,18 @@ export bool checkConfig(const std::filesystem::path& binary,
                        const std::filesystem::path& workDir,
                        const std::filesystem::path& configFile, std::string& error);
 
+export inline bool SupportsRuleSetTools() noexcept {
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
+    return false;
+#else
+    return true;
+#endif
+}
+// Import a bounded binary snapshot through the pinned native SRS decoder.
+// Returns editable source JSON; never writes the selected user file.
+export std::optional<std::string> importRuleSet(const std::filesystem::path& binary,
+    const std::filesystem::path& workDir, const std::filesystem::path& source, std::string& error);
+
 export class CoreProcess {
 public:
     CoreProcess();

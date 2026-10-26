@@ -39,6 +39,8 @@ description: 修改 Clash-Flux 订阅转换、协议/DNS/规则/provider 映射�
 
 ## 桌面编排
 
+订阅个人规则遵守[独立修改与 JSON 编译契约](../../docs/subscription-personal-rules.md)：原文不回写，来源锚点唯一匹配，未知复杂规则只读，次来源不自动执行个人规则。
+
 改编排前读 [桌面订阅编排](../../docs/desktop-subscription-orchestration.md)。唯一主订阅 + 按启用规则参与的次来源；手机仍单活动普通来源，UI/CLI/导入/写入口按平台限制，不随视口变化。
 规则层次固定：前置动作 → UserOverride → SourcePolicy → 模式规则 → MainPolicy → MainFallback，priority 仅同层比较后按 order。
 不可用目标保留匹配并 Reject（默认）/UseMain（默认出口、不重跑主规则）/Direct，无启用规则不载入次来源。

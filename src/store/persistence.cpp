@@ -297,6 +297,14 @@ void Persistence::setSetting(const std::string& key, const std::string& value) {
     std::lock_guard lock(impl_->mutex);
     if (impl_->degraded || impl_->closing)
         throw std::runtime_error("设置持久化不可用，操作已拒绝");
+    if (key.starts_with("profile.rules.")) {
+        std::int64_t id = 0;
+        const auto suffix = std::string_view(key).substr(14);
+        const auto [end, ec] = std::from_chars(suffix.data(), suffix.data() + suffix.size(), id);
+        if (!impl_->ready || ec != std::errc{} || end != suffix.data() + suffix.size() ||
+            std::ranges::find(impl_->profiles, id, &model::Profile::id) == impl_->profiles.end())
+            throw std::runtime_error("个人规则所属订阅不存在或尚未加载");
+    }
     impl_->settings[key] = value;
     impl_->dirty[key] = ++impl_->settingsRevision;
 }
@@ -314,7 +322,7 @@ huxerui::Task<bool> Persistence::flushSettings() {
         co_await huxerui::Delay(std::chrono::milliseconds{1});
     }
     Impl::FlushGuard guard{impl, &Impl::flushingSettings};
-    struct Pending { std::string key, value; std::uint64_t revision; };
+    struct Pending { std::string key, value; std::uint64_t revision; std::optional<db_schema::ProfileRow> owner; };
     std::vector<Pending> pending;
     {
         std::lock_guard lock(impl->mutex);
@@ -330,14 +338,32 @@ huxerui::Task<bool> Persistence::flushSettings() {
         for (const auto& [key, revision] : impl->dirty) {
             const auto found = impl->settings.find(key);
             if (found != impl->settings.end()) {
-                pending.push_back({found->first, found->second, revision});
+                Pending entry{found->first, found->second, revision};
+                if (key.starts_with("profile.rules.")) {
+                    const auto owner = std::ranges::find_if(impl->profiles, [&](const auto& profile) {
+                        return key == "profile.rules." + std::to_string(profile.id);
+                    });
+                    if (owner == impl->profiles.end()) continue;
+                    entry.owner = ToRow(*owner);
+                }
+                pending.push_back(std::move(entry));
             }
         }
     }
-    for (const auto& [key, value, revision] : pending) {
-        auto result = co_await impl->database->InsertAsync(
-            db_schema::settings(), db_schema::SettingRow{key, value},
-            sqlite::ConflictPolicy::Replace);
+    for (const auto& entry : pending) {
+        const auto& key = entry.key;
+        const auto revision = entry.revision;
+        auto result = co_await impl->database->TransactionAsync(
+            [entry](sqlite::Transaction& transaction) -> sqlite::Result<void> {
+                if (entry.owner) {
+                    auto owner = transaction.Insert(db_schema::profiles(), *entry.owner, sqlite::ConflictPolicy::Ignore);
+                    if (!owner) return owner.Error();
+                }
+                auto saved = transaction.Insert(db_schema::settings(), db_schema::SettingRow{entry.key, entry.value},
+                    sqlite::ConflictPolicy::Replace);
+                if (!saved) return saved.Error();
+                return {};
+            });
         if (!result) {
             std::lock_guard lock(impl->mutex);
             impl->lastError = "写入设置失败：" + result.Error().Message();
@@ -420,6 +446,9 @@ bool Persistence::deleteProfile(std::int64_t id, bool removeFile) {
         impl_->dirty["profiles.order"] = ++impl_->settingsRevision;
     }
     impl_->dirtyProfiles.erase(id);
+    const auto rulesKey = "profile.rules." + std::to_string(id);
+    impl_->settings.erase(rulesKey);
+    impl_->dirty.erase(rulesKey);
     impl_->deletedProfiles[id] = std::move(deletion);
     return true;
 }
@@ -478,10 +507,15 @@ huxerui::Task<bool> Persistence::flushProfiles() {
     Impl* impl = impl_.get();
     for (;;) {
         { std::lock_guard lock(impl->mutex);
-          if (!impl->flushingProfiles) { impl->flushingProfiles = true; break; } }
+          if (!impl->flushingProfiles && !impl->flushingSettings) {
+              impl->flushingProfiles = true; impl->flushingSettings = true; break;
+          } }
         co_await huxerui::Delay(std::chrono::milliseconds{1});
     }
     Impl::FlushGuard guard{impl, &Impl::flushingProfiles};
+    // Profile deletion and its owned settings commit together, after any older
+    // settings flush. An already captured write cannot resurrect deleted edits.
+    Impl::FlushGuard settingsGuard{impl, &Impl::flushingSettings};
     std::vector<std::pair<model::Profile, std::uint64_t>> updates;
     std::unordered_map<std::int64_t, Impl::Deletion> removals;
     {
@@ -529,6 +563,8 @@ huxerui::Task<bool> Persistence::flushProfiles() {
             [id](sqlite::Transaction& transaction) -> sqlite::Result<std::vector<db_schema::ProfileRow>> {
                 auto removed = transaction.Delete(db_schema::profiles(), id);
                 if (!removed) return removed.Error();
+                auto rulesRemoved = transaction.Delete(db_schema::settings(), "profile.rules." + std::to_string(id));
+                if (!rulesRemoved) return rulesRemoved.Error();
                 return transaction.Select(db_schema::profiles()).All();
             });
         if (!result) {

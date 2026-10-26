@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "profile_rules.h"
 
 // Owning wire values shared by the module and Android legacy builds. No JSON
 // library types escape this boundary. JSON decoding is independent of the UI.
@@ -107,6 +108,10 @@ Result<std::string> DecodeMessage(std::string_view text);
 Result<std::map<std::string, std::string>> DecodeHeaders(std::string_view text);
 Result<Policy> DecodePolicy(std::string_view text);
 Result<std::string> EncodePolicy(const Policy& policy);
+Result<ProfileRuleEdits> DecodeProfileRuleEdits(std::string_view text);
+Result<std::string> EncodeProfileRuleEdits(const ProfileRuleEdits& edits);
+Result<RuleSetLibrary> DecodeRuleSetLibrary(std::string_view text);
+Result<std::string> EncodeRuleSetLibrary(const RuleSetLibrary& library);
 Result<std::string> EncodeSelection(std::string_view name);
 
 } // namespace clashflux::wire

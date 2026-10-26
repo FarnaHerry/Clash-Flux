@@ -21,6 +21,7 @@ module;
 #include "health_history.h"
 #include "runtime_plan_state.h"
 #include "runtime_compile.h"
+#include "rule_set_cache_ownership.h"
 #if defined(__ANDROID__)
 #include "android_profile_http.h"
 #if !defined(NDEBUG)

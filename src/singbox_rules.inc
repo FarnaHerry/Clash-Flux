@@ -1075,6 +1075,7 @@ int ruleSpecificity(vpn::MatchKind kind) {
     case vpn::MatchKind::DomainSuffix: return 3;
     case vpn::MatchKind::Ipv4Cidr: return 2;
     case vpn::MatchKind::Any: return 1;
+    case vpn::MatchKind::RuleSet: return 0;
     }
     return 0;
 }
@@ -1086,6 +1087,11 @@ std::optional<nlohmann::json> globalRuleMatch(Context& ctx, const vpn::RouteRule
     case vpn::MatchKind::Any:
         if (pattern.empty()) return match;
         break;
+    case vpn::MatchKind::RuleSet:
+        // The shared library has already been validated and injected. Never
+        // treat a missing resource as an empty (catch-all) condition.
+        match["rule_set"] = {personalRuleSetTag(ctx.opt.ruleSetLibrary, rule.pattern)};
+        return match;
     case vpn::MatchKind::ExactDomain:
     case vpn::MatchKind::DomainSuffix:
         if (const auto host = vpn::NormalizeRuleDomain(pattern)) {

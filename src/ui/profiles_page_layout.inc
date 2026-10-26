@@ -287,16 +287,13 @@
     huxerui::View mobileFilePage = ProfileFilePage(
         filePageId.Get(), fileContent, fileLoading, tasks, toast,
         [filePageId] { filePageId = 0; });
-    huxerui::View mobileRulesPage = ProfileRulesPage(
-        rulesPageId.Get(), editYamlText, editRules, editRuleInput,
-        editRulesDirty, tasks, toast, [rulesPageId] { rulesPageId = 0; });
+
 
     return huxerui::IndexedPages(
                std::vector<huxerui::View>{std::move(profileListPage),
                                           std::move(mobileEditPage),
                                           std::move(mobileCreatePage),
-                                          std::move(mobileFilePage),
-                                          std::move(mobileRulesPage)},
+                                          std::move(mobileFilePage)},
                ResponsiveProfilePageIndex(compact, editPageId, createPageOpen,
-                                          filePageId, rulesPageId))
+                                          filePageId))
         .With(huxerui::Grow(1.0F));

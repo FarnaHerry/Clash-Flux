@@ -10,8 +10,12 @@
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <filesystem>
+#include <fstream>
 import clashflux.stream;
 import clashflux.api;
+import clashflux.core;
+import clashflux.singbox;
 using namespace std::chrono_literals;
 void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 template<class Predicate> void until(Predicate predicate, std::chrono::seconds budget = 20s) {
@@ -22,6 +26,38 @@ template<class Predicate> void until(Predicate predicate, std::chrono::seconds b
     }
 }
 int main(int argc, char** argv) {
+    if (argc == 4 && std::string_view(argv[1]) == "--rule-set-import") {
+        const auto root = std::filesystem::absolute(argv[2]);
+        const auto binary = std::filesystem::absolute(argv[3]);
+        std::string error;
+        const auto original = singbox::ReadRuleProviderText(root/"rules.srs", 8*1024*1024, error);
+        require(original.has_value(), "missing SRS fixture");
+        auto imported = core::importRuleSet(binary, root, root/"rules.srs", error);
+        require(imported.has_value() && error.empty(), "production SRS import failed");
+        const auto unicodeSource = root/std::filesystem::path(u8"导入 规则.srs");
+        const auto unicodeWork = root/std::filesystem::path(u8"暂存 work");
+        std::filesystem::copy_file(root/"rules.srs", unicodeSource, std::filesystem::copy_options::overwrite_existing);
+        require(core::importRuleSet(binary, unicodeWork, unicodeSource, error) == imported && error.empty(),
+            "native import failed with Unicode paths or spaces");
+        require(std::filesystem::is_empty(unicodeWork), "Unicode staging directory was not cleaned");
+        require(singbox::ReadRuleProviderText(root/"rules.srs", 8*1024*1024, error) == original, "import changed selected source file");
+        singbox::CompileOptions options;
+        options.profileYaml = "rules: ['MATCH,DIRECT']\n";
+        options.ruleSetLibrary.resources.push_back({.id="imported", .name="Imported", .type="inline", .format="source", .content=*imported});
+        options.profileRuleEdits.rules.push_back({.id="ref", .match="rule_set", .pattern="imported", .target="REJECT"});
+        const auto compiled = singbox::compileConfig(options);
+        require(compiled.error.empty() && !compiled.json.empty(), "imported resource cannot compile");
+        std::ofstream(root/"personal-library-imported.json") << compiled.json;
+        std::ofstream(root/"malformed.srs", std::ios::binary) << "SRS\x05not-zlib";
+        require(!core::importRuleSet(binary, root, root/"malformed.srs", error) && !error.empty(), "malformed SRS accepted");
+        require(!core::importRuleSet(binary, root, root/"missing.srs", error) && !error.empty(), "missing SRS accepted");
+        std::ofstream(root/"oversized.srs", std::ios::binary) << std::string(8*1024*1024+1, 'x');
+        require(!core::importRuleSet(binary, root, root/"oversized.srs", error) && !error.empty(), "oversized SRS accepted");
+        for (const auto& entry : std::filesystem::directory_iterator(root))
+            require(!entry.path().filename().string().starts_with("rule-set-import-"), "import left a staging directory");
+        std::cout << "production SRS import: valid roundtrip, malformed/missing/oversize rejection, source and staging preservation passed\n";
+        return 0;
+    }
     testRuntimeHealth();
     using namespace clashflux::health;
     require(!clashflux::wire::DecodeTraffic("{}"), "missing traffic counters accepted");

@@ -13,6 +13,8 @@ import clashflux.db;
 import clashflux.persistence;
 import clashflux.core;
 import clashflux.store.core;
+import clashflux.singbox;
+import clashflux.routing;
 
 namespace store {
 
@@ -509,7 +511,52 @@ p->name = fields.name.empty() ? p->name : fields.name;
         return p ? yamlOf(*p) : std::string{};
     }
 
-    // 保存订阅 YAML 原文（编辑规则/内容）：写文件 + 更新 updatedAt；
+    singbox::ProfileRuleEdits ruleEdits(std::int64_t id) {
+        return routing::DecodeProfileRules(clashflux::persistence::persistence().setting(routing::ProfileRulesKey(id)));
+    }
+
+    bool saveRuleEdits(std::int64_t id, singbox::ProfileRuleEdits edits,
+                       const std::string& expectedContent, std::string& error) {
+        auto planLock = coreStore().lockPlanLifecycle();
+        error.clear();
+        try {
+            auto& data = clashflux::persistence::persistence();
+            if (!data.ready()) { error = "订阅尚未加载完成"; return false; }
+            const auto profile = findById(id);
+            if (!profile || profile->type == "pptp") { error = "订阅不存在或不支持个人规则"; return false; }
+            const auto content = yamlOf(*profile);
+            const auto previous = ruleEdits(id);
+            if (content != expectedContent || previous.revision != edits.revision) {
+                error = "订阅或个人规则已变化，请重新打开后编辑"; return false;
+            }
+            if (edits.revision == std::numeric_limits<std::uint64_t>::max()) { error = "规则修订号超出范围"; return false; }
+            ++edits.revision;
+            if (!singbox::ValidateProfileRuleEdits(edits, error)) return false;
+            const auto plan = singbox::InspectProfileRules(content, edits);
+            if (!plan.error.empty()) { error = plan.error; return false; }
+            const auto key = routing::ProfileRulesKey(id);
+            const auto previousText = data.setting(key);
+            data.setSetting(key, routing::EncodeProfileRules(edits));
+            bool ok = false;
+            try {
+                const bool runningMain = profile->selected && coreStore().snapshot().state == core::CoreState::Running;
+                ok = runningMain ? coreStore().restartCore(content)
+                                 : coreStore().validateProfileRuleSource(id, content, error);
+                if (!ok && error.empty()) error = coreStore().snapshot().lastError;
+            } catch (const std::exception& exception) { error = exception.what(); }
+            if (!ok) {
+                data.setSetting(key, previousText);
+                if (error.empty()) error = "订阅个人规则未能应用";
+                return false;
+            }
+            coreStore().invalidateProxyGroupsSnapshot();
+            // Publish a content revision even when only this profile's settings changed.
+            data.saveProfile(*profile);
+            return true;
+        } catch (const std::exception& exception) { error = exception.what(); return false; }
+    }
+
+    // 保存订阅 YAML 原文（高级文件编辑）：写文件 + 更新 updatedAt；
     // 若该订阅启用中且内核在跑，重启内核使改动生效。阻塞。
     bool saveYaml(std::int64_t id, const std::string& content) {
         lastError_.clear();

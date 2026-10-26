@@ -227,13 +227,12 @@ std::size_t ResponsiveProfilePageIndex(
     bool compact,
     huxerui::State<std::int64_t> edit_page_id,
     huxerui::State<bool> create_page_open,
-    huxerui::State<std::int64_t> file_page_id,
-    huxerui::State<std::int64_t> rules_page_id) {
+    huxerui::State<std::int64_t> file_page_id) {
     if (!compact) return 0U;
     if (edit_page_id.Get() != 0) return 1U;
     if (create_page_open.Get()) return 2U;
     if (file_page_id.Get() != 0) return 3U;
-    return rules_page_id.Get() != 0 ? 4U : 0U;
+    return 0U;
 }
 void OpenProfileCreate(bool compact, huxerui::State<bool> page,
                        huxerui::TaskScope tasks,

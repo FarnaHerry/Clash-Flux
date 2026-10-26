@@ -23,7 +23,9 @@ namespace {
 #include "singbox_context_dns.inc"
 #include "singbox_proxy.inc"
 #include "singbox_mrs.inc"
+std::string personalRuleSetTag(const RuleSetLibrary& library, const std::string& id);
 #include "singbox_rules.inc"
+#include "singbox_profile_rules.inc"
 #include "singbox_compile.inc"
 #include "singbox_sources.inc"
 } // namespace
@@ -51,6 +53,110 @@ ProfileFormat DetectProfileFormat(std::string_view content) {
         content.remove_prefix(end + 1);
     }
     return ProfileFormat::ClashYaml;
+}
+
+bool ValidateProfileRuleEdits(const ProfileRuleEdits& edits, std::string& error) {
+    error.clear();
+    if (edits.format_version != 1) { error = "不支持的订阅个人规则版本；保留原数据"; return false; }
+    std::set<std::string> ids;
+    bool final = false;
+    for (const auto& edit : edits.rules) {
+        const auto& op = edit.operation;
+        if (edit.id.empty() || !ids.insert(edit.id).second ||
+            (op != "prepend" && op != "before_final" && op != "replace" && op != "disable" && op != "final") ||
+            ((op == "replace" || op == "disable") != !edit.anchor.empty()) ||
+            (edit.unavailable != "reject" && edit.unavailable != "direct" && edit.unavailable != "main")) {
+            error = "订阅个人规则身份、操作或引用无效"; return false;
+        }
+        if (op == "final") {
+            if (final) { error = "默认出口只能修改一次"; return false; }
+            final = true;
+            if (edit.unavailable == "main") { error = "默认出口不能回退到自身"; return false; }
+        }
+        if (op != "disable" && (edit.target.empty() || (op != "final" &&
+            (!validPersonalMatch(edit.match) || edit.pattern.empty())))) {
+            error = "订阅个人规则缺少有效条件或目标"; return false;
+        }
+    }
+    return true;
+}
+
+bool ValidateRuleSetLibrary(const RuleSetLibrary& library, std::string& error) {
+    error.clear();
+    const auto fail = [&](const std::string& message) { error = message; return false; };
+    if (library.format_version != 1) return fail("不支持的规则集资源库版本；保留原数据");
+    if (library.resources.size() > 256) return fail("规则集最多允许 256 个");
+    std::set<std::string> ids, names;
+    std::size_t total = 0;
+    for (const auto& resource : library.resources) {
+        if (resource.id.empty() || resource.id.size() > 96 ||
+            !std::ranges::all_of(resource.id, [](unsigned char c) {
+                return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '-' || c == '_';
+            }) || !ids.insert(resource.id).second || trimCopy(resource.name).empty() ||
+            resource.name.size() > 256 || !names.insert(resource.name).second)
+            return fail("规则集名称或标识为空、重复或无效");
+        if (resource.content.size() > 8 * 1024 * 1024 || (total += resource.content.size()) > 16 * 1024 * 1024)
+            return fail("规则集内容超过限制（单个 8 MiB，合计 16 MiB）");
+        if (resource.type == "remote") {
+            if (resource.url.size() > 8192 || !clashflux::profile_link::IsHttpUrl(resource.url) || resource.url.find('#') != std::string::npos ||
+                !resource.content.empty() || (resource.format != "source" && resource.format != "binary") ||
+                resource.update_hours == 0 || resource.update_hours > 8760)
+                return fail("远程规则集需要有效 HTTP(S) 地址、格式和 1–8760 小时更新周期");
+        } else if (resource.type == "inline") {
+            if (resource.format != "source" || !resource.url.empty()) return fail("本地规则集仅支持 sing-box JSON 源格式");
+            const auto document = nlohmann::json::parse(resource.content, nullptr, false);
+            if (document.is_discarded() || !document.is_object() || document.size() != 2 ||
+                !document.contains("version") || !document["version"].is_number_integer() ||
+                document["version"] < 1 || document["version"] > 5 ||
+                !document.contains("rules") || !document["rules"].is_array())
+                return fail("规则集需要 version 1–5 和 rules 数组；不能导入完整配置或 Clash YAML");
+            for (const auto& rule : document["rules"])
+                if (!rule.is_object()) return fail("规则集条目必须为对象");
+        } else return fail("不支持的规则集来源类型");
+    }
+    return true;
+}
+
+bool ValidateRuleSetReferences(const RuleSetLibrary& library, const ProfileRuleEdits& edits, std::string& error) {
+    error.clear();
+    for (const auto& edit : edits.rules) {
+        if (edit.match != "rule_set" || edit.operation == "disable" || edit.operation == "final") continue;
+        if (!std::ranges::any_of(library.resources, [&](const auto& resource) { return resource.id == edit.pattern; })) {
+            error = "规则集仍被订阅引用，请先删除引用"; return false;
+        }
+    }
+    return true;
+}
+
+bool ValidateGlobalRuleSetReferences(const RuleSetLibrary& library, const std::vector<vpn::RouteRule>& rules, std::string& error) {
+    error.clear();
+    for (const auto& rule : rules) {
+        if (rule.match != vpn::MatchKind::RuleSet) continue;
+        if (!std::ranges::any_of(library.resources, [&](const auto& resource) { return resource.id == rule.pattern; })) {
+            error = "规则集仍被全局规则引用，请先删除引用"; return false;
+        }
+    }
+    return true;
+}
+
+ProfileRules InspectProfileRules(const std::string& content, const ProfileRuleEdits& edits) {
+    try {
+        const auto project = [&](std::vector<ProfileRule> rows) {
+            auto result = personalRulePlan(rows, edits);
+            result.original = std::move(rows);
+            return result;
+        };
+        if (DetectProfileFormat(content) == ProfileFormat::SingBoxJson) {
+            auto config = nlohmann::json::parse(content);
+            if (!config.is_object()) return {{}, "原生配置必须为 JSON 对象"};
+            return project(nativeProfileRules(config));
+        }
+        if (DetectProfileFormat(content) == ProfileFormat::OpenVpn) return {{}, "OpenVPN 使用连接和内网路由规则"};
+        const auto root = YAML::Load(content);
+        if (!root.IsMap()) return {{}, "订阅必须为 YAML 对象"};
+        return project(clashProfileRules(root));
+    } catch (const std::exception& error) { return {{}, error.what()}; }
 }
 
 std::string FidelitySummary(const std::vector<FidelityNote>& notes) {
@@ -110,6 +216,8 @@ CompileResult compileConfig(const CompileOptions& options) {
     ctx.sourceId = options.mainConnectionId;
     ctx.result.planRevision = options.planRevision;
     if (!vpn::ValidatePolicyRules(options.globalRules, ctx.result.error)) return std::move(ctx.result);
+    if (!ValidateProfileRuleEdits(options.profileRuleEdits, ctx.result.error)) return std::move(ctx.result);
+    if (!ValidateRuleSetLibrary(options.ruleSetLibrary, ctx.result.error)) return std::move(ctx.result);
     std::string_view original = options.profileYaml;
     if (original.starts_with("\xEF\xBB\xBF")) original.remove_prefix(3);
     const std::string trimmed = trimCopy(original);
@@ -134,11 +242,14 @@ CompileResult compileConfig(const CompileOptions& options) {
                 ctx.knownTags.push_back(tag);
                 ctx.result.sourceObjects.push_back({options.mainConnectionId, options.mainSourceName, vpn::TargetKind::Node, tag, tag});
             }
+            if (!options.profileRuleEdits.rules.empty() && !compilePersonalNativeRules(ctx)) return std::move(ctx.result);
             if (!options.mainConnectionId.empty()) {
-                ctx.sourceDefaults[options.mainConnectionId] = {ctx.config["route"].value("final", "")};
+                ctx.sourceDefaults[options.mainConnectionId] = {ctx.config["route"].value("final", ""),
+                    ctx.finalTarget == "REJECT" || ctx.finalTarget == "REJECT-DROP", ctx.finalTarget == "REJECT-DROP"};
                 ctx.result.participatingSources.push_back(options.mainConnectionId);
             }
             if (!compileAuxiliarySources(ctx)) return std::move(ctx.result);
+            if (!compilePersonalRuleSets(ctx)) return std::move(ctx.result);
             ctx.config["outbounds"] = ctx.outbounds;
             if (!applyConnectionRules(ctx)) return std::move(ctx.result);
         } catch (const std::exception& error) {
@@ -208,6 +319,7 @@ CompileResult compileConfig(const CompileOptions& options) {
     if (!ctx.ruleSets.empty()) {
         ctx.config["route"]["rule_set"] = std::move(ctx.ruleSets);
     }
+    if (!compilePersonalRuleSets(ctx)) return std::move(ctx.result);
     ctx.config["outbounds"] = std::move(ctx.outbounds);
     if (!applyConnectionRules(ctx)) return std::move(ctx.result);
     ctx.result.json = ctx.config.dump();
