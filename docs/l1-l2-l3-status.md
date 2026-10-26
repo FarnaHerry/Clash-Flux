@@ -1,5 +1,13 @@
 # L1 / L2 / L3 开发完成度复核
 
+2026-10-26 Windows 安装器修复：应用 `ac301e5` 加工作区、框架 `6ebc621` 加隐藏 HWND 修复，在独立源码快照和 MSVC x64/Release 下完成主应用与安装器干净构建，版本命令返回 v0.3.68/0；框架公共头文件检查、4 个通用套件和安装器 10 个用例的 88 条断言均通过。原增量目录的 Runtime 视口异常在干净构建中未复现。应用 `legacy_bundle_cleanup`、`project_test_gate`、`page_transition`、`persistence`、`ui_resources`、`cps_dependencies` 六项通过；配置测试在正确加载 MSVC/Ninja 环境后重跑通过。
+
+应用独立 checkout 固定到 `abd07a3f19d2680ade6093075608f73b42a9b3a3` 后，主目标和版本检查通过。原增量目录中部分框架对象仍早于变更后的公共头文件，分页和持久化测试异常退出；保留目录与源码、按现有 MSVC 编译命令重编译框架及测试库对象，再由常规构建刷新依赖和链接后，上述六项回归全部通过。
+
+WiX 成功生成包含清理 DLL 的 MSI，安装表确认清理为 commit、Impersonate=no，且排除卸载；DLL 仅依赖系统 DLL。独立 per-user 测试产品的 quiet 安装、升级时 embedded 卸载及最终 quiet 卸载均退出 0，结束后无测试注册、依赖 Provider 或标记文件。升级日志含 Burn 重复调用已删除旧测试缓存的非致命 0x80070003，未视为无警告验收。真实 Clash-Flux 安装记录、缓存与用户数据未修改；历史迁移范围见 [HuxerUI fork](huxerui-fork.md#windows-legacy-bundle-migration)。
+
+框架 SDK 完整安装被测试配置的 HUXERUI_ENABLE_PROFILING=ON 检查拒绝，未重配为发布 SDK，不能宣称 SDK 安装通过。真实 Clash-Flux 跨版本升级、失败回滚、签名发布和其它平台未执行。框架修复已发布到 farna/main 的 `abd07a3f19d2680ade6093075608f73b42a9b3a3`，应用 CI 和独立 checkout 同步固定该 SHA；应用版本仍为 0.3.68，没有发布新版本安装包。
+
 2026-10-25 Android 编译产物复用（`159e674` 加工作区）：把运行参数规范化前移至
 规则集发现前，统一保留 TUN 宽松路由和 IPv6 设置，移除检查回调与启动计划的无条件
 完整重编译。无 HTTP 依赖与固定快照各需一次发现编译；普通单轮 HTTP 新快照仍需

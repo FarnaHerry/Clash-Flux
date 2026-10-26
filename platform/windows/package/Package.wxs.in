@@ -7,6 +7,13 @@
     <Icon Id="ClashFluxApplicationIcon" SourceFile="@HUXERUI_WINDOWS_ICON_FILE@" />
     <Property Id="ARPPRODUCTICON" Value="ClashFluxApplicationIcon" />
 
+    <Binary Id="LegacyBundleCleanup" SourceFile="@HUXERUI_WINDOWS_LEGACY_CLEANUP_DLL@" />
+    <CustomAction Id="CleanupLegacyBundles" BinaryRef="LegacyBundleCleanup" DllEntry="CleanupLegacyBundles"
+                  Execute="commit" Impersonate="no" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="CleanupLegacyBundles" After="InstallInitialize" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
+    </InstallExecuteSequence>
+
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Clash-Flux" />
     </StandardDirectory>

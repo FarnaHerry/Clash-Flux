@@ -4,7 +4,7 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `9333c98b87fb4c6ac924f905d7e6b42c385b7835`，各平台 CI 共用
+Clash-Flux 当前固定 `abd07a3f19d2680ade6093075608f73b42a9b3a3`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
@@ -19,7 +19,7 @@ logic_error）、Windows 自定义标题栏窗口的 DWM 圆角、Windows 安装
 提示移除"忽略继续"（防止卸载失败被忽略后新旧两套程序文件并存）、Windows 安装器
 命令驱动运行修复（命令式安装/卸载绕过新版本闩锁、不阻塞收尾并按终端状态映射
 退出码、保留引擎停止与 bundle 注销，修复升级时每个陈旧 bundle 注册弹一页且
-注册跨版本累积的根因）、Windows 安装器 embedded/quiet 无窗执行与退出等待修复，
+注册跨版本累积的根因）、Windows 安装器 embedded/quiet 隐藏原生 HWND 与退出等待修复，
 以及 iOS 链接闭包修复（link.rsp 解析 app 目标自有传递
 依赖 + IOS 平台补 CoreMedia 框架声明）。
 这些修复已从应用 `cmake/patches/` 和 CMake/CI 应用步骤中移除，配置应用不会修改框架源码。
@@ -48,7 +48,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 9333c98b87fb4c6ac924f905d7e6b42c385b7835
+git -C third_party/huxerui checkout abd07a3f19d2680ade6093075608f73b42a9b3a3
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
@@ -62,6 +62,20 @@ Clash-Flux 必须重新运行 `cmake --build build --target clash-flux`、`./run
 同源约束，桌面门禁和 iOS 暂缓政策保持不变。
 
 ## 验证边界
+
+### Windows legacy bundle migration
+
+Windows 安装器从旧 `dev.farna.clashflux.bundle` 转到 `dev.farna.clashflux.bundle.v2` 的确定性 Burn UpgradeCode，避免新安装器调用旧缓存中无法静默执行的 bootstrapper。MSI UpgradeCode 保持不变，旧产品仍由 `MajorUpgrade` 在 MSI 事务内移除，失败时保留回滚能力。新框架修复在独立维护仓库中验证后才更新应用固定提交；未提交的框架修改不能成为 CI pin。
+
+MSI 内嵌静态 CRT 的原生清理 DLL，在安装/修复成功提交时以系统权限执行；卸载和回滚路径不清理。它只接受 HKLM 64 位卸载项中名称、发布者、旧 UpgradeCode、GUID ProviderKey 和 0.3.0–0.3.68 版本均匹配的 Burn Bundle。新升级标识的 Bundle、MSI 产品、其它软件、用户数据库和订阅均不匹配。
+
+清理仅删除 `%ProgramData%\Package Cache\{BundleId}` 内与注册版本一致的 Setup.exe、`state.rsm` 和空目录，拒绝路径不符、重解析点和额外文件；不递归删除共享 MSI 载荷。随后移除对应依赖项的旧 Bundle 引用、无其它依赖者的旧 Provider 和卸载注册。存在其它依赖者时保留该 Bundle；权限或缓存占用错误写入 MSI 日志，并保留尚未完成的注册以供下一次安装/修复重试，不使已成功安装的产品失败。
+
+`legacy_bundle_cleanup` 回归使用独立 HKCU 注册表树和临时目录，无需管理员权限，不改变真实安装记录。发布前另需 Windows 实机验证旧版到高于 0.3.68 的升级、失败回滚、新版静默卸载和维护页；不能用相同版本重新打包替代跨版本验收。
+
+2026-10-26 本机只读盘点发现旧升级标识下的 Bundle 0.3.60、0.3.61、0.3.62、0.3.66、0.3.68 各一条及各自缓存，另有当前 0.3.68 MSI 注册。当前 Bundle 与 MSI 两条记录不等于两份应用。盘点没有执行真实注册或缓存删除。
+
+Windows/MSVC 构建、隔离迁移、真实 Burn 测试产品及未完成边界见 [L1 / L2 / L3 验证记录](l1-l2-l3-status.md)。
 
 2026-10-22 固定版本更新到 `9333c98`：Windows Burn 安装器在 embedded 与 quiet 模式下
 不创建 HuxerUI 窗口，直接执行检测、计划、应用和退出；普通完整界面保持原样。

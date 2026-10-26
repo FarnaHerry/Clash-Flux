@@ -490,6 +490,7 @@ installation wizard: Burn bundles an MSI and a HuxerUI installer interface with
 destination selection, desktop shortcuts, repair and uninstall. The installer
 supports Simplified Chinese, Traditional Chinese and English. GitHub Release
 Windows archives include both `clash-flux-Setup-<version>.exe` and portable files.
+New installers use a separate Burn upgrade identity and clean legacy bundle registrations and private caches through 0.3.68 after MSI commit. The MSI upgrade identity, user data and shared MSI caches are preserved; see [migration details](docs/huxerui-fork.md#windows-legacy-bundle-migration).
 
 The saved theme is read synchronously through a temporary read-only connection before the first frame is built. Other settings and subscriptions still load asynchronously. The Lib-SQLite startup query is included in the pinned fork commit; see [UI development](docs/ui-development.md).
 

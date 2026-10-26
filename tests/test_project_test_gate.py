@@ -53,7 +53,7 @@ def main():
         configure(without_orm, msvc=True)
         configure([name for name in without_orm if name != "persistence"],
                   missing="persistence", msvc=True)
-        windows_tests = ["windows_service", "windows_physical_dns", "windows_physical_dns_wfp"]
+        windows_tests = ["windows_service", "windows_physical_dns", "windows_physical_dns_wfp", "legacy_bundle_cleanup"]
         windows_required = REQUIRED + windows_tests
         configure(windows_required, windows=True)
         for name in windows_tests:

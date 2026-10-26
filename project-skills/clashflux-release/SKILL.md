@@ -37,3 +37,4 @@ apksigner verify --verbose --min-sdk-version 23 --print-certs <apk>
 - 以实际 workflow 要求核对 Windows 安装器/归档、Linux 包/归档、macOS 归档和 Android APK。服务载荷版本与应用匹配，打包内核符合锁定版本与摘要。
 - iOS 是暂缓的非阻塞 Simulator 编译诊断，不生成 IPA、不进入 Release，不承诺真机支持；恢复支持需要明确项目决策。
 - 最终报告提交/标签、CI 与安装包/签名的真实结果；没有执行的签名、安装、真机测试不能写成通过。
+- Windows 包含 legacy-bundle-cleanup.dll；新 Burn 升级标识避开旧缓存 bootstrapper，MSI 标识保持不变。发布前按 [迁移边界](../../docs/huxerui-fork.md#windows-legacy-bundle-migration) 验证跨版本升级、回滚和卸载，不能以同版本重新打包替代。

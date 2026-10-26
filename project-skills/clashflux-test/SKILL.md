@@ -31,7 +31,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required
 ```
 
-- 必跑名单以 [ProjectTestGate.cmake](../../cmake/ProjectTestGate.cmake) 为准；当前通用桌面 21 项、Windows 24 项。只有记录在案的 MSVC C4737 可跳过直接 ORM 测试（Windows 23 项），persistence 必跑；手机不启用该桌面门禁。
+- 必跑名单以 [ProjectTestGate.cmake](../../cmake/ProjectTestGate.cmake) 为准；Windows 还包括不提权的 legacy_bundle_cleanup 隔离注册表/缓存回归。只有记录在案的 MSVC C4737 可跳过直接 ORM 测试，persistence 必跑；手机不启用该桌面门禁。
 - 缺失/禁用/未注册不是通过。Python、固定打包内核和可执行 OpenSSL CLI 缺失必须让门禁失败。下载回归传明确 OpenSSL 路径及 `--require-tls`，不能省略证书拒绝场景。
 - Windows CI 用 runner 的 Program Files/OpenSSL，构建前检查 CLI 与开发头文件，不重新通过 Chocolatey 安装。服务和 WFP 回归需要管理员测试环境。
 - 本地针对改动选择相关回归；改测试注册、CI 或发布门禁时检查完整注册与禁用情况。文档改动不冒充完整平台验收。

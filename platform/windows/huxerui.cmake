@@ -62,7 +62,7 @@ function(huxerui_configure_windows_project_package target_name install_component
     )
     string(UUID HUXERUI_WINDOWS_BUNDLE_UPGRADE_CODE
             NAMESPACE 6ba7b810-9dad-11d1-80b4-00c04fd430c8
-            NAME "dev.farna.clashflux.bundle"
+            NAME "dev.farna.clashflux.bundle.v2"
             TYPE SHA1
             UPPER
     )
@@ -72,6 +72,25 @@ function(huxerui_configure_windows_project_package target_name install_component
     set(HUXERUI_WINDOWS_ICON_FILE "${PROJECT_SOURCE_DIR}/assets/icon.ico")
     set(HUXERUI_WINDOWS_PROJECT_VERSION "${PROJECT_VERSION}")
     file(MAKE_DIRECTORY "${HUXERUI_WINDOWS_PACKAGE_DIRECTORY}")
+
+    # A new Burn lineage avoids executing the cached, broken legacy bootstrapper.
+    # The unchanged MSI UpgradeCode still gives Windows Installer transactional upgrades.
+    add_library(clashflux_legacy_bundle_cleanup SHARED
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/package/legacy_bundle_cleanup.cpp"
+    )
+    target_compile_features(clashflux_legacy_bundle_cleanup PRIVATE cxx_std_20)
+    if (MSVC)
+        target_compile_options(clashflux_legacy_bundle_cleanup PRIVATE /W4 /permissive-)
+    endif ()
+    target_compile_definitions(clashflux_legacy_bundle_cleanup PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(clashflux_legacy_bundle_cleanup PRIVATE advapi32 msi shell32 ole32)
+    set_target_properties(clashflux_legacy_bundle_cleanup PROPERTIES
+            CXX_EXTENSIONS OFF
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+            RUNTIME_OUTPUT_DIRECTORY "${HUXERUI_WINDOWS_PACKAGE_DIRECTORY}/$<0:>"
+            OUTPUT_NAME "legacy-bundle-cleanup"
+    )
+    set(HUXERUI_WINDOWS_LEGACY_CLEANUP_DLL "${HUXERUI_WINDOWS_PACKAGE_DIRECTORY}/legacy-bundle-cleanup.dll")
 
     # The installer has its own resource package; stage the shared mascot into
     # that package so the branding panel uses the same artwork as the app.
@@ -132,6 +151,7 @@ function(huxerui_configure_windows_project_package target_name install_component
             INTEGRATION_OUTPUT
                 "${HUXERUI_WINDOWS_PACKAGE_DIRECTORY}/$<CONFIG>/installer.json"
     )
+    add_dependencies(${target_name}_installer clashflux_legacy_bundle_cleanup)
     # 安装器壳子复用 src/ui/theme_colors.h 的产品配色（深浅两态），
     # 只加只读 include，不引入其它应用源码依赖。
     target_include_directories(${target_name}_installer PRIVATE
