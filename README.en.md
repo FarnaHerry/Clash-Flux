@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.59 release notes](docs/releases/v0.3.59.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.69 release notes](docs/releases/v0.3.69.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -490,7 +490,7 @@ installation wizard: Burn bundles an MSI and a HuxerUI installer interface with
 destination selection, desktop shortcuts, repair and uninstall. The installer
 supports Simplified Chinese, Traditional Chinese and English. GitHub Release
 Windows archives include both `clash-flux-Setup-<version>.exe` and portable files.
-New installers use a separate Burn upgrade identity and clean legacy bundle registrations and private caches through 0.3.68 after MSI commit. The MSI upgrade identity, user data and shared MSI caches are preserved; see [migration details](docs/huxerui-fork.md#windows-legacy-bundle-migration).
+New installers use a separate Burn upgrade identity and clean legacy bundle registrations and private caches for versions 0.3.0–0.3.68 after MSI commit. The MSI upgrade identity, user data and shared MSI caches are preserved; see [migration details](docs/huxerui-fork.md#windows-legacy-bundle-migration).
 
 The saved theme is read synchronously through a temporary read-only connection before the first frame is built. Other settings and subscriptions still load asynchronously. The Lib-SQLite startup query is included in the pinned fork commit; see [UI development](docs/ui-development.md).
 

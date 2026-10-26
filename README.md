@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.59 发布说明](docs/releases/v0.3.59.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.69 发布说明](docs/releases/v0.3.69.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -363,7 +363,7 @@ Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、
 修复/卸载；界面字符串含简中/繁中/英文）。GitHub Release 的 Windows 归档中同时
 包含 `clash-flux-Setup-<版本>.exe` 安装包和便携版文件。
-新安装器使用独立的 Burn 升级标识，并在 MSI 安装提交后迁移清理 0.3.68 及更早版本的旧 Bundle 注册和专属缓存；MSI 升级标识保持不变，用户数据与共享 MSI 缓存保留。边界见 [HuxerUI fork](docs/huxerui-fork.md#windows-legacy-bundle-migration)。
+新安装器使用独立的 Burn 升级标识，并在 MSI 安装提交后迁移清理 0.3.0–0.3.68 的旧 Bundle 注册和专属缓存；MSI 升级标识保持不变，用户数据与共享 MSI 缓存保留。边界见 [HuxerUI fork](docs/huxerui-fork.md#windows-legacy-bundle-migration)。
 
 启动时在首帧构建前同步、只读地读取保存的主题，避免默认主题切换闪烁；其余设置与订阅仍异步加载。Lib-SQLite 启动只读查询已合入所用 fork 的固定提交，详见 [UI 开发约定](docs/ui-development.md)。
 
