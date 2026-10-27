@@ -5,7 +5,66 @@
 
 #include "ui.h"
 
+#include <algorithm>
+
 namespace clashflux::ui {
+
+namespace {
+
+struct SearchFocusOutline {
+    class Extension;
+    bool focused = false;
+    huxerui::Color color;
+    bool animated = true;
+    bool operator==(const SearchFocusOutline&) const = default;
+};
+
+class SearchFocusOutline::Extension final : public huxerui::NodeExtension {
+public:
+    Extension(huxerui::ViewNode& node, const SearchFocusOutline& value) { Update(node, value); }
+
+    void Update(huxerui::ViewNode&, const SearchFocusOutline& value) {
+        if (!value.focused || !value.animated) {
+            reveal_.Set(value.focused ? 1.0F : 0.0F);
+        } else if (!focused_) {
+            reveal_.Set(0.0F);
+            reveal_.AnimateTo(1.0F, huxerui::TweenSpec{0.25, huxerui::Easing::EaseOut});
+        }
+        focused_ = value.focused;
+        color_ = value.color;
+        InvalidatePaint(PaintInvalidation::Foreground);
+    }
+
+    FrameResult OnFrame(huxerui::ViewNode&, const huxerui::FrameInfo& frame) override {
+        const auto result = reveal_.Advance(frame);
+        if (result.changed) InvalidatePaint(PaintInvalidation::Foreground);
+        return {.needs_frame = result.needs_frame, .wake_after = result.wake_after};
+    }
+
+    void PaintAboveContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
+        const float progress = std::clamp(reveal_.Value(), 0.0F, 1.0F);
+        if (!focused_ || progress <= 0.0F) return;
+        const auto bounds = node.Bounds();
+        // Reveal both horizontal edges together, keeping the original capsule
+        // geometry. Only this foreground paint sequence changes each frame.
+        paint.PushClip({bounds.x, bounds.y, bounds.width * progress, bounds.height});
+        paint.DrawBorder(bounds, color_, huxerui::StrokeStyle{.width = 1.0F},
+                         huxerui::CornerRadii{bounds.height / 2.0F});
+        paint.PopClip();
+    }
+
+private:
+    bool focused_ = false;
+    huxerui::Color color_;
+    huxerui::MotionController reveal_{0.0F};
+};
+
+} // namespace
+
+huxerui::View WithSearchFocusOutline(huxerui::View content, bool focused,
+                                     huxerui::Color color, bool animated) {
+    return std::move(content).With(SearchFocusOutline{focused, color, animated});
+}
 
 huxerui::View TitleBarSearchStack(huxerui::View title_bar_content,
                                   huxerui::View title_search_field) {

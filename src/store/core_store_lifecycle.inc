@@ -139,7 +139,7 @@
             if (!plan) { fail("规则集/订阅准备失败：" + prepareError); return; }
             auto& options = plan->options;
             auto& compiled = plan->compiled;
-            auto config = nlohmann::json::parse(compiled.json);
+            auto& config = plan->config;
             // Re-read after preparation: another client may have started while
             // downloads/checks were running. Reject before replacing config.json.
             if (!checkNetworkConflicts(options, config, prepareError)) { fail(prepareError); return; }
@@ -155,6 +155,7 @@
                 }
             }
 #endif
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
             std::ifstream previousConfig(configFile, std::ios::binary);
             if (previousConfig) {
                 const std::string text(std::istreambuf_iterator<char>(previousConfig), {});
@@ -162,6 +163,7 @@
                 residentConfigMatches = !previous.is_discarded() && previous == config;
             }
             previousConfig.close(); // Windows replacement needs the read handle closed.
+#endif
             ruleSetResources = compiled.ruleSetResources;
             if (config.contains("route") && config["route"].contains("rule_set"))
                 geoRepairSafe = clashflux::rule_cache::MayRepairGeo(config["route"]["rule_set"], ruleSetResources, workDir);
@@ -169,12 +171,11 @@
             if (!api::CommitFile(plan->file, configFile, commitError)) { fail(commitError); return; }
             lastPreparedOptions_ = options;
             lastPreparedJson_ = compiled.json;
+            cacheProxyGroups(options, compiled, std::move(plan->proxyGroups));
             std::lock_guard lock(mutex_);
-            compiledProxyGroups_ = std::move(plan->proxyGroups);
             snap_.warnings = std::move(compiled.warnings);
             snap_.fidelity = std::move(compiled.fidelity);
-            snap_.sourceObjects = std::make_shared<const std::vector<singbox::SourceObject>>(std::move(compiled.sourceObjects));
-            previewSourceObjects_ = snap_.sourceObjects;
+            snap_.sourceObjects = previewSourceObjects_;
             snap_.participatingSources = std::move(compiled.participatingSources);
         }
 
@@ -559,20 +560,79 @@
 
     // 订阅/配置变更时重启当前内核。Android 的 libbox 由 VpnService 托管，
     // 但无 TUN 内核也要保持常驻；写完新配置后按当前 TUN 状态恢复对应服务。
-    auto lockPlanLifecycle() { return std::unique_lock(lifecycleMutex_); }
+    auto lockPlanLifecycle(std::stop_token cancel = {}) {
+        std::unique_lock lock(lifecycleMutex_, std::defer_lock);
+        if (!cancel.stop_possible()) { lock.lock(); return lock; }
+        while (!cancel.stop_requested()) {
+            if (lock.try_lock()) return lock;
+            std::this_thread::sleep_for(std::chrono::milliseconds{10});
+        }
+        return lock;
+    }
+
+    // One owned candidate serves validation, handoff, preview and feedback.
+    // The caller keeps the lifecycle lock from source lookup through commit.
+    bool applyMainProfile(std::int64_t id, const std::string& content, std::string& error,
+                          std::stop_token cancel = {}, std::string* fidelitySummary = nullptr) {
+        std::lock_guard operationLock(lifecycleMutex_);
+        auto healthPause = streams_.pauseHealth();
+        ensureOpen();
+        error.clear();
+        const auto began = std::chrono::steady_clock::now();
+        const auto before = snapshot();
+        const bool running = before.state == core::CoreState::Running;
+        const bool proxy = running && systemProxyOurs();
+        std::int64_t previous = 0;
+        for (const auto& profile : db_->listProfiles()) if (profile.selected) previous = profile.id;
+        bool selectedChanged = false;
+        try {
+            if (cancel.stop_requested()) return false;
+            auto options = routingOptions(content, before.tunEnabled, false, nullptr, routing::ConnectionId(id));
+            auto candidate = prepareStartPlan(std::move(options), error, cancel, running);
+            if (!candidate || cancel.stop_requested() ||
+                !validatePlanTargets(candidate->options, candidate->compiled, nullptr, error)) return false;
+            const auto summary = singbox::FidelitySummary(candidate->compiled.fidelity);
+            if (cancel.stop_requested()) return false;
+            db_->setSelectedProfile(id);
+            selectedChanged = true;
+            invalidateProxyGroupsSnapshot();
+            if (running) {
+                if (!restartPreparedCore(content, std::move(candidate), before, proxy, false, cancel, began)) {
+                    if (!cancel.stop_requested()) error = snapshot().lastError;
+                    db_->setSelectedProfile(previous);
+                    invalidateProxyGroupsSnapshot();
+                    return false;
+                }
+            } else {
+                cacheProxyGroups(candidate->options, candidate->compiled, std::move(candidate->proxyGroups));
+            }
+            if (fidelitySummary) *fidelitySummary = summary;
+            return true;
+        } catch (const std::exception& exception) {
+            if (selectedChanged) {
+                db_->setSelectedProfile(previous);
+                invalidateProxyGroupsSnapshot();
+            }
+            error = exception.what();
+            return false;
+        }
+    }
 
     // 候选检查不改变订阅数据库、运行态或组选项；HTTP 自有缓存只在转换与
     // 候选检查成功后提交。适用于 UI/CLI 的写入口。
     bool validateRoutingPlan(const std::string& profileYaml, std::string& error,
                              const vpn::VpnPolicy* policy = nullptr,
-                             const std::optional<std::string>& main = std::nullopt) {
+                             const std::optional<std::string>& main = std::nullopt,
+                             std::stop_token cancel = {}) {
         std::lock_guard lock(lifecycleMutex_);
         ensureOpen();
         try {
+            if (cancel.stop_requested()) return false;
             auto options = routingOptions(profileYaml, snapshot().tunEnabled, false, policy, main);
             singbox::CompileResult compiled;
-            if (!prepareHttpRuleProviders(options, compiled, error, policy) ||
+            if (!prepareHttpRuleProviders(options, compiled, error, policy, cancel) || cancel.stop_requested() ||
                 !validatePlanTargets(options, compiled, policy, error)) return false;
+            if (cancel.stop_requested()) return false;
             return checkCompiledPlan(compiled, error);
         } catch (const std::exception& e) { error = e.what(); return false; }
     }
@@ -742,62 +802,28 @@
         } catch (const std::exception& e) { error = e.what(); return false; }
     }
 
-    bool restartCore(const std::string& profileYaml, bool skipUnchanged = false) {
+    bool restartCore(const std::string& profileYaml, bool skipUnchanged = false,
+                     std::stop_token cancel = {}) {
         std::lock_guard operationLock(lifecycleMutex_);
+        if (cancel.stop_requested()) return false;
         auto healthPause = streams_.pauseHealth();
         const auto before = snapshot();
-        const bool wasActive = before.state == core::CoreState::Running || before.state == core::CoreState::Starting;
         const bool systemProxyEnabled = systemProxyOurs();
         const auto preparationBegan = std::chrono::steady_clock::now();
         std::unique_ptr<PreparedStart> candidate;
         std::string error;
         try {
-            candidate = prepareStartPlan(routingOptions(profileYaml, before.tunEnabled), error);
+            candidate = prepareStartPlan(routingOptions(profileYaml, before.tunEnabled), error, cancel);
             if (!candidate) {
+                if (cancel.stop_requested()) return false;
                 std::lock_guard lock(mutex_); snap_.lastError = "候选计划被拒绝：" + error; return false;
             }
         } catch (const std::exception& e) {
+            if (cancel.stop_requested()) return false;
             std::lock_guard lock(mutex_); snap_.lastError = e.what(); return false;
         }
-        if (skipUnchanged && wasActive && candidate->compiled.json == lastAppliedJson_) return true;
-        const auto previous = lastAppliedOptions_;
-        stream::logApplication("info", std::format("主计划准备完成，用时 {} ms（原内核保持运行）",
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - preparationBegan).count()));
-        const auto handoffBegan = std::chrono::steady_clock::now();
-        if (!stopCore()) return false;
-        preparedStart_ = std::move(candidate);
-        startCore(profileYaml, false, before.tunEnabled,
-                  systemProxyEnabled ? std::optional<bool>(true) : std::nullopt);
-#if defined(__ANDROID__)
-        if (wasActive && snapshot().state != core::CoreState::Failed) {
-            if (before.tunEnabled) clashflux_android_start_vpn(); else clashflux_android_start_core();
-        }
-        return snapshot().state != core::CoreState::Failed;
-#else
-        if (snapshot().state == core::CoreState::Running) {
-            stream::logApplication("info", std::format("主计划交接完成，用时 {} ms（控制器就绪）",
-                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - handoffBegan).count()));
-            return true;
-        }
-        const auto failure = snapshot().lastError;
-        // 只有上一份计划仍拥有同一原生接口时才允许恢复，不能复活已释放的接口。
-        const bool safe = previous && std::ranges::all_of(previous->nativeConnections, [&](const auto& old) {
-            if (!old.connected) return true;
-            return std::ranges::any_of(nativeSessions_, [&](const auto& current) {
-                return current.id == old.id && current.connected && current.interfaceName == old.interfaceName &&
-                       current.nativeConfig == old.nativeConfig && current.transportAddress == old.transportAddress;
-            });
-        });
-        if (wasActive && safe && stopCore()) {
-            preparedOptions_ = *previous;
-            startCore(previous->profileYaml, false, previous->tunInbound,
-                      systemProxyEnabled ? std::optional<bool>(true) : std::nullopt);
-        }
-        const bool restored = snapshot().state == core::CoreState::Running;
-        std::lock_guard lock(mutex_);
-        snap_.lastError = failure + (restored ? "；已恢复上一份运行计划" : "；未能恢复上一份运行计划");
-        return false;
-#endif
+        return restartPreparedCore(profileYaml, std::move(candidate), before, systemProxyEnabled,
+                                   skipUnchanged, cancel, preparationBegan);
     }
 
     // 拉 /configs 刷新运行配置快照（阻塞：UI 必须 RunOnTaskThread）。

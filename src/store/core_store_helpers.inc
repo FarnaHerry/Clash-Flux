@@ -4,6 +4,7 @@
     struct PreparedStart {
         singbox::CompileOptions options;
         singbox::CompileResult compiled;
+        nlohmann::json config;
         std::string proxyGroups;
         std::filesystem::path directory, file;
         ~PreparedStart() {
@@ -12,6 +13,55 @@
             if (!directory.empty()) std::filesystem::remove(directory, ignored);
         }
     };
+
+
+    bool restartPreparedCore(const std::string& profileYaml, std::unique_ptr<PreparedStart> candidate,
+                             const CoreSnapshot& before, bool systemProxyEnabled, bool skipUnchanged,
+                             std::stop_token cancel, std::chrono::steady_clock::time_point preparationBegan) {
+        const bool wasActive = before.state == core::CoreState::Running || before.state == core::CoreState::Starting;
+        if (skipUnchanged && wasActive && candidate->compiled.json == lastAppliedJson_) return true;
+        // Once handoff starts, finish/rollback under the lifecycle lock. A newer
+        // request will apply afterwards; never abandon a stopped data plane.
+        if (cancel.stop_requested()) return false;
+        const auto previous = lastAppliedOptions_;
+        stream::logApplication("info", std::format("主计划准备完成，用时 {} ms（原内核保持运行）",
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - preparationBegan).count()));
+        const auto handoffBegan = std::chrono::steady_clock::now();
+        if (!stopCore()) return false;
+        preparedStart_ = std::move(candidate);
+        startCore(profileYaml, false, before.tunEnabled,
+                  systemProxyEnabled ? std::optional<bool>(true) : std::nullopt);
+#if defined(__ANDROID__)
+        if (wasActive && snapshot().state != core::CoreState::Failed) {
+            if (before.tunEnabled) clashflux_android_start_vpn(); else clashflux_android_start_core();
+        }
+        return snapshot().state != core::CoreState::Failed;
+#else
+        if (snapshot().state == core::CoreState::Running) {
+            stream::logApplication("info", std::format("主计划交接完成，用时 {} ms（控制器就绪）",
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - handoffBegan).count()));
+            return true;
+        }
+        const auto failure = snapshot().lastError;
+        // 只有上一份计划仍拥有同一原生接口时才允许恢复，不能复活已释放的接口。
+        const bool safe = previous && std::ranges::all_of(previous->nativeConnections, [&](const auto& old) {
+            if (!old.connected) return true;
+            return std::ranges::any_of(nativeSessions_, [&](const auto& current) {
+                return current.id == old.id && current.connected && current.interfaceName == old.interfaceName &&
+                       current.nativeConfig == old.nativeConfig && current.transportAddress == old.transportAddress;
+            });
+        });
+        if (wasActive && safe && stopCore()) {
+            preparedOptions_ = *previous;
+            startCore(previous->profileYaml, false, previous->tunInbound,
+                      systemProxyEnabled ? std::optional<bool>(true) : std::nullopt);
+        }
+        const bool restored = snapshot().state == core::CoreState::Running;
+        std::lock_guard lock(mutex_);
+        snap_.lastError = failure + (restored ? "；已恢复上一份运行计划" : "；未能恢复上一份运行计划");
+        return false;
+#endif
+    }
 
     static std::vector<clashflux::network_conflict::Tun> networkTuns(const nlohmann::json& config) {
         std::vector<clashflux::network_conflict::Tun> result;
@@ -88,7 +138,9 @@
     // while the previous data plane is still alive. The exact staged bytes
     // are consumed by startCore; the stopped interval performs no downloads.
     std::unique_ptr<PreparedStart> prepareStartPlan(singbox::CompileOptions options,
-                                                   std::string& error) {
+                                                   std::string& error, std::stop_token cancel = {},
+                                                   bool inspectNetwork = true) {
+        if (cancel.stop_requested()) return {};
         auto plan = std::make_unique<PreparedStart>();
         const auto began = std::chrono::steady_clock::now();
         auto checkpoint = began;
@@ -106,24 +158,34 @@
         };
         // Catch another client's global interception before downloads can fail
         // through that tunnel; address/name checks follow actual compilation.
-        if (!checkNetworkConflicts(options, nlohmann::json::object(), error)) return {};
+        if (inspectNetwork && !checkNetworkConflicts(options, nlohmann::json::object(), error)) return {};
         trace("network-preflight");
-        if (!prepareHttpRuleProviders(options, plan->compiled, error)) { publishFailure(); return {}; }
+        bool geoPrepared = false;
+        if (!prepareHttpRuleProviders(options, plan->compiled, error, nullptr, cancel, &geoPrepared)) {
+            if (!cancel.stop_requested()) publishFailure();
+            return {};
+        }
+        if (cancel.stop_requested()) return {};
         trace("providers-and-compile");
-        prefetchRuleSets(plan->compiled.ruleSetResources, workDir);
-        const bool geoInputsChanged = clashflux::runtime_compile::GeoInputsChanged(
-            !plan->compiled.ruleSetResources.empty(), options.ruleSetDir != workDir.string());
+        if (!geoPrepared) prefetchRuleSets(plan->compiled.ruleSetResources, workDir);
+        const bool directoryChanged = options.ruleSetDir != workDir.string();
+        const bool geoInputsChanged = (!geoPrepared || directoryChanged) && clashflux::runtime_compile::GeoInputsChanged(
+            !plan->compiled.ruleSetResources.empty(), directoryChanged);
         options.ruleSetDir = workDir.string();
-        if (geoInputsChanged) plan->compiled = core::generateConfig(options);
+        if (geoInputsChanged) plan->compiled = singbox::compileConfig(options, cancel);
         trace(geoInputsChanged ? "geo-prefetch-and-recompile" : "geo-prefetch-reuse");
+        if (cancel.stop_requested()) return {};
         if (!plan->compiled.error.empty() || plan->compiled.json.empty()) {
             error = "订阅编译失败：" + plan->compiled.error; publishFailure(); return {};
         }
-        auto config = nlohmann::json::parse(plan->compiled.json, nullptr, false);
+        plan->config = nlohmann::json::parse(plan->compiled.json, nullptr, false);
+        auto& config = plan->config;
         if (!config.is_object()) { error = "订阅编译结果不是合法 JSON 对象"; return {}; }
-        if (!checkNetworkConflicts(options, config, error)) return {};
-        plan->proxyGroups = proxyGroupsFromConfig(config, plan->compiled.sourceObjects);
-        plan->compiled.json = config.dump();
+        if (inspectNetwork && !checkNetworkConflicts(options, config, error)) return {};
+        bool selectorChanged = false;
+        plan->proxyGroups = proxyGroupsFromConfig(config, plan->compiled.sourceObjects, options.mainConnectionId, &selectorChanged);
+        if (selectorChanged) plan->compiled.json = config.dump();
+        if (cancel.stop_requested()) return {};
         trace("projection-and-json");
         if (!checkCompiledPlan(plan->compiled, error)) return {};
 #if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
@@ -161,12 +223,46 @@
         return plan;
     }
 
+    void cacheProxyGroups(const singbox::CompileOptions& options, singbox::CompileResult& compiled,
+                          std::string snapshot) {
+        // 记下这份快照对应的订阅文件指纹（mtime + 大小）：文件被重新下载或
+        // 替换后缓存自动失效，不会一直返回旧的空快照。
+        const std::filesystem::path file = selectedProfileFile();
+        std::error_code ec;
+        const auto stamp = std::filesystem::last_write_time(file, ec);
+        const auto size = ec ? 0 : std::filesystem::file_size(file, ec);
+        std::lock_guard lock(mutex_);
+        compiledProxyGroups_ = std::move(snapshot);
+        compiledProxyGroupsStamp_ = ec ? std::filesystem::file_time_type{}
+                                       : stamp;
+        compiledProxyGroupsSize_ = ec ? 0 : size;
+        compiledSourceFiles_.clear();
+        for (const auto& profile : db_->listProfiles()) {
+            const auto id = routing::ConnectionId(profile.id);
+            if (profile.file.empty() || (!profile.selected &&
+                !std::ranges::any_of(options.auxiliarySources, [&](const auto& source) { return source.id == id; }))) continue;
+            const auto sourceFile = cfg::profilesDir() / profile.file;
+            std::error_code error;
+            const auto sourceStamp = std::filesystem::last_write_time(sourceFile, error);
+            const auto bytes = error ? 0 : std::filesystem::file_size(sourceFile, error);
+            if (!error) compiledSourceFiles_[sourceFile] = {sourceStamp, bytes};
+        }
+        // 预览编译同样产出保真度账本：让「配置保真度」报告在内核没跑时也
+        // 有内容（startCore 那条路径看到的是同一份订阅）。
+        previewSourceObjects_ = std::make_shared<const std::vector<singbox::SourceObject>>(std::move(compiled.sourceObjects));
+        if (snap_.state != core::CoreState::Running && snap_.state != core::CoreState::Starting) {
+            snap_.fidelity = std::move(compiled.fidelity);
+            snap_.sourceObjects = previewSourceObjects_;
+        }
+        compiledProfilesRevision_ = clashflux::persistence::persistence().profilesRevision();
+        compiledPolicyText_ = setting("vpn.global_policy", "");
+    }
+
     // 代理页快照（组 + 每节点 type/udp）由 clashflux.singbox 的纯函数生成，
     // 便于单测；这里只把「持久化的组选中项」从 settings 里喂进去。
     std::string proxyGroupsFromConfig(nlohmann::json& config,
-        const std::vector<singbox::SourceObject>& objects = {}) {
-        std::string main;
-        for (const auto& profile : db_->listProfiles())
+        const std::vector<singbox::SourceObject>& objects = {}, std::string main = {}, bool* configChanged = nullptr) {
+        if (main.empty()) for (const auto& profile : db_->listProfiles())
             if (profile.selected) main = routing::ConnectionId(profile.id);
         return singbox::BuildProxySnapshot(config, [this, &objects, &main](const std::string& group) {
             const auto key = "proxy.selection." + group;
@@ -183,7 +279,7 @@
                 }
             }
             return std::string{};
-        });
+        }, configChanged);
     }
 
     inline singbox::CompileOptions routingOptions(
@@ -288,7 +384,10 @@
 
     bool prepareHttpRuleProviders(singbox::CompileOptions& options,
                                  singbox::CompileResult& compiled, std::string& error,
-                                 const vpn::VpnPolicy* policy = nullptr) {
+                                 const vpn::VpnPolicy* policy = nullptr, std::stop_token cancel = {},
+                                 bool* geoPrepared = nullptr) {
+        bool preparedGeo = false;
+        if (geoPrepared) *geoPrepared = false;
         clashflux::runtime_compile::Normalize(options);
         rule_provider_cache::PreparationStats stats;
         const auto began = std::chrono::steady_clock::now();
@@ -383,19 +482,22 @@
               fetched = request(resource.headers, false);
           return fetched;
         };
-        operations.check = [this, policy](const auto& candidate, const auto& result, std::string& reason) {
+        operations.check = [this, policy, cancel, &preparedGeo](const auto& candidate, auto& result, std::string& reason) {
+            if (cancel.stop_requested()) return false;
             if (!validatePlanTargets(candidate, result, policy, reason)) return false;
             prefetchRuleSets(result.ruleSetResources, cfg::coreWorkDir());
+            preparedGeo = true;
             // Only GEO prefetch can change compiler inputs here. HTTP/ASN
             // snapshots are already fully lowered and must still pass check.
-            if (!clashflux::runtime_compile::GeoInputsChanged(!result.ruleSetResources.empty(), false))
-                return checkCompiledPlan(result, reason);
-            return checkCompiledPlan(core::generateConfig(candidate), reason);
+            if (clashflux::runtime_compile::GeoInputsChanged(!result.ruleSetResources.empty(), false))
+                result = singbox::compileConfig(candidate, cancel);
+            return !cancel.stop_requested() && checkCompiledPlan(result, reason);
         };
         operations.commit = [](const auto& temp, const auto& dest, std::string& reason) {
             return api::CommitFile(temp, dest, reason);
         };
-        const bool ready = rule_provider_cache::Prepare(options, operations, compiled, error, &stats);
+        const bool ready = rule_provider_cache::Prepare(options, operations, compiled, error, &stats, cancel);
+        if (geoPrepared) *geoPrepared = ready && preparedGeo;
         stream::logApplication("info", std::format(
             "profile-providers ready={} total_ms={} discovery_compile_calls={} discovery_compile_us={} validated_snapshot_reuses={} conversion_cache_hits={}", ready,
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count(),

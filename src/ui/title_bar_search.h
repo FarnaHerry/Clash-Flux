@@ -4,6 +4,11 @@
 
 namespace clashflux::ui {
 
+// Paint-only focus reveal. The caller supplies focus and foreground/reduced-motion
+// policy; the retained modifier owns frame progression without recomposition.
+huxerui::View WithSearchFocusOutline(huxerui::View content, bool focused,
+                                     huxerui::Color color, bool animated = true);
+
 // 桌面标题栏搜索层：把页面动作行与搜索胶囊叠放。搜索胶囊不再定宽——外层
 // 「容量槽」按权重（0.3）取标题栏剩余空间并保持居中，内层胶囊不带 Grow、用
 // Frame.max_width 封顶（kDesktopTitleBarSearchWidth）：空间足够时 320，窄窗口

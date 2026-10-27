@@ -102,20 +102,29 @@
                     [startupTasks, trayRuntime, toast, profilesModel, proxiesModel,
                      windowGeneration,
                      id = profile.id] {
-                        startupTasks.Launch([trayRuntime, toast, profilesModel,
-                                             proxiesModel, windowGeneration,
-                                             id]() -> huxerui::Task<void> {
-                            const std::string error = co_await RunOnTaskThread([id] {
+                        LaunchProfileSelection<std::string>(startupTasks, profilesModel, id,
+                            [id](std::stop_token cancel) -> huxerui::Task<std::string> {
+                            co_return co_await RunOnTaskThread([id, cancel] {
                                 auto& store = store::profilesStore();
-                                return store.activate(id) ? std::string{} : store.lastError();
+                                std::string error;
+                                store.activate(id, cancel, &error);
+                                return error;
                             });
+                        }, [trayRuntime, toast, profilesModel, proxiesModel, windowGeneration](
+                            std::optional<std::string> result, std::exception_ptr failure, std::uint64_t) {
+                            std::string error = result.value_or(std::string{});
+                            if (failure) {
+                                try { std::rethrow_exception(failure); }
+                                catch (const std::exception& exception) { error = exception.what(); }
+                                catch (...) { error = "订阅切换失败"; }
+                            }
+                            profilesModel->PublishCached();
                             if (!error.empty()) {
                                 if (trayRuntime->retired ||
                                     trayRuntime->windowGeneration != windowGeneration)
                                     stream::logApplication("error", error);
                                 else toast.Show(error);
                             }
-                            profilesModel->RequestSync();
                             if (error.empty()) proxiesModel->RequestRefresh();
                         });
                     }).Checked(profile.selected));

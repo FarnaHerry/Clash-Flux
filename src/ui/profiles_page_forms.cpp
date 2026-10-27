@@ -1335,51 +1335,95 @@ void PushProfileQrScanner(
                                  pptp_supported, on_back);
     });
 }
+namespace {
+huxerui::Task<void> SaveProfileDocument(
+    std::int64_t id, std::shared_ptr<const std::string> text,
+    huxerui::State<bool> saving, huxerui::ToastHandle toast,
+    std::shared_ptr<ProfilesModel> model, std::function<void()> done) {
+    std::string error;
+    try {
+        error = co_await RunOnTaskThread([id, text] {
+            auto& profiles = store::profilesStore();
+            return profiles.saveYaml(id, *text) ? std::string{} : profiles.lastError();
+        });
+    } catch (const std::exception& exception) { error = exception.what(); }
+    saving = false;
+    if (!error.empty()) { toast.Show(error); co_return; }
+    model->PublishCached();
+    toast.Show(Localized("已保存"));
+    if (done) done();
+}
+
+[[huxerui::composable]] huxerui::View ProfileDocumentBody(
+    huxerui::State<TextDocumentHandle> content, bool loading, bool saving, float height) {
+    if (loading) return huxerui::ProgressCircle().With(huxerui::Frame{.min_height = 48.0F});
+    if (!content.Get()) return huxerui::Text(Localized("无法读取订阅文件"));
+    return DocumentTextView(content.Get(), false, height).With(huxerui::Enabled(!saving));
+}
+}
+
 [[huxerui::composable]] huxerui::View ProfileFilePage(
-    std::int64_t id, huxerui::State<std::shared_ptr<std::string>> content,
-    huxerui::State<bool> loading, huxerui::TaskScope tasks,
+    std::int64_t id, huxerui::State<TextDocumentHandle> content,
+    huxerui::State<bool> loading, huxerui::TaskScope pageTasks,
     huxerui::ToastHandle toast, std::function<void()> on_back) {
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
+    auto tasks = huxerui::UseApplicationTaskScope();
+    auto saving = huxerui::UseState(false);
+    auto alive = huxerui::UseState(true);
+    huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
+    const auto back = [=] { if (alive.Get() && !saving.Get()) on_back(); };
     const auto save = [=] {
-        if (loading.Get()) return;
-        const std::string yaml = *content.Get();
+        if (loading.Get() || saving.Get() || !content.Get() || !content.Get()->Ready()) return;
+        const auto text = content.Get()->Snapshot();
+        saving = true;
         tasks.Launch([=]() -> huxerui::Task<void> {
-            const std::string error = co_await RunOnTaskThread([id, yaml] {
-                auto& profiles = store::profilesStore();
-                return profiles.saveYaml(id, yaml) ? std::string{}
-                                                    : profiles.lastError();
-            });
-            if (!error.empty()) {
-                toast.Show(error);
-                co_return;
-            }
-            toast.Show(Localized("已保存"));
-            profilesModel->RequestSync();
-            on_back();
+            co_await SaveProfileDocument(id, text, saving, toast, profilesModel, back);
         });
     };
-    huxerui::View editor = loading.Get()
-        ? huxerui::View{huxerui::ProgressCircle()}
-        : huxerui::View{huxerui::TextField(
-              huxerui::TextEditingValue{*content.Get()})
-              .Variant(huxerui::TextFieldVariant::Outlined)
-              .LineLimits(huxerui::TextFieldLineLimits::MultiLine(18, 40))
-              .OnChanged([content](const huxerui::TextEditingValue& value) {
-                  *content.Get() = value.text;
-              })};
     return ProfileFlowPage(
         huxerui::Text(Localized("编辑订阅文件"), huxerui::TextRole::Title),
         huxerui::IconButton(app::images::save, Localized("保存文件"))
-            .With(huxerui::Tooltip(Localized("保存订阅文件")))
+            .With(huxerui::Tooltip(Localized("保存订阅文件")),
+                  huxerui::Enabled(!loading.Get() && !saving.Get() && content.Get() != nullptr && content.Get()->Ready()))
             .OnClick(save),
         huxerui::Column {
             huxerui::Text(Localized("直接编辑订阅 YAML；保存后启用中的订阅会重启生效。")),
-            editor,
+            ProfileDocumentBody(content, loading.Get(), saving.Get(), 0.0F),
             CompactFloatingNavigationFooter(),
         }.With(huxerui::Spacing(16.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
                huxerui::Grow(1.0F)),
-        std::move(on_back));
+        back);
+}
+
+[[huxerui::composable]] huxerui::View ProfileFileDialog(
+    std::int64_t id, huxerui::State<TextDocumentHandle> content,
+    huxerui::State<bool> loading, huxerui::ToastHandle toast, huxerui::DialogContext context) {
+    const auto profilesModel = huxerui::UseService<ProfilesModel>();
+    auto tasks = huxerui::UseApplicationTaskScope();
+    auto saving = huxerui::UseState(false);
+    return DialogCard(huxerui::Column {
+      huxerui::Text(Localized("编辑文件"), huxerui::TextRole::Title),
+      huxerui::Text(Localized("直接编辑订阅原文，远程更新会覆盖这些改动。需要保留的规则请使用编辑规则。")),
+      ProfileDocumentBody(content, loading.Get(), saving.Get(), 380.0F),
+      huxerui::Row {
+        huxerui::Button(Localized("取消")).With(huxerui::Enabled(!saving.Get()))
+            .OnClick([context] { context.Dismiss(); }),
+        huxerui::Spacer(),
+        huxerui::Button(Localized("保存"))
+            .With(huxerui::Enabled(!loading.Get() && !saving.Get() && content.Get() != nullptr && content.Get()->Ready()))
+            .OnClick([=] {
+                if (loading.Get() || saving.Get() || !content.Get() || !content.Get()->Ready()) return;
+                const auto text = content.Get()->Snapshot();
+                saving = true;
+                tasks.Launch([=]() -> huxerui::Task<void> {
+                    co_await SaveProfileDocument(id, text, saving, toast, profilesModel,
+                        [context] { context.Dismiss(); });
+                });
+            }),
+      },
+    }.With(huxerui::Spacing(16.0F), huxerui::Frame{.width = 640.0F},
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
 }
 
 } // namespace clashflux::ui

@@ -58,7 +58,7 @@ struct CoreModel {
     CoreOperations operations;
     huxerui::State<bool> diagnosticsBusy{false};
     huxerui::State<bool> diagnosticsExportBusy{false};
-    huxerui::State<std::string> diagnosticsReport{std::string{}};
+    huxerui::State<std::shared_ptr<const std::string>> diagnosticsReport{std::make_shared<const std::string>()};
     std::stop_source diagnosticsCancel;
     std::uint64_t diagnosticsSerial = 0;
     huxerui::State<bool> serviceChecking{false};

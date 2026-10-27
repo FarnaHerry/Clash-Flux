@@ -1564,6 +1564,81 @@ void testAsnRuleProviderBatch() {
           bad.ruleProviderContents.empty(), "one invalid ASN still rejects the entire batched candidate without commit");
 }
 
+void testProviderPreparationCancellation() {
+    const RuleSetTestDirectory directory;
+    singbox::CompileOptions base;
+    base.profileYaml = "rule-providers:\n  p0: {type: http, behavior: domain, url: https://example.test/p0.yaml}\nrules: ['RULE-SET,p0,DIRECT', 'MATCH,DIRECT']\n";
+    std::stop_source stopped;
+    stopped.request_stop();
+    const auto rejected = singbox::compileConfig(base, stopped.get_token());
+    check(rejected.json.empty() && !rejected.error.empty(), "pre-canceled compilation produces no candidate JSON");
+    for (const bool cancelDuringFetch : {false, true}) {
+        std::stop_source cancel;
+        auto candidate = base;
+        candidate.ruleProviderCacheDir = (directory.path / (cancelDuringFetch ? "fetch" : "check")).string();
+        rule_provider_cache::Operations operations;
+        unsigned checks = 0, commits = 0;
+        operations.fetch = [&](const auto&, const auto& path, std::string&) {
+            std::ofstream output(path, std::ios::binary);
+            output << "payload: [cancel.test]\n";
+            output.close();
+            if (cancelDuringFetch) cancel.request_stop();
+            return output.good();
+        };
+        operations.check = [&](const auto&, const auto&, std::string&) {
+            ++checks;
+            cancel.request_stop();
+            return true;
+        };
+        operations.commit = [&](const auto& from, const auto& to, std::string&) {
+            ++commits;
+            std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing);
+            return true;
+        };
+        singbox::CompileResult result;
+        std::string error;
+        check(!rule_provider_cache::Prepare(candidate, operations, result, error, nullptr, cancel.get_token()) &&
+              commits == 0 && candidate.ruleProviderContents.empty() && checks == (cancelDuringFetch ? 0u : 1u),
+              "canceled provider preparation commits no cache or caller snapshots, including cancellation after check");
+        for (const auto& entry : std::filesystem::directory_iterator(candidate.ruleProviderCacheDir))
+            check(!entry.path().filename().string().starts_with(".stage-"), "cancellation retires its exclusive staging directory");
+        operations.check = [](const auto&, auto& compiled, std::string&) {
+            compiled.json = json::parse(compiled.json).dump(2);
+            return true;
+        };
+        check(rule_provider_cache::Prepare(candidate, operations, result, error) && commits == 1,
+              "a canceled candidate can be retried successfully with a fresh request");
+        check(result.json.starts_with("{\n") && result.ruleProviderContents.empty(),
+              "preparation retains finalized checked bytes without another compilation or duplicate raw snapshots");
+    }
+    std::stop_source selectionCancel;
+    unsigned updated = 0;
+    for (const auto source : {4, 5}) {
+        auto background = base;
+        background.mainConnectionId = "profile-" + std::to_string(source);
+        background.ruleProviderCacheDir = (directory.path / std::to_string(source)).string();
+        rule_provider_cache::Operations operations;
+        operations.fetch = [&](const auto&, const auto& path, std::string&) {
+            selectionCancel.request_stop();
+            std::ofstream output(path, std::ios::binary);
+            output << "payload: [background.test]\n";
+            output.close(); return output.good();
+        };
+        operations.check = [](const auto&, const auto&, std::string&) { return true; };
+        operations.commit = [](const auto& from, const auto& to, std::string&) {
+            std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing);
+            return true;
+        };
+        singbox::CompileResult result;
+        std::string error;
+        if (rule_provider_cache::Prepare(background, operations, result, error)) ++updated;
+        check(background.ruleProviderContents.size() == 1 && !result.json.empty(),
+              "background subscription preparation retains its own snapshots when selection is canceled");
+    }
+    check(selectionCancel.stop_requested() && updated == 2,
+          "a canceled selection token cannot interrupt independent preparations for other subscriptions");
+}
+
 void testProviderParallelPreparation() {
     const RuleSetTestDirectory directory;
     singbox::CompileOptions base;
@@ -2569,6 +2644,7 @@ int main(int argc, char** argv) {
     testAsnRuleProviders();
     testAsnRuleProviderBatch();
     testProviderParallelPreparation();
+    testProviderPreparationCancellation();
     testProviderConversionReuse();
     testProviderConditionalRefresh();
     testMrsRuleProviders();
@@ -3476,11 +3552,13 @@ rules:
                   {{"type", "vmess"}, {"tag", "vmess-01"}},
                   {{"type", "http"}, {"tag", "http-01"}},
                   {{"type", "direct"}, {"tag", "DIRECT"}}})}};
+        bool configChanged = false;
         const std::string snapshot = singbox::BuildProxySnapshot(
             config, [](const std::string& group) {
                 return group == "节点选择" ? std::string{"http-01"}
                                           : std::string{};
-            });
+            }, &configChanged);
+        check(configChanged, "changed saved selector requests exactly one runtime JSON rewrite");
         const auto proxies = nlohmann::json::parse(snapshot, nullptr, false);
         check(proxies.is_object() && proxies.contains("proxies"),
               "代理快照顶层含 proxies");
@@ -3499,6 +3577,13 @@ rules:
               "预览快照不臆测 udp（只有内核真给了才显示）");
         check(config["outbounds"][0].value("default", "") == "http-01",
               "保存的选中项落到 config 的 selector default");
+        const auto accepted = config.dump();
+        singbox::BuildProxySnapshot(config, [](const auto&) { return std::string{"http-01"}; }, &configChanged);
+        check(!configChanged && config.dump() == accepted,
+              "equal selector replay is idempotent and does not require full JSON serialization");
+        singbox::BuildProxySnapshot(config, {}, &configChanged);
+        check(!configChanged && config.dump() == accepted,
+              "read-only proxy projection leaves runtime JSON bytes reusable");
         // 形态不对的 config 不能抛异常。
         nlohmann::json broken = nlohmann::json::array();
         const auto empty = nlohmann::json::parse(

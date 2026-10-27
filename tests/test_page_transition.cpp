@@ -9,6 +9,7 @@
 #include <sstream>
 #include <string>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 #include <huxerui/huxerui.h>
@@ -17,6 +18,7 @@
 #include "ui.h"
 #include "box_cat.h"
 #include "runtime_diagnostics.h"
+#include "text_document.h"
 #include "home_control_motion.h"
 #include "home_header_control.h"
 #include "home_grid.h"
@@ -32,6 +34,7 @@
 #include "section_tab_picker.h"
 #include "responsive_shell.h"
 #include "page_layout.h"
+#include "title_bar_search.h"
 #include "page_loading.h"
 #include "empty_state.h"
 #include "connection_row.h"
@@ -289,6 +292,139 @@ void testPptpProgressResources() {
               "PPTP 断开后可重新进入连接进度");
     }
 }
+clashflux::ui::TextDocumentHandle documentFixture;
+std::shared_ptr<const std::string> documentFixtureSource;
+std::shared_ptr<huxerui::Clipboard> documentFixtureClipboard;
+bool documentFixtureReadOnly = false;
+int documentFixtureCompositions = 0;
+[[huxerui::composable]] huxerui::View TextDocumentFixture() {
+    ++documentFixtureCompositions;
+    documentFixtureClipboard = huxerui::UseApplication().Clipboard();
+    if (!documentFixture) documentFixture = std::make_shared<clashflux::ui::TextDocument>(documentFixtureSource);
+    auto visible = huxerui::UseState(true);
+    auto tick = huxerui::UseState(0);
+    return huxerui::Column {
+      huxerui::Row {
+        huxerui::Button("Toggle document").OnClick([visible] { visible = !visible.Get(); }),
+        huxerui::Button("Recompose parent").OnClick([tick] { tick += 1; }),
+        huxerui::Text(std::to_string(tick.Get())),
+      },
+      visible.Get() ? clashflux::ui::DocumentTextView(documentFixture, documentFixtureReadOnly, 300.0F)
+                    : huxerui::View{huxerui::Text("Document hidden")},
+    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+huxerui::View TextDocumentFixtureRoot() {
+    return huxerui::MaterialTheme(TextDocumentFixture());
+}
+const huxerui::Application kTextDocumentApplication{TextDocumentFixtureRoot};
+void waitForTextDocument(huxerui::testing::UiTest& ui,
+                         const clashflux::ui::TextDocumentHandle& document) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+    while (!document->Ready() && document->Error().empty() && std::chrono::steady_clock::now() < deadline) {
+        ui.Pump();
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    ui.Pump();
+    check(document->Ready(), "document worker preparation completes without UI-thread parsing");
+}
+void testTextDocuments() {
+    std::string text;
+    for (int line = 0; line < 30000; ++line) text += "rule-" + std::to_string(line) + ": example.com\n";
+    text += "中文 😀\n";
+    const auto original = std::make_shared<const std::string>(std::move(text));
+    documentFixtureReadOnly = false;
+    documentFixtureSource = original;
+    documentFixture.reset();
+    {
+        huxerui::testing::UiTest ui(kTextDocumentApplication, {.viewport = {640.0F, 500.0F},
+            .resource_provider = AppResources()});
+        ui.Pump();
+        waitForTextDocument(ui, documentFixture);
+        check(documentFixture->Controller().IsConnected(), "large text mounts the production CodeEditor");
+        check(documentFixture->Snapshot() == original, "unchanged document snapshots share the original bytes");
+        const auto editor = ui.Find(UiSelector::Key("document-editor")).Find(UiSelector::Type<huxerui::Canvas>());
+        check(editor.One().bounds.height < 301.0F, "large document keeps a bounded editor viewport");
+        editor.Tap();
+        documentFixture->Controller().SetCursor(0, 0);
+        const int compositions = documentFixtureCompositions;
+        editor.EnterText("新增 😀 ");
+        ui.Pump();
+        check(documentFixtureCompositions == compositions, "typing does not recompose the owning page");
+        const auto edited = documentFixture->Snapshot();
+        check(edited != original && edited->starts_with("新增 😀 ") && edited->ends_with("中文 😀\n"),
+              "explicit snapshot retains the entire large UTF-8 document after editing");
+        check(documentFixture->Snapshot() == edited, "repeated save/copy snapshots reuse unchanged text");
+        ui.Find(UiSelector::Text("Recompose parent")).Tap();
+        ui.Pump();
+        check(documentFixture->Snapshot() == edited, "unrelated parent recomposition preserves live text");
+        documentFixture->Controller().SetCursor(0, 0);
+        editor.Tap();
+        documentFixture->Controller().SetCursor(0, 0);
+        editor.EnterText("before-unmount ");
+        if (ui.Find(UiSelector::Key("action-menu-surface")).Exists()) {
+            ui.PressKey(huxerui::Key::Escape);
+            ui.Pump();
+        }
+        ui.Find(UiSelector::Text("Toggle document")).Tap();
+        ui.Pump();
+        check(ui.Find(UiSelector::Text("Document hidden")).Exists(), "hide action removes the document viewport");
+        check(!documentFixture->Controller().IsConnected(), "unmounted document disconnects the controller");
+        check(documentFixture->Snapshot()->starts_with("before-unmount "),
+              "retained document preserves unsaved edits after editor release");
+        ui.Find(UiSelector::Text("Toggle document")).Tap();
+        ui.Pump();
+        check(documentFixture->Controller().Text().starts_with("before-unmount "),
+              "remount restores unsaved text without truncating the document");
+    }
+    documentFixtureReadOnly = true;
+    documentFixtureSource = original;
+    documentFixture.reset();
+    {
+        huxerui::testing::UiTest ui(kTextDocumentApplication, {.viewport = {390.0F, 500.0F},
+            .resource_provider = AppResources()});
+        ui.Pump();
+        waitForTextDocument(ui, documentFixture);
+        const auto editor = ui.Find(UiSelector::Key("document-editor")).Find(UiSelector::Type<huxerui::Canvas>());
+        editor.Tap();
+        documentFixture->Controller().SelectAll();
+        check(documentFixture->Controller().Copy(), "read-only editor supports selection and copy through the fork fix");
+        check(documentFixtureClipboard->ReadText() == std::optional<std::string>{*original},
+              "toolbar copy writes actual selected text before any native clipboard action");
+        check(!documentFixture->Controller().Cut() && !documentFixture->Controller().Paste(),
+              "read-only controller refuses cut and paste");
+        check(documentFixture->Controller().Text() == *original, "copy does not change the read-only document");
+        ui.Find(UiSelector::Text("Recompose parent")).Tap();
+        ui.Pump();
+        check(documentFixture->Snapshot() == original, "read-only preview shares its full source across recomposition");
+        ui.Find(UiSelector::Key("document-search-toggle")).Tap();
+        check(ui.Find(UiSelector::Key("document-search-input")).Exists(), "shared document search opens");
+        ui.Find(UiSelector::Key("document-search-close")).Tap();
+        check(!ui.Find(UiSelector::Key("document-search-input")).Exists(), "shared document search closes");
+        ui.Find(UiSelector::Key("document-search-toggle")).Tap();
+        check(ui.Find(UiSelector::Key("document-search-input")).Exists(), "search reopens on the first click after closing");
+    }
+    documentFixture.reset();
+    documentFixtureReadOnly = false;
+    documentFixtureSource = std::make_shared<const std::string>("original\r\n中文 😀\n");
+    {
+        huxerui::testing::UiTest ui(kTextDocumentApplication, {.viewport = {640.0F, 500.0F},
+            .resource_provider = AppResources()});
+        ui.Pump();
+        waitForTextDocument(ui, documentFixture);
+        const auto& controller = documentFixture->Controller();
+        documentFixtureClipboard->WriteText("pasted 😀");
+        controller.SelectAll();
+        check(controller.Paste(), "toolbar paste works without an earlier native clipboard action");
+        check(*documentFixture->Snapshot() == "pasted 😀", "paste emits change notification and updates the save snapshot");
+        controller.SelectAll();
+        check(controller.Cut(), "toolbar cut succeeds only after writing the selection to clipboard");
+        check(documentFixtureClipboard->ReadText() == std::optional<std::string>{"pasted 😀"} &&
+              documentFixture->Snapshot()->empty(), "cut preserves selected bytes on clipboard and saves the edited document");
+    }
+    documentFixture.reset();
+    documentFixtureClipboard.reset();
+}
+
 bool diagnosticsFixtureDark = false;
 bool diagnosticsFixtureCanSave = true;
 bool diagnosticsFixtureSaving = false;
@@ -296,7 +432,7 @@ std::string diagnosticsFixtureReport = "redacted-report";
 [[huxerui::composable]] huxerui::View DiagnosticsFixture() {
     auto target = huxerui::UseState(huxerui::TextEditingValue{});
     auto busy = huxerui::UseState(false);
-    return clashflux::ui::RuntimeDiagnosticsContent(target, busy.Get(), true, diagnosticsFixtureReport,
+    return clashflux::ui::RuntimeDiagnosticsContent(target, busy.Get(), true, std::make_shared<const std::string>(diagnosticsFixtureReport),
         [busy] { ++diagnosticsStarts; busy = true; }, [busy] { busy = false; },
         [] { ++diagnosticsCopies; }, [] { ++diagnosticsCloses; },[] { ++diagnosticsSaves; },
         diagnosticsFixtureCanSave, diagnosticsFixtureSaving);
@@ -332,7 +468,16 @@ void testDiagnosticsContent() {
         check(!ui.Find(UiSelector::Text(zh ? "保存脱敏报告" : "Save redacted report")).One().enabled,
               "采集过程中禁止保存未完成报告");
         ui.Find(UiSelector::Text(zh ? "取消" : "Cancel")).Tap(); ui.PumpAndSettle();
-        check(ui.Find(UiSelector::Text("redacted-report")).Exists(), "取消动作后恢复报告与交互");
+        const auto reportReady = [&] {
+            return ui.FindSemantics(huxerui::testing::UiSemanticSelector::Value("redacted-report")).Exists();
+        };
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+        while (!reportReady() && std::chrono::steady_clock::now() < deadline) {
+            ui.Pump();
+            std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        }
+        check(reportReady() && ui.Find(UiSelector::Text(zh ? "开始诊断" : "Run diagnostics")).One().enabled,
+              "取消动作后恢复报告与交互");
     }
 }
 
@@ -1426,6 +1571,99 @@ void testHeaderGeometry() {
     }
 }
 
+struct SearchOutlineFixture {
+    huxerui::State<bool> focused{false};
+    huxerui::State<bool> reduced{false};
+    huxerui::State<bool> dark{false};
+    int compositions = 0;
+};
+std::shared_ptr<SearchOutlineFixture> searchOutlineFixture;
+void InstallSearchOutlineFixture(huxerui::ApplicationContext& context) {
+    searchOutlineFixture = std::make_shared<SearchOutlineFixture>();
+    context.Provide(searchOutlineFixture);
+}
+[[huxerui::composable]] huxerui::View SearchOutlineContent() {
+    const auto model = huxerui::UseService<SearchOutlineFixture>();
+    const auto& theme = huxerui::UseTheme();
+    ++model->compositions;
+    const bool animated = !theme.motion.reduced_motion &&
+        huxerui::UseWindow().LifecycleState() != huxerui::WindowLifecycleState::Background;
+    return huxerui::Column {
+        clashflux::ui::WithSearchFocusOutline(huxerui::Row {huxerui::Text("SEARCH")}
+            .With(huxerui::Frame{.width = 320.0F, .height = 34.0F},
+                  huxerui::Border(theme.colors.outline, 1.0F), huxerui::CornerRadius(17.0F))
+            .Key("search-outline"), model->focused.Get(), theme.colors.primary, animated),
+        huxerui::Text("BELOW-SEARCH").Key("below-search"),
+    };
+}
+huxerui::View SearchOutlineRoot() {
+    return huxerui::Scope([] {
+        const auto model = huxerui::UseService<SearchOutlineFixture>();
+        auto theme = huxerui::MaterialLightThemeSpec();
+        theme.colors = model->dark.Get() ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
+        theme.motion.reduced_motion = model->reduced.Get();
+        return huxerui::MaterialTheme(theme, SearchOutlineContent());
+    });
+}
+const huxerui::Application kSearchOutlineApplication{SearchOutlineRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallSearchOutlineFixture}}};
+
+void testSearchFocusOutline() {
+    huxerui::testing::UiTest ui(kSearchOutlineApplication, {.viewport = {600.0F, 200.0F}});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    const auto model = searchOutlineFixture;
+    for (bool dark : {false, true}) {
+        model->dark = dark;
+        model->focused = false;
+        ui.PumpAndSettle();
+        const auto bounds = ui.Find(UiSelector::Key("search-outline")).One().bounds;
+        const auto below = ui.Find(UiSelector::Key("below-search")).One().bounds;
+        const auto idle = ui.CaptureSnapshot();
+        model->focused = true;
+        ui.Pump();
+        const int compositions = model->compositions;
+        const auto start = ui.CaptureSnapshot();
+        ui.Pump(std::chrono::milliseconds(80));
+        const auto partial = ui.CaptureSnapshot();
+        ui.Pump(std::chrono::milliseconds(80));
+        check(partial != start && partial != ui.CaptureSnapshot(),
+              "focus outline reveals progressively instead of lighting the entire capsule immediately");
+        check(model->compositions == compositions &&
+              ui.Find(UiSelector::Key("search-outline")).One().bounds == bounds &&
+              ui.Find(UiSelector::Key("below-search")).One().bounds == below,
+              "focus reveal updates retained paint without recomposition or layout movement");
+        ui.PumpAndSettle();
+        const auto finished = ui.CaptureSnapshot();
+        ui.Pump(std::chrono::seconds(2));
+        check(finished == ui.CaptureSnapshot() && finished != idle,
+              "completed focus reveal stays highlighted and stops requesting frames");
+        model->focused = false;
+        ui.PumpAndSettle();
+        check(ui.CaptureSnapshot() == idle, "blur restores the normal border immediately");
+    }
+    for (bool background : {false, true}) {
+        model->focused = true;
+        ui.Pump();
+        ui.Pump(std::chrono::milliseconds(50));
+        model->focused = false;
+        ui.Pump();
+        model->focused = true;
+        if (background) ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background);
+        else model->reduced = true;
+        ui.PumpAndSettle();
+        const auto stopped = ui.CaptureSnapshot();
+        ui.Pump(std::chrono::seconds(2));
+        check(stopped == ui.CaptureSnapshot(), "reduced motion/background settles interrupted focus without recurring frames");
+        ui.SetWindowMetrics({.viewport = {390.0F, 200.0F}});
+        ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Key("search-outline")).One().bounds.width == 320.0F,
+              "focus paint preserves capsule geometry after resize");
+        model->focused = false;
+        ui.PumpAndSettle();
+        model->reduced = false;
+    }
+}
+
 // Exercise the mobile policy even on the desktop test host, including wide
 // mobile viewports. The page content must keep its space below a 48pt search.
 huxerui::View MobileSearchRoot() {
@@ -1711,6 +1949,97 @@ void testProfileImportCompletion() {
 }
 
 using TestProfilesModel = clashflux::ui::ProfileListModel<std::string>;
+struct SelectionFixture : clashflux::ui::ProfileListModel<std::int64_t> {
+    huxerui::State<std::int64_t> desired{1}, applied{1};
+    int publications = 0, cancellations = 0, executions = 0, active = 0, maximum = 0;
+};
+std::shared_ptr<SelectionFixture> selectionFixture;
+void InstallSelectionFixture(huxerui::ApplicationContext& context) {
+    selectionFixture = std::make_shared<SelectionFixture>();
+    context.Provide(selectionFixture);
+}
+[[huxerui::composable]] huxerui::View SelectionOrigin() {
+    const auto model = huxerui::UseService<SelectionFixture>();
+    const auto tasks = huxerui::UseApplicationTaskScope();
+    const auto select = [model, tasks](std::int64_t id, int latency, bool fail) {
+        model->desired = id;
+        clashflux::ui::LaunchProfileSelection<std::int64_t>(tasks, model, id,
+            [model, id, latency, fail](std::stop_token cancel) -> huxerui::Task<std::int64_t> {
+                ++model->executions;
+                model->maximum = std::max(model->maximum, ++model->active);
+                co_await huxerui::Delay(std::chrono::milliseconds(latency));
+                --model->active;
+                if (cancel.stop_requested()) ++model->cancellations;
+                if (fail) throw std::runtime_error("superseded selection");
+                co_return id;
+            }, [model](std::optional<std::int64_t> id, std::exception_ptr failure, std::uint64_t) {
+                ++model->publications;
+                if (!failure && id) model->applied = *id;
+                else model->desired = model->applied.Get();
+            });
+    };
+    return huxerui::Row {
+        huxerui::Button("Slow selection").OnClick([select] { select(2, 300, false); }),
+        huxerui::Button("Quick selection").OnClick([select] { select(3, 50, false); }),
+        huxerui::Button("Back to active").OnClick([select] { select(1, 10, false); }),
+        huxerui::Button("Fail selection").OnClick([select] { select(4, 100, true); }),
+    };
+}
+huxerui::View SelectionRoot() {
+    return huxerui::FlatTheme {huxerui::Scope([] {
+        auto retired = huxerui::UseState(false);
+        return huxerui::Column {
+            retired.Get() ? huxerui::View{huxerui::Text("SELECTION-RETIRED")} : SelectionOrigin(),
+            huxerui::Button("Retire selection origin").OnClick([retired] { retired = true; }),
+        };
+    })};
+}
+const huxerui::Application kSelectionApplication{SelectionRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallSelectionFixture}}};
+void testLatestProfileSelection() {
+    huxerui::testing::UiTest ui(kSelectionApplication, {.viewport = {900.0F, 400.0F}});
+    ui.PumpAndSettle();
+    const auto model = selectionFixture;
+    const auto tap = [&](const char* label) { ui.Find(UiSelector::Text(label)).Tap(); ui.Pump(); };
+    tap("Slow selection");
+    const auto duplicateSerial = model->selectionSerial;
+    tap("Slow selection"); tap("Slow selection");
+    check(model->selectionSerial == duplicateSerial && model->executions == 1,
+          "repeated clicks on the pending card are idempotent and submit no additional preparation");
+    const auto cancelled = model->selectionCancel.get_token();
+    tap("Back to active");
+    check(cancelled.stop_requested() && model->desired.Get() == 1,
+          "switching back while preparation is pending records the new intent and cancels the old request");
+    ui.Pump(std::chrono::milliseconds(20));
+    check(model->selectionPending.Get() && model->applied.Get() == 1,
+          "retargeting keeps the active source unchanged while canceled preparation drains");
+    ui.Pump(std::chrono::milliseconds(400));
+    ui.PumpAndSettle();
+    check(model->publications == 1 && model->cancellations == 1 && model->applied.Get() == 1,
+          "a superseded completion cannot change selection or publish stale state");
+    tap("Slow selection"); tap("Quick selection"); tap("Slow selection");
+    ui.Pump(std::chrono::milliseconds(60));
+    check(model->selectionPending.Get() && model->publications == 1,
+          "equal-target ABA and intermediate completion cannot clear the newest pending request");
+    tap("Retire selection origin");
+    ui.SetWindowMetrics({.viewport = {390.0F, 600.0F}});
+    ui.Pump(std::chrono::milliseconds(400)); ui.PumpAndSettle();
+    check(model->applied.Get() == 2 && !model->selectionPending.Get() && model->publications == 2,
+          "only the last selection publishes after caller retirement and resize");
+    check(model->maximum == 1 && model->executions == 4,
+          "one preparation runs at a time and intermediate queued targets are replaced without execution");
+    huxerui::testing::UiTest retry(kSelectionApplication, {.viewport = {900.0F, 400.0F}});
+    retry.PumpAndSettle();
+    const auto failedModel = selectionFixture;
+    retry.Find(UiSelector::Text("Fail selection")).Tap(); retry.Pump(std::chrono::milliseconds(200));
+    retry.PumpAndSettle();
+    check(!failedModel->selectionPending.Get() && failedModel->desired.Get() == failedModel->applied.Get(),
+          "latest failure releases pending and restores the authoritative selection");
+    retry.Find(UiSelector::Text("Quick selection")).Tap(); retry.Pump(std::chrono::milliseconds(100));
+    retry.PumpAndSettle();
+    check(failedModel->applied.Get() == 3 && !failedModel->selectionPending.Get(), "failed selection remains retryable");
+}
+
 struct ProfileListFixture {
     std::uint64_t revision = 1;
     std::vector<std::string> rows{"remote-1", "remote-2", "local-3"};
@@ -2125,6 +2454,8 @@ struct ControlFixture {
     huxerui::State<std::string> result{std::string{"CONTROL-IDLE"}};
     huxerui::State<std::string> poll{std::string{}};
     huxerui::State<int> executions{0};
+    huxerui::State<int> resumedCommands{0};
+    huxerui::State<bool> tunIntent{false};
 };
 
 struct BoxCatFixture {
@@ -2789,9 +3120,37 @@ void InstallControlFixture(huxerui::ApplicationContext& context) {
             });
         if (launched) model->executions = model->executions.Get() + 1;
     };
+    const auto installThenRun = [model, tasks](int outcome, CoreAction action) {
+        LaunchCoreOperation<bool>(tasks, model, {.action = action, .enabled = true},
+            [model, outcome](CoreCommand original) -> huxerui::Task<bool> {
+                const auto resumed = co_await ResumeCoreCommandAfterServiceInstall<bool>(
+                    original, [model, outcome]() -> huxerui::Task<bool> {
+                        co_await huxerui::Delay(std::chrono::milliseconds(200));
+                        check(model->operations.Busy(), "installation retains the original operation ticket");
+                        if (outcome == 2) throw std::runtime_error("install fixture");
+                        co_return outcome != 1;
+                    }, [model, original, outcome](CoreCommand command) -> huxerui::Task<bool> {
+                        check(command == original && model->operations.command.Get() == original,
+                              "installation resumes the unchanged command while shared pending is held");
+                        model->resumedCommands = model->resumedCommands.Get() + 1;
+                        if (outcome == 3) co_return false;
+                        model->tunIntent = command.action == CoreAction::Tun && command.enabled;
+                        co_return true;
+                    });
+                co_return resumed.value_or(false);
+            }, [model](std::optional<bool> result, std::exception_ptr error) {
+                model->result = std::string{result.value_or(false) && !error
+                    ? "CONTROL-SUCCESS" : "CONTROL-FAILED"};
+            });
+    };
     return huxerui::Row {
         huxerui::Button("Run control").OnClick([run] { run(false); }),
         huxerui::Button("Fail control").OnClick([run] { run(true); }),
+        huxerui::Button("Install then TUN").OnClick([installThenRun] { installThenRun(0, CoreAction::Tun); }),
+        huxerui::Button("Cancel install").OnClick([installThenRun] { installThenRun(1, CoreAction::Tun); }),
+        huxerui::Button("Throw install").OnClick([installThenRun] { installThenRun(2, CoreAction::Tun); }),
+        huxerui::Button("Fail resumed TUN").OnClick([installThenRun] { installThenRun(3, CoreAction::Tun); }),
+        huxerui::Button("Install then start").OnClick([installThenRun] { installThenRun(0, CoreAction::Start); }),
     }.Key("control-origin");
 }
 [[huxerui::composable]] huxerui::View ControlFixtureContent() {
@@ -2821,6 +3180,8 @@ void InstallControlFixture(huxerui::ApplicationContext& context) {
         huxerui::Text(model->result.Get()),
         huxerui::Text(model->poll.Get()),
         huxerui::Text("CONTROL-EXECUTIONS:" + std::to_string(model->executions.Get())),
+        huxerui::Text("RESUMED-COMMANDS:" + std::to_string(model->resumedCommands.Get())),
+        huxerui::Text(model->tunIntent.Get() ? "TUN-INTENT-ON" : "TUN-INTENT-OFF"),
     }.With(huxerui::Grow(1.0F));
 }
 huxerui::View ControlFixtureRoot() { return huxerui::FlatTheme{ControlFixtureContent()}; }
@@ -2848,6 +3209,44 @@ void testCoreOperations() {
     check(ui.Find(UiSelector::Text("CONTROL-FAILED")).Exists() && ui.Find(UiSelector::Text("CONTROL-READY")).Exists(), "failed work releases shared pending");
     ui.Find(UiSelector::Text("Run control")).Tap(); ui.Pump(std::chrono::milliseconds(300)); ui.PumpAndSettle();
     check(ui.Find(UiSelector::Text("CONTROL-SUCCESS")).Exists() && ui.Find(UiSelector::Text("CONTROL-EXECUTIONS:3")).Exists(), "failed operation remains retryable");
+}
+
+void testServiceInstallContinuation() {
+    for (const auto* button : {"Install then TUN", "Cancel install", "Throw install",
+                               "Fail resumed TUN", "Install then start"}) {
+        huxerui::testing::UiTest ui(kControlApplication, {.viewport = {1800.0F, 700.0F}});
+        ui.PumpAndSettle();
+        ui.Find(UiSelector::Text("Start control poll")).Tap(); ui.Pump();
+        ui.Find(UiSelector::Text(button)).Tap(); ui.Pump();
+        ui.Find(UiSelector::Text("Try second control entry")).Tap(); ui.Pump();
+        check(ui.Find(UiSelector::Text("CONTROL-BUSY")).Exists() &&
+              ui.Find(UiSelector::Text("CONTROL-EXECUTIONS:0")).Exists(),
+              "service installation prevents conflicting commands throughout authorization");
+        ui.Find(UiSelector::Text("Retire control origin")).Tap(); ui.Pump();
+        check(ui.Find(UiSelector::Text("ORIGIN-RETIRED")).Exists(),
+              "service-install caller actually unmounts before installation completes");
+        ui.SetWindowMetrics({.viewport = {390.0F, 700.0F}});
+        ui.Pump(std::chrono::milliseconds(500)); ui.PumpAndSettle();
+        const std::string_view scenario = button;
+        const bool success = scenario == "Install then TUN" || scenario == "Install then start";
+        const bool resumed = success || scenario == "Fail resumed TUN";
+        check(ui.Find(UiSelector::Text(success ? "CONTROL-SUCCESS" : "CONTROL-FAILED")).Exists() &&
+              ui.Find(UiSelector::Text("CONTROL-READY")).Exists() &&
+              ui.Find(UiSelector::Text("CONTROL-POLL-REJECTED")).Exists(),
+              "install completion settles after retirement/resize and rejects stale snapshots");
+        check(ui.Find(UiSelector::Text(resumed ? "RESUMED-COMMANDS:1" : "RESUMED-COMMANDS:0")).Exists(),
+              "only confirmed installation retries, exactly once, even when retry fails");
+        check(ui.Find(UiSelector::Text(scenario == "Install then TUN" ? "TUN-INTENT-ON" : "TUN-INTENT-OFF")).Exists(),
+              "successful resumed TUN preserves intent; cancellation/failure does not enable it");
+        if (!success) {
+            ui.Find(UiSelector::Text("Restore control origin")).Tap(); ui.PumpAndSettle();
+            ui.Find(UiSelector::Text("Install then TUN")).Tap();
+            ui.Pump(std::chrono::milliseconds(300)); ui.PumpAndSettle();
+            check(ui.Find(UiSelector::Text("CONTROL-SUCCESS")).Exists() &&
+                  ui.Find(UiSelector::Text("TUN-INTENT-ON")).Exists(),
+                  "canceled, exceptional, or failed installation remains retryable");
+        }
+    }
 }
 
 struct HeaderControlFixture {
@@ -3190,6 +3589,12 @@ void testHomeCardPress() {
 } // namespace
 
 int main() {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    try { testTextDocuments(); }
+    catch (const std::exception& exception) {
+        std::printf("FAIL: text document fixture: %s\n", exception.what());
+        return 1;
+    }
     {
         using namespace clashflux::ui;
         const auto disconnected = ResolveHomeVpnStatus(0, {});
@@ -3295,6 +3700,7 @@ int main() {
         ++failures;
     }
     testCoreOperations();
+    testServiceInstallContinuation();
     testInboundSettings();
     testConnectionList();
     testDiagnosticsContent();
@@ -3369,6 +3775,7 @@ int main() {
     testResponsiveDesktopShell();
     testDesktopPageSwitcher();
     testHeaderGeometry();
+    testSearchFocusOutline();
     testMobileSearchGeometry();
     testResponsiveAnchorMount();
     testCompactPageBottom();
@@ -3377,6 +3784,7 @@ int main() {
     testProfileFileFilter();
     testProfileImportCompletion();
     testProfileListPublication();
+    testLatestProfileSelection();
     {
         huxerui::testing::UiTest ui(kApplication, {
             .viewport = {400.0F, 700.0F},

@@ -405,6 +405,18 @@ inline bool IsDarkTheme(const huxerui::ThemeSpec& theme) noexcept {
     return brightness < 0.5F;
 }
 
+// 首页流量与流量统计共用的方向色，不随用户强调色或警告语义色改变。
+struct TrafficColors {
+    huxerui::Color upload;
+    huxerui::Color download;
+};
+
+inline TrafficColors ResolveTrafficColors(const huxerui::ThemeSpec& theme) {
+    return IsDarkTheme(theme)
+        ? TrafficColors{huxerui::Color::Rgb(255, 184, 77), huxerui::Color::Rgb(63, 184, 255)}
+        : TrafficColors{huxerui::Color::Rgb(196, 122, 0), huxerui::Color::Rgb(20, 139, 220)};
+}
+
 // 覆盖 ButtonStyle 时必须同时提供禁用态，不能带回 Default() 的深色文字。
 // 使用中性表面区分不可操作状态，同时保持标签在深浅主题下可读。
 inline huxerui::ButtonStyle ResolveFluxButtonStyle(const huxerui::ThemeSpec& theme) {

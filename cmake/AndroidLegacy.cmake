@@ -150,6 +150,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/ui/fidelity_page.cpp"
         "${_root}/src/ui/settings_page.cpp"
         "${_root}/src/ui/runtime_diagnostics.cpp"
+        "${_root}/src/ui/text_document.cpp"
         "${_root}/src/ui/platform_settings.cpp"
         "${_root}/src/ui/platform_app.cpp"
         # The desktop module/UI sources include these implementation fragments.
@@ -251,7 +252,8 @@ function(clashflux_prepare_android_sources output_directory output_header
             "${_root}/src/ui/section_tabs.cpp"
             "${_root}/src/ui/fidelity_page.cpp"
             "${_root}/src/ui/settings_page.cpp"
-        "${_root}/src/ui/runtime_diagnostics.cpp"
+            "${_root}/src/ui/runtime_diagnostics.cpp"
+            "${_root}/src/ui/text_document.cpp"
             "${_root}/src/ui/platform_settings.cpp"
             "${_root}/src/ui/platform_app.cpp")
         file(READ "${_source}" _content)

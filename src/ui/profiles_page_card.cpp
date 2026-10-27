@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -197,39 +198,38 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     };
 
     auto activateProfile = [applicationTasks, toast, profilesModel, profiles,
-                            selectionPending, coreModel](std::int64_t profileId) {
-        if (selectionPending.Get()) return;
+                            coreModel](std::int64_t profileId) {
         const std::optional<std::int64_t> previous =
             CurrentSelectedProfile(profiles);
         if (previous == profileId) return;
         SetSelectedProfile(profiles, profileId);
-        selectionPending = true;
-        applicationTasks.Launch([toast, profilesModel, selectionPending,
-                      profileId, coreModel]() -> huxerui::Task<void> {
-            std::string error;
-            try {
-                const auto outcome = co_await RunOnTaskThread([profileId] {
+        using Outcome = std::tuple<std::string, store::CoreSnapshot, std::string>;
+        LaunchProfileSelection<Outcome>(applicationTasks, profilesModel, profileId,
+            [profileId](std::stop_token cancel) -> huxerui::Task<Outcome> {
+                co_return co_await RunOnTaskThread([profileId, cancel] {
                     auto& profileStore = store::profilesStore();
-                    const bool ok = profileStore.activate(profileId);
-                    return std::pair{ok ? std::string{} : profileStore.lastError(), store::coreStore().snapshot()};
+                    std::string error, summary;
+                    profileStore.activate(profileId, cancel, &error, &summary);
+                    return Outcome{std::move(error), store::coreStore().snapshot(), std::move(summary)};
                 });
-                error = outcome.first;
-                coreModel->Update([&](CoreView& view) { view.core = outcome.second; });
-            } catch (const std::exception& exception) {
-                error = exception.what();
+            }, [toast, profilesModel, coreModel](
+                    std::optional<Outcome> outcome, std::exception_ptr failure, std::uint64_t) {
+            std::string error;
+            if (failure) {
+                try { std::rethrow_exception(failure); }
+                catch (const std::exception& exception) { error = exception.what(); }
+                catch (...) { error = "订阅切换失败"; }
+            } else if (outcome) {
+                error = std::get<0>(*outcome);
+                coreModel->Update([&](CoreView& view) { view.core = std::get<1>(*outcome); });
             }
-            selectionPending = false;
             profilesModel->PublishCached();
             if (!error.empty()) {
                 toast.Show(error);
-            } else {
-                // 启用订阅同样是一次「这份订阅能吃什么」的告知时机。
-                const std::string summary = co_await RunOnTaskThread(
-                    [profileId] { return ProfileFidelitySummary(profileId); });
-                if (!summary.empty()) {
-                    toast.Show(LocalizedFormat("已设为主订阅 · {}", summary),
-                               huxerui::ToastOptions{6.0});
-                }
+            } else if (outcome && !std::get<2>(*outcome).empty()) {
+                // Reuse the validated candidate ledger; feedback must not launch
+                // another full compiler/JSON serialization request.
+                toast.Show(LocalizedFormat("已设为主订阅 · {}", std::get<2>(*outcome)), huxerui::ToastOptions{6.0});
             }
         });
     };

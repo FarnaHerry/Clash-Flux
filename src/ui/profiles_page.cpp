@@ -132,8 +132,8 @@ struct ProfileReorderSession {
 
     // ---- 编辑规则弹窗（工作 YAML + 规则行 + 输入行 + 脏标记）----
 
-    // ---- 编辑文件弹窗（懒加载 + 非受控大文本：shared_ptr 原地写，逐键零重组）----
-    auto fileContent = huxerui::UseState(std::make_shared<std::string>());
+    // ---- 编辑文件：懒加载，CodeEditor 文档只在保存/卸载时取全文 ----
+    auto fileContent = huxerui::UseState(TextDocumentHandle{});
     auto fileLoading = huxerui::UseState(false);
     // Android 编辑订阅时切换到页面；0 表示仍在订阅列表。
     auto editPageId = huxerui::UseState<std::int64_t>(0);

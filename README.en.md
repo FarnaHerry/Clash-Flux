@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.70 release notes](docs/releases/v0.3.70.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.72 release notes](docs/releases/v0.3.72.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -30,6 +30,8 @@ application-managed settings before being passed to sing-box.
 
 ## Features
 
+- Subscription sources, rule-set JSON, compiled JSON and diagnostic reports share CodeEditor, with worker-prepared documents and no full-document copy on each keystroke.
+
 - Light, dark and system appearance modes with preset or custom theme colors.
 
 - Desktop uses separators for its outer layout and cards inside pages. Page names and actions
@@ -38,6 +40,8 @@ application-managed settings before being passed to sing-box.
 - Subscription and profile management: entries with context menus, double-click
   activation and refresh actions; URL import, update, activation, deletion and rule
   editing; local storage; Clash YAML, native sing-box JSON and OpenVPN .ovpn file import.
+  Selection can change during preparation: repeated clicks are coalesced and only the latest pending target is kept.
+  Candidate validation, startup and preview reuse the prepared output.
 - Desktop rule targets: search and select groups or nodes from Clash subscriptions,
   including inactive sources; preserve missing references. Mobile, native connections
   and JSON use the default outbound. See [orchestration](docs/desktop-subscription-orchestration.md).

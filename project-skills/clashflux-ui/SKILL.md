@@ -16,6 +16,7 @@ composable 体内不能使用条件编译，沿用现有 DSL；UI 经过 HuxerUI
 | 二级页面 / 标签 / 横滑 | UI 文档“页内标签与导航图标”及手机二级页约定：手机二级页覆盖底栏，返回箭头/系统返回/手势共用返回直接父级的动作，push/pop 独立于一级动画，保留父页状态。 |
 | 卡片 / 主题 / 阴影 / 拖放 | UI 文档“圆角阶梯与密集卡片”“主题颜色审查”“可拖动仪表盘卡片”；下文补充不可丢失的联动约束。 |
 | 空状态 / 菜单 / 抽屉 | UI 文档“空状态占位”“通用操作菜单”“代理分组抽屉”；复用 EmptyState、action_menu、section_tab_picker，不在页面复制实现。 |
+| 大文本查看 / 编辑 | UI 文档“大文本查看与编辑”；统一 TextDocument / DocumentTextView，工作线程预构建，文档独占 UI 挂载，按需快照，不逐键复制全文。 |
 | 文案 / 图像 | UI 文档“界面文案与字符串资源”“正式 Logo”；使用下面的资源规则，改 Logo 另读 [品牌技能](../clashflux-branding/SKILL.md)。 |
 | 首页猫咪 / 运行标题 / Demo | [首页与 Demo](references/home.md)，及 UI 文档的生产动画、VpnUptime 验收要求。 |
 | 托盘 / 首帧 / 系统操作 | [运行控制技能](../clashflux-runtime/SKILL.md)；涉及服务再选 [平台技能](../clashflux-platform/SKILL.md)。 |

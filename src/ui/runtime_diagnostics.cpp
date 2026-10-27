@@ -1,16 +1,20 @@
 #include <huxerui/huxerui.h>
 #include "runtime_diagnostics.h"
 #include "ui.h"
+#include "text_document.h"
 
 namespace clashflux::ui {
 [[huxerui::composable]] huxerui::View RuntimeDiagnosticsContent(
     huxerui::State<huxerui::TextEditingValue> target, bool busy, bool canRun,
-    std::string report, std::function<void()> start, std::function<void()> cancel,
+    std::shared_ptr<const std::string> report, std::function<void()> start, std::function<void()> cancel,
     std::function<void()> copy, std::function<void()> close,
     std::function<void()> save, bool canSave, bool saving) {
     const auto& theme = huxerui::UseTheme();
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
-    const bool hasReport = !report.empty();
+    const bool hasReport = report && !report->empty();
+    auto document = huxerui::UseState(TextDocumentHandle{});
+    if (!document.Get() || document.Get()->InitialText() != report)
+        document = std::make_shared<TextDocument>(report);
     auto secondary = ResolveFluxSecondaryButtonStyle(theme);
     secondary.minimum_height = 40.0F;
 
@@ -24,14 +28,7 @@ namespace clashflux::ui {
                huxerui::CornerRadius(theme.shapes.small),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     } else if (hasReport) {
-        reportArea = huxerui::ScrollView(huxerui::Text(report)
-            .Style(huxerui::TextStyle{huxerui::Font::Monospace(font_size::kCaption),
-                                      theme.colors.on_surface})
-            .With(huxerui::Padding(12.0F)))
-            .With(huxerui::Frame{.height = compact ? 200.0F : 260.0F},
-                  huxerui::Background(theme.colors.surface_container_low),
-                  huxerui::CornerRadius(theme.shapes.small),
-                  huxerui::ClipChildren(), huxerui::ScrollBar())
+        reportArea = DocumentTextView(document.Get(), true, compact ? 200.0F : 260.0F)
             .Key("diagnostics-report");
     } else {
         reportArea = huxerui::Text(Localized("诊断完成后，可在此查看并导出脱敏报告。"))

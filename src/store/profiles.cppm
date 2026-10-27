@@ -268,7 +268,7 @@ public:
             return false;
         }
         db::Profile& p = *profile;
-        p.file = std::format("{}.yaml", p.id);
+        if (p.file.empty()) p.file = std::format("{}.yaml", p.id);
         std::string failure;
         if (!fetched.ok) {
             failure = fetched.error.empty() ? "传输失败" : fetched.error;
@@ -319,6 +319,10 @@ public:
 
     // 重新拉取订阅（阻塞）。本地导入（无 url）直接报错。
     bool refresh(std::int64_t id) {
+        // Copy the row only after acquiring the same lock as activation. A
+        // snapshot captured before waiting could restore an obsolete selected
+        // flag or URL when the download later saves the refreshed row.
+        auto planLock = coreStore().lockPlanLifecycle();
         lastError_.clear();
         for (auto& p : list()) {
             if (p.id != id) continue;
@@ -587,30 +591,29 @@ p->name = fields.name.empty() ? p->name : fields.name;
     }
 
     // selected 是主来源的兼容持久化字段；候选通过检查后才切换，应用失败还原。
-    bool activate(std::int64_t id) {
-        lastError_.clear();
-        auto planLock = coreStore().lockPlanLifecycle();
-        const auto profile = findById(id);
-        if (!profile) { lastError_ = "订阅不存在"; return false; }
-        if (profile->type == "pptp") {
-            lastError_ = "当前原生 VPN 只作为规则来源参与，不能设为 main"; return false;
-        }
-        const auto content = yamlOf(*profile);
-        if (content.empty()) { lastError_ = "主来源没有有效内容"; return false; }
-        const auto previous = selected();
-        if (!coreStore().validateRoutingPlan(content, lastError_, nullptr,
-                                             "profile-" + std::to_string(id))) return false;
-        try {
-            coreStore().db().setSelectedProfile(id);
-            coreStore().invalidateProxyGroupsSnapshot();
-            if (coreStore().snapshot().state == core::CoreState::Running && !coreStore().restartCore(content)) {
-                lastError_ = coreStore().snapshot().lastError;
-                coreStore().db().setSelectedProfile(previous ? previous->id : 0);
-                coreStore().invalidateProxyGroupsSnapshot();
-                return false;
+    bool activate(std::int64_t id, std::stop_token cancel = {}, std::string* failure = nullptr,
+                  std::string* fidelitySummary = nullptr) {
+        auto planLock = coreStore().lockPlanLifecycle(cancel);
+        if (!planLock.owns_lock()) { if (failure) failure->clear(); return false; }
+        std::string error, summary;
+        const bool success = [&] {
+            if (cancel.stop_requested()) return false;
+            const auto profile = findById(id);
+            if (!profile) { error = "订阅不存在"; return false; }
+            if (profile->type == "pptp") {
+                error = "当前原生 VPN 只作为规则来源参与，不能设为 main"; return false;
             }
-            return true;
-        } catch (const std::exception& e) { lastError_ = e.what(); return false; }
+            // Retargeting the still-active source cancels an unfinished candidate
+            // without compiling the original source again.
+            if (cancel.stop_possible() && profile->selected) return true;
+            const auto content = yamlOf(*profile);
+            if (content.empty()) { error = "主来源没有有效内容"; return false; }
+            return coreStore().applyMainProfile(id, content, error, cancel, &summary);
+        }();
+        lastError_ = cancel.stop_requested() ? std::string{} : error;
+        if (failure) *failure = lastError_;
+        if (fidelitySummary) *fidelitySummary = success ? std::move(summary) : std::string{};
+        return success;
     }
 
     void remove(std::int64_t id) {
@@ -757,7 +760,9 @@ private:
         auto planLock = coreStore().lockPlanLifecycle();
         const auto previousContent = yamlOf(p);
         const auto previousProfile = p;
-        p.file = std::format("{}.yaml", p.id);
+        // Keep the referenced path stable: validation, runtime reapply and the
+        // saved row must all refer to the same newly replaced source file.
+        if (p.file.empty()) p.file = std::format("{}.yaml", p.id);
         api::ClashApi::DownloadOptions opts;
         opts.timeoutSecs = p.timeoutSecs > 0 ? p.timeoutSecs : 60;
         opts.allowInvalidCert = p.allowInvalidCert;

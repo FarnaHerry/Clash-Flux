@@ -5,6 +5,7 @@ struct SourceDefault { std::string tag; bool reject = false; bool drop = false; 
 
 struct Context {
     const CompileOptions& opt;
+    std::stop_token cancel;
     CompileResult result;
     bool providerSyntaxOnly = false; // HTTP body validation, never a published candidate.
     std::size_t unpreparedAsnConditions = 0;
@@ -25,7 +26,13 @@ struct Context {
     std::string defaultFingerprint = "chrome";       // Scoped to this Clash source.
     std::string finalTarget;                          // MATCH 目标
 
-    explicit Context(const CompileOptions& options) : opt(options) {}
+    explicit Context(const CompileOptions& options, std::stop_token token = {}) : opt(options), cancel(token) {}
+
+    bool cancelled() {
+        if (!cancel.stop_requested()) return false;
+        result.error = "订阅准备已取消";
+        return true;
+    }
 
     void warn(std::string message) { result.warnings.push_back(std::move(message)); }
 

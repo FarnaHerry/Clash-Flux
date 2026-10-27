@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.71 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.72 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -409,6 +409,20 @@ huxerui_use_library(clash-flux
     COMMIT "${CLASHFLUX_HUXERUI_CHARTS_COMMIT}"
 )
 
+# CodeEditor's public-header capability checks must inspect the active SDK.
+set(_clashflux_previous_huxerui_home "${HUXERUI_HOME}")
+if (CLASHFLUX_HUXERUI_SOURCE_DIR)
+    set(HUXERUI_HOME "${CLASHFLUX_HUXERUI_SOURCE_DIR}")
+else ()
+    set(HUXERUI_HOME "${HUXERUI_SDK_DIR}")
+endif ()
+huxerui_use_library(clash-flux
+    TARGET HuxerUI::CodeEditor
+    URL "${CLASHFLUX_HUXERUI_CODEEDITOR_URL}"
+    COMMIT "${CLASHFLUX_HUXERUI_CODEEDITOR_COMMIT}"
+)
+set(HUXERUI_HOME "${_clashflux_previous_huxerui_home}")
+
 if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     if (ANDROID)
         # AndroidLegacy.cmake 已把模块接口/实现转为普通 C++ 源；显式关闭扫描，
@@ -682,11 +696,12 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         if (TARGET HuxerUI::testing)
             add_executable(test_page_transition tests/test_page_transition.cpp
                 src/ui/section_tabs.cpp src/ui/box_cat.cpp src/ui/runtime_diagnostics.cpp
-                src/ui/home_header_control.cpp src/ui/home_grid.cpp src/ui/page_loading.cpp)
+                src/ui/home_header_control.cpp src/ui/home_grid.cpp src/ui/page_loading.cpp
+                src/ui/title_bar_search.cpp src/ui/text_document.cpp)
             target_include_directories(test_page_transition PRIVATE
                 src/ui "${CMAKE_CURRENT_BINARY_DIR}/huxerui-resources/clash-flux/include")
             target_compile_features(test_page_transition PRIVATE cxx_std_23)
-            target_link_libraries(test_page_transition PRIVATE HuxerUI::testing)
+            target_link_libraries(test_page_transition PRIVATE HuxerUI::testing HuxerUI::CodeEditor)
             get_target_property(CLASHFLUX_TEST_RESOURCE_PACKAGE
                 clash-flux HUXERUI_RESOURCE_PACKAGE)
             file(TO_CMAKE_PATH "${CLASHFLUX_TEST_RESOURCE_PACKAGE}"

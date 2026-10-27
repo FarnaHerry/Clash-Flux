@@ -191,7 +191,7 @@ export struct CompileOptions {
 
 // 编译 options.profileYaml 为 sing-box 配置 JSON。可为空（最小可用配置）、
 // Clash YAML，或以 "{" 开头的原生 sing-box JSON（直通并合并托管设置）。
-export CompileResult compileConfig(const CompileOptions& options);
+export CompileResult compileConfig(const CompileOptions& options, std::stop_token cancel = {});
 // Read-only Clash/.ovpn object directory, including sources not yet referenced by a
 // plan. Uses the same export compiler as secondary sources; no download/check,
 // persistence mutation or running/preview mapping publication.
@@ -224,7 +224,8 @@ export std::string BuiltinRuleSetUrl(std::string_view tag);
 // config 为空或形态不对时返回只有空 proxies 对象的快照。
 export inline std::string BuildProxySnapshot(
     nlohmann::json& config,
-    const std::function<std::string(const std::string&)>& savedSelection = {}) {
+    const std::function<std::string(const std::string&)>& savedSelection = {}, bool* configChanged = nullptr) {
+    if (configChanged) *configChanged = false;
     nlohmann::json proxies = nlohmann::json::object();
     if (!config.is_object() || !config.contains("outbounds") ||
         !config["outbounds"].is_array()) {
@@ -254,7 +255,10 @@ export inline std::string BuildProxySnapshot(
         if (type == "selector" && !saved.empty()) {
             for (const auto& member : members) {
                 if (member == saved) {
-                    outbound["default"] = saved;
+                    if (current != saved) {
+                        outbound["default"] = saved;
+                        if (configChanged) *configChanged = true;
+                    }
                     current = saved;
                     break;
                 }

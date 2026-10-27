@@ -16,7 +16,7 @@ description: 修改 Clash-Flux CMake/CPS 包边界、固定依赖、HuxerUI 或�
 ## HuxerUI 与扩展
 
 - HuxerUI 修复维护在 FarnaHerry/HuxerUI 的 farna/main，独立 ../HuxerUI-fork；main 保留官方基线。应用 third_party/huxerui 独立 checkout，与 CI 固定同一验证 SHA，不直接消费维护工作树。
-- Lib-Charts/Lib-SQLite/Lib-Camera 同样维护在 FarnaHerry fork 的 farna/main，独立 ../HuxerUI-libs；应用 huxerui_use_library(URL,COMMIT) 固定获取，不在 CMake/CI 重复打已合入补丁。
+- Lib-Charts/Lib-SQLite/Lib-Camera/Lib-CodeEditor 同样维护在 FarnaHerry fork 的 farna/main，独立 ../HuxerUI-libs；应用 huxerui_use_library(URL,COMMIT) 固定获取，不在 CMake/CI 重复打已合入补丁。
 - 同步先 fetch 上游最新 revision，逐项审查集成差异，merge 进 farna/main，不 rebase/force push；上游已修复的差异不继续保留。应用构建/回归验证新 revision 后才更新固定 SHA，所有 CI/原生/Android 图共用相同 URL/COMMIT。
 - 升级必须保留 Lib-Charts 的 PieChartData/PieChart、紧凑高度与项目采用的图表 API/行为，实际验证首页图表。
 - 框架升级保留 Pager 清过期拖动目标、反向离场页与隐藏虚拟页待测量/失效传播行为，运行生产 page_transition；不能在应用重贴这些框架补丁。

@@ -211,8 +211,9 @@ std::string FidelitySummary(const std::vector<FidelityNote>& notes) {
     return summary;
 }
 
-CompileResult compileConfig(const CompileOptions& options) {
-    Context ctx{options};
+CompileResult compileConfig(const CompileOptions& options, std::stop_token cancel) {
+    Context ctx{options, cancel};
+    if (ctx.cancelled()) return std::move(ctx.result);
     ctx.sourceId = options.mainConnectionId;
     ctx.result.planRevision = options.planRevision;
     if (!vpn::ValidatePolicyRules(options.globalRules, ctx.result.error)) return std::move(ctx.result);
@@ -231,6 +232,7 @@ CompileResult compileConfig(const CompileOptions& options) {
             return std::move(ctx.result);
         }
         ctx.config = std::move(parsed);
+        if (ctx.cancelled()) return std::move(ctx.result);
         try {
             applyManagedSkeleton(ctx, options);
             if (!ctx.result.error.empty()) return std::move(ctx.result);
@@ -256,7 +258,9 @@ CompileResult compileConfig(const CompileOptions& options) {
             ctx.result.error = std::format("原生 sing-box 配置合并失败：{}", error.what());
             return std::move(ctx.result);
         }
+        if (ctx.cancelled()) return std::move(ctx.result);
         ctx.result.json = ctx.config.dump();
+        if (ctx.cancelled()) ctx.result.json.clear();
         return std::move(ctx.result);
     }
 
@@ -314,7 +318,7 @@ CompileResult compileConfig(const CompileOptions& options) {
             ctx.finalTarget == "REJECT" || ctx.finalTarget == "REJECT-DROP", ctx.finalTarget == "REJECT-DROP"};
         ctx.result.participatingSources.push_back(options.mainConnectionId);
     }
-    if (!compileAuxiliarySources(ctx)) return std::move(ctx.result);
+    if (ctx.cancelled() || !compileAuxiliarySources(ctx)) return std::move(ctx.result);
 
     if (!ctx.ruleSets.empty()) {
         ctx.config["route"]["rule_set"] = std::move(ctx.ruleSets);
@@ -322,7 +326,9 @@ CompileResult compileConfig(const CompileOptions& options) {
     if (!compilePersonalRuleSets(ctx)) return std::move(ctx.result);
     ctx.config["outbounds"] = std::move(ctx.outbounds);
     if (!applyConnectionRules(ctx)) return std::move(ctx.result);
+    if (ctx.cancelled()) return std::move(ctx.result);
     ctx.result.json = ctx.config.dump();
+    if (ctx.cancelled()) ctx.result.json.clear();
     return std::move(ctx.result);
 }
 

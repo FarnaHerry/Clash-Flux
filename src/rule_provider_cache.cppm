@@ -31,7 +31,9 @@ export struct Operations {
                              const singbox::HttpCacheValidators&)> revalidate;
     std::function<bool(const singbox::HttpRuleProviderResource&, const std::filesystem::path&,
                        std::string&)> fetch;
-    std::function<bool(const singbox::CompileOptions&, const singbox::CompileResult&,
+    // Finalization may replace compiled bytes after GEO inputs materialize.
+    // Preserve that checked result through commit instead of compiling it again.
+    std::function<bool(const singbox::CompileOptions&, singbox::CompileResult&,
                        std::string&)> check;
     std::function<bool(const std::filesystem::path&, const std::filesystem::path&,
                        std::string&)> commit;
@@ -45,8 +47,15 @@ export struct PreparationStats {
 };
 
 export inline bool Prepare(singbox::CompileOptions& options, const Operations& operations,
-        singbox::CompileResult& result, std::string& error, PreparationStats* stats = nullptr) {
+        singbox::CompileResult& result, std::string& error, PreparationStats* stats = nullptr,
+        std::stop_token cancel = {}) {
     error.clear();
+    const auto cancelled = [&] {
+        if (!cancel.stop_requested()) return false;
+        error = "订阅准备已取消";
+        return true;
+    };
+    if (cancelled()) return false;
     if (stats) *stats = {};
     const auto compile = [&](const singbox::CompileOptions& candidate) {
         const auto began = stats ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -56,7 +65,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
         };
         if (stats) ++stats->compileCount;
         try {
-            auto compiled = singbox::compileConfig(candidate);
+            auto compiled = singbox::compileConfig(candidate, cancel);
             if (stats) stats->conversionCacheHits += compiled.ruleProviderConversionCacheHits;
             record();
             return compiled;
@@ -67,6 +76,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
     };
     try {
         result = compile(options);
+        if (cancelled()) return false;
         if (result.httpRuleProviders.empty()) { error = result.error; return error.empty(); }
         if (options.ruleProviderCacheDir.empty() || (!operations.fetch && !operations.revalidate) ||
                 !operations.check || !operations.commit) {
@@ -115,6 +125,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
             }
             const auto prepare = [&](std::size_t index) {
               auto& item = prepared[index];
+              if (cancel.stop_requested()) { item.error = "订阅准备已取消"; return; }
               const auto& resource = resources[index];
               try {
                 std::string reason;
@@ -200,6 +211,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                 });
             }
             // Stable declaration order for diagnostics, snapshots and commits.
+            if (cancelled()) return false;
             // No structural mutation of candidate/result occurs in workers.
             for (const auto index : jobs) {
                 const auto& resource = resources[index];
@@ -224,6 +236,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
             // The first compile may already have consumed fresh disk caches.
             // Only new or byte-different snapshots require another compile.
             if (inputsChanged) result = compile(candidate);
+            if (cancelled()) return false;
             // Newly discovered dependencies must verify full identity even
             // when a colliding filename already has a prepared snapshot.
             for (const auto& resource : result.httpRuleProviders) {
@@ -243,6 +256,8 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
             if (error.empty()) error = "HTTP 候选配置检查失败";
             return false;
         }
+        if (cancelled()) return false;
+        result.ruleProviderContents.clear(); // A finalizing check may have recompiled.
         // Each replace is atomic. No cross-file crash transaction is claimed.
         for (const auto& [file, destination] : pending)
             if (!operations.commit(file, destination, error)) {

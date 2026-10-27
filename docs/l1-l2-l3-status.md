@@ -1032,3 +1032,135 @@ Android Legacy 全量原生代码经 NDK 29.0.14206865、arm64-v8a/API24 语法�
 完整 `:app:compileDebugJavaWithJavac --offline` 在本机缺少固定版本 libbox AAR/元数据的
 `stageSingboxAar` 门禁停止，未绕过门禁或伪造产物；未完成整应用 Java 构建、APK 或真机验收。
 版本检查输出 v0.3.70，基础构建与 `git diff --check` 通过。未提交、打标签或推送。
+
+## 2026-10-27：首页服务安装后继续原运行操作
+
+代码快照：`82b8830` 上的未提交工作区。原先权限检查失败会先结束首页命令，再单独安装
+服务，安装成功没有继续开启 TUN/启动内核，导致开关恢复旧意图。本轮将安装纳入应用级
+运行操作，确认安装成功且服务存在后只重试一次原命令，再回读发布权威状态。安装期间
+保留共享 pending 与原开关目标值；设置页安装/更新仍只管理服务，取消或失败不应用原命令。
+
+Windows/MSVC Release 执行 `cmake --build build --target clash-flux test_page_transition`
+成功，包含 HuxerUI codegen。`page_transition`、`ui_resources`、`service_protocol`、`vpn`、
+`routing`、`compensation` 共 6/6 通过。新增无窗口回归使用生产命令续执行函数，覆盖安装
+成功、取消、异常、后续命令失败、单次重试、冲突操作拒绝、发起视图卸载/缩放、旧轮询
+拒绝及失败后重试。`./run.ps1 --version` 实际输出 v0.3.71，`git diff --check` 通过。
+未执行真实 UAC 安装/取消、SCM 管理员回归、GUI 人工交互或真实 TUN 数据流验收，
+未验证 Linux 运行；上述无窗口回归不等于平台端到端验收。
+
+## 2026-10-27：首页流量方向专用配色
+
+代码快照：`82b8830` 上的未提交工作区。`theme_colors.h` 新增 `TrafficColors` /
+`ResolveTrafficColors()`，首页流量与流量统计统一使用上传橙、下载蓝，分别适配深浅主题，
+不再复用强调色/警告色；下载面积填充仍为下载色的 18% 透明度。浅色上传/下载分别为
+`#C47A00` / `#148BDC`，深色分别为 `#FFB84D` / `#3FB8FF`。
+
+Windows/MSVC Release 构建 `clash-flux test_page_transition` 成功，包含 HuxerUI codegen；
+`page_transition`、`ui_resources` 共 2/2 通过，版本检查实际输出 v0.3.71，
+`git diff --check` 通过。已尝试启动构建产物进行 GUI 检查，但现有安装版单实例接管了
+启动请求，未替换用户当前实例，因此新配色的实际 GUI 外观仍未验收；未验证手机平台。
+
+## 2026-10-27：顶部搜索胶囊聚焦描边展开
+
+代码快照：`82b8830` 上的未提交工作区。桌面非 Compact 的 `PillSearchField` 保留普通
+描边，由 `WithSearchFocusOutline` 在上层绘制主题主色描边，以 250ms EaseOut 从左向右
+展开矩形裁剪，上下边同步显现。MotionController 只使保留前景绘制失效，完成后不请求帧；
+失焦立即清除，后台和 reduced motion 直接定位最终状态，手机/Compact 行为不变。
+
+Windows/MSVC Release 构建 `clash-flux test_page_transition` 成功并通过 HuxerUI codegen；
+首次链接因产物临时占用报 LNK1104，重试后成功。`page_transition`、`ui_resources` 通过；
+新增生产绘制组件回归覆盖深浅色渐进/结束、重组次数与布局不变、失焦、快速重入、
+缩放、后台和减少动态效果。`project_test_gate` 首次因普通 Shell 的 PATH 缺少 Ninja 失败，
+在 MSVC 开发环境中重跑通过。`./run.ps1 --version` 实际输出 v0.3.71，`git diff --check` 通过。
+
+使用构建目录内的独立 GUI 预览复用同一生产描边函数，检查深浅色聚焦、输入和清空正常；
+不接数据库、代理或服务，不作为主应用全流程/手机验收。未做 CPU/GPU 定量性能测量。
+
+## 2026-10-27：订阅切换幂等、取消范围与准备产物复用
+
+代码快照：`82b8830` 上的未提交工作区。卡片/托盘统一使用应用级 `LaunchProfileSelection`：
+相同待切 ID 的重复点击合并，只执行一份准备并保留最后一个待切目标；改选取消旧准备，
+旧完成/异常按请求序号（含 ABA）拒绝发布，不能清除新 pending 或覆盖新选中状态。
+取消发生在编译条目和准备阶段边界，单次 YAML/JSON 解析、JSON 序列化和下载不会被强制
+中断；已经开始的内核交接继续完成或回滚。切回仍活动的来源不重新编译它。
+
+此次取消令牌只属于显式切换：Android `AndroidRefreshProfilesDueOnce -> completeRemote`
+与桌面 `refreshDue -> refresh` 不接收此令牌，也不进入切换队列。后台更新继续逐条完成
+下载、候选检查和原子提交；更新与切换共享运行锁，可能相互等待，不能相互取消。
+新增两个独立来源的准备回归确认切换令牌被取消不影响后台候选和自有缓存快照。
+
+切换候选检查与运行交接复用同一份 PreparedStart，不再先 validateRoutingPlan 再从头
+restartCore；成功提示直接取候选账本，代理组预览沿用候选快照及完整文件/数据修订指纹。
+准备过程保留 JSON DOM，启动不再重新解析候选字节；Android 不读取/解析桌面驻留实例的
+旧 config.json。代理组选项未实际改变 selector default 时保留编译字节，不再次 dump；
+改写选中项后仍序列化并校验最终字节。大型来源目录与代理快照按所有权移动，避免额外复制。
+HTTP/ASN 依赖发现、有效新快照和 GEO 输入/目录变化仍按需要重新编译；HTTP 检查阶段
+已完成的 GEO 重编译结果传递给后续准备，不丢弃后再次编译。刷新/文件编辑的提交前检查
+与提交后应用边界未被跳过，也未将独立来源只读报告替换成其它来源的运行报告。
+
+实际命令与结果（Windows/MSVC Release）：
+
+```powershell
+cmake --build build --target clash-flux test_page_transition test_singbox test_persistence test_rule_provider_download
+ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources|singbox|persistence|rule_provider_download|personal_rule_sets_runtime|service_protocol|vpn|routing|compensation|project_test_gate)$'
+python tests/test_profile_selection_runtime.py build/health-evidence/clash-flux.exe
+./run.ps1 --version
+git diff --check
+```
+
+构建成功，包含 HuxerUI codegen；11/11 CTest 通过。新增 UI 回归覆盖重复点击只执行一次、
+单任务上限、替换中间目标、返回活动项、ABA、异常后重试、视图卸载和缩放。新增编译回归
+覆盖预取消、下载/检查后取消零提交、暂存退役、后台来源隔离、最终校验字节复用和 selector
+幂等。之前版本的 Python 定向回归曾使用 CMakeCache 中的 Python 3.14 验证一次切换只记录
+一份完整准备，以及失败时保留 profile/config 文件。扩展后台更新顺序用例后，当前脚本尚未
+成功重跑：本机现有 Windows 单实例使初始化命令无法确认使用临时数据根；脚本在隔离数据库
+核验处退出，没有执行 profile、文件或 config 修改。该 Python 回归未注册 CTest。
+Windows 链接曾被开发版占用，用户授权后实例退出，随后构建成功。版本输出 v0.3.71，
+`git diff --check` 通过，根 AGENTS 与各 SKILL.md 的行数/字符限制检查通过。
+
+通过现有 AndroidLegacy.cmake 生成兼容源码，NDK 29.0.14206865 的
+`clang++ --target=aarch64-linux-android24 -std=c++23 -fsyntax-only` 检查完整原生实现与
+订阅卡片 UI 源码成功；未打包 APK、未执行 Android 真机后台更新/快速切换/数据流验收，
+未执行 Windows 管理员服务/WFP 回归，未测手机耗时、CPU/GPU 或内存峰值改善比例。
+## 2026-10-27：统一大文本编辑与预览
+
+代码快照：应用 `82b8830` + 当前工作区；HuxerUI 固定 `3a6c18e4d5141b27f3671e33baa42b61550f83cd`，
+Lib-CodeEditor 固定 `984d2886b04b77cffa162a2934766f5712929704`。
+
+- 订阅原文的桌面弹窗/手机页面、规则集 JSON、编译 JSON、诊断报告统一使用
+  `TextDocument` / `DocumentTextView`；单行字段和结构化实时日志仍使用各自控件。
+- 文档 UTF-8 拆行在工作线程单飞准备，`initial_document` 避免 UI 声明复制全文；
+  输入只记脏，保存/复制按需生成共享快照，文档内容跨卸载保留。规则集列表/表单共享资源引用，
+  整库复制与保存组装在工作线程；订阅文件保存失败保留编辑内容并拒绝重复提交。
+- 用户授权后通过 gh 凭据向 FarnaHerry/Lib-CodeEditor 的 farna/main 推送必要修复：
+  固定子模块声明、预构建文档接口、Windows 公共头宏传播、关闭默认输入追踪、
+  工具栏剪贴板初始化/只读保护/实际结果与统一文本变更通知、库图接口目标早退。
+- Windows Release 主目标与 HuxerUI codegen 构建通过；`run.ps1 --version` / `git diff --check`
+  收尾检查通过。CTest 的 page_transition、ui_resources、singbox、persistence、
+  cps_dependencies、rule_provider_download、personal_rule_sets_runtime 共 7 项通过；
+  扩展库独立验证 15 个用例、58 条断言通过（包含真实无窗口剪贴板及 IME 通知）。
+- 生产组件回归覆盖 30,000 行文档、中文/emoji、输入不重组页面、快照复用、卸载重挂载、
+  只读复制和剪切/粘贴后的保存快照、搜索关闭后一次点击重开。Windows 独立 GUI 验证
+  20,001 条规则、中文/emoji 输入、深浅色切换、未保存内容重开，以及 1 MiB 单行显示/搜索栏布局。
+- Android NDK 29 arm64 API 24 对六个受影响 UI 单元和扩展源码的语法检查通过。
+  库图配置通过；重复下载挂起后复用了经 HEAD/干净状态/子模块版本核对的固定构建缓存，
+  未改来源 URL/COMMIT，也未消费可变维护工作树。
+- 未完成边界：Android APK/真机输入法、手机端耗时和峰值内存、其它桌面平台未实测；
+  首次视口布局、字体测量和显式取全文仍在 UI 线程，不将上述检查等同于所有设备的大文件性能验收。
+
+## 2026-10-27：v0.3.72 发布候选
+
+代码快照：`v0.3.71` / `82b8830` 加本次工作区改动。候选版本 `0.3.72`，Android
+`versionCode=150`，与 CMake `project(VERSION)`、Gradle `versionName` 一致。
+
+- Windows / MSVC Release、Ninja、HuxerUI codegen：`cmake --build build --target clash-flux`
+  及全量 `cmake --build build --parallel` 均成功；`clash-flux.exe --version` 输出
+  `Clash-Flux v0.3.72`；`git diff --check` 通过。
+- `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required --timeout 300`
+  25 项中 23 项通过。`windows_service` 因 service pipe 不可用失败；
+  `windows_physical_dns_wfp` 因无法添加 WFP sublayer 失败。本地 Shell 为 medium integrity，
+  未提升；这两项需要管理员测试环境。隔离的 `legacy_bundle_cleanup` 回归通过。
+- Android APK、其余多平台构建与 Release 资产尚未由本机验证，需由候选提交的 CI 检查。
+- 本机未执行 Windows Burn 的跨版本安装、失败回滚、静默卸载与维护页验收：Windows Sandbox
+  不可用，且检测到本机应用进程；安装可能影响运行中的服务/代理。需在隔离 Windows
+  测试环境完成后再推送发布标签。

@@ -233,43 +233,13 @@
 
         try {
             const auto options = routingOptions(profileYaml, false);
-            const auto compiled = core::generateConfig(options);
+            auto compiled = core::generateConfig(options);
             if (compiled.json.empty() || !compiled.error.empty()) return {};
             auto config = nlohmann::json::parse(compiled.json, nullptr, false);
             if (!config.is_object()) return {};
             const std::string snapshot = proxyGroupsFromConfig(config, compiled.sourceObjects);
-            // 记下这份快照对应的订阅文件指纹（mtime + 大小）：文件被重新下载或
-            // 替换后缓存自动失效，不会一直返回旧的空快照。
-            const std::filesystem::path file = selectedProfileFile();
-            std::error_code ec;
-            const auto stamp = std::filesystem::last_write_time(file, ec);
-            const auto size = ec ? 0 : std::filesystem::file_size(file, ec);
-            std::lock_guard lock(mutex_);
-            compiledProxyGroups_ = snapshot;
-            compiledProxyGroupsStamp_ = ec ? std::filesystem::file_time_type{}
-                                           : stamp;
-            compiledProxyGroupsSize_ = ec ? 0 : size;
-            compiledSourceFiles_.clear();
-            for (const auto& profile : db_->listProfiles()) {
-                const auto id = routing::ConnectionId(profile.id);
-                if (profile.file.empty() || (!profile.selected &&
-                    !std::ranges::any_of(options.auxiliarySources, [&](const auto& source) { return source.id == id; }))) continue;
-                const auto sourceFile = cfg::profilesDir() / profile.file;
-                std::error_code error;
-                const auto sourceStamp = std::filesystem::last_write_time(sourceFile, error);
-                const auto bytes = error ? 0 : std::filesystem::file_size(sourceFile, error);
-                if (!error) compiledSourceFiles_[sourceFile] = {sourceStamp, bytes};
-            }
-            // 预览编译同样产出保真度账本：让「配置保真度」报告在内核没跑时也
-            // 有内容（startCore 那条路径看到的是同一份订阅）。
-            previewSourceObjects_ = std::make_shared<const std::vector<singbox::SourceObject>>(compiled.sourceObjects);
-            if (snap_.state != core::CoreState::Running && snap_.state != core::CoreState::Starting) {
-                snap_.fidelity = compiled.fidelity;
-                snap_.sourceObjects = previewSourceObjects_;
-            }
-            compiledProfilesRevision_ = clashflux::persistence::persistence().profilesRevision();
-            compiledPolicyText_ = setting("vpn.global_policy", "");
-            return compiledProxyGroups_;
+            cacheProxyGroups(options, compiled, snapshot);
+            return snapshot;
         } catch (...) {
             return {};
         }

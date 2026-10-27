@@ -13,6 +13,7 @@
 #include <huxerui/huxerui.h>
 
 #include "app_http_client.h"
+#include "text_document.h"
 
 namespace clashflux::ui {
 
@@ -231,9 +232,12 @@ huxerui::View ProfileEditRoutePage(
     std::int64_t id, ProfileEditFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::function<void()> on_back);
 huxerui::View ProfileFilePage(
-    std::int64_t id, huxerui::State<std::shared_ptr<std::string>> content,
+    std::int64_t id, huxerui::State<TextDocumentHandle> content,
     huxerui::State<bool> loading, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::function<void()> on_back);
+huxerui::View ProfileFileDialog(
+    std::int64_t id, huxerui::State<TextDocumentHandle> content,
+    huxerui::State<bool> loading, huxerui::ToastHandle toast, huxerui::DialogContext context);
 
 
 } // namespace clashflux::ui

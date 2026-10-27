@@ -36,6 +36,8 @@ set(CLASHFLUX_HUXERUI_SQLITE_URL "https://github.com/FarnaHerry/Lib-SQLite.git")
 set(CLASHFLUX_HUXERUI_SQLITE_COMMIT "88f610fe66c57260b1ac38e676fc36b23c900fc2")
 set(CLASHFLUX_HUXERUI_CHARTS_URL "https://github.com/FarnaHerry/Lib-Charts.git")
 set(CLASHFLUX_HUXERUI_CHARTS_COMMIT "e90cfa84707bdf72eb6029410bf05c420efa62fc")
+set(CLASHFLUX_HUXERUI_CODEEDITOR_URL "https://github.com/FarnaHerry/Lib-CodeEditor.git")
+set(CLASHFLUX_HUXERUI_CODEEDITOR_COMMIT "984d2886b04b77cffa162a2934766f5712929704")
 
 function(clashflux_dependency_source name)
     clashflux_extract(${name} "${CLASHFLUX_DEP_${name}_ARCHIVE}"

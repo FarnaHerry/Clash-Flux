@@ -602,14 +602,14 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const std::string reportType=huxerui::UseString(Localized("诊断报告"));
     huxerui::State<huxerui::TextEditingValue> target{huxerui::TextEditingValue{}};
     const bool busy = model->diagnosticsBusy.Get();
-    const std::string report = model->diagnosticsReport.Get();
+    const auto report = model->diagnosticsReport.Get();
     const auto save=[control,model,picker,toast,report,reportType] {
-        if(model->diagnosticsExportBusy.Get()||report.empty()||!picker->CanSaveFiles())return;
+        if(model->diagnosticsExportBusy.Get()||report->empty()||!picker->CanSaveFiles())return;
         model->diagnosticsExportBusy=true;
         control.tasks.Launch([model,picker,toast,report,reportType]() -> huxerui::Task<void> {
             try {
                 const auto file=co_await RunOnTaskThread([report] {
-                    return DiagnosticExportFile::Prepare(cfg::dataDir(),report);
+                    return DiagnosticExportFile::Prepare(cfg::dataDir(),*report);
                 });
                 const bool saved=co_await picker->SaveFileAsync(huxerui::File(file->Path().string()),
                     huxerui::SaveFileOptions{.suggested_name="clash-flux-health.txt",
@@ -627,7 +627,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         const auto revision = model->operations.revision.Get();
         const std::string url = target.Get().text;
         model->diagnosticsBusy = true;
-        model->diagnosticsReport = std::string{};
+        model->diagnosticsReport = std::make_shared<const std::string>();
         control.tasks.Launch([model, url, token, serial, revision]() -> huxerui::Task<void> {
             std::string result;
             try {
@@ -637,14 +637,15 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
             } catch (...) { result = "diagnostic=failed; unable to collect evidence"; }
             if (serial != model->diagnosticsSerial) co_return;
             model->diagnosticsBusy = false;
-            model->diagnosticsReport = token.stop_requested() || !model->operations.AcceptsPoll(revision)
-                ? std::string("diagnostic=cancelled-or-superseded; results discarded") : std::move(result);
+            model->diagnosticsReport = std::make_shared<const std::string>(
+                token.stop_requested() || !model->operations.AcceptsPoll(revision)
+                    ? std::string("diagnostic=cancelled-or-superseded; results discarded") : std::move(result));
         });
     };
     return DialogCard(RuntimeDiagnosticsContent(target, busy, !control.Busy(), report, start,
         [model] { model->diagnosticsCancel.request_stop(); },
         [clipboard, report, toast] {
-            toast.Show(Localized(clipboard && clipboard->WriteText(report)
+            toast.Show(Localized(clipboard && clipboard->WriteText(*report)
                 ? "已复制到剪贴板" : "复制失败"));
         },
         [context] { context.Dismiss(); },save,picker->CanSaveFiles(),model->diagnosticsExportBusy.Get()));

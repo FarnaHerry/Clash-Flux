@@ -314,6 +314,7 @@ bool expandGroupProxies(Context& ctx, const YAML::Node& group, const std::string
 // 解析 Clash YAML 文档并转换节点/组/规则（调用方负责异常捕获）。
 void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportOnly = false) {
     YAML::Node root = YAML::Load(trimmed);
+    if (ctx.cancelled()) return;
     if (!root.IsMap()) {
         ctx.result.error = "订阅不是有效的 Clash YAML 配置";
         return;
@@ -337,6 +338,7 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
     bool rejectedProxy = false;
     if (const YAML::Node proxies = root["proxies"]; proxies && proxies.IsSequence()) {
         for (const YAML::Node& proxy : proxies) {
+            if (ctx.cancelled()) return;
             if (!proxy.IsMap()) { rejectedProxy = true; continue; }
             if (auto converted = convertProxy(ctx, proxy)) {
                 localProxies.push_back(converted->at("tag").get<std::string>());
@@ -348,6 +350,7 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
     std::ranges::sort(localProxies); // Mihomo AllProxies uses bytewise name order.
 
     for (const YAML::Node& group : groups) {
+        if (ctx.cancelled()) return;
         const std::string name = ytext(group, "name");
         if (name.empty()) continue;
         std::vector<std::string> members = ylist(group, "proxies");
@@ -420,6 +423,7 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
         }
         std::size_t index = 0;
         for (const YAML::Node& rule : rules) {
+            if (ctx.cancelled()) return;
             if (!rule.IsScalar()) {
                 ctx.note(FidelityScope::Rule, Fidelity::Unsupported,
                          "rules[" + std::to_string(index) + "]", "规则不是字符串，已跳过");

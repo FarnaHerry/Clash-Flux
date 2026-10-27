@@ -455,126 +455,35 @@
         }
     };
 
-    // ---- 编辑文件（懒加载 YAML + 非受控多行编辑：OnChanged 只写 shared_ptr
-    // 指向的内容，不触发 State 写 → 无逐键全文重排版；保存取现值）----
+    // 文件 I/O 在工作线程；只有最后一次打开请求可以发布文档。
     auto showEditFile = [compact, navigation, navigation_enabled, dialog, tasks,
-                         toast, fileContent, fileLoading, filePageId, profilesModel,
-                         hintColor = theme.colors.on_surface_variant](
-                            std::int64_t id) {
+                         toast, fileContent, fileLoading, filePageId](std::int64_t id) {
+        const auto request = std::make_shared<TextDocument>();
+        fileContent = request;
+        fileLoading = true;
+        if (navigation_enabled) {
+            navigation.Push([=] {
+                return ProfileFilePage(id, fileContent, fileLoading, tasks, toast,
+                    [navigation] { static_cast<void>(navigation.Pop()); });
+            });
+        } else if (compact) {
+            filePageId = id;
+        } else {
+            dialog.Show([=](huxerui::DialogContext context) {
+                return ProfileFileDialog(id, fileContent, fileLoading, toast, context);
+            });
+        }
         tasks.Launch([=]() -> huxerui::Task<void> {
-            co_await huxerui::Delay(std::chrono::duration<double>{0});
-            *fileContent.Get() = "";
-            fileLoading = true;
-            if (navigation_enabled) {
-                navigation.Push([=] {
-                    return ProfileFilePage(
-                        id, fileContent, fileLoading, tasks, toast,
-                        [navigation] { static_cast<void>(navigation.Pop()); });
-                });
-                const std::string yaml = co_await RunOnTaskThread([id] {
-                    return store::profilesStore().yamlOf(id);
-                });
-                *fileContent.Get() = yaml;
-                fileLoading = false;
-                co_return;
-            }
-            if (compact) {
-                filePageId = id;
-                const std::string yaml = co_await RunOnTaskThread([id] {
-                    return store::profilesStore().yamlOf(id);
-                });
-                *fileContent.Get() = yaml;
-                fileLoading = false;
-                co_return;
-            }
-            dialog.Show(
-                [tasks, toast, fileContent, fileLoading, id, hintColor, profilesModel](
-                    huxerui::DialogContext ctx) -> huxerui::View {
-                    const huxerui::View body =
-                        fileLoading.Get()
-                            ? huxerui::View{
-                                  huxerui::Column {
-                                      huxerui::ProgressCircle()
-                                          .With(huxerui::Frame{
-                                              .width = 28.0F,
-                                              .height = 28.0F}),
-                                      huxerui::Text(Localized("正在加载订阅文件…"))
-                                          .Style(huxerui::TextStyle{
-                                              huxerui::Font::System(
-                                                  font_size::kCaption),
-                                              hintColor}),
-                                  }
-                                      .With(huxerui::Spacing(10.0F),
-                                            huxerui::Padding(24.0F),
-                                            huxerui::MainAlign(
-                                                huxerui::MainAxisAlignment::
-                                                    Center),
-                                            huxerui::CrossAlign(
-                                                huxerui::CrossAxisAlignment::
-                                                    Center))}
-                              : huxerui::View{
-                                    huxerui::TextField(huxerui::
-                                                           TextEditingValue{
-                                                               *fileContent
-                                                                    .Get()})
-                                        .Variant(
-                                            huxerui::TextFieldVariant::Outlined)
-                                        .LineLimits(huxerui::
-                                                        TextFieldLineLimits::
-                                                            MultiLine(14, 22))
-                                        // 非受控：只落 shared_ptr，不回写
-                                        // State（避免逐键全文重组）。
-                                        .OnChanged(
-                                            [fileContent](
-                                                const huxerui::TextEditingValue&
-                                                    v) {
-                                                *fileContent.Get() = v.text;
-                                            })};
-                    return DialogCard(huxerui::Column {
-                        huxerui::Text(Localized("编辑文件"), huxerui::TextRole::Title),
-                        huxerui::Text(Localized(
-                            "直接编辑订阅原文，远程更新会覆盖这些改动。需要保留的规则请使用编辑规则。"))
-                            .Style(huxerui::TextStyle{
-                                huxerui::Font::System(font_size::kCaption),
-                                hintColor}),
-                        body,
-                        huxerui::Row {
-                            huxerui::Button(Localized("取消")).OnClick(
-                                [ctx] { ctx.Dismiss(); }),
-                            huxerui::Button(Localized("保存")).OnClick([=] {
-                                ctx.Dismiss();
-                                if (fileLoading.Get()) return;
-                                const std::string content = *fileContent.Get();
-                                tasks.Launch([=]() -> huxerui::Task<void> {
-                                    const std::string err = co_await
-                                        RunOnTaskThread([id, content] {
-                                            auto& ps = store::profilesStore();
-                                            if (!ps.saveYaml(id, content))
-                                                return ps.lastError();
-                                            return std::string{};
-                                        });
-                                    toast.Show(err.empty() ? Localized("已保存")
-                                                           : huxerui::StringVariant(err));
-                                    if (err.empty()) profilesModel->RequestSync();
-                                });
-                            }),
-                        }.With(huxerui::MainAlign(
-                                   huxerui::MainAxisAlignment::SpaceBetween)),
-                    }
-                                      .With(huxerui::Spacing(16.0F),
-                                            huxerui::Frame{.width = 640.0F},
-                                            huxerui::CrossAlign(
-                                                huxerui::CrossAxisAlignment::
-                                                    Stretch)));
-                },
-                huxerui::DialogOptions{});
-            // 文件读取在任务线程；完成后经 fileLoading=false 触发重组展示。
-            const std::string yaml =
-                co_await RunOnTaskThread([id] {
-                    return store::profilesStore().yamlOf(id);
-                });
-            *fileContent.Get() = yaml;
+            TextDocumentHandle result;
+            std::string error;
+            try {
+                auto text = co_await RunOnTaskThread([id] { return store::profilesStore().yamlOf(id); });
+                result = std::make_shared<TextDocument>(std::move(text));
+            } catch (const std::exception& exception) { error = exception.what(); }
+            if (fileContent.Get() != request) co_return;
+            fileContent = std::move(result);
             fileLoading = false;
+            if (!error.empty()) toast.Show(error);
         });
     };
 

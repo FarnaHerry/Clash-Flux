@@ -27,6 +27,7 @@
 #include "rule_target_picker.h"
 #include "action_menu.h"
 #include "profile_file_picker.h"
+#include "text_document.h"
 
 import clashflux.db;
 import clashflux.config;
@@ -378,9 +379,12 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id) {
         .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = ResolveIslandTheme(theme).dense_radius}));
 }
 
+using RuleSetResource = std::shared_ptr<const singbox::PersonalRuleSet>;
+
 struct RuleSetDraft {
-    singbox::PersonalRuleSet resource;
-    huxerui::TextEditingValue name, url, content, hours;
+    RuleSetResource resource;
+    huxerui::TextEditingValue name, url, hours;
+    TextDocumentHandle content;
     std::size_t type = 0, format = 0;
 };
 
@@ -420,7 +424,7 @@ struct RuleSetDraft {
                 if (!alive.Get()) co_return;
                 if (!result.second.empty()) { toast.Show(result.second); co_return; }
                 auto edited = draft.Get();
-                edited.content = huxerui::TextEditingValue::FromText(result.first);
+                edited.content = std::make_shared<TextDocument>(std::move(result.first));
                 draft = std::move(edited);
             });
         });
@@ -432,7 +436,12 @@ struct RuleSetDraft {
             .OnChanged([draft](const auto& text) { auto v = draft.Get(); v.name = text; draft = v; }),
         huxerui::Select(std::vector<std::string>{"远程规则集", "本地 / 手写 JSON"}, value.type,
             [](const auto& text) { return huxerui::Text(Localized(text)); })
-            .OnChanged([draft](std::size_t index) { auto v = draft.Get(); v.type = index; draft = v; }),
+            .OnChanged([draft](std::size_t index) {
+                auto v = draft.Get();
+                if (v.content) static_cast<void>(v.content->Snapshot());
+                v.type = index;
+                draft = std::move(v);
+            }),
         value.type == 0 ? huxerui::View{huxerui::Column{
             huxerui::TextField(value.url).Label(Localized("规则集地址"))
                 .Placeholder("https://...").Variant(huxerui::TextFieldVariant::Outlined)
@@ -448,11 +457,8 @@ struct RuleSetDraft {
         }.With(huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))} :
         huxerui::View{huxerui::Column{
             huxerui::Button(supportsSrs ? Localized("导入 JSON / SRS 文件") : Localized("导入 JSON 文件")).OnClick(chooseFile),
-            huxerui::TextField(value.content).Label(Localized("规则集 JSON"))
-                .LineLimits(huxerui::TextFieldLineLimits::MultiLine(4, 10))
-                .Placeholder("{\"version\":3,\"rules\":[{\"domain_suffix\":[\"example.com\"]}]}")
-                .Variant(huxerui::TextFieldVariant::Outlined)
-                .OnChanged([draft](const auto& text) { auto v = draft.Get(); v.content = text; draft = v; }),
+            huxerui::Text(Localized("规则集 JSON")),
+            DocumentTextView(value.content, false, 300.0F),
             huxerui::Text(supportsSrs ? Localized("SRS 由固定内核转换为可编辑 JSON。") : Localized("仅接受 sing-box 规则集 JSON。")),
             huxerui::Text(Localized("导入内容独立保存，不修改原文件。")),
         }.With(huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))},
@@ -473,25 +479,25 @@ struct RuleSetDraft {
 }
 
 [[huxerui::composable]] huxerui::View RuleSetResourceRow(
-    singbox::PersonalRuleSet resource, bool busy, std::string receipt,
-    std::function<void(singbox::PersonalRuleSet)> edit,
+    RuleSetResource resource, bool busy, std::string receipt,
+    std::function<void(RuleSetResource)> edit,
     std::function<void(std::string)> remove, std::function<void(std::string)> refresh) {
     auto menu = UseActionMenu();
     return DenseCard(huxerui::Row{
         huxerui::Column{
-            huxerui::Text(resource.name),
-            huxerui::Text(resource.type == "remote" ? Localized("远程规则集") : Localized("本地 / 手写 JSON")),
-            huxerui::Text(resource.type == "remote" ? resource.format + " · " +
-                std::to_string(resource.update_hours) + "h" : "JSON"),
+            huxerui::Text(resource->name),
+            huxerui::Text(resource->type == "remote" ? Localized("远程规则集") : Localized("本地 / 手写 JSON")),
+            huxerui::Text(resource->type == "remote" ? resource->format + " · " +
+                std::to_string(resource->update_hours) + "h" : "JSON"),
             receipt.empty() ? huxerui::View{huxerui::Row{}} : huxerui::View{huxerui::Text(receipt)},
         }.With(huxerui::Spacing(4.0F), huxerui::Grow(1.0F)),
         huxerui::IconButton(app::images::more_vertical, Localized("规则集操作"))
             .With(menu.Anchor()).OnClick([=] {
                 std::vector<ActionMenuEntry> actions{
                     ActionMenuItem(Localized("编辑"), [=] { edit(resource); }).Enabled(!busy)};
-                if (resource.type == "remote" && core::SupportsRuleSetTools()) actions.push_back(ActionMenuItem(Localized("重新下载（重启内核）"),
-                    [=] { refresh(resource.id); }).Enabled(!busy));
-                actions.push_back(ActionMenuItem(Localized("删除"), [=] { remove(resource.id); }).Enabled(!busy).Danger());
+                if (resource->type == "remote" && core::SupportsRuleSetTools()) actions.push_back(ActionMenuItem(Localized("重新下载（重启内核）"),
+                    [=] { refresh(resource->id); }).Enabled(!busy));
+                actions.push_back(ActionMenuItem(Localized("删除"), [=] { remove(resource->id); }).Enabled(!busy).Danger());
                 menu.Show(std::move(actions));
             }),
     }.With(huxerui::Spacing(8.0F)));
@@ -517,14 +523,16 @@ struct RuleSetDraft {
     const auto refreshSucceeded = huxerui::UseString(Localized("本次已重新下载并应用"));
     const auto refreshQueued = huxerui::UseString(Localized("已安排在下次引用启动时重新下载"));
     const auto refreshFailed = huxerui::UseString(Localized("更新失败："));
-    const auto persist = [=](singbox::RuleSetLibrary next, std::function<void()> done) {
+    const auto persist = [=](std::function<void(singbox::RuleSetLibrary&)> edit, std::function<void()> done) {
         if (busy.Get()) return;
         busy = true;
         tasks.Launch([=]() -> huxerui::Task<void> {
             std::string error;
             auto saved = std::make_shared<singbox::RuleSetLibrary>();
             try {
-                error = co_await RunOnTaskThread([next, saved] {
+                error = co_await RunOnTaskThread([library, edit, saved] {
+                    auto next = *library;
+                    edit(next);
                     std::string failure;
                     if (store::coreStore().saveRuleSetLibrary(next, failure)) *saved = store::coreStore().ruleSetLibrary();
                     return failure;
@@ -541,36 +549,47 @@ struct RuleSetDraft {
             if (done) done();
         });
     };
-    const auto openEditor = [=](singbox::PersonalRuleSet resource) {
+    const auto openEditor = [=](RuleSetResource resource) {
         if (!alive.Get() || busy.Get() || !model->ruleSetsLoaded.Get() || model->ruleSetLibrary.Get() != library) return;
-        if (resource.id.empty()) resource.id = "set-" + cfg::randomSecret();
+        if (!resource) {
+            auto created = std::make_shared<singbox::PersonalRuleSet>();
+            created->id = "set-" + cfg::randomSecret();
+            resource = std::move(created);
+        }
+        auto text = std::shared_ptr<const std::string>(resource, &resource->content);
         RuleSetDraft value{.resource = resource,
-            .name = huxerui::TextEditingValue::FromText(resource.name),
-            .url = huxerui::TextEditingValue::FromText(resource.url),
-            .content = huxerui::TextEditingValue::FromText(resource.content),
-            .hours = huxerui::TextEditingValue::FromText(std::to_string(resource.update_hours)),
-            .type = resource.type == "inline" ? 1U : 0U, .format = resource.format == "source" ? 1U : 0U};
+            .name = huxerui::TextEditingValue::FromText(resource->name),
+            .url = huxerui::TextEditingValue::FromText(resource->url),
+            .hours = huxerui::TextEditingValue::FromText(std::to_string(resource->update_hours)),
+            .content = std::make_shared<TextDocument>(std::move(text)),
+            .type = resource->type == "inline" ? 1U : 0U, .format = resource->format == "source" ? 1U : 0U};
         draft = std::move(value);
         const auto save = [=](std::function<void()> done) {
+            if (busy.Get()) return;
             if (model->ruleSetLibrary.Get() != library) { toast.Show(Localized("规则集资源库已变化，请重新打开后编辑")); return; }
             const auto value = draft.Get();
-            auto edited = value.resource;
-            edited.name = Trim(value.name.text);
-            edited.type = value.type == 0 ? "remote" : "inline";
-            edited.format = value.type == 0 && value.format == 0 ? "binary" : "source";
-            edited.url = value.type == 0 ? Trim(value.url.text) : "";
-            edited.content = value.type == 1 ? value.content.text : "";
+            auto hours = value.resource->update_hours;
             if (value.type == 0) {
                 const auto& text = value.hours.text;
-                const auto parsed = std::from_chars(text.data(), text.data() + text.size(), edited.update_hours);
+                const auto parsed = std::from_chars(text.data(), text.data() + text.size(), hours);
                 if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) {
                     toast.Show(Localized("更新周期需要填写整数小时")); return;
                 }
             }
-            auto next = *library;
-            const auto found = std::ranges::find(next.resources, edited.id, &singbox::PersonalRuleSet::id);
-            if (found == next.resources.end()) next.resources.push_back(std::move(edited)); else *found = std::move(edited);
-            persist(std::move(next), std::move(done));
+            const auto text = value.type == 1 ? value.content->Snapshot() : std::shared_ptr<const std::string>{};
+            persist([base = value.resource, name = Trim(value.name.text), url = Trim(value.url.text),
+                     type = value.type, format = value.format, hours, text](singbox::RuleSetLibrary& next) {
+                auto edited = *base;
+                edited.name = name;
+                edited.type = type == 0 ? "remote" : "inline";
+                edited.format = type == 0 && format == 0 ? "binary" : "source";
+                edited.url = type == 0 ? url : "";
+                edited.content = text ? *text : std::string{};
+                edited.update_hours = hours;
+                const auto found = std::ranges::find(next.resources, edited.id, &singbox::PersonalRuleSet::id);
+                if (found == next.resources.end()) next.resources.push_back(std::move(edited));
+                else *found = std::move(edited);
+            }, std::move(done));
         };
         if (compact) OpenRuleEditor(navigation, desktop, [=] { return RuleSetEditorPage(draft, busy, save); });
         else dialog.Show([=](huxerui::DialogContext context) {
@@ -590,9 +609,9 @@ struct RuleSetDraft {
     huxerui::Lifecycle([=] { addAction = std::function<void()>{[=] { openEditor({}); }}; }, model->ruleSetLibrary, busy, model->ruleSetsLoaded);
     const auto remove = [=](std::string id) {
         if (!alive.Get() || busy.Get() || model->ruleSetLibrary.Get() != library) return;
-        auto next = *library;
-        std::erase_if(next.resources, [&](const auto& resource) { return resource.id == id; });
-        persist(std::move(next), {});
+        persist([id = std::move(id)](singbox::RuleSetLibrary& next) {
+            std::erase_if(next.resources, [&](const auto& resource) { return resource.id == id; });
+        }, {});
     };
     const auto refresh = [=](std::string id) {
         if (!alive.Get() || busy.Get() || model->ruleSetLibrary.Get() != library) return;
@@ -622,10 +641,11 @@ struct RuleSetDraft {
             toast.Show(message);
         });
     };
-    std::vector<singbox::PersonalRuleSet> visible;
+    std::vector<RuleSetResource> visible;
     for (const auto& resource : library->resources)
-        if (SearchTextMatches(resource.name, search.Get().text)) visible.push_back(resource);
-    const auto rows = std::make_shared<const std::vector<singbox::PersonalRuleSet>>(std::move(visible));
+        if (SearchTextMatches(resource.name, search.Get().text))
+            visible.emplace_back(library, &resource);
+    const auto rows = std::make_shared<const std::vector<RuleSetResource>>(std::move(visible));
     const auto scroll = model->rulesScrolls.try_emplace(std::pair<std::int64_t, std::size_t>{-1, 0}).first->second;
     return huxerui::Column{
         !model->ruleSetsLoaded.Get() ? PageLoadingSkeleton(theme, true) : rows->empty() ?
@@ -633,9 +653,9 @@ struct RuleSetDraft {
             huxerui::View{huxerui::VirtualList(rows->size() + (compact ? 1U : 0U), [=](std::size_t index) -> huxerui::View {
                 if (index == rows->size()) return CompactFloatingNavigationFooter();
                 const auto receipts = model->ruleSetRefreshReceipts.Get();
-                const auto receipt = receipts.find((*rows)[index].id);
+                const auto receipt = receipts.find((*rows)[index]->id);
                 return RuleSetResourceRow((*rows)[index], busy.Get(), receipt == receipts.end() ? "" : receipt->second,
-                    openEditor, remove, refresh).Key((*rows)[index].id);
+                    openEditor, remove, refresh).Key((*rows)[index]->id);
             }).Controller(scroll).EstimatedItemExtent(92.0F).With(huxerui::Grow(1.0F), huxerui::ScrollBar())},
     }.With(huxerui::Spacing(12.0F), huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -670,6 +690,7 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
     auto generation = huxerui::UseState<std::uint64_t>(0);
     auto refresh = huxerui::UseState<std::uint64_t>(0);
     auto busy = huxerui::UseState(false);
+    auto previewBusy = huxerui::UseState(false);
     auto view = profilesModel->rulesView;
     auto draft = huxerui::UseState(PersonalRuleDraft{});
     auto alive = huxerui::UseState(true);
@@ -876,6 +897,8 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
                     for (std::size_t i=0; i<kPersonalViews.size(); ++i)
                         items.push_back(ActionMenuItem(Localized(kPersonalViews[i]), [view, i] { view = i; }).Checked(view.Get() == i));
                     items.push_back(ActionMenuItem(Localized("编译 JSON"), [=] {
+                        if (previewBusy.Get()) return;
+                        previewBusy = true;
                         tasks.Launch([=]() -> huxerui::Task<void> {
                             std::string text;
                             try {
@@ -884,20 +907,23 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
                                     return result.error.empty() ? result.json : result.error;
                                 });
                             } catch (const std::exception& exception) { text = exception.what(); }
+                            previewBusy = false;
                             if (!alive.Get() || snapshot.Get() != source || profileId.Get() != source->id) co_return;
+                            const auto document = std::make_shared<TextDocument>(std::move(text));
                             dialog.Show([=](huxerui::DialogContext context) {
                                 return DialogCard(huxerui::Column{
                                     huxerui::Text(Localized("编译 JSON"), huxerui::TextRole::Title),
                                     huxerui::Text(Localized("此预览仅包含当前订阅及个人修改，不代表正在运行的全局计划。")),
-                                    huxerui::ScrollView(huxerui::Text(text)).With(huxerui::Frame{.height = 320.0F}, huxerui::ScrollBar()),
+                                    DocumentTextView(document, true, 320.0F),
                                     huxerui::Row{
-                                        huxerui::Button(Localized("复制")).OnClick([clipboard, text] { clipboard->WriteText(text); }),
+                                        huxerui::Button(Localized("复制")).OnClick([clipboard, document] { clipboard->WriteText(*document->Snapshot()); }),
                                         huxerui::Button(Localized("关闭")).OnClick([context] { context.Dismiss(); }),
                                     },
-                                }.With(huxerui::Spacing(12.0F), huxerui::Frame{.max_width = 680.0F}));
+                                }.With(huxerui::Spacing(12.0F), huxerui::Frame{.max_width = 680.0F},
+                                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
                             });
                         });
-                    }).Enabled(source->id != 0 && source->supported && !busy.Get()));
+                    }).Enabled(source->id != 0 && source->supported && !busy.Get() && !previewBusy.Get()));
                     menu.Show(std::move(items));
                 }),
         }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),

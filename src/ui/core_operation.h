@@ -45,6 +45,16 @@ struct CoreOperations {
     }
 };
 
+// The caller retains its operation ticket throughout authorization/install.
+// Retry exactly once after confirmed installation; cancellation must not apply
+// the original intent or start another authorization attempt.
+template <class Result, class Install, class Execute>
+huxerui::Task<std::optional<Result>> ResumeCoreCommandAfterServiceInstall(
+    CoreCommand command, Install install, Execute execute) {
+    if (!co_await install()) co_return std::nullopt;
+    co_return co_await execute(std::move(command));
+}
+
 // Own both the model and completion until application work settles. The caller
 // passes its application TaskScope; page retirement cannot strand the command.
 // Completion runs on the UI thread, after shared pending has been cleared.

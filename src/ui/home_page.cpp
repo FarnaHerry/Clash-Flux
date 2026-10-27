@@ -342,7 +342,7 @@ void MirrorHomeState(huxerui::State<HomeState> state,
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
 }
 
-// 流量曲线：下载面积图（主色渐变填充）+ 上传折线（琥珀）。历史不足两点画平线。
+// 流量曲线：下载面积图（蓝色半透明填充）+ 上传折线（橙色）。历史不足两点画平线。
 // 首页流量曲线数据：把滚动窗口拍成 Lib-Charts 的坐标快照（datum key 必须非空且唯一、
 // x 必须严格递增；这里用窗口内索引当 x，天然递增）。窗口约 1 Hz 变一次，重建 60×2 个
 // 点可忽略；空窗口也是合法快照（库会呈现空数据提示）。
@@ -370,8 +370,9 @@ huxerui::XYChartData BuildTrafficChartData(
 // 流量统计：圆环旁保留方向占比，累计上传/下载量固定排在卡片底部。
 [[huxerui::composable]] huxerui::View HomeTotalCard(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const huxerui::Color upColor = SemanticWarningColor(theme);
-    const huxerui::Color downColor = theme.colors.primary;
+    const auto trafficColors = ResolveTrafficColors(theme);
+    const huxerui::Color upColor = trafficColors.upload;
+    const huxerui::Color downColor = trafficColors.download;
     const std::int64_t upload = std::max<std::int64_t>(0, s.totalUp);
     const std::int64_t download = std::max<std::int64_t>(0, s.totalDown);
     const double total = static_cast<double>(upload) + static_cast<double>(download);
@@ -439,9 +440,10 @@ huxerui::XYChartData BuildTrafficChartData(
 [[huxerui::composable]] huxerui::View HomeTrafficCard(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool fresh = huxerui::UseService<CoreModel>()->view.Get().health.traffic.state == health::State::Fresh;
-    const huxerui::Color downColor = theme.colors.primary;
-    const huxerui::Color upColor = SemanticWarningColor(theme);
-    huxerui::Color fillDown = theme.colors.primary;
+    const auto trafficColors = ResolveTrafficColors(theme);
+    const huxerui::Color downColor = trafficColors.download;
+    const huxerui::Color upColor = trafficColors.upload;
+    huxerui::Color fillDown = downColor;
     fillDown.alpha = 0.18F;  // 与旧手绘面积填充同一透明度
 
     return huxerui::Column {

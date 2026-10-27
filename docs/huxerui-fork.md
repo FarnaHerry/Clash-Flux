@@ -29,7 +29,7 @@ logic_error）、Windows 自定义标题栏窗口的 DWM 圆角、Windows 安装
 依赖 + IOS 平台补 CoreMedia 框架声明）。
 这些修复已从应用 `cmake/patches/` 和 CMake/CI 应用步骤中移除，配置应用不会修改框架源码。
 
-Lib-Charts、Lib-SQLite、Lib-Camera 的项目修复已收录到各自 fork 的 `farna/main`，
+Lib-Charts、Lib-SQLite、Lib-Camera、Lib-CodeEditor 的项目修复已收录到各自 fork 的 `farna/main`，
 独立维护目录为 `../HuxerUI-libs`。应用已移除四份扩展库补丁和
 全部 CMake 自动应用步骤；通过框架的 `huxerui_use_library(URL, COMMIT)` 在构建缓存获取
 固定源码，不自动采用本地 `third_party/lib-*` 或可变的维护工作树。
@@ -39,6 +39,7 @@ Lib-Charts、Lib-SQLite、Lib-Camera 的项目修复已收录到各自 fork 的 
 | [Lib-Charts](https://github.com/FarnaHerry/Lib-Charts/tree/farna/main) | `e90cfa84707bdf72eb6029410bf05c420efa62fc` | 饼图、96pt 紧凑绘图面与 `inner_radius` 圆环样式（环形段外弧+反向内弧、NonZero 填充，取全图最大解析值）均已包含，原两份补丁 reverse check 通过；包含 `rounded_caps`、中心占比/180ms 悬停动画，全零数据按条目数等分且中心保持 0%。 |
 | [Lib-SQLite](https://github.com/FarnaHerry/Lib-SQLite/tree/farna/main) | `88f610fe66c57260b1ac38e676fc36b23c900fc2` | 启动临时只读查询已包含，原补丁 reverse check 通过；另保留逐值 UTF-8 校验与主键 schema 兼容修复。 |
 | [Lib-Camera](https://github.com/FarnaHerry/Lib-Camera/tree/farna/main) | `b8b3b9304646cdc1afb9722ead16d85cf2160610` | 已采用 ApplicationContext/UiWindow；Android/iOS/Windows/Linux 行为覆盖原补丁。macOS 用直接 UiWindow factory，当前 backend 不消费 NSWindow，因此与原 typed wrapper 等价；库图模式早退也已包含。 |
+| [Lib-CodeEditor](https://github.com/FarnaHerry/Lib-CodeEditor/tree/farna/main) | `984d2886b04b77cffa162a2934766f5712929704` | 包含只读复制、滚动/绘制兼容；补齐固定子模块声明，提供工作线程预构建并跨卸载保留的 `initial_document`，向消费者传播 Windows 宏约束，默认关闭输入追踪，并修复工具栏剪贴板、文本变更通知和 Android 库图接口目标。 |
 
 CMake 原生构建和 CLI 的 Android 库图共用这些 HTTPS URL 与完整 SHA。Camera 的库图
 兼容已由库本身处理，应用不再预声明占位目标。旧的本地 Charts/SQLite 工作树及旧

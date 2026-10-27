@@ -21,6 +21,7 @@
 #include "task_bridge.h"
 #include "ui.h"
 #include "page_layout.h"
+#include "title_bar_search.h"
 #include "responsive_shell.h"
 #include "app.h"
 #include "file_drop_zone.h"
@@ -56,7 +57,7 @@ bool isSelectorType(const std::string& type) {
     return type == "Selector" || type == "selector";
 }
 
-enum class CoreApplyStatus { Applied, PermissionDenied, Failed };
+enum class CoreApplyStatus { Applied, PermissionDenied, ServiceInstallFailed, Failed };
 struct CoreApplyResult {
     CoreApplyStatus status = CoreApplyStatus::Failed;
     std::string error;
@@ -178,6 +179,28 @@ void CoreControl::Run(CoreCommand command) const {
             CoreApplyResult result;
             try {
                 result = co_await RunOnTaskThread([command] { return ExecuteCoreCommand(command); });
+    #if defined(__linux__) || defined(_WIN32)
+                if (result.status == CoreApplyStatus::PermissionDenied &&
+                    control.window && control.dialog && control.toast &&
+                    (!control.presentationAvailable || control.presentationAvailable()) &&
+                    !co_await RunOnTaskThread([] { return service::installed(); })) {
+                    control.window->Show();
+                    control.window->Activate();
+                    const auto resumed = co_await ResumeCoreCommandAfterServiceInstall<CoreApplyResult>(
+                        command, [&result, control]() -> huxerui::Task<bool> {
+                            const auto installed = co_await InstallDesktopServiceAsync();
+                            result.error = installed.error;
+                            if (!installed.success || !installed.installed) co_return false;
+                            control.toast->Show(Localized("服务已安装"));
+                            co_return true;
+                        }, [](CoreCommand original) -> huxerui::Task<CoreApplyResult> {
+                            co_return co_await RunOnTaskThread(
+                                [original] { return ExecuteCoreCommand(original); });
+                        });
+                    if (resumed) result = *resumed;
+                    else result.status = CoreApplyStatus::ServiceInstallFailed;
+                }
+    #endif
     #if defined(__ANDROID__)
                 if (command.action == CoreAction::Tun && result.status == CoreApplyStatus::Applied) {
                     bool accepted = false;
@@ -251,18 +274,13 @@ void CoreControl::Run(CoreCommand command) const {
             }
             control.window->Show();
             control.window->Activate();
-#if defined(__linux__) || defined(_WIN32)
-            if (!control.model->view.Get().serviceInstalled) {
-                InstallDesktopService(control.model, control.tasks, *control.toast);
-                return;
-            }
-#endif
             ShowTunGuideDialog(*control.dialog, control.clipboard, *control.toast,
                                control.textColor, control.hintColor);
         } else if (result.status != CoreApplyStatus::Applied) {
             if (control.toast) {
-                control.toast->Show(result.error.empty() ? CoreActionFailure(action)
-                                                         : huxerui::StringVariant(result.error));
+                control.toast->Show(!result.error.empty() ? huxerui::StringVariant(result.error)
+                    : result.status == CoreApplyStatus::ServiceInstallFailed
+                        ? Localized("安装被取消或失败（需要授权）") : CoreActionFailure(action));
             } else if (control.onHeadlessFailure) {
                 control.onHeadlessFailure(false, result.error);
             }
@@ -1032,6 +1050,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto inputFocused = huxerui::UseState(false);
     const bool focused = kPageTitlesInWindow && !compact && inputFocused.Get();
+    const bool animateFocus = !theme.motion.reduced_motion &&
+        huxerui::UseWindow().LifecycleState() != huxerui::WindowLifecycleState::Background;
     const float height = kPageTitlesInWindow
         ? compact ? kDesktopTitleBarHeight : kDesktopTitleBarSearchHeight
         : 48.0F;
@@ -1096,12 +1116,13 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
            }),
            huxerui::Background(focused ? huxerui::Color::Transparent()
                                       : theme.colors.surface_container_highest),
-           huxerui::Border(focused ? theme.colors.primary : theme.colors.outline, 1.0F),
+           huxerui::Border(theme.colors.outline, 1.0F),
            huxerui::CornerRadius(height / 2.0F),
            huxerui::ClipChildren(),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
            huxerui::Grow(1.0F));
 
+    pill = WithSearchFocusOutline(std::move(pill), focused, theme.colors.primary, animateFocus);
     return PageSearchFieldLayout(std::move(pill).Key("pill-search-field"), compact);
 }
 
