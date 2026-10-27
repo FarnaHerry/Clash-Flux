@@ -1162,5 +1162,24 @@ Lib-CodeEditor 固定 `984d2886b04b77cffa162a2934766f5712929704`。
   未提升；这两项需要管理员测试环境。隔离的 `legacy_bundle_cleanup` 回归通过。
 - Android APK、其余多平台构建与 Release 资产尚未由本机验证，需由候选提交的 CI 检查。
 - 本机未执行 Windows Burn 的跨版本安装、失败回滚、静默卸载与维护页验收：Windows Sandbox
-  不可用，且检测到本机应用进程；安装可能影响运行中的服务/代理。需在隔离 Windows
-  测试环境完成后再推送发布标签。
+  不可用，且检测到本机应用进程；安装可能影响运行中的服务/代理。用户随后明确要求直接
+  推送 tag 运行发布 CI、失败修复后重打，并要求本机暂不安装；隔离环境安装/升级/回滚/卸载
+  验收仍未完成。
+
+## 2026-10-27：v0.3.72 首轮 CI 失败与重验准备
+
+代码快照：应用 `7ebfd30` + 本次修复；Lib-CodeEditor 固定更新到
+`e3695be698c88738d228525cd46ce3a550162464`。
+
+- 首轮 tag CI `40461865066` 的 Windows、macOS 构建与 Windows 安装器成功；Android 因
+  AndroidLegacy 未生成 `title_bar_search.cpp` 中的搜索焦点实现而链接失败。已将该源文件
+  和头文件加入输入依赖，并将实现加入 Android UI 源码图。
+- Linux x86_64/arm64 因 CodeEditor 合并的预编译 simdutf 对象要求 libstdc++ 新符号而失败。
+  CodeEditor fork 现在固定 simdutf v7.7.0 源码提交，并仅在 Linux 按消费工具链构建，避免
+  与应用 libc++ 混用。iOS Simulator 诊断同时暴露静态库已合入 simdutf 却继续传递该目标的
+  链接边；fork 已从静态库链接闭包移除该冗余边。iOS 仍是非阻塞诊断平台，等待新 CI 确认。
+- 修复后的 Windows/MSVC Release 主目标和 HuxerUI codegen 构建成功；PTY 下
+  `./run.ps1 --version` 输出 `Clash-Flux v0.3.72（sing-box 客户端）`；`git diff --check`
+  通过。tag 尚未重新触发，Android/Linux/iOS 的修复待新 CI 验证。
+- 本机 Windows 安装验收仍未执行，按用户要求等待隔离测试环境；不得将构建或 CI 等同于
+  Burn 升级、回滚、卸载验收。
