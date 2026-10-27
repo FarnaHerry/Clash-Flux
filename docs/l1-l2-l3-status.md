@@ -1169,17 +1169,20 @@ Lib-CodeEditor 固定 `984d2886b04b77cffa162a2934766f5712929704`。
 ## 2026-10-27：v0.3.72 首轮 CI 失败与重验准备
 
 代码快照：应用 `7ebfd30` + 本次修复；Lib-CodeEditor 固定更新到
-`e3695be698c88738d228525cd46ce3a550162464`。
+`2aa99554a64339a07bbd2c553cf253f40f375b16`。
 
 - 首轮 tag CI `40461865066` 的 Windows、macOS 构建与 Windows 安装器成功；Android 因
   AndroidLegacy 未生成 `title_bar_search.cpp` 中的搜索焦点实现而链接失败。已将该源文件
   和头文件加入输入依赖，并将实现加入 Android UI 源码图。
 - Linux x86_64/arm64 因 CodeEditor 合并的预编译 simdutf 对象要求 libstdc++ 新符号而失败。
   CodeEditor fork 现在固定 simdutf v7.7.0 源码提交，并仅在 Linux 按消费工具链构建，避免
-  与应用 libc++ 混用。iOS Simulator 诊断同时暴露静态库已合入 simdutf 却继续传递该目标的
-  链接边；fork 已从静态库链接闭包移除该冗余边。iOS 仍是非阻塞诊断平台，等待新 CI 确认。
-- 修复后的 Windows/MSVC Release 主目标和 HuxerUI codegen 构建成功；PTY 下
+  与应用 libc++ 混用。第一次重打 tag 的 Linux arm64 job 随后发现 upstream 头文件布局与
+  SweetEditor include 路径不同；fork `2aa9955` 补上同版本兼容头目录。iOS Simulator 诊断
+  同时暴露静态库已合入 simdutf 却继续传递该目标的链接边；fork 已从静态库链接闭包移除
+  该冗余边。iOS 仍是非阻塞诊断平台，等待新 CI 确认。
+- 固定到 CodeEditor `2aa9955` 后，Windows/MSVC Release 主目标和 HuxerUI codegen 构建成功；PTY 下
   `./run.ps1 --version` 输出 `Clash-Flux v0.3.72（sing-box 客户端）`；`git diff --check`
-  通过。tag 尚未重新触发，Android/Linux/iOS 的修复待新 CI 验证。
+  通过。上一轮使用 CodeEditor `e3695be` 的流水线已因 Linux include 缺失取消；`2aa9955`
+  仍待新 CI 验证 Android/Linux/iOS 修复。
 - 本机 Windows 安装验收仍未执行，按用户要求等待隔离测试环境；不得将构建或 CI 等同于
   Burn 升级、回滚、卸载验收。
