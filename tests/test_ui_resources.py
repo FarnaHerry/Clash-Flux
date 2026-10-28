@@ -5,6 +5,13 @@ import re
 import sys
 
 
+def msg_key(value):
+    digest = 14695981039346656037
+    for byte in value.encode("utf-8"):
+        digest = ((digest ^ byte) * 1099511628211) & ((1 << 64) - 1)
+    return f"msg_{digest:016x}"
+
+
 def check(root):
     literals = {}
     for source in (root / "src").rglob("*"):
@@ -13,10 +20,13 @@ def check(root):
         for match in re.finditer(r'Localized(?:Format|Resource)?\("((?:[^"\\]|\\.)*)"',
                                  source.read_text(encoding="utf-8")):
             value = json.loads('"' + match[1] + '"')
-            digest = 14695981039346656037
-            for byte in value.encode("utf-8"):
-                digest = ((digest ^ byte) * 1099511628211) & ((1 << 64) - 1)
-            literals[f"msg_{digest:016x}"] = (source.relative_to(root), value)
+            literals[msg_key(value)] = (source.relative_to(root), value)
+    # Card-back menus resolve titles dynamically through Localized(spec.title).
+    grid = root / "src/ui/home_grid.h"
+    for match in re.finditer(r'\{HomeCardKind::\w+,\s*"[^"]*",\s*"((?:[^"\\]|\\.)*)"',
+                             grid.read_text(encoding="utf-8")):
+        value = json.loads('"' + match[1] + '"')
+        literals[msg_key(value)] = (grid.relative_to(root), value)
     assert literals, "No localized source literals found"
     errors = []
     catalogs = sorted((root / "resources/strings").glob("*.properties"))

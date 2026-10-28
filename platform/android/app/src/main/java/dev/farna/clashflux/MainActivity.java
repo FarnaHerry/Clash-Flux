@@ -7,7 +7,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
-import android.content.res.Configuration;
 import android.net.Uri;
 import android.net.VpnService;
 import android.os.Build;
@@ -69,7 +68,6 @@ public final class MainActivity extends HuxerUIActivity {
     private static volatile String runtimeMessage = "";
 
     private static native void nativeInit(String filesDirectory, String nativeLibraryDirectory);
-    private static native void nativeSetSystemDark(boolean dark);
     private static native void nativeStartCore();
     private static native void nativeVpnStartCancelled();
     private static native void nativeVpnStartFailed(String message);
@@ -355,14 +353,9 @@ public final class MainActivity extends HuxerUIActivity {
         reportPreviousNativeCrash(this);
         Log.i(TAG, "Native bridge initialized");
         appLog("主 Activity 已初始化 native bridge", false);
-        // Make the system-theme value available to the first native frame too.
-        nativeSetSystemDark(isSystemDarkMode());
         Log.i(TAG, "Calling HuxerUIActivity.onCreate");
         super.onCreate(savedInstanceState);
         Log.i(TAG, "HuxerUIActivity.onCreate returned");
-        // System dark/light toggles recreate the Activity (uiMode is not in
-        // configChanges), so this per-onCreate report is always fresh for the
-        // "follow system" theme option.
         nativeStartCore();
         requestNotificationPermission();
         Log.i(TAG, "Android UI process initialized; sing-box runtime is isolated in :background");
@@ -441,14 +434,6 @@ public final class MainActivity extends HuxerUIActivity {
             }
             Log.w(TAG, "Unable to read sing-box runtime state", error);
         }
-    }
-
-    private static boolean isSystemDarkMode() {
-        MainActivity activity = current;
-        if (activity == null) return false;
-        final int nightMode = activity.getResources().getConfiguration().uiMode
-                & Configuration.UI_MODE_NIGHT_MASK;
-        return nightMode == Configuration.UI_MODE_NIGHT_YES;
     }
 
     @Override

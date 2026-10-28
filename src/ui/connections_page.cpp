@@ -164,7 +164,7 @@ std::string closeAllConnectionsForPlatform() {
 }
 
 void ConfirmCloseConnection(huxerui::DialogHandle dialog, huxerui::TaskScope tasks,
-                            huxerui::ToastHandle toast, std::string id,
+                            FluxToastHandle toast, std::string id,
                             std::string host, bool all = false) {
     // 菜单项先结束弹出层；下一拍再打开模态层，避免同一事件路径互相抢焦点。
     tasks.Launch([dialog, tasks, toast, id = std::move(id), host = std::move(host), all]()
@@ -269,7 +269,7 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
         huxerui::UseViewportClass() != huxerui::ViewportClass::Expanded;
     auto tasks = huxerui::UseTaskScope();
     const auto dialog = huxerui::UseDialog();
-    const auto toast = huxerui::UseToast();
+    const auto toast = UseFluxToast();
     const auto navigation = huxerui::UseNavigation();
     const auto desktopNavigation = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
     // 窗口层一次安装的层服务：宽屏从右侧抽屉打开连接详情（详见 OpenConnectionDetail）。
@@ -466,7 +466,7 @@ huxerui::XYChartData ConnectionChartData(
     const auto& theme = huxerui::UseTheme();
     const auto tasks = huxerui::UseTaskScope();
     const auto dialog = huxerui::UseDialog();
-    const auto toast = huxerui::UseToast();
+    const auto toast = UseFluxToast();
 
     huxerui::Lifecycle([tasks, current, ended, history, initial] {
         auto generation = std::make_shared<std::uint64_t>(0);
@@ -633,7 +633,7 @@ huxerui::XYChartData ConnectionChartData(
     auto history = huxerui::UseState(std::vector<ConnectionRatePoint>{});
     huxerui::View body = ConnectionDetailBody(current, ended, history, initial, false);
     const auto dialog = huxerui::UseDialog();
-    const auto toast = huxerui::UseToast();
+    const auto toast = UseFluxToast();
     const auto tasks = huxerui::UseTaskScope();
     const ConnectionRow row = current.Get();
     const auto confirmClose = [dialog, tasks, toast, id = row.id, host = row.host] {

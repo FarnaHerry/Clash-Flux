@@ -81,7 +81,7 @@ env:
   # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
   # CI 必须自行 clone 并钉 commit，保证可复现）。框架补丁集中维护在
   # farna/main；main 保留官方基线。验证集成更新后同步本机 checkout 与此 pin。
-  HUXERUI_COMMIT: 'be67da4a898856382bb8d4876a6c8ce71d889f5e'
+  HUXERUI_COMMIT: 'ce2a671832152bf2376d331cb81f20c59f0a6875'
   SINGBOX_COMMIT: 'c005f35300ce76427dc285481ec5695f5b179cd2' # v1.14.4
 
 jobs:

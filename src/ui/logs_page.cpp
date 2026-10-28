@@ -136,7 +136,7 @@ std::string BreakableLogText(std::string_view text) {
 [[huxerui::composable]] huxerui::View LogsPage(std::function<void()> onBack, bool active) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
-    auto toast = huxerui::UseToast();
+    auto toast = UseFluxToast();
     auto clipboard = huxerui::UseApplication().Clipboard();
     auto picker = huxerui::UseService<huxerui::FilePicker>();
     auto exporting = huxerui::UseState(false);

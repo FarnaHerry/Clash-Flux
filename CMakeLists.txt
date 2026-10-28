@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.75 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.76 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -711,7 +711,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                 "CLASHFLUX_TEST_RESOURCE_PACKAGE=\"${CLASHFLUX_TEST_RESOURCE_PACKAGE}\"")
             add_dependencies(test_page_transition clash-flux)
             if (MSVC)
-                target_compile_options(test_page_transition PRIVATE /utf-8)
+                target_compile_options(test_page_transition PRIVATE /utf-8 /bigobj)
             endif ()
             huxerui_enable_codegen(test_page_transition)
             clashflux_deploy_huxerui_dll(test_page_transition)

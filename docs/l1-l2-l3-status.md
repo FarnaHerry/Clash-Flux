@@ -1,5 +1,14 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-10-28：v0.3.76 发布验证
+
+代码快照：`7fcc273` 加本轮工作区，准备提交并标记为 `v0.3.76`；HuxerUI 固定 `ce2a671832152bf2376d331cb81f20c59f0a6875`。
+Windows/MSVC Release 全目标构建及 HuxerUI codegen 通过；完整 required CTest 25 项中 21 项首次通过，
+`project_test_gate` 与 `cps_dependencies` 在补齐测试子进程 MSVC/Ninja PATH 后另行通过，合计 23/25。
+`windows_service` 报 Service pipe unavailable (Win32 2)，`windows_physical_dns_wfp` 添加 fixture sublayer 失败；
+需管理员服务/WFP 环境，留待 Release CI 确认。`./run.ps1 --version` 输出 Clash-Flux v0.3.76，`git diff --check` 通过。
+本机未重复执行安装器跨版本升级、回滚、卸载或 Android 签名验收；等待推送后的 Release CI 及资产检查。
+
 2026-10-28，基于 `98da670` 未提交工作区后续：按用户反馈将浅色中性表面从暖白微调为冷白，
 统一 FluxLightColors：外框/标题/侧栏 #FAFAFB、内容 #F1F2F4、卡片 #FEFEFF，文字、描边与遮罩
 改为配套冷中性色；深色和强调色不变。次要文字在三种主要表面的对比度最低约 4.71:1。
@@ -1292,3 +1301,56 @@ HuxerUI 固定 `be67da4a898856382bb8d4876a6c8ce71d889f5e`。
   本机未打 APK 或做手机实机验证。`git diff --check` 通过。
 - 根据用户要求，本机不运行 Burn 安装。跨版本旧版升级、失败回滚、静默卸载和维护页仍未实机验收；
   本地构建、隔离清理回归及发布 CI 不替代该验收。
+
+## 2026-10-28：HuxerUI 官方系统外观接口与猫咪动作 Demo
+
+代码快照：应用 `7fcc273` 加当前工作区（保留原有未提交修改），应用版本 `0.3.75`；
+HuxerUI 固定 `ce2a671832152bf2376d331cb81f20c59f0a6875`，本机独立 checkout 与 CI/Android pin 相同。
+
+- HUI 应用开发技能及新公开头文件已核对；自动主题改用 `UseSystemThemeBrightness()`，
+  当前主题深浅使用 `ThemeSpec::brightness`。显式模式、强调色与启动只读主题设置保留。
+- Windows/MSVC Release 主目标及全量测试目标完整重建通过，避免旧对象继续消费
+  `CreateApplicationWindow` 虚函数和旧 `ThemeSpec` 布局。初轮增量构建暴露旧对象链接/主题断言，
+  完整重建后生产 `page_transition` 通过；版本命令实际输出 `Clash-Flux v0.3.75（sing-box 客户端）`。
+- `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required` 为 23/25；
+  `windows_service` 报 `Service pipe unavailable (Win32 2)`，`windows_physical_dns_wfp` 无法添加 fixture sublayer。
+  当前进程未提权，未禁用两项门禁。CPS 重定位/版本拒绝/缓存完整性、DNS/TLS、分页/主题及 persistence 均通过。
+- HUI 独立维护仓库完整重建通过；24 项 CTest 中 20 项首轮通过，四项配置/构建夹具因未加载
+  MSVC 环境失败，加载开发环境后 `--rerun-failed` 4/4 通过。Windows 原生测试通过；
+  这些结果不等于 macOS/Linux/Android 原生或手机实机验证。
+- Windows 安装器 UI 源码经 HuxerUI codegen 和 MSVC `/Zs` 检查通过，未执行 Burn 打包或安装。
+- 隔离 Demo 新增 `--tricks` 动作实验室，八个动作使用保留帧时钟，支持速度、重播与静态逐帧检查；
+  补齐躯干、后腿、前爪与尾巴连接，正式应用 Logo 和生产运行状态映射保持原样。
+  Demo 使用同一固定 HUI 源码，Windows Debug 原生构建及 GUI 检查通过；补齐下半身后
+  `box_cat_demo.exe --tricks --smoke-test` 验证八动作、终态停帧、快速重播、减少动态效果及逐帧检查通过，
+  原 `box_cat_demo.exe --smoke-test` 的唤醒/停止/失败/取消、帧预算与恢复检查也通过。
+- 未提交、打标签、推送或发布；未执行服务提权验收、手机真机、其它平台原生或安装/签名验收。
+
+## 2026-10-28：动作实验室完整小猫重新设计
+
+代码快照：应用 `7fcc273` 加当前工作区，HUI 固定 `ce2a6718`。根据反馈重新绘制头、耳、眼睛、鼻口、胡须、躯干和尾巴，移除旧 Logo 菱形下沿与胸前折线；仅用于隔离 Demo。
+Windows Debug Demo codegen/原生构建、`box_cat_demo.exe --tricks --smoke-test` 八动作检查通过；GUI 实测待机及 44% 歪头姿势，检查头身连接和遮挡。
+`page_transition`、`ui_resources` 2/2 通过；主目标构建、版本命令（v0.3.75）及 `git diff --check` 通过。其它平台原生及手机实机未覆盖。
+
+2026-10-28 后续按角色一致性反馈调整：恢复原作耳朵、实心椭圆眼、睡眼/弯眼、尾巴素材及 #111318 深色线稿；移除新增瞳孔、鼻口、胡须，只将箱盖状尖角下沿改为圆弧下巴，保留完整身体。Windows Debug Demo 构建及实际窗口待机轮廓检查通过，未更改正式品牌资源。
+
+2026-10-28 按身体比例反馈，将动作实验室小猫的躯干和腿纵向缩短约三成，保留头部尺寸与原作特征，同步上移尾根和地面投影并减小伸爪幅度。Windows Debug Demo codegen/原生构建及 GUI 待机比例检查通过。
+
+## 2026-10-28：首页彩蛋轻缩放切换与单项内容池
+
+代码快照：应用 `7fcc273` 加当前工作区，版本 `0.3.75`；保留已有未提交改动。
+
+- 首页普通卡片双击改为实时内容的 200ms、0.96→1 轻缩放淡入，移除整卡 SharedBounds 快照、收窄到侧边及附加光照；外框、网格占位和正面子树状态保留。减少动态效果直接切面，快速反向从当前进度重定向，不逐帧写 State。
+- 每次从正面显示彩蛋时从公共池抽取，返回不重抽。目前仅保留官方作者 `FinalScave` 的 GitHub 主页；已从 HuxerUI 官方提交 `eb32948` 的 GitHub 作者关联核对账号。旧连接/日志/订阅/设置快捷菜单不再作为彩蛋，猫咪运行控制保持排除。
+- Windows/MSVC Release 主目标与 HuxerUI codegen、`test_page_transition` 构建通过；`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$' 为 2/2，通过鼠标/触控、深浅主题、减少动态效果、输入隔离、正面状态保留、快速反向、每次进入抽取、链接点击及结束后停帧检查。链接使用测试回调核对目标，未自动打开浏览器。
+- 主程序 GUI 实际检查大卡片与 88pt 小卡片，作者入口布局正常，邻卡不移位。`./run.ps1 --version` 输出 v0.3.75，`git diff --check` 通过。
+- 本轮未重跑完整桌面服务/VPN 门禁，未做其它原生平台或手机实机、帧耗时基准、安装/签名验证；未提交或推送。
+## 2026-10-28：三条可关闭 Toast 与保留退场
+
+代码快照：应用 `7fcc273` 加当前工作区，版本 `0.3.75`；保留其它已有未提交改动。
+
+- 应用改用 `toast_stack.h` 的窗口级有界通知层；所有页面、内核操作及窗口订阅通知共用 `UseFluxToast()`。底部居中最多三条、8pt 间距；第四条淘汰最早一条，旧条目保留占位完成退场后补入最新消息，突发不积累过期提示。
+- 每条支持鼠标、触摸和键盘激活关闭，各自计时；自动到期与手动关闭使用同一 200ms 下移/轻缩放淡出路径，结束后才卸载。关闭窗口清空条目及定时器，旧句柄不能向新窗口投递。通过公开 LayerController / ToastStyle / Transition 组合应用通知策略，未修改框架。
+- Windows/MSVC Release 主目标与 `test_page_transition` 经 HuxerUI codegen 构建通过；定向 `page_transition` / `ui_resources` 2/2 通过，覆盖自动/手动退场、深浅主题、reduced motion、三条独立布局、第四条淘汰、连发保留最新三条、点击/触摸取消、计时独立与窗口清理。
+- 使用同一生产组件的独立 Windows 原生窗口检查三条显示、第四条淡出替换、点击移除中间条目、主题切换保持消息，以及提示外按钮仍可操作；主程序实际重新启动，首页正常。`./run.ps1 --version` 为 v0.3.75，`git diff --check` 通过。
+- 未重跑完整桌面服务/VPN 门禁，未验证其它原生平台、手机实机、安装/签名；未提交或推送。

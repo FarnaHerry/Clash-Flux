@@ -31,9 +31,6 @@ namespace {
 std::mutex g_mutex;
 JavaVM* g_vm = nullptr;
 jclass g_activity_class = nullptr;
-// 「跟随系统」主题用：MainActivity 在每次 onCreate 时上报（系统深浅切换会
-// 重建 Activity，uiMode 不在 configChanges 里），因此缓存总是新鲜的。
-std::atomic<bool> g_system_dark{false};
 // Owned by ClashVpnService, never inferred from a saved setting.
 // 0=closed, 1=building, 2=attached, 3=failed.
 std::atomic<int> g_vpn_state{0};
@@ -418,12 +415,6 @@ Java_dev_farna_clashflux_MainActivity_nativeStartCore(JNIEnv*, jclass) {
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_dev_farna_clashflux_MainActivity_nativeSetSystemDark(JNIEnv*, jclass,
-                                                          jboolean dark) {
-    g_system_dark.store(dark == JNI_TRUE);
-}
-
-extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_MainActivity_nativeVpnStartCancelled(JNIEnv*, jclass) {
     // VpnService.prepare 的授权框被取消时，不能留下一个看似已启用的偏好。
     const bool noTunCoreWasRunning =
@@ -463,11 +454,6 @@ Java_dev_farna_clashflux_MainActivity_nativeVpnStartFailed(JNIEnv* environment,
     } catch (...) {
         log_android("Failed to persist Android VPN startup failure", true);
     }
-}
-
-// cfg::systemPrefersDark() 的 Android 后端（见 src/config.cppm）。
-extern "C" bool clashflux_android_system_dark() noexcept {
-    return g_system_dark.load();
 }
 
 // ---- sing-box VPN state ----------------------------------------------------

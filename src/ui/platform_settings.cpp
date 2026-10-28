@@ -165,7 +165,7 @@ huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync() {
 }
 
 void InstallDesktopService(std::shared_ptr<CoreModel> model,
-                           huxerui::TaskScope tasks, huxerui::ToastHandle toast) {
+                           huxerui::TaskScope tasks, FluxToastHandle toast) {
     if (model->serviceChecking.Get() || model->operations.Busy()) return;
     model->serviceChecking = true;
     tasks.Launch([toast, model]() -> huxerui::Task<void> {
@@ -196,7 +196,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
 
 [[huxerui::composable]] huxerui::View DesktopServiceRow(
     bool service_installed, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast) {
+    FluxToastHandle toast) {
     const auto model = huxerui::UseService<CoreModel>();
     const auto serviceTasks = huxerui::UseApplicationTaskScope();
     return SettingRow(
@@ -248,7 +248,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
 
 [[huxerui::composable]] huxerui::View DesktopServiceRow(
     bool service_installed, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast) {
+    FluxToastHandle toast) {
     const auto model = huxerui::UseService<CoreModel>();
     const auto serviceTasks = huxerui::UseApplicationTaskScope();
     const auto remove = [tasks = serviceTasks, toast, model] {
@@ -300,7 +300,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
 #else
 
 [[huxerui::composable]] huxerui::View DesktopServiceRow(
-    bool, huxerui::TaskScope, huxerui::ToastHandle) {
+    bool, huxerui::TaskScope, FluxToastHandle) {
     return {};
 }
 
@@ -325,7 +325,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
 
 [[huxerui::composable]] huxerui::View AndroidKernelSettings() {
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
-    auto toast = huxerui::UseToast();
+    auto toast = UseFluxToast();
     const auto control = UseCoreControl();
     const auto model = control.model;
     const CoreView view = model->view.Get();
@@ -438,7 +438,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const auto application = huxerui::UseApplication();
     const auto clipboard = application.Clipboard();
-    const auto toast = huxerui::UseToast();
+    const auto toast = UseFluxToast();
     const auto coreModel = huxerui::UseService<CoreModel>();
     const auto settingsModel = huxerui::UseService<SettingsModel>();
     const SettingsView settings = settingsModel->view.Get();
@@ -517,7 +517,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
     const auto control = UseCoreControl();
     const auto view = control.model->view.Get();
     const auto tasks = huxerui::UseApplicationTaskScope();
-    const auto toast = huxerui::UseToast();
+    const auto toast = UseFluxToast();
     const bool running = view.core.state == core::CoreState::Running;
     const auto version = view.core.version.empty() ? cfg::singboxFallbackLabel()
                                                    : view.core.version;

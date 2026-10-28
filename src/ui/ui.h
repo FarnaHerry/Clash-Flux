@@ -19,6 +19,7 @@
 #include "../runtime_health.h"
 #include "app_http_client.h"
 #include "theme_colors.h"
+#include "toast_stack.h"
 
 namespace clashflux::ui {
 
@@ -600,7 +601,7 @@ huxerui::View DialogCard(huxerui::View content);
 // 纯函数无钩子，可在任务协程续体里调。
 void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                         std::shared_ptr<huxerui::Clipboard> clipboard,
-                        huxerui::ToastHandle toast, huxerui::Color textColor,
+                        FluxToastHandle toast, huxerui::Color textColor,
                         huxerui::Color hintColor);
 
 #if defined(__linux__) || defined(_WIN32)
@@ -614,7 +615,7 @@ struct DesktopServiceInstallResult {
 // its original command without releasing the shared pending state.
 huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync();
 void InstallDesktopService(std::shared_ptr<CoreModel> model,
-                           huxerui::TaskScope tasks, huxerui::ToastHandle toast);
+                           huxerui::TaskScope tasks, FluxToastHandle toast);
 #endif
 
 // Android 订阅自动更新：任务线程列出到期订阅，应用共享 HTTP 客户端在 UI

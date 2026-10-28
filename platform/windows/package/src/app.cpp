@@ -1,14 +1,10 @@
 #include <algorithm>
 #include <filesystem>
 #include <iterator>
-#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <vector>
-
-#include <windows.h>
 
 #include <installer_resources.h>
 #include <huxerui/huxerui.h>
@@ -21,30 +17,10 @@ namespace installer_strings = installer::strings;
 
 namespace {
 
-// 与主应用 src/config.cppm 的 systemPrefersDark() 同一注册表键；安装器是
-// 独立小 exe，不链接 clashflux 模块，这里保留同语义的本地实现。
-bool SystemPrefersDark() {
-  HKEY raw_key = nullptr;
-  if (RegOpenKeyExA(HKEY_CURRENT_USER,
-                    "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                    0, KEY_READ, &raw_key) != ERROR_SUCCESS) {
-    return false;
-  }
-  const std::unique_ptr<std::remove_pointer_t<HKEY>, decltype(&RegCloseKey)> key(
-      raw_key, &RegCloseKey);
-
-  DWORD apps_use_light_theme = 1;
-  DWORD size = sizeof(apps_use_light_theme);
-  const LONG result = RegQueryValueExA(key.get(), "AppsUseLightTheme", nullptr, nullptr,
-                                       reinterpret_cast<LPBYTE>(&apps_use_light_theme), &size);
-  return result == ERROR_SUCCESS && apps_use_light_theme == 0;
-}
-
 // 颜色角色统一来自 src/ui/theme_colors.h 的产品配色（唯一配置入口），
-// 深浅两态随系统注册表切换；形状与焦点环与主应用 FluxDark/LightThemeSpec
+// 深浅两态随框架系统外观切换；形状与焦点环与主应用 FluxDark/LightThemeSpec
 // 保持一致，typography 沿用 Material 默认（安装器字号多为显式指定）。
-ThemeSpec InstallerThemeSpec() {
-  const bool dark = SystemPrefersDark();
+ThemeSpec InstallerThemeSpec(bool dark) {
   ThemeSpec spec = dark ? MaterialDarkThemeSpec() : MaterialLightThemeSpec();
   spec.shapes = ShapeScheme{6.0F, 12.0F, 16.0F, 22.0F, 28.0F, 10000.0F};
   spec.colors = dark ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
@@ -448,8 +424,8 @@ View InstallerContent() {
 View InstallerPage() {
   // 自定义标题栏与主应用同款（WindowChromeMode::Custom）：拖拽区 +
   // 平台标准控件由 WindowTitleBar/框架处理，品牌侧栏从标题栏下方铺满。
-  // 深浅模式跟随系统注册表（InstallerThemeSpec），子树经 UseTheme 消费。
-  const ThemeSpec theme = InstallerThemeSpec();
+  // 在组合期观察宿主外观，子树经 UseTheme 消费品牌主题。
+  const ThemeSpec theme = InstallerThemeSpec(UseSystemThemeBrightness() == ThemeBrightness::Dark);
   return MaterialTheme(theme, Column {
       WindowTitleBar {
         Text(installer_strings::application_setup)

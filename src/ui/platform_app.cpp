@@ -576,7 +576,7 @@ struct TrayMenuText {
     trayRuntime->control = control;
     auto closeDialogOpen = huxerui::UseState(false);
     auto dialog = huxerui::UseDialog();
-    auto toast = huxerui::UseToast();
+    auto toast = UseFluxToast();
     const bool darkTheme = IsDarkTheme(rootSpec);
 
     huxerui::Lifecycle(

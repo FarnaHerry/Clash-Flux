@@ -16,7 +16,7 @@ inline huxerui::FilePickerFilter ProfileConfigFileFilter() {
 
 inline huxerui::Task<std::optional<huxerui::FileReference>> PickProfileConfigFile(
     std::shared_ptr<huxerui::FilePicker> picker, huxerui::FilePickerFilter filter,
-    huxerui::ToastHandle toast) {
+    FluxToastHandle toast) {
     if (!picker) {
         toast.Show(Localized("文件选择器不可用"));
         co_return std::nullopt;

@@ -247,7 +247,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
 
 [[huxerui::composable]] huxerui::View ProfileCreatePage(
     ProfileCreateFields fields, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     std::function<void()> on_back, bool embedded) {
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
@@ -674,7 +674,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
 
 void PushProfileQrScanner(
     ProfileCreateFields fields, huxerui::NavigationController navigation,
-    huxerui::ToastHandle toast,
+    FluxToastHandle toast,
     std::function<void(std::string)> on_result) {
     static_cast<void>(toast);
     fields.importing = true;
@@ -696,7 +696,7 @@ void PushProfileQrScanner(
 
 void PushProfileQrScanner(
     ProfileCreateFields, huxerui::NavigationController,
-    huxerui::ToastHandle toast,
+    FluxToastHandle toast,
     std::function<void(std::string)>) {
     toast.Show(Localized("当前平台暂不支持二维码扫描"));
 }
@@ -705,7 +705,7 @@ void PushProfileQrScanner(
 
 [[huxerui::composable]] huxerui::View ProfileAddMethodPage(
     ProfileCreateFields fields, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http,
     bool pptp_supported,
     huxerui::NavigationController navigation) {
@@ -913,7 +913,7 @@ void PushProfileQrScanner(
 
 [[huxerui::composable]] huxerui::View ProfileCreateMethodPage(
     ProfileAddMethod method, ProfileCreateFields fields,
-    huxerui::TaskScope tasks, huxerui::ToastHandle toast,
+    huxerui::TaskScope tasks, FluxToastHandle toast,
     std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http,
     bool pptp_supported,
@@ -1133,7 +1133,7 @@ void PushProfileQrScanner(
 
 [[huxerui::composable]] huxerui::View ProfileLinkImportPage(
     profile_link::RemoteProfile request,
-    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, huxerui::NavigationController navigation,
     std::function<void()> close, huxerui::State<bool> showing) {
     auto tasks = huxerui::UseTaskScope();
@@ -1165,7 +1165,7 @@ void PushProfileQrScanner(
     std::shared_ptr<ProfilesModel> model, huxerui::NavigationController navigation,
     bool navigation_enabled, bool active) {
     auto tasks = huxerui::UseTaskScope();
-    auto toast = huxerui::UseToast();
+    auto toast = UseFluxToast();
     auto dialog = huxerui::UseDialog();
     auto picker = huxerui::UseService<huxerui::FilePicker>();
     auto http = huxerui::UseService<AppHttpClient>();
@@ -1218,7 +1218,7 @@ void PushProfileQrScanner(
     huxerui::State<huxerui::TextEditingValue> pptp_timeout,
     huxerui::State<huxerui::TextEditingValue> pptp_routes,
     huxerui::State<bool> pptp_mppe,
-    huxerui::TaskScope tasks, huxerui::ToastHandle toast,
+    huxerui::TaskScope tasks, FluxToastHandle toast,
     std::function<void()> on_back) {
     const auto save = [id, name, url, type, desc, timeout, interval, auto_update,
                        system_proxy, core_proxy, invalid_cert, pptp_server,
@@ -1316,7 +1316,7 @@ void PushProfileQrScanner(
 
 [[huxerui::composable]] huxerui::View ProfileEditRoutePage(
     std::int64_t id, ProfileEditFields fields, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::function<void()> on_back) {
+    FluxToastHandle toast, std::function<void()> on_back) {
     return ProfileEditPage(
         id, fields.name, fields.url, fields.type, fields.desc, fields.timeout,
         fields.interval, fields.auto_update, fields.system_proxy,
@@ -1328,7 +1328,7 @@ void PushProfileQrScanner(
 
 [[huxerui::composable]] huxerui::View ResponsiveProfileEditSurface(
     std::int64_t id, ProfileEditFields fields, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::function<void()> on_back) {
+    FluxToastHandle toast, std::function<void()> on_back) {
     return huxerui::Scope(
         [id, fields, tasks, toast, on_back]() -> huxerui::View {
             // 非激活时必须保持空页：IndexedPages 常驻挂载每一页，而桌面编辑
@@ -1347,7 +1347,7 @@ void PushProfileQrScanner(
 }
 [[huxerui::composable]] huxerui::View ResponsiveProfileCreateSurface(
     bool open, ProfileCreateFields fields, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     std::function<void()> on_back) {
     return huxerui::Scope([=]() -> huxerui::View {
@@ -1360,7 +1360,7 @@ void PushProfileQrScanner(
 namespace {
 huxerui::Task<void> SaveProfileDocument(
     std::int64_t id, std::shared_ptr<const std::string> text,
-    huxerui::State<bool> saving, huxerui::ToastHandle toast,
+    huxerui::State<bool> saving, FluxToastHandle toast,
     std::shared_ptr<ProfilesModel> model, std::function<void()> done) {
     std::string error;
     try {
@@ -1387,7 +1387,7 @@ huxerui::Task<void> SaveProfileDocument(
 [[huxerui::composable]] huxerui::View ProfileFilePage(
     std::int64_t id, huxerui::State<TextDocumentHandle> content,
     huxerui::State<bool> loading, huxerui::TaskScope pageTasks,
-    huxerui::ToastHandle toast, std::function<void()> on_back) {
+    FluxToastHandle toast, std::function<void()> on_back) {
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     auto tasks = huxerui::UseApplicationTaskScope();
     auto saving = huxerui::UseState(false);
@@ -1423,14 +1423,14 @@ huxerui::Task<void> SaveProfileDocument(
 [[huxerui::composable]] huxerui::View ProfileFileRoutePage(
     std::int64_t id, huxerui::State<TextDocumentHandle> content,
     huxerui::State<bool> loading, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::function<void()> on_back) {
+    FluxToastHandle toast, std::function<void()> on_back) {
     return ProfileFilePage(id, content, loading, tasks, toast, std::move(on_back))
         .With(ProfileSecondaryTransition(huxerui::UseTheme().motion));
 }
 
 [[huxerui::composable]] huxerui::View ProfileFileDialog(
     std::int64_t id, huxerui::State<TextDocumentHandle> content,
-    huxerui::State<bool> loading, huxerui::ToastHandle toast, huxerui::DialogContext context) {
+    huxerui::State<bool> loading, FluxToastHandle toast, huxerui::DialogContext context) {
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     auto tasks = huxerui::UseApplicationTaskScope();
     auto saving = huxerui::UseState(false);

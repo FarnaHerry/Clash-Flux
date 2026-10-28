@@ -32,13 +32,13 @@
 - 浅色中性表面采用微冷白：外框/标题/侧栏 `#FAFAFB`，内容区 `#F1F2F4`，卡片 `#FEFEFF`，文字与轮廓使用配套冷中性色，统一在 `FluxLightColors` 定义；深色及用户强调色沿用原配置。
 - 桌面公共标题栏的返回按钮左侧留白统一为 `kDesktopPageLeadingInset=8pt`，无返回按钮的标题继续使用正文 24pt 缩进。关于入口、检查更新、仓库和 Release 行不显示右侧箭头。
 - 设置及关于滚动位置由页面保留的 `PageScrollOffset` 记录，`RememberPageScroll` 仅在实际滚动活动中更新普通内存，不逐帧写可观察 State；跨响应式层级重建时用保存偏移初始化新控制器，几何收敛不覆盖原位置。更新检查的 busy/result 通过 `UseState` 保留，不能在 composable 中直接构造临时 State。
-- 首页翻面 `SharedBounds` 标识必须带 `HomeCardSpec.id`；局部共享动画作用域中的标识仍会被 NavigationStack 全页捕获，不可让多张卡复用同一共享标识。二级页切换首页需覆盖真实多卡标记的回归，避免重复键异常。
+- 首页彩蛋切换只对卡片内容使用保留的缩放/透明度动画，不捕获整卡 SharedBounds 快照；多卡与二级页返回首页仍保留生产组件回归。
 
 - 设置及关于页的上下留白放在 `ScrollablePageContent` 内（顶部 16pt、底部 24pt），scaffold 开启 `scrollToContentEdges`，滚动视口直达固定标题下沿和内容底部；左右缩进不变，Compact 一级页继续保留胶囊避让。不得在滚动视口外增加上下裁切带，也不使用空白文本行撑开间距。
 - 设置页末尾只保留图标与「关于」入口，使用统一 NavigationStack 二级页。关于内容宽度上限 640pt，显示正式主题 Logo、名称、实际版本、简介、更新入口、项目/框架/所用 fork/内核仓库和免责声明；GitHub 仓库及 Release 使用 GitHub 标记。桌面非 Compact 复用 PageScaffold 的 WindowTitleBar，与一级页的背景、分隔线、拖动和窗口控件一致；窄屏沿用公共二级页标题。更新使用 GitHub latest stable Release，页面任务域取消、单飞、10 秒超时及 2MiB 响应限制；请求期间仅刷新图标保留旋转，完成或失败立即停止，reduced motion 不旋转；失败可重试，稳定版本按数字比较，仅打开固定项目下经校验的 Release tag 页面，不自动安装。
 
 - 设置页所有分组标题位于卡片外，与卡片内第一列图标的左边缘对齐。`SettingsSectionCard` 统一外部标题、标题间距和零内边距卡片，内容通过 `SettingsRowInsets` 下发水平留白、10pt 行内垂直留白与 48pt 最小行高；首行贴顶、末行贴底，无组级上下空白带，由整组卡片裁切四角。单项组四角同样裁切，圆角外点击不命中。主题、语言、入站端口、运行诊断及「更多」整行入口承接全宽点击和 Indication；开关、单选、下拉框、复制及维护按钮保留各自控件的操作语义。共享 SettingRow/SettingSwitchRow 在表单中的默认 Insets 为零，不改变订阅表单几何。
-- Toast 运动统一由 `theme_colors.h` 的 `ResolveFluxToastMotion` 与主题层接入：底部入场，退场下移 8pt、缩到 98%、200ms EaseIn 淡出；减少动态效果关闭位移与缩放。现有 HUI 的 PresentationMotion 共用入场/退场隐藏端点；按用户要求不改 fork，本轮不实现“下方进入、上方退出”。窗口级订阅错误/更新失败提示也在主题容器内取得 Toast 句柄，避免漏掉全局运动与主题。自动到期和主动 Dismiss 都保留退场绘制至完成。
+- Toast 统一使用窗口级 `toast_stack.h` / `UseFluxToast()`，在 Notification 层复用当前 `ToastStyle`；同时最多 3 条，底部居中纵向排列、间距 8pt。第 4 条淘汰最早一条，保留旧条目的位置直到退场完成再补入新条目；突发消息只保留最新 3 条目标，不积累旧提示。每条可点击、触摸或键盘激活关闭，无全屏遮罩或焦点陷阱，空白区域可操作原页面。计时由窗口任务域从实际入列时开始，到期/主动关闭走同一退场路径：下移 8pt、缩到 98%、200ms EaseIn 淡出，完成后才卸载；reduced motion 直接定位。窗口级订阅错误/更新失败与页面消息共用同一个栈；关窗清除定时器和待显示条目，旧句柄不能向重建窗口投递。通过公开 LayerController、主题和 Transition 组合实现应用的有界可交互通知策略，不修改框架。
 - MD3 反馈颜色在强调色写入后调用 `ApplyFluxInteractionTheme` 重建；`theme_colors.h` 的 `ResolveFluxIndication` 和 `kInteraction*Opacity` 统一拥有颜色与透明度（hover 8%，focus/press/ripple 12%）。普通反馈取 primary，实心主按钮/选中分段使用 on_primary；图标按钮、Chip、Tabs 的拥有型 Indication 经 `FluxInteractionStyles` 统一替换，保留 Material 几何。单选、复选、开关的选中颜色继续由 Material 从当前主题 tokens 生成。首页规则/全局/直连使用 `HomeModeChoices` 的框架 RadioButton，与语言单选同一交互；整行可点击，反馈集中在 32pt 圆形状态层，控件本体 18pt，不再手绘整行 hover/press。
 
 - 桌面非 Compact 的顶部搜索胶囊聚焦时，高亮描边以 250ms 从左向右展开，上下边同步显现。
@@ -52,7 +52,9 @@
   选取完成后的实际导入与 URL/二维码导入共用应用任务域及异常收尾。
   `profile_list_model.h` 的后台泵只在快照成功发布后确认内容版本；切换/拖动阻止
   发布时保留重读义务，动作发布使在途旧快照失效。列表镜像同时依赖列表与切换/拖动
-  状态，操作结束后补齐曾被推迟的镜像，切换失败时也从权威列表恢复选中态。`test_page_transition` 覆盖即时增删、
+  状态，操作结束后补齐曾被推迟的镜像，切换失败时也从权威列表恢复选中态。
+  拖放落点经 `ProfileListModel::PublishOrder` 把新顺序写透权威模型，解除
+  `reorderPending` 时镜像直接同步目标顺序，不被旧列表覆盖回弹。`test_page_transition` 覆盖即时增删、
   在途旧快照和无额外数据库写入时的延迟重读，持久化保护另由 `persistence` 回归。
   普通订阅切换同一卡片重复点击合并；应用级队列只执行一份准备并保留最后一个待切目标。
   改选会取消旧准备，旧结果按请求号（含 ABA）拒绝发布；编译在条目/阶段边界检查取消，
@@ -304,7 +306,7 @@ Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上�
 不添加整卡点击动作，卡内开关和按钮维持独立命中。按下时缩至 98.5% 并下移 1pt，
 松开或取消后用弹簧回到原位；只观察指针，不夺取子控件/滚动所有权，reduced motion 关闭位移动画。
 
-首页普通卡片还支持鼠标双击/触控双击翻面，再双击翻回；`home_card.h` 的 `HomeCardSurface` 通过框架 MultiTapGesture 和每卡片独立的局部 SharedBounds 过渡实现 0.62 秒翻转，不改变 HomeGrid 占位。翻转包含抬起、侧向弧线、收窄到 2.5pt 侧边与展开，外层 retained lighting 同步绘制换向明暗渐变和侧边，不逐帧写 State。背面暂为空白，覆盖内容区的独立双击命中层隔离正面控件；正面子树保留挂载但隐藏绘制、禁用输入并从无障碍树移除，翻回保留控件状态；不写入持久化。启动/运行猫咪控制卡显式关闭此能力，顶栏猫咪保持原交互。减少动态效果时直接切面；动画与光照完成后停止调度额外帧。
+首页普通卡片支持鼠标双击/触控双击显示彩蛋，再双击返回；`home_card.h` 的 `HomeCardSurface` 使用框架 MultiTapGesture 和 `Transition` 对实时内容做 200ms、0.96→1 的轻缩放淡入，卡片外框与 HomeGrid 占位不动。移除整卡 SharedBounds 快照、侧边收窄和光照层，不逐帧写 State，快速反向直接从当前进度转向最新目标。正反面子树保留挂载，以透明度控制绘制；隐藏面禁用输入并退出无障碍树，彩蛋面另有输入隔离层，防止正面子控件重新启用后穿透。减少动态效果直接切换，结束后停止额外帧。每次从正面进入彩蛋时，从 `home_easter_eggs.h` 的公共池抽取并保留当前卡片选择；返回不重抽、不持久化。目前池中仅有 HuxerUI 官方作者 `FinalScave` 的 GitHub 主页（https://github.com/FinalScave），只在用户点击入口时打开；旧的按卡片类型跳转连接/日志/订阅/设置菜单不再作为彩蛋。启动/运行猫咪控制卡显式关闭此能力。
 
 圆角自上而下共用一套阶梯（`IslandTheme` + 主题 ShapeScheme）：一级岛
 `island_radius` 22pt → 卡片/二级岛 `nested_radius` 14pt → 控件
@@ -356,7 +358,13 @@ Logo 容器底色使用 surface，不再固定白色。页面代码不再直接�
 明确保留的例外是 `profiles_page_support.cpp` 的二维码绘制：固定白底、近黑模块用于扫描对比，
 属于编码图像而非界面主题。PNG/SVG Logo、托盘及启动图标是资源素材，遵循各自平台图标约定。
 布局尺寸、动画时长、交互透明度及文字角色仍是控件参数；本次没有将所有几何常量改成颜色变量。
-主题切换仍由 SettingsModel 写透驱动，首帧同步主题读取保持原逻辑。
+主题选择由 SettingsModel 写透驱动，首帧同步读取保存的模式与强调色。
+自动模式在组合期通过 HuxerUI `UseSystemThemeBrightness()` 观察当前窗口宿主，系统变化触发重组；
+手动深浅模式使用显式调色板，不随宿主变化。主题设置页在组合期读取宿主亮度并按值捕获，
+点击回调不得调用组合期 hook。`IsDarkTheme()` 使用 `ThemeSpec::brightness`，不从背景色反推；
+自定义调色板从对应的 Material 深浅 ThemeSpec 工厂派生，测试夹具也必须保持颜色与语义一致。
+主程序和 Windows 安装器共用框架的系统外观渠道，不再自行读注册表、执行 defaults/gsettings 或维护 Android JNI 主题缓存。
+Linux portal 首次异步结果到达前按框架契约回落浅色；Android 的宿主配置变化与 Force Dark 处理由框架负责。
 
 普通单色 SVG 由 Image.Tint 或 IconButton/NavigationPane 的主题前景色着色；源码中黑色路径不等于运行时固定黑色。回归 `page_transition` 增加已挂载 EmptyState 的浅色→深色→浅色点击切换，检查实际文字绘制颜色。
 

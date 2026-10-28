@@ -399,11 +399,7 @@ inline huxerui::ColorScheme FluxLightColors(std::string_view accent = "blue") {
 }
 
 inline bool IsDarkTheme(const huxerui::ThemeSpec& theme) noexcept {
-    const huxerui::Color background = theme.colors.background;
-    const float brightness = 0.2126F * background.red +
-                             0.7152F * background.green +
-                             0.0722F * background.blue;
-    return brightness < 0.5F;
+    return theme.brightness == huxerui::ThemeBrightness::Dark;
 }
 
 // 首页流量与流量统计共用的方向色，不随用户强调色或警告语义色改变。

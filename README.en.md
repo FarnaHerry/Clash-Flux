@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.75 release notes](docs/releases/v0.3.75.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.76 release notes](docs/releases/v0.3.76.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -158,6 +158,7 @@ application-managed settings before being passed to sing-box.
   Minimizing uses the platform's native behavior and keeps the Windows taskbar entry, including with lightweight tray mode enabled.
 - A dashboard donut chart shows cumulative upload/download shares (the largest share's percentage in the center), totals and
   percentages.
+- Double-click a regular dashboard card for a short scale-and-fade Easter egg; double-click again to return. The shared pool currently contains only the HuxerUI creator's GitHub profile.
 - Android: sing-box libbox uses the same version as the desktop core and runs in a
   separate `:background` process. VpnService creates the TUN interface, while the UI
   process owns the configuration database. Binder controls the runtime; atomic
@@ -504,7 +505,7 @@ supports Simplified Chinese, Traditional Chinese and English. GitHub Release
 Windows archives include both `clash-flux-Setup-<version>.exe` and portable files.
 New installers use a separate Burn upgrade identity and clean legacy bundle registrations and private caches for versions 0.3.0–0.3.68 after MSI commit. The MSI upgrade identity, user data and shared MSI caches are preserved; see [migration details](docs/huxerui-fork.md#windows-legacy-bundle-migration).
 
-The saved theme is read synchronously through a temporary read-only connection before the first frame is built. Other settings and subscriptions still load asynchronously. The Lib-SQLite startup query is included in the pinned fork commit; see [UI development](docs/ui-development.md).
+The saved theme is read synchronously through a temporary read-only connection before the first frame is built. System mode observes light/dark changes through HuxerUI's official window appearance API; explicit light/dark choices remain independent. Other settings and subscriptions still load asynchronously. The Lib-SQLite startup query is included in the pinned fork commit; see [UI development](docs/ui-development.md).
 
 ASN rules expand a complete ipverse IPv4/IPv6 announcement snapshot and are recorded as approximate.
 Missing data rejects the candidate while preserving existing subscriptions. MRS decoding statically links

@@ -70,6 +70,10 @@
             if (!profileStore.setOrder(ids)) {
                 restoreOrder(session.originalOrder);
                 toast.Show(profileStore.lastError());
+            } else {
+                // 写透权威模型：reorderPending 解除时镜像直接同步新顺序，
+                // 不被旧列表覆盖回弹；顺序不完整时由下面的 RequestSync 重读。
+                profilesModel->PublishOrder(ids);
             }
         }
         session.activeId = 0;

@@ -275,46 +275,4 @@ export std::string randomSecret() {
     return out;
 }
 
-#if defined(__ANDROID__)
-// Android 后端由 platform/android/android_bridge.cpp 提供（C 链接符号）。
-// 声明必须在命名空间作用域：链接说明不允许出现在块作用域，而无 extern "C"
-// 的块作用域声明会带上 cfg:: 限定改名，链接不到 C 符号。
-extern "C" bool clashflux_android_system_dark() noexcept;
-#endif
-
-// 系统是否偏好深色（"跟随系统"主题模式用）。启动时读取一次即可。
-export bool systemPrefersDark() {
-#if defined(_WIN32)
-    clashflux::win32::UniqueHkey key;
-    if (RegOpenKeyExA(HKEY_CURRENT_USER,
-                      "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                      0, KEY_READ, key.put()) != ERROR_SUCCESS)
-        return false;
-    DWORD value = 1, size = sizeof(value);
-    const LONG rc = RegQueryValueExA(key.get(), "AppsUseLightTheme", nullptr, nullptr,
-                                     reinterpret_cast<LPBYTE>(&value), &size);
-    return rc == ERROR_SUCCESS && value == 0;
-#elif defined(__APPLE__)
-    FILE* pipe = ::popen("defaults read -g AppleInterfaceStyle 2>/dev/null", "r");
-    if (pipe == nullptr) return false;
-    std::array<char, 32> buf{};
-    const bool dark = std::fgets(buf.data(), static_cast<int>(buf.size()), pipe) != nullptr &&
-                      std::string_view(buf.data()).starts_with("Dark");
-    ::pclose(pipe);
-    return dark;
-#elif defined(__ANDROID__)
-    // uiMode 不在 configChanges 里：系统切深浅会重建 Activity，onCreate 里的
-    // JNI 查询随之刷新缓存；无 Activity 实例的极端情况按浅色回落。
-    return clashflux_android_system_dark();
-#else
-    FILE* pipe = ::popen("gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null", "r");
-    if (pipe == nullptr) return false;
-    std::array<char, 64> buf{};
-    const bool dark = std::fgets(buf.data(), static_cast<int>(buf.size()), pipe) != nullptr &&
-                      std::string_view(buf.data()).find("prefer-dark") != std::string_view::npos;
-    ::pclose(pipe);
-    return dark;
-#endif
-}
-
 } // namespace cfg

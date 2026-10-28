@@ -74,7 +74,7 @@ struct ProfileReorderSession {
     auto tasks = huxerui::UseTaskScope();
     auto applicationTasks = huxerui::UseApplicationTaskScope();
     const auto coreControl = UseCoreControl();
-    auto toast = huxerui::UseToast();
+    auto toast = UseFluxToast();
     // 应用级共享 HTTP 客户端；Android 订阅导入/刷新使用平台网络栈。
     auto http = huxerui::UseService<AppHttpClient>();
     auto dialog = huxerui::UseDialog();

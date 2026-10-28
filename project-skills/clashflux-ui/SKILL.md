@@ -37,7 +37,7 @@ composable 体内不能使用条件编译，沿用现有 DSL；UI 经过 HuxerUI
 ## 资源与验证
 
 - 新增/修改 Localized/LocalizedFormat 文案，同步 resources/strings/{default,en,zh}.properties，default/en 英文、zh 中文，按 FNV-1a-64 的 msg id 排序。漏资源在懒组合时也会终止进程；核对三元、数组、相邻字面量拼接后的完整字符串，ui_resources 回归不能只查显眼页面。
-- Image.Tint 只支持矢量；PNG 按主题选资源。颜色归 theme_colors.h / ThemeSpec，阴影用 ThemeShadowColor，危险按钮继承样式并用 OnErrorColor；页面不写 RGB/固定黑白（二维码编码模块与固定图标资源例外）。
+- Image.Tint 只支持矢量；PNG 按主题选资源。颜色归 theme_colors.h / ThemeSpec，深浅用 ThemeSpec::brightness，跟随系统在组合期读 UseSystemThemeBrightness（详见 UI 文档“主题颜色审查”）；阴影用 ThemeShadowColor，危险按钮继承样式并用 OnErrorColor；页面不写 RGB/固定黑白（二维码编码模块与固定图标资源例外）。
 - 普通弹出菜单用 UseActionMenu + 描述，hover 子菜单复用公共项/表面；Danger 用 error 色，独立入口各有 anchor。事件只建拥有型描述，Scope 组合期读主题。托盘用框架原生 MenuItem，框架选择器不改成自制 Popup。
 - 抽屉不叠遮罩色：右侧从 SectionTabPickerInsets 的桌面标题下沿开始，底部只局部将 BottomSheetStyle.scrim 设透明；保留其它模态样式、关闭和系统返回。
 - 按 [测试技能](../clashflux-test/SKILL.md) 执行基础验证、生产 page_transition / ui_resources 及相关 GUI 检查。共享搜索、宽窄切换、分页取消/快速反向、实际滚动保留不能只凭截图或编译判断。

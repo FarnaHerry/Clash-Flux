@@ -1,5 +1,6 @@
 #include <huxerui/huxerui.h>
 #include "app_resources.h"
+#include "cat_tricks.h"
 
 #include <algorithm>
 #include <array>
@@ -7,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <random>
 #include <stdexcept>
 #include <string>
 
@@ -20,6 +22,7 @@ bool smokePassed = false;
 float preview = 0.0F;
 bool previewFailure = false;
 bool brandPreview = false;
+bool tricksPreview = false;
 constexpr double kFailureMotionDuration = 2.4;
 constexpr double kIdleFrameInterval = 1.0 / 30.0;
 constexpr float kCatRiseEnd = 0.63F;
@@ -697,6 +700,23 @@ Task<void> WaitFailurePeek(State<LabState> state) {
     return std::move(content).With(Padding(24), CornerRadius(20),
         Background(theme.colors.surface_container_low));
   };
+  auto trickIndex = UseState(0);
+  auto trickSerial = UseState<std::uint64_t>(0);
+  const auto trickRandom = std::make_shared<std::mt19937>(std::random_device{}());
+  const auto trickCatalog = CatTrickCatalog();
+  const auto playTrick = [trickIndex, trickSerial](int index) {
+    trickIndex = index;
+    trickSerial = trickSerial.Get() + 1;
+  };
+  const auto trickPreview = Stack {
+      CatTrickPlayer(trickCatalog[trickIndex.Get()].trick, trickSerial.Get(), !current.reduced),
+  }.With(Frame{.width = 240, .height = 200},
+      Semantics{.role = SemanticRole::Button, .label = "再播一次"}, Indication{})
+      .OnClick([trickSerial] { trickSerial = trickSerial.Get() + 1; }).Key("trick-preview");
+  const auto trickButton = [playTrick, trickCatalog](std::size_t index) {
+    return Button(trickCatalog[index].title)
+        .OnClick([playTrick, index] { playTrick(static_cast<int>(index)); });
+  };
   return ScrollView(Column {
     Row {
       Label("CLASH FLUX  /  MOTION LAB", 12, theme.colors.primary, true),
@@ -766,6 +786,25 @@ Task<void> WaitFailurePeek(State<LabState> state) {
       }.With(Spacing(12), CrossAlign(CrossAxisAlignment::Center)),
     }.With(Spacing(14))),
     Label("仅使用本地模拟状态；连接数与时长为示例值。", 12, theme.colors.on_surface_variant),
+    panel(Column {
+      Label("彩蛋动画", 18, theme.colors.on_surface, true),
+      Label("完整小猫的 8 个一次性动作 · 播完停帧；点击预览再播一次", 12,
+          theme.colors.on_surface_variant),
+      Column {
+        trickPreview,
+        Label(trickCatalog[trickIndex.Get()].title, 14, theme.colors.primary, true),
+      }.With(Spacing(8), CrossAlign(CrossAxisAlignment::Center)),
+      Row {
+        trickButton(0), trickButton(1), trickButton(2), trickButton(3),
+      }.With(Spacing(10)),
+      Row {
+        trickButton(4), trickButton(5), trickButton(6), trickButton(7),
+      }.With(Spacing(10)),
+      Button("随机一只小猫").OnClick([playTrick, trickRandom, trickCatalog] {
+        std::uniform_int_distribution<int> pick(0, static_cast<int>(trickCatalog.size()) - 1);
+        playTrick(pick(*trickRandom));
+      }),
+    }.With(Spacing(14), CrossAlign(CrossAxisAlignment::Stretch))),
   }.With(Padding(32), Spacing(18), CrossAlign(CrossAxisAlignment::Stretch)))
       .With(Background(theme.colors.background));
 }
@@ -808,27 +847,21 @@ View App() {
   if (brandPreview) return BrandPreview();
   auto theme = MaterialDarkThemeSpec();
   theme.colors.primary = Color::Rgb(76, 190, 238);
-  return MaterialTheme(theme, Lab());
+  return MaterialTheme(theme, tricksPreview ? CatTrickLab() : Lab());
 }
 
 WindowOptions DemoWindow() {
-  return {.title = "Clash Flux · 抚摸唤醒演示", .initial_size = {1000, 940},
+  return {.title = tricksPreview ? "Clash Flux · 猫咪动作实验室" : "Clash Flux · 抚摸唤醒演示",
+          .initial_size = tricksPreview ? Size{1040, 900} : Size{1000, 940},
           .minimum_size = Size{940, 800}};
-}
-
-void InstallDemo(ApplicationContext&) {
-  const auto application = UseApplication();
-  const auto options = DemoWindow();
-  UseApplicationTaskScope().Launch([application, options]() -> Task<void> {
-    (void)application.OpenWindow(options);
-    co_return;
-  });
 }
 
 } // namespace boxcat
 
-const Application application{boxcat::App,
-    {.window = boxcat::DemoWindow(),
-     .create_initial_window = false,
-     .show_debug_overlay = false,
-     .application_hooks = {boxcat::InstallDemo}}};
+namespace boxcat {
+int RunDemoApplication() {
+  // CLI mode must be selected before freezing the application's window options.
+  const Application application{App, {.window = DemoWindow(), .show_debug_overlay = false}};
+  return RunApplication();
+}
+} // namespace boxcat

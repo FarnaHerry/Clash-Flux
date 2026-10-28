@@ -4,10 +4,20 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `be67da4a898856382bb8d4876a6c8ce71d889f5e`，各平台 CI 共用
+Clash-Flux 当前固定 `ce2a671832152bf2376d331cb81f20c59f0a6875`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
+
+2026-10-28 更新到 `ce2a6718`：合入上游逐窗口系统外观支持，官方组合期接口为
+`UseSystemThemeBrightness()`，当前主题语义为 `UseTheme().brightness`；深浅 ThemeSpec 工厂自动设置该元数据。
+Clash-Flux 的自动主题及 Windows 安装器改用该接口，移除自行读取注册表、defaults/gsettings 和 Android JNI 主题缓存；
+显式深浅模式及品牌调色板保持独立，主题设置页在组合期读取宿主偏好后按值捕获给切换回调。
+框架 Runtime 工厂从 `CreateApplicationWindow` 更名为 `CreateUiWindow`，应用的 `OpenWindow(content, options)` 调用无需变化。
+本机独立依赖与 CI/Android 共用上述完整 SHA；新 `ThemeSpec` 布局和虚函数名要求重新编译全部框架消费对象。
+Windows 框架完整重建及 24 项 CTest 通过（四项构建夹具加载 MSVC 环境后重跑通过）；
+应用完整重建和 23/25 项必跑回归通过，服务管道/WFP fixture 两项仍受本机非管理员环境限制。
+安装器源文件经过 HuxerUI codegen 与 MSVC 语法检查；未在本轮生成/安装 Burn 包，未验证其它原生平台。
 
 2026-10-26 更新到 `3a6c18e`：上游 `main` 的 `0c51262` HTTP streaming 修复已包含在集成分支；
 最新 fork 提交修复框架 warning，并更新 Windows renderer 头文件和多窗口测试。
@@ -77,7 +87,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout be67da4a898856382bb8d4876a6c8ce71d889f5e
+git -C third_party/huxerui checkout ce2a671832152bf2376d331cb81f20c59f0a6875
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`

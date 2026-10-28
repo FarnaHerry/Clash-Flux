@@ -569,7 +569,7 @@ std::function<void()> NodeSelectAction(
 [[huxerui::composable]] huxerui::View ProxiesPage(bool active) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
-    auto toast = huxerui::UseToast();
+    auto toast = UseFluxToast();
     // 策略组快照 / 内核状态的全局唯一来源（见 *_model.h）。
     const auto proxiesModel = huxerui::UseService<ProxiesModel>();
     const auto coreModel = huxerui::UseService<CoreModel>();

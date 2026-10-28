@@ -738,7 +738,7 @@ bool StartProxyGroupTest(const std::string& group) {
 // （工厂在 layer 组合期执行，未经 codegen 管理的裸钩子是脆弱写法）。
 void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                         std::shared_ptr<huxerui::Clipboard> clipboard,
-                        huxerui::ToastHandle toast, huxerui::Color textColor,
+                        FluxToastHandle toast, huxerui::Color textColor,
                         huxerui::Color hintColor) {
 #if defined(__ANDROID__)
     (void)dialog;
@@ -1206,7 +1206,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 [[huxerui::composable]] huxerui::View FileDropZone(
     huxerui::ImageVariant icon, huxerui::StringVariant title,
     huxerui::State<std::string> picked_path, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     huxerui::FilePickerFilter filter, std::string key) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);

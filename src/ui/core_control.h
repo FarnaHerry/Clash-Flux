@@ -12,7 +12,7 @@ namespace clashflux::ui {
 struct CoreControl {
     std::shared_ptr<CoreModel> model;
     huxerui::TaskScope tasks;
-    std::optional<huxerui::ToastHandle> toast;
+    std::optional<FluxToastHandle> toast;
     std::optional<huxerui::DialogHandle> dialog;
     std::optional<huxerui::WindowHandle> window;
     std::shared_ptr<huxerui::Clipboard> clipboard;
@@ -59,7 +59,7 @@ struct CoreControl {
 inline CoreControl UseCoreControl() {
     const auto& theme = huxerui::UseTheme();
     return {huxerui::UseService<CoreModel>(), huxerui::UseApplicationTaskScope(),
-            huxerui::UseToast(), huxerui::UseDialog(), huxerui::UseWindow(),
+            UseFluxToast(), huxerui::UseDialog(), huxerui::UseWindow(),
             huxerui::UseApplication().Clipboard(), theme.colors.on_surface,
             theme.colors.on_surface_variant};
 }

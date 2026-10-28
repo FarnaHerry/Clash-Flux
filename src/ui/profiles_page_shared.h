@@ -186,7 +186,7 @@ huxerui::View PptpOptionsForm(
 
 huxerui::View ProfileCard(
     const db::Profile& profile, bool compact, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::shared_ptr<AppHttpClient> http,
+    FluxToastHandle toast, std::shared_ptr<AppHttpClient> http,
     std::function<void()> reload,
     huxerui::StateList<db::Profile> profiles,
     huxerui::State<bool> selectionPending,
@@ -202,43 +202,43 @@ huxerui::View ProfileCard(
 
 huxerui::View ResponsiveProfileEditSurface(
     std::int64_t id, ProfileEditFields fields, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::function<void()> on_back);
+    FluxToastHandle toast, std::function<void()> on_back);
 huxerui::View ProfileCreatePage(
     ProfileCreateFields fields, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     std::function<void()> on_back, bool embedded = false);
 huxerui::View ResponsiveProfileCreateSurface(
     bool open, ProfileCreateFields fields, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     std::function<void()> on_back);
 huxerui::View ProfileAddMethodPage(
     ProfileCreateFields fields, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     huxerui::NavigationController navigation);
 huxerui::View ProfileCreateMethodPage(
     ProfileAddMethod method, ProfileCreateFields fields,
-    huxerui::TaskScope tasks, huxerui::ToastHandle toast,
+    huxerui::TaskScope tasks, FluxToastHandle toast,
     std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     huxerui::NavigationController navigation, std::function<void()> on_back,
     std::function<void()> on_complete);
 huxerui::View ProfileEditRoutePage(
     std::int64_t id, ProfileEditFields fields, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::function<void()> on_back);
+    FluxToastHandle toast, std::function<void()> on_back);
 huxerui::View ProfileFilePage(
     std::int64_t id, huxerui::State<TextDocumentHandle> content,
     huxerui::State<bool> loading, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::function<void()> on_back);
+    FluxToastHandle toast, std::function<void()> on_back);
 huxerui::View ProfileFileRoutePage(
     std::int64_t id, huxerui::State<TextDocumentHandle> content,
     huxerui::State<bool> loading, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::function<void()> on_back);
+    FluxToastHandle toast, std::function<void()> on_back);
 huxerui::View ProfileFileDialog(
     std::int64_t id, huxerui::State<TextDocumentHandle> content,
-    huxerui::State<bool> loading, huxerui::ToastHandle toast, huxerui::DialogContext context);
+    huxerui::State<bool> loading, FluxToastHandle toast, huxerui::DialogContext context);
 
 
 } // namespace clashflux::ui

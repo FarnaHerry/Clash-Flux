@@ -10,6 +10,7 @@
 #include "../../src/profile_link.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <string>
 #include <utility>
@@ -20,6 +21,26 @@ import clashflux.cli_ipc;
 import clashflux.instance;
 
 int main(int argc, char** argv) {
+    std::set_terminate([] {
+        if (FILE* log = std::fopen(
+                "C:\\Users\\farna\\AppData\\Local\\Temp\\clashflux-terminate-20261028.txt",
+                "ab")) {
+            std::fputs("unhandled exception: ", log);
+            if (auto exception = std::current_exception()) {
+                try {
+                    std::rethrow_exception(exception);
+                } catch (const std::exception& error) {
+                    std::fprintf(log, "%s\n", error.what());
+                } catch (...) {
+                    std::fputs("non-std exception\n", log);
+                }
+            } else {
+                std::fputs("no current exception\n", log);
+            }
+            std::fclose(log);
+        }
+        std::abort();
+    });
     // The public registration API preserves registrations owned by other apps.
     if (argc == 1 || (argc == 2 && clashflux::profile_link::IsSupportedScheme(
             std::string_view(argv[1]).substr(0, std::string_view(argv[1]).find(':'))))) {

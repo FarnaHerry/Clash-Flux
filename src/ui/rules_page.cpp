@@ -410,7 +410,7 @@ struct RuleSetDraft {
     const auto value = draft.Get();
     auto tasks = huxerui::UseTaskScope();
     auto ioTasks = huxerui::UseApplicationTaskScope();
-    auto toast = huxerui::UseToast();
+    auto toast = UseFluxToast();
     auto picker = huxerui::UseService<huxerui::FilePicker>();
     auto alive = huxerui::UseState(true);
     huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
@@ -537,7 +537,7 @@ struct RuleSetDraft {
     const auto model = huxerui::UseService<ProfilesModel>();
     const auto coreModel = huxerui::UseService<CoreModel>();
     auto tasks = huxerui::UseApplicationTaskScope();
-    auto toast = huxerui::UseToast();
+    auto toast = UseFluxToast();
     auto dialog = huxerui::UseDialog();
     const auto navigation = huxerui::UseNavigation();
     const auto desktop = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
@@ -702,7 +702,7 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const auto& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseApplicationTaskScope();
-    auto toast = huxerui::UseToast();
+    auto toast = UseFluxToast();
     auto dialog = huxerui::UseDialog();
     auto menu = UseActionMenu();
     auto clipboard = huxerui::UseApplication().Clipboard();
@@ -1011,7 +1011,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
     auto dialog = huxerui::UseDialog();
-    auto toast = huxerui::UseToast();
+    auto toast = UseFluxToast();
     // 共享数据一律来自 application service（见 *_model.h）。
     const auto coreModel = huxerui::UseService<CoreModel>();
     const auto profilesModel = huxerui::UseService<ProfilesModel>();

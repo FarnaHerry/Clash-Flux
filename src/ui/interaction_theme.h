@@ -1,6 +1,7 @@
 #pragma once
 #include <huxerui/huxerui.h>
 #include "theme_colors.h"
+#include "toast_stack.h"
 
 namespace clashflux::ui {
 
@@ -19,7 +20,7 @@ inline huxerui::View FluxInteractionStyles(huxerui::View content) {
         toasts.motion = ResolveFluxToastMotion(theme);
         huxerui::ThemeDefinition overrides;
         overrides.Set(icons).Set(chips).Set(tabs).Set(toasts);
-        return huxerui::Theme(overrides, content);
+        return huxerui::Theme(overrides, FluxToastStack(content));
     });
 }
 

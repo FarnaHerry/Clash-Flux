@@ -16,7 +16,7 @@ namespace clashflux::ui {
 huxerui::View FileDropZone(
     huxerui::ImageVariant icon, huxerui::StringVariant title,
     huxerui::State<std::string> picked_path, huxerui::TaskScope tasks,
-    huxerui::ToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     huxerui::FilePickerFilter filter, std::string key = "file-drop-zone");
 
 } // namespace clashflux::ui

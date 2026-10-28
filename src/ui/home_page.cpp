@@ -38,6 +38,7 @@
 #include "page_layout.h"
 #include "home_grid.h"
 #include "home_card.h"
+#include "home_easter_eggs.h"
 #include "home_mode_choices.h"
 #include "empty_state.h"
 #include "task_bridge.h"
@@ -936,6 +937,17 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     return CLASHFLUX_HOME_PLATFORM_CARD(s, state, kind);
 }
 
+// Each reveal samples the shared pool; each card retains its own selection.
+[[huxerui::composable]] huxerui::View HomeCardWithEasterEgg(
+    const huxerui::ThemeSpec& theme, huxerui::View content, std::string cardId) {
+    auto selected = huxerui::UseState<std::size_t>(0);
+    return HomeCardSurface(theme, content, std::move(cardId), true,
+        HomeEasterEggContent(kHomeEasterEggPool[selected.Get()], [](std::string_view url) {
+            core::openInBrowser(std::string{url});
+        }),
+        [selected] { selected = PickHomeEasterEgg(); });
+}
+
 } // namespace
 
 [[huxerui::composable]] huxerui::View HomePage(
@@ -944,7 +956,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
-    auto toast = huxerui::UseToast();
+    auto toast = UseFluxToast();
     // 策略组快照 / 内核与接管状态的全局唯一来源（见 *_model.h）。
     const auto coreModel = huxerui::UseService<CoreModel>();
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
@@ -1061,7 +1073,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
         // 首页所有卡片一视同仁：都是 raised 二级岛外壳。「当前订阅」不显示选中态
         // （哪个订阅在使用中由订阅页的选中卡承担）。
         huxerui::View body = HomeCardContent(kind, state);
-        huxerui::View cardView = HomeCardSurface(theme, std::move(body), id);
+        huxerui::View cardView = HomeCardWithEasterEgg(theme, body, id);
         cards.push_back(std::move(cardView)
                             .LayoutValue<HomeCardSpan>(size)
                             .Key("home-card-" + id));

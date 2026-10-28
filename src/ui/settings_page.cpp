@@ -304,14 +304,15 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         huxerui::UseState(std::make_shared<ThemeAnimationFlag>());
     const auto settingsModel = huxerui::UseService<SettingsModel>();
     // 主题模式：0=自动，1=深色，2=浅色。
+    const bool systemDark = huxerui::UseSystemThemeBrightness() == huxerui::ThemeBrightness::Dark;
     const auto applyTheme = [themeMode, transition, tasks, animating,
-                             settingsModel, motion = theme.motion](int mode) {
+                             settingsModel, systemDark, motion = theme.motion](int mode) {
         if (animating.Get()->animating) return;
         const bool currentDark =
             themeMode.Get() == 1 ||
-            (themeMode.Get() == 0 && cfg::systemPrefersDark());
+            (themeMode.Get() == 0 && systemDark);
         const bool targetDark =
-            mode == 1 || (mode == 0 && cfg::systemPrefersDark());
+            mode == 1 || (mode == 0 && systemDark);
         const auto mutation = [themeMode, mode, settingsModel] {
             store::coreStore().setSetting("ui.theme_mode", std::to_string(mode));
             settingsModel->Update([mode](SettingsView& settings) {
@@ -496,7 +497,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     huxerui::State<huxerui::TextEditingValue> socksPort,
     std::shared_ptr<SettingsModel> settingsModel) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const auto toast = huxerui::UseToast();
+    const auto toast = UseFluxToast();
     const auto save = [context, mixedPort, httpPort, socksPort, settingsModel, toast] {
         const auto error = settingsModel->SetPorts(mixedPort.Get().text,
             httpPort.Get().text, socksPort.Get().text);
@@ -610,7 +611,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const auto model = control.model;
     const auto clipboard = control.clipboard;
     const auto picker=huxerui::UseService<huxerui::FilePicker>();
-    const auto toast=huxerui::UseToast();
+    const auto toast=UseFluxToast();
     const std::string reportType=huxerui::UseString(Localized("诊断报告"));
     huxerui::State<huxerui::TextEditingValue> target{huxerui::TextEditingValue{}};
     const bool busy = model->diagnosticsBusy.Get();
@@ -816,7 +817,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const IslandTheme islands = ResolveIslandTheme(theme);
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
-    auto toast = huxerui::UseToast();
+    auto toast = UseFluxToast();
     const auto control = UseCoreControl();
     const auto coreModel = control.model;
     const CoreView coreView = coreModel->view.Get();

@@ -74,6 +74,22 @@ template<class Profile> struct ProfileListModel : ProfileRefreshModel {
         RequestSync();
         list = std::move(next);
     }
+    // 拖放完成：把新顺序写透权威模型。解除 reorderPending 时镜像立即同步
+    // 新顺序，不被旧列表覆盖回弹；Publish 同时使在途旧快照失效（ABA）。
+    // 顺序与当前列表不完整对应时拒绝发布，交给后续重读兜底。
+    bool PublishOrder(const std::vector<std::int64_t>& ids) {
+        auto current = list.Get();
+        std::vector<Profile> ordered;
+        ordered.reserve(current.size());
+        for (const std::int64_t id : ids) {
+            const auto it = std::ranges::find(current, id, &Profile::id);
+            if (it == current.end()) return false;
+            ordered.push_back(std::move(*it));
+        }
+        if (ordered.size() != current.size()) return false;
+        Publish(std::move(ordered));
+        return true;
+    }
 };
 
 // A newer selection cancels preparation and owns publication, including ABA.

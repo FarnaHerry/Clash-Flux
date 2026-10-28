@@ -24,6 +24,7 @@
 #include "home_header_control.h"
 #include "home_grid.h"
 #include "home_card.h"
+#include "home_easter_eggs.h"
 #include "home_mode_choices.h"
 #include "interaction_theme.h"
 #include "home_vpn_status.h"
@@ -467,7 +468,7 @@ std::string diagnosticsFixtureReport = "redacted-report";
         diagnosticsFixtureCanSave, diagnosticsFixtureSaving);
 }
 huxerui::View DiagnosticsFixtureRoot() {
-    auto spec = huxerui::MaterialLightThemeSpec();
+    auto spec = diagnosticsFixtureDark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
     spec.colors = diagnosticsFixtureDark ? clashflux::ui::FluxDarkColors()
                                         : clashflux::ui::FluxLightColors();
     auto definition = huxerui::MaterialThemeDefinition(spec);
@@ -1115,7 +1116,7 @@ const huxerui::Application kCommonMenuApplication{CommonMenuRoot};
 huxerui::View ThemeSwitchRoot() {
     return huxerui::Scope([] {
         auto dark = huxerui::UseState(false);
-        auto spec = huxerui::MaterialLightThemeSpec();
+        auto spec = dark.Get() ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
         spec.colors = dark.Get() ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
         return huxerui::Theme(huxerui::MaterialThemeDefinition(spec), huxerui::Scope([dark] {
           const auto& theme = huxerui::UseTheme();
@@ -1136,6 +1137,12 @@ float titleShadowOpacity(huxerui::testing::UiTest& ui) {
     return match.empty() ? -1.0F : std::stof(match[1]);
 }
 void testThemeSwitch() {
+    auto semanticDark = huxerui::MaterialDarkThemeSpec();
+    semanticDark.colors.background = huxerui::Color::White();
+    auto semanticLight = huxerui::MaterialLightThemeSpec();
+    semanticLight.colors.background = huxerui::Color::Black();
+    check(clashflux::ui::IsDarkTheme(semanticDark) && !clashflux::ui::IsDarkTheme(semanticLight),
+          "主题语义来自框架 brightness，不受单个自定义底色亮度影响");
     huxerui::testing::UiTest ui(kThemeSwitchApplication, {
         .viewport = {400.0F, 700.0F}, .resource_provider = AppResources()});
     ui.PumpAndSettle();
@@ -1857,7 +1864,7 @@ void InstallSearchOutlineFixture(huxerui::ApplicationContext& context) {
 huxerui::View SearchOutlineRoot() {
     return huxerui::Scope([] {
         const auto model = huxerui::UseService<SearchOutlineFixture>();
-        auto theme = huxerui::MaterialLightThemeSpec();
+        auto theme = model->dark.Get() ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
         theme.colors = model->dark.Get() ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
         theme.motion.reduced_motion = model->reduced.Get();
         return huxerui::MaterialTheme(theme, SearchOutlineContent());
@@ -2214,7 +2221,7 @@ void testCommonMenu() {
 [[huxerui::composable]] huxerui::View ProfileFileFilterContent() {
     const auto filter = clashflux::ui::ProfileConfigFileFilter();
     auto tasks = huxerui::UseTaskScope();
-    auto toast = huxerui::UseToast();
+    auto toast = clashflux::ui::UseFluxToast();
     auto result = huxerui::UseState(std::string{"idle"});
     return huxerui::Column{
         huxerui::Button("Choose profile file").OnClick([tasks, toast, filter, result] {
@@ -2227,8 +2234,8 @@ void testCommonMenu() {
         huxerui::Text(result.Get()),
     };
 }
-huxerui::View ProfileFileFilterRoot() { return huxerui::FlatTheme{ProfileFileFilterContent()}; }
-const huxerui::Application kProfileFileFilterApplication{ProfileFileFilterRoot};
+huxerui::View ProfileFileFilterRoot() { return huxerui::FlatTheme{clashflux::ui::FluxToastStack(ProfileFileFilterContent())}; }
+const huxerui::Application kProfileFileFilterApplication{ProfileFileFilterRoot, {.window_hooks = {clashflux::ui::InstallToastLayers}}};
 
 void testProfileFileFilter() {
     for (const auto* language : {"zh", "en"}) {
@@ -2396,7 +2403,7 @@ std::shared_ptr<SubscriptionRuleLayoutFixture> subscriptionRuleLayoutFixture;
 huxerui::View SubscriptionRuleLayoutRoot() {
     return huxerui::Scope([] {
         const auto model = huxerui::UseService<SubscriptionRuleLayoutFixture>();
-        auto theme = huxerui::MaterialLightThemeSpec();
+        auto theme = model->dark.Get() ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
         theme.colors = model->dark.Get() ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
         return huxerui::MaterialTheme(theme, huxerui::Scope([model] {
             std::vector<std::string> views;
@@ -2702,6 +2709,91 @@ void PumpProfileList(huxerui::testing::UiTest& ui, std::chrono::milliseconds ela
          time += std::chrono::milliseconds{50})
         ui.Pump(std::chrono::milliseconds{50});
     ui.Pump();
+}
+
+// Drag-drop write-through: production ProfileListModel, mirror chain and pump.
+struct ReorderPublishRow {
+    std::int64_t id;
+    std::string name;
+    bool operator==(const ReorderPublishRow&) const = default;
+};
+using ReorderPublishModel = clashflux::ui::ProfileListModel<ReorderPublishRow>;
+struct ReorderPublishStore {
+    std::uint64_t revision = 1;
+    std::vector<ReorderPublishRow> rows{{1, "remote-1"}, {2, "remote-2"}, {3, "local-3"}};
+};
+std::shared_ptr<ReorderPublishModel> reorderPublishModel;
+std::shared_ptr<ReorderPublishStore> reorderPublishStore;
+std::optional<huxerui::StateList<ReorderPublishRow>> reorderPublishCards;
+void InstallReorderPublishFixture(huxerui::ApplicationContext& context) {
+    context.Provide(std::make_shared<ReorderPublishModel>());
+    context.Provide(std::make_shared<ReorderPublishStore>());
+}
+[[huxerui::composable]] huxerui::View ProfileReorderPublishContent() {
+    const auto model = huxerui::UseService<ReorderPublishModel>();
+    const auto store = huxerui::UseService<ReorderPublishStore>();
+    const auto tasks = huxerui::UseApplicationTaskScope();
+    auto cards = huxerui::UseStateList<ReorderPublishRow>();
+    reorderPublishModel = model;
+    reorderPublishStore = store;
+    reorderPublishCards = cards;
+    huxerui::Lifecycle([model, store, tasks] {
+        clashflux::ui::DriveProfileList(tasks, model,
+            [store] { return store->revision; },
+            [store]() -> huxerui::Task<clashflux::ui::ProfileListSnapshot<ReorderPublishRow>> {
+                clashflux::ui::ProfileListSnapshot<ReorderPublishRow> snapshot{
+                    .profiles = store->rows, .ready = true};
+                co_await huxerui::Delay(std::chrono::milliseconds{10});
+                co_return snapshot;
+            });
+        return [] {};
+    }, 0);
+    huxerui::Lifecycle([model, cards] {
+        if (!model->selectionPending.Get() && !model->reorderPending.Get())
+            clashflux::ui::ReplaceStateList(cards, model->list.Get());
+        return [] {};
+    }, model->list, model->selectionPending, model->reorderPending);
+    return huxerui::Text("reorder-publish");
+}
+huxerui::View ProfileReorderPublishRoot() { return huxerui::FlatTheme{ProfileReorderPublishContent()}; }
+const huxerui::Application kProfileReorderPublishApplication{ProfileReorderPublishRoot,
+    {.application_hooks = {InstallReorderPublishFixture}}};
+void testProfileReorderPublish() {
+    huxerui::testing::UiTest ui(kProfileReorderPublishApplication,
+        huxerui::testing::UiTestOptions{.viewport = {700.0F, 850.0F}});
+    PumpProfileList(ui, kSettle); ui.Pump();
+    const auto model = reorderPublishModel;
+    const auto store = reorderPublishStore;
+    const auto modelIds = [model] {
+        std::vector<std::int64_t> ids;
+        for (const auto& row : model->list.Get()) ids.push_back(row.id);
+        return ids;
+    };
+    const auto mirrorIds = [] {
+        std::vector<std::int64_t> ids;
+        const auto& cards = *reorderPublishCards;
+        for (std::size_t i = 0; i < cards.Size(); ++i) ids.push_back(cards[i].id);
+        return ids;
+    };
+    check(modelIds() == std::vector<std::int64_t>{1, 2, 3} &&
+          mirrorIds() == std::vector<std::int64_t>{1, 2, 3},
+          "reorder fixture hydrates the model and its mirror");
+    // Production drop: reorderPending holds the mirror, setOrder updates the
+    // store cache, then the new order is written through the authoritative model.
+    model->reorderPending = true;
+    store->rows = {store->rows[2], store->rows[0], store->rows[1]};
+    check(model->PublishOrder({3, 1, 2}), "drag drop writes the new order through the model");
+    model->reorderPending = false;
+    ui.Pump();
+    check(mirrorIds() == std::vector<std::int64_t>{3, 1, 2},
+          "drop release mirrors the target order immediately without snapping back");
+    PumpProfileList(ui, std::chrono::milliseconds{1500});
+    check(mirrorIds() == std::vector<std::int64_t>{3, 1, 2} &&
+          modelIds() == std::vector<std::int64_t>{3, 1, 2},
+          "later list reads keep the published drag order");
+    check(!model->PublishOrder({1, 2, 99}) &&
+          modelIds() == std::vector<std::int64_t>{3, 1, 2},
+          "incomplete drag order is rejected without touching the model");
 }
 void testProfileListPublication() {
     const auto makeOptions = [] {
@@ -4112,7 +4204,7 @@ void testInboundSettings() {
 }
 int homeCardActionCount = 0;
 huxerui::View HomeCardPressRoot(bool dark, bool reduced) {
-    auto theme = huxerui::FlatLightThemeSpec();
+    auto theme = dark ? huxerui::FlatDarkThemeSpec() : huxerui::FlatLightThemeSpec();
     theme.colors = dark ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
     theme.motion.reduced_motion = reduced;
     return huxerui::MaterialTheme(theme, huxerui::Column{
@@ -4131,39 +4223,22 @@ const huxerui::Application kHomeCardPressDark{HomeCardPressDarkRoot, {.show_debu
 const huxerui::Application kHomeCardPressReduced{HomeCardPressReducedRoot, {.show_debug_overlay = false}};
 
 float paintedHomeCardScale(huxerui::testing::UiTest& ui) {
-    const auto snapshot = ui.CaptureSnapshot().ToString();
-    const std::regex transform{R"(transform\s+\{\s+m11=([\d.-]+))"};
-    float result = 1.0F;
-    for (std::sregex_iterator item(snapshot.begin(), snapshot.end(), transform), end; item != end; ++item)
-        result = std::min(result, std::stof((*item)[1].str()));
-    return result;
-}
-
-bool paintedHomeCardEdgeOn(huxerui::testing::UiTest& ui, float cardHeight) {
     std::istringstream input(ui.CaptureSnapshot().ToString());
     std::string line;
     std::getline(input, line); std::getline(input, line);
     const auto snapshot = readCatPaintNode(input, line);
-    bool found = false;
-    const auto visit = [&](auto&& self, const CatPaintNode& node, huxerui::Transform2D parent) -> void {
-        const auto world = composeCatPaint(parent, catPaintTransform(node.Find("transform")));
-        if (const auto* content = node.Find("content")) {
-            for (const auto& command : content->children) {
-                if (const auto* bounds = command.Find("bounds"); command.name == "rect" && bounds) {
-                    const float width = std::abs(world.m11 * bounds->Number("width"));
-                    const float height = std::abs(world.m22 * bounds->Number("height"));
-                    if (width > 0.0F && width < 70.0F &&
-                        height > cardHeight * 0.8F && height < cardHeight * 1.2F) found = true;
-                }
-            }
-        }
+    float result = 1.0F;
+    const auto visit = [&](auto&& self, const CatPaintNode& node, float opacity) -> void {
+        opacity *= node.Number("opacity", 1.0F);
+        if (opacity < 0.01F) return;
+        if (const auto* transform = node.Find("transform"))
+            result = std::min(result, transform->Number("m11", 1.0F));
         if (const auto* children = node.Find("children"))
-            for (const auto& child : children->children)
-                self(self, child, composeCatPaint(world, catPaintTransform(node.Find("children_transform"))));
+            for (const auto& child : children->children) self(self, child, opacity);
     };
     if (const auto* render = snapshot.Find("render"))
-        for (const auto& node : render->children) visit(visit, node, huxerui::Transform2D{});
-    return found;
+        for (const auto& node : render->children) visit(visit, node, 1.0F);
+    return result;
 }
 
 void testHomeCardPress() {
@@ -4201,11 +4276,15 @@ void testHomeCardPress() {
     }
 }
 
+int homeCardReveals = 0;
+std::string homeEasterEggOpenedUrl;
+
 huxerui::View HomeCardFlipRoot(bool dark, bool reduced) {
-    auto theme = huxerui::FlatLightThemeSpec();
+    auto theme = dark ? huxerui::FlatDarkThemeSpec() : huxerui::FlatLightThemeSpec();
     theme.colors = dark ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
     theme.motion.reduced_motion = reduced;
     return huxerui::MaterialTheme(theme, huxerui::Scope([theme] {
+        auto backCount = huxerui::UseState(0);
         const auto content = huxerui::Scope([] {
             auto count = huxerui::UseState(0);
             return huxerui::Column {
@@ -4216,9 +4295,18 @@ huxerui::View HomeCardFlipRoot(bool dark, bool reduced) {
             }.With(huxerui::Grow(1.0F));
         });
         return huxerui::Column {
-          clashflux::ui::HomeCardSurface(theme, content, "first")
+          clashflux::ui::HomeCardSurface(theme, content, "first", true,
+              huxerui::Column {
+                huxerui::Text("Flip back menu"),
+                huxerui::Button("Back action-" + std::to_string(backCount.Get()))
+                    .OnClick([backCount] { backCount = backCount.Get() + 1; })
+                    .Key("flip-back-action"),
+              }, [] { ++homeCardReveals; })
               .With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("flip-card-one"),
-          clashflux::ui::HomeCardSurface(theme, huxerui::Text("Second front"), "second")
+          clashflux::ui::HomeCardSurface(theme, huxerui::Text("Second front"), "second", true,
+              clashflux::ui::HomeEasterEggContent(
+                  clashflux::ui::kHomeEasterEggPool[clashflux::ui::PickHomeEasterEgg()],
+                  [](std::string_view url) { homeEasterEggOpenedUrl = url; }))
               .With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("flip-card-two"),
           clashflux::ui::HomeCardSurface(theme, huxerui::Text("Cat control excluded"), "control", false)
               .With(huxerui::Frame{.width = 280.0F, .height = 88.0F}).Key("flip-card-excluded"),
@@ -4272,7 +4360,7 @@ huxerui::View ModeChoiceRoot() {
         };
     })));
 }
-const huxerui::Application kModeChoiceApplication{ModeChoiceRoot, {.show_debug_overlay = false}};
+const huxerui::Application kModeChoiceApplication{ModeChoiceRoot, {.show_debug_overlay = false, .window_hooks = {clashflux::ui::InstallToastLayers}}};
 
 void testModeChoiceFeedback() {
     using namespace clashflux::ui;
@@ -4323,6 +4411,9 @@ void testModeChoiceFeedback() {
 }
 
 bool toastFixtureDark = false, toastFixtureReduced = false;
+std::optional<clashflux::ui::FluxToastHandle> savedStackToast;
+std::vector<huxerui::LayerId> stackedToastIds;
+std::function<void()> toastTestAction;
 huxerui::View ToastMotionRoot() {
     using namespace clashflux::ui;
     auto theme = toastFixtureDark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
@@ -4330,16 +4421,23 @@ huxerui::View ToastMotionRoot() {
     theme.motion.reduced_motion = toastFixtureReduced;
     ApplyFluxInteractionTheme(theme);
     return huxerui::MaterialTheme(theme, FluxInteractionStyles(huxerui::Scope([] {
-        const auto toast = huxerui::UseToast();
+        const auto toast = clashflux::ui::UseFluxToast();
+        savedStackToast = toast;
         auto active = huxerui::UseState(std::optional<huxerui::LayerId>{});
         return huxerui::Column {
           huxerui::Button("Show short toast").OnClick([toast] { toast.Show("EXIT-TOAST", {0.8}); }),
           huxerui::Button("Show sticky toast").OnClick([toast, active] { active = toast.Show("EXIT-TOAST", {10.0}); }),
           huxerui::Button("Dismiss toast").OnClick([toast, active] { if (active.Get()) toast.Dismiss(*active.Get()); }),
+          huxerui::Button("Show three toasts").OnClick([toast] {
+              stackedToastIds.clear();
+              for (int i = 1; i <= 3; ++i)
+                  stackedToastIds.push_back(toast.Show("QUEUE-" + std::to_string(i), {3.0}));
+          }),
+          huxerui::Button("Run toast action").OnClick([] { if (toastTestAction) toastTestAction(); }),
         };
     })));
 }
-const huxerui::Application kToastMotionApplication{ToastMotionRoot, {.show_debug_overlay = false}};
+const huxerui::Application kToastMotionApplication{ToastMotionRoot, {.show_debug_overlay = false, .window_hooks = {clashflux::ui::InstallToastLayers}}};
 struct ToastPaintSample { float scale, y, opacity; };
 std::optional<ToastPaintSample> paintedToast(huxerui::testing::UiTest& ui,
     std::string_view text = "EXIT-TOAST") {
@@ -4396,6 +4494,82 @@ void testToastExitMotion() {
         check(!ui.Find(UiSelector::Text("EXIT-TOAST")).Exists(), "toast is removed after exit completes");
         const auto settled = ui.CaptureSnapshot(); ui.Pump(std::chrono::seconds(1));
         check(ui.CaptureSnapshot() == settled, "dismissed toast has no continuing animation");
+    }
+}
+
+void testToastStack() {
+    for (bool dark : {false, true}) for (bool reduced : {false, true}) {
+        toastFixtureDark = dark; toastFixtureReduced = reduced;
+        {
+            huxerui::testing::UiTest ui(kToastMotionApplication, {.viewport = {400.0F, 500.0F}});
+            ui.PumpAndSettle();
+            ui.Find(UiSelector::Text("Show three toasts")).Tap(); ui.Pump();
+            const auto runAction = [&](std::function<void()> action) {
+                toastTestAction = std::move(action);
+                ui.Find(UiSelector::Text("Run toast action")).Tap(); ui.Pump();
+                toastTestAction = {};
+            };
+            const auto advance = [&](int frames) {
+                for (int frame = 0; frame < frames; ++frame) {
+                    ui.Pump(std::chrono::milliseconds(20));
+                    int count = 0;
+                    for (int i = 1; i <= 9; ++i)
+                        if (paintedToast(ui, "QUEUE-" + std::to_string(i))) ++count;
+                    check(count <= 3, "toast stack never mounts more than three surfaces, including during eviction");
+                }
+            };
+            advance(16);
+            check(stackedToastIds.size() == 3 && stackedToastIds[0] != stackedToastIds[1],
+                "stacked toast requests receive independent identifiers");
+            const auto first = ui.Find(UiSelector::Text("QUEUE-1")).One().bounds;
+            const auto second = ui.Find(UiSelector::Text("QUEUE-2")).One().bounds;
+            const auto third = ui.Find(UiSelector::Text("QUEUE-3")).One().bounds;
+            check(first.y + first.height < second.y && second.y + second.height < third.y,
+                "three toast surfaces are vertically spaced without overlap");
+            check(third.y + third.height <= 500.0F && first.x >= 0.0F && third.x + third.width <= 400.0F,
+                "toast stack stays inside the viewport");
+            runAction([] { savedStackToast->Show("QUEUE-4", {3.0}); });
+            bool fading = false;
+            for (int frame = 0; frame < 16; ++frame) {
+                advance(1);
+                const auto sample = paintedToast(ui, "QUEUE-1");
+                fading = fading || (sample && sample->opacity > 0.02F && sample->opacity < 0.95F);
+            }
+            check(reduced || fading, "evicting the oldest toast paints its exit animation");
+            advance(12);
+            check(!paintedToast(ui, "QUEUE-1") && paintedToast(ui, "QUEUE-2") &&
+                paintedToast(ui, "QUEUE-3") && paintedToast(ui, "QUEUE-4"),
+                "fourth toast replaces only the oldest after its exit");
+            ui.Find(UiSelector::Text("QUEUE-2")).Tap(); advance(16);
+            check(!paintedToast(ui, "QUEUE-2") && paintedToast(ui, "QUEUE-3") && paintedToast(ui, "QUEUE-4"),
+                "clicking a toast dismisses that row without cancelling its neighbors");
+            runAction([] {
+                check(!savedStackToast->Dismiss(stackedToastIds[1]), "dismissed identifiers cannot dismiss another row");
+                for (int i = 5; i <= 9; ++i) savedStackToast->Show("QUEUE-" + std::to_string(i), {3.0});
+            });
+            ui.Pump(); advance(30);
+            for (int i = 1; i <= 6; ++i)
+                check(!paintedToast(ui, "QUEUE-" + std::to_string(i)), "a burst discards superseded notifications");
+            for (int i = 7; i <= 9; ++i)
+                check(paintedToast(ui, "QUEUE-" + std::to_string(i)).has_value(), "a burst retains the newest three notifications");
+            ui.Find(UiSelector::Text("QUEUE-8")).Tap({.device_kind = huxerui::PointerDeviceKind::Touch}); advance(16);
+            check(!paintedToast(ui, "QUEUE-8"), "touch can dismiss a middle toast");
+            advance(180);
+            check(!paintedToast(ui, "QUEUE-7") && !paintedToast(ui, "QUEUE-9"), "remaining toast timers expire independently");
+            const auto settled = ui.CaptureSnapshot(); ui.Pump(std::chrono::seconds(1));
+            check(settled == ui.CaptureSnapshot(), "empty toast stack has no continuing animation");
+            const std::string longMessage = "A longer notification needs to wrap inside the available window width without clipping";
+            runAction([longMessage] { savedStackToast->Show(longMessage, {3.0}); });
+            advance(16);
+            const auto wrapped = ui.Find(UiSelector::Text(longMessage)).One().bounds;
+            check(wrapped.x >= 16.0F && wrapped.x + wrapped.width <= 384.0F &&
+                wrapped.y >= 0.0F && wrapped.y + wrapped.height <= 476.0F,
+                "long notifications wrap inside the padded viewport");
+            ui.Find(UiSelector::Text("Show three toasts")).Tap(); ui.Pump();
+        }
+        check(savedStackToast->Show("AFTER-CLOSE") == 0,
+            "retained handles cannot resurrect toasts after the window unmounts");
+        savedStackToast.reset();
     }
 }
 
@@ -4491,6 +4665,8 @@ void testHomeCardFlip() {
     for (const auto* app : {&kHomeCardFlipLight, &kHomeCardFlipDark, &kHomeCardFlipReduced}) {
         for (const auto device : {huxerui::PointerDeviceKind::Mouse, huxerui::PointerDeviceKind::Touch}) {
             const bool reduced = app == &kHomeCardFlipReduced;
+            homeCardReveals = 0;
+            homeEasterEggOpenedUrl.clear();
             huxerui::testing::UiTest ui(*app, {.viewport = {400.0F, 700.0F}, .resource_provider = AppResources()});
             ui.PumpAndSettle();
             const auto first = ui.Find(UiSelector::Key("flip-card-one"));
@@ -4517,24 +4693,38 @@ void testHomeCardFlip() {
             doubleTap(first);
             check(first.Find(UiSelector::Key("home-card-back")).Exists(),
                   "mouse double click and touch double tap both turn the card over");
-            bool edgeOn = reduced;
-            for (int frame = 0; frame < 24; ++frame) {
+            check(homeCardReveals == 1, "a reveal draws its Easter egg exactly once");
+            bool scaled = false;
+            bool backPainted = false;
+            for (int frame = 0; frame < 8; ++frame) {
                 ui.Pump(std::chrono::milliseconds(30));
-                edgeOn = edgeOn || paintedHomeCardEdgeOn(ui, firstBounds.height);
+                const float scale = paintedHomeCardScale(ui);
+                scaled = scaled || scale < 0.999F;
+                check(scale >= 0.95F, "content never collapses to an edge-on shared snapshot");
+                backPainted = backPainted ||
+                    ui.CaptureSnapshot().ToString().find("Flip back menu") != std::string::npos;
             }
-            if (!edgeOn)
-                std::ofstream("home-card-flip-failure.snapshot") << ui.CaptureSnapshot().ToString();
-            check(edgeOn,
-                  "the flip paints an edge-on intermediate frame rather than switching faces instantly");
+            check(reduced ? !scaled : scaled,
+                  "the live content lightly scales during reveal and reduced motion switches immediately");
+            check(backPainted, "the short reveal paints the new face");
             check(first.One().bounds == firstBounds && second.One().bounds == secondBounds,
                   "flipping a card does not change dashboard slots or move its neighbors");
             ui.PumpAndSettle();
             check(!ui.FindSemantics(UiSemanticSelector::Label("Counter-1")).Exists(),
                   "the back face hides and disables front controls");
+            ui.Find(UiSelector::Key("flip-back-action")).Tap(); ui.PumpAndSettle();
+            check(ui.Find(UiSelector::Text("Back action-1")).Exists() &&
+                  !ui.FindSemantics(UiSemanticSelector::Label("Counter-1")).Exists(),
+                  "back menu actions stay clickable while front controls remain disabled");
             doubleTap(second); ui.PumpAndSettle();
             check(first.Find(UiSelector::Key("home-card-back")).Exists() &&
                   second.Find(UiSelector::Key("home-card-back")).Exists(),
                   "each card retains its own independent flip state and local transition");
+            check(ui.Find(UiSelector::Text("FinalScave")).Exists() &&
+                  homeEasterEggOpenedUrl.empty(), "the author Easter egg never opens its link automatically");
+            ui.Find(UiSelector::Key("home-easter-egg-link")).Tap(); ui.PumpAndSettle();
+            check(homeEasterEggOpenedUrl == "https://github.com/FinalScave",
+                  "the only pool item opens the verified HuxerUI creator profile on click");
             ui.TapAt(counterPoint, {.device_kind = device}); ui.PumpAndSettle();
             check(first.Find(UiSelector::Key("home-card-back")).Exists() &&
                   ui.Find(UiSelector::Text("Counter-1")).Exists(),
@@ -4545,6 +4735,13 @@ void testHomeCardFlip() {
             check(!first.Find(UiSelector::Key("home-card-back")).Exists() &&
                   ui.Find(UiSelector::Text("Counter-1")).Exists(),
                   "double tapping the back restores the front without remounting its state");
+            check(homeCardReveals == 1, "returning to the front does not draw another Easter egg");
+            ui.Pump(std::chrono::seconds(1));
+            doubleTap(first); ui.Pump(std::chrono::milliseconds(30));
+            doubleTap(first); ui.PumpAndSettle();
+            check(!first.Find(UiSelector::Key("home-card-back")).Exists() &&
+                  ui.Find(UiSelector::Text("Counter-1")).Exists() && homeCardReveals == 2,
+                  "rapid reversal settles at the latest face and retains the front state");
             doubleTap(excluded); ui.PumpAndSettle();
             check(!excluded.Find(UiSelector::Key("home-card-back")).Exists(),
                   "cat controls explicitly opt out of the dashboard Easter egg");
@@ -4696,7 +4893,7 @@ int main() {
     testCustomThemeColors();
     testThemeColorSurfaces();
     testHomeCardPress();
-    try { testModeChoiceFeedback(); testToastExitMotion(); testRetainedRootDock(); testHomeCardFlip(); }
+    try { testModeChoiceFeedback(); testToastExitMotion(); testToastStack(); testRetainedRootDock(); testHomeCardFlip(); }
     catch (const std::exception& error) {
         std::printf("FAIL: home card flip: %s\n", error.what());
         ++failures;
@@ -4792,6 +4989,7 @@ int main() {
         ++failures;
     }
     testProfileListPublication();
+    testProfileReorderPublish();
     testLatestProfileSelection();
     {
         huxerui::testing::UiTest ui(kApplication, {

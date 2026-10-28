@@ -10,6 +10,16 @@
 起身完成就退场，随后展开统计卡片。慢启动在等待期间持续显示；待机、运行、失败或取消后均隐藏。
 点击后睡眠 zzz 消失，完全启动后保留原有运行态 Logo、耳尾轻摆及统计卡片展开。
 窗口并排提供放大预览与实际卡片，共用动画和进度控制；项目正式 Logo 与旧闭箱素材均保留。
+底部「彩蛋动画」面板与独立 `--tricks` 动作实验室提供完整小猫的 8 个一次性动作：
+歪头好奇、开心蹦跳、伸懒腰、打个滚、摇尾巴、惊讶一跳、打盹惊醒、蹭蹭你。
+小猫保留原作的耳形、实心椭圆眼、尾巴和深色线稿，不增加瞳孔、鼻口或胡须；
+只将头部像箱盖的尖角下沿改为自然下巴，连接补全的坐姿躯干、后腿、前爪和脚趾；
+身体与腿缩短约三成，头部保持原尺寸，尾根与地面投影同步上移。
+尾巴接在臀部后方，歪头与身体可独立转动。
+动作分为准备、主体与回落，配合独立闭眼/弯眼、耳朵、尾巴及地面投影；非等比缩放和旋转共用正确的支点变换，首尾回到相同待机姿势。
+`src/cat_tricks.cpp` 无快照捕获、不逐帧写 State；播放期间 30fps，播完或 reduced motion 停帧。
+实验室提供单独点播、随机选择不同动作、点击预览重播、0.25–2 倍速度及逐帧滑杆；拖动滑杆暂停时间轴，重播恢复播放。
+尚未接入主程序首页，保持隔离演示。
 默认使用与主程序相同的 `third_party/huxerui` 固定源码；不链接 Clash-Flux 的领域模块，不访问数据库、订阅、内核、
 系统代理或 TUN。时长和连接统计均为固定示例数据，不代表真实运行状态。
 
@@ -20,6 +30,7 @@ CMake 4.4+ 和 Ninja，不需要 WSL）：
 ./demos/box-cat-demo/run-demo.ps1 -BuildOnly
 ./demos/box-cat-demo/run-demo.ps1
 ./demos/box-cat-demo/run-demo.ps1 -DemoArguments '--version'
+./demos/box-cat-demo/run-demo.ps1 -DemoArguments '--tricks'
 ```
 
 脚本按需加载 Visual Studio x64 开发环境，使用仓库固定 HuxerUI 源码，
@@ -32,6 +43,7 @@ CMake 4.4+ 和 Ninja，不需要 WSL）：
 & ./demos/box-cat-demo/build-windows/box_cat_demo.exe --version
 & ./demos/box-cat-demo/build-windows/box_cat_demo.exe --smoke-test | Out-Host
 & ./demos/box-cat-demo/build-windows/box_cat_demo.exe --brand-preview --smoke-test | Out-Host
+& ./demos/box-cat-demo/build-windows/box_cat_demo.exe --tricks --smoke-test | Out-Host
 ```
 
 Windows 使用 GUI 子系统和原生 DPI manifest，正常启动不弹出额外控制台。
@@ -92,12 +104,15 @@ cmake --build demos/box-cat-demo/build --target box_cat_demo
 ./demos/box-cat-demo/build/box_cat_demo --smoke-test
 ./demos/box-cat-demo/build/box_cat_demo --preview-progress 0.5
 ./demos/box-cat-demo/build/box_cat_demo --preview-failure 0.5
+./demos/box-cat-demo/build/box_cat_demo --tricks
+./demos/box-cat-demo/build/box_cat_demo --tricks --smoke-test
 ```
 
 `--smoke-test` 打开独立窗口，检查放大预览与实际卡片的睡脸与 zzz 循环及帧预算、等待期间保持、起身后提前退场、慢启动轻抚及帧预算、取消退场、耳尾推进及帧预算、减少动态效果的暂停/恢复、
 停止后循环结束、失败 wink、失败后重试、探头阶段停止/重置与慢启动被停止后旧结果失效，
 再播放成功/失败的分阶段预览并自动关闭。
 状态断言失败会报告错误；视觉效果需实际查看。
+`--tricks --smoke-test` 单独验证八个动作实际启动、到达终态后停帧、快速重播、减少动态效果及静态逐帧预览。
 仓库要求的主目标编译与 `./run.sh --version` 仍需执行；不需要打开主程序 GUI。
 
 

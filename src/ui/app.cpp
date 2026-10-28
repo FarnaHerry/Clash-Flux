@@ -1128,7 +1128,7 @@ void StartDesktopWindowlessRuntime() {
     huxerui::State<std::size_t> pagerPage) {
     const auto tasks = huxerui::UseTaskScope();
     const auto linkWindow = huxerui::UseWindow();
-    const auto linkToast = huxerui::UseToast();
+    const auto linkToast = UseFluxToast();
     const auto toastStyle = huxerui::UseEnvironment<huxerui::ToastStyle>();
     huxerui::Lifecycle([profilesModel, linkToast] {
         const auto error = profilesModel->linkError.Get();
@@ -1432,7 +1432,9 @@ void StartDesktopWindowlessRuntime() {
 
     // 主题派生（托盘 TUN 引导弹窗也要取 rootSpec 配色，故先于托盘块计算）。
     const bool dark =
-        themeMode.Get() == 1 || (themeMode.Get() == 0 && cfg::systemPrefersDark());
+        themeMode.Get() == 1 ||
+        (themeMode.Get() == 0 &&
+         huxerui::UseSystemThemeBrightness() == huxerui::ThemeBrightness::Dark);
     const SettingsView settings = settingsModel->view.Get();
     const std::string& accent = settings.ready ? settings.themeColor : startupSettings.themeColor;
     const huxerui::ThemeSpec rootSpec = dark ? FluxDarkThemeSpec(accent) : FluxLightThemeSpec(accent);

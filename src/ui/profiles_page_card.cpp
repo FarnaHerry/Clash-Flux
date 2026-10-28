@@ -59,7 +59,7 @@ bool HasKnownExhaustedQuota(const db::Profile& profile) {
            profile.usedBytes >= profile.totalBytes;
 }
 
-void ShowKnownExhaustedQuota(huxerui::ToastHandle toast,
+void ShowKnownExhaustedQuota(FluxToastHandle toast,
                              const std::string& profileName) {
     toast.Show(LocalizedFormat("订阅「{}」上次更新的流量数据已用尽",
                                profileName),
@@ -188,7 +188,7 @@ huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool par
 
 [[huxerui::composable]] huxerui::View ProfileCard(
     const db::Profile& profile, bool compact,
-    huxerui::TaskScope tasks, huxerui::ToastHandle toast,
+    huxerui::TaskScope tasks, FluxToastHandle toast,
     std::shared_ptr<AppHttpClient> http, std::function<void()> reload,
     huxerui::StateList<db::Profile> profiles,
     huxerui::State<bool> selectionPending,

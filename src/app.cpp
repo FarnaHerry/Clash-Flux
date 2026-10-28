@@ -45,6 +45,6 @@ const huxerui::Application application{
             clashflux::ui::InstallQrPhotoDecoder,
 #endif
         },
-        .window_hooks = {clashflux::ui::InstallSectionPickerLayers},
+        .window_hooks = {clashflux::ui::InstallSectionPickerLayers, clashflux::ui::InstallToastLayers},
     },
 };
