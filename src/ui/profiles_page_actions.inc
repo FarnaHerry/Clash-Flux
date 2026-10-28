@@ -444,6 +444,7 @@
 
     // All subscription rule edits use the shared structured rule page.
     auto showEditRules = [profilesCache, profilesModel, navigation, navigation_enabled](std::int64_t id) {
+        if (!profilesModel->IsRuleSource(id)) return;
         if (navigation_enabled) {
             navigation.Push([profilesCache, navigation, id] {
                 return RulesPage(profilesCache,

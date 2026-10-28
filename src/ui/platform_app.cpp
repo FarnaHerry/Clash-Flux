@@ -166,7 +166,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
             if (opening) {
                 ++windowGeneration;
                 retired = false;
-                window = application->OpenWindow(huxerui::WindowOptions{
+                window = application->OpenWindow([] { return AppRoot(); }, huxerui::WindowOptions{
                     .title = "Clash-Flux",
                     .initial_size = {1080.0F, 720.0F},
                     .minimum_size = huxerui::Size{320.0F, 480.0F},
@@ -187,7 +187,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
 
     void OpenHiddenWindow() {
         if (!application || window) return;
-        window = application->OpenWindow(huxerui::WindowOptions{
+        window = application->OpenWindow([] { return AppRoot(); }, huxerui::WindowOptions{
             .title = "Clash-Flux",
             .initial_size = {1080.0F, 720.0F},
             .minimum_size = huxerui::Size{320.0F, 480.0F},

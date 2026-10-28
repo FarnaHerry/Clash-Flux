@@ -1353,8 +1353,10 @@ void DriveProfilesModel(huxerui::TaskScope tasks,
                     std::string prefix(20001, '\0');
                     input.read(prefix.data(), static_cast<std::streamsize>(prefix.size()));
                     prefix.resize(static_cast<std::size_t>(input.gcount()));
-                    if (!prefix.empty() && singbox::DetectProfileFormat(prefix) == singbox::ProfileFormat::ClashYaml)
-                        next.clashSources.push_back(profile.id);
+                    if (prefix.empty()) continue;
+                    const auto format = singbox::DetectProfileFormat(prefix);
+                    if (format == singbox::ProfileFormat::ClashYaml) next.clashSources.push_back(profile.id);
+                    if (format != singbox::ProfileFormat::OpenVpn) next.ruleSources.push_back(profile.id);
                 }
                 return next;
             });

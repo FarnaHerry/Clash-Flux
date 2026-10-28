@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.72 release notes](docs/releases/v0.3.72.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.73 release notes](docs/releases/v0.3.73.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -67,6 +67,7 @@ application-managed settings before being passed to sing-box.
   CIDRs to different connections through global rules;
   inspect connection snapshots and close individual or all connections. Core and
   application logs share one searchable list and export, with history restored for viewing.
+  The subscription selector lists only rule-editable sources; its toolbar fits medium-width windows, and compiled JSON opens as a separate page on phones.
 - Standalone PPTP connections use system dialing and privileged service integration.
   Windows uses RAS with MS-CHAPv2; enabling MPPE-128 requires encryption, while
   disabling that option lets the server negotiate its requirements. Windows

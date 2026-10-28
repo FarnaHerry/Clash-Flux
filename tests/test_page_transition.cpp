@@ -44,6 +44,7 @@
 #include "core_operation.h"
 #include "inbound_settings.h"
 #include "pptp_connection_progress.h"
+#include "subscription_rule_layout.h"
 
 namespace {
 using huxerui::testing::UiSelector;
@@ -296,6 +297,7 @@ clashflux::ui::TextDocumentHandle documentFixture;
 std::shared_ptr<const std::string> documentFixtureSource;
 std::shared_ptr<huxerui::Clipboard> documentFixtureClipboard;
 bool documentFixtureReadOnly = false;
+bool documentFixtureFill = false;
 int documentFixtureCompositions = 0;
 [[huxerui::composable]] huxerui::View TextDocumentFixture() {
     ++documentFixtureCompositions;
@@ -309,7 +311,8 @@ int documentFixtureCompositions = 0;
         huxerui::Button("Recompose parent").OnClick([tick] { tick += 1; }),
         huxerui::Text(std::to_string(tick.Get())),
       },
-      visible.Get() ? clashflux::ui::DocumentTextView(documentFixture, documentFixtureReadOnly, 300.0F)
+      visible.Get() ? clashflux::ui::DocumentTextView(documentFixture, documentFixtureReadOnly,
+                                                    documentFixtureFill ? 0.0F : 300.0F)
                     : huxerui::View{huxerui::Text("Document hidden")},
     }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -403,6 +406,25 @@ void testTextDocuments() {
         ui.Find(UiSelector::Key("document-search-toggle")).Tap();
         check(ui.Find(UiSelector::Key("document-search-input")).Exists(), "search reopens on the first click after closing");
     }
+    documentFixture.reset();
+    documentFixtureFill = true;
+    {
+        huxerui::testing::UiTest ui(kTextDocumentApplication, {.viewport = {320.0F, 700.0F},
+            .resource_provider = AppResources()});
+        ui.Pump();
+        waitForTextDocument(ui, documentFixture);
+        const auto retained = documentFixture;
+        for (const auto size : {huxerui::Size{320, 360}, huxerui::Size{960, 700}, huxerui::Size{320, 700}}) {
+            ui.SetWindowMetrics({.viewport = size}); ui.PumpAndSettle();
+            const auto bounds = ui.Find(UiSelector::Key("document-editor")).One().bounds;
+            check(bounds.width <= size.width && bounds.height > size.height - 160.0F &&
+                  std::abs(bounds.y + bounds.height - size.height) < 1.0F,
+                  "full-page JSON preview fills the bounded remaining height across resize");
+            check(documentFixture == retained && documentFixture->Snapshot() == original,
+                  "resizing the read-only preview preserves its document and original content");
+        }
+    }
+    documentFixtureFill = false;
     documentFixture.reset();
     documentFixtureReadOnly = false;
     documentFixtureSource = std::make_shared<const std::string>("original\r\n中文 😀\n");
@@ -1946,6 +1968,244 @@ void testProfileImportCompletion() {
     ui.Find(UiSelector::Text("Import fixture")).Tap(); ui.Pump(std::chrono::milliseconds(400)); ui.PumpAndSettle();
     check(ui.Find(UiSelector::Text("IMPORT-SUCCESS")).Exists() && ui.Find(UiSelector::Text("IMPORT-ATTEMPTS:3")).Exists(),
           "failed import remains retryable without retaining busy or creating duplicate operations");
+}
+
+struct RefreshFixture : clashflux::ui::ProfileRefreshModel {
+    huxerui::State<std::string> a{"RULES-A-OLD"}, b{"RULES-B-OLD"}, error{std::string{}};
+    huxerui::State<std::int64_t> visible{1};
+    huxerui::State<std::uint64_t> aVersion{0}, bVersion{0};
+    int attempts = 0;
+    bool clearedBeforeFeedback = true;
+};
+std::shared_ptr<RefreshFixture> refreshFixture;
+void InstallRefreshFixture(huxerui::ApplicationContext& context) {
+    refreshFixture = std::make_shared<RefreshFixture>();
+    context.Provide(refreshFixture);
+}
+[[huxerui::composable]] huxerui::View RefreshOrigin() {
+    const auto model = huxerui::UseService<RefreshFixture>();
+    const auto tasks = huxerui::UseApplicationTaskScope();
+    const auto start = [model, tasks](std::int64_t id, bool fail) {
+        clashflux::ui::LaunchProfileRefresh<std::string>(tasks, model, id,
+            [model, id, fail]() -> huxerui::Task<std::string> {
+                ++model->attempts;
+                co_await huxerui::Delay(std::chrono::milliseconds(id == 1 ? 300 : 600));
+                if (fail) throw std::runtime_error("refresh failed");
+                co_return id == 1 ? "RULES-A-NEW" : "RULES-B-NEW";
+            }, [model, id](std::optional<std::string> result, std::exception_ptr error) {
+                model->clearedBeforeFeedback &= !model->Refreshing(id);
+                if (error) model->error = "REFRESH-FAILED";
+                else (id == 1 ? model->a : model->b) = std::move(*result);
+                (id == 1 ? model->aVersion : model->bVersion) = model->RefreshVersion(id);
+            });
+    };
+    return huxerui::Row {
+      huxerui::Button("Refresh A").OnClick([start] { start(1, false); }),
+      huxerui::Button("Fail B").OnClick([start] { start(2, true); }),
+      huxerui::Button("Retry B").OnClick([start] { start(2, false); }),
+    };
+}
+huxerui::View RefreshRoot() {
+    return huxerui::FlatTheme {huxerui::Scope([] {
+        const auto model = huxerui::UseService<RefreshFixture>();
+        auto shown = huxerui::UseState(true);
+        const auto& theme = huxerui::UseTheme();
+        const auto id = model->visible.Get();
+        return huxerui::Column {
+          huxerui::Button("Retire refresh origin").OnClick([shown] { shown = !shown.Get(); }),
+          huxerui::Button("View A").OnClick([model] { model->visible = 1; }),
+          huxerui::Button("View B").OnClick([model] { model->visible = 2; }),
+          shown.Get() ? RefreshOrigin().Key("refresh-origin") : huxerui::View{huxerui::Row {}}.Key("refresh-retired"),
+          model->RulesLoading(id, id == 1 ? model->aVersion.Get() : model->bVersion.Get())
+                               ? clashflux::ui::PageLoadingSkeleton(theme, true)
+                                    .Key(id == 1 ? "rules-a-loading" : "rules-b-loading")
+                               : huxerui::View{huxerui::Text(id == 1 ? model->a.Get() : model->b.Get())},
+          huxerui::Text("GLOBAL-RULES-READY"), huxerui::Text(model->error.Get()),
+        };
+    })};
+}
+const huxerui::Application kRefreshApplication{RefreshRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallRefreshFixture}}};
+void testScopedProfileRefresh() {
+    huxerui::testing::UiTest ui(kRefreshApplication, {.viewport = {700.0F, 1000.0F}});
+    ui.Pump();
+    const auto model = refreshFixture;
+    ui.Find(UiSelector::Text("Refresh A")).Tap(); ui.Pump();
+    ui.Find(UiSelector::Text("Refresh A")).Tap(); ui.Pump();
+    check(model->attempts == 1 && ui.Find(UiSelector::Key("rules-a-loading")).Exists(), "refresh A is single-flight and shows only A's skeleton");
+    ui.Find(UiSelector::Text("View B")).Tap(); ui.Pump();
+    check(ui.Find(UiSelector::Text("RULES-B-OLD")).Exists() && !ui.Find(UiSelector::Key("page-loading-skeleton")).Exists() &&
+          ui.Find(UiSelector::Text("GLOBAL-RULES-READY")).Exists(), "switching to cached B during A refresh shows B and global rules without skeletons");
+    ui.Find(UiSelector::Text("View A")).Tap(); ui.Pump();
+    check(ui.Find(UiSelector::Key("rules-a-loading")).Exists(), "returning to pending A restores only A's skeleton");
+    ui.Find(UiSelector::Text("Fail B")).Tap(); ui.Pump();
+    ui.Find(UiSelector::Text("Retire refresh origin")).Tap(); ui.Pump();
+    check(!ui.Find(UiSelector::Text("Refresh A")).Exists(), "refresh origin actually retires while tasks are awaiting");
+    ui.Pump(std::chrono::milliseconds(350)); ui.Pump();
+    check(ui.Find(UiSelector::Text("RULES-A-NEW")).Exists() && model->Refreshing(2), "A completes after retirement without clearing B's pending operation");
+    ui.Find(UiSelector::Text("View B")).Tap(); ui.Pump();
+    ui.Pump(std::chrono::milliseconds(350)); ui.Pump();
+    check(ui.Find(UiSelector::Text("RULES-B-OLD")).Exists() && ui.Find(UiSelector::Text("REFRESH-FAILED")).Exists(), "failed B refresh restores its old rules and clears its skeleton");
+    ui.Find(UiSelector::Text("Retire refresh origin")).Tap(); ui.Pump();
+    ui.Find(UiSelector::Text("Retry B")).Tap(); ui.Pump(std::chrono::milliseconds(700)); ui.Pump();
+    check(ui.Find(UiSelector::Text("RULES-B-NEW")).Exists() && model->clearedBeforeFeedback, "failed refresh is retryable and clears ID-specific busy before feedback");
+    const auto old = *model->BeginRefresh(1); model->FinishRefresh(1, old);
+    const auto latest = *model->BeginRefresh(1);
+    check(!model->FinishRefresh(1, old) && model->Refreshing(1) && model->RefreshVersion(2) != latest,
+          "stale completion cannot clear a newer operation or change another profile's version");
+    model->FinishRefresh(1, latest);
+    check(model->RulesLoading(1, old) && !model->RulesLoading(2, model->bVersion.Get()),
+          "completed A refresh invalidates only A's old rules until its new snapshot arrives");
+    check(!model->RulesLoading(1, latest), "the matching rules snapshot ends only its own loading state");
+}
+
+struct SubscriptionRuleLayoutFixture {
+    huxerui::State<std::size_t> source{0}, view{0};
+    huxerui::State<bool> busy{false}, dark{false};
+    int actions = 0;
+};
+std::shared_ptr<SubscriptionRuleLayoutFixture> subscriptionRuleLayoutFixture;
+
+huxerui::View SubscriptionRuleLayoutRoot() {
+    return huxerui::Scope([] {
+        const auto model = huxerui::UseService<SubscriptionRuleLayoutFixture>();
+        auto theme = huxerui::MaterialLightThemeSpec();
+        theme.colors = model->dark.Get() ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
+        return huxerui::MaterialTheme(theme, huxerui::Scope([model] {
+            std::vector<std::string> views;
+            for (const auto* label : {"修改后的规则", "订阅原规则", "个人修改记录"})
+                views.push_back(huxerui::UseString(clashflux::ui::Localized(label)));
+            auto scroll = huxerui::UseScrollController();
+            return huxerui::Column {
+              clashflux::ui::SubscriptionRulesToolbar({"A", "B", "一个很长的订阅名称 Long subscription name"},
+                  model->source.Get(), views, model->view.Get(), model->busy.Get(),
+                  [model](std::size_t index) { model->source = index; },
+                  [model](std::size_t index) { model->view = index; },
+                  huxerui::IconButton(huxerui::ImageResource{"app", "images/more_vertical"}, "Preview")
+                      .OnClick([model] { ++model->actions; }).Key("rule-toolbar-more"))
+                  .Key("rule-toolbar"),
+              huxerui::VirtualList(1000, [model](std::size_t index) {
+                  return clashflux::ui::SubscriptionRuleContent("域名后缀",
+                      "very-long-api.example.com/path/to/resource", "香港自动选择很长的出口名称",
+                      "个人新增 · 订阅规则之前",
+                      huxerui::IconButton(huxerui::ImageResource{"app", "images/more_vertical"}, "Details")
+                          .OnClick([model] { ++model->actions; }).Key("rule-row-more"))
+                      .With(huxerui::Padding(8.0F)).Key("rule-layout-" + std::to_string(index));
+              }).Controller(scroll).EstimatedItemExtent(clashflux::ui::kSubscriptionRuleEstimatedExtent)
+                  .With(huxerui::Grow(1.0F)).Key("rule-layout-list"),
+            }.With(huxerui::Padding(4.0F), huxerui::Spacing(4.0F),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        }));
+    });
+}
+const huxerui::Application kSubscriptionRuleLayoutApplication{SubscriptionRuleLayoutRoot,
+    {.show_debug_overlay = false, .application_hooks = {[](huxerui::ApplicationContext& context) {
+        subscriptionRuleLayoutFixture = std::make_shared<SubscriptionRuleLayoutFixture>();
+        context.Provide(subscriptionRuleLayoutFixture);
+    }}}};
+
+void testSubscriptionRuleLayout() {
+    for (const auto* locale : {"zh", "en"}) {
+        huxerui::testing::UiTest ui(kSubscriptionRuleLayoutApplication,
+            {.viewport = {960.0F, 600.0F},
+             .resources = {.locale = huxerui::Locale::FromLanguageTag(locale)}, .resource_provider = AppResources()});
+        const auto model = subscriptionRuleLayoutFixture;
+        for (bool dark : {false, true}) {
+            model->dark = dark;
+            for (float width : {320.0F, 420.0F, 599.0F, 600.0F, 960.0F, 1600.0F, 320.0F}) {
+                ui.SetWindowMetrics({.viewport = {width, 600.0F}}); ui.PumpAndSettle();
+                const auto source = ui.Find(UiSelector::Key("subscription-rule-source")).One().bounds;
+                const auto view = ui.Find(UiSelector::Key("subscription-rule-view")).One().bounds;
+                const auto more = ui.Find(UiSelector::Key("rule-toolbar-more")).One().bounds;
+                check(source.width >= 30.0F && source.x + source.width <= view.x &&
+                      view.x + view.width <= more.x && more.x + more.width <= width - 3.5F &&
+                      std::abs(source.y - view.y) < 1.0F && more.width >= 40.0F,
+                      "subscription source, view and action stay on one accessible row at every width");
+                check(width < 600.0F || source.width < 250.0F,
+                      "wide rule source selector retains a compact natural width");
+                const auto row = ui.Find(UiSelector::Key("rule-layout-0"));
+                const auto kind = row.Find(UiSelector::Key("rule-kind")).One().bounds;
+                const auto pattern = row.Find(UiSelector::Key("rule-pattern")).One().bounds;
+                const auto target = row.Find(UiSelector::Key("rule-target")).One().bounds;
+                const auto status = row.Find(UiSelector::Key("rule-status")).One().bounds;
+                const auto action = row.Find(UiSelector::Key("rule-row-more")).One().bounds;
+                check(pattern.width > 40.0F && target.width > 20.0F && kind.x + kind.width <= pattern.x &&
+                      pattern.x + pattern.width <= target.x && target.x + target.width <= action.x &&
+                      std::abs(kind.y - pattern.y) < 1.0F && status.y >= pattern.y + pattern.height &&
+                      std::abs(status.x - pattern.x) < 1.0F && action.x + action.width <= width - 3.5F,
+                      "rule match and target share the first line; status is aligned below without collisions");
+                check(std::abs(row.One().bounds.height -
+                      (16.0F + std::max(action.height, pattern.height + status.height + 4.0F))) < 1.0F,
+                      "long rule fields keep a compact two-line height across widths");
+                const auto snapshot = ui.CaptureSnapshot().ToString();
+                check(width > 420.0F || snapshot.find("…") != std::string::npos,
+                      "narrow rule labels paint an ellipsis instead of wrapping or spilling");
+            }
+        }
+        ui.Find(UiSelector::Key("subscription-rule-source")).Tap(); ui.PumpAndSettle();
+        ui.PressKey(huxerui::Key::ArrowDown); ui.PressKey(huxerui::Key::Enter); ui.PumpAndSettle();
+        check(model->source.Get() == 1, "source selector still changes the controlled source");
+        ui.Find(UiSelector::Key("subscription-rule-view")).Tap(); ui.PumpAndSettle();
+        ui.PressKey(huxerui::Key::ArrowDown); ui.PressKey(huxerui::Key::Enter); ui.PumpAndSettle();
+        check(model->view.Get() == 1, "visible view selector still changes the controlled mode");
+        model->source = 2; model->view = 2; ui.PumpAndSettle();
+        const auto source = ui.Find(UiSelector::Key("subscription-rule-source")).One().bounds;
+        const auto view = ui.Find(UiSelector::Key("subscription-rule-view")).One().bounds;
+        check(source.width >= 30.0F && source.x + source.width <= view.x,
+              "long source names yield space to the complete view control");
+        ui.Find(UiSelector::Key("rule-toolbar-more")).Tap();
+        ui.Find(UiSelector::Key("rule-layout-0")).Find(UiSelector::Key("rule-row-more")).Tap();
+        check(model->actions == 2, "toolbar preview and rule detail actions remain reachable at 320pt");
+        model->busy = true; ui.PumpAndSettle();
+        check(!ui.Find(UiSelector::Key("subscription-rule-source")).One().enabled &&
+              ui.Find(UiSelector::Key("subscription-rule-view")).One().enabled,
+              "save busy only disables the source; view and existing rules remain browsable");
+        ui.Find(UiSelector::Key("rule-layout-list")).ScrollBy({0.0F, 1800.0F}); ui.PumpAndSettle();
+        const auto before = ui.Find(UiSelector::Key("rule-layout-list")).Find(UiSelector::Key("rule-layout-0"));
+        check(!before.Exists() || !before.One().in_viewport, "long subscription lists scroll with virtual rows");
+        ui.SetWindowMetrics({.viewport = {1600.0F, 600.0F}}); ui.PumpAndSettle();
+        ui.SetWindowMetrics({.viewport = {320.0F, 600.0F}}); ui.PumpAndSettle();
+        check(model->source.Get() == 2 && model->view.Get() == 2 &&
+              (!before.Exists() || !before.One().in_viewport),
+              "resize preserves source, view and actual virtual-list scroll position");
+    }
+}
+
+struct RuleSourceFixtureRow {
+    std::int64_t id;
+    std::string type;
+    bool selected = false;
+    bool operator==(const RuleSourceFixtureRow&) const = default;
+};
+void testRuleSourceEligibility() {
+    std::shared_ptr<clashflux::ui::ProfileListModel<RuleSourceFixtureRow>> owned;
+    huxerui::Application application{[] { return huxerui::View{huxerui::Row {}}; },
+        {.application_hooks = {[&owned](huxerui::ApplicationContext& context) {
+            owned = std::make_shared<clashflux::ui::ProfileListModel<RuleSourceFixtureRow>>();
+            context.Provide(owned);
+        }}}};
+    huxerui::testing::UiTest ui(application, {.viewport = {700.0F, 1000.0F}});
+    auto& model = *owned;
+    model.list = std::vector<RuleSourceFixtureRow>{{1, "pptp", true}, {2, "remote"}, {3, "local"}, {4, "remote"}};
+    // Worker classification includes YAML/JSON and excludes the OpenVPN file.
+    model.ruleSources = std::vector<std::int64_t>{1, 2, 3};
+    check(model.RuleSources().empty() && model.ResolveRuleSource(1) == 0,
+          "rules wait for classification instead of offering unclassified profiles");
+    model.ruleSourcesReady = true;
+    const auto eligible = model.RuleSources();
+    check(eligible.size() == 2 && eligible[0].id == 2 && eligible[1].id == 3 &&
+          !model.IsRuleSource(1) && !model.IsRuleSource(4),
+          "PPTP and OpenVPN are omitted while YAML and native JSON keep their stable IDs and order");
+    check(model.ResolveRuleSource(1) == 2 && model.ResolveRuleSource(4) == 2,
+          "unsupported selections fall back to an editable profile instead of creating placeholder entries");
+    model.list = std::vector<RuleSourceFixtureRow>{{1, "pptp", true}, {2, "remote"}, {3, "local", true}, {4, "remote"}};
+    check(model.ResolveRuleSource(0) == 3 && model.ResolveRuleSource(2) == 2,
+          "the eligible main profile is the default and an eligible explicit selection is retained");
+    model.list = std::vector<RuleSourceFixtureRow>{{1, "pptp", true}, {3, "local", true}, {4, "remote"}};
+    check(!model.IsRuleSource(2) && model.ResolveRuleSource(2) == 3, "a removed source cannot remain selectable in a stale classification");
+    model.list = std::vector<RuleSourceFixtureRow>{{1, "pptp", true}, {4, "remote"}};
+    check(model.RuleSources().empty() && model.ResolveRuleSource(3) == 0,
+          "an unsupported-only inventory has a genuine empty state and no fabricated selection");
 }
 
 using TestProfilesModel = clashflux::ui::ProfileListModel<std::string>;
@@ -3783,6 +4043,13 @@ int main() {
     testThemeSwitch();
     testProfileFileFilter();
     testProfileImportCompletion();
+    testScopedProfileRefresh();
+    testRuleSourceEligibility();
+    try { testSubscriptionRuleLayout(); }
+    catch (const std::exception& error) {
+        std::printf("FAIL: subscription rule layout: %s\n", error.what());
+        ++failures;
+    }
     testProfileListPublication();
     testLatestProfileSelection();
     {

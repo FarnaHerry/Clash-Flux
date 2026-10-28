@@ -1,5 +1,22 @@
 # L1 / L2 / L3 开发完成度复核
 
+2026-10-28，同一 `d43769c` 未提交工作区后续：订阅规则在所有视口采用相同布局，一行来源/查看模式/更多工具栏，规则首行显示类型、匹配内容和出口，次行显示状态与插入位置。来源按名称占宽并封顶 240pt，查看模式与操作预留空间；移除右侧固定状态列，英文模式标签缩短。单行文本在最终分配宽度内省略，保留完整提示与语义标签；仅在内容/样式或宽度变化时重新测量，不写逐帧 State、不改框架。JSON 编译预览在 Compact 进入独立二级页，使用共享只读文档填满剩余高度并提供复制，桌面非 Compact 保留弹窗。
+Windows 执行 `cmake --build build --target clash-flux test_page_transition`；Linux 执行 `cmake --build /tmp/clashflux-refresh-clang21-20261028 --target clash-flux test_page_transition --parallel 8`，主目标和 HuxerUI codegen 均通过。两端执行 `ctest --test-dir <build> --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`，均 2/2 通过（Windows 15.17s，Linux 6.25s）。新增生产布局回归覆盖中英文、深浅色、320/420/599/600/960/1600pt 和缩放返回、长来源名/匹配/出口省略、控件避让、来源与模式选择、操作点击、保存忙态及千行虚拟列表的真实滚动保留；共享只读文档增加 320pt 短窗/长窗与 960pt 往返时的剩余高度、文档身份和全文保留检查。
+Windows 在独立临时原生窗口挂载生产工具栏与规则内容，检查 960pt/320pt 的单行工具栏、长文本省略和操作位置；只使用测试数据，不接触安装版数据库或内核。完整应用的 JSON 二级导航与真机移动端尚未手工验收；没有将组件预览计作完整产品 GUI、VPN 或发布验收。两端版本检查输出 v0.3.72，`git diff --check` 通过；Linux 仍按下述方式仅在内存中规范化 `run.sh` 的 CRLF。未执行完整 required 门禁，未提交、推送或发布。
+
+2026-10-28，同一 `d43769c` 未提交工作区后续：订阅规则来源和卡片「编辑规则」共用应用级可编辑来源清单，沿既有工作线程的有界格式识别读取一次前缀，保留 Clash YAML / 原生 sing-box JSON，过滤 PPTP、OpenVPN 和没有可读来源文件的记录。选择失效时回到可编辑主来源或首项；全部不可编辑则仅显示空状态，不放无效选项、不展示不支持编辑的占位行，也不改全局规则的连接目标。
+Windows 执行 `cmake --build build --target clash-flux test_page_transition`，Linux 在下述 Clang 21 临时构建目录执行同名目标，主目标与 HuxerUI codegen 均通过；两端 `ctest --test-dir <build> --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'` 均为 2/2 通过。新增应用生命周期内的模型回归覆盖分类未就绪、PPTP/非可编辑文件过滤、JSON 保留、稳定 ID/顺序、默认主来源、保留有效选择、删除后的回落和仅剩不支持来源的空状态。版本检查仍为 v0.3.72，`git diff --check` 通过；未做桌面 GUI/真机 VPN 验收，未提交或发布。
+
+2026-10-28，基于 `d43769c` 的未提交工作区：手动刷新按订阅 ID 共享忙态和完成版本，只有该订阅的规则内容显示骨架；切到其它已缓存订阅直接显示其快照，全局规则、规则集和来源选择器独立加载。应用级任务覆盖切页、重复点击、异常重试及旧版本完成回调；规则快照按 ID 缓存，更新结束后等待匹配版本的新快照。
+订阅 HTTP 下载在独占暂存中等待，不持有运行计划锁；候选检查前重新核对来源 URL、文件、下载选项和原内容，保留最新选择/名称/排序。检查至文件替换、运行交接与落库仍持锁；来源已编辑/删除时拒绝迟到结果，不恢复旧行或覆盖新文件。
+Windows MSVC x64/Release 执行 `cmake --build build --target clash-flux test_page_transition test_persistence`，主目标与 HuxerUI codegen 通过；`./run.ps1 --version` 返回 0，输出 v0.3.72。
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources|persistence)$'` 为 3/3 通过；新增回归覆盖 A/B 独立骨架、切到 B 缓存、发起视图真实卸载、并发操作互不清忙、失败旧内容/重试和版本 ABA。
+Linux 在 Fedora 44/WSL 的独立 `/tmp/clashflux-refresh-clang21-20261028` 中，以临时解压的 Clang 21.1.8、系统 libc++ 22 和 CMake 4.4.2 构建；未改系统默认编译器、应用依赖 SHA 或框架源码。`cmake --build /tmp/clashflux-refresh-clang21-20261028 --target clash-flux test_page_transition test_persistence --parallel 8` 通过，同一 CTest 筛选为 3/3 通过。
+`python3 tests/test_profile_selection_runtime.py /tmp/clashflux-refresh-clang21-20261028/clash-flux` 通过：真实 Runtime、SQLite 和固定 sing-box 下覆盖单候选、候选失败保留、慢响应期间另一来源选择先完成、最新选择保留、文件编辑/明确删除后迟到下载拒绝，以及其它 ID/文件与停止态配置保留。
+Linux 使用显式 `CLASHFLUX_BIN` 验证 v0.3.72；当前 Windows checkout 的 `run.sh` 带 CRLF，直接执行报 `bash\r`，因此只在内存中规范化 LF 后执行同一脚本，未修改脚本。`git diff --check` 通过。
+工具链边界：本机 Clang 22.1.8 在未改动的 `pptp.cpp` 发生前端内部崩溃（退出 132，O0 诊断亦复现）；GCC 16.2.1 在 `home_page.cpp` 消费 `profile_rules.h` 时报告 DTO 重复声明，两次构建均未计为通过。Linux 持久化独立目标亦在 Clang 22 下通过；最终应用与竞争回归采用项目 CI 的 Clang 21 主版本。Windows CLI 隔离回归因当前会话已有安装版占用固定单实例互斥而在首次 `profile list` 超时，未关闭该安装版；该回归在 Linux 隔离数据目录完成。
+本轮未执行完整 required 门禁、Linux 实机 TUN/桌面 GUI、SCM/VPN 交接、Android/macOS/iOS 构建或签名发布验收；没有提交、推送或发布。行为约定见 [UI 开发约定](ui-development.md)。
+
 2026-10-26 `v0.3.70` Windows 发版候选实机验证：本地生成的安装包从 0.3.69 静默升级到 0.3.70，安装器返回 0，
 但升级后 `ClashFluxService` 被旧 MSI 删除。MSI 日志显示卸载中的 0.3.69 包即使设置了 `UPGRADINGPRODUCTCODE`、
 且 `ServiceCleanup` 组件 Action 为 Absent，仍执行 Stop/Delete ServiceControl。通过新安装的程序显式重装服务后恢复运行；
@@ -1188,3 +1205,22 @@ Lib-CodeEditor 固定 `984d2886b04b77cffa162a2934766f5712929704`。
   arm64 configure 已失败，现有 Linux 修复待新 tag CI 复核 Android/Linux/iOS。
 - 本机 Windows 安装验收仍未执行，按用户要求等待隔离测试环境；不得将构建或 CI 等同于
   Burn 升级、回滚、卸载验收。
+
+## 2026-10-28：v0.3.73 发布候选验证
+
+代码快照：应用 `d43769c` 加当前工作区；候选版本 `0.3.73`，Android `versionCode=151`；
+HuxerUI 固定 `be67da4a898856382bb8d4876a6c8ce71d889f5e`。
+
+- Linux Clang 21 Release 主目标与全量构建通过；`./run.sh --version` 输出
+  `Clash-Flux v0.3.73（sing-box 客户端）`；`clashflux-required` 22/22 通过，
+  覆盖订阅刷新、规则页分页、运行时健康检查、DNS/TLS 与持久化。
+- Windows/MSVC Release 主目标和全量测试构建成功；PTY 下 `./run.ps1 --version`
+  输出 `Clash-Flux v0.3.73（sing-box 客户端）`。`clashflux-required` 为 23/25；
+  `windows_service` 和 `windows_physical_dns_wfp` 需要管理员上下文，本机未提升，交由正式 CI 验证。
+- HuxerUI fork Windows 全量构建及 CTest 24/24 通过。macOS shared 原生 bundle 构建成功，
+  但原生 lifecycle CTest 为 10/12；frame failure 关闭后窗口释放断言失败，windowless runtime
+  retirement/reopen 超时。键盘派发关闭测试通过，诊断步骤随后超时；这两项仍未解决。
+- Android 对受影响 UI 单元和 HuxerUI 扩展源码的 NDK 29 arm64/API 24 语法检查通过；
+  本机未打 APK 或做手机实机验证。`git diff --check` 通过。
+- 根据用户要求，本机不运行 Burn 安装。跨版本旧版升级、失败回滚、静默卸载和维护页仍未实机验收；
+  本地构建、隔离清理回归及发布 CI 不替代该验收。

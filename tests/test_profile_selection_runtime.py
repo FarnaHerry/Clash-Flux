@@ -75,10 +75,16 @@ def main():
         for identity, content in sources.items():
             assert (profiles / f"selection-{identity}.yaml").read_bytes() == content
         latest = [b"# source-v2\nrules: ['MATCH,DIRECT']\n"]
+        hold_response = threading.Event()
+        request_started = threading.Event()
+        release_response = threading.Event()
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 body = latest[0]
+                if hold_response.is_set():
+                    request_started.set()
+                    assert release_response.wait(30), "slow subscription fixture timed out"
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
@@ -115,12 +121,72 @@ def main():
                 assert (profiles / filename).read_bytes() == latest[0]
                 assert db.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] == len(sources)
             assert config.read_bytes() == original_config
+            previous_source = latest[0]
+            latest[0] = b"proxies: [unterminated\n"
+            run("profile", "update", "2", expected=1)
+            assert (profiles / "selection-2.yaml").read_bytes() == previous_source
+            with closing(sqlite3.connect(database)) as db:
+                assert db.execute("SELECT id FROM profiles WHERE selected=1").fetchall() == [(2,)]
+                assert db.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] == len(sources)
+            # A slow download must leave the lifecycle available to read/check
+            # another source. Its late row save must preserve a newer selection.
+            hold_response.set()
+            latest[0] = b"# source-v4\nrules: ['MATCH,DIRECT']\n"
+            updating = subprocess.Popen([str(app), "profile", "update", "2"], env=env,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                assert request_started.wait(10), "refresh never reached the slow HTTP response"
+                selection = subprocess.run([str(app), "profile", "use", "1"], env=env,
+                                           capture_output=True, timeout=10)
+                assert selection.returncode == 0, selection.stderr.decode(errors="replace")
+                assert updating.poll() is None, "selection must finish before the download is released"
+            finally:
+                release_response.set()
+                output, errors = updating.communicate(timeout=60)
+            assert updating.returncode == 0, errors.decode(errors="replace")
+            with closing(sqlite3.connect(database)) as db:
+                assert db.execute("SELECT id FROM profiles WHERE selected=1").fetchall() == [(1,)]
+                assert db.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] == len(sources)
+                assert db.execute("SELECT file FROM profiles WHERE id=2").fetchone()[0] == "selection-2.yaml"
+            assert (profiles / "selection-2.yaml").read_bytes() == latest[0]
+            assert (profiles / "selection-1.yaml").read_bytes() == sources[1]
+            assert config.read_bytes() == original_config
+            for change in ("edit", "remove"):
+                request_started.clear()
+                release_response.clear()
+                updating = subprocess.Popen([str(app), "profile", "update", "2"], env=env,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                edited = b"# edited while fetching\nrules: ['MATCH,DIRECT']\n"
+                try:
+                    assert request_started.wait(10)
+                    if change == "edit":
+                        temporary_source = profiles / "explicit-edit.yaml"
+                        temporary_source.write_bytes(edited)
+                        temporary_source.replace(profiles / "selection-2.yaml")
+                    else:
+                        removed = subprocess.run([str(app), "profile", "remove", "2"], env=env,
+                                                 capture_output=True, timeout=10)
+                        assert removed.returncode == 0, removed.stderr.decode(errors="replace")
+                finally:
+                    release_response.set()
+                    output, errors = updating.communicate(timeout=60)
+                assert updating.returncode == 1, (change, output, errors)
+                with closing(sqlite3.connect(database)) as db:
+                    assert db.execute("SELECT id FROM profiles WHERE selected=1").fetchall() == [(1,)]
+                    expected_ids = [(1,), (2,), (3,)] if change == "edit" else [(1,), (3,)]
+                    assert db.execute("SELECT id FROM profiles ORDER BY id").fetchall() == expected_ids
+                if change == "edit":
+                    assert (profiles / "selection-2.yaml").read_bytes() == edited
+                assert (profiles / "selection-1.yaml").read_bytes() == sources[1]
+                assert (profiles / "selection-3.yaml").read_bytes() == sources[3]
+                assert config.read_bytes() == original_config
         finally:
+            release_response.set()
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
         assert not list(core.glob("prepared-run-*")), "candidate staging must retire after success/failure"
-        print("profile_selection_runtime: ok (one candidate; failures preserve data; refresh/select orders retain newest bytes)")
+        print("profile_selection_runtime: ok (one candidate; failures preserve data; slow refresh permits another selection)")
 
 
 if __name__ == "__main__":

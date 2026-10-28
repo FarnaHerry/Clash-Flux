@@ -319,21 +319,19 @@ public:
 
     // 重新拉取订阅（阻塞）。本地导入（无 url）直接报错。
     bool refresh(std::int64_t id) {
-        // Copy the row only after acquiring the same lock as activation. A
-        // snapshot captured before waiting could restore an obsolete selected
-        // flag or URL when the download later saves the refreshed row.
-        auto planLock = coreStore().lockPlanLifecycle();
-        lastError_.clear();
-        for (auto& p : list()) {
-            if (p.id != id) continue;
-            if (p.url.empty()) {
-                lastError_ = "本地导入的订阅不支持更新";
+        // download re-reads this row under the lifecycle lock before fetching
+        // and again before committing. Network I/O must not block other rules.
+        std::optional<db::Profile> profile;
+        {
+            auto planLock = coreStore().lockPlanLifecycle();
+            lastError_.clear();
+            profile = findById(id);
+            if (!profile) {
+                if (lastError_.empty()) lastError_ = "订阅不存在";
                 return false;
             }
-            return download(p);
         }
-        lastError_ = "订阅不存在";
-        return false;
+        return download(*profile);
     }
 
     // 本地文件导入（local）：复制内容到 profiles/<id>.yaml。
@@ -757,9 +755,24 @@ private:
     // 下载 p.url 到 profiles/<id>.yaml 并更新行（updated_at/error）。
     // 代理三态按订阅选项组装：内核代理 > 系统环境代理 > 强制直连。
     bool download(db::Profile& p) {
+        std::lock_guard downloadLock(downloadMutex_);
         auto planLock = coreStore().lockPlanLifecycle();
+        lastError_.clear();
+        const auto initial = findById(p.id);
+        if (!initial) {
+            if (lastError_.empty()) lastError_ = "订阅不存在";
+            return false;
+        }
+        p = *initial;
+        if (p.url.empty()) { lastError_ = "本地导入的订阅不支持更新"; return false; }
         const auto previousContent = yamlOf(p);
-        const auto previousProfile = p;
+        auto previousProfile = p;
+        const auto sameRequest = [&initial](const db::Profile& current) {
+            return current.url == initial->url && current.type == initial->type &&
+                current.file == initial->file && current.timeoutSecs == initial->timeoutSecs &&
+                current.allowInvalidCert == initial->allowInvalidCert &&
+                current.useCoreProxy == initial->useCoreProxy && current.useSystemProxy == initial->useSystemProxy;
+        };
         // Keep the referenced path stable: validation, runtime reapply and the
         // saved row must all refer to the same newly replaced source file.
         if (p.file.empty()) p.file = std::format("{}.yaml", p.id);
@@ -772,18 +785,38 @@ private:
         } else {
             opts.allowProxyEnv = p.useSystemProxy;
         }
+        // downloadToFile owns an exclusive temporary file. Keep the lifecycle
+        // free while waiting on the network; reacquire it in validation and
+        // retain it through the atomic file commit, runtime handoff and row save.
+        planLock.unlock();
         opts.validate = [&](const std::filesystem::path& file) {
             std::ifstream input(file, std::ios::binary);
             if (!input) return std::string{"无法读取候选订阅"};
             const std::string content(std::istreambuf_iterator<char>(input), {});
+            planLock.lock();
+            const auto current = findById(p.id);
+            if (!current || !sameRequest(*current) || yamlOf(*current) != previousContent)
+                return std::string{"订阅在下载期间已变化，请重新更新"};
+            previousProfile = *current;
+            p = *current; // Preserve changes such as selection, name and order.
+            if (p.file.empty()) p.file = std::format("{}.yaml", p.id);
             std::string error;
             return coreStore().validateSourceUpdate(p.id, content, error) ? std::string{} : error;
         };
-        const auto r = coreStore().api().downloadToFile(
-            p.url, cfg::profilesDir() / p.file, opts);
+        // Runtime maintenance may replace the controller API while we fetch.
+        // The independent downloader owns no controller endpoint or secret.
+        api::ClashApi downloader{"", ""};
+        const auto r = downloader.downloadToFile(initial->url, cfg::profilesDir() / p.file, opts);
         if (!r.ok) {
-            p.error = r.error;
-            try { coreStore().db().saveProfile(p); } catch (...) {}
+            if (!planLock.owns_lock()) planLock.lock();
+            const auto current = findById(p.id);
+            // A deleted/edited source must not be resurrected or overwritten
+            // by either a late download result or its failure bookkeeping.
+            if (current && sameRequest(*current) && yamlOf(*current) == previousContent) {
+                auto failed = *current;
+                failed.error = r.error;
+                try { coreStore().db().saveProfile(failed); } catch (...) {}
+            }
             lastError_ = std::format("下载失败：{}", r.error);
             return false;
         }
@@ -822,6 +855,7 @@ private:
         return true;
     }
 
+    std::mutex downloadMutex_;
     std::string lastError_;
 };
 

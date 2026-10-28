@@ -400,13 +400,16 @@ huxerui::Task<std::string> AndroidRefreshRemote(
 }
 
 // 更新入口只在这里做一次平台选择；卡片自身只持有 refresh(id) 这个统一动作。
-void RefreshProfileForPlatform(
-    std::int64_t id, const ProfileRefreshAction& http_refresh,
-    const ProfileRefreshAction& desktop_refresh) {
+huxerui::Task<std::string> RefreshProfileForPlatform(
+    std::shared_ptr<AppHttpClient> http, std::int64_t id) {
 #if defined(__ANDROID__)
-    http_refresh(id);
+    co_return co_await AndroidRefreshRemote(std::move(http), id);
 #else
-    desktop_refresh(id);
+    static_cast<void>(http);
+    co_return co_await RunOnTaskThread([id]() -> std::string {
+        auto& profiles = store::profilesStore();
+        return profiles.refresh(id) ? std::string{} : profiles.lastError();
+    });
 #endif
 }
 

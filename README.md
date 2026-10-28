@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.72 发布说明](docs/releases/v0.3.72.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.73 发布说明](docs/releases/v0.3.73.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -37,6 +37,7 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   失效旧引用保留原名。手机、原生连接与 JSON 使用默认出口，详见[编排设计](docs/desktop-subscription-orchestration.md)
 - 多重规则 / 连接 / 日志：按订阅查看、添加、禁用和替换规则，个人修改独立保存，更新后保留；
   [订阅个人规则](docs/subscription-personal-rules.md)直接编译成 sing-box JSON；可添加远程 JSON/SRS、导入本地规则集 JSON（桌面也支持 SRS），在个人或全局规则中引用；桌面可通过重启内核重新下载指定远程集合。`personal_rule_sets_runtime` 必跑回归覆盖导入、真实匹配、缓存与 TLS 拒绝。
+  订阅规则选择器只显示支持编辑规则的来源；工具栏适配中等宽度，手机上的编译 JSON 使用独立页面。
   使用全局规则把域名/IP/CIDR
   分配给不同连接；连接快照（可逐条/全部关闭）、内核与应用日志统一显示、搜索与导出，历史可恢复
 - PPTP 独立连接：保留系统拨号/特权服务路径（Windows 走系统 RAS，条目固定

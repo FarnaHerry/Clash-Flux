@@ -1,6 +1,7 @@
 #pragma once
 
 #include <huxerui/huxerui.h>
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <exception>
@@ -10,20 +11,24 @@
 #include <stop_token>
 #include <utility>
 #include <vector>
+#include "profile_refresh_model.h"
 
 namespace clashflux::ui {
 
 template<class Profile> struct ProfileListSnapshot {
     std::vector<Profile> profiles;
     std::vector<std::int64_t> clashSources;
+    std::vector<std::int64_t> ruleSources;
     bool ready = false;
 };
 
 // UI-thread state shared by action completions and the background reader.
-template<class Profile> struct ProfileListModel {
+template<class Profile> struct ProfileListModel : ProfileRefreshModel {
     huxerui::State<std::vector<Profile>> list{std::vector<Profile>{}};
     huxerui::State<bool> loaded{false};
     huxerui::State<std::vector<std::int64_t>> clashSources{std::vector<std::int64_t>{}};
+    huxerui::State<std::vector<std::int64_t>> ruleSources{std::vector<std::int64_t>{}};
+    huxerui::State<bool> ruleSourcesReady{false};
     huxerui::State<bool> selectionPending{false};
     huxerui::State<bool> reorderPending{false};
     huxerui::State<std::uint64_t> syncTick{0};
@@ -32,6 +37,36 @@ template<class Profile> struct ProfileListModel {
     std::optional<std::int64_t> selectionTarget;
     bool selectionRunning = false;
     std::function<huxerui::Task<void>()> queuedSelection;
+
+    bool IsRuleSource(std::int64_t id) const {
+        if (!ruleSourcesReady.Get()) return false;
+        const auto& eligible = ruleSources.Get();
+        if (std::ranges::find(eligible, id) == eligible.end()) return false;
+        const auto& profiles = list.Get();
+        const auto found = std::ranges::find(profiles, id, &Profile::id);
+        return found != profiles.end() && found->type != "pptp";
+    }
+    std::vector<Profile> RuleSources() const {
+        std::vector<Profile> sources;
+        if (!ruleSourcesReady.Get()) return sources;
+        const auto& eligible = ruleSources.Get();
+        for (const auto& profile : list.Get())
+            if (profile.type != "pptp" && std::ranges::find(eligible, profile.id) != eligible.end())
+                sources.push_back(profile);
+        return sources;
+    }
+    std::int64_t ResolveRuleSource(std::int64_t current) const {
+        if (!ruleSourcesReady.Get()) return 0;
+        const auto& eligible = ruleSources.Get();
+        std::int64_t first = 0, main = 0;
+        for (const auto& profile : list.Get()) {
+            if (profile.type == "pptp" || std::ranges::find(eligible, profile.id) == eligible.end()) continue;
+            if (profile.id == current) return current;
+            if (!first) first = profile.id;
+            if (profile.selected) main = profile.id;
+        }
+        return main ? main : first;
+    }
 
     void RequestSync() { syncTick = syncTick.Get() + 1; }
     void Publish(std::vector<Profile> next) {
@@ -102,6 +137,8 @@ void DriveProfileList(huxerui::TaskScope tasks, std::shared_ptr<Model> model,
                 if (!model->selectionPending.Get() && !model->reorderPending.Get() &&
                     model->syncTick.Get() == before && revision() == version) {
                     model->clashSources = std::move(next.clashSources);
+                    model->ruleSources = std::move(next.ruleSources);
+                    model->ruleSourcesReady = next.ready;
                     model->list = std::move(next.profiles);
                     if (next.ready) model->loaded = true;
                     // A rejected/deferred read is still owed to the UI. Never

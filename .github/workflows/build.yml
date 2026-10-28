@@ -81,7 +81,7 @@ env:
   # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
   # CI 必须自行 clone 并钉 commit，保证可复现）。框架补丁集中维护在
   # farna/main；main 保留官方基线。验证集成更新后同步本机 checkout 与此 pin。
-  HUXERUI_COMMIT: '3a6c18e4d5141b27f3671e33baa42b61550f83cd'
+  HUXERUI_COMMIT: 'be67da4a898856382bb8d4876a6c8ce71d889f5e'
   SINGBOX_COMMIT: '7054cac5124465ffdb145870d7c01885566711b1' # v1.14.3
 
 jobs:
@@ -137,7 +137,7 @@ jobs:
         run: |
           apt-get install -y --no-install-recommends \
             clang-21 libc++-21-dev g++ ninja-build pkg-config file binutils gzip \
-            python3 python3-pip openssl libssl-dev patchelf \
+            python3 python3-pip openssl libssl-dev \
             libgtk-4-dev libepoxy-dev libsoup-3.0-dev dpkg-dev rpm
           # Ubuntu 24.04 的 apt cmake/clang 版本不满足 import-std，固定 CMake
           # 并从 apt.llvm.org 安装 LLVM 21。
@@ -153,6 +153,32 @@ jobs:
               m['source-path'] = '/usr/lib/llvm-21/share/libc++/v1/' + m['source-path'].split('/')[-1]
               m['local-arguments']['system-include-directories'] = ['/usr/lib/llvm-21/share/libc++/v1']
           json.dump(d, open(p, 'w'), indent=1)"
+
+      - name: Install safe patchelf for runtime deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.arch }}" in
+            x86_64)
+              patchelf_arch=x86_64
+              patchelf_sha256=2abdc34fbe949c995a1baa4ec310896a085588a45a99cd0d726851bdfac2a4bb
+              ;;
+            arm64)
+              patchelf_arch=aarch64
+              patchelf_sha256=ba6850c1a6f4cbdb050e1cc22fa5239159ad31c43606846e49c408d335f594ff
+              ;;
+            *) exit 1 ;;
+          esac
+          patchelf_archive="${RUNNER_TEMP}/patchelf-0.19.2-${patchelf_arch}.tar.gz"
+          patchelf_root="${RUNNER_TEMP}/clashflux-patchelf"
+          curl --fail --location --retry 3 \
+            "https://github.com/NixOS/patchelf/releases/download/0.19.2/patchelf-0.19.2-${patchelf_arch}.tar.gz" \
+            --output "${patchelf_archive}"
+          printf '%s  %s\n' "${patchelf_sha256}" "${patchelf_archive}" | sha256sum --check --status
+          mkdir -p "${patchelf_root}"
+          tar -xzf "${patchelf_archive}" -C "${patchelf_root}"
+          printf '%s\n' "${patchelf_root}/bin" >> "${GITHUB_PATH}"
+          "${patchelf_root}/bin/patchelf" --version
 
       - name: Configure
         run: |

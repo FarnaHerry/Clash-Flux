@@ -4,7 +4,7 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `3a6c18e4d5141b27f3671e33baa42b61550f83cd`，各平台 CI 共用
+Clash-Flux 当前固定 `be67da4a898856382bb8d4876a6c8ce71d889f5e`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
@@ -13,6 +13,23 @@ Clash-Flux 当前固定 `3a6c18e4d5141b27f3671e33baa42b61550f83cd`，各平台 C
 最新 fork 提交修复框架 warning，并更新 Windows renderer 头文件和多窗口测试。
 Windows MSVC 主目标、UI codegen 及 10 项定向回归通过。具体构建 warning 和平台未覆盖范围见
 [L1 / L2 / L3 验收记录](l1-l2-l3-status.md)。
+
+2026-10-28 更新到 `5873eeb`：`farna/main` 合入上游应用级多窗口重构并增加 Linux runtime 部署安全检查。
+这是破坏性 API 更新：窗口创建改为 `ApplicationHandle::OpenWindow(content, options)`，每个窗口必须提供自己的
+`ViewFactory`；旧 `Runtime::OpenWindow(WindowOptions)`、`WindowOptions::key` 和 `WindowIdentity` 已移除。
+Clash-Flux 的托盘唤起与无窗启动路径都显式复用 `AppRoot`，并继续由应用级服务共享数据模型。
+窗口关闭现在有明确的 last-window 退出策略；应用关闭确认/托盘隐藏继续由应用自己的 close handler 控制。
+Linux 包安装时框架要求 patchelf ≥0.19.0，工作流在配置和 CPack 前下载官方 0.19.2 并按架构核对 SHA-256。
+`HUXERUI_COMMIT`、本机独立 checkout 与 Android Java/native 构建统一固定到上述提交。
+
+2026-10-28 更新到 `be67da4`：修复 SDK 的 Win32 `CreateWindow` 宏与 Runtime 工厂方法冲突，
+将工厂重命名为 `CreateApplicationWindow` 并同步平台实现、测试和文档；同时修复 macOS 合并回归，
+让窗口关闭命令走 `UiWindow::CloseWindow` / Runtime 生命周期，移除残留的 `QueueClose` 调用。
+Windows 全量框架构建与 24 项 CTest 通过；macOS 编译和原生生命周期由 fork CI 验证。
+macOS 原生 bundle 编译成功，但生命周期 CTest 为 10/12：
+`HuxerUIMacOSNativeWindowFrameFailuresPropagateFromTheSharedLoop` 在关闭后的窗口释放断言失败，
+`HuxerUIMacOSNativeRetirementKeepsWindowlessRuntimeAliveAndCanReopen` 超时。键盘派发关闭测试通过；
+CI 诊断器仍尝试运行该键盘测试并最终超时，两个失败尚未定位或修复。
 
 ## 补丁归属
 
@@ -54,7 +71,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 3a6c18e4d5141b27f3671e33baa42b61550f83cd
+git -C third_party/huxerui checkout be67da4a898856382bb8d4876a6c8ce71d889f5e
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`

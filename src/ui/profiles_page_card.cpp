@@ -172,6 +172,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     const std::int64_t id = profile.id;
     const bool nativeVpn = isNativeVpnType(profile.type);
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
+    const bool editableRules = profilesModel->IsRuleSource(id);
     const bool selected = profile.selected;
     // 表面/文字色与选中态都来自统一原语 SelectableTileColors（形状以代理页节点卡
     // 为标准，见 ui.h）。次级文字选中时是同色降透明度；错误信息保持 error
@@ -184,7 +185,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     // 刷新忙态与实际任务同生命周期：按钮/菜单触发时置位，任务线程回到 UI
     // 线程后清除；忙态中图标换成 ProgressCircle 并忽略重复触发，不再用
     // 与真实时长无关的「点击转一圈」装饰动画。
-    auto refreshBusy = huxerui::UseState(false);
+    const bool refreshBusy = profilesModel->Refreshing(id);
 
     const auto applicationTasks = huxerui::UseApplicationTaskScope();
     auto action = [applicationTasks, toast, reload](std::function<std::string()> job) {
@@ -234,59 +235,25 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         });
     };
 
-    // 平台栈刷新路径（Android）：HttpClient 不许进阻塞线程池，走协程抓取。
-    auto httpRefresh = [tasks, toast, reload, refreshBusy,
-                        http](std::int64_t pid) {
-        tasks.Launch([toast, reload, refreshBusy, http, pid]() -> huxerui::Task<void> {
-            const std::string err =
-                co_await AndroidRefreshRemote(http, pid);
-            if (!err.empty()) {
-                toast.Show(err);
-            } else {
-                const std::string summary = co_await RunOnTaskThread(
-                    [pid] { return ProfileFidelitySummary(pid); });
-                if (!summary.empty()) {
-                    toast.Show(LocalizedFormat("订阅已更新 · {}", summary),
-                               huxerui::ToastOptions{6.0});
-                }
-            }
-            refreshBusy = false;
-            reload();
-        });
-    };
-    // 刷新成功后补一条保真度提示：订阅内容变了，用户要知道这次「少吃了什么」。
-    const ProfileRefreshAction desktopRefresh = [tasks, toast, reload, refreshBusy](
-                                                    std::int64_t pid) {
-        tasks.Launch([toast, reload, refreshBusy, pid]() -> huxerui::Task<void> {
-            const std::string err =
-                co_await RunOnTaskThread([pid]() -> std::string {
-                    auto& ps = store::profilesStore();
-                    if (!ps.refresh(pid)) return ps.lastError();
-                    return {};
-                });
-            if (!err.empty()) {
-                toast.Show(err);
-            } else {
-                const std::string summary = co_await RunOnTaskThread(
-                    [pid] { return ProfileFidelitySummary(pid); });
-                if (!summary.empty()) {
-                    toast.Show(LocalizedFormat("订阅已更新 · {}", summary),
-                               huxerui::ToastOptions{6.0});
-                }
-            }
-            refreshBusy = false;
-            reload();
-        });
-    };
-    const ProfileRefreshAction refresh = [httpRefresh, desktopRefresh](
-                                             std::int64_t pid) {
-        profile_detail::RefreshProfileForPlatform(pid, httpRefresh, desktopRefresh);
-    };
-    // 统一刷新入口：忙态中忽略重复触发（按钮与菜单共用同一行为）。
-    const auto startRefresh = [refresh, refreshBusy](std::int64_t pid) {
-        if (refreshBusy.Get()) return;
-        refreshBusy = true;
-        refresh(pid);
+    // Both card/menu and the rules panel observe one application-owned ID.
+    const auto startRefresh = [applicationTasks, profilesModel, http, toast, reload](std::int64_t pid) {
+        using Result = std::pair<std::string, std::string>;
+        LaunchProfileRefresh<Result>(applicationTasks, profilesModel, pid,
+            [http, pid]() -> huxerui::Task<Result> {
+                auto error = co_await profile_detail::RefreshProfileForPlatform(http, pid);
+                std::string summary;
+                if (error.empty()) summary = co_await RunOnTaskThread([pid] { return ProfileFidelitySummary(pid); });
+                co_return Result{std::move(error), std::move(summary)};
+            }, [toast, reload](std::optional<Result> result, std::exception_ptr exception) {
+                reload();
+                if (exception) {
+                    try { std::rethrow_exception(exception); }
+                    catch (const std::exception& error) { toast.Show(error.what()); }
+                    catch (...) { toast.Show(Localized("订阅更新发生未知异常")); }
+                } else if (!result->first.empty()) toast.Show(result->first);
+                else if (!result->second.empty())
+                    toast.Show(LocalizedFormat("订阅已更新 · {}", result->second), huxerui::ToastOptions{6.0});
+            });
     };
 
     const auto themedButtonStyle = huxerui::UseEnvironment<huxerui::ButtonStyle>();
@@ -346,7 +313,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                    openEditFile, openQr, clipboard, toast, id, navigation, desktopNavigation,
                                    homepage = profile.homepage, url = profile.url,
                                    profileType = profile.type,
-                                   selected, nativeVpn,
+                                   selected, nativeVpn, editableRules,
                                    confirmDelete] {
         std::vector<ActionMenuEntry> entries;
         if (!selected && !nativeVpn) {
@@ -380,7 +347,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         entries.push_back(ActionMenuItem(app::images::edit, Localized("编辑信息"), [openEditInfo, id] {
             openEditInfo(id);
         }));
-        if (!nativeVpn) {
+        if (editableRules) {
             entries.push_back(ActionMenuItem(app::images::route, Localized("编辑规则"), [openEditRules, id] {
                 openEditRules(id);
             }));
@@ -409,7 +376,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     huxerui::View refreshButton = huxerui::Row{};
     if (!nativeVpn) {
         huxerui::View refreshGlyph;
-        if (refreshBusy.Get()) {
+        if (refreshBusy) {
             refreshGlyph = huxerui::View{huxerui::ProgressCircle()}.With(
                 huxerui::Frame{.width = 20.0F, .height = 20.0F});
         } else {

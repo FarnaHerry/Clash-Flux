@@ -144,10 +144,8 @@ huxerui::Task<std::int64_t> AndroidImportRemote(
 huxerui::Task<std::string> AndroidRefreshRemote(
     std::shared_ptr<AppHttpClient> http, std::int64_t id);
 
-using ProfileRefreshAction = std::function<void(std::int64_t)>;
-void RefreshProfileForPlatform(std::int64_t id,
-                               const ProfileRefreshAction& http_refresh,
-                               const ProfileRefreshAction& desktop_refresh);
+huxerui::Task<std::string> RefreshProfileForPlatform(
+    std::shared_ptr<AppHttpClient> http, std::int64_t id);
 huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
     std::shared_ptr<AppHttpClient> http, ProfileImportRequest request);
 
@@ -164,7 +162,6 @@ using profile_detail::parseNumber;
 using profile_detail::parseRouteField;
 using profile_detail::profileTypeLabel;
 using profile_detail::profileTypeTabLabel;
-using profile_detail::ProfileRefreshAction;
 using profile_detail::QrPainter;
 using profile_detail::joinRoutes;
 using profile_detail::makePptpConfig;
