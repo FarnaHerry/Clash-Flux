@@ -29,6 +29,18 @@
 
 ## 操作控件
 
+- 浅色中性表面采用微冷白：外框/标题/侧栏 `#FAFAFB`，内容区 `#F1F2F4`，卡片 `#FEFEFF`，文字与轮廓使用配套冷中性色，统一在 `FluxLightColors` 定义；深色及用户强调色沿用原配置。
+- 桌面公共标题栏的返回按钮左侧留白统一为 `kDesktopPageLeadingInset=8pt`，无返回按钮的标题继续使用正文 24pt 缩进。关于入口、检查更新、仓库和 Release 行不显示右侧箭头。
+- 设置及关于滚动位置由页面保留的 `PageScrollOffset` 记录，`RememberPageScroll` 仅在实际滚动活动中更新普通内存，不逐帧写可观察 State；跨响应式层级重建时用保存偏移初始化新控制器，几何收敛不覆盖原位置。更新检查的 busy/result 通过 `UseState` 保留，不能在 composable 中直接构造临时 State。
+- 首页翻面 `SharedBounds` 标识必须带 `HomeCardSpec.id`；局部共享动画作用域中的标识仍会被 NavigationStack 全页捕获，不可让多张卡复用同一共享标识。二级页切换首页需覆盖真实多卡标记的回归，避免重复键异常。
+
+- 设置及关于页的上下留白放在 `ScrollablePageContent` 内（顶部 16pt、底部 24pt），scaffold 开启 `scrollToContentEdges`，滚动视口直达固定标题下沿和内容底部；左右缩进不变，Compact 一级页继续保留胶囊避让。不得在滚动视口外增加上下裁切带，也不使用空白文本行撑开间距。
+- 设置页末尾只保留图标与「关于」入口，使用统一 NavigationStack 二级页。关于内容宽度上限 640pt，显示正式主题 Logo、名称、实际版本、简介、更新入口、项目/框架/所用 fork/内核仓库和免责声明；GitHub 仓库及 Release 使用 GitHub 标记。桌面非 Compact 复用 PageScaffold 的 WindowTitleBar，与一级页的背景、分隔线、拖动和窗口控件一致；窄屏沿用公共二级页标题。更新使用 GitHub latest stable Release，页面任务域取消、单飞、10 秒超时及 2MiB 响应限制；请求期间仅刷新图标保留旋转，完成或失败立即停止，reduced motion 不旋转；失败可重试，稳定版本按数字比较，仅打开固定项目下经校验的 Release tag 页面，不自动安装。
+
+- 设置页所有分组标题位于卡片外，与卡片内第一列图标的左边缘对齐。`SettingsSectionCard` 统一外部标题、标题间距和零内边距卡片，内容通过 `SettingsRowInsets` 下发水平留白、10pt 行内垂直留白与 48pt 最小行高；首行贴顶、末行贴底，无组级上下空白带，由整组卡片裁切四角。单项组四角同样裁切，圆角外点击不命中。主题、语言、入站端口、运行诊断及「更多」整行入口承接全宽点击和 Indication；开关、单选、下拉框、复制及维护按钮保留各自控件的操作语义。共享 SettingRow/SettingSwitchRow 在表单中的默认 Insets 为零，不改变订阅表单几何。
+- Toast 运动统一由 `theme_colors.h` 的 `ResolveFluxToastMotion` 与主题层接入：底部入场，退场下移 8pt、缩到 98%、200ms EaseIn 淡出；减少动态效果关闭位移与缩放。现有 HUI 的 PresentationMotion 共用入场/退场隐藏端点；按用户要求不改 fork，本轮不实现“下方进入、上方退出”。窗口级订阅错误/更新失败提示也在主题容器内取得 Toast 句柄，避免漏掉全局运动与主题。自动到期和主动 Dismiss 都保留退场绘制至完成。
+- MD3 反馈颜色在强调色写入后调用 `ApplyFluxInteractionTheme` 重建；`theme_colors.h` 的 `ResolveFluxIndication` 和 `kInteraction*Opacity` 统一拥有颜色与透明度（hover 8%，focus/press/ripple 12%）。普通反馈取 primary，实心主按钮/选中分段使用 on_primary；图标按钮、Chip、Tabs 的拥有型 Indication 经 `FluxInteractionStyles` 统一替换，保留 Material 几何。单选、复选、开关的选中颜色继续由 Material 从当前主题 tokens 生成。首页规则/全局/直连使用 `HomeModeChoices` 的框架 RadioButton，与语言单选同一交互；整行可点击，反馈集中在 32pt 圆形状态层，控件本体 18pt，不再手绘整行 hover/press。
+
 - 桌面非 Compact 的顶部搜索胶囊聚焦时，高亮描边以 250ms 从左向右展开，上下边同步显现。
   `WithSearchFocusOutline` 只推进保留绘制的裁剪，不逐帧重组或改变布局；完成后停止请求帧，
   失焦立即恢复普通描边。后台及 reduced motion 直接定位最终状态，手机与 Compact 保留原行为。
@@ -58,11 +70,10 @@
   面板四边在主题原有内边距上增加 `spacing.extra_small`（默认 4pt），项间增加其一半（默认 2pt）；
   清空菜单项使用项目统一的 `theme.colors.error` 危险文字色。
 
-- 语言使用下拉菜单，具体语言显示固定原名（简体中文、English），不随当前界面语言翻译；
-  自动选项跟随界面语言。主题使用自动、深色、浅色三个图标选项，并保留无障碍标签。
+- 语言入口使用共享 `ResponsiveLanguageSetting`：Compact 通过 `LanguageRoutePage` 进入独立选择页，其它宽度使用弹窗，不按桌面/手机区分；两种形式共用 `LanguageChoices`。页面返回走 NavigationStack Pop；桌面胶囊和渐隐层属于 `CompactRootPageSurface` 的导航首页，二级页直接覆盖，Pop 从开始即露出同一已挂载胶囊，不由语言/主题/报告/规则编辑页维护显隐 State。切换一级页由 `UsePrimaryPageNavigation` 清理逻辑二级路径。打开后调整窗口保留页面身份。具体语言显示固定原名（简体中文、English），不随当前界面语言翻译；自动选项跟随界面语言。主题使用自动、深色、浅色三个图标选项，并保留无障碍标签。
 - 桌面“启用托盘”统一控制关闭按钮：启用且系统托盘可用时隐藏到托盘，否则询问是否退出；
   确认框只有关闭与取消。旧 `tray.close_behavior` 设置不再读取，不删除用户持久化数据。
-  最小化使用系统原生行为，Windows 保留任务栏入口；轻量托盘只在关闭隐藏时退役窗口，不拦截最小化。
+  最小化使用系统原生行为，Windows 保留任务栏入口，不拦截最小化。普通托盘模式隐藏并保留窗口，轻量模式让原生关闭流程销毁窗口/UI，唤出时 OpenWindow 重建；应用不再调用 fork 的 Retire。桌面固定 quit_on_last_window_closed=false，后台协程使用 UseApplicationTaskScope，保留同一 Runtime、托盘与应用模型；显式退出仍完成收尾后 Quit。此 AppOptions 是初始化配置，当前公共 API 没有动态 setter；轻量开关仅动态选择关闭策略。
 
 - 桌面 Medium/Expanded 使用平面布局和分层底色，左侧 Logo 与导航组成完整一栏，右侧为标题与内容一栏；竖线贯穿两栏，
   横线只分隔右侧标题栏与内容。页内区块、订阅和代理条目恢复卡片底色、圆角与
@@ -227,7 +238,7 @@ Button("操作").With(menu.Anchor()).OnClick([menu] {
 
 桌面窗口最小尺寸为 320 × 480 逻辑像素（`src/app.cpp` 的 `minimum_size`），默认启动尺寸仍为 1080 × 720。允许缩到手机竖屏尺寸并进入 Compact 视口；平台能力仍由平台判定，不能通过窗口宽度改变订阅编排权限。
 
-桌面 Compact（宽度小于 600）由 `responsive_shell.h` 切换为四项底部导航与页内标题；独立 40pt 窗口标题栏保留拖动和系统窗口控件。规则/连接/日志通过设置「更多」进入，返回设置时恢复底部导航。桌面窄窗打开新建订阅、编辑信息或编辑文件页时隐藏底部导航及渐隐层，返回或保存成功后恢复；显示状态由当前实际显示的订阅表单统一派生，窗口跨断点或切换一级页时同步更新，不占用 NavigationStack route 的 secondaryOpen/secondaryOwner；内容容器 Key 与树路径保持稳定，越过断点不重挂载页面。桌面订阅编排、系统代理等能力不因窗口缩窄改变。
+桌面 Compact（宽度小于 600）由 `responsive_shell.h` 切换为四项底部导航与页内标题；独立 40pt 窗口标题栏保留拖动和系统窗口控件。规则/连接/日志通过设置「更多」进入，返回设置时恢复底部导航。桌面窄窗打开新建订阅、编辑信息或编辑文件页时隐藏底部导航及渐隐层，返回或保存成功后恢复；显示状态由当前实际显示的订阅表单统一派生，窗口跨断点或切换一级页时同步更新，与 NavigationStack 的 push/pop 路径独立；内容容器 Key 与树路径保持稳定，越过断点不重挂载页面。桌面订阅编排、系统代理等能力不因窗口缩窄改变。
 
 订阅页在 Compact（手机与桌面窄窗）将「新建订阅」加号放在 `PillSearchField` 胶囊内部最右侧；有搜索内容时，清空按钮位于加号左侧。搜索框的外层 Scope 显式声明 Grow，Compact 搜索标题行不放 Spacer，避免两者平分剩余宽度；搜索表面在 Compact 下占满标题行可用宽度，保留骨架统一的两侧留白。仅桌面非 Compact 的 PillSearchField 通过 PageSearchFieldLayout 共用 320pt 宽度上限，外层高度固定 40pt，胶囊高度 34pt、上下各留 3pt；在非 Grow 内层限制宽度，外层 Grow 槽位预留标题与动作后随空间收缩，搜索条在槽位内居中，两侧空白留作窗口拖动。桌面宽屏搜索框聚焦时使用 Color::Transparent() 透出所在区域的真实背景，描边改用 primary；失焦后恢复 surface_container_highest 和 outline，不改变控件尺寸。该桌面规则同时覆盖一级页和二级页；移动平台（含宽视口）和桌面 Compact 直接返回原搜索控件，不添加居中容器，移动端保留 48pt 高度。PPTP 卡片移除批量勾选与页顶批量操作，卡片底部保留一个图标按钮：打开使用现有 play，关闭使用 pause，加载中使用 ProgressCircle；保留对应 Tooltip 和无障碍标签。连接或断开期间禁用，失败后允许重试，状态读取应用级 VpnModel，动作使用应用任务域。OpenVPN 统一作为普通来源，移除旧独立连接的勾选、批量动作和专用编辑器；Medium/Expanded 的加号继续位于窗口标题栏。入口复用同一个新建操作，不改变平台订阅能力或导入流程。新建订阅与各添加方式的配置表单复用二级页面骨架，紧凑页顶行保留返回与居中标题，创建/保存动作固定在页面底部，使用全宽圆角按钮和现有保存图标，高度由 `kCompactPrimaryActionHeight` 统一控制；按钮忙碌时禁用并提供忙碌语义。桌面窄屏新建页隐藏底部导航，创建按钮落在页面底部；移动端保留按添加方式进入的页面流程，底部按钮避让系统导航区。返回键与标题栏返回使用同一动作。`test_page_transition` 的生产标题布局回归检查 320/420/600/960/1600pt 搜索表面的实际宽度、操作按钮避让与宽窄往返，以及普通/加载状态的标题中心；另检查移动端 48pt 高度、下方内容区域、输入/清空/添加及宽窄往返。
 
@@ -313,7 +324,7 @@ Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上�
 深浅模式都遵循「外框较亮 → 内容区较暗 → 卡片再次提亮」；Compact、宽屏和二级页共用此规则，
 不在页面分别硬编码颜色，不新增外层卡片或阴影。
 
-浅色层级：外框 `#FAFBFC`、内容 `#EFF1F4`、普通卡片 `#FDFDFD`、未选中可选卡片 `#FAFBFC`。深色层级：外框 `#1A1B1C`、内容 `#141516`、普通卡片 `#1E1F20`、未选中可选卡片 `#242526`。选中卡片保留品牌色。
+浅色层级：外框 `#FAFAFB`、内容 `#F1F2F4`、普通卡片 `#FEFEFF`、未选中可选卡片 `#FAFAFB`。深色层级：外框 `#1A1B1C`、内容 `#141516`、普通卡片 `#1E1F20`、未选中可选卡片 `#242526`。选中卡片保留品牌色。
 
 输入框（TextField）经窗口根部的 `WithUnifiedFieldStyle`（`app.cpp`）全局对齐下拉
 触发框：圆角与高度 `theme.shapes.small` + 48pt、文字 `body_medium`、垂直内边距置零
@@ -400,7 +411,7 @@ HuxerUI 的 `Image.Tint` 仅支持矢量图，PNG 调用会在启动时抛出异
 
 日志页不再按应用/内核分区，两类历史与推送增量合并为一个按 Unix 秒排序的列表，同秒按 UI 接收顺序排列（不声称跨来源精确事件顺序），仅保留最新 800 行。stdout/stderr 使用接收时间排序并保留原文。搜索、级别筛选、剪贴板与文件导出共用列表，文件默认名为 `clash-flux.log`；清空统一缓存及 `core/logs.log` 文件。两种写入口共用同一日志存储，直接启用新文件，不迁移或读取旧 `app.log` / `kernel-ui.log`；内核进程自己的 stdout/stderr 文件仍供生命周期诊断使用。页面直接使用单个 VirtualList，保留 Compact 滚动尾部避让。
 
-配置保真度使用独立二级页面 `fidelity_page.cpp`，从每个配置卡片的右键菜单进入，Compact/手机的卡片「更多」菜单共用同一入口，设置页不再提供入口。菜单传入稳定 profile ID，页面任务在线程池只读该文件并独立编译报告，不启用配置、不下载、不发布运行/预览映射。标题显示配置名称，读取/编译错误明确显示并保留部分保真度记录；PPTP 明确提示暂不提供此报告，OpenVPN 普通来源使用同一编译器报告。内容使用 VirtualList 展示完整明细，空记录不声称全部能力保真。桌面宽窗使用自定义标题栏与返回按钮，Compact/手机覆盖底部导航，返回直接父级配置列表；桌面二级导航记录所属一级页，切换侧栏时弹出报告。
+配置保真度使用独立二级页面 `fidelity_page.cpp`，从每个配置卡片的右键菜单进入，Compact/手机的卡片「更多」菜单共用同一入口，设置页不再提供入口。菜单传入稳定 profile ID，页面任务在线程池只读该文件并独立编译报告，不启用配置、不下载、不发布运行/预览映射。标题显示配置名称，读取/编译错误明确显示并保留部分保真度记录；PPTP 明确提示暂不提供此报告，OpenVPN 普通来源使用同一编译器报告。内容使用 VirtualList 展示完整明细，空记录不声称全部能力保真。桌面宽窗使用自定义标题栏与返回按钮，Compact/手机覆盖底部导航，返回直接父级配置列表；桌面切换一级页时由导航栈统一清理二级路径。
 
 新建订阅的桌面弹窗与桌面窄屏页面共用 `ProfileCreatePage`；窄屏页隐藏底部导航，表单滚动区下方固定全宽创建按钮并使用保存图标。移动端按添加方式继续进入
 `ProfileCreateMethodPage`，创建按钮同样固定在二级页底部；保留移动端的方法选择流程。两者均通过普通来源入口导入 JSON/YAML/.ovpn。

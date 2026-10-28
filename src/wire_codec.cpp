@@ -30,6 +30,10 @@ template <class T> Result<std::string> encode(const T& value) {
 }
 
 struct VersionInput { std::optional<std::string> version; };
+struct ReleaseInput {
+    std::optional<std::string> tag_name;
+    std::optional<bool> draft, prerelease;
+};
 struct TrafficInput { std::optional<std::int64_t> up, down; };
 struct TotalsInput { std::optional<std::int64_t> uploadTotal, downloadTotal; };
 
@@ -142,6 +146,16 @@ Result<std::string> DecodeVersion(std::string_view text) {
     if (!input) return {{}, std::move(input.error)};
     if (!input.value.version || input.value.version->empty()) return {{}, "missing version"};
     return {std::move(*input.value.version), {}};
+}
+Result<Release> DecodeStableRelease(std::string_view text) {
+    auto input = codec_detail::decode<codec_detail::ReleaseInput>(text);
+    if (!input) return {{}, std::move(input.error)};
+    const auto& release = input.value;
+    if (!release.tag_name || release.tag_name->empty() ||
+        !release.draft.has_value() || !release.prerelease.has_value() ||
+        *release.draft || *release.prerelease)
+        return {{}, "missing or non-stable release"};
+    return {{std::move(*input.value.tag_name)}, {}};
 }
 Result<Traffic> DecodeTraffic(std::string_view text) {
     auto input = codec_detail::decode<codec_detail::TrafficInput>(text);

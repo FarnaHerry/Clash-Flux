@@ -5,7 +5,50 @@
 namespace clashflux::ui {
 
 inline constexpr float kDesktopPageHorizontalInset = 24.0F;
+inline constexpr float kDesktopPageLeadingInset = 8.0F;
 inline constexpr float kPageHeaderHeight = 48.0F;
+// These belong to the scroll content, so they disappear at the viewport edges
+// while scrolling and leave breathing room only at the beginning/end.
+inline constexpr float kScrollablePageTopInset = 16.0F;
+inline constexpr float kScrollablePageBottomInset = 24.0F;
+
+struct PageScrollOffset {
+    float value = 0.0F;
+};
+
+// A scaffold changes hierarchy across desktop/compact layouts. Record real
+// scroll activity without observable writes, then seed a newly mounted scroll
+// container. A controller alone does not restore its offset after reattachment.
+struct RememberPageScroll {
+    class Extension;
+    std::shared_ptr<PageScrollOffset> offset;
+    bool operator==(const RememberPageScroll&) const = default;
+};
+class RememberPageScroll::Extension final : public huxerui::NodeExtension {
+public:
+    Extension(huxerui::ViewNode&, const RememberPageScroll& value) : offset_(value.offset) {}
+    void Update(huxerui::ViewNode&, const RememberPageScroll& value) { offset_ = value.offset; }
+    void OnScrollActivity(huxerui::ViewNode&, const huxerui::ScrollActivity& activity) override {
+        if (activity.phase != huxerui::ScrollPhase::Cancel &&
+            activity.source != huxerui::ScrollSource::Programmatic)
+            offset_->value = activity.metrics.offset;
+    }
+private:
+    std::shared_ptr<PageScrollOffset> offset_;
+};
+
+inline huxerui::View ScrollablePageContent(huxerui::View content,
+    std::shared_ptr<PageScrollOffset> offset) {
+    return huxerui::Scope([content, offset] {
+        const auto controller = huxerui::UseScrollController(offset->value);
+        return huxerui::ScrollView(huxerui::Column{content}.With(
+            huxerui::Padding(huxerui::EdgeInsets{
+                .top = kScrollablePageTopInset, .bottom = kScrollablePageBottomInset}),
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+            .Controller(controller)
+            .With(RememberPageScroll{offset}, huxerui::Grow(1.0F));
+    }).With(huxerui::Grow(1.0F));
+}
 
 #if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
 inline constexpr bool kPageTitlesInWindow = false;

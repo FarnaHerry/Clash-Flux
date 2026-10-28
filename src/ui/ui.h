@@ -361,11 +361,10 @@ huxerui::View AndroidFidelityPage(std::int64_t profileId);
 huxerui::View AndroidConnectionDetailPage(ConnectionRow initial);
 #endif
 huxerui::View LanguagePage(std::function<void()> onBack);
+huxerui::View LanguageRoutePage();
 huxerui::View ThemePage(huxerui::State<int> themeMode, std::function<void()> onBack,
                         bool windowTitle = false);
 struct DesktopSettingsNavigationModel {
-    huxerui::State<bool> secondaryOpen{false};
-    huxerui::State<std::optional<std::size_t>> secondaryOwner{std::nullopt};
     // IndexedPages forms have their own lifetime, independent of pushed routes.
     huxerui::State<bool> compactProfileFormOpen{false};
 };
@@ -472,13 +471,17 @@ huxerui::View PageScaffold(huxerui::StringVariant title, huxerui::View actions,
                            huxerui::View leading = {},
                            huxerui::View titleSearchField = {},
                            bool showInlineHeader = true,
-                           huxerui::View inlineHeader = {});
+                           huxerui::View inlineHeader = {},
+                           bool scrollToContentEdges = false);
+huxerui::View AboutRoutePage();
+huxerui::View AboutPage(std::function<void()> onBack);
 huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     huxerui::View actions, huxerui::View content,
                                     std::function<void()> onBack,
                                     bool hideBack = false,
                                     bool fullWidthSections = false,
-                                    bool centerTitle = false);
+                                    bool centerTitle = false,
+                                    bool scrollToContentEdges = false);
 huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
                               huxerui::StringVariant placeholder,
                               huxerui::View trailingAction = {});
@@ -486,7 +489,9 @@ huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
 // 卡片容器（二级岛）：raised 表面 + nested 圆角 + 内边距。outlined=false 去掉
 // 描边，仅靠表面层级区分卡片（移动端设置页等无边框场景）。
 // 描边宽度统一由 theme_colors.h 的卡片主题常量控制，页面不单独指定。
-huxerui::View Card(huxerui::View content, bool outlined = true);
+// contentPadding 可显式设为 0，让整行反馈铺满表面，留白交给行内内容。
+huxerui::View Card(huxerui::View content, bool outlined = true,
+                   std::optional<float> contentPadding = std::nullopt);
 
 // 密集卡片：圆角阶梯的 dense 档（IslandTheme::dense_radius 4pt）+ 减半
 // 内边距，用于日志行等高密度内容——嵌套圆角 14pt 在密集列表里过圆。

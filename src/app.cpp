@@ -30,6 +30,9 @@ const huxerui::Application application{
         },
 #if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
         .create_initial_window = false,
+        // The tray owns application lifetime; closing the lightweight UI leaves
+        // application services/tasks alive until the explicit Quit path.
+        .quit_on_last_window_closed = false,
 #endif
         .application_hooks = {
             huxerui::camera::Install,

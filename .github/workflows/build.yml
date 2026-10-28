@@ -82,7 +82,7 @@ env:
   # CI 必须自行 clone 并钉 commit，保证可复现）。框架补丁集中维护在
   # farna/main；main 保留官方基线。验证集成更新后同步本机 checkout 与此 pin。
   HUXERUI_COMMIT: 'be67da4a898856382bb8d4876a6c8ce71d889f5e'
-  SINGBOX_COMMIT: '7054cac5124465ffdb145870d7c01885566711b1' # v1.14.3
+  SINGBOX_COMMIT: 'c005f35300ce76427dc285481ec5695f5b179cd2' # v1.14.4
 
 jobs:
   # ------------------------------------------------------------------ Linux

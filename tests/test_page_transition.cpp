@@ -24,6 +24,8 @@
 #include "home_header_control.h"
 #include "home_grid.h"
 #include "home_card.h"
+#include "home_mode_choices.h"
+#include "interaction_theme.h"
 #include "home_vpn_status.h"
 #include "rule_target_picker.h"
 #include "log_actions.h"
@@ -35,6 +37,7 @@
 #include "section_tab_picker.h"
 #include "responsive_shell.h"
 #include "page_layout.h"
+#include "about_update.h"
 #include "title_bar_search.h"
 #include "page_loading.h"
 #include "empty_state.h"
@@ -1532,8 +1535,7 @@ huxerui::View ProfileFormNavigationRoot() {
             }).Key("profile-form-effects");
         }
         huxerui::View navigation;
-        if (!model->secondaryOpen.Get() &&
-            !(active.Get() && model->compactProfileFormOpen.Get())) {
+        if (!(active.Get() && model->compactProfileFormOpen.Get())) {
             navigation = huxerui::Text("PROFILE-DOCK")
                 .With(huxerui::Frame{.height = 64.0F});
         }
@@ -1545,9 +1547,6 @@ huxerui::View ProfileFormNavigationRoot() {
             huxerui::Button("BACK").OnClick([form] { form = 0; }),
             huxerui::Button("SWITCH").OnClick([active] { active = !active.Get(); }),
             huxerui::Button("MOUNT").OnClick([mounted] { mounted = !mounted.Get(); }),
-            huxerui::Button("ROUTE").OnClick([model] {
-                model->secondaryOpen = !model->secondaryOpen.Get();
-            }),
             huxerui::Text("FORM-" + std::to_string(form.Get())),
         }.With(huxerui::Grow(1.0F)),
             huxerui::Text("SIDEBAR").With(huxerui::Frame{.width = 80.0F}),
@@ -1587,11 +1586,8 @@ void testProfileFormNavigation() {
     check(dock(), "unmounting profile forms clears their dock visibility state");
     tap("MOUNT");
     check(!dock(), "remounting a retained form restores its dock visibility state");
-    tap("ROUTE");
     tap("BACK");
-    check(!dock(), "closing a local form does not clear a pushed route's ownership");
-    tap("ROUTE");
-    check(dock(), "closing the remaining pushed route restores the dock");
+    check(dock(), "closing a local form restores its root-page dock independently of pushed routes");
 }
 
 huxerui::View CompactProfileCardsRoot() {
@@ -4123,7 +4119,7 @@ huxerui::View HomeCardPressRoot(bool dark, bool reduced) {
         clashflux::ui::HomeCardSurface(theme, huxerui::Column{
             huxerui::Text("Card body").With(huxerui::Grow(1.0F)),
             huxerui::Button("Nested card action").OnClick([] { ++homeCardActionCount; }).Key("nested-card-action"),
-        }.With(huxerui::Grow(1.0F))).With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("press-card"),
+        }.With(huxerui::Grow(1.0F)), "press").With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("press-card"),
         huxerui::Spacer().With(huxerui::Frame{.height = 100.0F}),
     });
 }
@@ -4220,11 +4216,11 @@ huxerui::View HomeCardFlipRoot(bool dark, bool reduced) {
             }.With(huxerui::Grow(1.0F));
         });
         return huxerui::Column {
-          clashflux::ui::HomeCardSurface(theme, content)
+          clashflux::ui::HomeCardSurface(theme, content, "first")
               .With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("flip-card-one"),
-          clashflux::ui::HomeCardSurface(theme, huxerui::Text("Second front"))
+          clashflux::ui::HomeCardSurface(theme, huxerui::Text("Second front"), "second")
               .With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("flip-card-two"),
-          clashflux::ui::HomeCardSurface(theme, huxerui::Text("Cat control excluded"), false)
+          clashflux::ui::HomeCardSurface(theme, huxerui::Text("Cat control excluded"), "control", false)
               .With(huxerui::Frame{.width = 280.0F, .height = 88.0F}).Key("flip-card-excluded"),
         }.With(huxerui::Spacing(12.0F));
     }));
@@ -4235,6 +4231,260 @@ huxerui::View HomeCardFlipReducedRoot() { return HomeCardFlipRoot(false, true); 
 const huxerui::Application kHomeCardFlipLight{HomeCardFlipLightRoot, {.show_debug_overlay = false}};
 const huxerui::Application kHomeCardFlipDark{HomeCardFlipDarkRoot, {.show_debug_overlay = false}};
 const huxerui::Application kHomeCardFlipReduced{HomeCardFlipReducedRoot, {.show_debug_overlay = false}};
+
+struct ModeChoiceFixture {
+    huxerui::State<std::size_t> selected{0U};
+    huxerui::State<bool> enabled{true};
+    int changes = 0;
+};
+std::shared_ptr<ModeChoiceFixture> modeChoiceFixture;
+bool modeChoiceDark = false;
+std::string modeChoiceAccent = "blue";
+bool modeThemeMatches = false;
+huxerui::View ModeChoiceRoot() {
+    using namespace clashflux::ui;
+    auto theme = modeChoiceDark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
+    theme.colors = modeChoiceDark ? FluxDarkColors(modeChoiceAccent) : FluxLightColors(modeChoiceAccent);
+    ApplyFluxInteractionTheme(theme);
+    return huxerui::MaterialTheme(theme, FluxInteractionStyles(huxerui::Scope([theme] {
+        auto model = huxerui::UseState(std::make_shared<ModeChoiceFixture>()).Get();
+        modeChoiceFixture = model;
+        const auto radio = huxerui::UseEnvironment<huxerui::RadioButtonStyle>();
+        const auto toggle = huxerui::UseEnvironment<huxerui::SwitchStyle>();
+        const auto icons = huxerui::UseEnvironment<huxerui::IconButtonStyle>();
+        const auto chips = huxerui::UseEnvironment<huxerui::ChipStyle>();
+        const auto tabs = huxerui::UseEnvironment<huxerui::TabsStyle>();
+        const auto matches = [theme](const auto& indication) {
+            return indication && indication->ripple &&
+                indication->ripple->color == FluxStateLayerColor(theme.colors.primary, kInteractionRippleOpacity);
+        };
+        modeThemeMatches = radio.selected_color == theme.colors.primary &&
+            toggle.checked_track == theme.colors.primary && matches(icons.indication) &&
+            matches(chips.indication) && matches(tabs.indication) &&
+            huxerui::UseTheme().interactions.indication == ResolveFluxIndication(theme);
+        return huxerui::Column {
+          huxerui::Stack {HomeModeChoices({"Rule", "Global", "Direct"}, model->selected.Get(), model->enabled.Get(),
+            [model](std::size_t index) { model->selected = index; ++model->changes; })
+          }.With(huxerui::Frame{.width = 280.0F, .height = 132.0F},
+              huxerui::Align(huxerui::HorizontalAlignment::Stretch, huxerui::VerticalAlignment::Stretch))
+              .Key("mode-options"),
+          huxerui::RadioButton("Language baseline", true),
+        };
+    })));
+}
+const huxerui::Application kModeChoiceApplication{ModeChoiceRoot, {.show_debug_overlay = false}};
+
+void testModeChoiceFeedback() {
+    using namespace clashflux::ui;
+    for (bool dark : {false, true}) for (const char* accent : {"blue", "green"}) {
+        modeChoiceDark = dark; modeChoiceAccent = accent;
+        for (auto device : {huxerui::PointerDeviceKind::Mouse, huxerui::PointerDeviceKind::Touch}) {
+            huxerui::testing::UiTest ui(kModeChoiceApplication, {.viewport = {320.0F, 300.0F}});
+            ui.PumpAndSettle();
+            check(modeThemeMatches, "Material selection colors and owning feedback follow the current accent in both themes");
+            const auto bounds = ui.Find(UiSelector::Key("home-mode-1")).One().bounds;
+            huxerui::PointerEvent event{.type = huxerui::PointerEventType::Down, .pointer_id = 91,
+                .position = {bounds.x + bounds.width - 4.0F, bounds.y + bounds.height * 0.5F},
+                .device_kind = device, .changed_button = huxerui::PointerButton::Primary,
+                .pressed_buttons = huxerui::PointerButton::Primary};
+            ui.SendPointer(event); ui.Pump(); ui.Pump(std::chrono::milliseconds(100));
+            std::istringstream input(ui.CaptureSnapshot().ToString());
+            std::string line; std::getline(input, line); std::getline(input, line);
+            const auto snapshot = readCatPaintNode(input, line);
+            bool circle = false, wide = false;
+            const auto scan = [&](auto&& self, const CatPaintNode& node) -> void {
+                if (node.name == "circle" && node.Number("radius") >= 14.0F && node.Number("radius") <= 24.0F)
+                    circle = true;
+                if (node.name == "rect") {
+                    const auto* b = node.Find("bounds");
+                    const auto* brush = node.Find("brush");
+                    const auto* color = brush ? brush->Find("color") : nullptr;
+                    if (b && color && b->Number("width") > 70.0F && color->Number("alpha") > 0.0F &&
+                        color->Number("alpha") < 0.3F) wide = true;
+                }
+                for (const auto& child : node.children) self(self, child);
+            };
+            scan(scan, snapshot);
+            if (!circle || wide) std::ofstream("mode-feedback-failure.snapshot") << ui.CaptureSnapshot().ToString();
+            check(circle && !wide, "clicking the radio label keeps feedback around the control rather than across the row");
+            event.type = huxerui::PointerEventType::Up;
+            event.pressed_buttons = huxerui::PointerButton::None;
+            ui.SendPointer(event); ui.PumpAndSettle();
+            check(modeChoiceFixture->selected.Get() == 1U && modeChoiceFixture->changes == 1,
+                "the whole radio row remains clickable and selects once");
+            modeChoiceFixture->enabled = false; ui.PumpAndSettle();
+            const auto disabled = ui.Find(UiSelector::Key("home-mode-2")).One().bounds;
+            ui.TapAt({disabled.x + 40.0F, disabled.y + disabled.height * 0.5F}, {.device_kind = device});
+            ui.PumpAndSettle();
+            check(modeChoiceFixture->selected.Get() == 1U && modeChoiceFixture->changes == 1,
+                "busy mode controls reject a new selection");
+        }
+    }
+}
+
+bool toastFixtureDark = false, toastFixtureReduced = false;
+huxerui::View ToastMotionRoot() {
+    using namespace clashflux::ui;
+    auto theme = toastFixtureDark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
+    theme.colors = toastFixtureDark ? FluxDarkColors() : FluxLightColors();
+    theme.motion.reduced_motion = toastFixtureReduced;
+    ApplyFluxInteractionTheme(theme);
+    return huxerui::MaterialTheme(theme, FluxInteractionStyles(huxerui::Scope([] {
+        const auto toast = huxerui::UseToast();
+        auto active = huxerui::UseState(std::optional<huxerui::LayerId>{});
+        return huxerui::Column {
+          huxerui::Button("Show short toast").OnClick([toast] { toast.Show("EXIT-TOAST", {0.8}); }),
+          huxerui::Button("Show sticky toast").OnClick([toast, active] { active = toast.Show("EXIT-TOAST", {10.0}); }),
+          huxerui::Button("Dismiss toast").OnClick([toast, active] { if (active.Get()) toast.Dismiss(*active.Get()); }),
+        };
+    })));
+}
+const huxerui::Application kToastMotionApplication{ToastMotionRoot, {.show_debug_overlay = false}};
+struct ToastPaintSample { float scale, y, opacity; };
+std::optional<ToastPaintSample> paintedToast(huxerui::testing::UiTest& ui,
+    std::string_view text = "EXIT-TOAST") {
+    std::istringstream input(ui.CaptureSnapshot().ToString());
+    std::string line; std::getline(input, line); std::getline(input, line);
+    const auto snapshot = readCatPaintNode(input, line);
+    std::optional<ToastPaintSample> result;
+    const auto containsText = [&](auto&& self, const CatPaintNode& node) -> bool {
+        if (node.name == "text" && node.value == "\"" + std::string(text) + "\"") return true;
+        return std::any_of(node.children.begin(), node.children.end(), [&](const auto& child) { return self(self, child); });
+    };
+    const auto visit = [&](auto&& self, const CatPaintNode& node, huxerui::Transform2D parent, float alpha) -> void {
+        if (const auto* visible = node.Find("visible"); visible && visible->value == "false") return;
+        auto local = catPaintTransform(node.Find("transform"));
+        if (const auto* offset = node.Find("offset")) {
+            local.translate_x += offset->Number("x"); local.translate_y += offset->Number("y");
+        }
+        const auto world = composeCatPaint(parent, local);
+        alpha *= node.Number("opacity", 1.0F);
+        if (const auto* content = node.Find("content"); content && containsText(containsText, *content))
+            result = ToastPaintSample{world.m11, world.translate_y, alpha};
+        if (const auto* children = node.Find("children"))
+            for (const auto& child : children->children)
+                self(self, child, composeCatPaint(world, catPaintTransform(node.Find("children_transform"))), alpha);
+    };
+    if (const auto* render = snapshot.Find("render"))
+        for (const auto& node : render->children) visit(visit, node, huxerui::Transform2D{}, 1.0F);
+    return result;
+}
+void testToastExitMotion() {
+    for (bool dark : {false, true}) for (bool reduced : {false, true}) for (bool manual : {false, true}) {
+        toastFixtureDark = dark; toastFixtureReduced = reduced;
+        huxerui::testing::UiTest ui(kToastMotionApplication, {.viewport = {400.0F, 500.0F}});
+        ui.PumpAndSettle();
+        ui.Find(UiSelector::Text(manual ? "Show sticky toast" : "Show short toast")).Tap();
+        ui.Pump();
+        for (int frame = 0; frame < 16; ++frame) ui.Pump(std::chrono::milliseconds(20));
+        const auto visible = paintedToast(ui);
+        check(visible.has_value(), "toast remains present for its visible duration");
+        if (!visible) continue;
+        if (manual) { ui.Find(UiSelector::Text("Dismiss toast")).Tap(); ui.Pump(); }
+        bool animatedExit = false;
+        for (int frame = 0; frame < 65; ++frame) {
+            ui.Pump(std::chrono::milliseconds(20));
+            const auto sample = paintedToast(ui);
+            if (sample && sample->opacity > 0.02F && sample->opacity < 0.99F) {
+                if (reduced) check(std::abs(sample->scale - 1.0F) < 0.001F &&
+                    std::abs(sample->y - visible->y) < 0.01F, "reduced motion suppresses toast slide and scale");
+                else animatedExit = animatedExit || (sample->scale < visible->scale - 0.0001F &&
+                    sample->y > visible->y + 0.05F);
+            }
+        }
+        check(reduced || animatedExit, "automatic and explicit toast dismissal paint a downward, shrinking fade before removal");
+        check(!ui.Find(UiSelector::Text("EXIT-TOAST")).Exists(), "toast is removed after exit completes");
+        const auto settled = ui.CaptureSnapshot(); ui.Pump(std::chrono::seconds(1));
+        check(ui.CaptureSnapshot() == settled, "dismissed toast has no continuing animation");
+    }
+}
+
+struct RootDockFixture {
+    huxerui::State<std::size_t> selected{0U};
+    huxerui::State<int> count{0};
+    huxerui::NavigationController navigation;
+    int mounts = 0, unmounts = 0;
+};
+std::shared_ptr<RootDockFixture> rootDockFixture;
+huxerui::View RootDockSecondary(int depth) {
+    return huxerui::Scope([depth] {
+        const auto nav = huxerui::UseNavigation();
+        const auto& theme = huxerui::UseTheme();
+        const huxerui::TransitionSpec enter{huxerui::SlideTransition{}, huxerui::TweenSpec{0.3}};
+        return huxerui::Column {
+          huxerui::Text("SECONDARY-" + std::to_string(depth)),
+          huxerui::Button("DEEPER").OnClick([nav, depth] { nav.Push(RootDockSecondary, depth + 1); }),
+          huxerui::Button("POP").OnClick([nav] { static_cast<void>(nav.Pop()); }),
+        }.With(huxerui::Grow(1.0F), huxerui::Background(theme.colors.surface_container_low),
+            huxerui::PageTransition{.push = enter, .pop = enter.Reversed(huxerui::TweenSpec{0.2})});
+    });
+}
+huxerui::View RootDockRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        const auto model = huxerui::UseState(std::make_shared<RootDockFixture>()).Get();
+        rootDockFixture = model;
+        auto stack = huxerui::NavigationStack([model] {
+            return huxerui::Scope([model] {
+                const auto nav = huxerui::UseNavigation();
+                model->navigation = nav;
+                clashflux::ui::UsePrimaryPageNavigation(nav, model->selected);
+                auto dock = huxerui::Scope([model] {
+                    huxerui::Lifecycle([model] {
+                        ++model->mounts;
+                        return [model] { ++model->unmounts; };
+                    }, 0);
+                    return huxerui::Button("DOCK-" + std::to_string(model->count.Get()))
+                        .With(huxerui::Frame{.height = 64.0F})
+                        .OnClick([model] { model->count = model->count.Get() + 1; });
+                });
+                return clashflux::ui::CompactRootPageSurface(huxerui::Column {
+                  huxerui::Text("PRIMARY-" + std::to_string(model->selected.Get())),
+                  model->selected.Get() == 1 ? huxerui::View{huxerui::Column {
+                    clashflux::ui::HomeCardSurface(huxerui::UseTheme(), huxerui::Text("HOME-FIRST"), "first")
+                        .With(huxerui::Frame{.height = 88.0F}),
+                    clashflux::ui::HomeCardSurface(huxerui::UseTheme(), huxerui::Text("HOME-SECOND"), "second")
+                        .With(huxerui::Frame{.height = 88.0F}),
+                  }} : huxerui::View{},
+                  huxerui::Button("OPEN").OnClick([nav] { nav.Push(RootDockSecondary, 1); }),
+                }.With(huxerui::Grow(1.0F)), dock);
+            });
+        });
+        return clashflux::ui::ResponsiveDesktopShell(stack,
+            huxerui::Text("SIDE").With(huxerui::Frame{.width = 80.0F}),
+            huxerui::Text("CHROME").With(huxerui::Frame{.height = 40.0F}), {});
+    })};
+}
+const huxerui::Application kRootDockApplication{RootDockRoot, {.show_debug_overlay = false}};
+void testRetainedRootDock() {
+    huxerui::testing::UiTest ui(kRootDockApplication, {.viewport = {400.0F, 700.0F}});
+    ui.PumpAndSettle();
+    ui.Find(UiSelector::Text("DOCK-0")).Tap(); ui.PumpAndSettle();
+    check(paintedToast(ui, "DOCK-1").has_value(), "the root dock is painted before navigation");
+    ui.Find(UiSelector::Text("OPEN")).Tap(); ui.PumpAndSettle();
+    check(rootDockFixture->mounts == 1 && rootDockFixture->unmounts == 0,
+        "pushing a secondary page retains the root dock instead of hiding/unmounting it");
+    check(!paintedToast(ui, "DOCK-1"), "the settled secondary page covers the dock and scrim");
+    ui.Find(UiSelector::Text("POP")).Tap(); ui.Pump(std::chrono::milliseconds(40));
+    check(ui.Find(UiSelector::Text("DOCK-1")).Exists() && rootDockFixture->mounts == 1 &&
+          rootDockFixture->unmounts == 0,
+        "the return transition already owns the original mounted dock before any page cleanup");
+    ui.PumpAndSettle();
+    check(rootDockFixture->mounts == 1 && rootDockFixture->unmounts == 0,
+        "returning preserves the same mounted dock and its state");
+    ui.Find(UiSelector::Text("OPEN")).Tap(); ui.PumpAndSettle();
+    for (float width : {960.0F, 320.0F, 599.0F, 400.0F}) {
+        ui.SetWindowMetrics({.viewport = {width, 700.0F}}); ui.PumpAndSettle();
+        check(rootDockFixture->navigation.Depth() == 2 && !paintedToast(ui, "DOCK-1"),
+            "breakpoint changes keep the secondary route above the root dock");
+    }
+    ui.Find(UiSelector::Text("DEEPER")).Tap(); ui.PumpAndSettle();
+    check(rootDockFixture->navigation.Depth() == 3, "nested secondary routes use the same navigation stack");
+    rootDockFixture->selected = 1; ui.PumpAndSettle();
+    check(rootDockFixture->navigation.Depth() == 1 && paintedToast(ui, "DOCK-1").has_value(),
+        "changing primary pages clears nested routes through logical navigation, without route ownership flags");
+    check(ui.Find(UiSelector::Text("HOME-FIRST")).Exists() && ui.Find(UiSelector::Text("HOME-SECOND")).Exists(),
+        "switching directly from a secondary route to home accepts all card shared markers");
+}
 
 void testHomeCardFlip() {
     using huxerui::testing::UiSemanticSelector;
@@ -4308,6 +4558,24 @@ void testHomeCardFlip() {
 
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    {
+        using namespace clashflux::ui;
+        const auto same = ReadAppUpdate(R"({"tag_name":"v0.3.74","draft":false,"prerelease":false,"unknown":{"ok":true}})", "0.3.74");
+        check(same.error.empty() && !same.newer, "same stable release is not an update");
+        const auto newer = ReadAppUpdate(R"({"tag_name":"v0.3.100","draft":false,"prerelease":false})", "0.3.74");
+        check(newer.error.empty() && newer.newer, "release comparison is numeric, not lexical");
+        check(!ReadAppUpdate(R"({"tag_name":"v0.3.7","draft":false,"prerelease":false})", "0.3.74").newer,
+            "older release never offers a downgrade");
+        for (auto body : {"{}", "null", "[]", "{", R"({"tag_name":"v0.4.0","draft":true,"prerelease":false})",
+             R"({"tag_name":"v0.4.0","draft":false,"prerelease":true})",
+             R"({"tag_name":"v0.4.0","draft":"false","prerelease":false})",
+             R"({"tag_name":"https://example.com","draft":false,"prerelease":false})"})
+            check(!ReadAppUpdate(body, "0.3.74").error.empty(), "invalid release is an error, not latest");
+        for (auto tag : {"v1.2.3-rc1", "v1.2", "v1.2.3/../../evil", "v1.2.4294967296", "v1.2.-1", "v1.2.3?x"})
+            check(AppReleaseUrl(tag).empty(), "unsupported or unsafe release tag rejected");
+        check(AppReleaseUrl(newer.tag) == "https://github.com/FarnaHerry/Clash-Flux/releases/tag/v0.3.100",
+            "release URL stays in the application repository");
+    }
     try { testTextDocuments(); }
     catch (const std::exception& exception) {
         std::printf("FAIL: text document fixture: %s\n", exception.what());
@@ -4428,7 +4696,7 @@ int main() {
     testCustomThemeColors();
     testThemeColorSurfaces();
     testHomeCardPress();
-    try { testHomeCardFlip(); }
+    try { testModeChoiceFeedback(); testToastExitMotion(); testRetainedRootDock(); testHomeCardFlip(); }
     catch (const std::exception& error) {
         std::printf("FAIL: home card flip: %s\n", error.what());
         ++failures;

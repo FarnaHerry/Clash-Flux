@@ -38,6 +38,7 @@
 #include "page_layout.h"
 #include "home_grid.h"
 #include "home_card.h"
+#include "home_mode_choices.h"
 #include "empty_state.h"
 #include "task_bridge.h"
 
@@ -497,77 +498,16 @@ huxerui::XYChartData BuildTrafficChartData(
 // 出站模式：纵向单选列表（规则/全局/直连），排布参考 FlClash；单选圈、配色
 // 与圆角沿用主题。点击乐观更新，失败做目标值校验后回落。
 [[huxerui::composable]] huxerui::View HomeModeCard() {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const auto control = UseCoreControl();
     const std::size_t selected = HomeModeIndex(control.Mode());
 
-    huxerui::Color hoverFill = theme.colors.on_surface;
-    hoverFill.alpha = 0.08F;
-    huxerui::Color pressFill = theme.colors.on_surface;
-    pressFill.alpha = 0.14F;
-    const huxerui::Indication indication{
-        .hover = huxerui::IndicationLayer{
-            .fill = huxerui::VisualFill{huxerui::Brush{hoverFill}}},
-        .press = huxerui::IndicationLayer{
-            .fill = huxerui::VisualFill{huxerui::Brush{pressFill}}},
-    };
-
-    std::vector<huxerui::View> options;
-    options.reserve(kModeLabels.size());
-    for (std::size_t i = 0; i < kModeLabels.size(); ++i) {
-        const bool active = i == selected;
-        // 单选圈：18pt 外环（选中 primary / 未选 outline），选中时中心实心点。
-        huxerui::View dot =
-            active ? huxerui::View{huxerui::Row{}.With(
-                         huxerui::Frame{.width = 8.0F, .height = 8.0F},
-                         huxerui::CornerRadius(4.0F),
-                         huxerui::Background(theme.colors.primary))}
-                   : huxerui::View{huxerui::Row{}};
-        huxerui::View ring = huxerui::Column {
-            std::move(dot),
-        }.With(huxerui::Frame{.width = 18.0F, .height = 18.0F},
-               huxerui::CornerRadius(9.0F),
-               huxerui::Border(active ? theme.colors.primary
-                                      : theme.colors.outline,
-                               2.0F),
-               huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
-        options.push_back(
-            huxerui::Row {
-                std::move(ring),
-                huxerui::Text(Localized(kModeLabels[i])).Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kBody)
-                        .WithWeight(active ? huxerui::FontWeight::SemiBold
-                                           : huxerui::FontWeight::Regular),
-                    active ? theme.colors.primary
-                           : theme.colors.on_surface}),
-            }
-                .With(huxerui::Spacing(10.0F),
-                      huxerui::Grow(1.0F),
-                      huxerui::Padding(
-                          huxerui::EdgeInsets::Symmetric(6.0F, 4.0F)),
-                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
-                      huxerui::CornerRadius(8.0F),
-                      huxerui::ClipChildren(),
-                      indication,
-                      huxerui::Semantics{
-                          .role = huxerui::SemanticRole::RadioButton,
-                          .label = Localized(kModeLabels[i]),
-                          .selected = active})
-                .With(huxerui::Enabled(!control.Busy()))
-                .OnClick([control, i] {
-                    control.Run({.action = CoreAction::Mode, .mode = kModes[i]});
-                })
-                .Key("home-mode-" + std::to_string(i)));
-    }
-
+    std::vector<huxerui::StringVariant> labels;
+    for (const auto& label : kModeLabels) labels.push_back(Localized(label));
     return huxerui::Column {
         HomeCardHeading(app::images::route, Localized("出站模式")),
-        huxerui::Column(std::move(options))
-            .With(huxerui::Spacing(2.0F),
-                  huxerui::Grow(1.0F),
-                  huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+        HomeModeChoices(labels, selected, !control.Busy(), [control](std::size_t index) {
+            control.Run({.action = CoreAction::Mode, .mode = kModes[index]});
+        }),
     }.With(huxerui::Spacing(4.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -886,7 +826,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
            huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
            huxerui::MainAlign(huxerui::MainAxisAlignment::Center));
-    return huxerui::View{HomeCardSurface(theme, std::move(content), /*allowFlip=*/false)}
+    return huxerui::View{HomeCardSurface(theme, std::move(content), "control", /*allowFlip=*/false)}
         .OnClick([control, cardShown, motion, transition, reducedMotion = theme.motion.reduced_motion] {
             RunDesktopHomeCoreAction(control, cardShown, motion, transition,
                                      CoreAction::Stop, reducedMotion);
@@ -1121,7 +1061,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
         // 首页所有卡片一视同仁：都是 raised 二级岛外壳。「当前订阅」不显示选中态
         // （哪个订阅在使用中由订阅页的选中卡承担）。
         huxerui::View body = HomeCardContent(kind, state);
-        huxerui::View cardView = HomeCardSurface(theme, std::move(body));
+        huxerui::View cardView = HomeCardSurface(theme, std::move(body), id);
         cards.push_back(std::move(cardView)
                             .LayoutValue<HomeCardSpan>(size)
                             .Key("home-card-" + id));

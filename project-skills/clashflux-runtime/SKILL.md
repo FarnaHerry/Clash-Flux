@@ -11,7 +11,7 @@ description: 修改 Clash-Flux 内核控制、托盘与无窗启动、首帧快�
 
 先读 [启动设置快照](../../docs/ui-development.md#启动设置快照) 与 Windows 后台/托盘章节。
 
-- 桌面 AppOptions::create_initial_window=false；application hook 在 Runtime Running 后才建窗。启动阶段唯一同步持久化读取是 readStartupSettings，桌面在托盘/首窗前读一次，AppRoot 复用；Android 等平台先建窗入口由 AppRoot 读。
+- 桌面 AppOptions::create_initial_window=false、quit_on_last_window_closed=false；application hook 在 Runtime Running 后才建窗。应用后台任务用 UseApplicationTaskScope，显式退出经收尾后 Quit。启动阶段唯一同步持久化读取是 readStartupSettings，桌面在托盘/首窗前读一次，AppRoot 复用；Android 等平台先建窗入口由 AppRoot 读。
 - 快照只含首帧主题模式/颜色/语言与 tray.enabled/start_minimized；其它设置等待 SettingsModel ready，慢启动不扩大同步读取。临时只读连接不建文件、不迁移、不改 journal、不 hydrate/改订阅缓存；失败明确终止、保留原库。
 - tray.enabled 与 start_minimized 都真时，先无窗启动持久化、数据泵、服务版本同步和内核自启，等待异步托盘可用性。图标发布成功保持无窗，激活用 OpenWindow；超时/图标失败建窗，后续刷新失败不退出或隐藏唯一窗口。
 - 托盘关闭时快照/SettingsModel 将 startMinimized 视为 false，但不改历史值；设置仅在托盘启用时显示该选项，重新启用恢复历史值。伪 CLI 隐藏窗口执行运行时命令；外部订阅链接打开窗口只预填表单。

@@ -45,7 +45,7 @@ def main():
             selected = config["route"]["final"]
             groups = {out["tag"]: out for out in config["outbounds"] if out["type"] == "selector"}
             all_tag = next(tag for tag, group in groups.items() if group["outbounds"] == [a, z])
-            assert groups[selected]["outbounds"] == [z, all_tag, a, z]
+            assert groups[selected]["outbounds"] == [z, all_tag, a]
             assert groups[selected]["default"] == a
             mixed, controller = port(), port()
             config["inbounds"] = [{"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": mixed}]
@@ -74,7 +74,7 @@ def main():
                             if process.poll() is not None or time.monotonic() >= deadline:
                                 raise RuntimeError((folder / "kernel.log").read_text())
                             time.sleep(0.02)
-                    assert state["all"] == [z, all_tag, a, z] and state["now"] == a, state
+                    assert state["all"] == [z, all_tag, a] and state["now"] == a, state
                     assert api(all_tag)["all"] == [a, z]
                     count = 2
 

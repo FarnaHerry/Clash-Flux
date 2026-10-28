@@ -27,6 +27,7 @@
 #include "file_drop_zone.h"
 #include "profile_file_picker.h"
 #include "proxy_display_name.h"
+#include "settings_group_layout.h"
 
 #include "wire_codec.h"
 import clashflux.config;
@@ -641,18 +642,18 @@ bool StartProxyGroupTest(const std::string& group) {
     if (compact) {
         huxerui::View compactControl = control;
         if (icon) compactControl = std::move(compactControl).With(huxerui::Padding(huxerui::EdgeInsets{.left = 32.0F}));
-        return huxerui::Column {
+        return SettingsContentRow(huxerui::Column {
           description,
           compactControl,
         }.With(huxerui::Spacing(8.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
     }
 
-    return huxerui::Row {
+    return SettingsContentRow(huxerui::Row {
       std::move(description).With(huxerui::Grow(1.0F)),
       control,
     }.With(huxerui::Spacing(12.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
 }
 
 [[huxerui::composable]] huxerui::View SettingSwitchRow(
@@ -670,18 +671,18 @@ bool StartProxyGroupTest(const std::string& group) {
                   theme.colors.on_surface_variant})},
     }.With(huxerui::Spacing(2.0F), huxerui::Grow(1.0F));
     if (icon) {
-        return huxerui::Row {
+        return SettingsContentRow(huxerui::Row {
           SettingItemIcon(*icon, danger),
           text,
           control,
         }.With(huxerui::Spacing(12.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
     }
-    return huxerui::Row {
+    return SettingsContentRow(huxerui::Row {
         std::move(text),
         control,
     }.With(huxerui::Spacing(12.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
 }
 
 [[huxerui::composable]] huxerui::View UnifiedListRow(
@@ -930,7 +931,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                                                    huxerui::View leading,
                                                    huxerui::View titleSearchField,
                                                    bool showInlineHeader,
-                                                   huxerui::View inlineHeader) {
+                                                   huxerui::View inlineHeader,
+                                                   bool scrollToContentEdges) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     // 响应式：Compact(<600) 收窄一级岛内边距。
@@ -939,6 +941,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     auto contentInsets = PageContentInsets(theme, compact,
         fullWidthSections ? 0.0F : contentSpacing.value_or(compact ? 4.0F : kDesktopPageHorizontalInset));
     if (contentSpacing) contentInsets.top = *contentSpacing;
+    const float headerTopInset = contentInsets.top;
+    if (scrollToContentEdges) contentInsets.top = contentInsets.bottom = 0.0F;
     if (kPageTitlesInWindow && !compact) {
         // 桌面动作直接挂在本页标题栏中，不经共享 State 转交 View 或复制回调。
         huxerui::View desktopBody = huxerui::View{content}.With(huxerui::Grow(1.0F));
@@ -975,7 +979,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         return huxerui::Column{
             huxerui::WindowTitleBar{
                 huxerui::Row{leading}.With(huxerui::Padding(huxerui::EdgeInsets{
-                    .left = leading ? kDesktopPageHorizontalInset : 0.0F})),
+                    .left = leading ? kDesktopPageLeadingInset : 0.0F})),
                 std::move(titleBarContent),
             }.With(huxerui::Frame{.height = kDesktopTitleBarHeight}, huxerui::Spacing(0.0F)),
             huxerui::Row{}.With(huxerui::Frame{.height = kDesktopChromeDividerThickness},
@@ -1001,6 +1005,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         titleView,
         showInlineHeader ? huxerui::View{actions} : huxerui::View{}, compact && !inlineCompactActions,
         compact && static_cast<bool>(titleSearchField));
+    if (scrollToContentEdges && header) header = huxerui::View{header}.With(
+        huxerui::Padding(huxerui::EdgeInsets{.top = headerTopInset}));
     const float horizontal = fullWidthSections
         ? kSectionCardSpacing
         : (compact ? 4.0F : kDesktopPageHorizontalInset);
@@ -1015,7 +1021,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     if (header) children.push_back(std::move(header));
     children.push_back(std::move(body));
     return huxerui::Column(std::move(children)).With(huxerui::Padding(contentInsets),
-           huxerui::Spacing(contentSpacing.value_or(theme.spacing.medium)),
+           huxerui::Spacing(scrollToContentEdges ? 0.0F : contentSpacing.value_or(theme.spacing.medium)),
            huxerui::Background(islands.base),
            huxerui::CornerRadius(kPageTitlesInWindow || compact ? 0.0F : islands.island_radius),
            huxerui::ClipChildren(),
@@ -1026,7 +1032,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 [[huxerui::composable]] huxerui::View SecondaryPageScaffold(
     huxerui::View title, huxerui::View actions, huxerui::View content,
     std::function<void()> onBack, bool hideBack, bool fullWidthSections,
-    bool centerTitle) {
+    bool centerTitle, bool scrollToContentEdges) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     const bool compact =
@@ -1061,13 +1067,19 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                 compact ? horizontal : kDesktopPageHorizontalInset, 0.0F)));
         body = huxerui::ProvideEnvironment(SectionTabContentInsets{horizontal}, body);
     }
+    auto contentInsets = PageContentInsets(theme, compact,
+        fullWidthSections ? 0.0F : horizontal);
+    if (scrollToContentEdges) {
+        header = huxerui::View{header}.With(
+            huxerui::Padding(huxerui::EdgeInsets{.top = contentInsets.top}));
+        contentInsets.top = contentInsets.bottom = 0.0F;
+    }
     // 一级/二级页共用内容层底色，保持与窗口外框的颜色区分，不套外卡。
     huxerui::View scaffold = huxerui::Column {
         std::move(header),
         std::move(body),
-    }.With(huxerui::Padding(PageContentInsets(theme, compact,
-                   fullWidthSections ? 0.0F : horizontal)),
-           huxerui::Spacing(theme.spacing.medium),
+    }.With(huxerui::Padding(contentInsets),
+           huxerui::Spacing(scrollToContentEdges ? 0.0F : theme.spacing.medium),
            huxerui::Background(islands.base),
            huxerui::CornerRadius(kPageTitlesInWindow || compact ? 0.0F : islands.island_radius),
            huxerui::ClipChildren(), huxerui::Grow(1.0F),
@@ -1163,7 +1175,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 }
 
 [[huxerui::composable]] huxerui::View Card(huxerui::View content,
-                                           bool outlined) {
+                                           bool outlined, std::optional<float> contentPadding) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     // 二级岛：半透明水晶卡片感的 raised 表面 + 同心圆角。移动端设置页等
@@ -1175,7 +1187,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     // 一圈底色（首页「当前订阅」卡、订阅卡都踩过：深灰卡 + 蓝色圆角边）。需要另一种
     // 表面就再加一个建树型 composable（如 `SelectableTile`），不要事后装修。
     return huxerui::Column { std::move(content) }
-        .With(huxerui::Padding(islands.island_padding),
+        .With(huxerui::Padding(contentPadding.value_or(islands.island_padding)),
               huxerui::Background(islands.raised),
               huxerui::CornerRadius(islands.nested_radius),
               huxerui::Border(outlined ? islands.outline_soft

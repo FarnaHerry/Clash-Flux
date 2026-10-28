@@ -9,6 +9,14 @@
 
 namespace clashflux::ui {
 
+inline void UsePrimaryPageNavigation(huxerui::NavigationController navigation,
+    huxerui::State<std::size_t> selected) {
+    huxerui::Lifecycle([navigation] {
+        while (navigation.CanPop()) if (!navigation.Pop()) break;
+        return [] {};
+    }, selected);
+}
+
 // Keep the mounted Pager across breakpoints so page State/Lifecycle survives resizing.
 // Disable motion only on this container; restore the real theme inside every page so
 // controls and section tabs retain their own animations and reduced-motion preference.
@@ -103,6 +111,22 @@ inline huxerui::View CompactNavigationScrim(const huxerui::ThemeSpec& theme) {
             .Key("compact-navigation-fade")},
     }.With(huxerui::MainAlign(huxerui::MainAxisAlignment::End),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
+// Keep the dock on the NavigationStack root page. Pushed pages cover it and
+// reveal the same mounted dock during Pop, without a delayed visibility flag.
+inline huxerui::View CompactRootPageSurface(huxerui::View content, huxerui::View navigation) {
+    return huxerui::Scope([content, navigation] {
+        const auto& theme = huxerui::UseTheme();
+        const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+        std::vector<huxerui::View> layers{content};
+        if (compact && navigation) {
+            layers.push_back(CompactNavigationScrim(theme).Key("compact-navigation-scrim"));
+            layers.push_back(CompactNavigationDock(navigation, theme).Key("compact-navigation"));
+        }
+        return huxerui::Stack(std::move(layers)).With(huxerui::Grow(1.0F),
+            huxerui::Align(huxerui::HorizontalAlignment::Stretch, huxerui::VerticalAlignment::Stretch));
+    }).With(huxerui::Grow(1.0F));
 }
 
 // 内容保留在同一 Row/Key 中，窗口越过断点时不重新挂载页面。

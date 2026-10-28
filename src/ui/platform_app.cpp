@@ -317,14 +317,9 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
         presentationKey = std::string{key};
     }
 
-    void HideWindow(bool lightweight) {
+    void HideWindow() {
         if (!window) return;
-        if (lightweight) {
-            retired = true;
-            window->Retire();
-        } else {
-            window->Hide();
-        }
+        window->Hide();
     }
 };
 
@@ -602,7 +597,7 @@ struct TrayMenuText {
         },
         darkTheme);
 
-    // 托盘与单实例唤醒在应用级任务中运行，主窗口 Retire 后继续响应。
+    // 托盘与单实例唤醒在应用级任务中运行，轻量模式关闭主窗口后继续响应。
     huxerui::Lifecycle(
         [startupTasks, trayRuntime, tray, settingsModel] {
             if (!trayRuntime->started) {
@@ -701,12 +696,10 @@ struct TrayMenuText {
     // 关闭按钮只由托盘开关控制。托盘宿主尚未就绪时仍需确认退出，
     // 避免隐藏后没有入口唤回窗口；事件中动态查询宿主可用性。
     const huxerui::Color closeHintColor = rootSpec.colors.on_surface_variant;
-    auto hideWindow = [startupTasks, trayRuntime, settingsModel] {
-        const bool lightweight = settingsModel->view.Get().lightweightTray;
-        // Native close callbacks must finish before the host window is retired.
-        startupTasks.Launch([trayRuntime, lightweight]() -> huxerui::Task<void> {
+    auto hideWindow = [startupTasks, trayRuntime] {
+        startupTasks.Launch([trayRuntime]() -> huxerui::Task<void> {
             co_await huxerui::Delay(std::chrono::duration<double>{0});
-            trayRuntime->HideWindow(lightweight);
+            trayRuntime->HideWindow();
         });
     };
     // 最小化交给平台原生行为，保留任务栏入口；轻量托盘只用于关闭隐藏。
@@ -717,6 +710,13 @@ struct TrayMenuText {
             const bool trayEnabled = settings.ready
                 ? settings.trayEnabled : startupTrayEnabled;
             if (trayEnabled && tray.IsAvailable() && !trayRuntime->trayRefreshFailed) {
+                if (settings.lightweightTray) {
+                    // Let the normal close path destroy the native window/UI.
+                    // AppOptions::quit_on_last_window_closed keeps the Runtime
+                    // alive; the tray can create a fresh window with OpenWindow.
+                    trayRuntime->retired = true;
+                    return false;
+                }
                 hideWindow();
                 return true;
             }

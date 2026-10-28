@@ -1,5 +1,53 @@
 # L1 / L2 / L3 开发完成度复核
 
+2026-10-28，基于 `98da670` 未提交工作区后续：按用户反馈将浅色中性表面从暖白微调为冷白，
+统一 FluxLightColors：外框/标题/侧栏 #FAFAFB、内容 #F1F2F4、卡片 #FEFEFF，文字、描边与遮罩
+改为配套冷中性色；深色和强调色不变。次要文字在三种主要表面的对比度最低约 4.71:1。
+恢复 UI 对象的头文件依赖跟踪后重新编译全部应用 UI 与 page_transition 消费方，主目标构建通过；
+page_transition/ui_resources 2/2 通过（23.09s）。隔离原生设置页夹具使用当前生产组件及新调色板启动，
+通过电脑操作工具只读查看实际窗口，确认内容冷灰与亮卡片层次；未点击会写用户设置的控件。
+`cmake --build build --target clash-flux test_page_transition --parallel 4`、`./run.ps1 --version`
+（v0.3.74）及 `git diff --check` 通过。未做手机、其它平台或完整 required 门禁，未提交或发布。
+
+2026-10-28，基于 `98da670` 未提交工作区：桌面设置 AppOptions.quit_on_last_window_closed=false，
+轻量托盘改用正常窗口关闭，不再调用 fork Retire；普通模式仍隐藏窗口，最小化保留原生任务栏行为。
+应用后台任务使用 UseApplicationTaskScope，显式退出保留清理后 Quit。当前固定 HuxerUI SDK 已含上游选项，
+无框架 pin 或 fork 源码变更。隔离原生窗口夹具 `%TEMP%/clashflux-window-lifetime.cpp` 验证普通隐藏不卸载、
+托盘不可用时拦截关闭、三次轻量关闭/重建、同一模型和无窗协程存活、显式 Quit，以及默认选项关闭末窗退出。
+不把该夹具当成生产托盘菜单或 macOS/Linux 实机验收；当前仍保留轻量模式开关，移除开关的产品提议尚未实施。
+
+同轮将桌面六平台资产、Android libbox 和 iOS 源码 pin 对齐 sing-box 1.14.4 / c005f353，
+处理新内核拒绝重复策略组成员及 Android useProcFS 接口移除，更新保真度基线；详情与 AAR 摘要见
+[稳定升级记录](singbox-stable-upgrade.md#2026-10-281143--1144)。Windows 主目标、HuxerUI codegen 与相关测试目标
+构建通过，10 项 UI/编译器/真实内核回归全过（94.81s），版本命令 v0.3.74，打包内核 1.14.4 / c005f353。
+构建缓存恢复时的 MSVC include 前缀乱码导致 .inc 增量依赖遗漏，已修复本地生成的编译器元数据前缀并重新配置，
+强制重编生产 singbox.cpp 及测试消费方后回归通过，不修改工程工具链设置。
+Android arm64 新 AAR 实际构建、来源/摘要 stage 和固定 GEO stage 通过；变更 owner 方法独立 javac 编译通过。
+完整 Android Java 构建在 CMake 查找前置步骤失败，未产 APK；未验证真机 VPN、服务安装更新、其它桌面平台、
+iOS 或完整 required 门禁。未提交、推送或发布。
+
+2026-10-28，接续下方关于页工作，基于 `98da670` 未提交工作区：重启后 cl/mspdb 组件已统一为 36260，恢复原 Release/health-evidence/required 测试配置，重新配置与主目标/HuxerUI codegen 构建成功。关于右侧箭头已移除，公共桌面返回按钮左侧留白改为 8pt。修复更新检查使用临时 State 导致重组重置的问题，改用 UseState；修复响应式重建后滚动位置丢失，记录用户滚动偏移并在新容器挂载时恢复；宽屏关于实际限宽 640pt 并居中。用户反馈二级页直接切换首页崩溃，日志为 shared keys 重复；首页翻面标记现按卡片稳定 ID 唯一，回归包含二级/嵌套页直接切换到多张真实 HomeCardSurface 的首页。最终执行 `cmake --build build --target clash-flux test_page_transition --parallel 4` 成功，`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'` 2/2 通过（12.32s），`./run.ps1 --version` 为 v0.3.74，`git diff --check` 通过。
+生产组件临时夹具 `%TEMP%/clashflux-profile-form-review/about_probe.cpp` 在深浅色、320/599/600/960pt 共 8 组合通过：可滚动上下留白、无尾箭头、宽屏 640pt 居中、跨断点页面身份/返回及设置原滚动位置；刷新图标持续旋转、完成停止、reduced motion 静止；真实页面在测试运行时显示请求失败并可再次检查。未把该测试运行时结果视为真实 GitHub 联网成功证据。电脑操作工具恢复后只读查看了用户已打开的主程序暖白设置页；隔离原生夹具补齐同名资源包后成功启动，后续用户按 Esc 停止电脑操作，不再操作窗口。最终产品首页切换与新按钮位置的自动原生 GUI 验收未完成；未做 Android/其它平台或完整 required 门禁，未提交或发布。
+
+2026-10-28，基于 `98da670` 未提交工作区后续：设置及关于页通过 ScrollablePageContent 将 16pt 顶部/24pt 底部留白放入滚动内容，保留水平缩进与 Compact 胶囊避让；设置末尾简化为关于入口，新增独立关于页（Logo、版本、简介、仓库、免责声明及只读稳定 Release 更新检查）。更新 codec 与数字版本比较、错误/非稳定响应和 Release URL 校验已加入 page_transition。初版 Windows 主目标/HuxerUI codegen 构建通过，page_transition / ui_resources 2/2 通过（15.47s）；生产临时夹具尚未完成全组合验收，不计为通过。
+用户随后要求刷新图标在检查期间旋转、GitHub 仓库入口使用 GitHub 标记，以及修正宽屏关于标题栏；代码已接入保留 Rotation（reduced motion 停止）、带 MIT 许可的 Octicons 资源及公共桌面 PageScaffold。用户选择温润暖白，统一 FluxLightColors 为外框 #FBFAF7、内容 #F4F2EE、卡片 #FFFEFC，保留强调色与深色配置；次要文字/内容背景对比度约 4.81:1。
+最终验证被本机 Visual Studio 更新阻塞：用户要求尝试不重启，重新加载开发环境并配置时，最小 C 编译即报 C1902；实查 cl/c1/c2/mspdb140 为 36260，mspdbcore/mspdbsrv 仍为 36252。适配 SDK 路径时 CMake 自动清理缓存，已从 build/CMakeCache.before-hui-startup.txt 恢复原构建设置并补回 Release、health-evidence 输出、required 测试 ON、原 OpenSSL/Python 路径；原 VS Ninja/26100 SDK 路径恢复可用，下一步需工具链完成更新后先重新配置再构建。最新旋转/GitHub 图标/标题栏/暖白改动尚未完成主目标编译或 GUI 验收，不以初版的通过记录替代。最新字符串检查覆盖 414 个文案、GitHub SVG XML 检查及 git diff --check 通过；run.ps1 --version 为已有产物 v0.3.74。未重启系统、未提交或发布。
+
+2026-10-28，基于 `98da670` 未提交工作区后续：设置分组标题统一移到卡片外并按内容首列对齐；组面板零内边距，行内保留空间，首尾行贴边，由整组圆角裁切绘制和命中。共享设置行通过 SettingsRowInsets 仅在设置组内取得行距，订阅表单的默认几何保持中性。Toast 使用现有 HUI 能力统一下移 8pt、缩到 98%、200ms 淡出，减少动画时禁用位移/缩放；用户明确不改 fork，未实现上下独立方向。窗口级订阅错误/刷新失败提示移到主题容器内取得 Toast，并随样式变化更新唤醒绑定。
+桌面 Compact 胶囊/渐隐层移入 NavigationStack 的首页层 `CompactRootPageSurface`，语言/主题/报告/规则编辑等二级页直接覆盖父页；移除 secondaryOpen/secondaryOwner 与各路由的手工显隐/清理，返回保留同一胶囊挂载状态。`UsePrimaryPageNavigation` 在一级选择改变时清理逻辑二级路径；订阅内联表单的展示状态与 push/pop 独立。用户已初步手工认可导航行为。
+Windows MSVC x64 Release 执行 `cmake --build build --target clash-flux test_page_transition --parallel 4` 与 HuxerUI codegen 通过；`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'` 最终 2/2 通过（11.07s）。新增回归覆盖 Toast 自动/主动退场的真实位移、缩放、透明度、卸载/静止和 reduced motion；胶囊 push/pop 的挂载保留、返回过程中状态可用、二级页稳态覆盖、嵌套与跨断点、一级切换清栈。回归不将被导航覆盖父页的逻辑 visible 标记等同于冻结过渡画面的逐像素验收。
+生产临时夹具 `%TEMP%/clashflux-profile-form-review/settings_group_probe.cpp` 在深浅色、单/多行、320/400/960pt 与鼠标/触屏共 24 组合验证标题外置/缩进、首尾无空带、边缘点击和圆角外拒绝，并覆盖虚构根级错误 Toast 消费/展示/退役；语言夹具 8 组合再次通过，仅检查打开/返回，无数据库写入。未执行本轮完整产品原生动画验收、Android APK/实机及完整 required 门禁；未提交或发布。
+
+2026-10-28，基于 `98da670` 未提交工作区后续：首页出站模式移除手绘单选圈/整行状态层，生产 `HomeModeChoices` 使用框架 RadioButton，与语言单选同一行为，文字区域可选、32pt 状态层围绕圆圈；保留 18pt 圈和首页紧凑布局。MD3 通用反馈在强调色写入后统一重建，hover/focus/press/ripple 透明度归 theme_colors.h 常量；填充按钮保留 on_primary 对比角色，图标按钮/Chip/Tabs/分段/菜单/Select/对话框反馈从统一 helper 取色。
+语言入口改为跨平台响应式：320/599pt 进共享 LanguageRoutePage，600/960pt 开弹窗，共用真实 LanguageChoices；桌面路由生命周期驱动二级页及底栏状态。Windows MSVC x64 Release 的 `cmake --build build --target clash-flux test_page_transition --parallel 4` 与 HuxerUI codegen 通过；`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'` 2/2 通过（10.91s），新增深浅/蓝绿强调色、鼠标/触屏下的实际局部圆形反馈、无整行半透明反馈、标签点击单次更新及 busy 拒绝回归。
+临时夹具 `%TEMP%/clashflux-profile-form-review/responsive_language_probe.cpp` 链接真实入口/选择页，在深浅色与四种宽度共 8 组合验证页面/弹窗、跨宽窄保留页面、返回与导航所有权清理；只打开和关闭选择器，不选择语言、不写用户 store。用户手动验证并认可反馈效果。自动 GUI 工具因 kernel assets 路径错误未能初始化，未将自动组件回归计为原生 GUI 验收；本轮未做 Android APK/实机或其它平台构建，未提交或发布。Toast 消失动画尚处方案讨论，本轮未修改 Toast。
+
+2026-10-28，基于 `98da670` 未提交工作区后续：用户确认全宽反馈示例后，设置页主题/语言/入站端口/运行诊断和手机及桌面 Compact 的更多入口共用全宽行；标题、说明与非整行控件维持原对齐。整行仍读取 Material 基线的 theme.interactions.indication，本次未修改涟漪配色；应用仅替换 colors 不会自动重算这组拥有型反馈颜色。
+Windows MSVC x64 Release 执行 `cmake --build build --target clash-flux test_page_transition --parallel 4`，主目标及 HuxerUI codegen 通过；`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'` 2/2 通过（10.02s）。生产组件临时夹具覆盖默认入口与显式留白入口，在深浅色、320/400/960pt、鼠标/触屏左右边缘共 48 次点击均恰好触发一次，行宽与卡片相同、文字保持原对齐。未做本轮完整产品 GUI 或 Android APK/实机验收；未提交或发布。
+
+2026-10-28，基于 `98da670` 未提交工作区：设置页仅「网络 → 运行诊断」试用全宽点击/Indication。网络卡片的水平留白下放到标题和各行；诊断行的留白位于可交互 Row 内，其它行保持原位置和范围。共享 Card 的可选 contentPadding 默认仍取主题值，不改其它卡片。
+Windows MSVC x64 Release 执行 `cmake --build build --target clash-flux test_page_transition --parallel 4`，主目标/HuxerUI codegen 通过；`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'` 2/2 通过（10.03s）。临时夹具 `%TEMP%/clashflux-profile-form-review/settings_row_probe.cpp` 链接生产 SettingNavigationItem/SettingsSectionCard，在深浅色、320/400/960pt 验证整行与卡片同宽、文字对齐不变，以及鼠标/触屏左右边缘共 24 次点击均恰好触发一次；不连接数据库或网络操作。未做完整产品原生窗口效果或 Android 实机验收，等待用户确认这一个示例的视觉效果后再推广；未提交或发布。
+
 2026-10-28，`v0.3.74` 发布候选：汇总手机订阅统一列表/紧凑卡片、手机代理原名、策略组卡片选中态、窄屏固定底部保存与桌面窄窗编辑导航修复、首页双击翻面彩蛋，以及订阅更新失败提示。版本为 CMake `0.3.74`、Android `versionName=0.3.74` / `versionCode=152`。
 翻面后由背面独立命中层隔离正面控件，覆盖显式 Enabled(true) 子按钮原位置的单击不触发、双击翻回及控件状态保留。翻转加强为 0.62 秒，包含抬起/侧向弧线/2.5pt 侧边与 retained 明暗变化，减少动画时直接切面，静止后不持续调度。Windows MSVC x64 Release 执行 `cmake --build build --target clash-flux test_page_transition --parallel 4` 与 HuxerUI codegen 通过；`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'` 2/2 通过（24.98s），覆盖深浅色、鼠标/触屏、减少动画、实际绘制中间帧、背面原控件位置输入和状态保留。`./run.ps1 --version` 输出 v0.3.74，`git diff --check` 通过。
 构建曾被运行中的旧 exe 占用，保留旧进程、将原产物移至同目录备份后重新链接通过。Windows 入口中开发机绝对路径的临时 terminate 日志改动保留在工作区，不纳入发行提交。本机未执行本轮完整 required 门禁、原生窗口动画验收、Android 真机/签名包或其它平台构建；tag 发布流水线仍需完成跨平台门禁、安装包及 APK 签名检查。

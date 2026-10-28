@@ -188,3 +188,49 @@ Temurin OpenJDK 17.0.20.1+1 归档校验 SHA256：
 本机未重新构建 Android AAR 与 iOS xcframework；两者由 CI 与各平台脚本按
 同一固定 revision 生成，AAR 版本/revision/ABI/SHA256 元数据校验不通过会
 直接失败。真机 VPN、远端握手与服务端兼容性仍需实机验证。
+
+## 2026-10-28：1.14.3 → 1.14.4
+
+基于 `98da670` 的未提交工作区，固定官方稳定版
+[v1.14.4](https://github.com/SagerNet/sing-box/releases/tag/v1.14.4)，revision
+`c005f35300ce76427dc285481ec5695f5b179cd2`。官方发布说明虽只写修复与改进，仍按
+[完整源码差异](https://github.com/SagerNet/sing-box/compare/v1.14.3...v1.14.4) 检查兼容性。
+
+| 1.14.4 资产后缀 | 官方 SHA256 |
+|---|---|
+| `linux-amd64.tar.gz` | `699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968` |
+| `linux-arm64.tar.gz` | `436441f76ee2f7fe21b5b2d426d3cb261a480455a704865789ad533e4273ec26` |
+| `windows-amd64.zip` | `99185d75d314a07dbba4a130c8ad986cbeb629a07927975636b341ca61f991df` |
+| `windows-arm64.zip` | `8cd0a4d0cd8cd480be5731ac31f17038969a42d12add9feb6e031fd43d85bbae` |
+| `darwin-amd64.tar.gz` | `eae86b9b033bba50b7c44ab719e4bfac0aca05efd28483390ed3aa510f32db25` |
+| `darwin-arm64.tar.gz` | `0d8c7f5ed5d587b0f1a5e9772a708ec3bfa4ac4c9329604b01d8d9c2ba406838` |
+
+摘要来自官方 expanded_assets 发布页的逐项 digest；CMake 实际下载并校验 Windows x64
+归档。桌面 CMake、CI 与 Android/iOS 脚本、Gradle 全部对齐同一 revision。
+
+兼容性处理：
+
+- selector/urltest 新增重复 tag 拒绝。旧展开示例会产生重复成员，真实内核 check 已复现失败。
+  Clash 组编译保留首次位置、不同成员顺序及有效 default，每个重复项记 Group/Approx；原订阅不改写。
+  显式组及自动展开共用处理，原生 JSON 不自动改写。单位回归和真实 SOCKS 转发/组切换验证通过。
+- `option/rule_action.go` 移除 `action:direct`。托管 DIRECT 仍通过 direct 出站路由，未使用该动作；
+  固定新内核实测旧动作拒绝、route + outbound:direct 接受。用户原生配置仍由候选校验拒绝，不做静默修复。
+- libbox PlatformInterface 移除 useProcFS。API 24–28 的 owner 回调显式调用新增
+  Libbox.findConnectionOwner，API 29+ 继续系统 UID 查询；保留包名解析、非空结果与错误反馈。
+- Clash API 和 StartedService 组状态内部改用 TCP Selected，现有组/选择/版本读取通过真实接口回归；
+  真实版本断言改为与同一固定内核的 version 输出核对，不再写死前一版本。
+
+实际验证：Windows MSVC Release 主目标、test_singbox/test_runtime_health/test_page_transition 构建
+及 HuxerUI codegen 通过；page_transition、ui_resources、singbox、native_control_runtime、
+group_expansion_runtime、dns_hosts_runtime、dns_policy_runtime、dns_tls_runtime、runtime_health、
+personal_rule_sets_runtime 共 10/10 通过（94.81s）。打包内核输出 1.14.4 和上述 revision；
+应用版本仍为 v0.3.74。运行脚本版本与 git diff --check 通过。
+
+Android 实际执行 build-singbox-libbox.sh，使用正式 tag 构建 arm64-v8a AAR，
+SHA256 `c3125f8d3bc55dd26a7310534528fbe96a2278ea6eba52f6b67ecc5a1ce21ccc`；
+stageSingboxAar 与 stageBundledRuleSets 通过，未伪造旧 AAR 的来源元数据。
+新 AAR 的 PlatformInterface/Libbox 导出已用 javap 核对，生产 findConnectionOwner 方法与
+StringArray 原样提取后，用 JDK 17、Android API 36 和新 classes.jar 独立 javac 编译通过。
+完整 compileDebugJavaWithJavac 在前置 configureCMakeDebug 失败：Gradle 未找到 CMake 4.4.2；
+该独立编译不等于完整 Java/APK 构建或真机 VPN 通过。未做 Android 真机、其它桌面平台、
+iOS xcframework、服务安装升级或完整 required 门禁；未提交、推送或发布。

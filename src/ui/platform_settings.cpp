@@ -18,6 +18,7 @@
 #include "ui.h"
 #include "app_resources.h"
 #include "task_bridge.h"
+#include "settings_group_layout.h"
 
 import clashflux.config;
 import clashflux.core;
@@ -332,7 +333,6 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
         if (state == huxerui::ApplicationLifecycleState::Active) model->RequestRefresh();
     });
     return huxerui::Column {
-        SectionTitle(Localized("后台运行")),
         SettingSwitchRow(
             Localized("后台保活"),
             Localized("申请忽略电池优化，防止后台被杀；建议同时在系统设置中允许本应用自启动"),
@@ -348,7 +348,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                     }
                     model->RequestRefresh();
                 }), false, app::images::battery),
-    }.With(huxerui::Spacing(10.0F),
+    }.With(huxerui::Spacing(0.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
@@ -429,7 +429,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                         [on](SettingsView& view) { view.lightweightTray = on; });
                 }), false, app::images::tray));
     return huxerui::Column(std::move(rows)).With(
-        huxerui::Spacing(10.0F),
+        huxerui::Spacing(0.0F),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
@@ -499,18 +499,18 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
     }.With(huxerui::Spacing(12.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     if (compact) {
-        return huxerui::Column {
+        return SettingsContentRow(huxerui::Column {
             std::move(description),
             huxerui::Row { huxerui::Spacer(), std::move(shellSelect) }
                 .With(huxerui::Padding(huxerui::EdgeInsets{.left = 32.0F})),
         }.With(huxerui::Spacing(8.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
     }
-    return huxerui::Row {
+    return SettingsContentRow(huxerui::Row {
         std::move(description).With(huxerui::Grow(1.0F)),
         std::move(shellSelect),
     }.With(huxerui::Spacing(12.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
 }
 
 [[huxerui::composable]] huxerui::View DesktopKernelSettings() {
@@ -522,14 +522,13 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
     const auto version = view.core.version.empty() ? cfg::singboxFallbackLabel()
                                                    : view.core.version;
     return huxerui::Column {
-        SectionTitle(Localized("运行与维护")),
         SettingRow(Localized("内核"), version,
             huxerui::Button(Localized("重启"))
                 .With(huxerui::Enabled(running && !control.Busy()))
                 .OnClick([control] { control.Run({.action = CoreAction::Restart}); }),
             app::images::bolt),
         CLASHFLUX_DESKTOP_SERVICE_ROW(view.serviceInstalled, tasks, toast),
-    }.With(huxerui::Spacing(10.0F),
+    }.With(huxerui::Spacing(0.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 

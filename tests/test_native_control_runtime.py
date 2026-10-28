@@ -161,6 +161,9 @@ def main():
     assert len(sys.argv) == 3, "fixed core and production C++ probe are required"
     core = pathlib.Path(sys.argv[1]).resolve()
     driver = pathlib.Path(sys.argv[2]).resolve()
+    expected_version = subprocess.check_output([str(core), "version"], text=True).splitlines()[0]
+    assert expected_version.startswith("sing-box version "), expected_version
+    expected_version = expected_version.removeprefix("sing-box version ").encode()
     faults(driver)
     with tempfile.TemporaryDirectory(prefix="clash-flux-native-") as temporary, Server(("127.0.0.1", 0), Echo) as echo:
         root = pathlib.Path(temporary)
@@ -194,7 +197,7 @@ def main():
             process = subprocess.Popen([str(core), "run", "-c", str(config_path), "-D", str(root)], stdout=log, stderr=log)
             try:
                 version = wait_for(lambda: native(api, "GetVersion"))
-                assert b"1.14.3" in version, version
+                assert expected_version in version, version
                 started = native(api, "GetStartedAt")
                 def production_probe(token="test-native-secret"):
                     if len(sys.argv) < 3:
@@ -205,7 +208,7 @@ def main():
                 production = production_probe()
                 if production is not None:
                     assert production.returncode == 0, production.stderr.decode(errors="replace")
-                    assert production.stdout.startswith(b"1.14.3 4 ")
+                    assert production.stdout.startswith(expected_version + b" 4 ")
                     assert production_probe("wrong-secret").returncode != 0
                 try:
                     native(api, "GetVersion", "wrong-secret")

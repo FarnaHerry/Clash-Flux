@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <string>
 #include <utility>
 #include <huxerui/huxerui.h>
 
@@ -90,8 +91,8 @@ private:
 // Build the dashboard surface on its own node so its fill and hover layer share
 // the same rounded geometry. A passive card does not acquire a click action.
 inline huxerui::View HomeCardSurface(const huxerui::ThemeSpec& theme,
-                                    huxerui::View content, bool allowFlip = true) {
-    return huxerui::Scope([theme, content = std::move(content), allowFlip]() -> huxerui::View {
+                                    huxerui::View content, std::string cardId, bool allowFlip = true) {
+    return huxerui::Scope([theme, content = std::move(content), cardId, allowFlip]() -> huxerui::View {
         auto pointer = huxerui::UseState<std::optional<std::int64_t>>(std::nullopt);
         auto back = huxerui::UseState(false);
         const auto flip = huxerui::UseSharedTransition();
@@ -154,7 +155,9 @@ inline huxerui::View HomeCardSurface(const huxerui::ThemeSpec& theme,
             });
         if (!allowFlip) return surface;
         surface = std::move(surface).With(huxerui::Grow(1.0F), huxerui::MultiTapGesture{},
-            huxerui::SharedBounds("home-card-face").BoundsTransform(HomeCardFlipBounds{}))
+            // Navigation captures the whole page, including these local scopes.
+            // Marker identity must therefore also be unique across all cards.
+            huxerui::SharedBounds("home-card-face-" + cardId).BoundsTransform(HomeCardFlipBounds{}))
             .On<huxerui::MultiTapEvents::Recognized>(turn);
         return huxerui::Column {surface}.With(flip.Scope(),
             HomeCardFlipLighting{back.Get(), theme.motion.reduced_motion,

@@ -27,6 +27,7 @@
 #include "responsive_shell.h"
 #include "page_layout.h"
 #include "app_resources.h"
+#include "interaction_theme.h"
 #include "proxies_model.h"
 #include "task_bridge.h"
 
@@ -121,6 +122,7 @@ huxerui::ThemeSpec FluxDarkThemeSpec(std::string_view accent) {
     spec.shapes = huxerui::ShapeScheme{6.0F, 12.0F, 16.0F, 22.0F, 28.0F,
                                         10000.0F};
     spec.colors = FluxDarkColors(accent);
+    ApplyFluxInteractionTheme(spec);
     spec.interactions.focus_ring = huxerui::FocusRing{spec.colors.on_primary_container, 2.0F, 2.0F};
     return spec;
 }
@@ -140,6 +142,7 @@ huxerui::ThemeSpec FluxLightThemeSpec(std::string_view accent) {
     spec.shapes = huxerui::ShapeScheme{6.0F, 12.0F, 16.0F, 22.0F, 28.0F,
                                         10000.0F};
     spec.colors = FluxLightColors(accent);
+    ApplyFluxInteractionTheme(spec);
     spec.interactions.focus_ring = huxerui::FocusRing{ResolveFluxAccent(accent).dark, 2.0F, 2.0F};
     return spec;
 }
@@ -172,6 +175,8 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     segments.selected_label = spec.colors.on_primary;
     segments.border = huxerui::Border{spec.colors.outline, 1.0F};
     segments.selected_border = huxerui::Border{spec.colors.primary, 1.0F};
+    segments.indication = ResolveFluxIndication(spec);
+    segments.selected_indication = ResolveFluxIndication(spec, spec.colors.on_primary);
     definition.Set(segments);
 
     // 内置确认框跟随主题（DialogStyle 是 Environment 值，经 ThemeDefinition::Set
@@ -187,16 +192,10 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     dialogs.positive_action_style = huxerui::TextStyle{
         huxerui::Font::System(font_size::kBody), spec.colors.on_primary};
     dialogs.positive_action_background = spec.colors.primary;
-    dialogs.positive_action_indication = huxerui::Indication{
-        .hover = huxerui::IndicationLayer{.fill = withAlpha(spec.colors.on_primary, 0.10F)},
-        .press = huxerui::IndicationLayer{.fill = withAlpha(spec.colors.on_primary, 0.18F)},
-    };
+    dialogs.positive_action_indication = ResolveFluxIndication(spec, spec.colors.on_primary);
     dialogs.negative_action_style = huxerui::TextStyle{
         huxerui::Font::System(font_size::kBody), spec.colors.on_surface};
-    dialogs.negative_action_indication = huxerui::Indication{
-        .hover = huxerui::IndicationLayer{.fill = withAlpha(spec.colors.on_surface, 0.06F)},
-        .press = huxerui::IndicationLayer{.fill = withAlpha(spec.colors.on_surface, 0.12F)},
-    };
+    dialogs.negative_action_indication = ResolveFluxIndication(spec);
     dialogs.action_separator_color = spec.colors.outline;
     definition.Set(dialogs);
 
@@ -207,8 +206,8 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     selects.border = huxerui::Border{spec.colors.outline, 1.0F};
     selects.indicator = spec.colors.on_surface_variant;
     selects.popup_background = spec.colors.surface_container;
-    selects.active_item_background = withAlpha(spec.colors.primary, 0.08F);
-    selects.selected_item_background = withAlpha(spec.colors.primary, 0.12F);
+    selects.active_item_background = withAlpha(spec.colors.primary, kInteractionHoverOpacity);
+    selects.selected_item_background = withAlpha(spec.colors.primary, kInteractionPressOpacity);
     selects.validation_error = spec.colors.error;
     selects.validation_text_style = huxerui::TextStyle{
         huxerui::Font::System(font_size::kChip), spec.colors.error};
@@ -224,10 +223,7 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     selects.indicator_size = 20.0F;
     selects.corner_radii = spec.shapes.small;
     selects.popup_corner_radii = spec.shapes.small;
-    const huxerui::Indication selectIndication{
-        .hover = huxerui::IndicationLayer{.fill = withAlpha(spec.colors.on_surface, 0.08F)},
-        .press = huxerui::IndicationLayer{.fill = withAlpha(spec.colors.on_surface, 0.12F)},
-    };
+    const huxerui::Indication selectIndication = ResolveFluxIndication(spec);
     selects.indication = selectIndication;
     selects.item_indication = selectIndication;
     definition.Set(selects);
@@ -294,19 +290,13 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     navigationPane.compact_indicator_size =
         huxerui::Size{kTopNavigationIndicatorSize, kTopNavigationIndicatorSize};
     navigationPane.indicator_corner_radius = spec.shapes.medium;
-    huxerui::Color navigationHover = spec.colors.on_surface;
-    navigationHover.alpha = 0.08F;
-    huxerui::Color navigationPress = spec.colors.on_surface;
-    navigationPress.alpha = 0.14F;
-    navigationPane.indication = huxerui::Indication{
-        .geometry = huxerui::IndicationGeometry{
+    auto navigationIndication = ResolveFluxIndication(spec);
+    navigationIndication.geometry = huxerui::IndicationGeometry{
             .layer_size = navigationPane.compact_indicator_size,
             .clip_corner_radii =
                 huxerui::CornerRadii{navigationPane.indicator_corner_radius},
-        },
-        .hover = huxerui::IndicationLayer{.fill = navigationHover},
-        .press = huxerui::IndicationLayer{.fill = navigationPress},
-    };
+        };
+    navigationPane.indication = navigationIndication;
     definition.Set(navigationPane);
 
     // Android 的主题级回退也必须跟随页面壳层的内容底色；否则状态栏候选
@@ -323,7 +313,7 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
 #endif
     definition.Set(systemBars);
 
-    return huxerui::Theme(std::move(definition), FluxPresentationShadows(content));
+    return huxerui::Theme(std::move(definition), FluxInteractionStyles(FluxPresentationShadows(content)));
 }
 
 // 输入框对齐下拉触发框（Select 全局覆盖为 shapes.small + 48pt，见
@@ -633,13 +623,7 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
         if (profilesModel->rulesRequests.Get() != 0) navPage = pages::kRules;
     }, profilesModel->rulesRequests);
     const auto model = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
-    huxerui::Lifecycle([navPage, navigation, model] {
-        if (model->secondaryOpen.Get() &&
-            navPage.Get() != model->secondaryOwner.Get().value_or(pages::kSettings)) {
-            static_cast<void>(navigation.Pop());
-        }
-        return [] {};
-    }, navPage);
+    UsePrimaryPageNavigation(navigation, navPage);
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const auto backToSettings = compact ? std::function<void()>{[navPage] { navPage = pages::kSettings; }}
                                         : std::function<void()>{};
@@ -665,7 +649,13 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
                                  desktopActivePage == pages::kSettings)
                         .Key("settings").With(huxerui::Grow(1.0F)));
     // Compact 保留原来的点击翻页；规则、连接、日志仍只从「更多」进入。
-    return DesktopPageSwitcher(pages, navPage, compact, huxerui::UseTheme());
+    huxerui::View dock;
+    const bool auxiliary = desktopActivePage == pages::kRules || desktopActivePage == pages::kConnections ||
+        desktopActivePage == pages::kLogs;
+    if (!auxiliary && !(desktopActivePage == pages::kProfiles && model->compactProfileFormOpen.Get()))
+        dock = AndroidNavigationSurface(navPage);
+    return CompactRootPageSurface(
+        DesktopPageSwitcher(pages, navPage, compact, huxerui::UseTheme()), dock);
 }
 
 // 导航栈只占内容区域，左侧栏和 Compact 系统标题栏留在持久外壳中。
@@ -699,7 +689,6 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
     case core::CoreState::Stopped:
         break;
     }
-    const std::size_t desktopActivePage = navPage.Get();
     huxerui::View logoArt = huxerui::Image(
         IsDarkTheme(spec) ? app::images::clash_flux_logo_vector_dark_current
                          : app::images::clash_flux_logo_vector_light_current)
@@ -746,19 +735,13 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
         huxerui::Text("Clash-Flux").With(huxerui::Padding(8.0F)),
         huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
     }.With(huxerui::Frame{.height = kDesktopTitleBarHeight});
-    const bool secondary = desktopActivePage == pages::kRules ||
-        desktopActivePage == pages::kConnections || desktopActivePage == pages::kLogs ||
-        model->secondaryOpen.Get() ||
-        (desktopActivePage == pages::kProfiles && model->compactProfileFormOpen.Get());
-    huxerui::View navigation;
-    if (!secondary) navigation = AndroidNavigationSurface(navPage);
     // Environment 只提供作用域；外层真实布局承接骨架的 Grow/Key 行为。
     huxerui::View content = huxerui::Column {
       huxerui::ProvideEnvironment(DesktopSettingsNavigation{model},
           huxerui::NavigationStack(DesktopPrimaryPages, navPage, themeMode, profilesCache)
               .With(huxerui::Grow(1.0F))),
     }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    return ResponsiveDesktopShell(content, sidebar, chrome, navigation);
+    return ResponsiveDesktopShell(content, sidebar, chrome, {});
 }
 
 // 二级页的进入与返回动画：新页自右缘滑入、父页左移 20%，
@@ -861,6 +844,18 @@ huxerui::PageTransition SecondaryPageTransition(
 
 } // namespace
 
+[[huxerui::composable]] huxerui::View LanguageRoutePage() {
+    const auto navigation = huxerui::UseNavigation();
+    return LanguagePage([navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+
+[[huxerui::composable]] huxerui::View AboutRoutePage() {
+    const auto navigation = huxerui::UseNavigation();
+    return AboutPage([navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+
 #if defined(__ANDROID__)
 // 手机端二级页：由设置页「更多」入口 push 到 NavigationStack，标题栏返回箭头
 // 与系统返回键统一调用 Pop，因此进入和返回都使用上面的页面动画。
@@ -914,20 +909,12 @@ huxerui::PageTransition SecondaryPageTransition(
 #if !defined(__ANDROID__)
 [[huxerui::composable]] huxerui::View DesktopThemePage(huxerui::State<int> themeMode) {
     const huxerui::NavigationController navigation = huxerui::UseNavigation();
-    const auto model = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
-    huxerui::Lifecycle([model] {
-        return [model] { model->secondaryOpen = false; };
-    }, 0);
     return ThemePage(themeMode, [navigation] { static_cast<void>(navigation.Pop()); }, true)
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
 
 [[huxerui::composable]] huxerui::View DesktopFidelityPage(std::int64_t profileId) {
     const auto navigation = huxerui::UseNavigation();
-    const auto model = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
-    huxerui::Lifecycle([model] {
-        return [model] { model->secondaryOpen = false; model->secondaryOwner = std::nullopt; };
-    }, 0);
     return FidelityPage(profileId, [navigation] { static_cast<void>(navigation.Pop()); }, true)
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
@@ -935,13 +922,6 @@ huxerui::PageTransition SecondaryPageTransition(
 [[huxerui::composable]] huxerui::View DesktopConnectionDetailPage(
     ConnectionRow initial) {
     const auto navigation = huxerui::UseNavigation();
-    const auto model = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
-    huxerui::Lifecycle([model] {
-        return [model] {
-            model->secondaryOpen = false;
-            model->secondaryOwner = std::nullopt;
-        };
-    }, 0);
     return ConnectionDetailPage(initial,
         [navigation] { static_cast<void>(navigation.Pop()); }, true)
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
@@ -949,33 +929,23 @@ huxerui::PageTransition SecondaryPageTransition(
 #endif
 
 [[huxerui::composable]] huxerui::View RuleEditorRoute(
-    std::shared_ptr<DesktopSettingsNavigationModel> model, std::function<huxerui::View()> editor) {
-    huxerui::Lifecycle([model] {
-        return [model] { if (model) { model->secondaryOpen = false; model->secondaryOwner = std::nullopt; } };
-    }, 0);
+    std::function<huxerui::View()> editor) {
     return editor().With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
 
 void OpenRuleEditor(huxerui::NavigationController navigation,
     std::shared_ptr<DesktopSettingsNavigationModel> desktopNavigation,
     std::function<huxerui::View()> editor) {
-    if (desktopNavigation) {
-        desktopNavigation->secondaryOwner = pages::kRules;
-        desktopNavigation->secondaryOpen = true;
-    }
-    navigation.Push([desktopNavigation, editor] { return RuleEditorRoute(desktopNavigation, editor); });
+    static_cast<void>(desktopNavigation);
+    navigation.Push([editor] { return RuleEditorRoute(editor); });
 }
 
 void OpenProfileFidelityPage(huxerui::NavigationController navigation,
     std::shared_ptr<DesktopSettingsNavigationModel> desktopNavigation, std::int64_t profileId) {
-#if defined(__ANDROID__)
     static_cast<void>(desktopNavigation);
+#if defined(__ANDROID__)
     navigation.Push(AndroidFidelityPage, profileId);
 #else
-    if (desktopNavigation) {
-        desktopNavigation->secondaryOwner = pages::kProfiles;
-        desktopNavigation->secondaryOpen = true;
-    }
     navigation.Push(DesktopFidelityPage, profileId);
 #endif
 }
@@ -983,14 +953,10 @@ void OpenProfileFidelityPage(huxerui::NavigationController navigation,
 void OpenConnectionDetailPage(huxerui::NavigationController navigation,
     std::shared_ptr<DesktopSettingsNavigationModel> desktopNavigation,
     ConnectionRow initial) {
-#if defined(__ANDROID__)
     static_cast<void>(desktopNavigation);
+#if defined(__ANDROID__)
     navigation.Push(AndroidConnectionDetailPage, std::move(initial));
 #else
-    if (desktopNavigation) {
-        desktopNavigation->secondaryOwner = pages::kConnections;
-        desktopNavigation->secondaryOpen = true;
-    }
     navigation.Push(DesktopConnectionDetailPage, std::move(initial));
 #endif
 }
@@ -1155,6 +1121,64 @@ void StartDesktopWindowlessRuntime() {
 }
 #endif
 
+// Toast handles capture their environment, so window notices must mount below
+// the locale/Material/Toast theme boundary just like page-local feedback.
+[[huxerui::composable]] huxerui::View AppNoticeEffects(
+    std::shared_ptr<ProfilesModel> profilesModel, huxerui::State<std::size_t> navPage,
+    huxerui::State<std::size_t> pagerPage) {
+    const auto tasks = huxerui::UseTaskScope();
+    const auto linkWindow = huxerui::UseWindow();
+    const auto linkToast = huxerui::UseToast();
+    const auto toastStyle = huxerui::UseEnvironment<huxerui::ToastStyle>();
+    huxerui::Lifecycle([profilesModel, linkToast] {
+        const auto error = profilesModel->linkError.Get();
+        if (!error.empty()) {
+            linkToast.Show(error);
+            profilesModel->linkError = std::string{};
+        }
+        return [] {};
+    }, profilesModel->linkError);
+    huxerui::Lifecycle([profilesModel, linkToast] {
+        const auto failures = profilesModel->TakeProfileRefreshFailures();
+        if (!failures.empty()) {
+            std::string details;
+            for (const auto& failure : failures) {
+                if (!details.empty()) details += "；";
+                details += failure.profileName + "：" + failure.error;
+            }
+            linkToast.Show(LocalizedFormat("订阅更新失败：{}", details),
+                           huxerui::ToastOptions{8.0});
+        }
+        return [] {};
+    }, profilesModel->profileRefreshFailures);
+    huxerui::Lifecycle([tasks, profilesModel, navPage, pagerPage, linkWindow, linkToast] {
+        auto wake = [tasks, profilesModel, navPage, pagerPage, linkWindow, linkToast] {
+            tasks.Post([profilesModel, navPage, pagerPage, linkWindow, linkToast] {
+                auto incoming = profile_link::TakePending();
+                if (incoming.empty()) return;
+                auto links = profilesModel->importLinks.Get();
+                for (auto& request : incoming) {
+                    if (links.size() >= 16) {
+                        linkToast.Show("待处理的订阅链接过多，请先完成导入");
+                        break;
+                    }
+                    links.push_back(std::move(request));
+                }
+                profilesModel->importLinks = std::move(links);
+                navPage = pages::kProfiles;
+                pagerPage = 2;
+                linkWindow.Activate();
+            });
+        };
+        profile_link::SetWakeHandler(wake);
+        // A startup activation may enqueue its URL before this window scope is
+        // mounted. Drain that queue once the window installs its wake handler.
+        wake();
+        return [] { profile_link::SetWakeHandler({}); };
+    }, toastStyle);
+    return huxerui::Row{};
+}
+
 [[huxerui::composable]] huxerui::View AppRoot() {
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
     const huxerui::Locale systemLocale =
@@ -1215,8 +1239,6 @@ void StartDesktopWindowlessRuntime() {
     auto tasks = huxerui::UseTaskScope();
     auto applicationTasks = huxerui::UseApplicationTaskScope();
     const auto runtimeServices = huxerui::UseService<AppRuntimeServices>();
-    const auto linkToast = huxerui::UseToast();
-    const auto linkWindow = huxerui::UseWindow();
     huxerui::Lifecycle([application, profilesModel, runtimeServices] {
         if (!runtimeServices->startupActivationHandled) {
             runtimeServices->startupActivationHandled = true;
@@ -1234,52 +1256,6 @@ void StartDesktopWindowlessRuntime() {
         }
         return [] {};
     }, runtimeServices->backgroundSettingsRequests);
-    huxerui::Lifecycle([profilesModel, linkToast] {
-        const auto error = profilesModel->linkError.Get();
-        if (!error.empty()) {
-            linkToast.Show(error);
-            profilesModel->linkError = std::string{};
-        }
-        return [] {};
-    }, profilesModel->linkError);
-    huxerui::Lifecycle([profilesModel, linkToast] {
-        const auto failures = profilesModel->TakeProfileRefreshFailures();
-        if (!failures.empty()) {
-            std::string details;
-            for (const auto& failure : failures) {
-                if (!details.empty()) details += "；";
-                details += failure.profileName + "：" + failure.error;
-            }
-            linkToast.Show(LocalizedFormat("订阅更新失败：{}", details),
-                           huxerui::ToastOptions{8.0});
-        }
-        return [] {};
-    }, profilesModel->profileRefreshFailures);
-    huxerui::Lifecycle([tasks, profilesModel, navPage, pagerPage, linkWindow, linkToast] {
-        auto wake = [tasks, profilesModel, navPage, pagerPage, linkWindow, linkToast] {
-            tasks.Post([profilesModel, navPage, pagerPage, linkWindow, linkToast] {
-                auto incoming = profile_link::TakePending();
-                if (incoming.empty()) return;
-                auto links = profilesModel->importLinks.Get();
-                for (auto& request : incoming) {
-                    if (links.size() >= 16) {
-                        linkToast.Show("待处理的订阅链接过多，请先完成导入");
-                        break;
-                    }
-                    links.push_back(std::move(request));
-                }
-                profilesModel->importLinks = std::move(links);
-                navPage = pages::kProfiles;
-                pagerPage = 2;
-                linkWindow.Activate();
-            });
-        };
-        profile_link::SetWakeHandler(wake);
-        // A startup activation may enqueue its URL before this window scope is
-        // mounted. Drain that queue once the window installs its wake handler.
-        wake();
-        return [] { profile_link::SetWakeHandler({}); };
-    }, 0);
     huxerui::Lifecycle(
         [applicationTasks, runtimeServices, application, profilesModel, settingsModel] {
             if (!runtimeServices->persistenceStarted) {
@@ -1478,6 +1454,7 @@ void StartDesktopWindowlessRuntime() {
         rootSpec,
         WithUnifiedFieldStyle(
             huxerui::Column {
+                AppNoticeEffects(profilesModel, navPage, pagerPage),
                 std::move(profileRefreshPump),
                 std::move(applicationEffects),
                 std::move(content),

@@ -31,6 +31,12 @@ macOS 原生 bundle 编译成功，但生命周期 CTest 为 10/12：
 `HuxerUIMacOSNativeRetirementKeepsWindowlessRuntimeAliveAndCanReopen` 超时。键盘派发关闭测试通过；
 CI 诊断器仍尝试运行该键盘测试并最终超时，两个失败尚未定位或修复。
 
+2026-10-28 应用接入上游 `AppOptions::quit_on_last_window_closed=false`：当前固定 SDK 已包含该选项，
+无需升级框架 pin。轻量模式使用普通窗口关闭及 OpenWindow 重建，应用级协程由
+UseApplicationTaskScope 持有，不再消费 fork 的 Retire 原语。该选项控制最后一个窗口关闭后的
+Runtime 退出策略，不等于隐藏窗口或清空全部框架缓存。Windows 原生隔离夹具验证三次关窗/重建、
+无窗协程和模型存活、默认 last-window 退出及显式 Quit；不替代尚未通过的 macOS 原生生命周期回归。
+
 ## 补丁归属
 
 此固定提交包含 acgu 的五个补丁提交、28 个未提交文件快照、Android 宿主默认焦点高亮修复，

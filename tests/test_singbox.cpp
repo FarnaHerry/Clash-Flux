@@ -2185,8 +2185,23 @@ void testGroupProxyExpansion() {
     const auto explicitFirst = compile("    include-all-proxies: true\n    proxies: [other, z-node]\n"
                                        "    default-selected: a-node\n    filter: ''\n    use: []\n");
     check(explicitFirst.error.empty() && group(explicitFirst)["outbounds"] ==
-          json::array({"other", "z-node", "a-node", "z-node"}) &&
-          group(explicitFirst)["default"] == "a-node", "explicit members precede expansion; repeated members and selector default survive");
+          json::array({"other", "z-node", "a-node"}) &&
+          group(explicitFirst)["default"] == "a-node" &&
+          std::ranges::any_of(explicitFirst.fidelity, [](const auto& note) {
+              return note.scope == singbox::FidelityScope::Group && note.subject == "all" &&
+                     note.level == singbox::Fidelity::Approx;
+          }), "expansion keeps first occurrence and selector default, accounting for duplicate removal");
+    for (const auto* type : {"select", "url-test", "fallback", "load-balance"}) {
+        singbox::CompileOptions options;
+        options.profileYaml = nodes + std::format(
+            "proxy-groups:\n  - {{name: all, type: {}, proxies: [z-node, a-node, z-node, a-node]}}\nrules: ['MATCH,all']\n", type);
+        const auto result = singbox::compileConfig(options);
+        check(result.error.empty() && group(result)["outbounds"] == json::array({"z-node", "a-node"}) &&
+              std::ranges::any_of(result.fidelity, [](const auto& note) {
+                  return note.scope == singbox::FidelityScope::Group && note.subject == "all" &&
+                         note.level == singbox::Fidelity::Approx && note.detail.find("重复成员") != std::string::npos;
+              }), "explicit duplicate members are usable on the pinned core and carry a fidelity warning");
+    }
     for (const auto* value : {"false", "no", "0"}) {
         const auto result = compile(std::format("    include-all-proxies: {}\n    proxies: [DIRECT]\n", value));
         check(result.error.empty() && group(result)["outbounds"] == json::array({"DIRECT"}) && !exact(result),

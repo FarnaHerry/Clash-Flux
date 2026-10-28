@@ -380,18 +380,19 @@ inline huxerui::ColorScheme FluxLightColors(std::string_view accent = "blue") {
     colors.on_secondary_container = huxerui::Color::Rgb(48, 56, 64);
     colors.tertiary_container = huxerui::Color::Rgb(236, 238, 240);
     colors.on_tertiary_container = huxerui::Color::Rgb(63, 70, 77);
-    colors.background = huxerui::Color::Rgb(250, 251, 252);
-    colors.surface = huxerui::Color::Rgb(253, 253, 253);
-    colors.surface_container_low = huxerui::Color::Rgb(239, 241, 244);
-    colors.surface_container = huxerui::Color::Rgb(253, 253, 253);
-    colors.surface_container_high = huxerui::Color::Rgb(250, 251, 252);
-    colors.surface_container_highest = huxerui::Color::Rgb(253, 253, 253);
-    colors.on_surface = huxerui::Color::Rgb(32, 36, 41);
-    colors.on_surface_variant = huxerui::Color::Rgb(98, 108, 118);
-    colors.outline = huxerui::Color::Rgb(209, 214, 220);
-    colors.inverse_surface = huxerui::Color::Rgb(37, 42, 48);
-    colors.inverse_on_surface = huxerui::Color::Rgb(242, 244, 246);
-    colors.scrim = huxerui::Color::Rgb(17, 24, 32, 0.34F);
+    // Subtly cool neutral surfaces, shared by every light-theme page.
+    colors.background = huxerui::Color::Rgb(250, 250, 251);            // #FAFAFB
+    colors.surface = huxerui::Color::Rgb(254, 254, 255);               // #FEFEFF
+    colors.surface_container_low = huxerui::Color::Rgb(241, 242, 244); // #F1F2F4
+    colors.surface_container = colors.surface;
+    colors.surface_container_high = huxerui::Color::Rgb(248, 249, 251);
+    colors.surface_container_highest = colors.surface;
+    colors.on_surface = huxerui::Color::Rgb(36, 38, 41);
+    colors.on_surface_variant = huxerui::Color::Rgb(104, 108, 114);
+    colors.outline = huxerui::Color::Rgb(211, 215, 221);
+    colors.inverse_surface = huxerui::Color::Rgb(38, 40, 44);
+    colors.inverse_on_surface = huxerui::Color::Rgb(244, 246, 249);
+    colors.scrim = huxerui::Color::Rgb(27, 31, 38, 0.34F);
     colors.error = huxerui::Color::Rgb(180, 35, 50);
     ApplyFluxAccent(colors, false, accent);
     return colors;
@@ -417,6 +418,46 @@ inline TrafficColors ResolveTrafficColors(const huxerui::ThemeSpec& theme) {
         : TrafficColors{huxerui::Color::Rgb(196, 122, 0), huxerui::Color::Rgb(20, 139, 220)};
 }
 
+// MD3 feedback is rebuilt after applying the accent palette. These values own
+// the application's state-layer opacity rather than the SDK's default palette.
+inline constexpr float kInteractionHoverOpacity = 0.08F;
+inline constexpr float kInteractionFocusOpacity = 0.12F;
+inline constexpr float kInteractionPressOpacity = 0.12F;
+inline constexpr float kInteractionRippleOpacity = 0.12F;
+
+inline constexpr float kToastHiddenScale = 0.98F;
+inline constexpr float kToastSlideDistance = 8.0F;
+inline constexpr double kToastExitDuration = 0.20;
+
+inline huxerui::PresentationMotion ResolveFluxToastMotion(const huxerui::ThemeSpec& theme) {
+    return {
+        .initial_scale = theme.motion.reduced_motion ? 1.0F : kToastHiddenScale,
+        .slide_distance = theme.motion.reduced_motion ? 0.0F : kToastSlideDistance,
+        .enter = huxerui::TweenSpec{.duration = 0.20, .easing = huxerui::Easing::EaseOut},
+        .exit = huxerui::TweenSpec{.duration = kToastExitDuration, .easing = huxerui::Easing::EaseIn},
+    };
+}
+
+inline huxerui::Color FluxStateLayerColor(huxerui::Color color, float opacity) {
+    color.alpha = opacity;
+    return color;
+}
+
+inline huxerui::Indication ResolveFluxIndication(const huxerui::ThemeSpec& theme,
+    std::optional<huxerui::Color> foreground = std::nullopt) {
+    const auto color = foreground.value_or(theme.colors.primary);
+    return {
+        .focus = huxerui::IndicationLayer{.fill = FluxStateLayerColor(color, kInteractionFocusOpacity)},
+        .hover = huxerui::IndicationLayer{.fill = FluxStateLayerColor(color, kInteractionHoverOpacity)},
+        .press = huxerui::IndicationLayer{.fill = FluxStateLayerColor(color, kInteractionPressOpacity)},
+        .ripple = huxerui::RippleEffect{.color = FluxStateLayerColor(color, kInteractionRippleOpacity)},
+    };
+}
+
+inline void ApplyFluxInteractionTheme(huxerui::ThemeSpec& theme) {
+    theme.interactions.indication = ResolveFluxIndication(theme);
+}
+
 // 覆盖 ButtonStyle 时必须同时提供禁用态，不能带回 Default() 的深色文字。
 // 使用中性表面区分不可操作状态，同时保持标签在深浅主题下可读。
 inline huxerui::ButtonStyle ResolveFluxButtonStyle(const huxerui::ThemeSpec& theme) {
@@ -425,6 +466,7 @@ inline huxerui::ButtonStyle ResolveFluxButtonStyle(const huxerui::ThemeSpec& the
     style.background = theme.colors.primary;
     style.label_style = {huxerui::Font::System(theme.typography.label_large),
                          theme.colors.on_primary};
+    style.indication = ResolveFluxIndication(theme, theme.colors.on_primary);
     auto disabledBackground = theme.colors.on_surface;
     disabledBackground.alpha *= 0.10F;
     style.disabled_background = disabledBackground;
@@ -437,6 +479,7 @@ inline huxerui::ButtonStyle ResolveFluxSecondaryButtonStyle(const huxerui::Theme
     auto style = ResolveFluxButtonStyle(theme);
     style.background = theme.colors.surface_container_high;
     style.label_style.foreground = theme.colors.on_surface;
+    style.indication = ResolveFluxIndication(theme);
     return style;
 }
 

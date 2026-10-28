@@ -4,8 +4,8 @@ set -euo pipefail
 # Corresponding source for the generated libbox.aar.  Never source native
 # libraries from a third-party APK: build precisely the pinned upstream core.
 readonly repo='https://github.com/SagerNet/sing-box.git'
-readonly version="${SINGBOX_VERSION:-1.14.3}"
-readonly revision="${SINGBOX_COMMIT:-7054cac5124465ffdb145870d7c01885566711b1}" # v1.14.3
+readonly version="${SINGBOX_VERSION:-1.14.4}"
+readonly revision="${SINGBOX_COMMIT:-c005f35300ce76427dc285481ec5695f5b179cd2}" # v1.14.4
 readonly output="$(realpath -m "${1:?usage: build-singbox-libbox.sh OUTPUT_AAR}")"
 
 command -v go >/dev/null || { echo 'Go is required.' >&2; exit 1; }

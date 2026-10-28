@@ -1633,25 +1633,30 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     // not declare it, while an unannotated method remains harmless there.
     public boolean usePlatformAutoRedirect(){return false;}
     @Override public void autoDetectInterfaceControl(int fd){protect(fd);}
-    @Override public boolean useProcFS(){return Build.VERSION.SDK_INT < Build.VERSION_CODES.Q;} @Override public boolean includeAllNetworks(){return false;} @Override public boolean underNetworkExtension(){return false;}
+    @Override public boolean includeAllNetworks(){return false;} @Override public boolean underNetworkExtension(){return false;}
     @Override public boolean usePlatformBridge(){return false;} @Override public boolean usePlatformShell(){return false;}
     @Override public void clearDNSCache(){}
     // libbox dereferences the returned owner while preparing TUN DNS metadata;
     // returning null here causes a Go-side SIGSEGV. Android 10+ exposes the
-    // exact socket-to-UID lookup, while older releases use libbox procfs mode.
+    // exact socket-to-UID lookup. In 1.14.4 the older-Android procfs lookup is
+    // an explicit Libbox function instead of a PlatformInterface mode flag.
     @Override public ConnectionOwner findConnectionOwner(int protocol, String sourceAddress,
                                                          int sourcePort, String destinationAddress,
                                                          int destinationPort) throws Exception {
+        final int uid;
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            throw new UnsupportedOperationException("Android connection owner lookup requires API 29");
+            ConnectionOwner owner = Libbox.findConnectionOwner(protocol, sourceAddress,
+                    sourcePort, destinationAddress, destinationPort);
+            if (owner == null) throw new IllegalStateException("Android 未找到连接所属应用");
+            uid = owner.getUserId();
+        } else {
+            ConnectivityManager manager =
+                    (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (manager == null) throw new IllegalStateException("Android 网络服务不可用");
+            uid = manager.getConnectionOwnerUid(protocol,
+                    new InetSocketAddress(sourceAddress, sourcePort),
+                    new InetSocketAddress(destinationAddress, destinationPort));
         }
-        ConnectivityManager manager =
-                (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        if (manager == null) throw new IllegalStateException("Android 网络服务不可用");
-        int uid = manager.getConnectionOwnerUid(
-                protocol,
-                new InetSocketAddress(sourceAddress, sourcePort),
-                new InetSocketAddress(destinationAddress, destinationPort));
         if (uid == Process.INVALID_UID) {
             throw new IllegalStateException("Android 未找到连接所属应用");
         }

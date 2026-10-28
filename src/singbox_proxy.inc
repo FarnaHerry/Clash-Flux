@@ -1090,6 +1090,7 @@ std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
     // 成员必须是已知的节点/组/DIRECT；REJECT 等特殊目标在 1.14 无对应 outbound，
     // 过滤并提示（sing-box 对未知 outbound tag 直接拒绝启动）。
     nlohmann::json filtered = nlohmann::json::array();
+    std::set<std::string> included;
     for (const std::string& member : members) {
         if (member == "REJECT" || member == "REJECT-DROP" || member == "PASS") {
             ctx.note(FidelityScope::Group, Fidelity::Approx, name,
@@ -1103,6 +1104,12 @@ std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
             ctx.note(FidelityScope::Group, Fidelity::Approx, name,
                      std::format("代理组「{}」引用了未知的成员「{}」，已移除", name, member),
                      "检查订阅里被引用的成员名是否写错，或该节点是否因协议不支持被跳过");
+            continue;
+        }
+        if (!included.insert(member).second) {
+            ctx.note(FidelityScope::Group, Fidelity::Approx, name,
+                     std::format("代理组「{}」的重复成员「{}」只保留首次出现位置", name, member),
+                     "sing-box 1.14.4 拒绝 selector/urltest 的重复成员；保留不同成员的原顺序和默认选择，原订阅不改写");
             continue;
         }
         filtered.push_back(member);
