@@ -14,6 +14,7 @@
 
 #include "app_http_client.h"
 #include "text_document.h"
+#include "profile_card_layout.h"
 
 namespace clashflux::ui {
 
@@ -21,8 +22,6 @@ struct ProfilesModel;
 huxerui::View ProfileLinkImportEffects(std::shared_ptr<ProfilesModel> model,
     huxerui::NavigationController navigation, bool navigation_enabled, bool active);
 
-inline constexpr float kCardWidth = 340.0F;
-inline constexpr float kCardHeight = 180.0F;
 inline constexpr float kDialogFormHeight = 340.0F;
 
 struct NativeProfileSupport {
@@ -30,6 +29,7 @@ struct NativeProfileSupport {
 };
 
 struct ProfileReorderActions {
+    std::function<float(std::int64_t)> cardWidth;
     std::function<void(std::int64_t)> begin;
     std::function<void(std::int64_t, std::int64_t)> preview;
     std::function<void(std::int64_t, huxerui::Point)> movePointer;
@@ -229,6 +229,10 @@ huxerui::View ProfileEditRoutePage(
     std::int64_t id, ProfileEditFields fields, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::function<void()> on_back);
 huxerui::View ProfileFilePage(
+    std::int64_t id, huxerui::State<TextDocumentHandle> content,
+    huxerui::State<bool> loading, huxerui::TaskScope tasks,
+    huxerui::ToastHandle toast, std::function<void()> on_back);
+huxerui::View ProfileFileRoutePage(
     std::int64_t id, huxerui::State<TextDocumentHandle> content,
     huxerui::State<bool> loading, huxerui::TaskScope tasks,
     huxerui::ToastHandle toast, std::function<void()> on_back);

@@ -886,7 +886,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
            huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
            huxerui::MainAlign(huxerui::MainAxisAlignment::Center));
-    return huxerui::View{HomeCardSurface(theme, std::move(content))}
+    return huxerui::View{HomeCardSurface(theme, std::move(content), /*allowFlip=*/false)}
         .OnClick([control, cardShown, motion, transition, reducedMotion = theme.motion.reduced_motion] {
             RunDesktopHomeCoreAction(control, cardShown, motion, transition,
                                      CoreAction::Stop, reducedMotion);

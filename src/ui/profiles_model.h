@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <map>
+#include <string>
 #include <vector>
 
 #include "../profile_link.h"
@@ -28,9 +29,25 @@
 namespace clashflux::ui {
 
 struct ProfilesModel : ProfileListModel<db::Profile> {
+    struct RefreshFailureNotice {
+        std::int64_t profileId = 0;
+        std::string profileName;
+        std::string error;
+        bool operator==(const RefreshFailureNotice&) const = default;
+    };
+
     // Read only the hydrated in-memory cache; no disk/network work on the UI
     // thread. Action completion publishes before feedback/navigation.
     void PublishCached();
+    void ReportProfileRefreshFailure(std::int64_t id, std::string name,
+                                     std::string error,
+                                     bool userInitiated = false);
+    void ClearProfileRefreshFailure(std::int64_t id);
+    std::vector<RefreshFailureNotice> TakeProfileRefreshFailures();
+
+    huxerui::State<std::vector<RefreshFailureNotice>> profileRefreshFailures{
+        std::vector<RefreshFailureNotice>{}};
+    std::map<std::int64_t, bool> reportedProfileErrors;
     huxerui::State<std::vector<profile_link::RemoteProfile>> importLinks{
         std::vector<profile_link::RemoteProfile>{}};
     huxerui::State<std::string> linkError{std::string{}};

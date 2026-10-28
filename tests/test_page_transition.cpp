@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <fstream>
 #include <optional>
 #include <regex>
 #include <sstream>
@@ -45,6 +46,9 @@
 #include "inbound_settings.h"
 #include "pptp_connection_progress.h"
 #include "subscription_rule_layout.h"
+#include "profile_card_layout.h"
+#include "profile_list_layout.h"
+#include "proxy_display_name.h"
 
 namespace {
 using huxerui::testing::UiSelector;
@@ -1511,6 +1515,242 @@ void testResponsiveDesktopShell() {
           ui.Find(UiSelector::Text("RETAINED-1")).Exists(), "600pt 恢复桌面布局且页面不重挂载");
 }
 
+huxerui::View ProfileFormNavigationRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        const auto model = huxerui::UseState(
+            std::make_shared<clashflux::ui::DesktopSettingsNavigationModel>()).Get();
+        auto form = huxerui::UseState(0);
+        auto active = huxerui::UseState(true);
+        auto mounted = huxerui::UseState(true);
+        const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+        huxerui::View effects;
+        if (mounted.Get()) {
+            effects = huxerui::Scope([model, form, active, compact] {
+                clashflux::ui::UseCompactProfileFormNavigation(
+                    model, active.Get() && compact && form.Get() != 0);
+                return huxerui::Row{};
+            }).Key("profile-form-effects");
+        }
+        huxerui::View navigation;
+        if (!model->secondaryOpen.Get() &&
+            !(active.Get() && model->compactProfileFormOpen.Get())) {
+            navigation = huxerui::Text("PROFILE-DOCK")
+                .With(huxerui::Frame{.height = 64.0F});
+        }
+        return clashflux::ui::ResponsiveDesktopShell(huxerui::Column{
+            effects,
+            huxerui::Button("EDIT").OnClick([form] { form = 1; }),
+            huxerui::Button("CREATE").OnClick([form] { form = 2; }),
+            huxerui::Button("FILE").OnClick([form] { form = 3; }),
+            huxerui::Button("BACK").OnClick([form] { form = 0; }),
+            huxerui::Button("SWITCH").OnClick([active] { active = !active.Get(); }),
+            huxerui::Button("MOUNT").OnClick([mounted] { mounted = !mounted.Get(); }),
+            huxerui::Button("ROUTE").OnClick([model] {
+                model->secondaryOpen = !model->secondaryOpen.Get();
+            }),
+            huxerui::Text("FORM-" + std::to_string(form.Get())),
+        }.With(huxerui::Grow(1.0F)),
+            huxerui::Text("SIDEBAR").With(huxerui::Frame{.width = 80.0F}),
+            huxerui::Text("CHROME").With(huxerui::Frame{.height = 40.0F}), navigation);
+    })};
+}
+const huxerui::Application kProfileFormNavigationApplication{ProfileFormNavigationRoot,
+    {.show_debug_overlay = false}};
+
+void testProfileFormNavigation() {
+    huxerui::testing::UiTest ui(kProfileFormNavigationApplication,
+        {.viewport = {400.0F, 700.0F}});
+    ui.PumpAndSettle();
+    const auto tap = [&ui](const char* text) {
+        ui.Find(UiSelector::Text(text)).Tap();
+        ui.PumpAndSettle();
+    };
+    const auto dock = [&ui] { return ui.Find(UiSelector::Key("compact-navigation")).Exists(); };
+    check(dock(), "subscription list shows the compact dock");
+    for (const char* entry : {"EDIT", "CREATE", "FILE"}) {
+        tap(entry);
+        for (float width : {320.0F, 599.0F, 960.0F, 400.0F}) {
+            ui.SetWindowMetrics({.viewport = {width, 700.0F}});
+            ui.PumpAndSettle();
+            check(!dock() && !ui.Find(UiSelector::Key("compact-navigation-scrim")).Exists(),
+                  "profile forms hide both dock and scrim across breakpoints");
+        }
+        tap("SWITCH");
+        check(dock(), "switching primary pages restores the dock despite retained form state");
+        tap("SWITCH");
+        check(!dock(), "returning to the retained profile form hides the dock again");
+        tap("BACK");
+        check(dock(), "closing a profile form restores the dock");
+    }
+    tap("EDIT");
+    tap("MOUNT");
+    check(dock(), "unmounting profile forms clears their dock visibility state");
+    tap("MOUNT");
+    check(!dock(), "remounting a retained form restores its dock visibility state");
+    tap("ROUTE");
+    tap("BACK");
+    check(!dock(), "closing a local form does not clear a pushed route's ownership");
+    tap("ROUTE");
+    check(dock(), "closing the remaining pushed route restores the dock");
+}
+
+huxerui::View CompactProfileCardsRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        using namespace clashflux::ui;
+        const auto& theme = huxerui::UseTheme();
+        const SelectableTileColors colors{theme.colors.surface_container,
+            theme.colors.on_surface, theme.colors.on_surface_variant, theme.colors.on_surface_variant};
+        auto menuCount = huxerui::UseState(0);
+        const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+        return huxerui::Column {
+          huxerui::Text("MENU-" + std::to_string(menuCount.Get())),
+          huxerui::VirtualGrid(100, [colors, compact, menuCount](std::size_t index) {
+              const auto suffix = std::to_string(index);
+              const std::string traffic = index % 4 == 1 || index % 4 == 3 ? "" : "12 / 100 GB";
+              const std::string expiry = index % 4 >= 2 ? "" : "Expires 2026-11-30";
+              auto body = CompactProfileCardContent("A very long subscription name that needs ellipsis",
+                  "By rules", colors,
+                  huxerui::Text("=").With(huxerui::Frame{.width = 20.0F}),
+                  huxerui::Row {huxerui::Text("...")}
+                      .With(huxerui::Frame{.width = 40.0F, .height = 40.0F},
+                            huxerui::Semantics{.role = huxerui::SemanticRole::Button})
+                      .OnClick([menuCount] { menuCount = menuCount.Get() + 1; }).Key("profile-more"),
+                  CompactProfileTrafficContent(traffic, expiry,
+                      ProfileTrafficProgress(traffic.empty() ? 0 : 12, traffic.empty() ? 0 : 100), colors.muted));
+              return huxerui::Column {body}.With(
+                  huxerui::Frame{.height = ProfileCardHeight(compact)},
+                  huxerui::Padding(huxerui::EdgeInsets::Symmetric(10.0F, 8.0F)),
+                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+                  .Key("compact-profile-" + suffix);
+          }).Columns(huxerui::GridColumns::Fixed(1))
+              .EstimatedRowExtent(ProfileCardHeight(compact))
+              .RowSpacing(compact ? kCompactProfileCardSpacing : kSectionCardSpacing)
+              .With(huxerui::Grow(1.0F)).Key("compact-profile-grid"),
+        }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    })};
+}
+const huxerui::Application kCompactProfileCardsApplication{CompactProfileCardsRoot,
+    {.show_debug_overlay = false}};
+
+void testCompactProfileCards() {
+    using namespace clashflux::ui;
+    huxerui::testing::UiTest ui(kCompactProfileCardsApplication, {.viewport = {320.0F, 700.0F}});
+    ui.PumpAndSettle();
+    for (float width : {320.0F, 599.0F, 960.0F, 400.0F, 320.0F}) {
+        ui.SetWindowMetrics({.viewport = {width, 700.0F}});
+        ui.PumpAndSettle();
+        std::optional<float> infoY, barY;
+        for (int index = 0; index < 4; ++index) {
+            const auto card = ui.Find(UiSelector::Key("compact-profile-" + std::to_string(index)));
+            const auto bounds = card.One().bounds;
+            check(std::abs(bounds.height - ProfileCardHeight(width < 600.0F)) < 0.5F,
+                  "every quota/expiry combination shares the responsive card height");
+            const auto name = card.Find(UiSelector::Key("profile-compact-name")).One().bounds;
+            const auto status = card.Find(UiSelector::Key("profile-compact-status")).One().bounds;
+            const auto more = card.Find(UiSelector::Key("profile-more")).One().bounds;
+            const auto info = card.Find(UiSelector::Key("profile-traffic-label")).One().bounds;
+            const auto bar = card.Find(UiSelector::Key("profile-traffic-bar")).One().bounds;
+            check(name.x + name.width <= status.x && status.x + status.width <= more.x &&
+                  more.x + more.width <= bounds.x + bounds.width,
+                  "long names leave status and the more button visible at narrow widths");
+            check(bar.y + bar.height <= bounds.y + bounds.height &&
+                  std::abs(bar.height - 3.0F) < 0.5F,
+                  "the traffic bar stays inside the compact card");
+            if (infoY) check(std::abs(info.y - bounds.y - *infoY) < 0.5F &&
+                            std::abs(bar.y - bounds.y - *barY) < 0.5F,
+                            "empty metadata preserves identical text and progress positions");
+            infoY = info.y - bounds.y;
+            barY = bar.y - bounds.y;
+        }
+    }
+    ui.Find(UiSelector::Key("compact-profile-0")).Find(UiSelector::Key("profile-more")).Tap();
+    ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("MENU-1")).Exists(), "the compact card menu remains clickable");
+    const auto grid = ui.Find(UiSelector::Key("compact-profile-grid"));
+    grid.ScrollBy({0.0F, 3000.0F});
+    ui.PumpAndSettle();
+    check(!ui.Find(UiSelector::Key("compact-profile-0")).Exists() ||
+          !ui.Find(UiSelector::Key("compact-profile-0")).One().in_viewport,
+          "compact cards retain virtual scrolling with the smaller row estimate");
+    grid.ScrollBy({0.0F, -3000.0F});
+    ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Key("compact-profile-0")).One().in_viewport,
+          "scrolling back remounts the compact card at its original geometry");
+    check(ProfileTrafficProgress(0, 0) == 1.0F && ProfileTrafficProgress(12, 100) == 0.12F,
+          "unknown traffic keeps a full placeholder bar while known quota keeps its real fraction");
+}
+
+void testProfileListSections() {
+    using namespace clashflux::ui;
+    struct Profile { std::string type, name; };
+    const std::vector<Profile> rows{{"local", "match file"}, {"remote", "match URL"},
+        {"custom", "other"}, {"remote", "other"}, {"local", "other"}, {"pptp", "other"}};
+    const auto all = [](const Profile&) { return true; };
+    const auto mobile = BuildProfileListSections(rows, false, all);
+    check(mobile.size() == 1 && !mobile[0].type &&
+          mobile[0].indices == std::vector<std::size_t>{0, 1, 2, 3, 4, 5},
+          "phone list combines every source type in the authoritative order");
+    const auto desktop = BuildProfileListSections(rows, true, all);
+    check(desktop.size() == 4 && desktop[0].type == "remote" && desktop[1].type == "local" &&
+          desktop[2].type == "pptp" && desktop[3].type == "custom" &&
+          desktop[0].indices == std::vector<std::size_t>{1, 3},
+          "desktop including narrow windows retains its existing type sections");
+    const auto filtered = BuildProfileListSections(rows, false, [](const Profile& row) {
+        return row.name.starts_with("match");
+    });
+    check(filtered.size() == 1 && filtered[0].indices == std::vector<std::size_t>{0, 1},
+          "phone search spans remote and local configurations without regrouping");
+    check(BuildProfileListSections(rows, false, [](const Profile&) { return false; }).empty() &&
+          BuildProfileListSections(std::vector<Profile>{}, false, all).empty(),
+          "empty phone searches and inventories produce a genuine empty state");
+    check(ProxyObjectDisplayName("Group · original", "Subscription", false) == "Group · original" &&
+          ProxyObjectDisplayName("Group · original", "Subscription", true) == "Group · original · Subscription" &&
+          ProxyObjectDisplayName("DIRECT", "", true) == "DIRECT",
+          "phone proxy names use original catalog names while desktop retains source qualification");
+}
+
+huxerui::View UnifiedProfileListRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        using namespace clashflux::ui;
+        const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+        return UnifiedProfileList(huxerui::VirtualGrid(100, [compact](std::size_t index) {
+            return huxerui::Text((index % 2 ? "remote-" : "local-") + std::to_string(index))
+                .With(huxerui::Frame{.height = ProfileCardHeight(compact)}).Key("unified-row-" + std::to_string(index));
+        }).Columns(huxerui::GridColumns::Fixed(1))
+          .EstimatedRowExtent(ProfileCardHeight(compact))
+          .RowSpacing(kCompactProfileCardSpacing).With(huxerui::Grow(1.0F)).Key("unified-grid"));
+    })};
+}
+const huxerui::Application kUnifiedProfileListApplication{UnifiedProfileListRoot,
+    {.show_debug_overlay = false}};
+
+void testUnifiedProfileList() {
+    huxerui::testing::UiTest ui(kUnifiedProfileListApplication, {.viewport = {320.0F, 700.0F}});
+    ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("local-0")).One().in_viewport &&
+          ui.Find(UiSelector::Text("remote-1")).One().in_viewport &&
+          !ui.Find(UiSelector::Key("section-tab-pages")).Exists(),
+          "phone remote and local entries share a visible list without a section Pager");
+    ui.Drag({40.0F, 200.0F}, {280.0F, 200.0F});
+    ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("local-0")).One().in_viewport,
+          "horizontal gestures cannot switch hidden subscription categories");
+    ui.Find(UiSelector::Key("unified-grid")).ScrollBy({0.0F, 1000.0F});
+    ui.PumpAndSettle();
+    for (float width : {400.0F, 960.0F, 320.0F}) {
+        ui.SetWindowMetrics({.viewport = {width, 700.0F}});
+        ui.PumpAndSettle();
+        const auto grid = ui.Find(UiSelector::Key("unified-grid")).One().bounds;
+        check(std::abs(grid.x - 4.0F) < 0.5F && std::abs(grid.width - width + 8.0F) < 0.5F,
+              "the phone list preserves its existing side insets at every viewport width");
+        const auto first = ui.Find(UiSelector::Key("unified-row-0"));
+        check(!first.Exists() || !first.One().in_viewport,
+              "resizing the unified phone list retains a scrolled position");
+        check(!ui.Find(UiSelector::Key("section-tab-pages")).Exists(),
+              "wide phones do not reintroduce desktop category paging");
+    }
+}
+
 huxerui::View HeaderGeometryRoot() {
     return huxerui::FlatTheme{huxerui::Scope([] {
         const auto& theme = huxerui::UseTheme();
@@ -1806,6 +2046,97 @@ void testCompactPageBottom() {
         const auto bounds = ui.Find(UiSelector::Key("compact-page-end")).One().bounds;
         check(std::abs(bounds.y + bounds.height - height) < 0.5F,
               "Compact 页面内容容器延伸到视口底边，不留骨架底部间距");
+    }
+}
+
+huxerui::View PinnedPageActionRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        auto longForm = huxerui::UseState(false);
+        return clashflux::ui::CompactPageActionContent(
+            huxerui::ScrollView(huxerui::Column {
+              huxerui::Button("LONG-FORM").OnClick([longForm] { longForm = true; }),
+              huxerui::Row {}.With(huxerui::Frame{.height = longForm.Get() ? 1400.0F : 40.0F}),
+              huxerui::Text("FORM-END").Key("pinned-form-end"),
+            }).Key("pinned-form-scroll"),
+            huxerui::Button("SAVE").With(huxerui::Frame{.height = clashflux::ui::kCompactPrimaryActionHeight})
+                .Key("pinned-save"));
+    })};
+}
+const huxerui::Application kPinnedPageActionApplication{PinnedPageActionRoot,
+    {.window = {.content_mode = huxerui::WindowContentMode::EdgeToEdge}, .show_debug_overlay = false}};
+
+void testPinnedPageAction() {
+    for (const auto size : {huxerui::Size{320.0F, 480.0F}, huxerui::Size{400.0F, 700.0F},
+                            huxerui::Size{420.0F, 300.0F}}) {
+        for (float inset : {0.0F, 24.0F, 48.0F}) {
+            huxerui::testing::UiTest ui(kPinnedPageActionApplication,
+                {.viewport = size, .safe_area = {.bottom = inset}});
+            ui.PumpAndSettle();
+            const auto save = ui.Find(UiSelector::Key("pinned-save"));
+            const auto scroll = ui.Find(UiSelector::Key("pinned-form-scroll"));
+            const auto bounds = save.One().bounds;
+            check(std::abs(bounds.height - clashflux::ui::kCompactPrimaryActionHeight) < 0.5F &&
+                  std::abs(bounds.y + bounds.height - (size.height - inset - 8.0F)) < 0.5F,
+                  "短表单的保存按钮固定在底部安全区上方，不额外预留胶囊导航空白");
+            check(std::abs(scroll.One().bounds.height -
+                           (size.height - inset - clashflux::ui::kCompactPrimaryActionHeight - 16.0F)) < 0.5F,
+                  "表单独占按钮上方的剩余空间，不与底部占位平分高度");
+            ui.Find(UiSelector::Text("LONG-FORM")).Tap();
+            ui.PumpAndSettle();
+            check(save.One().bounds == bounds, "长表单不会将保存按钮挤离底部");
+            scroll.ScrollBy({0.0F, 2000.0F});
+            ui.PumpAndSettle();
+            const auto end = ui.Find(UiSelector::Key("pinned-form-end")).One();
+            check(save.One().bounds == bounds && end.in_viewport &&
+                  end.bounds.y + end.bounds.height <= bounds.y,
+                  "滚动至表单末项时保存按钮保持固定，末项仍可完整显示");
+            ui.SetWindowMetrics({.viewport = {size.width, size.height + 100.0F},
+                                 .safe_area = {.bottom = inset}});
+            ui.PumpAndSettle();
+            const auto resized = save.One().bounds;
+            check(std::abs(resized.y + resized.height - (size.height + 100.0F - inset - 8.0F)) < 0.5F,
+                  "窗口高度变化后保存按钮仍锚定可用区域底部");
+        }
+    }
+}
+
+huxerui::View GroupPickerSelectionContent() {
+    return huxerui::Scope([] {
+        auto selected = huxerui::UseState(std::string{"alpha"});
+        auto dismissed = huxerui::UseState(0);
+        return huxerui::Column {
+          huxerui::Text("DISMISSED-" + std::to_string(dismissed.Get())),
+          clashflux::ui::GroupPickerContent({{"alpha", "Alpha"}, {"beta", "Beta", "!"}},
+              selected.Get(), [selected](const std::string& key) { selected = key; },
+              [dismissed] { dismissed = dismissed.Get() + 1; }).With(huxerui::Grow(1.0F)),
+        }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    });
+}
+huxerui::View GroupPickerSelectionLightRoot() { return huxerui::FlatTheme{GroupPickerSelectionContent()}; }
+huxerui::View GroupPickerSelectionDarkRoot() { return huxerui::FlatDarkTheme{GroupPickerSelectionContent()}; }
+const huxerui::Application kGroupPickerSelectionLightApplication{GroupPickerSelectionLightRoot};
+const huxerui::Application kGroupPickerSelectionDarkApplication{GroupPickerSelectionDarkRoot};
+void testGroupPickerSelection() {
+    using huxerui::testing::UiSemanticSelector;
+    for (const auto* app : {&kGroupPickerSelectionLightApplication, &kGroupPickerSelectionDarkApplication}) {
+        for (float width : {320.0F, 960.0F}) {
+            huxerui::testing::UiTest ui(*app, {.viewport = {width, 500.0F}, .resource_provider = AppResources()});
+            ui.PumpAndSettle();
+            const auto choice = [&ui](const char* label) {
+                return ui.FindSemantics(UiSemanticSelector::AllOf(
+                    UiSemanticSelector::Label(label), UiSemanticSelector::Role(huxerui::SemanticRole::Button)));
+            };
+            check(choice("Alpha").One().selected == true && choice("Beta").One().selected == false,
+                  "group choices use the shared tile's accessible selected state");
+            check(ui.Find(UiSelector::Key("group-picker-item-alpha")).One().bounds.width < 200.0F,
+                  "shared selected tiles retain the picker's compact flowing layout");
+            const auto before = ui.CaptureSnapshot();
+            ui.Find(UiSelector::Key("group-picker-item-beta")).Tap();
+            ui.PumpAndSettle();
+            check(choice("Beta").One().selected == true && choice("Alpha").One().selected == false &&
+                  ui.Find(UiSelector::Text("DISMISSED-1")).Exists() && ui.CaptureSnapshot() != before,
+                  "choosing a group updates tile selection and dismisses exactly once in both themes");
+        }
     }
 }
 
@@ -3812,6 +4143,33 @@ float paintedHomeCardScale(huxerui::testing::UiTest& ui) {
     return result;
 }
 
+bool paintedHomeCardEdgeOn(huxerui::testing::UiTest& ui, float cardHeight) {
+    std::istringstream input(ui.CaptureSnapshot().ToString());
+    std::string line;
+    std::getline(input, line); std::getline(input, line);
+    const auto snapshot = readCatPaintNode(input, line);
+    bool found = false;
+    const auto visit = [&](auto&& self, const CatPaintNode& node, huxerui::Transform2D parent) -> void {
+        const auto world = composeCatPaint(parent, catPaintTransform(node.Find("transform")));
+        if (const auto* content = node.Find("content")) {
+            for (const auto& command : content->children) {
+                if (const auto* bounds = command.Find("bounds"); command.name == "rect" && bounds) {
+                    const float width = std::abs(world.m11 * bounds->Number("width"));
+                    const float height = std::abs(world.m22 * bounds->Number("height"));
+                    if (width > 0.0F && width < 70.0F &&
+                        height > cardHeight * 0.8F && height < cardHeight * 1.2F) found = true;
+                }
+            }
+        }
+        if (const auto* children = node.Find("children"))
+            for (const auto& child : children->children)
+                self(self, child, composeCatPaint(world, catPaintTransform(node.Find("children_transform"))));
+    };
+    if (const auto* render = snapshot.Find("render"))
+        for (const auto& node : render->children) visit(visit, node, huxerui::Transform2D{});
+    return found;
+}
+
 void testHomeCardPress() {
     for (const auto* app : {&kHomeCardPressLight, &kHomeCardPressDark, &kHomeCardPressReduced}) {
         const bool reduced = app == &kHomeCardPressReduced;
@@ -3844,6 +4202,106 @@ void testHomeCardPress() {
         ui.SendPointer(event); ui.PumpAndSettle();
         check(homeCardActionCount == previous + 1, "card feedback preserves the nested button's single click");
         check(std::abs(paintedHomeCardScale(ui) - 1.0F) < 0.0001F, "release restores the card's painted scale");
+    }
+}
+
+huxerui::View HomeCardFlipRoot(bool dark, bool reduced) {
+    auto theme = huxerui::FlatLightThemeSpec();
+    theme.colors = dark ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
+    theme.motion.reduced_motion = reduced;
+    return huxerui::MaterialTheme(theme, huxerui::Scope([theme] {
+        const auto content = huxerui::Scope([] {
+            auto count = huxerui::UseState(0);
+            return huxerui::Column {
+              huxerui::Text("Flip front").With(huxerui::Grow(1.0F)),
+              huxerui::Button("Counter-" + std::to_string(count.Get()))
+                  .With(huxerui::Enabled(true))
+                  .OnClick([count] { count = count.Get() + 1; }).Key("flip-counter"),
+            }.With(huxerui::Grow(1.0F));
+        });
+        return huxerui::Column {
+          clashflux::ui::HomeCardSurface(theme, content)
+              .With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("flip-card-one"),
+          clashflux::ui::HomeCardSurface(theme, huxerui::Text("Second front"))
+              .With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("flip-card-two"),
+          clashflux::ui::HomeCardSurface(theme, huxerui::Text("Cat control excluded"), false)
+              .With(huxerui::Frame{.width = 280.0F, .height = 88.0F}).Key("flip-card-excluded"),
+        }.With(huxerui::Spacing(12.0F));
+    }));
+}
+huxerui::View HomeCardFlipLightRoot() { return HomeCardFlipRoot(false, false); }
+huxerui::View HomeCardFlipDarkRoot() { return HomeCardFlipRoot(true, false); }
+huxerui::View HomeCardFlipReducedRoot() { return HomeCardFlipRoot(false, true); }
+const huxerui::Application kHomeCardFlipLight{HomeCardFlipLightRoot, {.show_debug_overlay = false}};
+const huxerui::Application kHomeCardFlipDark{HomeCardFlipDarkRoot, {.show_debug_overlay = false}};
+const huxerui::Application kHomeCardFlipReduced{HomeCardFlipReducedRoot, {.show_debug_overlay = false}};
+
+void testHomeCardFlip() {
+    using huxerui::testing::UiSemanticSelector;
+    for (const auto* app : {&kHomeCardFlipLight, &kHomeCardFlipDark, &kHomeCardFlipReduced}) {
+        for (const auto device : {huxerui::PointerDeviceKind::Mouse, huxerui::PointerDeviceKind::Touch}) {
+            const bool reduced = app == &kHomeCardFlipReduced;
+            huxerui::testing::UiTest ui(*app, {.viewport = {400.0F, 700.0F}, .resource_provider = AppResources()});
+            ui.PumpAndSettle();
+            const auto first = ui.Find(UiSelector::Key("flip-card-one"));
+            const auto second = ui.Find(UiSelector::Key("flip-card-two"));
+            const auto excluded = ui.Find(UiSelector::Key("flip-card-excluded"));
+            const auto firstBounds = first.One().bounds;
+            const auto secondBounds = second.One().bounds;
+            const auto tap = [&](const huxerui::testing::UiNodeQuery& card) {
+                const auto b = card.One().bounds;
+                ui.TapAt({b.x + 8.0F, b.y + 8.0F}, {.device_kind = device});
+            };
+            const auto doubleTap = [&](const huxerui::testing::UiNodeQuery& card) {
+                tap(card); ui.Pump(std::chrono::milliseconds(70)); tap(card); ui.Pump();
+            };
+            ui.Find(UiSelector::Key("flip-counter")).Tap();
+            ui.PumpAndSettle();
+            const auto counterBounds = ui.Find(UiSelector::Key("flip-counter")).One().bounds;
+            const huxerui::Point counterPoint{counterBounds.x + counterBounds.width * 0.5F,
+                                              counterBounds.y + counterBounds.height * 0.5F};
+            tap(first); ui.PumpAndSettle();
+            check(!first.Find(UiSelector::Key("home-card-back")).Exists() &&
+                  ui.Find(UiSelector::Text("Counter-1")).Exists(),
+                  "single card taps and nested controls retain their existing behavior");
+            doubleTap(first);
+            check(first.Find(UiSelector::Key("home-card-back")).Exists(),
+                  "mouse double click and touch double tap both turn the card over");
+            bool edgeOn = reduced;
+            for (int frame = 0; frame < 24; ++frame) {
+                ui.Pump(std::chrono::milliseconds(30));
+                edgeOn = edgeOn || paintedHomeCardEdgeOn(ui, firstBounds.height);
+            }
+            if (!edgeOn)
+                std::ofstream("home-card-flip-failure.snapshot") << ui.CaptureSnapshot().ToString();
+            check(edgeOn,
+                  "the flip paints an edge-on intermediate frame rather than switching faces instantly");
+            check(first.One().bounds == firstBounds && second.One().bounds == secondBounds,
+                  "flipping a card does not change dashboard slots or move its neighbors");
+            ui.PumpAndSettle();
+            check(!ui.FindSemantics(UiSemanticSelector::Label("Counter-1")).Exists(),
+                  "the back face hides and disables front controls");
+            doubleTap(second); ui.PumpAndSettle();
+            check(first.Find(UiSelector::Key("home-card-back")).Exists() &&
+                  second.Find(UiSelector::Key("home-card-back")).Exists(),
+                  "each card retains its own independent flip state and local transition");
+            ui.TapAt(counterPoint, {.device_kind = device}); ui.PumpAndSettle();
+            check(first.Find(UiSelector::Key("home-card-back")).Exists() &&
+                  ui.Find(UiSelector::Text("Counter-1")).Exists(),
+                  "a single back tap over the original control cannot activate the hidden front");
+            ui.Pump(std::chrono::seconds(1));
+            ui.TapAt(counterPoint, {.device_kind = device}); ui.Pump(std::chrono::milliseconds(70));
+            ui.TapAt(counterPoint, {.device_kind = device}); ui.PumpAndSettle();
+            check(!first.Find(UiSelector::Key("home-card-back")).Exists() &&
+                  ui.Find(UiSelector::Text("Counter-1")).Exists(),
+                  "double tapping the back restores the front without remounting its state");
+            doubleTap(excluded); ui.PumpAndSettle();
+            check(!excluded.Find(UiSelector::Key("home-card-back")).Exists(),
+                  "cat controls explicitly opt out of the dashboard Easter egg");
+            const auto settled = ui.CaptureSnapshot();
+            ui.Pump(std::chrono::seconds(1));
+            check(ui.CaptureSnapshot() == settled, "a completed flip schedules no continuous animation");
+        }
     }
 }
 } // namespace
@@ -3970,6 +4428,11 @@ int main() {
     testCustomThemeColors();
     testThemeColorSurfaces();
     testHomeCardPress();
+    try { testHomeCardFlip(); }
+    catch (const std::exception& error) {
+        std::printf("FAIL: home card flip: %s\n", error.what());
+        ++failures;
+    }
     {
         huxerui::testing::UiTest ui(kMotionApplication, {.viewport = {800.0F, 700.0F}, .resource_provider = AppResources()});
         ui.PumpAndSettle();
@@ -4032,6 +4495,7 @@ int main() {
     testDesktopTouchpadSectionPager();
     testCommonMenu();
     testGroupDrawers();
+    testGroupPickerSelection();
     testResponsiveDesktopShell();
     testDesktopPageSwitcher();
     testHeaderGeometry();
@@ -4039,6 +4503,15 @@ int main() {
     testMobileSearchGeometry();
     testResponsiveAnchorMount();
     testCompactPageBottom();
+    testPinnedPageAction();
+    testProfileFormNavigation();
+    testProfileListSections();
+    testUnifiedProfileList();
+    try { testCompactProfileCards(); }
+    catch (const std::exception& error) {
+        std::printf("FAIL: compact profile cards: %s\n", error.what());
+        ++failures;
+    }
     testEmptyState();
     testThemeSwitch();
     testProfileFileFilter();

@@ -315,14 +315,21 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id) {
     huxerui::State<PersonalRuleDraft> draft, std::vector<std::string> targets,
     singbox::RuleSetLibrary library, huxerui::State<bool> busy, std::function<void(std::function<void()>)> save) {
     const auto navigation = huxerui::UseNavigation();
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto alive = huxerui::UseState(true);
     huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
     auto back = [navigation, busy, alive] { if (alive.Get() && !busy.Get()) static_cast<void>(navigation.Pop()); };
+    huxerui::View content = huxerui::ScrollView(PersonalRuleForm(draft, targets, library, busy))
+        .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
+    huxerui::View saveAction = CompactPrimaryActionButton(
+        app::images::save, Localized("保存"), [save, back] { save(back); },
+        !busy.Get(), busy.Get());
+    if (compact) content = CompactPageActionContent(std::move(content), std::move(saveAction));
     return SecondaryPageScaffold(huxerui::Text(Localized("编辑订阅规则")),
-        huxerui::IconButton(app::images::save, Localized("保存规则"))
-            .With(huxerui::Enabled(!busy.Get())).OnClick([save, back] { save(back); }),
-        huxerui::ScrollView(PersonalRuleForm(draft, targets, library, busy))
-            .With(huxerui::Grow(1.0F), huxerui::ScrollBar()), back);
+        compact ? huxerui::View{} : huxerui::View{
+            huxerui::IconButton(app::images::save, Localized("保存规则"))
+                .With(huxerui::Enabled(!busy.Get())).OnClick([save, back] { save(back); })},
+        std::move(content), back);
 }
 
 [[huxerui::composable]] huxerui::View CompiledRulesPreviewPage(TextDocumentHandle document) {
@@ -357,21 +364,30 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id) {
     else if (!rule.editable) status += " · " + huxerui::UseString(Localized("仅查看"));
     auto actions = [=] {
         std::vector<ActionMenuEntry> entries;
-        entries.push_back(ActionMenuItem(Localized("编辑"), [edit, rule] { edit(rule); })
+        entries.push_back(ActionMenuItem(app::images::edit, Localized("编辑"),
+            [edit, rule] { edit(rule); })
             .Enabled(editable && rule.editable && !busy));
-        if (rule.editId.empty() && !rule.terminal) entries.push_back(ActionMenuItem(Localized("禁用"),
+        if (rule.editId.empty() && !rule.terminal) entries.push_back(ActionMenuItem(
+            app::images::visibility_off, Localized("禁用"),
             [change, rule] { change(rule, "disable"); }).Enabled(editable && rule.editable && !busy));
         if (!rule.editId.empty()) {
-            entries.push_back(ActionMenuItem(Localized(rule.enabled ? "禁用" : "启用"),
+            entries.push_back(ActionMenuItem(
+                rule.enabled ? app::images::visibility_off : app::images::check,
+                Localized(rule.enabled ? "禁用" : "启用"),
                 [change, rule] { change(rule, "toggle"); }).Enabled(editable && !busy));
-            entries.push_back(ActionMenuItem(Localized(rule.origin == "added" ? "删除" : "恢复订阅原规则"),
+            entries.push_back(ActionMenuItem(
+                rule.origin == "added" ? app::images::trash : app::images::refresh,
+                Localized(rule.origin == "added" ? "删除" : "恢复订阅原规则"),
                 [change, rule] { change(rule, "remove"); }).Enabled(editable && !busy));
             if (rule.origin == "added" && !rule.terminal) {
-                entries.push_back(ActionMenuItem(Localized("上移"), [change, rule] { change(rule, "up"); }).Enabled(!busy));
-                entries.push_back(ActionMenuItem(Localized("下移"), [change, rule] { change(rule, "down"); }).Enabled(!busy));
+                entries.push_back(ActionMenuItem(app::images::arrow_up,
+                    Localized("上移"), [change, rule] { change(rule, "up"); }).Enabled(!busy));
+                entries.push_back(ActionMenuItem(app::images::arrow_down,
+                    Localized("下移"), [change, rule] { change(rule, "down"); }).Enabled(!busy));
             }
         }
-        entries.push_back(ActionMenuItem(Localized("查看详情"), [change, rule] { change(rule, "details"); }));
+        entries.push_back(ActionMenuItem(app::images::info, Localized("查看详情"),
+            [change, rule] { change(rule, "details"); }));
         menu.Show(std::move(entries));
     };
     return DenseCard(SubscriptionRuleContent(label, rule.terminal ? "—" : displayPattern, rule.target, status,
@@ -470,13 +486,21 @@ struct RuleSetDraft {
     huxerui::State<RuleSetDraft> draft, huxerui::State<bool> busy,
     std::function<void(std::function<void()>)> save) {
     const auto navigation = huxerui::UseNavigation();
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto alive = huxerui::UseState(true);
     huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
     const auto back = [=] { if (alive.Get() && !busy.Get()) static_cast<void>(navigation.Pop()); };
+    huxerui::View content = huxerui::ScrollView(RuleSetForm(draft, busy))
+        .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
+    huxerui::View saveAction = CompactPrimaryActionButton(
+        app::images::save, Localized("保存"), [=] { save(back); },
+        !busy.Get(), busy.Get());
+    if (compact) content = CompactPageActionContent(std::move(content), std::move(saveAction));
     return SecondaryPageScaffold(huxerui::Text(Localized("编辑规则集")),
-        huxerui::IconButton(app::images::save, Localized("保存"))
-            .With(huxerui::Enabled(!busy.Get())).OnClick([=] { save(back); }),
-        huxerui::ScrollView(RuleSetForm(draft, busy)).With(huxerui::Grow(1.0F), huxerui::ScrollBar()), back);
+        compact ? huxerui::View{} : huxerui::View{
+            huxerui::IconButton(app::images::save, Localized("保存"))
+                .With(huxerui::Enabled(!busy.Get())).OnClick([=] { save(back); })},
+        std::move(content), back);
 }
 
 [[huxerui::composable]] huxerui::View RuleSetResourceRow(
@@ -495,10 +519,13 @@ struct RuleSetDraft {
         huxerui::IconButton(app::images::more_vertical, Localized("规则集操作"))
             .With(menu.Anchor()).OnClick([=] {
                 std::vector<ActionMenuEntry> actions{
-                    ActionMenuItem(Localized("编辑"), [=] { edit(resource); }).Enabled(!busy)};
-                if (resource->type == "remote" && core::SupportsRuleSetTools()) actions.push_back(ActionMenuItem(Localized("重新下载（重启内核）"),
+                    ActionMenuItem(app::images::edit, Localized("编辑"),
+                        [=] { edit(resource); }).Enabled(!busy)};
+                if (resource->type == "remote" && core::SupportsRuleSetTools()) actions.push_back(ActionMenuItem(
+                    app::images::refresh, Localized("重新下载（重启内核）"),
                     [=] { refresh(resource->id); }).Enabled(!busy));
-                actions.push_back(ActionMenuItem(Localized("删除"), [=] { remove(resource->id); }).Enabled(!busy).Danger());
+                actions.push_back(ActionMenuItem(app::images::trash,
+                    Localized("删除"), [=] { remove(resource->id); }).Enabled(!busy).Danger());
                 menu.Show(std::move(actions));
             }),
     }.With(huxerui::Spacing(8.0F)));
@@ -914,7 +941,8 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
             huxerui::IconButton(app::images::more_vertical, Localized("查看规则"))
                 .With(menu.Anchor()).OnClick([=] {
                     std::vector<ActionMenuEntry> items;
-                    items.push_back(ActionMenuItem(Localized("编译 JSON"), [=] {
+                    items.push_back(ActionMenuItem(app::images::terminal,
+                        Localized("编译 JSON"), [=] {
                         if (previewBusy.Get()) return;
                         previewBusy = true;
                         tasks.Launch([=]() -> huxerui::Task<void> {
@@ -1511,20 +1539,21 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
     };
     // 编辑器页在 IndexedPages 中常驻挂载；未打开时必须保持为空，否则它与
     // 桌面弹窗绑定同一组受控 State，输入法组合值会被另一实例当作外部权威值。
-    huxerui::View editorPage = !globalEditorOpen.Get()
-        ? huxerui::View{huxerui::Row{}}
-        : PageScaffold(
-        Localized(editIndex.Get() < 0 ? "添加全局规则"
-                                      : "编辑全局规则"),
-        huxerui::Row {
+    huxerui::View editorPage = huxerui::Scope([=]() -> huxerui::View {
+        if (!globalEditorOpen.Get()) return huxerui::Row{};
+        huxerui::View saveAction = CompactPrimaryActionButton(
+            app::images::save, Localized("保存"), saveResponsiveRule,
+            !policySaving.Get(), policySaving.Get());
+        huxerui::View actions = huxerui::Row {
             huxerui::IconButton(app::images::arrow_back, Localized("返回"))
                 .With(huxerui::Tooltip(Localized("返回规则列表")))
                 .OnClick([globalEditorOpen] { globalEditorOpen = false; }),
-            huxerui::IconButton(app::images::save, Localized("保存规则"))
-                .With(huxerui::Tooltip(Localized("保存规则")))
-                .OnClick(saveResponsiveRule),
-        }.With(huxerui::Spacing(8.0F)),
-        huxerui::ScrollView(
+            compact ? huxerui::View{} : huxerui::View{
+                huxerui::IconButton(app::images::save, Localized("保存规则"))
+                    .With(huxerui::Tooltip(Localized("保存规则")))
+                    .OnClick(saveResponsiveRule)},
+        }.With(huxerui::Spacing(8.0F));
+        huxerui::View content = huxerui::ScrollView(
             huxerui::Column {
                 Card(huxerui::Column {
                     huxerui::Text(
@@ -1557,10 +1586,15 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                 }.With(huxerui::Spacing(16.0F),
                        huxerui::CrossAlign(
                            huxerui::CrossAxisAlignment::Stretch))),
-                CompactFloatingNavigationFooter(),
             }.With(huxerui::Spacing(16.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
-            .With(huxerui::Grow(1.0F)));
+            .With(huxerui::Grow(1.0F));
+        if (compact) content = CompactPageActionContent(std::move(content), std::move(saveAction));
+        return PageScaffold(
+            Localized(editIndex.Get() < 0 ? "添加全局规则"
+                                          : "编辑全局规则"),
+            std::move(actions), std::move(content));
+    });
     if (compact && globalEditorOpen.Get()) {
         editorPage = std::move(editorPage).On<huxerui::ViewEvents::BackRequested>(
             [globalEditorOpen] { globalEditorOpen = false; });

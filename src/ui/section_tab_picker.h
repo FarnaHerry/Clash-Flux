@@ -58,20 +58,20 @@ inline huxerui::View GroupPickerContent(const std::vector<SectionTab>& tabs,
     std::vector<huxerui::View> choices;
     for (const auto& tab : tabs) {
         const bool active = tab.key == selected;
+        const auto colors = ResolveSelectableTileColors(theme, active);
         std::vector<huxerui::View> label{
             huxerui::Text(tab.label, huxerui::TextRole::Label)
-                .With(huxerui::Foreground(active ? theme.colors.on_primary_container : theme.colors.on_surface)),
+                .With(huxerui::Foreground(colors.fg)),
         };
         if (!tab.badge.empty()) label.push_back(huxerui::Text(tab.badge, huxerui::TextRole::Label)
             .With(huxerui::Foreground(SemanticWarningColor(theme))));
-        choices.push_back(huxerui::Row(std::move(label)).With(
-            huxerui::Spacing(theme.spacing.extra_small),
-            huxerui::Padding(huxerui::EdgeInsets::Symmetric(12.0F, 10.0F)),
-            huxerui::CornerRadius(theme.shapes.small),
-            huxerui::Background(active ? theme.colors.primary_container : theme.colors.surface_container_high),
-            theme.interactions.indication, huxerui::Focusable(true),
-            huxerui::Semantics{.role = huxerui::SemanticRole::Button, .label = tab.label, .selected = active})
-            .OnClick([dismiss, select, key = tab.key] { dismiss(); select(key); })
+        choices.push_back(SelectableTile(
+            huxerui::Row(std::move(label)).With(huxerui::Spacing(theme.spacing.extra_small),
+                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+            active, huxerui::UseString(tab.label),
+            [dismiss, select, key = tab.key] { dismiss(); select(key); },
+            SelectableTileInteraction::Selectable)
+            .With(huxerui::Grow(0.0F))
             .Key("group-picker-item-" + tab.key));
     }
     return huxerui::Column{

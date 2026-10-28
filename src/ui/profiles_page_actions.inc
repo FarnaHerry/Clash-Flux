@@ -310,10 +310,6 @@
                     return DialogCard(huxerui::Column {
                         huxerui::Text(Localized("编辑订阅"), huxerui::TextRole::Title),
                         huxerui::ScrollView(huxerui::Column {
-                            huxerui::Text(Localized(pptp ? "类型：PPTP 内网连接"
-                                               : editType.Get() == "local"
-                                                     ? "类型：本地文件"
-                                                     : "类型：远程订阅")),
                             huxerui::TextField(editName.Get())
                                 .Label(Localized("名称"))
                                 .Variant(huxerui::TextFieldVariant::Outlined)
@@ -464,7 +460,7 @@
         fileLoading = true;
         if (navigation_enabled) {
             navigation.Push([=] {
-                return ProfileFilePage(id, fileContent, fileLoading, tasks, toast,
+                return ProfileFileRoutePage(id, fileContent, fileLoading, tasks, toast,
                     [navigation] { static_cast<void>(navigation.Pop()); });
             });
         } else if (compact) {

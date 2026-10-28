@@ -37,6 +37,7 @@
 #include "task_bridge.h"
 #include "profile_import_task.h"
 #include "profile_reorder_geometry.h"
+#include "profile_list_layout.h"
 
 import clashflux.core;
 import clashflux.db;
@@ -64,10 +65,12 @@ struct ProfileReorderSession {
 
 [[huxerui::composable]] huxerui::View ProfilesPageCore(
     huxerui::NavigationController navigation, bool navigation_enabled,
-    ProfilesCache profilesCache, bool active) {
+    ProfilesCache profilesCache, bool active, bool group_by_type) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    const auto desktopNavigation =
+        huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
     auto tasks = huxerui::UseTaskScope();
     auto applicationTasks = huxerui::UseApplicationTaskScope();
     const auto coreControl = UseCoreControl();
@@ -139,6 +142,12 @@ struct ProfileReorderSession {
     auto editPageId = huxerui::UseState<std::int64_t>(0);
     auto filePageId = huxerui::UseState<std::int64_t>(0);
 
+    // Derive dock visibility from the page actually displayed, including back/save,
+    // primary-page changes and breakpoint changes; do not mutate route ownership.
+    UseCompactProfileFormNavigation(desktopNavigation,
+        active && !navigation_enabled &&
+        ResponsiveProfilePageIndex(compact, editPageId, createPageOpen, filePageId) != 0U);
+
     // 原生连接状态：唯一来源是 VpnModel（见 vpn_model.h）。挂载时加载一次
     // 持久化的连接配置并请模型立刻同步，之后由模型 State 驱动镜像。
     const auto vpnModel = huxerui::UseService<VpnModel>();
@@ -195,14 +204,14 @@ struct ProfileReorderSession {
 [[huxerui::composable]] huxerui::View ProfilesPage(
     ProfilesCache profilesCache, bool active) {
     return ProfilesPageCore(huxerui::NavigationController{}, false,
-                            profilesCache, active);
+                            profilesCache, active, /*group_by_type=*/true);
 }
 
 #if defined(__ANDROID__)
 [[huxerui::composable]] huxerui::View AndroidProfilesPage(
     huxerui::NavigationController navigation, ProfilesCache profilesCache,
     bool active) {
-    return ProfilesPageCore(navigation, true, profilesCache, active);
+    return ProfilesPageCore(navigation, true, profilesCache, active, /*group_by_type=*/false);
 }
 #endif
 

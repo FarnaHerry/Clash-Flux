@@ -55,20 +55,6 @@ import clashflux.stream;
 
 namespace clashflux::ui {
 
-namespace pages {
-
-enum PageIndex : std::size_t {
-    kHome = 0,
-    kProfiles = 1,
-    kProxies = 2,
-    kRules = 3,
-    kConnections = 4,
-    kLogs = 5,
-    kSettings = 6,
-};
-
-} // namespace pages
-
 namespace {
 
 #if defined(__ANDROID__)
@@ -762,7 +748,8 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
     }.With(huxerui::Frame{.height = kDesktopTitleBarHeight});
     const bool secondary = desktopActivePage == pages::kRules ||
         desktopActivePage == pages::kConnections || desktopActivePage == pages::kLogs ||
-        model->secondaryOpen.Get();
+        model->secondaryOpen.Get() ||
+        (desktopActivePage == pages::kProfiles && model->compactProfileFormOpen.Get());
     huxerui::View navigation;
     if (!secondary) navigation = AndroidNavigationSurface(navPage);
     // Environment 只提供作用域；外层真实布局承接骨架的 Grow/Key 行为。
@@ -1076,12 +1063,18 @@ void StartDesktopWindowlessRuntime() {
             }
             if (!runtimeServices->profileRefreshStarted) {
                 runtimeServices->profileRefreshStarted = true;
-                tasks.Launch([]() -> huxerui::Task<void> {
+                tasks.Launch([profilesModel]() -> huxerui::Task<void> {
                     for (;;) {
                         co_await huxerui::Delay(std::chrono::duration<double>{30.0});
-                        co_await RunOnTaskThread([] {
-                            store::profilesStore().refreshDue();
+                        const auto batch = co_await RunOnTaskThread([] {
+                            return store::profilesStore().refreshDue();
                         });
+                        for (const auto id : batch.updated)
+                            profilesModel->ClearProfileRefreshFailure(id);
+                        for (const auto& failure : batch.failures)
+                            profilesModel->ReportProfileRefreshFailure(
+                                failure.profileId, failure.profileName,
+                                failure.error);
                     }
                 });
             }
@@ -1249,6 +1242,19 @@ void StartDesktopWindowlessRuntime() {
         }
         return [] {};
     }, profilesModel->linkError);
+    huxerui::Lifecycle([profilesModel, linkToast] {
+        const auto failures = profilesModel->TakeProfileRefreshFailures();
+        if (!failures.empty()) {
+            std::string details;
+            for (const auto& failure : failures) {
+                if (!details.empty()) details += "；";
+                details += failure.profileName + "：" + failure.error;
+            }
+            linkToast.Show(LocalizedFormat("订阅更新失败：{}", details),
+                           huxerui::ToastOptions{8.0});
+        }
+        return [] {};
+    }, profilesModel->profileRefreshFailures);
     huxerui::Lifecycle([tasks, profilesModel, navPage, pagerPage, linkWindow, linkToast] {
         auto wake = [tasks, profilesModel, navPage, pagerPage, linkWindow, linkToast] {
             tasks.Post([profilesModel, navPage, pagerPage, linkWindow, linkToast] {

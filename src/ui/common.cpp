@@ -26,6 +26,7 @@
 #include "app.h"
 #include "file_drop_zone.h"
 #include "profile_file_picker.h"
+#include "proxy_display_name.h"
 
 #include "wire_codec.h"
 import clashflux.config;
@@ -423,6 +424,11 @@ std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
 // ---- 策略组快照：唯一来源（见 proxies_model.h）------------------------------
 
 ProxiesSnapshot FetchProxiesSnapshot() {
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
+    constexpr bool qualifySources = false;
+#else
+    constexpr bool qualifySources = true;
+#endif
     ProxiesSnapshot next;
     next.loaded = true;
     std::string body;
@@ -458,8 +464,7 @@ ProxiesSnapshot FetchProxiesSnapshot() {
             next.proxies = std::make_shared<const wire::Proxies>(std::move(decoded.value));
             const auto catalog = store::coreStore().proxySourceObjects(next.source == ProxiesSource::Preview);
             if (catalog) for (const auto& object : *catalog) {
-                next.labels[object.tag] = object.sourceName.empty() ? object.objectId
-                    : object.objectId + " · " + object.sourceName;
+                next.labels[object.tag] = ProxyObjectDisplayName(object.objectId, object.sourceName, qualifySources);
             }
             for (const auto& entry : next.proxies->entries) {
                 const auto& tag = entry.first;
@@ -884,6 +889,37 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         IslandLevel::Base);
 }
 
+[[huxerui::composable]] huxerui::View CompactPrimaryActionButton(
+    huxerui::ImageResource icon, huxerui::StringVariant label,
+    std::function<void()> onClick, bool enabled, bool busy) {
+    const auto button = huxerui::UseEnvironment<huxerui::ButtonStyle>();
+    auto textStyle = button.label_style;
+    const huxerui::Color foreground = enabled
+        ? button.label_style.foreground : button.disabled_label;
+    textStyle.foreground = foreground;
+    const huxerui::VisualFill background = enabled
+        ? button.background : button.disabled_background;
+    return huxerui::Row {
+        huxerui::Image(std::move(icon)).Tint(foreground)
+            .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
+        huxerui::Text(label).Style(textStyle),
+    }.With(huxerui::Spacing(10.0F),
+           huxerui::Frame{.height = kCompactPrimaryActionHeight},
+           huxerui::Padding(huxerui::EdgeInsets::Symmetric(20.0F, 8.0F)),
+           huxerui::Background(background),
+           huxerui::CornerRadius(1000.0F),
+           huxerui::ClipChildren(),
+           huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
+           huxerui::PointerCursor(huxerui::PointerCursorKind::Hand),
+           huxerui::Focusable(true),
+           huxerui::Enabled(enabled),
+           huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                              .label = label,
+                              .busy = busy})
+        .OnClick(std::move(onClick));
+}
+
 [[huxerui::composable]] huxerui::View PageScaffold(huxerui::StringVariant title,
                                                    huxerui::View actions,
                                                    huxerui::View content,
@@ -1256,62 +1292,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-// 可选中卡片的形状常量见 ui.h（代理页节点卡为标准）。
-
-SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme,
-                                                 bool selected) {
-    SelectableTileColors colors;
-    if (selected) {
-        // 选中态是「容器淡染底 + 主色描边」（描边由 SelectableTile 落笔）：
-        // 实心 primary 铺满整卡过重，primary_container 保持表面层次，文字用
-        // on_primary_container 常规对比，标题不再整段反色。
-        colors.surface = theme.colors.primary_container;
-        colors.fg = theme.colors.on_primary_container;
-        colors.muted = theme.colors.on_primary_container;
-        colors.faint = theme.colors.on_primary_container;
-        colors.muted.alpha = 0.78F;
-        colors.faint.alpha = 0.62F;
-    } else {
-        colors.surface = ResolveIslandTheme(theme).active;
-        colors.fg = theme.colors.on_surface;
-        colors.muted = theme.colors.on_surface_variant;
-        colors.faint = theme.colors.outline;
-    }
-    return colors;
-}
-
-[[huxerui::composable]] huxerui::View SelectableTile(
-    huxerui::View content, bool selected, std::string semantics_label,
-    std::function<void()> on_click, SelectableTileInteraction interaction) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const SelectableTileColors colors =
-        ResolveSelectableTileColors(theme, selected);
-    const bool interactive = interaction != SelectableTileInteraction::Disabled &&
-                             static_cast<bool>(on_click);
-    // 表面/圆角/描边在建树时就落在 Column 上（不能在返回值外面补修饰符，原因见
-    // Card 的注释）：未选中 islands.active，选中 primary_container 淡染底 +
-    // primary 描边。
-    huxerui::View tile =
-        huxerui::Column {std::move(content)}
-            .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(10.0F, 8.0F)),
-                  huxerui::Background(colors.surface),
-                  huxerui::CornerRadius(kSelectableTileRadius),
-                  huxerui::Border(selected ? theme.colors.primary
-                                           : huxerui::Color::Transparent(),
-                                  selected ? kCardSelectedOutlineWidth : 0.0F),
-                  huxerui::ClipChildren(),
-                  huxerui::Grow(1.0F),
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
-                  huxerui::Semantics{.role = interactive ? huxerui::SemanticRole::Button
-                                                           : huxerui::SemanticRole::Generic,
-                                     .label = std::move(semantics_label)},
-                  huxerui::Focusable(interactive),
-                  huxerui::Enabled(interaction != SelectableTileInteraction::Disabled));
-    if (interactive) {
-        tile = std::move(tile).OnClick(std::move(on_click));
-    }
-    return tile;
-}
+// 可选中卡片与分组选择器共用 selectable_tile.cpp。
 
 [[huxerui::composable]] huxerui::View DialogCard(huxerui::View content) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
@@ -1334,6 +1315,38 @@ void ProfilesModel::PublishCached() {
     auto& database = clashflux::persistence::persistence();
     Publish(database.listProfiles());
     if (database.ready()) loaded = true;
+}
+
+void ProfilesModel::ReportProfileRefreshFailure(std::int64_t id,
+                                                std::string name,
+                                                std::string error,
+                                                bool userInitiated) {
+    if (error.empty()) return;
+    if (!userInitiated && reportedProfileErrors.contains(id)) return;
+    reportedProfileErrors[id] = true;
+    profileRefreshFailures.Update([&](auto& notices) {
+        const auto existing = std::ranges::find(notices, id,
+            &RefreshFailureNotice::profileId);
+        RefreshFailureNotice notice{id, std::move(name), std::move(error)};
+        if (existing == notices.end()) notices.push_back(std::move(notice));
+        else *existing = std::move(notice);
+    });
+}
+
+void ProfilesModel::ClearProfileRefreshFailure(std::int64_t id) {
+    reportedProfileErrors.erase(id);
+    profileRefreshFailures.Update([&](auto& notices) {
+        std::erase_if(notices, [id](const auto& notice) {
+            return notice.profileId == id;
+        });
+    });
+}
+
+std::vector<ProfilesModel::RefreshFailureNotice>
+ProfilesModel::TakeProfileRefreshFailures() {
+    auto notices = profileRefreshFailures.Get();
+    profileRefreshFailures = std::vector<RefreshFailureNotice>{};
+    return notices;
 }
 
 void DriveProfilesModel(huxerui::TaskScope tasks,

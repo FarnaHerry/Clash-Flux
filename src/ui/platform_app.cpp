@@ -71,12 +71,13 @@ void AndroidPreparePlatformDataDirectory(
 [[huxerui::composable]] huxerui::View AndroidProfileRefreshPump() {
     auto tasks = huxerui::UseTaskScope();
     auto http = huxerui::UseService<AppHttpClient>();
+    auto profilesModel = huxerui::UseService<ProfilesModel>();
     huxerui::Lifecycle(
-        [tasks, http] {
-            tasks.Launch([http]() -> huxerui::Task<void> {
+        [tasks, http, profilesModel] {
+            tasks.Launch([http, profilesModel]() -> huxerui::Task<void> {
                 for (;;) {
                     co_await huxerui::Delay(std::chrono::duration<double>{30.0});
-                    co_await AndroidRefreshProfilesDueOnce(http);
+                    co_await AndroidRefreshProfilesDueOnce(http, profilesModel);
                 }
             });
             return [] {};
@@ -460,16 +461,23 @@ bool HasDesktopCoreRuntime() {
 [[huxerui::composable]] huxerui::View DesktopProfileRefreshPump() {
     auto tasks = huxerui::UseApplicationTaskScope();
     auto runtimeServices = huxerui::UseService<AppRuntimeServices>();
+    auto profilesModel = huxerui::UseService<ProfilesModel>();
     huxerui::Lifecycle(
-        [tasks, runtimeServices] {
+        [tasks, runtimeServices, profilesModel] {
             if (!runtimeServices->profileRefreshStarted) {
                 runtimeServices->profileRefreshStarted = true;
-                tasks.Launch([]() -> huxerui::Task<void> {
+                tasks.Launch([profilesModel]() -> huxerui::Task<void> {
                     for (;;) {
                         co_await huxerui::Delay(std::chrono::duration<double>{30.0});
-                        co_await RunOnTaskThread([] {
-                            store::profilesStore().refreshDue();
+                        const auto batch = co_await RunOnTaskThread([] {
+                            return store::profilesStore().refreshDue();
                         });
+                        for (const auto id : batch.updated)
+                            profilesModel->ClearProfileRefreshFailure(id);
+                        for (const auto& failure : batch.failures)
+                            profilesModel->ReportProfileRefreshFailure(
+                                failure.profileId, failure.profileName,
+                                failure.error);
                     }
                 });
             }

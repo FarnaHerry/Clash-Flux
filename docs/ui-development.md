@@ -98,17 +98,19 @@
 
 ## 页内标签与导航图标
 
+手机订阅页将远程、本地及已有其它来源按权威列表顺序放在同一个单列虚拟网格，搜索跨类型匹配，不挂类型标签或单页 Pager；横屏/宽视口继续使用统一列表，保持原有内容边距。桌面（含 Compact 窄窗）保留类型分页与原有类型顺序。两种展示共用卡片、搜索和拖放逻辑，平台包装显式指定是否按类型分组，不用视口宽度推断平台。手机代理显示名直接使用来源对象目录的原始 objectId，不附订阅名；运行 tag、选择/测速目标与默认出口不变。桌面代理显示名继续附来源名称。
+
 - 应用 Logo 统一从 `assets/branding/logo.svg` 生成，沿用独立 demo 的完整出箱造型。界面使用透明的 `clash_flux_logo_vector_{dark,light}_current.svg`，按主题选择且不加 Tint；Linux/Windows/macOS 原生图标使用透明背景，Windows 安装器和 Android legacy launcher 保留白底。托盘保留默认、TUN 和系统代理三种状态色及 32/64/96 像素资源；Android 快捷磁贴继续使用独立猫爪。生成和预览方式见 [Logo 资源说明](branding/README.md)。
 - 首页猫咪动画由 `src/ui/box_cat.cpp` 提供，桌面按钮和运行卡片只映射共享 `CoreControl` 的真实内核命令/快照，Android 只映射 VPN 后台快照，不能将 core-only 当作 VPN 已连接。等待可持续轻抚，成功后才起身；失败 wink 每次进入失败态只播放一次，重开窗口或切页不重播已稳定姿势。帧时钟限频 30fps，不逐帧写 State；窗口后台、隐藏首页、SharedBounds 转场和 reduced-motion 下暂停或落到静态姿势。独立 Demo 仅用于隔离预览，不向主程序引入模拟进度。
 - 移动端与桌面 Compact 首页共用 `home_header_control.cpp` 的固定 48pt 页内标题槽位：未运行时显示“首页”和右下角猫咪；真实内核（桌面）/VPN（移动端）成功且出箱动作完成后，猫咪按桌面同款 0.64 秒轨迹先移动到标题中心再展开为“运行中 + HH:MM:SS”，运行态使用 36pt 猫咪。点击运行栏停止，先原地收拢为实际 48pt 姿势（0.28 秒），再返回悬浮位置（0.36 秒）；不照搬网格卡片的固定缩放系数。`PageScaffold` 的可选 `inlineHeader` 保持标题和滚动内容为稳定兄弟节点，替换不改变内容视口或滚动位置；移除旧的移动端全宽 VPN 状态卡。首次读到已运行快照、切页返回、宽窄切换和后台恢复直接同步，动画序号淘汰已退役任务，减少动态效果直接切换。桌面宽屏仍用窗口标题与网格运行卡，桌面窄窗保留独立系统窗口标题栏；所有运行操作共用 `CoreControl`，桌面系统代理/TUN 卡片与移动平台能力边界保持原样。
 - 运行文案统一为“运行中 / 正在启动 / 正在停止”，操作标签保留“启动/停止内核”和“启动/停止 VPN”对象。桌面从内核确认就绪的 `runningSince` 计算时长；Android `VpnUptime` 在后台 VPN 真正连接成功后记录 `SystemClock.elapsedRealtime()`，同一 Binder 快照成对传递状态与已运行毫秒数，经 MainActivity/JNI → `CoreModel` 显示。首份后台快照未就绪前不把默认值当成断开状态；core-only 不开始 VPN 计时。锁屏、切页和 UI 重建不重置后台会话，重复 connected 不重置，真正断开后重新连接开始新会话；Binder 暂时不可用保留最后快照。UI 不用逐秒累加计数器，也不跨 Java/C++ 比较不同时间基准。`test_page_transition` 直接挂载生产标题/悬浮组件回归，`tests/android/VpnUptimeTest.java` 验证后台会话计时。
 - 桌面与移动端共用设置页主题选项，三个标签统一为“自动 / 深色 / 浅色”；“自动”按系统深浅模式选择主题。
 
-- 二级标签共用 `src/ui/section_tabs.cpp` 的 `SectionTabBar` 与 `SectionTabPages`，代理、订阅、规则页都接入。标签栏固定在 Pager 外，点击、溢出菜单与内容横滑写回同一受控选择。
+- 二级标签共用 `src/ui/section_tabs.cpp` 的 `SectionTabBar` 与 `SectionTabPages`，代理、规则页及桌面订阅页接入；手机订阅页使用统一列表，不挂分类标签或类型 Pager。标签栏固定在 Pager 外，点击、溢出菜单与内容横滑写回同一受控选择。
 - 对照 ACGU 首页 `FeedTabs` + `SwipePages`：内容使用框架 Pager 的完整出入场、跟手拖动与取消回弹；内层首尾向外滑由框架滚动事务交给外层 Pager。不要再添加 PointerIntercept 或逐页入场过渡。
 - 标签保留独立警示色角标和溢出菜单，因此继续使用现有标签结构；一条由实际布局驱动的保留指示线连续移动并调整宽度。每对标签栏/内容页在所有 hook 区域调用一次 `UseSectionTabMotion()`，将同一 handle 传给 `SectionTabBar` 和 `SectionTabPages`；它从 Pager 与参与显示的页的最终呈现几何读取进度，拖动、提交与取消回弹时下划线同步跟随。两端分别使用正弦的加速/减速插值，形成前端延伸、后端收拢的效果；标签文字的普通色与主色也按同一实际进度线性混合：离场标签逐渐淡出，目标标签逐渐增强，取消或反向拖动沿原进度恢复；警示角标保持语义警示色。文字仍由普通 Text 测量并提供语义，保留扩展只绘制渐变颜色。动画只更新保留几何与标签前景绘制，不逐帧写 State 或使布局失效。首次显示直接定位，reduced motion 保留线性跟手但关闭伸缩。
 - 页面根用稳定语义 Key 与有界 Column，Pager 只测量显示轨道中的页。代理组仅声明轻量 VirtualGrid，卡片按视口构建，避免无界 IndexedPages 让大组节点全量构建；切回分区保留各页滚动位置。
-- 分页视口占满页面骨架可用宽度，水平内容边距放进每个分页，与内容一起移动。对照 [FlClash 的代理分组实现](https://github.com/chen08209/FlClash/blob/main/lib/views/proxies/tab.dart)：`TabBarView` 占满宽度，每页网格设置左右 16 的 padding，卡片间距另由网格设置。我们的四种二级标签页启用骨架的 `fullWidthSections`：骨架通过 `SectionTabContentInsets` 提供边距，标题和标签条也用相同值；`SectionTabPages` 将其一半应用在每个稳定页根上。代理/订阅网格的行列间距与分页边距均由 `kSectionCardSpacing`（8pt）计算，页面每侧留 4pt，滑动中的两页边距合成 8pt，恰好等于卡片间距。Pager 外侧不加水平 Padding，翻页步长始终是完整视口宽度，形成连续的卡片节奏。
+- 分页视口占满页面骨架可用宽度，水平内容边距放进每个分页，与内容一起移动。对照 [FlClash 的代理分组实现](https://github.com/chen08209/FlClash/blob/main/lib/views/proxies/tab.dart)：`TabBarView` 占满宽度，每页网格设置左右 16 的 padding，卡片间距另由网格设置。我们的四种二级标签页启用骨架的 `fullWidthSections`：骨架通过 `SectionTabContentInsets` 提供边距，标题和标签条也用相同值；`SectionTabPages` 将其一半应用在每个稳定页根上。代理网格与宽屏订阅网格的行列间距、分页边距均由 `kSectionCardSpacing`（8pt）计算；窄屏订阅卡行距见下文紧凑卡片约定，分页边距不变，页面每侧留 4pt，滑动中的两页边距合成 8pt，恰好等于卡片间距。Pager 外侧不加水平 Padding，翻页步长始终是完整视口宽度，形成连续的卡片节奏。
 - 标签栏用实际标签几何计算各项居中偏移，先限制到滚动范围，再按 Pager 呈现进度在两端偏移间插值（与 Flutter TabBar 相同）。内容拖动期间提前揭示目标，松手收敛、反向和取消回弹时标签条同步跟随；选择变化、标签尺寸变化与窗口缩放重新尽量居中。首尾标签按滚动边界对齐，手动滚动保持浏览位置。滚动请求在保留扩展的帧更新中执行，不逐帧写页面 State；溢出菜单的显隐不能重挂载 ScrollView。
 - Pager 反向切换修复已合入 HuxerUI fork 的 `farna/main`：清除过期 drag target，保留跨标签反向动画的离场页 slot。应用使用固定集成 SHA，不再在 CMake 或 CI 打框架补丁。
 - 隐藏虚拟页布局修复同样由 `farna/main` 维护：viewport dirty 留在隐藏子树，重新显示时恢复测量，避免逐帧使可见祖先失效。
@@ -225,14 +227,16 @@ Button("操作").With(menu.Anchor()).OnClick([menu] {
 
 桌面窗口最小尺寸为 320 × 480 逻辑像素（`src/app.cpp` 的 `minimum_size`），默认启动尺寸仍为 1080 × 720。允许缩到手机竖屏尺寸并进入 Compact 视口；平台能力仍由平台判定，不能通过窗口宽度改变订阅编排权限。
 
-桌面 Compact（宽度小于 600）由 `responsive_shell.h` 切换为四项底部导航与页内标题；独立 40pt 窗口标题栏保留拖动和系统窗口控件。规则/连接/日志通过设置「更多」进入，返回设置时恢复底部导航。内容容器 Key 与树路径保持稳定，越过断点不重挂载页面。桌面订阅编排、系统代理等能力不因窗口缩窄改变。
+桌面 Compact（宽度小于 600）由 `responsive_shell.h` 切换为四项底部导航与页内标题；独立 40pt 窗口标题栏保留拖动和系统窗口控件。规则/连接/日志通过设置「更多」进入，返回设置时恢复底部导航。桌面窄窗打开新建订阅、编辑信息或编辑文件页时隐藏底部导航及渐隐层，返回或保存成功后恢复；显示状态由当前实际显示的订阅表单统一派生，窗口跨断点或切换一级页时同步更新，不占用 NavigationStack route 的 secondaryOpen/secondaryOwner；内容容器 Key 与树路径保持稳定，越过断点不重挂载页面。桌面订阅编排、系统代理等能力不因窗口缩窄改变。
 
-订阅页在 Compact（手机与桌面窄窗）将「新建订阅」加号放在 `PillSearchField` 胶囊内部最右侧；有搜索内容时，清空按钮位于加号左侧。搜索框的外层 Scope 显式声明 Grow，Compact 搜索标题行不放 Spacer，避免两者平分剩余宽度；搜索表面在 Compact 下占满标题行可用宽度，保留骨架统一的两侧留白。仅桌面非 Compact 的 PillSearchField 通过 PageSearchFieldLayout 共用 320pt 宽度上限，外层高度固定 40pt，胶囊高度 34pt、上下各留 3pt；在非 Grow 内层限制宽度，外层 Grow 槽位预留标题与动作后随空间收缩，搜索条在槽位内居中，两侧空白留作窗口拖动。桌面宽屏搜索框聚焦时使用 Color::Transparent() 透出所在区域的真实背景，描边改用 primary；失焦后恢复 surface_container_highest 和 outline，不改变控件尺寸。该桌面规则同时覆盖一级页和二级页；移动平台（含宽视口）和桌面 Compact 直接返回原搜索控件，不添加居中容器，移动端保留 48pt 高度。PPTP 卡片移除批量勾选与页顶批量操作，卡片底部保留一个图标按钮：打开使用现有 play，关闭使用 pause，加载中使用 ProgressCircle；保留对应 Tooltip 和无障碍标签。连接或断开期间禁用，失败后允许重试，状态读取应用级 VpnModel，动作使用应用任务域。OpenVPN 统一作为普通来源，移除旧独立连接的勾选、批量动作和专用编辑器；Medium/Expanded 的加号继续位于窗口标题栏。入口复用同一个新建操作，不改变平台订阅能力或导入流程。新建订阅与各添加方式的配置表单复用二级页面骨架，返回图标、居中的标题与右侧导入按钮同处顶行；新建/添加表单的左右动作使用等宽 40pt 槽位，导入中在右侧同一槽位显示 loading，不在表单底部重复导入按钮，返回键与图标使用同一返回动作。`test_page_transition` 的生产标题布局回归检查 320/420/600/960/1600pt 搜索表面的实际宽度、操作按钮避让与宽窄往返，以及普通/加载状态的标题中心；另检查移动端 48pt 高度、下方内容区域、输入/清空/添加及宽窄往返。
+订阅页在 Compact（手机与桌面窄窗）将「新建订阅」加号放在 `PillSearchField` 胶囊内部最右侧；有搜索内容时，清空按钮位于加号左侧。搜索框的外层 Scope 显式声明 Grow，Compact 搜索标题行不放 Spacer，避免两者平分剩余宽度；搜索表面在 Compact 下占满标题行可用宽度，保留骨架统一的两侧留白。仅桌面非 Compact 的 PillSearchField 通过 PageSearchFieldLayout 共用 320pt 宽度上限，外层高度固定 40pt，胶囊高度 34pt、上下各留 3pt；在非 Grow 内层限制宽度，外层 Grow 槽位预留标题与动作后随空间收缩，搜索条在槽位内居中，两侧空白留作窗口拖动。桌面宽屏搜索框聚焦时使用 Color::Transparent() 透出所在区域的真实背景，描边改用 primary；失焦后恢复 surface_container_highest 和 outline，不改变控件尺寸。该桌面规则同时覆盖一级页和二级页；移动平台（含宽视口）和桌面 Compact 直接返回原搜索控件，不添加居中容器，移动端保留 48pt 高度。PPTP 卡片移除批量勾选与页顶批量操作，卡片底部保留一个图标按钮：打开使用现有 play，关闭使用 pause，加载中使用 ProgressCircle；保留对应 Tooltip 和无障碍标签。连接或断开期间禁用，失败后允许重试，状态读取应用级 VpnModel，动作使用应用任务域。OpenVPN 统一作为普通来源，移除旧独立连接的勾选、批量动作和专用编辑器；Medium/Expanded 的加号继续位于窗口标题栏。入口复用同一个新建操作，不改变平台订阅能力或导入流程。新建订阅与各添加方式的配置表单复用二级页面骨架，紧凑页顶行保留返回与居中标题，创建/保存动作固定在页面底部，使用全宽圆角按钮和现有保存图标，高度由 `kCompactPrimaryActionHeight` 统一控制；按钮忙碌时禁用并提供忙碌语义。桌面窄屏新建页隐藏底部导航，创建按钮落在页面底部；移动端保留按添加方式进入的页面流程，底部按钮避让系统导航区。返回键与标题栏返回使用同一动作。`test_page_transition` 的生产标题布局回归检查 320/420/600/960/1600pt 搜索表面的实际宽度、操作按钮避让与宽窄往返，以及普通/加载状态的标题中心；另检查移动端 48pt 高度、下方内容区域、输入/清空/添加及宽窄往返。
 
 Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上，桌面窄窗与手机保持相同的最大宽度、圆角和边距。表面以 Telegram Android 的纯色回退为基准：`CompactNavigationSurfaceColor` 使用独立的导航目标色，深色取 `surface_container_highest`，浅色取 `surface_container_high`，Alpha 为 1。不透出未经模糊的卡片内容，不对整个导航施加 Opacity。HuxerUI 当前没有背景模糊/折射，本实现不声称完整玻璃效果。`CompactNavigationDock` 唯一维护底色、32pt 圆角、0.4pt 单色细描边与轻阴影（模糊半径 2.667pt、向下偏移 0.85pt）；描边强度取 Telegram 上下边缘的平均值，阴影色遵守项目的 `ThemeShadowColor` 约定。选中指示底板由 `CompactNavigationIndicatorColor` 使用 0.16 Alpha 的主题 `primary`，选中文字与图标也使用 `primary`，参考 hui-test 的淡主色选中态。导航最大宽度为 352pt，四个槽位等分可用宽度；选中胶囊宽度为槽位宽度减 12pt、最多 76pt，高度 50pt，垂直居中于 64pt 导航行。窗口缩放直接重新定位，首帧不播放入场动画。图标与文字保留普通色底层，选中色覆盖层通过框架 Opacity 在 0.2 秒内渐变；点击导航时选中胶囊使用与 hui-test 相同的弹簧（stiffness 240、damping_ratio 0.78）轻微越过目标后回弹，横滑翻页提交后使用 0.2 秒缓出配合 Pager 收敛。反向改选由保留的 MotionController 从当前位移与速度继续，减少动态效果时直接切换。各导航项显式使用空 `Indication` 覆盖 `OnClick` 默认指示层，不显示悬停、按压或点击波纹，点击仍切页并移动选中胶囊。页面容器延伸到视口底边（Compact 含系统安全区，桌面也不保留骨架底部间距）；滚动内容通过 `CompactFloatingNavigationFooter` 留出导航避让，末项可滚到胶囊上方；首页启动按钮在窄窗避开导航，代理页桌面网格尾部为悬浮测速按钮保留 80pt 净空。
 
 
 胶囊下方的全宽渐隐层使用页面 base（`surface_container_low`）颜色，从 64pt 导航行的水平中线向下开始，上半部与胶囊上方不覆盖内容；默认渐隐高度为 40pt，并通过与导航相同的 `SafeAreaPadding` 加入底部安全区。覆盖从透明缓慢增加，到视口底边为 0.68，不进行模糊或滚动状态采样。渐隐层与导航同时显示/隐藏，位于内容之上、导航之下且无输入修饰符。生产壳层回归检查宽窄切换及 0/24/48pt 底部安全区下的实际起点与底边。
+
+紧凑二级表单共用 `CompactPageActionContent`：上方表单独占剩余高度并独立滚动，下方创建/保存按钮固定在页面底部、距离系统安全区 8pt；二级页已覆盖胶囊导航，不再添加导航占位。共享表单不声明 `PageTransition`；动画仅由真正进入 `NavigationStack` 的 route 页面声明，桌面窄屏 `IndexedPages` 中的编辑信息/文件页不能携带该动画，否则框架会终止进程。生产布局回归覆盖短/长表单、滚动至末项、矮窗口、窗口高度变化及 0/24/48pt 底部安全区，确保按钮不被内容挤上去。
 
 ## 空状态占位
 
@@ -269,6 +273,10 @@ Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上�
 
 ## 圆角阶梯与密集卡片
 
+订阅卡片在 Compact 使用 `profile_card_layout.h` 的 `kCompactProfileCardHeight`（88pt）与 `kCompactProfileCardSpacing`（6pt），宽屏继续 180pt。实际卡片、VirtualGrid 行高估算与拖动预览共用 `ProfileCardHeight`；预览宽度取来源槽位。窄屏只保留名称、简写参与状态、更多菜单、流量/到期文字与 3pt 进度条，隐藏链接、刷新按钮、描述、自动更新频率及更新时间；更新入口仍在共用菜单，忙态用小型指示器表达。流量和到期文字各占固定槽位，缺失留空，无流量总额时进度条按宽屏逻辑满格。名称按分配宽度省略并保留完整语义/提示，空文字不创建 Tooltip。PPTP 同高，保留服务器、连接状态与开关；路由及 Windows 单连接说明在编辑表单查看。宽窄切换保留平台能力、菜单、拖放与虚拟滚动。
+
+策略组下拉选择器的条目直接复用 `selectable_tile.cpp` 的 `SelectableTile`，与代理节点/订阅卡片共用选中底色、前景色、主色描边、圆角及交互；右侧抽屉与底部抽屉使用同一内容，保留紧凑 Flow 排布、角标和选后关闭行为。
+
 所有页面的卡片描边线宽集中在 `src/ui/theme_colors.h`：
 `kCardOutlineWidth` 用于普通卡片和对话框卡片；
 `kCardSelectedOutlineWidth` 用于可选条目的选中描边；
@@ -284,6 +292,8 @@ Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上�
 鼠标悬停以 5% primary 色在内容下方淡入，移出淡出；使用框架 Indication，不占布局、
 不添加整卡点击动作，卡内开关和按钮维持独立命中。按下时缩至 98.5% 并下移 1pt，
 松开或取消后用弹簧回到原位；只观察指针，不夺取子控件/滚动所有权，reduced motion 关闭位移动画。
+
+首页普通卡片还支持鼠标双击/触控双击翻面，再双击翻回；`home_card.h` 的 `HomeCardSurface` 通过框架 MultiTapGesture 和每卡片独立的局部 SharedBounds 过渡实现 0.62 秒翻转，不改变 HomeGrid 占位。翻转包含抬起、侧向弧线、收窄到 2.5pt 侧边与展开，外层 retained lighting 同步绘制换向明暗渐变和侧边，不逐帧写 State。背面暂为空白，覆盖内容区的独立双击命中层隔离正面控件；正面子树保留挂载但隐藏绘制、禁用输入并从无障碍树移除，翻回保留控件状态；不写入持久化。启动/运行猫咪控制卡显式关闭此能力，顶栏猫咪保持原交互。减少动态效果时直接切面；动画与光照完成后停止调度额外帧。
 
 圆角自上而下共用一套阶梯（`IslandTheme` + 主题 ShapeScheme）：一级岛
 `island_radius` 22pt → 卡片/二级岛 `nested_radius` 14pt → 控件
@@ -392,8 +402,8 @@ HuxerUI 的 `Image.Tint` 仅支持矢量图，PNG 调用会在启动时抛出异
 
 配置保真度使用独立二级页面 `fidelity_page.cpp`，从每个配置卡片的右键菜单进入，Compact/手机的卡片「更多」菜单共用同一入口，设置页不再提供入口。菜单传入稳定 profile ID，页面任务在线程池只读该文件并独立编译报告，不启用配置、不下载、不发布运行/预览映射。标题显示配置名称，读取/编译错误明确显示并保留部分保真度记录；PPTP 明确提示暂不提供此报告，OpenVPN 普通来源使用同一编译器报告。内容使用 VirtualList 展示完整明细，空记录不声称全部能力保真。桌面宽窗使用自定义标题栏与返回按钮，Compact/手机覆盖底部导航，返回直接父级配置列表；桌面二级导航记录所属一级页，切换侧栏时弹出报告。
 
-新建订阅的桌面弹窗与窄屏页面共用 `ProfileCreatePage`；移动端按添加方式继续进入
-`ProfileCreateMethodPage`，两者均通过普通来源入口导入 JSON/YAML/.ovpn。
+新建订阅的桌面弹窗与桌面窄屏页面共用 `ProfileCreatePage`；窄屏页隐藏底部导航，表单滚动区下方固定全宽创建按钮并使用保存图标。移动端按添加方式继续进入
+`ProfileCreateMethodPage`，创建按钮同样固定在二级页底部；保留移动端的方法选择流程。两者均通过普通来源入口导入 JSON/YAML/.ovpn。
 OpenVPN 不再拥有创建类型/单独创建字段，直接配置的专用 VPN 表单仅保留 PPTP。
 文件选择器支持 `json/yaml/yml/ovpn`，名称在组合期解析为拥有型 DTO。
 旧 OpenVPN 独立连接兼容已移除，不进行记录迁移或数据库清理；只有 PPTP 保留独立连接界面。

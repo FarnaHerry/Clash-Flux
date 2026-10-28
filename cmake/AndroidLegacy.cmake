@@ -117,6 +117,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/store/persistence.cpp"
         "${_root}/src/ui/app.cpp"
         "${_root}/src/ui/common.cpp"
+        "${_root}/src/ui/selectable_tile.cpp"
         "${_root}/src/ui/title_bar_search.cpp"
         "${_root}/src/ui/title_bar_search.h"
         "${_root}/src/ui/connections_page.cpp"
@@ -241,6 +242,7 @@ function(clashflux_prepare_android_sources output_directory output_header
     foreach (_source IN ITEMS
             "${_root}/src/ui/app.cpp"
             "${_root}/src/ui/common.cpp"
+            "${_root}/src/ui/selectable_tile.cpp"
             "${_root}/src/ui/title_bar_search.cpp"
             "${_root}/src/ui/connections_page.cpp"
             "${_root}/src/ui/box_cat.cpp"

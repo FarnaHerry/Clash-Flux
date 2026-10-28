@@ -16,6 +16,7 @@ struct FittedRuleLabel {
     class Extension;
     std::string text;
     huxerui::TextStyle style;
+    huxerui::TextAlign align = huxerui::TextAlign::Leading;
     bool operator==(const FittedRuleLabel&) const = default;
 };
 
@@ -60,7 +61,8 @@ public:
     void PaintAboveContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
         const auto bounds = node.ContentBounds();
         paint.PushClip(bounds);
-        paint.DrawText(bounds, rendered_, value_.style, {.wrap = huxerui::TextWrap::NoWrap});
+        paint.DrawText(bounds, rendered_, value_.style,
+            {.align = value_.align, .wrap = huxerui::TextWrap::NoWrap});
         paint.PopClip();
     }
 
@@ -70,22 +72,23 @@ private:
     std::string rendered_;
 };
 
-huxerui::View RuleLabel(std::string text, huxerui::TextStyle style) {
-    return huxerui::Scope([text, style] {
+} // namespace
+
+huxerui::View FittedSingleLineLabel(std::string text, huxerui::TextStyle style, huxerui::TextAlign align) {
+    return huxerui::Scope([text, style, align] {
         // Explicit source line breaks must not turn a regex/name into extra rows.
         std::string line = text;
         std::replace(line.begin(), line.end(), '\n', ' ');
         std::replace(line.begin(), line.end(), '\r', ' ');
         auto& measurer = huxerui::UseTextMeasurer();
         const auto metrics = measurer.MeasureText(line.empty() ? " " : line, style);
-        return huxerui::Row {}.With(
+        huxerui::View label = huxerui::Row {}.With(
             huxerui::Frame{.width = std::ceil(metrics.size.width), .height = std::ceil(metrics.size.height)},
-            FittedRuleLabel{line, style},
-            huxerui::Tooltip(text));
+            FittedRuleLabel{line, style, align});
+        if (!text.empty()) label = std::move(label).With(huxerui::Tooltip(text));
+        return label;
     }).With(huxerui::Semantics{.role = huxerui::SemanticRole::Text, .label = text});
 }
-
-} // namespace
 
 huxerui::View SubscriptionRulesToolbar(std::vector<std::string> sources, std::size_t source,
     std::vector<std::string> views, std::size_t view, bool busy,
@@ -104,7 +107,7 @@ huxerui::View SubscriptionRulesToolbar(std::vector<std::string> sources, std::si
         float viewWidth = 0.0F;
         for (const auto& label : views)
             viewWidth = std::max(viewWidth, measurer.MeasureText(label, style).size.width + chrome);
-        const auto label = [style](const std::string& text) { return RuleLabel(text, style); };
+        const auto label = [style](const std::string& text) { return FittedSingleLineLabel(text, style); };
         const float moreWidth = huxerui::UseEnvironment<huxerui::IconButtonStyle>().minimum_interactive_size;
         // Cap the non-growing group, not its growing source slot: tight Grow
         // constraints would override a max_width applied directly to that slot.
@@ -138,15 +141,15 @@ huxerui::View SubscriptionRuleContent(std::string kind, std::string pattern, std
         return huxerui::Row {
           huxerui::Column {
             huxerui::Row {
-              RuleLabel(kind, body).With(huxerui::Frame{.width = kindWidth}).Key("rule-kind"),
-              RuleLabel(pattern, body).With(huxerui::Grow(1.0F)).Key("rule-pattern"),
+              FittedSingleLineLabel(kind, body).With(huxerui::Frame{.width = kindWidth}).Key("rule-kind"),
+              FittedSingleLineLabel(pattern, body).With(huxerui::Grow(1.0F)).Key("rule-pattern"),
               huxerui::Row {
-                RuleLabel(target, destination).With(huxerui::Frame{.max_width = 160.0F}).Key("rule-target"),
+                FittedSingleLineLabel(target, destination).With(huxerui::Frame{.max_width = 160.0F}).Key("rule-target"),
               }.With(huxerui::Grow(0.45F)),
             }.With(huxerui::Spacing(6.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
             huxerui::Row {
               huxerui::Row {}.With(huxerui::Frame{.width = kindWidth}),
-              RuleLabel(status, secondary).With(huxerui::Grow(1.0F)).Key("rule-status"),
+              FittedSingleLineLabel(status, secondary).With(huxerui::Grow(1.0F)).Key("rule-status"),
             }.With(huxerui::Spacing(6.0F)),
           }.With(huxerui::Spacing(4.0F), huxerui::Grow(1.0F),
                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),

@@ -54,8 +54,37 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     }
 }
 
+bool HasKnownExhaustedQuota(const db::Profile& profile) {
+    return profile.type != "pptp" && profile.totalBytes > 0 &&
+           profile.usedBytes >= profile.totalBytes;
+}
+
+void ShowKnownExhaustedQuota(huxerui::ToastHandle toast,
+                             const std::string& profileName) {
+    toast.Show(LocalizedFormat("订阅「{}」上次更新的流量数据已用尽",
+                               profileName),
+               huxerui::ToastOptions{6.0});
+}
+
+huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool participating) {
+    return profile.selected ? Localized("主订阅")
+        : participating ? Localized("按规则") : Localized("未参与");
+}
+
+[[huxerui::composable]] huxerui::View CompactProfileQuota(
+    const db::Profile& profile, huxerui::Color muted) {
+    const bool hasTraffic = profile.usedBytes > 0 || profile.totalBytes > 0;
+    const std::string traffic = !hasTraffic ? "" : huxerui::UseString(profile.totalBytes > 0
+        ? LocalizedFormat("{} / {}", formatBytes(profile.usedBytes), formatBytes(profile.totalBytes))
+        : LocalizedFormat("{} / 不限量", formatBytes(profile.usedBytes)));
+    const std::string expiry = profile.expireAt <= 0 ? ""
+        : huxerui::UseString(LocalizedFormat("到期 {}", formatDate(profile.expireAt)));
+    return CompactProfileTrafficContent(traffic, expiry,
+        ProfileTrafficProgress(profile.usedBytes, profile.totalBytes), muted);
+}
+
 [[huxerui::composable]] huxerui::View ProfileDragPreview(
-    const db::Profile& profile, bool compact, bool participating) {
+    const db::Profile& profile, bool compact, bool participating, float width) {
     const auto& theme = huxerui::UseTheme();
     const bool nativeVpn = isNativeVpnType(profile.type);
     const auto colors = ResolveSelectableTileColors(theme, profile.selected);
@@ -78,8 +107,21 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         : participating ? huxerui::UseString(Localized("次订阅 · 按规则参与"))
                         : huxerui::UseString(Localized("已保存 · 未参与"));
 
-    huxerui::View preview = SelectableTile(
-        huxerui::Column {
+    huxerui::View previewContent;
+    if (compact) {
+        previewContent = CompactProfileCardContent(profile.name,
+            nativeVpn ? "" : huxerui::UseString(CompactProfileStatus(profile, participating)), colors,
+            huxerui::Image(app::images::drag_indicator).Tint(colors.muted)
+                .With(huxerui::Frame{.width = 18.0F, .height = 18.0F}, huxerui::Padding(1.0F)),
+            huxerui::Image(app::images::more_vertical).Tint(colors.muted)
+                .With(huxerui::Frame{.width = 20.0F, .height = 20.0F},
+                      huxerui::Padding(nativeVpn ? 6.0F : 10.0F)),
+            nativeVpn ? FittedSingleLineLabel(primaryLine, huxerui::TextStyle{
+                huxerui::Font::System(font_size::kCaption), colors.muted})
+                .With(huxerui::Frame{.height = 32.0F})
+                : CompactProfileQuota(profile, colors.muted), nativeVpn);
+    } else {
+        previewContent = huxerui::Column {
             huxerui::Row {
                 huxerui::Image(app::images::drag_indicator)
                     .Fit(huxerui::ImageFit::Contain)
@@ -126,17 +168,20 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                 : 1.0F,
                             0.0F, 1.0F)).With(huxerui::Frame{.height = 3.0F})},
         }.With(huxerui::Spacing(6.0F), huxerui::Grow(1.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    }
+    huxerui::View preview = SelectableTile(previewContent,
         profile.selected, profile.name, {}, SelectableTileInteraction::ReadOnly);
     huxerui::Color shadow = theme.colors.scrim;
     shadow.alpha = 0.24F;
     return std::move(preview).With(
-        huxerui::Frame{.width = kCardWidth, .height = kCardHeight},
+        huxerui::Frame{.width = width, .height = ProfileCardHeight(compact)},
         huxerui::Border(theme.colors.primary, kCardEmphasisOutlineWidth),
         huxerui::CornerRadius(kSelectableTileRadius),
         huxerui::Shadow{.color = shadow, .blur_radius = 16.0F, .spread = -2.0F},
-        // DragSource 位于卡片内左上角的手柄；补偿卡片留白，使抓取点保持在手柄上。
-        huxerui::Offset(huxerui::Point{-10.0F, -8.0F}));
+        // Compact 的 20pt 手柄在标题行中居中，补偿留白和垂直居中偏移。
+        huxerui::Offset(huxerui::Point{-10.0F, -8.0F - (compact
+            ? (CompactProfileCardHeadingHeight(nativeVpn) - 20.0F) * 0.5F : 0.0F)}));
 }
 
 } // namespace
@@ -213,7 +258,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                     profileStore.activate(profileId, cancel, &error, &summary);
                     return Outcome{std::move(error), store::coreStore().snapshot(), std::move(summary)};
                 });
-            }, [toast, profilesModel, coreModel](
+            }, [toast, profilesModel, coreModel, profileId](
                     std::optional<Outcome> outcome, std::exception_ptr failure, std::uint64_t) {
             std::string error;
             if (failure) {
@@ -227,16 +272,25 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
             profilesModel->PublishCached();
             if (!error.empty()) {
                 toast.Show(error);
-            } else if (outcome && !std::get<2>(*outcome).empty()) {
-                // Reuse the validated candidate ledger; feedback must not launch
-                // another full compiler/JSON serialization request.
-                toast.Show(LocalizedFormat("已设为主订阅 · {}", std::get<2>(*outcome)), huxerui::ToastOptions{6.0});
+            } else if (outcome) {
+                const auto& currentProfiles = profilesModel->list.Get();
+                const auto current = std::ranges::find(
+                    currentProfiles, profileId, &db::Profile::id);
+                if (current != currentProfiles.end() &&
+                    HasKnownExhaustedQuota(*current)) {
+                    ShowKnownExhaustedQuota(toast, current->name);
+                } else if (!std::get<2>(*outcome).empty()) {
+                    // Reuse the validated candidate ledger; feedback must not launch
+                    // another full compiler/JSON serialization request.
+                    toast.Show(LocalizedFormat("已设为主订阅 · {}", std::get<2>(*outcome)), huxerui::ToastOptions{6.0});
+                }
             }
         });
     };
 
     // Both card/menu and the rules panel observe one application-owned ID.
-    const auto startRefresh = [applicationTasks, profilesModel, http, toast, reload](std::int64_t pid) {
+    const auto startRefresh = [applicationTasks, profilesModel, http, toast, reload,
+                               profileName = profile.name](std::int64_t pid) {
         using Result = std::pair<std::string, std::string>;
         LaunchProfileRefresh<Result>(applicationTasks, profilesModel, pid,
             [http, pid]() -> huxerui::Task<Result> {
@@ -244,15 +298,24 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 std::string summary;
                 if (error.empty()) summary = co_await RunOnTaskThread([pid] { return ProfileFidelitySummary(pid); });
                 co_return Result{std::move(error), std::move(summary)};
-            }, [toast, reload](std::optional<Result> result, std::exception_ptr exception) {
+            }, [toast, reload, profilesModel, pid, profileName](
+                    std::optional<Result> result, std::exception_ptr exception) {
                 reload();
                 if (exception) {
+                    std::string message;
                     try { std::rethrow_exception(exception); }
-                    catch (const std::exception& error) { toast.Show(error.what()); }
-                    catch (...) { toast.Show(Localized("订阅更新发生未知异常")); }
-                } else if (!result->first.empty()) toast.Show(result->first);
-                else if (!result->second.empty())
-                    toast.Show(LocalizedFormat("订阅已更新 · {}", result->second), huxerui::ToastOptions{6.0});
+                    catch (const std::exception& error) { message = error.what(); }
+                    catch (...) { message = "订阅更新发生未知异常"; }
+                    profilesModel->ReportProfileRefreshFailure(
+                        pid, profileName, std::move(message), true);
+                } else if (!result->first.empty()) {
+                    profilesModel->ReportProfileRefreshFailure(
+                        pid, profileName, result->first, true);
+                } else {
+                    profilesModel->ClearProfileRefreshFailure(pid);
+                    if (!result->second.empty())
+                        toast.Show(LocalizedFormat("订阅已更新 · {}", result->second), huxerui::ToastOptions{6.0});
+                }
             });
     };
 
@@ -374,7 +437,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     // 同 apitab 标题栏齿轮配方），正常 20pt 尺寸与 4pt 内边距。刷新进行中换成
     // ProgressCircle——指示器的起止由真实任务驱动，而不是固定时长动画。
     huxerui::View refreshButton = huxerui::Row{};
-    if (!nativeVpn) {
+    if (!nativeVpn && !compact) {
         huxerui::View refreshGlyph;
         if (refreshBusy) {
             refreshGlyph = huxerui::View{huxerui::ProgressCircle()}.With(
@@ -412,7 +475,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
         }
                          .With(menu.Anchor(),
-                               huxerui::Padding(4.0F),
+                               huxerui::Padding(nativeVpn ? 6.0F : 10.0F),
                                huxerui::CornerRadius(islands.nested_radius),
                                huxerui::Tooltip(Localized("更多操作")),
                                huxerui::Focusable(true),
@@ -441,11 +504,12 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 huxerui::DragSource(
                     ProfileDragPayload{id},
                     std::function<huxerui::View()>{
-                        [profile, compact, participating =
+                        [profile, compact, reorder, participating =
                              std::ranges::find(runtime.participatingSources,
                                                store::ProfileConnectionId(id)) !=
                              runtime.participatingSources.end()]() -> huxerui::View {
-                            return ProfileDragPreview(profile, compact, participating);
+                            return ProfileDragPreview(profile, compact, participating,
+                                reorder.cardWidth ? reorder.cardWidth(profile.id) : kCardWidth);
                         }
                     }
                 )
@@ -560,15 +624,15 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                                .Fit(huxerui::ImageFit::Contain)
                                .Tint(muted)};
         actionGlyph = std::move(actionGlyph).With(huxerui::Frame{.width = 20.0F, .height = 20.0F});
+        const auto connectionLabel = connectionPending
+            ? PptpConnectionProgress(openingConnection) : pptpStateText(pptpState);
+        const huxerui::TextStyle connectionStyle{huxerui::Font::System(font_size::kCaption),
+            !connectionPending && pptpState.state == vpn::ConnectionState::Failed ? theme.colors.error : muted};
+        huxerui::View connectionText = compact
+            ? FittedSingleLineLabel(huxerui::UseString(connectionLabel) + " · " + primaryLine, connectionStyle)
+            : huxerui::View{huxerui::Text(connectionLabel).Style(connectionStyle)};
         trafficSection = huxerui::Row {
-          huxerui::Text(connectionPending
-                            ? PptpConnectionProgress(openingConnection)
-                            : pptpStateText(pptpState))
-              .Style(huxerui::TextStyle{
-                  huxerui::Font::System(font_size::kCaption),
-                  !connectionPending && pptpState.state == vpn::ConnectionState::Failed
-                      ? theme.colors.error : muted})
-              .With(huxerui::Frame{.height = 18.0F}, huxerui::Grow(1.0F),
+          std::move(connectionText).With(huxerui::Frame{.height = 18.0F}, huxerui::Grow(1.0F),
                     huxerui::ClipChildren()),
           huxerui::Row {actionGlyph}
               .OnClick([togglePptpConnection, id] { togglePptpConnection(id); })
@@ -587,8 +651,22 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     // 订阅卡复用代理页节点卡的形状原语（SelectableTile）：同一套内边距、圆角、
     // 表面色与选中态（选中 = primary_container 淡染底 + primary 描边 +
     // on_primary_container 文字）。不再自己叠描边或第二层选中背景。
-    huxerui::View card = SelectableTile(
-        huxerui::Column {
+    huxerui::View cardContent;
+    if (compact) {
+        huxerui::View busy;
+        if (refreshBusy) busy = huxerui::View{huxerui::ProgressCircle()}.With(
+            huxerui::Frame{.width = 12.0F, .height = 12.0F},
+            huxerui::Tooltip(Localized("更新订阅")),
+            huxerui::Semantics{.busy = true}).Key("profile-refresh-busy");
+        cardContent = CompactProfileCardContent(profile.name,
+            nativeVpn ? "" : huxerui::UseString(CompactProfileStatus(profile,
+                runtime.state == core::CoreState::Running &&
+                std::ranges::find(runtime.participatingSources, store::ProfileConnectionId(id)) !=
+                    runtime.participatingSources.end())),
+            tile, dragHandle, moreButton,
+            nativeVpn ? trafficSection : CompactProfileQuota(profile, muted), nativeVpn, busy);
+    } else {
+        cardContent = huxerui::Column {
         huxerui::Row {
             std::move(dragHandle),
             std::move(profileName),
@@ -640,18 +718,13 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
                 : huxerui::View{huxerui::Row{}},
             huxerui::Spacer(),
             huxerui::Text(truncateOneLine(
-                              nativeVpn
-                                  ? ""
-                                  : profile.error.empty()
-                                  ? huxerui::UseString(
-                                        FormatRelativeTime(profile.updatedAt))
-                                  : huxerui::UseString(LocalizedFormat(
-                                        "错误：{}", profile.error)),
+                              nativeVpn ? ""
+                                        : huxerui::UseString(
+                                              FormatRelativeTime(profile.updatedAt)),
                               52))
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kCaption),
-                    nativeVpn || profile.error.empty() ? muted
-                                                       : theme.colors.error}),
+                    muted}),
         }
             .With(huxerui::Spacing(8.0F),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))} : huxerui::View{},
@@ -659,24 +732,32 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
         std::move(trafficSection),
     }.With(huxerui::Spacing(6.0F),
            huxerui::Grow(1.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    }
+    huxerui::View card = SelectableTile(cardContent,
         selected, profile.name,
         // 远程/本地代理订阅暂时保持单选：点击哪张卡片，哪张就是当前订阅。
         // PPTP 仍使用系统接口；OpenVPN 已由 sing-box endpoint 统一承载。
-        [activateProfile, id, selected, nativeVpn, toast] {
+        [activateProfile, id, selected, nativeVpn, toast,
+         hasKnownExhaustedQuota = HasKnownExhaustedQuota(profile),
+         profileName = profile.name] {
             if (nativeVpn) {
                 toast.Show(Localized(
                     "此连接配置用于内网连接，不能设为主订阅"));
                 return;
             }
-            if (selected) return;
+            if (selected) {
+                if (hasKnownExhaustedQuota)
+                    ShowKnownExhaustedQuota(toast, profileName);
+                return;
+            }
             activateProfile(id);
         }, nativeVpn ? SelectableTileInteraction::ReadOnly
                      : SelectableTileInteraction::Selectable);
 
     // 矩形卡统一高度；宽度由虚拟网格的轨道均分，铺满页面而不固定尺寸
     // （内容已单行截断，ClipChildren 兜底）。
-    card = std::move(card).With(huxerui::Frame{.height = kCardHeight},
+    card = std::move(card).With(huxerui::Frame{.height = ProfileCardHeight(compact)},
                                 huxerui::ClipChildren());
     if (isDragging.Get()) {
         card = std::move(card).With(huxerui::Opacity(0.4F));

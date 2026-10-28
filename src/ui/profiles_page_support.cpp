@@ -31,6 +31,7 @@ import clashflux.store.vpn;
 import clashflux.vpn;
 
 #include "profiles_page_shared.h"
+#include "profiles_model.h"
 #include "../profile_link.h"
 
 namespace clashflux::ui::profile_detail {
@@ -503,7 +504,8 @@ std::string ProfileFidelitySummary(std::int64_t profileId) {
 // Android 订阅自动更新泵的一次迭代：任务线程列出到期订阅 → 逐个经 HuxerUI
 // HttpClient 抓取 → store completeRemote 收尾。错误落在订阅行 error 字段。
 huxerui::Task<int> AndroidRefreshProfilesDueOnce(
-    std::shared_ptr<AppHttpClient> http) {
+    std::shared_ptr<AppHttpClient> http,
+    std::shared_ptr<ProfilesModel> profilesModel) {
     const std::vector<db::Profile> due = co_await RunOnTaskThread(
         [] { return store::profilesStore().dueForUpdate(); });
     int updated = 0;
@@ -511,11 +513,19 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
         const store::FetchedProfile fetched = co_await
             profile_detail::AndroidFetchProfile(
                 http, row.url, row.timeoutSecs, row.allowInvalidCert);
-        const bool ok = co_await RunOnTaskThread(
+        const auto outcome = co_await RunOnTaskThread(
             [id = row.id, fetched] {
-                return store::profilesStore().completeRemote(id, fetched, false);
+                auto& profiles = store::profilesStore();
+                const bool ok = profiles.completeRemote(id, fetched, false);
+                return std::pair{ok, ok ? std::string{} : profiles.lastError()};
             });
-        if (ok) ++updated;
+        if (outcome.first) {
+            ++updated;
+            profilesModel->ClearProfileRefreshFailure(row.id);
+        } else {
+            profilesModel->ReportProfileRefreshFailure(
+                row.id, row.name, outcome.second);
+        }
     }
     co_return updated;
 }

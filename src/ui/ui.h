@@ -22,6 +22,20 @@
 
 namespace clashflux::ui {
 
+namespace pages {
+
+enum PageIndex : std::size_t {
+    kHome = 0,
+    kProfiles = 1,
+    kProxies = 2,
+    kRules = 3,
+    kConnections = 4,
+    kLogs = 5,
+    kSettings = 6,
+};
+
+} // namespace pages
+
 struct AndroidVpnRuntime {
     bool ready = false;
     int state = 0;
@@ -352,7 +366,18 @@ huxerui::View ThemePage(huxerui::State<int> themeMode, std::function<void()> onB
 struct DesktopSettingsNavigationModel {
     huxerui::State<bool> secondaryOpen{false};
     huxerui::State<std::optional<std::size_t>> secondaryOwner{std::nullopt};
+    // IndexedPages forms have their own lifetime, independent of pushed routes.
+    huxerui::State<bool> compactProfileFormOpen{false};
 };
+inline void UseCompactProfileFormNavigation(
+    std::shared_ptr<DesktopSettingsNavigationModel> model, bool open) {
+    huxerui::Lifecycle([model, open] {
+        if (model) model->compactProfileFormOpen = open;
+        return [model] {
+            if (model) model->compactProfileFormOpen = false;
+        };
+    }, model, open);
+}
 struct DesktopSettingsNavigation {
     std::shared_ptr<DesktopSettingsNavigationModel> model;
     static DesktopSettingsNavigation Default() { return {}; }
@@ -414,6 +439,27 @@ huxerui::View WithoutIconButtonOutlines(huxerui::View content);
 huxerui::View PasswordField(
     huxerui::State<huxerui::TextEditingValue> password);
 
+// Compact secondary forms keep their primary action outside the scrolling body.
+inline constexpr float kCompactPrimaryActionHeight = 40.0F;
+huxerui::View CompactPrimaryActionButton(huxerui::ImageResource icon,
+    huxerui::StringVariant label, std::function<void()> onClick,
+    bool enabled = true, bool busy = false);
+inline huxerui::View CompactPageActionContent(huxerui::View scrollContent, huxerui::View action) {
+    // Secondary pages cover the navigation dock; only the system safe area is reserved.
+    return huxerui::Column {
+      huxerui::View{scrollContent}.With(huxerui::Grow(1.0F)),
+      huxerui::Column {action}.With(
+          huxerui::Padding(huxerui::EdgeInsets{
+              .top = 8.0F, .right = 16.0F, .bottom = 8.0F, .left = 16.0F}),
+          huxerui::Grow(0.0F),
+          huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+    }.With(
+        huxerui::Spacing(0.0F),
+        huxerui::Grow(1.0F),
+        huxerui::SafeAreaPadding{.top = false, .right = false, .left = false},
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
 // 页面骨架（一级岛）：标题行（标题 + 右缘动作）+ 内容区，整体为 16pt 圆角岛，
 // 落在窗口海面底色上（岛间缝隙经壳层 Spacing 透出）。
 // contentSpacing 可统一顶部、左右留白和 Compact 标题下间距（首页沿用卡片间距）。
@@ -462,6 +508,8 @@ struct SelectableTileColors {
     huxerui::Color muted;
     huxerui::Color faint;
 };
+huxerui::View FittedSingleLineLabel(std::string text, huxerui::TextStyle style,
+    huxerui::TextAlign align = huxerui::TextAlign::Leading);
 
 constexpr float kSelectableTileRadius = 8.0F;
 
@@ -566,7 +614,9 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
 
 // Android 订阅自动更新：任务线程列出到期订阅，应用共享 HTTP 客户端在 UI
 // 协程中抓取并由 store 收尾。桌面刷新由 DesktopProfileRefreshPump 走 curl。
+struct ProfilesModel;
 huxerui::Task<int> AndroidRefreshProfilesDueOnce(
-    std::shared_ptr<AppHttpClient> http);
+    std::shared_ptr<AppHttpClient> http,
+    std::shared_ptr<ProfilesModel> profilesModel);
 
 } // namespace clashflux::ui

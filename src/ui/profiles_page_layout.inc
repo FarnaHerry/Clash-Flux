@@ -1,16 +1,7 @@
 // profiles_page_layout.inc — ProfilesPage 的列表布局与页面装配。
 // 此文件由 profiles_page.cpp 在 ProfilesPage 函数体内包含。
 
-    // 订阅按类型分区：与代理页/规则页共用 SectionTabBar（统一样式）；每个
-    // 类型一页，Pager 保留各页滚动位置并负责跟手切换。不再把分组头
-    // 混排在同一张网格里。
-    std::vector<std::string> profileTypes{"remote", "local", "pptp"};
-    for (const db::Profile& profile : profiles) {
-        if (std::find(profileTypes.begin(), profileTypes.end(), profile.type) ==
-            profileTypes.end()) {
-            profileTypes.emplace_back(profile.type);
-        }
-    }
+    // 手机所有来源共用一个列表；桌面（包括窄窗）继续按类型分页。
     const std::string profileQuery = profileSearch.Get().text;
     const auto matchesProfile = [&profileQuery](const db::Profile& profile) {
         return SearchTextMatches(profile.name, profileQuery) ||
@@ -18,16 +9,11 @@
                SearchTextMatches(profile.url, profileQuery) ||
                SearchTextMatches(profile.type, profileQuery);
     };
-    // 只给当前搜索结果覆盖到的类型出标签；清空搜索后恢复完整类型集合。
+    const auto sections = BuildProfileListSections(profiles, group_by_type, matchesProfile);
+    // 只给桌面搜索结果覆盖到的类型出标签。
     std::vector<std::string> visibleTypes;
-    for (const std::string& type : profileTypes) {
-        const auto hasType = [&type, &matchesProfile](const db::Profile& profile) {
-            return profile.type == type && matchesProfile(profile);
-        };
-        if (std::any_of(profiles.begin(), profiles.end(), hasType)) {
-            visibleTypes.push_back(type);
-        }
-    }
+    for (const auto& section : sections)
+        if (section.type) visibleTypes.push_back(*section.type);
     std::string currentType = activeType.Get();
     if (std::find(visibleTypes.begin(), visibleTypes.end(), currentType) ==
         visibleTypes.end()) {
@@ -48,28 +34,25 @@
                                      : profileTypeLabel(type)});
     }
 
-    // 一个类型一页：只生成轻量的索引列表，真实 Profile 仍由共享缓存的
-    // StateList 持有，卡片由 VirtualGrid 懒加载。
+    // 两种展示共用同一个卡片工厂、索引和拖放逻辑。
     std::vector<huxerui::View> typePages;
-    typePages.reserve(visibleTypes.size());
+    typePages.reserve(sections.size());
     // VirtualGrid 的 item factory 在布局阶段调用；在这里订阅 State，目标变化才会
     // 更新网格声明并重建可见卡片。只在 factory 内 Get() 不会触发页面重组。
     const std::int64_t previewActiveId = reorderSession.Get()->activeId;
     const std::int64_t previewTargetId = reorderTarget.Get();
-    for (std::size_t page = 0; page < visibleTypes.size(); ++page) {
-        const std::string& type = visibleTypes[page];
-        std::vector<std::size_t> typeIndices;
-        for (std::size_t index = 0; index < profiles.Size(); ++index) {
-            if (profiles[index].type == type && matchesProfile(profiles[index])) {
-                typeIndices.push_back(index);
-            }
-        }
+    for (const auto& section : sections) {
+        std::vector<std::size_t> typeIndices = section.indices;
         const std::size_t typeCount = typeIndices.size();
         std::vector<std::int64_t> typeIds;
         typeIds.reserve(typeCount);
         for (const std::size_t profileIndex : typeIndices)
             typeIds.push_back(profiles[profileIndex].id);
         ProfileReorderActions pageReorder = reorderProfile;
+        pageReorder.cardWidth = [geometry = gridGeometry.Get()](std::int64_t id) {
+            const auto slot = geometry->slots.find(id);
+            return slot == geometry->slots.end() ? kCardWidth : slot->second.width;
+        };
         pageReorder.movePointer = [ids = typeIds, geometry = gridGeometry.Get(),
                                    preview = reorderProfile.preview](
                                       std::int64_t fromId, huxerui::Point position) {
@@ -161,12 +144,12 @@
                                      }
                                      return std::move(slot).Key("profile-slot-" + std::to_string(index));
                                  })
-                                 .Columns(compact
+                                 .Columns(!group_by_type || compact
                                               ? huxerui::GridColumns::Fixed(1)
                                               : huxerui::GridColumns::Adaptive(
                                                     kCardWidth))
-                                 .EstimatedRowExtent(kCardHeight)
-                                 .RowSpacing(kSectionCardSpacing)
+                                 .EstimatedRowExtent(ProfileCardHeight(compact))
+                                 .RowSpacing(compact ? kCompactProfileCardSpacing : kSectionCardSpacing)
                                  .ColumnSpacing(kSectionCardSpacing)
                                  .With(huxerui::Grow(1.0F), huxerui::ScrollBar(),
                                        huxerui::DropTarget::Accepts<ProfileDragPayload>())
@@ -177,11 +160,12 @@
                                      });
         typePages.push_back(huxerui::Column {grid}.With(
             huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
-            .Key("type-page-" + type));
+            .Key(section.type ? "type-page-" + *section.type : "all-profiles"));
     }
 
-    huxerui::View profileBody = visibleTypes.empty()
+    huxerui::View profileBody = typePages.empty()
         ? EmptyState(Localized("没有匹配的订阅"), app::images::search)
+        : !group_by_type ? UnifiedProfileList(typePages.front())
         : SectionTabPages(typePages, selectedType,
             [activeType, visibleTypes](std::size_t index) {
                 if (index < visibleTypes.size()) activeType = visibleTypes[index];

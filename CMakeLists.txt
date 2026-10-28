@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.73 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.74 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -697,7 +697,8 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             add_executable(test_page_transition tests/test_page_transition.cpp
                 src/ui/section_tabs.cpp src/ui/box_cat.cpp src/ui/runtime_diagnostics.cpp
                 src/ui/home_header_control.cpp src/ui/home_grid.cpp src/ui/page_loading.cpp
-                src/ui/title_bar_search.cpp src/ui/text_document.cpp src/ui/subscription_rule_layout.cpp)
+                src/ui/title_bar_search.cpp src/ui/text_document.cpp src/ui/subscription_rule_layout.cpp
+                src/ui/selectable_tile.cpp)
             target_include_directories(test_page_transition PRIVATE
                 src/ui "${CMAKE_CURRENT_BINARY_DIR}/huxerui-resources/clash-flux/include")
             target_compile_features(test_page_transition PRIVATE cxx_std_23)

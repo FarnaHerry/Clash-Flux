@@ -146,6 +146,17 @@ export struct FetchedProfile {
     std::string body;
 };
 
+export struct ProfileRefreshFailure {
+    std::int64_t profileId = 0;
+    std::string profileName;
+    std::string error;
+};
+
+export struct ProfileRefreshBatch {
+    std::vector<std::int64_t> updated;
+    std::vector<ProfileRefreshFailure> failures;
+};
+
 export class ProfilesStore {
 public:
     ProfilesStore() = default;
@@ -487,13 +498,20 @@ p->name = fields.name.empty() ? p->name : fields.name;
     }
 
     // 自动更新（桌面 curl 通道）：把 dueForUpdate() 命中的订阅逐个拉新。
-    // 全程阻塞（网络），由壳层泵经 RunOnTaskThread 周期调用。返回刷新条数。
-    int refreshDue() {
-        int updated = 0;
+    // 全程阻塞（网络），由壳层泵经 RunOnTaskThread 周期调用，返回本轮结果。
+    ProfileRefreshBatch refreshDue() {
+        ProfileRefreshBatch batch;
         for (const auto& p : dueForUpdate()) {
-            if (refresh(p.id)) ++updated;
+            if (refresh(p.id)) {
+                batch.updated.push_back(p.id);
+            } else {
+                batch.failures.push_back(ProfileRefreshFailure{
+                    .profileId = p.id,
+                    .profileName = p.name,
+                    .error = lastError_.empty() ? "下载失败" : lastError_});
+            }
         }
-        return updated;
+        return batch;
     }
 
     // 读取指定订阅的 YAML 原文（不存在 / 读失败 = 空串）。
