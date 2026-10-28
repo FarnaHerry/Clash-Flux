@@ -6,9 +6,10 @@
 # 兼容头和实现单元，桌面目标完全不经过本文件。
 #
 # 维护约定：新增的模块接口（.cppm）要同时加入下面 `_interfaces`（顺序即头文件
-# 内的依赖顺序），新增的实现单元（.cpp）要加入 `_core` 与 `_android_legacy_inputs`，
-# 只被 .inc 片段引用的头也要进 `_android_legacy_inputs`；漏登记只会在这条
-# Android 通道上以「未声明标识符」的形式暴露。接口里用到的标准库设施必须补进
+# 内的依赖顺序），新增的实现单元（.cpp）要加入 `_core` 与 `_android_legacy_inputs`；
+# UI 实现单元还要加入 `_ui_sources`。只被 .inc 片段引用的头也要进
+# `_android_legacy_inputs`；漏登记只会在这条 Android 通道上以「未声明标识符」的形式暴露。
+# 接口里用到的标准库设施必须补进
 # 兼容头的 include 列表（桌面由 `import std;` 承担）。
 include_guard(GLOBAL)
 set(CLASHFLUX_ANDROID_LEGACY_REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
@@ -131,6 +132,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/ui/profiles_page_card.cpp"
         "${_root}/src/ui/profiles_page_forms.cpp"
         "${_root}/src/ui/profiles_page_support.cpp"
+        "${_root}/src/ui/subscription_rule_layout.cpp"
         "${_root}/src/ui/box_cat.h"
         "${_root}/src/ui/home_header_control.h"
         "${_root}/src/ui/home_control_motion.h"
@@ -141,6 +143,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/ui/profiles_cache.h"
         "${_root}/src/ui/profiles_model.h"
         "${_root}/src/ui/profiles_page_shared.h"
+        "${_root}/src/ui/subscription_rule_layout.h"
         "${_root}/src/ui/filtered_indices.h"
         "${_root}/src/ui/proxies_model.h"
         "${_root}/src/ui/settings_model.h"
@@ -250,6 +253,7 @@ function(clashflux_prepare_android_sources output_directory output_header
             "${_root}/src/ui/profiles_page_card.cpp"
             "${_root}/src/ui/profiles_page_forms.cpp"
             "${_root}/src/ui/profiles_page_support.cpp"
+            "${_root}/src/ui/subscription_rule_layout.cpp"
             "${_root}/src/ui/proxies_page.cpp"
             "${_root}/src/ui/rules_page.cpp"
             "${_root}/src/ui/section_tabs.cpp"
