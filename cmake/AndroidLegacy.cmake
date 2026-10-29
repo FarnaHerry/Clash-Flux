@@ -12,7 +12,8 @@
 # 接口里用到的标准库设施必须补进
 # 兼容头的 include 列表（桌面由 `import std;` 承担）。
 include_guard(GLOBAL)
-set(CLASHFLUX_ANDROID_LEGACY_REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
+get_filename_component(CLASHFLUX_ANDROID_LEGACY_REPO_ROOT
+    "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 
 function(clashflux_prepare_android_sources output_directory output_header
         output_core output_ui)
@@ -159,6 +160,11 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/ui/text_document.cpp"
         "${_root}/src/ui/platform_settings.cpp"
         "${_root}/src/ui/platform_app.cpp"
+        "${_root}/src/ui/app_update_package.h"
+        "${_root}/src/ui/app_update_package.cpp"
+        "${_root}/src/ui/app_update_model.h"
+        "${_root}/src/ui/android_update_installer.h"
+        "${_root}/src/ui/android_update_installer.cpp"
         # The desktop module/UI sources include these implementation fragments.
         # Track them so AndroidLegacy regenerates its compatibility TU when a
         # split fragment changes.
@@ -169,6 +175,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/service_startup.h"
         "${_root}/src/singbox_compile.inc"
         "${_root}/src/singbox_sources.inc"
+        "${_root}/src/singbox_node_subscription.inc"
         "${_root}/src/singbox_context_dns.inc"
         "${_root}/src/singbox_proxy.inc"
         "${_root}/src/singbox_mrs.inc"

@@ -11,7 +11,7 @@
 | 任务/触及范围 | 必须先读 |
 | --- | --- |
 | 任何修改后的构建/验证，测试、CTest、CI 门禁 | [clashflux-test](project-skills/clashflux-test/SKILL.md) |
-| 发版、版本号、发布说明、打包、签名、发布流水线 | [clashflux-release](project-skills/clashflux-release/SKILL.md) |
+| 应用升级、发版、版本号、发布说明、打包、签名、发布流水线 | [clashflux-release](project-skills/clashflux-release/SKILL.md) |
 | UI、布局、分页、菜单、主题、文案、首页动画、应用级模型、导入交互 | [clashflux-ui](project-skills/clashflux-ui/SKILL.md) |
 | 数据库、迁移、订阅增删改/导入刷新、文件提交、flush、CLI 单实例数据路径 | [clashflux-data](project-skills/clashflux-data/SKILL.md) |
 | 内核控制、托盘、无窗/首帧启动、PPTP、OpenVPN 入口、订阅唤醒链接 | [clashflux-runtime](project-skills/clashflux-runtime/SKILL.md) |

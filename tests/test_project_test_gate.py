@@ -4,7 +4,7 @@ import subprocess
 import sys
 import tempfile
 
-REQUIRED = ["smoke", "profile_links", "page_transition", "singbox",
+REQUIRED = ["smoke", "profile_links", "app_update", "app_update_async", "app_update_handoff", "page_transition", "singbox",
             "rule_provider_download", "dns_hosts_runtime", "dns_policy_runtime",
             "dns_tls_runtime", "vpn", "routing", "compensation", "sqlite_orm",
             "persistence", "project_test_gate", "group_expansion_runtime", "service_protocol", "cps_dependencies", "runtime_health", "native_control_runtime", "ui_resources", "runtime_evidence", "personal_rule_sets_runtime"]
@@ -17,7 +17,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="clash-flux-test-gate-") as temp:
         root = pathlib.Path(temp)
 
-        def configure(names, *, missing=None, disabled=None, msvc=False, windows=False):
+        def configure(names, *, missing=None, disabled=None, msvc=False, windows=False, platform="Linux"):
             nonlocal cases
             folder = root / str(cases)
             folder.mkdir()
@@ -25,6 +25,7 @@ def main():
                      "project(GateRegression LANGUAGES NONE)", "enable_testing()",
                      f'set(CLASHFLUX_MSVC_C4737_HARD_ERROR {"TRUE" if msvc else "FALSE"})']
             lines.append(f'set(WIN32 {"TRUE" if windows else "FALSE"})')
+            lines.append(f'set(CMAKE_SYSTEM_NAME "{platform}")')
             # Upstream tests cannot substitute for a missing project regression.
             lines.append('add_test(NAME upstream_only COMMAND "${CMAKE_COMMAND}" -E true)')
             lines.extend(f'add_test(NAME {name} COMMAND "${{CMAKE_COMMAND}}" -E true)'
@@ -45,6 +46,7 @@ def main():
             cases += 1
 
         configure(REQUIRED)
+        configure([name for name in REQUIRED if not name.startswith("app_update")], platform="Darwin")
         for name in REQUIRED:
             configure([other for other in REQUIRED if other != name], missing=name)
         for name in ("persistence", "dns_tls_runtime", "personal_rule_sets_runtime"):

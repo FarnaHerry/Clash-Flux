@@ -157,13 +157,14 @@ struct Persistence::Impl {
     std::filesystem::path profileDirectory;
     std::uint64_t settingsRevision = 0;
     bool flushingSettings = false, flushingProfiles = false, closing = false;
+    bool upgradeFrozen = false;
     struct FlushGuard {
         Impl* impl;
         bool Impl::* flag;
         ~FlushGuard() { std::lock_guard lock(impl->mutex); impl->*flag = false; }
     };
     void requireProfilesReady() const {
-        if (!ready || !database || closing)
+        if (!ready || !database || closing || upgradeFrozen)
             throw std::runtime_error("订阅持久化未就绪，操作已拒绝；原数据库与订阅文件保持不变");
     }
     // 订阅修订号：三个变更入口各 +1，供 UI 侧做脏检查（见 profilesRevision）。
@@ -173,6 +174,18 @@ struct Persistence::Impl {
 
 Persistence::Persistence() : impl_(std::make_unique<Impl>()) {}
 Persistence::~Persistence() = default;
+
+bool Persistence::freezeWritesForUpgrade() {
+    std::lock_guard lock(impl_->mutex);
+    if (!impl_->ready || !impl_->database || impl_->closing || impl_->upgradeFrozen) return false;
+    impl_->upgradeFrozen = true;
+    return true;
+}
+
+void Persistence::resumeWritesAfterUpgradeFailure() {
+    std::lock_guard lock(impl_->mutex);
+    impl_->upgradeFrozen = false;
+}
 
 huxerui::Task<bool> Persistence::open(const std::filesystem::path& file,
                                      const std::filesystem::path& profileDirectory) {
@@ -247,6 +260,7 @@ huxerui::Task<bool> Persistence::open(const std::filesystem::path& file,
         impl->deletedProfiles.clear();
         impl->profileDirectory = profileDirectory;
         impl->closing = false;
+        impl->upgradeFrozen = false;
         impl->ready = true;
         impl->degraded = false;
         impl->lastError.clear();
@@ -295,7 +309,7 @@ std::string Persistence::setting(const std::string& key,
 void Persistence::setSetting(const std::string& key, const std::string& value) {
     if (key.empty()) return;
     std::lock_guard lock(impl_->mutex);
-    if (impl_->degraded || impl_->closing)
+    if (impl_->degraded || impl_->closing || impl_->upgradeFrozen)
         throw std::runtime_error("设置持久化不可用，操作已拒绝");
     if (key.starts_with("profile.rules.")) {
         std::int64_t id = 0;

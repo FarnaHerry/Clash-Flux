@@ -30,6 +30,7 @@
 #include "interaction_theme.h"
 #include "proxies_model.h"
 #include "task_bridge.h"
+#include "app_update_model.h"
 
 import clashflux.config;
 import clashflux.cli;
@@ -1130,6 +1131,16 @@ void StartDesktopWindowlessRuntime() {
     const auto linkWindow = huxerui::UseWindow();
     const auto linkToast = UseFluxToast();
     const auto toastStyle = huxerui::UseEnvironment<huxerui::ToastStyle>();
+    const auto updates = huxerui::UseService<AppUpdateModel>();
+    huxerui::Lifecycle([updates, linkToast] {
+        const auto message = updates->notice.Get();
+        if (!message.empty()) {
+            linkToast.Show(updates->noticeIsError.Get() ? LocalizedFormat("应用更新未完成：{}", message) :
+                huxerui::StringVariant(message), huxerui::ToastOptions{8.0});
+            updates->notice = std::string{};
+        }
+        return [] {};
+    }, updates->notice);
     huxerui::Lifecycle([profilesModel, linkToast] {
         const auto error = profilesModel->linkError.Get();
         if (!error.empty()) {

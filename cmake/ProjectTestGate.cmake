@@ -5,6 +5,9 @@ function(clashflux_check_required_tests)
     set(required smoke profile_links page_transition singbox rule_provider_download
         dns_hosts_runtime dns_policy_runtime dns_tls_runtime vpn routing compensation
         persistence project_test_gate group_expansion_runtime service_protocol cps_dependencies runtime_health native_control_runtime ui_resources runtime_evidence personal_rule_sets_runtime)
+    if (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        list(APPEND required app_update app_update_async app_update_handoff)
+    endif ()
     if (WIN32)
         list(APPEND required windows_service windows_physical_dns windows_physical_dns_wfp legacy_bundle_cleanup)
     endif ()

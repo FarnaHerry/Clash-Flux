@@ -28,6 +28,8 @@ Configurations can be imported as Clash YAML, which the built-in compiler conver
 to sing-box configuration, or as native sing-box JSON, which is merged with
 application-managed settings before being passed to sing-box.
 
+The About page supports in-app update downloads on Windows, Linux (DEB/RPM), and Android arm64, with SHA-256 verification, cancellation and retry. Desktop installation saves configuration, disconnects the proxy and exits before opening the Windows installer or Linux Polkit authorization. Android also checks the official signing certificate and version, then saves configuration and disconnects the proxy before opening the system installer; first use requires permission to install apps from this source. Other platforms retain manual downloads; see [application updates](docs/app-updates.md).
+
 ## Features
 
 - Subscription sources, rule-set JSON, compiled JSON and diagnostic reports share CodeEditor, with worker-prepared documents and no full-document copy on each keystroke.
@@ -39,7 +41,7 @@ application-managed settings before being passed to sing-box.
   layout; see [UI conventions](docs/ui-development.md).
 - Subscription and profile management: entries with context menus, double-click
   activation and refresh actions; URL import, update, activation, deletion and rule
-  editing; local storage; Clash YAML, native sing-box JSON and OpenVPN .ovpn file import.
+  editing; local storage; Clash YAML, native sing-box JSON, OpenVPN .ovpn, and VMess JSON node subscriptions (plain lists or Base64). See [node subscriptions](docs/node-subscriptions.md) for conversion and limits.
   Selection can change during preparation: repeated clicks are coalesced and only the latest pending target is kept.
   Candidate validation, startup and preview reuse the prepared output.
 - Desktop rule targets: search and select groups or nodes from Clash subscriptions,
@@ -501,8 +503,10 @@ checkout, patch ownership and upgrade instructions.
 Windows packaging with `huxerui package windows` creates a `setup.exe` with an
 installation wizard: Burn bundles an MSI and a HuxerUI installer interface with
 destination selection, desktop shortcuts, repair and uninstall. The installer
-supports Simplified Chinese, Traditional Chinese and English. GitHub Release
-Windows archives include both `clash-flux-Setup-<version>.exe` and portable files.
+supports Simplified Chinese, Traditional Chinese and English. GitHub Release assets use
+`clash-flux-<version>-<platform>-<arch>.<format>`: the Windows installer is
+`clash-flux-<version>-windows-x86_64.exe`, and the portable archive uses the same prefix with `.zip`.
+In-app updates also recognize previously published Windows installer names; see [application updates](docs/app-updates.md).
 New installers use a separate Burn upgrade identity and clean legacy bundle registrations and private caches for versions 0.3.0–0.3.68 after MSI commit. The MSI upgrade identity, user data and shared MSI caches are preserved; see [migration details](docs/huxerui-fork.md#windows-legacy-bundle-migration).
 
 The saved theme is read synchronously through a temporary read-only connection before the first frame is built. System mode observes light/dark changes through HuxerUI's official window appearance API; explicit light/dark choices remain independent. Other settings and subscriptions still load asynchronously. The Lib-SQLite startup query is included in the pinned fork commit; see [UI development](docs/ui-development.md).

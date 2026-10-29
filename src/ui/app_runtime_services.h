@@ -24,6 +24,7 @@ struct AppRuntimeServices {
     bool vpnPumpStarted = false;
     bool settingsPumpStarted = false;
     std::function<void()> showWindow;
+    std::function<void()> installAppUpdate;
     bool startupSettingsLoaded = false;
     int startupThemeMode = 1;
     std::string startupThemeColor = "blue";

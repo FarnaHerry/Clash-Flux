@@ -81,7 +81,7 @@ env:
   # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
   # CI 必须自行 clone 并钉 commit，保证可复现）。框架补丁集中维护在
   # farna/main；main 保留官方基线。验证集成更新后同步本机 checkout 与此 pin。
-  HUXERUI_COMMIT: 'ce2a671832152bf2376d331cb81f20c59f0a6875'
+  HUXERUI_COMMIT: 'b08302858fe7f3d6ff6d9c0b00a09c1ad0e6524b'
   SINGBOX_COMMIT: 'c005f35300ce76427dc285481ec5695f5b179cd2' # v1.14.4
 
 jobs:
@@ -206,6 +206,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist-src/lib
           cp build/clash-flux dist-src/clash-flux
+          cp build/clash-flux-updater dist-src/clash-flux-updater
           chmod +x dist-src/clash-flux
           # HuxerUI 资源包（resources.bin 索引 + 同目录 .huxv/.png payload），
           # POST_BUILD 已拷到 exe 旁边。
@@ -223,6 +224,7 @@ jobs:
             if [ -n "$p" ]; then cp -L "$p" "dist-src/lib/$lib"; fi
           done
           patchelf --set-rpath '$ORIGIN/lib' dist-src/clash-flux
+          patchelf --set-rpath '$ORIGIN/lib' dist-src/clash-flux-updater
           file dist-src/clash-flux
           ls -la dist-src dist-src/lib dist-src/engines
 
@@ -447,7 +449,7 @@ jobs:
           if (-not (Test-Path $exe -PathType Leaf)) { throw "$exe not found" }
           New-Item -ItemType Directory -Force dist-src | Out-Null
           Copy-Item (Join-Path $staging '*') dist-src -Recurse -Force
-          foreach ($file in @('clash-flux.exe', 'huxerui.dll')) {
+          foreach ($file in @('clash-flux.exe', 'clash-flux-updater.exe', 'huxerui.dll')) {
             if (-not (Test-Path (Join-Path 'dist-src' $file) -PathType Leaf)) {
               throw "Windows runtime payload is missing: $file"
             }
@@ -867,9 +869,9 @@ jobs:
                 zip -qr "$GITHUB_WORKSPACE/release/clash-flux-${release_version}-windows-x86_64.zip" .
               )
             elif [ "$name" = "build-windows-installer" ]; then
-              installer="$artifact/clash-flux-Setup-${release_version}.exe"
+              installer="$artifact/clash-flux-${release_version}-windows-x86_64.exe"
               test -s "$installer"
-              cp "$installer" "release/clash-flux-Setup-${release_version}.exe"
+              cp "$installer" "release/clash-flux-${release_version}-windows-x86_64.exe"
             elif [[ "$name" == build-linux-* ]]; then
               arch="${name#build-linux-}"
               [[ "$arch" == "arm64" ]] && arch="aarch64"
@@ -893,7 +895,7 @@ jobs:
             fi
           done
           test -s "release/clash-flux-${release_version}-windows-x86_64.zip"
-          test -s "release/clash-flux-Setup-${release_version}.exe"
+          test -s "release/clash-flux-${release_version}-windows-x86_64.exe"
           test -s "release/clash-flux-${release_version}-android-arm64-v8a.apk"
           test -n "$(find release -type f -name '*.tar.gz' -print -quit)"
           test -n "$(find release -type f -name '*.deb' -print -quit)"
@@ -981,8 +983,8 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path $bundle -PathType Leaf)) { throw 'WiX setup build failed' }
           $releaseVersion = $env:GITHUB_REF_NAME.Substring(1)
           New-Item -ItemType Directory -Force dist-src | Out-Null
-          Copy-Item $bundle (Join-Path 'dist-src' "clash-flux-Setup-$releaseVersion.exe") -Force
-          if (-not (Test-Path (Join-Path 'dist-src' "clash-flux-Setup-$releaseVersion.exe") -PathType Leaf)) {
+          Copy-Item $bundle (Join-Path 'dist-src' "clash-flux-$releaseVersion-windows-x86_64.exe") -Force
+          if (-not (Test-Path (Join-Path 'dist-src' "clash-flux-$releaseVersion-windows-x86_64.exe") -PathType Leaf)) {
             throw 'Staged Windows installer is missing'
           }
 

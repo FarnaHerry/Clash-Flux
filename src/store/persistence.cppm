@@ -50,6 +50,10 @@ public:
 
     /// 落库所有标脏设置后关闭连接。
     huxerui::Task<void> close();
+    // Upgrade handoff rejects late writes while the existing session flushes.
+    // On any preparation failure, resume the same cache/database for retry.
+    bool freezeWritesForUpgrade();
+    void resumeWritesAfterUpgradeFailure();
 
     [[nodiscard]] bool ready() const noexcept;
 

@@ -8,6 +8,8 @@
 nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归档可离线解包；HuxerUI 插件与内核首次获取仍可能需要网络。
 归档版本及来源以本项目清单为准。
 
+应用当前的 HuxerUI fork 源码提交与检出命令见 [固定版本](../docs/huxerui-fork.md)；本机独立 checkout、CI 和 Android Java/native 共用该身份，不消费维护工作树。
+
 ## 清单与来源
 
 | 包 | 版本 | tarball | 来源 |

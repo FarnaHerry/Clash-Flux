@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.76 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.77 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -308,6 +308,8 @@ if (ANDROID)
         "${CLASHFLUX_ANDROID_LEGACY_CORE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/profile_link.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/qr_photo_decoder.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/app_update_package.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/android_update_installer.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/platform/android/android_bridge.cpp"
         ${CLASHFLUX_ANDROID_LEGACY_UI}
     )
@@ -509,6 +511,30 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         target_link_libraries(clash-flux PRIVATE log)
     endif ()
 
+    # The handoff must outlive the GUI and must not lock application DLLs on
+    # Windows. Its static CRT executable is copied to the exclusive update cache.
+    if (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(clash-flux-updater platform/desktop/app_updater.cpp)
+        target_compile_features(clash-flux-updater PRIVATE cxx_std_20)
+        if (WIN32)
+            target_compile_options(clash-flux-updater PRIVATE /utf-8)
+            set_target_properties(clash-flux-updater PROPERTIES
+                MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+            target_compile_definitions(clash-flux-updater PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+            target_link_libraries(clash-flux-updater PRIVATE bcrypt shell32 user32 advapi32)
+            target_link_libraries(clash-flux PRIVATE bcrypt)
+        else ()
+            target_link_libraries(clash-flux-updater PRIVATE OpenSSL::Crypto)
+            set_target_properties(clash-flux-updater PROPERTIES INSTALL_RPATH "$ORIGIN/lib")
+        endif ()
+        add_dependencies(clash-flux clash-flux-updater)
+        add_custom_command(TARGET clash-flux POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:clash-flux-updater>"
+                "$<TARGET_FILE_DIR:clash-flux>/clash-flux-updater$<TARGET_FILE_SUFFIX:clash-flux-updater>")
+        get_target_property(CLASHFLUX_UPDATE_INSTALL_COMPONENT clash-flux HUXERUI_APPLICATION_INSTALL_COMPONENT)
+        install(TARGETS clash-flux-updater RUNTIME DESTINATION . COMPONENT "${CLASHFLUX_UPDATE_INSTALL_COMPONENT}")
+    endif ()
+
     # 生成格式钩子：平台清单 / Info.plist
     if (WIN32 AND HUXERUI_WINDOWS_MANIFEST)
         target_sources(clash-flux PRIVATE "${HUXERUI_WINDOWS_MANIFEST}")
@@ -691,9 +717,35 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         target_compile_features(test_profile_links PRIVATE cxx_std_23)
         add_test(NAME profile_links COMMAND test_profile_links)
 
+        if (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            add_executable(test_app_update tests/test_app_update.cpp src/ui/app_update_package.cpp)
+            target_compile_features(test_app_update PRIVATE cxx_std_23)
+            target_link_libraries(test_app_update PRIVATE clashflux_wire)
+            if (WIN32)
+                target_link_libraries(test_app_update PRIVATE bcrypt)
+            else ()
+                target_link_libraries(test_app_update PRIVATE OpenSSL::Crypto)
+            endif ()
+            add_test(NAME app_update COMMAND test_app_update)
+        endif ()
+
         # 页内分区切换：无窗口 Runtime 验证生产 Pager 的跟手、回弹、嵌套边界、
         # 快速反向切换、滚动保留以及大组的有界虚拟化。
         if (TARGET HuxerUI::testing)
+            if (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+                add_executable(test_app_update_async tests/test_app_update_async.cpp src/ui/app_update_package.cpp)
+                target_compile_features(test_app_update_async PRIVATE cxx_std_23)
+                target_link_libraries(test_app_update_async PRIVATE HuxerUI::testing clashflux_wire)
+                if (WIN32)
+                    target_link_libraries(test_app_update_async PRIVATE bcrypt)
+                else ()
+                    target_link_libraries(test_app_update_async PRIVATE OpenSSL::Crypto)
+                endif ()
+                huxerui_enable_codegen(test_app_update_async)
+                clashflux_deploy_huxerui_dll(test_app_update_async)
+                add_test(NAME app_update_async COMMAND test_app_update_async)
+                set_tests_properties(app_update_async PROPERTIES TIMEOUT 30 LABELS clashflux-required)
+            endif ()
             add_executable(test_page_transition tests/test_page_transition.cpp
                 src/ui/section_tabs.cpp src/ui/box_cat.cpp src/ui/runtime_diagnostics.cpp
                 src/ui/home_header_control.cpp src/ui/home_grid.cpp src/ui/page_loading.cpp
@@ -741,6 +793,21 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             find_program(CLASHFLUX_TEST_OPENSSL NAMES openssl
                 HINTS "${OPENSSL_ROOT_DIR}/bin" "$ENV{OPENSSL_ROOT_DIR}/bin"
                     "C:/Program Files/OpenSSL/bin" "C:/Program Files/OpenSSL-Win64/bin")
+            if (WIN32)
+                add_executable(fake_update_installer tests/fake_update_installer.cpp)
+                set_target_properties(fake_update_installer PROPERTIES
+                    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+                target_compile_features(fake_update_installer PRIVATE cxx_std_20)
+                add_dependencies(test_app_update fake_update_installer clash-flux-updater)
+                add_test(NAME app_update_handoff COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_app_update_handoff.py"
+                    "$<TARGET_FILE:test_app_update>" "$<TARGET_FILE:clash-flux-updater>" "$<TARGET_FILE:fake_update_installer>")
+                set_tests_properties(app_update_handoff PROPERTIES TIMEOUT 40 LABELS clashflux-required)
+            elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+                add_test(NAME app_update_handoff COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_app_update_linux.py" "$<TARGET_FILE:clash-flux-updater>")
+                set_tests_properties(app_update_handoff PROPERTIES TIMEOUT 30 LABELS clashflux-required)
+            endif ()
             set(CLASHFLUX_DOWNLOAD_TEST_ARGS)
             if (CLASHFLUX_TEST_OPENSSL)
                 list(APPEND CLASHFLUX_DOWNLOAD_TEST_ARGS --openssl "${CLASHFLUX_TEST_OPENSSL}")

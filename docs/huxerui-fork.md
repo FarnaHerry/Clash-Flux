@@ -4,10 +4,16 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `ce2a671832152bf2376d331cb81f20c59f0a6875`，各平台 CI 共用
+Clash-Flux 当前固定 `b08302858fe7f3d6ff6d9c0b00a09c1ad0e6524b`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
+
+2026-10-29 更新到 `b0830285`：移除显式 `WindowHandle::Retire()` / `Runtime::RetireWindow()`。
+应用已使用普通 Close、`quit_on_last_window_closed=false` 和应用任务域维持托盘/无窗生命周期，
+因此无旧 API 调用需要迁移；仍由 Close 的请求处理和 Runtime 统一维护窗口销毁、随后 OpenWindow 重建。
+该提交包含当前官方 `5523172` 基线，不额外改框架、扩展或维护分支；验证证据及平台限制见
+[验收记录](l1-l2-l3-status.md)。
 
 2026-10-28 更新到 `ce2a6718`：合入上游逐窗口系统外观支持，官方组合期接口为
 `UseSystemThemeBrightness()`，当前主题语义为 `UseTheme().brightness`；深浅 ThemeSpec 工厂自动设置该元数据。
@@ -87,7 +93,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout ce2a671832152bf2376d331cb81f20c59f0a6875
+git -C third_party/huxerui checkout b08302858fe7f3d6ff6d9c0b00a09c1ad0e6524b
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`

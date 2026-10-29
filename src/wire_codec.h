@@ -97,8 +97,16 @@ struct Policy {
 
 Result<std::string> DecodeVersion(std::string_view text);
 // GitHub's latest stable Release, projected from the REST response.
+struct ReleaseAsset {
+    std::string name;
+    std::string browser_download_url;
+    std::string digest;
+    std::string state;
+    std::uint64_t size = 0;
+};
 struct Release {
     std::string tag;
+    std::vector<ReleaseAsset> assets;
 };
 Result<Release> DecodeStableRelease(std::string_view text);
 Result<Traffic> DecodeTraffic(std::string_view text);

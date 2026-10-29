@@ -71,6 +71,10 @@ SHA-256 指纹为 `a4a0bc09a3dc76d7ac37f92043d2be6e153bda1347ce344013828e1547241
 `apksigner verify --print-certs` 同时核对 v1、v2 签名和该指纹。Release 打包任务缺少发布密钥
 时会失败，不能以 debug 签名包替代。
 
+应用内 APK 更新沿用该指纹，在 HUI 平台模块工作线程校验下载摘要、包名、版本及已安装/候选签名，
+通过私有只读 Provider 打开系统安装界面；不自动卸载 debug 包或清除用户数据。安装授权与生命周期见
+[应用升级](app-updates.md)。Gradle `preBuild` 必跑 `:app:testAppUpdatePolicy`（宿主 JVM 的真实文件/JCA 回归）。
+
 ## 发布版本号
 
 发布时 `platform/android/app/build.gradle` 的 `versionCode` 在上一发布基础上 +1，

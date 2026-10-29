@@ -7,6 +7,13 @@ description: 准备 Clash-Flux 版本、发布说明、安装包或修改发布�
 
 准备发版可以修改版本和说明，但提交、打标签、推送、发布必须有用户明确授权；授权不因读取此技能而扩大。
 以 [.github/workflows/build.yml](../../.github/workflows/build.yml) 的当前构建矩阵、publish-release 依赖和资产检查为准，不凭旧发布记录推断。
+对外资产统一 `clash-flux-<version>-<platform>-<arch>.<format>`；改名同步 CI 暂存/收集/存在性检查、应用更新匹配和 README，保留历史名称的受限兼容，详见 [应用升级](../../docs/app-updates.md)。不改已发布资产或旧 Bundle 清理规则。
+
+## 应用内升级
+
+修改升级行为先读 [应用升级](../../docs/app-updates.md)，同时读取 UI、运行、数据与对应平台技能。
+`clash-flux-updater` 必须随 Windows/Linux 运行目录和安装包交付；回归运行 `app_update`、`app_update_async`、`app_update_handoff` 及 persistence，真实安装另需隔离机器验收。
+Android 使用正式签名 APK 和系统安装确认；构建运行 `:app:testAppUpdatePolicy`，发布验收另测正式签名跨版本覆盖、授权/取消和数据保留，不能以 debug 包或宿主 JVM 回归替代真机安装。
 
 ## 准备发布提交
 

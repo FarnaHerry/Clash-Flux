@@ -32,6 +32,7 @@
 #include "proxies_model.h"
 #include "settings_model.h"
 #include "app_runtime_services.h"
+#include "app_update_model.h"
 #include "task_bridge.h"
 
 import clashflux.config;
@@ -57,6 +58,15 @@ import clashflux.instance;
 namespace clashflux::ui {
 
 #if defined(__ANDROID__)
+
+// A cancelled application task (for example Activity/Runtime destruction while
+// the system installer is open) must not leave the process-wide cache frozen.
+struct AndroidUpgradeWriteFreeze {
+    bool active = false;
+    ~AndroidUpgradeWriteFreeze() {
+        if (active) persistence::persistence().resumeWritesAfterUpgradeFailure();
+    }
+};
 
 void AndroidPreparePlatformDataDirectory(
     const huxerui::ApplicationHandle& application) {
@@ -88,12 +98,72 @@ void AndroidPreparePlatformDataDirectory(
 
 [[huxerui::composable]] huxerui::View AndroidApplicationEffects(
     const huxerui::ApplicationHandle&, const huxerui::ThemeSpec&, bool) {
+    const auto runtime = huxerui::UseService<AppRuntimeServices>();
+    const auto updates = huxerui::UseService<AppUpdateModel>();
+    const auto core = huxerui::UseService<CoreModel>();
+    const auto tasks = huxerui::UseApplicationTaskScope();
+    const auto permissionDenied = huxerui::UseString(Localized("未允许安装此来源的应用，安装包已保留，可重试"));
+    const auto cancelled = huxerui::UseString(Localized("已取消安装，安装包已保留，可重试"));
+    const auto installed = huxerui::UseString(Localized("安装已完成，请重新打开 Clash-Flux"));
+    huxerui::Lifecycle([runtime, updates, core, tasks, permissionDenied, cancelled, installed] {
+        runtime->installAppUpdate = [updates, core, tasks, permissionDenied, cancelled, installed] {
+            if (!updates->CanInstall() || core->operations.Busy()) return;
+            updates->error = std::string{};
+            updates->phase = AppUpdatePhase::Installing;
+            tasks.Launch([updates, core, permissionDenied, cancelled, installed]() -> huxerui::Task<void> {
+                std::optional<std::uint64_t> ticket;
+                AndroidUpgradeWriteFreeze freeze;
+                try {
+                    const auto package = updates->package;
+                    if (!co_await updates->androidInstaller->EnsurePermission(package)) {
+                        updates->phase = AppUpdatePhase::Ready;
+                        updates->noticeIsError = false;
+                        updates->notice = permissionDenied;
+                        co_return;
+                    }
+                    ticket = core->operations.Begin({.action = CoreAction::Stop});
+                    if (!ticket || core->serviceChecking.Get())
+                        throw std::runtime_error("Another runtime operation is still in progress; retry installation");
+                    auto& database = persistence::persistence();
+                    if (!database.ready() || !co_await database.flushSettings() || !co_await database.flushProfiles())
+                        throw std::runtime_error("Cannot save configuration; installation cancelled");
+                    const bool stopped = co_await RunOnTaskThread([] {
+                        store::vpnStore().shutdown();
+                        return store::coreStore().stopCore();
+                    });
+                    if (!stopped) throw std::runtime_error("Android did not confirm proxy shutdown; installation cancelled");
+                    freeze.active = database.freezeWritesForUpgrade();
+                    if (!freeze.active || !co_await database.flushSettings() || !co_await database.flushProfiles() ||
+                        database.hasPendingSettings() || database.hasPendingProfiles())
+                        throw std::runtime_error("Cannot save all pending changes; installation cancelled");
+                    const bool success = co_await updates->androidInstaller->Install(package);
+                    updates->phase = AppUpdatePhase::Ready;
+                    updates->noticeIsError = false;
+                    updates->notice = success ? installed : cancelled;
+                } catch (const std::exception& error) {
+                    updates->noticeIsError = true;
+                    updates->error = std::string(error.what());
+                    updates->notice = std::string(error.what());
+                    updates->phase = AppUpdatePhase::InstallFailed;
+                } catch (...) {
+                    updates->noticeIsError = true;
+                    updates->error = std::string{"Android update installation failed"};
+                    updates->notice = updates->error.Get();
+                    updates->phase = AppUpdatePhase::InstallFailed;
+                }
+                if (ticket) core->operations.Finish(*ticket);
+                core->RequestRefresh();
+            });
+        };
+        return [runtime] { runtime->installAppUpdate = {}; };
+    }, permissionDenied, cancelled, installed);
     return {};
 }
 
 [[huxerui::composable]] huxerui::View AndroidAppContent(
     huxerui::View mainRow, const huxerui::ThemeSpec& rootSpec) {
     const huxerui::Color pageBackground = ResolveIslandTheme(rootSpec).base;
+    const auto updates = huxerui::UseService<AppUpdateModel>();
     huxerui::SystemBarsAppearance systemBars =
         huxerui::UseEnvironment<huxerui::SystemBarsAppearance>();
     systemBars.status_bar_background = pageBackground;
@@ -103,6 +173,7 @@ void AndroidPreparePlatformDataDirectory(
     return huxerui::View{mainRow}.With(
         huxerui::SafeAreaPadding{},
         huxerui::Background(pageBackground),
+        huxerui::Enabled(updates->phase.Get() != AppUpdatePhase::Installing),
         systemBars,
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -119,6 +190,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
     std::optional<huxerui::TaskScope> tasks;
     std::shared_ptr<SettingsModel> settingsModel;
     std::shared_ptr<AppRuntimeServices> runtimeServices;
+    std::shared_ptr<AppUpdateModel> updateModel;
     huxerui::SystemTrayHandle tray;
     std::function<void()> refresh;
     bool started = false;
@@ -161,7 +233,8 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
     }
 
     void ShowWindow() {
-        if (!application) return;
+        if (!application || exitRequested ||
+            (updateModel && updateModel->phase.Get() == AppUpdatePhase::Installing)) return;
         const bool opening = retired || !window;
         try {
             if (opening) {
@@ -200,7 +273,8 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
     }
 
     void RequestExit() {
-        if (exitRequested || !application) return;
+        if (exitRequested || !application ||
+            (updateModel && updateModel->phase.Get() == AppUpdatePhase::Installing)) return;
         exitRequested = true;
         refresh = {};
         instance::markClosing();
@@ -254,6 +328,59 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
             std::this_thread::sleep_for(std::chrono::seconds(3));
             std::_Exit(0);
         }).detach();
+    }
+
+    void InstallUpdate() {
+        if (exitRequested || !application || !tasks || !control || control->Busy() || !updateModel->CanInstall()) return;
+        const auto ticket = control->model->operations.Begin({.action = CoreAction::Stop});
+        if (!ticket) return;
+        updateModel->phase = AppUpdatePhase::Installing;
+        // Once confirmed, retire interactive UI before freezing persistence.
+        // A failed preparation restores this same window and writable session.
+        if (window) window->Hide();
+        auto self = shared_from_this();
+        tasks->Launch([self, ticket = *ticket]() -> huxerui::Task<void> {
+            bool frozen = false;
+            try {
+                auto& database = persistence::persistence();
+                if (!database.ready() || !co_await database.flushSettings() || !co_await database.flushProfiles() ||
+                    database.hasPendingSettings() || database.hasPendingProfiles())
+                    throw std::runtime_error("Cannot save all configuration; installation cancelled");
+                const bool stopped = co_await RunOnTaskThread([] {
+                    store::vpnStore().shutdown();
+                    return store::coreStore().stopCore();
+                });
+                if (!stopped) throw std::runtime_error("Cannot stop the proxy; installation cancelled");
+                frozen = database.freezeWritesForUpgrade();
+                if (!frozen) throw std::runtime_error("Cannot prepare configuration for upgrade");
+                if (!co_await database.flushSettings() || !co_await database.flushProfiles() ||
+                    database.hasPendingSettings() || database.hasPendingProfiles())
+                    throw std::runtime_error("Configuration is still pending; installation cancelled");
+                const auto package = self->updateModel->package;
+                co_await RunOnTaskThread([package] { package->StartInstallerAfterExit(cfg::executableDir()); });
+                self->exitRequested = true;
+                instance::markClosing();
+                self->refresh = {};
+                self->HideTray();
+                if (self->window) self->window->Hide();
+                self->application->Quit();
+            } catch (const std::exception& error) {
+                self->updateModel->error = std::string(error.what());
+                self->updateModel->phase = AppUpdatePhase::InstallFailed;
+                stream::logApplication("error", std::string("应用升级准备失败：") + error.what());
+            } catch (...) {
+                self->updateModel->error = std::string{"Update installation preparation failed"};
+                self->updateModel->phase = AppUpdatePhase::InstallFailed;
+            }
+            if (frozen && !self->exitRequested) persistence::persistence().resumeWritesAfterUpgradeFailure();
+            if (!self->exitRequested) {
+                self->updateModel->noticeIsError = true;
+                self->updateModel->notice = self->updateModel->error.Get();
+            }
+            self->control->model->operations.Finish(ticket);
+            self->control->model->RequestRefresh();
+            if (!self->exitRequested) self->ShowWindow();
+        });
     }
 
     void RefreshBasicTray() {
@@ -349,6 +476,10 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
         if (const auto trayRuntime = weak.lock()) trayRuntime->ShowWindow();
     };
     runtime->control = std::move(control);
+    runtime->updateModel = huxerui::UseService<AppUpdateModel>();
+    runtimeServices->installAppUpdate = [weak] {
+        if (const auto runtime = weak.lock()) runtime->InstallUpdate();
+    };
     runtimeServices->showWindow = [weak] {
         if (const auto trayRuntime = weak.lock()) trayRuntime->ShowWindow();
     };

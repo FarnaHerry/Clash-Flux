@@ -20,6 +20,12 @@ public:
         return client_.SendAsync(std::move(request), std::move(progress));
     }
 
+    [[nodiscard]] huxerui::Task<huxerui::HttpResult<huxerui::HttpResponseStream>>
+    SendStreamAsync(huxerui::HttpRequest request,
+                    std::function<void(huxerui::HttpProgress)> progress = {}) const {
+        return client_.SendStreamAsync(std::move(request), std::move(progress));
+    }
+
 private:
     huxerui::HttpClient client_;
 };

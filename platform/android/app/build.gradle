@@ -192,8 +192,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 154
-        versionName = "0.3.76"
+        versionCode = 155
+        versionName = "0.3.77"
 
         externalNativeBuild {
             cmake {
@@ -357,3 +357,20 @@ dependencies {
         implementation project(library.projectPath)
     }
 }
+
+// Runs on the build JVM without a device or Android runtime; every APK build
+// keeps the same signature/version/cache-boundary gate as the native verifier.
+def compileAppUpdatePolicyTest = tasks.register("compileAppUpdatePolicyTest", JavaCompile) {
+    source files("src/main/java/dev/farna/clashflux/ApkUpdatePolicy.java",
+            "../../../tests/android/ApkUpdatePolicyTest.java")
+    destinationDirectory = layout.buildDirectory.dir("app-update-policy-test")
+    classpath = files()
+    options.encoding = "UTF-8"
+    options.release = 8
+}
+def testAppUpdatePolicy = tasks.register("testAppUpdatePolicy", JavaExec) {
+    dependsOn compileAppUpdatePolicyTest
+    classpath = files(compileAppUpdatePolicyTest.flatMap { it.destinationDirectory })
+    mainClass = "dev.farna.clashflux.ApkUpdatePolicyTest"
+}
+tasks.named("preBuild").configure { dependsOn testAppUpdatePolicy }

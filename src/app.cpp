@@ -8,6 +8,7 @@
 #include "ui/ui.h"
 #include "ui/section_tab_picker.h"
 #include "ui/app_http_client.h"
+#include "ui/app_update_model.h"
 #include "ui/proxies_model.h"
 #if defined(__ANDROID__)
 #include "ui/qr_photo_decoder.h"
@@ -37,6 +38,10 @@ const huxerui::Application application{
         .application_hooks = {
             huxerui::camera::Install,
             clashflux::ui::InstallAppHttpClient,
+#if defined(__ANDROID__)
+            clashflux::ui::InstallAndroidAppUpdateSupport,
+#endif
+            clashflux::ui::InstallAppUpdateModel,
             clashflux::ui::InstallClashFluxUiModels,
 #if !defined(__ANDROID__)
             clashflux::ui::InstallDesktopTrayRuntime,

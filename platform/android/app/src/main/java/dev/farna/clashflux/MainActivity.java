@@ -36,6 +36,7 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntConsumer;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
@@ -52,6 +53,39 @@ import org.huxerui.HuxerUIActivity;
 public final class MainActivity extends HuxerUIActivity {
     private static final String TAG = "ClashFlux";
     private static final int REQUEST_VPN_CONSENT = 4001;
+    static final int REQUEST_UPDATE_SOURCE = 4010;
+    static final int REQUEST_UPDATE_INSTALL = 4011;
+    private Object updateRequestOwner;
+    private int updateRequestCode;
+    private IntConsumer updateRequestCompletion;
+
+    static MainActivity updateActivity() {
+        MainActivity activity = current;
+        return activity == null || activity.isFinishing() || activity.isDestroyed() ? null : activity;
+    }
+
+    void beginUpdateRequest(int code, Object owner, Intent intent, IntConsumer completed) {
+        if (updateRequestCompletion != null) throw new IllegalStateException("An update authorization is already open");
+        updateRequestOwner = owner;
+        updateRequestCode = code;
+        updateRequestCompletion = completed;
+        try { startActivityForResult(intent, code); }
+        catch (RuntimeException error) { cancelUpdateRequest(owner); throw error; }
+    }
+
+    void cancelUpdateRequest(Object owner) {
+        if (updateRequestOwner == owner) {
+            updateRequestOwner = null;
+            updateRequestCompletion = null;
+        }
+    }
+
+    private void completeUpdateRequest(int result) {
+        IntConsumer completed = updateRequestCompletion;
+        updateRequestOwner = null;
+        updateRequestCompletion = null;
+        if (completed != null) completed.accept(result);
+    }
     static {
         Log.i(TAG, "Loading application native library: " + BuildConfig.HUXERUI_APP_LIBRARY);
         System.loadLibrary(BuildConfig.HUXERUI_APP_LIBRARY);
@@ -438,6 +472,7 @@ public final class MainActivity extends HuxerUIActivity {
 
     @Override
     protected void onDestroy() {
+        completeUpdateRequest(RESULT_CANCELED);
         runtimeReader.shutdownNow();
         if (current == this) {
             current = null;
@@ -942,6 +977,11 @@ public final class MainActivity extends HuxerUIActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if ((requestCode == REQUEST_UPDATE_SOURCE || requestCode == REQUEST_UPDATE_INSTALL)
+                && requestCode == updateRequestCode) {
+            completeUpdateRequest(resultCode);
+            return;
+        }
         if (requestCode == REQUEST_VPN_CONSENT) {
             if (resultCode == RESULT_OK) {
                 appLog("用户已允许系统 VPN，继续启动服务", false);

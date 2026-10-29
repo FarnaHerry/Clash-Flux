@@ -1,5 +1,114 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-10-29：HUI fork 更新与 VMess 节点订阅
+
+代码快照：`54e96c8` 加本轮未提交工作区，应用版本保持 0.3.76。
+读取 fork 最新 farna/main 并核对官方 upstream/main：HUI 固定到
+`b08302858fe7f3d6ff6d9c0b00a09c1ad0e6524b`，包含官方 `5523172` 基线。
+此轮只移除显式 Retire API；应用无旧调用，继续普通 Close、应用任务域和最后窗口关闭后保持运行。
+本机独立 checkout、CI pin 与 Android Java/native 来源一致，未改框架、维护分支或扩展源码。
+
+共享编译器新增明文/Base64 VMess JSON 节点列表；规则投影、对象目录、预览、主/次来源共用转换。
+保留原订阅字节，不改下载地址、数据库或文件提交协议；坏条目、未知协议/字段整份拒绝，不保留合法前缀。
+默认生成 selector/MATCH 记字段 approx，服务商非标准 net=tls 兼容为显式 TCP+TLS 并记节点 approx。
+详细字段和界限见[节点订阅](node-subscriptions.md)，保真度基线与 README 同步。
+
+Windows MSVC 执行 `cmake --build build --parallel 4` 全量通过，HUI DLL 与所有应用测试目标重建，
+包含应用 HUI codegen；保留框架 renderer 的两处 C4244 和扩展已有 C4819 警告，未贴应用补丁。
+`ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required` 为 26/28（193.47s）：
+windows_service 报 Service pipe unavailable / Win32 2，windows_physical_dns_wfp 报 add WFP fixture sublayer；
+本机令牌非管理员。这两项未验收，其余含 page_transition、singbox、persistence、CPS、真实 DNS/TLS
+及内核运行回归通过。补强 HTTP/2/gRPC 字段和生成组重名测试后单独重跑 singbox，0.66s 通过。
+
+用户给定订阅以当前应用 UA 只读获取到临时目录；通过生产 test_singbox --compile-config 后逐条比对，
+46/46 节点的服务器/端口、UUID、alterId、TLS、Host/SNI 与 WS 路径全部保留，34 WS + 12 TCP/TLS 别名，
+一个 selector 包含全部节点，默认不关闭证书校验。固定 sing-box 1.14.4 check 通过。
+地址、凭据及生成配置不入仓库，没有启动这些节点或 VPN，未改用户数据库。
+NDK 29 arm64/API 24 采用实际编译参数和新生成 Android Legacy core/header，完整 core 单元语法检查通过；
+不是 Android 全量链接或 APK/设备验收，此前 SweetEditor Windows 归档路径限制仍未修复。
+
+隔离原生夹具链接生产 HomeTotalCard、应用对象与新 HUI DLL，实际检查零流量 0%、非零 25%/75%，
+以及关闭最后窗口后由应用任务重建新 HWND；不挂应用数据泵，不打开用户数据库/内核。
+第二轮主题背景复核被用户物理 Esc 中止，立即停止 Computer Use，未将该轮记为通过。
+`cmake --build build --target clash-flux`、`./run.ps1 --version`（v0.3.76）、`git diff --check`
+及规范文件限额检查通过。未提交、打标签、推送或发布。
+
+## 2026-10-29：统一 Release 安装包名称
+
+代码快照：`54e96c8` 加本轮未提交工作区，版本保持 0.3.76。Windows 对外安装器由
+`clash-flux-Setup-<version>.exe` 改为 `clash-flux-<version>-windows-x86_64.exe`，
+与 ZIP、Linux/macOS 归档、Linux 包和 Android APK 的版本/平台/架构顺序一致。
+同步 CI 暂存、收集、存在性检查和应用更新匹配；仅在新名缺失时兼容旧名，新名非法或重复不回退。
+HUI/WiX 内部生成名称、旧 Bundle 清理及线上已发布资产未改，README 与发布技能同步。
+
+Windows MSVC 实际执行 `cmake --build build --target clash-flux test_app_update test_app_update_async --parallel 4`
+通过，HUI codegen 通过；`ctest --test-dir build --output-on-failure --no-tests=error -R '^(app_update|app_update_async|app_update_handoff|project_test_gate|ui_resources|persistence)$'`
+6/6 通过（17.61s），含新旧名称、优先级、重复/非法拒绝及 URL 完全匹配回归。
+28 个 required 测试注册且无禁用；本轮未运行全部 28 项。
+隔离假产物执行实际 CI PowerShell 暂存与 WSL Bash 收集脚本，11 个发布文件名全部匹配，
+缺少新名安装器时收集明确失败；该检查不运行 WiX 或真实安装器。
+`./run.ps1 --version` 输出 v0.3.76，`git diff --check` 和发布技能行数限额通过。
+未执行实际 CI、跨平台重打包、签名或安装；未提交、打标签、推送或发布。
+
+## 2026-10-29：Android 应用内 APK 更新
+
+代码快照：`54e96c8` 加本轮未提交工作区，版本保持 0.3.76 / Android versionCode 154，未签名、发布或安装。
+Android arm64 接入已有 HUI 流式下载与应用级模型；应用作用域 Java PlatformModule 在工作线程
+校验大小、SHA-256、正式证书、包名、versionName、递增 versionCode 和最低 SDK。
+允许安装来源后保存配置、停 VPN/核心、冻结并排空持久化，通过私有只读 Provider 打开系统安装确认；
+拒绝/取消保留 APK 和同一持久化会话供重试，系统负责进程替换。不卸载、不清除订阅或数据库。
+Android Legacy 配置输入改为规范绝对路径，消除新增原生单元的 Ninja 重复输出；未改框架或扩展 fork。
+
+实际检查：JDK 17 / SDK 36 下 Gradle `:app:testAppUpdatePolicy`、`:app:compileDebugAidl`、
+`:app:processDebugResources`、`:HuxerUI:bundleLibCompileToJarDebug` 和 Camera Java 构建通过，
+包含真实 Manifest 合并。新增 Java 平台模块、Provider、Policy 和 MainActivity 等 14 个业务单元
+及真实生成的 AIDL 用 `javac --release 8` 编译通过；使用上述 HUI/libbox/R 类路径，隔离编译的
+BuildConfig 常量取自实际 CMake integration plan 和 Gradle 版本；未编译无关 QrPhotoDecoderModule，
+这不是完整 Gradle Java/APK 构建。
+
+NDK 29 arm64/API 24 的新原生模块和下载暂存单元通过 `-Wall -Wextra -Werror` 语法检查。
+`cmake --build build/android-update-arm64 --target clash-flux --parallel 4` 的全量构建在现有
+SweetEditor 合并 simdutf 归档时失败：其脚本将 Windows `C:/...` 拼入 `temp_extract/C:/...`，
+Windows 拒绝创建目录；`-k 0` 后仍被同一依赖阻塞。未绕过归档或修改依赖缓存冒充链接通过。
+另按该构建的真实 Ninja compdb 命令单独编译六个受影响单元：src/app.cpp、下载暂存、Android
+平台模块及 HUI codegen 后的 app/platform_app/settings_page，全部通过；真实资源也由 HRC 生成。
+Android 全量链接/APK、正式签名跨版本覆盖、来源授权/取消和数据重开仍待验证；adb 当前无设备。
+
+Windows MSVC 主目标与 HUI codegen 通过，版本命令输出 v0.3.76；针对 app_update、app_update_async、
+app_update_handoff、page_transition、persistence、ui_resources、project_test_gate 的七项回归通过。
+首次裸环境 project_test_gate 因 PATH 无 Ninja 失败，在 VS 开发环境单独重跑通过。
+规范文件行数/根字符限额与 `git diff --check` 通过。桌面真实安装/UAC/Polkit 仍未执行。
+
+## 2026-10-29：应用内下载与升级交接
+
+代码快照：`54e96c8` 加本轮未提交工作区。应用内更新接入 HuxerUI 平台 HttpClient，
+检查用 SendAsync、包下载用 SendStreamAsync；应用级模型/任务保留下载状态，支持进度、取消、
+SHA-256 校验和失败重试。Windows x64 选择 Burn 安装器；Linux 按包数据库选择 DEB/RPM，
+经 pkexec 请求原生授权。确认安装后隐藏交互窗口、保存配置并停止代理，冻结晚到写入并排空待写版本；
+独立助手确认就绪后主进程退出，助手等待退出完成再安装。准备失败恢复原窗口及持久化会话。
+Windows 助手复制到独占缓存，使用静态 CRT 和只读包锁；Linux 助手封存 memfd 快照后交给包管理器。
+未改变应用版本、数据库 schema、依赖 pin 或服务信任边界；其它平台继续手动下载。
+
+Windows MSVC x64 Release 实际执行 `cmake --build build --target clash-flux test_app_update test_app_update_async test_page_transition test_persistence --parallel 4`，主目标/助手/HuxerUI codegen 通过；
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(app_update|app_update_async|app_update_handoff|page_transition|persistence|ui_resources|project_test_gate)$'`
+7/7 通过（48.50s）。必跑门禁 28 项均注册且启用，Darwin 不要求 Windows/Linux 专属升级测试；
+本轮未执行完整 28 项。`./run.ps1 --version` 在 PTY 中输出 v0.3.76，`git diff --check` 通过。
+持久化回归包含真实 SQLite 写锁下冻结、晚到设置/增删/选中拒绝、失败恢复及三个来源/引用文件重开保留。
+
+Fedora 44 WSL 使用 g++ 编译生产下载暂存/摘要代码、wire codec 与 app_update，0 failures；
+独立助手以 `-Wall -Wextra -Werror` 编译并运行 Linux 交接回归，摘要拒绝、等待存活父进程和 sealed
+快照拒绝写入通过。Windows 交接回归使用真实助手及无提权假安装器，验证父进程退出前不安装、
+文件锁拒绝改写和退出后才运行安装器；未调用真实安装包、UAC、Polkit 或包管理器。
+
+原生隔离夹具 `%TEMP%/clashflux-update-review-98a885661b014807835e42186ebe1d87/probe.cpp`
+链接生产关于页与更新模型，将检查参数模拟为 0.3.75，经真实 HUI 平台请求下载 v0.3.76 安装器
+36,812,935 字节，应用校验并进入 Ready；独立 SHA-256 复核为
+`569404560c2418c902dbc3f114f282badcd76c224556f6153675316f59cab70c`，与 Release 资产一致。
+使用电脑操作技能查看浅色 960×800 窗口的安装入口与确认框，点击确认后测试桩收到一次回调；
+夹具随后关闭，未操作用户订阅/系统代理/服务，未安装真实 Release。
+未覆盖真实跨版本安装/回滚、Linux 授权窗口、深色/窄屏原生验收、完整 Linux GUI 构建、
+Android/macOS/iOS 构建、签名或发布；未提交、推送或发布。
+
 ## 2026-10-28：v0.3.76 发布验证
 
 代码快照：`7fcc273` 加本轮工作区，准备提交并标记为 `v0.3.76`；HuxerUI 固定 `ce2a671832152bf2376d331cb81f20c59f0a6875`。

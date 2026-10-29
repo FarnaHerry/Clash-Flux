@@ -29,6 +29,7 @@ description: 修改 Clash-Flux 订阅转换、协议/DNS/规则/provider 映射�
 
 ## 下载与候选提交
 
+- VMess 明文/Base64 节点订阅读 [转换边界](../../docs/node-subscriptions.md)。统一走编译、规则投影和对象目录；保留原文，未知/坏条目整份拒绝，生成默认策略与非标准传输别名记保真度，不把未知传输降为 TCP 或放宽 TLS。
 - GEO 仅处理 CompileResult.ruleSetResources 自有清单，任务预取/周刷新/坏缓存清理，不扫描原生 tag 拼路径或清理无关 .srs；Android 打包 GEO 不参与运行时更新/清理，SRS 头检查不等于完整解析。
 - file provider 仅从显式 ruleProviderDir 读取根内普通相对文件，canonical 后不越界，8 MiB；不写源文件或纳入 GEO 清理，失败整份候选拒绝。
 - HTTP provider 编译器输出 httpRuleProviders，任务按 HTTP(S)、直连/DIRECT 及文档支持的 header 准备快照。单值非空 ASCII header 总量 16 KiB，值参与完整缓存身份、不进配置或诊断；带头禁重定向并记 approx，iOS 暂拒带头，Android 用 Java TLS 桥接。

@@ -40,7 +40,7 @@ export ProfileRules InspectProfileRules(const std::string& content,
     const ProfileRuleEdits& edits = {});
 
 // Source transport (remote/local) is independent of the document format.
-export enum class ProfileFormat { ClashYaml, SingBoxJson, OpenVpn };
+export enum class ProfileFormat { ClashYaml, SingBoxJson, OpenVpn, NodeSubscription };
 export ProfileFormat DetectProfileFormat(std::string_view content);
 
 // 保真度级别（见 docs/singbox-layers-and-fidelity.md §2）：翻译层对订阅里每个条目

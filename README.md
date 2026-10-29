@@ -14,6 +14,8 @@ Clash-Flux 是一个使用 C++23 和 HuxerUI 构建的全平台代理客户端�
 交互，UI 与内核接入层由 C++ 实现。配置支持 Clash YAML（由内置编译器转换为 sing-box 配置）和 sing-box 原生
 JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 
+关于页支持 Windows、Linux（DEB/RPM）与 Android arm64 的应用内下载更新、SHA-256 校验和取消/重试。桌面确认安装后保存配置、断开代理并退出，再启动 Windows 安装向导或 Linux Polkit 授权；Android 额外校验正式签名与版本，保存配置、断开代理后打开系统安装界面，首次需要允许安装此来源的应用。其它平台保留手动下载入口，详情见[应用升级](docs/app-updates.md)。
+
 ## 功能
 
 - 订阅原文、规则集 JSON、编译 JSON 和诊断报告共用 CodeEditor 文本组件，工作线程预构建文档，输入时不逐键复制全文。
@@ -22,7 +24,7 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   手机保留现有页面布局。
   界面约定见 [UI 开发约定](docs/ui-development.md)。
 - 订阅与代理配置管理：条目右键菜单 / 双击切换 / 刷新、URL 导入 /
-  更新 / 启用 / 删除 / 规则编辑，本地落盘；支持 Clash YAML、sing-box 原生 JSON 和 OpenVPN .ovpn 文件导入
+  更新 / 启用 / 删除 / 规则编辑，本地落盘；支持 Clash YAML、sing-box 原生 JSON、OpenVPN .ovpn 和 VMess JSON 节点订阅（明文列表或 Base64）。节点列表的转换和限制见[节点订阅](docs/node-subscriptions.md)。
   切换准备期间可改选，同一卡片重复点击合并，只保留最后一个待切目标；候选检查、启动与预览复用编译结果。
 - 网页唤醒导入：兼容 sing-box 与 FlClash 订阅链接，打开预填名称与 URL 的导入表单；
   支持粘贴和扫码解析，格式与平台注册方式见[订阅唤醒链接](docs/profile-links.md)
@@ -370,8 +372,10 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、
-修复/卸载；界面字符串含简中/繁中/英文）。GitHub Release 的 Windows 归档中同时
-包含 `clash-flux-Setup-<版本>.exe` 安装包和便携版文件。
+修复/卸载；界面字符串含简中/繁中/英文）。GitHub Release 统一采用
+`clash-flux-<版本>-<平台>-<架构>.<格式>`，Windows 安装包为
+`clash-flux-<版本>-windows-x86_64.exe`，便携归档为同名前缀的 `.zip`。
+应用内更新兼容已发布的旧 Windows 安装包名称，详见[应用升级](docs/app-updates.md)。
 新安装器使用独立的 Burn 升级标识，并在 MSI 安装提交后迁移清理 0.3.0–0.3.68 的旧 Bundle 注册和专属缓存；MSI 升级标识保持不变，用户数据与共享 MSI 缓存保留。边界见 [HuxerUI fork](docs/huxerui-fork.md#windows-legacy-bundle-migration)。
 
 启动时在首帧构建前同步、只读地读取保存的主题，避免默认主题切换闪烁；自动模式通过 HuxerUI 官方窗口外观接口响应系统深浅变化，手动深浅选择保持独立。其余设置与订阅仍异步加载。Lib-SQLite 启动只读查询已合入所用 fork 的固定提交，详见 [UI 开发约定](docs/ui-development.md)。

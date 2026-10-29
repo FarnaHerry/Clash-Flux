@@ -255,6 +255,49 @@ Task<void> FlushWhileLocked(persistence::Persistence& store, bool settings, std:
     result->done = true;
 }
 
+Task<void> UpgradeExitPhase(TaskScope tasks) {
+    const Fixture fixture;
+    persistence::Persistence store;
+    Check(co_await store.open(fixture.path, fixture.files), "upgrade fixture open");
+    SeedProfiles(store);
+    Check(co_await store.flushSettings() && co_await store.flushProfiles(), "upgrade fixture seed");
+    auto opened = co_await sqlite::Database::OpenAsync(File{fixture.path.string()}, db_schema::openOptions());
+    Check(static_cast<bool>(opened), "upgrade observer open");
+    sqlite::Database raw = std::move(*opened);
+    const auto gate = std::make_shared<Gate>();
+    tasks.Launch([&raw, gate]() -> Task<void> { co_await HoldWriter(raw, gate); });
+    co_await WaitFor([gate] { return gate->entered.load(); });
+    store.setSetting("test.value", "upgrade-save");
+    auto profile = store.listProfiles().front();
+    profile.name = "saved before upgrade";
+    store.saveProfile(profile);
+    Check(store.freezeWritesForUpgrade() && !store.freezeWritesForUpgrade(), "upgrade exit is exclusive");
+    const auto flush = std::make_shared<FlushResult>();
+    tasks.Launch([&store, flush]() -> Task<void> { co_await FlushWhileLocked(store, true, flush); });
+    co_await WaitFor([flush] { return flush->started; });
+    Check(!flush->done, "upgrade save awaits a real SQLite write lock");
+    Refused([&] { store.setSetting("test.value", "late-write"); });
+    Refused([&] { store.saveProfile(db::Profile{}); });
+    Refused([&] { store.deleteProfile(42, true); });
+    Refused([&] { store.setSelectedProfile(42); });
+    gate->release = true;
+    co_await WaitFor([flush, gate] { return flush->done && gate->writerDone.load(); });
+    Check(flush->ok && co_await store.flushProfiles(), "upgrade preserves pending settings and rows");
+    Check(!store.hasPendingSettings() && !store.hasPendingProfiles(), "upgrade flush confirms all versions");
+    store.resumeWritesAfterUpgradeFailure();
+    store.setSetting("test.value", "retry-after-helper-failure");
+    Check(co_await store.flushSettings(), "helper failure resumes the same writable session");
+    co_await store.close();
+    Check(static_cast<bool>(co_await raw.CloseAsync()), "upgrade observer close");
+    Check(co_await store.open(fixture.path, fixture.files), "upgrade fixture reopen");
+    const auto profiles = store.listProfiles();
+    Check(profiles.size() == 3 && profiles.front().id == 41 && profiles.front().name == "saved before upgrade" &&
+        store.setting("test.value") == "retry-after-helper-failure" &&
+        std::filesystem::exists(fixture.files / "shared.yaml") && std::filesystem::exists(fixture.files / "unique.yaml"),
+        "upgrade and failed handoff preserve all sources, IDs, references and files across reopen");
+    co_await store.close();
+}
+
 Task<void> PersonalRulesPhase(TaskScope tasks) {
     const Fixture fixture;
     persistence::Persistence store;
@@ -827,6 +870,7 @@ Task<void> RunTest(TaskScope tasks) {
         co_await FailedOpenPhase();
         Trace(10, "真实 SQLite 锁下异步交错与版本确认");
         co_await InterleavedPhase(tasks);
+        co_await UpgradeExitPhase(tasks);
         co_await PersonalRulesPhase(tasks);
         Trace(11, "删除失败/共享引用/确认后文件清理");
         co_await DeletionPhase();

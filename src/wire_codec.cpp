@@ -33,7 +33,9 @@ struct VersionInput { std::optional<std::string> version; };
 struct ReleaseInput {
     std::optional<std::string> tag_name;
     std::optional<bool> draft, prerelease;
+    std::vector<glz::raw_json> assets;
 };
+struct ReleaseAssetNameInput { std::string name; };
 struct TrafficInput { std::optional<std::int64_t> up, down; };
 struct TotalsInput { std::optional<std::int64_t> uploadTotal, downloadTotal; };
 
@@ -155,7 +157,16 @@ Result<Release> DecodeStableRelease(std::string_view text) {
         !release.draft.has_value() || !release.prerelease.has_value() ||
         *release.draft || *release.prerelease)
         return {{}, "missing or non-stable release"};
-    return {{std::move(*input.value.tag_name)}, {}};
+    Release result{std::move(*input.value.tag_name), {}};
+    for (const auto& raw : release.assets) {
+        auto asset = codec_detail::decode<ReleaseAsset>(raw.str);
+        // Older assets may have a null digest. Keep version checking available,
+        // but never offer such an asset for automatic installation.
+        if (asset) result.assets.push_back(std::move(asset.value));
+        else if (auto name = codec_detail::decode<codec_detail::ReleaseAssetNameInput>(raw.str); name)
+            result.assets.push_back({std::move(name.value.name)});
+    }
+    return {std::move(result), {}};
 }
 Result<Traffic> DecodeTraffic(std::string_view text) {
     auto input = codec_detail::decode<codec_detail::TrafficInput>(text);

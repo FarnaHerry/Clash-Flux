@@ -2572,10 +2572,128 @@ void testPersonalRules(const std::filesystem::path& fixtures = {}) {
         "native before-fallback additions precede an explicit unconditional route rule");
 }
 
+std::string encodeNodeFixture(std::string_view input, bool urlSafe = false) {
+    constexpr std::string_view alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string result;
+    unsigned value = 0, bits = 0;
+    for (const unsigned char c : input) {
+        value = (value << 8) | c; bits += 8;
+        while (bits >= 6) { bits -= 6; result += alphabet[(value >> bits) & 63]; }
+        value &= (1U << bits) - 1;
+    }
+    if (bits) result += alphabet[(value << (6 - bits)) & 63];
+    if (urlSafe) {
+        std::ranges::replace(result, '+', '-'); std::ranges::replace(result, '/', '_');
+    } else while (result.size() % 4) result += '=';
+    return result;
+}
+
+void testNodeSubscriptions() {
+    const json original{{"v", "2"}, {"ps", "日本 WS"}, {"add", "node.example.com"},
+        {"port", "443"}, {"id", "11111111-2222-3333-4444-555555555555"}, {"aid", "2"},
+        {"net", "ws"}, {"type", "none"}, {"host", "host.example.com"}, {"path", "/a?b=1&c=2"},
+        {"tls", "tls"}, {"alpn", "h2,http/1.1"}, {"fp", "firefox"}};
+    const auto uri = [](const json& node) { return "vmess://" + encodeNodeFixture(node.dump()); };
+    auto other = original; other["ps"] = "TLS alias"; other["net"] = "tls"; other["path"] = "";
+    const auto raw = uri(original) + "\r\n" + uri(other) + "\n";
+    const auto compile = [](const std::string& text) {
+        singbox::CompileOptions options; options.profileYaml = text;
+        return singbox::compileConfig(options);
+    };
+    const auto baseline = compile(raw);
+    check(baseline.error.empty() && !baseline.json.empty(), "raw VMess JSON list compiles");
+    if (baseline.json.empty()) return;
+    const auto config = json::parse(baseline.json);
+    const auto outputs = config["outbounds"];
+    check(outputs.size() == 4 && outputs[1]["uuid"] == original["id"] && outputs[1]["server_port"] == 443 &&
+        outputs[1]["alter_id"] == 2 && outputs[1]["security"] == "auto", "VMess identity, numbers and default cipher retained");
+    check(outputs[1]["transport"]["path"] == original["path"] &&
+        outputs[1]["transport"]["headers"]["Host"] == original["host"] &&
+        outputs[1]["tls"]["server_name"] == original["host"] &&
+        !outputs[1]["tls"].contains("insecure") && outputs[1]["tls"]["utls"]["fingerprint"] == "firefox" &&
+        outputs[1]["tls"]["alpn"] == json::array({"h2", "http/1.1"}), "WS, Host/SNI, ALPN and verified TLS retained");
+    check(!outputs[2].contains("transport") && outputs[2]["tls"]["enabled"] == true &&
+        outputs[3]["type"] == "selector" && outputs[3]["outbounds"].size() == 2 &&
+        config["route"]["final"] == outputs[3]["tag"], "net=tls alias and selectable default preserve every node");
+    check(std::ranges::any_of(baseline.fidelity, [](const auto& note) {
+        return note.subject == "node-subscription.policy" && note.level == singbox::Fidelity::Approx;
+    }) && std::ranges::any_of(baseline.fidelity, [](const auto& note) {
+        return note.subject == "TLS alias" && note.level == singbox::Fidelity::Approx;
+    }), "generated routing policy and nonstandard TLS alias are accounted for");
+    for (const auto& text : {encodeNodeFixture(raw), encodeNodeFixture(raw, true),
+            std::string("\xEF\xBB\xBF# comment\r\n") + raw,
+            encodeNodeFixture(raw).insert(12, " \r\n\t")}) {
+        const auto parsed = compile(text);
+        check(parsed.error.empty() && parsed.json == baseline.json, "BOM, CRLF, wrapped and URL-safe unpadded Base64 retain the same config");
+        check(singbox::DetectProfileFormat(text) == singbox::ProfileFormat::NodeSubscription,
+            "node subscription format classified independently of remote/local transport");
+    }
+    auto explicitSni = original; explicitSni["sni"] = "sni.example.com"; explicitSni["insecure"] = "1";
+    const auto tls = compile(uri(explicitSni));
+    check(tls.error.empty() && json::parse(tls.json)["outbounds"][1]["tls"]["server_name"] == explicitSni["sni"] &&
+        json::parse(tls.json)["outbounds"][1]["tls"]["insecure"] == true, "only explicit source override disables TLS verification");
+    for (const auto network : {"tcp", "h2", "grpc"}) {
+        auto node = original; node["net"] = network;
+        if (std::string_view(network) == "tcp") node["path"] = "";
+        if (std::string_view(network) == "grpc") node["host"] = "";
+        const auto parsed = compile(uri(node));
+        check(parsed.error.empty(), std::string("standard transport ") + network + ": " + parsed.error);
+        if (!parsed.json.empty()) {
+            const auto output = json::parse(parsed.json)["outbounds"][1];
+            if (std::string_view(network) == "h2")
+                check(output["transport"]["path"] == node["path"] &&
+                    output["transport"]["host"] == json::array({node["host"]}), "HTTP/2 retains both path and host");
+            else if (std::string_view(network) == "grpc")
+                check(output["transport"]["service_name"] == node["path"], "gRPC path retains serviceName semantics");
+            else check(!output.contains("transport"), "plain TCP does not acquire an unrelated transport");
+        }
+    }
+    auto collision = original; collision["ps"] = "节点选择";
+    const auto colliding = compile(uri(collision));
+    check(colliding.error.empty() && json::parse(colliding.json)["outbounds"][2]["tag"] != "节点选择",
+        "generated selector never collides with an original node name");
+    const auto reject = [&](std::string content, std::string_view message) {
+        const auto parsed = compile(content);
+        check(!parsed.error.empty() && parsed.json.empty(), message);
+        check(parsed.error.find("11111111") == std::string::npos && parsed.error.find("vmess://") == std::string::npos,
+            "failure diagnostics do not reveal node credentials or raw links");
+    };
+    for (const auto& [key, value] : std::vector<std::pair<std::string, json>>{
+            {"port", "443junk"}, {"port", 65536}, {"port", 0}, {"aid", -1}, {"id", "bad-uuid"},
+            {"v", 3}, {"net", "kcp"}, {"type", "http"}, {"tls", "reality"}, {"alpn", "h2,"},
+            {"unknown-secret", "credential"}, {"fp", "not-a-fingerprint"}, {"vcn", "pin.example.com"},
+            {"pcs", "certificate-pin"}, {"ps", json::array({"bad"})}}) {
+        auto bad = original; bad["ps"] = "invalid-second"; bad[key] = value;
+        reject(uri(original) + "\n" + uri(bad), "invalid second node fails the whole candidate without losing a valid prefix");
+    }
+    auto plaintext = original; plaintext["tls"] = "";
+    reject(uri(plaintext), "TLS options cannot silently enable TLS on a plaintext node");
+    auto conflicting = original; conflicting["insecure"] = true; conflicting["allowInsecure"] = false;
+    reject(uri(conflicting), "conflicting certificate verification options rejected");
+    reject(raw + "vless://not-supported\n", "mixed unsupported URI protocol is not silently dropped");
+    reject(uri(original) + "\n" + uri(original), "duplicate node names cannot drop or redirect members");
+    reject("vmess://AB==", "noncanonical Base64 tail bits rejected");
+    reject("vmess://" + encodeNodeFixture(R"({"ps":"first","ps":"second"})"), "duplicate JSON fields rejected");
+    reject(encodeNodeFixture(raw) + "?", "malformed outer Base64 rejected");
+    reject("vmess://" + std::string(8 * 1024 * 1024, 'A'), "oversized node subscription rejected");
+    std::string tooMany;
+    for (unsigned i = 0; i < 4097; ++i) {
+        auto node = original; node["ps"] = "node-" + std::to_string(i); tooMany += uri(node) + "\n";
+    }
+    reject(encodeNodeFixture(tooMany), "oversized node count rejected");
+    singbox::CompileOptions inventory; inventory.profileYaml = encodeNodeFixture(raw);
+    inventory.mainConnectionId = "profile-nodes"; inventory.mainSourceName = "node fixture";
+    const auto inspected = singbox::inspectProfileSourceObjects(inventory);
+    check(inspected.error.empty() && inspected.sourceObjects.size() >= 3, "node/selector inventory works before activation");
+    const auto rules = singbox::InspectProfileRules(inventory.profileYaml, {});
+    check(rules.error.empty() && !rules.original.empty(), "generated MATCH is visible to personal-rule projection");
+}
+
 int main(int argc, char** argv) {
     if (argc == 3 && std::string_view(argv[1]) == "--personal-rule-fixtures") {
         testPersonalRules(argv[2]); testPersonalRuleSets(argv[2]); return failures ? 1 : 0;
     }
+    if (argc == 1) testNodeSubscriptions();
     testPersonalRules();
     testPersonalRuleSets();
     // Test-only compiler entry for isolated native runtime fixtures; no app

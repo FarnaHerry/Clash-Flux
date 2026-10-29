@@ -20,6 +20,7 @@ namespace singbox {
 namespace {
 
 #include "singbox_yaml_openvpn.inc"
+#include "singbox_node_subscription.inc"
 #include "singbox_context_dns.inc"
 #include "singbox_proxy.inc"
 #include "singbox_mrs.inc"
@@ -31,6 +32,7 @@ std::string personalRuleSetTag(const RuleSetLibrary& library, const std::string&
 } // namespace
 
 ProfileFormat DetectProfileFormat(std::string_view content) {
+    if (nodeSubscriptionText(content)) return ProfileFormat::NodeSubscription;
     if (content.starts_with("\xEF\xBB\xBF")) content.remove_prefix(3);
     while (!content.empty()) {
         const auto end = content.find('\n');
@@ -153,7 +155,7 @@ ProfileRules InspectProfileRules(const std::string& content, const ProfileRuleEd
             return project(nativeProfileRules(config));
         }
         if (DetectProfileFormat(content) == ProfileFormat::OpenVpn) return {{}, "OpenVPN 使用连接和内网路由规则"};
-        const auto root = YAML::Load(content);
+        const auto root = loadClashProfileDocument(content);
         if (!root.IsMap()) return {{}, "订阅必须为 YAML 对象"};
         return project(clashProfileRules(root));
     } catch (const std::exception& error) { return {{}, error.what()}; }

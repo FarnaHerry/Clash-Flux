@@ -31,7 +31,7 @@
 
 ### L2 翻译层（处理 Clash 生态）
 
-- 普通来源按内容识别 Clash YAML、sing-box 原生 JSON、OpenVPN `.ovpn`，共用远程/本地/文本导入；
+- 普通来源按内容识别 Clash YAML、sing-box 原生 JSON、OpenVPN `.ovpn`、VMess JSON 节点订阅（明文或 Base64），共用远程/本地导入；节点链接转换边界见[节点订阅](node-subscriptions.md)。
   独立拨号路径只保留 PPTP，旧 OpenVPN 独立记录兼容已移除。所有来源都经 `clashflux.singbox` 出口。
 - 每条条目——协议、组、规则、单个字段——必须归入三档之一，并写入保真度账本（§2）：
   - **exact**：与 sing-box 语义 1:1；
@@ -170,6 +170,10 @@ std::string FidelitySummary(const std::vector<FidelityNote>& notes);
 
 原生 JSON 合并托管项时，`experimental.cache_file` 仅强制 `enabled: true`，保留
 `path`、`cache_id`、`store_fakeip`、`store_rdrc` 等用户配置，不整对象重建。
+
+节点订阅复用下列 VMess 映射，不增加内核协议能力。Base64/URL-safe 包装解码与标准字段映射为 exact；
+无规则列表生成 selector/MATCH 为字段 approx，非标准 `net=tls` → 显式 TCP+TLS 为节点 approx。
+未知协议、未知字段、无法表达的传输/证书约束或畸形条目拒绝整份候选，不提交合法前缀；原订阅字节保留。
 
 ### 4.1 出站协议（Clash 转换覆盖 12 / 15 个代理协议类型）
 

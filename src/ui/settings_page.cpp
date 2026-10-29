@@ -23,6 +23,8 @@
 #include "diagnostic_export_file.h"
 #include "app_http_client.h"
 #include "about_update.h"
+#include "app_update_model.h"
+#include "app_runtime_services.h"
 #include "page_layout.h"
 
 import clashflux.config;
@@ -75,6 +77,7 @@ void ApplyLanguage(const std::shared_ptr<SettingsModel>& model, std::size_t inde
 #define CLASHFLUX_THEME_SETTING AndroidThemeSetting
 constexpr bool kSettingsMoreOnWide = true;
 constexpr const char* kMaintenanceTitle = "后台运行";
+constexpr bool kUpdateUsesSystemInstaller = true;
 #else
 #define CLASHFLUX_GENERAL_PLATFORM_SECTION DesktopGeneralSettings
 #define CLASHFLUX_NETWORK_PLATFORM_SECTION DesktopNetworkSettings
@@ -84,6 +87,7 @@ constexpr const char* kMaintenanceTitle = "后台运行";
 #define CLASHFLUX_THEME_SETTING DesktopThemeSetting
 constexpr bool kSettingsMoreOnWide = false;
 constexpr const char* kMaintenanceTitle = "运行与维护";
+constexpr bool kUpdateUsesSystemInstaller = false;
 #endif
 
 } // namespace
@@ -704,43 +708,20 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 
 [[huxerui::composable]] huxerui::View AboutPage(std::function<void()> onBack) {
     const auto& theme = huxerui::UseTheme();
-    const auto tasks = huxerui::UseTaskScope();
+    const auto tasks = huxerui::UseApplicationTaskScope();
     const auto http = huxerui::UseService<AppHttpClient>();
-    const auto checking = huxerui::UseState(false);
-    const auto checked = huxerui::UseState(false);
-    const auto update = huxerui::UseState(AppUpdate{});
+    const auto updates = huxerui::UseService<AppUpdateModel>();
+    const auto runtime = huxerui::UseService<AppRuntimeServices>();
+    const auto control = UseCoreControl();
+    const auto dialog = huxerui::UseDialog();
+    const auto cache = huxerui::UseApplication().Directories().cache_directory;
+    const auto checking = updates->checking;
+    const auto checked = updates->checked;
     const auto scroll = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
-    const auto result = update.Get();
-    const auto check = [tasks, http, checking, checked, update] {
-        if (checking.Get()) return;
-        checking = true;
-        tasks.Launch([http, checking, checked, update]() -> huxerui::Task<void> {
-            AppUpdate next;
-            try {
-                huxerui::HttpRequest request;
-                request.url = "https://api.github.com/repos/FarnaHerry/Clash-Flux/releases/latest";
-                request.timeout = std::chrono::seconds{10};
-                request.headers = {{"User-Agent", "Clash-Flux/" CLASHFLUX_VERSION},
-                    {"Accept", "application/vnd.github+json"},
-                    {"X-GitHub-Api-Version", "2022-11-28"}};
-                auto response = co_await http->SendAsync(std::move(request),
-                    [](huxerui::HttpProgress progress) {
-                        if (progress.kind == huxerui::HttpProgressKind::Download &&
-                            progress.transferred_bytes > 2 * 1024 * 1024)
-                            throw std::runtime_error("release response too large");
-                    });
-                if (!response.Succeeded()) next.error = "release request failed";
-                else if (response.Value().status_code != 200) next.error = "release HTTP status error";
-                else {
-                    const auto& body = response.Value().body;
-                    next = ReadAppUpdate(std::string_view(
-                        reinterpret_cast<const char*>(body.data()), body.size()), CLASHFLUX_VERSION);
-                }
-            } catch (...) { next.error = "release check failed"; }
-            update = std::move(next);
-            checked = true;
-            checking = false;
-        });
+    const auto result = updates->release.Get();
+    const auto phase = updates->phase.Get();
+    const auto check = [tasks, http, updates] {
+        updates->Check(tasks, http, CLASHFLUX_VERSION);
     };
     huxerui::StringVariant status = Localized("查看 GitHub 上的最新稳定版本");
     if (checking.Get()) status = Localized("正在检查更新…");
@@ -752,10 +733,59 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         status = Localized("已是最新稳定版本");
     std::vector<huxerui::View> updateRows{
         AboutActionRow(Localized("检查更新"), status, app::images::refresh,
-            check, !checking.Get(), checking.Get()).Key("about-check-update")};
+            check, !checking.Get() && !updates->Transferring() && !updates->CanInstall() &&
+                phase != AppUpdatePhase::Installing, checking.Get()).Key("about-check-update")};
+    if (!checking.Get() && result.error.empty() && result.newer && result.asset) {
+        const auto download = [tasks, http, updates, cache] {
+            updates->Download(tasks, http, std::filesystem::path(cache.Path()));
+        };
+        if (updates->Transferring()) {
+            updateRows.push_back(AboutActionRow(
+                phase == AppUpdatePhase::Verifying ? Localized("正在校验安装包…") :
+                    LocalizedFormat("正在下载更新：{}%", updates->percent.Get()),
+                Localized("离开此页面后仍会继续下载"), app::images::refresh, {}, false, true)
+                .Key("about-update-progress"));
+            updateRows.push_back(AboutActionRow(Localized("取消下载"), {}, app::images::close,
+                [updates] { updates->CancelDownload(); }).Key("about-update-cancel"));
+        } else if (updates->CanInstall() || phase == AppUpdatePhase::Installing) {
+            const auto install = [dialog, runtime, updates, control] {
+                if (!updates->CanInstall() || control.Busy() || !runtime->installAppUpdate) return;
+                dialog.Show([runtime](huxerui::DialogContext context) {
+                    return DialogCard(huxerui::Column {
+                      huxerui::Text(Localized("安装更新？"), huxerui::TextRole::Title),
+                      huxerui::Text(kUpdateUsesSystemInstaller
+                          ? Localized("确认后将保存配置、断开代理并打开系统安装界面。首次可能需要允许安装此来源的应用。")
+                          : Localized("确认后将保存配置、断开代理并关闭 Clash-Flux，然后启动安装。系统可能要求安装授权。")),
+                      huxerui::Row {
+                        huxerui::Button(Localized("取消")).OnClick([context] { context.Dismiss(); }),
+                        huxerui::Button(kUpdateUsesSystemInstaller ? Localized("继续安装") : Localized("关闭并安装"))
+                          .OnClick([context, runtime] {
+                            context.Dismiss();
+                            if (runtime->installAppUpdate) runtime->installAppUpdate();
+                        }),
+                      }.With(huxerui::Spacing(12.0F)),
+                    }.With(huxerui::Spacing(16.0F), huxerui::Frame{.max_width = 420.0F},
+                           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+                });
+            };
+            updateRows.push_back(AboutActionRow(
+                phase == AppUpdatePhase::Installing ? Localized("正在准备安装…") : Localized("安装已下载的更新"),
+                phase == AppUpdatePhase::InstallFailed ? Localized("安装准备失败，应用已保留；请重试") :
+                    kUpdateUsesSystemInstaller ? Localized("APK 与发布签名已校验；安装由系统确认") :
+                        Localized("安装包已通过 SHA-256 校验；安装时会关闭应用"),
+                app::images::check, install, phase != AppUpdatePhase::Installing && !control.Busy(),
+                phase == AppUpdatePhase::Installing).Key("about-update-install"));
+        } else {
+            updateRows.push_back(AboutActionRow(LocalizedFormat("下载新版本 {}", result.tag),
+                phase == AppUpdatePhase::DownloadFailed ? Localized("下载或校验失败，请重试") :
+                    Localized("在应用内下载安装包，完成后由你确认安装"),
+                app::images::arrow_down, download).Key("about-update-download"));
+        }
+    }
     if (!checking.Get() && result.error.empty() && result.newer)
         updateRows.push_back(AboutActionRow(LocalizedFormat("查看新版本 {}", result.tag),
-            Localized("打开发布页面查看说明和下载"), app::images::github,
+            result.asset ? Localized("打开发布页面查看说明和下载") : Localized("此平台或版本暂不支持应用内安装，请手动下载"),
+            app::images::github,
             [tag = result.tag] { core::openInBrowser(AppReleaseUrl(tag)); })
             .Key("about-release"));
     const auto repository = [](const char* url) {
