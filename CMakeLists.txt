@@ -514,7 +514,7 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # The handoff must outlive the GUI and must not lock application DLLs on
     # Windows. Its static CRT executable is copied to the exclusive update cache.
     if (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        add_executable(clash-flux-updater platform/desktop/app_updater.cpp)
+        add_executable(clash-flux-updater app_updater.cpp)
         target_compile_features(clash-flux-updater PRIVATE cxx_std_20)
         if (WIN32)
             target_compile_options(clash-flux-updater PRIVATE /utf-8)

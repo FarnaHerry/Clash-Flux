@@ -1,7 +1,7 @@
 // Independent, unprivileged handoff. It verifies and retains the package before
 // acknowledging readiness, waits for the GUI to exit, then invokes the native
 // installer. It never opens a database or creates a HuxerUI Runtime.
-#include "../../src/app_update_hash.h"
+#include "src/app_update_hash.h"
 #include <charconv>
 #include <chrono>
 #include <fstream>
