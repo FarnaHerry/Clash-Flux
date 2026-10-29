@@ -16,6 +16,7 @@
 #include "action_menu.h"
 #include "task_bridge.h"
 #include "pptp_connection_progress.h"
+#include "subscription_expiry.h"
 
 import clashflux.core;
 import clashflux.db;
@@ -71,14 +72,20 @@ huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool par
         : participating ? Localized("按规则") : Localized("未参与");
 }
 
+huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
+    if (expiry == clashflux::subscription::kNeverExpires) return Localized("长期有效");
+    if (expiry <= 0) return "";
+    return compact ? LocalizedFormat("到期 {}", formatDate(expiry))
+                   : LocalizedFormat("到期时间 {}", formatDate(expiry));
+}
+
 [[huxerui::composable]] huxerui::View CompactProfileQuota(
     const db::Profile& profile, huxerui::Color muted) {
     const bool hasTraffic = profile.usedBytes > 0 || profile.totalBytes > 0;
     const std::string traffic = !hasTraffic ? "" : huxerui::UseString(profile.totalBytes > 0
         ? LocalizedFormat("{} / {}", formatBytes(profile.usedBytes), formatBytes(profile.totalBytes))
         : LocalizedFormat("{} / 不限量", formatBytes(profile.usedBytes)));
-    const std::string expiry = profile.expireAt <= 0 ? ""
-        : huxerui::UseString(LocalizedFormat("到期 {}", formatDate(profile.expireAt)));
+    const std::string expiry = huxerui::UseString(ProfileExpiryLabel(profile.expireAt, true));
     return CompactProfileTrafficContent(traffic, expiry,
         ProfileTrafficProgress(profile.usedBytes, profile.totalBytes), muted);
 }
@@ -90,7 +97,8 @@ huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool par
     const auto colors = ResolveSelectableTileColors(theme, profile.selected);
     const std::string primaryLine = [&] {
         if (!nativeVpn)
-            return profile.url.empty() ? huxerui::UseString(Localized("本地导入")) : profile.url;
+            return profile.url.empty() ? huxerui::UseString(Localized("本地导入"))
+                                       : ProfileSubscriptionAddress(profile.url);
         std::string error;
         const auto config = pptp::ParsePptpConfig(profile.nativeConfig, error);
         return config ? "PPTP · " + config->server
@@ -107,6 +115,10 @@ huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool par
         : participating ? huxerui::UseString(Localized("次订阅 · 按规则参与"))
                         : huxerui::UseString(Localized("已保存 · 未参与"));
 
+    const std::string updatedLabel = nativeVpn ? "" : profile.updatedAt > 0
+        ? huxerui::UseString(LocalizedFormat("更新于 {}",
+            huxerui::UseString(FormatRelativeTime(profile.updatedAt))))
+        : huxerui::UseString(Localized("未拉取"));
     huxerui::View previewContent;
     if (compact) {
         previewContent = CompactProfileCardContent(profile.name,
@@ -119,7 +131,7 @@ huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool par
             nativeVpn ? FittedSingleLineLabel(primaryLine, huxerui::TextStyle{
                 huxerui::Font::System(font_size::kCaption), colors.muted})
                 .With(huxerui::Frame{.height = 32.0F})
-                : CompactProfileQuota(profile, colors.muted), nativeVpn);
+                : CompactProfileQuota(profile, colors.muted), nativeVpn, {}, updatedLabel);
     } else {
         previewContent = huxerui::Column {
             huxerui::Row {
@@ -142,9 +154,8 @@ huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool par
                                       huxerui::Padding(4.0F))},
             }.With(huxerui::Spacing(6.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-            huxerui::Text(truncateOneLine(primaryLine, 48))
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::Monospace(font_size::kChip), colors.muted}),
+            FittedSingleLineLabel(primaryLine, huxerui::TextStyle{
+                huxerui::Font::Monospace(font_size::kChip), colors.muted}),
             huxerui::Text(truncateOneLine(detailLine, 52))
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kCaption), colors.muted}),
@@ -152,21 +163,24 @@ huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool par
                 huxerui::Text(statusLine)
                     .Style(huxerui::TextStyle{
                         huxerui::Font::System(font_size::kCaption), colors.muted}),
-                huxerui::Spacer(),
-                huxerui::Text(nativeVpn ? "" : huxerui::UseString(
-                    FormatRelativeTime(profile.updatedAt)))
-                    .Style(huxerui::TextStyle{
-                        huxerui::Font::System(font_size::kCaption), colors.muted}),
             }.With(huxerui::Spacing(8.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
             huxerui::Spacer(),
-            nativeVpn ? huxerui::View{huxerui::Row{}}
-                      : huxerui::View{huxerui::ProgressBar(std::clamp(
-                            profile.totalBytes > 0
-                                ? static_cast<float>(profile.usedBytes) /
-                                      static_cast<float>(profile.totalBytes)
-                                : 1.0F,
-                            0.0F, 1.0F)).With(huxerui::Frame{.height = 3.0F})},
+            nativeVpn ? huxerui::View{} : huxerui::Column {
+              profile.expireAt > 0 || profile.expireAt == clashflux::subscription::kNeverExpires
+                  ? huxerui::Row {
+                      huxerui::Spacer(),
+                      huxerui::Text(ProfileExpiryLabel(profile.expireAt, false)).Style(huxerui::TextStyle{
+                          huxerui::Font::System(font_size::kCaption), colors.muted}),
+                    }
+                  : huxerui::View{},
+              huxerui::ProgressBar(ProfileTrafficProgress(profile.usedBytes, profile.totalBytes))
+                  .With(huxerui::Frame{.height = 3.0F}),
+              FittedSingleLineLabel(updatedLabel, huxerui::TextStyle{
+                  huxerui::Font::System(font_size::kCaption), colors.muted})
+                  .With(huxerui::Frame{.height = 16.0F}).Key("profile-preview-updated"),
+            }.With(huxerui::Spacing(4.0F),
+                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
         }.With(huxerui::Spacing(6.0F), huxerui::Grow(1.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }
@@ -546,7 +560,7 @@ huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool par
         if (!nativeVpn) {
             return profile.url.empty()
                        ? huxerui::UseString(Localized("本地导入"))
-                       : profile.url;
+                       : ProfileSubscriptionAddress(profile.url);
         }
         std::string parseError;
         const auto config = pptp::ParsePptpConfig(profile.nativeConfig, parseError);
@@ -556,7 +570,8 @@ huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool par
 
     const bool hasTraffic =
         !nativeVpn && (profile.usedBytes > 0 || profile.totalBytes > 0);
-    const bool hasExpiry = !nativeVpn && profile.expireAt > 0;
+    const bool hasExpiry = !nativeVpn &&
+        (profile.expireAt > 0 || profile.expireAt == clashflux::subscription::kNeverExpires);
     const int percent = profile.totalBytes > 0
                             ? static_cast<int>(std::clamp(
                                   static_cast<double>(profile.usedBytes) /
@@ -589,8 +604,7 @@ huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool par
                     huxerui::Spacer(),
                     hasExpiry
                         ? huxerui::View{huxerui::Text(
-                              LocalizedFormat("到期时间 {}",
-                                              formatDate(profile.expireAt)))
+                              ProfileExpiryLabel(profile.expireAt, false))
                               .Style(huxerui::TextStyle{
                                   huxerui::Font::System(font_size::kCaption),
                                   muted})}
@@ -651,6 +665,10 @@ huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool par
     // 订阅卡复用代理页节点卡的形状原语（SelectableTile）：同一套内边距、圆角、
     // 表面色与选中态（选中 = primary_container 淡染底 + primary 描边 +
     // on_primary_container 文字）。不再自己叠描边或第二层选中背景。
+    const std::string updatedLabel = nativeVpn ? "" : profile.updatedAt > 0
+        ? huxerui::UseString(LocalizedFormat("更新于 {}",
+            huxerui::UseString(FormatRelativeTime(profile.updatedAt))))
+        : huxerui::UseString(Localized("未拉取"));
     huxerui::View cardContent;
     if (compact) {
         huxerui::View busy;
@@ -664,7 +682,7 @@ huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool par
                 std::ranges::find(runtime.participatingSources, store::ProfileConnectionId(id)) !=
                     runtime.participatingSources.end())),
             tile, dragHandle, moreButton,
-            nativeVpn ? trafficSection : CompactProfileQuota(profile, muted), nativeVpn, busy);
+            nativeVpn ? trafficSection : CompactProfileQuota(profile, muted), nativeVpn, busy, updatedLabel);
     } else {
         cardContent = huxerui::Column {
         huxerui::Row {
@@ -675,9 +693,8 @@ huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool par
             std::move(moreButton),
         }.With(huxerui::Spacing(6.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        huxerui::Text(truncateOneLine(primaryLine, 48))
-            .Style(huxerui::TextStyle{huxerui::Font::Monospace(font_size::kChip),
-                                      muted}),
+        FittedSingleLineLabel(primaryLine, huxerui::TextStyle{
+            huxerui::Font::Monospace(font_size::kChip), muted}),
         huxerui::Text(truncateOneLine(
                           nativeVpn
                               ? (profile.nativeRoutes.empty()
@@ -708,28 +725,16 @@ huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool par
                                     ? Localized("次订阅 · 按规则参与") : Localized("已保存 · 未参与"))
                 .Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kCaption), muted}),
-            !nativeVpn && profile.autoUpdate && profile.intervalMins > 0
-                ? huxerui::View{huxerui::Text(LocalizedFormat(
-                                       "自动 {} 分钟", profile.intervalMins))
-                                    .Style(huxerui::TextStyle{
-                                        huxerui::Font::System(
-                                            font_size::kCaption),
-                                        muted})}
-                : huxerui::View{huxerui::Row{}},
-            huxerui::Spacer(),
-            huxerui::Text(truncateOneLine(
-                              nativeVpn ? ""
-                                        : huxerui::UseString(
-                                              FormatRelativeTime(profile.updatedAt)),
-                              52))
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kCaption),
-                    muted}),
         }
             .With(huxerui::Spacing(8.0F),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))} : huxerui::View{},
         huxerui::Spacer(),
-        std::move(trafficSection),
+        nativeVpn ? trafficSection : huxerui::Column {
+          trafficSection,
+          FittedSingleLineLabel(updatedLabel, huxerui::TextStyle{
+              huxerui::Font::System(font_size::kCaption), muted})
+              .With(huxerui::Frame{.height = 16.0F}).Key("profile-wide-updated"),
+        }.With(huxerui::Spacing(4.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
     }.With(huxerui::Spacing(6.0F),
            huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));

@@ -1,5 +1,156 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-10-29：HuxerUI 同步自定义字体支持
+
+代码快照：`1dcd040` 加原有工作区，应用版本保持 0.3.77；HuxerUI 独立依赖与各平台
+CI 固定到已发布的 `5dd4009a3f1bb70a4d617fbedf3e5631a7b49a3d`，包含官方
+`03885df` 的自定义字体和主题排版支持。复用另一个任务完成的合并，不新增框架提交；
+保留现有页面修改、扩展库固定版本与 Android Java/native 同源约束。
+
+字体公共类型布局变化后，Windows/MSVC 使用原构建配置执行
+`cmake --build build --clean-first --parallel 6`，主程序、UI codegen 和测试目标全部通过。
+`./run.ps1 --version` 在终端输出 v0.3.77；`git diff --check` 通过。
+`ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required --parallel 3`
+实际为 26/28 通过（63.88s），包含生产 page_transition、ui_resources、persistence、
+CPS、DNS/TLS、个人规则集运行、升级检查/异步/交接与 VPN 回归。
+`windows_service` 报 `Service pipe unavailable (Win32 2)`；`windows_physical_dns_wfp`
+无法添加 WFP fixture sublayer。两项保留在门禁中，未将本机环境限制记作通过。
+
+框架维护副本完整重编后，25 项 CTest 全部通过；Android 渲染/JNI 源码的 NDK
+ARM64/API 23 语法检查和 JDK 17 下的 `:HuxerUI:compileDebugJavaWithJavac` 通过。
+应用以独占临时 APPDATA 启动，实际检查深色首页文字、流量图和零数据圆环图，随后关闭
+隔离实例。未运行应用 Android APK、其它平台原生构建、真实 VPN 或安装/发布验收。
+
+## 2026-10-29：新建订阅类型选择弱化
+
+代码快照：`1dcd040` 加本轮工作区，版本保持 0.3.77。新建订阅页面与弹窗共用的
+类型分段控件改为选中项透明底色、primary 文字和原有细描边；局部继承当前控件样式，
+选中交互状态层改用 primary，保留原有尺寸、焦点、类型切换与表单状态。
+Windows MSVC 执行 `cmake --build build --target clash-flux test_page_transition --parallel 4`
+通过，包含 HuxerUI codegen；
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+2/2 通过（73.02s）。`./run.ps1 --version` 输出 v0.3.77，`git diff --check` 通过。
+未进行原生窗口人工视觉检查或 Android 真机验收；未提交或发布。
+
+## 2026-10-29：窄屏运行诊断二级页
+
+代码快照：`1dcd040` 加本轮工作区，版本保持 0.3.77。运行诊断在 Compact（含桌面窄窗）
+经统一 NavigationStack 进入二级页，覆盖根页胶囊导航，复用 SecondaryPageTransition 与返回 Pop；
+宽屏入口保留弹窗。页面无弹窗宽高上限，不重复显示内容标题/关闭按钮，放大后保留页面身份。
+页面/弹窗分别用 UseState 保留完整目标输入，采集、取消、报告、复制和保存复用原应用模型与任务域。
+
+Windows MSVC 执行 `cmake --build build --target clash-flux test_page_transition --parallel 4`
+通过，包含 HuxerUI codegen。新增输入回归初期因等待聚焦光标完全静止而超时，改为正常帧推进后，
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+2/2 通过（71.83s）。检查 320/420/960/390pt 页面内容尺寸、输入保留和无重复标题/关闭按钮；
+原有诊断三语、报告滚动、导出/取消、短窗弹窗及导航栈回归继续通过。
+`./run.ps1 --version` 输出 v0.3.77，`git diff --check` 通过。
+未进行原生窗口人工检查、Android 真机返回/手势或实际网络诊断验证；未提交或发布。
+
+## 2026-10-29：来源后缀统一按数量判断
+
+代码快照：`1dcd040` 加本轮工作区，版本保持 0.3.77。移除代理显示名判断中的
+desktop 参数及平台条件编译，各平台统一按对象目录中的不同实际 source ID 数量显示后缀。
+手机沿用单活动订阅能力约束，自然显示原名；不改变运行 tag 或多订阅能力边界。
+Windows MSVC 构建 `clash-flux` / `test_page_transition` 通过（含 HuxerUI codegen）；
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+2/2 通过（22.14s），覆盖空目录、内置对象、单来源多对象和多来源的通用判断。
+`./run.ps1 --version` 输出 v0.3.77，`git diff --check` 通过。
+未进行 Android 真机、原生窗口人工或真实多订阅 VPN 验证；未提交或发布。
+
+## 2026-10-29：代理名称按实际多来源显示后缀
+
+代码快照：`1dcd040` 加本轮工作区，版本保持 0.3.77。桌面代理页及托盘线路菜单
+仅在当前运行/预览对象目录包含多个不同 source ID 时加订阅名后缀；单来源显示原始名称，
+不统计已保存但未参与的订阅、同来源的多个对象或无来源的内置对象。手机保持原名。
+只更新显示标签，运行 tag、选择/测速参数与稳定 Key 保持原样。
+Windows MSVC 构建 `clash-flux` / `test_page_transition` 通过，包含 HuxerUI codegen；
+初次链接被运行实例锁定，按已有授权关闭构建目录中的调试实例后重试通过。
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+2/2 通过（52.41s），覆盖空目录、单来源多对象、多来源、手机及原始名称标点保留。
+`./run.ps1 --version` 输出 v0.3.77，`git diff --check` 通过。
+未进行原生窗口人工检查、真实多订阅 VPN 或 Android 真机验证；未提交或发布。
+
+## 2026-10-29：宽屏订阅更新时间底部对齐
+
+代码快照：`1dcd040` 加本轮工作区，版本保持 0.3.77。宽屏订阅卡的相对更新时间
+移至进度条下方左侧，底行高 16pt，与窄屏一致；卡高保留 180pt，拖动预览和加载骨架同步。
+移除卡片上的自动更新间隔提示，保留参与状态，自动更新配置和调度不变。
+运行调试实例退出后重试 `cmake --build build --target clash-flux test_page_transition --parallel 4`
+通过，包含 HuxerUI codegen；`ctest --test-dir build --output-on-failure --no-tests=error
+-R '^(page_transition|ui_resources)$'` 为 2/2 通过（21.40s）。
+`./run.ps1 --version` 输出 v0.3.77，`git diff --check` 通过。
+未进行原生窗口人工检查、Android 真机或完整平台验证；未提交或发布。
+
+## 2026-10-29：订阅地址精简与长期有效
+
+代码快照：`1dcd040` 加本轮工作区，版本保持 0.3.77。宽屏订阅卡和拖动预览只显示
+域名/IP 及显式端口，IPv6 保留方括号，省略协议、用户信息、路径、查询和片段；
+按实际可用宽度省略，原始地址仍供下载与编辑。覆盖域名、IPv4、IPv6、显式端口、用户信息和无效地址。
+初次链接因运行中的调试 EXE 被 Windows 锁定而失败；获用户授权后关闭指定实例，再次构建通过。
+
+用户给定订阅以默认 TLS 验证只读获取，HEAD 返回 501，GET 返回 200 且元数据包含空的 `expire=`；
+响应正文丢弃，完整地址、token 和订阅内容未写入仓库。显式空/0/-1 到期值现在归一为 -1，
+宽窄卡片及拖动预览显示「长期有效」；缺失/畸形值仍为未知，正数继续显示到期日期。
+沿用现有有符号 expire_at 列，SQLite schema 不变，历史 0 不批量改写，下一次成功刷新识别。
+
+Windows MSVC 执行 `cmake --build build --target clash-flux test_page_transition test_persistence --parallel 4`
+和最终主目标构建通过，包含 HuxerUI codegen 与三语资源生成。
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources|persistence)$'`
+3/3 通过（30.48s），包含永久/有限/未知到期解析、真实 SQLite 锁竞争和重开、多来源/稳定 ID/文件保留，
+以及长期有效文案的卡片布局。`./run.ps1 --version` 输出 v0.3.77，`git diff --check` 通过。
+未进行原生窗口人工检查、Android 真机或完整平台验证；未提交、打标签或发布。
+
+## 2026-10-29：窄屏更新时间移至左下角
+
+代码快照：`1dcd040` 加本轮工作区，版本保持 0.3.77。Compact 订阅的相对更新时间
+改在进度条下方左对齐，独占 16pt 底行；名称恢复单行。窄屏卡高从 88pt 调整为 108pt，
+实际卡片、拖动预览、加载骨架和 VirtualGrid 行高估算共用该高度，卡距保持 6pt。
+Windows MSVC 执行 `cmake --build build --target clash-flux test_page_transition --parallel 4`
+通过（含 HuxerUI codegen）；`ctest --test-dir build --output-on-failure --no-tests=error
+-R '^(page_transition|ui_resources)$'` 2/2 通过（21.61s）。检查更新时间位于进度条下方、
+左边缘对齐且不超出卡片，并覆盖响应式骨架尺寸、虚拟滚动和菜单点击。
+`./run.ps1 --version` 输出 v0.3.77，`git diff --check` 通过。
+未进行原生窗口人工检查、Android 真机或完整平台验证；未提交或发布。
+
+## 2026-10-29：窄屏订阅使用相对更新时间
+
+代码快照：`1dcd040` 加本轮工作区，版本保持 0.3.77。根据用户补充要求，名称下方改为
+「更新于 刚刚 / 5分钟前 / 2小时前 / 3天前」等相对时间，实际卡片与拖动预览复用
+现有 `FormatRelativeTime`；缺失仍显示「未拉取」。布局、卡高及到期日期格式保持原样。
+Windows MSVC 构建 `clash-flux` / `test_page_transition` 通过（含 HuxerUI codegen）；
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+2/2 通过（61.21s），包含相对时间文案的标题槽几何回归。
+`./run.ps1 --version` 输出 v0.3.77，`git diff --check` 通过。
+未进行原生窗口人工检查或 Android 真机验证；未提交或发布。
+
+## 2026-10-29：窄屏订阅最后更新日期
+
+代码快照：`1dcd040` 加本轮工作区，版本保持 0.3.77。Compact 订阅卡在名称下方显示
+本地日期「更新于 YYYY-MM-DD」，无更新时间显示「未拉取」，PPTP 保留原连接信息。
+实际卡片与拖动预览共用日期槽，加载骨架增加对应占位；保持 88pt 卡高及既有流量/到期位置。
+Windows MSVC 执行 `cmake --build build --target clash-flux test_page_transition --parallel 4`
+通过，包含 HuxerUI codegen；`ctest --test-dir build --output-on-failure --no-tests=error
+-R '^(page_transition|ui_resources)$'` 为 2/2 通过（21.23s），检查窄屏及宽窄往返时日期
+位于名称下方、不覆盖状态/菜单/流量，卡高、虚拟滚动及菜单点击保持正常。
+`./run.ps1 --version` 输出 v0.3.77，`git diff --check` 通过。
+未进行原生窗口人工检查、Android 真机或完整平台回归；未提交或发布。
+
+## 2026-10-29：订阅加载骨架响应式尺寸
+
+代码快照：`1dcd040` 加本轮工作区，版本保持 0.3.77。订阅加载改用生产
+`ProfileLoadingSkeleton`，与实际列表共用列宽策略、卡高、行距和分页留白；
+桌面宽屏最小列宽 340pt、卡高 180pt，Compact 单列高 88pt、行距 6pt，手机宽视口保留单列。
+首载的窄窗/手机也显示骨架，标题搜索栏沿用正常页面，Compact 滚动尾部避让悬浮导航。
+
+Windows MSVC 执行 `cmake --build build --target clash-flux test_page_transition --parallel 4`
+及最终主目标增量构建通过，包含 HuxerUI codegen。
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+2/2 通过（25.27s）。生产骨架在无窗口 Runtime 检查 320/599/600/695/696/1044/1600/400pt
+宽窄往返的实际卡片几何、列数、行列间距和边距，并检查深浅色流光不引发重组或布局变化。
+`./run.ps1 --version` 输出 v0.3.77，`git diff --check` 通过。
+未进行原生窗口人工检查、Android 真机验收或完整平台回归；未发布新版本。
+
 ## 2026-10-29：HUI fork 更新与 VMess 节点订阅
 
 代码快照：`54e96c8` 加本轮未提交工作区，应用版本保持 0.3.76。

@@ -610,14 +610,14 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 }
 #endif
 
-[[huxerui::composable]] huxerui::View RuntimeDiagnosticsDialog(huxerui::DialogContext context) {
+[[huxerui::composable]] huxerui::View RuntimeDiagnosticsBody(
+    huxerui::State<huxerui::TextEditingValue> target, std::function<void()> onClose, bool fullPage) {
     const auto control = UseCoreControl();
     const auto model = control.model;
     const auto clipboard = control.clipboard;
     const auto picker=huxerui::UseService<huxerui::FilePicker>();
     const auto toast=UseFluxToast();
     const std::string reportType=huxerui::UseString(Localized("诊断报告"));
-    huxerui::State<huxerui::TextEditingValue> target{huxerui::TextEditingValue{}};
     const bool busy = model->diagnosticsBusy.Get();
     const auto report = model->diagnosticsReport.Get();
     const auto save=[control,model,picker,toast,report,reportType] {
@@ -659,19 +659,42 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                     ? std::string("diagnostic=cancelled-or-superseded; results discarded") : std::move(result));
         });
     };
-    return DialogCard(RuntimeDiagnosticsContent(target, busy, !control.Busy(), report, start,
+    return RuntimeDiagnosticsContent(target, busy, !control.Busy(), report, start,
         [model] { model->diagnosticsCancel.request_stop(); },
         [clipboard, report, toast] {
             toast.Show(Localized(clipboard && clipboard->WriteText(*report)
                 ? "已复制到剪贴板" : "复制失败"));
         },
-        [context] { context.Dismiss(); },save,picker->CanSaveFiles(),model->diagnosticsExportBusy.Get()));
+        onClose, save, picker->CanSaveFiles(), model->diagnosticsExportBusy.Get(), fullPage);
+}
+
+[[huxerui::composable]] huxerui::View RuntimeDiagnosticsDialog(huxerui::DialogContext context) {
+    const auto target = huxerui::UseState(huxerui::TextEditingValue{});
+    return DialogCard(RuntimeDiagnosticsBody(target, [context] { context.Dismiss(); }, false));
+}
+
+[[huxerui::composable]] huxerui::View RuntimeDiagnosticsPage(std::function<void()> onBack) {
+    const auto target = huxerui::UseState(huxerui::TextEditingValue{});
+    const auto body = RuntimeDiagnosticsBody(target, onBack, true);
+    if (kPageTitlesInWindow && huxerui::UseViewportClass() != huxerui::ViewportClass::Compact) {
+        const auto back = huxerui::IconButton(app::images::arrow_back, Localized("返回上一页")).OnClick(onBack);
+        return PageScaffold(Localized("运行诊断"), {}, body, true, false, true, std::nullopt, back)
+            .On<huxerui::ViewEvents::BackRequested>(onBack);
+    }
+    return SecondaryPageScaffold(huxerui::Text(Localized("运行诊断"), huxerui::TextRole::Title),
+        {}, body, onBack);
 }
 
 [[huxerui::composable]] huxerui::View RuntimeDiagnosticsEntry() {
     const auto dialog = huxerui::UseDialog();
+    const auto navigation = huxerui::UseNavigation();
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const float inset = ResolveIslandTheme(huxerui::UseTheme()).island_padding;
-    return SettingNavigationItem(Localized("运行诊断"), app::images::info, [dialog] {
+    return SettingNavigationItem(Localized("运行诊断"), app::images::info, [dialog, navigation, compact] {
+        if (compact) {
+            navigation.Push(RuntimeDiagnosticsRoutePage);
+            return;
+        }
         dialog.Show([](huxerui::DialogContext context) { return RuntimeDiagnosticsDialog(context); });
     }, inset).Key("settings-diagnostics-full-width");
 }

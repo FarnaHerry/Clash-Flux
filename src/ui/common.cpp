@@ -425,11 +425,6 @@ std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
 // ---- 策略组快照：唯一来源（见 proxies_model.h）------------------------------
 
 ProxiesSnapshot FetchProxiesSnapshot() {
-#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
-    constexpr bool qualifySources = false;
-#else
-    constexpr bool qualifySources = true;
-#endif
     ProxiesSnapshot next;
     next.loaded = true;
     std::string body;
@@ -464,8 +459,11 @@ ProxiesSnapshot FetchProxiesSnapshot() {
         if (decoded) {
             next.proxies = std::make_shared<const wire::Proxies>(std::move(decoded.value));
             const auto catalog = store::coreStore().proxySourceObjects(next.source == ProxiesSource::Preview);
-            if (catalog) for (const auto& object : *catalog) {
-                next.labels[object.tag] = ProxyObjectDisplayName(object.objectId, object.sourceName, qualifySources);
+            if (catalog) {
+                const bool qualifySources = ShouldQualifyProxySources(*catalog);
+                for (const auto& object : *catalog) {
+                    next.labels[object.tag] = ProxyObjectDisplayName(object.objectId, object.sourceName, qualifySources);
+                }
             }
             for (const auto& entry : next.proxies->entries) {
                 const auto& tag = entry.first;

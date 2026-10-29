@@ -33,7 +33,7 @@ export struct Profile {
     std::string homepage;           // 订阅提供方首页（右键「首页」跳转）
     std::int64_t usedBytes = 0;     // 已用流量（upload + download）
     std::int64_t totalBytes = 0;    // 总流量（0 = 未知/不限量，进度条摆满）
-    std::int64_t expireAt = 0;      // 到期时间（Unix 秒；0 = 未提供，不显示该行）
+    std::int64_t expireAt = 0;      // 到期时间（Unix 秒；0 = 未提供，-1 = 明确长期有效）
 
     bool operator==(const Profile&) const = default;  // State 变更检测
 };

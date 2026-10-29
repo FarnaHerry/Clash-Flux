@@ -476,6 +476,8 @@ huxerui::View PageScaffold(huxerui::StringVariant title, huxerui::View actions,
                            bool scrollToContentEdges = false);
 huxerui::View AboutRoutePage();
 huxerui::View AboutPage(std::function<void()> onBack);
+huxerui::View RuntimeDiagnosticsPage(std::function<void()> onBack);
+huxerui::View RuntimeDiagnosticsRoutePage();
 huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     huxerui::View actions, huxerui::View content,
                                     std::function<void()> onBack,

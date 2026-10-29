@@ -184,14 +184,6 @@ struct ProfileReorderSession {
         .With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
         .Key("profiles-page");
 
-    if (kPageTitlesInWindow && !compact && !profilesModel->loaded.Get()) {
-        return huxerui::Column {
-          linkEffects,
-          PageLoadingScaffold(Localized("订阅"), theme),
-        }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
-            .Key("profiles-page");
-    }
-
     const auto buildContent = [&]() -> huxerui::View {
 #include "ui/profiles_page_actions.inc"
 #include "ui/profiles_page_layout.inc"

@@ -851,6 +851,12 @@ huxerui::PageTransition SecondaryPageTransition(
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
 
+[[huxerui::composable]] huxerui::View RuntimeDiagnosticsRoutePage() {
+    const auto navigation = huxerui::UseNavigation();
+    return RuntimeDiagnosticsPage([navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+
 [[huxerui::composable]] huxerui::View AboutRoutePage() {
     const auto navigation = huxerui::UseNavigation();
     return AboutPage([navigation] { static_cast<void>(navigation.Pop()); })

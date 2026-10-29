@@ -3,6 +3,9 @@
 // 订阅 = db::Profile 行 + profiles/<id>.yaml 文件。importUrl 下载落盘；
 // activate 把启用订阅交给 coreStore 重启内核生效。线程契约同 core_store：
 // 标「阻塞」的方法（网络下载 / 内核重启）UI 必须经 RunOnTaskThread 调用。
+module;
+#include "subscription_expiry.h"
+
 export module clashflux.store.profiles;
 
 import std;
@@ -727,7 +730,7 @@ private:
     }
 
     // 解析 subscription-userinfo：upload=..; download=..; total=..; expire=..
-    // （单位字节；expire 为 Unix 秒；键值两侧空白容忍；未知键忽略）。
+    // （单位字节；expire 为 Unix 秒；显式空/0/-1 表示长期有效，缺失仍未知）。
     static void parseUserInfo(const std::string& value, std::int64_t& used,
                               std::int64_t& total, std::int64_t& expire) {
         std::int64_t upload = 0;
@@ -755,11 +758,12 @@ private:
                 std::int64_t parsed = 0;
                 const auto [ptr, ec] = std::from_chars(
                     num.data(), num.data() + num.size(), parsed);
-                if (ec == std::errc()) {
+                if (key == "expire") {
+                    expireIn = clashflux::subscription::ParseExpiryValue(num);
+                } else if (ec == std::errc()) {
                     if (key == "upload") upload = parsed;
                     else if (key == "download") download = parsed;
                     else if (key == "total") totalIn = parsed;
-                    else if (key == "expire") expireIn = parsed;
                 }
             }
             if (end == std::string::npos) break;

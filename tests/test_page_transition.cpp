@@ -458,6 +458,7 @@ void testTextDocuments() {
 bool diagnosticsFixtureDark = false;
 bool diagnosticsFixtureCanSave = true;
 bool diagnosticsFixtureSaving = false;
+bool diagnosticsFixtureFullPage = false;
 std::string diagnosticsFixtureReport = "redacted-report";
 [[huxerui::composable]] huxerui::View DiagnosticsFixture() {
     auto target = huxerui::UseState(huxerui::TextEditingValue{});
@@ -465,7 +466,7 @@ std::string diagnosticsFixtureReport = "redacted-report";
     return clashflux::ui::RuntimeDiagnosticsContent(target, busy.Get(), true, std::make_shared<const std::string>(diagnosticsFixtureReport),
         [busy] { ++diagnosticsStarts; busy = true; }, [busy] { busy = false; },
         [] { ++diagnosticsCopies; }, [] { ++diagnosticsCloses; },[] { ++diagnosticsSaves; },
-        diagnosticsFixtureCanSave, diagnosticsFixtureSaving);
+        diagnosticsFixtureCanSave, diagnosticsFixtureSaving, diagnosticsFixtureFullPage);
 }
 huxerui::View DiagnosticsFixtureRoot() {
     auto spec = diagnosticsFixtureDark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
@@ -776,6 +777,28 @@ void testDiagnosticsThemeAndLayout() {
     }
     diagnosticsFixtureDark = diagnosticsFixtureSaving = false;
     diagnosticsFixtureReport = "redacted-report";
+    diagnosticsFixtureFullPage = true;
+    {
+        huxerui::testing::UiTest ui(kDiagnosticsApplication,
+            {.viewport = {390.0F, 800.0F}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        ui.Find(UiSelector::Key("diagnostics-target")).Tap();
+        ui.Find(UiSelector::Key("diagnostics-target")).EnterText("https://example.test/");
+        // A focused field keeps scheduling caret blinks, so it cannot settle.
+        ui.Pump(kSettle);
+        for (float width : {320.0F, 420.0F, 960.0F, 390.0F}) {
+            ui.SetWindowMetrics({.viewport = {width, 800.0F}});
+            ui.Pump(kSettle);
+            const auto bounds = ui.Find(UiSelector::Key("runtime-diagnostics-content")).One().bounds;
+            check(std::abs(bounds.width - width) < 0.5F && std::abs(bounds.height - 800.0F) < 0.5F,
+                  "diagnostics page fills its viewport across narrow and expanded sizes");
+            check(ui.Find(UiSelector::Key("diagnostics-target")).One().value == "https://example.test/" &&
+                  !ui.Find(UiSelector::Text("Close")).Exists() &&
+                  !ui.Find(UiSelector::Text("Runtime diagnostics")).Exists(),
+                  "page diagnostics retains input on resize and leaves title/back actions to its scaffold");
+        }
+    }
+    diagnosticsFixtureFullPage = false;
 }
 float colorDistance(huxerui::Color a, huxerui::Color b) {
     return std::abs(a.red - b.red) + std::abs(a.green - b.green) + std::abs(a.blue - b.blue);
@@ -1310,6 +1333,8 @@ huxerui::View LoadingSkeletonRoot() {
             if (model->ready.Get()) return huxerui::View{huxerui::Text("SKELETON-READY")};
             if (!model->active.Get()) return huxerui::View{huxerui::Text("SKELETON-INACTIVE")};
             const auto& current = huxerui::UseTheme();
+            if (model->kind.Get() >= 3) return clashflux::ui::ProfileLoadingSkeleton(current,
+                huxerui::UseViewportClass() == huxerui::ViewportClass::Compact, model->kind.Get() == 3);
             return model->kind.Get() == 2 ? clashflux::ui::ProxyLoadingSkeleton(current)
                 : clashflux::ui::PageLoadingSkeleton(current, model->kind.Get() == 1);
         }));
@@ -1327,10 +1352,11 @@ void testSkeletonShimmer() {
         model->dark = dark;
         for (float width : {320.0F, 960.0F}) {
             ui.SetWindowMetrics({.viewport = {width, 600.0F}});
-            for (int kind : {0, 1, 2}) {
+            for (int kind : {0, 1, 2, 3}) {
                 model->kind = kind;
                 for (int frame = 0; frame < 4; ++frame) ui.Pump(std::chrono::milliseconds(50));
-                const char* key = kind == 2 ? "proxy-loading-skeleton" : "page-loading-skeleton";
+                const char* key = kind == 3 ? "profile-loading-skeleton"
+                    : kind == 2 ? "proxy-loading-skeleton" : "page-loading-skeleton";
                 const auto bounds = ui.Find(UiSelector::Key(key)).One().bounds;
                 const auto before = ui.CaptureSnapshot();
                 const int compositions = model->compositions;
@@ -1342,6 +1368,28 @@ void testSkeletonShimmer() {
             }
         }
     }
+    for (int kind : {3, 4}) {
+        model->kind = kind;
+        for (float width : {320.0F, 599.0F, 600.0F, 695.0F, 696.0F, 1044.0F, 1600.0F, 400.0F}) {
+            ui.SetWindowMetrics({.viewport = {width, 600.0F}});
+            ui.Pump(std::chrono::milliseconds(50));
+            const auto first = ui.Find(UiSelector::Key("profile-loading-item-0")).One().bounds;
+            const auto second = ui.Find(UiSelector::Key("profile-loading-item-1")).One().bounds;
+            const bool compact = width < 600.0F;
+            const float columns = compact || kind == 4 ? 1.0F :
+                std::max(1.0F, std::floor(width / 348.0F));
+            const float expectedWidth = (width - 8.0F - (columns - 1.0F) * 8.0F) / columns;
+            check(std::abs(first.height - (compact ? 108.0F : 180.0F)) < 0.5F &&
+                  std::abs(first.width - expectedWidth) < 0.5F && std::abs(first.x - 4.0F) < 0.5F,
+                  "profile loading cards match real card height, adaptive tracks and section insets");
+            check(columns > 1.0F ? std::abs(second.y - first.y) < 0.5F &&
+                      std::abs(second.x - first.x - first.width - 8.0F) < 0.5F
+                  : std::abs(second.y - first.y - first.height - (compact ? 6.0F : 8.0F)) < 0.5F,
+                  "profile loading responds across breakpoints and preserves mobile single-column capability");
+        }
+    }
+    model->kind = 2;
+    ui.Pump(std::chrono::milliseconds(50));
     ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background);
     ui.PumpAndSettle();
     const auto background = ui.CaptureSnapshot();
@@ -1610,7 +1658,8 @@ huxerui::View CompactProfileCardsRoot() {
           huxerui::VirtualGrid(100, [colors, compact, menuCount](std::size_t index) {
               const auto suffix = std::to_string(index);
               const std::string traffic = index % 4 == 1 || index % 4 == 3 ? "" : "12 / 100 GB";
-              const std::string expiry = index % 4 >= 2 ? "" : "Expires 2026-11-30";
+              const std::string expiry = index % 4 == 2 ? "Never expires"
+                  : index % 4 == 3 ? "" : "Expires 2026-11-30";
               auto body = CompactProfileCardContent("A very long subscription name that needs ellipsis",
                   "By rules", colors,
                   huxerui::Text("=").With(huxerui::Frame{.width = 20.0F}),
@@ -1619,7 +1668,8 @@ huxerui::View CompactProfileCardsRoot() {
                             huxerui::Semantics{.role = huxerui::SemanticRole::Button})
                       .OnClick([menuCount] { menuCount = menuCount.Get() + 1; }).Key("profile-more"),
                   CompactProfileTrafficContent(traffic, expiry,
-                      ProfileTrafficProgress(traffic.empty() ? 0 : 12, traffic.empty() ? 0 : 100), colors.muted));
+                      ProfileTrafficProgress(traffic.empty() ? 0 : 12, traffic.empty() ? 0 : 100), colors.muted),
+                  false, {}, index % 2 == 0 ? "Updated 5 minutes ago" : "Not fetched");
               return huxerui::Column {body}.With(
                   huxerui::Frame{.height = ProfileCardHeight(compact)},
                   huxerui::Padding(huxerui::EdgeInsets::Symmetric(10.0F, 8.0F)),
@@ -1637,6 +1687,12 @@ const huxerui::Application kCompactProfileCardsApplication{CompactProfileCardsRo
 
 void testCompactProfileCards() {
     using namespace clashflux::ui;
+    check(ProfileSubscriptionAddress("https://example.com/api/sub?token=secret#private") == "example.com" &&
+          ProfileSubscriptionAddress("http://141.164.62.251:49/video/private?mu=2") == "141.164.62.251:49" &&
+          ProfileSubscriptionAddress("https://user:secret@example.com:443/private") == "example.com:443" &&
+          ProfileSubscriptionAddress("http://[2001:db8::1]:8080/sub") == "[2001:db8::1]:8080" &&
+          ProfileSubscriptionAddress("relative/private?token=secret") == "—",
+          "subscription address labels retain only host and explicit port, excluding credentials and private paths");
     huxerui::testing::UiTest ui(kCompactProfileCardsApplication, {.viewport = {320.0F, 700.0F}});
     ui.PumpAndSettle();
     for (float width : {320.0F, 599.0F, 960.0F, 400.0F, 320.0F}) {
@@ -1649,6 +1705,7 @@ void testCompactProfileCards() {
             check(std::abs(bounds.height - ProfileCardHeight(width < 600.0F)) < 0.5F,
                   "every quota/expiry combination shares the responsive card height");
             const auto name = card.Find(UiSelector::Key("profile-compact-name")).One().bounds;
+            const auto updated = card.Find(UiSelector::Key("profile-compact-updated")).One().bounds;
             const auto status = card.Find(UiSelector::Key("profile-compact-status")).One().bounds;
             const auto more = card.Find(UiSelector::Key("profile-more")).One().bounds;
             const auto info = card.Find(UiSelector::Key("profile-traffic-label")).One().bounds;
@@ -1656,6 +1713,10 @@ void testCompactProfileCards() {
             check(name.x + name.width <= status.x && status.x + status.width <= more.x &&
                   more.x + more.width <= bounds.x + bounds.width,
                   "long names leave status and the more button visible at narrow widths");
+            check(updated.y >= bar.y + bar.height && updated.y + updated.height <= bounds.y + bounds.height &&
+                  std::abs(updated.x - bar.x) < 0.5F &&
+                  updated.x + updated.width <= bounds.x + bounds.width,
+                  "relative update time stays below the progress bar at the card's left edge");
             check(bar.y + bar.height <= bounds.y + bounds.height &&
                   std::abs(bar.height - 3.0F) < 0.5F,
                   "the traffic bar stays inside the compact card");
@@ -1709,7 +1770,14 @@ void testProfileListSections() {
     check(ProxyObjectDisplayName("Group · original", "Subscription", false) == "Group · original" &&
           ProxyObjectDisplayName("Group · original", "Subscription", true) == "Group · original · Subscription" &&
           ProxyObjectDisplayName("DIRECT", "", true) == "DIRECT",
-          "phone proxy names use original catalog names while desktop retains source qualification");
+          "proxy labels preserve original punctuation and only append source names when requested");
+    struct SourceObject { std::string sourceId; };
+    const std::vector<SourceObject> singleSource{{"profile:41"}, {"profile:41"}, {""}};
+    const std::vector<SourceObject> multipleSources{{"profile:41"}, {"profile:42"}, {"profile:41"}};
+    check(!ShouldQualifyProxySources(std::vector<SourceObject>{}) &&
+          !ShouldQualifyProxySources(std::vector<SourceObject>{{""}, {""}}) &&
+          !ShouldQualifyProxySources(singleSource) && ShouldQualifyProxySources(multipleSources),
+          "all platforms qualify multiple distinct catalog sources, ignoring built-ins and same-source objects");
 }
 
 huxerui::View UnifiedProfileListRoot() {
@@ -4886,8 +4954,12 @@ int main() {
     testServiceInstallContinuation();
     testInboundSettings();
     testConnectionList();
-    testDiagnosticsContent();
-    testDiagnosticsThemeAndLayout();
+    try { testDiagnosticsContent(); testDiagnosticsThemeAndLayout(); }
+    catch (const std::exception& error) {
+        diagnosticsFixtureFullPage = false;
+        std::fprintf(stderr, "FAIL: diagnostics presentation: %s\n", error.what());
+        ++failures;
+    }
     testPptpProgressResources();
     testVpnPublication();
     testCustomThemeColors();

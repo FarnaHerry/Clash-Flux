@@ -10,6 +10,7 @@
 #include <huxerui/testing/ui_test.h>
 
 #include "sqlite_schema.h"
+#include "subscription_expiry.h"
 
 #include <atomic>
 #include <chrono>
@@ -132,6 +133,7 @@ void SeedProfiles(persistence::Persistence& store) {
     db::Profile remote;
     remote.id = 41; remote.name = "remote"; remote.file = "shared.yaml";
     remote.url = "https://example.test/remote";
+    remote.expireAt = clashflux::subscription::kNeverExpires;
     store.saveProfile(remote);
     db::Profile local;
     local.id = 42; local.name = "local"; local.type = "local"; local.file = "./shared.yaml";
@@ -164,7 +166,8 @@ Task<void> ProfileOrderPhase() {
               rows[2].id == 41 && rows[0].type == "local" &&
               rows[1].url == "https://example.test/other" &&
               rows[2].url == "https://example.test/remote" &&
-              rows[0].file == "./shared.yaml" && rows[2].file == "shared.yaml",
+              rows[0].file == "./shared.yaml" && rows[2].file == "shared.yaml" &&
+              rows[2].expireAt == clashflux::subscription::kNeverExpires,
           "latest card order must survive reopen with all sources and stable references");
     Check(ReadFile(fixture.files / "shared.yaml") == shared &&
               ReadFile(fixture.files / "unique.yaml") == unique,
@@ -397,6 +400,8 @@ Task<void> InterleavedPhase(TaskScope tasks) {
         Check(rows.size() == (scenario == 3 ? 2 : 3) && rows.back().id == (scenario == 6 ? 44 : 43),
               "interleaved reopen retains all independent sources/stable IDs");
         for (const db::Profile& row : rows) {
+            if (row.id == 41) Check(row.expireAt == clashflux::subscription::kNeverExpires,
+                "explicit unlimited expiry survives interleaved flush and reopen");
             if (row.id == 43) {
                 Check(row.expireAt == 1893456000,
                       "subscription expiry timestamp survives flush and reopen");
@@ -902,6 +907,12 @@ View PersistenceTestApp() {
 } // namespace
 
 int main() {
+    using clashflux::subscription::ParseExpiryValue;
+    Check(ParseExpiryValue("") == -1 && ParseExpiryValue("0") == -1 && ParseExpiryValue("-1") == -1 &&
+              ParseExpiryValue("1893456000") == 1893456000 && ParseExpiryValue("-2") == 0 &&
+              ParseExpiryValue("0junk") == 0 && ParseExpiryValue("invalid") == 0 &&
+              ParseExpiryValue("9999999999999999999999") == 0,
+          "explicit permanent expiry is distinct from invalid or unknown metadata");
     StartWatchdog();
     const Application application{PersistenceTestApp};
     testing::UiTest ui{application, testing::UiTestOptions{.viewport = {480.0F, 320.0F}}};

@@ -144,12 +144,9 @@
                                      }
                                      return std::move(slot).Key("profile-slot-" + std::to_string(index));
                                  })
-                                 .Columns(!group_by_type || compact
-                                              ? huxerui::GridColumns::Fixed(1)
-                                              : huxerui::GridColumns::Adaptive(
-                                                    kCardWidth))
+                                 .Columns(ProfileGridColumns(compact, group_by_type))
                                  .EstimatedRowExtent(ProfileCardHeight(compact))
-                                 .RowSpacing(compact ? kCompactProfileCardSpacing : kSectionCardSpacing)
+                                 .RowSpacing(ProfileCardRowSpacing(compact))
                                  .ColumnSpacing(kSectionCardSpacing)
                                  .With(huxerui::Grow(1.0F), huxerui::ScrollBar(),
                                        huxerui::DropTarget::Accepts<ProfileDragPayload>())
@@ -247,7 +244,9 @@
     huxerui::View profileListPage = PageScaffold(
         Localized("订阅"),
         std::move(pageActions),
-        profiles.Empty()
+        !profilesModel->loaded.Get()
+            ? ProfileLoadingSkeleton(theme, compact, group_by_type, active)
+            : profiles.Empty()
             ? EmptyState(Localized("还没有订阅。点击右上角「新建订阅」导入。"), app::images::request)
             : std::move(profileBody),
         compact, true, true,

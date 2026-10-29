@@ -23,6 +23,8 @@ huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle 
 // First real snapshot wins immediately; there is no minimum loading duration.
 huxerui::View PageLoadingSkeleton(const huxerui::ThemeSpec& theme, bool list = false, bool active = true);
 huxerui::View ProxyLoadingSkeleton(const huxerui::ThemeSpec& theme);
+huxerui::View ProfileLoadingSkeleton(const huxerui::ThemeSpec& theme,
+    bool compact, bool groupByType, bool active = true);
 
 inline huxerui::View PageLoadingScaffold(huxerui::StringVariant title,
     const huxerui::ThemeSpec& theme, bool list = false) {

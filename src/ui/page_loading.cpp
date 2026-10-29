@@ -1,10 +1,13 @@
 #include "page_loading.h"
 #include "theme_colors.h"
+#include "profile_card_layout.h"
+#include "profile_list_layout.h"
 
 #include <algorithm>
 #include <cmath>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace clashflux::ui {
 
@@ -115,10 +118,12 @@ private:
     double lastPaint_ = -1;
 };
 
-huxerui::View SkeletonCard(huxerui::View content, const huxerui::ThemeSpec& theme, float height) {
+huxerui::View SkeletonCard(huxerui::View content, const huxerui::ThemeSpec& theme, float height,
+    std::optional<huxerui::EdgeInsets> padding = std::nullopt) {
     const auto islands = ResolveIslandTheme(theme);
     return huxerui::Column {content}.With(
-        huxerui::Padding(islands.island_padding), huxerui::Frame{.height = height},
+        huxerui::Padding(padding.value_or(huxerui::EdgeInsets::All(islands.island_padding))),
+        huxerui::Frame{.height = height},
         huxerui::Background(islands.raised), huxerui::CornerRadius(islands.nested_radius),
         huxerui::Border(islands.outline_soft, kCardOutlineWidth), huxerui::ClipChildren(),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -168,6 +173,49 @@ huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle 
             .With(huxerui::Grow(1.0F));
     }
     return SkeletonLoadingRegion(content, shimmer).Key("page-loading-skeleton");
+}
+
+[[huxerui::composable]] huxerui::View ProfileLoadingSkeleton(
+    const huxerui::ThemeSpec& theme, bool compact, bool groupByType, bool active) {
+    const auto shimmer = UseSkeletonShimmer(theme, active);
+    const auto item = [theme, compact, shimmer](std::size_t index) -> huxerui::View {
+        if (index >= 8) return CompactFloatingNavigationFooter();
+        std::vector<huxerui::View> rows{
+            huxerui::Row {
+              SkeletonBlock(shimmer, 140.0F, 16.0F).With(huxerui::Grow(1.0F)),
+              SkeletonBlock(shimmer, 20.0F, 20.0F),
+            }.With(huxerui::Frame{.height = CompactProfileCardHeadingHeight(false)},
+                huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        };
+        if (!compact) {
+            rows.push_back(SkeletonBlock(shimmer, 180.0F, 12.0F));
+            rows.push_back(SkeletonBlock(shimmer, 112.0F, 12.0F));
+            rows.push_back(huxerui::Spacer());
+        }
+        rows.push_back(huxerui::Row {
+          SkeletonBlock(shimmer, 112.0F, 12.0F).With(huxerui::Grow(1.0F)),
+          SkeletonBlock(shimmer, 72.0F, 12.0F),
+        }.With(huxerui::Frame{.height = 20.0F}, huxerui::Spacing(6.0F),
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
+        rows.push_back(huxerui::Row {
+          SkeletonBlock(shimmer, 0.0F, 3.0F).With(huxerui::Grow(1.0F)),
+        });
+        rows.push_back(huxerui::Row {
+          SkeletonBlock(shimmer, 96.0F, 11.0F),
+        }.With(huxerui::Frame{.height = 16.0F},
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
+        return SkeletonCard(huxerui::Column(rows).With(
+            huxerui::Spacing(4.0F), huxerui::Grow(1.0F),
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+            theme, ProfileCardHeight(compact), huxerui::EdgeInsets::Symmetric(10.0F, 8.0F))
+            .Key("profile-loading-item-" + std::to_string(index));
+    };
+    const auto grid = huxerui::VirtualGrid(8 + (compact ? 1U : 0U), item)
+        .Columns(ProfileGridColumns(compact, groupByType))
+        .EstimatedRowExtent(ProfileCardHeight(compact))
+        .RowSpacing(ProfileCardRowSpacing(compact)).ColumnSpacing(kSectionCardSpacing)
+        .With(huxerui::Grow(1.0F));
+    return SkeletonLoadingRegion(UnifiedProfileList(grid), shimmer).Key("profile-loading-skeleton");
 }
 
 [[huxerui::composable]] huxerui::View ProxyLoadingSkeleton(const huxerui::ThemeSpec& theme) {

@@ -262,6 +262,11 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
     std::vector<huxerui::StringVariant> types{
         Localized("远程订阅"), Localized("本地文件")};
     if (pptp_supported) types.push_back(Localized("PPTP 内网"));
+    const auto& theme = huxerui::UseTheme();
+    auto typeStyle = huxerui::UseEnvironment<huxerui::SegmentedButtonStyle>();
+    typeStyle.selected_background = huxerui::Color::Transparent();
+    typeStyle.selected_label = theme.colors.primary;
+    typeStyle.selected_indication = ResolveFluxIndication(theme);
 
     huxerui::View typeFields;
     if (remote) {
@@ -366,10 +371,11 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                   fields.invalid_cert)};
 
     huxerui::View formFields = huxerui::Column {
-        huxerui::SegmentedButton(types, typeIndex)
-            .OnChanged([type = fields.type_index](std::size_t index) {
-                type = index;
-            }),
+        huxerui::ProvideEnvironment(typeStyle,
+            huxerui::SegmentedButton(types, typeIndex)
+                .OnChanged([type = fields.type_index](std::size_t index) {
+                    type = index;
+                })),
         typeFields,
         huxerui::TextField(fields.name.Get())
             .Label(Localized("名称（可选）"))

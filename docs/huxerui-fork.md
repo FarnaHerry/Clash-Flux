@@ -4,15 +4,22 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `b08302858fe7f3d6ff6d9c0b00a09c1ad0e6524b`，各平台 CI 共用
+Clash-Flux 当前固定 `5dd4009a3f1bb70a4d617fbedf3e5631a7b49a3d`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
 
+2026-10-29 更新到 `5dd4009`：复用已发布的 `farna/main` 合并提交，包含官方
+`03885df` 的自定义 TTF/OTF 字体、`FontFamily` 和主题排版字体继承支持，并保留 fork
+的渲染效果与窗口行为。应用现有调用兼容，无需修改页面代码或扩展库固定版本。
+本机独立 checkout 与 CI/Android 固定到上述完整 SHA；字体公共类型布局变化后完整重编。
+Windows 应用构建、版本检查、隔离首页显示与 26/28 项桌面回归通过；服务管道和 WFP
+fixture 两项仍受本机环境限制，详情见 [验收记录](l1-l2-l3-status.md)。
+
 2026-10-29 更新到 `b0830285`：移除显式 `WindowHandle::Retire()` / `Runtime::RetireWindow()`。
 应用已使用普通 Close、`quit_on_last_window_closed=false` 和应用任务域维持托盘/无窗生命周期，
 因此无旧 API 调用需要迁移；仍由 Close 的请求处理和 Runtime 统一维护窗口销毁、随后 OpenWindow 重建。
-该提交包含当前官方 `5523172` 基线，不额外改框架、扩展或维护分支；验证证据及平台限制见
+该提交包含当时官方 `5523172` 基线，不额外改框架、扩展或维护分支；验证证据及平台限制见
 [验收记录](l1-l2-l3-status.md)。
 
 2026-10-28 更新到 `ce2a6718`：合入上游逐窗口系统外观支持，官方组合期接口为
@@ -93,7 +100,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout b08302858fe7f3d6ff6d9c0b00a09c1ad0e6524b
+git -C third_party/huxerui checkout 5dd4009a3f1bb70a4d617fbedf3e5631a7b49a3d
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
