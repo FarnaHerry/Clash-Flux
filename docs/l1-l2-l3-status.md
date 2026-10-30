@@ -2,7 +2,7 @@
 
 ## 2026-10-30：Linux 自升级保留授权会话，服务安装后恢复内核
 
-候选版本：0.3.82。RPM/Fedora 分支用户
+GitHub Release `v0.3.82` 已发布，标签提交 `def5eee`，CI run 41030355870。RPM/Fedora 分支用户
 反馈确认升级后应用退出，但未弹授权且未安装。代码确认旧流程仅以快照 ready 为退出条件，
 尚未确认 Polkit 或包管理器结果；本轮没有取到用户现场日志，不能断言实际失败来自哪层。
 Linux 改为保留主进程等待授权和安装，成功才退出；取消/失败恢复原窗口与同一持久化会话。
@@ -20,7 +20,10 @@ Linux 改为保留主进程等待授权和安装，成功才退出；取消/失�
 `cmake --build build --target clash-flux` 还出现 `stl_list.h` 的模块声明冲突；HuxerUI
 codegen 已执行，但未产生可验收的新主目标。`./run.sh --version` 使用旧二进制仍退出 139；
 `git diff --check` 通过，规范文件长度限制通过。未完成 Fedora/Polkit 实际安装、Windows
-服务安装/TUN 实机转换验收；没有以模拟助手替代上述验收。
+服务安装/TUN 实机转换验收；没有以模拟助手替代上述验收。标签 CI 的 Linux x86_64/arm64、
+Windows x86_64、macOS arm64、Android、Windows 安装器及 publish-release 均通过，Release
+含 10 个资产；APK v1/v2 和正式证书 SHA-256 验证通过。iOS Simulator 诊断因 HuxerUI
+无法解析 `SweetEditor3p::Simdutf` 链接依赖而失败，按策略不阻塞发布。
 
 ## 2026-10-30：修正待命内核与其他客户端 TUN 的共存检查
 
