@@ -13,6 +13,7 @@ description: 修改 Clash-Flux 持久化、数据库迁移、订阅导入刷新�
 - 数据库记录和 profile 文件共同构成订阅。升级、启动、导入、刷新、候选失败都不得清空、重建或“修复性”删除数据；CI 失败不能通过删除数据库或订阅目录恢复。
 - 老库 user_version=0 通过 0→1 事务重建表并复制全部数据；schema 再改须升版本并追加 Migration 链。失败明确终止启动并保留原库，不退回空内存缓存。
 - hydrate 完成前不将空缓存当“没有订阅”写回。内容修订号必须涵盖 hydrate，显式 RequestSync 仍强制拉取；运行期设置从 SettingsModel 读取。
+- 从 settings 初始化的一次性缓存必须等待 Persistence ready；未就绪或解码失败保留重试机会，不能消费 once 标记。全局规则的实际存储与加载契约见[订阅编排](../../docs/desktop-subscription-orchestration.md#当前-sqlite-存储与加载)。
 
 ## 原子文件与删除
 

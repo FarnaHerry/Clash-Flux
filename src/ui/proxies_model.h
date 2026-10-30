@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "wire_codec.h"
+#include "proxy_test_model.h"
 #include "ui.h" // ProxyGroupSnapshot
 
 namespace clashflux::ui {
@@ -54,6 +55,7 @@ struct ProxiesSnapshot {
 
 // 应用级单例：在 application_hooks 里 Provide，组件用 UseService<ProxiesModel>()。
 struct ProxiesModel {
+    std::shared_ptr<ProxyTestModel> tests = std::make_shared<ProxyTestModel>();
     // 唯一的订阅点。读它即订阅：内容变化时读取方所在的部分重组。
     // 必须带初值：huxerui::State 的默认构造是「空 cell」，读取/写入都会抛
     // "Lifecycle dependency State is empty"。

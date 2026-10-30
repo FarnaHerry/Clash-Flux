@@ -192,8 +192,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 156
-        versionName = "0.3.78"
+        versionCode = 157
+        versionName = "0.3.79"
 
         externalNativeBuild {
             cmake {
@@ -374,3 +374,25 @@ def testAppUpdatePolicy = tasks.register("testAppUpdatePolicy", JavaExec) {
     mainClass = "dev.farna.clashflux.ApkUpdatePolicyTest"
 }
 tasks.named("preBuild").configure { dependsOn testAppUpdatePolicy }
+
+def compileRuntimeStartPolicyTest = tasks.register("compileRuntimeStartPolicyTest", JavaCompile) {
+    source files("src/main/java/dev/farna/clashflux/RuntimeStartPolicy.java",
+            "src/main/java/dev/farna/clashflux/VpnUptime.java",
+            "../../../tests/android/RuntimeStartPolicyTest.java",
+            "../../../tests/android/VpnUptimeTest.java")
+    destinationDirectory = layout.buildDirectory.dir("runtime-start-policy-test")
+    classpath = files()
+    options.encoding = "UTF-8"
+    options.release = 8
+}
+def testRuntimeStartPolicy = tasks.register("testRuntimeStartPolicy", JavaExec) {
+    dependsOn compileRuntimeStartPolicyTest
+    classpath = files(compileRuntimeStartPolicyTest.flatMap { it.destinationDirectory })
+    mainClass = "dev.farna.clashflux.RuntimeStartPolicyTest"
+}
+def testVpnUptime = tasks.register("testVpnUptime", JavaExec) {
+    dependsOn compileRuntimeStartPolicyTest
+    classpath = files(compileRuntimeStartPolicyTest.flatMap { it.destinationDirectory })
+    mainClass = "dev.farna.clashflux.VpnUptimeTest"
+}
+tasks.named("preBuild").configure { dependsOn testRuntimeStartPolicy, testVpnUptime }

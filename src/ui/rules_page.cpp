@@ -16,6 +16,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "app_resources.h"
@@ -1010,6 +1011,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
+    auto applicationTasks = huxerui::UseApplicationTaskScope();
     auto dialog = huxerui::UseDialog();
     auto toast = UseFluxToast();
     // 共享数据一律来自 application service（见 *_model.h）。
@@ -1071,9 +1073,12 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
     // 编辑（新增/开关/删除都会触发保存）。在途时只标 pending，完成后用最新
     // 列表补一次保存——直接丢弃会让刚写的规则在下一次重载时被存储值覆盖。
     auto dispatchPolicySave = std::make_shared<std::function<void()>>();
-    *dispatchPolicySave = [tasks, globalRules, toast, refreshTick, policySaving,
+    const std::weak_ptr<std::function<void()>> weakDispatch = dispatchPolicySave;
+    *dispatchPolicySave = [applicationTasks, globalRules, toast, refreshTick, policySaving,
                            policySavePending, loadGeneration, coreModel,
-                           dispatchPolicySave] {
+                           weakDispatch] {
+        const auto keepAlive = weakDispatch.lock();
+        if (!keepAlive) return;
         policySaving = true;
         loadGeneration = loadGeneration.Get() + 1;
         vpn::VpnPolicy policy;
@@ -1081,13 +1086,13 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
         for (const vpn::RouteRule& rule : globalRules) {
             policy.rules.push_back(rule);
         }
-        tasks.Launch([policy = std::move(policy), toast, refreshTick, policySaving,
-                      policySavePending, coreModel, dispatchPolicySave]() mutable
+        applicationTasks.Launch([policy = std::move(policy), toast, refreshTick, policySaving,
+                      policySavePending, coreModel, keepAlive]() mutable
                          -> huxerui::Task<void> {
             std::string error;
             bool ok = false;
-            try { const auto outcome = co_await RunOnTaskThread([policy = std::move(policy),
-                                                       &error]() mutable {
+            try { const auto outcome = co_await RunOnTaskThread([policy = std::move(policy)]() mutable {
+                std::string saveError;
                 // 未命中的流量始终跟随当前启用的代理订阅；PPTP
                 // 通过全局规则接管自己的目标网段。
                 for (const db::Profile& profile : store::profilesStore().list()) {
@@ -1097,11 +1102,12 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                         break;
                     }
                 }
-                const bool saved = store::vpnStore().saveGlobalPolicy(std::move(policy), error);
-                return std::pair{saved, store::coreStore().snapshot()};
+                const bool saved = store::vpnStore().saveGlobalPolicy(std::move(policy), saveError);
+                return std::tuple{saved, store::coreStore().snapshot(), std::move(saveError)};
             });
-            ok = outcome.first;
-            coreModel->Update([&](CoreView& view) { view.core = outcome.second; });
+            ok = std::get<0>(outcome);
+            error = std::get<2>(outcome);
+            coreModel->Update([&](CoreView& view) { view.core = std::get<1>(outcome); });
             } catch (const std::exception& e) { error = e.what(); }
             policySaving = false;
             toast.Show(ok ? Localized("编排规则已保存")
@@ -1111,7 +1117,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
             if (ok) refreshTick = refreshTick.Get() + 1;
             if (policySavePending.Get()) {
                 policySavePending = false;
-                (*dispatchPolicySave)();
+                (*keepAlive)();
             }
         });
     };
@@ -1126,6 +1132,9 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
     };
 
     huxerui::Lifecycle([=] {
+        // Early fallback reads must not initialize VpnStore with an empty
+        // policy before Persistence has hydrated the saved global rules.
+        if (!profilesModel->loaded.Get()) return;
         const auto ticket = loadGeneration.Get() + 1;
         loadGeneration = ticket;
         tasks.Launch([=]() -> huxerui::Task<void> {

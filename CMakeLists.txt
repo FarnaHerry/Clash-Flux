@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.78 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.79 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -1083,7 +1083,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             target_include_directories(test_persistence PRIVATE
                 "${CMAKE_CURRENT_SOURCE_DIR}/src")
             target_link_libraries(test_persistence PRIVATE
-                HuxerUI::testing HuxerUI::SQLite)
+                HuxerUI::testing HuxerUI::SQLite clashflux_wire)
             if (MSVC)
                 target_compile_options(test_persistence PRIVATE /utf-8 /wd4737)
             endif ()

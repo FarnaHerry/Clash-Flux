@@ -27,6 +27,8 @@ inline constexpr float kCardEmphasisOutlineWidth = kCardOutlineWidth;
 inline constexpr float kCardStrongOutlineWidth = kCardSelectedOutlineWidth;
 #endif
 
+inline constexpr float kSubscriptionSelectedOutlineWidth = 2.0F;
+
 inline constexpr int kRgbChannelMax = 255;
 inline constexpr float kHsbTurnDegrees = 360.0F;
 inline constexpr float kHsbHueSectorDegrees = 60.0F;

@@ -16,6 +16,7 @@ import clashflux.stream;
 import clashflux.api;
 import clashflux.core;
 import clashflux.singbox;
+import clashflux.service;
 using namespace std::chrono_literals;
 void require(bool value, const char* message) {
     if (!value) {
@@ -31,6 +32,19 @@ template<class Predicate> void until(Predicate predicate, std::chrono::seconds b
     }
 }
 int main(int argc, char** argv) {
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+    {
+        require(service::required(), "desktop core must require the shared service facade");
+        core::CoreProcess process;
+        require(!process.start({}, {}, {}) && !process.running() &&
+                process.lastError() == "内核必须由系统网络服务托管",
+                "application-owned core start must reject before creating a process");
+        std::string error;
+        require(!core::spawnDetached({}, {}, {}, error) &&
+                error == "内核必须由系统网络服务托管",
+                "CLI detached spawn must not bypass the desktop service owner");
+    }
+#endif
     if (argc == 4 && std::string_view(argv[1]) == "--rule-set-import") {
         try {
             const auto root = std::filesystem::absolute(argv[2]);

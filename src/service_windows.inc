@@ -198,15 +198,9 @@ export std::string coreFailure() {
     if (!reply || !reply->starts_with("OK ")) return {};
     return protocol::unhex(reply->substr(3)).value_or(std::string{});
 }
-export std::optional<bool> coreRunningEvidence() {
+std::optional<std::string> readCoreStatus() {
     std::string error;
-    const auto reply = native_service::request("STATUS", error);
-    return reply ? clashflux::service_protocol::runningEvidence(*reply) : std::nullopt;
-}
-export bool coreRunning() {
-    std::string error;
-    const auto reply = native_service::request("STATUS", error);
-    return reply && reply->starts_with("RUNNING ");
+    return native_service::request("STATUS", error);
 }
 export bool prepareWindowsTun(std::string_view tun, std::span<const std::string> interfaces,
                               std::span<const std::string> exclusions, std::string& error) {

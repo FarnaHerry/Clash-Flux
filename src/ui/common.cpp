@@ -132,19 +132,15 @@ CoreApplyResult ExecuteCoreCommand(const CoreCommand& command) {
 #endif
             break;
         case CoreAction::Restart:
-#if defined(_WIN32)
-            if (!service::installed()) {
+            if (service::required() && !service::installed()) {
                 return {.status = CoreApplyStatus::PermissionDenied};
             }
-#endif
             ok = coreStore.restartCore(store::profilesStore().selectedYaml());
             break;
         case CoreAction::Start:
-#if defined(_WIN32)
-            if (!service::installed()) {
+            if (service::required() && !service::installed()) {
                 return {.status = CoreApplyStatus::PermissionDenied};
             }
-#endif
             coreStore.startCore(store::profilesStore().selectedYaml(), false,
                                 coreStore.tunEnabled(), coreStore.systemProxyEnabled());
             ok = coreStore.snapshot().state == core::CoreState::Running &&

@@ -1,5 +1,259 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-10-30：准备 v0.3.79 补丁版本
+
+版本 `0.3.79`，Android versionCode `157`（`0.3.78` / `156` 的递增版本）。发布说明覆盖
+主题预览、代理单节点测速、全局规则保存、Windows/Linux 服务生命周期及 Android 后台修复；
+README 中英文入口已更新。没有生成安装包或 Android 正式签名包。
+
+Windows/MSVC 将全量目标构建到独立 `build/release-candidate-0.3.79` 输出目录，避免覆盖
+正在运行的开发窗口；`CLASHFLUX_BIN` 指向候选文件时 `./run.ps1 --version` 输出 v0.3.79。
+Windows 25 项隔离回归全部通过（含 `project_test_gate` 与 `cps_dependencies`）；Android
+宿主策略测试 `:app:testRuntimeStartPolicy` 与 `:app:testVpnUptime` 通过。
+未在当前日常系统执行会安装 SCM 测试服务、安装 WFP 过滤器或修改物理 DNS 的 3 项测试；
+Android Release APK 签名/跨版本安装与其它平台完整 CI 仍需发布流水线验收。仅准备本地
+提交及 tag，不推送、不触发线上 Release。
+
+## 2026-10-30：补齐订阅页 hydrate 门禁，修复启动回归
+
+下节验证遗漏了真实 GUI 启动。用户随后报告开发版出现透明窗口，Windows 事件日志
+也记录相同开发路径在 10:08 的两次 ucrtbase/c0000409 异常退出。静态调用链确认：
+订阅页在首帧（包括不可见挂载）无条件调用 VpnStore::init，新增 ready 检查抛出的
+异常未被页面任务捕获；HuxerUI 对未捕获 Task 异常执行 terminate。
+
+订阅页现监听 ProfilesModel::loaded，完成 hydrate 后才发起初始化；生产异步封装
+LaunchHydratedVpnSnapshot 将 worker 异常转成反馈并保留已有模型快照。
+新 headless UI 回归实际消费该封装和 RunOnTaskThread，覆盖首帧不提前读取、hydrate
+唤醒、工作线程异常后 Runtime 存活与重试成功。版本保持 0.3.78，数据库与订阅文件不变。
+
+Windows/MSVC `cmake --build build --target clash-flux test_page_transition` 通过，含订阅页
+与测试 HuxerUI codegen；`ctest --test-dir build --output-on-failure --no-tests=error
+-R '^(page_transition|ui_resources|persistence)$'` 3/3 通过（44.17 秒）。直接启动
+`build/health-evidence/clash-flux.exe`，核对实际进程路径、首页首帧、订阅列表与全局规则
+可见；结束本轮自行启动的诊断进程后再次启动，首页正常，原有一条全局规则仍在 SQLite。
+该重启检查不是托盘正常退出清理验收；没有手动启动代理，未进行真实 TUN/Android/Linux
+验收。开发版仍显示既有的服务版本同步提示（非 Program Files 安装不自动更新服务），
+不影响本轮窗口绘制与交互。基础主目标构建、版本输出及 diff 检查通过。
+
+## 2026-10-30：全局规则重启读取与保存任务修复
+
+代码快照：`09af459` 加当前工作区，版本保持 0.3.78。用户报告退出重开后全局规则消失；
+只读检查本机数据库确认 `settings["vpn.global_policy"]` 仍有一条规则，未输出规则内容或
+修改用户数据。现有两张业务表为 profiles/settings，全局策略以 JSON 存储，并未缺少规则表。
+
+发现规则页在订阅 hydrate 前可读取策略，VpnStore 将空回退值通过 call_once 固定为
+已加载缓存。现增加页面 loaded 门禁和生产 HydratedOnce ready 检查，未就绪或解码失败
+可重试。全局规则保存迁到应用任务域，离页不取消在途保存；工作线程拥有错误字符串，
+递归保存调度改为弱引用，避免自持有环。既有数据库与策略格式不变，无数据迁移或清理。
+
+Windows/MSVC 执行 `cmake --build build --target clash-flux test_persistence test_page_transition`
+通过，包含规则页 HuxerUI codegen。`ctest --test-dir build --output-on-failure --no-tests=error
+-R '^(persistence|page_transition|ui_resources)$'` 3/3 通过（86.22 秒）。新增回归使用真实 SQLite
+和生产策略 codec，覆盖过早读取后成功 hydrate、解码失败重试、真实写锁期间连续编辑及
+ABA、关闭重开后规则/修订号/三个来源及所有被引用文件保留。
+
+最终 `cmake --build build --target clash-flux`、显式 CLASHFLUX_BIN 的
+`./run.ps1 --version`（v0.3.78）与 `git diff --check` 通过；根规范及项目技能限额通过。
+未操作已安装服务或真实网络，未运行真实 GUI 重启验收、完整 required 套件或 Android/macOS/Linux
+完整构建；上述回归不等于实机 VPN 验收。
+
+## 2026-10-30：修复桌面生命周期并统一 Windows/Linux 服务入口
+
+代码快照：`09af459` 加当前工作区，版本保持 0.3.78。修复下方审查的三个缺口：析构只
+清理本对象负责且非 CLI 驻留的服务内核；Linux 替换子进程必须确认旧 PID 已释放，失败
+不 spawn、不覆盖旧身份；启动等待超时走统一 `stopCore`，停止失败保留所有权和 PID 文件，
+启动原因与清理错误同时可见。驻留进程停止失败不再提前清除 adopted 标记。
+
+按 Windows/Linux 统一服务定位，应用层共用 `service::required()`、CoreStore 所有权和
+启停流程，两端 STATUS 也只由同一公共函数解析。Linux 普通启动不再回落无服务 spawn，
+包括 root GUI；底层 `CoreProcess::start` 和 `spawnDetached` 同样拒绝绕过服务。
+服务缺失时沿已有显式安装授权流程，启动本身不自动提权。命令继续复用同一 Runtime/缓存
+或向已有实例转发；保留一次性命令的服务驻留语义，没有另建 CLI 数据面。显式 STOP 对
+可达服务幂等提交，即使子进程已退出也让服务清理所属路由；失败保留清理责任，未知 STATUS
+不被当作停止确认。详细契约见[桌面内核生命周期](runtime-health-review.md#桌面内核所有权与失败清理)。
+
+Windows/MSVC 执行 `cmake --build build --target clash-flux test_runtime_health
+test_service_protocol test_runtime_evidence test_rule_provider_download test_page_transition`
+通过，包含 HuxerUI codegen；`ctest --test-dir build --output-on-failure --no-tests=error
+-R '^(service_protocol|runtime_health|runtime_evidence|native_control_runtime|page_transition|ui_resources)$'`
+6/6 通过（132.18 秒）。新回归覆盖停止失败阻断替换、旧 PID 保留、未释放 PID 拒绝、
+重试与 spawn 失败；实际内核 API 回归同时执行应用/CLI 数据面绕过拒绝断言。
+
+WSL Fedora Linux 44 / Clang 22.1.8：`test_service_protocol` 与 `test_runtime_evidence`
+以独占 `/tmp` 输出目录编译执行通过；新增替换回归使用自有真实子进程并在结束回收，
+不接触真实服务/路由。另用仓库外脚本 `clashflux-linux-service-module-compile.py`
+按实际 libc++ 模块编译生产 service、config、pptp、vpn、compensation 接口及 service 对象；
+`clashflux-linux-core-owner-test.py` 进一步编译生产 nlohmann/singbox/core 模块和 core.cpp，
+链接有界检查程序验证 service 必需、CoreProcess/CLI detached 拒绝，执行通过。该独立链接
+使用 section GC，仅计为生产模块和拒绝门禁验证，不计为完整 Linux GUI 构建或应用运行验收。
+
+`cmake --build build --target clash-flux`、`./run.ps1 --version`（v0.3.78）、
+`git diff --check` 通过；根 AGENTS 与修改技能均在行数/字符上限内。未替换已安装服务，
+未执行完整应用 CLI 退出/30 秒超时到真实服务的故障注入、真实 TUN/DNS/Codex 或双客户端
+切换验收，也未运行完整 required 套件、Android/macOS 构建或签名发布。
+
+## 2026-10-30：桌面生命周期审查（Linux 业务故障原因未确认）
+
+本节保留修复前审查证据；三个缺口的后续修复与实际验证见上节。
+
+代码快照：`09af459` 加当前工作区，版本 0.3.78。本轮只审查与运行隔离回归，未修改
+桌面生产代码或操作真实服务、系统代理、路由。用户报告 Linux 控制器显示已连接但 Codex
+不可用，换 Clash Verge 有时恢复；后续确认使用 TUN，且仅 Codex 不通。发行版、Codex
+桌面/CLI 形态、进程代理环境和现场报告尚未取得，不能归因。局部业务失败使规则/出口、
+目标 DNS 与进程代理环境更值得优先对照，但不能因此排除 TUN 的目标相关选路或 IPv6 问题。
+
+静态审查发现三个待修缺口：
+
+- `CoreStore` 析构在 Linux 会查询并停止已有 root 服务内核，而不要求本对象取得所有权；
+  `serviceDetached_` 只在 Windows 生效。无现存 GUI、单独执行状态查询的 CLI 可能在退出
+  时停止旧服务内核，CLI detached START 的驻留契约同样受到影响。
+- `service_daemon.inc` 的 START 忽略 `stopEngine` 返回值；旧子进程停止失败时仍 spawn
+  并覆盖 `childPid`，丢失旧实例监管，可能发生监听/网络资源冲突。
+- `startCoreUnchecked` 等待原生控制 30 秒超时后，非服务分支只调用本地 `process_.stop()`，
+  未覆盖 detached/adopted PID；服务分支忽略 STOP 失败仍清除所有权标记。失败后界面状态
+  与实际后台资源可能不一致，应保留清理失败及所有权并走统一停止路径。
+
+这些是代码路径证据，尚未对三个失败分支执行完整应用故障注入，也未证明触发了用户现场。
+现有 Running 由所属进程/鉴权原生控制就绪发布，业务目标另由主动诊断经 mixed 入站检查；
+控制器连接、节点延迟或统计帧不能证明 Codex 的 TUN/DNS/出口链路正常。
+
+Windows/MSVC 构建 `test_service_protocol test_runtime_health test_runtime_evidence
+test_rule_provider_download` 通过；执行 `ctest --test-dir build --output-on-failure
+--no-tests=error -R '^(service_protocol|runtime_health|runtime_evidence|native_control_runtime)$'`
+为 4/4 通过（62.38 秒）。WSL Fedora Linux 44 / Clang 22.1.8 用独占 `/tmp` 输出目录
+直接编译并执行生产 `test_service_protocol.cpp`，以及 `test_runtime_evidence.cpp` +
+`runtime_network_probe.cpp` / `health_history.cpp` / `network_conflict.cpp`，两项通过；包含
+loopback DNS 错误/取消、真实系统只读查询、现场历史/重开和脱敏，不是真实桌面 TUN 验收。
+基础检查 `cmake --build build --target clash-flux`、`./run.ps1 --version`（v0.3.78）及
+`git diff --check` 通过。没有 Linux 完整应用重建、真实公网 Codex、桌面系统代理、实际服务
+切换或跨客户端 TUN/DNS 验收结论；上述缺口仍待修复。
+
+同日 TUN 专项补充：WSL 执行 `python3 tests/test_network_conflict_namespace.py
+/tmp/clashflux-desktop-audit-20261030-n_41wmpd/test_runtime_evidence`，由脚本自行隔离
+user/network namespace、建立真实测试 TUN；IPv4/IPv6 默认和成对 /1 路由、自身豁免、
+地址占用与接口 down 六种场景全部通过。未修改宿主路由。配置审查确认托管 TUN 使用
+auto_route、严格路由和 auto_detect_interface，并保留 DNS sniff/hijack 前置动作；没有依据
+此次局部失败直接改 strict_route、放宽 TLS、全局直连或替换用户节点/规则。
+此回归不覆盖故障机器的实际 DNS 服务、业务规则、出口或 Codex 长连接。
+
+## 2026-10-30：Android 重开启动权限与停止收尾（完整构建受阻）
+
+代码快照：`09af459` 加当前工作区，版本保持 0.3.78。保留从最近任务划走 Activity 后
+后台 VPN 继续运行的行为，也保留按持久化模式进行真正的系统 sticky 恢复。
+UI core-only 请求只保留当前真实运行/启动中的 VPN，不再依据旧持久标记升级为 VPN；
+无 TUN 运行时仅在内存中过滤 TUN inbound，`openTun` 再检查当前请求与取消状态。
+显式停止、撤权和 libbox 停止回调统一走后台收尾；数据面关闭失败仍尝试关闭 TUN，
+保留失败句柄和服务供重试，确认释放后才移除通知。缺失服务对象不再把错误快照默认为停止。
+
+宿主 JVM 的 `:app:testRuntimeStartPolicy`、`:app:testVpnUptime`、`:app:testAppUpdatePolicy`
+通过，前两项接入 Android `preBuild`。使用 JDK 17、Android SDK/NDK 29、固定 libbox AAR
+及同源 HuxerUI 执行 `:app:compileDebugJavaWithJavac`：先补齐本机 CMake 4.4.2 PATH，
+再通过仓库外 init script 将 native staging 缩短到 `C:/tmp/clashflux-android-20261030`，
+绕过 Ninja 260 字符限制。后续在 SweetEditor 静态库 post-build 阻塞：拼接出
+`sweeteditor/temp_extract/C:/.../libsimdutf.a`，Windows 报 Invalid argument；未修改依赖源码或
+跳过正式 native 门禁，因此完整 Java/NDK/APK 构建未通过。
+
+另外使用仓库外 `clashflux-android-java-diagnostic.init.gradle` 的
+`:app:compileLifecycleJavaDiagnostic`，按正式 debugCompileClasspath、SDK、AIDL/R 和全部
+应用 Java 源码独立编译通过；仅 BuildConfig 使用取自实际 Gradle variant/CMake integration
+plan 的编译专用 fixture，产物在 `build/android-lifecycle-test`，不打包、不替代正式构建。
+核对固定 libbox revision 的 CommandServer/StartedService 关闭实现：控制面 close 不代替
+closeService，数据面关闭失败时仍保留该 owner。Windows 主目标
+`cmake --build build --target clash-flux`、`./run.ps1 --version`（v0.3.78）与
+`git diff --check` 通过。`adb devices` 无设备；未完成真机划走重开、实际 TUN、通知/系统 VPN
+图标、撤权、sticky 恢复及关闭故障注入验收，不计为平台通过或可发布。
+
+## 2026-10-30：单节点刷新图标与圆形反馈对齐
+
+代码快照：`09af459` 加当前工作区，版本保持 0.3.78。单节点测速改为 refresh 图标，
+使用框架 IconButton 的 16pt 方形命中区域与圆形状态层，14pt 图标居中；62×16pt 延迟槽保留，
+按钮贴最右端，左侧空白仍触发整卡选线。移除自定义 Row 按钮造成的反馈圆圈与图标偏移。
+按钮保留挂载，测速期间与关于页检查更新共用 `RefreshIconRotation`（0.9s、线性循环），
+完成立即复位、reduced motion 静止；切页返回时先建立零角度再恢复循环。
+
+Windows/MSVC 执行 `cmake --build build --target clash-flux test_page_transition` 通过，
+包含 HuxerUI codegen；首轮因开发版占用输出文件链接失败，用户退出后重建成功。
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+两项通过（45.23s）。生产组件回归断言方形按钮位于槽右端且垂直居中、状态切换不改变布局、
+左侧空白不会触发测速、点击按钮不选线、实际旋转后呈现几何变化，以及切页返回继续旋转。
+`./run.ps1 --version` 输出 v0.3.78；`git diff --check` 通过。
+本轮还在独占临时 APPDATA 原生窗口检查未测速卡片及右端刷新按钮悬停，圆形反馈与图标重合，
+不再在左侧空槽出现独立圆圈；隔离实例已关闭。未测试真实节点网络、手机实机或 VPN/服务接管。
+
+## 2026-10-29：节点 hover 单独测速
+
+代码快照：`09af459` 加当前工作区，版本保持 0.3.78。桌面非组节点卡片 hover 时，
+右下角延迟文字由现有 speed 速度表图标替代；62×16pt 槽位在文字、按钮、加载指示器之间保持几何，
+离开卡片恢复结果。独立点击只调用该运行 tag 的 delay API，不选中线路；请求及结果归应用测速模型。
+同节点拒绝重复请求，不同节点可分别测速，与整组扫描互斥；切页继续，换计划丢弃旧句柄和旧结果。
+Android 的原生组测速保持现状，本轮未增加 Android 单节点入口或后台接口。
+
+Windows/MSVC 执行 `cmake --build build --target clash-flux test_page_transition` 通过，
+包含主目标及 HuxerUI codegen；初次链接因开发版占用输出文件失败，用户退出后重建成功。
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+两项通过（22.49s）。新增无窗口回归直接使用生产 `ProxyNodeTile` 与单测调度，真实鼠标 hover/点击，
+覆盖只替换当前节点、移入图标保持 hover、槽位几何、子按钮不触发整卡选线、不同节点独立、
+组卡片不显示入口、切页保留、异常后重试、旧计划结果隔离及退休卡片句柄拒绝。
+`./run.ps1 --version` 输出 v0.3.78，`git diff --check` 通过。
+未执行原生窗口像素检查、真实节点网络测速、Android 构建/实机或 VPN/服务接管验收。
+
+同日追加空延迟专项：回归用例将单测首节点改为从未测速，并使用与生产相同的空 Row 延迟占位，
+验证空槽 hover 显示图标、独立点击、加载及返回结果。Windows/MSVC 主目标和测试构建通过，
+同一 CTest 命令两项通过（29.09s）；版本仍为 v0.3.78，差异空白检查通过。
+另以独占临时 APPDATA 实际启动最终二进制，导入两个仅用于预览的本地 SOCKS 节点，
+保持内核停止，实际检查选中/未选中卡片：两者初始均无 ms，鼠标悬停均显示速度表图标，
+移向另一张卡时前一张恢复空延迟。未复现“无 ms 导致 hover 不显示”；分组类型卡片按设计无单测入口。
+隔离实例已关闭，未执行节点网络请求或改动用户订阅。
+
+## 2026-10-29：测速进度与结果跨页面保留
+
+代码快照：`09af459` 加当前工作区，版本保持 0.3.78。测速批次及节点状态移入
+`ProxiesModel::tests`，应用任务域负责整组请求与原生结果等待；节点卡片只观察共享状态。
+切页卸载卡片后任务继续，返回时恢复进度或已完成结果；虚拟列表未挂载节点同样参与，
+桌面最多 8 个并发请求。请求结束检查批次与运行计划，停止/换计划清除旧缓存，拒绝旧结果覆盖。
+
+Windows/MSVC 执行 `cmake --build build --target clash-flux test_page_transition` 通过，
+包含主目标及 HuxerUI codegen。执行
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+两项通过（24.35s）。新增无窗口回归使用生产测速模型及请求调度，真实卸载/重挂发起视图，
+覆盖进行中恢复、离页完成、12 节点整批/8 并发、重复点击、异常清理后重试、
+旧请求晚到、运行计划变化失效和原生快照离页完成。测试通过独立 gate 控制测量结束，未访问真实节点。
+`./run.ps1 --version` 输出 v0.3.78，`git diff --check` 通过。
+未运行真实节点网络测速、手机/libbox 实机或 VPN/服务接管验收。
+
+## 2026-10-29：窄屏颜色编辑二级页
+
+代码快照：`09af459` 加当前工作区，版本保持 0.3.78。Compact 的添加颜色及右键编辑颜色
+通过 ThemeColorEditorRoutePage 压入 NavigationStack，返回直接 Pop 到主题页；表单与宽屏弹窗
+共用 ThemeColorEditor 的 HEX/HSB 状态及保存逻辑，二级页通过 CompactPageActionContent
+固定底部添加/保存按钮并避让系统安全区。页面进入后放大窗口保留页面身份与输入状态。
+颜色值统一使用 MD3 Outlined 输入框，页面与弹窗继承同一主题样式。
+
+Windows/MSVC 主目标、test_page_transition 与 HuxerUI codegen 构建通过；
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+两项通过（25.18s），覆盖共用导航/二级表单布局与资源回归。
+`./run.ps1 --version` 输出 v0.3.78，`git diff --check` 通过。
+解锁后实际启动独占临时 APPDATA 实例，检查约 424pt 窄窗添加/右键编辑二级页、底部按钮、
+宽屏弹窗以及两种形式的 MD3 描边输入框；输入 #AA4477 后最大化再还原，输入值与 HSB 保留。
+添加保存直接返回主题页并选中新颜色；编辑为 #123456 后用顶部返回，原 #AA4477 保留且未新增颜色。
+隔离实例已关闭。未执行手机系统返回/手势或软键盘、移动端构建、VPN 或发布验收。
+
+## 2026-10-29：订阅选中描边与主题预览卡
+
+代码快照：`09af459` 加本次工作区，版本保持 0.3.78。订阅实际卡片与拖动预览通过
+`SelectableTileStyle::Subscription` 使用 2pt 选中描边；模式卡片改为 48pt 高的横向
+图标加文字，主题色按候选真实 tokens 展示微型界面及选中标记，不显示颜色名称或 HEX，
+保留无障碍名称、编辑/删除与添加入口。预览内容列铺满，选中勾使用固定高度槽避免内容上下跳动。
+
+Windows/MSVC 主目标及 test_page_transition 构建通过，包含 HuxerUI codegen。
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+两项通过（24.77s）；覆盖 320/800pt 深浅主题的矩形模式卡、图标文字顺序、预览内部几何、
+选色标记更新、选中内容不偏移、预设/自定义色无可见名称或编码及添加入口。
+`./run.ps1 --version` 输出 v0.3.78，`git diff --check` 通过。
+Windows 解锁后以独占临时 APPDATA 实际启动最终构建，检查宽窗深浅主题、约 424pt 窄窗排列、
+选色反馈及通过弹窗新增自定义色，确认预设与新建色卡都不显示名称或 HEX；隔离实例已关闭。
+未执行移动端构建、手机实机交互、VPN 或发布验收。
+
 ## 2026-10-29：HuxerUI 同步自定义字体支持
 
 代码快照：`1dcd040` 加原有工作区，应用版本保持 0.3.77；HuxerUI 独立依赖与各平台

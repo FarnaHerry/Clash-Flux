@@ -309,13 +309,13 @@ export int run() {
                     // START 是幂等的重启请求。GUI 可能在上一次关闭、崩溃或
                     // 热重载期间没有机会发送 STOP；沿用 Clash Verge 的
                     // 生命周期模型，先回收本服务托管的旧 core，再启动新配置。
-                    if (childPid > 0) stopEngine(childPid);
                     std::string err;
-                    const pid_t pid = spawnEngine(binary, config, err);
-                    if (pid < 0) {
+                    const bool started = clashflux::service_startup::restartChild(childPid,
+                        [](pid_t& child, std::string& error) { return stopEngine(child, &error); },
+                        [&](std::string& error) { return spawnEngine(binary, config, error); }, err);
+                    if (!started) {
                         replyLine(fd, std::format("ERR {}", err));
                     } else {
-                        childPid = pid;
                         replyLine(fd, "OK");
                     }
                 }

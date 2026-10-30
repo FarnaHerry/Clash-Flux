@@ -18,6 +18,7 @@ description: 修改 Clash-Flux 内核控制、托盘与无窗启动、首帧快�
 - 关闭按钮仅由 tray.enabled 控制：启用且可用则隐藏，否则确认退出；不读 tray.close_behavior，确认框不提供托盘动作。最小化使用系统原生行为，Windows 保留任务栏入口，不因托盘/轻量模式隐藏窗口。
 - Linux 无窗简版菜单切完整菜单时先隐藏，下一轮托盘轮询才发布，不同结构不在同轮替换，避免 Plasma 旧动作；共享退出收尾与实际状态映射。
 - 启动后异步检查已安装桌面服务，在内核自启前完成版本同步；同版本跳过，未安装不主动装，失败一次反馈、不自动请求 UAC。Windows 升级信任边界见平台技能；macOS 无独立服务，手机服务随应用更新。
+- Windows/Linux 通过同一 service facade 和 CoreStore 维护生命周期；所有权、CLI 驻留、三态状态与启动失败清理见 [桌面内核生命周期](../../docs/runtime-health-review.md#桌面内核所有权与失败清理)。不恢复 Linux 无服务或 CLI 专属数据面。
 
 ## PPTP 与 OpenVPN
 

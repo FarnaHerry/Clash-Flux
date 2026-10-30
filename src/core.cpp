@@ -1,8 +1,7 @@
 // core.cpp — clashflux.core 实现单元。
 //
-// 进程后端按编译期分流：POSIX（Linux + macOS）走 posix_spawn，Windows 走
-// CreateProcess。Android 的 sing-box libbox 由 Java VpnService 持有，
-// 此处仅保留跨平台的轻量状态接口。
+// Windows/Linux 常驻数据面归系统服务，应用进程入口拒绝自行 spawn。
+// macOS 保留 POSIX 进程后端；移动端数据面归各自 VPN/Libbox runtime。
 module;
 #include "runtime_compile.h"
 
@@ -56,8 +55,8 @@ namespace core {
 
 // ---- TUN 打开门禁（见 core.cppm 注释）----
 TunGate tunGate() {
-#ifdef _WIN32
-    // Only the SCM service owns privileged networking. Never elevate the GUI.
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+    // Desktop services own privileged networking, including for a root GUI.
     std::string error;
     return service::ensureCompatible(error) ? TunGate::Ok : TunGate::Denied;
 #elif defined(CLASHFLUX_IOS)
@@ -66,12 +65,6 @@ TunGate tunGate() {
     return TunGate::Ok;
 #else
     if (::geteuid() == 0) return TunGate::Ok;
-#ifdef __linux__
-    // root 服务托管的内核由服务侧（root）建 TUN。若已安装但版本落后，
-    // 握手会请求 root 服务自行升级；没有服务时仍交给 UI 引导安装。
-    std::string serviceError;
-    if (service::ensureCompatible(serviceError)) return TunGate::Ok;
-#endif
     return TunGate::Denied;
 #endif
 }
@@ -394,11 +387,11 @@ bool spawnDetached(const std::filesystem::path& binary,
                    const std::filesystem::path& workDir,
                    const std::filesystem::path& configFile,
                    std::string& error) {
-#if defined(_WIN32)
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
     static_cast<void>(binary);
     static_cast<void>(workDir);
     static_cast<void>(configFile);
-    error = "Windows 内核必须由系统网络服务托管";
+    error = "内核必须由系统网络服务托管";
     return false;
 #elif defined(CLASHFLUX_IOS)
     static_cast<void>(binary);
@@ -797,11 +790,11 @@ bool CoreProcess::start(const std::filesystem::path& binary,
     impl_->exitCode.store(-1);
     impl_->lastError.clear();
 
-#if defined(_WIN32)
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
     static_cast<void>(binary);
     static_cast<void>(workDir);
     static_cast<void>(configFile);
-    impl_->lastError = "Windows 内核必须由系统网络服务托管";
+    impl_->lastError = "内核必须由系统网络服务托管";
     return false;
 #elif defined(CLASHFLUX_IOS)
     // iOS cannot launch the desktop sing-box executable. The Network Extension

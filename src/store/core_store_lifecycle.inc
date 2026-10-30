@@ -67,14 +67,15 @@
         std::lock_guard operationLock(lifecycleMutex_);
         auto healthPause = streams_.pauseHealth();
         ensureOpen();
-#ifdef _WIN32
-        // All Windows data-plane work belongs to SCM, including non-TUN mode.
-        std::string windowsServiceError;
-        if (!service::ensureCompatible(windowsServiceError)) {
-            fail(windowsServiceError);
-            return;
+        if (service::required()) {
+            // Windows/Linux never fall back to a GUI-owned data plane, even
+            // in non-TUN mode or while the installed service is unavailable.
+            std::string serviceError;
+            if (!service::ensureCompatible(serviceError)) {
+                fail(serviceError);
+                return;
+            }
         }
-#endif
         const auto serviceInfo = service::query();
         if (serviceInfo.reachable && !serviceInfo.compatible()) {
             std::string upgradeError;
@@ -179,11 +180,9 @@
             snap_.participatingSources = std::move(compiled.participatingSources);
         }
 
-        // 三种拉起方式（按优先级）：
-        //   1. root 服务托管（装了服务模式 → TUN 等特权操作开箱可用）
-        //   2. 接管已在跑的内核（CLI detached spawn / 上次 GUI 残留）：避免
-        //      重复 spawn 撞控制端口与混合端口
-        //   3. 直接 spawn（默认）
+        // Windows/Linux 仅经系统服务启动。macOS 保留兼容进程后端：
+        // 先接管自身驻留内核，否则由应用启动，避免监听端口冲突。
+        // Mobile branches hand the accepted configuration to their OS runtime.
 #if defined(__ANDROID__)
         // Android compiles the selected profile in the UI process, then hands
         // its TUN intent to the isolated VpnService runtime after the system
@@ -215,12 +214,7 @@
         }
         return;
 #else
-        const bool useService =
-#ifdef _WIN32
-            true; // A failed/restarting SCM service must never trigger GUI spawn.
-#else
-            service::available();
-#endif
+        const bool useService = service::required() || service::available();
         if (useService) {
             std::string err;
             if (!service::startCore(configFile, err)) {
@@ -228,9 +222,7 @@
                 return;
             }
             managedByService_ = true;
-#ifdef _WIN32
             serviceDetached_ = detached;
-#endif
         } else {
             const bool controllerAnswering = api_->version().ok;
             const long residentPid = readPidFile();
@@ -354,14 +346,13 @@
             std::this_thread::sleep_for(std::chrono::milliseconds(120));
         }
         if (!ready) {
-            if (managedByService_) {
-                std::string err;
-                service::stopCore(err);
-                managedByService_ = false;
-            } else {
-                process_.stop();
+            std::string error = "原生控制接口 30s 内未就绪";
+            // The unified stop path also owns detached/adopted PIDs, waits for
+            // actual exit, and retains service ownership when STOP fails.
+            if (!stopCore()) {
+                error += "；启动失败后的清理未完成：" + snapshot().lastError;
             }
-            fail("原生控制接口 30s 内未就绪");
+            fail(std::move(error));
             return;
         }
 
@@ -423,9 +414,7 @@
     bool stopCore() {
         std::lock_guard operationLock(lifecycleMutex_);
         auto healthPause = streams_.pauseHealth();
-#ifdef _WIN32
         serviceDetached_ = false;
-#endif
         stream::logApplication("info", "请求停止代理内核");
 #if defined(__ANDROID__)
         if (!clashflux_android_stop_vpn()) {
@@ -469,15 +458,14 @@
             }
         }
         streams_.stop();
-        // 正常情况下 managedByService_ 会记录所有权；但 GUI 可能在 START
-        // 成功后还没来得及写入标记就被关闭，或者上一次实例异常退出留下了
-        // 服务侧内核。只要本地没有直连 CoreProcess，且 root 服务报告
-        // 有自己的 core，就补发一次幂等 STOP，避免下一次启动误报“先 STOP”。
-        const bool serviceOwnsCore =
+        // Explicit STOP is idempotent on both services and also releases owned
+        // routes when the child already exited. Do not turn an unknown STATUS
+        // into a local "stopped" result; require the service's STOP acknowledgement.
+        const bool stopThroughService =
             managedByService_ ||
-            (!process_.running() && service::reachable() &&
-             service::coreRunning());
-        if (serviceOwnsCore) {
+            (!process_.running() && service::reachable());
+        if (stopThroughService) {
+            managedByService_ = true; // retain cleanup responsibility on failure
             std::string err;
             if (!service::stopCore(err)) {
                 std::lock_guard lock(mutex_);
@@ -493,7 +481,6 @@
         } else {
             // 接管/外部实例（本进程 detached spawn，或另一进程——CLI、上次
             // GUI 残留——拉起的内核）：本进程没有句柄，经 pidfile 终止。
-            adopted_ = false;
             const long pid = readPidFile();
             if (pid > 0) {
                 // pidfile 可能陈旧且该 pid 已被系统复用：先确认它仍然是 sing-box
@@ -523,6 +510,7 @@
                             " 已是 " + image + "，不是 sing-box），未发送终止信号");
                 }
             }
+            adopted_ = false;
         }
         // 等监视线程收尾（最多 ~2s 宽限 + waitpid）。
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);

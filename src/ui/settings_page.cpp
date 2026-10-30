@@ -26,6 +26,7 @@
 #include "app_update_model.h"
 #include "app_runtime_services.h"
 #include "page_layout.h"
+#include "refresh_motion.h"
 
 import clashflux.config;
 import clashflux.core;
@@ -169,9 +170,9 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     });
 }
 
-[[huxerui::composable]] huxerui::View ThemeColorDialog(
-    std::shared_ptr<SettingsModel> model, huxerui::DialogContext context,
-    std::string initialHex, std::optional<std::string> editingId) {
+[[huxerui::composable]] huxerui::View ThemeColorEditor(
+    std::shared_ptr<SettingsModel> model, std::function<void()> onClose,
+    std::string initialHex, std::optional<std::string> editingId, bool fullPage) {
     const auto& theme = huxerui::UseTheme();
     const bool editing = editingId.has_value();
     auto input = huxerui::UseState(huxerui::TextEditingValue{initialHex});
@@ -209,7 +210,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
               .With(huxerui::Frame{.width = theme.spacing.extra_large}),
         }.With(huxerui::Spacing(theme.spacing.small), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
     }
-    const auto save = [model, input, context, editingId] {
+    const auto save = [model, input, onClose, editingId] {
         const auto color = NormalizeThemeColor(input.Get().text);
         if (!color || !model->view.Get().ready) return;
         const SettingsView current = model->view.Get();
@@ -235,13 +236,13 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
             settings.hiddenThemeColors = savedHidden;
             settings.themeColor = selectedColor;
         });
-        context.Dismiss();
+        onClose();
     };
-    return DialogCard(huxerui::Column {
-      huxerui::Text(Localized(editing ? "编辑颜色" : "添加颜色"), huxerui::TextRole::Title),
+    huxerui::View fields = huxerui::Column {
       huxerui::Row {}.With(huxerui::Frame{.height = kThemeColorPreviewHeight},
           huxerui::Background(preview), huxerui::CornerRadius(theme.shapes.medium)),
       huxerui::TextField(input.Get()).Label(Localized("颜色值"))
+          .Variant(huxerui::TextFieldVariant::Outlined)
           .Placeholder("#RRGGBB")
           .Validation(hex ? huxerui::ValidationResult::None() :
               huxerui::ValidationResult::Invalid(Localized("请输入六位十六进制颜色值")))
@@ -253,13 +254,43 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
           .OnSubmitted(save),
       huxerui::Column(std::move(sliders)).With(huxerui::Spacing(theme.spacing.small),
           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+    }.With(huxerui::Spacing(theme.spacing.medium),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    const auto title = Localized(editing ? "编辑颜色" : "添加颜色");
+    if (fullPage) {
+        huxerui::View body = CompactPageActionContent(
+            huxerui::ScrollView(fields).With(huxerui::Grow(1.0F)),
+            CompactPrimaryActionButton(app::images::save, Localized(editing ? "保存" : "添加"), save,
+                hex.has_value() && model->view.Get().ready));
+        if (kPageTitlesInWindow && huxerui::UseViewportClass() != huxerui::ViewportClass::Compact) {
+            const auto back = huxerui::IconButton(app::images::arrow_back, Localized("返回上一页")).OnClick(onClose);
+            return PageScaffold(title, {}, body, true, false, true, std::nullopt, back)
+                .On<huxerui::ViewEvents::BackRequested>(onClose);
+        }
+        return SecondaryPageScaffold(huxerui::Text(title, huxerui::TextRole::Title),
+            {}, body, onClose, false, false, true);
+    }
+    return DialogCard(huxerui::Column {
+      huxerui::Text(title, huxerui::TextRole::Title),
+      fields,
       huxerui::Row {
-        huxerui::Button(Localized("取消")).OnClick([context] { context.Dismiss(); }),
+        huxerui::Button(Localized("取消")).OnClick(onClose),
         huxerui::Button(Localized(editing ? "保存" : "添加")).OnClick(save)
             .With(huxerui::Enabled(hex.has_value() && model->view.Get().ready)),
       }.With(huxerui::Spacing(theme.spacing.small), huxerui::MainAlign(huxerui::MainAxisAlignment::End)),
     }.With(huxerui::Frame{.width = kThemeColorDialogWidth}, huxerui::Spacing(theme.spacing.medium),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+}
+
+[[huxerui::composable]] huxerui::View ThemeColorDialog(
+    std::shared_ptr<SettingsModel> model, huxerui::DialogContext context,
+    std::string initialHex, std::optional<std::string> editingId) {
+    return ThemeColorEditor(model, [context] { context.Dismiss(); }, initialHex, editingId, false);
+}
+
+[[huxerui::composable]] huxerui::View ThemeColorEditorPage(
+    std::string initialHex, std::optional<std::string> editingId, std::function<void()> onBack) {
+    return ThemeColorEditor(huxerui::UseService<SettingsModel>(), onBack, initialHex, editingId, true);
 }
 
 [[huxerui::composable]] huxerui::View ThemeColorCard(
@@ -268,16 +299,22 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const auto& theme = huxerui::UseTheme();
     auto menu = UseActionMenu();
     auto tasks = huxerui::UseTaskScope();
+    const auto navigation = huxerui::UseNavigation();
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const auto fill = IsDarkTheme(theme) ? accent.dark : accent.light;
     const auto foreground = IsDarkTheme(theme) ? accent.onDark : accent.onLight;
     const huxerui::StringVariant label = accent.id.starts_with('#') ? huxerui::StringVariant{accent.name} : Localized(accent.name);
     huxerui::View card = ThemeColorCardSurface(theme, fill, foreground,
         selected ? std::optional<huxerui::ImageResource>{app::images::check} : std::nullopt,
-        selected, huxerui::UseString(label), [model, id = accent.id] { SelectThemeColor(model, id); }, std::nullopt, edge)
+        selected, huxerui::UseString(label), [model, id = accent.id] { SelectThemeColor(model, id); }, edge, accent.id)
         .Key("theme-color-" + accent.id);
     const std::string id = accent.id;
     const std::string initialHex = id.starts_with('#') ? id : ThemeColorToHex(accent.light);
-    const auto edit = [dialog, model, id, initialHex] {
+    const auto edit = [dialog, navigation, compact, model, id, initialHex] {
+        if (compact) {
+            navigation.Push(ThemeColorEditorRoutePage, initialHex, std::optional<std::string>{id});
+            return;
+        }
         dialog.Show([model, id, initialHex](huxerui::DialogContext context) {
             return ThemeColorDialog(model, context, initialHex, id);
         });
@@ -341,6 +378,8 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     };
 
     const auto dialog = huxerui::UseDialog();
+    const auto navigation = huxerui::UseNavigation();
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const SettingsView settings = settingsModel->view.Get();
     const float cardEdge = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact ?
         kThemeColorCompactCardEdge : kThemeColorCardEdge;
@@ -363,20 +402,24 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     std::vector<huxerui::View> modes;
     for (std::size_t index = 0; index < kThemeNames.size(); ++index) {
         const bool selected = static_cast<int>(index) == themeMode.Get();
-        const auto colors = ResolveSelectableTileColors(theme, selected);
-        modes.push_back(ThemeColorCardSurface(theme, colors.surface, colors.fg, modeIcons[index],
+        modes.push_back(ThemeModeCardSurface(theme, modeIcons[index],
             selected, huxerui::UseString(kThemeNames[index]),
-            [applyTheme, index] { applyTheme(static_cast<int>(index)); }, kThemeNames[index], cardEdge)
+            [applyTheme, index] { applyTheme(static_cast<int>(index)); })
             .Key("theme-mode-" + std::to_string(index)));
     }
     colors.push_back(ThemeColorCardSurface(theme, ResolveIslandTheme(theme).active,
         theme.colors.on_surface_variant, app::images::add, false,
-        huxerui::UseString(Localized("添加颜色")), [dialog, settingsModel] {
+        huxerui::UseString(Localized("添加颜色")), [dialog, navigation, compact, settingsModel] {
+            if (compact) {
+                navigation.Push(ThemeColorEditorRoutePage, ThemeColorToHex(FluxPalette::water()),
+                    std::optional<std::string>{});
+                return;
+            }
             dialog.Show([settingsModel](huxerui::DialogContext context) {
                 return ThemeColorDialog(settingsModel, context,
                     ThemeColorToHex(FluxPalette::water()), std::nullopt);
             });
-        }, std::nullopt, cardEdge).Key("theme-color-add"));
+        }, cardEdge).Key("theme-color-add"));
     huxerui::View content = huxerui::ScrollView(huxerui::Column {
       SectionTitle(Localized("模式")),
       huxerui::Row(std::move(modes)).With(huxerui::Spacing(kSectionCardSpacing),
@@ -705,10 +748,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     huxerui::ImageResource icon, std::function<void()> action,
     bool enabled = true, bool spinning = false) {
     const auto& theme = huxerui::UseTheme();
-    const auto rotation = spinning && !theme.motion.reduced_motion
-        ? huxerui::AnimateTo(360.0F, huxerui::TweenSpec{0.9, huxerui::Easing::Linear},
-            huxerui::AnimationPlayback{.iterations = std::nullopt})
-        : huxerui::AnimateTo(0.0F, huxerui::SnapSpec{});
+    const auto rotation = RefreshIconRotation(theme, spinning);
     return huxerui::Row{
         SettingItemIcon(icon).With(huxerui::Rotation(rotation)).Key("about-action-icon"),
         huxerui::Column{

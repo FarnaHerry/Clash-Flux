@@ -478,6 +478,9 @@ huxerui::View AboutRoutePage();
 huxerui::View AboutPage(std::function<void()> onBack);
 huxerui::View RuntimeDiagnosticsPage(std::function<void()> onBack);
 huxerui::View RuntimeDiagnosticsRoutePage();
+huxerui::View ThemeColorEditorPage(std::string initialHex, std::optional<std::string> editingId,
+    std::function<void()> onBack);
+huxerui::View ThemeColorEditorRoutePage(std::string initialHex, std::optional<std::string> editingId);
 huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     huxerui::View actions, huxerui::View content,
                                     std::function<void()> onBack,
@@ -522,13 +525,15 @@ huxerui::View FittedSingleLineLabel(std::string text, huxerui::TextStyle style,
 constexpr float kSelectableTileRadius = 8.0F;
 
 enum class SelectableTileInteraction { Selectable, ReadOnly, Disabled };
+enum class SelectableTileStyle { Standard, Subscription };
 
 SelectableTileColors ResolveSelectableTileColors(
     const huxerui::ThemeSpec& theme, bool selected);
 huxerui::View SelectableTile(huxerui::View content, bool selected,
                              std::string semantics_label,
                              std::function<void()> on_click,
-                             SelectableTileInteraction interaction);
+                             SelectableTileInteraction interaction,
+                             SelectableTileStyle style = SelectableTileStyle::Standard);
 
 // 注意（踩过的坑）：**不要在 composable 的返回值上补 `Background/Border/CornerRadius`**。
 // composable 返回的是 hcg 生成的 Scope 包装节点，那些 paint 修饰符只会画在整棵子树

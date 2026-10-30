@@ -47,6 +47,7 @@ ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-require
 | 个人/全局规则集、SRS 导入、强制更新 | 构建 test_singbox / test_runtime_health，运行 personal_rule_sets_runtime；包含真实固定内核、生产导入函数、新旧缓存和 TLS 拒绝，不用配置 check 替代运行匹配。 |
 | 依赖 / fork / 打包边界 | 读取 [依赖技能](../clashflux-dependencies/SKILL.md)，执行 CPS 重定位、版本拒绝、缓存完整性、TLS 及对应框架行为回归。 |
 | 服务 / PPTP / 系统网络 | 读取 [运行控制技能](../clashflux-runtime/SKILL.md) 和对应 [平台约束](../clashflux-platform/SKILL.md)，依平台执行 service_protocol、vpn、routing、compensation 和 Windows 专属回归。 |
+| Android 启停 / 后台状态 | 从 platform/android 运行 `./gradlew.bat :app:testRuntimeStartPolicy :app:testVpnUptime`，并编译应用 Java/NDK；划走重开、停止/撤权、通知和 sticky 恢复需真机，见 [Android 生命周期](../../docs/android-background-lifecycle.md)。 |
 
 DNS 定向回归：
 

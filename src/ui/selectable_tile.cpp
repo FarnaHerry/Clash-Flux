@@ -27,7 +27,7 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
 
 [[huxerui::composable]] huxerui::View SelectableTile(
     huxerui::View content, bool selected, std::string semantics_label,
-    std::function<void()> on_click, SelectableTileInteraction interaction) {
+    std::function<void()> on_click, SelectableTileInteraction interaction, SelectableTileStyle style) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const SelectableTileColors colors =
         ResolveSelectableTileColors(theme, selected);
@@ -43,7 +43,8 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
                   huxerui::CornerRadius(kSelectableTileRadius),
                   huxerui::Border(selected ? theme.colors.primary
                                            : huxerui::Color::Transparent(),
-                                  selected ? kCardSelectedOutlineWidth : 0.0F),
+                                  selected ? (style == SelectableTileStyle::Subscription
+                                      ? kSubscriptionSelectedOutlineWidth : kCardSelectedOutlineWidth) : 0.0F),
                   huxerui::ClipChildren(),
                   huxerui::Grow(1.0F),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),

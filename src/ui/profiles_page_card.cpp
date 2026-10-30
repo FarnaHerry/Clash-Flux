@@ -185,7 +185,8 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }
     huxerui::View preview = SelectableTile(previewContent,
-        profile.selected, profile.name, {}, SelectableTileInteraction::ReadOnly);
+        profile.selected, profile.name, {}, SelectableTileInteraction::ReadOnly,
+        SelectableTileStyle::Subscription);
     huxerui::Color shadow = theme.colors.scrim;
     shadow.alpha = 0.24F;
     return std::move(preview).With(
@@ -758,7 +759,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
             }
             activateProfile(id);
         }, nativeVpn ? SelectableTileInteraction::ReadOnly
-                     : SelectableTileInteraction::Selectable);
+                     : SelectableTileInteraction::Selectable, SelectableTileStyle::Subscription);
 
     // 矩形卡统一高度；宽度由虚拟网格的轨道均分，铺满页面而不固定尺寸
     // （内容已单行截断，ClipChildren 兜底）。

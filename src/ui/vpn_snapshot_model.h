@@ -3,6 +3,9 @@
 #include <huxerui/huxerui.h>
 
 #include <cstdint>
+#include <exception>
+#include <memory>
+#include <string>
 #include <utility>
 
 namespace clashflux::ui {
@@ -28,5 +31,25 @@ template <class Snapshot> struct VpnSnapshotModel {
         return true;
     }
 };
+
+// Startup pages mount before SQLite hydration. Do not call the store until
+// loaded, and never let a worker initialization error escape the UI task.
+template<class Model, class Load, class Failed>
+void LaunchHydratedVpnSnapshot(huxerui::TaskScope tasks, bool loaded,
+                               std::shared_ptr<Model> model, Load load, Failed failed) {
+    if (!loaded) return;
+    const auto before = model->syncTick.Get();
+    tasks.Launch([model, before, load = std::move(load), failed = std::move(failed)]() mutable
+                     -> huxerui::Task<void> {
+        try {
+            auto next = co_await load();
+            model->PublishPolled(before, std::move(next));
+        } catch (const std::exception& error) {
+            failed(std::string{error.what()});
+        } catch (...) {
+            failed(std::string{"VPN initialization failed"});
+        }
+    });
+}
 
 } // namespace clashflux::ui

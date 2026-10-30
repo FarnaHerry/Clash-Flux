@@ -58,14 +58,21 @@
 
 ## 启停和恢复
 
-- 应用启动先由 CoreStore 读取已保存的 TUN 设置，再编译对应配置；此前台服务启动请求不再把
-  已启用的 TUN 配置改写成无 TUN 配置。
+- 应用启动先由 CoreStore 读取已保存的 TUN 设置，再编译对应配置；core-only 请求不改写
+  已提交配置中的 TUN 恢复意图，运行时另在内存中移除 TUN inbound。
 - `ClashVpnService` 在 Android `:background` 进程中执行。它在 `onCreate()` 第一时间调用
   `startForeground()`，随后由工作线程初始化 JNI/libbox 和运行配置。
 - 服务以 `START_STICKY` 返回。系统传入空 Intent 时，从服务专属持久状态精确恢复 `core_only`
   或 `vpn`；状态不明确时停止空服务，绝不猜测为 TUN。
+- 打开 UI 的 core-only 请求只保留后台当前确实在运行或启动、且未取消的 VPN；旧恢复标记
+  不能把该请求升级为 VPN。无 TUN 模式在内存中移除 `tun` inbound，保留其它 inbound 和
+  已提交配置文件供真正的 sticky VPN 恢复；`openTun` 在创建接口前再次检查本次请求权限。
 - 用户关闭、VPN 授权撤回、启动失败会清除恢复模式。普通进程回收不依赖 `onDestroy()` 清理恢复状态。
 - UI 的显式停止在任务线程通过 Binder 等待 libbox 关闭结果；启动中的停止先取消启动并等待工作线程收尾，关闭失败不得回报“已停止”。Activity 销毁本身仍不停止常驻内核。
+- 从最近任务划走 Activity 继续保留后台 VPN，重新打开只重新绑定；这与显式停止或撤销 VPN
+  授权不同。后两者及 libbox 的停止回调在后台工作线程收尾，即使 libbox 关闭失败仍尝试
+  关闭 TUN；失败保留未关闭句柄和错误通知供重试，确认释放后才移除前台通知并停止服务。
+  服务对象缺失的快照仍保留实际错误状态，不把缺省 Bundle 值解释为已停止。
 - `BootReceiver` 仅在先前 TUN 状态仍启用时启动 VpnService；它不加载 HuxerUI，也不初始化 UI 数据库。
 - 旧的同进程 `CoreService` 常驻通知已移除；无 TUN 内核与 VPN 共用 libbox/VpnService 生命周期，
   避免两个常驻前台服务和重复通知。
@@ -106,11 +113,12 @@ Android Task Manager 停止或厂商禁用后台/自启动。`START_STICKY` 是�
 Binder 暂时丢失只保留最后观测，不能清零会话或伪造断开；后台进程真正重启后重新连接
 自然建立新会话。首份 Binder 快照有独立就绪标志，不能把 JNI 默认值当作已确认状态。
 
-无 Android 设备也可运行纯 Java 会话时钟回归：
+无 Android 设备也可从 `platform/android` 运行宿主 JVM 回归；两项均接入 `preBuild`：
 
 ```powershell
-javac -d build/android-clock-test platform/android/app/src/main/java/dev/farna/clashflux/VpnUptime.java tests/android/VpnUptimeTest.java
-java -cp build/android-clock-test dev.farna.clashflux.VpnUptimeTest
+./gradlew.bat :app:testRuntimeStartPolicy :app:testVpnUptime
 ```
 
-这只验证后台计时契约，不代替 APK 构建与真实 VPN 授权/连接生命周期验收。
+`RuntimeStartPolicyTest` 覆盖重新绑定保留活动 VPN、停止/取消拒绝旧启动、无 TUN 请求权限
+与 inbound 过滤策略；`VpnUptimeTest` 覆盖后台会话时钟。它们不代替 Java/NDK/APK 构建，
+也不代替真机的划走后重开、显式停止、授权撤回、通知/系统 VPN 图标与 sticky 恢复验收。

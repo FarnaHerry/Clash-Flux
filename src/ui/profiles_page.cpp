@@ -151,20 +151,18 @@ struct ProfileReorderSession {
     // 原生连接状态：唯一来源是 VpnModel（见 vpn_model.h）。挂载时加载一次
     // 持久化的连接配置并请模型立刻同步，之后由模型 State 驱动镜像。
     const auto vpnModel = huxerui::UseService<VpnModel>();
+    const auto profilesModel = huxerui::UseService<ProfilesModel>();
     const auto vpnOperation = vpnModel->operation.Get();
     huxerui::Lifecycle(
-        [tasks, vpnModel] {
-            const auto before = vpnModel->syncTick.Get();
-            tasks.Launch([vpnModel, before]() -> huxerui::Task<void> {
-                auto next = co_await RunOnTaskThread([] {
+        [tasks, vpnModel, profilesModel, toast] {
+            LaunchHydratedVpnSnapshot(tasks, profilesModel->loaded.Get(), vpnModel,
+                [] { return RunOnTaskThread([] {
                     store::vpnStore().init();
                     return store::vpnStore().snapshot();
-                });
-                vpnModel->PublishPolled(before, std::move(next));
-            });
+                }); }, [toast](std::string error) { toast.Show(std::move(error)); });
             return [] {};
         },
-        0);
+        profilesModel->loaded);
     huxerui::Lifecycle(
         [pptpStates, vpnModel] {
             const auto& view = vpnModel->view.Get();
@@ -177,7 +175,6 @@ struct ProfileReorderSession {
     // 四个一级页同时挂载，隐藏页即使不重组，其已挂载子树仍随每一帧被重新测量。
     // 真机实测（代理页大分组）：四页同挂时每帧 1443 次测量请求 / ~20ms，
     // 只留当前页后降到 28 次 / ~0ms；因此不可见页必须返回空占位。
-    const auto profilesModel = huxerui::UseService<ProfilesModel>();
     auto linkEffects = ProfileLinkImportEffects(profilesModel, navigation,
                                                 navigation_enabled, active);
     if (!active) return huxerui::Column{linkEffects, huxerui::Row{}}

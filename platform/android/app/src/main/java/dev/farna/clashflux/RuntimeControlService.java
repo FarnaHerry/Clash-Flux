@@ -83,6 +83,12 @@ public final class RuntimeControlService extends Service {
     }
 
     static void requestStop(Context context) {
+        if (context instanceof ClashVpnService) {
+            // Already in :background. Avoid starting another service from a
+            // libbox/revoke callback, and keep blocking cleanup on the worker.
+            COMMANDS.execute(ClashVpnService::stopCurrent);
+            return;
+        }
         Intent intent = new Intent(context, RuntimeControlService.class).setAction(ACTION_STOP);
         try {
             context.startService(intent);
@@ -93,8 +99,10 @@ public final class RuntimeControlService extends Service {
     }
 
     private boolean stopRuntimeService() {
-        if (ClashVpnService.stopCurrent()) return true;
+        // A failed close must retain its owner/resources for an explicit retry.
+        if (ClashVpnService.hasRuntimeOwner()) return ClashVpnService.stopCurrent();
         ClashVpnService.stopServiceFallback(this);
-        return ClashVpnService.runtimeSnapshot().getInt("coreState") == 0;
+        Bundle snapshot = ClashVpnService.runtimeSnapshot();
+        return snapshot.containsKey("coreState") && snapshot.getInt("coreState") == 0;
     }
 }

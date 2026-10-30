@@ -1,7 +1,7 @@
-// cli.cppm — clashflux.cli：完整命令行入口（无 GUI 依赖）。
+// cli.cppm — clashflux.cli：单实例 Runtime 的命令入口。
 //
-// 主入口分流：argv 无参数 → GUI；有参数 → cli::run。子命令围绕「内核 /
-// 订阅 / 代理」三块，全部复用领域 store（与 GUI 同一份数据目录与设置）：
+// version/help/service 直接执行，其余命令由 Runtime 内执行或单实例转发。
+// 子命令围绕「内核 / 订阅 / 代理」，复用 GUI 的领域 store 和数据目录：
 //
 //   clash-flux version
 //   clash-flux service install|uninstall|status|run   服务模式（root 托管 sing-box/PPTP）
@@ -17,9 +17,8 @@
 //   clash-flux profile check [<id>]                   检查订阅的 sing-box 保真度
 //                                                     （有无法映射的条目时退出码 1）
 //
-// 与 GUI 的关系：CLI 启动的内核若为直连 spawn 则以 setsid 脱离会话驻留
-// （pid 写 core/core.pid）；GUI 启动时先探测控制器，已有内核在跑则直接
-// 接管（不重复 spawn）。装了服务模式后 start/stop 一律经 root 服务。
+// 与 GUI 共用 Runtime/缓存和单实例转发；version/help/service 保持直接命令。
+// Windows/Linux 的 start/stop 一律经系统服务，不存在 CLI 专属数据面。
 module;
 
 // stderr 是宏，模块不导出宏：println(stderr, ...) 需要本 TU 文本可见。
@@ -146,8 +145,8 @@ int cmdCore(const std::vector<std::string>& args) {
         return 0;
     }
     if (args[0] == "status") {
-        // 先探控制器：CLI 是新进程，本地快照不知道别的进程（GUI/detached/
-        // 服务）拉起的内核。
+        // A new command Runtime may not have observed the existing service
+        // instance yet; forwarded commands share the resident GUI snapshot.
         if (const auto r = core.api().version(); r.ok) {
             std::println("内核：运行中{}", service::coreRunning() ? "（服务托管）" : "");
             return 0;
@@ -163,7 +162,8 @@ int cmdCore(const std::vector<std::string>& args) {
             std::println(stderr, "停止旧内核失败：{}", core.snapshot().lastError);
             return 1;
         }
-        // detached：CLI 退出后内核驻留（setsid + 日志文件 + pidfile）。
+        // Keep the service-owned core alive after a one-shot command Runtime
+        // exits; this does not launch a separate CLI data plane.
         core.startCore(store::profilesStore().selectedYaml(), /*detached=*/true);
         const auto s = core.snapshot();
         if (s.state != core::CoreState::Running) {

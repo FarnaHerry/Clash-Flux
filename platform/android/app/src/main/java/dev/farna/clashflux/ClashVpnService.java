@@ -81,7 +81,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private CommandServer server;
     private CommandClient client;
     private ParcelFileDescriptor tunnel;
-    private boolean started;
+    private volatile boolean started;
     private boolean foregroundReady;
     private boolean libboxReady;
     private volatile boolean runtimeBootstrapReady;
@@ -173,6 +173,13 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         ClashVpnService owner = current;
         if (owner != null) synchronized (owner.clientLock) { return owner.lockedRuntimeSnapshot(); }
         Bundle empty = new Bundle();
+        // Service destruction may follow a failed resource close. An absent
+        // owner must not turn that error into Bundle.getInt()'s default zero.
+        empty.putInt("coreState", runtimeCoreState);
+        VpnUptime.Snapshot vpn = vpnUptime.snapshot(SystemClock.elapsedRealtime());
+        empty.putInt("vpnState", vpn.state);
+        empty.putLong("vpnElapsedMs", vpn.elapsedMs);
+        empty.putString("message", runtimeMessage);
         empty.putString("statusHealth", "paused");
         empty.putLong("statusAgeMs", -1);
         return empty;
@@ -205,6 +212,8 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     }
 
     private static void publishCoreState(int state, String message) {
+        // A resident core is not a VPN session, including after a reused service.
+        vpnUptime.update(0, SystemClock.elapsedRealtime());
         runtimeCoreState = state;
         runtimeMessage = message == null ? "" : message;
         nativeCoreState(state, runtimeMessage);
@@ -256,6 +265,11 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             MainActivity.appLog("VPN 服务未完成前台初始化，拒绝启动数据面", true);
             return START_NOT_STICKY;
         }
+        if (!RuntimeStartPolicy.mayStart(stopRequested.get(), started, starting,
+                server != null, tunnel != null)) {
+            MainActivity.appLog("Android 内核仍在关闭，拒绝旧启动请求", false);
+            return START_NOT_STICKY;
+        }
         if (i == null) {
             // START_STICKY deliberately does not redeliver the last Intent.
             // Restore the selected service mode instead of accidentally
@@ -273,6 +287,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 MainActivity.appLog("系统重建服务：恢复 VPN/TUN 模式", false);
             } else {
                 MainActivity.appLog("系统重建了无持久运行模式的服务，停止空服务", false);
+                stopForeground(STOP_FOREGROUND_REMOVE);
                 stopSelf(id);
                 return START_NOT_STICKY;
             }
@@ -282,18 +297,18 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         final boolean requestedCoreOnly = i != null
                 && i.getBooleanExtra(EXTRA_CORE_ONLY, false);
         if (i != null && requestedCoreOnly) {
-            String savedMode = getSharedPreferences(SERVICE_PREFS, MODE_PRIVATE)
-                    .getString(KEY_SERVICE_MODE, "");
-            if (MODE_VPN.equals(savedMode) || BootReceiver.isVpnActive(this)) {
-                // MainActivity can request the resident core while restoring
-                // its saved state. Preserve an already requested tunnel mode.
-                if (!MODE_VPN.equals(savedMode)) persistServiceMode(MODE_VPN);
+            if (RuntimeStartPolicy.preserveLiveVpn(started, starting, startRequested,
+                    stopRequested.get(), coreOnly, speedTestOnly)) {
+                // Reattaching UI must leave a live VPN alone. A stale durable
+                // mode may restore only a system sticky restart, never this request.
+                persistServiceMode(MODE_VPN);
                 coreOnly = false;
                 speedTestOnly = false;
             } else {
                 persistServiceMode(MODE_CORE_ONLY);
                 coreOnly = true;
                 speedTestOnly = false;
+                BootReceiver.setVpnActive(this, false);
                 // The C++ side persists a TUN intent for config compilation.
                 // Starting the resident core without the tunnel makes that
                 // intent stale; flag it so the UI clears its switch to OFF
@@ -318,7 +333,11 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 stopRequested.set(false);
                 starting = true;
                 new Thread(() -> {
-                    close("切换到 Android VPN 数据面", false);
+                    if (!close("切换到 Android VPN 数据面", false)) {
+                        stopRequested.set(true);
+                        starting = false;
+                        return;
+                    }
                     if (!stopRequested.get()) {
                         startRequested = true;
                         startDataPlane();
@@ -371,8 +390,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         markTunPreferenceResetPending();
         clearPersistentServiceMode(this);
         BootReceiver.setVpnActive(this, false);
-        close("系统撤销了 VPN");
-        stopSelf();
+        RuntimeControlService.requestStop(this);
     }
     @Override public void onDestroy() {
         MainActivity.appLog("VPN 服务正在销毁", false);
@@ -444,6 +462,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             MainActivity.appLog("已找到运行配置，准备校验 libbox 配置", false);
             String configContent = new String(
                     Files.readAllBytes(config.toPath()), StandardCharsets.UTF_8);
+            configContent = runtimeConfig(configContent, noTun);
             checkpoint = logPreparationStage("config-wait-and-read", checkpoint);
             Libbox.checkConfig(configContent);
             checkpoint = logPreparationStage("libbox-check", checkpoint);
@@ -538,8 +557,28 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             runtimeBootstrapReady = true;
         }
     }
+    private static String runtimeConfig(String content, boolean noTun) throws Exception {
+        if (!noTun) return content;
+        JSONObject config = new JSONObject(content);
+        JSONArray inbounds = config.optJSONArray("inbounds");
+        if (inbounds == null) return content;
+        JSONArray retained = new JSONArray();
+        for (int index = 0; index < inbounds.length(); ++index) {
+            JSONObject inbound = inbounds.getJSONObject(index);
+            if (RuntimeStartPolicy.retainInbound(noTun, inbound.optString("type"))) retained.put(inbound);
+        }
+        if (retained.length() == inbounds.length()) return content;
+        // Keep the committed VPN config intact for an actual sticky VPN restore.
+        config.put("inbounds", retained);
+        return config.toString();
+    }
+    private void requireTunRequest() {
+        if (!RuntimeStartPolicy.allowTun(coreOnly, speedTestOnly, startRequested, stopRequested.get()))
+            throw new IllegalStateException("当前运行请求不允许创建 Android VPN/TUN");
+    }
     @Override public int openTun(TunOptions o) throws Exception {
         try {
+            requireTunRequest();
             String conflict = VpnConflict.find(this);
             if (!conflict.isEmpty()) throw new IllegalStateException(conflict);
             if (VpnService.prepare(this) != null) {
@@ -593,8 +632,14 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             b.setConfigureIntent(PendingIntent.getActivity(
                     this, 0, new Intent(this, MainActivity.class),
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+            requireTunRequest();
             tunnel = b.establish();
             if (tunnel == null) throw new IllegalStateException("系统拒绝创建 VPN 接口");
+            if (!RuntimeStartPolicy.allowTun(coreOnly, speedTestOnly, startRequested, stopRequested.get())) {
+                tunnel.close();
+                tunnel = null;
+                throw new IllegalStateException("Android VPN 启动已取消");
+            }
             MainActivity.appLog("Android VPN 接口已创建", false);
             // Keep the PFD owned by the service until libbox is stopped.  The
             // official Android client returns pfd.fd and closes the same PFD
@@ -1314,29 +1359,38 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             client = null;
         }
         try { if (activeClient != null) activeClient.disconnect(); } catch (Exception ignored) {}
+        boolean closed = true;
+        boolean dataPlaneClosed = true;
         try {
             if (server != null) server.closeService();
         } catch (Exception error) {
             MainActivity.appLog("关闭 sing-box 数据面失败：" + error.getMessage(), true);
-            if (noTun) publishCoreState(3, "关闭 sing-box 数据面失败");
-            else publishVpnState(3, "关闭 sing-box 数据面失败");
-            return false;
+            closed = false;
+            dataPlaneClosed = false;
         }
-        boolean closed = true;
-        try { if (server != null) server.close(); }
+        try {
+            // CommandServer.close() only closes its control plane, not the
+            // data plane. Retain the owner if closeService() needs a retry.
+            if (dataPlaneClosed) {
+                if (server != null) server.close();
+                server = null;
+            }
+        }
         catch (Exception error) {
             MainActivity.appLog("关闭 sing-box 服务失败：" + error.getMessage(), true);
             closed = false;
         }
-        server = null;
-        try { if (tunnel != null) tunnel.close(); }
+        try {
+            if (tunnel != null) tunnel.close();
+            tunnel = null;
+        }
         catch (Exception error) {
             MainActivity.appLog("关闭 Android TUN 失败：" + error.getMessage(), true);
             closed = false;
         }
-        tunnel = null;
         publishStats(0, 0, 0, 0, 0);
         if (!closed) {
+            updateForegroundNotification("Android 内核资源关闭失败，请重试停止");
             if (noTun) publishCoreState(3, "Android 内核资源未完全关闭");
             else publishVpnState(3, "Android 内核资源未完全关闭");
         } else if (reportStopped && !failureReported) {
@@ -1346,12 +1400,15 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         return closed;
     }
 
+    static boolean hasRuntimeOwner() { return current != null; }
+
     /** Stops the current data plane before asking Android to destroy the service. */
     public static boolean stopCurrent() {
         ClashVpnService service = current;
         if (service == null) return false;
         synchronized (service.stopLock) {
             service.stopRequested.set(true);
+            synchronized (URL_TEST_LOCK) { pendingUrlTestGroup = null; }
             if (!service.coreOnly && !service.speedTestOnly) {
                 service.markTunPreferenceResetPending();
             }
@@ -1616,16 +1673,19 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     // a second "stopped" callback immediately, hiding the actual libbox error.
     private void fail(String msg) {
         failureReported = true;
+        stopRequested.set(true);
         Log.e(TAG, msg);
         MainActivity.appLog(msg, true);
         if (!speedTestOnly && !coreOnly) markTunPreferenceResetPending();
         clearPersistentServiceMode(this);
         BootReceiver.setVpnActive(this, false);
-        close(msg, false);
+        boolean closed = close(msg, false);
         if (speedTestOnly || coreOnly) publishCoreState(3, msg);
         else publishVpnState(3, msg);
-        stopForeground(STOP_FOREGROUND_REMOVE);
-        stopSelf();
+        if (closed) {
+            stopForeground(STOP_FOREGROUND_REMOVE);
+            stopSelf();
+        }
     }
 
     @Override public boolean usePlatformAutoDetectInterfaceControl(){return true;}
@@ -1686,7 +1746,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     @Override public void registerMyInterface(String n){}
     @Override public void checkPlatformShell(){}
     @Override public BridgeSession createBridge(BridgeOptions o){return null;} @Override public PlatformUser lookupUser(String n){return null;} @Override public ShellSession openShellSession(PlatformUser u,String c,StringIterator e,String d,int p,int q){return null;} @Override public String lookupSFTPServer(){return "";} @Override public String readSystemSSHHostKey(){return "";} @Override public String tailscaleHostname(){return "";}
-    @Override public void sendNotification(io.nekohasekai.libbox.Notification n){} @Override public void cancelNotification(String i,int t){} @Override public int connectSSHAgent(){return -1;} @Override public SystemProxyStatus getSystemProxyStatus(){return null;} @Override public void serviceReload(){} @Override public void serviceStop(){close("sing-box 已停止");} @Override public void setSystemProxyEnabled(boolean e){} @Override public void triggerNativeCrash(){} @Override public void writeDebugMessage(String m){Log.d(TAG,m); MainActivity.appLog("libbox 调试信息："+m,false);}
+    @Override public void sendNotification(io.nekohasekai.libbox.Notification n){} @Override public void cancelNotification(String i,int t){} @Override public int connectSSHAgent(){return -1;} @Override public SystemProxyStatus getSystemProxyStatus(){return null;} @Override public void serviceReload(){} @Override public void serviceStop(){RuntimeControlService.requestStop(this);} @Override public void setSystemProxyEnabled(boolean e){} @Override public void triggerNativeCrash(){} @Override public void writeDebugMessage(String m){Log.d(TAG,m); MainActivity.appLog("libbox 调试信息："+m,false);}
     @Override public void clearLogs(){} @Override public void connected(){Log.i(TAG,"sing-box command stream connected"); MainActivity.appLog("libbox 控制通道已连接",false);} @Override public void disconnected(String message){Log.w(TAG,"sing-box command stream disconnected: "+message); MainActivity.appLog("libbox 控制流断开："+message,true);} @Override public void initializeClashMode(StringIterator modes,String current){} @Override public void setDefaultLogLevel(int level){} @Override public void updateClashMode(String mode){} @Override public void writeConnectionEvents(ConnectionEvents events){
         if (events == null) return;
         try {

@@ -1,11 +1,8 @@
 // core.cppm — clashflux.core：sing-box 内核进程生命周期（接口模块）。
 //
-// 进程模型（对齐 apitab k6_engine）：start() 由 store 调用，POSIX（Linux/macOS）
-// posix_spawn / Windows CreateProcessW 拉起 sing-box 子进程（stdout+stderr 合并进
-// 一根管道），监视线程按 \r / \n 拆行入队（内核自身的启动日志，日志页在 WS
-// 断线时也能看到这些）；stop() POSIX 先 SIGTERM，2s 宽限后 SIGKILL；Windows 无
-// SIGTERM 语义，直接 TerminateProcess。iOS 不走子进程路径，必须通过 Network
-// Extension 中的 Libbox runtime 启动。
+// Windows/Linux 的数据面由 SCM/systemd 服务持有，CoreProcess::start 与
+// spawnDetached 均拒绝在应用进程启动内核。macOS 保留 posix_spawn、日志管道和
+// SIGTERM→SIGKILL 的进程后端；移动端由各自系统 VPN/Libbox runtime 托管。
 //
 // 运行时配置：generateConfig() 经 clashflux.singbox 编译器把订阅（Clash YAML、
 // 原生 sing-box JSON 或空）与本应用托管的设置（clash_api / mixed 入站 / tun /
@@ -47,10 +44,8 @@ export std::string pidImageName(long pid);
 // 供诊断文本进 UI/CLI 前净化。
 export std::string stripAnsi(std::string text);
 
-// 以脱离会话方式启动内核（CLI `core start` 用：CLI 退出后内核驻留）：
-// POSIX setsid + stdout/stderr 追加到 <workDir>/core.log；Windows
-// DETACHED_PROCESS + 同样重定向日志。成功后 pid 写 <workDir>/core.pid
-// （接管/停止路径的活判与 killPid 依据）。失败返回 false 并填 error。
+// macOS 的兼容驻留后端：setsid + 日志文件 + core.pid。
+// Windows/Linux 必须经服务启动，此函数只返回错误，不创建进程或写 pidfile。
 export bool spawnDetached(const std::filesystem::path& binary,
                           const std::filesystem::path& workDir,
                           const std::filesystem::path& configFile,
@@ -65,9 +60,8 @@ export enum class TunGate {
 
 // 打开 TUN 前的门禁（阻塞：Linux 会连服务 socket 探测 root 服务托管；任务线程
 // 调用）。Windows 检查 SCM 网络服务，权限只由服务提供，不提权 GUI；
-// Linux 的设计取向是应用自身保持非 root（更安全），root 只在服务侧——服务模式
-// 可用即 Ok；euid==0 仅作兜底事实判断（已经 root 的环境 TUN 本就能建）；
-// macOS 同理。Denied 时 UI 引导安装服务。
+// Linux 同样仅接受服务，包括 euid==0 的 GUI；macOS 保留原 root 门禁。
+// Denied 时 UI 引导安装服务。
 export TunGate tunGate();
 
 // 用系统默认浏览器打开 URL（订阅卡「首页」跳转）。fork+exec（不走 shell，

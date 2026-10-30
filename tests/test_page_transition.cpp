@@ -46,6 +46,7 @@
 #include "theme_colors.h"
 #include "theme_color_card.h"
 #include "vpn_snapshot_model.h"
+#include "task_bridge.h"
 #include "core_operation.h"
 #include "inbound_settings.h"
 #include "pptp_connection_progress.h"
@@ -53,6 +54,8 @@
 #include "profile_card_layout.h"
 #include "profile_list_layout.h"
 #include "proxy_display_name.h"
+#include "proxy_test_model.h"
+#include "proxy_node_tile.h"
 
 namespace {
 using huxerui::testing::UiSelector;
@@ -2286,6 +2289,69 @@ void testCommonMenu() {
     check(ui.Find(UiSelector::Text("COMMON-39")).Exists(), "按坐标打开的长菜单可滚动到末项并执行");
 }
 
+struct VpnHydrationFixture {
+    std::shared_ptr<clashflux::ui::VpnSnapshotModel<int>> model =
+        std::make_shared<clashflux::ui::VpnSnapshotModel<int>>();
+    huxerui::State<bool> loaded{false};
+    huxerui::State<int> retry{0};
+    huxerui::State<std::string> error{std::string{}};
+    int attempts = 0;
+    bool fail = true;
+};
+std::shared_ptr<VpnHydrationFixture> vpnHydrationFixture;
+huxerui::View VpnHydrationRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        const auto fixture = huxerui::UseService<VpnHydrationFixture>();
+        const auto tasks = huxerui::UseTaskScope();
+        huxerui::Lifecycle([fixture, tasks] {
+            clashflux::ui::LaunchHydratedVpnSnapshot(tasks, fixture->loaded.Get(), fixture->model,
+                [fixture] {
+                    ++fixture->attempts;
+                    return clashflux::ui::RunOnTaskThread([fail = fixture->fail] {
+                        if (fail) throw std::runtime_error("native init fixture failure");
+                        return 42;
+                    });
+                }, [fixture](std::string error) { fixture->error = std::move(error); });
+        }, fixture->loaded, fixture->retry);
+        return huxerui::Column{
+            huxerui::Button("Hydrate profiles").OnClick([fixture] { fixture->loaded = true; }),
+            huxerui::Button("Retry native init").OnClick([fixture] {
+                fixture->retry = fixture->retry.Get() + 1;
+            }),
+            huxerui::Text("STARTUP-RESPONSIVE"),
+        };
+    })};
+}
+const huxerui::Application kVpnHydrationApplication{VpnHydrationRoot,
+    {.show_debug_overlay = false, .application_hooks = {[](huxerui::ApplicationContext& context) {
+        vpnHydrationFixture = std::make_shared<VpnHydrationFixture>();
+        context.Provide(vpnHydrationFixture);
+    }}}};
+void testVpnHydrationStartup() {
+    huxerui::testing::UiTest ui(kVpnHydrationApplication, {.viewport = {700.0F, 500.0F}});
+    ui.PumpAndSettle();
+    const auto fixture = vpnHydrationFixture;
+    ui.Find(UiSelector::Text("Retry native init")).Tap(); ui.PumpAndSettle();
+    check(fixture->attempts == 0 && ui.Find(UiSelector::Text("STARTUP-RESPONSIVE")).Exists(),
+          "mounted startup page must not initialize VPN before profiles hydrate");
+    ui.Find(UiSelector::Text("Hydrate profiles")).Tap();
+    for (int i = 0; i < 100 && fixture->error.Get().empty(); ++i) {
+        ui.Pump(std::chrono::milliseconds(20));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    check(fixture->attempts == 1 && fixture->error.Get() == "native init fixture failure" &&
+          fixture->model->view.Get() == 0 && ui.Find(UiSelector::Text("STARTUP-RESPONSIVE")).Exists(),
+          "worker initialization exception becomes feedback without terminating startup or publishing empty data");
+    fixture->fail = false;
+    ui.Find(UiSelector::Text("Retry native init")).Tap();
+    for (int i = 0; i < 100 && fixture->model->view.Get() != 42; ++i) {
+        ui.Pump(std::chrono::milliseconds(20));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    check(fixture->attempts == 2 && fixture->model->view.Get() == 42,
+          "VPN initialization remains retryable after a caught worker failure");
+}
+
 [[huxerui::composable]] huxerui::View ProfileFileFilterContent() {
     const auto filter = clashflux::ui::ProfileConfigFileFilter();
     auto tasks = huxerui::UseTaskScope();
@@ -2370,6 +2436,264 @@ void testProfileImportCompletion() {
     ui.Find(UiSelector::Text("Import fixture")).Tap(); ui.Pump(std::chrono::milliseconds(400)); ui.PumpAndSettle();
     check(ui.Find(UiSelector::Text("IMPORT-SUCCESS")).Exists() && ui.Find(UiSelector::Text("IMPORT-ATTEMPTS:3")).Exists(),
           "failed import remains retryable without retaining busy or creating duplicate operations");
+}
+
+// Uses the production model and dispatch with controlled measurement completions.
+struct ProxyProbeFixture {
+    std::shared_ptr<clashflux::ui::ProxyTestModel> model = std::make_shared<clashflux::ui::ProxyTestModel>();
+    std::vector<huxerui::State<bool>> releases;
+    huxerui::State<std::int64_t> nativeTime{0};
+    huxerui::State<int> nativeDelay{0};
+    int requests = 0, started = 0, active = 0, peak = 0;
+    huxerui::State<int> selected{0};
+    std::vector<std::string> singleTags;
+    bool singleFail = false;
+};
+std::shared_ptr<ProxyProbeFixture> proxyProbeFixture;
+void InstallProxyProbeFixture(huxerui::ApplicationContext& context) {
+    proxyProbeFixture = std::make_shared<ProxyProbeFixture>();
+    proxyProbeFixture->model->ObserveContext(true, 1);
+    context.Provide(proxyProbeFixture);
+}
+void StartProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture, huxerui::TaskScope tasks,
+    bool fail, bool native, int count = 1) {
+    using namespace clashflux::ui;
+    const auto model = fixture->model;
+    const int ticket = model->Begin();
+    if (ticket == 0) return;
+    const int result = 137 + 100 * fixture->requests++;
+    std::vector<ProxyProbeTarget> targets;
+    for (int index = 0; index < count; ++index) {
+        const auto tag = "node-" + std::to_string(index);
+        const auto entry = model->Get(tag, 0, false, 0);
+        model->Start(entry, ticket, 0);
+        targets.push_back({tag, entry});
+    }
+    model->Broadcast(ticket, "fixture-group");
+    if (native) {
+        LaunchNativeProxyProbeBatch(tasks, model, std::move(targets), ticket, [] { return true; },
+            [fixture](const std::string&) -> std::optional<std::pair<int, std::int64_t>> {
+                return std::pair{fixture->nativeDelay.Get(), fixture->nativeTime.Get()};
+            });
+    } else {
+        huxerui::State<bool> release{false};
+        fixture->releases.push_back(release);
+        LaunchProxyProbeBatch(tasks, model, std::move(targets), ticket,
+            [fixture, release, fail, result](const std::string&) -> huxerui::Task<int> {
+                ++fixture->started;
+                fixture->peak = std::max(fixture->peak, ++fixture->active);
+                while (!release.Get()) co_await huxerui::Delay(std::chrono::duration<double>{0.01});
+                --fixture->active;
+                if (fail) throw std::runtime_error("fixture probe failure");
+                co_return result;
+            }, [] { return true; });
+    }
+    tasks.Launch([model, ticket, native]() -> huxerui::Task<void> {
+        co_await WaitForProxyTestBatch(model, ticket, native);
+    });
+}
+[[huxerui::composable]] huxerui::View ProxyProbeOrigin() {
+    const auto fixture = huxerui::UseService<ProxyProbeFixture>();
+    const auto tasks = huxerui::UseApplicationTaskScope();
+    static_cast<void>(fixture->model->generation.Get());
+    const auto probe = fixture->model->Get("node-0", 0, false, 0)->value.Get();
+    return huxerui::Column {
+      huxerui::Button("Probe").OnClick([fixture, tasks] { StartProbeFixture(fixture, tasks, false, false); }),
+      huxerui::Button("Batch probe").OnClick([fixture, tasks] { StartProbeFixture(fixture, tasks, false, false, 12); }),
+      huxerui::Button("Fail probe").OnClick([fixture, tasks] { StartProbeFixture(fixture, tasks, true, false); }),
+      huxerui::Button("Native probe").OnClick([fixture, tasks] { StartProbeFixture(fixture, tasks, false, true); }),
+      huxerui::Text(probe.testing ? "PROBE-TESTING" : probe.timeout ? "PROBE-TIMEOUT" :
+          "PROBE:" + std::to_string(probe.delay)),
+    };
+}
+[[huxerui::composable]] huxerui::View ProxyProbeFixtureContent() {
+    const auto fixture = huxerui::UseService<ProxyProbeFixture>();
+    auto shown = huxerui::UseState(true);
+    return huxerui::Column {
+      huxerui::Button("Toggle probe page").OnClick([shown] { shown = !shown.Get(); }),
+      shown.Get() ? ProxyProbeOrigin().Key("probe-origin") : huxerui::View{huxerui::Row{}}.Key("probe-retired"),
+      huxerui::Text(fixture->model->progress.Get().busy ? "PROBE-BATCH-BUSY" : "PROBE-BATCH-READY"),
+    };
+}
+huxerui::View ProxyProbeFixtureRoot() { return huxerui::FlatTheme{ProxyProbeFixtureContent()}; }
+const huxerui::Application kProxyProbeFixtureApplication{ProxyProbeFixtureRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallProxyProbeFixture}}};
+void testProxyProbesSurvivePageRetirement() {
+    huxerui::testing::UiTest ui(kProxyProbeFixtureApplication, {.viewport = {600.0F, 700.0F}});
+    ui.PumpAndSettle();
+    const auto fixture = proxyProbeFixture;
+    const auto toggle = [&] { ui.Find(UiSelector::Text("Toggle probe page")).Tap(); ui.Pump(); };
+    // Some checks deliberately keep another request suspended; advance its clock
+    // without requiring the entire application's task queue to become empty.
+    const auto settle = [&] {
+        for (int step = 0; step < 25; ++step) ui.Pump(std::chrono::milliseconds(20));
+    };
+    ui.Find(UiSelector::Text("Batch probe")).Tap(); ui.Pump();
+    ui.Find(UiSelector::Text("Probe")).Tap(); ui.Pump();
+    check(fixture->requests == 1 && fixture->started == 8 && fixture->peak == 8 &&
+          fixture->model->pending.Get() == 12, "batch includes unseen nodes, bounds concurrency and rejects duplicate clicks");
+    toggle();
+    check(!ui.Find(UiSelector::Key("probe-origin")).Exists() && ui.Find(UiSelector::Text("PROBE-BATCH-BUSY")).Exists(),
+          "originating page retires while the application retains progress");
+    toggle();
+    check(ui.Find(UiSelector::Text("PROBE-TESTING")).Exists() && fixture->requests == 1,
+          "remount restores pending measurement without restarting it");
+    toggle(); fixture->releases[0] = true; settle(); toggle();
+    check(ui.Find(UiSelector::Text("PROBE:137")).Exists() && fixture->started == 12 &&
+          ui.Find(UiSelector::Text("PROBE-BATCH-READY")).Exists(), "queued results complete while the page is absent");
+    ui.Find(UiSelector::Text("Fail probe")).Tap(); ui.Pump(); toggle(); fixture->releases[1] = true; settle(); toggle();
+    check(ui.Find(UiSelector::Text("PROBE-TIMEOUT")).Exists() && ui.Find(UiSelector::Text("PROBE-BATCH-READY")).Exists(),
+          "measurement exceptions survive remount and clear pending state");
+    ui.Find(UiSelector::Text("Probe")).Tap(); ui.Pump();
+    fixture->model->End(fixture->model->progress.Get().generation);
+    ui.Find(UiSelector::Text("Probe")).Tap(); ui.Pump();
+    fixture->releases[2] = true; settle();
+    check(ui.Find(UiSelector::Text("PROBE-TESTING")).Exists(), "late completion cannot overwrite a newer request");
+    fixture->releases[3] = true; settle();
+    check(ui.Find(UiSelector::Text("PROBE:437")).Exists(), "latest request publishes its own result");
+    ui.Find(UiSelector::Text("Probe")).Tap(); ui.Pump();
+    fixture->model->ObserveContext(true, 2); fixture->releases[4] = true; settle();
+    check(ui.Find(UiSelector::Text("PROBE:0")).Exists() && fixture->model->pending.Get() == 0,
+          "runtime-plan change discards old results and busy state");
+    ui.Find(UiSelector::Text("Native probe")).Tap(); ui.Pump(); toggle();
+    fixture->nativeDelay = 42; fixture->nativeTime = std::int64_t{5}; settle(); toggle();
+    check(ui.Find(UiSelector::Text("PROBE:42")).Exists() && ui.Find(UiSelector::Text("PROBE-BATCH-READY")).Exists(),
+          "native measurements finish independently of mounted cards");
+}
+
+
+void StartSingleProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture,
+    huxerui::TaskScope tasks, const std::string& tag, std::shared_ptr<clashflux::ui::ProxyProbe> probe) {
+    huxerui::State<bool> release{false};
+    if (clashflux::ui::LaunchSingleProxyProbe(tasks, fixture->model, tag, probe,
+        [fixture, release, fail = fixture->singleFail](const std::string& target) -> huxerui::Task<int> {
+            fixture->singleTags.push_back(target);
+            while (!release.Get()) co_await huxerui::Delay(std::chrono::milliseconds(10));
+            if (fail) throw std::runtime_error("single probe failed");
+            co_return 81;
+        }, [] { return true; })) fixture->releases.push_back(release);
+}
+[[huxerui::composable]] huxerui::View SingleProbeTile(std::string tag, int initialDelay, bool canProbe = true) {
+    using namespace clashflux::ui;
+    const auto fixture = huxerui::UseService<ProxyProbeFixture>();
+    const auto tasks = huxerui::UseApplicationTaskScope();
+    static_cast<void>(fixture->model->generation.Get());
+    const auto entry = fixture->model->Get(tag, initialDelay, false, 0);
+    const auto value = entry->value.Get();
+    const auto text = value.timeout ? "TIMEOUT" : value.delay > 0 ? std::to_string(value.delay) + " ms" : "";
+    huxerui::View delay = text.empty()
+        ? huxerui::View{huxerui::Row{}.With(huxerui::Frame{.width = kProxyDelaySlotWidth})}
+        : huxerui::View{huxerui::Text(text)};
+    return ProxyNodeTile(huxerui::Text(tag), huxerui::Text("TLS"), std::move(delay), false,
+        tag, [fixture] { fixture->selected += 1; }, SelectableTileInteraction::Selectable,
+        canProbe, value.testing, fixture->model->progress.Get().busy,
+        [fixture, tasks, tag, entry] { StartSingleProbeFixture(fixture, tasks, tag, entry); });
+}
+[[huxerui::composable]] huxerui::View SingleProbeFixtureContent() {
+    const auto fixture = huxerui::UseService<ProxyProbeFixture>();
+    auto shown = huxerui::UseState(true);
+    return huxerui::Column{
+        huxerui::Button("Toggle single page").OnClick([shown] { shown = !shown.Get(); }),
+        shown.Get() ? huxerui::View{huxerui::Column{
+            huxerui::Row{SingleProbeTile("single-a", 0).Key("single-a")}
+                .With(huxerui::Frame{.width = 220.0F, .height = 52.0F}),
+            huxerui::Row{SingleProbeTile("single-b", 234).Key("single-b")}
+                .With(huxerui::Frame{.width = 220.0F, .height = 52.0F}),
+            huxerui::Row{SingleProbeTile("group", 0, false).Key("group")}
+                .With(huxerui::Frame{.width = 220.0F, .height = 52.0F}),
+        }} : huxerui::View{huxerui::Row{}},
+    };
+}
+huxerui::View SingleProbeFixtureRoot() { return huxerui::FlatTheme{SingleProbeFixtureContent()}; }
+const huxerui::Application kSingleProbeFixtureApplication{SingleProbeFixtureRoot,
+    {.show_debug_overlay = false, .application_hooks = {InstallProxyProbeFixture}}};
+void testSingleProxyProbeHover() {
+    huxerui::testing::UiTest ui(kSingleProbeFixtureApplication, {.viewport = {600.0F, 700.0F},
+        .resource_provider = AppResources()});
+    ui.PumpAndSettle();
+    const auto fixture = proxyProbeFixture;
+    const auto tile = [&](const char* tag) { return ui.Find(UiSelector::Key(tag)); };
+    const auto action = [&](const char* tag) { return tile(tag).Find(UiSelector::Key("node-probe-action")); };
+    const auto probing = [&](const char* tag) {
+        const auto query = ui.FindSemantics(huxerui::testing::UiSemanticSelector::Identifier(std::string("node-probe:") + tag));
+        return query.Exists() && query.One().busy.value_or(false);
+    };
+    const auto move = [&](huxerui::Point position) {
+        ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 91,
+            .position = position, .device_kind = huxerui::PointerDeviceKind::Mouse});
+        ui.Pump();
+    };
+    const auto hover = [&](const char* tag) {
+        const auto bounds = tile(tag).One().bounds;
+        move({bounds.x + 20.0F, bounds.y + 10.0F});
+    };
+    const auto toggle = [&] { ui.Find(UiSelector::Text("Toggle single page")).Tap(); ui.Pump(); };
+    const auto advance = [&] { for (int step = 0; step < 25; ++step) ui.Pump(std::chrono::milliseconds(20)); };
+    const auto before = action("single-a").One().bounds;
+    check(tile("single-a").Find(UiSelector::Type<huxerui::Text>()).Count() == 2 &&
+          !ui.Find(UiSelector::Key("node-probe-icon")).Exists(), "untested node leaves its delay slot empty without hiding the action target");
+    hover("single-a");
+    const auto after = action("single-a").One().bounds;
+    check(tile("single-a").Find(UiSelector::Type<huxerui::IconButton>()).Exists() &&
+          ui.Find(UiSelector::Text("234 ms")).Exists(),
+          "hover reveals the speed action in an empty slot without changing other nodes");
+    check(std::abs(before.x - after.x) < 0.1F && std::abs(before.y - after.y) < 0.1F &&
+          before.width == after.width && before.height == after.height,
+          "hover action occupies the unchanged delay slot");
+    const auto slot = tile("single-a").Find(UiSelector::Key("node-probe-slot")).One().bounds;
+    check(after.width == clashflux::ui::kProxyProbeActionSize && after.height == after.width &&
+          std::abs(after.x + after.width - slot.x - slot.width) < 0.1F &&
+          std::abs(after.y + after.height / 2 - slot.y - slot.height / 2) < 0.1F,
+          "refresh icon, round feedback and hit target share one square at the right end of the delay slot");
+    ui.TapAt({slot.x + 4.0F, slot.y + slot.height / 2}); ui.Pump();
+    check(fixture->selected.Get() == 1 && fixture->singleTags.empty(),
+          "empty space to the left of the round button remains a card selection target");
+    fixture->selected = 0;
+    move({after.x + after.width - 8.0F, after.y + after.height / 2});
+    check(tile("single-a").Find(UiSelector::Type<huxerui::IconButton>()).Exists(),
+          "moving from the card onto its action preserves hover");
+    action("single-a").Tap(); ui.Pump();
+    check(fixture->singleTags == std::vector<std::string>{"single-a"} && fixture->selected.Get() == 0 &&
+          probing("single-a"),
+          "single probe targets the clicked runtime tag and does not activate the parent selection");
+    const auto busy = action("single-a").One().bounds;
+    check(busy.width == before.width && busy.height == before.height && fixture->model->Begin() == 0,
+          "single loading preserves geometry and excludes a simultaneous group sweep");
+    ui.Pump(std::chrono::milliseconds(112));
+    check(action("single-a").One().bounds.width > before.width * 1.2F,
+          "pending measurement rotates the retained refresh button using the shared refresh animation");
+    hover("single-b"); action("single-b").Tap(); ui.Pump();
+    check(fixture->singleTags == std::vector<std::string>{"single-a", "single-b"} &&
+          fixture->model->singlePending.Get() == 2, "different nodes can run independent single probes");
+    toggle(); fixture->releases.at(0) = true; advance(); toggle(); move({500.0F, 650.0F});
+    check(tile("single-a").Find(UiSelector::Text("81 ms")).Exists() &&
+          probing("single-b"),
+          "single result and another node's pending state survive real page retirement");
+    ui.Pump(std::chrono::milliseconds(112));
+    check(action("single-b").One().bounds.width > before.width * 1.2F,
+          "returning to a pending measurement restarts the retained refresh rotation");
+    fixture->releases.at(1) = true; advance();
+    check(fixture->model->singlePending.Get() == 0, "all single completions release their busy counts");
+    tile("single-a").Find(UiSelector::Text("single-a")).Tap(); ui.Pump();
+    check(fixture->selected.Get() == 1 && fixture->singleTags.size() == 2, "card body still selects without probing");
+    hover("group");
+    check(!tile("group").Find(UiSelector::Key("node-probe-action")).Exists() &&
+          !tile("group").Find(UiSelector::Key("node-probe-icon")).Exists(), "group entries expose no individual node action");
+    fixture->singleFail = true; hover("single-a"); action("single-a").Tap(); ui.Pump();
+    fixture->releases.at(2) = true; advance(); move({500.0F, 650.0F});
+    check(tile("single-a").Find(UiSelector::Text("TIMEOUT")).Exists() && fixture->model->singlePending.Get() == 0,
+          "individual measurement failure clears loading and remains retryable");
+    fixture->singleFail = false; hover("single-a"); action("single-a").Tap(); ui.Pump();
+    const auto retired = fixture->model->probes.at("single-a");
+    fixture->model->ObserveContext(true, 2); ui.Pump();
+    check(fixture->model->StartSingle("single-a", retired) == 0, "retired card handles cannot start an untracked single request");
+    hover("single-a"); action("single-a").Tap(); ui.Pump();
+    fixture->releases.at(3) = true; advance();
+    check(probing("single-a") &&
+          fixture->model->singlePending.Get() == 1, "old individual result cannot overwrite a new plan's request");
+    fixture->releases.at(4) = true; advance(); move({500.0F, 650.0F});
+    check(tile("single-a").Find(UiSelector::Text("81 ms")).Exists() && fixture->model->singlePending.Get() == 0,
+          "retry after a plan change publishes only the new request");
 }
 
 struct RefreshFixture : clashflux::ui::ProfileRefreshModel {
@@ -3009,27 +3333,26 @@ void testVpnPublication() {
     auto selected = huxerui::UseState(0);
     auto added = huxerui::UseState(false);
     std::vector<huxerui::View> cards;
-    for (int index = 0; index < 2; ++index) {
-        const auto accent = ResolveFluxAccent(index == 0 ? "blue" : "purple");
+    for (int index = 0; index < 3; ++index) {
+        const auto accent = ResolveFluxAccent(index == 0 ? "blue" : index == 1 ? "purple" : "#336699");
         const bool active = selected.Get() == index;
         cards.push_back(ThemeColorCardSurface(theme,
             IsDarkTheme(theme) ? accent.dark : accent.light,
             IsDarkTheme(theme) ? accent.onDark : accent.onLight,
             active ? std::optional<huxerui::ImageResource>{{"app", "images/check"}} : std::nullopt,
-            active, accent.name, [selected, index] { selected = index; }, std::nullopt, edge)
+            active, accent.name, [selected, index] { selected = index; }, edge, accent.id)
             .Key("test-color-" + std::to_string(index)));
     }
     cards.push_back(ThemeColorCardSurface(theme, theme.colors.surface_container, theme.colors.on_surface,
-        huxerui::ImageResource{"app", "images/add"}, false, "Add color", [added] { added = true; }, std::nullopt, edge)
+        huxerui::ImageResource{"app", "images/add"}, false, "Add color", [added] { added = true; }, edge)
         .Key("test-color-add"));
     std::vector<huxerui::View> modes;
     const std::array<huxerui::ImageResource, 3> icons{{
         {"app", "images/sun_moon"}, {"app", "images/moon"}, {"app", "images/sun"}}};
     const std::array<std::string, 3> labels{"Automatic", "Dark", "Light"};
     for (int index = 0; index < 3; ++index)
-        modes.push_back(ThemeColorCardSurface(theme, theme.colors.surface_container, theme.colors.on_surface,
-            icons[index], mode.Get() == index, labels[index], [mode, index] { mode = index; },
-            huxerui::StringVariant{labels[index]}, edge).Key("test-mode-" + std::to_string(index)));
+        modes.push_back(ThemeModeCardSurface(theme, icons[index], mode.Get() == index,
+            labels[index], [mode, index] { mode = index; }).Key("test-mode-" + std::to_string(index)));
     return huxerui::Column {
       huxerui::Row(std::move(modes)).With(huxerui::Spacing(kSectionCardSpacing)),
       huxerui::Flow(std::move(cards)).With(huxerui::Spacing(clashflux::ui::kSectionCardSpacing)),
@@ -3061,20 +3384,40 @@ void testThemeColorSurfaces() {
             const auto color = ui.Find(UiSelector::Key("test-color-0")).One();
             const auto other = ui.Find(UiSelector::Key("test-color-1")).One();
             const auto add = ui.Find(UiSelector::Key("test-color-add")).One();
-            check(color.size.width == color.size.height && other.size == color.size && add.size == color.size,
-                  "color and add cards remain equal squares in narrow and wide themes");
+            check(color.size.width > color.size.height && other.size == color.size && add.size == color.size,
+                  "color previews and add card use equal horizontal rectangles");
+            for (const char* caption : {"蓝色", "紫色", "#336699"})
+                check(!ui.Find(UiSelector::Text(caption)).Exists(),
+                      "preset and custom previews do not show color names or hex captions");
+            const auto preview = ui.Find(UiSelector::Key("test-color-0")).Find(UiSelector::Key("theme-color-preview")).One().bounds;
+            for (const char* key : {"theme-preview-selection", "theme-preview-button"}) {
+                const auto item = ui.Find(UiSelector::Key("test-color-0")).Find(UiSelector::Key(key)).One().bounds;
+                const auto inactive = ui.Find(UiSelector::Key("test-color-1")).Find(UiSelector::Key(key)).One().bounds;
+                check(item.x >= preview.x && item.y >= preview.y && item.x + item.width <= preview.x + preview.width &&
+                      item.y + item.height <= preview.y + preview.height + 0.1F && item.width > preview.width * 0.5F,
+                      "miniature selection and primary button fill the content column within the preview in both themes");
+                check(std::abs(item.y - inactive.y) < 0.1F,
+                      "selection check does not shift miniature content vertically");
+            }
             for (const char* key : {"test-mode-0", "test-mode-1", "test-mode-2"}) {
                 const auto mode = ui.Find(UiSelector::Key(key)).One();
                 const auto first = ui.Find(UiSelector::Key("test-mode-0")).One();
-                check(mode.size == color.size && mode.bounds.y == first.bounds.y && mode.in_viewport,
-                      "all mode cards use the same square style and remain in one horizontal row");
+                check(mode.size.height == clashflux::ui::kThemeModeCardHeight && mode.size.width > mode.size.height &&
+                      mode.bounds.y == first.bounds.y && mode.in_viewport,
+                      "mode cards are low horizontal rectangles in one row");
+                const auto symbol = ui.Find(UiSelector::Key(key)).Find(UiSelector::Key("theme-mode-symbol")).One().bounds;
+                const auto label = ui.Find(UiSelector::Key(key)).Find(UiSelector::Key("theme-mode-label")).One().bounds;
+                check(symbol.x + symbol.width <= label.x && std::abs(symbol.y + symbol.height / 2 -
+                      mode.bounds.y - mode.bounds.height / 2) < 0.1F,
+                      "mode icon appears to the left of the label and is vertically centered");
             }
             const auto checkCenter = [&ui](const char* key) {
                 const auto card = ui.Find(UiSelector::Key(key)).One().bounds;
                 const auto symbol = ui.Find(UiSelector::Key(key)).Find(UiSelector::Key("theme-color-symbol")).One().bounds;
-                check(std::abs(card.x + card.width / 2 - symbol.x - symbol.width / 2) < 0.1F &&
-                          std::abs(card.y + card.height / 2 - symbol.y - symbol.height / 2) < 0.1F,
-                      "selection check and add icon stay centered in their card");
+                check(symbol.x >= card.x && symbol.y >= card.y &&
+                      symbol.x + symbol.width <= card.x + card.width &&
+                      symbol.y + symbol.height <= card.y + card.height,
+                      "selection check and add icon remain inside the preview card");
             };
             checkCenter("test-color-0");
             checkCenter("test-color-add");
@@ -5051,8 +5394,19 @@ int main() {
     }
     testEmptyState();
     testThemeSwitch();
+    testVpnHydrationStartup();
     testProfileFileFilter();
     testProfileImportCompletion();
+    try { testProxyProbesSurvivePageRetirement(); }
+    catch (const std::exception& error) {
+        std::fprintf(stderr, "FAIL: proxy probe lifetime: %s\n", error.what());
+        ++failures;
+    }
+    try { testSingleProxyProbeHover(); }
+    catch (const std::exception& error) {
+        std::fprintf(stderr, "FAIL: single proxy probe: %s\n", error.what());
+        ++failures;
+    }
     testScopedProfileRefresh();
     testRuleSourceEligibility();
     try { testSubscriptionRuleLayout(); }

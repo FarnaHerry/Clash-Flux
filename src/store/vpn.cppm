@@ -9,10 +9,12 @@ module;
 #include <format>
 #include "../service_protocol.h"
 #include "../native_route_transaction.h"
+#include "../hydrated_once.h"
 export module clashflux.store.vpn;
 
 import std;
 import clashflux.db;
+import clashflux.persistence;
 import clashflux.config;
 import clashflux.core;
 import clashflux.pptp;
@@ -561,7 +563,7 @@ private:
     }
 
     void ensureLoaded() {
-        std::call_once(loadOnce_, [this] {
+        loadOnce_.Run([] { return clashflux::persistence::persistence().ready(); }, [this] {
             coreStore().init();
 
             const std::string savedPolicy =
@@ -604,7 +606,7 @@ private:
         });
     }
 
-    std::once_flag loadOnce_;
+    clashflux::persistence::HydratedOnce loadOnce_;
     mutable std::mutex mutex_;
     std::mutex operationMutex_;
     vpn::EngineAdapter adapter_;

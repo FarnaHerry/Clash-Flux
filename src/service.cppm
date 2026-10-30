@@ -1,6 +1,6 @@
 // service.cppm — shared network service facade (Linux systemd / Windows SCM).
 //
-// Linux service mode：TUN/PPTP 需要 root/CAP_NET_ADMIN，一次性
+// Linux 数据面统一归 systemd 服务，TUN/PPTP 需要 root/CAP_NET_ADMIN，一次性
 // 首次安装可通过 pkexec 执行 `clash-flux service install` 安装一个 systemd
 // 服务；服务以 root 常驻（`clash-flux service run`），统一代替用户态 GUI/CLI
 // 管理 sing-box 和系统 PPTP 连接。已安装服务的版本升级由 root 服务
@@ -100,6 +100,15 @@ export struct PptpSessionInfo {
     std::string transportAddress;
 };
 
+// Desktop networking has one service owner, regardless of GUI/CLI entry.
+export constexpr bool required() {
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+    return true;
+#else
+    return false;
+#endif
+}
+
 #if defined(__linux__) && !defined(__ANDROID__)
 
 // root 服务 IPC 的 fd 所有权：socket/bind/listen/accept/connect 原本要在每一
@@ -138,6 +147,16 @@ private:
 #include "service_windows.inc"
 #else  // Mobile/macOS currently use the same public stubs.
 #include "service_stub.inc"
+#endif
+
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+// Both transports publish the same tri-state evidence. Missing/invalid status
+// is unknown; only a confirmed STOPPED can prove the owned core has exited.
+export std::optional<bool> coreRunningEvidence() {
+    const auto reply = readCoreStatus();
+    return reply ? clashflux::service_protocol::runningEvidence(*reply) : std::nullopt;
+}
+export bool coreRunning() { return coreRunningEvidence().value_or(false); }
 #endif
 
 export using StartupResult = clashflux::service_startup::Result;

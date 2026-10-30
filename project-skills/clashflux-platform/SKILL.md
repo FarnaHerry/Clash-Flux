@@ -33,6 +33,7 @@ description: 修改 Clash-Flux Android、Windows、Linux 或 iOS 平台服务、
 
 ## Linux
 
+- 与 Windows 共用应用层生命周期和服务状态判定；sing-box/TUN/PPTP 归 systemd root 服务，普通启停不回落 GUI/CLI spawn，root GUI 也不例外。首次显式启动可沿已有安装流程授权，服务不可达/版本不符不能切换成无服务运行。
 - 停核不能仅按 pref 9000 删除策略规则，它也可能属于其它 sing-box。只清理 52000–52999 表内协议 186、metric 4278190000 的完整保留哨兵；普通用户无权限不尝试修改，由 root 服务 STOP 清理已确认归属的规则/路由。
 - pppd/接口释放遵守运行计划撤出边界，UNKNOWN 不能当断开；服务 IPC fd 用 service.cppm 的 UniqueFd。无窗托盘与单实例读运行技能/数据技能。
 

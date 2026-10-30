@@ -3,6 +3,24 @@
 #include <string>
 
 namespace clashflux::service_startup {
+// Replace a service-owned child only after its stop callback confirms exit
+// and releases the PID. Failed stops retain the old identity for a retry.
+template <class Pid, class Stop, class Spawn>
+bool restartChild(Pid& child, Stop stop, Spawn spawn, std::string& error) {
+    error.clear();
+    if (child > 0 && (!stop(child, error) || child > 0)) {
+        if (error.empty()) error = "旧内核未确认退出，拒绝启动新内核";
+        return false;
+    }
+    const auto replacement = spawn(error);
+    if (replacement <= 0) {
+        if (error.empty()) error = "新内核进程启动失败";
+        return false;
+    }
+    child = replacement;
+    return true;
+}
+
 struct Result {
     bool installed = false;
     bool ready = true; // An absent optional service does not need maintenance.

@@ -310,16 +310,10 @@ export bool stopCore(std::string& err) {
     return false;
 }
 
-// 服务视角的内核存活（连不上服务 = false）。
-export std::optional<bool> coreRunningEvidence() {
+// Transport only: lifecycle/status interpretation is shared with SCM below.
+std::optional<std::string> readCoreStatus() {
     std::string err;
-    const auto reply = request("STATUS", err);
-    return reply ? clashflux::service_protocol::runningEvidence(*reply) : std::nullopt;
-}
-export bool coreRunning() {
-    std::string err;
-    const auto reply = request("STATUS", err);
-    return reply && reply->starts_with("RUNNING ");
+    return request("STATUS", err);
 }
 
 export bool pptpAvailable() {

@@ -2,8 +2,83 @@
 #include "../src/service_startup.h"
 #include <stdexcept>
 #include <vector>
+#if defined(__linux__) && !defined(__ANDROID__)
+#include <cerrno>
+#include <csignal>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
+inline void testServiceChildReplacement() {
+    const auto check = [](bool ok) {
+        if (!ok) throw std::runtime_error("service child replacement regression");
+    };
+    int child = 41, spawns = 0;
+    std::string error;
+    auto spawn = [&](std::string&) { ++spawns; return 42; };
+    check(!clashflux::service_startup::restartChild(child,
+        [](int&, std::string& failure) { failure = "stop denied"; return false; }, spawn, error));
+    check(child == 41 && spawns == 0 && error == "stop denied");
+    // A positive PID cannot be overwritten even if a backend reports success
+    // without releasing its previous child identity.
+    check(!clashflux::service_startup::restartChild(child,
+        [](int&, std::string&) { return true; }, spawn, error));
+    check(child == 41 && spawns == 0 && !error.empty());
+    check(clashflux::service_startup::restartChild(child,
+        [](int& pid, std::string&) { pid = 0; return true; }, spawn, error));
+    check(child == 42 && spawns == 1 && error.empty());
+    check(!clashflux::service_startup::restartChild(child,
+        [](int& pid, std::string&) { pid = 0; return true; },
+        [](std::string& failure) { failure = "spawn denied"; return -1; }, error));
+    check(child == 0 && error == "spawn denied");
+    check(clashflux::service_startup::restartChild(child,
+        [](int&, std::string&) -> bool { throw std::runtime_error("absent child must not be stopped"); },
+        spawn, error));
+    check(child == 42 && spawns == 2 && error.empty());
+
+#if defined(__linux__) && !defined(__ANDROID__)
+    // Own real children, never a system service or another process's PID.
+    struct ChildOwner {
+        pid_t pid = 0;
+        ~ChildOwner() {
+            if (pid > 0) {
+                ::kill(pid, SIGKILL);
+                while (::waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {}
+            }
+        }
+    } owner;
+    const auto forkChild = [](std::string&) {
+        const auto pid = ::fork();
+        if (pid == 0) { for (;;) ::pause(); }
+        return pid;
+    };
+    const auto stopChild = [](pid_t& pid, std::string& failure) {
+        if (::kill(pid, SIGKILL) != 0) { failure = "kill failed"; return false; }
+        pid_t result;
+        do { result = ::waitpid(pid, nullptr, 0); } while (result < 0 && errno == EINTR);
+        if (result != pid) { failure = "wait failed"; return false; }
+        pid = 0;
+        return true;
+    };
+    check(clashflux::service_startup::restartChild(owner.pid, stopChild, forkChild, error));
+    const auto previous = owner.pid;
+    bool calledSpawn = false;
+    check(!clashflux::service_startup::restartChild(owner.pid,
+        [](pid_t&, std::string& failure) { failure = "injected stop failure"; return false; },
+        [&](std::string& message) { calledSpawn = true; return forkChild(message); }, error));
+    check(!calledSpawn && owner.pid == previous && ::kill(previous, 0) == 0);
+    check(clashflux::service_startup::restartChild(owner.pid, stopChild,
+        [&](std::string& message) {
+            check(owner.pid == 0); // prior child was reaped before replacement
+            return forkChild(message);
+        }, error));
+    check(owner.pid > 0 && owner.pid != previous && error.empty());
+    check(stopChild(owner.pid, error));
+#endif
+}
 
 inline void testServiceStartup() {
+    testServiceChildReplacement();
     struct Probe {
         bool reachable = false;
         bool matches = false;

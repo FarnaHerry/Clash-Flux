@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.78 release notes](docs/releases/v0.3.78.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.79 release notes](docs/releases/v0.3.79.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -125,11 +125,12 @@ The About page supports in-app update downloads on Windows, Linux (DEB/RPM), and
 - System proxy support for Windows, macOS, KDE and GNOME, plus sing-box TUN mode.
   Changing TUN restarts the core to apply the setting. Windows background proxy
   operations use system APIs without opening command windows.
-- Optional Linux service mode: one root systemd service manages sing-box and Linux PPTP,
+- Linux service mode: one root systemd service manages sing-box and Linux PPTP,
   avoiding repeated authorization for TUN, PPTP dialing and native routes. OpenVPN
-  follows the sing-box lifecycle and does not require a system OpenVPN CLI. Without
-  the service, the application first tries to adopt an external instance, then
-  falls back to launching the core directly.
+  follows the sing-box lifecycle and does not require a system OpenVPN CLI.
+  Windows/Linux share the application lifecycle. Missing services use the explicit
+  installation flow; unavailable services never trigger an application-owned core.
+  See [desktop core lifecycle](docs/runtime-health-review.md#桌面内核所有权与失败清理).
 - Native Windows service: SCM runs `ClashFluxService` as LocalSystem to own sing-box,
   TUN, PPTP and route compensation. The GUI stays unelevated and uses a restricted
   named pipe. Installation/updates request UAC only for the service command.
@@ -138,8 +139,9 @@ The About page supports in-app update downloads on Windows, Linux (DEB/RPM), and
   The updated service keeps the main TUN alive while PPTP dials and prepares the
   candidate before handoff. A full configuration still needs one restart; see
   [PPTP handoff and validation scope](docs/native-pptp-handoff.md).
-- A full CLI in the same executable: `core`, `mode`, `tun`, `proxy`, `profile` and
-  `service` commands. On desktop, launch without arguments to start in the system
+- One command entry in the same executable: `core`, `mode`, `tun`, `proxy`, `profile` and
+  `service` commands reuse the GUI Runtime/cache or forward to the existing instance;
+  they do not create a separate CLI data plane. On desktop, launch without arguments to start in the system
   tray when the tray and “Start minimized to tray” are enabled and the tray is available;
   activate the tray icon to open the main window. The startup option is shown only
   while the tray is enabled, and its saved value is retained while the tray is disabled.
@@ -304,6 +306,9 @@ upstream revisions and SHA256 hashes. The first build needs network access;
 runtime China routing does not require downloading these rule sets.
 See [Android background service lifecycle](docs/android-background-lifecycle.md)
 for process ownership, Binder control, service recovery and network changes.
+Android `preBuild` runs host JVM tests for startup policy and the VPN session clock.
+Run `./gradlew.bat :app:testRuntimeStartPolicy :app:testVpnUptime` from `platform/android`
+to execute them separately; these tests do not replace device validation.
 
 GitHub Release APKs use a stable Android release signing key. CI requires four
 repository secrets: `CLASHFLUX_ANDROID_KEYSTORE_BASE64`,
@@ -399,14 +404,14 @@ references and implementation priorities.
 
 ## CLI
 
-The same executable provides the GUI and CLI. Without arguments it opens the GUI;
-with arguments it runs a command:
+The same executable launches the GUI/tray or processes commands in the shared Runtime/cache,
+forwarding to an existing instance when present. Version/help/service retain direct entry points:
 
 ```bash
 clash-flux version                    # Show version
 clash-flux core start|stop|restart|status
 clash-flux mode [rule|global|direct]   # Show or change outbound mode
-clash-flux tun on|off                 # TUN; requires service mode or root
+clash-flux tun on|off                 # Windows/Linux TUN requires the system service
 clash-flux proxy on|off|status        # System proxy
 clash-flux profile list|import <url> [name]|use <id>|update <id>|remove <id>
 clash-flux profile check [<id>]       # Check fidelity; exit 1 for unmappable entries
@@ -416,7 +421,8 @@ clash-flux service install|uninstall|status|run
 `service install` requires root; the GUI settings page invokes it through `pkexec`.
 It installs `clash-flux.service`, after which one root daemon manages sing-box and
 Linux PPTP. OpenVPN endpoints are created by sing-box and do not require the
-OpenVPN CLI.
+OpenVPN CLI. Linux requires the service for core startup, including non-TUN mode;
+an unavailable or incompatible service never falls back to a GUI/CLI-owned core.
 
 On every GUI startup, an asynchronous check synchronizes an installed service's
 Clash-Flux and sing-box binaries from the current client before core auto-start. Upgrade files are written to

@@ -11,6 +11,8 @@
 
 #include "sqlite_schema.h"
 #include "subscription_expiry.h"
+#include "hydrated_once.h"
+#include "wire_codec.h"
 
 #include <atomic>
 #include <chrono>
@@ -530,6 +532,97 @@ Task<void> DeletionPhaseRetry(const Fixture& fixture) {
     co_await retryReopen.close();
 }
 
+Task<void> GlobalPolicyHydrationPhase(TaskScope tasks) {
+    const auto encode = [](std::uint64_t revision, std::vector<std::string> ids) {
+        clashflux::wire::Policy policy;
+        policy.format_version = 2;
+        policy.revision = revision;
+        policy.default_main_id = "profile-41";
+        for (const auto& id : ids) {
+            policy.rules.push_back({.match = "domain-suffix", .pattern = id + ".example.test",
+                .connection_id = "profile-41", .priority = 100, .id = id,
+                .order = static_cast<std::int64_t>(policy.rules.size())});
+        }
+        auto encoded = clashflux::wire::EncodePolicy(policy);
+        Check(static_cast<bool>(encoded), "global policy production encode");
+        return std::move(encoded.value);
+    };
+    const auto first = encode(7, {"kept-a", "kept-b"});
+    const auto snapshot = encode(8, {"kept-a", "kept-b", "new-c"});
+    const auto latest = encode(9, {"new-c", "kept-a"});
+    for (const bool aba : {false, true}) {
+        const Fixture fixture;
+        persistence::Persistence seed;
+        Check(co_await seed.open(fixture.path, fixture.files), "global policy seed open");
+        SeedProfiles(seed);
+        seed.setSetting("vpn.global_policy", first);
+        Check(co_await seed.flushSettings() && co_await seed.flushProfiles(), "global policy seed flush");
+        co_await seed.close();
+
+        persistence::Persistence store;
+        persistence::HydratedOnce initialized;
+        std::string cachedPolicy;
+        int reads = 0;
+        const auto load = [&] {
+            initialized.Run([&] { return store.ready(); }, [&] {
+                ++reads;
+                cachedPolicy = store.setting("vpn.global_policy");
+                if (!cachedPolicy.empty()) {
+                    const auto decoded = clashflux::wire::DecodePolicy(cachedPolicy);
+                    Check(decoded && decoded.value.rules.size() == 2 && decoded.value.revision == 7,
+                          "hydrated global policy must decode every rule and revision");
+                }
+            });
+        };
+        Refused(load);
+        Refused(load);
+        Check(reads == 0 && cachedPolicy.empty() && !store.hasPendingSettings(),
+              "pre-hydration reads must neither initialize an empty policy nor schedule a write");
+        Check(co_await store.open(fixture.path, fixture.files), "global policy reopen hydrate");
+        load(); load();
+        Check(reads == 1 && cachedPolicy == first && store.listProfiles().size() == 3,
+              "the same policy owner must retry after hydration and retain every saved rule/source");
+
+        persistence::HydratedOnce decodeRetry;
+        Refused([&] { decodeRetry.Run([] { return true; }, [] {
+            Check(static_cast<bool>(clashflux::wire::DecodePolicy("{broken")), "injected policy decode failure");
+        }); });
+        bool retried = false;
+        decodeRetry.Run([] { return true; }, [&] { retried = store.setting("vpn.global_policy") == first; });
+        Check(retried, "failed policy decoding must not consume initialization");
+
+        auto opened = co_await sqlite::Database::OpenAsync(File{fixture.path.string()}, db_schema::openOptions());
+        Check(static_cast<bool>(opened), "global policy lock observer open");
+        sqlite::Database raw = std::move(*opened);
+        const auto gate = std::make_shared<Gate>();
+        tasks.Launch([&raw, gate]() -> Task<void> { co_await HoldWriter(raw, gate); });
+        co_await WaitFor([gate] { return gate->entered.load(); });
+        store.setSetting("vpn.global_policy", snapshot);
+        const auto flush = std::make_shared<FlushResult>();
+        tasks.Launch([&store, flush]() -> Task<void> { co_await FlushWhileLocked(store, true, flush); });
+        co_await WaitFor([flush] { return flush->started; });
+        co_await Delay(std::chrono::milliseconds{30});
+        store.setSetting("vpn.global_policy", latest);
+        if (aba) store.setSetting("vpn.global_policy", snapshot);
+        gate->release = true;
+        co_await WaitFor([gate, flush] { return gate->writerDone.load() && flush->done; });
+        Check(gate->writerOk && flush->ok && store.hasPendingSettings(),
+              "old global-policy flush acknowledgement must retain the latest revision, including ABA");
+        Check(co_await store.flushSettings(), "latest global policy flush");
+        Check(static_cast<bool>(co_await raw.CloseAsync()), "global policy observer close");
+        co_await store.close();
+
+        persistence::Persistence reopened;
+        Check(co_await reopened.open(fixture.path, fixture.files), "final global policy reopen");
+        Check(reopened.setting("vpn.global_policy") == (aba ? snapshot : latest) &&
+              reopened.listProfiles().size() == 3 &&
+              ReadFile(fixture.files / "shared.yaml") == "remote and local stable content\n" &&
+              ReadFile(fixture.files / "unique.yaml") == "other remote stable content\n",
+              "latest global rules, independent sources and referenced files must survive restart");
+        co_await reopened.close();
+    }
+}
+
 Task<void> DeletionPhase() {
     const Fixture fixture;
     co_await DeletionPhaseSetup(fixture);
@@ -883,7 +976,9 @@ Task<void> RunTest(TaskScope tasks) {
         co_await OpenVpnSourceCompatibilityPhase();
         Trace(13, "连续排序与重开保留");
         co_await ProfileOrderPhase();
-        Trace(14, "完成");
+        Trace(14, "全局规则 hydrate/锁竞争/ABA 与重开保留");
+        co_await GlobalPolicyHydrationPhase(tasks);
+        Trace(15, "完成");
         RemoveDatabase(path);
         Finish();
     } catch (const std::exception& exception) {

@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.78 发布说明](docs/releases/v0.3.78.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.79 发布说明](docs/releases/v0.3.79.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -79,17 +79,17 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   普通 C++ 数据，连接解析在任务线程。Clash YAML 与原生配置 DOM 保留现有适配器，
   迁移范围见 [开发记录](docs/glaze-migration.md)。
 - 系统代理（Windows、macOS、KDE / GNOME）与 TUN 模式开关（sing-box TUN，切换即重启内核生效）；Windows 后台代理操作直接使用系统 API，不弹命令行窗口
-- Linux 服务模式（可选）：统一 root systemd 服务托管 sing-box 和 Linux PPTP，
+- Linux 服务模式：统一 root systemd 服务托管 sing-box 和 Linux PPTP，
   TUN、PPTP 拨号和原生路由无需每次授权；OpenVPN 不依赖系统 CLI，随 sing-box
-  内核生命周期运行；
-  未安装时回落「接管外部实例 → 直接 spawn」
+  内核生命周期运行。与 Windows 共用应用层生命周期，未安装时显式引导安装服务，
+  服务不可达时不回落到应用进程启动内核；详见 [桌面内核生命周期](docs/runtime-health-review.md#桌面内核所有权与失败清理)。
 - Windows 原生服务：SCM LocalSystem 服务托管 sing-box、TUN 与 PPTP，应用保持普通
   用户权限；设置中安装/更新服务时授权一次。控制使用受限命名管道，服务不打开用户
   数据库；GUI 运行中安装或重启服务后会重新检测 PPTP 能力，详见 [Windows 服务](docs/windows-service.md)。
   新服务支持保留主 TUN 拨号、候选配置预备后交接；完整配置仍需重启一次，
   实现与验收范围见 [PPTP 连接交接](docs/native-pptp-handoff.md)。
-- 完整 CLI：同一二进制带子命令（core / mode / tun / proxy / profile / service），
-  无参数启动进入 GUI
+- 统一命令入口：同一二进制带子命令（core / mode / tun / proxy / profile / service），
+  运行命令共用 GUI 的单实例 Runtime/缓存或转发给已有实例，不创建独立 CLI 数据面
 - 浅色/深色/自动主题模式与可自定义主题色、岛屿风界面、自定义窗口标题栏、系统托盘（桌面启用托盘、打开“启动时隐藏到托盘”且系统托盘可用时启动直接驻留托盘，点击托盘打开主窗口；关闭托盘时该选项隐藏并保留历史值；托盘不可用时直接打开窗口；Windows 托盘菜单跟随应用主题；启用托盘后关闭窗口隐藏到托盘，停用后询问是否退出）、
   窄窗口响应式布局。最小化使用系统原生行为，Windows 保留任务栏入口，轻量托盘模式也不改变该行为
 - 首页流量统计卡片用圆环图展示累计上传/下载占比（环心写占比最大一方的百分比），并同时显示各自流量总量与百分比
@@ -229,6 +229,8 @@ Gradle 会按固定上游 revision 和 SHA256 生成并打包 `geoip-cn.srs` /
 `geosite-cn.srs`；首次构建需要网络，运行时则无需联网下载国内分流规则。
 Android 进程所有权、Binder 控制、服务恢复和网络切换策略见
 [Android 后台服务生命周期](docs/android-background-lifecycle.md)。
+Android `preBuild` 包含启动策略与 VPN 会话时钟的宿主 JVM 回归；可在 `platform/android`
+单独运行 `./gradlew.bat :app:testRuntimeStartPolicy :app:testVpnUptime`，不代替真机验收。
 
 GitHub Release 使用稳定的 Android 发布密钥签名。CI 需要配置
 `CLASHFLUX_ANDROID_KEYSTORE_BASE64`、`CLASHFLUX_ANDROID_KEYSTORE_PASSWORD`、
@@ -293,13 +295,14 @@ Clash YAML 次来源只通过启用规则参与，同名组/节点隔离；全�
 
 ## CLI
 
-同一二进制带完整子命令；无参数启动进入 GUI，有参数走 CLI：
+同一二进制启动 GUI/托盘或处理命令；数据库命令经同一 Runtime/缓存执行或转发，
+version/help/service 保留直接入口：
 
 ```bash
 clash-flux version                    # 版本
 clash-flux core start|stop|restart|status
 clash-flux mode [rule|global|direct]  # 查看/切换出站模式
-clash-flux tun on|off                 # TUN（需服务模式或 root）
+clash-flux tun on|off                 # Windows/Linux TUN 由系统服务托管
 clash-flux proxy on|off|status        # 系统代理
 clash-flux profile list|import <url> [name]|use <id>|update <id>|remove <id>
 clash-flux profile check [<id>]        # 检查订阅保真度（有无法映射的条目时退出码 1）
@@ -317,7 +320,8 @@ sing-box；升级文件先写入同目录临时文件，再原子替换，因此
 GUI 通过受限 unix socket `/run/clash-flux/service.sock` 提交固定协议请求，
 不再直接执行 `pppd` 或 `ip route`；安装时记录提权前用户 UID，socket 只允许该
 用户和 root 访问。TUN/PPTP 开箱可用，OpenVPN 由 sing-box 用户态 endpoint
-建立；未安装服务时 Linux 的 TUN/PPTP 不会静默尝试 root 操作，而是明确提示安装服务。
+建立；Linux 启停内核（包括非 TUN 模式）均需要服务，未安装明确提示安装，
+不可达或版本检查失败不会回落到 GUI/CLI 自行启动。
 
 Windows 使用原生 SCM 服务 `ClashFluxService`，首次在设置的内核服务安装，软件升级后
 启动应用会异步检查版本，由服务自己的 LocalSystem 助手同步受保护 Program Files
