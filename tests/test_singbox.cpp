@@ -2690,6 +2690,30 @@ void testNodeSubscriptions() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 6 && std::string_view(argv[1]) == "--proxy-runtime-fixtures") {
+        const std::filesystem::path root(argv[2]);
+        std::filesystem::create_directories(root);
+        for (const bool native : {false, true}) {
+            singbox::CompileOptions options;
+            options.controller = std::string("127.0.0.1:") + argv[3];
+            options.mixedPort = std::stoi(argv[4]);
+            options.nativeControllerPort = std::stoi(argv[5]);
+            options.secret = "test-native-secret";
+            options.profileYaml = native
+                ? json{{"inbounds", json::array({{{"type", "mixed"}, {"tag", "custom-in"},
+                    {"listen", "127.0.0.1"}, {"listen_port", options.mixedPort}}})},
+                    {"outbounds", json::array({{{"type", "direct"}, {"tag", "DIRECT"}}})}}.dump()
+                : "proxies: []\nrules:\n  - MATCH,DIRECT\n";
+            for (const bool listening : {false, true}) {
+                options.proxyListening = listening;
+                const auto compiled = singbox::compileConfig(options);
+                if (!compiled.error.empty()) { std::println(stderr, "{}", compiled.error); return 1; }
+                std::ofstream(root / std::format("{}{}.json", native ? "native-" : "",
+                    listening ? "connected" : "standby")) << compiled.json;
+            }
+        }
+        return 0;
+    }
     if (argc == 3 && std::string_view(argv[1]) == "--personal-rule-fixtures") {
         testPersonalRules(argv[2]); testPersonalRuleSets(argv[2]); return failures ? 1 : 0;
     }
@@ -3856,6 +3880,36 @@ rules:
         check(running.runtimeEpoch>firstEpoch&&running.tunEnabled,"重启产生新代次并恢复保存的 TUN 模式");
         savedIntent=false;clashflux::runtime_plan::Stopped(running);apply(savedIntent,{});
         check(!running.tunEnabled,"代理模式启动不沿用上次 TUN 运行态");
+    }
+    {
+        singbox::CompileOptions options;
+        options.profileYaml = kFixture;
+        options.proxyListening = false;
+        auto compiled = singbox::compileConfig(options);
+        check(compiled.error.empty(), "待命配置经过完整生产编译器");
+        if (compiled.error.empty()) {
+            const auto standby = json::parse(compiled.json);
+            check(standby["inbounds"].empty(), "内核待命不开放业务入站");
+            check(!standby["outbounds"].empty() && standby["experimental"].contains("clash_api"),
+                  "待命仍保留节点和测速控制接口");
+            options.proxyListening = true;
+            compiled = singbox::compileConfig(options);
+            const auto connected = json::parse(compiled.json);
+            check(!connected["inbounds"].empty(), "手动代理连接开放端口，无需 TUN 或系统代理");
+            check(standby["outbounds"] == connected["outbounds"], "监听切换不改变订阅节点或协议语义");
+            check(standby["dns"] == connected["dns"] && standby["route"] == connected["route"],
+                  "待命/连接保留 DNS 与路由语义");
+        }
+        options.proxyListening = false;
+        options.tunInbound = true;
+        check(!singbox::compileConfig(options).error.empty(), "拒绝待命与 TUN 接管的矛盾计划");
+        struct Published {
+            bool tunEnabled = true, proxyListening = true;
+            std::chrono::steady_clock::time_point connectedSince = std::chrono::steady_clock::now();
+        } state;
+        clashflux::runtime_plan::Stopped(state);
+        check(!state.proxyListening && !state.tunEnabled && state.connectedSince == std::chrono::steady_clock::time_point{},
+              "停止内核同时撤销连接运行态与时长");
     }
     if (failures != 0) {
         std::println(stderr, "test_singbox: {} 项断言失败", failures);

@@ -408,14 +408,20 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
             : runtimeServices && runtimeServices->startupLanguage == "en";
         const CoreView view = control->model->view.Get();
         const bool coreRunning = view.core.state == core::CoreState::Running;
-        const std::string key = std::format("{}:{}:{}:{}:{}:{}:{}:{}", running, proxyEnabled,
-            tunEnabled, busy, english, coreRunning, view.systemProxyActive, view.TunActive());
+        const std::string key = std::format("{}:{}:{}:{}:{}:{}:{}:{}:{}", running, proxyEnabled,
+            tunEnabled, busy, english, coreRunning, view.systemProxyActive, view.TunActive(), view.ProxyActive());
         if (key == presentationKey) return;
         std::vector<huxerui::MenuEntry> entries;
         const auto self = shared_from_this();
         entries.push_back(huxerui::MenuItem(english ? "Open main window" : "显示主窗口",
                                             [self] { self->ShowWindow(); }));
         entries.push_back(huxerui::MenuSection{});
+        entries.push_back(huxerui::MenuItem(
+            control->ProxyActive() ? (english ? "Disconnect" : "断开连接")
+                                   : (english ? "Connect" : "连接"), [self] {
+                if (self->control) self->MenuControl().Run({
+                    .action = self->control->ProxyActive() ? CoreAction::Disconnect : CoreAction::Connect});
+            }).Checked(control->ProxyActive()).Enabled(!busy));
         entries.push_back(huxerui::MenuItem(
             running ? (english ? "Stop core" : "停止内核")
                     : (english ? "Start core" : "启动内核"), [self] {
@@ -678,6 +684,8 @@ struct TrayMenuText {
     std::string autoLineSuffix;
     std::string startCore;
     std::string stopCore;
+    std::string connect;
+    std::string disconnect;
     std::string systemProxy;
     std::string tun;
     std::string lightweight;
@@ -754,7 +762,7 @@ struct TrayMenuText {
         },
         0);
 
-    // 每次 GUI 启动都检查已安装服务，随后按设置自启内核；任务线程执行
+    // 每次 GUI 启动都检查已安装服务，随后待命或按设置自动连接；任务线程执行
     // 阻塞 IPC/升级，应用级保留状态避免重组重复检查；不主动安装或触发 UAC。
     huxerui::Lifecycle(
         [startupTasks, coreModel, settingsModel, toast, control] {
@@ -795,8 +803,15 @@ struct TrayMenuText {
                     coreModel->Update([next = std::move(next)](CoreView& view) { view = next; });
                     coreModel->serviceChecking = false;
                     coreModel->RequestRefresh();
-                    if (maintenance.ready && startupAutoRun && HasDesktopCoreRuntime())
-                        control.Run({.action = CoreAction::Start});
+                    if (maintenance.ready && HasDesktopCoreRuntime()) {
+                        auto startupControl = control;
+                        startupControl.presentationAvailable = [] { return false; };
+                        startupControl.onHeadlessFailure = [toast](bool, const std::string& error) {
+                            stream::logApplication("error", error.empty() ? "启动内核失败" : error);
+                            toast.Show(error.empty() ? Localized("启动内核失败") : huxerui::StringVariant(error));
+                        };
+                        startupControl.Run({.action = startupAutoRun ? CoreAction::Connect : CoreAction::Start});
+                    }
                     if (!maintenance.ready)
                         toast.Show(maintenance.error.empty() ? Localized("服务操作失败")
                                                             : huxerui::StringVariant(maintenance.error));

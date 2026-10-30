@@ -735,7 +735,7 @@ void RunDesktopHomeCoreAction(const CoreControl& control,
     if (control.Busy()) return;
     // Startup stays in the button until real success and the cat's completion
     // signal. Stopping still shrinks the card back into the sleeping button.
-    if (action == CoreAction::Stop)
+    if (action == CoreAction::Disconnect)
         AnimateHomeControlCard(false, cardShown, motion, transition, control.tasks, reducedMotion);
     control.Run({.action = action});
 }
@@ -746,12 +746,12 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     // card, rather than a kernel command that is still waiting to finish.
     if (presented == CoreAction::Start) return BoxCatPhase::Running;
     const CoreAction action = presented == CoreAction::Idle
-        ? control.model->operations.command.Get().action : presented;
+        ? control.ConnectionAction() : presented;
     if (action == CoreAction::Start) return BoxCatPhase::Starting;
     if (action == CoreAction::Stop) return BoxCatPhase::Stopping;
     switch (control.model->view.Get().core.state) {
-    case core::CoreState::Starting: return BoxCatPhase::Starting;
-    case core::CoreState::Running: return BoxCatPhase::Running;
+    case core::CoreState::Starting: return BoxCatPhase::Sleeping;
+    case core::CoreState::Running: return control.ProxyActive() ? BoxCatPhase::Running : BoxCatPhase::Sleeping;
     case core::CoreState::Failed: return BoxCatPhase::Failed;
     case core::CoreState::Stopped: return BoxCatPhase::Sleeping;
     }
@@ -786,7 +786,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
             return [] {};
         },
         0);
-    const CoreAction action = control.model->operations.command.Get().action;
+    const CoreAction action = control.ConnectionAction();
     const bool entering = motion.Get().action == CoreAction::Start;
     const bool returning = motion.Get().action == CoreAction::Stop;
     // Shared-bounds playback keeps the destination paint-stable; the cat's
@@ -797,7 +797,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
         action == CoreAction::Start ? "正在启动"
         : returning || action == CoreAction::Stop ? "正在停止"
                                      : "运行中");
-    const auto runningSince = control.model->view.Get().core.runningSince;
+    const auto runningSince = control.model->view.Get().core.connectedSince;
     const auto elapsed = runningSince == std::chrono::steady_clock::time_point{}
         ? std::chrono::seconds{0}
         : std::max(std::chrono::seconds{0},
@@ -830,24 +830,23 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     return huxerui::View{HomeCardSurface(theme, std::move(content), "control", /*allowFlip=*/false)}
         .OnClick([control, cardShown, motion, transition, reducedMotion = theme.motion.reduced_motion] {
             RunDesktopHomeCoreAction(control, cardShown, motion, transition,
-                                     CoreAction::Stop, reducedMotion);
+                                     CoreAction::Disconnect, reducedMotion);
         })
         .With(huxerui::Scale(huxerui::AnimateTo(
                   motion.Get().collapsing ? kHomeControlCollapsedScale : 1.0F,
                   kHomeControlCollapseMotion)),
               huxerui::Enabled(!control.Busy() && !entering && !returning),
-              huxerui::Tooltip(Localized("停止内核")),
+              huxerui::Tooltip(Localized("断开连接")),
               huxerui::Indication{},
               huxerui::SharedBounds("home-core-control")
                   .BoundsTransform(HomeControlMoveExpand{}),
               huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                  .label = huxerui::UseString(
-                                     Localized("停止内核"))});
+                                     Localized("断开连接"))});
 }
 
 // 桌面宽窗：内核猫咪并入网格卡片；Compact 与移动端共用标题栏组件。
-// 「正式启动」是独立动作：只负责拉起/停止内核，启动时按已记录的 TUN 与
-// 系统代理意图恢复；不再由各个开关隐式触发内核。
+// The main button opens/closes proxy listeners. The ready core remains available for tests.
 [[huxerui::composable]] huxerui::View DesktopHomeFloatingAction(
     huxerui::View page, huxerui::State<bool> cardShown,
     huxerui::State<HomeControlMotion> motion,
@@ -857,22 +856,22 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     const auto control = UseCoreControl();
     huxerui::View base = page;
     const bool returning = motion.Get().action == CoreAction::Stop;
-    const bool active = returning ? false : control.Running();
+    const bool active = returning ? false : control.ProxyActive();
     const bool enabled = !control.Busy() && !returning;
-    const CoreAction command = control.model->operations.command.Get().action;
+    const CoreAction command = control.ConnectionAction();
     const bool changing = !returning && (command == CoreAction::Start ||
                                         command == CoreAction::Stop);
     const auto toggle = [control, active, cardShown, motion, transition,
                          reducedMotion = theme.motion.reduced_motion] {
         RunDesktopHomeCoreAction(control, cardShown, motion, transition,
-            active ? CoreAction::Stop : CoreAction::Start, reducedMotion);
+            active ? CoreAction::Disconnect : CoreAction::Connect, reducedMotion);
     };
 
     const auto onRunningReady = [control, catReady] {
-        const auto action = control.model->operations.command.Get().action;
+        const auto action = control.ConnectionAction();
         if (action != CoreAction::Start && action != CoreAction::Stop &&
             action != CoreAction::Restart &&
-            control.model->view.Get().core.state == core::CoreState::Running)
+            control.ProxyActive())
             catReady = true;
     };
     huxerui::View button = BoxCatButtonContent(
@@ -880,13 +879,13 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
         theme.colors.on_surface,
         motion.Get().action == CoreAction::Idle, {}, onRunningReady,
         returning ? std::optional{BoxCatPhase::Running} : std::nullopt).OnClick(toggle)
-        .With(huxerui::Tooltip(Localized(active ? "停止内核" : "启动内核")),
+        .With(huxerui::Tooltip(Localized(active ? "断开连接" : "连接代理")),
               huxerui::Enabled(enabled),
               huxerui::Focusable(true),
               huxerui::Indication{},
               huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                  .label = huxerui::UseString(Localized(
-                                     active ? "停止内核" : "启动内核"))});
+                                     active ? "断开连接" : "连接代理"))});
     auto bounds = huxerui::SharedBounds("home-core-control");
     if (returning) bounds = std::move(bounds).BoundsTransform(HomeControlReturnToDock{});
     else bounds = std::move(bounds).BoundsTransform(HomeControlMoveExpand{});
@@ -962,7 +961,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     auto state = huxerui::UseState<HomeState>({});
     auto controlCardShown = huxerui::UseState<bool>(
-        coreModel->view.Get().core.state == core::CoreState::Running);
+        coreModel->view.Get().ProxyActive());
     auto controlMotion = huxerui::UseState<HomeControlMotion>({});
     auto controlCardSynced = huxerui::UseState<bool>(false);
     auto controlCatReady = huxerui::UseState<bool>(false);
@@ -971,35 +970,35 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     const auto control = UseCoreControl();
     const auto& coreView = coreModel->view.Get();
     const auto vpnStatus = ResolveHomeVpnStatus(coreView.vpnState, coreModel->operations.command.Get());
-    const auto action = coreModel->operations.command.Get().action;
+    const auto action = kDesktopHomeControl ? control.ConnectionAction()
+                                          : coreModel->operations.command.Get().action;
     const auto headerPhase = kDesktopHomeControl
         ? (action == CoreAction::Stop ? BoxCatPhase::Stopping
             : action == CoreAction::Start || action == CoreAction::Restart ? BoxCatPhase::Starting
-            : coreView.core.state == core::CoreState::Running ? BoxCatPhase::Running
-            : coreView.core.state == core::CoreState::Starting ? BoxCatPhase::Starting
+            : coreView.ProxyActive() ? BoxCatPhase::Running
             : coreView.core.state == core::CoreState::Failed ? BoxCatPhase::Failed : BoxCatPhase::Sleeping)
         : vpnStatus.phase;
     const auto headerControl = UseHomeHeaderControl(HomeHeaderSnapshot{
         .ready = coreView.ready && (kDesktopHomeControl || coreView.vpnSnapshotReady),
         .active = active && headerControlEnabled,
-        .running = kDesktopHomeControl ? coreView.core.state == core::CoreState::Running : vpnStatus.connected,
+        .running = kDesktopHomeControl ? coreView.ProxyActive() : vpnStatus.connected,
         .busy = control.Busy(),
         .canStart = kDesktopHomeControl || state.Get().profileId != 0,
         .phase = headerPhase,
         .elapsedSeconds = coreView.vpnElapsedMs / 1000,
-        .runningSince = kDesktopHomeControl ? coreView.core.runningSince
+        .runningSince = kDesktopHomeControl ? coreView.core.connectedSince
             : std::chrono::steady_clock::time_point{},
     });
     const auto toggleHeader = [control] {
         if (kDesktopHomeControl) {
-            control.Run({.action = control.Running() ? CoreAction::Stop : CoreAction::Start});
+            control.Run({.action = control.ProxyActive() ? CoreAction::Disconnect : CoreAction::Connect});
         } else {
             control.Run({.action = CoreAction::Tun, .enabled = control.model->view.Get().vpnState != 2});
         }
     };
-    const auto headerStopLabel = Localized(kDesktopHomeControl ? "停止内核" : "停止 VPN");
+    const auto headerStopLabel = Localized(kDesktopHomeControl ? "断开连接" : "停止 VPN");
     const auto headerActionLabel = headerControl.latest.Get().running ? headerStopLabel
-        : Localized(kDesktopHomeControl ? "启动内核" : "启动 VPN");
+        : Localized(kDesktopHomeControl ? "连接代理" : "启动 VPN");
 
     // 基础卡片顺序与尺寸只由 kHomeCards 决定，没有布局持久化；尾部控制卡
     // 只随桌面运行状态出现，不改变其它卡片的声明跨度。
@@ -1020,16 +1019,15 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
              reducedMotion = theme.motion.reduced_motion] {
                 const CoreView& view = coreModel->view.Get();
                 if (view.ready) {
-                    const bool running =
-                        view.core.state == core::CoreState::Running;
+                    const bool running = view.ProxyActive();
                     if (!controlCardSynced.Get() || !active || compact) {
                         controlCardSynced = true;
                         controlCardShown = running;
                         controlCatReady = running;
                     } else {
                         const auto command = coreModel->operations.command.Get().action;
-                        if (!running || command == CoreAction::Start ||
-                            command == CoreAction::Stop || command == CoreAction::Restart)
+                        if (!running || command == CoreAction::Connect ||
+                            command == CoreAction::Disconnect || command == CoreAction::Stop || command == CoreAction::Restart)
                             controlCatReady = false;
                         if (!coreModel->operations.Busy() &&
                             controlCardShown.Get() != running &&

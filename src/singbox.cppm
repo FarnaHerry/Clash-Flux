@@ -166,6 +166,7 @@ export struct CompileOptions {
     bool tunInbound = false;                     // 生成 TUN inbound（Android/桌面
                                                  // 均按当前 TUN 状态决定；Android
                                                  // 由 VpnService 提供 fd）
+    bool proxyListening = true;                 // false: keep control/outbounds, suspend traffic inbounds
     bool speedTestOnly = false;                  // 仅测速时关闭 URLTest 自动巡检
     bool tunStrictRoute = true;                  // Android VpnService 侧保持 false（严格
                                                  // 路由会截断系统级分流）

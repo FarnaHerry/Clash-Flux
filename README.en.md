@@ -30,6 +30,8 @@ application-managed settings before being passed to sing-box.
 
 The About page supports in-app update downloads on Windows, Linux (DEB/RPM), and Android arm64, with SHA-256 verification, cancellation and retry. Desktop installation saves configuration, disconnects the proxy and exits before opening the Windows installer or Linux Polkit authorization. Android also checks the official signing certificate and version, then saves configuration and disconnects the proxy before opening the system installer; first use requires permission to install apps from this source. Other platforms retain manual downloads; see [application updates](docs/app-updates.md).
 
+Desktop startup prepares a core without traffic inbounds so nodes can be tested. Connect opens proxy ports and applies the saved system proxy/TUN choices; both may remain off for manual proxy use. Disconnect returns to standby. See [desktop proxy lifecycle](docs/desktop-proxy-lifecycle.md).
+
 ## Features
 
 - Subscription sources, rule-set JSON, compiled JSON and diagnostic reports share CodeEditor, with worker-prepared documents and no full-document copy on each keystroke.
@@ -79,12 +81,12 @@ The About page supports in-app update downloads on Windows, Linux (DEB/RPM), and
   endpoint. Desktop auxiliary sources participate through enabled routing rules;
   mobile keeps one active ordinary source. Legacy standalone OpenVPN controls are
   removed. Only PPTP installs system routes through the platform backend.
-- Core controls: start the core with the application, using a minimal configuration
-  when no subscription is selected. Restore TUN and system proxy settings according
-  to saved preferences. Select rule, global or direct outbound mode; configure the
-  mixed port, LAN access and log level. Stopping from the desktop Home page or tray
-  releases the app-owned system proxy, confirms core exit and disconnects its PPTP
-  sessions; incomplete cleanup is reported as a failure. App-managed desktop
+- Core controls: desktop startup prepares a standby core without traffic inbounds.
+  Connect opens proxy ports and restores the saved system proxy/TUN choices;
+  Disconnect returns to standby. Manual proxy listening works with both choices off.
+  Select rule, global or direct outbound mode; configure ports, LAN access and logging.
+  Disconnecting releases the app-owned system proxy and PPTP sessions; the tray also
+  retains a full Stop core action. Incomplete cleanup is reported as a failure. App-managed desktop
   GEOIP/GEOSITE caches check SRS, version and zlib headers before replacement, refresh weekly on startup,
   and retain the old file on failure. Native rule sets remain managed by the core;
   Android China rule sets remain pinned build assets. The core performs full parsing.

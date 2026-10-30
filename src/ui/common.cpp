@@ -137,14 +137,24 @@ CoreApplyResult ExecuteCoreCommand(const CoreCommand& command) {
             }
             ok = coreStore.restartCore(store::profilesStore().selectedYaml());
             break;
+        case CoreAction::Connect:
+            if (service::required() && !service::installed())
+                return {.status = CoreApplyStatus::PermissionDenied, .error = "内核服务尚未安装，请在设置中安装"};
+            ok = coreStore.connectProxy();
+            break;
+        case CoreAction::Disconnect:
+            {
+                std::string error;
+                if (!store::vpnStore().stopTraffic(error))
+                    return {.status = CoreApplyStatus::Failed, .error = std::move(error)};
+                ok = coreStore.startReadyCore();
+            }
+            break;
         case CoreAction::Start:
             if (service::required() && !service::installed()) {
-                return {.status = CoreApplyStatus::PermissionDenied};
+                return {.status = CoreApplyStatus::PermissionDenied, .error = "内核服务尚未安装，请在设置中安装"};
             }
-            coreStore.startCore(store::profilesStore().selectedYaml(), false,
-                                coreStore.tunEnabled(), coreStore.systemProxyEnabled());
-            ok = coreStore.snapshot().state == core::CoreState::Running &&
-                 coreStore.snapshot().lastError.empty();
+            ok = coreStore.startReadyCore();
             break;
         case CoreAction::Idle:
             return {};
@@ -157,6 +167,8 @@ huxerui::StringVariant CoreActionFailure(CoreAction action) {
     switch (action) {
         case CoreAction::Start: return Localized("启动内核失败");
         case CoreAction::Stop: return Localized("停止内核失败");
+        case CoreAction::Connect: return Localized("连接失败");
+        case CoreAction::Disconnect: return Localized("断开连接失败");
         case CoreAction::Restart: return Localized("启动内核失败");
         case CoreAction::Mode: return Localized("出站模式切换失败");
         case CoreAction::SystemProxy: return Localized("系统代理设置失败");
@@ -592,8 +604,7 @@ bool StartProxyGroupTest(const std::string& group) {
     }
 #else
     // 桌面节点测速通过内核 delay API 完成。测速依赖内核但不需要接管流量，
-    // 内核没跑时不再隐式拉起（内置启动入口只在首页右下角悬浮按钮与设置里的
-    // 「启动时自动运行内核」），这里直接返回失败由页面提示先启动内核。
+    // 应用启动先保持无代理入站的待命内核；测速不开放代理端口或恢复接管。
     if (store::coreStore().snapshot().state != core::CoreState::Running) {
         return false;
     }

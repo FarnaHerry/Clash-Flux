@@ -145,7 +145,7 @@
                         coreControl.model->Update([&](CoreView& view) { view.core = coreSnapshot; });
                         if (coreSnapshot.state == core::CoreState::Stopped ||
                             coreSnapshot.state == core::CoreState::Failed) {
-                            coreControl.Run(CoreCommand{.action = CoreAction::Start});
+                            coreControl.Run(CoreCommand{.action = CoreAction::Connect});
                         }
                     } else {
                         coreControl.model->RequestRefresh();

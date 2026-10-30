@@ -24,6 +24,9 @@
         const auto evidence = streams_.health();
         std::string report = "Clash-Flux runtime diagnostics v3\n";
         report += "lifecycle=" + std::string(core::stateName(before.state)) + "\n";
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+        report += "proxy-listening=" + std::string(before.proxyListening ? "enabled" : "standby") + "\n";
+#endif
         report += "runtime-epoch=" + std::to_string(before.runtimeEpoch) + "\n";
 #if defined(__ANDROID__)
         report += "control-binder=" + std::string(before.binderAvailable ? "responsive" : "unconfirmed") +
@@ -100,6 +103,9 @@
             " through-tun="+std::to_string(transportThroughTun)+" unknown="+std::to_string(transportUnknown)+"\n";
         if (target.empty()) report += "target-path=not-checked (explicit HTTP(S) target required)\n";
         else if (before.state != core::CoreState::Running) report += "target-path=not-checked (runtime not ready)\n";
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+        else if (!before.proxyListening) report += "target-path=not-checked (proxy listeners are in standby)\n";
+#endif
         else if (cancel.stop_requested()) report += "target-path=cancelled\n";
         else {
             const auto result = api::probeThroughProxy(target, before.mixedPort, cancel, remaining());

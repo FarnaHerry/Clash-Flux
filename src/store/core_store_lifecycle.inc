@@ -17,6 +17,47 @@
                message.find("EOF") != std::string::npos;
     }
 
+    // Desktop standby keeps protocol implementations available for URL tests,
+    // without restoring saved system proxy/TUN choices or opening proxy ports.
+    bool startReadyCore() {
+        std::lock_guard operationLock(lifecycleMutex_);
+        ensureOpen();
+        if (snapshot().state == core::CoreState::Running) return true;
+        const auto profileYaml = currentMainContent();
+        preparedOptions_ = routingOptions(profileYaml, false);
+        preparedOptions_->proxyListening = false;
+        startCore(profileYaml, false, false, false);
+        return snapshot().state == core::CoreState::Running && snapshot().lastError.empty();
+    }
+
+    bool connectProxy() {
+        std::lock_guard operationLock(lifecycleMutex_);
+        auto healthPause = streams_.pauseHealth();
+        ensureOpen();
+        const auto before = snapshot();
+        if (before.state == core::CoreState::Running && before.proxyListening) return true;
+        // Read source and selected identity under the same lifecycle lock as compilation.
+        const auto profileYaml = currentMainContent();
+        auto options = routingOptions(profileYaml, tunEnabled());
+        options.proxyListening = true;
+        std::string error;
+        auto candidate = prepareStartPlan(std::move(options), error);
+        if (!candidate) {
+            std::lock_guard lock(mutex_);
+            snap_.lastError = "连接候选计划被拒绝：" + error;
+            return false;
+        }
+        if (before.state == core::CoreState::Running) {
+            if (!restartPreparedCore(profileYaml, std::move(candidate), before,
+                    systemProxyEnabled(), false, {}, std::chrono::steady_clock::now())) return false;
+        } else {
+            preparedStart_ = std::move(candidate);
+            startCore(profileYaml, false, tunEnabled(), systemProxyEnabled());
+        }
+        return snapshot().state == core::CoreState::Running && snapshot().proxyListening &&
+               snapshot().lastError.empty();
+    }
+
     void startCore(const std::string& profileYaml, bool detached = false,
                    bool tunEnabled = false,
                    std::optional<bool> systemProxyState = std::nullopt,
@@ -374,6 +415,9 @@
             snap_.runningSince = std::chrono::steady_clock::now();
             lastAppliedOptions_ = lastPreparedOptions_;
             lastAppliedJson_ = lastPreparedJson_;
+            snap_.proxyListening = lastAppliedOptions_ && lastAppliedOptions_->proxyListening;
+            snap_.connectedSince = snap_.proxyListening ? std::chrono::steady_clock::now()
+                                                       : std::chrono::steady_clock::time_point{};
             // The ready instance is running this accepted plan. sing-box's
             // compatibility /configs does not report TUN status; leaving the
             // default false here makes the next routing handoff remove TUN.
@@ -576,6 +620,9 @@
         try {
             if (cancel.stop_requested()) return false;
             auto options = routingOptions(content, before.tunEnabled, false, nullptr, routing::ConnectionId(id));
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+            if (running) options.proxyListening = before.proxyListening;
+#endif
             auto candidate = prepareStartPlan(std::move(options), error, cancel, running);
             if (!candidate || cancel.stop_requested() ||
                 !validatePlanTargets(candidate->options, candidate->compiled, nullptr, error)) return false;
@@ -801,7 +848,11 @@
         std::unique_ptr<PreparedStart> candidate;
         std::string error;
         try {
-            candidate = prepareStartPlan(routingOptions(profileYaml, before.tunEnabled), error, cancel);
+            auto options = routingOptions(profileYaml, before.tunEnabled);
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+            options.proxyListening = before.proxyListening;
+#endif
+            candidate = prepareStartPlan(std::move(options), error, cancel);
             if (!candidate) {
                 if (cancel.stop_requested()) return false;
                 std::lock_guard lock(mutex_); snap_.lastError = "候选计划被拒绝：" + error; return false;

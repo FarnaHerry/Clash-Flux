@@ -1,5 +1,28 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-10-30：桌面内核待命、代理监听与接管解耦
+
+代码快照为 `d993688929490b935cd96e8db52d629afda2a7d9` 基线上的本轮工作树，版本仍为
+0.3.79；未提交、打标签、推送或打包。完整状态与原语见[桌面代理生命周期](desktop-proxy-lifecycle.md)。
+桌面默认启动无业务入站的内核，Connect 开放监听并应用独立的系统代理/TUN 选择，
+Disconnect 清理接管及原生连接后回到待命。两种接管均关闭时可手动使用本地端口，
+首页动画/时长依据代理会话；待命与重配不把保存意图冒充实际接管。Android 启停策略不变。
+
+Windows / MSVC 18 Release：`cmake --build build --target clash-flux test_singbox
+ test_page_transition` 通过，包含 HuxerUI codegen；相关 test_persistence、test_service_protocol、
+test_vpn、test_routing、test_compensation 也已构建。
+`ctest --test-dir build --output-on-failure --no-tests=error -R
+ '^(proxy_standby_runtime|singbox|service_protocol|vpn|routing|compensation|persistence|project_test_gate|ui_resources|page_transition)$'`
+10/10 通过（54.38 秒）。最初未加载开发环境的门禁检查因 PATH 中缺少 Ninja 失败，
+加载 MSVC 开发环境后重跑通过。`./run.ps1 --version` 输出 Clash-Flux v0.3.79；
+`git diff --check` 通过，AGENTS.md 与项目 SKILL.md 长度限制符合要求。
+
+新增 proxy_standby_runtime 使用固定 sing-box 1.14.4、真实原生/兼容控制接口和回环 HTTP
+目标，对 Clash YAML 与原生 JSON 验证待命→监听→待命：待命仍能 URLTest，业务端口拒绝
+连接；监听时实际 HTTP 请求通过本地代理。编译回归核对出站、DNS、路由不因暂停监听而改变。
+没有重启用户正在运行的 GUI，没有修改真实系统代理、建立 TUN 或拨号；SCM/WFP/物理 DNS
+管理员回归、系统代理与 TUN 组合实机验收、Linux/macOS/Android 构建和设备验证未覆盖。
+
 ## 2026-10-30：准备 v0.3.79 补丁版本
 
 版本 `0.3.79`，Android versionCode `157`（`0.3.78` / `156` 的递增版本）。发布说明覆盖

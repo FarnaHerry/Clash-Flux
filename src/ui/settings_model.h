@@ -29,7 +29,7 @@ struct SettingsView {
     std::string customThemeColors;  // ui.custom_theme_colors: 换行分隔的 #RRGGBB
     std::string hiddenThemeColors;  // ui.hidden_theme_colors: 换行分隔的隐藏预设 ID
     bool autoStart = false;       // app.autostart
-    bool autoRun = false;         // app.auto_run
+    bool autoRun = false;         // app.auto_run: automatically connect, core readiness is unconditional
     bool trayEnabled = true;      // tray.enabled
     bool startMinimized = false; // tray.start_minimized, effective only when trayEnabled
     bool lightweightTray = false; // tray.lightweight

@@ -858,6 +858,10 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_native_control_runtime.py"
                     "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}" "$<TARGET_FILE:test_rule_provider_download>")
                 set_tests_properties(native_control_runtime PROPERTIES TIMEOUT 45)
+                add_test(NAME proxy_standby_runtime COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_proxy_standby_runtime.py"
+                    "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}")
+                set_tests_properties(proxy_standby_runtime PROPERTIES TIMEOUT 60)
                 add_test(NAME group_expansion_runtime COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_group_expansion_runtime.py"
                     "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"

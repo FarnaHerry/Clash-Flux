@@ -1088,7 +1088,7 @@ void StartDesktopWindowlessRuntime() {
             });
             coreModel->serviceChecking = false;
             coreModel->RequestRefresh();
-            if (maintenance.ready && startupAutoRun && !cfg::singboxBinary().empty()) {
+            if (maintenance.ready && !cfg::singboxBinary().empty()) {
                 CoreControl control;
                 control.model = coreModel;
                 control.tasks = tasks;
@@ -1098,7 +1098,7 @@ void StartDesktopWindowlessRuntime() {
                     runtimeServices->startupError = message;
                     stream::logApplication("error", message);
                 };
-                control.Run({.action = CoreAction::Start});
+                control.Run({.action = startupAutoRun ? CoreAction::Connect : CoreAction::Start});
             } else if (!maintenance.ready) {
                 const std::string message = maintenance.error.empty()
                     ? "启动服务检查/更新失败" : "启动服务检查/更新失败：" + maintenance.error;

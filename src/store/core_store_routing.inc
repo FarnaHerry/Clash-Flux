@@ -1,9 +1,8 @@
 // core_store_routing.inc — 原生连接路由与配置刷新
 // 由 src/store/core_store.cppm 在 CoreStore 类体内包含。
 
-    // 说明：这里曾经有一个 ensureRunning()——「开关发现内核没跑就顺手拉起」。
-    // 「彻底分离」之后开关只负责记录意图，内核只由启动入口（首页右下角悬浮
-    // 按钮 / 设置里的启动时自动运行）拉起，因此不再保留这个隐式启动捷径。
+    // The application starts a standby core. Connect enables traffic listeners;
+    // settings only reconfigure an active connection or retain the next choice.
 
     // ---- 内核控制（阻塞：UI 必须 RunOnTaskThread）----
 
@@ -21,10 +20,18 @@
                                     std::string& error) {
         std::lock_guard operationLock(lifecycleMutex_);
         auto healthPause = streams_.pauseHealth();
+        preparedOptions_ = routingOptions(lastProfileYaml_, before.tunEnabled);
+        preparedOptions_->proxyListening = before.proxyListening;
         startCore(lastProfileYaml_, false, before.tunEnabled,
                   systemProxyEnabled ? std::optional<bool>(true)
                                      : std::nullopt);
-        if (snapshot().state == core::CoreState::Running) return true;
+        if (snapshot().state == core::CoreState::Running) {
+            if (before.proxyListening) {
+                std::lock_guard lock(mutex_);
+                snap_.connectedSince = before.connectedSince;
+            }
+            return true;
+        }
         error = snapshot().lastError;
         return false;
     }

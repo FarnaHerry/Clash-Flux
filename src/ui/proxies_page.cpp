@@ -401,7 +401,7 @@ huxerui::Task<int> MeasureProxyDelay(const std::string& tag) {
     // Windows 的禁用透明度会为每张卡创建单独的 Direct2D 图层。
     const auto startProbe = [tasks, coreModel, tests, entry, tag = node.name, toast] {
         if (coreModel->view.Get().core.state != core::CoreState::Running) {
-            toast.Show(Localized("测速需要内核：请先在首页右下角启动内核"));
+            toast.Show(Localized("测速需要内核就绪，请检查内核服务"));
             return;
         }
         const auto valid = [coreModel, revision = coreModel->view.Get().core.planRevision] {
@@ -542,7 +542,7 @@ std::function<void()> NodeSelectAction(
                               nodes = std::move(nodes), groupName = std::move(groupName)]() -> huxerui::Task<void> {
                 if (testModel->progress.Get().busy || testModel->singlePending.Get() != 0) co_return;
                 if (coreModel->view.Get().core.state != core::CoreState::Running) {
-                    toast.Show(Localized("测速需要内核：请先在首页右下角启动内核"));
+                    toast.Show(Localized("测速需要内核就绪，请检查内核服务"));
                     co_return;
                 }
                 const auto valid = [coreModel, revision = coreModel->view.Get().core.planRevision] {

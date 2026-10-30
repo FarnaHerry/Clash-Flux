@@ -7,6 +7,8 @@ description: 修改 Clash-Flux 内核控制、托盘与无窗启动、首帧快�
 
 涉及 UI 控制先读 [UI 生命周期](../clashflux-ui/references/lifecycle.md)，服务/系统网络同时按 [平台技能](../clashflux-platform/SKILL.md) 选择当前平台；阻塞内核、网络、路由、系统设置工作进任务线程。
 
+桌面启停/测速/接管先读 [桌面代理生命周期](../../docs/desktop-proxy-lifecycle.md)：应用默认启动无业务入站的待命内核，Connect/Disconnect 控制监听，系统代理和 TUN 独立；首页计时依据实际代理会话，不依据内核存活。
+
 ## 首帧与托盘
 
 先读 [启动设置快照](../../docs/ui-development.md#启动设置快照) 与 Windows 后台/托盘章节。
@@ -17,7 +19,7 @@ description: 修改 Clash-Flux 内核控制、托盘与无窗启动、首帧快�
 - 托盘关闭时快照/SettingsModel 将 startMinimized 视为 false，但不改历史值；设置仅在托盘启用时显示该选项，重新启用恢复历史值。伪 CLI 隐藏窗口执行运行时命令；外部订阅链接打开窗口只预填表单。
 - 关闭按钮仅由 tray.enabled 控制：启用且可用则隐藏，否则确认退出；不读 tray.close_behavior，确认框不提供托盘动作。最小化使用系统原生行为，Windows 保留任务栏入口，不因托盘/轻量模式隐藏窗口。
 - Linux 无窗简版菜单切完整菜单时先隐藏，下一轮托盘轮询才发布，不同结构不在同轮替换，避免 Plasma 旧动作；共享退出收尾与实际状态映射。
-- 启动后异步检查已安装桌面服务，在内核自启前完成版本同步；同版本跳过，未安装不主动装，失败一次反馈、不自动请求 UAC。Windows 升级信任边界见平台技能；macOS 无独立服务，手机服务随应用更新。
+- 启动后异步检查已安装桌面服务，在待命内核启动前完成版本同步；同版本跳过，未安装不主动装，失败一次反馈、不自动请求 UAC。Windows 升级信任边界见平台技能；macOS 无独立服务，手机服务随应用更新。
 - Windows/Linux 通过同一 service facade 和 CoreStore 维护生命周期；所有权、CLI 驻留、三态状态与启动失败清理见 [桌面内核生命周期](../../docs/runtime-health-review.md#桌面内核所有权与失败清理)。不恢复 Linux 无服务或 CLI 专属数据面。
 
 ## PPTP 与 OpenVPN

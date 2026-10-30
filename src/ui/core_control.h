@@ -53,6 +53,14 @@ struct CoreControl {
         if (action == CoreAction::Stop) return false;
         return model->view.Get().core.state == core::CoreState::Running;
     }
+    bool ProxyActive() const { return model->view.Get().ProxyActive(); }
+    // Reuse presentation motions without confusing connection commands with core lifetime.
+    CoreAction ConnectionAction() const {
+        const auto action = model->operations.command.Get().action;
+        if (action == CoreAction::Connect) return CoreAction::Start;
+        if (action == CoreAction::Disconnect || action == CoreAction::Stop) return CoreAction::Stop;
+        return action == CoreAction::Start ? CoreAction::Idle : action;
+    }
     void Run(CoreCommand command) const;
 };
 

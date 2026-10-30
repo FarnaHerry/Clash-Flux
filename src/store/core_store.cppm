@@ -94,6 +94,8 @@ export struct CoreSnapshot {
     bool allowLan = false;
     std::string logLevel = "info";
     bool tunEnabled = false;
+    bool proxyListening = false; // accepted traffic inbounds; independent of controller readiness
+    std::chrono::steady_clock::time_point connectedSince{};
     // Android sing-box libbox status stream.  Desktop continues to use the
     // sing-box clash_api WebSocket streams below.
     std::int64_t uploadRate = 0;

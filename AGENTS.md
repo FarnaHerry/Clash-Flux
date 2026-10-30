@@ -14,7 +14,7 @@
 | 应用升级、发版、版本号、发布说明、打包、签名、发布流水线 | [clashflux-release](project-skills/clashflux-release/SKILL.md) |
 | UI、布局、分页、菜单、主题、文案、首页动画、应用级模型、导入交互 | [clashflux-ui](project-skills/clashflux-ui/SKILL.md) |
 | 数据库、迁移、订阅增删改/导入刷新、文件提交、flush、CLI 单实例数据路径 | [clashflux-data](project-skills/clashflux-data/SKILL.md) |
-| 内核控制、托盘、无窗/首帧启动、PPTP、OpenVPN 入口、订阅唤醒链接 | [clashflux-runtime](project-skills/clashflux-runtime/SKILL.md) |
+| 内核/代理监听控制、托盘、无窗/首帧启动、PPTP、OpenVPN 入口、订阅唤醒链接 | [clashflux-runtime](project-skills/clashflux-runtime/SKILL.md) |
 | Android 后台、Windows/Linux 服务、系统网络/权限、iOS | [clashflux-platform](project-skills/clashflux-platform/SKILL.md)，只读相关平台及引用 |
 | CMake/CPS 包、HuxerUI/扩展 fork、固定依赖/内核升级 | [clashflux-dependencies](project-skills/clashflux-dependencies/SKILL.md) |
 | 订阅转换、协议/DNS/规则/provider、保真度、来源编排与候选应用 | [clashflux-compiler](project-skills/clashflux-compiler/SKILL.md) |

@@ -417,9 +417,9 @@
     }
 
     // 切换 TUN（阻塞）。TUN 是与内核启停解耦的独立开关：
-    // - 内核在跑：sing-box 的 clash_api 不支持热更 tun → 重新合成 config.json
+    // - 代理已连接：sing-box 的 clash_api 不支持热更 tun → 重新合成 config.json
     //   并重启内核生效；失败时回滚设置并恢复原运行状态；
-    // - 内核没跑：只写配置（下次启动内核时带上 tun），不再隐式拉起内核。
+    // - 内核待命或停止：只保存配置，下次连接时应用，不隐式开放监听。
     // 成功更新快照。
     bool applyTun(bool enable) {
         std::lock_guard operationLock(lifecycleMutex_);
@@ -436,13 +436,10 @@
         return false;
 #else
         ensureOpen();
+        const auto before = snapshot();
         setSetting("core.tun_enabled", enable ? "true" : "false");
-        {
-            std::lock_guard lock(mutex_);
-            snap_.tunEnabled = enable;
-        }
-        if (snapshot().state != core::CoreState::Running) {
-            // 只记意图；内核怎么启动由「启动入口 + 启动策略」决定。
+        if (before.state != core::CoreState::Running || !before.proxyListening) {
+            // A ready core is not a connection: preserve the saved choice until Connect.
             return true;
         }
         const bool restoreSystemProxy = systemProxyOurs();
@@ -455,7 +452,11 @@
             return false;
         }
         startCore(lastProfileYaml_, false, enable, restoreSystemProxy);
-        if (snapshot().state == core::CoreState::Running) return true;
+        if (snapshot().state == core::CoreState::Running) {
+            std::lock_guard lock(mutex_);
+            snap_.connectedSince = before.connectedSince;
+            return true;
+        }
         const std::string startError = snapshot().lastError;
         const std::string failure = std::format("TUN {}失败{}", enable ? "开启" : "关闭",
                                                 startError.empty() ? "" : "：" + startError);
@@ -469,6 +470,7 @@
         startCore(lastProfileYaml_, false, !enable, restoreSystemProxy);
         {
             std::lock_guard lock(mutex_);
+            if (snap_.state == core::CoreState::Running) snap_.connectedSince = before.connectedSince;
             snap_.lastError = failure;
         }
         return false;
@@ -478,8 +480,8 @@
     // 切换系统代理（阻塞 shell 调用）。系统代理是与内核启停解耦的独立开关：
     // - 关闭：只要当前系统代理是我方写入的就撤销（与内核是否运行无关，
     //   避免系统一直指向已死端口）；指向其他软件时不动系统，仅清开关；
-    // - 开启且内核在跑：立即写 OS 代理并记录端口；
-    // - 开启但内核没跑：只记意图（下次启动内核时由 startCore 恢复），
+    // - 开启且代理已连接：立即写 OS 代理并记录端口；
+    // - 开启但内核待命或停止：只记意图，下次 connectProxy 恢复，
     //   返回成功表示「意图已记录」。
     bool applySystemProxy(bool enable) {
         std::lock_guard operationLock(lifecycleMutex_);
@@ -504,7 +506,7 @@
         const std::string previousSetting =
             setting("proxy.system_enabled", "false");
         setSetting("proxy.system_enabled", "true");
-        if (snapshot().state != core::CoreState::Running) return true;
+        if (snapshot().state != core::CoreState::Running || !snapshot().proxyListening) return true;
         std::string err;
         const int activePort = snapshot().mixedPort;
         if (!sysproxy::enable("127.0.0.1", activePort, err)) {

@@ -13,5 +13,9 @@ void Ready(Snapshot& snapshot, bool acceptedTun, std::uint64_t revision) {
 template<class Snapshot>
 void Stopped(Snapshot& snapshot) {
     snapshot.tunEnabled=false;
+    if constexpr (requires { snapshot.proxyListening; snapshot.connectedSince; }) {
+        snapshot.proxyListening=false;
+        snapshot.connectedSince={};
+    }
 }
 } // namespace clashflux::runtime_plan

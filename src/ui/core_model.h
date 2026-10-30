@@ -50,6 +50,9 @@ struct CoreView {
     bool TunActive() const {
         return core.state == decltype(core.state)::Running && core.tunEnabled;
     }
+    bool ProxyActive() const {
+        return core.state == decltype(core.state)::Running && core.proxyListening;
+    }
 
     bool operator==(const CoreView&) const = default;
 };

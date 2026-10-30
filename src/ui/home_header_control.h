@@ -12,7 +12,7 @@
 
 namespace clashflux::ui {
 
-// A presentation of the authoritative core (desktop) or VPN (mobile) snapshot.
+// A presentation of the authoritative proxy connection (desktop) or VPN (mobile) snapshot.
 // The owner retains this hook even while its page content is inactive.
 struct HomeHeaderSnapshot {
     bool ready = false;

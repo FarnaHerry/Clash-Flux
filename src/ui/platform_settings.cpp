@@ -382,10 +382,9 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                     settingsModel->Update(
                         [on](SettingsView& view) { view.autoStart = on; });
                 }), false, app::images::power));
-    // 内核启停与流量接管解耦后的「启动入口」之一：默认不随应用启动内核
-    // （内核只是本地端口 + 控制接口），需要时用首页右下角悬浮按钮启动。
+    // The core always starts ready; this preference only controls traffic listeners.
     rows.push_back(SettingSwitchRow(
-            Localized("启动时自动运行内核"), Localized("打开应用就拉起 sing-box，并按已记录的系统代理/TUN 恢复接管"),
+            Localized("启动时自动连接"), Localized("内核随应用就绪；启用后自动开放代理端口，并恢复系统代理/TUN 选择"),
             huxerui::Switch(settings.autoRun)
                 .OnChanged([settingsModel](bool on) {
                     store::coreStore().setSetting("app.auto_run",
@@ -473,7 +472,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                             const SettingsView current = settingsModel->view.Get();
                             if (!current.ready) return;
                             const CoreView runtime = coreModel->view.Get();
-                            const int port = runtime.core.state == core::CoreState::Running
+                            const int port = runtime.ProxyActive()
                                 ? runtime.core.mixedPort : std::atoi(current.mixedPort.c_str());
                             const std::string command = ProxyEnvironmentCommand(
                                 current.envShell.empty() ? detectedShell : current.envShell, port);

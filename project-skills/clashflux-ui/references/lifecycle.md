@@ -20,7 +20,7 @@
 ## 运行控制与订阅
 
 - 首页、设置、托盘都用 UseCoreControl/CoreControl::Run；CoreModel::operations 持全应用唯一命令与版本，冲突动作单飞。应用级 TaskScope 持运行操作，发起视图卸载/缩放后仍完成回读与反馈；服务安装/退出清理保留各自边界。
-- CoreView::tunIntent/modeIntent/systemProxyIntent 为配置，TunActive/vpnState/systemProxyActive/core 为实际状态；停止内核不伪造保存意图已关闭，保存意图不伪造接管成功。
+- CoreView::tunIntent/modeIntent/systemProxyIntent 为配置，ProxyActive/TunActive/vpnState/systemProxyActive/core 为实际状态；桌面待命、监听与接管遵循[桌面生命周期](../../../docs/desktop-proxy-lifecycle.md)，停止内核不伪造保存意图已关闭，保存意图不伪造接管成功。
 - 配置端口来自 SettingsModel、运行端口来自内核快照；系统代理和复制环境变量使用实际监听端口，新端口重启生效。统一 SettingsModel::SetPorts/SetEnvShell、CoreModel::SetAllowLan/SetIpv6，不复制校验流程。
 - 日常运行控件在首页，托盘共用同入口；设置保留网络参数、运行中重启、版本/服务管理，Android 保活；配置页维护来源/规则。系统代理和 TUN 不改成互斥，桌面窄屏不隐藏能力。
 - URL 导入用 profile_import_task.h 的 LaunchProfileImport：应用任务持工作/回调，UI 先结束 busy 再反馈，捕获异常、拒绝重复点击。文件选择器/相机/导航延时仍用页面生命周期，选定后的实际提交用应用任务。

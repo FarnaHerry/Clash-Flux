@@ -10,6 +10,11 @@ std::string mappedLogLevel(const std::string& level) {
 void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
     nlohmann::json& config = ctx.config;
 
+    if (!opt.proxyListening && opt.tunInbound) {
+        ctx.result.error = "待命内核不能启用 TUN；请先连接代理";
+        return;
+    }
+
     const auto validPort = [](int port) { return port >= 1 && port <= 65535; };
     if (!validPort(opt.mixedPort) || opt.httpPort < 0 || opt.httpPort > 65535 ||
         opt.socksPort < 0 || opt.socksPort > 65535) {
@@ -62,7 +67,8 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
         config["route"]["default_domain_resolver"] = {{"server", "local"}};
     }
 
-    // inbounds：mixed 常驻（系统代理 + 经内核下载订阅），tun 按需。
+    // Standby is an explicit runtime override, never a change to the source.
+    // Keep outbounds/controllers for URL tests, but accept no application traffic.
     if (!config.contains("inbounds") || !config["inbounds"].is_array()) {
         config["inbounds"] = nlohmann::json::array();
     }
@@ -89,7 +95,7 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
             hasTun = true;
         }
     }
-    if (!hasMixed) {
+    if (opt.proxyListening && !hasMixed) {
         config["inbounds"].push_back({
             {"type", "mixed"},
             {"tag", "mixed-in"},
@@ -97,7 +103,7 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
             {"listen_port", opt.mixedPort},
         });
     }
-    if (opt.httpPort > 0 && !hasHttp) {
+    if (opt.proxyListening && opt.httpPort > 0 && !hasHttp) {
         config["inbounds"].push_back({
             {"type", "http"},
             {"tag", "http-in"},
@@ -105,7 +111,7 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
             {"listen_port", opt.httpPort},
         });
     }
-    if (opt.socksPort > 0 && !hasSocks) {
+    if (opt.proxyListening && opt.socksPort > 0 && !hasSocks) {
         config["inbounds"].push_back({
             {"type", "socks"},
             {"tag", "socks-in"},
@@ -113,7 +119,8 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
             {"listen_port", opt.socksPort},
         });
     }
-    if (opt.tunInbound && !hasTun) {
+    if (!opt.proxyListening) config["inbounds"] = nlohmann::json::array();
+    if (opt.proxyListening && opt.tunInbound && !hasTun) {
         nlohmann::json tun = {
             {"type", "tun"},
             {"tag", "tun-in"},

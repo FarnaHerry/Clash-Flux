@@ -10,8 +10,10 @@
             .selectLine = huxerui::UseString(Localized("切换当前订阅线路")),
             .noLines = huxerui::UseString(Localized("暂无可切换线路")),
             .autoLineSuffix = huxerui::UseString(Localized("（自动测速，不支持手动切换）")),
-            .startCore = huxerui::UseString(Localized("启动")),
+            .startCore = huxerui::UseString(Localized("启动内核")),
             .stopCore = huxerui::UseString(Localized("停止内核")),
+            .connect = huxerui::UseString(Localized("连接代理")),
+            .disconnect = huxerui::UseString(Localized("断开连接")),
             .systemProxy = huxerui::UseString(Localized("系统代理")),
             .tun = huxerui::UseString(Localized("TUN 模式")),
             .lightweight = huxerui::UseString(Localized("轻量级托盘模式")),
@@ -53,11 +55,13 @@
                      &menuText.selectProfile, &menuText.selectLine,
                      &menuText.noLines, &menuText.autoLineSuffix,
                      &menuText.startCore, &menuText.stopCore,
+                     &menuText.connect, &menuText.disconnect,
                      &menuText.systemProxy, &menuText.tun,
                      &menuText.lightweight, &menuText.quit}) append(*label);
             key += std::format("{}{}{}{}{}{}{}{}",
                 running, menuRunning, proxyEnabled, tunEnabled, busy,
                 core.systemProxyActive, core.TunActive(), settings.lightweightTray);
+            key += core.ProxyActive() ? '1' : '0';
             std::size_t profileCount = 0;
             for (const db::Profile& profile : profiles) {
                 if (profile.type == "pptp") continue;
@@ -177,6 +181,15 @@
                 huxerui::MenuItem(menuText.noLines, [] {}).Enabled(false));
             entries.push_back(huxerui::MenuItem(menuText.selectLine,
                                                 std::move(lineEntries)));
+            entries.push_back(huxerui::MenuItem(
+                control.ProxyActive() ? menuText.disconnect : menuText.connect,
+                [trayRuntime] {
+                    if (trayRuntime->control) {
+                        const CoreControl control = trayRuntime->MenuControl();
+                        control.Run({.action = control.ProxyActive()
+                            ? CoreAction::Disconnect : CoreAction::Connect});
+                    }
+                }).Checked(control.ProxyActive()).Enabled(!busy));
             entries.push_back(huxerui::MenuItem(
                 menuRunning ? menuText.stopCore : menuText.startCore,
                 [trayRuntime] {

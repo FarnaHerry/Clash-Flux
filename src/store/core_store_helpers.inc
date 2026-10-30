@@ -38,6 +38,10 @@
         return snapshot().state != core::CoreState::Failed;
 #else
         if (snapshot().state == core::CoreState::Running) {
+            if (before.proxyListening && snapshot().proxyListening) {
+                std::lock_guard lock(mutex_);
+                snap_.connectedSince = before.connectedSince;
+            }
             stream::logApplication("info", std::format("主计划交接完成，用时 {} ms（控制器就绪）",
                 std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - handoffBegan).count()));
             return true;
@@ -58,6 +62,7 @@
         }
         const bool restored = snapshot().state == core::CoreState::Running;
         std::lock_guard lock(mutex_);
+        if (restored && before.proxyListening) snap_.connectedSince = before.connectedSince;
         snap_.lastError = failure + (restored ? "；已恢复上一份运行计划" : "；未能恢复上一份运行计划");
         return false;
 #endif
