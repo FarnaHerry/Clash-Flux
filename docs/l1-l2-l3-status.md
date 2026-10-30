@@ -29,8 +29,13 @@ SweetLine 子模块时遇到 GitHub TLS unexpected EOF，临时使用 HTTP/1.1 �
 验证。候选版本再次运行 `cmake --build build --target clash-flux`，仍在 GCC 16.2.1 的
 `stl_map.h:420 make_decl_rtl` 触发内部编译器错误，日志为 `/tmp/clash-flux-v0.3.81-build.log`；
 `./run.sh --version` 仍因旧应用与新框架 ABI 不匹配退出 139。版本号人工核对为 CMake 0.3.81、
-Android versionName 0.3.81 / versionCode 159；`git diff --check` 通过。未完成 Windows 双客户端
-实机验收；标签 CI 尚未运行。
+Android versionName 0.3.81 / versionCode 159；`git diff --check` 通过。2026-10-30 推送标签
+`v0.3.81`（提交 `41ed2fb`）后，Release CI run 41022896006 的 Linux x86_64/arm64、Windows
+x86_64、macOS arm64、Android、Windows 安装器及 publish-release 全部通过；APK 的 v1、v2
+签名和正式证书 SHA-256 均通过核验。GitHub Release 发布了 10 个平台安装包。iOS Simulator
+诊断 job 因 HuxerUI 链接依赖 `SweetEditor3p::Simdutf` 无法解析而失败，按策略不阻塞 Release。
+Windows Clash Verge + Clash-Flux 双客户端 TUN 实机验收仍未完成；本机 GCC 16 编译与旧二进制
+版本命令也仍失败，详见上述记录。
 
 ## 2026-10-30：桌面内核待命、代理监听与接管解耦
 
