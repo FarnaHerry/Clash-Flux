@@ -1,5 +1,37 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-10-30：修正待命内核与其他客户端 TUN 的共存检查
+
+代码快照：`3d5d224` 加本轮工作树，候选版本为 0.3.81。Windows 用户确认 Clash Verge
+开启 TUN 时，待命启动被“其他活动隧道 meta 正在接管 IPv4 默认路由”拒绝；关闭 TUN
+即可启动。根因是候选准备仍无条件应用开放监听时的全局接管检查，不是本次端口绑定失败。
+现将运行计划的 proxyListening 传给生产检查器，仅无业务入站的待命允许已有全局隧道；
+开放监听、候选 TUN 的全局路由、接口名和地址冲突保护保留。未改系统路由或其他客户端。
+
+Linux/GCC 16 用 `-std=c++23 -O2` 独立编译生产 network_conflict.cpp 与现有回归头：
+旧检查器配新增用例稳定失败于 IPv4 待命，新检查器通过全部判定及真实只读 OS 快照。
+`python3 tests/test_network_conflict_namespace.py <临时回归驱动>` 6/6 通过，使用独占
+user/network namespace 的真实 TUN，覆盖 IPv4/IPv6 默认及两半默认路由、地址重叠、离线
+残留；同时断言待命放行、开放监听仍拒绝、接口与地址冲突不因待命标志被豁免。
+
+正式 test_runtime_evidence/test_singbox 目标已构建；`ctest --test-dir build
+--output-on-failure --no-tests=error -R '^(runtime_evidence|singbox|proxy_standby_runtime)$'`
+中前两项通过，proxy_standby_runtime 在回环 URLTest 超时，单独重跑仍失败；未放宽断言。
+用正式 `build/test_runtime_evidence` 重跑上述真实 TUN namespace 脚本也为 6/6 通过。
+
+`cmake --build build --target clash-flux test_runtime_evidence test_singbox` 最初在下载
+SweetLine 子模块时遇到 GitHub TLS unexpected EOF，临时使用 HTTP/1.1 且保留证书校验后
+恢复。发现本机干净的 HuxerUI checkout 仍为 a954965，按已有项目 pin 同步到 5dd4009，
+未改变固定版本或用户配置。重编主目标仍在未改动的代理页/common.cpp 触发 GCC 16.2.1
+`stl_map.h:420 make_decl_rtl` 内部编译器错误，单线程重试未解决。HuxerUI codegen 已执行，
+主目标未构建成功。同步框架前 `./run.sh --version` 输出旧产物 v0.3.68；同步并重编框架后，
+旧应用尚未重新链接，版本命令退出 139，不能混用旧二进制与新框架，也不能计作新代码版本
+验证。候选版本再次运行 `cmake --build build --target clash-flux`，仍在 GCC 16.2.1 的
+`stl_map.h:420 make_decl_rtl` 触发内部编译器错误，日志为 `/tmp/clash-flux-v0.3.81-build.log`；
+`./run.sh --version` 仍因旧应用与新框架 ABI 不匹配退出 139。版本号人工核对为 CMake 0.3.81、
+Android versionName 0.3.81 / versionCode 159；`git diff --check` 通过。未完成 Windows 双客户端
+实机验收；标签 CI 尚未运行。
+
 ## 2026-10-30：桌面内核待命、代理监听与接管解耦
 
 代码快照为 `d993688929490b935cd96e8db52d629afda2a7d9` 基线上的本轮工作树，版本仍为

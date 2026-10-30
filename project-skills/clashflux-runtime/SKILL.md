@@ -8,6 +8,7 @@ description: 修改 Clash-Flux 内核控制、托盘与无窗启动、首帧快�
 涉及 UI 控制先读 [UI 生命周期](../clashflux-ui/references/lifecycle.md)，服务/系统网络同时按 [平台技能](../clashflux-platform/SKILL.md) 选择当前平台；阻塞内核、网络、路由、系统设置工作进任务线程。
 
 桌面启停/测速/接管先读 [桌面代理生命周期](../../docs/desktop-proxy-lifecycle.md)：应用默认启动无业务入站的待命内核，Connect/Disconnect 控制监听，系统代理和 TUN 独立；首页计时依据实际代理会话，不依据内核存活。
+待命与其他全局 TUN 的共存边界及连接时冲突检查以该文档为准，不用全局接管检查阻断无业务入站的启动。
 
 ## 首帧与托盘
 

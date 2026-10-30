@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.80 release notes](docs/releases/v0.3.80.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.81 release notes](docs/releases/v0.3.81.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -83,7 +83,7 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
   removed. Only PPTP installs system routes through the platform backend.
 - Core controls: desktop startup prepares a standby core without traffic inbounds.
   Connect opens proxy ports and restores the saved system proxy/TUN choices;
-  Disconnect returns to standby. Manual proxy listening works with both choices off.
+  Disconnect returns to standby. Standby can coexist with another client's TUN; connecting still checks conflicts. Manual proxy listening works with both choices off.
   Select rule, global or direct outbound mode; configure ports, LAN access and logging.
   Disconnecting releases the app-owned system proxy and PPTP sessions; the tray also
   retains a full Stop core action. Incomplete cleanup is reported as a failure. App-managed desktop

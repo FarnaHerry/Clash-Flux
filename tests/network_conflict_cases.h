@@ -21,6 +21,15 @@ inline void NetworkConflictCases() {
     require(Check(snapshot,request).find("接口冲突")!=std::string::npos,"occupied explicit interface name accepted");
     request.tuns.clear();
     require(!Check(snapshot,request).empty(),"proxy-only startup missed other full-tunnel routing");
+    request.proxyListening=false;
+    require(Check(snapshot,request).empty(),"standby blocked by another client's IPv4 TUN");
+    request.tuns={{"ClashFlux",{"10.255.255.1/30"}}};
+    require(!Check(snapshot,request).empty(),"standby flag bypassed actual TUN route conflict");
+    request.tuns={{"ClashFlux",{"172.19.0.1/30"}}};
+    require(Check(snapshot,request).find("地址冲突")!=std::string::npos,"standby flag bypassed address collision");
+    request.tuns={{"tun0",{"10.255.255.1/30"}}};
+    require(Check(snapshot,request).find("接口冲突")!=std::string::npos,"standby flag bypassed interface collision");
+    request.tuns.clear();request.proxyListening=true;
     request.nativeInterfaces={"tun0"};
     require(Check(snapshot,request).empty(),"explicit native upstream was rejected");
     request.tuns={{"ClashFlux",{"172.19.0.1/30"}}};
@@ -29,6 +38,9 @@ inline void NetworkConflictCases() {
     require(Check(snapshot,request).empty(),"split-tunnel enterprise VPN blocked without collision");
     snapshot.interfaces.front().capturesIpv6=true;
     require(Check(snapshot,request).find("IPv6")!=std::string::npos,"IPv6-only full tunnel missed");
+    request.proxyListening=false;
+    require(Check(snapshot,request).empty(),"standby blocked by another client's IPv6 TUN");
+    request.proxyListening=true;
     snapshot.interfaces.front().tunnel=false;
     require(Check(snapshot,request).empty(),"physical default route mistaken for VPN");
     snapshot.interfaces.front().tunnel=true;

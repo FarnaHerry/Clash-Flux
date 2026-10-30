@@ -92,6 +92,7 @@
         namespace conflicts = clashflux::network_conflict;
         const auto observed = conflicts::Inspect();
         conflicts::Request request;
+        request.proxyListening = options.proxyListening;
         request.tuns = networkTuns(config);
         for (const auto& connection : options.nativeConnections)
             if (connection.connected && !connection.interfaceName.empty())

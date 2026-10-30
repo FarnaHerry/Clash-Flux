@@ -216,7 +216,8 @@ std::string Check(const Snapshot& snapshot,const Request& request) {
                 if(Overlaps(wanted,actual))return "TUN 地址冲突："+wanted+" 与活动接口「"+link.name+"」的 "+actual+
                     " 重叠；请先关闭对应 VPN/TUN 或调整其网段后重试";
         }
-        if(link.tunnel&&(link.capturesIpv4||link.capturesIpv6)&&
+        if((request.proxyListening||!request.tuns.empty())&&
+           link.tunnel&&(link.capturesIpv4||link.capturesIpv6)&&
            std::find(request.nativeInterfaces.begin(),request.nativeInterfaces.end(),link.name)==request.nativeInterfaces.end())
             return "网络接管冲突：其他活动隧道「"+link.name+"」正在接管 "+
                 (link.capturesIpv4?"IPv4":"IPv6")+" 默认路由；请先关闭对应 VPN/TUN 后重试（系统代理出口也可能经过它）";

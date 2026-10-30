@@ -16,6 +16,8 @@ inline void NetworkConflictNamespaceCase(const std::string& mode) {
         require(found->up&&found->tunnel&&(ipv6?found->capturesIpv6:found->capturesIpv4),
                 "real full-tunnel route not recognized");
         require(!Check(snapshot,{}).empty(),"proxy-only route conflict missed");
+        Request standby;standby.proxyListening=false;
+        require(Check(snapshot,standby).empty(),"standby blocked by real full-tunnel route");
         request.owned=OwnedInterfaces(snapshot,{{"other-tun",{"172.19.0.1/30"}}});
         require(!request.owned.empty()&&Check(snapshot,request).empty(),"owned live TUN exemption failed");
     } else if(mode=="address") {

@@ -23,6 +23,7 @@ struct Request {
     std::vector<Tun> tuns;
     std::vector<unsigned> owned; // Only authenticated running-plan interfaces.
     std::vector<std::string> nativeInterfaces; // Explicit connected native sessions.
+    bool proxyListening = true; // Standby accepts no traffic; defaults preserve proxy-only checks.
 };
 // Read-only OS queries. No packet, DNS request, process probing, shell or mutation.
 Snapshot Inspect();
