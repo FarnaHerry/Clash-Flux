@@ -12,6 +12,7 @@ description: 准备 Clash-Flux 版本、发布说明、安装包或修改发布�
 ## 应用内升级
 
 修改升级行为先读 [应用升级](../../docs/app-updates.md)，同时读取 UI、运行、数据与对应平台技能。
+Linux 授权/安装期间保留主进程，成功才退出；取消/失败恢复原窗口与同一持久化会话，Polkit 无桌面代理时明确报错。
 `clash-flux-updater` 必须随 Windows/Linux 运行目录和安装包交付；回归运行 `app_update`、`app_update_async`、`app_update_handoff` 及 persistence，真实安装另需隔离机器验收。
 Android 使用正式签名 APK 和系统安装确认；构建运行 `:app:testAppUpdatePolicy`，发布验收另测正式签名跨版本覆盖、授权/取消和数据保留，不能以 debug 包或宿主 JVM 回归替代真机安装。
 

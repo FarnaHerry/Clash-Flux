@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.81 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.82 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -804,8 +804,18 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                     "$<TARGET_FILE:test_app_update>" "$<TARGET_FILE:clash-flux-updater>" "$<TARGET_FILE:fake_update_installer>")
                 set_tests_properties(app_update_handoff PROPERTIES TIMEOUT 40 LABELS clashflux-required)
             elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+                add_executable(fake_update_pkexec tests/fake_update_pkexec.cpp)
+                target_compile_features(fake_update_pkexec PRIVATE cxx_std_20)
+                add_executable(test_linux_update_helper app_updater.cpp)
+                target_compile_features(test_linux_update_helper PRIVATE cxx_std_20)
+                target_link_libraries(test_linux_update_helper PRIVATE OpenSSL::Crypto)
+                target_compile_definitions(test_linux_update_helper PRIVATE
+                    CLASHFLUX_TEST_PKEXEC="$<TARGET_FILE:fake_update_pkexec>")
+                add_dependencies(test_linux_update_helper fake_update_pkexec)
+                add_dependencies(test_app_update clash-flux-updater test_linux_update_helper)
                 add_test(NAME app_update_handoff COMMAND "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_app_update_linux.py" "$<TARGET_FILE:clash-flux-updater>")
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_app_update_linux.py" "$<TARGET_FILE:clash-flux-updater>"
+                    "$<TARGET_FILE:test_linux_update_helper>" "$<TARGET_FILE:test_app_update>")
                 set_tests_properties(app_update_handoff PROPERTIES TIMEOUT 30 LABELS clashflux-required)
             endif ()
             set(CLASHFLUX_DOWNLOAD_TEST_ARGS)

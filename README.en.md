@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.81 release notes](docs/releases/v0.3.81.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.82 release notes](docs/releases/v0.3.82.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -28,7 +28,7 @@ Configurations can be imported as Clash YAML, which the built-in compiler conver
 to sing-box configuration, or as native sing-box JSON, which is merged with
 application-managed settings before being passed to sing-box.
 
-The About page supports in-app update downloads on Windows, Linux (DEB/RPM), and Android arm64, with SHA-256 verification, cancellation and retry. Desktop installation saves configuration, disconnects the proxy and exits before opening the Windows installer or Linux Polkit authorization. Android also checks the official signing certificate and version, then saves configuration and disconnects the proxy before opening the system installer; first use requires permission to install apps from this source. Other platforms retain manual downloads; see [application updates](docs/app-updates.md).
+The About page supports in-app update downloads on Windows, Linux (DEB/RPM), and Android arm64, with SHA-256 verification, cancellation and retry. Desktop installation saves configuration and disconnects the proxy. Windows exits before opening its installer; Linux keeps the application alive through Polkit authorization and installation, returning to the same window on failure. Android also checks the official signing certificate and version, then saves configuration and disconnects the proxy before opening the system installer; first use requires permission to install apps from this source. Other platforms retain manual downloads; see [application updates](docs/app-updates.md).
 
 Desktop startup prepares a core without traffic inbounds so nodes can be tested. Connect opens proxy ports and applies the saved system proxy/TUN choices; both may remain off for manual proxy use. Disconnect returns to standby. See [desktop proxy lifecycle](docs/desktop-proxy-lifecycle.md).
 

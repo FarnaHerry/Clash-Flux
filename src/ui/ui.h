@@ -620,7 +620,7 @@ struct DesktopServiceInstallResult {
 };
 // Await within the existing application operation so installation can resume
 // its original command without releasing the shared pending state.
-huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync();
+huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync(bool startStandby = true);
 void InstallDesktopService(std::shared_ptr<CoreModel> model,
                            huxerui::TaskScope tasks, FluxToastHandle toast);
 #endif

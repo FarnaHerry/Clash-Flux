@@ -144,8 +144,8 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 
 #if defined(__linux__) || defined(_WIN32)
 
-huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync() {
-    co_return co_await RunOnTaskThread([] {
+huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync(bool startStandby) {
+    co_return co_await RunOnTaskThread([startStandby] {
         DesktopServiceInstallResult result;
 #if defined(__linux__)
         const std::string executable =
@@ -154,12 +154,18 @@ huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync() {
             std::format("pkexec \"{}\" service install", executable).c_str()) == 0;
 #else
         result.success = service::manageElevated(false, result.error);
-        if (result.success) {
-            store::vpnStore().shutdown();
-            store::coreStore().stopCore();
-        }
 #endif
         result.installed = service::installed();
+        if (result.success && result.installed) {
+            auto& core = store::coreStore();
+            store::vpnStore().shutdown();
+            // Service replacement invalidates the old runtime snapshot on both platforms.
+            result.success = core.stopCore() && (!startStandby || core.startReadyCore());
+            if (!result.success) {
+                result.error = core.snapshot().lastError;
+                if (result.error.empty()) result.error = "Service installed, but core preparation failed";
+            }
+        }
         return result;
     });
 }

@@ -357,7 +357,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
                     database.hasPendingSettings() || database.hasPendingProfiles())
                     throw std::runtime_error("Configuration is still pending; installation cancelled");
                 const auto package = self->updateModel->package;
-                co_await RunOnTaskThread([package] { package->StartInstallerAfterExit(cfg::executableDir()); });
+                co_await RunOnTaskThread([package] { package->InstallDesktopUpdate(cfg::executableDir()); });
                 self->exitRequested = true;
                 instance::markClosing();
                 self->refresh = {};

@@ -136,7 +136,7 @@ static std::wstring QuoteUpdateArgument(const std::wstring& value) {
 }
 #endif
 
-void AppUpdatePackage::StartInstallerAfterExit(const std::filesystem::path& executableDirectory) {
+void AppUpdatePackage::InstallDesktopUpdate(const std::filesystem::path& executableDirectory) {
 #if defined(__ANDROID__)
     static_cast<void>(executableDirectory);
     throw std::runtime_error("Android installation is owned by the system package installer");
@@ -178,10 +178,21 @@ void AppUpdatePackage::StartInstallerAfterExit(const std::filesystem::path& exec
     pid_t child = -1;
     if (::posix_spawn(&child, helper.c_str(), nullptr, nullptr, argv.data(), environ) != 0)
         throw std::runtime_error("Cannot start update helper");
-    bool childFinished = false;
-    // This process is intentionally transferred to the OS after a successful
-    // handshake. It must outlive the GUI in order to install the package.
+    int status = 0;
+    pid_t completed;
+    do { completed = ::waitpid(child, &status, 0); } while (completed < 0 && errno == EINTR);
+    if (completed == child && WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+        handedOff_ = true;
+        return;
+    }
+    std::ifstream result(directory_ / "result.txt");
+    std::array<char, 8192> message{};
+    result.read(message.data(), message.size());
+    throw std::runtime_error(result.gcount() > 0
+        ? std::string(message.data(), static_cast<std::size_t>(result.gcount()))
+        : "Linux update helper failed; the application remains open");
 #endif
+#if defined(_WIN32)
     for (unsigned attempt = 0; attempt < 300; ++attempt) {
         std::ifstream input(ready);
         std::string line;
@@ -189,24 +200,13 @@ void AppUpdatePackage::StartInstallerAfterExit(const std::filesystem::path& exec
             handedOff_ = true;
             return;
         }
-#if defined(_WIN32)
         if (WaitForSingleObject(processOwner.get(), 0) != WAIT_TIMEOUT) break;
-#else
-        const auto result = ::waitpid(child, nullptr, WNOHANG);
-        if (result > 0 || (result < 0 && errno != EINTR)) { childFinished = true; break; }
-#endif
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-#if defined(_WIN32)
     TerminateProcess(processOwner.get(), 1);
     WaitForSingleObject(processOwner.get(), 5000);
-#else
-    if (!childFinished) {
-        ::kill(child, SIGTERM);
-        while (::waitpid(child, nullptr, 0) < 0 && errno == EINTR) {}
-    }
-#endif
     throw std::runtime_error("Update helper failed to prepare; the application remains open");
+#endif
 #endif
 }
 

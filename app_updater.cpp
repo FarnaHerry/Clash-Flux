@@ -1,9 +1,12 @@
 // Independent, unprivileged handoff. It verifies and retains the package before
-// acknowledging readiness, waits for the GUI to exit, then invokes the native
-// installer. It never opens a database or creates a HuxerUI Runtime.
+// acknowledging readiness. Windows waits for GUI exit; Linux installs while
+// the GUI remains alive to retain the desktop authorization session. It never opens a database or creates a
+// HuxerUI Runtime.
 #include "src/app_update_hash.h"
 #include <charconv>
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <fstream>
 #include <thread>
 #include <vector>
@@ -112,39 +115,49 @@ static int Apply(const std::vector<fs::path>& arguments) {
             throw std::runtime_error("Installation did not complete; reopen Clash-Flux to retry");
         lockedPackage.reset();
 #else
-        unsigned waited = 0;
-        while (::getppid() == static_cast<pid_t>(parentId) && waited++ < 1200)
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (::getppid() == static_cast<pid_t>(parentId))
-            throw std::runtime_error("Application did not exit; installation cancelled");
+        FileOwner diagnostic(std::fopen((directory / "installer.log").c_str(), "w"));
+        if (!diagnostic) throw std::runtime_error("Cannot capture installer diagnostics");
         const pid_t installer = ::fork();
+        if (installer < 0) throw std::runtime_error("Cannot start Linux installer");
         if (installer == 0) {
-            if (kind == "deb") ::execl("/usr/bin/pkexec", "pkexec", "/usr/bin/dpkg", "--install", immutable.c_str(), nullptr);
-            else ::execl("/usr/bin/pkexec", "pkexec", "/usr/bin/rpm", "--upgrade", immutable.c_str(), nullptr);
+            ::dup2(::fileno(diagnostic.get()), STDOUT_FILENO);
+            ::dup2(::fileno(diagnostic.get()), STDERR_FILENO);
+#ifdef CLASHFLUX_TEST_PKEXEC
+            constexpr auto launcher = CLASHFLUX_TEST_PKEXEC;
+#else
+            constexpr auto launcher = "/usr/bin/pkexec";
+#endif
+            ::execl(launcher, "pkexec", "--disable-internal-agent",
+                kind == "deb" ? "/usr/bin/dpkg" : "/usr/bin/rpm",
+                kind == "deb" ? "--install" : "--upgrade", immutable.c_str(), nullptr);
+            std::fprintf(stderr, "Cannot execute pkexec: %s\n", std::strerror(errno));
             ::_exit(127);
         }
         int status = 0;
-        if (installer < 0 || ::waitpid(installer, &status, 0) != installer ||
-            !WIFEXITED(status) || WEXITSTATUS(status) != 0)
-            throw std::runtime_error("Installation cancelled or failed; reopen Clash-Flux to retry");
+        pid_t completed;
+        do { completed = ::waitpid(installer, &status, 0); }
+        while (completed < 0 && errno == EINTR);
+        if (completed != installer || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            std::ifstream log(directory / "installer.log");
+            std::array<char, 4096> text{};
+            log.read(text.data(), text.size());
+            const auto details = std::string(text.data(), static_cast<std::size_t>(log.gcount()));
+            const auto code = WIFEXITED(status) ? std::to_string(WEXITSTATUS(status)) : "signal";
+            throw std::runtime_error("Linux update authorization/installation failed (" + code + "): " + details);
+        }
 #endif
         std::ofstream(directory / "result.txt") << "Installation completed\n";
-        fs::remove(package);
-        fs::remove(directory / "ready.txt");
+        std::error_code cleanupError;
+        fs::remove(package, cleanupError);
+        fs::remove(directory / "ready.txt", cleanupError);
         return 0;
     } catch (const std::exception& error) {
         std::ofstream(directory / "result.txt") << error.what() << '\n';
-        if (ready) std::ofstream(directory.parent_path() / "last-result.txt") << error.what() << '\n';
 #if defined(_WIN32)
+        if (ready) std::ofstream(directory.parent_path() / "last-result.txt") << error.what() << '\n';
         if (ready) MessageBoxW(nullptr,
             L"Clash-Flux update did not complete. Reopen the application to retry.\nDetails: result.txt in the update cache.",
             L"Clash-Flux", MB_OK | MB_ICONERROR);
-#else
-        if (ready) {
-            // Return to the ordinary user session; never relaunch the GUI as root.
-            const auto child = ::fork();
-            if (child == 0) { ::execl(application.c_str(), application.c_str(), nullptr); ::_exit(127); }
-        }
 #endif
         std::fprintf(stderr, "Clash-Flux update: %s\n", error.what());
         return 1;

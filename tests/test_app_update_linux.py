@@ -1,5 +1,4 @@
-"""Verify the real Linux helper without requesting privileges or installing."""
-import hashlib
+"""Exercise the production Linux installation flow with a build-only fake pkexec."""
 import os
 import pathlib
 import subprocess
@@ -8,43 +7,56 @@ import tempfile
 import time
 
 
+def wait_for(path, process):
+    deadline = time.monotonic() + 10
+    while not path.exists() and time.monotonic() < deadline:
+        assert process.poll() is None, process.communicate()
+        time.sleep(0.02)
+    assert path.exists(), path
+
+
 def main():
-    helper = str(pathlib.Path(sys.argv[1]).resolve())
+    production, fixture, driver = map(lambda p: str(pathlib.Path(p).resolve()), sys.argv[1:])
     with tempfile.TemporaryDirectory(prefix="clash-flux-update-linux-") as temp:
         root = pathlib.Path(temp)
         package = root / "package.deb"
         package.write_bytes(b"abc")
-        digest = hashlib.sha256(b"abc").hexdigest()
-        command = [helper, "--apply", str(os.getpid()), str(package), digest, "3", "deb", sys.executable]
-        bad = command.copy()
-        bad[4] = "0" * 64
-        rejected = subprocess.run(bad, capture_output=True, text=True, timeout=10)
-        assert rejected.returncode == 1 and not (root / "ready.txt").exists()
+        bad = subprocess.run([production, "--apply", str(os.getpid()), str(package), "0" * 64,
+                              "3", "deb", sys.executable], capture_output=True, timeout=10)
+        assert bad.returncode == 1 and not (root / "ready.txt").exists()
         assert "SHA-256 mismatch" in (root / "result.txt").read_text()
-        child = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        try:
-            deadline = time.monotonic() + 10
-            while not (root / "ready.txt").exists() and time.monotonic() < deadline:
-                assert child.poll() is None, child.stderr.read()
-                time.sleep(0.02)
-            assert (root / "ready.txt").read_text().strip() == "ready"
-            assert child.poll() is None, "helper must wait for its live GUI parent"
-            sealed = next(fd for fd in pathlib.Path(f"/proc/{child.pid}/fd").iterdir()
-                          if "memfd:clash-flux-update" in os.readlink(fd))
-            assert sealed.read_bytes() == b"abc"
-            package.write_bytes(b"untrusted replacement")
-            assert sealed.read_bytes() == b"abc", "installer must consume the verified immutable snapshot"
-            try:
-                with sealed.open("r+b") as output:
-                    output.write(b"x")
-            except PermissionError:
-                pass
-            else:
-                raise AssertionError("snapshot must reject writes even from the owning user")
-        finally:
-            child.terminate()
-            child.wait(timeout=5)
-    print("app_update_linux: checksum rejection, parent-exit barrier and sealed package passed")
+        helper_dir = root / "helper"
+        helper_dir.mkdir()
+        (helper_dir / "clash-flux-updater").symlink_to(fixture)
+        for kind in ("deb", "rpm"):
+            for code in (0, 126, 127, 1):
+                case = root / f"{kind}-{code}"
+                case.mkdir()
+                env = dict(os.environ, CLASHFLUX_UPDATE_TEST_ROOT=str(case),
+                           CLASHFLUX_UPDATE_TEST_RESULT=str(code))
+                parent = subprocess.Popen([driver, "--linux-install", str(case), str(helper_dir), kind],
+                                          env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                try:
+                    stage = pathlib.Path(parent.stdout.readline().strip())
+                    wait_for(case / "started", parent)
+                    assert parent.poll() is None, "GUI must remain alive through authorization and installation"
+                    assert (case / "started").read_text() == (
+                        "/usr/bin/dpkg --install" if kind == "deb" else "/usr/bin/rpm --upgrade")
+                    if code == 0:
+                        # The privileged installer must consume the retained sealed snapshot.
+                        (stage / f"package.{kind}").write_bytes(b"untrusted replacement")
+                    (case / "allow").touch()
+                    output, error = parent.communicate(timeout=10)
+                    assert parent.returncode == (1 if code else 0), (output, error)
+                    if code:
+                        assert "RETAINED:" in output and f"fixture authorization/package failure {code}" in output
+                    else:
+                        assert "INSTALLED" in output and (case / "installed").read_bytes() == b"abc"
+                finally:
+                    if parent.poll() is None:
+                        parent.terminate()
+                        parent.wait(timeout=5)
+    print("app_update_linux: live parent, DEB/RPM, immutable snapshot, success/cancel/no-agent/package-error passed")
 
 
 if __name__ == "__main__":

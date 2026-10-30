@@ -1,5 +1,27 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-10-30：Linux 自升级保留授权会话，服务安装后恢复内核
+
+候选版本：0.3.82。RPM/Fedora 分支用户
+反馈确认升级后应用退出，但未弹授权且未安装。代码确认旧流程仅以快照 ready 为退出条件，
+尚未确认 Polkit 或包管理器结果；本轮没有取到用户现场日志，不能断言实际失败来自哪层。
+Linux 改为保留主进程等待授权和安装，成功才退出；取消/失败恢复原窗口与同一持久化会话。
+只提升 dpkg/rpm，禁用无窗口的内置终端授权代理，返回有界安装诊断，继续消费 sealed memfd。
+服务设置入口安装/更新成功后清理旧客户端状态并默认启动待命；连接/TUN 等触发安装时
+保留原操作票据，续跑原命令及参数，不先强制启动待命。启动时自动服务同步保持启动意图。
+
+`cmake --build build --target test_app_update test_app_update_async test_persistence` 通过；
+`ctest --test-dir build --output-on-failure --no-tests=error -R
+'^(app_update|app_update_async|app_update_handoff|persistence)$'` 4/4 通过。Linux handoff 使用
+测试构建替换 pkexec 入口，走生产父进程及助手代码，覆盖 DEB/RPM、授权等待期间父进程存活、
+快照不可改及缓存替换、安装成功、取消、缺授权代理及包管理失败；没有执行真实提权或安装。
+`ui_resources` 也通过；上述四项加资源检查共 5/5。`test_page_transition` 构建依赖主目标，
+被本机 GCC 16 的 `stl_map.h:420 make_decl_rtl` 内部编译器错误阻断。直接执行
+`cmake --build build --target clash-flux` 还出现 `stl_list.h` 的模块声明冲突；HuxerUI
+codegen 已执行，但未产生可验收的新主目标。`./run.sh --version` 使用旧二进制仍退出 139；
+`git diff --check` 通过，规范文件长度限制通过。未完成 Fedora/Polkit 实际安装、Windows
+服务安装/TUN 实机转换验收；没有以模拟助手替代上述验收。
+
 ## 2026-10-30：修正待命内核与其他客户端 TUN 的共存检查
 
 代码快照：`3d5d224` 加本轮工作树，候选版本为 0.3.81。Windows 用户确认 Clash Verge

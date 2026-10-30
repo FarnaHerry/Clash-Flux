@@ -48,10 +48,28 @@ int main(int argc, char** argv) {
         candidate->Commit();
         const auto stage = candidate->Path().parent_path();
         std::ofstream(stage / "expected-parent.txt") << GetCurrentProcessId();
-        candidate->StartInstallerAfterExit(fs::absolute(argv[3]));
+        candidate->InstallDesktopUpdate(fs::absolute(argv[3]));
         std::cout << stage.string() << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(1500));
         return 0;
+    }
+#elif defined(__linux__)
+    if (argc == 5 && std::string_view(argv[1]) == "--linux-install") {
+        auto candidate = AppUpdatePackage::Prepare(fs::absolute(argv[2]),
+            Asset(std::string_view(argv[4]) == "deb" ? AppUpdateTarget::LinuxX64Deb : AppUpdateTarget::LinuxX64Rpm));
+        candidate->Write(std::as_bytes(std::span("abc", 3)));
+        candidate->Commit();
+        std::cout << candidate->Path().parent_path().string() << std::endl;
+        try {
+            candidate->InstallDesktopUpdate(fs::absolute(argv[3]));
+            Check(!fs::exists(candidate->Path()), "successful installation removes candidate");
+            std::cout << "INSTALLED" << std::endl;
+            return failures ? 1 : 0;
+        } catch (const std::exception& error) {
+            Check(fs::exists(candidate->Path()), "failed installation retains candidate for retry");
+            std::cout << "RETAINED: " << error.what() << std::endl;
+            return 1;
+        }
     }
 #else
     (void)argc; (void)argv;
@@ -127,7 +145,7 @@ int main(int argc, char** argv) {
         Check(candidate->Path().filename() == "package.exe" && fs::exists(candidate->Path()),
             "verified bytes atomically become the install candidate");
         std::ofstream(candidate->Path(), std::ios::binary) << "abd";
-        Check(Throws([&] { candidate->StartInstallerAfterExit(root); }), "tampering rejected again before handoff");
+        Check(Throws([&] { candidate->InstallDesktopUpdate(root); }), "tampering rejected again before handoff");
         Check(!fs::exists(stage / "ready.txt"), "tampered bytes never start an installer");
     }
     Check(!fs::exists(stage), "unhanded package directory is cleaned");

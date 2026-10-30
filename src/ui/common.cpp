@@ -198,7 +198,7 @@ void CoreControl::Run(CoreCommand command) const {
                     control.window->Activate();
                     const auto resumed = co_await ResumeCoreCommandAfterServiceInstall<CoreApplyResult>(
                         command, [&result, control]() -> huxerui::Task<bool> {
-                            const auto installed = co_await InstallDesktopServiceAsync();
+                            const auto installed = co_await InstallDesktopServiceAsync(false);
                             result.error = installed.error;
                             if (!installed.success || !installed.installed) co_return false;
                             control.toast->Show(Localized("服务已安装"));

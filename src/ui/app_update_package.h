@@ -26,7 +26,9 @@ public:
     void Write(std::span<const std::byte> bytes);
     void CloseDownload();
     void Commit();
-    void StartInstallerAfterExit(const std::filesystem::path& executableDirectory);
+    // Windows transfers a ready helper; Linux waits for authorized installation.
+    // The caller exits only on success and restores its writable session on error.
+    void InstallDesktopUpdate(const std::filesystem::path& executableDirectory);
 private:
     std::filesystem::path directory_, path_;
     wire::ReleaseAsset asset_;
@@ -47,7 +49,7 @@ inline AppUpdatePackage::~AppUpdatePackage() = default;
 inline void AppUpdatePackage::Write(std::span<const std::byte>) { throw std::runtime_error("Unsupported update package"); }
 inline void AppUpdatePackage::CloseDownload() { throw std::runtime_error("Unsupported update package"); }
 inline void AppUpdatePackage::Commit() { throw std::runtime_error("Unsupported update package"); }
-inline void AppUpdatePackage::StartInstallerAfterExit(const std::filesystem::path&) {
+inline void AppUpdatePackage::InstallDesktopUpdate(const std::filesystem::path&) {
     throw std::runtime_error("Unsupported update installation");
 }
 #endif
