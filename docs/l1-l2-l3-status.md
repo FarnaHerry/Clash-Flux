@@ -1,5 +1,19 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-02：v0.3.88 Android 模式缓存协调
+
+修复代码快照 `7bda7cd`，随后更新版本 `0.3.88`、Android `versionName=0.3.88` /
+`versionCode=166`。Android 通过 CommandClient 初始/更新回调协调 sing-box 缓存模式，
+Starting 新目标会重新协调；无 TUN 常驻内核也可热切换，实际模式经 Binder/JNI 回读。
+
+本地 `cmake --build build --target clash-flux` 通过，版本命令输出 v0.3.88，
+`git diff --check` 通过；`page_transition`、`singbox`、`project_test_gate`、`ui_resources`、
+`proxy_standby_runtime` 5/5 通过。使用项目脚本按固定 1.14.4 revision 重建 libbox AAR 后，
+`:app:assembleDebug`（Java/NDK/APK）通过；`testRuntimeStartPolicy`、
+`testRuntimeModeReconciler`、`testVpnUptime`、`testAppUpdatePolicy` 均通过。未做 Android
+真机 sticky/开机恢复、VPN 路由或正式签名覆盖安装验收；这些边界由后续设备测试验证，
+不能由宿主 JVM 或 Debug APK 构建替代。
+
 ## 2026-11-01：v0.3.86 测速对齐
 
 版本 `0.3.86`，Android `versionName=0.3.86` / `versionCode=164`。发布说明见
