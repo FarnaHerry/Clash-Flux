@@ -591,6 +591,11 @@ rule_set）/ `GEOSITE` / `RULE-SET` 国内别名 / `MATCH` / `PROCESS-NAME` → 
 `process_path` / `PROCESS-PATH-REGEX` → `process_path_regex`，以及 `action:reject`、
 sniff、DNS 劫持等前置规则。
 
+2026-11-02：编译器在 MainPolicy 后追加 `clash_mode=rule` + `route.final` 的语义中性兜底，
+让 libbox 在 `default_mode=direct/global` 时也推导出完整三模式；兜底与原 final 出口一致，
+不抢占或改变首个有效 MATCH、显式 REJECT 和其它模式的语义。此前缺省 direct 时模式列表只有
+`direct/global`，`SetClashMode("rule")` 会被上游静默忽略，应用回读才能识别。
+
 新增 exact 匹配：`SRC-IP-CIDR` → `source_ip_cidr`（IPv4/IPv6）、`SRC-PORT` →
 `source_port` / `source_port_range`、`DST-PORT` → `port` / `port_range`、
 `NETWORK` → `network`（TCP/UDP，大小写归一）。端口列表用 `/` 分隔，范围的 `-`

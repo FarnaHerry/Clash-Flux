@@ -89,6 +89,10 @@ sing-box `experimental.cache_file` 会持久化实际 Clash 模式；重启时�
 收到的新模式意图会替换本次启动目标，协调循环在确认前再次检查目标，避免旧启动配置覆盖新选择。
 运行中切换同样等待回调；无 TUN 常驻内核也可热切换，不再只按 VPN connected 判断内核是否可接收命令。
 
+libbox 的可选模式列表来自配置中的 `clash_mode` 规则和 `default_mode`，并不自动包含全部三项。
+编译器在全部策略规则末尾追加与 `route.final` 等价的 `rule` 兜底，避免缺省 direct/global 时
+`SetClashMode("rule")` 被上游静默忽略；兜底不更改原路由出口。
+
 实际模式只保存在后台运行时内存，经现有 Binder `clashMode` 快照和 JNI 发布到 CoreStore；不新增
 SharedPreferences 或数据库第二真相源。停止或尚未取得回调时保留保存意图供预览，Running 时显示实际
 回读值。`RuntimeModeReconcilerTest` 覆盖缓存 `direct` → 配置 `rule`、异步确认、未确认失败和控制

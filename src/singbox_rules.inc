@@ -1390,6 +1390,7 @@ bool applyConnectionRules(Context& ctx) {
     applyMainDefault(globalMode);
     precedence.push_back(std::move(globalMode));
     for (auto& rule : config["route"]["rules"]) precedence.push_back(std::move(rule));
+    precedence.push_back({{"clash_mode", "rule"}, {"outbound", config["route"]["final"]}});
     config["route"]["rules"] = std::move(precedence);
     return true;
 }

@@ -234,8 +234,8 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
     clashApi["external_controller"] = opt.controller;
     if (!opt.secret.empty()) clashApi["secret"] = opt.secret;
     // mode_list 不是可写配置字段（1.14.2 已移除旧内部 ModeList 成员）：
-    // 内核从 route rules 的 clash_mode 值自动推导模式列表，default_mode
-    // 不在列表里时会被自动补头——因此小写 rule/global/direct 全部可用。
+    // 内核从 route rules 的 clash_mode 值自动推导模式列表；规则编译末尾另有
+    // 与 route.final 等价的 rule 兜底，保证 default/cache 任意组合下三模式均可选。
     clashApi["default_mode"] = opt.mode;
     config["experimental"]["clash_api"] = std::move(clashApi);
     if (opt.nativeControllerPort != 0) {

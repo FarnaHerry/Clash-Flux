@@ -2361,8 +2361,10 @@ void testPersonalRuleSets(const std::filesystem::path& fixtures = {}) {
     const auto& sets = config["route"]["rule_set"];
     check(sets.size() == 1 && sets[0]["tag"] == "cf_personal_set_ads" && sets[0]["rules"].size() == 2,
         "only referenced resources are loaded; complex headless rules survive");
-    check(config["route"]["rules"].back()["rule_set"] == json::array({"cf_personal_set_ads"}) &&
-        config["route"]["rules"].back()["action"] == "reject", "resource match retains action after source namespacing");
+    check(config["route"]["rules"][config["route"]["rules"].size()-2]["rule_set"] ==
+            json::array({"cf_personal_set_ads"}) &&
+        config["route"]["rules"][config["route"]["rules"].size()-2]["action"] == "reject",
+        "resource match retains action after source namespacing");
     if (!fixtures.empty()) std::ofstream(fixtures/"personal-library-inline.json") << result.json;
     auto global = options;
     global.profileRuleEdits = {};
@@ -2433,7 +2435,8 @@ void testPersonalRuleSets(const std::filesystem::path& fixtures = {}) {
         const auto forcedDocument = json::parse(forcedResult.json);
         check(forcedDocument["route"]["rule_set"][0]["tag"] != resource["tag"] &&
             forcedDocument["route"]["rule_set"][0]["url"] == resource["url"] &&
-            forcedDocument["route"]["rules"].back()["rule_set"][0] == forcedDocument["route"]["rule_set"][0]["tag"],
+            forcedDocument["route"]["rules"][forcedDocument["route"]["rules"].size()-2]["rule_set"][0] ==
+                forcedDocument["route"]["rule_set"][0]["tag"],
             "an explicit forced update rotates only the native cache identity and every reference together");
         if (!fixtures.empty()) std::ofstream(fixtures/"personal-library-forced.json") << forcedResult.json;
         if (!fixtures.empty()) std::ofstream(fixtures/"personal-library-remote.json") << remoteResult.json;
@@ -2504,11 +2507,12 @@ void testPersonalRules(const std::filesystem::path& fixtures = {}) {
     if (!compiled.json.empty()) {
         const auto config = json::parse(compiled.json);
         const auto& rules = config["route"]["rules"];
-        check(rules[rules.size()-2]["domain_suffix"] == json::array({"head.test"}) &&
-            rules.back()["domain"] == json::array({"tail.test"}) && rules.back()["action"] == "reject",
+        check(rules[rules.size()-3]["domain_suffix"] == json::array({"head.test"}) &&
+            rules[rules.size()-2]["domain"] == json::array({"tail.test"}) &&
+            rules[rules.size()-2]["action"] == "reject",
             "head and before-fallback positions are inside the main policy after mode rules");
         check(compiled.json.find("original.test") == std::string::npos, "disabled source rule is not lowered");
-        check(rules[rules.size()-2]["outbound"] == config["route"]["final"], "source-local targets are namespaced once");
+        check(rules[rules.size()-3]["outbound"] == config["route"]["final"], "source-local targets are namespaced once");
         if (!fixtures.empty()) { std::filesystem::create_directories(fixtures); std::ofstream(fixtures/"personal-clash.json") << compiled.json; }
     }
     auto refreshed = options;
@@ -2530,7 +2534,8 @@ void testPersonalRules(const std::filesystem::path& fixtures = {}) {
         "replacement emits a native rule and preserves reject-drop action");
     options.profileRuleEdits.rules.push_back({.id="fallback", .operation="final", .target="REJECT"});
     auto rejected = singbox::compileConfig(options);
-    check(rejected.error.empty() && json::parse(rejected.json)["route"]["rules"].back()["action"] == "reject",
+    const auto rejectedRules = json::parse(rejected.json)["route"]["rules"];
+    check(rejected.error.empty() && rejectedRules[rejectedRules.size()-2]["action"] == "reject",
         "explicit default rejection remains terminal and follows before-fallback additions");
     options.profileRuleEdits.rules = {{.id="implicit", .operation="before_final", .pattern="implicit.test"}};
     options.profileYaml = "rules: []\n";
@@ -3115,6 +3120,9 @@ int main(int argc, char** argv) {
               rules[3].value("outbound", "") == "DIRECT",
           "direct 模式前置规则");
     check(rules[4].value("clash_mode", "") == "global", "global 模式前置规则");
+    check(rules.back().value("clash_mode", "") == "rule" &&
+              rules.back()["outbound"] == config["route"]["final"],
+          "rule 始终在模式列表且兜底不改变 route.final 语义");
     bool sawReject = false;
     bool sawGeoip = false;
     bool sawGeosite = false;
@@ -3564,7 +3572,8 @@ rules:
               std::find(rawExclude.begin(), rawExclude.end(), json("198.51.100.7/32")) != rawExclude.end(),
           "用户和动态服务器排除地址均保留");
     check(rawConfig["route"]["rules"][3]["outbound"] == "local" &&
-              rawConfig["route"]["rules"].back()["domain"] == json{"user.example"}, "原生 JSON 全局规则优先，订阅规则保留");
+              rawConfig["route"]["rules"][rawConfig["route"]["rules"].size()-2]["domain"] ==
+                  json{"user.example"}, "原生 JSON 全局规则优先，订阅规则保留");
     rawCompensation.tunInbound = false;
     const auto withoutTun = json::parse(singbox::compileConfig(rawCompensation).json);
     check(std::none_of(withoutTun["inbounds"].begin(), withoutTun["inbounds"].end(), [](const auto& inbound) {

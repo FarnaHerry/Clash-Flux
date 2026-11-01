@@ -131,6 +131,10 @@ def main():
             worker.start()
             try:
                 target = f"http://127.0.0.1:{server.server_port}/generate_204"
+                direct_default = root / "direct-default.json"
+                document = json.loads((root / "connected.json").read_text(encoding="utf-8"))
+                document["experimental"]["clash_api"]["default_mode"] = "direct"
+                direct_default.write_text(json.dumps(document), encoding="utf-8")
                 for prefix in ("", "native-"):
                     for state in ("standby", "connected", "standby"):
                         run_stage(binary, root, root / f"{prefix}{state}.json", controller, proxy, native_port, target)
@@ -138,6 +142,8 @@ def main():
                           after_ready=lambda: patch_mode("direct"))
                 run_stage(binary, root, root / "connected.json", controller, proxy, native_port, target,
                           after_ready=reconcile_cached_direct)
+                run_stage(binary, root, direct_default, controller, proxy, native_port, target,
+                          after_ready=lambda: patch_mode("rule"))
             finally:
                 server.shutdown()
                 worker.join(timeout=5)
