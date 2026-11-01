@@ -1,5 +1,18 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-02：v0.3.89 规则模式列表修复
+
+修复代码快照 `bcda54d`，随后更新版本 `0.3.89`、Android `versionName=0.3.89` /
+`versionCode=167`。编译器追加与 `route.final` 等价的 `clash_mode=rule` 兜底，
+避免默认 direct/global 时 libbox 缺少 rule 可选模式，不改变原路由和显式 REJECT 语义。
+
+修复前用固定 sing-box 复现默认 direct 的模式列表仅 `direct/global`，PATCH rule 后仍为 direct。
+修复后 `page_transition`、`singbox`、`project_test_gate`、`ui_resources`、
+`proxy_standby_runtime` 5/5 通过，其中真实运行回归覆盖默认 direct → rule 回读。
+`cmake --build build --target clash-flux`、Android `:app:assembleDebug`（Java/NDK/APK）通过，
+Android 四项宿主 JVM 回归通过；版本命令输出 v0.3.89，`git diff --check` 通过。
+未做 Android 真机外网、VPN 路由或正式签名覆盖安装验收，不将固定内核/编译验证写成真机通过。
+
 ## 2026-11-02：v0.3.88 Android 模式缓存协调
 
 修复代码快照 `7bda7cd`，随后更新版本 `0.3.88`、Android `versionName=0.3.88` /
