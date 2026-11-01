@@ -31,6 +31,7 @@ extern "C" bool clashflux_ios_download_to_file(
 module clashflux.api;
 
 import std;
+import nlohmann.json;
 import clashflux.utils;
 
 namespace api {
@@ -428,6 +429,30 @@ ApiResult ClashApi::configs() { return impl_->request("", "/configs"); }
 
 ApiResult ClashApi::patchConfigs(const std::string& jsonBody) {
     return impl_->request("PATCH", "/configs", jsonBody);
+}
+
+ModeResult reconcileMode(ClashApi& api, const std::string& desired) {
+    if (desired != "rule" && desired != "global" && desired != "direct")
+        return {.error = "invalid mode: " + desired};
+    const auto read = [&api]() -> ModeResult {
+        const auto response = api.configs();
+        if (!response.ok) return {.error = response.error};
+        const auto config = nlohmann::json::parse(response.body, nullptr, false);
+        if (!config.is_object() || !config.contains("mode") || !config["mode"].is_string())
+            return {.error = "GET /configs returned no valid mode"};
+        return {.ok = true, .actual = config["mode"].get<std::string>()};
+    };
+    const auto before = read();
+    if (before.ok && before.actual == desired) return before;
+    const auto patched = api.patchConfigs(nlohmann::json{{"mode", desired}}.dump());
+    if (!patched.ok) return {.actual = before.actual, .error = patched.error};
+    auto confirmed = read();
+    if (!confirmed.ok) return {.actual = before.actual, .error = confirmed.error};
+    if (confirmed.actual != desired) {
+        confirmed.ok = false;
+        confirmed.error = std::format("mode verification failed: expected {}, got {}", desired, confirmed.actual);
+    }
+    return confirmed;
 }
 
 ApiResult ClashApi::proxies() { return impl_->request("", "/proxies"); }

@@ -515,8 +515,8 @@ std::function<void()> NodeSelectAction(
             const store::CoreSnapshot core = coreModel->view.Get().core;
             coreState = core.state;
             testModel->ObserveContext(core.state == core::CoreState::Running, core.planRevision);
-            // Preview while stopped and live rendering share the saved mode.
-            mode = coreModel->view.Get().modeIntent;
+            // Stopped previews use saved intent; live pages show the actual core mode.
+            mode = coreModel->view.Get().Mode();
             const ProxiesSnapshot& current = proxiesModel->snapshot.Get();
             if (current.body != parsedBody.Get() || current.labels != parsedLabels.Get()) {
                 parsedLabels = current.labels;

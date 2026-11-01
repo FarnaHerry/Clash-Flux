@@ -24,10 +24,11 @@ def free_port():
         return probe.getsockname()[1]
 
 
-def request(port, path, *, control=False):
+def request(port, path, *, control=False, method="GET", body=None):
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
     try:
-        connection.request("GET", path, headers={"Authorization": "Bearer test-native-secret"} if control else {})
+        headers = {"Authorization": "Bearer test-native-secret"} if control else {}
+        connection.request(method, path, body=body, headers=headers)
         response = connection.getresponse()
         return response.status, response.read()
     finally:
@@ -43,10 +44,14 @@ class Target(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def run_stage(binary, root, config, controller, proxy, native_port, target):
+def run_stage(binary, root, config, controller, proxy, native_port, target, after_ready=None):
     document = json.loads(config.read_text(encoding="utf-8"))
     listening = bool(document["inbounds"])
     assert not any(item["type"] == "tun" for item in document["inbounds"])
+    document["outbounds"] = [item for item in document["outbounds"] if item.get("tag") != "LOOPBACK"]
+    document["outbounds"].append(
+        {"type": "urltest", "tag": "LOOPBACK", "outbounds": ["DIRECT"], "url": target})
+    config.write_text(json.dumps(document), encoding="utf-8")
     with (root / "core.log").open("wb") as log:
         process = subprocess.Popen(
             [binary, "run", "-c", str(config), "-D", str(root)],
@@ -65,9 +70,10 @@ def run_stage(binary, root, config, controller, proxy, native_port, target):
                     pass
                 assert time.monotonic() < deadline, "controller never became ready"
                 time.sleep(0.05)
-            status, body = request(controller, "/proxies/DIRECT/delay?" + urllib.parse.urlencode(
-                {"url": target, "timeout": 2000}), control=True)
-            assert status == 200 and isinstance(json.loads(body).get("delay"), int), body
+            status, body = request(controller, "/group/LOOPBACK/delay?" + urllib.parse.urlencode(
+                {"timeout": 2000}), control=True)
+            assert status == 200 and isinstance(json.loads(body).get("DIRECT"), int), (
+                config.name, body, (root / "core.log").read_text(errors="replace"))
             if listening:
                 status, _ = request(proxy, target)
                 assert status == 204, "manual proxy failed with system proxy and TUN both off"
@@ -79,6 +85,8 @@ def run_stage(binary, root, config, controller, proxy, native_port, target):
                 else:
                     connection.close()
                     raise AssertionError("standby unexpectedly accepted application traffic")
+            if after_ready:
+                after_ready()
         finally:
             process.terminate()
             try:
@@ -89,11 +97,31 @@ def run_stage(binary, root, config, controller, proxy, native_port, target):
 
 
 def main():
-    generator, binary = sys.argv[1:]
+    generator, binary, driver = sys.argv[1:]
     ports = set()
     while len(ports) < 3:
         ports.add(free_port())
     controller, proxy, native_port = ports
+
+    def actual_mode():
+        status, body = request(controller, "/configs", control=True)
+        assert status == 200, body
+        return json.loads(body)["mode"]
+
+    def patch_mode(mode):
+        status, body = request(controller, "/configs", control=True, method="PATCH",
+                               body=json.dumps({"mode": mode}))
+        assert 200 <= status < 300, body
+        assert actual_mode() == mode
+
+    def reconcile_cached_direct():
+        assert actual_mode() == "direct", "sing-box cache did not restore the previous mode"
+        result = subprocess.run(
+            [driver, "--reconcile-mode", f"http://127.0.0.1:{controller}",
+             "test-native-secret", "rule"], capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert actual_mode() == "rule", "PATCH was not confirmed through GET /configs"
+
     with tempfile.TemporaryDirectory(prefix="clash-flux-proxy-runtime-") as directory:
         root = pathlib.Path(directory)
         subprocess.run([generator, "--proxy-runtime-fixtures", str(root), str(controller), str(proxy),
@@ -106,10 +134,14 @@ def main():
                 for prefix in ("", "native-"):
                     for state in ("standby", "connected", "standby"):
                         run_stage(binary, root, root / f"{prefix}{state}.json", controller, proxy, native_port, target)
+                run_stage(binary, root, root / "connected.json", controller, proxy, native_port, target,
+                          after_ready=lambda: patch_mode("direct"))
+                run_stage(binary, root, root / "connected.json", controller, proxy, native_port, target,
+                          after_ready=reconcile_cached_direct)
             finally:
                 server.shutdown()
                 worker.join(timeout=5)
-    print("YAML/native: standby URLTest, closed proxy ports, manual proxy and return to standby passed")
+    print("YAML/native standby/listening and cached-mode reconciliation with GET verification passed")
 
 
 if __name__ == "__main__":

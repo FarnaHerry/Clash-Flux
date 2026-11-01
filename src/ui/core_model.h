@@ -54,6 +54,10 @@ struct CoreView {
     bool ProxyActive() const {
         return core.state == decltype(core.state)::Running && core.proxyListening;
     }
+    std::string Mode() const {
+        return core.state == decltype(core.state)::Running && !core.mode.empty()
+            ? core.mode : modeIntent;
+    }
 
     bool operator==(const CoreView&) const = default;
 };

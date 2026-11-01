@@ -899,7 +899,8 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                 set_tests_properties(native_control_runtime PROPERTIES TIMEOUT 45)
                 add_test(NAME proxy_standby_runtime COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_proxy_standby_runtime.py"
-                    "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}")
+                    "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
+                    "$<TARGET_FILE:test_mode_reconcile>")
                 set_tests_properties(proxy_standby_runtime PROPERTIES TIMEOUT 60)
                 add_test(NAME group_expansion_runtime COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_group_expansion_runtime.py"
@@ -927,6 +928,15 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                 endif ()
             endif ()
         endif ()
+
+        add_executable(test_mode_reconcile tests/test_mode_reconcile.cpp src/api.cpp)
+        target_sources(test_mode_reconcile PRIVATE FILE_SET mode_modules TYPE CXX_MODULES
+            BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+            FILES src/utils.cppm src/api.cppm)
+        target_include_directories(test_mode_reconcile PRIVATE src)
+        set_target_properties(test_mode_reconcile PROPERTIES CXX_MODULE_STD ON)
+        target_compile_features(test_mode_reconcile PRIVATE cxx_std_23)
+        target_link_libraries(test_mode_reconcile PRIVATE clashflux_wire clashflux_json CURL::libcurl)
 
         add_executable(test_runtime_health tests/test_runtime_health.cpp src/stream.cpp src/api.cpp src/core.cpp src/singbox.cpp src/profile_link.cpp
             src/pptp.cpp src/openvpn.cpp src/vpn_compensation.cpp src/vpn_compensation_windows.cpp)

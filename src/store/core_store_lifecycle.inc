@@ -427,6 +427,18 @@
         }
         stream::logApplication("info", "代理内核控制器已就绪");
         refreshRuntime();
+#ifndef __ANDROID__
+        const auto reconciledMode = api::reconcileMode(*api_, mode());
+        if (!reconciledMode.ok) {
+            stopCore();
+            fail("恢复出站模式失败：" + reconciledMode.error);
+            return;
+        }
+        {
+            std::lock_guard lock(mutex_);
+            snap_.mode = reconciledMode.actual;
+        }
+#endif
         captureHealthEvidence(false);
         // 只有调用方明确要求恢复本次运行态时才处理系统代理。普通启动
         // 不读取历史设置，也不改变其他软件当前接管的系统代理。

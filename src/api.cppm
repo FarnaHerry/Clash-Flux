@@ -118,4 +118,11 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+export struct ModeResult {
+    bool ok = false;
+    std::string actual;
+    std::string error;
+};
+export ModeResult reconcileMode(ClashApi& api, const std::string& desired);
+
 } // namespace api

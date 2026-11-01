@@ -51,7 +51,7 @@ struct CoreControl {
     std::string Mode() const {
         const auto& command = model->operations.command.Get();
         return command.action == CoreAction::Mode ? command.mode
-                                                 : model->view.Get().modeIntent;
+                                                 : model->view.Get().Mode();
     }
     bool Running() const {
         const auto action = model->operations.command.Get().action;
