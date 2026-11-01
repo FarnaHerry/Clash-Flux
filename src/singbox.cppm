@@ -180,7 +180,7 @@ export struct CompileOptions {
                                                  // 均按当前 TUN 状态决定；Android
                                                  // 由 VpnService 提供 fd）
     bool proxyListening = true;                 // false: keep control/outbounds, suspend traffic inbounds
-    bool speedTestOnly = false;                  // 仅测速时关闭 URLTest 自动巡检
+    bool speedTestOnly = false;                  // 仅测速内核；保留 URLTest 组的订阅测速地址
     bool tunStrictRoute = true;                  // Android VpnService 侧保持 false（严格
                                                  // 路由会截断系统级分流）
     bool ipv6 = true;                            // DNS 与 TUN 是否允许 IPv6

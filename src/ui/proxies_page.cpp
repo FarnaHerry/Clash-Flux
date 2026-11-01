@@ -305,8 +305,11 @@ constexpr std::size_t kNodeMetaChars = 8;
 
 huxerui::Task<int> MeasureProxyDelay(const std::string& tag) {
     co_return co_await RunOnTaskThread([tag] {
+        // The Clash API deliberately discards http:// test URLs and falls back
+        // to sing-box's HTTPS default. Use the same HTTPS endpoint explicitly
+        // and leave enough time for TCP/TLS/HTTP setup on a slow node.
         const auto result = store::coreStore().api().proxyDelay(tag,
-            "http://connectivitycheck.gstatic.com/generate_204", 3000);
+            "https://www.gstatic.com/generate_204", 10000);
         if (!result.ok) return 0;
         const auto delay = wire::DecodeDelay(result.body);
         return delay ? delay.value : 0;

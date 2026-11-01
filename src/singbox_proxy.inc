@@ -1044,41 +1044,35 @@ std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
                      "sing-box 没有 fallback / load-balance：该组现在是「最低延迟」，"
                      "不再是顺序兜底 / 轮询分发");
         }
-        if (ctx.opt.speedTestOnly) {
-            // A speed-only libbox instance performs explicit outbound tests
-            // from Android.  Keeping imported URLTest groups here would make
-            // sing-box start its own automatic sweep at the same time, which
-            // doubles the connections and mixes its configured URL with the
-            // CommandClient default URL.  Keep the group as a selector so the
-            // page still exposes the same members without a second sweep.
-            out["type"] = "selector";
-        } else {
-            out["type"] = "urltest";
-            std::string url = ytext(item, "url");
-            if (url.empty()) url = "https://www.gstatic.com/generate_204";
-            out["url"] = url;
-            if (const auto interval = yint(item, "interval"); interval && *interval > 0) {
-                out["interval"] = std::format("{}s", *interval);
-                if (*interval > 1800) {
-                    out["idle_timeout"] = std::format("{}s", *interval);
-                    ctx.note(FidelityScope::Group, Fidelity::Approx, name,
-                             std::format("代理组「{}」保留 {}s 测速间隔，并把 idle_timeout 从默认 30m 延长到同一值", name, *interval),
-                             "sing-box 要求 interval ≤ idle_timeout；空闲时停止巡检的时间因此延长");
-                }
-            } else if (item["interval"]) {
+        // Keep the imported URLTest group (and its URL/interval/tolerance)
+        // even for the Android speed-only runtime. CommandClient urlTest on
+        // the group then uses the subscription's test URL instead of the
+        // per-outbound default URL, matching sing-box and SFA semantics.
+        out["type"] = "urltest";
+        std::string url = ytext(item, "url");
+        if (url.empty()) url = "https://www.gstatic.com/generate_204";
+        out["url"] = url;
+        if (const auto interval = yint(item, "interval"); interval && *interval > 0) {
+            out["interval"] = std::format("{}s", *interval);
+            if (*interval > 1800) {
+                out["idle_timeout"] = std::format("{}s", *interval);
                 ctx.note(FidelityScope::Group, Fidelity::Approx, name,
-                         std::format("代理组「{}」的 interval 无效，使用 sing-box 默认 3m", name),
-                         "interval 必须为正整数秒数");
+                         std::format("代理组「{}」保留 {}s 测速间隔，并把 idle_timeout 从默认 30m 延长到同一值", name, *interval),
+                         "sing-box 要求 interval ≤ idle_timeout；空闲时停止巡检的时间因此延长");
             }
-            if (item["tolerance"]) {
-                const auto tolerance = yint(item, "tolerance");
-                if (tolerance && *tolerance > 0 && *tolerance <= 65535) {
-                    out["tolerance"] = *tolerance;
-                } else {
-                    ctx.note(FidelityScope::Group, Fidelity::Approx, name,
-                             std::format("代理组「{}」的 tolerance 无法原样表达，使用 sing-box 默认 50ms", name),
-                             "sing-box 接受 1–65535ms；0 会被内核替换成 50ms，不能表示零容差");
-                }
+        } else if (item["interval"]) {
+            ctx.note(FidelityScope::Group, Fidelity::Approx, name,
+                     std::format("代理组「{}」的 interval 无效，使用 sing-box 默认 3m", name),
+                     "interval 必须为正整数秒数");
+        }
+        if (item["tolerance"]) {
+            const auto tolerance = yint(item, "tolerance");
+            if (tolerance && *tolerance > 0 && *tolerance <= 65535) {
+                out["tolerance"] = *tolerance;
+            } else {
+                ctx.note(FidelityScope::Group, Fidelity::Approx, name,
+                         std::format("代理组「{}」的 tolerance 无法原样表达，使用 sing-box 默认 50ms", name),
+                         "sing-box 接受 1–65535ms；0 会被内核替换成 50ms，不能表示零容差");
             }
         }
     } else {

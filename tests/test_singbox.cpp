@@ -2276,11 +2276,12 @@ void testGroupProxyExpansion() {
         singbox::CompileOptions options;
         options.speedTestOnly = speedOnly;
         options.profileYaml = nodes +
-            "proxy-groups:\n  - {name: all, type: url-test, include-all-proxies: true, interval: 60}\nrules: ['MATCH,all']\n";
+            "proxy-groups:\n  - {name: all, type: url-test, include-all-proxies: true, interval: 60, url: 'https://example.test/generate_204'}\nrules: ['MATCH,all']\n";
         const auto result = singbox::compileConfig(options);
         check(result.error.empty() && group(result)["outbounds"] == json::array({"a-node", "z-node"}) &&
-              group(result).value("type", "") == (speedOnly ? "selector" : "urltest"),
-              "expanded URLTest members survive ordinary and speed-only compilation");
+              group(result).value("type", "") == "urltest" &&
+              group(result).value("url", "") == "https://example.test/generate_204",
+              "expanded URLTest members and subscription test URL survive ordinary and speed-only compilation");
     }
 }
 

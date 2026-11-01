@@ -34,10 +34,8 @@ import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.concurrent.CountDownLatch;
@@ -60,9 +58,6 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private static final int NOTIFICATION_ID = 1;
     static final String EXTRA_SPEED_TEST_ONLY = "speed_test_only";
     static final String EXTRA_CORE_ONLY = "core_only";
-    private static final int URL_TEST_BATCH_SIZE = 12;
-    private static final long URL_TEST_BATCH_TIMEOUT_MS = 16000L;
-    private static final long URL_TEST_POLL_MS = 150L;
     private static final Object LIBBOX_SETUP_LOCK = new Object();
     private static final Object URL_TEST_LOCK = new Object();
     private static final AtomicBoolean URL_TEST_RUNNING = new AtomicBoolean();
@@ -1563,42 +1558,13 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 if (all == null || all.length() == 0) {
                     throw new IllegalStateException("出站组尚未同步");
                 }
-                List<String> tags = new ArrayList<>();
-                for (int index = 0; index < all.length(); ++index) {
-                    String tag = all.optString(index, "");
-                    if (!tag.isEmpty()) tags.add(tag);
-                }
-                if (tags.isEmpty()) {
-                    throw new IllegalStateException("出站组没有可测速节点");
-                }
-                MainActivity.appLog("开始测速：" + group + "（" + tags.size()
-                        + " 个节点，分批并发 " + URL_TEST_BATCH_SIZE + "）", false);
-                int started = 0;
-                for (int batchStart = 0; batchStart < tags.size();
-                        batchStart += URL_TEST_BATCH_SIZE) {
-                    int batchEnd = Math.min(batchStart + URL_TEST_BATCH_SIZE, tags.size());
-                    List<String> batch = new ArrayList<>(
-                            tags.subList(batchStart, batchEnd));
-                    Map<String, Long> baseline = urlTestTimes(batch);
-                    for (String tag : batch) {
-                        if (stopRequested.get()) return;
-                        try {
-                            // The speed-only config has URLTest groups lowered
-                            // to selectors, so this is the only test sweep.
-                            // Keep the batch bounded to avoid saturating the
-                            // phone/Wi-Fi path with every node at once.
-                            activeClient.urlTest(tag);
-                            started++;
-                        } catch (Exception itemError) {
-                            Log.w(TAG, "Unable to test outbound " + tag, itemError);
-                        }
-                    }
-                    waitForUrlTestBatch(batch, baseline);
-                }
-                if (started > 0) {
-                    return;
-                }
-                throw new IllegalStateException("出站组没有可测速节点");
+                MainActivity.appLog("开始测速：" + group + "（" + all.length()
+                        + " 个成员，使用组配置的 URLTest 地址）", false);
+                // libbox tests the group through the group's own URLTest URL
+                // and timeout. Calling each member separately would silently
+                // fall back to sing-box's per-outbound default URL.
+                activeClient.urlTest(group);
+                return;
             } catch (Exception error) {
                 lastError = error;
                 try {
@@ -1612,46 +1578,6 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         if (lastError != null) {
             Log.w(TAG, "Unable to test outbound group " + group, lastError);
             MainActivity.appLog("测速启动失败：" + lastError.getMessage(), true);
-        }
-    }
-
-    private static Map<String, Long> urlTestTimes(List<String> tags) {
-        Map<String, Long> result = new HashMap<>();
-        try {
-            JSONObject root = new JSONObject(outboundGroupsJson);
-            JSONObject proxies = root.optJSONObject("proxies");
-            if (proxies == null) return result;
-            for (String tag : tags) {
-                JSONObject detail = proxies.optJSONObject(tag);
-                result.put(tag, detail == null ? 0L : detail.optLong("urlTestTime", 0L));
-            }
-        } catch (Exception error) {
-            Log.w(TAG, "Unable to read URLTest baselines", error);
-        }
-        return result;
-    }
-
-    private static void waitForUrlTestBatch(List<String> tags,
-                                            Map<String, Long> baseline) {
-        final long deadline = System.currentTimeMillis() + URL_TEST_BATCH_TIMEOUT_MS;
-        while (System.currentTimeMillis() < deadline) {
-            boolean complete = true;
-            Map<String, Long> currentTimes = urlTestTimes(tags);
-            for (String tag : tags) {
-                long before = baseline.getOrDefault(tag, 0L);
-                long after = currentTimes.getOrDefault(tag, 0L);
-                if (after <= before) {
-                    complete = false;
-                    break;
-                }
-            }
-            if (complete) return;
-            try {
-                Thread.sleep(URL_TEST_POLL_MS);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                return;
-            }
         }
     }
 

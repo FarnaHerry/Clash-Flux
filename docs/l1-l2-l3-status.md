@@ -1,5 +1,20 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-01：v0.3.85 URLTest 语义修复
+
+版本 `0.3.85`，Android `versionName=0.3.85` / `versionCode=163`。发布说明见
+[`docs/releases/v0.3.85.md`](releases/v0.3.85.md)。
+
+Android speed-test 配置不再把订阅的 URLTest 组降成 selector；组测速调用
+`CommandClient.urlTest(group)`，由 libbox 使用组自身 `url`、`interval` 和
+`tolerance`。桌面单节点测速改为 HTTPS
+`https://www.gstatic.com/generate_204`，超时从 3 秒改为 10 秒；此前 HTTP URL
+会被 sing-box Clash API 丢弃并回落到内核默认地址。
+
+`cmake --build build --target clash-flux test_singbox` 通过；`test_singbox: ok`；
+`./run.sh --version` 输出 v0.3.85；`git diff --check` 通过。Android Java 在本机仍被
+陈旧 libbox AAR 阻断，APK 由 CI 构建验证；未做小米/vivo 实机测速。
+
 ## 2026-11-01：v0.3.84 Android 网络选择修复
 
 版本 `0.3.84`，Android `versionName=0.3.84` / `versionCode=162`。发布说明见
