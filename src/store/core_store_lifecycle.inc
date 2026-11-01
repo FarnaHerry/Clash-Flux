@@ -908,9 +908,10 @@
         ensureOpen();
         bool live = false;
 #if defined(__ANDROID__)
-        // VpnService 数据面存在才算「真的在跑」；此时才要求 JNI 同步成功，
-        // 否则仅落配置，等下次生成配置时生效。
-        live = clashflux_android_vpn_state() == 2;
+        // 无 TUN 的常驻 libbox 也接受模式热切换；Starting 阶段先把最新
+        // 意图交给后台，由启动流程在发布 Running 前协调并确认。
+        const int runtimeState = clashflux_android_core_state();
+        live = runtimeState == 1 || runtimeState == 2;
         if (live && !clashflux_android_set_clash_mode(m.c_str())) return false;
 #else
         {

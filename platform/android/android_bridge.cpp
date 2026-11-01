@@ -337,7 +337,7 @@ extern "C" JNIEXPORT void JNICALL
 Java_dev_farna_clashflux_MainActivity_nativeUpdateRuntimeState(
     JNIEnv* environment, jclass, jint core_state, jint vpn_state, jlong vpn_elapsed_ms,
     jlong upload_rate, jlong download_rate, jlong upload_total,
-    jlong download_total, jint connections, jstring message) {
+    jlong download_total, jint connections, jstring message, jstring clash_mode) {
     g_core_state.store(core_state);
     UpdateVpnSnapshot(vpn_state, vpn_elapsed_ms, true);
     std::string text;
@@ -347,9 +347,17 @@ Java_dev_farna_clashflux_MainActivity_nativeUpdateRuntimeState(
             environment->ReleaseStringUTFChars(message, value);
         }
     }
+    std::string mode;
+    if (clash_mode != nullptr) {
+        if (const char* value = environment->GetStringUTFChars(clash_mode, nullptr)) {
+            mode = value;
+            environment->ReleaseStringUTFChars(clash_mode, value);
+        }
+    }
     try {
         auto& core = store::coreStore();
         core.setAndroidRuntimeState(core_state, text);
+        core.setAndroidRuntimeMode(mode);
         core.setAndroidRuntimeStats(
             static_cast<std::int64_t>(upload_rate),
             static_cast<std::int64_t>(download_rate),

@@ -232,8 +232,8 @@ Gradle 会按固定上游 revision 和 SHA256 生成并打包 `geoip-cn.srs` /
 `geosite-cn.srs`；首次构建需要网络，运行时则无需联网下载国内分流规则。
 Android 进程所有权、Binder 控制、服务恢复和网络切换策略见
 [Android 后台服务生命周期](docs/android-background-lifecycle.md)。
-Android `preBuild` 包含启动策略与 VPN 会话时钟的宿主 JVM 回归；可在 `platform/android`
-单独运行 `./gradlew.bat :app:testRuntimeStartPolicy :app:testVpnUptime`，不代替真机验收。
+Android `preBuild` 包含启动策略、libbox 模式协调与 VPN 会话时钟的宿主 JVM 回归；可在
+`platform/android` 单独运行 `./gradlew.bat :app:testRuntimeStartPolicy :app:testRuntimeModeReconciler :app:testVpnUptime`（Linux/macOS 用 `./gradlew`），不代替真机验收。
 
 GitHub Release 使用稳定的 Android 发布密钥签名。CI 需要配置
 `CLASHFLUX_ANDROID_KEYSTORE_BASE64`、`CLASHFLUX_ANDROID_KEYSTORE_PASSWORD`、

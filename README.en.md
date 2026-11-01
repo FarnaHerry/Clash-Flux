@@ -309,9 +309,9 @@ upstream revisions and SHA256 hashes. The first build needs network access;
 runtime China routing does not require downloading these rule sets.
 See [Android background service lifecycle](docs/android-background-lifecycle.md)
 for process ownership, Binder control, service recovery and network changes.
-Android `preBuild` runs host JVM tests for startup policy and the VPN session clock.
-Run `./gradlew.bat :app:testRuntimeStartPolicy :app:testVpnUptime` from `platform/android`
-to execute them separately; these tests do not replace device validation.
+Android `preBuild` runs host JVM tests for startup policy, libbox mode reconciliation and the VPN session clock.
+Run `./gradlew.bat :app:testRuntimeStartPolicy :app:testRuntimeModeReconciler :app:testVpnUptime` from `platform/android`
+(use `./gradlew` on Linux/macOS) to execute them separately; these tests do not replace device validation.
 
 GitHub Release APKs use a stable Android release signing key. CI requires four
 repository secrets: `CLASHFLUX_ANDROID_KEYSTORE_BASE64`,

@@ -56,6 +56,16 @@
 #endif
     }
 
+    void setAndroidRuntimeMode(const std::string& mode) {
+#if defined(__ANDROID__)
+        if (mode.empty()) return;
+        std::lock_guard lock(mutex_);
+        snap_.mode = mode;
+#else
+        static_cast<void>(mode);
+#endif
+    }
+
     void startAndroidApiStreams() {
 #if defined(__ANDROID__)
         // libbox is hosted by ClashVpnService and exposes status through the

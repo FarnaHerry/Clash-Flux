@@ -378,7 +378,9 @@ tasks.named("preBuild").configure { dependsOn testAppUpdatePolicy }
 def compileRuntimeStartPolicyTest = tasks.register("compileRuntimeStartPolicyTest", JavaCompile) {
     source files("src/main/java/dev/farna/clashflux/RuntimeStartPolicy.java",
             "src/main/java/dev/farna/clashflux/VpnUptime.java",
+            "src/main/java/dev/farna/clashflux/RuntimeModeReconciler.java",
             "../../../tests/android/RuntimeStartPolicyTest.java",
+            "../../../tests/android/RuntimeModeReconcilerTest.java",
             "../../../tests/android/VpnUptimeTest.java")
     destinationDirectory = layout.buildDirectory.dir("runtime-start-policy-test")
     classpath = files()
@@ -390,9 +392,14 @@ def testRuntimeStartPolicy = tasks.register("testRuntimeStartPolicy", JavaExec) 
     classpath = files(compileRuntimeStartPolicyTest.flatMap { it.destinationDirectory })
     mainClass = "dev.farna.clashflux.RuntimeStartPolicyTest"
 }
+def testRuntimeModeReconciler = tasks.register("testRuntimeModeReconciler", JavaExec) {
+    dependsOn compileRuntimeStartPolicyTest
+    classpath = files(compileRuntimeStartPolicyTest.flatMap { it.destinationDirectory })
+    mainClass = "dev.farna.clashflux.RuntimeModeReconcilerTest"
+}
 def testVpnUptime = tasks.register("testVpnUptime", JavaExec) {
     dependsOn compileRuntimeStartPolicyTest
     classpath = files(compileRuntimeStartPolicyTest.flatMap { it.destinationDirectory })
     mainClass = "dev.farna.clashflux.VpnUptimeTest"
 }
-tasks.named("preBuild").configure { dependsOn testRuntimeStartPolicy, testVpnUptime }
+tasks.named("preBuild").configure { dependsOn testRuntimeStartPolicy, testRuntimeModeReconciler, testVpnUptime }

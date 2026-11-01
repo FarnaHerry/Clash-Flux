@@ -109,7 +109,7 @@ public final class MainActivity extends HuxerUIActivity {
     private static native void nativeCoreLog(int level, String message);
     private static native void nativeUpdateRuntimeState(
             int coreState, int vpnState, long vpnElapsedMs, long uploadRate, long downloadRate,
-            long uploadTotal, long downloadTotal, int connections, String message);
+            long uploadTotal, long downloadTotal, int connections, String message, String clashMode);
     private static native void nativeClearTunPreference();
     private static native void nativeUpdateRuntimeHealth(long epoch, long generation, long sequence,
             long age, int repairs, boolean connected, boolean available, String state);
@@ -437,7 +437,8 @@ public final class MainActivity extends HuxerUIActivity {
             nativeUpdateRuntimeState(runtimeCoreState, runtimeVpnState, snapshot.getLong("vpnElapsedMs"),
                     snapshot.getLong("uploadRate"), snapshot.getLong("downloadRate"),
                     snapshot.getLong("uploadTotal"), snapshot.getLong("downloadTotal"),
-                    snapshot.getInt("connections"), runtimeMessage);
+                    snapshot.getInt("connections"), runtimeMessage,
+                    snapshot.getString("clashMode", ""));
             }
             if (bindingEpoch != runtimeBindingEpoch || service != runtimeControl) return;
             if (snapshot.getBoolean("tunResetPending")) {

@@ -77,6 +77,23 @@
 - 旧的同进程 `CoreService` 常驻通知已移除；无 TUN 内核与 VPN 共用 libbox/VpnService 生命周期，
   避免两个常驻前台服务和重复通知。
 
+## 出站模式恢复与回读
+
+sing-box `experimental.cache_file` 会持久化实际 Clash 模式；重启时缓存值可能覆盖配置中的
+`experimental.clash_api.default_mode`。因此数据库保存 `core.mode=rule` 并不能证明内核没有从
+`cache.db` 恢复旧的 `direct`。Android 没有桌面 `/configs` HTTP 接口，不能复用桌面协调路径。
+
+后台服务从已提交的 `config.json` 读取目标模式，启动数据面后通过 CommandClient 的
+`initializeClashMode` 取得缓存恢复后的实际模式；不一致时调用 `setClashMode`，并等待
+`updateClashMode` 回读确认。确认失败按启动失败关闭数据面，不能提前发布 Running。Starting 阶段
+收到的新模式意图会替换本次启动目标，协调循环在确认前再次检查目标，避免旧启动配置覆盖新选择。
+运行中切换同样等待回调；无 TUN 常驻内核也可热切换，不再只按 VPN connected 判断内核是否可接收命令。
+
+实际模式只保存在后台运行时内存，经现有 Binder `clashMode` 快照和 JNI 发布到 CoreStore；不新增
+SharedPreferences 或数据库第二真相源。停止或尚未取得回调时保留保存意图供预览，Running 时显示实际
+回读值。`RuntimeModeReconcilerTest` 覆盖缓存 `direct` → 配置 `rule`、异步确认、未确认失败和控制
+通道重置；真实 sticky/开机恢复及 VPN 路由仍需 Android 设备验收。
+
 ## 网络切换和唤醒
 
 服务监听带 Internet 能力的网络与默认物理接口。物理网络、接口或当前物理网络的 DNS
@@ -117,12 +134,13 @@ Android Task Manager 停止或厂商禁用后台/自启动。`START_STICKY` 是�
 Binder 暂时丢失只保留最后观测，不能清零会话或伪造断开；后台进程真正重启后重新连接
 自然建立新会话。首份 Binder 快照有独立就绪标志，不能把 JNI 默认值当作已确认状态。
 
-无 Android 设备也可从 `platform/android` 运行宿主 JVM 回归；两项均接入 `preBuild`：
+无 Android 设备也可从 `platform/android` 运行宿主 JVM 回归；三项均接入 `preBuild`：
 
 ```powershell
-./gradlew.bat :app:testRuntimeStartPolicy :app:testVpnUptime
+./gradlew.bat :app:testRuntimeStartPolicy :app:testRuntimeModeReconciler :app:testVpnUptime
 ```
 
-`RuntimeStartPolicyTest` 覆盖重新绑定保留活动 VPN、停止/取消拒绝旧启动、无 TUN 请求权限
-与 inbound 过滤策略；`VpnUptimeTest` 覆盖后台会话时钟。它们不代替 Java/NDK/APK 构建，
-也不代替真机的划走后重开、显式停止、授权撤回、通知/系统 VPN 图标与 sticky 恢复验收。
+Linux/macOS 使用 `./gradlew` 和相同任务名。`RuntimeStartPolicyTest` 覆盖重新绑定保留活动 VPN、
+停止/取消拒绝旧启动、无 TUN 请求权限与 inbound 过滤策略；`RuntimeModeReconcilerTest` 覆盖模式恢复
+与回调确认；`VpnUptimeTest` 覆盖后台会话时钟。它们不代替 Java/NDK/APK 构建，也不代替真机的划走后
+重开、显式停止、授权撤回、通知/系统 VPN 图标与 sticky 恢复验收。

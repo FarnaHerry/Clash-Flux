@@ -48,7 +48,8 @@ HTTP/SOCKS 代理，因此两个接管开关都关闭仍是有效连接。首页
 
 桌面内核每次启动、接管或重配就绪后必须调用生产 `api::reconcileMode`：读取 `GET /configs`，
 实际模式不同于数据库意图时执行 `PATCH /configs`，随后再次 GET 确认。协调失败按启动失败
-停核，重配沿原有回滚路径处理；Android 没有该桌面接口，不套用此路径。UI 在 Running 时显示
+停核，重配沿原有回滚路径处理。Android 没有该桌面接口，改用 CommandClient 模式回调完成协调，
+见[Android 出站模式恢复](android-background-lifecycle.md#出站模式恢复与回读)。UI 在 Running 时显示
 `CoreSnapshot.mode` 的实际回读值，停止后才以保存意图预览，不能用保存值掩盖协调失败。
 `/configs` 不含完整 TUN 状态，模式回读不能替代运行计划和平台服务证据。
 
