@@ -1,5 +1,23 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-01：v0.3.84 Android 网络选择修复
+
+版本 `0.3.84`，Android `versionName=0.3.84` / `versionCode=162`。发布说明见
+[`docs/releases/v0.3.84.md`](releases/v0.3.84.md)。
+
+`ClashVpnService.findPhysicalNetwork()` 不再只按“非 VPN”取 `getAllNetworks()` 首项：
+候选必须有 `NET_CAPABILITY_INTERNET`，优先 `NET_CAPABILITY_VALIDATED`，并记录接口、
+transport、Internet/validated 能力；`notifyDefaultInterface()` 对接口索引最多重试
+10 次 ×100 ms，避免切换网络时过早回报空接口。`docs/android-background-lifecycle.md`
+同步说明。未修改订阅、规则、TUN 路由或平台代理语义。
+
+`cmake --build build --target clash-flux` 通过；`./run.sh --version` 输出 v0.3.84，
+退出码 0；`git diff --check` 通过。Android Java 编译在本机被陈旧的 libbox 1.14.3 AAR
+阻断（`stageSingboxAar` 要求固定 1.14.4），现有 `useProcFS`/`findConnectionOwner`
+API 不一致先于本次网络改动出现；未生成 APK。`testRuntimeStartPolicy` 与
+`testVpnUptime` 通过。需用小米/vivo 实机验证默认接口日志和真实流量，不能以本机
+编译代替。
+
 ## 2026-11-01：v0.3.83 发布候选
 
 版本 `0.3.83`，Android `versionName=0.3.83` / `versionCode=161`。发布说明见

@@ -82,6 +82,10 @@
 服务监听带 Internet 能力的网络与默认物理接口。物理网络、接口或当前物理网络的 DNS
 服务器列表变化时更新 libbox 的 `InterfaceUpdateListener`；DNS 变化使用回调携带的
 `LinkProperties`，保证 libbox 刷新接口时读到新列表，然后稍作合并关闭现有出站连接。
+Android 物理网络必须具有 `NET_CAPABILITY_INTERNET`，优先选择 `NET_CAPABILITY_VALIDATED`
+的网络；不得仅凭“非 VPN”取 `getAllNetworks()` 的首项，否则双卡/多网络设备可能把
+无数据的副卡当成上游。启动和网络回调记录候选接口、transport、Internet/validated
+能力及最终选择，接口索引最多重试 10 次、每次 100 ms，再回退空接口。
 屏幕点亮或设备退出 Doze 时执行同一连接重置，恢复休眠前卡住的上游连接。若服务未在运行，
 不创建额外内核，也不持有额外 wake lock。
 

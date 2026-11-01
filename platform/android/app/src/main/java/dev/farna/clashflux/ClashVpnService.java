@@ -946,15 +946,53 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         if (manager == null) return null;
         Network active = manager.getActiveNetwork();
-        if (isPhysicalNetwork(manager, active)) return active;
         try {
+            Network best = null;
             for (Network network : manager.getAllNetworks()) {
-                if (isPhysicalNetwork(manager, network)) return network;
+                NetworkCapabilities capabilities = manager.getNetworkCapabilities(network);
+                MainActivity.appLog("Android 网络候选：" + describeNetwork(manager, network), false);
+                if (!isPhysicalNetwork(manager, network)) continue;
+                if (best == null) best = network;
+                if (capabilities != null &&
+                        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                    best = network;
+                    break;
+                }
+            }
+            if (best != null) {
+                MainActivity.appLog("Android 选择物理网络：" + describeNetwork(manager, best), false);
+                return best;
             }
         } catch (RuntimeException error) {
             MainActivity.appLog("读取 Android 默认网络失败：" + error.getMessage(), true);
         }
+        // getAllNetworks can be temporarily unavailable during a handover.
+        if (isPhysicalNetwork(manager, active)) {
+            MainActivity.appLog("Android 回退到活动物理网络：" + describeNetwork(manager, active), false);
+            return active;
+        }
         return null;
+    }
+
+    private static String describeNetwork(ConnectivityManager manager, Network network) {
+        if (network == null) return "null";
+        LinkProperties link = manager.getLinkProperties(network);
+        NetworkCapabilities capabilities = manager.getNetworkCapabilities(network);
+        String name = link == null || link.getInterfaceName() == null
+                ? "?" : link.getInterfaceName();
+        if (capabilities == null) return name + " [no-capabilities]";
+        String transport = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ? "wifi"
+                : capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ? "cellular"
+                : capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ? "ethernet"
+                : capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) ? "vpn" : "other";
+        return name + " [" + transport
+                + (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        ? ",internet" : ",no-internet")
+                + (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                        ? ",validated" : ",unvalidated")
+                + (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+                        ? ",unmetered" : ",metered")
+                + "]";
     }
 
     private static final class PhysicalLink {
@@ -1089,41 +1127,52 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         if (network == null) return false;
         NetworkCapabilities capabilities = manager.getNetworkCapabilities(network);
         return capabilities != null
-                && !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN);
+                && !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
     }
 
     private void notifyDefaultInterface(InterfaceUpdateListener listener) {
         if (listener == null) return;
+        // The interface and its LinkProperties may appear a few hundred
+        // milliseconds after the network callback on OEM ROMs. Retry before
+        // reporting that no physical interface exists.
+        for (int attempt = 0; attempt < 10; ++attempt) {
+            if (notifyDefaultInterfaceOnce(listener)) return;
+            if (attempt == 9) break;
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        try {
+            listener.updateDefaultInterface("", -1, false, false);
+        } catch (RuntimeException ignored) {
+        }
+        MainActivity.appLog("Android 未找到可用的默认物理网络接口", true);
+    }
+
+    private boolean notifyDefaultInterfaceOnce(InterfaceUpdateListener listener) {
         try {
             ConnectivityManager manager =
                     (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (manager == null) return false;
             Network physical = defaultNetwork;
-            if (manager == null || !isPhysicalNetwork(manager, physical)) {
+            if (!isPhysicalNetwork(manager, physical)) {
                 physical = findPhysicalNetwork();
                 defaultNetwork = physical;
                 physicalLink = readPhysicalLink(physical, null, null);
             }
-            if (manager == null || physical == null) {
-                listener.updateDefaultInterface("", -1, false, false);
-                MainActivity.appLog("Android 未找到默认物理网络接口", true);
-                return;
-            }
+            if (physical == null) return false;
             PhysicalLink snapshot = physicalLink;
             LinkProperties link = snapshot.properties != null
                     && java.util.Objects.equals(snapshot.network, physical)
                     ? snapshot.properties : manager.getLinkProperties(physical);
-            if (link == null || link.getInterfaceName() == null) {
-                listener.updateDefaultInterface("", -1, false, false);
-                MainActivity.appLog("Android 默认物理网络缺少接口信息", true);
-                return;
-            }
+            if (link == null || link.getInterfaceName() == null) return false;
             java.net.NetworkInterface networkInterface =
                     java.net.NetworkInterface.getByName(link.getInterfaceName());
-            if (networkInterface == null) {
-                listener.updateDefaultInterface("", -1, false, false);
-                MainActivity.appLog("Android 找不到物理接口：" + link.getInterfaceName(), true);
-                return;
-            }
+            if (networkInterface == null) return false;
             NetworkCapabilities capabilities = manager.getNetworkCapabilities(physical);
             boolean metered = capabilities != null && !capabilities.hasCapability(
                     NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
@@ -1131,12 +1180,10 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                     networkInterface.getIndex(), metered, false);
             MainActivity.appLog("Android 默认物理接口已注册：" + link.getInterfaceName()
                     + " (" + networkInterface.getIndex() + ")", false);
+            return true;
         } catch (Exception error) {
             MainActivity.appLog("注册 Android 默认物理接口失败：" + error.getMessage(), true);
-            try {
-                listener.updateDefaultInterface("", -1, false, false);
-            } catch (RuntimeException ignored) {
-            }
+            return false;
         }
     }
 
