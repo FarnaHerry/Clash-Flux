@@ -273,6 +273,9 @@ Result<int> DecodeDelay(std::string_view text) {
     auto input = codec_detail::decode<codec_detail::DelayInput>(text);
     return {.value = input.value.delay, .error = std::move(input.error)};
 }
+Result<std::map<std::string, int>> DecodeGroupDelays(std::string_view text) {
+    return codec_detail::decode<std::map<std::string, int>>(text);
+}
 Result<std::string> DecodeMessage(std::string_view text) {
     auto input = codec_detail::decode<codec_detail::MessageInput>(text);
     return {.value = std::move(input.value.message), .error = std::move(input.error)};

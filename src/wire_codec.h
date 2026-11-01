@@ -117,6 +117,7 @@ Result<Connections> DecodeConnections(std::string_view text);
 Result<ConnectionTotals> DecodeConnectionTotals(std::string_view text);
 Result<Proxies> DecodeProxies(std::string_view text);
 Result<int> DecodeDelay(std::string_view text);
+Result<std::map<std::string, int>> DecodeGroupDelays(std::string_view text);
 Result<std::string> DecodeMessage(std::string_view text);
 Result<std::map<std::string, std::string>> DecodeHeaders(std::string_view text);
 Result<Policy> DecodePolicy(std::string_view text);

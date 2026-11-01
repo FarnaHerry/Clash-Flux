@@ -139,22 +139,26 @@ struct ProxyProbeTarget {
     std::string tag;
     std::shared_ptr<ProxyProbe> probe;
 };
+
+// One kernel-side group test supplies delays for every target. This replaces
+// UI-side per-node fan-out so the kernel owns the group URL, concurrency and
+// history write order (sing-box /group/{name}/delay semantics).
 template<class Measure, class Valid>
-void LaunchProxyProbeBatch(huxerui::TaskScope tasks, std::shared_ptr<ProxyTestModel> model,
-    std::vector<ProxyProbeTarget> targets, int ticket, Measure measure, Valid valid) {
-    constexpr std::size_t concurrency = 8;
-    const auto owned = std::make_shared<const std::vector<ProxyProbeTarget>>(std::move(targets));
-    for (std::size_t worker = 0; worker < std::min(concurrency, owned->size()); ++worker)
-        tasks.Launch([model, owned, ticket, worker, measure, valid]() -> huxerui::Task<void> {
-            for (std::size_t index = worker; index < owned->size(); index += concurrency) {
-                if (!model->Current(ticket)) co_return;
-                if (!valid()) { model->End(ticket); co_return; }
-                int delay = 0;
-                try { delay = co_await measure((*owned)[index].tag); } catch (...) {}
-                if (!valid()) { model->End(ticket); co_return; }
-                model->Complete((*owned)[index].probe, ticket, delay);
-            }
-        });
+void LaunchProxyGroupProbeBatch(huxerui::TaskScope tasks, std::shared_ptr<ProxyTestModel> model,
+    std::string group, std::vector<ProxyProbeTarget> targets, int ticket,
+    Measure measure, Valid valid) {
+    tasks.Launch([model, group = std::move(group), targets = std::move(targets),
+                  ticket, measure, valid]() -> huxerui::Task<void> {
+        std::map<std::string, int> delays;
+        if (valid()) {
+            try { delays = co_await measure(group); } catch (...) {}
+        }
+        if (!valid() || !model->Current(ticket)) co_return;
+        for (const auto& target : targets) {
+            const auto found = delays.find(target.tag);
+            model->Complete(target.probe, ticket, found == delays.end() ? 0 : found->second);
+        }
+    });
 }
 
 template<class Valid, class Poll>

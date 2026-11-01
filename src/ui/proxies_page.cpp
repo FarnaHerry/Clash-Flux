@@ -42,6 +42,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -302,17 +303,30 @@ constexpr float kSpeedFabFooterHeight = 80.0F;
 
 // 延迟槽能放下的字符数（"测速中…"/"99999 ms"），超出截断成省略号。
 constexpr std::size_t kNodeMetaChars = 8;
+// sing-box constant.TCPTimeout；单节点和组测速都使用内核同一上限。
+constexpr int kProxyDelayTimeoutMs = 15000;
 
 huxerui::Task<int> MeasureProxyDelay(const std::string& tag) {
     co_return co_await RunOnTaskThread([tag] {
-        // The Clash API deliberately discards http:// test URLs and falls back
-        // to sing-box's HTTPS default. Use the same HTTPS endpoint explicitly
-        // and leave enough time for TCP/TLS/HTTP setup on a slow node.
-        const auto result = store::coreStore().api().proxyDelay(tag,
-            "https://www.gstatic.com/generate_204", 10000);
+        // Empty URL lets sing-box use its own default test URL (HTTPS
+        // www.gstatic.com/generate_204), matching CommandClient.urlTest and
+        // /proxies/{name}/delay without an explicit url parameter.
+        const auto result = store::coreStore().api().proxyDelay(tag, "", kProxyDelayTimeoutMs);
         if (!result.ok) return 0;
         const auto delay = wire::DecodeDelay(result.body);
         return delay ? delay.value : 0;
+    });
+}
+
+huxerui::Task<std::map<std::string, int>> MeasureProxyGroupDelay(const std::string& group) {
+    co_return co_await RunOnTaskThread([group] {
+        // Native group test: URLTest groups use their own url-test.url;
+        // other groups use the kernel's default test URL. The kernel runs
+        // the batch itself with its native concurrency and history updates.
+        const auto result = store::coreStore().api().groupDelay(group, kProxyDelayTimeoutMs);
+        if (!result.ok) return std::map<std::string, int>{};
+        auto decoded = wire::DecodeGroupDelays(result.body);
+        return decoded ? std::move(decoded.value) : std::map<std::string, int>{};
     });
 }
 
@@ -535,12 +549,15 @@ std::function<void()> NodeSelectAction(
         },
         coreModel->view, proxiesModel->snapshot);
 
-    // 组测速触发：桌面逐节点调用内核 delay API；Android 调用 libbox
-    // urlTest，UI 只消费内核回写的结果。
+    // 组测速触发：桌面统一走内核 /group/{name}/delay（URLTest 组保留订阅的
+    // url-test.url，内核内部并发 10）；Android 调用 libbox urlTest，UI 只消费
+    // 内核回写的结果。
     const std::function<void(const std::string&)> triggerGroupTest =
         [testTasks, toast, testModel, coreModel, proxiesModel, groups](std::string groupName) {
             std::vector<ProxyNode> nodes;
-            for (const auto& group : groups) if (group.name == groupName) nodes = group.nodes;
+            for (const auto& group : groups) {
+                if (group.name == groupName) nodes = group.nodes;
+            }
             testTasks.Launch([toast, testTasks, testModel, coreModel, proxiesModel,
                               nodes = std::move(nodes), groupName = std::move(groupName)]() -> huxerui::Task<void> {
                 if (testModel->progress.Get().busy || testModel->singlePending.Get() != 0) co_return;
@@ -580,8 +597,11 @@ std::function<void()> NodeSelectAction(
                             return std::pair{node->second.delay, node->second.testTime};
                         });
                 } else {
-                    LaunchProxyProbeBatch(testTasks, testModel, std::move(targets), generation,
-                        MeasureProxyDelay, valid);
+                    // 所有组都由内核批量测速；不要逐节点 fan-out，否则会
+                    // 丢失组 URL / 组参数，也无法得到与 sing-box 相同的
+                    // 并发和历史写入顺序。
+                    LaunchProxyGroupProbeBatch(testTasks, testModel, groupName,
+                        std::move(targets), generation, MeasureProxyGroupDelay, valid);
                 }
                 testModel->Broadcast(generation, groupName);
                 co_await WaitForProxyTestBatch(testModel, generation, native);

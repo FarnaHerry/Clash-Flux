@@ -11,11 +11,12 @@
 //   GET    /proxies                     全部代理与策略组
 //   PUT    /proxies/{group}             策略组切换节点（{"name": "..."}）
 //   GET    /proxies/{name}/delay        内核代理延迟测速（?url=&timeout=）
+//   GET    /group/{name}/delay          策略组测速（?timeout=；URLTest 组用组自身 URL）
 //   GET    /connections                 连接快照（REST 轮询用；推送走 WS）
 //   DELETE /connections/{id}            关闭单条连接
 //   DELETE /connections                 关闭全部连接
-// mihomo 专属端点（/group/{name}/delay 聚合测速、/providers/*、PUT /configs、
-// /restart）已随 mihomo 移除；组测速由 groupDelay 内部 fan-out 实现。
+// sing-box 的 /proxies/{name}/delay 会丢弃 http:// 测试地址并回落到 HTTPS
+// 默认地址；组测速必须走 /group/{name}/delay，才能保留订阅的 url-test.url。
 export module clashflux.api;
 
 import std;
@@ -77,8 +78,12 @@ public:
 
     ApiResult proxies();
     ApiResult selectProxy(const std::string& group, const std::string& name);
-    // 延迟测速：ok 时 body 是 {"delay":N}；超时/失败 ok=false。
+    // 单节点测速：ok 时 body 是 {"delay":N}；超时/失败 ok=false。
+    // testUrl 为空或 http:// 时，sing-box 使用默认 HTTPS 测速地址。
     ApiResult proxyDelay(const std::string& name, const std::string& testUrl, int timeoutMs);
+    // 策略组测速：ok 时 body 是 {"tag":delay,...}。URLTest 组使用组自身
+    // 的 url（订阅 url-test.url），不会回落到单节点默认地址。
+    ApiResult groupDelay(const std::string& name, int timeoutMs);
 
     ApiResult connections();
     ApiResult closeConnection(const std::string& id);

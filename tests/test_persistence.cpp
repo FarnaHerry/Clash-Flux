@@ -1002,6 +1002,15 @@ View PersistenceTestApp() {
 } // namespace
 
 int main() {
+    {
+        const auto decoded = clashflux::wire::DecodeGroupDelays(
+            R"({"node-b":321,"node-a":123})");
+        Check(decoded && decoded.value.size() == 2 && decoded.value.at("node-a") == 123 &&
+                  decoded.value.at("node-b") == 321,
+              "group delay map decode");
+        Check(!clashflux::wire::DecodeGroupDelays("[]"),
+              "non-object group delay map accepted");
+    }
     using clashflux::subscription::ParseExpiryValue;
     Check(ParseExpiryValue("") == -1 && ParseExpiryValue("0") == -1 && ParseExpiryValue("-1") == -1 &&
               ParseExpiryValue("1893456000") == 1893456000 && ParseExpiryValue("-2") == 0 &&

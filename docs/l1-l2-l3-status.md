@@ -1,5 +1,23 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-01：v0.3.86 测速对齐
+
+版本 `0.3.86`，Android `versionName=0.3.86` / `versionCode=164`。发布说明见
+[`docs/releases/v0.3.86.md`](releases/v0.3.86.md)。
+
+桌面所有组测速改走 sing-box 的 `/group/{name}/delay`，由内核使用组自身
+`url-test.url` 或默认测试地址，并按内核原生并发（10）批量更新历史；不再由
+UI 逐节点 fan-out。单节点测速也改为空 URL + 15 秒超时，与内核
+`constant.TCPTimeout` 和 `CommandClient.urlTest` 对齐。Android 组测速保持
+`CommandClient.urlTest(group)`，与 SFA 一致。
+
+本地运行内核对比同一路径：`https://www.gstatic.com/generate_204` 为 3782 ms，
+`https://cp.cloudflare.com/generate_204` 为 921 ms，说明测速地址会显著影响显示值。
+`cmake --build build --target clash-flux test_persistence test_page_transition test_singbox`
+通过；`ctest -R '^(page_transition|ui_resources|singbox|persistence)$'` 4/4 通过；
+`./run.sh --version` 输出 v0.3.86；`git diff --check` 通过。未做桌面 GUI 点击验证，
+未做 Android 实机测速；发布由 CI 构建安装包。
+
 ## 2026-11-01：v0.3.85 URLTest 语义修复
 
 版本 `0.3.85`，Android `versionName=0.3.85` / `versionCode=163`。发布说明见

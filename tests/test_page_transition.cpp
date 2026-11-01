@@ -2478,14 +2478,19 @@ void StartProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture, huxerui::Task
     } else {
         huxerui::State<bool> release{false};
         fixture->releases.push_back(release);
-        LaunchProxyProbeBatch(tasks, model, std::move(targets), ticket,
-            [fixture, release, fail, result](const std::string&) -> huxerui::Task<int> {
+        LaunchProxyGroupProbeBatch(tasks, model, "fixture-group", std::move(targets), ticket,
+            [fixture, release, fail, result, count](const std::string&)
+                -> huxerui::Task<std::map<std::string, int>> {
                 ++fixture->started;
                 fixture->peak = std::max(fixture->peak, ++fixture->active);
                 while (!release.Get()) co_await huxerui::Delay(std::chrono::duration<double>{0.01});
                 --fixture->active;
                 if (fail) throw std::runtime_error("fixture probe failure");
-                co_return result;
+                std::map<std::string, int> delays;
+                for (int index = 0; index < count; ++index) {
+                    delays["node-" + std::to_string(index)] = result;
+                }
+                co_return delays;
             }, [] { return true; });
     }
     tasks.Launch([model, ticket, native]() -> huxerui::Task<void> {
@@ -2530,8 +2535,8 @@ void testProxyProbesSurvivePageRetirement() {
     };
     ui.Find(UiSelector::Text("Batch probe")).Tap(); ui.Pump();
     ui.Find(UiSelector::Text("Probe")).Tap(); ui.Pump();
-    check(fixture->requests == 1 && fixture->started == 8 && fixture->peak == 8 &&
-          fixture->model->pending.Get() == 12, "batch includes unseen nodes, bounds concurrency and rejects duplicate clicks");
+    check(fixture->requests == 1 && fixture->started == 1 && fixture->model->pending.Get() == 12,
+          "one group request includes unseen nodes and rejects duplicate clicks");
     toggle();
     check(!ui.Find(UiSelector::Key("probe-origin")).Exists() && ui.Find(UiSelector::Text("PROBE-BATCH-BUSY")).Exists(),
           "originating page retires while the application retains progress");
@@ -2539,8 +2544,8 @@ void testProxyProbesSurvivePageRetirement() {
     check(ui.Find(UiSelector::Text("PROBE-TESTING")).Exists() && fixture->requests == 1,
           "remount restores pending measurement without restarting it");
     toggle(); fixture->releases[0] = true; settle(); toggle();
-    check(ui.Find(UiSelector::Text("PROBE:137")).Exists() && fixture->started == 12 &&
-          ui.Find(UiSelector::Text("PROBE-BATCH-READY")).Exists(), "queued results complete while the page is absent");
+    check(ui.Find(UiSelector::Text("PROBE:137")).Exists() && fixture->started == 1 &&
+          ui.Find(UiSelector::Text("PROBE-BATCH-READY")).Exists(), "group results complete while the page is absent");
     ui.Find(UiSelector::Text("Fail probe")).Tap(); ui.Pump(); toggle(); fixture->releases[1] = true; settle(); toggle();
     check(ui.Find(UiSelector::Text("PROBE-TIMEOUT")).Exists() && ui.Find(UiSelector::Text("PROBE-BATCH-READY")).Exists(),
           "measurement exceptions survive remount and clear pending state");

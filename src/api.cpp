@@ -447,6 +447,13 @@ ApiResult ClashApi::proxyDelay(const std::string& name, const std::string& testU
     return impl_->request("", path, {}, timeoutMs / 1000 + 5);
 }
 
+ApiResult ClashApi::groupDelay(const std::string& name, int timeoutMs) {
+    const std::string path = appendQuery("/group/" + percentEncode(name) + "/delay",
+                                         {{"timeout", std::to_string(timeoutMs)}});
+    // 组测速在服务端并发测试所有成员，传输预算同样要比单个测速宽。
+    return impl_->request("", path, {}, timeoutMs / 1000 + 5);
+}
+
 ApiResult ClashApi::connections() { return impl_->request("", "/connections"); }
 
 ApiResult ClashApi::closeConnection(const std::string& id) {
