@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.82 release notes](docs/releases/v0.3.82.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.83 release notes](docs/releases/v0.3.83.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -43,7 +43,7 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
   layout; see [UI conventions](docs/ui-development.md).
 - Subscription and profile management: entries with context menus, double-click
   activation and refresh actions; URL import, update, activation, deletion and rule
-  editing; local storage; Clash YAML, native sing-box JSON, OpenVPN .ovpn, and VMess JSON node subscriptions (plain lists or Base64). See [node subscriptions](docs/node-subscriptions.md) for conversion and limits.
+  editing; local storage; Clash YAML, native sing-box JSON, OpenVPN .ovpn, and VMess JSON node subscriptions (plain lists or Base64). Card menus share a single-frame QR or the complete config as a QiFi/QRS multi-frame QR sequence. See [node subscriptions](docs/node-subscriptions.md) for conversion and limits.
   Selection can change during preparation: repeated clicks are coalesced and only the latest pending target is kept.
   Candidate validation, startup and preview reuse the prepared output.
 - Desktop rule targets: search and select groups or nodes from Clash subscriptions,
@@ -62,16 +62,17 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
   the center. Content rebounds when canceled; returning to a group preserves its scroll
   position. Switch nodes and test a whole group's latency, with colored delay values and
   a test button at the bottom right.
-- Rules, connections and logs: view and customize subscription rules, with personal
-  changes saved separately across updates and compiled directly to sing-box JSON
-  ([details](docs/subscription-personal-rules.md)). Add remote JSON/SRS sets or import local
-  rule-set JSON (desktop also imports SRS), then reference them in personal or global rules.
-  Desktop can force a remote set to download again by restarting the core. Required CTest
-  `personal_rule_sets_runtime` covers import, matching, caching and TLS rejection; assign domains, IP addresses and
-  CIDRs to different connections through global rules;
-  inspect connection snapshots and close individual or all connections. Core and
-  application logs share one searchable list and export, with history restored for viewing.
-  The subscription selector lists only rule-editable sources; its toolbar fits medium-width windows, and compiled JSON opens as a separate page on phones.
+- Rules, connections and logs: the rules page is read-only and shows the current main
+  subscription's effective rules plus saved global rules. Subscription editing opens from
+  the card context menu as wide-screen dialogs or compact secondary pages; personal changes are saved separately
+  across updates and compiled directly to sing-box JSON
+  ([details](docs/subscription-personal-rules.md)). Global rules are managed from a
+  secondary page opened by the rules page header. Manual rule-set editing has been removed;
+  existing data remains compatible. The card context menu also opens a per-profile read-only
+  list of subscription-parsed external references. Assign domains, IP addresses and CIDRs to
+  different connections through global rules; inspect connection snapshots and close
+  individual or all connections. Core and application logs share one searchable list and
+  export, with history restored for viewing.
 - Standalone PPTP connections use system dialing and privileged service integration.
   Windows uses RAS with MS-CHAPv2; enabling MPPE-128 requires encryption, while
   disabling that option lets the server negotiate its requirements. Windows

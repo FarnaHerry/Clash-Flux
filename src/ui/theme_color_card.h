@@ -19,6 +19,8 @@ inline constexpr float kThemeColorCardHeightRatio = 0.8F;
 inline constexpr float kThemePreviewLineHeight = 4.0F;
 inline constexpr float kThemePreviewSpacing = 4.0F;
 inline constexpr float kThemeModeCardHeight = 48.0F;
+inline constexpr float kThemeModeCardWidth = 160.0F;
+inline constexpr float kThemeModeCompactCardWidth = 96.0F;
 inline constexpr float kThemeModeIconSize = 20.0F;
 inline constexpr float kThemeColorDialogWidth = 280.0F;
 inline constexpr float kThemeColorPreviewHeight = 48.0F;
@@ -63,7 +65,8 @@ inline huxerui::View HsbGradientSliderTrack(
 }
 
 inline huxerui::View ThemeModeCardSurface(const huxerui::ThemeSpec& theme,
-    huxerui::ImageResource symbol, bool selected, std::string label, std::function<void()> onClick) {
+    huxerui::ImageResource symbol, bool selected, std::string label,
+    std::function<void()> onClick, float width = kThemeModeCardWidth) {
     const auto colors = ResolveSelectableTileColors(theme, selected);
     return huxerui::Row {
       huxerui::Image(symbol).Tint(colors.fg)
@@ -72,7 +75,7 @@ inline huxerui::View ThemeModeCardSurface(const huxerui::ThemeSpec& theme,
       FittedSingleLineLabel(label, huxerui::TextStyle{
           huxerui::Font::System(theme.typography.body_small), colors.fg})
           .With(huxerui::Grow(1.0F)).Key("theme-mode-label"),
-    }.With(huxerui::Frame{.height = kThemeModeCardHeight}, huxerui::Grow(1.0F),
+    }.With(huxerui::Frame{.width = width, .height = kThemeModeCardHeight},
         huxerui::Spacing(theme.spacing.small), huxerui::Padding(theme.spacing.small),
         huxerui::Background(colors.surface), huxerui::CornerRadius(theme.shapes.medium),
         huxerui::Border(selected ? theme.colors.primary : huxerui::Color::Transparent(),

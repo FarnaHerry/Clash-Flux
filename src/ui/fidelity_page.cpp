@@ -16,7 +16,7 @@ import clashflux.store.core;
 namespace clashflux::ui {
 
 [[huxerui::composable]] huxerui::View FidelityPage(
-    std::int64_t profileId, std::function<void()> onBack, bool windowTitle) {
+    std::int64_t profileId, std::function<void()> onBack) {
     const auto& theme = huxerui::UseTheme();
     const auto tasks = huxerui::UseTaskScope();
     auto report = huxerui::UseState(store::ProfileFidelityReport{});
@@ -90,14 +90,8 @@ namespace clashflux::ui {
         }.With(huxerui::Grow(1.0F), huxerui::Spacing(theme.spacing.medium),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }
-    if (windowTitle) {
-        auto back = huxerui::IconButton(app::images::arrow_back, Localized("返回上一页"))
-            .With(huxerui::Tooltip(Localized("返回上一页")))
-            .OnClick(onBack);
-        return PageScaffold(title, {}, content,
-                            true, false, true, std::nullopt, back)
-            .On<huxerui::ViewEvents::BackRequested>(onBack);
-    }
+    // 与其他二级页共用同一骨架：宽屏标题栏/返回/内容起点、Compact 页内返回栏
+    // 及两侧留白都由 SecondaryPageScaffold 决定，页面不再单独画头部。
     return SecondaryPageScaffold(
         huxerui::Text(title, huxerui::TextRole::Title), {}, content, onBack);
 }

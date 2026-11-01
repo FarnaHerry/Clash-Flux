@@ -619,10 +619,6 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
     huxerui::State<std::size_t> navPage, huxerui::State<int> themeMode,
     ProfilesCache profilesCache) {
     const auto navigation = huxerui::UseNavigation();
-    const auto profilesModel = huxerui::UseService<ProfilesModel>();
-    huxerui::Lifecycle([profilesModel, navPage] {
-        if (profilesModel->rulesRequests.Get() != 0) navPage = pages::kRules;
-    }, profilesModel->rulesRequests);
     const auto model = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
     UsePrimaryPageNavigation(navigation, navPage);
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
@@ -929,7 +925,7 @@ huxerui::PageTransition SecondaryPageTransition(
 
 [[huxerui::composable]] huxerui::View DesktopFidelityPage(std::int64_t profileId) {
     const auto navigation = huxerui::UseNavigation();
-    return FidelityPage(profileId, [navigation] { static_cast<void>(navigation.Pop()); }, true)
+    return FidelityPage(profileId, [navigation] { static_cast<void>(navigation.Pop()); })
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
 

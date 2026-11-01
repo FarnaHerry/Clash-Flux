@@ -161,6 +161,90 @@ ProfileRules InspectProfileRules(const std::string& content, const ProfileRuleEd
     } catch (const std::exception& error) { return {{}, error.what()}; }
 }
 
+std::vector<ExternalResource> InspectExternalResources(
+    std::string_view content, std::string& error) {
+    error.clear();
+    std::vector<ExternalResource> resources;
+    if (DetectProfileFormat(content) != ProfileFormat::ClashYaml) {
+        error = "只有 Clash YAML 订阅支持外部资源识别";
+        return resources;
+    }
+    try {
+        const auto root = loadClashProfileDocument(std::string(content));
+        if (!root.IsMap()) {
+            error = "订阅必须为 YAML 对象";
+            return resources;
+        }
+        CompileOptions options;
+        Context ctx{options};
+        ctx.sourceId = "resource-inspection";
+        const auto add = [&](ExternalResource resource) {
+            if (resource.url.empty() || !clashflux::profile_link::IsHttpUrl(resource.url)) {
+                if (error.empty())
+                    error = std::format("外部资源「{}」缺少有效 HTTP(S) 地址", resource.name);
+                return;
+            }
+            resources.push_back(std::move(resource));
+        };
+        const auto interval = [](const YAML::Node& provider) {
+            const auto value = provider["interval"];
+            if (!value || !value.IsScalar()) return std::uint64_t{0};
+            std::uint64_t seconds = 0;
+            const auto text = value.Scalar();
+            const auto parsed = std::from_chars(text.data(), text.data() + text.size(), seconds);
+            return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size()
+                ? seconds : 0;
+        };
+        if (const auto providers = root["rule-providers"]; providers) {
+            if (!providers.IsMap()) {
+                error = "rule-providers 必须为映射";
+            } else {
+                for (const auto& entry : providers) {
+                    if (!entry.first.IsScalar() || !entry.second.IsMap()) continue;
+                    const std::string name = entry.first.Scalar();
+                    if (lowerCopy(ytext(entry.second, "type")) != "http") continue;
+                    std::string failure;
+                    const auto resource = httpProviderResource(ctx, entry.second, name,
+                        lowerCopy(ytext(entry.second, "behavior")),
+                        lowerCopy(ytext(entry.second, "format")), failure);
+                    if (!resource) {
+                        if (error.empty()) error = std::format("规则集「{}」：{}", name, failure);
+                        continue;
+                    }
+                    add({.name = name, .url = resource->url, .kind = "rule-provider",
+                         .behavior = resource->behavior, .format = resource->format,
+                         .intervalSeconds = resource->intervalSeconds});
+                }
+            }
+        }
+        if (const auto providers = root["proxy-providers"]; providers) {
+            if (!providers.IsMap()) {
+                if (error.empty()) error = "proxy-providers 必须为映射";
+            } else {
+                for (const auto& entry : providers) {
+                    if (!entry.first.IsScalar() || !entry.second.IsMap()) continue;
+                    if (lowerCopy(ytext(entry.second, "type")) != "http") continue;
+                    const auto url = ytext(entry.second, "url");
+                    add({.name = entry.first.Scalar(), .url = url, .kind = "proxy-provider",
+                         .intervalSeconds = interval(entry.second)});
+                }
+            }
+        }
+        if (const auto geox = root["geox-url"]; geox) {
+            if (!geox.IsMap()) {
+                if (error.empty()) error = "geox-url 必须为映射";
+            } else {
+                for (const auto& entry : geox) {
+                    if (!entry.first.IsScalar() || !entry.second.IsScalar()) continue;
+                    add({.name = entry.first.Scalar(), .url = entry.second.Scalar(),
+                         .kind = "geo"});
+                }
+            }
+        }
+    } catch (const std::exception& exception) { error = exception.what(); }
+    return resources;
+}
+
 std::string FidelitySummary(const std::vector<FidelityNote>& notes) {
     std::size_t nodeSkip = 0;
     std::size_t nodeApprox = 0;

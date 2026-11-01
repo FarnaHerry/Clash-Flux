@@ -73,7 +73,8 @@
                                   vpnOperation,
                                   pptpAvailable = vpnModel->view.Get().pptpAvailable,
                                   togglePptpConnection, openEditInfo, showEditRules,
-                                  showEditFile, showQr, selectionPending, theme,
+                                  showEditFile, showCompiledPreview, showQr, showQrs,
+                                  showExternalResources, selectionPending, theme,
                                   dialog, pageReorder, dropAtPointer,
                                   previewActiveId, previewTargetId,
                                   geometry = gridGeometry.Get()](std::size_t index) -> huxerui::View {
@@ -120,8 +121,8 @@
                                                 vpnOperation.action == VpnAction::Open,
                                                 vpnOperation.Busy(),
                                                 togglePptpConnection, openEditInfo,
-                                                showEditRules, showEditFile,
-                                                showQr, dialog, pageReorder)
+                                                showEditRules, showEditFile, showCompiledPreview,
+                                                showQr, showQrs, showExternalResources, dialog, pageReorder)
                                          .Key(profile.id)
                                          .With(huxerui::Offset(huxerui::AnimateTo(
                                              cardOffset,
@@ -267,9 +268,11 @@
         tasks, toast, picker, http, pptpSupported,
         [createPageOpen] { createPageOpen = false; });
 
-    huxerui::View mobileFilePage = ProfileFilePage(
-        filePageId.Get(), fileContent, fileLoading, tasks, toast,
-        [filePageId] { filePageId = 0; });
+    huxerui::View mobileFilePage = filePageId.Get() == 0
+        ? huxerui::View{huxerui::Row{}}
+        : ProfileFilePage(
+              filePageId.Get(), fileContent, fileLoading, tasks, toast,
+              [filePageId] { filePageId = 0; });
 
 
     return huxerui::IndexedPages(

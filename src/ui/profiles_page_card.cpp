@@ -213,7 +213,10 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
     const std::function<void(std::int64_t)>& openEditInfo,
     const std::function<void(std::int64_t)>& openEditRules,
     const std::function<void(std::int64_t)>& openEditFile,
+    const std::function<void(std::int64_t)>& openCompiledPreview,
     const std::function<void(std::int64_t)>& openQr,
+    const std::function<void(std::int64_t)>& openQrs,
+    const std::function<void(std::int64_t)>& openExternalResources,
     huxerui::DialogHandle dialog,
     ProfileReorderActions reorder) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
@@ -388,16 +391,16 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
     // 桌面端由右键触发，Compact 由卡片上的触控按钮触发；菜单内容只维护
     // 一份，避免移动端和桌面端的订阅操作逐渐产生行为差异。
     const auto buildMenuEntries = [action, activateProfile, startRefresh, openEditInfo, openEditRules,
-                                   openEditFile, openQr, clipboard, toast, id, navigation, desktopNavigation,
+                                   openEditFile, openCompiledPreview, openQr, openQrs, openExternalResources, clipboard, toast, id, navigation, desktopNavigation,
                                    homepage = profile.homepage, url = profile.url,
                                    profileType = profile.type,
                                    selected, nativeVpn, editableRules,
                                    confirmDelete] {
         std::vector<ActionMenuEntry> entries;
-        if (!selected && !nativeVpn) {
-            entries.push_back(ActionMenuItem(app::images::check, Localized("设为主订阅"), [activateProfile, id] {
-                activateProfile(id);
-            }));
+        if (!nativeVpn) {
+            entries.push_back(ActionMenuItem(app::images::check, Localized("设为主订阅"),
+                [activateProfile, id] { activateProfile(id); })
+                .Checked(selected).Enabled(!selected));
         }
         if (!nativeVpn) {
             entries.push_back(ActionMenuItem(app::images::refresh, Localized("更新"), [startRefresh, id] {
@@ -410,6 +413,11 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
                     core::openInBrowser(homepage);
                     return "";
                 });
+            }));
+        }
+        if (!nativeVpn) {
+            entries.push_back(ActionMenuItem(app::images::qr_scan, Localized("通过 QRS 码分享"), [openQrs, id] {
+                openQrs(id);
             }));
         }
         if (!nativeVpn && !url.empty()) {
@@ -429,6 +437,9 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
             entries.push_back(ActionMenuItem(app::images::route, Localized("编辑规则"), [openEditRules, id] {
                 openEditRules(id);
             }));
+            entries.push_back(ActionMenuItem(app::images::link, Localized("外部资源"), [openExternalResources, id] {
+                openExternalResources(id);
+            }));
         }
         if (!nativeVpn) {
             entries.push_back(ActionMenuItem(app::images::manual_config, Localized("编辑文件"), [openEditFile, id] {
@@ -440,6 +451,10 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
                 [navigation, desktopNavigation, id] {
                     OpenProfileFidelityPage(navigation, desktopNavigation, id);
                 }));
+        }
+        if (editableRules) {
+            entries.push_back(ActionMenuItem(app::images::terminal, Localized("查看编译配置"),
+                [openCompiledPreview, id] { openCompiledPreview(id); }));
         }
         entries.push_back(ActionMenuSection{});
         entries.push_back(

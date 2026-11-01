@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.82 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.83 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -124,6 +124,7 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     endif ()
 
     find_package(Threads REQUIRED)
+    find_package(ZLIB QUIET)
 endif ()
 
 # ---- HuxerUI（0.3.0 SDK / 源码双通道，HUXERUI_HOME 契约）-------------------
@@ -495,6 +496,10 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         zstd::libzstd_static
         Threads::Threads
     )
+    if (ZLIB_FOUND)
+        target_compile_definitions(clash-flux PRIVATE CLASHFLUX_HAVE_ZLIB=1)
+        target_link_libraries(clash-flux PRIVATE ZLIB::ZLIB)
+    endif ()
     if (APPLE AND NOT IOS)
         # Lib-Camera uses AppKit, CoreGraphics, and Foundation APIs on macOS,
         # but its static target does not declare these framework dependencies.
@@ -768,6 +773,20 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             huxerui_enable_codegen(test_page_transition)
             clashflux_deploy_huxerui_dll(test_page_transition)
             add_test(NAME page_transition COMMAND test_page_transition)
+
+            add_executable(test_rule_source_choices_ui tests/test_rule_source_choices_ui.cpp)
+            target_include_directories(test_rule_source_choices_ui PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/ui")
+            target_compile_features(test_rule_source_choices_ui PRIVATE cxx_std_23)
+            get_target_property(CLASHFLUX_UI_TEST_RESOURCE_PACKAGE
+                clash-flux HUXERUI_RESOURCE_PACKAGE)
+            file(TO_CMAKE_PATH "${CLASHFLUX_UI_TEST_RESOURCE_PACKAGE}"
+                CLASHFLUX_UI_TEST_RESOURCE_PACKAGE)
+            target_compile_definitions(test_rule_source_choices_ui PRIVATE
+                "CLASHFLUX_TEST_RESOURCE_PACKAGE=\"${CLASHFLUX_UI_TEST_RESOURCE_PACKAGE}\"")
+            target_link_libraries(test_rule_source_choices_ui PRIVATE HuxerUI::testing)
+            add_dependencies(test_rule_source_choices_ui clash-flux)
+            add_test(NAME rule_source_choices_ui COMMAND test_rule_source_choices_ui)
         endif ()
 
         # clashflux.singbox 订阅编译器：只依赖 std + nlohmann.json 模块 + yaml-cpp。
@@ -783,6 +802,16 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         target_compile_features(test_singbox PRIVATE cxx_std_23)
         target_link_libraries(test_singbox PRIVATE clashflux_json yaml-cpp::yaml-cpp zstd::libzstd_static)
         add_test(NAME singbox COMMAND test_singbox)
+
+        add_executable(test_qrs_codec tests/test_qrs_codec.cpp src/ui/qrs_codec.cpp)
+        target_include_directories(test_qrs_codec PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/ui")
+        target_compile_features(test_qrs_codec PRIVATE cxx_std_23)
+        if (ZLIB_FOUND)
+            target_compile_definitions(test_qrs_codec PRIVATE CLASHFLUX_HAVE_ZLIB=1)
+            target_link_libraries(test_qrs_codec PRIVATE ZLIB::ZLIB)
+        endif ()
+        add_test(NAME qrs_codec COMMAND test_qrs_codec)
 
         if (CLASHFLUX_REQUIRE_PROJECT_TESTS)
             find_package(Python3 COMPONENTS Interpreter REQUIRED)

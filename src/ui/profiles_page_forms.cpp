@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "profile_import_task.h"
+#include "qrs_codec.h"
 #include "app_resources.h"
 #include "ui.h"
 #include "empty_state.h"
@@ -495,7 +496,9 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
     auto scanning = huxerui::UseState(false);
     auto decoding = huxerui::UseState(false);
     auto decoder = huxerui::UseState(std::shared_ptr<QrPhotoDecoder>{});
+    auto qrsDecoder = huxerui::UseState(std::make_shared<qrs::Decoder>());
     auto detected = huxerui::UseState(std::string{});
+    auto scanned = huxerui::UseState(std::string{});
     auto message = huxerui::UseState(Localized("正在准备相机…"));
     const huxerui::camera::CameraSession session =
         huxerui::camera::UseCamera({
@@ -515,6 +518,8 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
         scanning = true;
         message = Localized("正在请求相机权限…");
         detected = std::string{};
+        scanned = std::string{};
+        qrsDecoder = std::make_shared<qrs::Decoder>();
         return tasks.Launch([=]() -> huxerui::Task<void> {
             const huxerui::PermissionStatus permission =
                 co_await application.RequestPermissionAsync(
@@ -551,7 +556,10 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                     continue;
                 }
 
-                message = Localized("将二维码放入取景画面，识别后自动导入");
+                if (qrsDecoder.Get()->DecodedBlocks() == 0 &&
+                    detected.Get().empty()) {
+                    message = Localized("将二维码放入取景画面，识别后自动导入");
+                }
                 const auto photo = co_await session.CapturePhotoAsync(
                     {.jpeg_quality = 50,
                      .mirror = huxerui::camera::MirrorMode::Off});
@@ -575,7 +583,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                 decoding = true;
                 const huxerui::PlatformRequestId request = decoder_instance->Decode(
                     std::move(jpeg),
-                    [decoding, detected, message](
+                    [decoding, scanned, message](
                         huxerui::PlatformResult<std::string> result) {
                         decoding = false;
                         if (const auto* error =
@@ -586,7 +594,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                         const std::string content =
                             std::get<std::string>(std::move(result));
                         if (!content.empty()) {
-                            detected = content;
+                            scanned = content;
                         }
                     });
                 *pending_request = request;
@@ -597,6 +605,31 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                 }
                 pending_request->reset();
                 if (!scanning.Get()) co_return;
+                const std::string content = scanned.Get();
+                if (!content.empty()) {
+                    scanned = std::string{};
+                    auto decoder_state = qrsDecoder.Get();
+                    std::string decoded;
+                    std::string qrsError;
+                    const qrs::DecodeResult qrsResult =
+                        decoder_state->Add(content, decoded, qrsError);
+                    if (qrsResult == qrs::DecodeResult::Complete) {
+                        detected = decoded;
+                    } else if (qrsResult == qrs::DecodeResult::NeedMore) {
+                        message = LocalizedFormat(
+                            "已扫描 {0} / {1} 个 QRS 帧",
+                            decoder_state->DecodedBlocks(),
+                            decoder_state->TotalBlocks());
+                    } else if (qrsResult == qrs::DecodeResult::Error) {
+                        message = qrsError;
+                        decoder_state->Reset();
+                        co_await huxerui::Delay(
+                            std::chrono::milliseconds{300});
+                        continue;
+                    } else {
+                        detected = content;
+                    }
+                }
                 if (!detected.Get().empty()) {
                     const std::string content = detected.Get();
                     active = false;
@@ -605,7 +638,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                     co_return;
                 }
                 co_await huxerui::Delay(
-                    std::chrono::milliseconds{380});
+                    std::chrono::milliseconds{180});
             }
         });
     };
@@ -1384,7 +1417,11 @@ huxerui::Task<void> SaveProfileDocument(
 
 [[huxerui::composable]] huxerui::View ProfileDocumentBody(
     huxerui::State<TextDocumentHandle> content, bool loading, bool saving, float height) {
-    if (loading) return huxerui::ProgressCircle().With(huxerui::Frame{.min_height = 48.0F});
+    if (loading) {
+        huxerui::View pending = huxerui::Row{};
+        if (height > 0.0F) return std::move(pending).With(huxerui::Frame{.height = height});
+        return std::move(pending).With(huxerui::Grow(1.0F));
+    }
     if (!content.Get()) return huxerui::Text(Localized("无法读取订阅文件"));
     return DocumentTextView(content.Get(), false, height).With(huxerui::Enabled(!saving));
 }

@@ -93,6 +93,19 @@ export struct HttpRuleProviderResource {
     std::size_t maxBytes = 8 * 1024 * 1024;
 };
 
+// 订阅解析识别到的外部资源。当前只做清单识别，不下载、不改变编译/运行语义。
+export struct ExternalResource {
+    std::string name;
+    std::string url;
+    std::string kind;      // rule-provider / proxy-provider / geo
+    std::string behavior;  // rule-provider 的 behavior
+    std::string format;    // rule-provider 的 format
+    std::uint64_t intervalSeconds = 0;
+    bool operator==(const ExternalResource&) const = default;
+};
+export std::vector<ExternalResource> InspectExternalResources(
+    std::string_view content, std::string& error);
+
 export struct HttpCacheValidators {
     std::string etag, lastModified;
     bool operator==(const HttpCacheValidators&) const = default;

@@ -506,7 +506,7 @@ huxerui::XYChartData BuildTrafficChartData(
     for (const auto& label : kModeLabels) labels.push_back(Localized(label));
     return huxerui::Column {
         HomeCardHeading(app::images::route, Localized("出站模式")),
-        HomeModeChoices(labels, selected, !control.Busy(), [control](std::size_t index) {
+        HomeModeChoices(labels, selected, true, [control](std::size_t index) {
             control.Run({.action = CoreAction::Mode, .mode = kModes[index]});
         }),
     }.With(huxerui::Spacing(4.0F),
@@ -697,7 +697,6 @@ huxerui::XYChartData BuildTrafficChartData(
             app::images::system_proxy, Localized("系统代理"),
             Localized("应用代理"),
             huxerui::Switch(control.SystemProxyEnabled())
-                .With(huxerui::Enabled(!control.Busy()))
                 .OnChanged([control](bool on) {
                     control.Run({.action = CoreAction::SystemProxy, .enabled = on});
                 })),
@@ -712,7 +711,6 @@ huxerui::XYChartData BuildTrafficChartData(
             app::images::tun, Localized("TUN 模式"),
             Localized("全局接管"),
             huxerui::Switch(control.TunEnabled())
-                .With(huxerui::Enabled(!control.Busy()))
                 .OnChanged([control](bool on) {
                     control.Run({.action = CoreAction::Tun, .enabled = on});
                 })),
@@ -835,7 +833,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
         .With(huxerui::Scale(huxerui::AnimateTo(
                   motion.Get().collapsing ? kHomeControlCollapsedScale : 1.0F,
                   kHomeControlCollapseMotion)),
-              huxerui::Enabled(!control.Busy() && !entering && !returning),
+              huxerui::Enabled(!control.ConnectionBusy() && !entering && !returning),
               huxerui::Tooltip(Localized("断开连接")),
               huxerui::Indication{},
               huxerui::SharedBounds("home-core-control")
@@ -857,7 +855,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     huxerui::View base = page;
     const bool returning = motion.Get().action == CoreAction::Stop;
     const bool active = returning ? false : control.ProxyActive();
-    const bool enabled = !control.Busy() && !returning;
+    const bool enabled = !control.ConnectionBusy() && !returning;
     const CoreAction command = control.ConnectionAction();
     const bool changing = !returning && (command == CoreAction::Start ||
                                         command == CoreAction::Stop);
@@ -960,33 +958,34 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     const auto coreModel = huxerui::UseService<CoreModel>();
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     auto state = huxerui::UseState<HomeState>({});
-    auto controlCardShown = huxerui::UseState<bool>(
-        coreModel->view.Get().ProxyActive());
+    auto homeView = coreModel->home.Get();
+    auto controlCardShown = huxerui::UseState(static_cast<bool>(homeView.proxyActive));
     auto controlMotion = huxerui::UseState<HomeControlMotion>({});
     auto controlCardSynced = huxerui::UseState<bool>(false);
     auto controlCatReady = huxerui::UseState<bool>(false);
     const auto controlTransition = huxerui::UseSharedTransition();
     const bool headerControlEnabled = !kPageTitlesInWindow || compact;
     const auto control = UseCoreControl();
-    const auto& coreView = coreModel->view.Get();
-    const auto vpnStatus = ResolveHomeVpnStatus(coreView.vpnState, coreModel->operations.command.Get());
+    const auto vpnStatus = kDesktopHomeControl
+        ? HomeVpnStatus{BoxCatPhase::Sleeping, "", false, false, false}
+        : ResolveHomeVpnStatus(homeView.vpnState, coreModel->operations.command.Get());
     const auto action = kDesktopHomeControl ? control.ConnectionAction()
                                           : coreModel->operations.command.Get().action;
     const auto headerPhase = kDesktopHomeControl
         ? (action == CoreAction::Stop ? BoxCatPhase::Stopping
             : action == CoreAction::Start || action == CoreAction::Restart ? BoxCatPhase::Starting
-            : coreView.ProxyActive() ? BoxCatPhase::Running
-            : coreView.core.state == core::CoreState::Failed ? BoxCatPhase::Failed : BoxCatPhase::Sleeping)
+            : homeView.proxyActive ? BoxCatPhase::Running
+            : homeView.coreState == core::CoreState::Failed ? BoxCatPhase::Failed : BoxCatPhase::Sleeping)
         : vpnStatus.phase;
     const auto headerControl = UseHomeHeaderControl(HomeHeaderSnapshot{
-        .ready = coreView.ready && (kDesktopHomeControl || coreView.vpnSnapshotReady),
+        .ready = homeView.ready && (kDesktopHomeControl || homeView.vpnSnapshotReady),
         .active = active && headerControlEnabled,
-        .running = kDesktopHomeControl ? coreView.ProxyActive() : vpnStatus.connected,
-        .busy = control.Busy(),
+        .running = kDesktopHomeControl ? homeView.proxyActive : vpnStatus.connected,
+        .busy = kDesktopHomeControl ? control.ConnectionBusy() : control.Busy(),
         .canStart = kDesktopHomeControl || state.Get().profileId != 0,
         .phase = headerPhase,
-        .elapsedSeconds = coreView.vpnElapsedMs / 1000,
-        .runningSince = kDesktopHomeControl ? coreView.core.connectedSince
+        .elapsedSeconds = homeView.vpnElapsedMs / 1000,
+        .runningSince = kDesktopHomeControl ? homeView.connectedSince
             : std::chrono::steady_clock::time_point{},
     });
     const auto toggleHeader = [control] {

@@ -1,5 +1,55 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-01：v0.3.83 发布候选
+
+版本 `0.3.83`，Android `versionName=0.3.83` / `versionCode=161`。发布说明见
+[`docs/releases/v0.3.83.md`](releases/v0.3.83.md)，README 中英文入口已同步。
+
+`cmake --build build --target clash-flux test_qrs_codec test_rule_source_choices_ui
+test_page_transition test_singbox test_routing test_vpn test_persistence test_profile_links`
+通过；`./run.sh --version` 输出 v0.3.83，退出码 0；`git diff --check` 通过。
+相关回归 9/11 通过：profile_links、page_transition、rule_source_choices_ui、singbox、
+qrs_codec、ui_resources、vpn、routing、persistence。`proxy_standby_runtime` 仍失败于
+回环 URLTest 超时（固定 sing-box 会访问默认 `www.gstatic.com`，与 2026-10-30 记录一致）；
+`personal_rule_sets_runtime` 未执行，因为本机 `test_runtime_health` 目标在 libc++
+`__atomic_unique_lock::__set_locked_bit` 符号链接处失败。未构建 Android/APK，未做 QRS
+相机实机扫码、真实系统代理/TUN 或安装包验收；这些边界不写成通过。
+
+## 2026-11-01：QRS 多帧二维码分享
+
+订阅卡片右键新增独立「通过 QRS 码分享」，读取当前订阅完整配置并按 QiFi/QRS 的
+Luby Transform 帧格式循环显示二维码；分享弹窗只含二维码。Android 扫码页在普通单帧
+二维码识别前先尝试 QRS 帧重组，累积到完整配置后沿用现有导入流程。
+
+新增 `src/ui/qrs_codec.{h,cpp}` 与 `test_qrs_codec`。帧格式按 qifi-dev/qrs：500 字节
+源块、标准 Base64、uint32 小端头、CRC32 与 Luby Transform 修复帧；发送端前 k 帧为
+系统化单块帧，便于标准扫码端快速完成。用 Node `luby-transform@0.3.0` 对 8797 字节
+测试载荷交叉验证：本端 42 帧中的前 18 帧可被 QiFi 解码为原内容；QiFi 发送的帧也可由
+本端解码。临时链接系统 `libz.so.1` 验证压缩帧同样可互相解码；本机构建未找到 zlib
+开发链接，生产默认退回未压缩 QiFi 帧，不改变帧格式。
+
+`cmake --build build-clang --target clash-flux test_qrs_codec test_page_transition` 通过；
+`ctest -R '^(qrs_codec|page_transition|ui_resources)$'` 3/3 通过；`./run.sh --version`
+输出 v0.3.83，`git diff --check` 通过。未完成桌面 QRS 弹窗/菜单截图和 Android 相机端
+多帧实机扫码；Android 扫描逻辑未在桌面构建中编译验证。
+
+## 2026-11-01：订阅外部资源识别与规则页只读重构
+
+当前工作区完成规则页只读、订阅卡片右键进入独立规则/信息/文件二级页、全局规则独立管理页、
+以及宽屏二级页复用 `WindowTitleBar`/`DesktopTitleBarBody`。设置页的外部资源入口已移除；
+订阅卡片右键的「外部资源」只读取当前订阅自己的 YAML，并按该 profile ID 打开二级页，不跨订阅汇总。
+
+新增 `singbox::InspectExternalResources`，识别 Clash 订阅的 `rule-providers` HTTP 项、
+`proxy-providers` HTTP 项和 `geox-url`。使用用户提供的订阅链接测试；该站点默认 UA 返回 403，
+改用 `User-Agent: clash.meta` 获取成功。`test_singbox --inspect-external-resources` 在该内容上
+识别 12 项：11 个 rule-provider（其中 `overseas-ai` 为 classical/text，其余为 MRS）和 1 个
+`geox-url.asn`。识别只建立清单，不下载资源、不改变编译/运行语义。
+
+`cmake --build build-clang --target clash-flux test_page_transition test_singbox` 通过；
+`ctest -R '^(page_transition|ui_resources|rule_source_choices_ui)$'` 3/3 通过；
+`./run.sh --version` 输出 v0.3.83，`git diff --check` 通过。未完成远程订阅实际导入后的
+按订阅外部资源页的 GUI 截图、资源下载/缓存状态和规则集内部引用识别。
+
 ## 2026-10-30：Linux 自升级保留授权会话，服务安装后恢复内核
 
 GitHub Release `v0.3.82` 已发布，标签提交 `def5eee`，CI run 41030355870。RPM/Fedora 分支用户

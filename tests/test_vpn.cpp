@@ -175,7 +175,9 @@ int main() {
     manager.setPolicy(VpnPolicy{
         .defaultMainId = "main",
         .rules = {{MatchKind::Ipv4Cidr, "10.20.0.0/16", "company-a", 100},
-                  {MatchKind::Ipv4Cidr, "10.21.0.0/16", "company-a", 90}},
+                  {MatchKind::Ipv4Cidr, "10.21.0.0/16", "company-a", 90},
+                  {MatchKind::DomainSuffix, "direct.example", std::string(DirectConnectionId()), 200},
+                  {MatchKind::Ipv4Cidr, "10.99.0.0/16", std::string(DirectConnectionId()), 200}},
     });
 
     assert(manager.selectEngine("main").engine == EngineKind::SingBox);
@@ -184,6 +186,8 @@ int main() {
     try { manager.resolveConnection("10.20.8.9"); }
     catch (const std::runtime_error&) { rejectedUnavailable = true; }
     assert(rejectedUnavailable);
+    assert(manager.resolveConnection("direct.example").empty());
+    assert(manager.resolveConnection("10.99.8.1").empty());
     assert(NormalizeRuleDomain("https://Portal.Example:443/path?q=1") == "portal.example");
     assert(!NormalizeRuleDomain("https://user:pass@example.com/path"));
     assert(!NormalizeRuleDomain("https:///missing-host"));
@@ -201,6 +205,8 @@ int main() {
     assert(linuxPlan.mainConnectionId == "main");
     assert(linuxPlan.requiresNativeRouteBackend());
     assert(linuxPlan.nativeRoutes.size() == 2);
+    assert(std::ranges::none_of(linuxPlan.nativeRoutes,
+        [](const auto& route) { return route.destination == "10.99.0.0/16"; }));
     assert(linuxPlan.nativeRoutes.front().destination == "10.20.0.0/16");
     assert(linuxPlan.nativeRoutes.front().interfaceName == "ppp0");
     assert((linuxPlan.capture.routeExcludeAddress ==

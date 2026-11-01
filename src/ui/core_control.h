@@ -26,6 +26,12 @@ struct CoreControl {
         return !model->view.Get().ready || model->operations.Busy() ||
                model->serviceChecking.Get();
     }
+    // The dashboard cat owns connect/start/stop only. Mode, system-proxy and
+    // TUN commands must not disable or restyle it; those are independent cards.
+    bool ConnectionBusy() const {
+        return !model->view.Get().ready || model->serviceChecking.Get() ||
+               model->operations.connectionBusy.Get();
+    }
     bool TunEnabled() const {
         const auto& command = model->operations.command.Get();
         return command.action == CoreAction::Tun ? command.enabled
@@ -53,10 +59,10 @@ struct CoreControl {
         if (action == CoreAction::Stop) return false;
         return model->view.Get().core.state == core::CoreState::Running;
     }
-    bool ProxyActive() const { return model->view.Get().ProxyActive(); }
+    bool ProxyActive() const { return model->home.Get().proxyActive; }
     // Reuse presentation motions without confusing connection commands with core lifetime.
     CoreAction ConnectionAction() const {
-        const auto action = model->operations.command.Get().action;
+        const auto action = model->operations.connectionAction.Get();
         if (action == CoreAction::Connect) return CoreAction::Start;
         if (action == CoreAction::Disconnect || action == CoreAction::Stop) return CoreAction::Stop;
         return action == CoreAction::Start ? CoreAction::Idle : action;

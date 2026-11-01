@@ -2690,6 +2690,18 @@ void testNodeSubscriptions() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string_view(argv[1]) == "--inspect-external-resources") {
+        std::ifstream input(argv[2]);
+        if (!input) { std::println(stderr, "cannot open {}", argv[2]); return 1; }
+        const std::string content{std::istreambuf_iterator<char>(input), {}};
+        std::string error;
+        const auto resources = singbox::InspectExternalResources(content, error);
+        std::println("resources={} error={}", resources.size(), error);
+        for (const auto& resource : resources)
+            std::println("{}|{}|{}|{}|{}", resource.kind, resource.name,
+                         resource.url, resource.behavior, resource.format);
+        return error.empty() ? 0 : 2;
+    }
     if (argc == 6 && std::string_view(argv[1]) == "--proxy-runtime-fixtures") {
         const std::filesystem::path root(argv[2]);
         std::filesystem::create_directories(root);
@@ -3910,6 +3922,77 @@ rules:
         clashflux::runtime_plan::Stopped(state);
         check(!state.proxyListening && !state.tunEnabled && state.connectedSince == std::chrono::steady_clock::time_point{},
               "停止内核同时撤销连接运行态与时长");
+    }
+    {
+        singbox::CompileOptions direct;
+        direct.profileYaml =
+            "proxies:\n"
+            "  - {name: node, type: socks5, server: 127.0.0.1, port: 1080}\n"
+            "rules:\n"
+            "  - MATCH,node\n";
+        direct.globalRules = {{.match = vpn::MatchKind::DomainSuffix,
+            .pattern = "direct.test",
+            .connectionId = std::string(vpn::DirectConnectionId()),
+            .priority = 100, .id = "direct"}};
+        const auto compiled = singbox::compileConfig(direct);
+        check(compiled.error.empty(), "显式直连全局规则编译成功");
+        if (compiled.error.empty()) {
+            const auto config = json::parse(compiled.json);
+            const auto& rules = config["route"]["rules"];
+            const auto rule = std::ranges::find_if(rules, [](const auto& item) {
+                return item.contains("domain_suffix") &&
+                       item["domain_suffix"] == json{"direct.test"};
+            });
+            check(rule != rules.end() && !rule->contains("action") &&
+                      rule->contains("outbound"),
+                  "显式直连使用 outbound 而不是阻断");
+            if (rule != rules.end()) {
+                const auto tag = rule->at("outbound").get<std::string>();
+                check(std::ranges::any_of(config["outbounds"], [&](const auto& outbound) {
+                          return outbound.value("tag", "") == tag &&
+                                 outbound.value("type", "") == "direct";
+                      }),
+                      "显式直连目标解析到 direct outbound");
+            }
+        }
+    }
+    {
+        const std::string yaml = R"yaml(
+rule-providers:
+  ads:
+    type: http
+    behavior: domain
+    format: mrs
+    interval: 86400
+    url: https://example.com/ads.mrs
+  local:
+    type: file
+    behavior: classical
+    path: ./local.list
+proxy-providers:
+  nodes:
+    type: http
+    url: https://example.com/nodes.yaml
+    interval: 3600
+geox-url:
+  asn: https://example.com/GeoLite2-ASN.mmdb
+)yaml";
+        std::string error;
+        const auto resources = singbox::InspectExternalResources(yaml, error);
+        check(error.empty() && resources.size() == 3,
+              "external resource inspection finds HTTP rule/proxy providers and geo assets");
+        const auto rule = std::ranges::find(resources, "rule-provider", &singbox::ExternalResource::kind);
+        const auto proxy = std::ranges::find(resources, "proxy-provider", &singbox::ExternalResource::kind);
+        const auto geo = std::ranges::find(resources, "geo", &singbox::ExternalResource::kind);
+        check(rule != resources.end() && rule->name == "ads" &&
+                  rule->url == "https://example.com/ads.mrs" && rule->intervalSeconds == 86400,
+              "HTTP rule provider keeps name, URL and interval");
+        check(proxy != resources.end() && proxy->name == "nodes" &&
+                  proxy->url == "https://example.com/nodes.yaml",
+              "HTTP proxy provider is recognized as external state");
+        check(geo != resources.end() && geo->name == "asn" &&
+                  geo->url == "https://example.com/GeoLite2-ASN.mmdb",
+              "geox-url assets are recognized without downloading");
     }
     if (failures != 0) {
         std::println(stderr, "test_singbox: {} 项断言失败", failures);

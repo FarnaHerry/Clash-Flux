@@ -23,8 +23,18 @@ struct CoreCommand {
 // revision also rejects reads started before a command or a synchronous edit.
 struct CoreOperations {
     huxerui::State<CoreCommand> command{CoreCommand{}};
+    // Connection/cat presentation reads this instead of the whole command, so
+    // mode/system-proxy/TUN changes cannot restart or disable the cat button.
+    huxerui::State<bool> connectionBusy{false};
+    huxerui::State<CoreAction> connectionAction{CoreAction::Idle};
     huxerui::State<std::uint64_t> revision{0};
     std::uint64_t serial = 0;
+
+    static constexpr bool IsConnectionAction(CoreAction action) noexcept {
+        return action == CoreAction::Start || action == CoreAction::Stop ||
+            action == CoreAction::Restart || action == CoreAction::Connect ||
+            action == CoreAction::Disconnect;
+    }
 
     bool Busy() const { return command.Get().action != CoreAction::Idle; }
     void Invalidate() { revision = revision.Get() + 1; }
@@ -32,12 +42,17 @@ struct CoreOperations {
         if (Busy() || next.action == CoreAction::Idle) return std::nullopt;
         Invalidate();
         command = std::move(next);
+        const auto action = command.Get().action;
+        connectionBusy = IsConnectionAction(action);
+        connectionAction = connectionBusy.Get() ? action : CoreAction::Idle;
         return ++serial;
     }
     bool Finish(std::uint64_t ticket) {
         if (!Busy() || ticket != serial) return false;
         Invalidate();
         command = CoreCommand{};
+        connectionBusy = false;
+        connectionAction = CoreAction::Idle;
         return true;
     }
     bool AcceptsPoll(std::uint64_t startedAt) const {

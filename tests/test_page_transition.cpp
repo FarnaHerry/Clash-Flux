@@ -3327,8 +3327,9 @@ void testVpnPublication() {
 [[huxerui::composable]] huxerui::View ThemeColorSurfaceContent() {
     using namespace clashflux::ui;
     const auto& theme = huxerui::UseTheme();
-    const float edge = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact ?
-        kThemeColorCompactCardEdge : kThemeColorCardEdge;
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    const float edge = compact ? kThemeColorCompactCardEdge : kThemeColorCardEdge;
+    const float modeWidth = compact ? kThemeModeCompactCardWidth : kThemeModeCardWidth;
     auto mode = huxerui::UseState(0);
     auto selected = huxerui::UseState(0);
     auto added = huxerui::UseState(false);
@@ -3352,7 +3353,7 @@ void testVpnPublication() {
     const std::array<std::string, 3> labels{"Automatic", "Dark", "Light"};
     for (int index = 0; index < 3; ++index)
         modes.push_back(ThemeModeCardSurface(theme, icons[index], mode.Get() == index,
-            labels[index], [mode, index] { mode = index; }).Key("test-mode-" + std::to_string(index)));
+            labels[index], [mode, index] { mode = index; }, modeWidth).Key("test-mode-" + std::to_string(index)));
     return huxerui::Column {
       huxerui::Row(std::move(modes)).With(huxerui::Spacing(kSectionCardSpacing)),
       huxerui::Flow(std::move(cards)).With(huxerui::Spacing(clashflux::ui::kSectionCardSpacing)),

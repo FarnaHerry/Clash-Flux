@@ -425,7 +425,7 @@ extern "C" bool clashflux_ios_download_to_file(
                 requestWithURL:sourceURL
                    cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
                timeoutInterval:static_cast<double>(timeout)];
-            [request setValue:@"clash-flux/0.1" forHTTPHeaderField:@"User-Agent"];
+            [request setValue:@"clash.meta" forHTTPHeaderField:@"User-Agent"];
             [request setValue:@"identity" forHTTPHeaderField:@"Accept-Encoding"];
 
             NSString* destinationPath = [NSString stringWithUTF8String:tempPath];

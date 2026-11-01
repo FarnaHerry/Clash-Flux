@@ -1050,6 +1050,57 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         huxerui::IconButton(app::images::arrow_back, Localized("返回上一页"))
             .With(huxerui::Tooltip(Localized("返回上一页")))
             .OnClick(onBack);
+    if (kPageTitlesInWindow && !compact) {
+        const float horizontal = fullWidthSections ? kSectionCardSpacing
+            : kDesktopPageHorizontalInset;
+        auto contentInsets = PageContentInsets(theme, false,
+            fullWidthSections ? 0.0F : horizontal);
+        if (scrollToContentEdges) contentInsets.top = contentInsets.bottom = 0.0F;
+        huxerui::View desktopBody = huxerui::View{content}.With(huxerui::Grow(1.0F));
+        if (fullWidthSections) {
+            desktopBody = huxerui::ProvideEnvironment(
+                SectionTabContentInsets{horizontal}, desktopBody);
+        }
+        desktopBody = huxerui::ProvideEnvironment(
+            SectionTabPickerInsets{kDesktopTitleBarHeight + kDesktopChromeDividerThickness},
+            std::move(desktopBody));
+        huxerui::View pageTitle = titleView;
+        if (hideBack) pageTitle = huxerui::View{pageTitle}.With(
+            huxerui::Padding(huxerui::EdgeInsets{.left = kDesktopPageHorizontalInset}));
+        huxerui::View leading = hideBack
+            ? huxerui::Row{}
+            : huxerui::Row{backButton}.With(huxerui::Padding(
+                  huxerui::EdgeInsets{.left = kDesktopPageLeadingInset}));
+        huxerui::View actionRow = huxerui::Row{actions}.With(
+            huxerui::Padding(huxerui::EdgeInsets{.right = 8.0F}),
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+        huxerui::View titleBarContent = huxerui::Row {
+            std::move(pageTitle),
+            huxerui::Spacer{}.With(huxerui::Grow(1.0F)),
+            std::move(actionRow),
+        }.With(huxerui::Spacing(12.0F), huxerui::Grow(1.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+        huxerui::View page = huxerui::Column {
+            huxerui::WindowTitleBar {
+                std::move(leading),
+                std::move(titleBarContent),
+            }.With(huxerui::Frame{.height = kDesktopTitleBarHeight},
+                   huxerui::Spacing(0.0F)),
+            huxerui::Row{}.With(
+                huxerui::Frame{.height = kDesktopChromeDividerThickness},
+                huxerui::Background(theme.colors.outline)),
+            DesktopTitleBarBody(huxerui::Column{std::move(desktopBody)}.With(
+                huxerui::Padding(contentInsets), huxerui::Grow(1.0F),
+                huxerui::Background(islands.base),
+                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), theme),
+        }.With(huxerui::Spacing(0.0F), huxerui::Grow(1.0F),
+               huxerui::ClipChildren(),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        if (backAction && !hideBack)
+            page = std::move(page).On<huxerui::ViewEvents::BackRequested>(
+                std::move(backAction));
+        return page;
+    }
     huxerui::View header = centerTitle
         ? CenteredPageHeader(theme, std::move(titleView), std::move(backButton), std::move(actions))
         : hideBack

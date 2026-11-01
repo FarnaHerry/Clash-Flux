@@ -424,6 +424,11 @@
                          editInterval, editAuto, editSys, editCore, editCert,
                          editPptpServer, editPptpUsername, editPptpPassword,
                          editPptpTimeout, editPptpRoutes, editPptpMppe](std::int64_t id) {
+        if (!compact) {
+            // Medium/Expanded 用弹窗；Compact 继续进入独立二级页。
+            showEditInfo(id);
+            return;
+        }
         if (navigation_enabled) {
             loadEditInfo(id, [=] {
                 const ProfileEditFields fields{
@@ -442,18 +447,33 @@
         OpenProfileEditInfo(id, compact, loadEditInfo, showEditInfo, editPageId);
     };
 
-    // All subscription rule edits use the shared structured rule page.
-    auto showEditRules = [profilesCache, profilesModel, navigation, navigation_enabled](std::int64_t id) {
+    // 订阅规则编辑只从卡片菜单进入；规则页本身只读。宽屏用弹窗，窄屏
+    // 保留独立二级页与返回栈。
+    auto showEditRules = [compact, dialog, profilesCache, profilesModel,
+                          navigation, desktopNavigation](std::int64_t id) {
         if (!profilesModel->IsRuleSource(id)) return;
-        if (navigation_enabled) {
-            navigation.Push([profilesCache, navigation, id] {
-                return RulesPage(profilesCache,
-                    [navigation] { static_cast<void>(navigation.Pop()); }, true, id);
+        if (!compact) {
+            dialog.Show([profilesCache, id](huxerui::DialogContext context) {
+                return SubscriptionRulesDialog(profilesCache, id,
+                    [context] { context.Dismiss(); });
             });
-        } else {
-            profilesModel->rulesProfile = id;
-            profilesModel->rulesRequests = profilesModel->rulesRequests.Get() + 1;
+            return;
         }
+        OpenRuleEditor(navigation, desktopNavigation, [profilesCache, navigation, id] {
+            return SubscriptionRulesEditorPage(profilesCache, id,
+                [navigation] { static_cast<void>(navigation.Pop()); });
+        });
+    };
+
+    // 外部资源属于该订阅自身的解析产物：只从卡片菜单进入，页面不跨订阅汇总。
+    auto showExternalResources = [navigation, desktopNavigation, findProfile](std::int64_t id) {
+        const auto profile = findProfile(id);
+        if (!profile) return;
+        const std::string name = profile->name;
+        OpenRuleEditor(navigation, desktopNavigation, [id, name, navigation] {
+            return ExternalResourcesPage(id, name,
+                [navigation] { static_cast<void>(navigation.Pop()); });
+        });
     };
 
     // 文件 I/O 在工作线程；只有最后一次打开请求可以发布文档。
@@ -462,13 +482,15 @@
         const auto request = std::make_shared<TextDocument>();
         fileContent = request;
         fileLoading = true;
-        if (navigation_enabled) {
-            navigation.Push([=] {
-                return ProfileFileRoutePage(id, fileContent, fileLoading, tasks, toast,
-                    [navigation] { static_cast<void>(navigation.Pop()); });
-            });
-        } else if (compact) {
-            filePageId = id;
+        if (compact) {
+            if (navigation_enabled) {
+                navigation.Push([=] {
+                    return ProfileFileRoutePage(id, fileContent, fileLoading, tasks, toast,
+                        [navigation] { static_cast<void>(navigation.Pop()); });
+                });
+            } else {
+                filePageId = id;
+            }
         } else {
             dialog.Show([=](huxerui::DialogContext context) {
                 return ProfileFileDialog(id, fileContent, fileLoading, toast, context);
@@ -488,6 +510,33 @@
         });
     };
 
+    auto showCompiledPreview = [compact, dialog, navigation, desktopNavigation,
+                                tasks, toast](std::int64_t id) {
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            std::string text;
+            try {
+                const auto content = co_await RunOnTaskThread(
+                    [id] { return store::profilesStore().yamlOf(id); });
+                const auto result = co_await RunOnTaskThread([id, content] {
+                    return store::coreStore().profileRulesPreview(id, content);
+                });
+                text = result.error.empty() ? result.json : result.error;
+            } catch (const std::exception& exception) { text = exception.what(); }
+            if (text.empty()) { toast.Show(Localized("无法生成编译配置")); co_return; }
+            auto document = std::make_shared<TextDocument>(std::move(text));
+            if (!compact) {
+                dialog.Show([document](huxerui::DialogContext context) {
+                    return CompiledRulesPreviewDialog(document,
+                        [context] { context.Dismiss(); });
+                });
+                co_return;
+            }
+            OpenRuleEditor(navigation, desktopNavigation, [document] {
+                return CompiledRulesPreviewPage(document);
+            });
+        });
+    };
+
     // ---- 分享二维码 ----
     auto showQr = [dialog, tasks, findProfile](std::int64_t id) {
         tasks.Launch([=]() -> huxerui::Task<void> {
@@ -496,10 +545,41 @@
             if (!profile || profile->url.empty()) co_return;
             const std::string url = profile->url;
             dialog.Show(
-                [url]() -> huxerui::View {
-                    return DialogCard(huxerui::Canvas(QrPainter(url))
-                        .With(huxerui::Frame{.width = 240.0F,
-                                             .height = 240.0F}));
+                [url](huxerui::DialogContext) -> huxerui::View {
+                    return DialogCard(
+                        huxerui::Canvas(QrPainter(url))
+                            .With(huxerui::Frame{.width = 300.0F,
+                                                 .height = 300.0F}));
+                },
+                huxerui::DialogOptions{});
+        });
+    };
+
+    // ---- 通过 QRS 多帧码分享完整配置 ----
+    auto showQrs = [dialog, tasks, findProfile, toast](std::int64_t id) {
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            co_await huxerui::Delay(std::chrono::duration<double>{0});
+            const auto profile = findProfile(id);
+            if (!profile) co_return;
+            const auto config = co_await RunOnTaskThread([id] {
+                return store::profilesStore().yamlOf(id);
+            });
+            if (config.empty()) {
+                toast.Show(Localized("无法读取订阅配置"));
+                co_return;
+            }
+            auto sequence = co_await RunOnTaskThread([config] {
+                return qrs::Encode(config);
+            });
+            if (sequence.frames.empty()) {
+                toast.Show(Localized("无法生成 QRS 分享码"));
+                co_return;
+            }
+            auto frames = std::make_shared<const std::vector<std::string>>(
+                std::move(sequence.frames));
+            dialog.Show(
+                [frames](huxerui::DialogContext) -> huxerui::View {
+                    return DialogCard(QrsSequenceView(frames));
                 },
                 huxerui::DialogOptions{});
         });

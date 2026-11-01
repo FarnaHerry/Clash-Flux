@@ -17,6 +17,7 @@
 
 #include <huxerui/huxerui.h>
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <stop_token>
@@ -57,6 +58,29 @@ struct CoreView {
     bool operator==(const CoreView&) const = default;
 };
 
+struct CoreHomeView {
+    bool ready = false;
+    bool proxyActive = false;
+    bool vpnSnapshotReady = false;
+    int vpnState = 0;
+    std::int64_t vpnElapsedMs = 0;
+    core::CoreState coreState = core::CoreState::Stopped;
+    std::chrono::steady_clock::time_point connectedSince{};
+    bool operator==(const CoreHomeView&) const = default;
+};
+
+inline CoreHomeView MakeCoreHomeView(const CoreView& view) {
+    return {
+        .ready = view.ready,
+        .proxyActive = view.ProxyActive(),
+        .vpnSnapshotReady = view.vpnSnapshotReady,
+        .vpnState = view.vpnState,
+        .vpnElapsedMs = view.vpnElapsedMs,
+        .coreState = view.core.state,
+        .connectedSince = view.core.connectedSince,
+    };
+}
+
 struct CoreModel {
     CoreOperations operations;
     huxerui::State<bool> diagnosticsBusy{false};
@@ -70,6 +94,9 @@ struct CoreModel {
     // 唯一订阅点。必须带初值：huxerui::State 的默认构造是「空 cell」，
     // 读取（DriveCoreModel 每拍读一次）会抛 "Lifecycle dependency State is empty"。
     huxerui::State<CoreView> view{CoreView{}};
+    // 首页/猫咪只需要连接相关字段；独立投影避免模式/系统代理/TUN 意图变化
+    // 订阅整份 CoreView，导致首页重组合。
+    huxerui::State<CoreHomeView> home{CoreHomeView{}};
     // 外部来源（CLI/托盘/内核推送/OS）改动后自增：驱动循环跳过本次等待，
     // 立即重读一次。它**不会**唤醒正在 Delay 的泵（tick 只在读完后被检查），
     // 所以用户自己的动作要在完成回调里用 Update() 写透，不要靠它刷新界面。
@@ -87,11 +114,13 @@ struct CoreModel {
         CoreView next = view.Get();
         change(next);
         view = std::move(next);
+        home = MakeCoreHomeView(view.Get());
     }
 
     bool PublishPolled(std::uint64_t revision, CoreView next) {
         if (!operations.AcceptsPoll(revision)) return false;
         view = std::move(next);
+        home = MakeCoreHomeView(view.Get());
         return true;
     }
     void SetAllowLan(bool enabled);

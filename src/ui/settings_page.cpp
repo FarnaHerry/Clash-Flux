@@ -26,15 +26,14 @@
 #include "app_update_model.h"
 #include "app_runtime_services.h"
 #include "page_layout.h"
+#include "subscription_rule_layout.h"
 #include "refresh_motion.h"
 
 import clashflux.config;
 import clashflux.core;
 import clashflux.db;
-import clashflux.singbox;
 import clashflux.stream;
 import clashflux.store.core;
-import clashflux.store.profiles;
 
 #include "core_model.h"
 #include "core_control.h"
@@ -404,7 +403,8 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         const bool selected = static_cast<int>(index) == themeMode.Get();
         modes.push_back(ThemeModeCardSurface(theme, modeIcons[index],
             selected, huxerui::UseString(kThemeNames[index]),
-            [applyTheme, index] { applyTheme(static_cast<int>(index)); })
+            [applyTheme, index] { applyTheme(static_cast<int>(index)); },
+            compact ? kThemeModeCompactCardWidth : kThemeModeCardWidth)
             .Key("theme-mode-" + std::to_string(index)));
     }
     colors.push_back(ThemeColorCardSurface(theme, ResolveIslandTheme(theme).active,

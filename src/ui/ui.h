@@ -337,13 +337,20 @@ huxerui::View ProfilesPage(ProfilesCache profiles, bool active);   // 订阅
 huxerui::View ProxiesPage(bool active);    // 代理
 huxerui::View RulesPage(ProfilesCache profiles,
                         std::function<void()> onBack = {},
-                        bool active = true, std::int64_t initialProfile = 0); // 规则
+                        bool active = true); // 规则（只读实际规则）
+huxerui::View SubscriptionRulesEditorPage(ProfilesCache profiles,
+                                          std::int64_t profileId,
+                                          std::function<void()> onBack);
+huxerui::View SubscriptionRulesDialog(ProfilesCache profiles,
+                                      std::int64_t profileId,
+                                      std::function<void()> onClose);
+huxerui::View GlobalRulesEditorPage(ProfilesCache profiles,
+                                    std::function<void()> onBack);
 huxerui::View ConnectionsPage(std::function<void()> onBack = {},
                               bool active = true);                // 连接
 huxerui::View LogsPage(std::function<void()> onBack = {},
                        bool active = true);                       // 日志
-huxerui::View FidelityPage(std::int64_t profileId, std::function<void()> onBack,
-                           bool windowTitle = false);
+huxerui::View FidelityPage(std::int64_t profileId, std::function<void()> onBack);
 huxerui::View ConnectionDetailPage(ConnectionRow initial,
                                    std::function<void()> onBack,
                                    bool windowTitle = false);
@@ -365,6 +372,8 @@ huxerui::View LanguagePage(std::function<void()> onBack);
 huxerui::View LanguageRoutePage();
 huxerui::View ThemePage(huxerui::State<int> themeMode, std::function<void()> onBack,
                         bool windowTitle = false);
+huxerui::View ExternalResourcesPage(std::int64_t profileId, std::string profileName,
+                                    std::function<void()> onBack);
 struct DesktopSettingsNavigationModel {
     // IndexedPages forms have their own lifetime, independent of pushed routes.
     huxerui::State<bool> compactProfileFormOpen{false};

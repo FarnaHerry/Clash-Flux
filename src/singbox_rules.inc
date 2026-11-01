@@ -1298,6 +1298,11 @@ bool applyConnectionRules(Context& ctx) {
         } else rule["outbound"] = finalOutbound;
     };
     const auto applyTarget = [&](nlohmann::json& rule, const vpn::RouteRule& target) {
+        if (target.connectionId == vpn::DirectConnectionId() &&
+            target.targetKind == vpn::TargetKind::Default) {
+            rule["outbound"] = directTag;
+            return;
+        }
         const auto native = nativeTags.find(target.connectionId);
         if (native != nativeTags.end() && target.targetKind == vpn::TargetKind::Default) {
             if (!native->second.empty()) { rule["outbound"] = native->second; return; }

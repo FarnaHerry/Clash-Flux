@@ -27,6 +27,7 @@
 #include "filtered_indices.h"
 #include "task_bridge.h"
 #include "rule_target_picker.h"
+#include "rule_source_choices.h"
 #include "action_menu.h"
 #include "profile_file_picker.h"
 #include "text_document.h"
@@ -56,10 +57,9 @@ namespace {
 
 const std::vector<SectionTab> kRuleTabs{
     {"subscription", Localized("订阅规则")},
-    {"global", Localized("全局规则")},
-    {"resources", Localized("规则集")}};
+    {"global", Localized("全局规则")}};
 const std::vector<std::string> kMatchKinds{
-    "全部", "精确域名", "域名后缀", "精确 IP", "IPv4 网段", "规则集"};
+    "全部", "精确域名", "域名后缀", "精确 IP", "IPv4 网段"};
 
 const std::vector<std::string> kTierNames{"来源分流", "全局覆盖"};
 const std::vector<std::string> kUnavailableNames{"阻断", "主默认出口", "直连"};
@@ -71,20 +71,7 @@ std::string RuleSetName(const singbox::RuleSetLibrary& library, const std::strin
 
 [[huxerui::composable]] huxerui::View GlobalRulePatternField(
     huxerui::State<std::size_t> match, huxerui::State<huxerui::TextEditingValue> pattern) {
-    const auto model = huxerui::UseService<ProfilesModel>();
-    const auto library = model->ruleSetLibrary.Get();
-    std::vector<std::string> names;
-    auto selected = library->resources.size();
-    for (std::size_t i = 0; i < library->resources.size(); ++i) {
-        names.push_back(library->resources[i].name);
-        if (library->resources[i].id == pattern.Get().text) selected = i;
-    }
-    if (selected == names.size()) names.push_back(huxerui::UseString(Localized("请选择规则集")));
     return match.Get() == 0 ? huxerui::View{huxerui::Row{}} :
-        match.Get() == 5 ? huxerui::View{huxerui::Select(names, selected,
-            [](const auto& name) { return huxerui::Text(name); }).OnChanged([=](std::size_t index) {
-                if (index < library->resources.size()) pattern = huxerui::TextEditingValue::FromText(library->resources[index].id);
-            }).With(huxerui::Enabled(model->ruleSetsLoaded.Get()))} :
         huxerui::View{huxerui::TextField(pattern.Get()).Label(Localized("匹配域名、URL 或 IP"))
             .Variant(huxerui::TextFieldVariant::Outlined)
             .OnChanged([pattern](const auto& value) { pattern = value; })};
@@ -94,15 +81,19 @@ huxerui::View RuleOptions(huxerui::State<std::size_t> tier,
     huxerui::State<std::size_t> unavailable, huxerui::State<std::size_t> kind,
     huxerui::State<huxerui::TextEditingValue> object, huxerui::State<bool> enabled,
     huxerui::State<RuleTargetCatalog> catalog,
-    huxerui::State<huxerui::TextEditingValue> search) {
+    huxerui::State<huxerui::TextEditingValue> search, bool direct) {
     return huxerui::Column {
       huxerui::Text(Localized("规则层级")),
       huxerui::Select(kTierNames, tier.Get(), [](const std::string& text) { return huxerui::Text(Localized(text)); })
           .OnChanged([tier](std::size_t index) { tier = index; }),
-      RuleTargetPicker(catalog, kind, object, search),
-      huxerui::Text(Localized("目标不可用时")),
-      huxerui::Select(kUnavailableNames, unavailable.Get(), [](const std::string& text) { return huxerui::Text(Localized(text)); })
-          .OnChanged([unavailable](std::size_t index) { unavailable = index; }),
+      direct ? huxerui::View{huxerui::Row{}}
+             : huxerui::View{RuleTargetPicker(catalog, kind, object, search)},
+      direct ? huxerui::View{huxerui::Row{}}
+             : huxerui::View{huxerui::Column{
+                   huxerui::Text(Localized("目标不可用时")),
+                   huxerui::Select(kUnavailableNames, unavailable.Get(), [](const std::string& text) { return huxerui::Text(Localized(text)); })
+                       .OnChanged([unavailable](std::size_t index) { unavailable = index; }),
+               }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))},
       huxerui::Row {
         huxerui::Text(Localized("启用规则")),
         huxerui::Spacer(),
@@ -116,7 +107,9 @@ std::string Trim(std::string value) {
     return first == std::string::npos ? "" : value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1);
 }
 std::string ConnectionName(const huxerui::StateList<db::Profile>& profiles,
-                           std::string_view connectionId) {
+                           std::string_view connectionId,
+                           std::string_view directName) {
+    if (connectionId == vpn::DirectConnectionId()) return std::string(directName);
     for (const db::Profile& profile : profiles) {
         if (store::ProfileConnectionId(profile.id) == connectionId) {
             return profile.name;
@@ -125,23 +118,9 @@ std::string ConnectionName(const huxerui::StateList<db::Profile>& profiles,
     return connectionId.empty() ? "未设置" : std::string(connectionId);
 }
 
-struct RuleSourceChoice {
-    std::int64_t id; std::string name;
-    bool operator==(const RuleSourceChoice&) const = default;
-};
-std::vector<RuleSourceChoice> TargetProfiles(const huxerui::StateList<db::Profile>& profiles) {
-    std::vector<RuleSourceChoice> result;
-    for (const auto& profile : profiles) {
-        if (!vpn::SupportsMultiProxySources() && !profile.selected &&
-            profile.type != "pptp") continue;
-        result.push_back({profile.id, profile.name});
-    }
-    return result;
-}
-std::vector<std::string> TargetNames(const std::vector<RuleSourceChoice>& profiles) {
-    std::vector<std::string> result;
-    for (const auto& profile : profiles) result.push_back(profile.name);
-    return result;
+std::string RuleSourceConnectionId(const RuleSourceChoice& choice) {
+    return choice.direct ? std::string(vpn::DirectConnectionId())
+                         : store::ProfileConnectionId(choice.id);
 }
 
 // Editor inventory is read-only and independent of both running and preview plans.
@@ -234,9 +213,9 @@ struct PersonalRuleDraft {
     std::size_t match = 0, position = 0, target = 0, unavailable = 0, resource = 0;
 };
 const std::vector<std::string> kPersonalMatches{
-    "domain_suffix", "domain", "ip_cidr", "domain_keyword", "domain_regex", "process_name", "rule_set"};
+    "domain_suffix", "domain", "ip_cidr", "domain_keyword", "domain_regex", "process_name"};
 const std::vector<std::string> kPersonalMatchLabels{
-    "域名后缀", "精确域名", "IP / CIDR", "域名关键词", "域名正则", "进程名称", "规则集"};
+    "域名后缀", "精确域名", "IP / CIDR", "域名关键词", "域名正则", "进程名称"};
 const std::vector<std::string> kPersonalPositions{"订阅规则之前", "订阅兜底之前"};
 const std::vector<std::string> kPersonalViews{"修改后的规则", "订阅原规则", "个人修改记录"};
 
@@ -274,21 +253,15 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id) {
     singbox::RuleSetLibrary library, huxerui::State<bool> busy) {
     const auto value = draft.Get();
     const bool final = value.edit.operation == "final";
-    std::vector<std::string> resourceNames;
-    for (const auto& resource : library.resources) resourceNames.push_back(resource.name);
-    if (value.resource >= resourceNames.size() && value.edit.match == "rule_set" && !value.edit.pattern.empty())
-        resourceNames.push_back(value.edit.pattern);
+    (void)library;
     return huxerui::Column{
         huxerui::Text(Localized("个人修改独立保存，更新订阅后保留。")),
         final ? huxerui::View{huxerui::Text(Localized("默认出口"))} : huxerui::View{huxerui::Column{
             huxerui::Select(kPersonalMatchLabels, value.match, [](const auto& text) { return huxerui::Text(Localized(text)); })
                 .OnChanged([draft](std::size_t index) { auto v = draft.Get(); v.match = index; draft = v; }),
-            value.match == 6 ? (resourceNames.empty() ? huxerui::View{huxerui::Text(Localized("请先在规则集页签添加资源"))} :
-                huxerui::View{huxerui::Select(resourceNames, value.resource, [](const auto& text) { return huxerui::Text(text); })
-                    .OnChanged([draft](std::size_t index) { auto v = draft.Get(); v.resource = index; draft = v; })}) :
-            huxerui::View{huxerui::TextField(value.pattern).Label(Localized("匹配内容"))
+            huxerui::TextField(value.pattern).Label(Localized("匹配内容"))
                 .Variant(huxerui::TextFieldVariant::Outlined)
-                .OnChanged([draft](const huxerui::TextEditingValue& text) { auto v = draft.Get(); v.pattern = text; draft = v; })},
+                .OnChanged([draft](const huxerui::TextEditingValue& text) { auto v = draft.Get(); v.pattern = text; draft = v; }),
         }.With(huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))},
         huxerui::Text(Localized("出口")),
         huxerui::Select(targets, value.target, [](const auto& text) { return huxerui::Text(text); })
@@ -310,6 +283,30 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id) {
             }),
         },
     }.With(huxerui::Spacing(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch), huxerui::Enabled(!busy.Get()));
+}
+
+// 宽屏弹窗与窄屏 PersonalRuleEditorPage 共用同一份表单和保存回调；两者只
+// 换外壳，不再各自维护字段与校验。
+[[huxerui::composable]] huxerui::View PersonalRuleDialog(
+    huxerui::State<PersonalRuleDraft> draft, std::vector<std::string> targets,
+    singbox::RuleSetLibrary library, huxerui::State<bool> busy, bool editing,
+    std::function<void(std::function<void()>)> save, std::function<void()> onClose) {
+    const auto close = [busy, onClose] { if (!busy.Get()) onClose(); };
+    return DialogCard(huxerui::Column{
+        huxerui::Text(Localized(editing ? "编辑规则" : "添加规则"),
+                      huxerui::TextRole::Title),
+        huxerui::ScrollView(PersonalRuleForm(draft, targets, library, busy))
+            .With(huxerui::Frame{.max_height = 480.0F}, huxerui::ScrollBar()),
+        huxerui::Row{
+            huxerui::Button(Localized("取消")).With(huxerui::Enabled(!busy.Get()))
+                .OnClick(close),
+            huxerui::Spacer(),
+            huxerui::Button(Localized("保存"))
+                .With(huxerui::Enabled(!busy.Get()))
+                .OnClick([save, onClose] { save(onClose); }),
+        },
+    }.With(huxerui::Spacing(16.0F), huxerui::Frame{.width = 520.0F},
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
 }
 
 [[huxerui::composable]] huxerui::View PersonalRuleEditorPage(
@@ -346,6 +343,29 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id) {
           DocumentTextView(document, true, 0.0F),
         }.With(huxerui::Spacing(8.0F), huxerui::Grow(1.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), back);
+}
+
+[[huxerui::composable]] huxerui::View CompiledRulesPreviewDialog(
+    TextDocumentHandle document, std::function<void()> onClose) {
+    const auto clipboard = huxerui::UseApplication().Clipboard();
+    return DialogCard(huxerui::Column {
+        huxerui::Row {
+            huxerui::Text(Localized("编译 JSON"), huxerui::TextRole::Title),
+            huxerui::Spacer(),
+            huxerui::IconButton(app::images::copy, Localized("复制"))
+                .With(huxerui::Tooltip(Localized("复制")))
+                .OnClick([clipboard, document] {
+                    clipboard->WriteText(*document->Snapshot());
+                }),
+            huxerui::IconButton(app::images::close, Localized("关闭"))
+                .With(huxerui::Tooltip(Localized("关闭"))).OnClick(onClose),
+        }.With(huxerui::Spacing(8.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        huxerui::Text(Localized("此预览仅包含当前订阅及个人修改，不代表正在运行的全局计划。")),
+        DocumentTextView(document, true, 0.0F),
+    }.With(huxerui::Spacing(12.0F),
+           huxerui::Frame{.width = 720.0F, .height = 620.0F},
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
 }
 
 [[huxerui::composable]] huxerui::View PersonalRuleRow(
@@ -391,6 +411,12 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id) {
             [change, rule] { change(rule, "details"); }));
         menu.Show(std::move(entries));
     };
+    if (!editable) {
+        return DenseCard(SubscriptionRuleContent(label, rule.terminal ? "—" : displayPattern,
+            rule.target, status, huxerui::Row{}, rule.enabled))
+            .With(huxerui::Padding(huxerui::EdgeInsets{
+                .bottom = ResolveIslandTheme(theme).dense_radius}));
+    }
     return DenseCard(SubscriptionRuleContent(label, rule.terminal ? "—" : displayPattern, rule.target, status,
         huxerui::IconButton(app::images::more_vertical, Localized("规则操作"))
             .With(menu.Anchor()).OnClick(actions), rule.enabled))
@@ -698,37 +724,28 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
 }
 
 [[huxerui::composable]] huxerui::View SubscriptionRulesPanel(
-    huxerui::State<huxerui::TextEditingValue> search,
-    huxerui::State<std::function<void()>> addAction, std::int64_t initialProfile) {
+    huxerui::State<std::function<void()>> addAction, std::int64_t initialProfile,
+    bool readOnly) {
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const auto& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseApplicationTaskScope();
     auto toast = UseFluxToast();
     auto dialog = huxerui::UseDialog();
-    auto menu = UseActionMenu();
-    auto clipboard = huxerui::UseApplication().Clipboard();
     const auto navigation = huxerui::UseNavigation();
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     const auto desktopNavigation = huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
     const auto coreModel = huxerui::UseService<CoreModel>();
-    auto profileId = profilesModel->rulesProfile;
-    huxerui::Lifecycle([profileId, initialProfile] {
-        if (initialProfile != 0) profileId = initialProfile;
-    }, initialProfile);
-    auto snapshot = huxerui::UseState(std::make_shared<const ProfileRulesSnapshot>());
-    using CachedRules = std::pair<std::uint64_t, std::shared_ptr<const ProfileRulesSnapshot>>;
-    auto snapshots = huxerui::UseState(std::make_shared<std::map<std::int64_t, CachedRules>>()).Get();
-    auto generation = huxerui::UseState<std::uint64_t>(0);
-    auto refresh = huxerui::UseState<std::uint64_t>(0);
-    auto busy = huxerui::UseState(false);
-    auto previewBusy = huxerui::UseState(false);
-    auto view = profilesModel->rulesView;
-    auto draft = huxerui::UseState(PersonalRuleDraft{});
-    auto alive = huxerui::UseState(true);
-    huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
+    auto profileId = huxerui::UseState(initialProfile);
     huxerui::Lifecycle([=] {
-        if (profilesModel->rulesRequests.Get() != 0) profileId = profilesModel->rulesProfile.Get();
-    }, profilesModel->rulesRequests);
+        if (initialProfile != 0) { profileId = initialProfile; return; }
+        if (!profilesModel->loaded.Get() || !profilesModel->ruleSourcesReady.Get()) return;
+        const auto candidates = profilesModel->RuleSources();
+        const auto selected = std::ranges::find_if(candidates, [](const db::Profile& profile) {
+            return profile.selected;
+        });
+        profileId = selected == candidates.end() ? 0 : selected->id;
+    }, profilesModel->list, profilesModel->loaded, profilesModel->ruleSources,
+       profilesModel->ruleSourcesReady, initialProfile);
     huxerui::Lifecycle([=] {
         if (!profilesModel->loaded.Get() || !profilesModel->ruleSourcesReady.Get()) return;
         const auto target = profilesModel->ResolveRuleSource(profileId.Get());
@@ -740,6 +757,16 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
     const bool sourcesReady = profilesModel->loaded.Get() && profilesModel->ruleSourcesReady.Get();
     const bool profileRefreshing = profilesModel->Refreshing(displayedId);
     const auto profileRefreshVersion = profilesModel->RefreshVersion(displayedId);
+    auto snapshot = huxerui::UseState(std::make_shared<const ProfileRulesSnapshot>());
+    using CachedRules = std::pair<std::uint64_t, std::shared_ptr<const ProfileRulesSnapshot>>;
+    auto snapshots = huxerui::UseState(
+        std::make_shared<std::map<std::int64_t, CachedRules>>()).Get();
+    auto generation = huxerui::UseState<std::uint64_t>(0);
+    auto refresh = huxerui::UseState<std::uint64_t>(0);
+    auto busy = huxerui::UseState(false);
+    auto draft = huxerui::UseState(PersonalRuleDraft{});
+    auto alive = huxerui::UseState(true);
+    huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
     huxerui::Lifecycle([=] {
         const auto id = displayedId;
         const auto ticket = generation.Get() + 1;
@@ -793,10 +820,12 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
         });
     };
     const auto openEditor = [=](singbox::ProfileRule row) {
-        if (!alive.Get() || busy.Get() || rulesLoading) return;
+        if (readOnly || !alive.Get() || busy.Get() || rulesLoading) return;
         if (snapshot.Get() != renderedSource) return;
         const auto source = snapshot.Get();
         if (!source->supported || source->id != profileId.Get()) return;
+        const bool adding = row.editId.empty() && row.type.empty() &&
+            row.pattern.empty() && row.anchor.empty() && row.target.empty();
         PersonalRuleDraft value;
         auto targets = source->targets;
         const auto existing = std::ranges::find(source->edits.rules, row.editId, &singbox::ProfileRuleEdit::id);
@@ -845,28 +874,23 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
             if (found == edits.rules.end()) edits.rules.push_back(std::move(edited)); else *found = std::move(edited);
             persist(std::move(edits), std::move(done));
         };
-        if (compact) OpenRuleEditor(navigation, desktopNavigation, [=] { return PersonalRuleEditorPage(draft, targets, source->library, busy, save); });
-        else dialog.Show([=](huxerui::DialogContext context) {
-            return DialogCard(huxerui::Column{
-                huxerui::Text(Localized("编辑订阅规则"), huxerui::TextRole::Title),
-                huxerui::ScrollView(PersonalRuleForm(draft, targets, source->library, busy))
-                    .With(huxerui::Frame{.max_height = 460.0F}, huxerui::ScrollBar()),
-                huxerui::Row{
-                    huxerui::Button(Localized("取消")).OnClick([context, busy] { if (!busy.Get()) context.Dismiss(); }),
-                    huxerui::Spacer(),
-                    huxerui::Button(Localized(source->selected ? "保存并应用" : "保存"))
-                        .With(huxerui::Enabled(!busy.Get())).OnClick([save, context] { save([context] { context.Dismiss(); }); }),
-                },
-            }.With(huxerui::Spacing(16.0F), huxerui::Frame{.width = 480.0F},
-                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+        if (compact) {
+            OpenRuleEditor(navigation, desktopNavigation, [=] {
+                return PersonalRuleEditorPage(draft, targets, source->library, busy, save);
+            });
+            return;
+        }
+        dialog.Show([=](huxerui::DialogContext context) {
+            return PersonalRuleDialog(draft, targets, source->library, busy, adding,
+                save, [context] { context.Dismiss(); });
         });
     };
     huxerui::Lifecycle([=] {
-        addAction = rulesLoading || !renderedSource->supported ? std::function<void()>{}
+        addAction = readOnly || rulesLoading || !renderedSource->supported ? std::function<void()>{}
             : std::function<void()>{[openEditor] { openEditor({}); }};
-    }, snapshot, profileId, busy, rulesLoading);
+    }, snapshot, profileId, busy, rulesLoading, readOnly);
     const auto change = [=](singbox::ProfileRule row, std::string action) {
-        if (snapshot.Get() != renderedSource || busy.Get() || rulesLoading) return;
+        if (readOnly || snapshot.Get() != renderedSource || busy.Get() || rulesLoading) return;
         const auto source = snapshot.Get();
         if (action == "details") {
             dialog.Show([=](huxerui::DialogContext context) {
@@ -900,89 +924,56 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
         persist(std::move(edits), {});
     };
     const auto source = renderedSource;
-    std::vector<std::string> names;
-    std::size_t selected = 0;
-    for (const auto& profile : sources) {
-        if (profile.id == displayedId) selected = names.size();
-        names.push_back(profile.name);
-    }
-    std::vector<singbox::ProfileRule> rows = view.Get() == 1 ? source->original.rules : source->effective.rules;
-    if (view.Get() == 2) {
-        rows.clear();
-        for (const auto& edit : source->edits.rules) rows.push_back({.anchor = edit.anchor,
-            .raw = edit.anchor, .type = edit.match, .pattern = edit.pattern, .target = edit.target,
-            .editId = edit.id, .origin = edit.operation == "disable" ? "disabled" :
-                edit.operation == "replace" || edit.operation == "final" ? "replaced" : "added",
-            .position = edit.operation, .editable = edit.operation != "disable", .enabled = edit.enabled,
-            .terminal = edit.operation == "final"});
-    }
-    std::erase_if(rows, [&](const auto& rule) {
-        const auto& query = search.Get().text;
-        return !SearchTextMatches(PersonalRulePattern(rule, source->library), query) && !SearchTextMatches(rule.target, query) && !SearchTextMatches(rule.type, query);
-    });
-    const auto records = std::make_shared<const std::vector<singbox::ProfileRule>>(std::move(rows));
-    const auto scroll = profilesModel->rulesScrolls.try_emplace(std::pair{displayedId, view.Get()}).first->second;
+    const auto records = std::make_shared<const std::vector<singbox::ProfileRule>>(
+        source->effective.rules);
+    const auto scroll = profilesModel->rulesScrolls.try_emplace(
+        std::pair{displayedId, std::size_t{0}}).first->second;
     auto list = rulesLoading ? PageLoadingSkeleton(theme, true) :
         sources.empty() ? EmptyState(Localized("暂无支持编辑规则的订阅"), app::images::route) :
-        records->empty() ? EmptyState(Localized("没有匹配的规则"), app::images::route) :
+        records->empty() ? EmptyState(Localized("没有规则"), app::images::route) :
         huxerui::View{huxerui::VirtualList(records->size() + (compact ? 1U : 0U), [=](std::size_t index) -> huxerui::View {
             if (index == records->size()) return CompactFloatingNavigationFooter();
             const auto& row = (*records)[index];
-            return PersonalRuleRow(row, source->supported, busy.Get(), PersonalRulePattern(row, source->library), openEditor, change)
+            return PersonalRuleRow(row, !readOnly && source->supported && row.type != "rule_set", busy.Get(),
+                PersonalRulePattern(row, source->library), openEditor, change)
                 .Key(row.editId.empty() ? row.anchor + ":" + std::to_string(index) : row.editId);
         }).Controller(scroll).EstimatedItemExtent(kSubscriptionRuleEstimatedExtent)
             .With(huxerui::Grow(1.0F), huxerui::ScrollBar())};
     std::vector<huxerui::View> content;
-    std::vector<std::string> viewNames;
-    for (const auto& name : kPersonalViews) viewNames.push_back(huxerui::UseString(Localized(name)));
-    if (!names.empty()) content.push_back(
-        SubscriptionRulesToolbar(names, selected, viewNames, view.Get(), busy.Get(),
-            [=](std::size_t index) { if (index < sources.size()) profileId = sources[index].id; },
-            [view](std::size_t index) { view = index; },
-            huxerui::IconButton(app::images::more_vertical, Localized("查看规则"))
-                .With(menu.Anchor()).OnClick([=] {
-                    std::vector<ActionMenuEntry> items;
-                    items.push_back(ActionMenuItem(app::images::terminal,
-                        Localized("编译 JSON"), [=] {
-                        if (previewBusy.Get()) return;
-                        previewBusy = true;
-                        tasks.Launch([=]() -> huxerui::Task<void> {
-                            std::string text;
-                            try {
-                                text = co_await RunOnTaskThread([source] {
-                                    const auto result = store::coreStore().profileRulesPreview(source->id, source->content);
-                                    return result.error.empty() ? result.json : result.error;
-                                });
-                            } catch (const std::exception& exception) { text = exception.what(); }
-                            previewBusy = false;
-                            if (!alive.Get() || snapshot.Get() != source || profileId.Get() != source->id) co_return;
-                            const auto document = std::make_shared<TextDocument>(std::move(text));
-                            if (compact) {
-                                OpenRuleEditor(navigation, desktopNavigation,
-                                    [document] { return CompiledRulesPreviewPage(document); });
-                                co_return;
-                            }
-                            dialog.Show([=](huxerui::DialogContext context) {
-                                return DialogCard(huxerui::Column{
-                                    huxerui::Text(Localized("编译 JSON"), huxerui::TextRole::Title),
-                                    huxerui::Text(Localized("此预览仅包含当前订阅及个人修改，不代表正在运行的全局计划。")),
-                                    DocumentTextView(document, true, 320.0F),
-                                    huxerui::Row{
-                                        huxerui::Button(Localized("复制")).OnClick([clipboard, document] { clipboard->WriteText(*document->Snapshot()); }),
-                                        huxerui::Button(Localized("关闭")).OnClick([context] { context.Dismiss(); }),
-                                    },
-                                }.With(huxerui::Spacing(12.0F), huxerui::Frame{.max_width = 680.0F},
-                                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
-                            });
-                        });
-                    }).Enabled(source->id != 0 && source->supported && !rulesLoading && !busy.Get() && !previewBusy.Get()));
-                    menu.Show(std::move(items));
-                })));
     if (!source->error.empty())
-        content.push_back(huxerui::Text(source->error).Style({huxerui::Font::System(font_size::kCaption), theme.colors.error}));
+        content.push_back(huxerui::Text(source->error).Style(
+            {huxerui::Font::System(font_size::kCaption), theme.colors.error}));
     content.push_back(std::move(list));
-    return huxerui::Column{std::move(content)}.With(huxerui::Spacing(ResolveIslandTheme(theme).dense_radius),
+    return huxerui::Column{std::move(content)}.With(
+        huxerui::Spacing(ResolveIslandTheme(theme).dense_radius),
         huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
+// 宽屏从订阅卡片打开规则编辑时使用弹窗；窄屏仍进入完整二级页
+// SubscriptionRulesEditorPage。列表、快照与保存逻辑共用 SubscriptionRulesPanel。
+[[huxerui::composable]] huxerui::View SubscriptionRulesDialog(
+    ProfilesCache profilesCache, std::int64_t profileId,
+    std::function<void()> onClose) {
+    auto addAction = huxerui::UseState<std::function<void()>>(
+        std::function<void()>{});
+    return DialogCard(huxerui::Column {
+        huxerui::Row {
+            huxerui::Text(Localized("编辑订阅规则"), huxerui::TextRole::Title),
+            huxerui::Spacer(),
+            huxerui::IconButton(app::images::add, Localized("添加规则"))
+                .With(huxerui::Tooltip(Localized("添加规则")),
+                      huxerui::Enabled(static_cast<bool>(addAction.Get())))
+                .OnClick([addAction] {
+                    if (addAction.Get()) addAction.Get()();
+                }),
+            huxerui::IconButton(app::images::close, Localized("关闭"))
+                .With(huxerui::Tooltip(Localized("关闭"))).OnClick(onClose),
+        }.With(huxerui::Spacing(8.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        SubscriptionRulesPanel(addAction, profileId, false),
+    }.With(huxerui::Spacing(12.0F),
+           huxerui::Frame{.width = 720.0F, .height = 620.0F},
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
 }
 
 using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObject>>;
@@ -994,8 +985,10 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
     const auto coreModel = huxerui::UseService<CoreModel>();
     huxerui::Lifecycle([activeConnections, sourceObjects, coreModel] {
         const auto& core = coreModel->view.Get().core;
-        const auto connections = core.state == core::CoreState::Running
+        auto connections = core.state == core::CoreState::Running
             ? core.participatingSources : std::vector<std::string>{};
+        if (core.state == core::CoreState::Running)
+            connections.emplace_back(vpn::DirectConnectionId());
         if (!std::ranges::equal(activeConnections, connections))
             ReplaceStateList(activeConnections, connections);
         sourceObjects = core.sourceObjects;
@@ -1004,12 +997,21 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
     return huxerui::Row{};
 }
 
-[[huxerui::composable]] huxerui::View RulesPage(
-    ProfilesCache profilesCache, std::function<void()> onBack, bool active, std::int64_t initialProfile) {
+enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
+
+[[huxerui::composable]] huxerui::View RulesPageImpl(
+    ProfilesCache profilesCache, std::function<void()> onBack, bool active,
+    RulesPageMode mode, std::int64_t initialProfile) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const float denseGap = ResolveIslandTheme(theme).dense_radius;
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    const bool readOnly = mode == RulesPageMode::ReadOnly;
+    const bool subscriptionEditor = mode == RulesPageMode::SubscriptionEditor;
+    const bool globalEditor = mode == RulesPageMode::GlobalEditor;
+    const auto navigation = huxerui::UseNavigation();
+    const auto desktopNavigation =
+        huxerui::UseEnvironment<DesktopSettingsNavigation>().model;
     auto tasks = huxerui::UseTaskScope();
     auto applicationTasks = huxerui::UseApplicationTaskScope();
     auto dialog = huxerui::UseDialog();
@@ -1017,14 +1019,9 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
     // 共享数据一律来自 application service（见 *_model.h）。
     const auto coreModel = huxerui::UseService<CoreModel>();
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
-    auto section = huxerui::UseState<std::size_t>(0);
-    huxerui::Lifecycle([profilesModel, section] {
-        if (profilesModel->rulesRequests.Get() != 0) section = 0;
-    }, profilesModel->rulesRequests);
+    auto section = huxerui::UseState<std::size_t>(globalEditor ? 1 : 0);
     auto sectionMotion = UseSectionTabMotion();
-    auto ruleSearch = huxerui::UseState(huxerui::TextEditingValue{});
     auto subscriptionAdd = huxerui::UseState(std::function<void()>{});
-    auto resourceAdd = huxerui::UseState(std::function<void()>{});
     huxerui::Lifecycle([=] {
         if (!profilesModel->loaded.Get() || profilesModel->ruleSetsLoaded.Get()) return;
         const auto revision = profilesModel->ruleSetsRevision.Get();
@@ -1038,7 +1035,6 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
         });
     }, profilesModel->loaded);
     auto globalRevision = huxerui::UseState<std::uint64_t>(0);
-    auto globalFilter = huxerui::UseState(std::make_shared<FilteredIndicesCache>()).Get();
     auto globalRules = huxerui::UseStateList<vpn::RouteRule>();
     // 订阅列表来自 ProfilesModel 的镜像（唯一来源见 profiles_model.h），
     // 本页不再自维护副本。
@@ -1154,6 +1150,10 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
         catalogGeneration = ticket;
         const auto& sources = editSources.Get();
         const auto index = editTarget.Get();
+        if (index < sources.size() && sources[index].direct) {
+            editCatalog = RuleTargetCatalog{.profileId = -1, .ready = true, .defaultOnly = true};
+            return;
+        }
         const auto id = index < sources.size() ? sources[index].id : 0;
         editCatalog = RuleTargetCatalog{.profileId = id};
         tasks.Launch([=]() -> huxerui::Task<void> {
@@ -1173,13 +1173,22 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
         });
     }, editTarget, editSources, catalogRequest, profilesModel->list, refreshTick);
 
-    const auto selectRuleSource = [editTarget, editObject, editSearch, editCatalog, catalogRequest](std::size_t index) {
+    const auto selectRuleSource = [editTarget, editObject, editSearch, editCatalog, catalogRequest, editSources, editKind, editUnavailable](std::size_t index) {
         if (editTarget.Get() == index) return;
         editTarget = index;
         ResetRuleTargetSelection(editCatalog, editObject, editSearch);
+        const auto& sources = editSources.Get();
+        if (index < sources.size() && sources[index].direct) {
+            editKind = 0;
+            editUnavailable = 0;
+            editCatalog = RuleTargetCatalog{.profileId = -1, .ready = true, .defaultOnly = true};
+            return;
+        }
         catalogRequest = catalogRequest.Get() + 1;
     };
-    const auto targetSelectionValid = [=](std::int64_t id) {
+    const auto targetSelectionValid = [=](const RuleSourceChoice& source) {
+        if (source.direct) return true;
+        const auto id = source.id;
         // Keep an unchanged broken reference editable so the user can disable it
         // or choose an unavailable policy. Never silently rebind it.
         const auto index = editIndex.Get();
@@ -1204,15 +1213,21 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
         return huxerui::Text(text).Style(huxerui::TextStyle{
             huxerui::Font::Monospace(font_size::kMonoBody), color});
     };
+    const auto directName = huxerui::UseString(Localized("直连"));
 
-    auto openGlobalRuleEditor = [compact, dialog, profiles, editMatch, editPattern,
+    auto openGlobalRuleEditor = [compact, dialog, profiles, directName, editMatch, editPattern,
                                  editTarget, editPriority, globalRules,
                                  persistGlobalPolicy, globalEditorOpen, theme,
                                  editIndex, toast, editTier, editUnavailable, editKind,
                                  editObject, editEnabled, policySaving, editSources, editCatalog, editSearch,
                                  catalogRequest, selectRuleSource, targetSelectionValid](int index) {
         if (policySaving.Get()) return;
-        const auto targetProfiles = TargetProfiles(profiles);
+        if (index >= 0 && static_cast<std::size_t>(index) < globalRules.Size() &&
+            globalRules[static_cast<std::size_t>(index)].match == vpn::MatchKind::RuleSet) {
+            toast.Show(Localized("规则集引用仅查看"));
+            return;
+        }
+        const auto targetProfiles = TargetProfiles(profiles, directName, vpn::SupportsMultiProxySources());
         editSources = targetProfiles;
         editTier = 0; editUnavailable = 0; editKind = 0; editEnabled = true;
         editObject = huxerui::TextEditingValue{};
@@ -1234,7 +1249,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
             editEnabled = rule.enabled;
             editTarget = targetProfiles.size();
             for (std::size_t i = 0; i < targetProfiles.size(); ++i)
-                if (store::ProfileConnectionId(targetProfiles[i].id) == rule.connectionId) editTarget = i;
+                if (RuleSourceConnectionId(targetProfiles[i]) == rule.connectionId) editTarget = i;
         }
         editSearch = huxerui::TextEditingValue{};
         editCatalog = RuleTargetCatalog{};
@@ -1251,6 +1266,11 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                 -> huxerui::View {
                 auto targets = TargetNames(targetProfiles);
                 if (!targets.empty() && editTarget.Get() >= targets.size()) targets.push_back(huxerui::UseString(Localized("目标来源已失效，请重新选择")));
+                const auto targetIndex =
+                    std::min(editTarget.Get(), targetProfiles.size() - 1);
+                const auto& selectedTarget = targetProfiles[targetIndex];
+                const bool directTarget = editTarget.Get() < targetProfiles.size() &&
+                                          targetProfiles[editTarget.Get()].direct;
                 return DialogCard(huxerui::ScrollView(
                     huxerui::Column {
                         huxerui::Text(editIndex.Get() < 0 ? Localized("添加全局规则") : Localized("编辑全局规则"),
@@ -1286,7 +1306,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                                            const huxerui::TextEditingValue& value) {
                                 editPriority = value;
                             }),
-                        RuleOptions(editTier, editUnavailable, editKind, editObject, editEnabled, editCatalog, editSearch),
+                        RuleOptions(editTier, editUnavailable, editKind, editObject, editEnabled, editCatalog, editSearch, selectedTarget.direct),
                         huxerui::Row{
                             huxerui::Button(Localized("取消")).OnClick(
                                 [ctx] { ctx.Dismiss(); }),
@@ -1296,7 +1316,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                                     toast.Show(Localized("请选择目标连接"));
                                     return;
                                 }
-                                if (!targetSelectionValid(targetProfiles[editTarget.Get()].id)) {
+                                if (!targetSelectionValid(targetProfiles[editTarget.Get()])) {
                                     toast.Show(Localized("请选择当前来源中的有效组或节点")); return;
                                 }
                                 int priority = 0;
@@ -1315,19 +1335,18 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                                 const auto match = vpn::ParseMatchKind(
                                     kMatchKinds[editMatch.Get()]);
                                 if (!match.has_value()) return;
-                                const std::size_t targetIndex =
-                                    std::min(editTarget.Get(), targetProfiles.size() - 1);
                                 vpn::RouteRule rule{
                                     .match = *match,
                                     .pattern = *match == vpn::MatchKind::Any ? "" : Trim(editPattern.Get().text),
-                                    .connectionId = store::ProfileConnectionId(
-                                        targetProfiles[targetIndex].id),
+                                    .connectionId = RuleSourceConnectionId(selectedTarget),
                                     .priority = priority,
                                     .tier = editTier.Get() == 0 ? vpn::RuleTier::SourcePolicy : vpn::RuleTier::UserOverride,
                                     .enabled = editEnabled.Get(),
                                     .unavailable = static_cast<vpn::UnavailablePolicy>(editUnavailable.Get()),
-                                    .targetKind = static_cast<vpn::TargetKind>(editKind.Get()),
-                                    .targetObject = editKind.Get() == 0 ? "" : editObject.Get().text,
+                                    .targetKind = selectedTarget.direct ? vpn::TargetKind::Default
+                                                                        : static_cast<vpn::TargetKind>(editKind.Get()),
+                                    .targetObject = selectedTarget.direct || editKind.Get() == 0
+                                                        ? "" : editObject.Get().text,
                                 };
                                 if (editIndex.Get() >= 0 && static_cast<std::size_t>(editIndex.Get()) < globalRules.Size())
                                     rule.id = globalRules[static_cast<std::size_t>(editIndex.Get())].id;
@@ -1357,45 +1376,33 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
 
     std::vector<huxerui::View> sectionPages;
     for (std::size_t page = 0; page < kRuleTabs.size(); ++page) {
+        if (subscriptionEditor && page != 0) continue;
+        if (globalEditor && page != 1) continue;
         huxerui::View body;
         if (page == 0) {
-            body = SubscriptionRulesPanel(ruleSearch, subscriptionAdd, initialProfile);
-        } else if (page == 2) {
-            body = RuleSetLibraryPanel(ruleSearch, resourceAdd);
+            body = SubscriptionRulesPanel(subscriptionAdd, initialProfile, readOnly);
         } else if (!loaded.Get()) {
             body = PageLoadingSkeleton(theme, true);
         } else {
             const std::size_t count = globalRules.Size();
-            const std::string query = ruleSearch.Get().text;
-            const auto visibleRules = globalFilter->Resolve(globalRevision.Get(), count, query,
-                [&globalRules, &profiles, &query, profilesModel](std::size_t index) {
-                    const auto& rule = globalRules[index];
-                    return SearchTextMatches(rule.match == vpn::MatchKind::RuleSet ? RuleSetName(*profilesModel->ruleSetLibrary.Get(), rule.pattern) : rule.pattern, query) || SearchTextMatches(rule.targetObject, query) ||
-                           SearchTextMatches(ConnectionName(profiles, rule.connectionId), query) ||
-                           SearchTextMatches(vpn::MatchKindName(rule.match), query) ||
-                           SearchTextMatches(std::to_string(rule.priority), query);
-                });
-            const std::size_t visibleCount = visibleRules.Size();
             if (count == 0) {
                 body = EmptyState(Localized("还没有全局规则"), app::images::route);
-            } else if (visibleCount == 0 && !query.empty()) {
-                body = EmptyState(Localized("没有匹配的全局规则"), app::images::search);
             } else {
                 auto globalList = huxerui::VirtualList(
-                    visibleCount + (compact ? 1U : 0U),
-                    [globalRules, visibleRules,
-                     profiles, mono, theme, compact, visibleCount, profilesModel,
+                    count + (compact ? 1U : 0U),
+                    [globalRules, directName,
+                     profiles, mono, theme, compact, count, profilesModel,
                      persistGlobalPolicy, openGlobalRuleEditor, activeConnections,
-                     policySaving, sourceObjects, denseGap](std::size_t index) -> huxerui::View {
-                        const std::size_t ruleIndex =
-                            index < visibleCount ? visibleRules.SourceIndex(index) : 0;
+                     policySaving, sourceObjects, denseGap, readOnly](std::size_t index) -> huxerui::View {
+                        const std::size_t ruleIndex = index;
                         // 与订阅规则相同：只在测量 factory 中声明 Scope。
                         return huxerui::Scope([=]() -> huxerui::View {
-                          if (compact && index == visibleCount) {
+                          if (compact && index == count) {
                               return CompactFloatingNavigationFooter().Key("compact-floating-footer");
                           }
                           const auto& rule = globalRules[ruleIndex];
                           const auto catalog = sourceObjects.Get();
+                          const bool directRule = rule.connectionId == vpn::DirectConnectionId();
                           const bool objectExists = rule.targetKind == vpn::TargetKind::Default || (catalog &&
                               std::ranges::any_of(*catalog, [&](const auto& object) {
                                   return object.sourceId == rule.connectionId && object.kind == rule.targetKind && object.objectId == rule.targetObject;
@@ -1406,14 +1413,15 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                               huxerui::Column {
                                 mono(rule.match == vpn::MatchKind::Any ? huxerui::UseString(Localized("全部流量")) : rule.match == vpn::MatchKind::RuleSet ? RuleSetName(*profilesModel->ruleSetLibrary.Get(), rule.pattern) : rule.pattern, theme.colors.on_surface),
                                 mono(huxerui::UseString(LocalizedFormat("{} · {} · 优先级 {}", huxerui::UseString(Localized(vpn::MatchKindName(rule.match))),
-                                                 ConnectionName(profiles, rule.connectionId) + (rule.targetObject.empty() ? "" : " / " + rule.targetObject), rule.priority)),
+                                                 ConnectionName(profiles, rule.connectionId, directName) + (rule.targetObject.empty() ? "" : " / " + rule.targetObject), rule.priority)),
                                      theme.colors.on_surface_variant),
-                                huxerui::Flow {
-                                  huxerui::Text(!rule.enabled ? Localized("已禁用") : active ? Localized("已参与编排") :
-                                      LocalizedFormat("目标不可用/待应用 · {}", huxerui::UseString(Localized(kUnavailableNames[static_cast<std::size_t>(rule.unavailable)]))))
-                                      .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption),
-                                          active ? theme.colors.primary : theme.colors.on_surface_variant}),
-                                  huxerui::Text(Localized(rule.tier == vpn::RuleTier::UserOverride ? "全局覆盖" : "来源分流")),
+                                huxerui::Text(!rule.enabled ? Localized("已禁用") : active ? Localized("已参与编排") :
+                                    directRule ? Localized("直连") :
+                                    LocalizedFormat("目标不可用/待应用 · {}", huxerui::UseString(Localized(kUnavailableNames[static_cast<std::size_t>(rule.unavailable)]))))
+                                    .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption),
+                                        active ? theme.colors.primary : theme.colors.on_surface_variant}),
+                                huxerui::Text(Localized(rule.tier == vpn::RuleTier::UserOverride ? "全局覆盖" : "来源分流")),
+                                readOnly ? huxerui::View{huxerui::Row{}} : huxerui::View{huxerui::Row {
                                   huxerui::Button(Localized(rule.enabled ? "禁用" : "启用")).With(huxerui::Enabled(!policySaving.Get()))
                                       .OnClick([globalRules, ruleIndex, persistGlobalPolicy] {
                                           auto changed = globalRules[ruleIndex]; changed.enabled = !changed.enabled;
@@ -1440,7 +1448,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                                           persistGlobalPolicy();
                                       }
                                   }),
-                                }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+                                }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))},
                               }.With(huxerui::Spacing(6.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
                               .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = denseGap}))
                               .Key(key);
@@ -1461,37 +1469,56 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
             huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
             .Key("rule-section-" + kRuleTabs[page].key));
     }
-    huxerui::View body = SectionTabPages(sectionPages, section.Get(),
-        [section](std::size_t index) { section = index; }, sectionMotion);
+    const std::size_t selectedSection = readOnly ? section.Get() : 0;
+    huxerui::View body = SectionTabPages(sectionPages, selectedSection,
+        [section, readOnly](std::size_t index) { if (readOnly) section = index; }, sectionMotion);
 
-    // 分区切换与代理页/订阅页共用同一下划线标签栏（SectionTabBar）。
-    huxerui::View sectionSwitch = SectionTabBar(
-        kRuleTabs, kRuleTabs[section.Get()].key,
-        [section](const std::string& key) { section = key == "resources" ? 2 : key == "global" ? 1 : 0; }, sectionMotion);
-    // Each section supplies its own add action.
-    huxerui::View actions = huxerui::View{
-        huxerui::IconButton(app::images::add, Localized(section.Get() == 2 ? "添加规则集" : "添加规则"))
-            .With(huxerui::Tooltip(Localized(section.Get() == 2 ? "添加规则集" : "添加规则")),
-                  huxerui::Enabled(section.Get() == 0 ? static_cast<bool>(subscriptionAdd.Get()) :
-                      section.Get() == 2 ? static_cast<bool>(resourceAdd.Get()) : loaded.Get()))
-            .OnClick([section, subscriptionAdd, resourceAdd, openGlobalRuleEditor] {
-                if (section.Get() == 0) { if (subscriptionAdd.Get()) subscriptionAdd.Get()(); }
-                else if (section.Get() == 2) { if (resourceAdd.Get()) resourceAdd.Get()(); }
-                else openGlobalRuleEditor(-1);
-            })};
-    body = huxerui::Column {
-        std::move(sectionSwitch), std::move(body),
-    }.With(huxerui::Spacing(denseGap), huxerui::Grow(1.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    huxerui::View sectionSwitch;
+    const bool hasSectionSwitch = readOnly;
+    if (hasSectionSwitch) {
+        // 分区切换与代理页/订阅页共用同一下划线标签栏（SectionTabBar）。
+        sectionSwitch = SectionTabBar(
+            kRuleTabs, kRuleTabs[section.Get()].key,
+            [section](const std::string& key) {
+                section = key == "global" ? 1 : 0;
+            }, sectionMotion);
+    }
 
-    huxerui::View searchField = PillSearchField(
-        ruleSearch, Localized("搜索规则"));
+    huxerui::View actions;
+    if (subscriptionEditor) {
+        actions = huxerui::IconButton(app::images::add, Localized("添加规则"))
+            .With(huxerui::Tooltip(Localized("添加规则")),
+                  huxerui::Enabled(static_cast<bool>(subscriptionAdd.Get())))
+            .OnClick([subscriptionAdd] { if (subscriptionAdd.Get()) subscriptionAdd.Get()(); });
+    } else if (globalEditor) {
+        actions = huxerui::IconButton(app::images::add, Localized("添加全局规则"))
+            .With(huxerui::Tooltip(Localized("添加全局规则")), huxerui::Enabled(loaded.Get()))
+            .OnClick([openGlobalRuleEditor] { openGlobalRuleEditor(-1); });
+    } else {
+        actions = huxerui::IconButton(app::images::edit, Localized("管理全局规则"))
+            .With(huxerui::Tooltip(Localized("管理全局规则")))
+            .OnClick([=] {
+                OpenRuleEditor(navigation, desktopNavigation, [=] {
+                    return GlobalRulesEditorPage(profilesCache, [navigation] {
+                        static_cast<void>(navigation.Pop());
+                    });
+                });
+            });
+    }
+    if (hasSectionSwitch) {
+        body = huxerui::Column {
+            std::move(sectionSwitch), std::move(body),
+        }.With(huxerui::Spacing(denseGap), huxerui::Grow(1.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    }
+
+    const char* title = subscriptionEditor ? "编辑订阅规则" :
+        globalEditor ? "管理全局规则" : "规则";
     huxerui::View listPage = onBack
-        ? SecondaryPageScaffold(std::move(searchField), std::move(actions),
-                                std::move(body), onBack, false, true)
-        : PageScaffold(Localized("规则"), std::move(actions), std::move(body),
-                       false, true, true, std::nullopt, {},
-                       std::move(searchField));
+        ? SecondaryPageScaffold(huxerui::Text(Localized(title), huxerui::TextRole::Title),
+                                std::move(actions), std::move(body), onBack, false, true)
+        : PageScaffold(Localized(title), std::move(actions), std::move(body),
+                       false, true, true);
     listPage = huxerui::Column{runtimeEffects, listPage}.With(
         huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     const auto editorProfiles = editSources.Get();
@@ -1503,7 +1530,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
             toast.Show(Localized("请选择目标连接"));
             return;
         }
-        if (!targetSelectionValid(editorProfiles[editTarget.Get()].id)) {
+        if (!targetSelectionValid(editorProfiles[editTarget.Get()])) {
             toast.Show(Localized("请选择当前来源中的有效组或节点")); return;
         }
         int priority = 0;
@@ -1520,17 +1547,19 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
         if (!match) return;
         const std::size_t targetIndex =
             std::min(editTarget.Get(), editorProfiles.size() - 1);
+        const auto& selectedTarget = editorProfiles[targetIndex];
         vpn::RouteRule rule{
             .match = *match,
             .pattern = *match == vpn::MatchKind::Any ? "" : Trim(editPattern.Get().text),
-            .connectionId = store::ProfileConnectionId(
-                editorProfiles[targetIndex].id),
+            .connectionId = RuleSourceConnectionId(selectedTarget),
             .priority = priority,
             .tier = editTier.Get() == 0 ? vpn::RuleTier::SourcePolicy : vpn::RuleTier::UserOverride,
             .enabled = editEnabled.Get(),
             .unavailable = static_cast<vpn::UnavailablePolicy>(editUnavailable.Get()),
-            .targetKind = static_cast<vpn::TargetKind>(editKind.Get()),
-            .targetObject = editKind.Get() == 0 ? "" : editObject.Get().text,
+            .targetKind = selectedTarget.direct ? vpn::TargetKind::Default
+                                                : static_cast<vpn::TargetKind>(editKind.Get()),
+            .targetObject = selectedTarget.direct || editKind.Get() == 0
+                                ? "" : editObject.Get().text,
         };
         if (editIndex.Get() >= 0 && static_cast<std::size_t>(editIndex.Get()) < globalRules.Size())
             rule.id = globalRules[static_cast<std::size_t>(editIndex.Get())].id;
@@ -1562,6 +1591,8 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                     .With(huxerui::Tooltip(Localized("保存规则")))
                     .OnClick(saveResponsiveRule)},
         }.With(huxerui::Spacing(8.0F));
+        const bool directTarget = !editorProfiles.empty() && editTarget.Get() < editorProfiles.size() &&
+                                  editorProfiles[editTarget.Get()].direct;
         huxerui::View content = huxerui::ScrollView(
             huxerui::Column {
                 Card(huxerui::Column {
@@ -1591,7 +1622,7 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                                        const huxerui::TextEditingValue& value) {
                             editPriority = value;
                         }),
-                    RuleOptions(editTier, editUnavailable, editKind, editObject, editEnabled, editCatalog, editSearch),
+                    RuleOptions(editTier, editUnavailable, editKind, editObject, editEnabled, editCatalog, editSearch, directTarget),
                 }.With(huxerui::Spacing(16.0F),
                        huxerui::CrossAlign(
                            huxerui::CrossAxisAlignment::Stretch))),
@@ -1612,6 +1643,25 @@ using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObjec
                std::vector<huxerui::View>{listPage, editorPage},
                compact && globalEditorOpen.Get() ? 1U : 0U)
         .With(huxerui::Grow(1.0F));
+}
+
+[[huxerui::composable]] huxerui::View RulesPage(
+    ProfilesCache profilesCache, std::function<void()> onBack, bool active) {
+    return RulesPageImpl(std::move(profilesCache), std::move(onBack), active,
+                         RulesPageMode::ReadOnly, 0);
+}
+
+[[huxerui::composable]] huxerui::View SubscriptionRulesEditorPage(
+    ProfilesCache profilesCache, std::int64_t profileId,
+    std::function<void()> onBack) {
+    return RulesPageImpl(std::move(profilesCache), std::move(onBack), true,
+                         RulesPageMode::SubscriptionEditor, profileId);
+}
+
+[[huxerui::composable]] huxerui::View GlobalRulesEditorPage(
+    ProfilesCache profilesCache, std::function<void()> onBack) {
+    return RulesPageImpl(std::move(profilesCache), std::move(onBack), true,
+                         RulesPageMode::GlobalEditor, 0);
 }
 
 } // namespace clashflux::ui

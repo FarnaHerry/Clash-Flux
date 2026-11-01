@@ -132,6 +132,29 @@ huxerui::CanvasPainter QrPainter(const std::string& text) {
     };
 }
 
+// QRS 分享只显示二维码本身；多帧序列按固定节奏循环，扫码端负责重组。
+[[huxerui::composable]] huxerui::View QrsSequenceView(
+    std::shared_ptr<const std::vector<std::string>> frames) {
+    const huxerui::TaskScope tasks = huxerui::UseTaskScope();
+    auto index = huxerui::UseState<std::size_t>(0);
+    huxerui::Lifecycle([=]() -> std::function<void()> {
+        if (!frames || frames->size() < 2) return [] {};
+        const huxerui::TaskHandle handle = tasks.Launch([=]() -> huxerui::Task<void> {
+            while (true) {
+                co_await huxerui::Delay(std::chrono::milliseconds{350});
+                index = (index.Get() + 1) % frames->size();
+            }
+        });
+        return [handle] { handle.Cancel(); };
+    });
+    if (!frames || frames->empty()) {
+        return huxerui::Canvas(QrPainter(std::string{}))
+            .With(huxerui::Frame{.width = 300.0F, .height = 300.0F});
+    }
+    return huxerui::Canvas(QrPainter((*frames)[index.Get() % frames->size()]))
+        .With(huxerui::Frame{.width = 300.0F, .height = 300.0F});
+}
+
 // 把弹窗数字输入解析为秒/分钟：空/非法回落 fallback。
 int parseNumber(const huxerui::TextEditingValue& v, int fallback) {
     const std::string t = v.text;
@@ -295,7 +318,7 @@ huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
     huxerui::HttpRequest request;
     request.url = std::move(url);
     request.headers.push_back(
-        huxerui::HttpHeader{"User-Agent", "clash-flux/0.1"});
+        huxerui::HttpHeader{"User-Agent", "clash.meta"});
     request.timeout = std::chrono::milliseconds{
         (timeoutSecs > 0 ? timeoutSecs : 60) * 1000};
     const std::string urlText = request.url;

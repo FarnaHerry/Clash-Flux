@@ -51,9 +51,6 @@ struct ProfilesModel : ProfileListModel<db::Profile> {
     huxerui::State<std::vector<profile_link::RemoteProfile>> importLinks{
         std::vector<profile_link::RemoteProfile>{}};
     huxerui::State<std::string> linkError{std::string{}};
-    huxerui::State<std::int64_t> rulesProfile{0};
-    huxerui::State<std::uint64_t> rulesRequests{0};
-    huxerui::State<std::size_t> rulesView{0};
     huxerui::State<std::shared_ptr<const wire::RuleSetLibrary>> ruleSetLibrary{
         std::make_shared<const wire::RuleSetLibrary>()};
     huxerui::State<bool> ruleSetsLoaded{false};

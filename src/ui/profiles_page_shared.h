@@ -116,6 +116,8 @@ void OpenProfileEditInfo(std::int64_t id, bool compact,
                          huxerui::State<std::int64_t> edit_page_id);
 std::string truncateOneLine(const std::string& value, std::size_t maxCodePoints);
 huxerui::CanvasPainter QrPainter(const std::string& text);
+huxerui::View QrsSequenceView(
+    std::shared_ptr<const std::vector<std::string>> frames);
 int parseNumber(const huxerui::TextEditingValue& value, int fallback);
 std::vector<std::string> parseRouteField(std::string_view text);
 std::string joinRoutes(const std::vector<std::string>& routes);
@@ -163,6 +165,7 @@ using profile_detail::parseRouteField;
 using profile_detail::profileTypeLabel;
 using profile_detail::profileTypeTabLabel;
 using profile_detail::QrPainter;
+using profile_detail::QrsSequenceView;
 using profile_detail::joinRoutes;
 using profile_detail::makePptpConfig;
 using profile_detail::pptpStateText;
@@ -196,7 +199,10 @@ huxerui::View ProfileCard(
     const std::function<void(std::int64_t)>& openEditInfo,
     const std::function<void(std::int64_t)>& openEditRules,
     const std::function<void(std::int64_t)>& openEditFile,
+    const std::function<void(std::int64_t)>& openCompiledPreview,
     const std::function<void(std::int64_t)>& openQr,
+    const std::function<void(std::int64_t)>& openQrs,
+    const std::function<void(std::int64_t)>& openExternalResources,
     huxerui::DialogHandle dialog,
     ProfileReorderActions reorder = {});
 
@@ -232,6 +238,10 @@ huxerui::View ProfileFilePage(
     std::int64_t id, huxerui::State<TextDocumentHandle> content,
     huxerui::State<bool> loading, huxerui::TaskScope tasks,
     FluxToastHandle toast, std::function<void()> on_back);
+huxerui::View CompiledRulesPreviewPage(TextDocumentHandle document);
+huxerui::View CompiledRulesPreviewDialog(TextDocumentHandle document,
+                                         std::function<void()> onClose);
+
 huxerui::View ProfileFileRoutePage(
     std::int64_t id, huxerui::State<TextDocumentHandle> content,
     huxerui::State<bool> loading, huxerui::TaskScope tasks,

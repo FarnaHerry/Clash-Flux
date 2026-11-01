@@ -60,9 +60,12 @@ void TextDocument::Prepare(huxerui::TaskScope tasks) {
         document->Prepare(tasks);
     }, document);
     if (!document->Ready()) {
-        huxerui::View pending = document->Error().empty()
-            ? huxerui::View{huxerui::ProgressCircle()}
-            : huxerui::View{huxerui::Text(document->Error())};
+        if (!document->Error().empty()) {
+            huxerui::View failed = huxerui::Text(document->Error());
+            if (height > 0.0F) return std::move(failed).With(huxerui::Frame{.height = height});
+            return std::move(failed).With(huxerui::Grow(1.0F));
+        }
+        huxerui::View pending = huxerui::Row{};
         if (height > 0.0F) return std::move(pending).With(huxerui::Frame{.height = height});
         return std::move(pending).With(huxerui::Grow(1.0F));
     }
@@ -88,6 +91,10 @@ void TextDocument::Prepare(huxerui::TaskScope tasks) {
     options.font_size = font_size::kBody;
     options.wrap_mode = 0;
     options.scrollbar_mode = 1;
+    // Keep the line-number gutter on the same surface as the text area.
+    EditorTheme editorTheme = EditorTheme::FromThemeSpec(theme);
+    editorTheme.gutter_background = editorTheme.background;
+    options.theme = std::move(editorTheme);
     // No full-document highlighter/diff: edits and scrolling stay local to the viewport.
     const std::weak_ptr<TextDocument> weak = document;
     auto editor = CodeEditor(std::move(options), controller)

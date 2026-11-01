@@ -20,6 +20,13 @@ int main() {
     assert(routing::DecodeRuleSetLibrary(R"({"resources":[{"id":"old","name":"Old"}]})").resources[0].refresh_generation == 0);
     vpn::VpnPolicy setPolicy{.rules={{.match=vpn::MatchKind::RuleSet, .pattern="ads", .connectionId="profile-1"}}};
     assert(routing::DecodePolicy(routing::EncodePolicy(setPolicy)) == setPolicy);
+    vpn::VpnPolicy directPolicy{.rules={{.match=vpn::MatchKind::DomainSuffix,
+        .pattern="direct.test", .connectionId=std::string(vpn::DirectConnectionId())}}};
+    assert(routing::DecodePolicy(routing::EncodePolicy(directPolicy)) == directPolicy);
+    std::string directError;
+    assert(vpn::ValidatePolicyRules(directPolicy.rules, directError));
+    directPolicy.rules[0].targetObject = "DIRECT";
+    assert(!vpn::ValidatePolicyRules(directPolicy.rules, directError));
     for (const std::string invalid : {"null", "[]", "{", "{\"unknown\":1}",
             "{\"resources\":[{\"extra\":true}]}", "{\"format_version\":99}",
             "{\"resources\":false}", "{} trailing"}) {

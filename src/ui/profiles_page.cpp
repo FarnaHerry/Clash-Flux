@@ -38,6 +38,7 @@
 #include "profile_import_task.h"
 #include "profile_reorder_geometry.h"
 #include "profile_list_layout.h"
+#include "qrs_codec.h"
 
 import clashflux.core;
 import clashflux.db;
@@ -192,7 +193,7 @@ struct ProfileReorderSession {
 
 [[huxerui::composable]] huxerui::View ProfilesPage(
     ProfilesCache profilesCache, bool active) {
-    return ProfilesPageCore(huxerui::NavigationController{}, false,
+    return ProfilesPageCore(huxerui::UseNavigation(), true,
                             profilesCache, active, /*group_by_type=*/true);
 }
 

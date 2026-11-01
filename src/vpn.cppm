@@ -103,6 +103,9 @@ export enum class RuleTier { MainFallback = 0, MainPolicy = 1, SourcePolicy = 2,
 export enum class UnavailablePolicy { Reject, UseMain, Direct };
 export enum class TargetKind { Default, Group, Node };
 
+// 全局规则的显式直连目标：不是订阅连接，编译后直接落到 DIRECT 出站/系统路由。
+export inline std::string_view DirectConnectionId() { return "DIRECT"; }
+
 export inline std::string_view RuleTierKey(RuleTier value) {
     switch (value) {
     case RuleTier::MainFallback: return "main_fallback";
@@ -169,10 +172,13 @@ export inline bool RulePrecedes(const RouteRule& left, const RouteRule& right) {
 export inline bool ValidatePolicyRules(const std::vector<RouteRule>& rules, std::string& error) {
     std::set<std::string> ids;
     for (const auto& rule : rules) {
+        const bool direct = rule.connectionId == DirectConnectionId();
+        const bool directTarget = rule.targetKind == TargetKind::Default && rule.targetObject.empty();
         if (rule.connectionId.empty() ||
             (rule.tier != RuleTier::SourcePolicy && rule.tier != RuleTier::UserOverride) ||
             UnavailablePolicyKey(rule.unavailable).empty() || TargetKindKey(rule.targetKind).empty() ||
-            (rule.targetKind == TargetKind::Default ? !rule.targetObject.empty() : rule.targetObject.empty())) {
+            (direct ? !directTarget
+                    : (rule.targetKind == TargetKind::Default ? !rule.targetObject.empty() : rule.targetObject.empty()))) {
             error = "编排规则缺少目标、目标身份无效或使用了保留的 main 层级";
             return false;
         }
@@ -894,6 +900,7 @@ public:
             if (selected == nullptr || RulePrecedes(rule, *selected)) selected = &rule;
         }
         if (selected == nullptr) return mainConnectionId();
+        if (selected->connectionId == DirectConnectionId()) return {};
         const auto* connection = findConnection(selected->connectionId);
         if (connection && connection->enabled &&
             (!detail::nativeConnection(*connection) || connection->state == ConnectionState::Connected))
