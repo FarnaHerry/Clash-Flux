@@ -22,6 +22,8 @@
   该限制。开发目标见[桌面订阅编排](desktop-subscription-orchestration.md)，状态、
   诊断与能力门控交互参考[官方 GUI 研究](singbox-official-gui-review.md)。
 - 多字段编辑在 Compact 视口进入独立页面；简单确认操作（例如删除确认）继续使用对话框。
+- 添加订阅在 Medium/Expanded 视口使用弹窗，二维码、文件、URL 和平台支持的 PPTP 入口共用原有导入流程；弹窗内部使用独立导航栈承载子表单，页头只显示返回/关闭与表单动作。Compact 保留独立页面。订阅信息表单的 HTTP 超时、更新间隔各占一行。
+- `ProvideEnvironment` / `Theme` 的结果只负责作用域，不能直接添加布局、绘制或输入修饰。`DialogCard` 使用自己的 Column 承载表面、圆角和内边距，允许内容根为环境节点；环境与独立导航栈的真实弹窗挂载、返回和关闭由 page_transition 回归覆盖。
 - Android 在 `AppOptions::window.content_mode` 启用 `EdgeToEdge`，由 `AndroidAppContent`
   用 `IslandTheme::base` 绘制完整视口并统一消费 `SafeAreaPadding`。系统栏的
   `SystemBarsAppearance` 使用同一底色，图标明暗自动跟随；一级页、二级页和底部导航

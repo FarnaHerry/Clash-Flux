@@ -205,22 +205,17 @@
         newPptpServer, newPptpUsername, newPptpPassword, newPptpTimeout,
         newPptpRoutes, newPptpMppe,
         pickedPath, importing};
-    // Desktop dialog and compact page mount the same creation form.
+    // Wide windows keep the full add-method flow in a dialog-owned stack.
     const auto showCreateDialog = [createFields, tasks, toast, picker, http,
                                     pptpSupported, dialog] {
         dialog.Show([=](huxerui::DialogContext ctx) {
-            return DialogCard(huxerui::Column{
-                // embedded：DialogCard 是唯一容器层，布局与编辑订阅弹窗一致。
-                ProfileCreatePage(createFields, tasks, toast, picker, http,
-                                  pptpSupported, [ctx] { ctx.Dismiss(); },
-                                  /*embedded=*/true),
-            }.With(huxerui::Frame{.width = 420.0F},
-                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+            return ProfileAddDialog(createFields, tasks, toast, picker, http,
+                                    pptpSupported, [ctx] { ctx.Dismiss(); });
         });
     };
     const auto openCreate = [=] {
         resetCreateFields();
-        if (navigation_enabled) {
+        if (compact && navigation_enabled) {
             navigation.Push([=] {
                 return ProfileAddMethodPage(createFields, tasks, toast,
                                             picker, http, pptpSupported,

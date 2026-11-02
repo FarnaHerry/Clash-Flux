@@ -55,8 +55,10 @@ ABI 和 AAR SHA256。`stageSingboxAar` 将三者与固定版本核对，拒绝�
 | 缺失代理链目标、编译后重复 tag、循环 | 完成全部出站后检查依赖图；组的全部候选成员参与；报编译错误，不改成直连 |
 | `select.default-selected` | 有效成员映射 selector.default；不强制覆盖已缓存的选择 |
 | 未映射组字段 | 每个字段记 Group/Approx，不臆造 lazy/timeout 等原生设置 |
-| HTTP proxy-providers、select 的 use/include-all-providers | 已接入 DIRECT 下载、验证缓存与节点展开；限 Clash proxies/现有节点订阅，完整候选后提交 |
-| file/inline、健康检查、筛选、override、age、非 DIRECT 下载及 provider-backed url-test | 未接入，记 Unsupported 并拒绝候选，不保留部分成员 |
+| HTTP/file/inline proxy-providers、select/url-test 的 use/include-all-providers | HTTP DIRECT 下载与验证缓存、file 根内只读快照、inline payload 和混合集合展开；完整候选后提交 |
+| provider/select/url-test 的 filter、exclude-filter、exclude-type | 已接入常见大小写/alternation/多表达式与类型排除子集；高级 .NET 语法和空结果拒绝 |
+| provider-backed url-test | 原生组测速、URL 继承、默认 300 秒；静态成员和测速判定差异记 Approx，不冒充独立 provider 健康检查 |
+| 启用的健康检查、非空 override、age、非 DIRECT 下载、HTTP/file 的非空 fallback payload | 未接入，记 Unsupported 并拒绝候选，不保留部分成员 |
 | `no-resolve` | 保留匹配条件并记 Rule/Approx，明确托管前置 resolve 仍可能解析域名 |
 | 未知规则修饰符或缺少必需字段 | 整条跳过并记 Rule/Unsupported，不截断后静默接受 |
 

@@ -118,7 +118,11 @@ Clash YAML/text/MRS 导入此资源库，以及订阅原有 provider 的统一�
 - `geox-url` 的 ASN/GEO 数据地址。
 
 订阅卡片右键的「外部资源」只读展示该订阅的识别结果，不跨订阅汇总；页面自身不下载、不缓存、
-不改变编译/运行语义。运行准备现已支持 HTTP proxy-providers 的 DIRECT 下载、验证缓存及 select 组
+不改变编译/运行语义。运行准备现已支持 HTTP proxy-providers 的 DIRECT 下载、验证缓存及 select/url-test 组
 `use` / `include-all-providers` 节点展开，缓存与主订阅更新走同一完整候选检查。
-TODO：展示 provider 缓存/更新状态，并逐版补齐筛选、健康检查、override、file/inline 等能力；
+依赖准备会遍历多个组和桌面次来源；规则、代理缓存分别落到各自目录。手动更新订阅同时
+强制检查更新两类 provider，失败不提交本轮缓存。资源页展示声明，不能据此判断尚未下载。
+provider/select/url-test 的常见 filter、exclude-filter、exclude-type 子集已接入，高级 .NET 语法仍拒绝。
+file/inline 代理集合已接入只读文件根/内联 payload，同样执行完整转换；url-test 的静态组测速记近似。
+TODO：展示 provider 缓存/更新状态，并逐版补齐独立健康检查、override 等能力；
 未接入字段仍拒绝候选，不把资源清单当成已支持全部 provider 语义。

@@ -294,7 +294,7 @@ bool expandGroupProxies(Context& ctx, const YAML::Node& group, const std::string
     const auto use = group["use"];
     if (ybool(group, "include-all") || ybool(group, "include-all-providers") ||
         (use.IsDefined() && (!use.IsSequence() || use.size() != 0)))
-        return reject("use/include-all", "代理集合尚未接入，不提交部分展开");
+        return reject("use/include-all", "include-all-proxies 与代理集合混用尚未支持，不提交部分展开");
     for (const char* field : {"filter", "exclude-filter", "exclude-type"}) {
         const auto declared = group[field];
         if (declared.IsDefined() && (!declared.IsScalar() || !declared.Scalar().empty()))
@@ -382,14 +382,30 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
     auto proxyProviders = compileProxyProviders(ctx, root["proxy-providers"]);
     if (!proxyProviders) return;
 
+    // Discover all referenced HTTP inputs before the first incomplete group
+    // stops compilation, so independent provider downloads can share a batch.
+    for (const YAML::Node& group : groups) {
+        const auto type = lowerCopy(ytext(group, "type"));
+        if (type != "select" && type != "url-test") continue;
+        const auto use = group["use"];
+        for (const auto& [provider, index] : proxyProviders->resources) {
+            const bool explicitUse = use && use.IsSequence() && std::ranges::any_of(use, [&](const auto& item) {
+                return item.IsScalar() && item.Scalar() == provider;
+            });
+            if (ybool(group, "include-all-providers") || explicitUse)
+                ctx.result.httpProxyProviders[index].required = true;
+        }
+    }
+
     for (const YAML::Node& group : groups) {
         if (ctx.cancelled()) return;
         const std::string name = ytext(group, "name");
         if (name.empty()) continue;
         std::vector<std::string> members = ylist(group, "proxies");
+        std::string providerTestUrl;
         if (!expandGroupProxies(ctx, group, name, localProxies, rejectedProxy, members) ||
-            !expandProxyProviderGroup(ctx, group, name, *proxyProviders, members)) return;
-        if (auto converted = convertGroup(ctx, group, name, members)) {
+            !expandProxyProviderGroup(ctx, group, name, *proxyProviders, members, providerTestUrl)) return;
+        if (auto converted = convertGroup(ctx, group, name, members, providerTestUrl)) {
             ctx.outbounds.push_back(std::move(*converted));
         } else {
             ctx.note(FidelityScope::Group, Fidelity::Unsupported, name,

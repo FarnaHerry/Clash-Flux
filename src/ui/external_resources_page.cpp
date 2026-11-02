@@ -144,7 +144,7 @@ huxerui::StringVariant ExternalResourceKindName(std::string_view kind) {
                 huxerui::Font::System(font_size::kCaption),
                 theme.colors.on_surface_variant}),
             huxerui::Text(Localized(
-                "来自订阅解析（rule-providers / proxy-providers / geox-url），当前只读识别，不下载。")).Style(
+                "应用订阅时自动下载所需的远程规则与节点集合，手动更新订阅会刷新它们。本页显示订阅声明，不代表下载状态。")).Style(
                 huxerui::TextStyle{
                     huxerui::Font::System(font_size::kCaption),
                     theme.colors.on_surface_variant}),

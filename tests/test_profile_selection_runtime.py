@@ -76,6 +76,8 @@ def main():
             assert (profiles / f"selection-{identity}.yaml").read_bytes() == content
         latest = [b"# source-v2\nrules: ['MATCH,DIRECT']\n"]
         provider_latest = [b"proxies:\n  - {name: remote-a, type: socks5, server: 127.0.0.1, port: 9}\n"]
+        rule_latest = [b"payload: [provider.test]\n"]
+        fetched_paths = set()
         hold_response = threading.Event()
         request_started = threading.Event()
         release_response = threading.Event()
@@ -86,7 +88,14 @@ def main():
                     self.send_response(403)
                     self.end_headers()
                     return
-                body = provider_latest[0] if self.path == "/provider" else latest[0]
+                fetched_paths.add(self.path)
+                if self.path.startswith("/provider"):
+                    suffix = self.path.removeprefix("/provider")
+                    body = provider_latest[0].replace(b"name: remote-", f"name: remote{suffix}-".encode())
+                elif self.path == "/rules":
+                    body = rule_latest[0]
+                else:
+                    body = latest[0]
                 if hold_response.is_set():
                     request_started.set()
                     assert release_response.wait(30), "slow subscription fixture timed out"
@@ -140,21 +149,36 @@ def main():
                 assert db.execute("SELECT error FROM profiles WHERE id=2").fetchone()[0] != ""
             provider_source = (
                 "proxy-providers:\n"
-                f"  remote: {{type: http, url: 'http://127.0.0.1:{server.server_port}/provider', header: {{User-Agent: [provider-test/1]}}}}\n"
-                "proxy-groups:\n  - {name: Proxy, type: select, use: [remote]}\n"
+                f"  remote: {{type: http, url: 'http://127.0.0.1:{server.server_port}/provider', interval: 3600, header: {{User-Agent: [provider-test/1]}}}}\n"
+                f"  second: {{type: http, url: 'http://127.0.0.1:{server.server_port}/provider2', interval: 3600}}\n"
+                f"  third: {{type: http, url: 'http://127.0.0.1:{server.server_port}/provider3', interval: 3600}}\n"
+                "proxy-groups:\n  - {name: Proxy, type: select, use: [remote, second]}\n"
+                "  - {name: Last, type: select, use: [third]}\n"
+                "rule-providers:\n"
+                f"  sites: {{type: http, behavior: domain, url: 'http://127.0.0.1:{server.server_port}/rules', interval: 3600}}\n"
+                "rules: ['RULE-SET,sites,Last', 'MATCH,Proxy']\n"
             ).encode()
             latest[0] = provider_source
             run("profile", "update", "2")
-            cache_files = list((core / "proxy-providers").glob("*.cache"))
-            assert len(cache_files) == 1
-            first_cache = cache_files[0].read_bytes()
+            cache_files = sorted((core / "proxy-providers").glob("*.cache"))
+            rule_cache_files = sorted((core / "rule-providers").glob("*.cache"))
+            assert len(cache_files) == 3 and len(rule_cache_files) == 1
+            assert {"/provider", "/provider2", "/provider3", "/rules"} <= fetched_paths
+            all_cache_files = cache_files + rule_cache_files
+            first_cache = {file: file.read_bytes() for file in all_cache_files}
             provider_latest[0] = b"proxies:\n  - {name: remote-b, type: socks5, server: 127.0.0.1, port: 9}\n"
+            rule_latest[0] = b"payload: [provider-v2.test]\n"
             run("profile", "update", "2")
-            assert cache_files[0].read_bytes() != first_cache
-            second_cache = cache_files[0].read_bytes()
+            assert all(file.read_bytes() != first_cache[file] for file in all_cache_files), "manual update must refresh both provider families before interval expiry"
+            second_cache = {file: file.read_bytes() for file in all_cache_files}
             provider_latest[0] = b"proxies: [unterminated\n"
             run("profile", "update", "2", expected=1)
-            assert cache_files[0].read_bytes() == second_cache
+            assert all(file.read_bytes() == second_cache[file] for file in all_cache_files)
+            assert (profiles / "selection-2.yaml").read_bytes() == provider_source
+            provider_latest[0] = b"proxies:\n  - {name: remote-c, type: socks5, server: 127.0.0.1, port: 9}\n"
+            rule_latest[0] = b"payload: [unterminated\n"
+            run("profile", "update", "2", expected=1)
+            assert all(file.read_bytes() == second_cache[file] for file in all_cache_files), "late rule-provider failure must retain staged proxy caches too"
             assert (profiles / "selection-2.yaml").read_bytes() == provider_source
             latest[0] = previous_source
             run("profile", "update", "2")

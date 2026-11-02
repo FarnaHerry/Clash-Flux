@@ -26,6 +26,7 @@ namespace {
 #include "singbox_mrs.inc"
 std::string personalRuleSetTag(const RuleSetLibrary& library, const std::string& id);
 #include "singbox_rules.inc"
+#include "singbox_filter.inc"
 #include "singbox_proxy_provider.inc"
 #include "singbox_profile_rules.inc"
 #include "singbox_compile.inc"
@@ -601,7 +602,7 @@ bool ValidateHttpProxyProvider(const HttpProxyProviderResource& resource,
     context.providerSyntaxOnly = true;
     context.knownTags.push_back("DIRECT");
     std::vector<std::string> members;
-    return appendProxyProviderNodes(context, content, resource.name, members, error);
+    return appendProxyProviderNodes(context, content, resource.name, members, error, &resource);
 }
 
 std::optional<std::string> ReadHttpRuleProviderSeed(const HttpRuleProviderResource& resource,

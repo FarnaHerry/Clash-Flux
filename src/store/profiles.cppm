@@ -272,8 +272,9 @@ public:
 
     // UI 层下载路径收尾：2xx 内容写 profiles/<id>.yaml + 解析 userinfo 头 +
     // 行更新；失败写行 error，import=true（新建流程行已先建）回滚删行。
+    // forceProviders 只用于用户明确的手动更新；自动更新遵循 provider interval。
     bool completeRemote(std::int64_t id, const FetchedProfile& fetched,
-                        bool import) {
+                        bool import, bool forceProviders = false) {
         auto planLock = coreStore().lockPlanLifecycle();
         lastError_.clear();
         auto profile = findById(id);
@@ -291,7 +292,7 @@ public:
         } else {
             std::error_code ec;
             std::filesystem::create_directories(cfg::profilesDir(), ec);
-            if (!saveYaml(p.id, fetched.body, true)) failure = lastError_;
+            if (!saveYaml(p.id, fetched.body, forceProviders)) failure = lastError_;
         }
         if (failure.empty()) {
             if (const auto userinfo = findHeader(fetched.headers, "subscription-userinfo")) {
@@ -331,7 +332,7 @@ public:
         return failure.empty();
     }
 
-    // 重新拉取订阅（阻塞）。本地导入（无 url）直接报错。
+    // 重新拉取订阅（阻塞，用户手动入口）。手动更新保留同步强刷 provider 语义。
     bool refresh(std::int64_t id) {
         // download re-reads this row under the lifecycle lock before fetching
         // and again before committing. Network I/O must not block other rules.
@@ -345,7 +346,7 @@ public:
                 return false;
             }
         }
-        return download(*profile);
+        return download(*profile, true);
     }
 
     // 本地文件导入（local）：复制内容到 profiles/<id>.yaml。
@@ -504,8 +505,9 @@ p->name = fields.name.empty() ? p->name : fields.name;
     // 全程阻塞（网络），由壳层泵经 RunOnTaskThread 周期调用，返回本轮结果。
     ProfileRefreshBatch refreshDue() {
         ProfileRefreshBatch batch;
-        for (const auto& p : dueForUpdate()) {
-            if (refresh(p.id)) {
+        for (const auto& due : dueForUpdate()) {
+            auto p = due;
+            if (download(p, false)) {
                 batch.updated.push_back(p.id);
             } else {
                 batch.failures.push_back(ProfileRefreshFailure{
@@ -581,14 +583,15 @@ p->name = fields.name.empty() ? p->name : fields.name;
 
     // 保存订阅 YAML 原文（高级文件编辑）：写文件 + 更新 updatedAt；
     // 若该订阅启用中且内核在跑，重启内核使改动生效。阻塞。
+    // forceProviders 仅限用户手动更新：只强刷该来源自己的 provider。
     bool saveYaml(std::int64_t id, const std::string& content,
-                  bool forceProxyProviderRefresh = false) {
+                  bool forceProviders = false) {
         lastError_.clear();
         auto planLock = coreStore().lockPlanLifecycle();
         auto profile = findById(id);
         if (!profile) { lastError_ = "订阅不存在"; return false; }
         if (profile->file.empty()) profile->file = std::format("{}.yaml", id);
-        if (!coreStore().validateSourceUpdate(id, content, lastError_, forceProxyProviderRefresh)) return false;
+        if (!coreStore().validateSourceUpdate(id, content, lastError_, forceProviders)) return false;
         const auto previous = yamlOf(*profile);
         if (!writeContent(*profile, content, lastError_)) return false;
         coreStore().invalidateProxyGroupsSnapshot();
@@ -657,7 +660,7 @@ p->name = fields.name.empty() ? p->name : fields.name;
         if (clearStandby) {
             auto& persistence = clashflux::persistence::persistence();
             persistence.setSelectedProfile(0);
-            if (!coreStore().restartCore("")) {
+            if (!coreStore().clearStandbyCore()) {
                 persistence.setSelectedProfile(id);
                 lastError_ = "清空待命内核失败：" + coreStore().snapshot().lastError;
                 return;
@@ -788,8 +791,9 @@ private:
     }
 
     // 下载 p.url 到 profiles/<id>.yaml 并更新行（updated_at/error）。
+    // forceProviders 只由用户手动更新传入；自动更新沿用 provider 自己的 interval。
     // 代理三态按订阅选项组装：内核代理 > 系统环境代理 > 强制直连。
-    bool download(db::Profile& p) {
+    bool download(db::Profile& p, bool forceProviders = false) {
         std::lock_guard downloadLock(downloadMutex_);
         auto planLock = coreStore().lockPlanLifecycle();
         lastError_.clear();
@@ -836,7 +840,8 @@ private:
             p = *current; // Preserve changes such as selection, name and order.
             if (p.file.empty()) p.file = std::format("{}.yaml", p.id);
             std::string error;
-            return coreStore().validateSourceUpdate(p.id, content, error, true) ? std::string{} : error;
+            return coreStore().validateSourceUpdate(p.id, content, error, forceProviders)
+                ? std::string{} : error;
         };
         // Runtime maintenance may replace the controller API while we fetch.
         // The independent downloader owns no controller endpoint or secret.

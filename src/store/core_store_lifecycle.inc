@@ -677,8 +677,11 @@
             if (cancel.stop_requested()) return false;
             auto options = routingOptions(profileYaml, snapshot().tunEnabled, false, policy, main);
             singbox::CompileResult compiled;
-            if (!prepareHttpRuleProviders(options, compiled, error, policy, cancel) || cancel.stop_requested() ||
-                !validatePlanTargets(options, compiled, policy, error)) return false;
+            bool candidateChecked = false;
+            if (!prepareHttpRuleProviders(options, compiled, error, policy, cancel, nullptr,
+                    &candidateChecked) || cancel.stop_requested()) return false;
+            if (candidateChecked) return true;
+            if (!validatePlanTargets(options, compiled, policy, error)) return false;
             if (cancel.stop_requested()) return false;
             return checkCompiledPlan(compiled, error);
         } catch (const std::exception& e) { error = e.what(); return false; }
@@ -789,7 +792,10 @@
         auto options = routingOptions(content, false, false, nullptr,
             routing::ConnectionId(id), nullptr, false);
         singbox::CompileResult compiled;
-        return prepareHttpRuleProviders(options, compiled, error) && checkCompiledPlan(compiled, error);
+        bool candidateChecked = false;
+        if (!prepareHttpRuleProviders(options, compiled, error, nullptr, {}, nullptr,
+                &candidateChecked)) return false;
+        return candidateChecked || checkCompiledPlan(compiled, error);
     }
 
     std::string currentMainContent() {
@@ -816,11 +822,23 @@
     }
 
     bool standbyActive() {
-#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
-        const auto current = snapshot();
-        return current.state == core::CoreState::Running && !current.proxyListening;
-#else
+#if defined(__ANDROID__)
+        return clashflux::runtime_plan::Standby(snapshot(), clashflux_android_vpn_state(), tunEnabled());
+#elif defined(CLASHFLUX_IOS)
         return false;
+#else
+        return clashflux::runtime_plan::Standby(snapshot());
+#endif
+    }
+
+    // Called under the plan lock after temporarily clearing the main selection.
+    // Android startup is asynchronous: a restart request cannot prove that the
+    // old source was released. Require the background STOP acknowledgement.
+    bool clearStandbyCore() {
+#if defined(__ANDROID__)
+        return stopCore();
+#else
+        return restartCore("");
 #endif
     }
 
@@ -840,7 +858,7 @@
     }
 
     bool validateSourceUpdate(std::int64_t id, const std::string& content, std::string& error,
-                              bool forceProxyProviderRefresh = false) {
+                              bool forceProviderRefresh = false) {
         std::lock_guard lock(lifecycleMutex_);
         ensureOpen();
         try {
@@ -858,7 +876,7 @@
             for (const auto& profile : db_->listProfiles()) if (profile.id == id && profile.selected) main = true;
             auto options = routingOptions(main ? content : currentMainContent(), snapshot().tunEnabled,
                                           false, nullptr, std::nullopt, &updated);
-            options.forceProxyProviderRefresh = forceProxyProviderRefresh;
+            if (forceProviderRefresh) options.forceProviderRefreshSources.insert(sourceId);
             if (sourceId == options.mainConnectionId) options.profileYaml = content;
             else {
                 bool replaced = false;
@@ -871,7 +889,10 @@
                 }
             }
             singbox::CompileResult compiled;
-            return prepareHttpRuleProviders(options, compiled, error) && checkCompiledPlan(compiled, error);
+            bool candidateChecked = false;
+            if (!prepareHttpRuleProviders(options, compiled, error, nullptr, {}, nullptr,
+                    &candidateChecked)) return false;
+            return candidateChecked || checkCompiledPlan(compiled, error);
         } catch (const std::exception& e) { error = e.what(); return false; }
     }
 

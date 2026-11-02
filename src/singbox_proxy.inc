@@ -1018,13 +1018,15 @@ std::optional<nlohmann::json> convertProxy(Context& ctx, const YAML::Node& item)
 
 std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
                                            const std::string& name,
-                                           const std::vector<std::string>& members) {
+                                           const std::vector<std::string>& members,
+                                           const std::string& providerTestUrl = {}) {
     const std::string clashType = lowerCopy(ytext(item, "type"));
     for (const auto& field : item) {
         const std::string key = field.first.IsScalar() ? field.first.Scalar() : "(无效字段名)";
         if (key == "name" || key == "type" || key == "proxies" || key == "default-selected" ||
             key == "use" || key == "include-all" || key == "include-all-proxies" || key == "include-all-providers") continue;
-        if (ybool(item, "include-all-proxies") &&
+        if ((ybool(item, "include-all-proxies") || ybool(item, "include-all-providers") ||
+             (item["use"] && item["use"].IsSequence() && item["use"].size() > 0)) &&
             (key == "filter" || key == "exclude-filter" || key == "exclude-type")) continue;
         if ((clashType == "url-test" || clashType == "fallback" || clashType == "load-balance") &&
             (key == "url" || key == "interval" || key == "tolerance")) continue;
@@ -1049,9 +1051,11 @@ std::optional<nlohmann::json> convertGroup(Context& ctx, const YAML::Node& item,
         // the group then uses the subscription's test URL instead of the
         // per-outbound default URL, matching sing-box and SFA semantics.
         out["type"] = "urltest";
-        std::string url = ytext(item, "url");
+        std::string url = providerTestUrl.empty() ? ytext(item, "url") : providerTestUrl;
         if (url.empty()) url = "https://www.gstatic.com/generate_204";
         out["url"] = url;
+        if (!providerTestUrl.empty() && yint(item, "interval").value_or(0) == 0)
+            out["interval"] = "300s";
         if (const auto interval = yint(item, "interval"); interval && *interval > 0) {
             out["interval"] = std::format("{}s", *interval);
             if (*interval > 1800) {

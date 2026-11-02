@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.91 发布说明](docs/releases/v0.3.91.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.92 发布说明](docs/releases/v0.3.92.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -287,8 +287,14 @@ Android 使用系统 TLS 下载桥接，默认校验证书；8 MiB 或更小 `si
 见[HTTP 离线样本](docs/examples/http-providers-2026-10-03.yaml)。
 协议类型覆盖为 12/15；不表示每种协议的全部字段已支持，更多字段与 provider 适配继续推进。
 代理组支持 `include-all-proxies: true` 的静态来源展开：本来源节点按名称排序追加到
-显式成员之后，不引入其它组或其它订阅节点。非空筛选和代理集合组合尚未转换，
-候选会明确拒绝；空组不会隐式直连。见[离线展开样本](docs/examples/group-expansion-2026-10-03.yaml)。
+显式成员之后，不引入其它组或其它订阅节点；该选项的非空筛选及与 provider 混用仍拒绝。
+代理集合另支持 HTTP、file、inline 及 select/url-test 的 use/include-all-providers，执行常见筛选子集。
+file 在数据根内只读，inline 从 payload 完整转换；HTTP 验证缓存后随完整候选提交。
+应用订阅时自动准备引用中的 HTTP provider（含桌面次来源）；手动更新订阅同时检查更新
+规则和代理集合，失败保留原订阅与旧缓存。外部资源页展示声明，不代表下载状态。
+file 静态快照和 provider url-test 的调度/判定差异记近似；独立 provider 健康检查、非空 override
+及非 DIRECT 下载仍拒绝。空组不会隐式直连，边界见[保真度契约](docs/singbox-layers-and-fidelity.md)。
+另见[离线展开样本](docs/examples/group-expansion-2026-10-03.yaml)。
 桌面已接入[唯一主订阅 + 规则驱动的多次来源编排](docs/desktop-subscription-orchestration.md)：
 Clash YAML 次来源只通过启用规则参与，同名组/节点隔离；全局覆盖、来源分流、主规则、
 主兜底使用固定层级，权重只在层内比较。目标不可用默认阻断，可明确选择主默认出口或直连。

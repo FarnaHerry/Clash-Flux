@@ -47,6 +47,10 @@ export struct PreparationStats {
     std::int64_t compileMicros = 0;
     unsigned validatedSnapshotReuses = 0;
     unsigned conversionCacheHits = 0;
+    // The final result passed operations.check and no later input changed it.
+    // Callers may skip an identical candidate check; JSON projection or GEO
+    // recompilation invalidates this and requires checking the final bytes.
+    bool candidateChecked = false;
 };
 
 export inline bool Prepare(singbox::CompileOptions& options, const Operations& operations,
@@ -118,9 +122,20 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
             stats->compileCount += proxyPreparation.compileCount;
             stats->compileMicros += proxyPreparation.compileMicros;
         }
+        // Proxy discovery can reveal rule providers after the initial compile.
+        // Staging may live in either cache root; rule payloads always use theirs.
+        const std::filesystem::path ruleRoot(candidate.ruleProviderCacheDir);
+        if (!result.httpRuleProviders.empty()) {
+            if (ruleRoot.empty() || (!operations.fetch && !operations.revalidate)) {
+                error = "HTTP 规则集任务缺少缓存目录或下载接口"; return false;
+            }
+            std::filesystem::create_directories(ruleRoot, ec);
+            if (ec) { error = "无法创建 HTTP 规则集缓存目录"; return false; }
+        }
         // A classical body can reveal ASN dependencies only after its download.
         // Discover in bounded rounds, holding every replacement until full check.
         std::map<std::string, std::string> identities;
+        std::set<std::string> processed;
         for (unsigned round = 0; ; ++round) {
             if (round >= 256) { error = "HTTP/ASN 依赖发现超过轮数限制"; return false; }
             const auto resources = result.httpRuleProviders;
@@ -141,7 +156,10 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                 if (position->second != resource.identity || identities.size() > 256) {
                     error = "HTTP/ASN 缓存身份冲突或依赖过多"; return false;
                 }
-                if (!candidate.ruleProviderContents.contains(resource.cacheKey) && scheduled.insert(resource.cacheKey).second)
+                const bool forced = candidate.forceProviderRefreshSources.contains(resource.sourceId);
+                if ((!candidate.ruleProviderContents.contains(resource.cacheKey) ||
+                     (forced && !processed.contains(resource.cacheKey))) &&
+                    scheduled.insert(resource.cacheKey).second)
                     jobs.push_back(i);
             }
             const auto prepare = [&](std::size_t index) {
@@ -150,12 +168,12 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
               const auto& resource = resources[index];
               try {
                 std::string reason;
-                const auto destination = root / (resource.cacheKey + ".cache");
+                const auto destination = ruleRoot / (resource.cacheKey + ".cache");
                 const auto consumed = result.ruleProviderContents.find(resource.cacheKey);
                 const bool alreadyCompiled = consumed != result.ruleProviderContents.end();
                 singbox::HttpCacheValidators validators;
                 auto content = alreadyCompiled ? std::optional<std::string>{std::move(consumed->second)}
-                    : singbox::ReadHttpRuleProviderCache(resource, root, reason, &validators);
+                    : singbox::ReadHttpRuleProviderCache(resource, ruleRoot, reason, &validators);
                 if (reason == "HTTP 规则集缓存身份或版本不匹配") { item.error = reason; return; }
                 bool usable = alreadyCompiled || (content && singbox::ValidateHttpRuleProvider(resource, *content, reason));
                 bool inputChanged = !alreadyCompiled;
@@ -167,8 +185,9 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                     usable = content && singbox::ValidateHttpRuleProvider(resource, *content, reason);
                     changed = usable;
                 }
-                bool stale = !usable;
-                if (usable && resource.intervalSeconds != 0) {
+                const bool forced = candidate.forceProviderRefreshSources.contains(resource.sourceId);
+                bool stale = !usable || forced;
+                if (usable && !stale && resource.intervalSeconds != 0) {
                     std::error_code stampError;
                     const auto stamp = std::filesystem::last_write_time(destination, stampError);
                     stale = stampError || decltype(stamp)::clock::now() - stamp >= std::chrono::seconds(resource.intervalSeconds);
@@ -179,7 +198,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                         // Bind validators to the exact verified body, including
                         // a cache file changed between compilation and refresh.
                         std::string ignored;
-                        const auto disk = singbox::ReadHttpRuleProviderCache(resource, root, ignored, &validators);
+                        const auto disk = singbox::ReadHttpRuleProviderCache(resource, ruleRoot, ignored, &validators);
                         if (!disk || *disk != *content) validators = {};
                     }
                     if (!usable || resource.headers.contains("if-none-match") ||
@@ -204,7 +223,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                         inputChanged = !alreadyCompiled || *downloaded != *content;
                         content = std::move(downloaded); usable = true; changed = true;
                         validators = std::move(response.validators);
-                    } else if (usable) {
+                    } else if (usable && !forced) {
                         item.warning = "HTTP 规则集「" + resource.name + "」刷新失败，沿用已验证缓存/种子：" + reason;
                     } else {
                         item.error = "HTTP 规则集「" + resource.name + "」准备失败：" + reason;
@@ -240,7 +259,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                 if (!item.error.empty()) { error = std::move(item.error); return false; }
                 if (!item.warning.empty()) warnings.push_back(std::move(item.warning));
                 if (item.reused && stats) ++stats->validatedSnapshotReuses;
-                const auto destination = root / (resource.cacheKey + ".cache");
+                const auto destination = ruleRoot / (resource.cacheKey + ".cache");
                 if (item.changed) {
                     const auto image = singbox::HttpRuleProviderCacheImage(resource, *item.content, item.validators);
                     if (image.empty()) { error = "HTTP 缓存身份或内容无效"; return false; }
@@ -252,6 +271,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                     pending.emplace_back(file, destination);
                 }
                 candidate.ruleProviderContents[resource.cacheKey] = std::move(*item.content);
+                processed.insert(resource.cacheKey);
                 inputsChanged = inputsChanged || item.inputChanged;
             }
             // The first compile may already have consumed fresh disk caches.
@@ -278,6 +298,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
             if (error.empty()) error = "HTTP 候选配置检查失败";
             return false;
         }
+        if (stats) stats->candidateChecked = true;
         if (cancelled()) return false;
         result.ruleProviderContents.clear(); // A finalizing check may have recompiled.
         result.proxyProviderContents.clear();

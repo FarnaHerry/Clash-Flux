@@ -167,7 +167,9 @@
         if (inspectNetwork && !checkNetworkConflicts(options, nlohmann::json::object(), error)) return {};
         trace("network-preflight");
         bool geoPrepared = false;
-        if (!prepareHttpRuleProviders(options, plan->compiled, error, nullptr, cancel, &geoPrepared)) {
+        bool candidateChecked = false;
+        if (!prepareHttpRuleProviders(options, plan->compiled, error, nullptr, cancel,
+                &geoPrepared, &candidateChecked)) {
             if (!cancel.stop_requested()) publishFailure();
             return {};
         }
@@ -178,7 +180,10 @@
         const bool geoInputsChanged = (!geoPrepared || directoryChanged) && clashflux::runtime_compile::GeoInputsChanged(
             !plan->compiled.ruleSetResources.empty(), directoryChanged);
         options.ruleSetDir = workDir.string();
-        if (geoInputsChanged) plan->compiled = singbox::compileConfig(options, cancel);
+        if (geoInputsChanged) {
+            plan->compiled = singbox::compileConfig(options, cancel);
+            candidateChecked = false;
+        }
         trace(geoInputsChanged ? "geo-prefetch-and-recompile" : "geo-prefetch-reuse");
         if (cancel.stop_requested()) return {};
         if (!plan->compiled.error.empty() || plan->compiled.json.empty()) {
@@ -190,14 +195,19 @@
         if (inspectNetwork && !checkNetworkConflicts(options, config, error)) return {};
         bool selectorChanged = false;
         plan->proxyGroups = proxyGroupsFromConfig(config, plan->compiled.sourceObjects, options.mainConnectionId, &selectorChanged);
-        if (selectorChanged) plan->compiled.json = config.dump();
+        if (selectorChanged) {
+            plan->compiled.json = config.dump();
+            candidateChecked = false;
+        }
         if (cancel.stop_requested()) return {};
         trace("projection-and-json");
-        if (!checkCompiledPlan(plan->compiled, error)) return {};
+        // Provider preparation already checked these exact final bytes. Only a
+        // GEO recompile or selector projection invalidates that result.
+        if (!candidateChecked && !checkCompiledPlan(plan->compiled, error)) return {};
 #if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
         trace("check-deferred-to-libbox");
 #else
-        trace("kernel-check");
+        trace(candidateChecked ? "kernel-check-reused" : "kernel-check");
 #endif
         const auto revisionText = setting("routing.applied_revision", "0");
         std::uint64_t revision = 0;
@@ -392,9 +402,10 @@
     bool prepareHttpRuleProviders(singbox::CompileOptions& options,
                                  singbox::CompileResult& compiled, std::string& error,
                                  const vpn::VpnPolicy* policy = nullptr, std::stop_token cancel = {},
-                                 bool* geoPrepared = nullptr) {
+                                 bool* geoPrepared = nullptr, bool* candidateChecked = nullptr) {
         bool preparedGeo = false;
         if (geoPrepared) *geoPrepared = false;
+        if (candidateChecked) *candidateChecked = false;
         clashflux::runtime_compile::Normalize(options);
         rule_provider_cache::PreparationStats stats;
         const auto began = std::chrono::steady_clock::now();
@@ -537,10 +548,12 @@
         };
         const bool ready = rule_provider_cache::Prepare(options, operations, compiled, error, &stats, cancel);
         if (geoPrepared) *geoPrepared = ready && preparedGeo;
+        if (candidateChecked) *candidateChecked = ready && stats.candidateChecked;
         stream::logApplication("info", std::format(
-            "profile-providers ready={} total_ms={} discovery_compile_calls={} discovery_compile_us={} validated_snapshot_reuses={} conversion_cache_hits={}", ready,
+            "profile-providers ready={} total_ms={} discovery_compile_calls={} discovery_compile_us={} validated_snapshot_reuses={} conversion_cache_hits={} candidate_checked={}", ready,
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count(),
-            stats.compileCount, stats.compileMicros, stats.validatedSnapshotReuses, stats.conversionCacheHits));
+            stats.compileCount, stats.compileMicros, stats.validatedSnapshotReuses, stats.conversionCacheHits,
+            stats.candidateChecked ? 1 : 0));
         if (ready) for (const auto& warning : compiled.warnings)
             if (warning.starts_with("HTTP 规则集「") || warning.starts_with("HTTP 代理集合「"))
                 stream::logApplication("warning", warning);

@@ -5,6 +5,10 @@ description: 修改或评审 Clash-Flux UI、布局、分页、共享模型、�
 
 # UI 开发
 
+## HuxerUI 原生技能
+
+每次 UI 修改前，除本文外，必须先确认当前构建/目标平台实际选中的 HuxerUI 源码或 SDK 及其 revision，再读取该版本自带的 `skills/huxerui-app-development/SKILL.md`，并按其要求读取相关引用。CMake 查看活动构建目录的 `CMakeCache.txt` 并按 `CMakeLists.txt` 的选择顺序核实；Android 查看 `platform/android/settings.gradle` 与实际 `HUXERUI_HOME`。本仓库固定源码对应技能为 [HuxerUI 原生应用开发技能](../../third_party/huxerui/skills/huxerui-app-development/SKILL.md)。不得用未被当前目标选中的安装目录或旧 checkout 代替；若选中 SDK 不带该文件，读取与其精确版本/revision 匹配源码中的技能。无法确认匹配版本或找不到对应技能时，暂停 UI 修改并先取得匹配版本。
+
 所有 UI 改动先读 [生命周期与模型](references/lifecycle.md)；再按实际改动读取 [UI 开发约定](../../docs/ui-development.md) 的对应章节，不加载无关平台文档。
 composable 体内不能使用条件编译，沿用现有 DSL；UI 经过 HuxerUI codegen 和目标构建，不直接改生成文件。
 

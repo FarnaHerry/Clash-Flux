@@ -70,6 +70,8 @@ TODO（低优先级）：评估订阅级 UA 覆盖及带真实版本的规范 Cl
 
 ## 启停和恢复
 
+- 无 TUN 常驻内核与桌面统一视为待命。删除主订阅仅在 Binder 可用、VPN 明确停止且
+  无待启用意图时放行，先等待后台停核确认，再沿用订阅删除事务及引用核对；停核失败保留订阅。
 - 应用启动先由 CoreStore 读取已保存的 TUN 设置，再编译对应配置；core-only 请求不改写
   已提交配置中的 TUN 恢复意图，运行时另在内存中移除 TUN inbound。
 - `ClashVpnService` 在 Android `:background` 进程中执行。它在 `onCreate()` 第一时间调用

@@ -419,7 +419,7 @@ huxerui::Task<std::string> AndroidRefreshRemote(
         std::move(http), row->url, row->timeoutSecs, row->allowInvalidCert);
     const bool ok = co_await RunOnTaskThread(
         [id, fetched] { return store::profilesStore().completeRemote(
-                             id, fetched, false); });
+                             id, fetched, false, /*forceProviders=*/true); });
     co_return ok ? "" : store::profilesStore().lastError();
 }
 
@@ -539,7 +539,9 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
         const auto outcome = co_await RunOnTaskThread(
             [id = row.id, fetched] {
                 auto& profiles = store::profilesStore();
-                const bool ok = profiles.completeRemote(id, fetched, false);
+                // Automatic subscription updates leave provider intervals intact.
+                const bool ok = profiles.completeRemote(
+                    id, fetched, false, /*forceProviders=*/false);
                 return std::pair{ok, ok ? std::string{} : profiles.lastError()};
             });
         if (outcome.first) {

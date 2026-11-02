@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.91 release notes](docs/releases/v0.3.91.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.92 release notes](docs/releases/v0.3.92.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -370,8 +370,19 @@ differences and rejects external key paths; see the [SSH sample](docs/examples/s
 field coverage; further field and provider adaptation remains in the review backlog.
 Groups support static `include-all-proxies: true` expansion: successfully compiled
 nodes from that source are appended in name order after explicit members, excluding
-other groups and subscriptions. Unsupported nonempty filters and proxy-provider
-combinations reject the candidate; an empty group never silently becomes DIRECT.
+other groups and subscriptions. Nonempty filters and mixing providers with this option
+still reject the candidate. Separately, HTTP/file/inline proxy providers support
+select/url-test use/include-all-providers with the supported filter subset.
+Files are read-only snapshots under the explicit data root; inline payloads are converted
+in full, and HTTP caches commit only after candidate validation.
+Referenced HTTP providers, including desktop secondary sources, are prepared when applying
+a profile. Manual profile updates check both rule and proxy providers for updates; failures
+retain the original profile and caches. The external-resources page lists declarations,
+not download status. File snapshots and
+provider url-test scheduling/result differences are reported as approximate.
+Independent provider health checks, nonempty overrides and non-DIRECT downloads remain
+unsupported. An empty group never silently becomes DIRECT; see the
+[fidelity contract](docs/singbox-layers-and-fidelity.md).
 See the [offline expansion sample](docs/examples/group-expansion-2026-10-03.yaml).
 Local `type: file` rule providers now accept a defined YAML/text domain/ipcidr/classical
 subset. Paths are relative to the application data directory (Linux defaults to

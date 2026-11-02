@@ -2732,7 +2732,7 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
-    if (argc == 7 && std::string_view(argv[1]) == "--proxy-provider-runtime-fixture") {
+    if ((argc == 7 || argc == 8) && std::string_view(argv[1]) == "--proxy-provider-runtime-fixture") {
         const std::filesystem::path root(argv[2]);
         std::filesystem::create_directories(root);
         singbox::CompileOptions options;
@@ -2741,17 +2741,33 @@ int main(int argc, char** argv) {
         options.nativeControllerPort = std::stoi(argv[5]);
         options.secret = "test-native-secret";
         options.proxyProviderCacheDir = (root / "cache").string();
-        options.profileYaml = R"yaml(
-proxy-providers:
-  remote: {type: http, url: 'https://example.test/nodes.yaml'}
-proxy-groups:
-  - {name: Proxy, type: select, use: [remote]}
-)yaml";
+        options.ruleProviderDir = root.string();
+        const std::string kind = argc == 8 ? argv[7] : "http";
+        const bool automatic = kind.ends_with("-urltest");
+        const std::string filter = automatic ? "remote-node|dead-node" : "remote-node";
+        std::string nodes = automatic
+            ? "  - {name: dead-node, type: socks5, server: 127.0.0.1, port: 9}\n" : "";
+        nodes += std::format("  - {{name: remote-node, type: socks5, server: 127.0.0.1, port: {}}}\n", argv[6]);
+        nodes += "  - {name: filtered-out, type: socks5, server: 127.0.0.1, port: 9}\n";
+        const std::string body = "proxies:\n" + nodes;
+        options.profileYaml = "proxy-providers:\n";
+        if (kind.starts_with("file")) {
+            std::ofstream(root / "nodes.yaml") << body;
+            options.profileYaml += "  remote: {type: file, path: nodes.yaml, filter: '" + filter + "'}\n";
+        } else if (kind.starts_with("inline")) {
+            options.profileYaml += "  remote:\n    type: inline\n    filter: '" + filter + "'\n    payload:\n";
+            std::istringstream lines(nodes);
+            for (std::string line; std::getline(lines, line);) options.profileYaml += "    " + line + "\n";
+        } else {
+            options.profileYaml += "  remote: {type: http, url: 'https://example.test/nodes.yaml', filter: '" + filter + "'}\n";
+        }
+        options.profileYaml += automatic
+            ? "proxy-groups:\n  - {name: Proxy, type: url-test, use: [remote], url: 'http://127.0.0.1/provider-probe', interval: 1, tolerance: 1}\n"
+            : "proxy-groups:\n  - {name: Proxy, type: select, use: [remote]}\n";
+        options.profileYaml += "rules: ['MATCH,Proxy']\n";
         rule_provider_cache::Operations operations;
         operations.fetchProxy = [&](const auto&, const auto& file, std::string&) {
-            std::ofstream(file, std::ios::binary | std::ios::trunc)
-                << "proxies:\n  - {name: remote-node, type: socks5, server: 127.0.0.1, port: "
-                << argv[6] << "}\n";
+            std::ofstream(file, std::ios::binary | std::ios::trunc) << body;
             return true;
         };
         operations.check = [](const auto&, const auto& result, std::string&) {
@@ -3768,7 +3784,7 @@ proxies:
         body = "proxies:\n  - {name: remote-c, type: socks5, server: 127.0.0.1, port: 1082}\n";
         auto forced = provider;
         forced.proxyProviderContents.clear();
-        forced.forceProxyProviderRefresh = true;
+        forced.forceProviderRefreshSources = {""};
         singbox::CompileResult forcedResult;
         check(rule_provider_cache::Prepare(forced, operations, forcedResult, error) &&
                   fetches == 2 && commits == 2 &&
@@ -3780,14 +3796,14 @@ proxies:
         };
         auto failed = forced;
         failed.proxyProviderContents.clear();
-        failed.forceProxyProviderRefresh = true;
+        failed.forceProviderRefreshSources = {""};
         singbox::CompileResult failedResult;
         check(!rule_provider_cache::Prepare(failed, operations, failedResult, error) &&
                   commits == 2 && checks == 3,
               "手动刷新失败不提交新缓存或进入完整检查");
         auto offline = forced;
         offline.proxyProviderContents.clear();
-        offline.forceProxyProviderRefresh = false;
+        offline.forceProviderRefreshSources.clear();
         for (const auto& entry : std::filesystem::directory_iterator(cache.path)) {
             if (entry.path().extension() == ".cache")
                 std::filesystem::last_write_time(entry.path(),
@@ -3805,7 +3821,7 @@ proxies:
         auto rejected = provider;
         rejected.proxyProviderCacheDir = rejectedCache.path.string();
         rejected.proxyProviderContents.clear();
-        rejected.forceProxyProviderRefresh = true;
+        rejected.forceProviderRefreshSources = {""};
         operations.fetchProxy = [&](const auto&, const auto& file, std::string&) {
             std::ofstream(file, std::ios::binary | std::ios::trunc) << body;
             return true;
@@ -3836,6 +3852,96 @@ proxy-groups:
                   json::parse(compiled.json)["outbounds"].back()["outbounds"] ==
                       json::array({"a-node", "z-node"}),
               "include-all-providers 按 provider 名称排序展开");
+        const auto compileBodies = [](singbox::CompileOptions options,
+                const std::map<std::string, std::string>& bodies) {
+            const auto discovered = singbox::compileConfig(options);
+            for (const auto& resource : discovered.httpProxyProviders)
+                options.proxyProviderContents[resource.cacheKey] = bodies.at(resource.name);
+            return singbox::compileConfig(options);
+        };
+        const auto nodeText = [](std::string_view name, std::string_view type = "socks5") {
+            if (type == "ss")
+                return std::format("  - {{name: {}, type: ss, server: 127.0.0.1, port: 1080, cipher: aes-256-gcm, password: x}}\n", name);
+            return std::format("  - {{name: {}, type: {}, server: 127.0.0.1, port: 1080}}\n", name, type);
+        };
+        singbox::CompileOptions filtered;
+        filtered.profileYaml = R"yaml(
+proxy-providers:
+  remote: {type: http, url: 'https://example.test/nodes.yaml', filter: '(?i)hk|hongkong', exclude-filter: 'vip', exclude-type: 'ss'}
+proxy-groups:
+  - {name: Proxy, type: select, use: [remote]}
+)yaml";
+        std::string body = "proxies:\n" + nodeText("hk-a") + nodeText("HK-vip") +
+            nodeText("hongkong-b", "ss") + nodeText("us-c") + nodeText("hk-d");
+        auto result = compileBodies(filtered, {{"remote", body}});
+        check(result.error.empty() &&
+                  json::parse(result.json)["outbounds"].back()["outbounds"] ==
+                      json::array({"hk-a", "hk-d"}),
+              "provider filter 大小写、排除名称及排除类型生效");
+        filtered.profileYaml = R"yaml(
+proxy-providers:
+  remote: {type: http, url: 'https://example.test/nodes.yaml', filter: 'us`hk'}
+proxy-groups:
+  - {name: Proxy, type: select, use: [remote]}
+)yaml";
+        result = compileBodies(filtered, {{"remote", body}});
+        check(result.error.empty() &&
+                  json::parse(result.json)["outbounds"].back()["outbounds"] ==
+                      json::array({"us-c", "hk-a", "hk-d"}),
+              "多个 provider filter 按表达式顺序取并集");
+        singbox::CompileOptions groupFiltered;
+        groupFiltered.profileYaml = R"yaml(
+proxies:
+  - {name: local, type: socks5, server: 127.0.0.1, port: 1080}
+proxy-providers:
+  z: {type: http, url: 'https://example.test/z.yaml'}
+  a: {type: http, url: 'https://example.test/a.yaml'}
+proxy-groups:
+  - {name: Proxy, type: select, proxies: [local], use: [z, a], filter: 'us`hk'}
+)yaml";
+        result = compileBodies(groupFiltered, {
+            {"z", "proxies:\n" + nodeText("z-hk") + nodeText("z-us")},
+            {"a", "proxies:\n" + nodeText("a-hk") + nodeText("a-us")}});
+        check(result.error.empty() &&
+                  json::parse(result.json)["outbounds"].back()["outbounds"] ==
+                      json::array({"local", "z-us", "a-us", "z-hk", "a-hk"}),
+              "组级多 provider 重排且显式 proxies 不参与筛选");
+        groupFiltered.profileYaml = R"yaml(
+proxy-providers:
+  remote: {type: http, url: 'https://example.test/nodes.yaml'}
+proxy-groups:
+  - {name: Proxy, type: select, use: [remote], exclude-type: 'Shadowsocks'}
+)yaml";
+        result = compileBodies(groupFiltered, {{"remote", "proxies:\n" +
+            nodeText("ss-node", "ss") + nodeText("socks-node")}});
+        check(result.error.empty() &&
+                  json::parse(result.json)["outbounds"].back()["outbounds"] ==
+                      json::array({"socks-node"}),
+              "组级 exclude-type 按 Mihomo 类型名大小写不敏感匹配");
+        groupFiltered.profileYaml = R"yaml(
+proxy-providers:
+  remote: {type: http, url: 'https://example.test/nodes.yaml', filter: 'nomatch'}
+proxy-groups:
+  - {name: Proxy, type: select, use: [remote]}
+)yaml";
+        check(!compileBodies(groupFiltered, {{"remote", body}}).error.empty(),
+              "provider 筛选空结果拒绝而不是 DIRECT");
+        groupFiltered.profileYaml = R"yaml(
+proxy-providers:
+  remote: {type: http, url: 'https://example.test/nodes.yaml'}
+proxy-groups:
+  - {name: Proxy, type: select, use: [remote], filter: '(?=hk)'}
+)yaml";
+        check(!compileBodies(groupFiltered, {{"remote", body}}).error.empty(),
+              "高级 .NET lookahead 不冒充受支持正则");
+        groupFiltered.profileYaml = R"yaml(
+proxy-providers:
+  remote: {type: http, url: 'https://example.test/nodes.yaml', filter: '(a+)+'}
+proxy-groups:
+  - {name: Proxy, type: select, use: [remote]}
+)yaml";
+        check(!compileBodies(groupFiltered, {{"remote", body}}).error.empty(),
+              "嵌套量词在筛选边界明确拒绝");
         singbox::CompileOptions nodeSubscription;
         nodeSubscription.profileYaml = R"yaml(
 proxy-providers:
@@ -3874,9 +3980,279 @@ proxy-providers:
 proxy-groups:
   - {name: Proxy, type: url-test, use: [remote]}
 )yaml";
-        check(!singbox::compileConfig(providers).error.empty(),
-              "provider-backed url-test 未实现时明确拒绝");
+        const auto automatic = compileBodies(providers, {{"remote", body}});
+        check(automatic.error.empty() && json::parse(automatic.json)["outbounds"].back()["type"] == "urltest" &&
+              json::parse(automatic.json)["outbounds"].back()["interval"] == "300s",
+              "HTTP provider-backed url-test 使用原生组和来源默认间隔");
     }
+
+    // Local/inline providers share strict conversion and filters with HTTP snapshots.
+    {
+        const RuleSetTestDirectory directory, outside;
+        const std::string nodes =
+            "proxies:\n  - {name: local-a, type: socks5, server: 127.0.0.1, port: 1080}\n"
+            "  - {name: local-b, type: socks5, server: 127.0.0.1, port: 1081}\n";
+        std::ofstream(directory.path / "nodes.yaml") << nodes;
+        std::ofstream(outside.path / "nodes.yaml") << nodes;
+        const auto compile = [&](const std::string& declaration, const std::string& group =
+                "{name: Proxy, type: select, use: [local]}") {
+            singbox::CompileOptions options;
+            options.ruleProviderDir = directory.path.string();
+            options.profileYaml = "proxy-providers:\n  local: " + declaration +
+                "\nproxy-groups:\n  - " + group + "\nrules: ['MATCH,Proxy']\n";
+            return singbox::compileConfig(options);
+        };
+        const auto rejects = [&](const std::string& declaration, const char* message) {
+            const auto result = compile(declaration);
+            check(!result.error.empty() && result.json.empty() &&
+                  std::ranges::any_of(result.fidelity, [](const auto& note) {
+                      return note.level == singbox::Fidelity::Unsupported;
+                  }), message);
+        };
+        auto result = compile("{type: file, path: nodes.yaml, filter: 'local-b'}");
+        check(result.error.empty() && result.httpProxyProviders.empty() &&
+              json::parse(result.json)["outbounds"].back()["outbounds"] == json::array({"local-b"}) &&
+              std::ranges::any_of(result.fidelity, [](const auto& note) {
+                  return note.level == singbox::Fidelity::Approx && note.detail.find("静态快照") != std::string::npos;
+              }), "file provider 只读根内快照，完整执行筛选并记缺少监听的近似");
+        const std::string inlineSource = "{type: inline, payload: ["
+            "{name: inline-a, type: socks5, server: 127.0.0.1, port: 1082},"
+            "{name: inline-b, type: socks5, server: 127.0.0.1, port: 1083}]}";
+        result = compile(inlineSource);
+        check(result.error.empty() && result.httpProxyProviders.empty() &&
+              json::parse(result.json)["outbounds"].back()["outbounds"] == json::array({"inline-a", "inline-b"}),
+              "inline payload 保留节点声明顺序，不产生下载请求");
+        rejects("{type: file, path: '../nodes.yaml'}", "file provider 拒绝父路径跳转");
+        rejects("{type: file, path: '" + (outside.path / "nodes.yaml").string() + "'}",
+                "file provider 拒绝绝对路径");
+        rejects("{type: file, path: missing.yaml}", "file provider 缺文件拒绝整份候选");
+        rejects("{type: file, path: .}", "file provider 拒绝目录");
+        rejects("{type: file, path: nodes.yaml, url: 'https://example.test/ignored'}",
+                "file provider 不忽略不适用下载字段");
+        rejects("{type: file, path: nodes.yaml, filter: no-match}", "file provider 筛选空结果不补 DIRECT");
+        std::ofstream(directory.path / "multiple.yaml") << nodes << "---\n" << nodes;
+        rejects("{type: file, path: multiple.yaml}", "file provider 多文档不只读首份");
+        std::ofstream(directory.path / "duplicate-field.yaml") << nodes << nodes;
+        rejects("{type: file, path: duplicate-field.yaml}", "file provider 重复 proxies 字段拒绝");
+        rejects("{type: inline, payload: []}", "inline provider 空 payload 拒绝");
+        rejects("{type: inline, payload: [oops]}", "inline provider 非对象节点拒绝");
+        rejects("{type: inline, payload: [{name: broken, type: unsupported}]}\n",
+                "inline provider 未支持节点拒绝完整候选");
+        rejects("{type: inline, payload: [{name: duplicate, type: socks5, server: a, port: 1},"
+                "{name: duplicate, type: socks5, server: b, port: 2}]}", "inline provider 重名拒绝");
+        std::ofstream(directory.path / "oversize.yaml") << std::string(8 * 1024 * 1024 + 1, 'x');
+        rejects("{type: file, path: oversize.yaml}", "file provider 超过 8 MiB 拒绝");
+#ifndef _WIN32
+        std::filesystem::create_symlink(outside.path / "nodes.yaml", directory.path / "escape.yaml");
+        rejects("{type: file, path: escape.yaml}", "file provider 符号链接逃逸拒绝");
+#endif
+        singbox::CompileOptions noRoot;
+        noRoot.profileYaml = "proxy-providers: {local: {type: file, path: nodes.yaml}}\n";
+        check(!singbox::compileConfig(noRoot).error.empty(), "file provider 无显式文件根拒绝");
+        result = compile("{type: file, path: nodes.yaml}",
+            "{name: Proxy, type: url-test, use: [local], url: 'http://example.test/probe', interval: 17, tolerance: 9}");
+        auto group = json::parse(result.json)["outbounds"].back();
+        check(result.error.empty() && group["type"] == "urltest" && group["url"] == "http://example.test/probe" &&
+              group["interval"] == "17s" && group["tolerance"] == 9 &&
+              group["outbounds"] == json::array({"local-a", "local-b"}),
+              "provider url-test 原样保留 URL、间隔、容差及展开顺序");
+        result = compile("{type: file, path: nodes.yaml, health-check: {enable: false, url: 'http://example.test/inherited'}}",
+            "{name: Proxy, type: url-test, use: [local]}");
+        group = json::parse(result.json)["outbounds"].back();
+        check(result.error.empty() && group["url"] == "http://example.test/inherited" && group["interval"] == "300s",
+              "provider 测速组继承首个检查 URL，并保留 Mihomo 的 300 秒默认间隔");
+        result = compile(inlineSource, "{name: Proxy, type: url-test, use: [local], interval: 0, filter: inline-b}");
+        group = json::parse(result.json)["outbounds"].back();
+        check(result.error.empty() && group["interval"] == "300s" &&
+              group["outbounds"] == json::array({"inline-b"}) &&
+              std::ranges::none_of(result.fidelity, [](const auto& note) {
+                  return note.scope == singbox::FidelityScope::Group && note.detail.find("filter 未映射") != std::string::npos;
+              }), "inline url-test 执行组筛选，interval 0 使用来源默认值且不谎报筛选忽略");
+        for (const auto interval : {"-1", "bad", "[1]", "2147483648"}) {
+            result = compile(inlineSource, std::format("{{name: Proxy, type: url-test, use: [local], interval: {}}}", interval));
+            check(!result.error.empty() && result.json.empty(), "provider 测速组拒绝无效间隔");
+        }
+        rejects("{type: inline, payload: [{name: a, type: socks5, server: a, port: 1}], health-check: {enable: true}}",
+                "inline provider 启用的独立健康检查仍明确拒绝");
+        singbox::CompileOptions mixed;
+        mixed.ruleProviderDir = directory.path.string();
+        mixed.profileYaml = "proxy-providers:\n  z: {type: file, path: nodes.yaml}\n"
+            "  a: " + inlineSource + "\n  m: {type: http, url: 'https://example.test/nodes'}\n"
+            "proxy-groups:\n  - {name: Proxy, type: select, include-all-providers: true}\n";
+        const auto discovery = singbox::compileConfig(mixed);
+        check(discovery.httpProxyProviders.size() == 1, "混合本地集合发现唯一 HTTP 下载需求");
+        for (const auto& resource : discovery.httpProxyProviders)
+            mixed.proxyProviderContents[resource.cacheKey] =
+                "proxies: [{name: http-node, type: socks5, server: localhost, port: 1084}]\n";
+        result = singbox::compileConfig(mixed);
+        check(result.error.empty() && json::parse(result.json)["outbounds"].back()["outbounds"] ==
+              json::array({"inline-a", "inline-b", "http-node", "local-a", "local-b"}),
+              "HTTP/file/inline 混合按集合名称排序并保留各集合节点顺序");
+        std::ifstream original(directory.path / "nodes.yaml");
+        check(std::string(std::istreambuf_iterator<char>(original), {}) == nodes,
+              "所有本地 provider 编译及失败路径保留原文件");
+    }
+
+    // Discover every provider frontier before committing either cache family.
+    {
+        const RuleSetTestDirectory directory;
+        singbox::CompileOptions base;
+        base.proxyProviderCacheDir = (directory.path / "proxies").string();
+        base.ruleProviderCacheDir = (directory.path / "rules").string();
+        base.profileYaml = R"yaml(
+proxy-providers:
+  a: {type: http, url: 'https://example.test/a', interval: 3600}
+  b: {type: http, url: 'https://example.test/b', interval: 3600}
+  c: {type: http, url: 'https://example.test/c', interval: 3600}
+  unused: {type: http, url: 'https://example.test/unused'}
+proxy-groups:
+  - {name: First, type: select, use: [a, b]}
+  - {name: Last, type: select, use: [c]}
+rule-providers:
+  sites: {type: http, behavior: domain, url: 'https://example.test/sites', interval: 3600}
+rules: ['RULE-SET,sites,Last', 'MATCH,First']
+)yaml";
+        std::set<std::string> fetched;
+        unsigned checks = 0, commits = 0, proxyFetches = 0, ruleFetches = 0;
+        std::string revision, failMode;
+        rule_provider_cache::Operations operations;
+        operations.fetchProxy = [&](const auto& resource, const auto& file, std::string& reason) {
+            ++proxyFetches;
+            fetched.insert(resource.name);
+            if (failMode == "proxy" && resource.name == "b") { reason = "proxy fixture offline"; return false; }
+            std::ofstream(file) << std::format("proxies: [{{name: node-{}{}, type: socks5, server: 127.0.0.1, port: 9}}]\n", resource.name, revision);
+            return true;
+        };
+        operations.fetch = [&](const auto& resource, const auto& file, std::string& reason) {
+            ++ruleFetches;
+            fetched.insert(resource.name);
+            if (failMode == "rule") { reason = "rule fixture offline"; return false; }
+            std::ofstream(file) << "payload: [provider" << revision << ".test]\n";
+            return true;
+        };
+        operations.check = [&](const auto&, const auto& result, std::string& reason) {
+            ++checks;
+            check(commits == 0, "所有分阶段 provider 下载在完整检查前均不得提交");
+            if (failMode == "check") { reason = "candidate fixture rejected"; return false; }
+            return result.error.empty() && !result.json.empty();
+        };
+        operations.commit = [&](const auto& from, const auto& to, std::string&) {
+            ++commits;
+            std::filesystem::rename(from, to);
+            return true;
+        };
+        auto candidate = base;
+        singbox::CompileResult result;
+        std::string error;
+        const bool prepared = rule_provider_cache::Prepare(candidate, operations, result, error);
+        check(prepared && fetched == std::set<std::string>{"a", "b", "c", "sites"} && checks == 1 && commits == 4 && proxyFetches == 3 && ruleFetches == 1,
+              "自动下载跨组全部代理集合及随后发现的规则集合，不漏后续组、不下载未引用集合");
+        if (prepared) {
+            check(std::ranges::all_of(result.httpRuleProviders, [&](const auto& resource) {
+                return std::filesystem::exists(std::filesystem::path(base.ruleProviderCacheDir) / (resource.cacheKey + ".cache"));
+            }), "代理准备后才发现的规则缓存提交到规则目录，不能混入代理目录");
+            const auto before = fetched;
+            checks = commits = 0;
+            auto warm = base;
+            check(rule_provider_cache::Prepare(warm, operations, result, error) && fetched == before &&
+                  checks == 1 && commits == 0 && proxyFetches == 3 && ruleFetches == 1, "重新准备多 provider 订阅复用两类有效缓存");
+            revision = "-v2";
+            checks = commits = 0;
+            auto forced = candidate; // Includes previously prepared immutable raw snapshots.
+            forced.forceProviderRefreshSources = {""};
+            check(rule_provider_cache::Prepare(forced, operations, result, error) &&
+                  checks == 1 && commits == 4 && proxyFetches == 6 && ruleFetches == 2 &&
+                  result.json.find("node-a-v2") != std::string::npos &&
+                  result.json.find("provider-v2.test") != std::string::npos,
+                  "手动刷新绕过未到期缓存和旧 raw 快照，规则与代理集合都检查更新");
+            const auto snapshot = [&] {
+                std::map<std::string, std::string> files;
+                for (const auto& file : std::filesystem::recursive_directory_iterator(directory.path)) {
+                    if (file.path().extension() != ".cache") continue;
+                    std::ifstream input(file.path(), std::ios::binary);
+                    files[file.path().string()] = std::string(std::istreambuf_iterator<char>(input), {});
+                }
+                return files;
+            };
+            const auto previous = snapshot();
+            revision = "-v3";
+            for (const auto* failure : {"proxy", "rule", "check"}) {
+                failMode = failure;
+                checks = commits = 0;
+                auto rejected = base;
+                rejected.forceProviderRefreshSources = {""};
+                check(!rule_provider_cache::Prepare(rejected, operations, result, error) &&
+                      commits == 0 && snapshot() == previous && rejected.proxyProviderContents.empty() &&
+                      rejected.ruleProviderContents.empty(),
+                      "任一代理/规则下载或完整候选检查失败，所有旧缓存和调用方快照均保留");
+            }
+            failMode.clear();
+            const auto declared = singbox::compileConfig(base);
+            for (const auto& resource : declared.httpProxyProviders) {
+                if (resource.name != "a") continue;
+                const auto path = std::filesystem::path(base.proxyProviderCacheDir) / (resource.cacheKey + ".cache");
+                const std::string futureImage = "clash-flux-proxy-provider-v999\n" + resource.identity + "\nfuture body";
+                std::ofstream(path, std::ios::binary | std::ios::trunc) << futureImage;
+                const auto protectedFiles = snapshot();
+                const auto before = proxyFetches;
+                auto future = base;
+                checks = commits = 0;
+                check(!rule_provider_cache::Prepare(future, operations, result, error) &&
+                      snapshot() == protectedFiles && commits == 0 && proxyFetches == before,
+                      "未知代理缓存版本明确拒绝，不重新下载覆盖已有文件");
+            }
+        }
+    }
+
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+    {
+        const RuleSetTestDirectory directory;
+        singbox::CompileOptions sources;
+        sources.mainConnectionId = "main";
+        sources.profileYaml = "rules: ['MATCH,DIRECT']\n";
+        sources.proxyProviderCacheDir = directory.path.string();
+        for (const auto* id : {"side-one", "side-two"}) {
+            sources.auxiliarySources.push_back({id, id,
+                "proxy-providers:\n  remote: {type: http, url: 'https://example.test/nodes'}\n"
+                "proxy-groups:\n  - {name: Proxy, type: select, use: [remote]}\nrules: ['MATCH,Proxy']\n"});
+            vpn::RouteRule rule;
+            rule.id = id; rule.connectionId = id; rule.pattern = std::string(id) + ".test";
+            rule.match = vpn::MatchKind::ExactDomain;
+            sources.globalRules.push_back(rule);
+        }
+        std::set<std::string> fetched;
+        unsigned commits = 0;
+        rule_provider_cache::Operations operations;
+        operations.fetchProxy = [&](const auto& resource, const auto& file, std::string&) {
+            fetched.insert(resource.sourceId);
+            std::ofstream(file) << "proxies: [{name: same-node, type: socks5, server: 127.0.0.1, port: 9}]\n";
+            return true;
+        };
+        operations.check = [&](const auto&, const auto& result, std::string&) {
+            check(commits == 0, "两个次来源的 provider 都保留到完整检查后才提交");
+            return result.error.empty() && !result.json.empty();
+        };
+        operations.commit = [&](const auto& from, const auto& to, std::string&) {
+            ++commits; std::filesystem::rename(from, to); return true;
+        };
+        singbox::CompileResult result;
+        std::string error;
+        check(rule_provider_cache::Prepare(sources, operations, result, error) &&
+              fetched == std::set<std::string>{"side-one", "side-two"} && commits == 2 &&
+              sources.proxyProviderContents.size() == 2 && result.httpProxyProviders.size() == 2,
+              "桌面次来源透传 provider 依赖，同名声明按来源隔离并全部自动准备");
+        // A manual update of one source must not force its siblings.
+        const auto beforeScoped = fetched;
+        fetched.clear();
+        commits = 0;
+        auto scoped = sources; // Includes immutable raw snapshots from the first pass.
+        scoped.forceProviderRefreshSources = {"side-one"};
+        check(rule_provider_cache::Prepare(scoped, operations, result, error) &&
+              fetched == std::set<std::string>{"side-one"} && commits == 1,
+              "手动更新只强刷本次来源的 provider，不扩大到无关次来源");
+        fetched = beforeScoped;
+    }
+#endif
 
     // ---- 空订阅最小配置 -------------------------------------------------------
     options.profileYaml.clear();

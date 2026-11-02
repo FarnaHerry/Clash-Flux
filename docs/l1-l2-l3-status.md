@@ -1,5 +1,225 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-02：v0.3.92 发布准备
+
+桌面版本 `0.3.92`，Android `versionCode=170` / `versionName=0.3.92`；发布说明见
+[v0.3.92](releases/v0.3.92.md)。内容覆盖 provider 下载/刷新意图、file/inline/筛选/url-test、
+宽屏添加弹窗与二维码滚动、Android 待命删除。
+
+实际通过：`cmake --build build --target clash-flux`、`./run.sh --version`（v0.3.92）、
+`git diff --check`；`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|singbox|proxy_provider_runtime|persistence|rule_provider_download|group_expansion_runtime)$'`
+6/6；`python3 tests/test_profile_selection_runtime.py build/clash-flux`。
+Android `./gradlew :app:assembleDebug` 通过，`aapt dump badging` 确认 versionCode=170、
+versionName=0.3.92。未运行完整 `clashflux-required` 门禁，未做 Android 真机、正式签名覆盖
+安装或 Windows/macOS 实机验收；Tag 触发的 CI 与发布产物另行核对。
+
+## 2026-11-02：Provider 更新机制上游复核（研究）
+
+快照：`9266acf` 加当前工作区。已核对 Clash Verge Rev v2.5.8、Mihomo
+`3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8` 和应用固定 sing-box v1.14.4 的源码。
+连接复用、初始化并发与运行期刷新不能混为一谈；缓存优先、独立资源更新周期、
+正文未变跳过处理和候选复用，是当前更明确的优化方向。
+源码依据、版本边界与执行顺序见 [上游复核](provider-upstream-review.md)。
+本轮只增加研究文档，未实现调度或连接池优化，未做性能对照与平台运行验收。
+实际基础检查：`cmake --build build --target clash-flux`、`./run.sh --version`（v0.3.91）、
+`git diff --check`；未重跑功能测试、未提交或发布。
+
+## 2026-11-02：Provider 更新意图与候选检查复用
+
+快照：`9266acf` 加当前工作区。按 [上游复核](provider-upstream-review.md) 的第 1、2 项执行：
+
+- 手动订阅更新只把本次来源 ID 加入 `forceProviderRefreshSources`；自动更新和导入不再强刷。
+  代理/规则缓存按来源匹配强刷集合，其他来源和未到 interval 的资源继续复用已验证缓存。
+- 代理与规则缓存准备已通过的最终候选检查由调用方复用；selector 投影或 GEO 重编译改变
+  最终字节时仍重新检查，未准备 provider 的普通配置继续由调用方检查。
+- 未实现独立 provider 调度器、同资源在途合并、跨更新周期 Transport/easy 复用或多文件
+  崩溃事务；这些仍需单独设计与测量，不能据本轮改动宣称完成。
+
+实际通过：`cmake --build build --target clash-flux`、`cmake --build build --target test_singbox`、
+`./run.sh --version`（v0.3.91）、`git diff --check`。
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|singbox|proxy_provider_runtime|persistence)$'`
+4/4；`ctest ... -R '^(rule_provider_download|group_expansion_runtime)$'` 2/2；
+`python3 tests/test_profile_selection_runtime.py build/clash-flux` 通过（手动强刷、失败留旧、
+停止主订阅删除）。新增 singbox 回归证明手动强刷只命中本次来源，其他次来源不重新下载。
+未做 GUI、公网、Android 真机或 Windows/macOS 实机验收，未重跑完整门禁，未提交或发布。
+
+## 2026-11-02：修复添加弹窗 Environment 挂载崩溃
+
+快照：`9266acf` 加当前未提交工作区。宽屏添加弹窗将环境节点传给 `DialogCard`，
+旧组件直接给传入节点添加绘制/布局修饰，挂载时触发
+`HuxerUI Environment node cannot declare view behavior`。将生产组件拆为独立编译单元，
+由自己的 Column 承载表面、圆角和内边距，内容保留原有环境与导航；Android Legacy
+源码复制及 UI codegen 两份清单同步加入该单元。
+
+新增生产 `DialogCard` 的环境加 NavigationStack 回归：修复前 page_transition 在 0.19 秒内
+以相同异常终止，修复后验证环境继承、打开子页、返回和关闭，通过 page_transition /
+ui_resources 2/2。实际命令：`cmake --build build --target clash-flux test_page_transition`、
+`./run.sh --version`（v0.3.91）、`git diff --check`，以及
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`。
+Android 从 platform/android 执行
+`./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug` 通过，五项 JVM 回归通过。
+
+Linux 实际 GUI 使用 bwrap 隔离 XDG_DATA_HOME、服务 socket 与网络；已检查应用首帧、
+订阅页、宽屏添加弹窗、URL 子弹窗及取消、PPTP 子表单，未出现异常；子页返回和关闭
+另由上述生产组件回归覆盖。
+隔离过程中没有导入或编辑用户订阅，也不连接真实服务。未做手机真机、扫码/文件选择、
+实际导入、Windows/macOS 实机或完整门禁验收；未提交或发布。
+
+## 2026-11-02：订阅表单与宽屏添加入口
+
+快照：`9266acf` 加当前未提交工作区。共用订阅信息表单将 HTTP 超时和更新间隔
+拆为各占一行；Medium/Expanded 的添加入口改用弹窗，保留二维码、文件、URL 和
+平台支持的 PPTP，子表单使用弹窗自己的导航栈，成功导入后关闭。Compact 保留页面
+导航；二维码内容可滚动，避免弹窗高度不足时裁掉反馈或重试按钮。
+
+实际通过：`cmake --build build --target clash-flux test_page_transition`（含 HuxerUI codegen）、
+`./run.sh --version`（v0.3.91）、`git diff --check`；
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+2/2。Android 在 platform/android 执行
+`./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug` 通过，依赖执行的
+五项 JVM 回归通过。未进行本轮弹窗 GUI 点击、扫码或手机真机验收，未重跑完整门禁。
+现有服务和用户订阅未改动；未提交或发布。
+
+## 2026-11-02：真实多 provider 订阅隔离验证
+
+快照：`9266acf` 加当前工作区；用户提供的订阅 URL 和原文未写入仓库。临时目录使用独立
+APPDATA/XDG_DATA_HOME，通过生产 CLI `profile import <用户链接> isolated-provider-check`
+执行真实下载、转换和固定内核候选校验，完成后自动移除临时数据库及文件，不修改现有订阅。
+
+默认 `clash-flux/0.1` UA 返回 HTTP 200、7,170 字节。配置含 3 节点、2 组、11 个
+rule-provider，proxy-provider 为 0；规则集合为 9 个 domain/MRS、1 个 ipcidr/MRS、
+1 个 classical/text。首次导入退出码 0，约 10.48 秒；实际生成 11 份规则缓存和 2 份
+额外 ASN 依赖缓存，共约 648,010 字节，没有 .stage-* 遗留，临时记录 selected=0。
+重复隔离导入同样成功，并单独核对上述缓存身份/格式。
+
+`profile check 1` 返回 1：账本仍有 10 项 Unsupported DNS，包括 FakeIP、cache-algorithm、
+direct-nameserver-follow-policy、prefer-h3、respect-rules、use-system-hosts 及 rule-set DNS
+策略；另有组/规则/DNS 近似。资源下载和候选检查通过，不代表订阅语义全部保真。
+没有测试配额耗尽节点的公网连通性、系统代理/TUN 或手机真机。
+
+## 2026-11-02：外部 provider 自动下载与刷新闭环
+
+代码快照：`9266acf` 加未提交工作区。HTTP rule-providers 下载规则，HTTP proxy-providers
+下载节点；file/inline 读取本地/内联内容。下载转换属于 L2 准备任务，产物仍是 sing-box
+原生 rule_set、outbound、selector/urltest。原生 remote rule_set 沿用内核自己的下载/更新能力。
+
+本轮用永久回归先复现多组 provider 漏下载，再修复：
+
+- 编译预先收集各组引用，任务按完整身份有界发现后续来源，直到全部需要的代理集合准备好；
+  桌面 Clash 次来源透传下载需求和已验证原文，保留 source ID，不扩展手机编排能力。
+- 初次编译被未准备代理组阻断时，后续出现的规则 provider 也继续下载；规则缓存始终写入
+  core/rule-providers，代理缓存写入 core/proxy-providers，不随暂存目录所在位置混用。
+- 手动更新订阅同时强制检查更新规则和代理 provider，缓存未到 interval、已有 raw 快照时也执行；
+  普通到期更新仍可在网络失败时沿用已验证缓存，显式强刷失败报错并保留旧数据。
+- 全部下载、转换和完整候选检查通过后才提交本轮缓存；代理/规则下载失败、检查拒绝、未知
+  代理缓存版本的隔离回归证明旧缓存和调用方快照保留。未增加多文件崩溃事务。
+- 外部资源页仍展示订阅声明，说明现已明确实际自动下载路径；三套字符串资源同步。
+
+实际通过：`cmake --build build --target clash-flux test_singbox test_rule_provider_download test_page_transition test_persistence`；
+`./run.sh --version`（v0.3.91）；`git diff --check`。最终定向
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(singbox|proxy_provider_runtime|group_expansion_runtime|rule_provider_download|ui_resources|persistence)$'`
+6/6；文案/codegen 后的 page_transition 另通过。`python3 tests/test_profile_selection_runtime.py build/clash-flux`
+通过真实 loopback HTTP、生产下载/候选/持久化入口验证三个代理集合加一个规则集合，
+覆盖手动强刷、后续下载失败保留全部旧缓存/原文、并发选择/编辑/删除及重开。
+Android `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug` 及依赖执行的五项 JVM 回归通过。
+未做 GUI 点击、手机真机、公网与 Windows/macOS 实机验收；未重跑完整门禁，之前记录的 libc++
+测试链接问题未处理。独立 provider 健康检查、override、指定代理下载、资源下载状态展示和
+Clash 快照的定时热更新仍未完成；不据此宣称完整 Mihomo provider 等价。未提交或发布。
+
+## 2026-11-02：L2 provider 后续交付（file/inline 与 url-test）
+
+用户已将当前优先级调整为先推进 L2 provider；下方主线复盘的其它队列继续保留，
+不以本轮交付替代全部 provider 生命周期或 L3 最终形态。代码快照为 `9266acf` 加未提交工作区。
+
+本批在已有 HTTP/filter 子集上接入 file/inline 代理集合，复用完整节点转换、筛选与组展开。
+file 使用显式只读数据根与 8 MiB 上限，拒绝越界、非普通文件、坏文档和重复 proxies，
+文件不写回、不监听，记静态快照近似；inline payload 限 1–4096 节点和 8 MiB。
+HTTP/file/inline 可混用，use 保序、include-all-providers 按名称排序，筛选空结果拒绝。
+
+provider-backed url-test 输出原生 urltest，显式 URL 优先、否则继承首个非空 provider 检查 URL；
+未设/0 间隔输出 300 秒，显式间隔/容差沿用转换。静态成员、调度和成功判定差异记 Group/Approx。
+启用的独立 provider 健康检查、非空 override、HTTP/file fallback payload、age、非 DIRECT
+下载及 include-all 仍拒绝；include-all-proxies 与 provider 混用也未开放。
+
+实际检查：`cmake --build build --target clash-flux test_singbox test_rule_provider_download test_routing test_persistence`、
+`./run.sh --version`（v0.3.91）、`git diff --check` 通过。
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(singbox|proxy_provider_runtime|group_expansion_runtime|rule_provider_download|routing|persistence)$'`
+6/6 通过。proxy_provider_runtime 用固定 sing-box 1.14.4 实际运行 HTTP/file/inline × selector/urltest
+六种配置；urltest 含不可用首节点，核对实际选中可用节点并成功 SOCKS 转发，file 原文保留。
+`python3 tests/test_profile_selection_runtime.py build/clash-flux` 通过，覆盖失败留旧和停止主订阅删除。
+Android 从 platform/android 运行 `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`
+通过（依赖执行的五项 JVM 回归也通过）。未做 Android 真机、Windows/macOS 实机和公网 provider
+验收；未重跑完整门禁，下节记录的 libc++ 链接阻塞仍未处理。未提交或发布。
+
+## 2026-11-02：主计划复盘与恢复顺序
+
+复核快照：`9266acf`（v0.3.91）加当前未提交工作区，包含 provider/select 筛选和
+Android 待命删除修复。以下是本次代码与本地门禁复核；下方按日期保留历史，
+不能把早期“待实现”逐条当成当前需求，也不能把已构建等同于已完成真机验收。
+
+主线继续按 2026-10-03 的决定推进 **M2 / L3 产品完善**；M1 / L2 按实际使用问题补齐，
+M3 原生能力分批接入。订阅保护、保真度和平台边界始终是门禁，不按版本数量计算完成率。
+
+| 主线 | 当前交付 | 仍未完成 |
+|---|---|---|
+| M1 / L1、L2 基础 | 固定 sing-box/libbox 1.14.4、服务/后台所有权、候选检查、保真度账本；常用协议/DNS/规则、HTTP rule-provider 和 proxy-provider select 子集及筛选 | 更多字段和 provider 语义、完整跨平台故障/真实流量验收；子集支持不等于完整 Clash 兼容 |
+| M2 / L3 常用产品 | 主/次来源首阶段、Clash 对象目录/搜索、个人规则独立保存、指定订阅 JSON 预览、只读规则页、全局规则管理、代理浏览/测速、连接/日志、待命控制和应用更新 | 连接到具体 L3 rule ID 的追溯、保真度定位动作、JSON 次来源/目录、跨来源链、完整稳定对象身份和恢复 |
+| M3 / 差异化 | OpenVPN 导入、PPTP 平台补充路径、Android 后台及应用路由基础、原生规则集数据/编译兼容 | 原生 DNS 和更多端点的一等连接对象、完整字段/启停/恢复及相应平台验收 |
+
+代码核对：`wire::Connection` 仍只有内核 rule/rulePayload，没有具体 L3 rule ID；
+`singbox_sources.inc` 仍明确拒绝原生 JSON 次来源。外部资源页目前识别/展示地址，
+没有下载/缓存状态。个人规则集手工管理入口已按后续产品决定移除，
+见[当前个人规则契约](subscription-personal-rules.md)；不能因旧 M3 清单写有管理界面就恢复它。
+手机继续单活动普通订阅，iOS 继续暂缓。
+
+复盘时的执行队列（后续用户已优先安排上方 L2 provider 批次，其余顺序继续保留）：
+
+| 顺序 | 交付 | 完成条件 |
+|---|---|---|
+| 0 | 解除必跑回归阻塞 | 修复或匹配本机工具链，构建 test_runtime_health；runtime_health 与 personal_rule_sets_runtime 实际执行通过，不能豁免或跳过换绿 |
+| 1 | L3 来源/规则追溯闭环 | 连接与已应用计划修订关联，能定位实际来源和明确可证明的规则身份；重名/重复条件/旧运行快照不猜测绑定，增加生产回归 |
+| 2 | 桌面编排下一阶段 | 分批交付 JSON 次来源与对象目录、显式跨来源链和稳定身份；每批证明引用隔离、无效目标处理与失败留旧，不一次性承诺任意 JSON 合并 |
+| 3 | 持久恢复与手机异步回滚 | 跨重开保留上一有效计划，覆盖 SQLite/文件/后台确认的中断与恢复，故障注入和平台记录齐备后再称完成 |
+| 4 | 原生能力产品化 | 按固定内核能力逐个建设 DNS/端点，字段、路由、状态、启停和恢复成套交付；不恢复已移除的资源库编辑入口 |
+
+本次全量构建 `cmake --build build` 仍失败于 test_runtime_health 的
+libc++ `__atomic_unique_lock::__set_locked_bit` 未定义符号；主应用构建与测试目标的状态分开记录。
+`ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required` 实际 25/27
+通过；runtime_health 缺少上述链接失败的可执行文件，personal_rule_sets_runtime 因依赖同一
+产物失败，两项都未完成运行验收。`cmake --build build --target clash-flux`、
+`./run.sh --version`（v0.3.91）、`git diff --check` 通过。Android 本次沿用下方待命删除条目
+明确记录的 Java/NDK 和 JVM 检查证据，没有重新声称真机通过，当前无已连接设备。未提交或发布。
+
+## 2026-11-02：Android 待命主订阅删除
+
+代码快照：`9266acf` 加本次未提交工作区。移动端首页停止 VPN 后会恢复 core-only libbox，
+此前删除保护仍把它当成活动代理。现复用统一待命判断和主订阅删除流程；Android 须有
+可用 Binder、VPN 明确停止且无待启用意图，删除前等待后台 STOP 确认。失败保留订阅，
+桌面仍清空为待命配置；已连接/连接中/未知 VPN 及其它来源引用继续受保护。
+
+实际通过：`cmake --build build --target clash-flux test_page_transition test_persistence test_singbox`；
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources|persistence|singbox|proxy_standby_runtime)$'`
+5/5；`python3 tests/test_profile_selection_runtime.py build/clash-flux`；
+`./run.sh --version`（v0.3.91）；`git diff --check`。`page_transition` 新增生产待命判断回归，
+覆盖 Android 保留本地监听、待启动意图、VPN 各态和 Binder 丢失。
+Android 从 `platform/android` 运行 `./gradlew :app:testRuntimeStartPolicy :app:testRuntimeModeReconciler :app:testVpnUptime :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`
+通过（含依赖执行的另外两项 JVM 回归）。ADB 无设备；未做 Android 真机删除/停核失败注入、
+桌面 GUI 或其它平台实机验收，未发布。
+
+## 2026-11-02：provider/select 筛选子集（后续工作区）
+
+上游 `dlclark/regexp2` 是 .NET 正则语义，项目没有兼容引擎；本批不新增依赖，只开放
+有边界的 ECMAScript 常见子集，高级 .NET 分组/转义和分组内量词明确拒绝。
+provider 在转换前按类型、排除表达式和 include 表达式顺序过滤；组级筛选只作用于
+provider 成员，多 provider 重排，显式 proxies 不受影响。筛选身份参与缓存键，空结果拒绝。
+
+`test_singbox` 覆盖大小写、alternation、多表达式顺序、provider/组两级排除、显式成员保护、
+非法表达式与空结果。`proxy_provider_runtime` 使用两个节点筛选一个，真实 sing-box 只让
+保留节点承接流量。完整桌面门禁除两个本机 libc++ stop-token 链接目标外，其余 25/25 通过；
+`runtime_health` 与 `personal_rule_sets_runtime` 仍未完成，不能记为全量通过。
+Android Legacy 补齐 `<regex>` 头和筛选片段重生成依赖，Debug Java/NDK/APK 及五项 JVM 回归通过。
+未做 Android 真机或 Windows/macOS 实机筛选验收，代码未提交/发布。
+
 ## 2026-11-02：v0.3.91 HTTP proxy-providers 子集
 
 实现 `src/singbox_proxy_provider.inc` 与 `src/proxy_provider_cache.cppm`：HTTP provider 使用
@@ -1718,7 +1938,10 @@ git diff --check
 没有在 Windows/macOS 编译或运行最新工作区，也没有安装本次 APK 进行 Android
 浏览器 intent、返回手势、VPN 重建验收。历史真机性能记录不等于本轮改动已实测。
 
-## 下一步交付与完成条件
+## 历史交付队列（2026-10-03）
+
+此表保留当时的计划；当前执行顺序以本文顶部 2026-11-02 主计划复盘为准，
+具体能力和已移除的产品入口以对应专题的最新契约为准。
 
 | 优先级 | 任务 | 可以标成完成的条件 |
 |---|---|---|

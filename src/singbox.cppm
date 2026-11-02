@@ -95,6 +95,7 @@ export struct HttpRuleProviderResource {
 
 export struct HttpProxyProviderResource {
     std::string name, sourceId, url, cachePathHint;
+    std::string filter, excludeFilter, excludeType;
     std::map<std::string, std::string> headers;
     std::string identity, cacheKey;
     std::uint64_t intervalSeconds = 0;
@@ -199,13 +200,15 @@ export struct CompileOptions {
     std::string ruleSetDir;                      // 非空时 GEOIP/GEOSITE .srs 本地命中即以
                                                  // local rule_set 生成（core_store
                                                  // 预取缓存目录；未命中回落 remote）
-    std::string ruleProviderDir;                 // type:file 只读根；仅允许根内相对路径，
+    std::string ruleProviderDir;                 // rule/proxy provider 的 type:file 共用只读根；仅允许根内相对路径，
                                                  // 编译为 inline 快照，不监听或写入文件
     std::string ruleProviderCacheDir;            // 应用自有 HTTP 缓存，与 file/GEO 分离
     std::map<std::string, std::string> ruleProviderContents; // 任务层准备的不可变 raw 快照
     std::string proxyProviderCacheDir;
     std::map<std::string, std::string> proxyProviderContents;
-    bool forceProxyProviderRefresh = false;
+    // Manual source updates force refresh only the providers declared by that
+    // source. Automatic updates leave this empty and respect each interval.
+    std::set<std::string> forceProviderRefreshSources;
     std::string mainSourceName;
     std::vector<ProfileSource> auxiliarySources; // 桌面：只由启用的显式规则引用
     std::uint64_t planRevision = 0;

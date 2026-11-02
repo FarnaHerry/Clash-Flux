@@ -28,6 +28,7 @@
 #include "home_mode_choices.h"
 #include "interaction_theme.h"
 #include "home_vpn_status.h"
+#include "../src/runtime_plan_state.h"
 #include "rule_target_picker.h"
 #include "log_actions.h"
 #include "filtered_indices.h"
@@ -5168,10 +5169,83 @@ void testHomeCardFlip() {
         }
     }
 }
+// Match the subscription modal's production surface/environment/navigation composition.
+struct DialogTestScope {
+    bool enabled = false;
+    static DialogTestScope Default() { return {}; }
+    bool operator==(const DialogTestScope&) const = default;
+};
+
+huxerui::View DialogSurfaceTestRoot() {
+    return huxerui::FlatTheme {huxerui::Scope([] {
+        const auto dialog = huxerui::UseDialog();
+        return huxerui::Button("Open subscription dialog").OnClick([dialog] {
+            dialog.Show([](huxerui::DialogContext context) {
+                return clashflux::ui::DialogCard(huxerui::ProvideEnvironment(DialogTestScope{true},
+                    huxerui::NavigationStack([context] {
+                        const auto navigation = huxerui::UseNavigation();
+                        const bool scoped = huxerui::UseEnvironment<DialogTestScope>().enabled;
+                        return huxerui::Column {
+                          huxerui::Text(scoped ? "Scoped add methods" : "Missing dialog scope"),
+                          huxerui::Button("Open child form").OnClick([navigation] {
+                              navigation.Push([navigation] {
+                                  return huxerui::Button("Back to methods").OnClick([navigation] {
+                                      static_cast<void>(navigation.Pop());
+                                  });
+                              });
+                          }),
+                          huxerui::Button("Close subscription dialog").OnClick([context] { context.Dismiss(); }),
+                        };
+                    }).With(huxerui::Frame{.width = 480.0F, .height = 520.0F})));
+            });
+        });
+    })};
+}
+
+void testDialogSurfaceEnvironment() {
+    const huxerui::Application application{DialogSurfaceTestRoot};
+    huxerui::testing::UiTest ui(application, {.viewport = {1080.0F, 720.0F}});
+    ui.PumpAndSettle();
+    ui.Find(UiSelector::Text("Open subscription dialog")).Tap(); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("Scoped add methods")).Exists(), "dialog preserves its content environment");
+    ui.Find(UiSelector::Text("Open child form")).Tap(); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("Back to methods")).Exists(), "dialog has its own child navigation");
+    ui.Find(UiSelector::Text("Back to methods")).Tap(); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("Scoped add methods")).Exists(), "child form returns to dialog methods");
+    ui.Find(UiSelector::Text("Close subscription dialog")).Tap(); ui.PumpAndSettle();
+    check(!ui.Find(UiSelector::Text("Scoped add methods")).Exists(), "dialog closes after child navigation");
+}
 } // namespace
 
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    testDialogSurfaceEnvironment();
+    {
+        enum class State { Stopped, Starting, Running, Failed };
+        struct Snapshot {
+            State state = State::Running;
+            bool proxyListening = true;
+            bool binderAvailable = true;
+        } snapshot;
+        using clashflux::runtime_plan::Standby;
+        check(!Standby(snapshot), "desktop listening core still protects the main profile");
+        check(Standby(snapshot, 0, false),
+              "Android core-only permits main profile removal even with local listeners");
+        snapshot.proxyListening = false;
+        check(Standby(snapshot), "desktop standby permits main profile removal");
+        for (int vpnState : {1, 2, 3, -1})
+            check(!Standby(snapshot, vpnState, false),
+                  "connecting, connected, failed or unknown VPN remains protected");
+        check(!Standby(snapshot, 0, true), "pending VPN intent remains protected");
+        snapshot.binderAvailable = false;
+        check(!Standby(snapshot, 0, false), "lost Binder cannot grant the standby deletion exception");
+        snapshot.binderAvailable = true;
+        for (State state : {State::Stopped, State::Starting, State::Failed}) {
+            snapshot.state = state;
+            check(!Standby(snapshot) && !Standby(snapshot, 0, false),
+                  "only a confirmed running core can be standby");
+        }
+    }
     {
         using namespace clashflux::ui;
         const auto same = ReadAppUpdate(R"({"tag_name":"v0.3.74","draft":false,"prerelease":false,"unknown":{"ok":true}})", "0.3.74");

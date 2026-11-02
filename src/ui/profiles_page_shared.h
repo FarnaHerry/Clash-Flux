@@ -223,7 +223,13 @@ huxerui::View ProfileAddMethodPage(
     ProfileCreateFields fields, huxerui::TaskScope tasks,
     FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
-    huxerui::NavigationController navigation);
+    huxerui::NavigationController navigation,
+    std::function<void()> close = {});
+huxerui::View ProfileAddDialog(
+    ProfileCreateFields fields, huxerui::TaskScope tasks,
+    FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    std::shared_ptr<AppHttpClient> http, bool pptp_supported,
+    std::function<void()> close);
 huxerui::View ProfileCreateMethodPage(
     ProfileAddMethod method, ProfileCreateFields fields,
     huxerui::TaskScope tasks, FluxToastHandle toast,

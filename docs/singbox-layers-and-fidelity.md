@@ -460,13 +460,32 @@ sing-box 1.14 另有：`openvpn-server`、`openconnect`、`wireguard`、`tailsca
 仍存在的成员；无效值或用于 urltest 时记 approx，不伪造手动锁定。缓存中已经保存
 的选择可能优先于初始 default，这不是一次强制切换命令。
 未映射的组字段逐字段记 `Group/Approx`，包括 lazy、timeout、expected-status、
-filter 与界面字段（下述展开子集的空筛选除外）。HTTP proxy-providers 已接入受限子集：
-内容为 Clash `proxies` 或现有节点订阅格式，select 组的 `use` 按声明顺序展开，
+filter 与界面字段（下述实际执行的筛选子集除外）。HTTP proxy-providers 已接入受限子集：
+内容为 Clash `proxies` 或现有节点订阅格式，select/url-test 组的 `use` 按声明顺序展开，
 `include-all-providers` 按 provider 名称排序；显式成员保持在前。下载默认 DIRECT，
 支持单值 headers、interval、size-limit 和应用自有验证缓存，完整候选检查后才提交快照。
 HTTP path 仅作缓存位置提示、默认 8 MiB 上限及静态展开记 approx。
-file/inline、非空筛选或 payload、启用的健康检查、provider-backed url-test、override、
-age 加密、非 DIRECT 下载和 include-all 尚未支持，相关候选记 Unsupported 并拒绝，
+依赖发现先收集各组的 HTTP 引用；后续次来源才显露的依赖继续按完整身份有界准备，
+未引用的普通代理集合不下载。桌面次来源透传下载声明和已验证原文快照，按 source ID 隔离。
+代理下载全部完成后，才准备完整编译显露的规则 provider；两类缓存各用自己的目录。
+用户手动更新订阅只强制检查更新该来源自己的代理与规则集合，未到 interval 也执行；
+订阅自动更新和其他来源不继承强刷，按各 provider 的 interval 复用已验证缓存。任一下载或
+完整候选检查失败都不提交本轮暂存缓存，保留旧订阅、缓存与运行计划。
+provider 与 select/url-test 组的 filter/exclude-filter/exclude-type 已接入常见子集：
+支持开头 `(?i)`、alternation、字符类、基础量词及反引号多表达式并集；provider 先排除类型/名称，
+再按表达式顺序取并集，组级多 provider 重排，显式 proxies 不受组筛选影响。空结果拒绝，
+不补 DIRECT。高级 .NET 分组/转义、分组内量词、超过 16 个表达式、512 字节表达式或
+1024 字节节点名会拒绝；不冒充完整 `dlclark/regexp2` 兼容。
+2026-11-02 起，file/inline 代理集合也接入同一转换和筛选：file 共用显式 `ruleProviderDir`
+只读根，拒绝绝对路径、父目录、越界符号链接、非普通文件及超过 8 MiB 的内容；不监听或写回，
+静态快照记 approx。inline 的 payload 必须为 1–4096 个节点，序列化后最多 8 MiB；
+HTTP/file 的非空 fallback payload、file/inline 的下载专用字段继续拒绝。多文档、重复 proxies、
+重名或未完整转换的节点拒绝整份候选；混合三种集合时仍按声明/名称规则展开。
+provider-backed url-test 映射原生 urltest，URL 优先取组配置，否则继承首个非空 provider
+health-check.url；未设或为 0 的组 interval 使用 300 秒，显式正间隔和容差沿用组转换。
+测速调度、成功判定与静态成员生命周期遵循 sing-box，组整体记 approx，不等同于独立
+provider 健康检查。后者即使组为 url-test 也必须保持 enable=false 或省略。
+启用的健康检查、非空 override、age 加密、非 DIRECT 下载和 include-all 尚未支持，相关候选记 Unsupported 并拒绝，
 不保留部分成员或退回 DIRECT。rule-providers 的 inline、本地 file 与 HTTP 直连子集见下文；
 未成功转换的声明不会被同名国内别名替换。
 
@@ -478,7 +497,7 @@ age 加密、非 DIRECT 下载和 include-all 尚未支持，相关候选记 Uns
 | 显式组成员/default-selected | 保留原顺序及前向组引用；selector default 可指向展开节点；urltest/仅测速 selector 都复用同一成员列表 |
 | 有被拒绝的节点 | 节点自身 Unsupported 不丢失，组另记 Approx 说明成员减少；不声称整个订阅全保真 |
 | false/no/0；空 filter/exclude-filter/exclude-type 字符串、use 空数组 | 关闭展开保留既有显式成员；空筛选/use 不影响合法展开 |
-| 非空筛选、include-all 或未接入的 provider 组合 | 整个候选 Unsupported 失败，不忽略筛选后扩大范围，不只提交部分集合；HTTP select use/include-all-providers 的受限子集见上 |
+| 非空筛选、include-all 或未接入的 provider 组合 | include-all-proxies 的这些组合仍 Unsupported 失败，不忽略筛选后扩大范围；HTTP/file/inline 的 select/url-test use/include-all-providers 子集见上 |
 | 非法布尔、重复声明、残缺/非数组 proxies、无可用成员 | Unsupported 并保留失败账本；不保留合法列表前缀，不隐式填 DIRECT；空组回退仍未接入 |
 | 依赖及次来源 | 展开后走原出站依赖图校验，detour/组循环拒绝；主/次来源分别收集后再命名空间化，导出闭包不会混入其它来源 |
 
@@ -491,6 +510,8 @@ age 加密、非 DIRECT 下载和 include-all 尚未支持，相关候选记 Uns
 [AllProxies 收集/排序](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/config/config.go)、
 [显式成员后追加](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outboundgroup/parser.go)
 与 [筛选语义](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outboundgroup/groupbase.go)。
+file/inline 声明依据同 revision 的 [provider parser](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/provider/parser.go)；
+测速只输出固定内核支持的 [URLTest 字段](https://sing-box.sagernet.org/configuration/outbound/urltest/)，运行回归使用项目固定的 1.14.4。
 固定 sing-box selector/urltest 使用原生 outbounds 数组；不向内核写 include-all 或筛选字段。
 样本见 [group-expansion-2026-10-03.yaml](examples/group-expansion-2026-10-03.yaml)。
 
@@ -740,7 +761,7 @@ Android 的根是应用私有数据目录，本批未提供复制/管理文件�
 | `url` | 仅 HTTP(S)，保持原文，不降级协议或证书校验；URL userinfo 鉴权未跨平台接入，拒绝而非丢凭据；无完整内容时拒绝候选 |
 | `proxy` | 缺省使用直连，显式仅支持 `DIRECT`；其它值整份 unsupported，不用当前 mixed-port 冒充指定出站 |
 | `interval` | 非负整数秒，缺省/0 只在无可用内容时下载；正值在应用配置时按自有缓存 mtime 检查到期 |
-| 更新生命周期 | approx；inline 快照不随后台计时器热更新，直连路径不等同于 Mihomo 缺省的路由选择 |
+| 更新生命周期 | approx；inline 快照不随后台计时器热更新，直连路径不等同于 Mihomo 缺省的路由选择；手动更新订阅强制远程检查，失败报错并保留旧内容 |
 | `size-limit` | 非负整数，0/缺省上限 8 MiB，正值只支持 ≤8 MiB；超限拒绝整份，不截断成可解析前缀（与 Mihomo LimitReader 不同，approx） |
 | `path` | 数据目录内的只读种子，仅在无可用自有缓存时尝试；下载写自有缓存，不覆盖 path（缓存布局差异记 approx） |
 | `header` 的单值普通请求头 | exact 子集；映射的每项须为一个非空 ASCII 字符串的数组，保留值/内部空格；名称按大小写无关处理；总量（名称+值+分隔符）≤16 KiB |
@@ -894,6 +915,9 @@ sing-box 侧可用但未映射：Android 应用选择入口、`user` / 更多逻
 
 2026-10-03 按用户意图转向 M2 产品完善；M1 继续按实际使用反馈补齐，订阅保护与保真度门禁不降低。
 首批已接入桌面 Clash 编排目标目录/搜索。未完成范围与验收见 [状态记录](l1-l2-l3-status.md)。
+2026-11-02 已按当前代码与后续产品决定重排执行队列，见该状态记录顶部“主计划复盘与恢复顺序”。
+旧表中的规则集管理界面不覆盖后续移除手工资源库编辑入口的决定，当前入口以
+[个人规则契约](subscription-personal-rules.md)为准。
 
 ## 8. 维护要求
 

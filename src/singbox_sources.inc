@@ -220,6 +220,11 @@ bool compileAuxiliarySources(Context& ctx) {
         catch (const std::exception& e) { part.result.error = e.what(); }
         ctx.result.fidelity.insert(ctx.result.fidelity.end(), part.result.fidelity.begin(), part.result.fidelity.end());
         ctx.result.warnings.insert(ctx.result.warnings.end(), part.result.warnings.begin(), part.result.warnings.end());
+        // Failed export compilation still carries download requirements. Keep
+        // their source identities and verified raw snapshots for preparation.
+        ctx.result.httpProxyProviders.insert(ctx.result.httpProxyProviders.end(),
+            part.result.httpProxyProviders.begin(), part.result.httpProxyProviders.end());
+        ctx.result.proxyProviderContents.merge(part.result.proxyProviderContents);
         if (!part.result.error.empty()) {
             ctx.result.error = "次来源「" + source.name + "」编译失败：" + part.result.error;
             return false;

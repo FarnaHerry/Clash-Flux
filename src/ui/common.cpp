@@ -1362,21 +1362,6 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 
 // 可选中卡片与分组选择器共用 selectable_tile.cpp。
 
-[[huxerui::composable]] huxerui::View DialogCard(huxerui::View content) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const IslandTheme islands = ResolveIslandTheme(theme);
-    huxerui::View card = content;
-    return std::move(card).With(
-        kPageTitlesInWindow ? ResolveFluxShadows(theme).dialog
-            : huxerui::Shadow{ThemeShadowColor(theme, 0.30F), {}, 28.0F, 2.0F},
-        huxerui::Background(islands.overlay),
-        huxerui::CornerRadius(islands.island_radius),
-        huxerui::Border(islands.outline_soft, kCardOutlineWidth),
-        huxerui::ClipChildren(),
-        huxerui::Padding(islands.island_padding));
-}
-
-
 // ---- 订阅列表：唯一来源（见 profiles_model.h）-------------------------------
 
 void ProfilesModel::PublishCached() {
