@@ -75,13 +75,18 @@ def main():
         for identity, content in sources.items():
             assert (profiles / f"selection-{identity}.yaml").read_bytes() == content
         latest = [b"# source-v2\nrules: ['MATCH,DIRECT']\n"]
+        provider_latest = [b"proxies:\n  - {name: remote-a, type: socks5, server: 127.0.0.1, port: 9}\n"]
         hold_response = threading.Event()
         request_started = threading.Event()
         release_response = threading.Event()
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                body = latest[0]
+                if self.path == "/provider" and self.headers.get_all("User-Agent") != ["provider-test/1"]:
+                    self.send_response(403)
+                    self.end_headers()
+                    return
+                body = provider_latest[0] if self.path == "/provider" else latest[0]
                 if hold_response.is_set():
                     request_started.set()
                     assert release_response.wait(30), "slow subscription fixture timed out"
@@ -133,6 +138,26 @@ def main():
                 assert db.execute("SELECT id FROM profiles WHERE selected=1").fetchall() == [(2,)]
                 assert db.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] == len(sources)
                 assert db.execute("SELECT error FROM profiles WHERE id=2").fetchone()[0] != ""
+            provider_source = (
+                "proxy-providers:\n"
+                f"  remote: {{type: http, url: 'http://127.0.0.1:{server.server_port}/provider', header: {{User-Agent: [provider-test/1]}}}}\n"
+                "proxy-groups:\n  - {name: Proxy, type: select, use: [remote]}\n"
+            ).encode()
+            latest[0] = provider_source
+            run("profile", "update", "2")
+            cache_files = list((core / "proxy-providers").glob("*.cache"))
+            assert len(cache_files) == 1
+            first_cache = cache_files[0].read_bytes()
+            provider_latest[0] = b"proxies:\n  - {name: remote-b, type: socks5, server: 127.0.0.1, port: 9}\n"
+            run("profile", "update", "2")
+            assert cache_files[0].read_bytes() != first_cache
+            second_cache = cache_files[0].read_bytes()
+            provider_latest[0] = b"proxies: [unterminated\n"
+            run("profile", "update", "2", expected=1)
+            assert cache_files[0].read_bytes() == second_cache
+            assert (profiles / "selection-2.yaml").read_bytes() == provider_source
+            latest[0] = previous_source
+            run("profile", "update", "2")
             # A slow download must leave the lifecycle available to read/check
             # another source. Its late row save must preserve a newer selection.
             hold_response.set()
@@ -190,8 +215,16 @@ def main():
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+        run("profile", "remove", "3")
+        run("profile", "remove", "1")
+        with closing(sqlite3.connect(database)) as db:
+            assert db.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] == 0
+            assert db.execute("SELECT COUNT(*) FROM profiles WHERE selected=1").fetchone()[0] == 0
+        assert not (profiles / "selection-1.yaml").exists()
+        assert not (profiles / "selection-3.yaml").exists()
+        assert config.read_bytes() == original_config, "stopped main deletion must not restart or rewrite the core"
         assert not list(core.glob("prepared-run-*")), "candidate staging must retire after success/failure"
-        print("profile_selection_runtime: ok (one candidate; failures preserve data; slow refresh permits another selection)")
+        print("profile_selection_runtime: ok (one candidate; failures preserve data; stopped main can be removed)")
 
 
 if __name__ == "__main__":

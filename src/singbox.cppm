@@ -93,7 +93,17 @@ export struct HttpRuleProviderResource {
     std::size_t maxBytes = 8 * 1024 * 1024;
 };
 
-// 订阅解析识别到的外部资源。当前只做清单识别，不下载、不改变编译/运行语义。
+export struct HttpProxyProviderResource {
+    std::string name, sourceId, url, cachePathHint;
+    std::map<std::string, std::string> headers;
+    std::string identity, cacheKey;
+    std::uint64_t intervalSeconds = 0;
+    std::size_t maxBytes = 8 * 1024 * 1024;
+    bool required = false;
+};
+
+// InspectExternalResources 只建立清单；该函数本身不下载或改变运行配置。
+// HTTP proxy-providers 的受限下载与展开由独立准备管线执行。
 export struct ExternalResource {
     std::string name;
     std::string url;
@@ -136,9 +146,11 @@ export struct CompileResult {
     std::vector<FidelityNote> fidelity;
     std::vector<RuleSetResource> ruleSetResources;
     std::vector<HttpRuleProviderResource> httpRuleProviders;
+    std::vector<HttpProxyProviderResource> httpProxyProviders;
     // Exact disk inputs successfully lowered in this compile. Already pinned
     // option bytes are not duplicated; preparation owns those snapshots.
     std::map<std::string, std::string> ruleProviderContents;
+    std::map<std::string, std::string> proxyProviderContents;
     unsigned ruleProviderConversionCacheHits = 0;
     std::vector<SourceObject> sourceObjects;
     std::vector<std::string> participatingSources;
@@ -191,6 +203,9 @@ export struct CompileOptions {
                                                  // 编译为 inline 快照，不监听或写入文件
     std::string ruleProviderCacheDir;            // 应用自有 HTTP 缓存，与 file/GEO 分离
     std::map<std::string, std::string> ruleProviderContents; // 任务层准备的不可变 raw 快照
+    std::string proxyProviderCacheDir;
+    std::map<std::string, std::string> proxyProviderContents;
+    bool forceProxyProviderRefresh = false;
     std::string mainSourceName;
     std::vector<ProfileSource> auxiliarySources; // 桌面：只由启用的显式规则引用
     std::uint64_t planRevision = 0;
@@ -219,6 +234,13 @@ export std::optional<std::string> ReadHttpRuleProviderSeed(const HttpRuleProvide
 export std::string HttpRuleProviderCacheImage(const HttpRuleProviderResource& resource,
     const std::string& content, const HttpCacheValidators& validators = {});
 export bool ValidateHttpRuleProvider(const HttpRuleProviderResource& resource,
+    const std::string& content, std::string& error);
+export std::optional<std::string> ReadHttpProxyProviderCache(
+    const HttpProxyProviderResource& resource, const std::filesystem::path& directory,
+    std::string& error);
+export std::string HttpProxyProviderCacheImage(const HttpProxyProviderResource& resource,
+    const std::string& content);
+export bool ValidateHttpProxyProvider(const HttpProxyProviderResource& resource,
     const std::string& content, std::string& error);
 
 // sing-box 二进制规则集（.srs）以 "SRS" 魔数开头。0 字节、被写入错误内容

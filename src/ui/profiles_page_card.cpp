@@ -367,8 +367,8 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
                                     [=] {
                                         context.Dismiss();
                                         action([=]() -> std::string {
-                                            if (store::coreStore().sourceParticipates(id))
-                                                return std::string{"该来源是主订阅、被路由引用或仍连接中；请先更换主订阅、解除规则引用并断开连接"};
+                                            if (store::coreStore().sourceDeletionProtected(id))
+                                                return std::string{"活动代理或未确认状态的主订阅、被路由引用或仍连接中的来源不能删除；请先停止内核或切换为待命，再解除其它引用"};
                                             if (nativeVpn) {
                                                 store::vpnStore().forgetPptp(id);
                                             }

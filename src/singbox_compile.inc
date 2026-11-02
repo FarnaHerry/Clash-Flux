@@ -379,26 +379,16 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
         }
     }
     std::ranges::sort(localProxies); // Mihomo AllProxies uses bytewise name order.
+    auto proxyProviders = compileProxyProviders(ctx, root["proxy-providers"]);
+    if (!proxyProviders) return;
 
     for (const YAML::Node& group : groups) {
         if (ctx.cancelled()) return;
         const std::string name = ytext(group, "name");
         if (name.empty()) continue;
         std::vector<std::string> members = ylist(group, "proxies");
-        if (!expandGroupProxies(ctx, group, name, localProxies, rejectedProxy, members)) return;
-        const YAML::Node providers = group["use"];
-        const bool usesProviders = providers && (!providers.IsSequence() || providers.size() != 0);
-        if (ybool(group, "include-all") ||
-            ybool(group, "include-all-providers") || usesProviders) {
-            ctx.note(FidelityScope::Group, Fidelity::Unsupported, name,
-                     std::format("代理组「{}」使用了未接入的成员展开（use/include-all），"
-                                 "无法保留 provider 节点",
-                                 name),
-                     "候选已拒绝；保留原订阅和运行配置，不退回 DIRECT 或仅保留显式成员");
-            ctx.result.error = std::format(
-                "代理组「{}」依赖尚未支持的 provider 成员展开", name);
-            return;
-        }
+        if (!expandGroupProxies(ctx, group, name, localProxies, rejectedProxy, members) ||
+            !expandProxyProviderGroup(ctx, group, name, *proxyProviders, members)) return;
         if (auto converted = convertGroup(ctx, group, name, members)) {
             ctx.outbounds.push_back(std::move(*converted));
         } else {
@@ -409,13 +399,6 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
     }
 
     if (!validateOutboundDependencies(ctx)) return;
-    for (const auto* field : {"proxy-providers"}) {
-        if (root[field]) {
-            ctx.note(FidelityScope::Field, Fidelity::Unsupported, field,
-                     std::format("Clash {} 尚未解析、下载或展开，已忽略", field),
-                     "这是应用输入转换的缺口；固定国内规则别名不等于通用 provider 支持");
-        }
-    }
 
     if (!exportOnly) compileRuleProviders(ctx, root["rule-providers"]);
     if (!ctx.result.error.empty()) return;

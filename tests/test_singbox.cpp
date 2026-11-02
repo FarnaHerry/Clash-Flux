@@ -2732,6 +2732,48 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
+    if (argc == 7 && std::string_view(argv[1]) == "--proxy-provider-runtime-fixture") {
+        const std::filesystem::path root(argv[2]);
+        std::filesystem::create_directories(root);
+        singbox::CompileOptions options;
+        options.controller = std::string("127.0.0.1:") + argv[3];
+        options.mixedPort = std::stoi(argv[4]);
+        options.nativeControllerPort = std::stoi(argv[5]);
+        options.secret = "test-native-secret";
+        options.proxyProviderCacheDir = (root / "cache").string();
+        options.profileYaml = R"yaml(
+proxy-providers:
+  remote: {type: http, url: 'https://example.test/nodes.yaml'}
+proxy-groups:
+  - {name: Proxy, type: select, use: [remote]}
+)yaml";
+        rule_provider_cache::Operations operations;
+        operations.fetchProxy = [&](const auto&, const auto& file, std::string&) {
+            std::ofstream(file, std::ios::binary | std::ios::trunc)
+                << "proxies:\n  - {name: remote-node, type: socks5, server: 127.0.0.1, port: "
+                << argv[6] << "}\n";
+            return true;
+        };
+        operations.check = [](const auto&, const auto& result, std::string&) {
+            return result.error.empty() && !result.json.empty();
+        };
+        operations.commit = [](const auto& source, const auto& target, std::string& error) {
+            std::error_code ec;
+            std::filesystem::rename(source, target, ec);
+            error = ec ? ec.message() : "";
+            return !ec;
+        };
+        singbox::CompileResult result;
+        std::string error;
+        if (!rule_provider_cache::Prepare(options, operations, result, error)) {
+            std::println(stderr, "{}", error);
+            return 1;
+        }
+        std::ofstream output(root / "provider.json", std::ios::binary | std::ios::trunc);
+        output << result.json;
+        output.close();
+        return output ? 0 : 1;
+    }
     if (argc == 3 && std::string_view(argv[1]) == "--personal-rule-fixtures") {
         testPersonalRules(argv[2]); testPersonalRuleSets(argv[2]); return failures ? 1 : 0;
     }
@@ -3656,12 +3698,13 @@ rules:
         singbox::CompileOptions provider;
         provider.profileYaml = R"yaml(
 proxy-providers:
-  remote: {type: http, url: 'https://example.test/nodes.yaml'}
+  remote: {type: http, url: 'https://example.test/nodes.yaml', interval: 1}
 proxy-groups:
-  - {name: Proxy, type: select, use: [remote]}
+  - {name: Proxy, type: select, use: [remote], default-selected: remote-b}
 )yaml";
         const auto result = singbox::compileConfig(provider);
-        check(!result.error.empty() && result.json.empty(),
+        check(!result.error.empty() && result.json.empty() &&
+                  result.httpProxyProviders.size() == 1 && result.httpProxyProviders[0].required,
               "provider-only 订阅拒绝候选，不生成 Proxy 到 DIRECT 的直连配置");
         provider.profileYaml =
             "proxies:\n  - {name: local, type: socks5, server: 127.0.0.1, port: 1080}\n"
@@ -3670,6 +3713,169 @@ proxy-groups:
         const auto compatible = singbox::compileConfig(provider);
         check(compatible.error.empty() && !compatible.json.empty(),
               "旧版显式节点订阅仍可编译");
+
+        provider.profileYaml = R"yaml(
+proxy-providers:
+  remote: {type: http, url: 'https://example.test/nodes.yaml', interval: 1}
+proxy-groups:
+  - {name: Proxy, type: select, use: [remote], default-selected: remote-b}
+)yaml";
+        const RuleSetTestDirectory cache;
+        provider.proxyProviderCacheDir = cache.path.string();
+        std::string body = R"yaml(
+proxies:
+  - {name: remote-a, type: socks5, server: 127.0.0.1, port: 1080}
+  - {name: remote-b, type: socks5, server: 127.0.0.1, port: 1081}
+)yaml";
+        int fetches = 0, checks = 0, commits = 0;
+        rule_provider_cache::Operations operations;
+        operations.fetchProxy = [&](const auto&, const auto& file, std::string&) {
+            ++fetches;
+            std::ofstream(file, std::ios::binary | std::ios::trunc) << body;
+            return true;
+        };
+        operations.check = [&](const auto&, const auto& compiled, std::string&) {
+            ++checks;
+            return compiled.error.empty() && !compiled.json.empty();
+        };
+        operations.commit = [&](const auto& temp, const auto& dest, std::string& error) {
+            std::error_code ec;
+            std::filesystem::copy_file(temp, dest,
+                std::filesystem::copy_options::overwrite_existing, ec);
+            if (!ec) std::filesystem::remove(temp, ec);
+            error = ec ? ec.message() : "";
+            if (!ec) ++commits;
+            return !ec;
+        };
+        singbox::CompileResult prepared;
+        std::string error;
+        check(rule_provider_cache::Prepare(provider, operations, prepared, error) &&
+                  fetches == 1 && checks == 1 && commits == 1,
+              "HTTP proxy provider 首次下载、检查并提交缓存");
+        auto config = json::parse(prepared.json);
+        const auto group = std::ranges::find_if(config["outbounds"], [](const auto& item) {
+            return item.value("tag", "") == "Proxy";
+        });
+        check(group != config["outbounds"].end() &&
+                  group->at("outbounds") == json::array({"remote-a", "remote-b"}) &&
+                  group->at("default") == "remote-b" && config["route"]["final"] == "Proxy",
+              "provider 节点按声明展开并保留 selector 默认选择");
+        auto warm = provider;
+        singbox::CompileResult warmResult;
+        check(rule_provider_cache::Prepare(warm, operations, warmResult, error) &&
+                  fetches == 1 && commits == 1,
+              "有效 provider 快照复用，不重复下载");
+        body = "proxies:\n  - {name: remote-c, type: socks5, server: 127.0.0.1, port: 1082}\n";
+        auto forced = provider;
+        forced.proxyProviderContents.clear();
+        forced.forceProxyProviderRefresh = true;
+        singbox::CompileResult forcedResult;
+        check(rule_provider_cache::Prepare(forced, operations, forcedResult, error) &&
+                  fetches == 2 && commits == 2 &&
+                  json::parse(forcedResult.json)["outbounds"].back()["outbounds"] == json::array({"remote-c"}),
+              "手动主订阅刷新强制更新 provider 节点");
+        operations.fetchProxy = [&](const auto&, const auto&, std::string& failure) {
+            failure = "fixture offline";
+            return false;
+        };
+        auto failed = forced;
+        failed.proxyProviderContents.clear();
+        failed.forceProxyProviderRefresh = true;
+        singbox::CompileResult failedResult;
+        check(!rule_provider_cache::Prepare(failed, operations, failedResult, error) &&
+                  commits == 2 && checks == 3,
+              "手动刷新失败不提交新缓存或进入完整检查");
+        auto offline = forced;
+        offline.proxyProviderContents.clear();
+        offline.forceProxyProviderRefresh = false;
+        for (const auto& entry : std::filesystem::directory_iterator(cache.path)) {
+            if (entry.path().extension() == ".cache")
+                std::filesystem::last_write_time(entry.path(),
+                    std::filesystem::file_time_type::clock::now() - std::chrono::hours{1});
+        }
+        singbox::CompileResult offlineResult;
+        check(rule_provider_cache::Prepare(offline, operations, offlineResult, error) &&
+                  !offlineResult.warnings.empty() && commits == 2,
+              "启动时到期刷新失败沿用已验证 provider 缓存");
+        operations.check = [&](const auto&, const auto&, std::string& failure) {
+            failure = "candidate rejected";
+            return false;
+        };
+        const RuleSetTestDirectory rejectedCache;
+        auto rejected = provider;
+        rejected.proxyProviderCacheDir = rejectedCache.path.string();
+        rejected.proxyProviderContents.clear();
+        rejected.forceProxyProviderRefresh = true;
+        operations.fetchProxy = [&](const auto&, const auto& file, std::string&) {
+            std::ofstream(file, std::ios::binary | std::ios::trunc) << body;
+            return true;
+        };
+        singbox::CompileResult rejectedResult;
+        check(!rule_provider_cache::Prepare(rejected, operations, rejectedResult, error) &&
+                  std::filesystem::is_empty(rejectedCache.path),
+              "完整候选失败不提交 provider 缓存");
+    }
+    {
+        singbox::CompileOptions providers;
+        providers.profileYaml = R"yaml(
+proxy-providers:
+  z: {type: http, url: 'https://example.test/z.yaml'}
+  a: {type: http, url: 'https://example.test/a.yaml'}
+proxy-groups:
+  - {name: Proxy, type: select, include-all-providers: true}
+)yaml";
+        const auto discovered = singbox::compileConfig(providers);
+        check(discovered.httpProxyProviders.size() == 2, "发现多个 proxy provider");
+        for (const auto& resource : discovered.httpProxyProviders) {
+            const std::string node = resource.name == "a" ? "a-node" : "z-node";
+            providers.proxyProviderContents[resource.cacheKey] =
+                "proxies:\n  - {name: " + node + ", type: socks5, server: 127.0.0.1, port: 1080}\n";
+        }
+        const auto compiled = singbox::compileConfig(providers);
+        check(compiled.error.empty() &&
+                  json::parse(compiled.json)["outbounds"].back()["outbounds"] ==
+                      json::array({"a-node", "z-node"}),
+              "include-all-providers 按 provider 名称排序展开");
+        singbox::CompileOptions nodeSubscription;
+        nodeSubscription.profileYaml = R"yaml(
+proxy-providers:
+  remote: {type: http, url: 'https://example.test/nodes.txt'}
+proxy-groups:
+  - {name: Proxy, type: select, use: [remote]}
+)yaml";
+        const auto remote = singbox::compileConfig(nodeSubscription);
+        check(remote.httpProxyProviders.size() == 1, "发现节点订阅格式 provider");
+        const auto resource = remote.httpProxyProviders.front();
+        const json node{{"v", "2"}, {"ps", "remote-vmess"}, {"add", "127.0.0.1"},
+            {"port", "1080"}, {"id", "11111111-2222-3333-4444-555555555555"},
+            {"aid", "0"}, {"scy", "auto"}, {"net", "tcp"}, {"type", "none"}, {"tls", ""}};
+        nodeSubscription.proxyProviderContents[resource.cacheKey] =
+            encodeNodeFixture("vmess://" + encodeNodeFixture(node.dump()));
+        const auto parsed = singbox::compileConfig(nodeSubscription);
+        check(parsed.error.empty() && json::parse(parsed.json)["outbounds"][1]["type"] == "vmess" &&
+                  json::parse(parsed.json)["outbounds"][1]["tag"] == "remote-vmess",
+              "provider 复用 Base64 VMess 节点订阅转换");
+        std::string invalidError;
+        check(!singbox::ValidateHttpProxyProvider(resource,
+                  "proxies:\n  - {name: duplicate, type: socks5, server: 127.0.0.1, port: 1080}\n"
+                  "  - {name: duplicate, type: socks5, server: 127.0.0.1, port: 1081}\n", invalidError),
+              "provider 重名节点整份拒绝");
+        providers.profileYaml = R"yaml(
+proxy-providers:
+  remote: {type: http, url: 'https://example.test/nodes.yaml', health-check: {enable: true}}
+proxy-groups:
+  - {name: Proxy, type: select, use: [remote]}
+)yaml";
+        check(!singbox::compileConfig(providers).error.empty(),
+              "provider 健康检查未实现时明确拒绝");
+        providers.profileYaml = R"yaml(
+proxy-providers:
+  remote: {type: http, url: 'https://example.test/nodes.yaml'}
+proxy-groups:
+  - {name: Proxy, type: url-test, use: [remote]}
+)yaml";
+        check(!singbox::compileConfig(providers).error.empty(),
+              "provider-backed url-test 未实现时明确拒绝");
     }
 
     // ---- 空订阅最小配置 -------------------------------------------------------

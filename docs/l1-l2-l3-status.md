@@ -1,5 +1,43 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-02：v0.3.91 HTTP proxy-providers 子集
+
+实现 `src/singbox_proxy_provider.inc` 与 `src/proxy_provider_cache.cppm`：HTTP provider 使用
+DIRECT 下载、单值 headers、interval/size-limit、完整身份验证缓存；支持 Clash proxies 与现有
+Base64 VMess 节点订阅，select 的 use 按声明顺序、include-all-providers 按名称排序展开。
+file/inline、非空筛选/payload、启用的健康检查、provider-backed url-test、override、age、
+非 DIRECT 下载和 include-all 仍明确拒绝，未准备节点不会退回 DIRECT。
+
+规则/代理 provider 共用 `rule_provider_cache::Prepare` 的完整检查和提交边界，新缓存只有候选成功
+才替换；手动主订阅刷新强制下载引用中的 provider，启动时到期失败可沿用验证缓存并警告。
+桌面 curl 与 Android Java 下载均接入，Android Legacy 的模块顺序、NDK ranges::iota 缺失和
+多翻译单元 inline 问题已修正。
+
+验证：`singbox` 覆盖节点展开、Base64、顺序、重复拒绝、首次下载/复用/强制刷新/离线回退/
+候选失败不提交；`proxy_provider_runtime` 经真实 sing-box + loopback SOCKS 验证流量进入
+provider 节点；生产 CLI 覆盖自定义 User-Agent、provider 强制更新及坏内容保留旧主订阅/缓存。
+启用完整门禁后，除 `runtime_health` 与依赖其可执行文件的 `personal_rule_sets_runtime` 外，
+其余 25/25 通过。后两者因本机 libc++ 缺少 `__atomic_unique_lock::__set_locked_bit` 链接符号
+未完成，不能记为通过；`cmake --build build` 也因此仍有失败。Android Debug Java/NDK/APK 及
+五项 JVM 回归通过。版本为 `0.3.91`，Android `versionCode=169`。当前无 ADB 设备，
+未做 Android 真机下载、外网、VPN 或正式签名覆盖安装验收。
+
+## 2026-11-02：v0.3.91 停止/待命主订阅删除边界
+
+原删除入口把 `selected=true` 无条件当成不可删除，导致停止后的唯一主订阅也无法移除。
+新增 `sourceDeletionProtected`：明确停止或桌面待命（Running 且 proxyListening=false）的主来源，
+在无其它引用时允许删除；活动代理、状态未确认的主来源继续阻断，手机不套用桌面待命例外。
+启用规则引用、原生内网路由和仍连接的原生来源不因停止而解除保护。
+
+待命删除先取消主来源选择，经现有候选交接切换为空的待命配置，成功后才删除记录；
+清空失败恢复原选择，删除失败恢复原选择和配置。停止删除不重写运行配置；文件仍由
+persistence 在事务提交并核对全部引用后清理。
+
+`page_transition`、`project_test_gate`、`ui_resources`、`persistence`、`proxy_standby_runtime`
+5/5 通过；生产 CLI `test_profile_selection_runtime.py` 覆盖先删其它来源、再删唯一停止主订阅，
+数据库清空、对应文件移除且原 core/config.json 不变。Android Debug Java/NDK/APK 与五项宿主
+JVM 回归通过。未做真实桌面 GUI 待命删除、清空/删除失败故障注入或手机真机验收。
+
 ## 2026-11-02：v0.3.90 订阅解析与 UA 兼容修复
 
 对比 v0.3.82/v0.3.83：数据库、订阅文件和共享编译器没有迁移改动，Android 默认订阅 UA

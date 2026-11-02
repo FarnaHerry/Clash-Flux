@@ -117,6 +117,8 @@ Clash YAML/text/MRS 导入此资源库，以及订阅原有 provider 的统一�
 - `proxy-providers` 中 `type: http` 的代理提供者；
 - `geox-url` 的 ASN/GEO 数据地址。
 
-订阅卡片右键的「外部资源」只读展示该订阅的识别结果，不跨订阅汇总，不下载、不缓存、不改变编译/运行语义。
-TODO：继续补齐规则集内部引用类型、下载身份、缓存状态与失败重试；在此之前不得把未识别的
-规则集资源库或订阅 provider 当成已解析资源。
+订阅卡片右键的「外部资源」只读展示该订阅的识别结果，不跨订阅汇总；页面自身不下载、不缓存、
+不改变编译/运行语义。运行准备现已支持 HTTP proxy-providers 的 DIRECT 下载、验证缓存及 select 组
+`use` / `include-all-providers` 节点展开，缓存与主订阅更新走同一完整候选检查。
+TODO：展示 provider 缓存/更新状态，并逐版补齐筛选、健康检查、override、file/inline 等能力；
+未接入字段仍拒绝候选，不把资源清单当成已支持全部 provider 语义。

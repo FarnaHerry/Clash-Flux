@@ -3,6 +3,7 @@
 export module clashflux.rule_provider_cache;
 import std;
 import clashflux.singbox;
+import clashflux.proxy_provider_cache;
 
 namespace rule_provider_cache {
 
@@ -31,6 +32,8 @@ export struct Operations {
                              const singbox::HttpCacheValidators&)> revalidate;
     std::function<bool(const singbox::HttpRuleProviderResource&, const std::filesystem::path&,
                        std::string&)> fetch;
+    std::function<bool(const singbox::HttpProxyProviderResource&, const std::filesystem::path&,
+                       std::string&)> fetchProxy;
     // Finalization may replace compiled bytes after GEO inputs materialize.
     // Preserve that checked result through commit instead of compiling it again.
     std::function<bool(const singbox::CompileOptions&, singbox::CompileResult&,
@@ -77,26 +80,44 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
     try {
         result = compile(options);
         if (cancelled()) return false;
-        if (result.httpRuleProviders.empty()) { error = result.error; return error.empty(); }
-        if (options.ruleProviderCacheDir.empty() || (!operations.fetch && !operations.revalidate) ||
-                !operations.check || !operations.commit) {
-            error = "HTTP 规则集任务缺少缓存目录或操作接口"; return false;
+        const bool hasRules = !result.httpRuleProviders.empty();
+        const bool hasProxies = std::ranges::any_of(result.httpProxyProviders,
+            [](const auto& resource) { return resource.required; });
+        if (!hasRules && !hasProxies) { error = result.error; return error.empty(); }
+        if ((hasRules && (options.ruleProviderCacheDir.empty() ||
+                          (!operations.fetch && !operations.revalidate))) ||
+            (hasProxies && (options.proxyProviderCacheDir.empty() || !operations.fetchProxy)) ||
+            !operations.check || !operations.commit) {
+            error = "HTTP 订阅资源任务缺少缓存目录或操作接口"; return false;
         }
-        const std::filesystem::path root(options.ruleProviderCacheDir);
+        const std::filesystem::path root(hasRules ? options.ruleProviderCacheDir
+                                                 : options.proxyProviderCacheDir);
         std::error_code ec;
         std::filesystem::create_directories(root, ec);
-        if (ec) { error = "无法创建 HTTP 规则集缓存目录"; return false; }
+        if (ec) { error = "无法创建 HTTP 订阅资源缓存目录"; return false; }
         StagingDirectory stage;
         std::random_device random;
         for (unsigned attempt = 0; attempt < 32; ++attempt) {
             const auto candidate = root / (".stage-" + std::to_string(random()) + "-" + std::to_string(random()));
             if (std::filesystem::create_directory(candidate, ec)) { stage.path = candidate; break; }
         }
-        if (stage.path.empty()) { error = "无法创建独占 HTTP 规则集临时目录"; return false; }
+        if (stage.path.empty()) { error = "无法创建独占 HTTP 订阅资源临时目录"; return false; }
         // Caller options are published only after complete conversion/check/commit.
         auto candidate = options;
         std::vector<std::pair<std::filesystem::path, std::filesystem::path>> pending;
         std::vector<std::string> warnings;
+        proxy_provider_cache::Operations proxyOperations;
+        proxyOperations.maxConcurrentFetches = operations.maxConcurrentFetches;
+        proxyOperations.fetch = operations.fetchProxy;
+        proxy_provider_cache::Preparation proxyPreparation;
+        if (!proxy_provider_cache::Prepare(candidate, proxyOperations, result,
+                proxyPreparation, stage.path, error, cancel)) return false;
+        pending = std::move(proxyPreparation.pending);
+        warnings = std::move(proxyPreparation.warnings);
+        if (stats) {
+            stats->compileCount += proxyPreparation.compileCount;
+            stats->compileMicros += proxyPreparation.compileMicros;
+        }
         // A classical body can reveal ASN dependencies only after its download.
         // Discover in bounded rounds, holding every replacement until full check.
         std::map<std::string, std::string> identities;
@@ -251,6 +272,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
             break;
         }
         result.ruleProviderContents.clear(); // Options own the published/rollback snapshots.
+        result.proxyProviderContents.clear();
         if (!result.error.empty() || result.json.empty()) { error = result.error; return false; }
         if (!operations.check(candidate, result, error)) {
             if (error.empty()) error = "HTTP 候选配置检查失败";
@@ -258,6 +280,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
         }
         if (cancelled()) return false;
         result.ruleProviderContents.clear(); // A finalizing check may have recompiled.
+        result.proxyProviderContents.clear();
         // Each replace is atomic. No cross-file crash transaction is claimed.
         for (const auto& [file, destination] : pending)
             if (!operations.commit(file, destination, error)) {

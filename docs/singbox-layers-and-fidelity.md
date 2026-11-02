@@ -460,9 +460,14 @@ sing-box 1.14 另有：`openvpn-server`、`openconnect`、`wireguard`、`tailsca
 仍存在的成员；无效值或用于 urltest 时记 approx，不伪造手动锁定。缓存中已经保存
 的选择可能优先于初始 default，这不是一次强制切换命令。
 未映射的组字段逐字段记 `Group/Approx`，包括 lazy、timeout、expected-status、
-filter 与界面字段（下述展开子集的空筛选除外）。`use` 数组及 include-all/providers 无法展开时记 `Group/Unsupported`
-并拒绝候选，不只保留显式成员或退回 DIRECT；proxy-providers 当前不下载或展开。rule-providers 的 inline 子集已接入，
-本地 file 与 HTTP 直连 YAML/text 子集也已接入（见下文）；未映射来源字段记 unsupported；MRSv1 domain/ipcidr 已接入，
+filter 与界面字段（下述展开子集的空筛选除外）。HTTP proxy-providers 已接入受限子集：
+内容为 Clash `proxies` 或现有节点订阅格式，select 组的 `use` 按声明顺序展开，
+`include-all-providers` 按 provider 名称排序；显式成员保持在前。下载默认 DIRECT，
+支持单值 headers、interval、size-limit 和应用自有验证缓存，完整候选检查后才提交快照。
+HTTP path 仅作缓存位置提示、默认 8 MiB 上限及静态展开记 approx。
+file/inline、非空筛选或 payload、启用的健康检查、provider-backed url-test、override、
+age 加密、非 DIRECT 下载和 include-all 尚未支持，相关候选记 Unsupported 并拒绝，
+不保留部分成员或退回 DIRECT。rule-providers 的 inline、本地 file 与 HTTP 直连子集见下文；
 未成功转换的声明不会被同名国内别名替换。
 
 `include-all-proxies` 静态来源展开基线（2026-10-03）：
@@ -473,7 +478,7 @@ filter 与界面字段（下述展开子集的空筛选除外）。`use` 数组�
 | 显式组成员/default-selected | 保留原顺序及前向组引用；selector default 可指向展开节点；urltest/仅测速 selector 都复用同一成员列表 |
 | 有被拒绝的节点 | 节点自身 Unsupported 不丢失，组另记 Approx 说明成员减少；不声称整个订阅全保真 |
 | false/no/0；空 filter/exclude-filter/exclude-type 字符串、use 空数组 | 关闭展开保留既有显式成员；空筛选/use 不影响合法展开 |
-| 非空筛选、use/include-all/providers 的展开组合 | 整个候选 Unsupported 失败，不忽略筛选后扩大范围，不只提交部分集合；正则引擎兼容与 proxy-providers 仍未接入 |
+| 非空筛选、include-all 或未接入的 provider 组合 | 整个候选 Unsupported 失败，不忽略筛选后扩大范围，不只提交部分集合；HTTP select use/include-all-providers 的受限子集见上 |
 | 非法布尔、重复声明、残缺/非数组 proxies、无可用成员 | Unsupported 并保留失败账本；不保留合法列表前缀，不隐式填 DIRECT；空组回退仍未接入 |
 | 依赖及次来源 | 展开后走原出站依赖图校验，detour/组循环拒绝；主/次来源分别收集后再命名空间化，导出闭包不会混入其它来源 |
 

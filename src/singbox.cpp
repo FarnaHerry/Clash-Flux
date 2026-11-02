@@ -26,6 +26,7 @@ namespace {
 #include "singbox_mrs.inc"
 std::string personalRuleSetTag(const RuleSetLibrary& library, const std::string& id);
 #include "singbox_rules.inc"
+#include "singbox_proxy_provider.inc"
 #include "singbox_profile_rules.inc"
 #include "singbox_compile.inc"
 #include "singbox_sources.inc"
@@ -552,6 +553,55 @@ bool ValidateHttpRuleProvider(const HttpRuleProviderResource& resource,
     Context context{options};
     context.providerSyntaxOnly = true;
     return ruleProviderContentRules(context, content, resource.format, resource.behavior, error).has_value();
+}
+
+std::string HttpProxyProviderCacheImage(const HttpProxyProviderResource& resource,
+        const std::string& content) {
+    if (resource.cacheKey != httpProviderKey(resource.identity) || resource.identity.size() > 32 * 1024 ||
+        resource.identity.find('\n') != std::string::npos || content.size() > resource.maxBytes ||
+        resource.maxBytes > 8 * 1024 * 1024) return {};
+    return "clash-flux-proxy-provider-v1\n" + resource.identity + "\n" + content;
+}
+
+std::optional<std::string> ReadHttpProxyProviderCache(
+        const HttpProxyProviderResource& resource, const std::filesystem::path& directory,
+        std::string& error) {
+    if (resource.cacheKey != httpProviderKey(resource.identity) || resource.identity.size() > 32 * 1024 ||
+        resource.maxBytes > 8 * 1024 * 1024) {
+        error = "HTTP 代理集合缓存资源身份无效";
+        return std::nullopt;
+    }
+    const auto path = ruleProviderPath(directory.string(), resource.cacheKey + ".cache", error);
+    if (!path) return std::nullopt;
+    const auto image = ReadRuleProviderText(*path, resource.maxBytes + 36 * 1024 + 40, error);
+    if (!image) return std::nullopt;
+    const std::string prefix = "clash-flux-proxy-provider-v1\n" + resource.identity + "\n";
+    if (!image->starts_with(prefix)) {
+        error = "HTTP 代理集合缓存身份或版本不匹配";
+        return std::nullopt;
+    }
+    auto content = image->substr(prefix.size());
+    if (content.size() > resource.maxBytes) {
+        error = "代理集合缓存内容超过读取上限";
+        return std::nullopt;
+    }
+    return content;
+}
+
+bool ValidateHttpProxyProvider(const HttpProxyProviderResource& resource,
+        const std::string& content, std::string& error) {
+    error.clear();
+    if (resource.cacheKey != httpProviderKey(resource.identity) ||
+        content.size() > resource.maxBytes || resource.maxBytes > 8 * 1024 * 1024) {
+        error = "代理集合身份或大小不在支持范围";
+        return false;
+    }
+    CompileOptions options;
+    Context context{options};
+    context.providerSyntaxOnly = true;
+    context.knownTags.push_back("DIRECT");
+    std::vector<std::string> members;
+    return appendProxyProviderNodes(context, content, resource.name, members, error);
 }
 
 std::optional<std::string> ReadHttpRuleProviderSeed(const HttpRuleProviderResource& resource,

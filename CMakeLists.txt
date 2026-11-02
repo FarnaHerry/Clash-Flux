@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.90 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.91 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -354,7 +354,7 @@ set(CLASHFLUX_MODULE_UNITS
     # sing-box 核心：进程生命周期 / 订阅编译 / REST API / 推送流 / 系统代理
     src/core.cppm
     src/singbox.cppm
-    src/rule_provider_cache.cppm
+    src/rule_provider_cache.cppm src/proxy_provider_cache.cppm
     src/routing.cppm
     src/api.cppm
     src/stream.cppm
@@ -797,7 +797,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         target_sources(test_singbox PRIVATE FILE_SET clashflux_singbox_modules
             TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-            FILES src/singbox.cppm src/rule_provider_cache.cppm src/vpn.cppm)
+            FILES src/singbox.cppm src/rule_provider_cache.cppm src/proxy_provider_cache.cppm src/vpn.cppm)
         set_target_properties(test_singbox PROPERTIES CXX_MODULE_STD ON)
         target_compile_features(test_singbox PRIVATE cxx_std_23)
         target_link_libraries(test_singbox PRIVATE clashflux_json yaml-cpp::yaml-cpp zstd::libzstd_static)
@@ -907,6 +907,10 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                     "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/group-expansion-2026-10-03.yaml")
                 set_tests_properties(group_expansion_runtime PROPERTIES TIMEOUT 30)
+                add_test(NAME proxy_provider_runtime COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_proxy_provider_runtime.py"
+                    "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}")
+                set_tests_properties(proxy_provider_runtime PROPERTIES TIMEOUT 30)
                 add_test(NAME dns_hosts_runtime COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dns_hosts_runtime.py"
                     "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"

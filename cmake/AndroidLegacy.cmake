@@ -85,6 +85,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/pptp.cppm"
         "${_root}/src/openvpn.cppm"
         "${_root}/src/singbox.cppm"
+        "${_root}/src/proxy_provider_cache.cppm"
         "${_root}/src/rule_provider_cache.cppm"
         "${_root}/src/routing.cppm"
         "${_root}/src/core.cppm"

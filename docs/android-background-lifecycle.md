@@ -13,8 +13,12 @@
 时以 `clash.meta` 重试，自定义请求头与规则集下载不重试。共享编译器此前会把尚未支持的
 `use` / `include-all-providers` 组仅保留显式成员，空组再补 DIRECT；provider-only 配置因此能以
 `Proxy → DIRECT` 通过校验并启动。现此类组记 Unsupported 并拒绝候选，刷新保留旧文件、选中状态
-和其它订阅。这只是明确失败与旧数据保护，不代表已经支持 proxy-providers；实际服务端响应差异和
-真机外网仍需设备验证。
+和其它订阅。v0.3.90 先提供明确失败与旧数据保护；后续工作区已接入 HTTP proxy-providers
+的 DIRECT 下载、验证缓存和 select 组节点展开，未接入字段仍拒绝。实际服务端响应差异和真机外网
+仍需设备验证。
+
+TODO（低优先级）：评估订阅级 UA 覆盖及带真实版本的规范 Clash-Flux UA；当前固定旧 UA 加
+403 重试已够用，不再为格式或版本展示全局切换订阅身份。
 
 2026-10-25 订阅准备优化：在规则集发现/首次编译前统一 Android 运行参数，TUN 继续
 使用 `strict_route=false`，保留 IPv6、端口及用户来源语义。Android 打包 GEO 预取不改输入，

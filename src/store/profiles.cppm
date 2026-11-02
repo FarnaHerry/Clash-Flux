@@ -291,7 +291,7 @@ public:
         } else {
             std::error_code ec;
             std::filesystem::create_directories(cfg::profilesDir(), ec);
-            if (!saveYaml(p.id, fetched.body)) failure = lastError_;
+            if (!saveYaml(p.id, fetched.body, true)) failure = lastError_;
         }
         if (failure.empty()) {
             if (const auto userinfo = findHeader(fetched.headers, "subscription-userinfo")) {
@@ -581,13 +581,14 @@ p->name = fields.name.empty() ? p->name : fields.name;
 
     // 保存订阅 YAML 原文（高级文件编辑）：写文件 + 更新 updatedAt；
     // 若该订阅启用中且内核在跑，重启内核使改动生效。阻塞。
-    bool saveYaml(std::int64_t id, const std::string& content) {
+    bool saveYaml(std::int64_t id, const std::string& content,
+                  bool forceProxyProviderRefresh = false) {
         lastError_.clear();
         auto planLock = coreStore().lockPlanLifecycle();
         auto profile = findById(id);
         if (!profile) { lastError_ = "订阅不存在"; return false; }
         if (profile->file.empty()) profile->file = std::format("{}.yaml", id);
-        if (!coreStore().validateSourceUpdate(id, content, lastError_)) return false;
+        if (!coreStore().validateSourceUpdate(id, content, lastError_, forceProxyProviderRefresh)) return false;
         const auto previous = yamlOf(*profile);
         if (!writeContent(*profile, content, lastError_)) return false;
         coreStore().invalidateProxyGroupsSnapshot();
@@ -638,32 +639,44 @@ p->name = fields.name.empty() ? p->name : fields.name;
     void remove(std::int64_t id) {
         lastError_.clear();
         auto planLock = coreStore().lockPlanLifecycle();
-        if (coreStore().sourceParticipates(id)) {
-            lastError_ = "该来源是 main 或被路由引用；请先更换 main、禁用/改绑规则或清空原生内网路由";
+        if (coreStore().sourceDeletionProtected(id)) {
+            lastError_ = "活动代理或未确认状态的主订阅及被引用来源不能删除；请先停止内核或切换为待命，再解除其它引用";
             return;
         }
-        bool wasSelected = false;
         bool found = false;
+        std::optional<db::Profile> selectedProfile;
         for (const auto& p : list()) {
             if (p.id == id) {
                 found = true;
-                wasSelected = p.selected;
+                if (p.selected) selectedProfile = p;
             }
         }
         if (!found) { lastError_ = "订阅不存在"; return; }
+        const bool clearStandby = selectedProfile && coreStore().standbyActive();
+        const std::string previousContent = clearStandby ? yamlOf(*selectedProfile) : std::string{};
+        if (clearStandby) {
+            auto& persistence = clashflux::persistence::persistence();
+            persistence.setSelectedProfile(0);
+            if (!coreStore().restartCore("")) {
+                persistence.setSelectedProfile(id);
+                lastError_ = "清空待命内核失败：" + coreStore().snapshot().lastError;
+                return;
+            }
+        }
         try {
             clashflux::persistence::persistence().deleteProfile(id, true);
         } catch (const std::exception& e) {
             lastError_ = e.what();
+            if (clearStandby) {
+                clashflux::persistence::persistence().saveProfile(*selectedProfile);
+                if (!coreStore().restartCore(previousContent))
+                    lastError_ += "；原待命配置恢复失败：" + coreStore().snapshot().lastError;
+            }
             return;
         }
         // File cleanup is performed by persistence only after the delete
         // commits and no other persisted or cached source references it.
-        if (wasSelected) coreStore().invalidateProxyGroupsSnapshot();
-        // 删掉的是启用订阅且内核在跑：用空配置重启（代理全断比跑旧配置直观）。
-        if (wasSelected && coreStore().snapshot().state == core::CoreState::Running) {
-            coreStore().restartCore("");
-        }
+        if (selectedProfile) coreStore().invalidateProxyGroupsSnapshot();
     }
 
 private:
@@ -823,7 +836,7 @@ private:
             p = *current; // Preserve changes such as selection, name and order.
             if (p.file.empty()) p.file = std::format("{}.yaml", p.id);
             std::string error;
-            return coreStore().validateSourceUpdate(p.id, content, error) ? std::string{} : error;
+            return coreStore().validateSourceUpdate(p.id, content, error, true) ? std::string{} : error;
         };
         // Runtime maintenance may replace the controller API while we fetch.
         // The independent downloader owns no controller endpoint or secret.

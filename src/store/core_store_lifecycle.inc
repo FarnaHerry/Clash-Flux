@@ -815,7 +815,32 @@
         });
     }
 
-    bool validateSourceUpdate(std::int64_t id, const std::string& content, std::string& error) {
+    bool standbyActive() {
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+        const auto current = snapshot();
+        return current.state == core::CoreState::Running && !current.proxyListening;
+#else
+        return false;
+#endif
+    }
+
+    bool sourceDeletionProtected(std::int64_t id) {
+        std::lock_guard operationLock(lifecycleMutex_);
+        ensureOpen();
+        const auto connection = routing::ConnectionId(id);
+        if (std::ranges::any_of(nativeSessions_, [&](const auto& session) { return session.id == connection && session.connected; })) return true;
+        for (const auto& profile : db_->listProfiles())
+            if (profile.id == id &&
+                ((profile.selected && snapshot().state != core::CoreState::Stopped && !standbyActive()) ||
+                 ((profile.type == "pptp") && !routing::SplitRoutes(profile.nativeRoutes).empty()))) return true;
+        const auto policy = routing::DecodePolicy(setting("vpn.global_policy", ""));
+        return std::ranges::any_of(policy.rules, [&](const auto& rule) {
+            return rule.enabled && rule.connectionId == connection;
+        });
+    }
+
+    bool validateSourceUpdate(std::int64_t id, const std::string& content, std::string& error,
+                              bool forceProxyProviderRefresh = false) {
         std::lock_guard lock(lifecycleMutex_);
         ensureOpen();
         try {
@@ -833,6 +858,7 @@
             for (const auto& profile : db_->listProfiles()) if (profile.id == id && profile.selected) main = true;
             auto options = routingOptions(main ? content : currentMainContent(), snapshot().tunEnabled,
                                           false, nullptr, std::nullopt, &updated);
+            options.forceProxyProviderRefresh = forceProxyProviderRefresh;
             if (sourceId == options.mainConnectionId) options.profileYaml = content;
             else {
                 bool replaced = false;

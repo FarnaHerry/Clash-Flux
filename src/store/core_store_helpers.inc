@@ -312,6 +312,7 @@
         options.ruleSetDir = cfg::coreWorkDir().string();
         options.ruleProviderDir = cfg::dataDir().string();
         options.ruleProviderCacheDir = (cfg::coreWorkDir() / "rule-providers").string();
+        options.proxyProviderCacheDir = (cfg::coreWorkDir() / "proxy-providers").string();
         options.ruleSetLibrary = routing::DecodeRuleSetLibrary(setting("rules.resources", ""));
         auto profiles = db_->listProfiles();
         if (mainOverride) {
@@ -488,6 +489,38 @@
               fetched = request(resource.headers, false);
           return fetched;
         };
+        operations.fetchProxy = [this](const singbox::HttpProxyProviderResource& resource,
+                                   const std::filesystem::path& file, std::string& reason) {
+#if defined(__ANDROID__)
+            const auto response = clashflux::android::DownloadProfile(
+                resource.url, 20, false, resource.maxBytes, true, resource.headers);
+            if (!response.error.empty() || response.status < 200 || response.status >= 300) {
+                reason = response.error.empty() ? "HTTP " + std::to_string(response.status) : response.error;
+                return false;
+            }
+            if (!singbox::ValidateHttpProxyProvider(resource, response.body, reason)) return false;
+            std::ofstream output(file, std::ios::binary | std::ios::trunc);
+            output << response.body;
+            output.close();
+            if (!output) { reason = "无法完成平台代理集合临时文件写入"; return false; }
+            return true;
+#else
+            api::ClashApi::DownloadOptions download;
+            download.timeoutSecs = 20;
+            download.maxBytes = resource.maxBytes;
+            download.headers = resource.headers;
+            download.allowProxyEnv = false;
+            download.validate = [&resource](const auto& temp) {
+                std::string failure;
+                const auto text = singbox::ReadRuleProviderText(temp, resource.maxBytes, failure);
+                return text && singbox::ValidateHttpProxyProvider(resource, *text, failure)
+                    ? std::string{} : failure;
+            };
+            const auto response = api_->downloadToFile(resource.url, file, download);
+            reason = response.error;
+            return response.ok;
+#endif
+        };
         operations.check = [this, policy, cancel, &preparedGeo](const auto& candidate, auto& result, std::string& reason) {
             if (cancel.stop_requested()) return false;
             if (!validatePlanTargets(candidate, result, policy, reason)) return false;
@@ -509,7 +542,8 @@
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count(),
             stats.compileCount, stats.compileMicros, stats.validatedSnapshotReuses, stats.conversionCacheHits));
         if (ready) for (const auto& warning : compiled.warnings)
-            if (warning.starts_with("HTTP 规则集「")) stream::logApplication("warning", warning);
+            if (warning.starts_with("HTTP 规则集「") || warning.starts_with("HTTP 代理集合「"))
+                stream::logApplication("warning", warning);
         return ready;
     }
 
