@@ -125,9 +125,14 @@ def main():
             latest[0] = b"proxies: [unterminated\n"
             run("profile", "update", "2", expected=1)
             assert (profiles / "selection-2.yaml").read_bytes() == previous_source
+            latest[0] = (b"proxy-providers:\n  remote: {type: http, url: 'https://example.test/nodes.yaml'}\n"
+                         b"proxy-groups:\n  - {name: Proxy, type: select, use: [remote]}\n")
+            run("profile", "update", "2", expected=1)
+            assert (profiles / "selection-2.yaml").read_bytes() == previous_source
             with closing(sqlite3.connect(database)) as db:
                 assert db.execute("SELECT id FROM profiles WHERE selected=1").fetchall() == [(2,)]
                 assert db.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] == len(sources)
+                assert db.execute("SELECT error FROM profiles WHERE id=2").fetchone()[0] != ""
             # A slow download must leave the lifecycle available to read/check
             # another source. Its late row save must preserve a newer selection.
             hold_response.set()

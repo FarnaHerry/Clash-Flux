@@ -392,10 +392,12 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
             ybool(group, "include-all-providers") || usesProviders) {
             ctx.note(FidelityScope::Group, Fidelity::Unsupported, name,
                      std::format("代理组「{}」使用了未接入的成员展开（use/include-all），"
-                                 "sing-box 编译暂不支持，仅保留显式成员",
+                                 "无法保留 provider 节点",
                                  name),
-                     "成员展开由应用翻译层处理，当前仅保留 proxies 的显式成员；"
-                     "use 数组、include-all/providers 均不会静默漏报；include-all-proxies 有独立转换子集");
+                     "候选已拒绝；保留原订阅和运行配置，不退回 DIRECT 或仅保留显式成员");
+            ctx.result.error = std::format(
+                "代理组「{}」依赖尚未支持的 provider 成员展开", name);
+            return;
         }
         if (auto converted = convertGroup(ctx, group, name, members)) {
             ctx.outbounds.push_back(std::move(*converted));

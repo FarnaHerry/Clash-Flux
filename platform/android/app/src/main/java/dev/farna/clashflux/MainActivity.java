@@ -135,6 +135,22 @@ public final class MainActivity extends HuxerUIActivity {
     public static Bundle fetchProfile(String address, int timeoutSeconds,
                                       boolean allowInvalidCertificate, long maxBytes,
                                       boolean forceDirect, String[] requestHeaders) {
+        Bundle result = fetchProfileWithUserAgent(address, timeoutSeconds,
+                allowInvalidCertificate, maxBytes, forceDirect, requestHeaders,
+                ProfileHttpPolicy.DEFAULT_USER_AGENT);
+        if (ProfileHttpPolicy.shouldRetryWithClashMeta(
+                result.getInt("status", 0), maxBytes, requestHeaders)) {
+            return fetchProfileWithUserAgent(address, timeoutSeconds,
+                    allowInvalidCertificate, maxBytes, forceDirect, requestHeaders,
+                    ProfileHttpPolicy.CLASH_META_USER_AGENT);
+        }
+        return result;
+    }
+
+    private static Bundle fetchProfileWithUserAgent(
+            String address, int timeoutSeconds, boolean allowInvalidCertificate,
+            long maxBytes, boolean forceDirect, String[] requestHeaders,
+            String userAgent) {
         Bundle result = new Bundle();
         HttpURLConnection connection = null;
         try {
@@ -173,7 +189,7 @@ public final class MainActivity extends HuxerUIActivity {
                 connection = (HttpURLConnection) opened;
                 connection.setInstanceFollowRedirects(false);
                 connection.setUseCaches(false);
-                connection.setRequestProperty("User-Agent", "clash.meta");
+                connection.setRequestProperty("User-Agent", userAgent);
                 connection.setRequestProperty("Accept-Encoding", "identity");
                 // Compiler/JNI validate the common subset before this call.
                 for (int i = 0; i < requestHeaders.length; i += 2) {

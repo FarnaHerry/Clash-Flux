@@ -460,8 +460,8 @@ sing-box 1.14 另有：`openvpn-server`、`openconnect`、`wireguard`、`tailsca
 仍存在的成员；无效值或用于 urltest 时记 approx，不伪造手动锁定。缓存中已经保存
 的选择可能优先于初始 default，这不是一次强制切换命令。
 未映射的组字段逐字段记 `Group/Approx`，包括 lazy、timeout、expected-status、
-filter 与界面字段（下述展开子集的空筛选除外）。`use` 数组及 include-all/providers 无法展开时记 `Group/Unsupported`，
-只保留显式成员；proxy-providers 当前不下载或展开。rule-providers 的 inline 子集已接入，
+filter 与界面字段（下述展开子集的空筛选除外）。`use` 数组及 include-all/providers 无法展开时记 `Group/Unsupported`
+并拒绝候选，不只保留显式成员或退回 DIRECT；proxy-providers 当前不下载或展开。rule-providers 的 inline 子集已接入，
 本地 file 与 HTTP 直连 YAML/text 子集也已接入（见下文）；未映射来源字段记 unsupported；MRSv1 domain/ipcidr 已接入，
 未成功转换的声明不会被同名国内别名替换。
 

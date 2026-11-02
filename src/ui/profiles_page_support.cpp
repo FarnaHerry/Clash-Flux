@@ -318,7 +318,7 @@ huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
     huxerui::HttpRequest request;
     request.url = std::move(url);
     request.headers.push_back(
-        huxerui::HttpHeader{"User-Agent", "clash.meta"});
+        huxerui::HttpHeader{"User-Agent", "clash-flux/0.1"});
     request.timeout = std::chrono::milliseconds{
         (timeoutSecs > 0 ? timeoutSecs : 60) * 1000};
     const std::string urlText = request.url;

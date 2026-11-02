@@ -1,5 +1,20 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-02：v0.3.90 订阅解析与 UA 兼容修复
+
+对比 v0.3.82/v0.3.83：数据库、订阅文件和共享编译器没有迁移改动，Android 默认订阅 UA
+从 `clash-flux/0.1` 改为 `clash.meta`。外部资源页面只读，不参与运行。修复前用 provider-only
+Clash 配置复现：使用 `use` 的组被补成 DIRECT，生成 `Proxy → DIRECT` 并通过候选检查。
+现恢复 Android 旧 UA 默认值，普通订阅 403 时才以 `clash.meta` 重试；同时让
+`use` / `include-all-providers` 未接入展开明确拒绝候选。
+
+`ctest --test-dir build -R '^(singbox|persistence)$'` 2/2 通过；生产 CLI
+`test_profile_selection_runtime.py` 通过，覆盖畸形/provider 候选失败后保留旧文件、选中行和全部来源。
+桌面主目标、版本命令和 Android Debug Java/NDK/APK 构建通过，五项宿主 JVM 回归通过；
+`git diff --check` 通过。版本为 `0.3.90`，Android `versionCode=168`。尚未取得设备上的
+新旧订阅响应，也未做真机外网或正式签名覆盖安装验收，不能把 UA 触发链路写成实机已证实；
+本版本不宣称已支持 proxy-providers。
+
 ## 2026-11-02：v0.3.89 规则模式列表修复
 
 修复代码快照 `bcda54d`，随后更新版本 `0.3.89`、Android `versionName=0.3.89` /

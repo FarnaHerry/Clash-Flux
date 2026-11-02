@@ -8,6 +8,14 @@
 `completeRemote` 检查、原子提交和必要的重启。切换与更新在运行锁下串行提交，
 可能相互等待，但改选不能取消其它订阅的后台更新。
 
+2026-11-02 跨版本订阅回归：v0.3.83 把 Android 默认订阅 UA 改成 `clash.meta`，可能让服务端改返
+不同的 Clash 内容；现恢复 v0.3.82 的 `clash-flux/0.1` 默认请求，仅普通订阅收到 HTTP 403
+时以 `clash.meta` 重试，自定义请求头与规则集下载不重试。共享编译器此前会把尚未支持的
+`use` / `include-all-providers` 组仅保留显式成员，空组再补 DIRECT；provider-only 配置因此能以
+`Proxy → DIRECT` 通过校验并启动。现此类组记 Unsupported 并拒绝候选，刷新保留旧文件、选中状态
+和其它订阅。这只是明确失败与旧数据保护，不代表已经支持 proxy-providers；实际服务端响应差异和
+真机外网仍需设备验证。
+
 2026-10-25 订阅准备优化：在规则集发现/首次编译前统一 Android 运行参数，TUN 继续
 使用 `strict_route=false`，保留 IPv6、端口及用户来源语义。Android 打包 GEO 预取不改输入，
 检查回调与启动计划复用已有编译产物；HTTP/ASN 新快照仍重新编译并完成候选检查后提交，

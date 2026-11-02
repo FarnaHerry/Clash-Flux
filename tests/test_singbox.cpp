@@ -3651,6 +3651,27 @@ rules:
               "纯编译保留坏缓存文件，替换由下载边界负责");
     }
 
+    // Provider 成员尚未展开时不能把代理组静默改成 DIRECT。
+    {
+        singbox::CompileOptions provider;
+        provider.profileYaml = R"yaml(
+proxy-providers:
+  remote: {type: http, url: 'https://example.test/nodes.yaml'}
+proxy-groups:
+  - {name: Proxy, type: select, use: [remote]}
+)yaml";
+        const auto result = singbox::compileConfig(provider);
+        check(!result.error.empty() && result.json.empty(),
+              "provider-only 订阅拒绝候选，不生成 Proxy 到 DIRECT 的直连配置");
+        provider.profileYaml =
+            "proxies:\n  - {name: local, type: socks5, server: 127.0.0.1, port: 1080}\n"
+            "proxy-groups:\n  - {name: Proxy, type: select, proxies: [local]}\n"
+            "rules: ['MATCH,Proxy']\n";
+        const auto compatible = singbox::compileConfig(provider);
+        check(compatible.error.empty() && !compatible.json.empty(),
+              "旧版显式节点订阅仍可编译");
+    }
+
     // ---- 空订阅最小配置 -------------------------------------------------------
     options.profileYaml.clear();
     const auto empty = singbox::compileConfig(options);

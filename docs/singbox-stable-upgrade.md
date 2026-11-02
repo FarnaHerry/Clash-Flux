@@ -55,7 +55,7 @@ ABI 和 AAR SHA256。`stageSingboxAar` 将三者与固定版本核对，拒绝�
 | 缺失代理链目标、编译后重复 tag、循环 | 完成全部出站后检查依赖图；组的全部候选成员参与；报编译错误，不改成直连 |
 | `select.default-selected` | 有效成员映射 selector.default；不强制覆盖已缓存的选择 |
 | 未映射组字段 | 每个字段记 Group/Approx，不臆造 lazy/timeout 等原生设置 |
-| `use` 数组、include-all 系列 | 不展开 provider，记 Group/Unsupported 并保留显式成员 |
+| `use` 数组、include-all/providers | 不展开 provider，记 Group/Unsupported 并拒绝候选，不保留部分成员 |
 | 根级 proxy-providers / rule-providers | 不展开，记 Field/Unsupported；仍待开发 |
 | `no-resolve` | 保留匹配条件并记 Rule/Approx，明确托管前置 resolve 仍可能解析域名 |
 | 未知规则修饰符或缺少必需字段 | 整条跳过并记 Rule/Unsupported，不截断后静默接受 |

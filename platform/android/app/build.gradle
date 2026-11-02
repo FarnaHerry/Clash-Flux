@@ -192,8 +192,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 167
-        versionName = "0.3.89"
+        versionCode = 168
+        versionName = "0.3.90"
 
         externalNativeBuild {
             cmake {
@@ -402,4 +402,19 @@ def testVpnUptime = tasks.register("testVpnUptime", JavaExec) {
     classpath = files(compileRuntimeStartPolicyTest.flatMap { it.destinationDirectory })
     mainClass = "dev.farna.clashflux.VpnUptimeTest"
 }
+
+def compileProfileHttpPolicyTest = tasks.register("compileProfileHttpPolicyTest", JavaCompile) {
+    source files("src/main/java/dev/farna/clashflux/ProfileHttpPolicy.java",
+            "../../../tests/android/ProfileHttpPolicyTest.java")
+    destinationDirectory = layout.buildDirectory.dir("profile-http-policy-test")
+    classpath = files()
+    options.encoding = "UTF-8"
+    options.release = 8
+}
+def testProfileHttpPolicy = tasks.register("testProfileHttpPolicy", JavaExec) {
+    dependsOn compileProfileHttpPolicyTest
+    classpath = files(compileProfileHttpPolicyTest.flatMap { it.destinationDirectory })
+    mainClass = "dev.farna.clashflux.ProfileHttpPolicyTest"
+}
+tasks.named("preBuild").configure { dependsOn testProfileHttpPolicy }
 tasks.named("preBuild").configure { dependsOn testRuntimeStartPolicy, testRuntimeModeReconciler, testVpnUptime }
