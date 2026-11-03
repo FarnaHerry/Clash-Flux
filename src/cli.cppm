@@ -459,11 +459,21 @@ int cmdResource(const std::vector<std::string>& args) {
 export int run(const std::vector<std::string>& args) {
 #ifdef _WIN32
     // 链接为 GUI 子系统（/SUBSYSTEM:WINDOWS）：从终端启动 CLI 子命令时没有
-    // 控制台，附着父进程控制台并重接 stdio，println 才可见。
+    // 控制台，附着父进程控制台并重接 stdio，println 才可见。脚本/CTest 会
+    // 传入管道或文件句柄；这些句柄已可写，绝不能改指 CONOUT$，否则调用方
+    // 捕获不到输出（Windows 冒烟的 resource references 曾因此拿到空串）。
     if (AttachConsole(ATTACH_PARENT_PROCESS)) {
-        (void)std::freopen("CONOUT$", "w", stdout);
-        (void)std::freopen("CONOUT$", "w", stderr);
-        (void)std::freopen("CONIN$", "r", stdin);
+        const auto missingOrConsoleless = [](DWORD id) {
+            const HANDLE handle = GetStdHandle(id);
+            return handle == nullptr || handle == INVALID_HANDLE_VALUE ||
+                   GetFileType(handle) == FILE_TYPE_UNKNOWN;
+        };
+        if (missingOrConsoleless(STD_OUTPUT_HANDLE))
+            (void)std::freopen("CONOUT$", "w", stdout);
+        if (missingOrConsoleless(STD_ERROR_HANDLE))
+            (void)std::freopen("CONOUT$", "w", stderr);
+        if (missingOrConsoleless(STD_INPUT_HANDLE))
+            (void)std::freopen("CONIN$", "r", stdin);
     }
 #endif
     if (args.empty()) {
