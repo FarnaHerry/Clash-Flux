@@ -18,6 +18,7 @@ import clashflux.core;
 import clashflux.store.core;
 import clashflux.singbox;
 import clashflux.routing;
+import clashflux.stream;
 
 namespace store {
 
@@ -847,6 +848,10 @@ private:
         // The independent downloader owns no controller endpoint or secret.
         api::ClashApi downloader{"", ""};
         const auto r = downloader.downloadToFile(initial->url, cfg::profilesDir() / p.file, opts);
+        stream::logApplication("info", std::format(
+            "profile-download source_id={} manual={} ready={} network_us={} candidate_us={} file_commit_us={} download_bytes={} connections_known={} new_connections={}",
+            p.id, forceProviders, r.ok, r.download.networkMicros, r.download.validationMicros,
+            r.download.commitMicros, r.download.bytes, r.download.transportKnown, r.download.newConnections));
         if (!r.ok) {
             if (!planLock.owns_lock()) planLock.lock();
             const auto current = findById(p.id);
@@ -861,12 +866,18 @@ private:
             return false;
         }
         coreStore().invalidateProxyGroupsSnapshot();
-        if (coreStore().sourceParticipates(p.id) && coreStore().snapshot().state == core::CoreState::Running &&
-            !coreStore().restartCore(coreStore().currentMainContent())) {
-            lastError_ = coreStore().snapshot().lastError;
-            std::string restoreError;
-            if (!writeContent(p, previousContent, restoreError)) lastError_ += "；来源文件恢复失败：" + restoreError;
-            return false;
+        if (coreStore().sourceParticipates(p.id) && coreStore().snapshot().state == core::CoreState::Running) {
+            const auto began = std::chrono::steady_clock::now();
+            const bool applied = coreStore().restartCore(coreStore().currentMainContent());
+            stream::logApplication("info", std::format("profile-update source_id={} ready={} apply_us={}",
+                p.id, applied, std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - began).count()));
+            if (!applied) {
+                lastError_ = coreStore().snapshot().lastError;
+                std::string restoreError;
+                if (!writeContent(p, previousContent, restoreError)) lastError_ += "；来源文件恢复失败：" + restoreError;
+                return false;
+            }
         }
         // 订阅响应头：subscription-userinfo（流量/到期）/ profile-web-page-url
         // （提供方首页）。缺头时清零/清空——以最新一跳为准。

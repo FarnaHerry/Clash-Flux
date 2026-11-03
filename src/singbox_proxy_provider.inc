@@ -279,6 +279,7 @@ std::optional<ProxyProviderSet> compileProxyProviders(Context& ctx, const YAML::
         }
         auto resource = httpProxyProviderResource(ctx, provider, name, failure);
         if (!resource) return reject("代理集合「" + name + "」：" + failure);
+        resource->required = resource->cacheKey == ctx.opt.refreshProviderKey;
         compiled.resources[name] = ctx.result.httpProxyProviders.size();
         ctx.result.httpProxyProviders.push_back(*resource);
         const auto supplied = ctx.opt.proxyProviderContents.find(resource->cacheKey);
@@ -295,7 +296,7 @@ std::optional<ProxyProviderSet> compileProxyProviders(Context& ctx, const YAML::
         if (supplied == ctx.opt.proxyProviderContents.end())
             ctx.result.proxyProviderContents.try_emplace(resource->cacheKey, *content);
         ctx.note(FidelityScope::Field, Fidelity::Approx, "proxy-providers." + name,
-                 "HTTP 代理集合使用 DIRECT 下载和应用自有缓存，节点编译为静态快照；interval 仅在应用配置时检查，path 不读写，默认上限 8 MiB",
+                 "HTTP 代理集合使用 DIRECT 下载和应用自有缓存，节点编译为静态快照；interval 由应用资源调度器独立检查，配置交接可能重启内核；path 不读写，默认上限 8 MiB",
                  "手动刷新主订阅会重新下载引用中的代理集合；启动时到期刷新失败可沿用已验证缓存");
     }
     return compiled;

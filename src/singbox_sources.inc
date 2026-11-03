@@ -225,6 +225,9 @@ bool compileAuxiliarySources(Context& ctx) {
         ctx.result.httpProxyProviders.insert(ctx.result.httpProxyProviders.end(),
             part.result.httpProxyProviders.begin(), part.result.httpProxyProviders.end());
         ctx.result.proxyProviderContents.merge(part.result.proxyProviderContents);
+        ctx.result.httpRuleProviders.insert(ctx.result.httpRuleProviders.end(),
+            part.result.httpRuleProviders.begin(), part.result.httpRuleProviders.end());
+        ctx.result.ruleProviderContents.merge(part.result.ruleProviderContents);
         if (!part.result.error.empty()) {
             ctx.result.error = "次来源「" + source.name + "」编译失败：" + part.result.error;
             return false;

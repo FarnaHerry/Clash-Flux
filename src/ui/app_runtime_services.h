@@ -19,6 +19,7 @@ struct AppRuntimeServices {
     bool profilesPumpStarted = false;
     bool cliWatcherStarted = false;
     bool profileRefreshStarted = false;
+    bool externalResourceRefreshStarted = false;
     bool proxiesPumpStarted = false;
     bool corePumpStarted = false;
     bool vpnPumpStarted = false;

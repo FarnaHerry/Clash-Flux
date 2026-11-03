@@ -81,7 +81,7 @@ export struct RuleSetResource {
     std::string url;
 };
 
-// Only compiler-declared HTTP providers and ASN snapshots enter this cache.
+// Compiler-declared HTTP providers, Geo DAT and ASN snapshots enter this cache.
 // Identity is checked in full on every read; cacheKey is a filename, not a trust
 // or cryptographic checksum. Original provider paths are read-only seed files.
 export struct HttpRuleProviderResource {
@@ -112,10 +112,20 @@ export struct ExternalResource {
     std::string behavior;  // rule-provider 的 behavior
     std::string format;    // rule-provider 的 format
     std::uint64_t intervalSeconds = 0;
+    std::string identity, cacheKey;
     bool operator==(const ExternalResource&) const = default;
+    std::size_t maxBytes = 8 * 1024 * 1024;
 };
+export struct ExternalResourceCache {
+    bool supported = false, present = false, valid = false;
+    std::size_t bytes = 0;
+    std::string error;
+    bool operator==(const ExternalResourceCache&) const = default;
+};
+export ExternalResourceCache InspectExternalResourceCache(const ExternalResource& resource,
+    const std::filesystem::path& directory);
 export std::vector<ExternalResource> InspectExternalResources(
-    std::string_view content, std::string& error);
+    std::string_view content, std::string& error, std::string sourceId = "resource-inspection");
 
 export struct HttpCacheValidators {
     std::string etag, lastModified;
@@ -196,6 +206,8 @@ export struct CompileOptions {
     bool speedTestOnly = false;                  // 仅测速内核；保留 URLTest 组的订阅测速地址
     bool tunStrictRoute = true;                  // Android VpnService 侧保持 false（严格
                                                  // 路由会截断系统级分流）
+    int tunMtu = 1400;
+    bool overrideTunMtu = false;                // Preserve explicit native JSON MTU until user saves an override.
     bool ipv6 = true;                            // DNS 与 TUN 是否允许 IPv6
     std::string ruleSetDir;                      // 非空时 GEOIP/GEOSITE .srs 本地命中即以
                                                  // local rule_set 生成（core_store
@@ -209,6 +221,9 @@ export struct CompileOptions {
     // Manual source updates force refresh only the providers declared by that
     // source. Automatic updates leave this empty and respect each interval.
     std::set<std::string> forceProviderRefreshSources;
+    // Explicit one-resource update; other providers use existing verified
+    // snapshots even when expired. Missing dependencies fail the candidate.
+    std::string refreshProviderKey;
     std::string mainSourceName;
     std::vector<ProfileSource> auxiliarySources; // 桌面：只由启用的显式规则引用
     std::uint64_t planRevision = 0;

@@ -14,6 +14,8 @@ bool ensureGeoipRuleSet(Context& ctx, std::string country) {
     }
     const std::string tag = "geoip-" + country;
     ctx.geoipTags.emplace(country, tag);
+    if (ctx.customGeo.contains("geoip") || ctx.geoFailures.contains("geoip"))
+        return customGeoRuleSet(ctx, "geoip", country);
     // MetaCubeX 的 geoip 目录只提供国家/地区代码。某些 Clash 订阅会把
     // TELEGRAM 等类别误写成 GEOIP；继续拼出不存在的 URL 会让 sing-box
     // 在启动阶段直接 FATAL，而不是把规则温和地降级。
@@ -83,6 +85,8 @@ bool ensureGeositeRuleSet(Context& ctx, std::string category) {
     }
     const std::string tag = "geosite-" + category;
     ctx.geositeTags.emplace(category, tag);
+    if (ctx.customGeo.contains("geosite") || ctx.geoFailures.contains("geosite"))
+        return customGeoRuleSet(ctx, "geosite", category);
     if (category.empty() ||
         !std::all_of(category.begin(), category.end(), [](unsigned char c) {
             return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
@@ -250,6 +254,11 @@ std::optional<nlohmann::json> asnPrefixes(const HttpRuleProviderResource& resour
 RuleCondition compileAsnCondition(Context& ctx, const std::string& kind,
         const std::string& value, const std::string& subject) {
     RuleCondition result;
+    if (ctx.geoFailures.contains("asn")) {
+        result.error = ctx.geoFailures.at("asn");
+        ctx.result.error = result.error;
+        return result;
+    }
     std::uint32_t asn = 0;
     const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), asn);
     if (value.empty() || ec != std::errc{} || end != value.data() + value.size() || !asn) {
@@ -261,6 +270,34 @@ RuleCondition compileAsnCondition(Context& ctx, const std::string& kind,
         // Only validates shape before dependencies are prepared. This context
         // is confined to ValidateHttpRuleProvider; no config can escape it.
         result.rule[kind == "src-ip-asn" ? "source_ip_cidr" : "ip_cidr"] = {"192.0.2.0/24"};
+        return result;
+    }
+    if (const auto custom = ctx.customGeo.find("asn"); custom != ctx.customGeo.end()) {
+        const auto& resource = custom->second;
+        if (!std::ranges::any_of(ctx.result.httpRuleProviders, [&](const auto& r) { return r.identity == resource.identity; }))
+            ctx.result.httpRuleProviders.push_back(resource);
+        std::string error;
+        const auto pinned = ctx.opt.ruleProviderContents.find(resource.cacheKey);
+        std::optional<std::string> loaded;
+        const std::string* bytes = nullptr;
+        if (pinned != ctx.opt.ruleProviderContents.end()) bytes = &pinned->second;
+        else {
+            loaded = ReadHttpRuleProviderCache(resource, ctx.opt.ruleProviderCacheDir, error);
+            if (loaded) bytes = &*loaded;
+        }
+        try {
+            if (!bytes) throw std::runtime_error("ASN MMDB 尚未准备：" + error);
+            const auto index = mmdbIndex("asn", *bytes);
+            const auto found = index->entries.find(std::to_string(asn));
+            if (found == index->entries.end()) throw std::runtime_error("自定义 ASN MMDB 不含该编号");
+            result.rule[kind == "src-ip-asn" ? "source_ip_cidr" : "ip_cidr"] = mmdbPrefixes(found->second);
+            if (loaded) ctx.result.ruleProviderContents.try_emplace(resource.cacheKey, std::move(*loaded));
+            ctx.note(FidelityScope::Rule, Fidelity::Approx, subject,
+                "ASN MMDB 转为原生网段快照；应用资源调度器按间隔刷新，配置交接可能重启内核");
+        } catch (const std::exception& exception) {
+            ++ctx.unpreparedAsnConditions;
+            result.error = exception.what(); ctx.result.error = result.error;
+        }
         return result;
     }
     const auto resource = asnResource(asn);
@@ -938,7 +975,7 @@ void compileRuleProviders(Context& ctx, const YAML::Node& providers) {
                      "文件更新后重新应用配置；读取或转换失败会拒绝候选，规则文件始终只读");
         if (type == "http")
             ctx.note(FidelityScope::Field, Fidelity::Approx, "rule-providers." + name,
-                     "HTTP 规则集采用直连下载与应用自有缓存，编译为 inline 快照；interval 仅在应用配置时检查到期，不定时热更新；path 仅作只读种子",
+                     "HTTP 规则集采用直连下载与应用自有缓存，编译为 inline 快照；interval 由应用资源调度器独立检查到期，配置交接可能重启内核；path 仅作只读种子",
                      "重新应用配置触发到期刷新；不覆盖 path 文件，不将指定代理下载改成直连；size-limit 默认限制为 8 MiB，超限拒绝而非截断");
         if (type == "http" && provider["header"] && provider["header"].size() != 0)
             ctx.note(FidelityScope::Field, Fidelity::Approx, "rule-providers." + name + ".header",

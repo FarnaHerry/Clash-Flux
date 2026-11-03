@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <string>
 #include "inbound_settings.h"
+#include "../tun_settings.h"
 
 namespace clashflux::ui {
 
@@ -36,6 +37,8 @@ struct SettingsView {
     std::string mixedPort = "7899"; // core.mixed_port
     std::string httpPort;         // core.http_port; empty disables the inbound
     std::string socksPort;        // core.socks_port; empty disables the inbound
+    std::string tunMtu = "1400";
+    bool tunStrictRoute = true;
     std::string envShell;         // ui.env_shell（空 = 未保存，用探测值）
     std::string language = "system"; // ui.language: system / zh / en
 
@@ -55,6 +58,7 @@ struct SettingsModel {
     // Validate once, then synchronously update the cache and publish the same values.
     PortSettingsError SetPorts(std::string mixed, std::string http, std::string socks);
     void SetEnvShell(std::string shell);
+    huxerui::State<bool> tunSettingsSaving{false};
 
     // 写透：设置项的内存缓存写完（setSetting 是同步写缓存）后，直接把同一个值
     // 发布进模型。UI 真值与缓存真值同一时刻成立，因此 KV 类设置不需要 pending、

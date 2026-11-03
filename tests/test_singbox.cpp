@@ -16,6 +16,7 @@ import std;
 import nlohmann.json;
 import clashflux.singbox;
 import clashflux.rule_provider_cache;
+import clashflux.provider_resources;
 import clashflux.vpn;
 
 namespace {
@@ -158,6 +159,10 @@ public:
 
     std::filesystem::path path;
 };
+
+#include "provider_resource_cases.inc"
+#include "geo_data_cases.inc"
+#include "mmdb_cases.inc"
 
 void testProxyValues() {
     // Subscription generators still emit these valid compatibility fields.
@@ -1924,7 +1929,8 @@ void testRuntimeCompileReuse() {
     reject = false;
     auto warm = options; warm.ruleProviderContents.clear();
     check(rule_provider_cache::Prepare(warm, operations, result, error, &stats) && stats.compileCount == 1 &&
-          stats.validatedSnapshotReuses == 1 && checks == 4 && commits == 1 && fetched == 1 &&
+          stats.validatedSnapshotReuses == 1 && stats.cacheHits == 1 && stats.staleFallbacks == 0 &&
+          checks == 4 && commits == 1 && fetched == 1 &&
           warm.ruleProviderContents == pinned && result.ruleProviderContents.empty() && result.json == legacy.json &&
           result.fidelity == legacy.fidelity && result.warnings == legacy.warnings,
           "fresh disk inputs reuse the exact compiled artifact and publish one owning rollback snapshot");
@@ -2791,9 +2797,10 @@ int main(int argc, char** argv) {
         return output ? 0 : 1;
     }
     if (argc == 3 && std::string_view(argv[1]) == "--personal-rule-fixtures") {
-        testPersonalRules(argv[2]); testPersonalRuleSets(argv[2]); return failures ? 1 : 0;
+        testPersonalRules(argv[2]); testPersonalRuleSets(argv[2]); testGeoData(argv[2]); testMmdb(argv[2]); return failures ? 1 : 0;
     }
     if (argc == 1) testNodeSubscriptions();
+    if (argc == 1) { testGeoData(); testMmdb(); }
     testPersonalRules();
     testPersonalRuleSets();
     // Test-only compiler entry for isolated native runtime fixtures; no app
@@ -2877,6 +2884,8 @@ int main(int argc, char** argv) {
     testAsnRuleProviders();
     testAsnRuleProviderBatch();
     testProviderParallelPreparation();
+    testProviderResourceManager();
+    testProviderSharedCandidates();
     testProviderPreparationCancellation();
     testProviderConversionReuse();
     testProviderConditionalRefresh();

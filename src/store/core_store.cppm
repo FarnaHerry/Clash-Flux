@@ -21,6 +21,7 @@ module;
 #include "health_history.h"
 #include "runtime_plan_state.h"
 #include "runtime_compile.h"
+#include "tun_settings.h"
 #include "rule_set_cache_ownership.h"
 #if defined(__ANDROID__)
 #include "android_profile_http.h"
@@ -40,6 +41,7 @@ import clashflux.api;
 import clashflux.core;
 import clashflux.singbox;
 import clashflux.rule_provider_cache;
+import clashflux.provider_resources;
 import clashflux.stream;
 import clashflux.sysproxy;
 import clashflux.service;
@@ -114,6 +116,12 @@ export struct CoreSnapshot {
     bool operator==(const CoreSnapshot&) const = default;  // State 变更检测
 };
 
+export struct ExternalResourceRefreshBatch {
+    unsigned attempted = 0, updated = 0, applied = 0;
+    bool deferred = false;
+    std::vector<std::string> errors;
+};
+
 export class CoreStore {
 public:
     CoreStore() = default;
@@ -142,12 +150,18 @@ public:
 #include "store/core_store_evidence.inc"
 #include "store/core_store_routing.inc"
 #include "store/core_store_lifecycle.inc"
+#include "store/external_resource_scheduler.inc"
 private:
+#include "store/provider_download.inc"
 #include "store/core_store_helpers.inc"
 
     std::unique_ptr<db::Db> db_;
     std::unique_ptr<api::ClashApi> api_;
     std::unique_ptr<api::NativeApi> nativeApi_;
+    provider_resources::Manager providerResources_;
+    struct ResourceRetry { std::chrono::steady_clock::time_point next{}; unsigned failures = 0; };
+    std::map<std::string, ResourceRetry> resourceRetries_;
+    std::string resourceCursor_;
     core::CoreProcess process_;
     stream::CoreStreams streams_;
     std::string secret_;

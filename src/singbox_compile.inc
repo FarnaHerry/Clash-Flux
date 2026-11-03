@@ -9,6 +9,10 @@ std::string mappedLogLevel(const std::string& level) {
 }
 void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
     nlohmann::json& config = ctx.config;
+    if (!clashflux::tun_settings::ValidMtu(opt.tunMtu)) {
+        ctx.result.error = "虚拟网卡 MTU 需要填写 1280–9000 的整数";
+        return;
+    }
 
     if (!opt.proxyListening && opt.tunInbound) {
         ctx.result.error = "待命内核不能启用 TUN；请先连接代理";
@@ -125,7 +129,7 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
             {"type", "tun"},
             {"tag", "tun-in"},
             {"address", nlohmann::json::array({"172.19.0.1/30"})},
-            {"mtu", 1400},
+            {"mtu", opt.tunMtu},
             {"auto_route", true},
             {"strict_route", opt.tunStrictRoute},
         };
@@ -147,6 +151,7 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
         if (!inbound.is_object() || inbound.value("type", "") != "tun") continue;
         inbound["auto_route"] = true;
         inbound["strict_route"] = opt.tunStrictRoute;
+        if (opt.overrideTunMtu) inbound["mtu"] = opt.tunMtu;
 #ifdef _WIN32
         if (inbound.value("interface_name", "").empty()) inbound["interface_name"] = "ClashFlux";
         if (!opt.nativeConnections.empty()) {
@@ -345,6 +350,7 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
         return;
     }
     if (!applyClashFingerprint(ctx, root)) return;
+    if (!configureGeoData(ctx, root)) return;
 
     std::vector<YAML::Node> groups;
     if (const YAML::Node proxyGroups = root["proxy-groups"];

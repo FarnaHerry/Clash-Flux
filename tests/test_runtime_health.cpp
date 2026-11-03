@@ -1,17 +1,9 @@
 #include "../src/runtime_health.h"
 #include "../src/wire_codec.h"
 #include "runtime_health_cases.h"
-#include <chrono>
-#include <atomic>
-#include <array>
-#include <memory>
-#include <set>
-#include <vector>
-#include <iostream>
-#include <stdexcept>
-#include <thread>
-#include <filesystem>
-#include <fstream>
+// Match the production modules' standard-library import. Mixing textual
+// <thread> with their std BMI loses a libc++ stop-token definition on Clang.
+import std;
 import clashflux.stream;
 import clashflux.api;
 import clashflux.core;

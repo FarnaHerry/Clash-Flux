@@ -39,6 +39,15 @@ int main(int argc, char** argv) {
         return error;
     };
     const auto result = client.downloadToFile(argv[1], argv[2], options);
+    const bool invalidHeaders = argc == 6 && std::string_view(argv[5]) == "invalid";
+    if (!invalidHeaders && (!result.download.transportKnown || result.download.networkMicros < 0 ||
+            (result.status != 0 && result.download.newConnections < 1))) {
+        std::cerr << "real transfer must report time and measured connection count\n"; return 1;
+    }
+    if ((result.status == 304 && result.download.bytes != 0) ||
+            (!validated && result.download.validationMicros != 0)) {
+        std::cerr << "304 and validation metrics must describe actual work\n"; return 1;
+    }
     if (result.status == 304 && (validated || (conditional && !result.ok))) {
         std::cerr << "304 must return metadata without validating or replacing a body\n"; return 1;
     }

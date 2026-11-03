@@ -40,6 +40,7 @@ import clashflux.db;
 import clashflux.store.core;
 import clashflux.store.profiles;
 import clashflux.store.vpn;
+import clashflux.vpn;
 import clashflux.persistence;
 import clashflux.service;
 import clashflux.stream;
@@ -853,6 +854,12 @@ huxerui::PageTransition SecondaryPageTransition(
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
 
+[[huxerui::composable]] huxerui::View HomeProxySettingsRoutePage(HomeProxySettingsKind kind) {
+    const auto navigation = huxerui::UseNavigation();
+    return HomeProxySettingsPage(kind, [navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+
 [[huxerui::composable]] huxerui::View ThemeColorEditorRoutePage(
     std::string initialHex, std::optional<std::string> editingId) {
     const auto navigation = huxerui::UseNavigation();
@@ -1037,6 +1044,7 @@ void StartDesktopWindowlessRuntime() {
                 runtimeServices->settingsPumpStarted = true;
                 DriveSettingsModel(tasks, settingsModel);
             }
+            StartExternalResourceRefreshPump(tasks);
             if (!runtimeServices->profileRefreshStarted) {
                 runtimeServices->profileRefreshStarted = true;
                 tasks.Launch([profilesModel]() -> huxerui::Task<void> {

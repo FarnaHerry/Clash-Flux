@@ -150,6 +150,19 @@
         }
     }
 
+    std::string saveTunSettings(int mtu, bool strictRoute, const std::string& expectedMtu, bool expectedStrict) {
+        if (!clashflux::tun_settings::ValidMtu(mtu)) return "MTU 需要填写 1280–9000 的整数";
+        std::lock_guard lock(lifecycleMutex_);
+        auto& data = clashflux::persistence::persistence();
+        if (!data.ready()) return "设置尚未就绪";
+        if (data.setting("core.tun_mtu", "1400") != expectedMtu ||
+            (data.setting("core.tun_strict_route", "true") == "true") != expectedStrict)
+            return "设置已变化，请重新打开后编辑";
+        data.setSetting("core.tun_mtu", std::to_string(mtu));
+        data.setSetting("core.tun_strict_route", strictRoute ? "true" : "false");
+        return {};
+    }
+
     // 从已 hydrate 的缓存确保 core.secret 存在并（重新）构建 API 端点。
     // 启动任务在 Persistence::open 之后调用一次；缓存未就绪时只建空 secret 的
     // 端点，避免把「启动早期读不到设置」误判成需要重新生成 secret。

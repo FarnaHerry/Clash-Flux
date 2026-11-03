@@ -84,6 +84,7 @@ void AndroidPreparePlatformDataDirectory(
     auto profilesModel = huxerui::UseService<ProfilesModel>();
     huxerui::Lifecycle(
         [tasks, http, profilesModel] {
+            StartExternalResourceRefreshPump(huxerui::UseApplicationTaskScope());
             tasks.Launch([http, profilesModel]() -> huxerui::Task<void> {
                 for (;;) {
                     co_await huxerui::Delay(std::chrono::duration<double>{30.0});
@@ -433,7 +434,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
                 .action = CoreAction::SystemProxy,
                 .enabled = !self->control->SystemProxyEnabled()});
         }).Checked(proxyEnabled).Enabled(!busy));
-        entries.push_back(huxerui::MenuItem(english ? "TUN mode" : "TUN 模式", [self] {
+        entries.push_back(huxerui::MenuItem(english ? "Virtual network adapter" : "虚拟网卡", [self] {
             if (self->control) self->MenuControl().Run({
                 .action = CoreAction::Tun,
                 .enabled = !self->control->TunEnabled()});
@@ -596,6 +597,7 @@ bool HasDesktopCoreRuntime() {
     auto profilesModel = huxerui::UseService<ProfilesModel>();
     huxerui::Lifecycle(
         [tasks, runtimeServices, profilesModel] {
+            StartExternalResourceRefreshPump(tasks);
             if (!runtimeServices->profileRefreshStarted) {
                 runtimeServices->profileRefreshStarted = true;
                 tasks.Launch([profilesModel]() -> huxerui::Task<void> {

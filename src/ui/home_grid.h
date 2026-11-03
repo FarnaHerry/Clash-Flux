@@ -13,7 +13,7 @@ enum class HomeCardKind {
     Mode,       // 出站模式
     Profile,    // 当前订阅
     Proxy,      // 系统代理（桌面）
-    Tun,        // TUN 模式（桌面）
+    Tun,        // 虚拟网卡（桌面）
     LanIp,      // 内网 IP（本机局域网地址）
 };
 
@@ -45,7 +45,7 @@ inline constexpr HomeCardSpec kDesktopHomeCards[] = {
     // 内网 IP 紧跟当前订阅，1x2：两行高度可容纳更多接口明细。
     {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 2},
     {HomeCardKind::Proxy, "proxy", "系统代理", 1, 1},
-    {HomeCardKind::Tun, "tun", "TUN 模式", 1, 1},
+    {HomeCardKind::Tun, "tun", "虚拟网卡", 1, 1},
 };
 
 inline constexpr std::span<const HomeCardSpec> HomeCardCatalog(bool desktop) {

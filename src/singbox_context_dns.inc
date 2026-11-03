@@ -15,6 +15,9 @@ struct Context {
     std::vector<std::string> knownTags;               // 节点 + 组 + DIRECT
     std::map<std::string, std::string> geoipTags;     // 国家码 → rule_set tag
     std::map<std::string, std::string> geositeTags;   // 站点类别 → rule_set tag
+    std::map<std::string, HttpRuleProviderResource> customGeo;
+    std::map<std::string, std::string> geoFailures;
+    std::map<std::string, std::shared_ptr<const GeoDataIndex>> geoIndexes;
     std::map<std::string, std::string> dnsServerTags; // Clash DNS 地址 → typed server tag
     std::map<std::string, std::string> providerTags; // source name -> inline native tag
     std::set<std::string> declaredProviders;        // rejected declarations also shadow aliases

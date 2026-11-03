@@ -47,6 +47,7 @@ import clashflux.store.core;
 import clashflux.store.profiles;
 import clashflux.store.vpn;
 import clashflux.singbox;
+import clashflux.routing;
 
 namespace cli {
 
@@ -70,7 +71,10 @@ void printUsage() {
         "  profile use <id>                 启用订阅\n"
         "  profile update <id>              更新订阅\n"
         "  profile remove <id>              删除订阅\n"
-        "  profile check [<id>]             检查订阅保真度（默认查启用的那条）\n",
+        "  profile check [<id>]             检查订阅保真度（默认查启用的那条）\n"
+        "  profile resources-update-due       检查并刷新到期外部资源\n"
+        "  profile resource-refresh <id> <kind> <name>  刷新单个订阅资源\n"
+        "  resource list|add|add-url|rename|remove|refresh|references  全局规则集\n",
         CLASHFLUX_VERSION);
 }
 
@@ -321,6 +325,47 @@ int cmdProfile(const std::vector<std::string>& args) {
         // 本身已经在 stdout 说明了丢了多少，不再往 stderr 重复一遍。
         return unsupported > 0 ? 1 : 0;
     }
+    if (args[0] == "resources-update-due" && args.size() == 1) {
+        const auto batch = store::coreStore().refreshDueExternalResources();
+        std::println("attempted={} updated={} applied={} deferred={}", batch.attempted, batch.updated, batch.applied, batch.deferred);
+        for (const auto& error : batch.errors) std::println(stderr, "{}", error);
+        return batch.errors.empty() ? 0 : 1;
+    }
+    if (args[0] == "resources" && args.size() == 2) {
+        std::int64_t id = 0;
+        const auto [end, code] = std::from_chars(args[1].data(), args[1].data() + args[1].size(), id);
+        if (code != std::errc{} || end != args[1].data() + args[1].size() || id <= 0) return 2;
+        std::string error;
+        const auto content = ps.yamlOf(id);
+        if (content.empty()) { std::println(stderr, "订阅不存在或无法读取配置"); return 1; }
+        const auto resources = singbox::InspectExternalResources(content, error, routing::ConnectionId(id));
+        if (!error.empty()) { std::println(stderr, "{}", error); return 1; }
+        for (const auto& resource : resources) {
+            const auto state = store::coreStore().externalResourceCache(resource);
+            std::println("{}\t{}\t{}\t{}", resource.kind, resource.name,
+                !state.supported ? "unavailable" : state.valid ? "valid" : state.present ? "invalid" : "missing", state.bytes);
+        }
+        return 0;
+    }
+    if (args[0] == "resource-refresh") {
+        if (args.size() != 4) return 2;
+        std::int64_t id = 0;
+        const auto [end, code] = std::from_chars(args[1].data(), args[1].data() + args[1].size(), id);
+        if (code != std::errc{} || end != args[1].data() + args[1].size() || id <= 0) return 2;
+        const auto content = ps.yamlOf(id);
+        std::string error;
+        const auto resources = singbox::InspectExternalResources(content, error, routing::ConnectionId(id));
+        const auto resource = std::ranges::find_if(resources, [&](const auto& item) {
+            return item.kind == args[2] && item.name == args[3];
+        });
+        if (resource == resources.end()) { std::println(stderr, "未找到指定资源：{}", error); return 1; }
+        bool applied = false;
+        if (!store::coreStore().refreshExternalResource(id, content, *resource, applied, error)) {
+            std::println(stderr, "资源刷新失败：{}", error); return 1;
+        }
+        std::println("{}", applied ? "资源已更新并应用" : "资源缓存已更新");
+        return 0;
+    }
     if (args.size() < 2 ||
         (args[0] != "use" && args[0] != "update" && args[0] != "remove")) {
         std::println(stderr, "用法：profile list|import|use|update|remove|check");
@@ -358,6 +403,57 @@ int cmdProfile(const std::vector<std::string>& args) {
     return 0;
 }
 
+int cmdResource(const std::vector<std::string>& args) {
+    if (args.empty()) return 2;
+    auto& store = store::coreStore();
+    try {
+        auto library = store.ruleSetLibrary();
+        std::string error;
+        if (args[0] == "list" && args.size() == 1) {
+            for (const auto& resource : library.resources)
+                std::println("{}\t{}\t{}", resource.id, resource.name, resource.type);
+            return 0;
+        }
+        if (args[0] == "add" && args.size() == 3) {
+            const std::filesystem::path file(std::u8string(args[2].begin(), args[2].end()));
+            const auto text = file.extension() == ".srs"
+                ? core::importRuleSet(cfg::singboxBinary(), cfg::coreWorkDir(), file, error)
+                : singbox::ReadRuleProviderText(file, 8 * 1024 * 1024, error);
+            if (!text) { std::println(stderr, "{}", error); return 1; }
+            singbox::PersonalRuleSet resource;
+            resource.id = "set-" + cfg::randomSecret(); resource.name = args[1];
+            resource.type = "inline"; resource.format = "source"; resource.content = *text;
+            library.resources.push_back(std::move(resource));
+        } else if (args[0] == "add-url" && args.size() == 4) {
+            singbox::PersonalRuleSet resource;
+            resource.id = "set-" + cfg::randomSecret(); resource.name = args[1];
+            resource.format = args[2]; resource.url = args[3];
+            library.resources.push_back(std::move(resource));
+        } else if ((args[0] == "rename" && args.size() == 3) ||
+                   ((args[0] == "remove" || args[0] == "refresh" || args[0] == "references") && args.size() == 2)) {
+            const auto resource = std::ranges::find(library.resources, args[1], &singbox::PersonalRuleSet::id);
+            if (resource == library.resources.end()) { std::println(stderr, "资源不存在"); return 1; }
+            if (args[0] == "references") {
+                for (const auto& item : store.ruleSetUsage()) if (item.resourceId == args[1])
+                    std::println("{}\t{}\t{}\t{}", item.profileId, item.ruleId, item.profileName, item.enabled);
+                return 0;
+            }
+            if (args[0] == "refresh") {
+                bool applied = false;
+                if (!store.refreshPersonalRuleSet(args[1], library.revision, applied, error)) {
+                    std::println(stderr, "{}", error); return 1;
+                }
+                std::println("{}", applied ? "本次已重新下载并应用" : "已安排在下次引用启动时重新下载");
+                return 0;
+            }
+            if (args[0] == "rename") resource->name = args[2];
+            else library.resources.erase(resource);
+        } else return 2;
+        if (!store.saveRuleSetLibrary(std::move(library), error)) { std::println(stderr, "{}", error); return 1; }
+        return 0;
+    } catch (const std::exception& exception) { std::println(stderr, "{}", exception.what()); return 1; }
+}
+
 } // namespace
 
 export int run(const std::vector<std::string>& args) {
@@ -390,6 +486,7 @@ export int run(const std::vector<std::string>& args) {
     if (cmd == "tun") return cmdTun(rest);
     if (cmd == "proxy") return cmdProxy(rest);
     if (cmd == "profile") return cmdProfile(rest);
+    if (cmd == "resource") return cmdResource(rest);
     std::println(stderr, "未知命令：{}（help 查看用法）", cmd);
     return 2;
 }

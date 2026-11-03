@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.92 release notes](docs/releases/v0.3.92.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.93 release notes](docs/releases/v0.3.93.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -67,9 +67,11 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
   the card context menu as wide-screen dialogs or compact secondary pages; personal changes are saved separately
   across updates and compiled directly to sing-box JSON
   ([details](docs/subscription-personal-rules.md)). Global rules are managed from a
-  secondary page opened by the rules page header. Manual rule-set editing has been removed;
-  existing data remains compatible. The card context menu also opens a per-profile read-only
-  list of subscription-parsed external references. Assign domains, IP addresses and CIDRs to
+  secondary page opened by the rules page header. Settings → Resources manages shared native
+  JSON/SRS rule sets, retaining existing IDs and references; personal and global rules can select them.
+  The card context menu opens external resources with names, URLs and actual type labels,
+  including per-item refresh for HTTP rule/proxy providers and custom [Geo DAT/MMDB](docs/geo-resources.md).
+  Assign domains, IP addresses and CIDRs to
   different connections through global rules; inspect connection snapshots and close
   individual or all connections. Core and application logs share one searchable list and
   export, with history restored for viewing.
@@ -85,6 +87,10 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
 - Core controls: desktop startup prepares a standby core without traffic inbounds.
   Connect opens proxy ports and restores the saved system proxy/TUN choices;
   Disconnect returns to standby. Standby can coexist with another client's TUN; connecting still checks conflicts. Manual proxy listening works with both choices off.
+  Home system-proxy and virtual-adapter settings provide port/LAN and MTU/strict-routing controls
+  through wide dialogs or compact secondary pages; saved runtime parameters require a core restart.
+  See [home network settings](docs/home-network-settings.md). Geo supports DAT attribute filters, country/ASN MMDB and
+  validated cache status ([details](docs/geo-resources.md)).
   Select rule, global or direct outbound mode; configure ports, LAN access and logging.
   Disconnecting releases the app-owned system proxy and PPTP sessions; the tray also
   retains a full Stop core action. Incomplete cleanup is reported as a failure. App-managed desktop
@@ -263,8 +269,11 @@ register that test. See [validation evidence](docs/l1-l2-l3-status.md).
 Desktop CI sets `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`: missing or disabled required
 tests fail configuration. Python, the pinned bundled core and a runnable OpenSSL
 CLI are required; the download regression must include default certificate rejection.
-There are 21 common desktop tests (including CPS, runtime health, native control UI resources and system evidence), plus service, physical DNS and isolated WFP regressions on Windows (24).
-Only the documented MSVC C4737 defect permits skipping the direct ORM test (23 on Windows); subscription persistence remains mandatory. Windows service and WFP tests require an elevated test environment.
+The required list in [ProjectTestGate.cmake](cmake/ProjectTestGate.cmake) covers resource management,
+runtime matching, persistence, UI and system evidence; Windows also includes service, physical DNS,
+isolated WFP and legacy cleanup regressions. Only the documented MSVC C4737 defect permits skipping
+the direct ORM test; subscription persistence remains mandatory. Windows service and WFP tests require
+an elevated test environment.
 Use the same gate locally:
 
 ```bash
@@ -397,7 +406,11 @@ complete conversion and candidate checks precede app-owned cache replacement;
 failed updates keep verified old content, and applied plans hold separate raw snapshots.
 Resource preparation uses bounded concurrency, ETag/Last-Modified revalidation and
 a bounded in-process conversion cache; see the [cache contract](docs/singbox-layers-and-fidelity.md).
-`interval` is checked when applying a configuration, without periodic hot updates;
+Rule and proxy providers share an application-owned download entry point that coalesces identical
+in-flight requests and records stage timings, transfer counts and measured desktop connections;
+see [resource management and timing](docs/provider-resource-management.md).
+An application Runtime task independently checks positive `interval` values; changed configurations
+pass full candidate checks and may restart the core.
 `path` is a read-only seed. `header` supports single-value ASCII arrays, such as
 `User-Agent: [my-client/1]`, and participates in cache identity. Downloads with
 headers reject redirects and report that difference as approximate. Multiple
@@ -429,6 +442,14 @@ clash-flux tun on|off                 # Windows/Linux TUN requires the system se
 clash-flux proxy on|off|status        # System proxy
 clash-flux profile list|import <url> [name]|use <id>|update <id>|remove <id>
 clash-flux profile check [<id>]       # Check fidelity; exit 1 for unmappable entries
+clash-flux profile resources <id>      # Read-only DAT/MMDB cache status
+clash-flux profile resources-update-due # Refresh due external resources
+clash-flux profile resource-refresh <id> <rule-provider|proxy-provider|geo> <name>
+clash-flux resource list
+clash-flux resource add <name> <JSON-or-SRS-file>
+clash-flux resource add-url <name> <source|binary> <url>
+clash-flux resource rename <id> <name>
+clash-flux resource remove|refresh|references <id>
 clash-flux service install|uninstall|status|run
 ```
 

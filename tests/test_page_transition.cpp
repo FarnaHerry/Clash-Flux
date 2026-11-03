@@ -47,9 +47,11 @@
 #include "theme_colors.h"
 #include "theme_color_card.h"
 #include "vpn_snapshot_model.h"
+#include "global_rules_model.h"
 #include "task_bridge.h"
 #include "core_operation.h"
 #include "inbound_settings.h"
+#include "../src/tun_settings.h"
 #include "pptp_connection_progress.h"
 #include "subscription_rule_layout.h"
 #include "profile_card_layout.h"
@@ -2288,6 +2290,70 @@ void testCommonMenu() {
     surface.ScrollBy({0.0F, 5000.0F}); ui.PumpAndSettle();
     ui.Find(UiSelector::Text("Action-39")).Tap(); ui.PumpAndSettle();
     check(ui.Find(UiSelector::Text("COMMON-39")).Exists(), "按坐标打开的长菜单可滚动到末项并执行");
+}
+
+using TestGlobalRules = clashflux::ui::GlobalRulesModel<std::string>;
+std::shared_ptr<TestGlobalRules> globalRuleFixture;
+huxerui::View GlobalRuleSharingRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        const auto model = huxerui::UseService<TestGlobalRules>();
+        const auto tasks = huxerui::UseApplicationTaskScope();
+        const auto editor = huxerui::UseState(true);
+        return huxerui::Column {
+            huxerui::Text(model->accepted.Get().size() ? model->accepted.Get()[0] : "SAVED-empty"),
+            huxerui::Button("Unmount global editor").OnClick([editor] { editor = false; }),
+            editor.Get() ? huxerui::View{huxerui::Button("Save shared rule").OnClick([model, tasks] {
+                TestGlobalRules::Replace(model->rules, {"SAVED-new"});
+                model->Edited();
+                model->saving = true;
+                ++model->loadGeneration;
+                tasks.Launch([model]() -> huxerui::Task<void> {
+                    co_await huxerui::Delay(std::chrono::milliseconds{400});
+                    model->PublishSaved({"SAVED-new"});
+                    model->saving = false;
+                });
+            })} : huxerui::View{huxerui::Text("EDITOR-unmounted")},
+        };
+    })};
+}
+const huxerui::Application kGlobalRuleSharingApplication{GlobalRuleSharingRoot,
+    {.show_debug_overlay = false, .application_hooks = {[](huxerui::ApplicationContext& context) {
+        globalRuleFixture = std::make_shared<TestGlobalRules>();
+        globalRuleFixture->PublishLoaded(0, {"SAVED-old"});
+        context.Provide(globalRuleFixture);
+    }}}};
+void testGlobalRuleSharing() {
+    huxerui::testing::UiTest ui(kGlobalRuleSharingApplication, {.viewport = {700.0F, 500.0F}});
+    ui.PumpAndSettle();
+    const auto model = globalRuleFixture;
+    ui.Find(UiSelector::Text("Save shared rule")).Tap();
+    ui.Find(UiSelector::Text("Unmount global editor")).Tap();
+    ui.Pump(std::chrono::milliseconds{600}); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("EDITOR-unmounted")).Exists() &&
+          ui.Find(UiSelector::Text("SAVED-new")).Exists() && !model->saving.Get(),
+          "global rule save publishes to the retained reader after the editor unmounts");
+    const auto stale = model->loadGeneration.Get();
+    TestGlobalRules::Replace(model->rules, {"FAILED-draft"}); model->Edited();
+    check(!model->PublishLoaded(stale, {"STALE-rule"}) && model->rules.Get()[0] == "FAILED-draft" &&
+          model->accepted.Get()[0] == "SAVED-new", "late loads cannot overwrite edits or leak failed drafts into the saved list");
+    const auto current = model->loadGeneration.Get();
+    check(model->PublishLoaded(current, {"SAVED-external"}) && model->rules.Get()[0] == "FAILED-draft" &&
+          model->accepted.Get()[0] == "SAVED-external", "a failed draft survives navigation and a fresh saved-policy read");
+    model->pending = true;
+    TestGlobalRules::Replace(model->rules, {"QUEUED-newest"}); model->Edited();
+    model->PublishSaved({"SAVED-inflight"});
+    check(model->rules.Get()[0] == "QUEUED-newest" && model->accepted.Get()[0] == "SAVED-inflight" && model->dirty.Get(),
+          "an in-flight save preserves newer pending edits while publishing only its accepted policy");
+    model->pending = false;
+    model->PublishSaved({"SAVED-canonical-id"});
+    const auto unchanged = model->revision.Get();
+    model->PublishLoaded(model->loadGeneration.Get(), {"SAVED-canonical-id"});
+    check(model->rules.Get()[0] == "SAVED-canonical-id" && !model->dirty.Get() && model->revision.Get() == unchanged,
+          "final save shares canonical IDs and identical reloads do not invalidate open forms");
+    const auto aba = model->loadGeneration.Get();
+    TestGlobalRules::Replace(model->rules, {"TEMP"}); model->Edited();
+    TestGlobalRules::Replace(model->rules, {"SAVED-canonical-id"}); model->Edited();
+    check(!model->PublishLoaded(aba, {"ABA-stale"}), "ABA edits invalidate pre-edit loads even when values return to their old state");
 }
 
 struct VpnHydrationFixture {
@@ -4611,6 +4677,11 @@ void testHomeHeaderColdStart() {
 void testInboundSettings() {
     using namespace clashflux::ui;
     const auto ports = ParseInboundPorts(" 07899\n", "", " 1080 ");
+    check(clashflux::tun_settings::ParseMtu(" 1500 ") == 1500 &&
+          clashflux::tun_settings::ParseMtu("1280") == 1280 && clashflux::tun_settings::ParseMtu("9000") == 9000,
+          "adapter MTU accepts boundaries and trims input");
+    for (const auto* value : {"", "1279", "9001", "-1", "1500x", "1.5", "999999999999"})
+        check(!clashflux::tun_settings::ParseMtu(value), "invalid adapter MTU rejected before write");
     check(ports.error == PortSettingsError::None && ports.ports.mixed == "7899" &&
           ports.ports.http.empty() && ports.ports.socks == "1080", "shared port validation trims and normalizes optional listeners");
     check(ParseInboundPorts("65535", "1", "").error == PortSettingsError::None, "port boundaries remain accepted");
@@ -5474,6 +5545,7 @@ int main() {
     }
     testEmptyState();
     testThemeSwitch();
+    testGlobalRuleSharing();
     testVpnHydrationStartup();
     testProfileFileFilter();
     testProfileImportCompletion();

@@ -93,7 +93,7 @@ constexpr bool kDesktopHomeControl = false;
 //
 // 初始宽高按 FlClash 仪表盘实测跨度（其 3 列网格：单元 264x79.5、间距 14 逻辑 px）：
 //   网络速度 2x2 → 流量曲线 2x2   流量统计 1x2 → 流量统计 1x2
-//   系统代理 1x1 → 系统代理 1x1   TUN 1x1      → TUN 模式 1x1
+//   系统代理 1x1 → 系统代理 1x1   TUN 1x1      → 虚拟网卡 1x1
 //   出站模式(竖排) 1x2 → 出站模式取 1x2（纵向单选列表）
 //   其余信息类卡片（当前订阅）与 FlClash 的信息卡同级，取 1x2。
 constexpr auto& kHomeCards = kDesktopHomeCards;
@@ -663,7 +663,7 @@ huxerui::XYChartData BuildTrafficChartData(
 
 [[huxerui::composable]] huxerui::View DesktopModeSwitchRow(
     huxerui::ImageVariant icon, huxerui::StringVariant label,
-    huxerui::StringVariant description, huxerui::View control) {
+    huxerui::View action, huxerui::View control) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     return huxerui::Column {
         huxerui::Row {
@@ -678,10 +678,8 @@ huxerui::XYChartData BuildTrafficChartData(
         }.With(huxerui::Spacing(8.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         huxerui::Row {
-            huxerui::Text(description).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kCaption),
-                theme.colors.on_surface_variant})
-                .With(huxerui::Grow(1.0F)),
+            std::move(action),
+            huxerui::Spacer(),
             control,
         }.With(huxerui::Spacing(8.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
@@ -695,7 +693,7 @@ huxerui::XYChartData BuildTrafficChartData(
     return huxerui::Column {
         DesktopModeSwitchRow(
             app::images::system_proxy, Localized("系统代理"),
-            Localized("应用代理"),
+            HomeProxySettingsAction(HomeProxySettingsKind::SystemProxy),
             huxerui::Switch(control.SystemProxyEnabled())
                 .OnChanged([control](bool on) {
                     control.Run({.action = CoreAction::SystemProxy, .enabled = on});
@@ -708,8 +706,8 @@ huxerui::XYChartData BuildTrafficChartData(
     const auto control = UseCoreControl();
     return huxerui::Column {
         DesktopModeSwitchRow(
-            app::images::tun, Localized("TUN 模式"),
-            Localized("全局接管"),
+            app::images::tun, Localized("虚拟网卡"),
+            HomeProxySettingsAction(HomeProxySettingsKind::Tun),
             huxerui::Switch(control.TunEnabled())
                 .OnChanged([control](bool on) {
                     control.Run({.action = CoreAction::Tun, .enabled = on});

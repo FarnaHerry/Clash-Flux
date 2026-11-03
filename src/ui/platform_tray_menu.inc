@@ -15,7 +15,7 @@
             .connect = huxerui::UseString(Localized("连接代理")),
             .disconnect = huxerui::UseString(Localized("断开连接")),
             .systemProxy = huxerui::UseString(Localized("系统代理")),
-            .tun = huxerui::UseString(Localized("TUN 模式")),
+            .tun = huxerui::UseString(Localized("虚拟网卡")),
             .lightweight = huxerui::UseString(Localized("轻量级托盘模式")),
             .quit = huxerui::UseString(Localized("退出")),
         };

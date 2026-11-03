@@ -30,11 +30,11 @@ description: 修改 Clash-Flux 订阅转换、协议/DNS/规则/provider 映射�
 ## 下载与候选提交
 
 - VMess 明文/Base64 节点订阅读 [转换边界](../../docs/node-subscriptions.md)。统一走编译、规则投影和对象目录；保留原文，未知/坏条目整份拒绝，生成默认策略与非标准传输别名记保真度，不把未知传输降为 TCP 或放宽 TLS。
-- GEO 仅处理 CompileResult.ruleSetResources 自有清单，任务预取/周刷新/坏缓存清理，不扫描原生 tag 拼路径或清理无关 .srs；Android 打包 GEO 不参与运行时更新/清理，SRS 头检查不等于完整解析。
+- GEO 仅处理 CompileResult.ruleSetResources 自有清单，任务预取/周刷新/坏缓存清理，不扫描原生 tag 拼路径或清理无关 .srs；Android 打包 GEO 不参与运行时更新/清理，SRS 头检查不等于完整解析。自定义 Geo DAT/MMDB 的类型/来源隔离、暂存转换与未支持边界遵守 [Geo 资源](../../docs/geo-resources.md)，不能把自定义数据替换为内置数据。
 - file provider 仅从显式 ruleProviderDir 读取根内普通相对文件，canonical 后不越界，8 MiB；不写源文件或纳入 GEO 清理，失败整份候选拒绝。
 - HTTP provider 编译器输出 httpRuleProviders，任务按 HTTP(S)、直连/DIRECT 及文档支持的 header 准备快照。单值非空 ASCII header 总量 16 KiB，值参与完整缓存身份、不进配置或诊断；带头禁重定向并记 approx，iOS 暂拒带头，Android 用 Java TLS 桥接。
 - 下载默认验证证书，8 MiB 或更小 size-limit 在传输时拒绝、不截断提交；全部来源独占暂存、整份转换/候选与目标检查成功才原子换自有缓存，失败保留旧缓存/订阅。path 只作数据目录内只读种子，不改用户文件。
-- 缓存检查完整身份/格式，摘要文件名不是安全验证；未来版本/冲突拒覆盖。运行计划持 raw 快照，回滚不重新下载；interval 仅应用配置时检查到期，记 approx。没有多文件崩溃事务，不能宣称完整崩溃恢复。
+- 缓存检查完整身份/格式，摘要文件名不是安全验证；未来版本/冲突拒覆盖。运行计划持 raw 快照，回滚不重新下载；显式 HTTP/Geo interval 由应用 Runtime 独立检查到期，重配可能重启内核，记 approx；隐式 ipverse ASN 仍按应用配置检查。没有多文件崩溃事务，不能宣称完整崩溃恢复。
 - ASN 固定 ipverse JSON 编号/双地址族 CIDR 完整检查；MRS 固定 Zstandard，输入 8 MiB、解压 32 MiB、集合有界；未知版本/扩展/畸形或不支持域名整份拒绝。完整候选通过前不提交任何暂存缓存。
 - 通用原子替换、订阅保护、Windows 不先删目标、Android 无桌面 CLI 预检查等遵守 [数据技能](../clashflux-data/SKILL.md)。
 

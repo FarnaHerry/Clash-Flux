@@ -693,6 +693,36 @@
         return routing::DecodeRuleSetLibrary(clashflux::persistence::persistence().setting("rules.resources"));
     }
 
+    struct RuleSetUsage {
+        std::string resourceId, ruleId, profileName;
+        std::int64_t profileId = 0; // 0: a global rule.
+        bool enabled = true;
+        bool operator==(const RuleSetUsage&) const = default;
+    };
+
+    singbox::ExternalResourceCache externalResourceCache(const singbox::ExternalResource& resource) {
+        std::lock_guard lock(lifecycleMutex_);
+        return singbox::InspectExternalResourceCache(resource, cfg::coreWorkDir() / "rule-providers");
+    }
+
+    std::vector<RuleSetUsage> ruleSetUsage() {
+        std::lock_guard lock(lifecycleMutex_);
+        ensureOpen();
+        std::vector<RuleSetUsage> usage;
+        const auto policy = routing::DecodePolicy(setting("vpn.global_policy", ""));
+        for (const auto& rule : policy.rules)
+            if (rule.match == vpn::MatchKind::RuleSet)
+                usage.push_back({rule.pattern, rule.id, "", 0, rule.enabled});
+        for (const auto& profile : db_->listProfiles()) {
+            const auto edits = routing::DecodeProfileRules(setting(routing::ProfileRulesKey(profile.id), ""));
+            for (const auto& rule : edits.rules)
+                if (rule.match == "rule_set" && rule.operation != "final")
+                    usage.push_back({rule.pattern, rule.id, profile.name, profile.id,
+                                     rule.enabled && rule.operation != "disable"});
+        }
+        return usage;
+    }
+
     // Shared library edits serialize with profile edits/refreshes. Validate the
     // full proposed library before publishing settings or touching a running core.
     bool saveRuleSetLibrary(singbox::RuleSetLibrary library, std::string& error) {
@@ -718,7 +748,9 @@
             options.ruleSetLibrary = library;
             options.validateAllPersonalRuleSets = true;
             singbox::CompileResult compiled;
-            if (!prepareHttpRuleProviders(options, compiled, error)) return false;
+            bool checked = false;
+            if (!prepareHttpRuleProviders(options, compiled, error, nullptr, {}, nullptr, &checked) ||
+                (!checked && !checkCompiledPlan(compiled, error))) return false;
             ++library.revision;
             auto& data = clashflux::persistence::persistence();
             const auto oldText = data.setting("rules.resources");
@@ -894,6 +926,99 @@
                     &candidateChecked)) return false;
             return candidateChecked || checkCompiledPlan(compiled, error);
         } catch (const std::exception& e) { error = e.what(); return false; }
+    }
+
+    // Resource actions never replace the subscription source. A late response
+    // must still match the exact declaration/content captured by the page.
+    bool refreshExternalResource(std::int64_t profileId, const std::string& expectedContent,
+                                 const singbox::ExternalResource& selected,
+                                 bool& applied, std::string& error, std::stop_token cancel = {}) {
+        std::lock_guard lock(lifecycleMutex_);
+        ensureOpen();
+        applied = false;
+        error.clear();
+        try {
+            const auto profiles = db_->listProfiles();
+            const auto profile = std::ranges::find(profiles, profileId, &db::Profile::id);
+            if (profile == profiles.end()) { error = "订阅不存在"; return false; }
+            const auto readSource = [&] {
+                std::ifstream input(cfg::profilesDir() / profile->file, std::ios::binary);
+                return std::string(std::istreambuf_iterator<char>(input), {});
+            };
+            const auto guard = [&](std::string& failure) {
+                if (cancel.stop_requested()) { failure = "资源更新已取消"; return false; }
+                if (readSource() == expectedContent) return true;
+                failure = "订阅已变化，请重新打开外部资源";
+                return false;
+            };
+            if (!guard(error)) return false;
+            const auto sourceId = routing::ConnectionId(profileId);
+            std::string scanError;
+            const auto inventory = singbox::InspectExternalResources(expectedContent, scanError, sourceId);
+            if (selected.cacheKey.empty() ||
+                std::ranges::find(inventory, selected) == inventory.end()) {
+                error = "资源声明已变化或不支持手动刷新"; return false;
+            }
+            const auto before = snapshot();
+            const auto content = currentMainContent();
+            auto options = routingOptions(content, before.tunEnabled);
+            const bool participating = options.mainConnectionId == sourceId ||
+                std::ranges::any_of(options.auxiliarySources, [&](const auto& source) { return source.id == sourceId; });
+            if (!participating) {
+                options = routingOptions(expectedContent, false, false, nullptr, sourceId, nullptr, false);
+                options.auxiliarySources.clear(); options.globalRules.clear(); options.nativeConnections.clear();
+            }
+            options.refreshProviderKey = selected.cacheKey;
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+            if (participating) options.proxyListening = before.proxyListening;
+#endif
+            const std::filesystem::path cacheRoot = selected.kind == "proxy-provider"
+                ? options.proxyProviderCacheDir : options.ruleProviderCacheDir;
+            std::error_code ec;
+            std::filesystem::create_directories(cacheRoot, ec);
+            if (ec) { error = "无法创建资源缓存目录"; return false; }
+            rule_provider_cache::StagingDirectory backup;
+            backup.path = cacheRoot / (".stage-resource-" + cfg::randomSecret());
+            if (!std::filesystem::create_directory(backup.path, ec)) {
+                backup.path.clear(); error = "无法创建独占资源暂存目录"; return false;
+            }
+            const auto destination = cacheRoot / (selected.cacheKey + ".cache");
+            const bool hadCache = std::filesystem::exists(destination);
+            if (hadCache) {
+                const auto stamp = std::filesystem::last_write_time(destination, ec);
+                if (!ec) std::filesystem::copy_file(destination, backup.path / "previous", ec);
+                if (!ec) std::filesystem::last_write_time(backup.path / "previous", stamp, ec);
+            }
+            if (ec) { error = "无法保留原资源缓存"; return false; }
+            const auto restoreCache = [&] {
+                if (hadCache) {
+                    std::string restoreError;
+                    if (!api::CommitFile(backup.path / "previous", destination, restoreError))
+                        error += "；资源缓存恢复失败：" + restoreError;
+                } else {
+                    std::filesystem::remove(destination, ec);
+                    if (ec) error += "；新资源缓存移除失败：" + ec.message();
+                }
+            };
+            const auto began = std::chrono::steady_clock::now();
+            auto plan = prepareStartPlan(std::move(options), error, cancel,
+                participating && before.state == core::CoreState::Running, guard);
+            if (!plan) { restoreCache(); return false; }
+            if (!participating || before.state != core::CoreState::Running) {
+                resourceRetries_.erase(selected.identity);
+                return true;
+            }
+            if (restartPreparedCore(content, std::move(plan), before, systemProxyOurs(), true, cancel, began)) {
+                resourceRetries_.erase(selected.identity);
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+                applied = true;
+#endif
+                return true;
+            }
+            error = snapshot().lastError;
+            restoreCache();
+            return false;
+        } catch (const std::exception& exception) { error = exception.what(); return false; }
     }
 
     bool restartCore(const std::string& profileYaml, bool skipUnchanged = false,

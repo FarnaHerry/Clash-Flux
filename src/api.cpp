@@ -617,7 +617,15 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
         curl_easy_setopt(easy, CURLOPT_PROXY, "");
     }
     // 订阅服务器 UA 嗅探常见：clash-meta 的 UA 通过率更高。
+    const auto transferBegan = std::chrono::steady_clock::now();
     const CURLcode code = curl_easy_perform(easy);
+    result.download.networkMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - transferBegan).count();
+    result.download.transportKnown = true;
+    curl_off_t downloadedBytes = 0;
+    curl_easy_getinfo(easy, CURLINFO_SIZE_DOWNLOAD_T, &downloadedBytes);
+    result.download.bytes = static_cast<std::uint64_t>(std::max<curl_off_t>(0, downloadedBytes));
+    curl_easy_getinfo(easy, CURLINFO_NUM_CONNECTS, &result.download.newConnections);
     out.flush();
     if (code == CURLE_OK) {
         curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status);
@@ -677,6 +685,7 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
         }
     }
     if (result.ok && options.validate) {
+        const auto began = std::chrono::steady_clock::now();
         try {
             result.error = options.validate(temp);
         } catch (const std::exception& error) {
@@ -685,9 +694,14 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
             result.error = "下载内容校验失败";
         }
         result.ok = result.error.empty();
+        result.download.validationMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - began).count();
     }
     if (result.ok) {
+        const auto began = std::chrono::steady_clock::now();
         const auto ec = replaceDownload(temp, dest);
+        result.download.commitMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - began).count();
         if (ec) {
             result.ok = false;
             result.error = "无法替换目标文件: " + dest.string() + "：" + ec.message();

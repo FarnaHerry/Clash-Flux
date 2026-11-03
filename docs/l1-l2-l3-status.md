@@ -1,5 +1,232 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-03：v0.3.93 发布准备
+
+桌面版本 `0.3.93`，Android `versionCode=171` / `versionName=0.3.93`；发布说明见
+[v0.3.93](releases/v0.3.93.md)。内容覆盖 Geo DAT/MMDB、资源库与逐项/独立到期刷新、
+provider 下载协调、全局规则草稿，以及首页系统代理/虚拟网卡设置。
+
+实际通过：`cmake --build build --target clash-flux`（含 HuxerUI codegen）、
+`cmake --build build`、`./run.sh --version` 输出 `Clash-Flux v0.3.93（sing-box 客户端）`。
+完整 `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required --timeout 300`
+为 28/28，142.17 秒；`python3 tests/test_profile_selection_runtime.py build/clash-flux` 通过，
+核对候选失败留旧、停止主订阅删除及 provider 请求诊断。
+Android 从 platform/android 执行 `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`
+成功，64 个任务中 18 个执行、46 个已是最新，包含依赖的 JVM 策略检查。
+
+未做 Android 真机 VPN、正式签名覆盖安装、Windows/macOS 实机、真实系统代理/TUN、
+真实系统服务交接失败注入或 Windows 安装升级/回滚/卸载验收。Tag 触发的多平台 CI、
+APK 签名和 Release 资产需另行核对，不以本地 Debug 构建替代发布验收。
+
+## 2026-11-03：MMDB 国家/ASN 与独立资源到期调度
+
+快照：`2194823`（v0.3.92）加当前工作区，保留已有 provider、Geo DAT、资源库及首页设置改动。
+本条接续下方历史记录中“MMDB 与独立定时更新待后续”的边界，不改内核版本或数据库 schema。
+
+- L2 接入有界 MMDB v2 读取：24/28/32 位记录、IPv4/IPv6、指针、国家 MaxMind/sing/Meta
+  三种结构与 GeoLite2/DBIP/ipinfo ASN。生成原生 inline rule_set 或来源/目标 CIDR；
+  不把 MMDB 交给 L1，不替换成内置 Geo/ipverse。缺分类、错误类型/指针/UTF-8/版本、
+  搜索树环、node_count 溢出及展开超限均拒绝。紧凑网段索引保留 IPv6 别名，只展开所选分类文本。
+- `geodata-mode: false` 选择 geox-url.mmdb，true 选择 geoip DAT；未选中的声明不下载。
+  MMDB/ASN 复用已有完整身份缓存、TLS 验证、条件请求、单项暂存/候选检查、来源 guard 和
+  状态回读；资源页及 CLI 可刷新并查看缓存状态，不输出虚构的内核 Geo 状态。
+- 应用 Runtime 注册唯一 30 秒调度任务，独立于订阅刷新；显式 HTTP rule/proxy provider
+  按正 interval，Geo 按启用的 geo-auto-update/geo-update-interval。每轮最多三项轮换，
+  运行锁忙跳过；失败退避 60–960 秒，保留旧缓存及原到期时间，成功手动刷新清除退避。
+  声明修改/删除淘汰旧身份；WorkerSequence 将应用退出取消传至准备/提交检查。
+- 停止/未参与只更新缓存；运行中字节变化才完整交接，可能重启内核，相同字节跳过重启。
+  定时成功发布应用级资源修订，已打开资源页回读。新增 CLI resources-update-due 复用正常
+  到期 pass，单实例转发共享退避；debug 日志只记 attempted/updated/deferred 计数。
+
+实际检查：`cmake --build build --target clash-flux test_singbox`（含 HuxerUI codegen）、
+`cmake --build build`、`./run.sh --version`（v0.3.92）、`git diff --check` 通过。
+完整 `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required` 为
+28/28，145.41 秒；此前一轮 28/28，147.28 秒。最后补充 ASN 三种记录结构及 source ASN
+断言后，重新构建主目标与 test_singbox，相关四项定向回归 4/4，15.54 秒。
+`personal_rule_sets_runtime` 使用固定 sing-box 验证国家/ASN MMDB 的 IPv4、IPv6 实际拒绝
+及无关 loopback DIRECT；生产 CLI 回归覆盖四个 HTTP provider 的三项批次/剩余一项到期刷新、
+Geo 独立到期、不下载主订阅、坏数据/缺分类留旧、多 ID、旧到期时间保留及声明移除。
+三个公开国家/ASN 样本经生产准备器及固定内核 check，大小/哈希见 [Geo 资源](geo-resources.md)。
+
+隔离 Linux 原生 GUI 常驻 Runtime 验证真实 30 秒调度：未参与 MMDB、订阅 auto_update=0
+也能下载并提交；同 Runtime 的失败退避生效、手动成功刷新清除退避、新声明身份可立即更新，
+停止状态未产生活动 config.json；所有测试自建数据库和 loopback HTTP，隔离系统服务及 D-Bus。
+最终样本诊断为 attempted=1/updated=1/deferred=false。一次较短观察窗未出现提交，随后用
+覆盖两个周期的观察上限重跑通过；不把运行锁忙时跳过一轮说成准点更新承诺。
+Android 从 platform/android 执行 `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`
+通过，最终 13 秒（64 tasks，10 executed），含 Java/NDK 与依赖的 JVM 策略检查。
+
+边界：只在应用 Runtime 存活期间调度；Android UI 进程被回收、桌面完全退出后暂停，
+不在后台 libbox/系统服务另开数据库。隐式 ipverse ASN 依赖仍在应用配置时检查，原生 remote
+rule_set 保持 sing-box 调度；无文件监听、跨资源重配合批、HTTP 连接池或多缓存崩溃事务。
+首次缺少其它必需快照仍须先完整应用/更新订阅。Android 异步失败完整回滚、真机 VPN、
+Windows/macOS 实机及真实系统服务中的资源交接未验收。未提交或发布。
+契约见 [Geo](geo-resources.md) 与 [独立调度](provider-resource-management.md)。
+
+## 2026-11-03：Geo 属性/缓存状态与首页网络设置完善
+
+快照：`2194823`（v0.3.92）加当前工作区，保留此前 provider、资源库和首页设置入口改动。
+按用户选择，本批优先完成 DAT 属性筛选及资源状态；MMDB/MetaDB 和独立定时更新继续留后续。
+
+- GEOSITE 支持 category@a 与 category@a@b，按 Mihomo 的属性名存在性、大小写不敏感及 AND
+  筛选，bool=false/int 属性仍按存在匹配。空属性段拒绝；空匹配以原生互斥域名 AND 表达，
+  不产生 match-all 空对象；固定内核要求 inline 列表非空，已做实际 check 和运行回归。
+- 外部资源页在任务线程查询 Geo 原始缓存，显示尚未缓存/可用/无效和大小，刷新后回读；
+  不联网、不写缓存、不冒充已应用或内核周期状态。CLI profile resources <id> 提供同一投影。
+- 首页卡片、卡片目录/菜单和托盘将「TUN 模式」改为「虚拟网卡」。系统代理设置复用端口、
+  局域网和环境变量；端口统一校验且过期表单拒绝。虚拟网卡增加 MTU 1280–9000 及严格路由，
+  共享设置模型、应用级单飞任务、worker 生命周期锁和提交前核对，离页仍可完成提交。
+  保留原生 JSON 的原 MTU，直到用户显式保存覆盖；Android 严格路由 false/gVisor 策略不变。
+  IPv6/局域网/shell 沿用即时保存偏好；MTU/严格路由/端口按保存提交，运行参数重启内核生效。
+  契约见[Geo 资源](geo-resources.md)和[首页网络设置](home-network-settings.md)。
+
+实际通过：`cmake --build build --target clash-flux test_singbox test_page_transition`（含 HuxerUI
+codegen）、`cmake --build build`、`./run.sh --version`（v0.3.92）、`git diff --check`。
+完整 `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required` 为
+28/28，137.66 秒。最后补齐按钮间距、入口就绪门禁和 CLI 无效 ID 处理后，重新构建主目标，
+定向 `singbox|resource_management_runtime|personal_rule_sets_runtime|ui_resources` 4/4，13.07 秒。
+生产 CLI 证明缓存查询不下载、missing/valid/invalid 投影、坏缓存保留和缺失 profile ID 拒绝；
+固定内核证明属性交集实际匹配、空筛选不误拦截，以及 MTU/严格路由编译和原生 MTU 覆盖。
+沿用公开 DAT 同一哈希快照复核 google@cn，生产准备器和固定 sing-box check 均通过。
+
+隔离 Linux 原生 GUI 检查了宽屏两个弹窗、窄屏两个二级页和返回、Geo 缓存状态及大小；
+MTU=1200 被禁止保存，1500/strict_route=false 保存后实际私有 SQLite 与重开回读一致；
+重复端口拒绝，8888/8080/1080 保存后回读一致。测试仅用独占数据库与服务/网络隔离，
+未开启真实系统代理或 TUN。Android 从 platform/android 执行
+`./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug` 通过；最后增量构建
+25 秒（64 tasks，10 executed），Java/NDK 和依赖的 JVM 策略回归均通过。
+未做 Android 真机、Windows/macOS 实机、浅色专项、真实路由/MTU 性能、系统代理接管或完整
+异步失败恢复验收；未提交或发布。
+
+## 2026-11-03：Geo DAT 首批支持
+
+快照：`2194823`（v0.3.92）加当前工作区，保留已有资源管理、provider 协调和首页设置改动。
+本条补充下方历史记录中 Geo 仅展示声明的边界。
+
+- `geox-url.geosite` 与 geodata-mode 下的 `geox-url.geoip` 接入受限 V2Ray protobuf DAT
+  读取，按实际分类生成 sing-box 原生 inline rule_set；保留四种域名匹配、IPv4/IPv6 CIDR
+  和 inverse_match。缺分类、未知字段/类型、坏文件和不支持的筛选明确失败，不替换内置数据。
+- 自定义 DAT 共用生产下载协调、完整身份缓存、条件请求、独占暂存、候选检查和来源 guard；
+  外部资源页可逐项刷新。停止/未参与只更缓存，未引用 DAT 也可显式刷新；桌面待命保留监听状态。
+  单文件上限 64 MiB，普通 rule/proxy provider 仍限 8 MiB；分类共享原始快照/偏移索引，
+  不逐条规则复制整库。自动更新默认关闭，开启后只在应用配置时检查小时周期，按 approx 记账。
+- Android 自定义 DAT 由 UI 进程准备 JSON，固定打包 SRS 和后台数据库所有权不变。
+  MMDB/MetaDB、自定义 ASN MMDB、属性筛选、独立定时热更新仍未支持；详见[Geo 资源](geo-resources.md)。
+
+实际通过：`cmake --build build --target clash-flux`（HuxerUI codegen）、`cmake --build build`、
+`./run.sh --version`（v0.3.92）、`git diff --check`。
+`ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required` 为 28/28，
+142.96 秒；其中 `resource_management_runtime` 6.83 秒、`personal_rule_sets_runtime` 3.65 秒。
+生产 CLI 覆盖大于 8 MiB 的真实二进制 HTTP 下载、来源 ID 隔离、未引用 DAT 单项刷新、其他过期
+缓存复用、坏内容/缺分类留旧、下载中原文变化拒绝和多 ID 重开；固定内核运行覆盖域名四类型、
+子域、GeoIP 及 inverse_match 实际 rule_set 拒绝，并证明无关 loopback 流量仍可直连。
+HTTP(S)/TLS 拒绝、持久化和运行健康门禁均实际执行，没有禁用或豁免。
+Android 从 platform/android 执行
+`./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug` 通过（32 秒，含依赖的
+JVM 策略回归）。此前同批隔离 Linux 深色 GUI 已核对宽窄 Geo 行、DAT 启用/MMDB 禁用和下载
+失败反馈；测试使用独占数据库、隔离网络/服务，未写用户数据或开启真实系统代理/TUN。
+另外下载公开 MetaCubeX DAT 样本，使用生产准备器转换，再通过固定内核 check；大小和 SHA256
+见 [Geo 样本证据](geo-resources.md#公开样本复核2026-11-03)。这不是公网流量或 VPN 验收。
+未做 Android 真机、Windows/macOS 实机、浅色专项、真实服务交接失败注入及 Android 异步失败
+完整回滚；多文件崩溃事务仍未实现。未提交或发布。
+
+## 2026-11-03：首页系统代理/TUN 设置入口
+
+快照：`2194823`（v0.3.92）加当前工作区，保留工作区内其它未提交改动。
+
+- 桌面首页系统代理/TUN 卡片在原「应用代理」「全局接管」文字槽显示齿轮，原开关及
+  CoreControl 命令保持不变。Medium/Expanded 打开设置弹窗，Compact 进入统一二级页；
+  600pt 为弹窗边界，599pt 为二级页，宽窄切换保留页面身份，返回共用 NavigationStack Pop。
+- 系统代理设置复用入站端口编辑与桌面环境变量控件，窄屏保存固定在页面底部；TUN 设置
+  复用 LAN/IPv6 写透开关。未新增未经内核支持的 TUN 选项，未改系统代理/TUN 接管逻辑。
+
+实际通过：`cmake --build build --target clash-flux`（含 HuxerUI codegen）、
+`cmake --build build --target test_page_transition`、`./run.sh --version`（v0.3.92）、
+`git diff --check`，以及 `ctest --test-dir build --output-on-failure --no-tests=error
+-R '^(page_transition|ui_resources)$'` 2/2。一次性完整生产 Application UiTest 在独占
+XDG_DATA_HOME 和 bwrap 服务/网络隔离中通过宽屏两个弹窗、599pt 两个二级页、宽窄切换、
+返回及 600pt 边界；临时驱动未留在仓库。Linux 原生 GUI 截图只作为首页齿轮与开关布局证据，
+上述交互不记为 Wayland 原生点击验收。未开启真实系统代理/TUN，未重跑完整桌面门禁，
+未做 Android 真机或 Windows/macOS 实机验收；未提交或发布。
+
+## 2026-11-03：资源管理与逐项刷新
+
+快照：`2194823`（v0.3.92）加当前工作区；保留前批 provider 协调/诊断和门禁修复。
+用户新决定覆盖下方历史记录中「不恢复资源库入口」的产品约束，本批不改变主线剩余队列。
+
+- 订阅外部资源页移除订阅名、识别数量和宽窄标题栏刷新；名称/URL/类型来自实际声明，
+  行尾逐项刷新带进度并防重复。仅强制所选 HTTP rule/proxy provider，其他过期快照复用；
+  来源变更/坏响应/完整候选拒绝不提交。停止或未参与只更缓存，待命应用保留无业务监听。
+  Geo 仍只识别，不开放单项刷新；Android 异步交接不提前报告已应用。
+- 设置 → 资源二级页复用 `rules.resources`，保留旧 ID/引用，提供原生 JSON/SRS 添加/导入、
+  编辑、内容/引用详情、受引用删除保护与桌面远程刷新。宽屏表单弹窗、Compact push 编辑页；
+  桌面非 Compact 列表限宽居中。全局和订阅个人规则可选择规则集，保存稳定 ID。
+  保存未引用本地内容也执行固定内核候选检查，未知字段不能进入库。
+- 原生远程资源仍由 sing-box 下载/定时更新；未运行或未引用只安排下次引用下载，Android
+  暂不支持此手动强制操作。没有全局代理集合、Clash YAML/text/MRS 库导入、周期状态 RPC、
+  provider 独立定时调度/HTTP 连接池、多文件崩溃事务或 Android 异步失败完整回滚。
+  产品与所有权契约见[全局与订阅资源](subscription-personal-rules.md)。
+
+实际通过：`cmake --build build --target clash-flux`（含 HuxerUI codegen）、
+`cmake --build build`、`./run.sh --version`（v0.3.92）、`git diff --check`。
+完整 `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required` 为
+28/28，136.39 秒；最后的缓存恢复与限宽调整后再次构建全部目标，定向执行
+`resource_management_runtime|personal_rule_sets_runtime|ui_resources|project_test_gate` 4/4，8.06 秒。
+新增生产隔离回归覆盖多 ID/重开、禁用全局及个人引用保护、改名保留 ID、未知本地条件拒绝、
+只请求所选资源、未使用代理集合刷新、坏响应留旧及下载期间来源变更拒绝。
+Android 从 platform/android 执行
+`./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug` 通过；五项 JVM 策略测试
+由构建依赖执行（最后一次增量为 up-to-date），无 Android 真机结论。
+Linux GUI 在独占测试数据库、网络/服务隔离环境中检查了宽窄资源页、添加弹窗、窄屏编辑和
+逐级返回、原生 JSON 详情，以及订阅外部资源两种类型标签和行刷新图标；未写用户数据。
+未做 Android 真机、Windows/macOS 实机、真实服务重启失败注入、真实 VPN/系统代理或
+公网性能对照；GUI 本轮覆盖深色，未单独验收浅色。未提交或发布。
+
+## 2026-11-02：Provider 资源协调与分段计时（第一批）
+
+快照：`2194823`（v0.3.92）加本次工作区，保留上轮完整门禁链接修复。
+按计划先交付分段诊断和统一资源请求入口；独立到期调度继续留在下一批。
+
+- CoreStore 持有应用级 `provider_resources::Manager`，规则/ASN 与代理集合共用下载入口，
+  默认三个活动传输、64 个在途身份。完整身份/请求策略相同才合并正在进行的下载，
+  完成后不保留第二份正文缓存；来源、请求头、条件请求、大小、TLS/代理等变化均隔离。
+- 共享原始响应，各候选独立暂存、转换、检查与提交。等待者可取消，排队所有者取消后可由
+  其他消费者接手；已开始的 IO 收尾后才释放所属暂存，取消候选不发布结果。
+- 新诊断区分主订阅传输/校验/替换、运行重配，以及 provider 工作排队/下载排队/共享等待、
+  网络/内容验证/编译/最终检查/缓存提交，记录请求、缓存、304、字节和桌面实际建连计数。
+  Android 无建连证据时不据零值宣称连接复用；计时的嵌套与平台边界见
+  [资源管理与计时](provider-resource-management.md)。
+- 生产生命周期锁与候选版本核对保留，普通准备入口通常仍串行；并发合并由生产管理器与
+  完整缓存准备器回归证明，没有据此声称公网提速。未新增定时刷新、Transport/easy 池、
+  跨验证/应用阶段的 PreparedStart 复用、本地 SRS/热重载或多文件崩溃事务。
+
+实际通过：`cmake --build build --target clash-flux test_singbox test_rule_provider_download`、
+`cmake --build build`、`./run.sh --version`（v0.3.92）、`git diff --check`；完整
+`ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required` 27/27，约 137 秒。
+`python3 tests/test_profile_selection_runtime.py build/clash-flux` 通过，核对生产四项 provider
+请求诊断、失败留旧、多 ID 选择/编辑/删除与重开。新增回归同时覆盖两个完整候选共享
+规则/代理下载，但一份检查拒绝不阻止另一份独立成功提交。
+Android 从 platform/android 执行 `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`
+通过，依赖执行的五项 JVM 回归通过。未做 GUI、Android 真机、Windows/macOS 实机、
+公网性能对照或 VPN 系统接管验收；未提交或发布。
+
+## 2026-11-02：解除完整门禁链接阻塞
+
+快照：`2194823`（v0.3.92）加本次工作区。主计划“解除必跑回归阻塞”已完成。
+本机 Clang 21.1.8 / libc++ 22.1.8 下，`test_runtime_health.cpp` 文本包含 `<thread>`
+后导入生产模块，其对象留下 libc++ stop-token 内部 `__set_locked_bit` 未定义引用。
+隔离编译同一源码、同一 flags/BMI，对照改为显式 `import std` 并移除重复标准库头后，
+对象正常生成该符号；测试入口现与其它模块测试保持相同导入方式。
+没有修改系统标准库、编译/链接参数、生产逻辑或门禁名单。
+
+实际通过：`cmake --build build --target clash-flux test_runtime_health`、
+`cmake --build build`（全部目标）、`./run.sh --version`（v0.3.92）、`git diff --check`。
+`ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required`
+27/27，约 129 秒；其中 `runtime_health` 58.21 秒、`personal_rule_sets_runtime` 2.73 秒，
+两项此前受阻的运行回归均实际执行通过，没有禁用或豁免。
+下方 25/27 和链接阻塞条目保留为历史证据；本轮未做 GUI、Android 真机、Windows/macOS
+实机或 VPN 系统网络验收，未提交或发布。
+
 ## 2026-11-02：v0.3.92 发布准备
 
 桌面版本 `0.3.92`，Android `versionCode=170` / `versionName=0.3.92`；发布说明见
@@ -176,7 +403,7 @@ M3 原生能力分批接入。订阅保护、保真度和平台边界始终是�
 
 | 顺序 | 交付 | 完成条件 |
 |---|---|---|
-| 0 | 解除必跑回归阻塞 | 修复或匹配本机工具链，构建 test_runtime_health；runtime_health 与 personal_rule_sets_runtime 实际执行通过，不能豁免或跳过换绿 |
+| 0（已完成） | 解除必跑回归阻塞 | 2026-11-02 已修复测试入口的标准库导入，全部目标构建和完整门禁 27/27 通过；详见本文顶部验收记录 |
 | 1 | L3 来源/规则追溯闭环 | 连接与已应用计划修订关联，能定位实际来源和明确可证明的规则身份；重名/重复条件/旧运行快照不猜测绑定，增加生产回归 |
 | 2 | 桌面编排下一阶段 | 分批交付 JSON 次来源与对象目录、显式跨来源链和稳定身份；每批证明引用隔离、无效目标处理与失败留旧，不一次性承诺任意 JSON 合并 |
 | 3 | 持久恢复与手机异步回滚 | 跨重开保留上一有效计划，覆盖 SQLite/文件/后台确认的中断与恢复，故障注入和平台记录齐备后再称完成 |

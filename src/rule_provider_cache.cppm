@@ -44,7 +44,9 @@ export struct Operations {
 
 export struct PreparationStats {
     unsigned compileCount = 0;
-    std::int64_t compileMicros = 0;
+    std::int64_t compileMicros = 0, validationMicros = 0, taskQueueMicros = 0;
+    std::int64_t checkMicros = 0, commitMicros = 0;
+    unsigned cacheHits = 0, staleFallbacks = 0;
     unsigned validatedSnapshotReuses = 0;
     unsigned conversionCacheHits = 0;
     // The final result passed operations.check and no later input changed it.
@@ -114,14 +116,19 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
         proxyOperations.maxConcurrentFetches = operations.maxConcurrentFetches;
         proxyOperations.fetch = operations.fetchProxy;
         proxy_provider_cache::Preparation proxyPreparation;
-        if (!proxy_provider_cache::Prepare(candidate, proxyOperations, result,
-                proxyPreparation, stage.path, error, cancel)) return false;
+        const bool proxiesReady = proxy_provider_cache::Prepare(candidate, proxyOperations, result,
+                proxyPreparation, stage.path, error, cancel);
         pending = std::move(proxyPreparation.pending);
         warnings = std::move(proxyPreparation.warnings);
         if (stats) {
             stats->compileCount += proxyPreparation.compileCount;
             stats->compileMicros += proxyPreparation.compileMicros;
+            stats->validationMicros += proxyPreparation.validationMicros;
+            stats->taskQueueMicros += proxyPreparation.taskQueueMicros;
+            stats->cacheHits += proxyPreparation.cacheHits;
+            stats->staleFallbacks += proxyPreparation.staleFallbacks;
         }
+        if (!proxiesReady) return false;
         // Proxy discovery can reveal rule providers after the initial compile.
         // Staging may live in either cache root; rule payloads always use theirs.
         const std::filesystem::path ruleRoot(candidate.ruleProviderCacheDir);
@@ -145,6 +152,8 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                 std::string error, warning;
                 singbox::HttpCacheValidators validators;
                 bool changed = false, inputChanged = false, reused = false;
+                bool cacheHit = false, staleFallback = false;
+                std::int64_t validationMicros = 0, queueMicros = 0;
             };
             std::vector<std::size_t> jobs;
             std::set<std::string> scheduled;
@@ -156,16 +165,27 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                 if (position->second != resource.identity || identities.size() > 256) {
                     error = "HTTP/ASN 缓存身份冲突或依赖过多"; return false;
                 }
-                const bool forced = candidate.forceProviderRefreshSources.contains(resource.sourceId);
+                const bool forced = candidate.forceProviderRefreshSources.contains(resource.sourceId) ||
+                    candidate.refreshProviderKey == resource.cacheKey;
                 if ((!candidate.ruleProviderContents.contains(resource.cacheKey) ||
                      (forced && !processed.contains(resource.cacheKey))) &&
                     scheduled.insert(resource.cacheKey).second)
                     jobs.push_back(i);
             }
+            const auto queuedAt = std::chrono::steady_clock::now();
             const auto prepare = [&](std::size_t index) {
               auto& item = prepared[index];
               if (cancel.stop_requested()) { item.error = "订阅准备已取消"; return; }
               const auto& resource = resources[index];
+              item.queueMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+                  std::chrono::steady_clock::now() - queuedAt).count();
+              const auto validate = [&](const auto& body, std::string& reason) {
+                  const auto began = std::chrono::steady_clock::now();
+                  const bool valid = singbox::ValidateHttpRuleProvider(resource, body, reason);
+                  item.validationMicros += std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::steady_clock::now() - began).count();
+                  return valid;
+              };
               try {
                 std::string reason;
                 const auto destination = ruleRoot / (resource.cacheKey + ".cache");
@@ -175,23 +195,28 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                 auto content = alreadyCompiled ? std::optional<std::string>{std::move(consumed->second)}
                     : singbox::ReadHttpRuleProviderCache(resource, ruleRoot, reason, &validators);
                 if (reason == "HTTP 规则集缓存身份或版本不匹配") { item.error = reason; return; }
-                bool usable = alreadyCompiled || (content && singbox::ValidateHttpRuleProvider(resource, *content, reason));
+                bool usable = alreadyCompiled || (content && validate(*content, reason));
                 bool inputChanged = !alreadyCompiled;
                 item.reused = alreadyCompiled;
                 bool changed = false;
                 if (!usable && !resource.seedPath.empty()) {
                     content = singbox::ReadHttpRuleProviderSeed(resource, options.ruleProviderDir, reason);
                     if (reason.find("越过文件根目录") != std::string::npos) { item.error = reason; return; }
-                    usable = content && singbox::ValidateHttpRuleProvider(resource, *content, reason);
+                    usable = content && validate(*content, reason);
                     changed = usable;
                 }
-                const bool forced = candidate.forceProviderRefreshSources.contains(resource.sourceId);
+                const bool forced = candidate.forceProviderRefreshSources.contains(resource.sourceId) ||
+                    candidate.refreshProviderKey == resource.cacheKey;
+                if (!candidate.refreshProviderKey.empty() && !forced && !usable && resource.asn == 0) {
+                    item.error = "请先应用订阅，准备其他外部资源"; return;
+                }
                 bool stale = !usable || forced;
-                if (usable && !stale && resource.intervalSeconds != 0) {
+                if (usable && !stale && candidate.refreshProviderKey.empty() && resource.intervalSeconds != 0) {
                     std::error_code stampError;
                     const auto stamp = std::filesystem::last_write_time(destination, stampError);
                     stale = stampError || decltype(stamp)::clock::now() - stamp >= std::chrono::seconds(resource.intervalSeconds);
                 }
+                item.cacheHit = usable && !stale;
                 if (stale) {
                     const auto payload = stage.path / (resource.cacheKey + ".download");
                     if (operations.revalidate && alreadyCompiled) {
@@ -219,11 +244,12 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                         changed = true;
                         if (!response.validators.etag.empty()) validators.etag = response.validators.etag;
                         if (!response.validators.lastModified.empty()) validators.lastModified = response.validators.lastModified;
-                    } else if (downloaded && singbox::ValidateHttpRuleProvider(resource, *downloaded, reason)) {
+                    } else if (downloaded && validate(*downloaded, reason)) {
                         inputChanged = !alreadyCompiled || *downloaded != *content;
                         content = std::move(downloaded); usable = true; changed = true;
                         validators = std::move(response.validators);
                     } else if (usable && !forced) {
+                        item.staleFallback = true;
                         item.warning = "HTTP 规则集「" + resource.name + "」刷新失败，沿用已验证缓存/种子：" + reason;
                     } else {
                         item.error = "HTTP 规则集「" + resource.name + "」准备失败：" + reason;
@@ -249,6 +275,12 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                         prepare(jobs[offset]);
                     }
                 });
+            }
+            if (stats) for (const auto& item : prepared) {
+                stats->validationMicros += item.validationMicros;
+                stats->taskQueueMicros += item.queueMicros;
+                stats->cacheHits += item.cacheHit ? 1 : 0;
+                stats->staleFallbacks += item.staleFallback ? 1 : 0;
             }
             // Stable declaration order for diagnostics, snapshots and commits.
             if (cancelled()) return false;
@@ -294,7 +326,11 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
         result.ruleProviderContents.clear(); // Options own the published/rollback snapshots.
         result.proxyProviderContents.clear();
         if (!result.error.empty() || result.json.empty()) { error = result.error; return false; }
-        if (!operations.check(candidate, result, error)) {
+        const auto checkBegan = std::chrono::steady_clock::now();
+        const bool checked = operations.check(candidate, result, error);
+        if (stats) stats->checkMicros += std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - checkBegan).count();
+        if (!checked) {
             if (error.empty()) error = "HTTP 候选配置检查失败";
             return false;
         }
@@ -303,11 +339,16 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
         result.ruleProviderContents.clear(); // A finalizing check may have recompiled.
         result.proxyProviderContents.clear();
         // Each replace is atomic. No cross-file crash transaction is claimed.
-        for (const auto& [file, destination] : pending)
-            if (!operations.commit(file, destination, error)) {
+        for (const auto& [file, destination] : pending) {
+            const auto began = std::chrono::steady_clock::now();
+            const bool committed = operations.commit(file, destination, error);
+            if (stats) stats->commitMicros += std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - began).count();
+            if (!committed) {
                 if (error.empty()) error = "HTTP 缓存提交失败";
                 return false;
             }
+        }
         result.warnings.insert(result.warnings.end(), warnings.begin(), warnings.end());
         options = std::move(candidate);
         return true;

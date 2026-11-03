@@ -27,6 +27,13 @@ namespace api {
 export bool CommitFile(const std::filesystem::path& temp, const std::filesystem::path& dest,
                        std::string& error);
 
+export struct DownloadMetrics {
+    bool transportKnown = false;
+    std::int64_t networkMicros = 0, validationMicros = 0, commitMicros = 0;
+    std::uint64_t bytes = 0;
+    long newConnections = 0;
+};
+
 export struct ApiResult {
     bool ok = false;
     long status = 0;          // HTTP 状态码；传输失败为 0
@@ -35,6 +42,7 @@ export struct ApiResult {
     // 响应头（仅订阅下载填充；名字统一小写，重定向取最后一跳）。
     std::map<std::string, std::string> headers;
     std::string failurePhase;
+    DownloadMetrics download;
 };
 
 // Explicit, cancellable HEAD through the running mixed inbound. No target is

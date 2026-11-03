@@ -52,14 +52,14 @@ def connect(proxy,host,target):
   # clients do. Pipelining them made the fixture depend on packet boundaries.
   s.sendall(b'GET / HTTP/1.0\r\nHost: '+h+b'\r\n\r\n')
  return s,response
-def run_case(label,config,offline=False,blocked='ads.test'):
+def run_case(label,config,offline=False,blocked='ads.test',expected_tag=None,empty=False,resolved='127.0.0.2'):
  work=root/label;work.mkdir(exist_ok=True)
  listen=port();config=copy.deepcopy(config)
  config['inbounds']=[{'type':'mixed','tag':'test','listen':'127.0.0.1','listen_port':listen}]
  config['experimental'].pop('clash_api',None)
  config['experimental']['cache_file']={'enabled':True,'path':str(root/'shared-cache.db' if 'binary' in label else work/'cache.db')}
  config['log']={'level':'debug','timestamp':False}
- config['dns']['servers']=[{'type':'hosts','tag':config['dns']['final'],'predefined':{blocked:['192.0.2.99']}}]
+ config['dns']['servers']=[{'type':'hosts','tag':config['dns']['final'],'predefined':{blocked:[resolved]}}]
  file=work/'config.json';file.write_text(json.dumps(config))
  check=subprocess.run([str(engine),'check','-c',str(file),'-D',str(work)],capture_output=True,text=True,timeout=15)
  assert check.returncode==0,(label,check.stderr)
@@ -72,12 +72,15 @@ def run_case(label,config,offline=False,blocked='ads.test'):
      s=socket.create_connection(('127.0.0.1',listen),timeout=.2);s.close();break
     except OSError:time.sleep(.1)
    else:raise AssertionError((label,'not ready'))
-   s,r=connect(listen,blocked,80)
-   if len(r)==4 and r[1]==0:
-    try:assert s.recv(4096)==b'',(label,'blocked domain returned payload')
-    except ConnectionResetError:pass
-   s.close()
-   assert 'rule_set=' in (work/'runtime.log').read_text() and '=> reject' in (work/'runtime.log').read_text(),(label,'no rule-set rejection evidence')
+   if not empty:
+    s,r=connect(listen,blocked,80)
+    if len(r)==4 and r[1]==0:
+     try:assert s.recv(4096)==b'',(label,'blocked domain returned payload')
+     except ConnectionResetError:pass
+    s.close()
+    assert '=> reject' in (work/'runtime.log').read_text(),(label,'no rejection evidence')
+    if not label.startswith('geo-asn-mmdb'):assert 'rule_set=' in (work/'runtime.log').read_text(),(label,'no rule-set rejection evidence')
+    if expected_tag:assert expected_tag in (work/'runtime.log').read_text(),(label,'wrong Geo rule-set matched')
    # A local server proves unrelated traffic still follows DIRECT.
    sink=socket.socket();sink.bind(('127.0.0.1',0));sink.listen();sink.settimeout(6)
    received=[]
@@ -97,6 +100,24 @@ inline=json.loads((root/'personal-library-inline.json').read_text())
 remote=json.loads((root/'personal-library-remote.json').read_text())
 results=[run_case('inline',inline)]
 results.append(run_case('global',json.loads((root/'personal-library-global.json').read_text())))
+for name in ['ads.test','sub.ads.test','full.test','some-tracking.test','regex42.test']:
+ config=json.loads((root/'geo-site.json').read_text())
+ results.append(run_case('geo-site-'+name,config,blocked=name,expected_tag=config['route']['rule_set'][0]['tag']))
+config=json.loads((root/'geo-ip.json').read_text())
+results.append(run_case('geo-ip',config,blocked='ip.test',expected_tag=config['route']['rule_set'][1]['tag']))
+for fixture in ('geo-mmdb', 'geo-asn-mmdb'):
+ config=json.loads((root/(fixture+'.json')).read_text())
+ # ASN rules use CIDR directly, Geo country rules reference an inline rule set.
+ results.append(run_case(fixture,config,blocked='ip.test',expected_tag=config['route']['rule_set'][0]['tag'] if config['route'].get('rule_set') else None))
+ results.append(run_case(fixture+'-ipv6',config,blocked='ip.test',resolved='2001:db8::1',expected_tag=config['route']['rule_set'][0]['tag'] if config['route'].get('rule_set') else None))
+config=json.loads((root/'geo-ip-inverse.json').read_text())
+results.append(run_case('geo-ip-inverse',config,blocked='ip.test',expected_tag=config['route']['rule_set'][1]['tag']))
+config=json.loads((root/'geo-filter.json').read_text())
+results.append(run_case('geo-filter',config,blocked='both.test',expected_tag=config['route']['rule_set'][0]['tag']))
+subprocess.run([str(engine),'check','-c',str(root/'geo-empty.json'),'-D',str(root)],check=True,capture_output=True,timeout=15)
+config=json.loads((root/'geo-empty.json').read_text())
+config['route']['rules']=[rule for rule in config['route']['rules'] if not ('rule_set' in rule and rule['rule_set'][0]==config['route']['rule_set'][1]['tag'])]
+results.append(run_case('geo-empty',config,empty=True))
 if len(sys.argv)>4:
  results.append(run_case('imported-srs',json.loads((root/'personal-library-imported.json').read_text())))
 for fmt,suffix in [('source','json'),('binary','srs')]:

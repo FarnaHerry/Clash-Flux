@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.92 发布说明](docs/releases/v0.3.92.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.93 发布说明](docs/releases/v0.3.93.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -40,7 +40,8 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 - 多重规则 / 连接 / 日志：规则页只读展示当前主订阅的实际规则和已保存全局规则；
   订阅编辑从卡片右键进入，宽屏弹窗、窄屏二级页；个人修改独立保存、更新后保留，
   [订阅个人规则](docs/subscription-personal-rules.md)直接编译成 sing-box JSON；全局规则从规则页页头进入管理二级页。
-  规则集资源库的手工编辑入口已移除，已有数据/编译兼容保留；订阅卡片右键「外部资源」只读展示该订阅解析识别出的 rule-providers/proxy-providers 与 geox-url。
+  设置「资源」管理可跨订阅引用的原生 JSON/SRS 规则集，保留旧资源 ID；全局与个人规则可选择引用。
+  订阅卡片右键「外部资源」展示实际类型、名称与链接，可逐项刷新 HTTP rule/proxy provider 和自定义 [Geo DAT/MMDB](docs/geo-resources.md)。
   使用全局规则把域名/IP/CIDR
   分配给不同连接；连接快照（可逐条/全部关闭）、内核与应用日志统一显示、搜索与导出，历史可恢复
 - PPTP 独立连接：保留系统拨号/特权服务路径（Windows 走系统 RAS，条目固定
@@ -52,6 +53,8 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 - 内核控制：桌面应用启动即拉起无业务入站的待命内核，可直接测速；点击“连接”后
   开放代理端口并应用保存的系统代理/TUN 选择，两者均关闭仍可手动使用本地代理。
   断开连接回到待命，“启动时自动连接”默认关闭。待命可与其他客户端的 TUN 共存，实际连接仍检查冲突；详见[桌面代理生命周期](docs/desktop-proxy-lifecycle.md)。
+  首页「系统代理」「虚拟网卡」齿轮提供端口/局域网及 MTU/严格路由设置，宽屏弹窗、窄屏二级页；
+  新参数重启内核生效，详见[首页网络设置](docs/home-network-settings.md)。
   出站模式（规则/全局/直连）、
   混合端口、局域网连接、日志级别；桌面首页断开/托盘停核会撤销自有系统代理、确认
   内核退出并断开由应用持有的 PPTP，会把未完成的清理反馈为失败；桌面自有
@@ -193,8 +196,7 @@ CMake 明确报告未注册。验证范围与证据见[分层完成度记录](do
 
 桌面 CI 配置 `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`，缺失或禁用必跑回归会让
 配置失败；Python、固定打包内核和可执行 OpenSSL CLI 均为必要前提，下载测试
-也必须执行默认证书拒绝场景。通用桌面必跑 21 项（含 CPS、运行健康、原生控制、界面资源、系统证据），Windows 另加服务、物理 DNS 和隔离 WFP 回归（24 项）；只有已记录的 MSVC C4737
-缺陷允许跳过直接 ORM 测试（Windows 为 23 项），订阅持久化测试始终必跑。Windows 服务与 WFP 测试需要管理员环境。本地可使用同一门禁：
+也必须执行默认证书拒绝场景。必跑名单以 [ProjectTestGate.cmake](cmake/ProjectTestGate.cmake) 为准，覆盖资源管理、运行匹配、持久化、UI 和系统证据；Windows 另含服务、物理 DNS、隔离 WFP 与旧版本清理回归。只有已记录的 MSVC C4737 缺陷允许跳过直接 ORM 测试，订阅持久化始终必跑。Windows 服务与 WFP 测试需要管理员环境。本地可使用同一门禁：
 
 ```bash
 cmake -S . -B build -DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON
@@ -278,9 +280,10 @@ SSH 另支持密码、内联/加密私钥和主机公钥/算法列表；双认�
 [样本与配套文件](docs/examples/file-providers-2026-10-03.yaml)及[保真度契约](docs/singbox-layers-and-fidelity.md)。
 HTTP provider 也支持 YAML/text 直连子集：任务下载、完整转换与候选检查后才更新
 自有缓存，失败沿用已验证旧缓存，运行计划保留独立内容快照。
-资源准备支持有限并发、ETag/Last-Modified 条件刷新及有界进程内转换缓存，
-详情见[缓存与保真度契约](docs/singbox-layers-and-fidelity.md)。`interval` 在应用
-配置时检查到期，尚无定时热更新；`path` 只读不回写。支持 `header` 的单值 ASCII
+资源准备支持有限并发、ETag/Last-Modified 条件刷新及有界进程内转换缓存。
+规则与代理集合共用应用级下载入口，合并相同在途请求，并记录分段耗时和实际请求/建连计数，
+见[资源管理与计时](docs/provider-resource-management.md)。
+详情见[缓存与保真度契约](docs/singbox-layers-and-fidelity.md)。`interval` 由应用 Runtime 独立检查到期，更新后经完整候选交接，可能重启内核；`path` 只读不回写。支持 `header` 的单值 ASCII
 数组子集（如 `User-Agent: [my-client/1]`），请求头参与缓存身份；带头下载不跟随
 重定向并记 approx。多值、传输保留头、指定代理及 MRS classical/未来版本仍拒绝整份声明。
 Android 使用系统 TLS 下载桥接，默认校验证书；8 MiB 或更小 `size-limit` 超限拒绝，
@@ -315,6 +318,14 @@ clash-flux tun on|off                 # Windows/Linux TUN 由系统服务托管
 clash-flux proxy on|off|status        # 系统代理
 clash-flux profile list|import <url> [name]|use <id>|update <id>|remove <id>
 clash-flux profile check [<id>]        # 检查订阅保真度（有无法映射的条目时退出码 1）
+clash-flux profile resources <id>      # Geo DAT/MMDB 缓存状态（只读）
+clash-flux profile resources-update-due # 检查并更新到期外部资源
+clash-flux profile resource-refresh <id> <rule-provider|proxy-provider|geo> <name>
+clash-flux resource list
+clash-flux resource add <name> <JSON-or-SRS-file>
+clash-flux resource add-url <name> <source|binary> <url>
+clash-flux resource rename <id> <name>
+clash-flux resource remove|refresh|references <id>
 clash-flux service install|uninstall|status|run
 ```
 

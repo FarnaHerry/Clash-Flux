@@ -89,6 +89,13 @@ URL 身份匹配、可解析的持久化缓存；没有缓存时可读取 initia
 - 第 2 项的调用方复用已落地：provider 准备记录 `candidateChecked`，同一最终字节不再
   重复执行候选检查；selector 投影或 GEO 重编译后仍检查最终配置。`saveYaml` 验证后仍
   重新进入运行准备，未做跨阶段 PreparedStart 复用。
-- 第 3–5 项未改：没有新增独立 provider 调度器、在途请求表、Transport/easy 池或本地
-  SRS/热重载路径。分段计时字段只增加 `candidate_checked` 诊断，未做连接/字节对照测量。
-- 验证与剩余边界见 [状态记录](l1-l2-l3-status.md) 同日“Provider 更新意图与候选检查复用”。
+- 第 3 项首批已接入应用级下载入口和在途请求表；第 4 项已补排队/网络/验证/检查、
+  实际请求、字节与桌面建连计数，契约见 [资源管理与计时](provider-resource-management.md)。
+  没有新增独立 provider 调度器、Transport/easy 池或本地 SRS/热重载路径，也未做公网性能对照。
+- 验证与剩余边界见 [状态记录](l1-l2-l3-status.md) 同日“Provider 更新意图与候选检查复用”
+  及“Provider 资源协调与分段计时（第一批）”。
+
+2026-11-03 后续：第 3 项独立到期调度已接入应用 Runtime，显式 HTTP provider 与自定义
+Geo DAT/MMDB 按各自间隔刷新，复用单项暂存/校验/来源 guard 和候选交接；失败保留旧快照
+并退避。相同原生字节跳过重启，变更可能重启内核，不等同于 sing-box 原生 remote rule_set
+无损交换。平台存活范围与验收见[资源调度契约](provider-resource-management.md#独立到期调度2026-11-03)。

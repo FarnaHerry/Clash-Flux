@@ -14,7 +14,8 @@ export struct Preparation {
     std::vector<std::pair<std::filesystem::path, std::filesystem::path>> pending;
     std::vector<std::string> warnings;
     unsigned compileCount = 0;
-    std::int64_t compileMicros = 0;
+    std::int64_t compileMicros = 0, validationMicros = 0, taskQueueMicros = 0;
+    unsigned cacheHits = 0, staleFallbacks = 0;
 };
 
 export inline bool Prepare(singbox::CompileOptions& candidate, const Operations& operations,
@@ -54,14 +55,25 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
             struct Item {
                 std::string content, error, warning;
                 bool changed = false;
-                bool inputChanged = false;
+                bool inputChanged = false, cacheHit = false, staleFallback = false;
+                std::int64_t validationMicros = 0, queueMicros = 0;
             };
             std::vector<Item> items(resources.size());
             std::vector<std::size_t> jobs(resources.size());
             for (std::size_t index = 0; index < jobs.size(); ++index) jobs[index] = index;
+            const auto queuedAt = std::chrono::steady_clock::now();
             const auto prepare = [&](std::size_t index) {
                 auto& item = items[index];
                 const auto& resource = *resources[index];
+                item.queueMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - queuedAt).count();
+                const auto validate = [&](const auto& body, std::string& reason) {
+                    const auto began = std::chrono::steady_clock::now();
+                    const bool valid = singbox::ValidateHttpProxyProvider(resource, body, reason);
+                    item.validationMicros += std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - began).count();
+                    return valid;
+                };
                 try {
                     if (cancel.stop_requested()) {
                         item.error = "订阅准备已取消";
@@ -77,16 +89,21 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
                         item.error = reason;
                         return;
                     }
-                    bool usable = content && singbox::ValidateHttpProxyProvider(resource, *content, reason);
-                    const bool forced = candidate.forceProviderRefreshSources.contains(resource.sourceId);
+                    bool usable = content && validate(*content, reason);
+                    const bool forced = candidate.forceProviderRefreshSources.contains(resource.sourceId) ||
+                        candidate.refreshProviderKey == resource.cacheKey;
+                    if (!candidate.refreshProviderKey.empty() && !forced && !usable) {
+                        item.error = "请先应用订阅，准备其他外部资源"; return;
+                    }
                     bool stale = !usable || forced;
-                    if (usable && !stale && resource.intervalSeconds != 0) {
+                    if (usable && !stale && candidate.refreshProviderKey.empty() && resource.intervalSeconds != 0) {
                         const auto destination = root / (resource.cacheKey + ".cache");
                         std::error_code stampError;
                         const auto stamp = std::filesystem::last_write_time(destination, stampError);
                         stale = stampError || decltype(stamp)::clock::now() - stamp >=
                             std::chrono::seconds(resource.intervalSeconds);
                     }
+                    item.cacheHit = usable && !stale;
                     if (stale) {
                         const auto payload = stage / (resource.cacheKey + ".proxy-download");
                         reason.clear();
@@ -94,12 +111,13 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
                         auto downloaded = fetched
                             ? singbox::ReadRuleProviderText(payload, resource.maxBytes, reason)
                             : std::nullopt;
-                        if (downloaded && singbox::ValidateHttpProxyProvider(resource, *downloaded, reason)) {
+                        if (downloaded && validate(*downloaded, reason)) {
                             item.inputChanged = !alreadyCompiled || *downloaded != *content;
                             content = std::move(downloaded);
                             usable = true;
                             item.changed = true;
                         } else if (usable && !forced) {
+                            item.staleFallback = true;
                             item.warning = "HTTP 代理集合「" + resource.name +
                                 "」到期刷新失败，沿用已验证缓存：" + reason;
                         } else {
@@ -132,6 +150,12 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
                         prepare(jobs[offset]);
                     }
                 });
+            }
+            for (const auto& item : items) {
+                preparation.validationMicros += item.validationMicros;
+                preparation.taskQueueMicros += item.queueMicros;
+                preparation.cacheHits += item.cacheHit ? 1 : 0;
+                preparation.staleFallbacks += item.staleFallback ? 1 : 0;
             }
             if (cancel.stop_requested()) {
                 error = "订阅准备已取消";

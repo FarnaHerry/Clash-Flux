@@ -14,6 +14,8 @@ TUN 按路由配置接管；都不代表已验证节点的公网可用性。仅�
 HTTP/SOCKS 代理，因此两个接管开关都关闭仍是有效连接。首页不以实时字节数判断连接，
 空闲不关闭会话、不重置计时。
 
+首页与托盘显示名为「虚拟网卡」（TUN）；设置入口及参数生效时机见[首页网络设置](home-network-settings.md)。
+
 ## 运行原语与发布
 
 - `CoreAction::Start` / `startReadyCore` 让内核待命；`Connect` / `connectProxy` 开放代理

@@ -10,6 +10,7 @@ module;
 #include <zstd.h>
 #include "profile_link.h"
 #include "http_request_headers.h"
+#include "tun_settings.h"
 
 module clashflux.singbox;
 
@@ -21,9 +22,12 @@ namespace {
 
 #include "singbox_yaml_openvpn.inc"
 #include "singbox_node_subscription.inc"
+struct GeoDataIndex;
 #include "singbox_context_dns.inc"
 #include "singbox_proxy.inc"
 #include "singbox_mrs.inc"
+std::string httpProviderKey(std::string_view identity);
+#include "singbox_geodata.inc"
 std::string personalRuleSetTag(const RuleSetLibrary& library, const std::string& id);
 #include "singbox_rules.inc"
 #include "singbox_filter.inc"
@@ -164,7 +168,7 @@ ProfileRules InspectProfileRules(const std::string& content, const ProfileRuleEd
 }
 
 std::vector<ExternalResource> InspectExternalResources(
-    std::string_view content, std::string& error) {
+    std::string_view content, std::string& error, std::string sourceId) {
     error.clear();
     std::vector<ExternalResource> resources;
     if (DetectProfileFormat(content) != ProfileFormat::ClashYaml) {
@@ -179,7 +183,7 @@ std::vector<ExternalResource> InspectExternalResources(
         }
         CompileOptions options;
         Context ctx{options};
-        ctx.sourceId = "resource-inspection";
+        ctx.sourceId = std::move(sourceId);
         const auto add = [&](ExternalResource resource) {
             if (resource.url.empty() || !clashflux::profile_link::IsHttpUrl(resource.url)) {
                 if (error.empty())
@@ -215,7 +219,8 @@ std::vector<ExternalResource> InspectExternalResources(
                     }
                     add({.name = name, .url = resource->url, .kind = "rule-provider",
                          .behavior = resource->behavior, .format = resource->format,
-                         .intervalSeconds = resource->intervalSeconds});
+                         .intervalSeconds = resource->intervalSeconds,
+                         .identity = resource->identity, .cacheKey = resource->cacheKey});
                 }
             }
         }
@@ -226,9 +231,13 @@ std::vector<ExternalResource> InspectExternalResources(
                 for (const auto& entry : providers) {
                     if (!entry.first.IsScalar() || !entry.second.IsMap()) continue;
                     if (lowerCopy(ytext(entry.second, "type")) != "http") continue;
-                    const auto url = ytext(entry.second, "url");
-                    add({.name = entry.first.Scalar(), .url = url, .kind = "proxy-provider",
-                         .intervalSeconds = interval(entry.second)});
+                    std::string failure;
+                    const auto name = entry.first.Scalar();
+                    const auto resource = httpProxyProviderResource(ctx, entry.second, name, failure);
+                    if (!resource) { if (error.empty()) error = failure; continue; }
+                    add({.name = name, .url = resource->url, .kind = "proxy-provider",
+                         .intervalSeconds = interval(entry.second), .identity = resource->identity,
+                         .cacheKey = resource->cacheKey});
                 }
             }
         }
@@ -238,8 +247,19 @@ std::vector<ExternalResource> InspectExternalResources(
             } else {
                 for (const auto& entry : geox) {
                     if (!entry.first.IsScalar() || !entry.second.IsScalar()) continue;
-                    add({.name = entry.first.Scalar(), .url = entry.second.Scalar(),
-                         .kind = "geo"});
+                    ExternalResource item{.name = entry.first.Scalar(), .url = entry.second.Scalar(), .kind = "geo"};
+                    if (item.name == "geosite" || item.name == "geoip" || item.name == "mmdb" || item.name == "asn") {
+                        std::string reason;
+                        if (auto declared = geoDeclaration(root, item.name, ctx.sourceId, reason);
+                            declared && declared->name == item.name) {
+                            item.format = declared->format;
+                            item.behavior = declared->behavior;
+                            item.identity = declared->identity; item.cacheKey = declared->cacheKey;
+                            item.intervalSeconds = declared->intervalSeconds;
+                            item.maxBytes = declared->maxBytes;
+                        }
+                    }
+                    add(std::move(item));
                 }
             }
         }
@@ -497,7 +517,7 @@ std::string HttpRuleProviderCacheImage(const HttpRuleProviderResource& resource,
         const std::string& content, const HttpCacheValidators& validators) {
     if (resource.cacheKey != httpProviderKey(resource.identity) || resource.identity.size() > 32 * 1024 ||
         resource.identity.find('\n') != std::string::npos || content.size() > resource.maxBytes ||
-        resource.maxBytes > 8 * 1024 * 1024 || !ValidHttpCacheValidators(validators)) return {};
+        resource.maxBytes > (geoDataResource(resource) ? kGeoDataMaxBytes : 8 * 1024 * 1024) || !ValidHttpCacheValidators(validators)) return {};
     if (!validators.etag.empty() || !validators.lastModified.empty())
         return "clash-flux-rule-provider-v2\n" + resource.identity + "\n" + validators.etag + "\n" +
             validators.lastModified + "\n" + content;
@@ -508,7 +528,7 @@ std::optional<std::string> ReadHttpRuleProviderCache(const HttpRuleProviderResou
         const std::filesystem::path& directory, std::string& error, HttpCacheValidators* validators) {
     if (validators) *validators = {};
     if (resource.cacheKey != httpProviderKey(resource.identity) || resource.identity.size() > 32 * 1024 ||
-        resource.maxBytes > 8 * 1024 * 1024) {
+        resource.maxBytes > (geoDataResource(resource) ? kGeoDataMaxBytes : 8 * 1024 * 1024)) {
         error = "HTTP 缓存资源身份无效"; return std::nullopt;
     }
     const auto path = ruleProviderPath(directory.string(), resource.cacheKey + ".cache", error);
@@ -543,6 +563,15 @@ std::optional<std::string> ReadHttpRuleProviderCache(const HttpRuleProviderResou
 bool ValidateHttpRuleProvider(const HttpRuleProviderResource& resource,
         const std::string& content, std::string& error) {
     error.clear();
+    if (geoDataResource(resource)) {
+        try {
+            if (resource.maxBytes == 0 || resource.maxBytes > kGeoDataMaxBytes || content.size() > resource.maxBytes)
+                throw std::runtime_error("Geo 文件超过大小上限");
+            if (resource.format == "mmdb") static_cast<void>(mmdbIndex(resource.behavior, content));
+            else static_cast<void>(geoDataIndex(resource.behavior, content));
+            return true;
+        } catch (const std::exception& exception) { error = std::string("Geo: ") + exception.what(); return false; }
+    }
     if (resource.asn || resource.behavior == "asn")
         return asnPrefixes(resource, content, error).has_value();
     if (content.size() > resource.maxBytes || resource.maxBytes > 8 * 1024 * 1024 ||
@@ -554,6 +583,28 @@ bool ValidateHttpRuleProvider(const HttpRuleProviderResource& resource,
     Context context{options};
     context.providerSyntaxOnly = true;
     return ruleProviderContentRules(context, content, resource.format, resource.behavior, error).has_value();
+}
+
+ExternalResourceCache InspectExternalResourceCache(const ExternalResource& resource,
+        const std::filesystem::path& directory) {
+    ExternalResourceCache state;
+    if (resource.kind != "geo" || resource.cacheKey.empty() || (resource.format != "geodata" && resource.format != "mmdb") ||
+        resource.cacheKey != httpProviderKey(resource.identity)) return state;
+    state.supported = true;
+    std::error_code ec;
+    state.present = std::filesystem::exists(directory / (resource.cacheKey + ".cache"), ec);
+    if (ec) { state.present = true; state.error = ec.message(); return state; }
+    if (!state.present) return state;
+    HttpRuleProviderResource declared;
+    declared.name = resource.name; declared.behavior = resource.behavior;
+    declared.format = resource.format; declared.identity = resource.identity;
+    declared.cacheKey = resource.cacheKey; declared.maxBytes = resource.maxBytes;
+    const auto content = ReadHttpRuleProviderCache(declared, directory, state.error);
+    if (content) {
+        state.bytes = content->size();
+        state.valid = ValidateHttpRuleProvider(declared, *content, state.error);
+    }
+    return state;
 }
 
 std::string HttpProxyProviderCacheImage(const HttpProxyProviderResource& resource,

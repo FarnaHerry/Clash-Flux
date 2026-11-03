@@ -145,7 +145,8 @@
     // are consumed by startCore; the stopped interval performs no downloads.
     std::unique_ptr<PreparedStart> prepareStartPlan(singbox::CompileOptions options,
                                                    std::string& error, std::stop_token cancel = {},
-                                                   bool inspectNetwork = true) {
+                                                   bool inspectNetwork = true,
+                                                   const std::function<bool(std::string&)>& guard = {}) {
         if (cancel.stop_requested()) return {};
         auto plan = std::make_unique<PreparedStart>();
         const auto began = std::chrono::steady_clock::now();
@@ -169,7 +170,7 @@
         bool geoPrepared = false;
         bool candidateChecked = false;
         if (!prepareHttpRuleProviders(options, plan->compiled, error, nullptr, cancel,
-                &geoPrepared, &candidateChecked)) {
+                &geoPrepared, &candidateChecked, guard)) {
             if (!cancel.stop_requested()) publishFailure();
             return {};
         }
@@ -217,6 +218,7 @@
             error = "已应用计划修订号无效；保留原设置"; return {};
         }
         options.planRevision = revision + 1;
+        options.refreshProviderKey.clear();
         plan->options = std::move(options);
         std::random_device random;
         for (int attempt = 0; attempt < 8; ++attempt) {
@@ -318,6 +320,14 @@
         options.ipv6 = ipv6Enabled();
         options.logLevel = logLevel();
         options.tunInbound = tunEnabled;
+        const auto mtuText = setting("core.tun_mtu", "");
+        if (!mtuText.empty()) {
+            const auto mtu = clashflux::tun_settings::ParseMtu(mtuText);
+            if (!mtu) throw std::runtime_error("虚拟网卡 MTU 需要填写 1280–9000 的整数");
+            options.tunMtu = *mtu;
+            options.overrideTunMtu = true;
+        }
+        options.tunStrictRoute = setting("core.tun_strict_route", "true") == "true";
         options.speedTestOnly = speedTestOnly;
         options.ruleSetDir = cfg::coreWorkDir().string();
         options.ruleProviderDir = cfg::dataDir().string();
@@ -402,7 +412,8 @@
     bool prepareHttpRuleProviders(singbox::CompileOptions& options,
                                  singbox::CompileResult& compiled, std::string& error,
                                  const vpn::VpnPolicy* policy = nullptr, std::stop_token cancel = {},
-                                 bool* geoPrepared = nullptr, bool* candidateChecked = nullptr) {
+                                 bool* geoPrepared = nullptr, bool* candidateChecked = nullptr,
+                                 const std::function<bool(std::string&)>& guard = {}) {
         bool preparedGeo = false;
         if (geoPrepared) *geoPrepared = false;
         if (candidateChecked) *candidateChecked = false;
@@ -411,78 +422,20 @@
         const auto began = std::chrono::steady_clock::now();
         rule_provider_cache::Operations operations;
         operations.maxConcurrentFetches = 3;
-        operations.revalidate = [this](const singbox::HttpRuleProviderResource& resource,
+        ProviderDownloadStats downloads;
+        operations.revalidate = [this, cancel, &downloads](const singbox::HttpRuleProviderResource& resource,
                                  const std::filesystem::path& file, const singbox::HttpCacheValidators& validators) {
           const auto request = [&](const std::map<std::string, std::string>& headers, bool conditional) {
-            rule_provider_cache::FetchResult fetched;
+            provider_resources::Request pending;
+            pending.identity = "rule:" + resource.identity;
+            pending.url = resource.url;
+            pending.headers = headers;
+            pending.maxBytes = resource.maxBytes;
+            pending.acceptNotModified = conditional;
 #if defined(__ANDROID__)
-            // curl has no TLS here. Reuse the platform bridge on the task
-            // thread, with system trust, a bounded body, and explicit direct IO.
-            constexpr int kDownloadTimeoutSecs = 20;
-            constexpr int kDownloadAttempts = 2;
-            constexpr auto kRetryDelay = std::chrono::milliseconds{250};
-#if !defined(NDEBUG)
-            const auto started = std::chrono::steady_clock::now();
+            pending.attempts = 2;
 #endif
-            clashflux::android::ProfileHttpResponse response;
-            for (int attempt = 1; attempt <= kDownloadAttempts; ++attempt) {
-#if !defined(NDEBUG)
-                __android_log_print(ANDROID_LOG_INFO, "ClashFluxImport",
-                                    "rule-set begin name=%s attempt=%d max_bytes=%zu",
-                                    resource.name.c_str(), attempt, resource.maxBytes);
-#endif
-                response = clashflux::android::DownloadProfile(
-                    resource.url, kDownloadTimeoutSecs, false,
-                    resource.maxBytes, true, headers);
-#if !defined(NDEBUG)
-                const auto elapsed = std::chrono::duration_cast<
-                    std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - started).count();
-                __android_log_print(ANDROID_LOG_INFO, "ClashFluxImport",
-                                    "rule-set end name=%s attempt=%d status=%ld bytes=%zu error=%d retryable=%d elapsed_ms=%lld",
-                                    resource.name.c_str(), attempt, response.status,
-                                    response.body.size(), response.error.empty() ? 0 : 1,
-                                    response.retryable ? 1 : 0,
-                                    static_cast<long long>(elapsed));
-#endif
-                const bool completeHttpResponse = ((response.status >= 200 &&
-                    response.status < 300) || (conditional && response.status == 304)) && response.error.empty();
-                if (completeHttpResponse || !response.retryable ||
-                    attempt == kDownloadAttempts) break;
-                std::this_thread::sleep_for(kRetryDelay);
-            }
-            fetched.ok = response.error.empty() && ((response.status >= 200 && response.status < 300) ||
-                (conditional && response.status == 304));
-            if (fetched.ok && response.status != 304) {
-                std::ofstream output(file, std::ios::binary | std::ios::trunc);
-                output << response.body;
-                output.close();
-                if (!output) { fetched.error = "无法完成平台规则集临时文件写入"; fetched.ok = false; return fetched; }
-            }
-#else
-            api::ClashApi::DownloadOptions download;
-            download.timeoutSecs = 20;
-            download.maxBytes = resource.maxBytes;
-            download.headers = headers;
-            download.acceptNotModified = conditional;
-            download.validate = [&resource](const auto& temp) {
-                std::string failure;
-                const auto text = singbox::ReadRuleProviderText(temp, resource.maxBytes, failure);
-                if (text) singbox::ValidateHttpRuleProvider(resource, *text, failure);
-                return failure;
-            };
-            const auto response = api_->downloadToFile(resource.url, file, download);
-            fetched.ok = response.ok;
-#endif
-            fetched.status = response.status;
-            fetched.notModified = response.status == 304;
-            fetched.error = response.error;
-            if (!fetched.ok && fetched.error.empty()) fetched.error = "HTTP " + std::to_string(response.status);
-            if (const auto entry = response.headers.find("etag"); entry != response.headers.end())
-                fetched.validators.etag = entry->second;
-            if (const auto entry = response.headers.find("last-modified"); entry != response.headers.end())
-                fetched.validators.lastModified = entry->second;
-            return fetched;
+            return downloadProvider(pending, file, downloads, cancel);
           };
           auto headers = resource.headers;
           std::size_t bytes = 0;
@@ -500,40 +453,20 @@
               fetched = request(resource.headers, false);
           return fetched;
         };
-        operations.fetchProxy = [this](const singbox::HttpProxyProviderResource& resource,
+        operations.fetchProxy = [this, cancel, &downloads](const singbox::HttpProxyProviderResource& resource,
                                    const std::filesystem::path& file, std::string& reason) {
-#if defined(__ANDROID__)
-            const auto response = clashflux::android::DownloadProfile(
-                resource.url, 20, false, resource.maxBytes, true, resource.headers);
-            if (!response.error.empty() || response.status < 200 || response.status >= 300) {
-                reason = response.error.empty() ? "HTTP " + std::to_string(response.status) : response.error;
-                return false;
-            }
-            if (!singbox::ValidateHttpProxyProvider(resource, response.body, reason)) return false;
-            std::ofstream output(file, std::ios::binary | std::ios::trunc);
-            output << response.body;
-            output.close();
-            if (!output) { reason = "无法完成平台代理集合临时文件写入"; return false; }
-            return true;
-#else
-            api::ClashApi::DownloadOptions download;
-            download.timeoutSecs = 20;
-            download.maxBytes = resource.maxBytes;
-            download.headers = resource.headers;
-            download.allowProxyEnv = false;
-            download.validate = [&resource](const auto& temp) {
-                std::string failure;
-                const auto text = singbox::ReadRuleProviderText(temp, resource.maxBytes, failure);
-                return text && singbox::ValidateHttpProxyProvider(resource, *text, failure)
-                    ? std::string{} : failure;
-            };
-            const auto response = api_->downloadToFile(resource.url, file, download);
+            provider_resources::Request pending;
+            pending.identity = "proxy:" + resource.identity;
+            pending.url = resource.url;
+            pending.headers = resource.headers;
+            pending.maxBytes = resource.maxBytes;
+            const auto response = downloadProvider(pending, file, downloads, cancel);
             reason = response.error;
             return response.ok;
-#endif
         };
-        operations.check = [this, policy, cancel, &preparedGeo](const auto& candidate, auto& result, std::string& reason) {
+        operations.check = [this, policy, cancel, &preparedGeo, guard](const auto& candidate, auto& result, std::string& reason) {
             if (cancel.stop_requested()) return false;
+            if (guard && !guard(reason)) return false;
             if (!validatePlanTargets(candidate, result, policy, reason)) return false;
             prefetchRuleSets(result.ruleSetResources, cfg::coreWorkDir());
             preparedGeo = true;
@@ -541,7 +474,7 @@
             // snapshots are already fully lowered and must still pass check.
             if (clashflux::runtime_compile::GeoInputsChanged(!result.ruleSetResources.empty(), false))
                 result = singbox::compileConfig(candidate, cancel);
-            return !cancel.stop_requested() && checkCompiledPlan(result, reason);
+            return !cancel.stop_requested() && checkCompiledPlan(result, reason) && (!guard || guard(reason));
         };
         operations.commit = [](const auto& temp, const auto& dest, std::string& reason) {
             return api::CommitFile(temp, dest, reason);
@@ -550,10 +483,13 @@
         if (geoPrepared) *geoPrepared = ready && preparedGeo;
         if (candidateChecked) *candidateChecked = ready && stats.candidateChecked;
         stream::logApplication("info", std::format(
-            "profile-providers ready={} total_ms={} discovery_compile_calls={} discovery_compile_us={} validated_snapshot_reuses={} conversion_cache_hits={} candidate_checked={}", ready,
+            "profile-providers ready={} total_ms={} discovery_compile_calls={} discovery_compile_us={} validated_snapshot_reuses={} conversion_cache_hits={} candidate_checked={} cache_hits={} stale_fallbacks={} task_queue_us={} download_queue_us={} shared_wait_us={} fetch_us={} network_us={} provider_validation_us={} finalize_check_us={} cache_commit_us={} download_requests={} shared_requests={} not_modified={} download_bytes={} measured_requests={} new_connections={}", ready,
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count(),
             stats.compileCount, stats.compileMicros, stats.validatedSnapshotReuses, stats.conversionCacheHits,
-            stats.candidateChecked ? 1 : 0));
+            stats.candidateChecked ? 1 : 0, stats.cacheHits, stats.staleFallbacks, stats.taskQueueMicros,
+            downloads.queueMicros, downloads.sharedWaitMicros, downloads.fetchMicros, downloads.networkMicros,
+            stats.validationMicros, stats.checkMicros, stats.commitMicros, downloads.requests, downloads.shared,
+            downloads.notModified, downloads.bytes, downloads.measuredRequests, downloads.newConnections));
         if (ready) for (const auto& warning : compiled.warnings)
             if (warning.starts_with("HTTP 规则集「") || warning.starts_with("HTTP 代理集合「"))
                 stream::logApplication("warning", warning);

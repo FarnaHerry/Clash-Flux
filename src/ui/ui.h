@@ -23,6 +23,8 @@
 
 namespace clashflux::ui {
 
+void StartExternalResourceRefreshPump(huxerui::TaskScope tasks);
+
 namespace pages {
 
 enum PageIndex : std::size_t {
@@ -374,6 +376,7 @@ huxerui::View ThemePage(huxerui::State<int> themeMode, std::function<void()> onB
                         bool windowTitle = false);
 huxerui::View ExternalResourcesPage(std::int64_t profileId, std::string profileName,
                                     std::function<void()> onBack);
+huxerui::View ResourcesPage();
 struct DesktopSettingsNavigationModel {
     // IndexedPages forms have their own lifetime, independent of pushed routes.
     huxerui::State<bool> compactProfileFormOpen{false};
@@ -487,6 +490,10 @@ huxerui::View AboutRoutePage();
 huxerui::View AboutPage(std::function<void()> onBack);
 huxerui::View RuntimeDiagnosticsPage(std::function<void()> onBack);
 huxerui::View RuntimeDiagnosticsRoutePage();
+enum class HomeProxySettingsKind { SystemProxy, Tun };
+huxerui::View HomeProxySettingsAction(HomeProxySettingsKind kind);
+huxerui::View HomeProxySettingsPage(HomeProxySettingsKind kind, std::function<void()> onBack);
+huxerui::View HomeProxySettingsRoutePage(HomeProxySettingsKind kind);
 huxerui::View ThemeColorEditorPage(std::string initialHex, std::optional<std::string> editingId,
     std::function<void()> onBack);
 huxerui::View ThemeColorEditorRoutePage(std::string initialHex, std::optional<std::string> editingId);

@@ -2,6 +2,7 @@
 // 页面骨架（一级岛）/ 卡片（二级岛）等跨页通用部件。
 #include <huxerui/huxerui.h>
 #include <huxerui/file_drop.h>
+#include "../tun_settings.h"
 
 #include <algorithm>
 #include <chrono>
@@ -12,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <stop_token>
 #include <thread>
 #include <tuple>
 #include <vector>
@@ -40,6 +42,7 @@ import clashflux.stream;
 import clashflux.store.core;
 import clashflux.store.profiles;
 import clashflux.store.vpn;
+import clashflux.vpn;
 
 // CoreView 含 store::CoreSnapshot、ProfilesModel 含 db::Profile，必须放在模块
 // 导入之后（同 profiles_cache.h）。
@@ -52,6 +55,32 @@ import clashflux.store.vpn;
 #include "vpn_model.h"
 
 namespace clashflux::ui {
+
+// Application scope survives window closure. Runtime shutdown owns cancellation;
+// WorkerSequence forwards shutdown cancellation into preparation/commit checks;
+// synchronous in-flight IO retains the existing bounded download timeout.
+void StartExternalResourceRefreshPump(huxerui::TaskScope tasks) {
+    const auto runtime = huxerui::UseService<AppRuntimeServices>();
+    if (runtime->externalResourceRefreshStarted) return;
+    runtime->externalResourceRefreshStarted = true;
+    const huxerui::WorkerSequence worker;
+    const auto profiles = huxerui::UseService<ProfilesModel>();
+    tasks.Launch([worker, profiles]() -> huxerui::Task<void> {
+        for (;;) {
+            co_await huxerui::Delay(std::chrono::seconds{30});
+            try {
+                const auto batch = co_await worker.Run([](std::stop_token cancel) {
+                    return store::coreStore().refreshDueExternalResources(cancel);
+                });
+                if (batch.updated) ++profiles->externalResourcesRevision;
+                stream::logApplication("debug", "external-resource-schedule attempted=" + std::to_string(batch.attempted) +
+                    " updated=" + std::to_string(batch.updated) + " deferred=" + (batch.deferred ? "true" : "false"));
+            } catch (...) {
+                stream::logApplication("warning", "外部资源定时更新异常，将在下一轮重试");
+            }
+        }
+    });
+}
 
 namespace {
 
@@ -1455,6 +1484,8 @@ void DriveSettingsModel(huxerui::TaskScope tasks,
             next.mixedPort = core.setting("core.mixed_port", "7899");
             next.httpPort = core.setting("core.http_port", "");
             next.socksPort = core.setting("core.socks_port", "");
+            next.tunMtu = core.setting("core.tun_mtu", "1400");
+            next.tunStrictRoute = core.setting("core.tun_strict_route", "true") == "true";
             next.envShell = core.setting("ui.env_shell", "");
             next.language = core.setting("ui.language", "system");
             // 都是内存读；State 按 operator== 去重，只有真的变了才通知订阅者。

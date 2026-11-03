@@ -20,6 +20,7 @@
 
 #include "ui.h"
 #include "vpn_snapshot_model.h"
+#include "global_rules_model.h"
 
 namespace clashflux::ui {
 
@@ -39,6 +40,7 @@ struct VpnOperation {
 };
 
 struct VpnModel : VpnSnapshotModel<store::VpnSnapshot> {
+    GlobalRulesModel<vpn::RouteRule> globalRules;
     huxerui::State<VpnOperation> operation{VpnOperation{}};
 
     bool Begin(VpnAction action, std::vector<std::int64_t> ids) {

@@ -3,6 +3,7 @@ import argparse
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
+import re
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -164,6 +165,19 @@ def main():
             rule_cache_files = sorted((core / "rule-providers").glob("*.cache"))
             assert len(cache_files) == 3 and len(rule_cache_files) == 1
             assert {"/provider", "/provider2", "/provider3", "/rules"} <= fetched_paths
+            measurements = [line for line in log.read_text(encoding="utf-8").splitlines()
+                            if "profile-providers ready=true" in line and "download_requests=4" in line]
+            assert measurements, "production preparation must account for all four provider transfers"
+            measurement = measurements[-1]
+            for field in ("task_queue_us", "download_queue_us", "network_us", "provider_validation_us",
+                          "finalize_check_us", "cache_commit_us", "download_bytes", "new_connections"):
+                assert re.search(rf"{field}=\d+", measurement), (field, measurement)
+            assert "measured_requests=4" in measurement and "shared_requests=0" in measurement
+            assert "provider-test/1" not in measurement and "http://" not in measurement
+            source_measurements = [line for line in log.read_text(encoding="utf-8").splitlines()
+                                   if "profile-download source_id=2" in line]
+            assert source_measurements and all("network_us=" in line and "candidate_us=" in line
+                                               for line in source_measurements)
             all_cache_files = cache_files + rule_cache_files
             first_cache = {file: file.read_bytes() for file in all_cache_files}
             provider_latest[0] = b"proxies:\n  - {name: remote-b, type: socks5, server: 127.0.0.1, port: 9}\n"

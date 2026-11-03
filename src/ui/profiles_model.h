@@ -55,6 +55,9 @@ struct ProfilesModel : ProfileListModel<db::Profile> {
         std::make_shared<const wire::RuleSetLibrary>()};
     huxerui::State<bool> ruleSetsLoaded{false};
     huxerui::State<bool> ruleSetsSaving{false};
+    huxerui::State<std::vector<std::string>> ruleSetsRefreshing{std::vector<std::string>{}};
+    huxerui::State<std::uint64_t> externalResourcesRevision{0};
+    huxerui::State<std::vector<std::string>> externalResourcesRefreshing{std::vector<std::string>{}};
     huxerui::State<std::uint64_t> ruleSetsRevision{0};
     // Receipts of explicit user actions in this session, not native auto-update telemetry.
     huxerui::State<std::map<std::string, std::string>> ruleSetRefreshReceipts{std::map<std::string, std::string>{}};
