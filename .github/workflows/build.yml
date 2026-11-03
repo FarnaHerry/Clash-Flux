@@ -138,7 +138,8 @@ jobs:
           apt-get install -y --no-install-recommends \
             clang-21 libc++-21-dev g++ ninja-build pkg-config file binutils gzip \
             python3 python3-pip openssl libssl-dev \
-            libgtk-4-dev libepoxy-dev libsoup-3.0-dev dpkg-dev rpm
+            libgtk-4-dev libepoxy-dev libsoup-3.0-dev dpkg-dev rpm \
+            xvfb xauth
           # Ubuntu 24.04 的 apt cmake/clang 版本不满足 import-std，固定 CMake
           # 并从 apt.llvm.org 安装 LLVM 21。
           python3 -m pip install --break-system-packages -q cmake==4.4.2
@@ -197,8 +198,9 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Smoke test
-        # 单测卡死不能拖住整个 job：ctest 超时后杀掉测试并打印其输出。
-        run: ctest --test-dir build --output-on-failure --no-tests=error --timeout 300
+        # resource_management_runtime 在生产 GUI Runtime 内执行 CLI；Ubuntu 容器
+        # 没有真实显示，提供 Xvfb 虚拟显示，不把持久化 CLI 移出 Runtime。
+        run: xvfb-run -a ctest --test-dir build --output-on-failure --no-tests=error --timeout 300
 
       - name: Stage runtime bundle
         shell: bash

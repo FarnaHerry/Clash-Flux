@@ -35,7 +35,7 @@ def main():
     app = str(Path(sys.argv[1]).resolve(strict=True))
     with tempfile.TemporaryDirectory(prefix="clashflux-resources-") as temporary:
         root = Path(temporary)
-        env = {**os.environ, "APPDATA": temporary, "XDG_DATA_HOME": temporary}
+        env = {**os.environ, "APPDATA": temporary, "XDG_DATA_HOME": temporary, "HOME": temporary}
         data = root / "clash-flux"
         database = data / "clash-flux.db"
 
@@ -100,7 +100,7 @@ def main():
             "id": "global-ref", "match": "规则集", "pattern": first_id,
             "connection_id": "DIRECT", "enabled": False}]}))
         references = run("resource", "references", first_id)
-        assert "personal-ref" in references and "global-ref" in references
+        assert "personal-ref" in references and "global-ref" in references, references
         run("resource", "remove", first_id, expected=1)
         assert setting("rules.resources") == before_failure
         run("resource", "remove", second_id)
