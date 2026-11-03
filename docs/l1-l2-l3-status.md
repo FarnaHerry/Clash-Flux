@@ -14,9 +14,21 @@ provider 下载协调、全局规则草稿，以及首页系统代理/虚拟网�
 Android 从 platform/android 执行 `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`
 成功，64 个任务中 18 个执行、46 个已是最新，包含依赖的 JVM 策略检查。
 
+发布修正：macOS 资源回归按真实 `~/Library/Application Support/clash-flux` 约定隔离数据；
+Windows CLI 在 stdout/stderr 已是管道或文件时不再改接父控制台，管道调用可读到
+`resource references` 结果。Tag `v0.3.93` 最终快照 `78cd58f`；CI run
+[41571450946](https://github.com/FarnaHerry/Clash-Flux/actions/runs/41571450946)
+的 Linux x86_64/arm64、Windows x86_64、macOS arm64、Android、Windows installer 与
+publish-release 全部通过，macOS/Windows 冒烟均覆盖生产资源回归。Android APK 签名门检查
+v1/v2 均为 true，证书 SHA-256 为
+`a4a0bc09a3dc76d7ac37f92043d2be6e153bda1347ce344013828e15472419f4`。
+已发布 10 项资产：Android APK、Linux x86_64/aarch64 的 tar.gz/deb/rpm、macOS arm64
+tar.gz、Windows x86_64 exe/zip；Release 正文采用 `docs/releases/v0.3.93.md`。
+iOS Simulator 编译仍是 advisory，不生成 IPA、不进入 Release。
+
 未做 Android 真机 VPN、正式签名覆盖安装、Windows/macOS 实机、真实系统代理/TUN、
-真实系统服务交接失败注入或 Windows 安装升级/回滚/卸载验收。Tag 触发的多平台 CI、
-APK 签名和 Release 资产需另行核对，不以本地 Debug 构建替代发布验收。
+真实系统服务交接失败注入或 Windows 安装升级/回滚/卸载验收；多平台构建、APK 签名与
+Release 资产收集已通过 CI，不替代上述实机/安装验收。
 
 ## 2026-11-03：MMDB 国家/ASN 与独立资源到期调度
 
