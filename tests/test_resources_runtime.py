@@ -36,7 +36,9 @@ def main():
     with tempfile.TemporaryDirectory(prefix="clashflux-resources-") as temporary:
         root = Path(temporary)
         env = {**os.environ, "APPDATA": temporary, "XDG_DATA_HOME": temporary, "HOME": temporary}
-        data = root / "clash-flux"
+        # 与 cfg::dataDir() 的平台约定保持一致；macOS 会落在
+        # $HOME/Library/Application Support/clash-flux，而不是 $HOME/clash-flux。
+        data = root / ("Library/Application Support/clash-flux" if sys.platform == "darwin" else "clash-flux")
         database = data / "clash-flux.db"
 
         def run(*args, expected=0):
