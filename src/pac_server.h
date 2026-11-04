@@ -4,13 +4,25 @@
 #include <ixwebsocket/IXSocket.h>
 #include <atomic>
 #include <chrono>
-#include <sstream>
 #include <ixwebsocket/IXNetSystem.h>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 
 namespace clashflux::network {
+
+// Splits the request on '\n' but keeps the trailing '\r' of the wire format,
+// matching std::getline on a '\n' delimiter. Deliberately avoids <sstream>:
+// this header lives in a module global fragment, and MSVC instantiates
+// std::getline in importer TUs where <istream> may be incomplete (C2079).
+inline bool NextLine(std::string_view& rest, std::string_view& line) {
+    if (rest.empty()) return false;
+    const auto end = rest.find('\n');
+    line = rest.substr(0, end);
+    rest.remove_prefix(end == std::string_view::npos ? rest.size() : end + 1);
+    return true;
+}
 
 // All JS strings come from validated IPs, port numbers and a domain alphabet.
 // No subscription rules or user-supplied script are evaluated by the app.
@@ -58,15 +70,15 @@ class PacServer {
                     request += byte;
                 }
                 bool ok = request.ends_with("\r\n\r\n");
-                std::istringstream lines(request);
-                std::string line;
-                std::getline(lines, line);
-                ok = ok && (line == "GET " + path_ + " HTTP/1.1\r" || line == "GET " + path_ + " HTTP/1.0\r");
+                const std::string http11 = "GET " + path_ + " HTTP/1.1\r";
+                const std::string http10 = "GET " + path_ + " HTTP/1.0\r";
+                std::string_view rest(request), line;
+                ok = ok && NextLine(rest, line) && (line == http11 || line == http10);
                 bool host = false;
-                while (std::getline(lines, line) && line != "\r") {
+                while (NextLine(rest, line) && line != "\r") {
                     const auto colon = line.find(':');
                     if (colon == std::string::npos) { ok = false; continue; }
-                    auto key = line.substr(0, colon);
+                    std::string key(line.substr(0, colon));
                     std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) {
                         return c >= 'A' && c <= 'Z' ? static_cast<char>(c + 'a' - 'A') : static_cast<char>(c);
                     });
