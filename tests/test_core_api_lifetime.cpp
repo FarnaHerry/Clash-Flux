@@ -37,7 +37,8 @@ Task<void> CheckLifetime() {
                 profile.file = std::to_string(id) + ".yaml";
                 profile.selected = id == 1;
                 data.saveProfile(profile);
-                std::ofstream(cfg::profilesDir() / profile.file) << "rules: ['MATCH,DIRECT']\n";
+                std::ofstream(cfg::profilesDir() / profile.file, std::ios::binary)
+                    << "rules: ['MATCH,DIRECT']\n";
             }
             co_await data.close();
             std::ofstream(root / "seeded").put('1');
