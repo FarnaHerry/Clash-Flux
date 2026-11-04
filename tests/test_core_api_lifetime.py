@@ -4,6 +4,7 @@ Private HOME/database; no core, system proxy, TUN or service operations.
 """
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from contextlib import closing
 import os
 import sqlite3
 import subprocess
@@ -51,7 +52,9 @@ def check(executable, seeded):
             assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
             assert authorizations == ["Bearer early-request", "Bearer rotated-31"], authorizations
             if seeded:
-                with sqlite3.connect(data / "clash-flux.db") as database:
+                # sqlite3's context manager only ends the transaction; the file
+                # handle must close before Windows can delete the temp tree.
+                with closing(sqlite3.connect(data / "clash-flux.db")) as database:
                     rows = database.execute("SELECT id,name,file,selected FROM profiles ORDER BY id").fetchall()
                 assert rows == [(1, "preserved-1", "1.yaml", 1), (2, "preserved-2", "2.yaml", 0)], rows
                 for identity in (1, 2):
