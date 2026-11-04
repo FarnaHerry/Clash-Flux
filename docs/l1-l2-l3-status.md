@@ -1,5 +1,40 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-04：v0.3.94 标签 CI、重打标签与发布结果
+
+快照：`51d1cc8`；`v0.3.94` 标签已从原提交 `3d27e84` 重打到该提交（用户明确授权），
+`CMakeLists.txt` 与 Android versionName 仍为 0.3.94、versionCode 172。
+
+首次标签 CI 失败的直接原因是 **Windows**：MSVC 14.51 在导入方 TU 实例化
+`src/pac_server.h` 的 `std::getline(std::istringstream&, std::string&)`，该 TU 未完整
+包含 `<istream>`，报 `error C2079: '_Ok' uses undefined class ...::sentry`；
+`publish-release` 依赖 `build-windows` 因此被跳过。修复为 `std::string_view` 切行并
+移除该头文件的 `<sstream>` 依赖，不改变 PAC 请求判定与响应语义。
+
+随后 Windows 冒烟测试暴露两处测试夹具缺陷（应用行为未变）：
+`core_api_lifetime` 的 `with sqlite3.connect(...)` 只结束事务不关闭句柄，临时目录清理
+报 `WinError 32`，改用 `closing()`；其种子 profile 以文本模式写出 CRLF，与断言的纯 LF
+字节不符，种子改为 `std::ios::binary`。
+
+实际结果（run [41805022472](https://github.com/FarnaHerry/Clash-Flux/actions/runs/41805022472)，success）：
+
+- Linux x86_64/aarch64、Windows x86_64、macOS arm64、Android 全部绿；Windows 27m31s，
+  含 34 项冒烟测试，Linux 含 30 项必跑回归。
+- Android `apksigner` 断言通过：`Verified using v1 scheme: true`、`v2 scheme: true`。
+- `publish-release` 生成 Release 与 10 个资产：Windows `.exe`/`.zip`，Linux
+  x86_64/aarch64 的 `.deb`/`.rpm`/`.tar.gz`，macOS `.tar.gz`，Android
+  `arm64-v8a` APK。
+- iOS 仍为失败告警（不阻塞发布）：`HuxerUIIosLink.cmake` 无法解析
+  `SweetEditor3p::Simdutf`，v0.3.93 同一提交链已相同失败；修复属 HuxerUI fork。
+- 一次 macOS `resource_management_runtime` 偶发：CLI 打印预期的引用保护错误后，
+  `UseApplicationTaskScope()` 在 `Phase::Stopping` 抛出
+  `HuxerUI application is stopping`，进程 SIGABRT（返回 -6 而非 1）。Linux 上同一
+  命令重复 60 次未复现，本次及后续运行通过；根因未定位，属框架退出时序待查，
+  不记为已修复。
+
+边界：未新增 Android 真机 VPN/覆盖安装、Windows/macOS 系统接管及安装器
+升级/回滚/卸载的实机验收；发布资产由 CI 生成，未在本机复验安装或签名。
+
 ## 2026-11-04：v0.3.94 发布准备
 
 基线 `3e54a22` 加本轮网络高级设置、UI 统一与启动修复工作区。用户明确授权整理、
