@@ -1,4 +1,4 @@
-// settings_page.cpp — 通用、网络参数、平台维护与关于；日常运行控制放在首页。
+// settings_page.cpp — 外观、网络、资源、启动与后台、维护和关于；日常运行控制放在首页。
 //
 // 平台专属内容由模块入口处的编译宏选择，平台函数内部自洽管理状态、
 // 任务、权限和控件；这里不维护 Android/桌面能力矩阵。
@@ -51,9 +51,6 @@ const std::vector<huxerui::StringVariant> kThemeNames{
 const std::vector<std::string> kLanguages{"system", "zh", "en"};
 const std::vector<huxerui::StringVariant> kLanguageNames{
     Localized("自动"), "简体中文", "English"};
-constexpr float kPortSettingsDialogWidth = 320.0F;
-constexpr float kPortSettingsEntryMinHeight = 48.0F;
-constexpr float kPortSettingsEntryHorizontalInset = 10.0F;
 
 std::size_t LanguageIndex(const std::string& language) {
     const auto found = std::find(kLanguages.begin(), kLanguages.end(), language);
@@ -69,24 +66,24 @@ void ApplyLanguage(const std::shared_ptr<SettingsModel>& model, std::size_t inde
 
 // 宏只选择模块级平台函数，不把平台能力拆成控件级过滤条件。
 #if defined(__ANDROID__)
-#define CLASHFLUX_GENERAL_PLATFORM_SECTION AndroidGeneralSettings
+constexpr bool kNetworkMobilePage = true;
+#define CLASHFLUX_BACKGROUND_PLATFORM_SECTION AndroidKernelSettings
 #define CLASHFLUX_NETWORK_PLATFORM_SECTION AndroidNetworkSettings
-#define CLASHFLUX_MAINTENANCE_PLATFORM_SECTION AndroidKernelSettings
+#define CLASHFLUX_MAINTENANCE_PLATFORM_SECTION AndroidGeneralSettings
 #define CLASHFLUX_MORE_SETTINGS AndroidMoreSettings
 #define CLASHFLUX_LANGUAGE_SETTING AndroidLanguageSetting
 #define CLASHFLUX_THEME_SETTING AndroidThemeSetting
 constexpr bool kSettingsMoreOnWide = true;
-constexpr const char* kMaintenanceTitle = "后台运行";
 constexpr bool kUpdateUsesSystemInstaller = true;
 #else
-#define CLASHFLUX_GENERAL_PLATFORM_SECTION DesktopGeneralSettings
+constexpr bool kNetworkMobilePage = false;
+#define CLASHFLUX_BACKGROUND_PLATFORM_SECTION DesktopGeneralSettings
 #define CLASHFLUX_NETWORK_PLATFORM_SECTION DesktopNetworkSettings
 #define CLASHFLUX_MAINTENANCE_PLATFORM_SECTION DesktopKernelSettings
 #define CLASHFLUX_MORE_SETTINGS DesktopMoreSettings
 #define CLASHFLUX_LANGUAGE_SETTING DesktopLanguageSetting
 #define CLASHFLUX_THEME_SETTING DesktopThemeSetting
 constexpr bool kSettingsMoreOnWide = false;
-constexpr const char* kMaintenanceTitle = "运行与维护";
 constexpr bool kUpdateUsesSystemInstaller = false;
 #endif
 
@@ -98,16 +95,11 @@ constexpr bool kUpdateUsesSystemInstaller = false;
     float horizontalInset = -1.0F) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const float inset = horizontalInset < 0.0F ? ResolveIslandTheme(theme).island_padding : horizontalInset;
-    return huxerui::Row {
+    return SettingsActionRow(huxerui::Row {
       SettingItemIcon(icon),
       huxerui::Text(label).With(huxerui::Grow(1.0F)),
-    }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(inset, 10.0F)),
-           huxerui::Frame{.min_height = 48.0F}, huxerui::Spacing(12.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
-           theme.interactions.indication, huxerui::Focusable(true),
-           huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                             .label = huxerui::UseString(label)})
-        .OnClick(std::move(open));
+    }.With(huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        open, {.role = huxerui::SemanticRole::Button, .label = label}, SettingsRowInsets{inset, 10.0F, 48.0F});
 }
 
 [[huxerui::composable]] huxerui::View MoreNavRow(
@@ -176,6 +168,9 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const bool editing = editingId.has_value();
     auto input = huxerui::UseState(huxerui::TextEditingValue{initialHex});
     auto hsb = huxerui::UseState(ThemeColorToHsb(ThemeColorFromHex(initialHex)));
+    const auto close = UseEditorClose([input, initialHex] {
+        return NormalizeThemeColor(input.Get().text) != NormalizeThemeColor(initialHex);
+    }, [] { return false; }, onClose);
     const auto hex = NormalizeThemeColor(input.Get().text);
     const HsbColor currentHsb = hsb.Get();
     const auto preview = hex ? ThemeColorFromHex(*hex) : ThemeColorFromHsb(currentHsb);
@@ -262,23 +257,18 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
             CompactPrimaryActionButton(app::images::save, Localized(editing ? "保存" : "添加"), save,
                 hex.has_value() && model->view.Get().ready));
         if (kPageTitlesInWindow && huxerui::UseViewportClass() != huxerui::ViewportClass::Compact) {
-            const auto back = huxerui::IconButton(app::images::arrow_back, Localized("返回上一页")).OnClick(onClose);
+            const auto back = huxerui::IconButton(app::images::arrow_back, Localized("返回上一页")).OnClick(close);
             return PageScaffold(title, {}, body, true, false, true, std::nullopt, back)
-                .On<huxerui::ViewEvents::BackRequested>(onClose);
+                .On<huxerui::ViewEvents::BackRequested>(close);
         }
         return SecondaryPageScaffold(huxerui::Text(title, huxerui::TextRole::Title),
-            {}, body, onClose, false, false, true);
+            {}, body, close, false, false, true);
     }
-    return DialogCard(huxerui::Column {
-      huxerui::Text(title, huxerui::TextRole::Title),
-      fields,
-      huxerui::Row {
-        huxerui::Button(Localized("取消")).OnClick(onClose),
-        huxerui::Button(Localized(editing ? "保存" : "添加")).OnClick(save)
-            .With(huxerui::Enabled(hex.has_value() && model->view.Get().ready)),
-      }.With(huxerui::Spacing(theme.spacing.small), huxerui::MainAlign(huxerui::MainAxisAlignment::End)),
-    }.With(huxerui::Frame{.width = kThemeColorDialogWidth}, huxerui::Spacing(theme.spacing.medium),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+    return DialogScaffold(DialogHeader(title),
+        huxerui::ScrollView(fields).With(huxerui::Frame{.max_height = 420.0F}, huxerui::ScrollBar()),
+        DialogActions({DialogAction(Localized("取消"), close, false),
+            DialogAction(Localized(editing ? "保存" : "添加"), save, true,
+                hex.has_value() && model->view.Get().ready)}), DialogSize::Small);
 }
 
 [[huxerui::composable]] huxerui::View ThemeColorDialog(
@@ -314,7 +304,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
             navigation.Push(ThemeColorEditorRoutePage, initialHex, std::optional<std::string>{id});
             return;
         }
-        dialog.Show([model, id, initialHex](huxerui::DialogContext context) {
+        ShowEditorDialog(dialog, [model, id, initialHex](huxerui::DialogContext context) {
             return ThemeColorDialog(model, context, initialHex, id);
         });
     };
@@ -415,7 +405,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                     std::optional<std::string>{});
                 return;
             }
-            dialog.Show([settingsModel](huxerui::DialogContext context) {
+            ShowEditorDialog(dialog, [settingsModel](huxerui::DialogContext context) {
                 return ThemeColorDialog(settingsModel, context,
                     ThemeColorToHex(FluxPalette::water()), std::nullopt);
             });
@@ -478,12 +468,9 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                 return;
             }
             dialog.Show([](huxerui::DialogContext context) {
-                return DialogCard(huxerui::Column {
-                  huxerui::Text(Localized("语言"), huxerui::TextRole::Title),
-                  LanguageChoices([context] { context.Dismiss(); }),
-                  huxerui::Button(Localized("取消")).OnClick([context] { context.Dismiss(); }),
-                }.With(huxerui::Spacing(12.0F), huxerui::Frame{.width = 320.0F},
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+                const auto close = [context] { context.Dismiss(); };
+                return DialogScaffold(DialogHeader(Localized("语言")), LanguageChoices(close),
+                    DialogActions({DialogAction(Localized("取消"), close, false)}), DialogSize::Small);
             });
         }).Key("settings-language");
 }
@@ -507,15 +494,15 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     // 同组入口合并成一段；外层由设置页统一加一层卡片。
     return huxerui::Column {
         huxerui::Column {
-            MoreNavRow(Localized("连接"), app::images::connections,
-                       [navigation] { navigation.Push(AndroidConnectionsPage); }),
-            MoreNavRow(Localized("日志"), app::images::logs,
-                       [navigation] { navigation.Push(AndroidLogsPage); }),
             MoreNavRow(Localized("规则"), app::images::route, [navigation, profilesCache] {
                 navigation.Push([profilesCache] {
                     return AndroidRulesPage(profilesCache);
                 });
             }),
+            MoreNavRow(Localized("连接"), app::images::connections,
+                       [navigation] { navigation.Push(AndroidConnectionsPage); }),
+            MoreNavRow(Localized("日志"), app::images::logs,
+                       [navigation] { navigation.Push(AndroidLogsPage); }),
         }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
     }.With(huxerui::Spacing(0.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -537,181 +524,34 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 
 #endif // platform-specific theme and language entries
 
-huxerui::View CoreNetworkSwitchSettings(bool includeLan, bool includeIpv6);
-
-[[huxerui::composable]] huxerui::View PortSettingsEditor(
-    std::function<void()> onClose, bool fullPage, huxerui::StringVariant title,
-    bool includeEnvironment) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const auto settingsModel = huxerui::UseService<SettingsModel>();
-    const SettingsView current = settingsModel->view.Get();
-    const auto baseline = huxerui::UseState(current);
-    auto mixedPort = huxerui::UseState(huxerui::TextEditingValue{current.mixedPort});
-    auto httpPort = huxerui::UseState(huxerui::TextEditingValue{
-        current.httpPort == "0" ? "" : current.httpPort});
-    auto socksPort = huxerui::UseState(huxerui::TextEditingValue{
-        current.socksPort == "0" ? "" : current.socksPort});
-    const auto toast = UseFluxToast();
-    const auto save = [mixedPort, httpPort, socksPort, settingsModel, baseline, toast, onClose] {
-        const auto& before = baseline.Get();
-        const auto& latest = settingsModel->view.Get();
-        if (before.mixedPort != latest.mixedPort || before.httpPort != latest.httpPort || before.socksPort != latest.socksPort) {
-            toast.Show(Localized("设置已变化，请重新打开后编辑")); return;
-        }
-        const auto error = settingsModel->SetPorts(mixedPort.Get().text,
-            httpPort.Get().text, socksPort.Get().text);
-        if (error != PortSettingsError::None) {
-            toast.Show(error == PortSettingsError::Duplicate
-                ? Localized("不同类型的端口不能重复") : Localized("端口无效"));
-            return;
-        }
-        toast.Show(Localized("端口已保存（重启内核生效）"));
-        onClose();
-    };
-
-    std::vector<huxerui::View> rows;
-    rows.push_back(huxerui::Text(Localized(
-        "配置混合、HTTP 和 SOCKS 代理入站端口（重启内核生效）"))
-        .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption),
-                                  theme.colors.on_surface_variant}));
-    rows.push_back(huxerui::TextField(mixedPort.Get())
-        .Variant(huxerui::TextFieldVariant::Outlined)
-        .Label(Localized("混合端口"))
-        .OnChanged([mixedPort](const huxerui::TextEditingValue& value) {
-            mixedPort = value;
-        }));
-    rows.push_back(huxerui::TextField(httpPort.Get())
-        .Variant(huxerui::TextFieldVariant::Outlined)
-        .Label(Localized("HTTP 端口"))
-        .Placeholder(Localized("留空以关闭"))
-        .OnChanged([httpPort](const huxerui::TextEditingValue& value) {
-            httpPort = value;
-        }));
-    rows.push_back(huxerui::TextField(socksPort.Get())
-        .Variant(huxerui::TextFieldVariant::Outlined)
-        .Label(Localized("SOCKS 端口"))
-        .Placeholder(Localized("留空以关闭"))
-        .OnChanged([socksPort](const huxerui::TextEditingValue& value) {
-            socksPort = value;
-        }));
-    if (includeEnvironment) {
-        rows.push_back(CoreNetworkSwitchSettings(true, false));
-        rows.push_back(Card(huxerui::ProvideEnvironment(
-            SettingsRowInsets{ResolveIslandTheme(theme).island_padding, 10.0F, 48.0F},
-            DesktopNetworkSettings()), false, 0.0F));
-    }
-    huxerui::View fields = huxerui::Column(std::move(rows)).With(
-        huxerui::Spacing(theme.spacing.medium),
-        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    if (fullPage) {
-        huxerui::View body = CompactPageActionContent(
-            huxerui::ScrollView(fields).With(huxerui::Grow(1.0F), huxerui::ScrollBar()),
-            CompactPrimaryActionButton(app::images::save, Localized("保存"), save,
-                settingsModel->view.Get().ready));
-        return SecondaryPageScaffold(huxerui::Text(title, huxerui::TextRole::Title),
-            {}, body, onClose, false, false, true);
-    }
-    return DialogCard(huxerui::ScrollView(huxerui::Column {
-        huxerui::Text(title, huxerui::TextRole::Title),
-        fields,
-        huxerui::Row {
-            huxerui::Button(Localized("取消")).OnClick(onClose),
-            huxerui::Button(Localized("保存")).OnClick(save)
-                .With(huxerui::Enabled(settingsModel->view.Get().ready)),
-        }.With(huxerui::Spacing(theme.spacing.small),
-               huxerui::MainAlign(huxerui::MainAxisAlignment::End)),
-    }.With(huxerui::Spacing(theme.spacing.medium),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
-        .With(huxerui::Frame{
-                  .width = includeEnvironment ? 480.0F : kPortSettingsDialogWidth,
-                  .max_height = 560.0F},
-              huxerui::ScrollBar()));
-}
-
-[[huxerui::composable]] huxerui::View PortSettingsDialog(huxerui::DialogContext context) {
-    return PortSettingsEditor([context] { context.Dismiss(); }, false,
-        Localized("入站端口"), false);
-}
-
-[[huxerui::composable]] huxerui::View PortSettingsEntry() {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const auto settingsModel = huxerui::UseService<SettingsModel>();
+[[huxerui::composable]] huxerui::View NetworkSettingsEntry(HomeProxySettingsKind kind) {
+    const auto settings = huxerui::UseService<SettingsModel>();
     const auto dialog = huxerui::UseDialog();
-    const SettingsView settings = settingsModel->view.Get();
-    const huxerui::StringVariant label = Localized("入站端口");
-    const auto open = [dialog, settingsModel] {
-        if (!settingsModel->view.Get().ready) return;
-        dialog.Show([](huxerui::DialogContext context) {
-            return PortSettingsDialog(context);
+    const auto navigation = huxerui::UseNavigation();
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    return SettingNavigationItem(kind == HomeProxySettingsKind::Tun ? Localized("虚拟网卡") :
+            kNetworkMobilePage ? Localized("本地代理") : Localized("系统代理"),
+        kind == HomeProxySettingsKind::Tun ? app::images::tun : app::images::port,
+        [settings, dialog, navigation, compact, kind] {
+            if (!settings->view.Get().ready) return;
+            if (compact || kNetworkMobilePage) { navigation.Push(HomeProxySettingsRoutePage, kind); return; }
+            ShowNetworkSettingsDialog(dialog, kind == HomeProxySettingsKind::Tun);
         });
-    };
-    return huxerui::Row {
-        SettingItemIcon(app::images::port),
-        huxerui::Column {
-            huxerui::Text(label).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody), theme.colors.on_surface}),
-            huxerui::Text(Localized(
-                "配置混合、HTTP 和 SOCKS 代理入站端口（重启内核生效）"))
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kCaption),
-                    theme.colors.on_surface_variant}),
-        }.With(huxerui::Grow(1.0F), huxerui::Spacing(2.0F)),
-    }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(
-               ResolveIslandTheme(theme).island_padding, kPortSettingsEntryHorizontalInset)),
-           huxerui::Frame{.min_height = kPortSettingsEntryMinHeight},
-           huxerui::Spacing(theme.spacing.medium),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
-           theme.interactions.indication, huxerui::Focusable(true),
-           huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                             .label = huxerui::UseString(label)},
-           huxerui::Enabled(settings.ready))
-        .OnClick(open);
 }
-
 #if !defined(__ANDROID__)
 [[huxerui::composable]] huxerui::View DesktopMoreSettings(
     huxerui::State<std::size_t> navPage, ProfilesCache) {
     if (huxerui::UseViewportClass() != huxerui::ViewportClass::Compact) return huxerui::View{};
     return huxerui::Column {
         huxerui::Column {
+          MoreNavRow(Localized("规则"), app::images::route, [navPage] { navPage = 3U; }),
           MoreNavRow(Localized("连接"), app::images::connections, [navPage] { navPage = 4U; }),
           MoreNavRow(Localized("日志"), app::images::logs, [navPage] { navPage = 5U; }),
-          MoreNavRow(Localized("规则"), app::images::route, [navPage] { navPage = 3U; }),
         }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
     }.With(huxerui::Spacing(0.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 #endif
-
-[[huxerui::composable]] huxerui::View CoreNetworkSwitchSettings(bool includeLan, bool includeIpv6) {
-    const auto toast = UseFluxToast();
-    const auto control = UseCoreControl();
-    const auto coreModel = control.model;
-    const CoreView coreView = coreModel->view.Get();
-    return huxerui::Column {
-        includeLan ? SettingSwitchRow(
-            Localized("局域网连接"), Localized("允许局域网设备接入（下次启动生效）"),
-            huxerui::Switch(coreView.allowLan)
-                .With(huxerui::Enabled(coreView.ready && !control.Busy()))
-                .OnChanged([coreModel, toast](bool on) {
-                    coreModel->SetAllowLan(on);
-                    toast.Show(Localized(
-                        on ? "已允许局域网连接（重启内核生效）"
-                           : "已关闭局域网连接"));
-                }), false, app::images::network) : huxerui::View{},
-        includeIpv6 ? SettingSwitchRow(
-            "IPv6", Localized("重启内核生效"),
-            huxerui::Switch(coreView.ipv6Enabled)
-                .With(huxerui::Enabled(coreView.ready && !control.Busy()))
-                .OnChanged([coreModel, toast](bool on) {
-                    coreModel->SetIpv6(on);
-                    toast.Show(Localized(
-                        on ? "已启用 IPv6（重启内核生效）"
-                           : "已关闭 IPv6（重启内核生效）"));
-                }), false, app::images::globe) : huxerui::View{},
-    }.With(huxerui::Spacing(0.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-}
 
 [[huxerui::composable]] huxerui::View RuntimeDiagnosticsBody(
     huxerui::State<huxerui::TextEditingValue> target, std::function<void()> onClose, bool fullPage) {
@@ -773,7 +613,9 @@ huxerui::View CoreNetworkSwitchSettings(bool includeLan, bool includeIpv6);
 
 [[huxerui::composable]] huxerui::View RuntimeDiagnosticsDialog(huxerui::DialogContext context) {
     const auto target = huxerui::UseState(huxerui::TextEditingValue{});
-    return DialogCard(RuntimeDiagnosticsBody(target, [context] { context.Dismiss(); }, false));
+    return DialogCard(huxerui::Column {RuntimeDiagnosticsBody(target, [context] { context.Dismiss(); }, false)}
+        .With(huxerui::Frame{.width = 520.0F, .height = 560.0F},
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
 }
 
 [[huxerui::composable]] huxerui::View RuntimeDiagnosticsPage(std::function<void()> onBack) {
@@ -802,96 +644,9 @@ huxerui::View CoreNetworkSwitchSettings(bool includeLan, bool includeIpv6);
     }, inset).Key("settings-diagnostics-full-width");
 }
 
-[[huxerui::composable]] huxerui::View TunSettingsEditor(
-    std::function<void()> onClose, bool fullPage) {
-    const auto& theme = huxerui::UseTheme();
-    const auto model = huxerui::UseService<SettingsModel>();
-    const auto baseline = huxerui::UseState(model->view.Get());
-    const auto mtu = huxerui::UseState(huxerui::TextEditingValue::FromText(baseline.Get().tunMtu));
-    const auto strict = huxerui::UseState(baseline.Get().tunStrictRoute);
-    const auto toast = UseFluxToast();
-    const auto tasks = huxerui::UseApplicationTaskScope();
-    const auto alive = huxerui::UseState(true);
-    huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
-    const auto save = [=] {
-        if (model->tunSettingsSaving.Get() || !model->view.Get().ready) return;
-        const auto latest = model->view.Get();
-        if (latest.tunMtu != baseline.Get().tunMtu || latest.tunStrictRoute != baseline.Get().tunStrictRoute) {
-            toast.Show(Localized("设置已变化，请重新打开后编辑")); return;
-        }
-        const auto parsed = clashflux::tun_settings::ParseMtu(mtu.Get().text);
-        if (!parsed) {
-            toast.Show(Localized("MTU 需要填写 1280–9000 的整数")); return;
-        }
-        const int savedMtu = *parsed;
-        const bool savedStrict = strict.Get();
-        const auto before = baseline.Get();
-        model->tunSettingsSaving = true;
-        tasks.Launch([=]() -> huxerui::Task<void> {
-            std::string failure;
-            try {
-                failure = co_await RunOnTaskThread([=] {
-                    return store::coreStore().saveTunSettings(savedMtu, savedStrict, before.tunMtu, before.tunStrictRoute);
-                });
-            } catch (const std::exception& exception) { failure = exception.what(); }
-            model->tunSettingsSaving = false;
-            if (!failure.empty()) { toast.Show(failure); co_return; }
-            model->Update([=](SettingsView& next) { next.tunMtu = std::to_string(savedMtu); next.tunStrictRoute = savedStrict; });
-            model->RequestSync();
-            toast.Show(Localized("虚拟网卡设置已保存（重启内核生效）"));
-            if (alive.Get()) onClose();
-        });
-    };
-    huxerui::View content = huxerui::Column {
-        huxerui::Text(Localized("重启内核生效")),
-        huxerui::TextField(mtu.Get()).Label("MTU")
-            .Variant(huxerui::TextFieldVariant::Outlined)
-            .Validation(clashflux::tun_settings::ParseMtu(mtu.Get().text) ? huxerui::ValidationResult::None() :
-                huxerui::ValidationResult::Invalid(Localized("MTU 需要填写 1280–9000 的整数")))
-            .OnChanged([mtu](const auto& value) { mtu = value; }),
-        SettingSwitchRow(Localized("严格路由"), Localized("减少流量绕过虚拟网卡的情况"),
-            huxerui::Switch(strict.Get()).OnChanged([strict](bool value) { strict = value; })),
-        CoreNetworkSwitchSettings(false, true),
-    }.With(huxerui::Spacing(12.0F), huxerui::Enabled(model->view.Get().ready && !model->tunSettingsSaving.Get()),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    if (fullPage) {
-        return SecondaryPageScaffold(
-            huxerui::Text(Localized("虚拟网卡设置"), huxerui::TextRole::Title), {},
-            CompactPageActionContent(huxerui::ScrollView(content).With(huxerui::Grow(1.0F), huxerui::ScrollBar()),
-                CompactPrimaryActionButton(app::images::save, Localized("保存"), save,
-                    model->view.Get().ready && !model->tunSettingsSaving.Get() && clashflux::tun_settings::ParseMtu(mtu.Get().text).has_value(),
-                    model->tunSettingsSaving.Get())),
-            onClose, false, false, true);
-    }
-    return DialogCard(huxerui::ScrollView(huxerui::Column {
-        huxerui::Text(Localized("虚拟网卡设置"), huxerui::TextRole::Title),
-        content,
-        huxerui::Row {
-            huxerui::Button(Localized("取消")).OnClick(onClose),
-            huxerui::Button(Localized("保存")).OnClick(save).With(huxerui::Enabled(
-                model->view.Get().ready && !model->tunSettingsSaving.Get() && clashflux::tun_settings::ParseMtu(mtu.Get().text).has_value())),
-        }.With(huxerui::Spacing(theme.spacing.small), huxerui::MainAlign(huxerui::MainAxisAlignment::End)),
-    }.With(huxerui::Spacing(theme.spacing.medium),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
-        .With(huxerui::Frame{.width = 420.0F, .max_height = 420.0F},
-              huxerui::ScrollBar()));
-}
-
-[[huxerui::composable]] huxerui::View HomeProxySettingsDialog(
-    HomeProxySettingsKind kind, huxerui::DialogContext context) {
-    auto close = [context] { context.Dismiss(); };
-    if (kind == HomeProxySettingsKind::SystemProxy) {
-        return PortSettingsEditor(close, false, Localized("系统代理设置"), true);
-    }
-    return TunSettingsEditor(close, false);
-}
-
 [[huxerui::composable]] huxerui::View HomeProxySettingsPage(
     HomeProxySettingsKind kind, std::function<void()> onBack) {
-    if (kind == HomeProxySettingsKind::SystemProxy) {
-        return PortSettingsEditor(onBack, true, Localized("系统代理设置"), true);
-    }
-    return TunSettingsEditor(onBack, true);
+    return NetworkSettingsEditor(kind == HomeProxySettingsKind::Tun, onBack, true);
 }
 
 [[huxerui::composable]] huxerui::View HomeProxySettingsAction(HomeProxySettingsKind kind) {
@@ -903,18 +658,15 @@ huxerui::View CoreNetworkSwitchSettings(bool includeLan, bool includeIpv6);
         ? Localized("系统代理设置") : Localized("虚拟网卡设置");
     return huxerui::IconButton(app::images::gear, label)
         .With(huxerui::Tooltip(label), huxerui::Frame{.width = 32.0F, .height = 32.0F},
-              huxerui::Enabled(settings->view.Get().ready &&
-                  (kind != HomeProxySettingsKind::Tun || !settings->tunSettingsSaving.Get())))
+              huxerui::Enabled(settings->view.Get().ready))
         .Key(kind == HomeProxySettingsKind::SystemProxy
             ? "home-system-proxy-settings" : "home-tun-settings")
         .OnClick([dialog, navigation, compact, kind] {
-            if (compact) {
+            if (compact || kNetworkMobilePage) {
                 navigation.Push(HomeProxySettingsRoutePage, kind);
                 return;
             }
-            dialog.Show([kind](huxerui::DialogContext context) {
-                return HomeProxySettingsDialog(kind, context);
-            });
+            ShowNetworkSettingsDialog(dialog, kind == HomeProxySettingsKind::Tun);
         });
 }
 
@@ -990,21 +742,18 @@ huxerui::View CoreNetworkSwitchSettings(bool includeLan, bool includeIpv6);
             const auto install = [dialog, runtime, updates, control] {
                 if (!updates->CanInstall() || control.Busy() || !runtime->installAppUpdate) return;
                 dialog.Show([runtime](huxerui::DialogContext context) {
-                    return DialogCard(huxerui::Column {
-                      huxerui::Text(Localized("安装更新？"), huxerui::TextRole::Title),
+                    return DialogScaffold(DialogHeaderContent(huxerui::Text(Localized("安装更新？"), huxerui::TextRole::Title)),
+                    huxerui::Column {
                       huxerui::Text(kUpdateUsesSystemInstaller
                           ? Localized("确认后将保存配置、断开代理并打开系统安装界面。首次可能需要允许安装此来源的应用。")
                           : Localized("确认后将保存配置、断开代理并关闭 Clash-Flux，然后启动安装。系统可能要求安装授权。")),
-                      huxerui::Row {
-                        huxerui::Button(Localized("取消")).OnClick([context] { context.Dismiss(); }),
+                    }.With(huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                    DialogActions({DialogAction(Localized("取消"), [context] { context.Dismiss(); }, false),
                         huxerui::Button(kUpdateUsesSystemInstaller ? Localized("继续安装") : Localized("关闭并安装"))
                           .OnClick([context, runtime] {
                             context.Dismiss();
                             if (runtime->installAppUpdate) runtime->installAppUpdate();
-                        }),
-                      }.With(huxerui::Spacing(12.0F)),
-                    }.With(huxerui::Spacing(16.0F), huxerui::Frame{.max_width = 420.0F},
-                           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+                        })}), DialogSize::Small);
                 });
             };
             updateRows.push_back(AboutActionRow(
@@ -1104,43 +853,48 @@ huxerui::View CoreNetworkSwitchSettings(bool includeLan, bool includeIpv6);
     if (compact || kSettingsMoreOnWide)
         sections.push_back(SettingsSectionCard(Localized("更多"), CLASHFLUX_MORE_SETTINGS(navPage, profilesCache))
             .Key("settings-more"));
-    // 参数与维护分区；首页独占日常模式与接管控制。
-    sections.push_back(SettingsSectionCard(Localized("通用"), huxerui::Column {
-                    CLASHFLUX_THEME_SETTING(themeMode),
-                    CLASHFLUX_LANGUAGE_SETTING(),
-                    CLASHFLUX_GENERAL_PLATFORM_SECTION(),
-                }.With(huxerui::Spacing(0.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+    // Daily controls stay on Home; these groups own parameters and maintenance.
+    sections.push_back(SettingsSectionCard(Localized("外观"), huxerui::Column {
+      CLASHFLUX_THEME_SETTING(themeMode),
+      CLASHFLUX_LANGUAGE_SETTING(),
+    }.With(huxerui::Spacing(0.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
         .Key("settings-general"));
-
-    sections.push_back(SettingsSectionCard(Localized("网络"), huxerui::Column {
-                    PortSettingsEntry(),
-                    SettingNavigationItem(Localized("资源"), app::images::route,
-                        [navigation] { navigation.Push(ResourcesPage); }),
-                    RuntimeDiagnosticsEntry(),
-                    CLASHFLUX_NETWORK_PLATFORM_SECTION(),
-                    CoreNetworkSwitchSettings(true, true),
-                }.With(huxerui::Spacing(0.0F),
-                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+    sections.push_back(SettingsSectionCard(Localized("代理与网络"), huxerui::Column {
+      NetworkSettingsEntry(HomeProxySettingsKind::SystemProxy),
+      NetworkSettingsEntry(HomeProxySettingsKind::Tun),
+      CLASHFLUX_NETWORK_PLATFORM_SECTION(),
+    }.With(huxerui::Spacing(0.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
         .Key("settings-network"));
-
-    sections.push_back(SettingsSectionCard(Localized(kMaintenanceTitle), CLASHFLUX_MAINTENANCE_PLATFORM_SECTION())
+    sections.push_back(SettingsSectionCard(Localized("规则与资源"),
+        SettingNavigationItem(Localized("外部资源"), app::images::route,
+            [navigation] { navigation.Push(ResourcesPage); })).Key("settings-resources"));
+    sections.push_back(SettingsSectionCard(Localized("启动与后台"), CLASHFLUX_BACKGROUND_PLATFORM_SECTION())
+        .Key("settings-background"));
+    sections.push_back(SettingsSectionCard(Localized("工具与维护"), huxerui::Column {
+      RuntimeDiagnosticsEntry(),
+      CLASHFLUX_MAINTENANCE_PLATFORM_SECTION(),
+    }.With(huxerui::Spacing(0.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
         .Key("settings-maintenance"));
 
     sections.push_back(Card(AboutActionRow(Localized("关于"), {}, app::images::info,
                     [navigation] { navigation.Push(AboutRoutePage); }), false, 0.0F)
         .Key("settings-about"));
     if (compact) sections.push_back(CompactFloatingNavigationFooter());
+    huxerui::View content = huxerui::Column(sections).With(
+        huxerui::Spacing(20.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    if (kPageTitlesInWindow && !compact) content = huxerui::Row {
+      huxerui::Spacer(),
+      huxerui::View{content}.With(huxerui::Frame{.max_width = 720.0F}),
+      huxerui::Spacer(),
+    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
     return PageScaffold(
         Localized("设置"), huxerui::View{},
-        ScrollablePageContent(huxerui::Column(std::move(sections)).With(
-            huxerui::Spacing(islands.nested_radius),
-            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), scroll)
+        ScrollablePageContent(content, scroll)
             .Key("settings-scroll"), false, false, true,
             islands.nested_radius, {}, {}, true, {}, true);
 }
 
-#undef CLASHFLUX_GENERAL_PLATFORM_SECTION
+#undef CLASHFLUX_BACKGROUND_PLATFORM_SECTION
 #undef CLASHFLUX_NETWORK_PLATFORM_SECTION
 #undef CLASHFLUX_MAINTENANCE_PLATFORM_SECTION
 #undef CLASHFLUX_MORE_SETTINGS

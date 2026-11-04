@@ -10,7 +10,7 @@
 
 namespace clashflux::ui {
 
-enum class CoreAction { Idle, Start, Stop, Restart, Connect, Disconnect, Mode, SystemProxy, Tun };
+enum class CoreAction { Idle, Start, Stop, Restart, Connect, Disconnect, Mode, SystemProxy, Tun, NetworkSettings };
 
 struct CoreCommand {
     CoreAction action = CoreAction::Idle;

@@ -9,6 +9,12 @@
 
 ## 桌面内核所有权与失败清理
 
+控制客户端由 `CoreStore` 的一次性初始化创建；`api()` 暴露的引用必须在 store
+存活期间一直有效。异步 hydrate 或凭据刷新只用 `ClashApi::setEndpoint` 加锁更新，
+在途请求使用开始时取得的端点/凭据快照；不得销毁客户端来刷新 secret。secret 与
+原生控制客户端的替换受生命周期锁保护，初始化不得在 `call_once` 内递归进入自身。
+`core_api_lifetime` 用真实阻塞 HTTP 请求跨越 hydrate，并检查凭据刷新、多订阅与文件重开。
+
 2026-10-30：Windows/Linux 共用 `CoreStore` 生命周期及 `service` facade，分别由
 SCM/systemd 持有数据面。`service::required()` 统一平台能力选择；缺失、不可达或版本不符
 的服务不会触发 GUI/CLI 自行 spawn，root GUI 也不例外。Linux 普通启动与重启沿已有

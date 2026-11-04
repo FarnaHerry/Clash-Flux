@@ -171,16 +171,15 @@ void ConfirmCloseConnection(huxerui::DialogHandle dialog, huxerui::TaskScope tas
                      -> huxerui::Task<void> {
         co_await huxerui::Delay(std::chrono::duration<double>{0});
         dialog.Show([tasks, toast, id, host, all](huxerui::DialogContext context) {
-            return DialogCard(huxerui::Column{
-                huxerui::Text(Localized(all ? "关闭全部连接" : "关闭连接"),
-                              huxerui::TextRole::Title),
-                huxerui::Text(all
+            return DialogScaffold(DialogHeaderContent(huxerui::Text(Localized(all ? "关闭全部连接" : "关闭连接"),
+                              huxerui::TextRole::Title)),
+                    huxerui::Column {
+                      huxerui::Text(all
                     ? Localized("确定关闭全部活动连接吗？应用可能会重新建立连接。")
                     : LocalizedFormat("确定关闭“{}”吗？应用可能会重新建立连接。", host)),
-                huxerui::Row{
-                    huxerui::Button(Localized("取消"))
-                        .OnClick([context] { context.Dismiss(); }),
-                    huxerui::Button(Localized("关闭"))
+                    }.With(huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                    DialogActions({DialogAction(Localized("取消"), [context] { context.Dismiss(); }, false),
+                        huxerui::Button(Localized("关闭"))
                         .OnClick([context, tasks, toast, id, all] {
                             context.Dismiss();
                             tasks.Launch([toast, id, all]() -> huxerui::Task<void> {
@@ -194,11 +193,7 @@ void ConfirmCloseConnection(huxerui::DialogHandle dialog, huxerui::TaskScope tas
                                     toast.Show(LocalizedFormat("关闭连接失败：{}", error.what()));
                                 }
                             });
-                        }),
-                }.With(huxerui::Spacing(8.0F),
-                       huxerui::MainAlign(huxerui::MainAxisAlignment::End)),
-            }.With(huxerui::Spacing(12.0F), huxerui::Frame{.width = 320.0F},
-                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+                        })}), DialogSize::Small);
         });
     });
 }

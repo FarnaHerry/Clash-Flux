@@ -463,6 +463,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                     Files.readAllBytes(config.toPath()), StandardCharsets.UTF_8);
             if (requestedClashMode.isEmpty()) requestedClashMode = configuredClashMode(configContent);
             configContent = runtimeConfig(configContent, noTun);
+            tunHasCustomRoutes = hasCustomTunRoutes(configContent);
             checkpoint = logPreparationStage("config-wait-and-read", checkpoint);
             Libbox.checkConfig(configContent);
             checkpoint = logPreparationStage("libbox-check", checkpoint);
@@ -562,6 +563,23 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             runtimeBootstrapReady = true;
         }
     }
+    private boolean tunHasCustomRoutes;
+
+    private static boolean hasCustomTunRoutes(String content) throws Exception {
+        JSONArray inbounds = new JSONObject(content).optJSONArray("inbounds");
+        if (inbounds == null) return false;
+        for (int index = 0; index < inbounds.length(); index++) {
+            JSONObject inbound = inbounds.getJSONObject(index);
+            if (!"tun".equals(inbound.optString("type"))) continue;
+            for (String key : new String[]{"route_address", "route_address_set"}) {
+                Object value = inbound.opt(key);
+                if (value instanceof JSONArray && ((JSONArray) value).length() > 0) return true;
+                if (value instanceof String && !((String) value).isEmpty()) return true;
+            }
+        }
+        return false;
+    }
+
     private static String runtimeConfig(String content, boolean noTun) throws Exception {
         if (!noTun) return content;
         JSONObject config = new JSONObject(content);
@@ -624,7 +642,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                     hasIPv4Route = addRoutes(b, o.getInet4RouteRange());
                     hasIPv6Route = addRoutes(b, o.getInet6RouteRange());
                 }
-                if (!hasIPv4Route) {
+                if (!hasIPv4Route && !tunHasCustomRoutes) {
                     b.addRoute("0.0.0.0", 0);
                     MainActivity.appLog("Android VPN 未返回 IPv4 路由，已补充全局路由 0.0.0.0/0", false);
                 }
@@ -632,7 +650,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 // supplied an IPv6 TUN address. Some Android 13+ devices
                 // reject ::/0 without an IPv6 address on the VPN interface.
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                        !hasIPv6Route && hasIPv6Address(o)) {
+                        !hasIPv6Route && !tunHasCustomRoutes && hasIPv6Address(o)) {
                     b.addRoute("::", 0);
                 }
                 StringBox dnsMode = o.getDNSMode();
@@ -725,10 +743,12 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
             while (include.hasNext()) {
                 String packageName = include.next();
                 if (packageName == null || packageName.isEmpty()) continue;
+                if (packageName.equals(getPackageName()))
+                    throw new IllegalArgumentException("Clash-Flux 自身必须保持直连");
                 try {
                     b.addAllowedApplication(packageName);
                 } catch (Exception error) {
-                    MainActivity.appLog("忽略不存在的 Android 包：" + packageName, true);
+                    throw new IllegalArgumentException("应用不存在，保留原接管设置：" + packageName, error);
                 }
             }
             return;
@@ -748,7 +768,7 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 try {
                     b.addDisallowedApplication(packageName);
                 } catch (Exception error) {
-                    MainActivity.appLog("忽略不存在的 Android 包：" + packageName, true);
+                    throw new IllegalArgumentException("应用不存在，保留原接管设置：" + packageName, error);
                 }
             }
         }

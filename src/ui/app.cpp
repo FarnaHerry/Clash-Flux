@@ -1018,6 +1018,7 @@ void StartDesktopWindowlessRuntime() {
             }
 
             auto& coreStore = store::coreStore();
+            coreStore.setPacSessionResident(!CliRuntimeCommandMode());
             coreStore.init();
             coreStore.ensureSecret();
             profilesModel->RequestSync();
@@ -1301,6 +1302,7 @@ void StartDesktopWindowlessRuntime() {
                         application.Quit();
                         co_return;
                     }
+                    store::coreStore().setPacSessionResident(!CliRuntimeCommandMode());
                     store::coreStore().init();
                     store::coreStore().ensureSecret();
                     if (db.ready()) {

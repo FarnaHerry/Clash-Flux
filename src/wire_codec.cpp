@@ -95,6 +95,91 @@ struct StoredLogInput {
 // Persisted and outgoing contracts use explicit key lists. UI-only projections
 // can evolve without accidentally renaming serialized policy/log keys.
 namespace glz {
+template <> struct meta<clashflux::network::Advanced> {
+    using T = clashflux::network::Advanced;
+    static constexpr auto value = object(
+        "auto_redirect", &T::auto_redirect,
+        "override_filters", &T::override_filters,
+        "interface_mode", &T::interface_mode,
+        "interfaces", &T::interfaces,
+        "uid_mode", &T::uid_mode,
+        "uids", &T::uids,
+        "mac_mode", &T::mac_mode,
+        "macs", &T::macs,
+        "override_route_sets", &T::override_route_sets,
+        "route_sets", &T::route_sets,
+        "exclude_sets", &T::exclude_sets,
+        "proxy_mode", &T::proxy_mode,
+        "pac_port", &T::pac_port,
+        "pac_url", &T::pac_url,
+        "pac_direct_domains", &T::pac_direct_domains);
+};
+template <> struct meta<clashflux::network::Settings> {
+    using T = clashflux::network::Settings;
+    static constexpr auto value = object(
+        "format_version", &T::format_version,
+        "revision", &T::revision,
+        "mixed_port", &T::mixed_port,
+        "http_port", &T::http_port,
+        "socks_port", &T::socks_port,
+        "allow_lan", &T::allow_lan,
+        "ipv6", &T::ipv6,
+        "mtu", &T::mtu,
+        "override_mtu", &T::override_mtu,
+        "strict_route", &T::strict_route,
+        "stack", &T::stack,
+        "dns_mode", &T::dns_mode,
+        "interface_name", &T::interface_name,
+        "addresses", &T::addresses,
+        "override_routes", &T::override_routes,
+        "override_exclusions", &T::override_exclusions,
+        "routes", &T::routes,
+        "exclusions", &T::exclusions,
+        "udp_timeout", &T::udp_timeout,
+        "udp_mapping", &T::udp_mapping,
+        "udp_filtering", &T::udp_filtering,
+        "udp_nat_max", &T::udp_nat_max,
+        "override_udp_nat_max", &T::override_udp_nat_max,
+        "package_mode", &T::package_mode,
+        "packages", &T::packages,
+        "listen_address", &T::listen_address,
+        "bind_interface", &T::bind_interface,
+        "override_ports", &T::override_ports,
+        "override_listen", &T::override_listen,
+        "allowed_sources", &T::allowed_sources,
+        "override_auth", &T::override_auth,
+        "username", &T::username,
+        "password", &T::password,
+        "proxy_target", &T::proxy_target,
+        "override_bypass", &T::override_bypass,
+        "restore_proxy", &T::restore_proxy,
+        "bypass", &T::bypass,
+        "advanced", &T::advanced);
+};
+template <> struct meta<clashflux::network::ProxyValue> {
+    using T = clashflux::network::ProxyValue;
+    static constexpr auto value = object(
+        "scope", &T::scope,
+        "key", &T::key,
+        "value", &T::value,
+        "present", &T::present);
+};
+template <> struct meta<clashflux::network::ProxySnapshot> {
+    using T = clashflux::network::ProxySnapshot;
+    static constexpr auto value = object(
+        "desktop", &T::desktop,
+        "values", &T::values);
+};
+template <> struct meta<clashflux::network::ProxyLease> {
+    using T = clashflux::network::ProxyLease;
+    static constexpr auto value = object(
+        "format_version", &T::format_version,
+        "original", &T::original,
+        "applied", &T::applied,
+        "restore", &T::restore,
+        "local_pac_url", &T::local_pac_url);
+};
+
 template <> struct meta<clashflux::wire::PersonalRuleSet> {
     using T = clashflux::wire::PersonalRuleSet;
     static constexpr auto value = object("id", &T::id, "name", &T::name,
@@ -142,6 +227,27 @@ template <> struct meta<clashflux::wire::codec_detail::SelectionInput> {
 } // namespace glz
 
 namespace clashflux::wire {
+
+namespace {
+template<class T> Result<T> DecodeNetworkValue(std::string_view text) {
+    struct Options : glz::opts {
+        bool validate_trailing_whitespace = true;
+        constexpr Options() { null_terminated = false; error_on_unknown_keys = true; error_on_missing_keys = true; }
+    };
+    Result<T> result;
+    if (const auto error = glz::read<Options{}>(result.value, text))
+        result.error = "网络设置数据无效，保留原数据";
+    else if (result.value.format_version != 1)
+        result.error = "不支持的网络设置版本，保留原数据";
+    return result;
+}
+}
+Result<network::Settings> DecodeNetworkSettings(std::string_view text) {
+    return DecodeNetworkValue<network::Settings>(text);
+}
+Result<std::string> EncodeNetworkSettings(const network::Settings& value) { return codec_detail::encode(value); }
+Result<network::ProxyLease> DecodeProxyLease(std::string_view text) { return DecodeNetworkValue<network::ProxyLease>(text); }
+Result<std::string> EncodeProxyLease(const network::ProxyLease& value) { return codec_detail::encode(value); }
 
 Result<std::string> DecodeVersion(std::string_view text) {
     auto input = codec_detail::decode<codec_detail::VersionInput>(text);

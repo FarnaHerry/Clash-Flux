@@ -229,6 +229,16 @@ struct PersonalRuleDraft {
     huxerui::TextEditingValue pattern;
     std::size_t match = 0, position = 0, target = 0, unavailable = 0, resource = static_cast<std::size_t>(-1);
 };
+std::function<void()> UsePersonalRuleClose(huxerui::State<PersonalRuleDraft> draft,
+    huxerui::State<bool> busy, std::function<void()> close) {
+    const auto snapshot = [draft] {
+        const auto& v = draft.Get();
+        return std::tuple{v.pattern.text, v.match, v.position, v.target, v.unavailable, v.resource, v.edit.enabled};
+    };
+    const auto initial = huxerui::UseState(snapshot());
+    return UseEditorClose([=] { return snapshot() != initial.Get(); }, [busy] { return busy.Get(); }, close);
+}
+
 const std::vector<std::string> kPersonalMatches{
     "domain_suffix", "domain", "ip_cidr", "domain_keyword", "domain_regex", "process_name", "rule_set"};
 const std::vector<std::string> kPersonalMatchLabels{
@@ -314,22 +324,12 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id) {
     huxerui::State<PersonalRuleDraft> draft, std::vector<std::string> targets,
     singbox::RuleSetLibrary library, huxerui::State<bool> busy, bool editing,
     std::function<void(std::function<void()>)> save, std::function<void()> onClose) {
-    const auto close = [busy, onClose] { if (!busy.Get()) onClose(); };
-    return DialogCard(huxerui::Column{
-        huxerui::Text(Localized(editing ? "编辑规则" : "添加规则"),
-                      huxerui::TextRole::Title),
+    const auto close = UsePersonalRuleClose(draft, busy, onClose);
+    return DialogScaffold(DialogHeader(Localized(editing ? "编辑规则" : "添加规则")),
         huxerui::ScrollView(PersonalRuleForm(draft, targets, library, busy))
-            .With(huxerui::Frame{.max_height = 480.0F}, huxerui::ScrollBar()),
-        huxerui::Row{
-            huxerui::Button(Localized("取消")).With(huxerui::Enabled(!busy.Get()))
-                .OnClick(close),
-            huxerui::Spacer(),
-            huxerui::Button(Localized("保存"))
-                .With(huxerui::Enabled(!busy.Get()))
-                .OnClick([save, onClose] { save(onClose); }),
-        },
-    }.With(huxerui::Spacing(16.0F), huxerui::Frame{.width = 520.0F},
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+            .With(huxerui::Frame{.max_height = 460.0F}, huxerui::ScrollBar()),
+        DialogActions({DialogAction(Localized("取消"), close, false, !busy.Get()),
+            DialogAction(Localized("保存"), [save, onClose] { save(onClose); }, true, !busy.Get())}));
 }
 
 [[huxerui::composable]] huxerui::View PersonalRuleEditorPage(
@@ -340,6 +340,7 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id) {
     auto alive = huxerui::UseState(true);
     huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
     auto back = [navigation, busy, alive] { if (alive.Get() && !busy.Get()) static_cast<void>(navigation.Pop()); };
+    const auto close = UsePersonalRuleClose(draft, busy, back);
     huxerui::View content = huxerui::ScrollView(PersonalRuleForm(draft, targets, library, busy))
         .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     huxerui::View saveAction = CompactPrimaryActionButton(
@@ -350,7 +351,7 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id) {
         compact ? huxerui::View{} : huxerui::View{
             huxerui::IconButton(app::images::save, Localized("保存规则"))
                 .With(huxerui::Enabled(!busy.Get())).OnClick([save, back] { save(back); })},
-        std::move(content), back);
+        std::move(content), close);
 }
 
 [[huxerui::composable]] huxerui::View CompiledRulesPreviewPage(TextDocumentHandle document) {
@@ -371,24 +372,14 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id) {
 [[huxerui::composable]] huxerui::View CompiledRulesPreviewDialog(
     TextDocumentHandle document, std::function<void()> onClose) {
     const auto clipboard = huxerui::UseApplication().Clipboard();
-    return DialogCard(huxerui::Column {
-        huxerui::Row {
-            huxerui::Text(Localized("编译 JSON"), huxerui::TextRole::Title),
-            huxerui::Spacer(),
-            huxerui::IconButton(app::images::copy, Localized("复制"))
-                .With(huxerui::Tooltip(Localized("复制")))
-                .OnClick([clipboard, document] {
-                    clipboard->WriteText(*document->Snapshot());
-                }),
-            huxerui::IconButton(app::images::close, Localized("关闭"))
-                .With(huxerui::Tooltip(Localized("关闭"))).OnClick(onClose),
-        }.With(huxerui::Spacing(8.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        huxerui::Text(Localized("此预览仅包含当前订阅及个人修改，不代表正在运行的全局计划。")),
-        DocumentTextView(document, true, 0.0F),
-    }.With(huxerui::Spacing(12.0F),
-           huxerui::Frame{.width = 720.0F, .height = 620.0F},
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+    return DialogScaffold(DialogHeader(Localized("编译 JSON"),
+        huxerui::IconButton(app::images::copy, Localized("复制")).OnClick([clipboard, document] {
+            clipboard->WriteText(*document->Snapshot());
+        })), huxerui::Column {
+          huxerui::Text(Localized("此预览仅包含当前订阅及个人修改，不代表正在运行的全局计划。")),
+          DocumentTextView(document, true, 0.0F),
+        }.With(huxerui::Spacing(12.0F), huxerui::Grow(1.0F),
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), DialogActions({DialogAction(Localized("关闭"), onClose, false)}), DialogSize::Large, true);
 }
 
 [[huxerui::composable]] huxerui::View PersonalRuleRow(
@@ -454,6 +445,21 @@ struct RuleSetDraft {
     TextDocumentHandle content;
     std::size_t type = 0, format = 0;
 };
+
+std::function<void()> UseRuleSetClose(huxerui::State<RuleSetDraft> draft,
+    huxerui::State<bool> busy, std::function<void()> close) {
+    const auto snapshot = [draft] {
+        const auto& v = draft.Get();
+        return std::tuple{v.name.text, v.url.text, v.hours.text, v.type, v.format};
+    };
+    const auto initial = huxerui::UseState(snapshot());
+    const auto content = huxerui::UseState(draft.Get().content ? draft.Get().content->InitialText()
+        : std::make_shared<const std::string>());
+    return UseEditorClose([=] {
+        const auto doc = draft.Get().content;
+        return snapshot() != initial.Get() || (doc && *doc->Snapshot() != *content.Get());
+    }, [busy] { return busy.Get(); }, close);
+}
 
 [[huxerui::composable]] huxerui::View RuleSetForm(
     huxerui::State<RuleSetDraft> draft, huxerui::State<bool> busy) {
@@ -532,6 +538,16 @@ struct RuleSetDraft {
     }.With(huxerui::Spacing(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch), huxerui::Enabled(!busy.Get()));
 }
 
+[[huxerui::composable]] huxerui::View RuleSetDialog(huxerui::State<RuleSetDraft> draft,
+    huxerui::State<bool> busy, std::function<void(std::function<void()>)> save, std::function<void()> onClose) {
+    const auto close = UseRuleSetClose(draft, busy, onClose);
+    return DialogScaffold(DialogHeader(Localized("编辑规则集")),
+        huxerui::ScrollView(RuleSetForm(draft, busy))
+            .With(huxerui::Frame{.max_height = 460.0F}, huxerui::ScrollBar()),
+        DialogActions({DialogAction(Localized("取消"), close, false, !busy.Get()),
+            DialogAction(Localized("保存"), [=] { save(onClose); }, true, !busy.Get())}));
+}
+
 [[huxerui::composable]] huxerui::View RuleSetEditorPage(
     huxerui::State<RuleSetDraft> draft, huxerui::State<bool> busy,
     std::function<void(std::function<void()>)> save) {
@@ -540,6 +556,7 @@ struct RuleSetDraft {
     auto alive = huxerui::UseState(true);
     huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
     const auto back = [=] { if (alive.Get() && !busy.Get()) static_cast<void>(navigation.Pop()); };
+    const auto close = UseRuleSetClose(draft, busy, back);
     huxerui::View content = huxerui::ScrollView(RuleSetForm(draft, busy))
         .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     huxerui::View saveAction = CompactPrimaryActionButton(
@@ -550,7 +567,7 @@ struct RuleSetDraft {
         compact ? huxerui::View{} : huxerui::View{
             huxerui::IconButton(app::images::save, Localized("保存"))
                 .With(huxerui::Enabled(!busy.Get())).OnClick([=] { save(back); })},
-        std::move(content), back);
+        std::move(content), close);
 }
 
 [[huxerui::composable]] huxerui::View ResourceDetailPage(
@@ -597,17 +614,13 @@ struct RuleSetDraft {
     const auto confirmRemove = [=] {
         if (!references.empty()) { toast.Show(referencedMessage); openDetails(); return; }
         dialog.Show([=](huxerui::DialogContext context) {
-            return DialogCard(huxerui::Column {
-              huxerui::Text(Localized("删除资源？"), huxerui::TextRole::Title),
-              huxerui::Text(resource->name),
-              huxerui::Row {
-                huxerui::Button(Localized("取消")).OnClick([context] { context.Dismiss(); }),
-                huxerui::Spacer(),
-                huxerui::ProvideEnvironment(danger, huxerui::Button(Localized("删除"))
-                    .OnClick([=] { context.Dismiss(); remove(resource->id); })),
-              }.With(huxerui::Spacing(8.0F)),
-            }.With(huxerui::Spacing(16.0F), huxerui::Frame{.width = 360.0F},
-                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+            return DialogScaffold(DialogHeaderContent(huxerui::Text(Localized("删除资源？"), huxerui::TextRole::Title)),
+                    huxerui::Column {
+                      huxerui::Text(resource->name),
+                    }.With(huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                    DialogActions({DialogAction(Localized("取消"), [context] { context.Dismiss(); }, false),
+                        huxerui::ProvideEnvironment(danger, huxerui::Button(Localized("删除"))
+                    .OnClick([=] { context.Dismiss(); remove(resource->id); }))}), DialogSize::Small);
         });
     };
     return DenseCard(huxerui::Row {
@@ -759,18 +772,8 @@ struct RuleSetDraft {
             }, std::move(done));
         };
         if (compact) navigation.Push([=] { return RuleSetEditorPage(draft, busy, save); });
-        else dialog.Show([=](huxerui::DialogContext context) {
-            return DialogCard(huxerui::Column{
-                huxerui::Text(Localized("编辑规则集"), huxerui::TextRole::Title),
-                huxerui::ScrollView(RuleSetForm(draft, busy)).With(huxerui::Frame{.max_height = 460.0F}, huxerui::ScrollBar()),
-                huxerui::Row{
-                    huxerui::Button(Localized("取消")).OnClick([=] { if (!busy.Get()) context.Dismiss(); }),
-                    huxerui::Spacer(),
-                    huxerui::Button(Localized("保存")).With(huxerui::Enabled(!busy.Get()))
-                        .OnClick([=] { save([context] { context.Dismiss(); }); }),
-                },
-            }.With(huxerui::Spacing(16.0F), huxerui::Frame{.width = 480.0F},
-                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+        else ShowEditorDialog(dialog, [=](huxerui::DialogContext context) {
+            return RuleSetDialog(draft, busy, save, [context] { context.Dismiss(); });
         });
     };
     huxerui::Lifecycle([=] { addAction = std::function<void()>{[=] { openEditor({}); }}; }, model->ruleSetLibrary, busy, model->ruleSetsLoaded);
@@ -830,8 +833,8 @@ struct RuleSetDraft {
                 const auto resource = (*rows)[index];
                 std::vector<std::string> references;
                 for (const auto& item : usage.Get()) if (item.resourceId == resource->id) {
-                    const auto label = item.profileId == 0
-                        ? huxerui::UseString(Localized("全局规则")) : item.profileName;
+                    const auto label = item.ruleId == "network-route" ? huxerui::UseString(Localized("虚拟网卡设置"))
+                        : item.profileId == 0 ? huxerui::UseString(Localized("全局规则")) : item.profileName;
                     references.push_back(label + " · " + item.ruleId +
                         (item.enabled ? "" : " · " + huxerui::UseString(Localized("已禁用"))));
                 }
@@ -1030,7 +1033,7 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
             });
             return;
         }
-        dialog.Show([=](huxerui::DialogContext context) {
+        ShowEditorDialog(dialog, [=](huxerui::DialogContext context) {
             return PersonalRuleDialog(draft, targets, source->library, busy, adding,
                 save, [context] { context.Dismiss(); });
         });
@@ -1044,14 +1047,14 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
         const auto source = snapshot.Get();
         if (action == "details") {
             dialog.Show([=](huxerui::DialogContext context) {
-                return DialogCard(huxerui::Column{
-                    huxerui::Text(Localized("规则详情"), huxerui::TextRole::Title),
-                    huxerui::ScrollView(huxerui::Column{
+                return DialogScaffold(DialogHeaderContent(huxerui::Text(Localized("规则详情"), huxerui::TextRole::Title)),
+                    huxerui::Column {
+                      huxerui::ScrollView(huxerui::Column{
                         huxerui::Text(row.raw),
                         huxerui::Text(row.type + " · " + row.pattern + " → " + row.target),
                     }.With(huxerui::Spacing(12.0F))).With(huxerui::Frame{.max_height = 300.0F}, huxerui::ScrollBar()),
-                    huxerui::Button(Localized("关闭")).OnClick([context] { context.Dismiss(); }),
-                }.With(huxerui::Spacing(16.0F), huxerui::Frame{.max_width = 600.0F}));
+                    }.With(huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                    DialogActions({DialogAction(Localized("关闭"), [context] { context.Dismiss(); }, false)}), DialogSize::Small);
             }); return;
         }
         auto edits = source->edits;
@@ -1106,24 +1109,12 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
     std::function<void()> onClose) {
     auto addAction = huxerui::UseState<std::function<void()>>(
         std::function<void()>{});
-    return DialogCard(huxerui::Column {
-        huxerui::Row {
-            huxerui::Text(Localized("编辑订阅规则"), huxerui::TextRole::Title),
-            huxerui::Spacer(),
-            huxerui::IconButton(app::images::add, Localized("添加规则"))
-                .With(huxerui::Tooltip(Localized("添加规则")),
-                      huxerui::Enabled(static_cast<bool>(addAction.Get())))
-                .OnClick([addAction] {
-                    if (addAction.Get()) addAction.Get()();
-                }),
-            huxerui::IconButton(app::images::close, Localized("关闭"))
-                .With(huxerui::Tooltip(Localized("关闭"))).OnClick(onClose),
-        }.With(huxerui::Spacing(8.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+    return DialogScaffold(DialogHeader(Localized("编辑订阅规则"),
+        huxerui::IconButton(app::images::add, Localized("添加规则"))
+            .With(huxerui::Enabled(static_cast<bool>(addAction.Get())))
+            .OnClick([addAction] { if (addAction.Get()) addAction.Get()(); })),
         SubscriptionRulesPanel(addAction, profileId, false),
-    }.With(huxerui::Spacing(12.0F),
-           huxerui::Frame{.width = 720.0F, .height = 620.0F},
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+        DialogActions({DialogAction(Localized("关闭"), onClose, false)}), DialogSize::Large, true);
 }
 
 using RuleSourceObjects = std::shared_ptr<const std::vector<singbox::SourceObject>>;
@@ -1216,6 +1207,7 @@ enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
     auto loadGeneration = policyModel->globalRules.loadGeneration;
     auto loaded = policyModel->globalRules.loaded;
 
+    const auto editorSaveClose = huxerui::UseState(std::function<void()>{});
     auto policySavePending = policyModel->globalRules.pending;
     // 一次保存要「编译 + 内核 check + 重启内核」，耗时数秒；期间用户可能继续
     // 编辑（新增/开关/删除都会触发保存）。在途时只标 pending，完成后用最新
@@ -1224,7 +1216,7 @@ enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
     const std::weak_ptr<std::function<void()>> weakDispatch = dispatchPolicySave;
     *dispatchPolicySave = [applicationTasks, globalRules, toast, refreshTick, policySaving,
                            policySavePending, loadGeneration, coreModel, policyModel,
-                           weakDispatch] {
+                           weakDispatch, editorSaveClose] {
         const auto keepAlive = weakDispatch.lock();
         if (!keepAlive) return;
         policySaving = true;
@@ -1235,7 +1227,7 @@ enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
             policy.rules.push_back(rule);
         }
         applicationTasks.Launch([policy = std::move(policy), toast, refreshTick, policySaving,
-                      policySavePending, coreModel, policyModel, keepAlive]() mutable
+                      policySavePending, coreModel, policyModel, keepAlive, editorSaveClose]() mutable
                          -> huxerui::Task<void> {
             std::string error;
             bool ok = false;
@@ -1260,6 +1252,11 @@ enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
             if (ok) policyModel->globalRules.PublishSaved(std::get<3>(outcome).rules);
             } catch (const std::exception& e) { error = e.what(); }
             policySaving = false;
+            if (!ok || !policySavePending.Get()) {
+                const auto close = editorSaveClose.Get();
+                editorSaveClose = std::function<void()>{};
+                if (ok && close) close();
+            }
             toast.Show(ok ? Localized("编排规则已保存")
                           : LocalizedFormat("全局规则保存失败：{}", error));
             // 失败不触发重载：列表保留用户编辑（含失败规则），修正后可重试；
@@ -1368,7 +1365,7 @@ enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
 
     auto openGlobalRuleEditor = [compact, dialog, profiles, directName, editMatch, editPattern,
                                  editTarget, editPriority, globalRules,
-                                 persistGlobalPolicy, globalEditorOpen, theme,
+                                 persistGlobalPolicy, globalEditorOpen, theme, editorSaveClose,
                                  editIndex, toast, editTier, editUnavailable, editKind,
                                  editObject, editEnabled, policySaving, editSources, editCatalog, editSearch,
                                  catalogRequest, selectRuleSource, targetSelectionValid, editRevision, globalRevision](int index) {
@@ -1405,11 +1402,11 @@ enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
             globalEditorOpen = true;
             return;
         }
-        dialog.Show(
+        ShowEditorDialog(dialog,
             [profiles, editMatch, editPattern, editTarget, editPriority,
              globalRules, persistGlobalPolicy, theme, editIndex, toast, targetProfiles,
              editTier, editUnavailable, editKind, editObject, editEnabled, policySaving,
-             editCatalog, editSearch, selectRuleSource, targetSelectionValid, editRevision, globalRevision](huxerui::DialogContext ctx)
+             editCatalog, editSearch, selectRuleSource, targetSelectionValid, editRevision, globalRevision, editorSaveClose](huxerui::DialogContext ctx)
                 -> huxerui::View {
                 auto targets = TargetNames(targetProfiles);
                 if (!targets.empty() && editTarget.Get() >= targets.size()) targets.push_back(huxerui::UseString(Localized("目标来源已失效，请重新选择")));
@@ -1418,16 +1415,24 @@ enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
                 const auto& selectedTarget = targetProfiles[targetIndex];
                 const bool directTarget = editTarget.Get() < targetProfiles.size() &&
                                           targetProfiles[editTarget.Get()].direct;
-                return DialogCard(huxerui::ScrollView(
-                    huxerui::Column {
-                        huxerui::Text(editIndex.Get() < 0 ? Localized("添加全局规则") : Localized("编辑全局规则"),
-                                      huxerui::TextRole::Title),
-                        huxerui::Text(
+                return huxerui::Scope([=] {
+                    const auto snapshot = [=] {
+                        return std::tuple{editMatch.Get(), editPattern.Get().text, editTarget.Get(),
+                            editPriority.Get().text, editTier.Get(), editUnavailable.Get(), editKind.Get(),
+                            editObject.Get().text, editEnabled.Get()};
+                    };
+                    const auto initial = huxerui::UseState(snapshot());
+                    const auto close = UseEditorClose([=] { return snapshot() != initial.Get(); },
+                        [policySaving] { return policySaving.Get(); }, [ctx] { ctx.Dismiss(); });
+                    return DialogScaffold(DialogHeaderContent(huxerui::Text(editIndex.Get() < 0 ? Localized("添加全局规则") : Localized("编辑全局规则"),
+                                      huxerui::TextRole::Title)),
+                        huxerui::ScrollView(huxerui::Column {
+                          huxerui::Text(
                             Localized("显式分流先于主订阅；无规则引用的次来源不参与。URL 按主机名匹配。"))
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::System(font_size::kCaption),
                                 theme.colors.on_surface_variant}),
-                        huxerui::Select(
+                          huxerui::Select(
                             kMatchKinds, editMatch.Get(),
                             [](const std::string& value) {
                                 return huxerui::Text(Localized(value));
@@ -1437,8 +1442,8 @@ enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
                                 editMatch = index;
                             })
                             .With(huxerui::Frame{.width = 220.0F}),
-                        GlobalRulePatternField(editMatch, editPattern),
-                        targets.empty()
+                          GlobalRulePatternField(editMatch, editPattern),
+                          targets.empty()
                             ? huxerui::View{
                                   huxerui::Text(Localized("请先创建一个订阅连接"))}
                             : huxerui::View{huxerui::Select(
@@ -1447,18 +1452,19 @@ enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
                                       return huxerui::Text(value);
                                   })
                                   .OnChanged(selectRuleSource)},
-                        huxerui::TextField(editPriority.Get())
+                          huxerui::TextField(editPriority.Get())
                             .Label(Localized("层内优先级（数字越大越先匹配）"))
                             .Variant(huxerui::TextFieldVariant::Outlined)
                             .OnChanged([editPriority](
                                            const huxerui::TextEditingValue& value) {
                                 editPriority = value;
                             }),
-                        RuleOptions(editTier, editUnavailable, editKind, editObject, editEnabled, editCatalog, editSearch, selectedTarget.direct),
-                        huxerui::Row{
-                            huxerui::Button(Localized("取消")).OnClick(
-                                [ctx] { ctx.Dismiss(); }),
-                            huxerui::Button(Localized("保存")).OnClick([=] {
+                          RuleOptions(editTier, editUnavailable, editKind, editObject, editEnabled, editCatalog, editSearch, selectedTarget.direct),
+                        }.With(huxerui::Spacing(16.0F), huxerui::Enabled(!policySaving.Get()),
+                            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+                            .With(huxerui::Grow(1.0F), huxerui::ScrollBar()),
+                        DialogActions({DialogAction(Localized("取消"), close, false, !policySaving.Get()),
+DialogAction(Localized("保存"), [=] {
                                 if (policySaving.Get()) return;
                                 if (editRevision.Get() != globalRevision.Get()) {
                                     toast.Show(Localized("设置已变化，请重新打开后编辑"));
@@ -1511,19 +1517,13 @@ enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
                                     static_cast<std::size_t>(editIndex.Get()) < globalRules.Get().size())
                                     globalRules.Update([&](auto& rules) { rules.at(static_cast<std::size_t>(editIndex.Get())) = std::move(rule); });
                                 else globalRules.Update([&](auto& rules) { rules.push_back(std::move(rule)); });
-                                ctx.Dismiss();
+                                if (editIndex.Get() < 0) editIndex = static_cast<int>(globalRules.Get().size()) - 1;
+                                editorSaveClose = std::function<void()>{[ctx] { ctx.Dismiss(); }};
                                 persistGlobalPolicy();
-                            }),
-                        }
-                            .With(huxerui::MainAlign(
-                                huxerui::MainAxisAlignment::SpaceBetween)),
-                    }
-                        .With(huxerui::Spacing(16.0F),
-                              huxerui::CrossAlign(
-                                  huxerui::CrossAxisAlignment::Stretch)))
-                    .With(huxerui::Frame{.max_width = 520.0F, .max_height = 640.0F}, huxerui::ScrollBar()));
-            },
-            huxerui::DialogOptions{});
+                                editRevision = globalRevision.Get();
+                            })}), DialogSize::Form, true);
+                });
+            });
     };
 
     std::vector<huxerui::View> sectionPages;
@@ -1726,20 +1726,29 @@ enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
             static_cast<std::size_t>(editIndex.Get()) < globalRules.Get().size())
             globalRules.Update([&](auto& rules) { rules.at(static_cast<std::size_t>(editIndex.Get())) = std::move(rule); });
         else globalRules.Update([&](auto& rules) { rules.push_back(std::move(rule)); });
+        if (editIndex.Get() < 0) editIndex = static_cast<int>(globalRules.Get().size()) - 1;
+        editorSaveClose = std::function<void()>{[globalEditorOpen] { globalEditorOpen = false; }};
         persistGlobalPolicy();
-        globalEditorOpen = false;
+        editRevision = globalRevision.Get();
     };
     // 编辑器页在 IndexedPages 中常驻挂载；未打开时必须保持为空，否则它与
     // 桌面弹窗绑定同一组受控 State，输入法组合值会被另一实例当作外部权威值。
     huxerui::View editorPage = huxerui::Scope([=]() -> huxerui::View {
         if (!globalEditorOpen.Get()) return huxerui::Row{};
+        const auto snapshot = [=] {
+            return std::tuple{editMatch.Get(), editPattern.Get().text, editTarget.Get(), editPriority.Get().text,
+                editTier.Get(), editUnavailable.Get(), editKind.Get(), editObject.Get().text, editEnabled.Get()};
+        };
+        const auto initial = huxerui::UseState(snapshot());
+        const auto close = UseEditorClose([=] { return snapshot() != initial.Get(); },
+            [policySaving] { return policySaving.Get(); }, [globalEditorOpen] { globalEditorOpen = false; });
         huxerui::View saveAction = CompactPrimaryActionButton(
             app::images::save, Localized("保存"), saveResponsiveRule,
             !policySaving.Get(), policySaving.Get());
         huxerui::View actions = huxerui::Row {
             huxerui::IconButton(app::images::arrow_back, Localized("返回"))
                 .With(huxerui::Tooltip(Localized("返回规则列表")))
-                .OnClick([globalEditorOpen] { globalEditorOpen = false; }),
+                .OnClick(close),
             compact ? huxerui::View{} : huxerui::View{
                 huxerui::IconButton(app::images::save, Localized("保存规则"))
                     .With(huxerui::Tooltip(Localized("保存规则")))
@@ -1749,7 +1758,7 @@ enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
                                   editorProfiles[editTarget.Get()].direct;
         huxerui::View content = huxerui::ScrollView(
             huxerui::Column {
-                Card(huxerui::Column {
+                huxerui::Column {
                     huxerui::Text(
                         Localized("显式分流先于主订阅；无规则引用的次来源不参与。URL 按主机名匹配。")),
                     huxerui::Select(
@@ -1780,20 +1789,16 @@ enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
                     RuleOptions(editTier, editUnavailable, editKind, editObject, editEnabled, editCatalog, editSearch, directTarget),
                 }.With(huxerui::Spacing(16.0F),
                        huxerui::CrossAlign(
-                           huxerui::CrossAxisAlignment::Stretch))),
+                           huxerui::CrossAxisAlignment::Stretch)),
             }.With(huxerui::Spacing(16.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
-            .With(huxerui::Grow(1.0F));
+            .With(huxerui::Grow(1.0F), huxerui::Enabled(!policySaving.Get()));
         if (compact) content = CompactPageActionContent(std::move(content), std::move(saveAction));
         return PageScaffold(
             Localized(editIndex.Get() < 0 ? "添加全局规则"
                                           : "编辑全局规则"),
-            std::move(actions), std::move(content));
+            std::move(actions), std::move(content)).On<huxerui::ViewEvents::BackRequested>(close);
     });
-    if (compact && globalEditorOpen.Get()) {
-        editorPage = std::move(editorPage).On<huxerui::ViewEvents::BackRequested>(
-            [globalEditorOpen] { globalEditorOpen = false; });
-    }
     return huxerui::IndexedPages(
                std::vector<huxerui::View>{listPage, editorPage},
                compact && globalEditorOpen.Get() ? 1U : 0U)

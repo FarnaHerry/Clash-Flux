@@ -1373,10 +1373,35 @@ bool applyConnectionRules(Context& ctx) {
         }
     };
 
-    nlohmann::json precedence = nlohmann::json::array({
-        {{"action", "sniff"}},
-        {{"protocol", "dns"}, {"action", "hijack-dns"}},
-    });
+    nlohmann::json precedence = nlohmann::json::array();
+    if (!ctx.opt.network.allowed_sources.empty()) {
+        auto allowed = clashflux::network::Lines(ctx.opt.network.allowed_sources);
+        allowed.push_back("127.0.0.0/8"); allowed.push_back("::1/128");
+        nlohmann::json listeners = nlohmann::json::array();
+        for (const auto& inbound : config["inbounds"]) {
+            const auto type = inbound.value("type", "");
+            if (type != "mixed" && type != "http" && type != "socks") continue;
+            const auto tag = inbound.value("tag", "");
+            if (tag.empty()) { ctx.result.error = "访问限制需要代理监听带有唯一 tag"; return false; }
+            listeners.push_back(tag);
+        }
+        if (!listeners.empty()) precedence.push_back({{"type", "logical"}, {"mode", "and"},
+            {"rules", nlohmann::json::array({{{"inbound", listeners}}, {{"source_ip_cidr", allowed}, {"invert", true}}})},
+            {"action", "reject"}});
+    }
+    precedence.push_back({{"action", "sniff"}});
+    nlohmann::json nativeDnsTuns = nlohmann::json::array();
+    for (const auto& inbound : config["inbounds"]) {
+        if (inbound.value("type", "") != "tun") continue;
+        const auto dnsMode = inbound.value("dns_mode", "");
+        if (dnsMode != "native" && dnsMode != "disabled") continue;
+        const auto tag = inbound.value("tag", "");
+        if (tag.empty()) { ctx.result.error = "原生或关闭 DNS 接管的 TUN 需要唯一 tag"; return false; }
+        nativeDnsTuns.push_back(tag);
+    }
+    if (nativeDnsTuns.empty()) precedence.push_back({{"protocol", "dns"}, {"action", "hijack-dns"}});
+    else precedence.push_back({{"type", "logical"}, {"mode", "and"}, {"rules", nlohmann::json::array({
+        {{"protocol", "dns"}}, {{"inbound", nativeDnsTuns}, {"invert", true}}})}, {"action", "hijack-dns"}});
     if (!ctx.hostsDomains.empty()) precedence.push_back({
         {"domain", ctx.hostsDomains}, {"action", "resolve"}, {"server", ctx.hostsDnsTag}, {"disable_cache", true}});
     if (ctx.hostsDomains.empty()) precedence.push_back({{"action", "resolve"}});

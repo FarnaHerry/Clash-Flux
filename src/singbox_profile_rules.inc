@@ -246,6 +246,10 @@ bool compilePersonalRuleSets(Context& ctx) {
             wanted.insert(edit.pattern);
     for (const auto& rule : ctx.opt.globalRules)
         if (rule.enabled && rule.match == vpn::MatchKind::RuleSet) wanted.insert(rule.pattern);
+    if (ctx.opt.tunInbound && ctx.opt.proxyListening && ctx.opt.network.advanced && ctx.opt.network.advanced->override_route_sets) {
+        for (const auto* ids : {&ctx.opt.network.advanced->route_sets, &ctx.opt.network.advanced->exclude_sets})
+            for (const auto& id : clashflux::network::Lines(*ids)) wanted.insert(id);
+    }
     if (ctx.opt.validateAllPersonalRuleSets)
         for (const auto& resource : ctx.opt.ruleSetLibrary.resources) wanted.insert(resource.id);
     for (const auto& id : wanted) {

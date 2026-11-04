@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.93 release notes](docs/releases/v0.3.93.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.94 release notes](docs/releases/v0.3.94.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -87,8 +87,11 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
 - Core controls: desktop startup prepares a standby core without traffic inbounds.
   Connect opens proxy ports and restores the saved system proxy/TUN choices;
   Disconnect returns to standby. Standby can coexist with another client's TUN; connecting still checks conflicts. Manual proxy listening works with both choices off.
-  Home system-proxy and virtual-adapter settings provide port/LAN and MTU/strict-routing controls
-  through wide dialogs or compact secondary pages; saved runtime parameters require a core restart.
+  Home network settings cover stacks, DNS capture, networks, UDP sessions, proxy targets/bypass,
+  authentication and previous-proxy restoration, plus Android application capture. Forms commit together;
+  active connections offer Save and apply, through wide dialogs or compact secondary pages.
+  Linux adds nftables redirection and interface/UID/MAC filters; Linux/Windows support IP rule-set capture.
+  System proxy modes include a loopback PAC server and a custom PAC URL.
   See [home network settings](docs/home-network-settings.md). Geo supports DAT attribute filters, country/ASN MMDB and
   validated cache status ([details](docs/geo-resources.md)).
   Select rule, global or direct outbound mode; configure ports, LAN access and logging.
@@ -270,7 +273,7 @@ Desktop CI sets `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`: missing or disabled requ
 tests fail configuration. Python, the pinned bundled core and a runnable OpenSSL
 CLI are required; the download regression must include default certificate rejection.
 The required list in [ProjectTestGate.cmake](cmake/ProjectTestGate.cmake) covers resource management,
-runtime matching, persistence, UI and system evidence; Windows also includes service, physical DNS,
+runtime matching, persistence, startup client lifetime, UI and system evidence; Windows also includes service, physical DNS,
 isolated WFP and legacy cleanup regressions. Only the documented MSVC C4737 defect permits skipping
 the direct ORM test; subscription persistence remains mandatory. Windows service and WFP tests require
 an elevated test environment.

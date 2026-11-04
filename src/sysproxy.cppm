@@ -14,6 +14,7 @@
 // 系统的代理设置，真正生效依赖各应用读对应通道（KDE 应用读 kioslaverc，
 // GTK/GLib 应用读 org.gnome.system.proxy，WinINet 应用读注册表）。
 module;
+#include "network_settings.h"
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -78,6 +79,12 @@ std::string runCapture(const std::string& cmd) {
 }
 #endif
 
+std::string shellQuote(std::string_view value) {
+    std::string out = "'";
+    for (const char c : value) { if (c == '\'') out += "'\\''"; else out += c; }
+    return out + "'";
+}
+
 bool hasTool(const char* tool) {
     return runOk(std::string("command -v ") + tool);
 }
@@ -128,8 +135,8 @@ const char* kwriteTool() {
 
 bool kdeSet(const std::string& key, const std::string& value) {
     return runOk(std::format(
-        "{} --file kioslaverc --group \"Proxy Settings\" --key {} \"{}\"",
-        kwriteTool(), key, value));
+        "{} --file kioslaverc --group \"Proxy Settings\" --key {} {}",
+        kwriteTool(), shellQuote(key), shellQuote(value)));
 }
 
 void kdeReload() {
@@ -248,7 +255,7 @@ bool winWriteDword(const wchar_t* valueName, DWORD value) {
 
 bool winWriteString(const wchar_t* valueName, std::string_view value) {
     const std::wstring wide = winUtf8ToWide(value);
-    if (wide.empty()) return false;
+    if (wide.empty() && !value.empty()) return false;
     clashflux::win32::UniqueHkey key;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, kWinInetRegKey, 0, KEY_SET_VALUE,
                       key.put()) != ERROR_SUCCESS) {
@@ -271,6 +278,54 @@ bool winProxyEnabled() {
 void winNotifyRefresh() {
     InternetSetOptionW(nullptr, INTERNET_OPTION_SETTINGS_CHANGED, nullptr, 0);
     InternetSetOptionW(nullptr, INTERNET_OPTION_REFRESH, nullptr, 0);
+}
+
+std::optional<clashflux::network::ProxySnapshot> winCaptureConnection() {
+    INTERNET_PER_CONN_OPTIONW options[4]{};
+    options[0].dwOption = INTERNET_PER_CONN_FLAGS;
+    options[1].dwOption = INTERNET_PER_CONN_PROXY_SERVER;
+    options[2].dwOption = INTERNET_PER_CONN_PROXY_BYPASS;
+    options[3].dwOption = INTERNET_PER_CONN_AUTOCONFIG_URL;
+    INTERNET_PER_CONN_OPTION_LISTW list{};
+    list.dwSize = sizeof(list); list.dwOptionCount = 4; list.pOptions = options;
+    DWORD size = sizeof(list);
+    if (!InternetQueryOptionW(nullptr, INTERNET_OPTION_PER_CONNECTION_OPTION, &list, &size)) return std::nullopt;
+    const auto release = [](wchar_t* value) { if (value) GlobalFree(value); };
+    std::unique_ptr<wchar_t, decltype(release)> server(options[1].Value.pszValue, release);
+    std::unique_ptr<wchar_t, decltype(release)> bypass(options[2].Value.pszValue, release);
+    std::unique_ptr<wchar_t, decltype(release)> pac(options[3].Value.pszValue, release);
+    clashflux::network::ProxySnapshot snapshot;
+    snapshot.desktop = "windows";
+    snapshot.values = {{"", "Flags", std::to_string(options[0].Value.dwValue)},
+        {"", "ProxyServer", server ? winWideToUtf8(server.get()) : ""},
+        {"", "ProxyOverride", bypass ? winWideToUtf8(bypass.get()) : ""},
+        {"", "AutoConfigURL", pac ? winWideToUtf8(pac.get()) : ""}};
+    return snapshot;
+}
+
+bool winRestoreConnection(const clashflux::network::ProxySnapshot& snapshot) {
+    INTERNET_PER_CONN_OPTIONW options[4]{};
+    options[0].dwOption = INTERNET_PER_CONN_FLAGS;
+    options[1].dwOption = INTERNET_PER_CONN_PROXY_SERVER;
+    options[2].dwOption = INTERNET_PER_CONN_PROXY_BYPASS;
+    options[3].dwOption = INTERNET_PER_CONN_AUTOCONFIG_URL;
+    std::wstring server, bypass, pac;
+    int flags = 0;
+    for (const auto& item : snapshot.values) {
+        if (item.key == "Flags" && !clashflux::network::Integer(item.value, flags, 0, 31)) return false;
+        if (item.key == "ProxyServer") server = winUtf8ToWide(item.value);
+        if (item.key == "ProxyOverride") bypass = winUtf8ToWide(item.value);
+        if (item.key == "AutoConfigURL") pac = winUtf8ToWide(item.value);
+    }
+    options[0].Value.dwValue = static_cast<DWORD>(flags);
+    options[1].Value.pszValue = server.data();
+    options[2].Value.pszValue = bypass.data();
+    options[3].Value.pszValue = pac.data();
+    INTERNET_PER_CONN_OPTION_LISTW list{};
+    list.dwSize = sizeof(list); list.dwOptionCount = 4; list.pOptions = options;
+    const bool ok = InternetSetOptionW(nullptr, INTERNET_OPTION_PER_CONNECTION_OPTION, &list, sizeof(list));
+    if (ok) winNotifyRefresh();
+    return ok;
 }
 #else
 bool winProxyEnabled() { return false; }
@@ -304,21 +359,21 @@ std::vector<std::string> macServices() {
 
 bool macSetProxy(const std::string& svc, const std::string& host,
                  const std::string& port) {
-    return runOk(std::format(R"(networksetup -setwebproxy "{}" {} {})",
-                             svc, host, port)) &&
-           runOk(std::format(R"(networksetup -setsecurewebproxy "{}" {} {})",
-                             svc, host, port)) &&
-           runOk(std::format(R"(networksetup -setsocksfirewallproxy "{}" {} {})",
-                             svc, host, port));
+    return runOk(std::format("networksetup -setwebproxy {} {} {}",
+                             shellQuote(svc), shellQuote(host), shellQuote(port))) &&
+           runOk(std::format("networksetup -setsecurewebproxy {} {} {}",
+                             shellQuote(svc), shellQuote(host), shellQuote(port))) &&
+           runOk(std::format("networksetup -setsocksfirewallproxy {} {} {}",
+                             shellQuote(svc), shellQuote(host), shellQuote(port)));
 }
 
 bool macSetProxyState(const std::string& svc, std::string_view state) {
-    return runOk(std::format(R"(networksetup -setwebproxystate "{}" {})",
-                             svc, state)) &&
-           runOk(std::format(R"(networksetup -setsecurewebproxystate "{}" {})",
-                             svc, state)) &&
-           runOk(std::format(R"(networksetup -setsocksfirewallproxystate "{}" {})",
-                             svc, state));
+    return runOk(std::format("networksetup -setwebproxystate {} {}",
+                             shellQuote(svc), shellQuote(state))) &&
+           runOk(std::format("networksetup -setsecurewebproxystate {} {}",
+                             shellQuote(svc), shellQuote(state))) &&
+           runOk(std::format("networksetup -setsocksfirewallproxystate {} {}",
+                             shellQuote(svc), shellQuote(state)));
 }
 #endif
 
@@ -334,22 +389,10 @@ export bool supported() {
     return desktop() != Desktop::Unsupported;
 }
 
-// 系统代理当前是否处于手动模式（不要求指向本机端口，仅作状态展示）。
-export bool enabled() {
-    switch (desktop()) {
-        case Desktop::Kde: return kdeProxyManual();
-        case Desktop::Gnome:
-            return runCapture("gsettings get org.gnome.system.proxy mode") ==
-                   "'manual'";
-        case Desktop::Windows:
-            return winProxyEnabled();
-        case Desktop::Macos:
-            // best effort：以 Wi-Fi 服务为代表（多数机器的主用服务）。
-            return runCapture(R"(networksetup -getwebproxy "Wi-Fi")")
-                       .find("Enabled: Yes") != std::string::npos;
-        default: return false;
-    }
-}
+export std::optional<clashflux::network::ProxySnapshot> capture(std::string& err);
+export std::string currentProxy();
+// Includes manual, PAC and automatic discovery channels.
+export bool enabled() { return !currentProxy().empty(); }
 
 // 当前系统代理指向（"host:port"；非手动模式、未启用或读取失败返回空）。
 // 用于所有权判定：只有指向本应用写入的端口时才允许撤销，避免把其他代理
@@ -359,7 +402,19 @@ export bool enabled() {
 export std::string currentProxy() {
     switch (desktop()) {
         case Desktop::Kde: {
-            if (!kdeProxyManual()) return {};
+            if (!kdeProxyManual()) {
+                std::string error;
+                if (auto saved = capture(error)) {
+                    std::string mode, url;
+                    for (const auto& field : saved->values) {
+                        if (field.key == "ProxyType") mode = field.value;
+                        if (field.key == "Proxy Config Script") url = field.value;
+                    }
+                    if (mode == "2") return "PAC " + url;
+                    if (mode == "3" || mode == "4") return "Auto discovery";
+                }
+                return {};
+            }
             const char* home = std::getenv("HOME");
             if (!home) return {};
             std::ifstream in(std::string(home) + "/.config/kioslaverc");
@@ -384,10 +439,9 @@ export std::string currentProxy() {
             return {};
         }
         case Desktop::Gnome: {
-            if (runCapture("gsettings get org.gnome.system.proxy mode") !=
-                "'manual'") {
-                return {};
-            }
+            const auto mode = runCapture("gsettings get org.gnome.system.proxy mode");
+            if (mode == "'auto'") return "PAC " + runCapture("gsettings get org.gnome.system.proxy autoconfig-url");
+            if (mode != "'manual'") return {};
             // gsettings 输出带单引号：'127.0.0.1'。
             std::string host = runCapture(
                 "gsettings get org.gnome.system.proxy.http host");
@@ -399,13 +453,30 @@ export std::string currentProxy() {
             return host + ":" + port;
         }
         case Desktop::Windows: {
-            if (!enabled()) return {};
+#ifdef _WIN32
+            if (auto saved = winCaptureConnection()) {
+                std::string flags, pac;
+                for (const auto& field : saved->values) {
+                    if (field.key == "Flags") flags = field.value;
+                    if (field.key == "AutoConfigURL") pac = field.value;
+                }
+                const auto bits = std::stoul(flags);
+                if (bits & PROXY_TYPE_AUTO_PROXY_URL) return "PAC " + pac;
+                if (bits & PROXY_TYPE_AUTO_DETECT) return "Auto discovery";
+                if (!(bits & PROXY_TYPE_PROXY)) return {};
+            } else return {};
+#endif
             return winReadString(L"ProxyServer");
         }
         case Desktop::Macos: {
             const std::string out = runCapture(
                 R"(networksetup -getwebproxy "Wi-Fi")");
-            if (out.find("Enabled: Yes") == std::string::npos) return {};
+            if (out.find("Enabled: Yes") == std::string::npos) {
+                const auto pac = runCapture(R"(networksetup -getautoproxyurl "Wi-Fi")");
+                if (pac.find("Enabled: Yes") != std::string::npos) return "PAC " + pac;
+                if (runCapture(R"(networksetup -getproxyautodiscovery "Wi-Fi")").ends_with("On")) return "Auto discovery";
+                return {};
+            }
             std::string host;
             std::string port;
             std::istringstream in(out);
@@ -423,13 +494,14 @@ export std::string currentProxy() {
 }
 
 // 打开系统代理，指向 host:port（本机内核 mixed 入站端口）。
-export bool enable(const std::string& host, int port, std::string& err) {
+export bool enable(const std::string& host, int port, std::string& err, bool includeSocks = true) {
     const std::string p = std::to_string(port);
+    const auto authority = host.find(':') == std::string::npos ? host : "[" + host + "]";
     switch (desktop()) {
         case Desktop::Kde: {
-            bool ok = kdeSet("httpProxy", std::format("http://{}:{}", host, p)) &&
-                      kdeSet("httpsProxy", std::format("http://{}:{}", host, p)) &&
-                      kdeSet("socksProxy", std::format("socks://{}:{}", host, p)) &&
+            bool ok = kdeSet("httpProxy", std::format("http://{}:{}", authority, p)) &&
+                      kdeSet("httpsProxy", std::format("http://{}:{}", authority, p)) &&
+                      kdeSet("socksProxy", includeSocks ? std::format("socks://{}:{}", authority, p) : "") &&
                       kdeSet("ProxyType", "1");
             if (ok) kdeReload();
             if (!ok) err = "kwriteconfig 写入失败";
@@ -441,15 +513,25 @@ export bool enable(const std::string& host, int port, std::string& err) {
                 gnomeSet(".http", std::format("port {}", p)) &&
                 gnomeSet(".https", std::format("host '{}'", host)) &&
                 gnomeSet(".https", std::format("port {}", p)) &&
-                gnomeSet(".socks", std::format("host '{}'", host)) &&
-                gnomeSet(".socks", std::format("port {}", p)) &&
+                gnomeSet(".socks", std::format("host '{}'", includeSocks ? host : "")) &&
+                gnomeSet(".socks", std::format("port {}", includeSocks ? p : "0")) &&
                 gnomeSet("", "mode 'manual'");
             if (!ok) err = "gsettings 写入失败";
             return ok;
         }
         case Desktop::Windows: {
-            const bool ok = winWriteString(L"ProxyServer", host + ":" + p) &&
-                            winWriteDword(L"ProxyEnable", 1);
+#ifdef _WIN32
+            auto saved = winCaptureConnection();
+            if (!saved) { err = "无法读取 Windows 系统代理设置"; return false; }
+            for (auto& value : saved->values) {
+                if (value.key == "Flags") value.value = std::to_string(PROXY_TYPE_DIRECT | PROXY_TYPE_PROXY);
+                if (value.key == "ProxyServer") value.value = includeSocks ? authority + ":" + p
+                    : "http=" + authority + ":" + p + ";https=" + authority + ":" + p;
+            }
+            const bool ok = winRestoreConnection(*saved);
+#else
+            const bool ok = false;
+#endif
             if (ok) winNotifyRefresh();
             if (!ok) err = "reg 写入失败";
             return ok;
@@ -462,7 +544,14 @@ export bool enable(const std::string& host, int port, std::string& err) {
             }
             bool ok = true;
             for (const auto& svc : services) {
-                ok = macSetProxy(svc, host, p) && ok;
+                if (includeSocks) ok = macSetProxy(svc, host, p) && ok;
+                else {
+                    ok = runOk("networksetup -setwebproxy " + shellQuote(svc) + " " + shellQuote(host) + " " + p) && ok;
+                    ok = runOk("networksetup -setsecurewebproxy " + shellQuote(svc) + " " + shellQuote(host) + " " + p) && ok;
+                    ok = runOk("networksetup -setsocksfirewallproxystate " + shellQuote(svc) + " off") && ok;
+                }
+                ok = runOk("networksetup -setautoproxystate " + shellQuote(svc) + " off") && ok;
+                ok = runOk("networksetup -setproxyautodiscovery " + shellQuote(svc) + " off") && ok;
             }
             if (!ok) err = "networksetup 写入失败";
             return ok;
@@ -471,6 +560,251 @@ export bool enable(const std::string& host, int port, std::string& err) {
             err = "当前平台不支持系统代理通道";
             return false;
     }
+}
+
+// PAC is an application/session setting, not a fabricated sing-box option.
+export bool enablePac(const std::string& url, std::string& err) {
+    clashflux::network::Advanced validation;
+    validation.proxy_mode = "pac_url"; validation.pac_url = url;
+    if (!(err = clashflux::network::ValidateAdvanced(validation)).empty()) return false;
+    bool ok = false;
+    switch (desktop()) {
+    case Desktop::Gnome:
+        ok = runOk("gsettings set org.gnome.system.proxy autoconfig-url " + shellQuote(url)) &&
+             gnomeSet("", "mode 'auto'");
+        break;
+    case Desktop::Kde:
+        ok = kdeSet("Proxy Config Script", url) && kdeSet("ProxyType", "2");
+        if (ok) kdeReload();
+        break;
+    case Desktop::Windows:
+#ifdef _WIN32
+        if (auto saved = winCaptureConnection()) {
+            for (auto& value : saved->values) {
+                if (value.key == "Flags") value.value = std::to_string(PROXY_TYPE_DIRECT | PROXY_TYPE_AUTO_PROXY_URL);
+                if (value.key == "AutoConfigURL") value.value = url;
+            }
+            ok = winRestoreConnection(*saved);
+            if (ok) winNotifyRefresh();
+        }
+#endif
+        break;
+    case Desktop::Macos: {
+#ifdef __APPLE__
+        const auto services = macServices();
+        ok = !services.empty();
+        for (const auto& service : services) {
+            ok = macSetProxyState(service, "off") && ok;
+            ok = runOk("networksetup -setproxyautodiscovery " + shellQuote(service) + " off") && ok;
+            ok = runOk("networksetup -setautoproxyurl " + shellQuote(service) + " " + shellQuote(url)) && ok;
+            ok = runOk("networksetup -setautoproxystate " + shellQuote(service) + " on") && ok;
+        }
+#endif
+        break;
+    }
+    default: break;
+    }
+    if (!ok) err = "系统 PAC 设置写入失败";
+    return ok;
+}
+
+// Snapshot only settings this module writes. The complete snapshot is also an
+// ownership fingerprint, so a user's changed exception list prevents restore.
+export std::optional<clashflux::network::ProxySnapshot> capture(std::string& err) {
+    clashflux::network::ProxySnapshot result;
+    const auto add = [&](std::string scope, std::string key, std::string value, bool present = true) {
+        result.values.push_back({std::move(scope), std::move(key), std::move(value), present});
+    };
+    switch (desktop()) {
+    case Desktop::Gnome:
+        result.desktop = "gnome";
+        for (const auto scope : {"", ".http", ".https", ".socks"}) {
+            const std::vector<std::string> keys = std::string_view(scope).empty()
+                ? std::vector<std::string>{"mode", "ignore-hosts", "autoconfig-url"} : std::vector<std::string>{"host", "port"};
+            for (const auto& key : keys) {
+                const auto value = runCapture(std::format("gsettings get org.gnome.system.proxy{} {}", scope, key));
+                if (value.empty()) { err = "无法读取 GNOME 系统代理设置"; return std::nullopt; }
+                add(scope, key, value);
+            }
+        }
+        break;
+    case Desktop::Kde: {
+        result.desktop = "kde";
+        const char* home = std::getenv("HOME");
+        if (!home) { err = "无法定位 KDE 系统代理设置"; return std::nullopt; }
+        const auto path = std::filesystem::path(home) / ".config/kioslaverc";
+        std::ifstream input(path);
+        if (std::filesystem::exists(path) && !input) { err = "无法读取 KDE 系统代理设置"; return std::nullopt; }
+        std::map<std::string, std::string> values;
+        bool section = false;
+        std::string line;
+        while (std::getline(input, line)) {
+            if (line.starts_with('[')) { section = line == "[Proxy Settings]"; continue; }
+            const auto equal = line.find('=');
+            if (section && equal != std::string::npos) values[line.substr(0, equal)] = line.substr(equal + 1);
+        }
+        for (const auto key : {"ProxyType", "httpProxy", "httpsProxy", "socksProxy", "NoProxyFor", "ReversedException", "Proxy Config Script"}) {
+            const auto found = values.find(key);
+            add("", key, found == values.end() ? "" : found->second, found != values.end());
+        }
+        break;
+    }
+    case Desktop::Windows:
+#ifdef _WIN32
+        if (auto saved = winCaptureConnection()) return saved;
+        err = "无法读取 Windows 系统代理设置"; return std::nullopt;
+#else
+        return std::nullopt;
+#endif
+    case Desktop::Macos:
+        result.desktop = "macos";
+        for (const auto& service : macServices()) {
+            for (const auto kind : {"web", "secureweb", "socksfirewall"}) {
+                const auto raw = runCapture(std::format("networksetup -get{}proxy {}", kind, shellQuote(service)));
+                if (!raw.starts_with("Enabled:")) { err = "无法读取 macOS 系统代理设置"; return std::nullopt; }
+                if (raw.find("Authenticated Proxy Enabled: 1") != std::string::npos) {
+                    err = "原系统代理带有认证，无法完整保存，请先在系统中关闭"; return std::nullopt;
+                }
+                std::istringstream lines(raw);
+                std::string line;
+                for (const auto key : {"Enabled", "Server", "Port"}) {
+                    lines.clear(); lines.seekg(0);
+                    std::string value;
+                    while (std::getline(lines, line)) if (line.starts_with(std::string(key) + ": ")) value = line.substr(std::string(key).size() + 2);
+                    add(service, std::string(kind) + "." + key, value);
+                }
+            }
+            const auto bypass = runCapture("networksetup -getproxybypassdomains " + shellQuote(service));
+            if (bypass.empty()) { err = "无法读取 macOS 代理绕过列表"; return std::nullopt; }
+            add(service, "bypass", bypass.starts_with("There aren't any") ? "" : bypass);
+            const auto pac = runCapture("networksetup -getautoproxyurl " + shellQuote(service));
+            const auto discovery = runCapture("networksetup -getproxyautodiscovery " + shellQuote(service));
+            if (pac.find("Enabled:") == std::string::npos || discovery.find(":") == std::string::npos) {
+                err = "无法读取 macOS 自动代理状态"; return std::nullopt;
+            }
+            add(service, "pac", pac);
+            add(service, "discovery", discovery);
+        }
+        if (result.values.empty()) { err = "未找到可用网络服务"; return std::nullopt; }
+        break;
+    default:
+        err = "当前平台不支持系统代理通道"; return std::nullopt;
+    }
+    return result;
+}
+
+export bool setBypass(const std::vector<std::string>& entries, std::string& err) {
+    bool ok = true;
+    std::string joined;
+    for (const auto& entry : entries) { if (!joined.empty()) joined += ';'; joined += entry; }
+    switch (desktop()) {
+    case Desktop::Kde:
+        // KConfig accepts comma-separated exceptions; shell quoting is separate.
+        std::replace(joined.begin(), joined.end(), ';', ',');
+        ok = runOk(std::format("{} --file kioslaverc --group 'Proxy Settings' --key NoProxyFor {}",
+            kwriteTool(), shellQuote(joined))) && kdeSet("ReversedException", "false");
+        if (ok) kdeReload();
+        break;
+    case Desktop::Gnome: {
+        std::string array = "[";
+        for (const auto& entry : entries) { if (array.size() > 1) array += ','; array += "'" + entry + "'"; }
+        array += ']';
+        ok = runOk("gsettings set org.gnome.system.proxy ignore-hosts " + shellQuote(array));
+        break;
+    }
+    case Desktop::Windows:
+#ifdef _WIN32
+        if (auto saved = winCaptureConnection()) {
+            for (auto& value : saved->values) if (value.key == "ProxyOverride") value.value = joined;
+            ok = winRestoreConnection(*saved);
+        } else ok = false;
+        break;
+#else
+        return false;
+#endif
+    case Desktop::Macos:
+        for (const auto& service : macServices()) {
+            std::string command = "networksetup -setproxybypassdomains " + shellQuote(service);
+            if (entries.empty()) command += " Empty";
+            for (const auto& entry : entries) command += " " + shellQuote(entry);
+            ok = runOk(command) && ok;
+        }
+        break;
+    default: ok = false;
+    }
+    if (!ok) err = "系统代理绕过列表写入失败";
+    return ok;
+}
+
+export bool restore(const clashflux::network::ProxySnapshot& saved, std::string& err) {
+    const auto current = capture(err);
+    if (!current || current->desktop != saved.desktop) { err = "系统代理平台已变化"; return false; }
+    bool ok = true;
+    // Only known fields and existing scopes may be replayed; saved strings
+    // never become command text or select arbitrary registry/KConfig keys.
+    std::set<std::pair<std::string, std::string>> unique;
+    for (const auto& item : saved.values) {
+        if (!unique.emplace(item.scope, item.key).second) { err = "系统代理快照字段重复"; return false; }
+        const auto known = std::ranges::find_if(current->values, [&](const auto& value) {
+            return value.scope == item.scope && value.key == item.key;
+        });
+        if (known == current->values.end()) { err = "系统代理快照字段已失效"; return false; }
+    }
+    auto fields = *current;
+    if (saved.desktop == "kde" && std::ranges::none_of(saved.values, [](const auto& item) { return item.key == "Proxy Config Script"; }))
+        std::erase_if(fields.values, [](const auto& item) { return item.key == "Proxy Config Script"; });
+    if (saved.values.size() != fields.values.size()) { err = "系统网络服务已变化"; return false; }
+    if (saved.desktop == "gnome") {
+        // Restore mode last, after all hosts, ports and exceptions.
+        for (const auto& item : saved.values) if (item.key != "mode")
+            ok = runOk("gsettings set org.gnome.system.proxy" + item.scope + " " + item.key + " " + shellQuote(item.value)) && ok;
+        for (const auto& item : saved.values) if (item.key == "mode")
+            ok = runOk("gsettings set org.gnome.system.proxy mode " + shellQuote(item.value)) && ok;
+    } else if (saved.desktop == "kde") {
+        for (const auto& item : saved.values) {
+            const auto command = std::format("{} --file kioslaverc --group 'Proxy Settings' --key {} {}",
+                kwriteTool(), shellQuote(item.key), item.present ? shellQuote(item.value) : "--delete");
+            ok = runOk(command) && ok;
+        }
+        if (ok) kdeReload();
+    } else if (saved.desktop == "windows") {
+#ifdef _WIN32
+        ok = winRestoreConnection(saved);
+#endif
+    } else if (saved.desktop == "macos") {
+        const auto value = [&](const std::string& scope, const std::string& key) {
+            const auto found = std::ranges::find_if(saved.values, [&](const auto& item) { return item.scope == scope && item.key == key; });
+            return found == saved.values.end() ? std::string{} : found->value;
+        };
+        for (const auto& service : macServices()) {
+            for (const auto kind : {"web", "secureweb", "socksfirewall"}) {
+                const std::string prefix = std::string(kind) + ".";
+                const auto host = value(service, prefix + "Server"), port = value(service, prefix + "Port");
+                if (!host.empty() && port != "0") ok = runOk(std::format("networksetup -set{}proxy {} {} {}",
+                    kind, shellQuote(service), shellQuote(host), shellQuote(port))) && ok;
+                ok = runOk(std::format("networksetup -set{}proxystate {} {}", kind, shellQuote(service),
+                    value(service, prefix + "Enabled") == "Yes" ? "on" : "off")) && ok;
+            }
+            std::string command = "networksetup -setproxybypassdomains " + shellQuote(service);
+            const auto originalPac = value(service, "pac");
+            const auto urlStart = originalPac.find("URL: ");
+            if (urlStart != std::string::npos) {
+                const auto end = originalPac.find('\n', urlStart);
+                const auto url = originalPac.substr(urlStart + 5, end == std::string::npos ? end : end - urlStart - 5);
+                ok = runOk("networksetup -setautoproxyurl " + shellQuote(service) + " " + shellQuote(url)) && ok;
+            }
+            ok = runOk("networksetup -setautoproxystate " + shellQuote(service) +
+                (value(service, "pac").find("Enabled: Yes") != std::string::npos ? " on" : " off")) && ok;
+            ok = runOk("networksetup -setproxyautodiscovery " + shellQuote(service) +
+                (value(service, "discovery").ends_with("On") ? " on" : " off")) && ok;
+            const auto entries = clashflux::network::Lines(value(service, "bypass"));
+            if (entries.empty()) command += " Empty";
+            for (const auto& entry : entries) command += " " + shellQuote(entry);
+            ok = runOk(command) && ok;
+        }
+    } else ok = false;
+    if (!ok) err = "原系统代理设置恢复失败";
+    return ok;
 }
 
 // 关闭系统代理（保留已写入的 host/port，仅切模式/状态）。
@@ -488,7 +822,13 @@ export bool disable(std::string& err) {
             return ok;
         }
         case Desktop::Windows: {
-            const bool ok = winWriteDword(L"ProxyEnable", 0);
+            bool ok = false;
+#ifdef _WIN32
+            if (auto saved = winCaptureConnection()) {
+                for (auto& value : saved->values) if (value.key == "Flags") value.value = std::to_string(PROXY_TYPE_DIRECT);
+                ok = winRestoreConnection(*saved);
+            }
+#endif
             if (ok) winNotifyRefresh();
             if (!ok) err = "reg 写入失败";
             return ok;
@@ -497,6 +837,8 @@ export bool disable(std::string& err) {
             bool ok = true;
             for (const auto& svc : macServices()) {
                 ok = macSetProxyState(svc, "off") && ok;
+                ok = runOk("networksetup -setautoproxystate " + shellQuote(svc) + " off") && ok;
+                ok = runOk("networksetup -setproxyautodiscovery " + shellQuote(svc) + " off") && ok;
             }
             if (!ok) err = "networksetup 写入失败";
             return ok;

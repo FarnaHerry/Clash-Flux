@@ -124,7 +124,15 @@ file(WRITE "${{CMAKE_BINARY_DIR}}/runtime-path.txt" "${{OPENSSL_ROOT_DIR}}/bin")
 #include <zstd.h>
 #include <curl/curl.h>
 #include <ixwebsocket/IXWebSocket.h>
+#include <ixwebsocket/IXSocketServer.h>
+#include <ixwebsocket/IXNetSystem.h>
+#include <ixwebsocket/IXSocket.h>
 #include <string_view>
+struct PacListener : ix::SocketServer {
+    PacListener() : SocketServer(0, "127.0.0.1") {}
+    void handleConnection(std::unique_ptr<ix::Socket>, std::shared_ptr<ix::ConnectionState>) override {}
+    size_t getConnectedClientsCount() override { return 0; }
+};
 struct Sample { int value = 0; };
 int main() {
     Sample sample;
@@ -140,6 +148,8 @@ int main() {
     auto* curl = curl_easy_init();
     if (!curl) return 8;
     curl_easy_cleanup(curl);
+    if (!ix::initNetSystem()) return 10;
+    PacListener pacServer;
     ix::WebSocket websocket;
     return websocket.getUrl().empty() ? 0 : 9;
 }

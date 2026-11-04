@@ -105,6 +105,32 @@ def main():
         assert "personal-ref" in references and "global-ref" in references, references
         run("resource", "remove", first_id, expected=1)
         assert setting("rules.resources") == before_failure
+        # A TUN-only resource reference protects deletion even while TUN is off.
+        # Use the complete persisted v1 contract, including literal defaults.
+        network = dict(format_version=1, revision=1, mixed_port=7899, http_port=0, socks_port=0,
+                       allow_lan=False, ipv6=False, mtu=1400, override_mtu=False, strict_route=True,
+                       stack="", dns_mode="", interface_name="", addresses="", override_routes=False,
+                       override_exclusions=False, routes="", exclusions="", udp_timeout="", udp_mapping="",
+                       udp_filtering="", udp_nat_max=0, override_udp_nat_max=False, package_mode="", packages="",
+                       listen_address="", bind_interface="", override_ports=False, override_listen=False,
+                       allowed_sources="", override_auth=False, username="", password="", proxy_target="mixed",
+                       override_bypass=False, restore_proxy=True, bypass="",
+                       advanced=dict(auto_redirect="", override_filters=False, interface_mode="", interfaces="",
+                                     uid_mode="", uids="", mac_mode="", macs="", override_route_sets=True,
+                                     route_sets=second_id, exclude_sets="", proxy_mode="manual", pac_port=7900,
+                                     pac_url="", pac_direct_domains=""))
+        set_setting("core.network_settings", json.dumps(network))
+        assert "network-route" in run("resource", "references", second_id)
+        run("resource", "remove", second_id, expected=1)
+        assert setting("rules.resources") == before_failure
+        assert json.loads(setting("core.network_settings"))["advanced"]["route_sets"] == second_id
+        for identity in (1, 2):
+            assert (profiles / f"{identity}.yaml").read_bytes() == plain
+        network["advanced"]["override_route_sets"] = False
+        set_setting("core.network_settings", json.dumps(network))
+        run("resource", "remove", second_id, expected=1)
+        assert setting("rules.resources") == before_failure
+        set_setting("core.network_settings", "")
         run("resource", "remove", second_id)
         assert [r["id"] for r in json.loads(setting("rules.resources"))["resources"]] == [first_id]
 

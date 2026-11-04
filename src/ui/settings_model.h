@@ -18,6 +18,7 @@
 #include <string>
 #include "inbound_settings.h"
 #include "../tun_settings.h"
+#include "../network_settings.h"
 
 namespace clashflux::ui {
 
@@ -37,6 +38,8 @@ struct SettingsView {
     std::string mixedPort = "7899"; // core.mixed_port
     std::string httpPort;         // core.http_port; empty disables the inbound
     std::string socksPort;        // core.socks_port; empty disables the inbound
+    clashflux::network::Settings network;
+    std::string networkError;
     std::string tunMtu = "1400";
     bool tunStrictRoute = true;
     std::string envShell;         // ui.env_shell（空 = 未保存，用探测值）
@@ -55,10 +58,18 @@ struct SettingsModel {
 
     void RequestSync() { syncTick = syncTick.Get() + 1; }
 
-    // Validate once, then synchronously update the cache and publish the same values.
-    PortSettingsError SetPorts(std::string mixed, std::string http, std::string socks);
     void SetEnvShell(std::string shell);
-    huxerui::State<bool> tunSettingsSaving{false};
+    void PublishNetwork(const clashflux::network::Settings& value) {
+        Update([&](SettingsView& next) {
+            next.network = value;
+            next.networkError.clear();
+            next.mixedPort = std::to_string(value.mixed_port);
+            next.httpPort = value.http_port ? std::to_string(value.http_port) : "";
+            next.socksPort = value.socks_port ? std::to_string(value.socks_port) : "";
+            next.tunMtu = std::to_string(value.mtu);
+            next.tunStrictRoute = value.strict_route;
+        });
+    }
 
     // 写透：设置项的内存缓存写完（setSetting 是同步写缓存）后，直接把同一个值
     // 发布进模型。UI 真值与缓存真值同一时刻成立，因此 KV 类设置不需要 pending、

@@ -300,6 +300,18 @@
         }, configChanged);
     }
 
+    static void applyNetworkOptions(singbox::CompileOptions& options, const clashflux::network::Settings& value) {
+        options.network = value;
+        options.mixedPort = value.mixed_port;
+        options.httpPort = value.http_port;
+        options.socksPort = value.socks_port;
+        options.allowLan = value.allow_lan;
+        options.ipv6 = value.ipv6;
+        options.tunMtu = value.mtu;
+        options.overrideTunMtu = value.override_mtu;
+        options.tunStrictRoute = value.strict_route;
+    }
+
     inline singbox::CompileOptions routingOptions(
         const std::string& profileYaml, bool tunEnabled,
         bool speedTestOnly = false, const vpn::VpnPolicy* overridePolicy = nullptr,
@@ -312,22 +324,10 @@
         options.nativeControllerPort = cfg::kNativeControllerPort;
 #endif
         options.secret = secret_;
-        options.mixedPort = mixedPort();
-        options.httpPort = httpPort();
-        options.socksPort = socksPort();
+        applyNetworkOptions(options, networkSettings());
         options.mode = mode();
-        options.allowLan = allowLan();
-        options.ipv6 = ipv6Enabled();
         options.logLevel = logLevel();
         options.tunInbound = tunEnabled;
-        const auto mtuText = setting("core.tun_mtu", "");
-        if (!mtuText.empty()) {
-            const auto mtu = clashflux::tun_settings::ParseMtu(mtuText);
-            if (!mtu) throw std::runtime_error("虚拟网卡 MTU 需要填写 1280–9000 的整数");
-            options.tunMtu = *mtu;
-            options.overrideTunMtu = true;
-        }
-        options.tunStrictRoute = setting("core.tun_strict_route", "true") == "true";
         options.speedTestOnly = speedTestOnly;
         options.ruleSetDir = cfg::coreWorkDir().string();
         options.ruleProviderDir = cfg::dataDir().string();
@@ -400,7 +400,8 @@
                     return object.sourceId == rule.connectionId && object.kind == rule.targetKind &&
                            object.objectId == rule.targetObject;
                 })) { error = "规则目标对象不存在：" + rule.connectionId + "/" + rule.targetObject; return false; }
-            } else if (rule.connectionId != options.mainConnectionId &&
+            } else if (rule.connectionId != vpn::DirectConnectionId() &&
+                rule.connectionId != options.mainConnectionId &&
                 !std::ranges::any_of(options.auxiliarySources, [&](const auto& source) { return source.id == rule.connectionId; }) &&
                 !std::ranges::any_of(options.nativeConnections, [&](const auto& source) { return source.id == rule.connectionId; })) {
                 error = "规则目标来源不存在：" + rule.connectionId; return false;
@@ -653,15 +654,124 @@
     // proxy.system_port）。只有指向本应用时才允许撤销/重指，避免误关或
     // 抢占其他代理软件（clash-verge/FlClash 等）接管中的设置。
     bool systemProxyOurs() {
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
         return false;
 #else
+        const auto raw = setting("proxy.system_lease", "");
+        if (!raw.empty()) {
+            const auto lease = clashflux::wire::DecodeProxyLease(raw);
+            if (!lease) return false;
+            std::string error;
+            const auto current = sysproxy::capture(error);
+            return current && clashflux::network::ProxySnapshotMatches(lease.value.applied, *current);
+        }
         const std::string current = sysproxy::currentProxy();
-        return !current.empty() &&
-               current == std::format("127.0.0.1:{}",
-                                      setting("proxy.system_port",
-                                              std::to_string(mixedPort())));
+        return !current.empty() && current == std::format("127.0.0.1:{}",
+            setting("proxy.system_port", std::to_string(mixedPort())));
 #endif
+    }
+
+    bool releaseSystemProxy(std::string& error) {
+        const auto raw = setting("proxy.system_lease", "");
+        if (raw.empty()) return sysproxy::disable(error); // pre-lease versions
+        const auto decoded = clashflux::wire::DecodeProxyLease(raw);
+        if (!decoded) { error = decoded.error; return false; }
+        const auto current = sysproxy::capture(error);
+        if (!current) return false;
+        if (!clashflux::network::ProxySnapshotMatches(decoded.value.applied, *current)) {
+            // A later user/other-client change owns these settings now.
+            setSetting("proxy.system_lease", "");
+            pacServer_.reset();
+            return true;
+        }
+        const bool ok = decoded.value.restore ? sysproxy::restore(decoded.value.original, error)
+                                              : sysproxy::disable(error);
+        if (ok) {
+            pacServer_.reset();
+            releasedProxy_ = sysproxy::capture(error);
+            setSetting("proxy.system_lease", "");
+        }
+        return ok;
+    }
+
+    bool canRetakeSystemProxy() {
+        if (!releasedProxy_) return false;
+        std::string error;
+        const auto current = sysproxy::capture(error);
+        return current && *current == *releasedProxy_;
+    }
+
+    bool takeSystemProxy(std::string& error) {
+        if (!lastAppliedOptions_ || !snapshot().proxyListening) { error = "代理监听尚未就绪"; return false; }
+        if (pacServer_) {
+            if (systemProxyOurs()) return true;
+            pacServer_.reset();
+        }
+        const auto& network = lastAppliedOptions_->network;
+        const auto config = nlohmann::json::parse(lastAppliedJson_, nullptr, false);
+        if (config.is_discarded()) { error = "无法读取已接受的代理监听"; return false; }
+        const std::string type = network.proxy_target == "http" ? "http" : "mixed";
+        int port = 0;
+        std::string host;
+        for (const auto& inbound : config.value("inbounds", nlohmann::json::array())) {
+            if (!inbound.is_object() || inbound.value("type", "") != type) continue;
+            if (port) { error = "系统代理目标存在多个监听，请使用唯一 HTTP 或混合入站"; return false; }
+            if (inbound.contains("users") && !inbound["users"].empty()) {
+                error = "系统代理无法自动提供认证，请先关闭本地代理认证"; return false;
+            }
+            const auto binding = inbound.value("bind_interface", "");
+            if (!binding.empty() && binding != "lo" && binding != "lo0") {
+                error = "系统代理目标不能绑定非回环网络接口"; return false;
+            }
+            const auto listen = inbound.value("listen", "");
+            if (listen == "127.0.0.1" || listen == "0.0.0.0") host = "127.0.0.1";
+            else if (listen == "::" || listen == "::1") host = "::1";
+            else { error = "系统代理目标需要监听本机回环或全部地址"; return false; }
+            port = inbound.value("listen_port", 0);
+        }
+        if (port <= 0 || port > 65535) { error = "系统代理目标没有可用监听"; return false; }
+        auto original = sysproxy::capture(error);
+        if (!original) return false;
+        const auto prior = clashflux::wire::DecodeProxyLease(setting("proxy.system_lease", ""));
+        clashflux::network::ProxyLease lease;
+        lease.original = prior && clashflux::network::ProxySnapshotMatches(prior.value.applied, *original) ? prior.value.original : *original;
+        lease.restore = network.restore_proxy && (prior || !systemProxyOurs());
+        const auto advanced = network.advanced.value_or(clashflux::network::Advanced{});
+        std::unique_ptr<clashflux::network::PacServer> pac;
+        auto pacUrl = advanced.pac_url;
+        if (advanced.proxy_mode == "pac") {
+            if (!pacSessionResident_.load()) { error = "本机 PAC 需要常驻应用；请先打开界面，或使用自定义 PAC URL"; return false; }
+            pac = std::make_unique<clashflux::network::PacServer>();
+            if (!pac->Start(advanced.pac_port, clashflux::network::PacScript(host, port, advanced.pac_direct_domains),
+                            cfg::randomSecret(), error)) return false;
+            pacUrl = pac->url();
+            lease.local_pac_url = pacUrl;
+        }
+        bool ok = advanced.proxy_mode == "manual" ? sysproxy::enable(host, port, error, type == "mixed") : sysproxy::enablePac(pacUrl, error);
+        if (ok && network.override_bypass) ok = sysproxy::setBypass(clashflux::network::Lines(network.bypass), error);
+        auto applied = sysproxy::capture(error);
+        if (!ok || !applied) {
+            std::string rollbackError;
+            if (!sysproxy::restore(*original, rollbackError)) error += "；" + rollbackError;
+            return false;
+        }
+        lease.applied = *applied;
+        const auto encoded = clashflux::wire::EncodeProxyLease(lease);
+        if (!encoded) { error = encoded.error; sysproxy::restore(*original, error); return false; }
+        setSetting("proxy.system_lease", encoded.value);
+        setSetting("proxy.system_port", std::to_string(port));
+        pacServer_ = std::move(pac);
+        releasedProxy_.reset();
+        return true;
+    }
+
+    std::string controllerSecret() {
+        auto secret = setting("core.secret", "");
+        if (secret.empty() && clashflux::persistence::persistence().ready()) {
+            secret = cfg::randomSecret();
+            setSetting("core.secret", secret);
+        }
+        return secret;
     }
 
     void ensureOpen() {
@@ -670,12 +780,9 @@
         // 的端点，启动任务随后调用 ensureSecret() 刷新。
         std::call_once(initFlag_, [this] {
             db_ = std::make_unique<db::Db>(cfg::databaseFile());
-            if (clashflux::persistence::persistence().ready()) {
-                ensureSecret();
-            } else {
-                api_ = std::make_unique<api::ClashApi>(cfg::controllerBaseUrl(),
-                                                       secret_);
-            }
+            secret_ = controllerSecret();
+            api_ = std::make_unique<api::ClashApi>(cfg::controllerBaseUrl(), secret_);
+            nativeApi_ = std::make_unique<api::NativeApi>(cfg::nativeControllerBaseUrl(), secret_);
             stream::logApplication("debug", "持久化门面与内核 API 端点已初始化");
         });
     }

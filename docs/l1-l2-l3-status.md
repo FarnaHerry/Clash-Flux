@@ -1,5 +1,259 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-04：v0.3.94 发布准备
+
+基线 `3e54a22` 加本轮网络高级设置、UI 统一与启动修复工作区。用户明确授权整理、
+提交、标签与直接发布；统一 CMake/Android versionName 为 **0.3.94**，versionCode
+在 v0.3.93 的 171 基础上升至 **172**。框架、扩展及 sing-box/libbox 1.14.4 身份不变。
+中英文说明见 [v0.3.94](releases/v0.3.94.md)，不将 v0.3.93 已发布的 Geo/provider 能力
+重复描述为本版首次新增。全部近期相关文件纳入同一发布快照。
+
+实际检查：
+
+- `cmake -S . -B build -DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`、`cmake --build build`
+  全部目标构建通过，包含 HuxerUI codegen；`./run.sh --version` 为 v0.3.94，
+  `git diff --check` 通过。根 AGENTS 和全部项目 SKILL 行数限制检查通过。
+- `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required`：
+  **30/30，174.42 秒**，包含新增控制客户端生命周期、系统代理/PAC 与资源引用保护回归。
+- `python tests/test_network_capture_runtime.py`：独占 user/network namespace 内策略路由、
+  auto_redirect、纯域名空 IP 集不扩大、双地址族路由及四轮 TUN/nftables 清理通过；
+  不改宿主网卡、DNS、系统代理或服务，不代表真实网关转发/性能已验收。
+- Android `./gradlew :app:testRuntimeStartPolicy :app:testRuntimeModeReconciler :app:testVpnUptime :app:testAppUpdatePolicy :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`
+  **59 秒通过**，含 preBuild 的 ProfileHttpPolicy，共五项 JVM 策略回归和 Java/NDK。
+
+本条记录本地准备证据；标签 CI 的 Windows/Linux/macOS、Android 正式签名及安装包结果
+按实际运行另补，不提前写成通过。Android 真机 VPN/覆盖安装、Windows/macOS 系统接管、
+真实安装器升级/回滚/卸载未新增实机验收；旧 core 177176 的检测现场边界保留下方记录。
+
+## 2026-11-04：启动 API 客户端生命周期竞态修复
+
+快照：`3e54a22`（v0.3.93）加当前工作区；保留全部已有改动，未改依赖/schema、
+未提交或发版，也未操作宿主系统代理、网卡或服务。
+
+- 用户 03:10 的 core 182609 在 `TaskExecution::CompleteOnUi` 终止；从保留的
+  exception_ptr 提取到 `mutex lock failed: 无效的参数`。启动 hydrate 后
+  `ensureSecret` 会替换 `api_`，与提前启动的代理快照请求并发，旧引用及其 mutex 失效。
+- `CoreStore` 一次性创建控制客户端，刷新只调用已有加锁的 `setEndpoint`，在途请求
+  保留原端点/凭据快照。secret 读写与原生客户端更新受生命周期锁保护；初始化不递归
+  进入 `call_once`。不靠延迟启动或吞掉后台异常掩盖对象生命周期问题。
+- 新增生产模块回归 `core_api_lifetime`：真实 HTTP 请求暂停在 hydrate 两侧，旧代码
+  稳定失败于“hydration destroyed the client retained by an in-flight request”；
+  修复后通过。覆盖新库、已有 secret/两订阅的库、32 次凭据刷新、真实鉴权头和重开。
+  纳入必跑门禁，缺失/禁用均拒绝；同步中英文 README、测试技能和运行所有权文档。
+
+实际验证：
+
+- `cmake --build build --target clash-flux test_core_api_lifetime test_persistence test_page_transition`
+  通过，包含 HuxerUI codegen；`./run.sh --version` 为 v0.3.93，`git diff --check` 通过。
+- `ctest --test-dir build --output-on-failure --no-tests=error -R '^(core_api_lifetime|persistence|page_transition|ui_resources|project_test_gate)$'`：
+  **5/5，66.56 秒**。补充已有库场景及必跑门禁后，lifetime / gate 再测 **2/2，1.83 秒**；
+  检查全部 **32** 项注册、其中 **30** 项必跑且未禁用，未冒充全量 30 项执行。
+- `ctest --test-dir build --output-on-failure --no-tests=error -R '^(proxy_standby_runtime|resource_management_runtime)$'`：
+  **2/2，11.66 秒**。
+- Android `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug` 通过，**39 秒**。
+- 网络/服务 socket/数据目录隔离的真实窗口连续启动 **15/15**：12 次独占双订阅夹具，
+  3 次以只读连接备份用户现有数据库并复制订阅文件。窗口持续运行并再次抓取，未复现崩溃，
+  自有进程全部关闭；原始数据库及 **3** 个 profile 文件 SHA256 前后相同。
+
+未覆盖 Windows/macOS 实机及 Android 真机。此前 core 177176 的堆损坏检测没有保留
+最初写坏内存的位置，本轮 15 次启动未再现；不能仅凭 GTK 分配栈把根因归给渲染器。
+
+## 2026-11-04：弹窗取消按钮描边及关闭入口统一
+
+快照：`3e54a22`（v0.3.93）加当前工作区；保留此前改动及固定 HuxerUI `5dd4009`，
+未改数据格式、内核或依赖，也未提交/发版。
+
+- 共享 DialogHeader/HeaderContent 移除右上角叉号及关闭回调参数；保留内容动作与
+  多步骤导入的左侧返回。原先只靠叉号退出的导入/规则/JSON 预览补固定底部取消或关闭。
+- DialogAction 次级动作共用透明底、主题描边和 primary 文字的 outline 风格，保留
+  hover/press/ripple/focus 与禁用态；危险确认及实心主按钮保持语义。旧嵌入订阅表单
+  的取消和服务引导/规则详情的关闭也复用此入口。UI skill 和权威 UI 文档已同步。
+
+实际验证：
+
+- `cmake --build build --target clash-flux test_page_transition` 通过并经过 HuxerUI codegen；
+  `./run.sh --version` 为 v0.3.93，`git diff --check` 通过。
+- `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`：
+  **2/2，54.66 秒**。生产组件回归断言无标题栏关闭图标、静态描边及完整按钮范围的
+  hover/press/键盘焦点反馈、禁用无 hover，以及既有固定动作、草稿保护和键盘返回。
+  覆盖深浅主题、360/960pt 与长短表单；字符串仍覆盖 **565** 个字面量。
+- Android `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug` 通过，**39 秒**。
+- 私有数据库/服务 socket/网络隔离 GUI 检查深色 TUN 取消的描边、悬停和按压，
+  宽窄导入流程的取消与返回、浅色语言取消及 JSON 预览的复制和底部关闭；退出有效，
+  两个测试 profile ID/原文件保留，无网络设置写入，所有自有窗口均已关闭。
+
+另记录一次验收异常：独占 GUI 在打开弹窗前因 `malloc(): unaligned tcache chunk detected`
+退出。保留 core 177176；检测栈落在 GTK `gtk_snapshot_translate` / HuxerUI
+`SnapshotScenePainter::DrawNode` 的分配路径，不能据此确定写坏堆的根因。
+同一二进制重启后以上交互复测未复现；本轮未定位或宣称修复此异常。
+未覆盖 Android 真机及 Windows/macOS 实机界面。
+
+## 2026-11-04：统一平铺弹窗与编辑表单
+
+快照：`3e54a22`（v0.3.93）加当前工作区；保留已有改动，HuxerUI 固定 `5dd4009`、
+sing-box 固定 1.14.4；未提交、发版或修改 schema，也未操作宿主系统代理/网卡/服务。
+
+- 弹窗共用标题、操作及尺寸骨架，只有外层 overlay 表面。网络配置移除高亮分组卡片
+  与重复标题，宽窄屏共用平铺字段；弹窗内复用的 Card/DenseCard 列表行透底、无描边。
+- 系统代理、虚拟网卡、订阅、个人/全局规则、规则集、颜色、语言、文件/JSON 预览、
+  诊断及确认框收敛标题/操作；取消为次级，保存并应用可用时仅它为主按钮。
+  短表单自然高度，长内容正文滚动，标题/标签/动作固定；设置首页导航分组卡片保留。
+- 多步骤添加订阅共用弹窗内导航，URL 不再另叠编辑弹窗；取消、关闭、Esc、遮罩
+  与页面返回共用草稿保护，忙态拒绝关闭。订阅信息宽窄共用保存路径，失败保留表单，
+  成功发布权威列表后退出；全局规则等异步保存完成后关闭，失败保留编辑并可修正重试。
+- 交互边界与单层表面规则进入 UI skill 和 UI 开发文档；无新增翻译字面量。
+
+实际验证：
+
+- `cmake --build build --target clash-flux test_page_transition` 通过，经过 HuxerUI codegen；
+  `./run.sh --version` 输出 v0.3.93，`git diff --check` 通过。
+- `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources|persistence)$'`：
+  **3/3，63.72 秒**。新增生产弹窗骨架/关闭路由覆盖深浅主题、360/960pt、矮窗、短/长表单、
+  正文滚动时固定动作、忙态 Escape、继续编辑/放弃；既有整行反馈与实际诊断布局回归保留。
+  `python tests/test_ui_resources.py .` 覆盖 **565** 个源码字面量。
+- Android `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug` 通过，**37 秒**。
+- 独占 GUI 使用私有 HOME/数据库、两个测试 profile 和隔离网络/服务 socket。实际检查
+  深浅主题、宽屏系统代理/TUN、窗口缩窄与窄屏独立编辑页、全宽订阅 URL 输入、
+  固定操作、透底订阅规则列表；URL 导入单层换页、无效输入保留、返回再进入保留草稿、
+  继续编辑/明确放弃均通过。订阅信息保存后列表即时更新；全局规则成功保存后弹窗关闭。
+  重开私有 SQLite 确认两个 profile ID/文件仍在，无网络设置提交，测试窗口全部关闭。
+
+未覆盖 Android 真机输入法/系统返回手势、Windows/macOS 实机界面、真实连接中的保存并应用，
+以及本轮未注入的 GUI 后端 I/O 保存失败。基础持久化锁竞争/失败回归通过，不冒充这些实机验收。
+
+## 2026-11-04：设置页及网络编辑器内容重排
+
+快照：`3e54a22`（v0.3.93）加当前工作区。保留此前改动，HuxerUI 固定 `5dd4009`、
+sing-box 固定 1.14.4；本轮重排 UI，不改变网络持久化格式、候选编译或系统接管协议。
+
+- 设置按用途分组，窄屏顶部“更多”直接排列规则、连接、日志，与侧栏顺序一致；
+  外部资源、诊断等二级入口保持用途分组。宽屏单列居中，托盘子选项随主开关展示。
+- 系统代理拆为系统接管/本地监听/访问控制，虚拟网卡拆为基础/接管范围/UDP。
+  标签、固定底部动作与独立滚动共用原始整份草稿；已填的网卡地址和 Linux 筛选默认展开。
+- 字段旁校验、错误标签标记、未保存退出提示；返回/Esc/遮罩统一关闭检查。
+  Android 保留本地代理两标签及应用范围，桌面窄窗保留 Linux、IP 规则集与 PAC 能力。
+
+实际验证：
+
+- 主目标经过 HuxerUI codegen 构建通过；`./run.sh --version` 为 v0.3.93，
+  `git diff --check` 通过。page_transition / ui_resources **2/2，47.46 秒**，
+  三份字符串资源覆盖 **586** 个源码字面量。
+- Android `:app:compileDebugJavaWithJavac :app:externalNativeBuildDebug` 通过，**36 秒**。
+- 独占 GUI 使用私有数据库、两个测试订阅和隔离服务 socket/网络。实际检查宽屏两个
+  编辑弹窗、Linux 筛选展开、窄屏“更多”进入规则并返回、两个编辑页面及固定动作。
+  标签切换和宽窄切换保留 PAC 草稿，切回保留滚动；70000 端口仅自身标错，修正后清除。
+  Esc、遮罩及取消触发放弃提示，继续编辑保留值，放弃后新网络键仍不存在。
+  窄屏保存 PAC 得 revision=1，再保存具名 IP 规则集接管得 revision=2，PAC 值保持，
+  放弃的端口/Linux 草稿未写入；系统/TUN 意图及两个 profile ID/文件保持。测试窗口已关闭。
+
+尚未覆盖 Android 真机输入法/系统返回手势、Windows/macOS 实机布局、真实连接中的保存并应用。
+本轮没有修改用户的系统代理、网卡或系统服务。内容分组契约见[网络设置](home-network-settings.md)。
+
+## 2026-11-03：补齐 Linux 路由、规则集接管与 PAC
+
+快照：`3e54a22`（v0.3.93）加当前工作区。保留此前已有改动，未提交、发版、改 schema
+或操作用户的系统代理/服务；HuxerUI 仍固定 `5dd4009`，sing-box 仍固定 1.14.4。
+
+- Linux 显式 auto_redirect、接口/UID 范围/MAC 筛选进入同一网络表单与候选检查；
+  与原生 VPN 补偿、非零路由标记冲突时拒绝候选。来源重定向被覆盖改记 Field/Approx。
+- Linux/Windows 支持全局规则集的目标 IP 接管/排除，资源 ID 在编译时解析、按需载入；
+  纯域名/空地址族集合不会扩大为全流量。关闭 TUN 不下载这些未使用资源，关闭覆盖
+  也保留已选引用的删除保护。Windows PPTP 共存仍拒绝规则集接管。
+- 系统代理支持本机 PAC/自定义 URL，按实际 HTTP/混合监听生成脚本；HTTP-only 目标
+  不再被写为 SOCKS 目标。PAC 归常驻会话，随机路径、回环监听、有界请求，不自动失败直连；
+  GNOME/KDE/WinINet/macOS 快照补齐 PAC URL/模式的写入、所有权和恢复。
+- 增加可缺省 advanced/本机 PAC lease 字段，旧 v1 可读、扩展内部仍严格；旧 KDE lease
+  按原有字段比较，不把未写过的 PAC 字段当作新所有权。独立退出的 CLI 不提供本机 PAC。
+- 固定 IXWebSocket 12.0.1 producer 仅增加 SocketServer，复用 socket RAII；上游目录
+  HTTP/WebSocket/代理服务器仍裁除，版本、TLS/zlib 策略及框架 fork 不变。
+
+实际验证：
+
+- `cmake --build build` 完整构建通过；当时完整 required 回归 **29/29，164.90 秒**，
+  包含下载 TLS、CPS 重定位/版本/缓存、真实内核与数据保护。
+- 最后补齐 HTTP-only 代理、URL 校验及关闭覆盖的引用保护后，主目标/test_singbox/
+  test_routing/test_sysproxy 构建通过；page_transition/singbox/resource_management_runtime/
+  ui_resources/cps_dependencies/proxy_standby_runtime/sysproxy/routing/persistence **9/9，82.95 秒**。
+  资源回归实际调用生产 CLI，确认 TUN/覆盖关闭后仍拒绝删除被引用的 ID，旧资源和两个
+  profile 文件保持不变。sysproxy 隔离 HOME/模拟 GNOME/KDE；真实 PAC HTTP 和 Node
+  JavaScript 执行覆盖直连匹配、无直连兜底、Host/路径/方法/超限/超时、端口冲突和关闭。
+- 固定内核 **12 组配置 check**，含 stack×DNS、Linux 重定向、两种规则集路由模式。
+  `python tests/test_network_capture_runtime.py` 在独占用户/网络命名空间真实启动固定内核：
+  双栈接管与排除路由、纯域名空 IP 集不扩大、nftables 建表及四轮停核清理全部通过。
+  测试没有更改宿主网卡、DNS、系统代理或 root 服务，不代表已测重定向转发数据流/性能。
+- Android Java/NDK、RuntimeStartPolicy/RuntimeModeReconciler/VpnUptime 最终通过，**33 秒**。
+- 独占 GUI（两个测试订阅、私有数据库/服务 socket 与网络命名空间）确认宽屏 Linux 参数、
+  PAC 选择；取消后新设置键仍不存在，保存本机 PAC 后 revision=1、系统/TUN 意图仍为 false。
+  760px 窄窗保留 PAC/Linux 能力、固定动作区，返回保留父页滚动；资源列表显示全局资源名，
+  勾选接管后 revision=2、保存稳定 ID，两个 profile ID/文件保持。自有测试窗口已关闭。
+- `./run.sh --version` 为 v0.3.93，`git diff --check` 通过，字符串覆盖 564 个源码字面量。
+
+尚未覆盖真实网关/原生 VPN 共存、Windows/macOS 构建和 OS PAC 行为、Android 真机 VPN。
+策略路由的远程地址集更新需重新连接，auto_redirect 则沿原生集合更新回调；不声明相同热更新
+能力。细节与可复现命令见[首页网络设置](home-network-settings.md)。
+
+## 2026-11-03：首批网络高级设置
+
+快照：`3e54a22`（v0.3.93）加当前工作区；没有提交、发版或改 schema。
+统一表单/候选/单 key 持久化，补齐桌面协议栈、DNS 接管、地址/网段、UDP NAT；
+系统代理增加真实监听目标、绕过和所有权快照恢复，本地监听补端口/地址覆盖、认证与
+CIDR 访问限制；Android 增加可见应用选择和手动包名。详细契约见[首页网络设置](home-network-settings.md)。
+
+- `cmake --build build` 完整构建通过；HuxerUI codegen 使用固定源码 5dd4009。
+- `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required`：
+  **29/29，152.03 秒**。新增 Linux sysproxy 必跑项及门禁缺失/禁用回归；真实
+  GNOME/KDE 适配器由隔离 HOME 和模拟工具驱动，覆盖捕获、代理目标、绕过、部分失败恢复、
+  IPv6 和坏快照，绝不写宿主代理。Windows/macOS 适配器没有冒充实机通过。
+- `test_singbox --network-settings-fixtures` 生成 system/gvisor/mixed × native/hijack/disabled
+  共 9 份配置，均通过固定 sing-box 1.14.4 的 `check`。另覆盖来源继承、显式覆盖、
+  CIDR 与 UDP 错误拒绝、凭据原文、访问控制顺序和 DNS 作用域。
+- Android `:app:compileDebugJavaWithJavac :app:externalNativeBuildDebug
+  :app:testRuntimeStartPolicy :app:testRuntimeModeReconciler :app:testVpnUptime` 通过（34 秒）。
+  开发中设置页误覆盖导致的重复定义已修复；编辑器已独立为生产 UI 源并注册 Android/codegen。
+- 隔离 GUI 使用两个自有订阅、独占数据库、服务 socket 和网络命名空间。MTU=1279 禁用保存；
+  取消重开不带入草稿。故意损坏测试订阅时，真实候选拒绝后保留 MTU=1600 草稿、旧网络设置
+  和两个 profile ID；恢复测试来源后成功重试，SQLite 新快照 revision=1、MTU=1600，重开回读一致。
+
+首批不包含 Linux auto_redirect 共存改造、UID/MAC/接口过滤、IP 规则集路由和 PAC 提供器。
+未做真实 TUN/DNS 路由、Android 真机应用分流、VPN 回滚或 Windows/macOS 系统代理验收。
+后续补上选择器可见标题、未启用覆盖的草稿校验、空输入与旧版本自有代理释放处理后，
+page_transition/singbox/routing/sysproxy/ui_resources/persistence 定向 **6/6，53.82 秒**；
+持久化快照再收紧为拒绝缺字段，routing/sysproxy/ui_resources **3/3，4.61 秒**。
+Android Java/NDK 与三项生命周期回归再次通过（42 秒），codec 最终增量构建通过（5 秒）。
+窄窗桌面实测系统代理二级页保留桌面能力、隐藏底栏；返回后设置页滚动位置保留，补齐
+表单水平留白及共用安全区动作区。开发中对运行中的测试程序覆盖资源包导致一次缺图，
+关闭测试程序后用最新产物重新启动已通过该页面；未把构建树热替换作为发布更新流程。
+最终表单留白/安全区调整经过 HuxerUI codegen、主目标构建、Android Java/NDK 增量构建
+（29 秒）和全新 GUI 进程窄窗检查；固定内核 9 组配置检查再次通过。
+版本检查仍为 v0.3.93，diff 空白检查通过。
+
+## 2026-11-03：全局规则页面同步与直连保存验收
+
+快照：`3e54a22`（v0.3.93）加当前工作区。此前的共享状态修复已经纳入该版本，
+本轮继续验收并补上实际界面复现的 DIRECT 候选校验问题；未改版本、schema 或用户数据库。
+
+- 全局规则只读页与独立管理页共用 VpnModel 中的 GlobalRulesModel；保存忙态、待保存、
+  已接受版本、编辑草稿与加载修订跨页面共享。成功后立即发布权威规则/ID；失败保留草稿，
+  只读页继续展示已接受版本。应用任务持有保存，卸载编辑器不取消；旧读取/ABA 和旧表单拒绝。
+- `validatePlanTargets` 原本将 DIRECT 默认出口按订阅 ID 查找，导致停止状态保存直连规则
+  报“规则目标来源不存在：DIRECT”。现仅为内置 DIRECT 默认目标免除来源存在性检查，
+  普通来源及组/节点对象继续检查；未新增编译降级或扩大匹配语义。
+
+实际通过：`cmake --build build --target clash-flux test_page_transition`（含 HuxerUI codegen）、
+`./run.sh --version`（v0.3.93）、`git diff --check`。
+当前快照的 page_transition/ui_resources/persistence/resource_management_runtime 4/4，58.81 秒；
+DIRECT 修复后 singbox/routing/resource_management_runtime/persistence 4/4，12.41 秒。
+UI 回归覆盖保存中卸载编辑器、读者立即回读、失败草稿隔离、在途保存保留更新草稿、
+相同重读不失效表单，以及 ABA 拒绝。持久化回归保留真实 SQLite flush 竞争及重开检查。
+
+隔离 Linux GUI 使用独占两订阅数据库、服务 socket 和网络隔离：先复现 DIRECT 保存失败，
+确认只读页保留 before.test、重新打开管理页仍保留 aftertest 失败草稿；修复后将规则改为
+synced 并保存，真实 SQLite 保持 global-shared-test ID，policy revision 1→2；切回只读规则页
+立即显示 synced。测试未接管真实 VPN/系统代理，拥有的 GUI 进程已关闭。
+Android `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug` 通过，
+33 秒（64 tasks，10 executed）；未做 Android 真机、Windows/macOS GUI 或运行中路由交接验收。
+本轮没有提交或发布；此前已存在的 v0.3.93 提交保持不变。
+
 ## 2026-11-03：v0.3.93 发布准备
 
 桌面版本 `0.3.93`，Android `versionCode=171` / `versionName=0.3.93`；发布说明见

@@ -40,6 +40,8 @@ ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-require
   OpenSSL 的 pkg-config 元数据，避免错误的传递依赖。其它 OpenSSL 仍走原生查找。
 - Android/iOS curl 保持原有无 TLS 编译路径；Android 订阅下载的 Java TLS 桥接
   保持证书校验，不能拿宿主机 CPS 包替代 NDK 包。Android Gradle 与 CI 同用 4.4.2。
+- IXWebSocket 仍固定 12.0.1、无 TLS/zlib；producer 增加 SocketServer，供本机 PAC 的
+  有界 HTTP 监听复用 RAII socket。没有启用上游目录 HTTP/WebSocket 服务端或代理服务端。
 - Glaze 模板仍只在 `clashflux_wire` 普通 TU；JSON 命名模块包装留在本体。
 - HuxerUI 的 codegen、资源、宿主工具、扩展和 Android Java/native 图继续通过
   框架接入。框架 revision 不变，不把复杂框架流程伪装成普通链接库。
@@ -50,7 +52,7 @@ ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-require
 
 桌面门禁增加 `cps_dependencies`：消费迁移到另一目录的七个真实包，检查静态
 编译定义与新前缀内的库路径，编译/运行 Glaze、JSON、YAML、QR、Zstd、curl 与
-WebSocket 客户端；拒绝错误版本，并验证暖缓存下归档篡改仍被拒绝且旧源码保留。
+WebSocket 客户端及 PAC 所需 SocketServer；拒绝错误版本，并验证暖缓存下归档篡改仍被拒绝且旧源码保留。
 系统依赖另经真实 CPS 导出/导入验证 Debug/Release 库路径、大小写配置映射和
 显式选择无配置库的映射。
 通用桌面为 21 项（含 runtime_health、native_control_runtime、ui_resources、runtime_evidence），Windows 加 windows_service、

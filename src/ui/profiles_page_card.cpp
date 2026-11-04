@@ -352,16 +352,16 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
                     danger.background = errorColor;
                     danger.label_style = huxerui::TextStyle{
                         huxerui::Font::System(font_size::kBody), onErrorColor};
-                    return DialogCard(huxerui::Column {
-                        huxerui::Text(Localized("删除订阅"), huxerui::TextRole::Title),
-                        huxerui::Text(LocalizedFormat(
+                    return DialogScaffold(DialogHeaderContent(huxerui::Text(Localized("删除订阅"), huxerui::TextRole::Title)),
+                    huxerui::Column {
+                      huxerui::Text(LocalizedFormat(
                             "确定删除“{}”吗？此操作无法撤销。", profileName))
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::System(font_size::kBody), textColor}),
-                        huxerui::Row {
-                            huxerui::Button(Localized("取消")).OnClick(
-                                [context] { context.Dismiss(); }),
-                            huxerui::ProvideEnvironment(
+                    }.With(huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                    DialogActions({DialogAction(Localized("取消"),
+                                [context] { context.Dismiss(); }, false),
+                        huxerui::ProvideEnvironment(
                                 danger,
                                 huxerui::Button(Localized("删除")).OnClick(
                                     [=] {
@@ -376,13 +376,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
                                             ps.remove(id);
                                             return ps.lastError();
                                         });
-                                    })),
-                        }.With(huxerui::Spacing(8.0F),
-                               huxerui::MainAlign(huxerui::MainAxisAlignment::End)),
-                    }.With(huxerui::Spacing(12.0F),
-                           huxerui::Frame{.width = 360.0F},
-                           huxerui::CrossAlign(
-                               huxerui::CrossAxisAlignment::Stretch)));
+                                    }))}), DialogSize::Small);
                 },
                 huxerui::DialogOptions{});
         });

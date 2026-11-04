@@ -23,9 +23,7 @@ namespace clashflux::ui {
         reportArea = huxerui::Column {
             huxerui::ProgressBar{},
             huxerui::Text(Localized("正在收集诊断证据…")),
-        }.With(huxerui::Spacing(12.0F), huxerui::Padding(16.0F),
-               huxerui::Background(theme.colors.surface_container_low),
-               huxerui::CornerRadius(theme.shapes.small),
+        }.With(huxerui::Spacing(12.0F), huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, 8.0F)),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     } else if (hasReport) {
         reportArea = DocumentTextView(document.Get(), true, compact ? 200.0F : 260.0F)
@@ -36,44 +34,30 @@ namespace clashflux::ui {
                                       theme.colors.on_surface_variant});
     }
 
-    huxerui::View saveButton;
-    if (save) saveButton = huxerui::Button(Localized(saving ? "正在保存…" : "保存脱敏报告"))
-        .With(huxerui::Enabled(canSave && !saving && !busy && hasReport))
-        .OnClick(std::move(save));
-    huxerui::View cancelButton;
-    if (busy) cancelButton = huxerui::Button(Localized("取消")).OnClick(std::move(cancel));
-    auto primary = ResolveFluxButtonStyle(theme);
-    primary.minimum_height = 40.0F;
-    huxerui::View content = huxerui::ScrollView(huxerui::Column {
-        fullPage ? huxerui::View{} : huxerui::Text(Localized("运行诊断"), huxerui::TextRole::Title),
-        huxerui::Text(Localized("留空仅检查运行状态；填写 HTTP(S) 目标后，通过当前代理入站检查。结果不代表全部网络。"))
-            .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
-                                      theme.colors.on_surface_variant}),
-        huxerui::TextField(target.Get()).Label(Localized("检查目标（可选）"))
-            .Variant(huxerui::TextFieldVariant::Outlined)
-            .With(huxerui::Enabled(!busy)).OnChanged([target](const huxerui::TextEditingValue& value) { target = value; })
-            .Key("diagnostics-target"),
-        std::move(reportArea),
-        huxerui::ProvideEnvironment(secondary, huxerui::Flow {
-            huxerui::Button(Localized("复制脱敏报告"))
-                .With(huxerui::Enabled(!busy && hasReport)).OnClick(std::move(copy)),
-            std::move(saveButton),
-        }.With(huxerui::Spacing(8.0F)).Key("diagnostics-export-actions")),
-        huxerui::Flow {
-            huxerui::Button(Localized("开始诊断"))
-                .With(huxerui::Enabled(!busy && canRun)).OnClick(std::move(start)),
-            huxerui::ProvideEnvironment(secondary, huxerui::Flow {
-                std::move(cancelButton),
-                fullPage ? huxerui::View{} : huxerui::Button(Localized("关闭")).OnClick(std::move(close)),
-            }.With(huxerui::Spacing(8.0F))),
-        }.With(huxerui::Spacing(8.0F)).Key("diagnostics-run-actions"),
-    }.With(huxerui::Spacing(16.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
-        .With(huxerui::ScrollBar())
-        .Key("runtime-diagnostics-content");
-    if (fullPage) content = huxerui::View{content}.With(huxerui::Grow(1.0F));
-    else content = huxerui::View{content}.With(huxerui::Frame{
-        .width = compact ? 320.0F : 520.0F, .max_height = 560.0F});
-    return huxerui::ProvideEnvironment(primary, content);
+    const auto body = huxerui::ScrollView(huxerui::Column {
+      huxerui::Text(Localized("留空仅检查运行状态；填写 HTTP(S) 目标后，通过当前代理入站检查。结果不代表全部网络。"))
+          .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody), theme.colors.on_surface_variant}),
+      huxerui::TextField(target.Get()).Label(Localized("检查目标（可选）"))
+          .Variant(huxerui::TextFieldVariant::Outlined).With(huxerui::Enabled(!busy))
+          .OnChanged([target](const huxerui::TextEditingValue& value) { target = value; }).Key("diagnostics-target"),
+      reportArea,
+      huxerui::Flow {
+        DialogAction(Localized("复制脱敏报告"), copy, false, !busy && hasReport),
+        save ? DialogAction(Localized(saving ? "正在保存…" : "保存脱敏报告"), save, false,
+            canSave && !saving && !busy && hasReport) : huxerui::View{},
+      }.With(huxerui::Spacing(8.0F)).Key("diagnostics-export-actions"),
+    }.With(huxerui::Spacing(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+        .With(huxerui::Grow(1.0F), huxerui::ScrollBar()).Key("runtime-diagnostics-content");
+    const auto actions = DialogActions({
+      fullPage ? huxerui::View{} : DialogAction(Localized("关闭"), close, false),
+      busy ? DialogAction(Localized("取消"), cancel, false) : huxerui::View{},
+      DialogAction(Localized("开始诊断"), start, true, !busy && canRun),
+    });
+    return huxerui::Column {
+      fullPage ? huxerui::View{} : DialogHeader(Localized("运行诊断")),
+      body,
+      actions,
+    }.With(huxerui::Grow(1.0F), huxerui::Spacing(16.0F),
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 }

@@ -8,6 +8,7 @@
 // 丢弃，调用方呈现给用户。
 module;
 #include "profile_rules.h"
+#include "network_settings.h"
 export module clashflux.singbox;
 
 import std;
@@ -188,6 +189,7 @@ export struct NativeConnection {
 };
 
 export struct CompileOptions {
+    clashflux::network::Settings network;
     std::string profileYaml;                     // 订阅/手写配置原文（Clash YAML、
                                                  // 原生 sing-box JSON、OpenVPN .ovpn 或空）
     std::string controller = "127.0.0.1:29097";  // clash_api external_controller

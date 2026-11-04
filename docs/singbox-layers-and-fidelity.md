@@ -10,6 +10,13 @@
 一句话定位：**内核贴 sing-box，输入贴 Clash 生态，产品层用 Clash 的词汇只暴露内核真有的
 能力，并把 sing-box 独有能力产品化成 Clash 客户端给不了的差异点。**
 
+2026-11-03 网络高级设置直接使用固定 1.14.4 的 TUN/DNS/UDP NAT 和监听字段，显式覆盖
+之外保留原生来源。DNS 原生/关闭模式不再受应用通用劫持前置规则覆盖；本地来源 CIDR
+白名单在分流前拒绝。原生 set_system_proxy 转为应用用户会话所有权并记 approx，
+不让服务内核和 UI 同时修改 OS 代理。Linux auto_redirect 显式开启后保留原生语义，
+与原生 VPN 补偿或路由标记冲突则拒绝；未开启时对来源的覆盖记 Field/Approx。
+IP 规则集路由只提取目标 CIDR；PAC 由应用提供与接管，不伪装成内核字段。字段与平台边界见[首页网络设置](home-network-settings.md)。
+
 ## 1. 三层与各自铁律
 
 | 层 | 职责 | 代码位置 | 铁律 |
@@ -84,8 +91,8 @@
   Android 缺本地规则集（`Rule`）、DNS 格式或协议不支持（`Dns` + `Unsupported`）、
   DNS 引用未知出站（`Dns` + `Unsupported`）、`MATCH` 目标缺失（`Rule` + `Unsupported`，编译失败）。
 - **判定标准**：用户订阅里的条目**消失或语义改变** → 进账本（`note`）；**运行期事件、
-  语义不变** → 留在 `warn`。目前只剩 4 处 `warn`，都是后者：托管 TUN 关掉
-  `auto_redirect`、规则集缓存不可用改走在线拉取（×2）、目标未连接导致执行规则声明的不可用策略。
+  语义不变** → 留在 `warn`。规则集缓存不可用改走在线拉取、目标未连接导致执行规则声明的不可用策略等留在 `warn`；
+  托管 TUN 覆盖来源 auto_redirect 已改为 Field/Approx。
 - `store::CoreSnapshot.fidelity`（`src/store/core_store.cppm`）：`startCore` 编译后赋值，
   **预览编译**（`core_store_state.inc::proxyGroupsSnapshot()`）同样留下账本——所以报告
   在内核没跑时也有内容。
@@ -169,6 +176,10 @@ std::string FidelitySummary(const std::vector<FidelityNote>& notes);
 4. **任何情况下不得在 UI 假装支持。**
 
 ## 4. 当前基线（sing-box 1.14.4）
+
+全局编排规则的 `connectionId=DIRECT`、默认出口目标按原生 DIRECT 精确处理；应用候选
+校验不要求存在名为 DIRECT 的订阅。组/节点目标仍必须存在，不扩大普通来源的验证例外。
+
 
 原生 JSON 合并托管项时，`experimental.cache_file` 仅强制 `enabled: true`，保留
 `path`、`cache_id`、`store_fakeip`、`store_rdrc` 等用户配置，不整对象重建。

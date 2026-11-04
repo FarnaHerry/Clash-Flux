@@ -208,7 +208,7 @@
     // Wide windows keep the full add-method flow in a dialog-owned stack.
     const auto showCreateDialog = [createFields, tasks, toast, picker, http,
                                     pptpSupported, dialog] {
-        dialog.Show([=](huxerui::DialogContext ctx) {
+        ShowEditorDialog(dialog, [=](huxerui::DialogContext ctx) {
             return ProfileAddDialog(createFields, tasks, toast, picker, http,
                                     pptpSupported, [ctx] { ctx.Dismiss(); });
         });

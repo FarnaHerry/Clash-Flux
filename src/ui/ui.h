@@ -491,6 +491,9 @@ huxerui::View AboutPage(std::function<void()> onBack);
 huxerui::View RuntimeDiagnosticsPage(std::function<void()> onBack);
 huxerui::View RuntimeDiagnosticsRoutePage();
 enum class HomeProxySettingsKind { SystemProxy, Tun };
+huxerui::View NetworkSettingsEditor(bool tun, std::function<void()> onClose, bool fullPage,
+    std::shared_ptr<std::function<void()>> dismissRequest = {});
+void ShowNetworkSettingsDialog(huxerui::DialogHandle dialog, bool tun);
 huxerui::View HomeProxySettingsAction(HomeProxySettingsKind kind);
 huxerui::View HomeProxySettingsPage(HomeProxySettingsKind kind, std::function<void()> onBack);
 huxerui::View HomeProxySettingsRoutePage(HomeProxySettingsKind kind);
@@ -613,10 +616,31 @@ huxerui::View SectionTabPages(std::vector<huxerui::View> pages, std::size_t sele
                               std::function<void(std::size_t)> onSelect,
                               SectionTabMotionHandle motion = {});
 
+struct DialogSurfaceContext {
+    bool flat = false;
+    static DialogSurfaceContext Default() { return {}; }
+    bool operator==(const DialogSurfaceContext&) const = default;
+};
+
 // 自定义内容弹窗的卡片包裹：SDK 的 dialog.Show(ViewFactory/DialogFactory) 不给
 // 内容加底板（只有标题+消息的内置形态才有 DialogStyle），统一包一层：
 // overlay 表面 + 阴影 + 描边 + 16pt 圆角 + 内边距。
 huxerui::View DialogCard(huxerui::View content);
+
+enum class DialogSize { Small, Form, Large };
+huxerui::View DialogHeader(huxerui::StringVariant title, huxerui::View actions = {},
+    huxerui::View leading = {});
+huxerui::View DialogHeaderContent(huxerui::View title, huxerui::View actions = {},
+    huxerui::View leading = {});
+huxerui::View DialogAction(huxerui::StringVariant label, std::function<void()> action,
+    bool primary = true, bool enabled = true, bool danger = false);
+huxerui::View DialogActions(std::vector<huxerui::View> actions);
+huxerui::View DialogScaffold(huxerui::View header, huxerui::View body, huxerui::View actions = {},
+    DialogSize size = DialogSize::Form, bool fillHeight = false);
+void ConfirmDiscardChanges(huxerui::DialogHandle dialog, std::function<void()> discard);
+void ShowEditorDialog(huxerui::DialogHandle dialog, huxerui::DialogFactory content);
+std::function<void()> UseEditorClose(std::function<bool()> changed,
+    std::function<bool()> busy, std::function<void()> close);
 
 // TUN 权限引导弹窗（core::tunGate()==Denied 时调用，UI 线程）：Linux 引导安装
 // 服务模式（应用保持非 root，root 只在服务侧），展示终端指令 + 一键复制

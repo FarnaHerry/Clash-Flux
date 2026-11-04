@@ -416,6 +416,7 @@
             lastAppliedOptions_ = lastPreparedOptions_;
             lastAppliedJson_ = lastPreparedJson_;
             snap_.proxyListening = lastAppliedOptions_ && lastAppliedOptions_->proxyListening;
+            snap_.networkRevision = lastAppliedOptions_ ? lastAppliedOptions_->network.revision : 0;
             snap_.connectedSince = snap_.proxyListening ? std::chrono::steady_clock::now()
                                                        : std::chrono::steady_clock::time_point{};
             // The ready instance is running this accepted plan. sing-box's
@@ -444,11 +445,9 @@
         // 不读取历史设置，也不改变其他软件当前接管的系统代理。
         if (systemProxyState.has_value() && *systemProxyState) {
             const std::string current = sysproxy::currentProxy();
-            if (current.empty() || systemProxyOurs()) {
+            if (current.empty() || systemProxyOurs() || canRetakeSystemProxy()) {
                 std::string err;
-                if (sysproxy::enable("127.0.0.1", mixedPort(), err)) {
-                    setSetting("proxy.system_port", std::to_string(mixedPort()));
-                } else {
+                if (!takeSystemProxy(err)) {
                     std::lock_guard lock(mutex_);
                     snap_.lastError = "系统代理应用失败：" + err;
                 }
@@ -459,7 +458,7 @@
             }
         } else if (systemProxyState.has_value() && systemProxyOurs()) {
             std::string err;
-            if (!sysproxy::disable(err) || systemProxyOurs()) {
+            if (!releaseSystemProxy(err) || systemProxyOurs()) {
                 std::lock_guard lock(mutex_);
                 snap_.lastError = "系统代理撤销失败：" +
                     (err.empty() ? std::string{"系统设置仍指向本应用"} : err);
@@ -508,7 +507,7 @@
         std::string cleanupError;
         if (systemProxyOurs()) {
             std::string err;
-            if (!sysproxy::disable(err) || systemProxyOurs()) {
+            if (!releaseSystemProxy(err) || systemProxyOurs()) {
                 cleanupError = "系统代理撤销失败：" +
                     (err.empty() ? std::string{"系统设置仍指向本应用"} : err);
             }
@@ -720,6 +719,10 @@
                     usage.push_back({rule.pattern, rule.id, profile.name, profile.id,
                                      rule.enabled && rule.operation != "disable"});
         }
+        const auto advanced = networkSettings().advanced.value_or(clashflux::network::Advanced{});
+        for (const auto* ids : {&advanced.route_sets, &advanced.exclude_sets})
+            for (const auto& id : clashflux::network::Lines(*ids))
+                usage.push_back({id, "network-route", "", 0, advanced.override_route_sets});
         return usage;
     }
 
@@ -736,6 +739,11 @@
             if (!singbox::ValidateRuleSetLibrary(library, error)) return false;
             const auto policy = routing::DecodePolicy(setting("vpn.global_policy", ""));
             if (!singbox::ValidateGlobalRuleSetReferences(library, policy.rules, error)) return false;
+            for (const auto& use : ruleSetUsage())
+                if (use.ruleId == "network-route" && std::ranges::none_of(library.resources,
+                    [&](const auto& resource) { return resource.id == use.resourceId; })) {
+                    error = "规则集仍被虚拟网卡接管设置引用：" + use.resourceId; return false;
+                }
             // Even disabled personal records retain their references. Removal
             // cannot turn a later re-enable into a different or missing match.
             for (const auto& profile : db_->listProfiles()) {
@@ -786,7 +794,14 @@
             if (resource == library.resources.end() || resource->type != "remote") { error = "请选择远程规则集"; return false; }
             if (resource->refresh_generation == std::numeric_limits<std::uint64_t>::max()) { error = "规则集更新次数超出范围"; return false; }
             const auto options = routingOptions(currentMainContent(), tunEnabled());
-            const bool referenced = std::ranges::any_of(options.globalRules, [&](const auto& rule) {
+            const auto extra = options.network.advanced.value_or(clashflux::network::Advanced{});
+            bool networkReferenced = false;
+            if (snapshot().tunEnabled && extra.override_route_sets)
+                for (const auto* ids : {&extra.route_sets, &extra.exclude_sets}) {
+                    const auto list = clashflux::network::Lines(*ids);
+                    if (std::ranges::find(list, id) != list.end()) networkReferenced = true;
+                }
+            const bool referenced = networkReferenced || std::ranges::any_of(options.globalRules, [&](const auto& rule) {
                 return rule.enabled && rule.match == vpn::MatchKind::RuleSet && rule.pattern == id;
             }) || std::ranges::any_of(options.profileRuleEdits.rules, [&](const auto& rule) {
                 return rule.enabled && rule.match == "rule_set" && rule.pattern == id &&

@@ -22,6 +22,7 @@ module;
 #include "runtime_plan_state.h"
 #include "runtime_compile.h"
 #include "tun_settings.h"
+#include "pac_server.h"
 #include "rule_set_cache_ownership.h"
 #if defined(__ANDROID__)
 #include "android_profile_http.h"
@@ -97,6 +98,7 @@ export struct CoreSnapshot {
     std::string logLevel = "info";
     bool tunEnabled = false;
     bool proxyListening = false; // accepted traffic inbounds; independent of controller readiness
+    std::uint64_t networkRevision = 0; // settings revision in the accepted plan
     std::chrono::steady_clock::time_point connectedSince{};
     // Android sing-box libbox status stream.  Desktop continues to use the
     // sing-box clash_api WebSocket streams below.
@@ -125,6 +127,7 @@ export struct ExternalResourceRefreshBatch {
 export class CoreStore {
 public:
     CoreStore() = default;
+    inline void setPacSessionResident(bool resident) { pacSessionResident_.store(resident); }
     ~CoreStore() noexcept {
         // 正常关闭由 AppRoot 的异步收尾负责；这里保留一个进程退出时的
         // RAII 兜底，避免窗口被外部关闭、组合树提前卸载后 root 服务仍
@@ -184,6 +187,9 @@ private:
     std::string binaryPath_;
     std::unique_ptr<PreparedStart> preparedStart_;
     std::string lastPreparedJson_, lastAppliedJson_;
+    std::optional<clashflux::network::ProxySnapshot> releasedProxy_;
+    std::unique_ptr<clashflux::network::PacServer> pacServer_;
+    std::atomic_bool pacSessionResident_{false};
     std::optional<singbox::CompileOptions> preparedOptions_;
     std::optional<singbox::CompileOptions> lastAppliedOptions_;
     std::optional<singbox::CompileOptions> lastPreparedOptions_;

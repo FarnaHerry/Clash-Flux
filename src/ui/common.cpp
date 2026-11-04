@@ -130,6 +130,8 @@ CoreApplyResult ExecuteCoreCommand(const CoreCommand& command) {
                 return {.error = "无效的出站模式"};
             ok = coreStore.applyMode(command.mode);
             break;
+        case CoreAction::NetworkSettings:
+            return {.error = "网络设置需要通过设置表单提交"};
         case CoreAction::SystemProxy:
             return ApplyDesktopSystemProxy(command.enabled);
         case CoreAction::Tun:
@@ -325,35 +327,6 @@ void CoreControl::Run(CoreCommand command) const {
             }
         }
     });
-}
-
-void CoreModel::SetAllowLan(bool enabled) {
-    if (!view.Get().ready) return;
-    store::coreStore().setSetting("core.allow_lan", enabled ? "true" : "false");
-    Update([enabled](CoreView& next) { next.allowLan = enabled; });
-}
-
-void CoreModel::SetIpv6(bool enabled) {
-    if (!view.Get().ready) return;
-    store::coreStore().setSetting("core.ipv6_enabled", enabled ? "true" : "false");
-    Update([enabled](CoreView& next) { next.ipv6Enabled = enabled; });
-}
-
-PortSettingsError SettingsModel::SetPorts(std::string mixed, std::string http, std::string socks) {
-    if (!view.Get().ready) return PortSettingsError::NotReady;
-    const auto parsed = ParseInboundPorts(mixed, http, socks);
-    if (parsed.error != PortSettingsError::None) return parsed.error;
-    const auto& ports = parsed.ports;
-    auto& coreStore = store::coreStore();
-    coreStore.setSetting("core.mixed_port", ports.mixed);
-    coreStore.setSetting("core.http_port", ports.http);
-    coreStore.setSetting("core.socks_port", ports.socks);
-    Update([&](SettingsView& next) {
-        next.mixedPort = ports.mixed;
-        next.httpPort = ports.http;
-        next.socksPort = ports.socks;
-    });
-    return PortSettingsError::None;
 }
 
 void SettingsModel::SetEnvShell(std::string shell) {
@@ -784,13 +757,13 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
 #elif defined(_WIN32)
     (void)clipboard;
     dialog.Show([textColor, hintColor](huxerui::DialogContext ctx) -> huxerui::View {
-        return DialogCard(huxerui::Column {
-            huxerui::Text(Localized("TUN 需要安装服务模式"), huxerui::TextRole::Title)
-                .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody), textColor}),
-            huxerui::Text(Localized("请到设置的内核服务安装或更新 Windows 服务，授权后再开启 TUN"))
+        return DialogScaffold(DialogHeaderContent(huxerui::Text(Localized("TUN 需要安装服务模式"), huxerui::TextRole::Title)
+                .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody), textColor})),
+                    huxerui::Column {
+                      huxerui::Text(Localized("请到设置的内核服务安装或更新 Windows 服务，授权后再开启 TUN"))
                 .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), hintColor}),
-            huxerui::Button(Localized("关闭")).OnClick([ctx] { ctx.Dismiss(); }),
-        }.With(huxerui::Spacing(12.0F), huxerui::Frame{.width = 460.0F}));
+                    }.With(huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                    DialogActions({DialogAction(Localized("关闭"), [ctx] { ctx.Dismiss(); }, false)}), DialogSize::Small);
     });
 #else
     namespace fs = std::filesystem;
@@ -804,18 +777,18 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
     dialog.Show(
         [clipboard, toast, textColor, hintColor,
          serviceCmd](huxerui::DialogContext ctx) -> huxerui::View {
-            return DialogCard(huxerui::Column {
-                huxerui::Text(Localized("TUN 需要安装服务模式"), huxerui::TextRole::Title),
-                huxerui::Text(Localized(
+            return DialogScaffold(DialogHeaderContent(huxerui::Text(Localized("TUN 需要安装服务模式"), huxerui::TextRole::Title)),
+                    huxerui::Column {
+                      huxerui::Text(Localized(
                     "TUN 由内核创建虚拟网卡，需要 root 权限。应用本身"
                     "保持非 root 运行（更安全），由 root 服务托管内核。"
                     "复制指令到终端执行（pkexec 会弹出授权）后重试："))
                     .Style(huxerui::TextStyle{
                         huxerui::Font::System(font_size::kCaption), hintColor}),
-                huxerui::Text(Localized("安装 root 服务（内核由服务托管，TUN 开箱可用）"))
+                      huxerui::Text(Localized("安装 root 服务（内核由服务托管，TUN 开箱可用）"))
                     .Style(huxerui::TextStyle{
                         huxerui::Font::System(font_size::kBody), textColor}),
-                huxerui::Row {
+                      huxerui::Row {
                     huxerui::TextField(
                         huxerui::TextEditingValue{serviceCmd})
                         .Variant(huxerui::TextFieldVariant::Outlined)
@@ -832,15 +805,8 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                     .With(huxerui::Spacing(8.0F),
                           huxerui::CrossAlign(
                               huxerui::CrossAxisAlignment::Center)),
-                huxerui::Row {
-                    huxerui::Button(Localized("关闭")).OnClick([ctx] { ctx.Dismiss(); }),
-                }.With(huxerui::MainAlign(
-                    huxerui::MainAxisAlignment::End)),
-            }
-                              .With(huxerui::Spacing(12.0F),
-                                    huxerui::Frame{.width = 460.0F},
-                                    huxerui::CrossAlign(
-                                        huxerui::CrossAxisAlignment::Stretch)));
+                    }.With(huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                    DialogActions({DialogAction(Localized("关闭"), [ctx] { ctx.Dismiss(); }, false)}), DialogSize::Small);
         },
         huxerui::DialogOptions{});
 #endif
@@ -1263,6 +1229,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                                            bool outlined, std::optional<float> contentPadding) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
+    const bool flat = huxerui::UseEnvironment<DialogSurfaceContext>().flat;
     // 二级岛：半透明水晶卡片感的 raised 表面 + 同心圆角。移动端设置页等
     // 场景不需要描边，由同层级的 raised 表面与页面底色自然区分。
     //
@@ -1273,11 +1240,11 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     // 表面就再加一个建树型 composable（如 `SelectableTile`），不要事后装修。
     return huxerui::Column { std::move(content) }
         .With(huxerui::Padding(contentPadding.value_or(islands.island_padding)),
-              huxerui::Background(islands.raised),
+              huxerui::Background(flat ? huxerui::Color::Transparent() : islands.raised),
               huxerui::CornerRadius(islands.nested_radius),
-              huxerui::Border(outlined ? islands.outline_soft
+              huxerui::Border(outlined && !flat ? islands.outline_soft
                                        : huxerui::Color::Transparent(),
-                              outlined ? kCardOutlineWidth : 0.0F),
+                              outlined && !flat ? kCardOutlineWidth : 0.0F),
               huxerui::ClipChildren(),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -1295,6 +1262,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     huxerui::FilePickerFilter filter, std::string key) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
+    const bool flat = huxerui::UseEnvironment<DialogSurfaceContext>().flat;
     auto hovering = huxerui::UseState(false);
     const bool hover = hovering.Get();
     const std::string pickedPath = picked_path.Get();
@@ -1381,9 +1349,10 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 [[huxerui::composable]] huxerui::View DenseCard(huxerui::View content) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
+    const bool flat = huxerui::UseEnvironment<DialogSurfaceContext>().flat;
     return huxerui::Column { std::move(content) }
         .With(huxerui::Padding(islands.island_padding * 0.5F),
-              huxerui::Background(islands.raised),
+              huxerui::Background(flat ? huxerui::Color::Transparent() : islands.raised),
               huxerui::CornerRadius(islands.dense_radius),
               huxerui::ClipChildren(),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -1486,6 +1455,10 @@ void DriveSettingsModel(huxerui::TaskScope tasks,
             next.socksPort = core.setting("core.socks_port", "");
             next.tunMtu = core.setting("core.tun_mtu", "1400");
             next.tunStrictRoute = core.setting("core.tun_strict_route", "true") == "true";
+            if (next.ready) {
+                try { next.network = core.networkSettings(); }
+                catch (const std::exception& error) { next.networkError = error.what(); }
+            }
             next.envShell = core.setting("ui.env_shell", "");
             next.language = core.setting("ui.language", "system");
             // 都是内存读；State 按 operator== 去重，只有真的变了才通知订阅者。

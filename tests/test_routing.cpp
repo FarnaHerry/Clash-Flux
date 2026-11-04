@@ -2,6 +2,7 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include "../src/wire_codec.h"
 
 import std;
 import nlohmann.json;
@@ -11,6 +12,78 @@ import clashflux.singbox;
 import clashflux.routing;
 
 int main() {
+    {
+        clashflux::network::Settings network;
+        network.revision = 17;
+        network.stack = "mixed";
+        network.routes = "192.0.2.0/24\n2001:db8::/32";
+        network.override_routes = true;
+        network.override_auth = true;
+        network.username = "literal user";
+        network.password = "literal secret ";
+        network.override_bypass = true;
+        network.bypass = "localhost\n*.example.test";
+        assert(clashflux::network::Validate(network).empty());
+        const auto encodedNetwork = clashflux::wire::EncodeNetworkSettings(network);
+        assert(encodedNetwork);
+        const auto decodedNetwork = clashflux::wire::DecodeNetworkSettings(encodedNetwork.value);
+        assert(decodedNetwork && decodedNetwork.value == network);
+        for (const auto bad : {"{}", "{\"format_version\":1,\"revision\":0}", "[]", "null", "{", "{\"format_version\":2}", "{\"unknown\":true}", "{\"mtu\":\"secret value\"}"}) {
+            const auto value = clashflux::wire::DecodeNetworkSettings(bad);
+            assert(!value && value.error.find("secret value") == std::string::npos);
+        }
+        for (const auto bad : {"1.2.3.256/24", "01.2.3.4/24", "1.2.3.4/33", "1.2.3.4", "host.test/24", "1::2::3/64", "::/129"})
+            assert(!clashflux::network::CIDR(bad));
+        for (const auto good : {"0.0.0.0/0", "192.0.2.1/32", "::/0", "::1/128", "2001:db8::1/64", "::ffff:192.0.2.1/128"})
+            assert(clashflux::network::CIDR(good));
+        assert(!clashflux::network::Validate(network, true).empty()); // Android stack policy
+        network.stack = "gvisor";
+        assert(clashflux::network::Validate(network, true).empty());
+        auto legacy = nlohmann::json::parse(encodedNetwork.value);
+        legacy.erase("advanced");
+        const auto old = clashflux::wire::DecodeNetworkSettings(legacy.dump());
+        assert(old && !old.value.advanced && old.value.password == network.password);
+        network.advanced.emplace();
+        network.advanced->auto_redirect = "enabled";
+        network.advanced->override_filters = true;
+        network.advanced->uid_mode = "include";
+        network.advanced->uids = "1000\n2000:3000";
+        network.advanced->mac_mode = "exclude";
+        network.advanced->macs = "aa:bb:cc:dd:ee:ff";
+        assert(clashflux::network::Validate(network).empty());
+        const auto advancedText = clashflux::wire::EncodeNetworkSettings(network);
+        assert(advancedText && clashflux::wire::DecodeNetworkSettings(advancedText.value).value == network);
+        auto incomplete = nlohmann::json::parse(advancedText.value);
+        incomplete["advanced"].erase("pac_port");
+        assert(!clashflux::wire::DecodeNetworkSettings(incomplete.dump()));
+        network.advanced->uids = "3000:2000";
+        assert(!clashflux::network::Validate(network).empty());
+        network.advanced->uids = "1000";
+        network.advanced->auto_redirect = "disabled";
+        assert(!clashflux::network::Validate(network).empty());
+        network.advanced->override_filters = false;
+        network.advanced->proxy_mode = "pac_url";
+        for (const auto& url : {"https://trusted.test/proxy.pac", "http://127.0.0.1:7900/proxy.pac"}) {
+            network.advanced->pac_url = url;
+            assert(clashflux::network::Validate(network).empty());
+        }
+        for (const auto& url : {"javascript:bad", "https://user:secret@host/pac", "https:///empty", "https://bad.test/\nsecret", "https://?q=bad", "http://host:65536/pac", "http://[bad]/pac", "http://-bad.test/pac"}) {
+            network.advanced->pac_url = url;
+            assert(!clashflux::network::Validate(network).empty());
+        }
+        network.advanced.reset();
+        network.routes = "192.0.2.0/99";
+        assert(!clashflux::network::Validate(network).empty());
+        clashflux::network::ProxyLease lease;
+        lease.original.desktop = "gnome";
+        lease.original.values.push_back({"", "mode", "'auto'"});
+        lease.applied = lease.original;
+        lease.applied.values[0].value = "'manual'";
+        const auto encodedLease = clashflux::wire::EncodeProxyLease(lease);
+        assert(encodedLease);
+        const auto decodedLease = clashflux::wire::DecodeProxyLease(encodedLease.value);
+        assert(decodedLease && decodedLease.value.original == lease.original && decodedLease.value.applied == lease.applied);
+    }
     singbox::RuleSetLibrary library;
     library.revision = 9;
     library.resources.push_back({.id="ads", .name="Ads", .type="inline", .format="source",

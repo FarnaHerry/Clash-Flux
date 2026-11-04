@@ -517,6 +517,22 @@ public final class MainActivity extends HuxerUIActivity {
         });
     }
 
+    // Package visibility is limited to launchable/otherwise visible apps. No
+    // QUERY_ALL_PACKAGES permission; manually entered package IDs are retained.
+    public static String visibleNetworkApplications() {
+        MainActivity activity = current;
+        if (activity == null) return "";
+        android.content.pm.PackageManager manager = activity.getPackageManager();
+        java.util.ArrayList<String> rows = new java.util.ArrayList<>();
+        for (android.content.pm.ApplicationInfo info : manager.getInstalledApplications(0)) {
+            if (info.packageName.equals(activity.getPackageName())) continue;
+            String label = String.valueOf(manager.getApplicationLabel(info)).replace('\n', ' ').replace('\t', ' ');
+            rows.add(info.packageName + "\t" + label);
+        }
+        java.util.Collections.sort(rows);
+        return String.join("\n", rows);
+    }
+
     // ---- VPN（C++ 设置页 VPN 开关经 JNI 调用）----
 
     private static final int REQUEST_NOTIFICATIONS = 4002;

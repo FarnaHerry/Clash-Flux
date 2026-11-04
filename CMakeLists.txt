@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.93 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.94 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -1037,6 +1037,18 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         endif ()
         add_test(NAME vpn COMMAND test_vpn)
 
+        if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND Python3_Interpreter_FOUND)
+            add_executable(test_sysproxy tests/test_sysproxy.cpp)
+            target_sources(test_sysproxy PRIVATE FILE_SET sysproxy_modules TYPE CXX_MODULES
+                BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}" FILES src/sysproxy.cppm)
+            set_target_properties(test_sysproxy PROPERTIES CXX_MODULE_STD ON)
+            target_compile_features(test_sysproxy PRIVATE cxx_std_23)
+            target_link_libraries(test_sysproxy PRIVATE IXWebSocket::ixwebsocket)
+            add_test(NAME sysproxy COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_sysproxy.py" "$<TARGET_FILE:test_sysproxy>")
+            set_tests_properties(sysproxy PROPERTIES TIMEOUT 75)
+        endif ()
+
         add_executable(test_routing tests/test_routing.cpp)
         target_sources(test_routing PRIVATE FILE_SET clashflux_routing_modules TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -1132,6 +1144,39 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
 
         # ORM 持久化服务（settings 缓存 + 异步落库）。
         if (TARGET HuxerUI::testing)
+            # Retain an early controller request across asynchronous hydration.
+            add_executable(test_core_api_lifetime tests/test_core_api_lifetime.cpp
+                src/db.cpp src/sqlite_schema.cpp src/store/persistence.cpp
+                src/health_history.cpp src/runtime_network_probe.cpp src/network_conflict.cpp
+                src/api.cpp src/core.cpp src/stream.cpp src/singbox.cpp src/profile_link.cpp
+                src/pptp.cpp src/openvpn.cpp src/vpn_compensation.cpp src/vpn_compensation_windows.cpp)
+            target_sources(test_core_api_lifetime PRIVATE FILE_SET lifetime_modules TYPE CXX_MODULES
+                BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+                FILES src/config.cppm src/utils.cppm src/model.cppm src/db.cppm src/store/persistence.cppm
+                src/api.cppm src/core.cppm src/stream.cppm src/singbox.cppm src/vpn.cppm src/service.cppm
+                src/pptp.cppm src/openvpn.cppm src/vpn_compensation.cppm src/sysproxy.cppm src/routing.cppm
+                src/rule_provider_cache.cppm src/proxy_provider_cache.cppm src/provider_resources.cppm
+                src/store/core_store.cppm)
+            set_target_properties(test_core_api_lifetime PROPERTIES CXX_MODULE_STD ON)
+            target_compile_features(test_core_api_lifetime PRIVATE cxx_std_23)
+            target_include_directories(test_core_api_lifetime PRIVATE src)
+            target_link_libraries(test_core_api_lifetime PRIVATE HuxerUI::testing HuxerUI::SQLite
+                clashflux_wire clashflux_json IXWebSocket::ixwebsocket CURL::libcurl yaml-cpp::yaml-cpp zstd::libzstd_static)
+            target_compile_definitions(test_core_api_lifetime PRIVATE CLASHFLUX_VERSION="${PROJECT_VERSION}")
+            if (WIN32)
+                target_sources(test_core_api_lifetime PRIVATE src/windows_service.cpp)
+                target_link_libraries(test_core_api_lifetime PRIVATE shell32 advapi32 ole32 uuid wininet rasapi32 iphlpapi ws2_32 dnsapi)
+                target_compile_definitions(test_core_api_lifetime PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+            endif ()
+            if (MSVC)
+                target_compile_options(test_core_api_lifetime PRIVATE /utf-8 /wd4737)
+            endif ()
+            clashflux_deploy_huxerui_dll(test_core_api_lifetime)
+            if (Python3_Interpreter_FOUND)
+                add_test(NAME core_api_lifetime COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_core_api_lifetime.py" "$<TARGET_FILE:test_core_api_lifetime>")
+                set_tests_properties(core_api_lifetime PROPERTIES TIMEOUT 30)
+            endif ()
             add_executable(test_persistence
                 tests/test_persistence.cpp
                 src/sqlite_schema.cpp

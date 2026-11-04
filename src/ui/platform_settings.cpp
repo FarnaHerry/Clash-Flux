@@ -423,8 +423,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                         view.startMinimized = view.trayEnabled && on;
                     });
                 }), false, app::images::visibility_off));
-    }
-    rows.push_back(SettingSwitchRow(
+        rows.push_back(SettingSwitchRow(
             Localized("轻量级托盘模式"),
             Localized("隐藏到托盘时销毁主窗口和界面，唤出时重新创建"),
             huxerui::Switch(settings.lightweightTray)
@@ -433,6 +432,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                     settingsModel->Update(
                         [on](SettingsView& view) { view.lightweightTray = on; });
                 }), false, app::images::tray));
+    }
     return huxerui::Column(std::move(rows)).With(
         huxerui::Spacing(0.0F),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));

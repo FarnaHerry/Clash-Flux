@@ -740,6 +740,29 @@ extern "C" const char* clashflux_android_connections() noexcept {
     return result.c_str();
 }
 
+extern "C" const char* clashflux_android_visible_apps() noexcept {
+    static thread_local std::string result;
+    result.clear();
+    bool attached = false;
+    JNIEnv* environment = current_environment(attached);
+    if (environment != nullptr && g_activity_class != nullptr) {
+        const auto method = environment->GetStaticMethodID(g_activity_class, "visibleNetworkApplications", "()Ljava/lang/String;");
+        if (method != nullptr) {
+            auto value = static_cast<jstring>(environment->CallStaticObjectMethod(g_activity_class, method));
+            if (!environment->ExceptionCheck() && value != nullptr) {
+                if (const char* chars = environment->GetStringUTFChars(value, nullptr)) {
+                    result = chars;
+                    environment->ReleaseStringUTFChars(value, chars);
+                }
+                environment->DeleteLocalRef(value);
+            }
+        }
+        if (environment->ExceptionCheck()) environment->ExceptionClear();
+    }
+    if (attached) g_vm->DetachCurrentThread();
+    return result.c_str();
+}
+
 extern "C" bool clashflux_android_close_connection(const char* id) noexcept {
     if (id == nullptr || *id == '\0') return false;
 

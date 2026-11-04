@@ -122,7 +122,7 @@ clashflux_install_system_configurations()
 clashflux_dependency_source(ixwebsocket)
 file(GLOB ix_sources "${ixwebsocket_SOURCE_DIR}/ixwebsocket/*.cpp")
 list(FILTER ix_sources EXCLUDE REGEX
-    "(IXSocketServer|IXHttpServer|IXWebSocketServer|IXWebSocketProxyServer|IXSocketOpenSSL|IXSocketMbedTLS|IXSocketAppleSSL)\\.cpp$")
+    "(IXHttpServer|IXWebSocketServer|IXWebSocketProxyServer|IXSocketOpenSSL|IXSocketMbedTLS|IXSocketAppleSSL)\\.cpp$")
 add_library(ixwebsocket STATIC ${ix_sources})
 target_include_directories(ixwebsocket PRIVATE "${ixwebsocket_SOURCE_DIR}"
     INTERFACE "$<INSTALL_INTERFACE:include>")

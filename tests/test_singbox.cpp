@@ -10,6 +10,7 @@
 #include "../src/runtime_compile.h"
 #include "../src/rule_set_cache_ownership.h"
 #include <cstdio>
+#include "../src/network_settings.h"
 #include <zstd.h>
 
 import std;
@@ -2701,7 +2702,141 @@ void testNodeSubscriptions() {
     check(rules.error.empty() && !rules.original.empty(), "generated MATCH is visible to personal-rule projection");
 }
 
+void testNetworkSettings(const std::filesystem::path& root = {}) {
+    const auto inspect = [](const json& config, const std::string& type) -> json {
+        for (const auto& inbound : config["inbounds"]) if (inbound.value("type", "") == type) return inbound;
+        return json::object();
+    };
+    singbox::CompileOptions options;
+    options.tunInbound = true;
+    options.ipv6 = true;
+    auto result = singbox::compileConfig(options);
+    check(result.error.empty(), "default managed network compiles");
+    check(inspect(json::parse(result.json), "tun")["address"].size() == 2, "IPv6 enabled generates both adapter address families");
+    for (const auto& stack : {"system", "gvisor", "mixed"}) for (const auto& dns : {"native", "hijack", "disabled"}) {
+        options.network.stack = stack;
+        options.network.dns_mode = dns;
+        options.network.interface_name = "FluxTest";
+        options.network.addresses = "172.20.0.1/30\nfd12:3456::1/126";
+        options.network.override_routes = true;
+        options.network.routes = "192.0.2.0/24\n2001:db8::/32";
+        options.network.override_exclusions = true;
+        options.network.exclusions = "192.0.2.128/25";
+        options.network.udp_timeout = "5m";
+        options.network.udp_mapping = "address_dependent";
+        options.network.udp_filtering = "address_and_port_dependent";
+        options.network.override_udp_nat_max = true;
+        options.network.udp_nat_max = 4096;
+        options.network.override_auth = true;
+        options.network.username = "user";
+        options.network.password = " exact password ";
+        options.network.allowed_sources = "192.168.0.0/16";
+        result = singbox::compileConfig(options);
+        check(result.error.empty(), "advanced TUN and proxy settings compile atomically");
+        if (!result.error.empty()) continue;
+        const auto config = json::parse(result.json), tun = inspect(config, "tun"), mixed = inspect(config, "mixed");
+        check(tun["stack"] == stack && tun["dns_mode"] == dns && tun["address"].size() == 2, "stack/DNS/addresses mapped exactly");
+        check(tun["route_address"] == json::array({"192.0.2.0/24", "2001:db8::/32"}) && tun["route_exclude_address"].size() >= 1,
+            "custom routes and exclusions preserved with transport compensation");
+        check(tun["udp_nat_max"] == 4096 && tun["udp_mapping"] == "address_dependent", "current UDP NAT fields emitted");
+        check(mixed["users"][0]["password"] == " exact password ", "authentication preserves literal credentials");
+        check(config["route"]["rules"][0]["action"] == "reject", "local access control precedes global routing and sniffing");
+        const auto& dnsRule = config["route"]["rules"][2];
+        check(dnsRule["action"] == "hijack-dns" && (std::string(dns) == "hijack" ? !dnsRule.contains("type") : dnsRule.value("type", "") == "logical"),
+            "native/disabled TUN DNS bypasses application-wide hijack prelude");
+        if (!root.empty()) std::ofstream(root / (std::string("network-") + stack + "-" + dns + ".json")) << result.json;
+    }
+    options.network = {};
+    options.profileYaml = R"({"inbounds":[{"type":"tun","tag":"source-tun","address":["172.22.0.1/30"],"mtu":1500,"stack":"system","dns_mode":"native","route_address":["198.51.100.0/24"],"udp_timeout":"7m"},{"type":"mixed","tag":"source-proxy","listen":"127.0.0.1","listen_port":18888,"users":[{"username":"original","password":"keep"}]}],"outbounds":[{"type":"direct","tag":"direct"}]})";
+    result = singbox::compileConfig(options);
+    check(result.error.empty(), "native source with advanced values compiles");
+    if (result.error.empty()) {
+        const auto config = json::parse(result.json), tun = inspect(config, "tun"), mixed = inspect(config, "mixed");
+        check(tun["mtu"] == 1500 && tun["stack"] == "system" && tun["udp_timeout"] == "7m" && tun["route_address"][0] == "198.51.100.0/24", "unset overrides retain native values");
+        check(mixed["listen_port"] == 18888 && mixed["users"][0]["password"] == "keep", "native listener ports and authentication inherit by default");
+    }
+    options.network.override_ports = true;
+    options.network.override_listen = true;
+    options.network.listen_address = "::1";
+    options.network.override_auth = true; // explicit empty removes source auth
+    result = singbox::compileConfig(options);
+    check(result.error.empty(), "explicit native listener overrides compile");
+    if (result.error.empty()) {
+        const auto mixed = inspect(json::parse(result.json), "mixed");
+        check(mixed["listen_port"] == 7899 && mixed["listen"] == "::1" && mixed["users"].empty(), "explicit native overrides change only requested fields");
+    }
+    options.network.routes = "host.test/24";
+    options.network.override_routes = true;
+    check(!singbox::compileConfig(options).error.empty(), "invalid CIDR rejects whole candidate");
+    options.network = {};
+    options.network.udp_timeout = "forever";
+    check(!singbox::compileConfig(options).error.empty(), "invalid UDP timeout rejects whole candidate");
+#if defined(__linux__) && !defined(__ANDROID__)
+    options = {};
+    options.tunInbound = true;
+    options.network.advanced.emplace();
+    auto& advanced = *options.network.advanced;
+    advanced.auto_redirect = "enabled";
+    advanced.override_filters = true;
+    advanced.interface_mode = "exclude"; advanced.interfaces = "docker0\nbr-lan";
+    advanced.uid_mode = "include"; advanced.uids = "1000\n2000:3000";
+    advanced.mac_mode = "exclude"; advanced.macs = "aa:bb:cc:dd:ee:ff";
+    result = singbox::compileConfig(options);
+    check(result.error.empty(), "Linux redirect, interface, UID and MAC overrides compile");
+    if (result.error.empty()) {
+        const auto tun = inspect(json::parse(result.json), "tun");
+        check(tun["auto_redirect"] == true && tun["include_uid"] == json::array({1000}) &&
+            tun["include_uid_range"] == json::array({"2000:3000"}) && tun["exclude_interface"].size() == 2 &&
+            tun["exclude_mac_address"][0] == "aa:bb:cc:dd:ee:ff", "Linux filter field types and values are exact");
+        if (!root.empty()) std::ofstream(root / "network-linux-redirect.json") << result.json;
+    }
+    options.nativeConnections.push_back({.id="pptp:1", .interfaceName="ppp0", .connected=true});
+    check(!singbox::compileConfig(options).error.empty(), "redirect rejects native VPN compensation before handoff");
+    options.nativeConnections.clear();
+    options.profileYaml = R"({"outbounds":[{"type":"direct","tag":"DIRECT","routing_mark":1234}]})";
+    check(!singbox::compileConfig(options).error.empty(), "redirect rejects imported routing marks");
+    options.profileYaml = "proxies:\n  - {name: marked, type: socks5, server: 192.0.2.1, port: 1080, routing-mark: 1234}\nrules: [MATCH,marked]";
+    check(!singbox::compileConfig(options).error.empty(), "redirect rejects compiled source routing marks");
+#endif
+#if (defined(__linux__) && !defined(__ANDROID__)) || defined(_WIN32)
+    options = {};
+    options.tunInbound = true;
+    options.ipv6 = true;
+    options.network.advanced.emplace();
+    options.network.advanced->override_route_sets = true;
+    options.network.advanced->route_sets = "capture";
+    options.network.advanced->exclude_sets = "bypass";
+    options.ruleSetLibrary.resources = {
+        {.id="capture", .name="Capture IPs", .type="inline", .format="source", .content=R"({"version":3,"rules":[{"ip_cidr":["192.0.2.0/24","2001:db8::/32"]}]})"},
+        {.id="bypass", .name="Bypass IPs", .type="inline", .format="source", .content=R"({"version":3,"rules":[{"ip_cidr":["192.0.2.128/25"]}]})"}};
+    for (bool redirect : {false, true}) {
+#ifdef _WIN32
+        if (redirect) continue;
+#endif
+        options.network.advanced->auto_redirect = redirect ? "enabled" : "";
+        result = singbox::compileConfig(options);
+        check(result.error.empty(), "TUN global resources inject without any policy-rule reference");
+        if (result.error.empty()) {
+            const auto config = json::parse(result.json), tun = inspect(config, "tun");
+            check(tun["route_address_set"][0] == "cf_personal_set_capture" &&
+                tun["route_exclude_address_set"][0] == "cf_personal_set_bypass" && config["route"]["rule_set"].size() == 2,
+                "capture/exclusion resource IDs resolve to actual injected tags");
+            check(tun["route_address"].size() == 2, "both address families guard against empty-set default-all fallback");
+            if (!root.empty()) std::ofstream(root / (redirect ? "network-sets-redirect.json" : "network-sets-policy.json")) << result.json;
+        }
+    }
+    options.network.advanced->route_sets = "missing";
+    check(!singbox::compileConfig(options).error.empty(), "missing capture resource rejects whole plan");
+#endif
+
+}
+
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string_view(argv[1]) == "--network-settings-fixtures") {
+        testNetworkSettings(argv[2]); return failures ? 1 : 0;
+    }
+    if (argc == 1) testNetworkSettings();
+
     if (argc == 3 && std::string_view(argv[1]) == "--inspect-external-resources") {
         std::ifstream input(argv[2]);
         if (!input) { std::println(stderr, "cannot open {}", argv[2]); return 1; }

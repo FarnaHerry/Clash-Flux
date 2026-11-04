@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.93 发布说明](docs/releases/v0.3.93.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.94 发布说明](docs/releases/v0.3.94.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -53,8 +53,9 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 - 内核控制：桌面应用启动即拉起无业务入站的待命内核，可直接测速；点击“连接”后
   开放代理端口并应用保存的系统代理/TUN 选择，两者均关闭仍可手动使用本地代理。
   断开连接回到待命，“启动时自动连接”默认关闭。待命可与其他客户端的 TUN 共存，实际连接仍检查冲突；详见[桌面代理生命周期](docs/desktop-proxy-lifecycle.md)。
-  首页「系统代理」「虚拟网卡」齿轮提供端口/局域网及 MTU/严格路由设置，宽屏弹窗、窄屏二级页；
-  新参数重启内核生效，详见[首页网络设置](docs/home-network-settings.md)。
+  首页「系统代理」「虚拟网卡」齿轮支持协议栈、DNS 接管、网段、UDP 会话，以及代理目标、绕过、认证和原设置恢复；
+  Linux 增加自动重定向及接口/UID/MAC 筛选，Linux/Windows 支持 IP 规则集接管；系统代理支持本机 PAC 和自定义 URL。
+  Android 提供应用接管选择。表单统一保存，连接中可保存并应用，宽屏弹窗、窄屏二级页；详见[首页网络设置](docs/home-network-settings.md)。
   出站模式（规则/全局/直连）、
   混合端口、局域网连接、日志级别；桌面首页断开/托盘停核会撤销自有系统代理、确认
   内核退出并断开由应用持有的 PPTP，会把未完成的清理反馈为失败；桌面自有
@@ -196,7 +197,7 @@ CMake 明确报告未注册。验证范围与证据见[分层完成度记录](do
 
 桌面 CI 配置 `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`，缺失或禁用必跑回归会让
 配置失败；Python、固定打包内核和可执行 OpenSSL CLI 均为必要前提，下载测试
-也必须执行默认证书拒绝场景。必跑名单以 [ProjectTestGate.cmake](cmake/ProjectTestGate.cmake) 为准，覆盖资源管理、运行匹配、持久化、UI 和系统证据；Windows 另含服务、物理 DNS、隔离 WFP 与旧版本清理回归。只有已记录的 MSVC C4737 缺陷允许跳过直接 ORM 测试，订阅持久化始终必跑。Windows 服务与 WFP 测试需要管理员环境。本地可使用同一门禁：
+也必须执行默认证书拒绝场景。必跑名单以 [ProjectTestGate.cmake](cmake/ProjectTestGate.cmake) 为准，覆盖资源管理、运行匹配、持久化、启动客户端生命周期、UI 和系统证据；Windows 另含服务、物理 DNS、隔离 WFP 与旧版本清理回归。只有已记录的 MSVC C4737 缺陷允许跳过直接 ORM 测试，订阅持久化始终必跑。Windows 服务与 WFP 测试需要管理员环境。本地可使用同一门禁：
 
 ```bash
 cmake -S . -B build -DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON

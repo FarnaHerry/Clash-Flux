@@ -43,10 +43,11 @@ ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-require
 | DNS / TLS | 先构建 test_singbox，再执行下方 DNS 命令。TLS 依赖 OpenSSL；证书拒绝同时断言 TLS certificate alert 和没有 DNS payload，不能用超时替代；临时根证书只进独占测试配置，不改生产或系统信任库。 |
 | 订阅 / 数据库 / flush | 读取 [数据技能](../clashflux-data/SKILL.md) 的真实锁竞争、多来源、多 ID、文件保留与重开要求，运行 persistence。 |
 | UI / 分页 / 导入 | 读取 [UI 技能](../clashflux-ui/SKILL.md)，运行生产组件的 page_transition / ui_resources 及所需 GUI 验证。桌面待命/连接另运行 singbox / proxy_standby_runtime，后者不代替系统代理/TUN 实机验收。 |
+| 启动 / 控制客户端与凭据 | 运行 core_api_lifetime：真实 HTTP 在途请求跨 hydrate、客户端身份保留、凭据刷新及重开；新库与已有多订阅库均使用独占目录，另做真实 GUI 启动。所有权约束见[桌面内核生命周期](../../docs/runtime-health-review.md#桌面内核所有权与失败清理)。 |
 | 应用下载 / 升级助手 | 读取 [应用升级](../../docs/app-updates.md)，运行 app_update / app_update_async / app_update_handoff / persistence；Android 另运行 :app:testAppUpdatePolicy 并编译 Java/NDK，系统安装另需真机。助手回归不运行真实安装器、包管理或提权。 |
 | Geo DAT/MMDB、独立资源更新、个人/全局规则集、SRS 导入、强制更新 | 构建 test_singbox / test_runtime_health，运行 personal_rule_sets_runtime / resource_management_runtime；后者验证生产 CLI 的多 ID、引用删除保护、单项刷新与过期响应拒绝；前者包含真实固定内核、生产导入函数、新旧缓存和 TLS 拒绝，不用配置 check 替代运行匹配。 |
 | 依赖 / fork / 打包边界 | 读取 [依赖技能](../clashflux-dependencies/SKILL.md)，执行 CPS 重定位、版本拒绝、缓存完整性、TLS 及对应框架行为回归。 |
-| 服务 / PPTP / 系统网络 | 读取 [运行控制技能](../clashflux-runtime/SKILL.md) 和对应 [平台约束](../clashflux-platform/SKILL.md)，依平台执行 service_protocol、vpn、routing、compensation 和 Windows 专属回归。 |
+| 服务 / PPTP / 系统网络 | Linux 系统代理另跑 sysproxy（隔离 HOME 的适配器、真实 PAC HTTP，有 Node 时加测 JS），TUN 可选运行 tests/test_network_capture_runtime.py（前提/范围见[网络设置](../../docs/home-network-settings.md#验证)）；读取 [运行控制技能](../clashflux-runtime/SKILL.md) 和对应 [平台约束](../clashflux-platform/SKILL.md)，依平台执行 service_protocol、vpn、routing、compensation 和 Windows 专属回归。 |
 | Android 启停 / 后台状态 | 从 platform/android 运行 `./gradlew.bat :app:testRuntimeStartPolicy :app:testRuntimeModeReconciler :app:testVpnUptime`（Linux/macOS 用 `./gradlew`），并编译应用 Java/NDK；划走重开、停止/撤权、通知和 sticky 恢复需真机，见 [Android 生命周期](../../docs/android-background-lifecycle.md)。 |
 
 DNS 定向回归：

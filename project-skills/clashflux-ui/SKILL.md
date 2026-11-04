@@ -27,8 +27,11 @@ composable 体内不能使用条件编译，沿用现有 DSL；UI 经过 HuxerUI
 
 ## 布局与交互联动
 
-- 桌面 Medium/Expanded 平面两栏，标题在自定义标题栏，PageScaffold 承载本页动作；分隔线统一 kDesktopChromeDividerThickness=0.5pt。Compact 底部四项导航，桌面窄窗保留独立系统标题栏；规则/连接/日志从设置“更多”进入并可返回。宽窄变化保留页面身份、状态和平台能力。
+- 弹窗/编辑页遵循 UI 文档“弹窗与平铺表单”：弹窗只有一个主题亮色表面，内部禁止再套高亮分组卡片；共用 DialogScaffold/Header/Actions，用字段间距和必要的轻标题组织内容，标题/标签/底部动作固定；移除弹窗标题栏关闭叉号，底部取消/关闭等次级按钮用 outline 并保留完整状态反馈，草稿关闭检查共用 UseEditorClose。设置首页导航卡片及二维码展示保留各自用途。
+
+- 桌面 Medium/Expanded 平面两栏，标题在自定义标题栏，PageScaffold 承载本页动作；分隔线统一 kDesktopChromeDividerThickness=0.5pt。Compact 底部四项导航，桌面窄窗保留独立系统标题栏；侧栏入口转入“更多”和普通二级入口分组遵循 UI 文档“响应式与平台边界”。宽窄变化保留页面身份、状态和平台能力。
 - 外框/标题/侧栏用 background，内容用 IslandTheme::base（surface_container_low），卡片 raised；深浅色均为外框较亮、内容较暗、卡片提亮。阴影统一 ResolveFluxShadows，不在页面自写参数；标题投影最后绘制、不占布局/输入，抽屉投影裁在标题下。
+- 长条操作行的 hover/focus/press/ripple 与命中范围统一使用容器分配的完整单元格；留白放行内、组级裁切圆角，复用 SettingsActionRow/SettingsContentRow，不另造缩小或外溢的反馈区域。独立开关/下拉/输入保持自身控件语义；细节及验收见 UI 文档“长条操作行的交互范围”。
 - 首页真实固定卡片无骨架，缺省中性占位；其它页面仅首份真实数据未就绪时挂 page_loading，缓存就绪直接显示。流光只绘制，退出加载/切页/后台/reduced motion 停止；桌面宽屏一级切换不横滑、不翻页，不能关闭页内动画。
 - 首页每张卡左上用 HomeCardHeading(icon,title) 或开关行：语义图标 20pt、primary 色、间距 8pt、居中对齐 SemiBold 标题。HomeGrid 固定目录/跨度、88pt 行高、12pt 卡距、两行 188pt；不借缩窄合并系统代理/TUN 卡或放大其它卡。
 - DenseCard 的 dense_radius（当前 4pt）、每卡底距（当前 4pt）和 VirtualList::EstimatedItemExtent 一起调整；估算包括减半内边距×2、单行文本及底距。连接条目保留虚拟化与稳定 ID。

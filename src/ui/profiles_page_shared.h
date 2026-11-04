@@ -101,6 +101,9 @@ struct ProfileEditFields {
     huxerui::State<bool> pptp_mppe;
 };
 
+huxerui::View ProfileEditDialogContent(std::int64_t id, ProfileEditFields fields,
+    huxerui::TaskScope tasks, FluxToastHandle toast, std::function<void()> close);
+
 namespace profile_detail {
 
 huxerui::StringVariant profileTypeLabel(std::string_view type);

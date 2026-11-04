@@ -11,6 +11,7 @@ module;
 #include "profile_link.h"
 #include "http_request_headers.h"
 #include "tun_settings.h"
+#include "network_settings.h"
 
 module clashflux.singbox;
 
@@ -327,6 +328,14 @@ CompileResult compileConfig(const CompileOptions& options, std::stop_token cance
     if (!vpn::ValidatePolicyRules(options.globalRules, ctx.result.error)) return std::move(ctx.result);
     if (!ValidateProfileRuleEdits(options.profileRuleEdits, ctx.result.error)) return std::move(ctx.result);
     if (!ValidateRuleSetLibrary(options.ruleSetLibrary, ctx.result.error)) return std::move(ctx.result);
+    if (options.network.advanced && options.network.advanced->override_route_sets)
+        for (const auto* ids : {&options.network.advanced->route_sets, &options.network.advanced->exclude_sets})
+            for (const auto& id : clashflux::network::Lines(*ids))
+                if (std::ranges::none_of(options.ruleSetLibrary.resources, [&](const auto& resource) { return resource.id == id; })) {
+                    ctx.result.error = "虚拟网卡引用的规则集已失效：" + id;
+                    ctx.note(FidelityScope::Field, Fidelity::Unsupported, id, ctx.result.error, "重新选择规则集；原设置保持不变");
+                    return std::move(ctx.result);
+                }
     std::string_view original = options.profileYaml;
     if (original.starts_with("\xEF\xBB\xBF")) original.remove_prefix(3);
     const std::string trimmed = trimCopy(original);
@@ -361,6 +370,7 @@ CompileResult compileConfig(const CompileOptions& options, std::stop_token cance
             if (!compileAuxiliarySources(ctx)) return std::move(ctx.result);
             if (!compilePersonalRuleSets(ctx)) return std::move(ctx.result);
             ctx.config["outbounds"] = ctx.outbounds;
+            if (!applyNetworkRouteSets(ctx)) return std::move(ctx.result);
             if (!applyConnectionRules(ctx)) return std::move(ctx.result);
         } catch (const std::exception& error) {
             ctx.result.error = std::format("原生 sing-box 配置合并失败：{}", error.what());
@@ -433,6 +443,7 @@ CompileResult compileConfig(const CompileOptions& options, std::stop_token cance
     }
     if (!compilePersonalRuleSets(ctx)) return std::move(ctx.result);
     ctx.config["outbounds"] = std::move(ctx.outbounds);
+    if (!applyNetworkRouteSets(ctx)) return std::move(ctx.result);
     if (!applyConnectionRules(ctx)) return std::move(ctx.result);
     if (ctx.cancelled()) return std::move(ctx.result);
     ctx.result.json = ctx.config.dump();

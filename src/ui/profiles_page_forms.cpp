@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <tuple>
 #include <vector>
 
 #include "profile_import_task.h"
@@ -16,6 +17,7 @@
 #include "ui.h"
 #include "empty_state.h"
 #include "file_drop_zone.h"
+#include "settings_group_layout.h"
 #include "profile_file_picker.h"
 #include "task_bridge.h"
 #if defined(__ANDROID__)
@@ -39,9 +41,24 @@ namespace {
 
 struct ProfileFormDialog {
     bool enabled = false;
+    std::shared_ptr<std::function<void()>> close;
     static ProfileFormDialog Default() { return {}; }
     bool operator==(const ProfileFormDialog&) const = default;
 };
+
+auto ProfileCreateSnapshot(const ProfileCreateFields& fields) {
+    return std::tuple{fields.name.Get().text, fields.url.Get().text, fields.qr_content.Get().text,
+        fields.desc.Get().text, fields.timeout.Get().text, fields.interval.Get().text,
+        fields.auto_update.Get(), fields.system_proxy.Get(), fields.core_proxy.Get(), fields.invalid_cert.Get(),
+        fields.pptp_server.Get().text, fields.pptp_username.Get().text, fields.pptp_password.Get().text,
+        fields.pptp_timeout.Get().text, fields.pptp_routes.Get().text, fields.pptp_mppe.Get(), fields.picked_path.Get()};
+}
+
+std::function<void()> UseProfileCreateClose(ProfileCreateFields fields, std::function<void()> close) {
+    const auto initial = huxerui::UseState(ProfileCreateSnapshot(fields));
+    return UseEditorClose([=] { return ProfileCreateSnapshot(fields) != initial.Get(); },
+        [fields] { return fields.importing.Get(); }, close);
+}
 
 huxerui::PageTransition ProfileSecondaryTransition(
     const huxerui::MotionScheme& motion) {
@@ -391,7 +408,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     // 嵌入（对话框）模式不再套 Card：DialogCard 是唯一容器层，与编辑订阅
     // 弹窗一致；页面模式保留表单卡片。
-    if (!embedded) formFields = Card(std::move(formFields));
+    // Editing forms stay flat in both dialog and page presentations.
     if (embedded) {
         // 对话框嵌入模式与编辑订阅弹窗同一布局：标题 + 表单 + 底部
         // 「取消 / 创建」，不出现页面页头与页面骨架。
@@ -404,7 +421,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                                        huxerui::CrossAxisAlignment::Stretch)))
                 .With(huxerui::Frame{.height = kDialogFormHeight}),
             huxerui::Row{
-                huxerui::Button(Localized("取消")).OnClick(on_back),
+                DialogAction(Localized("取消"), on_back, false, !fields.importing.Get()),
                 fields.importing.Get()
                     ? huxerui::View{huxerui::ProgressCircle().With(
                           huxerui::Frame{.width = 20.0F, .height = 20.0F})}
@@ -443,23 +460,20 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
 [[huxerui::composable]] huxerui::View ProfileFlowPage(
     huxerui::View title, huxerui::View actions, huxerui::View content,
     std::function<void()> on_back, bool centerTitle = false,
-    huxerui::View compactAction = {}) {
+    huxerui::View compactAction = {}, huxerui::View dialogAction = {}) {
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const bool inDialog = huxerui::UseEnvironment<ProfileFormDialog>().enabled;
     if (inDialog) {
         const bool canGoBack = huxerui::UseNavigation().CanPop();
+        const auto rootClose = huxerui::UseEnvironment<ProfileFormDialog>().close;
         return huxerui::Column {
-          huxerui::Row {
-            huxerui::IconButton(canGoBack ? app::images::arrow_back : app::images::close,
-                canGoBack ? Localized("返回上一页") : Localized("关闭"))
-                .OnClick(std::move(on_back)),
-            huxerui::View{title}.With(huxerui::Grow(1.0F)),
-            actions,
-          }.With(huxerui::Spacing(8.0F),
-                 huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+          DialogHeaderContent(title, {},
+              canGoBack ? huxerui::View(huxerui::IconButton(app::images::arrow_back,
+                  Localized("返回上一页")).OnClick(on_back)) : huxerui::View{}),
           huxerui::View{content}.With(huxerui::Grow(1.0F)),
+          DialogActions({DialogAction(Localized("取消"), rootClose ? *rootClose : on_back, false), dialogAction}),
         }.With(huxerui::Spacing(16.0F), huxerui::Grow(1.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }
     huxerui::View pageActions = actions;
     huxerui::View pageContent = content;
@@ -478,8 +492,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
     huxerui::StringVariant hint,
     std::string key, bool divider, std::function<void()> on_click) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    huxerui::View row = UnifiedListRow(
-        huxerui::Row {
+    return SettingsActionRow(huxerui::Row {
             huxerui::Image(icon)
                 .Tint(theme.colors.on_surface)
                 .With(huxerui::Frame{.width = 26.0F, .height = 26.0F}),
@@ -492,13 +505,9 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                     theme.colors.on_surface_variant}),
             }.With(huxerui::Spacing(3.0F), huxerui::Grow(1.0F)),
         }.With(huxerui::Spacing(16.0F),
-               huxerui::Padding(huxerui::EdgeInsets::Symmetric(8.0F, 14.0F)),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        std::move(key), true, divider);
-    return std::move(row).OnClick(on_click)
-        .With(huxerui::Focusable(true),
-              huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                 .label = huxerui::UseString(name)});
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)), on_click,
+        {.role = huxerui::SemanticRole::Button, .label = name}, SettingsRowInsets{8.0F, 14.0F, 64.0F})
+        .Key(key);
 }
 
 #if defined(__ANDROID__)
@@ -773,12 +782,13 @@ void PushProfileQrScanner(
     const auto configFileFilter = ProfileConfigFileFilter();
     const std::string qrConfigName = huxerui::UseString(Localized("二维码配置"));
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    auto dialog = huxerui::UseDialog();
-    auto urlInput = huxerui::UseState(huxerui::TextEditingValue{""});
     const auto on_back = [navigation, close] {
         if (navigation.CanPop()) static_cast<void>(navigation.Pop());
         else if (close) close();
     };
+    std::function<void()> rootBack = on_back;
+    if (!huxerui::UseEnvironment<ProfileFormDialog>().enabled)
+        rootBack = UseProfileCreateClose(fields, on_back);
     const auto finishImport = [fields, toast, on_back, profilesModel](
                                   ProfileImportResult result) {
         fields.importing = false;
@@ -830,9 +840,9 @@ void PushProfileQrScanner(
                 }
             });
     };
-    const auto openDirect = [fields, tasks, toast, picker, http,
+    const auto openMethod = [fields, tasks, toast, picker, http,
                              pptp_supported, navigation,
-                             on_back, close, popDuration = theme.motion.normal] {
+                             on_back, close, popDuration = theme.motion.normal](ProfileAddMethod method) {
         if (fields.importing.Get()) return;
         const auto on_complete = [tasks, navigation, close, popDuration] {
             if (close) { close(); return; }
@@ -848,7 +858,7 @@ void PushProfileQrScanner(
         };
         navigation.Push([=] {
             return ProfileCreateMethodPage(
-                ProfileAddMethod::Direct, fields, tasks, toast, picker, http,
+                method, fields, tasks, toast, picker, http,
                 pptp_supported, navigation, on_back,
                 on_complete);
         });
@@ -892,46 +902,6 @@ void PushProfileQrScanner(
                 }, finishImport);
         });
     };
-    const auto openUrlDialog = [fields, dialog, urlInput, toast,
-                                importRemote] {
-        if (fields.importing.Get()) return;
-        urlInput = huxerui::TextEditingValue{""};
-        dialog.Show(
-            [urlInput, toast, importRemote](
-                huxerui::DialogContext ctx) -> huxerui::View {
-                return DialogCard(huxerui::Column {
-                    huxerui::Text(Localized("添加订阅"), huxerui::TextRole::Title),
-                    huxerui::TextField(urlInput.Get())
-                        .Label(Localized("订阅 URL"))
-                        .Placeholder("https://...")
-                        .Variant(huxerui::TextFieldVariant::Outlined)
-                        .OnChanged([urlInput](
-                                       const huxerui::TextEditingValue& value) {
-                            urlInput = value;
-                        }),
-                    huxerui::Row {
-                        huxerui::Button(Localized("取消")).OnClick(
-                            [ctx] { ctx.Dismiss(); }),
-                        huxerui::Button(Localized("获取配置")).OnClick(
-                            [ctx, urlInput, toast, importRemote] {
-                                const std::string url = urlInput.Get().text;
-                                if (!IsHttpProfileUrl(url)) {
-                                    toast.Show(Localized("请输入有效的 HTTP 或 HTTPS URL"));
-                                    return;
-                                }
-                                ctx.Dismiss();
-                                importRemote(url);
-                            }),
-                    }.With(huxerui::Spacing(8.0F),
-                           huxerui::MainAlign(
-                               huxerui::MainAxisAlignment::End)),
-                }.With(huxerui::Spacing(16.0F),
-                       huxerui::Frame{.width = 300.0F},
-                       huxerui::CrossAlign(
-                           huxerui::CrossAxisAlignment::Stretch)));
-            },
-            huxerui::DialogOptions{});
-    };
 
     huxerui::View methods = huxerui::Column {
         ProfileAddMethodRow(
@@ -949,14 +919,14 @@ void PushProfileQrScanner(
         ProfileAddMethodRow(
             app::images::link, "URL", Localized("输入订阅链接并自动获取配置"),
             "profile-add-url", pptp_supported,
-            openUrlDialog),
+            [openMethod] { openMethod(ProfileAddMethod::Url); }),
         // 配置文本粘贴入口已并入「文件」；直接配置只剩原生 VPN 表单。
         pptp_supported
             ? huxerui::View{ProfileAddMethodRow(
                   app::images::manual_config, Localized("PPTP 内网"),
                   Localized("填写 PPTP 内网拨号参数"),
                   "profile-add-direct", false,
-                  openDirect)}
+                  [openMethod] { openMethod(ProfileAddMethod::Direct); })}
             : huxerui::View{huxerui::Row{}},
     }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     huxerui::View content = huxerui::ScrollView(huxerui::Column {
@@ -966,7 +936,7 @@ void PushProfileQrScanner(
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
         .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     return ProfileFlowPage(huxerui::Text(Localized("添加配置"), huxerui::TextRole::Title),
-                            huxerui::View{}, std::move(content), on_back, true)
+                            huxerui::View{}, std::move(content), rootBack, true)
         .With(ProfileSecondaryTransition(theme.motion),
               huxerui::Semantics{.role = huxerui::SemanticRole::Navigation,
                                  .label = huxerui::UseString(
@@ -987,10 +957,12 @@ void PushProfileQrScanner(
     FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     std::function<void()> close) {
-    return DialogCard(huxerui::ProvideEnvironment(ProfileFormDialog{true},
+    const auto guarded = UseProfileCreateClose(fields, close);
+    return DialogCard(huxerui::ProvideEnvironment(
+        ProfileFormDialog{true, std::make_shared<std::function<void()>>(guarded)},
         huxerui::NavigationStack(ProfileAddDialogRoot, fields, tasks, toast,
-            picker, http, pptp_supported, std::move(close))
-            .With(huxerui::Frame{.width = 480.0F, .height = 520.0F})));
+            picker, http, pptp_supported, close)
+            .With(huxerui::Frame{.width = 520.0F, .height = 620.0F})));
 }
 
 [[huxerui::composable]] huxerui::View ProfileCreateMethodPage(
@@ -1209,7 +1181,8 @@ void PushProfileQrScanner(
     return ProfileFlowPage(huxerui::Text(title, huxerui::TextRole::Title),
                            ProfileImportAction(fields.importing.Get(), Localized("导入配置"), import_profile),
                            std::move(content), std::move(on_back), true,
-                           std::move(action))
+                           std::move(action),
+                           DialogAction(Localized("创建"), import_profile, true, !fields.importing.Get()))
         .With(ProfileSecondaryTransition(theme.motion));
 }
 
@@ -1239,8 +1212,9 @@ void PushProfileQrScanner(
         huxerui::UseState(huxerui::TextEditingValue{}),
         huxerui::UseState(true),
         huxerui::UseState(std::string{}), huxerui::UseState(false)};
+    const auto back = UseProfileCreateClose(fields, close);
     return ProfileCreateMethodPage(ProfileAddMethod::Url, fields, tasks, toast,
-        picker, http, false, navigation, close, close);
+        picker, http, false, navigation, back, close);
 }
 
 [[huxerui::composable]] huxerui::View ProfileLinkImportEffects(
@@ -1269,13 +1243,14 @@ void PushProfileQrScanner(
                             http, navigation, close, showing);
                     });
                 } else {
-                    dialog.Show([=](huxerui::DialogContext context) {
+                    ShowEditorDialog(dialog,[=](huxerui::DialogContext context) {
                         const auto close = [context] { static_cast<void>(context.Dismiss()); };
-                        return huxerui::NavigationStack([=] {
+                        return DialogCard(huxerui::ProvideEnvironment(ProfileFormDialog{true, {}},
+                            huxerui::NavigationStack([=] {
                             return ProfileLinkImportPage(request, toast, picker,
                                 http, navigation, close, showing);
                         })
-                            .With(huxerui::Frame{.width = 520.0F, .height = 560.0F});
+                            .With(huxerui::Frame{.width = 520.0F, .height = 620.0F})));
                     });
                 }
             });
@@ -1301,12 +1276,23 @@ void PushProfileQrScanner(
     huxerui::State<huxerui::TextEditingValue> pptp_routes,
     huxerui::State<bool> pptp_mppe,
     huxerui::TaskScope tasks, FluxToastHandle toast,
-    std::function<void()> on_back) {
-    const auto save = [id, name, url, type, desc, timeout, interval, auto_update,
-                       system_proxy, core_proxy, invalid_cert, pptp_server,
-                       pptp_username, pptp_password, pptp_timeout, pptp_routes,
-                       pptp_mppe, tasks, toast,
-                       on_back] {
+    std::function<void()> on_back, bool inDialog = false) {
+    const auto profilesModel = huxerui::UseService<ProfilesModel>();
+    const auto saving = huxerui::UseState(false);
+    const auto alive = huxerui::UseState(true);
+    huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
+    const auto snapshot = [=] {
+        return std::tuple{name.Get().text, url.Get().text, type.Get(), desc.Get().text,
+            timeout.Get().text, interval.Get().text, auto_update.Get(), system_proxy.Get(),
+            core_proxy.Get(), invalid_cert.Get(), pptp_server.Get().text, pptp_username.Get().text,
+            pptp_password.Get().text, pptp_timeout.Get().text, pptp_routes.Get().text, pptp_mppe.Get()};
+    };
+    const auto baseline = huxerui::UseState(snapshot());
+    const auto close = UseEditorClose([=] { return snapshot() != baseline.Get(); },
+        [saving] { return saving.Get(); }, on_back);
+    const auto save = [=] {
+        if (saving.Get()) return;
+        saving = true;
         tasks.Launch([=]() -> huxerui::Task<void> {
             db::Profile fields;
             fields.name = name.Get().text;
@@ -1324,6 +1310,7 @@ void PushProfileQrScanner(
                     pptp_server.Get(), pptp_username.Get(), pptp_password.Get(),
                     pptp_timeout.Get(), pptp_mppe.Get(), configError);
                 if (!config) {
+                    saving = false;
                     toast.Show(configError);
                     co_return;
                 }
@@ -1333,27 +1320,26 @@ void PushProfileQrScanner(
             } else {
                 fields.url = url.Get().text;
             }
-            const std::string err = co_await RunOnTaskThread(
+            std::string err;
+            try { err = co_await RunOnTaskThread(
                 [id, fields] {
                     auto& ps = store::profilesStore();
                     if (!ps.updateProfile(id, fields)) return ps.lastError();
                     return std::string{};
                 });
+            } catch (const std::exception& exception) { err = exception.what(); }
+            saving = false;
             if (err.empty()) {
+                profilesModel->PublishCached();
                 toast.Show(Localized("已保存"));
-                on_back();
+                if (alive.Get()) on_back();
             } else {
                 toast.Show(err);
             }
         });
     };
 
-    return ProfileFlowPage(
-        huxerui::Text(Localized("编辑订阅"), huxerui::TextRole::Title),
-        huxerui::IconButton(app::images::save, Localized("保存"))
-            .With(huxerui::Tooltip(Localized("保存订阅")))
-            .OnClick(save),
-        huxerui::ScrollView(
+    const auto body = huxerui::ScrollView(
             huxerui::Column {
                     huxerui::TextField(name.Get())
                         .Label(Localized("名称"))
@@ -1377,7 +1363,8 @@ void PushProfileQrScanner(
                               ProfileOptionsForm(desc, timeout, interval,
                                                  auto_update, system_proxy,
                                                  core_proxy, invalid_cert),
-                          }},
+                          }.With(huxerui::Spacing(16.0F),
+                              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))},
                     type.Get() == "pptp"
                         ? huxerui::View{huxerui::TextField(desc.Get())
                                             .Label(Localized("描述（可选）"))
@@ -1391,9 +1378,23 @@ void PushProfileQrScanner(
                 .With(huxerui::Spacing(16.0F),
                       huxerui::CrossAlign(
                           huxerui::CrossAxisAlignment::Stretch)))
-                .With(huxerui::Grow(1.0F), huxerui::ScrollBar()),
-        on_back, false,
-        CompactPrimaryActionButton(app::images::save, Localized("保存"), save));
+                .With(huxerui::Grow(1.0F), huxerui::ScrollBar(), huxerui::Enabled(!saving.Get()));
+    if (inDialog) return DialogScaffold(DialogHeader(Localized("编辑订阅")),
+        huxerui::View{body}.With(huxerui::Enabled(!saving.Get())),
+        DialogActions({DialogAction(Localized("取消"), close, false, !saving.Get()),
+            DialogAction(Localized("保存"), save, true, !saving.Get())}), DialogSize::Form, true);
+    return ProfileFlowPage(huxerui::Text(Localized("编辑订阅"), huxerui::TextRole::Title),
+        huxerui::IconButton(app::images::save, Localized("保存"))
+            .With(huxerui::Enabled(!saving.Get())).OnClick(save), body, close, false,
+        CompactPrimaryActionButton(app::images::save, Localized("保存"), save, !saving.Get(), saving.Get()));
+}
+
+[[huxerui::composable]] huxerui::View ProfileEditDialogContent(std::int64_t id, ProfileEditFields fields,
+    huxerui::TaskScope tasks, FluxToastHandle toast, std::function<void()> close) {
+    return ProfileEditPage(id, fields.name, fields.url, fields.type, fields.desc, fields.timeout,
+        fields.interval, fields.auto_update, fields.system_proxy, fields.core_proxy, fields.invalid_cert,
+        fields.pptp_server, fields.pptp_username, fields.pptp_password, fields.pptp_timeout,
+        fields.pptp_routes, fields.pptp_mppe, tasks, toast, close, true);
 }
 
 [[huxerui::composable]] huxerui::View ProfileEditRoutePage(
@@ -1458,6 +1459,17 @@ huxerui::Task<void> SaveProfileDocument(
     if (done) done();
 }
 
+std::function<void()> UseDocumentClose(huxerui::State<TextDocumentHandle> document,
+    huxerui::State<bool> saving, std::function<void()> close) {
+    const auto initial = huxerui::UseState(std::shared_ptr<const std::string>{});
+    huxerui::Lifecycle([document, initial] {
+        if (document.Get() && !initial.Get()) initial = document.Get()->InitialText();
+    }, document);
+    return UseEditorClose([=] {
+        return document.Get() && initial.Get() && *document.Get()->Snapshot() != *initial.Get();
+    }, [saving] { return saving.Get(); }, close);
+}
+
 [[huxerui::composable]] huxerui::View ProfileDocumentBody(
     huxerui::State<TextDocumentHandle> content, bool loading, bool saving, float height) {
     if (loading) {
@@ -1480,6 +1492,7 @@ huxerui::Task<void> SaveProfileDocument(
     auto alive = huxerui::UseState(true);
     huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
     const auto back = [=] { if (alive.Get() && !saving.Get()) on_back(); };
+    const auto close = UseDocumentClose(content, saving, back);
     const auto save = [=] {
         if (loading.Get() || saving.Get() || !content.Get() || !content.Get()->Ready()) return;
         const auto text = content.Get()->Snapshot();
@@ -1500,7 +1513,7 @@ huxerui::Task<void> SaveProfileDocument(
         }.With(huxerui::Spacing(16.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
                huxerui::Grow(1.0F)),
-        back, false,
+        close, false,
         CompactPrimaryActionButton(app::images::save, Localized("保存"), save,
             !loading.Get() && !saving.Get() && content.Get() != nullptr && content.Get()->Ready(),
             saving.Get()));
@@ -1520,28 +1533,24 @@ huxerui::Task<void> SaveProfileDocument(
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     auto tasks = huxerui::UseApplicationTaskScope();
     auto saving = huxerui::UseState(false);
-    return DialogCard(huxerui::Column {
-      huxerui::Text(Localized("编辑文件"), huxerui::TextRole::Title),
+    const auto done = [context] { context.Dismiss(); };
+    const auto close = UseDocumentClose(content, saving, done);
+    const auto save = [=] {
+        if (loading.Get() || saving.Get() || !content.Get() || !content.Get()->Ready()) return;
+        const auto text = content.Get()->Snapshot();
+        saving = true;
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            co_await SaveProfileDocument(id, text, saving, toast, profilesModel, done);
+        });
+    };
+    return DialogScaffold(DialogHeader(Localized("编辑文件")), huxerui::Column {
       huxerui::Text(Localized("直接编辑订阅原文，远程更新会覆盖这些改动。需要保留的规则请使用编辑规则。")),
-      ProfileDocumentBody(content, loading.Get(), saving.Get(), 380.0F),
-      huxerui::Row {
-        huxerui::Button(Localized("取消")).With(huxerui::Enabled(!saving.Get()))
-            .OnClick([context] { context.Dismiss(); }),
-        huxerui::Spacer(),
-        huxerui::Button(Localized("保存"))
-            .With(huxerui::Enabled(!loading.Get() && !saving.Get() && content.Get() != nullptr && content.Get()->Ready()))
-            .OnClick([=] {
-                if (loading.Get() || saving.Get() || !content.Get() || !content.Get()->Ready()) return;
-                const auto text = content.Get()->Snapshot();
-                saving = true;
-                tasks.Launch([=]() -> huxerui::Task<void> {
-                    co_await SaveProfileDocument(id, text, saving, toast, profilesModel,
-                        [context] { context.Dismiss(); });
-                });
-            }),
-      },
-    }.With(huxerui::Spacing(16.0F), huxerui::Frame{.width = 640.0F},
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+      ProfileDocumentBody(content, loading.Get(), saving.Get(), 0.0F),
+    }.With(huxerui::Spacing(12.0F), huxerui::Grow(1.0F),
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+        DialogActions({DialogAction(Localized("取消"), close, false, !saving.Get()),
+            DialogAction(Localized("保存"), save, true,
+                !loading.Get() && !saving.Get() && content.Get() && content.Get()->Ready())}), DialogSize::Large, true);
 }
 
 } // namespace clashflux::ui

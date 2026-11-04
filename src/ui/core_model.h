@@ -127,8 +127,6 @@ struct CoreModel {
         home = MakeCoreHomeView(view.Get());
         return true;
     }
-    void SetAllowLan(bool enabled);
-    void SetIpv6(bool enabled);
 };
 
 // 在 worker 线程读一次内核/接管状态（会做 checkAlive 崩溃检测；slowProbes

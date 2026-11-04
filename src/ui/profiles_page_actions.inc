@@ -290,129 +290,14 @@
         });
     };
 
-    auto showEditInfo = [loadEditInfo, dialog, tasks, toast, editName, editUrl,
-                         editType, editDesc, editTimeout, editInterval, editAuto,
-                         editSys, editCore, editCert, editPptpServer,
-                         editPptpUsername, editPptpPassword, editPptpTimeout,
-                         editPptpRoutes, editPptpMppe,
-                         textColor = theme.colors.on_surface,
-                         hintColor = theme.colors.on_surface_variant](
-                            std::int64_t id) {
-        loadEditInfo(id, [dialog, tasks, toast, editName, editUrl, editType,
-                          editDesc, editTimeout, editInterval, editAuto, editSys,
-                          editCore, editCert, editPptpServer, editPptpUsername,
-                          editPptpPassword, editPptpTimeout, editPptpRoutes,
-                          editPptpMppe,
-                          id, textColor, hintColor] {
-            dialog.Show(
-                [tasks, toast, editName, editUrl, editType, editDesc, editTimeout,
-                 editInterval, editAuto, editSys, editCore, editCert,
-                 editPptpServer, editPptpUsername, editPptpPassword,
-                 editPptpTimeout, editPptpRoutes, editPptpMppe, id,
-                 textColor, hintColor](huxerui::DialogContext ctx) -> huxerui::View {
-                    const bool pptp = editType.Get() == "pptp";
-                    return DialogCard(huxerui::Column {
-                        huxerui::Text(Localized("编辑订阅"), huxerui::TextRole::Title),
-                        huxerui::ScrollView(huxerui::Column {
-                            huxerui::TextField(editName.Get())
-                                .Label(Localized("名称"))
-                                .Variant(huxerui::TextFieldVariant::Outlined)
-                                .OnChanged(
-                                    [editName](const huxerui::TextEditingValue& v) {
-                                        editName = v;
-                                    }),
-                            pptp
-                                ? huxerui::View{PptpOptionsForm(
-                                      editPptpServer, editPptpUsername,
-                                      editPptpPassword, editPptpTimeout,
-                                      editPptpRoutes, editPptpMppe)}
-                                : huxerui::View{huxerui::Column {
-                                      huxerui::TextField(editUrl.Get())
-                                          .Label(Localized("订阅链接（留空 = 本地导入）"))
-                                          .Placeholder("https://...")
-                                          .Variant(huxerui::TextFieldVariant::Outlined)
-                                          .OnChanged([editUrl](
-                                                         const huxerui::TextEditingValue& v) {
-                                              editUrl = v;
-                                          }),
-                                      ProfileOptionsForm(
-                                          editDesc, editTimeout, editInterval,
-                                          editAuto, editSys, editCore, editCert),
-                                  }},
-                            pptp
-                                ? huxerui::View{huxerui::TextField(editDesc.Get())
-                                                    .Label(Localized("描述（可选）"))
-                                                    .Variant(huxerui::TextFieldVariant::Outlined)
-                                                    .OnChanged([editDesc](
-                                                                   const huxerui::TextEditingValue& v) {
-                                                        editDesc = v;
-                                                    })}
-                                : huxerui::View{huxerui::Row{}},
-                        }
-                                           .With(huxerui::Spacing(16.0F),
-                                                 huxerui::CrossAlign(
-                                                     huxerui::CrossAxisAlignment::
-                                                         Stretch)))
-                            .With(huxerui::Frame{.height = kDialogFormHeight}),
-                        huxerui::Row {
-                            huxerui::Button(Localized("取消")).OnClick(
-                                [ctx] { ctx.Dismiss(); }),
-                            huxerui::Button(Localized("保存")).OnClick([=] {
-                                std::string configError;
-                                std::optional<std::string> nativeConfig;
-                                if (editType.Get() == "pptp") {
-                                    nativeConfig = makePptpConfig(
-                                        editPptpServer.Get(), editPptpUsername.Get(),
-                                        editPptpPassword.Get(), editPptpTimeout.Get(),
-                                        editPptpMppe.Get(), configError);
-                                    if (!nativeConfig) {
-                                        toast.Show(configError);
-                                        return;
-                                    }
-                                }
-                                ctx.Dismiss();
-                                tasks.Launch([=]() -> huxerui::Task<void> {
-                                    db::Profile fields;
-                                    fields.name = editName.Get().text;
-                                    fields.type = editType.Get();
-                                    fields.url = isNativeVpnType(fields.type)
-                                                     ? ""
-                                                     : editUrl.Get().text;
-                                    fields.description = editDesc.Get().text;
-                                    fields.timeoutSecs =
-                                        parseNumber(editTimeout.Get(), 60);
-                                    fields.intervalMins =
-                                        parseNumber(editInterval.Get(), 0);
-                                    fields.autoUpdate = editAuto.Get();
-                                    fields.useSystemProxy = editSys.Get();
-                                    fields.useCoreProxy = editCore.Get();
-                                    fields.allowInvalidCert = editCert.Get();
-                                    if (nativeConfig) {
-                                        fields.nativeConfig = *nativeConfig;
-                                        fields.nativeRoutes = joinRoutes(
-                                            parseRouteField(editPptpRoutes.Get().text));
-                                    }
-                                    const std::string err = co_await RunOnTaskThread(
-                                        [id, fields] {
-                                            auto& ps = store::profilesStore();
-                                            if (!ps.updateProfile(id, fields))
-                                                return ps.lastError();
-                                            return std::string{};
-                                        });
-                                    toast.Show(err.empty() ? Localized("已保存")
-                                                           : huxerui::StringVariant(err));
-                                });
-                            }),
-                        }.With(huxerui::MainAlign(
-                                   huxerui::MainAxisAlignment::SpaceBetween)),
-                    }
-                                      .With(huxerui::Spacing(16.0F),
-                                            huxerui::Frame{.width = 420.0F},
-                                            huxerui::CrossAlign(
-                                                huxerui::CrossAxisAlignment::
-                                                    Stretch)));
-                },
-                huxerui::DialogOptions{});
+    auto showEditInfo = [=](std::int64_t id) {
+        loadEditInfo(id, [=] {
+            ShowEditorDialog(dialog, [=](huxerui::DialogContext context) {
+                return ProfileEditDialogContent(id, ProfileEditFields{editName, editUrl, editType, editDesc, editTimeout,
+                    editInterval, editAuto, editSys, editCore, editCert, editPptpServer,
+                    editPptpUsername, editPptpPassword, editPptpTimeout, editPptpRoutes,
+                    editPptpMppe}, tasks, toast, [context] { context.Dismiss(); });
+            });
         });
     };
 
@@ -492,7 +377,7 @@
                 filePageId = id;
             }
         } else {
-            dialog.Show([=](huxerui::DialogContext context) {
+            ShowEditorDialog(dialog, [=](huxerui::DialogContext context) {
                 return ProfileFileDialog(id, fileContent, fileLoading, toast, context);
             });
         }

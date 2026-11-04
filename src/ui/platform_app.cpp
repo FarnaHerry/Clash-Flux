@@ -872,29 +872,22 @@ struct TrayMenuText {
             closeDialogOpen = true;
             dialog.Show(
                 [=](huxerui::DialogContext ctx) -> huxerui::View {
-                    return DialogCard(huxerui::Column{
-                        huxerui::Text(Localized("关闭 Clash-Flux？"), huxerui::TextRole::Title),
-                        huxerui::Text(Localized("关闭应用会停止代理，是否继续？"))
+                    return DialogScaffold(DialogHeaderContent(huxerui::Text(Localized("关闭 Clash-Flux？"), huxerui::TextRole::Title)),
+                    huxerui::Column {
+                      huxerui::Text(Localized("关闭应用会停止代理，是否继续？"))
                             .Style(huxerui::TextStyle{
                                 huxerui::Font::System(font_size::kCaption),
                                 closeHintColor}),
-                        huxerui::Row{
-                            huxerui::Button(Localized("关闭")).OnClick([=] {
+                    }.With(huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                    DialogActions({DialogAction(Localized("取消"), [=] {
+                                ctx.Dismiss();
+                                closeDialogOpen = false;
+                            }, false),
+                        huxerui::Button(Localized("关闭")).OnClick([=] {
                                 ctx.Dismiss();
                                 closeDialogOpen = false;
                                 finishExit();
-                            }),
-                            huxerui::Button(Localized("取消")).OnClick([=] {
-                                ctx.Dismiss();
-                                closeDialogOpen = false;
-                            }),
-                        }.With(huxerui::Spacing(8.0F),
-                               huxerui::MainAlign(
-                                   huxerui::MainAxisAlignment::SpaceBetween)),
-                    }.With(huxerui::Spacing(12.0F),
-                           huxerui::Frame{.width = 420.0F},
-                           huxerui::CrossAlign(
-                               huxerui::CrossAxisAlignment::Stretch)));
+                            })}), DialogSize::Small);
                 },
                 huxerui::DialogOptions{
                     .dismiss_on_outside_press = false,

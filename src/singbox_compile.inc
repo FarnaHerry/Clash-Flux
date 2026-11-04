@@ -14,6 +14,15 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
         return;
     }
 
+#if defined(__ANDROID__)
+    constexpr bool androidNetwork = true;
+#else
+    constexpr bool androidNetwork = false;
+#endif
+    if (const auto failure = clashflux::network::Validate(opt.network, androidNetwork); !failure.empty()) {
+        ctx.result.error = failure;
+        return;
+    }
     if (!opt.proxyListening && opt.tunInbound) {
         ctx.result.error = "待命内核不能启用 TUN；请先连接代理";
         return;
@@ -82,6 +91,22 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
             return inbound.is_object() && inbound.value("type", "") == "tun";
         }), inbounds.end());
     }
+    if (opt.network.override_ports) {
+        auto& inbounds = config["inbounds"];
+        inbounds.erase(std::remove_if(inbounds.begin(), inbounds.end(), [&](const auto& inbound) {
+            return (inbound.value("type", "") == "http" && !opt.httpPort) ||
+                   (inbound.value("type", "") == "socks" && !opt.socksPort);
+        }), inbounds.end());
+        std::set<std::string> rewritten;
+        for (auto& inbound : inbounds) {
+            const auto type = inbound.value("type", "");
+            if (type != "mixed" && type != "http" && type != "socks") continue;
+            if (!rewritten.insert(type).second) {
+                ctx.result.error = "覆盖端口需要每种类型仅有一个监听"; return;
+            }
+            inbound["listen_port"] = type == "mixed" ? opt.mixedPort : type == "http" ? opt.httpPort : opt.socksPort;
+        }
+    }
     bool hasMixed = false;
     bool hasHttp = false;
     bool hasSocks = false;
@@ -128,7 +153,8 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
         nlohmann::json tun = {
             {"type", "tun"},
             {"tag", "tun-in"},
-            {"address", nlohmann::json::array({"172.19.0.1/30"})},
+            {"address", opt.ipv6 ? nlohmann::json::array({"172.19.0.1/30", "fdfe:dcba:9876::1/126"})
+                                 : nlohmann::json::array({"172.19.0.1/30"})},
             {"mtu", opt.tunMtu},
             {"auto_route", true},
             {"strict_route", opt.tunStrictRoute},
@@ -144,6 +170,78 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
 #endif
         config["inbounds"].push_back(std::move(tun));
     }
+    // Apply explicit global overrides only. Source credentials, DNS addresses
+    // and custom inbounds survive when no corresponding override was selected.
+    const auto& network = opt.network;
+#if !defined(__linux__) || defined(__ANDROID__)
+    if (network.advanced && (!network.advanced->auto_redirect.empty() || network.advanced->override_filters)) {
+        ctx.result.error = "自动重定向及接口、UID、MAC 筛选仅支持 Linux 桌面";
+        return;
+    }
+#endif
+
+    for (auto& inbound : config["inbounds"]) {
+        const auto type = inbound.value("type", "");
+        if (type == "mixed" || type == "http" || type == "socks") {
+            if (network.override_listen) inbound["listen"] = network.listen_address.empty()
+                ? (opt.allowLan ? "0.0.0.0" : "127.0.0.1") : network.listen_address;
+            if (!network.bind_interface.empty()) inbound["bind_interface"] = network.bind_interface;
+            if (network.override_auth) {
+                inbound["users"] = nlohmann::json::array();
+                if (!network.username.empty()) inbound["users"].push_back({
+                    {"username", network.username}, {"password", network.password}});
+            }
+            // The user session owns OS proxy settings, including imported configs.
+            if (inbound.value("set_system_proxy", false)) {
+                inbound["set_system_proxy"] = false;
+                ctx.note(FidelityScope::Field, Fidelity::Approx, "set_system_proxy",
+                    "系统代理由应用用户会话统一管理", "使用首页系统代理开关");
+            }
+        }
+        if (type != "tun") continue;
+        if (!network.stack.empty()) inbound["stack"] = network.stack;
+        if (!network.dns_mode.empty()) {
+            inbound["dns_mode"] = network.dns_mode;
+            // Imported dns_address stays authoritative; a new mode never
+            // invents a DNS server or rewrites the source's DNS rules.
+        }
+        if (!network.interface_name.empty()) inbound["interface_name"] = network.interface_name;
+        if (!network.addresses.empty()) inbound["address"] = clashflux::network::Lines(network.addresses);
+        if (network.override_routes) {
+            inbound.erase("route_address");
+            inbound.erase("route_address_set");
+            inbound.erase("inet4_route_address");
+            inbound.erase("inet6_route_address");
+            if (!clashflux::network::Lines(network.routes).empty())
+                inbound["route_address"] = clashflux::network::Lines(network.routes);
+        }
+        if (network.override_exclusions) {
+            inbound.erase("route_exclude_address_set");
+            inbound.erase("inet4_route_exclude_address");
+            inbound.erase("inet6_route_exclude_address");
+            inbound["route_exclude_address"] = clashflux::network::Lines(network.exclusions);
+        }
+        if (!network.udp_timeout.empty()) inbound["udp_timeout"] = network.udp_timeout;
+        if (!network.udp_mapping.empty()) inbound["udp_mapping"] = network.udp_mapping;
+        if (!network.udp_filtering.empty()) inbound["udp_filtering"] = network.udp_filtering;
+        if (network.override_udp_nat_max) inbound["udp_nat_max"] = network.udp_nat_max;
+#if defined(__ANDROID__)
+        if (!network.package_mode.empty()) {
+            inbound.erase("include_package");
+            inbound.erase("exclude_package");
+            if (network.package_mode == "include" || network.package_mode == "exclude") {
+                const auto key = network.package_mode == "include" ? "include_package" : "exclude_package";
+                inbound[key] = clashflux::network::Lines(network.packages);
+            }
+        }
+#else
+        if (!network.package_mode.empty()) {
+            ctx.result.error = "应用接管列表仅支持 Android";
+            return;
+        }
+#endif
+    }
+
     // Apply ownership and transport compensation to imported TUNs as well.
     // Data destinations stay inside TUN so explicit global rules win over a
     // native connection's implicit CIDRs. Only transport addresses bypass it.
@@ -167,14 +265,35 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
 #if defined(__ANDROID__)
         inbound["stack"] = "gvisor";
 #elif defined(__linux__)
-        // Native transport rules use priorities before 9000; native data
-        // routes after it. auto_redirect's nftables interception would bypass
-        // that ordering, so all managed Linux TUNs use policy routing.
+        // Native VPN compensation has rules on both sides of this boundary.
+        // nftables interception is opt-in and must never bypass those rules.
         inbound["iproute2_rule_index"] = 9000;
-        if (inbound.value("auto_redirect", false)) {
-            ctx.warn("托管 TUN 已关闭 auto_redirect，以保证原生 VPN 补偿路由优先级");
+        const auto advanced = opt.network.advanced.value_or(clashflux::network::Advanced{});
+        const bool redirect = advanced.auto_redirect == "enabled";
+        if (redirect && std::ranges::any_of(opt.nativeConnections, [](const auto& native) { return native.connected; })) {
+            ctx.result.error = "Linux 自动重定向不能与原生 VPN 补偿路由同时启用";
+            ctx.note(FidelityScope::Field, Fidelity::Unsupported, "auto_redirect", ctx.result.error, "关闭自动重定向后重试");
+            return;
         }
-        inbound["auto_redirect"] = false;
+        if (inbound.value("auto_redirect", false) && !redirect)
+            ctx.note(FidelityScope::Field, Fidelity::Approx, "auto_redirect",
+                "托管 TUN 使用策略路由，来源的自动重定向未启用", "可在虚拟网卡高级设置显式启用");
+        inbound["auto_redirect"] = redirect;
+        if (advanced.override_filters) {
+            for (const auto key : {"include_interface", "exclude_interface", "include_uid", "exclude_uid",
+                "include_uid_range", "exclude_uid_range", "include_mac_address", "exclude_mac_address"}) inbound.erase(key);
+            if (!advanced.interface_mode.empty()) inbound[advanced.interface_mode + "_interface"] = clashflux::network::Lines(advanced.interfaces);
+            if (!advanced.uid_mode.empty()) {
+                nlohmann::json ids = nlohmann::json::array(), ranges = nlohmann::json::array();
+                for (const auto& uid : clashflux::network::Lines(advanced.uids)) {
+                    if (uid.find(':') != std::string::npos) ranges.push_back(uid);
+                    else ids.push_back(std::stoi(uid));
+                }
+                if (!ids.empty()) inbound[advanced.uid_mode + "_uid"] = std::move(ids);
+                if (!ranges.empty()) inbound[advanced.uid_mode + "_uid_range"] = std::move(ranges);
+            }
+            if (!advanced.mac_mode.empty()) inbound[advanced.mac_mode + "_mac_address"] = clashflux::network::Lines(advanced.macs);
+        }
 #endif
         nlohmann::json exclusions = nlohmann::json::array();
         if (inbound.contains("route_exclude_address")) {
@@ -471,4 +590,61 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
             ++index;
         }
     }
+}
+
+// Resource IDs are resolved after source namespacing and personal-set injection.
+// This is capture routing: the kernel extracts destination IP prefixes only.
+bool applyNetworkRouteSets(Context& ctx) {
+    const auto advanced = ctx.opt.network.advanced.value_or(clashflux::network::Advanced{});
+    if (advanced.auto_redirect == "enabled") {
+        const auto hasMark = [&](const auto& self, const nlohmann::json& value) -> bool {
+            if (value.is_object()) for (auto it = value.begin(); it != value.end(); ++it) {
+                if ((it.key() == "routing_mark" || it.key() == "default_mark") && it.value() != 0) return true;
+                if (self(self, it.value())) return true;
+            }
+            if (value.is_array()) for (const auto& child : value) if (self(self, child)) return true;
+            return false;
+        };
+        if (hasMark(hasMark, ctx.config)) {
+            ctx.result.error = "Linux 自动重定向与 routing_mark/default_mark 冲突";
+            return false;
+        }
+    }
+    if (!advanced.override_route_sets) return true;
+#ifdef _WIN32
+    if ((!clashflux::network::Lines(advanced.route_sets).empty() || !clashflux::network::Lines(advanced.exclude_sets).empty()) &&
+        std::ranges::any_of(ctx.opt.nativeConnections, [](const auto& native) { return native.connected; })) {
+        ctx.result.error = "Windows PPTP 共存不支持规则集路由接管";
+        return false;
+    }
+#endif
+
+#if (!defined(__linux__) || defined(__ANDROID__)) && !defined(_WIN32)
+    ctx.result.error = "IP 规则集路由接管仅支持 Linux 和 Windows 桌面";
+    return false;
+#else
+    for (auto& inbound : ctx.config["inbounds"]) {
+        if (inbound.value("type", "") != "tun") continue;
+        inbound.erase("route_address_set"); inbound.erase("route_exclude_address_set");
+        if (!clashflux::network::Lines(advanced.route_sets).empty()) {
+            // Empty IP extraction must not trigger sing-tun's default-all
+            // fallback for either address family (e.g. a domain-only set).
+            auto& addresses = inbound["route_address"];
+            if (addresses.is_string()) addresses = nlohmann::json::array({addresses});
+            if (addresses.is_null()) addresses = nlohmann::json::array();
+            for (const auto prefix : {"0.0.0.0/32", "::/128"})
+                if (std::ranges::find(addresses, nlohmann::json(prefix)) == addresses.end()) addresses.push_back(prefix);
+        }
+
+        for (const auto& [key, ids] : std::vector<std::pair<std::string, std::string>>{
+            {"route_address_set", advanced.route_sets}, {"route_exclude_address_set", advanced.exclude_sets}}) {
+            const auto list = clashflux::network::Lines(ids);
+            if (!list.empty()) {
+                inbound[key] = nlohmann::json::array();
+                for (const auto& id : list) inbound[key].push_back(personalRuleSetTag(ctx.opt.ruleSetLibrary, id));
+            }
+        }
+    }
+    return true;
+#endif
 }

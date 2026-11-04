@@ -1,5 +1,6 @@
 // 使用生产标签栏与内容 Pager，在无窗口 Runtime 中验证跟手翻页、嵌套边界和实际几何。
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -59,6 +60,7 @@
 #include "proxy_display_name.h"
 #include "proxy_test_model.h"
 #include "proxy_node_tile.h"
+#include "settings_group_layout.h"
 
 namespace {
 using huxerui::testing::UiSelector;
@@ -767,11 +769,15 @@ void testDiagnosticsThemeAndLayout() {
         huxerui::testing::UiTest ui(kDiagnosticsApplication,
             {.viewport = {320.0F, 400.0F}, .resource_provider = AppResources()});
         ui.PumpAndSettle();
-        ui.Find(UiSelector::Key("runtime-diagnostics-content"))
-            .ScrollUntil(UiSelector::Text("Close")).Tap();
+        const auto footer = ui.Find(UiSelector::Key("dialog-actions")).One().bounds;
+        ui.Find(UiSelector::Key("runtime-diagnostics-content")).ScrollBy({0.0F, 200.0F});
+        ui.PumpAndSettle();
+        check(std::abs(ui.Find(UiSelector::Key("dialog-actions")).One().bounds.y - footer.y) < 0.5F,
+              "diagnostics footer stays fixed while report content scrolls");
+        ui.Find(UiSelector::Key("dialog-actions")).Find(UiSelector::Text("Close")).Tap();
         ui.PumpAndSettle();
         check(diagnosticsCloses == 1,
-              "short diagnostic dialogs can scroll to and activate the close action");
+              "short diagnostic dialogs keep the close action visible outside scrolling content");
     }
     diagnosticsFixtureSaving = true;
     {
@@ -796,8 +802,10 @@ void testDiagnosticsThemeAndLayout() {
             ui.SetWindowMetrics({.viewport = {width, 800.0F}});
             ui.Pump(kSettle);
             const auto bounds = ui.Find(UiSelector::Key("runtime-diagnostics-content")).One().bounds;
-            check(std::abs(bounds.width - width) < 0.5F && std::abs(bounds.height - 800.0F) < 0.5F,
-                  "diagnostics page fills its viewport across narrow and expanded sizes");
+            const auto footer = ui.Find(UiSelector::Key("dialog-actions")).One().bounds;
+            check(std::abs(bounds.width - width) < 0.5F && bounds.height > 0.0F &&
+                  bounds.y + bounds.height <= footer.y && std::abs(footer.y + footer.height - 800.0F) < 0.5F,
+                  "diagnostics body and fixed actions fill the page across narrow and expanded sizes");
             check(ui.Find(UiSelector::Key("diagnostics-target")).One().value == "https://example.test/" &&
                   !ui.Find(UiSelector::Text("Close")).Exists() &&
                   !ui.Find(UiSelector::Text("Runtime diagnostics")).Exists(),
@@ -4851,6 +4859,119 @@ huxerui::View ModeChoiceRoot() {
 }
 const huxerui::Application kModeChoiceApplication{ModeChoiceRoot, {.show_debug_overlay = false, .window_hooks = {clashflux::ui::InstallToastLayers}}};
 
+
+bool settingsRowsDark = false, settingsRowsEnabled = true;
+std::array<int, 3> settingsRowClicks{};
+int settingsSwitchChanges = 0;
+
+huxerui::View SettingsRowsRoot() {
+    using namespace clashflux::ui;
+    auto theme = settingsRowsDark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
+    ApplyFluxInteractionTheme(theme);
+    return huxerui::MaterialTheme(theme, huxerui::Scope([theme] {
+        const auto checked = huxerui::UseState(false);
+        const auto action = [](int index) {
+            return SettingsActionRow(huxerui::Text("Row " + std::to_string(index)),
+                [index] { ++settingsRowClicks[index]; },
+                {.role = huxerui::SemanticRole::Button, .label = "Row " + std::to_string(index)})
+                .With(huxerui::Enabled(settingsRowsEnabled)).Key("settings-action-" + std::to_string(index));
+        };
+        return huxerui::ScrollView(huxerui::Column {
+          huxerui::Column {
+            huxerui::ProvideEnvironment(SettingsRowInsets{16.0F, 10.0F, 48.0F}, huxerui::Column {
+              action(0), action(1),
+              SettingsContentRow(huxerui::Row {
+                huxerui::Text("Independent control").With(huxerui::Grow(1.0F)),
+                huxerui::Switch(checked.Get()).OnChanged([checked](bool value) {
+                    checked = value; ++settingsSwitchChanges;
+                }).Key("settings-independent-switch"),
+              }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))).Key("settings-control-row"),
+              action(2),
+            }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
+          }.With(huxerui::Background(theme.colors.surface), huxerui::CornerRadius(14.0F),
+              huxerui::ClipChildren(), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+              .Key("settings-row-group"),
+          huxerui::Row {}.With(huxerui::Frame{.height = 16.0F}),
+        }.With(huxerui::Padding(20.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+    }));
+}
+const huxerui::Application kSettingsRowsApplication{SettingsRowsRoot, {.show_debug_overlay = false}};
+
+bool hasSettingsRowLayer(huxerui::testing::UiTest& ui, huxerui::Rect bounds, float opacity) {
+    std::istringstream input(ui.CaptureSnapshot().ToString());
+    std::string line; std::getline(input, line); std::getline(input, line);
+    const auto snapshot = readCatPaintNode(input, line);
+    const auto scan = [&](auto&& self, const CatPaintNode& node) -> bool {
+        if (node.name == "rect") {
+            const auto* rect = node.Find("bounds");
+            const auto* brush = node.Find("brush");
+            const auto* color = brush ? brush->Find("color") : nullptr;
+            if (rect && color && std::abs(rect->Number("width") - bounds.width) < 0.1F &&
+                std::abs(rect->Number("height") - bounds.height) < 0.1F &&
+                std::abs(color->Number("alpha") - opacity) < 0.001F) return true;
+        }
+        return std::ranges::any_of(node.children, [&](const auto& child) { return self(self, child); });
+    };
+    return scan(scan, snapshot);
+}
+
+void testSettingsRowFeedback() {
+    using namespace clashflux::ui;
+    for (bool dark : {false, true}) for (float width : {360.0F, 960.0F}) for (bool enabled : {true, false}) {
+        settingsRowsDark = dark; settingsRowsEnabled = enabled;
+        settingsRowClicks = {}; settingsSwitchChanges = 0;
+        huxerui::testing::UiTest ui(kSettingsRowsApplication, {.viewport = {width, 360.0F}});
+        ui.PumpAndSettle();
+        const auto group = ui.Find(UiSelector::Key("settings-row-group")).One().bounds;
+        const auto first = ui.Find(UiSelector::Key("settings-action-0")).One().bounds;
+        const auto middle = ui.Find(UiSelector::Key("settings-action-1")).One().bounds;
+        const auto control = ui.Find(UiSelector::Key("settings-control-row")).One().bounds;
+        const auto last = ui.Find(UiSelector::Key("settings-action-2")).One().bounds;
+        check(std::abs(first.width - group.width) < 0.1F && std::abs(first.x - group.x) < 0.1F &&
+              std::abs(last.width - group.width) < 0.1F && std::abs(first.height - 48.0F) < 0.1F &&
+              std::abs(first.y - group.y) < 0.1F && std::abs(last.y + last.height - group.y - group.height) < 0.1F,
+              "whole-row actions reach the group's edges, including first and last rows");
+        check(std::abs(middle.y - first.y - first.height) < 0.1F &&
+              std::abs(control.y - middle.y - middle.height) < 0.1F &&
+              std::abs(last.y - control.y - control.height) < 0.1F,
+              "groups allocate contiguous cells with padding inside each row");
+        ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 93,
+            .position = {middle.x + 1.0F, middle.y + middle.height / 2.0F},
+            .device_kind = huxerui::PointerDeviceKind::Mouse});
+        ui.PumpAndSettle();
+        check(hasSettingsRowLayer(ui, middle, kInteractionHoverOpacity) == enabled,
+              "hover fills the full allocated cell in both themes and widths; disabled rows have no hover");
+        for (auto device : {huxerui::PointerDeviceKind::Mouse, huxerui::PointerDeviceKind::Touch}) {
+            for (float x : {middle.x + 1.0F, middle.x + middle.width - 1.0F}) {
+                huxerui::PointerEvent event{.type = huxerui::PointerEventType::Down, .pointer_id = 94,
+                    .position = {x, middle.y + middle.height / 2.0F}, .device_kind = device,
+                    .changed_button = huxerui::PointerButton::Primary,
+                    .pressed_buttons = huxerui::PointerButton::Primary};
+                ui.SendPointer(event); ui.Pump(); ui.Pump(std::chrono::milliseconds(100));
+                if (enabled) check(hasSettingsRowLayer(ui, middle, kInteractionPressOpacity),
+                    "press fills the same cell as hover, including its horizontal padding");
+                event.type = huxerui::PointerEventType::Up;
+                event.pressed_buttons = huxerui::PointerButton::None;
+                ui.SendPointer(event); ui.PumpAndSettle();
+            }
+        }
+        check(settingsRowClicks == std::array<int, 3>{0, enabled ? 4 : 0, 0},
+              "mouse and touch activate row padding once without activating adjacent rows");
+        ui.TapAt({group.x + 0.25F, group.y + 0.25F}); ui.PumpAndSettle();
+        ui.TapAt({control.x + 1.0F, control.y + control.height / 2.0F}); ui.PumpAndSettle();
+        check(settingsRowClicks == std::array<int, 3>{0, enabled ? 4 : 0, 0},
+              "rounded outside corners and passive row whitespace do not invoke actions");
+        ui.Find(UiSelector::Key("settings-independent-switch")).Tap(); ui.PumpAndSettle();
+        check(settingsSwitchChanges == 1 && settingsRowClicks == std::array<int, 3>{0, enabled ? 4 : 0, 0},
+              "the independent switch changes once without a surrounding row action");
+        if (enabled) {
+            ui.TapAt({middle.x + 1.0F, middle.y + middle.height / 2.0F}); ui.PumpAndSettle();
+            ui.PressKey(huxerui::Key::Space); ui.PumpAndSettle();
+            check(settingsRowClicks[1] == 6, "keyboard activation uses the same semantic row action");
+        }
+    }
+}
+
 void testModeChoiceFeedback() {
     using namespace clashflux::ui;
     for (bool dark : {false, true}) for (const char* accent : {"blue", "green"}) {
@@ -5247,6 +5368,137 @@ struct DialogTestScope {
     bool operator==(const DialogTestScope&) const = default;
 };
 
+bool hasDialogButtonOutline(huxerui::testing::UiTest& ui, huxerui::Rect bounds) {
+    std::istringstream input(ui.CaptureSnapshot().ToString());
+    std::string line; std::getline(input, line); std::getline(input, line);
+    const auto snapshot = readCatPaintNode(input, line);
+    const auto scan = [&](auto&& self, const CatPaintNode& node) -> bool {
+        const auto* rect = node.Find("bounds");
+        const auto* style = node.Find("style");
+        if (node.name == "border" && rect && style && std::abs(style->Number("width") - 1.0F) < 0.1F &&
+            std::abs(rect->Number("width") - bounds.width) <= 1.1F &&
+            std::abs(rect->Number("height") - bounds.height) <= 1.1F) return true;
+        return std::ranges::any_of(node.children, [&](const auto& child) { return self(self, child); });
+    };
+    return scan(scan, snapshot);
+}
+
+bool flatDialogLong = false, flatDialogDark = false;
+huxerui::View FlatDialogTestRoot() {
+    using namespace clashflux::ui;
+    const auto theme = flatDialogDark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
+    return huxerui::MaterialTheme(theme, huxerui::Scope([] {
+        const auto dialog = huxerui::UseDialog();
+        return huxerui::Button("Open flat editor").OnClick([dialog] {
+            ShowEditorDialog(dialog, [](huxerui::DialogContext context) {
+                return huxerui::Scope([context] {
+                    const auto dirty = huxerui::UseState(false);
+                    const auto busy = huxerui::UseState(false);
+                    const auto close = UseEditorClose([dirty] { return dirty.Get(); },
+                        [busy] { return busy.Get(); }, [context] { context.Dismiss(); });
+                    std::vector<huxerui::View> fields{
+                      huxerui::Scope([] {
+                          check(huxerui::UseEnvironment<DialogSurfaceContext>().flat,
+                              "dialog publishes flat-content policy through its real surface");
+                          return huxerui::View{};
+                      }),
+                      huxerui::Button("Mutate draft").OnClick([dirty] { dirty = true; }),
+                      huxerui::Button("Toggle busy").OnClick([busy] { busy = !busy.Get(); }),
+                    };
+                    if (flatDialogLong) for (int i = 0; i < 20; ++i)
+                        fields.push_back(huxerui::Text("Field " + std::to_string(i))
+                            .With(huxerui::Frame{.height = 48.0F}));
+                    huxerui::View body = huxerui::ScrollView(huxerui::Column(fields).With(huxerui::Spacing(12.0F),
+                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+                        .With(huxerui::ScrollBar()).Key("flat-dialog-scroll");
+                    if (flatDialogLong) body = huxerui::View{body}.With(huxerui::Grow(1.0F));
+                    return DialogScaffold(DialogHeader("Flat editor"), body,
+                        DialogActions({DialogAction("Cancel editor", close, false, !busy.Get()).Key("flat-dialog-cancel"),
+                            DialogAction("Save editor", [] {})}), DialogSize::Form, flatDialogLong);
+                });
+            });
+        });
+    }));
+}
+
+void testFlatDialogLayoutAndDismissal() {
+    using namespace clashflux::ui;
+    for (bool dark : {false, true}) for (bool longForm : {false, true})
+        for (const auto size : {huxerui::Size{360.0F, 360.0F}, huxerui::Size{960.0F, 720.0F}}) {
+            flatDialogDark = dark; flatDialogLong = longForm;
+            const huxerui::Application application{FlatDialogTestRoot};
+            huxerui::testing::UiTest ui(application, {.viewport = size, .resource_provider = AppResources()}); ui.PumpAndSettle();
+            ui.Find(UiSelector::Text("Open flat editor")).Tap(); ui.PumpAndSettle();
+            const auto header = ui.Find(UiSelector::Key("dialog-header")).One().bounds;
+            const auto footer = ui.Find(UiSelector::Key("dialog-actions")).One().bounds;
+            const auto scroll = ui.Find(UiSelector::Key("flat-dialog-scroll")).One().bounds;
+            check(!ui.Find(UiSelector::Key("dialog-header")).Find(UiSelector::Type<huxerui::IconButton>()).Exists(),
+                "dialog titles have no close icon; cancellation belongs to the footer");
+            const auto cancel = ui.Find(UiSelector::Key("flat-dialog-cancel")).One().bounds;
+            check(hasDialogButtonOutline(ui, cancel), "secondary dialog action paints its outline at rest");
+            const huxerui::Point center{cancel.x + cancel.width / 2.0F, cancel.y + cancel.height / 2.0F};
+            ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 97,
+                .position = center, .device_kind = huxerui::PointerDeviceKind::Mouse});
+            ui.PumpAndSettle();
+            check(hasSettingsRowLayer(ui, cancel, kInteractionHoverOpacity),
+                "outlined cancellation paints hover feedback across its full button bounds");
+            huxerui::PointerEvent press{.type = huxerui::PointerEventType::Down, .pointer_id = 97,
+                .position = center, .device_kind = huxerui::PointerDeviceKind::Mouse,
+                .changed_button = huxerui::PointerButton::Primary,
+                .pressed_buttons = huxerui::PointerButton::Primary};
+            ui.SendPointer(press); ui.Pump(); ui.Pump(std::chrono::milliseconds{100});
+            check(hasSettingsRowLayer(ui, cancel, kInteractionPressOpacity),
+                "outlined cancellation paints press feedback without losing its outline");
+            press.type = huxerui::PointerEventType::Cancel; press.pressed_buttons = huxerui::PointerButton::None;
+            ui.SendPointer(press); ui.PumpAndSettle();
+            ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 97,
+                .position = {0.0F, 0.0F}, .device_kind = huxerui::PointerDeviceKind::Mouse});
+            const auto cancelFocused = [&] {
+                return ui.Find(UiSelector::AllOf({UiSelector::Key("flat-dialog-cancel"),
+                           UiSelector::Focused(true)})).Exists() ||
+                    ui.Find(UiSelector::Key("flat-dialog-cancel")).Find(UiSelector::Focused(true)).Exists();
+            };
+            // Pointer focus does not imply keyboard focus visibility. Traverse with Tab first.
+            ui.PressKey(huxerui::Key::Tab); ui.PumpAndSettle();
+            for (int step = 0; step < 8 && !cancelFocused(); ++step) {
+                ui.PressKey(huxerui::Key::Tab); ui.PumpAndSettle();
+            }
+            check(cancelFocused(), "outlined cancellation is keyboard reachable");
+            check(hasSettingsRowLayer(ui, cancel, kInteractionFocusOpacity),
+                "outlined cancellation paints keyboard focus feedback");
+            check(header.y >= 0 && footer.y + footer.height <= size.height,
+                "flat editor fixed header/footer fit short and narrow viewports");
+            check(scroll.y >= header.y + header.height && scroll.y + scroll.height <= footer.y,
+                "only flat editor body owns the scrolling viewport");
+            if (!longForm) check(footer.y + footer.height - header.y < 240.0F,
+                "short flat editor keeps its natural height");
+            ui.Find(UiSelector::Text("Toggle busy")).Tap(); ui.PumpAndSettle();
+            check(!ui.Find(UiSelector::Text("Cancel editor")).One().enabled,
+                "busy cancellation exposes its disabled state");
+            ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 97,
+                .position = center, .device_kind = huxerui::PointerDeviceKind::Mouse});
+            ui.PumpAndSettle();
+            check(!hasSettingsRowLayer(ui, cancel, kInteractionHoverOpacity),
+                "disabled outlined cancellation suppresses hover feedback");
+            ui.PressKey(huxerui::Key::Escape); ui.PumpAndSettle();
+            check(ui.Find(UiSelector::Text("Flat editor")).Exists(), "busy editor rejects Escape dismissal");
+            ui.Find(UiSelector::Text("Toggle busy")).Tap(); ui.PumpAndSettle();
+            ui.Find(UiSelector::Text("Mutate draft")).Tap(); ui.PumpAndSettle();
+            if (longForm) {
+                ui.Find(UiSelector::Key("flat-dialog-scroll")).ScrollBy({0.0F, 300.0F}); ui.PumpAndSettle();
+                const auto after = ui.Find(UiSelector::Key("dialog-actions")).One().bounds;
+                check(std::abs(after.y - footer.y) < 0.1F, "scrolling fields cannot move the editor footer");
+            }
+            ui.PressKey(huxerui::Key::Escape); ui.PumpAndSettle();
+            check(ui.Find(UiSelector::Key("discard-keep")).Exists(), "Escape routes through unsaved draft guard");
+            ui.Find(UiSelector::Key("discard-keep")).Tap(); ui.PumpAndSettle();
+            check(ui.Find(UiSelector::Text("Flat editor")).Exists(), "continue editing preserves the modal");
+            ui.Find(UiSelector::Text("Cancel editor")).Tap(); ui.PumpAndSettle();
+            ui.Find(UiSelector::Key("discard-confirm")).Tap(); ui.PumpAndSettle();
+            check(!ui.Find(UiSelector::Text("Flat editor")).Exists(), "explicit discard closes the owner editor");
+        }
+}
+
 huxerui::View DialogSurfaceTestRoot() {
     return huxerui::FlatTheme {huxerui::Scope([] {
         const auto dialog = huxerui::UseDialog();
@@ -5290,6 +5542,14 @@ void testDialogSurfaceEnvironment() {
 
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    try { testSettingsRowFeedback(); }
+    catch (const std::exception& error) {
+        std::fprintf(stderr, "FAIL: settings row feedback: %s\n", error.what());
+        ++failures;
+    }
+    if (failures) return 1;
+    testFlatDialogLayoutAndDismissal();
+    if (failures) return 1;
     testDialogSurfaceEnvironment();
     {
         enum class State { Stopped, Starting, Running, Failed };
