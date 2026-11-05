@@ -11,6 +11,7 @@
 #include "ui/app_update_model.h"
 #include "ui/proxies_model.h"
 #if defined(__ANDROID__)
+#include <huxerui/medialibrary.h>
 #include "ui/qr_photo_decoder.h"
 #endif
 
@@ -47,6 +48,7 @@ const huxerui::Application application{
             clashflux::ui::InstallDesktopTrayRuntime,
 #endif
 #if defined(__ANDROID__)
+            huxerui::media::Install,
             clashflux::ui::InstallQrPhotoDecoder,
 #endif
         },

@@ -25,6 +25,17 @@ huxerui build android --profile debug
 `--source` 时，则两者一起使用该指定源码。构建配置会打印 Gradle 实际选中的 Android Java
 模块或 AAR 路径，可用于确认没有混用版本。
 
+## 扩展库与相册选择
+
+`huxerui_use_library(URL, COMMIT)` 同时提供 native 依赖和 Android Java 库图。
+扫码页相册选择使用固定的官方 Lib-Media；CMake 在 Android 构建和
+`HUXERUI_LIBRARY_GRAPH_ONLY` 模式下声明 Media，桌面主目标不链接该库。
+库图应包含 `HuxerUI::Media`，各 `sourceRoot` 的实际提交必须与
+`cmake/dependencies/Lock.cmake` 一致，不能复用旧 Camera 等扩展的 Java 缓存图。
+重新运行项目的 HuxerUI 配置/库图生成流程，不手改 `.huxerui/generated/libraries.json`。
+Media 当前带入 Media3 播放器依赖，图片选择功能与 Debug APK 体积基线见
+[二维码扫描](qr-scanning.md)；APK 大小不能作为运行内存或真机权限验收结果。
+
 ## sing-box libbox 来源与缓存
 
 当前固定 sing-box 1.14.4，源码 revision

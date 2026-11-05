@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.97 发布说明](docs/releases/v0.3.97.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.98 发布说明](docs/releases/v0.3.98.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -29,7 +29,8 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   更新 / 启用 / 删除 / 规则编辑，本地落盘；支持 Clash YAML、sing-box 原生 JSON、OpenVPN .ovpn 和 VMess JSON 节点订阅（明文列表或 Base64）。卡片右键支持单张二维码和携带完整配置的 QiFi/QRS 多帧二维码分享；节点列表的转换和限制见[节点订阅](docs/node-subscriptions.md)。
   切换准备期间可改选，同一卡片重复点击合并，只保留最后一个待切目标；候选检查、启动与预览复用编译结果。
 - 网页唤醒导入：兼容 sing-box 与 FlClash 订阅链接，打开预填名称与 URL 的导入表单；
-  支持粘贴和扫码解析，格式与平台注册方式见[订阅唤醒链接](docs/profile-links.md)
+  支持粘贴和扫码解析，格式与平台注册方式见[订阅唤醒链接](docs/profile-links.md)。
+  Android 扫码页支持从相册选择图片，与相机共用普通二维码识别和 QRS 帧重组，见[二维码扫描](docs/qr-scanning.md)。
 - 订阅下载：订阅级三态代理（内核 / 系统环境 / 直连）与「允许无效证书」开关；
   Windows 没有系统 CA 目录，https 订阅改用 Windows 证书存储校验，与系统浏览器
   的信任结论一致
@@ -399,7 +400,7 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 `main` 保留官方基线；Lib-Camera、Lib-Charts、Lib-SQLite 也从各自 `FarnaHerry` fork 的
 `farna/main` 按固定 SHA 获取，原生构建与 Android 库图共用同一依赖身份。
 本地检出、补丁归属与升级流程见 [HuxerUI fork](docs/huxerui-fork.md)。
-当前源码基线为 SDK 0.4.0（`a755f9ff`）；离线回落包仍为独立锁定的 0.3.0 SDK，不代表本轮源码验收。
+当前源码基线为 SDK 0.4.0（`97d6fed`），新增分栏/停靠布局 API，应用现有页面兼容；离线回落包仍为独立锁定的 0.3.0 SDK，不代表本轮源码验收。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、

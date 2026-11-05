@@ -38,6 +38,8 @@ set(CLASHFLUX_HUXERUI_CHARTS_URL "https://github.com/FarnaHerry/Lib-Charts.git")
 set(CLASHFLUX_HUXERUI_CHARTS_COMMIT "e90cfa84707bdf72eb6029410bf05c420efa62fc")
 set(CLASHFLUX_HUXERUI_CODEEDITOR_URL "https://github.com/FarnaHerry/Lib-CodeEditor.git")
 set(CLASHFLUX_HUXERUI_CODEEDITOR_COMMIT "a332e7c3158818a891bb8181756d439a62df6268")
+set(CLASHFLUX_HUXERUI_MEDIA_URL "https://github.com/HuxerUI/Lib-Media.git")
+set(CLASHFLUX_HUXERUI_MEDIA_COMMIT "f45eb3c78fcb67dc76853df6573df6c2d16e28b1")
 
 function(clashflux_dependency_source name)
     clashflux_extract(${name} "${CLASHFLUX_DEP_${name}_ARCHIVE}"

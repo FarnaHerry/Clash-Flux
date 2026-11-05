@@ -4,10 +4,23 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `129209bc0d519ae475c17a610f25c7a67a4a104b`，各平台 CI 共用
+Clash-Flux 当前固定 `97d6fed1b6986655e4e744e157218917d5ebb0cb`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
+
+Media 选择器直接使用官方 [HuxerUI/Lib-Media](https://github.com/HuxerUI/Lib-Media)，
+固定提交 `f45eb3c78fcb67dc76853df6573df6c2d16e28b1`，本轮未创建 fork 或修改库源码。
+应用仅在 Android 集成相册图片选择；当前上游整体构建，尚无 picker-only 开关，
+功能、APK 体积比较及等待上游 Android 静态链接调整的 TODO 见[二维码扫描](qr-scanning.md)。
+
+2026-11-06 更新到 [`97d6fed`](https://github.com/FarnaHerry/HuxerUI/commit/97d6fed1b6986655e4e744e157218917d5ebb0cb)：
+已发布的 `farna/main` 合入官方 `a6e00e4`，新增受控 `SplitLayout` 分栏及
+`DockTree` / `DockLayout` 单窗口停靠工作区、分隔条无障碍语义和对应回归。
+State 示例和技能改为优先隐式读取，`State::Get()` API 保留；应用现有布局、
+任务、窗口和扩展调用兼容，无需页面迁移。Pager 等 fork 修复保留，五项扩展 pin 不变。
+本机独立 checkout 与 CI/Android Java/native 统一固定到上述 SHA；验收见
+[L1 / L2 / L3 记录](l1-l2-l3-status.md)。
 
 2026-11-05 更新到 `129209bc`：`a755f9ff` 新增窗口原生 surface 暴露（Linux GTK canvas
 aperture 与 locator 矩形、Win32 HWND），供 Camera 扩展的桌面屏幕选区使用，原生输入
@@ -143,7 +156,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 129209bc0d519ae475c17a610f25c7a67a4a104b
+git -C third_party/huxerui checkout 97d6fed1b6986655e4e744e157218917d5ebb0cb
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`

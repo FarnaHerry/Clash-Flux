@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.97 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.98 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -412,6 +412,16 @@ huxerui_use_library(clash-flux
     URL "${CLASHFLUX_HUXERUI_CHARTS_URL}"
     COMMIT "${CLASHFLUX_HUXERUI_CHARTS_COMMIT}"
 )
+
+# Native album selection is currently consumed by the Android QR page only.
+# The platform-neutral library graph must still include its Java package.
+if (ANDROID OR HUXERUI_LIBRARY_GRAPH_ONLY)
+    huxerui_use_library(clash-flux
+        TARGET HuxerUI::Media
+        URL "${CLASHFLUX_HUXERUI_MEDIA_URL}"
+        COMMIT "${CLASHFLUX_HUXERUI_MEDIA_COMMIT}"
+    )
+endif ()
 
 # CodeEditor's public-header capability checks must inspect the active SDK.
 set(_clashflux_previous_huxerui_home "${HUXERUI_HOME}")

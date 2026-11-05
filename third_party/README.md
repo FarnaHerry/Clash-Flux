@@ -9,7 +9,7 @@ nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归�
 归档版本及来源以本项目清单为准。
 
 应用当前的 HuxerUI fork 源码提交与检出命令见 [固定版本](../docs/huxerui-fork.md)；本机独立 checkout、CI 和 Android Java/native 共用该身份，不消费维护工作树。
-当前源码基线为 SDK 0.4.0（`129209bc`）；下表 0.3.0 是仍然保留的离线 SDK 归档身份，不是源码版本。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
+当前源码基线为 SDK 0.4.0（`97d6fed`）；下表 0.3.0 是仍然保留的离线 SDK 归档身份，不是源码版本。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
 
 ## 清单与来源
 
@@ -22,6 +22,7 @@ nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归�
 | OpenSSL | 3.5.1 | `openssl-3.5.1-linux-x86_64.tar.gz` | 静态预编译产物（libssl.a/libcrypto.a + include），仅 linux x86_64 兜底；其他平台用系统 OpenSSL。 |
 | 图表（Charts） | Lib-Charts fork | 构建期获取，不入 tarball | `FarnaHerry/Lib-Charts` 的 `farna/main`，固定 `e90cfa84707bdf72eb6029410bf05c420efa62fc`，包含圆角饼图、全零数据等分且中心 0%、180ms 悬停动画与 96pt 紧凑绘图面，用于首页流量与饼图。 |
 | 相机（Camera） | Lib-Camera fork | 构建期获取，不入 tarball | `FarnaHerry/Lib-Camera` 的 `farna/main`，固定 `48b11d6bb5ef0246c86ff7638e882f18b27b8db0`，包含 ApplicationContext/UiWindow 兼容、库图模式早退、Linux V4L2 预览/拍照、X11 与 ScreenCast/PipeWire 屏幕选区，以及 Android/iOS 窗口级模块工厂与 `AwaitCallback` 拍照等待。 |
+| 媒体选择（Media） | Lib-Media 上游 | 构建期获取，不入 tarball | 官方 `HuxerUI/Lib-Media`，固定 `f45eb3c78fcb67dc76853df6573df6c2d16e28b1`，未打补丁。仅 Android 扫码页使用图片选择器；原生目标和 Android 库图共用此提交，桌面应用不链接 Media。当前上游整体构建，Android 引入 Media3 ExoPlayer 1.9.3，不能因未调用播放器就假定其依赖被移除；体积实测见[二维码扫描](../docs/qr-scanning.md)。 |
 | 文本编辑（CodeEditor） | Lib-CodeEditor fork | 构建期获取，不入 tarball | `FarnaHerry/Lib-CodeEditor` 固定 `a332e7c3158818a891bb8181756d439a62df6268`，SweetEditor `bd4330e70eda5c71b71ecac54cf7312d82d2eae2`。预构建文档、视口编辑、只读复制、滚动和 Windows 公共头兼容；Linux 用固定 simdutf v7.7.0 源码提交 `94fb52ea0219cb37092d8ae294b4702bacf5d8df` 按消费者工具链构建，并以 build-only include 复用 SweetEditor 同版本兼容头，避免预编译归档与 libc++ 混用；其它平台使用同版本预编译包。SweetLine 仅由库的子模块获取，不链接到应用。 |
 | Zstandard | 1.5.7 | `zstd-1.5.7.tar.gz` | Official facebook/zstd v1.5.7 tag archive (`https://codeload.github.com/facebook/zstd/tar.gz/refs/tags/v1.5.7`), SHA256 `37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3`. Static MRS decoder dependency on all platforms, no CLI/test/shared build. Upstream BSD/GPL license files remain in the archive. |
 | Glaze | 9.0.0 | `glaze-9.0.0-headers.tar.gz` | 官方 tag revision `d78832c82289c61a9315bfbc35332cec9f4e93ca` 的 `include/` + MIT `LICENSE`。SHA256 `872764412db2ba94cf57e39cf6518f86c0e13728c1c668f7ed398801aadff812`。私有 `clashflux_wire` 静态库实现应用 JSON codec，不运行上游 CMake。 |
@@ -29,7 +30,7 @@ nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归�
 | QR-Code-generator | 1.8.0 | `qrcodegen/qrcodegen.{hpp,cpp}`（源码直提，同 json 先例） | 上游 `nayuki/QR-Code-generator` v1.8.0（MIT）。订阅分享二维码。 |
 | yaml-cpp | 0.8.0 | `yaml-cpp-0.8.0.tar.gz` | 上游 `jbeder/yaml-cpp` v0.8.0（MIT）。Clash 订阅 YAML 解析（sing-box 配置编译器输入）。 |
 
-Camera、Charts、SQLite、CodeEditor 通过 `huxerui_use_library(URL, COMMIT)` 获取到构建缓存，原生构建
+Camera、Charts、SQLite、CodeEditor、Media 通过 `huxerui_use_library(URL, COMMIT)` 获取到构建缓存，原生构建
 与 Android 库图同源；不自动采用旧 `third_party/lib-*` 工作树，也不在配置期打补丁。
 维护目录、审核清单与升级流程见 [HuxerUI fork](../docs/huxerui-fork.md)。
 

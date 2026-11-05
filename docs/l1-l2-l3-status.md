@@ -1,5 +1,67 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-06：v0.3.98 发布准备
+
+- 基于 `2087af1` 整理相册扫码与 HUI `97d6fed` 升级；中英文说明见
+  [v0.3.98](releases/v0.3.98.md)。应用版本 0.3.98，Android versionCode 176（上一发布 175）。
+- 升版本后 `cmake --build build --target clash-flux -j 4`、`./run.sh --version`
+  （v0.3.98）、`git diff --check` 通过；Android `./gradlew :app:assembleDebug`
+  **52 秒通过**，用 aapt 核验实际 APK versionName 0.3.98 / versionCode 176。
+- 功能与依赖保持下面已通过 **31/31** 桌面回归和 **1/1** QRS 的快照，升版本后不重复
+  全套功能测试。按用户要求只提交、打标签和推送，不监听 CI；正式产物、签名和设备验收
+  不因推送成功而记作通过，Media 静态链接裁剪继续等待上游。
+
+## 2026-11-06：HuxerUI 升级到 97d6fed，Media 等待上游裁剪
+
+快照：应用 `2087af19802f48f7884a471f4bc3edf0be8d677e`（v0.3.97）加已接入的相册工作区和
+本轮升级；本机独立 HuxerUI checkout 与 CI 固定
+`97d6fed1b6986655e4e744e157218917d5ebb0cb`，五项扩展的 URL/COMMIT 不变。
+
+- 从 origin 获取最新 `farna/main`，核验 `129209bc..97d6fed`：合入官方 `a6e00e4`，
+  新增受控分栏、单窗口停靠工作区及分隔条无障碍语义。State 隐式读取只改变示例/指南，
+  `Get()` 保留；应用无需 API 迁移，Pager 等已有 fork 修复保留。框架工作树无补丁。
+- `cmake --build build --target clash-flux -j 4`、`cmake --build build -j 4`、
+  `./run.sh --version`（v0.3.97）、`git diff --check` 通过，包含 HUI codegen 和全部测试目标。
+- `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required`
+  **31/31，175.51 秒**，含 page_transition、ui_resources、CPS 重定位/版本/缓存、
+  下载 TLS、运行时和持久化；另跑 `-R '^qrs_codec$'` **1/1，0.01 秒**。
+- 重新配置 Android 库图，从 `platform/android` 执行 `./gradlew :app:assembleDebug`
+  **1 分 43 秒通过**。Java 包路径和最近配置的 arm64-v8a native cache 均指向
+  `third_party/huxerui`，包含相册功能和现有 preBuild 策略检查；仅既存 Java 8 弃用警告。
+- 使用隔离的 XDG 数据/配置/缓存目录运行 Linux X11 GUI，在系统默认 HiDPI 缩放下实际检查
+  首页空流量圆环、侧栏与 Compact 底栏，以及 2600×1640 → 780×1640 → 2600×1640 像素
+  窗口往返；圆环显示 0%，恢复宽窗后继续绘制，进程存活且日志为空。截图在忽略目录
+  `build/hui-upgrade-97d6fed/gui/*native-scale.png`，只结束本次隔离 GUI 进程。
+- 接受 Media 已测的 +2.92 MiB 增量，按用户转述的作者计划，在
+  [二维码扫描 TODO](qr-scanning.md#依赖与体积) 记录等待 0.4 Release 前的 Android
+  全静态链接调整，再复测 native/DEX/APK；未创建 fork，旧体积基线仍明确对应 `129209bc`。
+- 未执行 Windows/macOS/iOS 原生构建、Android 真机、正式签名/Release 或运行内存测量。
+  GUI 检查不包含真实流量、摄像头、相册选择器或系统 VPN 操作。
+
+## 2026-11-05：Android 扫码页接入 Lib-Media 相册选择
+
+快照：应用 `2087af19802f48f7884a471f4bc3edf0be8d677e`（v0.3.97）加本轮工作区；
+HuxerUI `129209bc`、Camera `48b11d6` 不变，新增官方 Lib-Media
+`f45eb3c78fcb67dc76853df6573df6c2d16e28b1`，未创建 fork 或修改扩展源码。
+
+- Android 扫码页增加单张相册选图，与相机共用普通 QR 和 QRS 重组；选择时取消相机任务，
+  页面卸载取消在途等待，取消/失败恢复 busy 与此前扫描状态。provider 图片在 Java 工作
+  线程采样解码并释放引用，不整份传入 native。功能与体积基线见[二维码扫描](qr-scanning.md)。
+- `cmake --build build --target clash-flux test_page_transition -j 4`、
+  `cmake --build build -j 4`、最终主目标构建、`./run.sh --version`（v0.3.97）和
+  `git diff --check` 通过；UI 源码和新增资源经过 HUI codegen。
+- `ctest --test-dir build --no-tests=error -L clashflux-required` **31/31，175.98 秒**；
+  另跑 `ctest --test-dir build --output-on-failure --no-tests=error -R '^qrs_codec$'`
+  **1/1，0.01 秒**。page_transition 新增生产相机/相册控制的取消与卸载回归。
+- 从 `platform/android` 执行 `./gradlew :app:assembleDebug` 成功（最终 **51 秒**），
+  Java/native 消费相同固定来源，包含现有 preBuild 策略检查；只有既存 Java 8 弃用警告。
+  网络获取改用按固定提交校验的本地 Git 下载镜像，未改变依赖声明或使用可变维护工作树。
+- 同工具链、ABI 和当前既有依赖重建不含 Media 的 Debug 基线，并对两侧重新打包：
+  APK **52,327,902 → 55,389,117 字节，+2.92 MiB / 5.85%**，主要增加 DEX。
+  本地证据位于 `build/media-size-comparison/`，详细摘要和哈希见上述专题。
+- 未配置正式发布签名，Release 签名门禁按预期拒绝；未产出正式 Release 包。
+  未验证真机系统选择器/权限、云端相册、相机恢复、实际导入、内存/PSS、跨平台相册或发布。
+
 ## 2026-11-05：v0.3.97 标签 CI 与 Release
 
 - 标签 `v0.3.97`（提交 `93733f9`）的 CI 运行 `42028555034` 通过全部发布门禁：

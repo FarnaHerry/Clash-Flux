@@ -21,7 +21,9 @@
 #include "profile_file_picker.h"
 #include "task_bridge.h"
 #if defined(__ANDROID__)
+#include <huxerui/medialibrary.h>
 #include "qr_photo_decoder.h"
+#include "qr_scanner_control.h"
 #endif
 
 import clashflux.core;
@@ -518,171 +520,147 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
     const huxerui::TaskScope tasks = huxerui::UseTaskScope();
-    auto active = huxerui::UseState(false);
-    auto scanning = huxerui::UseState(false);
-    auto decoding = huxerui::UseState(false);
+    const auto control = huxerui::UseState(std::make_shared<QrScannerControl>()).Get();
+    const auto picker = huxerui::media::UseMediaPicker();
+    const auto toast = UseFluxToast();
     auto decoder = huxerui::UseState(std::shared_ptr<QrPhotoDecoder>{});
-    auto qrsDecoder = huxerui::UseState(std::make_shared<qrs::Decoder>());
+    const auto qrsDecoder = huxerui::UseState(std::make_shared<qrs::Decoder>()).Get();
     auto detected = huxerui::UseState(std::string{});
-    auto scanned = huxerui::UseState(std::string{});
     auto message = huxerui::UseState(Localized("正在准备相机…"));
-    const huxerui::camera::CameraSession session =
-        huxerui::camera::UseCamera({
-            .facing = huxerui::camera::Facing::Back,
-            .active = active.Get(),
-        });
-    const auto pending_request =
-        std::make_shared<std::optional<huxerui::PlatformRequestId>>();
-
-    const auto start_scanning = [=] {
-        if (scanning.Get()) return huxerui::TaskHandle{};
-        auto decoder_instance = decoder.Get();
-        if (!decoder_instance) {
-            decoder_instance = OpenQrPhotoDecoder();
-            decoder = decoder_instance;
+    const huxerui::camera::CameraSession session = huxerui::camera::UseCamera({
+        .facing = huxerui::camera::Facing::Back, .active = control->cameraActive.Get(),
+    });
+    const auto getDecoder = [decoder] {
+        if (!decoder.Get()) decoder = OpenQrPhotoDecoder();
+        return decoder.Get();
+    };
+    // Both sources feed the same QRS accumulator; choosing one frame must not
+    // discard frames already obtained from the camera or another image.
+    const auto consume = [qrsDecoder, message](std::string content) -> std::string {
+        if (content.empty()) return {};
+        std::string decoded, error;
+        const auto result = qrsDecoder->Add(content, decoded, error);
+        if (result == qrs::DecodeResult::Complete) return decoded;
+        if (result == qrs::DecodeResult::NotQrs) return content;
+        if (result == qrs::DecodeResult::NeedMore) {
+            message = LocalizedFormat("已扫描 {0} / {1} 个 QRS 帧",
+                qrsDecoder->DecodedBlocks(), qrsDecoder->TotalBlocks());
+        } else {
+            message = error;
+            qrsDecoder->Reset();
         }
-        scanning = true;
-        message = Localized("正在请求相机权限…");
+        return {};
+    };
+    const auto start_scanning = [=] {
+        if (!control->StartCamera()) return;
         detected = std::string{};
-        scanned = std::string{};
-        qrsDecoder = std::make_shared<qrs::Decoder>();
-        return tasks.Launch([=]() -> huxerui::Task<void> {
-            const huxerui::PermissionStatus permission =
-                co_await application.RequestPermissionAsync(
-                    huxerui::Permission::Camera);
-            if (permission != huxerui::PermissionStatus::Granted) {
-                message = Localized(
-                    permission == huxerui::PermissionStatus::Unavailable
-                        ? "当前设备无法使用相机"
-                        : "请允许相机权限后重试");
-                scanning = false;
-                co_return;
-            }
-
-            if (session.Status().state ==
-                huxerui::camera::SessionState::Failed) {
-                session.Retry();
-            }
-            active = true;
-            message = Localized("正在启动相机…");
-
-            while (scanning.Get()) {
-                const huxerui::camera::CameraStatus status = session.Status();
-                if (status.state == huxerui::camera::SessionState::Failed) {
-                    message = status.error
-                                  ? huxerui::StringVariant(status.error->message)
-                                  : Localized("相机启动失败，请重试");
-                    active = false;
-                    scanning = false;
+        message = Localized("正在请求相机权限…");
+        control->cameraTask = tasks.Launch([=]() -> huxerui::Task<void> {
+            try {
+                const auto decoderInstance = getDecoder();
+                const auto permission = co_await application.RequestPermissionAsync(huxerui::Permission::Camera);
+                if (permission != huxerui::PermissionStatus::Granted) {
+                    message = Localized(permission == huxerui::PermissionStatus::Unavailable
+                        ? "当前设备无法使用相机" : "请允许相机权限后重试");
+                    control->scanning = false;
                     co_return;
                 }
-                if (status.state != huxerui::camera::SessionState::Running) {
-                    co_await huxerui::Delay(
-                        std::chrono::milliseconds{120});
-                    continue;
-                }
-
-                if (qrsDecoder.Get()->DecodedBlocks() == 0 &&
-                    detected.Get().empty()) {
-                    message = Localized("将二维码放入取景画面，识别后自动导入");
-                }
-                const auto photo = co_await session.CapturePhotoAsync(
-                    {.jpeg_quality = 50,
-                     .mirror = huxerui::camera::MirrorMode::Off});
-                if (!photo.Succeeded()) {
-                    const auto code = photo.Error().code;
-                    if (code != huxerui::camera::CameraErrorCode::NotReady &&
-                        code != huxerui::camera::CameraErrorCode::Interrupted &&
-                        code != huxerui::camera::CameraErrorCode::OperationInProgress) {
-                        message = photo.Error().message;
-                        active = false;
-                        scanning = false;
-                        co_return;
+                if (session.Status().state == huxerui::camera::SessionState::Failed) session.Retry();
+                control->cameraActive = true;
+                message = qrsDecoder->DecodedBlocks() > 0
+                    ? LocalizedFormat("已扫描 {0} / {1} 个 QRS 帧", qrsDecoder->DecodedBlocks(), qrsDecoder->TotalBlocks())
+                    : Localized("正在启动相机…");
+                while (control->scanning.Get()) {
+                    const auto status = session.Status();
+                    if (status.state == huxerui::camera::SessionState::Failed) {
+                        message = status.error ? huxerui::StringVariant(status.error->message)
+                            : Localized("相机启动失败，请重试");
+                        break;
                     }
-                    co_await huxerui::Delay(
-                        std::chrono::milliseconds{180});
-                    continue;
-                }
-
-                const auto encoded = photo.Value().EncodedBytes();
-                huxerui::Bytes jpeg(encoded.begin(), encoded.end());
-                decoding = true;
-                const huxerui::PlatformRequestId request = decoder_instance->Decode(
-                    std::move(jpeg),
-                    [decoding, scanned, message](
-                        huxerui::PlatformResult<std::string> result) {
-                        decoding = false;
-                        if (const auto* error =
-                                std::get_if<huxerui::PlatformError>(&result)) {
-                            message = error->message;
-                            return;
-                        }
-                        const std::string content =
-                            std::get<std::string>(std::move(result));
-                        if (!content.empty()) {
-                            scanned = content;
-                        }
-                    });
-                *pending_request = request;
-
-                while (scanning.Get() && decoding.Get()) {
-                    co_await huxerui::Delay(
-                        std::chrono::milliseconds{25});
-                }
-                pending_request->reset();
-                if (!scanning.Get()) co_return;
-                const std::string content = scanned.Get();
-                if (!content.empty()) {
-                    scanned = std::string{};
-                    auto decoder_state = qrsDecoder.Get();
-                    std::string decoded;
-                    std::string qrsError;
-                    const qrs::DecodeResult qrsResult =
-                        decoder_state->Add(content, decoded, qrsError);
-                    if (qrsResult == qrs::DecodeResult::Complete) {
-                        detected = decoded;
-                    } else if (qrsResult == qrs::DecodeResult::NeedMore) {
-                        message = LocalizedFormat(
-                            "已扫描 {0} / {1} 个 QRS 帧",
-                            decoder_state->DecodedBlocks(),
-                            decoder_state->TotalBlocks());
-                    } else if (qrsResult == qrs::DecodeResult::Error) {
-                        message = qrsError;
-                        decoder_state->Reset();
-                        co_await huxerui::Delay(
-                            std::chrono::milliseconds{300});
+                    if (status.state != huxerui::camera::SessionState::Running) {
+                        co_await huxerui::Delay(std::chrono::milliseconds{120});
                         continue;
-                    } else {
-                        detected = content;
                     }
+                    if (qrsDecoder->DecodedBlocks() == 0)
+                        message = Localized("将二维码放入取景画面，识别后自动导入");
+                    const auto photo = co_await session.CapturePhotoAsync(
+                        {.jpeg_quality = 50, .mirror = huxerui::camera::MirrorMode::Off});
+                    if (!photo.Succeeded()) {
+                        const auto code = photo.Error().code;
+                        if (code != huxerui::camera::CameraErrorCode::NotReady &&
+                            code != huxerui::camera::CameraErrorCode::Interrupted &&
+                            code != huxerui::camera::CameraErrorCode::OperationInProgress) {
+                            message = photo.Error().message;
+                            break;
+                        }
+                    } else {
+                        const auto encoded = photo.Value().EncodedBytes();
+                        const auto content = consume(co_await decoderInstance->DecodeAsync(
+                            huxerui::Bytes(encoded.begin(), encoded.end())));
+                        if (!content.empty()) {
+                            detected = content;
+                            control->scanning = false;
+                            control->cameraActive = false;
+                            on_result(content);
+                            co_return;
+                        }
+                    }
+                    co_await huxerui::Delay(std::chrono::milliseconds{180});
                 }
-                if (!detected.Get().empty()) {
-                    const std::string content = detected.Get();
-                    active = false;
-                    scanning = false;
-                    on_result(content);
-                    co_return;
-                }
-                co_await huxerui::Delay(
-                    std::chrono::milliseconds{180});
-            }
+            } catch (const std::exception& error) { message = std::string(error.what()); }
+            catch (...) { message = Localized("相机启动失败，请重试"); }
+            control->scanning = false;
+            control->cameraActive = false;
         });
     };
-
-    huxerui::Lifecycle([=] {
-        const huxerui::TaskHandle request = start_scanning();
-        return [request, active, scanning, decoder, pending_request] {
-            request.Cancel();
-            scanning = false;
-            active = false;
-            if (*pending_request) {
-                if (const auto decoder_instance = decoder.Get()) {
-                    decoder_instance->Cancel(**pending_request);
+    const auto select_image = [=] {
+        const bool resumeCamera = control->scanning.Get();
+        const auto previousMessage = message.Get();
+        if (!control->BeginSelection()) return;
+        message = Localized("正在选择图片…");
+        tasks.Launch([=]() -> huxerui::Task<void> {
+            struct FinishSelection {
+                std::shared_ptr<QrScannerControl> control;
+                ~FinishSelection() { control->EndSelection(); }
+            } finish{control};
+            try {
+                auto result = co_await picker.PickAsync({huxerui::media::MediaPickerFilter::Images, 1});
+                if (!result.Succeeded()) throw std::runtime_error(result.Error().message);
+                auto images = std::move(result).Value();
+                if (images.empty()) {
+                    message = previousMessage;
+                } else {
+                    message = Localized("正在识别图片…");
+                    const auto decoderInstance = getDecoder();
+                    const auto text = co_await decoderInstance->DecodeAsync(std::move(images.front()));
+                    if (text.empty()) {
+                        message = Localized("图片中未识别到二维码，请重新选择");
+                        toast.Show(Localized("图片中未识别到二维码，请重新选择"));
+                    } else {
+                        const auto content = consume(text);
+                        if (!content.empty()) {
+                            detected = content;
+                            control->EndSelection();
+                            on_result(content);
+                            co_return;
+                        }
+                    }
                 }
-                pending_request->reset();
+            } catch (const std::exception& error) {
+                message = std::string(error.what());
+                toast.Show(std::string(error.what()));
+            } catch (...) {
+                message = Localized("无法选择或识别图片，请重试");
+                toast.Show(Localized("无法选择或识别图片，请重试"));
             }
-        };
-    });
+            control->EndSelection();
+            if (resumeCamera) start_scanning();
+        });
+    };
+    huxerui::Lifecycle([control, start_scanning] {
+        start_scanning();
+        return [control] { control->StopCamera(); };
+    }, 0);
 
     const huxerui::camera::CameraStatus status = session.Status();
     huxerui::View preview;
@@ -692,7 +670,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                       .mirror = huxerui::camera::MirrorMode::Off});
     } else {
         preview = huxerui::Column {
-            scanning.Get() ? huxerui::View{huxerui::ProgressCircle()}
+            control->scanning.Get() ? huxerui::View{huxerui::ProgressCircle()}
                            : huxerui::View{huxerui::Image(app::images::qr_scan)
                                                .Tint(theme.colors.on_surface_variant)
                                                .With(huxerui::Frame{.width = 36.0F,
@@ -718,13 +696,13 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
             .Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kBody),
                 theme.colors.on_surface_variant}),
-        !scanning.Get() && !detected.Get().empty()
+        !control->scanning.Get() && !detected.Get().empty()
             ? huxerui::View{huxerui::Text(Localized("正在导入配置…"))
                                 .Style(huxerui::TextStyle{
                                     huxerui::Font::System(font_size::kCaption),
                                     theme.colors.on_surface_variant})}
             : huxerui::View{huxerui::Row{}},
-        !scanning.Get()
+        !control->scanning.Get() && !control->selecting.Get()
             ? huxerui::View{huxerui::Button(Localized("重试"))
                                 .OnClick(start_scanning)}
             : huxerui::View{huxerui::Row{}},
@@ -733,7 +711,9 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     return ProfileFlowPage(
         huxerui::Text(Localized("扫描二维码"), huxerui::TextRole::Title),
-        huxerui::View{},
+        huxerui::IconButton(app::images::photo_library, Localized("从相册选择"))
+            .With(huxerui::Tooltip(Localized("从相册选择")), huxerui::Enabled(!control->selecting.Get()))
+            .OnClick(select_image).Key("qr-select-image"),
         huxerui::ScrollView(std::move(body))
             .With(huxerui::Grow(1.0F), huxerui::ScrollBar()),
         std::move(on_back))

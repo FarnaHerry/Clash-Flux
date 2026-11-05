@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.97 release notes](docs/releases/v0.3.97.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.98 release notes](docs/releases/v0.3.98.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -54,6 +54,8 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
 - Browser subscription links: accept sing-box and FlClash links and open an import
   form with the name and URL filled in. Pasting and QR import accept these links too;
   see [formats and platform registration](docs/profile-links.md).
+  On Android, the scanner also accepts a photo from the gallery. Photos and camera
+  captures share QR decoding and QRS frame assembly; see [QR scanning](docs/qr-scanning.md).
 - Subscription downloads: choose the sing-box core, system environment proxy or a
   direct connection for each subscription, with an explicit option to allow invalid
   certificates. On Windows, HTTPS downloads use the Windows certificate store for
@@ -548,7 +550,7 @@ Lib-Charts and Lib-SQLite also use pinned commits from their `FarnaHerry` forks'
 `farna/main` branches, with the same URL/COMMIT identities in native builds and the
 Android library graph. See [HuxerUI fork maintenance](docs/huxerui-fork.md) for local
 checkout, patch ownership and upgrade instructions.
-The current source baseline is SDK 0.4.0 (`a755f9ff`); the separately pinned offline fallback remains SDK 0.3.0 and is outside this source-upgrade validation.
+The current source baseline is SDK 0.4.0 (`97d6fed`), adding split and docking layout APIs while preserving compatibility with existing app pages. The separately pinned offline fallback remains SDK 0.3.0 and is outside this source-upgrade validation.
 
 Windows packaging with `huxerui package windows` creates a `setup.exe` with an
 installation wizard: Burn bundles an MSI and a HuxerUI installer interface with

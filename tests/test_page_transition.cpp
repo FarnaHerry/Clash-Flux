@@ -46,6 +46,7 @@
 #include "empty_state.h"
 #include "connection_row.h"
 #include "website_test_card.h"
+#include "qr_scanner_control.h"
 #include "website_test_editor.h"
 #include "website_test_grid.h"
 #include "theme_colors.h"
@@ -308,6 +309,54 @@ void testConnectionTraceContent() {
         }
 }
 
+
+std::shared_ptr<clashflux::ui::QrScannerControl> qrScannerControl;
+std::optional<huxerui::TaskScope> qrScannerTasks;
+huxerui::View QrScannerControlRoot() {
+    using namespace clashflux::ui;
+    qrScannerControl = huxerui::UseState(std::make_shared<QrScannerControl>()).Get();
+    qrScannerTasks = huxerui::UseApplicationTaskScope();
+    const auto visible = huxerui::UseState(true);
+    return huxerui::Column {
+      huxerui::Button("Close QR scanner").OnClick([visible] { visible = false; }),
+      visible.Get() ? huxerui::Scope([control = qrScannerControl] {
+          huxerui::Lifecycle([control] { return [control] { control->StopCamera(); }; }, 0);
+          return huxerui::Text(control->selecting.Get() ? "Album" : "Camera");
+      }) : huxerui::View{},
+    };
+}
+void testQrScannerControl() {
+    const huxerui::Application application{QrScannerControlRoot};
+    huxerui::testing::UiTest ui(application, {.viewport = {320, 640}});
+    ui.PumpAndSettle();
+    const auto control = qrScannerControl;
+    check(control->StartCamera() && !control->StartCamera(), "QR camera starts once");
+    control->cameraActive = true;
+    auto published = std::make_shared<int>(0), cancelled = std::make_shared<int>(0);
+    const auto beginCapture = [published, cancelled] {
+        return qrScannerTasks->Launch([published, cancelled]() -> huxerui::Task<void> {
+            struct Guard { std::shared_ptr<int> count; ~Guard() { ++*count; } } guard{cancelled};
+            co_await huxerui::Delay(std::chrono::milliseconds{200});
+            ++*published;
+        });
+    };
+    control->cameraTask = beginCapture(); ui.Pump(std::chrono::milliseconds{1});
+    check(control->BeginSelection() && !control->BeginSelection() && !control->StartCamera(),
+        "QR album selection stops the camera and rejects concurrent selection or restart");
+    ui.Pump(std::chrono::milliseconds{250});
+    check(!control->cameraActive.Get() && !control->scanning.Get() && *cancelled == 1 && *published == 0,
+        "a camera result cancelled by album selection cannot publish later");
+    control->EndSelection();
+    check(control->StartCamera(), "cancelled album selection allows camera scanning to resume");
+    control->cameraActive = true;
+    control->cameraTask = beginCapture(); ui.Pump(std::chrono::milliseconds{1});
+    ui.Find(UiSelector::Text("Close QR scanner")).Tap(); ui.PumpAndSettle();
+    check(!control->cameraActive.Get() && !control->scanning.Get() && *cancelled == 2 && *published == 0,
+        "QR page unmount cancels its remaining capture and stops the camera");
+    check(control->BeginSelection(), "album selection remains available when the camera is inactive");
+    control->EndSelection();
+    qrScannerControl.reset(); qrScannerTasks.reset();
+}
 
 struct WebsiteFixtureMetrics { int active = 0, maximum = 0, started = 0; };
 std::shared_ptr<clashflux::ui::WebsiteTestModel> websiteFixture;
@@ -5974,6 +6023,7 @@ int main() {
     testConnectionList();
     testConnectionTraceContent();
     testWebsiteTests();
+    testQrScannerControl();
     try { testDiagnosticsContent(); testDiagnosticsThemeAndLayout(); }
     catch (const std::exception& error) {
         diagnosticsFixtureFullPage = false;

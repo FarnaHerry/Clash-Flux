@@ -1,0 +1,70 @@
+# Android 二维码扫描与相册选图
+
+## 使用与生命周期
+
+Android 配置导入的扫码页在页头提供「从相册选择」图标，打开系统图片选择器，
+每次选择一张静态图片。相机不可用或相机权限被拒绝时，该入口仍可使用；
+相册选择本身不申请相机或全相册读取权限。进入扫码页时原有的相机权限请求仍会执行。
+桌面端尚未开放该扫码页，本轮不扩大桌面或 iOS 支持范围。
+
+- 选择图片前取消当前相机拍照/解码任务并停用预览，选择和解码期间拒绝重复点击。
+- 普通二维码与相机结果走同一导入回调；QRS 图片与相机共用帧累积器，可以逐张补充帧。
+  本轮不实现动画图片逐帧扫描或一次选择多张图片。
+- 取消选择保留表单和已收集 QRS 帧；读取失败、未识别到二维码时反馈错误并允许重试。
+  如果此前正在扫描相机，取消、失败或尚未集齐 QRS 帧后恢复扫描。
+- 选择器和识别任务归扫码页所有，离开页面取消在途等待；迟到的相机/解码结果不能触发导入。
+  实际配置导入继续使用既有的导入路径。
+
+选中的 HUI `FileReference` 通过平台载荷交给 Java，持有 provider 引用直至工作线程结束；
+通过 `ContentResolver` 流式读取尺寸和采样图像，不把相册原文件整份复制到 C++/JNI 字节数组。
+位图沿用相机识别的 1600 像素采样上限和 ZXing QR 解码，完成或失败后释放位图与文件引用。
+取消后底层已开始的读取可能继续到结束，但不再发布结果。
+
+## 依赖与体积
+
+直接消费官方 [Lib-Media 固定源码](https://github.com/HuxerUI/Lib-Media/tree/f45eb3c78fcb67dc76853df6573df6c2d16e28b1)，
+URL/完整 SHA 在 `cmake/dependencies/Lock.cmake`，通过 `HuxerUI::Media` 安装并使用
+`UseMediaPicker().PickAsync({MediaPickerFilter::Images, 1})`。未修改上游库或建立 fork。
+Android native 与 Java 库图使用同一固定提交，桌面主目标不引入 Media。
+
+该上游版本没有 picker-only 构建开关，Android 库依赖 Media3 ExoPlayer 1.9.3。
+应用未创建播放器或播放会话，但构建仍带入播放器依赖；当前应用未启用 R8，
+不能假定仅调用图片选择 API 就会剔除所有播放代码。目前保留完整 Media 集成。
+
+**TODO（等待上游）：**据作者反馈（用户转述），Android 将在 0.4 Release 前
+调整为全静态链接，以改善未使用代码的裁剪。现有实测增量为 2.92 MiB，先接受该体积，
+暂不为裁剪创建 Media fork。等作者发布对应提交后，升级固定版本并以相同 ABI/构建类型
+复测 APK、native 与 DEX 的各自增量，再决定是否需要额外裁剪。
+
+2026-11-05 本地测量：应用 `2087af19802f48f7884a471f4bc3edf0be8d677e`（v0.3.97）
+与本轮改动比较，HuxerUI `129209bc`、Camera `48b11d6` 及其它既有依赖相同。
+两侧均为 arm64-v8a Debug、未启用 R8；移除本轮构建生成的 APK 后重新打包，
+避免增量 ZIP 空洞影响。基线重新生成 Java 库图后测量，未把旧 Camera 缓存的变化计入 Media。
+
+| 项目 | 不含 Media | 相册功能 + Media | 增量 |
+| --- | ---: | ---: | ---: |
+| APK 字节数 | 52,327,902 | 55,389,117 | 3,061,215（5.85%） |
+| APK MiB（1024² 字节） | 49.90 | 52.82 | 2.92 |
+| DEX 压缩字节数合计 | 2,975,248 | 5,705,141 | 2,729,893 |
+| native 库压缩字节数合计 | 46,366,967 | 46,653,618 | 286,651 |
+
+增量包含应用相册代码、资源和 Media 依赖，主要来自 DEX。此处是 APK 分发大小，
+没有测量安装后大小、运行内存/PSS 或正式 Release；本机未配置正式发布密钥。
+本地证据保存在忽略目录 `build/media-size-comparison/` 的 `before-debug.apk`、
+`after-debug.apk`、逐 ZIP 项 JSON 和 `comparison.json`。本次 APK SHA-256：
+
+```text
+before 133fccd48238ac6872995a27ea073c95d57bccbfef5a4f50d7536730adb85be5
+after  28009da444764b60ab611bb06abcb0f0b9341f7a95e818cb0dfcb227a8dfc2db
+```
+
+## 验证边界
+
+已执行主目标/HUI codegen、版本检查、完整桌面 31 项门禁、`qrs_codec`，以及
+`platform/android` 中的 `./gradlew :app:assembleDebug`（Java、NDK 与 APK 打包）。
+生产 `QrScannerControl` 的无窗口回归覆盖单飞、相册切换取消在途相机任务、
+禁止迟到发布、选择结束后重启和页面卸载清理；编解码回归继续覆盖 QRS。
+
+尚未验证真机 Photo Picker/旧版图库回落、云端图片 provider、权限拒绝/返回、
+相机恢复、图片识别质量、页面退出时系统选择器表现、实际导入和运行内存。
+这些需要设备操作验证，不能由 APK 编译或无窗口回归代替。
