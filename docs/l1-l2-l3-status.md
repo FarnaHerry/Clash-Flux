@@ -1,5 +1,20 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-05：v0.3.97 标签 CI 与 Release
+
+- 标签 `v0.3.97`（提交 `93733f9`）的 CI 运行 `42028555034` 通过全部发布门禁：
+  `build-windows-x86_64`、`build-linux-x86_64`、`build-linux-arm64`、
+  `build-macos-arm64`、`build-android`、`build-windows-installer`、`publish-release`。
+  `publish-release` 创建了非草稿、非预发布的 `Clash-Flux v0.3.97`，共 10 个资产
+  （Windows exe/zip、Linux DEB/RPM/tar.gz ×2 架构、macOS tar.gz、Android APK）。
+- iOS Simulator job 仍是 advisory 且失败（`HuxerUIIosLink.cmake` 无法解析
+  `SweetEditor3p::Simdutf`），未进入 Release，也不视为通过。
+- 另下载发布 APK 并用 `apksigner verify --verbose --min-sdk-version 23 --print-certs`
+  核验：v1、v2 均为 true（v3/v3.1/v4 为 false），1 个签名者，证书 SHA-256 为
+  `a4a0bc09a3dc76d7ac37f92043d2be6e153bda1347ce344013828e15472419f4`，与发布基线一致。
+- 未做 Android 真机安装/跨版本覆盖、Windows 实机升级与卸载、Linux/macOS 安装运行验收；
+  CI 的 smoke test 和签名核验不替代这些实机检查。
+
 ## 2026-11-05：v0.3.96 标签 CI 失败与 v0.3.97 发布准备
 
 发布快照：基于 `0c862fb`（v0.3.95）加本轮工作区。`v0.3.96` 标签已推送但**没有产生
