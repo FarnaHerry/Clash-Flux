@@ -1,5 +1,186 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-05：v0.3.96 发布准备
+
+发布快照：基于 `0c862fb`（v0.3.95）加本轮工作区，标签 `v0.3.96`；CMake 与 Android
+versionName 同为 0.3.96，versionCode 从 173 增加为 174。说明见
+[release notes](releases/v0.3.96.md)。
+
+- 本轮内容：网站测试编辑/删除、备注与 MD3 表单、单卡独立排队/取消；Android 应用内更新
+  拆分为应用作用域校验与窗口作用域授权/安装（`JavaWindowPlatformModuleFactory`、
+  `AwaitCallback` 与待完成账本）；Lib-Camera `d51a2f0` / HuxerUI `a755f9ff` 追新；
+  Android 增量构建的 UI 镜像 configure 依赖修复。
+- `cmake -B build`、`cmake --build build --target clash-flux`、`cmake --build build -j 4`
+  （含全部测试目标）、`./run.sh --version`（v0.3.96）、`git diff --check` 通过。
+- `ctest --test-dir build --no-tests=error -L clashflux-required` **31/31，183.91 秒**；
+  本轮同时包含网站测试表单/分页、应用升级等待账本、持久化、DNS/TLS、Provider、
+  资源管理与运行控制回归。
+- Android 从 `platform/android` 执行
+  `./gradlew :app:testAppUpdatePolicy :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`，
+  **1 分 45 秒通过**；Java 与 native 均使用固定 HUXERUI 源码，仅有既存 Java
+  source/target 8 弃用警告。
+- 未验证真实摄像头预览/拍照、屏幕选区、Android 真机授权与系统安装、Compact 二级页真实
+  键盘/系统返回、Windows/macOS 原生与 iOS native；正式安装包和 APK 签名由标签 CI 核验。
+
+## 2026-11-05：Camera 追新（Lib-Camera d51a2f0 + HuxerUI a755f9ff）
+
+快照：应用 `0c862fb`（v0.3.95）加当前工作区；框架 checkout 与 CI 固定
+`a755f9ff17ac83cea6c48795ada4b2a560083fc1`，Lib-Camera 固定
+`d51a2f09dc73f68e488941daae4d1f50a3e19b29`，其余三项扩展 pin 不变。
+
+- 框架 `11161a7..a755f9ff` 只有 1 个提交：Win32 暴露原 HWND，Linux 暴露 GTK 原生
+  surface 几何，提供事件驱动的 canvas aperture、locator 矩形及关闭时背景恢复，供
+  Camera 的桌面屏幕选区使用。框架 checkout 工作树无改动，应用无 API 迁移。
+- Lib-Camera `b8b3b93..d51a2f0` 新增 Linux V4L2 预览/拍照、X11 与
+  ScreenCast/PipeWire 屏幕选区（X11、PipeWire 均可选，缺失时对应路径运行期不可用）、
+  `CaptureSource::Screen` / `ScreenPreview` / `CapturePreviewFrameAsync`；Android
+  模块改窗口级工厂并绑定原 `HuxerUIView`，iOS 改 `WindowPlatformModuleFactory`，
+  拍照等待改 `AwaitCallback` 并保留取消/中断/原生清理语义。应用只调用既有
+  `UseCamera` / `CameraPreview` / `CapturePhotoAsync`，未改页面代码。
+- 本机 `cmake -B build` 识别到 gtk4 4.22.5、gdk-pixbuf 2.44.4、x11 1.8.13、
+  xext 1.3.6、libpipewire-0.3 1.6.11；Camera 的 Linux 目标按 X11 与 PipeWire 均可用
+  的配置编译。构建脚本已把 libgtk-4-dev 等 X11/pixbuf 开发包列入 Linux CI，
+  PipeWire 头文件未安装时只编译可选分支关闭的代码。
+- `cmake --build build --target clash-flux`、`cmake --build build -j 4`（含全部测试
+  目标）、`./run.sh --version`（v0.3.95）、`git diff --check` 通过。
+- `ctest --test-dir build --no-tests=error -L clashflux-required` **31/31，180.14 秒**
+  （runtime_health 58.23 秒、sysproxy 11.22 秒，其余均为既有门禁）。
+- 隔离 XDG_DATA_HOME/XDG_CONFIG_HOME/XDG_CACHE_HOME 的 GUI 启动运行 8 秒仍存活，
+  由 `timeout` 结束（退出码 124），输出为空；未观察真实摄像头预览、拍照或屏幕选区。
+- 未验证 Android 真机、Windows/macOS 原生、iOS native 编译与签名/发布；iOS 仍暂缓。
+  编译与桌面回归不能替代摄像头设备、系统权限弹窗、屏幕录制授权的实机验收。
+
+## 2026-11-05：Android 更新授权/安装接入 HUI 窗口模块
+
+快照：应用 `0c862fb`（v0.3.95）加当前工作区，HuxerUI 固定 `11161a7`。
+本轮只迁移应用已有 Android 更新流程，不修改 Camera fork 或恢复 iOS 支持。
+
+- `AppUpdateModule` / `AndroidAppUpdateVerifier` 保持应用作用域，工作线程检查 APK 私有
+  缓存路径、大小、SHA-256、包名、版本、最低系统版本及正式签名；下载完成后提交与安装
+  前复验均走该模块。下载模型跨切页/窗口重建保留，未更改数据库或订阅格式。
+- `AppUpdatePresentationModule` / `AndroidAppUpdatePresentation` 使用
+  `JavaWindowPlatformModuleFactory`，在应用根 committed Lifecycle 打开独立窗口会话，
+  创建时捕获原窗口的 `getActivityResultLauncher()`；未知来源设置和系统安装 Intent
+  通过 HUI 的结果队列处理。移除 MainActivity 更新专用静态查找、4010/4011 请求码、
+  单槽回调及销毁/结果分支；VPN 授权仍走原有明确入口。
+- 安装任务捕获原窗口会话，保存、停核、冻结并排空写入后复验 APK，再启动系统安装。
+  窗口卸载显式 Close，`AwaitCallback` 加生产 `AppUpdatePendingCalls` 使仍存活的应用任务
+  失败并走既有票据释放/持久化解冻路径，不在新 Activity 上继续旧安装；保留 APK 供重试。
+  删除原有 50ms 平台结果轮询；取消与关闭后的迟到结果不再投递。
+- `cmake --build build --target clash-flux test_app_update_async -j 4`、
+  `./run.sh --version`（v0.3.95）、`git diff --check` 通过；另构建
+  `test_app_update test_app_update_async test_persistence test_page_transition`。
+- `ctest --test-dir build --no-tests=error -R
+  '^(app_update|app_update_async|app_update_handoff|persistence|page_transition|ui_resources)$'`
+  **6/6，78.19 秒**。新增回归在真实 HUI 应用任务域中覆盖生产等待账本的成功、平台失败、
+  取消与迟到结果、关闭多个等待者、重复关闭及关闭后拒绝新请求；既有 persistence 验证
+  真实锁竞争下冻结/失败恢复和多订阅文件保留。
+- Android 从 `platform/android` 运行
+  `./gradlew :app:testAppUpdatePolicy :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`，
+  首轮 1 分 12 秒、最终轮 **42 秒通过**。Java 与 NDK 均消费固定 HUI 源码，APK 策略回归
+  和 preBuild 的其它现有策略检查通过；只有既存 Java source/target 8 弃用警告。
+- 本轮未重跑完整 31 项桌面门禁，未打包/签名/安装 APK；宿主回归不包含实际 Android
+  Activity Result 与系统安装器。真机仍需核对授权拒绝/返回、排队、旋转/窗口销毁、取消、
+  正式签名跨版本覆盖、配置保留与安装后重开，不能以编译通过代替这些验收。
+
+## 2026-11-05：跟进 HuxerUI farna/main 11161a7
+
+快照：应用 `0c862fb`（v0.3.95）加本轮工作区；框架独立 checkout 与 CI 固定到
+`11161a7e093f4e388a5b88a857f4dfcdd5ab6b27`，源码工作树无改动。
+
+- 相对原固定点 `83617e66` 新增 6 个提交，审查 Android 窗口模块/Activity Result、iOS
+  工厂与呈现队列、Linux 暂存运行库候选裁决；原生、Android Java/native 共用新源码。
+  应用 Android 模块保持现有应用级 Factory，Activity 结果继续转发 super；宿主工具源码
+  本轮未变，四项扩展固定提交保持原值。README 中英文、third_party 清单与 fork 文档同步。
+- `cmake --build build -j 4`（含主目标和全部测试目标）、`./run.sh --version`（v0.3.95）、
+  `git diff --check` 通过；`ctest --test-dir build --no-tests=error -L clashflux-required`
+  **31/31，185.81 秒**，含生产 page_transition（73.84 秒）、ui_resources、CPS 重定位/
+  版本拒绝/缓存完整性、DNS/TLS、SQLite/persistence 和运行控制回归。
+- 直接执行框架 `tests/cmake/runtime_dependencies.cmake`，传入 SOURCE_DIRECTORY、
+  WORK_DIRECTORY=/tmp、HOST_GENERATOR=Ninja、HOST_CXX_COMPILER=/usr/bin/clang++-21，
+  运行库部署/重定位与拒绝路径 fixture 通过。
+- Android 从 `platform/android` 执行
+  `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`，**45 秒通过**；
+  Java 与 native 均使用 `third_party/huxerui`。Gradle 同时执行的更新、HTTP、启停、模式与
+  VPN 时长策略回归通过；仅有既存 Java source/target 8 弃用警告。
+- 隔离 XDG_DATA_HOME/XDG_CONFIG_HOME/XDG_CACHE_HOME 的 GUI 启动运行 8 秒仍存活，
+  随后由验证进程 SIGTERM 结束，日志为空；没有观察真实首页圆环图或窗口交互。
+  未验证 Android 真机、Windows/macOS、签名/发布与离线 0.3.0 SDK 回落。
+- iOS 继续暂缓：静态核对发现固定 Lib-Camera 仍调用新框架已移除的
+  `ios::PlatformModuleFactory`；该扩展 fork 尚需接口迁移，本轮不消费可变维护树或
+  在应用重贴补丁，也不把 Linux/Android 编译记为 iOS 原生兼容通过。
+
+## 2026-11-05：网站表单地址补全与统一站点管理
+
+快照：应用 `0c862fb`（v0.3.95）加本轮工作区，最终使用 HuxerUI `11161a7`。
+
+- 添加/编辑共用平铺表单与验证：裸域名自动补 HTTPS，保留显式 HTTP，支持端口、路径、
+  查询与带方括号的 IPv6；规范化协议、主机名及空路径后去重，保留路径/查询大小写。
+  默认八项仅作为初始列表，每张卡共用「更多操作」菜单，支持编辑和确认删除；可删空再添加。
+- 请求与操作改按稳定 ID 定位，发布再检查请求代次；修改 URL 先取消旧请求、重置结果，
+  改备注保留在途请求与结果；删除不影响其它站点排队/运行，ID 移位和同 URL 重加不串结果。
+  编辑弹窗/字段/卡片使用挂载后的 Scope，关闭共用 UseEditorClose，Esc 接入草稿放弃确认。
+- 主目标构建、版本与差异检查、上述 **31/31** 门禁和 Android Java/NDK 编译通过。
+  page_transition 新增生产菜单、编辑弹窗、真实 TextField 替换、重复地址失败保留、
+  Esc/继续编辑、保存关闭、运行/排队期间修改删除、删除后的单卡操作、删空再添加和满额编辑。
+- 网站列表继续仅保留在当前 Runtime，未新增数据库持久化。Compact 二级页的实际键盘、
+  系统返回与手势、真实宽窄切换、深浅主题和真机触控未验证；无窗口回归不代替这些验收。
+
+## 2026-11-05：网站添加入口备注与 MD3 表单
+
+快照：本轮工作区改动，应用版本仍为 v0.3.95。
+
+- 添加表单改用统一 MD3 平铺样式：带标签的 `TextField`、`TextFieldVariant::Outlined`、
+  16pt 行距，提交与取消仍在固定底部动作区。新增「备注（可选）」字段：
+  `WebsiteTestModel::Add(url, name)` 去首尾空白，备注作为卡片标题，留空回退到网址主机名；
+  成功后同时清空两个草稿字段。新增资源 `备注（可选）` 已写入 default/en/zh。
+- `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`
+  （v0.3.95）、`git diff --check` 通过；`page_transition / ui_resources` **2/2，56.31 秒**，
+  回归新增「备注成为标题」「留空回退主机名」两项断言。
+- Android `:app:externalNativeBuildDebug` 在首次增量构建后通过；本次不再出现旧镜像
+  编译问题（`AndroidLegacy.cmake` 的配置依赖修复生效）。
+- 本轮未重跑完整 31 项门禁，只执行上述 UI 回归与 Android native 编译；真实窗口点击与
+  真机仍未验证（当前 Wayland 会话没有输入注入/截图自动化）。
+
+## 2026-11-05：网站测试页头精简与添加入口
+
+快照：本轮工作区改动（上一轮单卡独立之上），应用版本仍为 v0.3.95。
+
+- 页头不再显示 HTTP HEAD 说明和 Android VPN 排除文字，改为动作区右上角「+」：宽屏弹
+  `DialogScaffold` 表单弹窗，Compact push 独立二级页（底部主操作按钮、返回箭头/系统返回
+  回列表），两处共用 `WebsiteTestModel::customUrl` 草稿；添加失败仍用 toast，成功后
+  弹窗/页面关闭。删掉的两条提示文案同步从 default/en/zh 资源移除。
+- `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`
+  （v0.3.95）、`git diff --check` 通过；`page_transition / ui_resources` **2/2，55.80 秒**；
+  完整必跑门禁 **31/31，190.14 秒**。
+- Android `:app:externalNativeBuildDebug` 通过（31 秒，configure 后重新生成 android-legacy
+  镜像）。同轮修复 `cmake/AndroidLegacy.cmake` 未把 UI 源列入 `CMAKE_CONFIGURE_DEPENDS`
+  的问题：增量 Gradle 构建会继续编译旧 UI 副本（本轮真实复现，报 `WebsiteTestGrid`
+  参数不匹配），加入后 UI 改动会触发重新生成。
+- 当前 Wayland 会话没有可用的输入注入/窗口截图自动化，页头「+」弹窗与二级页未在真实
+  窗口手动点击；添加弹窗/页面的打开与返回也没有自动 UI 回归（页面依赖窗口 toast 环境）。
+  真机、Windows/macOS 未验证。
+
+## 2026-11-05：网站测试单卡独立
+
+快照：`0c862fb`（v0.3.95）加本轮工作区改动，应用版本仍为 v0.3.95。
+
+- 反馈：点击单卡测试会阻塞其它 UI——旧模型是单一批次，`busy` 期间所有卡片按钮、URL
+  输入和「添加网站」一起禁用，页头动作整体变成「取消」。改为每个网站独立排队与取消：
+  卡片按钮只影响自己（测试中显示「取消」），其它卡可同时开始自己的测试；全局仍是 3
+  并发，超出按发起顺序暂存，空出槽位后继续；结果只写回发起它的索引。
+- `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`
+  （v0.3.95）、`git diff --check` 通过；`page_transition / ui_resources` **2/2，54.80 秒**；
+  完整必跑门禁 **31/31，174.44 秒**。
+- `page_transition` 新增真实卡片点击：点 Baidu 只启动 Baidu；Baidu 测试中点 Bilibili
+  仍能开始自己的测试；取消 Baidu 不结束 Bilibili；两张卡各自落结果。模型侧另覆盖
+  重复启动被忽略、排队中单卡取消、运行中单卡取消后空槽被后续网站占用、全部取消与重试。
+- Android `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`
+  **1 分 12 秒通过**，native 重新生成并编译共享网站页。
+- Linux 隔离数据目录启动应用，首帧正常；当前 Wayland 会话没有可用的输入注入/窗口
+  截图自动化，未在真实窗口里点卡验证，交互结论来自生产卡片的 UiTest 回归。真机、
+  Windows/macOS、真实网络下单卡取消的实际时延均未验证。
+
 ## 2026-11-05：v0.3.95 补丁版发布准备
 
 发布快照：基于 `9c83e10` 的本轮发布提交，标签 `v0.3.95`；CMake 与 Android

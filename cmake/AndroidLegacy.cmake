@@ -260,8 +260,7 @@ function(clashflux_prepare_android_sources output_directory output_header
 
     # HuxerUI codegen must see real .cpp inputs. Each Android copy has module
     # imports removed and includes the compatibility declarations above.
-    set(_ui_sources)
-    foreach (_source IN ITEMS
+    set(_ui_inputs
             "${_root}/src/ui/app.cpp"
             "${_root}/src/ui/common.cpp"
             "${_root}/src/ui/dialog_card.cpp"
@@ -292,6 +291,11 @@ function(clashflux_prepare_android_sources output_directory output_header
             "${_root}/src/ui/text_document.cpp"
             "${_root}/src/ui/platform_settings.cpp"
             "${_root}/src/ui/platform_app.cpp")
+    # UI edits must refresh this mirror; otherwise an incremental Gradle build
+    # keeps compiling the previous page copy until CMake happens to reconfigure.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_ui_inputs})
+    set(_ui_sources)
+    foreach (_source IN LISTS _ui_inputs)
         file(READ "${_source}" _content)
         string(REGEX REPLACE "import [A-Za-z0-9_.]+;" "" _content "${_content}")
         string(PREPEND _content "#include \"clashflux_android_legacy.h\"\n")

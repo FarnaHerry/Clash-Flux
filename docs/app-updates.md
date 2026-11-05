@@ -79,16 +79,29 @@ Linux 直接将退出码和 `installer.log` 的有界诊断返回仍存活的应
 ## Android 系统安装
 
 Android 使用相同的 HUI 平台 HTTP 下载与共享进度模型，不跳浏览器找 APK，也不依赖应用商店。
-应用作用域的 HUI Java PlatformModule 在工作线程用 JCA 校验大小和 SHA-256，再用
+应用作用域的 HUI Java PlatformModule（`AppUpdateModule` / `AndroidAppUpdateVerifier`）
+在工作线程用 JCA 校验大小和 SHA-256，再用
 PackageManager 检查包名、所选 Release 的 versionName、严格递增的 versionCode、设备最低 SDK
 及当前应用和候选 APK 的正式发布签名。证书指纹沿用 [Android 构建](android-build.md) 的唯一基线；
 debug 签名安装不能覆盖升级为正式签名，不自动卸载或清除数据来绕过签名不一致。
+
+授权与安装由独立的窗口级 `AppUpdatePresentationModule` / `AndroidAppUpdatePresentation`
+处理，使用 HUI `JavaWindowPlatformModuleFactory` 注册；应用根的 committed Lifecycle
+打开本次窗口会话，Java 仅在创建时捕获该 `HuxerUIView` 的 `getActivityResultLauncher()`。
+Intent 通过 HUI 的 `launch` 与文件选择器共用呈现队列、暂停/恢复和结果路由，不再用
+MainActivity 静态查找、更新专用请求码或手写结果槽，也不会改绑到后来创建的 Activity。
+APK 下载与校验仍由应用持有，切页或窗口重建不清理共享下载状态。
 
 点击“继续安装”后，API 26+ 如未授权先打开此应用的“允许安装未知应用”设置，返回后读取真实授权。
 用户拒绝时保留代理运行和已下载 APK；授权后保存配置、停止 VPN/核心、冻结并排空持久化写入，
 再次校验 APK，才通过系统安装 Intent 请求用户确认。API 24–25 由系统安装器处理对应权限。
 安装期间禁止应用内交互；系统负责替换应用与进程生命周期，不主动杀死进程。
 取消、拒绝或失败恢复同一持久化会话并允许重试，已停止的代理由用户重新开启。
+窗口卸载时显式关闭呈现模块；C++ 用 `AwaitCallback` 等待结果，`AppUpdatePendingCalls`
+在通道丢弃回调前使仍存活的应用任务失败，安装等待不会无限挂起。失败路径释放运行控制票据，
+恢复被冻结的同一持久化会话，保留 APK 供重试；取消后的旧结果不覆盖新请求。框架只请求
+取消原生呈现，已由系统完成的应用替换不能由此回滚。
+
 
 私有只读 ContentProvider 仅授予本次 `cache/app-updates/pending-<数字>-<数字>/package.apk`
 的临时读权限，不暴露数据库、订阅或任意路径，也不在 Provider 初始化 Runtime。
@@ -98,7 +111,9 @@ debug 签名安装不能覆盖升级为正式签名，不自动卸载或清除�
 ## 验证
 
 `app_update` 覆盖平台选择、资产来源/摘要/大小/歧义、真实文件校验和独占暂存清理；
-`app_update_async` 覆盖单飞、取消、过期任务、页面卸载后的失败收尾与重试；
+`app_update_async` 覆盖单飞、取消、过期任务、页面卸载后的失败收尾与重试，以及生产
+`AppUpdatePendingCalls` 在真实 HUI 应用任务域中的成功/失败、取消后迟到结果、关闭所有
+等待者、重复关闭及关闭后拒绝新请求；
 `app_update_handoff` 在 Windows 运行无提权假安装器验证父进程退出与文件锁，
 Linux 在测试专用构建中替换 pkexec 启动入口，走生产交接与安装流程，覆盖父进程在授权期间存活、
 sealed 快照、DEB/RPM 参数、成功、取消、缺少授权代理和包管理失败；生产构建固定使用 /usr/bin/pkexec。`persistence` 覆盖真实 SQLite 写锁下冻结、

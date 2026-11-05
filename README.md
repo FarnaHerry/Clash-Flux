@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.95 发布说明](docs/releases/v0.3.95.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.96 发布说明](docs/releases/v0.3.96.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -14,7 +14,7 @@ Clash-Flux 是一个使用 C++23 和 HuxerUI 构建的全平台代理客户端�
 交互，UI 与内核接入层由 C++ 实现。配置支持 Clash YAML（由内置编译器转换为 sing-box 配置）和 sing-box 原生
 JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 
-关于页支持 Windows、Linux（DEB/RPM）与 Android arm64 的应用内下载更新、SHA-256 校验和取消/重试。桌面确认安装后保存配置、断开代理；Windows 退出后启动安装向导，Linux 保留应用等待 Polkit 授权和安装成功，失败返回原窗口；Android 额外校验正式签名与版本，保存配置、断开代理后打开系统安装界面，首次需要允许安装此来源的应用。其它平台保留手动下载入口，详情见[应用升级](docs/app-updates.md)。
+关于页支持 Windows、Linux（DEB/RPM）与 Android arm64 的应用内下载更新、SHA-256 校验和取消/重试。桌面确认安装后保存配置、断开代理；Windows 退出后启动安装向导，Linux 保留应用等待 Polkit 授权和安装成功，失败返回原窗口；Android 额外校验正式签名与版本，保存配置、断开代理后打开系统安装界面，首次需要允许安装此来源的应用；授权与安装结果由 HUI 绑定发起窗口处理，窗口关闭后的等待失败可重试。其它平台保留手动下载入口，详情见[应用升级](docs/app-updates.md)。
 
 ## 功能
 
@@ -399,7 +399,7 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 `main` 保留官方基线；Lib-Camera、Lib-Charts、Lib-SQLite 也从各自 `FarnaHerry` fork 的
 `farna/main` 按固定 SHA 获取，原生构建与 Android 库图共用同一依赖身份。
 本地检出、补丁归属与升级流程见 [HuxerUI fork](docs/huxerui-fork.md)。
-当前源码基线为 SDK 0.4.0（`83617e66`）；离线回落包仍为独立锁定的 0.3.0 SDK，不代表本轮源码验收。
+当前源码基线为 SDK 0.4.0（`a755f9ff`）；离线回落包仍为独立锁定的 0.3.0 SDK，不代表本轮源码验收。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、

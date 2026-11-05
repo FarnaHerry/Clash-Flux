@@ -36,7 +36,8 @@ private:
     std::uint64_t written_ = 0;
     bool handedOff_ = false;
     bool androidVerified_ = false;
-    friend class AndroidAppUpdateInstaller;
+    friend class AndroidAppUpdateVerifier;
+    friend class AndroidAppUpdatePresentation;
 };
 
 #if !defined(_WIN32) && !defined(__linux__)

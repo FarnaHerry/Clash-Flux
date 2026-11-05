@@ -19,7 +19,7 @@ description: 修改 Clash-Flux Android、Windows、Linux 或 iOS 平台服务、
 - 网络变化、亮屏/退出 Doze 先更新 sing-box 物理接口再关闭旧连接；VPN 时长使用后台 VpnUptime，不能把 core-only/UI 存活当会话。
 - Gradle Java HuxerUI 必须与 CMake native 同源：有源码用该源码的 platform/android/huxerui，只有 SDK 回落才用 SDK AAR。国内 GEOIP/GEOSITE 固定 revision/SHA256 构建打包，不跳 stageBundledRuleSets 或改这些打包资产的运行时下载；自定义 Geo DAT/MMDB 和资源到期任务另走 UI 进程订阅准备路径，见 [Geo 资源](../../docs/geo-resources.md)。
 - libbox 与桌面固定同版本/revision；AAR 的 version/revision/ABI/SHA256 元数据缺失/不符须重建，不能只看文件存在。
-- APK 更新读 [应用升级](../../docs/app-updates.md)：HUI 下载与应用作用域平台模块、工作线程校验正式签名/版本，保存配置并停核后由系统确认安装；私有只读 Provider 不暴露订阅或初始化 Runtime，拒绝/取消可重试，不卸载清数据绕过签名。
+- APK 更新读 [应用升级](../../docs/app-updates.md)：HUI 应用作用域下载/校验、窗口作用域授权/安装模块，工作线程校验正式签名/版本，保存配置并停核后由系统确认安装；私有只读 Provider 不暴露订阅或初始化 Runtime，拒绝/取消可重试，不卸载清数据绕过签名。
 
 ## Windows
 

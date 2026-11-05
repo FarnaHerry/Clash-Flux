@@ -4,61 +4,98 @@
 #include "page_layout.h"
 #include "website_test_card.h"
 #include "website_test_grid.h"
+#include "website_test_editor.h"
+#include "empty_state.h"
 
 namespace clashflux::ui {
 
-#if defined(__ANDROID__)
-constexpr bool kWebsiteApplicationBypassesVpn = true;
-#else
-constexpr bool kWebsiteApplicationBypassesVpn = false;
-#endif
+namespace {
+
+// Add and edit share fields and validation across presentation sizes.
+[[huxerui::composable]] huxerui::View WebsiteTestEditorPage(std::shared_ptr<WebsiteTestModel> model,
+    bool editing, std::function<bool()> submit) {
+    const auto navigation = huxerui::UseNavigation();
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    const auto back = [navigation] { static_cast<void>(navigation.Pop()); };
+    const auto close = UseWebsiteEditorClose(model, back);
+    const auto title = editing ? Localized("编辑网站") : Localized("添加网站");
+    const auto action = editing ? Localized("保存") : Localized("添加网站");
+    const auto icon = editing ? app::images::check : app::images::add;
+    const auto commit = [submit, back] { if (submit()) back(); };
+    huxerui::View content = WebsiteTestForm(model);
+    if (compact) content = CompactPageActionContent(std::move(content),
+        CompactPrimaryActionButton(icon, action, commit, true, false));
+    return SecondaryPageScaffold(huxerui::Text(title),
+        compact ? huxerui::View{}
+                : huxerui::View{huxerui::IconButton(icon, action)
+                                    .With(huxerui::Tooltip(action)).OnClick(commit)},
+        content, close);
+}
+
+} // namespace
 
 [[huxerui::composable]] huxerui::View WebsiteTestsPage(std::function<void()> onBack, bool active) {
     const auto model = huxerui::UseService<WebsiteTestModel>();
     const auto http = huxerui::UseService<AppHttpClient>();
     const auto tasks = huxerui::UseApplicationTaskScope();
     const auto toast = UseFluxToast();
+    const auto dialog = huxerui::UseDialog();
+    const auto navigation = huxerui::UseNavigation();
     const auto offset = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
     const auto controller = huxerui::UseScrollController(offset->value);
-    const auto& theme = huxerui::UseTheme();
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const auto rows = model->sites.Get();
-    const bool busy = model->busy.Get();
+    const bool anyActive = model->AnyActive();
     const auto invalidUrl = huxerui::UseString(Localized("请输入不重复的 HTTP(S) 网站地址，最多添加 24 项。"));
     const WebsiteTestModel::Probe probe = [http](std::string url) { return ProbeWebsite(http, std::move(url)); };
-    const auto run = [model, tasks, probe](std::vector<std::size_t> indices) {
-        model->Start(tasks, probe, std::move(indices));
-    };
     if (!active) return huxerui::View{};
 
-    const auto actions = busy ? DialogAction(Localized("取消"), [model] { model->Cancel(); }, false)
-        : DialogAction(Localized("全部测试"), [run, count = rows.size()] {
-            std::vector<std::size_t> indices;
-            for (std::size_t i = 0; i < count; ++i) indices.push_back(i);
-            run(std::move(indices));
-        }, true);
-    const auto header = huxerui::Column {
-      huxerui::Text(Localized("使用当前应用网络发送 HTTP HEAD 请求，显示响应状态与耗时。网站已响应不代表网页完整加载。"))
-          .With(huxerui::Foreground(theme.colors.on_surface_variant)),
-      kWebsiteApplicationBypassesVpn ? huxerui::View{huxerui::Text(
-          Localized("Android 上应用自身绕过虚拟网卡；此处结果不代表其他应用的 VPN 分流。"))
-          .With(huxerui::Foreground(theme.colors.on_surface_variant))} : huxerui::View{},
-      huxerui::Flow {
-        huxerui::TextField(model->customUrl.Get()).Label(Localized("自定义网站 URL"))
-            .OnChanged([model](const huxerui::TextEditingValue& value) { model->customUrl = value; })
-            .With(huxerui::Grow(1.0F), huxerui::Frame{.min_width = compact ? 180.0F : 280.0F},
-                huxerui::Enabled(!busy)).Key("website-custom-url"),
-        DialogAction(Localized("添加网站"), [model, toast, invalidUrl] {
-            if (!model->Add(model->customUrl.Get().text)) toast.Show(invalidUrl);
-        }, false, !busy && rows.size() < 24),
-      }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-    }.With(huxerui::Spacing(16.0F),
-        huxerui::Padding(huxerui::EdgeInsets{.top = 16.0F, .bottom = 8.0F}),
-        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).Key("website-test-header");
+    const auto openEditor = [model, compact, navigation, dialog, toast, invalidUrl](std::optional<std::size_t> id) {
+        if (id) {
+            const auto& current = model->sites.Get();
+            const auto row = std::find_if(current.begin(), current.end(), [id](const auto& site) { return site.id == *id; });
+            if (row == current.end()) return;
+            model->customUrl = huxerui::TextEditingValue::FromText(row->url);
+            model->customName = huxerui::TextEditingValue::FromText(row->name);
+        } else {
+            model->customUrl = huxerui::TextEditingValue{};
+            model->customName = huxerui::TextEditingValue{};
+        }
+        const auto submit = [model, toast, invalidUrl, id] {
+            const auto url = model->customUrl.Get().text;
+            const auto name = model->customName.Get().text;
+            if (id ? model->Update(*id, url, name) : model->Add(url, name)) return true;
+            toast.Show(invalidUrl);
+            return false;
+        };
+        if (compact) {
+            navigation.Push([model, submit, id] { return WebsiteTestEditorPage(model, id.has_value(), submit); });
+        } else {
+            ShowEditorDialog(dialog, [model, submit, id](huxerui::DialogContext context) {
+                return WebsiteTestEditorDialog(context, model, id.has_value(), submit);
+            });
+        }
+    };
+    const auto actions = huxerui::Row {
+      huxerui::IconButton(app::images::add, Localized("添加网站"))
+          .With(huxerui::Tooltip(Localized("添加网站")), huxerui::Enabled(rows.size() < 24))
+          .OnClick([openEditor] { openEditor(std::nullopt); }),
+      anyActive ? DialogAction(Localized("取消"), [model] { model->CancelAll(); }, false)
+          : DialogAction(Localized("全部测试"), [model, tasks, probe] {
+                std::vector<std::size_t> ids;
+                for (const auto& row : model->sites.Get()) ids.push_back(row.id);
+                model->Start(tasks, probe, std::move(ids));
+            }, true, !rows.empty()),
+    }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     std::vector<huxerui::View> cards;
-    for (std::size_t i = 0; i < rows.size(); ++i)
-        cards.push_back(Card(WebsiteTestCardContent(rows[i], !busy, [run, i] { run({i}); })).Key(rows[i].url));
-    const auto content = WebsiteTestGrid(header, std::move(cards), compact, controller, offset);
+    for (const auto& row : rows)
+        cards.push_back(Card(WebsiteTestCardContent(row, [model, tasks, probe, id = row.id] {
+            model->Toggle(tasks, probe, id);
+        }, [openEditor, id = row.id] { openEditor(id); },
+           [model, id = row.id] { model->Remove(id); })).Key("website-card-" + std::to_string(row.id)));
+    const auto content = cards.empty()
+        ? EmptyState(Localized("还没有网站，点击右上角添加。"), app::images::globe)
+        : WebsiteTestGrid(cards, compact, controller, offset);
     if (onBack) return SecondaryPageScaffold(huxerui::Text(Localized("网站测试")), actions, content, onBack);
     return PageScaffold(Localized("网站测试"), actions, content);
 }

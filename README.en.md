@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.95 release notes](docs/releases/v0.3.95.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.96 release notes](docs/releases/v0.3.96.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -28,7 +28,7 @@ Configurations can be imported as Clash YAML, which the built-in compiler conver
 to sing-box configuration, or as native sing-box JSON, which is merged with
 application-managed settings before being passed to sing-box.
 
-The About page supports in-app update downloads on Windows, Linux (DEB/RPM), and Android arm64, with SHA-256 verification, cancellation and retry. Desktop installation saves configuration and disconnects the proxy. Windows exits before opening its installer; Linux keeps the application alive through Polkit authorization and installation, returning to the same window on failure. Android also checks the official signing certificate and version, then saves configuration and disconnects the proxy before opening the system installer; first use requires permission to install apps from this source. Other platforms retain manual downloads; see [application updates](docs/app-updates.md).
+The About page supports in-app update downloads on Windows, Linux (DEB/RPM), and Android arm64, with SHA-256 verification, cancellation and retry. Desktop installation saves configuration and disconnects the proxy. Windows exits before opening its installer; Linux keeps the application alive through Polkit authorization and installation, returning to the same window on failure. Android also checks the official signing certificate and version, then saves configuration and disconnects the proxy before opening the system installer; first use requires permission to install apps from this source. Authorization and installation use HUI result routing bound to the originating window; closing that window ends pending waits with a retryable failure. Other platforms retain manual downloads; see [application updates](docs/app-updates.md).
 
 Desktop startup prepares a core without traffic inbounds so nodes can be tested. Connect opens proxy ports and applies the saved system proxy/TUN choices; both may remain off for manual proxy use. Disconnect returns to standby. See [desktop proxy lifecycle](docs/desktop-proxy-lifecycle.md).
 
@@ -548,7 +548,7 @@ Lib-Charts and Lib-SQLite also use pinned commits from their `FarnaHerry` forks'
 `farna/main` branches, with the same URL/COMMIT identities in native builds and the
 Android library graph. See [HuxerUI fork maintenance](docs/huxerui-fork.md) for local
 checkout, patch ownership and upgrade instructions.
-The current source baseline is SDK 0.4.0 (`83617e66`); the separately pinned offline fallback remains SDK 0.3.0 and is outside this source-upgrade validation.
+The current source baseline is SDK 0.4.0 (`a755f9ff`); the separately pinned offline fallback remains SDK 0.3.0 and is outside this source-upgrade validation.
 
 Windows packaging with `huxerui package windows` creates a `setup.exe` with an
 installation wizard: Burn bundles an MSI and a HuxerUI installer interface with

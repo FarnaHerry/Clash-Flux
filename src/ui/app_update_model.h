@@ -26,7 +26,7 @@ struct AppUpdateModel : std::enable_shared_from_this<AppUpdateModel> {
     huxerui::TaskHandle transfer;
     std::uint64_t serial = 0;
 #if defined(__ANDROID__)
-    std::shared_ptr<AndroidAppUpdateInstaller> androidInstaller;
+    std::shared_ptr<AndroidAppUpdateVerifier> androidVerifier;
 #endif
 
     bool Transferring() const {
@@ -127,7 +127,7 @@ struct AppUpdateModel : std::enable_shared_from_this<AppUpdateModel> {
                 if (ticket != self->serial) co_return;
                 self->phase = AppUpdatePhase::Verifying;
 #if defined(__ANDROID__)
-                co_await self->androidInstaller->VerifyAndCommit(candidate);
+                co_await self->androidVerifier->VerifyAndCommit(candidate);
 #else
                 co_await RunOnTaskThread([candidate] { candidate->Commit(); });
 #endif
@@ -154,7 +154,7 @@ struct AppUpdateModel : std::enable_shared_from_this<AppUpdateModel> {
 inline void InstallAppUpdateModel(huxerui::ApplicationContext& context) {
     auto model = std::make_shared<AppUpdateModel>();
 #if defined(__ANDROID__)
-    model->androidInstaller = huxerui::UseService<AndroidAppUpdateInstaller>();
+    model->androidVerifier = huxerui::UseService<AndroidAppUpdateVerifier>();
 #endif
     context.Provide(model);
     try {

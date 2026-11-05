@@ -46,6 +46,7 @@
 #include "empty_state.h"
 #include "connection_row.h"
 #include "website_test_card.h"
+#include "website_test_editor.h"
 #include "website_test_grid.h"
 #include "theme_colors.h"
 #include "theme_color_card.h"
@@ -312,6 +313,7 @@ struct WebsiteFixtureMetrics { int active = 0, maximum = 0, started = 0; };
 std::shared_ptr<clashflux::ui::WebsiteTestModel> websiteFixture;
 std::optional<huxerui::TaskScope> websiteTasks;
 std::shared_ptr<clashflux::ui::AppHttpClient> websiteHttp;
+std::shared_ptr<clashflux::ui::WebsiteTestModel::Probe> websiteProbe;
 huxerui::View WebsiteFixtureRoot() {
     using namespace clashflux::ui;
     websiteFixture = huxerui::UseService<WebsiteTestModel>();
@@ -323,12 +325,25 @@ huxerui::View WebsiteFixtureRoot() {
     const auto controller = huxerui::UseScrollController(offset->value);
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     std::vector<huxerui::View> cards;
+    const auto dialog = huxerui::UseDialog();
     for (const auto& row : rows)
-        cards.push_back(huxerui::Column{WebsiteTestCardContent(row, !websiteFixture->busy.Get(), [] {})}
-            .With(huxerui::Padding(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).Key(row.url));
+        cards.push_back(huxerui::Column {WebsiteTestCardContent(row, [id = row.id] {
+            websiteFixture->Toggle(*websiteTasks, *websiteProbe, id);
+        }, [dialog, row] {
+            const auto model = websiteFixture;
+            model->customUrl = huxerui::TextEditingValue::FromText(row.url);
+            model->customName = huxerui::TextEditingValue::FromText(row.name);
+            ShowEditorDialog(dialog, [model, id = row.id](huxerui::DialogContext context) {
+                return WebsiteTestEditorDialog(context, model, true, [model, id] {
+                    return model->Update(id, model->customUrl.Get().text, model->customName.Get().text);
+                });
+            });
+        }, [id = row.id] { websiteFixture->Remove(id); })}
+            .With(huxerui::Padding(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+            .Key("website-card-" + std::to_string(row.id)));
     return huxerui::Column {
       huxerui::Button("Toggle website panel").OnClick([visible] { visible = !visible.Get(); }),
-      visible.Get() ? WebsiteTestGrid(huxerui::Text("Website header"), cards, compact, controller, offset).Key("website-panel")
+      visible.Get() ? WebsiteTestGrid(cards, compact, controller, offset).Key("website-panel")
           : huxerui::View{huxerui::Text("Website panel hidden")},
     }.With(huxerui::Padding(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -349,12 +364,35 @@ void testWebsiteTests() {
         const auto second = ui.Find(UiSelector::Text("Bilibili")).One().bounds;
         check(width == 320.0F ? second.y > first.y : std::abs(second.y - first.y) < 1.0F && second.x > first.x,
               "production website grid uses one compact column and multiple expanded columns");
-        check(shared->sites.Get().size() == 8 && !shared->busy.Get(), "website presets do not make automatic requests");
+        check(shared->sites.Get().size() == 8 && !shared->AnyActive(), "website presets do not make automatic requests");
         check(!shared->Add("file:///etc/hosts") && !shared->Add("https://user:pass@example.test/") &&
               !shared->Add("https://example.test/#secret") && !shared->Add("not a URL"),
               "custom websites accept only usable HTTP(S) targets without credentials or fragments");
-        check(shared->Add(" https://custom.example.test/path ") &&
-              !shared->Add("https://custom.example.test/path"), "custom website addition trims and rejects duplicate targets");
+        check(shared->Add(" https://custom.example.test/path ", "  自定义站点  ") &&
+              !shared->Add("https://custom.example.test/path"),
+              "custom website addition trims and rejects duplicate targets");
+        check(shared->sites.Get().back().name == "自定义站点" &&
+              shared->sites.Get().back().url == "https://custom.example.test/path",
+              "a trimmed remark becomes the card title");
+        check(shared->Add("https://no-remark.example.test/") &&
+              shared->sites.Get().back().name == "no-remark.example.test",
+              "a missing remark falls back to the URL host");
+        check(NormalizeWebsiteUrl(" Example.COM/Path?q=A ") == "https://example.com/Path?q=A" &&
+              NormalizeWebsiteUrl("//EXAMPLE.com") == "https://example.com/" &&
+              NormalizeWebsiteUrl("HTTP://EXAMPLE.com:8080") == "http://example.com:8080/" &&
+              NormalizeWebsiteUrl("localhost:8080/path") == "https://localhost:8080/path" &&
+              NormalizeWebsiteUrl("example.com/Path?url=HTTPS://Other.test") ==
+                  "https://example.com/Path?url=HTTPS://Other.test" &&
+              NormalizeWebsiteUrl("[::1]:8443") == "https://[::1]:8443/",
+              "website normalization fills HTTPS and preserves explicit HTTP, ports, paths and queries");
+        check(!NormalizeWebsiteUrl("") && !NormalizeWebsiteUrl("ftp://example.test/") &&
+              !NormalizeWebsiteUrl("mailto:a@example.test") && !NormalizeWebsiteUrl("https://:443") &&
+              !NormalizeWebsiteUrl("example.test:99999") && !NormalizeWebsiteUrl("example.test:") &&
+              !NormalizeWebsiteUrl("example.test/#fragment") && !NormalizeWebsiteUrl("user@example.test") &&
+              !NormalizeWebsiteUrl(std::string(2049, 'a')),
+              "auto completion does not admit invalid, oversized or unsupported addresses");
+        check(!shared->Add("WWW.BAIDU.COM") && !shared->Add("//www.baidu.com/"),
+              "presets and additions share normalized duplicate detection");
         const auto metrics = std::make_shared<WebsiteFixtureMetrics>();
         const WebsiteTestModel::Probe slow = [metrics](std::string) -> huxerui::Task<WebsiteTestResult> {
             struct Guard { std::shared_ptr<WebsiteFixtureMetrics> value; ~Guard() { --value->active; } } guard{metrics};
@@ -363,24 +401,57 @@ void testWebsiteTests() {
             co_await huxerui::Delay(std::chrono::milliseconds{200});
             co_return WebsiteTestResult{WebsiteTestPhase::Responded, 403, 200};
         };
+        websiteProbe = std::make_shared<WebsiteTestModel::Probe>(slow);
+        ui.Find(UiSelector::Key("website-test-0")).Tap();
+        ui.Pump(std::chrono::milliseconds{1});
+        check(shared->sites.Get()[0].result.phase == WebsiteTestPhase::Running && metrics->active == 1,
+              "tapping one card starts only that card");
+        ui.Find(UiSelector::Key("website-test-1")).Tap();
+        ui.Pump(std::chrono::milliseconds{1});
+        check(shared->sites.Get()[1].result.phase == WebsiteTestPhase::Running && metrics->active == 2,
+              "a second card starts its own test while the first card is still testing");
+        ui.Find(UiSelector::Key("website-test-0")).Tap();
+        ui.Pump(std::chrono::milliseconds{1});
+        check(shared->sites.Get()[0].result.phase == WebsiteTestPhase::Cancelled &&
+              shared->sites.Get()[1].result.phase == WebsiteTestPhase::Running,
+              "cancelling one card leaves the other card's test running");
+        ui.PumpAndSettle();
+        check(!shared->AnyActive() && shared->sites.Get()[1].result.status == 403,
+              "each card settles with its own result");
         shared->Start(*websiteTasks, slow, {0, 1, 2, 3, 4, 5, 6, 7});
         ui.Pump(std::chrono::milliseconds{1});
         check(metrics->active == 3 && metrics->maximum == 3, "website batch launches exactly three asynchronous requests");
-        const auto ticket = shared->generation;
+        const auto startedBeforeDuplicate = metrics->started;
         shared->Start(*websiteTasks, slow, {0});
-        check(shared->generation == ticket, "website batch rejects duplicate starts");
+        ui.Pump(std::chrono::milliseconds{1});
+        check(metrics->started == startedBeforeDuplicate && shared->sites.Get()[0].result.phase == WebsiteTestPhase::Running,
+              "a site that is already testing is not started twice");
+        const auto custom = shared->sites.Get().size() - 1;
+        shared->Start(*websiteTasks, slow, {custom});
+        ui.Pump(std::chrono::milliseconds{1});
+        check(shared->sites.Get()[custom].result.phase == WebsiteTestPhase::Queued,
+              "an idle site accepts its own test while other sites are already running");
+        shared->Cancel(custom);
+        check(shared->sites.Get()[custom].result.phase == WebsiteTestPhase::Cancelled && metrics->active == 3,
+              "cancelling a queued site leaves every running site untouched");
+        shared->Start(*websiteTasks, slow, {custom});
+        shared->Cancel(0);
+        ui.Pump(std::chrono::milliseconds{1});
+        check(shared->sites.Get()[0].result.phase == WebsiteTestPhase::Cancelled && metrics->active == 3 &&
+              shared->sites.Get()[1].result.phase == WebsiteTestPhase::Running,
+              "cancelling one running site frees only its slot and keeps the other sites going");
         ui.Find(UiSelector::Text("Toggle website panel")).Tap();
         ui.Pump(std::chrono::milliseconds{1});
-        check(!ui.Find(UiSelector::Key("website-panel")).Exists() && shared->busy.Get(),
+        check(!ui.Find(UiSelector::Key("website-panel")).Exists() && shared->AnyActive(),
               "application website tests survive the initiating panel unmounting");
-        shared->Cancel();
+        shared->CancelAll();
         ui.Pump(std::chrono::milliseconds{1});
-        check(!shared->busy.Get() && metrics->active == 0 &&
+        check(!shared->AnyActive() && metrics->active == 0 &&
               shared->sites.Get()[7].result.phase == WebsiteTestPhase::Cancelled,
               "cancel closes in-flight HTTP tasks and clears queued work immediately");
         shared->Start(*websiteTasks, slow, {0});
         ui.PumpAndSettle();
-        check(!shared->busy.Get() && shared->sites.Get()[0].result.status == 403 &&
+        check(!shared->AnyActive() && shared->sites.Get()[0].result.status == 403 &&
               shared->sites.Get()[1].result.phase == WebsiteTestPhase::Cancelled,
               "single retry publishes only its target and old batches cannot overwrite cancellation");
         ui.Find(UiSelector::Text("Toggle website panel")).Tap();
@@ -398,20 +469,78 @@ void testWebsiteTests() {
         shared->Start(*websiteTasks, slow, {0, 1, 2, 3, 4, 5, 6, 7});
         ui.PumpAndSettle();
         const auto completed = shared->sites.Get();
-        check(!shared->busy.Get() && metrics->maximum == 3 && std::all_of(completed.begin(),
+        check(!shared->AnyActive() && metrics->maximum == 3 && std::all_of(completed.begin(),
             completed.begin() + 8, [](const auto& row) { return row.result.status == 403; }),
             "bounded website workers drain the complete preset batch");
         const auto http = websiteHttp;
         shared->Start(*websiteTasks, [http](std::string url) { return ProbeWebsite(http, std::move(url)); }, {0});
         ui.PumpAndSettle();
-        check(!shared->busy.Get() && shared->sites.Get()[0].result.phase == WebsiteTestPhase::Failed,
+        check(!shared->AnyActive() && shared->sites.Get()[0].result.phase == WebsiteTestPhase::Failed,
               "production HTTP adapter failure leaves the website ready for retry");
+        ui.Find(UiSelector::Key("website-menu-0")).Tap(); ui.PumpAndSettle();
+        ui.Find(UiSelector::Text("编辑网站")).Tap(); ui.Pump(kSettle);
+        check(ui.Find(UiSelector::Key("website-editor-url")).Exists() &&
+              shared->customUrl.Get().text == "https://www.baidu.com/", "presets open the shared editor");
+        ui.Find(UiSelector::Key("website-editor-url")).Tap();
+        ui.Find(UiSelector::Key("website-editor-url")).ReplaceText("www.bilibili.com");
+        ui.Pump(kSettle);
+        ui.Find(UiSelector::Key("website-editor-submit")).Tap(); ui.Pump(kSettle);
+        check(ui.Find(UiSelector::Key("website-editor-url")).Exists() &&
+              shared->sites.Get()[0].url == "https://www.baidu.com/" &&
+              shared->customUrl.Get().text == "www.bilibili.com", "failed edits preserve the original and draft");
+        ui.PressKey(huxerui::Key::Escape); ui.Pump(kSettle);
+        check(ui.Find(UiSelector::Key("discard-keep")).Exists(), "editor dismissal guards unsaved changes");
+        ui.Find(UiSelector::Key("discard-keep")).Tap(); ui.Pump(kSettle);
+        shared->customUrl = huxerui::TextEditingValue::FromText("edited.example.test/Path?q=X");
+        shared->customName = huxerui::TextEditingValue::FromText("  Edited preset  ");
+        ui.Pump(kSettle);
+        ui.Find(UiSelector::Key("website-editor-submit")).Tap(); ui.PumpAndSettle();
+        check(!ui.Find(UiSelector::Key("website-editor-url")).Exists() &&
+              shared->sites.Get()[0].url == "https://edited.example.test/Path?q=X" &&
+              shared->sites.Get()[0].name == "Edited preset" &&
+              shared->sites.Get()[0].result.phase == WebsiteTestPhase::Idle,
+              "saving a preset uses normalized addresses and clears the previous target result");
+        shared->Start(*websiteTasks, slow, {0, 1, 2, 3, 4});
+        ui.Pump(std::chrono::milliseconds{1});
+        check(shared->Update(0, "edited.example.test/Path?q=X", "Rename during test") &&
+              shared->sites.Get()[0].result.phase == WebsiteTestPhase::Running && metrics->active == 3,
+              "remark-only edits preserve the active request");
+        check(!shared->Update(0, "www.bilibili.com") && metrics->active == 3,
+              "invalid edits do not cancel the running target");
+        check(shared->Update(0, "replacement.example.test") &&
+              shared->sites.Get()[0].result.phase == WebsiteTestPhase::Idle,
+              "changing a running target cancels it before publishing the replacement");
+        shared->Start(*websiteTasks, slow, {0});
+        check(shared->Remove(0) && !shared->Remove(0), "queued preset deletion is limited to its stable ID");
+        // Delete the first remaining in-flight site through the production menu and confirmation.
+        ui.Pump(std::chrono::milliseconds{1});
+        ui.Find(UiSelector::Key("website-menu-1")).Tap(); ui.Pump(std::chrono::milliseconds{1});
+        ui.Find(UiSelector::Text("删除")).Tap(); ui.Pump(std::chrono::milliseconds{1});
+        check(shared->sites.Get().front().id == 1, "delete menu waits for explicit confirmation");
+        ui.Find(UiSelector::Key("website-delete-confirm")).Tap(); ui.PumpAndSettle();
+        check(shared->sites.Get().front().id == 2 && !shared->AnyActive() && metrics->active == 0 &&
+              shared->sites.Get().front().result.status == 403,
+              "deleting a running preset preserves other requests and their results after indices shift");
+        ui.Find(UiSelector::Key("website-test-2")).Tap(); ui.Pump(std::chrono::milliseconds{1});
+        check(shared->sites.Get().front().id == 2 &&
+              shared->sites.Get().front().result.phase == WebsiteTestPhase::Running,
+              "card actions still target the stable ID after preceding presets are deleted");
+        ui.Find(UiSelector::Key("website-test-2")).Tap(); ui.PumpAndSettle();
+        check(shared->Add("replacement.example.test") && shared->sites.Get().back().id > 9,
+              "readding a removed URL allocates a fresh identity");
+        const auto remaining = shared->sites.Get();
+        for (const auto& row : remaining) shared->Remove(row.id);
+        check(shared->sites.Get().empty() && shared->Add("fresh.example.test"),
+              "all defaults can be removed and the list can be repopulated");
         while (shared->sites.Get().size() < 24)
             check(shared->Add("https://extra" + std::to_string(shared->sites.Get().size()) + ".example.test/"),
                   "custom website slots can be filled");
         check(!shared->Add("https://overflow.example.test/"), "website session has a bounded card count");
+        const auto last = shared->sites.Get().back();
+        check(shared->Update(last.id, last.url, "At capacity"), "a full list still allows editing an existing site");
+
     }
-    websiteFixture.reset(); websiteTasks.reset(); websiteHttp.reset();
+    websiteFixture.reset(); websiteTasks.reset(); websiteHttp.reset(); websiteProbe.reset();
 }
 
 int diagnosticsStarts = 0, diagnosticsCopies = 0, diagnosticsSaves = 0,

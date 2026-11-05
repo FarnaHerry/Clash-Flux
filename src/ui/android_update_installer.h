@@ -6,21 +6,34 @@
 
 namespace clashflux::ui {
 
-// APK inspection, install-source authorization and installation are Android
-// capabilities. HTTP and download state remain in the shared application model.
-class AndroidAppUpdateInstaller {
+struct AndroidUpdateChannel;
+
+// Application service: verification and download commit survive window closure.
+class AndroidAppUpdateVerifier {
 public:
-    explicit AndroidAppUpdateInstaller(huxerui::PlatformChannel channel);
+    explicit AndroidAppUpdateVerifier(huxerui::PlatformChannel channel);
+    ~AndroidAppUpdateVerifier();
+    huxerui::Task<void> Verify(std::shared_ptr<AppUpdatePackage> package) const;
     huxerui::Task<void> VerifyAndCommit(std::shared_ptr<AppUpdatePackage> package) const;
+private:
+    std::shared_ptr<AndroidUpdateChannel> calls_;
+};
+
+// Session-owned module bound to the original window. Close also settles Tasks
+// whose channel delivery is dropped when that window retires.
+class AndroidAppUpdatePresentation {
+public:
+    explicit AndroidAppUpdatePresentation(huxerui::PlatformChannel channel);
+    ~AndroidAppUpdatePresentation();
+    void Close();
     huxerui::Task<bool> EnsurePermission(std::shared_ptr<AppUpdatePackage> package) const;
     huxerui::Task<bool> Install(std::shared_ptr<AppUpdatePackage> package) const;
 private:
-    huxerui::Task<huxerui::PlatformPayload> Call(std::string method, huxerui::PlatformPayload arguments) const;
-    huxerui::PlatformPayload PackageArguments(const AppUpdatePackage& package) const;
-    huxerui::PlatformChannel channel_;
+    std::shared_ptr<AndroidUpdateChannel> calls_;
 };
 
 void InstallAndroidAppUpdateSupport(huxerui::ApplicationContext& context);
+std::shared_ptr<AndroidAppUpdatePresentation> OpenAndroidAppUpdatePresentation();
 
 } // namespace clashflux::ui
 #endif

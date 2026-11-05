@@ -4,10 +4,42 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `83617e66ab03e2680bfef9af8484861db86ec3d6`，各平台 CI 共用
+Clash-Flux 当前固定 `a755f9ff17ac83cea6c48795ada4b2a560083fc1`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
+
+2026-11-05 更新到 `a755f9ff`：框架新增窗口原生 surface 暴露（Linux GTK canvas aperture
+与 locator 矩形、Win32 HWND），供 Camera 扩展的桌面屏幕选区使用，原生输入路由与绘制
+保持分离。应用同步把 Lib-Camera 从 `b8b3b93` 提升到 `d51a2f0`：新增 Linux V4L2
+预览/拍照、X11 与 ScreenCast/PipeWire 屏幕选区（`CaptureSource::Screen` +
+`ScreenPreview`，X11/PipeWire 可选）、`CapturePreviewFrameAsync`；Android Camera 模块
+改用窗口级工厂并绑定原 `HuxerUIView`，iOS 改用 `WindowPlatformModuleFactory`，拍照等待
+由工作线程改为 `AwaitCallback` 并保留取消、中断与原生清理语义。应用继续只使用既有
+`UseCamera` / `CameraPreview` / `CapturePhotoAsync`，页面无需改动；Linux 扫码由
+`Unavailable` 变为可用的 V4L2 路径（真实设备仍取决于系统权限与 `/dev/video*`）。
+Linux 主目标及全部测试目标构建、`./run.sh --version`（v0.3.95）、31/31 桌面门禁
+（180.14 秒）、`git diff --check` 通过；隔离 XDG 数据目录的 GUI 运行 8 秒未退出且无日志。
+未做真实摄像头预览/拍照、屏幕选区、Android 真机、Windows/macOS 或 iOS 原生构建验收。
+iOS 静态阻塞已解除（该 fork 不再引用已移除的 `ios::PlatformModuleFactory`），但 iOS
+仍暂缓，不据此宣称 iOS native 编译通过。
+
+2026-11-05 更新到 `11161a7`：跟进已发布 `farna/main` 的 6 个提交，包含官方
+`c8d7ac24` 基线：Android 新增窗口级 Java 模块和 Activity Result 路由，文件选择器共用
+原窗口的结果队列；iOS 区分应用/窗口模块并统一原生呈现排队；Linux 运行库验证显式传入
+规范化的 staging 根，优先检查包内候选，仍拒绝包内不同内容的同名库冲突。
+应用的 Android `Factory` 模块和 `MainActivity` 的 super 结果转发保持兼容，四项扩展 pin 不变。
+Linux 主目标及全部测试目标构建、31/31 桌面门禁、框架 runtime deployment fixture、
+Android Java/arm64-v8a native 编译通过。隔离 XDG 数据目录的 GUI 运行 8 秒未退出；
+未做首页圆环图的视觉核对、真实窗口交互、Android 真机、Windows/macOS 或离线 SDK 验收。
+iOS 仍暂缓：静态接口核对发现固定 Lib-Camera 使用已移除的 `ios::PlatformModuleFactory`，
+其 fork 需迁移到窗口级工厂后才能继续 iOS native 编译；本轮不在应用重复补丁或启用 iOS Release。
+详细命令及本轮网站测试页回归见 [验收记录](l1-l2-l3-status.md)。
+
+同日应用完成独立的 Android 更新适配：APK 校验保留应用级 Java 模块，授权/安装迁移
+`JavaWindowPlatformModuleFactory` 与原窗口的 Activity Result launcher；移除更新专用
+MainActivity 静态查找/请求码，窗口关闭会结束仍存活任务的等待并恢复写入。该工作不依赖
+Camera 的 iOS 工厂迁移；定向 6/6 回归及 Android Java/NDK 通过，真机安装尚未验证。
 
 2026-11-04 更新到 `83617e66`：采用已发布的 `farna/main`，已包含官方 `1853c612`
 基线及 SDK 0.4.0、任务 callback 桥接、原生文件引用、Linux 字体度量失效传播和窗口实现清理。
@@ -92,7 +124,7 @@ Lib-Charts、Lib-SQLite、Lib-Camera、Lib-CodeEditor 的项目修复已收录�
 | --- | --- | --- |
 | [Lib-Charts](https://github.com/FarnaHerry/Lib-Charts/tree/farna/main) | `e90cfa84707bdf72eb6029410bf05c420efa62fc` | 饼图、96pt 紧凑绘图面与 `inner_radius` 圆环样式（环形段外弧+反向内弧、NonZero 填充，取全图最大解析值）均已包含，原两份补丁 reverse check 通过；包含 `rounded_caps`、中心占比/180ms 悬停动画，全零数据按条目数等分且中心保持 0%。 |
 | [Lib-SQLite](https://github.com/FarnaHerry/Lib-SQLite/tree/farna/main) | `3b286a2d7e64f205eeb935a52b0706067886abd0` | 启动临时只读查询已包含，原补丁 reverse check 通过；另保留逐值 UTF-8 校验，主键 schema 校验收紧为仅 INTEGER 单列 rowid 别名可视为非空（TEXT/复合/`DESC` 主键必须显式 NOT NULL），集成测试同步覆盖。 |
-| [Lib-Camera](https://github.com/FarnaHerry/Lib-Camera/tree/farna/main) | `b8b3b9304646cdc1afb9722ead16d85cf2160610` | 已采用 ApplicationContext/UiWindow；Android/iOS/Windows/Linux 行为覆盖原补丁。macOS 用直接 UiWindow factory，当前 backend 不消费 NSWindow，因此与原 typed wrapper 等价；库图模式早退也已包含。 |
+| [Lib-Camera](https://github.com/FarnaHerry/Lib-Camera/tree/farna/main) | `d51a2f09dc73f68e488941daae4d1f50a3e19b29` | 已采用 ApplicationContext/UiWindow；Android/iOS 改用窗口级模块工厂并绑定原窗口，拍照等待改用 `AwaitCallback`；新增 Linux V4L2 预览/拍照与 X11、ScreenCast/PipeWire 屏幕选区，桌面屏幕源使用框架 `a755f9ff` 的原生 surface 锚点。库图模式早退保留。 |
 | [Lib-CodeEditor](https://github.com/FarnaHerry/Lib-CodeEditor/tree/farna/main) | `a332e7c3158818a891bb8181756d439a62df6268` | 包含只读复制、滚动/绘制兼容；补齐固定子模块声明，提供工作线程预构建并跨卸载保留的 `initial_document`，向消费者传播 Windows 宏约束，默认关闭输入追踪，并修复工具栏剪贴板、文本变更通知和 Android 库图接口目标。Linux 从固定 simdutf v7.7.0 源码按 libc++ 工具链重建，复用 SweetEditor 同版本兼容头（仅进入构建期 include），并移除已合入静态库的冗余链接边，兼容 Linux 与 iOS 链接闭包。 |
 
 CMake 原生构建和 CLI 的 Android 库图共用这些 HTTPS URL 与完整 SHA。Camera 的库图
@@ -108,7 +140,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 83617e66ab03e2680bfef9af8484861db86ec3d6
+git -C third_party/huxerui checkout a755f9ff17ac83cea6c48795ada4b2a560083fc1
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`

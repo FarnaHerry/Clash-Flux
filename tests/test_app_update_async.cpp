@@ -1,6 +1,7 @@
 #include <huxerui/huxerui.h>
 #include <huxerui/testing/ui_test.h>
 #include "../src/ui/app_update_model.h"
+#include "../src/ui/app_update_pending_calls.h"
 #include <chrono>
 #include <iostream>
 #include <random>
@@ -37,6 +38,60 @@ template<class F> static void Wait(testing::UiTest& ui, F done) {
     }
     Require(done(), "asynchronous update did not settle");
 }
+
+static void TestPlatformCallLifetime(testing::UiTest& ui) {
+    struct Reply {
+        std::uint64_t token = 0;
+        bool done = false, value = false;
+        unsigned cancelled = 0;
+        std::string error;
+    };
+    auto pending = std::make_shared<AppUpdatePendingCalls>();
+    const auto start = [pending](std::shared_ptr<Reply> reply) {
+        return tasks->Launch([pending, reply]() -> Task<void> {
+            try {
+                const auto result = co_await AwaitCallback<PlatformPayload>([pending, reply](auto completion) {
+                    reply->token = pending->Add(completion);
+                    return [pending, reply] {
+                        ++reply->cancelled;
+                        pending->Abandon(reply->token);
+                    };
+                });
+                reply->value = result.AsBoolean();
+            } catch (const std::exception& error) { reply->error = error.what(); }
+            reply->done = true;
+        });
+    };
+    auto success = std::make_shared<Reply>();
+    start(success); ui.Pump();
+    pending->Finish(success->token, PlatformPayload{true});
+    Wait(ui, [success] { return success->done; });
+    Require(success->value && success->error.empty(), "platform update result resumes its task");
+
+    auto failed = std::make_shared<Reply>();
+    start(failed); ui.Pump();
+    pending->Finish(failed->token, PlatformError{"update/test", "host unavailable", {}});
+    Wait(ui, [failed] { return failed->done; });
+    Require(failed->error == "host unavailable", "platform failures finish instead of waiting forever");
+
+    auto cancelled = std::make_shared<Reply>();
+    auto cancel = start(cancelled); ui.Pump(); cancel.Cancel(); ui.Pump();
+    pending->Finish(cancelled->token, PlatformPayload{true}); ui.Pump();
+    Require(!cancelled->done && cancelled->cancelled == 1, "task cancellation discards late platform delivery");
+
+    auto closing = std::make_shared<Reply>(), queued = std::make_shared<Reply>();
+    start(closing); start(queued); ui.Pump();
+    pending->Close(); pending->Close();
+    Wait(ui, [closing, queued] { return closing->done && queued->done; });
+    Require(!closing->error.empty() && !queued->error.empty(), "session closure settles all pending application tasks");
+    const auto error = closing->error;
+    pending->Finish(closing->token, PlatformPayload{true}); ui.Pump();
+    Require(closing->error == error && !closing->value, "old-window results cannot overwrite closure failure");
+    auto afterClose = std::make_shared<Reply>();
+    start(afterClose);
+    Wait(ui, [afterClose] { return afterClose->done; });
+    Require(!afterClose->error.empty() && afterClose->token == 0, "a closed session rejects a new request");
+}
 int main() {
     const auto cache = std::filesystem::temp_directory_path() /
         ("clash-flux-update-async-" + std::to_string(std::random_device{}()));
@@ -44,6 +99,7 @@ int main() {
         const Application application{Root, AppOptions{.application_hooks = {InstallAppHttpClient, InstallAppUpdateModel}}};
         testing::UiTest ui(application, {.viewport = {480, 320}});
         ui.PumpAndSettle();
+        TestPlatformCallLifetime(ui);
         const auto shared = model;
         const clashflux::wire::ReleaseAsset asset{
             "clash-flux-1.2.3-windows-x86_64.exe", "https://github.com/FarnaHerry/Clash-Flux/releases/download/v1.2.3/clash-flux-1.2.3-windows-x86_64.exe",

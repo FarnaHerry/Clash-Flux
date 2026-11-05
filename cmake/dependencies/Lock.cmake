@@ -31,7 +31,7 @@ set(CLASHFLUX_DEPENDENCY_FILES
 
 # Framework extensions still use the framework's codegen/resource/Android graph.
 set(CLASHFLUX_HUXERUI_CAMERA_URL "https://github.com/FarnaHerry/Lib-Camera.git")
-set(CLASHFLUX_HUXERUI_CAMERA_COMMIT "b8b3b9304646cdc1afb9722ead16d85cf2160610")
+set(CLASHFLUX_HUXERUI_CAMERA_COMMIT "d51a2f09dc73f68e488941daae4d1f50a3e19b29")
 set(CLASHFLUX_HUXERUI_SQLITE_URL "https://github.com/FarnaHerry/Lib-SQLite.git")
 set(CLASHFLUX_HUXERUI_SQLITE_COMMIT "3b286a2d7e64f205eeb935a52b0706067886abd0")
 set(CLASHFLUX_HUXERUI_CHARTS_URL "https://github.com/FarnaHerry/Lib-Charts.git")
