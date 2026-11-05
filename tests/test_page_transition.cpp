@@ -45,6 +45,8 @@
 #include "page_loading.h"
 #include "empty_state.h"
 #include "connection_row.h"
+#include "website_test_card.h"
+#include "website_test_grid.h"
 #include "theme_colors.h"
 #include "theme_color_card.h"
 #include "vpn_snapshot_model.h"
@@ -278,6 +280,139 @@ huxerui::View ConnectionListRoot() {
     })};
 }
 const huxerui::Application kConnectionListApplication{ConnectionListRoot};
+
+clashflux::connection_trace::Status traceFixtureStatus = clashflux::connection_trace::Status::Matched;
+huxerui::View ConnectionTraceRoot() {
+    clashflux::ui::ConnectionRow row;
+    row.trace = {.status = traceFixtureStatus, .ruleId = "trace-rule-visible", .sourceId = "main",
+        .sourceName = "TraceFixture", .revision = 7};
+    return clashflux::ui::ConnectionTraceContent(row);
+}
+const huxerui::Application kConnectionTraceApplication{ConnectionTraceRoot};
+void testConnectionTraceContent() {
+    using clashflux::connection_trace::Status;
+    for (const auto size : {huxerui::Size{320, 640}, huxerui::Size{960, 720}})
+        for (const auto status : {Status::Matched, Status::PriorPlan, Status::Ambiguous, Status::Unavailable}) {
+            traceFixtureStatus = status;
+            huxerui::testing::UiTest ui(kConnectionTraceApplication, {.viewport = size, .resource_provider = AppResources()});
+            ui.UpdateResourceConfiguration({.locale = huxerui::Locale::FromLanguageTag("zh")});
+            ui.PumpAndSettle();
+            const bool matched = status == Status::Matched;
+            check(ui.Find(UiSelector::Text("trace-rule-visible")).Exists() == matched &&
+                  ui.Find(UiSelector::Text("TraceFixture · main")).Exists() == matched,
+                  "production trace fields expose identities only for a proven match at both widths");
+            const char* text = matched ? "已关联编排规则" : status == Status::PriorPlan ? "历史连接未关联" :
+                status == Status::Ambiguous ? "规则描述不唯一" : "暂无可验证的追溯";
+            check(ui.Find(UiSelector::Text(text)).Exists(), "production trace status is explicit and localized");
+        }
+}
+
+
+struct WebsiteFixtureMetrics { int active = 0, maximum = 0, started = 0; };
+std::shared_ptr<clashflux::ui::WebsiteTestModel> websiteFixture;
+std::optional<huxerui::TaskScope> websiteTasks;
+std::shared_ptr<clashflux::ui::AppHttpClient> websiteHttp;
+huxerui::View WebsiteFixtureRoot() {
+    using namespace clashflux::ui;
+    websiteFixture = huxerui::UseService<WebsiteTestModel>();
+    websiteTasks = huxerui::UseApplicationTaskScope();
+    websiteHttp = huxerui::UseService<AppHttpClient>();
+    const auto visible = huxerui::UseState(true);
+    const auto rows = websiteFixture->sites.Get();
+    const auto offset = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
+    const auto controller = huxerui::UseScrollController(offset->value);
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    std::vector<huxerui::View> cards;
+    for (const auto& row : rows)
+        cards.push_back(huxerui::Column{WebsiteTestCardContent(row, !websiteFixture->busy.Get(), [] {})}
+            .With(huxerui::Padding(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).Key(row.url));
+    return huxerui::Column {
+      huxerui::Button("Toggle website panel").OnClick([visible] { visible = !visible.Get(); }),
+      visible.Get() ? WebsiteTestGrid(huxerui::Text("Website header"), cards, compact, controller, offset).Key("website-panel")
+          : huxerui::View{huxerui::Text("Website panel hidden")},
+    }.With(huxerui::Padding(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+const huxerui::Application kWebsiteFixtureApplication{WebsiteFixtureRoot,
+    huxerui::AppOptions{.application_hooks = {[](huxerui::ApplicationContext& context) {
+        context.Provide(std::make_shared<clashflux::ui::WebsiteTestModel>());
+        clashflux::ui::InstallAppHttpClient(context);
+    }}}};
+void testWebsiteTests() {
+    using namespace clashflux::ui;
+    for (const auto width : {320.0F, 960.0F}) {
+        huxerui::testing::UiTest ui(kWebsiteFixtureApplication,
+            {.viewport = {width, 640}, .resource_provider = AppResources()});
+        ui.UpdateResourceConfiguration({.locale = huxerui::Locale::FromLanguageTag("zh")});
+        ui.PumpAndSettle();
+        const auto shared = websiteFixture;
+        const auto first = ui.Find(UiSelector::Text("Baidu")).One().bounds;
+        const auto second = ui.Find(UiSelector::Text("Bilibili")).One().bounds;
+        check(width == 320.0F ? second.y > first.y : std::abs(second.y - first.y) < 1.0F && second.x > first.x,
+              "production website grid uses one compact column and multiple expanded columns");
+        check(shared->sites.Get().size() == 8 && !shared->busy.Get(), "website presets do not make automatic requests");
+        check(!shared->Add("file:///etc/hosts") && !shared->Add("https://user:pass@example.test/") &&
+              !shared->Add("https://example.test/#secret") && !shared->Add("not a URL"),
+              "custom websites accept only usable HTTP(S) targets without credentials or fragments");
+        check(shared->Add(" https://custom.example.test/path ") &&
+              !shared->Add("https://custom.example.test/path"), "custom website addition trims and rejects duplicate targets");
+        const auto metrics = std::make_shared<WebsiteFixtureMetrics>();
+        const WebsiteTestModel::Probe slow = [metrics](std::string) -> huxerui::Task<WebsiteTestResult> {
+            struct Guard { std::shared_ptr<WebsiteFixtureMetrics> value; ~Guard() { --value->active; } } guard{metrics};
+            ++metrics->active; ++metrics->started;
+            metrics->maximum = std::max(metrics->maximum, metrics->active);
+            co_await huxerui::Delay(std::chrono::milliseconds{200});
+            co_return WebsiteTestResult{WebsiteTestPhase::Responded, 403, 200};
+        };
+        shared->Start(*websiteTasks, slow, {0, 1, 2, 3, 4, 5, 6, 7});
+        ui.Pump(std::chrono::milliseconds{1});
+        check(metrics->active == 3 && metrics->maximum == 3, "website batch launches exactly three asynchronous requests");
+        const auto ticket = shared->generation;
+        shared->Start(*websiteTasks, slow, {0});
+        check(shared->generation == ticket, "website batch rejects duplicate starts");
+        ui.Find(UiSelector::Text("Toggle website panel")).Tap();
+        ui.Pump(std::chrono::milliseconds{1});
+        check(!ui.Find(UiSelector::Key("website-panel")).Exists() && shared->busy.Get(),
+              "application website tests survive the initiating panel unmounting");
+        shared->Cancel();
+        ui.Pump(std::chrono::milliseconds{1});
+        check(!shared->busy.Get() && metrics->active == 0 &&
+              shared->sites.Get()[7].result.phase == WebsiteTestPhase::Cancelled,
+              "cancel closes in-flight HTTP tasks and clears queued work immediately");
+        shared->Start(*websiteTasks, slow, {0});
+        ui.PumpAndSettle();
+        check(!shared->busy.Get() && shared->sites.Get()[0].result.status == 403 &&
+              shared->sites.Get()[1].result.phase == WebsiteTestPhase::Cancelled,
+              "single retry publishes only its target and old batches cannot overwrite cancellation");
+        ui.Find(UiSelector::Text("Toggle website panel")).Tap();
+        ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Text("网站已响应")).Exists() && ui.Find(UiSelector::Text("HTTP 403")).Exists() &&
+              !ui.Find(UiSelector::Text("连接失败")).Exists(), "HTTP rejection remains distinct from transport failure");
+        ui.SetWindowMetrics({.viewport = {width == 320.0F ? 960.0F : 320.0F, 640}});
+        ui.PumpAndSettle();
+        check(websiteFixture == shared && shared->sites.Get()[0].result.status == 403,
+              "website model and results survive a narrow/wide viewport change");
+        ui.SetWindowMetrics({.viewport = {width, 640}});
+        ui.PumpAndSettle();
+        const auto card = ui.Find(UiSelector::Key("website-panel")).One().bounds;
+        check(card.width <= width && card.x >= 0, "production website card content fits narrow and expanded widths");
+        shared->Start(*websiteTasks, slow, {0, 1, 2, 3, 4, 5, 6, 7});
+        ui.PumpAndSettle();
+        const auto completed = shared->sites.Get();
+        check(!shared->busy.Get() && metrics->maximum == 3 && std::all_of(completed.begin(),
+            completed.begin() + 8, [](const auto& row) { return row.result.status == 403; }),
+            "bounded website workers drain the complete preset batch");
+        const auto http = websiteHttp;
+        shared->Start(*websiteTasks, [http](std::string url) { return ProbeWebsite(http, std::move(url)); }, {0});
+        ui.PumpAndSettle();
+        check(!shared->busy.Get() && shared->sites.Get()[0].result.phase == WebsiteTestPhase::Failed,
+              "production HTTP adapter failure leaves the website ready for retry");
+        while (shared->sites.Get().size() < 24)
+            check(shared->Add("https://extra" + std::to_string(shared->sites.Get().size()) + ".example.test/"),
+                  "custom website slots can be filled");
+        check(!shared->Add("https://overflow.example.test/"), "website session has a bounded card count");
+    }
+    websiteFixture.reset(); websiteTasks.reset(); websiteHttp.reset();
+}
 
 int diagnosticsStarts = 0, diagnosticsCopies = 0, diagnosticsSaves = 0,
     diagnosticsCloses = 0;
@@ -5708,6 +5843,8 @@ int main() {
     testServiceInstallContinuation();
     testInboundSettings();
     testConnectionList();
+    testConnectionTraceContent();
+    testWebsiteTests();
     try { testDiagnosticsContent(); testDiagnosticsThemeAndLayout(); }
     catch (const std::exception& error) {
         diagnosticsFixtureFullPage = false;

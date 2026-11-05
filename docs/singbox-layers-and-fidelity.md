@@ -21,7 +21,7 @@ IP 规则集路由只提取目标 CIDR；PAC 由应用提供与接管，不伪�
 
 | 层 | 职责 | 代码位置 | 铁律 |
 |---|---|---|---|
-| L1 内核层 | 运行 sing-box，提供控制面 | 官方二进制（桌面 spawn）/ libbox（Android）、`clashflux.core`、`clashflux.api`、`clashflux.stream` | 不 fork、不臆造字段、能力以上游文档/源码为准 |
+| L1 内核层 | 运行 sing-box，提供控制面 | 官方二进制（Windows/Linux 服务、macOS 进程）/ libbox（Android 后台）、`clashflux.core`、`clashflux.api`、`clashflux.stream` | 不 fork、不臆造字段、能力以上游文档/源码为准 |
 | L2 翻译层 | 把 Clash 生态翻译成 sing-box 形态 | `clashflux.singbox`、`clashflux.model`、`clashflux.routing`、`clashflux.openvpn`、`clashflux.pptp` | 每条映射必须落在 exact / approx / unsupported 之一，禁止静默丢弃 |
 | L3 产品层 | 交互、状态编排、CLI、托盘 | `src/ui/*`、`clashflux.store.*`、`clashflux.cli` | 只用内核真有的能力，不做假 UI |
 
@@ -111,12 +111,15 @@ IP 规则集路由只提取目标 CIDR；PAC 由应用提供与接管，不伪�
 - 回归测试：`tests/test_singbox.cpp` 断言结构化条目（未知协议 / REJECT 成员移除 /
   fallback / load-balance）、`warnings` 投影、以及 `FidelitySummary` 的计数与空账本。
 
+2026-11-05 首批[连接追溯](connection-rule-tracing.md)使用已应用计划和完整内核规则清单关联可证明唯一的编排规则；原始订阅/个人规则定位和保真度跳转尚未完成。
+
 仍缺（下一批）：
 
 1. **协议与端点补面**：Clash 出站类型已覆盖 12/15、端点编辑入口仍为 1/5
    （见 §4.1 / §4.2；类型覆盖不代表所有字段均已映射）；
-2. 外部 `RULE-SET` / rule-providers 下载与完整格式转换（已有 inline 子集与国内别名）；
-3. Android 应用选择入口及 owner 查询失败/共享 UID 等运行边界（包名/正则输入已接入）。
+2. 外部资源剩余语义与状态：已有 HTTP/file/inline provider 子集、DAT/MMDB 和独立更新；
+   普通 provider 缓存状态、准备结果复用和运行重配合批仍待完善，具体见 [Provider](provider-resource-management.md) 与 [Geo](geo-resources.md)；
+3. Android 应用路由的 owner 查询失败/共享 UID 等运行边界验收；可见应用选择和手工包名入口已接入，见 [网络设置](home-network-settings.md)。
 
 （进程匹配已补齐：`profile check` 实测某真实订阅的 24 条被跳过规则在补齐后只剩 1 条，
 剩下那条是订阅自己写错的 `GEOIP,telegram`。）
@@ -526,7 +529,7 @@ file/inline 声明依据同 revision 的 [provider parser](https://github.com/Me
 固定 sing-box selector/urltest 使用原生 outbounds 数组；不向内核写 include-all 或筛选字段。
 样本见 [group-expansion-2026-10-03.yaml](examples/group-expansion-2026-10-03.yaml)。
 
-### 4.3a DNS（2026-10-03 更新）
+### 4.3a DNS（2026-11-05 更新）
 
 | Clash 输入 | 当前映射与保真度 |
 |---|---|
@@ -539,8 +542,10 @@ file/inline 声明依据同 revision 的 [provider parser](https://github.com/Me
 | 单服务器 `nameserver-policy`：ASCII 完整域名、整层 `*`、前缀 `.`/`+.` | exact 子集；domain / 锚定 domain_regex + route server，从右向左按固定标签 > * > . 选择，不按总字符串长度排序；保留已有大小写/尾点规范化 |
 | `*` / `*.域名` / 中间或多层 `*` | 每个 * 只吃一个非空标签；裸 * 只匹配单标签名称，不含根域或额外层级；可与 . / +. 前缀组合 |
 | `.域名` / `+.域名` | . 匹配一层以上子域，不含根域；+. 展开为根分支与子域分支。后声明只覆盖同一规范化分支，Exact 条目追踪覆盖，不改变其它分支 |
+| 普通 `nameserver-policy` 的 `rule-set:name1,name2` | 已成功转换的 domain provider → 同源原生 `rule_set` DNS 条件（OR）；保持资源匹配器前后各连续域名 trie 的声明顺序，不能全局按域名精确度重排。列表中任一未知、失败、非 domain 或空名称使整条 unsupported；不替换为同名 GEO 别名。DNS 地址数组仍沿用首服务器 approx |
+| 托管真实 IP DNS 的域名保留 | 生成 `reverse_mapping:true`，使经过内核 DNS 的 A/AAAA 应答可供后续 IP 连接匹配域名规则；不是 FakeIP 等价替代。绕过内核 DNS、已有系统 DNS 缓存、同 IP 多域名仍有限制；原生 JSON 已有 DNS 保留显式设置 |
 | `default-nameserver` | IP DNS bootstrap，允许已接入的加密 IP DNS；域名和 detour 依赖拒绝并记 unsupported，数组仍记 approx |
-| `proxy-server-nameserver` | 域名代理节点的原生 domain_resolver；未指定时按同一完整域名/整层通配 policy 或 DNS final 选择；合法域名下划线也进入解析依赖 |
+| `proxy-server-nameserver` | 域名代理节点的原生 domain_resolver；未指定时按同一完整域名/整层通配 policy 或 DNS final 选择；合法域名下划线也进入解析依赖。静态节点选择暂不匹配普通 policy 的资源条件，存在该路径时单独记 approx，建议显式指定节点解析器 |
 | `proxy-server-nameserver-policy` | 与普通 policy 共用模式元数据/优先级，仅在 proxy-server-nameserver 有可转换默认服务器时生效；只设置节点解析器，不进入普通 DNS 查询规则 |
 | `direct-nameserver` | 写入 DIRECT domain_resolver，approx：托管前置 resolve 已解析的请求不会重查此解析器 |
 | DNS 地址数组 | 首个可转换服务器作为默认/策略目标，不执行并发或后备，记 approx |
@@ -555,13 +560,20 @@ file/inline 声明依据同 revision 的 [provider parser](https://github.com/Me
 策略只在无 nameserver 时也会生成，默认路径继续为 local。完整 DNS 策略可通过原生
 JSON 配置保留；`*.域名`（一级子域）和 `.域名`（不含根域）分别生成精确层级的
 锚定 regex，不能都改写成包含根域的 suffix。部分标签通配、非前缀位置的 +、非法空
-标签/超长标签、非 ASCII 字面量、geosite:/rule-set: 和其它未接入格式整条 unsupported。
+标签/超长标签、非 ASCII 字面量、geosite:、节点专用 rule-set: 和其它未接入格式整条 unsupported。
 DNS 服务域名使用显式 bootstrap 或 protected local。
 DNS server resolver、DNS detour、节点 resolver 与组候选共同检查依赖，缺失目标或循环
 返回编译错误；不去掉 detour 后直连。`direct-nameserver-follow-policy`、
 fallback-filter、FakeIP、hosts 通配/别名与系统 hosts 开关仍待实现。
 DNS approx 和 unsupported 在摘要中分别计为“近似”和“忽略”。原生 JSON 不经过此
 Clash 图检查，仍保留原始字段并由固定内核校验。
+
+2026-11-05 的 `dns_policy_runtime` 增加生产编译器 → 固定内核回环验证：独立关闭
+反向映射、移除资源 DNS 策略分别复现旧行为；修复后验证 provider 列表、资源与域名
+策略的先后关系、DNS 上游选择及无 HTTP Host/TLS SNI 的 IP 连接实际直连/代理出口。
+该验证不创建 TUN，不替代系统路由/真实订阅公网验收。实现依据：
+[sing-box reverse_mapping](https://sing-box.sagernet.org/configuration/dns/#reverse_mapping) 与
+[Mihomo makePolicy](https://github.com/MetaCubeX/mihomo/blob/Meta/dns/resolver.go)。
 
 策略样本：[dns-wildcard-policy-2026-10-03.yaml](examples/dns-wildcard-policy-2026-10-03.yaml)。
 `dns_policy_runtime` 用生产编译器（含主来源 namespace）、固定官方 1.14.2、独占

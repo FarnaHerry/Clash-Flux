@@ -43,8 +43,14 @@ struct ConnectionsSnapshot {
     std::vector<ConnectionRow> rows;
     std::int64_t totalUp = 0;
     std::int64_t totalDown = 0;
+    std::shared_ptr<const clashflux::connection_trace::Binding> binding;
 
     bool operator==(const ConnectionsSnapshot&) const = default;
+};
+
+struct ConnectionReadGuard {
+    std::shared_ptr<std::atomic<bool>> reading;
+    ~ConnectionReadGuard() { reading->store(false); }
 };
 
 struct ConnectionSample {
@@ -74,19 +80,22 @@ void ApplyConnectionRates(ConnectionsSnapshot& snapshot, ConnectionSamples& prev
     previous = std::move(next);
 }
 
-std::optional<ConnectionsSnapshot> parseConnections(const std::string& body) {
+std::optional<ConnectionsSnapshot> parseConnections(const std::string& body,
+    std::shared_ptr<const clashflux::connection_trace::Binding> binding,
+    const std::shared_ptr<const clashflux::connection_trace::Plan>& plan, std::uint64_t epoch) {
     ConnectionsSnapshot snap;
+    snap.binding = std::move(binding);
     const auto decoded = wire::DecodeConnections(body);
     if (!decoded) return std::nullopt;
     snap.totalUp = decoded.value.uploadTotal;
     snap.totalDown = decoded.value.downloadTotal;
-    std::map<std::string, std::string> labels;
-    const auto catalog = store::coreStore().snapshot().sourceObjects;
-    if (catalog) for (const auto& object : *catalog)
-        labels[object.tag] = object.objectId + (object.sourceName.empty() ? "" : " · " + object.sourceName);
+    const std::map<std::string, std::string> emptyLabels;
+    const auto& labels = plan ? plan->outboundLabels : emptyLabels;
     for (const auto& connection : decoded.value.entries) {
         ConnectionRow row;
         row.id = connection.id;
+        row.runtimeEpoch = epoch;
+        row.trace = clashflux::connection_trace::Resolve(snap.binding.get(), connection.rule, connection.rulePayload, connection.id);
         row.up = connection.upload;
         row.down = connection.download;
         row.start = connection.start;
@@ -127,10 +136,17 @@ std::optional<ConnectionsSnapshot> parseConnections(const std::string& body) {
 struct ConnectionFrame {
     bool open = false;
     std::string body;
+    std::uint64_t epoch = 0;
+    std::shared_ptr<const clashflux::connection_trace::Plan> plan;
+    std::shared_ptr<const clashflux::connection_trace::Binding> binding;
 };
 
 ConnectionFrame readConnectionFrame() {
     ConnectionFrame frame;
+    auto& core = store::coreStore();
+    const auto before = core.snapshot();
+    frame.epoch = before.runtimeEpoch;
+    if (before.state == core::CoreState::Running) frame.plan = before.appliedRulePlan;
 #if defined(__ANDROID__)
     frame.open = AndroidVpnState() == 2;
     if (const char* body = clashflux_android_connections();
@@ -141,9 +157,21 @@ ConnectionFrame readConnectionFrame() {
     auto& streams = store::coreStore().streams();
     frame.open = streams.connectionsOpen();
     streams.readConnections(frame.body);
+    if (!frame.body.empty()) {
+        auto traced = core.tracedConnections(frame.epoch);
+        if (traced.binding) {
+            frame.body = std::move(traced.body);
+            frame.binding = std::move(traced.binding);
+        }
+    }
 #endif
+    const auto after = core.snapshot();
+    if (before.runtimeEpoch != after.runtimeEpoch || after.state != core::CoreState::Running) {
+        frame.plan.reset(); frame.binding.reset();
+    }
     return frame;
 }
+
 
 std::string closeConnectionForPlatform(const std::string& id) {
 #if defined(__ANDROID__)
@@ -285,16 +313,21 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
             // 帧原文比较用共享对象保存：本次激活内的首次读取与后续推送共用
             // 同一份；重新激活（依赖变化）重建后强制重新解析，拿到最新快照。
             auto lastFrame = std::make_shared<std::string>();
+            auto lastEpoch = std::make_shared<std::uint64_t>(0);
+            auto lastBinding = std::make_shared<std::shared_ptr<const clashflux::connection_trace::Binding>>();
             auto samples = std::make_shared<ConnectionSamples>();
             auto generation = std::make_shared<std::uint64_t>(0);
+            auto reading = std::make_shared<std::atomic<bool>>(false);
             // 节拍泵的在位标志：依赖变化/卸载的 cleanup 置 false，让上一轮
             // 轮询在下一个节拍退出（TaskScope 活整个页面生命周期，不会随
             // Lifecycle 依赖变化取消已 Launch 的协程）。
             auto polling = std::make_shared<std::atomic<bool>>(true);
             const auto applyFrame = [tasks, rows, totalUp, totalDown, streamOpen,
-                                     lastFrame, samples, generation, loaded] {
+                                     lastFrame, lastEpoch, lastBinding, samples, generation, reading, loaded] {
+                if (reading->exchange(true)) return;
                 const auto ticket = ++*generation;
                 tasks.Launch([=]() -> huxerui::Task<void> {
+                    const ConnectionReadGuard readingGuard{reading};
                     try {
                         auto frame = co_await RunOnTaskThread(readConnectionFrame);
                         if (ticket != *generation) co_return;
@@ -303,7 +336,7 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
                             loaded = true;
                             co_return;
                         }
-                        if (frame.body == *lastFrame) {
+                        if (frame.body == *lastFrame && frame.binding == *lastBinding && frame.epoch == *lastEpoch) {
                             std::vector<ConnectionRow> idle;
                             idle.reserve(rows.Size());
                             bool hadRate = false;
@@ -316,10 +349,16 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
                             if (hadRate) ReplaceStateList(rows, std::move(idle));
                             co_return;
                         }
+                        if (*lastEpoch != frame.epoch) samples->clear();
+                        *lastEpoch = frame.epoch;
                         *lastFrame = frame.body;
+                        *lastBinding = frame.binding;
                         auto snapshot = co_await RunOnTaskThread(
-                            [body = std::move(frame.body)] { return parseConnections(body); });
+                            [frame = std::move(frame)] {
+                                return parseConnections(frame.body, frame.binding, frame.plan, frame.epoch);
+                            });
                         if (ticket != *generation) co_return;
+                        if (snapshot && snapshot->binding && !store::coreStore().connectionTraceCurrent(*snapshot->binding)) co_return;
                         if (!snapshot) {
                             stream::logApplication("warning", "连接快照格式错误，保留最近有效快照");
                             loaded = true;
@@ -345,7 +384,8 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
                     applyFrame();
                 });
             StartSnapshotPoll(tasks, active, polling, applyFrame);
-            return [subscription, polling] {
+            return [subscription, polling, generation] {
+                ++*generation;
                 UnsubscribeStreamUpdates(subscription);
                 polling->store(false);
             };
@@ -465,14 +505,16 @@ huxerui::XYChartData ConnectionChartData(
 
     huxerui::Lifecycle([tasks, current, ended, history, initial] {
         auto generation = std::make_shared<std::uint64_t>(0);
+        auto reading = std::make_shared<std::atomic<bool>>(false);
         auto polling = std::make_shared<std::atomic<bool>>(true);
         auto samples = std::make_shared<ConnectionSamples>();
         auto seenOpen = std::make_shared<bool>(false);
         const auto applyFrame = [tasks, current, ended, history, initial,
-                                 generation, samples, seenOpen] {
-            if (ended.Get()) return;
+                                 generation, samples, reading, seenOpen] {
+            if (ended.Get() || reading->exchange(true)) return;
             const auto ticket = ++*generation;
             tasks.Launch([=]() -> huxerui::Task<void> {
+                const ConnectionReadGuard readingGuard{reading};
                 try {
                     auto frame = co_await RunOnTaskThread(readConnectionFrame);
                     if (ticket != *generation) co_return;
@@ -487,13 +529,16 @@ huxerui::XYChartData ConnectionChartData(
                     *seenOpen = true;
                     if (frame.body.empty()) co_return;
                     auto snapshot = co_await RunOnTaskThread(
-                        [body = std::move(frame.body)] { return parseConnections(body); });
+                        [frame = std::move(frame)] {
+                            return parseConnections(frame.body, frame.binding, frame.plan, frame.epoch);
+                        });
                     if (ticket != *generation || !snapshot) co_return;
+                    if (snapshot->binding && !store::coreStore().connectionTraceCurrent(*snapshot->binding)) co_return;
                     ApplyConnectionRates(*snapshot, *samples,
                                          std::chrono::steady_clock::now());
                     const auto match = std::find_if(snapshot->rows.begin(),
                         snapshot->rows.end(), [&initial](const ConnectionRow& row) {
-                            return !initial.id.empty() && row.id == initial.id;
+                            return !initial.id.empty() && row.id == initial.id && row.runtimeEpoch == initial.runtimeEpoch;
                         });
                     if (match == snapshot->rows.end()) {
                         ConnectionRow finalRow = current.Get();
@@ -519,11 +564,12 @@ huxerui::XYChartData ConnectionChartData(
                 if (kind == stream::StreamKind::Connections) applyFrame();
             });
         StartSnapshotPoll(tasks, true, polling, applyFrame);
-        return [subscription, polling] {
+        return [subscription, polling, generation] {
+            ++*generation;
             UnsubscribeStreamUpdates(subscription);
             polling->store(false);
         };
-    }, initial.id);
+    }, initial.id, initial.runtimeEpoch);
 
     const ConnectionRow row = current.Get();
     const auto label = [&theme](huxerui::StringVariant title, std::string value) {
@@ -600,6 +646,7 @@ huxerui::XYChartData ConnectionChartData(
             label(Localized("链路"), row.chains),
             label(Localized("规则类型"), ConnectionRuleTypes(row.rule)),
             label(Localized("规则"), row.rule),
+            ConnectionTraceContent(row),
             label(Localized("开始时间"), row.start.empty() ? "—" : row.start),
         }.With(huxerui::Spacing(10.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),

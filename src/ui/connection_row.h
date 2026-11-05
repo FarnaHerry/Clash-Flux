@@ -7,6 +7,7 @@
 #include <huxerui/huxerui.h>
 
 #include "ui.h"
+#include "../connection_trace.h"
 
 namespace clashflux::ui {
 
@@ -19,6 +20,8 @@ struct ConnectionRow {
     std::string network;    // tcp / udp
     std::string chains;     // 节点链 "DIRECT" / "节点 ← 策略组"
     std::string rule;       // 命中规则
+    clashflux::connection_trace::Match trace;
+    std::uint64_t runtimeEpoch = 0;
     bool direct = false;    // 实际出口为直连，与全局 rule/global/direct 模式无关
     std::int64_t up = 0;
     std::int64_t down = 0;
@@ -28,6 +31,40 @@ struct ConnectionRow {
 
     bool operator==(const ConnectionRow&) const = default;
 };
+
+inline huxerui::StringVariant ConnectionTraceStatus(clashflux::connection_trace::Status status) {
+    using clashflux::connection_trace::Status;
+    switch (status) {
+    case Status::PriorPlan: return Localized("历史连接未关联");
+    case Status::Matched: return Localized("已关联编排规则");
+    case Status::Ambiguous: return Localized("规则描述不唯一");
+    case Status::Unmapped: return Localized("未关联编排规则");
+    default: return Localized("暂无可验证的追溯");
+    }
+}
+
+inline huxerui::View ConnectionTraceContent(ConnectionRow row) {
+    return huxerui::Scope([row = std::move(row)] {
+        const auto& theme = huxerui::UseTheme();
+        const auto field = [&theme](huxerui::StringVariant title, huxerui::StringVariant value) {
+            return huxerui::Row {
+              huxerui::Text(title).Style(huxerui::TextStyle{
+                  huxerui::Font::System(font_size::kCaption), theme.colors.on_surface_variant})
+                  .With(huxerui::Frame{.width = 82.0F}),
+              huxerui::Text(value).With(huxerui::Grow(1.0F)),
+            }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
+        };
+        const bool matched = row.trace.status == clashflux::connection_trace::Status::Matched;
+        const std::string source = row.trace.sourceName.empty() ? row.trace.sourceId :
+            row.trace.sourceName + " · " + row.trace.sourceId;
+        return huxerui::Column {
+          field(Localized("追溯状态"), ConnectionTraceStatus(row.trace.status)),
+          field(Localized("目标来源"), matched && !source.empty() ? source : "—"),
+          field(Localized("编排规则 ID"), matched ? row.trace.ruleId : "—"),
+          field(Localized("运行计划版本"), row.trace.revision && row.trace.status != clashflux::connection_trace::Status::PriorPlan ? std::to_string(row.trace.revision) : "—"),
+        }.With(huxerui::Spacing(10.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    });
+}
 
 // sing-box 的 rule 是匹配项描述（如 rule_set=tag、domain_suffix=...），
 // 后面还可能附有 " => route(...)"。卡片只提取匹配项类型，保留原文给详情页。

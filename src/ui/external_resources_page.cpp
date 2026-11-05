@@ -77,12 +77,12 @@ huxerui::StringVariant ExternalResourceKindName(std::string_view kind) {
                     } catch (const std::exception& exception) {
                         return std::tuple{std::vector<singbox::ExternalResource>{}, std::string{exception.what()}, std::string{}, std::vector<singbox::ExternalResourceCache>{}};
                     }
-                    if (content.empty()) {
-                        return std::tuple{std::vector<singbox::ExternalResource>{}, std::string{"无法读取订阅配置"}, std::string{}, std::vector<singbox::ExternalResourceCache>{}};
-                    }
                     std::string scanError;
                     auto parsed = singbox::InspectExternalResources(
                         content, scanError, routing::ConnectionId(profileId));
+                    // Discovery is optional for every subscription format. Keep
+                    // strict diagnostics in compilation/refresh, not this list.
+                    scanError.clear();
                     std::vector<singbox::ExternalResourceCache> states;
                     states.reserve(parsed.size());
                     for (const auto& resource : parsed) states.push_back(store::coreStore().externalResourceCache(resource));

@@ -503,6 +503,8 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                        [navigation] { navigation.Push(AndroidConnectionsPage); }),
             MoreNavRow(Localized("日志"), app::images::logs,
                        [navigation] { navigation.Push(AndroidLogsPage); }),
+            MoreNavRow(Localized("网站测试"), app::images::website_test,
+                       [navigation] { navigation.Push(WebsiteTestsRoutePage); }),
         }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
     }.With(huxerui::Spacing(0.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -547,6 +549,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
           MoreNavRow(Localized("规则"), app::images::route, [navPage] { navPage = 3U; }),
           MoreNavRow(Localized("连接"), app::images::connections, [navPage] { navPage = 4U; }),
           MoreNavRow(Localized("日志"), app::images::logs, [navPage] { navPage = 5U; }),
+          MoreNavRow(Localized("网站测试"), app::images::website_test, [navPage] { navPage = pages::kWebsiteTests; }),
         }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
     }.With(huxerui::Spacing(0.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));

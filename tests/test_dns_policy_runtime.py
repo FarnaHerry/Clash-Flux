@@ -88,6 +88,8 @@ def main():
                                for key, server in services.items() if key != endpoint), "node policy must select one resolver"
                     count += 1
         print(f"dns_policy_runtime: {count} cases passed (wildcard boundaries, trie priority and node resolver isolation)")
+        from test_dns_rule_set_runtime import run as run_rule_set_regression
+        run_rule_set_regression(sys.argv[1], sys.argv[2])
     finally:
         node.shutdown()
         node.server_close()

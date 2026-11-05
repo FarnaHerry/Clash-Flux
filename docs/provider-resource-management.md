@@ -1,7 +1,8 @@
 # Provider 请求协调与计时
 
 2026-11-02 第一批：统一下载入口、在途合并和分段诊断。跨验证/应用阶段
-准备结果复用与 Transport/easy 池仍未实现；2026-11-03 已接入下文独立到期调度；原生 remote rule_set 继续由 sing-box 管理。
+准备结果复用仍未实现；2026-11-03 已接入下文独立到期调度，2026-11-04 补齐桌面 Provider
+常驻下载器与有界空闲 easy/连接复用；原生 remote rule_set 继续由 sing-box 管理。
 
 ## 所有权与提交
 
@@ -26,7 +27,28 @@
 
 现有生命周期锁与版本核对继续负责候选/运行发布顺序，未为了合并请求放开这把锁。
 因此普通准备入口通常仍串行；共享机制有并发回归证据，尚无生产提速比例或公网对照。
-管理器不是持久线程池或 HTTP 连接池；独立调度归 CoreStore，见下文。
+管理器本身不持有 HTTP 连接；连接复用归下文独立下载器，独立调度仍归 CoreStore。
+
+## 桌面下载连接复用（2026-11-04）
+
+`CoreStore::providerDownloader_` 保持在 Runtime 内复用，独立于控制器端点与 secret。
+`downloadToFile` 在客户端内独占借用 easy handle，每个客户端最多保留 3 个空闲 handle，
+每个 handle 的 libcurl 连接缓存上限为 3；活跃并发仍由现有 Provider Manager 限制为 3。
+池锁只保护借出/归还，不包围网络传输；普通候选入口的生命周期锁并未放开。
+
+复用身份核对原始站点 authority（含 URL 凭据）、证书校验选项、代理三态、相关代理/CA
+环境值（区分未设置和空值）及请求头。仅 If-None-Match / If-Modified-Since 不分裂传输身份，仍逐次设置，
+完整请求的在途合并和持久缓存身份继续逐字节核对所有头。身份及凭据只在内存，不进日志。
+返回池前 reset 请求选项，清除回调、输出缓冲、请求头和错误缓冲指针；TLS/代理/跳转和
+大小限制逐次设置。传输失败销毁该 handle；候选验证失败仍保留原文件，不影响其它请求。
+传输在候选 validate 前归还，验证内嵌套准备 Provider 不占着外层连接。
+
+依据 libcurl 的 [easy reset](https://curl.se/libcurl/c/curl_easy_reset.html) 与
+[线程安全契约](https://curl.se/libcurl/c/threadsafe.html)：reset 保留连接/DNS/TLS session
+缓存，同一 handle 任一时刻只由一个线程使用。缓存项不保存响应正文或候选批准。
+Android Provider 仍使用 Java TLS 桥接，iOS URLSession 路径未改变，未宣称获得相同池化收益。
+主订阅刷新当前仍创建自己的独立下载器；本批重点是一次准备内多个 Provider 和常驻 Runtime
+后续 Provider 更新，不宣称跨进程 CLI、完全退出后或任意服务端均能复用连接。
 
 ## 诊断字段
 
@@ -90,4 +112,4 @@ CLI `profile resources-update-due` 复用同一生产调度 pass，单实例转�
 此调度仅覆盖订阅显式 HTTP/Geo 声明。原生 remote rule_set 仍由 sing-box 调度；
 未声明自定义 ASN MMDB 时的隐式 ipverse ASN 依赖仍在配置应用时检查每日到期，
 本地文件未加监听。桌面应用完全退出、Android UI Runtime 被回收后暂停，不在系统服务/
-libbox 后台进程写数据库。尚无跨资源运行重配合批或 Transport/easy 连接池。
+libbox 后台进程写数据库。跨资源运行重配合批与跨验证/应用阶段准备复用仍未实现。

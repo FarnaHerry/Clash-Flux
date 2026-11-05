@@ -2,16 +2,95 @@
 import argparse
 import base64
 import http.server
+import os
 import pathlib
 import shutil
+import socket
 import ssl
 import subprocess
 import tempfile
 import threading
+import time
 
 GOOD = b"payload: [valid.test]\n"
 # Zstandard MRSv1 IPCIDR fixture: exactly 192.0.2.0/24, including NUL bytes.
 MRS = base64.b64decode("KLUv/SA+HQEAwE1SUwEBAAEAAQABAP//wAACAP//wAAC/wUQALsUPHDGQxE=")
+
+
+class PoolHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    def setup(self):
+        super().setup()
+        self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+    def log_message(self, *_):
+        pass
+
+    def do_GET(self):
+        expected = {"/token-a": "Bearer pool-A", "/token-b": "Bearer pool-B",
+                    "/conditional": "Bearer pool-A", "/no-validator": "Bearer pool-A"}
+        authorized = self.path not in expected or self.headers.get("Authorization") == expected[self.path]
+        if self.path == "/direct-denied":
+            authorized = False
+        if (self.path == "/reuse" or self.path.startswith("/concurrent-")) and self.headers.get("Authorization"):
+            authorized = False
+        if self.path == "/no-validator":
+            authorized = authorized and self.headers.get("If-None-Match") is None
+        status = 200 if authorized else 403
+        body = b"payload: [pool.test]\n"
+        if self.path == "/conditional" and self.headers.get("If-None-Match") == '"pool"':
+            status, body = 304, b""
+        if self.path.startswith("/concurrent-"):
+            with self.lock:
+                type(self).active += 1
+                type(self).peak = max(type(self).peak, type(self).active)
+            try:
+                time.sleep(0.1)
+                body = f"payload: [{self.path[1:]}.test]\n".encode()
+            finally:
+                with self.lock:
+                    type(self).active -= 1
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(body) + (100 if self.path == "/truncate" else 0)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        if self.path == "/truncate":
+            self.close_connection = True
+
+
+def pool_test(binary, folder, key=None, cert=None):
+    servers = [http.server.ThreadingHTTPServer(("127.0.0.1", 0), PoolHandler) for _ in range(3)]
+    tls_address = ""
+    if key and cert:
+        tls = http.server.ThreadingHTTPServer(("127.0.0.1", 0), PoolHandler)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(cert, key)
+        tls.socket = context.wrap_socket(tls.socket, server_side=True)
+        servers.append(tls)
+        tls_address = f"https://127.0.0.1:{tls.server_port}"
+    for server in servers:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        addresses = [f"http://127.0.0.1:{s.server_port}" for s in servers[:3]]
+        result = subprocess.run([binary, "--download-pool", addresses[0], tls_address,
+                                 addresses[1], addresses[2], str(folder)], capture_output=True, text=True, timeout=30,
+                                env={**os.environ, "NO_PROXY": "", "no_proxy": ""})
+        assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+        assert PoolHandler.peak >= 2, "pool serialized independent transfers"
+        print(result.stdout, end="")
+        print(f"download pool: observed concurrent HTTP handlers={PoolHandler.peak}")
+    finally:
+        for server in servers:
+            server.shutdown()
+            server.server_close()
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -140,8 +219,10 @@ def main():
                 finally:
                     tls.shutdown()
                     tls.server_close()
+                pool_test(args.binary, folder, key, cert)
                 print("rule_provider_download: conditional caching, headers and default TLS rejection passed")
             else:
+                pool_test(args.binary, folder)
                 print("rule_provider_download: conditional caching and headers passed; TLS fixture unavailable")
         finally:
             server.shutdown()

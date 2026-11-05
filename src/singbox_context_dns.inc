@@ -20,6 +20,7 @@ struct Context {
     std::map<std::string, std::shared_ptr<const GeoDataIndex>> geoIndexes;
     std::map<std::string, std::string> dnsServerTags; // Clash DNS 地址 → typed server tag
     std::map<std::string, std::string> providerTags; // source name -> inline native tag
+    std::set<std::string> domainProviders;          // Only successfully converted domain providers.
     std::set<std::string> declaredProviders;        // rejected declarations also shadow aliases
     std::string dnsBootstrapTag = "local";
     nlohmann::json hostsDomains = nlohmann::json::array(); // Main-only connection resolution.
@@ -382,6 +383,7 @@ struct DnsPolicyRule {
     DnsPolicyPattern pattern;
     std::vector<unsigned> priority;
     nlohmann::json rule;
+    bool resource = false;
 };
 
 std::vector<DnsPolicyRule> compileDnsPolicy(Context& ctx, const YAML::Node& policy,
@@ -394,13 +396,52 @@ std::vector<DnsPolicyRule> compileDnsPolicy(Context& ctx, const YAML::Node& poli
     }
     std::vector<DnsPolicyRule> rules;
     std::map<std::pair<std::vector<std::string>, bool>, std::size_t> branches;
+    std::size_t segment = 0;
+    const auto finishSegment = [&] {
+        std::stable_sort(rules.begin() + segment, rules.end(), [](const auto& lhs, const auto& rhs) {
+            return lhs.priority > rhs.priority;
+        });
+        branches.clear();
+        segment = rules.size();
+    };
     for (const auto& item : policy) {
         const std::string pattern = item.first.IsScalar() ? trimCopy(item.first.Scalar()) : "<非标量>";
+        if (pattern.starts_with("rule-set:")) {
+            // Mihomo flushes each contiguous domain trie before a resource
+            // matcher. Never sort a later domain across this boundary.
+            finishSegment();
+            nlohmann::json tags = nlohmann::json::array();
+            bool valid = subject == "nameserver-policy";
+            std::string_view remaining{pattern}; remaining.remove_prefix(9);
+            while (true) {
+                const auto comma = remaining.find(',');
+                const std::string name{remaining.substr(0, comma)};
+                const auto found = ctx.providerTags.find(name);
+                if (name.empty() || !ctx.domainProviders.contains(name) || found == ctx.providerTags.end()) valid = false;
+                else tags.push_back(found->second);
+                if (comma == std::string_view::npos) break;
+                remaining.remove_prefix(comma + 1);
+            }
+            if (!valid) {
+                ctx.note(FidelityScope::Dns, Fidelity::Unsupported, subject + ":" + pattern,
+                         "DNS 规则集策略需要全部引用已成功转换的 domain provider；节点专用规则集策略尚未接入，整条已忽略");
+                continue;
+            }
+            const auto tag = selectDnsServer(ctx, item.second, subject + ":" + pattern);
+            if (tag.empty()) {
+                ctx.note(FidelityScope::Dns, Fidelity::Unsupported, subject + ":" + pattern,
+                         "DNS 规则集策略没有可转换服务器，整条已忽略");
+                continue;
+            }
+            rules.push_back({{}, {}, {{"rule_set", std::move(tags)}, {"action", "route"}, {"server", tag}}, true});
+            segment = rules.size();
+            continue;
+        }
         auto patterns = dnsPolicyPatterns(pattern);
         if (patterns.empty()) {
             ctx.note(FidelityScope::Dns, Fidelity::Unsupported, subject + ":" + pattern,
                      std::format("DNS 策略「{}」匹配模式尚未转换，已忽略", pattern),
-                     "支持完整域名、整层 *、前缀 . 与 +.；部分标签通配、geosite:、rule-set: "
+                     "支持完整域名、整层 *、前缀 . 与 +.；部分标签通配、geosite: "
                      "和其它格式不会改写成更宽的匹配");
             continue;
         }
@@ -430,9 +471,7 @@ std::vector<DnsPolicyRule> compileDnsPolicy(Context& ctx, const YAML::Node& poli
     // Trie DFS examines labels from right to left: literal, *, then dot.
     // Reverse-label lexicographic rank reproduces that choice among matching
     // patterns; total length or a global "exact first" sort cannot do so.
-    std::stable_sort(rules.begin(), rules.end(), [](const auto& lhs, const auto& rhs) {
-        return lhs.priority > rhs.priority;
-    });
+    finishSegment();
     return rules;
 }
 
@@ -445,7 +484,7 @@ std::string policyResolver(const std::vector<DnsPolicyRule>& rules, const std::s
     if (!domain) return fallback;
     const auto labels = dnsDomainLabels(*domain);
     for (const auto& rule : rules)
-        if (rule.pattern.matches(labels)) return rule.rule.value("server", fallback);
+        if (!rule.resource && rule.pattern.matches(labels)) return rule.rule.value("server", fallback);
     return fallback;
 }
 
@@ -501,6 +540,11 @@ void applyClashDns(Context& ctx, const YAML::Node& dns) {
     }
     const std::string proxyResolver = selectDnsServer(ctx, dns["proxy-server-nameserver"],
                                                      "proxy-server-nameserver");
+    if (proxyResolver.empty() && std::ranges::any_of(policy, [](const auto& rule) { return rule.resource; }) &&
+        std::ranges::any_of(ctx.outbounds, [](const auto& outbound) { return dnsHostIsDomain(outbound.value("server", "")); }))
+        ctx.note(FidelityScope::Dns, Fidelity::Approx, "proxy-server-nameserver",
+                 "普通 DNS 已启用规则集策略；节点域名的静态解析器选择暂不匹配规则集，继续使用域名策略或默认服务器",
+                 "需要独立的节点解析路径时显式设置 proxy-server-nameserver");
     const auto proxyPolicy = proxyResolver.empty() ? std::vector<DnsPolicyRule>{}
         : compileDnsPolicy(ctx, dns["proxy-server-nameserver-policy"], "proxy-server-nameserver-policy");
     const std::string directResolver = selectDnsServer(ctx, dns["direct-nameserver"], "direct-nameserver");

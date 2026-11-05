@@ -20,6 +20,7 @@ module;
 #include "network_conflict.h"
 #include "health_history.h"
 #include "runtime_plan_state.h"
+#include "connection_trace.h"
 #include "runtime_compile.h"
 #include "tun_settings.h"
 #include "pac_server.h"
@@ -90,6 +91,7 @@ export struct CoreSnapshot {
     std::vector<std::string> participatingSources;
     std::uint64_t planRevision = 0; // 实际启动成功的策略版本，停止/预览时不代表生效
     std::uint64_t nativeStartedAt = 0; // authenticated native instance identity
+    std::shared_ptr<const clashflux::connection_trace::Plan> appliedRulePlan;
 
     // 运行配置快照（Running 时有效）
     std::string mode;            // rule / global / direct
@@ -153,6 +155,7 @@ public:
 #include "store/core_store_evidence.inc"
 #include "store/core_store_routing.inc"
 #include "store/core_store_lifecycle.inc"
+#include "store/connection_trace.inc"
 #include "store/external_resource_scheduler.inc"
 private:
 #include "store/provider_download.inc"
@@ -161,6 +164,7 @@ private:
     std::unique_ptr<db::Db> db_;
     std::unique_ptr<api::ClashApi> api_;
     std::unique_ptr<api::NativeApi> nativeApi_;
+    api::ClashApi providerDownloader_{"", ""};
     provider_resources::Manager providerResources_;
     struct ResourceRetry { std::chrono::steady_clock::time_point next{}; unsigned failures = 0; };
     std::map<std::string, ResourceRetry> resourceRetries_;
@@ -187,6 +191,8 @@ private:
     std::string binaryPath_;
     std::unique_ptr<PreparedStart> preparedStart_;
     std::string lastPreparedJson_, lastAppliedJson_;
+    std::shared_ptr<const clashflux::connection_trace::Plan> lastPreparedRulePlan_;
+    std::shared_ptr<const clashflux::connection_trace::Binding> connectionRuleBinding_;
     std::optional<clashflux::network::ProxySnapshot> releasedProxy_;
     std::unique_ptr<clashflux::network::PacServer> pacServer_;
     std::atomic_bool pacSessionResident_{false};

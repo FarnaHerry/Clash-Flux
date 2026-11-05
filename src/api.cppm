@@ -1,6 +1,6 @@
 // api.cppm — clashflux.api：sing-box clash_api REST 客户端（接口模块）。
 //
-// 所有方法同步阻塞、线程安全（每次调用独立 curl easy handle），必须由 UI 经
+// 所有方法同步阻塞、线程安全（下载独占借用有界池中的 handle），必须由 UI 经
 // RunOnTaskThread 派到任务线程调用；UI 线程禁止直接调。curl 头只进实现单元。
 //
 // 端点约定（sing-box clash_api 与 mihomo 兼容的子集）：
@@ -62,6 +62,7 @@ export class NativeApi {
 public:
     NativeApi(std::string baseUrl, std::string secret);
     NativeRuntime runtime(std::stop_token cancel = {});
+    std::optional<std::uint64_t> startedAt();
 private:
     std::string base_, secret_;
     ApiResult unary(const char* method, long timeoutMs, std::stop_token cancel);
@@ -94,6 +95,8 @@ public:
     ApiResult groupDelay(const std::string& name, int timeoutMs);
 
     ApiResult connections();
+    ApiResult rules();
+    ApiResult traceConnections();
     ApiResult closeConnection(const std::string& id);
     ApiResult closeAllConnections();
 

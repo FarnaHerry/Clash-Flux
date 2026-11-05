@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.94 release notes](docs/releases/v0.3.94.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.95 release notes](docs/releases/v0.3.95.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -33,6 +33,8 @@ The About page supports in-app update downloads on Windows, Linux (DEB/RPM), and
 Desktop startup prepares a core without traffic inbounds so nodes can be tested. Connect opens proxy ports and applies the saved system proxy/TUN choices; both may remain off for manual proxy use. Disconnect returns to standby. See [desktop proxy lifecycle](docs/desktop-proxy-lifecycle.md).
 
 ## Features
+
+- Website access tests: cards show HTTP status and elapsed time for common sites, with batch tests, individual retries, cancellation and temporary custom URLs. Open from the wide sidebar or Settings → More on compact screens. Tests use the app network; Android results do not verify VPN routing for other apps. See [website tests](docs/website-tests.md).
 
 - Subscription sources, rule-set JSON, compiled JSON and diagnostic reports share CodeEditor, with worker-prepared documents and no full-document copy on each keystroke.
 
@@ -73,8 +75,10 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
   including per-item refresh for HTTP rule/proxy providers and custom [Geo DAT/MMDB](docs/geo-resources.md).
   Assign domains, IP addresses and CIDRs to
   different connections through global rules; inspect connection snapshots and close
-  individual or all connections. Core and application logs share one searchable list and
+  individual or all connections. Desktop details can verify orchestration rule IDs, target sources and plan revisions; historical or ambiguous matches stay unlinked. See [connection tracing](docs/connection-rule-tracing.md). Core and application logs share one searchable list and
   export, with history restored for viewing.
+Unsupported external-resource discovery shows the empty state without a format error; compilation and refresh validation remain strict.
+
 - Standalone PPTP connections use system dialing and privileged service integration.
   Windows uses RAS with MS-CHAPv2; enabling MPPE-128 requires encryption, while
   disabling that option lets the server negotiate its requirements. Windows
@@ -410,7 +414,8 @@ failed updates keep verified old content, and applied plans hold separate raw sn
 Resource preparation uses bounded concurrency, ETag/Last-Modified revalidation and
 a bounded in-process conversion cache; see the [cache contract](docs/singbox-layers-and-fidelity.md).
 Rule and proxy providers share an application-owned download entry point that coalesces identical
-in-flight requests and records stage timings, transfer counts and measured desktop connections;
+in-flight requests. Desktop providers retain a downloader with bounded idle connection reuse isolated by
+origin and TLS/proxy/header policy, recording stage timings, transfer counts and measured connections;
 see [resource management and timing](docs/provider-resource-management.md).
 An application Runtime task independently checks positive `interval` values; changed configurations
 pass full candidate checks and may restart the core.
@@ -543,6 +548,7 @@ Lib-Charts and Lib-SQLite also use pinned commits from their `FarnaHerry` forks'
 `farna/main` branches, with the same URL/COMMIT identities in native builds and the
 Android library graph. See [HuxerUI fork maintenance](docs/huxerui-fork.md) for local
 checkout, patch ownership and upgrade instructions.
+The current source baseline is SDK 0.4.0 (`83617e66`); the separately pinned offline fallback remains SDK 0.3.0 and is outside this source-upgrade validation.
 
 Windows packaging with `huxerui package windows` creates a `setup.exe` with an
 installation wizard: Burn bundles an MSI and a HuxerUI installer interface with

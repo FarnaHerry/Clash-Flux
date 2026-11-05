@@ -74,6 +74,9 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
                             {{"type", "local"}, {"tag", "local"}},
                         })},
             {"final", "local"},
+            // Managed real-IP DNS must retain names for IP-only TUN traffic.
+            // Native JSON with its own DNS remains authoritative.
+            {"reverse_mapping", true},
             {"strategy", opt.ipv6 ? "prefer_ipv4" : "ipv4_only"},
         };
         if (!config.contains("route")) config["route"] = nlohmann::json::object();

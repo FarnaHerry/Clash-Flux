@@ -28,7 +28,7 @@
     rule_provider_cache::FetchResult downloadProvider(
             const provider_resources::Request& request, const std::filesystem::path& file,
             ProviderDownloadStats& stats, std::stop_token cancel) {
-        const auto outcome = providerResources_.fetch(request, [file](const auto& pending) {
+        const auto outcome = providerResources_.fetch(request, [this, file](const auto& pending) {
             provider_resources::Response result;
 #if defined(__ANDROID__)
             clashflux::android::ProfileHttpResponse response;
@@ -60,10 +60,9 @@
             options.allowProxyEnv = pending.allowProxyEnv;
             options.proxyUrl = pending.proxyUrl;
             options.acceptNotModified = pending.acceptNotModified;
-            // Independent of the replaceable controller API/secret. Decode and
-            // validate separately in each candidate, after sharing raw IO only.
-            api::ClashApi downloader{"", ""};
-            const auto response = downloader.downloadToFile(pending.url, file, options);
+            // Runtime-owned transport retains safe connections between resources
+            // and refreshes, independently of controller credentials.
+            const auto response = providerDownloader_.downloadToFile(pending.url, file, options);
             result.ok = response.ok;
             result.networkMicros = response.download.networkMicros;
             result.bytes = response.download.bytes;

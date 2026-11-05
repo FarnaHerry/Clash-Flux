@@ -72,7 +72,7 @@ Linux 托管 TUN 会关闭 auto_redirect。它不是原样执行任意 JSON 的�
 - 新增 `dns_tls_runtime`，固定官方内核与 loopback DoT/DoH 服务共 12 场景，验证
   证书信任、显式 true/false、SNI/HTTP Host/路径和独立的名称校验；临时信任根仅测试注入。
   DoQ/H3 只有配置 check，Android 只有本地构建，不算 QUIC/真机流量验收。
-- 样本、分类、上游依据与检查命令见[分层契约](singbox-layers-and-fidelity.md#43a-dns2026-10-03-更新)
+- 样本、分类、上游依据与检查命令见[分层契约](singbox-layers-and-fidelity.md#43a-dns2026-11-05-更新)
   与[完成度记录](l1-l2-l3-status.md)。协议类型覆盖仍为 12/15。
 
 ### DNS 策略通配（2026-10-03 后续工作区增量）
@@ -85,7 +85,9 @@ Linux 托管 TUN 会关闭 auto_redirect。它不是原样执行任意 JSON 的�
 - 永久回归验证声明顺序、覆盖与边界、拒绝非法模式/regex 注入和 DNS/detour 循环。
   `dns_policy_runtime` 在固定官方内核实际验证 **63 场景**，包括实际 SOCKS 节点连接
   与普通/节点专用 resolver 隔离、同名普通 DNS 缓存不替代节点策略；Android 仅构建，未验收真机流量。
-- geosite:/rule-set:、更多策略/URL 参数、hosts 通配/别名仍未接入；协议覆盖仍 12/15。
+- 当时 geosite:/rule-set:、更多策略/URL 参数、hosts 通配/别名未接入；2026-11-05 已补普通
+  rule-set: 的 domain provider 子集和托管真实 IP DNS 反向映射，范围与验证以当前分层契约为准。
+  geosite:、节点专用资源策略、rcode DNS、FakeIP 完整语义仍待补；协议覆盖仍 12/15。
   分类、样本、依据与命令见[分层契约](singbox-layers-and-fidelity.md)和[完成度记录](l1-l2-l3-status.md)。
 
 ### HTTP rule-provider（2026-10-03 后续工作区增量）

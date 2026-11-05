@@ -994,6 +994,52 @@ void testFileRuleProviders() {
     rejected(singbox::compileConfig(unset), "no implicit cwd fallback when file root absent");
 }
 
+void testDnsProviderPolicies() {
+    singbox::CompileOptions options;
+    options.mainConnectionId = "dns-source";
+    options.profileYaml = R"yaml(rule-providers:
+  cn: {type: inline, behavior: domain, payload: ['+.domestic.test']}
+  other: {type: inline, behavior: domain, payload: ['+.other.test']}
+  ips: {type: inline, behavior: ipcidr, payload: ['192.0.2.0/24']}
+dns:
+  nameserver: [192.0.2.1]
+  nameserver-policy:
+    '+.domestic.test': 192.0.2.2
+    'rule-set:cn,other': 192.0.2.3
+    'exact.domestic.test': 192.0.2.4
+rules: ['RULE-SET,cn,DIRECT', 'MATCH,DIRECT']
+)yaml";
+    auto result = singbox::compileConfig(options);
+    check(result.error.empty(), "domain provider DNS policies compile");
+    const auto config = json::parse(result.json);
+    const auto& rules = config["dns"]["rules"];
+    check(config["dns"]["reverse_mapping"] == true && rules.size() == 4 &&
+          rules[2]["rule_set"].size() == 2 && rules[3].contains("domain"),
+          "managed DNS retains names and resource matchers preserve contiguous trie order");
+    for (const auto& tag : rules[2]["rule_set"])
+        check(std::ranges::any_of(config["route"]["rule_set"], [&](const auto& resource) {
+            return resource["tag"] == tag;
+        }), "DNS and route resources share the same namespaced provider identity");
+    for (const auto* invalid : {"cn,missing", "cn,ips", "cn,", "missing", "CN"}) {
+        auto rejected = options;
+        rejected.profileYaml = "rule-providers:\n  cn: {type: inline, behavior: domain, payload: ['+.test']}\n"
+            "  ips: {type: inline, behavior: ipcidr, payload: ['192.0.2.0/24']}\n"
+            "dns:\n  nameserver: [192.0.2.1]\n  nameserver-policy:\n    'rule-set:" + std::string(invalid) +
+            "': 192.0.2.2\nrules: ['MATCH,DIRECT']\n";
+        const auto compiled = singbox::compileConfig(rejected);
+        const auto document = json::parse(compiled.json);
+        check(document["dns"].value("rules", json::array()).empty() &&
+              document["dns"]["servers"].size() == 2 &&
+              std::ranges::any_of(compiled.fidelity, [](const auto& note) {
+                  return note.scope == singbox::FidelityScope::Dns && note.level == singbox::Fidelity::Unsupported;
+              }), "invalid DNS provider list rejects the whole policy before creating its server, without alias substitution");
+    }
+    options.profileYaml = R"({"dns":{"servers":[{"type":"local","tag":"local"}],"reverse_mapping":false},"outbounds":[{"type":"direct","tag":"DIRECT"}],"route":{"final":"DIRECT"}})";
+    result = singbox::compileConfig(options);
+    check(result.error.empty() && json::parse(result.json)["dns"]["reverse_mapping"] == false,
+          "native explicit DNS reverse mapping preference is preserved");
+}
+
 void testDnsWildcardPolicies() {
     const std::vector<std::pair<std::string, int>> policies = {
         {"+.example.test", 10}, {".example.test", 11}, {"*.example.test", 12},
@@ -2831,7 +2877,54 @@ void testNetworkSettings(const std::filesystem::path& root = {}) {
 
 }
 
+int writeTraceFixtures(const std::filesystem::path& root) {
+    for (const auto* mode : {"unique", "duplicate"}) {
+        singbox::CompileOptions options;
+        options.mainConnectionId = "main"; options.mainSourceName = "MainFixture";
+        options.secret = "test-native-secret"; options.nativeControllerPort = 29098;
+        options.profileYaml = "rules:\n";
+        for (int i = 0; i < 1500; ++i)
+            options.profileYaml += "  - DOMAIN,trace-" + std::to_string(i) + ".invalid,DIRECT\n";
+        options.profileYaml += "  - MATCH,DIRECT\n";
+        options.globalRules = {{.match = vpn::MatchKind::ExactIp, .pattern = "127.0.0.1",
+            .connectionId = "main", .id = "rule-a", .order = 1}};
+        auto disabled = options.globalRules.front(); disabled.id = "disabled"; disabled.enabled = false;
+        disabled.priority = 100; options.globalRules.push_back(disabled);
+        if (std::string_view(mode) == "duplicate") {
+            auto duplicate = options.globalRules.front(); duplicate.id = "rule-b"; duplicate.order = 2;
+            options.globalRules.push_back(duplicate);
+        }
+        const auto compiled = singbox::compileConfig(options);
+        if (!compiled.error.empty()) { std::println(stderr, "{}", compiled.error); return 1; }
+        const auto config = json::parse(compiled.json);
+        if (compiled.rulePlan.ruleCount != config["route"]["rules"].size() ||
+            compiled.rulePlan.origins.size() != (std::string_view(mode) == "unique" ? 1U : 2U)) return 1;
+        std::ofstream(root / (std::string(mode) + ".json")) << compiled.json;
+        std::ofstream metadata(root / (std::string(mode) + ".plan"));
+        metadata << compiled.rulePlan.ruleCount << '\n';
+        for (const auto& origin : compiled.rulePlan.origins) {
+            if (origin.ruleId == "disabled" || origin.sourceId != "main" || origin.sourceName != "MainFixture") return 1;
+            metadata << origin.index << ' ' << origin.ruleId << ' ' << origin.sourceId << ' '
+                     << origin.sourceName << ' ' << origin.tier << '\n';
+        }
+    }
+    for (const auto policy : {vpn::UnavailablePolicy::UseMain, vpn::UnavailablePolicy::Direct, vpn::UnavailablePolicy::Reject}) {
+        singbox::CompileOptions options;
+        options.mainConnectionId = "main"; options.mainSourceName = "MainFixture";
+        options.profileYaml = "rules: ['MATCH,DIRECT']\n";
+        options.globalRules = {{.match = vpn::MatchKind::ExactIp, .pattern = "127.0.0.1",
+            .connectionId = "missing", .id = "fallback", .unavailable = policy}};
+        const auto compiled = singbox::compileConfig(options);
+        const std::string expected = policy == vpn::UnavailablePolicy::UseMain ? "main" :
+            policy == vpn::UnavailablePolicy::Direct ? std::string(vpn::DirectConnectionId()) : "";
+        if (!compiled.error.empty() || compiled.rulePlan.origins.size() != 1 ||
+            compiled.rulePlan.origins.front().sourceId != expected) return 1;
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string_view(argv[1]) == "--trace-fixtures") return writeTraceFixtures(argv[2]);
     if (argc == 3 && std::string_view(argv[1]) == "--network-settings-fixtures") {
         testNetworkSettings(argv[2]); return failures ? 1 : 0;
     }
@@ -3039,6 +3132,7 @@ int main(int argc, char** argv) {
     }
     testDnsCertificateParameters();
     testDnsWildcardPolicies();
+    testDnsProviderPolicies();
     testClashHosts();
     testHysteria1();
     testSsh();

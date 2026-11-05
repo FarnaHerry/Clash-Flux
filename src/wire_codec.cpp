@@ -37,6 +37,9 @@ struct ReleaseInput {
 };
 struct ReleaseAssetNameInput { std::string name; };
 struct TrafficInput { std::optional<std::int64_t> up, down; };
+struct RuntimeRuleInput { std::optional<std::string> type, payload, proxy; };
+struct RuntimeRulesInput { std::optional<std::vector<RuntimeRuleInput>> rules; };
+struct ConnectionIdsInput { std::optional<std::vector<glz::raw_json>> connections; };
 struct TotalsInput { std::optional<std::int64_t> uploadTotal, downloadTotal; };
 
 struct ConnectionMetadata {
@@ -301,6 +304,32 @@ Result<ConnectionTotals> DecodeConnectionTotals(std::string_view text) {
     if (!input.value.uploadTotal || !input.value.downloadTotal || *input.value.uploadTotal < 0 || *input.value.downloadTotal < 0)
         return {{}, "missing or invalid connection totals"};
     return {{*input.value.uploadTotal, *input.value.downloadTotal}, {}};
+}
+Result<std::vector<RuntimeRule>> DecodeRuntimeRules(std::string_view text) {
+    auto input = codec_detail::decode<codec_detail::RuntimeRulesInput>(text);
+    if (!input) return {{}, std::move(input.error)};
+    if (!input.value.rules) return {{}, "missing runtime rules"};
+    std::vector<RuntimeRule> rules;
+    rules.reserve(input.value.rules->size());
+    for (auto& rule : *input.value.rules) {
+        if (!rule.type || rule.type->empty() || !rule.payload || !rule.proxy || rule.proxy->empty())
+            return {{}, "invalid runtime rule"};
+        rules.push_back({std::move(*rule.type), std::move(*rule.payload), std::move(*rule.proxy)});
+    }
+    return {std::move(rules), {}};
+}
+Result<std::vector<std::string>> DecodeConnectionIds(std::string_view text) {
+    const auto input = codec_detail::decode<codec_detail::ConnectionIdsInput>(text);
+    if (!input) return {{}, input.error};
+    if (!input.value.connections) return {{}, "missing connections"};
+    const auto connections = DecodeConnections(text);
+    if (!connections || connections.ignoredEntries) return {{}, "invalid baseline connections"};
+    std::vector<std::string> result;
+    for (const auto& entry : connections.value.entries) {
+        if (entry.id.empty()) return {{}, "missing baseline connection ID"};
+        result.push_back(entry.id);
+    }
+    return {std::move(result), {}};
 }
 Result<Connections> DecodeConnections(std::string_view text) {
     Result<Connections> result;

@@ -213,6 +213,7 @@
             if (!api::CommitFile(plan->file, configFile, commitError)) { fail(commitError); return; }
             lastPreparedOptions_ = options;
             lastPreparedJson_ = compiled.json;
+            lastPreparedRulePlan_ = std::make_shared<const clashflux::connection_trace::Plan>(std::move(compiled.rulePlan));
             cacheProxyGroups(options, compiled, std::move(plan->proxyGroups));
             std::lock_guard lock(mutex_);
             snap_.warnings = std::move(compiled.warnings);
@@ -415,6 +416,7 @@
             snap_.runningSince = std::chrono::steady_clock::now();
             lastAppliedOptions_ = lastPreparedOptions_;
             lastAppliedJson_ = lastPreparedJson_;
+            snap_.appliedRulePlan = lastPreparedRulePlan_;
             snap_.proxyListening = lastAppliedOptions_ && lastAppliedOptions_->proxyListening;
             snap_.networkRevision = lastAppliedOptions_ ? lastAppliedOptions_->network.revision : 0;
             snap_.connectedSince = snap_.proxyListening ? std::chrono::steady_clock::now()

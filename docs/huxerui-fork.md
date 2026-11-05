@@ -4,10 +4,18 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `5dd4009a3f1bb70a4d617fbedf3e5631a7b49a3d`，各平台 CI 共用
+Clash-Flux 当前固定 `83617e66ab03e2680bfef9af8484861db86ec3d6`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
+
+2026-11-04 更新到 `83617e66`：采用已发布的 `farna/main`，已包含官方 `1853c612`
+基线及 SDK 0.4.0、任务 callback 桥接、原生文件引用、Linux 字体度量失效传播和窗口实现清理。
+`AppOptions::extra_windows` 被移除；应用未使用该字段，现有首窗、无窗、托盘和任务接口兼容，
+无需页面迁移。Pager 的反向离场、过期拖动目标及隐藏虚拟页失效行为继续保留；四项扩展 pin 不变。
+本机源码完整重编、Linux 30/30 必跑回归和 Android Java/NDK 编译通过，首页宽窄布局、字体及圆环图
+已实际显示检查，证据见 [验收记录](l1-l2-l3-status.md)。旧退出诊断在该版本仍返回 10，不能记作修复。
+离线 SDK 归档仍独立固定为 0.3.0，本轮未升级或验收该回落路径，也未执行其它桌面平台或真机测试。
 
 2026-10-29 更新到 `5dd4009`：复用已发布的 `farna/main` 合并提交，包含官方
 `03885df` 的自定义 TTF/OTF 字体、`FontFamily` 和主题排版字体继承支持，并保留 fork
@@ -100,7 +108,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 5dd4009a3f1bb70a4d617fbedf3e5631a7b49a3d
+git -C third_party/huxerui checkout 83617e66ab03e2680bfef9af8484861db86ec3d6
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`

@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.94 发布说明](docs/releases/v0.3.94.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.95 发布说明](docs/releases/v0.3.95.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -17,6 +17,8 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 关于页支持 Windows、Linux（DEB/RPM）与 Android arm64 的应用内下载更新、SHA-256 校验和取消/重试。桌面确认安装后保存配置、断开代理；Windows 退出后启动安装向导，Linux 保留应用等待 Polkit 授权和安装成功，失败返回原窗口；Android 额外校验正式签名与版本，保存配置、断开代理后打开系统安装界面，首次需要允许安装此来源的应用。其它平台保留手动下载入口，详情见[应用升级](docs/app-updates.md)。
 
 ## 功能
+
+- 网站访问测试：常用国内外网站按卡片展示 HTTP 状态和耗时，支持全部测试、单卡重试、取消及临时添加地址；宽屏侧栏进入，窄屏在设置「更多」。使用当前应用网络，Android 结果不代表其它应用的 VPN 分流，见[网站测试](docs/website-tests.md)。
 
 - 订阅原文、规则集 JSON、编译 JSON 和诊断报告共用 CodeEditor 文本组件，工作线程预构建文档，输入时不逐键复制全文。
 
@@ -42,6 +44,8 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   [订阅个人规则](docs/subscription-personal-rules.md)直接编译成 sing-box JSON；全局规则从规则页页头进入管理二级页。
   设置「资源」管理可跨订阅引用的原生 JSON/SRS 规则集，保留旧资源 ID；全局与个人规则可选择引用。
   订阅卡片右键「外部资源」展示实际类型、名称与链接，可逐项刷新 HTTP rule/proxy provider 和自定义 [Geo DAT/MMDB](docs/geo-resources.md)。
+  无法识别资源的格式统一显示“未识别到外部资源”，不提示格式不支持。
+  桌面连接详情可核验并展示编排规则 ID、目标来源与计划版本；历史或重复描述保持未关联，见[连接追溯](docs/connection-rule-tracing.md)。
   使用全局规则把域名/IP/CIDR
   分配给不同连接；连接快照（可逐条/全部关闭）、内核与应用日志统一显示、搜索与导出，历史可恢复
 - PPTP 独立连接：保留系统拨号/特权服务路径（Windows 走系统 RAS，条目固定
@@ -282,7 +286,8 @@ SSH 另支持密码、内联/加密私钥和主机公钥/算法列表；双认�
 HTTP provider 也支持 YAML/text 直连子集：任务下载、完整转换与候选检查后才更新
 自有缓存，失败沿用已验证旧缓存，运行计划保留独立内容快照。
 资源准备支持有限并发、ETag/Last-Modified 条件刷新及有界进程内转换缓存。
-规则与代理集合共用应用级下载入口，合并相同在途请求，并记录分段耗时和实际请求/建连计数，
+规则与代理集合共用应用级下载入口，合并相同在途请求；桌面 Provider 使用常驻下载器，
+按来源站点及 TLS/代理/请求头策略复用有界空闲连接，并记录分段耗时和实际请求/建连计数，
 见[资源管理与计时](docs/provider-resource-management.md)。
 详情见[缓存与保真度契约](docs/singbox-layers-and-fidelity.md)。`interval` 由应用 Runtime 独立检查到期，更新后经完整候选交接，可能重启内核；`path` 只读不回写。支持 `header` 的单值 ASCII
 数组子集（如 `User-Agent: [my-client/1]`），请求头参与缓存身份；带头下载不跟随
@@ -394,6 +399,7 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 `main` 保留官方基线；Lib-Camera、Lib-Charts、Lib-SQLite 也从各自 `FarnaHerry` fork 的
 `farna/main` 按固定 SHA 获取，原生构建与 Android 库图共用同一依赖身份。
 本地检出、补丁归属与升级流程见 [HuxerUI fork](docs/huxerui-fork.md)。
+当前源码基线为 SDK 0.4.0（`83617e66`）；离线回落包仍为独立锁定的 0.3.0 SDK，不代表本轮源码验收。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、

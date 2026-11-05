@@ -9,6 +9,7 @@
 module;
 #include "profile_rules.h"
 #include "network_settings.h"
+#include "connection_trace.h"
 export module clashflux.singbox;
 
 import std;
@@ -165,6 +166,7 @@ export struct CompileResult {
     std::map<std::string, std::string> proxyProviderContents;
     unsigned ruleProviderConversionCacheHits = 0;
     std::vector<SourceObject> sourceObjects;
+    clashflux::connection_trace::Plan rulePlan;
     std::vector<std::string> participatingSources;
     std::uint64_t planRevision = 0;
 };

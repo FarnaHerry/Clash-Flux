@@ -1,5 +1,39 @@
 # 运行健康、原生接口与 PPTP 实施复核
 
+## 退出时序诊断（2026-11-04）
+
+在当前 Linux、固定 HuxerUI `5dd4009` 下，`tests/repro_runtime_shutdown.cpp` 使用公开
+无窗口 UiTest 复现：应用任务的 Post 回调先修改被页面观察的 State，再调用 Quit；
+同一 Pump 随后提交帧，Root 再次执行 `UseApplicationTaskScope()` 时抛
+`HuxerUI application is stopping`，诊断进程返回 **10**。
+
+本机构建与执行命令（现有 Clang/libc++ 构建，不改工具链）：
+
+```bash
+clang++-21 -std=c++23 -stdlib=libc++ -I third_party/huxerui/include \
+  tests/repro_runtime_shutdown.cpp build/huxerui-sdk/lib/libhuxerui_testing.a \
+  -L build/huxerui-sdk/lib -lhuxerui \
+  "-Wl,-rpath,$PWD/build/huxerui-sdk/lib" -o /tmp/clashflux-runtime-shutdown-repro
+/tmp/clashflux-runtime-shutdown-repro
+```
+
+当前连续 **5/5** 次输出为 `after queued shutdown: builds=2, exception=HuxerUI application is stopping`，
+均返回 10；这是预期故障的复现次数，不是退出回归通过。
+目前确定的路径是 UiTest::Pump 执行回调中的 Quit 后仍调用 BuildFrame；Quit 先进入 Stopping、
+拒绝新任务，再排队退役窗口/任务/服务，并非立即销毁 Runtime。测试宿主的停止边界与原生
+事件循环需分别验证。没有 macOS 原始崩溃栈，尚不能证明该诊断就是那次 CLI SIGABRT 的
+调用链，也不将旧堆异常归为同因。应用应先停止新业务、完成必要收尾，Quit 后不主动调用
+运行时服务；不以给每个组件加停止判断或吞异常替代框架宿主边界核查。
+手工诊断不注册为已通过的回归。随后应用升级到 `83617e66`（SDK 0.4.0），完整重编匹配
+的 testing 库后再次执行同一诊断，仍输出上述异常并返回 10；本次依赖升级没有修复此边界。
+用户随后明确降低此项优先级，排在当前功能主线之后；最新队列见 [功能复核](l1-l2-l3-status.md)。
+
+最初诊断时框架维护目录已有未提交的运行时及窗口测试改动，诊断阶段未修改它们。
+随后依赖升级仅使用已发布的独立 checkout，没有消费维护工作树。后续修复需在保留维护改动的
+前提下，补停止后不重组/不启动任务的回归，再按固定 revision 集成。
+
+## 既有实施复核（2026-10-25）
+
 日期：2026-10-25；代码快照：`1a1659b` 加未提交工作区。远端健康实现来自
 `86a9b16`，早期原生控制草稿来自本地 stash `d3a3813`；没有整体套用旧生命周期代码。
 已经恢复合并的 pull 前备份 `aba06f1` 按用户要求删除，旧草稿仍保留。
@@ -8,6 +42,8 @@
 [系统证据与现场记录](runtime-health-evidence.md)。下方实机数字保留当时的 v2 结果。
 
 ## 桌面内核所有权与失败清理
+
+退出与页面状态更新的本机复现见[退出时序诊断](#退出时序诊断2026-11-04)。
 
 控制客户端由 `CoreStore` 的一次性初始化创建；`api()` 暴露的引用必须在 store
 存活期间一直有效。异步 hydrate 或凭据刷新只用 `ClashApi::setEndpoint` 加锁更新，

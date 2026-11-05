@@ -34,7 +34,8 @@ enum PageIndex : std::size_t {
     kRules = 3,
     kConnections = 4,
     kLogs = 5,
-    kSettings = 6,
+    kWebsiteTests = 6,
+    kSettings = 7,
 };
 
 } // namespace pages
@@ -353,6 +354,8 @@ huxerui::View ConnectionsPage(std::function<void()> onBack = {},
 huxerui::View LogsPage(std::function<void()> onBack = {},
                        bool active = true);                       // 日志
 huxerui::View FidelityPage(std::int64_t profileId, std::function<void()> onBack);
+huxerui::View WebsiteTestsPage(std::function<void()> onBack = {}, bool active = true);
+huxerui::View WebsiteTestsRoutePage();
 huxerui::View ConnectionDetailPage(ConnectionRow initial,
                                    std::function<void()> onBack,
                                    bool windowTitle = false);

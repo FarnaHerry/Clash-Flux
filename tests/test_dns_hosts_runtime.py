@@ -140,7 +140,7 @@ def request(mixed, domain, dest_port):
 
 
 @contextlib.contextmanager
-def kernel(compiler, engine, folder, yaml):
+def kernel(compiler, engine, folder, yaml, transform=None):
     source, generated = folder / "input.yaml", folder / "compiled.json"
     source.write_text(yaml, encoding="utf-8")
     subprocess.run([compiler, "--compile-config", str(source), str(generated)], check=True, capture_output=True)
@@ -152,6 +152,8 @@ def kernel(compiler, engine, folder, yaml):
     config["route"]["rules"].insert(0, {"inbound": ["dns-test"], "action": "hijack-dns"})
     config["experimental"] = {}
     config["log"] = {"level": "error"}
+    if transform:
+        transform(config)
     generated.write_text(json.dumps(config))
     subprocess.run([engine, "check", "-c", str(generated)], check=True, capture_output=True)
     with (folder / "kernel.log").open("wb") as log:

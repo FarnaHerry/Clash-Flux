@@ -1,5 +1,239 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-05：v0.3.95 补丁版发布准备
+
+发布快照：基于 `9c83e10` 的本轮发布提交，标签 `v0.3.95`；CMake 与 Android
+versionName 同为 0.3.95，versionCode 从上一发布的 172 增加为 173。中英文说明见
+[v0.3.95](releases/v0.3.95.md)，README 当前版本入口同步更新。
+
+- `cmake -S . -B build -DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`、`cmake --build build`
+  全目标构建通过；`./run.sh --version` 回报 v0.3.95，`git diff --check` 通过。
+- `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required`
+  **31/31，164.11 秒**；包含本批 DNS 分流、Provider 连接复用、L3 追溯及网站测试 UI 回归。
+- Android `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`
+  **38 秒通过**，包括五项宿主策略回归；仅保留已有 Java 8 目标与废弃 API 提示。
+- HUI 固定 `83617e66`，sing-box/libbox 固定 1.14.4；没有临时追逐 fork 可变分支。
+  正式安装包、APK v1/v2 签名与长期证书核验仍由标签 CI 执行，本机未构建/验收这些发布产物。
+- 用户明确授权提交、打标签及推送，要求推送后不监听 CI/Release；此处仅记录本地证据。
+  Windows/macOS 安装升级/回滚/卸载及 Android 真机 VPN/正式签名覆盖安装未做，不记为通过。
+
+
+## 2026-11-05：网站访问测试页面
+
+快照：`9c83e10` 加保留的工作区和本轮页面，应用仍为 v0.3.94。
+
+- 宽屏新增「网站测试」侧栏，窄屏/Android 设置顶部「更多」直接进入；与规则、连接、
+  日志一致，窄屏返回设置且不显示底部导航。八个常用站点卡片，Compact 单列、宽屏
+  自适应多列，共用带全宽头部的虚拟网格；结果与输入由应用服务保留。
+- 手动全部/单项 HEAD 测试，3 并发、单请求 10 秒、取消及失败重试；HTTP 4xx/5xx
+  与传输失败分开显示。支持会话内临时添加 HTTP(S) URL，总数最多 24，无数据库改动。
+  当前应用网络与 Android VPN 排除的实际边界明确展示，见[网站测试](website-tests.md)。
+- `cmake --build build --target clash-flux test_page_transition`（含 HUI codegen）、
+  `./run.sh --version`（v0.3.94）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，55.98 秒**。生产网格/卡片覆盖 320/960pt 和视口切换，应用任务覆盖队列排空、
+  并发上限、取消、发起页卸载、重试和 HTTP 403；宿主 HTTP 不支持时恢复可重试状态。
+- Android `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`
+  **32 秒通过**，Java/native 使用固定同源 HUI。Linux 独占临时数据目录实际启动 GUI，
+  进入网站页并取得单项 HTTP 200；检查中调整宽屏网格后，以生产布局回归核对最终排列。
+  冒烟用内核已通过生产 CLI 停止，GUI 测试进程已关闭，原用户数据库/订阅未改动。
+- 本轮没有重新执行完整 31 项门禁，也没有 Windows/macOS、Android 真机、真实 TUN
+  分流或完整网页加载验收；不能把应用网络访问结果当成这些能力的通过证据。
+
+同日后续：新增 `website_test.svg` 独立入口图标（浏览器窗口 + 检测波形），桌面侧栏与
+宽窄屏「更多」共用，沿用 currentColor 及 24×24 / 2pt 圆头描边。资源编译、HUI codegen、
+主目标构建、版本与 diff 检查通过；`page_transition / ui_resources` **2/2，54.03 秒**。
+独占临时目录启动 Linux GUI 核对首帧侧栏实际图标，随后停止自有内核并关闭测试进程。
+未重新执行 Android 构建或跨平台真机检查。
+
+## 2026-11-05：虚拟网卡国内分流的 DNS 缺口
+
+快照：`9c83e10` 加已有工作区及本轮修复，应用仍为 v0.3.94。
+
+- 只读核对本机已选订阅和上次生成配置：国内 domain/IP provider 与 DIRECT 路由均存在，
+  普通 `nameserver-policy: rule-set:cn` 未生成，DNS 默认路径为经代理的境外 DoH；
+  托管 DNS 未启用反向映射。当时没有 Clash-Flux 数据面运行，不能断言覆盖用户全部现象。
+- 托管 DNS 增加 `reverse_mapping:true`，原生 JSON 已有 DNS 不覆盖。普通资源 DNS 策略
+  共用成功转换的 domain provider、列表 OR 和来源命名空间；按资源匹配器边界分别排序
+  连续域名 trie，保留声明先后。未知/失败/非 domain/空名称整条拒绝，无同名 GEO 替代。
+- 节点专用资源 DNS 策略、rcode DNS、FakeIP 仍未支持；静态节点解析器不匹配普通资源
+  策略的差异明确记 approx。完整支持边界见[DNS 基线](singbox-layers-and-fidelity.md#43a-dns2026-11-05-更新)。
+- 已执行 `cmake --build build --target clash-flux test_singbox`、`./run.sh --version`、
+  `git diff --check`；`singbox / dns_hosts_runtime / dns_policy_runtime / dns_tls_runtime`
+  **4/4，10.64 秒**。生产编译器和固定内核独立复现旧 DNS 选择与 IP 分流缺口，修复后
+  验证无域名握手信息的连接实际直连/代理分流，既有 63 项 DNS 策略及 TLS 拒绝继续通过。
+- 随后 `cmake --build build` 全目标通过，
+  `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required`
+  **31/31，160.71 秒**；文档同步后再次执行主目标构建、版本检查与 diff 检查通过。
+- 测试使用独占临时目录与回环 DNS/SOCKS/TCP，不修改用户数据库、订阅、运行配置或
+  系统网络；尚未进行真实 TUN、公网、跨平台设备验证。
+
+## 2026-11-05：外部资源空态与首批 L3 连接追溯
+
+快照：`9c83e10` 加保留的 Provider 连接复用、HuxerUI `83617e66` 和本轮工作区，应用仍为 v0.3.94。
+
+- 外部资源页将不支持的订阅格式、空内容及扫描无法识别的结果统一作为“未识别到外部资源”；
+  不再展示“只有 Clash YAML 支持”的格式报错。可识别项仍正常展示，读取异常与真实刷新失败
+  保留原处理；编译/候选刷新校验和后端诊断没有放宽，不因此宣称原生 JSON 已有资源管理能力。
+- 编译器输出独立规则位置/身份元数据，禁用规则不占位置，原生 JSON 不注入追溯字段。
+  用户覆盖、来源分流及隐式内网编排规则可保留稳定 L3 ID；UseMain/Direct/Reject 按实际动作
+  记录有效来源。运行仅在 Ready 后发布不可变计划，预览不覆盖已应用目录。
+- 桌面通过完整原生规则清单及两次鉴权实例核验夹住的新连接快照关联身份。完整描述（含动作）
+  在全清单中唯一才匹配；首次核验已存在的连接保留历史基线，不补绑新计划。缓存按计划/实例
+  隔离，列表与详情共用首次发布的基线；读取/发布和 UI 回写都核对版本。
+- 连接详情显示追溯状态、目标来源、编排规则 ID 和运行计划版本。重复、历史及未标注条目
+  不显示猜测身份；出站显示目录来自已接受计划。会话按 ID + epoch 区分，同正文但身份变化
+  重新投影。列表/详情各自最多一份在途读取，慢核验不会因连续通知而永远被新任务淘汰，
+  页面离开使旧发布版本失效。中英文资源、README、编译器/测试技能及[追溯契约](connection-rule-tracing.md)已同步。
+
+实际验证：
+
+- `cmake --build build` 全部目标通过，包含 HuxerUI codegen；基础主目标构建、
+  `./run.sh --version`（v0.3.94）和 `git diff --check` 通过。
+- `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required`
+  **31/31，174.16 秒**。新增 `connection_trace_runtime` 为必跑，门禁自测覆盖缺失/禁用，
+  完成 54 项注册、禁用、MSVC 和 TLS 前提检查；persistence 和真实在途 API 生命周期继续通过。
+- 真实内核清单为 **1507 条 / 150,938 字节**（唯一）与 **1508 条 / 151,034 字节**（重复），
+  新连接分别正确关联/拒绝歧义，旧连接不补绑；每个计划清单只获取一次。故障检查覆盖数量、
+  格式、目标、原生实例变化、停止/旧计划和认证拒绝，编译检查覆盖失效目标三种回退的有效来源。
+- page_transition 挂载生产追溯组件，验证 320/960 宽度下匹配、历史、重复和未知状态，
+  未证明关联时隐藏身份字段；本批测试夹具显式使用 AppResources，三语言资源检查通过。
+- Android `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`
+  **31 秒通过**，包含五项 JVM 策略回归；Java/native 继续使用同一固定框架源码。
+- 根 AGENTS 与修改过的项目技能长度限制、新增文件空白/末尾换行检查通过。
+
+当前下一项：保真度条目到来源对象的定位动作；原始订阅/个人规则锚点追溯需要继续建立
+可证明的唯一身份，不能用显示文本匹配冒充完成。
+
+边界：本批覆盖桌面编排规则，不是全部 L3 完成；主订阅/个人规则锚点关联、来源导航和
+保真度定位动作继续待做。Android 当前无同等规则清单/实例核验接口，显示未关联；未新增
+Windows/macOS、真实 GUI 操作、系统接管或手机真机验收。未修改数据库/schema、订阅原文、
+内核/框架源码或应用版本，未提交、推送、发布；退出诊断继续低优先级。
+
+## 2026-11-04：功能复核与主线恢复
+
+快照：`9c83e10` 加 Provider 连接复用和 HuxerUI `83617e66` 工作区。用户明确将退出诊断后移；
+本轮核对生产实现、功能契约和验证证据，未修改业务代码。此前 UiTest 的停止期重组诊断不能
+单独证明原生 GUI/CLI 存在同因故障，不在本轮扩展框架或应用退出绕行。
+
+| 功能 | 当前结论 | 仍需推进 |
+|---|---|---|
+| 订阅与外部资源 | rule/proxy provider 受支持子集已有下载、单项刷新、失败留旧和独立到期调度；Geo DAT/MMDB 已有转换、属性筛选及缓存状态 | 普通 rule/proxy provider 的缓存状态投影仍缺失；定时失败目前有日志，资源行尚无完整状态反馈 |
+| 更新性能 | 3 路下载、请求在途合并、桌面连接复用已交付 | 跨验证/应用的准备结果复用、跨资源运行重配合批；不能把连接池当作这两项已完成 |
+| L3 追溯 | 连接显示内核 rule/rulePayload，代理链可显示来源名称 | 尚无连接对应的具体 L3 rule ID 和已应用计划绑定；保真度定位动作仍待闭环 |
+| 桌面编排 | Clash 次来源和对象目录已支持 | 原生 JSON 次来源仍明确拒绝；跨来源链、稳定对象身份和跨重开有效计划恢复未完成 |
+| 网络设置 | 高级系统代理/PAC、TUN 参数和 Android 可见应用选择已有实现 | 继续保留真实网关、系统接管、设备生命周期及故障恢复的实机验收边界 |
+
+当前队列替代下方早期队列：
+
+1. L3 来源/规则追溯与保真度定位，绑定已应用计划，歧义或过期数据不猜测。
+2. Provider 更新的准备复用与重配合批，保留完整候选检查、TLS 隔离和失败留旧。
+3. 普通 rule/proxy provider 缓存状态及失败反馈，复用应用级模型与资源修订。
+4. 桌面编排与持久恢复，分批推进 JSON 次来源、显式跨来源链及恢复。
+5. 原生 DNS/端点产品化，每项包含编辑、状态、路由、启停和恢复。
+6. 退出时序诊断及框架跟踪；原生实际故障另取证，不以 UiTest 诊断直接归因。
+
+验证：沿用上节同业务代码的完整必跑 **30/30，193.43 秒** 和 Android Java/NDK 通过记录，
+本轮未重复执行。另执行
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(rule_source_choices_ui|qrs_codec)$'`
+为 **2/2，0.07 秒**；`python tests/test_network_capture_runtime.py` 的 policy、redirect、
+empty-policy、empty-redirect 双栈路由/规则和四轮 TUN/nftables 清理通过，未修改宿主网络。
+这不是公网转发、真实系统代理、VPN 共存或真机验收。修正保真度契约中将 Provider 下载和
+Android 应用选择仍列为未实现的旧清单；未提交或发布。
+
+## 2026-11-04：HuxerUI fork 跟进 SDK 0.4.0
+
+快照：应用 `9c83e10` 加已有 Provider 优化工作区；框架由 `5dd4009a` 升到已发布的
+`83617e66ab03e2680bfef9af8484861db86ec3d6`，包含官方 `1853c612` 基线。
+本机独立 checkout、CI 全平台 `HUXERUI_COMMIT` 与 Android Java/native 统一；维护工作树未修改。
+移除的 `AppOptions::extra_windows` 无应用调用，现有 API 继续兼容，四项扩展 pin 保留。
+宿主 hcg/hrc 的源码相对原版本仅 mcpp 包版本号变化，继续使用本机已有源码构建工具。
+更新了 fork 说明、依赖清单、中英文 README 和 CMake 的来源提示，离线 SDK 归档仍为 0.3.0。
+
+- `cmake --build build --target clash-flux` 及 `cmake --build build` 通过，包含框架、应用 codegen 和全部测试目标重编。
+- `./run.sh --version` 为 v0.3.94，`git diff --check` 通过。
+- `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required`
+  **30/30，193.43 秒**，包含生产 page_transition、ui_resources、persistence、core_api_lifetime、CPS 和 TLS。
+- Android `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`
+  **1 分 51 秒通过**，含五项 JVM 策略检查，Java 模块实际选中同一份 `third_party/huxerui`。
+- Linux GUI 使用独占 HOME/双订阅库、隔离网络和服务 socket，检查 1800×1200 / 860×1200
+  首页字体、圆环图和响应式布局；关闭确认框正常显示。自动输入未确认退出，夹具最后终止并回收，
+  不据此认定正常退出或托盘关窗重建通过。
+- 匹配新框架重新编译 `repro_runtime_shutdown.cpp` 后仍返回 **10**，输出
+  `after queued shutdown: builds=2, exception=HuxerUI application is stopping`；退出时序问题仍待框架修复。
+
+边界：未重验 SDK 回落、Windows/macOS/iOS、托盘原生生命周期或 Android 真机；未提交、推送、升级应用版本或发布。
+
+## 2026-11-04：应用侧 Provider 下载连接复用
+
+快照：`9c83e10`（v0.3.94）加工作区。用户明确暂缓框架问题，先做应用侧优化；
+该阶段退出诊断继续保留，框架维护目录、应用固定 checkout 与依赖 pin 均未改动；随后升级见上节。
+
+- `CoreStore` 保留独立于控制器 secret 的 Provider 下载器；curl 文件下载独占借用
+  客户端空闲 easy handle，最多保留 3 个，每个连接缓存上限 3。既有 Provider Manager
+  的 3 路活跃下载和完整请求在途合并保持；池锁不包围网络或候选验证。
+- 池身份包含站点 authority/URL 凭据、TLS 校验、代理三态、代理/CA 环境的存在性和值、
+  非条件请求头。条件头每次重设但不分裂传输身份；完整请求及持久缓存身份仍检查全部头。
+  归还前 reset 借用指针和请求选项，失败传输销毁 handle；证书、代理、重定向、字节上限
+  逐次设置。原子提交、候选检查、失败留旧及多 ID 数据保护不因池化跳过。
+- 传输在候选 validate 前归还，嵌套资源准备可继续复用；不留第二份正文或候选批准缓存。
+  中英文 README、传输契约及编译器技能入口已同步。
+
+本机证据：
+
+- 新增回归先在旧实现失败于 `warm download opened another connection`；修复后真实
+  keep-alive HTTP 对照 **8 次独立客户端下载 = 8 次建连，8 次复用下载 = 1 次建连**。
+- 生产 `profile update` 真实获取 4 个 rule/proxy provider，日志实测
+  `download_requests=4 measured_requests=4 new_connections=2`，服务端共接受 3 条 TCP，
+  包含主订阅自身的 1 条。断言 Provider 建连不超过 3，而非依赖固定调度顺序。
+- 同客户端 6 项并发真实 HTTP 响应内容各自正确，服务端峰值为 **6**，证明空闲池未串行化
+  网络；另覆盖 3 个空闲项淘汰、凭据/条件头重设、304 留旧、坏传输/大小失败留旧、
+  嵌套校验复用、双显式代理和直连切换、代理环境空值/未设置隔离，以及允许无效证书后
+  切回正常校验仍拒绝自签证书。下载暂存目录无泄漏。
+- `cmake --build build` 全部目标通过；`./run.sh --version` 为 v0.3.94，
+  `git diff --check` 通过。最终
+  `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required`
+  为 **30/30，179.23 秒**。
+- Android `./gradlew :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`
+  **37 秒通过**，包含原有五项 JVM 策略回归；Android Provider 仍走 Java TLS 桥接，
+  本轮没有将其传输统计当作桌面连接池效果。
+
+边界：收益是本机支持 keep-alive 的服务器和真实生产准备路径中的建连减少，未做公网
+整体耗时对照或 Windows/macOS 实机验收。主订阅自身仍使用独立临时下载器；跨验证/应用
+准备复用、跨资源重配合批及普通 Provider 状态展示继续待做。未提交、升级版本或发布。
+
+## 2026-11-04：发布后按本机可验证性调整队列
+
+快照：`9c83e10`（已发布 v0.3.94 后）。用户明确调整优先级：当前 Linux 能实际验证的
+工作优先；缺少设备的跨平台实机项先做静态核对、已有 CI/可用构建和边界记录，
+不让无法执行的实机验收占据应用主线。保留已有 CI 硬门禁、数据保护与真实能力约束，
+未执行的检查仍不能标成通过；手机单活动普通来源与 iOS 暂缓策略不变。
+
+| 顺序 | 当前可推进内容 | 本机完成条件 |
+|---|---|---|
+| 0 | 共用退出时序与启动稳定性 | 用公开无窗口 Runtime、生产 CLI 证明行为；能稳定复现的修复并加回归，不以重复未复现冒充修复 |
+| 1 | L3 来源/规则追溯及保真度定位 | 真实连接绑定已应用计划和可证明的规则身份；重名、重复条件、过期计划不猜测；Linux GUI/固定内核可验收 |
+| 2 | Provider 更新性能 | 用分段计时和本机 HTTP(S) 对照验证连接池、准备复用、重配合批的收益；保留请求策略隔离、TLS 和失败留旧 |
+| 3 | 普通 provider 资源状态 | 补 rule/proxy provider 缓存状态及失败反馈，复用应用级修订；不把缓存可用当作已应用 |
+| 4 | 桌面编排与持久恢复 | 分批推进 JSON 次来源、显式跨来源链、稳定身份及跨重开有效计划；本机覆盖引用隔离、失败保留与故障恢复 |
+| 5 | 原生能力产品化 | 按固定内核逐项建设 DNS/端点的编辑、状态、路由、启停和恢复，每项有可执行验证 |
+
+Windows/macOS 系统代理/PAC/TUN、安装器升级/回滚/卸载，Android 真机 VPN、权限/后台恢复
+和正式签名覆盖安装保留为并行验收清单；有设备时补测，不将其它平台的构建或 Linux 检查
+代替实机结论。Android 的纯模型/策略及共享编译器、恢复逻辑仍可在本机测试，不一并推迟。
+Provider/Geo 已交付的下载、独立调度和资源管理，以及本版网络设置与 UI 统一不重新列为待实现。
+
+本轮排查已将“macOS 偶发、Linux 60 次未复现”的问题缩小为本机确定性诊断：
+`repro_runtime_shutdown.cpp` 在固定框架上返回 **10**，实际为 State 更新 + Quit 后仍重组，
+再取应用任务域抛停止异常。详见[退出时序诊断](runtime-health-review.md#退出时序诊断2026-11-04)。
+框架维护目录同一运行时文件已有未提交工作，本轮保留全部改动，仅保存独立复现材料；
+尚未修改框架、应用运行行为、依赖 pin，未提交或发布新版本。
+
+实际检查：主目标 `cmake --build build --target clash-flux`、`./run.sh --version`
+（v0.3.94）和 `git diff --check` 通过；独立诊断连续 **5/5** 返回预期故障码 10。
+`ctest --test-dir build --output-on-failure --no-tests=error -R '^(core_api_lifetime|resource_management_runtime|ui_resources)$'`
+为 **3/3，14.83 秒**。未重跑完整门禁，未新增跨平台实机结论；不能将诊断复现写成修复通过。
+
 ## 2026-11-04：v0.3.94 标签 CI、重打标签与发布结果
 
 快照：`51d1cc8`；`v0.3.94` 标签已从原提交 `3d27e84` 重打到该提交（用户明确授权），

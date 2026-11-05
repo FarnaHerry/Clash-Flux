@@ -36,6 +36,8 @@ ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-require
 - Windows CI 用 runner 的 Program Files/OpenSSL，构建前检查 CLI 与开发头文件，不重新通过 Chocolatey 安装。服务和 WFP 回归需要管理员测试环境。
 - 本地针对改动选择相关回归；改测试注册、CI 或发布门禁时检查完整注册与禁用情况。文档改动不冒充完整平台验收。
 
+连接规则追溯另跑 `connection_trace_runtime`，覆盖真实固定内核、完整规则清单、新旧连接和实例/计划过期；组件状态另由 page_transition 验证，范围见[连接追溯](../../docs/connection-rule-tracing.md)。
+
 ## 按改动选择回归
 
 | 改动 | 必须查阅/执行的验证 |

@@ -1,6 +1,6 @@
 // api.cpp — clashflux.api 实现单元（curl）。
 //
-// 每次调用新建 easy handle（API 调用频率低，省去连接复用的复杂度换线程安全）。
+// 控制面请求使用独立 easy handle；文件下载独占借用客户端的有界空闲连接池。
 // 全程 CURLOPT_NOSIGNAL（多线程必须）；超时覆盖 DNS+连接+传输。
 module;
 
@@ -172,6 +172,103 @@ private:
     CURL* handle_;
 };
 
+struct DownloadPolicy {
+    std::string origin, proxy;
+    bool allowInvalidCert = false, allowProxyEnv = false;
+    std::map<std::string, std::string> headers;
+    std::array<std::optional<std::string>, 11> environment;
+
+    static DownloadPolicy From(const std::string& url, const ClashApi::DownloadOptions& options) {
+        DownloadPolicy policy;
+        const auto scheme = url.find("://");
+        policy.origin = url.substr(0, scheme == std::string::npos ? url.size() :
+            url.find_first_of("/?#", scheme + 3));
+        policy.proxy = options.proxyUrl;
+        policy.allowInvalidCert = options.allowInvalidCert;
+        policy.allowProxyEnv = options.allowProxyEnv;
+        for (const auto& [name, value] : options.headers) {
+            auto lower = name;
+            for (char& c : lower) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+            // Validators affect this response, not connection authentication.
+            // Every request still resets and reinstalls its complete headers.
+            if (lower != "if-none-match" && lower != "if-modified-since") policy.headers.emplace(name, value);
+        }
+        constexpr std::array names{"http_proxy", "https_proxy", "all_proxy", "no_proxy",
+            "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE"};
+        for (std::size_t i = 0; i < names.size(); ++i)
+            if (const auto* value = std::getenv(names[i])) policy.environment[i] = value;
+        return policy;
+    }
+    bool operator==(const DownloadPolicy&) const = default;
+};
+
+class DownloadHandlePool {
+public:
+    std::unique_ptr<CurlHandle> Take(const DownloadPolicy& policy) {
+        std::unique_ptr<CurlHandle> evicted;
+        {
+            std::lock_guard lock(mutex_);
+            for (auto entry = idle_.begin(); entry != idle_.end(); ++entry) {
+                if (entry->policy != policy) continue;
+                auto handle = std::move(entry->handle);
+                idle_.erase(entry);
+                return handle;
+            }
+            if (idle_.size() == kMaxIdle) {
+                evicted = std::move(idle_.front().handle);
+                idle_.erase(idle_.begin());
+            }
+        }
+        return std::make_unique<CurlHandle>();
+    }
+
+    void Return(DownloadPolicy policy, std::unique_ptr<CurlHandle> handle) noexcept {
+        try {
+            std::unique_ptr<CurlHandle> evicted;
+            {
+                std::lock_guard lock(mutex_);
+                if (idle_.size() == kMaxIdle) {
+                    evicted = std::move(idle_.front().handle);
+                    idle_.erase(idle_.begin());
+                }
+                idle_.push_back({std::move(policy), std::move(handle)});
+            }
+        } catch (...) {
+            // Retention is optional; allocation failure still releases the handle.
+        }
+    }
+
+private:
+    static constexpr std::size_t kMaxIdle = 3;
+    struct Entry { DownloadPolicy policy; std::unique_ptr<CurlHandle> handle; };
+    std::mutex mutex_;
+    std::vector<Entry> idle_;
+};
+
+class DownloadSession {
+public:
+    DownloadSession(std::shared_ptr<DownloadHandlePool> pool, DownloadPolicy policy)
+        : pool_(std::move(pool)), policy_(std::move(policy)), handle_(pool_->Take(policy_)) {}
+    ~DownloadSession() { Release(); }
+    void Release() noexcept {
+        if (!handle_ || !*handle_) return;
+        // Clear all callbacks and borrowed pointers before their stack owners
+        // disappear. Connection/DNS/TLS caches survive reset within this policy.
+        curl_easy_reset(handle_->get());
+        if (reusable_) pool_->Return(std::move(policy_), std::move(handle_));
+        else handle_.reset();
+    }
+    DownloadSession(const DownloadSession&) = delete;
+    DownloadSession& operator=(const DownloadSession&) = delete;
+    CURL* get() const noexcept { return handle_ ? handle_->get() : nullptr; }
+    void Keep(bool reusable) noexcept { reusable_ = reusable; }
+private:
+    std::shared_ptr<DownloadHandlePool> pool_;
+    DownloadPolicy policy_;
+    std::unique_ptr<CurlHandle> handle_;
+    bool reusable_ = false;
+};
+
 class CurlHeaderList {
 public:
     CurlHeaderList() = default;
@@ -241,12 +338,13 @@ ApiResult probeThroughProxy(const std::string& target, int mixedPort, std::stop_
 
 struct ClashApi::Impl {
     mutable std::mutex endpointMutex;
+    std::shared_ptr<DownloadHandlePool> downloadPool = std::make_shared<DownloadHandlePool>();
     std::string base;    // http://127.0.0.1:29097
     std::string secret;
 
     // 通用请求。method 为空 = GET；body 非空按 application/json 发送。
     ApiResult request(const std::string& method, const std::string& path,
-                      const std::string& body = {}, long timeoutSec = 10, bool bounded = false) {
+                      const std::string& body = {}, long timeoutSec = 10, bool bounded = false, std::size_t responseLimit = 65536) {
         ApiResult result;
         CurlHandle handle;
         if (!handle) {
@@ -275,14 +373,16 @@ struct ClashApi::Impl {
             curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, method.c_str());
         }
         curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers.get());
+        struct LimitedBody { std::string* body; std::size_t limit; } limited{&result.body, responseLimit};
         curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, bounded ? +[](char* data, size_t size, size_t count, void* context) -> size_t {
-            auto& output = *static_cast<std::string*>(context);
+            const auto& target = *static_cast<LimitedBody*>(context);
+            auto& output = *target.body;
+            if (size && count > (target.limit - output.size()) / size) return 0;
             const size_t bytes = size * count;
-            if (bytes > 65536 || output.size() > 65536 - bytes) return 0;
             try { output.append(data, bytes); return bytes; }
             catch (...) { return 0; }
         } : &onBodyWrite);
-        curl_easy_setopt(easy, CURLOPT_WRITEDATA, &result.body);
+        curl_easy_setopt(easy, CURLOPT_WRITEDATA, bounded ? static_cast<void*>(&limited) : static_cast<void*>(&result.body));
         curl_easy_setopt(easy, CURLOPT_TIMEOUT, timeoutSec);
         curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 3L);
         curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
@@ -415,6 +515,12 @@ NativeRuntime NativeApi::runtime(std::stop_token cancel) {
     return {.ok = true, .version = version->version, .apiVersion = version->api, .startedAt = *started};
 }
 
+std::optional<std::uint64_t> NativeApi::startedAt() {
+    const auto response = unary("GetStartedAt", 500, {});
+    if (!response.ok) return std::nullopt;
+    return clashflux::native_control::DecodeStartedAt(response.body);
+}
+
 void ClashApi::setEndpoint(std::string baseUrl, std::string secret) {
     std::lock_guard lock(impl_->endpointMutex);
     impl_->base = std::move(baseUrl);
@@ -480,6 +586,8 @@ ApiResult ClashApi::groupDelay(const std::string& name, int timeoutMs) {
 }
 
 ApiResult ClashApi::connections() { return impl_->request("", "/connections"); }
+ApiResult ClashApi::rules() { return impl_->request("", "/rules", {}, 1, true, 8 * 1024 * 1024); }
+ApiResult ClashApi::traceConnections() { return impl_->request("", "/connections", {}, 1, true, 8 * 1024 * 1024); }
 
 ApiResult ClashApi::closeConnection(const std::string& id) {
     return impl_->request("DELETE", "/connections/" + percentEncode(id));
@@ -564,12 +672,13 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     }
 #else
     CurlHeaderList requestHeaders;
-    CurlHandle handle;
-    if (!handle) {
+    DownloadSession session(impl_->downloadPool, DownloadPolicy::From(url, options));
+    CURL* const easy = session.get();
+    if (!easy) {
         result.error = "curl_easy_init failed";
         return result;
     }
-    CURL* const easy = handle.get();
+    curl_easy_setopt(easy, CURLOPT_MAXCONNECTS, 3L);
     curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
     curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(easy, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
@@ -605,11 +714,8 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     curl_easy_setopt(easy, CURLOPT_SSL_OPTIONS,
                      static_cast<long>(CURLSSLOPT_NATIVE_CA));
 #endif
-    if (options.allowInvalidCert) {
-        // 「允许无效证书（危险）」：跳过对端校验（自签/过期订阅源兜底）。
-        curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 0L);
-    }
+    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, options.allowInvalidCert ? 0L : 1L);
+    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, options.allowInvalidCert ? 0L : 2L);
     // 代理三态：指定代理 > 环境变量代理 > 强制直连（清空代理，防 env 干扰）。
     if (!options.proxyUrl.empty()) {
         curl_easy_setopt(easy, CURLOPT_PROXY, options.proxyUrl.c_str());
@@ -626,6 +732,7 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     curl_easy_getinfo(easy, CURLINFO_SIZE_DOWNLOAD_T, &downloadedBytes);
     result.download.bytes = static_cast<std::uint64_t>(std::max<curl_off_t>(0, downloadedBytes));
     curl_easy_getinfo(easy, CURLINFO_NUM_CONNECTS, &result.download.newConnections);
+    session.Keep(code == CURLE_OK);
     out.flush();
     if (code == CURLE_OK) {
         curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status);
@@ -666,6 +773,8 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
         }
     }
     if (sink.limitExceeded) result.error = "下载超过大小上限";
+    // Validation can prepare additional providers; no transport is held across it.
+    session.Release();
 #endif
     if (out.is_open()) {
         out.close();

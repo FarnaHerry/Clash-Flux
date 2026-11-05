@@ -7,6 +7,7 @@ from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -146,6 +147,15 @@ def main():
         }
 
         class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+            accepted = 0
+            connections_lock = threading.Lock()
+
+            def setup(self):
+                super().setup()
+                with self.connections_lock:
+                    type(self).accepted += 1
+
             def do_GET(self):
                 requests[self.path] += 1
                 body = bodies[self.path]
@@ -176,7 +186,17 @@ def main():
         with closing(sqlite3.connect(database)) as db, db:
             db.execute("UPDATE profiles SET type='remote',url=? WHERE id=1", (address + "/profile",))
         try:
+            connections_before = Handler.accepted
             run("profile", "update", "1")
+            measurements = [line for line in (data / "core/logs.log").read_text(encoding="utf-8").splitlines()
+                            if "profile-providers ready=true" in line and "download_requests=4" in line]
+            assert measurements, "production update must report all four provider requests"
+            measurement = measurements[-1]
+            new_connections = int(re.search(r"new_connections=(\d+)", measurement).group(1))
+            assert "measured_requests=4" in measurement and 1 <= new_connections <= 3, measurement
+            accepted = Handler.accepted - connections_before
+            assert accepted <= 4, (accepted, measurement)  # One main source plus pooled provider requests.
+            print(f"production provider requests=4 new_connections={new_connections} accepted_tcp={accepted}")
             cache = list((data / "core").glob("*-providers/*.cache"))
             assert len(cache) == 4
             before = requests.copy()

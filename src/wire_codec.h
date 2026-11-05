@@ -21,6 +21,13 @@ template <class T> struct Result {
     explicit operator bool() const noexcept { return error.empty(); }
 };
 
+struct RuntimeRule {
+    std::string type, payload, proxy;
+};
+Result<std::vector<RuntimeRule>> DecodeRuntimeRules(std::string_view text);
+
+Result<std::vector<std::string>> DecodeConnectionIds(std::string_view text);
+
 struct Traffic {
     std::int64_t up = 0;
     std::int64_t down = 0;

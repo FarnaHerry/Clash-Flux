@@ -968,6 +968,7 @@ void compileRuleProviders(Context& ctx, const YAML::Node& providers) {
         if (!rules) { reject(failure); continue; }
         const std::string tag = "clash-provider-" + std::to_string(ctx.providerTags.size());
         ctx.providerTags.emplace(name, tag);
+        if (behavior == "domain") ctx.domainProviders.insert(name);
         ctx.ruleSets.push_back({{"type", "inline"}, {"tag", tag}, {"rules", std::move(*rules)}});
         if (type == "file")
             ctx.note(FidelityScope::Field, Fidelity::Approx, "rule-providers." + name,
@@ -1334,43 +1335,44 @@ bool applyConnectionRules(Context& ctx) {
             if ((main != ctx.sourceDefaults.end() && main->second.drop) || ctx.finalTarget == "REJECT-DROP") rule["method"] = "drop";
         } else rule["outbound"] = finalOutbound;
     };
-    const auto applyTarget = [&](nlohmann::json& rule, const vpn::RouteRule& target) {
+    const auto applyTarget = [&](nlohmann::json& rule, const vpn::RouteRule& target) -> std::string {
         if (target.connectionId == vpn::DirectConnectionId() &&
             target.targetKind == vpn::TargetKind::Default) {
             rule["outbound"] = directTag;
-            return;
+            return std::string(vpn::DirectConnectionId());
         }
         const auto native = nativeTags.find(target.connectionId);
         if (native != nativeTags.end() && target.targetKind == vpn::TargetKind::Default) {
-            if (!native->second.empty()) { rule["outbound"] = native->second; return; }
+            if (!native->second.empty()) { rule["outbound"] = native->second; return target.connectionId; }
         } else if (target.targetKind == vpn::TargetKind::Default) {
             const auto source = ctx.sourceDefaults.find(target.connectionId);
             if (source != ctx.sourceDefaults.end()) {
                 if (source->second.reject) {
                     rule["action"] = "reject";
                     if (source->second.drop) rule["method"] = "drop";
-                    return;
+                    return target.connectionId;
                 }
-                if (!source->second.tag.empty()) { rule["outbound"] = source->second.tag; return; }
+                if (!source->second.tag.empty()) { rule["outbound"] = source->second.tag; return target.connectionId; }
             }
             // 兼容没有来源对象的旧单配置调用方。
             if (target.connectionId == ctx.opt.mainConnectionId && !target.connectionId.empty()) {
-                rule["outbound"] = finalOutbound; return;
+                rule["outbound"] = finalOutbound; return target.connectionId;
             }
         } else {
             for (const auto& object : ctx.result.sourceObjects) {
                 if (object.sourceId == target.connectionId && object.kind == target.targetKind &&
-                    object.objectId == target.targetObject) { rule["outbound"] = object.tag; return; }
+                    object.objectId == target.targetObject) { rule["outbound"] = object.tag; return target.connectionId; }
             }
         }
         if (unavailableWarnings.insert(target.connectionId + "/" + target.targetObject).second)
             ctx.warn("目标「" + target.connectionId + "/" + target.targetObject +
                      "」不可用，执行 " + std::string(vpn::UnavailablePolicyKey(target.unavailable)));
         switch (target.unavailable) {
-        case vpn::UnavailablePolicy::Reject: rule["action"] = "reject"; break;
-        case vpn::UnavailablePolicy::UseMain: applyMainDefault(rule); break;
-        case vpn::UnavailablePolicy::Direct: rule["outbound"] = directTag; break;
+        case vpn::UnavailablePolicy::Reject: rule["action"] = "reject"; return {};
+        case vpn::UnavailablePolicy::UseMain: applyMainDefault(rule); return ctx.opt.mainConnectionId;
+        case vpn::UnavailablePolicy::Direct: rule["outbound"] = directTag; return std::string(vpn::DirectConnectionId());
         }
+        return {};
     };
 
     nlohmann::json precedence = nlohmann::json::array();
@@ -1444,7 +1446,13 @@ bool applyConnectionRules(Context& ctx) {
         }
         auto rule = globalRuleMatch(ctx, item);
         if (!rule) return false;
-        applyTarget(*rule, item);
+        const auto actualSource = applyTarget(*rule, item);
+        std::string sourceName = actualSource == ctx.opt.mainConnectionId ? ctx.opt.mainSourceName : "";
+        if (actualSource == vpn::DirectConnectionId()) sourceName = "DIRECT";
+        for (const auto& source : ctx.opt.auxiliarySources)
+            if (source.id == actualSource) sourceName = source.name;
+        ctx.result.rulePlan.origins.push_back({precedence.size(), item.id, actualSource, std::move(sourceName),
+            item.tier == vpn::RuleTier::UserOverride ? "user-override" : "source-policy"});
         precedence.push_back(std::move(*rule));
     }
     precedence.push_back({{"clash_mode", "direct"}, {"outbound", directTag}});
@@ -1454,5 +1462,9 @@ bool applyConnectionRules(Context& ctx) {
     for (auto& rule : config["route"]["rules"]) precedence.push_back(std::move(rule));
     precedence.push_back({{"clash_mode", "rule"}, {"outbound", config["route"]["final"]}});
     config["route"]["rules"] = std::move(precedence);
+    ctx.result.rulePlan.ruleCount = config["route"]["rules"].size();
+    for (const auto& object : ctx.result.sourceObjects)
+        ctx.result.rulePlan.outboundLabels[object.tag] = object.objectId +
+            (object.sourceName.empty() ? "" : " · " + object.sourceName);
     return true;
 }

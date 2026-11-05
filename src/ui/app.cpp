@@ -347,13 +347,14 @@ struct NavigationEntry {
     huxerui::StringVariant label;
 };
 
-const std::array<NavigationEntry, 7> kNavigationEntries{
+const std::array<NavigationEntry, 8> kNavigationEntries{
     NavigationEntry{app::images::home, Localized("首页")},
     NavigationEntry{app::images::request, Localized("订阅")},
     NavigationEntry{app::images::proxies, Localized("代理")},
     NavigationEntry{app::images::route, Localized("规则")},
     NavigationEntry{app::images::connections, Localized("连接")},
     NavigationEntry{app::images::logs, Localized("日志")},
+    NavigationEntry{app::images::website_test, Localized("网站测试")},
     NavigationEntry{app::images::gear, Localized("设置")},
 };
 
@@ -366,7 +367,7 @@ std::vector<huxerui::NavigationItem> DesktopNavigationItems() {
     return destinations;
 }
 
-// Android 仅暴露四个一级页；规则、连接和日志由设置页的“更多”入口承载。
+// Android 仅暴露四个一级页；规则、连接、日志和网站测试由设置页的“更多”入口承载。
 constexpr std::array<std::size_t, 4> kAndroidNavDestinations{
     pages::kHome, pages::kProxies, pages::kProfiles, pages::kSettings};
 
@@ -615,7 +616,7 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
         profiles->linkError = error;
 }
 
-// 桌面主内容保留七个一级页面；二级设置只覆盖这个内容槽。
+// 桌面主内容保留八个一级页面；二级设置只覆盖这个内容槽。
 [[huxerui::composable]] huxerui::View DesktopPrimaryPages(
     huxerui::State<std::size_t> navPage, huxerui::State<int> themeMode,
     ProfilesCache profilesCache) {
@@ -626,7 +627,7 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
     const auto backToSettings = compact ? std::function<void()>{[navPage] { navPage = pages::kSettings; }}
                                         : std::function<void()>{};
     std::vector<huxerui::View> pages;
-    pages.reserve(7);
+    pages.reserve(8);
     // 不可见的一级页仍挂载（保住 State/Lifecycle）但不构建内容。
     // 宽屏直接显示目标页；数据未就绪时由页面自身展示真实加载状态的骨架。
     const std::size_t desktopActivePage = navPage.Get();
@@ -643,13 +644,15 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
                         .Key("connections").With(huxerui::Grow(1.0F)));
     pages.push_back(LogsPage(backToSettings, desktopActivePage == pages::kLogs)
                         .Key("logs").With(huxerui::Grow(1.0F)));
+    pages.push_back(WebsiteTestsPage(backToSettings, desktopActivePage == pages::kWebsiteTests)
+                        .Key("website-tests").With(huxerui::Grow(1.0F)));
     pages.push_back(SettingsPage(themeMode, navPage, profilesCache,
                                  desktopActivePage == pages::kSettings)
                         .Key("settings").With(huxerui::Grow(1.0F)));
-    // Compact 保留原来的点击翻页；规则、连接、日志仍只从「更多」进入。
+    // Compact 保留原来的点击翻页；规则、连接、日志和网站测试仍只从「更多」进入。
     huxerui::View dock;
     const bool auxiliary = desktopActivePage == pages::kRules || desktopActivePage == pages::kConnections ||
-        desktopActivePage == pages::kLogs;
+        desktopActivePage == pages::kLogs || desktopActivePage == pages::kWebsiteTests;
     if (!auxiliary && !(desktopActivePage == pages::kProfiles && model->compactProfileFormOpen.Get()))
         dock = AndroidNavigationSurface(navPage);
     return CompactRootPageSurface(
@@ -845,6 +848,12 @@ huxerui::PageTransition SecondaryPageTransition(
 [[huxerui::composable]] huxerui::View LanguageRoutePage() {
     const auto navigation = huxerui::UseNavigation();
     return LanguagePage([navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+
+[[huxerui::composable]] huxerui::View WebsiteTestsRoutePage() {
+    const auto navigation = huxerui::UseNavigation();
+    return WebsiteTestsPage([navigation] { static_cast<void>(navigation.Pop()); })
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
 

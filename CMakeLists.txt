@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.94 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.95 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -127,7 +127,7 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     find_package(ZLIB QUIET)
 endif ()
 
-# ---- HuxerUI（0.3.0 SDK / 源码双通道，HUXERUI_HOME 契约）-------------------
+# ---- HuxerUI（固定 fork 源码 / SDK 双通道，HUXERUI_HOME 契约）--------------
 # 优先级（固定顺序，与 apitab 一致）：
 #   1. 显式 HUXERUI_HOME 源码（有 CMakeLists.txt + include/huxerui/huxerui.h）。
 #   2. third_party/huxerui 源码（FarnaHerry/HuxerUI 的 farna/main 固定 SHA，
@@ -139,7 +139,7 @@ endif ()
 # CLASHFLUX_HUXERUI_FORCE_SDK=ON：唯一明确跳过源码的开关，只走第 3/4 通道（发布门禁
 # 与兼容测试用）。源码模式编译 Linux 后端需要 gtk4-devel libsoup3-devel。
 include(cmake/clashflux_vendor.cmake)
-set(HUXERUI_HOME "$ENV{HUXERUI_HOME}" CACHE PATH "HuxerUI 0.3.0 SDK or source directory")
+set(HUXERUI_HOME "$ENV{HUXERUI_HOME}" CACHE PATH "HuxerUI SDK or pinned source directory")
 set(CLASHFLUX_HUXERUI_BUNDLED_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/huxerui" CACHE PATH "Bundled HuxerUI source checkout (override for testing to simulate missing source without moving shared directory)")
 set(CLASHFLUX_HUXERUI_SOURCE_DIR "")
 option(CLASHFLUX_HUXERUI_FORCE_SDK "Skip source checkout; use SDK fallback only" OFF)
@@ -235,7 +235,7 @@ else ()
     elseif (APPLE OR WIN32)
         message(FATAL_ERROR
             "clash-flux: macOS/Windows 未提供离线 SDK 包；"
-            "请用 HUXERUI_HOME 指向 0.3.0 源码或已安装 SDK，"
+            "请用 HUXERUI_HOME 指向固定 fork 源码或已安装 SDK，"
             "或 clone third_party/huxerui 后默认以源码模式编译")
     else ()
         clashflux_dependency_source(huxerui)
@@ -880,6 +880,21 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             if (WIN32)
                 target_compile_definitions(test_rule_provider_download PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
             endif ()
+            add_executable(test_connection_trace tests/test_connection_trace.cpp src/api.cpp)
+            target_sources(test_connection_trace PRIVATE FILE_SET trace_modules TYPE CXX_MODULES
+                BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}" FILES src/api.cppm src/utils.cppm)
+            set_target_properties(test_connection_trace PROPERTIES CXX_MODULE_STD ON)
+            target_compile_features(test_connection_trace PRIVATE cxx_std_23)
+            target_link_libraries(test_connection_trace PRIVATE
+                clashflux_wire clashflux_json CURL::libcurl OpenSSL::SSL OpenSSL::Crypto)
+            if (WIN32)
+                target_compile_definitions(test_connection_trace PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+            endif ()
+            add_test(NAME connection_trace_runtime COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_connection_trace_runtime.py"
+                "$<TARGET_FILE:test_singbox>" "$<TARGET_FILE:test_connection_trace>"
+                "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}")
+            set_tests_properties(connection_trace_runtime PROPERTIES TIMEOUT 70)
             add_test(NAME rule_provider_download COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_rule_provider_download.py"
                 "$<TARGET_FILE:test_rule_provider_download>" ${CLASHFLUX_DOWNLOAD_TEST_ARGS})
