@@ -1,41 +1,54 @@
 # L1 / L2 / L3 开发完成度复核
 
-## 2026-11-05：v0.3.96 发布准备
+## 2026-11-05：v0.3.96 标签 CI 失败与 v0.3.97 发布准备
 
-发布快照：基于 `0c862fb`（v0.3.95）加本轮工作区，标签 `v0.3.96`；CMake 与 Android
-versionName 同为 0.3.96，versionCode 从 173 增加为 174。说明见
-[release notes](releases/v0.3.96.md)。
+发布快照：基于 `0c862fb`（v0.3.95）加本轮工作区。`v0.3.96` 标签已推送但**没有产生
+Release**：Windows 与 macOS 发布门禁失败，`publish-release` 未执行。
 
+- Windows `build-windows-x86_64` 在框架 `a755f9ff` 的 `win32_adapter.cpp` 失败：
+  代码位于 `namespace huxerui::windows`，`detail::` 被解析为 `huxerui::windows::detail`，
+  找不到 `CurrentApplicationRuntime` / `WindowsUiWindow`。修复提交 HuxerUI
+  `129209bc` 显式限定 `huxerui::detail::`。
+- macOS `build-macos-arm64` 在 Lib-Camera `d51a2f0` 的 `camera_screen.mm` 失败：
+  `using namespace huxerui` 与 AppKit `MacTypes.h` 的全局 `Rect` 重名。修复提交
+  Lib-Camera `48b11d6` 在 macOS 源中显式写 `huxerui::Rect`。
+- 修复提交已发布到各 fork 的 `farna/main`，应用固定点更新为框架 `129209bc`、
+  Lib-Camera `48b11d6`，其余三项扩展 pin 不变；版本提升到 0.3.97（versionCode 175），
+  说明见 [release notes](releases/v0.3.97.md)。v0.3.96 标签保留为未发布历史，不移动。
 - 本轮内容：网站测试编辑/删除、备注与 MD3 表单、单卡独立排队/取消；Android 应用内更新
   拆分为应用作用域校验与窗口作用域授权/安装（`JavaWindowPlatformModuleFactory`、
-  `AwaitCallback` 与待完成账本）；Lib-Camera `d51a2f0` / HuxerUI `a755f9ff` 追新；
-  Android 增量构建的 UI 镜像 configure 依赖修复。
+  `AwaitCallback` 与待完成账本）；Camera 桌面捕获与窗口原生 surface；Android 增量
+  构建的 UI 镜像 configure 依赖修复。
 - `cmake -B build`、`cmake --build build --target clash-flux`、`cmake --build build -j 4`
-  （含全部测试目标）、`./run.sh --version`（v0.3.96）、`git diff --check` 通过。
-- `ctest --test-dir build --no-tests=error -L clashflux-required` **31/31，183.91 秒**；
-  本轮同时包含网站测试表单/分页、应用升级等待账本、持久化、DNS/TLS、Provider、
-  资源管理与运行控制回归。
+  （含全部测试目标）、`./run.sh --version`（v0.3.97）、`git diff --check` 通过。
+- `ctest --test-dir build --no-tests=error -L clashflux-required`：v0.3.96 快照
+  **31/31，183.91 秒**；固定到修复提交并重建后 v0.3.97 复跑 **31/31，190.84 秒**。
 - Android 从 `platform/android` 执行
   `./gradlew :app:testAppUpdatePolicy :app:compileDebugJavaWithJavac :app:externalNativeBuildDebug`，
-  **1 分 45 秒通过**；Java 与 native 均使用固定 HUXERUI 源码，仅有既存 Java
-  source/target 8 弃用警告。
+  v0.3.96 快照 **1 分 45 秒**、修复提交后 **1 分 19 秒**通过；Java 与 native 均使用
+  固定 HUXERUI 源码，仅有既存 Java source/target 8 弃用警告。
+- iOS Simulator 仍是 advisory 且未通过（`HuxerUIIosLink.cmake` 无法解析
+  `SweetEditor3p::Simdutf`），不进入 Release，也不作为本轮回归。
 - 未验证真实摄像头预览/拍照、屏幕选区、Android 真机授权与系统安装、Compact 二级页真实
-  键盘/系统返回、Windows/macOS 原生与 iOS native；正式安装包和 APK 签名由标签 CI 核验。
+  键盘/系统返回；正式安装包和 APK 签名由 v0.3.97 标签 CI 核验。
 
-## 2026-11-05：Camera 追新（Lib-Camera d51a2f0 + HuxerUI a755f9ff）
+## 2026-11-05：Camera 追新（Lib-Camera 48b11d6 + HuxerUI 129209bc）
 
 快照：应用 `0c862fb`（v0.3.95）加当前工作区；框架 checkout 与 CI 固定
-`a755f9ff17ac83cea6c48795ada4b2a560083fc1`，Lib-Camera 固定
-`d51a2f09dc73f68e488941daae4d1f50a3e19b29`，其余三项扩展 pin 不变。
+`129209bc0d519ae475c17a610f25c7a67a4a104b`（含 `a755f9ff` 与 Windows 修复），
+Lib-Camera 固定 `48b11d6bb5ef0246c86ff7638e882f18b27b8db0`（含 `d51a2f0` 与 macOS
+修复），其余三项扩展 pin 不变。
 
-- 框架 `11161a7..a755f9ff` 只有 1 个提交：Win32 暴露原 HWND，Linux 暴露 GTK 原生
-  surface 几何，提供事件驱动的 canvas aperture、locator 矩形及关闭时背景恢复，供
-  Camera 的桌面屏幕选区使用。框架 checkout 工作树无改动，应用无 API 迁移。
-- Lib-Camera `b8b3b93..d51a2f0` 新增 Linux V4L2 预览/拍照、X11 与
+- 框架 `11161a7..129209bc` 两个提交：`a755f9ff` 在 Win32 暴露原 HWND，在 Linux 暴露
+  GTK 原生 surface 几何，提供事件驱动的 canvas aperture、locator 矩形及关闭时背景恢复，
+  供 Camera 的桌面屏幕选区使用；`129209bc` 修复 Win32 访问器的命名空间限定。
+  框架 checkout 工作树无改动，应用无 API 迁移。
+- Lib-Camera `b8b3b93..48b11d6` 新增 Linux V4L2 预览/拍照、X11 与
   ScreenCast/PipeWire 屏幕选区（X11、PipeWire 均可选，缺失时对应路径运行期不可用）、
   `CaptureSource::Screen` / `ScreenPreview` / `CapturePreviewFrameAsync`；Android
   模块改窗口级工厂并绑定原 `HuxerUIView`，iOS 改 `WindowPlatformModuleFactory`，
-  拍照等待改 `AwaitCallback` 并保留取消/中断/原生清理语义。应用只调用既有
+  拍照等待改 `AwaitCallback` 并保留取消/中断/原生清理语义；`48b11d6` 修复 macOS
+  屏幕选区 `Rect` 与 AppKit 全局类型重名。应用只调用既有
   `UseCamera` / `CameraPreview` / `CapturePhotoAsync`，未改页面代码。
 - 本机 `cmake -B build` 识别到 gtk4 4.22.5、gdk-pixbuf 2.44.4、x11 1.8.13、
   xext 1.3.6、libpipewire-0.3 1.6.11；Camera 的 Linux 目标按 X11 与 PipeWire 均可用
