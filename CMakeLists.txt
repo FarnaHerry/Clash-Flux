@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.99 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.100 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -824,6 +824,14 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             target_link_libraries(test_qrs_codec PRIVATE ZLIB::ZLIB)
         endif ()
         add_test(NAME qrs_codec COMMAND test_qrs_codec)
+
+        add_executable(test_wire_codec tests/test_wire_codec.cpp)
+        target_compile_features(test_wire_codec PRIVATE cxx_std_23)
+        target_link_libraries(test_wire_codec PRIVATE clashflux_wire)
+        if (MSVC)
+            target_compile_options(test_wire_codec PRIVATE /utf-8)
+        endif ()
+        add_test(NAME wire_codec COMMAND test_wire_codec)
 
         if (CLASHFLUX_REQUIRE_PROJECT_TESTS)
             find_package(Python3 COMPONENTS Interpreter REQUIRED)

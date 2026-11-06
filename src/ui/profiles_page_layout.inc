@@ -140,7 +140,7 @@
                                              huxerui::CornerRadius(kSelectableTileRadius));
                                      }
                                      return std::move(slot).Key("profile-slot-" + std::to_string(index));
-                                 }, PageScrollInset(theme), ProfileCardRowSpacing(compact),
+                                 }, PageScrollInset(theme, true), ProfileCardRowSpacing(compact),
                                  compact ? kCompactFloatingNavigationInset : 0.0F)
                                  .Columns(ProfileGridColumns(compact, group_by_type))
                                  .EstimatedRowExtent(ProfileCardHeight(compact))

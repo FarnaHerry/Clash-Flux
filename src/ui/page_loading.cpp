@@ -211,7 +211,7 @@ huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle 
             theme, ProfileCardHeight(compact), huxerui::EdgeInsets::Symmetric(10.0F, 8.0F))
             .Key("profile-loading-item-" + std::to_string(index));
     };
-    const auto grid = PageVirtualGrid(8, item, PageScrollInset(theme), ProfileCardRowSpacing(compact),
+    const auto grid = PageVirtualGrid(8, item, PageScrollInset(theme, true), ProfileCardRowSpacing(compact),
         compact ? kCompactFloatingNavigationInset : 0.0F)
         .Columns(ProfileGridColumns(compact, groupByType))
         .EstimatedRowExtent(ProfileCardHeight(compact))
@@ -235,7 +235,7 @@ huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle 
         SkeletonBlock(shimmer, 104.0F, 20.0F).With(huxerui::Grow(1.0F)),
       }.With(huxerui::Spacing(16.0F)),
       huxerui::Row {card(), card()}.With(huxerui::Spacing(kSectionCardSpacing)),
-    }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(kSectionCardSpacing, PageScrollInset(theme))),
+    }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(kSectionCardSpacing, PageScrollInset(theme, true))),
         huxerui::Spacing(16.0F), huxerui::Grow(1.0F),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), shimmer).Key("proxy-loading-skeleton");
 }

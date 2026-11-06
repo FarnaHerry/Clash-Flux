@@ -5,7 +5,7 @@ import sys
 import tempfile
 
 REQUIRED = ["smoke", "profile_links", "app_update", "app_update_async", "app_update_handoff", "page_transition", "singbox",
-            "rule_provider_download", "dns_hosts_runtime", "dns_policy_runtime",
+            "wire_codec", "rule_provider_download", "dns_hosts_runtime", "dns_policy_runtime",
             "dns_tls_runtime", "vpn", "routing", "compensation", "sqlite_orm",
             "persistence", "core_api_lifetime", "connection_trace_runtime", "project_test_gate", "group_expansion_runtime", "proxy_provider_runtime", "proxy_standby_runtime", "service_protocol", "cps_dependencies", "runtime_health", "native_control_runtime", "ui_resources", "runtime_evidence", "personal_rule_sets_runtime", "resource_management_runtime", "sysproxy"]
 

@@ -801,7 +801,7 @@ std::function<void()> NodeSelectAction(
                                                     *group, node),
                                                 nodeNameLimit, detailLimit)
                                          .Key(group->name + "::" + nodeName);
-                                 }, PageScrollInset(theme), kSectionCardSpacing,
+                                 }, PageScrollInset(theme, true), kSectionCardSpacing,
                                  compact ? kCompactFloatingNavigationInset : (showSpeedFab ? kSpeedFabFooterHeight : 0.0F))
                                  .Columns(compact
                                               ? huxerui::GridColumns::Fixed(2)

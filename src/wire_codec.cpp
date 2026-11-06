@@ -85,6 +85,10 @@ struct ProxiesInput {
     std::map<std::string, glz::raw_json> proxies;
 };
 struct DelayInput { int delay = 0; };
+struct HistoryInput {
+    std::string time;
+    int delay = 0;
+};
 struct MessageInput { std::string message; };
 struct SelectionInput { std::string name; };
 struct StoredLogInput {
@@ -244,6 +248,78 @@ template<class T> Result<T> DecodeNetworkValue(std::string_view text) {
         result.error = "不支持的网络设置版本，保留原数据";
     return result;
 }
+
+// Clash-compatible /proxies only exposes the latest URL test as
+// history[].time (RFC3339Nano). Android's bridge adds a numeric urlTestTime,
+// but desktop must derive the same monotonic version from history or every
+// poll compares 0 against 0 and the UI waits for the whole batch.
+std::int64_t ParseRfc3339Nanos(std::string_view text) {
+    const auto number = [](std::string_view value) {
+        std::int64_t result = 0;
+        for (const char c : value) {
+            if (c < '0' || c > '9') return std::int64_t{-1};
+            result = result * 10 + (c - '0');
+        }
+        return result;
+    };
+    if (text.size() < 20 || text[4] != '-' || text[7] != '-' ||
+        (text[10] != 'T' && text[10] != 't') || text[13] != ':' || text[16] != ':')
+        return 0;
+    const auto year = number(text.substr(0, 4));
+    const auto month = number(text.substr(5, 2));
+    const auto day = number(text.substr(8, 2));
+    const auto hour = number(text.substr(11, 2));
+    const auto minute = number(text.substr(14, 2));
+    const auto second = number(text.substr(17, 2));
+    if (year < 1970 || year > 2261 || month < 1 || month > 12 || day < 1 || day > 31 ||
+        hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
+        second < 0 || second > 60)
+        return 0;
+    std::size_t position = 19;
+    std::int64_t nanos = 0;
+    if (position < text.size() && text[position] == '.') {
+        ++position;
+        int digits = 0;
+        while (position < text.size() && text[position] >= '0' && text[position] <= '9') {
+            if (digits < 9) {
+                nanos = nanos * 10 + (text[position] - '0');
+                ++digits;
+            }
+            ++position;
+        }
+        if (digits == 0) return 0;
+        for (; digits < 9; ++digits) nanos *= 10;
+    }
+    std::int64_t offsetSeconds = 0;
+    if (position < text.size() && (text[position] == '+' || text[position] == '-')) {
+        if (position + 6 != text.size() || text[position + 3] != ':') return 0;
+        const auto offsetHour = number(text.substr(position + 1, 2));
+        const auto offsetMinute = number(text.substr(position + 4, 2));
+        if (offsetHour < 0 || offsetHour > 23 || offsetMinute < 0 || offsetMinute > 59)
+            return 0;
+        offsetSeconds = (offsetHour * 60 + offsetMinute) * 60;
+        if (text[position] == '-') offsetSeconds = -offsetSeconds;
+        position += 6;
+    } else if (position < text.size() && (text[position] == 'Z' || text[position] == 'z')) {
+        ++position;
+    } else {
+        return 0;
+    }
+    if (position != text.size()) return 0;
+    // Howard Hinnant's days_from_civil, kept local to avoid a time-zone
+    // dependent std::mktime call in the codec.
+    const std::int64_t adjustedYear = year - (month <= 2 ? 1 : 0);
+    const std::int64_t era = (adjustedYear >= 0 ? adjustedYear : adjustedYear - 399) / 400;
+    const std::int64_t yearOfEra = adjustedYear - era * 400;
+    const std::int64_t dayOfYear =
+        (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+    const std::int64_t dayOfEra =
+        yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
+    const std::int64_t days = era * 146097 + dayOfEra - 719468;
+    const std::int64_t seconds =
+        days * 86400 + hour * 3600 + minute * 60 + second - offsetSeconds;
+    return seconds * 1000000000 + nanos;
+}
 }
 Result<network::Settings> DecodeNetworkSettings(std::string_view text) {
     return DecodeNetworkValue<network::Settings>(text);
@@ -394,12 +470,19 @@ Result<Proxies> DecodeProxies(std::string_view text) {
                 if (member) value.members->push_back(std::move(member.value));
             }
         }
+        int historyDelay = 0;
+        std::int64_t historyTime = 0;
         if (!source.history.empty()) {
-            const auto history = codec_detail::decode<codec_detail::DelayInput>(source.history.back().str);
-            if (history) value.historyDelay = history.value.delay;
+            const auto history =
+                codec_detail::decode<codec_detail::HistoryInput>(source.history.back().str);
+            if (history) {
+                historyDelay = history.value.delay;
+                historyTime = ParseRfc3339Nanos(history.value.time);
+            }
         }
-        value.delay = source.urlTestDelay.value_or(value.historyDelay);
-        value.testTime = source.urlTestTime;
+        value.historyDelay = historyDelay;
+        value.delay = source.urlTestDelay.value_or(historyDelay);
+        value.testTime = source.urlTestTime != 0 ? source.urlTestTime : historyTime;
         result.value.entries.emplace(name, std::move(value));
     }
     return result;
