@@ -9,12 +9,15 @@
   新增 `wire_codec` 必跑回归，覆盖桌面 history、Android 数值字段、时区等价和非法时间。
 - 代理页分组与订阅页类型两组子标签内容改用 `dense_radius`（4pt）留白，与规则页
   的密集列表一致；不再在子标签下方和底部套用 `nested_radius` 的 14pt 空白。
+- 网格首尾留白项高度被压到 0 时，`VirtualGrid` 会保留整行估算高度，导致首张卡片
+  前出现整卡空白；`PageScrollSpace` 现在至少保留 0.5pt，避免零高度行。
 - 用 sing-box 组测速实测：`direct` 的 history 在组请求返回前约 7 秒写入，确认内核
   确实逐节点回写；修复后轮询可据此提前完成单个节点。
 - 应用版本升至 **0.3.100**，Android versionCode **178**；新增
   [v0.3.100 发布说明](releases/v0.3.100.md) 并更新 README 中英文入口。
-- 验证：`wire_codec` 通过；完整必跑门禁 **32/32，168.03 秒**；Android
-  `:app:assembleDebug` 34 秒通过，aapt 核验 0.3.100 / 178；`./run.sh --version`，
+- 验证：`wire_codec` 通过；完整必跑门禁 **32/32，169.39 秒**；Android
+  `:app:assembleDebug` 33 秒通过，aapt 核验 0.3.100 / 178；Linux X11
+  640×1400 实窗核验订阅/代理子标签与首卡间距；`./run.sh --version`、
   `git diff --check` 通过。
 - 边界：未重做真机/真实 VPN；发布 APK 签名由标签 CI 核验。
 

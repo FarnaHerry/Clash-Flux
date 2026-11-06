@@ -22,7 +22,10 @@ inline huxerui::View PageScrollContent(huxerui::View content, float inset, float
 }
 
 inline huxerui::View PageScrollSpace(float height) {
-    return huxerui::Row {}.With(huxerui::Frame{.height = std::max(0.0F, height)},
+    // HuxerUI virtual metrics ignore a measured zero extent and keep the row
+    // estimate (a full card), so a spacer that collapses to zero becomes a
+    // phantom card-height blank. Keep a sub-pixel positive extent instead.
+    return huxerui::Row {}.With(huxerui::Frame{.height = std::max(0.5F, height)},
         huxerui::Semantics{.hidden = true});
 }
 
