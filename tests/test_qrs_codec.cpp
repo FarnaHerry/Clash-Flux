@@ -63,11 +63,35 @@ void RoundTrip(bool compress) {
           "all source blocks are decoded");
 }
 
+void OwnSharedProfiles() {
+    // These are config bytes from the sharing path, not a URL or QRS frame text
+    // to be downloaded after reconstruction.
+    for (const std::string content : {
+            std::string{"proxies: []\nproxy-groups: []\nrules:\n  - MATCH,DIRECT\n"},
+            std::string{R"({"outbounds":[{"type":"direct","tag":"DIRECT"}],"route":{"final":"DIRECT"}})"}}) {
+        for (bool compress : {true, false}) {
+            const auto sequence = qrs::Encode(content, {.slice_size = 24, .compress = compress});
+            qrs::Decoder decoder;
+            std::string decoded, error;
+            bool complete = false;
+            for (const auto& frame : sequence.frames) {
+                const auto result = decoder.Add(frame, decoded, error);
+                Check(result != qrs::DecodeResult::NotQrs && result != qrs::DecodeResult::Error,
+                      "our own shared configuration frames are recognized as QRS");
+                if (result == qrs::DecodeResult::Complete) { complete = true; break; }
+                Check(decoded.empty(), "partial QRS frames never become a configuration import");
+            }
+            Check(complete && decoded == content, "own QRS sharing reconstructs exact YAML/JSON for inline import");
+        }
+    }
+}
+
 } // namespace
 
 int main() {
     RoundTrip(true);
     RoundTrip(false);
+    OwnSharedProfiles();
 
     qrs::Decoder decoder;
     std::string payload;

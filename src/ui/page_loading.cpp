@@ -160,16 +160,18 @@ huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle 
     };
     huxerui::View content;
     if (list) {
-        content = huxerui::VirtualList(8, [item](std::size_t index) {
+        content = PageVirtualList(8, [item, theme](std::size_t index) {
             return huxerui::Column {item(index)}.With(
-                huxerui::Padding(huxerui::EdgeInsets{.bottom = kSectionCardSpacing}),
+                huxerui::Padding(huxerui::EdgeInsets{
+                    .bottom = index == 7 ? 0.0F : PageScrollInset(theme, true)}),
                 huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-        }).EstimatedItemExtent(76.0F + kSectionCardSpacing).With(huxerui::Grow(1.0F));
+        }, PageScrollInset(theme, true)).EstimatedItemExtent(76.0F + PageScrollInset(theme, true))
+            .With(huxerui::Grow(1.0F));
     } else {
-        content = huxerui::VirtualGrid(6, item)
+        content = PageVirtualGrid(6, item, PageScrollInset(theme), kSectionCardSpacing)
             .Columns(huxerui::GridColumns::Adaptive(220.0F))
             .EstimatedRowExtent(108.0F)
-            .ColumnSpacing(kSectionCardSpacing).RowSpacing(kSectionCardSpacing)
+            .ColumnSpacing(kSectionCardSpacing)
             .With(huxerui::Grow(1.0F));
     }
     return SkeletonLoadingRegion(content, shimmer).Key("page-loading-skeleton");
@@ -179,7 +181,6 @@ huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle 
     const huxerui::ThemeSpec& theme, bool compact, bool groupByType, bool active) {
     const auto shimmer = UseSkeletonShimmer(theme, active);
     const auto item = [theme, compact, shimmer](std::size_t index) -> huxerui::View {
-        if (index >= 8) return CompactFloatingNavigationFooter();
         std::vector<huxerui::View> rows{
             huxerui::Row {
               SkeletonBlock(shimmer, 140.0F, 16.0F).With(huxerui::Grow(1.0F)),
@@ -210,10 +211,11 @@ huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle 
             theme, ProfileCardHeight(compact), huxerui::EdgeInsets::Symmetric(10.0F, 8.0F))
             .Key("profile-loading-item-" + std::to_string(index));
     };
-    const auto grid = huxerui::VirtualGrid(8 + (compact ? 1U : 0U), item)
+    const auto grid = PageVirtualGrid(8, item, PageScrollInset(theme), ProfileCardRowSpacing(compact),
+        compact ? kCompactFloatingNavigationInset : 0.0F)
         .Columns(ProfileGridColumns(compact, groupByType))
         .EstimatedRowExtent(ProfileCardHeight(compact))
-        .RowSpacing(ProfileCardRowSpacing(compact)).ColumnSpacing(kSectionCardSpacing)
+        .ColumnSpacing(kSectionCardSpacing)
         .With(huxerui::Grow(1.0F));
     return SkeletonLoadingRegion(UnifiedProfileList(grid), shimmer).Key("profile-loading-skeleton");
 }
@@ -233,7 +235,7 @@ huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle 
         SkeletonBlock(shimmer, 104.0F, 20.0F).With(huxerui::Grow(1.0F)),
       }.With(huxerui::Spacing(16.0F)),
       huxerui::Row {card(), card()}.With(huxerui::Spacing(kSectionCardSpacing)),
-    }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(kSectionCardSpacing, 12.0F)),
+    }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(kSectionCardSpacing, PageScrollInset(theme))),
         huxerui::Spacing(16.0F), huxerui::Grow(1.0F),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), shimmer).Key("proxy-loading-skeleton");
 }

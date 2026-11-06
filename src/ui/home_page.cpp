@@ -948,6 +948,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
 [[huxerui::composable]] huxerui::View HomePage(
     huxerui::State<std::size_t> navPage, bool active) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const float pageInset = ResolveIslandTheme(theme).nested_radius;
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseTaskScope();
@@ -1101,7 +1102,8 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
                           kDesktopHomeControl && controlCardShown.Get()
                               ? 0.0F : kHomeFloatingButtonInset})});
     huxerui::View pageBody = huxerui::Column(std::move(bodySections))
-        .With(huxerui::Spacing(kHomeGridGap),
+        .With(huxerui::Spacing(0.0F),
+           huxerui::Padding(huxerui::EdgeInsets{.top = pageInset, .bottom = pageInset}),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
     // 注意：首页不要在滚动内容里声明 Focusable(true)——运行时会自动把初始
@@ -1114,8 +1116,9 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     }.With(huxerui::Grow(1.0F));
     huxerui::View page = PageScaffold(
         Localized("首页"), {}, std::move(scrollContent), true, false, true,
-        kHomeGridGap, {}, {}, true,
-        headerControlEnabled ? HomeHeaderTitle(headerControl, toggleHeader, headerStopLabel) : huxerui::View{});
+        pageInset, {}, {}, true,
+        headerControlEnabled ? HomeHeaderTitle(headerControl, toggleHeader, headerStopLabel) : huxerui::View{},
+        true);
 
     // Mobile and desktop Compact share the same title/dock geometry and motion.
     if (headerControlEnabled) return HomeHeaderFloatingAction(page, headerControl, toggleHeader,

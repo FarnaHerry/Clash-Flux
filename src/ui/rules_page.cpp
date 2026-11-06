@@ -341,14 +341,14 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id) {
     huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
     auto back = [navigation, busy, alive] { if (alive.Get() && !busy.Get()) static_cast<void>(navigation.Pop()); };
     const auto close = UsePersonalRuleClose(draft, busy, back);
-    huxerui::View content = huxerui::ScrollView(PersonalRuleForm(draft, targets, library, busy))
+    huxerui::View content = ScrollablePageContent(PersonalRuleForm(draft, targets, library, busy))
         .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
-    huxerui::View saveAction = CompactPrimaryActionButton(
+    huxerui::View saveAction = FormHeaderAction(
         app::images::save, Localized("保存"), [save, back] { save(back); },
         !busy.Get(), busy.Get());
-    if (compact) content = CompactPageActionContent(std::move(content), std::move(saveAction));
+    if (compact) content = FormPageContent(content);
     return SecondaryPageScaffold(huxerui::Text(Localized("编辑订阅规则")),
-        compact ? huxerui::View{} : huxerui::View{
+        compact ? saveAction : huxerui::View{
             huxerui::IconButton(app::images::save, Localized("保存规则"))
                 .With(huxerui::Enabled(!busy.Get())).OnClick([save, back] { save(back); })},
         std::move(content), close);
@@ -385,7 +385,7 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id) {
 [[huxerui::composable]] huxerui::View PersonalRuleRow(
     singbox::ProfileRule rule, bool editable, bool busy, std::string displayPattern,
     std::function<void(singbox::ProfileRule)> edit,
-    std::function<void(singbox::ProfileRule, std::string)> change) {
+    std::function<void(singbox::ProfileRule, std::string)> change, bool last = false) {
     const auto& theme = huxerui::UseTheme();
     auto menu = UseActionMenu();
     const auto source = !rule.enabled || rule.origin == "disabled" ? Localized("已禁用") : rule.origin == "added" ? Localized("个人新增") :
@@ -429,12 +429,13 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id) {
         return DenseCard(SubscriptionRuleContent(label, rule.terminal ? "—" : displayPattern,
             rule.target, status, huxerui::Row{}, rule.enabled))
             .With(huxerui::Padding(huxerui::EdgeInsets{
-                .bottom = ResolveIslandTheme(theme).dense_radius}));
+                .bottom = last ? 0.0F : ResolveIslandTheme(theme).dense_radius}));
     }
     return DenseCard(SubscriptionRuleContent(label, rule.terminal ? "—" : displayPattern, rule.target, status,
         huxerui::IconButton(app::images::more_vertical, Localized("规则操作"))
             .With(menu.Anchor()).OnClick(actions), rule.enabled))
-        .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = ResolveIslandTheme(theme).dense_radius}));
+        .With(huxerui::Padding(huxerui::EdgeInsets{
+            .bottom = last ? 0.0F : ResolveIslandTheme(theme).dense_radius}));
 }
 
 using RuleSetResource = std::shared_ptr<const singbox::PersonalRuleSet>;
@@ -557,14 +558,14 @@ std::function<void()> UseRuleSetClose(huxerui::State<RuleSetDraft> draft,
     huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
     const auto back = [=] { if (alive.Get() && !busy.Get()) static_cast<void>(navigation.Pop()); };
     const auto close = UseRuleSetClose(draft, busy, back);
-    huxerui::View content = huxerui::ScrollView(RuleSetForm(draft, busy))
+    huxerui::View content = ScrollablePageContent(RuleSetForm(draft, busy))
         .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
-    huxerui::View saveAction = CompactPrimaryActionButton(
+    huxerui::View saveAction = FormHeaderAction(
         app::images::save, Localized("保存"), [=] { save(back); },
         !busy.Get(), busy.Get());
-    if (compact) content = CompactPageActionContent(std::move(content), std::move(saveAction));
+    if (compact) content = FormPageContent(content);
     return SecondaryPageScaffold(huxerui::Text(Localized("编辑规则集")),
-        compact ? huxerui::View{} : huxerui::View{
+        compact ? saveAction : huxerui::View{
             huxerui::IconButton(app::images::save, Localized("保存"))
                 .With(huxerui::Enabled(!busy.Get())).OnClick([=] { save(back); })},
         std::move(content), close);
@@ -588,7 +589,7 @@ std::function<void()> UseRuleSetClose(huxerui::State<RuleSetDraft> draft,
     for (const auto& reference : references) rows.push_back(huxerui::Text(reference));
     if (resource->type == "inline") rows.push_back(DocumentTextView(document, true, 320.0F));
     return SecondaryPageScaffold(huxerui::Text(Localized("资源详情")), {},
-        huxerui::ScrollView(huxerui::Column(std::move(rows)).With(
+        ScrollablePageContent(huxerui::Column(std::move(rows)).With(
             huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
             .With(huxerui::Grow(1.0F), huxerui::ScrollBar()),
         [navigation] { static_cast<void>(navigation.Pop()); });
@@ -827,7 +828,7 @@ std::function<void()> UseRuleSetClose(huxerui::State<RuleSetDraft> draft,
           huxerui::Button(Localized("重试")).OnClick([retry] { retry = retry.Get() + 1; }),
         }} : !model->ruleSetsLoaded.Get() ? PageLoadingSkeleton(theme, true) : rows->empty() ?
             EmptyState(Localized("还没有规则集，点击加号添加"), app::images::route) :
-            huxerui::View{huxerui::VirtualList(rows->size(), [=](std::size_t index) -> huxerui::View {
+            huxerui::View{PageVirtualList(rows->size(), [=](std::size_t index) -> huxerui::View {
                 const auto receipts = model->ruleSetRefreshReceipts.Get();
                 const auto receipt = receipts.find((*rows)[index]->id);
                 const auto resource = (*rows)[index];
@@ -842,8 +843,11 @@ std::function<void()> UseRuleSetClose(huxerui::State<RuleSetDraft> draft,
                 const bool refreshing = std::ranges::find(pending, resource->id) != pending.end();
                 return RuleSetResourceRow(resource, busy.Get(), refreshing,
                     receipt == receipts.end() ? "" : receipt->second, references,
-                    openEditor, remove, refresh).Key(resource->id);
-            }).Controller(scroll).EstimatedItemExtent(92.0F).With(huxerui::Grow(1.0F), huxerui::ScrollBar())},
+                    openEditor, remove, refresh).With(huxerui::Padding(huxerui::EdgeInsets{
+                        .bottom = index + 1 == rows->size() ? 0.0F : PageScrollInset(theme, true)}))
+                    .Key(resource->id);
+            }, PageScrollInset(theme, true)).Controller(scroll).EstimatedItemExtent(96.0F)
+                .With(huxerui::Grow(1.0F), huxerui::ScrollBar())},
     }.With(huxerui::Spacing(12.0F), huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
@@ -1084,13 +1088,13 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
     auto list = rulesLoading ? PageLoadingSkeleton(theme, true) :
         sources.empty() ? EmptyState(Localized("暂无支持编辑规则的订阅"), app::images::route) :
         records->empty() ? EmptyState(Localized("没有规则"), app::images::route) :
-        huxerui::View{huxerui::VirtualList(records->size() + (compact ? 1U : 0U), [=](std::size_t index) -> huxerui::View {
-            if (index == records->size()) return CompactFloatingNavigationFooter();
+        huxerui::View{PageVirtualList(records->size(), [=](std::size_t index) -> huxerui::View {
             const auto& row = (*records)[index];
             return PersonalRuleRow(row, !readOnly && source->supported, busy.Get(),
-                PersonalRulePattern(row, source->library), openEditor, change)
+                PersonalRulePattern(row, source->library), openEditor, change, index + 1 == records->size())
                 .Key(row.editId.empty() ? row.anchor + ":" + std::to_string(index) : row.editId);
-        }).Controller(scroll).EstimatedItemExtent(kSubscriptionRuleEstimatedExtent)
+        }, PageScrollInset(theme, true))
+            .Controller(scroll).EstimatedItemExtent(kSubscriptionRuleEstimatedExtent)
             .With(huxerui::Grow(1.0F), huxerui::ScrollBar())};
     std::vector<huxerui::View> content;
     if (!source->error.empty())
@@ -1540,8 +1544,8 @@ DialogAction(Localized("保存"), [=] {
             if (count == 0) {
                 body = EmptyState(Localized("还没有全局规则"), app::images::route);
             } else {
-                auto globalList = huxerui::VirtualList(
-                    count + (compact ? 1U : 0U),
+                auto globalList = PageVirtualList(
+                    count,
                     [globalRules, directName,
                      profiles, mono, theme, compact, count, profilesModel,
                      persistGlobalPolicy, openGlobalRuleEditor, activeConnections,
@@ -1549,9 +1553,6 @@ DialogAction(Localized("保存"), [=] {
                         const std::size_t ruleIndex = index;
                         // 与订阅规则相同：只在测量 factory 中声明 Scope。
                         return huxerui::Scope([=]() -> huxerui::View {
-                          if (compact && index == count) {
-                              return CompactFloatingNavigationFooter().Key("compact-floating-footer");
-                          }
                           const auto& rule = globalRules.Get()[ruleIndex];
                           const auto catalog = sourceObjects.Get();
                           const bool directRule = rule.connectionId == vpn::DirectConnectionId();
@@ -1600,10 +1601,11 @@ DialogAction(Localized("保存"), [=] {
                                   }),
                                 }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))},
                               }.With(huxerui::Spacing(6.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
-                              .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = denseGap}))
+                              .With(huxerui::Padding(huxerui::EdgeInsets{
+                                  .bottom = ruleIndex + 1 == count ? 0.0F : denseGap}))
                               .Key(key);
                         });
-                    });
+                    }, PageScrollInset(theme, true));
                 globalList = std::move(globalList)
                                  .EstimatedItemExtent(112.0F + denseGap)
                                  .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
@@ -1658,7 +1660,7 @@ DialogAction(Localized("保存"), [=] {
     if (hasSectionSwitch) {
         body = huxerui::Column {
             std::move(sectionSwitch), std::move(body),
-        }.With(huxerui::Spacing(denseGap), huxerui::Grow(1.0F),
+        }.With(huxerui::Spacing(0.0F), huxerui::Grow(1.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }
 
@@ -1742,21 +1744,21 @@ DialogAction(Localized("保存"), [=] {
         const auto initial = huxerui::UseState(snapshot());
         const auto close = UseEditorClose([=] { return snapshot() != initial.Get(); },
             [policySaving] { return policySaving.Get(); }, [globalEditorOpen] { globalEditorOpen = false; });
-        huxerui::View saveAction = CompactPrimaryActionButton(
+        huxerui::View saveAction = FormHeaderAction(
             app::images::save, Localized("保存"), saveResponsiveRule,
             !policySaving.Get(), policySaving.Get());
         huxerui::View actions = huxerui::Row {
             huxerui::IconButton(app::images::arrow_back, Localized("返回"))
                 .With(huxerui::Tooltip(Localized("返回规则列表")))
                 .OnClick(close),
-            compact ? huxerui::View{} : huxerui::View{
+            compact ? saveAction : huxerui::View{
                 huxerui::IconButton(app::images::save, Localized("保存规则"))
                     .With(huxerui::Tooltip(Localized("保存规则")))
                     .OnClick(saveResponsiveRule)},
         }.With(huxerui::Spacing(8.0F));
         const bool directTarget = !editorProfiles.empty() && editTarget.Get() < editorProfiles.size() &&
                                   editorProfiles[editTarget.Get()].direct;
-        huxerui::View content = huxerui::ScrollView(
+        huxerui::View content = ScrollablePageContent(
             huxerui::Column {
                 huxerui::Column {
                     huxerui::Text(
@@ -1793,10 +1795,11 @@ DialogAction(Localized("保存"), [=] {
             }.With(huxerui::Spacing(16.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
             .With(huxerui::Grow(1.0F), huxerui::Enabled(!policySaving.Get()));
-        if (compact) content = CompactPageActionContent(std::move(content), std::move(saveAction));
+        const auto title = Localized(editIndex.Get() < 0 ? "添加全局规则" : "编辑全局规则");
+        if (compact) return SecondaryPageScaffold(huxerui::Text(title), saveAction,
+            FormPageContent(content), close, false, false, true);
         return PageScaffold(
-            Localized(editIndex.Get() < 0 ? "添加全局规则"
-                                          : "编辑全局规则"),
+            title,
             std::move(actions), std::move(content)).On<huxerui::ViewEvents::BackRequested>(close);
     });
     return huxerui::IndexedPages(

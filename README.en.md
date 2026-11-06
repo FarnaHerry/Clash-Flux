@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.98 release notes](docs/releases/v0.3.98.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.99 release notes](docs/releases/v0.3.99.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -42,7 +42,8 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
 
 - Desktop uses separators for its outer layout and cards inside pages. Page names and actions
   share the custom title bar, with actions before the window controls. Mobile keeps its existing
-  layout; see [UI conventions](docs/ui-development.md).
+  layout. Compact edit/add forms use a top-right save/add icon, so the keyboard no longer lifts a bottom submit button;
+  see [UI conventions](docs/ui-development.md).
 - Subscription and profile management: entries with context menus, double-click
   activation and refresh actions; URL import, update, activation, deletion and rule
   editing; local storage; Clash YAML, native sing-box JSON, OpenVPN .ovpn, and VMess JSON node subscriptions (plain lists or Base64). Card menus share a single-frame QR or the complete config as a QiFi/QRS multi-frame QR sequence. See [node subscriptions](docs/node-subscriptions.md) for conversion and limits.
@@ -55,7 +56,8 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
   form with the name and URL filled in. Pasting and QR import accept these links too;
   see [formats and platform registration](docs/profile-links.md).
   On Android, the scanner also accepts a photo from the gallery. Photos and camera
-  captures share QR decoding and QRS frame assembly; see [QR scanning](docs/qr-scanning.md).
+  captures share QR decoding and the app’s QRS frame assembly. QR and file imports have separate busy states,
+  and a slow link import allows returning to the previous page; see [QR scanning](docs/qr-scanning.md).
 - Subscription downloads: choose the sing-box core, system environment proxy or a
   direct connection for each subscription, with an explicit option to allow invalid
   certificates. On Windows, HTTPS downloads use the Windows certificate store for

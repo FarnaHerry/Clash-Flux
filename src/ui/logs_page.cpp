@@ -14,6 +14,7 @@
 
 #include "app_resources.h"
 #include "ui.h"
+#include "page_layout.h"
 #include "empty_state.h"
 #include "search_text.h"
 #include "log_actions.h"
@@ -192,12 +193,9 @@ std::string BreakableLogText(std::string_view text) {
         Localized(entries.Empty() ? "暂无日志" : "没有匹配的日志"), app::images::logs);
     if (!visible.empty()) {
         const std::size_t visibleCount = visible.size();
-        body = huxerui::VirtualList(
-            visibleCount + (compact ? 1U : 0U),
+        body = PageVirtualList(
+            visibleCount,
             [entries, visible, theme, compact, visibleCount](std::size_t index) -> huxerui::View {
-                if (compact && index == visibleCount) {
-                    return CompactFloatingNavigationFooter().Key("compact-floating-footer");
-                }
                 const std::size_t sourceIndex = visible[index];
                 const LogEntry& entry = entries[sourceIndex];
                 // 等级/时间戳/消息融为单一段落（text 已含时间戳）：换行在整段
@@ -215,9 +213,10 @@ std::string BreakableLogText(std::string_view text) {
                                      .Style(huxerui::TextStyle{
                                          huxerui::Font::Monospace(font_size::kMonoBody),
                                          theme.colors.on_surface}))
-                    .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = 4.0F}))
+                    .With(huxerui::Padding(huxerui::EdgeInsets{
+                        .bottom = index + 1 == visibleCount ? 0.0F : PageScrollInset(theme, true)}))
                     .Key(std::format("log-{}", sourceIndex));
-            })
+            }, PageScrollInset(theme, true), compact && !onBack ? kCompactFloatingNavigationInset : 0.0F)
             // 密集卡片行高估算：减半内边距（8×2）+ 单行文本 + 底部外边距。
             .EstimatedItemExtent(compact ? 44.0F : 42.0F)
             .Controller(scroll)

@@ -19,6 +19,7 @@ import clashflux.store.core;
 #include "profiles_model.h"
 #include "page_layout.h"
 #include "settings_group_layout.h"
+#include "action_menu.h"
 
 namespace clashflux::ui {
 namespace {
@@ -557,11 +558,8 @@ huxerui::View NetworkAccess(huxerui::State<NetworkForm> form) {
 [[huxerui::composable]] huxerui::View NetworkTabContent(huxerui::View content,
     std::shared_ptr<PageScrollOffset> offset, bool fullPage) {
     const auto controller = huxerui::UseScrollController(offset->value);
-    return huxerui::ScrollView(huxerui::Column {content}.With(
-        huxerui::Padding(huxerui::EdgeInsets{
-            .top = 16.0F, .right = fullPage ? 14.0F : 2.0F,
-            .bottom = 20.0F, .left = fullPage ? 14.0F : 2.0F}),
-        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+    const float inset = PageScrollInset(huxerui::UseTheme());
+    return huxerui::ScrollView(PageScrollContent(content, inset, fullPage ? inset : 2.0F))
         .Controller(controller)
         .With(RememberPageScroll{offset}, huxerui::Grow(1.0F), huxerui::ScrollBar());
 }
@@ -669,9 +667,9 @@ struct NetworkSaveResult { std::string error; Network value; CoreView core; };
     if (!settings->view.Get().networkError.empty()) notices.push_back(huxerui::Text(settings->view.Get().networkError));
     const auto content = huxerui::Column {
       tabBar,
-      huxerui::Column(notices).With(
+      notices.empty() ? huxerui::View{} : huxerui::View{huxerui::Column(notices).With(
           huxerui::Spacing(4.0F), huxerui::Padding(huxerui::EdgeInsets::Symmetric(fullPage ? 16.0F : 2.0F, 4.0F)),
-          huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).Key("network-notices"),
+          huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).Key("network-notices")},
       huxerui::Column {
         huxerui::ProvideEnvironment(SectionTabContentInsets{2.0F},
             SectionTabPages(pages, selected.Get(), select, motion)),
@@ -684,8 +682,20 @@ struct NetworkSaveResult { std::string error; Network value; CoreView core; };
       canApply ? DialogAction(Localized("保存并应用"), [save] { save(true); }, true, valid)
           .Key("network-save-apply") : huxerui::View{},
     });
-    if (fullPage) return SecondaryPageScaffold(huxerui::Text(title, huxerui::TextRole::Title), {},
-        CompactPageActionContent(content, actions), close, false, true, true);
+    const auto saveMenu = UseActionMenu();
+    if (fullPage) {
+        const auto commit = [saveMenu, save, canApply] {
+            if (!canApply) { save(false); return; }
+            saveMenu.Show({
+                ActionMenuItem(app::images::check, Localized("保存并应用"), [save] { save(true); }),
+                ActionMenuItem(app::images::save, Localized("保存"), [save] { save(false); }),
+            });
+        };
+        return SecondaryPageScaffold(huxerui::Text(title, huxerui::TextRole::Title),
+            FormHeaderAction(app::images::save, Localized("保存"), commit, valid, busy)
+                .With(saveMenu.Anchor()).Key("network-save"),
+            FormPageContent(content), close, false, true, true);
+    }
     return DialogScaffold(DialogHeader(title), content, actions, DialogSize::Large, true)
         .On<huxerui::ViewEvents::BackRequested>(close);
 }

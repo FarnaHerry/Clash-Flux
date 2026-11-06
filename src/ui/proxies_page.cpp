@@ -723,7 +723,6 @@ std::function<void()> NodeSelectAction(
     // 分配完整的 ProxyItem 与 span 数组；只有视口附近的节点会被构造为卡片。
     // 每个根组仅声明轻量虚拟网格；Pager 提供有界视口并只测量参与显示的页。
     // 不给各页叠加单独入场动画，避免与 Pager 的完整出入场轨道冲突。
-    constexpr std::size_t kCompactFooterItems = 2;
     // 桌面悬浮测速按钮存在时，滚动尾部要留出它的净空，否则最后一行节点
     // 会被按钮遮住。
     const bool showSpeedFab = !direct && current != nullptr;
@@ -749,8 +748,6 @@ std::function<void()> NodeSelectAction(
             }
         }
         const std::size_t nodeCount = visibleNodes.size();
-        const std::size_t footerCount =
-            compact ? kCompactFooterItems : (showSpeedFab ? 1U : 0U);
         if (!query.empty() && nodeCount == 0) {
             groupPages.push_back(huxerui::Column{
                 EmptyState(Localized("没有匹配的节点"), app::images::search),
@@ -759,26 +756,14 @@ std::function<void()> NodeSelectAction(
                  .Key("group-page-" + rootGroup.name));
             continue;
         }
-        huxerui::View grid = huxerui::VirtualGrid(
-                                 nodeCount + footerCount,
+        huxerui::View grid = PageVirtualGrid(
+                                 nodeCount,
                                  [groups, visibleNodes = std::move(visibleNodes),
                                   detailLimit,
                                   tasks, toast, nodeNameLimit, contentGroupName,
                                   nodeCount, compact, proxiesModel,
                                   selectionIntent](std::size_t index)
                                      -> huxerui::View {
-                                     if (index >= nodeCount) {
-                                         huxerui::View footer =
-                                             compact
-                                                 ? CompactFloatingNavigationFooter()
-                                                 : huxerui::View{huxerui::Row{}.With(
-                                                       huxerui::Frame{
-                                                           .height =
-                                                               kSpeedFabFooterHeight})};
-                                         return std::move(footer).Key(
-                                             "floating-footer-" +
-                                             std::to_string(index - nodeCount));
-                                     }
                                      const ProxyGroup* group =
                                          findGroup(groups, contentGroupName);
                                      if (group == nullptr || index >= nodeCount ||
@@ -812,7 +797,8 @@ std::function<void()> NodeSelectAction(
                                                     *group, node),
                                                 nodeNameLimit, detailLimit)
                                          .Key(group->name + "::" + nodeName);
-                                 })
+                                 }, PageScrollInset(theme), kSectionCardSpacing,
+                                 compact ? kCompactFloatingNavigationInset : (showSpeedFab ? kSpeedFabFooterHeight : 0.0F))
                                  .Columns(compact
                                               ? huxerui::GridColumns::Fixed(2)
                                               : huxerui::GridColumns::Adaptive(
@@ -822,7 +808,6 @@ std::function<void()> NodeSelectAction(
                                  // 自适应高度（字体缩放、系统字号变化都会改高度），
                                  // 写死精确行高会在这些情况下裁切/错位。
                                  .EstimatedRowExtent(52.0F)
-                                 .RowSpacing(kSectionCardSpacing)
                                  .ColumnSpacing(kSectionCardSpacing)
                                  .With(huxerui::Grow(1.0F),
                                        huxerui::ScrollBar())
@@ -881,7 +866,7 @@ std::function<void()> NodeSelectAction(
         columnChildren.push_back(std::move(content).With(huxerui::Grow(1.0F)));
         content =
             huxerui::Column(std::move(columnChildren))
-                .With(huxerui::Spacing(theme.spacing.small),
+                .With(huxerui::Spacing(0.0F),
                       huxerui::Grow(1.0F),
                       huxerui::CrossAlign(
                           huxerui::CrossAxisAlignment::Stretch));

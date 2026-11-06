@@ -1,5 +1,6 @@
 // 使用生产标签栏与内容 Pager，在无窗口 Runtime 中验证跟手翻页、嵌套边界和实际几何。
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -18,6 +19,7 @@
 #include <huxerui/testing/ui_test.h>
 
 #include "ui.h"
+#include "app_resources.h"
 #include "box_cat.h"
 #include "runtime_diagnostics.h"
 #include "text_document.h"
@@ -371,7 +373,6 @@ huxerui::View WebsiteFixtureRoot() {
     const auto visible = huxerui::UseState(true);
     const auto rows = websiteFixture->sites.Get();
     const auto offset = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
-    const auto controller = huxerui::UseScrollController(offset->value);
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     std::vector<huxerui::View> cards;
     const auto dialog = huxerui::UseDialog();
@@ -392,7 +393,7 @@ huxerui::View WebsiteFixtureRoot() {
             .Key("website-card-" + std::to_string(row.id)));
     return huxerui::Column {
       huxerui::Button("Toggle website panel").OnClick([visible] { visible = !visible.Get(); }),
-      visible.Get() ? WebsiteTestGrid(cards, compact, controller, offset).Key("website-panel")
+      visible.Get() ? WebsiteTestGrid(cards, compact, offset).Key("website-panel")
           : huxerui::View{huxerui::Text("Website panel hidden")},
     }.With(huxerui::Padding(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -414,6 +415,20 @@ void testWebsiteTests() {
         check(width == 320.0F ? second.y > first.y : std::abs(second.y - first.y) < 1.0F && second.x > first.x,
               "production website grid uses one compact column and multiple expanded columns");
         check(shared->sites.Get().size() == 8 && !shared->AnyActive(), "website presets do not make automatic requests");
+        ui.SetWindowMetrics({.viewport = {width, 300}});
+        ui.PumpAndSettle();
+        const float initialCardY = ui.Find(UiSelector::Key("website-card-0")).One().bounds.y;
+        ui.Find(UiSelector::Key("website-panel")).ScrollBy({0.0F, 80.0F});
+        ui.PumpAndSettle();
+        const float scrolledCardY = ui.Find(UiSelector::Key("website-card-0")).One().bounds.y;
+        check(scrolledCardY < initialCardY - 40.0F, "website grid scrolls through its leading whitespace");
+        ui.Find(UiSelector::Text("Toggle website panel")).Tap(); ui.PumpAndSettle();
+        ui.Find(UiSelector::Text("Toggle website panel")).Tap(); ui.PumpAndSettle();
+        check(std::abs(ui.Find(UiSelector::Key("website-card-0")).One().bounds.y - scrolledCardY) < 1.0F,
+              "website grid restores the actual scroll offset when its container remounts");
+        ui.Find(UiSelector::Key("website-panel")).ScrollBy({0.0F, -1000.0F});
+        ui.SetWindowMetrics({.viewport = {width, 640}});
+        ui.PumpAndSettle();
         check(!shared->Add("file:///etc/hosts") && !shared->Add("https://user:pass@example.test/") &&
               !shared->Add("https://example.test/#secret") && !shared->Add("not a URL"),
               "custom websites accept only usable HTTP(S) targets without credentials or fragments");
@@ -2447,55 +2462,193 @@ void testCompactPageBottom() {
     }
 }
 
-huxerui::View PinnedPageActionRoot() {
+huxerui::View HeaderFormActionRoot() {
     return huxerui::FlatTheme{huxerui::Scope([] {
-        auto longForm = huxerui::UseState(false);
-        return clashflux::ui::CompactPageActionContent(
-            huxerui::ScrollView(huxerui::Column {
-              huxerui::Button("LONG-FORM").OnClick([longForm] { longForm = true; }),
-              huxerui::Row {}.With(huxerui::Frame{.height = longForm.Get() ? 1400.0F : 40.0F}),
-              huxerui::Text("FORM-END").Key("pinned-form-end"),
-            }).Key("pinned-form-scroll"),
-            huxerui::Button("SAVE").With(huxerui::Frame{.height = clashflux::ui::kCompactPrimaryActionHeight})
-                .Key("pinned-save"));
+        const auto longForm = huxerui::UseState(false);
+        const auto busy = huxerui::UseState(false);
+        const auto saves = huxerui::UseState(0);
+        const auto input = huxerui::UseState(huxerui::TextEditingValue{});
+        return huxerui::Column {
+          clashflux::ui::CenteredPageHeader(huxerui::UseTheme(), huxerui::Text("EDIT"),
+              huxerui::IconButton(app::images::arrow_back, "BACK"),
+              clashflux::ui::FormHeaderAction(app::images::save, "SAVE", [saves] { saves += 1; }, true, busy)
+                  .Key("header-save")),
+          clashflux::ui::FormPageContent(clashflux::ui::ScrollablePageContent(huxerui::Column {
+            huxerui::TextField(input).OnChanged([input](const auto& value) { input = value; }).Key("form-input"),
+            huxerui::Button("LONG-FORM").OnClick([longForm] { longForm = true; }),
+            huxerui::Button("BUSY").OnClick([busy] { busy = true; }),
+            huxerui::Text("SAVES-" + std::to_string(static_cast<int>(saves))),
+            huxerui::Row {}.With(huxerui::Frame{.height = longForm ? 1400.0F : 40.0F}),
+            huxerui::Text("FORM-END").Key("header-form-end"),
+          })).Key("header-form-scroll"),
+        }.With(huxerui::Grow(1.0F), huxerui::SafeAreaPadding{},
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     })};
 }
-const huxerui::Application kPinnedPageActionApplication{PinnedPageActionRoot,
+const huxerui::Application kHeaderFormActionApplication{HeaderFormActionRoot,
     {.window = {.content_mode = huxerui::WindowContentMode::EdgeToEdge}, .show_debug_overlay = false}};
 
-void testPinnedPageAction() {
-    for (const auto size : {huxerui::Size{320.0F, 480.0F}, huxerui::Size{400.0F, 700.0F},
-                            huxerui::Size{420.0F, 300.0F}}) {
+void testHeaderFormAction() {
+    for (const auto size : {huxerui::Size{320.0F, 480.0F}, huxerui::Size{390.0F, 820.0F},
+                            huxerui::Size{420.0F, 500.0F}}) {
         for (float inset : {0.0F, 24.0F, 48.0F}) {
-            huxerui::testing::UiTest ui(kPinnedPageActionApplication,
-                {.viewport = size, .safe_area = {.bottom = inset}});
+            huxerui::testing::UiTest ui(kHeaderFormActionApplication,
+                {.viewport = size, .safe_area = {.top = 24.0F, .bottom = inset}, .resource_provider = AppResources()});
             ui.PumpAndSettle();
-            const auto save = ui.Find(UiSelector::Key("pinned-save"));
-            const auto scroll = ui.Find(UiSelector::Key("pinned-form-scroll"));
+            const auto save = ui.Find(UiSelector::Key("header-save"));
+            const auto scroll = ui.Find(UiSelector::Key("header-form-scroll"));
             const auto bounds = save.One().bounds;
-            check(std::abs(bounds.height - clashflux::ui::kCompactPrimaryActionHeight) < 0.5F &&
-                  std::abs(bounds.y + bounds.height - (size.height - inset - 8.0F)) < 0.5F,
-                  "短表单的保存按钮固定在底部安全区上方，不额外预留胶囊导航空白");
-            check(std::abs(scroll.One().bounds.height -
-                           (size.height - inset - clashflux::ui::kCompactPrimaryActionHeight - 16.0F)) < 0.5F,
-                  "表单独占按钮上方的剩余空间，不与底部占位平分高度");
-            ui.Find(UiSelector::Text("LONG-FORM")).Tap();
-            ui.PumpAndSettle();
-            check(save.One().bounds == bounds, "长表单不会将保存按钮挤离底部");
-            scroll.ScrollBy({0.0F, 2000.0F});
-            ui.PumpAndSettle();
-            const auto end = ui.Find(UiSelector::Key("pinned-form-end")).One();
-            check(save.One().bounds == bounds && end.in_viewport &&
-                  end.bounds.y + end.bounds.height <= bounds.y,
-                  "滚动至表单末项时保存按钮保持固定，末项仍可完整显示");
-            ui.SetWindowMetrics({.viewport = {size.width, size.height + 100.0F},
-                                 .safe_area = {.bottom = inset}});
-            ui.PumpAndSettle();
-            const auto resized = save.One().bounds;
-            check(std::abs(resized.y + resized.height - (size.height + 100.0F - inset - 8.0F)) < 0.5F,
-                  "窗口高度变化后保存按钮仍锚定可用区域底部");
+            check(std::abs(bounds.width - clashflux::ui::kFormHeaderActionSize) < 0.5F &&
+                  std::abs(bounds.height - clashflux::ui::kFormHeaderActionSize) < 0.5F &&
+                  bounds.x + bounds.width > size.width - 8.0F && bounds.y >= 24.0F && bounds.y < 40.0F,
+                  "compact save is a 40pt icon at the top right below the status bar");
+            save.Tap(); ui.PumpAndSettle();
+            check(ui.Find(UiSelector::Text("SAVES-1")).Exists(), "header save remains an operable labeled action");
+            ui.Find(UiSelector::Text("LONG-FORM")).Tap(); ui.PumpAndSettle();
+            scroll.ScrollBy({0.0F, 2000.0F}); ui.PumpAndSettle();
+            const auto end = ui.Find(UiSelector::Key("header-form-end")).One();
+            check(save.One().bounds == bounds && end.in_viewport,
+                  "long form can reach its final field without a bottom action consuming space");
+            // Android's IME changes the host viewport; keep the same header position.
+            for (float height : {size.height - 200.0F, size.height}) {
+                ui.SetWindowMetrics({.viewport = {size.width, height}, .safe_area = {.top = 24.0F, .bottom = inset}});
+                ui.PumpAndSettle();
+                check(save.One().bounds == bounds && scroll.One().bounds.y >= bounds.y + bounds.height,
+                      "keyboard viewport shrink/restore leaves the save icon in its header");
+            }
+            scroll.ScrollBy({0.0F, -2000.0F}); ui.PumpAndSettle();
+            ui.Find(UiSelector::Text("BUSY")).Tap(); ui.Pump();
+            check(!save.One().enabled && save.One().bounds == bounds,
+                  "busy header action keeps its hit area and rejects duplicate submissions");
         }
     }
+}
+
+struct ScrollEdgesFixture {
+    huxerui::State<bool> grid{false};
+    huxerui::State<bool> dense{false};
+    huxerui::State<bool> visible{true};
+    huxerui::State<std::size_t> count{31};
+    huxerui::State<int> selected{-1};
+    int built = 0;
+};
+std::shared_ptr<ScrollEdgesFixture> scrollEdgesFixture;
+huxerui::View ScrollEdgesRoot() {
+    using namespace clashflux::ui;
+    scrollEdgesFixture = huxerui::UseState(std::make_shared<ScrollEdgesFixture>()).Get();
+    const auto model = scrollEdgesFixture;
+    const auto offset = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
+    const auto header = PageHeaderWithInset(CenteredPageHeader(huxerui::UseTheme(), huxerui::Text("Edges"), {},
+        FormHeaderAction(app::images::check, "Save", [] {})), 8.0F).Key("edge-header");
+    const auto body = huxerui::Scope([model, offset] {
+        const auto controller = huxerui::UseScrollController(offset->value);
+        const float inset = PageScrollInset(huxerui::UseTheme(), model->dense.Get());
+        const auto factory = [model](std::size_t index) {
+            ++model->built;
+            return huxerui::Button("DATA-" + std::to_string(index))
+                .With(huxerui::Frame{.height = 40.0F})
+                .OnClick([model, index] { model->selected = static_cast<int>(index); })
+                .Key("edge-item-" + std::to_string(index));
+        };
+        huxerui::View content = model->grid.Get()
+            ? huxerui::View{PageVirtualGrid(model->count.Get(), factory, inset, 8.0F, 56.0F)
+                .Columns(huxerui::GridColumns::Fixed(2)).ColumnSpacing(8.0F).EstimatedRowExtent(40.0F)
+                .Controller(controller)}
+            : huxerui::View{PageVirtualList(model->count.Get(), factory, inset, 56.0F)
+                .EstimatedItemExtent(40.0F).Controller(controller)};
+        return huxerui::View{content}.With(RememberPageScroll{offset}, huxerui::Grow(1.0F));
+    }).With(huxerui::Grow(1.0F)).Key("edge-viewport");
+    return huxerui::Stack {
+      huxerui::Column {
+        header,
+        model->visible.Get() ? body : huxerui::View{huxerui::Text("Hidden")},
+      }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+      huxerui::Button("Floating").With(huxerui::Frame{.width = 72.0F, .height = 56.0F},
+          huxerui::Align(huxerui::HorizontalAlignment::End, huxerui::VerticalAlignment::End)),
+    }.With(huxerui::Grow(1.0F));
+}
+const huxerui::Application kScrollEdgesApplication{ScrollEdgesRoot, {.show_debug_overlay = false}};
+
+void testScrollEdges() {
+    for (float width : {320.0F, 960.0F}) {
+        for (int mode : {0, 1, 2}) {
+            huxerui::testing::UiTest ui(kScrollEdgesApplication,
+                {.viewport = {width, 400.0F}, .resource_provider = AppResources()});
+            const auto model = scrollEdgesFixture;
+            model->grid = mode == 2;
+            model->dense = mode == 1;
+            ui.PumpAndSettle();
+            const float inset = mode == 1 ? 4.0F : 14.0F;
+            const auto header = ui.Find(UiSelector::Key("edge-header")).One().bounds;
+            const auto viewport = ui.Find(UiSelector::Key("edge-viewport"));
+            const auto bounds = viewport.One().bounds;
+            const auto first = ui.Find(UiSelector::Key("edge-item-0"));
+            check(std::abs(bounds.y - header.y - header.height) < 0.5F &&
+                  std::abs(first.One().bounds.y - bounds.y - inset) < 0.5F,
+                  "scroll viewport meets the fixed header and edge whitespace belongs to its content");
+            first.Tap(); ui.PumpAndSettle();
+            check(model->selected.Get() == 0, "leading blank never shifts the first business action index");
+            if (mode == 2) check(std::abs(ui.Find(UiSelector::Key("edge-item-1")).One().bounds.y -
+                first.One().bounds.y) < 0.5F, "grid leading blank spans a whole row");
+            viewport.ScrollBy({0.0F, 80.0F}); ui.PumpAndSettle();
+            const float scrolled = first.One().bounds.y;
+            check(scrolled < bounds.y && ui.Find(UiSelector::Key("edge-header")).One().bounds == header,
+                  "content scrolls through its initial whitespace while the full header stays fixed");
+            model->visible = false; ui.PumpAndSettle();
+            model->visible = true; ui.PumpAndSettle();
+            check(std::abs(first.One().bounds.y - scrolled) < 1.0F,
+                  "virtual scroll edges restore their real offset after remounting");
+            for (int step = 0; step < 3; ++step) {
+                viewport.ScrollBy({0.0F, 100000.0F}); ui.PumpAndSettle();
+            }
+            const auto last = ui.Find(UiSelector::Key("edge-item-30"));
+            const auto end = last.One().bounds;
+            check(std::abs(bounds.y + bounds.height - end.y - end.height - inset - 56.0F) < 1.0F,
+                  "last row gets exactly one edge gap plus floating-control avoidance");
+            last.Tap(); ui.PumpAndSettle();
+            check(model->selected.Get() == 30, "trailing blank leaves the last business action operable");
+            ui.SetWindowMetrics({.viewport = {width, 240.0F}}); ui.PumpAndSettle();
+            check(ui.Find(UiSelector::Key("edge-header")).One().bounds == header,
+                  "short viewport preserves header geometry above scroll content");
+            viewport.ScrollBy({0.0F, -100000.0F}); ui.PumpAndSettle();
+            model->built = 0;
+            model->count = 100000; ui.PumpAndSettle();
+            check(model->built < 1000, "edge whitespace preserves demand-driven rendering of a large source");
+        }
+    }
+    scrollEdgesFixture.reset();
+}
+
+std::shared_ptr<clashflux::ui::WebsiteTestModel> websiteFormFixture;
+huxerui::View WebsiteFormRoot() {
+    using namespace clashflux::ui;
+    websiteFormFixture = huxerui::UseState(std::make_shared<WebsiteTestModel>()).Get();
+    return huxerui::Column {
+      CenteredPageHeader(huxerui::UseTheme(), huxerui::Text("Website"), {},
+          FormHeaderAction(app::images::check, "Save", [] {}).Key("website-header-save")),
+      WebsiteTestPageForm(websiteFormFixture),
+    }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+const huxerui::Application kWebsiteFormApplication{WebsiteFormRoot, {.show_debug_overlay = false}};
+void testWebsiteFormScroll() {
+    huxerui::testing::UiTest ui(kWebsiteFormApplication,
+        {.viewport = {320.0F, 420.0F}, .resource_provider = AppResources()});
+    ui.PumpAndSettle();
+    const auto save = ui.Find(UiSelector::Key("website-header-save")).One().bounds;
+    const auto name = ui.Find(UiSelector::Key("website-editor-name"));
+    // Focused fields keep scheduling caret blinks; inspect settled layout at a
+    // bounded frame time rather than waiting for the window to become idle.
+    name.Tap(); name.ReplaceText("Short viewport"); ui.Pump(kSettle);
+    ui.SetWindowMetrics({.viewport = {320.0F, 140.0F}}); ui.Pump(kSettle);
+    ui.Find(UiSelector::Key("website-form-scroll")).ScrollBy({0.0F, 1000.0F}); ui.Pump(kSettle);
+    check(name.One().in_viewport && name.One().bounds.y + name.One().bounds.height <= 140.5F &&
+          ui.Find(UiSelector::Key("website-header-save")).One().bounds == save &&
+          websiteFormFixture->customName.Get().text == "Short viewport",
+          "production website form reaches its final input after keyboard-sized viewport shrink without moving save");
+    ui.SetWindowMetrics({.viewport = {320.0F, 420.0F}}); ui.Pump(kSettle);
+    check(ui.Find(UiSelector::Key("website-editor-url")).One().in_viewport,
+          "short website form restores its normal viewport without a fixed blank band");
+    websiteFormFixture.reset();
 }
 
 huxerui::View GroupPickerSelectionContent() {
@@ -2824,6 +2977,117 @@ void testProfileImportCompletion() {
     ui.Find(UiSelector::Text("Import fixture")).Tap(); ui.Pump(std::chrono::milliseconds(400)); ui.PumpAndSettle();
     check(ui.Find(UiSelector::Text("IMPORT-SUCCESS")).Exists() && ui.Find(UiSelector::Text("IMPORT-ATTEMPTS:3")).Exists(),
           "failed import remains retryable without retaining busy or creating duplicate operations");
+}
+
+struct ImportWorkerGate {
+    std::atomic<bool> started{false}, released{false};
+};
+struct ImportOriginFixture {
+    huxerui::State<int> published{0}, navigations{0};
+    huxerui::State<bool> qrBusy{false}, fileBusy{false};
+    std::shared_ptr<ImportWorkerGate> gate;
+    std::shared_ptr<clashflux::ui::ProfileImportOrigin> origin;
+    int attempts = 0;
+};
+std::shared_ptr<ImportOriginFixture> importOriginFixture;
+
+[[huxerui::composable]] huxerui::View ImportActionOrigin(std::function<void()> back) {
+    using namespace clashflux::ui;
+    const auto origin = UseProfileImportOrigin();
+    const auto qr = huxerui::UseState(false), file = huxerui::UseState(false);
+    const auto fixture = importOriginFixture;
+    fixture->origin = origin; fixture->qrBusy = qr; fixture->fileBusy = file;
+    const auto complete = [fixture, origin, back](std::uint64_t ticket, auto result) {
+        fixture->published += 1;
+        if (result.first && origin->CanNavigate(ticket)) {
+            fixture->navigations += 1;
+            back();
+        }
+    };
+    return huxerui::Column {
+      huxerui::Button("QR-IMPORT").OnClick([fixture, origin, qr, complete] {
+          if (qr) return;
+          const auto ticket = origin->Advance();
+          const auto gate = fixture->gate = std::make_shared<ImportWorkerGate>();
+          ++fixture->attempts;
+          LaunchProfileImport(qr, [gate]() -> huxerui::Task<std::pair<std::int64_t, std::string>> {
+              co_return co_await RunOnTaskThread([gate] {
+                  gate->started = true;
+                  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                  while (!gate->released && std::chrono::steady_clock::now() < deadline)
+                      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                  return std::pair<std::int64_t, std::string>{42, ""};
+              });
+          }, [complete, ticket](auto result) { complete(ticket, std::move(result)); });
+      }),
+      huxerui::Button("FILE-IMPORT").OnClick([origin, file, complete] {
+          if (file) return;
+          const auto ticket = origin->Advance();
+          LaunchProfileImport(file, []() -> huxerui::Task<std::pair<std::int64_t, std::string>> {
+              co_await huxerui::Delay(std::chrono::seconds(1));
+              co_return std::pair<std::int64_t, std::string>{43, ""};
+          }, [complete, ticket](auto result) { complete(ticket, std::move(result)); });
+      }),
+      huxerui::Button("IMPORT-BACK").OnClick([origin, back] { origin->Advance(); back(); }),
+      huxerui::Text(qr ? "QR-WAIT" : "QR-READY"),
+      huxerui::Text(file ? "FILE-WAIT" : "FILE-READY"),
+    };
+}
+huxerui::View ImportOriginRoot() {
+    return huxerui::FlatTheme{huxerui::Scope([] {
+        const auto shown = huxerui::UseState(false);
+        const auto generation = huxerui::UseState(0);
+        return huxerui::Column {
+          huxerui::Button("OPEN-IMPORT").OnClick([shown, generation] { generation += 1; shown = true; }),
+          shown ? ImportActionOrigin([shown] { shown = false; }).Key(static_cast<int>(generation))
+                : huxerui::View{huxerui::Text("IMPORT-HOME")},
+        };
+    })};
+}
+const huxerui::Application kImportOriginApplication{ImportOriginRoot,
+    {.application_hooks = {[](huxerui::ApplicationContext&) { importOriginFixture = std::make_shared<ImportOriginFixture>(); }}}};
+void testProfileImportNavigation() {
+    huxerui::testing::UiTest ui(kImportOriginApplication, {.viewport = {390, 700}});
+    ui.PumpAndSettle();
+    const auto fixture = importOriginFixture;
+    const auto wait = [&](auto condition) {
+        for (int i = 0; i < 500 && !condition(); ++i) {
+            ui.Pump(); std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        check(condition(), "import worker completes or starts within the bounded wall-clock wait");
+    };
+    ui.Find(UiSelector::Text("OPEN-IMPORT")).Tap(); ui.PumpAndSettle();
+    ui.Find(UiSelector::Text("QR-IMPORT")).Tap(); ui.Pump();
+    const auto gate = fixture->gate;
+    wait([&] { return gate->started.load(); });
+    ui.Find(UiSelector::Text("QR-IMPORT")).Tap(); ui.Pump();
+    check(fixture->attempts == 1 && fixture->qrBusy && !fixture->fileBusy &&
+          ui.Find(UiSelector::Text("FILE-READY")).Exists(),
+          "slow QR link only marks QR busy, rejects its duplicate, and leaves file available");
+    ui.Find(UiSelector::Text("FILE-IMPORT")).Tap(); ui.Pump();
+    check(fixture->fileBusy && fixture->qrBusy, "file import can start independently while the QR worker waits");
+    gate->released = true;
+    wait([&] { return fixture->published == 1; });
+    check(!fixture->qrBusy && fixture->fileBusy && fixture->navigations == 0 &&
+          ui.Find(UiSelector::Text("IMPORT-BACK")).Exists(),
+          "older QR completion publishes without closing a newer file action");
+    ui.Pump(std::chrono::milliseconds(1200)); ui.PumpAndSettle();
+    check(fixture->published == 2 && fixture->navigations == 1 && ui.Find(UiSelector::Text("IMPORT-HOME")).Exists(),
+          "latest file completion releases busy and can return from its own origin");
+    ui.Find(UiSelector::Text("OPEN-IMPORT")).Tap(); ui.PumpAndSettle();
+    ui.Find(UiSelector::Text("QR-IMPORT")).Tap(); ui.Pump();
+    const auto late = fixture->gate;
+    const auto retired = fixture->origin;
+    wait([&] { return late->started.load(); });
+    ui.Find(UiSelector::Text("IMPORT-BACK")).Tap(); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("IMPORT-HOME")).Exists() && !late->released,
+          "back leaves the form immediately while blocking download work remains pending");
+    ui.Find(UiSelector::Text("OPEN-IMPORT")).Tap(); ui.PumpAndSettle();
+    check(retired != fixture->origin, "reopened import owns a new navigation identity");
+    late->released = true;
+    wait([&] { return fixture->published == 3; });
+    check(fixture->navigations == 1 && ui.Find(UiSelector::Text("IMPORT-BACK")).Exists(),
+          "late completion after real origin unmount cannot pop a reopened form");
 }
 
 // Uses the production model and dispatch with controlled measurement completions.
@@ -6110,7 +6374,9 @@ int main() {
     testMobileSearchGeometry();
     testResponsiveAnchorMount();
     testCompactPageBottom();
-    testPinnedPageAction();
+    testHeaderFormAction();
+    testScrollEdges();
+    testWebsiteFormScroll();
     testProfileFormNavigation();
     testProfileListSections();
     testUnifiedProfileList();
@@ -6125,6 +6391,7 @@ int main() {
     testVpnHydrationStartup();
     testProfileFileFilter();
     testProfileImportCompletion();
+    testProfileImportNavigation();
     try { testProxyProbesSurvivePageRetirement(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: proxy probe lifetime: %s\n", error.what());

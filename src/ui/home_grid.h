@@ -75,7 +75,7 @@ struct HomeGridCompact {
 };
 
 inline constexpr int kHomeGridMaxSpan = 4;   // 卡片宽高上限（格）
-inline constexpr float kHomeGridGap = 12.0F; // 卡片间距，同时用于首页顶部与左右留白
+inline constexpr float kHomeGridGap = 12.0F; // 卡片间距；页面边缘留白取卡片圆角
 // 一行单位高度：h=1 的卡片刚好容纳标题 + 一行控件。
 inline constexpr float kHomeGridUnitHeight = 88.0F;
 inline constexpr float kHomeGridFallbackWidth = 360.0F;

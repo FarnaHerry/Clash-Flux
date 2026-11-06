@@ -1,6 +1,7 @@
 #pragma once
 #include "website_test_model.h"
 #include "ui.h"
+#include "page_layout.h"
 
 namespace clashflux::ui {
 
@@ -19,6 +20,10 @@ inline huxerui::View WebsiteTestForm(std::shared_ptr<WebsiteTestModel> model) {
               .Key("website-editor-name"),
         }.With(huxerui::Spacing(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     });
+}
+
+inline huxerui::View WebsiteTestPageForm(std::shared_ptr<WebsiteTestModel> model) {
+    return FormPageContent(ScrollablePageContent(WebsiteTestForm(model)).Key("website-form-scroll"));
 }
 
 inline std::function<void()> UseWebsiteEditorClose(std::shared_ptr<WebsiteTestModel> model,

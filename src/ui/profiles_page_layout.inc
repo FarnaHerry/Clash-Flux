@@ -65,8 +65,8 @@
             const std::int64_t closestId = geometry->Closest(ids, position);
             if (closestId != 0 && drop) drop(fromId, closestId);
         };
-        huxerui::View grid = huxerui::VirtualGrid(
-                                 typeCount + (compact ? 1U : 0U),
+        huxerui::View grid = PageVirtualGrid(
+                                 typeCount,
                                  [profiles, typeIndices = std::move(typeIndices), typeIds = std::move(typeIds),
                                   typeCount, compact, tasks, toast, http, reload,
                                   pptpStates,
@@ -78,10 +78,6 @@
                                   dialog, pageReorder, dropAtPointer,
                                   previewActiveId, previewTargetId,
                                   geometry = gridGeometry.Get()](std::size_t index) -> huxerui::View {
-                                     if (index >= typeCount) {
-                                         return CompactFloatingNavigationFooter()
-                                             .Key("compact-floating-footer");
-                                     }
                                      const db::Profile& profile =
                                          profiles[typeIndices[index]];
                                      store::PptpState pptpState{
@@ -144,10 +140,10 @@
                                              huxerui::CornerRadius(kSelectableTileRadius));
                                      }
                                      return std::move(slot).Key("profile-slot-" + std::to_string(index));
-                                 })
+                                 }, PageScrollInset(theme), ProfileCardRowSpacing(compact),
+                                 compact ? kCompactFloatingNavigationInset : 0.0F)
                                  .Columns(ProfileGridColumns(compact, group_by_type))
                                  .EstimatedRowExtent(ProfileCardHeight(compact))
-                                 .RowSpacing(ProfileCardRowSpacing(compact))
                                  .ColumnSpacing(kSectionCardSpacing)
                                  .With(huxerui::Grow(1.0F), huxerui::ScrollBar(),
                                        huxerui::DropTarget::Accepts<ProfileDragPayload>())
@@ -175,7 +171,7 @@
                               activeType = key;
                           }, sectionMotion),
             std::move(profileBody),
-        }.With(huxerui::Spacing(theme.spacing.small), huxerui::Grow(1.0F),
+        }.With(huxerui::Spacing(0.0F), huxerui::Grow(1.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }
 
@@ -204,7 +200,7 @@
         newTimeout, newInterval, newAuto, newSys, newCore, newCert,
         newPptpServer, newPptpUsername, newPptpPassword, newPptpTimeout,
         newPptpRoutes, newPptpMppe,
-        pickedPath, importing};
+        pickedPath};
     // Wide windows keep the full add-method flow in a dialog-owned stack.
     const auto showCreateDialog = [createFields, tasks, toast, picker, http,
                                     pptpSupported, dialog] {

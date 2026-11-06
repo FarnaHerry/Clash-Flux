@@ -263,7 +263,7 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
 
 [[huxerui::composable]] huxerui::View ConnectionListCard(
     ConnectionRow row, bool stacked, std::function<void()> openDetails,
-    std::function<void()> confirmClose) {
+    std::function<void()> confirmClose, bool last = false) {
     const auto menu = UseActionMenu();
     const auto more = huxerui::IconButton(
         huxerui::ImageResource{"app", "images/more_vertical"}, Localized("更多操作"))
@@ -280,7 +280,8 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
     return DenseCard(ConnectionRowContent(
         row, formatRate(row.upRate), formatRate(row.downRate),
         formatBytes(row.up), formatBytes(row.down), stacked, more))
-        .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = 4.0F}));
+        .With(huxerui::Padding(huxerui::EdgeInsets{
+            .bottom = last ? 0.0F : PageScrollInset(huxerui::UseTheme(), true)}));
 }
 
 [[huxerui::composable]] huxerui::View ConnectionsPage(
@@ -417,15 +418,11 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
     }
     if (!visibleRows.empty()) {
         const std::size_t rowCount = visibleRows.size();
-        body = huxerui::VirtualList(
-                   rowCount + (compact ? 1U : 0U),
+        body = PageVirtualList(
+                   rowCount,
                    [rows, visibleRows, tasks, dialog, toast, navigation,
                     desktopNavigation, drawerLayers, compact, stacked, rowCount](
                        std::size_t index) -> huxerui::View {
-                       if (compact && index == rowCount) {
-                           return CompactFloatingNavigationFooter()
-                               .Key("compact-floating-footer");
-                       }
                        const ConnectionRow& row = rows[visibleRows[index]];
                        const std::string id = row.id;
                        const std::string key = id.empty()
@@ -440,8 +437,8 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
                            [dialog, tasks, toast, id, host = row.host] {
                                if (!id.empty())
                                    ConfirmCloseConnection(dialog, tasks, toast, id, host);
-                           }).Key(key);
-                   })
+                           }, index + 1 == rowCount).Key(key);
+                   }, PageScrollInset(theme, true), compact && !onBack ? kCompactFloatingNavigationInset : 0.0F)
                    // 16pt 卡内留白 + 三行内容 + 4pt 卡间距。
                    .EstimatedItemExtent(90.0F)
                    .Controller(scroll)
@@ -664,7 +661,7 @@ huxerui::XYChartData ConnectionChartData(
         }.With(huxerui::Spacing(12.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }
-    return huxerui::ScrollView(std::move(sections))
+    return ScrollablePageContent(sections)
         .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
 }
 

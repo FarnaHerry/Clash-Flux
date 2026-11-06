@@ -252,17 +252,16 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     const auto title = Localized(editing ? "编辑颜色" : "添加颜色");
     if (fullPage) {
-        huxerui::View body = CompactPageActionContent(
-            huxerui::ScrollView(fields).With(huxerui::Grow(1.0F)),
-            CompactPrimaryActionButton(app::images::save, Localized(editing ? "保存" : "添加"), save,
-                hex.has_value() && model->view.Get().ready));
+        huxerui::View body = FormPageContent(ScrollablePageContent(fields));
+        const auto action = FormHeaderAction(app::images::save, Localized(editing ? "保存" : "添加"), save,
+            hex.has_value() && model->view.Get().ready);
         if (kPageTitlesInWindow && huxerui::UseViewportClass() != huxerui::ViewportClass::Compact) {
             const auto back = huxerui::IconButton(app::images::arrow_back, Localized("返回上一页")).OnClick(close);
-            return PageScaffold(title, {}, body, true, false, true, std::nullopt, back)
+            return PageScaffold(title, action, body, true, false, true, std::nullopt, back)
                 .On<huxerui::ViewEvents::BackRequested>(close);
         }
         return SecondaryPageScaffold(huxerui::Text(title, huxerui::TextRole::Title),
-            {}, body, close, false, false, true);
+            action, body, close, false, false, true);
     }
     return DialogScaffold(DialogHeader(title),
         huxerui::ScrollView(fields).With(huxerui::Frame{.max_height = 420.0F}, huxerui::ScrollBar()),
@@ -410,7 +409,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                     ThemeColorToHex(FluxPalette::water()), std::nullopt);
             });
         }, cardEdge).Key("theme-color-add"));
-    huxerui::View content = huxerui::ScrollView(huxerui::Column {
+    huxerui::View content = ScrollablePageContent(huxerui::Column {
       SectionTitle(Localized("模式")),
       huxerui::Row(std::move(modes)).With(huxerui::Spacing(kSectionCardSpacing),
           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
@@ -454,7 +453,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 [[huxerui::composable]] huxerui::View LanguagePage(std::function<void()> onBack) {
     return SecondaryPageScaffold(
         huxerui::Text(Localized("语言"), huxerui::TextRole::Title), huxerui::View{},
-        huxerui::ScrollView(LanguageChoices({})), onBack);
+        ScrollablePageContent(LanguageChoices({})), onBack);
 }
 
 [[huxerui::composable]] huxerui::View ResponsiveLanguageSetting() {

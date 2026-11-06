@@ -15,26 +15,22 @@ namespace {
 [[huxerui::composable]] huxerui::View WebsiteTestEditorPage(std::shared_ptr<WebsiteTestModel> model,
     bool editing, std::function<bool()> submit) {
     const auto navigation = huxerui::UseNavigation();
-    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const auto back = [navigation] { static_cast<void>(navigation.Pop()); };
     const auto close = UseWebsiteEditorClose(model, back);
     const auto title = editing ? Localized("编辑网站") : Localized("添加网站");
     const auto action = editing ? Localized("保存") : Localized("添加网站");
     const auto icon = editing ? app::images::check : app::images::add;
     const auto commit = [submit, back] { if (submit()) back(); };
-    huxerui::View content = WebsiteTestForm(model);
-    if (compact) content = CompactPageActionContent(std::move(content),
-        CompactPrimaryActionButton(icon, action, commit, true, false));
+    huxerui::View content = WebsiteTestPageForm(model);
     return SecondaryPageScaffold(huxerui::Text(title),
-        compact ? huxerui::View{}
-                : huxerui::View{huxerui::IconButton(icon, action)
-                                    .With(huxerui::Tooltip(action)).OnClick(commit)},
+        FormHeaderAction(icon, action, commit),
         content, close);
 }
 
 } // namespace
 
 [[huxerui::composable]] huxerui::View WebsiteTestsPage(std::function<void()> onBack, bool active) {
+    const float pageInset = ResolveIslandTheme(huxerui::UseTheme()).nested_radius;
     const auto model = huxerui::UseService<WebsiteTestModel>();
     const auto http = huxerui::UseService<AppHttpClient>();
     const auto tasks = huxerui::UseApplicationTaskScope();
@@ -42,7 +38,6 @@ namespace {
     const auto dialog = huxerui::UseDialog();
     const auto navigation = huxerui::UseNavigation();
     const auto offset = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
-    const auto controller = huxerui::UseScrollController(offset->value);
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const auto rows = model->sites.Get();
     const bool anyActive = model->AnyActive();
@@ -76,16 +71,22 @@ namespace {
             });
         }
     };
+    const auto testLabel = anyActive ? Localized("取消") : Localized("全部测试");
     const auto actions = huxerui::Row {
       huxerui::IconButton(app::images::add, Localized("添加网站"))
           .With(huxerui::Tooltip(Localized("添加网站")), huxerui::Enabled(rows.size() < 24))
           .OnClick([openEditor] { openEditor(std::nullopt); }),
-      anyActive ? DialogAction(Localized("取消"), [model] { model->CancelAll(); }, false)
-          : DialogAction(Localized("全部测试"), [model, tasks, probe] {
-                std::vector<std::size_t> ids;
-                for (const auto& row : model->sites.Get()) ids.push_back(row.id);
-                model->Start(tasks, probe, std::move(ids));
-            }, true, !rows.empty()),
+      huxerui::IconButton(anyActive ? app::images::close : app::images::play, testLabel)
+          .With(huxerui::Tooltip(testLabel), huxerui::Enabled(anyActive || !rows.empty()))
+          .OnClick([model, tasks, probe, anyActive] {
+              if (anyActive) {
+                  model->CancelAll();
+                  return;
+              }
+              std::vector<std::size_t> ids;
+              for (const auto& row : model->sites.Get()) ids.push_back(row.id);
+              model->Start(tasks, probe, std::move(ids));
+          }),
     }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     std::vector<huxerui::View> cards;
     for (const auto& row : rows)
@@ -95,9 +96,11 @@ namespace {
            [model, id = row.id] { model->Remove(id); })).Key("website-card-" + std::to_string(row.id)));
     const auto content = cards.empty()
         ? EmptyState(Localized("还没有网站，点击右上角添加。"), app::images::globe)
-        : WebsiteTestGrid(cards, compact, controller, offset);
-    if (onBack) return SecondaryPageScaffold(huxerui::Text(Localized("网站测试")), actions, content, onBack);
-    return PageScaffold(Localized("网站测试"), actions, content);
+        : WebsiteTestGrid(cards, compact, offset);
+    if (onBack) return SecondaryPageScaffold(huxerui::Text(Localized("网站测试")), actions, content,
+        onBack, false, false, false, true, pageInset);
+    return PageScaffold(Localized("网站测试"), actions, content, false, false, true,
+        pageInset, {}, {}, true, {}, true);
 }
 
 } // namespace clashflux::ui

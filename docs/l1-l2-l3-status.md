@@ -1,5 +1,106 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-06：v0.3.99 发布准备
+
+- 基于 `76896d8` 整理当前工作区：滚动页首尾留白归属、窄屏表单标题栏主操作、
+  二维码/导入独立忙态与返回、网站测试图标动作；中英文说明见
+  [v0.3.99](releases/v0.3.99.md)。应用版本 0.3.99，Android versionCode 177
+  （上一发布 176）。
+- 升版本后 `cmake --build build -j 4`（全部目标，含 HUI codegen）、
+  `./run.sh --version`（v0.3.99）、`git diff --check` 通过。
+- `ctest --test-dir build --output-on-failure --no-tests=error -L
+  clashflux-required` **31/31，169.26 秒**；page_transition 覆盖滚动首尾归属、
+  标题槽、表单标题动作与导入导航，qrs_codec 覆盖自家 QRS 逐字节还原。
+- Android `./gradlew :app:assembleDebug` **51 秒通过**，用 aapt 核验实际 APK
+  versionName 0.3.99 / versionCode 177。未做正式签名、真机安装、其它平台构建或
+  真实 VPN；推送 `v0.3.99` 标签后以标签 CI 的发布门禁和产物为准。
+
+## 2026-11-06：首页与网站测试按卡片圆角统一留白
+
+快照：应用 `76896d8`（v0.3.98）加当前工作区，HuxerUI 仍为 `97d6fed`。
+本节为当前布局约定，替代此前网站网格使用设置页 16/24pt 的初版留白。
+
+- 首页和网站测试的左右缩进、顶部/底部滚动空白统一读取 `IslandTheme::nested_radius`
+  （当前 14pt）。首页将原外层顶部间距移入滚动正文，悬浮按钮/导航避让在底部空白之外
+  单独叠加；网格内部间距继续由各自网格维护。网站网格保留完整跨度的首尾空白项。
+- SecondaryPageScaffold 增加与一级骨架一致的可选 contentSpacing；显式设置时顶部
+  留白在完整 48pt 标题槽之外计算，网站二级页与首页的首卡位置一致。既有调用默认值保留。
+- `cmake --build build --target clash-flux test_page_transition -j 4` 及标题槽调整后的
+  `cmake --build build --target clash-flux -j 4`、`./run.sh --version`（v0.3.98）、
+  `git diff --check` 通过，包含 HUI codegen。最终执行
+  `ctest --test-dir build --output-on-failure --no-tests=error -R
+  '^(page_transition|ui_resources)$'` **2/2，56.88 秒**。
+- 隔离 XDG 的 Linux X11 实窗对比首页和网站测试的 1100pt/390pt 布局：首卡外边缘对齐，
+  网站网格底部净空 28 像素（2× 缩放下 14pt），上下空白随正文滚动；宽窄往返后卡片
+  几何恢复，截图差异只在滚动条淡出区域。截图在忽略目录
+  `build/radius-spacing-gui-aligned/`，自有 GUI 已结束且日志为空。
+  本轮未重复 Android/其它平台构建、真机触摸或完整桌面门禁，未提交、打标签或推送。
+
+## 2026-11-06：网站测试网格的滚动留白
+
+快照：应用 `76896d8`（v0.3.98）加当前工作区，HuxerUI 仍为 `97d6fed`。
+
+- 网站网格参照设置页，以完整跨度的首尾空白项提供顶部 16pt、底部 24pt 留白，扣除
+  相邻网格行距；一级/二级骨架启用 `scrollToContentEdges`，容器延伸至标题下沿和底边。
+  卡片间距和左右对齐保留，空白随内容滚动，VirtualGrid 自适应列与虚拟化保留。
+- 实窗检查发现原有宽窄切换会重置偏移，将控制器改为网格挂载时按 PageScrollOffset
+  初始化，与 ScrollablePageContent 保持一致。生产网格回归新增实际滚动、卸载与重挂
+  后的位置恢复，覆盖 320/960pt。
+- `cmake --build build --target clash-flux test_page_transition -j 4`、
+  `./run.sh --version`（v0.3.98）、`git diff --check` 通过，包含 HUI codegen。
+  `ctest --test-dir build --output-on-failure --no-tests=error -R
+  '^(page_transition|ui_resources)$'` **2/2，56.77 秒**。
+- 隔离 XDG 目录的 Linux X11 实窗检查 1100pt 宽屏、390pt 窄屏、滚到首尾和宽窄往返。
+  滚动后的卡片贴标题下沿，底部留白实际为 48 像素（2× 缩放下 24pt）；往返后卡片
+  几何相同，截图差异只在滚动条淡出区域。截图在忽略目录
+  `build/website-spacing-gui-fixed/`，自有 GUI 已结束且日志为空。
+  本轮未重复 Android/其它平台构建、真机触摸回弹或完整桌面门禁，未提交、打标签或推送。
+
+## 2026-11-06：网站测试动作图标化
+
+快照：应用 `76896d8`（v0.3.98）加当前工作区，HuxerUI 仍为 `97d6fed`。
+
+- 网站测试页顶部「全部测试」及各卡片「测试」改为框架 IconButton，复用 play 图标；
+  运行或排队时改为 close 取消图标，保留本地化提示、无障碍标签、空列表禁用及原有取消行为。
+- `cmake --build build --target clash-flux test_page_transition -j 4`、
+  `./run.sh --version`（v0.3.98）、`git diff --check` 通过，包含 HUI codegen。
+  `ctest --test-dir build --output-on-failure --no-tests=error -R
+  '^(page_transition|ui_resources)$'` **2/2，56.29 秒**，覆盖生产卡片单项测试/取消及宽窄切换。
+- 使用隔离 XDG 目录实际启动 Linux X11 GUI，检查 1100pt 宽屏与 390pt 窄屏：顶部和卡片
+  均显示图标动作，名称布局正常。截图在忽略目录 `build/website-icons-gui/`，已结束自有 GUI。
+  本轮未重复 Android/其它平台原生构建、真机及完整桌面门禁，未提交、打标签或推送。
+
+## 2026-11-06：导入可返回与窄屏表单标题栏主操作
+
+快照：应用 `76896d8`（v0.3.98）加当前工作区，HuxerUI 仍为 `97d6fed`。
+
+- 核实自家分享与扫码共用 QiFi/QRS 编解码器：集齐后恢复完整配置，按 inline 配置导入。
+  新增 YAML/JSON、压缩/未压缩的自家 QRS 识别和逐字节还原回归，未集齐帧不提交。
+- 去掉创建草稿中的全局 importing；二维码、文件和各次创建表单分别持忙态。选择器使用
+  页面任务域并在取消/卸载时恢复状态，文件引用保留到实际导入结束。已提交的导入继续归
+  应用任务域；慢请求不阻止返回/关闭，未提交草稿仍需确认放弃。提交前快照全部输入。
+- 生产 ProfileImportOrigin 用页面生命周期和操作代次控制完成后的跳转：新操作、返回或
+  卸载会拒绝旧跳转，但仍发布持久化结果和反馈。回归挂起真实 worker，验证二维码/文件
+  忙态独立、单飞、最新操作导航、请求未结束即可退出，以及旧结果不能关闭重新打开的表单。
+- 窄屏订阅添加/编辑/文本、个人与全局规则、规则集、网站测试、颜色及网络编辑主操作移到
+  标题栏右侧 FormHeaderAction 图标，移除底部提交按钮。FormPageContent 只给正文避让
+  底部系统安全区，网络表单保存图标保留「保存并应用 / 保存」菜单。更新 UI 规范入口。
+- `cmake --build build --target clash-flux test_page_transition test_qrs_codec -j 4`、
+  `./run.sh --version`（v0.3.98）、`git diff --check` 通过，包含 HUI codegen。
+  `ctest --test-dir build --output-on-failure --no-tests=error -R
+  '^(page_transition|ui_resources|qrs_codec|persistence)$'` **4/4，77.35 秒**。
+  生产标题布局/动作覆盖 320/390/420pt 宽度、短长表单、滚动末项、0/24/48pt 底部安全区、
+  IME 对应的视口缩短/恢复、点击及忙态尺寸/禁用。未重复完整 31 项桌面门禁。
+- 从 platform/android 执行 `./gradlew :app:assembleDebug` **42 秒通过**，Java/NDK
+  固定来源不变，仍包含现有 preBuild 策略检查。
+- Linux X11 实窗检查：隔离 XDG 目录，390pt 窄窗 URL 表单显示右上角保存图标；缩短视口
+  后图标保持顶部。另用自有回环 HTTP 服务挂起真实订阅响应，提交后通过键盘返回列表，
+  响应未释放时打开第二张导入表单，再释放响应；第二张表单保持打开并显示成功反馈。
+  只读核对隔离 profiles 表和 1.yaml：仅有测试订阅，文件 53 字节，error 为空。
+  实窗截图位于忽略目录 `build/import-header-gui-keyboard/`，已结束自有 GUI/HTTP 进程。
+- 未验证 Android 真机软键盘/系统返回、相机/相册实际识别、文件 provider，未做其它平台
+  原生构建、真实 VPN、正式签名或发布。本轮未提交、打标签或推送。
+
 ## 2026-11-06：v0.3.98 发布准备
 
 - 基于 `2087af1` 整理相册扫码与 HUI `97d6fed` 升级；中英文说明见

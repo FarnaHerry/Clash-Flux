@@ -454,30 +454,34 @@ huxerui::View WithoutIconButtonOutlines(huxerui::View content);
 huxerui::View PasswordField(
     huxerui::State<huxerui::TextEditingValue> password);
 
-// Compact secondary forms keep their primary action outside the scrolling body.
-inline constexpr float kCompactPrimaryActionHeight = 40.0F;
-huxerui::View CompactPrimaryActionButton(huxerui::ImageResource icon,
+// Form submission stays in the header when the keyboard changes body height.
+inline constexpr float kFormHeaderActionSize = 40.0F;
+inline huxerui::View FormHeaderAction(huxerui::ImageResource icon,
     huxerui::StringVariant label, std::function<void()> onClick,
-    bool enabled = true, bool busy = false);
-inline huxerui::View CompactPageActionContent(huxerui::View scrollContent, huxerui::View action) {
-    // Secondary pages cover the navigation dock; only the system safe area is reserved.
-    return huxerui::Column {
-      huxerui::View{scrollContent}.With(huxerui::Grow(1.0F)),
-      huxerui::Column {action}.With(
-          huxerui::Padding(huxerui::EdgeInsets{
-              .top = 8.0F, .right = 16.0F, .bottom = 8.0F, .left = 16.0F}),
-          huxerui::Grow(0.0F),
-          huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-    }.With(
-        huxerui::Spacing(0.0F),
-        huxerui::Grow(1.0F),
-        huxerui::SafeAreaPadding{.top = false, .right = false, .left = false},
-        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    bool enabled = true, bool busy = false) {
+    if (busy) {
+        return huxerui::Column {
+          huxerui::ProgressCircle().With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
+        }.With(huxerui::Frame{.width = kFormHeaderActionSize, .height = kFormHeaderActionSize},
+               huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
+               huxerui::Enabled(false), huxerui::Tooltip(label),
+               huxerui::Semantics{.role = huxerui::SemanticRole::Button, .label = label, .busy = true});
+    }
+    return huxerui::IconButton(icon, label)
+        .With(huxerui::Frame{.width = kFormHeaderActionSize, .height = kFormHeaderActionSize},
+              huxerui::Enabled(enabled), huxerui::Tooltip(label))
+        .OnClick(std::move(onClick));
+}
+
+inline huxerui::View FormPageContent(huxerui::View content) {
+    return huxerui::View{content}.With(huxerui::Grow(1.0F),
+        huxerui::SafeAreaPadding{.top = false, .right = false, .left = false});
 }
 
 // 页面骨架（一级岛）：标题行（标题 + 右缘动作）+ 内容区，整体为 16pt 圆角岛，
 // 落在窗口海面底色上（岛间缝隙经壳层 Spacing 透出）。
-// contentSpacing 可统一顶部、左右留白和 Compact 标题下间距（首页沿用卡片间距）。
+// contentSpacing controls fixed header/horizontal insets. Scroll content owns its vertical edge gaps.
 huxerui::View PageScaffold(huxerui::StringVariant title, huxerui::View actions,
                            huxerui::View content,
                            bool inlineCompactActions = false,
@@ -488,7 +492,7 @@ huxerui::View PageScaffold(huxerui::StringVariant title, huxerui::View actions,
                            huxerui::View titleSearchField = {},
                            bool showInlineHeader = true,
                            huxerui::View inlineHeader = {},
-                           bool scrollToContentEdges = false);
+                           bool scrollToContentEdges = true);
 huxerui::View AboutRoutePage();
 huxerui::View AboutPage(std::function<void()> onBack);
 huxerui::View RuntimeDiagnosticsPage(std::function<void()> onBack);
@@ -509,7 +513,8 @@ huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     bool hideBack = false,
                                     bool fullWidthSections = false,
                                     bool centerTitle = false,
-                                    bool scrollToContentEdges = false);
+                                    bool scrollToContentEdges = true,
+                                    std::optional<float> contentSpacing = std::nullopt);
 huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
                               huxerui::StringVariant placeholder,
                               huxerui::View trailingAction = {});

@@ -213,7 +213,7 @@ huxerui::StringVariant ExternalResourceKindName(std::string_view kind) {
             }.With(huxerui::Spacing(12.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
         }
-        content = huxerui::ScrollView(std::move(body)).With(huxerui::Grow(1.0F));
+        content = ScrollablePageContent(body);
     }
 
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;

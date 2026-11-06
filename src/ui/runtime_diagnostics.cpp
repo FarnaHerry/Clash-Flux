@@ -1,6 +1,7 @@
 #include <huxerui/huxerui.h>
 #include "runtime_diagnostics.h"
 #include "ui.h"
+#include "page_layout.h"
 #include "text_document.h"
 
 namespace clashflux::ui {
@@ -34,7 +35,7 @@ namespace clashflux::ui {
                                       theme.colors.on_surface_variant});
     }
 
-    const auto body = huxerui::ScrollView(huxerui::Column {
+    const auto fields = huxerui::Column {
       huxerui::Text(Localized("留空仅检查运行状态；填写 HTTP(S) 目标后，通过当前代理入站检查。结果不代表全部网络。"))
           .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody), theme.colors.on_surface_variant}),
       huxerui::TextField(target.Get()).Label(Localized("检查目标（可选）"))
@@ -46,7 +47,8 @@ namespace clashflux::ui {
         save ? DialogAction(Localized(saving ? "正在保存…" : "保存脱敏报告"), save, false,
             canSave && !saving && !busy && hasReport) : huxerui::View{},
       }.With(huxerui::Spacing(8.0F)).Key("diagnostics-export-actions"),
-    }.With(huxerui::Spacing(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+    }.With(huxerui::Spacing(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    const auto body = (fullPage ? ScrollablePageContent(fields) : huxerui::View{huxerui::ScrollView(fields)})
         .With(huxerui::Grow(1.0F), huxerui::ScrollBar()).Key("runtime-diagnostics-content");
     const auto actions = DialogActions({
       fullPage ? huxerui::View{} : DialogAction(Localized("关闭"), close, false),

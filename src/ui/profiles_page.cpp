@@ -96,7 +96,6 @@ struct ProfileReorderSession {
     // ---- 新建订阅弹窗 ----
     auto newName = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newUrl = huxerui::UseState(huxerui::TextEditingValue{""});
-    auto importing = huxerui::UseState(false);
     auto picker = huxerui::UseService<huxerui::FilePicker>();
     auto newTypeIdx = huxerui::UseState<std::size_t>(0);
     auto newDesc = huxerui::UseState(huxerui::TextEditingValue{""});

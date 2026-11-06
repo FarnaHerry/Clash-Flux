@@ -6,6 +6,7 @@
 
 #include "app_resources.h"
 #include "ui.h"
+#include "page_layout.h"
 #include "empty_state.h"
 #include "theme_colors.h"
 #include "task_bridge.h"
@@ -51,7 +52,7 @@ namespace clashflux::ui {
     if (loading.Get()) content = EmptyState(Localized("正在检查配置保真度…"), app::images::shield_check);
     else if (!result.supported) content = EmptyState(Localized("此配置类型暂无保真度报告"), app::images::shield_check);
     if (!loading.Get() && !notes.empty()) {
-        content = huxerui::VirtualList(notes.size(), [notes, theme, islands](std::size_t index) {
+        content = PageVirtualList(notes.size(), [notes, theme, islands](std::size_t index) {
             const auto& note = notes[index];
             const bool unsupported = note.level == singbox::Fidelity::Unsupported;
             const auto levelColor = unsupported ? theme.colors.error : SemanticWarningColor(theme);
@@ -72,12 +73,12 @@ namespace clashflux::ui {
                 huxerui::Padding(theme.spacing.medium),
                 huxerui::Spacing(theme.spacing.small),
                 huxerui::Background(islands.raised),
-                huxerui::CornerRadius(theme.shapes.medium),
+                huxerui::CornerRadius(islands.nested_radius),
                 huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
                 .Key("fidelity-record-" + std::to_string(index));
             return huxerui::Column{card}.With(huxerui::Padding(huxerui::EdgeInsets{
                 .bottom = index + 1 < notes.size() ? kSectionCardSpacing : 0.0F}));
-        }).EstimatedItemExtent(120.0F)
+        }, PageScrollInset(theme)).EstimatedItemExtent(120.0F)
             .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     }
     if (!result.error.empty()) {

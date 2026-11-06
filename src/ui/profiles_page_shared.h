@@ -60,7 +60,6 @@ struct ProfileCreateFields {
     huxerui::State<huxerui::TextEditingValue> pptp_routes;
     huxerui::State<bool> pptp_mppe;
     huxerui::State<std::string> picked_path;
-    huxerui::State<bool> importing;
 };
 
 enum class ProfileAddMethod { Qr, File, Url, Direct };

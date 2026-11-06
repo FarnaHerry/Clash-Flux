@@ -26,6 +26,7 @@ inline huxerui::View WebsiteTestCardContent(
         };
         const auto& result = site.result;
         const bool ownActive = result.phase == WebsiteTestPhase::Queued || result.phase == WebsiteTestPhase::Running;
+        const auto testLabel = ownActive ? Localized("取消") : Localized("测试");
         auto status = Localized("未测试");
         auto color = theme.colors.on_surface_variant;
         if (result.phase == WebsiteTestPhase::Queued) status = Localized("等待测试");
@@ -40,7 +41,8 @@ inline huxerui::View WebsiteTestCardContent(
           huxerui::Row {
             huxerui::Image(app::images::globe).Tint(theme.colors.primary).With(huxerui::Frame{.width = 20, .height = 20}),
             huxerui::Text(site.name, huxerui::TextRole::Title).With(huxerui::Grow(1.0F)),
-            DialogAction(ownActive ? Localized("取消") : Localized("测试"), toggle, false)
+            huxerui::IconButton(ownActive ? app::images::close : app::images::play, testLabel)
+                .With(huxerui::Tooltip(testLabel)).OnClick(toggle)
                 .Key("website-test-" + std::to_string(site.id)),
             huxerui::IconButton(app::images::more_vertical, Localized("更多操作"))
                 .With(menu.Anchor(), huxerui::Tooltip(Localized("更多操作")))

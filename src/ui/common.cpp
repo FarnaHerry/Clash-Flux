@@ -892,37 +892,6 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         IslandLevel::Base);
 }
 
-[[huxerui::composable]] huxerui::View CompactPrimaryActionButton(
-    huxerui::ImageResource icon, huxerui::StringVariant label,
-    std::function<void()> onClick, bool enabled, bool busy) {
-    const auto button = huxerui::UseEnvironment<huxerui::ButtonStyle>();
-    auto textStyle = button.label_style;
-    const huxerui::Color foreground = enabled
-        ? button.label_style.foreground : button.disabled_label;
-    textStyle.foreground = foreground;
-    const huxerui::VisualFill background = enabled
-        ? button.background : button.disabled_background;
-    return huxerui::Row {
-        huxerui::Image(std::move(icon)).Tint(foreground)
-            .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
-        huxerui::Text(label).Style(textStyle),
-    }.With(huxerui::Spacing(10.0F),
-           huxerui::Frame{.height = kCompactPrimaryActionHeight},
-           huxerui::Padding(huxerui::EdgeInsets::Symmetric(20.0F, 8.0F)),
-           huxerui::Background(background),
-           huxerui::CornerRadius(1000.0F),
-           huxerui::ClipChildren(),
-           huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
-           huxerui::PointerCursor(huxerui::PointerCursorKind::Hand),
-           huxerui::Focusable(true),
-           huxerui::Enabled(enabled),
-           huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                              .label = label,
-                              .busy = busy})
-        .OnClick(std::move(onClick));
-}
-
 [[huxerui::composable]] huxerui::View PageScaffold(huxerui::StringVariant title,
                                                    huxerui::View actions,
                                                    huxerui::View content,
@@ -1007,8 +976,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         titleView,
         showInlineHeader ? huxerui::View{actions} : huxerui::View{}, compact && !inlineCompactActions,
         compact && static_cast<bool>(titleSearchField));
-    if (scrollToContentEdges && header) header = huxerui::View{header}.With(
-        huxerui::Padding(huxerui::EdgeInsets{.top = headerTopInset}));
+    if (scrollToContentEdges && header) header = PageHeaderWithInset(header, headerTopInset);
     const float horizontal = fullWidthSections
         ? kSectionCardSpacing
         : (compact ? 4.0F : kDesktopPageHorizontalInset);
@@ -1034,7 +1002,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 [[huxerui::composable]] huxerui::View SecondaryPageScaffold(
     huxerui::View title, huxerui::View actions, huxerui::View content,
     std::function<void()> onBack, bool hideBack, bool fullWidthSections,
-    bool centerTitle, bool scrollToContentEdges) {
+    bool centerTitle, bool scrollToContentEdges, std::optional<float> contentSpacing) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     const bool compact =
@@ -1049,9 +1017,10 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             .OnClick(onBack);
     if (kPageTitlesInWindow && !compact) {
         const float horizontal = fullWidthSections ? kSectionCardSpacing
-            : kDesktopPageHorizontalInset;
+            : contentSpacing.value_or(kDesktopPageHorizontalInset);
         auto contentInsets = PageContentInsets(theme, false,
             fullWidthSections ? 0.0F : horizontal);
+        if (contentSpacing) contentInsets.top = *contentSpacing;
         if (scrollToContentEdges) contentInsets.top = contentInsets.bottom = 0.0F;
         huxerui::View desktopBody = huxerui::View{content}.With(huxerui::Grow(1.0F));
         if (fullWidthSections) {
@@ -1113,7 +1082,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     header = std::move(header).With(huxerui::Frame{.min_height = kPageHeaderHeight});
     const float horizontal = fullWidthSections ? kSectionCardSpacing
-        : (compact ? 4.0F : kDesktopPageHorizontalInset);
+        : contentSpacing.value_or(compact ? 4.0F : kDesktopPageHorizontalInset);
     if (fullWidthSections) {
         header = huxerui::View{header}.With(
             huxerui::Padding(huxerui::EdgeInsets::Symmetric(
@@ -1122,9 +1091,9 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     }
     auto contentInsets = PageContentInsets(theme, compact,
         fullWidthSections ? 0.0F : horizontal);
+    if (contentSpacing) contentInsets.top = *contentSpacing;
     if (scrollToContentEdges) {
-        header = huxerui::View{header}.With(
-            huxerui::Padding(huxerui::EdgeInsets{.top = contentInsets.top}));
+        header = PageHeaderWithInset(header, contentInsets.top);
         contentInsets.top = contentInsets.bottom = 0.0F;
     }
     // 一级/二级页共用内容层底色，保持与窗口外框的颜色区分，不套外卡。
@@ -1132,7 +1101,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         std::move(header),
         std::move(body),
     }.With(huxerui::Padding(contentInsets),
-           huxerui::Spacing(scrollToContentEdges ? 0.0F : theme.spacing.medium),
+           huxerui::Spacing(scrollToContentEdges ? 0.0F : contentSpacing.value_or(theme.spacing.medium)),
            huxerui::Background(islands.base),
            huxerui::CornerRadius(kPageTitlesInWindow || compact ? 0.0F : islands.island_radius),
            huxerui::ClipChildren(), huxerui::Grow(1.0F),

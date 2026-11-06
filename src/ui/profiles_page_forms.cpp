@@ -15,6 +15,7 @@
 #include "qrs_codec.h"
 #include "app_resources.h"
 #include "ui.h"
+#include "page_layout.h"
 #include "empty_state.h"
 #include "file_drop_zone.h"
 #include "settings_group_layout.h"
@@ -48,6 +49,12 @@ struct ProfileFormDialog {
     bool operator==(const ProfileFormDialog&) const = default;
 };
 
+[[huxerui::composable]] huxerui::View ProfileFormScroll(huxerui::View fields, bool dialog = false) {
+    const bool inDialog = dialog || huxerui::UseEnvironment<ProfileFormDialog>().enabled;
+    if (inDialog) return huxerui::ScrollView(fields).With(huxerui::Grow(1.0F), huxerui::ScrollBar());
+    return ScrollablePageContent(fields).With(huxerui::ScrollBar());
+}
+
 auto ProfileCreateSnapshot(const ProfileCreateFields& fields) {
     return std::tuple{fields.name.Get().text, fields.url.Get().text, fields.qr_content.Get().text,
         fields.desc.Get().text, fields.timeout.Get().text, fields.interval.Get().text,
@@ -58,8 +65,10 @@ auto ProfileCreateSnapshot(const ProfileCreateFields& fields) {
 
 std::function<void()> UseProfileCreateClose(ProfileCreateFields fields, std::function<void()> close) {
     const auto initial = huxerui::UseState(ProfileCreateSnapshot(fields));
+    // Submitted imports run in the application scope; only unsaved draft
+    // changes need confirmation. A slow request cannot veto back/close.
     return UseEditorClose([=] { return ProfileCreateSnapshot(fields) != initial.Get(); },
-        [fields] { return fields.importing.Get(); }, close);
+        [] { return false; }, close);
 }
 
 huxerui::PageTransition ProfileSecondaryTransition(
@@ -271,6 +280,12 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
     FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     std::function<void()> on_back, bool embedded) {
+    const auto importing = huxerui::UseState(false);
+    const auto origin = UseProfileImportOrigin();
+    const auto go_back = [origin, on_back] {
+        origin->Advance();
+        if (on_back) on_back();
+    };
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     const auto configFileFilter = ProfileConfigFileFilter();
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
@@ -310,6 +325,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
     }
 
     const auto importProfile = [=] {
+        if (importing) return;
         const std::string url = fields.url.Get().text;
         if (remote && url.empty()) {
             toast.Show(Localized("订阅链接不能为空"));
@@ -331,31 +347,28 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                 return;
             }
         }
-        LaunchProfileImport(fields.importing, [=]() -> huxerui::Task<ProfileImportResult> {
-            db::Profile options;
-            options.description = fields.desc.Get().text;
-            if (!pptp) {
-                options.timeoutSecs = parseNumber(fields.timeout.Get(), 60);
-                options.intervalMins = parseNumber(fields.interval.Get(), 0);
-                options.autoUpdate = fields.auto_update.Get();
-                options.useSystemProxy = fields.system_proxy.Get();
-                options.useCoreProxy = fields.core_proxy.Get();
-                options.allowInvalidCert = fields.invalid_cert.Get();
-            } else {
-                options.type = "pptp";
-                options.nativeConfig = *nativeConfig;
-                options.nativeRoutes = joinRoutes(parseRouteField(
-                    fields.pptp_routes.Get().text));
-            }
-            co_return co_await ImportProfileForPlatform(
-                http, ProfileImportRequest{
-                          .remote = remote,
-                          .local = local,
-                          .pptp = pptp,
-                          .name = fields.name.Get().text,
-                          .url = url,
-                          .picked_path = fields.picked_path.Get(),
-                          .options = std::move(options)});
+        db::Profile options;
+        options.description = fields.desc.Get().text;
+        if (!pptp) {
+            options.timeoutSecs = parseNumber(fields.timeout.Get(), 60);
+            options.intervalMins = parseNumber(fields.interval.Get(), 0);
+            options.autoUpdate = fields.auto_update.Get();
+            options.useSystemProxy = fields.system_proxy.Get();
+            options.useCoreProxy = fields.core_proxy.Get();
+            options.allowInvalidCert = fields.invalid_cert.Get();
+        } else {
+            options.type = "pptp";
+            options.nativeConfig = *nativeConfig;
+            options.nativeRoutes = joinRoutes(parseRouteField(
+                fields.pptp_routes.Get().text));
+        }
+        ProfileImportRequest request{
+            .remote = remote, .local = local, .pptp = pptp,
+            .name = fields.name.Get().text, .url = url,
+            .picked_path = fields.picked_path.Get(), .options = std::move(options)};
+        const auto ticket = origin->Advance();
+        LaunchProfileImport(importing, [http, request = std::move(request)]() mutable -> huxerui::Task<ProfileImportResult> {
+            co_return co_await ImportProfileForPlatform(http, std::move(request));
         }, [=](ProfileImportResult result) {
             profilesModel->PublishCached();
             const auto& [id, error] = result;
@@ -364,7 +377,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                                          : huxerui::StringVariant(error));
                 return;
             }
-            on_back();
+            if (origin->CanNavigate(ticket)) go_back();
             huxerui::UseApplicationTaskScope().Launch([id, toast]() -> huxerui::Task<void> {
             // 导入即告知「这份订阅有什么吃不下」（只编译不启动，见
             // docs/singbox-layers-and-fidelity.md §2）。
@@ -423,8 +436,8 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                                        huxerui::CrossAxisAlignment::Stretch)))
                 .With(huxerui::Frame{.height = kDialogFormHeight}),
             huxerui::Row{
-                DialogAction(Localized("取消"), on_back, false, !fields.importing.Get()),
-                fields.importing.Get()
+                DialogAction(Localized("取消"), go_back, false),
+                importing
                     ? huxerui::View{huxerui::ProgressCircle().With(
                           huxerui::Frame{.width = 20.0F, .height = 20.0F})}
                     : huxerui::View{huxerui::Button(Localized("创建"))
@@ -442,21 +455,19 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                         .With(huxerui::Spacing(16.0F),
                               huxerui::CrossAlign(
                                   huxerui::CrossAxisAlignment::Stretch));
-    huxerui::View content = huxerui::ScrollView(std::move(scrollContent))
+    huxerui::View content = ProfileFormScroll(scrollContent)
         .With(huxerui::Grow(1.0F));
-    huxerui::View action = CompactPrimaryActionButton(
+    if (compact) content = FormPageContent(content);
+    huxerui::View action = FormHeaderAction(
         app::images::save, Localized("创建"), importProfile,
-        !fields.importing.Get(), fields.importing.Get());
-    if (compact) {
-        content = CompactPageActionContent(std::move(content), std::move(action));
-    }
+        !importing, importing);
     return SecondaryPageScaffold(
         huxerui::Text(Localized("新建订阅"), huxerui::TextRole::Title)
             .Key("profile-create-title"),
-        compact ? huxerui::View{} : ProfileImportAction(
-            fields.importing.Get(), Localized("导入订阅"), importProfile),
+        compact ? action : ProfileImportAction(
+            importing, Localized("导入订阅"), importProfile),
         std::move(content),
-        std::move(on_back), false, false, true);
+        std::move(go_back), false, false, true);
 }
 
 [[huxerui::composable]] huxerui::View ProfileFlowPage(
@@ -480,9 +491,8 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
     huxerui::View pageActions = actions;
     huxerui::View pageContent = content;
     if (compact && compactAction) {
-        pageActions = {};
-        pageContent = CompactPageActionContent(std::move(pageContent),
-                                               std::move(compactAction));
+        pageActions = compactAction;
+        pageContent = FormPageContent(content);
     }
     return SecondaryPageScaffold(title, std::move(pageActions),
                                  std::move(pageContent), std::move(on_back),
@@ -721,19 +731,16 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
 }
 
 void PushProfileQrScanner(
-    ProfileCreateFields fields, huxerui::NavigationController navigation,
+    huxerui::NavigationController navigation,
     FluxToastHandle toast,
     std::function<void(std::string)> on_result) {
     static_cast<void>(toast);
-    fields.importing = true;
     navigation.Push([=] {
         return ProfileQrScannerPage(
-            [navigation, fields] {
-                fields.importing = false;
+            [navigation] {
                 static_cast<void>(navigation.Pop());
             },
-            [navigation, fields, on_result](std::string content) mutable {
-                fields.importing = false;
+            [navigation, on_result](std::string content) mutable {
                 static_cast<void>(navigation.Pop());
                 if (on_result) on_result(std::move(content));
             });
@@ -743,7 +750,7 @@ void PushProfileQrScanner(
 #else
 
 void PushProfileQrScanner(
-    ProfileCreateFields, huxerui::NavigationController,
+    huxerui::NavigationController,
     FluxToastHandle toast,
     std::function<void(std::string)>) {
     toast.Show(Localized("当前平台暂不支持二维码扫描"));
@@ -758,20 +765,24 @@ void PushProfileQrScanner(
     bool pptp_supported,
     huxerui::NavigationController navigation,
     std::function<void()> close) {
+    const auto origin = UseProfileImportOrigin();
+    const auto qrImporting = huxerui::UseState(false);
+    const auto fileImporting = huxerui::UseState(false);
+    const auto pickerTasks = huxerui::UseTaskScope();
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     const auto configFileFilter = ProfileConfigFileFilter();
     const std::string qrConfigName = huxerui::UseString(Localized("二维码配置"));
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const auto on_back = [navigation, close] {
+    const auto on_back = [navigation, close, origin] {
+        origin->Advance();
         if (navigation.CanPop()) static_cast<void>(navigation.Pop());
         else if (close) close();
     };
     std::function<void()> rootBack = on_back;
     if (!huxerui::UseEnvironment<ProfileFormDialog>().enabled)
         rootBack = UseProfileCreateClose(fields, on_back);
-    const auto finishImport = [fields, toast, on_back, profilesModel](
-                                  ProfileImportResult result) {
-        fields.importing = false;
+    const auto finishImport = [toast, on_back, profilesModel, origin](
+                                  std::uint64_t ticket, ProfileImportResult result) {
         profilesModel->PublishCached();
         if (result.first == 0) {
             toast.Show(result.second.empty() ? Localized("导入失败")
@@ -779,39 +790,42 @@ void PushProfileQrScanner(
             return;
         }
         toast.Show(Localized("配置已添加"));
-        on_back();
+        if (origin->CanNavigate(ticket)) on_back();
     };
-    const auto importRemote = [fields, http, finishImport](
+    const auto importRemote = [qrImporting, origin, http, finishImport](
                                   std::string url) {
-        if (fields.importing.Get()) return;
+        if (qrImporting) return;
         db::Profile options;
         options.autoUpdate = true;
         options.intervalMins = 1440;
         options.timeoutSecs = 60;
-        LaunchProfileImport(fields.importing,
+        const auto ticket = origin->Advance();
+        LaunchProfileImport(qrImporting,
             [http, url = std::move(url), options]() mutable -> huxerui::Task<ProfileImportResult> {
             ProfileImportRequest request;
             request.remote = true;
             request.url = std::move(url);
             request.options = options;
             co_return co_await ImportProfileForPlatform(http, std::move(request));
-        }, finishImport);
+        }, [finishImport, ticket](auto result) { finishImport(ticket, std::move(result)); });
     };
-    const auto importInline = [fields, finishImport, qrConfigName](
+    const auto importInline = [qrImporting, origin, finishImport, qrConfigName](
                                   std::string content) {
-        if (fields.importing.Get()) return;
+        if (qrImporting) return;
         db::Profile options;
-        LaunchProfileImport(fields.importing,
+        const auto ticket = origin->Advance();
+        LaunchProfileImport(qrImporting,
             [content = std::move(content), options, qrConfigName]() mutable
                 -> huxerui::Task<ProfileImportResult> {
                 co_return co_await ImportProfileContent(qrConfigName, std::move(content), options);
-            }, finishImport);
+            }, [finishImport, ticket](auto result) { finishImport(ticket, std::move(result)); });
     };
-    const auto beginQrScan = [fields, navigation, toast,
+    const auto beginQrScan = [qrImporting, origin, navigation, toast,
                               importRemote, importInline] {
-        if (fields.importing.Get()) return;
+        if (qrImporting) return;
+        origin->Advance();
         PushProfileQrScanner(
-            fields, navigation, toast,
+            navigation, toast,
             [importRemote, importInline](std::string content) mutable {
                 if (IsHttpProfileUrl(content)) {
                     importRemote(std::move(content));
@@ -820,18 +834,19 @@ void PushProfileQrScanner(
                 }
             });
     };
-    const auto openMethod = [fields, tasks, toast, picker, http,
+    const auto openMethod = [fields, tasks, toast, picker, http, origin,
                              pptp_supported, navigation,
                              on_back, close, popDuration = theme.motion.normal](ProfileAddMethod method) {
-        if (fields.importing.Get()) return;
-        const auto on_complete = [tasks, navigation, close, popDuration] {
+        const auto ticket = origin->Advance();
+        const auto on_complete = [tasks, navigation, close, popDuration, origin, ticket] {
+            if (!origin->CanNavigate(ticket)) return;
             if (close) { close(); return; }
-            tasks.Launch([navigation, popDuration]() -> huxerui::Task<void> {
-                if (navigation.Depth() < 3) co_return;
+            tasks.Launch([navigation, popDuration, origin, ticket]() -> huxerui::Task<void> {
+                if (!origin->CanNavigate(ticket) || navigation.Depth() < 3) co_return;
                 static_cast<void>(navigation.Pop());
                 co_await huxerui::Delay(
                     std::chrono::duration<double>{popDuration});
-                if (navigation.Depth() > 1) {
+                if (origin->CanNavigate(ticket) && navigation.Depth() == 2) {
                     static_cast<void>(navigation.Pop());
                 }
             });
@@ -843,27 +858,30 @@ void PushProfileQrScanner(
                 on_complete);
         });
     };
-    const auto chooseFile = [fields, tasks, toast, picker, http, finishImport, configFileFilter] {
-        if (fields.importing.Get()) return;
+    const auto chooseFile = [fileImporting, origin, pickerTasks, toast, picker, http, finishImport, configFileFilter] {
+        if (fileImporting) return;
         if (!picker) {
             toast.Show(Localized("文件选择器不可用"));
             return;
         }
-        fields.importing = true;
-        tasks.Launch([fields, picker, http, finishImport, toast, configFileFilter]() mutable
+        const auto ticket = origin->Advance();
+        fileImporting = true;
+        pickerTasks.Launch([fileImporting, ticket, picker, http, finishImport, toast, configFileFilter]() mutable
                          -> huxerui::Task<void> {
+            struct ResetPicking {
+                huxerui::State<bool> busy;
+                bool handedOff = false;
+                ~ResetPicking() { if (!handedOff) busy = false; }
+            } picking{fileImporting};
             const auto picked = co_await PickProfileConfigFile(picker, configFileFilter, toast);
             if (!picked) {
-                fields.importing = false;
                 co_return;
             }
             const auto file = picked->AsFile();
             if (!file) {
-                fields.importing = false;
                 co_return;
             }
             const std::string path = file->Path();
-            fields.picked_path = path;
             const std::size_t slash = path.find_last_of("/\\");
             std::string name = path.substr(
                 slash == std::string::npos ? 0 : slash + 1);
@@ -875,24 +893,26 @@ void PushProfileQrScanner(
             request.local = true;
             request.name = std::move(name);
             request.picked_path = path;
-            fields.importing = false;
-            LaunchProfileImport(fields.importing,
-                [http, request = std::move(request)]() mutable -> huxerui::Task<ProfileImportResult> {
+            fileImporting = false;
+            picking.handedOff = true;
+            // The path alone does not retain the picker grant/temporary owner.
+            LaunchProfileImport(fileImporting,
+                [http, selected = *picked, request = std::move(request)]() mutable -> huxerui::Task<ProfileImportResult> {
                     co_return co_await ImportProfileForPlatform(http, std::move(request));
-                }, finishImport);
+                }, [finishImport, ticket](auto result) { finishImport(ticket, std::move(result)); });
         });
     };
 
     huxerui::View methods = huxerui::Column {
         ProfileAddMethodRow(
             app::images::qr_scan, Localized("二维码"),
-            Localized(fields.importing.Get() ? "正在扫描或导入配置…"
+            Localized(qrImporting ? "正在扫描或导入配置…"
                                              : "扫描后自动导入订阅链接或配置"),
             "profile-add-qr", true,
             beginQrScan),
         ProfileAddMethodRow(
             app::images::file_import, Localized("文件"),
-            Localized(fields.importing.Get() ? "正在导入配置…"
+            Localized(fileImporting ? "正在导入配置…"
                                              : "从本地文件导入配置"),
             "profile-add-file", true,
             chooseFile),
@@ -909,11 +929,7 @@ void PushProfileQrScanner(
                   [openMethod] { openMethod(ProfileAddMethod::Direct); })}
             : huxerui::View{huxerui::Row{}},
     }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    huxerui::View content = huxerui::ScrollView(huxerui::Column {
-        methods,
-        CompactFloatingNavigationFooter(),
-    }.With(huxerui::Spacing(8.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
+    huxerui::View content = ProfileFormScroll(methods)
         .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
     return ProfileFlowPage(huxerui::Text(Localized("添加配置"), huxerui::TextRole::Title),
                             huxerui::View{}, std::move(content), rootBack, true)
@@ -953,6 +969,12 @@ void PushProfileQrScanner(
     bool pptp_supported,
     huxerui::NavigationController navigation, std::function<void()> on_back,
     std::function<void()> on_complete) {
+    const auto importing = huxerui::UseState(false);
+    const auto origin = UseProfileImportOrigin();
+    const auto go_back = [origin, on_back] {
+        origin->Advance();
+        if (on_back) on_back();
+    };
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     const auto configFileFilter = ProfileConfigFileFilter();
     const std::string manualConfigName = huxerui::UseString(Localized("手动配置"));
@@ -968,6 +990,7 @@ void PushProfileQrScanner(
     const bool directPptp = isDirect && pptp_supported;
 
     const auto import_profile = [=] {
+        if (importing) return;
         std::string url;
         std::string inlineConfig;
         bool remote = isRemote;
@@ -1037,7 +1060,8 @@ void PushProfileQrScanner(
 
         const std::string name = fields.name.Get().text;
         const std::string pickedPath = fields.picked_path.Get();
-        LaunchProfileImport(fields.importing, [=]() mutable -> huxerui::Task<ProfileImportResult> {
+        const auto ticket = origin->Advance();
+        LaunchProfileImport(importing, [=]() mutable -> huxerui::Task<ProfileImportResult> {
             std::pair<std::int64_t, std::string> result;
             if (!inlineConfig.empty()) {
                 result = co_await ImportProfileContent(
@@ -1064,7 +1088,7 @@ void PushProfileQrScanner(
                 return;
             }
             toast.Show(Localized("配置已导入"));
-            on_complete();
+            if (origin->CanNavigate(ticket)) on_complete();
         });
     };
 
@@ -1090,10 +1114,11 @@ void PushProfileQrScanner(
                 .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
                                           theme.colors.on_surface_variant}),
             huxerui::Button(Localized(scanned ? "重新扫描" : "开始扫码"))
-                .OnClick([fields, navigation, toast,
+                .OnClick([origin, navigation, toast,
                           content = fields.qr_content] {
+                    origin->Advance();
                     PushProfileQrScanner(
-                        fields, navigation, toast,
+                        navigation, toast,
                         [content](std::string result) {
                             content = huxerui::TextEditingValue{
                                 std::move(result)};
@@ -1150,19 +1175,19 @@ void PushProfileQrScanner(
         : isFile                         ? "从文件导入"
         : method == ProfileAddMethod::Url ? "从 URL 导入"
                                           : "PPTP 内网");
-    huxerui::View content = huxerui::ScrollView(
+    huxerui::View content = ProfileFormScroll(
         huxerui::Column(std::move(formFields))
             .With(huxerui::Spacing(16.0F),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
                                 .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
-    huxerui::View action = CompactPrimaryActionButton(
+    huxerui::View action = FormHeaderAction(
         app::images::save, Localized("创建"), import_profile,
-        !fields.importing.Get(), fields.importing.Get());
+        !importing, importing);
     return ProfileFlowPage(huxerui::Text(title, huxerui::TextRole::Title),
-                           ProfileImportAction(fields.importing.Get(), Localized("导入配置"), import_profile),
-                           std::move(content), std::move(on_back), true,
+                           ProfileImportAction(importing, Localized("导入配置"), import_profile),
+                           std::move(content), std::move(go_back), true,
                            std::move(action),
-                           DialogAction(Localized("创建"), import_profile, true, !fields.importing.Get()))
+                           DialogAction(Localized("创建"), import_profile, true, !importing))
         .With(ProfileSecondaryTransition(theme.motion));
 }
 
@@ -1191,7 +1216,7 @@ void PushProfileQrScanner(
         huxerui::UseState(huxerui::TextEditingValue{"30"}),
         huxerui::UseState(huxerui::TextEditingValue{}),
         huxerui::UseState(true),
-        huxerui::UseState(std::string{}), huxerui::UseState(false)};
+        huxerui::UseState(std::string{})};
     const auto back = UseProfileCreateClose(fields, close);
     return ProfileCreateMethodPage(ProfileAddMethod::Url, fields, tasks, toast,
         picker, http, false, navigation, back, close);
@@ -1319,7 +1344,7 @@ void PushProfileQrScanner(
         });
     };
 
-    const auto body = huxerui::ScrollView(
+    const auto body = ProfileFormScroll(
             huxerui::Column {
                     huxerui::TextField(name.Get())
                         .Label(Localized("名称"))
@@ -1357,7 +1382,7 @@ void PushProfileQrScanner(
             }
                 .With(huxerui::Spacing(16.0F),
                       huxerui::CrossAlign(
-                          huxerui::CrossAxisAlignment::Stretch)))
+                          huxerui::CrossAxisAlignment::Stretch)), inDialog)
                 .With(huxerui::Grow(1.0F), huxerui::ScrollBar(), huxerui::Enabled(!saving.Get()));
     if (inDialog) return DialogScaffold(DialogHeader(Localized("编辑订阅")),
         huxerui::View{body}.With(huxerui::Enabled(!saving.Get())),
@@ -1366,7 +1391,7 @@ void PushProfileQrScanner(
     return ProfileFlowPage(huxerui::Text(Localized("编辑订阅"), huxerui::TextRole::Title),
         huxerui::IconButton(app::images::save, Localized("保存"))
             .With(huxerui::Enabled(!saving.Get())).OnClick(save), body, close, false,
-        CompactPrimaryActionButton(app::images::save, Localized("保存"), save, !saving.Get(), saving.Get()));
+        FormHeaderAction(app::images::save, Localized("保存"), save, !saving.Get(), saving.Get()));
 }
 
 [[huxerui::composable]] huxerui::View ProfileEditDialogContent(std::int64_t id, ProfileEditFields fields,
@@ -1494,7 +1519,7 @@ std::function<void()> UseDocumentClose(huxerui::State<TextDocumentHandle> docume
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
                huxerui::Grow(1.0F)),
         close, false,
-        CompactPrimaryActionButton(app::images::save, Localized("保存"), save,
+        FormHeaderAction(app::images::save, Localized("保存"), save,
             !loading.Get() && !saving.Get() && content.Get() != nullptr && content.Get()->Ready(),
             saving.Get()));
 }
