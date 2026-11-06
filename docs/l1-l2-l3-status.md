@@ -18,8 +18,13 @@
   clashflux-required` **31/31，178.82 秒**；`resource_management_runtime` 单独复跑
   通过，`page_transition` 57.78 秒通过。
 - Android `./gradlew :app:assembleDebug` **30 秒通过**，aapt 核验实际 APK
-  versionName 0.3.99 / versionCode 177。未做正式签名、真机或其它平台；删除本地/
-  远端 `v0.3.99` 后在修复提交上重打标签，以新标签 CI 和 Release 资产为准。
+  versionName 0.3.99 / versionCode 177。删除本地/远端 `v0.3.99` 后在修复提交
+  `cd6b048` 上重打标签；标签 CI `42178290924` 全绿（仅 iOS Simulator 诊断 job
+  仍因既有 SweetEditor `Simdutf` 链接失败，不在发布 needs）。Release 已包含
+  x86_64/aarch64 的 tar.gz、deb、rpm，以及 Windows、macOS 和 Android APK；
+  `apksigner --min-sdk-version 23` 确认 v1/v2 均为 true，证书 SHA-256 为
+  `a4a0bc09a3dc76d7ac37f92043d2be6e153bda1347ce344013828e15472419f4`。
+  未做真机安装、真实 VPN 或其它平台实机验收。
 
 ## 2026-11-06：v0.3.99 发布准备
 
