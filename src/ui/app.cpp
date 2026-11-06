@@ -90,6 +90,8 @@ std::vector<std::string> CliTakePendingCommand() { return {}; }
 
 int CliRun(const std::vector<std::string>&) { return 0; }
 
+huxerui::Task<bool> RunPendingCliCommand(huxerui::ApplicationHandle) { co_return false; }
+
 } // namespace
 #else
 namespace {
@@ -106,6 +108,30 @@ std::vector<std::string> CliTakePendingCommand() {
 
 int CliRun(const std::vector<std::string>& args) { return cli::run(args); }
 
+} // namespace
+#endif
+
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+namespace {
+// CLI commands never need a GUI window. Running them from the windowless
+// startup task avoids composing and tearing down pages while the runtime is
+// already stopping. Returns true when a pending command owned this runtime.
+huxerui::Task<bool> RunPendingCliCommand(huxerui::ApplicationHandle application) {
+    auto args = CliTakePendingCommand();
+    if (args.empty()) co_return false;
+    int code = co_await RunOnTaskThread(
+        [args = std::move(args)] { return CliRun(args); });
+    auto& database = clashflux::persistence::persistence();
+    const bool settingsSaved = co_await database.flushSettings();
+    const bool profilesSaved = co_await database.flushProfiles();
+    if (!settingsSaved || !profilesSaved) {
+        std::fprintf(stderr, "Clash-Flux 命令落库失败：%s\n", database.lastError().c_str());
+        code = 1;
+    }
+    CliSetPendingExitCode(code);
+    application.Quit();
+    co_return true;
+}
 } // namespace
 #endif
 
@@ -1034,6 +1060,10 @@ void StartDesktopWindowlessRuntime() {
             settingsModel->RequestSync();
             CliStartCommandServer();
 
+            // 伪 CLI：命令在无窗口启动任务里执行，落库后退出；不组合 GUI 页面。
+            const bool handled = co_await RunPendingCliCommand(application);
+            if (handled) co_return;
+
             if (!runtimeServices->profilesPumpStarted) {
                 runtimeServices->profilesPumpStarted = true;
                 DriveProfilesModel(tasks, profilesModel);
@@ -1219,6 +1249,9 @@ void StartDesktopWindowlessRuntime() {
 
 [[huxerui::composable]] huxerui::View AppRoot() {
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
+    // CLI commands run in StartDesktopWindowlessRuntime; do not build the GUI
+    // tree or start model pumps that would race the command's lifecycle lock.
+    if (CliRuntimeCommandMode()) return huxerui::Row{};
     const huxerui::Locale systemLocale =
         huxerui::UseEnvironment<huxerui::Locale>();
     CLASHFLUX_PREPARE_PLATFORM_DATA(application);
@@ -1325,22 +1358,7 @@ void StartDesktopWindowlessRuntime() {
 
                     // 单实例：owner 启动转发服务；非 owner 的命令由这里代跑。
                     CliStartCommandServer();
-
-                    // 伪 CLI：命令在运行时内执行（窗口隐藏到托盘），落库后退出。
-                    auto args = CliTakePendingCommand();
-                    if (!args.empty()) {
-                        int code = co_await RunOnTaskThread(
-                            [args = std::move(args)] { return CliRun(args); });
-                        const bool settingsSaved = co_await db.flushSettings();
-                        const bool profilesSaved = co_await db.flushProfiles();
-                        if (!settingsSaved || !profilesSaved) {
-                            std::fprintf(stderr, "Clash-Flux 命令落库失败：%s\n", db.lastError().c_str());
-                            code = 1;
-                        }
-                        CliSetPendingExitCode(code);
-                        application.Quit();
-                        co_return;
-                    }
+                    if (co_await RunPendingCliCommand(application)) co_return;
 
                     // 落库失败必须可见：持久化降级（库打不开）时 flush* 会返回
                     // false，以前这里直接丢弃返回值，用户直到重启丢数据才发现。

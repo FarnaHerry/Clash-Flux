@@ -3096,6 +3096,8 @@ struct ProxyProbeFixture {
     std::vector<huxerui::State<bool>> releases;
     huxerui::State<std::int64_t> nativeTime{0};
     huxerui::State<int> nativeDelay{0};
+    huxerui::State<std::int64_t> pollTime{0};
+    huxerui::State<int> pollDelay{0};
     int requests = 0, started = 0, active = 0, peak = 0;
     huxerui::State<int> selected{0};
     std::vector<std::string> singleTags;
@@ -3143,7 +3145,11 @@ void StartProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture, huxerui::Task
                     delays["node-" + std::to_string(index)] = result;
                 }
                 co_return delays;
-            }, [] { return true; });
+            }, [] { return true; },
+            [fixture](const std::string& tag) -> std::optional<std::pair<int, std::int64_t>> {
+                if (tag != "node-0" || fixture->pollTime.Get() == 0) return std::nullopt;
+                return std::pair{fixture->pollDelay.Get(), fixture->pollTime.Get()};
+            });
     }
     tasks.Launch([model, ticket, native]() -> huxerui::Task<void> {
         co_await WaitForProxyTestBatch(model, ticket, native);
@@ -3195,9 +3201,17 @@ void testProxyProbesSurvivePageRetirement() {
     toggle();
     check(ui.Find(UiSelector::Text("PROBE-TESTING")).Exists() && fixture->requests == 1,
           "remount restores pending measurement without restarting it");
-    toggle(); fixture->releases[0] = true; settle(); toggle();
-    check(ui.Find(UiSelector::Text("PROBE:137")).Exists() && fixture->started == 1 &&
-          ui.Find(UiSelector::Text("PROBE-BATCH-READY")).Exists(), "group results complete while the page is absent");
+    fixture->pollDelay = 88;
+    fixture->pollTime = std::int64_t{7};
+    settle();
+    check(ui.Find(UiSelector::Text("PROBE:88")).Exists() && fixture->model->pending.Get() == 11 &&
+          ui.Find(UiSelector::Text("PROBE-BATCH-BUSY")).Exists(),
+          "kernel snapshot publishes each node before the group batch returns");
+    toggle(); fixture->pollTime = 0; fixture->releases[0] = true; settle(); toggle();
+    check(ui.Find(UiSelector::Text("PROBE:88")).Exists() && fixture->model->pending.Get() == 0 &&
+          fixture->model->probes.at("node-1")->value.Get().delay == 137 &&
+          ui.Find(UiSelector::Text("PROBE-BATCH-READY")).Exists(),
+          "incremental node result remains while the rest of the batch completes");
     ui.Find(UiSelector::Text("Fail probe")).Tap(); ui.Pump(); toggle(); fixture->releases[1] = true; settle(); toggle();
     check(ui.Find(UiSelector::Text("PROBE-TIMEOUT")).Exists() && ui.Find(UiSelector::Text("PROBE-BATCH-READY")).Exists(),
           "measurement exceptions survive remount and clear pending state");

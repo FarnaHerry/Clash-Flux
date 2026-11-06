@@ -532,7 +532,8 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
     // Linux discovers the status notifier host asynchronously after OnActivate.
     tasks.Launch([runtime, commandMode, startupWantsHidden]() -> huxerui::Task<void> {
         if (commandMode) {
-            runtime->OpenHiddenWindow();
+            // CLI commands run in StartDesktopWindowlessRuntime; creating a
+            // hidden GUI window would compose pages only to tear them down.
         } else if (startupWantsHidden) {
             for (int attempt = 0; attempt < 20 && !runtime->tray.IsAvailable(); ++attempt)
                 co_await huxerui::Delay(std::chrono::duration<double>{0.1});
@@ -552,7 +553,7 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
         }
         runtime->startupDecisionPending = false;
     });
-    if (startupWantsHidden) StartDesktopWindowlessRuntime();
+    if (startupWantsHidden || commandMode) StartDesktopWindowlessRuntime();
 
     const auto tray = runtime->tray;
     const bool initialTrayEnabled = startupSettings.trayEnabled;

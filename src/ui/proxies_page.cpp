@@ -587,21 +587,25 @@ std::function<void()> NodeSelectAction(
                     if (testModel->Start(probe, generation, node.urlTestTime)) targets.push_back({node.name, probe});
                 }
                 const bool native = ProxyTestUsesNativeGroup();
+                const auto pollProbe = [proxiesModel](const std::string& tag)
+                    -> std::optional<std::pair<int, std::int64_t>> {
+                    const auto snapshot = proxiesModel->snapshot.Get().proxies;
+                    if (!snapshot) return std::nullopt;
+                    const auto node = snapshot->entries.find(tag);
+                    if (node == snapshot->entries.end()) return std::nullopt;
+                    return std::pair{node->second.delay, node->second.testTime};
+                };
                 if (native) {
                     LaunchNativeProxyProbeBatch(testTasks, testModel, std::move(targets), generation, valid,
-                        [proxiesModel](const std::string& tag) -> std::optional<std::pair<int, std::int64_t>> {
-                            const auto snapshot = proxiesModel->snapshot.Get().proxies;
-                            if (!snapshot) return std::nullopt;
-                            const auto node = snapshot->entries.find(tag);
-                            if (node == snapshot->entries.end()) return std::nullopt;
-                            return std::pair{node->second.delay, node->second.testTime};
-                        });
+                        pollProbe);
                 } else {
                     // 所有组都由内核批量测速；不要逐节点 fan-out，否则会
                     // 丢失组 URL / 组参数，也无法得到与 sing-box 相同的
-                    // 并发和历史写入顺序。
+                    // 并发和历史写入顺序。内核批处理期间轮询 /proxies，
+                    // 让每个节点在自己的结果写入 history 后立即显示。
                     LaunchProxyGroupProbeBatch(testTasks, testModel, groupName,
-                        std::move(targets), generation, MeasureProxyGroupDelay, valid);
+                        std::move(targets), generation, MeasureProxyGroupDelay, valid,
+                        pollProbe);
                 }
                 testModel->Broadcast(generation, groupName);
                 co_await WaitForProxyTestBatch(testModel, generation, native);

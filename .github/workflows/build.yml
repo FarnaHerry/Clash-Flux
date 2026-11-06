@@ -25,10 +25,7 @@
 #     不会触发回落）；android job 只复用 tarball 里的 huxerui CLI，原生框架与
 #     项目使用同一提交的源码，避免 SDK 头文件与源码 API 漂移。
 #
-# 实验性 / 诊断 job（continue-on-error: true）及原因：
-#   * build-linux-arm64：ubuntu-24.04-arm 原生 runner + ubuntu:24.04 容器，
-#     配方与 x86_64 完全相同，但 arm64 runner 的 LLVM 源仓库可用性未经首跑验证；
-#     连续绿后摘掉 continue-on-error。
+# 诊断 job（continue-on-error: true）：
 #   * build-ios-simulator-arm64：macOS 上编译 Clash-Flux 的 HuxerUI app 壳与
 #     Packet Tunnel extension，并由与其他平台相同的 sing-box revision 生成
 #     iOS device/Simulator Libbox.xcframework。它生成的只是未签名 Simulator 构建，
@@ -81,7 +78,7 @@ env:
   # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
   # CI 必须自行 clone 并钉 commit，保证可复现）。框架补丁集中维护在
   # farna/main；main 保留官方基线。验证集成更新后同步本机 checkout 与此 pin。
-  HUXERUI_COMMIT: '97d6fed1b6986655e4e744e157218917d5ebb0cb'
+  HUXERUI_COMMIT: '69f24079bafa4f19d31e387e66a6b9bac8f3776f'
   SINGBOX_COMMIT: 'c005f35300ce76427dc285481ec5695f5b179cd2' # v1.14.4
 
 jobs:
@@ -106,11 +103,8 @@ jobs:
         include:
           - arch: x86_64
             runner: ubuntu-24.04
-            experimental: false
           - arch: arm64
             runner: ubuntu-24.04-arm
-            experimental: true   # 首跑验证 noble arm64 LLVM 源后摘掉
-    continue-on-error: ${{ matrix.experimental }}
     steps:
       - name: Install container baseline
         run: |
@@ -899,9 +893,11 @@ jobs:
           test -s "release/clash-flux-${release_version}-windows-x86_64.zip"
           test -s "release/clash-flux-${release_version}-windows-x86_64.exe"
           test -s "release/clash-flux-${release_version}-android-arm64-v8a.apk"
-          test -n "$(find release -type f -name '*.tar.gz' -print -quit)"
-          test -n "$(find release -type f -name '*.deb' -print -quit)"
-          test -n "$(find release -type f -name '*.rpm' -print -quit)"
+          for arch in x86_64 aarch64; do
+            test -s "release/clash-flux-${release_version}-linux-${arch}.tar.gz"
+            test -s "release/clash-flux-${release_version}-linux-${arch}.deb"
+            test -s "release/clash-flux-${release_version}-linux-${arch}.rpm"
+          done
           ls -lh release
 
       - name: Publish GitHub Release

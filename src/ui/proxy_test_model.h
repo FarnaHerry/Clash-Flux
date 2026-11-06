@@ -143,20 +143,46 @@ struct ProxyProbeTarget {
 // One kernel-side group test supplies delays for every target. This replaces
 // UI-side per-node fan-out so the kernel owns the group URL, concurrency and
 // history write order (sing-box /group/{name}/delay semantics).
-template<class Measure, class Valid>
+template<class Measure, class Valid, class Poll>
 void LaunchProxyGroupProbeBatch(huxerui::TaskScope tasks, std::shared_ptr<ProxyTestModel> model,
     std::string group, std::vector<ProxyProbeTarget> targets, int ticket,
-    Measure measure, Valid valid) {
-    tasks.Launch([model, group = std::move(group), targets = std::move(targets),
-                  ticket, measure, valid]() -> huxerui::Task<void> {
+    Measure measure, Valid valid, Poll poll) {
+    struct BatchResult {
+        bool done = false;
+        std::map<std::string, int> delays;
+    };
+    auto result = std::make_shared<BatchResult>();
+    // The kernel batch response only arrives after every member finishes. Run
+    // it beside a snapshot poll so each node can publish its own delay as soon
+    // as the kernel history/proxies snapshot reports it.
+    tasks.Launch([result, group = std::move(group), measure, valid]() -> huxerui::Task<void> {
         std::map<std::string, int> delays;
         if (valid()) {
             try { delays = co_await measure(group); } catch (...) {}
         }
+        result->delays = std::move(delays);
+        result->done = true;
+    });
+    tasks.Launch([model, targets = std::move(targets), ticket, valid, poll, result]() -> huxerui::Task<void> {
+        for (int attempt = 0; attempt < 124; ++attempt) {
+            if (!valid() || !model->Current(ticket)) co_return;
+            if (result->done) break;
+            for (const auto& target : targets) {
+                const auto& probe = target.probe;
+                if (!probe->value.Get().testing) continue;
+                const auto measured = poll(target.tag);
+                if (measured && measured->first > 0 &&
+                    measured->second > probe->baselineTime.Get()) {
+                    model->Complete(probe, ticket, measured->first);
+                    probe->baselineTime = measured->second;
+                }
+            }
+            co_await huxerui::Delay(std::chrono::duration<double>{0.25});
+        }
         if (!valid() || !model->Current(ticket)) co_return;
         for (const auto& target : targets) {
-            const auto found = delays.find(target.tag);
-            model->Complete(target.probe, ticket, found == delays.end() ? 0 : found->second);
+            const auto found = result->delays.find(target.tag);
+            model->Complete(target.probe, ticket, found == result->delays.end() ? 0 : found->second);
         }
     });
 }

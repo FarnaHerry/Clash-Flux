@@ -1,5 +1,26 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-06：v0.3.99 修复并重打标签
+
+- 跟进已发布 `farna/main` `69f24079`（合入官方 `82a3e134` / PR #152，修复单行
+  TextField 横向滚动后尾部光标不可见）；本机 `third_party/huxerui`、CI pin 与
+  [HuxerUI fork](huxerui-fork.md) 同步，五项扩展 pin 不变。
+- 代理页整体测速仍用内核 `/group/{name}/delay` 批量执行；批处理期间轮询
+  `/proxies` 快照，每个节点在历史写入后立即完成自己的探针并显示延迟，不再等整组。
+  `page_transition` 增加增量完成与最终结果共存的断言。
+- CLI 改为在无窗口启动任务中执行，`AppRoot` 在命令模式下跳过 GUI 组合；避免
+  隐藏窗口停止时 `UseApplicationTaskScope` 的未捕获异常，也避免 CoreModel 数据泵
+  与服务维护抢占资源调度的生命周期锁。`resource_management_runtime` 恢复通过。
+- CI 将 Linux arm64 从 `continue-on-error` 实验项提升为发布门禁；`publish-release`
+  显式要求 x86_64/aarch64 的 tar.gz、deb、rpm，避免缺少架构仍创建 Release。
+- `cmake --build build -j 4`、`./run.sh --version`（v0.3.99）、`git diff --check`
+  通过。`ctest --test-dir build --output-on-failure --no-tests=error -L
+  clashflux-required` **31/31，178.82 秒**；`resource_management_runtime` 单独复跑
+  通过，`page_transition` 57.78 秒通过。
+- Android `./gradlew :app:assembleDebug` **30 秒通过**，aapt 核验实际 APK
+  versionName 0.3.99 / versionCode 177。未做正式签名、真机或其它平台；删除本地/
+  远端 `v0.3.99` 后在修复提交上重打标签，以新标签 CI 和 Release 资产为准。
+
 ## 2026-11-06：v0.3.99 发布准备
 
 - 基于 `76896d8` 整理当前工作区：滚动页首尾留白归属、窄屏表单标题栏主操作、
