@@ -78,7 +78,7 @@ env:
   # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
   # CI 必须自行 clone 并钉 commit，保证可复现）。框架补丁集中维护在
   # farna/main；main 保留官方基线。验证集成更新后同步本机 checkout 与此 pin。
-  HUXERUI_COMMIT: '69f24079bafa4f19d31e387e66a6b9bac8f3776f'
+  HUXERUI_COMMIT: '144aff6be5f8fc8ba09eaaa7189a375322aa01af'
   SINGBOX_COMMIT: 'c005f35300ce76427dc285481ec5695f5b179cd2' # v1.14.4
 
 jobs:
@@ -782,6 +782,12 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Build Android package (GUI/native shell + sing-box libbox)
+        env:
+          # The pinned offline CLI only orchestrates the build; Java/native come
+          # from --source (HuxerUI 0.4.0). Pass release size options as Gradle
+          # properties because the 0.3 CLI does not expose --optimization/--lto.
+          ORG_GRADLE_PROJECT_huxeruiOptimization: minsize
+          ORG_GRADLE_PROJECT_huxeruiLto: 'ON'
         run: |
           set -euo pipefail
           huxerui build android --source huxerui-source --profile release

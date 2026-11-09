@@ -156,6 +156,10 @@ def huxeruiNdkVersion = huxeruiProperty("huxeruiNdkVersion")
 def clashfluxTargetAbis = ["arm64-v8a"]
 def singboxAarAbis = ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"]
 def huxeruiStl = huxeruiProperty("huxeruiStl")
+// `huxerui build android --optimization ... --lto ...` forwards these as Gradle
+// properties; pass them to CMake, which applies them to source-built targets.
+def huxeruiOptimization = providers.gradleProperty("huxeruiOptimization").getOrElse("default")
+def huxeruiLto = providers.gradleProperty("huxeruiLto").getOrElse("OFF")
 def releaseKeystoreFile = providers.gradleProperty("clashfluxReleaseKeystoreFile").orNull
 def releaseKeystorePassword = providers.gradleProperty("clashfluxReleaseKeystorePassword").orNull
 def releaseKeyAlias = providers.gradleProperty("clashfluxReleaseKeyAlias").orNull
@@ -192,13 +196,15 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 178
-        versionName = "0.3.100"
+        versionCode = 179
+        versionName = "0.3.101"
 
         externalNativeBuild {
             cmake {
                 arguments "-DANDROID_STL=${huxeruiStl}",
-                        "-DHUXERUI_HOME=${huxeruiHome.absolutePath}"
+                        "-DHUXERUI_HOME=${huxeruiHome.absolutePath}",
+                        "-DHUXERUI_OPTIMIZATION=${huxeruiOptimization}",
+                        "-DHUXERUI_ENABLE_LTO=${huxeruiLto}"
             }
         }
 

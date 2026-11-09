@@ -9,7 +9,7 @@ nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归�
 归档版本及来源以本项目清单为准。
 
 应用当前的 HuxerUI fork 源码提交与检出命令见 [固定版本](../docs/huxerui-fork.md)；本机独立 checkout、CI 和 Android Java/native 共用该身份，不消费维护工作树。
-当前源码基线为 SDK 0.4.0（`69f2407`）；下表 0.3.0 是仍然保留的离线 SDK 归档身份，不是源码版本。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
+当前源码基线为 SDK 0.4.0（`144aff6b`）；下表 0.3.0 是仍然保留的离线 SDK 归档身份，不是源码版本；0.3.0 离线包不满足当前 0.4.0 构建要求。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
 
 ## 清单与来源
 

@@ -22,7 +22,7 @@
 #include "profile_file_picker.h"
 #include "task_bridge.h"
 #if defined(__ANDROID__)
-#include <huxerui/medialibrary.h>
+#include <huxerui/media_library.h>
 #include "qr_photo_decoder.h"
 #include "qr_scanner_control.h"
 #endif

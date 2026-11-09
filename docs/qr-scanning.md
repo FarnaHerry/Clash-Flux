@@ -33,7 +33,7 @@ URL/PPTP 创建表单的忙态也归当前实例，不随公共草稿传给下�
 
 ## 依赖与体积
 
-直接消费官方 [Lib-Media 固定源码](https://github.com/HuxerUI/Lib-Media/tree/f45eb3c78fcb67dc76853df6573df6c2d16e28b1)，
+直接消费官方 [Lib-Media 固定源码](https://github.com/HuxerUI/Lib-Media/tree/01341304bdce46f109cc16d61b717add6dedc101)，
 URL/完整 SHA 在 `cmake/dependencies/Lock.cmake`，通过 `HuxerUI::Media` 安装并使用
 `UseMediaPicker().PickAsync({MediaPickerFilter::Images, 1})`。未修改上游库或建立 fork。
 Android native 与 Java 库图使用同一固定提交，桌面主目标不引入 Media。
@@ -42,10 +42,11 @@ Android native 与 Java 库图使用同一固定提交，桌面主目标不引�
 应用未创建播放器或播放会话，但构建仍带入播放器依赖；当前应用未启用 R8，
 不能假定仅调用图片选择 API 就会剔除所有播放代码。目前保留完整 Media 集成。
 
-**TODO（等待上游）：**据作者反馈（用户转述），Android 将在 0.4 Release 前
-调整为全静态链接，以改善未使用代码的裁剪。现有实测增量为 2.92 MiB，先接受该体积，
-暂不为裁剪创建 Media fork。等作者发布对应提交后，升级固定版本并以相同 ABI/构建类型
-复测 APK、native 与 DEX 的各自增量，再决定是否需要额外裁剪。
+**上游进展：**HuxerUI 0.4.0（`6eee8f86`）已实现 Android 静态链接与 release
+优化/LTO；本仓库已按新工程格式迁移，见[Android 构建](android-build.md#huxerui-04-工程格式)。
+下面的 2026-11-05 增量是旧 shared 框架、Debug 构建的基线，不再代表当前 Release 包；
+当前 SDK 0.4 arm64 Release（`minsize`+LTO）整包为 37.80 MiB，尚未重新测量
+"不含 Media" 的对照，因此不能据此更新增量列。
 
 2026-11-05 本地测量：应用 `2087af19802f48f7884a471f4bc3edf0be8d677e`（v0.3.97）
 与本轮改动比较，HuxerUI `129209bc`、Camera `48b11d6` 及其它既有依赖相同。

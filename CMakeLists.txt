@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.100 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.101 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -189,12 +189,14 @@ endif ()
 # 源码模式
 if (CLASHFLUX_HUXERUI_SOURCE_DIR)
     set(CLASHFLUX_HUXERUI_FROM_SOURCE ON)
-    # 桌面源码模式只用 shared HuxerUI，避免应用误链静态切片；iOS 只支持
-    # static，Clash-Flux CI 用它编译真正的 iOS Simulator app core。
-    if (IOS)
+    # 0.4.0 起应用默认静态链接 HuxerUI：Android/iOS 只提供 static 切片，
+    # Android 静态库把框架链接进 lib<app>.so。桌面仍显式用 shared——static
+    # 切片在 Linux 链接需要 gtk4 开发包，本仓库桌面运行时不使用该切片。
+    if (ANDROID OR IOS)
         set(HUXERUI_BUILD_SHARED OFF)
         set(HUXERUI_BUILD_STATIC ON)
     else ()
+        set(HUXERUI_BUILD_SHARED ON)
         set(HUXERUI_BUILD_STATIC OFF)
     endif ()
     # 上游预置宿主工具可能落后于源码（linux 预置 hrc 旧 → 新运行时解旧资源包直接
@@ -247,9 +249,14 @@ else ()
     endif ()
     set(HuxerUI_DIR "${HUXERUI_SDK_DIR}/lib/cmake/HuxerUI" CACHE PATH "HuxerUI package" FORCE)
     set(HUXERUI_RESOURCES_BIN "${HUXERUI_SDK_DIR}/share/huxerui/resources/huxerui/resources.bin" CACHE INTERNAL "")
-    # shared 组件：桌面 Linux/Windows 运行时动态库（static 切片在 Linux 要 gtk4
-    # 开发包，本仓库不用）。
-    find_package(HuxerUI 0.3.0 CONFIG REQUIRED COMPONENTS shared
+    # 组件：桌面 Linux/Windows 运行时用 shared 动态库（static 切片在 Linux 要
+    # gtk4 开发包，本仓库不用）；Android/iOS 的 SDK 只提供 static 切片。
+    if (ANDROID OR IOS)
+        set(CLASHFLUX_HUXERUI_SDK_COMPONENT static)
+    else ()
+        set(CLASHFLUX_HUXERUI_SDK_COMPONENT shared)
+    endif ()
+    find_package(HuxerUI 0.4.0 CONFIG REQUIRED COMPONENTS ${CLASHFLUX_HUXERUI_SDK_COMPONENT}
         PATHS "${HUXERUI_SDK_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 endif ()
 

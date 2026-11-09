@@ -53,9 +53,6 @@ public final class MainActivity extends HuxerUIActivity {
     private static final String TAG = "ClashFlux";
     private static final int REQUEST_VPN_CONSENT = 4001;
     static {
-        Log.i(TAG, "Loading application native library: " + BuildConfig.HUXERUI_APP_LIBRARY);
-        System.loadLibrary(BuildConfig.HUXERUI_APP_LIBRARY);
-        Log.i(TAG, "Application native library loaded");
         installCrashLogger();
     }
 

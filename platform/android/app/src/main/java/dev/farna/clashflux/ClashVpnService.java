@@ -159,7 +159,6 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         thread.setDaemon(true);
         return thread;
     });
-    static { System.loadLibrary(BuildConfig.HUXERUI_APP_LIBRARY); }
     private static native void nativeCoreState(int state, String message);
     private static native void nativeVpnState(int state, String message);
     private static native void nativeVpnStats(long uploadRate, long downloadRate,

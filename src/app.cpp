@@ -11,7 +11,7 @@
 #include "ui/app_update_model.h"
 #include "ui/proxies_model.h"
 #if defined(__ANDROID__)
-#include <huxerui/medialibrary.h>
+#include <huxerui/media_library.h>
 #include "ui/qr_photo_decoder.h"
 #endif
 

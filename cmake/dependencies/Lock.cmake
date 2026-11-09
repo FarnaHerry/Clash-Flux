@@ -31,15 +31,15 @@ set(CLASHFLUX_DEPENDENCY_FILES
 
 # Framework extensions still use the framework's codegen/resource/Android graph.
 set(CLASHFLUX_HUXERUI_CAMERA_URL "https://github.com/FarnaHerry/Lib-Camera.git")
-set(CLASHFLUX_HUXERUI_CAMERA_COMMIT "48b11d6bb5ef0246c86ff7638e882f18b27b8db0")
+set(CLASHFLUX_HUXERUI_CAMERA_COMMIT "5d6b8e814e3e5d8c22e63a4e470c2b6c1cd82cd0")
 set(CLASHFLUX_HUXERUI_SQLITE_URL "https://github.com/FarnaHerry/Lib-SQLite.git")
-set(CLASHFLUX_HUXERUI_SQLITE_COMMIT "3b286a2d7e64f205eeb935a52b0706067886abd0")
+set(CLASHFLUX_HUXERUI_SQLITE_COMMIT "882665a9772cc973b1cbfb7f491913703da1d636")
 set(CLASHFLUX_HUXERUI_CHARTS_URL "https://github.com/FarnaHerry/Lib-Charts.git")
-set(CLASHFLUX_HUXERUI_CHARTS_COMMIT "e90cfa84707bdf72eb6029410bf05c420efa62fc")
+set(CLASHFLUX_HUXERUI_CHARTS_COMMIT "a879e96c64499b18f355b88648e1698fb5a25f72")
 set(CLASHFLUX_HUXERUI_CODEEDITOR_URL "https://github.com/FarnaHerry/Lib-CodeEditor.git")
 set(CLASHFLUX_HUXERUI_CODEEDITOR_COMMIT "a332e7c3158818a891bb8181756d439a62df6268")
 set(CLASHFLUX_HUXERUI_MEDIA_URL "https://github.com/HuxerUI/Lib-Media.git")
-set(CLASHFLUX_HUXERUI_MEDIA_COMMIT "f45eb3c78fcb67dc76853df6573df6c2d16e28b1")
+set(CLASHFLUX_HUXERUI_MEDIA_COMMIT "01341304bdce46f109cc16d61b717add6dedc101")
 
 function(clashflux_dependency_source name)
     clashflux_extract(${name} "${CLASHFLUX_DEP_${name}_ARCHIVE}"

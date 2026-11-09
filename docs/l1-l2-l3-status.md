@@ -1,5 +1,48 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-09：迁移到 HuxerUI 0.4.0 工程格式
+
+- 框架源码/CI pin 从 `49faac65`（0.3 集成）更新到
+  `144aff6be5f8fc8ba09eaaa7189a375322aa01af`（0.4.0 合并线，已推送到
+  `origin/farna/main`）。`36f93958` 的 0.4.0 发布树缺少
+  `include/huxerui/linux/window.h`，会让 Lib-Camera 桌面编译失败；`062f3092`
+  合并 upstream 后恢复，`144aff6b` 继续合入文件 I/O 与内部重命名。
+- 扩展库同步到各自 SDK 0.4 迁移合并并推送：Lib-Camera `5d6b8e81`、
+  Lib-SQLite `882665a`、Lib-Charts `a879e96c`、Lib-CodeEditor `a332e7c`
+  （pin 不变）；Lib-Media 使用官方 `01341304`。
+- 工程格式迁移：Android/iOS 源码模式构建 static 切片，SDK 模式请求 `static`
+  组件；Android 新增 `MainApplication`（`Application` 初始化时加载
+  `BuildConfig.HUXERUI_APP_LIBRARY`），manifest 声明 `android:name`，移除
+  `MainActivity`/`ClashVpnService` 的重复加载；`huxeruiStl` 改为 `c++_static`；
+  `app/build.gradle` 转发 `huxeruiOptimization`/`huxeruiLto`。桌面仍显式使用
+  shared。
+- 验证（arm64-v8a Release，本地 debug keystore）：
+  - SDK 0.4.0 + `minsize`/LTO：`39,400,763 B`（37.57 MiB），仅
+    `arm64-v8a`，无 `libc++_shared.so`/`libhuxerui.so`，v1/v2 签名通过。
+  - 源码 pin `144aff6b` + 默认 Release：`40,695,859 B`（38.81 MiB），
+    `libclash-flux.so` 导出 `Java_*`/`JNI_OnLoad`，v1/v2 通过。
+  - 桌面：`cmake --build build`、`./run.sh --version`（v0.3.101）、
+    `git diff --check` 通过；`ctest -L clashflux-required` **32/32**。
+- 边界：未做真机安装/启动、未使用正式发布密钥；SDK 0.4.0 安装包本身早于
+  `062f3092`（仅影响其 Linux 头文件，Android 不受影响）；Lib-Media 使用官方
+  `01341304`，其余四项扩展使用本 fork 的 0.4 迁移合并提交。
+
+## 2026-11-07：跟进 HuxerUI fork `49faac65`
+
+- 已发布的 `farna/main` 新增两项 fork 提交：`f80e0190` 简化未用参数与返回值处理
+  （默认虚函数参数改为未命名/注释形式、`[[nodiscard]]` 属性增删）与 `a6dee54a`
+  刷新 prebuilt host tools，经合并提交 `49faac65` 进入集成分支；无新官方基线
+  （第二个父提交基于已在 `69f24079` 合入的 `82a3e134`），无 API 签名或行为变化。
+- 本机 `third_party/huxerui` checkout、CI `HUXERUI_COMMIT` 与
+  [HuxerUI fork](huxerui-fork.md) 固定同步更新到 `49faac65`；五项扩展 pin 不变，
+  应用无需页面迁移。
+- 验证：`cmake --build build --target clash-flux`、`./run.sh --version`
+  （v0.3.100）、`git diff --check` 通过；`ctest --output-on-failure --no-tests=error
+  -L clashflux-required` **32/32，462.03 秒**，含 page_transition、ui_resources、
+  cps_dependencies。
+- 边界：本轮为框架风格清理跟进，未做 Android/Windows/macOS 原生构建与 GUI 实机
+  操作验收；prebuilt host tools 刷新不影响应用（构建从源码编译 hcg/hrc）。
+
 ## 2026-11-06：v0.3.100 桌面代理测速逐个显示修复
 
 - 根因：桌面 `/proxies` 只在 `history[].time` 返回最近测速时间（RFC3339Nano），

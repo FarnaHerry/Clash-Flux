@@ -25,6 +25,27 @@ huxerui build android --profile debug
 `--source` 时，则两者一起使用该指定源码。构建配置会打印 Gradle 实际选中的 Android Java
 模块或 AAR 路径，可用于确认没有混用版本。
 
+## HuxerUI 0.4 工程格式
+
+0.4.0 起应用默认静态链接 HuxerUI，Android 工程按生成器格式包含以下约束：
+
+- `platform/android/app/build.gradle` 把 `huxeruiOptimization`/`huxeruiLto`
+  Gradle 属性转成 `HUXERUI_OPTIMIZATION`/`HUXERUI_ENABLE_LTO` CMake 参数；
+  `huxerui build android --optimization minsize --lto on` 依赖这两项。
+- `gradle.properties` 使用 `huxeruiStl=c++_static`，不再随包携带
+  `libc++_shared.so`；仓库内其它 JNI 库和 libbox 均不依赖该共享库。
+- 框架静态链接进 `libclash-flux.so`，不再有独立的 `libhuxerui.so`。
+- `MainApplication` 在 `Application` 初始化时加载
+  `BuildConfig.HUXERUI_APP_LIBRARY`，manifest 的 `<application>` 必须声明
+  `android:name=".MainApplication"`；不能在 `MainActivity`/`VpnService`
+  里加载，否则 HuxerUI 超类初始化可能早于 native 库。`:background` 进程
+  使用同一 Application，因此服务端也无需重复加载。
+- 源码模式下 Android/iOS 只构建 static 切片；桌面仍显式使用 shared，
+  因为 Linux 链接 static 切片需要 gtk4 开发包。
+- 源码/CI pin 使用 `062f3092`（0.4.0 合并线）。已发布的 0.4.0 SDK 包早于该
+  合并，缺少 `include/huxerui/linux/window.h`，只影响用该 SDK 做桌面构建；
+  Android 的 AAR/static 切片不受影响。
+
 ## 扩展库与相册选择
 
 `huxerui_use_library(URL, COMMIT)` 同时提供 native 依赖和 Android Java 库图。

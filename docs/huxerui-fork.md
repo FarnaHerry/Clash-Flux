@@ -4,15 +4,37 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `69f24079bafa4f19d31e387e66a6b9bac8f3776f`，各平台 CI 共用
+Clash-Flux 当前固定 `144aff6be5f8fc8ba09eaaa7189a375322aa01af`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
 
 Media 选择器直接使用官方 [HuxerUI/Lib-Media](https://github.com/HuxerUI/Lib-Media)，
-固定提交 `f45eb3c78fcb67dc76853df6573df6c2d16e28b1`，本轮未创建 fork 或修改库源码。
+固定提交 `01341304bdce46f109cc16d61b717add6dedc101`，本轮未创建 fork 或修改库源码。
 应用仅在 Android 集成相册图片选择；当前上游整体构建，尚无 picker-only 开关，
-功能、APK 体积比较及等待上游 Android 静态链接调整的 TODO 见[二维码扫描](qr-scanning.md)。
+APK 体积比较见[二维码扫描](qr-scanning.md)（0.4.0 已提供 Android 静态链接）。
+
+2026-11-09 更新到 [`144aff6b`](https://github.com/FarnaHerry/HuxerUI/commit/144aff6be5f8fc8ba09eaaa7189a375322aa01af)（HuxerUI 0.4.0）：
+`6eee8f86` 起应用默认静态链接框架，Android 把 HuxerUI 静态库链入
+`libclash-flux.so`，由 `MainApplication` 在 `Application` 初始化时加载；模板同时改用
+`c++_static`，并新增 `HUXERUI_OPTIMIZATION`/`HUXERUI_ENABLE_LTO` 覆盖入口。
+`36f93958` 的 0.4.0 发布树缺少 `include/huxerui/linux/window.h`，Lib-Camera 固定提交
+在 Linux 上依赖它；`062f3092` 合并 upstream 后恢复该头文件，`144aff6b` 继续合入
+upstream 的文件引用/随机访问流与内部重命名，因此源码/CI pin 采用 `144aff6b`。
+本仓库按生成器格式迁移：`CMakeLists.txt` 在 Android/iOS 构建 static 切片、SDK 模式
+选择 static 组件；Android 增加 `MainApplication`、manifest 声明并在
+`app/build.gradle` 转发优化/LTO 属性；`huxeruiStl` 改为 `c++_static`。
+扩展库同步到 SDK 0.4 迁移提交：Lib-Camera `5d6b8e8`、Lib-SQLite `882665a`、
+Lib-Charts `a879e96`、Lib-CodeEditor `a332e7c`；Lib-Media 使用官方 `01341304`。
+验收见 [L1 / L2 / L3 记录](l1-l2-l3-status.md)。
+
+2026-11-07 更新到 [`49faac65`](https://github.com/FarnaHerry/HuxerUI/commit/49faac65d83aa1a6066326aaba431a4f8a953503)：
+已发布的 `farna/main` 仅新增两项 fork 提交，无新官方基线：`f80e0190` 简化未用参数与
+返回值处理（默认虚函数参数改为未命名或注释形式、`[[nodiscard]]` 属性增删），
+`a6dee54a` 刷新 prebuilt host tools（应用不消费 prebuilt 工具，构建从源码编译）。
+无 API 签名或行为变化，应用无需页面迁移，五项扩展 pin 不变。
+本机独立 checkout 与 CI/Android Java/native 统一固定到上述 SHA；验收见
+[L1 / L2 / L3 记录](l1-l2-l3-status.md)。
 
 2026-11-06 更新到 [`69f24079`](https://github.com/FarnaHerry/HuxerUI/commit/69f24079bafa4f19d31e387e66a6b9bac8f3776f)：
 已发布的 `farna/main` 合入官方 `82a3e134`（PR #152），修复单行 TextField
@@ -145,8 +167,8 @@ Lib-Charts、Lib-SQLite、Lib-Camera、Lib-CodeEditor 的项目修复已收录�
 
 | 库 | 固定提交 | 项目补丁审核 |
 | --- | --- | --- |
-| [Lib-Charts](https://github.com/FarnaHerry/Lib-Charts/tree/farna/main) | `e90cfa84707bdf72eb6029410bf05c420efa62fc` | 饼图、96pt 紧凑绘图面与 `inner_radius` 圆环样式（环形段外弧+反向内弧、NonZero 填充，取全图最大解析值）均已包含，原两份补丁 reverse check 通过；包含 `rounded_caps`、中心占比/180ms 悬停动画，全零数据按条目数等分且中心保持 0%。 |
-| [Lib-SQLite](https://github.com/FarnaHerry/Lib-SQLite/tree/farna/main) | `3b286a2d7e64f205eeb935a52b0706067886abd0` | 启动临时只读查询已包含，原补丁 reverse check 通过；另保留逐值 UTF-8 校验，主键 schema 校验收紧为仅 INTEGER 单列 rowid 别名可视为非空（TEXT/复合/`DESC` 主键必须显式 NOT NULL），集成测试同步覆盖。 |
+| [Lib-Charts](https://github.com/FarnaHerry/Lib-Charts/tree/farna/main) | `a879e96c64499b18f355b88648e1698fb5a25f72` | 饼图、96pt 紧凑绘图面与 `inner_radius` 圆环样式（环形段外弧+反向内弧、NonZero 填充，取全图最大解析值）均已包含，原两份补丁 reverse check 通过；包含 `rounded_caps`、中心占比/180ms 悬停动画，全零数据按条目数等分且中心保持 0%。 |
+| [Lib-SQLite](https://github.com/FarnaHerry/Lib-SQLite/tree/farna/main) | `882665a9772cc973b1cbfb7f491913703da1d636` | 启动临时只读查询已包含，原补丁 reverse check 通过；另保留逐值 UTF-8 校验，主键 schema 校验收紧为仅 INTEGER 单列 rowid 别名可视为非空（TEXT/复合/`DESC` 主键必须显式 NOT NULL），集成测试同步覆盖。 |
 | [Lib-Camera](https://github.com/FarnaHerry/Lib-Camera/tree/farna/main) | `48b11d6bb5ef0246c86ff7638e882f18b27b8db0` | 已采用 ApplicationContext/UiWindow；Android/iOS 改用窗口级模块工厂并绑定原窗口，拍照等待改用 `AwaitCallback`；新增 Linux V4L2 预览/拍照与 X11、ScreenCast/PipeWire 屏幕选区，桌面屏幕源使用框架 `129209bc` 的原生 surface 锚点；macOS 屏幕选区显式限定 `huxerui::Rect`。库图模式早退保留。 |
 | [Lib-CodeEditor](https://github.com/FarnaHerry/Lib-CodeEditor/tree/farna/main) | `a332e7c3158818a891bb8181756d439a62df6268` | 包含只读复制、滚动/绘制兼容；补齐固定子模块声明，提供工作线程预构建并跨卸载保留的 `initial_document`，向消费者传播 Windows 宏约束，默认关闭输入追踪，并修复工具栏剪贴板、文本变更通知和 Android 库图接口目标。Linux 从固定 simdutf v7.7.0 源码按 libc++ 工具链重建，复用 SweetEditor 同版本兼容头（仅进入构建期 include），并移除已合入静态库的冗余链接边，兼容 Linux 与 iOS 链接闭包。 |
 
@@ -163,7 +185,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 97d6fed1b6986655e4e744e157218917d5ebb0cb
+git -C third_party/huxerui checkout 144aff6be5f8fc8ba09eaaa7189a375322aa01af
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
