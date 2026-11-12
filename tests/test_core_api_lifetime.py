@@ -93,6 +93,14 @@ def check_preparation(executable):
                                      "rules: ['RULE-SET,p,DIRECT', 'MATCH,DIRECT']\n")
         env = {**os.environ, "HOME": directory, "APPDATA": directory, "XDG_DATA_HOME": directory,
                "XDG_CONFIG_HOME": directory, "XDG_CACHE_HOME": directory}
+        if os.name != "nt":
+            # The preparation check runs "sing-box check". CI test builds may not
+            # carry the bundled engine next to the test binary (macOS); a stub on
+            # PATH keeps the test about preparation, not core validation.
+            stub = root / "sing-box"
+            stub.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+            stub.chmod(0o755)
+            env["PATH"] = str(root) + os.pathsep + env.get("PATH", "")
         try:
             result = subprocess.run([executable, "--prepare-resources", directory], env=env,
                                     capture_output=True, text=True, timeout=20)
