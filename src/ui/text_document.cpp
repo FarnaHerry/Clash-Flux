@@ -6,6 +6,7 @@
 #include "action_menu.h"
 #include "app_resources.h"
 #include "ui.h"
+#include "page_layout.h"
 #include "task_bridge.h"
 
 namespace clashflux::ui {
@@ -62,12 +63,12 @@ void TextDocument::Prepare(huxerui::TaskScope tasks) {
     if (!document->Ready()) {
         if (!document->Error().empty()) {
             huxerui::View failed = huxerui::Text(document->Error());
-            if (height > 0.0F) return std::move(failed).With(huxerui::Frame{.height = height});
-            return std::move(failed).With(huxerui::Grow(1.0F));
+            if (height > 0.0F) return PageBodyFrame(failed).With(huxerui::Frame{.height = height});
+            return PageBodyFrame(failed).With(huxerui::Grow(1.0F));
         }
         huxerui::View pending = huxerui::Row{};
-        if (height > 0.0F) return std::move(pending).With(huxerui::Frame{.height = height});
-        return std::move(pending).With(huxerui::Grow(1.0F));
+        if (height > 0.0F) return PageBodyFrame(pending).With(huxerui::Frame{.height = height});
+        return PageBodyFrame(pending).With(huxerui::Grow(1.0F));
     }
     const auto controller = document->Controller();
     const auto showMenu = [=] {
@@ -90,7 +91,10 @@ void TextDocument::Prepare(huxerui::TaskScope tasks) {
     options.read_only = readOnly;
     options.font_size = font_size::kBody;
     options.wrap_mode = 0;
-    options.scrollbar_mode = 1;
+    // CodeEditor: 1 = transient, 2 = never; use the same viewport policy.
+    // TODO(codeeditor): the pinned extension only applies this on creation.
+    // Await live option updates upstream/in the fork; never remount for style.
+    options.scrollbar_mode = ShowPageScrollBars() ? 1 : 2;
     // Keep the line-number gutter on the same surface as the text area.
     EditorTheme editorTheme = EditorTheme::FromThemeSpec(theme);
     editorTheme.gutter_background = editorTheme.background;
@@ -138,15 +142,15 @@ void TextDocument::Prepare(huxerui::TaskScope tasks) {
                 if (!searchVisible.Get()) controller.ClearSearch();
             }),
         huxerui::IconButton(app::images::more_vertical, Localized("文本操作"))
-            .With(menu.Anchor(), huxerui::Tooltip(Localized("文本操作"))).OnClick(showMenu),
+            .With(menu.Target(), huxerui::Tooltip(Localized("文本操作"))).OnClick(showMenu),
       },
       search,
       editor,
     }.With(huxerui::Background(theme.colors.surface_container_low),
            huxerui::CornerRadius(theme.shapes.small), huxerui::ClipChildren(),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    if (height > 0.0F) return std::move(content).With(huxerui::Frame{.height = height});
-    return std::move(content).With(huxerui::Grow(1.0F));
+    if (height > 0.0F) return PageBodyFrame(content).With(huxerui::Frame{.height = height});
+    return PageBodyFrame(content).With(huxerui::Grow(1.0F));
 }
 
 } // namespace clashflux::ui

@@ -29,6 +29,7 @@ composable 体内不能使用条件编译，沿用现有 DSL；UI 经过 HuxerUI
 ## 布局与交互联动
 
 - 滚动方向上的装饰性首尾留白归正文，滚动视口铺满可用正文区域；普通正文和虚拟列表复用公共留白组件，保留虚拟化及稳定业务 ID。固定区域、卡片内部、非滚动方向边距、安全区和浮层避让按上述专题分别处理，不机械替换全部 Padding，也不重复计入空白。
+- 滚动条复用 ScrollArea 对称边距内的独立槽，已有控制器显式传入；宽窄策略、虚拟列表装配、偏移恢复和编辑器扩展 TODO 见 UI 文档“滚动与留白的归属”，不再逐页挂覆盖式 ScrollBar。
 
 - Compact 编辑/添加页主操作放标题栏右侧，复用 FormHeaderAction 图标与忙态语义，正文用 FormPageContent 避让系统安全区；不再固定底部提交按钮。键盘造成视口缩短时检查图标位置、可滚动末项、重复提交和返回。
 
@@ -37,12 +38,12 @@ composable 体内不能使用条件编译，沿用现有 DSL；UI 经过 HuxerUI
 - 桌面 Medium/Expanded 平面两栏，标题在自定义标题栏，PageScaffold 承载本页动作；分隔线统一 kDesktopChromeDividerThickness=0.5pt。Compact 底部四项导航，桌面窄窗保留独立系统标题栏；侧栏入口转入“更多”和普通二级入口分组遵循 UI 文档“响应式与平台边界”。宽窄变化保留页面身份、状态和平台能力。
 - 外框/标题/侧栏用 background，内容用 IslandTheme::base（surface_container_low），卡片 raised；深浅色均为外框较亮、内容较暗、卡片提亮。阴影统一 ResolveFluxShadows，不在页面自写参数；标题投影最后绘制、不占布局/输入，抽屉投影裁在标题下。
 - 长条操作行的 hover/focus/press/ripple 与命中范围统一使用容器分配的完整单元格；留白放行内、组级裁切圆角，复用 SettingsActionRow/SettingsContentRow，不另造缩小或外溢的反馈区域。独立开关/下拉/输入保持自身控件语义；细节及验收见 UI 文档“长条操作行的交互范围”。
-- 首页真实固定卡片无骨架，缺省中性占位；其它页面仅首份真实数据未就绪时挂 page_loading，缓存就绪直接显示。流光只绘制，退出加载/切页/后台/reduced motion 停止；桌面宽屏一级切换不横滑、不翻页，不能关闭页内动画。
+- 首页真实固定卡片与设置首页无整页骨架；设置控件就绪规则见 [设置首页就绪](../../docs/ui-development.md#设置首页就绪)。其它页面仅首份真实数据未就绪时挂 page_loading，缓存就绪直接显示。流光只绘制，退出加载/切页/后台/reduced motion 停止；桌面宽屏一级切换不横滑、不翻页，不能关闭页内动画。
 - 首页每张卡左上用 HomeCardHeading(icon,title) 或开关行：语义图标 20pt、primary 色、间距 8pt、居中对齐 SemiBold 标题。HomeGrid 固定目录/跨度、88pt 行高、12pt 卡距、两行 188pt；不借缩窄合并系统代理/TUN 卡或放大其它卡。
 - DenseCard 的 dense_radius（当前 4pt）、每卡底距（当前 4pt）和 VirtualList::EstimatedItemExtent 一起调整；估算包括减半内边距×2、单行文本及底距。连接条目保留虚拟化与稳定 ID。
 - 拖动预览跟随原始抓取点；拖放目标注册在滚动视口，间隙/边缘仍可拖并触发自动滚动。
 - 二级标签用 SectionTabPages 的框架 Pager，标签在外、点击/菜单/滑动共用受控索引，稳定 Key、有界 Column+Grow 和虚拟列表；不额外 PointerIntercept 或逐页 Offset/Opacity。嵌套边缘交给外层，取消回弹、反向不崩，首次无入场、切回保留滚动。
-- 分页用 fullWidthSections、SectionTabContentInsets，将 kSectionCardSpacing 的一半放每页根；Pager 外不套水平 Padding，步长为完整视口。相邻两页留白合为一份卡距。
+- 分页用 fullWidthSections 和 PageBodyRegion 分配每页正文边距，由 ScrollArea / PageBodyFrame 消费一次；SectionTabContentInsets 只对齐标签栏。Pager 外不套水平 Padding，步长为完整视口；具体尺寸见 UI 文档。
 - 标签/内容共用保留 UseSectionTabMotion handle；下划线与居中目标根据实际几何和呈现进度，先限滚动边界再插值，拖动/取消/反向都跟随，不逐帧写 State 或失效布局。手动浏览不持续拉回，溢出菜单变化不重挂载 ScrollView。
 - 不加“内核未运行/请到设置启动”常驻横幅；由首页控件表达状态，只保留需要处置的操作失败等瞬时反馈。
 

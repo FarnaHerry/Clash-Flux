@@ -41,7 +41,7 @@
 #include "qrs_codec.h"
 
 import clashflux.core;
-import clashflux.db;
+import clashflux.model;
 import clashflux.pptp;
 import clashflux.singbox;
 import clashflux.store.core;

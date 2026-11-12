@@ -39,7 +39,7 @@ export module clashflux.cli;
 import std;
 
 import clashflux.config;
-import clashflux.db;
+import clashflux.model;
 import clashflux.core;
 import clashflux.sysproxy;
 import clashflux.service;
@@ -282,7 +282,16 @@ int cmdProfile(const std::vector<std::string>& args) {
             std::println(stderr, "导入失败：{}", ps.lastError());
             return 1;
         }
-        std::println("已导入（id={}）", id);
+        std::println("已保存（id={}）；连接前将准备资源", id);
+        return 0;
+    }
+    if (args[0] == "prepare" && args.size() == 2) {
+        std::int64_t id = 0;
+        const auto [end, ec] = std::from_chars(args[1].data(), args[1].data() + args[1].size(), id);
+        if (ec != std::errc{} || end != args[1].data() + args[1].size() || id <= 0) return 2;
+        const auto result = store::coreStore().prepareProfileResources(id);
+        if (!result.ready) { std::println(stderr, "准备失败：{}", result.error); return 1; }
+        std::println("资源已就绪{}", result.summary.empty() ? "" : " · " + result.summary);
         return 0;
     }
     if (args[0] == "check") {
@@ -368,7 +377,7 @@ int cmdProfile(const std::vector<std::string>& args) {
     }
     if (args.size() < 2 ||
         (args[0] != "use" && args[0] != "update" && args[0] != "remove")) {
-        std::println(stderr, "用法：profile list|import|use|update|remove|check");
+        std::println(stderr, "用法：profile list|import|prepare|use|update|remove|check");
         return 2;
     }
     std::int64_t id = 0;

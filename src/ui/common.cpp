@@ -35,8 +35,8 @@
 #include "wire_codec.h"
 import clashflux.config;
 import clashflux.core;
-import clashflux.db;
-import clashflux.persistence;
+import clashflux.model;
+import clashflux.data;
 import clashflux.service;
 import clashflux.singbox;
 import clashflux.stream;
@@ -45,7 +45,7 @@ import clashflux.store.profiles;
 import clashflux.store.vpn;
 import clashflux.vpn;
 
-// CoreView 含 store::CoreSnapshot、ProfilesModel 含 db::Profile，必须放在模块
+// CoreView 含 store::CoreSnapshot、ProfilesModel 含 model::Profile，必须放在模块
 // 导入之后（同 profiles_cache.h）。
 #include "core_model.h"
 #include "core_control.h"
@@ -529,7 +529,7 @@ CoreView ReadCoreView(bool slowProbes, bool previousSystemProxyActive) {
     CoreView view;
     view.core = core.snapshot();
     view.health = core.runtimeHealthSnapshot(view.core);
-    view.ready = clashflux::persistence::persistence().ready();
+    view.ready = clashflux::data::session().ready();
     view.tunIntent = core.tunEnabled();
     view.modeIntent = core.mode();
     const auto vpnRuntime = ReadAndroidVpnRuntime();
@@ -911,12 +911,14 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto contentInsets = PageContentInsets(theme, compact,
         fullWidthSections ? 0.0F : contentSpacing.value_or(compact ? 4.0F : kDesktopPageHorizontalInset));
+    const float bodyHorizontal = fullWidthSections ? kSectionCardSpacing * 0.5F : contentInsets.left;
+    contentInsets.left = contentInsets.right = 0.0F;
     if (contentSpacing) contentInsets.top = *contentSpacing;
     const float headerTopInset = contentInsets.top;
     if (scrollToContentEdges) contentInsets.top = contentInsets.bottom = 0.0F;
     if (kPageTitlesInWindow && !compact) {
         // 桌面动作直接挂在本页标题栏中，不经共享 State 转交 View 或复制回调。
-        huxerui::View desktopBody = huxerui::View{content}.With(huxerui::Grow(1.0F));
+        huxerui::View desktopBody = PageBodyRegion(content, bodyHorizontal);
         if (fullWidthSections) desktopBody = huxerui::ProvideEnvironment(
             SectionTabContentInsets{kSectionCardSpacing}, desktopBody);
         desktopBody = huxerui::ProvideEnvironment(
@@ -980,13 +982,13 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     const float horizontal = fullWidthSections
         ? kSectionCardSpacing
         : (compact ? 4.0F : kDesktopPageHorizontalInset);
-    huxerui::View body = huxerui::View{content}.With(huxerui::Grow(1.0F));
-    if (fullWidthSections) {
-        if (header) header = huxerui::View{header}.With(
-            huxerui::Padding(huxerui::EdgeInsets::Symmetric(
-                compact ? horizontal : kDesktopPageHorizontalInset, 0.0F)));
+    huxerui::View body = PageBodyRegion(content, bodyHorizontal);
+    if (header) header = huxerui::Column {header}.With(
+        huxerui::Padding(huxerui::EdgeInsets::Symmetric(fullWidthSections
+            ? (compact ? horizontal : kDesktopPageHorizontalInset) : bodyHorizontal, 0.0F)),
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    if (fullWidthSections)
         body = huxerui::ProvideEnvironment(SectionTabContentInsets{horizontal}, body);
-    }
     std::vector<huxerui::View> children;
     if (header) children.push_back(std::move(header));
     children.push_back(std::move(body));
@@ -1007,7 +1009,10 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     const IslandTheme islands = ResolveIslandTheme(theme);
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
-    huxerui::View body = huxerui::View{content}.With(huxerui::Grow(1.0F));
+    const float horizontal = fullWidthSections ? kSectionCardSpacing
+        : contentSpacing.value_or(compact ? 4.0F : kDesktopPageHorizontalInset);
+    const float bodyHorizontal = fullWidthSections ? horizontal * 0.5F : horizontal;
+    huxerui::View body = PageBodyRegion(content, bodyHorizontal);
     huxerui::View titleView = title;
     auto backAction = onBack;
     huxerui::View backButton;
@@ -1016,13 +1021,10 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             .With(huxerui::Tooltip(Localized("返回上一页")))
             .OnClick(onBack);
     if (kPageTitlesInWindow && !compact) {
-        const float horizontal = fullWidthSections ? kSectionCardSpacing
-            : contentSpacing.value_or(kDesktopPageHorizontalInset);
-        auto contentInsets = PageContentInsets(theme, false,
-            fullWidthSections ? 0.0F : horizontal);
+        auto contentInsets = PageContentInsets(theme, false, 0.0F);
         if (contentSpacing) contentInsets.top = *contentSpacing;
         if (scrollToContentEdges) contentInsets.top = contentInsets.bottom = 0.0F;
-        huxerui::View desktopBody = huxerui::View{content}.With(huxerui::Grow(1.0F));
+        huxerui::View desktopBody = body;
         if (fullWidthSections) {
             desktopBody = huxerui::ProvideEnvironment(
                 SectionTabContentInsets{horizontal}, desktopBody);
@@ -1081,16 +1083,12 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
           }.With(huxerui::Spacing(theme.spacing.small),
                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     header = std::move(header).With(huxerui::Frame{.min_height = kPageHeaderHeight});
-    const float horizontal = fullWidthSections ? kSectionCardSpacing
-        : contentSpacing.value_or(compact ? 4.0F : kDesktopPageHorizontalInset);
+    header = huxerui::View{header}.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(
+        fullWidthSections ? (compact ? horizontal : kDesktopPageHorizontalInset) : bodyHorizontal, 0.0F)));
     if (fullWidthSections) {
-        header = huxerui::View{header}.With(
-            huxerui::Padding(huxerui::EdgeInsets::Symmetric(
-                compact ? horizontal : kDesktopPageHorizontalInset, 0.0F)));
         body = huxerui::ProvideEnvironment(SectionTabContentInsets{horizontal}, body);
     }
-    auto contentInsets = PageContentInsets(theme, compact,
-        fullWidthSections ? 0.0F : horizontal);
+    auto contentInsets = PageContentInsets(theme, compact, 0.0F);
     if (contentSpacing) contentInsets.top = *contentSpacing;
     if (scrollToContentEdges) {
         header = PageHeaderWithInset(header, contentInsets.top);
@@ -1334,9 +1332,48 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 // ---- 订阅列表：唯一来源（见 profiles_model.h）-------------------------------
 
 void ProfilesModel::PublishCached() {
-    auto& database = clashflux::persistence::persistence();
-    Publish(database.listProfiles());
+    auto& database = clashflux::data::session();
+    auto profiles = database.listProfiles();
+    PrunePreparations(profiles);
+    Publish(std::move(profiles));
     if (database.ready()) loaded = true;
+}
+
+void StartProfilePreparation(huxerui::TaskScope tasks, std::shared_ptr<ProfilesModel> model,
+                             std::int64_t id, FluxToastHandle toast) {
+    const auto& profiles = model->list.Get();
+    const auto profile = std::ranges::find(profiles, id, &model::Profile::id);
+    if (profile == profiles.end() || profile->type == "pptp" || profile->file.empty()) return;
+    const auto operation = model->BeginPreparation(id, profile->file);
+    if (!operation) return;
+    const auto ticket = operation->first;
+    const auto cancel = operation->second;
+    const auto cancellation = model->preparationCancels.at(id);
+    try {
+        tasks.Launch([model, id, ticket, cancel, cancellation, toast]() -> huxerui::Task<void> {
+            struct CancelOnExit {
+                std::stop_source source;
+                ~CancelOnExit() { source.request_stop(); }
+            } cancellationGuard{cancellation};
+            store::ProfilePreparationResult result;
+            try {
+                result = co_await RunOnTaskThread([id, cancel] { return store::coreStore().prepareProfileResources(id, cancel); });
+            } catch (const std::exception& error) { result.error = error.what(); }
+            catch (...) { result.error = "订阅准备发生未知异常"; }
+            const auto current = model->Preparation(id);
+            if (!current || current->ticket != ticket) co_return;
+            if (cancel.stop_requested() || (result.sourceRevision &&
+                clashflux::data::session().profileRevision(id) != result.sourceRevision)) {
+                model->ForgetPreparation(id, ticket); co_return;
+            }
+            if (!model->FinishPreparation(id, ticket, result.ready, result.error)) co_return;
+            if (!result.ready) toast.Show(LocalizedFormat("资源准备失败：{}", result.error), huxerui::ToastOptions{6.0});
+            else if (!result.summary.empty()) toast.Show(LocalizedFormat("资源已就绪 · {}", result.summary), huxerui::ToastOptions{6.0});
+        });
+    } catch (const std::exception& error) {
+        model->FinishPreparation(id, ticket, false, error.what());
+        toast.Show(error.what());
+    }
 }
 
 void ProfilesModel::ReportProfileRefreshFailure(std::int64_t id,
@@ -1374,12 +1411,12 @@ ProfilesModel::TakeProfileRefreshFailures() {
 void DriveProfilesModel(huxerui::TaskScope tasks,
                         std::shared_ptr<ProfilesModel> model) {
     DriveProfileList(tasks, model,
-        [] { return clashflux::persistence::persistence().profilesRevision(); },
-        []() -> huxerui::Task<ProfileListSnapshot<db::Profile>> {
+        [] { return clashflux::data::session().profilesRevision(); },
+        []() -> huxerui::Task<ProfileListSnapshot<model::Profile>> {
             co_return co_await RunOnTaskThread([] {
-                ProfileListSnapshot<db::Profile> next;
-                next.ready = clashflux::persistence::persistence().ready();
-                next.profiles = clashflux::persistence::persistence().listProfiles();
+                ProfileListSnapshot<model::Profile> next;
+                next.ready = clashflux::data::session().ready();
+                next.profiles = clashflux::data::session().listProfiles();
                 const auto root = cfg::profilesDir();
                 for (const auto& profile : next.profiles) {
                     if (profile.type == "pptp" || profile.file.empty()) continue;
@@ -1401,39 +1438,43 @@ void DriveProfilesModel(huxerui::TaskScope tasks,
 
 // ---- 应用级设置：唯一读取点（见 settings_model.h）---------------------------
 
+void SettingsModel::PublishCached() {
+    // Never publish fallback settings before the database has hydrated.
+    if (!clashflux::data::session().ready()) return;
+    SettingsView next;
+    auto& core = store::coreStore();
+    next.ready = clashflux::data::session().ready();
+    const std::string themeMode = core.setting("ui.theme_mode", "1");
+    next.themeMode = themeMode == "0" ? 0 : themeMode == "2" ? 2 : 1;
+    next.themeColor = core.setting("ui.theme_color", "blue");
+    next.customThemeColors = core.setting("ui.custom_theme_colors", "");
+    next.hiddenThemeColors = core.setting("ui.hidden_theme_colors", "");
+    next.autoStart = core.setting("app.autostart", "false") == "true";
+    next.autoRun = core.setting("app.auto_run", "false") == "true";
+    next.trayEnabled = core.setting("tray.enabled", "true") == "true";
+    next.startMinimized = next.trayEnabled &&
+        core.setting("tray.start_minimized", "false") == "true";
+    next.lightweightTray =
+        core.setting("tray.lightweight", "false") == "true";
+    next.mixedPort = core.setting("core.mixed_port", "7899");
+    next.httpPort = core.setting("core.http_port", "");
+    next.socksPort = core.setting("core.socks_port", "");
+    next.tunMtu = core.setting("core.tun_mtu", "1400");
+    next.tunStrictRoute = core.setting("core.tun_strict_route", "true") == "true";
+    try { next.network = core.networkSettings(); }
+    catch (const std::exception& error) { next.networkError = error.what(); }
+    next.envShell = core.setting("ui.env_shell", "");
+    next.language = core.setting("ui.language", "system");
+    // 都是内存读；State 按 operator== 去重，只有真的变了才通知订阅者。
+    view = std::move(next);
+}
+
 void DriveSettingsModel(huxerui::TaskScope tasks,
                         std::shared_ptr<SettingsModel> model) {
     tasks.Launch([model]() -> huxerui::Task<void> {
         for (;;) {
             const std::uint64_t before = model->syncTick.Get();
-            SettingsView next;
-            auto& core = store::coreStore();
-            next.ready = clashflux::persistence::persistence().ready();
-            const std::string themeMode = core.setting("ui.theme_mode", "1");
-            next.themeMode = themeMode == "0" ? 0 : themeMode == "2" ? 2 : 1;
-            next.themeColor = core.setting("ui.theme_color", "blue");
-            next.customThemeColors = core.setting("ui.custom_theme_colors", "");
-            next.hiddenThemeColors = core.setting("ui.hidden_theme_colors", "");
-            next.autoStart = core.setting("app.autostart", "false") == "true";
-            next.autoRun = core.setting("app.auto_run", "false") == "true";
-            next.trayEnabled = core.setting("tray.enabled", "true") == "true";
-            next.startMinimized = next.trayEnabled &&
-                core.setting("tray.start_minimized", "false") == "true";
-            next.lightweightTray =
-                core.setting("tray.lightweight", "false") == "true";
-            next.mixedPort = core.setting("core.mixed_port", "7899");
-            next.httpPort = core.setting("core.http_port", "");
-            next.socksPort = core.setting("core.socks_port", "");
-            next.tunMtu = core.setting("core.tun_mtu", "1400");
-            next.tunStrictRoute = core.setting("core.tun_strict_route", "true") == "true";
-            if (next.ready) {
-                try { next.network = core.networkSettings(); }
-                catch (const std::exception& error) { next.networkError = error.what(); }
-            }
-            next.envShell = core.setting("ui.env_shell", "");
-            next.language = core.setting("ui.language", "system");
-            // 都是内存读；State 按 operator== 去重，只有真的变了才通知订阅者。
-            model->view = std::move(next);
+            model->PublishCached();
             if (model->syncTick.Get() != before) continue;
             co_await huxerui::Delay(std::chrono::duration<double>{1.0});
         }

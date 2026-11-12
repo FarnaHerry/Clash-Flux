@@ -44,6 +44,8 @@ export ProfileRules InspectProfileRules(const std::string& content,
 // Source transport (remote/local) is independent of the document format.
 export enum class ProfileFormat { ClashYaml, SingBoxJson, OpenVpn, NodeSubscription };
 export ProfileFormat DetectProfileFormat(std::string_view content);
+// Parse the complete source document without fetching dependencies or approving a runtime plan.
+export bool ValidateProfileDocument(const std::string& content, std::string& error);
 
 // 保真度级别（见 docs/singbox-layers-and-fidelity.md §2）：翻译层对订阅里每个条目
 // （协议 / 组 / 规则 / 字段）的映射结果。Exact 不产生条目，因此只出现后两级。
@@ -148,6 +150,7 @@ export struct ProfileSource {
     std::string name;
     std::string content;
     bool available = true;
+    bool operator==(const ProfileSource&) const = default;
 };
 
 export struct CompileResult {
@@ -165,6 +168,7 @@ export struct CompileResult {
     std::map<std::string, std::string> ruleProviderContents;
     std::map<std::string, std::string> proxyProviderContents;
     unsigned ruleProviderConversionCacheHits = 0;
+    bool hasFileProviders = false;
     std::vector<SourceObject> sourceObjects;
     clashflux::connection_trace::Plan rulePlan;
     std::vector<std::string> participatingSources;
@@ -188,6 +192,7 @@ export struct NativeConnection {
     vpn::ConnectionKind kind = vpn::ConnectionKind::Pptp;
     std::string transportAddress;
     std::string nativeConfig;
+    bool operator==(const NativeConnection&) const = default;
 };
 
 export struct CompileOptions {
@@ -238,6 +243,7 @@ export struct CompileOptions {
     bool validateAllPersonalRuleSets = false;    // Library editor candidate, never a running plan.
     std::vector<NativeConnection> nativeConnections;
     std::vector<std::string> tunExcludeAddresses; // 原生 VPN 服务器传输地址（IP/CIDR）
+    bool operator==(const CompileOptions&) const = default;
 };
 
 // 编译 options.profileYaml 为 sing-box 配置 JSON。可为空（最小可用配置）、

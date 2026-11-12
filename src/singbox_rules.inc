@@ -590,8 +590,9 @@ std::optional<YAML::Node> ruleProviderPayload(const std::string& content,
 }
 
 std::optional<std::string> readRuleProviderFile(
-        const Context& ctx, const YAML::Node& provider,
+        Context& ctx, const YAML::Node& provider,
         std::string& failure) {
+    ctx.result.hasFileProviders = true;
     const auto path = provider["path"];
     if (!path || !path.IsScalar()) { failure = "需要非空相对 path"; return std::nullopt; }
     const auto resolved = ruleProviderPath(ctx.opt.ruleProviderDir, path.Scalar(), failure);

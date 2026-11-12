@@ -144,8 +144,9 @@ huxerui::View SkeletonBlock(SkeletonShimmerStyle style, float width, float heigh
 }
 
 huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle style) {
-    return huxerui::Column {content}.With(huxerui::Grow(1.0F), ShimmerViewport{style.region},
-        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch), huxerui::ClipChildren());
+    return PageBodyFrame(huxerui::Column {content}.With(huxerui::Grow(1.0F), ShimmerViewport{style.region},
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch), huxerui::ClipChildren()))
+        .With(huxerui::Grow(1.0F));
 }
 
 [[huxerui::composable]] huxerui::View PageLoadingSkeleton(

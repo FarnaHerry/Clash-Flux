@@ -1,9 +1,48 @@
-// Application-owned request coordination. No compiler IO, persistent cache,
-// detached tasks or publication of candidate/configuration state lives here.
+// Application-owned request coordination and isolated validated-download reuse.
+// No compiler IO, detached tasks or publication of accepted configuration.
 export module clashflux.provider_resources;
 import std;
 
 namespace provider_resources {
+
+// This namespace holds validated downloads, never accepted provider references.
+export inline bool FreshDownloaded(const std::filesystem::path& root, const std::string& key, std::uint64_t interval) {
+    if (root.empty()) return false;
+    std::error_code ec;
+    const auto stamp = std::filesystem::last_write_time(root / (key + ".cache"), ec);
+    const auto age = decltype(stamp)::clock::now() - stamp;
+    return !ec && age >= decltype(age)::zero() && age < std::chrono::seconds{std::min<std::uint64_t>(interval ? interval : 3600, 3600)};
+}
+export template<class Commit>
+inline void RememberDownloaded(const std::filesystem::path& root, const std::filesystem::path& temporary,
+                     const std::string& key, const std::string& image, const Commit& commit) {
+    if (root.empty() || image.empty() || !commit) return;
+    try {
+        std::error_code ec;
+        std::filesystem::create_directories(root, ec);
+        if (ec) return;
+        const auto target = root / (key + ".cache");
+        {
+            std::ifstream previous(target, std::ios::binary);
+            if (previous) {
+                const auto first = image.find('\n');
+                const auto end = first == std::string::npos ? first : image.find('\n', first + 1);
+                if (end == std::string::npos) return;
+                const auto expected = std::string_view(image).substr(0, end + 1);
+                std::string prefix(expected.size(), '\0');
+                previous.read(prefix.data(), static_cast<std::streamsize>(prefix.size()));
+                if (previous.gcount() != static_cast<std::streamsize>(prefix.size()) || prefix != expected)
+                    return; // Unknown versions/identities are preserved, never repaired.
+            }
+        } // Close before replacement, including Windows sharing rules.
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        output.write(image.data(), static_cast<std::streamsize>(image.size())); output.close();
+        if (!output) return;
+        std::string ignored;
+        commit(temporary, target, ignored);
+    } catch (...) { /* Optional reuse cannot turn an accepted candidate into failure. */ }
+}
+
 
 export struct Request {
     // Full identity, never the filename digest; credentials stay in memory.

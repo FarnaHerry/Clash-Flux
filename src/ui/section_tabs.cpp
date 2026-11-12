@@ -508,7 +508,7 @@ private:
                   huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                      .label = huxerui::UseString(
                                          Localized("选择标签"))},
-                  huxerui::Focusable(true), huxerui::Enabled(true), menu.Anchor())
+                  huxerui::Focusable(true), huxerui::Enabled(true), menu.Target())
             .OnClick([menu, entries = std::move(pickerEntries), pickerMode, narrow,
                       sheets, drawerLayers, tabs, selectedKey, onSelect, pickerInsets] {
                 if (pickerMode == SectionTabPickerMode::Menu) { menu.Show(entries); return; }
@@ -551,16 +551,10 @@ private:
 
 [[huxerui::composable]] huxerui::View SectionTabPages(std::vector<huxerui::View> pages, std::size_t selectedIndex,
                               std::function<void(std::size_t)> onSelect, SectionTabMotionHandle motion) {
-    const auto insets = huxerui::UseEnvironment<SectionTabContentInsets>();
     if (pages.empty()) return huxerui::Column {}.With(huxerui::Grow(1.0F));
     auto pageViews = pages;
     const auto selected = std::min(selectedIndex, pageViews.size() - 1);
-    // 语义 Key 和页根保持原样，半个卡片间距归每页所有，随内容一起移动。
-    // 两页相接时合成一份卡片间距；不缩窄 Pager 或改变翻页步长。
-    for (auto& page : pageViews) {
-        page = huxerui::View{page}.With(
-            huxerui::Padding(huxerui::EdgeInsets::Symmetric(insets.horizontal * 0.5F, 0.0F)));
-    }
+    // Each page consumes the shared body inset; the Pager and its keys stay full width.
     if (motion) {
         for (std::size_t index = 0; index < pageViews.size(); ++index) {
             pageViews[index] = huxerui::View{pageViews[index]}.With(SectionPageGeometry{motion, index});

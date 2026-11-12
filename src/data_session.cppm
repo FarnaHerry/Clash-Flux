@@ -1,4 +1,4 @@
-// persistence.cppm — ORM 持久化服务：SQLite(ORM) 句柄 + settings 内存缓存。
+// data_session.cppm — independent application data session.
 //
 // 读路径（setting）永远走内存缓存，组合期调用不碰磁盘、不阻塞 UI；
 // 写路径（setSetting）同步更新缓存并标脏，flushSettings 在应用任务里异步落库。
@@ -7,12 +7,12 @@ module;
 #include <huxerui/sqlite.h>
 #include "sqlite_schema.h"
 
-export module clashflux.persistence;
+export module clashflux.data;
 
 import std;
 import clashflux.model;
 
-namespace clashflux::persistence {
+namespace clashflux::data {
 
 // 桌面启动阶段唯一的同步磁盘读：临时只读连接，不创建/迁移数据库，不填充订阅缓存。
 // 只包含必须在 SettingsModel hydrate 前决定首窗外观或平台副作用的设置。
@@ -34,19 +34,20 @@ export StartupSettings readStartupSettings(const std::filesystem::path& file);
 ///
 /// 日志不在这里：日志是高频追加，直接写 core/*.log 文件，避免与
 /// settings/profiles 的写事务抢锁与 IO。
-export class Persistence {
+export class DataSession {
 public:
-    Persistence();
-    ~Persistence();
-    Persistence(const Persistence&) = delete;
-    Persistence& operator=(const Persistence&) = delete;
+    DataSession();
+    ~DataSession();
+    DataSession(const DataSession&) = delete;
+    DataSession& operator=(const DataSession&) = delete;
 
     /// 打开数据库并 hydrate settings/profiles 缓存。应用线程调用一次。
     /// 老库（user_version=0）由 0→1 迁移重建表并保留全部数据；迁移不了的库
     /// open 返回 false，应用不删除任何文件，lastError 有诊断文本。
     /// @return true 表示库已就绪；失败时 lastError 有诊断文本。
     huxerui::Task<bool> open(const std::filesystem::path& file,
-                           const std::filesystem::path& profileDirectory = {});
+                           const std::filesystem::path& profileDirectory = {},
+                           huxerui::TaskScope dispatcher = {});
 
     /// 落库所有标脏设置后关闭连接。
     huxerui::Task<void> close();
@@ -73,7 +74,8 @@ public:
     /// 把标脏设置 upsert 进库；只清除本次成功写入的键，避免与并发写竞态。
     huxerui::Task<bool> flushSettings();
 
-    // ---- profiles（内存缓存 + 异步落库；与 settings 同样的写后缓存模型）----
+    // Compatibility writes still used by selection/deletion/rule commands.
+    // New imports, refreshes and metadata edits use commitProfile instead.
     /// 列出订阅（id 升序），读内存缓存。
     [[nodiscard]] std::vector<model::Profile> listProfiles() const;
     /// 保存：id==0 时由应用分配新 id；未 hydrate/打开失败/关闭中抛异常。
@@ -96,6 +98,16 @@ public:
     /// UI 侧用它做「脏检查」：每拍只比较一个整数，而不是每次把整张表拷贝出来
     /// 再逐字段比较（订阅可能带 nativeConfig/nativeRoutes 大字段）。
     [[nodiscard]] std::uint64_t profilesRevision() const noexcept;
+    [[nodiscard]] std::uint64_t settingsRevision() const noexcept;
+
+    // Reserve identity without publishing an incomplete subscription.
+    std::int64_t reserveProfileId();
+    [[nodiscard]] std::uint64_t profileRevision(std::int64_t id) const;
+    // Atomic durable row update; the accepted cache changes only after COMMIT.
+    // Serializes against compatibility flushes; expectedRevision rejects ABA.
+    huxerui::Task<bool> commitProfile(model::Profile profile, std::uint64_t expectedRevision);
+    // Adapter for existing blocking domain commands. Never call on the UI thread.
+    bool commitProfileOnWorker(model::Profile profile, std::uint64_t expectedRevision);
 
     [[nodiscard]] std::string lastError() const;
 
@@ -105,6 +117,6 @@ private:
 };
 
 /// 进程级单例：启动流程负责 open，其余代码只读缓存/写缓存。
-export Persistence& persistence();
+export DataSession& session();
 
-} // namespace clashflux::persistence
+} // namespace clashflux::data

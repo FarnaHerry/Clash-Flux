@@ -120,6 +120,17 @@ def kernel(compiler, engine, folder, endpoint, certificate=None):
                 process.wait(timeout=3)
 
 
+def assert_certificate_rejected(service, failures_before, messages_before):
+    # The client can return SERVFAIL before the server thread records its TLS
+    # alert. Wait for that evidence, never accept EOF or a DNS timeout instead.
+    deadline = time.monotonic() + 2
+    while not any("CERTIFICATE" in error or "UNKNOWN_CA" in error
+                  for error in service.failures[failures_before:]):
+        assert time.monotonic() < deadline, service.failures
+        time.sleep(0.01)
+    assert len(service.messages) == messages_before, "rejected TLS must carry no DNS payload"
+
+
 def main():
     cases = 0
     with tempfile.TemporaryDirectory(prefix="clash-flux-dns-tls-test-") as temp:
@@ -158,9 +169,7 @@ def main():
                                        for data in service.messages[before:]), "only fixture query may reach TLS DNS"
                         else:
                             assert rcode != 0 and not records, "untrusted certificate must fail DNS lookup"
-                            assert len(service.messages) == before, "rejected TLS must carry no DNS payload"
-                            assert any("CERTIFICATE" in error or "UNKNOWN_CA" in error
-                                       for error in service.failures[failures_before:]), service.failures
+                            assert_certificate_rejected(service, failures_before, before)
                         assert sni[sni_before:] and all(name == "resolver.test" for name in sni[sni_before:]), sni
                     cases += 1
                 # Trusted certificate still cannot authenticate an IP endpoint:
@@ -179,8 +188,7 @@ def main():
                         assert (rcode == 0 and bool(records)) == ok, (rcode, records)
                         assert (len(service.messages) > before) == ok
                         if not ok:
-                            assert any("CERTIFICATE" in error or "UNKNOWN_CA" in error
-                                       for error in service.failures[failures_before:]), service.failures
+                            assert_certificate_rejected(service, failures_before, before)
                     cases += 1
             finally:
                 service.shutdown()

@@ -14,6 +14,13 @@ module;
 #include <windows.h>
 #endif
 #include <curl/curl.h>
+#include <cstdio>
+#include <cerrno>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 #include "wire_codec.h"
 #include "http_request_headers.h"
 #include "native_control_wire.h"
@@ -597,6 +604,30 @@ ApiResult ClashApi::closeAllConnections() {
     return impl_->request("DELETE", "/connections");
 }
 
+bool SyncFile(const std::filesystem::path& file, std::string& error) {
+#ifdef _WIN32
+    std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(_wfopen(file.c_str(), L"r+b"), &std::fclose);
+    if (!handle || ::_commit(::_fileno(handle.get())) != 0) {
+#else
+    std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(std::fopen(file.c_str(), "rb"), &std::fclose);
+    if (!handle || ::fsync(::fileno(handle.get())) != 0) {
+#endif
+        error = "同步订阅文件失败：" + std::error_code(errno, std::generic_category()).message();
+        return false;
+    }
+#ifndef _WIN32
+    // FILE owns the directory descriptor as well; destruction closes all paths.
+    const auto parent = file.parent_path().empty() ? std::filesystem::path{"."} : file.parent_path();
+    std::unique_ptr<std::FILE, decltype(&std::fclose)> directory(std::fopen(parent.c_str(), "r"), &std::fclose);
+    if (!directory || ::fsync(::fileno(directory.get())) != 0) {
+        error = "同步订阅目录失败：" + std::error_code(errno, std::generic_category()).message();
+        return false;
+    }
+#endif
+    error.clear();
+    return true;
+}
+
 bool CommitFile(const std::filesystem::path& temp, const std::filesystem::path& dest,
                 std::string& error) {
     const auto ec = replaceDownload(temp, dest);
@@ -702,6 +733,8 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(easy, CURLOPT_USERAGENT, "clash-flux/0.1");
+    // Decode supported HTTP compression before the bounded write callback.
+    curl_easy_setopt(easy, CURLOPT_ACCEPT_ENCODING, "");
     // 失败原因（OpenSSL 文本，例如 "SSL certificate problem: unable to get
     // local issuer certificate"）比 curl_easy_strerror 的概括更有诊断价值。
     char errorDetail[CURL_ERROR_SIZE]{};

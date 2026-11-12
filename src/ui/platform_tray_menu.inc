@@ -63,7 +63,7 @@
                 core.systemProxyActive, core.TunActive(), settings.lightweightTray);
             key += core.ProxyActive() ? '1' : '0';
             std::size_t profileCount = 0;
-            for (const db::Profile& profile : profiles) {
+            for (const model::Profile& profile : profiles) {
                 if (profile.type == "pptp") continue;
                 ++profileCount;
                 key += std::to_string(profile.id);
@@ -100,7 +100,7 @@
                 [trayRuntime] { trayRuntime->ShowWindow(); }));
             entries.push_back(huxerui::MenuSection{});
             std::vector<huxerui::MenuEntry> profileEntries;
-            for (const db::Profile& profile : profiles) {
+            for (const model::Profile& profile : profiles) {
                 if (profile.type == "pptp") continue;
                 profileEntries.push_back(huxerui::MenuItem(profile.name,
                     [startupTasks, trayRuntime, toast, profilesModel, proxiesModel,

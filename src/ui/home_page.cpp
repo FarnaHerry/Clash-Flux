@@ -44,14 +44,14 @@
 #include "task_bridge.h"
 
 import clashflux.core;
-import clashflux.db;
+import clashflux.model;
 import clashflux.netinfo;
 import clashflux.stream;
 import clashflux.store.core;
 import clashflux.store.profiles;
 import clashflux.utils;
 
-// CoreView 含 store::CoreSnapshot、ProfilesModel 含 db::Profile，必须在模块导入
+// CoreView 含 store::CoreSnapshot、ProfilesModel 含 model::Profile，必须在模块导入
 // 之后（同 profiles_cache.h）。
 #include "core_model.h"
 #include "core_control.h"
@@ -241,8 +241,8 @@ void MirrorHomeState(huxerui::State<HomeState> state,
 
     // 选中订阅来自 ProfilesModel：直接扫它的列表（借用引用，不做整表拷贝），
     // 不再每次调用 profilesStore().selected()。
-    const db::Profile* selected = nullptr;
-    for (const db::Profile& candidate : profilesModel->list.Get()) {
+    const model::Profile* selected = nullptr;
+    for (const model::Profile& candidate : profilesModel->list.Get()) {
         if (candidate.selected && candidate.type != "pptp") {
             selected = &candidate;
             break;
@@ -957,6 +957,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     const auto coreModel = huxerui::UseService<CoreModel>();
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     auto state = huxerui::UseState<HomeState>({});
+    const auto scrollOffset = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
     auto homeView = coreModel->home.Get();
     auto controlCardShown = huxerui::UseState(static_cast<bool>(homeView.proxyActive));
     auto controlMotion = huxerui::UseState<HomeControlMotion>({});
@@ -1103,7 +1104,6 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
                               ? 0.0F : kHomeFloatingButtonInset})});
     huxerui::View pageBody = huxerui::Column(std::move(bodySections))
         .With(huxerui::Spacing(0.0F),
-           huxerui::Padding(huxerui::EdgeInsets{.top = pageInset, .bottom = pageInset}),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 
     // 注意：首页不要在滚动内容里声明 Focusable(true)——运行时会自动把初始
@@ -1112,7 +1112,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     // Runtime effects remain mounted independently from the replaceable header.
     huxerui::View scrollContent = huxerui::Stack {
         std::move(runtimePump),
-        huxerui::ScrollView(std::move(pageBody)).With(huxerui::Grow(1.0F)),
+        ScrollablePageContent(pageBody, scrollOffset),
     }.With(huxerui::Grow(1.0F));
     huxerui::View page = PageScaffold(
         Localized("首页"), {}, std::move(scrollContent), true, false, true,

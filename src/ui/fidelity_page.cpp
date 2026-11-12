@@ -52,7 +52,7 @@ namespace clashflux::ui {
     if (loading.Get()) content = EmptyState(Localized("正在检查配置保真度…"), app::images::shield_check);
     else if (!result.supported) content = EmptyState(Localized("此配置类型暂无保真度报告"), app::images::shield_check);
     if (!loading.Get() && !notes.empty()) {
-        content = PageVirtualList(notes.size(), [notes, theme, islands](std::size_t index) {
+        content = ScrollArea(PageVirtualList(notes.size(), [notes, theme, islands](std::size_t index) {
             const auto& note = notes[index];
             const bool unsupported = note.level == singbox::Fidelity::Unsupported;
             const auto levelColor = unsupported ? theme.colors.error : SemanticWarningColor(theme);
@@ -78,15 +78,15 @@ namespace clashflux::ui {
                 .Key("fidelity-record-" + std::to_string(index));
             return huxerui::Column{card}.With(huxerui::Padding(huxerui::EdgeInsets{
                 .bottom = index + 1 < notes.size() ? kSectionCardSpacing : 0.0F}));
-        }, PageScrollInset(theme)).EstimatedItemExtent(120.0F)
-            .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
+        }, PageScrollInset(theme)).EstimatedItemExtent(120.0F))
+            .With(huxerui::Grow(1.0F));
     }
     if (!result.error.empty()) {
         if (notes.empty()) content = EmptyState(
             LocalizedFormat("保真度检查失败：{}", result.error), app::images::error);
         else content = huxerui::Column {
-            huxerui::Text(LocalizedFormat("保真度检查失败：{}", result.error))
-                .With(huxerui::Foreground(theme.colors.error)),
+            PageBodyFrame(huxerui::Text(LocalizedFormat("保真度检查失败：{}", result.error))
+                .With(huxerui::Foreground(theme.colors.error))),
             content,
         }.With(huxerui::Grow(1.0F), huxerui::Spacing(theme.spacing.medium),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));

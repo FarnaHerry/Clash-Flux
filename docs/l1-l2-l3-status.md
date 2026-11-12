@@ -1,5 +1,286 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-12：滚动条 hover 高亮与 HuxerUI 追新
+
+- 快照：应用 `865b49ddbd88` 加当前工作区，未提交或发布。HUI 更新到
+  `cd66ef310bedbfa1916e535a34f1d608930fe7a8`（合入官方 `ad28dd34`，fork merge `2f6df692`），
+  应用 checkout、CI、Android Java/native 共用该 SHA；扩展 pin 不变。
+- `scroll_hover.h` 只用 ViewEvents::Hover 选唯一高亮目标：正文或滚动条槽悬停即显示主题主色滑块，
+  离开取消、拖动保持；嵌套时选最深且实际有溢出的 hover 容器，滚动方向与偏移不参与，
+  滚动不会清除或转移高亮。短内容、禁用、卸载和遮挡按资格变化回退或清除；rail 与正文
+  共用同一 `selected` 入口，rail Scope 之外不重组正文，空闲不轮询。
+- 框架差异：平台段落布局在测量与绘制间复用（Android StaticLayout、AppKit/UIKit CTFrame、
+  Windows DirectWrite、Web 行度量），测量条目不得驱逐可绘制条目；核心 `src/include` 与
+  公开 API 未变，Linux Pango 路径未改；6 DIP 拉伸窄带与 7pt 滑块边距保留。
+- `cmake --build build --target clash-flux test_page_transition`（含 codegen）通过；
+  本轮框架改动只涉及非 Linux 平台渲染器，Linux 目标无重编译。`./run.sh --version`
+  （v0.3.101）与 `git diff --check` 通过；`./build/test_page_transition --scrollbars`
+  专项通过。
+- `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，84.30 秒**，含 page_transition 84.24 秒。回归读取实际滑块绘制颜色，并验证正文/
+  滚动条槽悬停、离开、子按钮点击、相邻区域、嵌套唯一目标、滚动不改变高亮、内容变短、禁用、
+  遮挡、宽窄切换、无溢出和停止帧调度；原有滑块拖动、位置恢复及分页回归保持通过。
+- 从 `platform/android` 执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，27 秒**，Java/native 与新的 `cd66ef31` 同源。
+- 未覆盖：Windows/macOS/iOS/Web 的平台渲染器改动未在本机构建；原生 GUI 物理滚轮、触控板、
+  滚动条交互与 Android 真机未重跑；与本次改动无关的完整内核回归沿用旧记录。
+
+## 2026-11-12：Linux 拉伸窄带与滚动条避让
+
+- 快照：应用 `865b49ddbd88` 加当前工作区，未提交应用仓库；HUI fork 已单独提交并推送
+  `12231999142bd9c39626d033c6a9ae192291d105`，独立应用 checkout、CI、Android Java/native
+  共用该 SHA。框架维护目录原有四项 macOS 改动逐字保留。
+- Linux 自定义窗口边缘热区 10→6 DIP；先命中窄带，才在角落沿边 16 DIP 内判斜向拉伸。
+  不再命中正文内 14×14 方块；方向光标、最近边、无效几何与禁用窗口状态保留。
+  这是 fork 的明确交互选择，框架设计与覆盖表同步；未修改 Windows/macOS 原生拉伸。
+- 应用 ScrollArea 的滑块外侧、顶部和底部留白为 7pt，完整避开 6pt 拉伸带；最小左右边距
+  12→16pt，仍然对称，已有更大页面边距复用。窄屏隐藏滚动条并保留原小边距。
+  生产组件回归核对真实绘制范围、普通/局部/虚拟容器拖动、宽窄切换及偏移恢复。
+- `cmake --build ../HuxerUI-fork/build-farna-debug --target huxerui_linux_tests` 通过；
+  `../HuxerUI-fork/build-farna-debug/bin/huxerui_linux_tests 'LinuxResize*'`
+  **4 个用例、73 项断言通过**，含 6pt 边界、沿边角落、8×8pt 正文位置、极小窗口与方向光标。
+- `cmake --build build --target clash-flux test_page_transition`、`cmake --build build`（含 codegen）、
+  `./run.sh --version`（v0.3.101）、`git diff --check` 通过。
+  `./build/test_page_transition --scrollbars` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required`
+  **32/32，174.29 秒**，含 page_transition 67.11 秒。
+- 从 platform/android 执行 `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，24 秒**，Java/native 同源。
+- Linux 原生 GUI 以独占 XDG、隔离网络与服务启动，检查 1800×1200、900×1200 物理像素
+  首页和图表布局，测试进程已关闭。X11 自动点击仍不可靠，未宣称原生拖动与窗口拉伸交互验收
+  通过；命中几何由框架专项验证，滑块交互由无窗口生产组件回归验证。
+  未做 Windows/macOS 构建、Android 真机、APK 安装或 VPN/发布验收。
+
+## 2026-11-12：对称正文边距与 HuxerUI 更新
+
+- 快照：`865b49ddbd88` 加当前工作区，保留已有未提交改动。应用未提交或发布；经用户明确授权，
+  HuxerUI 单独提交并推送 `60514f8552f9edb4a61bf7f53b7859ad56c340e6` 到 fork farna/main。
+  应用独立 checkout、CI 和 Android Java/native 固定该 SHA；维护工作树原有四项 macOS 改动保留。
+- ScrollArea 左右使用相同边距，宽屏为请求值与 12pt 的较大者，滚动条位于右边距内；窄屏保留
+  请求的小边距并隐藏滚动条。Scaffold 只发布 PageBodyInsets，由首个滚动容器或静态正文消费，
+  子环境清零；移除分页、列表、网络正文、菜单和抽屉重复的外部水平 Padding。
+  空状态、骨架、错误提示与编辑器外框沿用相同边距，固定标题/动作、虚拟化、Key 和偏移恢复保留。
+- HUI 合入官方 `00d1a486` 的文本布局/绘制复用、行数/省略和传递依赖支持，扩展 pin 不变。
+  已发布候选 `571ca110` 的 Android RenderCommand 分派漏传文本布局参数，NDK 编译失败；
+  修复在独立工作树完成，先用同一 NDK 参数编译候选文件，再以正式新 SHA 完成 Android 构建。
+  首轮 Linux Clang 出现异常，核对源码与提交完全一致后重试成功；未修改框架头文件规避。
+- `cmake --build build --target clash-flux test_page_transition` 与 `cmake --build build` 通过，
+  含 HuxerUI codegen；`./run.sh --version` 为 v0.3.101，`git diff --check` 通过。
+  `./build/test_page_transition --scrollbars` 专项通过；旧 HUI 下页面/资源回归 2/2，66.67 秒。
+  升级后 `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required`
+  **32/32，181.77 秒**，含 page_transition 67.54 秒、CPS、TLS、ORM 与持久化。
+  首轮完整测试被终止（143，无完整结果），上述为从头重跑的完整结果。
+- 从 platform/android 执行 `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，41 秒，arm64-v8a**；Java/native 均取仓库内同一份源码，应用策略回归通过。
+- Linux 原生 GUI 在独占 XDG 目录、隔离网络/服务下检查 1800×1200 与 900×1200 物理像素
+  首页布局和图表；宽窄重新布局可见，两侧留白对称，测试进程已关闭。
+  X11 自动点击仍不可靠，不宣称原生滚动条拖动或全部页面交互通过；对应交互由无窗口生产组件
+  回归覆盖。未做 Windows/macOS 构建、APK 安装、Android 真机或 VPN/发布验收。
+  CodeEditor 实时滚动条模式接口仍为扩展 TODO，详见 [UI 约定](ui-development.md#滚动与留白的归属)。
+
+## 2026-11-12：应用层 ScrollArea 独立滚动条槽
+
+- 快照：`865b49ddbd88` 加当前工作区；保留原有未提交改动，未修改 HuxerUI/fork 或依赖版本。
+- 新增 `scroll_area.h`：同一 Row 承载真实滚动容器与独立 rail，Compact 槽宽 0，
+  Medium/Expanded 固定 12pt。短内容、空内容和淡出期间保留槽宽，不覆盖正文或引发宽度跳动。
+  滑块通过公开 ScrollController 读取范围并 ScrollTo；只有 rail Scope 订阅几何，
+  无第二份可观察滚动状态，空闲停止帧调度。绘制阶段读取已完成布局的最新范围，缩短内容当帧隐藏。
+- 普通正文、表单、菜单和抽屉通过 PageScrollView 接入；订阅/代理网格、连接/日志/规则列表、
+  保真度与网站测试先完成虚拟布局/控制器/拖放配置，再包装 ScrollArea。保留业务 Key、虚拟化、
+  留白和浮层避让；已有控制器显式传入，带 PageScrollOffset 的页面同步记录外置拖动的真实偏移。
+  加载骨架与横向标签栏不接 rail；编辑器实时修改模式继续保留为独立扩展 TODO。
+- `cmake --build build --target clash-flux test_page_transition`（含 HuxerUI codegen）、
+  `./run.sh --version`（v0.3.101）、`git diff --check` 通过。
+  `./build/test_page_transition --scrollbars` 专项通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，84.88 秒**。四类真实滚动节点覆盖独立槽位、不遮正文、滑块拖动、599/600pt 切换、
+  位置保留、普通页卸载重挂恢复、淡出后的稳定宽度及无空闲帧、短/空内容；滚动不重组页面工厂。
+- 从 `platform/android` 执行 `./gradlew :app:externalNativeBuildDebug` 通过（arm64-v8a，52 秒）；
+  日志确认 Java/native 使用仓库固定 HuxerUI 源码，未做 APK 安装和 Android 真机交互。
+- Linux 原生 GUI 在独占 XDG/运行目录、隔离网络及服务中启动并捕获首页。X11 自动化未能可靠
+  完成点击和宽窄交互，主线程采样多次位于 Pango/字体绘制。临时恢复框架覆盖式实现的对照程序
+  也出现输入未及时响应和高占用，不能据此判定为 ScrollArea 回归或宣称原生交互通过。
+  已关闭全部测试进程、恢复独立槽位源码并重新构建主目标；原生拖动/分页、Windows/macOS
+  构建和 Android 真机验收仍未覆盖。布局和交互的具体约定见
+  [滚动与留白的归属](ui-development.md#滚动与留白的归属)。
+
+## 2026-11-11：滚动条宽窄策略与真实节点挂载
+
+- 快照：`865b49ddbd88` 加当前工作区，保留已有未提交改动；未修改框架、依赖固定版本或发布。
+- 公共滚动工厂按窗口视口统一处理：Compact 隐藏，Medium/Expanded 溢出时显示，
+  不区分手机/电脑或输入设备。覆盖普通正文、虚拟列表/网格、表单、菜单与抽屉；
+  修复在 Scope 上添加 ScrollBar 而未作用到真实滚动节点的问题，加载骨架和横向标签不显示。
+- 首页接入公共滚动位置恢复；外部资源与规则集资源库将 640pt 限宽移到正文/条目内部，
+  保留完整滚动视口、虚拟化及业务 Key。首尾留白与浮层避让保持原规则。
+- CodeEditor 创建时采用相同宽窄策略。预留滚动槽及已挂载编辑器实时同步模式明确列为
+  框架/扩展 TODO，等待 fork 或上游支持；不使用逐页占位或重建编辑器规避，详见
+  [滚动与留白的归属](ui-development.md#滚动与留白的归属)。
+- `cmake --build build --target clash-flux test_page_transition`（含 HuxerUI codegen）、
+  `./run.sh --version`（v0.3.101）、`git diff --check` 通过。
+  `./build/test_page_transition --scrollbars` 专项通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，72.65 秒**。真实绘制与输入覆盖普通正文、局部滚动区、虚拟列表及网格的溢出、
+  边缘位置、滑块拖动、599/600pt 切换、偏移保留及短内容无滚动条；原有大列表与编辑器状态回归通过。
+- 从 `platform/android` 执行 `./gradlew :app:externalNativeBuildDebug` 通过（arm64-v8a，36 秒）；
+  日志确认 Java/native 使用仓库固定 HuxerUI 源码，非 APK 安装或真机验收。
+- Linux X11 GUI 使用独占 XDG 目录并隔离网络/服务，检查设置页 1800×1200、900×1200
+  物理像素下的宽窄布局，已关闭测试进程。GUI 截图只作为布局证据，滚动条拖动与绘制由
+  上述无窗口生产组件回归验证。未做 Windows/macOS 原生构建、Android 真机及全部页面的原生交互验收。
+
+## 2026-11-11：订阅快速保存、后台准备及失败下载复用
+
+- 快照：`865b49ddbd88` 加现有工作区；延续独立 DataSession/版本来源文件，不提交或发布。
+  完整协议与边界见 [Provider 准备](provider-resource-management.md) 和[存储架构](storage-architecture.md)。
+- 新导入先完整下载并解析来源、事务保存，再发布卡片；应用任务域准备资源，卡片有准备中、
+  就绪、失败和重试入口。准备不自动选中或启动代理；刷新/编辑已有来源仍先完整候选检查。
+  原文/设置版本、操作 ticket 和取消核对保护删改/ABA；离开页面不丢提交或后台完成。
+- 后台网络不持运行锁；准备等待可取消。完整 CompileOptions、资源身份/正文和更新间隔匹配时，
+  60 秒内复用有界已检查编译结果；连接仍检查网络冲突，selector 改变后检查最终字节。
+  导入反馈直接使用准备账本；file provider、内置 GEO、原生 JSON/OpenVPN 保留原准备路径。
+- `.downloads` 独立留存已完整验证的响应，不替换活动缓存；失败后按身份/格式重验复用，
+  过期、损坏、未知版本不能直接使用，未知版本/身份不覆盖。大 Geo/ASN 120 秒且 Android
+  不再从头重试两次；桌面和 Android 支持 HTTP 压缩，限制解压后大小，保留 TLS 默认验证。
+- 生产 CLI 回归证明：保存不请求依赖；依赖失败保留行与原文；重试跨 Runtime 只请求失败项；
+  来源/缓存同大小同时间戳改写、设置变化使候选失效；相同输入复用，排队取消不等另一项 IO。
+  UI 模型覆盖单飞、失败重试、删除取消和 ABA。下载测试补充 gzip、解压膨胀和截断保留旧文件。
+- `cmake --build build`、主目标构建、`./run.sh --version`（v0.3.101）、`git diff --check` 通过。
+  完整必跑门禁 **32/32，163.06 秒**；此前一次 dns_tls_runtime 的服务端仅记录 EOF 时断言失败，
+  独立重跑通过，随后加入等待真实证书告警的同步，仍要求无 DNS payload，未接受 EOF/超时替代。
+  Android `:app:assembleDebug` 通过（NDK 29 / arm64-v8a，Java/native 同源）。收尾补充未知留存缓存
+  版本与 Windows 替换前释放读句柄后，六项定向回归 **6/6，11.86 秒**，Android 再构建通过（50 秒）。
+- Linux 真实配置 GUI 在临时 XDG、独立 D-Bus 和屏蔽服务 socket 的 bwrap 中启动一次，
+  两条已有来源的 ID、引用和正文保留；未进行原生窗口交互流程、Android 真机、Windows/macOS 构建、
+  真实系统代理/TUN 或服务变更。UI 异步模型的状态约束由生产模型回归覆盖。
+- 私有真实订阅只在权限受限的临时目录测量，URL、内容、凭据没有加入仓库。
+  Linux Debug 保存 **0.617 秒**（传输 0.512 秒、原文解析回调 0.019 秒），保存阶段依赖请求为 0。
+  首次资源准备仍因 ASN CDN 下载在 120 秒超时，完整准备约 134.8 秒；11 份已验证响应留存，
+  活动 provider 缓存仍为 0。该结果证明保存已解耦，不代表网络问题消失或连接已加速到同一耗时。
+  未完成首次 ASN 获取时不能宣称可连接；不同 TUN/监听角色不保证候选直接复用。
+
+## 2026-11-11：存储重构第一阶段——独立数据会话与订阅版本提交
+
+- 快照：`865b49ddbd88` 加现有工作区；保留之前的依赖、无窗 CLI 和设置页改动。
+  架构、提交顺序与尚未迁移边界见[存储架构](storage-architecture.md)。
+- 删除 Db 门面，`clashflux.data::DataSession` 独立管理 SQLite；CoreStore 不再拥有数据句柄，
+  消费者直接依赖数据会话，共享 Profile 使用 model 模块。Android Legacy 聚合与桌面测试同步迁移。
+- 远程导入、刷新、本地导入、原文编辑改为独占暂存及独立版本来源文件，先校验、同步文件，
+  再事务提交引用及响应元数据；新导入不发布半成品行。原生导入和元数据编辑也等待 SQL 确认。
+  应用失败恢复旧记录及运行计划；旧文件保留。每 ID 单调版本拒绝过期/ABA 完成，旧 flush 串行隔离。
+- persistence 新增真实写锁下旧 flush 与新事务交错、COMMIT 前不发布、SQL 故障、ABA、
+  任务线程适配和三来源重开；生产 CLI 回归补充等待 HTTP 时无半成品行、成功版本引用、
+  显式删除及失败导入无新增记录，同时核对旧文件仍在。仍保留原迁移/共享引用/失败重试回归。
+- 验证：`cmake --build build`、`cmake --build build --target clash-flux`、
+  `./run.sh --version`（v0.3.101）与 `git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure -L clashflux-required --no-tests=error`
+  **32/32，173.87 秒**。补充 CLI 场景与恢复下载/应用计时日志后，定向
+  `ctest --test-dir build --output-on-failure -R '^(persistence|resource_management_runtime)$'`
+  **2/2，6.13 秒**。并行导入倒序完成的稳定排序补充回归及 core_api_lifetime
+  **3/3，13.90 秒**。没有把无窗 CLI 测试换成反复打开 GUI。
+- Android Debug `huxerui build android --profile debug --source third_party/huxerui
+  --java-home /home/farna/jdk21` 通过（NDK 29 / arm64-v8a，Java/native 同源）；首次聚合编译
+  发现缺少 `<future>`，补入兼容头后重跑成功。
+- Linux 临时 XDG、独立 D-Bus、只读根及屏蔽服务 socket 的 bwrap 运行一次真实设置 GUI，
+  以已有两订阅库启动，截图检查内容正常；退出后 SQL 行、ID、文件引用及原文逐字保留。
+- 边界：设置/策略/个人规则、排序/选择/删除仍走兼容缓存与 flush，UI 存储泵仍按秒检查。
+  本轮不是整个重构结束；未做版本文件回收、Windows/macOS 构建、Android 真机、断电故障注入，
+  未执行真实代理/TUN/系统服务变更或发版。内核与 SQL 不构成原子事务。
+
+## 2026-11-11：设置首页独立就绪与无骨架首屏
+
+- 快照：`865b49ddbd88` 加现有工作区；本轮只调整设置页及设置发布，不扩展到其它页面。
+- SettingsPage 移除依赖 CoreView/SettingsView 的宽屏整页骨架，标题、分组、资源、
+  关于与诊断入口直接显示。桌面宽窄共用 SettingsValue：配置未 hydrate 时显示
+  静态 `—`，不挂默认开关/环境 shell；真实值到达后原位挂载控件。主题、语言、
+  网络参数入口按设置就绪启用，语言选择及开关写入也核对实际 ready。
+- 内核重启、服务安装状态只等待各自 CoreView，未读到真实状态前不显示“未安装”；
+  Android 电池优化豁免同样等待真实快照。复制环境变量也核对运行快照，防止误取默认端口。
+- SettingsModel::PublishCached 从已 hydrate 内存读取设置；桌面无窗与普通/Android
+  启动在数据库 open 成功后、内核初始化前立即调用，正常设置泵复用同一读取函数。
+  不依赖 RequestSync 唤醒一秒 Delay，不增加同步磁盘读取，不改变迁移和数据保留。
+- 验证：主目标与 test_page_transition 经 HuxerUI codegen 构建，版本为 v0.3.101，
+  `git diff --check` 通过。page_transition **1/1，58.74 秒**，新增生产 SettingsValue
+  组件的 360/960pt 回归：未就绪不挂可编辑默认控件、导航独立可用、配置早于内核
+  就绪、首次点击使用保存值、内核到达不重置已编辑设置。
+  resource_management_runtime、ui_resources、core_api_lifetime、persistence **4/4**。
+  Android `huxerui build android --profile debug --source third_party/huxerui --java-home /home/farna/jdk21`
+  通过（NDK 29 / arm64-v8a，`:app:assembleDebug`，30 秒），Java/native 同源。
+- Linux 使用临时 XDG、独立 D-Bus、只读文件系统及屏蔽服务目录的 bwrap 启动一次真实
+  设置 GUI，实际核对宽屏分组、入口、环境 shell 和启动开关正常显示，无整页骨架。
+  未测试 Windows/macOS 原生、Android 真机，未执行整套 32 项门禁或真实系统网络操作。
+
+## 2026-11-11：资源回归不再反复闪出应用窗口
+
+- 快照：`865b49ddbd88` 加现有工作区改动。保留 `resource_management_runtime`：
+  它多次调用真实 CLI 检查资源导入/重命名/删除引用保护、provider/Geo 刷新、
+  失败保留及过期响应拒绝，不是无断言的启动压力循环。
+- 根因：命令模式虽跳过首窗，却仍注册托盘轮询；托盘不可用/停用时的 GUI 回退
+  调用 ShowWindow，导致每次 CLI 启动弹出窗口。命令模式现在只启动无窗任务并
+  完成 flush/退出，不安装托盘激活与呈现轮询；GUI 托盘路径保持原有语义。
+- Linux 资源回归加载测试专用 `test_cli_no_window_guard`，在 `gtk_window_new`
+  入口报错并以 86 退出，阻止回归先闪窗再失败。修改前对真实 `resource list`
+  注入同一拦截器稳定得到 86；修改后所有资源操作在该 guard 下通过。
+- 验证：`cmake --build build --target clash-flux test_cli_no_window_guard`、
+  `./run.sh --version`（v0.3.101）、`git diff --check` 通过；HuxerUI codegen 已执行。
+  CTest 定向 page_transition、resource_management_runtime、project_test_gate、
+  ui_resources、core_api_lifetime、persistence **6/6**（68.96 秒），
+  singbox、proxy_standby_runtime **2/2**；`ctest --test-dir build -N` 保持 34 项，
+  必跑名单及缺失/禁用拒绝检查不变。修改的项目技能均未超过 100 行。
+- 边界：没有删测试或降低必跑门禁；未重新跑整套 32 项、Windows/macOS 原生或
+  真机托盘交互。窗口拦截器只用于 Linux CLI 测试，不进入应用或安装包。
+
+## 2026-11-11：第三方依赖稳定版本更新
+
+- 快照：应用 `865b49ddbd88` 加现有未提交改动；保留本轮开始前的 UI、CI、
+  Charts pin 与文档修改。未提交、打标签、推送或发布。
+- Glaze 9.0.0 → 9.1.0、curl 8.22.0 → 8.23.0、IXWebSocket 12.0.1 → 12.1.0、
+  yaml-cpp 0.8.0 → 0.9.0；更换归档、锁定 SHA256，同步 CPS 精确版本与 curl
+  运行时版本断言。Glaze 继续仅把 include/ + LICENSE 归档，模板留在私有普通 TU。
+- HuxerUI 源码与 CI 固定 `2229125248d95fc47c334df1568533e56bf62350`，
+  包含官方 `9ae9cb0d`；Media 固定官方 `fbe5b7e652f8cb79191444fa2a51d0dd0c2299bb`。
+  SQLite/Charts 已覆盖最新上游；Zstd、JSON、QR 与 sing-box 已为最新稳定版本。
+- Linux CMake 4.4.2 / Clang 21 Debug：`cmake --build build --target clash-flux`、
+  `cmake --build build`、`./run.sh --version`（v0.3.101）、`git diff --check` 通过。
+  `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required`
+  **32/32，174.83 秒**，包含 page_transition、持久化、CPS 重定位/版本拒绝/
+  缓存完整性、下载 TLS 与 DNS TLS。最初 CPS 仍断言旧 curl 版本，修正后定向和
+  整套门禁均通过。隔离 XDG 目录实际启动 GUI，首页圆环图正常、中心 0%，运行无日志；
+  未做菜单/图表悬停交互验收。
+- Android：`huxerui build android --profile debug --source /home/farna/dev/cpp/mcpp/Clash-Flux/third_party/huxerui --java-home /home/farna/jdk21`
+  通过（NDK 29 / arm64-v8a，`:app:assembleDebug`，1m 38s），产出 Debug APK，
+  Java/native 同源，保留 `stageBundledRuleSets` / `stageSingboxAar`。重新生成的
+  `.huxerui/generated/libraries.json` 五项 sourceRoot 的 HEAD 与 Lock.cmake 一致。
+  网络下载受阻时使用临时固定 Git 对象镜像；只作为下载缓存，不修改 URL/COMMIT、
+  不使用维护仓库的未提交源码。初次原生依赖下载中断，临时镜像保留固定提交树后重试通过。
+- 未完成：OpenSSL 最新稳定版 4.1.0 官方 release/codeload 多次 TLS 中断、超时、
+  内容不完整，未生成新静态兜底包；原 3.5.1 归档保留。Linux 本轮实际链接系统
+  OpenSSL 3.5.9，不能算作兜底包验收。历史 HuxerUI 0.3.0 SDK 归档仍不满足当前构建。
+- Camera 上游 `7f6176c5`、CodeEditor 上游 `fb160968` 尚未合入各自 fork；
+  保留最新已发布 fork 的 Linux 摄像头、预构建文档/剪贴板与 simdutf 修复，
+  不切换上游 URL 绕过补丁。没有修改这些维护仓库已有的未提交工作。
+- Windows/macOS 原生、Android 真机、VPN、正式签名和安装未验证。
+
+## 2026-11-10：跟进 HuxerUI 上游 `998b89d6`
+
+- 已发布的 `farna/main` 合并 upstream `14b1af53`（合并提交 `c2f099c1`），并推送调和
+  提交 `b857e474`：下拉刷新改读每轴 overscroll；组合失败错误页替换内容时保留文本/
+  指针/语义/帧服务，窗口退役才释放；禁用滚动容器的程序化滚动仍放行。
+- 上游破坏性 API（`1b227315`）把 `FocusRequester`/`FocusTarget`/`LayerAnchor` 统一为
+  `ViewHandle`：Popup/Menu 的 `Show`/`ShowAtAnchor` 需要目标句柄，场景切换新增
+  `RunFromView`；`TextParagraphLayout`/`LayoutText` 被 `TextLayout`/
+  `CreateTextLayout` 取代。应用迁移 `ActionMenuHandle`（同时持有 `UseViewHandle()`）、
+  日志子菜单与响应式锚点回归；Lib-Charts fork 的悬停 tooltip 改走目标句柄，新提交
+  `2251bab` 已推送，应用 pin 同步。
+- 框架源码/CI pin 从 `144aff6b` 更新到 `998b89d6`，本机 `third_party/huxerui` 同步；
+  Charts pin `a879e96` → `2251bab`；其余四项扩展 pin 不变。
+- 验证：`cmake --build build`（全部目标）、`./run.sh --version`（v0.3.101）、
+  `ctest -L clashflux-required` **32/32，168.36 秒**，其中 page_transition 57.92 秒、
+  ui_resources 通过；固定 URL/COMMIT 重新获取后 `build/_deps` 的 Charts HEAD 为
+  `2251bab`；`git diff --check` 通过。隔离 XDG 的 GUI 运行 8 秒未退出、无日志，
+  首页流量圆环图实际显示（中心 `0%`）。
+- 边界：未做 Android/Windows/macOS 原生构建、真机或安装验收；未实际点击动作菜单
+  与图表悬停；未提交应用仓库改动。
+
 ## 2026-11-09：迁移到 HuxerUI 0.4.0 工程格式
 
 - 框架源码/CI pin 从 `49faac65`（0.3 集成）更新到

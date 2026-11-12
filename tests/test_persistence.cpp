@@ -30,13 +30,13 @@
 #include <utility>
 #include <vector>
 
-import clashflux.db;
-import clashflux.persistence;
+import clashflux.model;
+import clashflux.data;
 
 using namespace huxerui;
 namespace sqlite = huxerui::sqlite;
 namespace db_schema = clashflux::db_schema;
-namespace persistence = clashflux::persistence;
+namespace persistence = clashflux::data;
 
 namespace {
 
@@ -131,16 +131,16 @@ Task<void> WaitFor(std::function<bool()> ready) {
     }
 }
 
-void SeedProfiles(persistence::Persistence& store) {
-    db::Profile remote;
+void SeedProfiles(persistence::DataSession& store) {
+    model::Profile remote;
     remote.id = 41; remote.name = "remote"; remote.file = "shared.yaml";
     remote.url = "https://example.test/remote";
     remote.expireAt = clashflux::subscription::kNeverExpires;
     store.saveProfile(remote);
-    db::Profile local;
+    model::Profile local;
     local.id = 42; local.name = "local"; local.type = "local"; local.file = "./shared.yaml";
     store.saveProfile(local);
-    db::Profile other;
+    model::Profile other;
     other.id = 43; other.name = "other"; other.file = "unique.yaml";
     other.url = "https://example.test/other";
     other.expireAt = 1893456000;  // 2030-01-01 UTC：非零到期时间必须原样往返
@@ -152,7 +152,7 @@ Task<void> ProfileOrderPhase() {
     const Fixture fixture;
     const auto shared = ReadFile(fixture.files / "shared.yaml");
     const auto unique = ReadFile(fixture.files / "unique.yaml");
-    persistence::Persistence store;
+    persistence::DataSession store;
     Check(co_await store.open(fixture.path, fixture.files), "order fixture open");
     SeedProfiles(store);
     store.setProfileOrder({43, 41, 42});
@@ -161,7 +161,7 @@ Task<void> ProfileOrderPhase() {
           "ordered profiles and setting must flush");
     co_await store.close();
 
-    persistence::Persistence reopened;
+    persistence::DataSession reopened;
     Check(co_await reopened.open(fixture.path, fixture.files), "ordered profiles reopen");
     const auto rows = reopened.listProfiles();
     Check(rows.size() == 3 && rows[0].id == 42 && rows[1].id == 43 &&
@@ -187,8 +187,8 @@ Task<void> FailedOpenPhase() {
     const Fixture fixture;
     const auto shared = ReadFile(fixture.files / "shared.yaml");
     const auto unique = ReadFile(fixture.files / "unique.yaml");
-    persistence::Persistence store;
-    Refused([&] { store.saveProfile(db::Profile{}); });
+    persistence::DataSession store;
+    Refused([&] { store.saveProfile(model::Profile{}); });
     Refused([&] { store.deleteProfile(41, true); });
     Refused([&] { store.setSelectedProfile(0); });
     store.setSetting("before.open", "intent");
@@ -200,10 +200,10 @@ Task<void> FailedOpenPhase() {
     Check(static_cast<bool>(opened), "open raw failure fixture");
     sqlite::Database raw = std::move(*opened);
     Check(static_cast<bool>(co_await raw.ExecuteAsync("PRAGMA user_version = 999")), "future schema fixture");
-    persistence::Persistence failed;
+    persistence::DataSession failed;
     Check(!co_await failed.open(fixture.path, fixture.files) && failed.degraded() && !failed.ready(),
           "future schema must fail closed without recreating a database");
-    Refused([&] { failed.saveProfile(db::Profile{}); });
+    Refused([&] { failed.saveProfile(model::Profile{}); });
     Refused([&] { failed.deleteProfile(41, true); });
     Refused([&] { failed.setSelectedProfile(0); });
     Refused([&] { failed.setSetting("test.value", "unsafe"); });
@@ -254,15 +254,95 @@ Task<void> HoldWriter(sqlite::Database& raw, std::shared_ptr<Gate> gate) {
     gate->writerDone = true;
 }
 
-Task<void> FlushWhileLocked(persistence::Persistence& store, bool settings, std::shared_ptr<FlushResult> result) {
+Task<void> FlushWhileLocked(persistence::DataSession& store, bool settings, std::shared_ptr<FlushResult> result) {
     result->started = true;
     result->ok = settings ? co_await store.flushSettings() : co_await store.flushProfiles();
     result->done = true;
 }
 
+Task<void> DurableProfilePhase(TaskScope tasks) {
+    const Fixture fixture;
+    persistence::DataSession store;
+    Check(co_await store.open(fixture.path, fixture.files, tasks), "durable open");
+    SeedProfiles(store);
+    Check(co_await store.flushProfiles() && co_await store.flushSettings(), "durable seed");
+    const auto original = store.listProfiles();
+    auto next = original.front();
+    next.file = "41.new.yaml";
+    next.name = "committed version";
+    std::ofstream(fixture.files / next.file) << "new complete source\n";
+    const auto reserved = store.reserveProfileId();
+    Check(reserved > 43 && store.listProfiles() == original, "reservation never publishes an incomplete row");
+    auto opened = co_await sqlite::Database::OpenAsync(File{fixture.path.string()}, db_schema::openOptions());
+    Check(static_cast<bool>(opened), "durable observer open");
+    auto raw = std::move(*opened);
+    const auto gate = std::make_shared<Gate>();
+    tasks.Launch([&raw, gate]() -> Task<void> { co_await HoldWriter(raw, gate); });
+    co_await WaitFor([gate] { return gate->entered.load(); });
+    auto pending = original.front(); pending.name = "older pending metadata";
+    store.saveProfile(pending);
+    const auto revision = store.profileRevision(pending.id);
+    const auto flush = std::make_shared<FlushResult>();
+    tasks.Launch([&store, flush]() -> Task<void> { co_await FlushWhileLocked(store, false, flush); });
+    co_await WaitFor([flush] { return flush->started; });
+    const auto commit = std::make_shared<FlushResult>();
+    tasks.Launch([&store, next, revision, commit]() -> Task<void> {
+        commit->started = true;
+        commit->ok = co_await store.commitProfile(next, revision);
+        commit->done = true;
+    });
+    co_await WaitFor([commit] { return commit->started; });
+    Check(!flush->done && !commit->done && store.listProfiles().front() == pending,
+          "write lock retains old accepted reference; durable commit cannot overtake an older flush");
+    gate->release = true;
+    co_await WaitFor([gate, flush, commit] { return gate->writerDone.load() && flush->done && commit->done; });
+    Check(flush->ok && commit->ok && store.listProfiles().front() == next && !store.hasPendingProfiles(),
+          "confirmed transaction publishes once and clears the superseded pending version");
+    auto disk = co_await raw.Select(db_schema::profiles()).AllAsync();
+    Check(disk && disk->size() == 3 && disk->front().file == next.file && disk->front().name == next.name,
+          "success already means durable SQLite acceptance, with no later flush");
+    const auto committedRevision = store.profileRevision(next.id);
+    Check(!co_await store.commitProfile(original.front(), revision), "stale result cannot overwrite a committed revision");
+    // Even a return to identical values must invalidate the old preparation.
+    store.saveProfile(original.front()); store.saveProfile(next);
+    Check(!co_await store.commitProfile(original.front(), committedRevision), "ABA rejects old completion");
+    Check(co_await store.flushProfiles(), "persist newer ABA intent");
+    Check(static_cast<bool>(co_await raw.ExecuteAsync(
+        "CREATE TRIGGER reject_profile BEFORE INSERT ON profiles WHEN NEW.name='reject' "
+        "BEGIN SELECT RAISE(ABORT, 'injected failure'); END")), "inject SQL commit failure");
+    auto rejected = next; rejected.name = "reject";
+    const auto beforeFailure = store.profileRevision(next.id);
+    Check(!co_await store.commitProfile(rejected, beforeFailure) &&
+          store.listProfiles().front() == next && store.profileRevision(next.id) == beforeFailure,
+          "failed COMMIT never publishes a row or advances its accepted version");
+    next.name = "worker confirmed";
+    Check(co_await RunWorker([&store, next, beforeFailure] {
+        return store.commitProfileOnWorker(next, beforeFailure);
+    }), "worker adapter awaits the actual async transaction without blocking UI");
+    Check(ReadFile(fixture.files / "shared.yaml") == "remote and local stable content\n" &&
+          ReadFile(fixture.files / "unique.yaml") == "other remote stable content\n" &&
+          ReadFile(fixture.files / next.file) == "new complete source\n",
+          "new acceptance never overwrites old or other referenced source versions");
+    auto firstImport = original[1]; firstImport.id = store.reserveProfileId(); firstImport.name = "first import";
+    auto secondImport = original[2]; secondImport.id = store.reserveProfileId(); secondImport.name = "second import";
+    Check(co_await store.commitProfile(secondImport, 0) && co_await store.commitProfile(firstImport, 0),
+          "out-of-order import completion commits both reserved identities");
+    const auto beforeReopen = store.listProfiles();
+    Check(beforeReopen.size() == 5 && beforeReopen[3] == firstImport && beforeReopen[4] == secondImport,
+          "accepted list order is independent of network completion order");
+    co_await store.close();
+    Check(static_cast<bool>(co_await raw.CloseAsync()), "durable observer close");
+    persistence::DataSession reopened;
+    Check(co_await reopened.open(fixture.path, fixture.files), "durable reopen");
+    const auto rows = reopened.listProfiles();
+    Check(rows == beforeReopen && rows.front() == next && rows[1] == original[1] && rows[2] == original[2],
+          "reopen keeps the committed source pointer, every unrelated source and import order");
+    co_await reopened.close();
+}
+
 Task<void> UpgradeExitPhase(TaskScope tasks) {
     const Fixture fixture;
-    persistence::Persistence store;
+    persistence::DataSession store;
     Check(co_await store.open(fixture.path, fixture.files), "upgrade fixture open");
     SeedProfiles(store);
     Check(co_await store.flushSettings() && co_await store.flushProfiles(), "upgrade fixture seed");
@@ -282,7 +362,7 @@ Task<void> UpgradeExitPhase(TaskScope tasks) {
     co_await WaitFor([flush] { return flush->started; });
     Check(!flush->done, "upgrade save awaits a real SQLite write lock");
     Refused([&] { store.setSetting("test.value", "late-write"); });
-    Refused([&] { store.saveProfile(db::Profile{}); });
+    Refused([&] { store.saveProfile(model::Profile{}); });
     Refused([&] { store.deleteProfile(42, true); });
     Refused([&] { store.setSelectedProfile(42); });
     gate->release = true;
@@ -305,7 +385,7 @@ Task<void> UpgradeExitPhase(TaskScope tasks) {
 
 Task<void> PersonalRulesPhase(TaskScope tasks) {
     const Fixture fixture;
-    persistence::Persistence store;
+    persistence::DataSession store;
     Check(co_await store.open(fixture.path, fixture.files), "personal rules open");
     SeedProfiles(store);
     const std::string first = "profile.rules.41", second = "profile.rules.42";
@@ -337,7 +417,7 @@ Task<void> PersonalRulesPhase(TaskScope tasks) {
     Check(co_await store.flushSettings(), "flush other owner's latest rule revision");
     co_await store.close();
     Check(static_cast<bool>(co_await raw.CloseAsync()), "close personal rule observer");
-    persistence::Persistence reopened;
+    persistence::DataSession reopened;
     Check(co_await reopened.open(fixture.path, fixture.files), "reopen personal rules");
     Check(reopened.setting(first).empty() && reopened.setting(second) == "snapshot", "no resurrected edits; independent edits survive reopen");
     Check(reopened.listProfiles().size() == 2 && ReadFile(fixture.files/"shared.yaml") == "remote and local stable content\n",
@@ -351,7 +431,7 @@ Task<void> InterleavedPhase(TaskScope tasks) {
     // not after an arbitrary sleep; both commits and reopen are checked.
     for (int scenario = 0; scenario < 7; ++scenario) {
         const Fixture fixture;
-        persistence::Persistence store;
+        persistence::DataSession store;
         Check(co_await store.open(fixture.path, fixture.files), "interleaved open");
         SeedProfiles(store);
         Check(co_await store.flushSettings() && co_await store.flushProfiles(), "seed interleaved rows");
@@ -374,7 +454,7 @@ Task<void> InterleavedPhase(TaskScope tasks) {
             store.setSetting("test.value", "newest");
             if (scenario == 1) store.setSetting("test.value", "snapshot"); // ABA, still a new version
         } else if (scenario == 6) {
-            db::Profile pending;
+            model::Profile pending;
             pending.id = 44; pending.name = "newest"; pending.type = "local"; pending.file = "unique.yaml";
             store.saveProfile(pending); // no persisted reference exists yet
         } else if (scenario == 3) store.deleteProfile(41, true);
@@ -396,12 +476,12 @@ Task<void> InterleavedPhase(TaskScope tasks) {
         Check(co_await store.flushSettings() && co_await store.flushProfiles(), "flush latest mutation");
         co_await store.close();
         Check(static_cast<bool>(co_await raw.CloseAsync()), "close interleaved observer");
-        persistence::Persistence reopened;
+        persistence::DataSession reopened;
         Check(co_await reopened.open(fixture.path, fixture.files), "interleaved reopen");
         const auto rows = reopened.listProfiles();
         Check(rows.size() == (scenario == 3 ? 2 : 3) && rows.back().id == (scenario == 6 ? 44 : 43),
               "interleaved reopen retains all independent sources/stable IDs");
-        for (const db::Profile& row : rows) {
+        for (const model::Profile& row : rows) {
             if (row.id == 41) Check(row.expireAt == clashflux::subscription::kNeverExpires,
                 "explicit unlimited expiry survives interleaved flush and reopen");
             if (row.id == 43) {
@@ -419,7 +499,7 @@ Task<void> InterleavedPhase(TaskScope tasks) {
 }
 
 Task<void> DeletionPhaseSetup(const Fixture& fixture) {
-    persistence::Persistence store;
+    persistence::DataSession store;
     Check(co_await store.open(fixture.path, fixture.files), "deletion fixture open");
     SeedProfiles(store);
     Check(co_await store.flushSettings() && co_await store.flushProfiles(), "deletion seed flush");
@@ -436,7 +516,7 @@ Task<void> DeletionPhaseSetup(const Fixture& fixture) {
           "failed deletion retains persisted row and referenced file");
     co_await store.close(); // repeated failure must still retain the original file/row
     Check(static_cast<bool>(co_await raw.ExecuteAsync("DROP TRIGGER refuse_delete")), "remove injected delete failure");
-    persistence::Persistence reopened;
+    persistence::DataSession reopened;
     Check(co_await reopened.open(fixture.path, fixture.files),
           "failed deletion reopen: " + reopened.lastError());
     Check(reopened.listProfiles().size() == 3,
@@ -450,7 +530,7 @@ Task<void> DeletionPhaseSetup(const Fixture& fixture) {
     Check(rows && rows->size() == 1 && rows->front().id == 42, "committed deletes must remove exactly IDs 41 and 43");
     Check(!std::filesystem::exists(fixture.files / "unique.yaml") && std::filesystem::exists(fixture.files / "shared.yaml"),
           "only committed unreferenced requested file is cleaned");
-    db::Profile pending;
+    model::Profile pending;
     pending.id = 44; pending.name = "pending shared source"; pending.type = "local"; pending.file = "shared.yaml";
     reopened.saveProfile(pending);
     Check(reopened.deleteProfile(42, true), "queue delete while another source owns shared file");
@@ -461,7 +541,7 @@ Task<void> DeletionPhaseSetup(const Fixture& fixture) {
 }
 
 Task<void> DeletionPhaseUnsafeCleanup(const Fixture& fixture) {
-    persistence::Persistence finalStore;
+    persistence::DataSession finalStore;
     Check(co_await finalStore.open(fixture.path, fixture.files), "final delete reopen");
     const auto finalRows = finalStore.listProfiles();
     Check(finalRows.size() == 1 && finalRows[0].id == 44 && finalRows[0].file == "shared.yaml", "delete/reopen retains remaining source identity/reference");
@@ -471,7 +551,7 @@ Task<void> DeletionPhaseUnsafeCleanup(const Fixture& fixture) {
     const auto outside = fixture.files.parent_path() / (fixture.files.filename().string() + "-outside.yaml");
     std::ofstream(outside, std::ios::binary) << "protected outside file\n";
     struct OutsideFile { std::filesystem::path path; ~OutsideFile() { std::error_code ec; std::filesystem::remove(path, ec); } } outsideCleanup{outside};
-    db::Profile escaped;
+    model::Profile escaped;
     escaped.id = 45; escaped.file = "../" + outside.filename().string();
     finalStore.saveProfile(escaped);
     Check(co_await finalStore.flushProfiles(), "persist outside reference fixture");
@@ -493,7 +573,7 @@ Task<void> DeletionPhaseUnsafeCleanup(const Fixture& fixture) {
 }
 
 Task<void> DeletionPhaseRetry(const Fixture& fixture) {
-    persistence::Persistence finalStore;
+    persistence::DataSession finalStore;
     Check(co_await finalStore.open(fixture.path, fixture.files), "retry phase reopen");
     const auto outside = fixture.files.parent_path() / (fixture.files.filename().string() + "-outside.yaml");
     std::ofstream(outside, std::ios::binary) << "protected outside file\n";
@@ -504,7 +584,7 @@ Task<void> DeletionPhaseRetry(const Fixture& fixture) {
     // A rejected upsert must retain the pending version and other source files.
     Check(static_cast<bool>(co_await raw.ExecuteAsync(
         "CREATE TRIGGER refuse_insert BEFORE INSERT ON profiles WHEN NEW.id = 47 BEGIN SELECT RAISE(ABORT, 'test insert refused'); END")), "install upsert failure trigger");
-    db::Profile retry;
+    model::Profile retry;
     std::ofstream(fixture.files / "retry.yaml", std::ios::binary) << "protected retry source\n";
     retry.id = 47; retry.name = "retry source"; retry.type = "local"; retry.file = "retry.yaml";
     finalStore.saveProfile(retry);
@@ -524,7 +604,7 @@ Task<void> DeletionPhaseRetry(const Fixture& fixture) {
           "non-explicit row cleanup never deletes a completed source file");
     Check(static_cast<bool>(co_await raw.CloseAsync()), "close deletion observer");
     co_await finalStore.close();
-    persistence::Persistence retryReopen;
+    persistence::DataSession retryReopen;
     Check(co_await retryReopen.open(fixture.path, fixture.files), "retry source reopen");
     Check(retryReopen.listProfiles().size() == 1 && retryReopen.listProfiles()[0].id == 47 &&
               retryReopen.listProfiles()[0].name == "retry source", "failed/retried upsert survives reopen with stable identity");
@@ -552,14 +632,14 @@ Task<void> GlobalPolicyHydrationPhase(TaskScope tasks) {
     const auto latest = encode(9, {"new-c", "kept-a"});
     for (const bool aba : {false, true}) {
         const Fixture fixture;
-        persistence::Persistence seed;
+        persistence::DataSession seed;
         Check(co_await seed.open(fixture.path, fixture.files), "global policy seed open");
         SeedProfiles(seed);
         seed.setSetting("vpn.global_policy", first);
         Check(co_await seed.flushSettings() && co_await seed.flushProfiles(), "global policy seed flush");
         co_await seed.close();
 
-        persistence::Persistence store;
+        persistence::DataSession store;
         persistence::HydratedOnce initialized;
         std::string cachedPolicy;
         int reads = 0;
@@ -612,7 +692,7 @@ Task<void> GlobalPolicyHydrationPhase(TaskScope tasks) {
         Check(static_cast<bool>(co_await raw.CloseAsync()), "global policy observer close");
         co_await store.close();
 
-        persistence::Persistence reopened;
+        persistence::DataSession reopened;
         Check(co_await reopened.open(fixture.path, fixture.files), "final global policy reopen");
         Check(reopened.setting("vpn.global_policy") == (aba ? snapshot : latest) &&
               reopened.listProfiles().size() == 3 &&
@@ -635,7 +715,7 @@ Task<void> OpenVpnSourceCompatibilityPhase() {
     const std::string ovpn = "client\nremote vpn.example.test 1194 udp\n<auth-user-pass>\n user name \n secret password \n</auth-user-pass>\n";
     std::ofstream(fixture.files / "remote-ovpn.yaml", std::ios::binary) << ovpn;
     std::ofstream(fixture.files / "local-ovpn.yaml", std::ios::binary) << ovpn;
-    std::vector<db::Profile> expected(4);
+    std::vector<model::Profile> expected(4);
     expected[0].id = 81; expected[0].name = "remote OpenVPN"; expected[0].type = "remote";
     expected[0].file = "remote-ovpn.yaml"; expected[0].url = "https://example.test/config.ovpn";
     expected[0].selected = true; expected[0].autoUpdate = true; expected[0].intervalMins = 1440;
@@ -646,13 +726,13 @@ Task<void> OpenVpnSourceCompatibilityPhase() {
     expected[3].id = 84; expected[3].name = "other local source"; expected[3].type = "local";
     expected[3].file = "shared.yaml";
     const std::string policy = "legacy profile-83 and ordinary profile-82 stable references";
-    persistence::Persistence store;
+    persistence::DataSession store;
     Check(co_await store.open(fixture.path, fixture.files), "OpenVPN compatibility fixture open");
     for (const auto& profile : expected) store.saveProfile(profile);
     store.setSetting("vpn.global_policy", policy);
     Check(co_await store.flushProfiles() && co_await store.flushSettings(), "all OpenVPN source types persist");
     co_await store.close();
-    persistence::Persistence reopened;
+    persistence::DataSession reopened;
     Check(co_await reopened.open(fixture.path, fixture.files), "mixed OpenVPN sources reopen");
     Check(reopened.listProfiles() == expected && reopened.setting("vpn.global_policy") == policy,
           "legacy/remote/local OpenVPN keep all IDs, inline credentials, routes, source settings and references");
@@ -683,7 +763,7 @@ Task<void> RunTest(TaskScope tasks) {
     Trace(1, "开始：打开数据库");
     try {
         {
-            persistence::Persistence store;
+            persistence::DataSession store;
             Check(!store.ready(), "store must not be ready before open");
             Check(store.setting("ui.theme_mode", "fallback") == "fallback",
                   "unopened store must return the fallback");
@@ -752,7 +832,7 @@ Task<void> RunTest(TaskScope tasks) {
                   "startup snapshot must read an enabled tray setting");
             Trace(4, "profiles 缓存操作");
             // ---- profiles：插入/列出/更新/独占选中/删除 ----
-            db::Profile first;
+            model::Profile first;
             first.name = "主订阅";
             first.url = "https://example.com/a.yaml";
             first.file = "1.yaml";
@@ -760,7 +840,7 @@ Task<void> RunTest(TaskScope tasks) {
             const std::int64_t first_id = store.saveProfile(first);
             Check(first_id > 0, "saveProfile must return the generated id");
 
-            db::Profile second;
+            model::Profile second;
             second.name = "备用";
             second.file = "2.yaml";
             const std::int64_t second_id = store.saveProfile(second);
@@ -787,7 +867,7 @@ Task<void> RunTest(TaskScope tasks) {
             Check(!list[0].selected && list[1].selected,
                   "setSelectedProfile must leave exactly one selected row");
 
-            db::Profile third;
+            model::Profile third;
             third.name = "第三订阅";
             third.file = "3.yaml";
             const std::int64_t third_id = store.saveProfile(third);
@@ -812,7 +892,7 @@ Task<void> RunTest(TaskScope tasks) {
 
         {
             Trace(6, "重新打开数据库");
-            persistence::Persistence store;
+            persistence::DataSession store;
             Check(co_await store.open(path), "reopen failed");
             Check(store.setting("ui.theme_mode", "") == "2",
                   "setting did not persist through the ORM database");
@@ -833,7 +913,7 @@ Task<void> RunTest(TaskScope tasks) {
 
         {
             // 第三次打开：确认覆盖写生效。
-            persistence::Persistence store;
+            persistence::DataSession store;
             Check(co_await store.open(path), "third open failed");
             Check(store.setting("ui.theme_mode", "") == "1",
                   "overwritten setting did not persist");
@@ -906,7 +986,7 @@ Task<void> RunTest(TaskScope tasks) {
                       !legacySettings.startMinimized &&
                       legacySettings.error.empty(),
                   "startup snapshot must read legacy settings before migration");
-            persistence::Persistence store;
+            persistence::DataSession store;
             Check(co_await store.open(legacy),
                   "legacy database must open through the 0->1 migration: " +
                       store.lastError());
@@ -946,7 +1026,7 @@ Task<void> RunTest(TaskScope tasks) {
             std::error_code error;
             Check(std::filesystem::exists(legacy, error),
                   "legacy database must not be deleted");
-            persistence::Persistence reopened;
+            persistence::DataSession reopened;
             Check(co_await reopened.open(legacy),
                   "legacy reopen after migration failed");
             Check(reopened.setting("ui.theme_mode", "") == "1",
@@ -978,7 +1058,9 @@ Task<void> RunTest(TaskScope tasks) {
         co_await ProfileOrderPhase();
         Trace(14, "全局规则 hydrate/锁竞争/ABA 与重开保留");
         co_await GlobalPolicyHydrationPhase(tasks);
-        Trace(15, "完成");
+        Trace(15, "订阅版本提交/锁竞争/失败/ABA/工作线程桥接");
+        co_await DurableProfilePhase(tasks);
+        Trace(16, "完成");
         RemoveDatabase(path);
         Finish();
     } catch (const std::exception& exception) {
@@ -990,7 +1072,7 @@ Task<void> RunTest(TaskScope tasks) {
     }
 }
 
-View PersistenceTestApp() {
+View DataSessionTestApp() {
     const TaskScope tasks = UseTaskScope();
     Lifecycle([tasks] {
         tasks.Launch([tasks]() -> Task<void> { co_await RunTest(tasks); });
@@ -1018,7 +1100,7 @@ int main() {
               ParseExpiryValue("9999999999999999999999") == 0,
           "explicit permanent expiry is distinct from invalid or unknown metadata");
     StartWatchdog();
-    const Application application{PersistenceTestApp};
+    const Application application{DataSessionTestApp};
     testing::UiTest ui{application, testing::UiTestOptions{.viewport = {480.0F, 320.0F}}};
     ui.Pump();
 

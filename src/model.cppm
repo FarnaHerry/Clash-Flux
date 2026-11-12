@@ -1,7 +1,4 @@
-// model.cppm — 跨层共享的领域数据结构（无依赖，供 db / persistence / store 共用）。
-//
-// 单独成模块是为了打破 db ↔ persistence 的模块环：持久化服务需要 Profile
-// 类型，而 db.cpp（clashflux.db 的实现单元）又要转发到持久化服务。
+// Shared owned domain DTOs; independent of storage and runtime.
 export module clashflux.model;
 
 import std;
@@ -12,7 +9,7 @@ export struct Profile {
     std::int64_t id = 0;         // 0 = 未保存过
     std::string name;
     std::string url;             // 订阅 URL；本地导入为空
-    std::string file;            // profiles/ 下的 YAML 文件名（<id>.yaml）
+    std::string file;            // profiles/ 下的 YAML 文件名（旧库 id.yaml 或独立版本文件）
     bool selected = false;       // 当前启用
     std::int64_t updatedAt = 0;  // 上次成功拉取/导入时间（Unix 秒）
     std::string error;           // 上次拉取错误（成功清空）

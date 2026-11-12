@@ -3,7 +3,7 @@
 #include <mutex>
 #include <stdexcept>
 
-namespace clashflux::persistence {
+namespace clashflux::data {
 // A pre-hydration read must not permanently publish an empty owner cache.
 // Failed readiness/decoding leaves call_once retryable without mutating storage.
 class HydratedOnce {
@@ -18,4 +18,4 @@ public:
 private:
     std::once_flag once_;
 };
-} // namespace clashflux::persistence
+} // namespace clashflux::data

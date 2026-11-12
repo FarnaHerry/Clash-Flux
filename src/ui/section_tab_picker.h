@@ -84,12 +84,14 @@ inline huxerui::View GroupPickerContent(const std::vector<SectionTab>& tabs,
                     .With(huxerui::Tooltip(Localized("关闭"))).OnClick(dismiss),
             }.With(huxerui::MainAlign(huxerui::MainAxisAlignment::End)),
         }.With(huxerui::Align(huxerui::HorizontalAlignment::Stretch,
-                              huxerui::VerticalAlignment::Center)),
-        huxerui::ScrollView(huxerui::Flow(std::move(choices)).With(
+                              huxerui::VerticalAlignment::Center),
+               huxerui::Padding(huxerui::EdgeInsets::Symmetric(theme.spacing.medium, 0.0F))),
+        PageScrollView(huxerui::Flow(std::move(choices)).With(
             huxerui::Spacing(theme.spacing.small),
-            huxerui::MainAlign(huxerui::MainAxisAlignment::Center)))
+            huxerui::MainAlign(huxerui::MainAxisAlignment::Center)), {}, {}, theme.spacing.medium)
             .With(huxerui::Grow(1.0F)).Key("group-picker-scroll"),
-    }.With(huxerui::Padding(theme.spacing.medium), huxerui::Spacing(theme.spacing.medium),
+    }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, theme.spacing.medium)),
+           huxerui::Spacing(theme.spacing.medium),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 

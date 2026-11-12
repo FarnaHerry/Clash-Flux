@@ -6,7 +6,7 @@
 
 import std;
 import nlohmann.json;
-import clashflux.db;
+import clashflux.model;
 import clashflux.vpn;
 import clashflux.singbox;
 import clashflux.routing;
@@ -118,9 +118,9 @@ int main() {
         try { routing::DecodeProfileRules(invalid); } catch (...) { refused = true; }
         assert(refused);
     }
-    db::Profile main{.id = 1, .name = "main", .selected = true};
-    db::Profile other{.id = 2, .name = "other"};
-    db::Profile native{.id = 3, .name = "native", .type = "pptp",
+    model::Profile main{.id = 1, .name = "main", .selected = true};
+    model::Profile other{.id = 2, .name = "other"};
+    model::Profile native{.id = 3, .name = "native", .type = "pptp",
                        .nativeRoutes = " 10.2.0.0/16,\n10.3.0.0/16\r\n10.2.0.0/16 "};
     vpn::VpnPolicy policy{.defaultMainId = "profile-2",
         .rules = {{vpn::MatchKind::DomainSuffix, "example.test", "profile-3", 100}}};
@@ -134,7 +134,7 @@ int main() {
         assert(threw);
     }
 
-    std::vector<db::Profile> profiles{main, other, native};
+    std::vector<model::Profile> profiles{main, other, native};
     singbox::CompileOptions options;
     routing::PopulateOptions(options, profiles, policy, {});
     assert(options.mainConnectionId == "profile-1"); // selected beats stale saved main
@@ -165,12 +165,12 @@ int main() {
 
     // Ordinary OpenVPN source files keep the normal source identity and lifecycle.
     // Only PPTP is projected into separately controlled native sessions.
-    db::Profile localOvpn{.id = 41, .name = "local OpenVPN", .file = "41.ovpn",
+    model::Profile localOvpn{.id = 41, .name = "local OpenVPN", .file = "41.ovpn",
                            .selected = true, .type = "local"};
-    db::Profile remoteOvpn{.id = 42, .name = "remote OpenVPN",
+    model::Profile remoteOvpn{.id = 42, .name = "remote OpenVPN",
                             .url = "https://example.test/profile.ovpn", .file = "42.yaml",
                             .type = "remote"};
-    std::vector<db::Profile> ovpnSources{localOvpn, remoteOvpn, native};
+    std::vector<model::Profile> ovpnSources{localOvpn, remoteOvpn, native};
     routing::PopulateOptions(options, ovpnSources, policy, {});
     assert(options.mainConnectionId == "profile-41");
     assert(options.mainSourceName == "local OpenVPN");

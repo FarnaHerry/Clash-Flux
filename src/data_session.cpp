@@ -1,14 +1,14 @@
-// persistence.cpp — Persistence 实现单元（huxerui::sqlite ORM）。
+// Independent data session backed by the asynchronous SQLite ORM.
 module;
 #include <huxerui/sqlite.h>
 #include "sqlite_schema.h"
 
-module clashflux.persistence;
+module clashflux.data;
 
 import std;
 import clashflux.model;
 
-namespace clashflux::persistence {
+namespace clashflux::data {
 
 namespace sqlite = huxerui::sqlite;
 
@@ -142,7 +142,7 @@ StartupSettings readStartupSettings(const std::filesystem::path& file) {
     return settings;
 }
 
-struct Persistence::Impl {
+struct DataSession::Impl {
     std::optional<sqlite::Database> database;
     bool ready = false;
     // 打开失败的状态，仅供诊断；不允许继续订阅写入。
@@ -170,26 +170,34 @@ struct Persistence::Impl {
     // 订阅修订号：三个变更入口各 +1，供 UI 侧做脏检查（见 profilesRevision）。
     std::uint64_t profilesRevision = 0;
     std::string lastError;
+    huxerui::TaskScope dispatcher;
+    std::thread::id applicationThread;
+    std::int64_t nextProfileId = 1;
+    std::map<std::int64_t, std::uint64_t> profileVersions;
+    std::set<std::int64_t> committingProfiles;
 };
 
-Persistence::Persistence() : impl_(std::make_unique<Impl>()) {}
-Persistence::~Persistence() = default;
+DataSession::DataSession() : impl_(std::make_unique<Impl>()) {}
+DataSession::~DataSession() = default;
 
-bool Persistence::freezeWritesForUpgrade() {
+bool DataSession::freezeWritesForUpgrade() {
     std::lock_guard lock(impl_->mutex);
     if (!impl_->ready || !impl_->database || impl_->closing || impl_->upgradeFrozen) return false;
     impl_->upgradeFrozen = true;
     return true;
 }
 
-void Persistence::resumeWritesAfterUpgradeFailure() {
+void DataSession::resumeWritesAfterUpgradeFailure() {
     std::lock_guard lock(impl_->mutex);
     impl_->upgradeFrozen = false;
 }
 
-huxerui::Task<bool> Persistence::open(const std::filesystem::path& file,
-                                     const std::filesystem::path& profileDirectory) {
+huxerui::Task<bool> DataSession::open(const std::filesystem::path& file,
+                                     const std::filesystem::path& profileDirectory,
+                                     huxerui::TaskScope dispatcher) {
     Impl* impl = impl_.get();
+    impl->dispatcher = dispatcher;
+    impl->applicationThread = std::this_thread::get_id();
     // 老库（user_version=0 的 SQLiteCpp / 早期 ORM 结构）由 0→1 迁移在事务内
     // 重建表并保留数据；真正迁移不了的库 open 失败并记录错误——应用不删除任何
     // 文件；订阅写入在 hydrate 完成前一律拒绝，失败停止正常启动。
@@ -261,6 +269,13 @@ huxerui::Task<bool> Persistence::open(const std::filesystem::path& file,
         impl->profileDirectory = profileDirectory;
         impl->closing = false;
         impl->upgradeFrozen = false;
+        impl->nextProfileId = 1;
+        impl->profileVersions.clear();
+        for (const auto& profile : impl->profiles) {
+            impl->nextProfileId = std::max(impl->nextProfileId, profile.id + 1);
+            impl->profileVersions[profile.id] = ++impl->profilesRevision;
+        }
+        ++impl->settingsRevision;
         impl->ready = true;
         impl->degraded = false;
         impl->lastError.clear();
@@ -272,9 +287,13 @@ huxerui::Task<bool> Persistence::open(const std::filesystem::path& file,
     co_return true;
 }
 
-huxerui::Task<void> Persistence::close() {
+huxerui::Task<void> DataSession::close() {
     Impl* impl = impl_.get();
     { std::lock_guard lock(impl->mutex); impl->closing = true; }
+    for (;;) {
+        { std::lock_guard lock(impl->mutex); if (impl->committingProfiles.empty()) break; }
+        co_await huxerui::Delay(std::chrono::milliseconds{1});
+    }
     co_await flushSettings();
     co_await flushProfiles();
     if (impl->database.has_value()) {
@@ -289,24 +308,24 @@ huxerui::Task<void> Persistence::close() {
     impl->ready = false;
 }
 
-bool Persistence::ready() const noexcept {
+bool DataSession::ready() const noexcept {
     std::lock_guard lock(impl_->mutex);
     return impl_->ready && impl_->database.has_value() && !impl_->closing;
 }
 
-bool Persistence::degraded() const noexcept {
+bool DataSession::degraded() const noexcept {
     std::lock_guard lock(impl_->mutex);
     return impl_->degraded;
 }
 
-std::string Persistence::setting(const std::string& key,
+std::string DataSession::setting(const std::string& key,
                                  const std::string& fallback) const {
     std::lock_guard lock(impl_->mutex);
     const auto found = impl_->settings.find(key);
     return found == impl_->settings.end() ? fallback : found->second;
 }
 
-void Persistence::setSetting(const std::string& key, const std::string& value) {
+void DataSession::setSetting(const std::string& key, const std::string& value) {
     if (key.empty()) return;
     std::lock_guard lock(impl_->mutex);
     if (impl_->degraded || impl_->closing || impl_->upgradeFrozen)
@@ -323,12 +342,12 @@ void Persistence::setSetting(const std::string& key, const std::string& value) {
     impl_->dirty[key] = ++impl_->settingsRevision;
 }
 
-bool Persistence::hasPendingSettings() const noexcept {
+bool DataSession::hasPendingSettings() const noexcept {
     std::lock_guard lock(impl_->mutex);
     return !impl_->dirty.empty();
 }
 
-huxerui::Task<bool> Persistence::flushSettings() {
+huxerui::Task<bool> DataSession::flushSettings() {
     Impl* impl = impl_.get();
     for (;;) {
         { std::lock_guard lock(impl->mutex);
@@ -391,21 +410,24 @@ huxerui::Task<bool> Persistence::flushSettings() {
     co_return true;
 }
 
-std::vector<model::Profile> Persistence::listProfiles() const {
+std::vector<model::Profile> DataSession::listProfiles() const {
     std::lock_guard lock(impl_->mutex);
     return impl_->profiles;
 }
 
-std::int64_t Persistence::saveProfile(model::Profile profile) {
+std::int64_t DataSession::saveProfile(model::Profile profile) {
     std::lock_guard lock(impl_->mutex);
     impl_->requireProfilesReady();
+    if (impl_->committingProfiles.contains(profile.id)) throw std::runtime_error("订阅正在提交，请重试");
     if (profile.id == 0) {
         std::int64_t next = 1;
         for (const model::Profile& existing : impl_->profiles) {
             next = std::max(next, existing.id + 1);
         }
-        profile.id = next;
+        profile.id = std::max(next, impl_->nextProfileId);
+        impl_->nextProfileId = profile.id + 1;
     }
+    impl_->nextProfileId = std::max(impl_->nextProfileId, profile.id + 1);
     const auto found = std::ranges::find_if(
         impl_->profiles, [&profile](const model::Profile& existing) {
             return existing.id == profile.id;
@@ -423,17 +445,19 @@ std::int64_t Persistence::saveProfile(model::Profile profile) {
     } else {
         *found = profile;
     }
-    impl_->dirtyProfiles[profile.id] = ++impl_->profilesRevision;
+    impl_->profileVersions[profile.id] = impl_->dirtyProfiles[profile.id] = ++impl_->profilesRevision;
     impl_->deletedProfiles.erase(profile.id);
     return profile.id;
 }
 
-bool Persistence::deleteProfile(std::int64_t id, bool removeFile) {
+bool DataSession::deleteProfile(std::int64_t id, bool removeFile) {
     std::lock_guard lock(impl_->mutex);
     impl_->requireProfilesReady();
     const auto found = std::ranges::find(impl_->profiles, id, &model::Profile::id);
     if (found == impl_->profiles.end()) return false;
+    if (impl_->committingProfiles.contains(id)) throw std::runtime_error("订阅正在提交，请重试");
     Impl::Deletion deletion{++impl_->profilesRevision, found->file, removeFile};
+    impl_->profileVersions[id] = deletion.revision;
     std::erase_if(impl_->profiles, [id](const model::Profile& existing) {
         return existing.id == id;
     });
@@ -467,7 +491,7 @@ bool Persistence::deleteProfile(std::int64_t id, bool removeFile) {
     return true;
 }
 
-void Persistence::setProfileOrder(const std::vector<std::int64_t>& orderIds) {
+void DataSession::setProfileOrder(const std::vector<std::int64_t>& orderIds) {
     std::lock_guard lock(impl_->mutex);
     impl_->requireProfilesReady();
     if (orderIds.empty()) return;
@@ -500,24 +524,25 @@ void Persistence::setProfileOrder(const std::vector<std::int64_t>& orderIds) {
     ++impl_->profilesRevision;
 }
 
-bool Persistence::setSelectedProfile(std::int64_t id) {
+bool DataSession::setSelectedProfile(std::int64_t id) {
     std::lock_guard lock(impl_->mutex);
     impl_->requireProfilesReady();
+    if (!impl_->committingProfiles.empty()) throw std::runtime_error("订阅正在提交，请重试");
     const auto revision = ++impl_->profilesRevision;
     for (model::Profile& profile : impl_->profiles) {
         profile.selected = profile.id == id;
         // 选中态可能从 1→0，统一标脏交给 flush upsert。
-        impl_->dirtyProfiles[profile.id] = revision;
+        impl_->profileVersions[profile.id] = impl_->dirtyProfiles[profile.id] = revision;
     }
     return true;
 }
 
-bool Persistence::hasPendingProfiles() const noexcept {
+bool DataSession::hasPendingProfiles() const noexcept {
     std::lock_guard lock(impl_->mutex);
     return !impl_->dirtyProfiles.empty() || !impl_->deletedProfiles.empty();
 }
 
-huxerui::Task<bool> Persistence::flushProfiles() {
+huxerui::Task<bool> DataSession::flushProfiles() {
     Impl* impl = impl_.get();
     for (;;) {
         { std::lock_guard lock(impl->mutex);
@@ -636,19 +661,107 @@ huxerui::Task<bool> Persistence::flushProfiles() {
     co_return true;
 }
 
-std::uint64_t Persistence::profilesRevision() const noexcept {
+std::uint64_t DataSession::profilesRevision() const noexcept {
     std::lock_guard lock(impl_->mutex);
     return impl_->profilesRevision;
 }
 
-std::string Persistence::lastError() const {
+std::uint64_t DataSession::settingsRevision() const noexcept {
+    std::lock_guard lock(impl_->mutex);
+    return impl_->settingsRevision;
+}
+
+std::string DataSession::lastError() const {
     std::lock_guard lock(impl_->mutex);
     return impl_->lastError;
 }
 
-Persistence& persistence() {
-    static Persistence instance;
+DataSession& session() {
+    static DataSession instance;
     return instance;
 }
 
-} // namespace clashflux::persistence
+} // namespace clashflux::data
+
+namespace clashflux::data {
+std::int64_t DataSession::reserveProfileId() {
+    std::lock_guard lock(impl_->mutex);
+    impl_->requireProfilesReady();
+    return impl_->nextProfileId++;
+}
+std::uint64_t DataSession::profileRevision(std::int64_t id) const {
+    std::lock_guard lock(impl_->mutex);
+    const auto found = impl_->profileVersions.find(id);
+    return found == impl_->profileVersions.end() ? 0 : found->second;
+}
+huxerui::Task<bool> DataSession::commitProfile(model::Profile profile, std::uint64_t expectedRevision) {
+    auto* impl = impl_.get();
+    // Share the same gate as the compatibility flush path. An older captured
+    // flush must finish before the durable transaction, never overwrite it later.
+    for (;;) {
+        { std::lock_guard lock(impl->mutex);
+          impl->requireProfilesReady();
+          if (profile.id <= 0) throw std::invalid_argument("订阅 ID 无效");
+          const auto found = impl->profileVersions.find(profile.id);
+          const auto version = found == impl->profileVersions.end() ? 0 : found->second;
+          if (version != expectedRevision) {
+              impl->lastError = "订阅在准备期间已变化，请重试";
+              co_return false;
+          }
+          if (!impl->flushingProfiles && !impl->flushingSettings) {
+              impl->flushingProfiles = true;
+              impl->flushingSettings = true;
+              impl->committingProfiles.insert(profile.id);
+              break;
+          }
+        }
+        co_await huxerui::Delay(std::chrono::milliseconds{1});
+    }
+    struct Release {
+        Impl* impl; std::int64_t id;
+        ~Release() {
+            std::lock_guard lock(impl->mutex);
+            impl->committingProfiles.erase(id);
+            impl->flushingProfiles = impl->flushingSettings = false;
+        }
+    } release{impl, profile.id};
+    const auto row = ToRow(profile);
+    const auto result = co_await impl->database->TransactionAsync(
+        [row](sqlite::Transaction& transaction) -> sqlite::Result<void> {
+            auto saved = transaction.Insert(db_schema::profiles(), row, sqlite::ConflictPolicy::Replace);
+            if (!saved) return saved.Error();
+            return {};
+        });
+    std::lock_guard lock(impl->mutex);
+    if (!result) { impl->lastError = "提交订阅失败：" + result.Error().Message(); co_return false; }
+    auto found = std::ranges::find(impl->profiles, profile.id, &model::Profile::id);
+    if (found == impl->profiles.end()) {
+        impl->profiles.push_back(std::move(profile));
+        const auto order = impl->settings.find("profiles.order");
+        if (order == impl->settings.end() || order->second.empty())
+            std::ranges::sort(impl->profiles, {}, &model::Profile::id);
+        else applyProfileOrder(impl->profiles, order->second);
+    } else *found = std::move(profile);
+    impl->nextProfileId = std::max(impl->nextProfileId, row.id + 1);
+    impl->dirtyProfiles.erase(row.id);
+    impl->deletedProfiles.erase(row.id);
+    impl->profileVersions[row.id] = ++impl->profilesRevision;
+    impl->lastError.clear();
+    co_return true;
+}
+bool DataSession::commitProfileOnWorker(model::Profile profile, std::uint64_t expectedRevision) {
+    if (std::this_thread::get_id() == impl_->applicationThread)
+        throw std::logic_error("订阅提交必须在任务线程发起或 co_await commitProfile");
+    auto completion = std::make_shared<std::promise<bool>>();
+    auto future = completion->get_future();
+    const auto dispatcher = impl_->dispatcher;
+    dispatcher.Post([this, dispatcher, profile = std::move(profile), expectedRevision, completion]() mutable {
+        dispatcher.Launch([this, profile = std::move(profile), expectedRevision, completion]() mutable -> huxerui::Task<void> {
+            try { completion->set_value(co_await commitProfile(std::move(profile), expectedRevision)); }
+            catch (...) { completion->set_exception(std::current_exception()); }
+        });
+    });
+    completion.reset(); // A discarded/cancelled callback breaks the promise, never hangs the caller.
+    return future.get();
+}
+} // namespace clashflux::data

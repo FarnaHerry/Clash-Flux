@@ -228,6 +228,7 @@ bool compileAuxiliarySources(Context& ctx) {
         ctx.result.httpRuleProviders.insert(ctx.result.httpRuleProviders.end(),
             part.result.httpRuleProviders.begin(), part.result.httpRuleProviders.end());
         ctx.result.ruleProviderContents.merge(part.result.ruleProviderContents);
+        ctx.result.hasFileProviders = ctx.result.hasFileProviders || part.result.hasFileProviders;
         if (!part.result.error.empty()) {
             ctx.result.error = "次来源「" + source.name + "」编译失败：" + part.result.error;
             return false;

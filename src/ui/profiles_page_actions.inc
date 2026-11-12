@@ -3,7 +3,7 @@
 
     auto reload = [profilesModel] { profilesModel->PublishCached(); };
 
-    auto findProfile = [profiles](std::int64_t id) -> std::optional<db::Profile> {
+    auto findProfile = [profiles](std::int64_t id) -> std::optional<model::Profile> {
         for (const auto& p : profiles) {
             if (p.id == id) return p;
         }
@@ -109,7 +109,7 @@
                     const auto result = co_await RunOnTaskThread([id] {
                         const auto all = store::profilesStore().list();
                         const auto it = std::ranges::find_if(
-                            all, [id](const db::Profile& profile) { return profile.id == id; });
+                            all, [id](const model::Profile& profile) { return profile.id == id; });
                         if (it == all.end() || !isNativeVpnType(it->type)) {
                             return std::tuple{false, std::string{"订阅不存在或不是原生连接"},
                                               store::vpnStore().snapshot()};
@@ -185,7 +185,7 @@
                     auto next = co_await RunOnTaskThread([id] {
                         const auto all = store::profilesStore().list();
                         const auto it = std::ranges::find_if(
-                            all, [id](const db::Profile& profile) { return profile.id == id; });
+                            all, [id](const model::Profile& profile) { return profile.id == id; });
                         if (it == all.end() || !isNativeVpnType(it->type))
                             throw std::runtime_error("订阅不存在或不是原生连接");
                         store::vpnStore().disconnectPptp(id);

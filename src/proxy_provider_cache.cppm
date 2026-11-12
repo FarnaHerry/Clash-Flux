@@ -1,11 +1,14 @@
 export module clashflux.proxy_provider_cache;
 import std;
+import clashflux.provider_resources;
 import clashflux.singbox;
 
 namespace proxy_provider_cache {
 
 export struct Operations {
     unsigned maxConcurrentFetches = 1;
+    std::filesystem::path retainedDirectory;
+    std::function<bool(const std::filesystem::path&, const std::filesystem::path&, std::string&)> commit;
     std::function<bool(const singbox::HttpProxyProviderResource&,
                        const std::filesystem::path&, std::string&)> fetch;
 };
@@ -103,6 +106,14 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
                         stale = stampError || decltype(stamp)::clock::now() - stamp >=
                             std::chrono::seconds(resource.intervalSeconds);
                     }
+                    if (stale && !forced && provider_resources::FreshDownloaded(operations.retainedDirectory,
+                            resource.cacheKey, resource.intervalSeconds)) {
+                        auto retained = singbox::ReadHttpProxyProviderCache(resource, operations.retainedDirectory, reason);
+                        if (retained && validate(*retained, reason)) {
+                            item.inputChanged = !alreadyCompiled || !content || *retained != *content;
+                            content = std::move(retained); usable = true; item.changed = true; stale = false;
+                        }
+                    }
                     item.cacheHit = usable && !stale;
                     if (stale) {
                         const auto payload = stage / (resource.cacheKey + ".proxy-download");
@@ -116,6 +127,10 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
                             content = std::move(downloaded);
                             usable = true;
                             item.changed = true;
+                            if (!operations.retainedDirectory.empty())
+                                provider_resources::RememberDownloaded(operations.retainedDirectory,
+                                    stage / (resource.cacheKey + ".retained-proxy"), resource.cacheKey,
+                                    singbox::HttpProxyProviderCacheImage(resource, *content), operations.commit);
                         } else if (usable && !forced) {
                             item.staleFallback = true;
                             item.warning = "HTTP 代理集合「" + resource.name +

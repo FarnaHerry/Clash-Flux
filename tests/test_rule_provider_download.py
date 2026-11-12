@@ -2,6 +2,7 @@
 import argparse
 import base64
 import http.server
+import gzip
 import os
 import pathlib
 import shutil
@@ -54,15 +55,20 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
             finally:
                 with self.lock:
                     type(self).active -= 1
+        compressed = self.path in ("/gzip", "/gzip-large", "/gzip-short")
+        if compressed:
+            assert "gzip" in self.headers.get("Accept-Encoding", "")
+            body = gzip.compress(body if self.path != "/gzip-large" else b"X" * 4096)
         self.send_response(status)
-        self.send_header("Content-Length", str(len(body) + (100 if self.path == "/truncate" else 0)))
+        if compressed: self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body) + (100 if self.path in ("/truncate", "/gzip-short") else 0)))
         self.end_headers()
         try:
             self.wfile.write(body)
             self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             pass
-        if self.path == "/truncate":
+        if self.path in ("/truncate", "/gzip-short"):
             self.close_connection = True
 
 

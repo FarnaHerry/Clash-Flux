@@ -92,13 +92,13 @@ include("{bootstrap}")
 if(REJECT_VERSION)
     find_package(Glaze 999.0.0 EXACT CONFIG REQUIRED PATHS "${{CLASHFLUX_DEPENDENCY_PREFIX}}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 endif()
-clashflux_find_cps(Glaze 9.0.0 glaze)
+clashflux_find_cps(Glaze 9.1.0 glaze)
 clashflux_find_cps(nlohmann_json 3.12.0 nlohmann_json)
 clashflux_find_cps(QrCode 1.8.0 qrcodegen)
 clashflux_find_cps(zstd 1.5.7 libzstd_static)
-clashflux_find_cps(yaml-cpp 0.8.0 yaml-cpp)
-clashflux_find_cps(CURL 8.22.0 libcurl)
-clashflux_find_cps(IXWebSocket 12.0.1 ixwebsocket)
+clashflux_find_cps(yaml-cpp 0.9.0 yaml-cpp)
+clashflux_find_cps(CURL 8.23.0 libcurl)
+clashflux_find_cps(IXWebSocket 12.1.0 ixwebsocket)
 get_target_property(curl_defs CURL::libcurl INTERFACE_COMPILE_DEFINITIONS)
 get_target_property(yaml_defs yaml-cpp::yaml-cpp INTERFACE_COMPILE_DEFINITIONS)
 if(NOT "CURL_STATICLIB" IN_LIST curl_defs OR NOT "YAML_CPP_STATIC_DEFINE" IN_LIST yaml_defs)
@@ -144,7 +144,7 @@ int main() {
     const auto size = ZSTD_compress(compressed, sizeof(compressed), "CPS", 3, 1);
     if (ZSTD_isError(size) || ZSTD_decompress(restored, sizeof(restored), compressed, size) != 3) return 5;
     if (std::string_view(restored, 3) != "CPS" || ZSTD_versionNumber() != 10507) return 6;
-    if (curl_version_info(CURLVERSION_NOW)->version_num != 0x081600) return 7;
+    if (curl_version_info(CURLVERSION_NOW)->version_num != 0x081700) return 7;
     auto* curl = curl_easy_init();
     if (!curl) return 8;
     curl_easy_cleanup(curl);

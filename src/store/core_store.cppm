@@ -1,6 +1,6 @@
 // core_store.cppm — clashflux.store.core：内核编排 store（接口即实现，单例）。
 //
-// 持有 Db / CoreProcess / ClashApi / NativeApi / CoreStreams，是 UI 与内核之间的唯一
+// 持有 CoreProcess / ClashApi / NativeApi / CoreStreams，是 UI 与内核之间的唯一
 // 入口。线程契约：snapshot() / settings 读取等轻量方法任意线程可调；标注
 // 「阻塞」的方法（startCore/stopCore/refreshRuntime/applyConfig）会做 spawn、
 // 网络等待，UI 必须经 RunOnTaskThread 调用；State 写入只在 UI 线程（UI 层在
@@ -37,8 +37,8 @@ import std;
 import nlohmann.json;
 import clashflux.config;
 import clashflux.utils;
-import clashflux.db;
-import clashflux.persistence;
+import clashflux.model;
+import clashflux.data;
 import clashflux.api;
 import clashflux.core;
 import clashflux.singbox;
@@ -126,6 +126,13 @@ export struct ExternalResourceRefreshBatch {
     std::vector<std::string> errors;
 };
 
+export struct ProfilePreparationResult {
+    bool ready = false;
+    std::int64_t id = 0;
+    std::uint64_t sourceRevision = 0;
+    std::string file, error, summary;
+};
+
 export class CoreStore {
 public:
     CoreStore() = default;
@@ -149,7 +156,7 @@ public:
     CoreStore(const CoreStore&) = delete;
     CoreStore& operator=(const CoreStore&) = delete;
 
-    // 惰性初始化（打开 Db、确保 secret 存在、准备 API 端点）。幂等。
+    // 惰性初始化（确保 secret 存在、准备 API 端点；数据会话由应用启动流程管理）。幂等。
 #include "store/core_store_state.inc"
 #include "store/core_store_diagnostics.inc"
 #include "store/core_store_evidence.inc"
@@ -161,7 +168,6 @@ private:
 #include "store/provider_download.inc"
 #include "store/core_store_helpers.inc"
 
-    std::unique_ptr<db::Db> db_;
     std::unique_ptr<api::ClashApi> api_;
     std::unique_ptr<api::NativeApi> nativeApi_;
     api::ClashApi providerDownloader_{"", ""};

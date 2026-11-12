@@ -9,8 +9,8 @@
 // 一个整数，只有真的变了才拷贝整张表——订阅可能带 nativeConfig/nativeRoutes
 // 大字段，避免"每个节拍都整表拷贝 + 逐字段比较"。
 //
-// 注意：本头文件用到 db::Profile（clashflux.model），必须在
-// `import clashflux.db;` 之后包含（与 profiles_cache.h 同一约定）。
+// 注意：本头文件用到 model::Profile（clashflux.model），必须在
+// `import clashflux.model;` 之后包含（与 profiles_cache.h 同一约定）。
 #pragma once
 
 #include <huxerui/huxerui.h>
@@ -25,10 +25,11 @@
 
 #include "ui.h"
 #include "profile_list_model.h"
+#include "profile_preparation_model.h"
 
 namespace clashflux::ui {
 
-struct ProfilesModel : ProfileListModel<db::Profile> {
+struct ProfilesModel : ProfileListModel<model::Profile>, ProfilePreparationModel {
     struct RefreshFailureNotice {
         std::int64_t profileId = 0;
         std::string profileName;
@@ -63,6 +64,9 @@ struct ProfilesModel : ProfileListModel<db::Profile> {
     huxerui::State<std::map<std::string, std::string>> ruleSetRefreshReceipts{std::map<std::string, std::string>{}};
     std::map<std::pair<std::int64_t, std::size_t>, huxerui::ScrollController> rulesScrolls;
 };
+
+void StartProfilePreparation(huxerui::TaskScope tasks, std::shared_ptr<ProfilesModel> model,
+                             std::int64_t id, FluxToastHandle toast);
 
 // 启动唯一的数据泵（组合期调用一次）：1s 做一次「修订号脏检查」，变了才
 // 拷贝列表；动作完成直接 PublishCached，syncTick 使在途旧快照失效。

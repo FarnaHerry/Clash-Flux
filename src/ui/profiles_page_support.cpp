@@ -23,7 +23,8 @@
 #endif
 #endif
 
-import clashflux.db;
+import clashflux.model;
+import clashflux.data;
 import clashflux.pptp;
 import clashflux.store.core;
 import clashflux.store.profiles;
@@ -352,11 +353,11 @@ huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
 #endif
 }
 
-// Android 订阅导入：store 建行 → 平台栈抓取 → store 落盘。返回新订阅 id
+// Android 订阅导入：store 保留草稿 → 平台栈抓取 → store 落盘。返回新订阅 id
 //（失败 0，错误经 profilesStore().lastError() 读取）。
 huxerui::Task<std::int64_t> AndroidImportRemote(
     std::shared_ptr<AppHttpClient> http, const std::string& name,
-    const std::string& url, db::Profile options) {
+    const std::string& url, model::Profile options) {
     const std::int64_t nid = co_await RunOnTaskThread(
         [name, url, options] { return store::profilesStore().createRemote(
                                    name, url, options); });
@@ -401,8 +402,9 @@ huxerui::Task<std::int64_t> AndroidImportRemote(
 // 回落阻塞路径（保留「本地导入的订阅不支持更新」等语义）。返回错误串。
 huxerui::Task<std::string> AndroidRefreshRemote(
     std::shared_ptr<AppHttpClient> http, std::int64_t id) {
-    const std::optional<db::Profile> row = co_await RunOnTaskThread(
-        [id]() -> std::optional<db::Profile> {
+    const auto revision = clashflux::data::session().profileRevision(id);
+    const std::optional<model::Profile> row = co_await RunOnTaskThread(
+        [id]() -> std::optional<model::Profile> {
             for (const auto& p : store::profilesStore().list()) {
                 if (p.id == id) return p;
             }
@@ -418,8 +420,8 @@ huxerui::Task<std::string> AndroidRefreshRemote(
     const store::FetchedProfile fetched = co_await AndroidFetchProfile(
         std::move(http), row->url, row->timeoutSecs, row->allowInvalidCert);
     const bool ok = co_await RunOnTaskThread(
-        [id, fetched] { return store::profilesStore().completeRemote(
-                             id, fetched, false, /*forceProviders=*/true); });
+        [id, fetched, revision] { return store::profilesStore().completeRemote(
+                             id, fetched, false, /*forceProviders=*/true, revision); });
     co_return ok ? "" : store::profilesStore().lastError();
 }
 
@@ -525,23 +527,27 @@ std::string ProfileFidelitySummary(std::int64_t profileId) {
 }
 
 // Android 订阅自动更新泵的一次迭代：任务线程列出到期订阅 → 逐个经 HuxerUI
-// HttpClient 抓取 → store completeRemote 收尾。错误落在订阅行 error 字段。
+// HttpClient 抓取 → store completeRemote 收尾。失败通过应用模型报告，保留已接受记录。
 huxerui::Task<int> AndroidRefreshProfilesDueOnce(
     std::shared_ptr<AppHttpClient> http,
     std::shared_ptr<ProfilesModel> profilesModel) {
-    const std::vector<db::Profile> due = co_await RunOnTaskThread(
+    const std::vector<model::Profile> due = co_await RunOnTaskThread(
         [] { return store::profilesStore().dueForUpdate(); });
     int updated = 0;
     for (const auto& row : due) {
+        const auto revision = clashflux::data::session().profileRevision(row.id);
+        const auto current = clashflux::data::session().listProfiles();
+        const auto found = std::ranges::find(current, row.id, &model::Profile::id);
+        if (found == current.end() || *found != row) continue;
         const store::FetchedProfile fetched = co_await
             profile_detail::AndroidFetchProfile(
                 http, row.url, row.timeoutSecs, row.allowInvalidCert);
         const auto outcome = co_await RunOnTaskThread(
-            [id = row.id, fetched] {
+            [id = row.id, fetched, revision] {
                 auto& profiles = store::profilesStore();
                 // Automatic subscription updates leave provider intervals intact.
                 const bool ok = profiles.completeRemote(
-                    id, fetched, false, /*forceProviders=*/false);
+                    id, fetched, false, /*forceProviders=*/false, revision);
                 return std::pair{ok, ok ? std::string{} : profiles.lastError()};
             });
         if (outcome.first) {

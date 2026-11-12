@@ -34,9 +34,9 @@ description: 修改 Clash-Flux 订阅转换、协议/DNS/规则/provider 映射�
 - file provider 仅从显式 ruleProviderDir 读取根内普通相对文件，canonical 后不越界，8 MiB；不写源文件或纳入 GEO 清理，失败整份候选拒绝。
 - HTTP provider 编译器输出 httpRuleProviders，任务按 HTTP(S)、直连/DIRECT 及文档支持的 header 准备快照。单值非空 ASCII header 总量 16 KiB，值参与完整缓存身份、不进配置或诊断；带头禁重定向并记 approx，iOS 暂拒带头，Android 用 Java TLS 桥接。
 - 桌面 Provider 下载器和空闲连接复用遵守[传输隔离契约](../../docs/provider-resource-management.md#桌面下载连接复用2026-11-04)：独占 handle、站点/TLS/代理/请求头隔离，归还前清除借用指针，传输失败不留池；不得以连接复用省略候选或缓存身份检查。
-- 下载默认验证证书，8 MiB 或更小 size-limit 在传输时拒绝、不截断提交；全部来源独占暂存、整份转换/候选与目标检查成功才原子换自有缓存，失败保留旧缓存/订阅。path 只作数据目录内只读种子，不改用户文件。
+- 下载默认验证证书，8 MiB 或更小 size-limit 在传输时拒绝、不截断提交；全部来源独占暂存、整份转换/候选与目标检查成功才原子换活动缓存，失败保留旧缓存/订阅。path 只作数据目录内只读种子，不改用户文件。
 - 缓存检查完整身份/格式，摘要文件名不是安全验证；未来版本/冲突拒覆盖。运行计划持 raw 快照，回滚不重新下载；显式 HTTP/Geo interval 由应用 Runtime 独立检查到期，重配可能重启内核，记 approx；隐式 ipverse ASN 仍按应用配置检查。没有多文件崩溃事务，不能宣称完整崩溃恢复。
-- ASN 固定 ipverse JSON 编号/双地址族 CIDR 完整检查；MRS 固定 Zstandard，输入 8 MiB、解压 32 MiB、集合有界；未知版本/扩展/畸形或不支持域名整份拒绝。完整候选通过前不提交任何暂存缓存。
+- ASN 固定 ipverse JSON 编号/双地址族 CIDR 完整检查；MRS 固定 Zstandard，输入 8 MiB、解压 32 MiB、集合有界；未知版本/扩展/畸形或不支持域名整份拒绝。完整候选通过前不切换活动缓存；独立验证的下载可以留存供重试，命名空间/窗口与候选复用按[Provider 准备](../../docs/provider-resource-management.md)执行。
 - 通用原子替换、订阅保护、Windows 不先删目标、Android 无桌面 CLI 预检查等遵守 [数据技能](../clashflux-data/SKILL.md)。
 
 ## 桌面编排

@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.101 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.102 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -353,7 +353,6 @@ set(CLASHFLUX_MODULE_UNITS
     src/utils.cppm
     src/netinfo.cppm
     src/model.cppm
-    src/db.cppm
     src/vpn.cppm
     src/vpn_compensation.cppm
     src/pptp.cppm
@@ -373,7 +372,7 @@ set(CLASHFLUX_MODULE_UNITS
     src/cli_ipc.cppm
     # 领域 store（UI 无关）
     src/store/core_store.cppm
-    src/store/persistence.cppm
+    src/data_session.cppm
     src/store/vpn.cppm
     src/store/profiles.cppm
 )
@@ -846,8 +845,13 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             find_package(Python3 COMPONENTS Interpreter QUIET)
         endif ()
         if (Python3_Interpreter_FOUND)
+            set(CLASHFLUX_RESOURCE_TEST_ARGS "$<TARGET_FILE:clash-flux>")
+            if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+                add_library(test_cli_no_window_guard SHARED tests/cli_no_window_guard.cpp)
+                list(APPEND CLASHFLUX_RESOURCE_TEST_ARGS "$<TARGET_FILE:test_cli_no_window_guard>")
+            endif ()
             add_test(NAME resource_management_runtime COMMAND "${Python3_EXECUTABLE}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_resources_runtime.py" "$<TARGET_FILE:clash-flux>")
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_resources_runtime.py" ${CLASHFLUX_RESOURCE_TEST_ARGS})
             set_tests_properties(resource_management_runtime PROPERTIES TIMEOUT 180)
             find_program(CLASHFLUX_TEST_OPENSSL NAMES openssl
                 HINTS "${OPENSSL_ROOT_DIR}/bin" "$ENV{OPENSSL_ROOT_DIR}/bin"
@@ -1092,7 +1096,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         add_executable(test_routing tests/test_routing.cpp)
         target_sources(test_routing PRIVATE FILE_SET clashflux_routing_modules TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-            FILES src/model.cppm src/routing.cppm src/db.cppm src/vpn.cppm src/singbox.cppm)
+            FILES src/model.cppm src/routing.cppm src/vpn.cppm src/singbox.cppm)
         set_target_properties(test_routing PROPERTIES CXX_MODULE_STD ON)
         target_compile_features(test_routing PRIVATE cxx_std_23)
         target_link_libraries(test_routing PRIVATE clashflux_wire clashflux_json)
@@ -1186,13 +1190,13 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         if (TARGET HuxerUI::testing)
             # Retain an early controller request across asynchronous hydration.
             add_executable(test_core_api_lifetime tests/test_core_api_lifetime.cpp
-                src/db.cpp src/sqlite_schema.cpp src/store/persistence.cpp
+                src/sqlite_schema.cpp src/data_session.cpp
                 src/health_history.cpp src/runtime_network_probe.cpp src/network_conflict.cpp
                 src/api.cpp src/core.cpp src/stream.cpp src/singbox.cpp src/profile_link.cpp
                 src/pptp.cpp src/openvpn.cpp src/vpn_compensation.cpp src/vpn_compensation_windows.cpp)
             target_sources(test_core_api_lifetime PRIVATE FILE_SET lifetime_modules TYPE CXX_MODULES
                 BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-                FILES src/config.cppm src/utils.cppm src/model.cppm src/db.cppm src/store/persistence.cppm
+                FILES src/config.cppm src/utils.cppm src/model.cppm src/data_session.cppm
                 src/api.cppm src/core.cppm src/stream.cppm src/singbox.cppm src/vpn.cppm src/service.cppm
                 src/pptp.cppm src/openvpn.cppm src/vpn_compensation.cppm src/sysproxy.cppm src/routing.cppm
                 src/rule_provider_cache.cppm src/proxy_provider_cache.cppm src/provider_resources.cppm
@@ -1220,11 +1224,11 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             add_executable(test_persistence
                 tests/test_persistence.cpp
                 src/sqlite_schema.cpp
-                src/store/persistence.cpp)
+                src/data_session.cpp)
             target_sources(test_persistence PRIVATE FILE_SET clashflux_persistence_modules
                 TYPE CXX_MODULES
                 BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-                FILES src/model.cppm src/db.cppm src/store/persistence.cppm)
+                FILES src/model.cppm src/data_session.cppm)
             set_target_properties(test_persistence PROPERTIES CXX_MODULE_STD ON)
             target_compile_features(test_persistence PRIVATE cxx_std_23)
             target_include_directories(test_persistence PRIVATE

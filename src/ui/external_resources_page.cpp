@@ -20,7 +20,7 @@
 import clashflux.singbox;
 import clashflux.store.profiles;
 import clashflux.store.core;
-import clashflux.db;
+import clashflux.model;
 import clashflux.core;
 import clashflux.routing;
 #include "profiles_model.h"
@@ -43,6 +43,7 @@ huxerui::StringVariant ExternalResourceKindName(std::string_view kind) {
     std::int64_t profileId, std::string profileName,
     std::function<void()> onBack) {
     const auto& theme = huxerui::UseTheme();
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto tasks = huxerui::UseApplicationTaskScope();
     auto toast = UseFluxToast();
     static_cast<void>(profileName);
@@ -179,11 +180,11 @@ huxerui::StringVariant ExternalResourceKindName(std::string_view kind) {
 
     huxerui::View content;
     if (loading.Get()) {
-        content = huxerui::Column {
+        content = PageBodyFrame(huxerui::Column {
             huxerui::Text(Localized("正在识别外部资源…")),
         }.With(huxerui::Grow(1.0F), huxerui::Padding(24.0F),
                huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))).With(huxerui::Grow(1.0F));
     } else if (rows.empty()) {
         huxerui::View empty = EmptyState(
             Localized("未识别到外部资源"), app::images::link);
@@ -200,7 +201,7 @@ huxerui::StringVariant ExternalResourceKindName(std::string_view kind) {
                    huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
         }
-        content = std::move(empty);
+        content = PageBodyFrame(std::move(empty)).With(huxerui::Grow(1.0F));
     } else {
         huxerui::View body = Card(huxerui::Column(std::move(rows)).With(
             huxerui::Spacing(0.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), false);
@@ -213,17 +214,14 @@ huxerui::StringVariant ExternalResourceKindName(std::string_view kind) {
             }.With(huxerui::Spacing(12.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
         }
+        if (kPageTitlesInWindow && !compact) body = huxerui::Row {
+          huxerui::Spacer(),
+          huxerui::Column {body}.With(huxerui::Frame{.max_width = 640.0F},
+              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+          huxerui::Spacer(),
+        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
         content = ScrollablePageContent(body);
     }
-
-    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
-    if (kPageTitlesInWindow && !compact) content = huxerui::Row {
-      huxerui::Spacer(),
-      huxerui::Column {content}.With(huxerui::Frame{.max_width = 640.0F},
-          huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-      huxerui::Spacer(),
-    }.With(huxerui::Grow(1.0F), huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     return SecondaryPageScaffold(
         huxerui::Text(Localized("外部资源"), huxerui::TextRole::Title),
         huxerui::View{},

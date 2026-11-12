@@ -80,7 +80,7 @@ AAR 元数据包含 version，Gradle 同时核验版本、revision、ABI 与内�
 上游构建要求 OpenJDK 17，脚本在获取源码前检查 JAVA_HOME；Gradle 使用的 JDK
 可以单独配置。完整升级记录见[稳定内核升级](singbox-stable-upgrade.md)。
 
-共享 JSON codec 使用固定 Glaze 9.0.0；Android Legacy 头只引用拥有型 DTO，
+共享 JSON codec 使用固定 Glaze 9.1.0；Android Legacy 头只引用拥有型 DTO，
 `clashflux_wire` 单独编译 Glaze，不合入领域模块的兼容大 TU。接入与验证边界见
 [迁移记录](glaze-migration.md)。inline provider 与逻辑规则子集也用于 Android，
 但不增加手机多订阅；routing-mark 不能因 Android 的 `__linux__` 宏而开放。

@@ -3,7 +3,7 @@
 
     // 手机所有来源共用一个列表；桌面（包括窄窗）继续按类型分页。
     const std::string profileQuery = profileSearch.Get().text;
-    const auto matchesProfile = [&profileQuery](const db::Profile& profile) {
+    const auto matchesProfile = [&profileQuery](const model::Profile& profile) {
         return SearchTextMatches(profile.name, profileQuery) ||
                SearchTextMatches(profile.description, profileQuery) ||
                SearchTextMatches(profile.url, profileQuery) ||
@@ -65,7 +65,7 @@
             const std::int64_t closestId = geometry->Closest(ids, position);
             if (closestId != 0 && drop) drop(fromId, closestId);
         };
-        huxerui::View grid = PageVirtualGrid(
+        huxerui::View grid = ScrollArea(PageVirtualGrid(
                                  typeCount,
                                  [profiles, typeIndices = std::move(typeIndices), typeIds = std::move(typeIds),
                                   typeCount, compact, tasks, toast, http, reload,
@@ -78,7 +78,7 @@
                                   dialog, pageReorder, dropAtPointer,
                                   previewActiveId, previewTargetId,
                                   geometry = gridGeometry.Get()](std::size_t index) -> huxerui::View {
-                                     const db::Profile& profile =
+                                     const model::Profile& profile =
                                          profiles[typeIndices[index]];
                                      store::PptpState pptpState{
                                          .profileId = profile.id,
@@ -145,13 +145,12 @@
                                  .Columns(ProfileGridColumns(compact, group_by_type))
                                  .EstimatedRowExtent(ProfileCardHeight(compact))
                                  .ColumnSpacing(kSectionCardSpacing)
-                                 .With(huxerui::Grow(1.0F), huxerui::ScrollBar(),
-                                       huxerui::DropTarget::Accepts<ProfileDragPayload>())
+                                 .With(huxerui::DropTarget::Accepts<ProfileDragPayload>())
                                  .On<huxerui::DropEvents<ProfileDragPayload>::Dropped>(
                                      [dropAtPointer](
                                          const ProfileDragPayload& payload, const huxerui::DropEvent& event) {
                                          dropAtPointer(payload.id, event.window_position);
-                                     });
+                                     })).With(huxerui::Grow(1.0F));
         typePages.push_back(huxerui::Column {grid}.With(
             huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
             .Key(section.type ? "type-page-" + *section.type : "all-profiles"));

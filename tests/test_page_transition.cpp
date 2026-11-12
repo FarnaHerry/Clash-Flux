@@ -38,6 +38,7 @@
 #include "profile_file_picker.h"
 #include "profile_import_task.h"
 #include "profile_list_model.h"
+#include "profile_preparation_model.h"
 #include "profile_reorder_geometry.h"
 #include "section_tab_picker.h"
 #include "responsive_shell.h"
@@ -67,6 +68,7 @@
 #include "proxy_test_model.h"
 #include "proxy_node_tile.h"
 #include "settings_group_layout.h"
+#include "settings_value.h"
 
 namespace {
 using huxerui::testing::UiSelector;
@@ -102,10 +104,10 @@ std::string label(int index) { return "Group " + std::to_string(index) + " nodes
     std::vector<huxerui::View> pages;
     for (int i = 0; i < count; ++i) {
         pages.push_back(huxerui::Column {
-          huxerui::ScrollView(huxerui::Column {
+          clashflux::ui::ScrollArea(huxerui::ScrollView(huxerui::Column {
             huxerui::Text("PAGE-" + std::to_string(i)),
             huxerui::Row {}.With(huxerui::Frame{.height = 1400.0F}),
-          }).With(huxerui::Grow(1.0F)).Key("page-content-" + std::to_string(i)),
+          }).Key("page-content-" + std::to_string(i))).With(huxerui::Grow(1.0F)),
         }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
          .Key(key(i)));
     }
@@ -123,8 +125,9 @@ std::string label(int index) { return "Group " + std::to_string(index) + " nodes
       }, motion, groupDrawer ? clashflux::ui::SectionTabPickerMode::ResponsiveGroups
                             : clashflux::ui::SectionTabPickerMode::Menu),
       huxerui::Text("SELECTED-" + std::to_string(index)),
-      clashflux::ui::SectionTabPages(pages, static_cast<std::size_t>(index),
+      clashflux::ui::PageBodyRegion(clashflux::ui::SectionTabPages(pages, static_cast<std::size_t>(index),
           [select](std::size_t next) { select(static_cast<int>(next)); }, motion),
+          clashflux::ui::kSectionCardSpacing * 0.5F),
     }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
@@ -1471,7 +1474,7 @@ void testLogActions() {
         return items;
     };
     return huxerui::Column{
-        huxerui::Button("Open common").With(menu.Anchor()).OnClick([menu, entries] { menu.Show(entries()); }),
+        huxerui::Button("Open common").With(menu.Target()).OnClick([menu, entries] { menu.Show(entries()); }),
         huxerui::Button("Open at point").OnClick([menu, entries] { menu.ShowAt({280.0F, 90.0F}, entries()); }),
         huxerui::Text("COMMON-" + result.Get()),
     };
@@ -1670,7 +1673,7 @@ huxerui::View LoadingSkeletonRoot() {
         auto spec = huxerui::FlatLightThemeSpec();
         spec.colors = theme;
         spec.motion.reduced_motion = model->reduced.Get();
-        return huxerui::FlatTheme(spec, huxerui::Scope([model] {
+        return huxerui::FlatTheme(spec, clashflux::ui::PageBodyRegion(huxerui::Scope([model] {
             ++model->compositions;
             if (model->ready.Get()) return huxerui::View{huxerui::Text("SKELETON-READY")};
             if (!model->active.Get()) return huxerui::View{huxerui::Text("SKELETON-INACTIVE")};
@@ -1679,7 +1682,7 @@ huxerui::View LoadingSkeletonRoot() {
                 huxerui::UseViewportClass() == huxerui::ViewportClass::Compact, model->kind.Get() == 3);
             return model->kind.Get() == 2 ? clashflux::ui::ProxyLoadingSkeleton(current)
                 : clashflux::ui::PageLoadingSkeleton(current, model->kind.Get() == 1);
-        }));
+        }), 4.0F));
     });
 }
 const huxerui::Application kLoadingSkeletonApplication{LoadingSkeletonRoot,
@@ -1718,11 +1721,12 @@ void testSkeletonShimmer() {
             const auto first = ui.Find(UiSelector::Key("profile-loading-item-0")).One().bounds;
             const auto second = ui.Find(UiSelector::Key("profile-loading-item-1")).One().bounds;
             const bool compact = width < 600.0F;
+            const float side = compact ? 4.0F : 16.0F;
             const float columns = compact || kind == 4 ? 1.0F :
-                std::max(1.0F, std::floor(width / 348.0F));
-            const float expectedWidth = (width - 8.0F - (columns - 1.0F) * 8.0F) / columns;
+                std::max(1.0F, std::floor((width - 2.0F * side + 8.0F) / 348.0F));
+            const float expectedWidth = (width - 2.0F * side - (columns - 1.0F) * 8.0F) / columns;
             check(std::abs(first.height - (compact ? 108.0F : 180.0F)) < 0.5F &&
-                  std::abs(first.width - expectedWidth) < 0.5F && std::abs(first.x - 4.0F) < 0.5F,
+                  std::abs(first.width - expectedWidth) < 0.5F && std::abs(first.x - side) < 0.5F,
                   "profile loading cards match real card height, adaptive tracks and section insets");
             check(columns > 1.0F ? std::abs(second.y - first.y) < 0.5F &&
                       std::abs(second.x - first.x - first.width - 8.0F) < 0.5F
@@ -2126,12 +2130,12 @@ huxerui::View UnifiedProfileListRoot() {
     return huxerui::FlatTheme{huxerui::Scope([] {
         using namespace clashflux::ui;
         const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
-        return UnifiedProfileList(huxerui::VirtualGrid(100, [compact](std::size_t index) {
+        return PageBodyRegion(UnifiedProfileList(ScrollArea(huxerui::VirtualGrid(100, [compact](std::size_t index) {
             return huxerui::Text((index % 2 ? "remote-" : "local-") + std::to_string(index))
                 .With(huxerui::Frame{.height = ProfileCardHeight(compact)}).Key("unified-row-" + std::to_string(index));
         }).Columns(huxerui::GridColumns::Fixed(1))
           .EstimatedRowExtent(ProfileCardHeight(compact))
-          .RowSpacing(kCompactProfileCardSpacing).With(huxerui::Grow(1.0F)).Key("unified-grid"));
+          .RowSpacing(kCompactProfileCardSpacing).With(huxerui::Grow(1.0F)).Key("unified-grid")).With(huxerui::Grow(1.0F))), 4.0F);
     })};
 }
 const huxerui::Application kUnifiedProfileListApplication{UnifiedProfileListRoot,
@@ -2154,8 +2158,9 @@ void testUnifiedProfileList() {
         ui.SetWindowMetrics({.viewport = {width, 700.0F}});
         ui.PumpAndSettle();
         const auto grid = ui.Find(UiSelector::Key("unified-grid")).One().bounds;
-        check(std::abs(grid.x - 4.0F) < 0.5F && std::abs(grid.width - width + 8.0F) < 0.5F,
-              "the phone list preserves its existing side insets at every viewport width");
+        const float side = width < 600.0F ? 4.0F : 16.0F;
+        check(std::abs(grid.x - side) < 0.5F && std::abs(grid.width - width + 2.0F * side) < 0.5F,
+              "the unified list has equal viewport-based insets without an extra outer margin");
         const auto first = ui.Find(UiSelector::Key("unified-row-0"));
         check(!first.Exists() || !first.One().in_viewport,
               "resizing the unified phone list retains a scrolled position");
@@ -2399,10 +2404,11 @@ void testMobileSearchGeometry() {
 huxerui::View ResponsiveAnchorRoot() {
     return huxerui::FlatTheme{huxerui::Scope([] {
         auto popup = huxerui::UsePopup();
+        const auto target = huxerui::UseViewHandle();
         const bool compact =
             huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
         huxerui::View anchored = huxerui::Row {
-            huxerui::Button("LOG-ACTIONS").With(popup.Anchor()),
+            huxerui::Button("LOG-ACTIONS").With(target),
         };
         huxerui::View bar;
         if (compact) {
@@ -2522,6 +2528,358 @@ void testHeaderFormAction() {
                   "busy header action keeps its hit area and rejects duplicate submissions");
         }
     }
+}
+
+struct PageScrollBarFixture {
+    huxerui::State<int> mode{0};
+    huxerui::State<float> inset{0.0F};
+    huxerui::State<std::size_t> count{40};
+    huxerui::State<bool> mounted{true};
+    std::shared_ptr<clashflux::ui::PageScrollOffset> offset =
+        std::make_shared<clashflux::ui::PageScrollOffset>();
+};
+std::shared_ptr<PageScrollBarFixture> pageScrollBarFixture;
+int pageScrollBarCompositions = 0;
+
+huxerui::View PageScrollBarRoot() {
+    using namespace clashflux::ui;
+    ++pageScrollBarCompositions;
+    const auto model = huxerui::UseState(std::make_shared<PageScrollBarFixture>()).Get();
+    pageScrollBarFixture = model;
+    const auto controller = huxerui::UseScrollController(model->offset->value);
+    if (!model->mounted.Get()) return huxerui::Text("Scroll area unmounted");
+    const auto row = [](std::size_t index) -> huxerui::View {
+        return huxerui::Text("ROW-" + std::to_string(index))
+            .With(huxerui::Frame{.height = 40.0F}).Key("scroll-policy-row-" + std::to_string(index));
+    };
+    huxerui::View body;
+    if (model->mode.Get() == 4) {
+        body = PageBodyFrame(huxerui::Column {huxerui::Text("STATIC")}
+            .With(huxerui::Grow(1.0F)).Key("inset-static")).With(huxerui::Grow(1.0F));
+    } else if (model->mode.Get() == 5) {
+        body = ScrollablePageContent(PageScrollView(huxerui::Column {
+          huxerui::Text("NESTED").With(huxerui::Frame{.height = 1000.0F}),
+        }).With(huxerui::Frame{.height = 120.0F}));
+    } else if (model->mode.Get() < 2) {
+        std::vector<huxerui::View> rows;
+        for (std::size_t index = 0; index < model->count.Get(); ++index) rows.push_back(row(index));
+        const auto fields = huxerui::Column(rows).With(
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        if (model->mode.Get() == 0) {
+            body = ScrollablePageContent(huxerui::Row {
+              huxerui::Spacer(),
+              huxerui::Column {fields}.With(huxerui::Frame{.width = 200.0F}),
+              huxerui::Spacer(),
+            }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start)), model->offset);
+        } else {
+            // A narrow local viewport in a wide window still uses the wide policy.
+            body = ScrollArea(huxerui::ScrollView(fields).With(RememberPageScroll{model->offset}),
+                controller, model->offset);
+        }
+    } else if (model->mode.Get() == 2) {
+        body = ScrollArea(PageVirtualList(model->count.Get(), row, 8.0F).EstimatedItemExtent(40.0F)
+            .Controller(controller).With(RememberPageScroll{model->offset}), controller, model->offset);
+    } else {
+        body = ScrollArea(PageVirtualGrid(model->count.Get(), row, 8.0F, 0.0F)
+            .Columns(huxerui::GridColumns::Fixed(2)).EstimatedRowExtent(40.0F)
+            .Controller(controller).With(RememberPageScroll{model->offset}), controller, model->offset);
+    }
+    if (model->mode.Get() == 1) return PageBodyRegion(huxerui::Row {
+      huxerui::Column {
+        huxerui::View{body}.With(huxerui::Grow(1.0F)).Key("scroll-policy-viewport"),
+      }.With(huxerui::Frame{.width = 280.0F},
+          huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+      huxerui::Spacer(),
+    }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), model->inset.Get());
+    return PageBodyRegion(huxerui::Column {
+      huxerui::View{body}.With(huxerui::Grow(1.0F)).Key("scroll-policy-viewport"),
+    }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), model->inset.Get());
+}
+const huxerui::Application kPageScrollBarApplication{PageScrollBarRoot, {.show_debug_overlay = false}};
+
+std::vector<huxerui::Rect> paintedPageScrollBars(huxerui::testing::UiTest& ui) {
+    const auto snapshot = ui.CaptureSnapshot().ToString();
+    const std::regex pattern{
+        R"(rect\s+\{\s+bounds\s+\{\s+x=([\d.-]+)\s+y=([\d.-]+)\s+width=6\.000000\s+height=([\d.-]+)\s+\})"};
+    std::vector<huxerui::Rect> bars;
+    for (auto it = std::sregex_iterator(snapshot.begin(), snapshot.end(), pattern);
+         it != std::sregex_iterator(); ++it) {
+        const auto rail = ui.Find(UiSelector::Key("scroll-area-rail")).One().bounds;
+        bars.push_back({rail.x + std::stof((*it)[1]), rail.y + std::stof((*it)[2]),
+            6.0F, std::stof((*it)[3])});
+    }
+    return bars;
+}
+
+void testPageScrollBars() {
+    for (int mode = 0; mode < 4; ++mode) {
+        huxerui::testing::UiTest ui(kPageScrollBarApplication, {.viewport = {800.0F, 300.0F}});
+        ui.Pump();
+        const auto model = pageScrollBarFixture;
+        model->mode = mode;
+        ui.Pump();
+        const auto viewport = ui.Find(UiSelector::Key("scroll-policy-viewport"));
+        const auto contentBounds = [&] {
+            for (const auto& node : viewport.Find(UiSelector::Enabled(true)).All())
+                if (node.type == (mode < 2 ? "ScrollView" : "VirtualLayout")) return node.bounds;
+            throw std::runtime_error("scroll area has no retained scroll viewport");
+        };
+        const auto wideBounds = contentBounds();
+        check(std::abs(wideBounds.x - viewport.One().bounds.x - 16.0F) < 0.5F &&
+              std::abs(viewport.One().bounds.x + viewport.One().bounds.width -
+                  wideBounds.x - wideBounds.width - 16.0F) < 0.5F,
+              "default wide scrolling content has matching leading and trailing margins");
+        const auto gutter = ui.Find(UiSelector::Key("scroll-area-rail"));
+        check(std::abs(gutter.One().bounds.width - 16.0F) < 0.5F &&
+              std::abs(wideBounds.x + wideBounds.width - gutter.One().bounds.x) < 0.5F,
+              "wide scroll content ends before the independent sixteen-point rail");
+        const int compositions = pageScrollBarCompositions;
+        viewport.ScrollBy({0.0F, 20.0F}); ui.Pump(std::chrono::milliseconds(32));
+        const auto bars = paintedPageScrollBars(ui);
+        check(bars.size() == 2, "wide scroll areas paint exactly one track and thumb in their rail");
+        for (const auto& bar : bars) {
+            check(bar.x >= wideBounds.x + wideBounds.width,
+                  "the scrollbar never paints over ordinary or virtual content");
+            const auto host = viewport.One().bounds;
+            check(host.x + host.width - bar.x - bar.width > 6.0F &&
+                  bar.y - host.y > 6.0F && host.y + host.height - bar.y - bar.height > 6.0F,
+                  "the full scrollbar stays outside the window's six-point resize band at every edge");
+        }
+        if (bars.size() == 2) {
+            const auto thumb = *std::min_element(bars.begin(), bars.end(),
+                [](const auto& a, const auto& b) { return a.height < b.height; });
+            const auto hostBounds = viewport.One().bounds;
+            const float expectedX = hostBounds.x + hostBounds.width - 13.0F;
+            if (std::abs(thumb.x - expectedX) >= 0.5F)
+                std::printf("scroll host mode=%d bounds=(%.1f,%.1f %.1fx%.1f) thumb=(%.1f,%.1f %.1fx%.1f)\n",
+                    mode, hostBounds.x, hostBounds.y, hostBounds.width, hostBounds.height,
+                    thumb.x, thumb.y, thumb.width, thumb.height);
+            check(std::abs(thumb.x - expectedX) < 0.5F,
+                  "scrollbar follows the host edge independently of centered content or a bounded local host");
+            const float before = model->offset->value;
+            const huxerui::Point start{thumb.x + 3.0F, thumb.y + thumb.height * 0.5F};
+            ui.Drag(start, {start.x, start.y + 40.0F}, {
+                .pointer = {.device_kind = huxerui::PointerDeviceKind::Mouse}});
+            if (model->offset->value <= before + 20.0F) {
+                std::printf("scroll host mode=%d drag offset %.1f -> %.1f\n", mode, before, model->offset->value);
+            }
+            check(model->offset->value > before + 20.0F, "wide scrollbar thumb dragging moves actual content");
+        }
+        check(pageScrollBarCompositions == compositions, "scrolling recomposes only the rail, not the page factory");
+        if (mode == 0) {
+            const float firstY = ui.Find(UiSelector::Key("scroll-policy-row-0")).One().bounds.y;
+            model->mounted = false; ui.Pump();
+            model->mounted = true; ui.Pump(std::chrono::milliseconds(32));
+            check(std::abs(ui.Find(UiSelector::Key("scroll-policy-row-0")).One().bounds.y - firstY) < 0.5F,
+                  "remounting a page restores the offset set through the external scrollbar");
+        }
+        ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 1,
+            .position = {850.0F, 150.0F}, .device_kind = huxerui::PointerDeviceKind::Mouse});
+        ui.PumpAndSettle();
+        check(paintedPageScrollBars(ui).empty() && contentBounds() == wideBounds,
+              "idle fading stops frame scheduling without changing the content viewport");
+        const float wideOffset = model->offset->value;
+        ui.SetWindowMetrics({.viewport = {599.0F, 300.0F}}); ui.Pump();
+        check(paintedPageScrollBars(ui).empty(), "Compact removes the scrollbar from every scroll host");
+        check(gutter.One().bounds.width == 0.0F &&
+              std::abs(contentBounds().width - viewport.One().bounds.width) < 0.5F,
+              "narrow scroll areas give the full width back to their content");
+        check(std::abs(model->offset->value - wideOffset) < 0.5F,
+              "hiding the scrollbar preserves the retained offset");
+        viewport.ScrollBy({0.0F, 20.0F}); ui.Pump(std::chrono::milliseconds(32));
+        check(model->offset->value > wideOffset + 10.0F && paintedPageScrollBars(ui).empty(),
+              "narrow hosts still scroll without painting a scrollbar");
+        const float narrowOffset = model->offset->value;
+        ui.SetWindowMetrics({.viewport = {600.0F, 300.0F}}); ui.Pump(std::chrono::milliseconds(32));
+        ui.Pump(std::chrono::milliseconds(32));
+        check(paintedPageScrollBars(ui).size() == 2 &&
+              std::abs(model->offset->value - narrowOffset) < 0.5F,
+              "Medium restores the scrollbar without resetting the scroll position");
+        model->count = 1; ui.Pump();
+        check(paintedPageScrollBars(ui).empty(), "content without overflow has no scrollbar in a wide window");
+        const auto shortBounds = contentBounds();
+        model->count = 0; ui.Pump();
+        check(paintedPageScrollBars(ui).empty() && gutter.One().bounds.width == 16.0F &&
+              contentBounds().width == shortBounds.width,
+              "empty and short content keep the same reserved rail width");
+    }
+    pageScrollBarFixture.reset();
+}
+
+void testPageBodyInsets() {
+    using namespace clashflux::ui;
+    for (int mode : {0, 2, 3}) {
+        huxerui::testing::UiTest ui(kPageScrollBarApplication, {.viewport = {800.0F, 300.0F}});
+        ui.Pump();
+        const auto model = pageScrollBarFixture;
+        model->mode = mode;
+        for (float requested : {24.0F, 14.0F, 4.0F}) {
+            model->inset = requested; ui.PumpAndSettle();
+            const auto viewport = ui.Find(UiSelector::Key("scroll-policy-viewport"));
+            const auto nodes = viewport.Find(UiSelector::Enabled(true)).All();
+            const auto actual = std::find_if(nodes.begin(), nodes.end(), [](const auto& node) {
+                return node.type == "ScrollView" || node.type == "VirtualLayout";
+            });
+            check(actual != nodes.end(), "a body inset retains the original scrolling primitive");
+            if (actual == nodes.end()) continue;
+            const float side = std::max(requested, 16.0F);
+            check(std::abs(actual->bounds.x - side) < 0.5F &&
+                  std::abs(actual->bounds.width - (800.0F - 2.0F * side)) < 0.5F,
+                  "the scaffold's margin replaces outer padding and includes the scrollbar on both sides");
+            if (mode == 0) {
+                const auto centered = ui.Find(UiSelector::Key("scroll-policy-row-0")).One().bounds;
+                check(std::abs(centered.x + centered.width * 0.5F - 400.0F) < 0.5F,
+                      "maximum-width ordinary content stays centered in the full body region");
+            }
+        }
+        model->inset = 4.0F;
+        ui.SetWindowMetrics({.viewport = {599.0F, 300.0F}}); ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Key("scroll-area-leading")).One().bounds.width == 4.0F &&
+              ui.Find(UiSelector::Key("scroll-area-rail")).One().bounds.width == 4.0F &&
+              paintedPageScrollBars(ui).empty(),
+              "Compact retains a small symmetric margin without a scrollbar");
+    }
+    huxerui::testing::UiTest ui(kPageScrollBarApplication, {.viewport = {800.0F, 300.0F}});
+    ui.Pump();
+    const auto model = pageScrollBarFixture;
+    model->inset = 24.0F; model->mode = 4; ui.PumpAndSettle();
+    const auto bounds = ui.Find(UiSelector::Key("inset-static")).One().bounds;
+    check(std::abs(bounds.x - 24.0F) < 0.5F && std::abs(bounds.width - 752.0F) < 0.5F,
+          "static and loading body frames consume the same single margin budget");
+    model->mode = 5; ui.PumpAndSettle();
+    auto leading = ui.Find(UiSelector::Key("scroll-area-leading")).All();
+    std::vector<float> widths;
+    for (const auto& node : leading) widths.push_back(node.bounds.width);
+    std::sort(widths.begin(), widths.end());
+    check(widths == std::vector<float>{16.0F, 24.0F},
+          "a nested local scroll area does not inherit and duplicate its page margin");
+    pageScrollBarFixture.reset();
+}
+
+struct ScrollHoverFixture {
+    huxerui::State<bool> nested{false}, blocked{false}, enabled{true}, sideBySide{false};
+    huxerui::State<float> innerHeight{1000.0F}, outerHeight{1000.0F};
+    huxerui::ScrollController outer, inner;
+    huxerui::Color primary;
+    int clicks = 0, compositions = 0;
+};
+std::shared_ptr<ScrollHoverFixture> scrollHoverFixture;
+
+huxerui::View ScrollHoverRoot() {
+    using namespace clashflux::ui;
+    const auto model = huxerui::UseState(std::make_shared<ScrollHoverFixture>()).Get();
+    scrollHoverFixture = model;
+    ++model->compositions;
+    model->primary = huxerui::UseTheme().colors.primary;
+    if (model->sideBySide.Get()) return huxerui::Row {
+      PageScrollView(huxerui::Text("Left content").With(huxerui::Frame{.height = 1000.0F}), model->outer)
+          .With(huxerui::Grow(1.0F)),
+      PageScrollView(huxerui::Text("Right content").With(huxerui::Frame{.height = 5000.0F}), model->inner)
+          .With(huxerui::Grow(1.0F)),
+    }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    const auto button = huxerui::Button("Hover content button").OnClick([model] { ++model->clicks; });
+    huxerui::View first = button;
+    if (model->nested.Get()) first = PageScrollView(huxerui::Column {
+      button,
+      huxerui::Text("Inner content").With(huxerui::Frame{.height = model->innerHeight.Get()}),
+    }, model->inner).With(huxerui::Frame{.height = 120.0F}, huxerui::Enabled(model->enabled.Get()));
+    return huxerui::Stack {
+      PageScrollView(huxerui::Column {
+        first,
+        huxerui::Text("Outer content").With(huxerui::Frame{.height = model->outerHeight.Get()}),
+      }, model->outer).With(huxerui::Grow(1.0F)),
+      model->blocked.Get() ? huxerui::Button("Blocking overlay").With(
+          huxerui::Frame{.width = 800.0F, .height = 300.0F}) : huxerui::View{},
+    }.With(huxerui::Grow(1.0F));
+}
+const huxerui::Application kScrollHoverApplication{ScrollHoverRoot, {.show_debug_overlay = false}};
+
+std::vector<float> highlightedScrollThumbs(huxerui::testing::UiTest& ui) {
+    const auto snapshot = ui.CaptureSnapshot().ToString();
+    const std::regex pattern{
+        R"(rect\s+\{\s+bounds\s+\{\s+x=[\d.-]+\s+y=[\d.-]+\s+width=6\.000000\s+height=([\d.-]+)\s+\}\s+brush\s+\{\s+kind="solid"\s+color\s+\{\s+red=([\d.-]+)\s+green=([\d.-]+)\s+blue=([\d.-]+)\s+alpha=([\d.-]+))"};
+    std::vector<float> heights;
+    const auto primary = scrollHoverFixture->primary;
+    for (auto it = std::sregex_iterator(snapshot.begin(), snapshot.end(), pattern);
+         it != std::sregex_iterator(); ++it) {
+        if (std::abs(std::stof((*it)[2]) - primary.red) < 0.001F &&
+            std::abs(std::stof((*it)[3]) - primary.green) < 0.001F &&
+            std::abs(std::stof((*it)[4]) - primary.blue) < 0.001F && std::stof((*it)[5]) > 0.9F)
+            heights.push_back(std::stof((*it)[1]));
+    }
+    return heights;
+}
+
+void testScrollTargetHover() {
+    huxerui::testing::UiTest ui(kScrollHoverApplication, {.viewport = {800.0F, 300.0F}});
+    ui.PumpAndSettle();
+    const auto model = scrollHoverFixture;
+    const auto move = [&](huxerui::Point position) {
+        ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 1,
+            .position = position, .device_kind = huxerui::PointerDeviceKind::Mouse});
+        ui.PumpAndSettle();
+    };
+    const auto oneThumb = [&](bool inner, const char* message) {
+        const auto heights = highlightedScrollThumbs(ui);
+        check(heights.size() == 1 && (inner ? heights.front() < 32.0F : heights.front() > 50.0F), message);
+    };
+    check(highlightedScrollThumbs(ui).empty(), "idle content does not keep its scrollbar highlighted");
+    const int compositions = model->compositions;
+    move({100.0F, 60.0F});
+    oneThumb(false, "hovering content away from the rail highlights its scrolling target before wheel input");
+    check(model->outer.Offset() == 0.0F && model->compositions == compositions,
+          "hover feedback neither scrolls nor recomposes the content factory");
+    ui.Find(UiSelector::Text("Hover content button")).Tap(); ui.PumpAndSettle();
+    check(model->clicks == 1, "scroll target feedback preserves child button input");
+    const auto rail = ui.Find(UiSelector::Key("scroll-area-rail")).One().bounds;
+    move({rail.x + rail.width * 0.5F, 150.0F});
+    oneThumb(false, "hovering the scrollbar itself highlights its thumb");
+    move({100.0F, 60.0F});
+    oneThumb(false, "moving from the rail into the body keeps the highlight");
+    move({850.0F, 60.0F});
+    check(highlightedScrollThumbs(ui).empty(), "leaving the content clears its hover highlight and settles");
+
+    model->nested = true; ui.PumpAndSettle(); move({100.0F, 60.0F});
+    oneThumb(true, "nested content highlights only its innermost overflowing scroll area");
+    for (int tick = 0; tick < 3; ++tick) {
+        static_cast<void>(ui.SendScroll({{100.0F, 60.0F}, 0.0F, 40.0F}));
+        ui.Pump(std::chrono::milliseconds(16));
+        oneThumb(true, "wheel scrolling never clears or moves the hovered inner highlight");
+    }
+    check(model->inner.Offset() > 0.0F && model->outer.Offset() == 0.0F,
+          "the highlighted nested area receives the actual wheel input");
+    model->inner.ScrollTo(model->inner.MaxOffset()); ui.PumpAndSettle();
+    oneThumb(true, "the hovered inner area keeps its highlight at the inner boundary");
+    model->inner.ScrollTo(0.0F); ui.PumpAndSettle();
+    oneThumb(true, "the hovered inner area keeps its highlight at the inner start");
+    model->inner.ScrollTo(model->inner.MaxOffset()); ui.PumpAndSettle();
+    static_cast<void>(ui.SendScroll({{100.0F, 60.0F}, 0.0F, 40.0F})); ui.PumpAndSettle();
+    check(model->outer.Offset() > 0.0F,
+          "boundary wheel input still leaves the framework's outer scrolling intact");
+    oneThumb(true, "scrolling the outer area does not steal the hovered inner highlight");
+    const float outerOffset = model->outer.Offset();
+    static_cast<void>(ui.SendScroll({{100.0F, 60.0F}, 0.0F, -40.0F})); ui.PumpAndSettle();
+    oneThumb(true, "reversing the wheel keeps the highlight on the hovered inner area");
+    check(model->outer.Offset() == outerOffset && model->inner.Offset() < model->inner.MaxOffset(),
+          "reverse input is consumed by the hovered inner area");
+    model->innerHeight = 1.0F; ui.PumpAndSettle();
+    oneThumb(false, "short inner content returns the highlight to its outer scrolling ancestor without mouse movement");
+    model->innerHeight = 1000.0F; model->enabled = false; ui.PumpAndSettle();
+    oneThumb(false, "disabled nested scrolling does not take its ancestor's highlight");
+    model->blocked = true; ui.PumpAndSettle();
+    check(highlightedScrollThumbs(ui).empty(), "an occluding overlay clears the background scrolling highlight");
+    model->blocked = false; model->enabled = true; ui.PumpAndSettle();
+    ui.SetWindowMetrics({.viewport = {599.0F, 300.0F}}); ui.PumpAndSettle(); move({100.0F, 60.0F});
+    check(highlightedScrollThumbs(ui).empty(), "Compact content never shows a hover scrollbar");
+    ui.SetWindowMetrics({.viewport = {800.0F, 300.0F}});
+    model->sideBySide = true; ui.PumpAndSettle(); move({100.0F, 150.0F});
+    oneThumb(false, "the left scrolling pane highlights independently of its sibling");
+    move({600.0F, 150.0F});
+    oneThumb(true, "moving to a sibling transfers the highlight without retaining the old pane");
+    model->sideBySide = false; model->nested = false; model->outerHeight = 1.0F;
+    ui.PumpAndSettle(); move({100.0F, 150.0F});
+    check(highlightedScrollThumbs(ui).empty(), "content without overflow has no hover scrollbar");
+    scrollHoverFixture.reset();
 }
 
 struct ScrollEdgesFixture {
@@ -3367,7 +3725,7 @@ void testSingleProxyProbeHover() {
           "retry after a plan change publishes only the new request");
 }
 
-struct RefreshFixture : clashflux::ui::ProfileRefreshModel {
+struct RefreshFixture : clashflux::ui::ProfileRefreshModel, clashflux::ui::ProfilePreparationModel {
     huxerui::State<std::string> a{"RULES-A-OLD"}, b{"RULES-B-OLD"}, error{std::string{}};
     huxerui::State<std::int64_t> visible{1};
     huxerui::State<std::uint64_t> aVersion{0}, bVersion{0};
@@ -3454,6 +3812,22 @@ void testScopedProfileRefresh() {
     check(model->RulesLoading(1, old) && !model->RulesLoading(2, model->bVersion.Get()),
           "completed A refresh invalidates only A's old rules until its new snapshot arrives");
     check(!model->RulesLoading(1, latest), "the matching rules snapshot ends only its own loading state");
+    const auto firstPreparation = *model->BeginPreparation(1, "one.version.yaml");
+    check(!model->BeginPreparation(1, "one.version.yaml"), "duplicate preparation stays single-flight");
+    model->ForgetPreparation(1, firstPreparation.first);
+    check(firstPreparation.second.stop_requested(), "removing a source cancels its background preparation");
+    const auto retryPreparation = *model->BeginPreparation(1, "one.version.yaml");
+    check(!model->FinishPreparation(1, firstPreparation.first, true, {}) &&
+          model->Preparation(1)->phase == clashflux::ui::ProfilePreparationPhase::Preparing,
+          "ABA preparation completion cannot publish over a newer operation");
+    check(model->FinishPreparation(1, retryPreparation.first, false, "network failed") &&
+          model->Preparation(1)->phase == clashflux::ui::ProfilePreparationPhase::Failed,
+          "failed background preparation is retained separately from the saved subscription");
+    const auto changedPreparation = *model->BeginPreparation(1, "new.version.yaml");
+    check(model->FinishPreparation(1, changedPreparation.first, true, {}) &&
+          model->Preparation(1)->phase == clashflux::ui::ProfilePreparationPhase::Ready,
+          "new source version retries independently and publishes ready only after completion");
+
 }
 
 struct SubscriptionRuleLayoutFixture {
@@ -6129,11 +6503,77 @@ void testDialogSurfaceEnvironment() {
     ui.Find(UiSelector::Text("Close subscription dialog")).Tap(); ui.PumpAndSettle();
     check(!ui.Find(UiSelector::Text("Scoped add methods")).Exists(), "dialog closes after child navigation");
 }
+
+struct SettingsReadinessFixture {
+    huxerui::State<bool> settingsReady{false};
+    huxerui::State<bool> coreReady{false};
+    huxerui::State<bool> savedAutoRun{true};
+    int changes = 0;
+    int navigations = 0;
+};
+std::shared_ptr<SettingsReadinessFixture> settingsReadiness;
+
+huxerui::View SettingsReadinessRoot() {
+    return huxerui::FlatTheme {huxerui::Scope([] {
+        const auto model = huxerui::UseState(std::make_shared<SettingsReadinessFixture>()).Get();
+        settingsReadiness = model;
+        return huxerui::Column {
+          huxerui::Text("Settings"),
+          clashflux::ui::SettingsContentRow(huxerui::Row {
+            huxerui::Text("Auto connect").With(huxerui::Grow(1.0F)),
+            clashflux::ui::SettingsValue(model->settingsReady.Get(), huxerui::Switch(model->savedAutoRun.Get())
+                .OnChanged([model](bool value) { model->savedAutoRun = value; ++model->changes; })
+                .Key("hydrated-setting-switch")),
+          }),
+          clashflux::ui::SettingsContentRow(huxerui::Row {
+            huxerui::Text("Core").With(huxerui::Grow(1.0F)),
+            clashflux::ui::SettingsValue(model->coreReady.Get(), huxerui::Button("Restart").Key("ready-core-action")),
+          }),
+          huxerui::Button("About").OnClick([model] { ++model->navigations; }),
+        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    })};
+}
+
+void testSettingsReadiness() {
+    for (float width : {360.0F, 960.0F}) {
+        huxerui::testing::UiTest ui(huxerui::Application {SettingsReadinessRoot, {.show_debug_overlay = false}},
+            {.viewport = {width, 600.0F}});
+        ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Text("Auto connect")).Exists() &&
+              ui.Find(UiSelector::Text("Core")).Exists(), "pending values retain real settings labels");
+        check(!ui.Find(UiSelector::Key("hydrated-setting-switch")).Exists() &&
+              !ui.Find(UiSelector::Key("ready-core-action")).Exists(),
+              "pending settings and runtime values never expose default controls");
+        ui.Find(UiSelector::Text("About")).Tap(); ui.PumpAndSettle();
+        check(settingsReadiness->navigations == 1 && settingsReadiness->changes == 0,
+              "independent settings navigation works before configuration hydration");
+        settingsReadiness->settingsReady = true;
+        ui.Pump();
+        check(ui.Find(UiSelector::Key("hydrated-setting-switch")).Exists() &&
+              !ui.Find(UiSelector::Key("ready-core-action")).Exists(),
+              "hydrated settings appear immediately without waiting for runtime probes");
+        ui.Find(UiSelector::Key("hydrated-setting-switch")).Tap(); ui.PumpAndSettle();
+        check(!settingsReadiness->savedAutoRun.Get() && settingsReadiness->changes == 1,
+              "the first editable switch uses its saved value rather than a fallback");
+        settingsReadiness->coreReady = true;
+        ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Key("ready-core-action")).Exists() && settingsReadiness->changes == 1,
+              "runtime readiness updates its own action without resetting settings");
+    }
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--scrollbars") {
+        testPageScrollBars();
+        testPageBodyInsets();
+        testScrollTargetHover();
+        std::printf("test_page_transition scrollbars: %s\n", failures == 0 ? "ok" : "failed");
+        return failures == 0 ? 0 : 1;
+    }
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    try { testSettingsRowFeedback(); }
+    try { testSettingsReadiness(); testSettingsRowFeedback(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: settings row feedback: %s\n", error.what());
         ++failures;
@@ -6389,6 +6829,9 @@ int main() {
     testResponsiveAnchorMount();
     testCompactPageBottom();
     testHeaderFormAction();
+    testPageScrollBars();
+    testPageBodyInsets();
+    testScrollTargetHover();
     testScrollEdges();
     testWebsiteFormScroll();
     testProfileFormNavigation();

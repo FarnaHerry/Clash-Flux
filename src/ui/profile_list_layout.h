@@ -44,12 +44,10 @@ std::vector<ProfileListSection> BuildProfileListSections(
     return sections;
 }
 
-// Retain the same page insets without mounting a one-page Pager on phones.
+// The scroll/static body owns its inset; phones do not need a one-page Pager.
 inline huxerui::View UnifiedProfileList(huxerui::View list) {
     return huxerui::Scope([list] {
-        const auto insets = huxerui::UseEnvironment<SectionTabContentInsets>();
         return huxerui::Column {list}.With(huxerui::Grow(1.0F),
-            huxerui::Padding(huxerui::EdgeInsets::Symmetric(insets.horizontal * 0.5F, 0.0F)),
             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }).With(huxerui::Grow(1.0F)).Key("profile-unified-list");
 }

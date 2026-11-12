@@ -38,8 +38,8 @@
 import clashflux.config;
 import clashflux.cli;
 import clashflux.core;
-import clashflux.db;
-import clashflux.persistence;
+import clashflux.model;
+import clashflux.data;
 import clashflux.service;
 import clashflux.store.core;
 import clashflux.store.profiles;
@@ -49,7 +49,7 @@ import clashflux.stream;
 import clashflux.instance;
 #endif
 
-// CoreView 含 store::CoreSnapshot、ProfilesModel 含 db::Profile，必须在模块导入
+// CoreView 含 store::CoreSnapshot、ProfilesModel 含 model::Profile，必须在模块导入
 // 之后（同 profiles_cache.h）。
 #include "core_model.h"
 #include "core_control.h"
@@ -64,7 +64,7 @@ namespace clashflux::ui {
 struct AndroidUpgradeWriteFreeze {
     bool active = false;
     ~AndroidUpgradeWriteFreeze() {
-        if (active) persistence::persistence().resumeWritesAfterUpgradeFailure();
+        if (active) clashflux::data::session().resumeWritesAfterUpgradeFailure();
     }
 };
 
@@ -135,7 +135,7 @@ void AndroidPreparePlatformDataDirectory(
                     ticket = core->operations.Begin({.action = CoreAction::Stop});
                     if (!ticket || core->serviceChecking.Get())
                         throw std::runtime_error("Another runtime operation is still in progress; retry installation");
-                    auto& database = persistence::persistence();
+                    auto& database = clashflux::data::session();
                     if (!database.ready() || !co_await database.flushSettings() || !co_await database.flushProfiles())
                         throw std::runtime_error("Cannot save configuration; installation cancelled");
                     const bool stopped = co_await RunOnTaskThread([] {
@@ -312,7 +312,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
                             store::coreStore().snapshot().lastError);
                 }
                 coreStopped->store(stopped);
-                auto& database = clashflux::persistence::persistence();
+                auto& database = clashflux::data::session();
                 const bool settingsSaved = co_await database.flushSettings();
                 const bool profilesSaved = co_await database.flushProfiles();
                 if (!settingsSaved || !profilesSaved) {
@@ -354,7 +354,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
         tasks->Launch([self, ticket = *ticket]() -> huxerui::Task<void> {
             bool frozen = false;
             try {
-                auto& database = persistence::persistence();
+                auto& database = clashflux::data::session();
                 if (!database.ready() || !co_await database.flushSettings() || !co_await database.flushProfiles() ||
                     database.hasPendingSettings() || database.hasPendingProfiles())
                     throw std::runtime_error("Cannot save all configuration; installation cancelled");
@@ -384,7 +384,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
                 self->updateModel->error = std::string{"Update installation preparation failed"};
                 self->updateModel->phase = AppUpdatePhase::InstallFailed;
             }
-            if (frozen && !self->exitRequested) persistence::persistence().resumeWritesAfterUpgradeFailure();
+            if (frozen && !self->exitRequested) clashflux::data::session().resumeWritesAfterUpgradeFailure();
             if (!self->exitRequested) {
                 self->updateModel->noticeIsError = true;
                 self->updateModel->notice = self->updateModel->error.Get();
@@ -502,7 +502,7 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
         if (const auto trayRuntime = weak.lock()) trayRuntime->ShowWindow();
     };
 
-    const auto startupSettings = persistence::readStartupSettings(cfg::databaseFile());
+    const auto startupSettings = clashflux::data::readStartupSettings(cfg::databaseFile());
     if (!startupSettings.error.empty()) {
         std::fprintf(stderr, "Clash-Flux 启动失败：%s；原数据库与订阅文件已保留\n",
                      startupSettings.error.c_str());
@@ -520,21 +520,23 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
     const auto& startupActivation = runtime->application->StartupActivation();
     const bool startupUrl = startupActivation &&
         std::holds_alternative<huxerui::UrlActivation>(*startupActivation);
-    runtime->tray.OnActivate([runtime] { runtime->ShowWindow(); });
-
     const bool commandMode = cli::runtimeCommandMode();
-    const bool startupWantsHidden = !commandMode && !startupUrl &&
+    if (commandMode) {
+        // A command owns the Runtime until its writes are flushed, but has no
+        // desktop presentation. Tray recovery must never open a CLI window.
+        StartDesktopWindowlessRuntime();
+        return;
+    }
+    runtime->tray.OnActivate([runtime] { runtime->ShowWindow(); });
+    const bool startupWantsHidden = !startupUrl &&
         startupSettings.trayEnabled && startupSettings.startMinimized;
     runtime->startupDecisionPending = startupWantsHidden;
     runtime->started = true;
     // Application hooks run before Runtime enters Running. Both OpenWindow()
     // paths must wait until the platform event loop can create native windows.
     // Linux discovers the status notifier host asynchronously after OnActivate.
-    tasks.Launch([runtime, commandMode, startupWantsHidden]() -> huxerui::Task<void> {
-        if (commandMode) {
-            // CLI commands run in StartDesktopWindowlessRuntime; creating a
-            // hidden GUI window would compose pages only to tear them down.
-        } else if (startupWantsHidden) {
+    tasks.Launch([runtime, startupWantsHidden]() -> huxerui::Task<void> {
+        if (startupWantsHidden) {
             for (int attempt = 0; attempt < 20 && !runtime->tray.IsAvailable(); ++attempt)
                 co_await huxerui::Delay(std::chrono::duration<double>{0.1});
             if (runtime->tray.IsAvailable()) {
@@ -553,7 +555,7 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
         }
         runtime->startupDecisionPending = false;
     });
-    if (startupWantsHidden || commandMode) StartDesktopWindowlessRuntime();
+    if (startupWantsHidden) StartDesktopWindowlessRuntime();
 
     const auto tray = runtime->tray;
     const bool initialTrayEnabled = startupSettings.trayEnabled;

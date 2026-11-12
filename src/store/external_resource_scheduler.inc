@@ -3,14 +3,14 @@
     ExternalResourceRefreshBatch refreshDueExternalResources(std::stop_token cancel = {}) {
         ExternalResourceRefreshBatch batch;
         std::unique_lock lock(lifecycleMutex_, std::try_to_lock);
-        if (cancel.stop_requested() || !lock.owns_lock() || !clashflux::persistence::persistence().ready()) {
+        if (cancel.stop_requested() || !lock.owns_lock() || !clashflux::data::session().ready()) {
             batch.deferred = true;
             return batch;
         }
         ensureOpen();
         struct Pending { std::int64_t id; std::shared_ptr<const std::string> source; singbox::ExternalResource resource; };
         std::map<std::string, Pending> pending;
-        for (const auto& profile : db_->listProfiles()) {
+        for (const auto& profile : clashflux::data::session().listProfiles()) {
             if (cancel.stop_requested()) return batch;
             std::string error;
             const auto source = singbox::ReadRuleProviderText(cfg::profilesDir() / profile.file, 8 * 1024 * 1024, error);

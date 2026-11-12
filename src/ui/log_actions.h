@@ -61,6 +61,8 @@ inline huxerui::View LogMenuPanel(huxerui::PopupContext context, std::size_t sel
     std::function<void()> exportFile, std::function<void()> clear, bool canExportFile) {
     const auto levelPopup = huxerui::UsePopup();
     const auto exportPopup = huxerui::UsePopup();
+    const auto levelTarget = huxerui::UseViewHandle();
+    const auto exportTarget = huxerui::UseViewHandle();
     auto child = huxerui::UseState<huxerui::LayerId>(0);
     auto opened = huxerui::UseState(0);
     const auto closeChild = [levelPopup, exportPopup, child, opened] {
@@ -85,7 +87,7 @@ inline huxerui::View LogMenuPanel(huxerui::PopupContext context, std::size_t sel
     const auto openLevels = [=] {
         if (opened.Get() == 1) return;
         closeChild();
-        child = levelPopup.Show([=] {
+        child = levelPopup.Show(levelTarget, [=] {
             return huxerui::Scope([=] {
                 std::vector<huxerui::View> items;
                 for (std::size_t index = 0; index < kLogLevelNames.size(); ++index) {
@@ -102,7 +104,7 @@ inline huxerui::View LogMenuPanel(huxerui::PopupContext context, std::size_t sel
     const auto openExport = [=] {
         if (opened.Get() == 2) return;
         closeChild();
-        child = exportPopup.Show([=] {
+        child = exportPopup.Show(exportTarget, [=] {
             return huxerui::Scope([=] {
                 return ActionMenuSurface({
                     ActionMenuItemView(Localized("剪贴板"), [=] { dismiss(); copy(); },
@@ -117,13 +119,13 @@ inline huxerui::View LogMenuPanel(huxerui::PopupContext context, std::size_t sel
     return ActionMenuSurface({
         ActionMenuItemView(Localized("级别"), openLevels, "›", {}, true, false,
             huxerui::ImageResource{"app", "images/logs"})
-            .With(levelPopup.Anchor())
+            .With(levelTarget)
             .On<huxerui::ViewEvents::Hover>([openLevels](const huxerui::HoverEvent& event) {
                 if (event.type == huxerui::HoverEventType::Enter) openLevels();
             }),
         ActionMenuItemView(Localized("导出"), openExport, "›", {}, true, false,
             huxerui::ImageResource{"app", "images/save"})
-            .With(exportPopup.Anchor())
+            .With(exportTarget)
             .On<huxerui::ViewEvents::Hover>([openExport](const huxerui::HoverEvent& event) {
                 if (event.type == huxerui::HoverEventType::Enter) openExport();
             }),
@@ -140,10 +142,11 @@ inline huxerui::View LogActionsMenu(
     std::function<void()> copy, std::function<void()> exportFile,
     std::function<void()> clear, bool canExportFile = true) {
     auto popup = huxerui::UsePopup();
+    const auto target = huxerui::UseViewHandle();
     return huxerui::IconButton(huxerui::ImageResource{"app", "images/more_vertical"}, Localized("日志操作"))
-        .With(popup.Anchor(), huxerui::Tooltip(Localized("日志操作")))
+        .With(target, huxerui::Tooltip(Localized("日志操作")))
         .OnClick([=] {
-            popup.Show([=](huxerui::PopupContext context) {
+            popup.Show(target, [=](huxerui::PopupContext context) {
                 return huxerui::Scope([=] {
                     return LogMenuPanel(context, selectedLevel, selectLevel, copy, exportFile, clear, canExportFile);
                 });

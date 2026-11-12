@@ -64,6 +64,30 @@ ProfileFormat DetectProfileFormat(std::string_view content) {
     return ProfileFormat::ClashYaml;
 }
 
+bool ValidateProfileDocument(const std::string& content, std::string& error) {
+    error.clear();
+    if (content.empty() || content.size() > 8 * 1024 * 1024 || content.find('\0') != std::string::npos) {
+        error = "订阅文件为空、含 NUL 或超过 8 MiB"; return false;
+    }
+    try {
+        const auto format = DetectProfileFormat(content);
+        if (format == ProfileFormat::SingBoxJson) {
+            if (!nlohmann::json::parse(content, nullptr, false).is_object())
+                throw std::runtime_error("原生配置必须是 JSON 对象");
+        } else if (format == ProfileFormat::OpenVpn) {
+            if (!parseOpenVpnEndpointInput(content, error)) return false;
+        } else {
+            const auto root = loadClashProfileDocument(content);
+            if (!root.IsMap() || root.size() == 0) throw std::runtime_error("订阅必须是非空配置对象");
+            std::set<std::string> fields;
+            for (const auto& field : root)
+                if (!field.first.IsScalar() || !fields.insert(field.first.Scalar()).second)
+                    throw std::runtime_error("订阅含重复或无效的顶层字段");
+        }
+        return true;
+    } catch (const std::exception& exception) { error = exception.what(); return false; }
+}
+
 bool ValidateProfileRuleEdits(const ProfileRuleEdits& edits, std::string& error) {
     error.clear();
     if (edits.format_version != 1) { error = "不支持的订阅个人规则版本；保留原数据"; return false; }

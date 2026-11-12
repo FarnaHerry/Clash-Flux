@@ -6,7 +6,7 @@ module;
 export module clashflux.routing;
 
 import std;
-import clashflux.db;
+import clashflux.model;
 import clashflux.vpn;
 import clashflux.singbox;
 
@@ -123,7 +123,7 @@ export inline std::vector<std::string> SplitRoutes(std::string_view text) {
 }
 
 export inline bool ValidatePlatformPolicy(const vpn::VpnPolicy& policy,
-    std::span<const db::Profile> profiles, std::string& error) {
+    std::span<const model::Profile> profiles, std::string& error) {
     if (!vpn::ValidatePolicyRules(policy.rules, error)) return false;
     for (const auto& rule : policy.rules) {
         for (const auto& profile : profiles) {
@@ -153,7 +153,7 @@ export inline bool ValidatePlatformPolicy(const vpn::VpnPolicy& policy,
 // Session state is never persisted: a saved interface name cannot establish
 // that an interface still belongs to this connection after a restart.
 export inline void PopulateOptions(
-    singbox::CompileOptions& options, std::span<const db::Profile> profiles,
+    singbox::CompileOptions& options, std::span<const model::Profile> profiles,
     const vpn::VpnPolicy& policy,
     std::span<const singbox::NativeConnection> sessions) {
     options.mainConnectionId.clear();

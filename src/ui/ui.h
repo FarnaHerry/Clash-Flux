@@ -325,10 +325,10 @@ huxerui::View IslandSection(std::string title, huxerui::View content);
 // 规则页（含「添加全局规则规则」的目标连接列表）等消费同一份，不再各自向存储
 // 层要快照。selection_pending 与模型共享：为 true 时模型暂停发布，避免未确认
 // 的选中态被闪回。
-// 定义在 profiles_cache.h（成员是 StateList<db::Profile>，属于
+// 定义在 profiles_cache.h（成员是 StateList<model::Profile>，属于
 // clashflux.model 的模块内类型，只能在 import 之后见到，故不能在本头文件
 // 定义）；这里只前向声明，函数声明按值传不完整类型是合法的，用到定义的
-// 翻译单元在 import clashflux.db 之后包含 profiles_cache.h。
+// 翻译单元在 import clashflux.model 之后包含 profiles_cache.h。
 struct ProfilesCache;
 struct ConnectionRow;
 
@@ -599,7 +599,7 @@ struct SectionTab {
 // 每对标签栏/内容页共享一个保留的几何通道；动画采样不写 State、不触发重组。
 class SectionTabMotion;
 using SectionTabMotionHandle = std::shared_ptr<SectionTabMotion>;
-// 骨架决定内容留白，分页将它放在每一页内部；Pager 自身占满骨架宽度。
+// 标签栏的水平对齐；正文留白由 PageBodyInsets 分配，Pager 自身占满骨架宽度。
 struct SectionTabContentInsets {
     float horizontal = kSectionCardSpacing;
     static SectionTabContentInsets Default() { return {}; }

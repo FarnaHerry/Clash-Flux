@@ -48,8 +48,8 @@ namespace clashflux::ui {
             canSave && !saving && !busy && hasReport) : huxerui::View{},
       }.With(huxerui::Spacing(8.0F)).Key("diagnostics-export-actions"),
     }.With(huxerui::Spacing(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    const auto body = (fullPage ? ScrollablePageContent(fields) : huxerui::View{huxerui::ScrollView(fields)})
-        .With(huxerui::Grow(1.0F), huxerui::ScrollBar()).Key("runtime-diagnostics-content");
+    const auto body = (fullPage ? ScrollablePageContent(fields) : huxerui::View{PageScrollView(fields)})
+        .With(huxerui::Grow(1.0F)).Key("runtime-diagnostics-content");
     const auto actions = DialogActions({
       fullPage ? huxerui::View{} : DialogAction(Localized("关闭"), close, false),
       busy ? DialogAction(Localized("取消"), cancel, false) : huxerui::View{},

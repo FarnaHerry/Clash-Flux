@@ -145,9 +145,6 @@ std::string BreakableLogText(std::string_view text) {
     auto filter = huxerui::UseState<std::size_t>(0);
     auto logSearch = huxerui::UseState(huxerui::TextEditingValue{});
     const auto scroll = huxerui::UseScrollController();
-    // 水平留白与 SectionTabPages 同约定：骨架 fullWidthSections 后由页面根
-    // 持有半份卡片间距，不再叠加旧的 24pt 桌面岛内边距。
-    const auto sectionInsets = huxerui::UseEnvironment<SectionTabContentInsets>();
 
     huxerui::Lifecycle(
         [tasks, entries] {
@@ -193,7 +190,7 @@ std::string BreakableLogText(std::string_view text) {
         Localized(entries.Empty() ? "暂无日志" : "没有匹配的日志"), app::images::logs);
     if (!visible.empty()) {
         const std::size_t visibleCount = visible.size();
-        body = PageVirtualList(
+        body = ScrollArea(PageVirtualList(
             visibleCount,
             [entries, visible, theme, compact, visibleCount](std::size_t index) -> huxerui::View {
                 const std::size_t sourceIndex = visible[index];
@@ -219,8 +216,7 @@ std::string BreakableLogText(std::string_view text) {
             }, PageScrollInset(theme, true), compact && !onBack ? kCompactFloatingNavigationInset : 0.0F)
             // 密集卡片行高估算：减半内边距（8×2）+ 单行文本 + 底部外边距。
             .EstimatedItemExtent(compact ? 44.0F : 42.0F)
-            .Controller(scroll)
-            .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
+            .Controller(scroll), scroll).With(huxerui::Grow(1.0F));
     }
     const auto exportText = [filter, logSearch, entries] {
         std::vector<LogEntry> snapshot(entries.begin(), entries.end());
@@ -262,8 +258,6 @@ std::string BreakableLogText(std::string_view text) {
         picker->CanSaveFiles() && !exporting.Get());
     huxerui::View searchField = PillSearchField(
         logSearch, Localized("搜索日志"));
-    body = huxerui::View{std::move(body)}.With(huxerui::Padding(
-        huxerui::EdgeInsets::Symmetric(sectionInsets.horizontal * 0.5F, 0.0F)));
     if (onBack) return SecondaryPageScaffold(std::move(searchField), std::move(actions),
                                               std::move(body), onBack, false, true);
     return PageScaffold(Localized("日志"), std::move(actions), std::move(body),

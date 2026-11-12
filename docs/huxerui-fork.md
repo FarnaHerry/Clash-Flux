@@ -4,15 +4,72 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `144aff6be5f8fc8ba09eaaa7189a375322aa01af`，各平台 CI 共用
+Clash-Flux 当前固定 `cd66ef310bedbfa1916e535a34f1d608930fe7a8`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
 
 Media 选择器直接使用官方 [HuxerUI/Lib-Media](https://github.com/HuxerUI/Lib-Media)，
-固定提交 `01341304bdce46f109cc16d61b717add6dedc101`，本轮未创建 fork 或修改库源码。
+固定提交 `fbe5b7e652f8cb79191444fa2a51d0dd0c2299bb`，本轮未创建 fork 或修改库源码。
 应用仅在 Android 集成相册图片选择；当前上游整体构建，尚无 picker-only 开关，
 APK 体积比较见[二维码扫描](qr-scanning.md)（0.4.0 已提供 Android 静态链接）。
+
+2026-11-12 更新到已发布 [`cd66ef31`](https://github.com/FarnaHerry/HuxerUI/commit/cd66ef310bedbfa1916e535a34f1d608930fe7a8)：
+合入官方 `ad28dd34`（fork merge `2f6df692`），平台段落布局在测量与绘制之间复用：
+Android 共用 StaticLayout，NoWrap 用自然宽度并按绘制矩形解析水平位置；AppKit/UIKit 共用
+attributed string 并在尺寸匹配时复用已测量 CTFrame；Windows DirectWrite 复用 UTF-16 文本与
+解析后的字体范围，笔刷仍随可绘制布局；Web 共用行度量并在绘制时补算片段位置；Linux Pango
+原本共享布局缓存，路径未改。测量条目不得驱逐可绘制条目，缓存仍受条目数与约 8 MiB 预算约束。
+核心 `src/include` 与公开 API 未变，扩展 pin 不变；`farna/main` 原有的 6 DIP 拉伸窄带与
+应用 7pt 滑块边距保持不变。独立应用 checkout、CI、Android Java/native 共用该提交。
+各平台验证边界见[验收记录](l1-l2-l3-status.md)。
+
+2026-11-12 Linux 拉伸命中修复固定到 [`12231999`](https://github.com/FarnaHerry/HuxerUI/commit/12231999142bd9c39626d033c6a9ae192291d105)：
+自定义窗口边缘热区由 10 DIP 收窄为 6 DIP；角落斜向判定沿边延伸 16 DIP，
+必须先命中窄带，不再吞掉 14×14 DIP 的正文角落。保留方向光标、最近边选择、
+无效几何拒绝和最大化/全屏禁用策略；Windows/macOS 原生拉伸不变。
+这是相对官方 `00d1a486` 的明确 fork 交互差异，在框架窗口设计与上游覆盖表中登记。
+应用 ScrollArea 同步保留 7pt 滑块边距、最小 16pt 对称正文边距，避免滑块与拉伸带重叠。
+验证见 [验收记录](l1-l2-l3-status.md)。
+
+2026-11-12 更新到已发布 [`60514f85`](https://github.com/FarnaHerry/HuxerUI/commit/60514f8552f9edb4a61bf7f53b7859ad56c340e6)：
+合入官方 `00d1a486`：文本布局创建与绘制复用优化、行数限制及字素安全省略、
+传递库依赖、MSVC 应用源文件 UTF-8 编译。TextField 移除 TextStyles，应用未使用该接口，
+无需迁移；原 Pager 与扩展 fork 行为保留，各扩展 pin 不变。独立应用 checkout、CI 与
+Android Java/native 共用该提交，不消费维护工作树未提交的 macOS 改动。
+`571ca110` 的 Android 离屏绘制分派遗漏新增的文本布局参数，原生编译失败；
+`60514f85` 为该路径显式传入空布局，保留现有重建布局绘制路径，已单独提交并推送 fork。
+源码 hcg/hrc 本轮未变，继续使用同源构建的宿主工具；实际验证与边界见
+[验收记录](l1-l2-l3-status.md)。
+
+2026-11-11 更新到已发布 [`22291252`](https://github.com/FarnaHerry/HuxerUI/commit/2229125248d95fc47c334df1568533e56bf62350)：
+合入官方 `9ae9cb0d`，新增类型化剪贴板、内联文本对象，修复 Web 剪贴板/IME、
+默认程序化焦点提示与 Windows 平台视图输入。fork 移除已由上游覆盖的 Windows
+输入区域/圆角补丁，保留旧 Windows SDK 的数字 DWM 属性兼容。应用已有接口兼容，
+不消费维护仓库尚未提交的 macOS 改动；本机 checkout 与 CI 固定同一提交。
+Media 同步官方 `fbe5b7e6`（新增容器/编解码覆盖，Android picker 接口保持）；
+Camera/CodeEditor 上游更新尚未集成 fork，保留其修复与现有 pin，详见
+[依赖清单](../third_party/README.md#2026-11-11-稳定版本核对)。验证见
+[验收记录](l1-l2-l3-status.md)。
+
+2026-11-10 更新到 [`998b89d6`](https://github.com/FarnaHerry/HuxerUI/commit/998b89d6071223c2036a75a6d8e530687fbf752d)：
+`farna/main` 合入官方上游至 `14b1af53`（HuxerUI 0.4.0 之后的两轴滚动/虚拟布局、
+组合失败错误页、扩展权限模型、挂载视图目标统一、段落布局 API、Android 可 seek
+文件描述符与 Web 存储保护）。`1b227315` 是破坏性 API：`FocusRequester`、
+`FocusTarget`、`LayerAnchor` 统一为 `ViewHandle`，Popup/Menu 改为
+`Show(target, …)`、场景切换改用 `RunFromView`；`TextParagraphLayout`/`LayoutText`
+改为 `TextLayout`/`CreateTextLayout`，并新增 `PaintContext::DrawText(Point, TextLayout)`。
+应用把 `ActionMenuHandle` 改为同时持有 `UseViewHandle()`，日志子菜单、规则/订阅/
+连接/标签动作菜单与生产回归测试同步迁移；Lib-Charts fork 的悬停 tooltip 改为通过
+目标句柄调用 `ShowAtAnchor`（`2251bab`，已推送 `farna/main`）。
+`b857e474` 调和 fork 行为：下拉刷新读取每轴 overscroll；组合错误页替换内容时保留
+文本、指针、语义与帧服务，仅在窗口退役时释放；禁用滚动容器的程序化滚动仍放行。
+验证：`cmake --build build --target clash-flux`、`./run.sh --version`（v0.3.101）、
+`ctest -L clashflux-required` **32/32，168.36 秒**（含 page_transition 57.92 秒）、
+`git diff --check` 通过；固定 URL/COMMIT 重新获取后 `build/_deps` 的 Lib-Charts
+HEAD 为 `2251bab`。隔离 XDG 目录 GUI 运行 8 秒未退出、无日志，首页流量圆环图
+实际显示且中心为 `0%`。未做 Android/Windows/macOS 原生构建、真机安装或交互式
+菜单/图表悬停验收。
 
 2026-11-09 更新到 [`144aff6b`](https://github.com/FarnaHerry/HuxerUI/commit/144aff6be5f8fc8ba09eaaa7189a375322aa01af)（HuxerUI 0.4.0）：
 `6eee8f86` 起应用默认静态链接框架，Android 把 HuxerUI 静态库链入
@@ -148,10 +205,12 @@ Runtime 退出策略，不等于隐藏窗口或清空全部框架缓存。Window
 ## 补丁归属
 
 此固定提交包含 acgu 的五个补丁提交、28 个未提交文件快照、Android 宿主默认焦点高亮修复，
-以及 Clash-Flux 的十一项框架修复：拖动预览跟随抓取点、Pager 反向切换、隐藏虚拟页布局、
+以及 Clash-Flux 的框架修复：拖动预览跟随抓取点、Pager 反向切换、隐藏虚拟页布局、
 Linux 窗口帧生命周期、Objective-C++ 的 WindowTitleBar 聚合初始化兼容、
-composition 锚点在结构替换间转移（响应式断点切换不再抛 presentation anchor
-logic_error）、Windows 自定义标题栏窗口的 DWM 圆角、Windows 安装器引擎错误
+composition 锚点在结构替换间转移（`bd8fb056`；响应式断点切换不再抛 presentation anchor
+logic_error；上游 `1b227315` 统一为 `ViewHandle` 后已在合并 `c2f099c1` 中移除，
+改由 `TestAnchoredPresentationFollowsViewHandleAcrossReplacement` 覆盖）、
+Windows 自定义标题栏窗口的 DWM 圆角、Windows 安装器引擎错误
 提示移除"忽略继续"（防止卸载失败被忽略后新旧两套程序文件并存）、Windows 安装器
 命令驱动运行修复（命令式安装/卸载绕过新版本闩锁、不阻塞收尾并按终端状态映射
 退出码、保留引擎停止与 bundle 注销，修复升级时每个陈旧 bundle 注册弹一页且
@@ -167,7 +226,7 @@ Lib-Charts、Lib-SQLite、Lib-Camera、Lib-CodeEditor 的项目修复已收录�
 
 | 库 | 固定提交 | 项目补丁审核 |
 | --- | --- | --- |
-| [Lib-Charts](https://github.com/FarnaHerry/Lib-Charts/tree/farna/main) | `a879e96c64499b18f355b88648e1698fb5a25f72` | 饼图、96pt 紧凑绘图面与 `inner_radius` 圆环样式（环形段外弧+反向内弧、NonZero 填充，取全图最大解析值）均已包含，原两份补丁 reverse check 通过；包含 `rounded_caps`、中心占比/180ms 悬停动画，全零数据按条目数等分且中心保持 0%。 |
+| [Lib-Charts](https://github.com/FarnaHerry/Lib-Charts/tree/farna/main) | `2251bab5ad2a5df8e6e133c039e0b76bbe237add` | 饼图、96pt 紧凑绘图面与 `inner_radius` 圆环样式（环形段外弧+反向内弧、NonZero 填充，取全图最大解析值）均已包含，原两份补丁 reverse check 通过；包含 `rounded_caps`、中心占比/180ms 悬停动画，全零数据按条目数等分且中心保持 0%；悬停 tooltip 已迁移到 `ViewHandle` 目标（上游挂载目标统一）。 |
 | [Lib-SQLite](https://github.com/FarnaHerry/Lib-SQLite/tree/farna/main) | `882665a9772cc973b1cbfb7f491913703da1d636` | 启动临时只读查询已包含，原补丁 reverse check 通过；另保留逐值 UTF-8 校验，主键 schema 校验收紧为仅 INTEGER 单列 rowid 别名可视为非空（TEXT/复合/`DESC` 主键必须显式 NOT NULL），集成测试同步覆盖。 |
 | [Lib-Camera](https://github.com/FarnaHerry/Lib-Camera/tree/farna/main) | `48b11d6bb5ef0246c86ff7638e882f18b27b8db0` | 已采用 ApplicationContext/UiWindow；Android/iOS 改用窗口级模块工厂并绑定原窗口，拍照等待改用 `AwaitCallback`；新增 Linux V4L2 预览/拍照与 X11、ScreenCast/PipeWire 屏幕选区，桌面屏幕源使用框架 `129209bc` 的原生 surface 锚点；macOS 屏幕选区显式限定 `huxerui::Rect`。库图模式早退保留。 |
 | [Lib-CodeEditor](https://github.com/FarnaHerry/Lib-CodeEditor/tree/farna/main) | `a332e7c3158818a891bb8181756d439a62df6268` | 包含只读复制、滚动/绘制兼容；补齐固定子模块声明，提供工作线程预构建并跨卸载保留的 `initial_document`，向消费者传播 Windows 宏约束，默认关闭输入追踪，并修复工具栏剪贴板、文本变更通知和 Android 库图接口目标。Linux 从固定 simdutf v7.7.0 源码按 libc++ 工具链重建，复用 SweetEditor 同版本兼容头（仅进入构建期 include），并移除已合入静态库的冗余链接边，兼容 Linux 与 iOS 链接闭包。 |
@@ -185,7 +244,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 144aff6be5f8fc8ba09eaaa7189a375322aa01af
+git -C third_party/huxerui checkout 998b89d6071223c2036a75a6d8e530687fbf752d
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`

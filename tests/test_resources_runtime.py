@@ -37,6 +37,9 @@ def main():
     with tempfile.TemporaryDirectory(prefix="clashflux-resources-") as temporary:
         root = Path(temporary)
         env = {**os.environ, "APPDATA": temporary, "XDG_DATA_HOME": temporary, "HOME": temporary}
+        if len(sys.argv) > 2:
+            guard = str(Path(sys.argv[2]).resolve(strict=True))
+            env["LD_PRELOAD"] = guard + (":" + env["LD_PRELOAD"] if env.get("LD_PRELOAD") else "")
         # 与 cfg::dataDir() 的平台约定保持一致；macOS 会落在
         # $HOME/Library/Application Support/clash-flux，而不是 $HOME/clash-flux。
         data = root / ("Library/Application Support/clash-flux" if sys.platform == "darwin" else "clash-flux")
@@ -185,9 +188,17 @@ def main():
         bodies["/profile"] = content
         with closing(sqlite3.connect(database)) as db, db:
             db.execute("UPDATE profiles SET type='remote',url=? WHERE id=1", (address + "/profile",))
+        def profile_path(identity):
+            with closing(sqlite3.connect(database)) as db:
+                row = db.execute("SELECT file FROM profiles WHERE id=?", (identity,)).fetchone()
+            assert row, identity
+            return profiles / row[0]
+
         try:
             connections_before = Handler.accepted
             run("profile", "update", "1")
+            assert profile_path(1).name != "1.yaml"
+            assert (profiles / "1.yaml").read_bytes() == plain, "accepted version must retain the old source file"
             measurements = [line for line in (data / "core/logs.log").read_text(encoding="utf-8").splitlines()
                             if "profile-providers ready=true" in line and "download_requests=4" in line]
             assert measurements, "production update must report all four provider requests"
@@ -209,7 +220,7 @@ def main():
             summary = run("profile", "resources-update-due")
             assert "attempted=1 updated=1 applied=0" in summary, summary
             assert requests - before == Counter({"/nodes-a": 1,"/nodes-b": 1,"/rules-a": 1,"/rules-b": 1})
-            assert (profiles / "1.yaml").read_bytes() == content
+            assert profile_path(1).read_bytes() == content
             assert (profiles / "2.yaml").read_bytes() == plain
             for kind, name, route, body in (
                 ("rule-provider", "a", "/rules-a", b"payload: [changed.test]\n"),
@@ -221,22 +232,22 @@ def main():
                 bodies[route] = body
                 run("profile", "resource-refresh", "1", kind, name)
                 assert requests - before == Counter({route: 1}), (before, requests)
-                assert (profiles / "1.yaml").read_bytes() == content
+                assert profile_path(1).read_bytes() == content
                 assert (profiles / "2.yaml").read_bytes() == plain
             # A declared but unused provider can be refreshed without changing
             # the source's groups or fetching unrelated expired resources.
             unused = content.replace(b"use: [A, B]", b"use: [A]")
-            (profiles / "1.yaml").write_bytes(unused)
+            profile_path(1).write_bytes(unused)
             before = requests.copy()
             run("profile", "resource-refresh", "1", "proxy-provider", "B")
             assert requests - before == Counter({"/nodes-b": 1})
-            assert (profiles / "1.yaml").read_bytes() == unused
-            (profiles / "1.yaml").write_bytes(content)
+            assert profile_path(1).read_bytes() == unused
+            profile_path(1).write_bytes(content)
             previous_cache = {file: file.read_bytes() for file in cache}
             bodies["/rules-a"] = b"payload: [unterminated\n"
             run("profile", "resource-refresh", "1", "rule-provider", "a", expected=1)
             assert {file: file.read_bytes() for file in cache} == previous_cache
-            assert (profiles / "1.yaml").read_bytes() == content
+            assert profile_path(1).read_bytes() == content
             # Editing the exact source while IO is in flight must reject the
             # late response before any candidate cache is committed.
             bodies["/rules-a"] = b"payload: [late.test]\n"
@@ -246,15 +257,15 @@ def main():
             try:
                 assert reached.wait(10)
                 edited = b"# edited during download\n" + content
-                (profiles / "1.yaml").write_bytes(edited)
+                profile_path(1).write_bytes(edited)
             finally:
                 release.set()
                 output, errors = refreshing.communicate(timeout=60)
             assert refreshing.returncode == 1, (output, errors)
-            assert (profiles / "1.yaml").read_bytes() == edited
+            assert profile_path(1).read_bytes() == edited
             assert {file: file.read_bytes() for file in cache} == previous_cache
             hold.clear()
-            (profiles / "1.yaml").write_bytes(content)
+            profile_path(1).write_bytes(content)
             run("resource", "add-url", "Remote", "source", address + "/rules-native")
             remote = json.loads(setting("rules.resources"))["resources"][-1]
             before = requests.copy()
@@ -277,7 +288,7 @@ def main():
                    "rules: ['GEOSITE,test,REJECT', 'GEOIP,CN,REJECT,no-resolve', 'MATCH,DIRECT']\n").encode()
             bodies["/profile"] = geo
             run("profile", "update", "1")
-            assert (profiles / "1.yaml").read_bytes() == geo
+            assert profile_path(1).read_bytes() == geo
             assert requests["/site.dat"] == 1 and requests["/ip.dat"] == 1
             before = requests.copy()
             statuses = run("profile", "resources", "1")
@@ -302,7 +313,7 @@ def main():
                 bodies["/site.dat"] = broken
                 run("profile", "resource-refresh", "1", "geo", "geosite", expected=1)
                 assert {file: file.read_bytes() for file in all_cache} == saved_cache
-                assert (profiles / "1.yaml").read_bytes() == geo
+                assert profile_path(1).read_bytes() == geo
             bodies["/site.dat"] = site_file(b"late.test")
             held_route[0] = "/site.dat"
             reached.clear(); release.clear(); hold.set()
@@ -310,19 +321,19 @@ def main():
                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
                 assert reached.wait(10)
-                (profiles / "1.yaml").write_bytes(b"# changed Geo source\n" + geo)
+                profile_path(1).write_bytes(b"# changed Geo source\n" + geo)
             finally:
                 release.set()
                 output, errors = pending.communicate(timeout=60)
             assert pending.returncode == 1, (output, errors)
             assert {file: file.read_bytes() for file in all_cache} == saved_cache
             hold.clear()
-            (profiles / "1.yaml").write_bytes(geo)
+            profile_path(1).write_bytes(geo)
             bodies["/country.mmdb"] = b"not a database"
             bodies["/profile"] = (f"geox-url: {{mmdb: '{address}/country.mmdb'}}\n"
                 "rules: ['GEOIP,CN,REJECT', 'MATCH,DIRECT']\n").encode()
             run("profile", "update", "1", expected=1)
-            assert (profiles / "1.yaml").read_bytes() == geo
+            assert profile_path(1).read_bytes() == geo
             assert {file: file.read_bytes() for file in all_cache} == saved_cache
             assert (profiles / "2.yaml").read_bytes() == plain
             unused_geo = (f"geox-url: {{geosite: '{address}/site.dat'}}\nrules: ['MATCH,DIRECT']\n").encode()
@@ -333,7 +344,7 @@ def main():
             assert "geo\tgeosite\tvalid\t" in run("profile", "resources", "2")
             assert requests - before == Counter({"/site.dat": 1})
             assert (profiles / "2.yaml").read_bytes() == unused_geo
-            assert (profiles / "1.yaml").read_bytes() == geo
+            assert profile_path(1).read_bytes() == geo
             assert len(list((data / "core").glob("*-providers/*.cache"))) == 7, "source IDs must isolate Geo caches"
             (profiles / "2.yaml").write_bytes(plain)
             # Real MMDB downloads, state projection, native check, source isolation
@@ -359,7 +370,7 @@ def main():
             summary = run("profile", "resources-update-due")
             assert "attempted=2 updated=2 applied=0" in summary, summary
             assert requests - before == Counter({"/country.mmdb": 1, "/asn.mmdb": 1}), (before, requests)
-            assert (profiles / "1.yaml").read_bytes() == mmdb_source
+            assert profile_path(1).read_bytes() == mmdb_source
             assert (profiles / "2.yaml").read_bytes() == plain
             assert not (data / "core" / "config.json").exists(), "stopped scheduler must not launch or commit an active configuration"
             # Failed scheduled candidate retains every cache; deletion/retargeting
@@ -373,11 +384,81 @@ def main():
             assert target.stat().st_mtime_ns == old_stamp, "failed scheduled refresh must retain the expiry timestamp"
             assert {file: file.read_bytes() for file in mmdb_caches} == old
             bodies["/country.mmdb"] = mmdb_file()
-            (profiles / "1.yaml").write_bytes(plain)
+            profile_path(1).write_bytes(plain)
             before = requests.copy()
             assert "attempted=0" in run("profile", "resources-update-due")
             assert requests == before
             assert not list((data / "core").glob("**/.stage-*"))
+            # A new import remains a draft while HTTP is pending. Acceptance
+            # publishes exactly one complete row, and failure never needs a delete.
+            bodies["/new-profile"] = plain
+            held_route[0] = "/new-profile"
+            reached.clear()
+            release.clear()
+            hold.set()
+            importing = subprocess.Popen([app, "profile", "import", address + "/new-profile", "new-version"],
+                                         env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                assert reached.wait(10)
+                with closing(sqlite3.connect(database)) as db:
+                    assert db.execute("SELECT id FROM profiles ORDER BY id").fetchall() == [(1,), (2,)]
+            finally:
+                release.set()
+                output, errors = importing.communicate(timeout=60)
+                hold.clear()
+            assert importing.returncode == 0, (output, errors)
+            with closing(sqlite3.connect(database)) as db:
+                imported = db.execute("SELECT id,file,url FROM profiles WHERE name='new-version'").fetchone()
+            assert imported and imported[2] == address + "/new-profile", imported
+            imported_path = profiles / imported[1]
+            assert imported_path.name != f"{imported[0]}.yaml" and imported_path.read_bytes() == plain
+            run("profile", "remove", str(imported[0]))
+            assert not imported_path.exists(), "explicit removal cleans the committed current version only"
+            bodies["/bad-profile"] = b"proxy-groups: [unterminated\n"
+            run("profile", "import", address + "/bad-profile", "rejected-version", expected=1)
+            with closing(sqlite3.connect(database)) as db:
+                assert db.execute("SELECT id FROM profiles ORDER BY id").fetchall() == [(1,), (2,)]
+            assert (profiles / "1.yaml").read_bytes() == plain, "old version retained through every update/import"
+            pending_body = ("rule-providers:\n"
+                            f"  good: {{type: http, behavior: domain, url: '{address}/pending-good'}}\n"
+                            f"  bad: {{type: http, behavior: domain, url: '{address}/pending-bad'}}\n"
+                            "rules: ['RULE-SET,good,DIRECT', 'RULE-SET,bad,DIRECT', 'MATCH,DIRECT']\n").encode()
+            bodies["/pending-source"] = pending_body
+            bodies["/pending-good"] = b"payload: [kept.test]\n"
+            bodies["/pending-bad"] = b"payload: [unterminated\n"
+            before = requests.copy()
+            run("profile", "import", address + "/pending-source", "pending-resources")
+            assert requests - before == Counter({"/pending-source": 1}), "saving must not wait for dependency IO"
+            with closing(sqlite3.connect(database)) as db:
+                pending_id, pending_file = db.execute("SELECT id,file FROM profiles WHERE name='pending-resources'").fetchone()
+            raw = (profiles / pending_file).read_bytes()
+            before = requests.copy()
+            run("profile", "prepare", str(pending_id), expected=1)
+            assert requests - before == Counter({"/pending-good": 1, "/pending-bad": 1})
+            assert (profiles / pending_file).read_bytes() == raw == pending_body
+            bodies["/pending-bad"] = b"payload: [recovered.test]\n"
+            before = requests.copy()
+            run("profile", "prepare", str(pending_id))
+            assert requests - before == Counter({"/pending-bad": 1}), "retry must retain independently validated downloads across Runtime restarts"
+            provider_root = data / "core/rule-providers"
+            retained_good = next(file for file in (provider_root / ".downloads").glob("*.cache")
+                                 if b"/pending-good" in file.read_bytes())
+            _, _, retained_body = retained_good.read_bytes().partition(b"\n")
+            future_image = b"clash-flux-rule-provider-v99\n" + retained_body
+            retained_good.write_bytes(future_image)
+            # Remove only these two explicit temporary fixture caches to force
+            # the retention path, while leaving the saved source intact.
+            for file in provider_root.glob("*.cache"):
+                if any(route in file.read_bytes() for route in (b"/pending-good", b"/pending-bad")):
+                    file.unlink()
+            before = requests.copy()
+            run("profile", "prepare", str(pending_id))
+            assert requests - before == Counter({"/pending-good": 1}), requests - before
+            assert retained_good.read_bytes() == future_image, "unknown retained-cache versions must never be overwritten"
+
+            run("profile", "remove", str(pending_id))
+            assert (profiles / "1.yaml").read_bytes() == plain and (profiles / "2.yaml").read_bytes() == plain
+
         finally:
             server.shutdown()
             server.server_close()

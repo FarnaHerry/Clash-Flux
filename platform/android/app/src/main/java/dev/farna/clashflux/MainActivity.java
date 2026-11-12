@@ -153,7 +153,9 @@ public final class MainActivity extends HuxerUIActivity {
                 connection.setInstanceFollowRedirects(false);
                 connection.setUseCaches(false);
                 connection.setRequestProperty("User-Agent", userAgent);
-                connection.setRequestProperty("Accept-Encoding", "identity");
+                // Android negotiates gzip and transparently decodes the input stream.
+                // Its decoded response removes Content-Length/Content-Encoding;
+                // the existing maxBytes check therefore bounds decoded bytes.
                 // Compiler/JNI validate the common subset before this call.
                 for (int i = 0; i < requestHeaders.length; i += 2) {
                     connection.setRequestProperty(requestHeaders[i], requestHeaders[i + 1]);

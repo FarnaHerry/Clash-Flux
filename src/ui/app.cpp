@@ -36,16 +36,16 @@ import clashflux.config;
 import clashflux.cli;
 import clashflux.cli_ipc;
 import clashflux.core;
-import clashflux.db;
+import clashflux.model;
 import clashflux.store.core;
 import clashflux.store.profiles;
 import clashflux.store.vpn;
 import clashflux.vpn;
-import clashflux.persistence;
+import clashflux.data;
 import clashflux.service;
 import clashflux.stream;
 
-// CoreView 含 store::CoreSnapshot、ProfilesModel 含 db::Profile，必须在模块导入
+// CoreView 含 store::CoreSnapshot、ProfilesModel 含 model::Profile，必须在模块导入
 // 之后（同 profiles_cache.h）。
 #include "core_model.h"
 #include "core_control.h"
@@ -121,7 +121,7 @@ huxerui::Task<bool> RunPendingCliCommand(huxerui::ApplicationHandle application)
     if (args.empty()) co_return false;
     int code = co_await RunOnTaskThread(
         [args = std::move(args)] { return CliRun(args); });
-    auto& database = clashflux::persistence::persistence();
+    auto& database = clashflux::data::session();
     const bool settingsSaved = co_await database.flushSettings();
     const bool profilesSaved = co_await database.flushProfiles();
     if (!settingsSaved || !profilesSaved) {
@@ -1041,9 +1041,9 @@ void StartDesktopWindowlessRuntime() {
 
     tasks.Launch([=]() -> huxerui::Task<void> {
         try {
-            auto& database = clashflux::persistence::persistence();
+            auto& database = clashflux::data::session();
             if (!database.ready() &&
-                !co_await database.open(cfg::databaseFile(), cfg::profilesDir())) {
+                !co_await database.open(cfg::databaseFile(), cfg::profilesDir(), tasks)) {
                 stream::logApplication("error", database.lastError());
                 std::fprintf(stderr, "Clash-Flux 启动失败：%s；原数据库与订阅文件已保留\n",
                              database.lastError().c_str());
@@ -1052,12 +1052,12 @@ void StartDesktopWindowlessRuntime() {
                 co_return;
             }
 
+            settingsModel->PublishCached();
             auto& coreStore = store::coreStore();
             coreStore.setPacSessionResident(!CliRuntimeCommandMode());
             coreStore.init();
             coreStore.ensureSecret();
             profilesModel->RequestSync();
-            settingsModel->RequestSync();
             CliStartCommandServer();
 
             // 伪 CLI：命令在无窗口启动任务里执行，落库后退出；不组合 GUI 页面。
@@ -1261,8 +1261,8 @@ void StartDesktopWindowlessRuntime() {
     static const auto startupSettings = [] {
         const auto runtimeServices = huxerui::UseService<AppRuntimeServices>();
         if (!runtimeServices->startupSettingsLoaded)
-            return clashflux::persistence::readStartupSettings(cfg::databaseFile());
-        return clashflux::persistence::StartupSettings{
+            return clashflux::data::readStartupSettings(cfg::databaseFile());
+        return clashflux::data::StartupSettings{
             .themeMode = runtimeServices->startupThemeMode,
             .themeColor = runtimeServices->startupThemeColor,
             .language = runtimeServices->startupLanguage,
@@ -1299,7 +1299,7 @@ void StartDesktopWindowlessRuntime() {
             return [] {};
         },
         settingsModel->view);
-    auto profilesCacheList = huxerui::UseStateList<db::Profile>();
+    auto profilesCacheList = huxerui::UseStateList<model::Profile>();
     const ProfilesCache profilesCache{profilesCacheList,
                                       profilesModel->selectionPending};
 
@@ -1331,11 +1331,11 @@ void StartDesktopWindowlessRuntime() {
         [applicationTasks, runtimeServices, application, profilesModel, settingsModel] {
             if (!runtimeServices->persistenceStarted) {
                 runtimeServices->persistenceStarted = true;
-                applicationTasks.Launch([application, profilesModel,
+                applicationTasks.Launch([application, applicationTasks, profilesModel,
                           settingsModel]() -> huxerui::Task<void> {
                 try {
-                    auto& db = clashflux::persistence::persistence();
-                    if (!db.ready() && !co_await db.open(cfg::databaseFile(), cfg::profilesDir())) {
+                    auto& db = clashflux::data::session();
+                    if (!db.ready() && !co_await db.open(cfg::databaseFile(), cfg::profilesDir(), applicationTasks)) {
                         // A failed hydrate must never initialize an empty
                         // writable session or allocate IDs over existing files.
                         stream::logApplication("error", db.lastError());
@@ -1344,6 +1344,7 @@ void StartDesktopWindowlessRuntime() {
                         application.Quit();
                         co_return;
                     }
+                    settingsModel->PublishCached();
                     store::coreStore().setPacSessionResident(!CliRuntimeCommandMode());
                     store::coreStore().init();
                     store::coreStore().ensureSecret();
@@ -1351,9 +1352,6 @@ void StartDesktopWindowlessRuntime() {
                         // hydrate advances the content revision; explicitly
                         // request the initial model publication as well.
                         profilesModel->RequestSync();
-                        // 设置同理：让依赖「hydrate 完成后补读」的消费者（首页布局、
-                        // 环境 shell 选择）立刻拿到库里的值，而不是等下一拍。
-                        settingsModel->RequestSync();
                     }
 
                     // 单实例：owner 启动转发服务；非 owner 的命令由这里代跑。

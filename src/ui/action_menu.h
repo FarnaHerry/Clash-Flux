@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "ui.h"
+#include "page_layout.h"
 
 namespace clashflux::ui {
 
@@ -45,9 +46,11 @@ inline huxerui::View ActionMenuSurface(std::vector<huxerui::View> items) {
     padding.right += breathing;
     padding.bottom += breathing;
     padding.left += breathing;
-    return huxerui::ScrollView(huxerui::Column(std::move(items)).With(
+    const float horizontal = std::max(padding.left, padding.right);
+    padding.left = padding.right = 0.0F;
+    return PageScrollView(huxerui::Column(std::move(items)).With(
         huxerui::Spacing(breathing * 0.5F),
-        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))).With(
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), {}, {}, horizontal).With(
         huxerui::Frame{.width = style.minimum_width}, huxerui::Padding(padding),
         huxerui::Semantics{.role = huxerui::SemanticRole::Menu},
         huxerui::Background(style.background), huxerui::CornerRadius(style.corner_radii),
@@ -96,10 +99,12 @@ inline huxerui::View ActionMenuPanel(huxerui::PopupContext context, const std::v
 
 class ActionMenuHandle {
 public:
-    explicit ActionMenuHandle(huxerui::PopupHandle popup) : popup_(std::move(popup)) {}
-    huxerui::LayerAnchor Anchor() const { return popup_.Anchor(); }
+    explicit ActionMenuHandle(huxerui::PopupHandle popup, huxerui::ViewHandle target)
+        : popup_(std::move(popup)), target_(std::move(target)) {}
+    // 挂到锚点 View 上的句柄；菜单 Show() 使用同一目标。
+    huxerui::ViewHandle Target() const { return target_; }
     huxerui::LayerId Show(std::vector<ActionMenuEntry> entries) const {
-        return popup_.Show(Factory(std::move(entries)));
+        return popup_.Show(target_, Factory(std::move(entries)));
     }
     huxerui::LayerId ShowAt(huxerui::Point point, std::vector<ActionMenuEntry> entries) const {
         return popup_.ShowAt(point, Factory(std::move(entries)));
@@ -111,7 +116,10 @@ private:
         };
     }
     huxerui::PopupHandle popup_;
+    huxerui::ViewHandle target_;
 };
-inline ActionMenuHandle UseActionMenu() { return ActionMenuHandle{huxerui::UsePopup()}; }
+inline ActionMenuHandle UseActionMenu() {
+    return ActionMenuHandle{huxerui::UsePopup(), huxerui::UseViewHandle()};
+}
 
 } // namespace clashflux::ui

@@ -67,7 +67,46 @@ def check(executable, seeded):
             thread.join()
 
 
+def check_preparation(executable):
+    with tempfile.TemporaryDirectory(prefix="clashflux-preparation-") as directory:
+        root = Path(directory)
+        requests = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(self.path)
+                if self.path == "/held":
+                    (root / "provider-held").touch()
+                    deadline = time.monotonic() + 10
+                    while not (root / "release-provider").exists() and time.monotonic() < deadline:
+                        time.sleep(0.005)
+                body = b"payload: [cache.test]\n"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            def log_message(self, *_): pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        address = f"http://127.0.0.1:{server.server_port}"
+        for file, route in [("source.yaml", "/normal"), ("held-source.yaml", "/held")]:
+            (root / file).write_text(f"rule-providers:\n  p: {{type: http, behavior: domain, url: '{address}{route}'}}\n"
+                                     "rules: ['RULE-SET,p,DIRECT', 'MATCH,DIRECT']\n")
+        env = {**os.environ, "HOME": directory, "APPDATA": directory, "XDG_DATA_HOME": directory,
+               "XDG_CONFIG_HOME": directory, "XDG_CACHE_HOME": directory}
+        try:
+            result = subprocess.run([executable, "--prepare-resources", directory], env=env,
+                                    capture_output=True, text=True, timeout=20)
+            assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+            assert requests == ["/normal", "/held"], requests
+            print("preparation: candidate reuse, settings/byte invalidation and cancellation passed")
+        finally:
+            (root / "release-provider").touch()
+            server.shutdown(); server.server_close(); thread.join()
+
+
 if __name__ == "__main__":
     executable = str(Path(sys.argv[1]).resolve(strict=True))
     check(executable, False)
     check(executable, True)
+
+    check_preparation(executable)

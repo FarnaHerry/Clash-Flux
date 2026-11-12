@@ -7,7 +7,7 @@
 // 自定义布局在启动时丢失。主题首帧现由 AppRoot 同步只读启动快照初始化，
 // 运行期仍由本模型发布。
 //
-// 现在所有“组合期要读的应用设置”都从这里取：驱动循环每拍读一次（便宜的内存
+// 现在所有“组合期要读的应用设置”都从这里取：hydrate 后立即发布，驱动循环每拍读一次（便宜的内存
 // 读），内容变化才发布（State 去重），并把 hydrate 是否完成（ready）一起发布，
 // 需要“hydrate 后补一次”的消费者（首页布局）据此补读。
 #pragma once
@@ -58,6 +58,8 @@ struct SettingsModel {
 
     void RequestSync() { syncTick = syncTick.Get() + 1; }
 
+    // UI-thread publication immediately after hydration; only reads the memory cache.
+    void PublishCached();
     void SetEnvShell(std::string shell);
     void PublishNetwork(const clashflux::network::Settings& value) {
         Update([&](SettingsView& next) {

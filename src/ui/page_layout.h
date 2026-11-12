@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 #include "ui.h"
+#include "scroll_area.h"
 
 namespace clashflux::ui {
 
@@ -60,10 +61,6 @@ inline huxerui::View PageHeaderWithInset(huxerui::View header, float inset) {
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-struct PageScrollOffset {
-    float value = 0.0F;
-};
-
 // A scaffold changes hierarchy across desktop/compact layouts. Record real
 // scroll activity without observable writes, then seed a newly mounted scroll
 // container. A controller alone does not restore its offset after reattachment.
@@ -89,9 +86,8 @@ inline huxerui::View ScrollablePageContent(huxerui::View content,
     std::shared_ptr<PageScrollOffset> offset) {
     return huxerui::Scope([content, offset] {
         const auto controller = huxerui::UseScrollController(offset->value);
-        return huxerui::ScrollView(PageScrollContent(content, PageScrollInset(huxerui::UseTheme())))
-            .Controller(controller)
-            .With(RememberPageScroll{offset}, huxerui::Grow(1.0F));
+        return ScrollArea(huxerui::ScrollView(PageScrollContent(content, PageScrollInset(huxerui::UseTheme())))
+            .With(RememberPageScroll{offset}), controller, offset).With(huxerui::Grow(1.0F));
     }).With(huxerui::Grow(1.0F));
 }
 

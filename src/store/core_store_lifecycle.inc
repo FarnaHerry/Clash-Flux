@@ -617,6 +617,59 @@
 
     // One owned candidate serves validation, handoff, preview and feedback.
     // The caller keeps the lifecycle lock from source lookup through commit.
+    // Prepare an inactive source on a worker without holding the runtime lock
+    // during network IO. It never selects the source or starts a data plane.
+    ProfilePreparationResult prepareProfileResources(std::int64_t id, std::stop_token cancel = {}) {
+        ProfilePreparationResult outcome;
+        outcome.id = id;
+        auto& data = clashflux::data::session();
+        singbox::CompileOptions options;
+        std::string content;
+        std::uint64_t settingsVersion = 0;
+        {
+            std::lock_guard lock(lifecycleMutex_);
+            ensureOpen();
+            outcome.sourceRevision = data.profileRevision(id);
+            settingsVersion = data.settingsRevision();
+            const auto profiles = data.listProfiles();
+            const auto profile = std::ranges::find(profiles, id, &model::Profile::id);
+            if (profile == profiles.end() || profile->type == "pptp") {
+                outcome.error = "订阅不存在或不需要资源准备"; return outcome;
+            }
+            if (snapshot().state == core::CoreState::Running && sourceParticipates(id)) {
+                outcome.error = "运行中的来源请使用更新操作"; return outcome;
+            }
+            outcome.file = profile->file;
+            std::ifstream input(cfg::profilesDir() / profile->file, std::ios::binary);
+            content.assign(std::istreambuf_iterator<char>(input), {});
+            if (!input || content.empty()) { outcome.error = "无法读取订阅文件"; return outcome; }
+            options = routingOptions(content, tunEnabled(), false, nullptr, routing::ConnectionId(id));
+            // Prepare the source in the exact role used by card activation.
+            const auto before = snapshot();
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+            if (before.state == core::CoreState::Running) options.proxyListening = before.proxyListening;
+#endif
+        }
+        const auto guard = [&](std::string& error) {
+            if (cancel.stop_requested()) { error = "订阅准备已取消"; return false; }
+            if (data.profileRevision(id) != outcome.sourceRevision || data.settingsRevision() != settingsVersion) {
+                error = "订阅或设置已变化，请重新准备"; return false;
+            }
+            std::ifstream input(cfg::profilesDir() / outcome.file, std::ios::binary);
+            if (!input || std::string(std::istreambuf_iterator<char>(input), {}) != content) {
+                error = "订阅原文已变化，请重新准备"; return false;
+            }
+            return true;
+        };
+        singbox::CompileResult compiled;
+        bool checked = false;
+        outcome.ready = prepareHttpRuleProviders(options, compiled, outcome.error, nullptr, cancel, nullptr, &checked, guard);
+        // Sources without HTTP dependencies still need the complete candidate check.
+        if (outcome.ready && !checked) outcome.ready = guard(outcome.error) && checkCompiledPlan(compiled, outcome.error);
+        if (outcome.ready) outcome.summary = singbox::FidelitySummary(compiled.fidelity);
+        return outcome;
+    }
+
     bool applyMainProfile(std::int64_t id, const std::string& content, std::string& error,
                           std::stop_token cancel = {}, std::string* fidelitySummary = nullptr) {
         std::lock_guard operationLock(lifecycleMutex_);
@@ -628,7 +681,7 @@
         const bool running = before.state == core::CoreState::Running;
         const bool proxy = running && systemProxyOurs();
         std::int64_t previous = 0;
-        for (const auto& profile : db_->listProfiles()) if (profile.selected) previous = profile.id;
+        for (const auto& profile : clashflux::data::session().listProfiles()) if (profile.selected) previous = profile.id;
         bool selectedChanged = false;
         try {
             if (cancel.stop_requested()) return false;
@@ -641,13 +694,13 @@
                 !validatePlanTargets(candidate->options, candidate->compiled, nullptr, error)) return false;
             const auto summary = singbox::FidelitySummary(candidate->compiled.fidelity);
             if (cancel.stop_requested()) return false;
-            db_->setSelectedProfile(id);
+            clashflux::data::session().setSelectedProfile(id);
             selectedChanged = true;
             invalidateProxyGroupsSnapshot();
             if (running) {
                 if (!restartPreparedCore(content, std::move(candidate), before, proxy, false, cancel, began)) {
                     if (!cancel.stop_requested()) error = snapshot().lastError;
-                    db_->setSelectedProfile(previous);
+                    clashflux::data::session().setSelectedProfile(previous);
                     invalidateProxyGroupsSnapshot();
                     return false;
                 }
@@ -658,7 +711,7 @@
             return true;
         } catch (const std::exception& exception) {
             if (selectedChanged) {
-                db_->setSelectedProfile(previous);
+                clashflux::data::session().setSelectedProfile(previous);
                 invalidateProxyGroupsSnapshot();
             }
             error = exception.what();
@@ -691,7 +744,7 @@
     singbox::RuleSetLibrary ruleSetLibrary() {
         std::lock_guard lock(lifecycleMutex_);
         ensureOpen();
-        return routing::DecodeRuleSetLibrary(clashflux::persistence::persistence().setting("rules.resources"));
+        return routing::DecodeRuleSetLibrary(clashflux::data::session().setting("rules.resources"));
     }
 
     struct RuleSetUsage {
@@ -714,7 +767,7 @@
         for (const auto& rule : policy.rules)
             if (rule.match == vpn::MatchKind::RuleSet)
                 usage.push_back({rule.pattern, rule.id, "", 0, rule.enabled});
-        for (const auto& profile : db_->listProfiles()) {
+        for (const auto& profile : clashflux::data::session().listProfiles()) {
             const auto edits = routing::DecodeProfileRules(setting(routing::ProfileRulesKey(profile.id), ""));
             for (const auto& rule : edits.rules)
                 if (rule.match == "rule_set" && rule.operation != "final")
@@ -735,7 +788,7 @@
         error.clear();
         try {
             ensureOpen();
-            if (!clashflux::persistence::persistence().ready()) { error = "订阅尚未加载完成"; return false; }
+            if (!clashflux::data::session().ready()) { error = "订阅尚未加载完成"; return false; }
             const auto previous = ruleSetLibrary();
             if (library.revision != previous.revision) { error = "规则集资源库已变化，请重新打开后编辑"; return false; }
             if (!singbox::ValidateRuleSetLibrary(library, error)) return false;
@@ -748,7 +801,7 @@
                 }
             // Even disabled personal records retain their references. Removal
             // cannot turn a later re-enable into a different or missing match.
-            for (const auto& profile : db_->listProfiles()) {
+            for (const auto& profile : clashflux::data::session().listProfiles()) {
                 const auto edits = routing::DecodeProfileRules(setting(routing::ProfileRulesKey(profile.id), ""));
                 if (!singbox::ValidateRuleSetReferences(library, edits, error)) { error += "：" + profile.name; return false; }
             }
@@ -762,7 +815,7 @@
             if (!prepareHttpRuleProviders(options, compiled, error, nullptr, {}, nullptr, &checked) ||
                 (!checked && !checkCompiledPlan(compiled, error))) return false;
             ++library.revision;
-            auto& data = clashflux::persistence::persistence();
+            auto& data = clashflux::data::session();
             const auto oldText = data.setting("rules.resources");
             data.setSetting("rules.resources", routing::EncodeRuleSetLibrary(library));
             bool ok = true;
@@ -861,7 +914,7 @@
         ensureOpen();
         const auto connection = routing::ConnectionId(id);
         if (std::ranges::any_of(nativeSessions_, [&](const auto& session) { return session.id == connection && session.connected; })) return true;
-        for (const auto& profile : db_->listProfiles())
+        for (const auto& profile : clashflux::data::session().listProfiles())
             if (profile.id == id && (profile.selected ||
                 ((profile.type == "pptp") && !routing::SplitRoutes(profile.nativeRoutes).empty()))) return true;
         const auto policy = routing::DecodePolicy(setting("vpn.global_policy", ""));
@@ -896,7 +949,7 @@
         ensureOpen();
         const auto connection = routing::ConnectionId(id);
         if (std::ranges::any_of(nativeSessions_, [&](const auto& session) { return session.id == connection && session.connected; })) return true;
-        for (const auto& profile : db_->listProfiles())
+        for (const auto& profile : clashflux::data::session().listProfiles())
             if (profile.id == id &&
                 ((profile.selected && snapshot().state != core::CoreState::Stopped && !standbyActive()) ||
                  ((profile.type == "pptp") && !routing::SplitRoutes(profile.nativeRoutes).empty()))) return true;
@@ -922,7 +975,7 @@
             const auto sourceId = routing::ConnectionId(id);
             const singbox::ProfileSource updated{sourceId, "", content};
             bool main = false;
-            for (const auto& profile : db_->listProfiles()) if (profile.id == id && profile.selected) main = true;
+            for (const auto& profile : clashflux::data::session().listProfiles()) if (profile.id == id && profile.selected) main = true;
             auto options = routingOptions(main ? content : currentMainContent(), snapshot().tunEnabled,
                                           false, nullptr, std::nullopt, &updated);
             if (forceProviderRefresh) options.forceProviderRefreshSources.insert(sourceId);
@@ -955,8 +1008,8 @@
         applied = false;
         error.clear();
         try {
-            const auto profiles = db_->listProfiles();
-            const auto profile = std::ranges::find(profiles, profileId, &db::Profile::id);
+            const auto profiles = clashflux::data::session().listProfiles();
+            const auto profile = std::ranges::find(profiles, profileId, &model::Profile::id);
             if (profile == profiles.end()) { error = "订阅不存在"; return false; }
             const auto readSource = [&] {
                 std::ifstream input(cfg::profilesDir() / profile->file, std::ios::binary);

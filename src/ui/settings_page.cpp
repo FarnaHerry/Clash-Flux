@@ -16,7 +16,6 @@
 
 #include "app_resources.h"
 #include "ui.h"
-#include "page_loading.h"
 #include "action_menu.h"
 #include "task_bridge.h"
 #include "runtime_diagnostics.h"
@@ -31,7 +30,7 @@
 
 import clashflux.config;
 import clashflux.core;
-import clashflux.db;
+import clashflux.model;
 import clashflux.stream;
 import clashflux.store.core;
 
@@ -58,7 +57,7 @@ std::size_t LanguageIndex(const std::string& language) {
 }
 
 void ApplyLanguage(const std::shared_ptr<SettingsModel>& model, std::size_t index) {
-    if (index >= kLanguages.size()) return;
+    if (!model->view.Get().ready || index >= kLanguages.size()) return;
     const std::string language = kLanguages[index];
     store::coreStore().setSetting("ui.language", language);
     model->Update([language](SettingsView& settings) { settings.language = language; });
@@ -264,7 +263,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
             action, body, close, false, false, true);
     }
     return DialogScaffold(DialogHeader(title),
-        huxerui::ScrollView(fields).With(huxerui::Frame{.max_height = 420.0F}, huxerui::ScrollBar()),
+        PageScrollView(fields).With(huxerui::Frame{.max_height = 420.0F}),
         DialogActions({DialogAction(Localized("取消"), close, false),
             DialogAction(Localized(editing ? "保存" : "添加"), save, true,
                 hex.has_value() && model->view.Get().ready)}), DialogSize::Small);
@@ -431,19 +430,20 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 // 独立语言页与桌面选择框共用同一模型及写入口，选择立即更新全应用语言。
 [[huxerui::composable]] huxerui::View LanguageChoices(std::function<void()> onSelected) {
     const auto settingsModel = huxerui::UseService<SettingsModel>();
-    const std::size_t selected = LanguageIndex(settingsModel->view.Get().language);
+    const auto settings = settingsModel->view.Get();
+    const std::size_t selected = LanguageIndex(settings.language);
     std::vector<huxerui::View> choices;
     for (std::size_t index = 0; index < kLanguages.size(); ++index) {
         if (index != 0) choices.push_back(huxerui::Divider());
         choices.push_back(
-            huxerui::RadioButton(index == 0 ? Localized("自动跟随系统语言") : kLanguageNames[index], index == selected)
+            huxerui::RadioButton(index == 0 ? Localized("自动跟随系统语言") : kLanguageNames[index], settings.ready && index == selected)
                 .OnChanged([settingsModel, index, onSelected](bool checked) {
-                    if (!checked) return;
+                    if (!checked || !settingsModel->view.Get().ready) return;
                     ApplyLanguage(settingsModel, index);
                     if (onSelected) onSelected();
                 })
                 .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(12.0F, 10.0F)),
-                      huxerui::Frame{.min_height = 48.0F})
+                      huxerui::Frame{.min_height = 48.0F}, huxerui::Enabled(settings.ready))
                 .Key("language-option-" + kLanguages[index]));
     }
     return huxerui::Column(std::move(choices)).With(
@@ -460,6 +460,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const auto navigation = huxerui::UseNavigation();
     const auto dialog = huxerui::UseDialog();
+    const auto settings = huxerui::UseService<SettingsModel>();
     return SettingNavigationItem(Localized("语言"), app::images::language,
         [compact, navigation, dialog] {
             if (compact) {
@@ -471,16 +472,17 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                 return DialogScaffold(DialogHeader(Localized("语言")), LanguageChoices(close),
                     DialogActions({DialogAction(Localized("取消"), close, false)}), DialogSize::Small);
             });
-        }).Key("settings-language");
+        }).With(huxerui::Enabled(settings->view.Get().ready)).Key("settings-language");
 }
 
 #if defined(__ANDROID__)
 
 [[huxerui::composable]] huxerui::View AndroidThemeSetting(huxerui::State<int> themeMode) {
     const huxerui::NavigationController navigation = huxerui::UseNavigation();
+    const auto settings = huxerui::UseService<SettingsModel>();
     return SettingNavigationItem(Localized("主题"), app::images::sun_moon,
         [navigation, themeMode] { navigation.Push(AndroidThemePage, themeMode); })
-        .Key("settings-theme");
+        .With(huxerui::Enabled(settings->view.Get().ready)).Key("settings-theme");
 }
 
 [[huxerui::composable]] huxerui::View AndroidLanguageSetting() {
@@ -513,10 +515,11 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 
 [[huxerui::composable]] huxerui::View DesktopThemeSetting(huxerui::State<int> themeMode) {
     const huxerui::NavigationController navigation = huxerui::UseNavigation();
+    const auto settings = huxerui::UseService<SettingsModel>();
     return SettingNavigationItem(Localized("主题"), app::images::sun_moon,
         [navigation, themeMode] {
             navigation.Push(DesktopThemePage, themeMode);
-        }).Key("settings-theme");
+        }).With(huxerui::Enabled(settings->view.Get().ready)).Key("settings-theme");
 }
 
 [[huxerui::composable]] huxerui::View DesktopLanguageSetting() {
@@ -537,7 +540,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
             if (!settings->view.Get().ready) return;
             if (compact || kNetworkMobilePage) { navigation.Push(HomeProxySettingsRoutePage, kind); return; }
             ShowNetworkSettingsDialog(dialog, kind == HomeProxySettingsKind::Tun);
-        });
+        }).With(huxerui::Enabled(settings->view.Get().ready));
 }
 #if !defined(__ANDROID__)
 [[huxerui::composable]] huxerui::View DesktopMoreSettings(
@@ -837,9 +840,6 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const IslandTheme islands = ResolveIslandTheme(theme);
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
-    const auto coreModel = huxerui::UseService<CoreModel>();
-    const CoreView coreView = coreModel->view.Get();
-    const auto settingsModel = huxerui::UseService<SettingsModel>();
     const auto navigation = huxerui::UseNavigation();
     const auto scroll = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
     // 不可见时只保留本页 State/Lifecycle，不构建重子树：huxerui 的 Pager 会把
@@ -847,9 +847,6 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     // 真机实测（代理页大分组）：四页同挂时每帧 1443 次测量请求 / ~20ms，
     // 只留当前页后降到 28 次 / ~0ms；因此不可见页必须返回空占位。
     if (!active) return huxerui::View{huxerui::Row{}}.Key("settings-idle");
-
-    if (kPageTitlesInWindow && !compact && (!coreView.ready || !settingsModel->view.Get().ready))
-        return PageLoadingScaffold(Localized("设置"), theme, true);
 
     std::vector<huxerui::View> sections;
     if (compact || kSettingsMoreOnWide)

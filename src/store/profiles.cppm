@@ -1,6 +1,6 @@
 // profiles.cppm — clashflux.store.profiles：订阅管理 store（接口即实现，单例）。
 //
-// 订阅 = db::Profile 行 + profiles/<id>.yaml 文件。importUrl 下载落盘；
+// 订阅 = 已提交的 model::Profile 行 + 独立版本来源文件。
 // activate 把启用订阅交给 coreStore 重启内核生效。线程契约同 core_store：
 // 标「阻塞」的方法（网络下载 / 内核重启）UI 必须经 RunOnTaskThread 调用。
 module;
@@ -12,8 +12,8 @@ import std;
 import clashflux.config;
 import clashflux.utils;
 import clashflux.api;
-import clashflux.db;
-import clashflux.persistence;
+import clashflux.model;
+import clashflux.data;
 import clashflux.core;
 import clashflux.store.core;
 import clashflux.singbox;
@@ -167,9 +167,9 @@ public:
     ProfilesStore(const ProfilesStore&) = delete;
     ProfilesStore& operator=(const ProfilesStore&) = delete;
 
-    std::vector<db::Profile> list() {
+    std::vector<model::Profile> list() {
         try {
-            return coreStore().db().listProfiles();
+            return clashflux::data::session().listProfiles();
         } catch (const std::exception& e) {
             lastError_ = e.what();
             return {};
@@ -178,7 +178,7 @@ public:
 
     bool setOrder(const std::vector<std::int64_t>& orderIds) {
         try {
-            coreStore().db().setProfileOrder(orderIds);
+            clashflux::data::session().setProfileOrder(orderIds);
             lastError_.clear();
             return true;
         } catch (const std::exception& e) {
@@ -188,7 +188,7 @@ public:
     }
 
     // 当前启用的订阅；无 = nullptr。
-    std::optional<db::Profile> selected() {
+    std::optional<model::Profile> selected() {
         for (const auto& p : list()) {
             if (p.selected && p.type != "pptp") return p;
         }
@@ -224,120 +224,60 @@ public:
         return host;
     }
 
-    // 新增订阅（remote）：先建行拿 id，再下载到 profiles/<id>.yaml。阻塞（网络）。
-    // options 携带弹窗里的订阅选项（type 强制 remote）。成功返回新 id；失败返回 0。
+    // Remote imports reserve an identity; no accepted row exists before validation/COMMIT.
     std::int64_t importUrl(const std::string& name, const std::string& url,
-                           const db::Profile& options = {}) {
-        lastError_.clear();
-        db::Profile p = options;
-        p.id = 0;
-        p.selected = false;
-        p.type = "remote";
-        p.name = name.empty() ? RemoteFallbackName(url) : name;
-        p.url = url;
-        try {
-            p.id = coreStore().db().saveProfile(p);
-        } catch (const std::exception& e) {
-            lastError_ = e.what();
-            return 0;
-        }
-        if (!download(p)) {
-            try {
-                coreStore().db().deleteProfile(p.id);
-            } catch (...) {
-            }
-            return 0;
-        }
-        return p.id;
+                           const model::Profile& options = {}) {
+        const auto id = createRemote(name, url, options);
+        if (!id) return 0;
+        auto p = findById(id);
+        if (!p || !download(*p)) { discardDraft(id); return 0; }
+        return id;
     }
 
-    // 新建 remote 订阅行（不下载）：Android 上下载由 UI 层经平台栈完成后调
-    // completeRemote 落盘；桌面仍走 importUrl 的 curl 直下。成功返回新 id。
+    // Android keeps the draft across the platform HTTP await, outside the accepted list.
     std::int64_t createRemote(const std::string& name, const std::string& url,
-                              const db::Profile& options = {}) {
+                              const model::Profile& options = {}) {
         lastError_.clear();
-        db::Profile p = options;
-        p.id = 0;
-        p.selected = false;
-        p.type = "remote";
-        p.name = name.empty() ? RemoteFallbackName(url) : name;
-        p.url = url;
         try {
-            p.id = coreStore().db().saveProfile(p);
-        } catch (const std::exception& e) {
-            lastError_ = e.what();
-            return 0;
-        }
-        return p.id;
+            model::Profile p = options;
+            p.id = clashflux::data::session().reserveProfileId();
+            p.selected = false; p.file.clear(); p.type = "remote";
+            p.name = name.empty() ? RemoteFallbackName(url) : name;
+            p.url = url;
+            std::lock_guard lock(draftsMutex_);
+            drafts_.emplace(p.id, p);
+            return p.id;
+        } catch (const std::exception& e) { lastError_ = e.what(); return 0; }
     }
 
-    // UI 层下载路径收尾：2xx 内容写 profiles/<id>.yaml + 解析 userinfo 头 +
-    // 行更新；失败写行 error，import=true（新建流程行已先建）回滚删行。
-    // forceProviders 只用于用户明确的手动更新；自动更新遵循 provider interval。
     bool completeRemote(std::int64_t id, const FetchedProfile& fetched,
-                        bool import, bool forceProviders = false) {
+                        bool importing, bool forceProviders = false,
+                        std::uint64_t expectedRevision = 0) {
         auto planLock = coreStore().lockPlanLifecycle();
         lastError_.clear();
-        auto profile = findById(id);
-        if (!profile) {
-            lastError_ = "订阅不存在";
+        if (clashflux::data::session().profileRevision(id) != expectedRevision) {
+            lastError_ = "订阅在下载期间已变化，请重新更新"; return false;
+        }
+        auto previous = findById(id);
+        if (!previous) { lastError_ = "订阅不存在"; return false; }
+        if (!fetched.ok || fetched.status < 200 || fetched.status >= 300) {
+            lastError_ = fetched.error.empty() ? std::format("HTTP {}", fetched.status) : fetched.error;
+            if (importing) discardDraft(id);
             return false;
         }
-        db::Profile& p = *profile;
-        if (p.file.empty()) p.file = std::format("{}.yaml", p.id);
-        std::string failure;
-        if (!fetched.ok) {
-            failure = fetched.error.empty() ? "传输失败" : fetched.error;
-        } else if (fetched.status < 200 || fetched.status >= 300) {
-            failure = std::format("HTTP {}", fetched.status);
-        } else {
-            std::error_code ec;
-            std::filesystem::create_directories(cfg::profilesDir(), ec);
-            if (!saveYaml(p.id, fetched.body, forceProviders)) failure = lastError_;
-        }
-        if (failure.empty()) {
-            if (const auto userinfo = findHeader(fetched.headers, "subscription-userinfo")) {
-                parseUserInfo(*userinfo, p.usedBytes, p.totalBytes, p.expireAt);
-            } else {
-                p.usedBytes = 0;
-                p.totalBytes = 0;
-                p.expireAt = 0;
-            }
-            if (const auto webUrl = findHeader(fetched.headers, "profile-web-page-url")) {
-                p.homepage = *webUrl;
-            } else {
-                p.homepage.clear();
-            }
-            p.error.clear();
-            p.updatedAt = nowUnix();
-            if (p.selected) coreStore().invalidateProxyGroupsSnapshot();
-        } else {
-            p.error = failure;
-            lastError_ = std::format("下载失败：{}", failure);
-        }
-        try {
-            coreStore().db().saveProfile(p);
-        } catch (const std::exception& e) {
-            lastError_ = e.what();
-            failure = e.what();
-        }
-        if (!failure.empty() && import) {
-            try {
-                coreStore().db().deleteProfile(p.id);
-            } catch (...) {
-            }
-            // A failed import may leave an unreferenced completed file. Do not
-            // unlink it before the asynchronous row deletion is acknowledged;
-            // only an explicit user removal requests persistent file cleanup.
-        }
-        return failure.empty();
+        auto next = *previous;
+        applyHeaders(next, fetched.headers);
+        const bool ok = saveContentVersion(next, fetched.body, importing ? std::nullopt : previous,
+                                          expectedRevision, forceProviders, !importing);
+        if (importing) discardDraft(id);
+        return ok;
     }
 
     // 重新拉取订阅（阻塞，用户手动入口）。手动更新保留同步强刷 provider 语义。
     bool refresh(std::int64_t id) {
         // download re-reads this row under the lifecycle lock before fetching
         // and again before committing. Network I/O must not block other rules.
-        std::optional<db::Profile> profile;
+        std::optional<model::Profile> profile;
         {
             auto planLock = coreStore().lockPlanLifecycle();
             lastError_.clear();
@@ -350,70 +290,29 @@ public:
         return download(*profile, true);
     }
 
-    // 本地文件导入（local）：复制内容到 profiles/<id>.yaml。
-    bool importFile(const std::string& name, const std::filesystem::path& source,
-                    const db::Profile& options = {}) {
-        lastError_.clear();
-        db::Profile p = options;
-        p.id = 0;
-        p.selected = false;
-        p.type = "local";
-        p.url.clear();
-        p.name = name.empty() ? source.filename().string() : name;
-        try {
-            p.id = coreStore().db().saveProfile(p);
-            p.file = std::format("{}.yaml", p.id);
-            std::filesystem::copy_file(source, cfg::profilesDir() / p.file,
-                                       std::filesystem::copy_options::overwrite_existing);
-            p.updatedAt = nowUnix();
-            coreStore().db().saveProfile(p);
-        } catch (const std::exception& e) {
-            lastError_ = e.what();
-            if (p.id != 0) {
-                try { coreStore().db().deleteProfile(p.id); } catch (...) {}
-            }
-            return false;
-        }
-        return true;
+    // Local import uses the same version-file commit path, without a provisional row.
+    std::int64_t importFile(const std::string& name, const std::filesystem::path& source,
+                    const model::Profile& options = {}) {
+        std::ifstream input(source, std::ios::binary);
+        if (!input) { lastError_ = "无法读取订阅文件"; return false; }
+        const std::string content(std::istreambuf_iterator<char>(input), {});
+        if (input.bad()) { lastError_ = "读取订阅文件失败"; return false; }
+        return importContent(name.empty() ? source.filename().string() : name, content, options);
     }
 
-    // 手动粘贴 YAML 导入（local）：内容写入 profiles/<id>.yaml。
-    std::int64_t importContent(const std::string& name,
-                               const std::string& content,
-                               const db::Profile& options = {}) {
+    std::int64_t importContent(const std::string& name, const std::string& content,
+                               const model::Profile& options = {}) {
+        auto planLock = coreStore().lockPlanLifecycle();
         lastError_.clear();
-        db::Profile p = options;
-        p.id = 0;
-        p.selected = false;
-        p.type = "local";
-        p.url.clear();
-        p.file.clear();
-        p.name = name.empty() ? "手动配置" : name;
         try {
-            p.id = coreStore().db().saveProfile(p);
-            p.file = std::format("{}.yaml", p.id);
-            std::error_code ec;
-            std::filesystem::create_directories(cfg::profilesDir(), ec);
-            if (ec) throw std::filesystem::filesystem_error(
-                "创建订阅目录失败", cfg::profilesDir(), ec);
-            std::ofstream out(cfg::profilesDir() / p.file,
-                              std::ios::binary | std::ios::trunc);
-            if (!out) throw std::runtime_error("无法写入订阅文件");
-            out.write(content.data(), static_cast<std::streamsize>(content.size()));
-            out.flush();
-            if (!out) throw std::runtime_error("写入订阅文件失败");
-            p.updatedAt = nowUnix();
-            coreStore().db().saveProfile(p);
-        } catch (const std::exception& e) {
-            lastError_ = e.what();
-            if (p.id != 0) {
-                try { coreStore().db().deleteProfile(p.id); } catch (...) {}
-            }
-            // Retain completed files on failure; no repair-style unlink of a
-            // path whose persisted references have not been checked.
-            return 0;
-        }
-        return p.id;
+            auto p = options;
+            p.id = clashflux::data::session().reserveProfileId();
+            p.selected = false; p.type = "local"; p.url.clear(); p.file.clear();
+            p.name = name.empty() ? "手动配置" : name;
+            // An inactive local import may be inspected/edited before activation.
+            if (!saveContentVersion(p, content, std::nullopt, 0, false, false)) return 0;
+            return p.id;
+        } catch (const std::exception& e) { lastError_ = e.what(); return 0; }
     }
 
     // 新增 PPTP 原生连接订阅：不下载 YAML，连接参数
@@ -421,13 +320,13 @@ public:
     std::int64_t importNative(const std::string& name, const std::string& type,
                               const std::string& nativeConfig,
                               const std::string& nativeRoutes,
-                              const db::Profile& options = {}) {
+                              const model::Profile& options = {}) {
         lastError_.clear();
         if (type != "pptp") {
             lastError_ = "原生连接只支持 PPTP；OpenVPN 请通过普通文件或远程订阅导入";
             return 0;
         }
-        db::Profile p = options;
+        model::Profile p = options;
         p.id = 0;
         p.selected = false;
         p.type = type;
@@ -437,7 +336,10 @@ public:
         p.nativeConfig = nativeConfig;
         p.nativeRoutes = nativeRoutes;
         try {
-            p.id = coreStore().db().saveProfile(p);
+            p.id = clashflux::data::session().reserveProfileId();
+            if (!clashflux::data::session().commitProfileOnWorker(p, 0)) {
+                lastError_ = clashflux::data::session().lastError(); return 0;
+            }
         } catch (const std::exception& e) {
             lastError_ = e.what();
             return 0;
@@ -448,9 +350,10 @@ public:
     // 保存订阅信息与选项（订阅弹窗唯一保存入口）：fields 携带 name/url 与
     // type/描述/超时/间隔/自动更新/代理/证书开关；行身份字段（file/selected/
     // updatedAt/error）保留库中现值。仅落库——URL 等在下次「更新」拉取时生效。
-    bool updateProfile(std::int64_t id, const db::Profile& fields) {
+    bool updateProfile(std::int64_t id, const model::Profile& fields) {
         lastError_.clear();
         auto planLock = coreStore().lockPlanLifecycle();
+        const auto revision = clashflux::data::session().profileRevision(id);
         auto p = findById(id);
         if (!p) {
             lastError_ = "订阅不存在";
@@ -459,7 +362,7 @@ public:
         if (!fields.type.empty() && fields.type != p->type && coreStore().sourceParticipates(id)) {
             lastError_ = "被编排引用的来源不能变更类型；请先解除引用"; return false;
         }
-p->name = fields.name.empty() ? p->name : fields.name;
+        p->name = fields.name.empty() ? p->name : fields.name;
         p->url = fields.url;
         p->type = fields.type.empty() ? p->type : fields.type;
         p->description = fields.description;
@@ -474,7 +377,9 @@ p->name = fields.name.empty() ? p->name : fields.name;
             p->nativeRoutes = fields.nativeRoutes;
         }
         try {
-            coreStore().db().saveProfile(*p);
+            if (!clashflux::data::session().commitProfileOnWorker(*p, revision)) {
+                lastError_ = clashflux::data::session().lastError(); return false;
+            }
         } catch (const std::exception& e) {
             lastError_ = e.what();
             return false;
@@ -485,9 +390,9 @@ p->name = fields.name.empty() ? p->name : fields.name;
     // 到期待更新的订阅清单（无网络，纯查询）：允许自动更新 + 间隔已到；
     // 内核代理通道要求内核在跑，不在跑跳过本轮（下一轮再试）。Android 泵
     // 用它拿清单后经 HuxerUI HttpClient 逐个抓取（completeRemote 收尾）。
-    std::vector<db::Profile> dueForUpdate() {
+    std::vector<model::Profile> dueForUpdate() {
         const std::int64_t now = nowUnix();
-        std::vector<db::Profile> due;
+        std::vector<model::Profile> due;
         for (const auto& p : list()) {
             if (!p.autoUpdate || p.intervalMins <= 0) continue;
             if (p.url.empty()) continue;  // local 类型无 URL
@@ -524,7 +429,7 @@ p->name = fields.name.empty() ? p->name : fields.name;
     // 直接接收已查询出的 Profile，避免 UI 列表线程在同一轮刷新里再次
     // 查询 SQLite；Android 的 WAL/Activity 重建期间二次查询可能返回空，
     // 导致规则页误显示“没有订阅规则”，而内核实际仍在使用该文件。
-    std::string yamlOf(const db::Profile& profile) {
+    std::string yamlOf(const model::Profile& profile) {
         if (profile.file.empty()) return "";
         std::ifstream in(cfg::profilesDir() / profile.file, std::ios::binary);
         if (!in) return "";
@@ -538,7 +443,7 @@ p->name = fields.name.empty() ? p->name : fields.name;
     }
 
     singbox::ProfileRuleEdits ruleEdits(std::int64_t id) {
-        return routing::DecodeProfileRules(clashflux::persistence::persistence().setting(routing::ProfileRulesKey(id)));
+        return routing::DecodeProfileRules(clashflux::data::session().setting(routing::ProfileRulesKey(id)));
     }
 
     bool saveRuleEdits(std::int64_t id, singbox::ProfileRuleEdits edits,
@@ -546,7 +451,7 @@ p->name = fields.name.empty() ? p->name : fields.name;
         auto planLock = coreStore().lockPlanLifecycle();
         error.clear();
         try {
-            auto& data = clashflux::persistence::persistence();
+            auto& data = clashflux::data::session();
             if (!data.ready()) { error = "订阅尚未加载完成"; return false; }
             const auto profile = findById(id);
             if (!profile || profile->type == "pptp") { error = "订阅不存在或不支持个人规则"; return false; }
@@ -589,29 +494,10 @@ p->name = fields.name.empty() ? p->name : fields.name;
                   bool forceProviders = false) {
         lastError_.clear();
         auto planLock = coreStore().lockPlanLifecycle();
-        auto profile = findById(id);
+        const auto revision = clashflux::data::session().profileRevision(id);
+        const auto profile = findById(id);
         if (!profile) { lastError_ = "订阅不存在"; return false; }
-        if (profile->file.empty()) profile->file = std::format("{}.yaml", id);
-        if (!coreStore().validateSourceUpdate(id, content, lastError_, forceProviders)) return false;
-        const auto previous = yamlOf(*profile);
-        if (!writeContent(*profile, content, lastError_)) return false;
-        coreStore().invalidateProxyGroupsSnapshot();
-        if (coreStore().sourceParticipates(id) && coreStore().snapshot().state == core::CoreState::Running &&
-            !coreStore().restartCore(coreStore().currentMainContent())) {
-            lastError_ = coreStore().snapshot().lastError;
-            std::string restoreError;
-            if (!writeContent(*profile, previous, restoreError)) lastError_ += "；来源文件恢复失败：" + restoreError;
-            return false;
-        }
-        try {
-            auto row = *profile; row.updatedAt = nowUnix(); row.error.clear();
-            coreStore().db().saveProfile(row);
-            return true;
-        } catch (const std::exception& e) {
-            lastError_ = e.what();
-            restoreSource(*profile, previous, lastError_, true);
-            return false;
-        }
+        return saveContentVersion(*profile, content, profile, revision, forceProviders);
     }
 
     // selected 是主来源的兼容持久化字段；候选通过检查后才切换，应用失败还原。
@@ -648,7 +534,7 @@ p->name = fields.name.empty() ? p->name : fields.name;
             return;
         }
         bool found = false;
-        std::optional<db::Profile> selectedProfile;
+        std::optional<model::Profile> selectedProfile;
         for (const auto& p : list()) {
             if (p.id == id) {
                 found = true;
@@ -659,7 +545,7 @@ p->name = fields.name.empty() ? p->name : fields.name;
         const bool clearStandby = selectedProfile && coreStore().standbyActive();
         const std::string previousContent = clearStandby ? yamlOf(*selectedProfile) : std::string{};
         if (clearStandby) {
-            auto& persistence = clashflux::persistence::persistence();
+            auto& persistence = clashflux::data::session();
             persistence.setSelectedProfile(0);
             if (!coreStore().clearStandbyCore()) {
                 persistence.setSelectedProfile(id);
@@ -668,11 +554,11 @@ p->name = fields.name.empty() ? p->name : fields.name;
             }
         }
         try {
-            clashflux::persistence::persistence().deleteProfile(id, true);
+            clashflux::data::session().deleteProfile(id, true);
         } catch (const std::exception& e) {
             lastError_ = e.what();
             if (clearStandby) {
-                clashflux::persistence::persistence().saveProfile(*selectedProfile);
+                clashflux::data::session().saveProfile(*selectedProfile);
                 if (!coreStore().restartCore(previousContent))
                     lastError_ += "；原待命配置恢复失败：" + coreStore().snapshot().lastError;
             }
@@ -684,46 +570,104 @@ p->name = fields.name.empty() ? p->name : fields.name;
     }
 
 private:
-    static void restoreSource(const db::Profile& profile, const std::string& previous,
-                              std::string& error, bool restoreRuntime) {
-        std::string failure;
-        if (!writeContent(profile, previous, failure)) {
-            error += "；来源恢复失败：" + failure;
-            coreStore().stopCore(); return;
-        }
-        coreStore().invalidateProxyGroupsSnapshot();
-        try {
-            coreStore().db().saveProfile(profile);
-            if (restoreRuntime && coreStore().sourceParticipates(profile.id) &&
-                coreStore().snapshot().state == core::CoreState::Running &&
-                !coreStore().restartCore(coreStore().currentMainContent())) {
-                error += "；恢复运行配置失败：" + coreStore().snapshot().lastError;
-                coreStore().stopCore();
-            }
-        } catch (const std::exception& e) { error += "；恢复失败：" + std::string(e.what()); coreStore().stopCore(); }
+    void discardDraft(std::int64_t id) {
+        std::lock_guard lock(draftsMutex_); drafts_.erase(id);
     }
 
-    static bool writeContent(const db::Profile& profile, const std::string& content, std::string& error) {
+    bool commitPrepared(model::Profile next, const std::optional<model::Profile>& previous,
+                        std::uint64_t expectedRevision) {
+        auto& data = clashflux::data::session();
+        next.updatedAt = nowUnix(); next.error.clear();
+        if (!api::SyncFile(cfg::profilesDir() / next.file, lastError_)) return false;
+        try {
+            if (!data.commitProfileOnWorker(next, expectedRevision)) {
+                lastError_ = data.lastError(); return false;
+            }
+            coreStore().invalidateProxyGroupsSnapshot();
+            // SQLite acceptance and kernel application are separate steps. Keep
+            // both source versions so an apply failure can restore the old pointer.
+            bool applied = true;
+            try {
+                if (previous && coreStore().sourceParticipates(next.id) &&
+                    coreStore().snapshot().state == core::CoreState::Running) {
+                    const auto began = std::chrono::steady_clock::now();
+                    applied = coreStore().restartCore(coreStore().currentMainContent());
+                    stream::logApplication("info", std::format("profile-update source_id={} ready={} apply_us={}",
+                        next.id, applied, std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - began).count()));
+                    if (!applied) lastError_ = coreStore().snapshot().lastError;
+                }
+            } catch (const std::exception& e) { applied = false; lastError_ = e.what(); }
+            if (!applied) {
+                const auto committed = data.profileRevision(next.id);
+                if (!data.commitProfileOnWorker(*previous, committed)) {
+                    lastError_ += "；恢复订阅引用失败：" + data.lastError();
+                    coreStore().stopCore();
+                    return false;
+                }
+                coreStore().invalidateProxyGroupsSnapshot();
+                if (!coreStore().restartCore(coreStore().currentMainContent())) {
+                    lastError_ += "；恢复运行配置失败：" + coreStore().snapshot().lastError;
+                    coreStore().stopCore();
+                }
+                return false;
+            }
+            discardDraft(next.id);
+            return true;
+        } catch (const std::exception& e) { lastError_ = e.what(); return false; }
+    }
+
+    bool saveContentVersion(model::Profile next, const std::string& content,
+                            const std::optional<model::Profile>& previous,
+                            std::uint64_t expectedRevision, bool forceProviders,
+                            bool validate = true) {
+        if (!singbox::ValidateProfileDocument(content, lastError_)) return false;
+        if (validate && !coreStore().validateSourceUpdate(next.id, content, lastError_, forceProviders))
+            return false;
+        next.file = std::format("{}.{}.yaml", next.id, cfg::randomSecret());
+        std::error_code ec;
+        std::filesystem::create_directories(cfg::profilesDir(), ec);
+        if (ec) { lastError_ = "创建订阅目录失败：" + ec.message(); return false; }
+        if (!writeContent(next, content, lastError_)) return false;
+        return commitPrepared(std::move(next), previous, expectedRevision);
+    }
+
+    template<class Headers> static void applyHeaders(model::Profile& p, const Headers& headers) {
+        p.usedBytes = p.totalBytes = p.expireAt = 0;
+        if (const auto userinfo = findHeader(headers, "subscription-userinfo"))
+            parseUserInfo(*userinfo, p.usedBytes, p.totalBytes, p.expireAt);
+        p.homepage = findHeader(headers, "profile-web-page-url").value_or("");
+    }
+
+    static bool writeContent(const model::Profile& profile, const std::string& content, std::string& error) {
         const auto dest = cfg::profilesDir() / profile.file;
-        const auto temp = std::filesystem::path(dest.string() + "." + cfg::randomSecret() + ".tmp");
-        struct TempFile {
+        const auto directory = std::filesystem::path(dest.string() + "." + cfg::randomSecret() + ".tmp");
+        std::error_code ec;
+        if (!std::filesystem::create_directory(directory, ec)) {
+            error = "无法创建独占订阅暂存目录：" + ec.message(); return false;
+        }
+        struct TempDirectory {
             std::filesystem::path path;
-            ~TempFile() { std::error_code ec; std::filesystem::remove(path, ec); }
-        } cleanup{temp};
+            ~TempDirectory() { std::error_code ec; std::filesystem::remove_all(path, ec); }
+        } cleanup{directory};
+        const auto temp = directory / "payload";
         std::ofstream output(temp, std::ios::binary | std::ios::trunc);
         output.write(content.data(), static_cast<std::streamsize>(content.size())); output.close();
         if (!output) { error = "订阅文件写入失败"; return false; }
         return api::CommitFile(temp, dest, error);
     }
 
-    std::optional<db::Profile> findById(std::int64_t id) {
-        if (!clashflux::persistence::persistence().ready()) {
+    std::optional<model::Profile> findById(std::int64_t id) {
+        if (!clashflux::data::session().ready()) {
             lastError_ = "订阅持久化未就绪，操作已拒绝";
             return std::nullopt;
         }
         for (const auto& p : list()) {
             if (p.id == id) return p;
         }
+        std::lock_guard lock(draftsMutex_);
+        const auto draft = drafts_.find(id);
+        if (draft != drafts_.end()) return draft->second;
         return std::nullopt;
     }
 
@@ -791,121 +735,56 @@ private:
         expire = expireIn;
     }
 
-    // 下载 p.url 到 profiles/<id>.yaml 并更新行（updated_at/error）。
-    // forceProviders 只由用户手动更新传入；自动更新沿用 provider 自己的 interval。
-    // 代理三态按订阅选项组装：内核代理 > 系统环境代理 > 强制直连。
-    bool download(db::Profile& p, bool forceProviders = false) {
+    // Fetch into a fresh version file. Only a committed row makes it accepted.
+    bool download(model::Profile& p, bool forceProviders = false) {
         std::lock_guard downloadLock(downloadMutex_);
         auto planLock = coreStore().lockPlanLifecycle();
+        auto& data = clashflux::data::session();
         lastError_.clear();
+        const auto revision = data.profileRevision(p.id);
         const auto initial = findById(p.id);
-        if (!initial) {
-            if (lastError_.empty()) lastError_ = "订阅不存在";
-            return false;
-        }
+        if (!initial) { lastError_ = "订阅不存在"; return false; }
+        if (initial->url.empty()) { lastError_ = "本地导入的订阅不支持更新"; return false; }
+        const bool importing = revision == 0;
         p = *initial;
-        if (p.url.empty()) { lastError_ = "本地导入的订阅不支持更新"; return false; }
-        const auto previousContent = yamlOf(p);
-        auto previousProfile = p;
-        const auto sameRequest = [&initial](const db::Profile& current) {
-            return current.url == initial->url && current.type == initial->type &&
-                current.file == initial->file && current.timeoutSecs == initial->timeoutSecs &&
-                current.allowInvalidCert == initial->allowInvalidCert &&
-                current.useCoreProxy == initial->useCoreProxy && current.useSystemProxy == initial->useSystemProxy;
-        };
-        // Keep the referenced path stable: validation, runtime reapply and the
-        // saved row must all refer to the same newly replaced source file.
-        if (p.file.empty()) p.file = std::format("{}.yaml", p.id);
+        const auto previousContent = yamlOf(*initial);
+        const auto versionFile = std::format("{}.{}.yaml", p.id, cfg::randomSecret());
         api::ClashApi::DownloadOptions opts;
         opts.timeoutSecs = p.timeoutSecs > 0 ? p.timeoutSecs : 60;
+        opts.maxBytes = 8 * 1024 * 1024;
         opts.allowInvalidCert = p.allowInvalidCert;
-        if (p.useCoreProxy) {
-            opts.proxyUrl =
-                std::format("http://127.0.0.1:{}", coreStore().snapshot().mixedPort);
-        } else {
-            opts.allowProxyEnv = p.useSystemProxy;
-        }
-        // downloadToFile owns an exclusive temporary file. Keep the lifecycle
-        // free while waiting on the network; reacquire it in validation and
-        // retain it through the atomic file commit, runtime handoff and row save.
+        if (p.useCoreProxy)
+            opts.proxyUrl = std::format("http://127.0.0.1:{}", coreStore().snapshot().mixedPort);
+        else opts.allowProxyEnv = p.useSystemProxy;
         planLock.unlock();
         opts.validate = [&](const std::filesystem::path& file) {
             std::ifstream input(file, std::ios::binary);
             if (!input) return std::string{"无法读取候选订阅"};
             const std::string content(std::istreambuf_iterator<char>(input), {});
+            if (input.bad()) return std::string{"读取候选订阅失败"};
             planLock.lock();
             const auto current = findById(p.id);
-            if (!current || !sameRequest(*current) || yamlOf(*current) != previousContent)
+            if (data.profileRevision(p.id) != revision || !current || *current != *initial || yamlOf(*current) != previousContent)
                 return std::string{"订阅在下载期间已变化，请重新更新"};
-            previousProfile = *current;
-            p = *current; // Preserve changes such as selection, name and order.
-            if (p.file.empty()) p.file = std::format("{}.yaml", p.id);
             std::string error;
+            if (importing) return singbox::ValidateProfileDocument(content, error) ? std::string{} : error;
             return coreStore().validateSourceUpdate(p.id, content, error, forceProviders)
                 ? std::string{} : error;
         };
-        // Runtime maintenance may replace the controller API while we fetch.
-        // The independent downloader owns no controller endpoint or secret.
         api::ClashApi downloader{"", ""};
-        const auto r = downloader.downloadToFile(initial->url, cfg::profilesDir() / p.file, opts);
+        const auto result = downloader.downloadToFile(initial->url, cfg::profilesDir() / versionFile, opts);
         stream::logApplication("info", std::format(
             "profile-download source_id={} manual={} ready={} network_us={} candidate_us={} file_commit_us={} download_bytes={} connections_known={} new_connections={}",
-            p.id, forceProviders, r.ok, r.download.networkMicros, r.download.validationMicros,
-            r.download.commitMicros, r.download.bytes, r.download.transportKnown, r.download.newConnections));
-        if (!r.ok) {
-            if (!planLock.owns_lock()) planLock.lock();
-            const auto current = findById(p.id);
-            // A deleted/edited source must not be resurrected or overwritten
-            // by either a late download result or its failure bookkeeping.
-            if (current && sameRequest(*current) && yamlOf(*current) == previousContent) {
-                auto failed = *current;
-                failed.error = r.error;
-                try { coreStore().db().saveProfile(failed); } catch (...) {}
-            }
-            lastError_ = std::format("下载失败：{}", r.error);
-            return false;
-        }
-        coreStore().invalidateProxyGroupsSnapshot();
-        if (coreStore().sourceParticipates(p.id) && coreStore().snapshot().state == core::CoreState::Running) {
-            const auto began = std::chrono::steady_clock::now();
-            const bool applied = coreStore().restartCore(coreStore().currentMainContent());
-            stream::logApplication("info", std::format("profile-update source_id={} ready={} apply_us={}",
-                p.id, applied, std::chrono::duration_cast<std::chrono::microseconds>(
-                    std::chrono::steady_clock::now() - began).count()));
-            if (!applied) {
-                lastError_ = coreStore().snapshot().lastError;
-                std::string restoreError;
-                if (!writeContent(p, previousContent, restoreError)) lastError_ += "；来源文件恢复失败：" + restoreError;
-                return false;
-            }
-        }
-        // 订阅响应头：subscription-userinfo（流量/到期）/ profile-web-page-url
-        // （提供方首页）。缺头时清零/清空——以最新一跳为准。
-        if (const auto userinfo = findHeader(r.headers, "subscription-userinfo")) {
-            parseUserInfo(*userinfo, p.usedBytes, p.totalBytes, p.expireAt);
-        } else {
-            p.usedBytes = 0;
-            p.totalBytes = 0;
-            p.expireAt = 0;
-        }
-        if (const auto webUrl = findHeader(r.headers, "profile-web-page-url")) {
-            p.homepage = *webUrl;
-        } else {
-            p.homepage.clear();
-        }
-        p.error.clear();
-        p.updatedAt = nowUnix();
-        try {
-            coreStore().db().saveProfile(p);
-        } catch (const std::exception& e) {
-            lastError_ = e.what();
-            restoreSource(previousProfile, previousContent, lastError_, true);
-            return false;
-        }
-        if (p.selected) coreStore().invalidateProxyGroupsSnapshot();
-        return true;
+            p.id, forceProviders, result.ok, result.download.networkMicros, result.download.validationMicros,
+            result.download.commitMicros, result.download.bytes, result.download.transportKnown, result.download.newConnections));
+        if (!result.ok) { lastError_ = "下载失败：" + result.error; return false; }
+        p.file = versionFile;
+        applyHeaders(p, result.headers);
+        return commitPrepared(p, importing ? std::nullopt : initial, revision);
     }
 
+    std::mutex draftsMutex_;
+    std::map<std::int64_t, model::Profile> drafts_;
     std::mutex downloadMutex_;
     std::string lastError_;
 };

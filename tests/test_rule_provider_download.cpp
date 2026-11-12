@@ -43,6 +43,17 @@ int testDownloadPool(char** argv) {
     std::cout << "sequential downloads=8 fresh_client_connections=" << coldConnections
               << " pooled_connections=" << connections << '\n';
 
+    const auto compressed = client.downloadToFile(base + "/gzip", root / "compressed", options);
+    require(compressed.ok && readFile(root / "compressed") == "payload: [pool.test]\n",
+            "HTTP gzip must decode before storing the source");
+    const auto preservedCompressed = readFile(root / "compressed");
+    require(!client.downloadToFile(base + "/gzip-large", root / "compressed", options).ok &&
+            readFile(root / "compressed") == preservedCompressed,
+            "decoded size, not compressed transfer size, must enforce maxBytes and retain the old source");
+    require(!client.downloadToFile(base + "/gzip-short", root / "compressed", options).ok &&
+            readFile(root / "compressed") == preservedCompressed,
+            "truncated compressed transfer must retain the old source");
+
     options.headers = {{"Authorization", "Bearer pool-A"}};
     require(client.downloadToFile(base + "/token-a", root / "token", options).download.newConnections == 1,
             "different credential policy must use an isolated connection");

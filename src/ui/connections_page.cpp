@@ -267,7 +267,7 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
     const auto menu = UseActionMenu();
     const auto more = huxerui::IconButton(
         huxerui::ImageResource{"app", "images/more_vertical"}, Localized("更多操作"))
-        .With(menu.Anchor(), huxerui::Tooltip(Localized("更多操作")))
+        .With(menu.Target(), huxerui::Tooltip(Localized("更多操作")))
         .OnClick([menu, openDetails, confirmClose] {
             menu.Show({
                 ActionMenuItem(huxerui::ImageResource{"app", "images/info"},
@@ -305,9 +305,6 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
     auto loaded = huxerui::UseState(false);
     auto searchValue = huxerui::UseState(huxerui::TextEditingValue{""});
     const auto scroll = huxerui::UseScrollController();
-    // 水平留白与 SectionTabPages 同约定：骨架 fullWidthSections 后由页面根
-    // 持有半份卡片间距，不再叠加旧的 24pt 桌面岛内边距。
-    const auto sectionInsets = huxerui::UseEnvironment<SectionTabContentInsets>();
 
     huxerui::Lifecycle(
         [tasks, rows, totalUp, totalDown, streamOpen, active, loaded] {
@@ -418,7 +415,7 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
     }
     if (!visibleRows.empty()) {
         const std::size_t rowCount = visibleRows.size();
-        body = PageVirtualList(
+        body = ScrollArea(PageVirtualList(
                    rowCount,
                    [rows, visibleRows, tasks, dialog, toast, navigation,
                     desktopNavigation, drawerLayers, compact, stacked, rowCount](
@@ -441,8 +438,7 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
                    }, PageScrollInset(theme, true), compact && !onBack ? kCompactFloatingNavigationInset : 0.0F)
                    // 16pt 卡内留白 + 三行内容 + 4pt 卡间距。
                    .EstimatedItemExtent(90.0F)
-                   .Controller(scroll)
-                   .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
+                   .Controller(scroll), scroll).With(huxerui::Grow(1.0F));
     }
 
     huxerui::View searchField = PillSearchField(
@@ -454,8 +450,6 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
             ConfirmCloseConnection(dialog, tasks, toast, {}, {}, true);
         });
     huxerui::View actions = std::move(closeAllButton);
-    body = huxerui::View{std::move(body)}.With(huxerui::Padding(
-        huxerui::EdgeInsets::Symmetric(sectionInsets.horizontal * 0.5F, 0.0F)));
     return onBack
         ? SecondaryPageScaffold(std::move(searchField), std::move(actions),
                                 std::move(body), onBack, false, true)
@@ -662,7 +656,7 @@ huxerui::XYChartData ConnectionChartData(
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }
     return ScrollablePageContent(sections)
-        .With(huxerui::Grow(1.0F), huxerui::ScrollBar());
+        .With(huxerui::Grow(1.0F));
 }
 
 [[huxerui::composable]] huxerui::View ConnectionDetailPage(

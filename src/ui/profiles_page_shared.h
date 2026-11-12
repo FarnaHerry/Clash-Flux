@@ -71,7 +71,7 @@ struct ProfileImportRequest {
     std::string name;
     std::string url;
     std::string picked_path;
-    db::Profile options;
+    model::Profile options;
 };
 
 struct ProfileDragPayload {
@@ -144,7 +144,7 @@ huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
     int timeoutSecs, bool allowInvalidCert = false);
 huxerui::Task<std::int64_t> AndroidImportRemote(
     std::shared_ptr<AppHttpClient> http, const std::string& name,
-    const std::string& url, db::Profile options);
+    const std::string& url, model::Profile options);
 huxerui::Task<std::string> AndroidRefreshRemote(
     std::shared_ptr<AppHttpClient> http, std::int64_t id);
 
@@ -190,10 +190,10 @@ huxerui::View PptpOptionsForm(
     huxerui::State<bool> require_mppe);
 
 huxerui::View ProfileCard(
-    const db::Profile& profile, bool compact, huxerui::TaskScope tasks,
+    const model::Profile& profile, bool compact, huxerui::TaskScope tasks,
     FluxToastHandle toast, std::shared_ptr<AppHttpClient> http,
     std::function<void()> reload,
-    huxerui::StateList<db::Profile> profiles,
+    huxerui::StateList<model::Profile> profiles,
     huxerui::State<bool> selectionPending,
     const store::PptpState& pptpState,
     bool connectionPending, bool openingConnection, bool connectionActionsBusy,

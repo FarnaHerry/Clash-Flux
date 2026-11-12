@@ -82,11 +82,6 @@
 #endif
     }
 
-    db::Db& db() {
-        ensureOpen();
-        return *db_;
-    }
-
     api::ClashApi& api() {
         ensureOpen();
         return *api_;
@@ -134,11 +129,11 @@
     }
 
     // ---- 设置（落 settings 表）----
-    // 读走 Persistence 的内存缓存，可在组合期调用；写更新缓存并由启动流程的
+    // 读走 DataSession 的内存缓存，可在组合期调用；写更新缓存并由启动流程的
     // flush 泵异步落库。数据库由启动流程 open，这里不再触发任何磁盘 IO。
     std::string setting(const std::string& key, const std::string& fallback = "") {
         try {
-            if (networkSettingKey(key) && !clashflux::persistence::persistence().setting("core.network_settings", "").empty()) {
+            if (networkSettingKey(key) && !clashflux::data::session().setting("core.network_settings", "").empty()) {
                 const auto value = networkSettings();
                 if (key == "core.mixed_port") return std::to_string(value.mixed_port);
                 if (key == "core.http_port") return value.http_port ? std::to_string(value.http_port) : "";
@@ -148,14 +143,14 @@
                 if (key == "core.ipv6_enabled") return value.ipv6 ? "true" : "false";
                 if (key == "core.tun_strict_route") return value.strict_route ? "true" : "false";
             }
-            return clashflux::persistence::persistence().setting(key, fallback);
+            return clashflux::data::session().setting(key, fallback);
         } catch (...) {
             return fallback;
         }
     }
 
     clashflux::network::Settings networkSettings() {
-        auto& data = clashflux::persistence::persistence();
+        auto& data = clashflux::data::session();
         const auto raw = data.setting("core.network_settings", "");
         if (!raw.empty()) {
             const auto decoded = clashflux::wire::DecodeNetworkSettings(raw);
@@ -192,7 +187,7 @@
     }
 
     void setSetting(const std::string& key, const std::string& value) {
-        auto& data = clashflux::persistence::persistence();
+        auto& data = clashflux::data::session();
         if (networkSettingKey(key)) {
             std::lock_guard lock(lifecycleMutex_);
             auto next = networkSettings();
@@ -217,7 +212,7 @@
     std::string saveNetworkSettings(clashflux::network::Settings next,
                                    const clashflux::network::Settings& expected, bool apply) {
         std::lock_guard lock(lifecycleMutex_);
-        auto& data = clashflux::persistence::persistence();
+        auto& data = clashflux::data::session();
         if (!data.ready()) return "设置尚未就绪";
         const auto before = networkSettings();
         if (before != expected) return "设置已变化，请重新打开后编辑";
@@ -301,7 +296,7 @@
     }
 
     // 从已 hydrate 的缓存确保 core.secret 存在并更新 API 端点。
-    // 启动任务在 Persistence::open 之后调用一次；缓存未就绪时只建空 secret 的
+    // 启动任务在 DataSession::open 之后调用一次；缓存未就绪时只建空 secret 的
     // 端点，避免把「启动早期读不到设置」误判成需要重新生成 secret。
     void ensureSecret() {
         ensureOpen();
@@ -319,7 +314,7 @@
 
     // 当前选中订阅的文件路径（无选中/无文件时为空）。
     std::filesystem::path selectedProfileFile() {
-        for (const auto& profile : db_->listProfiles()) {
+        for (const auto& profile : clashflux::data::session().listProfiles()) {
             if (!profile.selected || profile.type == "pptp" || profile.file.empty()) {
                 continue;
             }
@@ -337,7 +332,7 @@
     bool proxyGroupsCacheFresh() {
         const std::filesystem::path file = selectedProfileFile();
         if (file.empty()) return false;
-        if (compiledProfilesRevision_ != clashflux::persistence::persistence().profilesRevision() ||
+        if (compiledProfilesRevision_ != clashflux::data::session().profilesRevision() ||
             compiledPolicyText_ != setting("vpn.global_policy", "")) return false;
         for (const auto& [sourceFile, fingerprint] : compiledSourceFiles_) {
             std::error_code error;
@@ -378,7 +373,7 @@
         ensureOpen();
 
         std::string profileYaml;
-        for (const auto& profile : db_->listProfiles()) {
+        for (const auto& profile : clashflux::data::session().listProfiles()) {
             if (!profile.selected || profile.type == "pptp" || profile.file.empty()) {
                 continue;
             }
@@ -430,7 +425,7 @@
         std::lock_guard operationLock(lifecycleMutex_);
         ProfileFidelityReport report;
         try {
-            for (const auto& profile : db_->listProfiles()) {
+            for (const auto& profile : clashflux::data::session().listProfiles()) {
                 if (profile.id != profileId) continue;
                 report.profileName = profile.name;
                 if (profile.type == "pptp") {

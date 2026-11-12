@@ -7,16 +7,16 @@ macro(clashflux_lock_archive name version archive sha256 topdir)
     set(CLASHFLUX_DEP_${name}_SHA256 "${sha256}")
     set(CLASHFLUX_DEP_${name}_TOPDIR "${topdir}")
 endmacro()
-clashflux_lock_archive(glaze 9.0.0 glaze-9.0.0-headers.tar.gz
-    872764412db2ba94cf57e39cf6518f86c0e13728c1c668f7ed398801aadff812 glaze-9.0.0)
+clashflux_lock_archive(glaze 9.1.0 glaze-9.1.0-headers.tar.gz
+    9bb4c9897e8b0f0d6b66b3ee4c1519efbf4288a4c331fd382d8c9412e67a244a glaze-9.1.0)
 clashflux_lock_archive(zstd 1.5.7 zstd-1.5.7.tar.gz
     37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3 zstd-1.5.7)
-clashflux_lock_archive(yamlcpp 0.8.0 yaml-cpp-0.8.0.tar.gz
-    fbe74bbdcee21d656715688706da3c8becfd946d92cd44705cc6098bb23b3a16 yaml-cpp-0.8.0)
-clashflux_lock_archive(curl 8.22.0 curl-8.22.0.tar.gz
-    d54dd598bf05927a726deb38df31c6a255ba83ff1de57c5d1464dac3ed8f44a1 curl-8.22.0)
-clashflux_lock_archive(ixwebsocket 12.0.1 ixwebsocket-12.0.1.tar.gz
-    d23bdc91dbfe2b9ae13c322d539392d7a6b8b506560f41c90e227fa0f86a2405 IXWebSocket-12.0.1)
+clashflux_lock_archive(yamlcpp 0.9.0 yaml-cpp-0.9.0.tar.gz
+    25cb043240f828a8c51beb830569634bc7ac603978e0f69d6b63558dadefd49a yaml-cpp-yaml-cpp-0.9.0)
+clashflux_lock_archive(curl 8.23.0 curl-8.23.0.tar.gz
+    e3de77cfa6367083c776a26647fc9f633b538c06c3baa73d931a252ac8f72b49 curl-8.23.0)
+clashflux_lock_archive(ixwebsocket 12.1.0 ixwebsocket-12.1.0.tar.gz
+    55f3a5d3a1a2c5f19d737c24e6aced28d1200f8f5deb45ecd8e5d46f765b5288 IXWebSocket-12.1.0)
 clashflux_lock_archive(huxerui 0.3.0 huxerui-sdk-0.3.0-linux-x86_64.tar.gz
     5413ccd9d35d0ad50c08c67045d73cb9faff23c04005a554af0faa7a914eb916 huxerui-sdk-0.3.0-linux-x86_64)
 clashflux_lock_archive(openssl 3.5.1 openssl-3.5.1-linux-x86_64.tar.gz
@@ -35,11 +35,11 @@ set(CLASHFLUX_HUXERUI_CAMERA_COMMIT "5d6b8e814e3e5d8c22e63a4e470c2b6c1cd82cd0")
 set(CLASHFLUX_HUXERUI_SQLITE_URL "https://github.com/FarnaHerry/Lib-SQLite.git")
 set(CLASHFLUX_HUXERUI_SQLITE_COMMIT "882665a9772cc973b1cbfb7f491913703da1d636")
 set(CLASHFLUX_HUXERUI_CHARTS_URL "https://github.com/FarnaHerry/Lib-Charts.git")
-set(CLASHFLUX_HUXERUI_CHARTS_COMMIT "a879e96c64499b18f355b88648e1698fb5a25f72")
+set(CLASHFLUX_HUXERUI_CHARTS_COMMIT "2251bab5ad2a5df8e6e133c039e0b76bbe237add")
 set(CLASHFLUX_HUXERUI_CODEEDITOR_URL "https://github.com/FarnaHerry/Lib-CodeEditor.git")
 set(CLASHFLUX_HUXERUI_CODEEDITOR_COMMIT "a332e7c3158818a891bb8181756d439a62df6268")
 set(CLASHFLUX_HUXERUI_MEDIA_URL "https://github.com/HuxerUI/Lib-Media.git")
-set(CLASHFLUX_HUXERUI_MEDIA_COMMIT "01341304bdce46f109cc16d61b717add6dedc101")
+set(CLASHFLUX_HUXERUI_MEDIA_COMMIT "fbe5b7e652f8cb79191444fa2a51d0dd0c2299bb")
 
 function(clashflux_dependency_source name)
     clashflux_extract(${name} "${CLASHFLUX_DEP_${name}_ARCHIVE}"

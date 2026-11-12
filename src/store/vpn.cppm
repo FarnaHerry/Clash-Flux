@@ -13,8 +13,8 @@ module;
 export module clashflux.store.vpn;
 
 import std;
-import clashflux.db;
-import clashflux.persistence;
+import clashflux.model;
+import clashflux.data;
 import clashflux.config;
 import clashflux.core;
 import clashflux.pptp;
@@ -106,7 +106,7 @@ public:
         const auto previous = manager_.policy();
         policy.revision = previous.revision;
         if (previous == policy) { error.clear(); return true; }
-        if (!routing::ValidatePlatformPolicy(policy, coreStore().db().listProfiles(), error)) return false;
+        if (!routing::ValidatePlatformPolicy(policy, clashflux::data::session().listProfiles(), error)) return false;
         if (!singbox::ValidateGlobalRuleSetReferences(coreStore().ruleSetLibrary(), policy.rules, error)) return false;
         if (previous.revision == std::numeric_limits<std::uint64_t>::max()) { error = "计划修订号超出范围"; return false; }
         policy.revision = previous.revision + 1;
@@ -130,12 +130,12 @@ public:
                 if (error.find("回滚失败") != std::string::npos) coreStore().stopCore();
                 return false;
             }
-            coreStore().db().setSetting("vpn.global_policy",
+            clashflux::data::session().setSetting("vpn.global_policy",
                                        detail::EncodePolicy(policy));
             coreStore().invalidateProxyGroupsSnapshot();
             if (!publishRouting(error)) {
                 const auto failure = error;
-                coreStore().db().setSetting("vpn.global_policy",
+                clashflux::data::session().setSetting("vpn.global_policy",
                                            detail::EncodePolicy(previous));
                 std::string rollbackError;
                 const bool restored = manager_.applyPolicy(previous, rollbackError);
@@ -155,7 +155,7 @@ public:
             std::string ignored;
             if (!manager_.applyPolicy(previous, ignored)) coreStore().stopCore();
             try {
-                coreStore().db().setSetting("vpn.global_policy",
+                clashflux::data::session().setSetting("vpn.global_policy",
                                            detail::EncodePolicy(previous));
                 if (!publishRouting(ignored)) coreStore().stopCore();
             } catch (...) { coreStore().stopCore(); }
@@ -262,7 +262,7 @@ public:
     }
 
     // 连接一个 PPTP 订阅。阻塞，UI 必须经 RunOnTaskThread 调用。
-    bool connectPptp(const db::Profile& profile, std::string& error) {
+    bool connectPptp(const model::Profile& profile, std::string& error) {
         ensureLoaded();
         if (profile.type != "pptp") {
             error = "该订阅不是 PPTP 类型";
@@ -563,7 +563,7 @@ private:
     }
 
     void ensureLoaded() {
-        loadOnce_.Run([] { return clashflux::persistence::persistence().ready(); }, [this] {
+        loadOnce_.Run([] { return clashflux::data::session().ready(); }, [this] {
             coreStore().init();
 
             const std::string savedPolicy =
@@ -581,21 +581,21 @@ private:
                 if (!pptp::ParsePptpConfig(legacyConfig, parseError)) return;
 
                 bool alreadyMigrated = false;
-                for (const db::Profile& profile : coreStore().db().listProfiles()) {
+                for (const model::Profile& profile : clashflux::data::session().listProfiles()) {
                     if (profile.type == "pptp") {
                         alreadyMigrated = true;
                         break;
                     }
                 }
                 if (!alreadyMigrated) {
-                    db::Profile profile;
+                    model::Profile profile;
                     profile.name = "PPTP 内网";
                     profile.type = "pptp";
                     profile.nativeConfig = legacyConfig;
                     profile.nativeRoutes =
                         coreStore().setting("vpn.pptp.routes", "");
                     try {
-                        coreStore().db().saveProfile(profile);
+                        clashflux::data::session().saveProfile(profile);
                         coreStore().setSetting("vpn.pptp.config", "");
                         coreStore().setSetting("vpn.pptp.routes", "");
                     } catch (...) {
@@ -606,7 +606,7 @@ private:
         });
     }
 
-    clashflux::persistence::HydratedOnce loadOnce_;
+    clashflux::data::HydratedOnce loadOnce_;
     mutable std::mutex mutex_;
     std::mutex operationMutex_;
     vpn::EngineAdapter adapter_;

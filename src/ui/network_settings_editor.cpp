@@ -11,7 +11,7 @@
 #include "ui.h"
 #include "task_bridge.h"
 import clashflux.core;
-import clashflux.db;
+import clashflux.model;
 import clashflux.store.core;
 #include "core_model.h"
 #include "core_control.h"
@@ -303,8 +303,8 @@ huxerui::View AdvancedSwitch(huxerui::State<NetworkForm> form, bool AdvancedNetw
       AdvancedSwitch(form, &AdvancedNetwork::override_route_sets, Localized("覆盖规则集接管"),
           Localized("仅提取全局资源中的目标 IP 网段；域名条件不参与系统路由")),
       form.Get().extra.override_route_sets ? SettingsContentRow(huxerui::Column {
-        huxerui::ScrollView(huxerui::Column(std::move(choices)).With(huxerui::Spacing(12.0F)))
-            .With(huxerui::Frame{.max_height = 220.0F}, huxerui::ScrollBar()),
+        PageScrollView(huxerui::Column(std::move(choices)).With(huxerui::Spacing(12.0F)))
+            .With(huxerui::Frame{.max_height = 220.0F}),
         huxerui::Text(Localized("可在设置的外部资源页面添加或管理规则集。")),
       }.With(huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))) : huxerui::View{},
     }.With(huxerui::Spacing(0.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -339,7 +339,7 @@ std::vector<NetworkApplication> ReadNetworkApplications() {
     const auto chosen = clashflux::network::Lines(form.Get().fields.at("packages").text);
     const auto mode = form.Get().value.package_mode;
     const bool custom = mode == "include" || mode == "exclude";
-    const huxerui::View list = huxerui::VirtualList(apps.Get().size(), [=](std::size_t index) {
+    const huxerui::View list = ScrollArea(huxerui::VirtualList(apps.Get().size(), [=](std::size_t index) {
         const auto item = apps.Get()[index];
         const bool selected = std::find(chosen.begin(), chosen.end(), item.package) != chosen.end();
         return huxerui::Checkbox(item.label + " (" + item.package + ")", selected)
@@ -353,7 +353,7 @@ std::vector<NetworkApplication> ReadNetworkApplications() {
                     next.fields.at("packages") = huxerui::TextEditingValue::FromText(text);
                 });
             }).With(huxerui::Frame{.min_height = 48.0F}).Key(item.package);
-    }).EstimatedItemExtent(48.0F).With(huxerui::Frame{.height = 240.0F});
+    }).EstimatedItemExtent(48.0F)).With(huxerui::Frame{.height = 240.0F});
     return huxerui::Column {
       NetworkChoice(form, &Network::package_mode, Localized("应用接管方式"), {
           {"", Localized("应用：跟随配置")}, {"all", Localized("全部应用")},
@@ -559,9 +559,8 @@ huxerui::View NetworkAccess(huxerui::State<NetworkForm> form) {
     std::shared_ptr<PageScrollOffset> offset, bool fullPage) {
     const auto controller = huxerui::UseScrollController(offset->value);
     const float inset = PageScrollInset(huxerui::UseTheme());
-    return huxerui::ScrollView(PageScrollContent(content, inset, fullPage ? inset : 2.0F))
-        .Controller(controller)
-        .With(RememberPageScroll{offset}, huxerui::Grow(1.0F), huxerui::ScrollBar());
+    return ScrollArea(huxerui::ScrollView(PageScrollContent(content, inset))
+        .With(RememberPageScroll{offset}), controller, offset, fullPage ? inset : 2.0F).With(huxerui::Grow(1.0F));
 }
 
 struct NetworkSaveResult { std::string error; Network value; CoreView core; };
@@ -693,7 +692,7 @@ struct NetworkSaveResult { std::string error; Network value; CoreView core; };
         };
         return SecondaryPageScaffold(huxerui::Text(title, huxerui::TextRole::Title),
             FormHeaderAction(app::images::save, Localized("保存"), commit, valid, busy)
-                .With(saveMenu.Anchor()).Key("network-save"),
+                .With(saveMenu.Target()).Key("network-save"),
             FormPageContent(content), close, false, true, true);
     }
     return DialogScaffold(DialogHeader(title), content, actions, DialogSize::Large, true)

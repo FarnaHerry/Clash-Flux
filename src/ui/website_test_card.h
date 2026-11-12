@@ -45,7 +45,7 @@ inline huxerui::View WebsiteTestCardContent(
                 .With(huxerui::Tooltip(testLabel)).OnClick(toggle)
                 .Key("website-test-" + std::to_string(site.id)),
             huxerui::IconButton(app::images::more_vertical, Localized("更多操作"))
-                .With(menu.Anchor(), huxerui::Tooltip(Localized("更多操作")))
+                .With(menu.Target(), huxerui::Tooltip(Localized("更多操作")))
                 .OnClick([menu, edit, confirmDelete] {
                     menu.Show({
                         ActionMenuItem(app::images::edit, Localized("编辑网站"), edit),

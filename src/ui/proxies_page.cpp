@@ -760,7 +760,7 @@ std::function<void()> NodeSelectAction(
                  .Key("group-page-" + rootGroup.name));
             continue;
         }
-        huxerui::View grid = PageVirtualGrid(
+        huxerui::View grid = ScrollArea(PageVirtualGrid(
                                  nodeCount,
                                  [groups, visibleNodes = std::move(visibleNodes),
                                   detailLimit,
@@ -812,9 +812,8 @@ std::function<void()> NodeSelectAction(
                                  // 自适应高度（字体缩放、系统字号变化都会改高度），
                                  // 写死精确行高会在这些情况下裁切/错位。
                                  .EstimatedRowExtent(52.0F)
-                                 .ColumnSpacing(kSectionCardSpacing)
-                                 .With(huxerui::Grow(1.0F),
-                                       huxerui::ScrollBar())
+                                 .ColumnSpacing(kSectionCardSpacing))
+                                 .With(huxerui::Grow(1.0F))
                                  .Key("group-grid-" + rootGroup.name);
         groupPages.push_back(huxerui::Column {grid}.With(
             huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))

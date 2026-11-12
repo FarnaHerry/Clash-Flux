@@ -26,6 +26,9 @@ namespace api {
 // 同一文件系统提交临时文件；Windows 覆盖不先删除旧目标。
 export bool CommitFile(const std::filesystem::path& temp, const std::filesystem::path& dest,
                        std::string& error);
+// Sync a completed immutable version and its parent before committing a DB pointer.
+export bool SyncFile(const std::filesystem::path& file, std::string& error);
+
 
 export struct DownloadMetrics {
     bool transportKnown = false;

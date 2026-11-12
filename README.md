@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.101 发布说明](docs/releases/v0.3.101.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.102 发布说明](docs/releases/v0.3.102.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -25,6 +25,7 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 - 桌面外层使用分隔线，页内保留卡片；页名和顶部动作位于自定义标题栏，动作排列在窗口控件左侧。
   手机保留现有页面布局。
   窄屏编辑/添加表单的保存与新增位于标题栏右上角图标，键盘弹出时不再抬起底部提交按钮。
+  正文使用对称水平边距：宽屏滚动条位于右侧边距内，并避开 Linux 窗口拉伸热区；窄屏隐藏，页面不再重复叠加外部留白。鼠标悬停可滚动正文时，对应滚动条以主题主色高亮。
   界面约定见 [UI 开发约定](docs/ui-development.md)。
 - 订阅与代理配置管理：条目右键菜单 / 双击切换 / 刷新、URL 导入 /
   更新 / 启用 / 删除 / 规则编辑，本地落盘；支持 Clash YAML、sing-box 原生 JSON、OpenVPN .ovpn 和 VMess JSON 节点订阅（明文列表或 Base64）。卡片右键支持单张二维码和携带完整配置的 QiFi/QRS 多帧二维码分享；节点列表的转换和限制见[节点订阅](docs/node-subscriptions.md)。
@@ -212,6 +213,7 @@ ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-require
 ```
 
 普通开发配置该选项默认关闭；Android/iOS 不适用此桌面测试清单。
+资源管理回归多次调用真实 CLI 验证写入、刷新和失败保留；Linux 会在尝试创建窗口前使测试失败，避免闪窗抢焦点。
 
 `run.sh` 默认只启动仓库 `build/clash-flux` 中已编译的程序，不负责隐式编译；
 因此构建失败时不得把改动标记为已完成。若使用其他构建目录，需显式设置
@@ -251,6 +253,10 @@ Secrets；APK 同时包含 v1（JAR）和 v2 签名，CI 会分别校验两种�
 本地 Debug 构建使用开发用 debug 签名；Release 打包缺少长期发布密钥时必须失败，不会回退到 debug 签名。
 
 ## 架构与保真度契约
+
+新订阅先保存原文，连接资源在后台准备；卡片显示准备状态并支持重试。CLI 使用 `profile prepare <id>` 显式准备，`profile import` 成功只表示文档已保存。
+
+存储分层、订阅版本文件提交与重构进度见[存储架构](docs/storage-architecture.md)。
 
 内核贴 sing-box、输入贴 Clash 生态、产品层用 Clash 的词汇只暴露内核真有的能力：Clash
 YAML、sing-box 原生 JSON 与原生连接（PPTP、OpenVPN）统一由内置编译器翻译，每条映射按

@@ -162,3 +162,10 @@ Linux/macOS 使用 `./gradlew` 和相同任务名。`RuntimeStartPolicyTest` 覆
 停止/取消拒绝旧启动、无 TUN 请求权限与 inbound 过滤策略；`RuntimeModeReconcilerTest` 覆盖模式恢复
 与回调确认；`VpnUptimeTest` 覆盖后台会话时钟。它们不代替 Java/NDK/APK 构建，也不代替真机的划走后
 重开、显式停止、授权撤回、通知/系统 VPN 图标与 sticky 恢复验收。
+
+## 新导入的资源准备（2026-11-11）
+
+UI 进程完整保存订阅文档后先发布卡片，应用任务域继续准备 provider/ASN；后台 libbox 仍只
+消费已提交的运行配置，不读 SQLite，也不因导入或准备成功自动启动代理。准备失败保留来源。
+大于 8 MiB 的资源请求预算 120 秒且只尝试一次；小资源维持原重试，平台透明 gzip 的
+解压后正文仍受大小上限约束。Java/native 需同源构建，实际网络和 VPN 时延仍需真机验证。

@@ -5,26 +5,26 @@ description: 修改 Clash-Flux 持久化、数据库迁移、订阅导入刷新�
 
 # 持久化与订阅保护
 
-修改前检查 `src/persistence*`、`src/sqlite_schema.*` 与实际调用路径；本文保存数据安全契约，平台数据所有权另见 [平台技能](../clashflux-platform/SKILL.md)。
+修改前检查 `src/data_session.*`、`src/sqlite_schema.*` 与实际调用路径；本文保存数据安全契约，平台数据所有权另见 [平台技能](../clashflux-platform/SKILL.md)。
 
 ## 数据与迁移
 
-- settings/profiles 使用 `clashflux.persistence` 的内存缓存 + 异步 SQLite ORM 落库；`clashflux.db` 只是同步接口转发门面，新代码直接依赖 persistence。
+- 唯一数据会话为 `clashflux.data::DataSession`，与 CoreStore 独立，直接用 `session()`；Db 转发层已删除。新订阅内容/元数据命令等待 commitProfile 确认，兼容 KV/选择/删除仍走版本 flush；边界与后续目标见[存储架构](../../docs/storage-architecture.md)。
 - 数据库记录和 profile 文件共同构成订阅。升级、启动、导入、刷新、候选失败都不得清空、重建或“修复性”删除数据；CI 失败不能通过删除数据库或订阅目录恢复。
 - 老库 user_version=0 通过 0→1 事务重建表并复制全部数据；schema 再改须升版本并追加 Migration 链。失败明确终止启动并保留原库，不退回空内存缓存。
 - hydrate 完成前不将空缓存当“没有订阅”写回。内容修订号必须涵盖 hydrate，显式 RequestSync 仍强制拉取；运行期设置从 SettingsModel 读取。
-- 从 settings 初始化的一次性缓存必须等待 Persistence ready；未就绪或解码失败保留重试机会，不能消费 once 标记。全局规则的实际存储与加载契约见[订阅编排](../../docs/desktop-subscription-orchestration.md#当前-sqlite-存储与加载)。
+- 从 settings 初始化的一次性缓存必须等待 DataSession ready；未就绪或解码失败保留重试机会，不能消费 once 标记。全局规则的实际存储与加载契约见[订阅编排](../../docs/desktop-subscription-orchestration.md#当前-sqlite-存储与加载)。
 
 ## 原子文件与删除
 
-- 刷新/编辑先写独占临时文件、完成解析与候选检查，成功后原子替换；失败保留旧文件、数据库引用与活动配置。通用下载先关闭并检查写入，再执行 DownloadOptions.validate；临时目录用 RAII，Windows 覆盖不得先删旧文件。
-- 用户删除由 persistence 在删除事务提交后，核对持久化与当前缓存的全部引用，再在任务线程清理；只响应明确删除的那个 ID，不启动扫描或按文件异常批量删元数据。
+- 刷新/编辑先写独占临时文件、完成解析与候选检查，rename 到独立版本并同步后，再事务切换数据库引用；旧文件保留。新导入不发布半成品行；准备版本（含 ABA）不匹配时拒绝提交。失败保留旧文件、数据库引用与活动配置。通用下载先关闭并检查写入，再执行 DownloadOptions.validate；临时目录用 RAII，Windows 覆盖不得先删旧文件。
+- 用户删除由 DataSession 在删除事务提交后，核对持久化与当前缓存的全部引用，再在任务线程清理；只响应明确删除的那个 ID，不启动扫描或按文件异常批量删元数据。
 - 仅使用 open 显式传入的文件根；未配置根、越界、无法确认安全或仍被任何订阅引用的文件保留，不扫描补删。
-- 本地首次导入可先存为未参与来源，启用时检查；不能借此绕过刷新/编辑的候选检查。Android 完整配置检查由后台 libbox 执行，不能宣称有桌面 CLI 预检查。
+- 新导入完整下载并解析原文后先提交未参与来源，资源在应用任务域准备，UI 明确区分已保存/准备中/就绪/失败；失败保留已存原文与 ID。不能借此绕过刷新/编辑已有来源的候选检查。Android 完整配置检查由后台 libbox 执行，不能宣称有桌面 CLI 预检查。
 
 ## 异步一致性与进程
 
-- 同类 flush 串行，按 key/ID 的写入版本确认；await 后不得无条件清脏（包括 ABA），失败保留待写版本。
+- commitProfile 与兼容 flush 共用串行门，旧快照不能覆盖已确认的新文件引用；工作线程适配器不得在 UI 线程调用。同类 flush 串行，按 key/ID 的写入版本确认；await 后不得无条件清脏（包括 ABA），失败保留待写版本。
 - 日志不进库：应用和内核推送共用 core/logs.log，不迁移旧分离日志；内核 stdout/stderr 诊断文件继续保留。
 - 需要数据库的 CLI 必须在应用 Runtime 内通过 setPendingCommand → cli::run → flush → 退出执行，不能在 Runtime 外直读写持久化。
 - GUI/CLI 先 acquireOrActivate；非 owner CLI 通过 tryForwardCommand 转发，owner 用 servePendingCommands 执行并回传输出/退出码，不能出现第二份 Runtime、托盘或缓存。

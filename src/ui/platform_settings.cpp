@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "ui.h"
+#include "settings_value.h"
 #include "app_resources.h"
 #include "task_bridge.h"
 #include "settings_group_layout.h"
@@ -205,6 +206,8 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
     FluxToastHandle toast) {
     const auto model = huxerui::UseService<CoreModel>();
     const auto serviceTasks = huxerui::UseApplicationTaskScope();
+    if (!model->view.Get().ready)
+        return SettingRow(Localized("内核服务"), "—", SettingsValue(false, {}), app::images::gear);
     return SettingRow(
         Localized("内核服务"),
         service_installed
@@ -257,6 +260,8 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
     FluxToastHandle toast) {
     const auto model = huxerui::UseService<CoreModel>();
     const auto serviceTasks = huxerui::UseApplicationTaskScope();
+    if (!model->view.Get().ready)
+        return SettingRow(Localized("内核服务"), "—", SettingsValue(false, {}), app::images::gear);
     const auto remove = [tasks = serviceTasks, toast, model] {
         if (model->serviceChecking.Get() || model->operations.Busy()) return;
         model->serviceChecking = true;
@@ -342,7 +347,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
         SettingSwitchRow(
             Localized("后台保活"),
             Localized("申请忽略电池优化，防止后台被杀；建议同时在系统设置中允许本应用自启动"),
-            huxerui::Switch(view.ignoringBattery)
+            SettingsValue(view.ready, huxerui::Switch(view.ignoringBattery)
                 .OnChanged([model, toast](bool on) {
                     if (on) {
                         AndroidRequestBackgroundKeepAlive();
@@ -353,7 +358,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                         toast.Show(Localized("请在系统电池设置中关闭本应用的电池优化豁免"));
                     }
                     model->RequestRefresh();
-                }), false, app::images::battery),
+                })), false, app::images::battery),
     }.With(huxerui::Spacing(0.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -381,27 +386,30 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
     std::vector<huxerui::View> rows;
     rows.push_back(SettingSwitchRow(
             Localized("开机自启动"), Localized("登录系统后自动启动 Clash-Flux（桌面端）"),
-            huxerui::Switch(settings.autoStart)
+            SettingsValue(settings.ready, huxerui::Switch(settings.autoStart)
                 .OnChanged([settingsModel](bool on) {
+                    if (!settingsModel->view.Get().ready) return;
                     store::coreStore().setSetting(
                         "app.autostart", on ? "true" : "false");
                     settingsModel->Update(
                         [on](SettingsView& view) { view.autoStart = on; });
-                }), false, app::images::power));
+                })), false, app::images::power));
     // The core always starts ready; this preference only controls traffic listeners.
     rows.push_back(SettingSwitchRow(
             Localized("启动时自动连接"), Localized("内核随应用就绪；启用后自动开放代理端口，并恢复系统代理/TUN 选择"),
-            huxerui::Switch(settings.autoRun)
+            SettingsValue(settings.ready, huxerui::Switch(settings.autoRun)
                 .OnChanged([settingsModel](bool on) {
+                    if (!settingsModel->view.Get().ready) return;
                     store::coreStore().setSetting("app.auto_run",
                                                   on ? "true" : "false");
                     settingsModel->Update(
                         [on](SettingsView& view) { view.autoRun = on; });
-                }), false, app::images::play));
+                })), false, app::images::play));
     rows.push_back(SettingSwitchRow(
             Localized("启用托盘"), Localized("启用后关闭窗口隐藏到托盘；停用后关闭窗口询问是否退出"),
-            huxerui::Switch(settings.trayEnabled)
+            SettingsValue(settings.ready, huxerui::Switch(settings.trayEnabled)
                 .OnChanged([settingsModel](bool on) {
+                    if (!settingsModel->view.Get().ready) return;
                     store::coreStore().setSetting("tray.enabled",
                                                   on ? "true" : "false");
                     const bool startMinimized = on &&
@@ -410,28 +418,30 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                         view.trayEnabled = on;
                         view.startMinimized = startMinimized;
                     });
-                }), false, app::images::tray));
-    if (settings.trayEnabled) {
+                })), false, app::images::tray));
+    if (!settings.ready || settings.trayEnabled) {
         rows.push_back(SettingSwitchRow(
             Localized("启动时隐藏到托盘"),
             Localized("下次启动不显示主窗口，经托盘唤出"),
-            huxerui::Switch(settings.startMinimized)
+            SettingsValue(settings.ready, huxerui::Switch(settings.startMinimized)
                 .OnChanged([settingsModel](bool on) {
+                    if (!settingsModel->view.Get().ready) return;
                     store::coreStore().setSetting(
                         "tray.start_minimized", on ? "true" : "false");
                     settingsModel->Update([on](SettingsView& view) {
                         view.startMinimized = view.trayEnabled && on;
                     });
-                }), false, app::images::visibility_off));
+                })), false, app::images::visibility_off));
         rows.push_back(SettingSwitchRow(
             Localized("轻量级托盘模式"),
             Localized("隐藏到托盘时销毁主窗口和界面，唤出时重新创建"),
-            huxerui::Switch(settings.lightweightTray)
+            SettingsValue(settings.ready, huxerui::Switch(settings.lightweightTray)
                 .OnChanged([settingsModel](bool on) {
+                    if (!settingsModel->view.Get().ready) return;
                     store::coreStore().setSetting("tray.lightweight", on ? "true" : "false");
                     settingsModel->Update(
                         [on](SettingsView& view) { view.lightweightTray = on; });
-                }), false, app::images::tray));
+                })), false, app::images::tray));
     }
     return huxerui::Column(std::move(rows)).With(
         huxerui::Spacing(0.0F),
@@ -469,15 +479,17 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                     })
                     .With(huxerui::Frame{.width = 220.0F},
                           huxerui::Enabled(settings.ready));
+    shellSelect = SettingsValue(settings.ready, std::move(shellSelect));
     huxerui::View copyAction = huxerui::IconButton(app::images::copy, Localized("复制"))
                     .With(huxerui::Tooltip(Localized("复制环境变量命令")),
                           huxerui::Frame{.width = 32.0F, .height = 32.0F},
-                          huxerui::Enabled(settings.ready))
+                          huxerui::Enabled(settings.ready && coreModel->view.Get().ready))
                     .OnClick(
                         [clipboard, toast, settingsModel, detectedShell, coreModel] {
                             const SettingsView current = settingsModel->view.Get();
                             if (!current.ready) return;
                             const CoreView runtime = coreModel->view.Get();
+                            if (!runtime.ready) return;
                             const int port = runtime.ProxyActive()
                                 ? runtime.core.mixedPort : std::atoi(current.mixedPort.c_str());
                             const std::string command = ProxyEnvironmentCommand(
@@ -528,9 +540,9 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                                                    : view.core.version;
     return huxerui::Column {
         SettingRow(Localized("内核"), version,
-            huxerui::Button(Localized("重启"))
-                .With(huxerui::Enabled(running && !control.Busy()))
-                .OnClick([control] { control.Run({.action = CoreAction::Restart}); }),
+            SettingsValue(view.ready, huxerui::Button(Localized("重启"))
+                .With(huxerui::Enabled(view.ready && running && !control.Busy()))
+                .OnClick([control] { control.Run({.action = CoreAction::Restart}); })),
             app::images::bolt),
         CLASHFLUX_DESKTOP_SERVICE_ROW(view.serviceInstalled, tasks, toast),
     }.With(huxerui::Spacing(0.0F),

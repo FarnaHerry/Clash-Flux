@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.101 release notes](docs/releases/v0.3.101.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.102 release notes](docs/releases/v0.3.102.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -43,7 +43,7 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
 - Desktop uses separators for its outer layout and cards inside pages. Page names and actions
   share the custom title bar, with actions before the window controls. Mobile keeps its existing
   layout. Compact edit/add forms use a top-right save/add icon, so the keyboard no longer lifts a bottom submit button;
-  see [UI conventions](docs/ui-development.md).
+  see [UI conventions](docs/ui-development.md). Body content uses equal horizontal margins: wide views place the scrollbar inside the right margin and clear the Linux window resize band, while compact views hide it without adding duplicate outer padding. Hovering scrollable content highlights its scrollbar in the theme primary color.
 - Subscription and profile management: entries with context menus, double-click
   activation and refresh actions; URL import, update, activation, deletion and rule
   editing; local storage; Clash YAML, native sing-box JSON, OpenVPN .ovpn, and VMess JSON node subscriptions (plain lists or Base64). Card menus share a single-frame QR or the complete config as a QiFi/QRS multi-frame QR sequence. See [node subscriptions](docs/node-subscriptions.md) for conversion and limits.
@@ -294,6 +294,8 @@ ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-require
 ```
 
 The option defaults to OFF for development and does not apply to Android/iOS builds.
+The resource regression invokes the real CLI to check writes, refreshes and failure retention;
+on Linux, a test guard fails before native window creation to prevent flashing or focus stealing.
 
 By default, `run.sh` starts the existing `build/clash-flux` executable and does not
 build it implicitly. A failed build must not be reported as complete. For another
@@ -341,6 +343,10 @@ CI verifies each scheme and the official certificate fingerprint. Local Debug bu
 Release packaging fails without the long-term release key and never falls back to debug signing.
 
 ## Architecture and configuration fidelity
+
+New subscriptions save their source first, then prepare connection resources in the background with visible status and retry. CLI users can run `profile prepare <id>`; successful `profile import` confirms source storage.
+
+See [storage architecture](docs/storage-architecture.md) for the independent data session, versioned subscription commits, and remaining migration work.
 
 The core follows sing-box, input follows the Clash ecosystem, and the product uses
 Clash terminology while exposing capabilities the core actually provides. The

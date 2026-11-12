@@ -2,6 +2,7 @@
 // snapshots remain immutable and no provider/user file is deleted or repaired.
 export module clashflux.rule_provider_cache;
 import std;
+import clashflux.provider_resources;
 import clashflux.singbox;
 import clashflux.proxy_provider_cache;
 
@@ -28,6 +29,7 @@ export struct Operations {
     // Callbacks are invoked concurrently only when explicitly opted in. All
     // workers finish before check/commit or staging-directory destruction.
     unsigned maxConcurrentFetches = 1;
+    std::filesystem::path retainedDirectory;
     std::function<FetchResult(const singbox::HttpRuleProviderResource&, const std::filesystem::path&,
                              const singbox::HttpCacheValidators&)> revalidate;
     std::function<bool(const singbox::HttpRuleProviderResource&, const std::filesystem::path&,
@@ -114,6 +116,9 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
         std::vector<std::string> warnings;
         proxy_provider_cache::Operations proxyOperations;
         proxyOperations.maxConcurrentFetches = operations.maxConcurrentFetches;
+        if (!operations.retainedDirectory.empty())
+            proxyOperations.retainedDirectory = std::filesystem::path(candidate.proxyProviderCacheDir) / ".downloads";
+        proxyOperations.commit = operations.commit;
         proxyOperations.fetch = operations.fetchProxy;
         proxy_provider_cache::Preparation proxyPreparation;
         const bool proxiesReady = proxy_provider_cache::Prepare(candidate, proxyOperations, result,
@@ -216,6 +221,16 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                     const auto stamp = std::filesystem::last_write_time(destination, stampError);
                     stale = stampError || decltype(stamp)::clock::now() - stamp >= std::chrono::seconds(resource.intervalSeconds);
                 }
+                if (stale && !forced && provider_resources::FreshDownloaded(operations.retainedDirectory,
+                        resource.cacheKey, resource.intervalSeconds)) {
+                    singbox::HttpCacheValidators retainedValidators;
+                    auto retained = singbox::ReadHttpRuleProviderCache(resource, operations.retainedDirectory, reason, &retainedValidators);
+                    if (retained && validate(*retained, reason)) {
+                        inputChanged = !alreadyCompiled || !content || *retained != *content;
+                        content = std::move(retained); validators = std::move(retainedValidators);
+                        usable = true; changed = true; stale = false;
+                    }
+                }
                 item.cacheHit = usable && !stale;
                 if (stale) {
                     const auto payload = stage.path / (resource.cacheKey + ".download");
@@ -248,6 +263,10 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                         inputChanged = !alreadyCompiled || *downloaded != *content;
                         content = std::move(downloaded); usable = true; changed = true;
                         validators = std::move(response.validators);
+                        if (!operations.retainedDirectory.empty())
+                            provider_resources::RememberDownloaded(operations.retainedDirectory,
+                                stage.path / (resource.cacheKey + ".retained-rule"), resource.cacheKey,
+                                singbox::HttpRuleProviderCacheImage(resource, *content, validators), operations.commit);
                     } else if (usable && !forced) {
                         item.staleFallback = true;
                         item.warning = "HTTP 规则集「" + resource.name + "」刷新失败，沿用已验证缓存/种子：" + reason;

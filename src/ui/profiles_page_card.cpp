@@ -19,7 +19,7 @@
 #include "subscription_expiry.h"
 
 import clashflux.core;
-import clashflux.db;
+import clashflux.model;
 import clashflux.pptp;
 import clashflux.store.core;
 import clashflux.store.profiles;
@@ -36,17 +36,17 @@ namespace clashflux::ui {
 namespace {
 
 std::optional<std::int64_t> CurrentSelectedProfile(
-    huxerui::StateList<db::Profile> profiles) {
-    for (const db::Profile& profile : profiles) {
+    huxerui::StateList<model::Profile> profiles) {
+    for (const model::Profile& profile : profiles) {
         if (profile.selected) return profile.id;
     }
     return std::nullopt;
 }
 
-void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
+void SetSelectedProfile(huxerui::StateList<model::Profile> profiles,
                         std::optional<std::int64_t> selectedId) {
     for (std::size_t index = 0; index < profiles.Size(); ++index) {
-        db::Profile profile = profiles[index];
+        model::Profile profile = profiles[index];
         const bool selected = selectedId.has_value() &&
                               profile.id == selectedId.value();
         if (profile.selected == selected) continue;
@@ -55,7 +55,7 @@ void SetSelectedProfile(huxerui::StateList<db::Profile> profiles,
     }
 }
 
-bool HasKnownExhaustedQuota(const db::Profile& profile) {
+bool HasKnownExhaustedQuota(const model::Profile& profile) {
     return profile.type != "pptp" && profile.totalBytes > 0 &&
            profile.usedBytes >= profile.totalBytes;
 }
@@ -67,7 +67,7 @@ void ShowKnownExhaustedQuota(FluxToastHandle toast,
                huxerui::ToastOptions{6.0});
 }
 
-huxerui::StringVariant CompactProfileStatus(const db::Profile& profile, bool participating) {
+huxerui::StringVariant CompactProfileStatus(const model::Profile& profile, bool participating) {
     return profile.selected ? Localized("主订阅")
         : participating ? Localized("按规则") : Localized("未参与");
 }
@@ -80,7 +80,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
 }
 
 [[huxerui::composable]] huxerui::View CompactProfileQuota(
-    const db::Profile& profile, huxerui::Color muted) {
+    const model::Profile& profile, huxerui::Color muted) {
     const bool hasTraffic = profile.usedBytes > 0 || profile.totalBytes > 0;
     const std::string traffic = !hasTraffic ? "" : huxerui::UseString(profile.totalBytes > 0
         ? LocalizedFormat("{} / {}", formatBytes(profile.usedBytes), formatBytes(profile.totalBytes))
@@ -91,7 +91,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
 }
 
 [[huxerui::composable]] huxerui::View ProfileDragPreview(
-    const db::Profile& profile, bool compact, bool participating, float width) {
+    const model::Profile& profile, bool compact, bool participating, float width) {
     const auto& theme = huxerui::UseTheme();
     const bool nativeVpn = isNativeVpnType(profile.type);
     const auto colors = ResolveSelectableTileColors(theme, profile.selected);
@@ -202,10 +202,10 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
 } // namespace
 
 [[huxerui::composable]] huxerui::View ProfileCard(
-    const db::Profile& profile, bool compact,
+    const model::Profile& profile, bool compact,
     huxerui::TaskScope tasks, FluxToastHandle toast,
     std::shared_ptr<AppHttpClient> http, std::function<void()> reload,
-    huxerui::StateList<db::Profile> profiles,
+    huxerui::StateList<model::Profile> profiles,
     huxerui::State<bool> selectionPending,
     const store::PptpState& pptpState,
     bool connectionPending, bool openingConnection, bool connectionActionsBusy,
@@ -222,7 +222,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto clipboard = huxerui::UseApplication().Clipboard();
     // Each card owns its presentation anchor. Sharing one page-level MenuHandle
-    // across compact cards mounts the same LayerAnchor on multiple Views, which
+    // across compact cards mounts the same anchor on multiple Views, which
     // Android rejects during the next frame with "anchor must be mounted on only
     // one View" when the subscription page contains more than one card.
     auto menu = UseActionMenu();
@@ -249,6 +249,14 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
     // 线程后清除；忙态中图标换成 ProgressCircle 并忽略重复触发，不再用
     // 与真实时长无关的「点击转一圈」装饰动画。
     const bool refreshBusy = profilesModel->Refreshing(id);
+    const bool preparationActive = runtime.state == core::CoreState::Running &&
+        std::ranges::find(runtime.participatingSources, store::ProfileConnectionId(id)) != runtime.participatingSources.end();
+    const auto preparation = profilesModel->Preparation(id);
+    const bool preparing = preparation && preparation->file == profile.file &&
+        preparation->phase == ProfilePreparationPhase::Preparing;
+    const bool preparationFailed = preparation && preparation->file == profile.file &&
+        preparation->phase == ProfilePreparationPhase::Failed;
+
 
     const auto applicationTasks = huxerui::UseApplicationTaskScope();
     auto action = [applicationTasks, toast, reload](std::function<std::string()> job) {
@@ -293,7 +301,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
             } else if (outcome) {
                 const auto& currentProfiles = profilesModel->list.Get();
                 const auto current = std::ranges::find(
-                    currentProfiles, profileId, &db::Profile::id);
+                    currentProfiles, profileId, &model::Profile::id);
                 if (current != currentProfiles.end() &&
                     HasKnownExhaustedQuota(*current)) {
                     ShowKnownExhaustedQuota(toast, current->name);
@@ -389,7 +397,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
                                    homepage = profile.homepage, url = profile.url,
                                    profileType = profile.type,
                                    selected, nativeVpn, editableRules,
-                                   confirmDelete] {
+                                   confirmDelete, applicationTasks, profilesModel, preparing, preparationActive] {
         std::vector<ActionMenuEntry> entries;
         if (!nativeVpn) {
             entries.push_back(ActionMenuItem(app::images::check, Localized("设为主订阅"),
@@ -400,6 +408,11 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
             entries.push_back(ActionMenuItem(app::images::refresh, Localized("更新"), [startRefresh, id] {
                 startRefresh(id);
             }));
+        }
+        if (!nativeVpn) {
+            entries.push_back(ActionMenuItem(app::images::refresh, Localized("准备连接资源"),
+                [applicationTasks, profilesModel, id, toast] { StartProfilePreparation(applicationTasks, profilesModel, id, toast); })
+                .Enabled(!preparing && !preparationActive));
         }
         if (!nativeVpn && !homepage.empty()) {
             entries.push_back(ActionMenuItem(app::images::home, Localized("首页"), [action, homepage] {
@@ -498,7 +511,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
                 .Tint(muted)
                 .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
         }
-                         .With(menu.Anchor(),
+                         .With(menu.Target(),
                                huxerui::Padding(nativeVpn ? 6.0F : 10.0F),
                                huxerui::CornerRadius(islands.nested_radius),
                                huxerui::Tooltip(Localized("更多操作")),
@@ -675,16 +688,20 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
     // 订阅卡复用代理页节点卡的形状原语（SelectableTile）：同一套内边距、圆角、
     // 表面色与选中态（选中 = primary_container 淡染底 + primary 描边 +
     // on_primary_container 文字）。不再自己叠描边或第二层选中背景。
-    const std::string updatedLabel = nativeVpn ? "" : profile.updatedAt > 0
-        ? huxerui::UseString(LocalizedFormat("更新于 {}",
+    const std::string updatedLabel = nativeVpn ? ""
+        : preparing ? huxerui::UseString(Localized("资源准备中"))
+        : preparationFailed ? huxerui::UseString(Localized("资源准备失败，可重试"))
+        : preparation && preparation->file == profile.file && preparation->phase == ProfilePreparationPhase::Ready
+            ? huxerui::UseString(Localized("资源已就绪"))
+        : profile.updatedAt > 0 ? huxerui::UseString(LocalizedFormat("更新于 {}",
             huxerui::UseString(FormatRelativeTime(profile.updatedAt))))
         : huxerui::UseString(Localized("未拉取"));
     huxerui::View cardContent;
     if (compact) {
         huxerui::View busy;
-        if (refreshBusy) busy = huxerui::View{huxerui::ProgressCircle()}.With(
+        if (refreshBusy || preparing) busy = huxerui::View{huxerui::ProgressCircle()}.With(
             huxerui::Frame{.width = 12.0F, .height = 12.0F},
-            huxerui::Tooltip(Localized("更新订阅")),
+            huxerui::Tooltip(preparing ? Localized("资源准备中") : Localized("更新订阅")),
             huxerui::Semantics{.busy = true}).Key("profile-refresh-busy");
         cardContent = CompactProfileCardContent(profile.name,
             nativeVpn ? "" : huxerui::UseString(CompactProfileStatus(profile,
@@ -743,7 +760,9 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
           trafficSection,
           FittedSingleLineLabel(updatedLabel, huxerui::TextStyle{
               huxerui::Font::System(font_size::kCaption), muted})
-              .With(huxerui::Frame{.height = 16.0F}).Key("profile-wide-updated"),
+              .With(huxerui::Frame{.height = 16.0F},
+                    huxerui::Tooltip(preparationFailed ? huxerui::StringVariant{preparation->error} : huxerui::StringVariant{updatedLabel}))
+              .Key("profile-wide-updated"),
         }.With(huxerui::Spacing(4.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
     }.With(huxerui::Spacing(6.0F),
            huxerui::Grow(1.0F),
