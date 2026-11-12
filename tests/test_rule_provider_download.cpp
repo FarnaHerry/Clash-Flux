@@ -1,6 +1,7 @@
 // The Python driver supplies an isolated loopback HTTP(S) server and files.
 #include <cstdlib>
 #include <fstream>
+#include <curl/curl.h>
 
 import std;
 import clashflux.api;
@@ -43,16 +44,26 @@ int testDownloadPool(char** argv) {
     std::cout << "sequential downloads=8 fresh_client_connections=" << coldConnections
               << " pooled_connections=" << connections << '\n';
 
-    const auto compressed = client.downloadToFile(base + "/gzip", root / "compressed", options);
-    require(compressed.ok && readFile(root / "compressed") == "payload: [pool.test]\n",
-            "HTTP gzip must decode before storing the source");
-    const auto preservedCompressed = readFile(root / "compressed");
-    require(!client.downloadToFile(base + "/gzip-large", root / "compressed", options).ok &&
-            readFile(root / "compressed") == preservedCompressed,
-            "decoded size, not compressed transfer size, must enforce maxBytes and retain the old source");
-    require(!client.downloadToFile(base + "/gzip-short", root / "compressed", options).ok &&
-            readFile(root / "compressed") == preservedCompressed,
-            "truncated compressed transfer must retain the old source");
+    // Vendored curl on Windows is built without zlib, so it advertises no
+    // Accept-Encoding and receives identity. Gzip assertions only apply when
+    // the linked curl can actually decode it; both paths must store the source.
+    const bool gzip = (curl_version_info(CURLVERSION_NOW)->features & CURL_VERSION_LIBZ) != 0;
+    if (gzip) {
+        const auto compressed = client.downloadToFile(base + "/gzip", root / "compressed", options);
+        require(compressed.ok && readFile(root / "compressed") == "payload: [pool.test]\n",
+                "HTTP gzip must decode before storing the source");
+        const auto preservedCompressed = readFile(root / "compressed");
+        require(!client.downloadToFile(base + "/gzip-large", root / "compressed", options).ok &&
+                readFile(root / "compressed") == preservedCompressed,
+                "decoded size, not compressed transfer size, must enforce maxBytes and retain the old source");
+        require(!client.downloadToFile(base + "/gzip-short", root / "compressed", options).ok &&
+                readFile(root / "compressed") == preservedCompressed,
+                "truncated compressed transfer must retain the old source");
+    } else {
+        const auto identity = client.downloadToFile(base + "/gzip", root / "compressed", options);
+        require(identity.ok && readFile(root / "compressed") == "payload: [pool.test]\n",
+                "builds without zlib must store the plain identity response");
+    }
 
     options.headers = {{"Authorization", "Bearer pool-A"}};
     require(client.downloadToFile(base + "/token-a", root / "token", options).download.newConnections == 1,

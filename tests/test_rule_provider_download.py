@@ -55,9 +55,10 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
             finally:
                 with self.lock:
                     type(self).active -= 1
-        compressed = self.path in ("/gzip", "/gzip-large", "/gzip-short")
+        # Only advertise/emit gzip when the client actually supports decoding it.
+        compressed = (self.path in ("/gzip", "/gzip-large", "/gzip-short")
+                      and "gzip" in self.headers.get("Accept-Encoding", ""))
         if compressed:
-            assert "gzip" in self.headers.get("Accept-Encoding", "")
             body = gzip.compress(body if self.path != "/gzip-large" else b"X" * 4096)
         self.send_response(status)
         if compressed: self.send_header("Content-Encoding", "gzip")

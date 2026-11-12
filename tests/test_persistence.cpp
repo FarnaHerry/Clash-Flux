@@ -270,7 +270,7 @@ Task<void> DurableProfilePhase(TaskScope tasks) {
     auto next = original.front();
     next.file = "41.new.yaml";
     next.name = "committed version";
-    std::ofstream(fixture.files / next.file) << "new complete source\n";
+    std::ofstream(fixture.files / next.file, std::ios::binary) << "new complete source\n";
     const auto reserved = store.reserveProfileId();
     Check(reserved > 43 && store.listProfiles() == original, "reservation never publishes an incomplete row");
     auto opened = co_await sqlite::Database::OpenAsync(File{fixture.path.string()}, db_schema::openOptions());

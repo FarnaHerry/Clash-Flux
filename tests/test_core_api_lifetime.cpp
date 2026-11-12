@@ -69,10 +69,16 @@ Task<void> CheckPreparation() {
     }
     Require((co_await RunWorker([&] { return core.prepareProfileResources(1); })).ready, "changed cache prepare");
     Require(Reuses() == reuses + 2, "same timestamp and size cannot hide changed dependency bytes");
-    std::ofstream(source) << Read(root / "held-source.yaml");
+    {
+        std::ofstream heldSource(source, std::ios::binary);
+        Require(static_cast<bool>(heldSource), "cannot open held source");
+        heldSource << Read(root / "held-source.yaml");
+    }
     store::ProfilePreparationResult held;
     std::jthread preparing([&] { held = core.prepareProfileResources(1); });
-    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    // Give slower Windows runners room to start the held request; the
+    // cancellation assertion is still the hard deadline.
+    const auto deadline = std::chrono::steady_clock::now() + 15s;
     while (!std::filesystem::exists(root / "provider-held")) {
         Require(std::chrono::steady_clock::now() < deadline, "held provider did not start");
         co_await Delay(5ms);
