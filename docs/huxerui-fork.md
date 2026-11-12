@@ -4,7 +4,7 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `cd66ef310bedbfa1916e535a34f1d608930fe7a8`，各平台 CI 共用
+Clash-Flux 当前固定 `e720ae5f48690e43a5899127ace1b61645c120f4`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
@@ -13,6 +13,12 @@ Media 选择器直接使用官方 [HuxerUI/Lib-Media](https://github.com/HuxerUI
 固定提交 `fbe5b7e652f8cb79191444fa2a51d0dd0c2299bb`，本轮未创建 fork 或修改库源码。
 应用仅在 Android 集成相册图片选择；当前上游整体构建，尚无 picker-only 开关，
 APK 体积比较见[二维码扫描](qr-scanning.md)（0.4.0 已提供 Android 静态链接）。
+
+2026-11-13 修复 macOS/iOS 构建并固定到 [`e720ae5f`](https://github.com/FarnaHerry/HuxerUI/commit/e720ae5f48690e43a5899127ace1b61645c120f4)：
+`cd66ef31` 的 `farna/main` 合并保留了 `std::unique_ptr<AppKitRenderer>` 成员，而上游把
+`AppKitPlatformViews` 构造函数改为 `AppKitRenderer&`，macOS 编译失败；在调用处解引用修复。
+iOS 应用侧把桌面伪 CLI 入口收束为空实现，避免 `RunPendingCommand` 未声明。核心 API 与
+其它平台路径不变，详见[验收记录](l1-l2-l3-status.md)。
 
 2026-11-12 更新到已发布 [`cd66ef31`](https://github.com/FarnaHerry/HuxerUI/commit/cd66ef310bedbfa1916e535a34f1d608930fe7a8)：
 合入官方 `ad28dd34`（fork merge `2f6df692`），平台段落布局在测量与绘制之间复用：

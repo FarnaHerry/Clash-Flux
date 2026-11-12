@@ -9,7 +9,7 @@ nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归�
 归档版本及来源以本项目清单为准。
 
 应用当前的 HuxerUI fork 源码提交与检出命令见 [固定版本](../docs/huxerui-fork.md)；本机独立 checkout、CI 和 Android Java/native 共用该身份，不消费维护工作树。
-当前源码基线为 SDK 0.4.0 之后的上游合并线（`cd66ef31`）；下表 0.3.0 是仍然保留的离线 SDK 归档身份，不是源码版本；0.3.0 离线包不满足当前 0.4.0 构建要求。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
+当前源码基线为 SDK 0.4.0 之后的上游合并线（`e720ae5f`）；下表 0.3.0 是仍然保留的离线 SDK 归档身份，不是源码版本；0.3.0 离线包不满足当前 0.4.0 构建要求。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
 
 ## 清单与来源
 
@@ -42,6 +42,13 @@ Camera、Charts、SQLite、CodeEditor、Media 通过 `huxerui_use_library(URL, C
 4. 重新编译应用并运行必跑回归，包含 `cps_dependencies`、下载 TLS 与持久化。
 
 HuxerUI 与其扩展仍遵守独立 fork 维护、固定提交和 Java/native 同源规则。
+
+## 2026-11-13 HuxerUI 更新（e720ae5f）
+
+应用源码与 CI 固定 `e720ae5f48690e43a5899127ace1b61645c120f4`，在 `cd66ef31` 上修复
+macOS `AppKitPlatformViews` 构造参数与 `unique_ptr<AppKitRenderer>` 不匹配的合并错误。
+核心 API、扩展 pin 与其它平台路径不变。详见 [fork 记录](../docs/huxerui-fork.md) 和
+[验收记录](../docs/l1-l2-l3-status.md)。
 
 ## 2026-11-12 HuxerUI 更新（cd66ef31）
 

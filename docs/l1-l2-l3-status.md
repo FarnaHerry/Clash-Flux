@@ -3,7 +3,7 @@
 ## 2026-11-12：滚动条 hover 高亮与 HuxerUI 追新
 
 - 快照：应用 `865b49ddbd88` 加当前工作区，未提交或发布。HUI 更新到
-  `cd66ef310bedbfa1916e535a34f1d608930fe7a8`（合入官方 `ad28dd34`，fork merge `2f6df692`），
+  `e720ae5f48690e43a5899127ace1b61645c120f4`（在 `cd66ef31` 上修复 macOS AppKit 合并错误；该版合入官方 `ad28dd34`，fork merge `2f6df692`），
   应用 checkout、CI、Android Java/native 共用该 SHA；扩展 pin 不变。
 - `scroll_hover.h` 只用 ViewEvents::Hover 选唯一高亮目标：正文或滚动条槽悬停即显示主题主色滑块，
   离开取消、拖动保持；嵌套时选最深且实际有溢出的 hover 容器，滚动方向与偏移不参与，

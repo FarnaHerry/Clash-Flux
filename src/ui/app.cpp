@@ -74,10 +74,10 @@ namespace {
 #define CLASHFLUX_MAIN_CONTENT DesktopMainContent
 #endif
 
-// 伪 CLI 与单实例命令转发只存在于桌面/CLI 形态：Android 没有 main()，也没有第二
-// 个进程可以转发命令。平台差异在这里一次性收束成同名函数，composable 函数体内
+// 伪 CLI 与单实例命令转发只存在于桌面/CLI 形态：Android/iOS 没有 main()，也没有
+// 第二个进程可以转发命令。平台差异在这里一次性收束成同名函数，composable 函数体内
 // 只调用统一名字（composable 体内不能出现条件编译）。
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
 namespace {
 
 bool CliRuntimeCommandMode() { return false; }
