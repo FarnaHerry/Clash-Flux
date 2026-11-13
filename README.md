@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.107 发布说明](docs/releases/v0.3.107.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.108 发布说明](docs/releases/v0.3.108.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -127,9 +127,10 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 - 支持 C++23 modules / `import std` 的编译器（本机 GCC 16）
 - Ninja（推荐）
 - Linux 源码构建 HuxerUI 需要 GTK ≥4.14、libepoxy ≥1.5 与 libsoup ≥3.0 开发包；
-  缺失时自动回落已安装/离线 0.3.0 SDK
+  缺失时无法回落离线 SDK：0.4.0 离线归档仅含 CLI/宿主工具，不含 fork 专属
+  `create_initial_window` API，配置期守卫会拒绝
 - sing-box 内核由项目自带：configure 期自动下载官方 release（按本机
-  平台/arch，哈希钉死，与 Android libbox 同为 1.14.2），无需手动放置；
+  平台/arch，哈希钉死，与 Android libbox 同为 1.14.4），无需手动放置；
   桌面缓存按版本及资产 SHA256 隔离，升级时不会复用旧版本内核；Android 构建
   核对正式 tag 与固定 revision，并校验 AAR 的版本、ABI 与 SHA256 元数据。
   `-DCLASHFLUX_BUNDLE_SINGBOX=OFF` 可关闭
@@ -407,7 +408,7 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 `main` 保留官方基线；Lib-Camera、Lib-Charts、Lib-SQLite 也从各自 `FarnaHerry` fork 的
 `farna/main` 按固定 SHA 获取，原生构建与 Android 库图共用同一依赖身份。
 本地检出、补丁归属与升级流程见 [HuxerUI fork](docs/huxerui-fork.md)。
-当前源码固定 SDK 0.4.0 之后的 `ecf1646f`，包含官方吸收的 FillViewport、禁用容器控制器滚动与 ScrollToItem 修复；Linux 32 项必跑回归和 Android Java/native 编译通过。新源码 CLI 使用 `--sdk` 选择框架，CI 固定的旧离线 CLI 继续使用 `--source`。离线回落包仍为独立锁定的 0.3.0 SDK，不代表本轮源码验收。
+当前源码固定 `eb190f3d`：farna/main 合入官方 0.4.0 发布基线，包含此前吸收的 FillViewport、禁用容器控制器滚动与 ScrollToItem 修复；源码 CLI 新增已安装 SDK 版本管理。源码 CLI 使用 `--sdk` 选择框架，Android CI 复用锁定的 0.4.0 离线归档中的 CLI 并以 `--sdk` 构建同一 fork 源码。离线回落包为独立锁定的 0.4.0 SDK，仅提供 CLI 与宿主工具，不含 fork 专属 `create_initial_window` 运行时 API，桌面构建使用 fork 源码（配置期守卫校验）。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、

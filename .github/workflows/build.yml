@@ -20,7 +20,7 @@
 #     若未来升级 commit 后出现 hrc 报 "unknown path operation"，即预置落后，
 #     需按 apitab CI 的方式在 job 内从 tools/codegen + tools/resource_compiler
 #     重编宿主工具（参考 apitab build.yml 的 "Build HuxerUI host tools" 步骤）。
-#   * 仓库自带离线 tarball（third_party/tarballs/huxerui-sdk-0.3.0-linux-x86_64）
+#   * 仓库自带离线 tarball（third_party/tarballs/huxerui-sdk-0.4.0-linux-x86_64）
 #     只在源码缺失时兜底，CI 不走它（Linux 桌面 job 装了 gtk4/epoxy/libsoup 开发包，
 #     不会触发回落）；android job 只复用 tarball 里的 huxerui CLI，原生框架与
 #     项目使用同一提交的源码，避免 SDK 头文件与源码 API 漂移。
@@ -78,7 +78,7 @@ env:
   # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
   # CI 必须自行 clone 并钉 commit，保证可复现）。框架补丁集中维护在
   # farna/main；main 保留官方基线。验证集成更新后同步本机 checkout 与此 pin。
-  HUXERUI_COMMIT: 'ecf1646feb38a082962a9ad4eca8a7078422d48f'
+  HUXERUI_COMMIT: 'eb190f3d7e20f29614042aec7bc59fe5143f29f7'
   SINGBOX_COMMIT: 'c005f35300ce76427dc285481ec5695f5b179cd2' # v1.14.4
 
 jobs:
@@ -746,7 +746,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p huxerui-sdk
-          tar -xzf third_party/tarballs/huxerui-sdk-0.3.0-linux-x86_64.tar.gz \
+          echo '86837f3e872fe6716464d1804c10d894957742a6616a8d2977ea93e630799583  third_party/tarballs/huxerui-sdk-0.4.0-linux-x86_64.tar.gz' | sha256sum -c -
+          tar -xzf third_party/tarballs/huxerui-sdk-0.4.0-linux-x86_64.tar.gz \
             -C huxerui-sdk --strip-components=1
           test -x huxerui-sdk/bin/huxerui
           git clone --filter=blob:none "$HUXERUI_REPO" huxerui-source
@@ -783,14 +784,14 @@ jobs:
 
       - name: Build Android package (GUI/native shell + sing-box libbox)
         env:
-          # The pinned offline CLI only orchestrates the build; Java/native come
-          # from --source (HuxerUI 0.4.0). Pass release size options as Gradle
-          # properties because the 0.3 CLI does not expose --optimization/--lto.
+          # The official 0.4.0 SDK supplies the CLI; Java/native are built
+          # together from the pinned fork selected by --sdk. Release size
+          # options remain explicit Gradle properties.
           ORG_GRADLE_PROJECT_huxeruiOptimization: minsize
           ORG_GRADLE_PROJECT_huxeruiLto: 'ON'
         run: |
           set -euo pipefail
-          huxerui build android --source huxerui-source --profile release
+          huxerui build android --sdk huxerui-source --profile release
 
       - name: Stage Android artifact
         run: |

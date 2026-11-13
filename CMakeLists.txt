@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.107 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.108 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -258,6 +258,16 @@ else ()
     endif ()
     find_package(HuxerUI 0.4.0 CONFIG REQUIRED COMPONENTS ${CLASHFLUX_HUXERUI_SDK_COMPONENT}
         PATHS "${HUXERUI_SDK_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+    if (NOT HUXERUI_LIBRARY_GRAPH_ONLY AND NOT ANDROID AND NOT IOS)
+        file(STRINGS "${HUXERUI_SDK_DIR}/include/huxerui/app.h" _clashflux_windowless_api
+            REGEX "bool[ \t]+create_initial_window")
+        if (NOT _clashflux_windowless_api)
+            message(FATAL_ERROR
+                "Clash-Flux requires the HuxerUI fork's create_initial_window API. "
+                "Use the pinned third_party/huxerui source or an SDK built from that fork. "
+                "The official SDK archive supplies host tools, not this fork-only runtime API.")
+        endif ()
+    endif ()
 endif ()
 
 # 平台壳的 HuxerUI 配置钩子（生成格式：platform/<平台>/huxerui.cmake 可选）

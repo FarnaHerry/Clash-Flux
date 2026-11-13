@@ -9,13 +9,13 @@ nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归�
 归档版本及来源以本项目清单为准。
 
 应用当前的 HuxerUI fork 源码提交与检出命令见 [固定版本](../docs/huxerui-fork.md)；本机独立 checkout、CI 和 Android Java/native 共用该身份，不消费维护工作树。
-当前源码基线为 SDK 0.4.0 之后的上游合并线（`ecf1646f`）；下表 0.3.0 是仍然保留的离线 SDK 归档身份，不是源码版本；0.3.0 离线包不满足当前 0.4.0 构建要求。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
+当前源码基线为合入官方 0.4.0 发布基线的 `eb190f3d`；下表 0.4.0 是离线 SDK 归档身份，不是源码版本。官方 0.4.0 归档提供 huxerui CLI、hcg/hrc 宿主工具与官方运行时库，但不含 fork 专属的 `create_initial_window` API，不满足桌面源码构建要求（CMake 配置期守卫会拒绝）。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
 
 ## 清单与来源
 
 | 包 | 版本 | tarball | 来源 |
 |----|------|---------|------|
-| HuxerUI | 0.3.0 | `huxerui-sdk-0.3.0-linux-x86_64.tar.gz` | 由官方 0.3.0 SDK 安装前缀归档（shared 库 + headers + CMake 包 + hcg/hrc + 内置资源）。`HUXERUI_HOME` 可指向 SDK 安装目录或上方固定的源码根目录；未设置时优先 `third_party/huxerui/` 源码，`CLASHFLUX_HUXERUI_FORCE_SDK=ON` 时使用 Linux 离线包。Linux 源码模式需 GTK ≥4.14、libepoxy ≥1.5、libsoup ≥3.0（Fedora：`gtk4-devel libepoxy-devel libsoup3-devel`）；macOS/Windows 不提供离线 SDK 包，使用固定源码或显式提供已安装 SDK。 |
+| HuxerUI | 0.4.0 | `huxerui-sdk-0.4.0-linux-x86_64.tar.gz` | 由官方 0.4.0 SDK 安装前缀归档（huxerui CLI + hcg/hrc 宿主工具 + headers + CMake 包 + 官方 shared/静态库与 Android/Web 平台静态库）。Android CI 复用其中 CLI 并以 `--sdk` 构建固定 fork 源码；归档不含 fork 专属 `create_initial_window` API，桌面构建需 fork 源码（`HUXERUI_HOME` 可指向 SDK 安装目录或上方固定的源码根目录；未设置时优先 `third_party/huxerui/` 源码，`CLASHFLUX_HUXERUI_FORCE_SDK=ON` 时使用 Linux 离线包，配置期守卫校验 fork API）。Linux 源码模式需 GTK ≥4.14、libepoxy ≥1.5、libsoup ≥3.0（Fedora：`gtk4-devel libepoxy-devel libsoup3-devel`）；macOS/Windows 不提供离线 SDK 包，使用固定源码或显式提供已安装 SDK。 |
 | curl | 8.23.0 | `curl-8.23.0.tar.gz` | 上游 `curl/curl` release tarball。用于 sing-box clash_api external-controller REST API 与订阅下载。 |
 | IXWebSocket | 12.1.0 | `ixwebsocket-12.1.0.tar.gz` | 上游 `machinezone/IXWebSocket` v12.1.0（客户端及本机 PAC HTTP 服务端、无 TLS/无 zlib）。用于 sing-box clash_api `/logs` `/traffic` `/connections` `/memory` 推送流（ws:// 回环）。 |
 | SQLite（ORM） | Lib-SQLite fork | 构建期获取，不入 tarball | `FarnaHerry/Lib-SQLite` 的 `farna/main`，固定 `882665a9772cc973b1cbfb7f491913703da1d636`，自带固定 SQLite engine；包含启动只读查询、逐值 UTF-8 校验和主键 schema 校验（仅单列 INTEGER rowid 别名可免显式 NOT NULL）。订阅与设置持久化回归必跑，日志仍写 `core/*.log`。 |
@@ -50,6 +50,19 @@ HuxerUI 与其扩展仍遵守独立 fork 维护、固定提交和 Java/native �
 在当时固定的 HUI `4b444b19` 下 HCG 后编译失败，且未包含 96pt 紧凑绘图区适配。
 应用继续固定 `FarnaHerry/Lib-Charts@2251bab5ad2a5df8e6e133c039e0b76bbe237add`，
 未修改 URL/COMMIT、库源码或平台库图。详见[fork 核对记录](../docs/huxerui-fork.md)。
+
+## 2026-11-13 HuxerUI SDK 归档更新至 0.4.0（源码 pin eb190f3d）
+
+离线 SDK 归档由 0.3.0 升级到官方 0.4.0（`huxerui-sdk-0.4.0-linux-x86_64.tar.gz`，
+SHA256 `86837f3e872fe6716464d1804c10d894957742a6616a8d2977ea93e630799583`，
+Lock.cmake 与 CI 一致校验），0.3.0 归档移除（历史仍可从 git 取回）。
+应用源码与 CI 固定推进到 `eb190f3d7e20f29614042aec7bc59fe5143f29f7`：farna/main
+合入官方 0.4.0 发布基线（`85d65da5`），CLI 新增已安装 SDK 版本管理（`2f079bae`）。
+Android CI 改用归档内 0.4.0 CLI 并以 `--sdk huxerui-source` 与 Java/native 同源构建，
+不再走旧 CLI 的 `--source`。CMake 新增 `create_initial_window` fork API 守卫：
+官方归档 `app.h` 不含该 API（实测），fork 源码 `app.h` 含（`app.h:376`），配置期据此拒绝误用官方包。
+本轮实测归档 SHA256、本机 checkout 与 CI pin 一致；按用户指示未重新编译主目标与必跑回归，
+完成度边界见 [验收记录](../docs/l1-l2-l3-status.md)。
 
 ## 2026-11-13 HuxerUI 更新（ecf1646f）
 

@@ -17,8 +17,8 @@ clashflux_lock_archive(curl 8.23.0 curl-8.23.0.tar.gz
     e3de77cfa6367083c776a26647fc9f633b538c06c3baa73d931a252ac8f72b49 curl-8.23.0)
 clashflux_lock_archive(ixwebsocket 12.1.0 ixwebsocket-12.1.0.tar.gz
     55f3a5d3a1a2c5f19d737c24e6aced28d1200f8f5deb45ecd8e5d46f765b5288 IXWebSocket-12.1.0)
-clashflux_lock_archive(huxerui 0.3.0 huxerui-sdk-0.3.0-linux-x86_64.tar.gz
-    5413ccd9d35d0ad50c08c67045d73cb9faff23c04005a554af0faa7a914eb916 huxerui-sdk-0.3.0-linux-x86_64)
+clashflux_lock_archive(huxerui 0.4.0 huxerui-sdk-0.4.0-linux-x86_64.tar.gz
+    86837f3e872fe6716464d1804c10d894957742a6616a8d2977ea93e630799583 huxerui-sdk-0.4.0-linux-x86_64)
 clashflux_lock_archive(openssl 3.5.1 openssl-3.5.1-linux-x86_64.tar.gz
     d749ee7ec6bda301dba4a67dc7196d4a04b310f664dc360d6ab2e49298b731cf openssl-3.5.1-linux-x86_64)
 set(CLASHFLUX_DEP_JSON_VERSION 3.12.0)

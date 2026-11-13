@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.107 release notes](docs/releases/v0.3.107.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.108 release notes](docs/releases/v0.3.108.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -202,11 +202,13 @@ The project is under development; interfaces and data structures may change.
   machine).
 - Ninja, recommended.
 - Building HuxerUI from source on Linux requires development packages for GTK
-  ≥4.14, libepoxy ≥1.5 and libsoup ≥3.0. If unavailable, the build falls back to the
-  installed or offline 0.3.0 SDK.
+  ≥4.14, libepoxy ≥1.5 and libsoup ≥3.0. There is no offline-SDK fallback for
+  desktop builds: the 0.4.0 offline archive supplies the CLI and host tools only
+  and lacks the fork-only `create_initial_window` API, which a configure-time
+  guard enforces.
 - The project bundles sing-box: configuration automatically downloads the official
   release for the host platform and architecture, with pinned hashes. Desktop and
-  Android libbox both use 1.14.2. No manual installation is needed; disable bundling
+  Android libbox both use 1.14.4. No manual installation is needed; disable bundling
   with `-DCLASHFLUX_BUNDLE_SINGBOX=OFF`. Desktop caches are isolated by version
   and asset SHA256 to prevent reuse of an older core.
 
@@ -558,7 +560,7 @@ Lib-Charts and Lib-SQLite also use pinned commits from their `FarnaHerry` forks'
 `farna/main` branches, with the same URL/COMMIT identities in native builds and the
 Android library graph. See [HuxerUI fork maintenance](docs/huxerui-fork.md) for local
 checkout, patch ownership and upgrade instructions.
-The source is pinned to post-0.4.0 commit `ecf1646f`, including the upstream FillViewport and disabled-container controller scrolling work, plus ScrollToItem alignment fixes. All 32 required Linux regressions and Android Java/native compilation pass. The new source CLI selects the framework with `--sdk`; CI retains `--source` for its pinned older offline CLI. The separately pinned SDK 0.3.0 fallback is outside this source-upgrade validation.
+The source is pinned to `eb190f3d`: `farna/main` merged the official 0.4.0 release baseline, including the previously absorbed FillViewport and disabled-container controller scrolling work plus ScrollToItem alignment fixes, and the source CLI adds installed-SDK version management. The source CLI selects the framework with `--sdk`; the Android CI reuses the CLI from the locked 0.4.0 offline archive and points it at the same pinned fork source with `--sdk`. The offline fallback is the separately locked 0.4.0 SDK archive, which supplies the CLI and host tools only; it lacks the fork-only `create_initial_window` runtime API, so desktop builds use the pinned fork source (checked by a configure-time guard).
 
 Windows packaging with `huxerui package windows` creates a `setup.exe` with an
 installation wizard: Burn bundles an MSI and a HuxerUI installer interface with

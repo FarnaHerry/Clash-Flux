@@ -4,11 +4,12 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `ecf1646feb38a082962a9ad4eca8a7078422d48f`，各平台 CI 共用
+Clash-Flux 当前固定 `eb190f3d7e20f29614042aec7bc59fe5143f29f7`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
-必须来自这同一份源码。新源码 CLI 使用 `--sdk <path>` 选择 SDK 或源码目录；CI 的固定
-0.3.0 离线 CLI 仍用其支持的 `--source` 参数，只承担编排，不提供 Java/native 框架。
+必须来自这同一份源码。源码 CLI 使用 `--sdk <path>` 选择 SDK 或源码目录；CI 的 Android
+job 从锁定的 0.4.0 离线归档取官方 CLI 并以 `--sdk huxerui-source` 指向同一 fork 源码，
+桌面 job 走 HuxerUI 源码通道，不消费离线包的运行时库（不含 fork 专属 `create_initial_window`）。
 
 2026-11-13 更新到已发布 [`ecf1646f`](https://github.com/FarnaHerry/HuxerUI/commit/ecf1646feb38a082962a9ad4eca8a7078422d48f)：
 相对 `4b444b19` 前进 6 个提交，包含官方 `df5f4ba0`。`ScrollView::FillViewport` 与禁用
@@ -20,6 +21,16 @@ Linux 主目标与全部测试目标构建、32 项必跑回归及 Android Java/
 临时目录编译新版 CLI 并验证版本与命令帮助，没有替换本机全局 CLI 或维护工作树。
 CI 继续消费固定 0.3.0 离线 CLI，其 --source 调用保持，具体区别见[Android 构建](android-build.md)。
 原生首页图表视觉与其它平台验证边界见[验收记录](l1-l2-l3-status.md)。
+
+2026-11-13 更新到 [`eb190f3d`](https://github.com/FarnaHerry/HuxerUI/commit/eb190f3d7e20f29614042aec7bc59fe5143f29f7)：
+`farna/main` 合入官方 0.4.0 发布基线（merge `85d65da5`），CLI 新增已安装 SDK 版本管理
+（`2f079bae`），其余为文档提交。应用 checkout、CI pin 与 Android Java/native 固定同一
+SHA；扩展库固定提交保持。离线 SDK 归档同步升级到官方 0.4.0（Lock.cmake 与 CI 校验
+同一 SHA256），Android job 改用归档内 0.4.0 CLI 并以 `--sdk huxerui-source` 构建；
+0.3.0 归档从仓库移除。CMake 配置期新增 `create_initial_window` fork API 守卫，
+实测官方归档 `app.h` 不含该 API、fork 源码含（`app.h:376`）。
+本轮实测归档 SHA256 与 pin/checkout 一致性；按用户指示未重新编译主目标与必跑回归，
+边界见[验收记录](l1-l2-l3-status.md)。
 
 Media 选择器直接使用官方 [HuxerUI/Lib-Media](https://github.com/HuxerUI/Lib-Media)，
 固定提交 `fbe5b7e652f8cb79191444fa2a51d0dd0c2299bb`，本轮未创建 fork 或修改库源码。
@@ -287,7 +298,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout ecf1646feb38a082962a9ad4eca8a7078422d48f
+git -C third_party/huxerui checkout eb190f3d7e20f29614042aec7bc59fe5143f29f7
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`

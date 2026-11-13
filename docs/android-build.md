@@ -22,10 +22,11 @@ huxerui build android --profile debug
 ```
 
 如果 `third_party/huxerui` 存在，Android Java 和 C++ 模块会一起从该源码构建。
-`ecf1646f` 对应的新源码 CLI 使用 `--sdk <path>` 显式选择 SDK 或源码目录；独立 mcpp
+源码 CLI 使用 `--sdk <path>` 显式选择 SDK 或源码目录；独立 mcpp
 前端以 `--project` 选择项目。命令应按实际 CLI 的帮助核对，不能只凭 0.4.0 版本字符串区分。
-CI 仍从锁定的 0.3.0 归档取离线 CLI，只负责构建编排，因此保留它支持的 `--source`；
-Java 和 native 则一起使用指定的新框架源码。不能把新参数直接套给这个旧 CLI。
+CI 从锁定的 0.4.0 归档取官方 CLI（SHA256 校验）并以 `--sdk huxerui-source`
+指向钉住的 fork 源码；Java 和 native 一起从该源码构建。锁定的 0.4.0 归档
+仅承担 CLI 与宿主工具，其运行时库不含 fork 专属 `create_initial_window` API，桌面构建不消费它。
 构建配置会打印 Gradle 实际选中的 Android Java 模块或 AAR 路径，可用于确认没有混用版本。
 
 ## HuxerUI 0.4 工程格式
