@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.106 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.107 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -491,7 +491,8 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     # /wd4737：MSVC 14.51 起把协程的 C4737（无法完成 required tail call）报成
     # 错误；它只是后端优化提示，HuxerUI Task 的对称转移会让部分协程帧命中。
     if (MSVC)
-        target_compile_options(clash-flux PRIVATE /utf-8 /wd4737)
+        # Generated UI/template-heavy TUs can exceed the standard COFF section limit (C1128).
+        target_compile_options(clash-flux PRIVATE /utf-8 /wd4737 /bigobj)
     endif ()
     target_include_directories(clash-flux PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"

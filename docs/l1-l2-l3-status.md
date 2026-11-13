@@ -1,5 +1,17 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-13：修复 v0.3.106 Windows C1128 构建失败
+
+- 失败运行：43446163955，Windows job 131956049234。MSVC 14.51 编译 HCG 生成的
+  rules_page.cpp 时报告 C1128，命令包含 /Gy、/Gw，但没有 /bigobj；UI 测试目标已有
+  此选项，应用主目标遗漏。Windows 安装器及发布任务因此跳过。
+- 为 clash-flux 的 MSVC 目标统一增加 /bigobj，覆盖真实 HCG 输出与普通源文件，
+  保留原优化、协程诊断设置和全部测试门禁。修复规则记录于 C++ 开发文档。
+- 准备 v0.3.107，Android versionCode 185，保留原 v0.3.106 标签；新标签触发实际
+  Windows 编译、测试和安装器发布验证。本机为 Linux，无法把本地构建当作 MSVC 验证。
+- cmake --build build --target clash-flux、./run.sh --version（v0.3.107）与
+  git diff --check 通过；Windows 实际构建与测试仍待新标签的远端 CI 复验。
+
 ## 2026-11-13：HuxerUI 追新已发布的 fork 集成分支
 
 - 应用快照：`e6f400093a4f` 加当前工作区，v0.3.105。远端核对后沿用项目 fork 的
