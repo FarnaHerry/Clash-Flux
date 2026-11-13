@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "ui.h"
-#include "page_layout.h"
 
 namespace clashflux::ui {
 
@@ -17,25 +16,45 @@ inline huxerui::View ActionMenuItemView(huxerui::StringVariant label,
     std::function<void()> action, std::string suffix = {},
     std::optional<bool> checked = {}, bool enabled = true, bool danger = false,
     std::optional<huxerui::ImageVariant> icon = {}) {
-    const auto style = huxerui::UseEnvironment<huxerui::MenuStyle>();
-    const auto foreground = danger ? huxerui::UseTheme().colors.error : style.foreground;
-    huxerui::Semantics semantics{.role = huxerui::SemanticRole::MenuItem, .label = label,
-        .descendants = huxerui::SemanticDescendantPolicy::Exclude};
-    if (checked) semantics.checked = *checked ? huxerui::SemanticCheckedState::Checked
-                                             : huxerui::SemanticCheckedState::Unchecked;
-    std::vector<huxerui::View> content;
-    if (icon) content.push_back(huxerui::Image(*icon).Fit(huxerui::ImageFit::Contain)
-        .Tint(danger ? foreground : style.icon_tint)
-        .With(huxerui::Frame{.width = style.icon_size, .height = style.icon_size}));
-    content.push_back(huxerui::Text(label).Style({huxerui::Font::System(font_size::kBody), foreground})
-            .With(huxerui::Grow(1.0F)));
-    content.push_back(huxerui::Text(std::move(suffix)).Style({huxerui::Font::System(font_size::kBody), foreground}));
-    return huxerui::Row(std::move(content)).With(huxerui::Frame{.min_height = style.minimum_item_height},
-           huxerui::Padding(style.item_padding), huxerui::Spacing(style.item_content_spacing),
-           huxerui::CornerRadius(style.corner_radii), style.item_indication,
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
-           std::move(semantics), huxerui::Focusable(enabled), huxerui::Enabled(enabled))
-        .OnClick(std::move(action));
+    // Own the hover binding inside this scope so callers can still attach
+    // submenu hover actions to the returned View without replacing it.
+    return huxerui::Scope([label, action, suffix, checked, enabled, danger, icon] {
+        const auto style = huxerui::UseEnvironment<huxerui::MenuStyle>();
+        const auto& theme = huxerui::UseTheme();
+        auto hovered = huxerui::UseState(false);
+        const bool animated = enabled && !theme.motion.reduced_motion &&
+            huxerui::UseWindow().LifecycleState() != huxerui::WindowLifecycleState::Background;
+        const bool pulse = animated && hovered.Get();
+        const auto foreground = danger ? theme.colors.error : style.foreground;
+        huxerui::Semantics semantics{.role = huxerui::SemanticRole::MenuItem, .label = label,
+            .descendants = huxerui::SemanticDescendantPolicy::Exclude};
+        if (checked) semantics.checked = *checked ? huxerui::SemanticCheckedState::Checked
+                                                 : huxerui::SemanticCheckedState::Unchecked;
+        std::vector<huxerui::View> content;
+        if (icon) content.push_back(huxerui::Image(*icon).Fit(huxerui::ImageFit::Contain)
+            .Tint(danger ? foreground : style.icon_tint)
+            .With(huxerui::Frame{.width = style.icon_size, .height = style.icon_size},
+                huxerui::Scale(huxerui::AnimateTo(pulse ? 1.12F : 1.0F,
+                    pulse ? huxerui::AnimationSpec{huxerui::TweenSpec{0.12, huxerui::Easing::EaseInOut}}
+                          : huxerui::AnimationSpec{huxerui::SnapSpec{}},
+                    pulse ? huxerui::AnimationPlayback{.iterations = 2, .repeat_mode = huxerui::RepeatMode::Reverse}
+                          : huxerui::AnimationPlayback{}))).Key("action-menu-icon"));
+        content.push_back(huxerui::Text(label).Style({huxerui::Font::System(font_size::kBody), foreground})
+                .With(huxerui::Grow(1.0F)));
+        content.push_back(huxerui::Text(std::move(suffix)).Style({huxerui::Font::System(font_size::kBody), foreground}));
+        auto row = huxerui::Row(std::move(content)).With(huxerui::Frame{.min_height = style.minimum_item_height},
+               huxerui::Padding(style.item_padding), huxerui::Spacing(style.item_content_spacing),
+               huxerui::CornerRadius(style.corner_radii), style.item_indication,
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
+               std::move(semantics), huxerui::Focusable(enabled), huxerui::Enabled(enabled))
+            .OnClick(std::move(action));
+        if (icon && animated) return std::move(row).On<huxerui::ViewEvents::Hover>(
+            [hovered](const huxerui::HoverEvent& event) {
+                if (event.type == huxerui::HoverEventType::Enter) hovered = true;
+                else if (event.type == huxerui::HoverEventType::Leave) hovered = false;
+            });
+        return row;
+    });
 }
 
 inline huxerui::View ActionMenuSurface(std::vector<huxerui::View> items) {
@@ -46,11 +65,11 @@ inline huxerui::View ActionMenuSurface(std::vector<huxerui::View> items) {
     padding.right += breathing;
     padding.bottom += breathing;
     padding.left += breathing;
-    const float horizontal = std::max(padding.left, padding.right);
-    padding.left = padding.right = 0.0F;
-    return PageScrollView(huxerui::Column(std::move(items)).With(
+    // Menus own their padding and natural height, independently of page rails.
+    // Keep overflow reachable in short windows without displaying a scrollbar.
+    return huxerui::ScrollView(huxerui::Column(std::move(items)).With(
         huxerui::Spacing(breathing * 0.5F),
-        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), {}, {}, horizontal).With(
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))).With(
         huxerui::Frame{.width = style.minimum_width}, huxerui::Padding(padding),
         huxerui::Semantics{.role = huxerui::SemanticRole::Menu},
         huxerui::Background(style.background), huxerui::CornerRadius(style.corner_radii),

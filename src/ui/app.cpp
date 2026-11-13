@@ -26,6 +26,7 @@
 #include "app.h"
 #include "responsive_shell.h"
 #include "page_layout.h"
+#include "scroll_area.h"
 #include "app_resources.h"
 #include "interaction_theme.h"
 #include "proxies_model.h"
@@ -194,6 +195,10 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     };
 
     definition.Set(ResolveFluxButtonStyle(spec));
+    auto scrollStyle = ScrollAreaStyle::Default();
+    scrollStyle.up_label = Localized("向上滚动");
+    scrollStyle.down_label = Localized("向下滚动");
+    definition.Set(scrollStyle);
 
     huxerui::SegmentedButtonStyle segments; // Default()：corner_radius=8
     segments.background = spec.colors.surface;
@@ -907,6 +912,14 @@ huxerui::PageTransition SecondaryPageTransition(
     return AboutPage([navigation] { static_cast<void>(navigation.Pop()); })
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
+
+#if !defined(__ANDROID__)
+[[huxerui::composable]] huxerui::View DesktopKernelSettingsRoutePage() {
+    const auto navigation = huxerui::UseNavigation();
+    return DesktopKernelSettingsPage([navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+#endif
 
 #if defined(__ANDROID__)
 // 手机端二级页：由设置页「更多」入口 push 到 NavigationStack，标题栏返回箭头

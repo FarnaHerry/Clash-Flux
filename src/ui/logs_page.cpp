@@ -190,6 +190,8 @@ std::string BreakableLogText(std::string_view text) {
         Localized(entries.Empty() ? "暂无日志" : "没有匹配的日志"), app::images::logs);
     if (!visible.empty()) {
         const std::size_t visibleCount = visible.size();
+        auto insets = ScrollAreaInsets::Dense(compact && !onBack ? kCompactFloatingNavigationInset : 0.0F);
+        insets.top_follows_horizontal = true;
         body = ScrollArea(PageVirtualList(
             visibleCount,
             [entries, visible, theme, compact, visibleCount](std::size_t index) -> huxerui::View {
@@ -213,10 +215,11 @@ std::string BreakableLogText(std::string_view text) {
                     .With(huxerui::Padding(huxerui::EdgeInsets{
                         .bottom = index + 1 == visibleCount ? 0.0F : PageScrollInset(theme, true)}))
                     .Key(std::format("log-{}", sourceIndex));
-            }, PageScrollInset(theme, true), compact && !onBack ? kCompactFloatingNavigationInset : 0.0F)
+            })
             // 密集卡片行高估算：减半内边距（8×2）+ 单行文本 + 底部外边距。
             .EstimatedItemExtent(compact ? 44.0F : 42.0F)
-            .Controller(scroll), scroll).With(huxerui::Grow(1.0F));
+            .Controller(scroll), scroll, {}, {}, insets)
+                .With(huxerui::Grow(1.0F));
     }
     const auto exportText = [filter, logSearch, entries] {
         std::vector<LogEntry> snapshot(entries.begin(), entries.end());

@@ -339,7 +339,7 @@ std::vector<NetworkApplication> ReadNetworkApplications() {
     const auto chosen = clashflux::network::Lines(form.Get().fields.at("packages").text);
     const auto mode = form.Get().value.package_mode;
     const bool custom = mode == "include" || mode == "exclude";
-    const huxerui::View list = ScrollArea(huxerui::VirtualList(apps.Get().size(), [=](std::size_t index) {
+    const huxerui::View list = ScrollArea(PageVirtualList(apps.Get().size(), [=](std::size_t index) {
         const auto item = apps.Get()[index];
         const bool selected = std::find(chosen.begin(), chosen.end(), item.package) != chosen.end();
         return huxerui::Checkbox(item.label + " (" + item.package + ")", selected)
@@ -556,11 +556,10 @@ huxerui::View NetworkAccess(huxerui::State<NetworkForm> form) {
 }
 
 [[huxerui::composable]] huxerui::View NetworkTabContent(huxerui::View content,
-    std::shared_ptr<PageScrollOffset> offset, bool fullPage) {
+    std::shared_ptr<PageScrollOffset> offset) {
     const auto controller = huxerui::UseScrollController(offset->value);
-    const float inset = PageScrollInset(huxerui::UseTheme());
-    return ScrollArea(huxerui::ScrollView(PageScrollContent(content, inset))
-        .With(RememberPageScroll{offset}), controller, offset, fullPage ? inset : 2.0F).With(huxerui::Grow(1.0F));
+    return ScrollArea(huxerui::ScrollView(PageScrollContent(content))
+        .With(RememberPageScroll{offset}), controller, offset).With(huxerui::Grow(1.0F));
 }
 
 struct NetworkSaveResult { std::string error; Network value; CoreView core; };
@@ -651,7 +650,7 @@ struct NetworkSaveResult { std::string error; Network value; CoreView core; };
         pages.push_back(NetworkListeners(form)); pages.push_back(NetworkAccess(form));
     }
     for (std::size_t index = 0; index < pages.size(); ++index)
-        pages[index] = NetworkTabContent(pages[index], scrolls.Get()[index], fullPage)
+        pages[index] = NetworkTabContent(pages[index], scrolls.Get()[index])
             .Key("network-page-" + tabs[index].key);
     const auto select = [selected](std::size_t index) { selected = index; };
     const auto tabBar = SectionTabBar(tabs, tabs[selected.Get()].key, [selected, tabs](const std::string& key) {
@@ -664,17 +663,16 @@ struct NetworkSaveResult { std::string error; Network value; CoreView core; };
     if (!failure.empty()) notices.push_back(huxerui::Text(failure).Style(huxerui::TextStyle{
         huxerui::Font::System(font_size::kCaption), theme.colors.error}));
     if (!settings->view.Get().networkError.empty()) notices.push_back(huxerui::Text(settings->view.Get().networkError));
-    const auto content = huxerui::Column {
+    const auto content = PageBodyRegion(huxerui::Column {
       tabBar,
       notices.empty() ? huxerui::View{} : huxerui::View{huxerui::Column(notices).With(
           huxerui::Spacing(4.0F), huxerui::Padding(huxerui::EdgeInsets::Symmetric(fullPage ? 16.0F : 2.0F, 4.0F)),
           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).Key("network-notices")},
       huxerui::Column {
-        huxerui::ProvideEnvironment(SectionTabContentInsets{2.0F},
-            SectionTabPages(pages, selected.Get(), select, motion)),
+        SectionTabPages(pages, selected.Get(), select, motion),
       }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).Key("network-pager"),
     }.With(huxerui::Grow(1.0F), huxerui::Enabled(!busy),
-        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), fullPage ? PageScrollInset(theme) : 2.0F);
     const auto actions = DialogActions({
       fullPage ? huxerui::View{} : DialogAction(Localized("取消"), close, false, !busy),
       DialogAction(Localized("保存"), [save] { save(false); }, !canApply, valid).Key("network-save"),

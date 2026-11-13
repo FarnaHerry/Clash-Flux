@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "profile_import_task.h"
+#include "profile_update_interval.h"
 #include "qrs_codec.h"
 #include "app_resources.h"
 #include "ui.h"
@@ -58,7 +59,7 @@ struct ProfileFormDialog {
 auto ProfileCreateSnapshot(const ProfileCreateFields& fields) {
     return std::tuple{fields.name.Get().text, fields.url.Get().text, fields.qr_content.Get().text,
         fields.desc.Get().text, fields.timeout.Get().text, fields.interval.Get().text,
-        fields.auto_update.Get(), fields.system_proxy.Get(), fields.core_proxy.Get(), fields.invalid_cert.Get(),
+        fields.system_proxy.Get(), fields.core_proxy.Get(), fields.invalid_cert.Get(),
         fields.pptp_server.Get().text, fields.pptp_username.Get().text, fields.pptp_password.Get().text,
         fields.pptp_timeout.Get().text, fields.pptp_routes.Get().text, fields.pptp_mppe.Get(), fields.picked_path.Get()};
 }
@@ -165,13 +166,13 @@ huxerui::View ProfilePlatformOptions(
 
 #endif
 
-// 订阅选项表单（新建/编辑弹窗共用）：描述 + HTTP 超时/更新间隔 + 自动更新/
+// 订阅选项表单（新建/编辑弹窗共用）：描述 + HTTP 超时/自动更新间隔 +
 // 系统代理/内核代理/无效证书开关。字段值由调用方持有的 State 承载。
 [[huxerui::composable]] huxerui::View ProfileOptionsForm(
     huxerui::State<huxerui::TextEditingValue> desc,
     huxerui::State<huxerui::TextEditingValue> timeout,
     huxerui::State<huxerui::TextEditingValue> interval,
-    huxerui::State<bool> autoUp, huxerui::State<bool> sysProxy,
+    huxerui::State<bool> sysProxy,
     huxerui::State<bool> coreProxy, huxerui::State<bool> invalidCert) {
     return huxerui::Column {
         huxerui::TextField(desc.Get())
@@ -184,15 +185,7 @@ huxerui::View ProfilePlatformOptions(
             .OnChanged([timeout](const huxerui::TextEditingValue& v) {
                 timeout = v;
             }),
-        huxerui::TextField(interval.Get())
-            .Label(Localized("更新间隔（分钟）"))
-            .Variant(huxerui::TextFieldVariant::Outlined)
-            .OnChanged([interval](const huxerui::TextEditingValue& v) {
-                interval = v;
-            }),
-        ToggleRow(Localized("允许自动更新"),
-                  Localized("开启后按更新间隔自动拉新（间隔需 > 0）"), false,
-                  autoUp),
+        ProfileUpdateIntervalField(interval),
         ProfilePlatformOptions(sysProxy, coreProxy, invalidCert),
     }
         .With(huxerui::Spacing(16.0F),
@@ -352,8 +345,10 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
         options.description = fields.desc.Get().text;
         if (!pptp) {
             options.timeoutSecs = parseNumber(fields.timeout.Get(), 60);
-            options.intervalMins = parseNumber(fields.interval.Get(), 0);
-            options.autoUpdate = fields.auto_update.Get();
+            const auto minutes = ParseProfileUpdateInterval(fields.interval.Get().text);
+            if (!minutes) { toast.Show(ProfileUpdateIntervalError()); return; }
+            options.intervalMins = *minutes;
+            options.autoUpdate = *minutes > 0;
             options.useSystemProxy = fields.system_proxy.Get();
             options.useCoreProxy = fields.core_proxy.Get();
             options.allowInvalidCert = fields.invalid_cert.Get();
@@ -395,7 +390,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                                 })}
             : huxerui::View{ProfileOptionsForm(
                   fields.desc, fields.timeout, fields.interval,
-                  fields.auto_update, fields.system_proxy, fields.core_proxy,
+                  fields.system_proxy, fields.core_proxy,
                   fields.invalid_cert)};
 
     huxerui::View formFields = huxerui::Column {
@@ -1034,8 +1029,10 @@ void PushProfileQrScanner(
         options.description = fields.desc.Get().text;
         if (remote) {
             options.timeoutSecs = parseNumber(fields.timeout.Get(), 60);
-            options.intervalMins = parseNumber(fields.interval.Get(), 1440);
-            options.autoUpdate = fields.auto_update.Get();
+            const auto minutes = ParseProfileUpdateInterval(fields.interval.Get().text);
+            if (!minutes) { toast.Show(ProfileUpdateIntervalError()); return; }
+            options.intervalMins = *minutes;
+            options.autoUpdate = *minutes > 0;
             options.useSystemProxy = fields.system_proxy.Get();
             options.useCoreProxy = fields.core_proxy.Get();
             options.allowInvalidCert = fields.invalid_cert.Get();
@@ -1143,7 +1140,7 @@ void PushProfileQrScanner(
     bool hasCommonFields = false;
     if (isRemote || (isQr && qrRemote)) {
         commonFields = ProfileOptionsForm(
-            fields.desc, fields.timeout, fields.interval, fields.auto_update,
+            fields.desc, fields.timeout, fields.interval,
             fields.system_proxy, fields.core_proxy, fields.invalid_cert);
         hasCommonFields = true;
     } else if (method == ProfileAddMethod::Url || isFile ||
@@ -1206,8 +1203,7 @@ void PushProfileQrScanner(
         huxerui::UseState(huxerui::TextEditingValue{}),
         huxerui::UseState(huxerui::TextEditingValue{"60"}),
         huxerui::UseState(huxerui::TextEditingValue{"1440"}),
-        huxerui::UseState(true), huxerui::UseState(false),
-        huxerui::UseState(false), huxerui::UseState(false),
+        huxerui::UseState(false), huxerui::UseState(false), huxerui::UseState(false),
         huxerui::UseState(huxerui::TextEditingValue{}),
         huxerui::UseState(huxerui::TextEditingValue{}),
         huxerui::UseState(huxerui::TextEditingValue{}),
@@ -1270,7 +1266,7 @@ void PushProfileQrScanner(
     huxerui::State<huxerui::TextEditingValue> desc,
     huxerui::State<huxerui::TextEditingValue> timeout,
     huxerui::State<huxerui::TextEditingValue> interval,
-    huxerui::State<bool> auto_update, huxerui::State<bool> system_proxy,
+    huxerui::State<bool> system_proxy,
     huxerui::State<bool> core_proxy, huxerui::State<bool> invalid_cert,
     huxerui::State<huxerui::TextEditingValue> pptp_server,
     huxerui::State<huxerui::TextEditingValue> pptp_username,
@@ -1286,7 +1282,7 @@ void PushProfileQrScanner(
     huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
     const auto snapshot = [=] {
         return std::tuple{name.Get().text, url.Get().text, type.Get(), desc.Get().text,
-            timeout.Get().text, interval.Get().text, auto_update.Get(), system_proxy.Get(),
+            timeout.Get().text, interval.Get().text, system_proxy.Get(),
             core_proxy.Get(), invalid_cert.Get(), pptp_server.Get().text, pptp_username.Get().text,
             pptp_password.Get().text, pptp_timeout.Get().text, pptp_routes.Get().text, pptp_mppe.Get()};
     };
@@ -1295,6 +1291,9 @@ void PushProfileQrScanner(
         [saving] { return saving.Get(); }, on_back);
     const auto save = [=] {
         if (saving.Get()) return;
+        const auto minutes = type.Get() == "pptp" ? std::optional<int>{0}
+            : ParseProfileUpdateInterval(interval.Get().text);
+        if (!minutes) { toast.Show(ProfileUpdateIntervalError()); return; }
         saving = true;
         tasks.Launch([=]() -> huxerui::Task<void> {
             model::Profile fields;
@@ -1302,8 +1301,8 @@ void PushProfileQrScanner(
             fields.type = type.Get();
             fields.description = desc.Get().text;
             fields.timeoutSecs = parseNumber(timeout.Get(), 60);
-            fields.intervalMins = parseNumber(interval.Get(), 0);
-            fields.autoUpdate = auto_update.Get();
+            fields.intervalMins = *minutes;
+            fields.autoUpdate = *minutes > 0;
             fields.useSystemProxy = system_proxy.Get();
             fields.useCoreProxy = core_proxy.Get();
             fields.allowInvalidCert = invalid_cert.Get();
@@ -1364,7 +1363,7 @@ void PushProfileQrScanner(
                                       url = value;
                                   }),
                               ProfileOptionsForm(desc, timeout, interval,
-                                                 auto_update, system_proxy,
+                                                 system_proxy,
                                                  core_proxy, invalid_cert),
                           }.With(huxerui::Spacing(16.0F),
                               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))},
@@ -1395,7 +1394,7 @@ void PushProfileQrScanner(
 [[huxerui::composable]] huxerui::View ProfileEditDialogContent(std::int64_t id, ProfileEditFields fields,
     huxerui::TaskScope tasks, FluxToastHandle toast, std::function<void()> close) {
     return ProfileEditPage(id, fields.name, fields.url, fields.type, fields.desc, fields.timeout,
-        fields.interval, fields.auto_update, fields.system_proxy, fields.core_proxy, fields.invalid_cert,
+        fields.interval, fields.system_proxy, fields.core_proxy, fields.invalid_cert,
         fields.pptp_server, fields.pptp_username, fields.pptp_password, fields.pptp_timeout,
         fields.pptp_routes, fields.pptp_mppe, tasks, toast, close, true);
 }
@@ -1405,7 +1404,7 @@ void PushProfileQrScanner(
     FluxToastHandle toast, std::function<void()> on_back) {
     return ProfileEditPage(
         id, fields.name, fields.url, fields.type, fields.desc, fields.timeout,
-        fields.interval, fields.auto_update, fields.system_proxy,
+        fields.interval, fields.system_proxy,
         fields.core_proxy, fields.invalid_cert, fields.pptp_server,
         fields.pptp_username, fields.pptp_password, fields.pptp_timeout,
         fields.pptp_routes, fields.pptp_mppe, tasks, toast, std::move(on_back))
@@ -1423,7 +1422,7 @@ void PushProfileQrScanner(
             if (id == 0) return huxerui::Row{};
             return ProfileEditPage(
                 id, fields.name, fields.url, fields.type, fields.desc,
-                fields.timeout, fields.interval, fields.auto_update,
+                fields.timeout, fields.interval,
                 fields.system_proxy, fields.core_proxy, fields.invalid_cert,
                 fields.pptp_server, fields.pptp_username, fields.pptp_password,
                 fields.pptp_timeout, fields.pptp_routes, fields.pptp_mppe,

@@ -71,29 +71,24 @@ namespace {
             });
         }
     };
-    const auto testLabel = anyActive ? Localized("取消") : Localized("全部测试");
+    const auto testLabel = anyActive ? Localized("测试中…") : Localized("全部测试");
     const auto actions = huxerui::Row {
       huxerui::IconButton(app::images::add, Localized("添加网站"))
           .With(huxerui::Tooltip(Localized("添加网站")), huxerui::Enabled(rows.size() < 24))
           .OnClick([openEditor] { openEditor(std::nullopt); }),
-      huxerui::IconButton(anyActive ? app::images::close : app::images::play, testLabel)
-          .With(huxerui::Tooltip(testLabel), huxerui::Enabled(anyActive || !rows.empty()))
-          .OnClick([model, tasks, probe, anyActive] {
-              if (anyActive) {
-                  model->CancelAll();
-                  return;
-              }
+      WebsiteTestAction(anyActive, testLabel, [model, tasks, probe] {
+              if (model->AnyActive()) return;
               std::vector<std::size_t> ids;
               for (const auto& row : model->sites.Get()) ids.push_back(row.id);
               model->Start(tasks, probe, std::move(ids));
-          }),
+          }).With(huxerui::Enabled(!rows.empty())),
     }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     std::vector<huxerui::View> cards;
     for (const auto& row : rows)
         cards.push_back(Card(WebsiteTestCardContent(row, [model, tasks, probe, id = row.id] {
-            model->Toggle(tasks, probe, id);
+            model->Start(tasks, probe, {id});
         }, [openEditor, id = row.id] { openEditor(id); },
-           [model, id = row.id] { model->Remove(id); })).Key("website-card-" + std::to_string(row.id)));
+           [model, id = row.id] { model->Remove(id); }), false).Key("website-card-" + std::to_string(row.id)));
     const auto content = cards.empty()
         ? EmptyState(Localized("还没有网站，点击右上角添加。"), app::images::globe)
         : WebsiteTestGrid(cards, compact, offset);

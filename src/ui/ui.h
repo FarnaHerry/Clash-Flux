@@ -267,11 +267,6 @@ inline constexpr float kCompactFloatingNavigationInset = 96.0F;
 // 56pt 悬浮操作按钮采用圆角方形，与页面卡片的圆角语言一致。
 inline constexpr float kFloatingActionCornerRadius = 18.0F;
 
-inline huxerui::View CompactFloatingNavigationFooter() {
-    return huxerui::Spacer{}.With(
-        huxerui::Frame{.height = kCompactFloatingNavigationInset});
-}
-
 // ---- 岛屿结构（对齐 apitab island 模型）----
 // 语义层级：页面通过层级选表面，不直接依赖 Material 的 surface_container_* 命名；
 // 颜色仍由当前 ThemeSpec 派生，深浅主题共用组件。
@@ -425,6 +420,11 @@ huxerui::View DesktopNetworkSettings();
 huxerui::View AndroidNetworkSettings();
 huxerui::View DesktopKernelSettings();
 huxerui::View AndroidKernelSettings();
+#if !defined(__ANDROID__)
+huxerui::View DesktopKernelSettingsContent();
+huxerui::View DesktopKernelSettingsPage(std::function<void()> onBack);
+huxerui::View DesktopKernelSettingsRoutePage();
+#endif
 
 // 应用壳层的平台边界：AppRoot 仅在调用点用宏选择，不持有托盘/窗口等平台状态。
 void AndroidPreparePlatformDataDirectory(
@@ -599,12 +599,7 @@ struct SectionTab {
 // 每对标签栏/内容页共享一个保留的几何通道；动画采样不写 State、不触发重组。
 class SectionTabMotion;
 using SectionTabMotionHandle = std::shared_ptr<SectionTabMotion>;
-// 标签栏的水平对齐；正文留白由 PageBodyInsets 分配，Pager 自身占满骨架宽度。
-struct SectionTabContentInsets {
-    float horizontal = kSectionCardSpacing;
-    static SectionTabContentInsets Default() { return {}; }
-    bool operator==(const SectionTabContentInsets&) const = default;
-};
+// 标签栏与正文共用 PageBodyInsets；Pager 自身占满骨架宽度。
 struct SectionTabPickerInsets {
     float top = 0.0F;
     static SectionTabPickerInsets Default() { return {}; }

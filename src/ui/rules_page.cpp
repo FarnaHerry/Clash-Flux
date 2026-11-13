@@ -853,7 +853,7 @@ std::function<void()> UseRuleSetClose(huxerui::State<RuleSetDraft> draft,
                   huxerui::Spacer(),
                 }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
                 return huxerui::View{row}.Key(resource->id);
-            }, PageScrollInset(theme, true)).Controller(scroll).EstimatedItemExtent(96.0F), scroll)
+            }).Controller(scroll).EstimatedItemExtent(96.0F), scroll, {}, {}, ScrollAreaInsets::Dense())
                 .With(huxerui::Grow(1.0F))},
     }.With(huxerui::Spacing(12.0F), huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -1092,8 +1092,9 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
             return PersonalRuleRow(row, !readOnly && source->supported, busy.Get(),
                 PersonalRulePattern(row, source->library), openEditor, change, index + 1 == records->size())
                 .Key(row.editId.empty() ? row.anchor + ":" + std::to_string(index) : row.editId);
-        }, PageScrollInset(theme, true))
-            .Controller(scroll).EstimatedItemExtent(kSubscriptionRuleEstimatedExtent), scroll)
+        })
+            .Controller(scroll).EstimatedItemExtent(kSubscriptionRuleEstimatedExtent),
+            scroll, {}, {}, ScrollAreaInsets::Dense())
             .With(huxerui::Grow(1.0F))};
     std::vector<huxerui::View> content;
     if (!source->error.empty())
@@ -1604,11 +1605,13 @@ DialogAction(Localized("保存"), [=] {
                                   .bottom = ruleIndex + 1 == count ? 0.0F : denseGap}))
                               .Key(key);
                         });
-                    }, PageScrollInset(theme, true));
+                    });
                 globalList = std::move(globalList)
                                  .EstimatedItemExtent(112.0F + denseGap)
                                  .With(huxerui::Grow(1.0F));
-                body = huxerui::Column{ScrollArea(globalList).With(huxerui::Grow(1.0F))}
+                body = huxerui::Column {
+                  ScrollArea(globalList, {}, {}, {}, ScrollAreaInsets::Dense()).With(huxerui::Grow(1.0F)),
+                }
                            .With(huxerui::Spacing(8.0F),
                                  huxerui::CrossAlign(
                                      huxerui::CrossAxisAlignment::Stretch),

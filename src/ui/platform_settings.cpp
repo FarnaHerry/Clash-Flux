@@ -346,7 +346,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
     return huxerui::Column {
         SettingSwitchRow(
             Localized("后台保活"),
-            Localized("申请忽略电池优化，防止后台被杀；建议同时在系统设置中允许本应用自启动"),
+            {},
             SettingsValue(view.ready, huxerui::Switch(view.ignoringBattery)
                 .OnChanged([model, toast](bool on) {
                     if (on) {
@@ -385,7 +385,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
 
     std::vector<huxerui::View> rows;
     rows.push_back(SettingSwitchRow(
-            Localized("开机自启动"), Localized("登录系统后自动启动 Clash-Flux（桌面端）"),
+            Localized("开机自启动"), {},
             SettingsValue(settings.ready, huxerui::Switch(settings.autoStart)
                 .OnChanged([settingsModel](bool on) {
                     if (!settingsModel->view.Get().ready) return;
@@ -396,7 +396,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                 })), false, app::images::power));
     // The core always starts ready; this preference only controls traffic listeners.
     rows.push_back(SettingSwitchRow(
-            Localized("启动时自动连接"), Localized("内核随应用就绪；启用后自动开放代理端口，并恢复系统代理/TUN 选择"),
+            Localized("启动时自动连接"), {},
             SettingsValue(settings.ready, huxerui::Switch(settings.autoRun)
                 .OnChanged([settingsModel](bool on) {
                     if (!settingsModel->view.Get().ready) return;
@@ -406,7 +406,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                         [on](SettingsView& view) { view.autoRun = on; });
                 })), false, app::images::play));
     rows.push_back(SettingSwitchRow(
-            Localized("启用托盘"), Localized("启用后关闭窗口隐藏到托盘；停用后关闭窗口询问是否退出"),
+            Localized("启用托盘"), {},
             SettingsValue(settings.ready, huxerui::Switch(settings.trayEnabled)
                 .OnChanged([settingsModel](bool on) {
                     if (!settingsModel->view.Get().ready) return;
@@ -422,7 +422,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
     if (!settings.ready || settings.trayEnabled) {
         rows.push_back(SettingSwitchRow(
             Localized("启动时隐藏到托盘"),
-            Localized("下次启动不显示主窗口，经托盘唤出"),
+            {},
             SettingsValue(settings.ready, huxerui::Switch(settings.startMinimized)
                 .OnChanged([settingsModel](bool on) {
                     if (!settingsModel->view.Get().ready) return;
@@ -434,7 +434,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                 })), false, app::images::visibility_off));
         rows.push_back(SettingSwitchRow(
             Localized("轻量级托盘模式"),
-            Localized("隐藏到托盘时销毁主窗口和界面，唤出时重新创建"),
+            {},
             SettingsValue(settings.ready, huxerui::Switch(settings.lightweightTray)
                 .OnChanged([settingsModel](bool on) {
                     if (!settingsModel->view.Get().ready) return;
@@ -460,25 +460,19 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
     const std::string detectedShell = CurrentEnvironmentShell();
     const std::size_t envShell = EnvironmentShellIndex(
         settings.envShell.empty() ? detectedShell : settings.envShell);
-    const std::vector<std::string> envShellLabels = EnvironmentShellLabels();
+    std::vector<std::string> envShellLabels = EnvironmentShellLabels();
+    for (auto& label : envShellLabels)
+        if (label == "命令提示符（cmd）") label = huxerui::UseString(Localized("命令提示符（cmd）"));
     // Keep the copy action next to its label; the shell selector is the only
     // trailing control. Narrow desktop layouts retain a separate control line.
-    huxerui::View shellSelect = huxerui::Select(
-                    envShellLabels,
-                    envShell,
-                    [](const std::string& name) {
-                        return huxerui::Text(
-                            name == "命令提示符（cmd）"
-                                ? Localized("命令提示符（cmd）")
-                                : huxerui::StringVariant(name));
-                    })
-                    .OnChanged([settingsModel](std::size_t index) {
+    huxerui::View shellSelect = ContentSizedSelect(
+                    envShellLabels, envShell, Localized("复制环境变量"),
+                    [settingsModel](std::size_t index) {
                         if (index < std::size(kEnvironmentShells))
                             settingsModel->SetEnvShell(
                                 kEnvironmentShells[index].id);
                     })
-                    .With(huxerui::Frame{.width = 220.0F},
-                          huxerui::Enabled(settings.ready));
+                    .With(huxerui::Enabled(settings.ready)).Key("settings-env-shell");
     shellSelect = SettingsValue(settings.ready, std::move(shellSelect));
     huxerui::View copyAction = huxerui::IconButton(app::images::copy, Localized("复制"))
                     .With(huxerui::Tooltip(Localized("复制环境变量命令")),
@@ -502,17 +496,12 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
                         });
     huxerui::View description = huxerui::Row {
         SettingItemIcon(app::images::terminal),
-        huxerui::Column {
-            huxerui::Row {
-                huxerui::Text(Localized("复制环境变量")).Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kBody), theme.colors.on_surface}),
-                std::move(copyAction),
-            }.With(huxerui::Spacing(4.0F),
-                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-            huxerui::Text(LocalizedFormat("当前检测到 {}；复制当前混合端口的代理变量",
-                                         detectedShell)).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kCaption), theme.colors.on_surface_variant}),
-        }.With(huxerui::Spacing(2.0F), huxerui::Grow(1.0F)),
+        huxerui::Row {
+          huxerui::Text(Localized("复制环境变量")).Style(huxerui::TextStyle{
+              huxerui::Font::System(font_size::kBody), theme.colors.on_surface}),
+          copyAction,
+        }.With(huxerui::Spacing(4.0F), huxerui::Grow(1.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
     }.With(huxerui::Spacing(12.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     if (compact) {
@@ -530,7 +519,7 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
 }
 
-[[huxerui::composable]] huxerui::View DesktopKernelSettings() {
+[[huxerui::composable]] huxerui::View DesktopKernelSettingsContent() {
     const auto control = UseCoreControl();
     const auto view = control.model->view.Get();
     const auto tasks = huxerui::UseApplicationTaskScope();
@@ -538,12 +527,19 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
     const bool running = view.core.state == core::CoreState::Running;
     const auto version = view.core.version.empty() ? cfg::singboxFallbackLabel()
                                                    : view.core.version;
+    const auto status = !view.ready ? huxerui::StringVariant{"—"} :
+        view.core.state == core::CoreState::Starting ? Localized("启动中") :
+        view.core.state == core::CoreState::Failed ? Localized("启动失败") :
+        running ? Localized("运行中") : Localized("已停止");
     return huxerui::Column {
         SettingRow(Localized("内核"), version,
             SettingsValue(view.ready, huxerui::Button(Localized("重启"))
                 .With(huxerui::Enabled(view.ready && running && !control.Busy()))
                 .OnClick([control] { control.Run({.action = CoreAction::Restart}); })),
             app::images::bolt),
+        SettingRow(Localized("运行状态"), {}, huxerui::Text(status), app::images::info),
+        view.core.lastError.empty() ? huxerui::View{} :
+            SettingRow(Localized("错误信息"), view.core.lastError, {}, app::images::info),
         CLASHFLUX_DESKTOP_SERVICE_ROW(view.serviceInstalled, tasks, toast),
     }.With(huxerui::Spacing(0.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));

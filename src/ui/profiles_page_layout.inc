@@ -140,8 +140,7 @@
                                              huxerui::CornerRadius(kSelectableTileRadius));
                                      }
                                      return std::move(slot).Key("profile-slot-" + std::to_string(index));
-                                 }, PageScrollInset(theme, true), ProfileCardRowSpacing(compact),
-                                 compact ? kCompactFloatingNavigationInset : 0.0F)
+                                 }, ProfileCardRowSpacing(compact))
                                  .Columns(ProfileGridColumns(compact, group_by_type))
                                  .EstimatedRowExtent(ProfileCardHeight(compact))
                                  .ColumnSpacing(kSectionCardSpacing)
@@ -150,7 +149,9 @@
                                      [dropAtPointer](
                                          const ProfileDragPayload& payload, const huxerui::DropEvent& event) {
                                          dropAtPointer(payload.id, event.window_position);
-                                     })).With(huxerui::Grow(1.0F));
+                                     }), {}, {}, {}, ScrollAreaInsets::Symmetric(ProfileCardRowSpacing(compact),
+                                         compact ? kCompactFloatingNavigationInset : 0.0F))
+                                 .With(huxerui::Grow(1.0F));
         typePages.push_back(huxerui::Column {grid}.With(
             huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
             .Key(section.type ? "type-page-" + *section.type : "all-profiles"));
@@ -181,7 +182,6 @@
         newDesc = huxerui::TextEditingValue{""};
         newTimeout = huxerui::TextEditingValue{""};
         newInterval = huxerui::TextEditingValue{"1440"};
-        newAuto = true;
         newSys = false;
         newCore = false;
         newCert = false;
@@ -196,7 +196,7 @@
     };
     const ProfileCreateFields createFields{
         newName, newUrl, newQrContent, newTypeIdx, newDesc,
-        newTimeout, newInterval, newAuto, newSys, newCore, newCert,
+        newTimeout, newInterval, newSys, newCore, newCert,
         newPptpServer, newPptpUsername, newPptpPassword, newPptpTimeout,
         newPptpRoutes, newPptpMppe,
         pickedPath};
@@ -248,7 +248,7 @@
     huxerui::View mobileEditPage = ResponsiveProfileEditSurface(
         editPageId.Get(),
         ProfileEditFields{editName, editUrl, editType, editDesc, editTimeout,
-                           editInterval, editAuto, editSys, editCore, editCert,
+                           editInterval, editSys, editCore, editCert,
                            editPptpServer, editPptpUsername, editPptpPassword,
                            editPptpTimeout, editPptpRoutes, editPptpMppe},
         tasks, toast, [editPageId] { editPageId = 0; });

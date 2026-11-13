@@ -435,10 +435,12 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
                                if (!id.empty())
                                    ConfirmCloseConnection(dialog, tasks, toast, id, host);
                            }, index + 1 == rowCount).Key(key);
-                   }, PageScrollInset(theme, true), compact && !onBack ? kCompactFloatingNavigationInset : 0.0F)
+                   })
                    // 16pt 卡内留白 + 三行内容 + 4pt 卡间距。
                    .EstimatedItemExtent(90.0F)
-                   .Controller(scroll), scroll).With(huxerui::Grow(1.0F));
+                   .Controller(scroll), scroll, {}, {},
+                   ScrollAreaInsets::Dense(compact && !onBack ? kCompactFloatingNavigationInset : 0.0F))
+                   .With(huxerui::Grow(1.0F));
     }
 
     huxerui::View searchField = PillSearchField(

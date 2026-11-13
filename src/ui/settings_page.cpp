@@ -526,6 +526,28 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     return ResponsiveLanguageSetting();
 }
 
+[[huxerui::composable]] huxerui::View DesktopKernelSettings() {
+    const auto navigation = huxerui::UseNavigation();
+    return SettingNavigationItem(Localized("内核"), app::images::bolt,
+        [navigation] { navigation.Push(DesktopKernelSettingsRoutePage); }).Key("settings-kernel");
+}
+
+[[huxerui::composable]] huxerui::View DesktopKernelSettingsPage(std::function<void()> onBack) {
+    const auto& theme = huxerui::UseTheme();
+    const auto scroll = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
+    const float inset = ResolveIslandTheme(theme).island_padding;
+    huxerui::View content = Card(huxerui::ProvideEnvironment(
+        SettingsRowInsets{inset, 10.0F, 48.0F}, DesktopKernelSettingsContent()), false, 0.0F);
+    if (huxerui::UseViewportClass() != huxerui::ViewportClass::Compact) content = huxerui::Row {
+      huxerui::Spacer(),
+      std::move(content).With(huxerui::Frame{.max_width = 720.0F}),
+      huxerui::Spacer(),
+    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
+    return SecondaryPageScaffold(huxerui::Text(Localized("内核"), huxerui::TextRole::Title), {},
+        ScrollablePageContent(content, scroll).Key("kernel-settings-scroll"), onBack, false, false, false, true)
+        .Key("kernel-settings-page");
+}
+
 #endif // platform-specific theme and language entries
 
 [[huxerui::composable]] huxerui::View NetworkSettingsEntry(HomeProxySettingsKind kind) {
@@ -878,7 +900,6 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     sections.push_back(Card(AboutActionRow(Localized("关于"), {}, app::images::info,
                     [navigation] { navigation.Push(AboutRoutePage); }), false, 0.0F)
         .Key("settings-about"));
-    if (compact) sections.push_back(CompactFloatingNavigationFooter());
     huxerui::View content = huxerui::Column(sections).With(
         huxerui::Spacing(20.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     if (kPageTitlesInWindow && !compact) content = huxerui::Row {
@@ -888,7 +909,8 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
     return PageScaffold(
         Localized("设置"), huxerui::View{},
-        ScrollablePageContent(content, scroll)
+        ScrollablePageContent(content, scroll,
+            {.bottom_avoidance = compact ? kCompactFloatingNavigationInset : 0.0F})
             .Key("settings-scroll"), false, false, true,
             islands.nested_radius, {}, {}, true, {}, true);
 }

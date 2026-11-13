@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.105 发布说明](docs/releases/v0.3.105.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.106 发布说明](docs/releases/v0.3.106.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -192,7 +192,7 @@ cmake --build build --target clash-flux
 ```
 
 二级标签内容使用框架 Pager；反向切换与隐藏虚拟页测量修复已包含在所用 fork 的固定提交中，所有 CI 平台共用同一版本。
-详见 [UI 开发约定](docs/ui-development.md)。
+详见 [UI 开发约定](docs/ui-development.md)。滚动组件的可选工作计数与固定输入测量见[滚动性能检查](docs/scroll-performance.md)。
 
 命名模块的小函数需区分显式 inline 与优化器展开，检查时核对 Debug/Release 参数；
 规则与汇编验证见 [C++ 模块开发](docs/cpp-modules-development.md)。
@@ -407,7 +407,7 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 `main` 保留官方基线；Lib-Camera、Lib-Charts、Lib-SQLite 也从各自 `FarnaHerry` fork 的
 `farna/main` 按固定 SHA 获取，原生构建与 Android 库图共用同一依赖身份。
 本地检出、补丁归属与升级流程见 [HuxerUI fork](docs/huxerui-fork.md)。
-当前源码基线为 SDK 0.4.0（`97d6fed`），新增分栏/停靠布局 API，应用现有页面兼容；离线回落包仍为独立锁定的 0.3.0 SDK，不代表本轮源码验收。
+当前源码固定 SDK 0.4.0 之后的 `ecf1646f`，包含官方吸收的 FillViewport、禁用容器控制器滚动与 ScrollToItem 修复；Linux 32 项必跑回归和 Android Java/native 编译通过。新源码 CLI 使用 `--sdk` 选择框架，CI 固定的旧离线 CLI 继续使用 `--source`。离线回落包仍为独立锁定的 0.3.0 SDK，不代表本轮源码验收。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、

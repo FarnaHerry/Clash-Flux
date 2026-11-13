@@ -179,14 +179,6 @@ struct WebsiteTestModel : std::enable_shared_from_this<WebsiteTestModel> {
         return true;
     }
 
-    void Toggle(huxerui::TaskScope taskScope, Probe onProbe, std::size_t id) {
-        const auto& rows = sites.Get();
-        const auto row = std::find_if(rows.begin(), rows.end(), [id](const auto& site) { return site.id == id; });
-        if (row == rows.end()) return;
-        if (row->result.phase == WebsiteTestPhase::Queued || row->result.phase == WebsiteTestPhase::Running) Cancel(id);
-        else Start(std::move(taskScope), std::move(onProbe), {id});
-    }
-
     // True while any site is queued or running. Callers use it for aggregate
     // actions only; individual sites decide their own availability.
     [[nodiscard]] bool AnyActive() const {

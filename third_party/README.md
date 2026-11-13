@@ -9,7 +9,7 @@ nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归�
 归档版本及来源以本项目清单为准。
 
 应用当前的 HuxerUI fork 源码提交与检出命令见 [固定版本](../docs/huxerui-fork.md)；本机独立 checkout、CI 和 Android Java/native 共用该身份，不消费维护工作树。
-当前源码基线为 SDK 0.4.0 之后的上游合并线（`e720ae5f`）；下表 0.3.0 是仍然保留的离线 SDK 归档身份，不是源码版本；0.3.0 离线包不满足当前 0.4.0 构建要求。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
+当前源码基线为 SDK 0.4.0 之后的上游合并线（`ecf1646f`）；下表 0.3.0 是仍然保留的离线 SDK 归档身份，不是源码版本；0.3.0 离线包不满足当前 0.4.0 构建要求。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
 
 ## 清单与来源
 
@@ -42,6 +42,32 @@ Camera、Charts、SQLite、CodeEditor、Media 通过 `huxerui_use_library(URL, C
 4. 重新编译应用并运行必跑回归，包含 `cps_dependencies`、下载 TLS 与持久化。
 
 HuxerUI 与其扩展仍遵守独立 fork 维护、固定提交和 Java/native 同源规则。
+
+## 2026-11-13 官方 Charts main 试编译（未切换）
+
+官方 `HuxerUI/Lib-Charts` main 为 `13e5ffddc7f24ed7f33533f873249558466e9591`，
+饼图实现和公开头文件已与当前 fork 一致；通用图表仍使用旧 PopupHandle 锚点 API，
+在当时固定的 HUI `4b444b19` 下 HCG 后编译失败，且未包含 96pt 紧凑绘图区适配。
+应用继续固定 `FarnaHerry/Lib-Charts@2251bab5ad2a5df8e6e133c039e0b76bbe237add`，
+未修改 URL/COMMIT、库源码或平台库图。详见[fork 核对记录](../docs/huxerui-fork.md)。
+
+## 2026-11-13 HuxerUI 更新（ecf1646f）
+
+应用源码与 CI 固定 `ecf1646feb38a082962a9ad4eca8a7078422d48f`，跟进已发布的 farna/main，
+相对 4b444b19 前进 6 个提交，包含官方 df5f4ba0 对 FillViewport 与禁用容器控制器滚动的
+吸收，以及禁用虚拟容器 ScrollToItem 对齐修复。源码 CLI 使用 --sdk，mcpp 使用
+--project，并新增 b/r/pkg 别名。CI 固定旧离线 CLI 保留其 --source 参数；Java/native
+均从同一新源码编译。HCG/HRC 源码、扩展、通用依赖和 sing-box/libbox 固定版本保持。
+Linux 全量构建、32 项必跑回归和 Android Java/native 编译通过；详见
+[fork 记录](../docs/huxerui-fork.md) 与 [验收记录](../docs/l1-l2-l3-status.md)。
+
+## 2026-11-13 HuxerUI 更新（4b444b19）
+
+应用源码与 CI 固定 `4b444b19da507efece20203372936439a74c4f3b`，跟进已发布的 farna/main，
+包含官方 `babf9f2a` 的全屏状态与窗口快捷键、Apple 文本居中、Web 换行以及 Windows
+安装器升级/重启处理；fork 另修复 Windows 全屏任务栏覆盖。定制安装器同步新重启提示的
+说明和四份语言目录按钮。扩展、通用依赖和 sing-box/libbox 固定版本不变。
+详见 [fork 记录](../docs/huxerui-fork.md) 与 [验收记录](../docs/l1-l2-l3-status.md)。
 
 ## 2026-11-13 HuxerUI 更新（e720ae5f）
 

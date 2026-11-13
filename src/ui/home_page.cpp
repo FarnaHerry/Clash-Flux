@@ -1094,14 +1094,6 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
 
     std::vector<huxerui::View> bodySections;
     bodySections.push_back(std::move(grid));
-    bodySections.push_back(
-        // 悬浮启动按钮压在滚动内容之上，尾部留出等高的空白，避免最后一张
-        // 卡片被按钮遮住（紧凑视口本来就带底部悬浮导航的空白）。
-        compact ? CompactFloatingNavigationFooter()
-                : huxerui::View{huxerui::Row{}.With(
-                      huxerui::Frame{.height =
-                          kDesktopHomeControl && controlCardShown.Get()
-                              ? 0.0F : kHomeFloatingButtonInset})});
     huxerui::View pageBody = huxerui::Column(std::move(bodySections))
         .With(huxerui::Spacing(0.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -1112,7 +1104,9 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     // Runtime effects remain mounted independently from the replaceable header.
     huxerui::View scrollContent = huxerui::Stack {
         std::move(runtimePump),
-        ScrollablePageContent(pageBody, scrollOffset),
+        ScrollablePageContent(pageBody, scrollOffset, {.bottom_avoidance = compact
+            ? kCompactFloatingNavigationInset
+            : (kDesktopHomeControl && controlCardShown.Get() ? 0.0F : kHomeFloatingButtonInset)}),
     }.With(huxerui::Grow(1.0F));
     huxerui::View page = PageScaffold(
         Localized("首页"), {}, std::move(scrollContent), true, false, true,

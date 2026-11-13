@@ -1,7 +1,5 @@
 #pragma once
 
-#include <algorithm>
-#include <limits>
 #include "ui.h"
 #include "scroll_area.h"
 
@@ -10,50 +8,6 @@ namespace clashflux::ui {
 inline constexpr float kDesktopPageHorizontalInset = 24.0F;
 inline constexpr float kDesktopPageLeadingInset = 8.0F;
 inline constexpr float kPageHeaderHeight = 48.0F;
-inline float PageScrollInset(const huxerui::ThemeSpec& theme, bool dense = false) {
-    const auto islands = ResolveIslandTheme(theme);
-    return dense ? islands.dense_radius : islands.nested_radius;
-}
-
-inline huxerui::View PageScrollContent(huxerui::View content, float inset, float horizontal = 0.0F) {
-    return huxerui::Column {content}.With(
-        huxerui::Padding(huxerui::EdgeInsets{
-            .top = inset, .right = horizontal, .bottom = inset, .left = horizontal}),
-        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-}
-
-inline huxerui::View PageScrollSpace(float height) {
-    // HuxerUI virtual metrics ignore a measured zero extent and keep the row
-    // estimate (a full card), so a spacer that collapses to zero becomes a
-    // phantom card-height blank. Keep a sub-pixel positive extent instead.
-    return huxerui::Row {}.With(huxerui::Frame{.height = std::max(0.5F, height)},
-        huxerui::Semantics{.hidden = true});
-}
-
-// Keep business factories and keys in their original index space. Only the
-// virtual source gains two non-interactive edge items; data remains virtual.
-template<class Factory>
-huxerui::VirtualList PageVirtualList(std::size_t count, Factory factory, float inset,
-    float bottomAvoidance = 0.0F) {
-    return huxerui::VirtualList(count + 2, [=](std::size_t index) -> huxerui::View {
-        if (index == 0) return PageScrollSpace(inset);
-        if (index == count + 1) return PageScrollSpace(inset + bottomAvoidance);
-        return factory(index - 1);
-    });
-}
-
-template<class Factory>
-huxerui::VirtualGrid PageVirtualGrid(std::size_t count, Factory factory, float inset,
-    float rowSpacing, float bottomAvoidance = 0.0F) {
-    const float gap = count == 0 ? 0.0F : rowSpacing;
-    std::vector<std::size_t> spans(count + 2, 1);
-    spans.front() = spans.back() = std::numeric_limits<std::size_t>::max();
-    return huxerui::VirtualGrid(count + 2, [=](std::size_t index) -> huxerui::View {
-        if (index == 0) return PageScrollSpace(inset - gap);
-        if (index == count + 1) return PageScrollSpace(inset + bottomAvoidance - gap);
-        return factory(index - 1);
-    }).ItemSpans(std::move(spans)).RowSpacing(gap);
-}
 
 // Put the inset around the full header slot rather than inside its min-height.
 inline huxerui::View PageHeaderWithInset(huxerui::View header, float inset) {
@@ -83,18 +37,18 @@ private:
 };
 
 inline huxerui::View ScrollablePageContent(huxerui::View content,
-    std::shared_ptr<PageScrollOffset> offset) {
-    return huxerui::Scope([content, offset] {
+    std::shared_ptr<PageScrollOffset> offset, ScrollAreaInsets insets = {}) {
+    return huxerui::Scope([content, offset, insets] {
         const auto controller = huxerui::UseScrollController(offset->value);
-        return ScrollArea(huxerui::ScrollView(PageScrollContent(content, PageScrollInset(huxerui::UseTheme())))
-            .With(RememberPageScroll{offset}), controller, offset).With(huxerui::Grow(1.0F));
+        return ScrollArea(huxerui::ScrollView(PageScrollContent(content))
+            .With(RememberPageScroll{offset}), controller, offset, {}, insets).With(huxerui::Grow(1.0F));
     }).With(huxerui::Grow(1.0F));
 }
 
-inline huxerui::View ScrollablePageContent(huxerui::View content) {
-    return huxerui::Scope([content] {
+inline huxerui::View ScrollablePageContent(huxerui::View content, ScrollAreaInsets insets = {}) {
+    return huxerui::Scope([content, insets] {
         const auto offset = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
-        return ScrollablePageContent(content, offset);
+        return ScrollablePageContent(content, offset, insets);
     }).With(huxerui::Grow(1.0F));
 }
 

@@ -4,7 +4,7 @@
 // 订阅；桌面右键、Compact 的“更多”按钮共用上下文菜单（使用/更新/首页/
 // 分享二维码/编辑信息/编辑规则/编辑文件/删除）；点击卡片切换启用订阅。
 //
-// 订阅选项（类型/描述/HTTP 超时/更新间隔/自动更新；桌面额外提供代理/证书开关）
+// 订阅选项（类型/描述/HTTP 超时/自动更新间隔；桌面额外提供代理/证书开关）
 // 在新建与编辑弹窗编辑，仅落库，下载行为在下次「更新」时生效；自动更新由
 // 壳层泵（app.cpp）按间隔扫描 refreshDue()。
 //
@@ -53,6 +53,7 @@ import clashflux.vpn;
 #include "profiles_cache.h"
 #include "profiles_model.h"
 #include "profiles_page_shared.h"
+#include "profile_update_interval.h"
 #include "core_control.h"
 #include "vpn_model.h"
 
@@ -101,7 +102,6 @@ struct ProfileReorderSession {
     auto newDesc = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newTimeout = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newInterval = huxerui::UseState(huxerui::TextEditingValue{"1440"});
-    auto newAuto = huxerui::UseState(true);
     auto newSys = huxerui::UseState(false);
     auto newCore = huxerui::UseState(false);
     auto newCert = huxerui::UseState(false);
@@ -122,7 +122,6 @@ struct ProfileReorderSession {
     auto editDesc = huxerui::UseState(huxerui::TextEditingValue{""});
     auto editTimeout = huxerui::UseState(huxerui::TextEditingValue{""});
     auto editInterval = huxerui::UseState(huxerui::TextEditingValue{""});
-    auto editAuto = huxerui::UseState(false);
     auto editSys = huxerui::UseState(false);
     auto editCore = huxerui::UseState(false);
     auto editCert = huxerui::UseState(false);

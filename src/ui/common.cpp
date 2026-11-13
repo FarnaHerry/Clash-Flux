@@ -919,8 +919,6 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     if (kPageTitlesInWindow && !compact) {
         // 桌面动作直接挂在本页标题栏中，不经共享 State 转交 View 或复制回调。
         huxerui::View desktopBody = PageBodyRegion(content, bodyHorizontal);
-        if (fullWidthSections) desktopBody = huxerui::ProvideEnvironment(
-            SectionTabContentInsets{kSectionCardSpacing}, desktopBody);
         desktopBody = huxerui::ProvideEnvironment(
             SectionTabPickerInsets{kDesktopTitleBarHeight + kDesktopChromeDividerThickness},
             std::move(desktopBody));
@@ -987,8 +985,6 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         huxerui::Padding(huxerui::EdgeInsets::Symmetric(fullWidthSections
             ? (compact ? horizontal : kDesktopPageHorizontalInset) : bodyHorizontal, 0.0F)),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    if (fullWidthSections)
-        body = huxerui::ProvideEnvironment(SectionTabContentInsets{horizontal}, body);
     std::vector<huxerui::View> children;
     if (header) children.push_back(std::move(header));
     children.push_back(std::move(body));
@@ -1025,10 +1021,6 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
         if (contentSpacing) contentInsets.top = *contentSpacing;
         if (scrollToContentEdges) contentInsets.top = contentInsets.bottom = 0.0F;
         huxerui::View desktopBody = body;
-        if (fullWidthSections) {
-            desktopBody = huxerui::ProvideEnvironment(
-                SectionTabContentInsets{horizontal}, desktopBody);
-        }
         desktopBody = huxerui::ProvideEnvironment(
             SectionTabPickerInsets{kDesktopTitleBarHeight + kDesktopChromeDividerThickness},
             std::move(desktopBody));
@@ -1085,9 +1077,6 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     header = std::move(header).With(huxerui::Frame{.min_height = kPageHeaderHeight});
     header = huxerui::View{header}.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(
         fullWidthSections ? (compact ? horizontal : kDesktopPageHorizontalInset) : bodyHorizontal, 0.0F)));
-    if (fullWidthSections) {
-        body = huxerui::ProvideEnvironment(SectionTabContentInsets{horizontal}, body);
-    }
     auto contentInsets = PageContentInsets(theme, compact, 0.0F);
     if (contentSpacing) contentInsets.top = *contentSpacing;
     if (scrollToContentEdges) {
@@ -1117,7 +1106,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto inputFocused = huxerui::UseState(false);
-    const bool focused = kPageTitlesInWindow && !compact && inputFocused.Get();
+    const bool focused = inputFocused.Get();
     const bool animateFocus = !theme.motion.reduced_motion &&
         huxerui::UseWindow().LifecycleState() != huxerui::WindowLifecycleState::Background;
     const float height = kPageTitlesInWindow

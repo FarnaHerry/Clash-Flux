@@ -39,6 +39,8 @@ ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-require
 
 连接规则追溯另跑 `connection_trace_runtime`，覆盖真实固定内核、完整规则清单、新旧连接和实例/计划过期；组件状态另由 page_transition 验证，范围见[连接追溯](../../docs/connection-rule-tracing.md)。
 
+滚动区性能变更先按[滚动性能检查](../../docs/scroll-performance.md)记录同输入基线；可选探针只注入测试进程，Debug 无窗口耗时不当作原生 FPS 或真机证据。
+
 ## 按改动选择回归
 
 | 改动 | 必须查阅/执行的验证 |

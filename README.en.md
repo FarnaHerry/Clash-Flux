@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.105 release notes](docs/releases/v0.3.105.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.106 release notes](docs/releases/v0.3.106.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -266,7 +266,7 @@ cmake --build build --target clash-flux
 
 Section content uses the framework Pager for direct dragging, rebound, and retained scroll positions.
 Pager retargeting and hidden virtual page layout fixes are included in the pinned framework fork; all CI platforms use that same revision.
-See [UI development notes](docs/ui-development.md).
+See [UI development notes](docs/ui-development.md). Optional work counters and fixed-input scroll measurements are documented in [scroll performance checks](docs/scroll-performance.md).
 
 For small named-module functions, distinguish explicit inline semantics from optimizer
 substitution and check Debug/Release flags. See [C++ module development](docs/cpp-modules-development.md).
@@ -558,7 +558,7 @@ Lib-Charts and Lib-SQLite also use pinned commits from their `FarnaHerry` forks'
 `farna/main` branches, with the same URL/COMMIT identities in native builds and the
 Android library graph. See [HuxerUI fork maintenance](docs/huxerui-fork.md) for local
 checkout, patch ownership and upgrade instructions.
-The current source baseline is SDK 0.4.0 (`97d6fed`), adding split and docking layout APIs while preserving compatibility with existing app pages. The separately pinned offline fallback remains SDK 0.3.0 and is outside this source-upgrade validation.
+The source is pinned to post-0.4.0 commit `ecf1646f`, including the upstream FillViewport and disabled-container controller scrolling work, plus ScrollToItem alignment fixes. All 32 required Linux regressions and Android Java/native compilation pass. The new source CLI selects the framework with `--sdk`; CI retains `--source` for its pinned older offline CLI. The separately pinned SDK 0.3.0 fallback is outside this source-upgrade validation.
 
 Windows packaging with `huxerui package windows` creates a `setup.exe` with an
 installation wizard: Burn bundles an MSI and a HuxerUI installer interface with

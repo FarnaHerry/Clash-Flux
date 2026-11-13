@@ -149,10 +149,10 @@ std::vector<View> PromptActions(const InstallerHandle& installer, const Installe
       label = installer_strings::ignore;
       break;
     case InstallerPromptChoice::Yes:
-      label = installer_strings::yes;
+      label = prompt.kind == InstallerPromptKind::Restart ? installer_strings::restart_now : installer_strings::yes;
       break;
     case InstallerPromptChoice::No:
-      label = installer_strings::no;
+      label = prompt.kind == InstallerPromptKind::Restart ? installer_strings::restart_later : installer_strings::no;
       break;
     case InstallerPromptChoice::Continue:
       label = installer_strings::continue_action;
@@ -188,7 +188,14 @@ View InstallerContent() {
     eyebrow = installer_strings::action_required;
     heading = installer_strings::setup_needs_attention;
     StringVariant prompt_message = status.prompt->message;
-    if (status.prompt->kind == InstallerPromptKind::FilesInUse && status.prompt->message.empty()) {
+    if (status.prompt->kind == InstallerPromptKind::Restart) {
+      eyebrow = installer_strings::complete;
+      heading = status.action == InstallerAction::Uninstall ? installer_strings::application_removed
+                                                           : installer_strings::installation_complete;
+      prompt_message = status.action == InstallerAction::Uninstall
+                           ? installer_strings::application_removed_restart_message
+                           : installer_strings::installation_complete_restart_message;
+    } else if (status.prompt->kind == InstallerPromptKind::FilesInUse && status.prompt->message.empty()) {
       prompt_message = installer_strings::files_in_use;
     }
     details.push_back(Text(std::move(prompt_message)).With(Foreground(theme.colors.on_surface_variant)));

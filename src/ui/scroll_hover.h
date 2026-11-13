@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <huxerui/huxerui.h>
@@ -15,6 +16,8 @@ struct ScrollHoverRegion {
     huxerui::State<bool> selected{false};
     std::size_t depth = 0;
     bool hovered = false, rail_hovered = false, enabled = false;
+    // UI-thread input epoch shared by the viewport and its scroll animation.
+    std::uint64_t input_revision = 0;
 };
 
 // Hover events follow the mounted hit route, so clipped and occluded siblings
@@ -53,7 +56,9 @@ struct ScrollHoverRoute {
         Refresh();
     }
     void Hover(const std::shared_ptr<ScrollHoverRegion>& region, const huxerui::HoverEvent& event) {
-        region->hovered = event.type != huxerui::HoverEventType::Leave;
+        const bool hovered = event.type != huxerui::HoverEventType::Leave;
+        if (region->hovered == hovered) return;
+        region->hovered = hovered;
         Refresh();
     }
 };

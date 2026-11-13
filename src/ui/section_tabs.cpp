@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "ui.h"
+#include "scroll_area.h"
 #include "action_menu.h"
 #include "section_tab_picker.h"
 
@@ -261,11 +262,14 @@ public:
         }
         tab_bounds_.clear();
         tab_bounds_.reserve(node.ChildCount());
+        // Keep the full tab hit area; its bottom padding must not become an
+        // extra fixed gap between the indicator and the scrolling content.
+        const float indicatorY = node.LayoutSize().height - 2.0F;
         for (std::size_t index = 0; index < node.ChildCount(); ++index) {
             const auto& tab = node.ChildAt(index);
             const auto& line = tab.ChildAt(1);
             tab_bounds_.push_back({tab.LayoutOffset().x + line.LayoutOffset().x,
-                                   tab.LayoutOffset().y + line.LayoutOffset().y,
+                                   indicatorY,
                                    line.LayoutSize().width, 2.0F});
         }
         const huxerui::ViewNode& selected = node.ChildAt(selected_index_);
@@ -278,7 +282,7 @@ public:
         const auto& line = selected.ChildAt(1);
         const float x = selected.LayoutOffset().x + line.LayoutOffset().x;
         const float width = line.LayoutSize().width;
-        const float y = selected.LayoutOffset().y + line.LayoutOffset().y;
+        const float y = indicatorY;
         const bool indicator_changed = !indicator_initialized_ ||
             x != indicator_x_.Target() || width != indicator_width_.Target() || y != indicator_y_;
         const bool snap_running = duration_ == 0.0 &&
@@ -398,7 +402,6 @@ private:
     std::function<void(const std::string&)> onSelect, SectionTabMotionHandle motion, SectionTabPickerMode pickerMode) {
     constexpr float kTabIndicatorHeight = 2.0F;
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const auto insets = huxerui::UseEnvironment<SectionTabContentInsets>();
     const auto pickerInsets = huxerui::UseEnvironment<SectionTabPickerInsets>();
     auto scroll = huxerui::UseScrollController();
     auto menu = UseActionMenu();
@@ -457,7 +460,7 @@ private:
             }
                 .With(huxerui::Spacing(3.0F),
                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
-                .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(8.0F, 4.0F)),
+                .With(huxerui::Padding(theme.spacing.extra_small),
                       // 未选中用透明描边（宽度恒为 1pt）保住几何，避免切换时
                       // 整项尺寸跳动；本样式不画框，描边始终透明。
                       huxerui::Border(huxerui::Color::Transparent(), 1.0F),
@@ -529,10 +532,10 @@ private:
     // 避免滚动连接重建后偏移归零，或在溢出判定附近反复切换布局。
     std::vector<huxerui::View> children{huxerui::View{strip}.With(huxerui::Grow(1.0F))};
     if (scroll.MaxOffset() > 1.0F) children.push_back(picker);
-    return huxerui::Row(children).With(
-        huxerui::Padding(huxerui::EdgeInsets::Symmetric(insets.horizontal, 0.0F)),
+    return PageBodyFrame(huxerui::Row(children).With(
+        huxerui::Padding(huxerui::EdgeInsets{.top = kSectionCardSpacing}),
         huxerui::Spacing(2.0F),
-        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
 }
 
 // 与 ACGU 首页相同：标签栏留在 Pager 外，内容跟手移动；受控索引变化由

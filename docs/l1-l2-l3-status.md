@@ -1,5 +1,462 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-13：HuxerUI 追新已发布的 fork 集成分支
+
+- 应用快照：`e6f400093a4f` 加当前工作区，v0.3.105。远端核对后沿用项目 fork 的
+  `farna/main`，从 `4b444b19` 更新到 `ecf1646feb38a082962a9ad4eca8a7078422d48f`。
+  相对旧点新增 6 个提交，包含官方 `df5f4ba0`；旧点是新点祖先，Pager、窗口和扩展
+  集成历史保留。独立 third_party/huxerui checkout 与 CI 完整 SHA 一致且源码干净；
+  ../HuxerUI-fork 的四项既有 macOS/设计/测试改动未触动，没有提交、推送或发布。
+- 官方已吸收 FillViewport 与禁用容器程序化滚动，新增禁用虚拟容器 ScrollToItem 对齐
+  覆盖。应用调用兼容，无页面迁移或应用补丁；扩展库 URL/COMMIT、通用 CPS 包和内核
+  固定版本保持。源码 HCG/HRC 未变，继续使用同源宿主工具。
+- CLI 源码改用 --sdk，mcpp 项目目录改用 --project，并新增 b/r/pkg 别名与命令帮助。
+  从候选源码的 tools/huxerui_cli 独立配置到 `/tmp/clashflux-hui-ecf1646f-cli`，以
+  Clang 21/libc++ 编译 huxerui_cli 通过，版本为 0.4.0，三个别名及 mcpp build --help
+  输出正确。未替换本机全局 CLI；CI 固定 0.3.0 离线 CLI 仍保留 --source，只编排构建。
+  README 中英文、依赖清单、fork/Android 文档及依赖技能同步该区别。
+- `cmake --build build --target clash-flux`、`cmake --build build`、
+  `cmake -S . -B build -DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON` 后再次全量目标构建、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 均通过；配置输出来源为 ecf1646f，
+  32 项必跑测试全部注册且启用。
+- `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required`
+  **32/32，218.46 秒**，包含生产 page_transition（111.65 秒）、CPS 重定位/版本拒绝/
+  缓存完整性、DNS/TLS、运行时、SQLite ORM 和持久化等门禁。
+  从 platform/android 执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，75 秒**；Java/native 共同选择独立应用源码 checkout。
+- 日志位于 `/tmp/clashflux-hui-ecf1646f-{build,all-build,configure,configured-build,ctest,android}.log`。
+  未运行 Windows/macOS/iOS 原生构建、Android 真机、离线 SDK 回落或新 CLI 的实际打包；
+  未重复尝试之前被本机检查页权限门禁拒绝的首页图表视觉检查。编译、无窗口回归与
+  帮助命令不替代原生绘制、设备交互或平台安装验收。依赖技能 29 行；AGENTS.md 67 行/3125 字符。
+
+## 2026-11-13：日志页顶部留白跟随自身左右边距
+
+- 快照：`e6f400093a4f` 加当前工作区，v0.3.105，HUI 固定 `4b444b19`。
+  日志页单独启用 ScrollAreaInsets.top_follows_horizontal，由 ScrollArea 在实际左右
+  边距解析完成后确定 top：当前 Compact 4pt、宽屏 16pt；自定义边距也同步跟随。
+  正文首空白与轨道共用解析后的请求，不增加外层 Padding、组合层或滚动状态。
+- 扩展普通正文/VirtualList/VirtualGrid 的生产组合回归，320/960pt 验证顶部等于
+  实际左右边距，再将边距改为 24pt 验证正文和轨道顶部同步；密集页默认顶部、底部
+  避让、虚拟化与现有分页/滚动恢复回归通过。日志行距与底部规则保留，UI 文档同步。
+- `cmake --build build --target clash-flux test_page_transition`（含 HCG）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，105.79 秒**。从 platform/android 执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，33 秒**。
+- 未执行原生桌面视觉、Windows/macOS 构建或 Android 真机验收；未改框架或提交发布。
+
+## 2026-11-13：补齐固定标签栏与密集列表的顶部留白
+
+- 快照：`e6f400093a4f` 加当前工作区，v0.3.105，HUI 固定 `4b444b19`；未修改框架。
+  SectionTabBar 在固定区域顶部增加 8pt 留白，订阅、代理及其它共用标签栏的页面同步；
+  标签项内部尺寸与点击范围保持，下划线到首排卡片的 6/8pt 正文空白仍由网格管理。
+- ScrollAreaInsets 的 Dense 默认顶部由 4pt 改为至少 8pt，日志、连接、规则及密集加载
+  骨架同步；底部留白、密集卡片圆角及行距仍为 4pt。顶部空白随正文滚动，滚动条两端
+  继续读取同一请求，显式 top 覆盖和局部表单零留白保留。
+- 扩展生产标签栏/Pager/虚拟网格回归，加入固定 40pt 标题，验证 320/960pt 下标签栏前
+  恰好 8pt、下方仍接完整视口、卡片行距不叠加、滚动时标题和标签位置不变；密集正文、
+  VirtualList、VirtualGrid 配对回归同步验证实际 8pt 顶部和 4pt 底部。
+- `cmake --build build --target clash-flux test_page_transition`（含 HCG）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，102.36 秒**。从 platform/android 执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，35 秒**。
+- 未执行原生桌面视觉、Windows/macOS 构建或 Android 真机验收；未提交、推送或发布。
+
+## 2026-11-13：滚动容器统一管理上下空白与轨道两端
+
+- 快照：`e6f400093a4f` 加当前工作区，v0.3.105，HUI 固定 `4b444b19`；未修改框架。
+  新增 scroll_insets.h 的 ScrollAreaInsets，一份请求管理 top/bottom、普通或密集主题
+  留白及 bottom_avoidance。ScrollArea 将请求交给普通正文内部 Padding、虚拟首尾空白
+  与滚动条；轨道上下缩进取对应空白和 7pt 安全缩进的较大值，底部同时避让浮层。
+  视口保持铺满，正文空白随内容滚走，轨道缩进固定；箭头、滑块仍操作原控制器。
+- 订阅/代理、连接/日志、规则、网站测试、保真度、网络页与加载骨架接入同一规则。
+  首页和设置页的手工底部占位改为容器请求，删除无调用的 CompactFloatingNavigationFooter；
+  局部表单维持零装饰空白，嵌套容器不继承父级避让。虚拟业务索引、稳定 Key、拖放与
+  估算/列数配置保留；项目技能和 UI 权威文档同步新接口及归属规则。
+- 新增生产普通正文、VirtualList、VirtualGrid 的配对回归：320/960pt、普通/密集/6pt/
+  非对称/零留白，验证实际首尾距离、轨道箭头位置、浮层避让只计一次、短列表、底部策略
+  动态变化和宽窄切换后的滚动位置，以及嵌套容器隔离；既有十万条数据与分页回归保留。
+- `cmake --build build --target clash-flux test_page_transition`（含 HCG）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，104.16 秒**。从 platform/android 执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，32 秒**。
+- 改动前后运行 `./build/test_page_transition --scroll-profile`，固定 96 帧的七个场景均完成，
+  正文无整页重组断言通过；单轮 Debug 无窗口记录位于
+  `/tmp/clashflux-scroll-insets-profile-{before,after}.log`。未启用分配探针，不据此声明
+  分配数量、性能提升或原生 FPS。UI 技能 56 行；AGENTS.md 67 行/3125 字符。
+- 未执行原生桌面视觉、Windows/macOS 构建或 Android 真机验收；未提交、推送或发布。
+
+## 2026-11-13：标签栏下方使用随正文滚动的空白
+
+- 快照：`e6f400093a4f` 加当前工作区，v0.3.105，HUI 固定 `4b444b19`。
+  订阅 Compact 网格首尾空白为实际行距 6pt，订阅宽屏及代理网格为 8pt；订阅骨架同步。
+  SectionTabBar 指示线贴齐标签栏底边，保留标签高度、文字位置与点击范围；分页视口
+  直接接在栏底，留白归虚拟网格，滚动时随正文移走，不在固定区域增加间距。
+- 公共虚拟空白项的最小正高度由 0.5pt 降为 float epsilon，避免与网格行距叠加出半点
+  偏差，同时满足当前 HUI 虚拟度量只接受正高度的契约，防止退回整张卡片的估算高度。
+  业务工厂索引、稳定 Key、控制器、Pager 步长与虚拟化保持；未改框架源码或依赖。
+- 新增生产 SectionTabBar、SectionTabPages、ScrollArea 与 PageVirtualGrid 的组合回归，
+  320/960pt、6/8pt 行距覆盖首排距离等于实际行距、固定栏与视口相接、空白随滚动移走、
+  宽窄切换恢复实际偏移、末排恰好一份行距、短列表与十万条数据虚拟化；订阅骨架也
+  验证实际顶部空白。UI 文档同步维护归属规则。
+- `cmake --build build --target clash-flux test_page_transition`（含 HCG）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，122.94 秒**。从 platform/android 执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，37 秒**。
+- 未执行原生桌面视觉、Windows/macOS 构建或 Android 真机验收；无窗口几何和输入回归
+  不替代原生绘制与设备交互。未提交、推送或发布。
+
+## 2026-11-13：固定子标签栏与滚动正文统一左右边距
+
+- 快照：`e6f400093a4f` 加当前工作区，v0.3.105，HUI 固定 `4b444b19`。
+  SectionTabBar 改用 PageBodyFrame，与每页 ScrollArea 消费同一 PageBodyInsets 预算；
+  fullWidthSections 的 4pt 请求在宽屏解析为至少 16pt，Compact 保留请求值。溢出选择入口
+  留在相同的右边界内；标签项的 4pt 内边距和项间距保持。
+- 移除旧 SectionTabContentInsets 类型、一级/二级骨架的重复发布与网络表单里的无效覆盖。
+  网络编辑器用真实 PageBodyRegion 承载自己的原有预算，表单滚动页不再另传水平覆盖，
+  固定标签与表单正文同源；保留 FormPageContent 的真实布局根和安全区消费。
+  标签不进入纵向滚动，Pager 不加外侧 Padding，保持整页翻页、指示线与稳定控制器。
+- 新增生产标签栏、Pager 与 ScrollArea 的配对回归，400/800/599/960/400pt 往返，
+  请求 4/14/24pt，验证左右边界、溢出按钮、短标签、正文滚动时栏位置及全宽分页步长。
+  旧分页夹具同步使用同一页面预算；项目 UI 技能与权威文档同步移除旧通道约定。
+- `cmake --build build --target clash-flux test_page_transition`（含 HCG）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，119.38 秒**。从 platform/android 执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，48 秒**。UI 技能 56 行；AGENTS.md 67 行/3125 字符。
+- 未执行原生桌面视觉、Windows/macOS 构建或 Android 真机的表单/输入法验收；
+  无窗口几何和输入回归不替代设备显示与交互。未提交或发布。
+
+## 2026-11-13：子标签栏收紧横向填充
+
+- 快照：`e6f400093a4f` 加当前工作区，v0.3.105，HUI 固定 `4b444b19`。
+  订阅分类、代理分组共用 SectionTabBar 的标签项由水平 8pt/垂直 4pt 改为主题
+  extra_small 四边内距（当前 4pt），项间距仍为 4pt；同组件的其它入口同步。
+  未改 Pager、外侧对齐、标签栏高度、指示线、手势、滚动恢复或平台订阅展示策略。
+- 隔离无窗口夹具链接生产 SectionTabBar/SectionTabPages，在 390/960pt 下比较：
+  Remote/Local 标签宽度各减少 8pt，栏高仍为 30.5pt，分页视口宽度及 y=70.5 起点不变。
+  该数值属于默认 Material 夹具，不代表所有主题的绝对字体高度；原始前后记录位于
+  `/tmp/clashflux-tab-layout-20261113/{before,after}.log`。
+- `cmake --build build --target clash-flux test_page_transition`（含 HCG）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，89.40 秒**，包含分页中间帧、取消/反向、标签揭示/溢出与滚动保留等既有回归。
+- 从 platform/android 执行 `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，35 秒**。未执行原生桌面视觉、Windows/macOS 构建或 Android 真机
+  验收；未提交或发布。
+
+## 2026-11-13：官方 Charts main 候选失败，保留 fork
+
+- 应用快照：`e6f400093a4f` 加当前工作区，v0.3.105；实际 HUI 源码固定 `4b444b19`。
+  两次查询官方 main 均为 `13e5ffddc7f24ed7f33533f873249558466e9591`；在临时目录干净
+  checkout 后比较已发布源码，PieChart 实现、公开头文件和资源与 fork `2251bab` 一致。
+  chart_view 仍缺 ViewHandle tooltip 迁移与 96pt 最小绘图区，另有预览示例/构建声明差异。
+- 使用本应用实际 HCG 和 compile_commands.json 中的 Clang 21/libc++ C++23 编译配方，
+  仅替换候选源码/include 与独占输出目录。chart_pie.cpp 经 HCG/对象编译通过；chart_view.cpp
+  经 HCG 后对象编译失败：ShowAtAnchor 缺 ViewHandle 参数、PopupHandle 没有 Anchor 成员。
+  复用了两版完全相同的资源生成头；没有降级 HUI 或在应用打兼容补丁。
+- 原始编译命令/退出码位于 `/tmp/clashflux-charts-official-check-20261113/result.json`，
+  错误日志为同目录 `chart_view.cpp.compile.log`。官方候选因此未进入链接、首页视觉或平台
+  构建验收。未改依赖锁、应用缓存及维护工作树；继续使用已验证的 fork `2251bab`。
+- 文档更新后执行 `cmake --build build --target clash-flux`、`./run.sh --version`
+  （v0.3.105）和 `git diff --check` 通过。应用依赖未切换，未重跑桌面完整回归、Android、
+  Windows/macOS 或真机测试；未提交、推送或发布。
+
+## 2026-11-13：搜索聚焦特效统一到窄屏和手机
+
+- 快照：`e6f400093a4f` 加当前工作区，v0.3.105，HUI 固定 `4b444b19`。
+  PillSearchField 的 focused 直接跟随输入焦点，移除桌面非 Compact 条件；订阅、代理、连接、
+  日志搜索统一复用 250ms 从左向右的描边展开。保留原有框高、布局、输入/清空/页面操作，
+  失焦立即恢复，后台与减少动态效果直接定位，不新增定时器或逐帧页面 State。
+- `cmake --build build --target clash-flux test_page_transition`（含 HCG）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，88.47 秒**。原聚焦绘制回归扩展到 390/960pt，检查中间帧、布局/组合次数、
+  深浅主题、失焦、后台及减少动态效果；保留手机 48pt 搜索几何与下方内容回归。
+- 从 platform/android 执行 `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，36 秒**。未执行原生桌面视觉、Windows/macOS 构建及 Android 真机
+  输入法/触摸验收；无窗口测试不替代原生显示与设备交互。未提交或发布。
+
+## 2026-11-13：网站测试按钮改为不可点击的加载态
+
+- 快照：`e6f400093a4f` 加当前工作区，v0.3.105，HUI 固定 `4b444b19`。
+  单卡排队/运行时及任意网站忙碌时的页头全部测试均禁用，保留刷新旋转与 busy 语义，
+  提示改为等待/测试中；完成、失败后恢复点击，空闲卡片不受其它卡片测试影响。
+- 按钮与回调均拒绝忙态操作；单卡只走 Start，移除旧 Toggle 开始/取消接口及页头取消回调。
+  内部取消保留用于任务清理、编辑地址和删除，文档同步区分 UI 行为与内部清理。
+- `cmake --build build --target clash-flux test_page_transition`（含 HCG）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，99.64 秒**。回归验证真实忙态不可点击、重复点击不取消/不重复请求、其它卡片独立
+  测试及结束后恢复，保留旋转、并发与清理检查。
+- 从 platform/android 执行 `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，38 秒**。未执行原生桌面视觉、Windows/macOS 构建或 Android 真机验收；
+  未提交或发布。
+
+## 2026-11-13：网站测试卡片取消描边并统一刷新动作
+
+- 快照：`e6f400093a4f` 加当前工作区，v0.3.105；HUI 仍为固定 `4b444b19`。
+  网站卡片使用不带描边的 Card，保留底色、圆角、内边距和响应式网格。
+- 单卡与页头全部测试复用 WebsiteTestAction，统一刷新图标、Tooltip 和忙态语义；
+  排队/运行复用 RefreshIconRotation 的 0.9 秒循环，结束/取消立即复位，减少动态效果时不旋转。
+  挂载先建立零角度，再按真实忙态开启动画；原有单卡/全部取消及应用任务生命周期不变。
+- `cmake --build build --target clash-flux test_page_transition`（含 HCG）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，89.34 秒**。生产卡片回归新增测试中旋转、取消及完成后复位检查，保留单卡独立
+  测试/取消、并发、编辑删除、结果保留与宽窄切换回归。
+- 从 platform/android 执行 `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，36 秒**。未执行原生桌面视觉、Windows/macOS 构建或 Android 真机验收；
+  本轮无窗口 UI 回归不代表真实网络/VPN 数据面验收。未提交或发布。
+
+## 2026-11-13：精简设置首页与内核详情入口
+
+- 快照：`e6f400093a4f` 加当前工作区，v0.3.105；HUI 保持固定
+  `4b444b19da507efece20203372936439a74c4f3b`，未修改框架、存储或运行控制逻辑。
+- 桌面复制环境变量的下拉框移除固定 220pt 宽度，按当前已本地化选项、字体及继承的
+  Select 内边距/指示器尺寸测量；保留探测、用户选择及原复制端口逻辑。删除“当前检测到…”
+  说明及设置首页所有启动/托盘/Android 保活选项的解释性副标题，保留标题、图标和操作控件。
+- 桌面内核/服务维护合并为一个“内核”整行入口，Compact/宽屏都使用 NavigationStack
+  二级页与 SecondaryPageScaffold；保留页面滚动位置，集中显示版本、实际运行状态、错误及
+  原有重启/平台服务操作。继续读取 CoreModel 并使用应用任务域，不新建轮询或后台管理入口。
+- `cmake --build build --target clash-flux test_page_transition`（含 HCG）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过。
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，98.59 秒**；新增生产 ContentSizedSelect 在 320/960pt 下的真实选择、变长/缩短、
+  中英切换、字体变化和未 hydrate 占位回归，保留原分页、菜单、滚动及交互测试。
+- 从 platform/android 执行 `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，36 秒**。未执行 Windows/macOS 原生构建、完整设置二级路由的 GUI
+  点击验收、Android 真机或真实服务安装/卸载/重启；组件无窗口回归不替代这些检查。
+
+## 2026-11-13：HuxerUI 跟进 farna/main 至 4b444b19
+
+- 应用快照：`e6f400093a4f` 加当前未提交工作区，v0.3.105；保留此前滚动条、菜单和订阅输入改动。
+  fetch 并核对已发布 farna/main，HUI 从 `e720ae5f48690e43a5899127ace1b61645c120f4`
+  前进 17 个提交至 `4b444b19da507efece20203372936439a74c4f3b`。独立的
+  third_party/huxerui checkout 为 detached HEAD 且干净，未修改维护工作树或推送框架。
+  应用构建/回归验证候选后更新 workflow 的统一 HUXERUI_COMMIT；原生与 Android Java 同源。
+- 包含官方 `babf9f2a`、fork merge `3da96007`：新增全屏状态与窗口快捷键、Apple shaping
+  文本居中、Web 换行和 Windows 安装器维护/重启流程；fork `4b444b19` 修复全屏被任务栏覆盖。
+  保留 macOS renderer 引用、Linux 6 DIP 窄带及 Pager 既有行为；扩展、通用归档与内核 pin 不变。
+- 新 InstallerPromptKind::Restart 的 message 为空；应用定制安装器补齐安装/卸载完成说明，
+  Yes/No 显示“立即重启/稍后重启”，四份语言目录同步，仍通过原 Respond(id, choice) 回应。
+  没有运行真实安装器、修改安装/修复/卸载入口或触发系统重启。
+- Linux 执行 `cmake --build build --target clash-flux` 和 `cmake --build build` 通过，
+  含当前 HUI 的全量重编与 HCG；`./run.sh --version` 为 v0.3.105，`git diff --check` 通过。
+  `ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-required`
+  **32/32，206.12 秒**，包含生产 page_transition、持久化/ORM、启动、CPS 重定位/版本拒绝/
+  暖缓存完整性、下载与 DNS/TLS 等。更新 CI pin 后补跑 project_test_gate / ui_resources
+  **2/2，0.74 秒**；所有必跑项均注册且启用。
+- 从 platform/android 执行 `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，62 秒**；日志确认 Java 包来自本机同一 third_party/huxerui 源码。
+- 定制安装器四份目录覆盖全部 66 项资源引用；按 Windows CMake 的 branding 配置在临时目录
+  暂存 logo 后运行 hrc，app.cpp 经 hcg 与 Clang 21/libc++ 的 `-fsyntax-only` 通过。
+  这是宿主共享源码/API 检查，不是 Windows 原生链接、Burn 安装或重启交互验收。
+- 隔离图表夹具 `/tmp/cf-hui-charts-7rswzexl/headless` 使用本轮 HUI、固定 Charts、应用
+  合并资源包以及首页采用的 rounded_caps / inner_radius=0.62 / 隐藏坐标轴等公开 API，
+  无窗口验证 72×72pt 环图、96pt 面积图、零/非零/零切换和 0% 呈现意图通过；不启动 Clash-Flux
+  内核/托盘业务服务。滚动工作计数 `gdb -q -batch -x tests/scroll_work_counts.gdb ./build/test_page_transition`
+  通过，宽/窄屏随偏移的 rail 更新仍为 0，窄屏 rail 回调及同区域 hover 重扫仍为 0。
+- 原生图表视觉检查尝试经隔离 GTK Broadway 页观察，浏览器权限门禁拒绝访问本机检查页；
+  未重试或绕过，已停止测试进程。未完成原生完整首页视觉、Windows/macOS/iOS 构建、
+  Windows 安装/重启、真机或离线 SDK 验收；无窗口绘制意图不替代原生图像或设备表现。
+  README 中英、third_party 清单、fork 当前固定 SHA 与检出示例均同步；未提交或发布应用。
+
+## 2026-11-13：通用滚动区减少重复工作
+
+- 快照：`e6f400093a4f` 加当前未提交工作区，v0.3.105；固定 HUI
+  `e720ae5f48690e43a5899127ace1b61645c120f4`，框架工作树干净，未改依赖、未提交或发布。
+- 按顺序先记录基线，再移除 rail Scope 的偏移订阅：扩展直接读取真实 Metrics，负责
+  几何、绘制及淡出时机；主题、语言、配置和 hover 目标变化仍更新小范围声明。
+  Compact 保留原边距节点、控制器与视口动画，不挂滚动条/hover 扩展；输入接管归
+  视口动画扩展，隐藏时销毁 rail 会停止箭头目标/长按，保留滚轮动画和实际偏移。
+- Hover 仅在进入/离开及资格变化时扫描选择通道，同区域 Move 不重复扫描或重绘 rail。
+  输入观察合并到已有视口 Scope，删除一层转发 Scope；同一视口、虚拟化、对称边距、
+  箭头几何、嵌套边界、布局前 UI 队列提交及取消保护保持不变。
+- 本机 Linux / Clang 21 / libc++ / Debug 的固定 96 帧输入，保存优化前后二进制，
+  交替运行 5 轮：滚轮场景的 UI 线程分配调用减少约 1.2%–2.7%，嵌套 hover 减少约 3.8%；
+  无窗口帧处理 P95 的跨轮中位数下降约 2.5%–4.4%。计时包含输入、布局/绘制记录、语义和
+  测试结构捕获，未分离布局/绘制阶段，不是原生 FPS、GPU、Release 或真机功耗证据。
+  方法、完整表格和[原始 CSV](evidence/2026-11-13-scroll-work.csv)见[滚动性能检查](scroll-performance.md)。
+- GDB 单独计数：96 帧内宽/窄屏单区域的 rail 声明更新 48 → 0；窄屏 rail 帧/几何回调
+  96/96 → 0/0；嵌套区域内 Move 的 hover Refresh 190 → 0。调试器下的耗时不参与性能比较。
+  可选探针只注入测试二进制，不链接进应用；README 中英、UI 文档和测试技能同步入口。
+- 各阶段及最终 `./build/test_page_transition --scrollbars` 通过，新增深浅主题、语言切换、
+  窄屏修改外观后恢复宽屏、持有箭头时隐藏取消回归；保留普通/虚拟列表/网格、逐帧正文/滑块同步、
+  hover 连续帧颜色、偏移恢复、长按、嵌套、斜向滚轮、浮层隔离和各输入接管检查。
+- `cmake --build build --target clash-flux test_page_transition`（含 HuxerUI codegen）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，99.11 秒**。从 platform/android 执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，33 秒**。规范限额通过：AGENTS.md 67 行/3125 字符，测试技能 65 行。
+- 未执行原生桌面视觉/FPS、Android APK 安装或真机性能验收，未执行 Windows/macOS 构建。
+  当前数据支持减少重复工作的结论，不推断框架布局/绘制热点，不据此修改框架。
+
+## 2026-11-13：应用层通用鼠标滚轮过渡
+
+- 快照：`e6f400093a4f` 加当前工作区，应用 v0.3.105，未提交或发布；HUI 保持
+  `e720ae5f48690e43a5899127ace1b61645c120f4` 且工作树干净，未修改框架或依赖。
+- 将箭头的 MotionController、真实偏移提交及生命周期保护提取到 `scroll_motion.h`，
+  由真实视口扩展推进；普通 ScrollView、VirtualList、VirtualGrid 的 ScrollArea 共用。
+  Compact 隐藏滚动条、无箭头样式及过短轨道仍支持滚轮过渡，槽位与对称边距不变。
+  `ScrollAreaStyle.wheel_duration` 默认 120ms，可独立设 0；减少动态效果时立即定位。
+- 同向滚轮累加目标，反向从实际偏移接管并取消祖先未完成的前进目标；滚轮替换箭头目标。
+  触控板、触屏、键盘、滑块和外部真实位移接管时拒绝旧提交，后台/卸载停止。
+  输入仍使用框架已归一化的距离；按需请求帧，UI 队列在下次布局前提交，普通/虚拟正文
+  和滑块同步，不逐帧重组页面，无常驻定时器。
+- 使用实际 ScrollInput 路径及公开 OnPreScroll 收集本次参与的 ScrollArea，从内向外按
+  目标容量分配纵向距离；连续输入不重复使用内层已预留的范围，终端超量不触发即时跳动。
+  横向输入保留原路径；浮层捕获的环境不能把后台页面加入本次滚动。菜单、横向标签栏和
+  编辑器自身交互保留原路径，覆盖范围为通用纵向 ScrollArea。
+- `./build/test_page_transition --scrollbars` 通过：400/800pt、普通/列表/网格真实中间帧、
+  页面组合次数与视口几何、连续/反向/大增量、触控板/触摸接管、后台/卸载、范围收缩及
+  后续滚轮、0 时长、减少动态效果、空闲稳定；嵌套内外层精确分配、祖先反向取消、
+  禁用/遮挡/相邻区域，以及斜向输入和浮层边界隔离均覆盖。原箭头、长按、拖动、恢复和
+  hover 每帧颜色回归保留并通过。
+- `cmake --build build --target clash-flux test_page_transition`（含 HuxerUI codegen）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，98.21 秒**。从 platform/android 执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，29 秒**。
+- 未执行原生桌面视觉/FPS、Android APK 安装或真机滚轮/触控板性能验收，未执行
+  Windows/macOS 构建；无窗口帧序列与 Android 编译不替代原生绘制或设备输入验收。
+
+## 2026-11-13：应用层箭头滚动短过渡
+
+- 快照：`e6f400093a4f` 加当前工作区，应用 v0.3.105，未提交或发布；HUI 仍为
+  `e720ae5f48690e43a5899127ace1b61645c120f4`，未修改框架、依赖或前面已完成的菜单/订阅输入交互。
+- ScrollRail 使用 MotionController 驱动真实 ScrollController 偏移，默认 EaseOut 120ms；
+  同向连续点击累加目标，反向从实际位置接管，长按追加目标。`ScrollAreaStyle.step_duration=0`
+  或减少动态效果时立即定位，组件几何与原槽位不变；普通滚轮、触控板和直接拖动继续使用原路径。
+- HUI 扩展 OnFrame 位于虚拟布局之后，直接在该回调改偏移会令正文比滑块晚一帧；改为窗口
+  作用域 UI 队列在下一次布局前提交。弱提交对象、版本、输入修订、窗口/控制器和实际偏移检查
+  拒绝取消后的旧回调；滚轮、正文按下、键盘、滑块拖动及后台接管停止旧过渡，退出后不重播。
+  仅过渡/长按期间调度，无常驻计时器；PageScrollOffset 记录真实提交与布局夹取后的偏移。
+- 新增生产普通滚动区、VirtualList、VirtualGrid 的真实中间帧回归：正文与滑块同步、视口几何
+  和页面组合次数不变、连续点击/反向、空闲停止、待提交期间滚轮/触摸接管、滑块接管、后台、
+  内容收缩归零及恢复不重播、减少动态效果与 0 时长立即定位。保留原长按、取消、边界、
+  无箭头样式拖动、hover 高亮和偏移恢复回归；`./build/test_page_transition --scrollbars` 通过。
+- `cmake --build build --target clash-flux test_page_transition`（含 HuxerUI codegen）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，78.36 秒**。从 platform/android 执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac` **通过，arm64-v8a，33 秒**。
+- 未执行原生桌面视觉/FPS 验收、Android APK 安装或真机输入/性能检查，未执行 Windows/macOS
+  构建；无窗口帧序列验证共享布局/呈现意图，不替代原生绘制或设备性能测量。
+
+## 2026-11-13：滚动条在原槽位内增加两端箭头
+
+- 快照：`e6f400093a4f` 加当前工作区，应用 v0.3.105，未提交或发布；HUI 保持
+  `e720ae5f48690e43a5899127ace1b61645c120f4`，未修改框架或依赖，保留已有菜单及订阅表单改动。
+- ScrollRail 在原轨道两端划分箭头区域，中间剩余长度用于计算滑块和拖动范围；外部槽宽、
+  组件宽高、正文和对称边距不变。宽屏默认显示，Compact/无溢出不显示；过短轨道省略箭头。
+  `ScrollAreaStyle.step_buttons` 可关闭箭头，`step_extent` 默认 40pt；主题提供本地化按钮标签。
+- 点击立即步进，按住 350ms 后每 60ms 重复；移出暂停，松开、取消及后台停止，到边界禁用。
+  复用原控制器并记录 PageScrollOffset，按住且仍可滚动时才定时唤醒，无空闲轮询或新任务。
+  箭头有可访问按钮语义及激活动作，边界可用状态与真实偏移同步。
+- `./build/test_page_transition --scrollbars` 通过，新增原槽位/正文几何不变、40pt 点击、长按、
+  移出/释放/取消/后台、边界、可访问动作、可选无箭头样式及其拖动、25pt 自定义步长、
+  过短/Compact 隐藏回归；保留普通/虚拟列表/网格拖动、滚动恢复及 hover 连续帧颜色检查。
+- `cmake --build build --target clash-flux test_page_transition`（含 HuxerUI codegen）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，75.65 秒**。从 platform/android 执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac` **通过，arm64-v8a，48 秒**。
+- 未执行桌面原生鼠标/箭头视觉验收、Android 真机或 Windows/macOS 构建；无窗口几何/输入
+  回归与 Android 编译不替代原生绘制、实机点击或实际性能验收。
+
+## 2026-11-13：订阅自动更新收束为单输入框
+
+- 快照：`e6f400093a4f` 加当前工作区，应用 v0.3.105，未提交或发布；HUI 保持
+  `e720ae5f48690e43a5899127ace1b61645c120f4`，未修改框架、依赖或数据库 schema。
+- 新建、编辑、桌面弹窗、Compact 二级页及链接导入共用“自动更新间隔（分钟）”，
+  提示“0 为关闭自动更新”；删除独立开关和表单 bool State，0 停止、正整数开启。
+  新建/快速扫码沿用 1440 分钟默认值；原来关闭但保留正间隔的旧记录在编辑时显示 0，
+  打开或取消不写库，只有明确保存才将间隔和兼容启停字段一起提交；手动更新不受影响。
+- 共用严格解析器和字段错误：空白、负数、小数、前后附加字符与整数溢出均拒绝，
+  不再把非法输入回落为关闭；提交校验先于忙态、导入任务和保存任务。
+  保留完整 TextEditingValue，Android 使用整数键盘提示，三份语言资源已同步。
+- `./build/test_page_transition --profile-interval` 通过：400/1000pt 生产输入框、单控件、
+  中文标签/提示、真实输入与校验语义、旧开关/间隔组合、0/正数及溢出边界均覆盖。
+- `cmake --build build --target clash-flux test_page_transition test_persistence`（含 HuxerUI codegen）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources|persistence)$'`
+  **3/3，97.53 秒**，包含既有 SQLite 真实锁竞争、失败保留和重开回归。
+  从 platform/android 执行 `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，43 秒**。
+- 未执行 Android APK 安装/真机键盘及后台到期更新验收，未执行 Windows/macOS 构建或原生 GUI
+  手动回归；无窗口 UI、持久化回归及 Android 编译不替代这些实机检查。
+
+## 2026-11-13：通用菜单图标轻量 hover 跳动
+
+- 快照：`e6f400093a4f` 加当前工作区，应用 v0.3.105，未提交或发布；保留已有菜单高度及
+  无滚动条策略，HUI 仍为 `e720ae5f48690e43a5899127ace1b61645c120f4`，未修改框架或依赖。
+- ActionMenuItemView 统一使用框架 Scale + AnimateTo：进入整行时图标 100% → 112% → 100%，
+  单次 240ms；文字、布局和命中范围不缩放。每项独立 Scope，只有 Enter/Leave 更新 hover，
+  Move 不重播，逐帧不写 State 或重组整个菜单，无任务/定时器/无限播放；离开即复原。
+  禁用或无图标项不播放，减少动态效果和后台取消；调用方的子菜单 hover 绑定继续独立工作。
+- 生产菜单项回归覆盖深浅主题、400/1000pt 视口、上升/峰值/回缩/静止、行内移动、再次进入、
+  提前离开、禁用、无图标、减少动态效果、切后台、点击和外部 hover 回调；检查图标中心、
+  行/文字几何不变、面板组合次数不增长。`./build/test_page_transition --menus` 通过，
+  同时保留日志父/子菜单、短长菜单、矮窗口输入、禁用和勾选回归。
+- `cmake --build build --target clash-flux test_page_transition`（含 HuxerUI codegen）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，75.18 秒**。从 platform/android 执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac` **通过，arm64-v8a，20 秒**。
+- 未执行桌面原生 hover 视觉验收、Android APK 安装或真机鼠标/触摸验收，未执行 Windows/macOS
+  构建；无窗口回归验证共享呈现几何和输入意图，不替代原生绘制或真机性能测量。
+
+## 2026-11-13：右键菜单独立于页面滚动条
+
+- 快照：`e6f400093a4f` 加当前工作区，应用 v0.3.105，未提交或发布；保留上一轮自然高度修复，
+  HUI 仍为 `e720ae5f48690e43a5899127ace1b61645c120f4`，未修改框架或依赖。
+- ActionMenuSurface 改用无滚动条的框架 ScrollView，不再复用 PageScrollView / ScrollArea。
+  普通操作菜单、右键菜单和日志子菜单在宽窄屏都无滚动条、无预留槽，主题内边距一致；
+  短菜单自然收缩，已有操作分组保留，极矮窗口的溢出仍可滚轮/触摸访问，末项可执行并关闭。
+- 生产菜单回归覆盖 400/1000pt 宽、700/900pt 高的自然高度和一致留白，以及 260pt 矮视口的
+  滚轮、触摸、边界和末项执行。改动前七项滚动条/边距断言失败，改动后 `--menus` 通过；
+  包含原有禁用、勾选、坐标锚定、日志 hover 子菜单和关闭交互。
+- `cmake --build build --target clash-flux test_page_transition`（含 HuxerUI codegen）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，78.37 秒**。从 platform/android 执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac` **通过，arm64-v8a，21 秒**。
+- 未安装 APK 或执行 Android 真机、桌面原生鼠标/触摸验收；未执行 Windows/macOS 构建。
+  无窗口输入回归及 Android 编译不替代这些实机验证。
+
+## 2026-11-13：通用操作菜单自然高度恢复
+
+- 快照：`e6f400093a4f` 加本轮工作区，应用 v0.3.105，未提交或发布；HUI 保持
+  `e720ae5f48690e43a5899127ace1b61645c120f4`，未修改框架、依赖或固定版本。
+- 根因：ScrollArea 内部 Column 的 Grow 把短菜单正文拉满可用高度，菜单项后留下大块空白。
+  将真实滚动节点直接放进横向 Row，Grow 只分配剩余宽度；页面和抽屉继续服从外层高度，
+  短菜单按正文收缩，长菜单达到上限后滚动。对称边距、滚动条、控制器和 hover 状态保留。
+- 新增生产 ActionMenu 的短菜单回归，覆盖 400/1000pt 宽、700/900pt 高视口，核对末项之后
+  无大块空白、自然高度不随窗口高度变化、末项可点击并关闭。修复前六项断言失败，修复后通过。
+  `./build/test_page_transition --menus` 同时验证长菜单滚到末项和日志父/子菜单交互。
+- 保留当前工作区已有的 hover 资格修正，未另外改变选中策略；新增滚轮六次、每次连续三帧的
+  实际滑块颜色断言，避免 PumpAndSettle 掩盖瞬时退色，当前实现通过。
+- `cmake --build build --target clash-flux test_page_transition`（含 HuxerUI codegen）、
+  `./run.sh --version`（v0.3.105）、`git diff --check` 通过。
+  `./build/test_page_transition --menus`、`./build/test_page_transition --scrollbars` 通过；
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`
+  **2/2，84.01 秒**，保留原有分页、正文视口、虚拟列表/网格、抽屉与滚动位置回归。
+- 从 platform/android 执行 `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`
+  **通过，arm64-v8a，41 秒**。未执行 APK 安装、Android 真机菜单验收、桌面原生鼠标滚轮验收
+  或 Windows/macOS 构建；无窗口生产 UI 回归不替代这些实机检查。
+
 ## 2026-11-12：滚动条 hover 高亮与 HuxerUI 追新
 
 - 快照：应用 `865b49ddbd88` 加当前工作区，未提交或发布。HUI 更新到

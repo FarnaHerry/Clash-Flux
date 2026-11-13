@@ -801,8 +801,7 @@ std::function<void()> NodeSelectAction(
                                                     *group, node),
                                                 nodeNameLimit, detailLimit)
                                          .Key(group->name + "::" + nodeName);
-                                 }, PageScrollInset(theme, true), kSectionCardSpacing,
-                                 compact ? kCompactFloatingNavigationInset : (showSpeedFab ? kSpeedFabFooterHeight : 0.0F))
+                                 }, kSectionCardSpacing)
                                  .Columns(compact
                                               ? huxerui::GridColumns::Fixed(2)
                                               : huxerui::GridColumns::Adaptive(
@@ -812,7 +811,9 @@ std::function<void()> NodeSelectAction(
                                  // 自适应高度（字体缩放、系统字号变化都会改高度），
                                  // 写死精确行高会在这些情况下裁切/错位。
                                  .EstimatedRowExtent(52.0F)
-                                 .ColumnSpacing(kSectionCardSpacing))
+                                 .ColumnSpacing(kSectionCardSpacing), {}, {}, {},
+                                 ScrollAreaInsets::Symmetric(kSectionCardSpacing, compact
+                                     ? kCompactFloatingNavigationInset : (showSpeedFab ? kSpeedFabFooterHeight : 0.0F)))
                                  .With(huxerui::Grow(1.0F))
                                  .Key("group-grid-" + rootGroup.name);
         groupPages.push_back(huxerui::Column {grid}.With(

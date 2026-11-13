@@ -3,13 +3,28 @@
 #include "ui.h"
 #include "app_resources.h"
 #include "action_menu.h"
+#include "refresh_motion.h"
 
 namespace clashflux::ui {
 
+inline huxerui::View WebsiteTestAction(bool active, huxerui::StringVariant label, std::function<void()> start) {
+    return huxerui::Scope([active, label, start] {
+        const auto& theme = huxerui::UseTheme();
+        const auto animationReady = huxerui::UseState(false);
+        huxerui::Lifecycle([animationReady] { animationReady = true; });
+        return huxerui::IconButton(app::images::refresh, label)
+            .With(huxerui::Tooltip(label),
+                huxerui::Rotation(RefreshIconRotation(theme, active && animationReady.Get())),
+                huxerui::Enabled(!active),
+                huxerui::Semantics{.role = huxerui::SemanticRole::Button, .label = label, .busy = active})
+            .OnClick([active, start] { if (!active) start(); });
+    });
+}
+
 inline huxerui::View WebsiteTestCardContent(
-    WebsiteTestSite site, std::function<void()> toggle,
+    WebsiteTestSite site, std::function<void()> start,
     std::function<void()> edit, std::function<void()> remove) {
-    return huxerui::Scope([site, toggle, edit, remove] {
+    return huxerui::Scope([site, start, edit, remove] {
         const auto& theme = huxerui::UseTheme();
         const auto menu = UseActionMenu();
         const auto dialog = huxerui::UseDialog();
@@ -26,7 +41,8 @@ inline huxerui::View WebsiteTestCardContent(
         };
         const auto& result = site.result;
         const bool ownActive = result.phase == WebsiteTestPhase::Queued || result.phase == WebsiteTestPhase::Running;
-        const auto testLabel = ownActive ? Localized("取消") : Localized("测试");
+        const auto testLabel = result.phase == WebsiteTestPhase::Queued ? Localized("等待测试") :
+            ownActive ? Localized("测试中…") : Localized("测试");
         auto status = Localized("未测试");
         auto color = theme.colors.on_surface_variant;
         if (result.phase == WebsiteTestPhase::Queued) status = Localized("等待测试");
@@ -41,8 +57,7 @@ inline huxerui::View WebsiteTestCardContent(
           huxerui::Row {
             huxerui::Image(app::images::globe).Tint(theme.colors.primary).With(huxerui::Frame{.width = 20, .height = 20}),
             huxerui::Text(site.name, huxerui::TextRole::Title).With(huxerui::Grow(1.0F)),
-            huxerui::IconButton(ownActive ? app::images::close : app::images::play, testLabel)
-                .With(huxerui::Tooltip(testLabel)).OnClick(toggle)
+            WebsiteTestAction(ownActive, testLabel, start)
                 .Key("website-test-" + std::to_string(site.id)),
             huxerui::IconButton(app::images::more_vertical, Localized("更多操作"))
                 .With(menu.Target(), huxerui::Tooltip(Localized("更多操作")))

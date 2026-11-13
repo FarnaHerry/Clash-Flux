@@ -78,7 +78,7 @@ namespace clashflux::ui {
                 .Key("fidelity-record-" + std::to_string(index));
             return huxerui::Column{card}.With(huxerui::Padding(huxerui::EdgeInsets{
                 .bottom = index + 1 < notes.size() ? kSectionCardSpacing : 0.0F}));
-        }, PageScrollInset(theme)).EstimatedItemExtent(120.0F))
+        }).EstimatedItemExtent(120.0F))
             .With(huxerui::Grow(1.0F));
     }
     if (!result.error.empty()) {

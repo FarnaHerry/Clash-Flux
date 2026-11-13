@@ -29,7 +29,7 @@ composable 体内不能使用条件编译，沿用现有 DSL；UI 经过 HuxerUI
 ## 布局与交互联动
 
 - 滚动方向上的装饰性首尾留白归正文，滚动视口铺满可用正文区域；普通正文和虚拟列表复用公共留白组件，保留虚拟化及稳定业务 ID。固定区域、卡片内部、非滚动方向边距、安全区和浮层避让按上述专题分别处理，不机械替换全部 Padding，也不重复计入空白。
-- 滚动条复用 ScrollArea 对称边距内的独立槽，已有控制器显式传入；宽窄策略、虚拟列表装配、偏移恢复和编辑器扩展 TODO 见 UI 文档“滚动与留白的归属”，不再逐页挂覆盖式 ScrollBar。
+- 滚动条复用 ScrollArea 对称边距内的独立槽；正文首尾空白、轨道上下收口及底部浮层避让共用一份 ScrollAreaInsets，不在页面重复传首尾尺寸或手放 footer，已有控制器显式传入。宽窄策略、虚拟列表装配、偏移恢复和编辑器扩展 TODO 见 UI 文档“滚动与留白的归属”。
 
 - Compact 编辑/添加页主操作放标题栏右侧，复用 FormHeaderAction 图标与忙态语义，正文用 FormPageContent 避让系统安全区；不再固定底部提交按钮。键盘造成视口缩短时检查图标位置、可滚动末项、重复提交和返回。
 
@@ -43,7 +43,7 @@ composable 体内不能使用条件编译，沿用现有 DSL；UI 经过 HuxerUI
 - DenseCard 的 dense_radius（当前 4pt）、每卡底距（当前 4pt）和 VirtualList::EstimatedItemExtent 一起调整；估算包括减半内边距×2、单行文本及底距。连接条目保留虚拟化与稳定 ID。
 - 拖动预览跟随原始抓取点；拖放目标注册在滚动视口，间隙/边缘仍可拖并触发自动滚动。
 - 二级标签用 SectionTabPages 的框架 Pager，标签在外、点击/菜单/滑动共用受控索引，稳定 Key、有界 Column+Grow 和虚拟列表；不额外 PointerIntercept 或逐页 Offset/Opacity。嵌套边缘交给外层，取消回弹、反向不崩，首次无入场、切回保留滚动。
-- 分页用 fullWidthSections 和 PageBodyRegion 分配每页正文边距，由 ScrollArea / PageBodyFrame 消费一次；SectionTabContentInsets 只对齐标签栏。Pager 外不套水平 Padding，步长为完整视口；具体尺寸见 UI 文档。
+- 分页用 fullWidthSections 和 PageBodyRegion 分配边距，正文 ScrollArea 与固定标签栏 PageBodyFrame 共用同一对称边距规则，各自消费一次。Pager 外不套水平 Padding，步长为完整视口；具体尺寸见 UI 文档。
 - 标签/内容共用保留 UseSectionTabMotion handle；下划线与居中目标根据实际几何和呈现进度，先限滚动边界再插值，拖动/取消/反向都跟随，不逐帧写 State 或失效布局。手动浏览不持续拉回，溢出菜单变化不重挂载 ScrollView。
 - 不加“内核未运行/请到设置启动”常驻横幅；由首页控件表达状态，只保留需要处置的操作失败等瞬时反馈。
 

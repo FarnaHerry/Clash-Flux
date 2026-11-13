@@ -21,7 +21,7 @@ description: 修改 Clash-Flux CMake/CPS 包边界、固定依赖、HuxerUI 或�
 - 升级必须保留 Lib-Charts 的 PieChartData/PieChart、紧凑高度与项目采用的图表 API/行为，实际验证首页图表。
 - 框架升级保留 Pager 清过期拖动目标、反向离场页与隐藏虚拟页待测量/失效传播行为，运行生产 page_transition；不能在应用重贴这些框架补丁。
 - Lib-SQLite 的只读启动查询也在 fork 维护；升级验证不建文件、不迁移、不改 journal、失败保留库以及多订阅重开，不用构建代替数据保护回归。
-- Android Java/native 选同一源码，SDK 回落同身份；详情见 [Android 构建](../../docs/android-build.md)。
+- Android Java/native 选同一源码，SDK 回落同身份；CLI 参数按实际帮助和所用版本核对，更新源码不等于替换 CI 固定的旧 CLI，详见 [Android 构建](../../docs/android-build.md)。
 
 ## sing-box
 

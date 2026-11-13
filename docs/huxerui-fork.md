@@ -4,15 +4,52 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `e720ae5f48690e43a5899127ace1b61645c120f4`，各平台 CI 共用
+Clash-Flux 当前固定 `ecf1646feb38a082962a9ad4eca8a7078422d48f`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
-必须来自这同一份源码；CLI 使用源码目录时显式传入 `--source`。
+必须来自这同一份源码。新源码 CLI 使用 `--sdk <path>` 选择 SDK 或源码目录；CI 的固定
+0.3.0 离线 CLI 仍用其支持的 `--source` 参数，只承担编排，不提供 Java/native 框架。
+
+2026-11-13 更新到已发布 [`ecf1646f`](https://github.com/FarnaHerry/HuxerUI/commit/ecf1646feb38a082962a9ad4eca8a7078422d48f)：
+相对 `4b444b19` 前进 6 个提交，包含官方 `df5f4ba0`。`ScrollView::FillViewport` 与禁用
+容器的程序化滚动已被官方吸收，补齐禁用虚拟容器的 ScrollToItem 对齐路径；应用既有
+调用兼容，不重复补丁。CLI 源码将 `--source` 改为 `--sdk`，独立 mcpp 的项目参数为
+`--project`，并新增 b/r/pkg 别名及命令帮助。HCG/HRC 源码未变，继续使用同源宿主工具。
+应用 checkout、CI 和 Android Java/native 固定同一 SHA；扩展库固定提交保持。
+Linux 主目标与全部测试目标构建、32 项必跑回归及 Android Java/native 编译通过；
+临时目录编译新版 CLI 并验证版本与命令帮助，没有替换本机全局 CLI 或维护工作树。
+CI 继续消费固定 0.3.0 离线 CLI，其 --source 调用保持，具体区别见[Android 构建](android-build.md)。
+原生首页图表视觉与其它平台验证边界见[验收记录](l1-l2-l3-status.md)。
 
 Media 选择器直接使用官方 [HuxerUI/Lib-Media](https://github.com/HuxerUI/Lib-Media)，
 固定提交 `fbe5b7e652f8cb79191444fa2a51d0dd0c2299bb`，本轮未创建 fork 或修改库源码。
 应用仅在 Android 集成相册图片选择；当前上游整体构建，尚无 picker-only 开关，
 APK 体积比较见[二维码扫描](qr-scanning.md)（0.4.0 已提供 Android 静态链接）。
+
+2026-11-13 核对并试编译官方 Lib-Charts main：两次 `git ls-remote` 均为
+[`13e5ffd`](https://github.com/HuxerUI/Lib-Charts/commit/13e5ffddc7f24ed7f33533f873249558466e9591)。
+官方已包含 PieChart、圆角环形段、中心百分比、180ms 悬停及全零数据处理；与当前 fork
+比较，饼图实现与公开头文件无差异。fork 仍保留 chart_view 的 ViewHandle tooltip 迁移和
+最小绘图区 180pt → 96pt，以及独立预览示例。使用本应用实际的 HCG、Clang 21/libc++
+编译配方和 HUI `4b444b19` 头文件，在临时干净官方 checkout 生成并编译：chart_pie.cpp
+通过，chart_view.cpp 因旧 ShowAtAnchor 签名及已删除的 PopupHandle::Anchor 两处失败。
+因此未切换 Lock.cmake，应用仍固定 fork `2251bab5ad2a5df8e6e133c039e0b76bbe237add`；
+没有修改官方/fork 源码、维护工作树或应用缓存来兼容，未尝试原生视觉及 Android 候选构建。
+检查范围与日志见[验收记录](l1-l2-l3-status.md)。
+
+2026-11-13 更新到已发布 [`4b444b19`](https://github.com/FarnaHerry/HuxerUI/commit/4b444b19da507efece20203372936439a74c4f3b)：
+相对 `e720ae5f` 前进 17 个提交，包含官方 `babf9f2a` 基线及 fork merge `3da96007`。
+新增实际全屏状态 `WindowHandle::IsFullscreen()`、生命周期绑定的 `OnShortcut()` 和默认全屏
+快捷键处理，Windows 修复全屏时任务栏覆盖；Apple 按实际 shaping 段落度量居中文本，
+Web 修复超宽单词/内联对象换行。Windows 安装器采用上游升级、维护、无人值守与重启提示实现，
+移除已由上游等价实现替代的 fork 内部命令策略/owner-window 头文件；应用未依赖这些私有头。
+应用定制安装器为新的 Restart prompt 补齐完成说明和四份目录的“立即/稍后重启”按钮，
+仍由 InstallerHandle::Respond 交给 Burn 处理；不改旧版清理标识、安装/修复/卸载入口或数据保留策略。
+已有 macOS renderer 引用修复、Linux 6 DIP 拉伸窄带、Pager 修复和扩展固定提交保持。
+Linux 主目标/全部目标、32 项桌面必跑回归及 Android Java/native 已验证；安装器资源经过
+hrc、源码经过 hcg 和宿主语法检查，不等同 Windows 安装/重启实机验收。隔离的 Charts
+无窗口夹具验证 72pt 圆角环图、96pt 面积图和零/非零切换，未代替完整首页视觉检查。原生图表视觉检查
+因浏览器访问本机检查页的权限门禁拒绝而未完成，详细边界见 [验收记录](l1-l2-l3-status.md)。
 
 2026-11-13 修复 macOS/iOS 构建并固定到 [`e720ae5f`](https://github.com/FarnaHerry/HuxerUI/commit/e720ae5f48690e43a5899127ace1b61645c120f4)：
 `cd66ef31` 的 `farna/main` 合并保留了 `std::unique_ptr<AppKitRenderer>` 成员，而上游把
@@ -250,7 +287,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 998b89d6071223c2036a75a6d8e530687fbf752d
+git -C third_party/huxerui checkout ecf1646feb38a082962a9ad4eca8a7078422d48f
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`

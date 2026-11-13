@@ -49,7 +49,6 @@ struct ProfileCreateFields {
     huxerui::State<huxerui::TextEditingValue> desc;
     huxerui::State<huxerui::TextEditingValue> timeout;
     huxerui::State<huxerui::TextEditingValue> interval;
-    huxerui::State<bool> auto_update;
     huxerui::State<bool> system_proxy;
     huxerui::State<bool> core_proxy;
     huxerui::State<bool> invalid_cert;
@@ -88,7 +87,6 @@ struct ProfileEditFields {
     huxerui::State<huxerui::TextEditingValue> desc;
     huxerui::State<huxerui::TextEditingValue> timeout;
     huxerui::State<huxerui::TextEditingValue> interval;
-    huxerui::State<bool> auto_update;
     huxerui::State<bool> system_proxy;
     huxerui::State<bool> core_proxy;
     huxerui::State<bool> invalid_cert;
@@ -179,7 +177,7 @@ huxerui::View ProfileOptionsForm(
     huxerui::State<huxerui::TextEditingValue> desc,
     huxerui::State<huxerui::TextEditingValue> timeout,
     huxerui::State<huxerui::TextEditingValue> interval,
-    huxerui::State<bool> auto_update, huxerui::State<bool> system_proxy,
+    huxerui::State<bool> system_proxy,
     huxerui::State<bool> core_proxy, huxerui::State<bool> invalid_cert);
 huxerui::View PptpOptionsForm(
     huxerui::State<huxerui::TextEditingValue> server,

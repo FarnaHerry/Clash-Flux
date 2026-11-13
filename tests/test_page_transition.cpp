@@ -15,10 +15,15 @@
 #include <thread>
 #include <vector>
 
+#if defined(__linux__)
+#include <dlfcn.h>
+#endif
+
 #include <huxerui/huxerui.h>
 #include <huxerui/testing/ui_test.h>
 
 #include "ui.h"
+#include "profile_update_interval.h"
 #include "app_resources.h"
 #include "box_cat.h"
 #include "runtime_diagnostics.h"
@@ -86,7 +91,8 @@ void check(bool condition, const char* what) {
 std::string key(int index) { return "group-" + std::to_string(index); }
 std::string label(int index) { return "Group " + std::to_string(index) + " nodes"; }
 
-[[huxerui::composable]] huxerui::View TestContent(bool followMotion = false, bool groupDrawer = false) {
+[[huxerui::composable]] huxerui::View TestContent(bool followMotion = false, bool groupDrawer = false,
+    float bodyInset = clashflux::ui::kSectionCardSpacing * 0.5F) {
     auto selected = huxerui::UseState(0);
     auto sharedMotion = clashflux::ui::UseSectionTabMotion();
     auto motion = followMotion ? sharedMotion : nullptr;
@@ -111,7 +117,7 @@ std::string label(int index) { return "Group " + std::to_string(index) + " nodes
         }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
          .Key(key(i)));
     }
-    return huxerui::Column {
+    return clashflux::ui::PageBodyRegion(huxerui::Column {
       huxerui::Row {
         huxerui::Button("First").OnClick([select] { select(0); }),
         huxerui::Button("Last").OnClick([select] { select(11); }),
@@ -125,10 +131,10 @@ std::string label(int index) { return "Group " + std::to_string(index) + " nodes
       }, motion, groupDrawer ? clashflux::ui::SectionTabPickerMode::ResponsiveGroups
                             : clashflux::ui::SectionTabPickerMode::Menu),
       huxerui::Text("SELECTED-" + std::to_string(index)),
-      clashflux::ui::PageBodyRegion(clashflux::ui::SectionTabPages(pages, static_cast<std::size_t>(index),
+      clashflux::ui::SectionTabPages(pages, static_cast<std::size_t>(index),
           [select](std::size_t next) { select(static_cast<int>(next)); }, motion),
-          clashflux::ui::kSectionCardSpacing * 0.5F),
-    }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+        bodyInset);
 }
 
 constexpr float kPageInset = clashflux::ui::kSectionCardSpacing * 0.5F;
@@ -381,7 +387,7 @@ huxerui::View WebsiteFixtureRoot() {
     const auto dialog = huxerui::UseDialog();
     for (const auto& row : rows)
         cards.push_back(huxerui::Column {WebsiteTestCardContent(row, [id = row.id] {
-            websiteFixture->Toggle(*websiteTasks, *websiteProbe, id);
+            websiteFixture->Start(*websiteTasks, *websiteProbe, {id});
         }, [dialog, row] {
             const auto model = websiteFixture;
             model->customUrl = huxerui::TextEditingValue::FromText(row.url);
@@ -469,22 +475,43 @@ void testWebsiteTests() {
             co_return WebsiteTestResult{WebsiteTestPhase::Responded, 403, 200};
         };
         websiteProbe = std::make_shared<WebsiteTestModel::Probe>(slow);
+        const auto testAction = [&](int id) {
+            return ui.Find(UiSelector::Key("website-test-" + std::to_string(id)))
+                .Find(UiSelector::Type<huxerui::IconButton>());
+        };
+        const float idleActionWidth = testAction(0).One().bounds.width;
         ui.Find(UiSelector::Key("website-test-0")).Tap();
         ui.Pump(std::chrono::milliseconds{1});
         check(shared->sites.Get()[0].result.phase == WebsiteTestPhase::Running && metrics->active == 1,
               "tapping one card starts only that card");
+        ui.Pump(std::chrono::milliseconds{112});
+        check(testAction(0).One().bounds.width > idleActionWidth * 1.2F,
+              "a website request rotates its refresh action using the shared motion");
+        check(!testAction(0).One().enabled && testAction(1).One().enabled,
+              "a loading website action is disabled while idle websites remain clickable");
         ui.Find(UiSelector::Key("website-test-1")).Tap();
         ui.Pump(std::chrono::milliseconds{1});
         check(shared->sites.Get()[1].result.phase == WebsiteTestPhase::Running && metrics->active == 2,
               "a second card starts its own test while the first card is still testing");
-        ui.Find(UiSelector::Key("website-test-0")).Tap();
+        const auto busyBounds = testAction(0).One().bounds;
+        ui.TapAt({busyBounds.x + busyBounds.width / 2, busyBounds.y + busyBounds.height / 2});
         ui.Pump(std::chrono::milliseconds{1});
+        check(shared->sites.Get()[0].result.phase == WebsiteTestPhase::Running &&
+              shared->sites.Get()[1].result.phase == WebsiteTestPhase::Running && metrics->started == 2,
+              "clicking a loading refresh action neither cancels nor starts another request");
+        shared->Cancel(0); ui.Pump(std::chrono::milliseconds{1});
         check(shared->sites.Get()[0].result.phase == WebsiteTestPhase::Cancelled &&
               shared->sites.Get()[1].result.phase == WebsiteTestPhase::Running,
               "cancelling one card leaves the other card's test running");
+        check(std::abs(testAction(0).One().bounds.width - idleActionWidth) < 0.1F,
+              "cancelling a website request immediately resets its refresh action");
         ui.PumpAndSettle();
         check(!shared->AnyActive() && shared->sites.Get()[1].result.status == 403,
               "each card settles with its own result");
+        check(testAction(0).One().enabled && testAction(1).One().enabled,
+              "website actions become clickable again after cancellation or completion");
+        check(std::abs(testAction(1).One().bounds.width - idleActionWidth) < 0.1F,
+              "a completed website request stops its refresh action");
         shared->Start(*websiteTasks, slow, {0, 1, 2, 3, 4, 5, 6, 7});
         ui.Pump(std::chrono::milliseconds{1});
         check(metrics->active == 3 && metrics->maximum == 3, "website batch launches exactly three asynchronous requests");
@@ -592,7 +619,8 @@ void testWebsiteTests() {
         check(shared->sites.Get().front().id == 2 &&
               shared->sites.Get().front().result.phase == WebsiteTestPhase::Running,
               "card actions still target the stable ID after preceding presets are deleted");
-        ui.Find(UiSelector::Key("website-test-2")).Tap(); ui.PumpAndSettle();
+        check(!testAction(2).One().enabled, "a reindexed running website still exposes a disabled loading action");
+        ui.PumpAndSettle();
         check(shared->Add("replacement.example.test") && shared->sites.Get().back().id > 9,
               "readding a removed URL allocates a fresh identity");
         const auto remaining = shared->sites.Get();
@@ -891,9 +919,8 @@ void testConnectionList() {
 
 huxerui::View TestRoot() {
     return huxerui::FlatTheme {
-      huxerui::ProvideEnvironment(clashflux::ui::SectionTabContentInsets{clashflux::ui::kSectionCardSpacing},
-          huxerui::Column {TestContent()}.With(
-              huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, kPageInset)), huxerui::Grow(1.0F))),
+      huxerui::Column {TestContent()}.With(
+          huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, kPageInset)), huxerui::Grow(1.0F)),
     };
 }
 huxerui::View DrawerRoot() {
@@ -922,9 +949,8 @@ huxerui::View ReducedRoot() {
     huxerui::ThemeSpec theme = huxerui::FlatLightThemeSpec();
     theme.motion.reduced_motion = true;
     return huxerui::FlatTheme(theme,
-        huxerui::ProvideEnvironment(clashflux::ui::SectionTabContentInsets{clashflux::ui::kSectionCardSpacing},
-            huxerui::Column {TestContent()}.With(
-                huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, kPageInset)), huxerui::Grow(1.0F))));
+        huxerui::Column {TestContent()}.With(
+            huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, kPageInset)), huxerui::Grow(1.0F)));
 }
 // 生产页面同样由虚拟网格声明每个组：大量节点不能被 Pager 测成无界高度。
 int constructed[12]{};
@@ -965,6 +991,49 @@ const huxerui::Application kNestedApplication{NestedRoot};
 const huxerui::Application kLargeApplication{LargeRoot};
 const huxerui::Application kApplication{TestRoot};
 const huxerui::Application kReducedApplication{ReducedRoot};
+
+std::optional<huxerui::State<float>> tabBodyInset;
+huxerui::View TabBodyInsetsRoot() {
+    return huxerui::FlatTheme {huxerui::Scope([] {
+        const auto inset = huxerui::UseState(4.0F);
+        tabBodyInset = inset;
+        return TestContent(true, false, inset.Get());
+    })};
+}
+
+void testSectionTabBodyInsets() {
+    huxerui::testing::UiTest ui(huxerui::Application{TabBodyInsetsRoot, {.show_debug_overlay = false}},
+        {.viewport = {400.0F, 700.0F}, .resource_provider = AppResources()});
+    ui.PumpAndSettle();
+    const auto checkEdges = [&](float width, float requested) {
+        const auto body = ui.Find(UiSelector::Key("page-content-0")).One().bounds;
+        const auto strip = ui.Find(UiSelector::Key("section-tab-scroll")).One().bounds;
+        const auto picker = ui.Find(UiSelector::Key("section-tab-picker"));
+        const auto last = picker.Exists() ? picker.One().bounds : strip;
+        const float inset = std::max(requested, width < 600.0F ? 0.0F : 16.0F);
+        check(std::abs(strip.x - body.x) < 0.1F && std::abs(strip.x - inset) < 0.1F &&
+              std::abs(last.x + last.width - (body.x + body.width)) < 0.1F,
+              "fixed tab strips and their overflow action share both edges with the real scroll viewport");
+        const auto pager = ui.Find(UiSelector::Key("section-tab-pages")).One().bounds;
+        check(std::abs(pager.x) < 0.1F && std::abs(pager.width - width) < 0.1F,
+              "aligning fixed tabs never narrows the Pager or changes its full-width page step");
+    };
+    for (float width : {400.0F, 800.0F, 599.0F, 960.0F, 400.0F}) {
+        ui.SetWindowMetrics({.viewport = {width, 700.0F}});
+        for (float requested : {4.0F, 14.0F, 24.0F}) {
+            *tabBodyInset = requested; ui.PumpAndSettle();
+            checkEdges(width, requested);
+            const auto bar = ui.Find(UiSelector::Key("section-tab-scroll")).One().bounds;
+            ui.Find(UiSelector::Key("page-content-0")).ScrollBy({0.0F, 40.0F}); ui.PumpAndSettle();
+            check(ui.Find(UiSelector::Key("section-tab-scroll")).One().bounds == bar,
+                  "vertical body scrolling leaves the aligned tab strip fixed");
+        }
+    }
+    ui.Find(UiSelector::Text("Fewer")).Tap(); ui.PumpAndSettle();
+    check(!ui.Find(UiSelector::Key("section-tab-picker")).Exists(), "short tab strips keep no overflow action");
+    checkEdges(400.0F, 24.0F);
+    tabBodyInset.reset();
+}
 
 void testDesktopTouchpadSectionPager() {
     huxerui::testing::UiTest ui(kApplication, {
@@ -1462,12 +1531,12 @@ void testLogActions() {
 [[huxerui::composable]] huxerui::View CommonMenuContent() {
     auto menu = clashflux::ui::UseActionMenu();
     auto result = huxerui::UseState(std::string{"idle"});
-    const auto entries = [result] {
+    const auto entries = [result](int count = 40) {
         std::vector<clashflux::ui::ActionMenuEntry> items;
         items.push_back(clashflux::ui::ActionMenuItem("Disabled", [result] { result = "disabled"; }).Enabled(false));
         items.push_back(clashflux::ui::ActionMenuItem("Checked", [result] { result = "checked"; }).Checked(true));
         items.push_back(clashflux::ui::ActionMenuSection{});
-        for (int i = 0; i < 40; ++i) {
+        for (int i = 0; i < count; ++i) {
             items.push_back(clashflux::ui::ActionMenuItem("Action-" + std::to_string(i),
                 [result, i] { result = std::to_string(i); }).Danger(i == 39));
         }
@@ -1476,11 +1545,63 @@ void testLogActions() {
     return huxerui::Column{
         huxerui::Button("Open common").With(menu.Target()).OnClick([menu, entries] { menu.Show(entries()); }),
         huxerui::Button("Open at point").OnClick([menu, entries] { menu.ShowAt({280.0F, 90.0F}, entries()); }),
+        huxerui::Button("Open short").OnClick([menu, entries] { menu.Show(entries(3)); }),
         huxerui::Text("COMMON-" + result.Get()),
     };
 }
 huxerui::View CommonMenuRoot() { return huxerui::FlatTheme{CommonMenuContent()}; }
 const huxerui::Application kCommonMenuApplication{CommonMenuRoot};
+
+struct ProfileIntervalFixture {
+    huxerui::State<huxerui::TextEditingValue> value{huxerui::TextEditingValue{"1440"}};
+};
+std::shared_ptr<ProfileIntervalFixture> profileIntervalFixture;
+huxerui::View ProfileIntervalRoot() {
+    return huxerui::FlatTheme(huxerui::Scope([] {
+        return clashflux::ui::ProfileUpdateIntervalField(huxerui::UseService<ProfileIntervalFixture>()->value);
+    }));
+}
+const huxerui::Application kProfileIntervalApplication{ProfileIntervalRoot,
+    {.show_debug_overlay = false, .application_hooks = {[](huxerui::ApplicationContext& context) {
+        profileIntervalFixture = std::make_shared<ProfileIntervalFixture>();
+        context.Provide(profileIntervalFixture);
+    }}}};
+
+struct MenuIconMotionFixture {
+    huxerui::State<bool> dark{false};
+    huxerui::State<bool> reduced{false};
+    int compositions = 0;
+    int enters = 0;
+    int clicks = 0;
+};
+std::shared_ptr<MenuIconMotionFixture> menuIconMotionFixture;
+huxerui::View MenuIconMotionRoot() {
+    return huxerui::Scope([] {
+        const auto model = huxerui::UseService<MenuIconMotionFixture>();
+        auto theme = model->dark.Get() ? huxerui::FlatDarkThemeSpec() : huxerui::FlatLightThemeSpec();
+        theme.motion.reduced_motion = model->reduced.Get();
+        return huxerui::FlatTheme(theme, huxerui::Scope([model] {
+            ++model->compositions;
+            const huxerui::ImageResource icon{"app", "images/refresh"};
+            return clashflux::ui::ActionMenuSurface({
+              clashflux::ui::ActionMenuItemView("Motion", [model] { ++model->clicks; },
+                  "", {}, true, false, icon).Key("motion-enabled")
+                  .On<huxerui::ViewEvents::Hover>([model](const huxerui::HoverEvent& event) {
+                      if (event.type == huxerui::HoverEventType::Enter) ++model->enters;
+                  }),
+              clashflux::ui::ActionMenuItemView("Disabled motion", {}, "", {}, false, false, icon)
+                  .Key("motion-disabled"),
+              clashflux::ui::ActionMenuItemView("Without icon", {}).Key("motion-without-icon"),
+            });
+        }));
+    });
+}
+const huxerui::Application kMenuIconMotionApplication{MenuIconMotionRoot,
+    {.show_debug_overlay = false, .application_hooks = {[](huxerui::ApplicationContext& context) {
+        menuIconMotionFixture = std::make_shared<MenuIconMotionFixture>();
+        context.Provide(menuIconMotionFixture);
+    }}}};
+
 huxerui::View ThemeSwitchRoot() {
     return huxerui::Scope([] {
         auto dark = huxerui::UseState(false);
@@ -1721,6 +1842,9 @@ void testSkeletonShimmer() {
             const auto first = ui.Find(UiSelector::Key("profile-loading-item-0")).One().bounds;
             const auto second = ui.Find(UiSelector::Key("profile-loading-item-1")).One().bounds;
             const bool compact = width < 600.0F;
+            const auto skeleton = ui.Find(UiSelector::Key("profile-loading-skeleton")).One().bounds;
+            check(std::abs(first.y - skeleton.y - clashflux::ui::ProfileCardRowSpacing(compact)) < 0.01F,
+                  "profile placeholders share the real cards' leading scrollable whitespace");
             const float side = compact ? 4.0F : 16.0F;
             const float columns = compact || kind == 4 ? 1.0F :
                 std::max(1.0F, std::floor((width - 2.0F * side + 8.0F) / 348.0F));
@@ -2289,58 +2413,60 @@ const huxerui::Application kSearchOutlineApplication{SearchOutlineRoot,
     {.show_debug_overlay = false, .application_hooks = {InstallSearchOutlineFixture}}};
 
 void testSearchFocusOutline() {
-    huxerui::testing::UiTest ui(kSearchOutlineApplication, {.viewport = {600.0F, 200.0F}});
-    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
-    const auto model = searchOutlineFixture;
-    for (bool dark : {false, true}) {
-        model->dark = dark;
-        model->focused = false;
-        ui.PumpAndSettle();
-        const auto bounds = ui.Find(UiSelector::Key("search-outline")).One().bounds;
-        const auto below = ui.Find(UiSelector::Key("below-search")).One().bounds;
-        const auto idle = ui.CaptureSnapshot();
-        model->focused = true;
-        ui.Pump();
-        const int compositions = model->compositions;
-        const auto start = ui.CaptureSnapshot();
-        ui.Pump(std::chrono::milliseconds(80));
-        const auto partial = ui.CaptureSnapshot();
-        ui.Pump(std::chrono::milliseconds(80));
-        check(partial != start && partial != ui.CaptureSnapshot(),
-              "focus outline reveals progressively instead of lighting the entire capsule immediately");
-        check(model->compositions == compositions &&
-              ui.Find(UiSelector::Key("search-outline")).One().bounds == bounds &&
-              ui.Find(UiSelector::Key("below-search")).One().bounds == below,
-              "focus reveal updates retained paint without recomposition or layout movement");
-        ui.PumpAndSettle();
-        const auto finished = ui.CaptureSnapshot();
-        ui.Pump(std::chrono::seconds(2));
-        check(finished == ui.CaptureSnapshot() && finished != idle,
-              "completed focus reveal stays highlighted and stops requesting frames");
-        model->focused = false;
-        ui.PumpAndSettle();
-        check(ui.CaptureSnapshot() == idle, "blur restores the normal border immediately");
-    }
-    for (bool background : {false, true}) {
-        model->focused = true;
-        ui.Pump();
-        ui.Pump(std::chrono::milliseconds(50));
-        model->focused = false;
-        ui.Pump();
-        model->focused = true;
-        if (background) ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background);
-        else model->reduced = true;
-        ui.PumpAndSettle();
-        const auto stopped = ui.CaptureSnapshot();
-        ui.Pump(std::chrono::seconds(2));
-        check(stopped == ui.CaptureSnapshot(), "reduced motion/background settles interrupted focus without recurring frames");
-        ui.SetWindowMetrics({.viewport = {390.0F, 200.0F}});
-        ui.PumpAndSettle();
-        check(ui.Find(UiSelector::Key("search-outline")).One().bounds.width == 320.0F,
-              "focus paint preserves capsule geometry after resize");
-        model->focused = false;
-        ui.PumpAndSettle();
-        model->reduced = false;
+    for (float width : {390.0F, 960.0F}) {
+        huxerui::testing::UiTest ui(kSearchOutlineApplication, {.viewport = {width, 200.0F}});
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+        const auto model = searchOutlineFixture;
+        for (bool dark : {false, true}) {
+            model->dark = dark;
+            model->focused = false;
+            ui.PumpAndSettle();
+            const auto bounds = ui.Find(UiSelector::Key("search-outline")).One().bounds;
+            const auto below = ui.Find(UiSelector::Key("below-search")).One().bounds;
+            const auto idle = ui.CaptureSnapshot();
+            model->focused = true;
+            ui.Pump();
+            const int compositions = model->compositions;
+            const auto start = ui.CaptureSnapshot();
+            ui.Pump(std::chrono::milliseconds(80));
+            const auto partial = ui.CaptureSnapshot();
+            ui.Pump(std::chrono::milliseconds(80));
+            check(partial != start && partial != ui.CaptureSnapshot(),
+                  "focus outline reveals progressively instead of lighting the entire capsule immediately");
+            check(model->compositions == compositions &&
+                  ui.Find(UiSelector::Key("search-outline")).One().bounds == bounds &&
+                  ui.Find(UiSelector::Key("below-search")).One().bounds == below,
+                  "focus reveal updates retained paint without recomposition or layout movement");
+            ui.PumpAndSettle();
+            const auto finished = ui.CaptureSnapshot();
+            ui.Pump(std::chrono::seconds(2));
+            check(finished == ui.CaptureSnapshot() && finished != idle,
+                  "completed focus reveal stays highlighted and stops requesting frames");
+            model->focused = false;
+            ui.PumpAndSettle();
+            check(ui.CaptureSnapshot() == idle, "blur restores the normal border immediately");
+        }
+        for (bool background : {false, true}) {
+            model->focused = true;
+            ui.Pump();
+            ui.Pump(std::chrono::milliseconds(50));
+            model->focused = false;
+            ui.Pump();
+            model->focused = true;
+            if (background) ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background);
+            else model->reduced = true;
+            ui.PumpAndSettle();
+            const auto stopped = ui.CaptureSnapshot();
+            ui.Pump(std::chrono::seconds(2));
+            check(stopped == ui.CaptureSnapshot(), "reduced motion/background settles interrupted focus without recurring frames");
+            ui.SetWindowMetrics({.viewport = {390.0F, 200.0F}});
+            ui.PumpAndSettle();
+            check(ui.Find(UiSelector::Key("search-outline")).One().bounds.width == 320.0F,
+                  "focus paint preserves capsule geometry after resize");
+            model->focused = false;
+            ui.PumpAndSettle();
+            model->reduced = false;
+        }
     }
 }
 
@@ -2535,6 +2661,9 @@ struct PageScrollBarFixture {
     huxerui::State<float> inset{0.0F};
     huxerui::State<std::size_t> count{40};
     huxerui::State<bool> mounted{true};
+    huxerui::State<bool> step_buttons{true};
+    huxerui::State<float> step_extent{40.0F};
+    huxerui::State<double> step_duration{0.12}, wheel_duration{0.12};
     std::shared_ptr<clashflux::ui::PageScrollOffset> offset =
         std::make_shared<clashflux::ui::PageScrollOffset>();
 };
@@ -2577,12 +2706,14 @@ huxerui::View PageScrollBarRoot() {
                 controller, model->offset);
         }
     } else if (model->mode.Get() == 2) {
-        body = ScrollArea(PageVirtualList(model->count.Get(), row, 8.0F).EstimatedItemExtent(40.0F)
-            .Controller(controller).With(RememberPageScroll{model->offset}), controller, model->offset);
+        body = ScrollArea(PageVirtualList(model->count.Get(), row).EstimatedItemExtent(40.0F)
+            .Controller(controller).With(RememberPageScroll{model->offset}), controller, model->offset, {},
+            ScrollAreaInsets::Symmetric(8.0F));
     } else {
-        body = ScrollArea(PageVirtualGrid(model->count.Get(), row, 8.0F, 0.0F)
+        body = ScrollArea(PageVirtualGrid(model->count.Get(), row, 0.0F)
             .Columns(huxerui::GridColumns::Fixed(2)).EstimatedRowExtent(40.0F)
-            .Controller(controller).With(RememberPageScroll{model->offset}), controller, model->offset);
+            .Controller(controller).With(RememberPageScroll{model->offset}), controller, model->offset, {},
+            ScrollAreaInsets::Symmetric(8.0F));
     }
     if (model->mode.Get() == 1) return PageBodyRegion(huxerui::Row {
       huxerui::Column {
@@ -2591,11 +2722,67 @@ huxerui::View PageScrollBarRoot() {
           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
       huxerui::Spacer(),
     }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), model->inset.Get());
-    return PageBodyRegion(huxerui::Column {
+    auto controls = huxerui::UseEnvironment<ScrollAreaStyle>();
+    controls.step_buttons = model->step_buttons.Get(); controls.step_extent = model->step_extent.Get();
+    controls.step_duration = model->step_duration.Get(); controls.wheel_duration = model->wheel_duration.Get();
+    return huxerui::ProvideEnvironment(controls, PageBodyRegion(huxerui::Column {
       huxerui::View{body}.With(huxerui::Grow(1.0F)).Key("scroll-policy-viewport"),
-    }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), model->inset.Get());
+    }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), model->inset.Get()));
 }
 const huxerui::Application kPageScrollBarApplication{PageScrollBarRoot, {.show_debug_overlay = false}};
+huxerui::View ReducedPageScrollBarRoot() {
+    auto theme = huxerui::FlatLightThemeSpec();
+    theme.motion.reduced_motion = true;
+    return huxerui::FlatTheme(theme, huxerui::Scope(PageScrollBarRoot));
+}
+const huxerui::Application kReducedPageScrollBarApplication{ReducedPageScrollBarRoot, {.show_debug_overlay = false}};
+
+struct ScrollAppearanceFixture {
+    huxerui::State<bool> dark{false}, chinese{false};
+};
+std::shared_ptr<ScrollAppearanceFixture> scrollAppearanceFixture;
+huxerui::View ScrollAppearanceRoot() {
+    using namespace clashflux::ui;
+    const auto model = huxerui::UseState(std::make_shared<ScrollAppearanceFixture>()).Get();
+    scrollAppearanceFixture = model;
+    auto controls = ScrollAreaStyle::Default();
+    controls.up_label = Localized("向上滚动"); controls.down_label = Localized("向下滚动");
+    return huxerui::FlatTheme {
+      model->dark.Get() ? huxerui::FlatDarkThemeSpec() : huxerui::FlatLightThemeSpec(),
+      huxerui::ProvideEnvironment(huxerui::Locale::FromLanguageTag(model->chinese.Get() ? "zh" : "en"),
+          huxerui::ProvideEnvironment(controls, huxerui::Scope(PageScrollBarRoot))),
+    };
+}
+const huxerui::Application kScrollAppearanceApplication{ScrollAppearanceRoot, {.show_debug_overlay = false}};
+void testScrollAppearanceUpdates() {
+    using huxerui::testing::UiSemanticSelector;
+    huxerui::testing::UiTest ui(kScrollAppearanceApplication,
+        {.viewport = {800.0F, 300.0F}, .resource_provider = AppResources()});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active); ui.PumpAndSettle();
+    const auto model = pageScrollBarFixture;
+    ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 1,
+        .position = {100.0F, 150.0F}, .device_kind = huxerui::PointerDeviceKind::Mouse});
+    static_cast<void>(ui.SendScroll({{100.0F, 150.0F}, 0.0F, 80.0F})); ui.PumpAndSettle();
+    const auto bounds = ui.Find(UiSelector::Key("scroll-area-rail")).One().bounds;
+    const float offset = model->offset->value;
+    const auto light = ui.CaptureSnapshot();
+    scrollAppearanceFixture->dark = true; ui.PumpAndSettle();
+    check(ui.CaptureSnapshot() != light && model->offset->value == offset &&
+          ui.Find(UiSelector::Key("scroll-area-rail")).One().bounds == bounds,
+          "retained scrollbar painting follows theme changes without moving content or changing its geometry");
+    check(ui.FindSemantics(UiSemanticSelector::Label("Scroll down")).Exists(), "scroll arrows initially use English labels");
+    scrollAppearanceFixture->chinese = true; ui.PumpAndSettle();
+    check(ui.FindSemantics(UiSemanticSelector::Label("向下滚动")).Exists() &&
+          ui.FindSemantics(UiSemanticSelector::Label("向上滚动")).Exists() && model->offset->value == offset,
+          "appearance-only rail composition still updates localized accessible labels");
+    ui.SetWindowMetrics({.viewport = {400.0F, 300.0F}}); ui.PumpAndSettle();
+    scrollAppearanceFixture->dark = false; scrollAppearanceFixture->chinese = false; ui.PumpAndSettle();
+    check(!ui.FindSemantics(UiSemanticSelector::Label("Scroll down")).Exists() && model->offset->value == offset,
+          "hidden rails keep their offset while theme and locale change");
+    ui.SetWindowMetrics({.viewport = {800.0F, 300.0F}}); ui.PumpAndSettle();
+    check(ui.FindSemantics(UiSemanticSelector::Label("Scroll down")).Exists() && model->offset->value == offset,
+          "restored wide rails use the current appearance and labels without recreating the scroll viewport");
+}
 
 std::vector<huxerui::Rect> paintedPageScrollBars(huxerui::testing::UiTest& ui) {
     const auto snapshot = ui.CaptureSnapshot().ToString();
@@ -2609,6 +2796,277 @@ std::vector<huxerui::Rect> paintedPageScrollBars(huxerui::testing::UiTest& ui) {
             6.0F, std::stof((*it)[3])});
     }
     return bars;
+}
+
+void testScrollArrowButtons() {
+    using huxerui::testing::UiSemanticSelector;
+    huxerui::testing::UiTest ui(kPageScrollBarApplication, {.viewport = {800.0F, 300.0F}});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    ui.PumpAndSettle();
+    const auto model = pageScrollBarFixture;
+    const auto rail = ui.Find(UiSelector::Key("scroll-area-rail"));
+    const auto viewport = ui.Find(UiSelector::Key("scroll-policy-viewport"));
+    const auto bounds = rail.One().bounds, host = viewport.One().bounds;
+    const auto up = ui.FindSemantics(UiSemanticSelector::Label("Scroll up"));
+    const auto down = ui.FindSemantics(UiSemanticSelector::Label("Scroll down"));
+    check(up.Exists() && down.Exists() && !up.One().enabled && down.One().enabled,
+          "wide rails expose both arrow buttons and disable the upward arrow at the top");
+    const auto center = [](const huxerui::Rect& r) { return huxerui::Point{r.x + r.width * 0.5F, r.y + r.height * 0.5F}; };
+    const auto downPoint = center(down.One().bounds);
+    const auto send = [&](huxerui::PointerEventType type, huxerui::Point point) {
+        static_cast<void>(ui.SendPointer({.type = type, .pointer_id = 91, .position = point,
+            .device_kind = huxerui::PointerDeviceKind::Mouse, .changed_button = huxerui::PointerButton::Primary}));
+        ui.Pump();
+    };
+    // Hover reveals the existing rail; button clicks remain in the original gutter.
+    send(huxerui::PointerEventType::Move, downPoint); ui.PumpAndSettle();
+    const int compositions = pageScrollBarCompositions;
+    ui.TapAt(downPoint, {.device_kind = huxerui::PointerDeviceKind::Mouse}); ui.PumpAndSettle();
+    check(std::abs(model->offset->value - 40.0F) < 0.1F && up.One().enabled &&
+          rail.One().bounds == bounds && viewport.One().bounds == host && pageScrollBarCompositions == compositions,
+          "arrow clicks move one step without resizing the rail, content or recomposing the page");
+    const float beforeHold = model->offset->value;
+    send(huxerui::PointerEventType::Down, downPoint);
+    ui.Pump(std::chrono::milliseconds(200));
+    ui.Pump();
+    check(std::abs(model->offset->value - beforeHold - 40.0F) < 0.1F, "holding starts with one immediate step");
+    for (int frame = 0; frame < 18; ++frame) ui.Pump(std::chrono::milliseconds(16));
+    check(model->offset->value > beforeHold + 80.0F, "holding an arrow repeats after its initial delay");
+    send(huxerui::PointerEventType::Move, {bounds.x - 20.0F, downPoint.y});
+    const float outside = model->offset->value; ui.Pump(std::chrono::seconds(1));
+    check(model->offset->value == outside, "captured pointer movement outside the arrow pauses repetition");
+    send(huxerui::PointerEventType::Up, downPoint); ui.PumpAndSettle();
+    const float released = model->offset->value; ui.Pump(std::chrono::seconds(1));
+    check(model->offset->value == released, "releasing an arrow leaves no repeating work");
+    up.PerformSemanticAction({huxerui::SemanticActionKind::Activate, {}}); ui.PumpAndSettle();
+    check(std::abs(model->offset->value - released + 40.0F) < 0.1F, "accessible arrow activation uses the same step");
+    send(huxerui::PointerEventType::Down, downPoint);
+    send(huxerui::PointerEventType::Cancel, downPoint); ui.PumpAndSettle();
+    const float cancelled = model->offset->value; ui.Pump(std::chrono::seconds(1));
+    check(model->offset->value == cancelled, "pointer cancellation terminates arrow repetition");
+    send(huxerui::PointerEventType::Down, downPoint);
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background); ui.Pump();
+    const float background = model->offset->value; ui.Pump(std::chrono::seconds(1));
+    check(model->offset->value == background, "backgrounding cancels a held scroll arrow");
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active); ui.PumpAndSettle();
+    viewport.ScrollBy({0.0F, 100000.0F}); ui.PumpAndSettle();
+    check(!down.One().enabled && up.One().enabled, "the downward arrow disables at the bottom");
+    model->step_buttons = false; ui.PumpAndSettle();
+    check(!up.Exists() && !down.Exists() && rail.One().bounds == bounds && viewport.One().bounds == host,
+          "the plain scrollbar style removes arrows without changing external geometry");
+    send(huxerui::PointerEventType::Move, {bounds.x + 6.0F, bounds.y + bounds.height * 0.5F});
+    ui.PumpAndSettle();
+    const auto bars = paintedPageScrollBars(ui);
+    const auto thumb = *std::min_element(bars.begin(), bars.end(),
+        [](const auto& a, const auto& b) { return a.height < b.height; });
+    const auto plainStart = center(thumb);
+    const float beforeDrag = model->offset->value;
+    ui.Drag(plainStart, {plainStart.x, plainStart.y - 30.0F}, {
+        .pointer = {.device_kind = huxerui::PointerDeviceKind::Mouse}});
+    ui.PumpAndSettle();
+    check(model->offset->value < beforeDrag - 20.0F, "plain style keeps thumb dragging connected throughout metric updates");
+    model->step_buttons = true; model->step_extent = 25.0F; ui.PumpAndSettle();
+    const float bottom = model->offset->value;
+    up.PerformSemanticAction({huxerui::SemanticActionKind::Activate, {}}); ui.PumpAndSettle();
+    check(std::abs(model->offset->value - bottom + 25.0F) < 0.1F, "the common style can configure arrow step size");
+    send(huxerui::PointerEventType::Down, downPoint);
+    ui.Pump(std::chrono::milliseconds(32));
+    ui.SetWindowMetrics({.viewport = {599.0F, 300.0F}}); ui.Pump();
+    const float hidden = model->offset->value;
+    ui.Pump(std::chrono::milliseconds(500));
+    check(model->offset->value == hidden && !up.Exists() && !down.Exists(),
+          "hiding the rail while an arrow is held cancels its pending motion and repetition");
+    send(huxerui::PointerEventType::Up, downPoint);
+    ui.SetWindowMetrics({.viewport = {800.0F, 300.0F}}); ui.PumpAndSettle();
+    ui.SetWindowMetrics({.viewport = {800.0F, 50.0F}}); ui.PumpAndSettle();
+    check(!up.Exists() && !down.Exists(), "short rails retain a usable thumb by omitting arrow buttons");
+    ui.SetWindowMetrics({.viewport = {599.0F, 300.0F}}); ui.PumpAndSettle();
+    check(!up.Exists() && !down.Exists(), "Compact viewports never expose arrow buttons");
+}
+
+void testScrollArrowMotion() {
+    using huxerui::testing::UiSemanticSelector;
+    for (int mode : {0, 2, 3}) {
+        huxerui::testing::UiTest ui(kPageScrollBarApplication, {.viewport = {800.0F, 300.0F}});
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+        const auto model = pageScrollBarFixture;
+        model->mode = mode; ui.PumpAndSettle();
+        const auto down = ui.FindSemantics(UiSemanticSelector::Label("Scroll down"));
+        const auto rail = ui.Find(UiSelector::Key("scroll-area-rail"));
+        const auto host = ui.Find(UiSelector::Key("scroll-policy-viewport"));
+        const auto hostBounds = host.One().bounds;
+        const float startY = ui.Find(UiSelector::Key("scroll-policy-row-0")).One().bounds.y;
+        const int compositions = pageScrollBarCompositions;
+        const auto step = [&] { down.PerformSemanticAction({huxerui::SemanticActionKind::Activate, {}}); ui.Pump(); };
+        step();
+        check(model->offset->value == 0.0F, "an arrow request starts at the current offset without an immediate jump");
+        ui.Pump(std::chrono::milliseconds(32));
+        ui.Pump();
+        const float first = model->offset->value;
+        const auto firstBars = paintedPageScrollBars(ui);
+        const auto thumbY = [](const std::vector<huxerui::Rect>& bars) {
+            return std::min_element(bars.begin(), bars.end(), [](const auto& a, const auto& b) {
+                return a.height < b.height;
+            })->y;
+        };
+        check(first > 0.0F && first < 40.0F, "an intermediate frame contains a real partial scroll offset");
+        ui.Pump(std::chrono::milliseconds(32));
+        ui.Pump();
+        const float second = model->offset->value;
+        check(second > first && second < 40.0F && thumbY(paintedPageScrollBars(ui)) > thumbY(firstBars) &&
+              std::abs(ui.Find(UiSelector::Key("scroll-policy-row-0")).One().bounds.y - startY + second) < 0.5F &&
+              host.One().bounds == hostBounds && pageScrollBarCompositions == compositions,
+              "content and thumb share the animated offset without moving the viewport or recomposing the page");
+        step(); step(); ui.PumpAndSettle();
+        check(std::abs(model->offset->value - 120.0F) < 0.1F, "rapid arrow activations accumulate distance into one target");
+        const auto completed = ui.CaptureSnapshot(); ui.Pump(std::chrono::seconds(1));
+        check(completed == ui.CaptureSnapshot(), "completed arrow scrolling has no ongoing animation");
+        step(); ui.Pump(std::chrono::milliseconds(32)); ui.Pump();
+        const float reversing = model->offset->value;
+        ui.FindSemantics(UiSemanticSelector::Label("Scroll up"))
+            .PerformSemanticAction({huxerui::SemanticActionKind::Activate, {}}); ui.Pump();
+        ui.Pump(std::chrono::milliseconds(32)); ui.Pump();
+        check(model->offset->value < reversing, "opposite arrow input reverses from the real presented offset");
+        ui.PumpAndSettle();
+        check(std::abs(model->offset->value - reversing + 40.0F) < 0.1F,
+              "reversing replaces the unfinished target instead of retaining forward travel");
+        step(); ui.Pump(std::chrono::milliseconds(32));
+        const float beforeWheel = model->offset->value;
+        static_cast<void>(ui.SendScroll({{100.0F, 150.0F}, 0.0F, -20.0F})); ui.Pump();
+        check(model->offset->value == beforeWheel, "wheel takeover rejects the old pending arrow commit");
+        ui.PumpAndSettle();
+        check(std::abs(model->offset->value - beforeWheel + 20.0F) < 0.1F,
+              "wheel takeover replaces the arrow target with its own smooth travel");
+        step(); ui.Pump(std::chrono::milliseconds(32));
+        static_cast<void>(ui.SendPointer({.type = huxerui::PointerEventType::Down, .pointer_id = 93,
+            .position = {100.0F, 150.0F}, .device_kind = huxerui::PointerDeviceKind::Touch})); ui.Pump();
+        const float touchOffset = model->offset->value; ui.Pump(std::chrono::milliseconds(200));
+        check(model->offset->value == touchOffset, "touching the content cancels arrow motion before direct dragging");
+        static_cast<void>(ui.SendPointer({.type = huxerui::PointerEventType::Cancel, .pointer_id = 93,
+            .position = {100.0F, 150.0F}, .device_kind = huxerui::PointerDeviceKind::Touch})); ui.PumpAndSettle();
+        step(); ui.Pump(std::chrono::milliseconds(32));
+        const auto bars = paintedPageScrollBars(ui);
+        const auto thumb = *std::min_element(bars.begin(), bars.end(), [](const auto& a, const auto& b) {
+            return a.height < b.height;
+        });
+        const huxerui::Point grab{thumb.x + thumb.width * 0.5F, thumb.y + thumb.height * 0.5F};
+        ui.Drag(grab, {grab.x, grab.y + 12.0F}, {.pointer = {.device_kind = huxerui::PointerDeviceKind::Mouse}});
+        const float dragged = model->offset->value; ui.PumpAndSettle();
+        check(model->offset->value == dragged, "thumb dragging cancels arrow motion and remains authoritative after release");
+        step(); ui.Pump(std::chrono::milliseconds(32));
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background); ui.Pump();
+        const float background = model->offset->value; ui.Pump(std::chrono::seconds(1));
+        check(model->offset->value == background, "backgrounding stops an arrow animation after its click was released");
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active); ui.PumpAndSettle();
+        model->step_duration = 0.0; ui.PumpAndSettle();
+        const float immediate = model->offset->value;
+        down.PerformSemanticAction({huxerui::SemanticActionKind::Activate, {}});
+        check(std::abs(model->offset->value - immediate - 40.0F) < 0.1F,
+              "zero-duration component style applies steps without scheduling an animation");
+        model->step_duration = 0.12; ui.PumpAndSettle();
+        step(); ui.Pump(std::chrono::milliseconds(32));
+        model->count = 1; ui.PumpAndSettle();
+        check(model->offset->value == 0.0F, "shrinking content cancels the target and remembers the actual clamped offset");
+        model->count = 40; ui.PumpAndSettle();
+        check(model->offset->value == 0.0F, "restoring long content does not replay a cancelled arrow target");
+    }
+    huxerui::testing::UiTest reduced(kReducedPageScrollBarApplication, {.viewport = {800.0F, 300.0F}});
+    reduced.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    reduced.PumpAndSettle();
+    reduced.FindSemantics(UiSemanticSelector::Label("Scroll down"))
+        .PerformSemanticAction({huxerui::SemanticActionKind::Activate, {}});
+    check(pageScrollBarFixture->offset->value == 40.0F, "reduced motion applies arrow steps immediately");
+}
+
+void testScrollWheelMotion() {
+    for (float width : {400.0F, 800.0F}) {
+        for (int mode : {0, 2, 3}) {
+            huxerui::testing::UiTest ui(kPageScrollBarApplication, {.viewport = {width, 300.0F}});
+            ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+            const auto model = pageScrollBarFixture;
+            model->mode = mode; model->step_buttons = false; ui.PumpAndSettle();
+            const auto host = ui.Find(UiSelector::Key("scroll-policy-viewport"));
+            const auto bounds = host.One().bounds;
+            const auto first = ui.Find(UiSelector::Key("scroll-policy-row-0"));
+            const float startY = first.One().bounds.y;
+            const int compositions = pageScrollBarCompositions;
+            const auto wheel = [&](float delta) {
+                static_cast<void>(ui.SendScroll({{100.0F, 150.0F}, 0.0F, delta})); ui.Pump();
+            };
+            wheel(40.0F);
+            check(model->offset->value == 0.0F, "wheel input starts a transition without jumping on receipt");
+            ui.Pump(std::chrono::milliseconds(32)); ui.Pump();
+            const float intermediate = model->offset->value;
+            check(intermediate > 0.0F && intermediate < 40.0F &&
+                  std::abs(first.One().bounds.y - startY + intermediate) < 0.5F && host.One().bounds == bounds &&
+                  pageScrollBarCompositions == compositions,
+                  "ordinary and virtual wheel content present real intermediate offsets without page recomposition");
+            wheel(40.0F); wheel(40.0F); ui.PumpAndSettle();
+            check(std::abs(model->offset->value - 120.0F) < 0.1F,
+                  "rapid wheel ticks accumulate distance with hidden rails and optional arrows");
+            wheel(40.0F); ui.Pump(std::chrono::milliseconds(32)); ui.Pump();
+            const float reverse = model->offset->value;
+            wheel(-20.0F); ui.PumpAndSettle();
+            check(std::abs(model->offset->value - reverse + 20.0F) < 0.1F,
+                  "opposite wheel input cancels forward backlog and reverses from the actual position");
+            wheel(40.0F); ui.Pump(std::chrono::milliseconds(32));
+            const float beforeTouchpad = model->offset->value;
+            static_cast<void>(ui.SendScroll({.position = {100.0F, 150.0F}, .delta_y = -10.0F,
+                .kind = huxerui::ScrollInputKind::Touchpad, .phase = huxerui::ScrollInputPhase::Begin})); ui.Pump();
+            check(std::abs(model->offset->value - beforeTouchpad + 10.0F) < 0.1F,
+                  "continuous touchpad input immediately takes over a pending wheel commit");
+            static_cast<void>(ui.SendScroll({.position = {100.0F, 150.0F},
+                .kind = huxerui::ScrollInputKind::Touchpad, .phase = huxerui::ScrollInputPhase::End}));
+            const float touchpad = model->offset->value; ui.PumpAndSettle();
+            check(model->offset->value == touchpad, "touchpad input does not replay a cancelled wheel target");
+            wheel(40.0F); ui.Pump(std::chrono::milliseconds(32));
+            static_cast<void>(ui.SendPointer({.type = huxerui::PointerEventType::Down, .pointer_id = 98,
+                .position = {100.0F, 150.0F}, .device_kind = huxerui::PointerDeviceKind::Touch})); ui.Pump();
+            const float touched = model->offset->value; ui.Pump(std::chrono::milliseconds(200));
+            check(model->offset->value == touched, "content touch interrupts pending wheel motion");
+            static_cast<void>(ui.SendPointer({.type = huxerui::PointerEventType::Cancel, .pointer_id = 98,
+                .position = {100.0F, 150.0F}, .device_kind = huxerui::PointerDeviceKind::Touch})); ui.PumpAndSettle();
+            wheel(40.0F); ui.Pump(std::chrono::milliseconds(32));
+            ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background); ui.Pump();
+            const float background = model->offset->value; ui.Pump(std::chrono::seconds(1));
+            check(model->offset->value == background, "backgrounding rejects queued wheel commits");
+            ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active); ui.PumpAndSettle();
+            model->wheel_duration = 0.0; ui.PumpAndSettle();
+            const float immediate = model->offset->value;
+            wheel(20.0F);
+            check(std::abs(model->offset->value - immediate - 20.0F) < 0.1F,
+                  "wheel transition duration can be disabled independently from arrow duration");
+            model->wheel_duration = 0.12; ui.PumpAndSettle();
+            wheel(100000.0F); wheel(100000.0F);
+            check(model->offset->value < immediate + 100.0F,
+                  "terminal overshoot cannot jump into travel reserved by an unfinished animation");
+            ui.PumpAndSettle();
+            wheel(-100000.0F); wheel(-100000.0F); ui.PumpAndSettle();
+            check(model->offset->value == 0.0F, "large and repeated wheel deltas clamp to both boundaries");
+            wheel(100000.0F); model->count = 20; ui.Pump(); wheel(20.0F); ui.PumpAndSettle();
+            const float shorter = model->offset->value;
+            model->count = 40; ui.PumpAndSettle();
+            check(shorter > 0.0F && model->offset->value == shorter,
+                  "shrinking a pending range clamps reserved targets before another wheel tick without reversed consumption");
+            wheel(40.0F); ui.Pump(std::chrono::milliseconds(32));
+            model->count = 1; ui.PumpAndSettle(); model->count = 40; ui.PumpAndSettle();
+            check(model->offset->value == 0.0F, "content shrink cancels a wheel target without later replay");
+            wheel(40.0F); ui.Pump(std::chrono::milliseconds(32));
+            model->mounted = false; ui.Pump();
+            const float unmounted = model->offset->value;
+            ui.Pump(std::chrono::milliseconds(200));
+            check(model->offset->value == unmounted, "unmounted wheel motion cannot continue writing remembered state");
+            model->mounted = true; ui.PumpAndSettle();
+            check(std::abs(model->offset->value - unmounted) < 0.1F,
+                  "unmounting cancels queued wheel motion and restores only the actual remembered offset");
+            const auto idle = ui.CaptureSnapshot(); ui.Pump(std::chrono::seconds(1));
+            check(ui.CaptureSnapshot() == idle, "completed wheel scrolling leaves no ongoing animation");
+        }
+    }
+    huxerui::testing::UiTest reduced(kReducedPageScrollBarApplication, {.viewport = {400.0F, 300.0F}});
+    reduced.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active); reduced.PumpAndSettle();
+    static_cast<void>(reduced.SendScroll({{100.0F, 150.0F}, 0.0F, 40.0F})); reduced.Pump();
+    check(pageScrollBarFixture->offset->value == 40.0F, "reduced motion keeps wheel scrolling immediate");
 }
 
 void testPageScrollBars() {
@@ -2829,6 +3287,15 @@ void testScrollTargetHover() {
     oneThumb(false, "hovering content away from the rail highlights its scrolling target before wheel input");
     check(model->outer.Offset() == 0.0F && model->compositions == compositions,
           "hover feedback neither scrolls nor recomposes the content factory");
+    // Check every presented frame, since settling can hide a one-frame grey flash.
+    for (int tick = 0; tick < 6; ++tick) {
+        static_cast<void>(ui.SendScroll({{100.0F, 60.0F}, 0.0F, 20.0F}));
+        for (int frame = 0; frame < 3; ++frame) {
+            ui.Pump(std::chrono::milliseconds(16));
+            oneThumb(false, "wheel input keeps the highlighted thumb color on every presented frame");
+        }
+    }
+    model->outer.ScrollTo(0.0F); ui.PumpAndSettle();
     ui.Find(UiSelector::Text("Hover content button")).Tap(); ui.PumpAndSettle();
     check(model->clicks == 1, "scroll target feedback preserves child button input");
     const auto rail = ui.Find(UiSelector::Key("scroll-area-rail")).One().bounds;
@@ -2882,6 +3349,165 @@ void testScrollTargetHover() {
     scrollHoverFixture.reset();
 }
 
+void testNestedScrollWheelMotion() {
+    for (float width : {400.0F, 800.0F}) {
+        huxerui::testing::UiTest ui(kScrollHoverApplication, {.viewport = {width, 300.0F}});
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+        const auto model = scrollHoverFixture;
+        model->nested = true; ui.PumpAndSettle();
+        const auto wheel = [&](float delta) {
+            static_cast<void>(ui.SendScroll({{100.0F, 60.0F}, 0.0F, delta})); ui.Pump();
+        };
+        const float maximum = model->inner.MaxOffset();
+        model->inner.ScrollTo(maximum - 10.0F); ui.PumpAndSettle();
+        const int compositions = model->compositions;
+        wheel(40.0F); wheel(40.0F);
+        check(model->inner.Offset() == maximum - 10.0F && model->outer.Offset() == 0.0F,
+              "nested wheel allocation starts no immediate jumps and does not require prior mouse hover");
+        ui.Pump(std::chrono::milliseconds(32)); ui.Pump();
+        check(model->inner.Offset() > maximum - 10.0F && model->inner.Offset() < maximum &&
+              model->outer.Offset() > 0.0F && model->outer.Offset() < 70.0F,
+              "inner boundary travel and outer remainder both animate through real intermediate offsets");
+        ui.PumpAndSettle();
+        check(std::abs(model->inner.Offset() - maximum) < 0.1F && std::abs(model->outer.Offset() - 70.0F) < 0.1F &&
+              model->compositions == compositions,
+              "pending targets reserve inner capacity and transfer the exact remainder once to the outer viewport");
+        model->outer.ScrollTo(0.0F); model->inner.ScrollTo(maximum - 10.0F); ui.PumpAndSettle();
+        wheel(40.0F); ui.Pump(std::chrono::milliseconds(32)); ui.Pump();
+        const float innerReverse = model->inner.Offset(), outerReverse = model->outer.Offset();
+        wheel(-20.0F); ui.PumpAndSettle();
+        check(std::abs(model->inner.Offset() - innerReverse + 20.0F) < 0.1F &&
+              std::abs(model->outer.Offset() - outerReverse) < 0.1F,
+              "reversing within the inner viewport cancels unfinished forward travel in its ancestors too");
+        model->outer.ScrollTo(0.0F); model->enabled = false; ui.PumpAndSettle();
+        const float disabledInner = model->inner.Offset();
+        wheel(40.0F); ui.PumpAndSettle();
+        check(model->inner.Offset() == disabledInner && std::abs(model->outer.Offset() - 40.0F) < 0.1F,
+              "disabled nested viewports leave wheel ownership to their enabled ancestor");
+        model->blocked = true; ui.PumpAndSettle();
+        const float blocked = model->outer.Offset();
+        wheel(40.0F); ui.PumpAndSettle();
+        check(model->outer.Offset() == blocked, "an occluding overlay cannot start background wheel motion");
+        model->blocked = false; model->sideBySide = true; ui.PumpAndSettle();
+        model->outer.ScrollTo(0.0F); model->inner.ScrollTo(0.0F); ui.PumpAndSettle();
+        static_cast<void>(ui.SendScroll({{width * 0.75F, 150.0F}, 0.0F, 40.0F})); ui.PumpAndSettle();
+        check(model->outer.Offset() == 0.0F && std::abs(model->inner.Offset() - 40.0F) < 0.1F,
+              "sibling scroll areas route wheel input independently using the actual event hit path");
+    }
+}
+
+struct ScrollWheelRoutingFixture {
+    huxerui::ScrollController outer, popup, horizontal;
+};
+std::shared_ptr<ScrollWheelRoutingFixture> scrollWheelRoutingFixture;
+huxerui::View ScrollWheelRoutingRoot() {
+    using namespace clashflux::ui;
+    const auto model = huxerui::UseState(std::make_shared<ScrollWheelRoutingFixture>()).Get();
+    scrollWheelRoutingFixture = model;
+    return PageScrollView(huxerui::Column {
+      huxerui::Scope([model] {
+          const auto popup = huxerui::UsePopup();
+          return huxerui::Button("Open wheel popup").OnClick([model, popup] {
+              popup.ShowAt({20.0F, 20.0F}, [model] {
+                  return PageScrollView(huxerui::Text("Popup scrolling").With(huxerui::Frame{.height = 1000.0F}),
+                      model->popup).With(huxerui::Frame{.width = 260.0F, .height = 120.0F}).Key("wheel-popup");
+              });
+          });
+      }),
+      huxerui::ScrollView(huxerui::Text("Horizontal scrolling").With(huxerui::Frame{.width = 2000.0F, .height = 100.0F}))
+          .ScrollAxis(huxerui::Axis::Horizontal).Controller(model->horizontal)
+          .With(huxerui::Frame{.height = 100.0F}).Key("wheel-horizontal"),
+      huxerui::Text("Outer scrolling").With(huxerui::Frame{.height = 1000.0F}),
+    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), model->outer).With(huxerui::Grow(1.0F));
+}
+const huxerui::Application kScrollWheelRoutingApplication{ScrollWheelRoutingRoot, {.show_debug_overlay = false}};
+void testScrollWheelRouting() {
+    huxerui::testing::UiTest ui(kScrollWheelRoutingApplication, {.viewport = {800.0F, 300.0F}});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active); ui.PumpAndSettle();
+    const auto model = scrollWheelRoutingFixture;
+    const auto horizontal = ui.Find(UiSelector::Key("wheel-horizontal")).One().bounds;
+    static_cast<void>(ui.SendScroll({{horizontal.x + 100.0F, horizontal.y + 50.0F}, 25.0F, 40.0F}));
+    check(model->horizontal.Offset() == 25.0F && model->outer.Offset() == 0.0F,
+          "vertical smoothing does not consume the horizontal part of a diagonal wheel event");
+    ui.PumpAndSettle();
+    check(std::abs(model->outer.Offset() - 40.0F) < 0.1F, "diagonal wheel input preserves its vertical distance");
+    model->outer.ScrollTo(0.0F); ui.PumpAndSettle();
+    ui.Find(UiSelector::Text("Open wheel popup")).Tap(); ui.PumpAndSettle();
+    const auto popup = ui.Find(UiSelector::Key("wheel-popup")).One().bounds;
+    model->popup.ScrollTo(model->popup.MaxOffset() - 10.0F); ui.PumpAndSettle();
+    static_cast<void>(ui.SendScroll({{popup.x + 100.0F, popup.y + 60.0F}, 0.0F, 80.0F})); ui.PumpAndSettle();
+    check(std::abs(model->popup.Offset() - model->popup.MaxOffset()) < 0.1F && model->outer.Offset() == 0.0F,
+          "popup wheel boundaries cannot scroll a background viewport inherited through the captured environment");
+}
+
+// Optional, reproducible headless work probe. Timing includes UiTest structure
+// capture and semantics; it is not native presentation/GPU or device FPS data.
+#if defined(_MSC_VER)
+__declspec(noinline)
+#else
+__attribute__((noinline))
+#endif
+void ScrollProfileMarker(int phase, const char* scenario) {
+    static_cast<void>(phase); static_cast<void>(scenario);
+    std::atomic_signal_fence(std::memory_order_seq_cst);
+}
+
+void profileScrollWork() {
+    using AllocationProbe = unsigned long long (*)(bool);
+    AllocationProbe allocations = nullptr;
+#if defined(__linux__)
+    allocations = reinterpret_cast<AllocationProbe>(dlsym(RTLD_DEFAULT, "clashflux_scroll_allocations"));
+#endif
+    const auto measure = [&](huxerui::testing::UiTest& ui, const std::string& scenario, auto input) {
+        constexpr int frames = 96;
+        std::array<double, frames> samples{};
+        if (allocations) allocations(true);
+        ScrollProfileMarker(1, scenario.c_str());
+        for (int frame = 0; frame < frames; ++frame) {
+            const auto start = std::chrono::steady_clock::now();
+            input(frame);
+            ui.Pump(std::chrono::milliseconds(16));
+            samples[frame] = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+        }
+        ScrollProfileMarker(0, scenario.c_str());
+        const auto count = allocations ? allocations(false) : 0;
+        std::sort(samples.begin(), samples.end());
+        std::printf("scroll-profile,%s,frames=%d,allocations=%llu,alloc_probe=%d,p50_us=%.2f,p95_us=%.2f\n",
+            scenario.c_str(), frames, count, allocations != nullptr, samples[frames / 2], samples[frames * 95 / 100]);
+    };
+    for (float width : {400.0F, 800.0F}) {
+        for (int mode : {0, 2, 3}) {
+            huxerui::testing::UiTest ui(kPageScrollBarApplication, {.viewport = {width, 300.0F}});
+            ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+            const auto model = pageScrollBarFixture;
+            model->mode = mode; ui.PumpAndSettle();
+            // Warm both hover and scrolling before collecting steady-state work.
+            ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 1,
+                .position = {100.0F, 150.0F}, .device_kind = huxerui::PointerDeviceKind::Mouse});
+            static_cast<void>(ui.SendScroll({{100.0F, 150.0F}, 0.0F, 20.0F})); ui.PumpAndSettle();
+            const int compositions = pageScrollBarCompositions;
+            measure(ui, "wheel-w" + std::to_string(static_cast<int>(width)) + "-mode" + std::to_string(mode),
+                [&](int frame) {
+                    ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 1,
+                        .position = {100.0F + static_cast<float>(frame % 2), 150.0F},
+                        .device_kind = huxerui::PointerDeviceKind::Mouse});
+                    if (frame % 4 == 0) static_cast<void>(ui.SendScroll({{100.0F, 150.0F}, 0.0F, 10.0F}));
+                });
+            check(pageScrollBarCompositions == compositions, "scroll profiling never recomposes the page factory");
+        }
+    }
+    huxerui::testing::UiTest ui(kScrollHoverApplication, {.viewport = {800.0F, 300.0F}});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    scrollHoverFixture->nested = true; ui.PumpAndSettle();
+    ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 1,
+        .position = {100.0F, 60.0F}, .device_kind = huxerui::PointerDeviceKind::Mouse}); ui.PumpAndSettle();
+    measure(ui, "nested-hover", [&](int frame) {
+        ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 1,
+            .position = {100.0F + static_cast<float>(frame % 2), 60.0F},
+            .device_kind = huxerui::PointerDeviceKind::Mouse});
+    });
+}
+
 struct ScrollEdgesFixture {
     huxerui::State<bool> grid{false};
     huxerui::State<bool> dense{false};
@@ -2909,10 +3535,10 @@ huxerui::View ScrollEdgesRoot() {
                 .Key("edge-item-" + std::to_string(index));
         };
         huxerui::View content = model->grid.Get()
-            ? huxerui::View{PageVirtualGrid(model->count.Get(), factory, inset, 8.0F, 56.0F)
+            ? huxerui::View{PageVirtualGrid(model->count.Get(), factory, 8.0F, ScrollAreaInsets::Symmetric(inset, 56.0F))
                 .Columns(huxerui::GridColumns::Fixed(2)).ColumnSpacing(8.0F).EstimatedRowExtent(40.0F)
                 .Controller(controller)}
-            : huxerui::View{PageVirtualList(model->count.Get(), factory, inset, 56.0F)
+            : huxerui::View{PageVirtualList(model->count.Get(), factory, ScrollAreaInsets::Symmetric(inset, 56.0F))
                 .EstimatedItemExtent(40.0F).Controller(controller)};
         return huxerui::View{content}.With(RememberPageScroll{offset}, huxerui::Grow(1.0F));
     }).With(huxerui::Grow(1.0F)).Key("edge-viewport");
@@ -2975,6 +3601,224 @@ void testScrollEdges() {
         }
     }
     scrollEdgesFixture.reset();
+}
+
+struct ManagedScrollInsetsFixture {
+    huxerui::State<int> mode{0};
+    huxerui::State<float> horizontal{4.0F};
+    huxerui::State<std::size_t> count{40};
+    huxerui::State<clashflux::ui::ScrollAreaInsets> insets{clashflux::ui::ScrollAreaInsets{}};
+    huxerui::State<bool> nested{false};
+    std::shared_ptr<clashflux::ui::PageScrollOffset> offset =
+        std::make_shared<clashflux::ui::PageScrollOffset>();
+    huxerui::ScrollController controller, inner;
+};
+std::shared_ptr<ManagedScrollInsetsFixture> managedScrollInsetsFixture;
+huxerui::View ManagedScrollInsetsRoot() {
+    using namespace clashflux::ui;
+    const auto model = huxerui::UseState(std::make_shared<ManagedScrollInsetsFixture>()).Get();
+    managedScrollInsetsFixture = model;
+    model->controller = huxerui::UseScrollController(model->offset->value);
+    model->inner = huxerui::UseScrollController();
+    const auto request = model->insets.Get();
+    const auto row = [](std::size_t index) {
+        return huxerui::Text("MANAGED-" + std::to_string(index))
+            .With(huxerui::Frame{.height = 40.0F}).Key("managed-row-" + std::to_string(index));
+    };
+    huxerui::View body;
+    if (model->nested.Get()) {
+        body = PageScrollView(huxerui::Column {
+          PageScrollView(huxerui::Text("Nested body").With(huxerui::Frame{.height = 1000.0F})
+              .Key("managed-nested-body"), model->inner).With(huxerui::Frame{.height = 120.0F}),
+          huxerui::Row {}.With(huxerui::Frame{.height = 1200.0F}),
+        }, model->controller, model->offset, {}, request);
+    } else if (model->mode.Get() == 0) {
+        std::vector<huxerui::View> rows;
+        for (std::size_t i = 0; i < model->count.Get(); ++i) rows.push_back(row(i));
+        body = ScrollablePageContent(huxerui::Column(rows)
+            .With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), model->offset, request);
+    } else if (model->mode.Get() == 1) {
+        body = ScrollArea(PageVirtualList(model->count.Get(), row).With(RememberPageScroll{model->offset}),
+            model->controller, model->offset, {}, request);
+    } else {
+        body = ScrollArea(PageVirtualGrid(model->count.Get(), row, 0.0F)
+            .Columns(huxerui::GridColumns::Fixed(2)).With(RememberPageScroll{model->offset}),
+            model->controller, model->offset, {}, request);
+    }
+    return PageBodyRegion(huxerui::Column {
+      huxerui::Text("Fixed header").With(huxerui::Frame{.height = 40.0F}).Key("managed-fixed-header"),
+      huxerui::View{body}.With(huxerui::Grow(1.0F)).Key("managed-host"),
+    }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), model->horizontal.Get());
+}
+const huxerui::Application kManagedScrollInsetsApplication{ManagedScrollInsetsRoot, {.show_debug_overlay = false}};
+
+void testManagedScrollInsets() {
+    using namespace clashflux::ui;
+    using huxerui::testing::UiSemanticSelector;
+    for (float width : {320.0F, 960.0F}) {
+        for (int mode : {0, 1, 2}) {
+            huxerui::testing::UiTest ui(kManagedScrollInsetsApplication,
+                {.viewport = {width, 400.0F}, .resource_provider = AppResources()});
+            const auto model = managedScrollInsetsFixture;
+            model->mode = mode;
+            const auto viewport = [&] {
+                for (const auto& node : ui.Find(UiSelector::Key("managed-host")).Find(UiSelector::Enabled(true)).All())
+                    if (node.type == (mode == 0 ? "ScrollView" : "VirtualLayout")) return node.bounds;
+                throw std::runtime_error("managed scrolling viewport missing");
+            };
+            const auto policies = std::vector<ScrollAreaInsets>{ScrollAreaInsets{}, ScrollAreaInsets::Dense(),
+                ScrollAreaInsets::Symmetric(6.0F), {.top = 12.0F, .bottom = 20.0F, .bottom_avoidance = 56.0F},
+                {.dense = true, .top_follows_horizontal = true},
+                ScrollAreaInsets::None()};
+            for (const auto& policy : policies) {
+                model->insets = policy; ui.PumpAndSettle();
+                const auto scroll = ui.Find(UiSelector::Key("managed-host"));
+                scroll.ScrollBy({0.0F, -100000.0F}); ui.PumpAndSettle();
+                const auto bounds = viewport();
+                const auto header = ui.Find(UiSelector::Key("managed-fixed-header")).One().bounds;
+                const float top = policy.top_follows_horizontal
+                    ? bounds.x - scroll.One().bounds.x : policy.top.value_or(policy.dense ? 8.0F : 14.0F);
+                const float bottom = policy.bottom.value_or(policy.dense ? 4.0F : 14.0F) + policy.bottom_avoidance;
+                check(bounds.y == header.y + header.height && bounds.height == 360.0F &&
+                      std::abs(ui.Find(UiSelector::Key("managed-row-0")).One().bounds.y - bounds.y - top) < 0.01F,
+                      "one container request supplies ordinary/list/grid leading whitespace without shrinking the viewport");
+                const auto up = ui.FindSemantics(UiSemanticSelector::Label("Scroll up"));
+                const auto down = ui.FindSemantics(UiSemanticSelector::Label("Scroll down"));
+                if (width >= 600.0F) {
+                    check(up.Exists() && down.Exists() &&
+                          std::abs(up.One().bounds.y - bounds.y - std::max(7.0F, top)) < 0.01F &&
+                          std::abs(bounds.y + bounds.height - down.One().bounds.y - down.One().bounds.height -
+                              std::max(7.0F, bottom)) < 0.01F,
+                          "rail arrows consume the same top/bottom request and floating-control avoidance exactly once");
+                } else check(!up.Exists() && !down.Exists(), "compact content edges do not enable a scrollbar");
+                if (policy.top_follows_horizontal) {
+                    const auto first = ui.Find(UiSelector::Key("managed-row-0"));
+                    check(std::abs(first.One().bounds.y - bounds.y - (width < 600.0F ? 4.0F : 16.0F)) < 0.01F,
+                          "log-style leading whitespace follows the resolved narrow/wide side margin");
+                    model->horizontal = 24.0F; ui.PumpAndSettle();
+                    check(std::abs(first.One().bounds.y - viewport().y - 24.0F) < 0.01F &&
+                          std::abs(viewport().x - scroll.One().bounds.x - 24.0F) < 0.01F &&
+                          (width < 600.0F || std::abs(up.One().bounds.y - viewport().y - 24.0F) < 0.01F),
+                          "changing the actual side budget updates the content and rail top together");
+                    model->horizontal = 4.0F; ui.PumpAndSettle();
+                }
+                for (int step = 0; step < 3; ++step) {
+                    scroll.ScrollBy({0.0F, 100000.0F}); ui.PumpAndSettle();
+                }
+                const auto last = ui.Find(UiSelector::Key("managed-row-39")).One().bounds;
+                check(std::abs(bounds.y + bounds.height - last.y - last.height - bottom) < 0.1F && viewport() == bounds,
+                      "one trailing content blank includes floating-control avoidance and scrolls to the real last row");
+            }
+            auto scroll = ui.Find(UiSelector::Key("managed-host"));
+            scroll.ScrollBy({0.0F, -100000.0F}); ui.PumpAndSettle();
+            scroll.ScrollBy({0.0F, 80.0F}); ui.PumpAndSettle();
+            model->insets = ScrollAreaInsets{.top = 0.0F, .bottom = 22.0F, .bottom_avoidance = 80.0F};
+            ui.PumpAndSettle();
+            ui.SetWindowMetrics({.viewport = {width < 600.0F ? 960.0F : 320.0F, 400.0F}}); ui.PumpAndSettle();
+            check(std::abs(model->offset->value - 80.0F) < 0.01F &&
+                  std::abs(ui.Find(UiSelector::Key("managed-row-0")).One().bounds.y - viewport().y + 80.0F) < 0.01F,
+                  "changing bottom avoidance and scrollbar layout keeps the real offset and item identity");
+            scroll.ScrollBy({0.0F, -100000.0F}); ui.PumpAndSettle();
+            model->count = 1; ui.PumpAndSettle();
+            check(viewport().height == 360.0F && std::abs(model->offset->value) < 0.01F,
+                  "short managed content keeps its full viewport and clears the scroll range");
+        }
+    }
+    huxerui::testing::UiTest nested(kManagedScrollInsetsApplication,
+        {.viewport = {960.0F, 400.0F}, .resource_provider = AppResources()});
+    const auto model = managedScrollInsetsFixture;
+    model->insets = ScrollAreaInsets{.top = 18.0F, .bottom = 22.0F, .bottom_avoidance = 80.0F};
+    model->nested = true; nested.PumpAndSettle();
+    check(std::abs(model->inner.Metrics().content_extent - 1000.0F) < 0.01F &&
+          model->inner.Metrics().viewport_extent == 120.0F,
+          "a local nested scroll area owns its edges and never inherits the outer floating-control footer");
+    managedScrollInsetsFixture.reset();
+}
+
+struct TabCardSpaceFixture {
+    huxerui::State<float> spacing{8.0F};
+    huxerui::State<std::size_t> count{31};
+    std::shared_ptr<clashflux::ui::PageScrollOffset> offset =
+        std::make_shared<clashflux::ui::PageScrollOffset>();
+    int built = 0;
+};
+std::shared_ptr<TabCardSpaceFixture> tabCardSpaceFixture;
+huxerui::View TabCardSpaceRoot() {
+    using namespace clashflux::ui;
+    tabCardSpaceFixture = huxerui::UseState(std::make_shared<TabCardSpaceFixture>()).Get();
+    const auto model = tabCardSpaceFixture;
+    const auto motion = UseSectionTabMotion();
+    const float gap = model->spacing.Get();
+    const auto controller = huxerui::UseScrollController(model->offset->value);
+    const auto grid = ScrollArea(PageVirtualGrid(model->count.Get(), [model](std::size_t index) {
+        ++model->built;
+        return huxerui::Button("CARD-" + std::to_string(index))
+            .With(huxerui::Frame{.height = 40.0F}).Key("tab-card-" + std::to_string(index));
+    }, gap)
+        .Columns(huxerui::GridColumns::Fixed(2)).ColumnSpacing(8.0F).EstimatedRowExtent(40.0F)
+        .With(RememberPageScroll{model->offset}).Key("tab-card-viewport"), controller, model->offset, {}, ScrollAreaInsets::Symmetric(gap))
+        .With(huxerui::Grow(1.0F)).Key("tab-card-page");
+    return PageBodyRegion(huxerui::Column {
+      huxerui::Text("Title").With(huxerui::Frame{.height = 40.0F}).Key("tab-card-header"),
+      SectionTabBar({{"cards", "Cards"}}, "cards", [](const std::string&) {}, motion),
+      SectionTabPages({grid}, 0, [](std::size_t) {}, motion),
+    }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), 4.0F);
+}
+const huxerui::Application kTabCardSpaceApplication{TabCardSpaceRoot, {.show_debug_overlay = false}};
+
+void testTabCardScrollSpace() {
+    for (float width : {320.0F, 960.0F}) {
+        for (float gap : {6.0F, 8.0F}) {
+            huxerui::testing::UiTest ui(kTabCardSpaceApplication,
+                {.viewport = {width, 400.0F}, .resource_provider = AppResources()});
+            const auto model = tabCardSpaceFixture;
+            model->spacing = gap;
+            ui.PumpAndSettle();
+            const auto bar = ui.Find(UiSelector::Key("section-tab-scroll")).One().bounds;
+            const auto header = ui.Find(UiSelector::Key("tab-card-header")).One().bounds;
+            const auto viewport = ui.Find(UiSelector::Key("tab-card-viewport"));
+            const auto bounds = viewport.One().bounds;
+            const auto first = ui.Find(UiSelector::Key("tab-card-0"));
+            const auto card = first.One().bounds;
+            const auto nextRow = ui.Find(UiSelector::Key("tab-card-2")).One().bounds;
+            const auto line = indicator(ui);
+            check(std::abs(bar.y - header.y - header.height - 8.0F) < 0.01F,
+                  "fixed section tabs leave an eight-point gap below the page header in narrow and wide layouts");
+            check(std::abs(line.y + line.height - bar.height) < 0.01F &&
+                  std::abs(bounds.y - bar.y - bar.height) < 0.01F,
+                  "tab underline meets the full scrolling viewport without a fixed gap");
+            check(std::abs(card.y - bounds.y - gap) < 0.01F &&
+                  std::abs(card.y - bounds.y - (nextRow.y - card.y - card.height)) < 0.01F,
+                  "leading scrollable whitespace exactly matches the actual card row spacing");
+            viewport.ScrollBy({0.0F, 80.0F}); ui.PumpAndSettle();
+            check(first.One().bounds.y < bounds.y &&
+                  ui.Find(UiSelector::Key("section-tab-scroll")).One().bounds == bar &&
+                  ui.Find(UiSelector::Key("tab-card-header")).One().bounds == header,
+                  "leading card whitespace scrolls away while the tab bar remains fixed");
+            const float offset = model->offset->value;
+            ui.SetWindowMetrics({.viewport = {width < 600.0F ? 960.0F : 320.0F, 400.0F}});
+            ui.PumpAndSettle();
+            check(std::abs(model->offset->value - offset) < 0.01F &&
+                  std::abs(first.One().bounds.y - (bounds.y + gap - offset)) < 0.01F,
+                  "changing scrollbar layout preserves the real card offset and stable item keys");
+            for (int step = 0; step < 3; ++step) {
+                viewport.ScrollBy({0.0F, 100000.0F}); ui.PumpAndSettle();
+            }
+            const auto last = ui.Find(UiSelector::Key("tab-card-30")).One().bounds;
+            check(std::abs(bounds.y + bounds.height - last.y - last.height - gap) < 0.01F,
+                  "the trailing virtual blank matches one row gap without an estimated phantom row");
+            viewport.ScrollBy({0.0F, -100000.0F}); ui.PumpAndSettle();
+            model->count = 3; ui.PumpAndSettle();
+            check(std::abs(first.One().bounds.y - bounds.y - gap) < 0.01F &&
+                  viewport.One().bounds.height == bounds.height && model->offset->value == 0.0F,
+                  "short card content keeps the full viewport and one leading blank without scrolling");
+            model->built = 0;
+            model->count = 100000; ui.PumpAndSettle();
+            check(model->built < 1000 && std::abs(first.One().bounds.y - bounds.y - gap) < 0.01F,
+                  "a nearly zero virtual edge never expands into an estimated card or defeats virtualization");
+        }
+    }
+    tabCardSpaceFixture.reset();
 }
 
 std::shared_ptr<clashflux::ui::WebsiteTestModel> websiteFormFixture;
@@ -3098,6 +3942,175 @@ void testGroupDrawers() {
     ui.Find(UiSelector::Key("group-picker-scroll")).ScrollBy({0.0F, 2000.0F}); ui.PumpAndSettle();
     ui.Find(UiSelector::Key("group-picker-item-group-11")).Tap(); ui.PumpAndSettle();
     check(ui.Find(UiSelector::Text("SELECTED-11")).Exists(), "矮窗口分组抽屉可滚动到末项选择");
+}
+
+void testProfileUpdateInterval() {
+    using clashflux::ui::ParseProfileUpdateInterval;
+    using clashflux::ui::ProfileUpdateIntervalForEdit;
+    check(ProfileUpdateIntervalForEdit(false, 60) == 0 && ProfileUpdateIntervalForEdit(false, 0) == 0 &&
+          ProfileUpdateIntervalForEdit(true, 0) == 0 && ProfileUpdateIntervalForEdit(true, -1) == 0 &&
+          ProfileUpdateIntervalForEdit(true, 60) == 60,
+          "legacy disabled profiles stay disabled even when a positive interval was retained");
+    check(ParseProfileUpdateInterval("2147483647") == 2147483647 &&
+          !ParseProfileUpdateInterval("999999999999999999999999999") &&
+          !ParseProfileUpdateInterval("+1") && !ParseProfileUpdateInterval("60 minutes"),
+          "interval parsing checks the complete unsigned integer and rejects overflow");
+    for (float width : {400.0F, 1000.0F}) {
+        huxerui::testing::UiTest ui(kProfileIntervalApplication, {.viewport = {width, 260.0F},
+            .resources = {.locale = huxerui::Locale::FromLanguageTag("zh")}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        const auto input = ui.Find(UiSelector::Key("profile-update-interval"));
+        const auto semantic = ui.FindSemantics(huxerui::testing::UiSemanticSelector::Label("自动更新间隔（分钟）"));
+        check(ui.Find(UiSelector::Type<huxerui::TextField>()).Count() == 1 &&
+              !ui.Find(UiSelector::Type<huxerui::Switch>()).Exists() &&
+              ui.Find(UiSelector::Text("0 为关闭自动更新")).Exists() && input.One().value == "1440",
+              "wide and narrow forms expose a single update interval with the existing default and zero hint");
+        input.Tap(); ui.Pump(std::chrono::milliseconds(32));
+        for (const std::string text : {"", "-1", "1.5", "60x", "2147483648", "0", "60", "00015"}) {
+            input.ReplaceText(text); ui.Pump(std::chrono::milliseconds(32));
+            const auto minutes = ParseProfileUpdateInterval(text);
+            check(semantic.One().invalid == !minutes.has_value() &&
+                  semantic.One().error == (minutes ? "" : "自动更新间隔需要填写非负整数（分钟）") &&
+                  profileIntervalFixture->value.Get().text == text,
+                  "invalid drafts show a field error without silently changing to zero or replacing the typed value");
+        }
+        check(ParseProfileUpdateInterval("0") == 0 && ParseProfileUpdateInterval("60") == 60 &&
+              ParseProfileUpdateInterval("00015") == 15,
+              "zero disables updates and positive integer intervals enable them");
+    }
+    profileIntervalFixture.reset();
+}
+
+void testMenuIconMotion() {
+    for (bool dark : {false, true}) {
+        huxerui::testing::UiTest ui(kMenuIconMotionApplication, {
+            .viewport = {dark ? 400.0F : 1000.0F, 300.0F}, .resource_provider = AppResources()});
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+        const auto model = menuIconMotionFixture;
+        model->dark = dark; ui.PumpAndSettle();
+        const auto row = ui.Find(UiSelector::Key("motion-enabled"));
+        const auto icon = row.Find(UiSelector::Key("action-menu-icon"));
+        const auto idle = icon.One().bounds;
+        const auto rowBounds = row.One().bounds;
+        const auto textBounds = ui.Find(UiSelector::Text("Motion")).One().bounds;
+        const auto move = [&](huxerui::Point point) {
+            static_cast<void>(ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 73,
+                .position = point, .device_kind = huxerui::PointerDeviceKind::Mouse}));
+            ui.Pump();
+        };
+        const auto enter = [&] { move({textBounds.x + textBounds.width * 0.5F,
+                                      textBounds.y + textBounds.height * 0.5F}); };
+        const auto leave = [&] { move({350.0F, 280.0F}); };
+        const auto atRest = [&] { return std::abs(icon.One().bounds.width - idle.width) < 0.01F; };
+        const int compositions = model->compositions;
+        enter(); ui.Pump(std::chrono::milliseconds(60));
+        const float rising = icon.One().bounds.width;
+        ui.Pump(std::chrono::milliseconds(60));
+        const auto peak = icon.One().bounds;
+        check(rising > idle.width && peak.width > rising && peak.width <= idle.width * 1.121F,
+              "hovering the menu text gives only its icon a small scale pulse");
+        check(row.One().bounds == rowBounds && ui.Find(UiSelector::Text("Motion")).One().bounds == textBounds &&
+              std::abs(peak.x + peak.width * 0.5F - idle.x - idle.width * 0.5F) < 0.01F &&
+              model->compositions == compositions && model->enters == 1,
+              "icon motion preserves row/text geometry and external hover callbacks without recomposing the panel");
+        ui.Pump(std::chrono::milliseconds(60));
+        check(icon.One().bounds.width < peak.width && !atRest(), "the icon shrinks after its pulse peak");
+        ui.PumpAndSettle();
+        check(atRest(), "the icon returns to its original size while the pointer remains in the row");
+        move({textBounds.x + 1.0F, textBounds.y + textBounds.height * 0.5F});
+        ui.Pump(std::chrono::milliseconds(120));
+        check(atRest(), "pointer movement within a hovered menu item never restarts the pulse");
+        const auto finished = ui.CaptureSnapshot();
+        ui.Pump(std::chrono::seconds(2));
+        check(finished == ui.CaptureSnapshot(), "a completed menu icon pulse has no continuing animation");
+        leave(); enter(); ui.Pump(std::chrono::milliseconds(60));
+        check(!atRest(), "reentering the same menu item starts a fresh pulse");
+        leave();
+        check(atRest(), "leaving mid-pulse immediately restores the icon");
+        const auto disabled = ui.Find(UiSelector::Key("motion-disabled"));
+        const auto disabledIcon = disabled.Find(UiSelector::Key("action-menu-icon"));
+        const auto disabledBounds = disabledIcon.One().bounds;
+        const auto disabledRow = disabled.One().bounds;
+        move({disabledRow.x + disabledRow.width * 0.5F, disabledRow.y + disabledRow.height * 0.5F});
+        ui.Pump(std::chrono::milliseconds(120));
+        check(disabledIcon.One().bounds == disabledBounds, "disabled menu icons never pulse");
+        check(!ui.Find(UiSelector::Key("motion-without-icon")).Find(UiSelector::Key("action-menu-icon")).Exists(),
+              "text-only menu items keep their original content");
+        enter(); ui.Pump(std::chrono::milliseconds(60));
+        model->reduced = true; ui.PumpAndSettle();
+        check(atRest(), "reduced motion cancels an in-flight pulse without leaving an enlarged icon");
+        leave(); enter(); ui.Pump(std::chrono::milliseconds(120));
+        check(atRest(), "reduced motion suppresses new hover pulses");
+        model->reduced = false; leave(); enter(); ui.Pump(std::chrono::milliseconds(60));
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background); ui.PumpAndSettle();
+        check(atRest(), "backgrounding cancels the menu icon pulse");
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active); ui.PumpAndSettle();
+        row.Tap(); ui.PumpAndSettle();
+        check(model->clicks == 1, "icon animation keeps menu activation intact");
+    }
+    menuIconMotionFixture.reset();
+}
+
+void testMenuNaturalHeight() {
+    float contentInset = 0.0F;
+    for (float width : {400.0F, 1000.0F}) {
+        float naturalHeight = 0.0F;
+        for (float height : {900.0F, 700.0F}) {
+            huxerui::testing::UiTest ui(kCommonMenuApplication, {
+                .viewport = {width, height}, .resource_provider = AppResources()});
+            ui.PumpAndSettle();
+            ui.Find(UiSelector::Text("Open short")).Tap(); ui.PumpAndSettle();
+            const auto surface = ui.Find(UiSelector::Key("action-menu-surface")).One().bounds;
+            const auto last = ui.Find(UiSelector::Text("Action-2")).One().bounds;
+            check(!ui.Find(UiSelector::Key("scroll-area-rail")).Exists(),
+                  "context menus never mount a page scrollbar, on either narrow or wide viewports");
+            const float inset = ui.Find(UiSelector::Text("Disabled")).One().bounds.x - surface.x;
+            if (contentInset > 0.0F) check(std::abs(inset - contentInset) < 0.5F,
+                "menu content keeps the same inset without a wide-screen scrollbar gutter");
+            contentInset = inset;
+            check(surface.height < 400.0F && surface.y + surface.height - last.y - last.height < 64.0F,
+                  "a short menu ends after its final item instead of stretching into empty window space");
+            if (naturalHeight > 0.0F) check(std::abs(surface.height - naturalHeight) < 0.5F,
+                "a short menu's natural height stays independent of the available window height");
+            naturalHeight = surface.height;
+            ui.Find(UiSelector::Text("Action-2")).Tap(); ui.PumpAndSettle();
+            check(ui.Find(UiSelector::Text("COMMON-2")).Exists() &&
+                  !ui.Find(UiSelector::Key("action-menu-surface")).Exists(),
+                  "a naturally sized menu keeps its final action clickable and dismisses on selection");
+        }
+    }
+}
+
+void testMenuOverflow() {
+    for (float width : {400.0F, 1000.0F}) {
+        huxerui::testing::UiTest ui(kCommonMenuApplication, {
+            .viewport = {width, 260.0F}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        ui.Find(UiSelector::Text("Open common")).Tap(); ui.PumpAndSettle();
+        const auto menu = ui.Find(UiSelector::Key("action-menu-surface"));
+        const auto bounds = menu.One().bounds;
+        check(bounds.y >= 0.0F && bounds.y + bounds.height <= 260.0F,
+              "an overflowing menu stays within a short viewport");
+        const auto firstY = [&] { return ui.Find(UiSelector::Text("Action-0")).One().bounds.y; };
+        const huxerui::Point center{bounds.x + bounds.width * 0.5F, bounds.y + bounds.height * 0.5F};
+        const float beforeWheel = firstY();
+        static_cast<void>(ui.SendScroll({center, 0.0F, 100.0F}));
+        ui.PumpAndSettle({.timeout = std::chrono::seconds(5)});
+        check(firstY() < beforeWheel - 20.0F, "overflowing menus remain accessible by wheel without a scrollbar");
+        const float beforeDrag = firstY();
+        ui.Drag({center.x, bounds.y + bounds.height - 24.0F}, {center.x, bounds.y + 24.0F});
+        ui.PumpAndSettle({.timeout = std::chrono::seconds(5)});
+        check(firstY() < beforeDrag - 20.0F, "overflowing menus remain accessible by touch without a scrollbar");
+        check(!ui.Find(UiSelector::Key("scroll-area-rail")).Exists(),
+              "wheel and touch never reveal a page scrollbar inside a context menu");
+        menu.ScrollBy({0.0F, 5000.0F}); ui.PumpAndSettle();
+        const auto last = ui.Find(UiSelector::Text("Action-39")).One().bounds;
+        check(last.y >= bounds.y && last.y + last.height <= bounds.y + bounds.height,
+              "the final menu action can be brought fully into view in a short window");
+        ui.Find(UiSelector::Text("Action-39")).Tap(); ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Text("COMMON-39")).Exists() && !menu.Exists(),
+              "the final action of an overflowing menu executes and dismisses normally");
+    }
 }
 
 void testCommonMenu() {
@@ -6504,6 +7517,72 @@ void testDialogSurfaceEnvironment() {
     check(!ui.Find(UiSelector::Text("Scoped add methods")).Exists(), "dialog closes after child navigation");
 }
 
+struct SettingsSelectFixture {
+    huxerui::State<std::size_t> selected{0U};
+    huxerui::State<bool> chinese{true}, largeText{false}, ready{true};
+};
+std::shared_ptr<SettingsSelectFixture> settingsSelect;
+huxerui::View SettingsSelectRoot() {
+    return huxerui::Scope([] {
+        const auto model = huxerui::UseState(std::make_shared<SettingsSelectFixture>()).Get();
+        settingsSelect = model;
+        auto theme = huxerui::MaterialLightThemeSpec();
+        if (model->largeText.Get()) theme.typography.body_medium = 20.0F;
+        return huxerui::MaterialTheme(theme,
+            huxerui::ProvideEnvironment(huxerui::Locale::FromLanguageTag(model->chinese.Get() ? "zh" : "en"),
+                huxerui::Scope([model]() -> huxerui::View {
+                    const std::vector<std::string> labels{
+                        "Zsh", "POSIX sh", huxerui::UseString(clashflux::ui::Localized("命令提示符（cmd）"))};
+                    const auto select = clashflux::ui::SettingsValue(model->ready.Get(),
+                        clashflux::ui::ContentSizedSelect(labels, model->selected.Get(), "Shell type",
+                            [model](std::size_t index) { model->selected = index; }).Key("content-sized-shell"));
+                    if (huxerui::UseViewportClass() == huxerui::ViewportClass::Compact) return huxerui::Column {
+                      huxerui::Text("Shell"),
+                      huxerui::Row {huxerui::Spacer(), select}
+                          .With(huxerui::Padding(huxerui::EdgeInsets{.left = 32.0F})),
+                    }.With(huxerui::Padding(8.0F),
+                           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+                    return huxerui::Row {
+                      huxerui::Text("Shell").With(huxerui::Grow(1.0F)),
+                      select,
+                    }.With(huxerui::Spacing(12.0F), huxerui::Padding(8.0F),
+                           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+                })));
+    });
+}
+
+void testSettingsSelectSizing() {
+    for (float width : {320.0F, 960.0F}) {
+        huxerui::testing::UiTest ui(huxerui::Application{SettingsSelectRoot, {.show_debug_overlay = false}},
+            {.viewport = {width, 500.0F}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        const auto selector = ui.Find(UiSelector::Key("content-sized-shell"));
+        const float shortWidth = selector.One().bounds.width;
+        check(shortWidth > 40.0F && shortWidth < 120.0F,
+            "short settings choices use their content width instead of the default minimum or the row width");
+        selector.Tap(); ui.PumpAndSettle();
+        ui.Find(UiSelector::Text("POSIX sh")).Tap(); ui.PumpAndSettle();
+        check(settingsSelect->selected.Get() == 1 && selector.One().bounds.width > shortWidth + 15.0F,
+            "selecting a longer shell through the popup expands the trigger");
+        settingsSelect->selected = 2; ui.PumpAndSettle();
+        const float chineseWidth = selector.One().bounds.width;
+        settingsSelect->chinese = false; ui.PumpAndSettle();
+        const float englishWidth = selector.One().bounds.width;
+        check(std::abs(chineseWidth - englishWidth) > 1.0F,
+            "translated settings choices remeasure on locale changes");
+        settingsSelect->largeText = true; ui.PumpAndSettle();
+        const auto large = selector.One().bounds;
+        check(large.width > englishWidth && large.x >= 8.0F && large.x + large.width <= width - 7.9F,
+            "theme text sizing updates the trigger while respecting narrow row constraints");
+        settingsSelect->selected = 0; ui.PumpAndSettle();
+        check(selector.One().bounds.width < englishWidth,
+            "returning to a short choice shrinks the trigger without retaining the popup width");
+        settingsSelect->ready = false; ui.PumpAndSettle();
+        check(!selector.Exists() && ui.Find(UiSelector::Text("—")).Exists(),
+            "unhydrated settings still withhold the selector instead of exposing a default choice");
+    }
+}
+
 struct SettingsReadinessFixture {
     huxerui::State<bool> settingsReady{false};
     huxerui::State<bool> coreReady{false};
@@ -6565,15 +7644,40 @@ void testSettingsReadiness() {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--scroll-profile") {
+        profileScrollWork();
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--profile-interval") {
+        testProfileUpdateInterval();
+        std::printf("test_page_transition profile interval: %s\n", failures == 0 ? "ok" : "failed");
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--menus") {
+        testMenuIconMotion();
+        testMenuNaturalHeight();
+        testMenuOverflow();
+        testCommonMenu();
+        testLogActions();
+        std::printf("test_page_transition menus: %s\n", failures == 0 ? "ok" : "failed");
+        return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--scrollbars") {
+        testScrollAppearanceUpdates();
+        testScrollWheelMotion();
+        testScrollArrowMotion();
+        testScrollArrowButtons();
         testPageScrollBars();
+        testManagedScrollInsets();
         testPageBodyInsets();
         testScrollTargetHover();
+        testNestedScrollWheelMotion();
+        testScrollWheelRouting();
         std::printf("test_page_transition scrollbars: %s\n", failures == 0 ? "ok" : "failed");
         return failures == 0 ? 0 : 1;
     }
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    try { testSettingsReadiness(); testSettingsRowFeedback(); }
+    try { testSettingsReadiness(); testSettingsSelectSizing(); testSettingsRowFeedback(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: settings row feedback: %s\n", error.what());
         ++failures;
@@ -6818,6 +7922,10 @@ int main(int argc, char** argv) {
     testFilteredRuleIndices();
     testLargeRuleList();
     testDesktopTouchpadSectionPager();
+    testProfileUpdateInterval();
+    testMenuIconMotion();
+    testMenuNaturalHeight();
+    testMenuOverflow();
     testCommonMenu();
     testGroupDrawers();
     testGroupPickerSelection();
@@ -6825,14 +7933,23 @@ int main(int argc, char** argv) {
     testDesktopPageSwitcher();
     testHeaderGeometry();
     testSearchFocusOutline();
+    testSectionTabBodyInsets();
     testMobileSearchGeometry();
     testResponsiveAnchorMount();
     testCompactPageBottom();
     testHeaderFormAction();
+    testScrollAppearanceUpdates();
+    testScrollWheelMotion();
+    testScrollArrowMotion();
+    testScrollArrowButtons();
     testPageScrollBars();
+    testManagedScrollInsets();
     testPageBodyInsets();
     testScrollTargetHover();
+    testNestedScrollWheelMotion();
+    testScrollWheelRouting();
     testScrollEdges();
+    testTabCardScrollSpace();
     testWebsiteFormScroll();
     testProfileFormNavigation();
     testProfileListSections();
