@@ -961,7 +961,7 @@
 
     bool validateSourceUpdate(std::int64_t id, const std::string& content, std::string& error,
                               bool forceProviderRefresh, std::function<bool()>& apply) {
-        std::lock_guard lock(lifecycleMutex_);
+        std::unique_lock lock(lifecycleMutex_);
         ensureOpen();
         try {
             const auto edits = routing::DecodeProfileRules(setting(routing::ProfileRulesKey(id), ""));
@@ -994,19 +994,51 @@
                     options.auxiliarySources.clear(); options.globalRules.clear(); options.nativeConnections.clear();
                 }
             }
+            auto& data = clashflux::data::session();
+            const auto profilesRevision = data.profilesRevision();
+            std::vector<std::pair<std::filesystem::path, std::string>> sourceImages;
+            for (const auto& profile : data.listProfiles()) {
+                const auto connection = routing::ConnectionId(profile.id);
+                const bool used = profile.id == id || connection == options.mainConnectionId ||
+                    std::ranges::any_of(options.auxiliarySources, [&](const auto& source) { return source.id == connection; });
+                if (!used || profile.file.empty()) continue;
+                const auto path = cfg::profilesDir() / profile.file;
+                std::ifstream input(path, std::ios::binary);
+                if (!input) { error = "无法读取来源快照"; return false; }
+                sourceImages.emplace_back(path, std::string(std::istreambuf_iterator<char>(input), {}));
+            }
+            const auto guard = [&](std::string& reason) {
+                if (data.profilesRevision() != profilesRevision || data.settingsRevision() != settingsRevision) {
+                    reason = "订阅或设置在准备期间已变化，请重新更新"; return false;
+                }
+                const auto current = snapshot();
+                if (current.state != before.state || current.runtimeEpoch != before.runtimeEpoch ||
+                    current.planRevision != before.planRevision || current.nativeStartedAt != before.nativeStartedAt) {
+                    reason = "运行计划在准备期间已变化，请重新更新"; return false;
+                }
+                for (const auto& [path, expected] : sourceImages) {
+                    std::ifstream input(path, std::ios::binary);
+                    if (!input || std::string(std::istreambuf_iterator<char>(input), {}) != expected) {
+                        reason = "订阅原文在准备期间已变化，请重新更新"; return false;
+                    }
+                }
+                return true;
+            };
             if (participates && before.state == core::CoreState::Running) {
 #if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
                 options.proxyListening = before.proxyListening;
 #endif
                 const auto began = std::chrono::steady_clock::now();
-                auto candidate = prepareStartPlan(std::move(options), error, {}, true, {}, true);
-                if (!candidate) return false;
+                lock.unlock();
+                auto candidate = prepareStartPlan(std::move(options), error, {}, true, guard, true);
+                lock.lock();
+                if (!candidate || !guard(error)) return false;
                 if (settingsRevision != clashflux::data::session().settingsRevision()) {
                     error = "运行设置已变化，请重新更新订阅";
                     return false;
                 }
-                // ProfilesStore holds the lifecycle lock across preparation,
-                // source commit and this one-shot handoff.
+                // ProfilesStore reacquires the lifecycle lock for the source
+                // commit and this one-shot handoff after preparation.
                 apply = [this, before, settingsRevision,
                          prepared = std::make_shared<std::unique_ptr<PreparedStart>>(std::move(candidate)), began] {
                     auto candidate = std::move(*prepared);
@@ -1044,9 +1076,12 @@
             }
             singbox::CompileResult compiled;
             bool candidateChecked = false;
-            if (!prepareHttpRuleProviders(options, compiled, error, nullptr, {}, nullptr,
-                    &candidateChecked)) return false;
-            return candidateChecked || checkCompiledPlan(compiled, error);
+            lock.unlock();
+            const bool prepared = prepareHttpRuleProviders(options, compiled, error, nullptr, {}, nullptr,
+                    &candidateChecked, guard);
+            const bool checked = prepared && (candidateChecked || checkCompiledPlan(compiled, error));
+            lock.lock();
+            return checked && guard(error);
         } catch (const std::exception& e) { error = e.what(); return false; }
     }
 

@@ -30,7 +30,7 @@ db_schema::ProfileRow ToRow(const model::Profile& profile) {
         .auto_update = profile.autoUpdate,
         .use_system_proxy = profile.useSystemProxy,
         .use_core_proxy = profile.useCoreProxy,
-        .allow_invalid_cert = profile.allowInvalidCert,
+        .allow_invalid_cert = false, // Retired option; keep the legacy column compatible.
         .homepage = profile.homepage,
         .used_bytes = profile.usedBytes,
         .total_bytes = profile.totalBytes,
@@ -56,7 +56,6 @@ model::Profile ToProfile(const db_schema::ProfileRow& row) {
     profile.autoUpdate = row.auto_update;
     profile.useSystemProxy = row.use_system_proxy;
     profile.useCoreProxy = row.use_core_proxy;
-    profile.allowInvalidCert = row.allow_invalid_cert;
     profile.homepage = row.homepage;
     profile.usedBytes = row.used_bytes;
     profile.totalBytes = row.total_bytes;

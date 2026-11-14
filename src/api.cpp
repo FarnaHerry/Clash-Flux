@@ -16,6 +16,7 @@ module;
 #include <curl/curl.h>
 #include <cstdio>
 #include <cerrno>
+#include <thread>
 #ifdef _WIN32
 #include <io.h>
 #else
@@ -23,13 +24,17 @@ module;
 #endif
 #include "wire_codec.h"
 #include "http_request_headers.h"
+#include "download_policy.h"
+#if defined(__ANDROID__)
+#include "android_profile_http.h"
+#endif
 #include "native_control_wire.h"
 
 #if defined(CLASHFLUX_IOS)
 #include <cstddef>
 extern "C" bool clashflux_ios_download_to_file(
     const char* url, const char* temp_path, long timeout_seconds,
-    bool allow_invalid_certificate, const char* proxy_url,
+    const char* proxy_url,
     bool allow_system_proxy, long* http_status, long long* expected_bytes,
     char* response_headers_json, std::size_t response_headers_capacity,
     char* error_buffer, std::size_t error_buffer_capacity) noexcept;
@@ -181,7 +186,7 @@ private:
 
 struct DownloadPolicy {
     std::string origin, proxy;
-    bool allowInvalidCert = false, allowProxyEnv = false;
+    bool allowProxyEnv = false, subscriptionRequest = false, compatibilityUserAgent = false;
     std::map<std::string, std::string> headers;
     std::array<std::optional<std::string>, 11> environment;
 
@@ -191,7 +196,8 @@ struct DownloadPolicy {
         policy.origin = url.substr(0, scheme == std::string::npos ? url.size() :
             url.find_first_of("/?#", scheme + 3));
         policy.proxy = options.proxyUrl;
-        policy.allowInvalidCert = options.allowInvalidCert;
+        policy.subscriptionRequest = options.subscriptionRequest;
+        policy.compatibilityUserAgent = options.compatibilityUserAgent;
         policy.allowProxyEnv = options.allowProxyEnv;
         for (const auto& [name, value] : options.headers) {
             auto lower = name;
@@ -200,10 +206,7 @@ struct DownloadPolicy {
             // Every request still resets and reinstalls its complete headers.
             if (lower != "if-none-match" && lower != "if-modified-since") policy.headers.emplace(name, value);
         }
-        constexpr std::array names{"http_proxy", "https_proxy", "all_proxy", "no_proxy",
-            "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE"};
-        for (std::size_t i = 0; i < names.size(); ++i)
-            if (const auto* value = std::getenv(names[i])) policy.environment[i] = value;
+        policy.environment = clashflux::download::TransportEnvironment();
         return policy;
     }
     bool operator==(const DownloadPolicy&) const = default;
@@ -635,9 +638,59 @@ bool CommitFile(const std::filesystem::path& temp, const std::filesystem::path& 
     error.clear(); return true;
 }
 
-ApiResult ClashApi::downloadToFile(const std::string& url,
+bool WriteFileAtomically(const std::filesystem::path& file, const std::string& content, std::string& error) {
+    DownloadTemp temporary(file);
+    if (!temporary) { error = "无法创建缓存暂存目录"; return false; }
+    std::ofstream output(temporary.path(), std::ios::binary | std::ios::trunc);
+    output.write(content.data(), static_cast<std::streamsize>(content.size())); output.close();
+    if (!output) { error = "无法完成缓存写入"; return false; }
+    return CommitFile(temporary.path(), file, error);
+}
+
+ApiResult ClashApi::downloadToFile(const std::string& url, const std::filesystem::path& dest,
+                                 const DownloadOptions& inputOptions) {
+    auto options = inputOptions;
+    DownloadMetrics totals;
+    ApiResult result;
+    for (unsigned attempt = 0; attempt < std::clamp(options.attempts, 1u, 3u); ++attempt) {
+        result = downloadOnce(url, dest, options);
+        totals.attempts += std::max(1u, result.download.attempts);
+        totals.networkMicros += result.download.networkMicros;
+        totals.bytes += result.download.bytes;
+        totals.newConnections += result.download.newConnections;
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+        if (options.subscriptionRequest && result.status == 403 && !options.compatibilityUserAgent &&
+            std::ranges::all_of(options.headers, [](const auto& entry) {
+                const auto name = clashflux::http_request::LowerHeaderName(entry.first);
+                return name == "if-none-match" || name == "if-modified-since";
+            })) {
+            options.compatibilityUserAgent = true;
+            result = downloadOnce(url, dest, options);
+            totals.attempts += std::max(1u, result.download.attempts);
+            totals.networkMicros += result.download.networkMicros;
+            totals.bytes += result.download.bytes;
+            totals.newConnections += result.download.newConnections;
+        }
+#endif
+        if (result.ok || !result.download.retryable) break;
+        if (attempt + 1 < std::clamp(options.attempts, 1u, 3u))
+            std::this_thread::sleep_for(std::chrono::milliseconds{250});
+    }
+    if (!result.ok && (result.failurePhase.empty() || result.failurePhase == "none"))
+        result.failurePhase = result.status >= 400 ? "http" : "transport";
+    result.download.attempts = totals.attempts;
+    result.download.networkMicros = totals.networkMicros;
+    result.download.bytes = totals.bytes;
+    result.download.newConnections = totals.newConnections;
+    return result;
+}
+
+ApiResult ClashApi::downloadOnce(const std::string& url,
                                    const std::filesystem::path& dest,
-                                   const DownloadOptions& options) {
+                                   const DownloadOptions& inputOptions) {
+    auto options = inputOptions;
+    if (options.subscriptionRequest && (!options.maxBytes || options.maxBytes > clashflux::download::kSubscriptionMaxBytes))
+        options.maxBytes = clashflux::download::kSubscriptionMaxBytes;
     ApiResult result;
     if (!clashflux::http_request::ValidHeaders(options.headers)) {
         result.error = "下载请求头非法或不支持";
@@ -660,9 +713,25 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
         result.error = "无法写入: " + dest.string();
         return result;
     }
-#if defined(CLASHFLUX_IOS)
+#if defined(__ANDROID__)
+    out.close();
+    const auto began = std::chrono::steady_clock::now();
+    const auto response = clashflux::android::DownloadProfileToFile(url,
+        options.timeoutSecs > 0 ? static_cast<int>(options.timeoutSecs) : 60,
+        temp.string(), options.maxBytes, !options.allowProxyEnv, options.headers, options.subscriptionRequest);
+    result.status = response.status; result.error = response.error; result.download.bytes = response.bytes;
+    result.download.retryable = response.retryable;
+    result.download.attempts = response.attempts;
+    result.failurePhase = response.failure;
+    result.download.networkMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - began).count();
+    result.headers.insert(response.headers.begin(), response.headers.end());
+    result.ok = response.error.empty() && ((response.status >= 200 && response.status < 300) ||
+        (options.acceptNotModified && response.status == 304));
+    if (!result.ok && result.error.empty()) result.error = "HTTP " + std::to_string(result.status);
+#elif defined(CLASHFLUX_IOS)
     // iOS 的 curl 构建不含 TLS。订阅和规则集下载改用系统 URLSession，
-    // 默认走 Apple 信任链校验证书；只有用户显式开启危险选项时才跳过校验。
+    // 始终走 Apple 信任链校验证书。
     out.close();
     std::vector<char> responseHeaders(64 * 1024, '\0');
     std::vector<char> errorBuffer(2048, '\0');
@@ -671,7 +740,7 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     const bool transferred = clashflux_ios_download_to_file(
         url.c_str(), temp.string().c_str(),
         options.timeoutSecs > 0 ? options.timeoutSecs : 60L,
-        options.allowInvalidCert, options.proxyUrl.c_str(),
+        options.proxyUrl.c_str(),
         options.allowProxyEnv, &status, &expectedBytes,
         responseHeaders.data(), responseHeaders.size(),
         errorBuffer.data(), errorBuffer.size());
@@ -732,7 +801,7 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
                      options.timeoutSecs > 0 ? options.timeoutSecs : 60L);
     curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(easy, CURLOPT_USERAGENT, "clash-flux/0.1");
+    curl_easy_setopt(easy, CURLOPT_USERAGENT, options.compatibilityUserAgent ? "clash.meta" : "clash-flux/0.1");
     // Decode supported HTTP compression before the bounded write callback.
     curl_easy_setopt(easy, CURLOPT_ACCEPT_ENCODING, "");
     // 失败原因（OpenSSL 文本，例如 "SSL certificate problem: unable to get
@@ -747,8 +816,8 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     curl_easy_setopt(easy, CURLOPT_SSL_OPTIONS,
                      static_cast<long>(CURLSSLOPT_NATIVE_CA));
 #endif
-    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, options.allowInvalidCert ? 0L : 1L);
-    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, options.allowInvalidCert ? 0L : 2L);
+    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 2L);
     // 代理三态：指定代理 > 环境变量代理 > 强制直连（清空代理，防 env 干扰）。
     if (!options.proxyUrl.empty()) {
         curl_easy_setopt(easy, CURLOPT_PROXY, options.proxyUrl.c_str());
@@ -766,6 +835,7 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
     result.download.bytes = static_cast<std::uint64_t>(std::max<curl_off_t>(0, downloadedBytes));
     curl_easy_getinfo(easy, CURLINFO_NUM_CONNECTS, &result.download.newConnections);
     session.Keep(code == CURLE_OK);
+    result.download.retryable = code == CURLE_PARTIAL_FILE || code == CURLE_RECV_ERROR || code == CURLE_OPERATION_TIMEDOUT;
     out.flush();
     if (code == CURLE_OK) {
         curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status);
@@ -798,14 +868,15 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
         if (code == CURLE_PEER_FAILED_VERIFICATION ||
             code == CURLE_SSL_CACERT_BADFILE) {
             // 证书链不被信任：系统根证书已参与校验（Windows 走系统信任库），
-            // 剩下的可能就是自签/私有 CA/过期证书，交给订阅级开关处理。
-            result.error = "TLS 证书校验失败（curl " + codeText + "）：" + detail +
-                           "；可在订阅编辑中开启「允许无效证书（危险）」后重试";
+            // 自签/私有 CA/过期证书继续拒绝，不提供跳过验证入口。
+            result.error = "TLS 证书校验失败（curl " + codeText + "）：" + detail;
         } else {
             result.error = detail + "（curl " + codeText + "）";
         }
     }
-    if (sink.limitExceeded) result.error = "下载超过大小上限";
+    if (code != CURLE_OK) result.failurePhase = code == CURLE_PEER_FAILED_VERIFICATION || code == CURLE_SSL_CACERT_BADFILE
+        ? "tls" : code == CURLE_OPERATION_TIMEDOUT ? "timeout" : "transport";
+    if (sink.limitExceeded) { result.error = "下载超过大小上限"; result.failurePhase = "limit"; }
     // Validation can prepare additional providers; no transport is held across it.
     session.Release();
 #endif
@@ -836,6 +907,7 @@ ApiResult ClashApi::downloadToFile(const std::string& url,
             result.error = "下载内容校验失败";
         }
         result.ok = result.error.empty();
+        if (!result.ok) result.failurePhase = "validation";
         result.download.validationMicros = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - began).count();
     }

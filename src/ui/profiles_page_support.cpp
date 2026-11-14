@@ -272,175 +272,17 @@ void OpenProfileCreate(bool compact, huxerui::State<bool> page,
     });
 }
 
-// Android 订阅下载统一走 app 的 HttpURLConnection 桥接：保留系统证书校验，
-// 并在读完响应后校验 Content-Length，避免平台异步 HTTP 返回被截断的配置。
-// 显式允许无效证书时，只对本次请求放宽信任；同步请求必须留在任务线程。
-huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
-    std::shared_ptr<AppHttpClient> http, std::string url,
-    int timeoutSecs, bool allowInvalidCert) {
-    store::FetchedProfile fetched;
-#if defined(__ANDROID__)
-    static_cast<void>(http);
-    fetched = co_await RunOnTaskThread(
-        [url = std::move(url), timeoutSecs, allowInvalidCert]() {
-#if !defined(NDEBUG)
-            const auto started = std::chrono::steady_clock::now();
-            __android_log_print(ANDROID_LOG_INFO, "ClashFluxImport",
-                                "subscription request begin timeout=%d allowInvalidCert=%d",
-                                timeoutSecs, allowInvalidCert ? 1 : 0);
-#endif
-            const auto response = clashflux::android::DownloadProfile(
-                url, timeoutSecs, allowInvalidCert);
-#if !defined(NDEBUG)
-            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - started).count();
-            __android_log_print(ANDROID_LOG_INFO, "ClashFluxImport",
-                                "subscription response status=%ld bytes=%zu error=%d elapsed_ms=%lld",
-                                response.status, response.body.size(),
-                                response.error.empty() ? 0 : 1,
-                                static_cast<long long>(elapsed));
-#endif
-            store::FetchedProfile result;
-            result.status = response.status;
-            result.error = response.error;
-            result.headers = response.headers;
-            result.body = response.body;
-            result.ok = result.error.empty() && result.status >= 200 &&
-                        result.status < 300;
-            return result;
-        });
-    co_return fetched;
-#else
-    static_cast<void>(allowInvalidCert);
-    if (!http) {
-        fetched.error = "HTTP 服务不可用";
-        co_return fetched;
-    }
-    huxerui::HttpRequest request;
-    request.url = std::move(url);
-    request.headers.push_back(
-        huxerui::HttpHeader{"User-Agent", "clash-flux/0.1"});
-    request.timeout = std::chrono::milliseconds{
-        (timeoutSecs > 0 ? timeoutSecs : 60) * 1000};
-    const std::string urlText = request.url;
-    huxerui::HttpResult<huxerui::HttpResponse> result =
-        co_await http->SendAsync(std::move(request));
-    if (!result.Succeeded()) {
-        // 失败时把可定位的信息一起带出来：HuxerUI 的 message 可能是空的
-        // （真机实测就只剩一个"传输失败"），code 是稳定分类，url 用于区分
-        // 是哪一个订阅源。
-        const huxerui::HttpError& error = result.Error();
-        fetched.error = std::format(
-            "{}（code={}, url={}）",
-            error.message.empty() ? "平台栈未给出错误详情" : error.message,
-            static_cast<int>(error.code), urlText);
-        co_return fetched;
-    }
-    huxerui::HttpResponse response = std::move(result).Value();
-    fetched.status = response.status_code;
-    fetched.ok = response.status_code >= 200 && response.status_code < 300;
-    for (const auto& header : response.headers) {
-        std::string lowerName = header.name;
-        for (char& c : lowerName) {
-            if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-        }
-        fetched.headers.emplace(std::move(lowerName), header.value);
-    }
-    fetched.body.assign(
-        reinterpret_cast<const char*>(response.body.data()),
-        static_cast<std::size_t>(response.body.size()));
-    co_return fetched;
-#endif
-}
-
-// Android 订阅导入：store 保留草稿 → 平台栈抓取 → store 落盘。返回新订阅 id
-//（失败 0，错误经 profilesStore().lastError() 读取）。
-huxerui::Task<std::int64_t> AndroidImportRemote(
-    std::shared_ptr<AppHttpClient> http, const std::string& name,
-    const std::string& url, model::Profile options) {
-    const std::int64_t nid = co_await RunOnTaskThread(
-        [name, url, options] { return store::profilesStore().createRemote(
-                                   name, url, options); });
-    if (nid == 0) co_return 0;
-#if defined(__ANDROID__) && !defined(NDEBUG)
-    const auto snapshotProfile = [nid] {
-        const auto profiles = store::profilesStore().list();
-        const bool found = std::any_of(
-            profiles.begin(), profiles.end(), [nid](const auto& profile) {
-                return profile.id == nid;
-            });
-        return std::pair{profiles.size(), found};
-    };
-    const auto afterCreate = co_await RunOnTaskThread(snapshotProfile);
-    __android_log_print(ANDROID_LOG_INFO, "ClashFluxImport",
-                        "profile created id=%lld count=%zu present=%d",
-                        static_cast<long long>(nid), afterCreate.first,
-                        afterCreate.second ? 1 : 0);
-#endif
-    const store::FetchedProfile fetched = co_await AndroidFetchProfile(
-        std::move(http), url, options.timeoutSecs, options.allowInvalidCert);
-#if defined(__ANDROID__) && !defined(NDEBUG)
-    const auto beforeComplete = co_await RunOnTaskThread(snapshotProfile);
-    __android_log_print(ANDROID_LOG_INFO, "ClashFluxImport",
-                        "profile before complete id=%lld count=%zu present=%d fetched_ok=%d status=%ld bytes=%zu",
-                        static_cast<long long>(nid), beforeComplete.first,
-                        beforeComplete.second ? 1 : 0, fetched.ok ? 1 : 0,
-                        fetched.status, fetched.body.size());
-#endif
-    const bool ok = co_await RunOnTaskThread(
-        [nid, fetched] { return store::profilesStore().completeRemote(
-                             nid, fetched, true); });
-#if defined(__ANDROID__) && !defined(NDEBUG)
-    __android_log_print(ANDROID_LOG_INFO, "ClashFluxImport",
-                        "profile complete id=%lld result=%d",
-                        static_cast<long long>(nid), ok ? 1 : 0);
-#endif
-    co_return ok ? nid : 0;
-}
-
-// Android 订阅更新：按订阅行的 URL/超时经平台栈抓取后收尾；非 remote 行
-// 回落阻塞路径（保留「本地导入的订阅不支持更新」等语义）。返回错误串。
-huxerui::Task<std::string> AndroidRefreshRemote(
-    std::shared_ptr<AppHttpClient> http, std::int64_t id) {
-    const auto revision = clashflux::data::session().profileRevision(id);
-    const std::optional<model::Profile> row = co_await RunOnTaskThread(
-        [id]() -> std::optional<model::Profile> {
-            for (const auto& p : store::profilesStore().list()) {
-                if (p.id == id) return p;
-            }
-            return std::nullopt;
-        });
-    if (!row || row->url.empty()) {
-        const std::string err = co_await RunOnTaskThread([id]() -> std::string {
-            auto& ps = store::profilesStore();
-            return ps.refresh(id) ? "" : ps.lastError();
-        });
-        co_return err;
-    }
-    const store::FetchedProfile fetched = co_await AndroidFetchProfile(
-        std::move(http), row->url, row->timeoutSecs, row->allowInvalidCert);
-    const bool ok = co_await RunOnTaskThread(
-        [id, fetched, revision] { return store::profilesStore().completeRemote(
-                             id, fetched, false, /*forceProviders=*/true, revision); });
-    co_return ok ? "" : store::profilesStore().lastError();
-}
-
-// 更新入口只在这里做一次平台选择；卡片自身只持有 refresh(id) 这个统一动作。
+// All platforms share the domain refresh transaction and bounded file downloader.
 huxerui::Task<std::string> RefreshProfileForPlatform(
     std::shared_ptr<AppHttpClient> http, std::int64_t id) {
-#if defined(__ANDROID__)
-    co_return co_await AndroidRefreshRemote(std::move(http), id);
-#else
     static_cast<void>(http);
-    co_return co_await RunOnTaskThread([id]() -> std::string {
+    co_return co_await RunOnTaskThread([id] {
         auto& profiles = store::profilesStore();
         return profiles.refresh(id) ? std::string{} : profiles.lastError();
     });
-#endif
 }
 
-// 导入流程的网络差异也在平台函数内收束：Android remote 走平台 HttpClient，
-// 桌面及本地/原生订阅走阻塞 store。弹窗只提交 request，不再判断平台。
+// 所有平台共用领域导入事务；下载后端在 API 层选择。弹窗只提交 request。
 std::string NormalizeProfileImportLink(ProfileImportRequest& request) {
     if (!request.remote) return {};
     const auto scheme = request.url.substr(0, request.url.find(':'));
@@ -455,36 +297,6 @@ std::string NormalizeProfileImportLink(ProfileImportRequest& request) {
         ? std::string{} : "订阅下载仅支持 HTTP 或 HTTPS URL";
 }
 
-#if defined(__ANDROID__)
-huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
-    std::shared_ptr<AppHttpClient> http, ProfileImportRequest request) {
-    if (auto error = NormalizeProfileImportLink(request); !error.empty())
-        co_return ProfileImportResult{0, std::move(error)};
-    if (request.remote) {
-        const std::int64_t id = co_await AndroidImportRemote(
-            std::move(http), request.name, request.url, request.options);
-        co_return ProfileImportResult{
-            id, id == 0 ? store::profilesStore().lastError() : ""};
-    }
-    const ProfileImportResult result = co_await RunOnTaskThread(
-        [request = std::move(request)] {
-            auto& ps = store::profilesStore();
-            const std::int64_t id =
-                request.remote
-                    ? ps.importUrl(request.name, request.url, request.options)
-                    : request.local
-                          ? ps.importFile(request.name, request.picked_path,
-                                          request.options)
-                          : ps.importNative(request.name,
-                                            "pptp",
-                                            request.options.nativeConfig,
-                                            request.options.nativeRoutes,
-                                            request.options);
-            return ProfileImportResult{id, ps.lastError()};
-        });
-    co_return result;
-}
-#else
 huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
     std::shared_ptr<AppHttpClient>, ProfileImportRequest request) {
     if (auto error = NormalizeProfileImportLink(request); !error.empty())
@@ -507,7 +319,7 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
         });
     co_return result;
 }
-#endif
+
 
 // 单张订阅卡：纯视图（零弹窗 State；任务域由页面下发，菜单句柄由卡片自持有），
 // 弹窗经 openXxx(id) 回调到页面级懒加载打开。
@@ -526,8 +338,8 @@ std::string ProfileFidelitySummary(std::int64_t profileId) {
     }
 }
 
-// Android 订阅自动更新泵的一次迭代：任务线程列出到期订阅 → 逐个经 HuxerUI
-// HttpClient 抓取 → store completeRemote 收尾。失败通过应用模型报告，保留已接受记录。
+// Android 自动更新逐个调用领域刷新，保留 Provider 到期策略。
+// 下载与提交在任务线程完成；失败通过应用模型报告，保留已接受记录。
 huxerui::Task<int> AndroidRefreshProfilesDueOnce(
     std::shared_ptr<AppHttpClient> http,
     std::shared_ptr<ProfilesModel> profilesModel) {
@@ -539,17 +351,13 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
         const auto current = clashflux::data::session().listProfiles();
         const auto found = std::ranges::find(current, row.id, &model::Profile::id);
         if (found == current.end() || *found != row) continue;
-        const store::FetchedProfile fetched = co_await
-            profile_detail::AndroidFetchProfile(
-                http, row.url, row.timeoutSecs, row.allowInvalidCert);
-        const auto outcome = co_await RunOnTaskThread(
-            [id = row.id, fetched, revision] {
-                auto& profiles = store::profilesStore();
-                // Automatic subscription updates leave provider intervals intact.
-                const bool ok = profiles.completeRemote(
-                    id, fetched, false, /*forceProviders=*/false, revision);
-                return std::pair{ok, ok ? std::string{} : profiles.lastError()};
-            });
+        const auto outcome = co_await RunOnTaskThread([id = row.id, revision] {
+            auto& profiles = store::profilesStore();
+            if (clashflux::data::session().profileRevision(id) != revision)
+                return std::pair{false, std::string{"订阅在更新前已变化"}};
+            const bool ok = profiles.refresh(id, false);
+            return std::pair{ok, ok ? std::string{} : profiles.lastError()};
+        });
         if (outcome.first) {
             ++updated;
             profilesModel->ClearProfileRefreshFailure(row.id);

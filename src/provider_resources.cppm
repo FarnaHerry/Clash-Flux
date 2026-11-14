@@ -1,5 +1,8 @@
 // Application-owned request coordination and isolated validated-download reuse.
 // No compiler IO, detached tasks or publication of accepted configuration.
+module;
+#include "download_policy.h"
+
 export module clashflux.provider_resources;
 import std;
 
@@ -54,7 +57,7 @@ export struct Request {
     long timeoutSecs = 20;
     unsigned attempts = 1;
     bool acceptNotModified = false;
-    bool allowInvalidCert = false, allowProxyEnv = false;
+    bool allowProxyEnv = false;
     std::string proxyUrl;
     auto operator<=>(const Request&) const = default;
 };
@@ -62,7 +65,7 @@ export struct Request {
 export struct Response {
     bool ok = false;
     long status = 0;
-    std::string body, error, etag, lastModified;
+    std::string body, error, etag, lastModified, failure;
     std::int64_t networkMicros = 0;
     std::uint64_t bytes = 0;
     unsigned attempts = 0;
@@ -88,7 +91,12 @@ export class Manager {
     };
     mutable std::mutex mutex_;
     std::condition_variable_any changed_;
-    std::map<Request, std::shared_ptr<Flight>> flights_;
+    struct TransportKey {
+        Request policy;
+        std::array<std::optional<std::string>, 11> environment;
+        auto operator<=>(const TransportKey&) const = default;
+    };
+    std::map<TransportKey, std::shared_ptr<Flight>> flights_;
     std::size_t active_ = 0;
     std::uint64_t joins_ = 0;
     const std::size_t concurrency_, capacity_;
@@ -119,11 +127,15 @@ public:
             outcome.response = std::move(response);
             return outcome;
         }
+        // Resource ownership is independent of transport equality. Every
+        // consumer still validates and commits its own candidate/staging.
+        TransportKey key{request, clashflux::download::TransportEnvironment()};
+        key.policy.identity.clear();
         std::shared_ptr<Flight> flight;
         for (;;) {
             std::unique_lock lock(mutex_);
             if (cancel.stop_requested()) { outcome.cancelled = true; return outcome; }
-            if (const auto found = flights_.find(request); found != flights_.end()) {
+            if (const auto found = flights_.find(key); found != flights_.end()) {
                 flight = found->second;
                 outcome.joined = true;
                 ++joins_;
@@ -147,14 +159,14 @@ public:
                 return outcome;
             }
             flight = std::make_shared<Flight>();
-            flights_.emplace(request, flight);
+            flights_.emplace(key, flight);
             outcome.joined = false;
             const auto queued = Clock::now();
             const bool available = changed_.wait(lock, cancel, [&] { return active_ < concurrency_; });
             outcome.queueMicros += elapsed(queued);
             if (!available || cancel.stop_requested()) {
                 flight->done = flight->abandoned = true;
-                flights_.erase(request);
+                flights_.erase(key);
                 lock.unlock();
                 changed_.notify_all();
                 outcome.cancelled = true;
@@ -185,7 +197,7 @@ public:
         flight->done = true;
         // Completed results are held only by current consumers. A later force
         // refresh must start new IO, including after a failed/throwing request.
-        flights_.erase(request);
+        flights_.erase(key);
         lock.unlock();
         changed_.notify_all();
         outcome.cancelled = cancel.stop_requested();

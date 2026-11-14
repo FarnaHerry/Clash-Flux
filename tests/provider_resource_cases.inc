@@ -34,7 +34,10 @@ void testProviderResourceManager() {
         std::array<Outcome, 3> followers;
         std::vector<std::jthread> workers;
         for (unsigned i = 0; i < followers.size(); ++i)
-            workers.emplace_back([&, i] { followers[i] = manager.fetch(request, load); });
+            workers.emplace_back([&, i] {
+                auto otherSource = request; otherSource.identity += ":source-" + std::to_string(i);
+                followers[i] = manager.fetch(otherSource, load);
+            });
         std::stop_source stop;
         Outcome cancelled;
         std::jthread waiter([&] { cancelled = manager.fetch(request, load, stop.get_token()); });
@@ -78,8 +81,6 @@ void testProviderResourceManager() {
         check(waitFor([&] { return entered == 1; }), "identity isolation owner is in flight");
         std::vector<Request> distinct;
         auto add = [&](auto change) { auto other = request; change(other); distinct.push_back(std::move(other)); };
-        add([](auto& r) { r.identity = "rule:source-2:full-identity"; });
-        add([](auto& r) { r.identity = "proxy:source-1:full-identity"; });
         add([](auto& r) { r.url += "/different"; });
         add([](auto& r) { r.headers["authorization"] = "another-test-secret"; });
         add([](auto& r) { r.headers["if-none-match"] = "test-etag"; });
@@ -87,14 +88,13 @@ void testProviderResourceManager() {
         add([](auto& r) { r.maxBytes /= 2; });
         add([](auto& r) { ++r.timeoutSecs; });
         add([](auto& r) { ++r.attempts; });
-        add([](auto& r) { r.allowInvalidCert = true; });
         add([](auto& r) { r.allowProxyEnv = true; });
         add([](auto& r) { r.proxyUrl = "http://127.0.0.1:1"; });
         unsigned loads = 0;
         for (const auto& other : distinct) {
             const auto result = manager.fetch(other, [&](const Request&) { ++loads; Response r; r.ok = true; return r; });
             check(result.response && result.response->ok && !result.joined,
-                  "source, type, URL, credentials, validators, size, retry, TLS and proxy policies isolate IO");
+                  "URL, credentials, validators, size, retry and proxy policies isolate IO");
         }
         check(loads == distinct.size() && manager.snapshot().joins == 0,
               "full request equality is required rather than filename/hash equality");
@@ -107,7 +107,7 @@ void testProviderResourceManager() {
         std::condition_variable changed;
         bool release = false;
         std::atomic_uint cancelledLoads = 0, survivingLoads = 0;
-        auto blockerRequest = request; blockerRequest.identity += "blocker";
+        auto blockerRequest = request; blockerRequest.url += "/blocker";
         std::jthread blocker([&] {
             manager.fetch(blockerRequest, [&](const Request&) {
                 std::unique_lock lock(mutex);
@@ -160,13 +160,13 @@ void testProviderResourceManager() {
         std::array<Outcome, 3> results;
         std::vector<std::jthread> workers;
         for (unsigned i = 0; i < 2; ++i) workers.emplace_back([&, i] {
-            auto other = request; other.identity += std::to_string(i);
+            auto other = request; other.url += "/" + std::to_string(i);
             results[i] = manager.fetch(other, load);
         });
         check(waitFor([&] { return entered == 2; }), "manager respects two active transport permits");
-        workers.emplace_back([&] { auto other = request; other.identity += "queued"; results[2] = manager.fetch(other, load); });
+        workers.emplace_back([&] { auto other = request; other.url += "/queued"; results[2] = manager.fetch(other, load); });
         check(waitFor([&] { return manager.snapshot().inFlight == 3; }), "third resource waits in bounded queue");
-        auto excess = request; excess.identity += "overflow";
+        auto excess = request; excess.url += "/overflow";
         const auto rejected = manager.fetch(excess, load);
         check(rejected.response && !rejected.response->ok && !rejected.response->error.empty() && entered == 2,
               "full request queue fails without performing more IO");
@@ -272,4 +272,89 @@ void testProviderSharedCandidates() {
     check(std::ranges::none_of(std::filesystem::recursive_directory_iterator(directory.path), [](const auto& entry) {
         return entry.path().filename().string().starts_with(".stage-");
     }), "both candidates retire their private staging after success or rejection");
+}
+
+void testProxyConditionalRefresh() {
+    const RuleSetTestDirectory directory;
+    singbox::CompileOptions options;
+    options.proxyProviderCacheDir = (directory.path / "proxy-conditional").string();
+    options.profileYaml = "proxy-providers:\n  remote: {type: http, url: https://example.test/nodes, interval: 1}\n"
+        "proxy-groups: [{name: Proxy, type: select, use: [remote]}]\nrules: ['MATCH,Proxy']\n";
+    const auto resource = singbox::compileConfig(options).httpProxyProviders.front();
+    const auto file = std::filesystem::path(options.proxyProviderCacheDir) / (resource.cacheKey + ".cache");
+    std::filesystem::create_directories(file.parent_path());
+    const std::string body = "proxies: [{name: remote-a, type: socks5, server: 127.0.0.1, port: 9}]\n";
+    const singbox::HttpCacheValidators original{"\"proxy-v1\"", "Wed, 21 Oct 2026 07:28:00 GMT"};
+    std::ofstream(file, std::ios::binary) << singbox::HttpProxyProviderCacheImage(resource, body, original);
+    options.forceProviderRefreshSources = {resource.sourceId};
+    unsigned fetched = 0, checked = 0, commits = 0;
+    bool reject = false;
+    rule_provider_cache::Operations operations;
+    operations.revalidateProxy = [&](const auto&, const auto&, const auto& validators) {
+        ++fetched;
+        check(validators == original, "proxy validators belong to the complete verified body");
+        rule_provider_cache::FetchResult response;
+        response.ok = true; response.notModified = true; response.status = 304;
+        return response;
+    };
+    operations.check = [&](const auto&, const auto&, std::string& reason) {
+        ++checked; if (reject) reason = "reject proxy candidate"; return !reject;
+    };
+    operations.commit = [&](const auto& from, const auto& to, std::string&) {
+        ++commits; std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing); return true;
+    };
+    singbox::CompileResult result;
+    std::string error;
+    check(rule_provider_cache::Prepare(options, operations, result, error) && fetched == 1 && checked == 1 && commits == 1,
+          "proxy 304 avoids a full body while preserving candidate check and atomic commit");
+    singbox::HttpCacheValidators recovered;
+    check(singbox::ReadHttpProxyProviderCache(resource, options.proxyProviderCacheDir, error, &recovered) == body && recovered == original,
+          "proxy v2 cache round-trips body and validators without changing node semantics");
+    const auto image = singbox::ReadRuleProviderText(file, 8192, error);
+    reject = true;
+    auto candidate = options;
+    check(!rule_provider_cache::Prepare(candidate, operations, result, error) && commits == 1 &&
+          singbox::ReadRuleProviderText(file, 8192, error) == image,
+          "rejected proxy 304 candidate retains the previously accepted cache");
+    reject = false;
+    operations.publish = [](const std::function<bool()>&, std::string& reason) {
+        reason = "source changed after check"; return false;
+    };
+    candidate = options;
+    check(!rule_provider_cache::Prepare(candidate, operations, result, error) && commits == 1 &&
+          singbox::ReadRuleProviderText(file, 8192, error) == image,
+          "publication guard rejects a stale prepared candidate before any cache replacement");
+}
+
+void testSourceParseReuse() {
+    singbox::CompileOptions source;
+    source.profileYaml = "# isolated source parse cache\nproxies: [{name: original, type: socks5, server: 127.0.0.1, port: 9}]\n"
+        "proxy-groups: [{name: Proxy, type: select, proxies: [original, DIRECT]}]\nrules: ['MATCH,Proxy']\n";
+    const auto initial = singbox::compileConfig(source);
+    auto changedMode = source; changedMode.mode = "global";
+    const auto warm = singbox::compileConfig(changedMode);
+    auto coldMode = changedMode; coldMode.profileYaml += "# distinct bytes, identical semantics\n";
+    const auto cold = singbox::compileConfig(coldMode);
+    check(initial.error.empty() && warm.error.empty() && cold.error.empty() && warm.sourceParseCacheHits == 1 &&
+          warm.json == cold.json && warm.fidelity == cold.fidelity,
+          "source parse reuse across runtime settings preserves full compilation and fidelity");
+    auto edited = source;
+    edited.profileYaml.replace(edited.profileYaml.find("port: 9"), 7, "port: 8");
+    const auto next = singbox::compileConfig(edited);
+    check(next.error.empty() && next.json != initial.json,
+          "source parsing is keyed by complete bytes rather than source identity or filename");
+    for (int i = 0; i < 8; ++i) {
+        auto other = source; other.profileYaml += "# eviction " + std::to_string(i);
+        check(singbox::compileConfig(other).error.empty(), "bounded parsing cache accepts independent source bytes");
+    }
+    check(singbox::compileConfig(source).json == initial.json, "parse cache eviction cannot mutate prior source semantics");
+    std::atomic_uint passed = 0;
+    std::vector<std::jthread> workers;
+    for (int i = 0; i < 4; ++i) workers.emplace_back([&] {
+        const auto first = singbox::compileConfig(source);
+        const auto second = singbox::compileConfig(source);
+        if (first.json == initial.json && second.json == initial.json && second.sourceParseCacheHits == 1) ++passed;
+    });
+    workers.clear();
+    check(passed == 4, "mutable compilations never share a YAML node graph between workers");
 }

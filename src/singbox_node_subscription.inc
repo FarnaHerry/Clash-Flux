@@ -254,7 +254,29 @@ NodeSubscriptionDocument parseNodeSubscription(const std::string& text) {
     return result;
 }
 
+YAML::Node loadCachedClashYaml(const std::string& content, bool* hit = nullptr) {
+    struct Parsed { std::string content; YAML::Node root; std::size_t bytes; };
+    thread_local std::deque<Parsed> parsed;
+    if (hit) *hit = false;
+    for (const auto& entry : parsed) if (entry.content == content) {
+        if (hit) *hit = true;
+        return YAML::Clone(entry.root);
+    }
+    auto root = YAML::Load(content);
+    constexpr std::size_t budget = 4 * 1024 * 1024;
+    const auto bytes = content.size() * 24 + sizeof(Parsed);
+    if (content.size() <= 128 * 1024 && bytes <= budget) {
+        std::size_t retained = bytes;
+        for (const auto& entry : parsed) retained += entry.bytes;
+        while (!parsed.empty() && (parsed.size() >= 2 || retained > budget)) {
+            retained -= parsed.back().bytes; parsed.pop_back();
+        }
+        parsed.push_front({content, YAML::Clone(root), bytes});
+    }
+    return root;
+}
+
 YAML::Node loadClashProfileDocument(const std::string& content) {
     if (auto text = nodeSubscriptionText(content)) return parseNodeSubscription(*text).root;
-    return YAML::Load(content);
+    return loadCachedClashYaml(content);
 }

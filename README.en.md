@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.108 release notes](docs/releases/v0.3.108.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.109 release notes](docs/releases/v0.3.109.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -23,6 +23,13 @@ Clash Verge Rev's core experience to sing-box. Desktop builds launch the officia
 sing-box binary and communicate through the `clash_api` REST API and WebSocket
 streams. Android runs libbox in a background process and uses the official libbox
 CommandClient. Both the UI and the core integration are implemented in C++.
+
+Subscription and provider downloads share bounded transport policies and verified conditional caches.
+Android streams downloads into exclusive staging files. Parsed sources, converted resources and accepted
+compilations have separate bounded reuse; see [provider preparation](docs/provider-resource-management.md).
+
+Subscription and provider HTTPS downloads always verify certificates and hostnames.
+The former per-subscription certificate bypass is ignored for existing data.
 
 Configurations can be imported as Clash YAML, which the built-in compiler converts
 to sing-box configuration, or as native sing-box JSON, which is merged with
@@ -535,7 +542,7 @@ It builds `Libbox.xcframework` for iOS devices and Simulator from the same sing-
 revision as Android. The job checks compilation of the app, Packet Tunnel and
 engine. It generates no IPA, uploads no release assets and is not a release gate.
 iOS subscriptions use native URLSession for TLS, validating system certificates
-by default with an explicit per-subscription option to allow invalid certificates.
+on every request, with no certificate-verification bypass.
 
 **iOS support is currently deferred as a TODO. It is not a supported platform, and
 there is no TestFlight or App Store release commitment.** Current work validates
@@ -560,7 +567,7 @@ Lib-Charts and Lib-SQLite also use pinned commits from their `FarnaHerry` forks'
 `farna/main` branches, with the same URL/COMMIT identities in native builds and the
 Android library graph. See [HuxerUI fork maintenance](docs/huxerui-fork.md) for local
 checkout, patch ownership and upgrade instructions.
-The source is pinned to `eb190f3d`: `farna/main` merged the official 0.4.0 release baseline, including the previously absorbed FillViewport and disabled-container controller scrolling work plus ScrollToItem alignment fixes, and the source CLI adds installed-SDK version management. The source CLI selects the framework with `--sdk`; the Android CI reuses the CLI from the locked 0.4.0 offline archive and points it at the same pinned fork source with `--sdk`. The offline fallback is the separately locked 0.4.0 SDK archive, which supplies the CLI and host tools only; it lacks the fork-only `create_initial_window` runtime API, so desktop builds use the pinned fork source (checked by a configure-time guard).
+The source is pinned to `5c84b4ab`: `farna/main` merges upstream `a66a0f76` with opt-in Row/Column layout priorities, preserving the existing Pager, window and extension integration fixes. The app does not yet enable the new priority policy; existing layouts keep their previous behavior. The source CLI selects the framework with `--sdk`; the Android CI reuses the CLI from the locked 0.4.0 offline archive and points it at the same pinned fork source with `--sdk`. The offline fallback is the separately locked 0.4.0 SDK archive, which supplies the CLI and host tools only; it lacks the fork-only `create_initial_window` runtime API, so desktop builds use the pinned fork source (checked by a configure-time guard).
 
 Windows packaging with `huxerui package windows` creates a `setup.exe` with an
 installation wizard: Burn bundles an MSI and a HuxerUI installer interface with

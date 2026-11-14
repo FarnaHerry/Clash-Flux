@@ -139,6 +139,8 @@ def main():
         assert [r["id"] for r in json.loads(setting("rules.resources"))["resources"]] == [first_id]
 
         requests = Counter()
+        conditions = {}
+        conditional_headers = []
         hold = threading.Event()
         reached = threading.Event()
         release = threading.Event()
@@ -162,11 +164,24 @@ def main():
             def do_GET(self):
                 requests[self.path] += 1
                 body = bodies[self.path]
+                if self.path in conditions:
+                    conditional_headers.append((self.path, self.headers.get("If-None-Match")))
+                    tag = conditions[self.path]
+                    if self.headers.get("If-None-Match") == tag:
+                        self.send_response(304)
+                        self.send_header("ETag", tag)
+                        self.end_headers()
+                        return
                 if hold.is_set() and self.path == held_route[0]:
                     reached.set()
                     assert release.wait(20)
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(body)))
+                if self.path in conditions:
+                    self.send_header("ETag", conditions[self.path])
+                    if self.path == "/conditional-source":
+                        self.send_header("subscription-userinfo", "upload=10; download=20; total=999; expire=1893456000")
+                        self.send_header("profile-web-page-url", "https://example.test/home")
                 self.end_headers()
                 self.wfile.write(body)
 
@@ -266,6 +281,24 @@ def main():
             assert {file: file.read_bytes() for file in cache} == previous_cache
             hold.clear()
             profile_path(1).write_bytes(content)
+            # Remote source refresh releases the lifecycle gate while preparing
+            # dependencies, then rechecks the exact accepted source before commit.
+            reached.clear(); release.clear(); hold.set()
+            refreshing = subprocess.Popen([app, "profile", "update", "1"], env=env,
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                assert reached.wait(10)
+                current_source = profile_path(1)
+                changed_source = b"# main source changed during dependency IO\n" + content
+                current_source.write_bytes(changed_source)
+            finally:
+                release.set()
+                output, errors = refreshing.communicate(timeout=60)
+            assert refreshing.returncode == 1, (output, errors)
+            assert profile_path(1) == current_source and current_source.read_bytes() == changed_source
+            assert {file: file.read_bytes() for file in cache} == previous_cache
+            hold.clear()
+            current_source.write_bytes(content)
             run("resource", "add-url", "Remote", "source", address + "/rules-native")
             remote = json.loads(setting("rules.resources"))["resources"][-1]
             before = requests.copy()
@@ -415,6 +448,47 @@ def main():
             run("profile", "remove", str(imported[0]))
             assert not imported_path.exists(), "explicit removal cleans the committed current version only"
             bodies["/bad-profile"] = b"proxy-groups: [unterminated\n"
+            # The primary representation and dependency validators survive a
+            # real Runtime/database reopen; 304 still forces dependency checks.
+            bodies["/conditional-source"] = ("rule-providers:\n"
+                f"  conditional: {{type: http, behavior: domain, url: '{address}/conditional-rule'}}\n"
+                "rules: ['RULE-SET,conditional,DIRECT', 'MATCH,DIRECT']\n").encode()
+            bodies["/conditional-rule"] = b"payload: [conditional.test]\n"
+            conditions.update({"/conditional-source": '"source-v1"', "/conditional-rule": '"rule-v1"'})
+            run("profile", "import", address + "/conditional-source", "conditional-source")
+            with closing(sqlite3.connect(database)) as db:
+                conditional_id, conditional_file = db.execute(
+                    "SELECT id,file FROM profiles WHERE name='conditional-source'").fetchone()
+            original_source = (profiles / conditional_file).read_bytes()
+            before = requests.copy()
+            run("profile", "update", str(conditional_id))
+            assert requests - before == Counter({"/conditional-source": 1, "/conditional-rule": 1})
+            assert ("/conditional-source", '"source-v1"') in conditional_headers
+            assert profile_path(conditional_id).name == conditional_file
+            with closing(sqlite3.connect(database)) as db:
+                metadata = db.execute("SELECT used_bytes,total_bytes,expire_at,homepage FROM profiles WHERE id=?", (conditional_id,)).fetchone()
+            assert metadata == (30, 999, 1893456000, "https://example.test/home"), metadata
+            before = requests.copy()
+            run("profile", "update", str(conditional_id))
+            assert requests - before == Counter({"/conditional-source": 1, "/conditional-rule": 1})
+            assert ("/conditional-rule", '"rule-v1"') in conditional_headers, "providers revalidate even when the primary returns 304"
+            assert (profiles / conditional_file).read_bytes() == original_source
+            # A local edit invalidates the validator, even with the same filename.
+            (profiles / conditional_file).write_bytes(original_source + b"# external local edit\n")
+            conditional_headers.clear()
+            run("profile", "update", str(conditional_id))
+            assert conditional_headers[0] == ("/conditional-source", None), conditional_headers
+            accepted_path = profile_path(conditional_id)
+            assert accepted_path.read_bytes() == original_source
+            assert (profiles / conditional_file).read_bytes().endswith(b"# external local edit\n")
+            # A changed remote validator/body that fails parsing cannot advance
+            # the source row, original file or accepted conditional metadata.
+            conditions["/conditional-source"] = '"bad-v2"'
+            bodies["/conditional-source"] = b"proxies: [unterminated\n"
+            run("profile", "update", str(conditional_id), expected=1)
+            assert profile_path(conditional_id) == accepted_path and accepted_path.read_bytes() == original_source
+            run("profile", "remove", str(conditional_id))
+
             run("profile", "import", address + "/bad-profile", "rejected-version", expected=1)
             with closing(sqlite3.connect(database)) as db:
                 assert db.execute("SELECT id FROM profiles ORDER BY id").fetchall() == [(1,), (2,)]

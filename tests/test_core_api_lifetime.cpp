@@ -58,6 +58,13 @@ Task<void> CheckPreparation() {
     // Reusing the new context is allowed; touching raw cache bytes must invalidate it.
     Require((co_await RunWorker([&] { return core.prepareProfileResources(1); })).ready, "same context prepare");
     Require(Reuses() == reuses + 2, "identical context must reuse");
+    data.setSetting("core.mode", "rule");
+    Require((co_await RunWorker([&] { return core.prepareProfileResources(1); })).ready, "return to prior context");
+    Require(Reuses() == reuses + 3, "alternating contexts retain separately keyed accepted compilations");
+    data.setSetting("core.mode", "global");
+    Require((co_await RunWorker([&] { return core.prepareProfileResources(1); })).ready, "return to second context");
+    Require(Reuses() == reuses + 4, "bounded cache retains both recent runtime contexts");
+    const auto beforeByteChange = Reuses();
     for (const auto& entry : std::filesystem::directory_iterator(cfg::coreWorkDir() / "rule-providers")) {
         if (entry.path().extension() != ".cache") continue;
         const auto stamp = std::filesystem::last_write_time(entry.path());
@@ -68,7 +75,7 @@ Task<void> CheckPreparation() {
         std::filesystem::last_write_time(entry.path(), stamp);
     }
     Require((co_await RunWorker([&] { return core.prepareProfileResources(1); })).ready, "changed cache prepare");
-    Require(Reuses() == reuses + 2, "same timestamp and size cannot hide changed dependency bytes");
+    Require(Reuses() == beforeByteChange, "same timestamp and size cannot hide changed dependency bytes");
     {
         std::ofstream heldSource(source, std::ios::binary);
         Require(static_cast<bool>(heldSource), "cannot open held source");
@@ -83,6 +90,14 @@ Task<void> CheckPreparation() {
         Require(std::chrono::steady_clock::now() < deadline, "held provider did not start");
         co_await Delay(5ms);
     }
+    model::Profile independent;
+    independent.id = 2; independent.name = "independent"; independent.type = "local"; independent.file = "2.yaml";
+    data.saveProfile(independent);
+    std::ofstream(cfg::profilesDir() / independent.file) << "rules: ['MATCH,DIRECT']\n";
+    const auto independentBegan = std::chrono::steady_clock::now();
+    const auto independentResult = co_await RunWorker([&] { return core.prepareProfileResources(2); });
+    Require(independentResult.ready && std::chrono::steady_clock::now() - independentBegan < 3s,
+            "another source's held download must not hold the global preparation cache lock");
     std::stop_source cancel;
     std::jthread cancelling([&] { std::this_thread::sleep_for(30ms); cancel.request_stop(); });
     const auto began = std::chrono::steady_clock::now();

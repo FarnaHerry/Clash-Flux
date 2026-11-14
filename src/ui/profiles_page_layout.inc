@@ -184,7 +184,6 @@
         newInterval = huxerui::TextEditingValue{"1440"};
         newSys = false;
         newCore = false;
-        newCert = false;
         newPptpServer = huxerui::TextEditingValue{""};
         newPptpUsername = huxerui::TextEditingValue{""};
         newPptpPassword = huxerui::TextEditingValue{""};
@@ -196,7 +195,7 @@
     };
     const ProfileCreateFields createFields{
         newName, newUrl, newQrContent, newTypeIdx, newDesc,
-        newTimeout, newInterval, newSys, newCore, newCert,
+        newTimeout, newInterval, newSys, newCore,
         newPptpServer, newPptpUsername, newPptpPassword, newPptpTimeout,
         newPptpRoutes, newPptpMppe,
         pickedPath};
@@ -248,7 +247,7 @@
     huxerui::View mobileEditPage = ResponsiveProfileEditSurface(
         editPageId.Get(),
         ProfileEditFields{editName, editUrl, editType, editDesc, editTimeout,
-                           editInterval, editSys, editCore, editCert,
+                           editInterval, editSys, editCore,
                            editPptpServer, editPptpUsername, editPptpPassword,
                            editPptpTimeout, editPptpRoutes, editPptpMppe},
         tasks, toast, [editPageId] { editPageId = 0; });

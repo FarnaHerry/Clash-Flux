@@ -23,6 +23,13 @@ ProfilesStore 和其它领域消费者直接依赖数据会话；原 `clashflux.
 共享 Profile DTO 由 `clashflux.model` 提供，不通过运行控制层获取存储。
 日志、生成的 core 配置、provider 缓存仍是各自用途的文件，不塞入 SQLite。
 
+2026-11-14 删除订阅的无效证书选项：schema v2 保留 `allow_invalid_cert` 旧列，
+hydrate 忽略其值，正常保存写入 false，不启动批量改写、迁移或文件清理；全部订阅 ID 和文件引用保留。
+
+主订阅条件响应另有可选的 `subscription-http/<id>.cache` 派生缓存，绑定完整 URL、来源文件版本
+和已验证正文；SQLite 行与来源文件仍是权威数据。缓存读取/写入失败不清空订阅、不升级 schema，
+写入只在来源提交与应用成功后进行，304 仍检查来源修订与外部资源候选。
+
 ## 订阅内容的提交协议
 
 刷新与原文编辑使用下列完整候选提交流程。原生连接导入和元数据编辑也等待

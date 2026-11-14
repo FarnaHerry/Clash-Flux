@@ -465,7 +465,11 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
             ctx.note(FidelityScope::Field, Fidelity::Unsupported, "node-subscription", ctx.result.error);
             return;
         }
-    } else root = YAML::Load(trimmed);
+    } else {
+        bool reusedParse = false;
+        root = loadCachedClashYaml(trimmed, &reusedParse);
+        ctx.result.sourceParseCacheHits += reusedParse ? 1 : 0;
+    }
     if (ctx.cancelled()) return;
     if (!root.IsMap()) {
         ctx.result.error = "订阅不是有效的 Clash YAML 配置";

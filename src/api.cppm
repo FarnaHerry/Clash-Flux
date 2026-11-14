@@ -27,11 +27,13 @@ namespace api {
 export bool CommitFile(const std::filesystem::path& temp, const std::filesystem::path& dest,
                        std::string& error);
 // Sync a completed immutable version and its parent before committing a DB pointer.
+export bool WriteFileAtomically(const std::filesystem::path& file, const std::string& content, std::string& error);
 export bool SyncFile(const std::filesystem::path& file, std::string& error);
 
 
 export struct DownloadMetrics {
-    bool transportKnown = false;
+    bool transportKnown = false, retryable = false;
+    unsigned attempts = 0;
     std::int64_t networkMicros = 0, validationMicros = 0, commitMicros = 0;
     std::uint64_t bytes = 0;
     long newConnections = 0;
@@ -103,11 +105,13 @@ public:
     ApiResult closeConnection(const std::string& id);
     ApiResult closeAllConnections();
 
-    // 订阅下载选项：超时 / 证书校验 / 代理三态（指定代理 > 系统环境代理 >
+    // 订阅下载始终校验证书；选项：超时 / 代理三态（指定代理 > 系统环境代理 >
     // 强制直连）。使用内核代理时由调用方拼 http://127.0.0.1:<mixedPort>。
     struct DownloadOptions {
         long timeoutSecs = 60;
-        bool allowInvalidCert = false;
+        bool subscriptionRequest = false;
+        unsigned attempts = 1;
+        bool compatibilityUserAgent = false;
         std::string proxyUrl;        // 非空 = 经该代理（如 http://127.0.0.1:7899）
         bool allowProxyEnv = false;  // proxyUrl 为空时是否允许环境变量代理
         // Explicit conditional request only: 304 returns headers without
@@ -128,6 +132,7 @@ public:
                              const DownloadOptions& options);
 
 private:
+    ApiResult downloadOnce(const std::string& url, const std::filesystem::path& dest, const DownloadOptions& options);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

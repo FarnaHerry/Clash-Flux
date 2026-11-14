@@ -4,12 +4,19 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `eb190f3d7e20f29614042aec7bc59fe5143f29f7`，各平台 CI 共用
+Clash-Flux 当前固定 `5c84b4abf34675e9265c41e875ceedc1e79b9349`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码。源码 CLI 使用 `--sdk <path>` 选择 SDK 或源码目录；CI 的 Android
 job 从锁定的 0.4.0 离线归档取官方 CLI 并以 `--sdk huxerui-source` 指向同一 fork 源码，
 桌面 job 走 HuxerUI 源码通道，不消费离线包的运行时库（不含 fork 专属 `create_initial_window`）。
+
+2026-11-14 跟进已发布的 [`5c84b4ab`](https://github.com/FarnaHerry/HuxerUI/commit/5c84b4abf34675e9265c41e875ceedc1e79b9349)：
+`farna/main` 已合入官方 `a66a0f76`，新增显式 `LayoutPriority` 的 Row/Column 空间分配。
+只有受限主轴且子项显式设置优先级时启用新策略；应用没有启用该 modifier，保留原布局行为。
+框架的公共 modifier/export、布局实现与回归同步更新；HCG/HRC、Android Java 和扩展 pin 未变。
+应用独立 checkout 与 CI/Android Java/native 固定同一完整 SHA，不消费维护目录的四项既有改动。
+本轮构建、分页/持久化门禁和发布验证见[验收记录](l1-l2-l3-status.md)。
 
 2026-11-13 更新到已发布 [`ecf1646f`](https://github.com/FarnaHerry/HuxerUI/commit/ecf1646feb38a082962a9ad4eca8a7078422d48f)：
 相对 `4b444b19` 前进 6 个提交，包含官方 `df5f4ba0`。`ScrollView::FillViewport` 与禁用
@@ -298,7 +305,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout eb190f3d7e20f29614042aec7bc59fe5143f29f7
+git -C third_party/huxerui checkout 5c84b4abf34675e9265c41e875ceedc1e79b9349
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`

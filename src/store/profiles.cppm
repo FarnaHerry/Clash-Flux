@@ -5,6 +5,8 @@
 // 标「阻塞」的方法（网络下载 / 内核重启）UI 必须经 RunOnTaskThread 调用。
 module;
 #include "subscription_expiry.h"
+#include "download_policy.h"
+#include "http_representation.h"
 
 export module clashflux.store.profiles;
 
@@ -274,7 +276,7 @@ public:
     }
 
     // 重新拉取订阅（阻塞，用户手动入口）。手动更新保留同步强刷 provider 语义。
-    bool refresh(std::int64_t id) {
+    bool refresh(std::int64_t id, bool forceProviders = true) {
         // download re-reads this row under the lifecycle lock before fetching
         // and again before committing. Network I/O must not block other rules.
         std::optional<model::Profile> profile;
@@ -287,7 +289,7 @@ public:
                 return false;
             }
         }
-        return download(*profile, true);
+        return download(*profile, forceProviders);
     }
 
     // Local import uses the same version-file commit path, without a provisional row.
@@ -348,7 +350,7 @@ public:
     }
 
     // 保存订阅信息与选项（订阅弹窗唯一保存入口）：fields 携带 name/url 与
-    // type/描述/超时/间隔/自动更新/代理/证书开关；行身份字段（file/selected/
+    // type/描述/超时/间隔/自动更新/代理；行身份字段（file/selected/
     // updatedAt/error）保留库中现值。仅落库——URL 等在下次「更新」拉取时生效。
     bool updateProfile(std::int64_t id, const model::Profile& fields) {
         lastError_.clear();
@@ -371,7 +373,6 @@ public:
         p->autoUpdate = fields.autoUpdate;
         p->useSystemProxy = fields.useSystemProxy;
         p->useCoreProxy = fields.useCoreProxy;
-        p->allowInvalidCert = fields.allowInvalidCert;
         if (!fields.nativeConfig.empty() || fields.type == "pptp") {
             p->nativeConfig = fields.nativeConfig;
             p->nativeRoutes = fields.nativeRoutes;
@@ -570,6 +571,8 @@ public:
     }
 
 private:
+#include "store/subscription_http.inc"
+
     void discardDraft(std::int64_t id) {
         std::lock_guard lock(draftsMutex_); drafts_.erase(id);
     }
@@ -632,11 +635,12 @@ private:
         return commitPrepared(std::move(next), previous, expectedRevision, std::move(apply));
     }
 
-    template<class Headers> static void applyHeaders(model::Profile& p, const Headers& headers) {
-        p.usedBytes = p.totalBytes = p.expireAt = 0;
+    template<class Headers> static void applyHeaders(model::Profile& p, const Headers& headers, bool partial = false) {
+        if (!partial || headers.find("subscription-userinfo") != headers.end()) p.usedBytes = p.totalBytes = p.expireAt = 0;
         if (const auto userinfo = findHeader(headers, "subscription-userinfo"))
             parseUserInfo(*userinfo, p.usedBytes, p.totalBytes, p.expireAt);
-        p.homepage = findHeader(headers, "profile-web-page-url").value_or("");
+        if (!partial || headers.find("profile-web-page-url") != headers.end())
+            p.homepage = findHeader(headers, "profile-web-page-url").value_or("");
     }
 
     static bool writeContent(const model::Profile& profile, const std::string& content, std::string& error) {
@@ -748,44 +752,84 @@ private:
         const bool importing = revision == 0;
         p = *initial;
         const auto previousContent = yamlOf(*initial);
+#if defined(CLASHFLUX_IOS)
+        const std::optional<clashflux::http_cache::Representation> cached;
+#else
+        const auto cached = readRemoteCache(*initial, previousContent);
+#endif
         const auto versionFile = std::format("{}.{}.yaml", p.id, cfg::randomSecret());
         api::ClashApi::DownloadOptions opts;
         opts.timeoutSecs = p.timeoutSecs > 0 ? p.timeoutSecs : 60;
-        opts.maxBytes = 8 * 1024 * 1024;
-        opts.allowInvalidCert = p.allowInvalidCert;
+        opts.maxBytes = clashflux::download::kSubscriptionMaxBytes;
+        opts.subscriptionRequest = true;
+        if (cached) {
+            opts.headers = clashflux::download::ConditionalHeaders({}, cached->etag, cached->modified);
+            opts.acceptNotModified = clashflux::download::HasCondition(opts.headers);
+        }
+#if defined(__ANDROID__)
+        // Ordinary subscriptions retain Android's platform proxy policy;
+        // provider resources remain explicitly DIRECT. Desktop toggles do not apply.
+        opts.allowProxyEnv = true;
+#else
         if (p.useCoreProxy)
             opts.proxyUrl = std::format("http://127.0.0.1:{}", coreStore().snapshot().mixedPort);
         else opts.allowProxyEnv = p.useSystemProxy;
+#endif
         planLock.unlock();
         std::function<bool()> apply;
+        std::shared_ptr<const std::string> validatedBody;
         opts.validate = [&](const std::filesystem::path& file) {
             std::ifstream input(file, std::ios::binary);
             if (!input) return std::string{"无法读取候选订阅"};
             const std::string content(std::istreambuf_iterator<char>(input), {});
             if (input.bad()) return std::string{"读取候选订阅失败"};
+            validatedBody = std::make_shared<const std::string>(content);
             planLock.lock();
             const auto current = findById(p.id);
             if (data.profileRevision(p.id) != revision || !current || *current != *initial || yamlOf(*current) != previousContent)
                 return std::string{"订阅在下载期间已变化，请重新更新"};
             std::string error;
             if (importing) return singbox::ValidateProfileDocument(content, error) ? std::string{} : error;
-            return coreStore().validateSourceUpdate(p.id, content, error, forceProviders, apply)
-                ? std::string{} : error;
+            planLock.unlock();
+            const bool accepted = coreStore().validateSourceUpdate(p.id, content, error, forceProviders, apply);
+            planLock.lock();
+            if (!accepted) return error;
+            const auto latest = findById(p.id);
+            if (data.profileRevision(p.id) != revision || !latest || *latest != *initial || yamlOf(*latest) != previousContent)
+                return std::string{"订阅在准备期间已变化，请重新更新"};
+            return std::string{};
         };
-        api::ClashApi downloader{"", ""};
-        const auto result = downloader.downloadToFile(initial->url, cfg::profilesDir() / versionFile, opts);
+        auto result = downloader_.downloadToFile(initial->url, cfg::profilesDir() / versionFile, opts);
+        if (opts.acceptNotModified && result.status >= 300 && result.status < 400 && result.status != 304) {
+            opts.headers.clear(); opts.acceptNotModified = false;
+            result = downloader_.downloadToFile(initial->url, cfg::profilesDir() / versionFile, opts);
+        }
+        if (result.ok && result.status == 304) {
+            // 304 still performs the explicit provider refresh and candidate
+            // checks; it never approves an empty body or a stale source version.
+            if (!cached) { lastError_ = "HTTP 304 没有对应的已验证订阅"; return false; }
+            const auto began = std::chrono::steady_clock::now();
+            const auto error = opts.validate(cfg::profilesDir() / initial->file);
+            result.download.validationMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - began).count();
+            if (!error.empty()) { result.ok = false; result.error = error; result.failurePhase = "validation"; }
+        }
         stream::logApplication("info", std::format(
-            "profile-download source_id={} manual={} ready={} network_us={} candidate_us={} file_commit_us={} download_bytes={} connections_known={} new_connections={}",
+            "profile-download source_id={} manual={} ready={} network_us={} candidate_us={} file_commit_us={} download_bytes={} connections_known={} new_connections={} status={} attempts={} failure={}",
             p.id, forceProviders, result.ok, result.download.networkMicros, result.download.validationMicros,
-            result.download.commitMicros, result.download.bytes, result.download.transportKnown, result.download.newConnections));
+            result.download.commitMicros, result.download.bytes, result.download.transportKnown, result.download.newConnections,
+            result.status, result.download.attempts, result.ok ? "none" : result.failurePhase));
         if (!result.ok) { lastError_ = "下载失败：" + result.error; return false; }
-        p.file = versionFile;
-        applyHeaders(p, result.headers);
-        return commitPrepared(p, importing ? std::nullopt : initial, revision, std::move(apply));
+        p.file = result.status == 304 ? initial->file : versionFile;
+        applyHeaders(p, result.headers, result.status == 304);
+        if (!commitPrepared(p, importing ? std::nullopt : initial, revision, std::move(apply))) return false;
+        if (validatedBody) rememberRemoteCache(p, *validatedBody, result.headers, result.status == 304 ? &*cached : nullptr);
+        return true;
     }
 
     std::mutex draftsMutex_;
     std::map<std::int64_t, model::Profile> drafts_;
+    api::ClashApi downloader_{"", ""};
     std::mutex downloadMutex_;
     std::string lastError_;
 };

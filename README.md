@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.108 发布说明](docs/releases/v0.3.108.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.109 发布说明](docs/releases/v0.3.109.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -33,7 +33,9 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 - 网页唤醒导入：兼容 sing-box 与 FlClash 订阅链接，打开预填名称与 URL 的导入表单；
   支持粘贴和扫码解析，格式与平台注册方式见[订阅唤醒链接](docs/profile-links.md)。
   Android 扫码页支持从相册选择图片，与相机共用普通二维码识别和自家 QRS 帧重组；二维码/文件导入状态独立，慢链接导入期间可返回，见[二维码扫描](docs/qr-scanning.md)。
-- 订阅下载：订阅级三态代理（内核 / 系统环境 / 直连）与「允许无效证书」开关；
+- 订阅与 Provider 下载统一超时、大小限制、重试和条件缓存；主订阅/规则集/代理集合支持已验证表示的 304，
+  Android 大文件直接写入独占暂存文件。分层编译复用及失效边界见[请求与编译复用](docs/provider-resource-management.md)。
+- 订阅下载：订阅级三态代理（内核 / 系统环境 / 直连），HTTPS 始终校验证书；
   Windows 没有系统 CA 目录，https 订阅改用 Windows 证书存储校验，与系统浏览器
   的信任结论一致
 - 代理页：分组横向标签栏（纯文字 + 选中主色下划线，标签过多可横向滚动；点击、
@@ -393,7 +395,7 @@ CI 使用固定 revision 的 HuxerUI iOS 平台源码，从 Clash-Flux 自己的
 项目编译 `clash-flux_huxerui_ios_core`（arm64 iOS Simulator），并从与 Android
 相同的 sing-box revision 构建 `Libbox.xcframework`（iOS device + Simulator）。此诊断
 job 验证 app、Packet Tunnel 与引擎可为 Simulator 编译；它不生成 IPA、不上传 Release 资产，也不作为
-发布门禁。iOS 订阅下载由原生 URLSession 提供 TLS：默认验证系统证书，订阅可单独选择允许无效证书。
+发布门禁。iOS 订阅下载由原生 URLSession 提供 TLS：始终验证系统证书，不提供跳过校验选项。
 **iOS 当前按 TODO 暂缓，不属于受支持平台，也没有 TestFlight/App Store 发布承诺。**现有工作只验证 Simulator 编译；可分发的签名设备包和真机 VPN 生命周期尚未完成，是否恢复支持由后续项目决策确定。
 构建和 Apple 签名说明见 [iOS 构建文档](docs/ios-build.md)。
 
@@ -408,7 +410,7 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 `main` 保留官方基线；Lib-Camera、Lib-Charts、Lib-SQLite 也从各自 `FarnaHerry` fork 的
 `farna/main` 按固定 SHA 获取，原生构建与 Android 库图共用同一依赖身份。
 本地检出、补丁归属与升级流程见 [HuxerUI fork](docs/huxerui-fork.md)。
-当前源码固定 `eb190f3d`：farna/main 合入官方 0.4.0 发布基线，包含此前吸收的 FillViewport、禁用容器控制器滚动与 ScrollToItem 修复；源码 CLI 新增已安装 SDK 版本管理。源码 CLI 使用 `--sdk` 选择框架，Android CI 复用锁定的 0.4.0 离线归档中的 CLI 并以 `--sdk` 构建同一 fork 源码。离线回落包为独立锁定的 0.4.0 SDK，仅提供 CLI 与宿主工具，不含 fork 专属 `create_initial_window` 运行时 API，桌面构建使用 fork 源码（配置期守卫校验）。
+当前源码固定 `5c84b4ab`：farna/main 合入官方 `a66a0f76` 的 Row/Column 布局优先级功能，保留已有 Pager、窗口及扩展兼容修复；应用尚未启用新优先级策略，既有布局沿用原行为。源码 CLI 使用 `--sdk` 选择框架，Android CI 复用锁定的 0.4.0 离线归档中的 CLI 并以 `--sdk` 构建同一 fork 源码。离线回落包为独立锁定的 0.4.0 SDK，仅提供 CLI 与宿主工具，不含 fork 专属 `create_initial_window` 运行时 API，桌面构建使用 fork 源码（配置期守卫校验）。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、

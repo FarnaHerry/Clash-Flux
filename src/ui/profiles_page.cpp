@@ -4,7 +4,7 @@
 // 订阅；桌面右键、Compact 的“更多”按钮共用上下文菜单（使用/更新/首页/
 // 分享二维码/编辑信息/编辑规则/编辑文件/删除）；点击卡片切换启用订阅。
 //
-// 订阅选项（类型/描述/HTTP 超时/自动更新间隔；桌面额外提供代理/证书开关）
+// 订阅选项（类型/描述/HTTP 超时/自动更新间隔；桌面额外提供代理选项）
 // 在新建与编辑弹窗编辑，仅落库，下载行为在下次「更新」时生效；自动更新由
 // 壳层泵（app.cpp）按间隔扫描 refreshDue()。
 //
@@ -104,7 +104,6 @@ struct ProfileReorderSession {
     auto newInterval = huxerui::UseState(huxerui::TextEditingValue{"1440"});
     auto newSys = huxerui::UseState(false);
     auto newCore = huxerui::UseState(false);
-    auto newCert = huxerui::UseState(false);
     auto newPptpServer = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newPptpUsername = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newPptpPassword = huxerui::UseState(huxerui::TextEditingValue{""});
@@ -124,7 +123,6 @@ struct ProfileReorderSession {
     auto editInterval = huxerui::UseState(huxerui::TextEditingValue{""});
     auto editSys = huxerui::UseState(false);
     auto editCore = huxerui::UseState(false);
-    auto editCert = huxerui::UseState(false);
     auto editPptpServer = huxerui::UseState(huxerui::TextEditingValue{""});
     auto editPptpUsername = huxerui::UseState(huxerui::TextEditingValue{""});
     auto editPptpPassword = huxerui::UseState(huxerui::TextEditingValue{""});

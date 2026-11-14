@@ -18,22 +18,21 @@ export struct StagingDirectory {
     }
 };
 
-export struct FetchResult {
-    bool ok = false, notModified = false;
-    long status = 0;
-    singbox::HttpCacheValidators validators;
-    std::string error;
-};
+export using FetchResult = proxy_provider_cache::FetchResult;
 
 export struct Operations {
     // Callbacks are invoked concurrently only when explicitly opted in. All
     // workers finish before check/commit or staging-directory destruction.
     unsigned maxConcurrentFetches = 1;
+    std::function<void(const std::string&, bool)> failure;
     std::filesystem::path retainedDirectory;
+    std::function<bool(const std::function<bool()>&, std::string&)> publish;
     std::function<FetchResult(const singbox::HttpRuleProviderResource&, const std::filesystem::path&,
                              const singbox::HttpCacheValidators&)> revalidate;
     std::function<bool(const singbox::HttpRuleProviderResource&, const std::filesystem::path&,
                        std::string&)> fetch;
+    std::function<FetchResult(const singbox::HttpProxyProviderResource&, const std::filesystem::path&,
+                             const singbox::HttpCacheValidators&)> revalidateProxy;
     std::function<bool(const singbox::HttpProxyProviderResource&, const std::filesystem::path&,
                        std::string&)> fetchProxy;
     // Finalization may replace compiled bytes after GEO inputs materialize.
@@ -94,7 +93,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
         if (!hasRules && !hasProxies) { error = result.error; return error.empty(); }
         if ((hasRules && (options.ruleProviderCacheDir.empty() ||
                           (!operations.fetch && !operations.revalidate))) ||
-            (hasProxies && (options.proxyProviderCacheDir.empty() || !operations.fetchProxy)) ||
+            (hasProxies && (options.proxyProviderCacheDir.empty() || (!operations.fetchProxy && !operations.revalidateProxy))) ||
             !operations.check || !operations.commit) {
             error = "HTTP 订阅资源任务缺少缓存目录或操作接口"; return false;
         }
@@ -119,7 +118,9 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
         if (!operations.retainedDirectory.empty())
             proxyOperations.retainedDirectory = std::filesystem::path(candidate.proxyProviderCacheDir) / ".downloads";
         proxyOperations.commit = operations.commit;
+        proxyOperations.failure = operations.failure;
         proxyOperations.fetch = operations.fetchProxy;
+        proxyOperations.revalidate = operations.revalidateProxy;
         proxy_provider_cache::Preparation proxyPreparation;
         const bool proxiesReady = proxy_provider_cache::Prepare(candidate, proxyOperations, result,
                 proxyPreparation, stage.path, error, cancel);
@@ -308,7 +309,10 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
             for (const auto index : jobs) {
                 const auto& resource = resources[index];
                 auto& item = prepared[index];
-                if (!item.error.empty()) { error = std::move(item.error); return false; }
+                if (!item.error.empty()) {
+                    if (operations.failure) operations.failure(resource.identity, false);
+                    error = std::move(item.error); return false;
+                }
                 if (!item.warning.empty()) warnings.push_back(std::move(item.warning));
                 if (item.reused && stats) ++stats->validatedSnapshotReuses;
                 const auto destination = ruleRoot / (resource.cacheKey + ".cache");
@@ -358,6 +362,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
         if (cancelled()) return false;
         result.ruleProviderContents.clear(); // A finalizing check may have recompiled.
         result.proxyProviderContents.clear();
+        const auto publish = [&] {
         // Each replace is atomic. No cross-file crash transaction is claimed.
         for (const auto& [file, destination] : pending) {
             const auto began = std::chrono::steady_clock::now();
@@ -372,6 +377,8 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
         result.warnings.insert(result.warnings.end(), warnings.begin(), warnings.end());
         options = std::move(candidate);
         return true;
+        };
+        return operations.publish ? operations.publish(publish, error) : publish();
     } catch (const std::exception& exception) {
         error = std::string("HTTP 规则集准备异常：") + exception.what(); return false;
     } catch (...) {

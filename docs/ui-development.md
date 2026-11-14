@@ -322,7 +322,7 @@ scrollbar_mode，也未公开完整滚动范围与定位接口，不能直接复
 - HuxerUI 通用拖动预览、Linux 窗口帧生命周期和 Objective-C++ 聚合初始化兼容修复已合入 `farna/main`，由同一固定 SHA 覆盖所有平台。维护与升级见 [HuxerUI fork](huxerui-fork.md)。
 - Camera 的 ApplicationContext/UiWindow 兼容、Charts 的 `PieChartData` / `PieChart` 与 96pt 绘图面高度、SQLite 的启动只读查询均由各自 `FarnaHerry` fork 的 `farna/main` 维护。应用原生构建与 Android 库图共用 CMake 固定的 URL/COMMIT，不再在配置时修改依赖源码。升级记录与固定版本见 [HuxerUI fork](huxerui-fork.md)。
 - 饼图通过 `PieChartData` 保存稳定 key、标签和值，`PieChart` 使用显式帧约束；标签与数值放在普通 HuxerUI Views 中，图形本身提供图像语义摘要。
-- iOS CI 使用固定 HuxerUI revision 构建未签名 Simulator app/Packet Tunnel，并用与 Android 相同的固定 sing-box revision 生成 iOS device/Simulator `Libbox.xcframework`。它不生成 IPA 或 Release 资产；订阅下载由 Clash-Flux iOS `URLSession` 桥接，默认校验证书，按订阅选项显式允许无效证书。签名设备包和真机 VPN 生命周期验证完成前，iOS Release 仍不纳入门禁。
+- iOS CI 使用固定 HuxerUI revision 构建未签名 Simulator app/Packet Tunnel，并用与 Android 相同的固定 sing-box revision 生成 iOS device/Simulator `Libbox.xcframework`。它不生成 IPA 或 Release 资产；订阅下载由 Clash-Flux iOS `URLSession` 桥接，始终校验证书，不提供跳过校验选项。签名设备包和真机 VPN 生命周期验证完成前，iOS Release 仍不纳入门禁。
 
 HuxerUI 更新先在独立维护仓库 merge 官方 main 到 `farna/main`，审查差异并验证框架与应用后再更新应用固定 SHA；官方 main 保留为对照基线。Lib-Charts、Lib-SQLite、Lib-Camera 在各自 fork 中采用同一流程，各平台和 Android Java/native 共用固定 SHA。
 

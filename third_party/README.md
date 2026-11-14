@@ -9,7 +9,7 @@ nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归�
 归档版本及来源以本项目清单为准。
 
 应用当前的 HuxerUI fork 源码提交与检出命令见 [固定版本](../docs/huxerui-fork.md)；本机独立 checkout、CI 和 Android Java/native 共用该身份，不消费维护工作树。
-当前源码基线为合入官方 0.4.0 发布基线的 `eb190f3d`；下表 0.4.0 是离线 SDK 归档身份，不是源码版本。官方 0.4.0 归档提供 huxerui CLI、hcg/hrc 宿主工具与官方运行时库，但不含 fork 专属的 `create_initial_window` API，不满足桌面源码构建要求（CMake 配置期守卫会拒绝）。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
+当前源码基线为合入官方 `a66a0f76`（显式 Row/Column 布局优先级）的 `5c84b4ab`；下表 0.4.0 是离线 SDK 归档身份，不是源码版本。官方 0.4.0 归档提供 huxerui CLI、hcg/hrc 宿主工具与官方运行时库，但不含 fork 专属的 `create_initial_window` API，不满足桌面源码构建要求（CMake 配置期守卫会拒绝）。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
 
 ## 清单与来源
 

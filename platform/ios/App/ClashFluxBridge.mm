@@ -127,29 +127,6 @@ bool saveManager(NETunnelProviderManager* manager, NSError** error) {
 
 } // namespace
 
-@interface ClashFluxDownloadDelegate : NSObject <NSURLSessionDelegate>
-@property(nonatomic, assign) BOOL allowInvalidCertificate;
-@end
-
-@implementation ClashFluxDownloadDelegate
-- (void)URLSession:(NSURLSession*)session
-    didReceiveChallenge:(NSURLAuthenticationChallenge*)challenge
-      completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition,
-                                  NSURLCredential*))completionHandler {
-    static_cast<void>(session);
-    if (self.allowInvalidCertificate &&
-        [challenge.protectionSpace.authenticationMethod
-            isEqualToString:NSURLAuthenticationMethodServerTrust] &&
-        challenge.protectionSpace.serverTrust != nullptr) {
-        completionHandler(
-            NSURLSessionAuthChallengeUseCredential,
-            [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
-        return;
-    }
-    completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
-}
-@end
-
 extern "C" const char* clashflux_ios_core_work_dir() noexcept {
     static std::string path;
     static std::once_flag once;
@@ -349,7 +326,7 @@ extern "C" void clashflux_ios_open_url(const char* url) noexcept {
 
 extern "C" bool clashflux_ios_download_to_file(
     const char* url, const char* tempPath, long timeoutSeconds,
-    bool allowInvalidCertificate, const char* proxyUrl,
+    const char* proxyUrl,
     bool allowSystemProxy, long* httpStatus, long long* expectedBytes,
     char* responseHeadersJson, std::size_t responseHeadersCapacity,
     char* errorBuffer, std::size_t errorBufferCapacity) noexcept {
@@ -434,11 +411,9 @@ extern "C" bool clashflux_ios_download_to_file(
                 return false;
             }
             NSURL* destinationURL = [NSURL fileURLWithPath:destinationPath];
-            ClashFluxDownloadDelegate* delegate = [ClashFluxDownloadDelegate new];
-            delegate.allowInvalidCertificate = allowInvalidCertificate;
             NSURLSession* session = [NSURLSession
                 sessionWithConfiguration:configuration
-                                delegate:delegate
+                                delegate:nil
                            delegateQueue:nil];
             dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
             __block NSError* transferError = nil;

@@ -5,8 +5,18 @@ import clashflux.singbox;
 
 namespace proxy_provider_cache {
 
+export struct FetchResult {
+    bool ok = false, notModified = false;
+    long status = 0;
+    singbox::HttpCacheValidators validators;
+    std::string error;
+};
+
 export struct Operations {
     unsigned maxConcurrentFetches = 1;
+    std::function<void(const std::string&, bool)> failure;
+    std::function<FetchResult(const singbox::HttpProxyProviderResource&, const std::filesystem::path&,
+                             const singbox::HttpCacheValidators&)> revalidate;
     std::filesystem::path retainedDirectory;
     std::function<bool(const std::filesystem::path&, const std::filesystem::path&, std::string&)> commit;
     std::function<bool(const singbox::HttpProxyProviderResource&,
@@ -44,7 +54,7 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
                     resources.push_back(&resource);
             }
             if (resources.empty()) return true;
-            if (candidate.proxyProviderCacheDir.empty() || !operations.fetch || stage.empty()) {
+            if (candidate.proxyProviderCacheDir.empty() || (!operations.fetch && !operations.revalidate) || stage.empty()) {
                 error = "HTTP 代理集合任务缺少缓存目录、暂存目录或下载接口";
                 return false;
             }
@@ -57,6 +67,7 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
             }
             struct Item {
                 std::string content, error, warning;
+                singbox::HttpCacheValidators validators;
                 bool changed = false;
                 bool inputChanged = false, cacheHit = false, staleFallback = false;
                 std::int64_t validationMicros = 0, queueMicros = 0;
@@ -87,7 +98,8 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
                     std::optional<std::string> content;
                     if (alreadyCompiled) content = consumed->second;
                     std::string reason;
-                    if (!content) content = singbox::ReadHttpProxyProviderCache(resource, root, reason);
+                    singbox::HttpCacheValidators validators;
+                    if (!content) content = singbox::ReadHttpProxyProviderCache(resource, root, reason, &validators);
                     if (reason == "HTTP 代理集合缓存身份或版本不匹配") {
                         item.error = reason;
                         return;
@@ -108,30 +120,48 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
                     }
                     if (stale && !forced && provider_resources::FreshDownloaded(operations.retainedDirectory,
                             resource.cacheKey, resource.intervalSeconds)) {
-                        auto retained = singbox::ReadHttpProxyProviderCache(resource, operations.retainedDirectory, reason);
+                        singbox::HttpCacheValidators retainedValidators;
+                        auto retained = singbox::ReadHttpProxyProviderCache(resource, operations.retainedDirectory, reason, &retainedValidators);
                         if (retained && validate(*retained, reason)) {
                             item.inputChanged = !alreadyCompiled || !content || *retained != *content;
-                            content = std::move(retained); usable = true; item.changed = true; stale = false;
+                            content = std::move(retained); validators = std::move(retainedValidators); usable = true; item.changed = true; stale = false;
                         }
                     }
                     item.cacheHit = usable && !stale;
                     if (stale) {
                         const auto payload = stage / (resource.cacheKey + ".proxy-download");
                         reason.clear();
-                        const bool fetched = operations.fetch(resource, payload, reason);
-                        auto downloaded = fetched
-                            ? singbox::ReadRuleProviderText(payload, resource.maxBytes, reason)
-                            : std::nullopt;
-                        if (downloaded &&
+                        if (operations.revalidate && alreadyCompiled) {
+                            std::string ignored;
+                            const auto disk = singbox::ReadHttpProxyProviderCache(resource, root, ignored, &validators);
+                            if (!disk || *disk != *content) validators = {};
+                        }
+                        if (!usable || resource.headers.contains("if-none-match") ||
+                            resource.headers.contains("if-modified-since")) validators = {};
+                        FetchResult response;
+                        if (operations.revalidate) response = operations.revalidate(resource, payload, validators);
+                        else { response.ok = operations.fetch(resource, payload, reason); response.error = reason; }
+                        reason = response.error;
+                        if (!singbox::ValidHttpCacheValidators(response.validators)) response.validators = {};
+                        const bool verified304 = response.ok && response.notModified && usable &&
+                            (!validators.etag.empty() || !validators.lastModified.empty());
+                        auto downloaded = response.ok && !response.notModified
+                            ? singbox::ReadRuleProviderText(payload, resource.maxBytes, reason) : std::nullopt;
+                        if (verified304) {
+                            item.changed = true;
+                            if (!response.validators.etag.empty()) validators.etag = response.validators.etag;
+                            if (!response.validators.lastModified.empty()) validators.lastModified = response.validators.lastModified;
+                        } else if (downloaded &&
                             ((usable && *downloaded == *content) || validate(*downloaded, reason))) {
                             item.inputChanged = !alreadyCompiled || *downloaded != *content;
                             content = std::move(downloaded);
                             usable = true;
                             item.changed = true;
+                            validators = std::move(response.validators);
                             if (!operations.retainedDirectory.empty())
                                 provider_resources::RememberDownloaded(operations.retainedDirectory,
                                     stage / (resource.cacheKey + ".retained-proxy"), resource.cacheKey,
-                                    singbox::HttpProxyProviderCacheImage(resource, *content), operations.commit);
+                                    singbox::HttpProxyProviderCacheImage(resource, *content, validators), operations.commit);
                         } else if (usable && !forced) {
                             item.staleFallback = true;
                             item.warning = "HTTP 代理集合「" + resource.name +
@@ -145,6 +175,7 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
                         item.error = "HTTP 代理集合「" + resource.name + "」没有有效内容";
                         return;
                     }
+                    item.validators = std::move(validators);
                     item.content = std::move(*content);
                 } catch (const std::exception& exception) {
                     item.error = std::string("HTTP 代理集合准备异常：") + exception.what();
@@ -182,12 +213,13 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
                 const auto& resource = *resources[index];
                 auto& item = items[index];
                 if (!item.error.empty()) {
+                    if (operations.failure) operations.failure(resource.identity, true);
                     error = std::move(item.error);
                     return false;
                 }
                 if (!item.warning.empty()) preparation.warnings.push_back(std::move(item.warning));
                 if (item.changed) {
-                    const auto image = singbox::HttpProxyProviderCacheImage(resource, item.content);
+                    const auto image = singbox::HttpProxyProviderCacheImage(resource, item.content, item.validators);
                     if (image.empty()) {
                         error = "HTTP 代理集合缓存身份或内容无效";
                         return false;

@@ -3120,6 +3120,8 @@ int main(int argc, char** argv) {
     testProviderPreparationCancellation();
     testProviderConversionReuse();
     testProviderConditionalRefresh();
+    testProxyConditionalRefresh();
+    testSourceParseReuse();
     testMrsRuleProviders();
     for (const auto* format : {"{bad: yaml}", "[yaml]", "null", "''", "'  '"}) {
         singbox::CompileOptions options;

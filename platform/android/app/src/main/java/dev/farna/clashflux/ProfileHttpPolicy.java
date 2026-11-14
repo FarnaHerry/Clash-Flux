@@ -6,8 +6,13 @@ final class ProfileHttpPolicy {
 
     private ProfileHttpPolicy() {}
 
-    static boolean shouldRetryWithClashMeta(int status, long maxBytes, String[] requestHeaders) {
-        return status == 403 && maxBytes == 0 &&
-                requestHeaders != null && requestHeaders.length == 0;
+    static boolean shouldRetryWithClashMeta(int status, boolean subscriptionRequest, String[] requestHeaders) {
+        if (status != 403 || !subscriptionRequest || requestHeaders == null || requestHeaders.length % 2 != 0)
+            return false;
+        for (int i = 0; i < requestHeaders.length; i += 2) {
+            String name = requestHeaders[i];
+            if (!"if-none-match".equalsIgnoreCase(name) && !"if-modified-since".equalsIgnoreCase(name)) return false;
+        }
+        return true;
     }
 }

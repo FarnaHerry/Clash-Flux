@@ -18,9 +18,8 @@ Release 门禁；签名设备包和真机 VPN 生命周期仍需验证。Clash-F
 编译配置，extension 不得打开应用数据库。
 
 iOS 订阅和规则集下载由 `src/api.cpp` 转到 `platform/ios/App/ClashFluxBridge.mm` 的
-`NSURLSession`，默认使用 Apple 系统证书校验。订阅的“允许无效证书（危险）”选项只影响这一个
-下载请求的 server-trust challenge；未勾选时 delegate 执行系统默认校验。不要通过修改全局
-URLSession 信任设置或 HuxerUI 通用 API 实现证书跳过。
+`NSURLSession`，始终使用 Apple 系统证书与主机名校验，不提供 server-trust challenge
+放行路径。旧订阅的证书跳过字段不再生效；不修改全局 URLSession 信任设置或 HuxerUI 通用 API。
 
 ## 工具链 ABI 约束（核心构建与 Xcode 侧必须同源）
 
@@ -77,7 +76,7 @@ Release job 只有在以下项目完成后才纳入 iOS：
 
 - 可启动的 Clash-Flux iOS app 与 Packet Tunnel extension；
 - extension 通过 App Group 原子文件读取 app 编译后的配置，并由固定 sing-box Libbox 生命周期管理隧道；
-- 在 Simulator 或真机上核对 iOS URLSession 的默认证书校验、显式无效证书选项和 HTTPS 订阅下载；
+- 在 Simulator 或真机上核对 iOS URLSession 的系统证书校验、无效证书拒绝和 HTTPS 订阅下载；
 - Xcode device archive 与签名导出通过 CI，应用和 extension 的签名、entitlements 与 provisioning
   profiles 均通过核验；
 - 真机启动、VPN 授权、连接、停止和网络切换完成验证。

@@ -135,6 +135,26 @@ int testDownloadPool(char** argv) {
     require(!recovery.downloadToFile(base + "/reuse", root / "recovery", options).ok && validated &&
                 readFile(root / "recovery") == preserved, "candidate validation held or leaked the transport");
     options.validate = {};
+    options.subscriptionRequest = true;
+    const auto compatible = recovery.downloadToFile(base + "/identity", root / "identity", options);
+    require(compatible.ok && compatible.download.attempts == 2,
+            "ordinary subscriptions get one bounded 403 user-agent fallback");
+    const auto deniedSource = recovery.downloadToFile(base + "/direct-denied", root / "identity", options);
+    require(!deniedSource.ok && deniedSource.download.attempts == 2 && deniedSource.failurePhase == "http",
+            "persistent HTTP denial is classified and never loops the user-agent fallback");
+    options.headers = {{"User-Agent", "explicit-test-agent"}};
+    const auto customAgent = recovery.downloadToFile(base + "/identity", root / "identity", options);
+    require(!customAgent.ok && customAgent.download.attempts == 1,
+            "source fallback must not override caller headers");
+    options.headers.clear(); options.subscriptionRequest = false;
+    const auto deniedResource = recovery.downloadToFile(base + "/identity", root / "identity", options);
+    require(!deniedResource.ok && deniedResource.download.attempts == 1,
+            "provider downloads never implicitly change their user agent");
+    options.attempts = 2;
+    const auto retriedShort = recovery.downloadToFile(base + "/truncate", root / "recovery", options);
+    require(!retriedShort.ok && retriedShort.download.attempts == 2 && readFile(root / "recovery") == preserved,
+            "bounded transport retries preserve the accepted file on repeated truncation");
+    options.attempts = 1;
 
     const std::string proxyTarget = base + "/direct-denied";
     options.proxyUrl = proxyA;
@@ -163,15 +183,16 @@ int testDownloadPool(char** argv) {
 #endif
 
     if (!tls.empty()) {
-        options.allowInvalidCert = true;
-        const auto insecure = client.downloadToFile(tls + "/reuse", root / "tls", options);
-        const auto insecureAgain = client.downloadToFile(tls + "/reuse", root / "tls", options);
-        require(insecure.ok && insecure.download.newConnections == 1 && insecureAgain.ok &&
-                    insecureAgain.download.newConnections == 0, "opt-in TLS session reuse failed");
-        options.allowInvalidCert = false;
-        const auto rejected = client.downloadToFile(tls + "/reuse", root / "tls", options);
-        require(!rejected.ok && rejected.error.find("TLS") != std::string::npos,
-                "insecure TLS connection leaked into a verifying request");
+        const auto file = root / "tls";
+        { std::ofstream output(file); output << "previous trusted subscription"; }
+        for (int i = 0; i < 2; ++i) {
+            const auto rejected = client.downloadToFile(tls + "/reuse", file, options);
+            require(!rejected.ok && rejected.error.find("TLS") != std::string::npos,
+                    "invalid TLS certificate must always be rejected");
+            require(rejected.error.find("允许无效证书") == std::string::npos &&
+                        readFile(file) == "previous trusted subscription",
+                    "TLS failure must preserve the previous file without suggesting a bypass");
+        }
     }
     require(!std::ranges::any_of(std::filesystem::directory_iterator(root), [](const auto& entry) {
         return entry.path().filename().string().starts_with(".clash-flux-download-");

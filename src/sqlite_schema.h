@@ -11,7 +11,7 @@
 // 日志仍然直接写 core/*.log 文件：日志是高频追加，放进 SQLite 会与
 // settings/profiles 的写事务抢锁与 IO，得不偿失。
 //
-// 记录类型与 model::Profile 一一对应。nullability 由 std::optional 决定；ORM
+// 记录类型对应 model::Profile，并保留停用的兼容列。nullability 由 std::optional 决定；ORM
 // 要求主键非可空，因此 id/key 用普通类型，主键由应用分配（非 AUTOINCREMENT，
 // 老库的 PK 没有 NOT NULL，靠 0→1 迁移重建表补齐）。
 #pragma once
@@ -38,7 +38,7 @@ struct ProfileRow {
     bool auto_update = false;
     bool use_system_proxy = false;
     bool use_core_proxy = false;
-    bool allow_invalid_cert = false;
+    bool allow_invalid_cert = false; // Legacy column only; ignored by the application.
     std::string homepage;
     std::int64_t used_bytes = 0;
     std::int64_t total_bytes = 0;

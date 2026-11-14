@@ -51,7 +51,6 @@ struct ProfileCreateFields {
     huxerui::State<huxerui::TextEditingValue> interval;
     huxerui::State<bool> system_proxy;
     huxerui::State<bool> core_proxy;
-    huxerui::State<bool> invalid_cert;
     huxerui::State<huxerui::TextEditingValue> pptp_server;
     huxerui::State<huxerui::TextEditingValue> pptp_username;
     huxerui::State<huxerui::TextEditingValue> pptp_password;
@@ -89,7 +88,6 @@ struct ProfileEditFields {
     huxerui::State<huxerui::TextEditingValue> interval;
     huxerui::State<bool> system_proxy;
     huxerui::State<bool> core_proxy;
-    huxerui::State<bool> invalid_cert;
     huxerui::State<huxerui::TextEditingValue> pptp_server;
     huxerui::State<huxerui::TextEditingValue> pptp_username;
     huxerui::State<huxerui::TextEditingValue> pptp_password;
@@ -137,15 +135,6 @@ void OpenProfileCreate(bool compact, huxerui::State<bool> page,
                        huxerui::TaskScope tasks,
                        const std::function<void()>& dialog);
 
-huxerui::Task<store::FetchedProfile> AndroidFetchProfile(
-    std::shared_ptr<AppHttpClient> http, std::string url,
-    int timeoutSecs, bool allowInvalidCert = false);
-huxerui::Task<std::int64_t> AndroidImportRemote(
-    std::shared_ptr<AppHttpClient> http, const std::string& name,
-    const std::string& url, model::Profile options);
-huxerui::Task<std::string> AndroidRefreshRemote(
-    std::shared_ptr<AppHttpClient> http, std::int64_t id);
-
 huxerui::Task<std::string> RefreshProfileForPlatform(
     std::shared_ptr<AppHttpClient> http, std::int64_t id);
 huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
@@ -153,9 +142,6 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
 
 } // namespace profile_detail
 
-using profile_detail::AndroidFetchProfile;
-using profile_detail::AndroidImportRemote;
-using profile_detail::AndroidRefreshRemote;
 using profile_detail::ImportProfileForPlatform;
 using profile_detail::OpenProfileCreate;
 using profile_detail::OpenProfileEditInfo;
@@ -178,7 +164,7 @@ huxerui::View ProfileOptionsForm(
     huxerui::State<huxerui::TextEditingValue> timeout,
     huxerui::State<huxerui::TextEditingValue> interval,
     huxerui::State<bool> system_proxy,
-    huxerui::State<bool> core_proxy, huxerui::State<bool> invalid_cert);
+    huxerui::State<bool> core_proxy);
 huxerui::View PptpOptionsForm(
     huxerui::State<huxerui::TextEditingValue> server,
     huxerui::State<huxerui::TextEditingValue> username,

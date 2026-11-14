@@ -15,6 +15,7 @@
 //   4. 就绪 → Running，拉起 /logs /traffic /connections 三条 WS 流
 module;
 #include "runtime_health.h"
+#include "download_policy.h"
 #include "wire_codec.h"
 #include "runtime_network_probe.h"
 #include "network_conflict.h"

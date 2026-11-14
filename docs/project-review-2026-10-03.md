@@ -54,9 +54,8 @@ dns_policy_runtime / dns_tls_runtime 要求 Python，TLS 回归另需 OpenSSL CL
   `Libbox.xcframework`。这仍是非阻塞编译检查：只生成未签名 Simulator 构建，不生成 IPA，
   也不属于 Release 门禁；除非项目未来明确恢复 iOS 支持，否则不要把它加入 Release 目标。签名设备包和真机 VPN 生命周期仍需另行验证。
 - iOS 订阅与规则集下载使用 `platform/ios/App/ClashFluxBridge.mm` 的 `NSURLSession`，因为 iOS
-  curl 构建不含 TLS。默认必须保留系统证书校验；只有订阅显式启用 `allowInvalidCert` 时，
-  该请求的 URLSession delegate 才接受无效服务器证书。证书跳过逻辑只维护在 Clash-Flux iOS
-  桥接层，不修改 HuxerUI 公共 HTTP API，也不得改动全局 URLSession 信任设置。
+  curl 构建不含 TLS。必须保留系统证书与主机名校验。2026-11-14 已删除订阅证书跳过功能，
+  旧字段不再生效；不修改 HuxerUI 公共 HTTP API，也不得改动全局 URLSession 信任设置。
 - iOS 设备与 Release 签名必须使用 Apple 开发团队签发并由匹配 provisioning profile 授权的身份；
   不得使用随机值或自签名证书伪造可安装包。Packet Tunnel 的 profile 必须授权
   `packet-tunnel-provider` entitlement。签名私钥和 profiles 不入库，管理流程见 `docs/ios-build.md`。

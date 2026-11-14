@@ -39,6 +39,9 @@ description: 修改 Clash-Flux 订阅转换、协议/DNS/规则/provider 映射�
 - ASN 固定 ipverse JSON 编号/双地址族 CIDR 完整检查；MRS 固定 Zstandard，输入 8 MiB、解压 32 MiB、集合有界；未知版本/扩展/畸形或不支持域名整份拒绝。完整候选通过前不切换活动缓存；独立验证的下载可以留存供重试，命名空间/窗口与候选复用按[Provider 准备](../../docs/provider-resource-management.md)执行。
 - 通用原子替换、订阅保护、Windows 不先删目标、Android 无桌面 CLI 预检查等遵守 [数据技能](../clashflux-data/SKILL.md)。
 
+主订阅/规则/代理下载策略、条件表示缓存、跨来源原始响应共享与分层编译缓存遵守
+[统一下载与编译复用](../../docs/provider-resource-management.md#2026-11-14下载与编译复用收敛)，不能把传输相同当成候选批准相同。
+
 ## 桌面编排
 
 订阅个人规则遵守[独立修改与 JSON 编译契约](../../docs/subscription-personal-rules.md)：原文不回写，来源锚点唯一匹配，未知复杂规则只读，次来源不自动执行个人规则。

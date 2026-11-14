@@ -82,10 +82,9 @@ JNIEnv* current_environment(bool& attached) noexcept {
 } // namespace
 
 clashflux::android::ProfileHttpResponse
-clashflux::android::DownloadProfile(const std::string& url, int timeoutSecs,
-                                    bool allowInvalidCertificate, std::size_t maxBytes,
-                                    bool forceDirect,
-                                    const std::map<std::string, std::string>& headers) {
+clashflux::android::DownloadProfileToFile(const std::string& url, int timeoutSecs,
+    const std::string& destination, std::size_t maxBytes, bool forceDirect,
+    const std::map<std::string, std::string>& headers, bool subscriptionRequest) {
     ProfileHttpResponse response;
     if (!clashflux::http_request::ValidHeaders(headers)) {
         response.error = "下载请求头非法或不支持";
@@ -128,7 +127,7 @@ clashflux::android::DownloadProfile(const std::string& url, int timeoutSecs,
 
     const jmethodID fetchProfile = environment->GetStaticMethodID(
         activityClass, "fetchProfile",
-        "(Ljava/lang/String;IZJZ[Ljava/lang/String;)Landroid/os/Bundle;");
+        "(Ljava/lang/String;IJZ[Ljava/lang/String;ZLjava/lang/String;)Landroid/os/Bundle;");
     if (fetchProfile == nullptr || environment->ExceptionCheck()) {
         environment->ExceptionClear();
         response.error = "Android 订阅下载接口不可用";
@@ -163,11 +162,15 @@ clashflux::android::DownloadProfile(const std::string& url, int timeoutSecs,
             }
         }
     }
+    jstring javaDestination = environment->NewStringUTF(destination.c_str());
+    if (javaDestination == nullptr || environment->ExceptionCheck()) {
+        environment->ExceptionClear(); response.error = "无法转换 Android 下载暂存路径"; return response;
+    }
     jobject bundle = environment->CallStaticObjectMethod(
         activityClass, fetchProfile, javaUrl,
         static_cast<jint>(timeoutSecs),
-        allowInvalidCertificate ? JNI_TRUE : JNI_FALSE,
-        static_cast<jlong>(maxBytes), forceDirect ? JNI_TRUE : JNI_FALSE, javaHeaders);
+        static_cast<jlong>(maxBytes), forceDirect ? JNI_TRUE : JNI_FALSE, javaHeaders,
+        subscriptionRequest ? JNI_TRUE : JNI_FALSE, javaDestination);
     if (bundle == nullptr || environment->ExceptionCheck()) {
         environment->ExceptionClear();
         response.error = "Android 订阅下载调用失败";
@@ -182,10 +185,10 @@ clashflux::android::DownloadProfile(const std::string& url, int timeoutSecs,
     const jmethodID getString = environment->GetMethodID(
         bundleClass, "getString",
         "(Ljava/lang/String;)Ljava/lang/String;");
-    const jmethodID getByteArray = environment->GetMethodID(
-        bundleClass, "getByteArray", "(Ljava/lang/String;)[B");
+    const jmethodID getLong = environment->GetMethodID(
+        bundleClass, "getLong", "(Ljava/lang/String;J)J");
     if (getInt == nullptr || getBoolean == nullptr || getString == nullptr ||
-        getByteArray == nullptr ||
+        getLong == nullptr ||
         environment->ExceptionCheck()) {
         environment->ExceptionClear();
         response.error = "Android 订阅下载响应格式无效";
@@ -222,18 +225,16 @@ clashflux::android::DownloadProfile(const std::string& url, int timeoutSecs,
             environment->ReleaseStringUTFChars(headersValue, text);
         }
     }
-    jstring bodyKey = key("body");
-    auto body = static_cast<jbyteArray>(
-        environment->CallObjectMethod(bundle, getByteArray, bodyKey));
-    if (body != nullptr) {
-        const jsize length = environment->GetArrayLength(body);
-        response.body.resize(static_cast<std::size_t>(length));
-        if (length > 0) {
-            environment->GetByteArrayRegion(
-                body, 0, length,
-                reinterpret_cast<jbyte*>(response.body.data()));
-        }
+    jstring attemptsKey = key("attempts");
+    response.attempts = static_cast<unsigned>(environment->CallIntMethod(bundle, getInt, attemptsKey));
+    jstring failureKey = key("failure");
+    auto failureValue = static_cast<jstring>(environment->CallObjectMethod(bundle, getString, failureKey));
+    if (failureValue != nullptr) {
+        const char* text = environment->GetStringUTFChars(failureValue, nullptr);
+        if (text != nullptr) { response.failure = text; environment->ReleaseStringUTFChars(failureValue, text); }
     }
+    jstring bytesKey = key("bytes");
+    response.bytes = static_cast<std::uint64_t>(environment->CallLongMethod(bundle, getLong, bytesKey, static_cast<jlong>(0)));
     if (environment->ExceptionCheck()) {
         environment->ExceptionClear();
         response = {};

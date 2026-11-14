@@ -40,6 +40,6 @@ description: 修改 Clash-Flux Android、Windows、Linux 或 iOS 平台服务、
 ## iOS（暂缓）
 
 只有任务实际涉及 iOS 才读 [iOS 构建](../../docs/ios-build.md)。iOS 不承诺支持/发布，不加入 Release 门禁：固定框架 revision + Simulator SDK 编译 app/Packet Tunnel，Libbox device/Simulator xcframework 与 Android 同 sing-box revision，仅未签名诊断，不产 IPA。
-订阅/规则集用 ClashFluxBridge.mm 的 NSURLSession（iOS curl 无 TLS），默认系统证书校验；仅显式 allowInvalidCert 的那次请求 delegate 允许无效证书，不改公共 HTTP API 或全局信任。
+订阅/规则集用 ClashFluxBridge.mm 的 NSURLSession（iOS curl 无 TLS），始终使用系统证书与主机名校验，不提供无效证书放行 delegate；不改公共 HTTP API 或全局信任。
 Libbox 必须由 Packet Tunnel extension 托管，不 posix_spawn/fork/CLI；App Group 原子文件共享配置，extension 不读写应用数据库。
 设备签名必须 Apple 开发团队身份及匹配 profile，Packet Tunnel 授权 packet-tunnel-provider entitlement；不造随机/自签身份，私钥/profile 不入库。签名设备包与真机 VPN 仍需独立验证。

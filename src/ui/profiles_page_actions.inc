@@ -254,7 +254,7 @@
     // ---- 编辑信息（按订阅类型显示对应表单；仅落库，下次更新/连接生效）----
     auto loadEditInfo = [tasks, findProfile, editName, editUrl, editType, editDesc,
                          editTimeout, editInterval, editSys, editCore,
-                         editCert, editPptpServer, editPptpUsername,
+                         editPptpServer, editPptpUsername,
                          editPptpPassword, editPptpTimeout, editPptpRoutes,
                          editPptpMppe](
         std::int64_t id, std::function<void()> next) {
@@ -273,7 +273,6 @@
                     profile->autoUpdate, profile->intervalMins))};
             editSys = profile->useSystemProxy;
             editCore = profile->useCoreProxy;
-            editCert = profile->allowInvalidCert;
             std::string pptpError;
             const auto config = pptp::ParsePptpConfig(profile->nativeConfig, pptpError);
             editPptpServer = huxerui::TextEditingValue{
@@ -294,7 +293,7 @@
         loadEditInfo(id, [=] {
             ShowEditorDialog(dialog, [=](huxerui::DialogContext context) {
                 return ProfileEditDialogContent(id, ProfileEditFields{editName, editUrl, editType, editDesc, editTimeout,
-                    editInterval, editSys, editCore, editCert, editPptpServer,
+                    editInterval, editSys, editCore, editPptpServer,
                     editPptpUsername, editPptpPassword, editPptpTimeout, editPptpRoutes,
                     editPptpMppe}, tasks, toast, [context] { context.Dismiss(); });
             });
@@ -306,7 +305,7 @@
     auto openEditInfo = [compact, navigation, navigation_enabled, tasks, toast,
                          loadEditInfo, showEditInfo, editPageId,
                          editName, editUrl, editType, editDesc, editTimeout,
-                         editInterval, editSys, editCore, editCert,
+                         editInterval, editSys, editCore,
                          editPptpServer, editPptpUsername, editPptpPassword,
                          editPptpTimeout, editPptpRoutes, editPptpMppe](std::int64_t id) {
         if (!compact) {
@@ -318,7 +317,7 @@
             loadEditInfo(id, [=] {
                 const ProfileEditFields fields{
                     editName, editUrl, editType, editDesc, editTimeout,
-                    editInterval, editSys, editCore, editCert,
+                    editInterval, editSys, editCore,
                     editPptpServer, editPptpUsername, editPptpPassword,
                     editPptpTimeout, editPptpRoutes, editPptpMppe};
                 navigation.Push([=] {

@@ -154,6 +154,7 @@ export struct ProfileSource {
 };
 
 export struct CompileResult {
+    unsigned sourceParseCacheHits = 0;
     std::string json;                    // compileConfig 配置 JSON；失败或仅目录检查为空
     std::string error;                   // 致命错误（YAML 解析失败等）
     // 自由文本投影（历史消费方与内核启动诊断沿用；每条 = fidelity[i].detail）
@@ -265,9 +266,9 @@ export bool ValidateHttpRuleProvider(const HttpRuleProviderResource& resource,
     const std::string& content, std::string& error);
 export std::optional<std::string> ReadHttpProxyProviderCache(
     const HttpProxyProviderResource& resource, const std::filesystem::path& directory,
-    std::string& error);
+    std::string& error, HttpCacheValidators* validators = nullptr);
 export std::string HttpProxyProviderCacheImage(const HttpProxyProviderResource& resource,
-    const std::string& content);
+    const std::string& content, const HttpCacheValidators& validators = {});
 export bool ValidateHttpProxyProvider(const HttpProxyProviderResource& resource,
     const std::string& content, std::string& error);
 

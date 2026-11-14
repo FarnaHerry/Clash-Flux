@@ -5,6 +5,7 @@
 // DNS 用 1.12+ 的 typed server。字段集保持严格最小——sing-box 对未知字段
 // 直接拒绝启动。
 module;
+#include "http_representation.h"
 
 #include <yaml-cpp/yaml.h>
 #include <zstd.h>
@@ -541,22 +542,16 @@ std::optional<std::string> ReadRuleProviderText(const std::filesystem::path& pat
 }
 
 bool ValidHttpCacheValidators(const HttpCacheValidators& validators) {
-    for (const auto* value : {&validators.etag, &validators.lastModified}) {
-        if (value->size() > 2048 || (!value->empty() && (value->front() == ' ' || value->back() == ' ')) ||
-            !std::ranges::all_of(*value, [](unsigned char c) { return c >= 32 && c <= 126; })) return false;
-    }
-    return true;
+    return clashflux::http_cache::ValidValidator(validators.etag) &&
+           clashflux::http_cache::ValidValidator(validators.lastModified);
 }
 
 std::string HttpRuleProviderCacheImage(const HttpRuleProviderResource& resource,
         const std::string& content, const HttpCacheValidators& validators) {
-    if (resource.cacheKey != httpProviderKey(resource.identity) || resource.identity.size() > 32 * 1024 ||
-        resource.identity.find('\n') != std::string::npos || content.size() > resource.maxBytes ||
-        resource.maxBytes > (geoDataResource(resource) ? kGeoDataMaxBytes : 8 * 1024 * 1024) || !ValidHttpCacheValidators(validators)) return {};
-    if (!validators.etag.empty() || !validators.lastModified.empty())
-        return "clash-flux-rule-provider-v2\n" + resource.identity + "\n" + validators.etag + "\n" +
-            validators.lastModified + "\n" + content;
-    return "clash-flux-rule-provider-v1\n" + resource.identity + "\n" + content;
+    if (resource.cacheKey != httpProviderKey(resource.identity) || content.size() > resource.maxBytes ||
+        resource.maxBytes > (geoDataResource(resource) ? kGeoDataMaxBytes : 8 * 1024 * 1024)) return {};
+    return clashflux::http_cache::Encode("clash-flux-rule-provider", resource.identity, content,
+                                         validators.etag, validators.lastModified);
 }
 
 std::optional<std::string> ReadHttpRuleProviderCache(const HttpRuleProviderResource& resource,
@@ -570,29 +565,10 @@ std::optional<std::string> ReadHttpRuleProviderCache(const HttpRuleProviderResou
     if (!path) return std::nullopt;
     const auto image = ReadRuleProviderText(*path, resource.maxBytes + 36 * 1024 + 80, error);
     if (!image) return std::nullopt;
-    const std::string prefix = "clash-flux-rule-provider-v1\n" + resource.identity + "\n";
-    const std::string prefixV2 = "clash-flux-rule-provider-v2\n" + resource.identity + "\n";
-    std::size_t offset = prefix.size();
-    if (image->starts_with(prefixV2)) {
-        offset = prefixV2.size();
-        HttpCacheValidators parsed;
-        for (auto* value : {&parsed.etag, &parsed.lastModified}) {
-            const auto end = image->find('\n', offset);
-            if (end == std::string::npos || end - offset > 2048) {
-                error = "HTTP 规则集缓存身份或版本不匹配"; return std::nullopt;
-            }
-            *value = image->substr(offset, end - offset); offset = end + 1;
-        }
-        if (!ValidHttpCacheValidators(parsed)) {
-            error = "HTTP 规则集缓存身份或版本不匹配"; return std::nullopt;
-        }
-        if (validators) *validators = std::move(parsed);
-    } else if (!image->starts_with(prefix)) {
-        error = "HTTP 规则集缓存身份或版本不匹配"; return std::nullopt;
-    }
-    auto content = image->substr(offset);
-    if (content.size() > resource.maxBytes) { error = "缓存内容超过读取上限"; return std::nullopt; }
-    return content;
+    auto decoded = clashflux::http_cache::Decode(*image, "clash-flux-rule-provider", resource.identity, resource.maxBytes);
+    if (!decoded) { error = "HTTP 规则集缓存身份或版本不匹配"; return std::nullopt; }
+    if (validators) *validators = {std::move(decoded->etag), std::move(decoded->modified)};
+    return std::move(decoded->body);
 }
 
 bool ValidateHttpRuleProvider(const HttpRuleProviderResource& resource,
@@ -643,36 +619,29 @@ ExternalResourceCache InspectExternalResourceCache(const ExternalResource& resou
 }
 
 std::string HttpProxyProviderCacheImage(const HttpProxyProviderResource& resource,
-        const std::string& content) {
-    if (resource.cacheKey != httpProviderKey(resource.identity) || resource.identity.size() > 32 * 1024 ||
-        resource.identity.find('\n') != std::string::npos || content.size() > resource.maxBytes ||
+        const std::string& content, const HttpCacheValidators& validators) {
+    if (resource.cacheKey != httpProviderKey(resource.identity) || content.size() > resource.maxBytes ||
         resource.maxBytes > 8 * 1024 * 1024) return {};
-    return "clash-flux-proxy-provider-v1\n" + resource.identity + "\n" + content;
+    return clashflux::http_cache::Encode("clash-flux-proxy-provider", resource.identity, content,
+                                         validators.etag, validators.lastModified);
 }
 
 std::optional<std::string> ReadHttpProxyProviderCache(
         const HttpProxyProviderResource& resource, const std::filesystem::path& directory,
-        std::string& error) {
+        std::string& error, HttpCacheValidators* validators) {
+    if (validators) *validators = {};
     if (resource.cacheKey != httpProviderKey(resource.identity) || resource.identity.size() > 32 * 1024 ||
         resource.maxBytes > 8 * 1024 * 1024) {
-        error = "HTTP 代理集合缓存资源身份无效";
-        return std::nullopt;
+        error = "HTTP 代理集合缓存资源身份无效"; return std::nullopt;
     }
     const auto path = ruleProviderPath(directory.string(), resource.cacheKey + ".cache", error);
     if (!path) return std::nullopt;
-    const auto image = ReadRuleProviderText(*path, resource.maxBytes + 36 * 1024 + 40, error);
+    const auto image = ReadRuleProviderText(*path, resource.maxBytes + 36 * 1024 + 80, error);
     if (!image) return std::nullopt;
-    const std::string prefix = "clash-flux-proxy-provider-v1\n" + resource.identity + "\n";
-    if (!image->starts_with(prefix)) {
-        error = "HTTP 代理集合缓存身份或版本不匹配";
-        return std::nullopt;
-    }
-    auto content = image->substr(prefix.size());
-    if (content.size() > resource.maxBytes) {
-        error = "代理集合缓存内容超过读取上限";
-        return std::nullopt;
-    }
-    return content;
+    auto decoded = clashflux::http_cache::Decode(*image, "clash-flux-proxy-provider", resource.identity, resource.maxBytes);
+    if (!decoded) { error = "HTTP 代理集合缓存身份或版本不匹配"; return std::nullopt; }
+    if (validators) *validators = {std::move(decoded->etag), std::move(decoded->modified)};
+    return std::move(decoded->body);
 }
 
 bool ValidateHttpProxyProvider(const HttpProxyProviderResource& resource,

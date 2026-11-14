@@ -1,5 +1,110 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-14：HuxerUI 追新与 v0.3.109 发布准备
+
+- 发布代码基于 `5f70ddc`，包含此前删除订阅证书跳过入口和订阅下载/编译复用改动；
+  CMake/Android versionName 同为 `0.3.109`，versionCode 从正式 v0.3.108 的 186 升到 187。
+  中英文说明见 [v0.3.109](releases/v0.3.109.md)，正式产物由标签流水线统一发布。
+- fetch 后官方 main 为 `a66a0f76`，已发布 fork `farna/main` 为
+  `5c84b4abf34675e9265c41e875ceedc1e79b9349`，包含旧 pin `eb190f3d` 和该官方提交。
+  审查公共 modifier/export、布局实现及测试；新 Row/Column 优先级策略显式启用，应用未使用该 modifier。
+  独立应用 checkout 与 workflow pin 一致，五项扩展及离线 SDK 归档保持原固定身份；
+  维护仓库的四项既有 macOS/设计/测试改动未触动。
+- Linux / Clang 21 Debug：`cmake --build build -j 4` 通过（含同源框架、HUI codegen 和全部测试目标）；
+  `./run.sh --version` 输出 v0.3.109，`git diff --check` 通过。
+  首轮 CTest 收到 SIGTERM（143）中断，无断言失败结果；重新执行
+  `ctest --test-dir build --output-on-failure --no-tests=error -j 2 -L clashflux-required`
+  **32/32，103.09 秒**，包括生产分页、持久化/锁竞争、CPS、HTTP/TLS、真实内核与订阅资源回归。
+- Android 设置 `HUXERUI_HOME` 为同一固定源码，从 platform/android 执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac --max-workers=4`
+  **通过，arm64-v8a，1 分 32 秒**，包含 preBuild 的真实 HTTP/HTTPS 文件流和策略回归。
+- 通过 bubblewrap 隔离可写 XDG 数据及 `/run` 服务通道，以 X11 启动实际主目标 8 秒；
+  进程存活、无启动日志，已查看原生截图：首页卡片与圆环图显示、中心 0%。
+  未连接实际代理、修改主机服务或用户订阅；该检查不覆盖图表悬停、手机触摸或 VPN 生命周期。
+- 文档更新后再次执行主目标构建、版本和 diff 检查。Windows/macOS 原生构建、正式 APK
+  签名及包收集由发布 CI 验证，以其实际结果为准；本地没有执行跨版本安装、手机新旧性能对照或 iOS 验收。
+
+## 2026-11-14：订阅下载与编译复用整理
+
+- 代码快照：`5f70ddc` 加本轮工作区，沿用 v0.3.108 和固定 HuxerUI `eb190f3d`；
+  保留此前移除无效证书入口的改动，没有数据库 schema 升级、清理用户数据或发布。
+- 主订阅导入/手动/自动更新统一领域事务及常驻下载器；规则/代理集合共用请求预算、
+  条件表示缓存和重试入口。主订阅条件缓存完整绑定来源版本与原文，304 仍做手动依赖检查，
+  保留未返回的流量/到期/首页字段。代理集合新增 v2 校验值镜像，旧 v1 继续可读。
+- Android 直接流式写入独占暂存文件，JNI 不再传完整正文；显式请求用途控制有界 403 UA 兼容，
+  保留系统 TLS/主机名验证。不同来源可合并完整传输策略相同的在途响应，但独立转换、候选检查和提交。
+- 小型 Clash YAML 解析缓存、已有资源转换缓存和多份已检查编译缓存分层；完整字节、选项、
+  身份与到期核对继续生效。去掉跨网络的全局编译锁，远程更新在准备后重新核对来源、设置和运行计划，
+  最终提交持锁检查版本。完整边界与预算见 [Provider 管理](provider-resource-management.md)。
+- Linux / Clang 21 Debug：`cmake --build build -j 4` 通过，含 HUI codegen 和全部测试目标。
+  `ctest --test-dir build --output-on-failure --no-tests=error -j 2 -L clashflux-required`
+  **32/32，106.71 秒**；覆盖生产 CLI、持久化/真实锁竞争、TLS、资源、UI 组件与内核生命周期。
+- 收尾新增 HTTP 403 兼容边界/重试计数回归、错误分类修正及控制客户端访问保护后，再构建全部目标，执行
+  `ctest --test-dir build --output-on-failure --no-tests=error -j 2 -R '^(singbox|rule_provider_download|resource_management_runtime|core_api_lifetime|persistence|connection_trace_runtime|proxy_standby_runtime|proxy_provider_runtime)$'`
+  **8/8，16.04 秒**。验证主订阅缓存跨 Runtime 重开、304 手动依赖重检、外部编辑使校验值失效、
+  下载/候选失败留旧、不同来源独立批准、交替编译上下文复用和另一来源慢下载不阻塞独立准备。
+- Android 从 platform/android 设置 `HUXERUI_HOME` 为本仓库固定源码，执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac --max-workers=4` 通过，arm64-v8a。
+  preBuild 宿主 JVM 使用真实回环 HTTP/HTTPS 验证文件流、大小限制、截断、304、有界 UA 重试、
+  请求头重定向拒绝与自签证书拒绝；未修改系统信任库。JNI/Java 适配器整理后再次增量构建。
+- 收尾执行 `cmake --build build --target clash-flux -j 4`、`./run.sh --version`（v0.3.108）及
+  `git diff --check`。本轮没有安装新 APK 或测量 Kitty 新旧版本耗时，不能将编译/宿主回归写成手机性能提升；
+  未运行原生 GUI 视觉、手机 VPN 生命周期或 Windows/macOS/iOS 构建验收；独立历史
+  `test_profile_selection_runtime.py` 的版本文件名断言适配仍未完成。不提交、打标签、推送或发布。
+
+## 2026-11-14：Android 真机 Kitty 订阅刷新耗时排查
+
+- 设备 PKJ110 / Android 16，通过用户指定 adb 调试现有正式 APK；versionName 0.3.108、
+  versionCode 186，APK SHA-256 `93527b5f625cddb29bf7a0aa4e8b692612610638d4c3b2052e3c29bc6f94e2ab`
+  与正式发布资产一致，对应 `ca1ac79`。本轮未覆盖安装工作区构建；不能将以下实测归于
+  `5f70ddc` 的八路并发/候选复用，或工作区删除无效证书开关的改动。
+- 在同一手机、Wi-Fi 下通过现有 UI 刷新 Kitty，保留全部订阅和旧来源文件。阶段日志：
+
+  | 设备日志时间 | Provider 准备 | 结果 | 请求 / 304 | 下载正文 |
+  | --- | --- | --- | --- | --- |
+  | 10:05:21 | 21,406 ms | 失败，候选未提交 | 12 / 10 | 9,065,111 B |
+  | 10:07:54 | 1,380 ms | 成功 | 12 / 11 | 9,065,111 B |
+  | 10:16:26 | 2,644 ms | 成功 | 12 / 12 | 0 B |
+
+- 后两轮 UI 在约 4.5 / 5.3 秒采样时已显示更新成功；采样包含 UI 自动化观察延迟，
+  不作为精确总耗时。成功轮配置编译约 85–138 ms；应用后两次 profile-prepare 为
+  53 / 74 ms，首次成功后的后台 libbox 准备为 994 ms。没有据此判断原生帧率。
+- Kitty 外部资源包含 11 项规则集和 ASN MMDB；ASN 来源为 jsDelivr 的
+  `MetaCubeX/meta-rules-dat@release/GeoLite2-ASN.mmdb`，缓存 8853 KiB，
+  其 9,065,111 B 与前两轮下载总字节一致。第三轮全部 304，证明确实可以使用条件缓存，
+  不能据前两轮断言 ASN 永远重新下载。资源主机还有 raw.githubusercontent.com。
+- 已安装 `ca1ac79` 的 Provider Manager/准备队列均为三路；手动刷新强制检查整套资源，
+  12 项请求需要分批等待。当前源码八路上限尚未装入手机，未做升级前后性能对照。
+  第三轮 network_us=7,158,750、task_queue_us=13,799,662 均为各任务累计值，
+  不能加到 2,644 ms 墙钟耗时上。慢轮主要停在外部资源阶段，原始配置发现编译约 98 ms。
+- 第一轮失败仅保留汇总日志，没有记录具体资源与错误，无法可靠归因到某条 URL、
+  ASN 超时或某种 TLS 错误。历史日志另有两次约 20 秒失败；不把时间接近预算当作超时原因证明。
+  本轮没有切换 VPN/TUN、改订阅 URL/规则、安装 APK 或删除用户数据。脱敏阶段记录归档于此；
+  设备临时导出文件在本地读取后清理。本机主目标增量构建、版本检查及 diff 检查另按基础门禁执行。
+
+## 2026-11-14：删除订阅下载的无效证书选项
+
+- 代码快照：`5f70ddc` 加本轮工作区；HuxerUI 使用仓库固定源码 `eb190f3d`。
+  删除新建、编辑、二维码及网页唤醒导入的证书开关、草稿状态和文案资源，
+  同步删除 Profile、DownloadOptions 和 Provider Request 的证书跳过字段。
+- 桌面 curl 固定校验证书链和主机名；Android 删除宽松 TrustManager/HostnameVerifier，
+  JNI 与 Java 签名一并更新；iOS 删除接受 server-trust 的 delegate，使用系统默认校验。
+  TLS 失败提示不再建议放行。节点与 DNS 的显式协议 TLS 参数不属于此订阅下载开关，保持原语义。
+- SQLite schema v2 保留 `allow_invalid_cert` 兼容列，hydrate 忽略其值，正常保存写 false；
+  不批量改写、删库或清理订阅文件。persistence 验证旧标志为 true 的多来源库迁移、
+  重开不改写该列，正常提交清除该标志并保留全部 ID、引用与来源文件；原锁竞争、ABA 等回归继续通过。
+- Linux / Clang 21 Debug：`cmake --build build --target clash-flux -j 4`（含 HUI codegen）、
+  `./run.sh --version`（v0.3.108）及 `git diff --check` 通过。
+  `cmake --build build --target clash-flux test_singbox test_persistence test_rule_provider_download test_page_transition -j 4` 通过。
+- `ctest --test-dir build --output-on-failure --no-tests=error -R '^(rule_provider_download|ui_resources)$'`
+  **2/2，2.22 秒**；下载回归带固定 OpenSSL CLI 和 `--require-tls`，重复拒绝不受信 HTTPS，保留原文件。
+  `ctest --test-dir build --output-on-failure --no-tests=error -j 2 -R '^(singbox|persistence|page_transition|resource_management_runtime|dns_hosts_runtime|dns_policy_runtime|dns_tls_runtime)$'`
+  **7/7，103.16 秒**；未将九项定向回归记作完整 required 门禁。
+- 在 platform/android 以 `HUXERUI_HOME` 显式指向同一仓库固定源码，执行
+  `./gradlew :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac --max-workers=4`
+  **通过，arm64-v8a，46 秒**，含 preBuild 的宿主策略回归。未运行 Android 真机证书场景、
+  原生 GUI 视觉验收或 Windows/macOS/iOS 构建。未提交、打标签或发布。
+
 ## 2026-11-14：Provider 八路并发与订阅刷新候选复用
 
 - 代码快照：`ca1ac79` 加本轮工作区。Provider 准备和请求协调共用八路上限。

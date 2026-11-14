@@ -37,6 +37,8 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
         authorized = self.path not in expected or self.headers.get("Authorization") == expected[self.path]
         if self.path == "/direct-denied":
             authorized = False
+        if self.path == "/identity":
+            authorized = self.headers.get("User-Agent") == "clash.meta"
         if (self.path == "/reuse" or self.path.startswith("/concurrent-")) and self.headers.get("Authorization"):
             authorized = False
         if self.path == "/no-validator":

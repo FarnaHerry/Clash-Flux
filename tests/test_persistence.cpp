@@ -1005,7 +1005,7 @@ Task<void> RunTest(TaskScope tasks) {
                           remote.file == "legacy-remote.yaml" && remote.selected && remote.updatedAt == 1700000001 &&
                           remote.type == "remote" && remote.description == "保留的远程订阅" &&
                           remote.timeoutSecs == 75 && remote.intervalMins == 180 && remote.autoUpdate &&
-                          remote.useCoreProxy && remote.allowInvalidCert && remote.homepage == "https://example.com" &&
+                          remote.useCoreProxy && remote.homepage == "https://example.com" &&
                           remote.usedBytes == 1234 && remote.totalBytes == 9876 &&
                           remote.expireAt == 0,
                       "remote subscription settings and usage data must survive migration");
@@ -1040,7 +1040,28 @@ Task<void> RunTest(TaskScope tasks) {
                       std::filesystem::exists(profileFiles / "legacy-remote.yaml") &&
                       std::filesystem::exists(profileFiles / "legacy-local.json"),
                   "all migrated subscription rows and files must survive close/reopen");
+            // Hydration ignores the retired flag without rewriting existing rows.
+            const auto readRetiredFlags = [legacy]() -> Task<std::vector<int>> {
+                auto opened = co_await sqlite::Database::OpenAsync(
+                    File{legacy.string()}, db_schema::openOptions());
+                Check(static_cast<bool>(opened), "retired TLS flag: open database");
+                auto raw = std::move(*opened);
+                auto flags = co_await raw.QueryAsync<int>(
+                    "SELECT allow_invalid_cert FROM profiles ORDER BY id",
+                    [](const sqlite::RowView& row) { return row.Get<int>(0); });
+                Check(static_cast<bool>(flags), "retired TLS flag: read compatibility column");
+                Check(static_cast<bool>(co_await raw.CloseAsync()), "retired TLS flag: close database");
+                co_return std::move(*flags);
+            };
+            Check((co_await readRetiredFlags()) == std::vector<int>{1, 0},
+                  "hydrate/reopen must leave legacy TLS flags and all rows untouched");
+            Check(co_await reopened.commitProfile(migratedAgain[0], reopened.profileRevision(41)),
+                  "normal save must accept a legacy profile with the retired TLS flag");
             co_await reopened.close();
+            Check((co_await readRetiredFlags()) == std::vector<int>{0, 0} &&
+                      std::filesystem::exists(profileFiles / "legacy-remote.yaml") &&
+                      std::filesystem::exists(profileFiles / "legacy-local.json"),
+                  "normal save must clear only the retired flag and preserve every source file");
             RemoveDatabase(legacy);
         }
 

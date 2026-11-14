@@ -21,7 +21,6 @@ export struct Profile {
     bool autoUpdate = false;        // 允许自动更新（需 intervalMins > 0）
     bool useSystemProxy = false;    // 使用系统代理更新（环境变量代理）
     bool useCoreProxy = false;      // 使用内核代理更新（127.0.0.1:mixedPort）
-    bool allowInvalidCert = false;  // 允许无效证书（危险）
     // ---- 原生连接订阅（PPTP；由 type 决定解释）----
     std::string nativeConfig;
     std::string nativeRoutes;

@@ -112,6 +112,9 @@
     bool checkNetworkConflicts(const singbox::CompileOptions& options,
                                const nlohmann::json& config, std::string& error) {
 #if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+        // Source-update preparation can run outside the lifecycle lock. Protect
+        // controller/process ownership while inspecting the current data plane.
+        std::lock_guard lifecycle(lifecycleMutex_);
         namespace conflicts = clashflux::network_conflict;
         const auto observed = conflicts::Inspect();
         conflicts::Request request;
@@ -455,13 +458,8 @@
                                  bool* geoPrepared = nullptr, bool* candidateChecked = nullptr,
                                  const std::function<bool(std::string&)>& guard = {},
                                  const FinalizeCompilation& finalize = {}) {
-        // Background preparation owns no lifecycle lock. Foreground operations
-        // may wait here, but the background completion never waits for them.
-        std::unique_lock compilationLock(compilationMutex_, std::defer_lock);
-        while (!compilationLock.try_lock()) {
-            if (cancel.stop_requested()) { error = "订阅准备已取消"; return false; }
-            std::this_thread::sleep_for(std::chrono::milliseconds{10});
-        }
+        // Each operation owns its inputs and staging. Only cache table access
+        // and the final cache publication are serialized, never network IO.
         bool preparedGeo = false;
         if (geoPrepared) *geoPrepared = false;
         if (candidateChecked) *candidateChecked = false;
@@ -481,48 +479,21 @@
         rule_provider_cache::Operations operations;
         operations.maxConcurrentFetches = provider_resources::kMaxConcurrentDownloads;
         operations.retainedDirectory = std::filesystem::path(options.ruleProviderCacheDir) / ".downloads";
-        ProviderDownloadStats downloads;
-        operations.revalidate = [this, cancel, &downloads](const singbox::HttpRuleProviderResource& resource,
-                                 const std::filesystem::path& file, const singbox::HttpCacheValidators& validators) {
-          const auto request = [&](const std::map<std::string, std::string>& headers, bool conditional) {
-            provider_resources::Request pending;
-            pending.identity = "rule:" + resource.identity;
-            pending.url = resource.url;
-            pending.headers = headers;
-            pending.maxBytes = resource.maxBytes;
-            pending.timeoutSecs = resource.maxBytes > 8 * 1024 * 1024 ? 120 : 20;
-            pending.acceptNotModified = conditional;
-#if defined(__ANDROID__)
-            pending.attempts = resource.maxBytes > 8 * 1024 * 1024 ? 1 : 2;
-#endif
-            return downloadProvider(pending, file, downloads, cancel);
-          };
-          auto headers = resource.headers;
-          std::size_t bytes = 0;
-          for (const auto& [name, value] : headers) bytes += name.size() + value.size() + 4;
-          const bool conditional = (!validators.etag.empty() || !validators.lastModified.empty()) &&
-              bytes + validators.etag.size() + validators.lastModified.size() + 40 <= 16384;
-          if (conditional) {
-              if (!validators.etag.empty()) headers.emplace("if-none-match", validators.etag);
-              if (!validators.lastModified.empty()) headers.emplace("if-modified-since", validators.lastModified);
-          }
-          auto fetched = request(headers, conditional);
-          // Conditional headers never follow redirects. Retry using the original
-          // request policy so an originally header-free URL can still redirect.
-          if (conditional && fetched.status >= 300 && fetched.status < 400 && fetched.status != 304)
-              fetched = request(resource.headers, false);
-          return fetched;
+        operations.publish = [this, guard](const std::function<bool()>& commit, std::string& reason) {
+            std::lock_guard lifecycle(lifecycleMutex_);
+            std::lock_guard publication(resourceCommitMutex_);
+            return (!guard || guard(reason)) && commit();
         };
-        operations.fetchProxy = [this, cancel, &downloads](const singbox::HttpProxyProviderResource& resource,
-                                   const std::filesystem::path& file, std::string& reason) {
-            provider_resources::Request pending;
-            pending.identity = "proxy:" + resource.identity;
-            pending.url = resource.url;
-            pending.headers = resource.headers;
-            pending.maxBytes = resource.maxBytes;
-            const auto response = downloadProvider(pending, file, downloads, cancel);
-            reason = response.error;
-            return response.ok;
+        ProviderDownloadStats downloads;
+        operations.failure = [](const std::string& identity, bool proxy) {
+            stream::logApplication("warning", std::format("provider-prepare key={:016x} ready=false phase=resource-validation",
+                clashflux::download::DiagnosticId((proxy ? "proxy:" : "rule:") + identity)));
+        };
+        operations.revalidate = [this, cancel, &downloads](const auto& resource, const auto& file, const auto& validators) {
+            return downloadConditionalResource("rule:", resource, file, validators, downloads, cancel);
+        };
+        operations.revalidateProxy = [this, cancel, &downloads](const auto& resource, const auto& file, const auto& validators) {
+            return downloadConditionalResource("proxy:", resource, file, validators, downloads, cancel);
         };
         operations.check = [this, policy, cancel, &preparedGeo, guard, &finalize](const auto& candidate, auto& result, std::string& reason) {
             if (cancel.stop_requested()) return false;
@@ -662,6 +633,10 @@
         // Android GEO 使用 Gradle 固定来源资产；不能改为运行时刷新。
         return false;
 #endif
+        if (resources.empty()) return false;
+        // Legacy built-in SRS owns shared paths; isolate its repair/download
+        // sequence without blocking HTTP/Geo snapshot preparation.
+        std::lock_guard lock(builtinGeoMutex_);
         bool attempted = false;
         for (const auto& resource : resources) {
             const auto& tag = resource.tag;
@@ -692,7 +667,7 @@
                 return singbox::RuleSetCacheValid(temp) ? std::string{}
                     : std::string{"文件不是兼容的 SRS 规则集（文件头校验失败）"};
             };
-            const auto result = api_->downloadToFile(url, dest, download);
+            const auto result = providerDownloader_.downloadToFile(url, dest, download);
             // 校验临时文件后才提交，HTTP 200 错误页也不能毁掉旧缓存。
             // 校验仅筛文件头，完整解压与规则校验仍由内核负责。
             const bool cacheUsable = singbox::RuleSetCacheValid(dest);

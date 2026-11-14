@@ -1,58 +1,86 @@
-// Included privately by CoreStore. One bounded, short-lived accepted compilation.
+// Immutable accepted compilations; cache locks never span file IO or downloads.
     struct CachedCompilation {
         singbox::CompileOptions request, prepared;
         singbox::CompileResult result;
         std::chrono::steady_clock::time_point created;
+        std::size_t bytes = 0;
     };
-    std::mutex compilationMutex_;
-    std::optional<CachedCompilation> cachedCompilation_;
+    std::mutex compilationCacheMutex_, resourceCommitMutex_, builtinGeoMutex_;
+    std::deque<std::shared_ptr<const CachedCompilation>> cachedCompilations_;
 
     bool reuseCompilation(const singbox::CompileOptions& request,
                           singbox::CompileOptions& prepared, singbox::CompileResult& result) {
-        if (!cachedCompilation_ || !request.forceProviderRefreshSources.empty() ||
-            !request.refreshProviderKey.empty() || cachedCompilation_->request != request ||
-            std::chrono::steady_clock::now() - cachedCompilation_->created > std::chrono::seconds{60}) return false;
-        const auto& cache = *cachedCompilation_;
-        // Full identities and bytes are re-read; filenames/mtime alone are not trust.
-        const auto fresh = [](const auto& resource, const std::filesystem::path& root) {
-            if (!resource.intervalSeconds) return true;
-            std::error_code ec;
-            const auto stamp = std::filesystem::last_write_time(root / (resource.cacheKey + ".cache"), ec);
-            return !ec && decltype(stamp)::clock::now() - stamp < std::chrono::seconds{resource.intervalSeconds};
-        };
-        for (const auto& resource : cache.result.httpRuleProviders) {
-            std::string error;
-            const auto body = singbox::ReadHttpRuleProviderCache(resource, request.ruleProviderCacheDir, error);
-            const auto expected = cache.prepared.ruleProviderContents.find(resource.cacheKey);
-            if (!fresh(resource, request.ruleProviderCacheDir) || !body ||
-                expected == cache.prepared.ruleProviderContents.end() || *body != expected->second) return false;
+        if (!request.forceProviderRefreshSources.empty() || !request.refreshProviderKey.empty()) return false;
+        std::vector<std::shared_ptr<const CachedCompilation>> snapshots;
+        {
+            std::lock_guard lock(compilationCacheMutex_);
+            snapshots.assign(cachedCompilations_.begin(), cachedCompilations_.end());
         }
-        for (const auto& resource : cache.result.httpProxyProviders) {
-            if (!resource.required) continue;
-            std::string error;
-            const auto body = singbox::ReadHttpProxyProviderCache(resource, request.proxyProviderCacheDir, error);
-            const auto expected = cache.prepared.proxyProviderContents.find(resource.cacheKey);
-            if (!fresh(resource, request.proxyProviderCacheDir) || !body ||
-                expected == cache.prepared.proxyProviderContents.end() || *body != expected->second) return false;
+        for (const auto& snapshot : snapshots) {
+            if (snapshot->request != request ||
+                std::chrono::steady_clock::now() - snapshot->created > std::chrono::seconds{60}) continue;
+            const auto& cache = *snapshot;
+            const auto fresh = [](const auto& resource, const std::filesystem::path& root) {
+                if (!resource.intervalSeconds) return true;
+                std::error_code ec;
+                const auto stamp = std::filesystem::last_write_time(root / (resource.cacheKey + ".cache"), ec);
+                return !ec && decltype(stamp)::clock::now() - stamp < std::chrono::seconds(resource.intervalSeconds);
+            };
+            // Full identities and bytes remain authoritative, including external edits.
+            for (const auto& resource : cache.result.httpRuleProviders) {
+                std::string error;
+                const auto body = singbox::ReadHttpRuleProviderCache(resource, request.ruleProviderCacheDir, error);
+                const auto expected = cache.prepared.ruleProviderContents.find(resource.cacheKey);
+                if (!fresh(resource, request.ruleProviderCacheDir) || !body ||
+                    expected == cache.prepared.ruleProviderContents.end() || *body != expected->second) return false;
+            }
+            for (const auto& resource : cache.result.httpProxyProviders) {
+                if (!resource.required) continue;
+                std::string error;
+                const auto body = singbox::ReadHttpProxyProviderCache(resource, request.proxyProviderCacheDir, error);
+                const auto expected = cache.prepared.proxyProviderContents.find(resource.cacheKey);
+                if (!fresh(resource, request.proxyProviderCacheDir) || !body ||
+                    expected == cache.prepared.proxyProviderContents.end() || *body != expected->second) return false;
+            }
+            prepared = cache.prepared;
+            result = cache.result;
+            return true;
         }
-        prepared = cache.prepared;
-        result = cache.result;
-        return true;
+        return false;
     }
+
     void rememberCompilation(singbox::CompileOptions request,
                              const singbox::CompileOptions& prepared, const singbox::CompileResult& result) {
-        // File providers and built-in GEO have independently changing disk inputs.
-        // Their existing preparation/check path is retained until fully fingerprinted.
         const auto format = singbox::DetectProfileFormat(request.profileYaml);
         if (result.hasFileProviders || !result.ruleSetResources.empty() ||
             (format != singbox::ProfileFormat::ClashYaml && format != singbox::ProfileFormat::NodeSubscription)) return;
-        std::size_t bytes = result.json.size() * 2 + request.profileYaml.size();
-        for (const auto& [key, body] : prepared.ruleProviderContents) bytes += key.size() + body.size();
-        for (const auto& [key, body] : prepared.proxyProviderContents) bytes += key.size() + body.size();
+        const auto optionBytes = [](const auto& input) {
+            std::size_t bytes = sizeof(input) + input.profileYaml.size();
+            for (const auto& source : input.auxiliarySources) bytes += sizeof(source) + source.content.size();
+            for (const auto* contents : {&input.ruleProviderContents, &input.proxyProviderContents})
+                for (const auto& [key, body] : *contents) bytes += 128 + key.size() + body.size();
+            return bytes;
+        };
+        // Account for both retained options, raw snapshots and result projection.
+        std::size_t bytes = sizeof(CachedCompilation) + optionBytes(request) + optionBytes(prepared) + result.json.size() * 4;
+        for (const auto* contents : {&result.ruleProviderContents, &result.proxyProviderContents})
+            for (const auto& [key, body] : *contents) bytes += 128 + key.size() + body.size();
         if (bytes > 32 * 1024 * 1024) return;
         request.forceProviderRefreshSources.clear(); request.refreshProviderKey.clear();
         auto accepted = prepared;
         accepted.forceProviderRefreshSources.clear(); accepted.refreshProviderKey.clear();
-        cachedCompilation_ = CachedCompilation{std::move(request), std::move(accepted), result,
-                                               std::chrono::steady_clock::now()};
+        auto snapshot = std::make_shared<const CachedCompilation>(CachedCompilation{
+            std::move(request), std::move(accepted), result, std::chrono::steady_clock::now(), bytes});
+        std::lock_guard lock(compilationCacheMutex_);
+        std::erase_if(cachedCompilations_, [&](const auto& entry) {
+            return entry->request == snapshot->request ||
+                std::chrono::steady_clock::now() - entry->created > std::chrono::seconds{60};
+        });
+        cachedCompilations_.push_front(std::move(snapshot));
+        std::size_t total = 0;
+        for (const auto& entry : cachedCompilations_) total += entry->bytes;
+        while (cachedCompilations_.size() > 4 || total > 32 * 1024 * 1024) {
+            total -= cachedCompilations_.back()->bytes;
+            cachedCompilations_.pop_back();
+        }
     }

@@ -4,6 +4,38 @@
 准备结果复用已于 2026-11-11 接入（范围见下文）；2026-11-03 已接入下文独立到期调度，2026-11-04 补齐桌面 Provider
 常驻下载器与有界空闲 easy/连接复用；原生 remote rule_set 继续由 sing-box 管理。
 
+## 2026-11-14：下载与编译复用收敛
+
+主订阅导入、手动更新与自动更新共用 ProfilesStore 的版本提交路径和常驻下载器。
+平台差异只在 `ClashApi::downloadToFile` 后端：桌面 curl、Android 文件流式桥接、iOS URLSession。
+主订阅显式标记请求用途并统一限制 8 MiB；不再用“大小不限”识别 Android 403 UA 兼容请求。
+普通订阅保留旧 UA，仅 HTTP 403 可用 clash.meta 重试；条件头不改变用途，自定义请求头和 Provider 不改 UA。
+Android 主订阅保留平台代理策略，Provider 保留 DIRECT；桌面的系统环境/内核代理选项不扩展到手机。
+Android Java 直接写入应用创建的独占暂存文件，JNI 只回传状态、响应头、字节数和错误分类；
+不再通过 Bundle byte[] 与 JNI 搬运完整正文。截断、超限和 TLS 失败都不能替换目标文件。
+小资源保持 20 秒预算、Android 最多两次可重试传输；大资源 120 秒、一次尝试，重试由共同下载入口处理。
+
+规则集与代理集合共用 v1/v2 表示缓存解码；v2 保存 ETag/Last-Modified，v1 继续可读。
+两种 Provider 都支持条件请求、304、正文相等时跳过重复格式校验；候选检查与缓存提交仍独立执行。
+主订阅另在 `subscription-http/<id>.cache` 保存可选表示缓存，完整绑定 ID、URL、来源版本文件及正文；
+发送条件头前逐字节核对已接受的来源文件，外部编辑、URL 变化或缓存损坏均回落完整 GET。
+该缓存不参与 SQLite schema，不是订阅记录的替代品，写入失败不影响已接受来源；未知版本保留，
+不进行扫描清理。只在来源提交/应用成功后更新缓存，304 保留缺省的流量/到期/首页元数据，
+仍执行手动更新所要求的 Provider 检查。iOS 暂缓，保留拒绝非空请求头边界，不启用内部条件头。
+
+编译复用分层：每工作线程最多两份小型 Clash YAML 解析快照（原文完整比较，单份原文不超过
+128 KiB、估算总预算 4 MiB），消费者独占克隆；资源转换缓存沿用既有完整内容键；
+CoreStore 最多保留四份不可变已检查编译快照，共用估算 32 MiB 预算与 60 秒有效期。
+命中仍核对完整选项、资源身份、正文与到期；file provider、内置 GEO 和未完整指纹化格式继续走完整检查。
+缓存锁只保护快照表；网络和纯编译在锁外，最终缓存发布短暂取得生命周期锁及资源提交锁并重新检查 guard。
+远程来源更新在网络准备期间释放生命周期锁，回来后核对全部来源/设置修订、原文字节和运行计划，
+只有持锁的来源事务与一次性交接才能发布结果。内置 SRS 的旧共享路径修复另有专用锁，
+不将它扩展到自定义 HTTP/Geo 准备；本地编辑等既有领域操作仍保留独占事务边界。
+
+`provider-download` 逐资源记录诊断 key、状态、尝试、排队/共享/传输耗时、字节与稳定错误分类；
+`provider-prepare` 标出失败资源的校验阶段。key 只用于诊断关联，不能用作完整身份或完整性证明，
+不打印 URL、名称、请求头、正文或原始异常。累计任务耗时不当作墙钟耗时，Android 不臆造连接数。
+
 ## 所有权与提交
 
 `CoreStore` 持有一份 `provider_resources::Manager`，规则/ASN 与代理集合通过
@@ -11,8 +43,9 @@
 进程的任务线程内使用现有 Java TLS 桥接，不将 SQLite/缓存提交搬进 libbox 后台进程。
 
 管理器默认最多八个活动下载、64 个不同在途请求（包括等待项）；满额拒绝新请求，
-同一请求的等待者仍可加入。身份比较使用完整来源/资源身份和完整请求策略，包括 URL、
-请求头、条件请求、大小、超时、重试、TLS 与代理选项，不按缓存文件名摘要判断。
+同一传输请求的等待者仍可加入。传输键逐项比较完整 URL、请求头、条件请求、大小、超时、
+重试、代理策略与代理/CA 环境值（区分未设置与空值），不按 URL 单独或摘要判断。
+来源/资源身份继续用于各自的验证、存储及候选发布；不同来源只共享相同策略的在途原始响应。
 凭据只用于内存中的身份比较，不输出到新诊断日志。
 
 在途协调仅共享有界原始响应，不共享候选批准、暂存路径或提交结果。每个候选在自己的独占目录
@@ -79,7 +112,8 @@ Android 行为依据[平台 HttpURLConnection 文档](https://developer.android.
 每个 handle 的 libcurl 连接缓存上限为 3；活跃并发由 Provider Manager 限制为 8。
 池锁只保护借出/归还，不包围网络传输；普通候选入口的生命周期锁并未放开。
 
-复用身份核对原始站点 authority（含 URL 凭据）、证书校验选项、代理三态、相关代理/CA
+HTTPS 始终校验证书链与主机名；订阅和 Provider 下载均无跳过校验入口。
+复用身份核对原始站点 authority（含 URL 凭据）、代理三态、相关代理/CA
 环境值（区分未设置和空值）及请求头。仅 If-None-Match / If-Modified-Since 不分裂传输身份，仍逐次设置，
 完整请求的在途合并和持久缓存身份继续逐字节核对所有头。身份及凭据只在内存，不进日志。
 返回池前 reset 请求选项，清除回调、输出缓冲、请求头和错误缓冲指针；TLS/代理/跳转和
@@ -90,8 +124,8 @@ Android 行为依据[平台 HttpURLConnection 文档](https://developer.android.
 [线程安全契约](https://curl.se/libcurl/c/threadsafe.html)：reset 保留连接/DNS/TLS session
 缓存，同一 handle 任一时刻只由一个线程使用。缓存项不保存响应正文或候选批准。
 Android Provider 仍使用 Java TLS 桥接，iOS URLSession 路径未改变，未宣称获得相同池化收益。
-主订阅刷新当前仍创建自己的独立下载器；本批重点是一次准备内多个 Provider 和常驻 Runtime
-后续 Provider 更新，不宣称跨进程 CLI、完全退出后或任意服务端均能复用连接。
+主订阅刷新也使用自己的常驻下载器；两个下载所有者的池均与控制器端点/secret 独立。
+不宣称跨进程 CLI、完全退出后或任意服务端均能复用连接。
 
 ## 诊断字段
 
@@ -110,12 +144,12 @@ Android Provider 仍使用 Java TLS 桥接，iOS URLSession 路径未改变，�
 | `finalize_check_us` / `cache_commit_us` | 目标核对、GEO 准备与最终候选检查/缓存原子替换 |
 | `download_requests` / `shared_requests` | 传输调用与重试次数（不拆分重定向跳数）/共享在途响应的调用数 |
 | `cache_hits` / `stale_fallbacks` / `not_modified` | 准备层未到期内容复用/失败沿用旧内容/实际 304 响应数 |
-| `download_bytes` | 桌面 curl 下载计数；Android 为平台返回的正文长度累计，失败时可能没有完整字节证据 |
+| `download_bytes` | 桌面 curl 下载计数；Android 为实际成功写入暂存文件的字节累计，超限块不计入 |
 | `measured_requests` / `new_connections` | 有 curl 建连证据的尝试数/`CURLINFO_NUM_CONNECTS` 计数 |
 
 `new_connections=0` 且 `measured_requests=0` 表示没有建连证据，不能解读为连接复用。
-Android 记录平台传输耗时和正文长度，不臆造系统连接池计数；主订阅仍沿用现有 Android
-传输诊断。本批没有改变 TLS 默认校验、DIRECT 下载或单值请求头/重定向约束。
+Android 记录平台传输耗时和落盘字节，不臆造系统连接池计数；主订阅也使用统一阶段诊断。
+本批没有改变 TLS 默认校验、Provider DIRECT 下载或单值请求头/重定向约束。
 新日志只输出上述阶段/计数和数值来源 ID，不输出 URL、provider 名称、正文或请求头。
 
 ## 回归边界
@@ -124,7 +158,10 @@ Android 记录平台传输耗时和正文长度，不臆造系统连接池计数
 取消排队所有者后接手，以及两个完整候选共享规则/代理下载而独立检查提交。
 `rule_provider_download` 通过真实 HTTP(S) 检查传输计数、304 和 TLS 拒绝。
 `test_profile_selection_runtime.py` 通过生产 CLI 核对四项 provider 请求的诊断、失败留旧、
-并发选择/编辑/删除与重开。当前命令和验收结果见 [主线状态](l1-l2-l3-status.md)。
+并发选择/编辑/删除与重开；该独立脚本的历史文件名断言适配尚未完成，不能据此宣称当前通过。
+必跑 `resource_management_runtime` 覆盖生产 CLI 的主订阅条件请求、手动依赖重检、元数据保留、
+下载失败留旧和准备期间外部编辑拒绝；Android 宿主 JVM 覆盖真实 HTTP 文件流、超限/截断、
+304、UA 边界、重定向与自签证书拒绝。当前命令和验收结果见 [主线状态](l1-l2-l3-status.md)。
 
 ## 单项刷新（2026-11-03）
 
