@@ -183,6 +183,27 @@ public:
         snapshots_.clear();
     }
 
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+    bool replaceService(const std::function<bool()>& replace, std::string& cleanupError) {
+        std::lock_guard operationLock(operationMutex_);
+        auto& core = coreStore();
+        auto lifecycle = core.lockNativeLifecycle();
+        if (!replace()) return false;
+        if (!core.retireReplacedService()) {
+            cleanupError = core.snapshot().lastError;
+            if (cleanupError.empty()) cleanupError = "服务变更后清理旧内核失败";
+        }
+        // The old daemon has already closed the sessions it owned.
+        manager_.disconnectAll();
+        {
+            std::lock_guard snapshotLock(mutex_);
+            snapshots_.clear();
+        }
+        refreshPptpAvailability();
+        return true;
+    }
+#endif
+
     // The Home/tray stop action pauses every data plane while keeping this
     // store usable for a later explicit start or PPTP connection. Unlike
     // shutdown(), it must not stop the session monitor permanently.

@@ -14,13 +14,18 @@
 namespace clashflux::ui {
 
 struct HomeEasterEgg {
-    std::string_view id;
-    std::string_view author;
+    std::string_view name;
     std::string_view url;
+    bool isLibrary = false;
 };
 
 inline constexpr std::array kHomeEasterEggPool{
-    HomeEasterEgg{"hui-author", "FinalScave", "https://github.com/FinalScave"},
+    HomeEasterEgg{"FinalScave", "https://github.com/FinalScave"},
+    HomeEasterEgg{"Lib-Charts", "https://github.com/HuxerUI/Lib-Charts", true},
+    HomeEasterEgg{"Lib-SQLite", "https://github.com/HuxerUI/Lib-SQLite", true},
+    HomeEasterEgg{"Lib-Camera", "https://github.com/HuxerUI/Lib-Camera", true},
+    HomeEasterEgg{"Lib-CodeEditor", "https://github.com/HuxerUI/Lib-CodeEditor", true},
+    HomeEasterEgg{"Lib-Media", "https://github.com/HuxerUI/Lib-Media", true},
 };
 
 inline std::size_t PickHomeEasterEgg() {
@@ -34,19 +39,20 @@ inline huxerui::View HomeEasterEggContent(
     return huxerui::Scope([egg, open = std::move(open)] {
         const auto& theme = huxerui::UseTheme();
         return huxerui::Column {
-          huxerui::Text(Localized("HuxerUI 官方作者")).Style(huxerui::TextStyle{
+          huxerui::Text(egg.isLibrary ? Localized("HuxerUI 扩展库") : Localized("HuxerUI 官方作者"))
+            .Style(huxerui::TextStyle{
               huxerui::Font::System(font_size::kCaption).WithWeight(huxerui::FontWeight::SemiBold),
               theme.colors.on_surface_variant}),
           huxerui::Row {
             huxerui::Image(app::images::github).Fit(huxerui::ImageFit::Contain).Tint(theme.colors.primary)
                 .With(huxerui::Frame{.width = 18.0F, .height = 18.0F}),
-            huxerui::Text(std::string{egg.author}).Style(huxerui::TextStyle{
+            huxerui::Text(std::string{egg.name}).Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kBody), theme.colors.primary}),
           }.With(huxerui::Spacing(8.0F), huxerui::Frame{.min_height = 28.0F},
                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
                  theme.interactions.indication, huxerui::Focusable(true),
                  huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                     .label = std::string{egg.author} + " · GitHub"})
+                     .label = std::string{egg.name} + " · GitHub"})
               .OnClick([egg, open] { open(egg.url); }).Key("home-easter-egg-link"),
         }.With(huxerui::Grow(1.0F), huxerui::Spacing(4.0F),
                huxerui::MainAlign(huxerui::MainAxisAlignment::Center),

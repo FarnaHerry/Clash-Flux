@@ -154,6 +154,9 @@ export ServiceInfo query() {
 export bool available() { return query().compatible(); }
 export bool reachable() { return query().reachable; }
 export bool installed() { return native_service::installed(); }
+export std::optional<bool> installationState(std::string& error) {
+    return native_service::installationState(error);
+}
 export bool ensureCompatible(std::string& error) {
     return native_service::ensureCompatible(CLASHFLUX_VERSION, error);
 }

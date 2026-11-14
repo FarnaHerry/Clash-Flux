@@ -167,8 +167,16 @@ inline StartupResult synchronizeInstalled() {
 export StartupResult synchronizeInstalled() {
 #endif
 #if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+#if defined(_WIN32)
+    std::string error;
+    const auto registered = installationState(error);
+    if (!registered) return {.ready = false, .error = std::move(error)};
+    const auto isInstalled = [registered] { return *registered; };
+#else
+    const auto isInstalled = [] { return installed(); };
+#endif
     return clashflux::service_startup::synchronize(
-        [] { return installed(); }, [] { return query(); },
+        isInstalled, [] { return query(); },
         [](std::string& error) { return ensureCompatible(error); });
 #else
     // macOS has no separately installed daemon; mobile services ship in the app.

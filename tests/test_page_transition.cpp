@@ -4475,9 +4475,26 @@ struct ProxyProbeFixture {
     bool singleFail = false;
 };
 std::shared_ptr<ProxyProbeFixture> proxyProbeFixture;
+void CheckProxyTestAfterStandby(const std::shared_ptr<clashflux::ui::ProxyTestModel>& model) {
+    model->ObserveContext(false, 1, 1);
+    model->preparing = true;
+    model->ObserveContext(true, 1, 2);
+    check(model->preparing.Get(), "pending probe survives the transition into standby");
+    model->preparing = false;
+    const auto ticket = model->Begin();
+    const auto probe = model->Get("standby-test", 0, false, 0);
+    check(model->Start(probe, ticket, 0), "original probe starts on the ready core");
+    model->ObserveContext(true, 1, 2);
+    check(model->Current(ticket), "standby observation preserves the new probe");
+    model->ObserveContext(true, 1, 3);
+    model->Complete(probe, ticket, 170);
+    check(!model->Current(ticket) && model->Get("standby-test", 0, false, 0)->value.Get().delay == 0,
+          "core replacement invalidates measurements even when the plan revision matches");
+    model->ObserveContext(true, 1);
+}
 void InstallProxyProbeFixture(huxerui::ApplicationContext& context) {
     proxyProbeFixture = std::make_shared<ProxyProbeFixture>();
-    proxyProbeFixture->model->ObserveContext(true, 1);
+    CheckProxyTestAfterStandby(proxyProbeFixture->model);
     context.Provide(proxyProbeFixture);
 }
 void StartProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture, huxerui::TaskScope tasks,
@@ -6753,6 +6770,7 @@ void testHomeCardPress() {
 
 int homeCardReveals = 0;
 std::string homeEasterEggOpenedUrl;
+std::size_t homeEasterEggFixtureIndex = 0;
 
 huxerui::View HomeCardFlipRoot(bool dark, bool reduced) {
     auto theme = dark ? huxerui::FlatDarkThemeSpec() : huxerui::FlatLightThemeSpec();
@@ -6780,7 +6798,7 @@ huxerui::View HomeCardFlipRoot(bool dark, bool reduced) {
               .With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("flip-card-one"),
           clashflux::ui::HomeCardSurface(theme, huxerui::Text("Second front"), "second", true,
               clashflux::ui::HomeEasterEggContent(
-                  clashflux::ui::kHomeEasterEggPool[clashflux::ui::PickHomeEasterEgg()],
+                  clashflux::ui::kHomeEasterEggPool[homeEasterEggFixtureIndex],
                   [](std::string_view url) { homeEasterEggOpenedUrl = url; }))
               .With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("flip-card-two"),
           clashflux::ui::HomeCardSurface(theme, huxerui::Text("Cat control excluded"), "control", false)
@@ -7250,6 +7268,8 @@ void testRetainedRootDock() {
 
 void testHomeCardFlip() {
     using huxerui::testing::UiSemanticSelector;
+    using clashflux::ui::kHomeEasterEggPool;
+    homeEasterEggFixtureIndex = 0;
     for (const auto* app : {&kHomeCardFlipLight, &kHomeCardFlipDark, &kHomeCardFlipReduced}) {
         for (const auto device : {huxerui::PointerDeviceKind::Mouse, huxerui::PointerDeviceKind::Touch}) {
             const bool reduced = app == &kHomeCardFlipReduced;
@@ -7308,11 +7328,11 @@ void testHomeCardFlip() {
             check(first.Find(UiSelector::Key("home-card-back")).Exists() &&
                   second.Find(UiSelector::Key("home-card-back")).Exists(),
                   "each card retains its own independent flip state and local transition");
-            check(ui.Find(UiSelector::Text("FinalScave")).Exists() &&
-                  homeEasterEggOpenedUrl.empty(), "the author Easter egg never opens its link automatically");
+            const auto& egg = kHomeEasterEggPool[homeEasterEggFixtureIndex];
+            check(ui.Find(UiSelector::Text(std::string{egg.name})).Exists() &&
+                  homeEasterEggOpenedUrl.empty(), "the Easter egg shows its name without opening the link");
             ui.Find(UiSelector::Key("home-easter-egg-link")).Tap(); ui.PumpAndSettle();
-            check(homeEasterEggOpenedUrl == "https://github.com/FinalScave",
-                  "the only pool item opens the verified HuxerUI creator profile on click");
+            check(homeEasterEggOpenedUrl == egg.url, "the Easter egg opens its own GitHub link on click");
             ui.TapAt(counterPoint, {.device_kind = device}); ui.PumpAndSettle();
             check(first.Find(UiSelector::Key("home-card-back")).Exists() &&
                   ui.Find(UiSelector::Text("Counter-1")).Exists(),
@@ -7336,6 +7356,7 @@ void testHomeCardFlip() {
             const auto settled = ui.CaptureSnapshot();
             ui.Pump(std::chrono::seconds(1));
             check(ui.CaptureSnapshot() == settled, "a completed flip schedules no continuous animation");
+            homeEasterEggFixtureIndex = (homeEasterEggFixtureIndex + 1) % kHomeEasterEggPool.size();
         }
     }
 }

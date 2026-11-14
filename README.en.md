@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.109 release notes](docs/releases/v0.3.109.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.110 release notes](docs/releases/v0.3.110.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -189,7 +189,7 @@ Unsupported external-resource discovery shows the empty state without a format e
   Minimizing uses the platform's native behavior and keeps the Windows taskbar entry, including with lightweight tray mode enabled.
 - A dashboard donut chart shows cumulative upload/download shares (the largest share's percentage in the center), totals and
   percentages.
-- Double-click a regular dashboard card for a short scale-and-fade Easter egg; double-click again to return. The shared pool currently contains only the HuxerUI creator's GitHub profile.
+- Double-click a regular dashboard card for a random Easter egg, then double-click again to return. The pool links to the HuxerUI creator's GitHub profile and the five official extensions Clash-Flux uses.
 - Android: sing-box libbox uses the same version as the desktop core and runs in a
   separate `:background` process. VpnService creates the TUN interface, while the UI
   process owns the configuration database. Binder controls the runtime; atomic
@@ -509,6 +509,8 @@ pauses core auto-start and reports the failure. Older services need one manual u
 to enable self-upgrade; portable copies in user-writable directories still require
 the Settings update button and authorization. UAC elevates only the management command.
 An administrator terminal can also run `clash-flux.exe service install|uninstall`.
+Installing or updating the service in Settings starts the core in standby. A desktop
+delay test also starts a stopped core in standby and then runs the requested test.
 All Windows core startup now goes through SCM. See [service deployment and validation](docs/windows-service.md).
 
 ## Cross-platform CI
@@ -567,7 +569,7 @@ Lib-Charts and Lib-SQLite also use pinned commits from their `FarnaHerry` forks'
 `farna/main` branches, with the same URL/COMMIT identities in native builds and the
 Android library graph. See [HuxerUI fork maintenance](docs/huxerui-fork.md) for local
 checkout, patch ownership and upgrade instructions.
-The source is pinned to `5c84b4ab`: `farna/main` merges upstream `a66a0f76` with opt-in Row/Column layout priorities, preserving the existing Pager, window and extension integration fixes. The app does not yet enable the new priority policy; existing layouts keep their previous behavior. The source CLI selects the framework with `--sdk`; the Android CI reuses the CLI from the locked 0.4.0 offline archive and points it at the same pinned fork source with `--sdk`. The offline fallback is the separately locked 0.4.0 SDK archive, which supplies the CLI and host tools only; it lacks the fork-only `create_initial_window` runtime API, so desktop builds use the pinned fork source (checked by a configure-time guard).
+The source is pinned to `11849f99`, merging upstream Windows color emoji rendering, the redundant fullscreen topmost removal and CLI DEB/RPM packaging templates, and fixing controlled Pager settling back to the outgoing page when dragging is disabled mid-gesture, while preserving the existing Pager, window and extension integration fixes. The app does not yet enable the new priority policy; existing layouts keep their previous behavior. The source CLI selects the framework with `--sdk`; the Android CI reuses the CLI from the locked 0.4.0 offline archive and points it at the same pinned fork source with `--sdk`. The offline fallback is the separately locked 0.4.0 SDK archive, which supplies the CLI and host tools only; it lacks the fork-only `create_initial_window` runtime API, so desktop builds use the pinned fork source (checked by a configure-time guard).
 
 Windows packaging with `huxerui package windows` creates a `setup.exe` with an
 installation wizard: Burn bundles an MSI and a HuxerUI installer interface with

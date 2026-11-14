@@ -683,8 +683,11 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const huxerui::StringVariant label = kind == HomeProxySettingsKind::SystemProxy
         ? Localized("系统代理设置") : Localized("虚拟网卡设置");
+    const auto style = huxerui::UseEnvironment<huxerui::IconButtonStyle>();
+    // Keep the button's hit area, with the icon on the card heading's leading edge.
+    const float trailingInset = std::max(0.0F, style.minimum_interactive_size - style.icon_size);
     return huxerui::IconButton(app::images::gear, label)
-        .With(huxerui::Tooltip(label), huxerui::Frame{.width = 32.0F, .height = 32.0F},
+        .With(huxerui::Tooltip(label), huxerui::Padding(huxerui::EdgeInsets{.right = trailingInset}),
               huxerui::Enabled(settings->view.Get().ready))
         .Key(kind == HomeProxySettingsKind::SystemProxy
             ? "home-system-proxy-settings" : "home-tun-settings")

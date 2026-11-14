@@ -1,5 +1,50 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-14：HuxerUI 11849f99 与 v0.3.110 发布准备
+
+- 发布代码基于 `cecf55c` 加本轮工作区，CMake/Android versionName 同为 `0.3.110`，
+  versionCode 从正式 v0.3.109 的 187 升到 188；中英文说明见 [v0.3.110](releases/v0.3.110.md)。
+- fetch 后 `farna/main` 为 `11849f99952c2c2d6a3292809f0011d79e125c9e`。
+  相对旧 pin `1683dc27` 包含官方 Windows 彩色 emoji、全屏 topmost、CLI DEB/RPM 模板，
+  以及受控 Pager 在拖动中禁用时收束到受控页的修复；末尾两条提交只更新维护文档。
+  应用 checkout、workflow 与 Android Java/native 固定同一 SHA，扩展 pin 保持。
+- 框架 Windows/MSVC Debug：单元 201、Windows 68、运行时 1149 项测试通过。
+- 应用 Windows/MSVC 19.51 + Ninja Release：主目标及全部测试目标构建通过；
+  `run.ps1 --version` 输出 `Clash-Flux v0.3.110`；`git diff --check` 通过。
+  `ctest -L clashflux-required` 31/34 通过，`page_transition` 135.29 秒、`ui_resources` 通过。
+  未通过的三项均为本机环境限制：`resource_management_runtime` 在已安装实例持有单实例
+  互斥量时 CLI 60 秒超时；`windows_service` 缺少管理员服务管道；`windows_physical_dns_wfp`
+  缺少管理员 WFP 权限。标签 CI 需在干净 runner 上重新执行完整门禁。
+- 未执行 Android 真机/签名、Linux/macOS 原生及 Windows 安装/提权实机；不能把本地 Windows
+  构建记作其它平台或真机通过。
+
+## 2026-11-14：首页彩蛋扩展库链接
+
+- 代码快照为 `cecf55c` 加本次工作区改动，HuxerUI 固定 `5c84b4ab`。彩蛋池包含作者主页和五个官方扩展库仓库。
+- Windows/MSVC 与 WSL Fedora/Clang 21 主目标经 HuxerUI codegen 构建，版本均为 `v0.3.109`。
+  Windows 运行 `ui_resources`。Linux 运行 `page_transition` 与 `ui_resources`，用测试回调核对六条链接。
+  在隔离的 Linux X11 窗口双击卡片确认库条目显示。Windows 原生交互及移动端未检查。
+
+## 2026-11-14：托盘出站模式
+
+- 代码快照为 `cecf55c` 加本次工作区改动，HuxerUI 固定 `5c84b4ab`。
+- Windows/MSVC 与 WSL Fedora/Clang 21 主目标及 HuxerUI codegen 构建通过，版本均为 `v0.3.109`。
+  Windows `ui_resources` 及 Linux `page_transition`、`ui_resources` 通过，`git diff --check` 通过。
+- Linux `test_tray_runtime.py` 在隔离 D-Bus 和 Xvfb 中通过，覆盖子菜单位置、三项勾选和切换、
+  首窗与无窗模式继承、托盘宿主恢复。Windows/macOS 原生鼠标悬停未实测。
+
+## 2026-11-14：桌面内核服务与测速启动
+
+- 代码快照为 `cecf55c` 加本次工作区改动，HuxerUI 固定 `5c84b4ab`。
+- Windows/MSVC 和 WSL Fedora/Clang 21 主目标及 HuxerUI codegen 构建通过，版本均为 `v0.3.109`。
+  Windows `service_protocol`、`ui_resources` 通过，`page_transition` 构建成功但运行超过两分钟后停止。
+  Linux 10 项定向 CTest 通过，包含待命内核、
+  控制客户端生命周期、代理页状态、服务协议、VPN 及 CLI 资源回归。`git diff --check` 通过。
+- 隔离 Linux 网络、临时数据库、真实 sing-box 和 Xvfb 下，桌面启动进入待命。
+  手动停核后点一次分组测速，服务重新启动一个待命内核，控制接口返回原分组的延迟结果，
+  两次待命配置均无业务入站。Windows SCM 测试产物已编译，UAC 安装后待命以及 Windows
+  GUI 停核后测速仍需管理员隔离环境实测。
+
 ## 2026-11-14：HuxerUI 追新与 v0.3.109 发布准备
 
 - 发布代码基于 `5f70ddc`，包含此前删除订阅证书跳过入口和订阅下载/编译复用改动；

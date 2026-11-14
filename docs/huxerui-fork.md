@@ -4,12 +4,23 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `5c84b4abf34675e9265c41e875ceedc1e79b9349`，各平台 CI 共用
+Clash-Flux 当前固定 `11849f99952c2c2d6a3292809f0011d79e125c9e`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码。源码 CLI 使用 `--sdk <path>` 选择 SDK 或源码目录；CI 的 Android
 job 从锁定的 0.4.0 离线归档取官方 CLI 并以 `--sdk huxerui-source` 指向同一 fork 源码，
 桌面 job 走 HuxerUI 源码通道，不消费离线包的运行时库（不含 fork 专属 `create_initial_window`）。
+
+2026-11-14 跟进 [`11849f99`](https://github.com/FarnaHerry/HuxerUI/commit/11849f99952c2c2d6a3292809f0011d79e125c9e)：
+`farna/main` 在 `489ba70e` 基础上追加两条维护文档，要求上游问题先具备可达修复才进入候选，
+并链接 Pager 拖动禁用修复的 PR。`489ba70e` 已合入官方 `df065105`（Windows 彩色 emoji 绘制）、
+`9efef2d6`（全屏时移除多余 topmost）与 `e90163a1`（CLI 新增 DEB/RPM 打包模板），并修复受控
+Pager 在拖动过程中被禁用时回弹到离场页的问题：现在直接收束到受控页，新增同帧改页并禁用拖动的回归。
+应用不消费新 CLI 打包模板，CI 继续使用锁定的 0.4.0 归档 CLI；Windows 渲染/全屏改动随
+桌面构建生效。应用独立 checkout、CI 与 Android Java/native 固定同一完整 SHA，扩展 pin 保持。
+本轮框架单元 201、Windows 68、运行时 1149 项测试通过；应用构建与回归见[验收记录](l1-l2-l3-status.md)。
+
+2026-11-14 跟进 [`1683dc27`](https://github.com/FarnaHerry/HuxerUI/commit/1683dc279aca30e6d080e10eb1428133e09cdac2)，合入上游 `124837c1` 的调试布局辅助线。
 
 2026-11-14 跟进已发布的 [`5c84b4ab`](https://github.com/FarnaHerry/HuxerUI/commit/5c84b4abf34675e9265c41e875ceedc1e79b9349)：
 `farna/main` 已合入官方 `a66a0f76`，新增显式 `LayoutPriority` 的 Row/Column 空间分配。
@@ -305,7 +316,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 5c84b4abf34675e9265c41e875ceedc1e79b9349
+git -C third_party/huxerui checkout 11849f99952c2c2d6a3292809f0011d79e125c9e
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`

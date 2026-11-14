@@ -22,7 +22,7 @@ description: 修改 Clash-Flux 内核控制、托盘与无窗启动、首帧快�
 - Linux 无窗简版菜单切完整菜单时先隐藏，下一轮托盘轮询才发布，不同结构不在同轮替换，避免 Plasma 旧动作；共享退出收尾与实际状态映射。
 - 启动后异步检查已安装桌面服务，在待命内核启动前完成版本同步；同版本跳过，未安装不主动装，失败一次反馈、不自动请求 UAC。Windows 升级信任边界见平台技能；macOS 无独立服务，手机服务随应用更新。
 - 服务手动安装/更新成功后，设置入口默认启动待命；由连接/TUN 等命令触发安装时保持原操作票据并续跑原命令，不将用户意图强制改为待命。
-- Windows/Linux 通过同一 service facade 和 CoreStore 维护生命周期；所有权、CLI 驻留、三态状态与启动失败清理见 [桌面内核生命周期](../../docs/runtime-health-review.md#桌面内核所有权与失败清理)。不恢复 Linux 无服务或 CLI 专属数据面。
+- Windows/Linux 通过同一 service facade 和 CoreStore 维护生命周期；首窗、无窗和按需测速共用应用级控制。服务替换后清理旧运行态，保留 PPTP 监视。所有权、CLI 驻留及失败清理见 [桌面内核生命周期](../../docs/runtime-health-review.md#桌面内核所有权与失败清理)。
 
 ## PPTP 与 OpenVPN
 

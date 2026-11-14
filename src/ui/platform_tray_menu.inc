@@ -5,6 +5,11 @@
         static_cast<void>(trayLocale);
         const TrayMenuText menuText{
             .showWindow = huxerui::UseString(Localized("显示主窗口")),
+            .mode = {huxerui::UseString(Localized("出站模式")), {
+                huxerui::UseString(Localized("规则")),
+                huxerui::UseString(Localized("全局")),
+                huxerui::UseString(Localized("直连")),
+            }},
             .noProfiles = huxerui::UseString(Localized("暂无可用订阅")),
             .selectProfile = huxerui::UseString(Localized("选择订阅")),
             .selectLine = huxerui::UseString(Localized("切换当前订阅线路")),
@@ -36,6 +41,7 @@
             if (!trayRuntime->control) return;
             const CoreControl& control = *trayRuntime->control;
             const CoreView core = coreModel->view.Get();
+            const std::string mode = core.Mode();
             const bool running = core.core.state == core::CoreState::Running;
             const bool menuRunning = control.Running();
             const bool proxyEnabled = control.SystemProxyEnabled();
@@ -51,13 +57,15 @@
                 key += value;
             };
             for (const std::string* label : {
-                     &menuText.showWindow, &menuText.noProfiles,
+                     &menuText.showWindow, &menuText.noProfiles, &menuText.mode.title,
                      &menuText.selectProfile, &menuText.selectLine,
                      &menuText.noLines, &menuText.autoLineSuffix,
                      &menuText.startCore, &menuText.stopCore,
                      &menuText.connect, &menuText.disconnect,
                      &menuText.systemProxy, &menuText.tun,
                      &menuText.lightweight, &menuText.quit}) append(*label);
+            for (const auto& label : menuText.mode.options) append(label);
+            append(mode);
             key += std::format("{}{}{}{}{}{}{}{}",
                 running, menuRunning, proxyEnabled, tunEnabled, busy,
                 core.systemProxyActive, core.TunActive(), settings.lightweightTray);
@@ -99,6 +107,7 @@
             entries.push_back(huxerui::MenuItem(menuText.showWindow,
                 [trayRuntime] { trayRuntime->ShowWindow(); }));
             entries.push_back(huxerui::MenuSection{});
+            entries.push_back(trayRuntime->OutboundModeMenu(menuText.mode, mode, !busy));
             std::vector<huxerui::MenuEntry> profileEntries;
             for (const model::Profile& profile : profiles) {
                 if (profile.type == "pptp") continue;

@@ -11,7 +11,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -145,56 +144,67 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 
 #if defined(__linux__) || defined(_WIN32)
 
-huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync(bool startStandby) {
-    co_return co_await RunOnTaskThread([startStandby] {
+namespace {
+
+huxerui::Task<DesktopServiceInstallResult> ManageDesktopServiceAsync(bool remove) {
+    co_return co_await RunOnTaskThread([remove] {
         DesktopServiceInstallResult result;
+        std::string managementError;
+        result.changed = store::vpnStore().replaceService([remove, &managementError] {
 #if defined(__linux__)
-        const std::string executable =
-            std::filesystem::read_symlink("/proc/self/exe").string();
-        result.success = std::system(
-            std::format("pkexec \"{}\" service install", executable).c_str()) == 0;
+            const std::string executable =
+                std::filesystem::read_symlink("/proc/self/exe").string();
+            return std::system(std::format("pkexec \"{}\" service {}",
+                executable, remove ? "uninstall" : "install").c_str()) == 0;
 #else
-        result.success = service::manageElevated(false, result.error);
+            return service::manageElevated(remove, managementError);
 #endif
+        }, result.error);
+        if (!result.changed) result.error = std::move(managementError);
         result.installed = service::installed();
-        if (result.success && result.installed) {
-            auto& core = store::coreStore();
-            store::vpnStore().shutdown();
-            // Service replacement invalidates the old runtime snapshot on both platforms.
-            result.success = core.stopCore() && (!startStandby || core.startReadyCore());
-            if (!result.success) {
-                result.error = core.snapshot().lastError;
-                if (result.error.empty()) result.error = "Service installed, but core preparation failed";
-            }
-        }
+        result.ready = result.changed && result.error.empty();
         return result;
     });
 }
 
-void InstallDesktopService(std::shared_ptr<CoreModel> model,
-                           huxerui::TaskScope tasks, FluxToastHandle toast) {
-    if (model->serviceChecking.Get() || model->operations.Busy()) return;
-    model->serviceChecking = true;
-    tasks.Launch([toast, model]() -> huxerui::Task<void> {
+void ManageDesktopService(CoreControl control, FluxToastHandle toast, bool remove) {
+    if (control.Busy()) return;
+    control.model->serviceChecking = true;
+    control.model->RequestRefresh();
+    control.tasks.Launch([toast, control, remove]() -> huxerui::Task<void> {
+        const auto& model = control.model;
+        DesktopServiceInstallResult result;
         try {
-            const auto result = co_await InstallDesktopServiceAsync();
-            model->Update([installed = result.installed](CoreView& view) {
-                view.serviceInstalled = installed;
-            });
-            model->RequestRefresh();
-            model->serviceChecking = false;
-            if (result.success && result.installed) toast.Show(Localized("服务已安装"));
-            else toast.Show(result.error.empty()
-                ? Localized("安装被取消或失败（需要授权）")
-                : huxerui::StringVariant(result.error));
+            result = co_await ManageDesktopServiceAsync(remove);
+            auto core = co_await RunOnTaskThread([] { return ReadCoreView(true, false); });
+            model->Update([core = std::move(core)](CoreView& view) { view = core; });
         } catch (const std::exception& error) {
-            model->serviceChecking = false;
-            toast.Show(error.what());
+            result.error = error.what();
+            result.ready = false;
         } catch (...) {
-            model->serviceChecking = false;
-            toast.Show(Localized("服务操作失败"));
+            result.ready = false;
         }
+        model->serviceChecking = false;
+        model->RequestRefresh();
+        if (model->closing) co_return;
+        if (result.changed && result.installed != remove) {
+            toast.Show(Localized(remove ? "服务已卸载" : "服务已安装"));
+            if (result.ready) {
+                if (!remove) control.Run({.action = CoreAction::Start});
+                co_return;
+            }
+        }
+        toast.Show(!result.error.empty() ? huxerui::StringVariant(result.error)
+            : result.changed ? Localized("服务操作失败")
+            : remove ? Localized("卸载被取消或失败")
+                     : Localized("安装被取消或失败（需要授权）"));
     });
+}
+
+} // namespace
+
+huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync() {
+    return ManageDesktopServiceAsync(false);
 }
 
 #endif
@@ -202,11 +212,9 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
 #if defined(__linux__)
 
 [[huxerui::composable]] huxerui::View DesktopServiceRow(
-    bool service_installed, huxerui::TaskScope tasks,
-    FluxToastHandle toast) {
-    const auto model = huxerui::UseService<CoreModel>();
-    const auto serviceTasks = huxerui::UseApplicationTaskScope();
-    if (!model->view.Get().ready)
+    bool service_installed, huxerui::TaskScope, FluxToastHandle toast) {
+    const auto control = UseCoreControl();
+    if (!control.model->view.Get().ready)
         return SettingRow(Localized("内核服务"), "—", SettingsValue(false, {}), app::images::gear);
     return SettingRow(
         Localized("内核服务"),
@@ -214,99 +222,35 @@ void InstallDesktopService(std::shared_ptr<CoreModel> model,
             ? Localized("已安装（sing-box、PPTP 与 TUN 由 root 服务托管）")
             : Localized("安装 root 服务后，TUN/PPTP 无需每次授权（经 pkexec 一次性提权）"),
         huxerui::Button(Localized(service_installed ? "卸载服务" : "安装服务"))
-            .With(huxerui::Enabled(!model->serviceChecking.Get() && !model->operations.Busy()))
-            .OnClick([service_installed, tasks = serviceTasks, toast, model] {
-                if (model->serviceChecking.Get() || model->operations.Busy()) return;
-                if (!service_installed) {
-                    InstallDesktopService(model, tasks, toast);
-                    return;
-                }
-                model->serviceChecking = true;
-                tasks.Launch([tasks, toast, model]() -> huxerui::Task<void> {
-                    try {
-                        const auto result = co_await RunOnTaskThread([] {
-                            const std::string executable =
-                                std::filesystem::read_symlink("/proc/self/exe")
-                                    .string();
-                            const int code = std::system(
-                                std::format("pkexec \"{}\" service uninstall", executable).c_str());
-                            return std::pair{code, service::installed()};
-                        });
-                        model->Update([installed = result.second](CoreView& view) {
-                            view.serviceInstalled = installed;
-                        });
-                        model->RequestRefresh();
-                        model->serviceChecking = false;
-                        if (result.first != 0) {
-                            toast.Show(Localized("卸载被取消或失败"));
-                            co_return;
-                        }
-                        toast.Show(Localized("服务已卸载"));
-                    } catch (const std::exception& error) {
-                        model->serviceChecking = false;
-                        toast.Show(error.what());
-                    } catch (...) {
-                        model->serviceChecking = false;
-                        toast.Show(Localized("服务操作失败"));
-                    }
-                });
+            .With(huxerui::Enabled(!control.Busy()))
+            .OnClick([service_installed, control, toast] {
+                ManageDesktopService(control, toast, service_installed);
             }), app::images::gear);
 }
 
 #elif defined(_WIN32)
 
 [[huxerui::composable]] huxerui::View DesktopServiceRow(
-    bool service_installed, huxerui::TaskScope tasks,
-    FluxToastHandle toast) {
-    const auto model = huxerui::UseService<CoreModel>();
-    const auto serviceTasks = huxerui::UseApplicationTaskScope();
-    if (!model->view.Get().ready)
+    bool service_installed, huxerui::TaskScope, FluxToastHandle toast) {
+    const auto control = UseCoreControl();
+    if (!control.model->view.Get().ready)
         return SettingRow(Localized("内核服务"), "—", SettingsValue(false, {}), app::images::gear);
-    const auto remove = [tasks = serviceTasks, toast, model] {
-        if (model->serviceChecking.Get() || model->operations.Busy()) return;
-        model->serviceChecking = true;
-        tasks.Launch([model, toast]() -> huxerui::Task<void> {
-            std::string error;
-            bool ok = false;
-            try {
-                const auto result = co_await RunOnTaskThread([] {
-                    std::string failure;
-                    const bool success = service::manageElevated(true, failure);
-                    // UAC cancellation leaves the current data plane untouched.
-                    // Once SCM changes succeed, retire the client's old session
-                    // state and per-user proxy settings on the task thread.
-                    if (success) {
-                        store::vpnStore().shutdown();
-                        store::coreStore().stopCore();
-                    }
-                    return std::tuple{success, std::move(failure), service::installed()};
-                });
-                ok = std::get<0>(result);
-                error = std::get<1>(result);
-                const bool installed = std::get<2>(result);
-                model->Update([installed](CoreView& view) { view.serviceInstalled = installed; });
-            } catch (const std::exception& exception) { error = exception.what(); }
-              catch (...) { error = "服务操作失败"; }
-            model->serviceChecking = false;
-            model->RequestRefresh();
-            if (ok) toast.Show(Localized("服务已卸载"));
-            else toast.Show(error.empty() ? Localized("服务操作失败") : huxerui::StringVariant(error));
-        });
-    };
     return SettingRow(
         Localized("内核服务"),
         Localized("Windows 系统服务托管内核、TUN 与 PPTP；启动后自动检查更新，手动安装或更新需要管理员授权"),
         huxerui::Row {
             huxerui::Button(Localized(service_installed ? "更新服务" : "安装服务"))
-                .OnClick([model, serviceTasks, toast] {
-                    InstallDesktopService(model, serviceTasks, toast);
-                }).With(huxerui::Enabled(!model->serviceChecking.Get() && !model->operations.Busy())),
+                .OnClick([control, toast] {
+                    ManageDesktopService(control, toast, false);
+                }).With(huxerui::Enabled(!control.Busy())),
             service_installed
                 ? huxerui::View{huxerui::Button(Localized("卸载服务"))
-                    .OnClick(remove).With(huxerui::Enabled(!model->serviceChecking.Get() && !model->operations.Busy()))}
+                    .OnClick([control, toast] { ManageDesktopService(control, toast, true); })
+                    .With(huxerui::Enabled(!control.Busy()))}
                 : huxerui::View{},
         }.With(huxerui::Spacing(8.0F)), app::images::gear);
 }
+
 
 #else
 

@@ -11,11 +11,13 @@
 namespace clashflux::ui {
 
 enum class CoreAction { Idle, Start, Stop, Restart, Connect, Disconnect, Mode, SystemProxy, Tun, NetworkSettings };
+enum class CoreCommandOrigin { Interactive, Startup, ProxyTest };
 
 struct CoreCommand {
     CoreAction action = CoreAction::Idle;
     bool enabled = false;
     std::string mode;
+    CoreCommandOrigin origin = CoreCommandOrigin::Interactive;
     bool operator==(const CoreCommand&) const = default;
 };
 

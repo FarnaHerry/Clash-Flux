@@ -5,6 +5,7 @@
 #include <huxerui/huxerui.h>
 
 #include <chrono>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -192,6 +193,11 @@ void AndroidPreparePlatformDataDirectory(
 
 #else
 
+struct TrayModeLabels {
+    std::string title;
+    std::array<std::string, 3> options;
+};
+
 struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
     explicit DesktopTrayRuntime(huxerui::ApplicationHandle app)
         : application(std::move(app)), tray(application->SystemTray()) {}
@@ -244,6 +250,23 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
         return next;
     }
 
+    huxerui::MenuItem OutboundModeMenu(const TrayModeLabels& labels,
+                                     const std::string& selected, bool enabled) {
+        constexpr std::array modes{"rule", "global", "direct"};
+        const std::weak_ptr<DesktopTrayRuntime> weak = shared_from_this();
+        std::vector<huxerui::MenuEntry> entries;
+        for (std::size_t i = 0; i < modes.size(); ++i) {
+            entries.push_back(huxerui::MenuItem(labels.options[i], [weak, mode = modes[i]] {
+                if (const auto runtime = weak.lock(); runtime && runtime->control) {
+                    const auto control = runtime->MenuControl();
+                    if (control.model->view.Get().Mode() != mode)
+                        control.Run({.action = CoreAction::Mode, .mode = mode});
+                }
+            }).Checked(selected == modes[i]).Enabled(enabled));
+        }
+        return huxerui::MenuItem(labels.title, std::move(entries)).Enabled(enabled);
+    }
+
     void ShowWindow() {
         if (!application || exitRequested ||
             (updateModel && updateModel->phase.Get() == AppUpdatePhase::Installing)) return;
@@ -285,20 +308,22 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
     }
 
     void RequestExit() {
-        if (exitRequested || !application ||
+        if (exitRequested || !application || !control ||
             (updateModel && updateModel->phase.Get() == AppUpdatePhase::Installing)) return;
         exitRequested = true;
+        control->model->closing = true;
         refresh = {};
         instance::markClosing();
         HideTray();
         if (window) window->Hide();
         const huxerui::ApplicationHandle app = *application;
-        auto coreStopped = std::make_shared<std::atomic_bool>(false);
         auto cleanupFinished = std::make_shared<std::atomic_bool>(false);
         if (!tasks) return;
         tasks->Launch(
-            [app, coreStopped, cleanupFinished]() -> huxerui::Task<void> {
+            [app, cleanupFinished, model = control->model]() -> huxerui::Task<void> {
             try {
+                while (model->operations.Busy() || model->serviceChecking.Get())
+                    co_await huxerui::Delay(std::chrono::duration<double>{0.1});
                 bool stopped = co_await RunOnTaskThread([] {
                     store::vpnStore().shutdown();
                     return store::coreStore().stopCore();
@@ -311,7 +336,6 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
                         "error", "退出时停止内核失败：" +
                             store::coreStore().snapshot().lastError);
                 }
-                coreStopped->store(stopped);
                 auto& database = clashflux::data::session();
                 const bool settingsSaved = co_await database.flushSettings();
                 const bool profilesSaved = co_await database.flushProfiles();
@@ -332,9 +356,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
                 app.Quit();
             }
         });
-        std::thread([coreStopped, cleanupFinished] {
-            std::this_thread::sleep_for(std::chrono::seconds(3));
-            if (!coreStopped->load()) store::coreStore().stopCore();
+        std::thread([cleanupFinished] {
             while (!cleanupFinished->load())
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             std::this_thread::sleep_for(std::chrono::seconds(3));
@@ -420,14 +442,19 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
             : runtimeServices && runtimeServices->startupLanguage == "en";
         const CoreView view = control->model->view.Get();
         const bool coreRunning = view.core.state == core::CoreState::Running;
-        const std::string key = std::format("{}:{}:{}:{}:{}:{}:{}:{}:{}", running, proxyEnabled,
-            tunEnabled, busy, english, coreRunning, view.systemProxyActive, view.TunActive(), view.ProxyActive());
+        const std::string mode = view.Mode();
+        const std::string key = std::format("{}:{}:{}:{}:{}:{}:{}:{}:{}:{}", running, proxyEnabled,
+            tunEnabled, busy, english, coreRunning, view.systemProxyActive, view.TunActive(), view.ProxyActive(), mode);
         if (key == presentationKey) return;
         std::vector<huxerui::MenuEntry> entries;
         const auto self = shared_from_this();
         entries.push_back(huxerui::MenuItem(english ? "Open main window" : "显示主窗口",
                                             [self] { self->ShowWindow(); }));
         entries.push_back(huxerui::MenuSection{});
+        const TrayModeLabels modeLabels = english
+            ? TrayModeLabels{"Outbound mode", {"Rule", "Global", "Direct"}}
+            : TrayModeLabels{"出站模式", {"规则", "全局", "直连"}};
+        entries.push_back(OutboundModeMenu(modeLabels, mode, !busy));
         entries.push_back(huxerui::MenuItem(
             control->ProxyActive() ? (english ? "Disconnect" : "断开连接")
                                    : (english ? "Connect" : "连接"), [self] {
@@ -524,7 +551,7 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
     if (commandMode) {
         // A command owns the Runtime until its writes are flushed, but has no
         // desktop presentation. Tray recovery must never open a CLI window.
-        StartDesktopWindowlessRuntime();
+        StartDesktopRuntime();
         return;
     }
     runtime->tray.OnActivate([runtime] { runtime->ShowWindow(); });
@@ -555,7 +582,7 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
         }
         runtime->startupDecisionPending = false;
     });
-    if (startupWantsHidden) StartDesktopWindowlessRuntime();
+    StartDesktopRuntime();
 
     const auto tray = runtime->tray;
     const bool initialTrayEnabled = startupSettings.trayEnabled;
@@ -593,16 +620,6 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
 void DesktopPreparePlatformDataDirectory(
     const huxerui::ApplicationHandle& application) {
     static_cast<void>(application);
-}
-
-bool HasDesktopCoreRuntime() {
-#if defined(CLASHFLUX_IOS)
-    // sing-box is linked into the Packet Tunnel extension, not shipped as an
-    // executable beside the iOS app.
-    return true;
-#else
-    return !cfg::singboxBinary().empty();
-#endif
 }
 
 [[huxerui::composable]] huxerui::View DesktopProfileRefreshPump() {
@@ -693,6 +710,7 @@ void ApplyWindowsNativeMenuTheme(bool) noexcept {}
 // 在组合期解析为拥有型文字，再把同一语言的菜单交给平台托盘。
 struct TrayMenuText {
     std::string showWindow;
+    TrayModeLabels mode;
     std::string noProfiles;
     std::string selectProfile;
     std::string selectLine;
@@ -777,75 +795,6 @@ struct TrayMenuText {
             return [] {};
         },
         0);
-
-    // 每次 GUI 启动都检查已安装服务，随后待命或按设置自动连接；任务线程执行
-    // 阻塞 IPC/升级，应用级保留状态避免重组重复检查；不主动安装或触发 UAC。
-    huxerui::Lifecycle(
-        [startupTasks, coreModel, settingsModel, toast, control] {
-            const auto noCleanup = [] {};
-            const SettingsView settings = settingsModel->view.Get();
-            if (!settings.ready || coreModel->startupServiceMaintenanceStarted ||
-                coreModel->serviceChecking.Get() || coreModel->operations.Busy() || cli::runtimeCommandMode()) return noCleanup;
-            coreModel->startupServiceMaintenanceStarted = true;
-            coreModel->serviceChecking = true;
-            const bool startupAutoRun = settings.autoRun;
-            startupTasks.Launch([=]() -> huxerui::Task<void> {
-                try {
-                    const auto maintenance = co_await RunOnTaskThread([] {
-                        auto& core = store::coreStore();
-                        core.init();
-                        // 若上次异常退出把系统代理留在本应用端口上，先撤销。
-                        // 仅限确实指向本应用的设置，不动其他代理软件的接管。
-                        core.releaseStaleOwnedSystemProxy();
-                        if (HasDesktopCoreRuntime()) {
-                            // 清理上次异常退出留下的旧内核（含仍持有旧 TUN 配置
-                            // 的进程）。
-                            if (!core.stopCore()) {
-                                return service::StartupResult{
-                                    .ready = false,
-                                    .error = core.snapshot().lastError};
-                            }
-                        }
-                        const auto maintenance = core.synchronizeService();
-                        if (!maintenance.ready) {
-                            stream::logApplication("warning", "启动服务检查/更新失败：" + maintenance.error);
-                            return maintenance;
-                        }
-                        if (maintenance.updated)
-                            stream::logApplication("info", "已将后台网络服务更新到当前应用版本");
-                        return maintenance;
-                    });
-                    auto next = co_await RunOnTaskThread([] { return ReadCoreView(true, false); });
-                    coreModel->Update([next = std::move(next)](CoreView& view) { view = next; });
-                    coreModel->serviceChecking = false;
-                    coreModel->RequestRefresh();
-                    if (maintenance.ready && HasDesktopCoreRuntime()) {
-                        auto startupControl = control;
-                        startupControl.presentationAvailable = [] { return false; };
-                        startupControl.onHeadlessFailure = [toast](bool, const std::string& error) {
-                            stream::logApplication("error", error.empty() ? "启动内核失败" : error);
-                            toast.Show(error.empty() ? Localized("启动内核失败") : huxerui::StringVariant(error));
-                        };
-                        startupControl.Run({.action = startupAutoRun ? CoreAction::Connect : CoreAction::Start});
-                    }
-                    if (!maintenance.ready)
-                        toast.Show(maintenance.error.empty() ? Localized("服务操作失败")
-                                                            : huxerui::StringVariant(maintenance.error));
-                } catch (const std::exception& exception) {
-                    coreModel->serviceChecking = false;
-                    coreModel->RequestRefresh();
-                    stream::logApplication("error", std::string{"启动服务任务异常："} + exception.what());
-                    toast.Show(exception.what());
-                } catch (...) {
-                    coreModel->serviceChecking = false;
-                    coreModel->RequestRefresh();
-                    stream::logApplication("error", "启动服务任务未知异常");
-                    toast.Show(Localized("服务操作失败"));
-                }
-            });
-            return noCleanup;
-        },
-        settingsModel->view, coreModel->serviceChecking, coreModel->operations.command);
 
     // 系统 VPN 的断开可能要等待 pppd/RAS 收尾，先完成清理再关闭窗口。
     const std::weak_ptr<DesktopTrayRuntime> weakTrayRuntime = trayRuntime;

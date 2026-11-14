@@ -65,6 +65,7 @@ import clashflux.utils;
 
 // CoreView 含 store::CoreSnapshot，必须在模块导入之后（同 profiles_cache.h）。
 #include "core_model.h"
+#include "core_control.h"
 
 namespace clashflux::ui {
 namespace {
@@ -306,6 +307,54 @@ constexpr std::size_t kNodeMetaChars = 8;
 // sing-box constant.TCPTimeout；单节点和组测速都使用内核同一上限。
 constexpr int kProxyDelayTimeoutMs = 15000;
 
+void RunProxyTestWhenReady(CoreControl control, std::shared_ptr<ProxyTestModel> tests,
+                           FluxToastHandle toast, std::function<huxerui::Task<void>()> measure) {
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
+    if (control.model->view.Get().core.state == core::CoreState::Running)
+        control.tasks.Launch(std::move(measure));
+    else toast.Show(Localized("测速需要内核就绪，请检查内核服务"));
+#else
+    if (control.model->closing || tests->preparing.Get()) return;
+    if (!control.Busy() && control.model->view.Get().core.state == core::CoreState::Running) {
+        control.tasks.Launch(std::move(measure));
+        return;
+    }
+    tests->preparing = true;
+    control.tasks.Launch([control, tests, toast, measure = std::move(measure)]() -> huxerui::Task<void> {
+        while (!control.model->closing &&
+               (control.model->operations.Busy() || control.model->serviceChecking.Get()))
+            co_await huxerui::Delay(std::chrono::duration<double>{0.1});
+        if (control.model->closing) {
+            tests->preparing = false;
+            co_return;
+        }
+        if (control.model->view.Get().core.state == core::CoreState::Running) {
+            tests->preparing = false;
+            co_await measure();
+            co_return;
+        }
+        if (!control.Run({.action = CoreAction::Start, .origin = CoreCommandOrigin::ProxyTest},
+                [tests, tasks = control.tasks, measure = std::move(measure)](bool ready) mutable {
+                    tests->preparing = false;
+                    if (ready) tasks.Launch(std::move(measure));
+                })) {
+            tests->preparing = false;
+            toast.Show(Localized("测速需要内核就绪，请检查内核服务"));
+        }
+    });
+#endif
+}
+
+auto BindProxyTest(const std::shared_ptr<CoreModel>& coreModel, ProxyTestModel& tests) {
+    const auto& core = coreModel->view.Get().core;
+    tests.ObserveContext(core.state == core::CoreState::Running, core.planRevision, core.runtimeEpoch);
+    return [coreModel, revision = core.planRevision, epoch = core.runtimeEpoch] {
+        const auto& current = coreModel->view.Get().core;
+        return current.state == core::CoreState::Running && current.planRevision == revision &&
+            current.runtimeEpoch == epoch;
+    };
+}
+
 huxerui::Task<int> MeasureProxyDelay(const std::string& tag) {
     co_return co_await RunOnTaskThread([tag] {
         // Empty URL lets sing-box use its own default test URL (HTTPS
@@ -339,8 +388,8 @@ huxerui::Task<std::map<std::string, int>> MeasureProxyGroupDelay(const std::stri
     std::size_t detailLimit) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const auto tasks = huxerui::UseApplicationTaskScope();
-    const auto coreModel = huxerui::UseService<CoreModel>();
-    const auto toast = UseFluxToast();
+    const auto control = UseCoreControl();
+    const auto toast = *control.toast;
     const auto tests = huxerui::UseService<ProxiesModel>()->tests;
     static_cast<void>(tests->generation.Get()); // Rebind after a runtime-plan change.
     const auto entry = tests->Get(node.name, node.delay, node.timeout, node.urlTestTime);
@@ -416,16 +465,17 @@ huxerui::Task<std::map<std::string, int>> MeasureProxyGroupDelay(const std::stri
     // 形状的标准（订阅卡等其它列表项同样复用它）。
     // URLTest 等只读组没有手动选择动作；整卡交互与正常节点一致，点击只提示。
     // Windows 的禁用透明度会为每张卡创建单独的 Direct2D 图层。
-    const auto startProbe = [tasks, coreModel, tests, entry, tag = node.name, toast] {
-        if (coreModel->view.Get().core.state != core::CoreState::Running) {
-            toast.Show(Localized("测速需要内核就绪，请检查内核服务"));
-            return;
-        }
-        const auto valid = [coreModel, revision = coreModel->view.Get().core.planRevision] {
-            const auto& core = coreModel->view.Get().core;
-            return core.state == core::CoreState::Running && core.planRevision == revision;
-        };
-        LaunchSingleProxyProbe(tasks, tests, tag, entry, MeasureProxyDelay, valid);
+    const auto startProbe = [tasks, control, tests, tag = node.name, delay = node.delay,
+                             timeout = node.timeout, testTime = node.urlTestTime, toast] {
+        if (tests->progress.Get().busy) return;
+        RunProxyTestWhenReady(control, tests, toast,
+                [tasks, model = control.model, tests, tag, delay, timeout, testTime]() -> huxerui::Task<void> {
+            const auto valid = BindProxyTest(model, *tests);
+            if (!valid()) co_return;
+            const auto probe = tests->Get(tag, delay, timeout, testTime);
+            LaunchSingleProxyProbe(tasks, tests, tag, probe, MeasureProxyDelay, valid);
+            co_return;
+        });
     };
     return ProxyNodeTile(NodeTitle(node.displayName, nameLimit, tile.fg),
         huxerui::Text(detail).Style(huxerui::TextStyle{
@@ -433,7 +483,7 @@ huxerui::Task<std::map<std::string, int>> MeasureProxyGroupDelay(const std::stri
         std::move(metaView), selected, node.displayName, std::move(onActivate),
         selectable ? SelectableTileInteraction::Selectable : SelectableTileInteraction::ReadOnly,
         !node.isGroup && !ProxyTestUsesNativeGroup(), currentProbe.testing,
-        tests->progress.Get().busy, startProbe);
+        tests->preparing.Get() || tests->progress.Get().busy, startProbe);
 }
 
 // 页面级「乐观选中意图」：点击后渲染立刻读到目标节点。以前直接改 `groups`
@@ -486,6 +536,7 @@ std::function<void()> NodeSelectAction(
     // 策略组快照 / 内核状态的全局唯一来源（见 *_model.h）。
     const auto proxiesModel = huxerui::UseService<ProxiesModel>();
     const auto coreModel = huxerui::UseService<CoreModel>();
+    const auto control = UseCoreControl();
     auto groups = huxerui::UseStateList<ProxyGroup>();
     auto coreState = huxerui::UseState<core::CoreState>(core::CoreState::Stopped);
     auto mode = huxerui::UseState<std::string>("rule");
@@ -514,7 +565,7 @@ std::function<void()> NodeSelectAction(
          parsedLabels, parsedBody, projectionGeneration, selectionIntent] {
             const store::CoreSnapshot core = coreModel->view.Get().core;
             coreState = core.state;
-            testModel->ObserveContext(core.state == core::CoreState::Running, core.planRevision);
+            testModel->ObserveContext(core.state == core::CoreState::Running, core.planRevision, core.runtimeEpoch);
             // Stopped previews use saved intent; live pages show the actual core mode.
             mode = coreModel->view.Get().Mode();
             const ProxiesSnapshot& current = proxiesModel->snapshot.Get();
@@ -553,23 +604,19 @@ std::function<void()> NodeSelectAction(
     // url-test.url，内核内部并发 10）；Android 调用 libbox urlTest，UI 只消费
     // 内核回写的结果。
     const std::function<void(const std::string&)> triggerGroupTest =
-        [testTasks, toast, testModel, coreModel, proxiesModel, groups](std::string groupName) {
+        [testTasks, toast, testModel, control, proxiesModel, groups](std::string groupName) {
+            if (testModel->progress.Get().busy || testModel->singlePending.Get() != 0) return;
             std::vector<ProxyNode> nodes;
             for (const auto& group : groups) {
                 if (group.name == groupName) nodes = group.nodes;
             }
-            testTasks.Launch([toast, testTasks, testModel, coreModel, proxiesModel,
-                              nodes = std::move(nodes), groupName = std::move(groupName)]() -> huxerui::Task<void> {
-                if (testModel->progress.Get().busy || testModel->singlePending.Get() != 0) co_return;
-                if (coreModel->view.Get().core.state != core::CoreState::Running) {
-                    toast.Show(Localized("测速需要内核就绪，请检查内核服务"));
-                    co_return;
-                }
-                const auto valid = [coreModel, revision = coreModel->view.Get().core.planRevision] {
-                    const auto& core = coreModel->view.Get().core;
-                    return core.state == core::CoreState::Running && core.planRevision == revision;
-                };
+            RunProxyTestWhenReady(control, testModel, toast,
+                [testTasks, toast, testModel, coreModel = control.model, proxiesModel,
+                 nodes = std::move(nodes), groupName = std::move(groupName)]() -> huxerui::Task<void> {
+                const auto valid = BindProxyTest(coreModel, *testModel);
+                if (!valid()) co_return;
                 const int generation = testModel->Begin();
+                if (!generation) co_return;
                 bool ok = false;
                 try {
                     ok = co_await RunOnTaskThread([groupName] { return StartProxyGroupTest(groupName); });
@@ -887,12 +934,12 @@ std::function<void()> NodeSelectAction(
     if (!direct && current != nullptr) {
         const std::string groupName = current->name;
         const GroupTestProgress progress = testProgress.Get();
-        const bool testing = progress.busy;
+        const bool testing = progress.busy || testModel->preparing.Get();
         huxerui::View floatingSpeed =
             huxerui::IconButton(app::images::speed, Localized("测速"))
                 .With(huxerui::Tooltip(Localized("测试当前分组延迟")),
                       huxerui::Frame{.width = 56.0F, .height = 56.0F},
-                      huxerui::Enabled(!progress.busy && testModel->singlePending.Get() == 0),
+                      huxerui::Enabled(!testing && testModel->singlePending.Get() == 0),
                       huxerui::Opacity(testing ? 0.0F : 1.0F),
                       huxerui::Foreground(theme.colors.on_primary),
                       huxerui::Semantics{.role = huxerui::SemanticRole::Button,

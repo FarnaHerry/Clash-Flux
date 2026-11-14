@@ -675,7 +675,20 @@ std::string currentUserSid() {
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw)) throw std::runtime_error(winError("OpenProcessToken"));
     const UniqueHandle token{raw}; return tokenSid(token.get());
 }
-bool installed(const Options& options) { return openService(options, SERVICE_QUERY_STATUS).valid(); }
+std::optional<bool> installationState(std::string& error, const Options& options) {
+    error.clear();
+    const auto service = openService(options, SERVICE_QUERY_STATUS);
+    if (service.valid()) return true;
+    const DWORD code = GetLastError();
+    if (code == ERROR_SERVICE_DOES_NOT_EXIST) return false;
+    error = winError("Query Windows service installation", code);
+    return std::nullopt;
+}
+
+bool installed(const Options& options) {
+    std::string error;
+    return installationState(error, options).value_or(false);
+}
 std::optional<std::string> request(std::string_view command, std::string& error,
                                   unsigned timeoutMs, const Options& options) {
     error.clear();
@@ -743,7 +756,13 @@ bool ensureCompatible(std::string_view version, std::string& error, const Option
     auto info = query(version, options);
     if (!info.reachable) {
         const auto service = openService(options, SERVICE_QUERY_STATUS | SERVICE_START);
-        if (!service.valid()) { error = "Windows service is not installed; install it from Settings"; return false; }
+        if (!service.valid()) {
+            const DWORD code = GetLastError();
+            error = code == ERROR_SERVICE_DOES_NOT_EXIST
+                ? "Windows service is not installed; install it from Settings"
+                : winError("Open Windows service for startup", code);
+            return false;
+        }
         if (!startService(service.get(), error)) return false;
         const auto deadline = GetTickCount64() + 15000;
         do {

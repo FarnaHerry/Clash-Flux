@@ -23,7 +23,7 @@ struct CoreControl {
     std::function<void(bool, const std::string&)> onHeadlessFailure;
 
     bool Busy() const {
-        return !model->view.Get().ready || model->operations.Busy() ||
+        return model->closing || !model->view.Get().ready || model->operations.Busy() ||
                model->serviceChecking.Get();
     }
     // The dashboard cat owns connect/start/stop only. Mode, system-proxy and
@@ -67,7 +67,7 @@ struct CoreControl {
         if (action == CoreAction::Disconnect || action == CoreAction::Stop) return CoreAction::Stop;
         return action == CoreAction::Start ? CoreAction::Idle : action;
     }
-    void Run(CoreCommand command) const;
+    bool Run(CoreCommand command, std::function<void(bool)> onFinished = {}) const;
 };
 
 inline CoreControl UseCoreControl() {

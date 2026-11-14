@@ -30,6 +30,7 @@ std::filesystem::path storageDirectory();
 // True only inside the SCM server that owns the current core process.
 bool ownsRunningCore();
 bool installed(const Options& options = {});
+std::optional<bool> installationState(std::string& error, const Options& options = {});
 Info query(std::string_view version, const Options& options = {});
 bool ensureCompatible(std::string_view version, std::string& error,
                       const Options& options = {});

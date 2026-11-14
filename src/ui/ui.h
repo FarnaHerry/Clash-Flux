@@ -655,17 +655,15 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                         huxerui::Color hintColor);
 
 #if defined(__linux__) || defined(_WIN32)
-struct CoreModel;
 struct DesktopServiceInstallResult {
-    bool success = false;
+    bool changed = false;
     bool installed = false;
+    bool ready = false;
     std::string error;
 };
 // Await within the existing application operation so installation can resume
 // its original command without releasing the shared pending state.
-huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync(bool startStandby = true);
-void InstallDesktopService(std::shared_ptr<CoreModel> model,
-                           huxerui::TaskScope tasks, FluxToastHandle toast);
+huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync();
 #endif
 
 // Android 订阅自动更新：任务线程列出到期订阅，应用共享 HTTP 客户端在 UI

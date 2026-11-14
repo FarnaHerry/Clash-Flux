@@ -5,8 +5,7 @@
 //   （rootSpec.colors.background——AppRoot 在主题 provider 之上，UseTheme 只能
 //   拿到默认浅色 spec，须按 dark 自选；子树在 provider 之下 UseTheme 正常）。
 //
-// 内核：Android 壳层在 VPN 服务就绪后独立启动数据面，桌面端首个组合经
-// RunOnTaskThread 启动（内核缺失时安静降级，状态胶囊显示「未安装」）；托盘：
+// 内核：Android 壳层在 VPN 服务就绪后独立启动数据面，桌面由应用任务启动；托盘：
 // 显示主窗口 / 退出。
 #include <huxerui/huxerui.h>
 
@@ -1038,8 +1037,40 @@ void InstallProfileLinkActivation(huxerui::ApplicationContext& context,
     });
 }
 
+namespace {
+
+#if !defined(__ANDROID__)
+void RequestStartupCore(huxerui::TaskScope tasks, std::shared_ptr<CoreModel> model,
+                        std::shared_ptr<AppRuntimeServices> runtime, bool autoConnect) {
+    CoreControl control;
+    control.model = std::move(model);
+    control.tasks = tasks;
+    control.presentationAvailable = [] { return false; };
+    control.onHeadlessFailure = [runtime](bool, const std::string& error) {
+        const std::string message = error.empty() ? "启动内核失败" : error;
+        runtime->startupError = message;
+        stream::logApplication("error", message);
+    };
+    control.Run({.action = autoConnect ? CoreAction::Connect : CoreAction::Start,
+                 .origin = CoreCommandOrigin::Startup});
+}
+#endif
+
+void StartMobileShellCore(huxerui::TaskScope tasks, std::shared_ptr<AppRuntimeServices> runtime,
+                          bool autoConnect) {
+#if defined(CLASHFLUX_IOS)
+    RequestStartupCore(tasks, huxerui::UseService<CoreModel>(), std::move(runtime), autoConnect);
+#else
+    static_cast<void>(tasks);
+    static_cast<void>(runtime);
+    static_cast<void>(autoConnect);
+#endif
+}
+
+} // namespace
+
 #if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
-void StartDesktopWindowlessRuntime() {
+void StartDesktopRuntime() {
     const auto runtimeServices = huxerui::UseService<AppRuntimeServices>();
     if (runtimeServices->persistenceStarted) return;
 
@@ -1065,17 +1096,19 @@ void StartDesktopWindowlessRuntime() {
                 co_return;
             }
 
-            settingsModel->PublishCached();
             auto& coreStore = store::coreStore();
             coreStore.setPacSessionResident(!CliRuntimeCommandMode());
             coreStore.init();
             coreStore.ensureSecret();
+            settingsModel->PublishCached();
             profilesModel->RequestSync();
-            CliStartCommandServer();
 
             // 伪 CLI：命令在无窗口启动任务里执行，落库后退出；不组合 GUI 页面。
             const bool handled = co_await RunPendingCliCommand(application);
             if (handled) co_return;
+
+            RequestStartupCore(tasks, coreModel, runtimeServices, settingsModel->view.Get().autoRun);
+            CliStartCommandServer();
 
             if (!runtimeServices->profilesPumpStarted) {
                 runtimeServices->profilesPumpStarted = true;
@@ -1120,49 +1153,6 @@ void StartDesktopWindowlessRuntime() {
                 StartCliRequestWatcher(tasks, profilesModel);
             }
 
-            // Claim startup service maintenance before yielding so a window opened
-            // during bootstrap cannot start a second maintenance operation.
-            coreModel->startupServiceMaintenanceStarted = true;
-            coreModel->serviceChecking = true;
-            const bool startupAutoRun =
-                coreStore.setting("app.auto_run", "false") == "true";
-            const auto maintenance = co_await RunOnTaskThread([] {
-                auto& core = store::coreStore();
-                core.init();
-                core.releaseStaleOwnedSystemProxy();
-                if (!cfg::singboxBinary().empty() && !core.stopCore()) {
-                    return service::StartupResult{
-                        .ready = false,
-                        .error = core.snapshot().lastError};
-                }
-                return core.synchronizeService();
-            });
-            CoreView initialCore = co_await RunOnTaskThread([] {
-                return ReadCoreView(true, false);
-            });
-            coreModel->Update([initialCore = std::move(initialCore)](CoreView& view) {
-                view = initialCore;
-            });
-            coreModel->serviceChecking = false;
-            coreModel->RequestRefresh();
-            if (maintenance.ready && !cfg::singboxBinary().empty()) {
-                CoreControl control;
-                control.model = coreModel;
-                control.tasks = tasks;
-                control.presentationAvailable = [] { return false; };
-                control.onHeadlessFailure = [runtimeServices](bool, const std::string& error) {
-                    const std::string message = error.empty() ? "启动内核失败" : error;
-                    runtimeServices->startupError = message;
-                    stream::logApplication("error", message);
-                };
-                control.Run({.action = startupAutoRun ? CoreAction::Connect : CoreAction::Start});
-            } else if (!maintenance.ready) {
-                const std::string message = maintenance.error.empty()
-                    ? "启动服务检查/更新失败" : "启动服务检查/更新失败：" + maintenance.error;
-                runtimeServices->startupError = message;
-                stream::logApplication("warning", message);
-            }
-
             bool storageFailureReported = false;
             for (;;) {
                 co_await huxerui::Delay(std::chrono::duration<double>{1.0});
@@ -1180,11 +1170,11 @@ void StartDesktopWindowlessRuntime() {
                 }
             }
         } catch (const std::exception& error) {
-            stream::logApplication("error", std::string{"托盘启动任务异常："} + error.what());
+            stream::logApplication("error", std::string{"桌面启动任务异常："} + error.what());
             CliSetPendingExitCode(1);
             application.Quit();
         } catch (...) {
-            stream::logApplication("error", "托盘启动任务未知异常");
+            stream::logApplication("error", "桌面启动任务未知异常");
             CliSetPendingExitCode(1);
             application.Quit();
         }
@@ -1262,7 +1252,7 @@ void StartDesktopWindowlessRuntime() {
 
 [[huxerui::composable]] huxerui::View AppRoot() {
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
-    // CLI commands run in StartDesktopWindowlessRuntime; do not build the GUI
+    // CLI commands run in StartDesktopRuntime; do not build the GUI
     // tree or start model pumps that would race the command's lifecycle lock.
     if (CliRuntimeCommandMode()) return huxerui::Row{};
     const huxerui::Locale systemLocale =
@@ -1344,7 +1334,7 @@ void StartDesktopWindowlessRuntime() {
         [applicationTasks, runtimeServices, application, profilesModel, settingsModel] {
             if (!runtimeServices->persistenceStarted) {
                 runtimeServices->persistenceStarted = true;
-                applicationTasks.Launch([application, applicationTasks, profilesModel,
+                applicationTasks.Launch([application, applicationTasks, profilesModel, runtimeServices,
                           settingsModel]() -> huxerui::Task<void> {
                 try {
                     auto& db = clashflux::data::session();
@@ -1370,6 +1360,7 @@ void StartDesktopWindowlessRuntime() {
                     // 单实例：owner 启动转发服务；非 owner 的命令由这里代跑。
                     CliStartCommandServer();
                     if (co_await RunPendingCliCommand(application)) co_return;
+                    StartMobileShellCore(applicationTasks, runtimeServices, settingsModel->view.Get().autoRun);
 
                     // 落库失败必须可见：持久化降级（库打不开）时 flush* 会返回
                     // false，以前这里直接丢弃返回值，用户直到重启丢数据才发现。

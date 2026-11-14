@@ -17,6 +17,10 @@ import time
 from gi.repository import Gio, GLib
 
 
+FULL_MENU_COUNT = 12
+BASIC_MENU_COUNT = 9
+MODE_INDEX = 2
+
 WATCHER = "org.kde.StatusNotifierWatcher"
 WATCHER_PATH = "/StatusNotifierWatcher"
 MENU_PATH = "/StatusNotifierItem/Menu"
@@ -35,8 +39,11 @@ class Fixture:
         self.owner = None
         self.host = True
         self.process = None
-        self.env = dict(os.environ, XDG_DATA_HOME=str(folder), TMPDIR=str(folder), GDK_BACKEND="x11",
-                        INTEL_FORCE_PROBE="1", GTK_A11Y="none", NO_AT_BRIDGE="1")
+        runtime = folder / "runtime"
+        runtime.mkdir(mode=0o700)
+        self.env = dict(os.environ, XDG_DATA_HOME=str(folder), XDG_RUNTIME_DIR=str(runtime),
+                        TMPDIR=str(folder), GDK_BACKEND="x11", INTEL_FORCE_PROBE="1",
+                        GTK_A11Y="none", NO_AT_BRIDGE="1", LANGUAGE="en")
         # Refuse the real session bus: watcher restarts must never affect Plasma.
         address = self.env.get("DBUS_SESSION_BUS_ADDRESS", "")
         assert address.startswith(("unix:path=/tmp/dbus-", "unix:abstract=/tmp/dbus-")), \
@@ -97,12 +104,37 @@ class Fixture:
                                         stdout=self.log, stderr=self.log)
         self.wait(lambda: len(self.menu()) == root_count, "initial tray menu missing")
         # Finish hydrate/maintenance before checking an otherwise identical menu.
-        self.wait(lambda: self.menu()[4 if root_count == 10 else 2][1].get("enabled", True),
+        def mode_ready():
+            items = self.menu()
+            return len(items) == root_count and items[MODE_INDEX][1].get("enabled", True)
+
+        self.wait(mode_ready,
                   "startup maintenance never finished")
 
     def click(self, item):
         self.call(self.owner, MENU_PATH, MENU, "Event",
                   GLib.Variant("(isvu)", (item[0], "clicked", GLib.Variant("i", 0), 0)))
+
+    def check_mode(self, selected):
+        mode = self.menu()[MODE_INDEX]
+        assert mode[1].get("label") == "Outbound mode", "outbound mode must precede subscriptions"
+        assert mode[1].get("children-display") == "submenu"
+        assert "toggle-state" not in mode[1]
+        assert [item[1].get("label") for item in mode[2]] == ["Rule", "Global", "Direct"]
+        assert [item[1].get("toggle-state") for item in mode[2]] == [int(i == selected) for i in range(3)]
+        return mode[2]
+
+    def switch_mode(self, index, selected):
+        self.click(self.check_mode(selected)[index])
+
+        def applied():
+            items = self.menu()
+            if len(items) <= MODE_INDEX or not items[MODE_INDEX][1].get("enabled", True):
+                return False
+            return items[MODE_INDEX][2][index][1].get("toggle-state") == 1
+
+        self.wait(applied, "mode action did not update the tray checkmark")
+        self.check_mode(index)
 
     def set_host(self, available):
         self.host = available
@@ -183,37 +215,42 @@ def main():
         folder = pathlib.Path(directory)
         fixture = Fixture(args.binary.resolve(), folder)
         try:
-            fixture.start(10)
+            fixture.start(FULL_MENU_COUNT)
+            fixture.switch_mode(1, selected=0)
             for _ in range(2):
-                fixture.recover_host(10)
+                fixture.recover_host(FULL_MENU_COUNT)
             fixture.restart_watcher()
             menu = fixture.menu()
-            lines = menu[3]
+            assert menu[MODE_INDEX + 1][1].get("label") == "Select subscription"
+            lines = menu[4]
             assert lines[1].get("children-display") == "submenu"
             assert "toggle-type" not in lines[1] and "toggle-state" not in lines[1]
-            lightweight = menu[7]
+            lightweight = menu[9]
             fixture.click(lightweight)
-            fixture.wait(lambda: fixture.menu()[7][1].get("toggle-state") !=
+            fixture.wait(lambda: fixture.menu()[9][1].get("toggle-state") !=
                          lightweight[1].get("toggle-state"), "checkbox did not update")
             print("PASS: full menu retains submenu and checkbox roles", flush=True)
             fixture.finish()
 
             # Seed only the stopped fixture database, never the user's database.
             with sqlite3.connect(folder / "clash-flux" / "clash-flux.db") as database:
-                database.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
-                                 ("tray.start_minimized", "true"))
-            fixture.start(7)
+                database.executemany("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
+                                     [("tray.start_minimized", "true"), ("ui.language", "en")])
+            fixture.start(BASIC_MENU_COUNT)
+            fixture.switch_mode(2, selected=1)
             fixture.click(fixture.menu()[0])
-            fixture.wait(lambda: len(fixture.menu()) == 10,
+            fixture.wait(lambda: len(fixture.menu()) == FULL_MENU_COUNT,
                          "window activation did not replace the basic menu")
-            fixture.recover_host(10)
+            fixture.check_mode(2)
+            fixture.recover_host(FULL_MENU_COUNT)
             fixture.finish()
 
-            fixture.start(7)
+            fixture.start(BASIC_MENU_COUNT)
+            fixture.switch_mode(0, selected=2)
             fixture.set_host(False)
             fixture.wait(lambda: not fixture.menu(), "lost host did not hide the basic tray")
             fixture.set_host(True)
-            fixture.wait(lambda: len(fixture.menu()) == 10,
+            fixture.wait(lambda: len(fixture.menu()) == FULL_MENU_COUNT,
                          "lost headless tray did not fall back to a window and full menu")
             print("PASS: headless host loss opens a fallback window", flush=True)
             fixture.finish()

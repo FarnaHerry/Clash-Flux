@@ -1,12 +1,26 @@
 // core_store_lifecycle.inc — sing-box 内核生命周期
 // 由 src/store/core_store.cppm 在 CoreStore 类体内包含。
 
-    // Blocking startup maintenance shares the core lifecycle lock: an explicit
-    // start/reconfigure cannot race a service payload replacement.
-    service::StartupResult synchronizeService() {
+    // Keep service maintenance, stale-state cleanup and the selected startup
+    // action together under the same lock used by CLI and configuration changes.
+    bool startDesktopSession(bool connect, std::string& error) {
         std::lock_guard operationLock(lifecycleMutex_);
         auto healthPause = streams_.pauseHealth();
-        return service::synchronizeInstalled();
+        releaseStaleOwnedSystemProxy();
+        const auto maintenance = service::synchronizeInstalled();
+        if (!maintenance.ready) {
+            error = maintenance.error;
+            return false;
+        }
+        if (maintenance.updated)
+            stream::logApplication("info", "已将后台网络服务更新到当前应用版本");
+        if (service::required() && !maintenance.installed) return true;
+#if !defined(CLASHFLUX_IOS)
+        if (!service::required() && cfg::singboxBinary().empty()) return true;
+#endif
+        if (stopCore() && (connect ? connectProxy() : startReadyCore())) return true;
+        error = snapshot().lastError;
+        return false;
     }
 
     // 内核把规则集解析失败报成启动 FATAL（parse rule-set: read rule:
@@ -468,7 +482,21 @@
         }
     }
 
-    bool stopCore() {
+    bool stopCore() { return stopCoreImpl(false); }
+
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+    // The administrative operation has confirmed that the old daemon exited.
+    // Its child and routes are gone even when the replacement has no IPC yet.
+    bool retireReplacedService() {
+        std::lock_guard operationLock(lifecycleMutex_);
+        managedByService_ = false;
+        nativeSessions_.clear();
+        return stopCoreImpl(true);
+    }
+#endif
+
+private:
+    bool stopCoreImpl([[maybe_unused]] bool serviceReplaced) {
         std::lock_guard operationLock(lifecycleMutex_);
         auto healthPause = streams_.pauseHealth();
         serviceDetached_ = false;
@@ -518,10 +546,9 @@
         // Explicit STOP is idempotent on both services and also releases owned
         // routes when the child already exited. Do not turn an unknown STATUS
         // into a local "stopped" result; require the service's STOP acknowledgement.
-        const bool stopThroughService =
-            managedByService_ ||
-            (!process_.running() && service::reachable());
-        if (stopThroughService) {
+        if (serviceReplaced) {
+            adopted_ = false;
+        } else if (managedByService_ || (!process_.running() && service::reachable())) {
             managedByService_ = true; // retain cleanup responsibility on failure
             std::string err;
             if (!service::stopCore(err)) {
@@ -602,6 +629,8 @@
         return cleanupError.empty();
 #endif
     }
+
+public:
 
     // 订阅/配置变更时重启当前内核。Android 的 libbox 由 VpnService 托管，
     // 但无 TUN 内核也要保持常驻；写完新配置后按当前 TUN 状态恢复对应服务。

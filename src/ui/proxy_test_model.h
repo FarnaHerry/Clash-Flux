@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -36,8 +37,9 @@ struct ProxyTestModel {
     huxerui::State<GroupTestProgress> progress{GroupTestProgress{}};
     huxerui::State<int> pending{0};
     huxerui::State<int> singlePending{0};
+    huxerui::State<bool> preparing{false};
     std::map<std::string, std::shared_ptr<ProxyProbe>> probes;
-    std::optional<std::pair<bool, std::uint64_t>> context;
+    std::optional<std::tuple<bool, std::uint64_t, std::uint64_t>> context;
 
     bool Current(int ticket) const {
         return progress.Get().busy && progress.Get().generation == ticket;
@@ -63,8 +65,8 @@ struct ProxyTestModel {
         pending = 0;
         progress = GroupTestProgress{};
     }
-    void ObserveContext(bool running, std::uint64_t revision) {
-        const auto next = std::pair{running, revision};
+    void ObserveContext(bool running, std::uint64_t revision, std::uint64_t epoch = 0) {
+        const auto next = std::tuple{running, revision, epoch};
         if (context && *context != next) {
             const int ticket = std::max(generation.Get(), progress.Get().generation) + 1;
             progress = GroupTestProgress{};

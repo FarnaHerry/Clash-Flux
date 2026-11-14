@@ -95,6 +95,19 @@ struct CoreApplyResult {
     std::string error;
 };
 
+CoreApplyResult CheckServiceForCoreCommand() {
+    if (!service::required()) return {.status = CoreApplyStatus::Applied};
+#if defined(_WIN32)
+    std::string error;
+    const auto installed = service::installationState(error);
+    if (!installed) return {.error = std::move(error)};
+    if (*installed) return {.status = CoreApplyStatus::Applied};
+#else
+    if (service::installed()) return {.status = CoreApplyStatus::Applied};
+#endif
+    return {.status = CoreApplyStatus::PermissionDenied, .error = "内核服务尚未安装，请在设置中安装"};
+}
+
 CoreApplyResult ApplyDesktopSystemProxy(bool enabled) {
     auto& coreStore = store::coreStore();
     if (coreStore.applySystemProxy(enabled)) {
@@ -124,6 +137,14 @@ CoreApplyResult ApplyDesktopTun(bool enabled) {
 
 CoreApplyResult ExecuteCoreCommand(const CoreCommand& command) {
     auto& coreStore = store::coreStore();
+#if !defined(__ANDROID__)
+    if (command.origin == CoreCommandOrigin::Startup) {
+        std::string error;
+        const bool ok = coreStore.startDesktopSession(command.action == CoreAction::Connect, error);
+        return {.status = ok ? CoreApplyStatus::Applied : CoreApplyStatus::Failed,
+                .error = std::move(error)};
+    }
+#endif
     bool ok = false;
     switch (command.action) {
         case CoreAction::Mode:
@@ -164,16 +185,15 @@ CoreApplyResult ExecuteCoreCommand(const CoreCommand& command) {
 #endif
             break;
         case CoreAction::Restart:
-            if (service::required() && !service::installed()) {
-                return {.status = CoreApplyStatus::PermissionDenied};
-            }
-            ok = coreStore.restartCore(store::profilesStore().selectedYaml());
-            break;
         case CoreAction::Connect:
-            if (service::required() && !service::installed())
-                return {.status = CoreApplyStatus::PermissionDenied, .error = "内核服务尚未安装，请在设置中安装"};
-            ok = coreStore.connectProxy();
+        case CoreAction::Start: {
+            const auto service = CheckServiceForCoreCommand();
+            if (service.status != CoreApplyStatus::Applied) return service;
+            if (command.action == CoreAction::Start) ok = coreStore.startReadyCore();
+            else if (command.action == CoreAction::Connect) ok = coreStore.connectProxy();
+            else ok = coreStore.restartCore(store::profilesStore().selectedYaml());
             break;
+        }
         case CoreAction::Disconnect:
             {
                 std::string error;
@@ -181,12 +201,6 @@ CoreApplyResult ExecuteCoreCommand(const CoreCommand& command) {
                     return {.status = CoreApplyStatus::Failed, .error = std::move(error)};
                 ok = coreStore.startReadyCore();
             }
-            break;
-        case CoreAction::Start:
-            if (service::required() && !service::installed()) {
-                return {.status = CoreApplyStatus::PermissionDenied, .error = "内核服务尚未安装，请在设置中安装"};
-            }
-            ok = coreStore.startReadyCore();
             break;
         case CoreAction::Idle:
             return {};
@@ -210,32 +224,40 @@ huxerui::StringVariant CoreActionFailure(CoreAction action) {
 
 } // namespace
 
-void CoreControl::Run(CoreCommand command) const {
-    if (Busy() || command.action == CoreAction::Idle) return;
+bool CoreControl::Run(CoreCommand command, std::function<void(bool)> onFinished) const {
+    if (model->closing || model->operations.Busy() || model->serviceChecking.Get() ||
+        command.action == CoreAction::Idle ||
+        (!model->view.Get().ready && command.origin != CoreCommandOrigin::Startup)) return false;
     model->diagnosticsCancel.request_stop();
     const CoreControl control = *this;
     const bool previousTun = model->view.Get().tunIntent;
     const CoreAction action = command.action;
-    LaunchCoreOperation<CoreApplyResult>(tasks, model, std::move(command),
+    const auto origin = command.origin;
+    return LaunchCoreOperation<CoreApplyResult>(tasks, model, std::move(command),
         [control, previousTun](CoreCommand command) -> huxerui::Task<CoreApplyResult> {
             CoreApplyResult result;
             try {
                 result = co_await RunOnTaskThread([command] { return ExecuteCoreCommand(command); });
     #if defined(__linux__) || defined(_WIN32)
-                if (result.status == CoreApplyStatus::PermissionDenied &&
+                if (!control.model->closing && command.origin == CoreCommandOrigin::Interactive &&
+                    result.status == CoreApplyStatus::PermissionDenied &&
                     control.window && control.dialog && control.toast &&
                     (!control.presentationAvailable || control.presentationAvailable()) &&
-                    !co_await RunOnTaskThread([] { return service::installed(); })) {
+                    co_await RunOnTaskThread([] {
+                        return CheckServiceForCoreCommand().status == CoreApplyStatus::PermissionDenied;
+                    })) {
                     control.window->Show();
                     control.window->Activate();
                     const auto resumed = co_await ResumeCoreCommandAfterServiceInstall<CoreApplyResult>(
                         command, [&result, control]() -> huxerui::Task<bool> {
-                            const auto installed = co_await InstallDesktopServiceAsync(false);
+                            const auto installed = co_await InstallDesktopServiceAsync();
                             result.error = installed.error;
-                            if (!installed.success || !installed.installed) co_return false;
-                            control.toast->Show(Localized("服务已安装"));
+                            if (installed.changed && installed.installed)
+                                control.toast->Show(Localized("服务已安装"));
+                            if (!installed.ready || !installed.installed) co_return false;
                             co_return true;
-                        }, [](CoreCommand original) -> huxerui::Task<CoreApplyResult> {
+                        }, [control](CoreCommand original) -> huxerui::Task<CoreApplyResult> {
+                            if (control.model->closing) co_return CoreApplyResult{};
                             co_return co_await RunOnTaskThread(
                                 [original] { return ExecuteCoreCommand(original); });
                         });
@@ -294,7 +316,8 @@ void CoreControl::Run(CoreCommand command) const {
                 result.status = CoreApplyStatus::Failed;
             }
             co_return result;
-    }, [control, action](std::optional<CoreApplyResult> completed, std::exception_ptr error) {
+    }, [control, action, origin, onFinished = std::move(onFinished)](
+            std::optional<CoreApplyResult> completed, std::exception_ptr error) {
         CoreApplyResult result = completed.value_or(CoreApplyResult{});
         if (error) {
             try { std::rethrow_exception(error); }
@@ -302,13 +325,15 @@ void CoreControl::Run(CoreCommand command) const {
             catch (...) {}
         }
         control.model->RequestRefresh();
+        if (onFinished) onFinished(result.status == CoreApplyStatus::Applied && !control.model->closing);
+        if (control.model->closing) return;
         if (control.presentationAvailable && !control.presentationAvailable()) {
             if (result.status != CoreApplyStatus::Applied && control.onHeadlessFailure)
                 control.onHeadlessFailure(
                     result.status == CoreApplyStatus::PermissionDenied, result.error);
             return;
         }
-        if (result.status == CoreApplyStatus::PermissionDenied) {
+        if (result.status == CoreApplyStatus::PermissionDenied && origin == CoreCommandOrigin::Interactive) {
             if (!control.window || !control.dialog || !control.toast) {
                 if (control.onHeadlessFailure)
                     control.onHeadlessFailure(true, result.error);

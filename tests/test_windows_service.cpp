@@ -130,10 +130,11 @@ int main(int argc, char** argv) {
             ~Cleanup() { std::string error; ws::uninstall(error, options); }
         } cleanup{options};
         std::string error;
-        check(!ws::installed(options), "fixture service must not already exist");
+        check(ws::installationState(error, options) == false && error.empty(),
+              "SCM reports a missing service explicitly");
         check(!ws::request("PPTP_AVAILABLE", error, 500, options), "PPTP capability before installation");
         check(ws::install(ws::currentUserSid(), error, options) == 0, "install: " + error);
-        check(ws::installed(options), "SCM registration");
+        check(ws::installationState(error, options) == true && error.empty(), "SCM registration");
         check(ws::query("fixture-v1", options).error.empty(), "VERSION handshake");
         // CI runner 的 SCM fixture 偶发在 2s 预算内没起好管道（2026-10-17 连续
         // 三轮挂在不同的传输检查点上）：传输失败重试，版本门禁断言本身不放松。

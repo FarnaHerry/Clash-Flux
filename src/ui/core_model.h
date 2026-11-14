@@ -93,8 +93,7 @@ struct CoreModel {
     std::stop_source diagnosticsCancel;
     std::uint64_t diagnosticsSerial = 0;
     huxerui::State<bool> serviceChecking{false};
-    // GUI 启动维护只发起一次；模型属于 application service，页面重挂载不会重跑。
-    bool startupServiceMaintenanceStarted = false;
+    bool closing = false;
     // 唯一订阅点。必须带初值：huxerui::State 的默认构造是「空 cell」，
     // 读取（DriveCoreModel 每拍读一次）会抛 "Lifecycle dependency State is empty"。
     huxerui::State<CoreView> view{CoreView{}};
@@ -122,7 +121,7 @@ struct CoreModel {
     }
 
     bool PublishPolled(std::uint64_t revision, CoreView next) {
-        if (!operations.AcceptsPoll(revision)) return false;
+        if (serviceChecking.Get() || !operations.AcceptsPoll(revision)) return false;
         view = std::move(next);
         home = MakeCoreHomeView(view.Get());
         return true;

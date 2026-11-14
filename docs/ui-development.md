@@ -78,6 +78,7 @@
 
 - 代理测速的批次状态与按运行 tag 保存的节点状态归 `ProxiesModel::tests`（`proxy_test_model.h`），
   组请求、节点请求及原生结果等待使用应用任务域；节点卡片只观察状态，切页、宽窄变化和虚拟回收不取消测速。
+  桌面测速按需请求待命，等待期间禁用重复测速；待命完成后再建立批次或节点测速票据。
   点击时快照整组非组类型成员，不依赖可见卡片注册；桌面所有组走 `/group/{name}/delay`，
   由内核按自身并发数（10）批量测速并保留订阅 `url-test.url`，排队节点也保留测速中状态。
   原生组测速按共享快照时间戳确认结果，30 秒兜底结束无结果项。完成发布核对批次代次与实际运行计划，
@@ -312,6 +313,7 @@ scrollbar_mode，也未公开完整滚动范围与定位接口，不能直接复
 - 启动、轮询和退出清理中的系统操作不能闪出命令行窗口。优先使用 Win32 API；确实需要子进程时，用 `CreateProcessW` 的 `CREATE_NO_WINDOW` 并重定向标准句柄。不要在后台 Windows 路径使用 `std::system` 或 `_popen`。
 - 只有需要用户明确授权的流程可以显示系统交互提示，例如 UAC 提权。普通后台操作、失败清理和状态探测都保持安静执行。
 - HuxerUI 的 Windows 系统托盘菜单是原生菜单，`SystemTrayOptions` 不提供 `MenuStyle` 参数。桌面托盘生命周期按当前应用 `ThemeSpec` 同步 Windows 原生菜单主题；Windows 10 build 17763 及以上支持此同步，旧系统保留系统原生菜单主题。修改 HuxerUI 或 Windows 平台适配时，保持托盘菜单与应用深浅模式一致。
+- 完整托盘菜单在「选择订阅」上方提供「出站模式」原生悬停子菜单，无窗简版共用该子菜单。规则、全局和直连沿用首页的切换入口。内核运行时勾选实际模式，停核时勾选保存值。
 - Linux 启动隐藏时先使用不依赖窗口的简版托盘菜单；主窗口挂载后切换到完整菜单，先让 StatusNotifier 菜单空一轮再发布，避免 Plasma 在两种菜单结构间保留旧动作。内核停止后的路由清理不碰 sing-box 的 `pref 9000`，仅由 root 服务清理能凭保留哨兵确认属于 Clash-Flux 的补偿路由。
 - 托盘隐藏时同时清空呈现缓存，停用后重开或宿主恢复时必须重新发布；简版菜单缓存包含实际内核与接管状态，图标使用实际状态，开关使用配置意图。完整菜单和无窗菜单统一调用应用级退出收尾。Linux 原生回归可在图形会话运行 `dbus-run-session -- /usr/bin/python3 tests/test_tray_runtime.py build/clash-flux`（需要 Gio/PyGObject 与 bubblewrap）：使用独立 D-Bus、临时数据及屏蔽已安装服务的沙箱，覆盖宿主失联/恢复、无窗唤回、菜单角色及退出；此检查单独运行，不替代 18 项桌面 CTest 门禁。
 
@@ -513,7 +515,7 @@ Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上�
 不添加整卡点击动作，卡内开关和按钮维持独立命中。按下时缩至 98.5% 并下移 1pt，
 松开或取消后用弹簧回到原位；只观察指针，不夺取子控件/滚动所有权，reduced motion 关闭位移动画。
 
-首页普通卡片支持鼠标双击/触控双击显示彩蛋，再双击返回；`home_card.h` 的 `HomeCardSurface` 使用框架 MultiTapGesture 和 `Transition` 对实时内容做 200ms、0.96→1 的轻缩放淡入，卡片外框与 HomeGrid 占位不动。移除整卡 SharedBounds 快照、侧边收窄和光照层，不逐帧写 State，快速反向直接从当前进度转向最新目标。正反面子树保留挂载，以透明度控制绘制；隐藏面禁用输入并退出无障碍树，彩蛋面另有输入隔离层，防止正面子控件重新启用后穿透。减少动态效果直接切换，结束后停止额外帧。每次从正面进入彩蛋时，从 `home_easter_eggs.h` 的公共池抽取并保留当前卡片选择；返回不重抽、不持久化。目前池中仅有 HuxerUI 官方作者 `FinalScave` 的 GitHub 主页（https://github.com/FinalScave），只在用户点击入口时打开；旧的按卡片类型跳转连接/日志/订阅/设置菜单不再作为彩蛋。启动/运行猫咪控制卡显式关闭此能力。
+首页普通卡片支持鼠标双击/触控双击显示彩蛋，再双击返回；`home_card.h` 的 `HomeCardSurface` 使用框架 MultiTapGesture 和 `Transition` 对实时内容做 200ms、0.96→1 的轻缩放淡入，卡片外框与 HomeGrid 占位不动。移除整卡 SharedBounds 快照、侧边收窄和光照层，不逐帧写 State，快速反向直接从当前进度转向最新目标。正反面子树保留挂载，以透明度控制绘制；隐藏面禁用输入并退出无障碍树，彩蛋面另有输入隔离层，防止正面子控件重新启用后穿透。减少动态效果直接切换，结束后停止额外帧。每次从正面进入彩蛋时，从 `home_easter_eggs.h` 的公共池抽取并保留当前卡片选择；返回不重抽、不持久化。池中包含 HuxerUI 作者 `FinalScave` 的 GitHub 主页，以及 Lib-Charts、Lib-SQLite、Lib-Camera、Lib-CodeEditor 和 Lib-Media 的官方仓库。链接只在用户点击入口时打开；旧的按卡片类型跳转连接/日志/订阅/设置菜单不再作为彩蛋。启动/运行猫咪控制卡显式关闭此能力。
 
 圆角自上而下共用一套阶梯（`IslandTheme` + 主题 ShapeScheme）：一级岛
 `island_radius` 22pt → 卡片/二级岛 `nested_radius` 14pt → 控件

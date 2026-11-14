@@ -296,9 +296,9 @@ export int uninstall() {
         return 0;
     }
     std::println("[1/3] systemctl disable --now {}", kUnitName);
-    // 服务可能已损坏/未在跑：disable 失败不阻断后续清理。
     if (::system(std::format("systemctl disable --now {}", kUnitName).c_str()) != 0) {
-        std::println(stderr, "警告：systemctl disable --now 返回非零，继续清理文件");
+        std::println(stderr, "systemctl disable --now 失败，保留服务文件以便重试");
+        return 1;
     }
     const auto unitPath = std::filesystem::path("/etc/systemd/system") / kUnitName;
     std::println("[2/3] 删除 {}", unitPath.string());
