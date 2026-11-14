@@ -142,7 +142,7 @@ std::string ProxyEnvironmentCommand(const std::string& shell, int port) {
 
 } // namespace
 
-#if defined(__linux__) || defined(_WIN32)
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
 
 namespace {
 
@@ -209,7 +209,7 @@ huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync() {
 
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
 
 [[huxerui::composable]] huxerui::View DesktopServiceRow(
     bool service_installed, huxerui::TaskScope, FluxToastHandle toast) {

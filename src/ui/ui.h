@@ -654,7 +654,7 @@ void ShowTunGuideDialog(huxerui::DialogHandle dialog,
                         FluxToastHandle toast, huxerui::Color textColor,
                         huxerui::Color hintColor);
 
-#if defined(__linux__) || defined(_WIN32)
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
 struct DesktopServiceInstallResult {
     bool changed = false;
     bool installed = false;

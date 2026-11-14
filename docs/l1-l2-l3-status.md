@@ -17,6 +17,9 @@
   缺少管理员 WFP 权限。标签 CI 需在干净 runner 上重新执行完整门禁。
 - 未执行 Android 真机/签名、Linux/macOS 原生及 Windows 安装/提权实机；不能把本地 Windows
   构建记作其它平台或真机通过。
+- 修复桌面服务设置与安装续跑代码的 `__ANDROID__` 条件编译：Android 不再引用仅桌面提供的
+  `VpnStore::replaceService` 和 `InstallDesktopServiceAsync`。本地 Android 调试构建缺少
+  libbox AAR 时止于 `stageSingboxAar`，native 编译由标签 CI 复核。
 
 ## 2026-11-14：首页彩蛋扩展库链接
 

@@ -238,7 +238,7 @@ bool CoreControl::Run(CoreCommand command, std::function<void(bool)> onFinished)
             CoreApplyResult result;
             try {
                 result = co_await RunOnTaskThread([command] { return ExecuteCoreCommand(command); });
-    #if defined(__linux__) || defined(_WIN32)
+    #if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
                 if (!control.model->closing && command.origin == CoreCommandOrigin::Interactive &&
                     result.status == CoreApplyStatus::PermissionDenied &&
                     control.window && control.dialog && control.toast &&
