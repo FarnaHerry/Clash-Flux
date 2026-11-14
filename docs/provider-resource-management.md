@@ -10,7 +10,7 @@
 `downloadProvider` 共用入口。编译器仍只读快照、输出需求，不联网。Android 管理器在 UI
 进程的任务线程内使用现有 Java TLS 桥接，不将 SQLite/缓存提交搬进 libbox 后台进程。
 
-管理器默认最多三个活动下载、64 个不同在途请求（包括等待项）；满额拒绝新请求，
+管理器默认最多八个活动下载、64 个不同在途请求（包括等待项）；满额拒绝新请求，
 同一请求的等待者仍可加入。身份比较使用完整来源/资源身份和完整请求策略，包括 URL、
 请求头、条件请求、大小、超时、重试、TLS 与代理选项，不按缓存文件名摘要判断。
 凭据只用于内存中的身份比较，不输出到新诊断日志。
@@ -50,6 +50,13 @@ CoreStore 保留一份估算不超过 32 MiB、有效期最多 60 秒的完整�
 后台准备、选择与连接在输入一致时共用结果，导入通知直接使用这份账本，不为提示再编译。
 不同 TUN/监听角色需要不同候选，不宣称可无条件复用或已经内核热切换。
 
+已有订阅参与运行时，刷新在保存前按当前运行角色准备候选。订阅文件及数据库引用提交成功后，
+在同一次生命周期操作内核对运行身份和设置版本，再直接交接已检查的候选。刷新以当前
+selector 选择生成最终配置并检查。桌面 Clash YAML 和节点订阅
+在确认最终 JSON、网络设置、原生接口、参与来源和规则追溯都一致时跳过重启。引用原生本地
+规则集的配置仍走交接，因为同一路径的内容可以变化。Android 的原生检查仍在后台 libbox。
+桌面内置 GEO 缓存未到期时跳过预取后的再次编译。
+
 ## 失败下载的独立复用与大资源预算
 
 独立完整下载且格式校验成功的规则/代理/ASN 正文可以写入各自缓存目录的 `.downloads`。
@@ -69,7 +76,7 @@ Android 行为依据[平台 HttpURLConnection 文档](https://developer.android.
 
 `CoreStore::providerDownloader_` 保持在 Runtime 内复用，独立于控制器端点与 secret。
 `downloadToFile` 在客户端内独占借用 easy handle，每个客户端最多保留 3 个空闲 handle，
-每个 handle 的 libcurl 连接缓存上限为 3；活跃并发仍由现有 Provider Manager 限制为 3。
+每个 handle 的 libcurl 连接缓存上限为 3；活跃并发由 Provider Manager 限制为 8。
 池锁只保护借出/归还，不包围网络传输；普通候选入口的生命周期锁并未放开。
 
 复用身份核对原始站点 authority（含 URL 凭据）、证书校验选项、代理三态、相关代理/CA
@@ -94,7 +101,7 @@ Android Provider 仍使用 Java TLS 桥接，iOS URLSession 路径未改变，�
 |---|---|
 | `profile-download network_us` | 桌面主订阅 curl perform 耗时，含同步写回调 |
 | `candidate_us` / `file_commit_us` | 主订阅校验回调（含锁等待和 provider 准备）/原文原子替换 |
-| `profile-update apply_us` | 运行中订阅刷新后的运行重配耗时，包含其内部准备与交接 |
+| `profile-update apply_us` | 提交订阅后判断是否需要重启及运行交接的耗时，候选准备计入 `candidate_us` |
 | `profile-providers total_ms` | 一次完整资源准备的墙钟时间 |
 | `task_queue_us` / `download_queue_us` | 准备轮次等待工作线程/管理器等待下载名额 |
 | `shared_wait_us` | 等待相同在途请求，不重复统计其网络/字节/建连工作 |

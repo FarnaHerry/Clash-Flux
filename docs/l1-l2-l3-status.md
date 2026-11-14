@@ -1,5 +1,16 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-14：Provider 八路并发与订阅刷新候选复用
+
+- 代码快照：`ca1ac79` 加本轮工作区。Provider 准备和请求协调共用八路上限。
+  相同正文复用本轮已验证内容，运行中的订阅刷新只准备一份候选。桌面最终配置和运行上下文一致时保留内核实例。
+- Fedora 44 / WSL、CMake 4.4.2、Clang 21.1.8 Release 构建及版本检查通过。
+  `singbox`、`persistence`、`rule_provider_download`、`resource_management_runtime` 通过。
+  隔离服务与真实 sing-box 1.14.4 的回环样本验证了十项 provider 的相同正文、单项变化和 HTTP 503：
+  分别观察到一次候选且 PID 保留、一次候选且新正文生效、旧订阅引用和 PID 保留。
+- 独立 `test_profile_selection_runtime.py` 在本轮及原有存储/候选实现均停在旧文件名断言，
+  该脚本尚未适配版本化文件名。未运行 Windows/macOS 原生构建或 Android 真机验收。
+
 ## 2026-11-13：修复 v0.3.106 Windows C1128 构建失败
 
 - 失败运行：43446163955，Windows job 131956049234。MSVC 14.51 编译 HCG 生成的

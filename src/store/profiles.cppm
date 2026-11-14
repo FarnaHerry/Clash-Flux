@@ -575,7 +575,7 @@ private:
     }
 
     bool commitPrepared(model::Profile next, const std::optional<model::Profile>& previous,
-                        std::uint64_t expectedRevision) {
+                        std::uint64_t expectedRevision, std::function<bool()> apply) {
         auto& data = clashflux::data::session();
         next.updatedAt = nowUnix(); next.error.clear();
         if (!api::SyncFile(cfg::profilesDir() / next.file, lastError_)) return false;
@@ -588,10 +588,9 @@ private:
             // both source versions so an apply failure can restore the old pointer.
             bool applied = true;
             try {
-                if (previous && coreStore().sourceParticipates(next.id) &&
-                    coreStore().snapshot().state == core::CoreState::Running) {
+                if (apply) {
                     const auto began = std::chrono::steady_clock::now();
-                    applied = coreStore().restartCore(coreStore().currentMainContent());
+                    applied = apply();
                     stream::logApplication("info", std::format("profile-update source_id={} ready={} apply_us={}",
                         next.id, applied, std::chrono::duration_cast<std::chrono::microseconds>(
                             std::chrono::steady_clock::now() - began).count()));
@@ -622,14 +621,15 @@ private:
                             std::uint64_t expectedRevision, bool forceProviders,
                             bool validate = true) {
         if (!singbox::ValidateProfileDocument(content, lastError_)) return false;
-        if (validate && !coreStore().validateSourceUpdate(next.id, content, lastError_, forceProviders))
+        std::function<bool()> apply;
+        if (validate && !coreStore().validateSourceUpdate(next.id, content, lastError_, forceProviders, apply))
             return false;
         next.file = std::format("{}.{}.yaml", next.id, cfg::randomSecret());
         std::error_code ec;
         std::filesystem::create_directories(cfg::profilesDir(), ec);
         if (ec) { lastError_ = "创建订阅目录失败：" + ec.message(); return false; }
         if (!writeContent(next, content, lastError_)) return false;
-        return commitPrepared(std::move(next), previous, expectedRevision);
+        return commitPrepared(std::move(next), previous, expectedRevision, std::move(apply));
     }
 
     template<class Headers> static void applyHeaders(model::Profile& p, const Headers& headers) {
@@ -757,6 +757,7 @@ private:
             opts.proxyUrl = std::format("http://127.0.0.1:{}", coreStore().snapshot().mixedPort);
         else opts.allowProxyEnv = p.useSystemProxy;
         planLock.unlock();
+        std::function<bool()> apply;
         opts.validate = [&](const std::filesystem::path& file) {
             std::ifstream input(file, std::ios::binary);
             if (!input) return std::string{"无法读取候选订阅"};
@@ -768,7 +769,7 @@ private:
                 return std::string{"订阅在下载期间已变化，请重新更新"};
             std::string error;
             if (importing) return singbox::ValidateProfileDocument(content, error) ? std::string{} : error;
-            return coreStore().validateSourceUpdate(p.id, content, error, forceProviders)
+            return coreStore().validateSourceUpdate(p.id, content, error, forceProviders, apply)
                 ? std::string{} : error;
         };
         api::ClashApi downloader{"", ""};
@@ -780,7 +781,7 @@ private:
         if (!result.ok) { lastError_ = "下载失败：" + result.error; return false; }
         p.file = versionFile;
         applyHeaders(p, result.headers);
-        return commitPrepared(p, importing ? std::nullopt : initial, revision);
+        return commitPrepared(p, importing ? std::nullopt : initial, revision, std::move(apply));
     }
 
     std::mutex draftsMutex_;

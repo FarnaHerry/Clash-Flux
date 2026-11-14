@@ -294,7 +294,7 @@ SSH 另支持密码、内联/加密私钥和主机公钥/算法列表；双认�
 [样本与配套文件](docs/examples/file-providers-2026-10-03.yaml)及[保真度契约](docs/singbox-layers-and-fidelity.md)。
 HTTP provider 也支持 YAML/text 直连子集：任务下载、完整转换与候选检查后才更新
 自有缓存，失败沿用已验证旧缓存，运行计划保留独立内容快照。
-资源准备支持有限并发、ETag/Last-Modified 条件刷新及有界进程内转换缓存。
+资源准备最多并行下载八项，支持 ETag/Last-Modified 条件刷新及有界进程内转换缓存。
 规则与代理集合共用应用级下载入口，合并相同在途请求；桌面 Provider 使用常驻下载器，
 按来源站点及 TLS/代理/请求头策略复用有界空闲连接，并记录分段耗时和实际请求/建连计数，
 见[资源管理与计时](docs/provider-resource-management.md)。

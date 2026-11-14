@@ -423,7 +423,7 @@ old subscription. MRSv1 domain/ipcidr is supported; classical/future MRS version
 HTTP providers also accept the YAML/text direct-download subset. Task downloads,
 complete conversion and candidate checks precede app-owned cache replacement;
 failed updates keep verified old content, and applied plans hold separate raw snapshots.
-Resource preparation uses bounded concurrency, ETag/Last-Modified revalidation and
+Resource preparation allows up to eight concurrent downloads, uses ETag/Last-Modified revalidation and
 a bounded in-process conversion cache; see the [cache contract](docs/singbox-layers-and-fidelity.md).
 Rule and proxy providers share an application-owned download entry point that coalesces identical
 in-flight requests. Desktop providers retain a downloader with bounded idle connection reuse isolated by

@@ -259,7 +259,8 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                         changed = true;
                         if (!response.validators.etag.empty()) validators.etag = response.validators.etag;
                         if (!response.validators.lastModified.empty()) validators.lastModified = response.validators.lastModified;
-                    } else if (downloaded && validate(*downloaded, reason)) {
+                    } else if (downloaded &&
+                               ((usable && *downloaded == *content) || validate(*downloaded, reason))) {
                         inputChanged = !alreadyCompiled || *downloaded != *content;
                         content = std::move(downloaded); usable = true; changed = true;
                         validators = std::move(response.validators);
@@ -281,7 +282,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
                 item.error = std::string("HTTP 规则集准备异常：") + exception.what();
               } catch (...) { item.error = "HTTP 规则集准备异常"; }
             };
-            const auto concurrency = std::min<std::size_t>({jobs.size(), 4,
+            const auto concurrency = std::min<std::size_t>({jobs.size(), provider_resources::kMaxConcurrentDownloads,
                 std::max(1u, operations.maxConcurrentFetches)});
             if (concurrency <= 1) { for (const auto index : jobs) prepare(index); }
             else {

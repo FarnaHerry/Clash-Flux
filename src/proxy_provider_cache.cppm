@@ -92,7 +92,7 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
                         item.error = reason;
                         return;
                     }
-                    bool usable = content && validate(*content, reason);
+                    bool usable = alreadyCompiled || (content && validate(*content, reason));
                     const bool forced = candidate.forceProviderRefreshSources.contains(resource.sourceId) ||
                         candidate.refreshProviderKey == resource.cacheKey;
                     if (!candidate.refreshProviderKey.empty() && !forced && !usable) {
@@ -122,7 +122,8 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
                         auto downloaded = fetched
                             ? singbox::ReadRuleProviderText(payload, resource.maxBytes, reason)
                             : std::nullopt;
-                        if (downloaded && validate(*downloaded, reason)) {
+                        if (downloaded &&
+                            ((usable && *downloaded == *content) || validate(*downloaded, reason))) {
                             item.inputChanged = !alreadyCompiled || *downloaded != *content;
                             content = std::move(downloaded);
                             usable = true;
@@ -151,7 +152,7 @@ export inline bool Prepare(singbox::CompileOptions& candidate, const Operations&
                     item.error = "HTTP 代理集合准备异常";
                 }
             };
-            const auto concurrency = std::min<std::size_t>({jobs.size(), 4,
+            const auto concurrency = std::min<std::size_t>({jobs.size(), provider_resources::kMaxConcurrentDownloads,
                 std::max(1u, operations.maxConcurrentFetches)});
             if (concurrency <= 1) {
                 for (const auto index : jobs) prepare(index);

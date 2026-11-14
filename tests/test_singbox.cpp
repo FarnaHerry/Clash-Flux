@@ -1696,7 +1696,9 @@ void testProviderParallelPreparation() {
     singbox::CompileOptions base;
     base.ruleProviderCacheDir = (directory.path / "parallel").string();
     base.profileYaml = "rule-providers:\n";
-    for (unsigned i = 0; i < 6; ++i) base.profileYaml += std::format(
+    constexpr unsigned workers = 8;
+    constexpr unsigned count = 10;
+    for (unsigned i = 0; i < count; ++i) base.profileYaml += std::format(
         "  p{}: {{type: http, behavior: domain, url: https://example.test/p{}.yaml}}\n", i, i);
     base.profileYaml += "rules: ['RULE-SET,p0,DIRECT', 'MATCH,DIRECT']\n";
     std::atomic_uint active = 0, maximum = 0, completed = 0;
@@ -1705,15 +1707,15 @@ void testProviderParallelPreparation() {
     unsigned entered = 0, checked = 0, committed = 0;
     bool invalid = false, throws = false;
     rule_provider_cache::Operations operations;
-    operations.maxConcurrentFetches = 3;
+    operations.maxConcurrentFetches = workers + 2;
     operations.fetch = [&](const auto& resource, const auto& path, std::string&) {
-        const auto count = active.fetch_add(1) + 1;
+        const auto inFlight = active.fetch_add(1) + 1;
         auto observed = maximum.load();
-        while (observed < count && !maximum.compare_exchange_weak(observed, count)) {}
+        while (observed < inFlight && !maximum.compare_exchange_weak(observed, inFlight)) {}
         {
             std::unique_lock lock(mutex);
             ++entered; ready.notify_all();
-            if (!ready.wait_for(lock, std::chrono::seconds(5), [&] { return entered >= 3; })) {
+            if (!ready.wait_for(lock, std::chrono::seconds(5), [&] { return entered >= workers; })) {
                 --active; return false;
             }
         }
@@ -1725,7 +1727,7 @@ void testProviderParallelPreparation() {
     };
     operations.check = [&](const auto&, const auto&, std::string&) {
         ++checked;
-        check(active == 0 && completed == 6 && committed == 0,
+        check(active == 0 && completed == count && committed == 0,
               "parallel workers all finish before candidate check and commit");
         return true;
     };
@@ -1736,9 +1738,9 @@ void testProviderParallelPreparation() {
     singbox::CompileResult result;
     std::string error;
     auto candidate = base;
-    check(rule_provider_cache::Prepare(candidate, operations, result, error) && maximum == 3 &&
-          checked == 1 && committed == 6 && candidate.ruleProviderContents.size() == 6,
-          "six resources use exactly three bounded download workers");
+    check(rule_provider_cache::Prepare(candidate, operations, result, error) && maximum == workers &&
+          checked == 1 && committed == count && candidate.ruleProviderContents.size() == count,
+          "ten resources use at most eight download workers even when requested concurrency is higher");
     const auto expected = singbox::compileConfig(candidate);
     check(result.json == expected.json && result.fidelity == expected.fidelity,
           "parallel preparation keeps deterministic JSON and fidelity");
@@ -1748,7 +1750,7 @@ void testProviderParallelPreparation() {
         entered = checked = committed = 0; completed = maximum = 0;
         auto failed = base;
         failed.ruleProviderCacheDir = (directory.path / (throws ? "throws" : "invalid")).string();
-        check(!rule_provider_cache::Prepare(failed, operations, result, error) && completed == 6 &&
+        check(!rule_provider_cache::Prepare(failed, operations, result, error) && completed == count &&
               active == 0 && checked == 0 && committed == 0 && failed.ruleProviderContents.empty(),
               "invalid or throwing parallel fetch joins every worker and publishes no candidate/cache");
         check(candidate.ruleProviderContents == oldSnapshot &&
@@ -1988,8 +1990,9 @@ void testRuntimeCompileReuse() {
     expire();
     auto same = options; same.ruleProviderContents.clear();
     check(rule_provider_cache::Prepare(same, operations, result, error, &stats) && stats.compileCount == 1 &&
-          checks == 5 && commits == 2 && fetched == 2 && result.json == legacy.json,
-          "byte-identical expired refresh still fetches/checks/commits without recompiling");
+          checks == 5 && commits == 2 && fetched == 2 && result.json == legacy.json &&
+          stats.validationMicros == 0,
+          "byte-identical expired refresh still fetches/checks/commits without reparsing or recompiling");
     expire(); providerBody = "payload: [changed.test]\n";
     auto changed = options; changed.ruleProviderContents.clear();
     const bool changedReady = rule_provider_cache::Prepare(changed, operations, result, error, &stats);
@@ -4015,9 +4018,12 @@ proxies:
                   group->at("default") == "remote-b" && config["route"]["final"] == "Proxy",
               "provider 节点按声明展开并保留 selector 默认选择");
         auto warm = provider;
+        warm.proxyProviderContents.clear();
         singbox::CompileResult warmResult;
-        check(rule_provider_cache::Prepare(warm, operations, warmResult, error) &&
-                  fetches == 1 && commits == 1,
+        rule_provider_cache::PreparationStats warmStats;
+        check(rule_provider_cache::Prepare(warm, operations, warmResult, error, &warmStats) &&
+                  fetches == 1 && commits == 1 && warmStats.validationMicros == 0 &&
+                  warmStats.compileCount == 1 && warmResult.json == prepared.json,
               "有效 provider 快照复用，不重复下载");
         body = "proxies:\n  - {name: remote-c, type: socks5, server: 127.0.0.1, port: 1082}\n";
         auto forced = provider;

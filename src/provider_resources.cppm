@@ -5,6 +5,8 @@ import std;
 
 namespace provider_resources {
 
+export inline constexpr unsigned kMaxConcurrentDownloads = 8;
+
 // This namespace holds validated downloads, never accepted provider references.
 export inline bool FreshDownloaded(const std::filesystem::path& root, const std::string& key, std::uint64_t interval) {
     if (root.empty()) return false;
@@ -92,8 +94,8 @@ export class Manager {
     const std::size_t concurrency_, capacity_;
 
 public:
-    explicit Manager(std::size_t concurrency = 3, std::size_t capacity = 64)
-        : concurrency_(std::clamp<std::size_t>(concurrency, 1, 4)),
+    explicit Manager(std::size_t concurrency = kMaxConcurrentDownloads, std::size_t capacity = 64)
+        : concurrency_(std::clamp<std::size_t>(concurrency, 1, kMaxConcurrentDownloads)),
           capacity_(std::clamp<std::size_t>(capacity, concurrency_, 256)) {}
     Manager(const Manager&) = delete;
     Manager& operator=(const Manager&) = delete;

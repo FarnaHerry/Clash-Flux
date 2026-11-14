@@ -14,6 +14,29 @@
         }
     };
 
+    bool canSkipSourceRestart(const PreparedStart& candidate, const CoreSnapshot& running) {
+        // Native file rules can change behind an identical JSON path. Also keep
+        // connection attribution tied to the same plan and native interfaces.
+        const auto format = singbox::DetectProfileFormat(candidate.options.profileYaml);
+        if ((format != singbox::ProfileFormat::ClashYaml && format != singbox::ProfileFormat::NodeSubscription) ||
+            !lastAppliedOptions_ || !running.appliedRulePlan ||
+            candidate.options.nativeConnections != lastAppliedOptions_->nativeConnections ||
+            candidate.options.network != lastAppliedOptions_->network ||
+            candidate.compiled.participatingSources != running.participatingSources) return false;
+        if (hasExternalRuleSetFiles(candidate.config)) return false;
+        const auto& trace = candidate.compiled.rulePlan;
+        const auto& applied = *running.appliedRulePlan;
+        return trace.ruleCount == applied.ruleCount && trace.origins == applied.origins &&
+               trace.outboundLabels == applied.outboundLabels;
+    }
+
+    static bool hasExternalRuleSetFiles(const nlohmann::json& config) {
+        const auto route = config.find("route");
+        return route != config.end() && route->contains("rule_set") &&
+               std::ranges::any_of((*route)["rule_set"], [](const auto& ruleSet) {
+                   return ruleSet.is_object() && ruleSet.value("type", "") == "local";
+               });
+    }
 
     bool restartPreparedCore(const std::string& profileYaml, std::unique_ptr<PreparedStart> candidate,
                              const CoreSnapshot& before, bool systemProxyEnabled, bool skipUnchanged,
@@ -146,7 +169,8 @@
     std::unique_ptr<PreparedStart> prepareStartPlan(singbox::CompileOptions options,
                                                    std::string& error, std::stop_token cancel = {},
                                                    bool inspectNetwork = true,
-                                                   const std::function<bool(std::string&)>& guard = {}) {
+                                                   const std::function<bool(std::string&)>& guard = {},
+                                                   bool sourceUpdate = false) {
         if (cancel.stop_requested()) return {};
         auto plan = std::make_unique<PreparedStart>();
         const auto began = std::chrono::steady_clock::now();
@@ -159,6 +183,7 @@
         };
         const auto workDir = cfg::coreWorkDir();
         const auto publishFailure = [&] {
+            if (sourceUpdate) return; // Refresh has not committed; keep the running plan's diagnostics.
             std::lock_guard lock(mutex_);
             snap_.warnings = plan->compiled.warnings;
             snap_.fidelity = plan->compiled.fidelity;
@@ -169,17 +194,27 @@
         trace("network-preflight");
         bool geoPrepared = false;
         bool candidateChecked = false;
+        bool selectorChanged = false;
+        const auto projectSelectors = [&](const auto& candidate, auto& compiled) {
+            plan->config = nlohmann::json::parse(compiled.json, nullptr, false);
+            if (!plan->config.is_object()) return false;
+            selectorChanged = false;
+            plan->proxyGroups = proxyGroupsFromConfig(plan->config, compiled.sourceObjects,
+                                                      candidate.mainConnectionId, &selectorChanged, !sourceUpdate);
+            if (selectorChanged) compiled.json = plan->config.dump();
+            return true;
+        };
         if (!prepareHttpRuleProviders(options, plan->compiled, error, nullptr, cancel,
-                &geoPrepared, &candidateChecked, guard)) {
+                &geoPrepared, &candidateChecked, guard,
+                sourceUpdate ? FinalizeCompilation{projectSelectors} : FinalizeCompilation{})) {
             if (!cancel.stop_requested()) publishFailure();
             return {};
         }
         if (cancel.stop_requested()) return {};
         trace("providers-and-compile");
-        if (!geoPrepared) prefetchRuleSets(plan->compiled.ruleSetResources, workDir);
+        const bool geoRefreshed = !geoPrepared && prefetchRuleSets(plan->compiled.ruleSetResources, workDir);
         const bool directoryChanged = options.ruleSetDir != workDir.string();
-        const bool geoInputsChanged = (!geoPrepared || directoryChanged) && clashflux::runtime_compile::GeoInputsChanged(
-            !plan->compiled.ruleSetResources.empty(), directoryChanged);
+        const bool geoInputsChanged = clashflux::runtime_compile::GeoInputsChanged(geoRefreshed, directoryChanged);
         options.ruleSetDir = workDir.string();
         if (geoInputsChanged) {
             plan->compiled = singbox::compileConfig(options, cancel);
@@ -190,16 +225,13 @@
         if (!plan->compiled.error.empty() || plan->compiled.json.empty()) {
             error = "订阅编译失败：" + plan->compiled.error; publishFailure(); return {};
         }
-        plan->config = nlohmann::json::parse(plan->compiled.json, nullptr, false);
+        if (!sourceUpdate || geoInputsChanged) {
+            if (!projectSelectors(options, plan->compiled)) { error = "订阅编译结果不是合法 JSON 对象"; return {}; }
+            candidateChecked = candidateChecked && !selectorChanged;
+        }
         auto& config = plan->config;
         if (!config.is_object()) { error = "订阅编译结果不是合法 JSON 对象"; return {}; }
         if (inspectNetwork && !checkNetworkConflicts(options, config, error)) return {};
-        bool selectorChanged = false;
-        plan->proxyGroups = proxyGroupsFromConfig(config, plan->compiled.sourceObjects, options.mainConnectionId, &selectorChanged);
-        if (selectorChanged) {
-            plan->compiled.json = config.dump();
-            candidateChecked = false;
-        }
         if (cancel.stop_requested()) return {};
         trace("projection-and-json");
         // Provider preparation already checked these exact final bytes. Only a
@@ -218,6 +250,7 @@
             error = "已应用计划修订号无效；保留原设置"; return {};
         }
         options.planRevision = revision + 1;
+        options.forceProviderRefreshSources.clear();
         options.refreshProviderKey.clear();
         plan->options = std::move(options);
         std::random_device random;
@@ -279,10 +312,11 @@
     // 代理页快照（组 + 每节点 type/udp）由 clashflux.singbox 的纯函数生成，
     // 便于单测；这里只把「持久化的组选中项」从 settings 里喂进去。
     std::string proxyGroupsFromConfig(nlohmann::json& config,
-        const std::vector<singbox::SourceObject>& objects = {}, std::string main = {}, bool* configChanged = nullptr) {
+        const std::vector<singbox::SourceObject>& objects = {}, std::string main = {}, bool* configChanged = nullptr,
+        bool persistLegacySelection = true) {
         if (main.empty()) for (const auto& profile : clashflux::data::session().listProfiles())
             if (profile.selected) main = routing::ConnectionId(profile.id);
-        return singbox::BuildProxySnapshot(config, [this, &objects, &main](const std::string& group) {
+        return singbox::BuildProxySnapshot(config, [this, &objects, &main, persistLegacySelection](const std::string& group) {
             const auto key = "proxy.selection." + group;
             auto saved = setting(key, "");
             if (!saved.empty()) return saved;
@@ -292,7 +326,8 @@
                 const auto legacy = setting("proxy.selection." + object.objectId, "");
                 for (const auto& member : objects) {
                     if (member.sourceId == main && member.objectId == legacy) {
-                        setSetting(key, member.tag); return member.tag;
+                        if (persistLegacySelection) setSetting(key, member.tag);
+                        return member.tag;
                     }
                 }
             }
@@ -412,11 +447,14 @@
 
 #include "store/prepared_compilation.inc"
 
+    using FinalizeCompilation = std::function<bool(const singbox::CompileOptions&, singbox::CompileResult&)>;
+
     bool prepareHttpRuleProviders(singbox::CompileOptions& options,
                                  singbox::CompileResult& compiled, std::string& error,
                                  const vpn::VpnPolicy* policy = nullptr, std::stop_token cancel = {},
                                  bool* geoPrepared = nullptr, bool* candidateChecked = nullptr,
-                                 const std::function<bool(std::string&)>& guard = {}) {
+                                 const std::function<bool(std::string&)>& guard = {},
+                                 const FinalizeCompilation& finalize = {}) {
         // Background preparation owns no lifecycle lock. Foreground operations
         // may wait here, but the background completion never waits for them.
         std::unique_lock compilationLock(compilationMutex_, std::defer_lock);
@@ -429,7 +467,7 @@
         if (candidateChecked) *candidateChecked = false;
         clashflux::runtime_compile::Normalize(options);
         const auto request = options;
-        if ((!guard || guard(error)) && !cancel.stop_requested() && reuseCompilation(request, options, compiled)) {
+        if (!finalize && (!guard || guard(error)) && !cancel.stop_requested() && reuseCompilation(request, options, compiled)) {
             if (!validatePlanTargets(options, compiled, policy, error)) return false;
             if (geoPrepared) *geoPrepared = true;
             if (candidateChecked) *candidateChecked = true;
@@ -441,7 +479,7 @@
         rule_provider_cache::PreparationStats stats;
         const auto began = std::chrono::steady_clock::now();
         rule_provider_cache::Operations operations;
-        operations.maxConcurrentFetches = 3;
+        operations.maxConcurrentFetches = provider_resources::kMaxConcurrentDownloads;
         operations.retainedDirectory = std::filesystem::path(options.ruleProviderCacheDir) / ".downloads";
         ProviderDownloadStats downloads;
         operations.revalidate = [this, cancel, &downloads](const singbox::HttpRuleProviderResource& resource,
@@ -486,16 +524,20 @@
             reason = response.error;
             return response.ok;
         };
-        operations.check = [this, policy, cancel, &preparedGeo, guard](const auto& candidate, auto& result, std::string& reason) {
+        operations.check = [this, policy, cancel, &preparedGeo, guard, &finalize](const auto& candidate, auto& result, std::string& reason) {
             if (cancel.stop_requested()) return false;
             if (guard && !guard(reason)) return false;
             if (!validatePlanTargets(candidate, result, policy, reason)) return false;
-            prefetchRuleSets(result.ruleSetResources, cfg::coreWorkDir());
+            const bool geoRefreshed = prefetchRuleSets(result.ruleSetResources, cfg::coreWorkDir());
             preparedGeo = true;
             // Only GEO prefetch can change compiler inputs here. HTTP/ASN
             // snapshots are already fully lowered and must still pass check.
-            if (clashflux::runtime_compile::GeoInputsChanged(!result.ruleSetResources.empty(), false))
+            if (geoRefreshed)
                 result = singbox::compileConfig(candidate, cancel);
+            if (finalize && result.error.empty() && !result.json.empty() && !finalize(candidate, result)) {
+                reason = "订阅编译结果不是合法 JSON 对象";
+                return false;
+            }
             return !cancel.stop_requested() && checkCompiledPlan(result, reason) && (!guard || guard(reason));
         };
         operations.commit = [](const auto& temp, const auto& dest, std::string& reason) {
@@ -519,7 +561,7 @@
             downloads.queueMicros, downloads.sharedWaitMicros, downloads.fetchMicros, downloads.networkMicros,
             stats.validationMicros, stats.checkMicros, stats.commitMicros, downloads.requests, downloads.shared,
             downloads.notModified, downloads.bytes, downloads.measuredRequests, downloads.newConnections));
-        if (ready && stats.candidateChecked) rememberCompilation(request, options, compiled);
+        if (ready && stats.candidateChecked && !finalize) rememberCompilation(request, options, compiled);
         if (ready) for (const auto& warning : compiled.warnings)
             if (warning.starts_with("HTTP 规则集「") || warning.starts_with("HTTP 代理集合「"))
                 stream::logApplication("warning", warning);
@@ -614,12 +656,13 @@
 
     // 编译器清单包含未命中与已命中的自有 GEO，才能真正按周刷新。
     // 不扫描原生 JSON 的远程来源，不改下载 detour/format/更新策略。
-    void prefetchRuleSets(const std::vector<singbox::RuleSetResource>& resources,
+    bool prefetchRuleSets(const std::vector<singbox::RuleSetResource>& resources,
                           const std::filesystem::path& workDir) {
 #if defined(__ANDROID__)
         // Android GEO 使用 Gradle 固定来源资产；不能改为运行时刷新。
-        return;
+        return false;
 #endif
+        bool attempted = false;
         for (const auto& resource : resources) {
             const auto& tag = resource.tag;
             const auto& url = resource.url;
@@ -642,6 +685,7 @@
                 }
             }
             if (!stale) continue;
+            attempted = true;
             api::ClashApi::DownloadOptions download;
             download.timeoutSecs = 8;  // 直连快速失败，不拖慢启动
             download.validate = [](const std::filesystem::path& temp) {
@@ -670,6 +714,7 @@
                                       reason);
             }
         }
+        return attempted;
     }
 
     long readPidFile() {

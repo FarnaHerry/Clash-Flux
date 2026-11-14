@@ -960,7 +960,7 @@
     }
 
     bool validateSourceUpdate(std::int64_t id, const std::string& content, std::string& error,
-                              bool forceProviderRefresh = false) {
+                              bool forceProviderRefresh, std::function<bool()>& apply) {
         std::lock_guard lock(lifecycleMutex_);
         ensureOpen();
         try {
@@ -976,19 +976,71 @@
             const singbox::ProfileSource updated{sourceId, "", content};
             bool main = false;
             for (const auto& profile : clashflux::data::session().listProfiles()) if (profile.id == id && profile.selected) main = true;
-            auto options = routingOptions(main ? content : currentMainContent(), snapshot().tunEnabled,
+            const auto before = snapshot();
+            const auto settingsRevision = clashflux::data::session().settingsRevision();
+            auto options = routingOptions(main ? content : currentMainContent(), before.tunEnabled,
                                           false, nullptr, std::nullopt, &updated);
             if (forceProviderRefresh) options.forceProviderRefreshSources.insert(sourceId);
+            bool participates = sourceId == options.mainConnectionId;
             if (sourceId == options.mainConnectionId) options.profileYaml = content;
             else {
                 bool replaced = false;
                 for (auto& source : options.auxiliarySources)
                     if (source.id == sourceId) { source.content = content; replaced = true; }
+                participates = replaced;
                 if (!replaced) {
                     options.profileYaml = content; options.mainConnectionId = sourceId;
                     options.profileRuleEdits = edits;
                     options.auxiliarySources.clear(); options.globalRules.clear(); options.nativeConnections.clear();
                 }
+            }
+            if (participates && before.state == core::CoreState::Running) {
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+                options.proxyListening = before.proxyListening;
+#endif
+                const auto began = std::chrono::steady_clock::now();
+                auto candidate = prepareStartPlan(std::move(options), error, {}, true, {}, true);
+                if (!candidate) return false;
+                if (settingsRevision != clashflux::data::session().settingsRevision()) {
+                    error = "运行设置已变化，请重新更新订阅";
+                    return false;
+                }
+                // ProfilesStore holds the lifecycle lock across preparation,
+                // source commit and this one-shot handoff.
+                apply = [this, before, settingsRevision,
+                         prepared = std::make_shared<std::unique_ptr<PreparedStart>>(std::move(candidate)), began] {
+                    auto candidate = std::move(*prepared);
+                    if (!candidate) return false;
+                    auto healthPause = streams_.pauseHealth();
+                    const auto running = snapshot();
+                    if (running.state != core::CoreState::Running || running.runtimeEpoch != before.runtimeEpoch ||
+                        running.nativeStartedAt != before.nativeStartedAt ||
+                        running.planRevision != before.planRevision || running.tunEnabled != before.tunEnabled ||
+                        running.proxyListening != before.proxyListening ||
+                        settingsRevision != clashflux::data::session().settingsRevision()) {
+                        std::lock_guard lock(mutex_);
+                        snap_.lastError = "内核运行状态已变化，请重新更新订阅";
+                        return false;
+                    }
+                    if (candidate->compiled.json == lastAppliedJson_ && canSkipSourceRestart(*candidate, running)) {
+                        cacheProxyGroups(candidate->options, candidate->compiled, std::move(candidate->proxyGroups));
+                        lastProfileYaml_ = candidate->options.profileYaml;
+                        candidate->options.planRevision = running.planRevision;
+                        lastAppliedOptions_ = std::move(candidate->options);
+                        {
+                            std::lock_guard lock(mutex_);
+                            snap_.warnings = std::move(candidate->compiled.warnings);
+                            snap_.fidelity = std::move(candidate->compiled.fidelity);
+                            snap_.sourceObjects = previewSourceObjects_;
+                        }
+                        stream::logApplication("info", "profile-update restart_skipped=true");
+                        return true;
+                    }
+                    const auto content = candidate->options.profileYaml;
+                    return restartPreparedCore(content, std::move(candidate), running, systemProxyOurs(),
+                        false, {}, began);
+                };
+                return true;
             }
             singbox::CompileResult compiled;
             bool candidateChecked = false;
