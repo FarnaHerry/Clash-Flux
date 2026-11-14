@@ -13,6 +13,8 @@ def msg_key(value):
 
 
 def check(root):
+    assert (root / "resources/images/country_flags.png").read_bytes() == (root / "assets/flags.png").read_bytes(), "Website flags must use the existing country atlas"
+    assert (root / "resources/raw/country_codes.txt").read_bytes() == (root / "assets/flags.codes").read_bytes(), "Website country indices must match the existing atlas"
     literals = {}
     for source in (root / "src").rglob("*"):
         if source.suffix not in {".cpp", ".cppm", ".inc", ".h"}:

@@ -372,21 +372,20 @@ void testQrScannerControl() {
 struct WebsiteFixtureMetrics { int active = 0, maximum = 0, started = 0; };
 std::shared_ptr<clashflux::ui::WebsiteTestModel> websiteFixture;
 std::optional<huxerui::TaskScope> websiteTasks;
-std::shared_ptr<clashflux::ui::AppHttpClient> websiteHttp;
 std::shared_ptr<clashflux::ui::WebsiteTestModel::Probe> websiteProbe;
 huxerui::View WebsiteFixtureRoot() {
     using namespace clashflux::ui;
     websiteFixture = huxerui::UseService<WebsiteTestModel>();
     websiteTasks = huxerui::UseApplicationTaskScope();
-    websiteHttp = huxerui::UseService<AppHttpClient>();
     const auto visible = huxerui::UseState(true);
+    const auto menuTasks = huxerui::UseTaskScope();
     const auto rows = websiteFixture->sites.Get();
     const auto offset = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     std::vector<huxerui::View> cards;
     const auto dialog = huxerui::UseDialog();
     for (const auto& row : rows)
-        cards.push_back(huxerui::Column {WebsiteTestCardContent(row, [id = row.id] {
+        cards.push_back(WebsiteTestCard(row, [id = row.id] {
             websiteFixture->Start(*websiteTasks, *websiteProbe, {id});
         }, [dialog, row] {
             const auto model = websiteFixture;
@@ -397,8 +396,7 @@ huxerui::View WebsiteFixtureRoot() {
                     return model->Update(id, model->customUrl.Get().text, model->customName.Get().text);
                 });
             });
-        }, [id = row.id] { websiteFixture->Remove(id); })}
-            .With(huxerui::Padding(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+        }, [id = row.id] { websiteFixture->Remove(id); }, menuTasks)
             .Key("website-card-" + std::to_string(row.id)));
     return huxerui::Column {
       huxerui::Button("Toggle website panel").OnClick([visible] { visible = !visible.Get(); }),
@@ -409,16 +407,39 @@ huxerui::View WebsiteFixtureRoot() {
 const huxerui::Application kWebsiteFixtureApplication{WebsiteFixtureRoot,
     huxerui::AppOptions{.application_hooks = {[](huxerui::ApplicationContext& context) {
         context.Provide(std::make_shared<clashflux::ui::WebsiteTestModel>());
-        clashflux::ui::InstallAppHttpClient(context);
     }}}};
 void testWebsiteTests() {
     using namespace clashflux::ui;
     for (const auto width : {320.0F, 960.0F}) {
         huxerui::testing::UiTest ui(kWebsiteFixtureApplication,
             {.viewport = {width, 640}, .resource_provider = AppResources()});
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
         ui.UpdateResourceConfiguration({.locale = huxerui::Locale::FromLanguageTag("zh")});
         ui.PumpAndSettle();
         const auto shared = websiteFixture;
+        const auto openWebsiteMenu = [&](int id) {
+            const auto menu = ui.Find(UiSelector::Key("website-menu-" + std::to_string(id)));
+            if (width == 320.0F) {
+                check(menu.Exists(), "compact website cards keep the touch menu button"); menu.Tap();
+            } else {
+                check(!menu.Exists(), "wide website cards omit the overflow button");
+                const auto info = ui.Find(UiSelector::Key("website-card-" + std::to_string(id))).One();
+                const auto bounds = info.bounds;
+                const huxerui::Point point{bounds.x + 4.0F, bounds.y + bounds.height * 0.5F};
+                static_cast<void>(ui.SendPointer({.type = huxerui::PointerEventType::Down, .pointer_id = 111, .position = point,
+                    .device_kind = huxerui::PointerDeviceKind::Mouse, .changed_button = huxerui::PointerButton::Secondary,
+                    .pressed_buttons = huxerui::PointerButton::Secondary}));
+                static_cast<void>(ui.SendPointer({.type = huxerui::PointerEventType::Up, .pointer_id = 111, .position = point,
+                    .device_kind = huxerui::PointerDeviceKind::Mouse, .changed_button = huxerui::PointerButton::Secondary}));
+            }
+            ui.PumpAndSettle();
+        };
+        check(!ui.Find(UiSelector::Text("https://www.baidu.com/")).Exists(), "website cards show names without a URL subtitle");
+        check(WebsiteNameFromUrl("https://www.example.test:8443/Path") == "example.test" &&
+              WebsiteNameFromUrl("http://192.0.2.1:8080/") == "192.0.2.1" &&
+              WebsiteNameFromUrl("http://[2001:db8::1]:8080/") == "2001:db8::1",
+              "automatic names remove URL decoration and retain the actual domain or IPv4/IPv6 host");
+
         const auto first = ui.Find(UiSelector::Text("Baidu")).One().bounds;
         const auto second = ui.Find(UiSelector::Text("Bilibili")).One().bounds;
         check(width == 320.0F ? second.y > first.y : std::abs(second.y - first.y) < 1.0F && second.x > first.x,
@@ -472,7 +493,7 @@ void testWebsiteTests() {
             ++metrics->active; ++metrics->started;
             metrics->maximum = std::max(metrics->maximum, metrics->active);
             co_await huxerui::Delay(std::chrono::milliseconds{200});
-            co_return WebsiteTestResult{WebsiteTestPhase::Responded, 403, 200};
+            co_return WebsiteTestResult{WebsiteTestPhase::Responded, 403};
         };
         websiteProbe = std::make_shared<WebsiteTestModel::Probe>(slow);
         const auto testAction = [&](int id) {
@@ -550,8 +571,10 @@ void testWebsiteTests() {
               "single retry publishes only its target and old batches cannot overwrite cancellation");
         ui.Find(UiSelector::Text("Toggle website panel")).Tap();
         ui.PumpAndSettle();
-        check(ui.Find(UiSelector::Text("网站已响应")).Exists() && ui.Find(UiSelector::Text("HTTP 403")).Exists() &&
-              !ui.Find(UiSelector::Text("连接失败")).Exists(), "HTTP rejection remains distinct from transport failure");
+        check(ui.Find(UiSelector::Text("失败")).Exists() && !ui.Find(UiSelector::Text("HTTP 403")).Exists(),
+              "HTTP rejection shows a failure without status/latency clutter");
+        check(shared->sites.Get()[0].result.completedAt > 0 && ui.Find(UiSelector::Key("website-time-0")).Exists(),
+              "completed results retain their wall-clock completion timestamp");
         ui.SetWindowMetrics({.viewport = {width == 320.0F ? 960.0F : 320.0F, 640}});
         ui.PumpAndSettle();
         check(websiteFixture == shared && shared->sites.Get()[0].result.status == 403,
@@ -566,15 +589,25 @@ void testWebsiteTests() {
         check(!shared->AnyActive() && metrics->maximum == 3 && std::all_of(completed.begin(),
             completed.begin() + 8, [](const auto& row) { return row.result.status == 403; }),
             "bounded website workers drain the complete preset batch");
-        const auto http = websiteHttp;
-        shared->Start(*websiteTasks, [http](std::string url) { return ProbeWebsite(http, std::move(url)); }, {0});
+        auto located = shared->sites.Get();
+        located[0].result = {WebsiteTestPhase::Responded, 200, "", "GB", 1700000000};
+        shared->sites = std::move(located); ui.Pump(kSettle);
+        check(ui.Find(UiSelector::Text("GB")).Exists() && !ui.Find(UiSelector::Text("HTTP 200")).Exists(),
+              "successful website results render their measured country code and packaged flag");
+        located = shared->sites.Get(); located[0].result.country.clear(); shared->sites = std::move(located); ui.Pump(kSettle);
+        check(ui.Find(UiSelector::Text("位置未知")).Exists(), "successful HTTP without location evidence is not reported as a connection failure");
+        shared->Start(*websiteTasks, [](std::string) -> huxerui::Task<WebsiteTestResult> {
+            throw std::runtime_error("injected probe failure"); co_return WebsiteTestResult{};
+        }, {0});
         ui.PumpAndSettle();
         check(!shared->AnyActive() && shared->sites.Get()[0].result.phase == WebsiteTestPhase::Failed,
-              "production HTTP adapter failure leaves the website ready for retry");
-        ui.Find(UiSelector::Key("website-menu-0")).Tap(); ui.PumpAndSettle();
-        ui.Find(UiSelector::Text("编辑网站")).Tap(); ui.Pump(kSettle);
+              "probe exceptions release their slot and leave the website ready for retry");
+        openWebsiteMenu(0);
+        ui.Find(UiSelector::Text("编辑")).Tap(); ui.Pump(kSettle);
         check(ui.Find(UiSelector::Key("website-editor-url")).Exists() &&
               shared->customUrl.Get().text == "https://www.baidu.com/", "presets open the shared editor");
+        check(ui.Find(UiSelector::Key("website-editor-name")).One().bounds.y < ui.Find(UiSelector::Key("website-editor-url")).One().bounds.y,
+              "name precedes URL in the shared website editor");
         ui.Find(UiSelector::Key("website-editor-url")).Tap();
         ui.Find(UiSelector::Key("website-editor-url")).ReplaceText("www.bilibili.com");
         ui.Pump(kSettle);
@@ -608,7 +641,7 @@ void testWebsiteTests() {
         check(shared->Remove(0) && !shared->Remove(0), "queued preset deletion is limited to its stable ID");
         // Delete the first remaining in-flight site through the production menu and confirmation.
         ui.Pump(std::chrono::milliseconds{1});
-        ui.Find(UiSelector::Key("website-menu-1")).Tap(); ui.Pump(std::chrono::milliseconds{1});
+        openWebsiteMenu(1);
         ui.Find(UiSelector::Text("删除")).Tap(); ui.Pump(std::chrono::milliseconds{1});
         check(shared->sites.Get().front().id == 1, "delete menu waits for explicit confirmation");
         ui.Find(UiSelector::Key("website-delete-confirm")).Tap(); ui.PumpAndSettle();
@@ -635,7 +668,60 @@ void testWebsiteTests() {
         check(shared->Update(last.id, last.url, "At capacity"), "a full list still allows editing an existing site");
 
     }
-    websiteFixture.reset(); websiteTasks.reset(); websiteHttp.reset(); websiteProbe.reset();
+    websiteFixture.reset(); websiteTasks.reset(); websiteProbe.reset();
+}
+
+void testWebsiteNetworkAndTimeout() {
+    using namespace clashflux::ui;
+    huxerui::testing::UiTest ui(kWebsiteFixtureApplication,
+        {.viewport = {960, 640}, .resource_provider = AppResources()});
+    ui.PumpAndSettle();
+    const auto model = websiteFixture;
+    auto active = std::make_shared<int>(0);
+    const WebsiteTestModel::Probe stalled = [active](std::string url) -> huxerui::Task<WebsiteTestResult> {
+        struct Guard { std::shared_ptr<int> count; ~Guard() { --*count; } } guard{active};
+        ++*active;
+        co_await huxerui::Delay(url.find("jd.com") != std::string::npos ? std::chrono::milliseconds{10} : std::chrono::hours{24});
+        co_return WebsiteTestResult{WebsiteTestPhase::Responded, 200};
+    };
+    model->Start(*websiteTasks, stalled, {0, 1, 2, 3});
+    ui.Pump(std::chrono::milliseconds{1});
+    ui.Pump(std::chrono::milliseconds{9998});
+    check(*active == 3 && model->sites.Get()[0].result.phase == WebsiteTestPhase::Running,
+          "a stalled website stays active only until its ten-second deadline");
+    ui.Pump(std::chrono::milliseconds{5}); ui.Pump(std::chrono::milliseconds{25});
+    for (int i = 0; i < 3; ++i)
+        check(model->sites.Get()[i].result.phase == WebsiteTestPhase::Failed &&
+              model->sites.Get()[i].result.error == clashflux::website::kTimeoutError && model->sites.Get()[i].result.completedAt > 0,
+              "hard timeout publishes a completed failure for every stalled slot");
+    ui.PumpAndSettle();
+    check(*active == 0 && !model->AnyActive() && model->sites.Get()[3].result.status == 200,
+          "timed-out probes are cancelled and queued websites continue without deadlocking the batch");
+
+    for (int scenario = 0; scenario < 4; ++scenario) {
+        const auto requests = std::make_shared<std::vector<huxerui::HttpRequest>>();
+        const WebsiteHttpExchange exchange = [requests, scenario](huxerui::HttpRequest request) -> huxerui::Task<WebsiteHttpReply> {
+            requests->push_back(request);
+            if (request.method == huxerui::HttpMethod::Head)
+                co_return WebsiteHttpReply{200, "https://site.test/final", "", ""};
+            co_return WebsiteHttpReply{scenario == 2 ? 404 : 200,
+                scenario == 1 ? "https://unrelated.test/cdn-cgi/trace" : request.url,
+                scenario == 3 ? "not a trace" : "ip=192.0.2.1\nloc=SG\n", ""};
+        };
+        model->Start(*websiteTasks, [exchange](std::string url) { return ProbeWebsiteNetwork(exchange, std::move(url)); }, {0});
+        ui.Pump(std::chrono::milliseconds{1}); ui.Pump(std::chrono::milliseconds{10});
+        const auto& result = model->sites.Get()[0].result;
+        check(result.phase == WebsiteTestPhase::Responded && result.status == 200 && result.country == (scenario == 0 ? "SG" : ""),
+              "country comes only from a valid trace on the tested origin; missing/redirected geography remains unknown");
+        check(requests->size() == 2 && (*requests)[0].method == huxerui::HttpMethod::Head &&
+              (*requests)[1].url == "https://site.test/cdn-cgi/trace" &&
+              (*requests)[0].timeout && (*requests)[1].timeout && *(*requests)[1].timeout <= *(*requests)[0].timeout,
+              "system-network probing follows the final website origin and shares the remaining deadline without a forced proxy");
+    }
+    ui.Pump(std::chrono::seconds{11});
+    check(model->sites.Get()[0].result.phase == WebsiteTestPhase::Responded && !model->AnyActive(),
+          "old watchdogs cannot overwrite successful retries or leave a new test busy");
+    websiteFixture.reset(); websiteTasks.reset(); websiteProbe.reset();
 }
 
 int diagnosticsStarts = 0, diagnosticsCopies = 0, diagnosticsSaves = 0,
@@ -7665,6 +7751,7 @@ void testSettingsReadiness() {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--website-tests") { testWebsiteTests(); testWebsiteNetworkAndTimeout(); testWebsiteFormScroll(); return failures == 0 ? 0 : 1; }
     if (argc == 2 && std::string_view(argv[1]) == "--scroll-profile") {
         profileScrollWork();
         return failures == 0 ? 0 : 1;
@@ -7866,6 +7953,7 @@ int main(int argc, char** argv) {
     testConnectionList();
     testConnectionTraceContent();
     testWebsiteTests();
+    testWebsiteNetworkAndTimeout();
     testQrScannerControl();
     try { testDiagnosticsContent(); testDiagnosticsThemeAndLayout(); }
     catch (const std::exception& error) {

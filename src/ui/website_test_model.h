@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 #include <huxerui/huxerui.h>
-#include "app_http_client.h"
+#include "../website_probe.h"
 
 namespace clashflux::ui {
 
@@ -20,8 +20,9 @@ enum class WebsiteTestPhase { Idle, Queued, Running, Responded, Failed, Cancelle
 struct WebsiteTestResult {
     WebsiteTestPhase phase = WebsiteTestPhase::Idle;
     int status = 0;
-    std::int64_t elapsedMs = 0;
     std::string error;
+    std::string country;
+    std::int64_t completedAt = 0;
     bool operator==(const WebsiteTestResult&) const = default;
 };
 struct WebsiteTestSite {
@@ -86,34 +87,34 @@ inline std::optional<std::string> NormalizeWebsiteUrl(std::string url) {
     return url;
 }
 
-inline huxerui::Task<WebsiteTestResult> ProbeWebsite(
-    std::shared_ptr<AppHttpClient> http, std::string url) {
-    WebsiteTestResult result;
-    const auto began = std::chrono::steady_clock::now();
-    try {
-        huxerui::HttpRequest request;
-        request.url = std::move(url);
-        request.method = huxerui::HttpMethod::Head;
-        request.timeout = std::chrono::seconds{10};
-        request.headers = {{"Cache-Control", "no-cache"}};
-        auto response = co_await http->SendAsync(std::move(request));
-        if (response.Succeeded()) {
-            result.phase = WebsiteTestPhase::Responded;
-            result.status = response.Value().status_code;
-        } else {
-            result.phase = WebsiteTestPhase::Failed;
-            result.error = response.Error().message;
-        }
-    } catch (const std::exception& error) {
-        result.phase = WebsiteTestPhase::Failed;
-        result.error = error.what();
-    } catch (...) {
-        result.phase = WebsiteTestPhase::Failed;
+inline std::string WebsiteNameFromUrl(const std::string& url) {
+    const auto uri = huxerui::Uri::Parse(url);
+    if (!uri || !uri->Authority()) return {};
+    std::string host(*uri->Authority());
+    if (host.starts_with('[')) {
+        const auto end = host.find(']');
+        return end == std::string::npos ? std::string{} : host.substr(1, end - 1);
     }
-    result.elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - began).count();
-    co_return result;
+    if (const auto port = host.find(':'); port != std::string::npos) host.resize(port);
+    if (host.size() > 4 && host.starts_with("www.")) host.erase(0, 4);
+    return host;
 }
+
+inline std::optional<std::string> WebsiteOrigin(const std::string& url) {
+    const auto parsed = huxerui::Uri::Parse(url);
+    if (!parsed || (parsed->Scheme() != "http" && parsed->Scheme() != "https") ||
+        !parsed->Authority() || parsed->Authority()->empty() || parsed->Authority()->find('@') != std::string_view::npos) return {};
+    return std::string(parsed->Scheme()) + "://" + std::string(*parsed->Authority());
+}
+
+struct WebsiteHttpReply {
+    int status = 0;
+    std::string url, body, error;
+};
+class AppHttpClient;
+huxerui::Task<WebsiteHttpReply> SendWebsiteRequest(std::shared_ptr<AppHttpClient> http, huxerui::HttpRequest request);
+using WebsiteHttpExchange = std::function<huxerui::Task<WebsiteHttpReply>(huxerui::HttpRequest)>;
+huxerui::Task<WebsiteTestResult> ProbeWebsiteNetwork(WebsiteHttpExchange exchange, std::string url);
 
 // UI-thread application service: each site owns its own request and result, at
 // most three asynchronous HTTP requests run at once, no page lifetime or timer.
@@ -127,11 +128,10 @@ struct WebsiteTestModel : std::enable_shared_from_this<WebsiteTestModel> {
     huxerui::TaskScope tasks;
     Probe probe;
     std::deque<std::size_t> pending;
-    struct Request { std::uint64_t generation; huxerui::TaskHandle task; };
+    struct Request { std::uint64_t generation; huxerui::TaskHandle task, timeout; };
     std::unordered_map<std::size_t, Request> running;
 
-    // `name` is the optional remark; an empty remark falls back to the URL host
-    // so a card always has a readable title.
+    // The effective name is mandatory; an empty input is filled from the host.
     bool Add(std::string url, std::string name = {}) {
         if (sites.Get().size() >= 24) return false;
         const auto normalized = NormalizeWebsiteUrl(std::move(url));
@@ -139,7 +139,7 @@ struct WebsiteTestModel : std::enable_shared_from_this<WebsiteTestModel> {
         auto rows = sites.Get();
         if (Duplicate(rows, *normalized, std::nullopt)) return false;
         TrimWebsiteInput(name);
-        if (name.empty()) name = std::string(*huxerui::Uri::Parse(*normalized)->Authority());
+        if (name.empty()) name = WebsiteNameFromUrl(*normalized);
         rows.push_back({std::move(name), *normalized, {}, nextId++});
         sites = std::move(rows);
         customUrl = huxerui::TextEditingValue{};
@@ -154,7 +154,7 @@ struct WebsiteTestModel : std::enable_shared_from_this<WebsiteTestModel> {
         const auto row = Find(rows, id);
         if (row == rows.end() || Duplicate(rows, *normalized, id)) return false;
         TrimWebsiteInput(name);
-        if (name.empty()) name = std::string(*huxerui::Uri::Parse(*normalized)->Authority());
+        if (name.empty()) name = WebsiteNameFromUrl(*normalized);
         if (row->url != *normalized) {
             Stop(id);
             row->url = *normalized;
@@ -190,7 +190,7 @@ struct WebsiteTestModel : std::enable_shared_from_this<WebsiteTestModel> {
     }
 
     void CancelAll() {
-        for (auto& entry : running) entry.second.task.Cancel();
+        for (auto& entry : running) { entry.second.task.Cancel(); entry.second.timeout.Cancel(); }
         running.clear();
         pending.clear();
         auto rows = sites.Get();
@@ -250,6 +250,7 @@ private:
         std::erase(pending, id);
         if (const auto entry = running.find(id); entry != running.end()) {
             entry->second.task.Cancel();
+            entry->second.timeout.Cancel();
             running.erase(entry);
         }
     }
@@ -269,20 +270,34 @@ private:
             running[id] = {generation, tasks.Launch([self, id, generation, url, probeForSite]() -> huxerui::Task<void> {
                 WebsiteTestResult result;
                 try { result = co_await probeForSite(url); }
-                catch (const std::exception& error) { result = {WebsiteTestPhase::Failed, 0, 0, error.what()}; }
+                catch (const std::exception& error) { result = {WebsiteTestPhase::Failed, 0, error.what()}; }
                 catch (...) { result = {WebsiteTestPhase::Failed}; }
-                const auto entry = self->running.find(id);
-                if (entry == self->running.end() || entry->second.generation != generation) co_return;
-                auto current = self->sites.Get();
-                const auto target = Find(current, id);
-                if (target != current.end() && target->url == url) {
-                    target->result = std::move(result);
-                    self->sites = std::move(current);
-                }
-                self->running.erase(entry);
-                self->Pump();
+                self->Complete(id, generation, url, std::move(result), false);
             })};
+            running.at(id).timeout = tasks.Launch([self, id, generation, url]() -> huxerui::Task<void> {
+                co_await huxerui::Delay(clashflux::website::kTimeout);
+                self->Complete(id, generation, url,
+                    {WebsiteTestPhase::Failed, 0, clashflux::website::kTimeoutError}, true);
+            });
         }
+    }
+    void Complete(std::size_t id, std::uint64_t generation, const std::string& url,
+                  WebsiteTestResult result, bool timedOut) {
+        const auto entry = running.find(id);
+        if (entry == running.end() || entry->second.generation != generation) return;
+        const auto request = entry->second;
+        running.erase(entry);
+        auto current = sites.Get();
+        const auto target = Find(current, id);
+        if (target != current.end() && target->url == url) {
+            result.completedAt = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            target->result = std::move(result);
+            sites = std::move(current);
+        }
+        // Cancel only the sibling: never destroy the coroutine completing now.
+        if (timedOut) request.task.Cancel(); else request.timeout.Cancel();
+        Pump();
     }
 };
 

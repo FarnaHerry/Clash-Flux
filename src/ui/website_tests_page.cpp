@@ -1,3 +1,4 @@
+#include "app_http_client.h"
 #include <huxerui/huxerui.h>
 #include "app_resources.h"
 #include "ui.h"
@@ -17,7 +18,7 @@ namespace {
     const auto navigation = huxerui::UseNavigation();
     const auto back = [navigation] { static_cast<void>(navigation.Pop()); };
     const auto close = UseWebsiteEditorClose(model, back);
-    const auto title = editing ? Localized("编辑网站") : Localized("添加网站");
+    const auto title = editing ? Localized("编辑") : Localized("添加网站");
     const auto action = editing ? Localized("保存") : Localized("添加网站");
     const auto icon = editing ? app::images::check : app::images::add;
     const auto commit = [submit, back] { if (submit()) back(); };
@@ -32,8 +33,9 @@ namespace {
 [[huxerui::composable]] huxerui::View WebsiteTestsPage(std::function<void()> onBack, bool active) {
     const float pageInset = ResolveIslandTheme(huxerui::UseTheme()).nested_radius;
     const auto model = huxerui::UseService<WebsiteTestModel>();
-    const auto http = huxerui::UseService<AppHttpClient>();
     const auto tasks = huxerui::UseApplicationTaskScope();
+    const auto http = huxerui::UseService<AppHttpClient>();
+    const auto menuTasks = huxerui::UseTaskScope();
     const auto toast = UseFluxToast();
     const auto dialog = huxerui::UseDialog();
     const auto navigation = huxerui::UseNavigation();
@@ -42,7 +44,9 @@ namespace {
     const auto rows = model->sites.Get();
     const bool anyActive = model->AnyActive();
     const auto invalidUrl = huxerui::UseString(Localized("请输入不重复的 HTTP(S) 网站地址，最多添加 24 项。"));
-    const WebsiteTestModel::Probe probe = [http](std::string url) { return ProbeWebsite(http, std::move(url)); };
+    const WebsiteTestModel::Probe probe = [http](std::string url) {
+        return ProbeWebsiteNetwork([http](huxerui::HttpRequest request) { return SendWebsiteRequest(http, std::move(request)); }, std::move(url));
+    };
     if (!active) return huxerui::View{};
 
     const auto openEditor = [model, compact, navigation, dialog, toast, invalidUrl](std::optional<std::size_t> id) {
@@ -85,10 +89,10 @@ namespace {
     }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     std::vector<huxerui::View> cards;
     for (const auto& row : rows)
-        cards.push_back(Card(WebsiteTestCardContent(row, [model, tasks, probe, id = row.id] {
+        cards.push_back(WebsiteTestCard(row, [model, tasks, probe, id = row.id] {
             model->Start(tasks, probe, {id});
         }, [openEditor, id = row.id] { openEditor(id); },
-           [model, id = row.id] { model->Remove(id); }), false).Key("website-card-" + std::to_string(row.id)));
+           [model, id = row.id] { model->Remove(id); }, menuTasks).Key("website-card-" + std::to_string(row.id)));
     const auto content = cards.empty()
         ? EmptyState(Localized("还没有网站，点击右上角添加。"), app::images::globe)
         : WebsiteTestGrid(cards, compact, offset);

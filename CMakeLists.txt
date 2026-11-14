@@ -780,6 +780,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                 set_tests_properties(app_update_async PROPERTIES TIMEOUT 30 LABELS clashflux-required)
             endif ()
             add_executable(test_page_transition tests/test_page_transition.cpp
+                src/ui/common_card.cpp src/ui/website_test_probe.cpp
                 src/ui/dialog_card.cpp
                 src/ui/section_tabs.cpp src/ui/box_cat.cpp src/ui/runtime_diagnostics.cpp
                 src/ui/home_header_control.cpp src/ui/home_grid.cpp src/ui/page_loading.cpp

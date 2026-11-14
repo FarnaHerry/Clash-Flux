@@ -1,5 +1,35 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-14：网站测试名称、菜单与出站位置
+
+- 代码快照：`6fc9a9e` 加本轮未提交工作区，版本保持 `0.3.110`。本机 Linux Debug 实际
+  选中源码 `third_party/huxerui@5c84b4ab`；本轮未更新依赖 pin。
+  仓库 CI 已由此前改动固定至 `11849f99`，本记录不冒充该 revision 的 CI 或平台验证。
+- 宽屏移除三点按钮，完整卡片（含内边距）右键打开「编辑 / 删除」；Compact 保留三点。
+  卡片仅显示名称，编辑名称在 URL 上方，空名称从域名/IPv4/IPv6 回退。成功显示国旗及
+  大写国家码，无法确认则「位置未知」，失败红字；右下角完成时间替换 HTTP 状态码和耗时。
+  共用 Card 原语移至独立 TU，生产组件测试直接链接真实卡片，未复制卡片实现。
+- 测试复用应用共享的 `AppHttpClient`，遵循系统当前代理、路由、VPN/TUN 与平台证书策略；
+  不建立内部 CONNECT 通道、不指定节点或本地端口，也不读取控制器选中的出站。先发 HEAD
+  并沿平台正常重定向拿到最终地址，再向该地址同源的 `/cdn-cgi/trace` 查询出口位置；
+  跨源重定向、非 200、超过 4096 字节或正文不含有效 IP/两字母 `loc` 时保持「位置未知」。
+  每个站点共用 10 秒预算，模型另有一次性 10 秒兜底，取消在途请求并继续队列。
+  按稳定 ID 与请求代次发布，旧请求、旧兜底定时器不能覆盖重试结果。
+  完整边界见[网站测试](website-tests.md)。
+- `cmake --build build --target clash-flux` 增量构建通过（HuxerUI codegen 已生成
+  `app::images::country_flags` 与 `app::raw::country_codes_txt`）；本轮未重新跑完整
+  `clashflux-required` 门禁。`ui_resources` 通过；`test_page_transition --website-tests`
+  覆盖宽窄菜单入口、名称回退、国旗/未知位置、字段顺序、10 秒兜底与同源位置；
+  收尾将队列排空断言改为 `PumpAndSettle()`，避免协程起跑跨帧时的假失败。
+  以上仅为本机 Linux Debug 结果，不代表 Windows/macOS 或 CI 通过。
+- Linux X11 原生窗口使用独占 XDG 目录及 bubblewrap 隐藏宿主 root 服务 socket，
+  检查 1500×1000 宽屏右键菜单、编辑弹窗字段顺序及 780×1100 窄窗三点按钮。
+  截图目录 `/tmp/clashflux-website-native-dplx9ofp/`（wide-context、wide-edit、compact）。
+  未接管系统代理/TUN、未操作用户订阅；不把受控内核测试等同于宿主服务或系统接管验收。
+  未执行 Windows/macOS 原生验证，未执行 Android Java/NDK 构建或真机验证；
+  本轮改动提交前未发布。
+
+
 ## 2026-11-14：HuxerUI 11849f99 与 v0.3.110 发布准备
 
 - 发布代码基于 `cecf55c` 加本轮工作区，CMake/Android versionName 同为 `0.3.110`，

@@ -41,7 +41,7 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
 
 ## Features
 
-- Website access tests: cards show HTTP status and elapsed time for common sites, with batch tests, individual retries, cancellation and temporary custom URLs. Open from the wide sidebar or Settings → More on compact screens. Tests use the app network; Android results do not verify VPN routing for other apps. See [website tests](docs/website-tests.md).
+- Website access tests: cards show the outbound country flag, country code and completion time, with batch tests, individual retries and editable temporary sites. Wide cards use a context menu; compact cards retain the overflow button. Tests follow the actual system network with a ten-second timeout. Country is shown only when the tested site provides its own exit-location trace. See [website tests](docs/website-tests.md).
 
 - Subscription sources, rule-set JSON, compiled JSON and diagnostic reports share CodeEditor, with worker-prepared documents and no full-document copy on each keystroke.
 

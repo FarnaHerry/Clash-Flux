@@ -8,16 +8,17 @@ namespace clashflux::ui {
 inline huxerui::View WebsiteTestForm(std::shared_ptr<WebsiteTestModel> model) {
     return huxerui::Scope([model] {
         return huxerui::Column {
+          huxerui::TextField(model->customName.Get()).Label(Localized("名称"))
+              .Placeholder(Localized("留空时使用域名或 IP"))
+              .Variant(huxerui::TextFieldVariant::Outlined)
+              .OnChanged([model](const huxerui::TextEditingValue& value) { model->customName = value; })
+              .Key("website-editor-name"),
           huxerui::TextField(model->customUrl.Get()).Label(Localized("网站地址"))
               .Placeholder(Localized("example.com（默认 HTTPS）"))
               .InputConfiguration({.type = huxerui::TextInputType::Url})
               .Variant(huxerui::TextFieldVariant::Outlined)
               .OnChanged([model](const huxerui::TextEditingValue& value) { model->customUrl = value; })
               .Key("website-editor-url"),
-          huxerui::TextField(model->customName.Get()).Label(Localized("备注（可选）"))
-              .Variant(huxerui::TextFieldVariant::Outlined)
-              .OnChanged([model](const huxerui::TextEditingValue& value) { model->customName = value; })
-              .Key("website-editor-name"),
         }.With(huxerui::Spacing(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     });
 }
@@ -39,7 +40,7 @@ inline huxerui::View WebsiteTestEditorDialog(huxerui::DialogContext context,
     std::shared_ptr<WebsiteTestModel> model, bool editing, std::function<bool()> submit) {
     return huxerui::Scope([context, model, editing, submit] {
         const auto close = UseWebsiteEditorClose(model, [context] { context.Dismiss(); });
-        return DialogScaffold(DialogHeader(editing ? Localized("编辑网站") : Localized("添加网站")),
+        return DialogScaffold(DialogHeader(editing ? Localized("编辑") : Localized("添加网站")),
             WebsiteTestForm(model), DialogActions({
                 DialogAction(Localized("取消"), close, false).Key("website-editor-cancel"),
                 DialogAction(editing ? Localized("保存") : Localized("添加网站"),
