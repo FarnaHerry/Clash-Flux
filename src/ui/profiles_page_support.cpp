@@ -1,11 +1,12 @@
 // profiles_page_support.cpp — 订阅页共享辅助与平台导入/刷新流程。
 #include <huxerui/huxerui.h>
-#include <qrcodegen.hpp>
+#include <huxerui/qrcode.h>
 
 #include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cctype>
+#include <exception>
 #include <format>
 #include <memory>
 #include <string>
@@ -36,13 +37,6 @@ import clashflux.vpn;
 #include "../profile_link.h"
 
 namespace clashflux::ui::profile_detail {
-namespace {
-
-// ISO/IEC 18004 requires a four-module quiet zone around a QR symbol.
-constexpr int kQrQuietZoneModules = 4;
-
-} // namespace
-
 huxerui::StringVariant profileTypeLabel(std::string_view type) {
     if (type == "remote") return Localized("远程订阅");
     if (type == "local") return Localized("本地文件");
@@ -100,60 +94,45 @@ std::string truncateOneLine(const std::string& s, std::size_t maxCodePoints) {
     return s;
 }
 
-// 订阅链接二维码画笔：白底 + 近黑模块（固定高对比，不随主题翻转，保证
-// 扫码成功率）。白色画布内包含标准四模块静区，不依赖弹窗背景。
-huxerui::CanvasPainter QrPainter(const std::string& text) {
-    return [text](huxerui::PaintContext& paint, huxerui::Size size) {
-        const float side = std::min(size.width, size.height);
-        if (side <= 0.0F) return;
-        qrcodegen::QrCode qr = qrcodegen::QrCode::encodeText(
-            text.c_str(), qrcodegen::QrCode::Ecc::MEDIUM);
-        const int n = qr.getSize();
-        const int totalModules = n + 2 * kQrQuietZoneModules;
-        const float cell = side / static_cast<float>(totalModules);
-        const float ox = (size.width - side) / 2.0F;
-        const float oy = (size.height - side) / 2.0F;
-        const float qrOffset =
-            static_cast<float>(kQrQuietZoneModules) * cell;
-        paint.DrawRect({ox, oy, side, side},
-                       huxerui::Color::Rgb(255, 255, 255), {});
-        const huxerui::Color moduleColor = huxerui::Color::Rgb(17, 17, 17);
-        for (int y = 0; y < n; ++y) {
-            for (int x = 0; x < n; ++x) {
-                if (qr.getModule(x, y)) {
-                    const float moduleX =
-                        ox + qrOffset + static_cast<float>(x) * cell;
-                    const float moduleY =
-                        oy + qrOffset + static_cast<float>(y) * cell;
-                    paint.DrawRect({moduleX, moduleY, cell, cell}, moduleColor,
-                                   {});
-                }
-            }
-        }
-    };
+huxerui::View ShareQrView(huxerui::qrcode::Symbol symbol) {
+    return huxerui::qrcode::QRCode(std::move(symbol))
+        .With(huxerui::Frame{.width = 300.0F, .height = 300.0F});
 }
 
-// QRS 分享只显示二维码本身；多帧序列按固定节奏循环，扫码端负责重组。
 [[huxerui::composable]] huxerui::View QrsSequenceView(
-    std::shared_ptr<const std::vector<std::string>> frames) {
+    std::shared_ptr<const std::vector<std::string>> frames,
+    huxerui::qrcode::Symbol first, FluxToastHandle toast) {
     const huxerui::TaskScope tasks = huxerui::UseTaskScope();
-    auto index = huxerui::UseState<std::size_t>(0);
+    auto current = huxerui::UseState(first);
+    const auto error_text = huxerui::UseString(Localized("无法生成 QRS 分享码"));
     huxerui::Lifecycle([=]() -> std::function<void()> {
-        if (!frames || frames->size() < 2) return [] {};
+        if (frames->size() < 2) return [] {};
         const huxerui::TaskHandle handle = tasks.Launch([=]() -> huxerui::Task<void> {
-            while (true) {
-                co_await huxerui::Delay(std::chrono::milliseconds{350});
-                index = (index.Get() + 1) % frames->size();
+            using Clock = std::chrono::steady_clock;
+            try {
+                std::size_t index = 0;
+                while (true) {
+                    const auto deadline = Clock::now() + std::chrono::milliseconds{350};
+                    index = (index + 1) % frames->size();
+                    auto next = first;
+                    if (index != 0) {
+                        next = co_await RunOnTaskThread([frames, index] {
+                            return huxerui::qrcode::Encode((*frames)[index]);
+                        });
+                    }
+                    if (const auto remaining = deadline - Clock::now();
+                        remaining > Clock::duration::zero()) {
+                        co_await huxerui::Delay(remaining);
+                    }
+                    current = std::move(next);
+                }
+            } catch (const std::exception&) {
+                toast.Show(error_text);
             }
         });
         return [handle] { handle.Cancel(); };
     });
-    if (!frames || frames->empty()) {
-        return huxerui::Canvas(QrPainter(std::string{}))
-            .With(huxerui::Frame{.width = 300.0F, .height = 300.0F});
-    }
-    return huxerui::Canvas(QrPainter((*frames)[index.Get() % frames->size()]))
-        .With(huxerui::Frame{.width = 300.0F, .height = 300.0F});
+    return ShareQrView(current.Get());
 }
 
 // 把弹窗数字输入解析为秒/分钟：空/非法回落 fallback。

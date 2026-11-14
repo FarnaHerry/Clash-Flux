@@ -49,12 +49,6 @@ target_include_directories(nlohmann_json INTERFACE "$<INSTALL_INTERFACE:include>
 clashflux_install_headers("${CLASHFLUX_DEPENDENCY_REPO}/third_party/json")
 clashflux_export_package(nlohmann_json ${CLASHFLUX_DEP_JSON_VERSION} nlohmann_json)
 
-add_library(qrcodegen STATIC "${CLASHFLUX_DEPENDENCY_REPO}/third_party/qrcodegen/qrcodegen.cpp")
-target_include_directories(qrcodegen INTERFACE "$<INSTALL_INTERFACE:include>")
-target_compile_features(qrcodegen PUBLIC cxx_std_17)
-clashflux_install_headers("${CLASHFLUX_DEPENDENCY_REPO}/third_party/qrcodegen")
-clashflux_export_package(QrCode ${CLASHFLUX_DEP_QRCODE_VERSION} qrcodegen)
-
 clashflux_dependency_source(zstd)
 set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -136,7 +130,7 @@ clashflux_export_package(IXWebSocket ${CLASHFLUX_DEP_ixwebsocket_VERSION} ixwebs
 
 # Build only the selected library payload, even though upstream exports/tools exist.
 add_custom_target(clashflux_dependency_payload ALL
-    DEPENDS qrcodegen libzstd_static yaml-cpp ${curl_target} ixwebsocket)
+    DEPENDS libzstd_static yaml-cpp ${curl_target} ixwebsocket)
 
 # The bootstrap checks these files before reusing a package cache.
 get_property(external_files GLOBAL PROPERTY CLASHFLUX_CPS_EXTERNAL_FILES)

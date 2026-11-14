@@ -1,5 +1,18 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-14：统一二维码生成与识别
+
+- 代码快照为 Clash-Flux `5a1dbdf` 加本轮工作区，固定 HuxerUI `11849f99` 和
+  Lib-QRCode `23bc79b`。分享单码、QRS 帧和 Android 像素识别共用 Lib-QRCode。
+  `qrs_codec` 验证 Unicode 链接和压缩／未压缩配置经二维码识别后能逐字节还原。
+- Windows MSVC Release 主目标和 HUI codegen 构建成功，版本为 `v0.3.110`。
+  `page_transition`、`qrs_codec`、`ui_resources`、CPS 重定位／版本拒绝／缓存完整性及
+  `dns_tls_runtime` 通过。完整门禁中 `project_test_gate` 并发超时，单独重跑通过。
+  `resource_management_runtime` 的 CLI 调用超时，Windows 服务管道与 WFP 用例也失败。
+- Android NDK 29 编译并链接 arm64 JNI 识别适配层，Android 模拟器上的 x86_64 专项探针
+  调用生产 Java 位图入口和 JNI，验证独立二维码样本、空白图及位图释放。
+  真机相机／相册、Windows 原生分享弹窗和其它平台仍需实测。
+
 ## 2026-11-14：网站测试名称、菜单与出站位置
 
 - 代码快照：`6fc9a9e` 加本轮未提交工作区，版本保持 `0.3.110`。本机 Linux Debug 实际

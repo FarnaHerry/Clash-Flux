@@ -9,7 +9,7 @@
 1. `cmake/dependencies/Lock.cmake` 集中声明归档版本/SHA、直提文件 SHA 和
    HuxerUI 扩展的固定 URL/COMMIT。归档默认来自仓库，无新增联网下载。
 2. 首次应用配置自动运行 `cmake/dependencies` 独立 producer，使用与应用相同
-   的目标工具链、编译器和 flags。Glaze、nlohmann_json、QrCode、zstd、yaml-cpp、
+   的目标工具链、编译器和 flags。Glaze、nlohmann_json、zstd、yaml-cpp、
    CURL、IXWebSocket 分别导出 CPS 包。
 3. 包存放于 `build/dependencies/<fingerprint>/prefix`。身份覆盖 recipe、锁定输入、
    CMake、编译器版本、ABI、构建类型、SDK/NDK、编译/链接 flags 和 OpenSSL。
@@ -50,8 +50,8 @@ ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-require
 
 ## 验证
 
-桌面门禁增加 `cps_dependencies`：消费迁移到另一目录的七个真实包，检查静态
-编译定义与新前缀内的库路径，编译/运行 Glaze、JSON、YAML、QR、Zstd、curl 与
+桌面门禁 `cps_dependencies` 消费迁移到另一目录的六个真实包，检查静态
+编译定义与新前缀内的库路径，编译/运行 Glaze、JSON、YAML、Zstd、curl 与
 WebSocket 客户端及 PAC 所需 SocketServer；拒绝错误版本，并验证暖缓存下归档篡改仍被拒绝且旧源码保留。
 系统依赖另经真实 CPS 导出/导入验证 Debug/Release 库路径、大小写配置映射和
 显式选择无配置库的映射。

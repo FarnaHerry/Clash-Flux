@@ -69,7 +69,6 @@ function(clashflux_prepare_android_sources output_directory output_header
         "#include <utility>\n"
         "#include <vector>\n"
         "#include <nlohmann/json.hpp>\n"
-        "#include <qrcodegen.hpp>\n"
         "#include \"wire_codec.h\"\n\n"
     )
 

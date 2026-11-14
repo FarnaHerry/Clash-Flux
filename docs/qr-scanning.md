@@ -17,8 +17,13 @@ Android 配置导入的扫码页在页头提供「从相册选择」图标，打
 
 选中的 HUI `FileReference` 通过平台载荷交给 Java，持有 provider 引用直至工作线程结束；
 通过 `ContentResolver` 流式读取尺寸和采样图像，不把相册原文件整份复制到 C++/JNI 字节数组。
-位图沿用相机识别的 1600 像素采样上限和 ZXing QR 解码，完成或失败后释放位图与文件引用。
-取消后底层已开始的读取可能继续到结束，但不再发布结果。
+相机 JPEG 和相册图片采用同一条路径。Java 将最长边采样至 1600 像素以内，透明位图
+先合成到白底，再将 RGBA 像素与行步长通过 JNI 交给 Lib-QRCode 的 `Decode()`。
+识别结果按 UTF-8 返回，识别完成或失败后释放像素锁、位图与文件引用。取消后底层已开始的
+读取或识别可能继续到结束，回调会丢弃结果。
+
+分享单码和 QRS 帧也由 Lib-QRCode 编码并绘制。分享仍使用 300 pt 视图与四模块静区。
+QRS 在工作线程准备下一张，单帧至少显示 350 ms。QiFi/QRS 分帧和重组由应用完成。
 
 ## 添加配置的识别与返回
 
@@ -72,7 +77,7 @@ after  28009da444764b60ab611bb06abcb0f0b9341f7a95e818cb0dfcb227a8dfc2db
 
 ## 验证边界
 
-已执行主目标/HUI codegen、版本检查、完整桌面 31 项门禁、`qrs_codec`，以及
+更换编解码库前，已执行主目标/HUI codegen、版本检查、完整桌面 31 项门禁、`qrs_codec`，以及
 `platform/android` 中的 `./gradlew :app:assembleDebug`（Java、NDK 与 APK 打包）。
 生产 `QrScannerControl` 的无窗口回归覆盖单飞、相册切换取消在途相机任务、
 禁止迟到发布、选择结束后重启和页面卸载清理；编解码回归继续覆盖 QRS。

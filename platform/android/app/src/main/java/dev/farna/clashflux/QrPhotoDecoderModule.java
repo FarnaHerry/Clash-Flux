@@ -3,15 +3,9 @@ package dev.farna.clashflux;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-
-import com.google.zxing.BarcodeFormat;
-import com.google.zxing.BinaryBitmap;
-import com.google.zxing.DecodeHintType;
-import com.google.zxing.MultiFormatReader;
-import com.google.zxing.NotFoundException;
-import com.google.zxing.RGBLuminanceSource;
-import com.google.zxing.Result;
-import com.google.zxing.common.HybridBinarizer;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Rect;
 
 import org.huxerui.HuxerUIFileReference;
 import org.huxerui.HuxerUIPlatformChannel;
@@ -20,15 +14,15 @@ import org.huxerui.PlatformPayload;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Collections;
-import java.util.EnumMap;
-import java.util.Map;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Decodes camera bytes or a retained album reference on a worker thread. */
 public final class QrPhotoDecoderModule implements HuxerUIPlatformModule.Factory {
+    private static native byte[] decodePixels(Bitmap bitmap);
+
     @Override
     public HuxerUIPlatformModule create(Context context, PlatformPayload options,
                                         HuxerUIPlatformChannel.Events events) {
@@ -121,7 +115,10 @@ public final class QrPhotoDecoderModule implements HuxerUIPlatformModule.Factory
 
         private static BitmapFactory.Options sampleOptions(BitmapFactory.Options bounds) {
             int sample = 1;
-            while (bounds.outWidth / sample > 1600 || bounds.outHeight / sample > 1600) sample *= 2;
+            while ((bounds.outWidth - 1) / sample >= 1600
+                    || (bounds.outHeight - 1) / sample >= 1600) {
+                sample *= 2;
+            }
             BitmapFactory.Options options = new BitmapFactory.Options();
             options.inSampleSize = sample;
             options.inPreferredConfig = Bitmap.Config.ARGB_8888;
@@ -130,29 +127,20 @@ public final class QrPhotoDecoderModule implements HuxerUIPlatformModule.Factory
 
         private static String decodeBitmap(Bitmap bitmap) {
             if (bitmap == null) return "";
+            Bitmap pixels = bitmap;
             try {
-                int width = bitmap.getWidth();
-                int height = bitmap.getHeight();
-                int[] pixels = new int[width * height];
-                bitmap.getPixels(pixels, 0, width, 0, 0, width, height);
-                RGBLuminanceSource luminance =
-                        new RGBLuminanceSource(width, height, pixels);
-                BinaryBitmap image = new BinaryBitmap(new HybridBinarizer(luminance));
-                MultiFormatReader reader = new MultiFormatReader();
-                Map<DecodeHintType, Object> hints =
-                        new EnumMap<>(DecodeHintType.class);
-                hints.put(DecodeHintType.POSSIBLE_FORMATS,
-                        Collections.singletonList(BarcodeFormat.QR_CODE));
-                hints.put(DecodeHintType.TRY_HARDER, Boolean.TRUE);
-                try {
-                    Result result = reader.decode(image, hints);
-                    return result.getText() == null ? "" : result.getText();
-                } catch (NotFoundException ignored) {
-                    return "";
-                } finally {
-                    reader.reset();
+                if (bitmap.getConfig() != Bitmap.Config.ARGB_8888 || bitmap.hasAlpha()) {
+                    pixels = Bitmap.createBitmap(bitmap.getWidth(), bitmap.getHeight(),
+                            Bitmap.Config.ARGB_8888);
+                    Canvas canvas = new Canvas(pixels);
+                    // The decoder ignores alpha. Composite transparent PNGs onto white.
+                    canvas.drawColor(Color.WHITE);
+                    canvas.drawBitmap(bitmap, null,
+                            new Rect(0, 0, pixels.getWidth(), pixels.getHeight()), null);
                 }
+                return new String(decodePixels(pixels), StandardCharsets.UTF_8);
             } finally {
+                if (pixels != bitmap) pixels.recycle();
                 bitmap.recycle();
             }
         }

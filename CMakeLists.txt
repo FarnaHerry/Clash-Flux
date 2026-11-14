@@ -428,6 +428,11 @@ huxerui_use_library(clash-flux
     URL "${CLASHFLUX_HUXERUI_CHARTS_URL}"
     COMMIT "${CLASHFLUX_HUXERUI_CHARTS_COMMIT}"
 )
+huxerui_use_library(clash-flux
+    TARGET HuxerUI::QRCode
+    URL "${CLASHFLUX_HUXERUI_QRCODE_URL}"
+    COMMIT "${CLASHFLUX_HUXERUI_QRCODE_COMMIT}"
+)
 
 # Native album selection is currently consumed by the Android QR page only.
 # The platform-neutral library graph must still include its Java package.
@@ -519,7 +524,6 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         CURL::libcurl
         clashflux_json
         clashflux_wire
-        QrCode::qrcodegen
         yaml-cpp::yaml-cpp
         zstd::libzstd_static
         Threads::Threads
@@ -541,7 +545,7 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     if (NOT ANDROID AND NOT IOS)
         target_link_libraries(clash-flux PRIVATE OpenSSL::SSL OpenSSL::Crypto)
     elseif (ANDROID)
-        target_link_libraries(clash-flux PRIVATE log)
+        target_link_libraries(clash-flux PRIVATE log jnigraphics)
     endif ()
 
     # The handoff must outlive the GUI and must not lock application DLLs on
@@ -837,6 +841,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         target_include_directories(test_qrs_codec PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/src/ui")
         target_compile_features(test_qrs_codec PRIVATE cxx_std_23)
+        target_link_libraries(test_qrs_codec PRIVATE HuxerUI::QRCode)
         if (ZLIB_FOUND)
             target_compile_definitions(test_qrs_codec PRIVATE CLASHFLUX_HAVE_ZLIB=1)
             target_link_libraries(test_qrs_codec PRIVATE ZLIB::ZLIB)

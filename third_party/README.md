@@ -2,7 +2,7 @@
 
 第三方 tarball 提交在 `tarballs/`，版本、来源与 SHA 的唯一构建声明位于
 `cmake/dependencies/Lock.cmake`。配置时验证归档与直提源码（包括热缓存），
-独立 producer 构建、安装七个 CPS 包，应用通过 `find_package` 消费。展开源码
+独立 producer 构建、安装六个 CPS 包，应用通过 `find_package` 消费。展开源码
 仍在 `build/vendor/`；包缓存区分平台、编译器、flags 与配置。详见
 [依赖管理](../docs/cps-dependencies.md)。
 nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归档可离线解包；HuxerUI 插件与内核首次获取仍可能需要网络。
@@ -27,7 +27,7 @@ nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归�
 | Zstandard | 1.5.7 | `zstd-1.5.7.tar.gz` | Official facebook/zstd v1.5.7 tag archive (`https://codeload.github.com/facebook/zstd/tar.gz/refs/tags/v1.5.7`), SHA256 `37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3`. Static MRS decoder dependency on all platforms, no CLI/test/shared build. Upstream BSD/GPL license files remain in the archive. |
 | Glaze | 9.1.0 | `glaze-9.1.0-headers.tar.gz` | 官方 tag revision `43b175e7446862b84ed07b2e5f5138433777680e` 的 `include/` + MIT `LICENSE`。SHA256 `9bb4c9897e8b0f0d6b66b3ee4c1519efbf4288a4c331fd382d8c9412e67a244a`。私有 `clashflux_wire` 静态库实现应用 JSON codec，不运行上游 CMake。 |
 | nlohmann::json | 3.12.0 | `json/nlohmann/json.hpp`（single header） | 上游 `nlohmann/json` v3.12.0 `single_include` |
-| QR-Code-generator | 1.8.0 | `qrcodegen/qrcodegen.{hpp,cpp}`（源码直提，同 json 先例） | 上游 `nayuki/QR-Code-generator` v1.8.0（MIT）。订阅分享二维码。 |
+| Lib-QRCode | `23bc79b19a6a6d104efc00bfa3934cd7ab78b08f` | 构建期通过 `huxerui_use_library` 获取官方 `HuxerUI/Lib-QRCode` | 共享二维码的生成、绘制和 Android 识别。内置 ZXing-C++ 2.3.0。许可见库内 `LICENSE` 与 `THIRD_PARTY_NOTICES.md`。 |
 | yaml-cpp | 0.9.0 | `yaml-cpp-0.9.0.tar.gz` | 上游 `jbeder/yaml-cpp` yaml-cpp-0.9.0（MIT）。Clash 订阅 YAML 解析（sing-box 配置编译器输入）。 |
 
 Camera、Charts、SQLite、CodeEditor、Media 通过 `huxerui_use_library(URL, COMMIT)` 获取到构建缓存，原生构建
@@ -110,7 +110,7 @@ CTFrame、Windows DirectWrite、Web 行度量）；核心 `src/include` 与公�
 通用库升级到 Glaze 9.1.0、curl 8.23.0、IXWebSocket 12.1.0、yaml-cpp 0.9.0。
 来源分别为官方 tag `v9.1.0`、curl 官方 release tarball、`v12.1.0`、`yaml-cpp-0.9.0`；
 Glaze 仅保留 include/ 与 LICENSE，归档元数据归零。所有构建输入摘要见 Lock.cmake。
-Zstd 1.5.7、nlohmann/json 3.12.0、QR-Code-generator 1.8.0 与 sing-box 1.14.4
+Zstd 1.5.7、nlohmann/json 3.12.0 与 sing-box 1.14.4
 核对官方最新稳定版本后保持不变，不采用 alpha/RC。
 
 HuxerUI 更新到已发布 fork `2229125248d95fc47c334df1568533e56bf62350`，

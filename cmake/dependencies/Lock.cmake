@@ -22,12 +22,9 @@ clashflux_lock_archive(huxerui 0.4.0 huxerui-sdk-0.4.0-linux-x86_64.tar.gz
 clashflux_lock_archive(openssl 3.5.1 openssl-3.5.1-linux-x86_64.tar.gz
     d749ee7ec6bda301dba4a67dc7196d4a04b310f664dc360d6ab2e49298b731cf openssl-3.5.1-linux-x86_64)
 set(CLASHFLUX_DEP_JSON_VERSION 3.12.0)
-set(CLASHFLUX_DEP_QRCODE_VERSION 1.8.0)
 set(CLASHFLUX_DEPENDENCY_ARCHIVES glaze zstd yamlcpp curl ixwebsocket)
 set(CLASHFLUX_DEPENDENCY_FILES
-    "third_party/json/nlohmann/json.hpp|aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63"
-    "third_party/qrcodegen/qrcodegen.hpp|b779c3b156cf7a57ce789d6fee4fc991ccc2913774d26c909d22bb8f26b2a793"
-    "third_party/qrcodegen/qrcodegen.cpp|1f3b3fcdac6954c32cf583ccd02ec9b5901f756a38c461acedc70be4a77d3757")
+    "third_party/json/nlohmann/json.hpp|aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63")
 
 # Framework extensions still use the framework's codegen/resource/Android graph.
 set(CLASHFLUX_HUXERUI_CAMERA_URL "https://github.com/FarnaHerry/Lib-Camera.git")
@@ -40,6 +37,8 @@ set(CLASHFLUX_HUXERUI_CODEEDITOR_URL "https://github.com/FarnaHerry/Lib-CodeEdit
 set(CLASHFLUX_HUXERUI_CODEEDITOR_COMMIT "a332e7c3158818a891bb8181756d439a62df6268")
 set(CLASHFLUX_HUXERUI_MEDIA_URL "https://github.com/HuxerUI/Lib-Media.git")
 set(CLASHFLUX_HUXERUI_MEDIA_COMMIT "fbe5b7e652f8cb79191444fa2a51d0dd0c2299bb")
+set(CLASHFLUX_HUXERUI_QRCODE_URL "https://github.com/HuxerUI/Lib-QRCode.git")
+set(CLASHFLUX_HUXERUI_QRCODE_COMMIT "23bc79b19a6a6d104efc00bfa3934cd7ab78b08f")
 
 function(clashflux_dependency_source name)
     clashflux_extract(${name} "${CLASHFLUX_DEP_${name}_ARCHIVE}"

@@ -342,7 +342,7 @@ jobs:
           # save-always：actions/cache 默认只在 job 成功时保存；冒烟测试失败
           # 不应浪费已经成功完成的编译成果，否则下次仍要全量重编。
           save-always: true
-          key: build-windows-${{ runner.os }}-${{ env.IMAGE_VERSION }}-${{ env.HUXERUI_COMMIT }}-${{ hashFiles('cmake/dependencies/**', 'cmake/clashflux_vendor.cmake', 'third_party/tarballs/**', 'third_party/json/**', 'third_party/qrcodegen/**') }}
+          key: build-windows-${{ runner.os }}-${{ env.IMAGE_VERSION }}-${{ env.HUXERUI_COMMIT }}-${{ hashFiles('cmake/dependencies/**', 'cmake/clashflux_vendor.cmake', 'third_party/tarballs/**', 'third_party/json/**') }}
           restore-keys: |
             build-windows-${{ runner.os }}-${{ env.IMAGE_VERSION }}-${{ env.HUXERUI_COMMIT }}-
 

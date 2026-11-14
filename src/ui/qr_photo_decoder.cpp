@@ -2,10 +2,77 @@
 
 #if defined(__ANDROID__)
 
+#include <android/bitmap.h>
 #include <huxerui/android/platform_registry.h>
 #include <huxerui/huxerui.h>
+#include <huxerui/qrcode/codec.h>
 
+#include <limits>
+#include <stdexcept>
 #include <utility>
+
+namespace {
+
+class LockedQrBitmap final {
+public:
+    LockedQrBitmap(JNIEnv* env, jobject bitmap) : env_(env), bitmap_(bitmap) {
+        if (AndroidBitmap_getInfo(env_, bitmap_, &info_) != ANDROID_BITMAP_RESULT_SUCCESS ||
+            info_.format != ANDROID_BITMAP_FORMAT_RGBA_8888 ||
+            info_.width == 0 || info_.height == 0 ||
+            info_.width > 1600 || info_.height > 1600 ||
+            info_.stride > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ||
+            info_.stride < info_.width * 4) {
+            throw std::runtime_error("Invalid QR bitmap");
+        }
+        if (AndroidBitmap_lockPixels(env_, bitmap_, &pixels_) != ANDROID_BITMAP_RESULT_SUCCESS) {
+            throw std::runtime_error("Unable to read QR bitmap pixels");
+        }
+    }
+    LockedQrBitmap(const LockedQrBitmap&) = delete;
+    LockedQrBitmap& operator=(const LockedQrBitmap&) = delete;
+    ~LockedQrBitmap() { AndroidBitmap_unlockPixels(env_, bitmap_); }
+
+    huxerui::qrcode::ImageView View() const {
+        return {
+            {static_cast<const std::uint8_t*>(pixels_),
+             static_cast<std::size_t>(info_.stride) * info_.height},
+            static_cast<int>(info_.width),
+            static_cast<int>(info_.height),
+            huxerui::qrcode::PixelFormat::RGBA8,
+            static_cast<int>(info_.stride)
+        };
+    }
+
+private:
+    JNIEnv* env_;
+    jobject bitmap_;
+    AndroidBitmapInfo info_{};
+    void* pixels_ = nullptr;
+};
+
+} // namespace
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_dev_farna_clashflux_QrPhotoDecoderModule_decodePixels(JNIEnv* env, jclass, jobject bitmap) {
+    namespace qr = huxerui::qrcode;
+    try {
+        const LockedQrBitmap pixels{env, bitmap};
+        const auto decoded = qr::Decode(pixels.View(), {.formats = {qr::BarcodeFormat::QRCode}});
+        const auto size = decoded ? static_cast<jsize>(decoded->text.size()) : 0;
+        const auto bytes = env->NewByteArray(size);
+        if (bytes && size != 0) {
+            env->SetByteArrayRegion(bytes, 0, size,
+                reinterpret_cast<const jbyte*>(decoded->text.data()));
+        }
+        return bytes;
+    } catch (const std::exception&) {
+        if (!env->ExceptionCheck()) {
+            const auto error = env->FindClass("java/lang/IllegalStateException");
+            if (error) env->ThrowNew(error, "Unable to decode QR bitmap");
+        }
+        return nullptr;
+    }
+}
 
 namespace clashflux::ui {
 namespace {

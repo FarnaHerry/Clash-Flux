@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <huxerui/huxerui.h>
+#include <huxerui/qrcode/codec.h>
 
 #include "app_http_client.h"
 #include "text_document.h"
@@ -113,9 +114,10 @@ void OpenProfileEditInfo(std::int64_t id, bool compact,
                          const ProfileEditDialog& show_edit_info,
                          huxerui::State<std::int64_t> edit_page_id);
 std::string truncateOneLine(const std::string& value, std::size_t maxCodePoints);
-huxerui::CanvasPainter QrPainter(const std::string& text);
+huxerui::View ShareQrView(huxerui::qrcode::Symbol symbol);
 huxerui::View QrsSequenceView(
-    std::shared_ptr<const std::vector<std::string>> frames);
+    std::shared_ptr<const std::vector<std::string>> frames,
+    huxerui::qrcode::Symbol first, FluxToastHandle toast);
 int parseNumber(const huxerui::TextEditingValue& value, int fallback);
 std::vector<std::string> parseRouteField(std::string_view text);
 std::string joinRoutes(const std::vector<std::string>& routes);
@@ -150,8 +152,8 @@ using profile_detail::parseNumber;
 using profile_detail::parseRouteField;
 using profile_detail::profileTypeLabel;
 using profile_detail::profileTypeTabLabel;
-using profile_detail::QrPainter;
 using profile_detail::QrsSequenceView;
+using profile_detail::ShareQrView;
 using profile_detail::joinRoutes;
 using profile_detail::makePptpConfig;
 using profile_detail::pptpStateText;

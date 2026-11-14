@@ -422,50 +422,60 @@
     };
 
     // ---- 分享二维码 ----
-    auto showQr = [dialog, tasks, findProfile](std::int64_t id) {
+    auto showQr = [dialog, tasks, findProfile, toast,
+                      error_text = huxerui::UseString(Localized("无法生成分享二维码"))](std::int64_t id) {
         tasks.Launch([=]() -> huxerui::Task<void> {
             co_await huxerui::Delay(std::chrono::duration<double>{0});
             const auto profile = findProfile(id);
             if (!profile || profile->url.empty()) co_return;
-            const std::string url = profile->url;
-            dialog.Show(
-                [url](huxerui::DialogContext) -> huxerui::View {
-                    return DialogCard(
-                        huxerui::Canvas(QrPainter(url))
-                            .With(huxerui::Frame{.width = 300.0F,
-                                                 .height = 300.0F}));
-                },
-                huxerui::DialogOptions{});
+            try {
+                auto symbol = co_await RunOnTaskThread([url = profile->url] {
+                    return huxerui::qrcode::Encode(url);
+                });
+                dialog.Show(
+                    [symbol = std::move(symbol)](huxerui::DialogContext) {
+                        return DialogCard(ShareQrView(symbol));
+                    },
+                    huxerui::DialogOptions{});
+            } catch (const std::exception&) {
+                toast.Show(error_text);
+            }
         });
     };
 
     // ---- 通过 QRS 多帧码分享完整配置 ----
-    auto showQrs = [dialog, tasks, findProfile, toast](std::int64_t id) {
+    auto showQrs = [dialog, tasks, findProfile, toast,
+                       read_error = huxerui::UseString(Localized("无法读取订阅配置")),
+                       encode_error = huxerui::UseString(Localized("无法生成 QRS 分享码"))](std::int64_t id) {
         tasks.Launch([=]() -> huxerui::Task<void> {
             co_await huxerui::Delay(std::chrono::duration<double>{0});
             const auto profile = findProfile(id);
             if (!profile) co_return;
-            const auto config = co_await RunOnTaskThread([id] {
+            auto config = co_await RunOnTaskThread([id] {
                 return store::profilesStore().yamlOf(id);
             });
             if (config.empty()) {
-                toast.Show(Localized("无法读取订阅配置"));
+                toast.Show(read_error);
                 co_return;
             }
-            auto sequence = co_await RunOnTaskThread([config] {
-                return qrs::Encode(config);
-            });
-            if (sequence.frames.empty()) {
-                toast.Show(Localized("无法生成 QRS 分享码"));
-                co_return;
+            try {
+                auto [frames, first] = co_await RunOnTaskThread([config = std::move(config)] {
+                    auto sequence = qrs::Encode(config);
+                    if (sequence.frames.empty())
+                        throw std::invalid_argument("QRS frame sequence is empty");
+                    auto first = huxerui::qrcode::Encode(sequence.frames.front());
+                    return std::pair{
+                        std::make_shared<const std::vector<std::string>>(std::move(sequence.frames)),
+                        std::move(first)};
+                });
+                dialog.Show(
+                    [frames, first, toast](huxerui::DialogContext) {
+                        return DialogCard(QrsSequenceView(frames, first, toast));
+                    },
+                    huxerui::DialogOptions{});
+            } catch (const std::exception&) {
+                toast.Show(encode_error);
             }
-            auto frames = std::make_shared<const std::vector<std::string>>(
-                std::move(sequence.frames));
-            dialog.Show(
-                [frames](huxerui::DialogContext) -> huxerui::View {
-                    return DialogCard(QrsSequenceView(frames));
-                },
-                huxerui::DialogOptions{});
         });
     };
 

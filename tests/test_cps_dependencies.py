@@ -94,7 +94,6 @@ if(REJECT_VERSION)
 endif()
 clashflux_find_cps(Glaze 9.1.0 glaze)
 clashflux_find_cps(nlohmann_json 3.12.0 nlohmann_json)
-clashflux_find_cps(QrCode 1.8.0 qrcodegen)
 clashflux_find_cps(zstd 1.5.7 libzstd_static)
 clashflux_find_cps(yaml-cpp 0.9.0 yaml-cpp)
 clashflux_find_cps(CURL 8.23.0 libcurl)
@@ -104,7 +103,7 @@ get_target_property(yaml_defs yaml-cpp::yaml-cpp INTERFACE_COMPILE_DEFINITIONS)
 if(NOT "CURL_STATICLIB" IN_LIST curl_defs OR NOT "YAML_CPP_STATIC_DEFINE" IN_LIST yaml_defs)
     message(FATAL_ERROR "Static usage requirements were lost")
 endif()
-foreach(target QrCode::qrcodegen zstd::libzstd_static yaml-cpp::yaml-cpp CURL::libcurl IXWebSocket::ixwebsocket)
+foreach(target zstd::libzstd_static yaml-cpp::yaml-cpp CURL::libcurl IXWebSocket::ixwebsocket)
     string(TOUPPER "${{CMAKE_BUILD_TYPE}}" config)
     get_target_property(location ${{target}} IMPORTED_LOCATION_${{config}})
     cmake_path(IS_PREFIX CLASHFLUX_DEPENDENCY_PREFIX "${{location}}" NORMALIZE inside)
@@ -114,13 +113,12 @@ foreach(target QrCode::qrcodegen zstd::libzstd_static yaml-cpp::yaml-cpp CURL::l
 endforeach()
 add_executable(cps_consumer main.cpp)
 target_link_libraries(cps_consumer PRIVATE Glaze::glaze nlohmann_json::nlohmann_json
-    QrCode::qrcodegen zstd::libzstd_static yaml-cpp::yaml-cpp CURL::libcurl IXWebSocket::ixwebsocket)
+    zstd::libzstd_static yaml-cpp::yaml-cpp CURL::libcurl IXWebSocket::ixwebsocket)
 file(WRITE "${{CMAKE_BINARY_DIR}}/runtime-path.txt" "${{OPENSSL_ROOT_DIR}}/bin")
 ''', encoding="utf-8")
         project.joinpath("main.cpp").write_text('''#include <glaze/glaze.hpp>
 #include <nlohmann/json.hpp>
 #include <yaml-cpp/yaml.h>
-#include <qrcodegen.hpp>
 #include <zstd.h>
 #include <curl/curl.h>
 #include <ixwebsocket/IXWebSocket.h>
@@ -139,7 +137,6 @@ int main() {
     if (glz::read_json(sample, std::string_view{R"({"value":7})"}) || sample.value != 7) return 1;
     if (nlohmann::json::parse(R"({"value":7})")["value"] != 7) return 2;
     if (YAML::Load("value: 7")["value"].as<int>() != 7) return 3;
-    if (qrcodegen::QrCode::encodeText("CPS", qrcodegen::QrCode::Ecc::MEDIUM).getSize() <= 0) return 4;
     char compressed[128], restored[16];
     const auto size = ZSTD_compress(compressed, sizeof(compressed), "CPS", 3, 1);
     if (ZSTD_isError(size) || ZSTD_decompress(restored, sizeof(restored), compressed, size) != 3) return 5;
@@ -193,7 +190,7 @@ clashflux_extract(fixture "${{CMAKE_CURRENT_SOURCE_DIR}}/fixture.tar.gz" "{diges
         archive.write_bytes(b"tampered archive")
         rejected = run(args, success=False)
         assert "SHA256 mismatch" in rejected and payload.read_text(encoding="utf-8") == "keep", rejected
-    print("cps_dependencies: system configurations, seven relocated packages, static definitions, linked runtime, version rejection and warm-cache integrity passed")
+    print("cps_dependencies: system configurations, six relocated packages, static definitions, linked runtime, version rejection and warm-cache integrity passed")
 
 
 if __name__ == "__main__":

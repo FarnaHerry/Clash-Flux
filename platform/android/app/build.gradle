@@ -353,7 +353,6 @@ androidComponents.onVariants(androidComponents.selector().all()) { variant ->
 
 dependencies {
     implementation(files(singboxAar).builtBy(stageSingboxAar))
-    implementation("com.google.zxing:core:3.5.3")
     if (rootProject.gradle.ext.huxeruiUsesSource) {
         implementation project(":HuxerUI")
     } else {

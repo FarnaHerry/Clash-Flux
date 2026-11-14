@@ -1,13 +1,18 @@
 // qrs_codec: encode frames, drop/duplicate/shuffle, recover the payload.
 #include "qrs_codec.h"
 
+#include <huxerui/qrcode/codec.h>
+
 #include <algorithm>
 #include <iostream>
+#include <optional>
 #include <random>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace qrs = clashflux::ui::qrs;
+namespace qr = huxerui::qrcode;
 
 namespace {
 
@@ -18,6 +23,14 @@ void Check(bool condition, const char* message) {
         std::cerr << "FAIL: " << message << '\n';
         ++failures;
     }
+}
+
+std::optional<qr::DecodeResult> ScanSharedQr(std::string_view text) {
+    const auto symbol = qr::Encode(text);
+    const auto image = symbol.Rasterize(300 / symbol.Width());
+    auto scanned = qr::Decode(image.View(), {.formats = {qr::BarcodeFormat::QRCode}});
+    Check(scanned && scanned->text == text, "shared QR preserves the exact payload");
+    return scanned;
 }
 
 std::string Payload() {
@@ -50,7 +63,9 @@ void RoundTrip(bool compress) {
     std::string error;
     bool complete = false;
     for (const std::string& frame : frames) {
-        const qrs::DecodeResult result = decoder.Add(frame, decoded, error);
+        const auto scanned = ScanSharedQr(frame);
+        if (!scanned) break;
+        const auto result = decoder.Add(scanned->text, decoded, error);
         Check(result != qrs::DecodeResult::Error, "valid frame decodes");
         if (result == qrs::DecodeResult::Complete) {
             complete = true;
@@ -70,12 +85,14 @@ void OwnSharedProfiles() {
             std::string{"proxies: []\nproxy-groups: []\nrules:\n  - MATCH,DIRECT\n"},
             std::string{R"({"outbounds":[{"type":"direct","tag":"DIRECT"}],"route":{"final":"DIRECT"}})"}}) {
         for (bool compress : {true, false}) {
-            const auto sequence = qrs::Encode(content, {.slice_size = 24, .compress = compress});
+            const auto sequence = qrs::Encode(content, {.compress = compress});
             qrs::Decoder decoder;
             std::string decoded, error;
             bool complete = false;
             for (const auto& frame : sequence.frames) {
-                const auto result = decoder.Add(frame, decoded, error);
+                const auto scanned = ScanSharedQr(frame);
+                if (!scanned) break;
+                const auto result = decoder.Add(scanned->text, decoded, error);
                 Check(result != qrs::DecodeResult::NotQrs && result != qrs::DecodeResult::Error,
                       "our own shared configuration frames are recognized as QRS");
                 if (result == qrs::DecodeResult::Complete) { complete = true; break; }
@@ -96,9 +113,13 @@ int main() {
     qrs::Decoder decoder;
     std::string payload;
     std::string error;
-    Check(decoder.Add("https://example.com/subscription", payload, error) ==
-              qrs::DecodeResult::NotQrs,
-          "plain subscription URL is not mistaken for QRS");
+    constexpr std::u8string_view utf8_url = u8"https://example.com/\u8BA2\u9605?name=\U0001F680";
+    const std::string_view url{reinterpret_cast<const char*>(utf8_url.data()), utf8_url.size()};
+    const auto scanned_url = ScanSharedQr(url);
+    if (scanned_url) {
+        Check(decoder.Add(scanned_url->text, payload, error) == qrs::DecodeResult::NotQrs,
+              "plain subscription URL is not mistaken for QRS");
+    }
     Check(decoder.Add("not base64", payload, error) ==
               qrs::DecodeResult::NotQrs,
           "invalid base64 is rejected");

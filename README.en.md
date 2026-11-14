@@ -63,7 +63,8 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
   form with the name and URL filled in. Pasting and QR import accept these links too;
   see [formats and platform registration](docs/profile-links.md).
   On Android, the scanner also accepts a photo from the gallery. Photos and camera
-  captures share QR decoding and the app’s QRS frame assembly. QR and file imports have separate busy states,
+  captures share Lib-QRCode decoding and the app’s QRS frame assembly. Sharing also uses Lib-QRCode.
+  QR and file imports have separate busy states,
   and a slow link import allows returning to the previous page; see [QR scanning](docs/qr-scanning.md).
 - Subscription downloads: choose the sing-box core, system environment proxy or a
   direct connection for each subscription, with an explicit option to allow invalid

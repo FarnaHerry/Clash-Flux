@@ -62,6 +62,9 @@ CI 从锁定的 0.4.0 归档取官方 CLI（SHA256 校验）并以 `--sdk huxeru
 Media 当前带入 Media3 播放器依赖，图片选择功能与 Debug APK 体积基线见
 [二维码扫描](qr-scanning.md)；APK 大小不能作为运行内存或真机权限验收结果。
 
+Lib-QRCode 通过 `HuxerUI::QRCode` 进入同一库图，由应用提供 Android static HuxerUI
+目标。它将 ZXing-C++ 静态链接进应用，Android 适配层通过 NDK 的 Bitmap API 读取采样像素。
+
 ## sing-box libbox 来源与缓存
 
 当前固定 sing-box 1.14.4，源码 revision
