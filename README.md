@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.110 发布说明](docs/releases/v0.3.110.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.111 发布说明](docs/releases/v0.3.111.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -28,11 +28,11 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   正文使用对称水平边距：宽屏滚动条位于右侧边距内，并避开 Linux 窗口拉伸热区；窄屏隐藏，页面不再重复叠加外部留白。鼠标悬停可滚动正文时，对应滚动条以主题主色高亮。
   界面约定见 [UI 开发约定](docs/ui-development.md)。
 - 订阅与代理配置管理：条目右键菜单 / 双击切换 / 刷新、URL 导入 /
-  更新 / 启用 / 删除 / 规则编辑，本地落盘；支持 Clash YAML、sing-box 原生 JSON、OpenVPN .ovpn 和 VMess JSON 节点订阅（明文列表或 Base64）。卡片右键支持单张二维码和携带完整配置的 QiFi/QRS 多帧二维码分享；节点列表的转换和限制见[节点订阅](docs/node-subscriptions.md)。
+  更新 / 启用 / 删除 / 规则编辑，本地落盘；支持 Clash YAML、sing-box 原生 JSON、OpenVPN .ovpn，以及 SS（SIP002/历史整串 Base64）、VMess JSON、VLESS/Trojan、HY2/TUIC/AnyTLS 节点订阅（明文或 Base64，可混合）。卡片右键支持单张二维码和携带完整配置的 QiFi/QRS 多帧二维码分享；节点列表的转换和限制见[节点订阅](docs/node-subscriptions.md)。
   切换准备期间可改选，同一卡片重复点击合并，只保留最后一个待切目标；候选检查、启动与预览复用编译结果。
 - 网页唤醒导入：兼容 sing-box 与 FlClash 订阅链接，打开预填名称与 URL 的导入表单；
   支持粘贴和扫码解析，格式与平台注册方式见[订阅唤醒链接](docs/profile-links.md)。
-  分享二维码和 Android 相机／相册识别统一使用 Lib-QRCode；相机和相册共用 QRS 帧重组。二维码/文件导入状态独立，慢链接导入期间可返回，见[二维码扫描](docs/qr-scanning.md)。
+  分享二维码和 Android 相机／相册识别统一使用 Lib-QRCode；分享码减少多余白边并保留标准静区，相机和相册共用 QRS 帧重组。二维码/文件导入状态独立，慢链接导入期间可返回，见[二维码扫描](docs/qr-scanning.md)。
 - 订阅与 Provider 下载统一超时、大小限制、重试和条件缓存；主订阅/规则集/代理集合支持已验证表示的 304，
   Android 大文件直接写入独占暂存文件。分层编译复用及失效边界见[请求与编译复用](docs/provider-resource-management.md)。
 - 订阅下载：订阅级三态代理（内核 / 系统环境 / 直连），HTTPS 始终校验证书；
@@ -200,6 +200,7 @@ cmake --build build --target clash-flux
 
 命名模块的小函数需区分显式 inline 与优化器展开，检查时核对 Debug/Release 参数；
 规则与汇编验证见 [C++ 模块开发](docs/cpp-modules-development.md)。
+规则页首次加载的阶段日志、投影回归和对照测量见[首次加载性能检查](docs/rule-page-performance.md)。
 
 DNS 本地内核运行回归先构建 `test_singbox`，再执行
 `ctest --test-dir build --output-on-failure -R '^(dns_hosts_runtime|dns_policy_runtime|dns_tls_runtime)$'`。
@@ -208,7 +209,7 @@ CMake 明确报告未注册。验证范围与证据见[分层完成度记录](do
 
 桌面 CI 配置 `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`，缺失或禁用必跑回归会让
 配置失败；Python、固定打包内核和可执行 OpenSSL CLI 均为必要前提，下载测试
-也必须执行默认证书拒绝场景。必跑名单以 [ProjectTestGate.cmake](cmake/ProjectTestGate.cmake) 为准，覆盖资源管理、运行匹配、持久化、启动客户端生命周期、UI 和系统证据；Windows 另含服务、物理 DNS、隔离 WFP 与旧版本清理回归。只有已记录的 MSVC C4737 缺陷允许跳过直接 ORM 测试，订阅持久化始终必跑。Windows 服务与 WFP 测试需要管理员环境。本地可使用同一门禁：
+也必须执行默认证书拒绝场景。必跑名单以 [ProjectTestGate.cmake](cmake/ProjectTestGate.cmake) 为准，覆盖资源管理、运行匹配、Shadowsocks TCP/UDP/UOT（含历史格式）、VLESS/Trojan URI（含 Vision/Reality）、HY2/TUIC/AnyTLS URI、本地其它协议转发与 TLS 身份拒绝，以及输入清单/实际内核一致性、持久化、生命周期、UI 和系统证据；Windows 另含服务、物理 DNS、隔离 WFP 与旧版本清理回归。只有已记录的 MSVC C4737 缺陷允许跳过直接 ORM 测试，订阅持久化始终必跑。Windows 服务与 WFP 测试需要管理员环境。本地可使用同一门禁：
 
 ```bash
 cmake -S . -B build -DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON
@@ -267,6 +268,9 @@ YAML、sing-box 原生 JSON 与原生连接（PPTP、OpenVPN）统一由内置�
 exact / approx / unsupported 记入保真度账本，不静默降级，也不在界面里假装支持内核没有
 的能力。分层职责、决策流程、协议/端点/规则覆盖基线与已知边界见
 [内核分层与 Clash → sing-box 保真度契约](docs/singbox-layers-and-fidelity.md)。
+协议解析与生成的分层和验收条件见[协议中间模型重构计划](docs/protocol-refactor-plan.md)；P0–P6 本轮范围已完成本机 Linux/Android 验证，当前 12 类 Clash 协议共用类型化模型、校验和生成。七类节点 URI、历史 SS 和能力一致性门禁已接入，保留原文和完整候选边界；其它历史格式仍按样本独立评估。跨入口检查使用 `test_singbox --protocol-entries`，URI 检查使用 `--ss-uri` / `--v2ray-uri` / `--secure-uri` / `--node-inputs`；必跑 `node_input_catalog` 对照实际固定内核，支持子集与未覆盖平台见[节点订阅](docs/node-subscriptions.md)。
+转换层按可独立维护、可复用的项目发展，当前保留同仓、同模块和现有构建发布；协议核心与输入适配器归拢到 `src/converter/`。职责划分、当前耦合和后续接口/资源边界见[转换子项目规划](docs/converter-project.md)，源码导航见[转换目录](src/converter/README.md)。
+
 当前接入程度、字段边界与下一批能力见
 [sing-box 能力审查](docs/singbox-capability-audit.md)，稳定版版本与资产校验见
 [内核升级记录](docs/singbox-stable-upgrade.md)，新增映射示例见
@@ -411,7 +415,7 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 `main` 保留官方基线；Lib-Camera、Lib-Charts、Lib-SQLite 也从各自 `FarnaHerry` fork 的
 `farna/main` 按固定 SHA 获取，原生构建与 Android 库图共用同一依赖身份。
 本地检出、补丁归属与升级流程见 [HuxerUI fork](docs/huxerui-fork.md)。
-当前源码固定 `11849f99`，合入官方 Windows 彩色 emoji、全屏 topmost 修复及 CLI DEB/RPM 打包模板，并修复受控 Pager 在拖动中禁用时回弹到离场页的问题；保留已有 Pager、窗口及扩展兼容修复。应用尚未启用新优先级策略，既有布局沿用原行为。源码 CLI 使用 `--sdk` 选择框架，Android CI 复用锁定的 0.4.0 离线归档中的 CLI 并以 `--sdk` 构建同一 fork 源码。离线回落包为独立锁定的 0.4.0 SDK，仅提供 CLI 与宿主工具，不含 fork 专属 `create_initial_window` 运行时 API，桌面构建使用 fork 源码（配置期守卫校验）。
+当前源码固定 `89359f43`，本机与 CI 统一，包含 Windows 文本方向、编辑动作、多格式剪贴板、独立资源包和既有 Pager 修复。CodeEditor 同步到 fork `ee5b0cf8`，文档与挂载控制器分离；Media 同步到官方 `fee506de`，扫码页适配系统图片选择 API。Camera 的新音频依赖集成另见上述 fork 记录。应用尚未启用新优先级策略，既有布局沿用原行为。源码 CLI 使用 `--sdk` 选择框架，Android CI 复用锁定的 0.4.0 离线归档中的 CLI 并以 `--sdk` 构建同一 fork 源码。离线回落包为独立锁定的 0.4.0 SDK，仅提供 CLI 与宿主工具，不含 fork 专属 `create_initial_window` 运行时 API，桌面构建使用 fork 源码（配置期守卫校验）。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、

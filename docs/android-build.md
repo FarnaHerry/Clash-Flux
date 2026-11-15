@@ -11,7 +11,7 @@ AAR 混装，否则 Java 层可能调用 native 层已经移除或改变的入�
 例如 `HuxerUI Android application has not been initialized`。
 
 框架源码来自 `FarnaHerry/HuxerUI` 的 `farna/main`，当前与 CI 固定到
-`11849f99952c2c2d6a3292809f0011d79e125c9e`（2026-11-14）；
+`89359f43ef34357fabcf1c994f4b5fa1062c91a9`（2026-11-15）；
 源码包含 Android 整个宿主视图的默认焦点高亮修复。框架真机 instrumentation 仍待完成，
 不能把 Linux 回归或 APK 编译成功记作 Android 真机测试通过。维护流程见 [HuxerUI fork](huxerui-fork.md)。
 
@@ -56,7 +56,7 @@ CI 从锁定的 0.4.0 归档取官方 CLI（SHA256 校验）并以 `--sdk huxeru
 `huxerui_use_library(URL, COMMIT)` 同时提供 native 依赖和 Android Java 库图。
 扫码页相册选择使用固定的官方 Lib-Media；CMake 在 Android 构建和
 `HUXERUI_LIBRARY_GRAPH_ONLY` 模式下声明 Media，桌面主目标不链接该库。
-库图应包含 `HuxerUI::Media`，各 `sourceRoot` 的实际提交必须与
+库图应包含 `HuxerUI::Media`、`HuxerUI::QRCode` 和 `HuxerUI::CodeEditor`，各 `sourceRoot` 的实际提交必须与
 `cmake/dependencies/Lock.cmake` 一致，不能复用旧 Camera 等扩展的 Java 缓存图。
 重新运行项目的 HuxerUI 配置/库图生成流程，不手改 `.huxerui/generated/libraries.json`。
 Media 当前带入 Media3 播放器依赖，图片选择功能与 Debug APK 体积基线见

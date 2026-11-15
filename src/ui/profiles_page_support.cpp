@@ -94,11 +94,6 @@ std::string truncateOneLine(const std::string& s, std::size_t maxCodePoints) {
     return s;
 }
 
-huxerui::View ShareQrView(huxerui::qrcode::Symbol symbol) {
-    return huxerui::qrcode::QRCode(std::move(symbol))
-        .With(huxerui::Frame{.width = 300.0F, .height = 300.0F});
-}
-
 [[huxerui::composable]] huxerui::View QrsSequenceView(
     std::shared_ptr<const std::vector<std::string>> frames,
     huxerui::qrcode::Symbol first, FluxToastHandle toast) {
@@ -132,7 +127,7 @@ huxerui::View ShareQrView(huxerui::qrcode::Symbol symbol) {
         });
         return [handle] { handle.Cancel(); };
     });
-    return ShareQrView(current.Get());
+    return ShareQrView(current.Get(), first.Width());
 }
 
 // 把弹窗数字输入解析为秒/分钟：空/非法回落 fallback。

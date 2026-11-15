@@ -26,8 +26,11 @@
 #include "ui.h"
 #include "profile_list_model.h"
 #include "profile_preparation_model.h"
+#include "profile_rules_model.h"
 
 namespace clashflux::ui {
+
+struct ProfileRulesSnapshot;
 
 struct ProfilesModel : ProfileListModel<model::Profile>, ProfilePreparationModel {
     struct RefreshFailureNotice {
@@ -40,6 +43,11 @@ struct ProfilesModel : ProfileListModel<model::Profile>, ProfilePreparationModel
     // Read only the hydrated in-memory cache; no disk/network work on the UI
     // thread. Action completion publishes before feedback/navigation.
     void PublishCached();
+    void SyncRuleInputs(std::int64_t requestedId = 0);
+    std::shared_ptr<ProfileRulesModel<ProfileRulesSnapshot>> rules =
+        std::make_shared<ProfileRulesModel<ProfileRulesSnapshot>>();
+    std::uint64_t rulesProfilesRevision = 0, rulesSettingsRevision = 0;
+    bool rulesInputsReady = false;
     void ReportProfileRefreshFailure(std::int64_t id, std::string name,
                                      std::string error,
                                      bool userInitiated = false);

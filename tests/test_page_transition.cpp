@@ -43,6 +43,7 @@
 #include "profile_file_picker.h"
 #include "profile_import_task.h"
 #include "profile_list_model.h"
+#include "profile_rules_model.h"
 #include "profile_preparation_model.h"
 #include "profile_reorder_geometry.h"
 #include "section_tab_picker.h"
@@ -55,6 +56,7 @@
 #include "connection_row.h"
 #include "website_test_card.h"
 #include "qr_scanner_control.h"
+#include "share_qr.h"
 #include "website_test_editor.h"
 #include "website_test_grid.h"
 #include "theme_colors.h"
@@ -804,12 +806,12 @@ void testTextDocuments() {
             .resource_provider = AppResources()});
         ui.Pump();
         waitForTextDocument(ui, documentFixture);
-        check(documentFixture->Controller().IsConnected(), "large text mounts the production CodeEditor");
+        check(documentFixture->Controller().GetDocument().has_value(), "large text mounts the production CodeEditor");
         check(documentFixture->Snapshot() == original, "unchanged document snapshots share the original bytes");
         const auto editor = ui.Find(UiSelector::Key("document-editor")).Find(UiSelector::Type<huxerui::Canvas>());
         check(editor.One().bounds.height < 301.0F, "large document keeps a bounded editor viewport");
         editor.Tap();
-        documentFixture->Controller().SetCursor(0, 0);
+        documentFixture->Controller().SetCursorPosition({0, 0});
         const int compositions = documentFixtureCompositions;
         editor.EnterText("新增 😀 ");
         ui.Pump();
@@ -821,9 +823,9 @@ void testTextDocuments() {
         ui.Find(UiSelector::Text("Recompose parent")).Tap();
         ui.Pump();
         check(documentFixture->Snapshot() == edited, "unrelated parent recomposition preserves live text");
-        documentFixture->Controller().SetCursor(0, 0);
+        documentFixture->Controller().SetCursorPosition({0, 0});
         editor.Tap();
-        documentFixture->Controller().SetCursor(0, 0);
+        documentFixture->Controller().SetCursorPosition({0, 0});
         editor.EnterText("before-unmount ");
         if (ui.Find(UiSelector::Key("action-menu-surface")).Exists()) {
             ui.PressKey(huxerui::Key::Escape);
@@ -832,12 +834,12 @@ void testTextDocuments() {
         ui.Find(UiSelector::Text("Toggle document")).Tap();
         ui.Pump();
         check(ui.Find(UiSelector::Text("Document hidden")).Exists(), "hide action removes the document viewport");
-        check(!documentFixture->Controller().IsConnected(), "unmounted document disconnects the controller");
+        check(!documentFixture->Controller().GetDocument().has_value(), "unmounted document disconnects the controller");
         check(documentFixture->Snapshot()->starts_with("before-unmount "),
               "retained document preserves unsaved edits after editor release");
         ui.Find(UiSelector::Text("Toggle document")).Tap();
         ui.Pump();
-        check(documentFixture->Controller().Text().starts_with("before-unmount "),
+        check(documentFixture->Controller().GetDocument()->GetText().starts_with("before-unmount "),
               "remount restores unsaved text without truncating the document");
     }
     documentFixtureReadOnly = true;
@@ -851,15 +853,23 @@ void testTextDocuments() {
         const auto editor = ui.Find(UiSelector::Key("document-editor")).Find(UiSelector::Type<huxerui::Canvas>());
         editor.Tap();
         documentFixture->Controller().SelectAll();
-        check(documentFixture->Controller().Copy(), "read-only editor supports selection and copy through the fork fix");
+        check(documentFixture->Controller().CopyToClipboard(), "read-only editor supports selection and copy through the fork fix");
         check(documentFixtureClipboard->ReadText() == std::optional<std::string>{*original},
               "toolbar copy writes actual selected text before any native clipboard action");
-        check(!documentFixture->Controller().Cut() && !documentFixture->Controller().Paste(),
+        check(!documentFixture->Controller().CutToClipboard() && !documentFixture->Controller().PasteFromClipboard(),
               "read-only controller refuses cut and paste");
-        check(documentFixture->Controller().Text() == *original, "copy does not change the read-only document");
+        check(documentFixture->Controller().GetDocument()->GetText() == *original, "copy does not change the read-only document");
         ui.Find(UiSelector::Text("Recompose parent")).Tap();
         ui.Pump();
         check(documentFixture->Snapshot() == original, "read-only preview shares its full source across recomposition");
+        editor.Tap();
+        ui.PressKey(huxerui::Key::F, {.control = true}); ui.Pump();
+        check(ui.Find(UiSelector::Key("document-search-input")).Exists(), "Ctrl+F opens the shared search from the editor");
+        ui.Find(UiSelector::Key("document-search-close")).Tap();
+        editor.Tap();
+        ui.PressKey(huxerui::Key::F, {.meta = true}); ui.Pump();
+        check(ui.Find(UiSelector::Key("document-search-input")).Exists(), "Meta+F opens the shared search from the editor");
+        ui.Find(UiSelector::Key("document-search-close")).Tap();
         ui.Find(UiSelector::Key("document-search-toggle")).Tap();
         check(ui.Find(UiSelector::Key("document-search-input")).Exists(), "shared document search opens");
         ui.Find(UiSelector::Key("document-search-close")).Tap();
@@ -897,10 +907,10 @@ void testTextDocuments() {
         const auto& controller = documentFixture->Controller();
         documentFixtureClipboard->WriteText("pasted 😀");
         controller.SelectAll();
-        check(controller.Paste(), "toolbar paste works without an earlier native clipboard action");
+        check(controller.PasteFromClipboard(), "toolbar paste works without an earlier native clipboard action");
         check(*documentFixture->Snapshot() == "pasted 😀", "paste emits change notification and updates the save snapshot");
         controller.SelectAll();
-        check(controller.Cut(), "toolbar cut succeeds only after writing the selection to clipboard");
+        check(controller.CutToClipboard(), "toolbar cut succeeds only after writing the selection to clipboard");
         check(documentFixtureClipboard->ReadText() == std::optional<std::string>{"pasted 😀"} &&
               documentFixture->Snapshot()->empty(), "cut preserves selected bytes on clipboard and saves the edited document");
     }
@@ -4287,6 +4297,122 @@ void testGlobalRuleSharing() {
     check(!model->PublishLoaded(aba, {"ABA-stale"}), "ABA edits invalidate pre-edit loads even when values return to their old state");
 }
 
+struct RulesCacheFixture {
+    std::shared_ptr<clashflux::ui::ProfileRulesModel<std::string>> cache =
+        std::make_shared<clashflux::ui::ProfileRulesModel<std::string>>();
+    huxerui::State<bool> visible{true};
+    huxerui::State<std::int64_t> source{1};
+    int reads = 0;
+    bool fail = false;
+    std::optional<clashflux::ui::ProfileRulesInput> beforePublish;
+};
+std::shared_ptr<RulesCacheFixture> rulesCacheFixture;
+[[huxerui::composable]] huxerui::View CachedRulesReader() {
+    const auto fixture = huxerui::UseService<RulesCacheFixture>();
+    const auto model = fixture->cache;
+    const auto tasks = huxerui::UseApplicationTaskScope();
+    const auto id = fixture->source.Get();
+    const auto revision = model->revision.Get();
+    huxerui::Lifecycle([=] {
+        const auto input = model->entries.at(id).input;
+        const bool fail = fixture->fail;
+        clashflux::ui::RequestProfileRulesSnapshot(tasks, model, id,
+            [fixture, input, fail]() -> huxerui::Task<std::shared_ptr<const std::string>> {
+                ++fixture->reads;
+                co_await huxerui::Delay(std::chrono::milliseconds{300});
+                if (fail) throw std::runtime_error("read failed");
+                co_return std::make_shared<const std::string>(input.file);
+            }, [fixture, model, id] {
+                if (fixture->beforePublish) {
+                    model->SetInput(id, std::move(*fixture->beforePublish));
+                    fixture->beforePublish.reset();
+                }
+            }, [](std::exception_ptr) { return std::make_shared<const std::string>("FAILED"); });
+    }, id, revision);
+    const auto value = model->SnapshotOf(id);
+    return value ? huxerui::View{huxerui::Text(*value)} : huxerui::View{
+        clashflux::ui::PageLoadingSkeleton(huxerui::UseTheme(), true).Key("cache-loading")};
+}
+huxerui::View RulesCacheRoot() {
+    return huxerui::FlatTheme {huxerui::Scope([] {
+        const auto fixture = huxerui::UseService<RulesCacheFixture>();
+        return huxerui::Column {
+          fixture->visible.Get() ? CachedRulesReader().Key("reader-one") : huxerui::View{},
+          fixture->visible.Get() ? CachedRulesReader().Key("reader-two") : huxerui::View{},
+        };
+    })};
+}
+const huxerui::Application kRulesCacheApplication{RulesCacheRoot,
+    {.show_debug_overlay = false, .application_hooks = {[](huxerui::ApplicationContext& context) {
+        rulesCacheFixture = std::make_shared<RulesCacheFixture>();
+        rulesCacheFixture->cache->SetInput(1, {.file = "RULES-A"});
+        rulesCacheFixture->cache->SetInput(2, {.file = "RULES-B"});
+        context.Provide(rulesCacheFixture);
+    }}}};
+void testSharedRulesCache() {
+    huxerui::testing::UiTest ui(kRulesCacheApplication, {.viewport = {700.0F, 500.0F}});
+    ui.Pump();
+    const auto fixture = rulesCacheFixture;
+    const auto cache = fixture->cache;
+    check(fixture->reads == 1 && !cache->Ready(1), "two readers share one pending rules read");
+    fixture->visible = false; ui.Pump();
+    ui.Pump(std::chrono::milliseconds{500}); ui.PumpAndSettle();
+    check(cache->Ready(1) && fixture->reads == 1, "rules loading publishes after both initiating panels unmount");
+    const auto accepted = cache->SnapshotOf(1);
+    fixture->visible = true; ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("RULES-A")).Exists() && fixture->reads == 1 &&
+          !ui.Find(UiSelector::Key("cache-loading")).Exists(), "remount reuses the accepted rules without loading skeletons");
+    const auto unchanged = cache->revision.Get();
+    cache->SetInput(1, {.file = "RULES-A"}); ui.PumpAndSettle();
+    check(cache->revision.Get() == unchanged && cache->SnapshotOf(1) == accepted && fixture->reads == 1,
+          "unchanged inputs preserve snapshot identity and do not schedule IO");
+    check(!cache->entries.at(1).targets && !cache->entries.at(1).targetsLoading,
+          "read-only consumers never prepare editor targets");
+    fixture->source = 2; ui.Pump();
+    check(!ui.Find(UiSelector::Text("RULES-A")).Exists(), "a new source never displays the previous source rules");
+    fixture->source = 1; ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("RULES-A")).Exists() && fixture->reads == 2,
+          "switching back reuses its own cache while the other source read completes");
+    cache->SetInput(1, {.file = "RULES-A-NEW", .edits = "revision-2"}); ui.Pump();
+    check(cache->SnapshotOf(1) == accepted && !cache->Ready(1) && !cache->EditorReady(1) &&
+          ui.Find(UiSelector::Text("RULES-A")).Exists(),
+          "revalidation retains the visible list and blocks editing its stale version");
+    ui.Pump(std::chrono::milliseconds{500}); ui.PumpAndSettle();
+    check(*cache->SnapshotOf(1) == "RULES-A-NEW" && cache->Ready(2), "source-specific reads publish independently");
+    const auto targetTicket = cache->Begin(1, true);
+    check(targetTicket && !cache->Begin(1, true), "editor target requests are single flight");
+    cache->SetInput(1, {.file = "RULES-A-NEW", .edits = "revision-3"});
+    check(!cache->PublishTargets(1, *targetTicket, {"STALE"}) && !cache->EditorReady(1),
+          "personal edits invalidate in-flight editor catalogs before publication");
+    ui.Pump(std::chrono::milliseconds{500}); ui.PumpAndSettle();
+    const auto currentTarget = cache->Begin(1, true);
+    cache->PublishTargets(1, *currentTarget, {"DIRECT"});
+    check(cache->EditorReady(1), "the editor upgrades the shared snapshot with its own catalog");
+    fixture->fail = true; cache->Retry(1); ui.Pump();
+    ui.Pump(std::chrono::milliseconds{500}); ui.PumpAndSettle();
+    check(*cache->SnapshotOf(1) == "FAILED" && !cache->entries.at(1).loading,
+          "failed reads publish a recoverable result and clear their flight");
+    fixture->fail = false; cache->Retry(1); ui.Pump();
+    ui.Pump(std::chrono::milliseconds{500}); ui.PumpAndSettle();
+    check(*cache->SnapshotOf(1) == "RULES-A-NEW", "explicit retry recovers without changing the source");
+    cache->Retry(1); ui.Pump();
+    fixture->beforePublish = clashflux::ui::ProfileRulesInput{.file = "RULES-A-VALIDATED"};
+    ui.Pump(std::chrono::milliseconds{500}); ui.PumpAndSettle();
+    ui.Pump(std::chrono::milliseconds{500}); ui.PumpAndSettle();
+    check(cache->Ready(1) && *cache->SnapshotOf(1) == "RULES-A-VALIDATED",
+          "publication revalidation rejects writes missed by the data pump and reads the latest input");
+    cache->SetInput(3, {.file = "ABA"});
+    const auto stale = *cache->Begin(3);
+    cache->SetInput(3, {.file = "OTHER"}); cache->SetInput(3, {.file = "ABA"});
+    check(!cache->Begin(3), "new input waits for the previous source read instead of queuing duplicate workers");
+    check(!cache->Publish(3, stale, std::make_shared<const std::string>("STALE")),
+          "ABA inputs reject pre-change reads and release the flight for the latest input");
+    const auto removed = *cache->Begin(3);
+    cache->Forget(3); cache->SetInput(3, {.file = "ABA"});
+    check(!cache->Publish(3, removed, std::make_shared<const std::string>("DELETED")) && !cache->SnapshotOf(3),
+          "deletion and recreation cannot resurrect an old snapshot");
+}
+
 struct VpnHydrationFixture {
     std::shared_ptr<clashflux::ui::VpnSnapshotModel<int>> model =
         std::make_shared<clashflux::ui::VpnSnapshotModel<int>>();
@@ -7584,6 +7710,56 @@ void testFlatDialogLayoutAndDismissal() {
         }
 }
 
+struct QrShareFixture {
+    huxerui::State<huxerui::qrcode::Symbol> symbol{huxerui::qrcode::Encode("https://example.com/subscription")};
+    huxerui::State<int> layoutModules{0};
+};
+std::shared_ptr<QrShareFixture> qrShareFixture;
+bool qrShareDark = false;
+huxerui::View QrShareRoot() {
+    return huxerui::FlatTheme {qrShareDark ? huxerui::FlatDarkThemeSpec() : huxerui::FlatLightThemeSpec(),
+        huxerui::Scope([] {
+            const auto model = huxerui::UseService<QrShareFixture>();
+            const auto dialog = huxerui::UseDialog();
+            return huxerui::Button("Open QR share").OnClick([=] {
+                dialog.Show([model](huxerui::DialogContext) {
+                    return huxerui::Scope([model] {
+                        return clashflux::ui::DialogCard(clashflux::ui::profile_detail::ShareQrView(
+                            model->symbol.Get(), model->layoutModules.Get()), 0.0F,
+                            clashflux::ui::profile_detail::kShareQrCornerRadius).Key("qr-share-card");
+                    });
+                });
+            });
+        })};
+}
+void testQrShareBounds() {
+    const huxerui::Application app{QrShareRoot,
+        {.show_debug_overlay = false, .application_hooks = {[](huxerui::ApplicationContext& context) {
+            qrShareFixture = std::make_shared<QrShareFixture>(); context.Provide(qrShareFixture);
+        }}}};
+    for (const bool dark : {false, true}) for (const float width : {320.0F, 960.0F}) {
+        qrShareDark = dark;
+        huxerui::testing::UiTest ui(app, {.viewport = {width, 700.0F}, .resource_provider = AppResources()});
+        ui.PumpAndSettle(); ui.Find(UiSelector::Text("Open QR share")).Tap(); ui.PumpAndSettle();
+        const auto model = qrShareFixture;
+        for (const std::string payload : std::vector<std::string>{"https://example.com/subscription", std::string(700, 'A')}) {
+            model->symbol = huxerui::qrcode::Encode(payload); model->layoutModules = 0; ui.PumpAndSettle();
+            const auto symbol = ui.Find(UiSelector::Key("share-qr-symbol")).One().bounds;
+            const auto card = ui.Find(UiSelector::Key("qr-share-card")).One().bounds;
+            check(symbol == card && symbol.width <= 300.0F && symbol.x >= 0.0F && symbol.x + symbol.width <= width,
+                "QR share dialog has no extra inset and fits compact/wide light/dark viewports");
+            const float scale = symbol.width / static_cast<float>(model->symbol.Get().Width());
+            check(scale >= 1.0F && std::abs(scale - std::round(scale)) < 0.001F,
+                "prepared sharing symbols occupy an integer module frame");
+        }
+        model->layoutModules = model->symbol.Get().Width(); ui.PumpAndSettle();
+        const auto before = ui.Find(UiSelector::Key("share-qr-symbol")).One().bounds;
+        model->symbol = huxerui::qrcode::Encode(std::string(800, 'B')); ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Key("share-qr-symbol")).One().bounds == before,
+            "QRS frame replacement retains stable dialog bounds");
+    }
+}
+
 huxerui::View DialogSurfaceTestRoot() {
     return huxerui::FlatTheme {huxerui::Scope([] {
         const auto dialog = huxerui::UseDialog();
@@ -7751,6 +7927,9 @@ void testSettingsReadiness() {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--qr-share") {
+        testQrShareBounds(); return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--website-tests") { testWebsiteTests(); testWebsiteNetworkAndTimeout(); testWebsiteFormScroll(); return failures == 0 ? 0 : 1; }
     if (argc == 2 && std::string_view(argv[1]) == "--scroll-profile") {
         profileScrollWork();
@@ -7794,6 +7973,7 @@ int main(int argc, char** argv) {
     testFlatDialogLayoutAndDismissal();
     if (failures) return 1;
     testDialogSurfaceEnvironment();
+    testQrShareBounds();
     {
         enum class State { Stopped, Starting, Running, Failed };
         struct Snapshot {
@@ -8071,6 +8251,7 @@ int main(int argc, char** argv) {
     testEmptyState();
     testThemeSwitch();
     testGlobalRuleSharing();
+    testSharedRulesCache();
     testVpnHydrationStartup();
     testProfileFileFilter();
     testProfileImportCompletion();

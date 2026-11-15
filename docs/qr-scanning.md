@@ -22,8 +22,12 @@ Android 配置导入的扫码页在页头提供「从相册选择」图标，打
 识别结果按 UTF-8 返回，识别完成或失败后释放像素锁、位图与文件引用。取消后底层已开始的
 读取或识别可能继续到结束，回调会丢弃结果。
 
-分享单码和 QRS 帧也由 Lib-QRCode 编码并绘制。分享仍使用 300 pt 视图与四模块静区。
-QRS 在工作线程准备下一张，单帧至少显示 350 ms。QiFi/QRS 分帧和重组由应用完成。
+分享单码和 QRS 帧由固定的 Lib-QRCode `4f67b7a1b60d459a53effe52af1ca9e44f67ff28`
+编码并绘制，内置 ZXing-C++ 3.1.1。分享布局消费弹窗实际可用宽高（上限 300 pt），
+按符号总模块数对齐整数缩放，消除固定画布在缩放或窄窗约束后剩下的白边；弹窗不再叠加内容内边距，使用 4 pt
+小圆角，避免最小模块尺寸时裁掉定位图案。符号自身保留完整四模块静区和白底黑码。
+QRS 在工作线程准备下一张，单帧至少显示 350 ms，弹窗边长以首帧为准保持稳定。
+QiFi/QRS 分帧和重组由应用完成。
 
 ## 添加配置的识别与返回
 
@@ -38,10 +42,11 @@ URL/PPTP 创建表单的忙态也归当前实例，不随公共草稿传给下�
 
 ## 依赖与体积
 
-直接消费官方 [Lib-Media 固定源码](https://github.com/HuxerUI/Lib-Media/tree/01341304bdce46f109cc16d61b717add6dedc101)，
+直接消费官方 [Lib-Media 固定源码](https://github.com/HuxerUI/Lib-Media/tree/fee506de40f9763b7374acf394ee0fbfe7f11256)，
 URL/完整 SHA 在 `cmake/dependencies/Lock.cmake`，通过 `HuxerUI::Media` 安装并使用
-`UseMediaPicker().PickAsync({MediaPickerFilter::Images, 1})`。未修改上游库或建立 fork。
+`UseMediaLibrary().PickAsync({MediaFilter::Images, 1})`。未修改上游库或建立 fork。
 Android native 与 Java 库图使用同一固定提交，桌面主目标不引入 Media。
+2026-11-15 升级仍使用系统单图选择，不启用新增的图库浏览、自建选择器或编解码功能；实际构建见[本轮证据](evidence/2026-11-15-protocol-p2.md)。
 
 该上游版本没有 picker-only 构建开关，Android 库依赖 Media3 ExoPlayer 1.9.3。
 应用未创建播放器或播放会话，但构建仍带入播放器依赖；当前应用未启用 R8，

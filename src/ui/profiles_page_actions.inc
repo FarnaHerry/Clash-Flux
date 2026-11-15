@@ -434,7 +434,7 @@
                 });
                 dialog.Show(
                     [symbol = std::move(symbol)](huxerui::DialogContext) {
-                        return DialogCard(ShareQrView(symbol));
+                        return DialogCard(ShareQrView(symbol), 0.0F, profile_detail::kShareQrCornerRadius);
                     },
                     huxerui::DialogOptions{});
             } catch (const std::exception&) {
@@ -470,7 +470,8 @@
                 });
                 dialog.Show(
                     [frames, first, toast](huxerui::DialogContext) {
-                        return DialogCard(QrsSequenceView(frames, first, toast));
+                        return DialogCard(QrsSequenceView(frames, first, toast),
+                            0.0F, profile_detail::kShareQrCornerRadius);
                     },
                     huxerui::DialogOptions{});
             } catch (const std::exception&) {

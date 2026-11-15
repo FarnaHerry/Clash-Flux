@@ -4,12 +4,41 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `11849f99952c2c2d6a3292809f0011d79e125c9e`，各平台 CI 共用
+Clash-Flux 当前固定 `89359f43ef34357fabcf1c994f4b5fa1062c91a9`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码。源码 CLI 使用 `--sdk <path>` 选择 SDK 或源码目录；CI 的 Android
 job 从锁定的 0.4.0 离线归档取官方 CLI 并以 `--sdk huxerui-source` 指向同一 fork 源码，
 桌面 job 走 HuxerUI 源码通道，不消费离线包的运行时库（不含 fork 专属 `create_initial_window`）。
+
+2026-11-15 跟进到已发布的 [`89359f43`](https://github.com/FarnaHerry/HuxerUI/commit/89359f43ef34357fabcf1c994f4b5fa1062c91a9)，
+包含官方 `3bebb8c71d92239504967972f12d4a5722c39dd5` 的 Windows 文本方向、独立资源包、
+编辑动作、多格式剪贴板与回调流更新，保留既有 Pager 和图表兼容修复。
+本机独立消费 checkout、CI 和 Android Java/native 统一该身份；宿主 HCG/HRC、锁定的 0.4.0 CLI 与内核版本保持。
+
+Lib-CodeEditor fork 已发布 [`ee5b0cf8`](https://github.com/FarnaHerry/Lib-CodeEditor/commit/ee5b0cf8ac53f23f9816c1aedd52a6b90c3d696c)，
+包含官方 `4e67fd0c33a927f49727f22b90b02862ddd7d3ab` 和当前 HUI 的编辑动作适配。
+应用不再使用 `PrepareEditorDocument` / `initial_document`：后台构造 `Document`，跨卸载保留文档；
+每次视图挂载通过 `UseCodeEditor()` 新建控制器，不能把只允许挂载一次的控制器跨视图复用。
+剪贴板、搜索、主题、变更事件与设置均改用新接口；父视图拦截 Ctrl/Meta+F，继续使用应用的搜索和动作菜单。
+只读复制、禁止只读剪切/粘贴、大文档、脏快照、卸载重挂、快捷键和宽窄变化由生产 page_transition 覆盖。
+
+Media 同步到官方 [`fee506de`](https://github.com/HuxerUI/Lib-Media/commit/fee506de40f9763b7374acf394ee0fbfe7f11256)。
+Android 扫码页迁移为 `UseMediaLibrary().PickAsync({MediaFilter::Images, 1})`，仍使用系统单图选择；
+未启用新增图库浏览、应用内选择器、编解码或音视频入口。Java 库图由实际 CLI 重新生成，包含 QRCode、Media 与新 CodeEditor 的固定源码。
+
+同日核对 Charts 官方 `13e5ffdd`、fork `2251bab5`，SQLite 官方/fork `882665a9`，QRCode 官方 `4f67b7a1`，可用 pin 保持。
+Camera 最新 fork `479cc0d21d1ab163781d09f8bd5c5db669774b74` 已合入官方 `e20e2fa7a26fdc59ff31f1c50fce641427cbc233`，
+但当前新版 CMake 强制依赖 Media/AudioCapture，缺少目标时寻找同级源码工作树。
+AudioCapture 官方 `94a5962c56ba1adbb6bebb1ab4bceb1e090627bc`（master）增加 ALSA 开发依赖及 Android 录音权限声明。
+本轮保留 Camera `5d6b8e81`；后续须独立固定该依赖、审查权限与 CI/各平台包边界，再验证迁移，未试编译 Camera 候选。
+未改变框架或扩展维护目录已有改动，没有在应用/依赖缓存补丁，也未创建提交、推送或发布。
+完整命令与未覆盖范围见[本轮证据](evidence/2026-11-15-protocol-p2.md)和[验收记录](l1-l2-l3-status.md)。
+
+同日早先仅采用 `7211803edf4d29138b9ca6d2df98c2d5e58bee8e`（包含 Windows 彩色 emoji、
+全屏 topmost、CLI DEB/RPM 模板与 Pager 拖动禁用收束），因为旧 CodeEditor `a332e7c` 的
+两处 TextSelectionClient override 与最新 HUI 不兼容。上述已发布 CodeEditor 更新及应用迁移解除了这一阻塞；
+早先的失败与兼容 pin 验证继续保留在历史[验收记录](l1-l2-l3-status.md)。
 
 2026-11-14 跟进 [`11849f99`](https://github.com/FarnaHerry/HuxerUI/commit/11849f99952c2c2d6a3292809f0011d79e125c9e)：
 `farna/main` 在 `489ba70e` 基础上追加两条维护文档，要求上游问题先具备可达修复才进入候选，
@@ -300,8 +329,8 @@ Lib-Charts、Lib-SQLite、Lib-Camera、Lib-CodeEditor 的项目修复已收录�
 | --- | --- | --- |
 | [Lib-Charts](https://github.com/FarnaHerry/Lib-Charts/tree/farna/main) | `2251bab5ad2a5df8e6e133c039e0b76bbe237add` | 饼图、96pt 紧凑绘图面与 `inner_radius` 圆环样式（环形段外弧+反向内弧、NonZero 填充，取全图最大解析值）均已包含，原两份补丁 reverse check 通过；包含 `rounded_caps`、中心占比/180ms 悬停动画，全零数据按条目数等分且中心保持 0%；悬停 tooltip 已迁移到 `ViewHandle` 目标（上游挂载目标统一）。 |
 | [Lib-SQLite](https://github.com/FarnaHerry/Lib-SQLite/tree/farna/main) | `882665a9772cc973b1cbfb7f491913703da1d636` | 启动临时只读查询已包含，原补丁 reverse check 通过；另保留逐值 UTF-8 校验，主键 schema 校验收紧为仅 INTEGER 单列 rowid 别名可视为非空（TEXT/复合/`DESC` 主键必须显式 NOT NULL），集成测试同步覆盖。 |
-| [Lib-Camera](https://github.com/FarnaHerry/Lib-Camera/tree/farna/main) | `48b11d6bb5ef0246c86ff7638e882f18b27b8db0` | 已采用 ApplicationContext/UiWindow；Android/iOS 改用窗口级模块工厂并绑定原窗口，拍照等待改用 `AwaitCallback`；新增 Linux V4L2 预览/拍照与 X11、ScreenCast/PipeWire 屏幕选区，桌面屏幕源使用框架 `129209bc` 的原生 surface 锚点；macOS 屏幕选区显式限定 `huxerui::Rect`。库图模式早退保留。 |
-| [Lib-CodeEditor](https://github.com/FarnaHerry/Lib-CodeEditor/tree/farna/main) | `a332e7c3158818a891bb8181756d439a62df6268` | 包含只读复制、滚动/绘制兼容；补齐固定子模块声明，提供工作线程预构建并跨卸载保留的 `initial_document`，向消费者传播 Windows 宏约束，默认关闭输入追踪，并修复工具栏剪贴板、文本变更通知和 Android 库图接口目标。Linux 从固定 simdutf v7.7.0 源码按 libc++ 工具链重建，复用 SweetEditor 同版本兼容头（仅进入构建期 include），并移除已合入静态库的冗余链接边，兼容 Linux 与 iOS 链接闭包。 |
+| [Lib-Camera](https://github.com/FarnaHerry/Lib-Camera/tree/farna/main) | `5d6b8e814e3e5d8c22e63a4e470c2b6c1cd82cd0` | 已采用 ApplicationContext/UiWindow；Android/iOS 改用窗口级模块工厂并绑定原窗口，拍照等待改用 `AwaitCallback`；新增 Linux V4L2 预览/拍照与 X11、ScreenCast/PipeWire 屏幕选区，桌面屏幕源使用框架 `129209bc` 的原生 surface 锚点；macOS 屏幕选区显式限定 `huxerui::Rect`。库图模式早退保留。 |
+| [Lib-CodeEditor](https://github.com/FarnaHerry/Lib-CodeEditor/tree/farna/main) | `ee5b0cf8ac53f23f9816c1aedd52a6b90c3d696c` | 已合入官方 4e67fd0c，适配当前 HUI 编辑动作，提供 Document/UseCodeEditor、实时 settings、结构化事件和剪贴板。保留预构建文档与 Windows 宏约束，Linux 按工具链重建固定 simdutf v7.7.0，并复用 SweetEditor 同版本兼容头与正确静态链接闭包。 |
 
 CMake 原生构建和 CLI 的 Android 库图共用这些 HTTPS URL 与完整 SHA。Camera 的库图
 兼容已由库本身处理，应用不再预声明占位目标。旧的本地 Charts/SQLite 工作树及旧

@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.110 release notes](docs/releases/v0.3.110.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.111 release notes](docs/releases/v0.3.111.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -53,7 +53,7 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
   see [UI conventions](docs/ui-development.md). Body content uses equal horizontal margins: wide views place the scrollbar inside the right margin and clear the Linux window resize band, while compact views hide it without adding duplicate outer padding. Hovering scrollable content highlights its scrollbar in the theme primary color.
 - Subscription and profile management: entries with context menus, double-click
   activation and refresh actions; URL import, update, activation, deletion and rule
-  editing; local storage; Clash YAML, native sing-box JSON, OpenVPN .ovpn, and VMess JSON node subscriptions (plain lists or Base64). Card menus share a single-frame QR or the complete config as a QiFi/QRS multi-frame QR sequence. See [node subscriptions](docs/node-subscriptions.md) for conversion and limits.
+  editing; local storage; Clash YAML, native sing-box JSON, OpenVPN .ovpn, and SS (SIP002/legacy full Base64), VMess JSON, VLESS/Trojan, HY2/TUIC/AnyTLS node subscriptions (plain or Base64, including mixed lists). Card menus share a single-frame QR or the complete config as a QiFi/QRS multi-frame QR sequence. See [node subscriptions](docs/node-subscriptions.md) for conversion and limits.
   Selection can change during preparation: repeated clicks are coalesced and only the latest pending target is kept.
   Candidate validation, startup and preview reuse the prepared output.
 - Desktop rule targets: search and select groups or nodes from Clash subscriptions,
@@ -63,7 +63,8 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
   form with the name and URL filled in. Pasting and QR import accept these links too;
   see [formats and platform registration](docs/profile-links.md).
   On Android, the scanner also accepts a photo from the gallery. Photos and camera
-  captures share Lib-QRCode decoding and the app’s QRS frame assembly. Sharing also uses Lib-QRCode.
+  captures share Lib-QRCode decoding and the app’s QRS frame assembly. Sharing also uses Lib-QRCode,
+  with compact margins that preserve the standard quiet zone.
   QR and file imports have separate busy states,
   and a slow link import allows returning to the previous page; see [QR scanning](docs/qr-scanning.md).
 - Subscription downloads: choose the sing-box core, system environment proxy or a
@@ -281,6 +282,8 @@ See [UI development notes](docs/ui-development.md). Optional work counters and f
 For small named-module functions, distinguish explicit inline semantics from optimizer
 substitution and check Debug/Release flags. See [C++ module development](docs/cpp-modules-development.md).
 
+Rule-page cold-load timings, projection checks and measurements are documented in the [performance guide](docs/rule-page-performance.md).
+
 For local DNS runtime regressions, build `test_singbox`, then run
 `ctest --test-dir build --output-on-failure -R '^(dns_hosts_runtime|dns_policy_runtime|dns_tls_runtime)$'`.
 These require Python and the pinned bundled core. The TLS test also needs the
@@ -291,7 +294,7 @@ Desktop CI sets `-DCLASHFLUX_REQUIRE_PROJECT_TESTS=ON`: missing or disabled requ
 tests fail configuration. Python, the pinned bundled core and a runnable OpenSSL
 CLI are required; the download regression must include default certificate rejection.
 The required list in [ProjectTestGate.cmake](cmake/ProjectTestGate.cmake) covers resource management,
-runtime matching, persistence, startup client lifetime, UI and system evidence; Windows also includes service, physical DNS,
+runtime matching, Shadowsocks TCP/UDP/UOT (including legacy input), VLESS/Trojan URI forwarding (including Vision/Reality), HY2/TUIC/AnyTLS URI and other local protocol forwarding and TLS identity rejection, input catalog consistency with the actual core, persistence, startup client lifetime, UI and system evidence; Windows also includes service, physical DNS,
 isolated WFP and legacy cleanup regressions. Only the documented MSVC C4737 defect permits skipping
 the direct ORM test; subscription persistence remains mandatory. Windows service and WFP tests require
 an elevated test environment.
@@ -368,6 +371,9 @@ core capabilities.
 See [sing-box layers and Clash-to-sing-box fidelity](docs/singbox-layers-and-fidelity.md)
 for responsibilities, decision rules, protocol/endpoint/rule coverage and known
 limitations.
+The [protocol model refactoring plan](docs/protocol-refactor-plan.md) describes the format-independent node model and acceptance checks. The scoped P0–P6 work has local Linux/Android validation: all 12 currently supported Clash protocols share typed validation and emission; seven URI protocols, documented legacy SS and the capability consistency gate are integrated. Original content and complete-candidate checks are preserved; other historical formats require separate sample review. Run `test_singbox --protocol-entries` for entry-point contracts and `--ss-uri` / `--v2ray-uri` / `--secure-uri` / `--node-inputs` for URI checks. The required `node_input_catalog` compares mappings with the actual pinned core; see [node subscriptions](docs/node-subscriptions.md) for subsets and untested platforms.
+
+The conversion layer will develop as a reusable, independently maintainable project within this repository, retaining the current module, build and release process. Protocol and input adapters live under `src/converter/`. See the [converter project plan](docs/converter-project.md) for responsibilities, remaining coupling and future API/resource boundaries, and the [source guide](src/converter/README.md) for navigation.
 
 See the [stable core upgrade record](docs/singbox-stable-upgrade.md) for the
 version pin, platform hashes and libbox artifact metadata requirement.
@@ -570,7 +576,7 @@ Lib-Charts and Lib-SQLite also use pinned commits from their `FarnaHerry` forks'
 `farna/main` branches, with the same URL/COMMIT identities in native builds and the
 Android library graph. See [HuxerUI fork maintenance](docs/huxerui-fork.md) for local
 checkout, patch ownership and upgrade instructions.
-The source is pinned to `11849f99`, merging upstream Windows color emoji rendering, the redundant fullscreen topmost removal and CLI DEB/RPM packaging templates, and fixing controlled Pager settling back to the outgoing page when dragging is disabled mid-gesture, while preserving the existing Pager, window and extension integration fixes. The app does not yet enable the new priority policy; existing layouts keep their previous behavior. The source CLI selects the framework with `--sdk`; the Android CI reuses the CLI from the locked 0.4.0 offline archive and points it at the same pinned fork source with `--sdk`. The offline fallback is the separately locked 0.4.0 SDK archive, which supplies the CLI and host tools only; it lacks the fork-only `create_initial_window` runtime API, so desktop builds use the pinned fork source (checked by a configure-time guard).
+The source is pinned to `89359f43` consistently in the local checkout and CI, including Windows text direction, text actions, multi-format clipboard, independent resource packages and the existing Pager fixes. CodeEditor uses fork `ee5b0cf8`, with retained documents and a controller for each mount. Media uses upstream `fee506de`, with the QR page migrated to the system image-picker API. The fork record explains the remaining Camera audio-dependency integration. The app does not yet enable the new priority policy; existing layouts keep their previous behavior. The source CLI selects the framework with `--sdk`; the Android CI reuses the CLI from the locked 0.4.0 offline archive and points it at the same pinned fork source with `--sdk`. The offline fallback is the separately locked 0.4.0 SDK archive, which supplies the CLI and host tools only; it lacks the fork-only `create_initial_window` runtime API, so desktop builds use the pinned fork source (checked by a configure-time guard).
 
 Windows packaging with `huxerui package windows` creates a `setup.exe` with an
 installation wizard: Burn bundles an MSI and a HuxerUI installer interface with

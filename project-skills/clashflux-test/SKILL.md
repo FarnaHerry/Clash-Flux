@@ -55,6 +55,15 @@ ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-require
 | 服务 / PPTP / 系统网络 | Linux 系统代理另跑 sysproxy（隔离 HOME 的适配器、真实 PAC HTTP，有 Node 时加测 JS），TUN 可选运行 tests/test_network_capture_runtime.py（前提/范围见[网络设置](../../docs/home-network-settings.md#验证)）；读取 [运行控制技能](../clashflux-runtime/SKILL.md) 和对应 [平台约束](../clashflux-platform/SKILL.md)，依平台执行 service_protocol、vpn、routing、compensation 和 Windows 专属回归。 |
 | Android 启停 / 后台状态 | 从 platform/android 运行 `./gradlew.bat :app:testRuntimeStartPolicy :app:testRuntimeModeReconciler :app:testVpnUptime`（Linux/macOS 用 `./gradlew`），并编译应用 Java/NDK；划走重开、停止/撤权、通知和 sticky 恢复需真机，见 [Android 生命周期](../../docs/android-background-lifecycle.md)。 |
 
+协议模型或入口改动另跑 `test_singbox --protocol-baseline` 和 `test_singbox --protocol-entries`；冻结样本、纯模型、入口与固定内核验证按[当前阶段](../../docs/protocol-refactor-plan.md#分批迁移与退出条件)查证据。`shadowsocks_runtime` 和 `protocol_runtime` 必跑本地双内核转发，后者检查 TLS 身份拒绝且无目标 payload，临时根仅进独占夹具配置；不自动重录预期来消除差分。
+SS URI 改动另跑 `test_singbox --ss-uri`：组件单次解码、插件缺省/转义、混合 provider 类型及 Prepare 失败留旧；`--ss-uri-fixtures` 可导出固定内核检查夹具。`shadowsocks_runtime` 同时覆盖 URI、SS 2022 provider 和混合列表的真实 TCP/UDP。
+VLESS/Trojan URI 改动另跑 `test_singbox --v2ray-uri`（`--v2ray-uri-fixtures` 导出配置）；必跑 `v2ray_uri_runtime` 验证 TCP/WS/gRPC/HTTP2/HTTPUpgrade、Vision/Reality 与 TLS 身份拒绝，默认校验不能为通过夹具而关闭，范围见[节点订阅](../../docs/node-subscriptions.md)。
+HY2/TUIC/AnyTLS URI 改动另跑 `test_singbox --secure-uri`（`--secure-uri-fixtures` 导出配置）；必跑 `secure_uri_runtime` 核对认证、混淆、UDP 中继、端口范围连接、三种身份拒绝和 AnyTLS IP 的无 SNI ClientHello。范围引导连接不等于定时多端口跳转，原生默认/未实现字段按[节点订阅](../../docs/node-subscriptions.md)记录。
+历史 SS / 能力登记改动另跑 `test_singbox --node-inputs`（`--node-input-fixtures` 导出清单/配置）；`node_input_catalog` 必跑，比较独立样例、生产字段/账本和各固定来源/实际内核身份，不能通过重录预期掩盖漂移。历史 SS 密码不做 URL 解码，普通/provider 实际转发由 `shadowsocks_runtime` 覆盖，边界见[节点订阅](../../docs/node-subscriptions.md)。
+转换子项目的目录移动按[结构规划](../../docs/converter-project.md)保留历史指纹、核对片段内容与 include 顺序，复用现有冻结/入口回归；移动/新增片段同步 `cmake/AndroidLegacy.cmake` 并实际编译 Android，不通过重录样例证明等价。
+
+规则页首次加载另按[投影性能检查](../../docs/rule-page-performance.md)运行 `test_singbox --profile-rules`，区分锁等待、读取、投影与 UI 挂载；合成 Debug 耗时不当作真机或 CI 阈值。
+
 DNS 定向回归：
 
 ```bash

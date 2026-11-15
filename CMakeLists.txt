@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.110 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.111 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -793,7 +793,8 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             target_include_directories(test_page_transition PRIVATE
                 src/ui "${CMAKE_CURRENT_BINARY_DIR}/huxerui-resources/clash-flux/include")
             target_compile_features(test_page_transition PRIVATE cxx_std_23)
-            target_link_libraries(test_page_transition PRIVATE HuxerUI::testing HuxerUI::CodeEditor clashflux_wire)
+            target_link_libraries(test_page_transition PRIVATE HuxerUI::testing HuxerUI::CodeEditor
+                HuxerUI::QRCode clashflux_wire)
             get_target_property(CLASHFLUX_TEST_RESOURCE_PACKAGE
                 clash-flux HUXERUI_RESOURCE_PACKAGE)
             file(TO_CMAKE_PATH "${CLASHFLUX_TEST_RESOURCE_PACKAGE}"
@@ -823,7 +824,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             add_test(NAME rule_source_choices_ui COMMAND test_rule_source_choices_ui)
         endif ()
 
-        # clashflux.singbox 订阅编译器：只依赖 std + nlohmann.json 模块 + yaml-cpp。
+        # 同仓转换回归：不链接 HUI，复用现有模块及 std/JSON/yaml-cpp/Zstd。
         add_executable(test_singbox tests/test_singbox.cpp src/singbox.cpp src/profile_link.cpp)
         if(MSVC)
             target_compile_options(test_singbox PRIVATE /utf-8)
@@ -977,6 +978,15 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_proxy_provider_runtime.py"
                     "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}")
                 set_tests_properties(proxy_provider_runtime PROPERTIES TIMEOUT 30)
+                add_test(NAME shadowsocks_runtime COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_shadowsocks_runtime.py"
+                    "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}")
+                set_tests_properties(shadowsocks_runtime PROPERTIES TIMEOUT 60)
+                add_test(NAME node_input_catalog COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_node_input_catalog.py"
+                    "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}")
+                set_tests_properties(node_input_catalog PROPERTIES TIMEOUT 60)
                 add_test(NAME dns_hosts_runtime COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dns_hosts_runtime.py"
                     "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
@@ -993,6 +1003,21 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                         "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
                         "${CLASHFLUX_TEST_OPENSSL}")
                     set_tests_properties(dns_tls_runtime PROPERTIES TIMEOUT 45)
+                    add_test(NAME protocol_runtime COMMAND "${Python3_EXECUTABLE}"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_protocol_runtime.py"
+                        "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
+                        "${CLASHFLUX_TEST_OPENSSL}")
+                    set_tests_properties(protocol_runtime PROPERTIES TIMEOUT 120)
+                    add_test(NAME v2ray_uri_runtime COMMAND "${Python3_EXECUTABLE}"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_v2ray_uri_runtime.py"
+                        "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
+                        "${CLASHFLUX_TEST_OPENSSL}")
+                    set_tests_properties(v2ray_uri_runtime PROPERTIES TIMEOUT 120)
+                    add_test(NAME secure_uri_runtime COMMAND "${Python3_EXECUTABLE}"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_secure_uri_runtime.py"
+                        "$<TARGET_FILE:test_singbox>" "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
+                        "${CLASHFLUX_TEST_OPENSSL}")
+                    set_tests_properties(secure_uri_runtime PROPERTIES TIMEOUT 120)
                 else ()
                     message(STATUS "DNS TLS runtime test unavailable: OpenSSL CLI not found")
                 endif ()

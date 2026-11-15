@@ -1,5 +1,180 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-15：转换层按同仓子项目发展
+
+- 将转换层作为可复用、可独立维护的项目持续发展，当前保留同仓、clashflux.singbox 模块及现有构建发布。方向、核心/配置编译/应用适配职责和后续接口、资源、外部消费步骤见[转换子项目规划](converter-project.md)。独立库目标、SDK 和拆仓发布均留待后续按实际需求推进。
+- 十个协议/输入片段归拢到 [src/converter](../src/converter/README.md)：protocol 下为模型、Clash 适配、校验和 sing-box 生成，input 下为订阅分流、能力登记及 URI 适配。九个片段字节不变，subscription 仅五个局部 include 改名；主实现包含顺序、公开模块接口和原有行为保持。纯模型测试仅改 include，AndroidLegacy 同步登记十个新路径，未重录冻结样例。
+- Linux 主目标/全部测试目标、六个协议定向入口、版本 v0.3.110 与 diff 检查通过；完整必跑门禁 **37/37，239.15 秒**。Android NDK 29 arm64-v8a native/Java 构建 55 秒通过，Java 为最新，未重打 APK。
+- README 中英文、协议/节点计划、保真度入口和相关技能已同步；历史证据的源码链接转到当前位置，原路径清单与哈希保留历史快照含义。代码基线为 `894a808` 加前序及本轮工作区，十六文件新指纹、逐文件核对、命令与日志位置见[结构整理证据](evidence/2026-11-15-converter-structure.md)。
+- 诊断/编译选项仍有应用类型依赖，部分配置编译仍直接读取资源；目录归拢不代表独立库和外部消费已完成。本轮未覆盖 Windows/macOS、Android 真机/VPN、GUI、签名/发布，未重跑随机差分/性能实验，未提交或推送。
+
+## 2026-11-15：P6 收尾，历史 SS 与能力一致性
+
+- P0–P6 本轮范围完成本机 Linux/Android 验证：12 类 Clash 节点统一模型/校验/生成，七类 URI 与有公开样例依据的历史 SS 接入。旧式 SS 独立分流、整串标准 Base64 解码，密码不做 URL 解码，@/#/?/百分号和空白原样保留；其它旧格式仍明确拒绝。字段边界只维护在[节点订阅](node-subscriptions.md)。
+- 私有登记驱动 scheme/大小写、默认名和 provider 类型；公开拥有型 NodeSubscriptionCapabilities 返回 8 种格式、7 类协议及审查版本/revision。新必跑 node_input_catalog 对照 9 份独立样例、生产普通/provider/别名路径、原生字段与账本，并核对实际打包内核和固定来源；27 份配置接受，8 类能力漂移拒绝，不代替字段矩阵或运行时能力探测。
+- 新增历史 SS 18 组正向、27 组拒绝及混合 provider/目录/次来源/Prepare 失败留旧；无损识别只记脱敏事件，不虚报节点近似，筛掉的节点无该事件。原 627 组冻结/纯模型及此前 URI 检查通过；27000 组 Clash/VMess、5400 组前批 URI 完整观察不变，1500 组历史 SS 独立字节对照通过。
+- shadowsocks_runtime 新增普通/provider 两个真实双内核场景，增加 4 条成功 TCP/UDP 数据流，旧 SS/2022/UOT/URI 合计 19 条。provider 是已验证原文快照注入，未声明真实远程订阅下载验收；未修改用户订阅、数据库/schema 或提交流程。
+- Linux 主目标/全部测试目标、版本 v0.3.110 与 diff 检查通过；最终必跑门禁 **37/37，222.01 秒**，singbox 3.04 秒、node_input_catalog 0.91 秒，门禁本身 65 项缺失/禁用/MSVC/TLS 检查通过。Android NDK 29 arm64-v8a 最后源码的 native/Java 构建 **20 秒通过**，Java 已是最新，未重新打 APK。
+- 四组 4096 节点 Debug 前后输出各自相同，耗时接近、RSS 增量不足 1 MiB；新增历史 SS 为 0.51 秒、23,516 KiB，不推断 Release/GUI/吞吐。完整命令、源码指纹、CSV 与边界见[P6 收尾证据](evidence/2026-11-15-protocol-p6-final.md)。
+- Windows/macOS、Android 真机/VPN、GUI/远端全参数互通、定时多端口跳转、0-RTT 恢复时序、签名/发布未验收；iOS 仅核对脚本 revision，不纳入平台验收。其它旧格式继续按必要样本评估。内核/依赖与应用版本保持，未提交、推送或发布。
+
+## 2026-11-15：P6 第三批 HY2 / TUIC / AnyTLS URI
+
+- 七类 URI 可混合进入 NodeSpec，复用规则投影、目录、provider 与桌面次来源；新语法选项仅用于 HY2/AnyTLS 默认 443/可选 auth 和 HY2 端口集合，旧格式门控保持。认证单次解码、不裁空白；TUIC v5 必须 UUID:password/显式单端口，允许空密码；AnyTLS 密码非空。
+- HY2 接入 salamander/gecko 和有界完整端口集合；TUIC native/quic 中继新增类型化 enum，参数别名冲突明确拒绝，Clash 白名单保持。QUIC 不注入 TCP uTLS，三者默认验证证书；AnyTLS 采用格式指纹默认、不继承外围 Clash 指纹。完整字段边界见[节点订阅](node-subscriptions.md)。
+- 新增 `--secure-uri` / `--secure-uri-fixtures`，59 组正向、177 组拒绝纳入 singbox；包含 128/超量范围、认证/默认/IPv6、TLS/参数/别名、七协议混合 provider、只读目录、次来源隔离和生产 Prepare 失败留旧。原 627 组冻结/纯模型与前两批 URI 检查通过；27000 组 Clash/VMess、2000 组 SS、1600 组 VLESS/Trojan 完整观察不变，1800 组新输入独立字节对照通过，59 份配置全部通过固定内核 check。
+- 新必跑 secure_uri_runtime 的 5 个 HY2、4 个 TUIC、3 个 AnyTLS 场景共 24 条实际 TCP/UDP 数据流通过；三种错误证书身份均拒绝且目标无 HTTP payload，TUIC 同时开启 disable_sni 仍拒绝。AnyTLS IP 场景透明观察 ClientHello，确认无 SNI 且以证书 IP 完成实际转发；临时根仅进测试配置。provider 是已验证原文快照注入，未宣称真实远程下载验收。
+- Linux 主目标/全部测试目标、版本 v0.3.110 与 diff 检查通过；必跑门禁 **36/36，230.50 秒**，新运行项 2.72 秒，门禁本身 63 项缺失/禁用/MSVC/TLS 检查通过。Android NDK 29 arm64-v8a native/Java 构建 **48 秒通过**，Java 已是最新，未重打 APK。
+- 4096 节点 Debug 对照中 VMess 0.90 → 0.89 秒、SS 0.50 → 0.49 秒、VLESS/Trojan 0.63 → 0.66 秒，输出分别相同、RSS 增量不足 0.5 MiB；新增三协议混合为 0.62 秒、27,660 KiB，不推断 Release/GUI/吞吐。源码指纹、命令、CSV 和边界见[P6 第三批证据](evidence/2026-11-15-protocol-p6-secure.md)。
+- P6 尚未整体完成，历史兼容与能力清单一致性检查待后续；Windows/macOS、Android 真机/VPN、定时多端口跳转、0-RTT 恢复时序、远端全参数互通、GUI/签名/发布未覆盖。内核/依赖和应用版本保持，未提交、推送或发布。
+
+## 2026-11-15：P6 第二批 VLESS / Trojan URI
+
+- 新 URI 适配器复用公共语法，直接构造 NodeSpec/TLS/传输；四协议 URI 可混合并沿用完整候选检查、目录、规则投影和次来源隔离。VLESS 默认无 TLS，Trojan 必须 TLS；SNI/Host 独立，URI 缺省 chrome 不继承 Clash 全局指纹，默认验证证书，Reality/Vision 仅开放明确子集。
+- 新增 `--v2ray-uri` / `--v2ray-uri-fixtures`，43 组正向、111 组拒绝纳入 singbox 必跑项，覆盖完整凭据、IPv6、默认/转义/重复参数、TLS/Reality/传输、provider 类型筛选及 Prepare 失败留旧。原 627 组冻结、18 组入口及 SS 检查均通过；27000 组旧 Clash/VMess 和 2000 组 SS 观察结果不变，1600 组新输入独立字节对照通过，43 份配置通过固定内核 check。
+- 新增必跑 v2ray_uri_runtime：9 个 VLESS、5 个 Trojan 场景共 28 条实际 TCP/UDP 数据流，含所有开放传输、TLS Vision、Reality Vision 和 provider 原文快照；错误 TLS 身份拒绝且目标无 HTTP payload。私有根仅进入测试配置，不关闭默认校验、不修改系统信任；未冒充真实远程订阅下载验收。
+- Linux 主目标/全量测试目标、版本 v0.3.110 与 diff 检查通过；必跑门禁 **35/35，214.48 秒**，新运行项 2.84 秒；门禁本身 61 项缺失/禁用/MSVC/TLS 检查通过。Android NDK 29 arm64-v8a native/Java 构建 **38 秒通过**，Java 已是最新，未重打 APK。
+- 4096 节点 Debug 观察中 VMess 为 0.88 → 0.87 秒、SS 为 0.47 → 0.47 秒，输出分别相同，RSS 约增 1 MiB；新增 VLESS/Trojan 为 0.61 秒、29,996 KiB，不推断 Release/GUI/吞吐。字段边界、源码指纹、命令、CSV 和未覆盖项见[P6 第二批证据](evidence/2026-11-15-protocol-p6-vt.md)。
+- P6 尚未整体完成，下一批为 HY2/TUIC/AnyTLS，历史格式继续延后；Windows/macOS、Android 真机/VPN、远端全参数互通、错误 Reality 公钥拒绝、GUI/签名/发布未覆盖。依赖/内核和应用版本保持，未提交、推送或发布。
+
+## 2026-11-15：P6 首批 SS SIP002 与 URI 公共语法
+
+- 新增私有 URI authority/query/fragment 拆分、组件单次百分号解码、UTF-8/ASCII 控制字符/主机/IPv6/端口检查，query 保留重复项后校验。SS SIP002 明文/Base64URL userinfo、SS 2022 明文组件及 SS/VMess 明文或外层 Base64 混合列表直接填 NodeSpec；旧式整串 SS 包装、其它协议 URI 和新 UI 入口未开放。
+- SIP003 只接入现有 obfs-local/v2ray-plugin 子集，显式拒绝未知/重复选项及 tls=false。模型的插件 host/path 变为可选，URI 不套用 Clash 的 bing.com/显式 host 默认，既有 Clash 结果保持；provider URI 依据实际 ss/vmess 类型筛选。
+- 新增 `--ss-uri` / `--ss-uri-fixtures` 并纳入现有 singbox 必跑项：49 组正向、58 组拒绝，以及 4096 数量边界、混合 provider/只读目录/次来源隔离。生产 Prepare 在格式和候选拒绝后保留原已批准缓存；原文不重写，未修改数据库/schema 或提交流程。
+- 原有 627 组冻结/纯模型检查通过；27000 组既有 Clash/VMess 输入与保存的 P5 消费者完整出站/error/fidelity/warnings 零差分。新增 2000 组独立凭据/插件字节对照通过，49 份新配置全部通过固定内核 check。
+- shadowsocks_runtime 新增 SS URI、SS 2022 HTTP provider、SS/VMess 混合列表三个真实双内核 TCP/UDP 场景，新增 6 条成功数据流，连同既有 SS/UOT 共 15 条。本地 provider 测试以已验证原文快照注入，未把它写成真实远程 SS 订阅下载验收。
+- Linux Clang 21 Debug 主目标/全部测试目标构建、版本 v0.3.110、`git diff --check` 通过；完整必跑门禁 **34/34，206.61 秒**。Android NDK 29 arm64-v8a native/Java 构建 **37 秒通过**，Java 已是最新，未重新打包 APK。
+- 4096 条既有 VMess 的 Debug 耗时中位数 0.86 → 0.86 秒、输出 SHA256 一致；新增 4096 条 SS 为 0.49 秒、19,632 KiB，未据此跨格式或推断 GUI/Release 性能。边界、源码指纹、命令和 CSV 见[P6 首批证据](evidence/2026-11-15-protocol-p6-ss.md)。
+- 下一批为 VLESS/Trojan，P6 尚未整体完成；Windows/macOS、Android 真机/VPN、SS 插件实际握手、所有方法远端互通、GUI/签名/发布未覆盖。依赖与内核保持，未提交、推送或发布。
+
+## 2026-11-15：协议重构 P5 入口核对与收敛
+
+- Clash 的字段/类型/凭据/端口门控归入格式适配器，复用现有结构检查；删除装配层重复助手。Clash 与现有 VMess URI 共用 `emitProtocolNode` 完成来源默认解析、协议校验、诊断发布和生成；指纹近似只记一次，QUIC 不继承 TCP 指纹。没有旧协议生成器或失败回退。
+- 新增 `test_singbox --protocol-entries`，并纳入现有 singbox 必跑项：18 组跨入口样本覆盖 12 类协议、近似场景及 URI，核对文档/规则只读检查、主来源、HTTP/file/inline provider、对象目录、同名次来源隔离、筛选/失败边界、原文保留与取消。原生 DOM 的未知字段、uint64/有符号边界/浮点/容器继续保留，托管合并按既有行为执行。
+- 单列修复 HTTP/file provider 漏记 VMess `net=tls` 近似说明及 warning，生成配置不变，过滤掉的别名节点不记账；新增回归在隔离编译的 P4 实现上准确触发 8 项相关断言，在本轮实现上通过。
+- 627 组冻结样本及纯模型检查通过；与 P4 独立消费者的 27000 组 Clash/URI 完整出站、error、fidelity、warnings 差分为零。固定内核检查 244 份接受、1 份既有空 SS 密码预期拒绝；provider 漏账修复的预期差异由上述专门入口回归检查，未重录冻结结果。
+- Linux Clang 21 Debug 主目标/全部测试目标构建、`./run.sh --version`（v0.3.110）与 `git diff --check` 通过；完整必跑门禁 **34/34，219.38 秒**。Android NDK 29 arm64-v8a native/Java 构建 **38 秒通过**，Java 已是最新，未重新打包 APK。
+- 两组 4096 节点的 Debug 输出 SHA256 相同；混合协议耗时中位数 1.02 → 1.04 秒，VMess URI 为 0.86 → 0.86 秒，峰值 RSS 接近。详细入口表、源码指纹、命令、CSV 与边界见[P5 证据](evidence/2026-11-15-protocol-p5.md)。P0–P5 已完成本机验证，Windows/macOS、Android 真机/VPN 与全部参数远端互通仍未覆盖；P6 新 URI 格式未实施。未提交、推送或发布。
+
+## 2026-11-15：协议重构 P4 剩余六类协议
+
+- HY1/HY2/TUIC、AnyTLS/Snell/SSH 的主订阅/provider/次来源节点转换进入专用类型化模型；当前 12 类 Clash 协议共用模型校验与 sing-box 生成，删除相应旧生成分支及 append 辅助实现。端口支持 HY ports-only，保留认证、窗口/带宽/跳端口、QUIC/TCP TLS 差别、显式零/false 和诊断顺序。
+- 新增 289 组冻结样本，累计 627 组基线及纯模型检查通过；与保存的 P3 编译器做 12000 组组合差分，完整出站/错误/账本/warnings 一致。固定内核 check 为 244 份接受、1 份既有空 SS 密码按预期拒绝。
+- 新增 `protocol_runtime` 并纳入必跑门禁：7 个本地固定双内核场景、14 条 TCP/UDP 数据流通过，包含 HY1 字节认证、HY2 Gecko/Salamander、TUIC、AnyTLS、Snell v4 plain/HTTP；TLS 身份不匹配明确拒绝且没有 HTTP payload。注册保护覆盖缺失/禁用。SSH 另用本地手工夹具验证密码、加密私钥、双认证转发及错误主机公钥在认证前拒绝，未给生产/CI 引入 Go 依赖。
+- Linux Clang 21 Debug 主目标/全部测试目标构建、`./run.sh --version`（v0.3.110）、`git diff --check` 通过；完整必跑门禁 **34/34，206.81 秒**。Android NDK 29 arm64-v8a native/Java 构建通过，最终一轮 35 秒，未重新打包 APK。
+- 4096 个混合节点的独立消费者输出 SHA256 相同；三轮交替 Debug 耗时中位数 1.03 → 1.00 秒，峰值 RSS 48,952 → 49,920 KiB，未宣称 GUI/Release 或流量性能提升。
+- 详细源码指纹、命令、CSV 与边界见[P4 证据](evidence/2026-11-15-protocol-p4.md)。Windows/macOS、Android 真机/VPN、完整协议参数及远端互通未覆盖；下一阶段为 P5 入口核对与收敛，P6 新 URI 格式未实施。未提交、推送或发布。
+
+## 2026-11-15：协议重构 P3 Shadowsocks
+
+- `894a808` 加前序及本轮工作区，应用 v0.3.110、sing-box 1.14.4、HUI/扩展身份保持。Shadowsocks 主订阅/provider/次来源统一进入类型化模型，保存原文凭据、专用插件 variant 和可选 UOT；Clash 默认在适配器解析，生成器做一次 SIP003 编码。删除旧 SS 生成/插件/UOT 分支，失败不回退；未开放新 URI。
+- 新增 121 组 SS 冻结样本，累计 338 组基线及纯模型检查通过；与 P2 独立编译器的 6000 组组合差分全部一致。固定内核 check 为 124 份接受、1 份空密码按预期拒绝，保留映射与完整候选检查的既有边界。
+- 新增 `shadowsocks_runtime` 并纳入必跑门禁：本地官方双内核验证 AEAD / SS 2022 的 TCP/UDP、仅 TCP 服务端的 UOT v1/v2、仅 UDP 服务端的显式 UOT false，共 9 条成功数据流。注册保护测试覆盖该项的缺失/禁用拒绝。
+- Linux 主目标与全部测试重建、版本和 diff 检查通过；完整必跑门禁 **33/33，208.72 秒**。Android Java/arm64 原生构建最终 **19 秒通过**，生产 Legacy 实现实际重编并链接；未重新打包 APK。
+- 4096 个合成 SS 节点三轮 Debug 对照输出相同，编译耗时中位数 1.30 → 1.37 秒（约增加 5%），峰值 RSS 65,352 → 65,380 KiB；不当作 Release、GUI 或流量吞吐结论。
+- 详细源码指纹、命令、CSV 与边界见[P3 证据](evidence/2026-11-15-protocol-p3.md)。Windows/macOS、Android 真机/VPN、插件远端握手和全部加密方法互通未覆盖；下一阶段为 P4 的 HY1/HY2/TUIC、AnyTLS/Snell/SSH。未提交、推送或发布。
+
+## 2026-11-15：HUI / CodeEditor / Media 更新与协议重构 P2
+
+- `894a808` 加前序及本轮工作区，应用版本 v0.3.110、sing-box 1.14.4 保持。HUI 独立 checkout / CI 统一 `89359f43`，CodeEditor 固定 `ee5b0cf8`、Media 固定 `fee506de`；Android Java/native 与生成库图同源核对通过，未改维护工作树或在缓存打补丁。
+- 编辑器改为后台构建 Document、每次挂载独立 UseCodeEditor 控制器，适配事件、主题、剪贴板、搜索和实时 settings；保留只读、脏快照和卸载重挂内容。Android 扫码页迁移到 MediaLibrary 的系统单图选择接口。Camera 最新候选新增强制 Media/AudioCapture、ALSA 和录音权限声明，本轮保留 `5d6b8e81`，单独记录后续固定依赖和平台审查要求；未试编译该候选。
+- P2 将 VMess/VLESS/Trojan 主订阅/provider 的协议、TLS、传输与 UDP 编码迁移至类型化模型；现有 VMess URI 直接填模型，默认选择策略独立装配。删除这三类旧生成分支，失败不回退；支持范围保持，其它七类待迁移，下一阶段 P3 Shadowsocks。
+- 217 组冻结样本（200 Clash + 17 URI）、纯模型/生产入口检查、6000 Clash + 3000 URI 组合差分和 74 份固定内核 check 全部通过。URI SNI 原文保留的差分反例已修复并入冻结回归；provider 全局指纹、筛选与整份拒绝边界独立验证。
+- Linux 主目标、全部测试目标和 HUI codegen 重建成功，版本与 diff 检查通过；完整必跑门禁 **32/32，211.01 秒**。Android 完整 APK 首轮 2 分 13 秒、最终 Media API 迁移后 43 秒通过，含 Java/arm64 原生及 JVM 门禁。
+- 隔离的 Linux 原生 GUI 启动 8 秒，实际首页圆环/空数据图与布局正常，应用日志为空。4096 条合成 URI 的 Debug 对照输出相同，编译耗时中位数 1.53 → 0.92 秒、峰值 RSS 87,220 → 35,772 KiB；不当作 GUI/Release/真机性能。
+- 完整命令、固定 SHA、源码指纹、CSV 和边界见[本轮证据](evidence/2026-11-15-protocol-p2.md)。Windows/macOS 构建、Android 真机扫码/VPN、全部协议远端握手和非零实时图表未覆盖；P3–P6 未实施。未提交、推送或发布。
+
+## 2026-11-15：协议重构首批 P0 / P1
+
+- `894a808` 加当前工作区，版本保持 v0.3.110。P0 冻结 106 组合成基线；P1 将 HTTP/SOCKS5 主订阅/provider 的转换拆为拥有型协议模型、格式解析、阶段/目标校验与独立 JSON 生成。其它十类协议、VMess URI、原生 JSON、数据库/schema 和运行提交边界保持。
+- 首批模型只有 HttpOptions/Socks5Options，并显式区分缺省/空凭据、零值与 false；目标能力由编译目标传入，模型测试可独立注入。失败不回退旧解析器，生成器不读 YAML/Context；较晚 YAML 异常仍发布此前的保真度提示，反例进入冻结回归。
+- Linux 主目标、test_singbox、test_runtime_health、test_rule_provider_download 构建通过；`./run.sh --version` 为 v0.3.110，`git diff --check` 通过。106 组主订阅/inline provider 基线、纯模型检查、与迁移前二进制的 2000 组差分全部通过，12 类有效样本全部通过固定内核 check。
+- singbox、proxy_provider_runtime、group_expansion_runtime、dns_hosts_runtime、dns_policy_runtime、dns_tls_runtime、proxy_standby_runtime、personal_rule_sets_runtime、resource_management_runtime、persistence、connection_trace_runtime **11/11，27.19 秒通过**。
+- Android `:app:externalNativeBuildDebug :app:compileDebugJavaWithJavac` 首轮 1 分 34 秒通过，最终增量 16 秒通过，arm64 原生核心实际重编并链接；Java/native 使用同一固定 HUI `7211803e`，未追新依赖。
+- 具体命令、编译器源码指纹和基线方法见[首批证据](evidence/2026-11-15-protocol-p1.md)。Windows/macOS 构建、完整桌面门禁、GUI、真机和所有协议远端握手未覆盖；P2–P6 未实施，当前 URI 支持范围不变。未提交、推送或发布。
+
+## 2026-11-15：协议中间模型重构规划（未实施）
+
+- 快照为 `894a808` 加当前未提交工作区；固定内核仍为 sing-box 1.14.4，HuxerUI 保留已验证的 `7211803e`，未跟进官方或修改依赖。
+- 参考 SubConverter-Extended `144f7c6` 的 Proxy / canonical JSON 分层，完成[协议重构计划](protocol-refactor-plan.md)。采用公共信息加协议专用 variant、共享 TLS/传输/拨号结构，拆分格式适配、协议/目标检查与 JSON 生成；原生 JSON 保留 DOM 直通。
+- 计划 P0–P5 先迁移既有 12 类协议与现有 VMess 输入并收敛入口，P6 再扩展 URI；首批为基线加 HTTP/SOCKS5 纵向迁移。已同步 URI 扩展计划、保真度文档、compiler 技能与中英文 README 入口，当前代码支持范围不变。
+- 明确保留普通 Clash、URI 列表和 provider 的失败/筛选差异、字段存在性与凭据原文、来源默认隔离、账本、引用图及提交保护；未修改解析器、生成器、公开 API、数据库/schema 或 UI。
+- 本轮文档改动后实际执行 `cmake --build build --target clash-flux`（增量无待构建项）、`./run.sh --version`（`v0.3.110`）、`git diff --check`，均通过；新增计划与相关入口的本地链接、代码块闭合及 AGENTS/技能限额检查通过。
+- 本轮未新增或运行协议回归、固定内核样本检查、GUI 或其它平台构建；上述均为后续实施门槛，不据此宣称重构已验证或任何新 URI 已支持。未提交、推送或发布。
+
+## 2026-11-15：HuxerUI 兼容更新与最新候选检查
+
+- 应用快照 `894a808` 加前序及本轮工作区。将本机 `5c84b4ab`、旧 CI `11849f99` 统一为已发布的
+  `7211803edf4d29138b9ca6d2df98c2d5e58bee8e`；Android Java/native 均由该源码选择规则获取。
+  相对本机旧版本包含 Windows 彩色 emoji、全屏 topmost、CLI DEB/RPM 模板及 Pager 中途禁用拖动收束修复；
+  相对旧 CI pin 仅增加维护文档。宿主 HCG/HRC、Android Java、各扩展及内核 pin 保持。
+- 检查时 fork 最新 `89359f43ef34357fabcf1c994f4b5fa1062c91a9` 已包含官方最新
+  `3bebb8c71d92239504967972f12d4a5722c39dd5`。切换独立消费 checkout 后实际构建生产 CodeEditor 对象：
+  框架通过，但固定 `a332e7c` 的两处旧版 `TextSelectionClient` override 编译失败。
+  新 API 使用 `GetTextEditingActionStatus(..., const Clipboard&)` 和 void 返回的动作处理。
+  因此该候选未入 pin；需要先在 CodeEditor fork 迁移并验证编辑、剪贴板与生命周期，详见
+  [框架记录](huxerui-fork.md)。未改维护工作树、依赖缓存源码，未创建提交或推送。
+- Linux Clang 21/libc++ Debug 执行 `cmake --build build --target clash-flux test_page_transition test_qrs_codec test_persistence`，
+  主目标及 HUI codegen 通过；`./run.sh --version` 为 `v0.3.110`，`git diff --check` 通过。
+  `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|qrs_codec|ui_resources|persistence|cps_dependencies|dns_tls_runtime)$'`
+  **6/6 通过，105.84 秒**；生产分页为 97.49 秒，涵盖快速切换、取消、宽窄重挂和共享规则模型。
+- 使用私有 session bus、独占 HOME/XDG 数据目录和 bubblewrap 隐藏真实服务 socket，原生 Linux X11 GUI 运行 8 秒未退出、应用日志为空。
+  实际截取并检查 2160×1440 首页：圆环图显示零流量的双等分及中心 0%，面积图为空数据状态，卡片和标题正常。
+  夹具已终止回收，未操作系统代理/TUN；未验证非零实时图表、悬停或正常退出流程。
+- 未执行完整桌面门禁、新版 CLI 打包、Android/Windows/macOS 构建或真机交互验收。
+
+## 2026-11-15：节点订阅扩展进入计划（未实施）
+
+按用户要求，将 SubConverter-Extended 的多协议 URI、编码兼容与能力清单思路写入
+[节点订阅解析扩展计划](node-subscription-plan.md)，固定研究源码 revision 和分期验收条件。
+本轮不启动解析、依赖或导入入口改造；现有节点输入仍仅支持文档定义的 VMess JSON 分享格式。
+后续只读源码对照已补充到计划：包装识别、URI 分段/单次解码、SS 2022、参数映射、生产接入点和分批回归；仍未修改解析实现。
+按用户最新指示搁置 HUI 官方追新，应用 checkout 与 CI 继续保留已验证的 `7211803e`，待用户更新后再跟进。
+
+## 2026-11-15：分享码白边与 Lib-QRCode 更新
+
+- 快照为 `894a808` 加本轮及前序未提交工作区；Lib-QRCode 从 `23bc79b` 更新并固定到
+  上游当时最新的 `4f67b7a1b60d459a53effe52af1ca9e44f67ff28`，内置 ZXing-C++ 3.1.1。
+  本机实际使用 HuxerUI `5c84b4ab`；未升级框架或其它扩展。
+- 普通二维码与 QRS 分享去掉弹窗额外内边距，按实际约束对齐码图尺寸，保留四模块静区；
+  小圆角避开定位图案，QRS 使用首帧模块尺度保持弹窗边界稳定。
+- Linux Clang 21 Debug 实际执行 `cmake --build build --target clash-flux test_qrs_codec test_page_transition`，
+  主目标/HUI codegen 成功；`./run.sh --version` 为 `v0.3.110`，`git diff --check` 通过。
+  `test_page_transition --qr-share` 与 page_transition、qrs_codec、ui_resources、
+  cps_dependencies、dns_tls_runtime 均通过；布局覆盖 320/960pt、深浅主题和换码边界，
+  编解码检查 Unicode 链接、压缩/未压缩 QRS 往返及恰好四模块静区。
+- 用固定库源码另建独立 codec 测试目录，qrcode.codec 和 qrcode.decode_fixtures 均通过。
+  未跑完整桌面门禁、原生 GUI/实机扫码，也未构建 Android、Windows 或 macOS。
+
+## 2026-11-15：规则页首次投影优化
+
+- 代码快照为 `894a808` 加共享缓存和本轮工作区，Linux Clang 21 Debug / HuxerUI `5c84b4ab`。
+  常见规则块避免构建逐项 YAML DOM，其它情况按条件走事件或原 DOM 路径；
+  展示省略未使用的原规则副本，个人修改使用一次性锚点索引，不改变规则语义。
+- 同构建、同合成负载三轮交替测量：10 万条规则投影中位数 2443.758 → 1070.706 ms；
+  加 1000 条禁用修改为 3968.383 → 1089.769 ms。范围、源码指纹和原始记录见
+  [首次加载性能检查](rule-page-performance.md)，不能当作用户界面端到端或 Release/真机耗时。
+- 主目标/HUI codegen、test_singbox、test_page_transition、test_persistence 构建成功；
+  `./run.sh --version` 为 `v0.3.110`，`git diff --check` 通过。
+  `--profile-rules` 与 singbox、page_transition、ui_resources、persistence、
+  personal_rule_sets_runtime 均通过。未跑完整门禁、原生 GUI 或其它平台构建。
+
+## 2026-11-15：规则页共享加载与缓存
+
+- 代码快照为 Clash-Flux `894a808` 加本轮工作区，Linux Clang 21 Debug，
+  本机实际选中的 HuxerUI 为 `5c84b4ab`，不同于 CI 固定的 `11849f99`。
+- 普通规则页和订阅规则编辑入口共用应用级、按来源输入失效的不可变快照；
+  同来源规则读取单飞，离页不取消缓存填充，已有列表在重新解析时保留。
+  出口候选仅在编辑入口按需准备，虚拟列表不再在组合期复制整张规则数组。
+- 实际执行 `cmake --build build --target clash-flux test_page_transition test_persistence`，
+  主目标/HUI codegen 构建成功；`./run.sh --version` 输出 `v0.3.110`，
+  `git diff --check` 通过。`page_transition`、`ui_resources`、`persistence` 均通过。
+  新增无窗口回归覆盖共享读取、真实面板卸载/重挂、缓存命中、来源隔离、重验证保留旧列表、
+  延迟出口目录、发布前输入变更、失败重试、ABA 和删除/重建拒绝迟到结果。
+- 未执行完整桌面门禁、原生 GUI 实测或 Android/Windows/macOS 构建；
+  缓存展示仍为本地配置投影，不作为内核已应用规则或真机 VPN 的验收证据。
+
 ## 2026-11-14：统一二维码生成与识别
 
 - 代码快照为 Clash-Flux `5a1dbdf` 加本轮工作区，固定 HuxerUI `11849f99` 和

@@ -448,18 +448,20 @@ bool expandGroupProxies(Context& ctx, const YAML::Node& group, const std::string
 // 解析 Clash YAML 文档并转换节点/组/规则（调用方负责异常捕获）。
 void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportOnly = false) {
     YAML::Node root;
+    std::optional<NodeSubscriptionDocument> nodes;
     const auto nodeText = nodeSubscriptionText(trimmed);
     if (nodeText) {
         try {
-            auto document = parseNodeSubscription(*nodeText);
-            root = document.root;
+            nodes = parseNodeSubscription(*nodeText);
+            root = nodes->root;
             ctx.note(FidelityScope::Field, Fidelity::Approx, "node-subscription.policy",
                 "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
                 "可在个人规则或全局规则中配置分流");
-            for (const auto& name : document.tlsTransportAliases)
-                ctx.note(FidelityScope::Node, Fidelity::Approx, name,
-                    "非标准 net=tls 兼容映射为 TCP，并保留显式 TLS 设置",
-                    "建议服务商使用标准 net=tcp、tls=tls 字段");
+            for (const auto& name : nodes->tlsTransportAliases)
+                noteNodeSubscriptionTlsAlias(ctx, name);
+            for (const auto& name : nodes->legacyShadowsocks) {
+                (void)name; noteNodeSubscriptionLegacySs(ctx);
+            }
         } catch (const std::exception& error) {
             ctx.result.error = error.what();
             ctx.note(FidelityScope::Field, Fidelity::Unsupported, "node-subscription", ctx.result.error);
@@ -493,6 +495,19 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
 
     std::vector<std::string> localProxies;
     bool rejectedProxy = false;
+    if (nodes) {
+        for (auto& node : nodes->nodes) {
+            if (ctx.cancelled()) return;
+            auto converted = convertProtocolNode(ctx, std::move(node));
+            if (!converted) {
+                ctx.result.error = "节点订阅包含无法完整转换的节点；保留原订阅，不提交部分结果";
+                return;
+            }
+            localProxies.push_back(converted->at("tag").get<std::string>());
+            ctx.knownTags.push_back(converted->at("tag").get<std::string>());
+            ctx.outbounds.push_back(std::move(*converted));
+        }
+    }
     if (const YAML::Node proxies = root["proxies"]; proxies && proxies.IsSequence()) {
         for (const YAML::Node& proxy : proxies) {
             if (ctx.cancelled()) return;
@@ -503,10 +518,6 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
                 ctx.outbounds.push_back(std::move(*converted));
             } else {
                 rejectedProxy = true;
-                if (nodeText) {
-                    ctx.result.error = "节点订阅包含无法完整转换的节点；保留原订阅，不提交部分结果";
-                    return;
-                }
             }
         }
     }

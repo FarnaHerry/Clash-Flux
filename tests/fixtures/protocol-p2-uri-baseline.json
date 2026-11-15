@@ -1,0 +1,881 @@
+{
+  "snapshot": "894a808 + validated P1",
+  "source_sha256": "666b7f27899dbfd4c98a341dabce15946e05a250321718d14bb6b14307e4e7de",
+  "cases": [
+    {
+      "name": "uri-tcp",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJ0Y3AiLCAidHlwZSI6ICJub25lIiwgInRscyI6ICJ0bHMiLCAiaG9zdCI6ICJlZGdlLnRlc3QiLCAicGF0aCI6ICIifQ==\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265",
+            "tls": {
+              "enabled": true,
+              "server_name": "edge.test",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "outbounds": [
+              "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口"
+        ]
+      }
+    },
+    {
+      "name": "uri-ws",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJ3cyIsICJ0eXBlIjogIm5vbmUiLCAidGxzIjogInRscyIsICJob3N0IjogImVkZ2UudGVzdCIsICJwYXRoIjogIi9zb2NrZXQifQ==\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265",
+            "tls": {
+              "enabled": true,
+              "server_name": "edge.test",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "headers": {
+                "Host": "edge.test"
+              },
+              "path": "/socket",
+              "type": "ws"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "outbounds": [
+              "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口"
+        ]
+      }
+    },
+    {
+      "name": "uri-h2",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJoMiIsICJ0eXBlIjogIm5vbmUiLCAidGxzIjogInRscyIsICJob3N0IjogImVkZ2UudGVzdCIsICJwYXRoIjogIi9zb2NrZXQifQ==\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265",
+            "tls": {
+              "enabled": true,
+              "server_name": "edge.test",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "host": [
+                "edge.test"
+              ],
+              "path": "/socket",
+              "type": "http"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "outbounds": [
+              "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口"
+        ]
+      }
+    },
+    {
+      "name": "uri-http",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJodHRwIiwgInR5cGUiOiAibm9uZSIsICJ0bHMiOiAidGxzIiwgImhvc3QiOiAiZWRnZS50ZXN0IiwgInBhdGgiOiAiL3NvY2tldCJ9\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265",
+            "tls": {
+              "enabled": true,
+              "server_name": "edge.test",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "host": [
+                "edge.test"
+              ],
+              "path": "/socket",
+              "type": "http"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "outbounds": [
+              "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口"
+        ]
+      }
+    },
+    {
+      "name": "uri-grpc",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJncnBjIiwgInR5cGUiOiAibm9uZSIsICJ0bHMiOiAidGxzIiwgImhvc3QiOiAiIiwgInBhdGgiOiAiL3NvY2tldCJ9\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "service_name": "/socket",
+              "type": "grpc"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "outbounds": [
+              "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口"
+        ]
+      }
+    },
+    {
+      "name": "uri-tls",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJ0bHMiLCAidHlwZSI6ICJub25lIiwgInRscyI6ICJ0bHMiLCAiaG9zdCI6ICJlZGdlLnRlc3QiLCAicGF0aCI6ICIifQ==\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          },
+          {
+            "action": "建议服务商使用标准 net=tcp、tls=tls 字段",
+            "detail": "非标准 net=tls 兼容映射为 TCP，并保留显式 TLS 设置",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "URI fixture"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265",
+            "tls": {
+              "enabled": true,
+              "server_name": "edge.test",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "outbounds": [
+              "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+          "非标准 net=tls 兼容映射为 TCP，并保留显式 TLS 设置"
+        ]
+      }
+    },
+    {
+      "name": "uri-fp-6",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJ3cyIsICJ0eXBlIjogIm5vbmUiLCAidGxzIjogInRscyIsICJob3N0IjogImVkZ2UudGVzdCIsICJwYXRoIjogIi9zb2NrZXQiLCAiZnAiOiAicmFuZG9tIn0\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          },
+          {
+            "action": "",
+            "detail": "节点「URI fixture」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "URI fixture"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265",
+            "tls": {
+              "enabled": true,
+              "server_name": "edge.test",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "random"
+              }
+            },
+            "transport": {
+              "headers": {
+                "Host": "edge.test"
+              },
+              "path": "/socket",
+              "type": "ws"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "outbounds": [
+              "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+          "节点「URI fixture」使用内核 random 指纹，其抽样分布与 Clash 不保证一致"
+        ]
+      }
+    },
+    {
+      "name": "uri-fp-7",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJ3cyIsICJ0eXBlIjogIm5vbmUiLCAidGxzIjogInRscyIsICJob3N0IjogImVkZ2UudGVzdCIsICJwYXRoIjogIi9zb2NrZXQiLCAiZnAiOiAidW5zdXBwb3J0ZWQifQ\n",
+      "expected": {
+        "error": "节点订阅包含无法完整转换的节点；保留原订阅，不提交部分结果",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          },
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「URI fixture」的 client-fingerprint 不是固定内核支持的指纹，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "URI fixture"
+          }
+        ],
+        "outbounds": null,
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+          "节点「URI fixture」的 client-fingerprint 不是固定内核支持的指纹，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "uri-net-8",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJrY3AiLCAidHlwZSI6ICJub25lIiwgInRscyI6ICJ0bHMiLCAiaG9zdCI6ICJlZGdlLnRlc3QiLCAicGF0aCI6ICIvc29ja2V0In0\n",
+      "expected": {
+        "error": "节点订阅第 1 行：传输类型尚无等价映射，不能改为 TCP",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点订阅第 1 行：传输类型尚无等价映射，不能改为 TCP",
+            "level": 2,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription"
+          }
+        ],
+        "outbounds": null,
+        "warnings": [
+          "节点订阅第 1 行：传输类型尚无等价映射，不能改为 TCP"
+        ]
+      }
+    },
+    {
+      "name": "uri-allowInsecure-9",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJ3cyIsICJ0eXBlIjogIm5vbmUiLCAidGxzIjogInRscyIsICJob3N0IjogImVkZ2UudGVzdCIsICJwYXRoIjogIi9zb2NrZXQiLCAiYWxsb3dJbnNlY3VyZSI6IHRydWV9\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265",
+            "tls": {
+              "enabled": true,
+              "insecure": true,
+              "server_name": "edge.test",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "headers": {
+                "Host": "edge.test"
+              },
+              "path": "/socket",
+              "type": "ws"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "outbounds": [
+              "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口"
+        ]
+      }
+    },
+    {
+      "name": "uri-aid-10",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJ3cyIsICJ0eXBlIjogIm5vbmUiLCAidGxzIjogInRscyIsICJob3N0IjogImVkZ2UudGVzdCIsICJwYXRoIjogIi9zb2NrZXQiLCAiYWlkIjogIjIifQ\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 2,
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265",
+            "tls": {
+              "enabled": true,
+              "server_name": "edge.test",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "headers": {
+                "Host": "edge.test"
+              },
+              "path": "/socket",
+              "type": "ws"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "outbounds": [
+              "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口"
+        ]
+      }
+    },
+    {
+      "name": "uri-path-11",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJ3cyIsICJ0eXBlIjogIm5vbmUiLCAidGxzIjogInRscyIsICJob3N0IjogImVkZ2UudGVzdCIsICJwYXRoIjogIiAvJTJCKyDwn5iAICJ9\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265",
+            "tls": {
+              "enabled": true,
+              "server_name": "edge.test",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "headers": {
+                "Host": "edge.test"
+              },
+              "path": " /%2B+ 😀 ",
+              "type": "ws"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "outbounds": [
+              "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口"
+        ]
+      }
+    },
+    {
+      "name": "uri-unknown-12",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJ3cyIsICJ0eXBlIjogIm5vbmUiLCAidGxzIjogInRscyIsICJob3N0IjogImVkZ2UudGVzdCIsICJwYXRoIjogIi9zb2NrZXQiLCAidW5rbm93biI6ICJzZWNyZXQifQ\n",
+      "expected": {
+        "error": "节点订阅第 1 行：VMess JSON 含未支持字段，保留原订阅",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点订阅第 1 行：VMess JSON 含未支持字段，保留原订阅",
+            "level": 2,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription"
+          }
+        ],
+        "outbounds": null,
+        "warnings": [
+          "节点订阅第 1 行：VMess JSON 含未支持字段，保留原订阅"
+        ]
+      }
+    },
+    {
+      "name": "uri-alpn-13",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJ3cyIsICJ0eXBlIjogIm5vbmUiLCAidGxzIjogInRscyIsICJob3N0IjogImVkZ2UudGVzdCIsICJwYXRoIjogIi9zb2NrZXQiLCAiYWxwbiI6ICJoMixodHRwLzEuMSJ9\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265",
+            "tls": {
+              "alpn": [
+                "h2",
+                "http/1.1"
+              ],
+              "enabled": true,
+              "server_name": "edge.test",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "headers": {
+                "Host": "edge.test"
+              },
+              "path": "/socket",
+              "type": "ws"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "outbounds": [
+              "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口"
+        ]
+      }
+    },
+    {
+      "name": "uri-scy-14",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIGZpeHR1cmUiLCAiYWRkIjogImV4YW1wbGUudGVzdCIsICJwb3J0IjogNDQzLCAiaWQiOiAiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwgIm5ldCI6ICJ3cyIsICJ0eXBlIjogIm5vbmUiLCAidGxzIjogInRscyIsICJob3N0IjogImVkZ2UudGVzdCIsICJwYXRoIjogIi9zb2NrZXQiLCAic2N5IjogIiBBRVMtMTI4LUdDTSAifQ\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "security": "aes-128-gcm",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265",
+            "tls": {
+              "enabled": true,
+              "server_name": "edge.test",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "headers": {
+                "Host": "edge.test"
+              },
+              "path": "/socket",
+              "type": "ws"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "outbounds": [
+              "cf_70726f746f636f6c2d626173656c696e65_o_5552492066697874757265"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口"
+        ]
+      }
+    },
+    {
+      "name": "uri-sni-blank",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIFNOSSBmaXh0dXJlIiwgImFkZCI6ICJleGFtcGxlLnRlc3QiLCAicG9ydCI6IDQ0MywgImlkIjogIjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsICJuZXQiOiAid3MiLCAidHlwZSI6ICJub25lIiwgInRscyI6ICJ0bHMiLCAiaG9zdCI6ICJlZGdlLnRlc3QiLCAic25pIjogIiAgICIsICJwYXRoIjogIi9leGFjdCUyRiJ9\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_55524920534e492066697874757265",
+            "tls": {
+              "enabled": true,
+              "server_name": "   ",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "headers": {
+                "Host": "edge.test"
+              },
+              "path": "/exact%2F",
+              "type": "ws"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "outbounds": [
+              "cf_70726f746f636f6c2d626173656c696e65_o_55524920534e492066697874757265"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口"
+        ]
+      }
+    },
+    {
+      "name": "uri-sni-exact",
+      "yaml": "vmess://eyJ2IjogIjIiLCAicHMiOiAiVVJJIFNOSSBmaXh0dXJlIiwgImFkZCI6ICJleGFtcGxlLnRlc3QiLCAicG9ydCI6IDQ0MywgImlkIjogIjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsICJuZXQiOiAid3MiLCAidHlwZSI6ICJub25lIiwgInRscyI6ICJ0bHMiLCAiaG9zdCI6ICJlZGdlLnRlc3QiLCAic25pIjogIiBzbmkudGVzdCAiLCAicGF0aCI6ICIvZXhhY3QlMkYifQ==\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "protocol-baseline",
+            "subject": "node-subscription.policy"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_55524920534e492066697874757265",
+            "tls": {
+              "enabled": true,
+              "server_name": " sni.test ",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "headers": {
+                "Host": "edge.test"
+              },
+              "path": "/exact%2F",
+              "type": "ws"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "outbounds": [
+              "cf_70726f746f636f6c2d626173656c696e65_o_55524920534e492066697874757265"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口"
+        ]
+      }
+    }
+  ]
+}

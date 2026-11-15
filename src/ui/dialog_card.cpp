@@ -13,7 +13,8 @@ struct EditorDismissBinding {
 };
 }
 
-[[huxerui::composable]] huxerui::View DialogCard(huxerui::View content) {
+[[huxerui::composable]] huxerui::View DialogCard(huxerui::View content,
+    std::optional<float> contentPadding, std::optional<float> cornerRadius) {
     const auto& theme = huxerui::UseTheme();
     const auto islands = ResolveIslandTheme(theme);
     // Environment is a transparent scope; the surface owns all view behavior.
@@ -22,10 +23,10 @@ struct EditorDismissBinding {
         kPageTitlesInWindow ? ResolveFluxShadows(theme).dialog
             : huxerui::Shadow{ThemeShadowColor(theme, 0.30F), {}, 28.0F, 2.0F},
         huxerui::Background(islands.overlay),
-        huxerui::CornerRadius(islands.island_radius),
+        huxerui::CornerRadius(cornerRadius.value_or(islands.island_radius)),
         huxerui::Border(islands.outline_soft, kCardOutlineWidth),
         huxerui::ClipChildren(),
-        huxerui::Padding(islands.island_padding),
+        huxerui::Padding(contentPadding.value_or(islands.island_padding)),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 

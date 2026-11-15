@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include <huxerui/codeeditor.h>
@@ -18,9 +19,10 @@ public:
     [[nodiscard]] const std::shared_ptr<const std::string>& InitialText() const { return text_; }
     [[nodiscard]] const std::string& Key() const { return key_; }
     [[nodiscard]] const huxerui::codeeditor::EditorController& Controller() const { return controller_; }
-    [[nodiscard]] const huxerui::codeeditor::EditorDocument& Prepared() const { return document_; }
+    [[nodiscard]] const huxerui::codeeditor::Document& Prepared() const { return document_.value(); }
     [[nodiscard]] bool Ready() const { return ready_.Get(); }
     [[nodiscard]] const std::string& Error() const { return error_.Get(); }
+    void BindController(huxerui::codeeditor::EditorController controller) { controller_ = std::move(controller); }
     void Prepare(huxerui::TaskScope tasks);
     [[nodiscard]] std::shared_ptr<const std::string> Snapshot();
     void MarkChanged() { dirty_ = true; }
@@ -29,7 +31,7 @@ private:
     std::shared_ptr<const std::string> text_;
     std::string key_;
     huxerui::codeeditor::EditorController controller_;
-    huxerui::codeeditor::EditorDocument document_;
+    std::optional<huxerui::codeeditor::Document> document_;
     huxerui::State<bool> ready_{false};
     huxerui::State<std::string> error_{std::string{}};
     bool preparing_ = false;

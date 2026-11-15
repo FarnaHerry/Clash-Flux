@@ -500,7 +500,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
     const huxerui::ApplicationHandle application = huxerui::UseApplication();
     const huxerui::TaskScope tasks = huxerui::UseTaskScope();
     const auto control = huxerui::UseState(std::make_shared<QrScannerControl>()).Get();
-    const auto picker = huxerui::media::UseMediaPicker();
+    const auto mediaLibrary = huxerui::media::UseMediaLibrary();
     const auto toast = UseFluxToast();
     auto decoder = huxerui::UseState(std::shared_ptr<QrPhotoDecoder>{});
     const auto qrsDecoder = huxerui::UseState(std::make_shared<qrs::Decoder>()).Get();
@@ -603,7 +603,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                 ~FinishSelection() { control->EndSelection(); }
             } finish{control};
             try {
-                auto result = co_await picker.PickAsync({huxerui::media::MediaPickerFilter::Images, 1});
+                auto result = co_await mediaLibrary.PickAsync({huxerui::media::MediaFilter::Images, 1});
                 if (!result.Succeeded()) throw std::runtime_error(result.Error().message);
                 auto images = std::move(result).Value();
                 if (images.empty()) {

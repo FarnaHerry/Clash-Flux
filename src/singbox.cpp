@@ -8,6 +8,8 @@ module;
 #include "http_representation.h"
 
 #include <yaml-cpp/yaml.h>
+#include <yaml-cpp/eventhandler.h>
+#include <yaml-cpp/parser.h>
 #include <zstd.h>
 #include "profile_link.h"
 #include "http_request_headers.h"
@@ -23,9 +25,13 @@ namespace singbox {
 namespace {
 
 #include "singbox_yaml_openvpn.inc"
-#include "singbox_node_subscription.inc"
 struct GeoDataIndex;
 #include "singbox_context_dns.inc"
+#include "converter/protocol/model.inc"
+#include "converter/protocol/validate.inc"
+#include "converter/protocol/clash.inc"
+#include "converter/protocol/singbox.inc"
+#include "converter/input/subscription.inc"
 #include "singbox_proxy.inc"
 #include "singbox_mrs.inc"
 std::string httpProviderKey(std::string_view identity);
@@ -35,9 +41,23 @@ std::string personalRuleSetTag(const RuleSetLibrary& library, const std::string&
 #include "singbox_filter.inc"
 #include "singbox_proxy_provider.inc"
 #include "singbox_profile_rules.inc"
+#include "singbox_rule_projection.inc"
 #include "singbox_compile.inc"
 #include "singbox_sources.inc"
 } // namespace
+
+NodeInputCatalog NodeSubscriptionCapabilities() {
+    NodeInputCatalog catalog{std::string(kNodeInputCoreVersion), std::string(kNodeInputCoreRevision), {}};
+    for (const auto& format : kNodeInputFormats) {
+        const auto& protocol = nodeInputProtocol(format.kind);
+        NodeInputCapability capability{std::string(format.id), std::string(protocol.protocol), std::string(protocol.nativeType), {}, false, format.legacy};
+        for (const auto& scheme : kNodeInputSchemes) if (scheme.kind == format.kind) {
+            capability.schemes.emplace_back(scheme.scheme); capability.caseSensitive = scheme.caseSensitive;
+        }
+        catalog.formats.push_back(std::move(capability));
+    }
+    return catalog;
+}
 
 ProfileFormat DetectProfileFormat(std::string_view content) {
     if (nodeSubscriptionText(content)) return ProfileFormat::NodeSubscription;
@@ -174,19 +194,23 @@ bool ValidateGlobalRuleSetReferences(const RuleSetLibrary& library, const std::v
     return true;
 }
 
-ProfileRules InspectProfileRules(const std::string& content, const ProfileRuleEdits& edits) {
+ProfileRules InspectProfileRules(const std::string& content, const ProfileRuleEdits& edits, bool includeOriginal) {
     try {
         const auto project = [&](std::vector<ProfileRule> rows) {
+            if (!includeOriginal) return personalRulePlan(std::move(rows), edits);
             auto result = personalRulePlan(rows, edits);
             result.original = std::move(rows);
             return result;
         };
-        if (DetectProfileFormat(content) == ProfileFormat::SingBoxJson) {
+        const auto format = DetectProfileFormat(content);
+        if (format == ProfileFormat::SingBoxJson) {
             auto config = nlohmann::json::parse(content);
             if (!config.is_object()) return {{}, "原生配置必须为 JSON 对象"};
             return project(nativeProfileRules(config));
         }
-        if (DetectProfileFormat(content) == ProfileFormat::OpenVpn) return {{}, "OpenVPN 使用连接和内网路由规则"};
+        if (format == ProfileFormat::OpenVpn) return {{}, "OpenVPN 使用连接和内网路由规则"};
+        if (format == ProfileFormat::ClashYaml)
+            if (auto rows = projectClashRuleDocument(content)) return project(std::move(*rows));
         const auto root = loadClashProfileDocument(content);
         if (!root.IsMap()) return {{}, "订阅必须为 YAML 对象"};
         return project(clashProfileRules(root));

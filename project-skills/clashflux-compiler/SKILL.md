@@ -8,6 +8,11 @@ description: 修改 Clash-Flux 订阅转换、协议/DNS/规则/provider 映射�
 先读 [保真度契约](../../docs/singbox-layers-and-fidelity.md) 的三层、账本、决策流程，再按下表只读相关基线章节。
 该文档维护完整支持矩阵和字段语义，本技能不再复制矩阵。版本/revision/资产由 [稳定升级文档](../../docs/singbox-stable-upgrade.md) 与依赖锁维护。
 
+协议中间模型重构及 URI 扩展先查[重构计划](../../docs/protocol-refactor-plan.md)的当前阶段和未完成边界，不以部分迁移替代当前支持矩阵或宣称新增格式已支持。
+现有节点共用 NodeSpec → 校验 → 生成出口；格式适配器保留结构门控和诊断先后，不重建临时 Clash 协议节点或失败回退。改入口时按测试技能运行跨入口回归，核对 provider 筛选、来源默认、只读投影及原生 DOM 分流。
+
+转换层按[同仓转换子项目](../../docs/converter-project.md)发展；源码入口为 [src/converter](../../src/converter/README.md)，协议/输入优先归入其下。当前保留原模块和构建，新增通用逻辑不获取 UI/数据库/Runtime 单例；应用策略和资源准备走明确适配。目录归拢不等于独立库/SDK 已完成，后续接口与资源边界按该规划收敛。
+
 ## 不可突破的边界
 
 - L1 紧贴真实 sing-box 能力、官方桌面内核与 libbox 同源码版本；不 fork 内核或造字段。Windows 数据面由服务启动，不能把“桌面内核”误解成 GUI 自行 spawn。
@@ -29,7 +34,8 @@ description: 修改 Clash-Flux 订阅转换、协议/DNS/规则/provider 映射�
 
 ## 下载与候选提交
 
-- VMess 明文/Base64 节点订阅读 [转换边界](../../docs/node-subscriptions.md)。统一走编译、规则投影和对象目录；保留原文，未知/坏条目整份拒绝，生成默认策略与非标准传输别名记保真度，不把未知传输降为 TCP 或放宽 TLS。
+- SS SIP002/历史整串 Base64、VMess JSON、VLESS/Trojan、HY2/TUIC/AnyTLS 节点订阅读 [转换边界](../../docs/node-subscriptions.md)。统一走模型、规则投影和目录，保留原文，未知/坏条目整份拒绝；URI 组件解码一次且 + 保留，历史 SS 密码不做百分号解码，格式默认不互套。默认策略/非标准别名记账，不把未知传输降为 TCP 或放宽 TLS；provider 按真实类型筛选。
+- 新增输入格式同步私有注册表与 `NodeSubscriptionCapabilities()`、独立样例和 `node_input_catalog` 门禁；清单表示审查过的格式子集，不代替字段矩阵。无损历史 SS 识别只记录脱敏事件，不虚报节点近似；provider 排除的节点不记录该事件。其它旧格式须先有具体样例，不增加失败后的猜测回退。
 - GEO 仅处理 CompileResult.ruleSetResources 自有清单，任务预取/周刷新/坏缓存清理，不扫描原生 tag 拼路径或清理无关 .srs；Android 打包 GEO 不参与运行时更新/清理，SRS 头检查不等于完整解析。自定义 Geo DAT/MMDB 的类型/来源隔离、暂存转换与未支持边界遵守 [Geo 资源](../../docs/geo-resources.md)，不能把自定义数据替换为内置数据。
 - file provider 仅从显式 ruleProviderDir 读取根内普通相对文件，canonical 后不越界，8 MiB；不写源文件或纳入 GEO 清理，失败整份候选拒绝。
 - HTTP provider 编译器输出 httpRuleProviders，任务按 HTTP(S)、直连/DIRECT 及文档支持的 header 准备快照。单值非空 ASCII header 总量 16 KiB，值参与完整缓存身份、不进配置或诊断；带头禁重定向并记 approx，iOS 暂拒带头，Android 用 Java TLS 桥接。

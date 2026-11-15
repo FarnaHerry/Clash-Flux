@@ -39,13 +39,26 @@ export struct ProfileRules {
 };
 export bool ValidateProfileRuleEdits(const ProfileRuleEdits& edits, std::string& error);
 export ProfileRules InspectProfileRules(const std::string& content,
-    const ProfileRuleEdits& edits = {});
+    const ProfileRuleEdits& edits = {}, bool includeOriginal = true);
 
 // Source transport (remote/local) is independent of the document format.
 export enum class ProfileFormat { ClashYaml, SingBoxJson, OpenVpn, NodeSubscription };
 export ProfileFormat DetectProfileFormat(std::string_view content);
 // Parse the complete source document without fetching dependencies or approving a runtime plan.
 export bool ValidateProfileDocument(const std::string& content, std::string& error);
+
+// Audited input formats, not a promise that every field of another client is supported.
+// Owned values keep this inspection independent of private parser storage or JSON codecs.
+export struct NodeInputCapability {
+    std::string id, protocol, nativeType;
+    std::vector<std::string> schemes;
+    bool caseSensitive = false, legacy = false;
+};
+export struct NodeInputCatalog {
+    std::string auditedCoreVersion, auditedCoreRevision;
+    std::vector<NodeInputCapability> formats;
+};
+export NodeInputCatalog NodeSubscriptionCapabilities();
 
 // 保真度级别（见 docs/singbox-layers-and-fidelity.md §2）：翻译层对订阅里每个条目
 // （协议 / 组 / 规则 / 字段）的映射结果。Exact 不产生条目，因此只出现后两级。

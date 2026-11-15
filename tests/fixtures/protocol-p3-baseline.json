@@ -1,0 +1,3231 @@
+{
+  "snapshot": "894a808 + validated P2",
+  "source_sha256": "12eb77b90049d9d3af6b7c47292bb4b1f8f287cddc4bde7d122daa12ea07bceb",
+  "cases": [
+    {
+      "name": "ss-p3-plain",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-long-type",
+      "yaml": "proxies:\n  - name: values\n    type: shadowsocks\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-mixed-type",
+      "yaml": "proxies:\n  - name: values\n    type: SS\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-missing-credentials",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-empty-password",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: ''\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      },
+      "native_error": "missing password"
+    },
+    {
+      "name": "ss-p3-absent-password",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-raw-password",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: ' raw +%40;=\\secret 😀 '\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": " raw +%40;=\\secret 😀 ",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-scalar-password",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: false\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "false",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-number-password",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: 1234\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "1234",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-null-password",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: null\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 password 必须为凭据字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 password 必须为凭据字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-bad-password",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: []\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 password 必须为凭据字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 password 必须为凭据字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-missing-method",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    password: sample\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "",
+            "password": "sample",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-null-method",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: null\n    password: sample\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "",
+            "password": "sample",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-bad-method",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: []\n    password: sample\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "",
+            "password": "sample",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-empty-method",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: ''\n    password: sample\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "",
+            "password": "sample",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-unknown-method",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: unsupported\n    password: sample\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "unsupported",
+            "password": "sample",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-case-method",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: ' AES-256-GCM '\n    password: sample\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "AES-256-GCM",
+            "password": "sample",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-trim-method",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: ' aes-256-gcm '\n    password: sample\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "sample",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-method-none",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: none\n    password: fixture-password\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "none",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-method-aes-128-gcm",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-128-gcm\n    password: fixture-password\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-128-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-method-chacha20-ietf-poly1305",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: chacha20-ietf-poly1305\n    password: fixture-password\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "chacha20-ietf-poly1305",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-method-2022-blake3-aes-128-gcm",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: 2022-blake3-aes-128-gcm\n    password: AAECAwQFBgcICQoLDA0ODw==\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "2022-blake3-aes-128-gcm",
+            "password": "AAECAwQFBgcICQoLDA0ODw==",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-method-2022-blake3-aes-256-gcm",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: 2022-blake3-aes-256-gcm\n    password: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "2022-blake3-aes-256-gcm",
+            "password": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-method-2022-blake3-chacha20-poly1305",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: 2022-blake3-chacha20-poly1305\n    password: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "2022-blake3-chacha20-poly1305",
+            "password": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-obfs-http",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: http}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "obfs-local",
+            "plugin_opts": "obfs=http;obfs-host=bing.com",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-obfs-http-host",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: http, host: 'exact.test;tls=1\\tail'}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "obfs-local",
+            "plugin_opts": "obfs=http;obfs-host=exact.test\\;tls\\=1\\\\tail",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-obfs-tls",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: tls}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "obfs-local",
+            "plugin_opts": "obfs=tls;obfs-host=bing.com",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-obfs-tls-host",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: tls, host: 'exact.test;tls=1\\tail'}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "obfs-local",
+            "plugin_opts": "obfs=tls;obfs-host=exact.test\\;tls\\=1\\\\tail",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-ws-true-true",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, tls: true, mux: true}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "v2ray-plugin",
+            "plugin_opts": "mode=websocket;host=bing.com;path=/;mux=1;tls",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-ws-true-false",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, tls: true, mux: false}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "v2ray-plugin",
+            "plugin_opts": "mode=websocket;host=bing.com;path=/;mux=0;tls",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-ws-false-true",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, tls: false, mux: true}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "v2ray-plugin",
+            "plugin_opts": "mode=websocket;host=bing.com;path=/;mux=1",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-ws-false-false",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, tls: false, mux: false}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "v2ray-plugin",
+            "plugin_opts": "mode=websocket;host=bing.com;path=/;mux=0",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-ws-defaults",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "v2ray-plugin",
+            "plugin_opts": "mode=websocket;host=bing.com;path=/;mux=1",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-ws-path-empty",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, path: ''}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "v2ray-plugin",
+            "plugin_opts": "mode=websocket;host=bing.com;path=;mux=1",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-ws-exact",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, host: ' edge.test ', path: '/%2F?x=a+b;k=v\\tail', tls: false, mux: false, headers: {}, skip-cert-verify: false, v2ray-http-upgrade: false, v2ray-http-upgrade-fast-open: false}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "v2ray-plugin",
+            "plugin_opts": "mode=websocket;host= edge.test ;path=/%2F?x\\=a+b\\;k\\=v\\\\tail;mux=0",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-ws-skip-cert-verify-false",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, skip-cert-verify: false}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "v2ray-plugin",
+            "plugin_opts": "mode=websocket;host=bing.com;path=/;mux=1",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-ws-skip-cert-verify-true",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, skip-cert-verify: true}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.skip-cert-verify 固定内核的 SIP003 插件没有等价选项，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.skip-cert-verify 固定内核的 SIP003 插件没有等价选项，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-ws-v2ray-http-upgrade-false",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, v2ray-http-upgrade: false}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "v2ray-plugin",
+            "plugin_opts": "mode=websocket;host=bing.com;path=/;mux=1",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-ws-v2ray-http-upgrade-true",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, v2ray-http-upgrade: true}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.v2ray-http-upgrade 固定内核的 SIP003 插件没有等价选项，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.v2ray-http-upgrade 固定内核的 SIP003 插件没有等价选项，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-ws-v2ray-http-upgrade-fast-open-false",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, v2ray-http-upgrade-fast-open: false}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "v2ray-plugin",
+            "plugin_opts": "mode=websocket;host=bing.com;path=/;mux=1",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-ws-v2ray-http-upgrade-fast-open-true",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, v2ray-http-upgrade-fast-open: true}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.v2ray-http-upgrade-fast-open 固定内核的 SIP003 插件没有等价选项，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.v2ray-http-upgrade-fast-open 固定内核的 SIP003 插件没有等价选项，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-plugin-empty",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: ''\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-plugin-null",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: null\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-plugin-array",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: [obfs]\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-plugin-unknown",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: restls\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin 尚未映射此插件，不能改成普通 SS 线路，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin 尚未映射此插件，不能改成普通 SS 线路，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-plugin-opts-unused",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin-opts: {mode: http}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」包含未启用插件的 plugin-opts，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」包含未启用插件的 plugin-opts，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-plugin-opts-blank",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: ' '\n    plugin-opts: {mode: http}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」包含未启用插件的 plugin-opts，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」包含未启用插件的 plugin-opts，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-plugin-case",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: OBFS\n    plugin-opts: {mode: http}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin 尚未映射此插件，不能改成普通 SS 线路，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin 尚未映射此插件，不能改成普通 SS 线路，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-plugin-old-name",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs-local\n    plugin-opts: {mode: http}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin 尚未映射此插件，不能改成普通 SS 线路，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin 尚未映射此插件，不能改成普通 SS 线路，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-opts-missing",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts 插件需要选项对象和显式 mode，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts 插件需要选项对象和显式 mode，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-opts-null",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: null\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts 插件需要选项对象和显式 mode，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts 插件需要选项对象和显式 mode，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-opts-array",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: [http]\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts 插件需要选项对象和显式 mode，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts 插件需要选项对象和显式 mode，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-opts-scalar",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: http\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts 插件需要选项对象和显式 mode，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts 插件需要选项对象和显式 mode，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-mode-missing",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.mode 必须显式指定，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.mode 必须显式指定，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-mode-empty",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: ''}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.mode 不能为空，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.mode 不能为空，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-mode-null",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: null}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.mode 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.mode 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-mode-array",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: [http]}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.mode 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.mode 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-mode-invalid",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: websocket}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.mode simple-obfs 仅支持 http/tls，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.mode simple-obfs 仅支持 http/tls，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-mode-case",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: HTTP}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.mode simple-obfs 仅支持 http/tls，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.mode simple-obfs 仅支持 http/tls，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-host-empty",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: http, host: ''}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.host 不能为空，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.host 不能为空，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-host-null",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: http, host: null}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.host 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.host 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-host-array",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: http, host: [bad]}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.host 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.host 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-host-order",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: unsupported, host: []}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.host 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.host 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-unknown-opts",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: http, extra: true, another: false}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；编译器不会省略未映射字段后改变线路语义",
+            "detail": "节点「values」的 extra 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；编译器不会省略未映射字段后改变线路语义",
+            "detail": "节点「values」的 another 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 extra 尚未映射，已跳过",
+          "节点「values」的 another 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-duplicate-opts",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: http, mode: tls}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts 不能包含重复键，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts 不能包含重复键，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-invalid-key",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: http, ? [bad]: value}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts 键必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts 键必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-ws-mode-invalid",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: quic}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.mode Clash v2ray-plugin 仅支持 websocket，不能改写模式，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.mode Clash v2ray-plugin 仅支持 websocket，不能改写模式，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-ws-tls-invalid",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, tls: invalid}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 tls 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-ws-mux-null",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, mux: null}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 mux 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 mux 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-ws-path-null",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, path: null}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.path 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.path 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-ws-headers-empty",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, headers: {}}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "plugin": "v2ray-plugin",
+            "plugin_opts": "mode=websocket;host=bing.com;path=/;mux=1",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-ws-headers-map",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, headers: {X-Test: fixture}}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.headers 固定内核的 SIP003 插件不能传入自定义 headers，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.headers 固定内核的 SIP003 插件不能传入自定义 headers，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-ws-headers-array",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, headers: []}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.headers 必须为对象，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.headers 必须为对象，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-ws-headers-bad-value",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, headers: {Host: []}}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.headers 的值 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.headers 的值 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-ws-headers-duplicate",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, headers: {Host: a, Host: b}}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.headers 不能包含重复键，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.headers 不能包含重复键，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-ws-unknown-opts",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, fingerprint: fixture, unknown: true}\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；编译器不会省略未映射字段后改变线路语义",
+            "detail": "节点「values」的 fingerprint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；编译器不会省略未映射字段后改变线路语义",
+            "detail": "节点「values」的 unknown 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 fingerprint 尚未映射，已跳过",
+          "节点「values」的 unknown 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-ws-stage-order",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: v2ray-plugin\n    plugin-opts: {mode: websocket, tls: invalid, headers: []}\n    udp-over-tcp-version: 9\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 tls 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-uot-version-0",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp-version: 0\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": false,
+              "version": 1
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-version-1",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp-version: 1\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": false,
+              "version": 1
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-version-2",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp-version: 2\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": false,
+              "version": 2
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-version--1",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp-version: -1\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-uot-version-3",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp-version: 3\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-uot-version-257",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp-version: 257\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-uot-version-4294967295",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp-version: 4294967295\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-uot-version-1.5",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp-version: 1.5\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-uot-version-null",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp-version: null\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-uot-version-[]",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp-version: []\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-uot-version-_2_",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp-version: ' 2 '\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": false,
+              "version": 2
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-enabled-true",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: true\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": true,
+              "version": 1
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-enabled-false",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: false\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": false,
+              "version": 1
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-enabled-yes",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: yes\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": true,
+              "version": 1
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-enabled-no",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: no\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": false,
+              "version": 1
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-enabled-1",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: 1\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": true,
+              "version": 1
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-enabled-0",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: 0\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": false,
+              "version": 1
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-enabled-null",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: null\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 udp-over-tcp 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 udp-over-tcp 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-uot-enabled-invalid",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: invalid\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 udp-over-tcp 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 udp-over-tcp 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-uot-enabled-[]",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: []\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 udp-over-tcp 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 udp-over-tcp 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-uot-true-0",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: true\n    udp-over-tcp-version: 0\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": true,
+              "version": 1
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-true-1",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: true\n    udp-over-tcp-version: 1\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": true,
+              "version": 1
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-true-2",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: true\n    udp-over-tcp-version: 2\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": true,
+              "version": 2
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-false-0",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: false\n    udp-over-tcp-version: 0\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": false,
+              "version": 1
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-false-1",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: false\n    udp-over-tcp-version: 1\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": false,
+              "version": 1
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-uot-false-2",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp: false\n    udp-over-tcp-version: 2\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks",
+            "udp_over_tcp": {
+              "enabled": false,
+              "version": 2
+            }
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-udp-false",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp: false\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "network": "tcp",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-udp-true",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp: true\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-udp-null",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp: null\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 udp 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 udp 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-dial-zero",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    routing-mark: 0\n    tfo: false\n    mptcp: false\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "routing_mark": 0,
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tcp_fast_open": false,
+            "tcp_multi_path": false,
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "ss-p3-dial-detour",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    dialer-proxy: DIRECT\n    interface-name: interface-test\n    routing-mark: 9\n    tfo: false\n    mptcp: true\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "物理网络选项需要放到代理链最终拨号的出站；不会自动迁移或继承这些字段",
+            "detail": "节点「values」使用 dialer-proxy，内核会忽略本节点的接口、路由标记及 TCP 拨号选项",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "bind_interface": "interface-test",
+            "detour": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "routing_mark": 9,
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tcp_fast_open": false,
+            "tcp_multi_path": true,
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": [
+          "节点「values」使用 dialer-proxy，内核会忽略本节点的接口、路由标记及 TCP 拨号选项"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-dial-mptcp",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    mptcp: true\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "实际多路径还依赖操作系统与对端；不能承诺所有地址族都启用 MPTCP",
+            "detail": "节点「values」已启用原生 TCP Multi Path；1.14.2 普通 IPv6 拨号路径未启用此选项",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tcp_multi_path": true,
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": [
+          "节点「values」已启用原生 TCP Multi Path；1.14.2 普通 IPv6 拨号路径未启用此选项"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-dial-mark-invalid",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    routing-mark: 4294967296\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的 routing-mark 必须在 0–4294967295 之间，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 routing-mark 必须在 0–4294967295 之间，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-dial-empty",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    dialer-proxy: ''\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的 dialer-proxy 必须为非空出站名，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 dialer-proxy 必须为非空出站名，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-dial-unknown",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    dialer-proxy: missing\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "出站「values」依赖的「missing」未成功编译",
+        "fidelity": [
+          {
+            "action": "修正引用或代理链；编译器不会移除 detour 后改成直连",
+            "detail": "出站「values」依赖的「missing」未成功编译",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": null,
+        "warnings": [
+          "出站「values」依赖的「missing」未成功编译"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-dial-interface-type",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    interface-name: []\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的 interface-name 必须为接口名字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 interface-name 必须为接口名字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-dial-bool-invalid",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    tfo: invalid\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 tfo 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tfo 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-plugin-before-uot",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    plugin: obfs\n    plugin-opts: {mode: unsupported}\n    udp-over-tcp-version: 3\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 plugin-opts.mode simple-obfs 仅支持 http/tls，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 plugin-opts.mode simple-obfs 仅支持 http/tls，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-uot-before-dial",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    udp-over-tcp-version: 9\n    routing-mark: bad\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 udp-over-tcp-version 仅支持 0（Clash 默认 v1）、1 或 2，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-unknown-field",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    unmapped: fixture\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unmapped 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unmapped 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-tls-disabled",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    tls: false\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-sni-field",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    sni: node.test\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 sni 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 sni 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-network-field",
+      "yaml": "proxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\n    network: ws\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": false,
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 network 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 network 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "ss-p3-global-fingerprint-ignored",
+      "yaml": "global-client-fingerprint: firefox\nproxies:\n  - name: values\n    type: ss\n    server: example.test\n    port: 443\n    cipher: aes-256-gcm\n    password: fixture-password\nrules:\n  - MATCH,DIRECT\n",
+      "native_check": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-256-gcm",
+            "password": "fixture-password",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    }
+  ]
+}

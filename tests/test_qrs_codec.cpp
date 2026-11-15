@@ -27,7 +27,15 @@ void Check(bool condition, const char* message) {
 
 std::optional<qr::DecodeResult> ScanSharedQr(std::string_view text) {
     const auto symbol = qr::Encode(text);
-    const auto image = symbol.Rasterize(300 / symbol.Width());
+    const auto image = symbol.Rasterize(std::max(1, 300 / symbol.Width()));
+    int minX = symbol.Width(), minY = symbol.Height(), maxX = 0, maxY = 0;
+    for (int y = 0; y < symbol.Height(); ++y) for (int x = 0; x < symbol.Width(); ++x) {
+        if (!symbol.IsDark(x, y)) continue;
+        minX = std::min(minX, x); minY = std::min(minY, y);
+        maxX = std::max(maxX, x); maxY = std::max(maxY, y);
+    }
+    Check(minX == 4 && minY == 4 && maxX == symbol.Width() - 5 && maxY == symbol.Height() - 5,
+          "QR retains exactly the standard four-module quiet zone");
     auto scanned = qr::Decode(image.View(), {.formats = {qr::BarcodeFormat::QRCode}});
     Check(scanned && scanned->text == text, "shared QR preserves the exact payload");
     return scanned;
@@ -106,6 +114,8 @@ void OwnSharedProfiles() {
 } // namespace
 
 int main() {
+    Check(qr::CanEncode(qr::BarcodeFormat::QRCode) && qr::CanDecode(qr::BarcodeFormat::QRCode),
+          "the pinned backend includes both QR encoding and decoding");
     RoundTrip(true);
     RoundTrip(false);
     OwnSharedProfiles();

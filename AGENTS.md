@@ -17,7 +17,7 @@
 | 内核/代理监听控制、托盘、无窗/首帧启动、PPTP、OpenVPN 入口、订阅唤醒链接 | [clashflux-runtime](project-skills/clashflux-runtime/SKILL.md) |
 | Android 后台、Windows/Linux 服务、系统网络/权限、iOS | [clashflux-platform](project-skills/clashflux-platform/SKILL.md)，只读相关平台及引用 |
 | CMake/CPS 包、HuxerUI/扩展 fork、固定依赖/内核升级 | [clashflux-dependencies](project-skills/clashflux-dependencies/SKILL.md) |
-| 订阅转换、协议/DNS/规则/provider、保真度、来源编排与候选应用 | [clashflux-compiler](project-skills/clashflux-compiler/SKILL.md) |
+| 转换子项目结构、订阅转换、协议/DNS/规则/provider、保真度、来源编排与候选应用 | [clashflux-compiler](project-skills/clashflux-compiler/SKILL.md) |
 | C++ 模块接口、inline/性能、JSON codec 边界 | [clashflux-cpp](project-skills/clashflux-cpp/SKILL.md) |
 | Logo、托盘/应用图标、Android 启动图标/磁贴 | [clashflux-branding](project-skills/clashflux-branding/SKILL.md) |
 

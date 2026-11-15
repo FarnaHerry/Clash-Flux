@@ -94,6 +94,8 @@ iOS xcframework 未在本机重新构建。源接口对比和版本对齐不能�
    `cmake/singbox_bundle.cmake` 的 `CLASHFLUX_SINGBOX_VERSION` 是 UI 内核标识
    （`cfg::singboxFallbackLabel()`）的唯一来源，更新 pin 后设置页/首页展示自动联动。
 2. 对比配置结构、Clash API 与 libbox 导出接口，必要时更新调用方，禁止写入未知字段。
+   同时复核 `src/converter/input/catalog.inc` 登记的输入/目标子集及独立样例，再更新审查版本/revision；
+   必跑 `node_input_catalog` 对照各 pin 与实际打包内核，不能只改字符串绕过语义审查。
 3. 由固定源码重新生成 Android AAR 和 metadata，不能沿用旧二进制补新身份。
 4. 重新构建桌面，核对实际 `engines/sing-box version`；执行仓库要求的应用版本
    命令和 diff 检查，并同步能力基线与实际平台验证范围。

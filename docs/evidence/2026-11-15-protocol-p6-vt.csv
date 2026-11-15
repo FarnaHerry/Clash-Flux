@@ -1,0 +1,16 @@
+corpus,version,elapsed_s,max_rss_kib
+vmess,before,0.86,34292
+vmess,after,0.87,35328
+vmess,after,0.87,35324
+vmess,before,0.88,34392
+vmess,before,0.88,34128
+vmess,after,0.87,35228
+ss,before,0.48,18940
+ss,after,0.47,20020
+ss,after,0.48,19776
+ss,before,0.47,18768
+ss,before,0.47,18812
+ss,after,0.47,19788
+vless-trojan,after,0.61,29788
+vless-trojan,after,0.61,30576
+vless-trojan,after,0.61,29996

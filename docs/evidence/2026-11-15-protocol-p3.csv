@@ -1,0 +1,7 @@
+version,elapsed_s,max_rss_kib
+before,1.30,65352
+after,1.37,65320
+after,1.37,65380
+before,1.31,65288
+before,1.28,66080
+after,1.36,65416

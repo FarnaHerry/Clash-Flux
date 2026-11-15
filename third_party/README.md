@@ -9,7 +9,7 @@ nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归�
 归档版本及来源以本项目清单为准。
 
 应用当前的 HuxerUI fork 源码提交与检出命令见 [固定版本](../docs/huxerui-fork.md)；本机独立 checkout、CI 和 Android Java/native 共用该身份，不消费维护工作树。
-当前源码基线为合入官方 `df065105`（Windows 彩色 emoji）、`9efef2d6`（全屏 topmost 修复）、`e90163a1`（CLI DEB/RPM 打包）并修复受控 Pager 拖动禁用的 `11849f99`；下表 0.4.0 是离线 SDK 归档身份，不是源码版本。官方 0.4.0 归档提供 huxerui CLI、hcg/hrc 宿主工具与官方运行时库，但不含 fork 专属的 `create_initial_window` API，不满足桌面源码构建要求（CMake 配置期守卫会拒绝）。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
+当前源码固定 `89359f43ef34357fabcf1c994f4b5fa1062c91a9`，保留既有平台/Pager 修复，并合入官方文本方向、编辑动作、多格式剪贴板与资源包更新；CodeEditor 已同步兼容接口，升级边界见上述记录。下表 0.4.0 是离线 SDK 归档身份，不是源码版本。官方 0.4.0 归档提供 huxerui CLI、hcg/hrc 宿主工具与官方运行时库，但不含 fork 专属的 `create_initial_window` API，不满足桌面源码构建要求（CMake 配置期守卫会拒绝）。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
 
 ## 清单与来源
 
@@ -22,12 +22,12 @@ nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归�
 | OpenSSL | 3.5.1 | `openssl-3.5.1-linux-x86_64.tar.gz` | 静态预编译产物（libssl.a/libcrypto.a + include），仅 linux x86_64 兜底；其他平台用系统 OpenSSL。 |
 | 图表（Charts） | Lib-Charts fork | 构建期获取，不入 tarball | `FarnaHerry/Lib-Charts` 的 `farna/main`，固定 `2251bab5ad2a5df8e6e133c039e0b76bbe237add`，包含圆角饼图、全零数据等分且中心 0%、180ms 悬停动画与 96pt 紧凑绘图面，用于首页流量与饼图。 |
 | 相机（Camera） | Lib-Camera fork | 构建期获取，不入 tarball | `FarnaHerry/Lib-Camera` 的 `farna/main`，固定 `5d6b8e814e3e5d8c22e63a4e470c2b6c1cd82cd0`，包含 ApplicationContext/UiWindow 兼容、库图模式早退、Linux V4L2 预览/拍照、X11 与 ScreenCast/PipeWire 屏幕选区，以及 Android/iOS 窗口级模块工厂与 `AwaitCallback` 拍照等待。 |
-| 媒体选择（Media） | Lib-Media 上游 | 构建期获取，不入 tarball | 官方 `HuxerUI/Lib-Media`，固定 `fbe5b7e652f8cb79191444fa2a51d0dd0c2299bb`，未打补丁。仅 Android 扫码页使用图片选择器；原生目标和 Android 库图共用此提交，桌面应用不链接 Media。当前上游整体构建，Android 引入 Media3 ExoPlayer 1.9.3，不能因未调用播放器就假定其依赖被移除；体积实测见[二维码扫描](../docs/qr-scanning.md)。 |
-| 文本编辑（CodeEditor） | Lib-CodeEditor fork | 构建期获取，不入 tarball | `FarnaHerry/Lib-CodeEditor` 固定 `a332e7c3158818a891bb8181756d439a62df6268`，SweetEditor `bd4330e70eda5c71b71ecac54cf7312d82d2eae2`。预构建文档、视口编辑、只读复制、滚动和 Windows 公共头兼容；Linux 用固定 simdutf v7.7.0 源码提交 `94fb52ea0219cb37092d8ae294b4702bacf5d8df` 按消费者工具链构建，并以 build-only include 复用 SweetEditor 同版本兼容头，避免预编译归档与 libc++ 混用；其它平台使用同版本预编译包。SweetLine 仅由库的子模块获取，不链接到应用。 |
+| 媒体选择（Media） | Lib-Media 上游 | 构建期获取，不入 tarball | 官方 `HuxerUI/Lib-Media`，固定 `fee506de40f9763b7374acf394ee0fbfe7f11256`，未打补丁。仅 Android 扫码页使用图片选择器；原生目标和 Android 库图共用此提交，桌面应用不链接 Media。当前上游整体构建，Android 引入 Media3 ExoPlayer 1.9.3，不能因未调用播放器就假定其依赖被移除；体积实测见[二维码扫描](../docs/qr-scanning.md)。 |
+| 文本编辑（CodeEditor） | Lib-CodeEditor fork | 构建期获取，不入 tarball | `FarnaHerry/Lib-CodeEditor` 固定 `ee5b0cf8ac53f23f9816c1aedd52a6b90c3d696c`，SweetEditor `bd4330e70eda5c71b71ecac54cf7312d82d2eae2`。拥有型 Document、每次挂载的 UseCodeEditor 控制器、视口编辑、只读复制、实时 settings 和 Windows 公共头兼容；Linux 用固定 simdutf v7.7.0 源码提交 `94fb52ea0219cb37092d8ae294b4702bacf5d8df` 按消费者工具链构建，并以 build-only include 复用 SweetEditor 同版本兼容头，避免预编译归档与 libc++ 混用；其它平台使用同版本预编译包。SweetLine 仅由库的子模块获取，不链接到应用。 |
 | Zstandard | 1.5.7 | `zstd-1.5.7.tar.gz` | Official facebook/zstd v1.5.7 tag archive (`https://codeload.github.com/facebook/zstd/tar.gz/refs/tags/v1.5.7`), SHA256 `37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3`. Static MRS decoder dependency on all platforms, no CLI/test/shared build. Upstream BSD/GPL license files remain in the archive. |
 | Glaze | 9.1.0 | `glaze-9.1.0-headers.tar.gz` | 官方 tag revision `43b175e7446862b84ed07b2e5f5138433777680e` 的 `include/` + MIT `LICENSE`。SHA256 `9bb4c9897e8b0f0d6b66b3ee4c1519efbf4288a4c331fd382d8c9412e67a244a`。私有 `clashflux_wire` 静态库实现应用 JSON codec，不运行上游 CMake。 |
 | nlohmann::json | 3.12.0 | `json/nlohmann/json.hpp`（single header） | 上游 `nlohmann/json` v3.12.0 `single_include` |
-| Lib-QRCode | `23bc79b19a6a6d104efc00bfa3934cd7ab78b08f` | 构建期通过 `huxerui_use_library` 获取官方 `HuxerUI/Lib-QRCode` | 共享二维码的生成、绘制和 Android 识别。内置 ZXing-C++ 2.3.0。许可见库内 `LICENSE` 与 `THIRD_PARTY_NOTICES.md`。 |
+| Lib-QRCode | `4f67b7a1b60d459a53effe52af1ca9e44f67ff28` | 构建期通过 `huxerui_use_library` 获取官方 `HuxerUI/Lib-QRCode` | 共享二维码的生成、绘制和 Android 识别。内置 ZXing-C++ 3.1.1。许可见库内 `LICENSE` 与 `THIRD_PARTY_NOTICES.md`。 |
 | yaml-cpp | 0.9.0 | `yaml-cpp-0.9.0.tar.gz` | 上游 `jbeder/yaml-cpp` yaml-cpp-0.9.0（MIT）。Clash 订阅 YAML 解析（sing-box 配置编译器输入）。 |
 
 Camera、Charts、SQLite、CodeEditor、Media 通过 `huxerui_use_library(URL, COMMIT)` 获取到构建缓存，原生构建
@@ -42,6 +42,17 @@ Camera、Charts、SQLite、CodeEditor、Media 通过 `huxerui_use_library(URL, C
 4. 重新编译应用并运行必跑回归，包含 `cps_dependencies`、下载 TLS 与持久化。
 
 HuxerUI 与其扩展仍遵守独立 fork 维护、固定提交和 Java/native 同源规则。
+
+## 2026-11-15 HuxerUI / CodeEditor / Media 更新
+
+HUI `89359f43` 包含官方 `3bebb8c7`；CodeEditor fork `ee5b0cf8` 包含官方 `4e67fd0c`，
+Media 更新到官方 `fee506de`。应用迁移编辑器文档/控制器、事件和剪贴板接口，以及 Android 系统相册选择接口。
+Charts、SQLite、QRCode 的可用固定提交保持；远端完整 SHA 与验证见 [fork 记录](../docs/huxerui-fork.md)。
+
+Camera fork 已到 `479cc0d2`（官方 `e20e2fa7`），但新版强制链接 Media 和 AudioCapture，
+AudioCapture 又增加 Linux ALSA 开发依赖与 Android 录音权限声明。当前继续固定 `5d6b8e81`；
+后续单独固定音频依赖、审查权限及 CI/平台包边界后再迁移，不从可变的同级库工作树获取依赖。
+本轮未新增 AudioCapture、录音入口或系统包要求；实际构建与未覆盖范围见[验收记录](../docs/l1-l2-l3-status.md)。
 
 ## 2026-11-13 官方 Charts main 试编译（未切换）
 

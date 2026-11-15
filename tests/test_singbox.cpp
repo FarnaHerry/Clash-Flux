@@ -164,6 +164,8 @@ public:
 #include "provider_resource_cases.inc"
 #include "geo_data_cases.inc"
 #include "mmdb_cases.inc"
+#include "protocol_baseline_cases.inc"
+#include "protocol_model_cases.inc"
 
 void testProxyValues() {
     // Subscription generators still emit these valid compatibility fields.
@@ -2544,6 +2546,97 @@ void testPersonalRuleSets(const std::filesystem::path& fixtures = {}) {
     check(!singbox::ValidateRuleSetLibrary(invalid, error), "zero update interval is refused");
 }
 
+void testRuleProjection() {
+    for (const std::string text : std::vector<std::string>{
+        "rules:\n  - DOMAIN-SUFFIX,one.test,DIRECT\n  - MATCH,DIRECT\n",
+        "rules:\n  - 'DOMAIN,quoted.test,节点选择'\n  - \"DOMAIN-SUFFIX,hash.test,Target # literal\"\n",
+        "rules:\n  - \"DOMAIN,escaped.test,\\u8282\\u70b9\"\n  - 'DOMAIN,quote.test,It''s literal'\n",
+        "rules: # heading\n# comment\n- DOMAIN,中文.test,节点选择\n\n- MATCH,DIRECT\n",
+        "rules:\r\n  - DOMAIN,windows.test,DIRECT\r\n  - MATCH,DIRECT\r\n",
+        "rules:\n  - DOMAIN,one.test,DIRECT\nproxy-groups: [{name: Pick, type: select}]\n",
+        "rules:\n  - DOMAIN,first.test,DIRECT\nrules: ['MATCH,REJECT']\n",
+        "rules:\n  - DOMAIN,comment.test,DIRECT # comment\n",
+        "rules:\n  - DOMAIN,multiline.test,\n    DIRECT\n",
+        "rules:\n  - null\n  - MATCH,DIRECT\n",
+        "rules:#not-a-key\n  - DOMAIN,one.test,DIRECT\n",
+        "rules:\n  - DOMAIN,unicode.test,DIRECT\xc2\x85 continuation\n",
+        std::string("rules:\n  - DOMAIN,") + char(0xff) + "invalid.test,DIRECT\n",
+        "other: \"text\nrules:\n- DOMAIN,fake.test,DIRECT\n\"\nrules: ['MATCH,REJECT']\n",
+        "rules: ['DOMAIN-SUFFIX,one.test,DIRECT', 'MATCH,DIRECT']\n",
+        "rules:\n  - 'DOMAIN,中文.test,DIRECT'\n  - >-\n    DOMAIN-SUFFIX,folded.test,DIRECT\n",
+        "proxy-groups: [{name: Auto, type: url-test}, {name: ' Pick ', type: ' select '}]\nrules: []\n",
+        "proxy-groups: [{name: First, name: Second, type: select}]\nrules: []\n",
+        "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT], metadata: {rules: [ignored]}}]\n",
+        "proxy-groups: [{name: null, type: select}]\nrules: []\n",
+        "rules: ['MATCH,DIRECT']\nrules: ['MATCH,REJECT']\n",
+        "rules: [&r 'DOMAIN,alias.test,DIRECT', *r, 'MATCH,DIRECT']\n",
+        "base: &base {rules: ['MATCH,REJECT']}\n<<: *base\nrules: ['MATCH,DIRECT']\n",
+        "rules: [{domain: [complex.test], outbound: DIRECT}, null, [one, two]]\n",
+        "rules: {ignored: value}\nproxy-groups: [{name: Pick, type: select}]\n",
+        "? [complex, key]\n: ignored\nrules: ['MATCH,DIRECT']\n",
+        "rules: [!rule 'DOMAIN,tagged.test,DIRECT', 'MATCH,DIRECT']\n",
+        "rules: []\n---\nrules: ['MATCH,REJECT']\n",
+        "rules: ['DOMAIN,one.test,DIRECT', broken\n",
+    }) {
+        // A root anchor deliberately exercises the independent DOM fallback.
+        const auto dom = singbox::InspectProfileRules("&projection_root\n" + text);
+        const auto projected = singbox::InspectProfileRules(text);
+        check(projected.error.empty() == dom.error.empty() && projected.rules == dom.rules &&
+            projected.original == dom.original, "event projection preserves the DOM rule inventory and fallback semantics");
+        const auto compact = singbox::InspectProfileRules(text, {}, false);
+        check(compact.error.empty() == projected.error.empty() && compact.rules == projected.rules && compact.original.empty(),
+            "display projection omits only the unused original copy");
+        const auto editable = std::ranges::find_if(projected.original, [](const auto& row) {
+            return row.editable && !row.terminal;
+        });
+        if (editable != projected.original.end()) {
+            singbox::ProfileRuleEdits edits;
+            edits.rules = {{.id="replace", .operation="replace", .anchor=editable->anchor,
+                .pattern="changed.test", .target="REJECT"}};
+            const auto changed = singbox::InspectProfileRules(text, edits, false);
+            const auto reference = singbox::InspectProfileRules("&projection_root\n" + text, edits);
+            check(changed.error == reference.error && changed.rules == reference.rules,
+                "indexed edits preserve original anchor uniqueness and replacement semantics");
+        }
+    }
+    const std::string duplicate = "rules: ['DOMAIN,duplicate.test,DIRECT', 'DOMAIN,duplicate.test,DIRECT']\n";
+    singbox::ProfileRuleEdits edits;
+    edits.rules = {{.id="disable", .operation="disable", .anchor="clash:DOMAIN,duplicate.test,DIRECT"}};
+    check(!singbox::InspectProfileRules(duplicate, edits, false).error.empty(),
+        "indexed edits still reject duplicate original anchors");
+    edits.rules[0].enabled = false;
+    check(singbox::InspectProfileRules(duplicate, edits, false).error.empty(), "disabled anchored edits do not create conflicts");
+    const std::string native = R"({"outbounds":[{"type":"direct","tag":"direct"}],"route":{"rules":[{"domain":["one.test"],"outbound":"direct"}],"final":"direct"}})";
+    const auto original = singbox::InspectProfileRules(native);
+    const auto compact = singbox::InspectProfileRules(native, {}, false);
+    check(original.rules == compact.rules && compact.original.empty() && original.original.size() == 2,
+        "native JSON display projection retains rules without a second table");
+}
+
+void profileRuleProjection() {
+    using Clock = std::chrono::steady_clock;
+    for (const int count : {1000, 10000, 100000}) {
+        std::string text = "rules:\n";
+        for (int i = 0; i < count; ++i)
+            text += "  - DOMAIN-SUFFIX,rule" + std::to_string(i) + ".test,DIRECT\n";
+        text += "  - MATCH,DIRECT\n";
+        singbox::ProfileRuleEdits edits;
+        for (int pass = 0; pass < 2; ++pass) {
+            const auto start = Clock::now();
+            const auto rules = singbox::InspectProfileRules(text, edits, false);
+            const auto ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+            check(rules.error.empty() && rules.rules.size() == static_cast<std::size_t>(count + 1) &&
+                rules.original.empty() && rules.rules.back().terminal, "cold rule projection preserves every row and terminal rule");
+            if (pass) check(std::ranges::count_if(rules.rules, [](const auto& rule) { return !rule.enabled; }) == 1000,
+                "large indexed edits disable exactly their own anchors");
+            std::println("rows={} edits={} ms={:.3f}", count, edits.rules.size(), ms);
+            for (int i = 0; i < 1000; ++i)
+                edits.rules.push_back({.id=std::to_string(i), .operation="disable",
+                    .anchor="clash:DOMAIN-SUFFIX,rule" + std::to_string(i) + ".test,DIRECT"});
+        }
+    }
+}
+
 void testPersonalRules(const std::filesystem::path& fixtures = {}) {
     singbox::CompileOptions options;
     options.mainConnectionId = "profile-71";
@@ -2732,7 +2825,7 @@ void testNodeSubscriptions() {
     reject(uri(plaintext), "TLS options cannot silently enable TLS on a plaintext node");
     auto conflicting = original; conflicting["insecure"] = true; conflicting["allowInsecure"] = false;
     reject(uri(conflicting), "conflicting certificate verification options rejected");
-    reject(raw + "vless://not-supported\n", "mixed unsupported URI protocol is not silently dropped");
+    reject(raw + "ssr://not-supported\n", "mixed unsupported URI protocol is not silently dropped");
     reject(uri(original) + "\n" + uri(original), "duplicate node names cannot drop or redirect members");
     reject("vmess://AB==", "noncanonical Base64 tail bits rejected");
     reject("vmess://" + encodeNodeFixture(R"({"ps":"first","ps":"second"})"), "duplicate JSON fields rejected");
@@ -2750,6 +2843,12 @@ void testNodeSubscriptions() {
     const auto rules = singbox::InspectProfileRules(inventory.profileYaml, {});
     check(rules.error.empty() && !rules.original.empty(), "generated MATCH is visible to personal-rule projection");
 }
+
+#include "protocol_entry_cases.inc"
+#include "node_uri_ss_cases.inc"
+#include "node_uri_v2ray_cases.inc"
+#include "node_uri_secure_cases.inc"
+#include "node_input_cases.inc"
 
 void testNetworkSettings(const std::filesystem::path& root = {}) {
     const auto inspect = [](const json& config, const std::string& type) -> json {
@@ -2927,6 +3026,45 @@ int writeTraceFixtures(const std::filesystem::path& root) {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--node-inputs") {
+        node_input_tests::LegacyRun(); node_input_tests::CatalogRun(); return failures ? 1 : 0;
+    }
+    if (argc == 3 && std::string_view(argv[1]) == "--node-input-fixtures") {
+        node_input_tests::LegacyRun(argv[2]); node_input_tests::CatalogRun(argv[2]); return failures ? 1 : 0;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--secure-uri") {
+        node_uri_secure_tests::Run(); return failures ? 1 : 0;
+    }
+    if (argc == 3 && std::string_view(argv[1]) == "--secure-uri-fixtures") {
+        node_uri_secure_tests::Run(argv[2]); return failures ? 1 : 0;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--v2ray-uri") {
+        node_uri_v2ray_tests::Run(); return failures ? 1 : 0;
+    }
+    if (argc == 3 && std::string_view(argv[1]) == "--v2ray-uri-fixtures") {
+        node_uri_v2ray_tests::Run(argv[2]); return failures ? 1 : 0;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--ss-uri") {
+        node_uri_ss_tests::Run(); return failures ? 1 : 0;
+    }
+    if (argc == 3 && std::string_view(argv[1]) == "--ss-uri-fixtures") {
+        node_uri_ss_tests::Run(argv[2]); return failures ? 1 : 0;
+    }
+    if (argc == 4 && (std::string_view(argv[1]) == "--ss-uri-provider-config" || std::string_view(argv[1]) == "--uri-provider-config"))
+        return node_uri_ss_tests::WriteProvider(argv[2], argv[3]);
+    if (argc == 2 && std::string_view(argv[1]) == "--protocol-entries") {
+        protocol_entry_tests::Run(); return failures ? 1 : 0;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--protocol-baseline") {
+        testProtocolBaseline(); protocol_model_tests::Run(); return failures ? 1 : 0;
+    }
+    if (argc == 3 && std::string_view(argv[1]) == "--protocol-fixtures") {
+        testProtocolBaseline(argv[2]); return failures ? 1 : 0;
+    }
+    if (argc == 1) { testProtocolBaseline(); protocol_model_tests::Run(); protocol_entry_tests::Run(); node_uri_ss_tests::Run(); node_uri_v2ray_tests::Run(); node_uri_secure_tests::Run(); node_input_tests::LegacyRun(); node_input_tests::CatalogRun(); }
+    if (argc == 2 && std::string_view(argv[1]) == "--profile-rules") {
+        testRuleProjection(); profileRuleProjection(); return failures ? 1 : 0;
+    }
     if (argc == 3 && std::string_view(argv[1]) == "--trace-fixtures") return writeTraceFixtures(argv[2]);
     if (argc == 3 && std::string_view(argv[1]) == "--network-settings-fixtures") {
         testNetworkSettings(argv[2]); return failures ? 1 : 0;
@@ -3032,6 +3170,7 @@ int main(int argc, char** argv) {
     }
     if (argc == 1) testNodeSubscriptions();
     if (argc == 1) { testGeoData(); testMmdb(); }
+    testRuleProjection();
     testPersonalRules();
     testPersonalRuleSets();
     // Test-only compiler entry for isolated native runtime fixtures; no app
@@ -4207,6 +4346,49 @@ proxy-groups:
         check(parsed.error.empty() && json::parse(parsed.json)["outbounds"][1]["type"] == "vmess" &&
                   json::parse(parsed.json)["outbounds"][1]["tag"] == "remote-vmess",
               "provider 复用 Base64 VMess 节点订阅转换");
+        auto secureNode = node;
+        secureNode["tls"] = "tls";
+        secureNode["net"] = "ws";
+        secureNode["host"] = "edge.example.test";
+        secureNode["path"] = "/exact%2F?token=a+b";
+        auto inherited = nodeSubscription;
+        inherited.profileYaml = "global-client-fingerprint: firefox\n" + inherited.profileYaml;
+        inherited.mainConnectionId = "uri-provider-source";
+        auto uriProvider = compileBodies(inherited, {{"remote", "vmess://" + encodeNodeFixture(secureNode.dump())}});
+        check(uriProvider.error.empty(), "typed URI provider inherits the containing source defaults");
+        if (!uriProvider.json.empty()) {
+            const auto output = json::parse(uriProvider.json)["outbounds"][1];
+            check(output["tls"]["utls"]["fingerprint"] == "firefox" &&
+                output["tls"]["server_name"] == "edge.example.test" &&
+                output["transport"]["path"] == "/exact%2F?token=a+b" &&
+                !output["tls"].contains("insecure"), "URI provider retains verified TLS, inherited fingerprint and exact path bytes");
+        }
+        secureNode["fp"] = "random";
+        uriProvider = compileBodies(inherited, {{"remote", "vmess://" + encodeNodeFixture(secureNode.dump())}});
+        check(uriProvider.error.empty() && std::ranges::count_if(uriProvider.fidelity, [](const auto& note) {
+            return note.scope == singbox::FidelityScope::Node && note.subject == "remote-vmess" &&
+                note.sourceId == "uri-provider-source" && note.level == singbox::Fidelity::Approx;
+        }) == 1, "explicit URI fingerprint overrides defaults and publishes one source-aware diagnostic");
+        if (!uriProvider.json.empty())
+            check(json::parse(uriProvider.json)["outbounds"][1]["tls"]["utls"]["fingerprint"] == "random",
+                "URI fingerprint overrides its provider source");
+        auto filteredUri = inherited;
+        filteredUri.profileYaml.replace(filteredUri.profileYaml.find("url: 'https://example.test/nodes.txt'"),
+            std::string("url: 'https://example.test/nodes.txt'").size(), "url: 'https://example.test/nodes.txt', filter: '^remote-vmess$'");
+        auto invalidUri = secureNode;
+        invalidUri["ps"] = "excluded-invalid";
+        invalidUri["port"] = "broken";
+        const auto badBody = "vmess://" + encodeNodeFixture(secureNode.dump()) + "\nvmess://" + encodeNodeFixture(invalidUri.dump());
+        check(!compileBodies(filteredUri, {{"remote", badBody}}).error.empty(),
+            "URI provider checks all URI syntax before filtering, retaining whole-document rejection");
+        invalidUri["port"] = 1080;
+        invalidUri["fp"] = "unsupported";
+        const auto filteredBody = "vmess://" + encodeNodeFixture(secureNode.dump()) + "\nvmess://" + encodeNodeFixture(invalidUri.dump());
+        check(compileBodies(filteredUri, {{"remote", filteredBody}}).error.empty(),
+            "only selected provider URI nodes require target conversion, matching the previous filter boundary");
+        auto unfilteredUri = compileBodies(inherited, {{"remote", filteredBody}});
+        check(!unfilteredUri.error.empty() && unfilteredUri.json.empty(),
+            "a selected URI conversion failure refuses the entire provider and its valid prefix");
         std::string invalidError;
         check(!singbox::ValidateHttpProxyProvider(resource,
                   "proxies:\n  - {name: duplicate, type: socks5, server: 127.0.0.1, port: 1080}\n"

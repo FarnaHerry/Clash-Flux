@@ -16,6 +16,7 @@
 #include "app_http_client.h"
 #include "text_document.h"
 #include "profile_card_layout.h"
+#include "share_qr.h"
 
 namespace clashflux::ui {
 
@@ -114,7 +115,6 @@ void OpenProfileEditInfo(std::int64_t id, bool compact,
                          const ProfileEditDialog& show_edit_info,
                          huxerui::State<std::int64_t> edit_page_id);
 std::string truncateOneLine(const std::string& value, std::size_t maxCodePoints);
-huxerui::View ShareQrView(huxerui::qrcode::Symbol symbol);
 huxerui::View QrsSequenceView(
     std::shared_ptr<const std::vector<std::string>> frames,
     huxerui::qrcode::Symbol first, FluxToastHandle toast);

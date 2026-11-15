@@ -22,7 +22,7 @@ TextDocument::TextDocument(std::shared_ptr<const std::string> text)
 
 std::shared_ptr<const std::string> TextDocument::Snapshot() {
     if (dirty_ && document_) {
-        text_ = std::make_shared<const std::string>(document_->getU8Text());
+        text_ = std::make_shared<const std::string>(document_->GetText());
         dirty_ = false;
     }
     return text_;
@@ -37,7 +37,7 @@ void TextDocument::Prepare(huxerui::TaskScope tasks) {
     tasks.Launch([self, text]() -> huxerui::Task<void> {
         try {
             auto prepared = co_await RunOnTaskThread([text] {
-                return huxerui::codeeditor::PrepareEditorDocument(*text);
+                return huxerui::codeeditor::Document(*text);
             });
             self->document_ = std::move(prepared);
             self->ready_ = true;
@@ -51,11 +51,13 @@ void TextDocument::Prepare(huxerui::TaskScope tasks) {
     using namespace huxerui::codeeditor;
     const auto& theme = huxerui::UseTheme();
     const auto clipboard = huxerui::UseApplication().Clipboard();
+    const auto controller = UseCodeEditor();
     auto menu = UseActionMenu();
     auto searchVisible = huxerui::UseState(false);
     auto query = huxerui::UseState(huxerui::TextEditingValue{});
     auto tasks = huxerui::UseApplicationTaskScope();
-    huxerui::Lifecycle([document, tasks, searchVisible, query] {
+    huxerui::Lifecycle([document, tasks, searchVisible, query, controller] {
+        document->BindController(controller);
         searchVisible = false;
         query = huxerui::TextEditingValue{};
         document->Prepare(tasks);
@@ -70,47 +72,43 @@ void TextDocument::Prepare(huxerui::TaskScope tasks) {
         if (height > 0.0F) return PageBodyFrame(pending).With(huxerui::Frame{.height = height});
         return PageBodyFrame(pending).With(huxerui::Grow(1.0F));
     }
-    const auto controller = document->Controller();
     const auto showMenu = [=] {
         std::vector<ActionMenuEntry> items{
             ActionMenuItem(Localized("全选"), [controller] { controller.SelectAll(); }),
-            ActionMenuItem(Localized("复制"), [controller] { controller.Copy(); }),
+            ActionMenuItem(Localized("复制"), [controller] { controller.CopyToClipboard(); }),
             ActionMenuItem(Localized("复制全部"), [document, clipboard] {
                 clipboard->WriteText(*document->Snapshot());
             }),
         };
         if (!readOnly) {
-            items.push_back(ActionMenuItem(Localized("剪切"), [controller] { controller.Cut(); }));
-            items.push_back(ActionMenuItem(Localized("粘贴"), [controller] { controller.Paste(); }));
+            items.push_back(ActionMenuItem(Localized("剪切"), [controller] { controller.CutToClipboard(); }));
+            items.push_back(ActionMenuItem(Localized("粘贴"), [controller] { controller.PasteFromClipboard(); }));
         }
         menu.Show(std::move(items));
     };
     EditorOptions options;
-    options.initial_document = document->Prepared();
-    options.document_key = document->Key();
-    options.read_only = readOnly;
-    options.font_size = font_size::kBody;
-    options.wrap_mode = 0;
-    // CodeEditor: 1 = transient, 2 = never; use the same viewport policy.
-    // TODO(codeeditor): the pinned extension only applies this on creation.
-    // Await live option updates upstream/in the fork; never remount for style.
-    options.scrollbar_mode = ShowPageScrollBars() ? 1 : 2;
+    options.document = document->Prepared();
+    options.settings.read_only = readOnly;
+    options.settings.editor_text_size = font_size::kBody;
+    options.settings.wrap_mode = WrapMode::NONE;
+    options.settings.scrollbar.mode = ShowPageScrollBars()
+        ? sweeteditor::ScrollbarMode::TRANSIENT : sweeteditor::ScrollbarMode::NEVER;
     // Keep the line-number gutter on the same surface as the text area.
     EditorTheme editorTheme = EditorTheme::FromThemeSpec(theme);
-    editorTheme.gutter_background = editorTheme.background;
+    editorTheme.gutter_background = editorTheme.background_color;
     options.theme = std::move(editorTheme);
     // No full-document highlighter/diff: edits and scrolling stay local to the viewport.
     const std::weak_ptr<TextDocument> weak = document;
-    auto editor = CodeEditor(std::move(options), controller)
-        .On<EditorEvents::TextChanged>([weak] {
+    auto editor = CodeEditor(controller, std::move(options))
+        .On<EditorEvents::TextChanged>([weak](const TextChangedEvent&) {
             if (const auto value = weak.lock()) value->MarkChanged();
         })
-        // The app owns visibility; keyboard toggles and the external close button share it.
-        .On<EditorEvents::SearchVisibilityChanged>([searchVisible, controller](bool) {
-            searchVisible = !searchVisible.Get();
-            if (!searchVisible.Get()) controller.ClearSearch();
+        .On<EditorEvents::DocumentLoaded>([controller] {
+            controller.SetContextMenuItemProvider([](const ContextMenuRequest&) {
+                return std::vector<ContextMenuSection>{};
+            });
         })
-        .On<EditorEvents::ContextMenuRequested>([showMenu](const EditorContextMenuInfo&) { showMenu(); })
+        .On<EditorEvents::ContextMenu>([showMenu](const ContextMenuEvent&) { showMenu(); })
         .With(huxerui::Grow(1.0F))
         .Key("document-editor");
     huxerui::View search;
@@ -119,12 +117,12 @@ void TextDocument::Prepare(huxerui::TaskScope tasks) {
           huxerui::TextField(query.Get()).Placeholder(Localized("搜索文本"))
               .OnChanged([query, controller](const huxerui::TextEditingValue& value) {
                   query = value;
-                  controller.RunSearch(value.text);
+                  controller.Search(SearchRequest{.pattern = value.text});
               })
-              .OnSubmitted([controller] { controller.FindNext(); })
+              .OnSubmitted([controller] { controller.FindNextSearchMatch(); })
               .With(huxerui::Grow(1.0F)).Key("document-search-input"),
-          huxerui::Button(Localized("上一处")).OnClick([controller] { controller.FindPrevious(); }),
-          huxerui::Button(Localized("下一处")).OnClick([controller] { controller.FindNext(); }),
+          huxerui::Button(Localized("上一处")).OnClick([controller] { controller.FindPreviousSearchMatch(); }),
+          huxerui::Button(Localized("下一处")).OnClick([controller] { controller.FindNextSearchMatch(); }),
           huxerui::IconButton(app::images::close, Localized("关闭"))
               .With(huxerui::Tooltip(Localized("关闭"))).Key("document-search-close").OnClick([=] {
               controller.ClearSearch();
@@ -146,7 +144,13 @@ void TextDocument::Prepare(huxerui::TaskScope tasks) {
       },
       search,
       editor,
-    }.With(huxerui::Background(theme.colors.surface_container_low),
+    }.On<huxerui::ViewEvents::KeyIntercept>([searchVisible, controller](const huxerui::KeyEvent& event) {
+        if (event.type != huxerui::KeyEventType::Down || event.repeat || event.key != huxerui::Key::F ||
+            !(event.modifiers.control || event.modifiers.meta) || event.modifiers.alt) return false;
+        searchVisible = !searchVisible.Get();
+        if (!searchVisible.Get()) controller.ClearSearch();
+        return true;
+    }).With(huxerui::Background(theme.colors.surface_container_low),
            huxerui::CornerRadius(theme.shapes.small), huxerui::ClipChildren(),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     if (height > 0.0F) return PageBodyFrame(content).With(huxerui::Frame{.height = height});

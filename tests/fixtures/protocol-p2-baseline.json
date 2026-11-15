@@ -1,0 +1,2827 @@
+{
+  "snapshot": "894a808 + validated P1",
+  "source_sha256": "666b7f27899dbfd4c98a341dabce15946e05a250321718d14bb6b14307e4e7de",
+  "cases": [
+    {
+      "name": "vmess-plain",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-udp-false",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    udp: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "network": "tcp",
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-packet-empty",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    packet-encoding: ''\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "packet_encoding": "",
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-packet-xudp",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    packet-encoding: xudp\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "packet_encoding": "xudp",
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-packet-addr",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    packet-encoding: packetaddr\n    xudp: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "packet_encoding": "xudp",
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-legacy-udp",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    packet-addr: true\n    xudp: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "packet_encoding": "packetaddr",
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-packet-invalid",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    packet-encoding: bad\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 packet-encoding 仅支持空字符串、packetaddr/packet 或 xudp，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 packet-encoding 仅支持空字符串、packetaddr/packet 或 xudp，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vmess-packet-type",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    packet-encoding: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 packet-encoding 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 packet-encoding 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vmess-packet-bool-invalid",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    xudp: null\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 xudp 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 xudp 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vmess-tls-off",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    tls: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-tls-on",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    tls: true\n    alpn: [h2, http/1.1]\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "alpn": [
+                "h2",
+                "http/1.1"
+              ],
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-tls-order",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    tls: false\n    sni: first.test\n    servername: second.test\n    alpn: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」同时指定不同的 sni/servername，使用 servername",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 sni 不能在未启用 TLS 时应用，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 servername 不能在未启用 TLS 时应用，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 alpn 不能在未启用 TLS 时应用，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」同时指定不同的 sni/servername，使用 servername",
+          "节点「values」的 sni 不能在未启用 TLS 时应用，已跳过",
+          "节点「values」的 servername 不能在未启用 TLS 时应用，已跳过",
+          "节点「values」的 alpn 不能在未启用 TLS 时应用，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vmess-tls-reality",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    tls: true\n    reality-opts: {public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA, short-id: abcd}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "reality": {
+                "enabled": true,
+                "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "short_id": "abcd"
+              },
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-tls-late-error",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    tls: true\n    client-fingerprint: random\n    reality-opts: {}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "订阅 YAML 解析失败：invalid node; first invalid key: \"public-key\"",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": null,
+        "warnings": [
+          "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致"
+        ]
+      }
+    },
+    {
+      "name": "vmess-ws",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-opts: {path: \" exact path \", headers: {Host: edge.test, X-Test: \" exact header \"}, max-early-data: 0, early-data-header-name: \"\"}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "early_data_header_name": "",
+              "headers": {
+                "Host": "edge.test",
+                "X-Test": " exact header "
+              },
+              "max_early_data": 0,
+              "path": " exact path ",
+              "type": "ws"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-ws-old",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-path: /old\n    ws-headers: {Host: old.test}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "headers": {
+                "Host": "old.test"
+              },
+              "path": "/old",
+              "type": "ws"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-ws-override",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-path: /old\n    ws-headers: {Host: old.test}\n    ws-opts: {path: /new, headers: {Host: new.test}}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "统一新旧 WebSocket 字段；相同的重复值不会导致节点降级",
+            "detail": "节点「values」的 ws-opts.path 覆盖不同的旧版 ws-path",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "统一新旧 WebSocket 字段；相同的重复值不会导致节点降级",
+            "detail": "节点「values」的 ws-opts.headers 覆盖不同的旧版 ws-headers",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "headers": {
+                "Host": "new.test"
+              },
+              "path": "/new",
+              "type": "ws"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-opts.path 覆盖不同的旧版 ws-path",
+          "节点「values」的 ws-opts.headers 覆盖不同的旧版 ws-headers"
+        ]
+      }
+    },
+    {
+      "name": "vmess-ws-bad-header",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-opts: {headers: {Host: [bad]}}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 ws-opts.headers 的值 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-opts.headers 的值 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vmess-ws-duplicate-header",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-headers: {Host: a, Host: b}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 ws-headers 不能包含重复键，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-headers 不能包含重复键，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vmess-ws-bad-early",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-opts: {max-early-data: -1}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 ws-opts.max-early-data 必须为非负整数，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-opts.max-early-data 必须为非负整数，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vmess-grpc",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: grpc\n    grpc-service-name: old\n    grpc-opts: {grpc-service-name: new}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的嵌套 grpc-service-name 覆盖顶层值",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "service_name": "new",
+              "type": "grpc"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": [
+          "节点「values」的嵌套 grpc-service-name 覆盖顶层值"
+        ]
+      }
+    },
+    {
+      "name": "vmess-grpc-empty",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: grpc\n    grpc-service-name: old\n    grpc-opts: {grpc-service-name: ''}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的嵌套 grpc-service-name 覆盖顶层值",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "type": "grpc"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": [
+          "节点「values」的嵌套 grpc-service-name 覆盖顶层值"
+        ]
+      }
+    },
+    {
+      "name": "vmess-http",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: http\n    http-opts: {path: [/one, /two], host: [first.test, second.test]}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "sing-box 客户端只接受一个请求路径；请明确指定要使用的路径",
+            "detail": "节点「values」的 HTTP 传输 path 列表仅使用首项",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "host": [
+                "first.test",
+                "second.test"
+              ],
+              "path": "/one",
+              "type": "http"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 HTTP 传输 path 列表仅使用首项"
+        ]
+      }
+    },
+    {
+      "name": "vmess-h2-empty",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: h2\n    h2-opts: {path: [], host: []}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "host": [],
+              "type": "http"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-httpupgrade",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: httpupgrade\n    httpupgrade-opts: {path: /upgrade, host: upgrade.test}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "host": "upgrade.test",
+              "path": "/upgrade",
+              "type": "httpupgrade"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-unknown-transport",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: quic\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "把该节点的 network 换成 sing-box 支持的传输层（tcp/ws/grpc/http）",
+            "detail": "节点「values」的传输层 network:quic 暂不支持，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的传输层 network:quic 暂不支持，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vmess-nested-unknown",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-opts: {unsupported: true}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；编译器不会省略未映射字段后改变线路语义",
+            "detail": "节点「values」的 unsupported 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unsupported 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vmess-transport-before-tls",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-path: []\n    tls: true\n    client-fingerprint: random\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 ws-path 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-path 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vmess-global-fingerprint",
+      "yaml": "global-client-fingerprint: firefox\nproxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    tls: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "firefox"
+              }
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-dial-order",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    tls: true\n    client-fingerprint: random\n    dialer-proxy: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "",
+            "detail": "节点「values」的 dialer-proxy 必须为非空出站名，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+          "节点「values」的 dialer-proxy 必须为非空出站名，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vless-plain",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vless-udp-false",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    udp: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "network": "tcp",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vless-packet-empty",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    packet-encoding: ''\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "packet_encoding": "xudp",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vless-packet-xudp",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    packet-encoding: xudp\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "packet_encoding": "xudp",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vless-packet-addr",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    packet-encoding: packetaddr\n    xudp: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "packet_encoding": "packetaddr",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vless-legacy-udp",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    packet-addr: true\n    xudp: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "packet_encoding": "packetaddr",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vless-packet-invalid",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    packet-encoding: bad\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 packet-encoding 仅支持空字符串、packetaddr/packet 或 xudp，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 packet-encoding 仅支持空字符串、packetaddr/packet 或 xudp，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vless-packet-type",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    packet-encoding: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 packet-encoding 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 packet-encoding 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vless-packet-bool-invalid",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    xudp: null\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 xudp 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 xudp 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vless-tls-off",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    tls: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vless-tls-on",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    tls: true\n    alpn: [h2, http/1.1]\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "alpn": [
+                "h2",
+                "http/1.1"
+              ],
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vless-tls-order",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    tls: false\n    sni: first.test\n    servername: second.test\n    alpn: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」同时指定不同的 sni/servername，使用 servername",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 sni 不能在未启用 TLS 时应用，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 servername 不能在未启用 TLS 时应用，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 alpn 不能在未启用 TLS 时应用，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」同时指定不同的 sni/servername，使用 servername",
+          "节点「values」的 sni 不能在未启用 TLS 时应用，已跳过",
+          "节点「values」的 servername 不能在未启用 TLS 时应用，已跳过",
+          "节点「values」的 alpn 不能在未启用 TLS 时应用，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vless-tls-reality",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    tls: true\n    reality-opts: {public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA, short-id: abcd}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "reality": {
+                "enabled": true,
+                "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "short_id": "abcd"
+              },
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vless-tls-late-error",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    tls: true\n    client-fingerprint: random\n    reality-opts: {}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "订阅 YAML 解析失败：invalid node; first invalid key: \"public-key\"",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": null,
+        "warnings": [
+          "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致"
+        ]
+      }
+    },
+    {
+      "name": "vless-ws",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-opts: {path: \" exact path \", headers: {Host: edge.test, X-Test: \" exact header \"}, max-early-data: 0, early-data-header-name: \"\"}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "early_data_header_name": "",
+              "headers": {
+                "Host": "edge.test",
+                "X-Test": " exact header "
+              },
+              "max_early_data": 0,
+              "path": " exact path ",
+              "type": "ws"
+            },
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vless-ws-old",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-path: /old\n    ws-headers: {Host: old.test}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "headers": {
+                "Host": "old.test"
+              },
+              "path": "/old",
+              "type": "ws"
+            },
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vless-ws-override",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-path: /old\n    ws-headers: {Host: old.test}\n    ws-opts: {path: /new, headers: {Host: new.test}}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "统一新旧 WebSocket 字段；相同的重复值不会导致节点降级",
+            "detail": "节点「values」的 ws-opts.path 覆盖不同的旧版 ws-path",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "统一新旧 WebSocket 字段；相同的重复值不会导致节点降级",
+            "detail": "节点「values」的 ws-opts.headers 覆盖不同的旧版 ws-headers",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "headers": {
+                "Host": "new.test"
+              },
+              "path": "/new",
+              "type": "ws"
+            },
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-opts.path 覆盖不同的旧版 ws-path",
+          "节点「values」的 ws-opts.headers 覆盖不同的旧版 ws-headers"
+        ]
+      }
+    },
+    {
+      "name": "vless-ws-bad-header",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-opts: {headers: {Host: [bad]}}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 ws-opts.headers 的值 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-opts.headers 的值 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vless-ws-duplicate-header",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-headers: {Host: a, Host: b}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 ws-headers 不能包含重复键，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-headers 不能包含重复键，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vless-ws-bad-early",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-opts: {max-early-data: -1}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 ws-opts.max-early-data 必须为非负整数，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-opts.max-early-data 必须为非负整数，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vless-grpc",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: grpc\n    grpc-service-name: old\n    grpc-opts: {grpc-service-name: new}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的嵌套 grpc-service-name 覆盖顶层值",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "service_name": "new",
+              "type": "grpc"
+            },
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": [
+          "节点「values」的嵌套 grpc-service-name 覆盖顶层值"
+        ]
+      }
+    },
+    {
+      "name": "vless-grpc-empty",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: grpc\n    grpc-service-name: old\n    grpc-opts: {grpc-service-name: ''}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的嵌套 grpc-service-name 覆盖顶层值",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "type": "grpc"
+            },
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": [
+          "节点「values」的嵌套 grpc-service-name 覆盖顶层值"
+        ]
+      }
+    },
+    {
+      "name": "vless-http",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: http\n    http-opts: {path: [/one, /two], host: [first.test, second.test]}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "sing-box 客户端只接受一个请求路径；请明确指定要使用的路径",
+            "detail": "节点「values」的 HTTP 传输 path 列表仅使用首项",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "host": [
+                "first.test",
+                "second.test"
+              ],
+              "path": "/one",
+              "type": "http"
+            },
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 HTTP 传输 path 列表仅使用首项"
+        ]
+      }
+    },
+    {
+      "name": "vless-h2-empty",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: h2\n    h2-opts: {path: [], host: []}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "host": [],
+              "type": "http"
+            },
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vless-httpupgrade",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: httpupgrade\n    httpupgrade-opts: {path: /upgrade, host: upgrade.test}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "transport": {
+              "host": "upgrade.test",
+              "path": "/upgrade",
+              "type": "httpupgrade"
+            },
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vless-unknown-transport",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: quic\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "把该节点的 network 换成 sing-box 支持的传输层（tcp/ws/grpc/http）",
+            "detail": "节点「values」的传输层 network:quic 暂不支持，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的传输层 network:quic 暂不支持，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vless-nested-unknown",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-opts: {unsupported: true}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；编译器不会省略未映射字段后改变线路语义",
+            "detail": "节点「values」的 unsupported 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unsupported 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vless-transport-before-tls",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    network: ws\n    ws-path: []\n    tls: true\n    client-fingerprint: random\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 ws-path 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-path 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vless-global-fingerprint",
+      "yaml": "global-client-fingerprint: firefox\nproxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    tls: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "firefox"
+              }
+            },
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vless-dial-order",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    tls: true\n    client-fingerprint: random\n    dialer-proxy: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "",
+            "detail": "节点「values」的 dialer-proxy 必须为非空出站名，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+          "节点「values」的 dialer-proxy 必须为非空出站名，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-plain",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "fixture",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "trojan"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "trojan-udp-false",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    udp: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "network": "tcp",
+            "password": "fixture",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "trojan"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "trojan-packet-empty",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    packet-encoding: ''\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 packet-encoding 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 packet-encoding 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-packet-xudp",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    packet-encoding: xudp\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 packet-encoding 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 packet-encoding 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-packet-addr",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    packet-encoding: packetaddr\n    xudp: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 packet-encoding 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 xudp 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 packet-encoding 尚未映射，已跳过",
+          "节点「values」的 xudp 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-legacy-udp",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    packet-addr: true\n    xudp: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 packet-addr 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 xudp 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 packet-addr 尚未映射，已跳过",
+          "节点「values」的 xudp 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-packet-invalid",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    packet-encoding: bad\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 packet-encoding 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 packet-encoding 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-packet-type",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    packet-encoding: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 packet-encoding 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 packet-encoding 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-packet-bool-invalid",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    xudp: null\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 xudp 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 xudp 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-tls-off",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    tls: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的协议不能关闭 TLS，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的协议不能关闭 TLS，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-tls-on",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    tls: true\n    alpn: [h2, http/1.1]\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "fixture",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "alpn": [
+                "h2",
+                "http/1.1"
+              ],
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "trojan"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "trojan-tls-order",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    tls: false\n    sni: first.test\n    servername: second.test\n    alpn: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的协议不能关闭 TLS，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的协议不能关闭 TLS，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-tls-reality",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    tls: true\n    reality-opts: {public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA, short-id: abcd}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "fixture",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "reality": {
+                "enabled": true,
+                "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "short_id": "abcd"
+              },
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "trojan"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "trojan-tls-late-error",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    tls: true\n    client-fingerprint: random\n    reality-opts: {}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "订阅 YAML 解析失败：invalid node; first invalid key: \"public-key\"",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": null,
+        "warnings": [
+          "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致"
+        ]
+      }
+    },
+    {
+      "name": "trojan-ws",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    network: ws\n    ws-opts: {path: \" exact path \", headers: {Host: edge.test, X-Test: \" exact header \"}, max-early-data: 0, early-data-header-name: \"\"}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "fixture",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "early_data_header_name": "",
+              "headers": {
+                "Host": "edge.test",
+                "X-Test": " exact header "
+              },
+              "max_early_data": 0,
+              "path": " exact path ",
+              "type": "ws"
+            },
+            "type": "trojan"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "trojan-ws-old",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    network: ws\n    ws-path: /old\n    ws-headers: {Host: old.test}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "fixture",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "headers": {
+                "Host": "old.test"
+              },
+              "path": "/old",
+              "type": "ws"
+            },
+            "type": "trojan"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "trojan-ws-override",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    network: ws\n    ws-path: /old\n    ws-headers: {Host: old.test}\n    ws-opts: {path: /new, headers: {Host: new.test}}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "统一新旧 WebSocket 字段；相同的重复值不会导致节点降级",
+            "detail": "节点「values」的 ws-opts.path 覆盖不同的旧版 ws-path",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "统一新旧 WebSocket 字段；相同的重复值不会导致节点降级",
+            "detail": "节点「values」的 ws-opts.headers 覆盖不同的旧版 ws-headers",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "fixture",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "headers": {
+                "Host": "new.test"
+              },
+              "path": "/new",
+              "type": "ws"
+            },
+            "type": "trojan"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-opts.path 覆盖不同的旧版 ws-path",
+          "节点「values」的 ws-opts.headers 覆盖不同的旧版 ws-headers"
+        ]
+      }
+    },
+    {
+      "name": "trojan-ws-bad-header",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    network: ws\n    ws-opts: {headers: {Host: [bad]}}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 ws-opts.headers 的值 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-opts.headers 的值 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-ws-duplicate-header",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    network: ws\n    ws-headers: {Host: a, Host: b}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 ws-headers 不能包含重复键，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-headers 不能包含重复键，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-ws-bad-early",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    network: ws\n    ws-opts: {max-early-data: -1}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 ws-opts.max-early-data 必须为非负整数，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-opts.max-early-data 必须为非负整数，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-grpc",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    network: grpc\n    grpc-service-name: old\n    grpc-opts: {grpc-service-name: new}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的嵌套 grpc-service-name 覆盖顶层值",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "fixture",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "service_name": "new",
+              "type": "grpc"
+            },
+            "type": "trojan"
+          }
+        ],
+        "warnings": [
+          "节点「values」的嵌套 grpc-service-name 覆盖顶层值"
+        ]
+      }
+    },
+    {
+      "name": "trojan-grpc-empty",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    network: grpc\n    grpc-service-name: old\n    grpc-opts: {grpc-service-name: ''}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的嵌套 grpc-service-name 覆盖顶层值",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "fixture",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "type": "grpc"
+            },
+            "type": "trojan"
+          }
+        ],
+        "warnings": [
+          "节点「values」的嵌套 grpc-service-name 覆盖顶层值"
+        ]
+      }
+    },
+    {
+      "name": "trojan-http",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    network: http\n    http-opts: {path: [/one, /two], host: [first.test, second.test]}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "sing-box 客户端只接受一个请求路径；请明确指定要使用的路径",
+            "detail": "节点「values」的 HTTP 传输 path 列表仅使用首项",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "fixture",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "host": [
+                "first.test",
+                "second.test"
+              ],
+              "path": "/one",
+              "type": "http"
+            },
+            "type": "trojan"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 HTTP 传输 path 列表仅使用首项"
+        ]
+      }
+    },
+    {
+      "name": "trojan-h2-empty",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    network: h2\n    h2-opts: {path: [], host: []}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "fixture",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "host": [],
+              "type": "http"
+            },
+            "type": "trojan"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "trojan-httpupgrade",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    network: httpupgrade\n    httpupgrade-opts: {path: /upgrade, host: upgrade.test}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "fixture",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "host": "upgrade.test",
+              "path": "/upgrade",
+              "type": "httpupgrade"
+            },
+            "type": "trojan"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "trojan-unknown-transport",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    network: quic\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "把该节点的 network 换成 sing-box 支持的传输层（tcp/ws/grpc/http）",
+            "detail": "节点「values」的传输层 network:quic 暂不支持，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的传输层 network:quic 暂不支持，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-nested-unknown",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    network: ws\n    ws-opts: {unsupported: true}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；编译器不会省略未映射字段后改变线路语义",
+            "detail": "节点「values」的 unsupported 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unsupported 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-transport-before-tls",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    network: ws\n    ws-path: []\n    tls: true\n    client-fingerprint: random\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 ws-path 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 ws-path 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "trojan-global-fingerprint",
+      "yaml": "global-client-fingerprint: firefox\nproxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    tls: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "fixture",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "firefox"
+              }
+            },
+            "type": "trojan"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "trojan-dial-order",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture\n    tls: true\n    client-fingerprint: random\n    dialer-proxy: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "",
+            "detail": "节点「values」的 dialer-proxy 必须为非空出站名，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+          "节点「values」的 dialer-proxy 必须为非空出站名，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vmess-padding-false",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    cipher: AES-128-GCM\n    alterId: 0\n    global-padding: false\n    authenticated-length: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "authenticated_length": false,
+            "global_padding": false,
+            "security": "aes-128-gcm",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "vmess-bad-padding",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    global-padding: null\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 global-padding 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 global-padding 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vless-bad-encryption",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    encryption: unsupported\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 encryption 在固定内核中没有对应的加密实现，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 encryption 在固定内核中没有对应的加密实现，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "vless-empty-encryption",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    encryption: ''\n    flow: xtls-rprx-vision\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "flow": "xtls-rprx-vision",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    }
+  ]
+}

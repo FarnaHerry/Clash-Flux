@@ -628,7 +628,8 @@ struct DialogSurfaceContext {
 // 自定义内容弹窗的卡片包裹：SDK 的 dialog.Show(ViewFactory/DialogFactory) 不给
 // 内容加底板（只有标题+消息的内置形态才有 DialogStyle），统一包一层：
 // overlay 表面 + 阴影 + 描边 + 16pt 圆角 + 内边距。
-huxerui::View DialogCard(huxerui::View content);
+huxerui::View DialogCard(huxerui::View content, std::optional<float> contentPadding = {},
+    std::optional<float> cornerRadius = {});
 
 enum class DialogSize { Small, Form, Large };
 huxerui::View DialogHeader(huxerui::StringVariant title, huxerui::View actions = {},

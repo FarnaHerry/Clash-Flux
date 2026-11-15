@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "ss-sip002",
+      "format": "ss-sip002",
+      "protocol": "ss",
+      "native_type": "shadowsocks",
+      "schemes": [
+        "ss"
+      ],
+      "case_sensitive": false,
+      "legacy": false,
+      "name": "catalog fixture",
+      "input": "ss://aes-256-gcm:catalog%20key@example.test:443#catalog%20fixture",
+      "expected_node": {
+        "server": "example.test",
+        "server_port": 443,
+        "type": "shadowsocks",
+        "method": "aes-256-gcm",
+        "password": "catalog key"
+      },
+      "node_approx": 0
+    },
+    {
+      "id": "ss-legacy-base64",
+      "format": "ss-legacy-base64",
+      "protocol": "ss",
+      "native_type": "shadowsocks",
+      "schemes": [
+        "ss"
+      ],
+      "case_sensitive": false,
+      "legacy": true,
+      "name": "example-server",
+      "input": "ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTp0ZXN0LyFAIzpAMTkyLjE2OC4xMDAuMTo4ODg4#example-server",
+      "expected_node": {
+        "type": "shadowsocks",
+        "method": "chacha20-ietf-poly1305",
+        "password": "test/!@#:",
+        "server": "192.168.100.1",
+        "server_port": 8888
+      },
+      "node_approx": 0,
+      "source": "https://shadowsocks.org/doc/configs.html"
+    },
+    {
+      "id": "vmess-json",
+      "format": "vmess-json",
+      "protocol": "vmess",
+      "native_type": "vmess",
+      "schemes": [
+        "vmess"
+      ],
+      "case_sensitive": true,
+      "legacy": false,
+      "name": "catalog fixture",
+      "input": "vmess://eyJ2IjoiMiIsInBzIjoiY2F0YWxvZyBmaXh0dXJlIiwiYWRkIjoiZXhhbXBsZS50ZXN0IiwicG9ydCI6IjQ0MyIsImlkIjoiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwibmV0IjoidGNwIn0=",
+      "expected_node": {
+        "server": "example.test",
+        "server_port": 443,
+        "type": "vmess",
+        "uuid": "11111111-2222-3333-4444-555555555555",
+        "security": "auto",
+        "alter_id": 0
+      },
+      "node_approx": 0
+    },
+    {
+      "id": "vless-uri",
+      "format": "vless-uri",
+      "protocol": "vless",
+      "native_type": "vless",
+      "schemes": [
+        "vless"
+      ],
+      "case_sensitive": false,
+      "legacy": false,
+      "name": "catalog fixture",
+      "input": "vless://11111111-2222-3333-4444-555555555555@example.test:443#catalog%20fixture",
+      "expected_node": {
+        "server": "example.test",
+        "server_port": 443,
+        "type": "vless",
+        "uuid": "11111111-2222-3333-4444-555555555555"
+      },
+      "node_approx": 0
+    },
+    {
+      "id": "trojan-uri",
+      "format": "trojan-uri",
+      "protocol": "trojan",
+      "native_type": "trojan",
+      "schemes": [
+        "trojan"
+      ],
+      "case_sensitive": false,
+      "legacy": false,
+      "name": "catalog fixture",
+      "input": "trojan://catalog%20key@example.test:443#catalog%20fixture",
+      "expected_node": {
+        "server": "example.test",
+        "server_port": 443,
+        "type": "trojan",
+        "password": "catalog key",
+        "tls": {
+          "enabled": true,
+          "server_name": "example.test",
+          "utls": {
+            "enabled": true,
+            "fingerprint": "chrome"
+          }
+        }
+      },
+      "node_approx": 0
+    },
+    {
+      "id": "hysteria2-uri",
+      "format": "hysteria2-uri",
+      "protocol": "hysteria2",
+      "native_type": "hysteria2",
+      "schemes": [
+        "hysteria2",
+        "hy2"
+      ],
+      "case_sensitive": false,
+      "legacy": false,
+      "name": "catalog fixture",
+      "input": "hysteria2://catalog%20key@example.test#catalog%20fixture",
+      "expected_node": {
+        "server": "example.test",
+        "server_port": 443,
+        "type": "hysteria2",
+        "password": "catalog key",
+        "tls": {
+          "enabled": true,
+          "server_name": "example.test"
+        }
+      },
+      "node_approx": 0
+    },
+    {
+      "id": "tuic-v5-uri",
+      "format": "tuic-v5-uri",
+      "protocol": "tuic",
+      "native_type": "tuic",
+      "schemes": [
+        "tuic"
+      ],
+      "case_sensitive": false,
+      "legacy": false,
+      "name": "catalog fixture",
+      "input": "tuic://11111111-2222-3333-4444-555555555555:catalog%20key@example.test:443#catalog%20fixture",
+      "expected_node": {
+        "server": "example.test",
+        "server_port": 443,
+        "type": "tuic",
+        "uuid": "11111111-2222-3333-4444-555555555555",
+        "password": "catalog key",
+        "tls": {
+          "enabled": true,
+          "server_name": "example.test"
+        }
+      },
+      "node_approx": 0
+    },
+    {
+      "id": "anytls-uri",
+      "format": "anytls-uri",
+      "protocol": "anytls",
+      "native_type": "anytls",
+      "schemes": [
+        "anytls"
+      ],
+      "case_sensitive": false,
+      "legacy": false,
+      "name": "catalog fixture",
+      "input": "anytls://catalog%20key@example.test#catalog%20fixture",
+      "expected_node": {
+        "server": "example.test",
+        "server_port": 443,
+        "type": "anytls",
+        "password": "catalog key",
+        "tls": {
+          "enabled": true,
+          "server_name": "example.test",
+          "utls": {
+            "enabled": true,
+            "fingerprint": "chrome"
+          }
+        }
+      },
+      "node_approx": 0
+    },
+    {
+      "id": "vmess-json-tls-alias",
+      "format": "vmess-json",
+      "protocol": "vmess",
+      "native_type": "vmess",
+      "schemes": [
+        "vmess"
+      ],
+      "case_sensitive": true,
+      "legacy": false,
+      "name": "catalog fixture",
+      "input": "vmess://eyJ2IjoiMiIsInBzIjoiY2F0YWxvZyBmaXh0dXJlIiwiYWRkIjoiZXhhbXBsZS50ZXN0IiwicG9ydCI6IjQ0MyIsImlkIjoiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwibmV0IjoidGxzIiwidGxzIjoidGxzIiwiZnAiOiJyYW5kb20ifQ==",
+      "expected_node": {
+        "server": "example.test",
+        "server_port": 443,
+        "type": "vmess",
+        "uuid": "11111111-2222-3333-4444-555555555555",
+        "security": "auto",
+        "alter_id": 0,
+        "tls": {
+          "enabled": true,
+          "utls": {
+            "enabled": true,
+            "fingerprint": "random"
+          }
+        }
+      },
+      "node_approx": 2
+    }
+  ]
+}

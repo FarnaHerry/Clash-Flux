@@ -1,5 +1,5 @@
-// VMess JSON share links, raw or wrapped in subscription Base64. Keep original
-// profile bytes on disk; this bounded adapter only builds the compiler's input.
+// Node share links, raw or wrapped in subscription Base64. Keep original
+// profile bytes on disk; protocol values never round-trip through Clash YAML.
 constexpr std::size_t kNodeSubscriptionBytes = 8 * 1024 * 1024;
 constexpr std::size_t kNodeSubscriptionCount = 4096;
 
@@ -77,16 +77,38 @@ std::optional<std::string> nodeSubscriptionText(std::string_view text) {
     return std::nullopt;
 }
 
+#include "catalog.inc"
+#include "uri.inc"
+#include "legacy_ss.inc"
+#include "v2ray.inc"
+#include "secure.inc"
+
 struct NodeSubscriptionDocument {
-    YAML::Node root;
+    std::vector<protocol::NodeSpec> nodes;
+    YAML::Node root; // Generated selection policy only; never protocol nodes.
     std::vector<std::string> tlsTransportAliases;
+    std::vector<std::string> legacyShadowsocks;
 };
+
+YAML::Node nodeSubscriptionPolicy(const std::vector<protocol::NodeSpec>& nodes) {
+    std::set<std::string> names;
+    YAML::Node members(YAML::NodeType::Sequence);
+    for (const auto& node : nodes) {
+        names.insert(node.origin.name);
+        members.push_back(node.origin.name);
+    }
+    std::string groupName = "节点选择";
+    for (unsigned i = 2; names.contains(groupName); ++i) groupName = "节点选择 (" + std::to_string(i) + ")";
+    YAML::Node root(YAML::NodeType::Map), group(YAML::NodeType::Map);
+    group["name"] = groupName; group["type"] = "select"; group["proxies"] = members;
+    root["proxy-groups"].push_back(group);
+    root["rules"].push_back("MATCH," + groupName);
+    return root;
+}
 
 NodeSubscriptionDocument parseNodeSubscription(const std::string& text) {
     if (text.size() > kNodeSubscriptionBytes) throw std::runtime_error("节点订阅超过 8 MiB 上限");
     NodeSubscriptionDocument result;
-    result.root = YAML::Node(YAML::NodeType::Map);
-    YAML::Node proxies(YAML::NodeType::Sequence), members(YAML::NodeType::Sequence);
     std::set<std::string> names{"DIRECT", "REJECT", "REJECT-DROP"};
     std::istringstream lines(text.starts_with("\xEF\xBB\xBF") ? text.substr(3) : text);
     std::string line;
@@ -99,8 +121,40 @@ NodeSubscriptionDocument parseNodeSubscription(const std::string& text) {
             // Never put a URI, UUID, endpoint or decoded JSON into diagnostics.
             throw std::runtime_error(std::format("节点订阅第 {} 行：{}", lineNumber, reason));
         };
-        if (proxies.size() >= kNodeSubscriptionCount) fail("节点数量超过 4096 上限");
-        if (!line.starts_with("vmess://")) fail("目前仅支持 VMess JSON 分享链接，不能丢弃其它条目");
+        if (result.nodes.size() >= kNodeSubscriptionCount) fail("节点数量超过 4096 上限");
+        const auto delimiter = line.find("://");
+        const auto rawScheme = delimiter == std::string::npos ? std::string_view{} : std::string_view(line).substr(0, delimiter);
+        const auto kind = nodeInputKind(rawScheme);
+        const auto scheme = kind ? lowerCopy(std::string(rawScheme)) : std::string{};
+        const auto defaultName = [&](protocol::NodeSpec& node) {
+            if (node.origin.name.empty()) node.origin.name = std::string(nodeInputProtocol(*kind).defaultName) + std::to_string(result.nodes.size() + 1);
+        };
+        if (kind == NodeInputKind::Shadowsocks) {
+            const auto remainder = std::string_view(line).substr(delimiter + 3);
+            const bool legacy = nodeShadowsocksLegacy(remainder);
+            auto node = legacy ? parseNodeLegacyShadowsocks(remainder, fail) : parseNodeShadowsocks(remainder, fail);
+            defaultName(node);
+            if (!names.insert(node.origin.name).second) fail("节点名称重复或与内置出口重名");
+            if (legacy) result.legacyShadowsocks.push_back(node.origin.name);
+            result.nodes.push_back(std::move(node));
+            continue;
+        }
+        if (kind == NodeInputKind::Hysteria2 || kind == NodeInputKind::Tuic || kind == NodeInputKind::AnyTls) {
+            auto node = parseNodeSecureUri(std::string_view(line).substr(delimiter + 3), scheme, fail);
+            defaultName(node);
+            if (!names.insert(node.origin.name).second) fail("节点名称重复或与内置出口重名");
+            result.nodes.push_back(std::move(node));
+            continue;
+        }
+        if (kind == NodeInputKind::Vless || kind == NodeInputKind::Trojan) {
+            const bool vless = kind == NodeInputKind::Vless;
+            auto node = parseNodeV2RayUri(std::string_view(line).substr(delimiter + 3), vless, fail);
+            defaultName(node);
+            if (!names.insert(node.origin.name).second) fail("节点名称重复或与内置出口重名");
+            result.nodes.push_back(std::move(node));
+            continue;
+        }
+        if (kind != NodeInputKind::Vmess) fail("目前支持 SS/VMess/VLESS/Trojan/HY2/TUIC/AnyTLS 分享子集，不能丢弃其它条目");
         auto payload = decodeNodeBase64(std::string_view(line).substr(8), 64 * 1024);
         if (!payload) fail("VMess 链接的 Base64 无效或超过 64 KiB");
         std::set<std::string> fields;
@@ -152,18 +206,12 @@ NodeSubscriptionDocument parseNodeSubscription(const std::string& text) {
         (void)integer("v", 2, 2, 2);
         if (!string("vcn").empty() || !string("pcs").empty()) fail("尚不支持证书名称覆盖或证书指纹钉扎");
         auto name = trimCopy(string("ps"));
-        if (name.empty()) name = "VMess " + std::to_string(proxies.size() + 1);
+        if (name.empty()) name = std::string(nodeInputProtocol(*kind).defaultName) + std::to_string(result.nodes.size() + 1);
         if (!names.insert(name).second) fail("节点名称重复或与内置出口重名");
         const auto address = string("add"), uuid = string("id");
         if (address.empty() || std::ranges::any_of(address, [](unsigned char c) { return c <= 32; }))
             fail("add 必须为非空服务器地址");
-        if (uuid.size() != 36) fail("id 必须为标准 UUID");
-        for (std::size_t i = 0; i < uuid.size(); ++i) {
-            const char c = uuid[i];
-            const bool dash = i == 8 || i == 13 || i == 18 || i == 23;
-            if (dash ? c != '-' : !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
-                fail("id 必须为标准 UUID");
-        }
+        if (!nodeUriUuidValid(uuid)) fail("id 必须为标准 UUID");
         const int port = integer("port", 0, 1, 65535), alterId = integer("aid", 0, 0, 65535);
         if (!port) fail("缺少服务器端口");
         auto network = lowerCopy(string("net"));
@@ -190,23 +238,28 @@ NodeSubscriptionDocument parseNodeSubscription(const std::string& text) {
             fail("未启用 TLS，不能应用 TLS 字段");
         if (network == "tcp" && !path.empty() && path != "/") fail("TCP 不支持传输路径");
         if (network == "grpc" && !host.empty()) fail("gRPC authority 尚无等价映射");
-        YAML::Node proxy(YAML::NodeType::Map);
-        proxy["name"] = name; proxy["type"] = "vmess";
-        proxy["server"] = address; proxy["port"] = port; proxy["uuid"] = uuid;
-        proxy["alterId"] = alterId;
-        const auto cipher = string("scy");
-        proxy["cipher"] = cipher.empty() ? "auto" : cipher;
-        proxy["network"] = network;
-        proxy["tls"] = tlsEnabled;
+        protocol::NodeSpec node;
+        node.origin.name = name;
+        node.server = address;
+        node.port = static_cast<std::uint16_t>(port);
+        protocol::VmessOptions options;
+        options.uuid = uuid;
+        options.alterId = alterId;
+        options.security = lowerCopy(trimCopy(string("scy")));
+        if (options.security.empty()) options.security = "auto";
+        node.options = std::move(options);
+        node.tls.declaredEnabled = tlsEnabled;
+        node.tls.enabled = tlsEnabled;
         if (tlsEnabled) {
             // Match established VMess client behavior: explicit SNI wins,
             // otherwise the first transport host supplies the TLS server name.
             if (sni.empty()) sni = trimCopy(std::string_view(host).substr(0, host.find(',')));
-            if (!sni.empty()) proxy["servername"] = sni;
-            if (insecure || allowInsecure) proxy["skip-cert-verify"] = true;
-            if (!fingerprint.empty()) proxy["client-fingerprint"] = fingerprint;
+            if (!sni.empty()) node.tls.serverName = sni;
+            if (insecure || allowInsecure) node.tls.verifyPeer = false;
+            node.tls.fingerprint = fingerprint;
+            node.tls.inheritFingerprint = fingerprint.empty();
             if (!alpn.empty()) {
-                YAML::Node protocols(YAML::NodeType::Sequence);
+                std::vector<std::string> protocols;
                 std::size_t start = 0;
                 for (;;) {
                     const auto end = alpn.find(',', start);
@@ -217,17 +270,19 @@ NodeSubscriptionDocument parseNodeSubscription(const std::string& text) {
                     if (end == std::string::npos) break;
                     start = end + 1;
                 }
-                proxy["alpn"] = protocols;
+                node.tls.alpn = std::move(protocols);
             }
         }
         if (network == "ws") {
-            if (!path.empty()) proxy["ws-opts"]["path"] = path;
-            if (!host.empty()) proxy["ws-opts"]["headers"]["Host"] = host;
+            protocol::WebSocketTransport transport;
+            if (!path.empty()) transport.path = path;
+            if (!host.empty()) transport.headers = std::map<std::string, std::string>{{"Host", host}};
+            node.transport = std::move(transport);
         } else if (network == "h2" || network == "http") {
-            const char* options = network == "h2" ? "h2-opts" : "http-opts";
-            if (!path.empty()) proxy[options]["path"].push_back(path);
+            protocol::HttpTransport transport;
+            if (!path.empty()) transport.path = path;
             if (!host.empty()) {
-                YAML::Node hosts(YAML::NodeType::Sequence);
+                std::vector<std::string> hosts;
                 std::size_t start = 0;
                 for (;;) {
                     const auto end = host.find(',', start);
@@ -238,19 +293,18 @@ NodeSubscriptionDocument parseNodeSubscription(const std::string& text) {
                     if (end == std::string::npos) break;
                     start = end + 1;
                 }
-                proxy[options]["host"] = hosts;
+                transport.hosts = std::move(hosts);
             }
-        } else if (network == "grpc" && !path.empty()) proxy["grpc-opts"]["grpc-service-name"] = path;
-        proxies.push_back(proxy); members.push_back(name);
+            node.transport = std::move(transport);
+        } else if (network == "grpc") {
+            protocol::GrpcTransport transport;
+            if (!path.empty()) transport.serviceName = path;
+            node.transport = std::move(transport);
+        }
+        result.nodes.push_back(std::move(node));
     }
-    if (proxies.size() == 0) throw std::runtime_error("节点订阅中没有可用节点");
-    std::string groupName = "节点选择";
-    for (unsigned i = 2; names.contains(groupName); ++i) groupName = "节点选择 (" + std::to_string(i) + ")";
-    result.root["proxies"] = proxies;
-    YAML::Node group(YAML::NodeType::Map);
-    group["name"] = groupName; group["type"] = "select"; group["proxies"] = members;
-    result.root["proxy-groups"].push_back(group);
-    result.root["rules"].push_back("MATCH," + groupName);
+    if (result.nodes.empty()) throw std::runtime_error("节点订阅中没有可用节点");
+    result.root = nodeSubscriptionPolicy(result.nodes);
     return result;
 }
 

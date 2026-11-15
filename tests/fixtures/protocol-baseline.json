@@ -1,0 +1,3120 @@
+{
+  "snapshot": "894a808 + pre-P1 worktree",
+  "source_sha256": "974f61328a05514c2bad4765cbc9558f3a599041275eea1a25e298829d4a1a19",
+  "cases": [
+    {
+      "name": "valid-ss",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: ss\n    cipher: aes-128-gcm\n    password: ' fixture secret '\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-128-gcm",
+            "password": " fixture secret ",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "shadowsocks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "unsupported-field-ss",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: ss\n    cipher: aes-128-gcm\n    password: ' fixture secret '\n    unmapped-constraint: fixture\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unmapped-constraint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unmapped-constraint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "valid-vmess",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    alterId: 0\n    tls: true\n    network: ws\n    ws-opts: {path: /socket, headers: {Host: edge.example.test}}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "alter_id": 0,
+            "security": "auto",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "transport": {
+              "headers": {
+                "Host": "edge.example.test"
+              },
+              "path": "/socket",
+              "type": "ws"
+            },
+            "type": "vmess",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "unsupported-field-vmess",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vmess\n    uuid: 11111111-2222-3333-4444-555555555555\n    alterId: 0\n    tls: true\n    network: ws\n    ws-opts: {path: /socket, headers: {Host: edge.example.test}}\n    unmapped-constraint: fixture\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unmapped-constraint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unmapped-constraint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "valid-vless",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    encryption: none\n    tls: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "vless",
+            "uuid": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "unsupported-field-vless",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: vless\n    uuid: 11111111-2222-3333-4444-555555555555\n    encryption: none\n    tls: false\n    unmapped-constraint: fixture\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unmapped-constraint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unmapped-constraint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "valid-trojan",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture-secret\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "fixture-secret",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "trojan"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "unsupported-field-trojan",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: trojan\n    password: fixture-secret\n    unmapped-constraint: fixture\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unmapped-constraint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unmapped-constraint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "valid-hysteria",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: hysteria\n    auth-str: fixture-auth\n    up: 30 Mbps\n    down: 3 MBps\n    recv-window: 1048576\n    recv-window-conn: 2097152\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "auth_str": "fixture-auth",
+            "connection_receive_window": 1048576,
+            "down_mbps": 24,
+            "server": "example.test",
+            "server_port": 443,
+            "stream_receive_window": 2097152,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true
+            },
+            "type": "hysteria",
+            "up_mbps": 30
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "unsupported-field-hysteria",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: hysteria\n    auth-str: fixture-auth\n    up: 30 Mbps\n    down: 3 MBps\n    recv-window: 1048576\n    recv-window-conn: 2097152\n    unmapped-constraint: fixture\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unmapped-constraint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unmapped-constraint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "valid-hysteria2",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: hysteria2\n    password: fixture-secret\n    ports: 24000-24002\n    hop-interval: 30\n    obfs: salamander\n    obfs-password: fixture-obfs\n    udp: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "hop_interval": "30s",
+            "hop_interval_max": "30s",
+            "network": "tcp",
+            "obfs": {
+              "password": "fixture-obfs",
+              "type": "salamander"
+            },
+            "password": "fixture-secret",
+            "server": "example.test",
+            "server_ports": [
+              "24000:24002"
+            ],
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true
+            },
+            "type": "hysteria2"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "unsupported-field-hysteria2",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: hysteria2\n    password: fixture-secret\n    ports: 24000-24002\n    hop-interval: 30\n    obfs: salamander\n    obfs-password: fixture-obfs\n    udp: false\n    unmapped-constraint: fixture\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unmapped-constraint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unmapped-constraint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "valid-tuic",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: tuic\n    uuid: 11111111-2222-3333-4444-555555555555\n    password: fixture-secret\n    alpn: [h3]\n    disable-sni: true\n    reduce-rtt: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "fixture-secret",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "alpn": [
+                "h3"
+              ],
+              "disable_sni": true,
+              "enabled": true
+            },
+            "type": "tuic",
+            "uuid": "11111111-2222-3333-4444-555555555555",
+            "zero_rtt_handshake": true
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "unsupported-field-tuic",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: tuic\n    uuid: 11111111-2222-3333-4444-555555555555\n    password: fixture-secret\n    alpn: [h3]\n    disable-sni: true\n    reduce-rtt: true\n    unmapped-constraint: fixture\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unmapped-constraint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unmapped-constraint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "valid-http",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    username: ' fixture user '\n    password: ' fixture pass '\n    tls: true\n    sni: proxy.example.test\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": " fixture pass ",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "server_name": "proxy.example.test",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "http",
+            "username": " fixture user "
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "unsupported-field-http",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    username: ' fixture user '\n    password: ' fixture pass '\n    tls: true\n    sni: proxy.example.test\n    unmapped-constraint: fixture\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unmapped-constraint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unmapped-constraint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "valid-socks5",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    username: ''\n    password: ' fixture pass '\n    udp: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "network": "tcp",
+            "password": " fixture pass ",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "socks",
+            "username": ""
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "unsupported-field-socks5",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    username: ''\n    password: ' fixture pass '\n    udp: false\n    unmapped-constraint: fixture\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unmapped-constraint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unmapped-constraint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "valid-ssh",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: ssh\n    username: fixture-user\n    password: ' fixture pass '\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": " fixture pass ",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "ssh",
+            "user": "fixture-user"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "unsupported-field-ssh",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: ssh\n    username: fixture-user\n    password: ' fixture pass '\n    unmapped-constraint: fixture\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unmapped-constraint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unmapped-constraint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "valid-anytls",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: anytls\n    password: fixture-secret\n    udp: true\n    idle-session-timeout: 10\n    min-idle-session: 1\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "idle_session_timeout": "10s",
+            "min_idle_session": 1,
+            "password": "fixture-secret",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "anytls"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "unsupported-field-anytls",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: anytls\n    password: fixture-secret\n    udp: true\n    idle-session-timeout: 10\n    min-idle-session: 1\n    unmapped-constraint: fixture\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；编译器不会省略未映射字段后改变线路语义",
+            "detail": "节点「values」的 unmapped-constraint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unmapped-constraint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "valid-snell",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: snell\n    version: 4\n    psk: fixture-secret\n    udp: true\n    obfs-opts: {mode: http, host: edge.example.test}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "obfs_host": "edge.example.test",
+            "obfs_mode": "http",
+            "psk": "fixture-secret",
+            "reuse": false,
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "snell",
+            "version": 4
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "unsupported-field-snell",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: snell\n    version: 4\n    psk: fixture-secret\n    udp: true\n    obfs-opts: {mode: http, host: edge.example.test}\n    unmapped-constraint: fixture\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；编译器不会省略未映射字段后改变线路语义",
+            "detail": "节点「values」的 unmapped-constraint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unmapped-constraint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-absent",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "http"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "http-empty-creds",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    username: ''\n    password: ''\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "http",
+            "username": ""
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "http-scalar-creds",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    username: 123\n    password: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "false",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "http",
+            "username": "123"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "http-username-invalid",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    username: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 username 必须为凭据字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 username 必须为凭据字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-password-null",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    password: null\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 password 必须为凭据字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 password 必须为凭据字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-udp-true",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    udp: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "http 节点「values」启用了 UDP，但原生出站仅转发 TCP",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "http"
+          }
+        ],
+        "warnings": [
+          "http 节点「values」启用了 UDP，但原生出站仅转发 TCP"
+        ]
+      }
+    },
+    {
+      "name": "http-udp-false",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    udp: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "http"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "http-udp-invalid",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    udp: nope\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 udp 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 udp 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-tls-false",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "http"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "http-tls-true",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "http"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "http-tls-invalid",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: null\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 tls 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-tls-off-fields",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: false\n    sni: x\n    servername: y\n    skip-cert-verify: false\n    alpn: [h2]\n    client-fingerprint: firefox\n    reality-opts: {public-key: fixture}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」同时指定不同的 sni/servername，使用 servername",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 sni 不能在未启用 TLS 时应用，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 servername 不能在未启用 TLS 时应用，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 skip-cert-verify 不能在未启用 TLS 时应用，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 alpn 不能在未启用 TLS 时应用，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 client-fingerprint 不能在未启用 TLS 时应用，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 reality-opts 不能在未启用 TLS 时应用，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」同时指定不同的 sni/servername，使用 servername",
+          "节点「values」的 sni 不能在未启用 TLS 时应用，已跳过",
+          "节点「values」的 servername 不能在未启用 TLS 时应用，已跳过",
+          "节点「values」的 skip-cert-verify 不能在未启用 TLS 时应用，已跳过",
+          "节点「values」的 alpn 不能在未启用 TLS 时应用，已跳过",
+          "节点「values」的 client-fingerprint 不能在未启用 TLS 时应用，已跳过",
+          "节点「values」的 reality-opts 不能在未启用 TLS 时应用，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-sni-implicit",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    sni: example.test\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "server_name": "example.test",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "http"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "http-sni-empty",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    sni: ''\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 sni 不能在未启用 TLS 时应用，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 sni 不能在未启用 TLS 时应用，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-sni-null",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    sni: null\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 sni 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 sni 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-servername-override",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\n    sni: first.test\n    servername: second.test\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」同时指定不同的 sni/servername，使用 servername",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "server_name": "second.test",
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "http"
+          }
+        ],
+        "warnings": [
+          "节点「values」同时指定不同的 sni/servername，使用 servername"
+        ]
+      }
+    },
+    {
+      "name": "http-empty-alpn",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\n    alpn: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "alpn": [],
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "http"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "http-empty-alpn-string",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\n    alpn: ''\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 alpn 不能为空，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 alpn 不能为空，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-scalar-alpn",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\n    alpn: h2\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "alpn": [
+                "h2"
+              ],
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "http"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "http-bad-alpn",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\n    alpn: [h2, {}]\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 alpn[1] 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 alpn[1] 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-long-alpn",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\n    alpn: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 alpn 协议名长度必须为 1–255 字节，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 alpn 协议名长度必须为 1–255 字节，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-fingerprint-random",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\n    client-fingerprint: random\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "random"
+              }
+            },
+            "type": "http"
+          }
+        ],
+        "warnings": [
+          "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致"
+        ]
+      }
+    },
+    {
+      "name": "http-fingerprint-alias",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\n    client-fingerprint: chrome_psk\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "固定 1.14.2 不保留这些 PSK/PQ 别名差异；需要区别时请更换配置",
+            "detail": "节点「values」的指纹别名在固定内核中按普通 chrome 处理",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome_psk"
+              }
+            },
+            "type": "http"
+          }
+        ],
+        "warnings": [
+          "节点「values」的指纹别名在固定内核中按普通 chrome 处理"
+        ]
+      }
+    },
+    {
+      "name": "http-fingerprint-bad",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\n    client-fingerprint: unsupported\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 client-fingerprint 不是固定内核支持的指纹，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 client-fingerprint 不是固定内核支持的指纹，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-fingerprint-and-reality-bad",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\n    client-fingerprint: unsupported\n    reality-opts: {public-key: []}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 client-fingerprint 不是固定内核支持的指纹，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 client-fingerprint 不是固定内核支持的指纹，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-fingerprint-and-reality-error",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\n    client-fingerprint: random\n    reality-opts: {public-key: []}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 reality-opts.public-key 必须为字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+          "节点「values」的 reality-opts.public-key 必须为字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-reality",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\n    reality-opts: {public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA, short-id: abcd}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "reality": {
+                "enabled": true,
+                "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "short_id": "abcd"
+              },
+              "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+              }
+            },
+            "type": "http"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "http-dial-false",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tfo: false\n    mptcp: false\n    routing-mark: 0\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "routing_mark": 0,
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tcp_fast_open": false,
+            "tcp_multi_path": false,
+            "type": "http"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "http-dial-detour",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    dialer-proxy: DIRECT\n    interface-name: eth-test\n    routing-mark: 4294967295\n    tfo: true\n    mptcp: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "物理网络选项需要放到代理链最终拨号的出站；不会自动迁移或继承这些字段",
+            "detail": "节点「values」使用 dialer-proxy，内核会忽略本节点的接口、路由标记及 TCP 拨号选项",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "bind_interface": "eth-test",
+            "detour": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "routing_mark": 4294967295,
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tcp_fast_open": true,
+            "tcp_multi_path": true,
+            "type": "http"
+          }
+        ],
+        "warnings": [
+          "节点「values」使用 dialer-proxy，内核会忽略本节点的接口、路由标记及 TCP 拨号选项"
+        ]
+      }
+    },
+    {
+      "name": "http-dial-mptcp",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    mptcp: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "实际多路径还依赖操作系统与对端；不能承诺所有地址族都启用 MPTCP",
+            "detail": "节点「values」已启用原生 TCP Multi Path；1.14.2 普通 IPv6 拨号路径未启用此选项",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tcp_multi_path": true,
+            "type": "http"
+          }
+        ],
+        "warnings": [
+          "节点「values」已启用原生 TCP Multi Path；1.14.2 普通 IPv6 拨号路径未启用此选项"
+        ]
+      }
+    },
+    {
+      "name": "http-dial-invalid-bool",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tfo: null\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 tfo 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tfo 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-dial-empty",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    dialer-proxy: ' '\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的 dialer-proxy 必须为非空出站名，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 dialer-proxy 必须为非空出站名，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-dial-invalid-name",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    dialer-proxy: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的 dialer-proxy 必须为非空出站名，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 dialer-proxy 必须为非空出站名，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-dial-invalid-mark",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    routing-mark: 4294967296\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的 routing-mark 必须在 0–4294967295 之间，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 routing-mark 必须在 0–4294967295 之间，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-dial-invalid-interface",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    interface-name: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的 interface-name 必须为接口名字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 interface-name 必须为接口名字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-dial-precedence",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\n    client-fingerprint: random\n    interface-name: []\n    routing-mark: bad\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "",
+            "detail": "节点「values」的 interface-name 必须为接口名字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」使用内核 random 指纹，其抽样分布与 Clash 不保证一致",
+          "节点「values」的 interface-name 必须为接口名字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-dial-missing",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    dialer-proxy: missing\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "出站「values」依赖的「missing」未成功编译",
+        "fidelity": [
+          {
+            "action": "修正引用或代理链；编译器不会移除 detour 后改成直连",
+            "detail": "出站「values」依赖的「missing」未成功编译",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": null,
+        "warnings": [
+          "出站「values」依赖的「missing」未成功编译"
+        ]
+      }
+    },
+    {
+      "name": "http-unknown-fields",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    unknown-a: x\n    unknown-b: y\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unknown-a 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unknown-b 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unknown-a 尚未映射，已跳过",
+          "节点「values」的 unknown-b 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-bad-map-key",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    ? [bad, key]\n    : value\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 (无效字段名) 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 (无效字段名) 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-absent",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "socks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "socks5-empty-creds",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    username: ''\n    password: ''\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "socks",
+            "username": ""
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "socks5-scalar-creds",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    username: 123\n    password: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "password": "false",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "socks",
+            "username": "123"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "socks5-username-invalid",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    username: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 username 必须为凭据字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 username 必须为凭据字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-password-null",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    password: null\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "修正该字段后重新导入；不会删掉异常成员后保留部分线路配置",
+            "detail": "节点「values」的 password 必须为凭据字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 password 必须为凭据字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-udp-true",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    udp: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "socks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "socks5-udp-false",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    udp: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "network": "tcp",
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "socks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "socks5-udp-invalid",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    udp: nope\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 udp 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 udp 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-tls-false",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: false\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-tls-true",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-tls-invalid",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: null\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-tls-off-fields",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: false\n    sni: x\n    servername: y\n    skip-cert-verify: false\n    alpn: [h2]\n    client-fingerprint: firefox\n    reality-opts: {public-key: fixture}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 sni 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 servername 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 skip-cert-verify 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 alpn 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 client-fingerprint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 reality-opts 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过",
+          "节点「values」的 sni 尚未映射，已跳过",
+          "节点「values」的 servername 尚未映射，已跳过",
+          "节点「values」的 skip-cert-verify 尚未映射，已跳过",
+          "节点「values」的 alpn 尚未映射，已跳过",
+          "节点「values」的 client-fingerprint 尚未映射，已跳过",
+          "节点「values」的 reality-opts 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-sni-implicit",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    sni: example.test\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 sni 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 sni 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-sni-empty",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    sni: ''\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 sni 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 sni 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-sni-null",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    sni: null\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 sni 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 sni 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-servername-override",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: true\n    sni: first.test\n    servername: second.test\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 sni 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 servername 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过",
+          "节点「values」的 sni 尚未映射，已跳过",
+          "节点「values」的 servername 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-empty-alpn",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: true\n    alpn: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 alpn 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过",
+          "节点「values」的 alpn 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-empty-alpn-string",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: true\n    alpn: ''\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 alpn 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过",
+          "节点「values」的 alpn 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-scalar-alpn",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: true\n    alpn: h2\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 alpn 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过",
+          "节点「values」的 alpn 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-bad-alpn",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: true\n    alpn: [h2, {}]\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 alpn 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过",
+          "节点「values」的 alpn 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-long-alpn",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: true\n    alpn: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 alpn 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过",
+          "节点「values」的 alpn 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-fingerprint-random",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: true\n    client-fingerprint: random\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 client-fingerprint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过",
+          "节点「values」的 client-fingerprint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-fingerprint-alias",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: true\n    client-fingerprint: chrome_psk\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 client-fingerprint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过",
+          "节点「values」的 client-fingerprint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-fingerprint-bad",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: true\n    client-fingerprint: unsupported\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 client-fingerprint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过",
+          "节点「values」的 client-fingerprint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-fingerprint-and-reality-bad",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: true\n    client-fingerprint: unsupported\n    reality-opts: {public-key: []}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 client-fingerprint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 reality-opts 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过",
+          "节点「values」的 client-fingerprint 尚未映射，已跳过",
+          "节点「values」的 reality-opts 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-fingerprint-and-reality-error",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: true\n    client-fingerprint: random\n    reality-opts: {public-key: []}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 client-fingerprint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 reality-opts 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过",
+          "节点「values」的 client-fingerprint 尚未映射，已跳过",
+          "节点「values」的 reality-opts 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-reality",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: true\n    reality-opts: {public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA, short-id: abcd}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 reality-opts 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过",
+          "节点「values」的 reality-opts 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-dial-false",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tfo: false\n    mptcp: false\n    routing-mark: 0\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "routing_mark": 0,
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tcp_fast_open": false,
+            "tcp_multi_path": false,
+            "type": "socks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "socks5-dial-detour",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    dialer-proxy: DIRECT\n    interface-name: eth-test\n    routing-mark: 4294967295\n    tfo: true\n    mptcp: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "物理网络选项需要放到代理链最终拨号的出站；不会自动迁移或继承这些字段",
+            "detail": "节点「values」使用 dialer-proxy，内核会忽略本节点的接口、路由标记及 TCP 拨号选项",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "bind_interface": "eth-test",
+            "detour": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "routing_mark": 4294967295,
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tcp_fast_open": true,
+            "tcp_multi_path": true,
+            "type": "socks"
+          }
+        ],
+        "warnings": [
+          "节点「values」使用 dialer-proxy，内核会忽略本节点的接口、路由标记及 TCP 拨号选项"
+        ]
+      }
+    },
+    {
+      "name": "socks5-dial-mptcp",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    mptcp: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "实际多路径还依赖操作系统与对端；不能承诺所有地址族都启用 MPTCP",
+            "detail": "节点「values」已启用原生 TCP Multi Path；1.14.2 普通 IPv6 拨号路径未启用此选项",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tcp_multi_path": true,
+            "type": "socks"
+          }
+        ],
+        "warnings": [
+          "节点「values」已启用原生 TCP Multi Path；1.14.2 普通 IPv6 拨号路径未启用此选项"
+        ]
+      }
+    },
+    {
+      "name": "socks5-dial-invalid-bool",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tfo: null\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "使用 true/false，避免无效字段被当成关闭状态",
+            "detail": "节点「values」的 tfo 不是有效布尔值，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tfo 不是有效布尔值，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-dial-empty",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    dialer-proxy: ' '\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的 dialer-proxy 必须为非空出站名，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 dialer-proxy 必须为非空出站名，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-dial-invalid-name",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    dialer-proxy: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的 dialer-proxy 必须为非空出站名，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 dialer-proxy 必须为非空出站名，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-dial-invalid-mark",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    routing-mark: 4294967296\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的 routing-mark 必须在 0–4294967295 之间，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 routing-mark 必须在 0–4294967295 之间，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-dial-invalid-interface",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    interface-name: []\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」的 interface-name 必须为接口名字符串，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 interface-name 必须为接口名字符串，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-dial-precedence",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    tls: true\n    client-fingerprint: random\n    interface-name: []\n    routing-mark: bad\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 tls 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 client-fingerprint 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 tls 尚未映射，已跳过",
+          "节点「values」的 client-fingerprint 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-dial-missing",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    dialer-proxy: missing\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "出站「values」依赖的「missing」未成功编译",
+        "fidelity": [
+          {
+            "action": "修正引用或代理链；编译器不会移除 detour 后改成直连",
+            "detail": "出站「values」依赖的「missing」未成功编译",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": null,
+        "warnings": [
+          "出站「values」依赖的「missing」未成功编译"
+        ]
+      }
+    },
+    {
+      "name": "socks5-unknown-fields",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    unknown-a: x\n    unknown-b: y\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unknown-a 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          },
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 unknown-b 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 unknown-a 尚未映射，已跳过",
+          "节点「values」的 unknown-b 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "socks5-bad-map-key",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\n    ? [bad, key]\n    : value\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请用原生 sing-box JSON 表达该线路；不会省略证书约束或组合传输后改变线路语义",
+            "detail": "节点「values」的 (无效字段名) 尚未映射，已跳过",
+            "level": 2,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "warnings": [
+          "节点「values」的 (无效字段名) 尚未映射，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "http-global-default",
+      "yaml": "global-client-fingerprint: firefox\nproxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "firefox"
+              }
+            },
+            "type": "http"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "http-global-overridden",
+      "yaml": "global-client-fingerprint: firefox\nproxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    tls: true\n    client-fingerprint: safari\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "tls": {
+              "enabled": true,
+              "utls": {
+                "enabled": true,
+                "fingerprint": "safari"
+              }
+            },
+            "type": "http"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "socks-global-unused",
+      "yaml": "global-client-fingerprint: firefox\nproxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: socks5\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "outbounds": [
+          {
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "server": "example.test",
+            "server_port": 443,
+            "tag": "cf_70726f746f636f6c2d626173656c696e65_o_76616c756573",
+            "type": "socks"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "http-late-yaml-exception",
+      "yaml": "proxies:\n  - name: values\n    server: example.test\n    port: 443\n    type: http\n    dialer-proxy: ''\n    servername: other.test\n    routing-mark: 9\n    sni: sni.test\n    reality-opts: {}\nrules:\n  - MATCH,DIRECT\n",
+      "expected": {
+        "error": "订阅 YAML 解析失败：invalid node; first invalid key: \"public-key\"",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "节点「values」同时指定不同的 sni/servername，使用 servername",
+            "level": 1,
+            "scope": 0,
+            "sourceId": "protocol-baseline",
+            "subject": "values"
+          }
+        ],
+        "outbounds": null,
+        "warnings": [
+          "节点「values」同时指定不同的 sni/servername，使用 servername"
+        ]
+      }
+    }
+  ]
+}

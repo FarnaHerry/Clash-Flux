@@ -112,43 +112,53 @@ bool appendProxyProviderNodes(Context& ctx, const std::string& content,
         ProxyTextFilters filters;
         if (declaration && !compileProxyTextFilters(declaration->filter,
                 declaration->excludeFilter, declaration->excludeType, filters, failure)) return false;
-        YAML::Node root;
-        if (nodeSubscriptionText(content)) {
-            root = loadClashProfileDocument(content);
+        using ProviderNode = std::variant<YAML::Node, protocol::NodeSpec>;
+        std::vector<ProviderNode> candidates;
+        std::set<std::string> tlsTransportAliases;
+        std::set<std::string> legacyShadowsocks;
+        if (auto text = nodeSubscriptionText(content)) {
+            auto document = parseNodeSubscription(*text);
+            for (auto& name : document.tlsTransportAliases) tlsTransportAliases.insert(std::move(name));
+            for (auto& name : document.legacyShadowsocks) legacyShadowsocks.insert(std::move(name));
+            for (auto& node : document.nodes) candidates.emplace_back(std::move(node));
         } else {
             const auto documents = YAML::LoadAll(content);
             if (documents.size() != 1) {
                 failure = "代理集合必须为单个文档";
                 return false;
             }
-            root = documents.front();
-        }
-        if (!root.IsMap() || !root["proxies"] || !root["proxies"].IsSequence() ||
-            root["proxies"].size() == 0 || root["proxies"].size() > 4096) {
-            failure = "代理集合必须包含 1–4096 个 proxies 节点";
-            return false;
-        }
-        unsigned declarations = 0;
-        for (const auto& field : root)
-            if (field.first.IsScalar() && field.first.Scalar() == "proxies" && ++declarations > 1) {
-                failure = "代理集合含重复 proxies 字段";
+            const auto& root = documents.front();
+            if (!root.IsMap() || !root["proxies"] || !root["proxies"].IsSequence() ||
+                root["proxies"].size() == 0 || root["proxies"].size() > 4096) {
+                failure = "代理集合必须包含 1–4096 个 proxies 节点";
                 return false;
             }
-        std::vector<YAML::Node> eligible;
+            unsigned declarations = 0;
+            for (const auto& field : root)
+                if (field.first.IsScalar() && field.first.Scalar() == "proxies" && ++declarations > 1) {
+                    failure = "代理集合含重复 proxies 字段";
+                    return false;
+                }
+            for (const auto& proxy : root["proxies"]) {
+                if (!proxy.IsMap()) {
+                    failure = "代理集合包含非对象节点";
+                    return false;
+                }
+                candidates.emplace_back(YAML::Node(proxy));
+            }
+        }
+        std::vector<ProviderNode> eligible;
         std::vector<std::string> names;
-        for (const auto& proxy : root["proxies"]) {
-            if (!proxy.IsMap()) {
-                failure = "代理集合包含非对象节点";
-                return false;
-            }
-            const auto type = lowerCopy(ytext(proxy, "type"));
-            const auto name = ytext(proxy, "name");
+        for (auto& candidate : candidates) {
+            const auto* proxy = std::get_if<YAML::Node>(&candidate);
+            const auto type = proxy ? lowerCopy(ytext(*proxy, "type")) : std::string(nodeSubscriptionType(std::get<protocol::NodeSpec>(candidate)));
+            const auto name = proxy ? ytext(*proxy, "name") : std::get<protocol::NodeSpec>(candidate).origin.name;
             if (filters.excludeTypes.contains(type) || proxyFilterExcluded(filters, name)) continue;
             if (name.size() > 1024 && (!filters.include.empty() || !filters.exclude.empty())) {
                 failure = "筛选节点名称超过 1024 字节";
                 return false;
             }
-            eligible.push_back(proxy);
+            eligible.push_back(std::move(candidate));
             names.push_back(name);
         }
         std::vector<std::size_t> selected;
@@ -161,9 +171,19 @@ bool appendProxyProviderNodes(Context& ctx, const std::string& content,
                 return false;
             }
         }
+        if (ctx.cancelled()) return false;
+        // Keep format compatibility notes for participating URI nodes, including
+        // when a later node fails. Filtered-out aliases do not enter the ledger.
+        for (const auto index : selected)
+            if (tlsTransportAliases.contains(names[index])) noteNodeSubscriptionTlsAlias(ctx, names[index]);
+        for (const auto index : selected)
+            if (legacyShadowsocks.contains(names[index])) noteNodeSubscriptionLegacySs(ctx);
         for (const auto index : selected) {
             if (ctx.cancelled()) return false;
-            auto converted = convertProxy(ctx, eligible[index]);
+            auto& candidate = eligible[index];
+            auto converted = std::holds_alternative<YAML::Node>(candidate)
+                ? convertProxy(ctx, std::get<YAML::Node>(candidate))
+                : convertProtocolNode(ctx, std::move(std::get<protocol::NodeSpec>(candidate)));
             if (!converted) {
                 failure = "代理集合包含无法完整转换或重名的节点";
                 return false;

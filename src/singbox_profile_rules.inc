@@ -31,7 +31,7 @@ ProfileRule clashProfileRule(std::string raw) {
         row.terminal = row.editable = true; row.target = (*parts)[1];
     } else if (parts->size() >= 3) {
         row.pattern = (*parts)[1]; row.target = (*parts)[2];
-        const std::map<std::string, std::string> kinds{{"domain", "domain"},
+        static const std::map<std::string, std::string> kinds{{"domain", "domain"},
             {"domain-suffix", "domain_suffix"}, {"ip-cidr", "ip_cidr"},
             {"ip-cidr6", "ip_cidr"}, {"domain-keyword", "domain_keyword"},
             {"domain-regex", "domain_regex"}, {"process-name", "process_name"}};
@@ -46,6 +46,7 @@ ProfileRule clashProfileRule(std::string raw) {
 std::vector<ProfileRule> clashProfileRules(const YAML::Node& root) {
     std::vector<ProfileRule> rows;
     if (const auto rules = root["rules"]; rules && rules.IsSequence()) {
+        rows.reserve(rules.size() + 1);
         for (const auto& rule : rules) {
             if (rule.IsScalar()) rows.push_back(clashProfileRule(rule.Scalar()));
             else rows.push_back({.anchor = "clash:" + YAML::Dump(rule), .raw = YAML::Dump(rule), .type = "YAML"});
@@ -108,14 +109,26 @@ ProfileRules personalRulePlan(std::vector<ProfileRule> rows, const ProfileRuleEd
     ProfileRules result;
     if (!ValidateProfileRuleEdits(edits, result.error)) return result;
     std::set<std::string> anchors;
+    // Anchors never change while applying edits. Count/index them once rather
+    // than scanning the complete rule table twice for every personal edit.
+    std::unordered_map<std::string_view, std::pair<std::size_t, std::size_t>> indexed;
+    if (std::ranges::any_of(edits.rules, [](const auto& edit) {
+        return edit.enabled && (edit.operation == "replace" || edit.operation == "disable");
+    })) {
+        indexed.reserve(rows.size());
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            auto [it, inserted] = indexed.try_emplace(rows[i].anchor, i, 0);
+            ++it->second.second;
+        }
+    }
     for (const auto& edit : edits.rules) {
         if (edit.operation != "replace" && edit.operation != "disable") continue;
         if (!edit.enabled) continue;
-        const auto count = std::ranges::count(rows, edit.anchor, &ProfileRule::anchor);
-        if (count != 1 || !anchors.insert(edit.anchor).second) {
+        const auto found = indexed.find(edit.anchor);
+        if (found == indexed.end() || found->second.second != 1 || !anchors.insert(edit.anchor).second) {
             result.error = "订阅规则修改冲突，原规则已变化、重复或消失：" + edit.id; return result;
         }
-        auto& row = *std::ranges::find(rows, edit.anchor, &ProfileRule::anchor);
+        auto& row = rows[found->second.first];
         if (!row.editable || row.terminal) {
             result.error = "此规则仅支持查看；兜底请使用默认出口修改"; return result;
         }
@@ -141,6 +154,7 @@ ProfileRules personalRulePlan(std::vector<ProfileRule> rows, const ProfileRuleEd
         else tail.push_back(std::move(row));
     }
     result.rules = std::move(head);
+    result.rules.reserve(result.rules.size() + rows.size() + tail.size());
     bool inserted = false;
     for (auto& row : rows) {
         if ((row.terminal || row.position == "catch_all") && !inserted) {

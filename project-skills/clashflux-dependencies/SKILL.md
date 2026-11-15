@@ -12,6 +12,7 @@ description: 修改 Clash-Flux CMake/CPS 包边界、固定依赖、HuxerUI 或�
 - CMake 最低 4.4、验证基线 4.4.2；通用库来自 cmake/dependencies/Lock.cmake 固定 URL/SHA、独立 CPS producer 与 find_package。保留 HuxerUI codegen/资源/Android 图及应用模块源码编译，不把宿主包用于目标平台。
 - 包边界变更执行 CPS 重定位、版本拒绝、缓存完整性和 TLS 回归；缓存隔离工具链、flags、配置与目标身份，具体命令见 CPS 文档，不只测当前缓存命中。
 - 固定 Zstandard 归档的来源/SHA 与各平台同一静态目标必须一致；升级/添加构建依赖同步 third_party/README.md，MRS 的解码边界另见编译器技能。
+- 转换层按[同仓子项目规划](../../docs/converter-project.md)发展，当前仍使用原模块/构建；目录归拢不建立独立发布包。后续若建立库目标，再按 CPS 与工具链/BMI 边界验证外部消费，不复制应用内转换实现。
 
 ## HuxerUI 与扩展
 
@@ -27,3 +28,4 @@ description: 修改 Clash-Flux CMake/CPS 包边界、固定依赖、HuxerUI 或�
 
 官方各平台资产 SHA256、版本/revision 与 Android libbox 同源，缓存按版本/资产摘要隔离；保留正式 tag 供 ReadTag，不凭旧 AAR 存在继续打包。
 升级时同时用 [编译器技能](../clashflux-compiler/SKILL.md) 更新能力/保真度基线，按 [测试技能](../clashflux-test/SKILL.md) 完成回归后再声称升级可用。
+输入能力注册表保留审查过的版本/revision；内核升级重新核对后同步该快照，执行 `node_input_catalog`，不能只随 pin 自动改字符串绕过语义审查。它核对实际桌面内核及 Android/CI/iOS 脚本身份，范围见[节点订阅](../../docs/node-subscriptions.md)。

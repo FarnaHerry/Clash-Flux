@@ -1,0 +1,10 @@
+corpus,version,elapsed_s,max_rss_kib
+vmess,before,0.86,34936
+vmess,after,0.86,34944
+vmess,after,0.85,35308
+vmess,before,0.86,34720
+vmess,before,0.87,34852
+vmess,after,0.86,34816
+ss,after,0.49,19460
+ss,after,0.47,19632
+ss,after,0.49,19728

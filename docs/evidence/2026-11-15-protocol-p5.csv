@@ -1,0 +1,13 @@
+corpus,version,elapsed_s,max_rss_kib
+mixed,before,1.02,49748
+mixed,after,1.04,49912
+mixed,after,1.03,49772
+mixed,before,1.01,49700
+mixed,before,1.02,49676
+mixed,after,1.08,50044
+uri,before,0.87,34792
+uri,after,0.86,34900
+uri,after,0.86,34932
+uri,before,0.86,34848
+uri,before,0.86,34840
+uri,after,0.87,34972

@@ -6,6 +6,7 @@
 
 实际完成度与本轮验证见 [2026-10-02 L1 / L2 / L3 开发复核](l1-l2-l3-status.md)。
 本文是能力和保真度契约；复核中的 F01–F03 首批修复已完成，完整字段与产品覆盖仍未完成。
+协议解析与生成的分层及进度见[中间模型重构计划](protocol-refactor-plan.md)：P0–P6 本轮范围已完成本机验证，12 类 Clash 协议共用类型化模型，七类 URI 与历史 SS 直接适配；字段子集以本文及[节点订阅](node-subscriptions.md)为准。后续按[同仓转换子项目](converter-project.md)发展，当前只归拢协议/输入目录并保持原模块/构建，独立库封装和外部消费尚未完成。
 
 一句话定位：**内核贴 sing-box，输入贴 Clash 生态，产品层用 Clash 的词汇只暴露内核真有的
 能力，并把 sing-box 独有能力产品化成 Clash 客户端给不了的差异点。**
@@ -38,7 +39,7 @@ IP 规则集路由只提取目标 CIDR；PAC 由应用提供与接管，不伪�
 
 ### L2 翻译层（处理 Clash 生态）
 
-- 普通来源按内容识别 Clash YAML、sing-box 原生 JSON、OpenVPN `.ovpn`、VMess JSON 节点订阅（明文或 Base64），共用远程/本地导入；节点链接转换边界见[节点订阅](node-subscriptions.md)。
+- 普通来源按内容识别 Clash YAML、sing-box 原生 JSON、OpenVPN `.ovpn`、SS SIP002/历史整串 Base64、VMess JSON、VLESS/Trojan、HY2/TUIC/AnyTLS 节点订阅（明文或 Base64，可混合），共用远程/本地导入；节点链接转换边界见[节点订阅](node-subscriptions.md)。
   独立拨号路径只保留 PPTP，旧 OpenVPN 独立记录兼容已移除。所有来源都经 `clashflux.singbox` 出口。
 - 每条条目——协议、组、规则、单个字段——必须归入三档之一，并写入保真度账本（§2）：
   - **exact**：与 sing-box 语义 1:1；
@@ -187,7 +188,7 @@ std::string FidelitySummary(const std::vector<FidelityNote>& notes);
 原生 JSON 合并托管项时，`experimental.cache_file` 仅强制 `enabled: true`，保留
 `path`、`cache_id`、`store_fakeip`、`store_rdrc` 等用户配置，不整对象重建。
 
-节点订阅复用下列 VMess 映射，不增加内核协议能力。Base64/URL-safe 包装解码与标准字段映射为 exact；
+节点订阅支持 SS SIP002、VMess JSON、VLESS/Trojan、HY2/TUIC/AnyTLS 的明确子集，复用下列协议映射，不增加内核协议能力；字段/格式默认与严格拒绝范围见[节点订阅边界](node-subscriptions.md)。Base64/URL-safe 包装解码与标准字段映射为 exact；
 无规则列表生成 selector/MATCH 为字段 approx，非标准 `net=tls` → 显式 TCP+TLS 为节点 approx。
 未知协议、未知字段、无法表达的传输/证书约束或畸形条目拒绝整份候选，不提交合法前缀；原订阅字节保留。
 
@@ -376,7 +377,7 @@ SS 不再一律拒绝插件，当前只转换固定内核内置的 simple-obfs �
 
 这里的 simple-obfs TLS 是伪装模式，不是 TLS 证书加密选项。v2ray-plugin 的 TLS
 使用内核实际证书校验；自定义 headers/证书/ECH 等仍未接入，插件支持不能当成完整
-SS 字段覆盖。类型覆盖仍为 10/15。正向样本见
+SS 字段覆盖；协议类型覆盖见本节总表。正向样本见
 [ss-plugins-2026-10-02.yaml](examples/ss-plugins-2026-10-02.yaml)。
 
 依据：[固定 obfs-local](https://github.com/SagerNet/sing-box/blob/c005f35300ce76427dc285481ec5695f5b179cd2/transport/sip003/obfs.go)、
@@ -387,6 +388,20 @@ SS 字段覆盖。类型覆盖仍为 10/15。正向样本见
 [Mihomo SS 输入及默认](https://github.com/MetaCubeX/mihomo/blob/Meta/adapter/outbound/shadowsocks.go)
 （2026-10-02 核对）。
 
+2026-11-15 协议重构 P3 将 SS 凭据、上述插件和 UOT 映射迁移到类型化模型；
+Clash 默认 host/path/mux 和 UOT v1 由格式适配器解析，生成器只做已验证值的 SIP003 编码与 JSON 输出。
+既有接受/拒绝范围保持；缺失/空密码等原来由固定内核拒绝的候选仍保留这一检查边界。
+本地 AEAD / SS 2022 TCP/UDP、UOT v1/v2 及显式禁用回归已接入必跑门禁；
+详细快照、配置/流量证据和未覆盖范围见 [P3 验证](evidence/2026-11-15-protocol-p3.md)。
+
+2026-11-15 P6 首批增加 SS SIP002 输入，直接构造相同模型；host/path 的未提供与显式值分别保存，Clash 仍由适配器写入既有默认，URI 缺省不补 bing.com 或 TLS SNI。输入编码、SS 2022 限制、插件白名单/默认及严格拒绝范围只维护在[节点订阅边界](node-subscriptions.md#ss-sip002-子集p6-首批)；SSURI 不扩展 UDP/UOT、证书例外或原生插件能力，证据见[P6 首批](evidence/2026-11-15-protocol-p6-ss.md)。
+
+2026-11-15 P6 第二批增加 VLESS/Trojan URI，直接填同一协议/TLS/传输模型；VLESS 缺省无 TLS，Trojan 必须 TLS。该格式的缺省 fp=chrome 不继承 Clash 全局指纹，传输 Host 不代替 SNI，默认验证证书；指纹近似仍经共同账本记账。Vision/Reality、HTTP/2、gRPC 及未支持字段的完整边界只维护在[节点订阅](node-subscriptions.md#vless--trojan-uri-子集p6-第二批)，不改变既有 Clash/VMess 结果。配置与真实双内核 TCP/UDP、TLS 身份拒绝的证据见[P6 第二批](evidence/2026-11-15-protocol-p6-vt.md)。
+
+2026-11-15 P6 第三批增加 HY2/TUIC/AnyTLS URI，保持默认验证、原文认证、按格式选择的默认端口和 HY2 端口集合；QUIC 不使用 TCP uTLS，AnyTLS 使用该格式的指纹默认。TUIC 原生 native/quic 中继模式进入类型化 enum，仅由 URI 子集接入，既有 Clash 白名单和编译结果保持。严格字段边界只维护在[节点订阅](node-subscriptions.md)，配置检查、实际双内核转发、三种 TLS 身份拒绝及 AnyTLS IP 无 SNI 观察见[P6 第三批](evidence/2026-11-15-protocol-p6-secure.md)。
+
+2026-11-15 P6 收尾增加官方样例证明的历史 SS 整串 Base64：解码后的凭据是原文字节，不做 URL 解码，与 SIP002 独立分流，无损转换为 exact；warnings 仅记录脱敏识别事件，不虚报 Node/Approx，provider 排除的历史节点不记录该事件。输入登记共 8 种格式，拥有型 API 与必跑 node_input_catalog 核对普通/provider/别名路径、独立原生字段、账本和实际固定内核版本/revision；它不代替字段矩阵或运行时能力探测。范围和证据见[节点订阅](node-subscriptions.md)与[P6 收尾](evidence/2026-11-15-protocol-p6-final.md)，其它旧格式维持明确拒绝。
+
 ### AnyTLS / Snell 的边界
 
 AnyTLS 的时间字段使用整数秒数，最少空闲会话为非负整数；未启用 `udp` 时记
@@ -394,6 +409,10 @@ AnyTLS 的时间字段使用整数秒数，最少空闲会话为非负整数；�
 Snell v1/v2/v3/v5、缺省版本与未映射的伪装均拒绝，不自动改成 v4；内核 v6 可由原生
 JSON 使用，本轮不把它当成 Clash 版本转换。字段边界及后续计划见
 [内核能力审查](singbox-capability-audit.md)。
+
+2026-11-15 协议重构 P4 将 HY1/HY2/TUIC、AnyTLS/Snell/SSH 迁移到专用模型，保留上述映射、TLS/QUIC 区别、窗口/端口范围和 SSH 认证顺序近似。主订阅/provider 共用校验与生成器；Snell 的缺省/异常标量回落等旧适配器行为按原样冻结，未借重构收紧接受范围。新增本地固定双内核转发与 TLS 身份拒绝必跑回归，SSH 认证/主机公钥另有本地手工运行证据；样本、源码指纹和未覆盖边界见 [P4 验证](evidence/2026-11-15-protocol-p4.md)。
+
+2026-11-15 协议重构 P5 核对主订阅/provider/次来源、对象目录、文档/规则检查及原生 JSON 分流，统一节点校验、来源默认和生成出口。补齐 HTTP/file provider 中 VMess `net=tls` 的 `Node/Approx` 及 warnings 投影，说明与主订阅一致；只有筛选后参与的节点记账，生成配置不变。原生未知字段与数值类型继续由 DOM 保留，只读检查仍不代替完整候选批准。完整入口表、对照及未覆盖范围见 [P5 验证](evidence/2026-11-15-protocol-p5.md)。
 
 ### 4.1a 代理链
 
