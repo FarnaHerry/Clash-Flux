@@ -24,7 +24,7 @@ json SemanticNode(json value) { value.erase("tag"); return value; }
 json NodeNotes(const singbox::CompileResult& result, std::string_view source) {
     auto notes = json::array();
     for (const auto& note : protocolNodeNotes(protocolObservation(result).at("fidelity")))
-        if (note.at("sourceId") == source) notes.push_back(note);
+        if (note.at("sourceId").get_ref<const std::string&>() == source) notes.push_back(note);
     return notes;
 }
 
