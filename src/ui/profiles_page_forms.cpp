@@ -1,5 +1,6 @@
 // profiles_page_forms.cpp — 订阅创建/编辑表单与移动端二级页面。
 #include <huxerui/huxerui.h>
+#include "share_qr.h"
 #include <huxerui/camera.h>
 
 #include <chrono>

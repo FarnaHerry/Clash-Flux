@@ -17,6 +17,7 @@
 // ProfilesCache 只是它的镜像；导入/更新/启用/删除/编辑保存都是阻塞活
 // （网络下载 / 内核重启），全部经 RunOnTaskThread。
 #include <huxerui/huxerui.h>
+#include "share_qr.h"
 
 #include <algorithm>
 #include <charconv>

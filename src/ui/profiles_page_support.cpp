@@ -1,5 +1,6 @@
 // profiles_page_support.cpp — 订阅页共享辅助与平台导入/刷新流程。
 #include <huxerui/huxerui.h>
+#include "share_qr.h"
 #include <huxerui/qrcode.h>
 
 #include <algorithm>
